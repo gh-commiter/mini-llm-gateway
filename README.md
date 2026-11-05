@@ -87,7 +87,7 @@ Router Mac (the app; then **Settings… → Claude CLI → Install** for `minigw
 brew install --cask gh-commiter/mini-gateway/mini-gateway
 ```
 
-Another Mac (client only; Claude Code comes from `brew install --cask claude-code`):
+Another Mac (client only). Both casks also install Claude Code (`claude-code`) if it is not installed yet:
 
 ```sh
 brew install --cask gh-commiter/mini-gateway/minigw
