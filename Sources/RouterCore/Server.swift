@@ -47,14 +47,12 @@ public final class RouterServer: @unchecked Sendable {
 
     private func accept(_ conn: NWConnection) {
         let allowed = router.config.allowedClientList
-        if !allowed.isEmpty {
-            guard case let .hostPort(host, _) = conn.endpoint, allowed.contains(Self.ip(host)) else {
-                conn.cancel()
-                return
-            }
-        }
+        guard case let .hostPort(host, _) = conn.endpoint else { conn.cancel(); return }
+        let peer = Self.ip(host)
+        // Seznam dovoljenih velja za vse razen lokalnega mount_webdav (/dav, preverjeno po branju zahteve).
+        guard allowed.isEmpty || allowed.contains(peer) || Self.isLoopback(peer) else { conn.cancel(); return }
         conn.start(queue: queue)
-        receive(conn, Data())
+        receive(conn, Data(), peer: peer)
     }
 
     static func ip(_ host: NWEndpoint.Host) -> String {
@@ -66,18 +64,28 @@ public final class RouterServer: @unchecked Sendable {
         }
     }
 
-    private func receive(_ conn: NWConnection, _ buffer: Data) {
+    static func isLoopback(_ ip: String) -> Bool {
+        ip == "::1" || ip.hasPrefix("127.") || ip.hasPrefix("::ffff:127.")
+    }
+
+    private func receive(_ conn: NWConnection, _ buffer: Data, peer: String) {
         conn.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, done, error in
             guard let self else { return }
             var buf = buffer
             if let data { buf.append(data) }
             switch HTTPParser.parse(buf) {
             case .needMore:
-                if done || error != nil { conn.cancel() } else { self.receive(conn, buf) }
+                if done || error != nil { conn.cancel() } else { self.receive(conn, buf, peer: peer) }
             case .error(let status, let message):
                 let w = ConnectionWriter(conn: conn)
                 Task { await self.router.reject(status: status, message: message, writer: w) }
-            case .request(let req):
+            case .request(var req):
+                req.peer = peer
+                let allowed = self.router.config.allowedClientList
+                if Self.isLoopback(peer), !allowed.isEmpty, !allowed.contains(peer), !req.path.hasPrefix("/dav/") {
+                    conn.cancel()
+                    return
+                }
                 let w = ConnectionWriter(conn: conn)
                 let task = Task { await self.router.handle(req, writer: w) }
                 conn.stateUpdateHandler = { state in

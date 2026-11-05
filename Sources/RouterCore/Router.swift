@@ -70,8 +70,8 @@ public final class Router: Sendable {
         let (status, model, provider) = await route(req, rid: rid, writer: writer)
         writer.close()
         let ms = Int(Date().timeIntervalSince(start) * 1000)
-        Self.log.info("\(rid, privacy: .public) \(req.method, privacy: .public) \(req.path, privacy: .public) model=\(model ?? "-", privacy: .public) provider=\(provider ?? "-", privacy: .public) status=\(status) \(ms)ms bytes=\(req.body.count)")
-        onLog(RequestLog(time: start, method: req.method, path: req.path, model: model, provider: provider, status: status, ms: ms))
+        Self.log.info("\(rid, privacy: .public) \(req.method, privacy: .public) \(req.path.hasPrefix("/dav/") ? "/dav/…" : req.path, privacy: .public) model=\(model ?? "-", privacy: .public) provider=\(provider ?? "-", privacy: .public) status=\(status) \(ms)ms bytes=\(req.body.count)")
+        if provider != "share" { onLog(RequestLog(time: start, method: req.method, path: req.path, model: model, provider: provider, status: status, ms: ms)) }  // brez prometa map v »Activity«
     }
 
     /// Za napake, ki nastanejo že pri branju zahteve.
@@ -91,6 +91,25 @@ public final class Router: Sendable {
             return (await json(200, ["status": "ok", "providers": providers], rid: rid, writer: writer), nil, nil)
         default:
             break
+        }
+
+        // Priklop mape odjemalca (mount_webdav na tem Macu): skrivnost v poti namesto žetona.
+        if req.path.hasPrefix("/dav/") {
+            guard RouterServer.isLoopback(req.peer) else {  // le lokalni mount_webdav
+                try? await writer.write(HTTPResponse.head(status: 404, headers: [], contentLength: 0))
+                return (404, nil, nil)
+            }
+            let secret = String(req.path.dropFirst(5).prefix { $0 != "/" })
+            guard let r = await Self.shares.dav(secret: secret, method: req.method, path: req.path,
+                                                headers: req.headers, body: req.body) else {
+                try? await writer.write(HTTPResponse.head(status: 404, headers: [], contentLength: 0))
+                return (404, nil, nil)
+            }
+            var headers = r.headers.map { ($0.key, $0.value) }
+            let length = r.headers["Content-Length"] == nil ? r.body.count : nil
+            if length == nil { headers = headers.filter { $0.0 != "Content-Length" } + [("Content-Length", r.headers["Content-Length"]!)] }
+            try? await writer.write(HTTPResponse.head(status: r.status, headers: headers, contentLength: length) + r.body)
+            return (r.status, nil, "share")
         }
 
         guard authorized(req) else {
@@ -139,6 +158,40 @@ public final class Router: Sendable {
             }
             let status = await passthrough(req, body: body, route: r, key: key, rid: rid, writer: writer)
             return (status, model, r.provider.id)
+
+        // minigw: mapa odjemalca za claude -p (glej ShareHub).
+        case ("POST", "/minigw/share"):
+            guard let session = req.header("x-claude-mini-session"), !session.isEmpty,
+                  let cwd = req.header("x-claude-mini-cwd"), !cwd.isEmpty else {
+                return (await error(400, "invalid_request_error", "Missing session or cwd", rid: rid, writer: writer), nil, nil)
+            }
+            guard let key = await Self.shares.register(session: session, cwd: cwd, key: req.header("x-share-key")) else {
+                return (await error(409, "invalid_request_error", "Session already has a folder", rid: rid, writer: writer), nil, "share")
+            }
+            return (await json(200, ["key": key], rid: rid, writer: writer), nil, "share")
+        case ("GET", "/minigw/share/next"):
+            switch await Self.shares.poll(key: req.header("x-share-key") ?? "") {
+            case .none:
+                return (await error(404, "not_found_error", "No such share", rid: rid, writer: writer), nil, "share")
+            case .some(.none):
+                try? await writer.write(HTTPResponse.head(status: 204, headers: [], contentLength: 0))
+                return (204, nil, "share")
+            case .some(.some(let job)):
+                let body = (try? JSONEncoder().encode(job)) ?? Data()
+                try? await writer.write(HTTPResponse.head(status: 200, headers: [("Content-Type", "application/json")], contentLength: body.count) + body)
+                return (200, nil, "share")
+            }
+        case ("POST", "/minigw/share/reply"):
+            guard let r = try? JSONDecoder().decode(DAVReply.self, from: req.body) else {
+                return (await error(400, "invalid_request_error", "Bad reply", rid: rid, writer: writer), nil, "share")
+            }
+            let ok = await Self.shares.reply(key: req.header("x-share-key") ?? "", r)
+            try? await writer.write(HTTPResponse.head(status: ok ? 204 : 404, headers: [], contentLength: 0))
+            return (ok ? 204 : 404, nil, "share")
+        case ("DELETE", "/minigw/share"):
+            await Self.shares.unregister(key: req.header("x-share-key") ?? "")
+            try? await writer.write(HTTPResponse.head(status: 204, headers: [], contentLength: 0))
+            return (204, nil, "share")
 
         default:
             return (await error(404, "not_found_error", "Not found: \(req.method) \(req.path)", rid: rid, writer: writer), nil, nil)

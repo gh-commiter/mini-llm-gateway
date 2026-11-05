@@ -27,8 +27,9 @@ if [[ $MODE == --test ]]; then
   xcodebuild test -scheme MiniGateway-Package -destination 'platform=macOS,arch=arm64' -derivedDataPath "$DERIVED" -quiet
 fi
 
+# Xcode 27 paketom privzeto vklopi pokritost kode → binarne datoteke pišejo default.profraw v mapo uporabnika.
 for scheme in MiniGateway MiniGW; do
-  xcodebuild build -scheme $scheme -configuration Release -destination 'platform=macOS,arch=arm64' -derivedDataPath "$DERIVED" -quiet
+  xcodebuild build -scheme $scheme -configuration Release -destination 'platform=macOS,arch=arm64' -derivedDataPath "$DERIVED" ENABLE_CODE_COVERAGE=NO -quiet
 done
 
 APP="build/Mini Gateway.app"

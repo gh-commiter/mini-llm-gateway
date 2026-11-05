@@ -6,6 +6,7 @@ public struct HTTPRequest: Sendable {
     public var query: String?
     public var headers: [String: String]  // imena v malih črkah
     public var body: Data
+    public var peer = ""  // IP odjemalca
 
     public func header(_ name: String) -> String? { headers[name.lowercased()] }
 }
@@ -67,7 +68,8 @@ public enum HTTPResponse {
     }
 
     static func reason(_ status: Int) -> String {
-        [200: "OK", 400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found",
+        [200: "OK", 201: "Created", 204: "No Content", 206: "Partial Content", 207: "Multi-Status",
+         400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found", 405: "Method Not Allowed", 409: "Conflict", 412: "Precondition Failed",
          411: "Length Required", 413: "Payload Too Large", 429: "Too Many Requests", 431: "Request Header Fields Too Large",
          500: "Internal Server Error", 502: "Bad Gateway", 503: "Service Unavailable", 504: "Gateway Timeout"][status] ?? "Status"
     }

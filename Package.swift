@@ -7,7 +7,7 @@ let package = Package(
     targets: [
         .target(name: "RouterCore"),
         .executableTarget(name: "MiniGateway", dependencies: ["RouterCore"]),
-        .executableTarget(name: "MiniGW"),  // ukaz minigw (Contents/Helpers)
+        .executableTarget(name: "MiniGW", dependencies: ["RouterCore"]),  // ukaz minigw (Contents/Helpers)
         .testTarget(name: "RouterCoreTests", dependencies: ["RouterCore"]),
     ],
     swiftLanguageModes: [.v5]

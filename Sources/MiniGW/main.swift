@@ -1,6 +1,7 @@
 // minigw — zažene Claude Code prek Mini Gateway.
 // Podpisan pomožni program v Mini Gateway.app (Contents/Helpers); Install v PATH naredi povezavo nanj.
 import Foundation
+import RouterCore
 import Security
 
 let service = "dev.trojar.minigateway.cli"
@@ -60,6 +61,71 @@ func get(_ c: Connection, _ path: String) -> (Int, [String: Any]?) {
     }.resume()
     done.wait()
     return result
+}
+
+/// Poljubna zahteva; telo odgovora kot Data (0 = ni povezave).
+func call(_ c: Connection, _ method: String, _ path: String, _ headers: [String: String] = [:], _ body: Data? = nil,
+          timeout: TimeInterval) -> (Int, Data?) {
+    var r = URLRequest(url: URL(string: c.url + path)!, timeoutInterval: timeout)
+    r.httpMethod = method
+    r.httpBody = body
+    r.setValue("Bearer \(c.token)", forHTTPHeaderField: "authorization")
+    for (k, v) in headers { r.setValue(v, forHTTPHeaderField: k) }
+    let done = DispatchSemaphore(value: 0)
+    var result: (Int, Data?) = (0, nil)
+    URLSession.shared.dataTask(with: r) { data, resp, _ in
+        result = ((resp as? HTTPURLResponse)?.statusCode ?? 0, data)
+        done.signal()
+    }.resume()
+    done.wait()
+    return result
+}
+
+/// Trenutna mapa za claude -p na Mac miniju: router jo priklopi (mount_webdav), minigw streže datoteke.
+/// Mac mini odjemalca ne doseže, zato vse teče po povezavah, ki jih odpre minigw (long poll).
+final class ShareClient: @unchecked Sendable {
+    let c: Connection, session: String, root: URL
+    private let lock = NSLock()
+    private var current = ""
+    var key: String { lock.withLock { current } }
+
+    init(_ c: Connection, session: String, root: URL) { self.c = c; self.session = session; self.root = root }
+
+    func register() -> Bool {
+        let (s, d) = call(c, "POST", "/minigw/share",
+                          ["x-claude-mini-session": session, "x-claude-mini-cwd": root.path, "x-share-key": key], timeout: 10)
+        guard s == 200, let d, let k = (try? JSONSerialization.jsonObject(with: d) as? [String: Any])?["key"] as? String else { return false }
+        lock.withLock { current = k }
+        return true
+    }
+
+    func unregister() { _ = call(c, "DELETE", "/minigw/share", ["x-share-key": key], timeout: 3) }
+
+    func start(workers: Int = 4) {
+        for _ in 0..<workers { Thread { self.work() }.start() }
+    }
+
+    private func work() {
+        while true {
+            let k = key
+            let (s, d) = call(c, "GET", "/minigw/share/next", ["x-share-key": k], timeout: 40)
+            switch s {
+            case 200:
+                guard let d, let job = try? JSONDecoder().decode(DAVJob.self, from: d) else { continue }
+                let r = WebDAV.handle(method: job.method, path: job.path, headers: job.headers, body: job.body,
+                                      root: root, prefix: job.prefix)
+                guard let body = try? JSONEncoder().encode(DAVReply(id: job.id, response: r)) else { continue }
+                _ = call(c, "POST", "/minigw/share/reply", ["x-share-key": k, "content-type": "application/json"], body, timeout: 120)
+            case 204:
+                continue
+            case 404:
+                _ = register()  // router se je znova zagnal
+                sleep(1)
+            default:
+                sleep(2)        // router nedosegljiv: poskusi znova
+            }
+        }
+    }
 }
 
 func requireConnection() -> Connection {
@@ -154,5 +220,45 @@ if sid.isEmpty && !own {
 setenv("ANTHROPIC_CUSTOM_HEADERS", "x-claude-mini-session: \(sid)\nx-claude-mini-cwd: \(FileManager.default.currentDirectoryPath)", 1)
 
 let argv = (["claude"] + args).map { strdup($0) } + [nil]
-execvp("claude", argv)
-fail("cannot run claude: \(String(cString: strerror(errno))) (is Claude Code installed and in PATH?)", code: 127)
+let cwd = FileManager.default.currentDirectoryPath
+let routerHost = URLComponents(string: c.url)?.host ?? ""
+// Mapo deli le z oddaljenim routerjem in le pod domačo mapo (nikoli cele domače mape); MINIGW_SHARE=0/1 preglasi.
+let shareEnv = ProcessInfo.processInfo.environment["MINIGW_SHARE"]
+// Brez ~/Library in skritih map v domači (.ssh, .gnupg …): tam le z MINIGW_SHARE=1.
+let underHome = cwd.hasPrefix(NSHomeDirectory() + "/") ? String(cwd.dropFirst(NSHomeDirectory().count + 1)) : nil
+let wantShare = shareEnv == "1"
+    || (shareEnv != "0" && !["127.0.0.1", "localhost", "::1"].contains(routerHost)
+        && underHome.map { !$0.hasPrefix(".") && $0 != "Library" && !$0.hasPrefix("Library/") } == true)
+
+guard wantShare, !sid.isEmpty else {
+    execvp("claude", argv)
+    fail("cannot run claude: \(String(cString: strerror(errno))) (is Claude Code installed and in PATH?)", code: 127)
+}
+
+let share = ShareClient(c, session: sid, root: URL(fileURLWithPath: cwd))
+if share.register() {
+    share.start()
+    err.write(Data("minigw: sharing \(cwd) with \(routerHost) for Claude CLI models with tools (MINIGW_SHARE=0 to turn off)\n".utf8))
+} else {
+    err.write(Data("minigw: router did not accept the folder; Claude CLI models with tools will not see it\n".utf8))
+}
+
+// claude kot podproces (minigw mora ostati za share); Ctrl+C dobi claude.
+signal(SIGINT, SIG_IGN)
+signal(SIGQUIT, SIG_IGN)
+var attr: posix_spawnattr_t?
+posix_spawnattr_init(&attr)
+var defaults = sigset_t()
+sigemptyset(&defaults); sigaddset(&defaults, SIGINT); sigaddset(&defaults, SIGQUIT)
+posix_spawnattr_setsigdefault(&attr, &defaults)
+posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETSIGDEF))
+var pid: pid_t = 0
+let rc = posix_spawnp(&pid, "claude", nil, &attr, argv, environ)
+guard rc == 0 else {
+    share.unregister()
+    fail("cannot run claude: \(String(cString: strerror(rc))) (is Claude Code installed and in PATH?)", code: 127)
+}
+var status: Int32 = 0
+while waitpid(pid, &status, 0) == -1 && errno == EINTR {}
+share.unregister()
+exit(status & 0x7f == 0 ? (status >> 8) & 0xff : 128 + (status & 0x7f))

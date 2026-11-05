@@ -372,3 +372,43 @@ func makeRouter(session: URLSession = .shared) -> Router {
     if case .failure(let f) = await Discovery.load(bad, key: "k") { #expect(f.message == "Invalid base URL") } else { Issue.record("url") }
     #expect(Discovery.isLocal("192.168.1.20") && Discovery.isLocal("mini.local") && !Discovery.isLocal("openrouter.ai"))
 }
+
+@Test func webDAVStaysInsideRootAndWrites() throws {
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent("davtest-" + UUID().uuidString)
+    let root = base.appendingPathComponent("proj"), outside = base.appendingPathComponent("secret.txt")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try Data("no".utf8).write(to: outside)
+    try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("link"), withDestinationURL: outside)
+    defer { try? FileManager.default.removeItem(at: base) }
+    func dav(_ m: String, _ p: String, _ h: [String: String] = [:], _ b: String = "") -> DAVResponse {
+        WebDAV.handle(method: m, path: "/dav/s" + p, headers: h, body: Data(b.utf8), root: root, prefix: "/dav/s")
+    }
+    // Ven iz mape: .., kodiran .., simbolna povezava, napačna predpona.
+    #expect(dav("GET", "/../secret.txt").status == 403)
+    #expect(dav("GET", "/%2E%2E/secret.txt").status == 403)
+    #expect(dav("GET", "/link").status == 403)
+    #expect(WebDAV.handle(method: "GET", path: "/x/a", headers: [:], body: Data(), root: root, prefix: "/dav/s").status == 403)
+
+    #expect(dav("PUT", "/a%20b.txt", [:], "hello").status == 201)
+    #expect(dav("MOVE", "/a%20b.txt", ["destination": "http://127.0.0.1:8765/dav/s/../moved"]).status == 403)
+    #expect(String(decoding: dav("GET", "/a%20b.txt").body, as: UTF8.self) == "hello")
+    #expect(String(decoding: dav("GET", "/a%20b.txt", ["range": "bytes=1-2"]).body, as: UTF8.self) == "el")
+    #expect(dav("MKCOL", "/dir").status == 201)
+    #expect(dav("MOVE", "/a%20b.txt", ["destination": "http://127.0.0.1:8765/dav/s/dir/c.txt"]).status == 201)
+    let list = String(decoding: dav("PROPFIND", "/dir", ["depth": "1"]).body, as: UTF8.self)
+    #expect(list.contains("<D:href>/dav/s/dir/c.txt</D:href>") && list.contains("<D:getcontentlength>5<"))
+    #expect(dav("PUT", "/._c.txt", [:], "xattr").status == 201)  // AppleDouble se ne zapiše
+    #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("._c.txt").path))
+    #expect(dav("DELETE", "/dir").status == 204)
+    #expect(dav("DELETE", "/").status == 403)
+}
+
+@Test func shareSessionCannotBeTakenOver() async {
+    let hub = ShareHub()
+    let key = await hub.register(session: "s1", cwd: "/a", key: nil)
+    #expect(key != nil)
+    #expect(await hub.register(session: "s1", cwd: "/b", key: nil) == nil)          // tuj odjemalec
+    #expect(await hub.register(session: "s1", cwd: "/a", key: "wrong") == nil)
+    #expect(await hub.register(session: "s1", cwd: "/a", key: key) == key)          // lastnik
+    #expect(await hub.mount(session: "../../x", cwd: nil, base: "http://127.0.0.1:1") == nil)
+}

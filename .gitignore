@@ -21,3 +21,4 @@ xcuserdata/
 .DS_Store
 .omc/
 .secrets/
+.claude/

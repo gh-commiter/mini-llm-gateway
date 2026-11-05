@@ -234,6 +234,13 @@ struct StreamTranslator {
 
 extension Router {
     static let sessions = SessionRegistry()
+    static let shares = ShareHub()
+
+    /// Naslov tega routerja za lokalni mount_webdav.
+    var localBase: String {
+        let h = config.host == "0.0.0.0" || config.host == "::" || config.host.isEmpty ? "127.0.0.1" : config.host
+        return "http://\(h.contains(":") ? "[\(h)]" : h):\(config.port)"
+    }
 
     func runCLI(_ req: HTTPRequest, body: [String: Any], cliModel: String, chatOnly: Bool,
                 rid: String, writer: ResponseWriter) async -> Int {
@@ -256,7 +263,14 @@ extension Router {
         var registryKey: String?
 
         if agent {
-            guard let dir = ClaudeCLI.resolveCwd(req.header("x-claude-mini-cwd"), roots: cfg.allowedRoots) else {
+            // Mapa odjemalca (minigw na drugem Macu) ima prednost pred enako potjo na tem Macu.
+            let clientCwd = req.header("x-claude-mini-cwd")
+            let shared = await Self.shares.mount(session: req.header("x-claude-mini-session") ?? "", cwd: clientCwd, base: localBase)
+            if let shared, let clientCwd {
+                args += ["--append-system-prompt",
+                         "The user's folder \(clientCwd) (on their Mac) is mounted here as \(shared.path), your working directory. Map paths under \(clientCwd) to it."]
+            }
+            guard let dir = shared ?? ClaudeCLI.resolveCwd(clientCwd, roots: cfg.allowedRoots) else {
                 return await error(400, "invalid_request_error",
                                    "cwd_unavailable: folder \(req.header("x-claude-mini-cwd") ?? "(none)") does not exist on this Mac or is outside the allowed folders",
                                    rid: rid, writer: writer)
@@ -274,7 +288,7 @@ extension Router {
                 prompt = ClaudeCLI.prompt(history: history, last: last)
             }
             args += ["--tools", cfg.tools, "--allowedTools", cfg.tools, "--permission-mode", cfg.permissionMode,
-                     "--setting-sources", cfg.settingSources]
+                     "--setting-sources", shared == nil ? cfg.settingSources : ""]  // hooki iz mape odjemalca ne tečejo tukaj
         } else {
             cwd = FileManager.default.temporaryDirectory.appendingPathComponent("minigateway-chat", isDirectory: true)
             try? FileManager.default.createDirectory(at: cwd, withIntermediateDirectories: true)

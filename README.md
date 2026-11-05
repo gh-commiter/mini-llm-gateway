@@ -105,6 +105,13 @@ minigw connect 192.168.1.20 --token …   # use a router on another Mac
 
 Subagents can use router models too, e.g. `model: claude-siri-ai` in `.claude/agents/<name>.md`.
 
+**Another Mac and Claude CLI models with tools.** `opus`, `sonnet`, `haiku` and `fable` run `claude -p` as an agent on
+the router Mac. When `minigw` talks to a router on another Mac, it shares the current folder with it for the length
+of the session: the router mounts it (built-in WebDAV, through the connection `minigw` opens, so the router Mac does
+not need to reach the client) and the agent works on your files. Nothing to install on either side. Only folders
+inside your home folder are shared: never the home folder itself, `~/Library` or hidden folders such as `~/.ssh`.
+The folder's own Claude Code settings and hooks are not loaded on the router Mac. Set `MINIGW_SHARE=0` to turn it off.
+
 ## Settings
 
 - **General** – listen address and port (default `127.0.0.1:8765`; use `0.0.0.0` or a LAN IP for other Macs),
@@ -122,6 +129,8 @@ Changes apply immediately. Keys and the access token are stored in the Keychain,
 - Every request needs the router's token; the server listens only on `127.0.0.1` unless you change it.
 - The Claude CLI provider runs `claude -p` with tools in the client's folder: it only runs inside the allowed
   folders and uses the tools and permission mode you configure (default: read-only, `dontAsk`).
+- With a remote router, `minigw` gives the router Mac read and write access to the current folder while it runs
+  (nothing outside it). Use it only with a router Mac you trust.
 - The Siri provider uses Accessibility UI automation of the Siri AI app. It only touches that app, but
   Accessibility is a powerful permission.
 
