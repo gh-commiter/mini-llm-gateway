@@ -80,6 +80,11 @@ if [[ $MODE == --release ]]; then
   cp install.sh "$OUT/install.sh"
 
   (cd $OUT && shasum -a 256 "${ZIP:t}" "${DMG:t}" minigw.zip install.sh | tee SHA256SUMS)
+  # Homebrew (Casks/, tap = ta repozitorij): različica in kontrolni vsoti te izdaje
+  for cask file in Casks/mini-gateway.rb "$ZIP" Casks/minigw.rb "$CLI_ZIP"; do
+    sed -i '' -e "s/^  version \".*\"/  version \"$VERSION\"/" \
+              -e "s/^  sha256 \".*\"/  sha256 \"$(shasum -a 256 "$file" | cut -d' ' -f1)\"/" "$cask"
+  done
   print "$ZIP"
   print "$DMG"
   print "$CLI_ZIP"

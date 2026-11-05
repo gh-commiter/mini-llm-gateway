@@ -69,6 +69,30 @@ curl -fsSL https://github.com/gh-commiter/mini-llm-gateway/releases/latest/downl
 
 The script checks the download against `SHA256SUMS` and the Developer ID signature before installing.
 
+### Homebrew
+
+The app and the client command are separate casks in this repository. Add the tap once:
+
+```sh
+brew tap gh-commiter/mini-gateway https://github.com/gh-commiter/mini-llm-gateway
+```
+
+```sh
+brew trust --tap gh-commiter/mini-gateway
+```
+
+Router Mac (the app; then **Settings… → Claude CLI → Install** for `minigw`):
+
+```sh
+brew install --cask gh-commiter/mini-gateway/mini-gateway
+```
+
+Another Mac (client only; Claude Code comes from `brew install --cask claude-code`):
+
+```sh
+brew install --cask gh-commiter/mini-gateway/minigw
+```
+
 ## Use
 
 ```sh
