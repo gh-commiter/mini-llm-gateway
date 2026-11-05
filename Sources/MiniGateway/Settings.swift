@@ -116,6 +116,8 @@ struct SettingsView: View {
                 TextField("Address", text: $draft.host)
                 TextField("Port", value: $draft.port, format: .number.grouping(.never))
                 TextField("Allowed clients (IP; empty = all)", text: $draft.allowedClients)
+                Toggle("Allow unencrypted connections from other Macs", isOn: $draft.allowPlainRemote)
+                    .help(String(localized: "minigw 0.4 and newer always encrypts. Turn on only for other clients on a trusted network."))
             } footer: {
                 Text("Changes are applied automatically.").font(.caption).foregroundStyle(.secondary)
             }
@@ -365,7 +367,7 @@ struct TokenRow: View {
                 WideButton(show ? "Hide" : "Show") { show.toggle() }
                 WideButton("Copy Token") {
                     NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(state.token, forType: .string)
+                    NSPasteboard.general.setString(state.connectToken, forType: .string)
                 }
                 WideButton("New Token") { state.regenerateToken() }
             }

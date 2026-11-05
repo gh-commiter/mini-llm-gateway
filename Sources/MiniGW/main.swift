@@ -14,6 +14,23 @@ func fail(_ s: String, code: Int32 = 1) -> Never { err.write(Data(("minigw: " + 
 struct Connection: Codable {
     var url: String
     var token: String
+    var key: String?  // javni ključ routerja (Noise); niz »Copy Token« = <žeton>#<ključ>
+
+    var isLocal: Bool { ["127.0.0.1", "localhost", "::1"].contains(URLComponents(string: url)?.host ?? "") }
+}
+
+/// Oddaljen router: vse (Claude Code, minigw, mapa) gre šifrirano prek lokalnega proxyja; lokalno navaden HTTP.
+var proxy: NoiseProxy?
+func route(_ c: Connection) -> Connection {
+    guard !c.isLocal else { return c }
+    guard let k = c.key.flatMap(Noise.fromBase64url), let p = NoiseProxy(routerURL: c.url, routerKey: k) else {
+        fail("no router key: copy the token again (Mini Gateway 0.4+ → Copy Token) and run minigw connect")
+    }
+    do { try p.start() } catch { fail("cannot start the local encrypted proxy: \(error)") }
+    proxy = p
+    var r = c
+    r.url = p.localURL
+    return r
 }
 
 func keychainQuery() -> [String: Any] {
@@ -99,7 +116,7 @@ final class ShareClient: @unchecked Sendable {
         return true
     }
 
-    func unregister() { _ = call(c, "DELETE", "/minigw/share", ["x-share-key": key], timeout: 3) }
+    func unregister() { guard !key.isEmpty else { return }; _ = call(c, "DELETE", "/minigw/share", ["x-share-key": key], timeout: 3) }
 
     func start(workers: Int = 4) {
         for _ in 0..<workers { Thread { self.work() }.start() }
@@ -140,15 +157,18 @@ var args = Array(CommandLine.arguments.dropFirst())
 switch args.first {
 case "connect":
     guard args.count >= 2 else { fail("usage: minigw connect <host[:port]> [--token <token>]") }
-    var token = loadConnection()?.token ?? ""
+    let saved = loadConnection()
+    var token = saved.map { $0.token + ($0.key.map { "#" + $0 } ?? "") } ?? ""
     if let i = args.firstIndex(of: "--token"), i + 1 < args.count { token = args[i + 1] }
     guard !token.isEmpty else { fail("missing --token (copy it from Mini Gateway → Settings → General → Copy Token)") }
-    let c = Connection(url: normalize(args[1]), token: token)
-    let (status, _) = get(c, "/v1/models")
+    let parts = token.split(separator: "#", maxSplits: 1).map(String.init)
+    let c = Connection(url: normalize(args[1]), token: parts[0], key: parts.count > 1 ? parts[1] : nil)
+    let (status, _) = get(route(c), "/v1/models")
     switch status {
-    case 200: saveConnection(c); say("Connected to \(c.url)")
+    case 200: saveConnection(c); say("Connected to \(c.url)" + (c.isLocal ? "" : " (encrypted)"))
     case 401: fail("router at \(c.url) rejected the token")
-    case 0: fail("cannot reach \(c.url)")
+    case 426: fail("router at \(c.url) needs an encrypted connection: copy the token again (it includes the router key)")
+    case 0: fail(c.isLocal ? "cannot reach \(c.url)" : "cannot reach \(c.url), or the router key does not match (copy the token again)")
     default: fail("router at \(c.url) answered HTTP \(status)")
     }
     exit(0)
@@ -159,9 +179,10 @@ case "disconnect":
     exit(0)
 
 case "status":
-    let c = requireConnection()
+    let saved = requireConnection()
+    let c = route(saved)
     let (s, ready) = get(c, "/health/ready")
-    say("Router:    \(c.url) (\(s == 200 ? "reachable" : s == 0 ? "unreachable" : "HTTP \(s)"))")
+    say("Router:    \(saved.url) (\(s == 200 ? "reachable" : s == 0 ? "unreachable" : "HTTP \(s)")\(saved.isLocal ? "" : ", encrypted"))")
     if let p = ready?["providers"] as? [String: Bool] {
         say("Providers: " + p.keys.sorted().map { "\($0) \(p[$0]! ? "✓" : "✗")" }.joined(separator: ", "))
     }
@@ -170,7 +191,7 @@ case "status":
     exit(s == 200 ? 0 : 1)
 
 case "models":
-    let c = requireConnection()
+    let c = route(requireConnection())
     let (s, models) = get(c, "/v1/models")
     guard s == 200, let data = models?["data"] as? [[String: Any]] else { fail(s == 401 ? "token rejected" : "cannot list models (HTTP \(s))") }
     let width = data.compactMap { ($0["id"] as? String)?.count }.max() ?? 0
@@ -194,7 +215,8 @@ default:
 
 // MARK: Claude Code prek routerja
 
-let c = requireConnection()
+let saved = requireConnection()
+let c = route(saved)
 setenv("ANTHROPIC_BASE_URL", c.url, 1)
 setenv("ANTHROPIC_AUTH_TOKEN", c.token, 1)
 setenv("ANTHROPIC_API_KEY", "", 1)
@@ -221,7 +243,7 @@ setenv("ANTHROPIC_CUSTOM_HEADERS", "x-claude-mini-session: \(sid)\nx-claude-mini
 
 let argv = (["claude"] + args).map { strdup($0) } + [nil]
 let cwd = FileManager.default.currentDirectoryPath
-let routerHost = URLComponents(string: c.url)?.host ?? ""
+let routerHost = URLComponents(string: saved.url)?.host ?? ""
 // Mapo deli le z oddaljenim routerjem in le pod domačo mapo (nikoli cele domače mape); MINIGW_SHARE=0/1 preglasi.
 let shareEnv = ProcessInfo.processInfo.environment["MINIGW_SHARE"]
 // Brez ~/Library in skritih map v domači (.ssh, .gnupg …): tam le z MINIGW_SHARE=1.
@@ -230,13 +252,16 @@ let wantShare = shareEnv == "1"
     || (shareEnv != "0" && !["127.0.0.1", "localhost", "::1"].contains(routerHost)
         && underHome.map { !$0.hasPrefix(".") && $0 != "Library" && !$0.hasPrefix("Library/") } == true)
 
-guard wantShare, !sid.isEmpty else {
+// Brez proxyja in brez mape: minigw ni več potreben → exec.
+guard proxy != nil || (wantShare && !sid.isEmpty) else {
     execvp("claude", argv)
     fail("cannot run claude: \(String(cString: strerror(errno))) (is Claude Code installed and in PATH?)", code: 127)
 }
 
 let share = ShareClient(c, session: sid, root: URL(fileURLWithPath: cwd))
-if share.register() {
+if !wantShare || sid.isEmpty {
+    // le šifrirani proxy
+} else if share.register() {
     share.start()
     err.write(Data("minigw: sharing \(cwd) with \(routerHost) for Claude CLI models with tools (MINIGW_SHARE=0 to turn off)\n".utf8))
 } else {

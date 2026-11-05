@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Network
 
@@ -15,9 +16,12 @@ public final class RouterServer: @unchecked Sendable {
     public let router: Router
     private let queue = DispatchQueue(label: "dev.trojar.minigateway.server")
     private var listener: NWListener?
+    private var pending = Set<ObjectIdentifier>()  // povezave brez cele zahteve (le na `queue`)
     public var onState: (@Sendable (ServerState) -> Void)?
 
-    public init(router: Router) { self.router = router }
+    let key: Curve25519.KeyAgreement.PrivateKey?  // stalni ključ routerja (Noise); nil = brez šifriranih povezav
+
+    public init(router: Router, key: Curve25519.KeyAgreement.PrivateKey? = nil) { self.router = router; self.key = key }
 
     public func start() throws {
         let c = router.config
@@ -52,7 +56,13 @@ public final class RouterServer: @unchecked Sendable {
         // Seznam dovoljenih velja za vse razen lokalnega mount_webdav (/dav, preverjeno po branju zahteve).
         guard allowed.isEmpty || allowed.contains(peer) || Self.isLoopback(peer) else { conn.cancel(); return }
         conn.start(queue: queue)
-        receive(conn, Data(), peer: peer)
+        let id = ObjectIdentifier(conn)
+        pending.insert(id)
+        // Brez cele zahteve v 120 s (zastalo rokovanje, počasen napadalec) → zapri. Velik PUT prek VPN ima dovolj časa.
+        queue.asyncAfter(deadline: .now() + 120) { [weak self] in
+            if self?.pending.remove(id) != nil { conn.cancel() }
+        }
+        sniff(conn, Data(), peer: peer)
     }
 
     static func ip(_ host: NWEndpoint.Host) -> String {
@@ -68,31 +78,86 @@ public final class RouterServer: @unchecked Sendable {
         ip == "::1" || ip.hasPrefix("127.") || ip.hasPrefix("::ffff:127.")
     }
 
-    private func receive(_ conn: NWConnection, _ buffer: Data, peer: String) {
+    /// Prvi bajti: »MGW1« = šifrirano (Noise), sicer navaden HTTP (z drugih Macov le, če je dovoljen).
+    private func sniff(_ conn: NWConnection, _ buf: Data, peer: String) {
         conn.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, done, error in
             guard let self else { return }
-            var buf = buffer
+            var buf = buf
             if let data { buf.append(data) }
-            switch HTTPParser.parse(buf) {
-            case .needMore:
-                if done || error != nil { conn.cancel() } else { self.receive(conn, buf, peer: peer) }
-            case .error(let status, let message):
-                let w = ConnectionWriter(conn: conn)
-                Task { await self.router.reject(status: status, message: message, writer: w) }
-            case .request(var req):
-                req.peer = peer
-                let allowed = self.router.config.allowedClientList
-                if Self.isLoopback(peer), !allowed.isEmpty, !allowed.contains(peer), !req.path.hasPrefix("/dav/") {
-                    conn.cancel()
-                    return
+            let end = done || error != nil
+            if buf.count < Noise.magic.count, Noise.magic.starts(with: buf), !end {
+                return self.sniff(conn, buf, peer: peer)
+            }
+            if buf.starts(with: Noise.magic) {
+                return self.handshake(conn, Data(buf.dropFirst(Noise.magic.count)), peer: peer)
+            }
+            guard Self.isLoopback(peer) || self.router.config.allowPlainRemote else {
+                let body = Data(#"{"type":"error","error":{"type":"permission_error","message":"Unencrypted connections from other Macs are off: update minigw to 0.4 or newer"}}"#.utf8)
+                let w = ConnectionWriter(conn: conn, cipher: nil)
+                Task {
+                    try? await w.write(HTTPResponse.head(status: 426, headers: [("Content-Type", "application/json")], contentLength: body.count) + body)
+                    w.close()
                 }
-                let w = ConnectionWriter(conn: conn)
-                let task = Task { await self.router.handle(req, writer: w) }
-                conn.stateUpdateHandler = { state in
-                    switch state {
-                    case .failed, .cancelled: task.cancel()  // odjemalec je odšel → prekini upstream
-                    default: break
-                    }
+                return
+            }
+            self.feed(conn, raw: buf, plain: Data(), peer: peer, session: nil, end: end)
+        }
+    }
+
+    private func handshake(_ conn: NWConnection, _ buf: Data, peer: String) {
+        guard buf.count >= Noise.handshakeLength else {
+            conn.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, done, error in
+                guard let self, let data, !data.isEmpty else { conn.cancel(); return }
+                if (done || error != nil) && buf.count + data.count < Noise.handshakeLength { conn.cancel(); return }
+                self.handshake(conn, buf + data, peer: peer)
+            }
+            return
+        }
+        guard let key, let (reply, session) = try? Noise.respond(Data(buf.prefix(Noise.handshakeLength)), key: key) else {
+            conn.cancel()  // napačen ključ routerja ali poškodovano sporočilo
+            return
+        }
+        conn.send(content: reply, completion: .contentProcessed { _ in })
+        feed(conn, raw: Data(buf.dropFirst(Noise.handshakeLength)), plain: Data(), peer: peer, session: session, end: false)
+    }
+
+    private func receive(_ conn: NWConnection, raw: Data, plain: Data, peer: String, session: Noise.Session?) {
+        conn.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, done, error in
+            guard let self else { return }
+            var raw = raw
+            if let data { raw.append(data) }
+            self.feed(conn, raw: raw, plain: plain, peer: peer, session: session, end: done || error != nil)
+        }
+    }
+
+    private func feed(_ conn: NWConnection, raw: Data, plain: Data, peer: String, session: Noise.Session?, end: Bool) {
+        var raw = raw, plain = plain
+        if let session {
+            guard let p = try? Noise.unframe(&raw, session.receive) else { conn.cancel(); return }
+            plain.append(p)
+        } else {
+            plain.append(raw); raw = Data()
+        }
+        let w = ConnectionWriter(conn: conn, cipher: session?.send)
+        let parsed = HTTPParser.parse(plain)
+        if case .needMore = parsed {} else { pending.remove(ObjectIdentifier(conn)) }
+        switch parsed {
+        case .needMore:
+            if end { conn.cancel() } else { receive(conn, raw: raw, plain: plain, peer: peer, session: session) }
+        case .error(let status, let message):
+            Task { await self.router.reject(status: status, message: message, writer: w) }
+        case .request(var req):
+            req.peer = peer
+            let allowed = router.config.allowedClientList
+            if Self.isLoopback(peer), !allowed.isEmpty, !allowed.contains(peer), !req.path.hasPrefix("/dav/") {
+                conn.cancel()
+                return
+            }
+            let task = Task { await self.router.handle(req, writer: w) }
+            conn.stateUpdateHandler = { state in
+                switch state {
+                case .failed, .cancelled: task.cancel()  // odjemalec je odšel → prekini upstream
+                default: break
                 }
             }
         }
@@ -101,12 +166,19 @@ public final class RouterServer: @unchecked Sendable {
 
 struct ConnectionWriter: ResponseWriter {
     let conn: NWConnection
+    let cipher: Noise.Cipher?  // šifrirana povezava: vsak zapis v okvirjih
 
     func write(_ data: Data) async throws {
+        guard !data.isEmpty else { return }
         try await withCheckedThrowingContinuation { (k: CheckedContinuation<Void, Error>) in
-            conn.send(content: data, completion: .contentProcessed { e in
+            let done: NWConnection.SendCompletion = .contentProcessed { e in
                 if let e { k.resume(throwing: e) } else { k.resume() }
-            })
+            }
+            if let c = cipher {
+                c.sendLock.withLock { conn.send(content: Noise.frames(data, c), completion: done) }  // send ohrani vrstni red klicev
+            } else {
+                conn.send(content: data, completion: done)
+            }
         }
     }
 

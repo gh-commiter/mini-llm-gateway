@@ -412,3 +412,55 @@ func makeRouter(session: URLSession = .shared) -> Router {
     #expect(await hub.register(session: "s1", cwd: "/a", key: key) == key)          // lastnik
     #expect(await hub.mount(session: "../../x", cwd: nil, base: "http://127.0.0.1:1") == nil)
 }
+
+@Test func noiseHandshakeAndFrames() throws {
+    let key = Noise.newKey()
+    var i = Noise.Initiator(routerKey: key.publicKey.rawRepresentation)
+    let m1 = try i.first()
+    #expect(m1.count == Noise.handshakeLength)
+    let (m2, server) = try Noise.respond(m1, key: key)
+    let client = try i.finish(m2)
+
+    let big = Data((0..<200_000).map { UInt8($0 % 251) })  // več okvirjev
+    var wire = Noise.frames(big, client.send)
+    #expect(try Noise.unframe(&wire, server.receive) == big && wire.isEmpty)
+    var back = Noise.frames(Data("ok".utf8), server.send)
+    var partial = back.prefix(5)                               // nepopoln okvir počaka
+    #expect(try Noise.unframe(&partial, client.receive).isEmpty && partial.count == 5)
+    #expect(try Noise.unframe(&back, client.receive) == Data("ok".utf8))
+
+    var tampered = Noise.frames(Data("x".utf8), client.send)
+    tampered[tampered.count - 1] ^= 1
+    #expect(throws: (any Error).self) { try Noise.unframe(&tampered, server.receive) }
+
+    // Odjemalec z napačnim ključem routerja se ne poveže.
+    var wrong = Noise.Initiator(routerKey: Noise.newKey().publicKey.rawRepresentation)
+    #expect(throws: (any Error).self) { try Noise.respond(try wrong.first(), key: key) }
+}
+
+@Test func encryptedProxyToRouter() async throws {
+    var c = RouterConfig()
+    c.host = "127.0.0.1"; c.port = 18_765
+    let key = Noise.newKey()
+    let server = RouterServer(router: Router(config: c, token: "tok", secrets: FakeSecrets(values: [:])), key: key)
+    try server.start()
+    defer { server.stop() }
+    try await Task.sleep(for: .milliseconds(200))
+
+    func get(_ base: String, _ path: String) async -> (Int, String) {
+        var r = URLRequest(url: URL(string: base + path)!, timeoutInterval: 5)
+        r.setValue("Bearer tok", forHTTPHeaderField: "authorization")
+        guard let (d, resp) = try? await URLSession.shared.data(for: r) else { return (0, "") }
+        return ((resp as! HTTPURLResponse).statusCode, String(decoding: d, as: UTF8.self))
+    }
+    let proxy = try #require(NoiseProxy(routerURL: "http://127.0.0.1:18765", routerKey: key.publicKey.rawRepresentation))
+    try proxy.start()
+    defer { proxy.stop() }
+    let (s, body) = await get(proxy.localURL, "/v1/models")
+    #expect(s == 200 && body.contains("\"data\""))
+
+    let bad = try #require(NoiseProxy(routerURL: "http://127.0.0.1:18765", routerKey: Noise.newKey().publicKey.rawRepresentation))
+    try bad.start()
+    defer { bad.stop() }
+    #expect(await get(bad.localURL, "/v1/models").0 == 0)  // napačen ključ: router prekine
+}

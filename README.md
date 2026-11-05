@@ -129,6 +129,10 @@ Changes apply immediately. Keys and the access token are stored in the Keychain,
 - Every request needs the router's token; the server listens only on `127.0.0.1` unless you change it.
 - The Claude CLI provider runs `claude -p` with tools in the client's folder: it only runs inside the allowed
   folders and uses the tools and permission mode you configure (default: read-only, `dontAsk`).
+- Between `minigw` and a router on another Mac everything is encrypted (WireGuard-style: Noise NK with Curve25519
+  and ChaCha20-Poly1305). **Copy Token** includes the router's public key, so `minigw` only talks to that router.
+  Unencrypted connections are accepted only from the router Mac itself, unless you turn on
+  **Allow unencrypted connections from other Macs** (for other clients, on a trusted network).
 - With a remote router, `minigw` gives the router Mac read and write access to the current folder while it runs
   (nothing outside it). Use it only with a router Mac you trust.
 - The Siri provider uses Accessibility UI automation of the Siri AI app. It only touches that app, but

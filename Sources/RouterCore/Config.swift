@@ -49,6 +49,7 @@ public struct RouterConfig: Codable, Sendable, Equatable {
     public var host = "127.0.0.1"
     public var port: UInt16 = 8765
     public var allowedClients = ""  // IP naslovi, ločeni s presledkom ali vejico; prazno = vsi
+    public var allowPlainRemote = false  // navaden HTTP z drugih Macov (brez minigw 0.4+); lokalno vedno
     public var providers: [ProviderConfig] = [
         ProviderConfig(id: "litellm", name: "LiteLLM", enabled: false,
                        baseURL: "http://localhost:4000", aliases: ""),  // prazno = modeli in okna, ki jih sporoči LiteLLM
@@ -68,6 +69,7 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         host = try c.decodeIfPresent(String.self, forKey: .host) ?? d.host
         port = try c.decodeIfPresent(UInt16.self, forKey: .port) ?? d.port
         allowedClients = try c.decodeIfPresent(String.self, forKey: .allowedClients) ?? d.allowedClients
+        allowPlainRemote = try c.decodeIfPresent(Bool.self, forKey: .allowPlainRemote) ?? d.allowPlainRemote
         providers = try c.decodeIfPresent([ProviderConfig].self, forKey: .providers) ?? d.providers
         claudeCLI = try c.decodeIfPresent(ClaudeCLIConfig.self, forKey: .claudeCLI) ?? d.claudeCLI
         appleFM = try c.decodeIfPresent(AppleFMConfig.self, forKey: .appleFM) ?? d.appleFM
@@ -124,6 +126,16 @@ public struct Keychain: SecretStore {
         guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data,
               let v = String(data: d, encoding: .utf8), !v.isEmpty else { return Self.defaultKeys[account] }
         return v
+    }
+
+    /// Vrednost in status (errSecItemNotFound = vnosa ni; druga napaka = keychain zaklenjen ali brez dovoljenja).
+    public func lookup(_ account: String) -> (value: String?, status: OSStatus) {
+        var q = query(account)
+        q[kSecReturnData as String] = true
+        q[kSecMatchLimit as String] = kSecMatchLimitOne
+        var out: CFTypeRef?
+        let st = SecItemCopyMatching(q as CFDictionary, &out)
+        return ((out as? Data).flatMap { String(data: $0, encoding: .utf8) }, st)
     }
 
     /// Privzeti ključi, dokler uporabnik ne vpiše svojega (niso skrivnost; LiteLLM LITELLM_MASTER_KEY iz claude-local).

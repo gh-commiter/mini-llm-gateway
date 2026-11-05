@@ -1,3 +1,4 @@
+import CryptoKit
 import AppKit
 import ApplicationServices
 import os
@@ -54,6 +55,25 @@ final class AppState: ObservableObject {
         return "sk-siri-" + bytes.map { String(format: "%02x", $0) }.joined()
     }
 
+    /// Stalni ključ routerja za šifrirane povezave (Noise); ustvari ga aplikacija ob prvem zagonu.
+    /// Nov ključ le, ko ga v Keychainu res ni; ob drugi napaki (zaklenjen keychain) brez šifriranih povezav,
+    /// sicer bi zamenjava ključa odklopila vse odjemalce.
+    lazy var routerKey: Curve25519.KeyAgreement.PrivateKey? = {
+        let (v, st) = keychain.lookup("router-key")
+        if st == errSecSuccess, let b = v.flatMap({ Data(base64Encoded: $0) }),
+           let k = try? Curve25519.KeyAgreement.PrivateKey(rawRepresentation: b) { return k }
+        guard st == errSecItemNotFound else {
+            log.error("router key unavailable (\(st)); encrypted connections off")
+            return nil
+        }
+        let k = Noise.newKey()
+        keychain.set("router-key", k.rawRepresentation.base64EncodedString())
+        return k
+    }()
+
+    /// Kar kopira »Copy Token«: žeton in javni ključ routerja (minigw z drugega Maca z njim preveri router).
+    var connectToken: String { token + (routerKey.map { "#" + Noise.base64url($0.publicKey.rawRepresentation) } ?? "") }
+
     func regenerateToken() {
         keychain.set("inbound-token", Self.newToken())
         restart()
@@ -66,7 +86,7 @@ final class AppState: ObservableObject {
                 self.logs = Array(([entry] + self.logs).prefix(500))
             }
         }
-        let s = RouterServer(router: router)
+        let s = RouterServer(router: router, key: routerKey)
         s.onState = { [weak self] state in
             Task { @MainActor in self?.show(state) }
         }
@@ -139,7 +159,7 @@ struct MenuView: View {
         Divider()
         Button("Copy Token") {
             NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(state.token, forType: .string)
+            NSPasteboard.general.setString(state.connectToken, forType: .string)
         }
         Button("Settings…") {
             openSettings()
