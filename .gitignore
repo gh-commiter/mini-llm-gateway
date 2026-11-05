@@ -1,0 +1,23 @@
+# Gradnja (xcodebuild, SwiftPM) in izdaje
+.build/
+build/
+DerivedData/
+*.profraw
+
+# Xcode / SwiftPM uporabniške nastavitve
+.swiftpm/
+xcuserdata/
+*.xcuserstate
+
+# Skrivnosti in podpisovanje (nikoli v repozitorij)
+*.p8
+*.p12
+*.cer
+*.certSigningRequest
+*.mobileprovision
+.env*
+
+# macOS
+.DS_Store
+.omc/
+.secrets/

@@ -1,0 +1,13 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "NSLocalNetworkUsageDescription" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "new", "value" : "Mini Gateway accepts requests from your local network and forwards them to providers such as LiteLLM." } },
+        "sl" : { "stringUnit" : { "state" : "translated", "value" : "Mini Gateway sprejema zahteve iz lokalnega omrežja in jih posreduje ponudnikom, kot je LiteLLM." } }
+      }
+    }
+  },
+  "version" : "1.0"
+}
