@@ -1,6 +1,6 @@
 # Mini Gateway
 
-A macOS menu bar app that gives [Claude Code](https://claude.com/claude-code) one gateway to several models:
+A macOS menu bar LLM gateway compatible with the [Claude Code](https://claude.com/claude-code) CLI. One endpoint for several models:
 the **Siri AI** app, **Apple Foundation Models** (on-device), the local **Claude Code CLI**, and any
 Anthropic-compatible upstream such as **LiteLLM** or **OpenRouter**. Pick a model with `/model`, or give each
 Claude Code subagent its own.
