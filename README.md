@@ -118,7 +118,9 @@ The folder's own Claude Code settings and hooks are not loaded on the router Mac
 This repository is also a Claude Code plugin marketplace. The `minigw` plugin lets any Claude Code session use
 Mini Gateway models through the `minigw` client: Claude runs `minigw -p --model <model> "…"` in the current folder
 and uses the answer. The session itself does not have to run through the router, so it works with your normal Claude
-login, Remote Control and so on. Only `minigw` must be installed and connected.
+login, Remote Control and so on. The plugin brings its own `minigw`: at session start it uses an installed one or
+downloads it from the latest release into its data folder, checks the SHA-256 and the Developer ID signature. No brew
+needed. Connect once with `/minigw:connect <router-mac> <token>` (the token goes to the Keychain).
 
 | Skill | Model | Use |
 |---|---|---|
@@ -128,6 +130,7 @@ login, Remote Control and so on. Only `minigw` must be installed and connected.
 | `/minigw:siri <question>` | `claude-siri-ai` | Questions about the router Mac's personal context (Siri must be allowed for the device) |
 | `/minigw:on-device <text>` | `claude-apple-fm` | Short private answers on-device |
 | `/minigw:status` | – | Connection and available models |
+| `/minigw:connect <router> <token>` | – | One-time connection to the router Mac |
 
 Claude can also pick these skills by itself when they fit the request. Install (Claude Code 2.1.275 or later):
 
