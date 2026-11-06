@@ -161,13 +161,13 @@ public final class Router: Sendable {
                     if req.path.hasSuffix("/count_tokens") {
                         return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "grok")
                     }
-                    return (await exclusive(req) { await runGrok(req, body: body, model: grokModel, rid: rid, writer: writer) }, model, "grok")
+                    return (await syncRun { await runGrok(req, body: body, model: grokModel, rid: rid, writer: writer) }, model, "grok")
                 }
                 if config.codex.enabled, let codexModel = Codex.match(model), codexModel.map(config.codex.isModelEnabled) ?? true {
                     if req.path.hasSuffix("/count_tokens") {
                         return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "codex")
                     }
-                    return (await exclusive(req) { await runCodex(req, body: body, model: codexModel, rid: rid, writer: writer) }, model, "codex")
+                    return (await syncRun { await runCodex(req, body: body, model: codexModel, rid: rid, writer: writer) }, model, "codex")
                 }
                 if config.appleFM.enabled, AppleFM.ids.contains(model) {
                     if req.path.hasSuffix("/count_tokens") {
@@ -179,7 +179,7 @@ public final class Router: Sendable {
                     if req.path.hasSuffix("/count_tokens") {
                         return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "claude-cli")
                     }
-                    return (await exclusive(req) { await runCLI(req, body: body, cliModel: m.cliModel, chatOnly: m.chatOnly, rid: rid, writer: writer) },
+                    return (await syncRun { await runCLI(req, body: body, cliModel: m.cliModel, chatOnly: m.chatOnly, rid: rid, writer: writer) },
                             model, "claude-cli")
                 }
                 return (await error(404, "not_found_error", "Unknown model: \(model)", rid: rid, writer: writer), model, nil)
@@ -283,18 +283,12 @@ public final class Router: Sendable {
         }
     }
 
-    /// sync: ena zahteva agenta naenkrat na kopijo (prenos → agent → prevzem); druga počaka. Zahteve brez orodij ne čakajo.
-    func exclusive(_ req: HTTPRequest, _ run: () async -> Int) async -> Int {
-        let tools = ((try? JSONSerialization.jsonObject(with: req.body) as? [String: Any])?["tools"] as? [Any])?.isEmpty == false
-        guard tools, let copy = await Self.shares.lock(session: req.header("x-claude-mini-session") ?? "",
-                                                       wait: req.header("x-claude-mini-share") == "1", device: req.device?.id)
-        else { return await run() }
-        if Task.isCancelled {  // Claude Code je med čakanjem prekinil: brez prenosa in agenta
-            await Self.shares.unlock(copy)
-            return 499
-        }
-        let status = await run()
-        await Self.shares.unlock(copy)
+    /// sync: izvajanje agenta v svojem klonu kopije (ShareHub.run); zaklep kopije velja le za prenos, prevzem in združitev,
+    /// zato agenti v isti mapi delajo vzporedno. Klon se odstrani tudi ob napaki ali prekinitvi.
+    func syncRun(_ run: () async -> Int) async -> Int {
+        let id = UUID().uuidString
+        let status = await ShareHub.$run.withValue(id) { await run() }
+        await Self.shares.finish(run: id)
         return status
     }
 

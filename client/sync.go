@@ -32,6 +32,9 @@ type syncChanges struct {
 	Changed []syncEntry `json:"changed"`
 	Deleted []string    `json:"deleted"`
 	Skipped []string    `json:"skipped"` // večje od maxSyncFile
+	// Base: sha256 različice, iz katere je agent začel, za vsako spremenjeno in izbrisano pot (ni ključa = datoteke ni
+	// bilo). Pišemo ali brišemo le, če je datoteka še ta različica. nil = starejši router → stanje ob prenosu.
+	Base map[string]string `json:"base"`
 }
 
 // maxSyncFile: cela datoteka gre v eni zahtevi; router sprejme telo do 64 MB.
@@ -261,11 +264,22 @@ func withExec(mode os.FileMode, exec bool) os.FileMode {
 	return mode
 }
 
-// syncApply: zapiše in izbriše, kar je agent spremenil. Datoteke, ki se je pri odjemalcu od prenosa spremenila, ne
-// prepiše: različico routerja zapiše kot <ime>.minigw-conflict. Poti, prezrte pri odjemalcu, preskoči.
+// syncApply: zapiše in izbriše, kar je agent spremenil. Datoteke, ki ni več različica, iz katere je agent začel
+// (ch.Base; spremenil jo je uporabnik ali drug agent), ne prepiše: različico routerja zapiše kot <ime>.minigw-conflict.
+// Poti, prezrte pri odjemalcu, preskoči.
 // state = manifest ob prenosu. Vrne sporočila za stderr in obdelane poti (potrditev routerju).
 func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch func(string) []byte) (notes, done []string) {
 	rules := loadIgnore(root)
+	before := map[string]string{}
+	for p, e := range state {
+		before[p] = e.SHA256
+	}
+	base := func(p string) string {
+		if ch.Base != nil {
+			return ch.Base[p]
+		}
+		return before[p]
+	}
 	for _, e := range ch.Changed {
 		if protectedPath(e.Path) {
 			notes = append(notes, "skipped "+e.Path+": protected path")
@@ -304,7 +318,7 @@ func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch fu
 			continue
 		}
 		local, _ := syncEntryOf(full, e.Path, state) // znova tik pred pisanjem
-		if local.SHA256 != state[e.Path].SHA256 {    // spremenjena (ali izbrisana) tudi tukaj
+		if local.SHA256 != base(e.Path) {            // spremenjena (ali izbrisana) tudi tukaj
 			c, ok := syncResolve(e.Path+".minigw-conflict", root)
 			if !ok || syncWrite(c, data, e.Mtime, e.Exec, false) != nil {
 				notes = append(notes, "conflict: "+e.Path+" changed here and on the router; the router's version could not be saved")
@@ -344,7 +358,7 @@ func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch fu
 			delete(state, p)
 			continue
 		}
-		if local.SHA256 != state[p].SHA256 {
+		if local.SHA256 != base(p) {
 			notes = append(notes, "conflict: "+p+" was deleted on the router but changed here; kept")
 			continue
 		}

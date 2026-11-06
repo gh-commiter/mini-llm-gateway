@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -190,6 +191,55 @@ func TestSyncApplyConflicts(t *testing.T) {
 	}
 	if st, _ := os.Stat(filepath.Join(root, "a.txt")); st.ModTime().UnixMilli() != 1700000000123 || state["a.txt"].Mtime != 1700000000123 {
 		t.Fatal("mtime not taken from the router")
+	}
+}
+
+// Dva agenta hkrati iz iste različice (router pošlje Base): različni datoteki prideta obe; isto datoteko drugi ne
+// prepiše (spor), tudi ko jo je prvi že zapisal in je stanje odjemalca že novo.
+func TestSyncApplyParallelRunsUseBase(t *testing.T) {
+	root := t.TempDir()
+	read := func(p string) string {
+		b, err := os.ReadFile(filepath.Join(root, p))
+		if err != nil {
+			return "<none>"
+		}
+		return string(b)
+	}
+	for _, p := range []string{"a.txt", "b.txt", "c.txt", "d.txt"} {
+		os.WriteFile(filepath.Join(root, p), []byte("v1"), 0o644)
+	}
+	state, _ := syncScan(root, nil)
+	v1 := sha256Hex([]byte("v1"))
+	run := func(files map[string]string, deleted ...string) syncChanges {
+		ch := syncChanges{Deleted: deleted, Base: map[string]string{}}
+		for _, p := range deleted {
+			ch.Base[p] = v1
+		}
+		for p, s := range files {
+			ch.Changed = append(ch.Changed, syncEntry{Path: p, Size: int64(len(s)), Mtime: 1, SHA256: sha256Hex([]byte(s))})
+			ch.Base[p] = v1
+		}
+		sort.Slice(ch.Changed, func(i, j int) bool { return ch.Changed[i].Path < ch.Changed[j].Path })
+		return ch
+	}
+	apply := func(ch syncChanges, blobs map[string]string) []string {
+		notes, _ := syncApply(ch, root, state, func(p string) []byte { return []byte(blobs[p]) })
+		return notes
+	}
+	first := map[string]string{"a.txt": "agent1", "c.txt": "one"}
+	second := map[string]string{"b.txt": "agent2", "c.txt": "two", "d.txt": "two"}
+	if n := apply(run(first, "d.txt"), first); len(n) != 0 {
+		t.Fatalf("first run: %v", n)
+	}
+	n := apply(run(second), second)
+	if read("a.txt") != "agent1" || read("b.txt") != "agent2" {
+		t.Fatalf("different files: %q %q", read("a.txt"), read("b.txt"))
+	}
+	if read("c.txt") != "one" || read("c.txt.minigw-conflict") != "two" || read("d.txt") != "<none>" || read("d.txt.minigw-conflict") != "two" {
+		t.Fatalf("second run overwrote the first: %q %q %q", read("c.txt"), read("c.txt.minigw-conflict"), read("d.txt"))
+	}
+	if len(n) != 2 || !strings.HasPrefix(n[0], "conflict:") || !strings.HasPrefix(n[1], "conflict:") {
+		t.Fatalf("notes: %v", n)
 	}
 }
 
