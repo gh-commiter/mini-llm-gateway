@@ -245,6 +245,13 @@ Settings of the menu bar app on the router Mac (**Settings…**). Client options
   download `minigw`.
 - **Codex CLI** / **Grok CLI** – off by default; model table, write and network switches for their sandbox.
 
+<table>
+<tr><td><img src="docs/images/general.png" width="400" alt="Settings: General"></td>
+<td><img src="docs/images/siri-ai.png" width="400" alt="Settings: Siri AI with devices"></td></tr>
+<tr><td><img src="docs/images/claude-cli.png" width="400" alt="Settings: Claude CLI"></td>
+<td><img src="docs/images/codex-cli.png" width="400" alt="Settings: Codex CLI"></td></tr>
+</table>
+
 Changes apply immediately. Keys and the access token are stored in the Keychain, settings in
 `~/Library/Preferences/dev.trojar.minigateway.plist`.
 
