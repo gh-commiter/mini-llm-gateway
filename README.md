@@ -154,6 +154,8 @@ those anyway, run `minigw share add` in it (`minigw share list`, `minigw share r
 **Read-only:** `minigw --minigw-ro …` (or `MINIGW_SHARE=ro`, for example in the `env` of Claude Code's settings for the
 plugin) shares the folder read-only: minigw refuses every write, the router mounts it read-only and runs Codex and
 Grok in their read-only sandbox. Agents read files up to 32 MB in one piece (larger ones only in ranges).
+The router caches folder listings (PROPFIND) for 10 seconds, like davfs2's `dir_refresh`; writes through the mount clear
+the cache at once, changes made on the client outside the mount show up within 10 seconds.
 The folder's own Claude Code settings and hooks are not loaded on the router Mac. Set `MINIGW_SHARE=0` to turn it off.
 
 ## Claude Code plugin

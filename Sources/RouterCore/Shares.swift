@@ -33,6 +33,8 @@ public actor ShareHub {
         var lastSeen = Date()
         var mountPoint: URL?
         var mounting: Task<URL?, Never>?
+        var props: [String: (DAVResponse, Date)] = [:]  // predpomnilnik PROPFIND (kot dir_refresh pri davfs2)
+        var writeCount = 0                                // pisanje med čakajočim PROPFIND: odgovora ne shrani
         init(session: String, cwd: String, readOnly: Bool) { self.session = session; self.cwd = cwd; self.readOnly = readOnly }
     }
 
@@ -120,6 +122,12 @@ public actor ShareHub {
 
     func dav(secret: String, method: String, path: String, headers: [String: String], body: Data) async -> DAVResponse? {
         guard let s = bySession.values.first(where: { $0.secret == secret }) else { return nil }
+        // Vsak PROPFIND je pot router → odjemalec → nazaj; agenti (rg, find) jih pošljejo na tisoče.
+        // ponytail: 10 s TTL in praznjenje ob pisanju prek priklopa; spremembe mimo priklopa vidne z do 10 s zamude.
+        let cacheKey = method == "PROPFIND" ? [path, headers["depth"] ?? "", String(body.hashValue)].joined(separator: "|") : nil
+        if Self.writes.contains(method) { s.props.removeAll(); s.writeCount += 1 }
+        let writesBefore = s.writeCount
+        if let cacheKey, let (r, t) = s.props[cacheKey], Date().timeIntervalSince(t) < Self.propsTTL { return r }
         let job = DAVJob(id: UUID().uuidString, method: method, path: path, prefix: "/dav/" + secret, headers: headers, body: body)
         // Brez odgovora (minigw se je ustavil ali ni odgovoril v 120 s): 504, ne 404 (datoteka morda obstaja).
         let r: DAVResponse? = await withCheckedContinuation { k in
@@ -130,8 +138,16 @@ public actor ShareHub {
                 await self?.timeoutReply(s, job.id)
             }
         }
+        if Self.writes.contains(method) { s.props.removeAll(); s.writeCount += 1 }  // tudi po odgovoru
+        if let cacheKey, let r, r.status == 207 || r.status == 404, s.writeCount == writesBefore {
+            if s.props.count > 5000 { s.props.removeAll() }
+            s.props[cacheKey] = (r, Date())
+        }
         return r ?? DAVResponse(504)
     }
+
+    static let propsTTL: TimeInterval = 10
+    static let writes: Set<String> = ["PUT", "DELETE", "MKCOL", "MOVE", "COPY", "PROPPATCH"]
 
     private func timeoutReply(_ s: Share, _ id: String) {
         s.jobs.removeAll { $0.id == id }

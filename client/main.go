@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const version = "0.5.8" // bump-version.sh
+const version = "0.5.9" // bump-version.sh
 
 type connection struct {
 	URL    string  `json:"url"`
