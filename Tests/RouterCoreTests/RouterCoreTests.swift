@@ -456,11 +456,13 @@ func makeRouter(session: URLSession = .shared) -> Router {
     let proxy = try #require(NoiseProxy(routerURL: "http://127.0.0.1:18765", routerKey: key.publicKey.rawRepresentation))
     try proxy.start()
     defer { proxy.stop() }
+    #expect(proxy.localPort == proxy.stablePort)  // stalen URL → Claude Code obdrži modele routerja
     let (s, body) = await get(proxy.localURL, "/v1/models")
     #expect(s == 200 && body.contains("\"data\""))
 
     let bad = try #require(NoiseProxy(routerURL: "http://127.0.0.1:18765", routerKey: Noise.newKey().publicKey.rawRepresentation))
     try bad.start()
     defer { bad.stop() }
+    #expect(bad.localPort != proxy.stablePort && bad.localPort != 0)  // port zaseden → naključen
     #expect(await get(bad.localURL, "/v1/models").0 == 0)  // napačen ključ: router prekine
 }

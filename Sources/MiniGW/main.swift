@@ -152,7 +152,7 @@ func requireConnection() -> Connection {
 
 // MARK: ukazi
 
-let minigwVersion = "0.4.1"  // bump-version.sh
+let minigwVersion = "0.4.2"  // bump-version.sh
 var args = Array(CommandLine.arguments.dropFirst())
 
 switch args.first {

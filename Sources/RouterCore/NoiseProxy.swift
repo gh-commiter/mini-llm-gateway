@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Network
 
@@ -16,10 +17,21 @@ public final class NoiseProxy: @unchecked Sendable {
         host = NWEndpoint.Host(h); port = p; self.routerKey = routerKey
     }
 
-    /// Začne poslušati na naključnem lokalnem portu; vrne, ko je pripravljen.
+    /// Stalen lokalni port za ta router: Claude Code hrani seznam modelov skupaj z ANTHROPIC_BASE_URL,
+    /// z naključnim portom bi ob vsakem zagonu zavrgel predpomnjene modele routerja.
+    public var stablePort: UInt16 {
+        let h = SHA256.hash(data: Data("\(host):\(port)".utf8)).prefix(2).reduce(0) { $0 << 8 | Int($1) }
+        return UInt16(20000 + h % 10000)
+    }
+
+    /// Začne poslušati na stalnem portu (če je zaseden, npr. druga seja minigw, na naključnem); vrne, ko je pripravljen.
     public func start() throws {
+        do { try listen(NWEndpoint.Port(rawValue: stablePort)!) } catch { try listen(.any) }
+    }
+
+    private func listen(_ lp: NWEndpoint.Port) throws {
         let params = NWParameters.tcp
-        params.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
+        params.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: lp)
         let l = try NWListener(using: params)
         let ready = DispatchSemaphore(value: 0)
         l.stateUpdateHandler = { state in
@@ -31,7 +43,7 @@ public final class NoiseProxy: @unchecked Sendable {
         l.newConnectionHandler = { [weak self] c in self?.accept(c) }
         l.start(queue: queue)
         ready.wait()
-        guard let p = l.port?.rawValue, p != 0 else { throw NWError.posix(.EADDRNOTAVAIL) }
+        guard l.state == .ready, let p = l.port?.rawValue, p != 0 else { l.cancel(); throw NWError.posix(.EADDRINUSE) }
         localPort = p
         listener = l
     }
