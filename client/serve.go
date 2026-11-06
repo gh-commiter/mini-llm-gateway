@@ -282,6 +282,12 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	if c.Scratch, err = filepath.Abs(c.Scratch); err != nil || under(c.Scratch, cfgDir) {
 		return nil, errors.New("scratch must not be inside the config folder " + cfgDir)
 	}
+	if c.Folder != "" {
+		c.Folder, _ = filepath.Abs(c.Folder)
+		if under(cfgDir, c.Folder) || under(c.Folder, cfgDir) { // agent bi dosegel žeton in ključ routerja
+			return nil, errors.New("folder must not contain or be inside the config folder " + cfgDir)
+		}
+	}
 	exe, err := resolveClaude(c.Claude)
 	if err != nil {
 		return nil, err
@@ -326,10 +332,10 @@ func (s *server) serve(ln net.Listener) error {
 }
 
 // acceptLoop: napaka sprejema (npr. preveč odprtih datotek) → počakaj in poskusi znova; konec le ob zaprtem poslušanju.
-// Največ 256 povezav hkrati v rokovanju; ostale se takoj zaprejo.
+// Največ 256 povezav hkrati v rokovanju in 1024 skupaj; ostale se takoj zaprejo.
 func (s *server) acceptLoop(l *serveListener) {
 	defer close(l.done)
-	sem := make(chan struct{}, 256)
+	sem, total := make(chan struct{}, 256), make(chan struct{}, 1024)
 	delay := 5 * time.Millisecond
 	for {
 		raw, err := l.Listener.Accept()
@@ -343,17 +349,26 @@ func (s *server) acceptLoop(l *serveListener) {
 		}
 		delay = 5 * time.Millisecond
 		select {
+		case total <- struct{}{}:
+		default:
+			raw.Close()
+			continue
+		}
+		select {
 		case sem <- struct{}{}:
 		default:
 			raw.Close()
+			<-total
 			continue
 		}
 		go func() {
 			c := s.accept(raw)
 			<-sem
 			if c == nil {
+				<-total
 				return
 			}
+			c.release = func() { <-total }
 			select {
 			case l.conns <- c:
 			case <-l.done:
@@ -390,6 +405,17 @@ type serveConn struct {
 	wmu     sync.Mutex
 	peer    string
 	device  *serveDevice
+	release func() // sprosti mesto v skupni omejitvi povezav
+	once    sync.Once
+}
+
+func (c *serveConn) Close() error {
+	c.once.Do(func() {
+		if c.release != nil {
+			c.release()
+		}
+	})
+	return c.Conn.Close()
 }
 
 func (c *serveConn) loopback() bool { ip := net.ParseIP(c.peer); return ip != nil && ip.IsLoopback() }

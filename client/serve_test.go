@@ -320,3 +320,15 @@ func TestServeRealClaudeStaysInCopy(t *testing.T) {
 		t.Fatal("agent read outside the copy")
 	}
 }
+
+func TestServeFolderNotNearConfig(t *testing.T) {
+	k, _ := ecdh.X25519().GenerateKey(rand.Reader)
+	base := t.TempDir()
+	cfgPath := filepath.Join(base, "cfg", "serve.json")
+	for folder, bad := range map[string]bool{base: true, filepath.Join(base, "cfg"): true, filepath.Join(base, "cfg", "x"): true, filepath.Join(base, "work"): false} {
+		_, err := newServer(serveConfig{Token: "tok", Key: base64url(k.Bytes()), Claude: "/bin/sh", Scratch: filepath.Join(base, "scratch"), Folder: folder}, cfgPath)
+		if (err != nil) != bad {
+			t.Fatalf("folder %s: %v", folder, err)
+		}
+	}
+}
