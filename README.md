@@ -26,6 +26,29 @@ Claude Code subagent its own.
 
 ## 1. What it does
 
+```mermaid
+flowchart LR
+  subgraph client["Client: Mac, Windows or Linux"]
+    cc["Claude Code<br/>(or a plugin skill)"] -->|"Anthropic API"| mg["minigw"]
+    folder[("project folder")]
+  end
+  mg <-->|"encrypted (Noise NK), port 8765"| router
+  mg -.->|"serves the folder (WebDAV over the same connection)"| folder
+  subgraph mac["Router Mac"]
+    router["Mini Gateway<br/>(menu bar app)"]
+    router --> siri["Siri AI app"]
+    router --> fm["Apple Foundation Models"]
+    router --> agents["agents: claude -p, codex, grok"]
+    router --> up["LiteLLM / OpenRouter"]
+    agents --> mount[("mounted folder")]
+  end
+  mount -.- folder
+```
+
+Claude Code talks to `minigw`, which forwards every request to the router over one encrypted connection. The router
+picks the provider by model name. For agent models `minigw` also shares the current folder: the router mounts it
+and the agent works on your files, while they stay on the client.
+
 | Model in `/model` | Provider | Notes |
 |---|---|---|
 | `claude-siri-ai` | Siri AI app (macOS 27) | Driven through Accessibility, in the background. Conversation only, no tools. Keeps a real Siri thread per Claude Code conversation. **Privacy:** Siri answers with the personal context of the router Mac's user (notes, documents), so other Macs get it only when you allow the device (Settings → Siri AI → Devices; minigw 0.4.4 or newer proves its device key over the encrypted connection). This Mac always has it. It cannot read folders itself: files you mention (`@CLAUDE.md`, or names like “CLAUDE.md”, “kb” that exist in the session folder) are found by the router and added to the question as text (up to 16 KB; names extracted on-device with Apple Foundation Models). Images and PDFs (up to 4) are attached in the Siri app itself, so Siri reads them. |
