@@ -334,7 +334,8 @@ extension Router {
         if agent {
             // Mapa odjemalca (minigw na drugem Macu) ima prednost pred enako potjo na tem Macu.
             let clientCwd = req.header("x-claude-mini-cwd")
-            let shared = await Self.shares.mount(session: req.header("x-claude-mini-session") ?? "", cwd: clientCwd, base: localBase)
+            let shared = await Self.shares.mount(session: req.header("x-claude-mini-session") ?? "", cwd: clientCwd, base: localBase,
+                                                 wait: req.header("x-claude-mini-share") == "1")
             if let shared, let clientCwd {
                 args += ["--append-system-prompt",
                          "The user's folder \(clientCwd) (on their Mac) is mounted here as \(shared.path), your working directory. Map paths under \(clientCwd) to it."]

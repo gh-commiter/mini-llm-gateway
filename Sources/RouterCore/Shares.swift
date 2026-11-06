@@ -19,7 +19,7 @@ public struct DAVReply: Codable, Sendable {
 /// Mape odjemalcev (minigw na drugem Macu) za `claude -p`.
 /// Mac mini odjemalca ne doseže, zato minigw sam sprašuje po zahtevah (long poll) in vrača odgovore;
 /// mapa je na Mac miniju priklopljena z vgrajenim mount_webdav na skrito pot `/dav/<skrivnost>` tega routerja.
-actor ShareHub {
+public actor ShareHub {
     final class Share {
         let session: String
         let key = UUID().uuidString.lowercased()      // minigw: poll/reply
@@ -133,7 +133,11 @@ actor ShareHub {
     }
 
     /// Mapa seje na tem Macu (priklopi ob prvi uporabi); nil, če seja nima mape odjemalca.
-    func mount(session: String, cwd: String?, base: String) async -> URL? {
+    /// `wait`: odjemalec deli mapo (minigw), a je po ponovnem zagonu routerja še ni znova registriral → počakaj do 30 s.
+    func mount(session: String, cwd: String?, base: String, wait: Bool = false) async -> URL? {
+        if wait, !session.isEmpty {
+            for _ in 0..<60 where bySession[session] == nil { try? await Task.sleep(for: .milliseconds(500)) }
+        }
         guard let s = bySession[session], cwd == nil || cwd == s.cwd else { return nil }
         if let mp = s.mountPoint, Self.isMounted(mp) { return mp }
         if let t = s.mounting { return await t.value }
@@ -157,6 +161,12 @@ actor ShareHub {
         s.mounting = nil
         if bySession[session] === s { s.mountPoint = result } else if let result { Task.detached { Self.unmount(result) } }
         return result
+    }
+
+    /// Ob zagonu aplikacije: priklopi prejšnjega zagona kažejo na skrivnosti, ki jih router ne pozna več → odklopi.
+    public static func cleanupStale() {
+        let dirs = (try? FileManager.default.contentsOfDirectory(at: mountsDir, includingPropertiesForKeys: nil)) ?? []
+        for d in dirs { if isMounted(d) { unmount(d) } else { rmdir(d.path) } }
     }
 
     static func isMounted(_ url: URL) -> Bool {

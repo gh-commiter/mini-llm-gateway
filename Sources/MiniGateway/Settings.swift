@@ -21,7 +21,7 @@ struct SettingsView: View {
     @State private var selectedDevice: String?
 
     enum Pane: Hashable {
-        case general, provider(String), siri, appleFM, claudeCLI
+        case general, provider(String), siri, appleFM, claudeCLI, codex
     }
 
     private struct Item: Identifiable {
@@ -41,7 +41,8 @@ struct SettingsView: View {
             }
             + [Item(pane: .siri, title: "Siri AI", symbol: "waveform", color: .pink),
                Item(pane: .appleFM, title: "Apple Foundation Models", symbol: "apple.intelligence", color: .orange),
-               Item(pane: .claudeCLI, title: "Claude CLI", symbol: "terminal.fill", color: .brown)]
+               Item(pane: .claudeCLI, title: "Claude CLI", symbol: "terminal.fill", color: .brown),
+               Item(pane: .codex, title: "Codex CLI", symbol: "chevron.left.forwardslash.chevron.right", color: .teal)]
     }
 
     var body: some View {
@@ -111,6 +112,7 @@ struct SettingsView: View {
         case .siri: siri
         case .appleFM: appleFM
         case .claudeCLI: claudeCLI
+        case .codex: codex
         }
     }
 
@@ -208,6 +210,21 @@ struct SettingsView: View {
         }
     }
 
+    private var codex: some View {
+        Form {
+            Section {
+                Toggle("Enabled", isOn: $draft.codex.enabled)
+                LabeledContent("Executable (empty = auto-detect)") {
+                    TextField("", text: $draft.codex.executable, prompt: Text(verbatim: Codex.detected ?? "codex"))
+                        .labelsHidden()
+                }
+            } footer: {
+                Text("The claude-codex models (one per Codex model of your account) run “codex exec” as an agent in the session's folder, also in folders shared from other Macs. Its sandbox writes only to that folder and the allowed folders from Claude CLI; reads are not limited. Sign in once with “codex login”.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
     private var claudeCLI: some View {
         Form {
             Section {
@@ -290,18 +307,6 @@ struct SettingsView: View {
                     let found = await ClaudeCLI.availableTools(draft.claudeCLI.executable)
                     cliTools = Array(Set(found + draft.claudeCLI.disabledTools)).sorted()
                 }
-            }
-            Section {
-                Toggle("Enabled", isOn: $draft.codex.enabled)
-                LabeledContent("Executable (empty = auto-detect)") {
-                    TextField("", text: $draft.codex.executable, prompt: Text(verbatim: Codex.detected ?? "codex"))
-                        .labelsHidden()
-                }
-            } header: {
-                Text("Codex")
-            } footer: {
-                Text("Model claude-codex runs “codex exec” as an agent in the session's folder (also folders shared from other Macs). Its sandbox writes only to that folder and the allowed folders; reads are not limited. Sign in once with “codex login”.")
-                    .font(.caption).foregroundStyle(.secondary)
             }
             Section {
                 LabeledContent {

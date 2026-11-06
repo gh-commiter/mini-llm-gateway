@@ -544,6 +544,9 @@ final class SeenDevices: @unchecked Sendable {
     #expect(a.contains("workspace-write") && !a.contains("danger-full-access") && !a.contains("--dangerously-bypass-approvals-and-sandbox"))
     #expect(a.contains("--add-dir") && a.contains("/tmp/x") && a.contains("/tmp/s"))
     #expect(Codex.args(cwd: cwd, extraDirs: [], agent: false, output: out).contains("read-only"))
+    #expect(Codex.args(cwd: cwd, extraDirs: [], agent: true, output: out, model: "gpt-6-luna").contains("gpt-6-luna"))
+    #expect(Codex.match("claude-codex")! == nil && Codex.match("claude-codex-gpt-6-luna")! == "gpt-6-luna")
+    #expect(Codex.match("claude-codex-") == nil && Codex.match("claude-opus-5-5") == nil)
 }
 
 @Test func mentionedFilesFoundAndAttached() async throws {
@@ -563,5 +566,9 @@ final class SeenDevices: @unchecked Sendable {
     let hits = Mentions.find(["CLAUDE.md", "kb"], in: root)
     #expect(hits.map(\.lastPathComponent).sorted() == ["CLAUDE.md", "kb"])  // node_modules preskočen
     let text = Mentions.attachments(hits, root: root)
-    #expect(text.contains("Attached file CLAUDE.md:") && text.contains("PORT=1") && text.contains("docs/kb/arch.md") && !text.contains("blob.bin"))
+    #expect(text.contains("Attached file CLAUDE.md:") && text.contains("PORT=1") && text.contains("Attached file docs/kb/arch.md")
+            && text.contains("- docs/kb/blob.bin") && !text.contains("Attached file docs/kb/blob.bin"))  // binarno le v seznamu
+    // mapa le s podmapo (docs → kb/…): vsebina iz podmap, navodilo zraven
+    let docs = Mentions.attachments(Mentions.find([], question: "povzemi vsebino mape ./docs", in: root), root: root)
+    #expect(docs.hasPrefix(Mentions.header) && docs.contains("Folder docs contains:") && docs.contains("kb note"))
 }

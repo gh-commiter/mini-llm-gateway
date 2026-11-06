@@ -161,7 +161,7 @@ func requireConnection() -> Connection {
 
 // MARK: ukazi
 
-let minigwVersion = "0.4.6"  // bump-version.sh
+let minigwVersion = "0.4.7"  // bump-version.sh
 var args = Array(CommandLine.arguments.dropFirst())
 
 switch args.first {
@@ -255,7 +255,6 @@ if sid.isEmpty && !own {
     sid = UUID().uuidString.lowercased()
     args = ["--session-id", sid] + args
 }
-setenv("ANTHROPIC_CUSTOM_HEADERS", "x-claude-mini-session: \(sid)\nx-claude-mini-cwd: \(FileManager.default.currentDirectoryPath)", 1)
 
 let argv = (["claude"] + args).map { strdup($0) } + [nil]
 let cwd = FileManager.default.currentDirectoryPath
@@ -267,6 +266,9 @@ let underHome = cwd.hasPrefix(NSHomeDirectory() + "/") ? String(cwd.dropFirst(NS
 let wantShare = shareEnv == "1"
     || (shareEnv != "0" && !["127.0.0.1", "localhost", "::1"].contains(routerHost)
         && underHome.map { !$0.hasPrefix(".") && $0 != "Library" && !$0.hasPrefix("Library/") } == true)
+
+// x-claude-mini-share: router po ponovnem zagonu počaka, da se mapa znova registrira (namesto napake cwd_unavailable).
+setenv("ANTHROPIC_CUSTOM_HEADERS", "x-claude-mini-session: \(sid)\nx-claude-mini-cwd: \(cwd)" + (wantShare ? "\nx-claude-mini-share: 1" : ""), 1)
 
 // Brez proxyja in brez mape: minigw ni več potreben → exec.
 guard proxy != nil || (wantShare && !sid.isEmpty) else {

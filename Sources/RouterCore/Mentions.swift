@@ -53,26 +53,44 @@ enum Mentions {
     /// Vsebina besedilnih datotek (mapa → njene datoteke na prvi ravni), skupaj največ `budget` bajtov.
     static let header = "The user attached these files from their project. Answer only from them; do not search elsewhere.\n\n"
 
+    /// Datoteke v mapi do 3 ravni globoko (brez skritih in velikih map izgradnje), urejene po poti.
+    static func filesIn(_ dir: URL) -> [URL] {
+        guard let e = FileManager.default.enumerator(at: dir, includingPropertiesForKeys: [.isRegularFileKey],
+                                                     options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return [] }
+        var out: [URL] = []
+        for case let u as URL in e {
+            if skipDirs.contains(u.lastPathComponent) || e.level > 3 { e.skipDescendants(); continue }
+            if (try? u.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true { out.append(u) }
+            if out.count >= 200 { break }
+        }
+        return out.sorted { $0.path < $1.path }
+    }
+
+    /// Mapa: seznam njenih datotek, nato vsebina besedilnih (najprej .md/.txt). Navodilo »le iz priponk« je zraven,
+    /// tudi če vsebine ni (npr. le PDF) — sicer Siri išče po osebnih dokumentih tega Maca.
     static func attachments(_ urls: [URL], root: URL, budget: Int = 16_000) -> String {
-        var files: [URL] = []
+        let base = root.standardizedFileURL.path + "/"
+        func rel(_ u: URL) -> String { u.standardizedFileURL.path.replacingOccurrences(of: base, with: "") }
+        var files: [URL] = [], listing = ""
         for u in urls {
             var isDir: ObjCBool = false
             FileManager.default.fileExists(atPath: u.path, isDirectory: &isDir)
             if isDir.boolValue {
-                files += ((try? FileManager.default.contentsOfDirectory(at: u, includingPropertiesForKeys: nil, options: .skipsHiddenFiles)) ?? [])
-                    .sorted { $0.path < $1.path }.prefix(10)
+                let inside = filesIn(u)
+                listing += "Folder \(rel(u)) contains:\n" + inside.map { "- \(rel($0))" }.joined(separator: "\n") + "\n\n"
+                let text = Set(["md", "txt", "markdown"])
+                files += inside.filter { text.contains($0.pathExtension.lowercased()) } + inside.filter { !text.contains($0.pathExtension.lowercased()) }
             } else { files.append(u) }
         }
-        var out = "", left = budget
-        let base = root.standardizedFileURL.path + "/"
+        guard !urls.isEmpty else { return "" }
+        var out = listing, left = budget - listing.utf8.count
         for f in files where left > 200 {
             guard let d = FileManager.default.contents(atPath: f.path), !d.prefix(4096).contains(0),
                   let text = String(data: d, encoding: .utf8) else { continue }  // le besedilo (brez binarnih)
-            let rel = f.standardizedFileURL.path.replacingOccurrences(of: base, with: "")
             let part = String(text.prefix(left))
-            out += "Attached file \(rel)\(part.count < text.count ? " (truncated)" : ""):\n```\n\(part)\n```\n\n"
+            out += "Attached file \(rel(f))\(part.count < text.count ? " (truncated)" : ""):\n```\n\(part)\n```\n\n"
             left -= part.utf8.count
         }
-        return out.isEmpty ? "" : header + out
+        return header + out
     }
 }

@@ -138,7 +138,7 @@ enum SiriAX {
         guard let field = find(root, ID.composer),
               AXUIElementSetAttributeValue(field, kAXValueAttribute as CFString, text as CFString) == .success else { return false }
         func pending() -> Bool { !((attr(field, kAXValueAttribute) as? String) ?? "").isEmpty }
-        for _ in 0..<4 {
+        for _ in 0..<10 {  // ~25 s: Siri ne sprejme novega sporočila, dokler še piše prejšnji odgovor
             usleep(300_000)
             AXUIElementSetAttributeValue(field, kAXFocusedAttribute as CFString, kCFBooleanTrue)
             guard AXUIElementPerformAction(field, "AXConfirm" as CFString) == .success else { continue }

@@ -15,8 +15,38 @@ public struct CodexConfig: Codable, Sendable, Equatable {
 }
 
 public enum Codex {
-    /// Claude Code pokaže le modele z »claude« v imenu.
+    /// Claude Code pokaže le modele z »claude« v imenu: »claude-codex« (privzeti model Codex) in »claude-codex-<slug>«.
     static let ids: Set<String> = ["claude-codex"]
+    static let prefix = "claude-codex-"
+
+    /// Model za `codex -m` (nil = privzeti iz nastavitev Codex); nil, če ime ni Codex.
+    static func match(_ model: String) -> String?? {
+        if ids.contains(model) { return .some(nil) }
+        return model.hasPrefix(prefix) && model.count > prefix.count ? .some(String(model.dropFirst(prefix.count))) : .none
+    }
+
+    struct Model: Sendable { let slug: String, name: String, description: String, window: Int? }
+
+    /// Modeli računa (`codex debug models`, vidni v izbirniku Codex); ob napaki prazno.
+    static func catalog(_ exe: String) -> [Model] {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: exe)
+        p.arguments = ["debug", "models"]
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = FileHandle.nullDevice
+        p.standardInput = FileHandle.nullDevice
+        guard (try? p.run()) != nil else { return [] }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        let json = try? JSONSerialization.jsonObject(with: data)
+        let items = (json as? [[String: Any]]) ?? ((json as? [String: Any])?["models"] as? [[String: Any]]) ?? []
+        return items.compactMap { m in
+            guard let slug = m["slug"] as? String, m["visibility"] as? String != "hide" else { return nil }
+            return Model(slug: slug, name: m["display_name"] as? String ?? slug, description: m["description"] as? String ?? "",
+                         window: m["context_window"] as? Int)
+        }
+    }
     public static let detected: String? = ClaudeCLI.locate("codex")
 
     static func executable(_ configured: String) -> String? {
@@ -25,8 +55,9 @@ public enum Codex {
 
     /// Argumenti: agent piše le v mapi seje in dovoljenih mapah (sandbox Codex), omrežje za gradnjo dovoljeno.
     /// Brez orodij (naslovi, povzetki) le branje v začasni mapi.
-    static func args(cwd: URL, extraDirs: [String], agent: Bool, output: URL) -> [String] {
+    static func args(cwd: URL, extraDirs: [String], agent: Bool, output: URL, model: String? = nil) -> [String] {
         ["exec", "--skip-git-repo-check", "--ephemeral", "--color", "never", "-C", cwd.path, "-o", output.path]
+            + (model.map { ["-m", $0] } ?? [])
             + (agent ? ["--sandbox", "workspace-write", "-c", "sandbox_workspace_write.network_access=true"]
                        + extraDirs.flatMap { ["--add-dir", $0] }
                      : ["--sandbox", "read-only"])
@@ -67,7 +98,7 @@ public enum Codex {
 }
 
 extension Router {
-    func runCodex(_ req: HTTPRequest, body: [String: Any], rid: String, writer: ResponseWriter) async -> Int {
+    func runCodex(_ req: HTTPRequest, body: [String: Any], model: String?, rid: String, writer: ResponseWriter) async -> Int {
         guard let exe = Codex.executable(config.codex.executable) else {
             return await error(503, "api_error", "Codex CLI not found (Mini Gateway → Settings → Claude CLI → Codex)", rid: rid, writer: writer)
         }
@@ -81,7 +112,8 @@ extension Router {
         var prompt = ClaudeCLI.prompt(history: all.dropLast(), last: last)
         if agent {
             let clientCwd = req.header("x-claude-mini-cwd")
-            let shared = await Self.shares.mount(session: req.header("x-claude-mini-session") ?? "", cwd: clientCwd, base: localBase)
+            let shared = await Self.shares.mount(session: req.header("x-claude-mini-session") ?? "", cwd: clientCwd, base: localBase,
+                                                 wait: req.header("x-claude-mini-share") == "1")
             guard let dir = shared ?? ClaudeCLI.resolveCwd(clientCwd, roots: config.claudeCLI.allowedRoots) else {
                 return await error(400, "invalid_request_error",
                                    "cwd_unavailable: folder \(clientCwd ?? "(none)") does not exist on this Mac or is outside the allowed folders",
@@ -98,7 +130,7 @@ extension Router {
         }
         let output = FileManager.default.temporaryDirectory.appendingPathComponent("codex-\(rid).txt")
         defer { try? FileManager.default.removeItem(at: output) }
-        let args = Codex.args(cwd: cwd, extraDirs: extra, agent: agent, output: output)
+        let args = Codex.args(cwd: cwd, extraDirs: extra, agent: agent, output: output, model: model)
         return await replyWhenDone(body: body, model: "claude-codex", rid: rid, writer: writer) {
             (try await Codex.run(exe, args: args, cwd: cwd, prompt: prompt, output: output), [])
         }

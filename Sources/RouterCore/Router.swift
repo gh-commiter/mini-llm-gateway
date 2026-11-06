@@ -142,11 +142,11 @@ public final class Router: Sendable {
                     }
                     return (await runSiri(req, body: body, rid: rid, writer: writer), model, "siri-ai")
                 }
-                if config.codex.enabled, Codex.ids.contains(model) {
+                if config.codex.enabled, let codexModel = Codex.match(model) {
                     if req.path.hasSuffix("/count_tokens") {
                         return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "codex")
                     }
-                    return (await runCodex(req, body: body, rid: rid, writer: writer), model, "codex")
+                    return (await runCodex(req, body: body, model: codexModel, rid: rid, writer: writer), model, "codex")
                 }
                 if config.appleFM.enabled, AppleFM.ids.contains(model) {
                     if req.path.hasSuffix("/count_tokens") {
@@ -245,9 +245,14 @@ public final class Router: Sendable {
                  "description": "claude -p · \(m) · tools in your folder", "created_at": created]
             }
         }
-        if config.codex.enabled, Codex.executable(config.codex.executable) != nil {
+        if config.codex.enabled, let exe = Codex.executable(config.codex.executable) {
             data.append(["type": "model", "id": "claude-codex", "display_name": "Codex · Codex CLI",
-                         "description": "codex exec · tools in your folder", "created_at": created])
+                         "description": "codex exec · default model · tools in your folder", "created_at": created])
+            data += Codex.catalog(exe).map { m in
+                ["type": "model", "id": Codex.prefix + m.slug, "display_name": "\(m.name) · Codex CLI",
+                 "description": "codex exec · \(m.slug)\(m.window.map { " · \($0 / 1000)K" } ?? "") · tools in your folder",
+                 "created_at": created]
+            }
         }
         return ["data": data, "has_more": false,
                 "first_id": data.first?["id"] ?? NSNull(), "last_id": data.last?["id"] ?? NSNull()]

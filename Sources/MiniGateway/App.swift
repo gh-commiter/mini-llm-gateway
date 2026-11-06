@@ -48,6 +48,7 @@ final class AppState: ObservableObject {
 
     init() {
         config.save()  // starejši JSON blob v preferences → berljiva struktura
+        ShareHub.cleanupStale()
         start()
     }
 

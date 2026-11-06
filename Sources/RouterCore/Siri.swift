@@ -208,7 +208,8 @@ extension Router {
             // Datoteke, omenjene v vprašanju, iz mape seje (priklopljene z drugega Maca ali dovoljene tukaj).
             var context = ""
             if let question = turns.last?.text {
-                let root: URL? = await Self.shares.mount(session: scope, cwd: clientCwd, base: localBase)
+                let root: URL? = await Self.shares.mount(session: scope, cwd: clientCwd, base: localBase,
+                                                 wait: req.header("x-claude-mini-share") == "1")
                     ?? ClaudeCLI.resolveCwd(clientCwd, roots: config.claudeCLI.allowedRoots)
                 if let root {
                     let names = await Mentions.names(in: question)
