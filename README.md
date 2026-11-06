@@ -3,9 +3,9 @@
 <img src="Resources/AppIcon-preview.png" width="96" align="left" alt="Mini Gateway icon">
 
 A macOS menu bar LLM gateway compatible with the [Claude Code](https://claude.com/claude-code) CLI. One endpoint for several models:
-the **Siri AI** app, **Apple Foundation Models** (on-device), the local **Claude Code CLI**, and any
-Anthropic-compatible upstream such as **LiteLLM** or **OpenRouter**. Pick a model with `/model`, or give each
-Claude Code subagent its own.
+the **Siri AI** app, **Apple Foundation Models** (on-device), the **Claude Code CLI**, **Codex** and **Grok** as agents,
+and any Anthropic-compatible upstream such as **LiteLLM** or **OpenRouter**. The router runs on a Mac; the `minigw`
+client runs on macOS, Windows and Linux. Pick a model with `/model`, or give each Claude Code subagent its own.
 
 <br clear="left">
 
