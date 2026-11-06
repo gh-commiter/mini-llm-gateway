@@ -36,3 +36,30 @@ func TestFramesRoundTrip(t *testing.T) {
 		t.Fatalf("round trip failed: %v rest=%d", err, len(rest))
 	}
 }
+
+func TestShareCommandAndWanted(t *testing.T) {
+	cfg, proj := t.TempDir(), t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfg)
+	t.Setenv("APPDATA", cfg)
+	t.Setenv("HOME", cfg)
+	t.Setenv("MINIGW_SHARE", "")
+	sub := filepath.Join(proj, "src")
+	os.Mkdir(sub, 0o755)
+	if shareWanted(sub, false) {
+		t.Fatal("folder outside home shared without share add")
+	}
+	shareCommand([]string{"add", proj})
+	if !shareWanted(sub, false) || !shareWanted(proj, false) {
+		t.Fatal("added folder or its subfolder not shared")
+	}
+	if shareWanted(sub, true) {
+		t.Fatal("shared with a local router")
+	}
+	if shareAllowed(filepath.VolumeName(proj)+string(filepath.Separator)) || shareAllowed(cfg) {
+		t.Fatal("drive root or home folder allowed")
+	}
+	shareCommand([]string{"remove", proj})
+	if shareWanted(sub, false) {
+		t.Fatal("removed folder still shared")
+	}
+}

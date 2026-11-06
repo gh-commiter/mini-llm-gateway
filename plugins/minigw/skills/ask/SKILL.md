@@ -15,7 +15,7 @@ PROMPT
 ```
 
 - If the user did not name a model, run `"${CLAUDE_PLUGIN_DATA}/bin/minigw" models` and pick a fitting one, or ask.
-- Agent models (`claude-codex*`, `claude-cli-*`) work in the current folder on the router Mac (minigw shares it): they read, edit and run commands there. Give them a self-contained task.
+- Agent models (`claude-codex*`, `claude-cli-*`) run on the router Mac but work in the current folder, which minigw shares with it: they read, edit and run commands in your files. Give them a self-contained task. If minigw prints that the folder "is not shared with the router", suggest `/minigw:share`.
 - Siri AI and Apple Foundation Models have no tools. Name the files they need in the question; the router adds them.
 - Codex and Claude CLI can take minutes. Use a Bash timeout of 600000 ms, or run it in the background for longer work.
 - Show the user the model's answer (summarize long output), then continue with the task.

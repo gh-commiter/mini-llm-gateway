@@ -159,12 +159,56 @@ func requireConnection() -> Connection {
     return c
 }
 
+// MARK: deljene mape
+
+/// Mape zunaj domače, ki jih uporabnik deli z »minigw share add« (enako kot odjemalec Go na macOS).
+let sharedFoldersFile = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    .appendingPathComponent("minigw/shared-folders")
+
+func sharedFolders() -> [String] {
+    ((try? String(contentsOf: sharedFoldersFile, encoding: .utf8)) ?? "").split(separator: "\n")
+        .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+}
+
+func shareCommand(_ a: [String]) -> Never {
+    let sub = a.first ?? "list"
+    let dir = URL(fileURLWithPath: a.count > 1 ? a[1] : FileManager.default.currentDirectoryPath).standardizedFileURL.path
+    var list = sharedFolders()
+    func save() {
+        try? FileManager.default.createDirectory(at: sharedFoldersFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+        guard (try? (list.joined(separator: "\n") + "\n").write(to: sharedFoldersFile, atomically: true, encoding: .utf8)) != nil
+        else { fail("cannot save \(sharedFoldersFile.path)") }
+    }
+    switch sub {
+    case "add":
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: dir, isDirectory: &isDir), isDir.boolValue else { fail("not a folder: \(dir)") }
+        guard dir != "/", dir != NSHomeDirectory() else {
+            fail("refusing to share \(dir) (the disk root or your home folder would expose everything); share a project folder")
+        }
+        if list.contains(dir) { print("already shared: \(dir)"); exit(0) }
+        list.append(dir); save()
+        print("shared with the router from now on: \(dir) (and its subfolders)")
+    case "remove":
+        list.removeAll { $0 == dir }; save()
+        print("no longer shared: \(dir)")
+    case "list":
+        if list.isEmpty { print("no extra shared folders (folders under your home folder are shared by default)") }
+        list.forEach { print($0) }
+    default:
+        fail("usage: minigw share [add|remove] [folder] | minigw share list")
+    }
+    exit(0)
+}
+
 // MARK: ukazi
 
-let minigwVersion = "0.5.3"  // bump-version.sh
+let minigwVersion = "0.5.4"  // bump-version.sh
 var args = Array(CommandLine.arguments.dropFirst())
 
 switch args.first {
+case "share":
+    shareCommand(Array(args.dropFirst()))
 case "connect":
     guard args.count >= 2 else { fail("usage: minigw connect <host[:port]> [--token <token>]") }
     let saved = loadConnection()
@@ -216,6 +260,7 @@ case "--minigw-help", "-h", "--help", "-v", "--version":
         say("""
         minigw connect <host[:port]> [--token T]   save router address and token (Keychain)
         minigw status | models | disconnect
+        minigw share add|remove [folder] | list    share a folder outside your home folder with the router
         minigw [claude options …]                    run Claude Code through the router
         """)
     }
@@ -266,9 +311,11 @@ let routerHost = URLComponents(string: saved.url)?.host ?? ""
 let shareEnv = ProcessInfo.processInfo.environment["MINIGW_SHARE"]
 // Brez ~/Library in skritih map v domači (.ssh, .gnupg …): tam le z MINIGW_SHARE=1.
 let underHome = cwd.hasPrefix(NSHomeDirectory() + "/") ? String(cwd.dropFirst(NSHomeDirectory().count + 1)) : nil
+let remoteRouter = !["127.0.0.1", "localhost", "::1"].contains(routerHost)
 let wantShare = shareEnv == "1"
-    || (shareEnv != "0" && !["127.0.0.1", "localhost", "::1"].contains(routerHost)
-        && underHome.map { !$0.hasPrefix(".") && $0 != "Library" && !$0.hasPrefix("Library/") } == true)
+    || (shareEnv != "0" && remoteRouter
+        && (underHome.map { !$0.hasPrefix(".") && $0 != "Library" && !$0.hasPrefix("Library/") } == true
+            || sharedFolders().contains { cwd == $0 || cwd.hasPrefix($0 + "/") }))
 
 // x-claude-mini-share: router po ponovnem zagonu počaka, da se mapa znova registrira (namesto napake cwd_unavailable).
 setenv("ANTHROPIC_CUSTOM_HEADERS", "x-claude-mini-session: \(sid)\nx-claude-mini-cwd: \(cwd)" + (wantShare ? "\nx-claude-mini-share: 1" : ""), 1)
@@ -280,6 +327,9 @@ guard proxy != nil || (wantShare && !sid.isEmpty) else {
 }
 
 let share = ShareClient(c, session: sid, root: URL(fileURLWithPath: cwd))
+if !wantShare && remoteRouter && shareEnv != "0" {
+    err.write(Data("minigw: \(cwd) is not shared with the router, so agent models (Codex, Claude CLI, Grok) cannot see it; to share it run: minigw share add\n".utf8))
+}
 if !wantShare || sid.isEmpty {
     // le šifrirani proxy
 } else if share.register() {

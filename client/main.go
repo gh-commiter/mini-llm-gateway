@@ -18,7 +18,7 @@ import (
 	"time"
 )
 
-const version = "0.5.3" // bump-version.sh
+const version = "0.5.4" // bump-version.sh
 
 type connection struct {
 	URL    string  `json:"url"`
@@ -149,6 +149,9 @@ func main() {
 		first = args[0]
 	}
 	switch first {
+	case "share":
+		shareCommand(args[1:])
+		return
 	case "connect":
 		if len(args) < 2 {
 			fail("usage: minigw connect <host[:port]> [--token '<token>']")
@@ -281,6 +284,7 @@ func main() {
 		} else {
 			say("minigw connect <host[:port]> [--token T]   save router address and token (" + storeName + ")\n" +
 				"minigw status | models | disconnect\n" +
+				"minigw share add|remove [folder] | list    share a folder outside your home folder with the router\n" +
 				"minigw [claude options …]                    run Claude Code through the router")
 		}
 		if first == "--minigw-help" {
@@ -351,6 +355,8 @@ func main() {
 		} else {
 			fmt.Fprintln(os.Stderr, "minigw: router did not accept the folder; Claude CLI models with tools will not see it")
 		}
+	} else if !saved.isLocal() && os.Getenv("MINIGW_SHARE") != "0" {
+		fmt.Fprintf(os.Stderr, "minigw: %s is not shared with the router, so agent models (Codex, Claude CLI, Grok) cannot see it; to share it run: minigw share add\n", cwd)
 	}
 	code := runClaude(args, env)
 	share.unregister()
@@ -368,6 +374,11 @@ func shareWanted(cwd string, local bool) bool {
 	}
 	if local {
 		return false
+	}
+	for _, f := range sharedFolders() {
+		if under(cwd, f) {
+			return true
+		}
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -410,4 +421,94 @@ func newUUID() string {
 	b[6] = b[6]&0x0f | 0x40
 	b[8] = b[8]&0x3f | 0x80
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
+// Mape, ki jih uporabnik deli z ukazom »minigw share add« (npr. projekti na drugem disku), ena na vrstico.
+func sharedFoldersFile() string {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "minigw", "shared-folders")
+}
+
+func sharedFolders() []string {
+	data, _ := os.ReadFile(sharedFoldersFile())
+	var out []string
+	for _, l := range strings.Split(strings.ReplaceAll(string(data), "\r", ""), "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// under: path je folder ali v njem (na Windows brez razlike v velikih črkah).
+func under(path, folder string) bool {
+	rel, err := filepath.Rel(folder, path)
+	if err != nil || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		return false
+	}
+	return true
+}
+
+// shareAllowed: nikoli koren diska ali domača mapa sama (to bi izpostavilo vse).
+func shareAllowed(dir string) bool {
+	home, _ := os.UserHomeDir()
+	return filepath.Dir(dir) != dir && !strings.EqualFold(filepath.Clean(dir), filepath.Clean(home))
+}
+
+func shareCommand(args []string) {
+	sub := "list"
+	if len(args) > 0 {
+		sub = args[0]
+	}
+	dir, _ := os.Getwd()
+	if len(args) > 1 {
+		dir = args[1]
+	}
+	dir, _ = filepath.Abs(dir)
+	list := sharedFolders()
+	save := func(l []string) {
+		f := sharedFoldersFile()
+		os.MkdirAll(filepath.Dir(f), 0o700)
+		if err := os.WriteFile(f, []byte(strings.Join(l, "\n")+"\n"), 0o600); err != nil {
+			fail("cannot save " + f + ": " + err.Error())
+		}
+	}
+	switch sub {
+	case "add":
+		if st, err := os.Stat(dir); err != nil || !st.IsDir() {
+			fail("not a folder: " + dir)
+		}
+		if !shareAllowed(dir) {
+			fail("refusing to share " + dir + " (a drive root or your home folder would expose everything); share a project folder")
+		}
+		for _, f := range list {
+			if strings.EqualFold(f, dir) {
+				fmt.Println("already shared:", dir)
+				return
+			}
+		}
+		save(append(list, dir))
+		fmt.Println("shared with the router from now on:", dir, "(and its subfolders)")
+	case "remove":
+		var keep []string
+		for _, f := range list {
+			if !strings.EqualFold(f, dir) {
+				keep = append(keep, f)
+			}
+		}
+		save(keep)
+		fmt.Println("no longer shared:", dir)
+	case "list":
+		if len(list) == 0 {
+			fmt.Println("no extra shared folders (folders under your home folder are shared by default)")
+		}
+		for _, f := range list {
+			fmt.Println(f)
+		}
+	default:
+		fail("usage: minigw share [add|remove] [folder] | minigw share list")
+	}
 }

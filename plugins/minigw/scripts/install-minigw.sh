@@ -1,7 +1,7 @@
 #!/bin/sh
 # SessionStart: zagotovi minigw v podatkovni mapi vtičnika (brez brew).
-# 1) že tam in veljaven → nič; 2) nameščen drugje (brew) → povezava nanj;
-# 3) sicer prenos iz izdaje na GitHubu: SHA256SUMS; na macOS še podpis Developer ID (ekipa, identifikator).
+# 1) nameščen drugje (macOS: brew, aplikacija) → povezava nanj; 2) sicer prenos iz zadnje izdaje na GitHubu,
+# ponovno, ko se SHA256SUMS spremeni (posodobitev); na macOS še podpis Developer ID (ekipa, identifikator).
 # Windows (Git Bash) in Linux: minigw-<os>-<arch> iz iste izdaje.
 # Izpis gre Claudu kot kontekst: ena vrstica.
 set -u
@@ -22,6 +22,25 @@ case "$(uname -s)" in
 esac
 mkdir -p "$BIN"
 
+# Kontrolne vsote zadnje izdaje: po njih se prenesena kopija posodobi (brez omrežja ostane obstoječa).
+sums=$(curl -fsSL --max-time 20 "$base/SHA256SUMS" 2>/dev/null || true)
+want() { printf '%s\n' "$sums" | grep " $1\$" | cut -d' ' -f1; }
+stamp="$BIN/.asset.sha256"  # vsota prenesenega paketa (na macOS je to minigw.zip, ne izvršljiva datoteka)
+
+# fetch <asset>: prenese, preveri vsoto (in na macOS podpis) ter namesti v $EXE.
+fetch() {
+  w=$(want "$1"); [ -n "$w" ] || return 1
+  tmp=$(mktemp -d) || return 1
+  if curl -fsSL -o "$tmp/$1" "$base/$1" && [ "$(sha "$tmp/$1")" = "$w" ]; then
+    if [ "$os" = darwin ]; then
+      ditto -x -k "$tmp/$1" "$tmp/x" && valid "$tmp/x/minigw" && rm -f "$EXE" && mv "$tmp/x/minigw" "$EXE"
+    else
+      chmod +x "$tmp/$1" && mv -f "$tmp/$1" "$EXE"
+    fi && echo "$w" > "$stamp" && { rm -rf "$tmp"; return 0; }
+  fi
+  rm -rf "$tmp"; return 1
+}
+
 if [ "$os" = darwin ]; then
   # macOS: podpisan minigw (Developer ID, ekipa in identifikator) iz minigw.zip ali že nameščen (brew).
   valid() { [ -x "$1" ] && codesign --verify --strict -R="$REQ" "$1" 2>/dev/null; }
@@ -33,30 +52,16 @@ if [ "$os" = darwin ]; then
   done
   if [ -n "$other" ]; then
     [ "$(readlink "$EXE" 2>/dev/null)" = "$other" ] || { rm -f "$EXE"; ln -s "$other" "$EXE"; }
-  elif ! valid "$EXE"; then
-    rm -f "$EXE"
-    tmp=$(mktemp -d) || exit 0
-    if curl -fsSL -o "$tmp/minigw.zip" "$base/minigw.zip" && curl -fsSL -o "$tmp/SHA256SUMS" "$base/SHA256SUMS" \
-       && [ "$(sha "$tmp/minigw.zip")" = "$(grep ' minigw.zip$' "$tmp/SHA256SUMS" | cut -d' ' -f1)" ] \
-       && ditto -x -k "$tmp/minigw.zip" "$tmp/x" && valid "$tmp/x/minigw"; then
-      mv "$tmp/x/minigw" "$EXE"
-    else
-      echo "minigw plugin: could not download or verify minigw from github.com/$REPO; gateway skills are unavailable."
-      rm -rf "$tmp"; exit 0
-    fi
-    rm -rf "$tmp"
+  elif [ -L "$EXE" ] || ! valid "$EXE" || { [ -n "$(want minigw.zip)" ] && [ "$(cat "$stamp" 2>/dev/null)" != "$(want minigw.zip)" ]; }; then
+    fetch minigw.zip || valid "$EXE" || {
+      echo "minigw plugin: could not download or verify minigw from github.com/$REPO; gateway skills are unavailable."; exit 0; }
   fi
-elif [ ! -x "$EXE" ]; then
+else
   # Windows/Linux: ena izvršljiva datoteka (Go, brez odvisnosti); kontrolna vsota iz SHA256SUMS iste izdaje.
-  tmp=$(mktemp -d) || exit 0
-  if curl -fsSL -o "$tmp/$asset" "$base/$asset" && curl -fsSL -o "$tmp/SHA256SUMS" "$base/SHA256SUMS" \
-     && [ "$(sha "$tmp/$asset")" = "$(grep " $asset\$" "$tmp/SHA256SUMS" | cut -d' ' -f1)" ]; then
-    chmod +x "$tmp/$asset" && mv "$tmp/$asset" "$EXE"
-  else
-    echo "minigw plugin: could not download or verify $asset from github.com/$REPO; gateway skills are unavailable."
-    rm -rf "$tmp"; exit 0
+  if [ ! -x "$EXE" ] || { [ -n "$(want "$asset")" ] && [ "$(sha "$EXE")" != "$(want "$asset")" ]; }; then
+    fetch "$asset" || [ -x "$EXE" ] || {
+      echo "minigw plugin: could not download or verify $asset from github.com/$REPO; gateway skills are unavailable."; exit 0; }
   fi
-  rm -rf "$tmp"
 fi
 
 # Claudov Bash najde »minigw« tudi brez poti.

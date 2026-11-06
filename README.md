@@ -147,7 +147,9 @@ Subagents can use router models too, e.g. `model: claude-siri-ai` in `.claude/ag
 the router Mac. When `minigw` talks to a router on another Mac, it shares the current folder with it for the length
 of the session: the router mounts it (built-in WebDAV, through the connection `minigw` opens, so the router Mac does
 not need to reach the client) and the agent works on your files. Nothing to install on either side. Only folders
-inside your home folder are shared: never the home folder itself, `~/Library` or hidden folders such as `~/.ssh`.
+inside your home folder are shared by default: never the home folder itself, `~/Library` or hidden folders such as `~/.ssh`.
+Share a project elsewhere (for example `D:\Projects` on Windows) once with `minigw share add` in that folder
+(`minigw share list`, `minigw share remove`); a drive root or the home folder itself is refused.
 The folder's own Claude Code settings and hooks are not loaded on the router Mac. Set `MINIGW_SHARE=0` to turn it off.
 
 ## Claude Code plugin
@@ -157,7 +159,8 @@ Mini Gateway models through the `minigw` client: Claude runs `minigw -p --model 
 and uses the answer. The session itself does not have to run through the router, so it works with your normal Claude
 login, Remote Control and so on. The plugin brings its own `minigw` on macOS, Windows (Git Bash)
 and Linux: at session start it uses an installed one or downloads it from the latest release into its data folder and
-checks the SHA-256 (on macOS also the Developer ID signature). No brew needed. Connect once with
+checks the SHA-256 (on macOS also the Developer ID signature). A downloaded copy is updated at session start when a
+new release is out. No brew needed. Connect once with
 `/minigw:connect <router-mac> <token>` (the token goes to the Keychain or Windows Credential Manager).
 
 | Skill | Model | Use |
@@ -169,6 +172,7 @@ checks the SHA-256 (on macOS also the Developer ID signature). No brew needed. C
 | `/minigw:on-device <text>` | `claude-apple-fm` | Short private answers on-device |
 | `/minigw:status` | – | Connection and available models |
 | `/minigw:connect <router> <token>` | – | One-time connection to the router Mac |
+| `/minigw:share [folder]` | – | Share a folder outside your home folder with the router (agent models see it) |
 
 Claude can also pick these skills by itself when they fit the request. Install (Claude Code 2.1.275 or later):
 
