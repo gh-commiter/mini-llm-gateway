@@ -313,6 +313,12 @@ extension Router {
     static let shares = ShareHub()
     static let grokSessions = SessionRegistry()
     static let codexSessions = SessionRegistry()
+
+    /// Navodilo agentu za priklopljeno mapo odjemalca (macOS, Windows ali Linux).
+    static func mountNote(_ clientCwd: String, _ shared: URL, readOnly: Bool) -> String {
+        "The user's folder \(clientCwd) (on their computer) is mounted here as \(shared.path), your working directory. Map paths under \(clientCwd) to it."
+            + (readOnly ? " The folder is shared read-only: do not try to create, change or delete files in it." : "")
+    }
     static let toolList = ToolList()
 
     /// Naslov tega routerja za lokalni mount_webdav.
@@ -347,8 +353,8 @@ extension Router {
             let shared = await Self.shares.mount(session: req.header("x-claude-mini-session") ?? "", cwd: clientCwd, base: localBase,
                                                  wait: req.header("x-claude-mini-share") == "1")
             if let shared, let clientCwd {
-                args += ["--append-system-prompt",
-                         "The user's folder \(clientCwd) (on their Mac) is mounted here as \(shared.path), your working directory. Map paths under \(clientCwd) to it."]
+                let readOnly = await Self.shares.isReadOnly(session: req.header("x-claude-mini-session") ?? "")
+                args += ["--append-system-prompt", Self.mountNote(clientCwd, shared, readOnly: readOnly)]
             }
             guard let dir = shared ?? ClaudeCLI.resolveCwd(clientCwd, roots: cfg.allowedRoots) else {
                 return await error(400, "invalid_request_error",

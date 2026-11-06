@@ -622,3 +622,23 @@ final class SeenDevices: @unchecked Sendable {
     #expect(Grok.event(Data(#"{"type":"text","data":"hello"}"#.utf8)) == .text("hello"))
     #expect(Grok.event(Data(#"{"type":"end","stopReason":"end_turn","sessionId":"s1"}"#.utf8)) == .end("s1"))
 }
+
+@Test func davGetReadsOnlyTheRangeAndLimitsSize() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("dav-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Data("0123456789".utf8).write(to: root.appendingPathComponent("a.txt"))
+    try Data().write(to: root.appendingPathComponent("empty"))
+    FileManager.default.createFile(atPath: root.appendingPathComponent("big").path, contents: nil)
+    let big = try FileHandle(forWritingTo: root.appendingPathComponent("big"))
+    try big.truncate(atOffset: UInt64(WebDAV.maxServe + 1)); try big.close()
+    func get(_ m: String, _ p: String, _ h: [String: String] = [:]) -> DAVResponse {
+        WebDAV.handle(method: m, path: "/dav/s/" + p, headers: h, body: Data(), root: root, prefix: "/dav/s")
+    }
+    let r = get("GET", "a.txt", ["range": "bytes=2-4"])
+    #expect(r.status == 206 && String(decoding: r.body, as: UTF8.self) == "234")
+    #expect(get("GET", "empty").status == 200 && get("GET", "empty").body.isEmpty)
+    #expect(get("HEAD", "big").status == 200 && get("HEAD", "big").headers["Content-Length"] == "\(WebDAV.maxServe + 1)")
+    #expect(get("GET", "big").status == 413)
+    #expect(get("GET", "big", ["range": "bytes=0-99"]).body.count == 100)
+}

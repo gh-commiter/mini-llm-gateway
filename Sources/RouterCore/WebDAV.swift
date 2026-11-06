@@ -14,6 +14,9 @@ public struct DAVResponse: Codable, Sendable {
 /// Teče v minigw na odjemalcu; router mu posreduje zahteve priklopa na Mac miniju.
 /// Nič zunaj `root`: brez `..`, simbolne povezave se razrešijo in preverijo.
 public enum WebDAV {
+    /// Največji kos datoteke v enem odgovoru (router sprejme odgovor do 64 MB, base64 doda tretjino).
+    public static let maxServe = 32 << 20
+
     public static func handle(method: String, path: String, headers: [String: String], body: Data,
                               root: URL, prefix: String) -> DAVResponse {
         let root = root.resolvingSymlinksInPath().standardizedFileURL
@@ -50,16 +53,20 @@ public enum WebDAV {
         case "GET", "HEAD":
             guard exists else { return DAVResponse(404) }
             if isDir.boolValue { return DAVResponse(200, ["Content-Type": "text/plain"]) }
-            guard let data = fm.contents(atPath: url.path) else { return DAVResponse(403) }
+            // Le zahtevani del (HEAD nič): odgovor gre v enem kosu prek routerja (do 64 MB, base64).
+            let size = ((try? fm.attributesOfItem(atPath: url.path)[.size]) as? NSNumber)?.intValue ?? 0
             var h = ["Content-Type": "application/octet-stream", "Last-Modified": httpDate(modified(url)), "Accept-Ranges": "bytes"]
-            var part = data, status = 200
-            if let r = headers["range"], let (a, b) = range(r, size: data.count) {
-                part = data.subdata(in: a..<b + 1)
-                h["Content-Range"] = "bytes \(a)-\(b)/\(data.count)"
-                status = 206
+            var start = 0, n = size, status = 200
+            if let r = headers["range"], let (a, b) = range(r, size: size) {
+                (start, n, status) = (a, b - a + 1, 206)
+                h["Content-Range"] = "bytes \(a)-\(b)/\(size)"
             }
-            if method == "HEAD" { h["Content-Length"] = "\(part.count)"; part = Data() }
-            return DAVResponse(status, h, part)
+            if method == "HEAD" { h["Content-Length"] = "\(n)"; return DAVResponse(status, h) }
+            guard n <= maxServe else { return DAVResponse(413) }  // takoj, namesto da router čaka na odgovor
+            guard let f = FileHandle(forReadingAtPath: url.path) else { return DAVResponse(403) }
+            defer { try? f.close() }
+            guard (try? f.seek(toOffset: UInt64(start))) != nil else { return DAVResponse(403) }
+            return DAVResponse(status, h, n == 0 ? Data() : ((try? f.read(upToCount: n)) ?? Data()))
 
         case "PUT":
             if junk { return DAVResponse(201) }

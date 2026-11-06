@@ -28,18 +28,28 @@ type davReply struct {
 }
 
 type shareClient struct {
-	c       connection
-	session string
-	root    string
-	mu      sync.Mutex
-	key     string
+	c        connection
+	session  string
+	root     string
+	readOnly bool // pisanje zavrne minigw sam (router mapo priklopi tudi rdonly)
+	mu       sync.Mutex
+	key      string
+}
+
+var writeMethods = map[string]bool{"PUT": true, "DELETE": true, "MKCOL": true, "MOVE": true, "COPY": true, "PROPPATCH": true, "LOCK": true}
+
+func (s *shareClient) mode() string {
+	if s.readOnly {
+		return "ro"
+	}
+	return "rw"
 }
 
 func (s *shareClient) currentKey() string { s.mu.Lock(); defer s.mu.Unlock(); return s.key }
 
 func (s *shareClient) register() bool {
 	st, data := call(s.c, "POST", "/minigw/share", map[string]string{
-		"x-claude-mini-session": s.session, "x-claude-mini-cwd": s.root, "x-share-key": s.currentKey()}, nil, 10*time.Second)
+		"x-claude-mini-session": s.session, "x-claude-mini-cwd": s.root, "x-share-key": s.currentKey(), "x-share-mode": s.mode()}, nil, 10*time.Second)
 	var r struct {
 		Key string `json:"key"`
 	}
@@ -74,7 +84,10 @@ func (s *shareClient) work() {
 			if json.Unmarshal(data, &job) != nil {
 				continue
 			}
-			r := davHandle(job.Method, job.Path, job.Headers, job.Body, s.root, job.Prefix)
+			r := dav(403, nil, nil)
+			if !s.readOnly || !writeMethods[job.Method] {
+				r = davHandle(job.Method, job.Path, job.Headers, job.Body, s.root, job.Prefix)
+			}
 			body, err := json.Marshal(davReply{ID: job.ID, Response: r})
 			if err != nil {
 				continue

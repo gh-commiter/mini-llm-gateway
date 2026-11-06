@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
@@ -71,5 +72,25 @@ func TestAutoShare(t *testing.T) {
 		if autoShare(p) {
 			t.Errorf("%s should not be shared", p)
 		}
+	}
+}
+
+func TestDavGetRangeAndLimit(t *testing.T) {
+	root := t.TempDir()
+	os.WriteFile(filepath.Join(root, "a.txt"), []byte("0123456789"), 0o644)
+	big, _ := os.Create(filepath.Join(root, "big.bin"))
+	big.Truncate(maxServe + 1)
+	big.Close()
+	if r := davHandle("GET", "/p/a.txt", map[string]string{"range": "bytes=2-4"}, nil, root, "/p"); r.Status != 206 || string(r.Body) != "234" {
+		t.Fatalf("range: %d %q", r.Status, r.Body)
+	}
+	if r := davHandle("HEAD", "/p/big.bin", nil, nil, root, "/p"); r.Status != 200 || len(r.Body) != 0 || r.Headers["Content-Length"] != strconv.Itoa(maxServe+1) {
+		t.Fatalf("head: %d %v", r.Status, r.Headers)
+	}
+	if r := davHandle("GET", "/p/big.bin", nil, nil, root, "/p"); r.Status != 413 {
+		t.Fatalf("big get: %d", r.Status)
+	}
+	if r := davHandle("GET", "/p/big.bin", map[string]string{"range": "bytes=0-99"}, nil, root, "/p"); r.Status != 206 || len(r.Body) != 100 {
+		t.Fatalf("big range: %d %d", r.Status, len(r.Body))
 	}
 }

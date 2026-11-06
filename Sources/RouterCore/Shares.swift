@@ -26,13 +26,14 @@ public actor ShareHub {
         let secret = UUID().uuidString.lowercased()   // pot priklopa (brez žetona; le lokalno)
         let dir = UUID().uuidString.lowercased()      // ime mape priklopa (nikoli iz glave odjemalca)
         let cwd: String                               // mapa na odjemalcu
+        let readOnly: Bool                            // minigw --minigw-ro: odjemalec zavrne pisanje, priklop rdonly
         var jobs: [DAVJob] = []
         var pollers: [String: CheckedContinuation<DAVJob?, Never>] = [:]
         var replies: [String: CheckedContinuation<DAVResponse?, Never>] = [:]
         var lastSeen = Date()
         var mountPoint: URL?
         var mounting: Task<URL?, Never>?
-        init(session: String, cwd: String) { self.session = session; self.cwd = cwd }
+        init(session: String, cwd: String, readOnly: Bool) { self.session = session; self.cwd = cwd; self.readOnly = readOnly }
     }
 
     private var bySession: [String: Share] = [:]
@@ -43,25 +44,28 @@ public actor ShareHub {
     private func share(key: String) -> Share? { bySession.values.first { $0.key == key } }
 
     /// nil: seja že ima share drugega lastnika (brez njegovega ključa je ni mogoče prevzeti).
-    func register(session: String, cwd: String, key: String?) -> String? {
+    func register(session: String, cwd: String, key: String?, readOnly: Bool = false) -> String? {
         if let s = bySession[session] {
             guard s.key == key else { return nil }
-            if s.cwd == cwd { s.lastSeen = Date(); return s.key }
+            if s.cwd == cwd, s.readOnly == readOnly { s.lastSeen = Date(); return s.key }
             bySession[session] = nil
             close(s)
         }
-        let s = Share(session: session, cwd: cwd)
+        let s = Share(session: session, cwd: cwd, readOnly: readOnly)
         bySession[session] = s
         if reaper == nil {
             reaper = Task { [weak self] in
                 while !Task.isCancelled {
-                    try? await Task.sleep(for: .seconds(30))
+                    try? await Task.sleep(for: .seconds(15))
                     await self?.reap()
                 }
             }
         }
         return s.key
     }
+
+    /// Mapa seje je deljena samo za branje.
+    func isReadOnly(session: String) -> Bool { bySession[session]?.readOnly ?? false }
 
     func unregister(key: String) {
         guard let s = share(key: key) else { return }
@@ -71,7 +75,7 @@ public actor ShareHub {
 
     /// minigw ni več spraševal (zaprt prenosnik, prekinjen VPN) → odklopi.
     private func reap() {
-        for s in bySession.values where Date().timeIntervalSince(s.lastSeen) > 90 {
+        for s in bySession.values where Date().timeIntervalSince(s.lastSeen) > 60 {  // minigw sprašuje vsaj vsakih 25 s
             bySession[s.session] = nil
             close(s)
         }
@@ -117,7 +121,8 @@ public actor ShareHub {
     func dav(secret: String, method: String, path: String, headers: [String: String], body: Data) async -> DAVResponse? {
         guard let s = bySession.values.first(where: { $0.secret == secret }) else { return nil }
         let job = DAVJob(id: UUID().uuidString, method: method, path: path, prefix: "/dav/" + secret, headers: headers, body: body)
-        return await withCheckedContinuation { k in
+        // Brez odgovora (minigw se je ustavil ali ni odgovoril v 120 s): 504, ne 404 (datoteka morda obstaja).
+        let r: DAVResponse? = await withCheckedContinuation { k in
             s.replies[job.id] = k
             if let (pid, p) = s.pollers.first { s.pollers[pid] = nil; p.resume(returning: job) } else { s.jobs.append(job) }
             Task { [weak self] in
@@ -125,6 +130,7 @@ public actor ShareHub {
                 await self?.timeoutReply(s, job.id)
             }
         }
+        return r ?? DAVResponse(504)
     }
 
     private func timeoutReply(_ s: Share, _ id: String) {
@@ -143,13 +149,14 @@ public actor ShareHub {
         if let t = s.mounting { return await t.value }
         let mp = Self.mountsDir.appendingPathComponent(s.dir, isDirectory: true)
         let url = "\(base)/dav/\(s.secret)/", name = URL(fileURLWithPath: s.cwd).lastPathComponent
+        let options = s.readOnly ? ["-o", "rdonly"] : []
         // mount_webdav med priklopom že pošilja zahteve v dav() → ne sme teči v akterju.
         let t = Task.detached { () -> URL? in
             if ShareHub.isMounted(mp) { ShareHub.unmount(mp) }  // ostanek prejšnjega zagona
             try? FileManager.default.createDirectory(at: ShareHub.mountsDir, withIntermediateDirectories: true,
                                                      attributes: [.posixPermissions: 0o700])
             try? FileManager.default.createDirectory(at: mp, withIntermediateDirectories: false)
-            guard ShareHub.run("/sbin/mount_webdav", ["-S", "-v", name, url, mp.path]) == 0 else {
+            guard ShareHub.run("/sbin/mount_webdav", ["-S", "-v", name] + options + [url, mp.path]) == 0 else {
                 Router.log.error("mount_webdav failed for session \(session, privacy: .public)")
                 rmdir(mp.path)
                 return nil

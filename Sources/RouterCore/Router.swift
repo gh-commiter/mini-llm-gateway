@@ -202,7 +202,8 @@ public final class Router: Sendable {
                   let cwd = req.header("x-claude-mini-cwd"), !cwd.isEmpty else {
                 return (await error(400, "invalid_request_error", "Missing session or cwd", rid: rid, writer: writer), nil, nil)
             }
-            guard let key = await Self.shares.register(session: session, cwd: cwd, key: req.header("x-share-key")) else {
+            guard let key = await Self.shares.register(session: session, cwd: cwd, key: req.header("x-share-key"),
+                                                       readOnly: req.header("x-share-mode") == "ro") else {
                 return (await error(409, "invalid_request_error", "Session already has a folder", rid: rid, writer: writer), nil, "share")
             }
             return (await json(200, ["key": key], rid: rid, writer: writer), nil, "share")

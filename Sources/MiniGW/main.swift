@@ -110,16 +110,20 @@ func call(_ c: Connection, _ method: String, _ path: String, _ headers: [String:
 /// Trenutna mapa za claude -p na Mac miniju: router jo priklopi (mount_webdav), minigw streže datoteke.
 /// Mac mini odjemalca ne doseže, zato vse teče po povezavah, ki jih odpre minigw (long poll).
 final class ShareClient: @unchecked Sendable {
-    let c: Connection, session: String, root: URL
+    let c: Connection, session: String, root: URL, readOnly: Bool
+    static let writeMethods: Set<String> = ["PUT", "DELETE", "MKCOL", "MOVE", "COPY", "PROPPATCH", "LOCK"]
     private let lock = NSLock()
     private var current = ""
     var key: String { lock.withLock { current } }
 
-    init(_ c: Connection, session: String, root: URL) { self.c = c; self.session = session; self.root = root }
+    init(_ c: Connection, session: String, root: URL, readOnly: Bool) {
+        self.c = c; self.session = session; self.root = root; self.readOnly = readOnly
+    }
 
     func register() -> Bool {
         let (s, d) = call(c, "POST", "/minigw/share",
-                          ["x-claude-mini-session": session, "x-claude-mini-cwd": root.path, "x-share-key": key], timeout: 10)
+                          ["x-claude-mini-session": session, "x-claude-mini-cwd": root.path, "x-share-key": key,
+                           "x-share-mode": readOnly ? "ro" : "rw"], timeout: 10)
         guard s == 200, let d, let k = (try? JSONSerialization.jsonObject(with: d) as? [String: Any])?["key"] as? String else { return false }
         lock.withLock { current = k }
         return true
@@ -138,8 +142,8 @@ final class ShareClient: @unchecked Sendable {
             switch s {
             case 200:
                 guard let d, let job = try? JSONDecoder().decode(DAVJob.self, from: d) else { continue }
-                let r = WebDAV.handle(method: job.method, path: job.path, headers: job.headers, body: job.body,
-                                      root: root, prefix: job.prefix)
+                let r = readOnly && Self.writeMethods.contains(job.method) ? DAVResponse(403)
+                    : WebDAV.handle(method: job.method, path: job.path, headers: job.headers, body: job.body, root: root, prefix: job.prefix)
                 guard let body = try? JSONEncoder().encode(DAVReply(id: job.id, response: r)) else { continue }
                 _ = call(c, "POST", "/minigw/share/reply", ["x-share-key": k, "content-type": "application/json"], body, timeout: 120)
             case 204:
@@ -220,8 +224,11 @@ func shareCommand(_ a: [String]) -> Never {
 
 // MARK: ukazi
 
-let minigwVersion = "0.5.6"  // bump-version.sh
+let minigwVersion = "0.5.7"  // bump-version.sh
 var args = Array(CommandLine.arguments.dropFirst())
+// --minigw-ro (ali MINIGW_SHARE=ro): mapa samo za branje; zastavica ne gre naprej v claude.
+let readOnly = args.contains("--minigw-ro") || ProcessInfo.processInfo.environment["MINIGW_SHARE"] == "ro"
+args.removeAll { $0 == "--minigw-ro" }
 
 switch args.first {
 case "share":
@@ -277,7 +284,8 @@ case "--minigw-help", "-h", "--help", "-v", "--version":
         say("""
         minigw connect <host[:port]> [--token T]   save router address and token (Keychain)
         minigw status | models | disconnect
-        minigw share add|remove [folder] | list    share a folder outside your home folder with the router
+        minigw share add|remove [folder] | list    also share a system or hidden folder with the router
+        minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)
         minigw [claude options …]                    run Claude Code through the router
         """)
     }
@@ -340,7 +348,7 @@ guard proxy != nil || (wantShare && !sid.isEmpty) else {
     fail("cannot run claude: \(String(cString: strerror(errno))) (is Claude Code installed and in PATH?)", code: 127)
 }
 
-let share = ShareClient(c, session: sid, root: URL(fileURLWithPath: cwd))
+let share = ShareClient(c, session: sid, root: URL(fileURLWithPath: cwd), readOnly: readOnly)
 if !wantShare && remoteRouter && shareEnv != "0" {
     err.write(Data("minigw: \(cwd) is not shared with the router, so agent models (Codex, Claude CLI, Grok) cannot see it; to share it run: minigw share add\n".utf8))
 }
@@ -348,7 +356,7 @@ if !wantShare || sid.isEmpty {
     // le šifrirani proxy
 } else if share.register() {
     share.start()
-    err.write(Data("minigw: sharing \(cwd) with \(routerHost) for Claude CLI models with tools (MINIGW_SHARE=0 to turn off)\n".utf8))
+    err.write(Data("minigw: sharing \(cwd) \(readOnly ? "read-only" : "read-write") with \(routerHost) for agent models (--minigw-ro = read-only, MINIGW_SHARE=0 = off)\n".utf8))
 } else {
     err.write(Data("minigw: router did not accept the folder; Claude CLI models with tools will not see it\n".utf8))
 }

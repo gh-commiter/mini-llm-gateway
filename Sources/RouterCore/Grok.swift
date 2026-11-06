@@ -163,6 +163,7 @@ extension Router {
         let agent = (body["tools"] as? [Any])?.isEmpty == false
         var cwd = FileManager.default.temporaryDirectory.appendingPathComponent("minigateway-chat", isDirectory: true)
         var extra: [String] = []
+        var readOnly = false
         var prompt = ClaudeCLI.prompt(history: all.dropLast(), last: last)
         if agent {
             let clientCwd = req.header("x-claude-mini-cwd")
@@ -177,12 +178,13 @@ extension Router {
             extra = config.claudeCLI.allowedRoots.split(separator: ",").map { ClaudeCLI.expand($0.trimmingCharacters(in: .whitespaces)) }
                 .filter { $0 != "/" && !$0.isEmpty && $0 != dir.path && FileManager.default.fileExists(atPath: $0) }
             if let shared, let clientCwd {
-                prompt = "The user's folder \(clientCwd) (on their Mac) is mounted here as \(shared.path), your working directory. Map paths under \(clientCwd) to it.\n\n" + prompt
+                readOnly = await Self.shares.isReadOnly(session: req.header("x-claude-mini-session") ?? "")
+                prompt = Self.mountNote(clientCwd, shared, readOnly: readOnly) + "\n\n" + prompt
             }
         } else {
             try? FileManager.default.createDirectory(at: cwd, withIntermediateDirectories: true)
         }
-        var args = Grok.args(cwd: cwd, extraDirs: extra, agent: agent, model: model, write: config.grok.write)
+        var args = Grok.args(cwd: cwd, extraDirs: extra, agent: agent, model: model, write: config.grok.write && !readOnly)
         // Nadaljevanje Grokove seje (prebrane datoteke, rezultati ukazov): ključ je dosedanji pogovor v tej mapi.
         let scope = Self.agentScope("grok", req, cwd: cwd)
         if agent, let existing = await Self.grokSessions.get(ClaudeCLI.key(all.dropLast(), scope: scope)) {

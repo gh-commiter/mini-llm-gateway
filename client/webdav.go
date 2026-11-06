@@ -34,6 +34,9 @@ func dav(status int, headers map[string]string, body []byte) davResponse {
 	return davResponse{Status: status, Headers: headers, Body: body}
 }
 
+// maxServe: največji kos datoteke v enem odgovoru (router sprejme odgovor do 64 MB, base64 doda tretjino).
+const maxServe = 32 << 20
+
 func davHandle(method, path string, headers map[string]string, body []byte, root, prefix string) davResponse {
 	r, err := filepath.EvalSymlinks(root)
 	if err != nil {
@@ -99,22 +102,31 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 		if isDir {
 			return dav(200, map[string]string{"Content-Type": "text/plain"}, nil)
 		}
-		data, err := os.ReadFile(p)
-		if err != nil {
-			return dav(403, nil, nil)
-		}
+		// Bere le zahtevani del (HEAD nič): odgovor gre v enem kosu prek routerja, ki sprejme do 64 MB (base64).
+		size := int(info.Size())
 		h := map[string]string{"Content-Type": "application/octet-stream", "Last-Modified": httpDate(info.ModTime()), "Accept-Ranges": "bytes"}
-		part, status := data, 200
+		start, n, status := 0, size, 200
 		if rg, ok := headers["range"]; ok {
-			if a, b, ok := parseRange(rg, len(data)); ok {
-				part = data[a : b+1]
-				h["Content-Range"] = fmt.Sprintf("bytes %d-%d/%d", a, b, len(data))
-				status = 206
+			if a, b, ok := parseRange(rg, size); ok {
+				start, n, status = a, b-a+1, 206
+				h["Content-Range"] = fmt.Sprintf("bytes %d-%d/%d", a, b, size)
 			}
 		}
 		if method == "HEAD" {
-			h["Content-Length"] = strconv.Itoa(len(part))
-			part = nil
+			h["Content-Length"] = strconv.Itoa(n)
+			return dav(status, h, nil)
+		}
+		if n > maxServe {
+			return dav(413, nil, nil) // takoj, namesto da router čaka na odgovor, ki ga ne more sprejeti
+		}
+		f, err := os.Open(p)
+		if err != nil {
+			return dav(403, nil, nil)
+		}
+		defer f.Close()
+		part := make([]byte, n)
+		if _, err := f.ReadAt(part, int64(start)); err != nil && err != io.EOF {
+			return dav(403, nil, nil)
 		}
 		return dav(status, h, part)
 

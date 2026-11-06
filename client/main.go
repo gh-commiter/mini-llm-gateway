@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const version = "0.5.6" // bump-version.sh
+const version = "0.5.7" // bump-version.sh
 
 type connection struct {
 	URL    string  `json:"url"`
@@ -283,7 +283,8 @@ func main() {
 		} else {
 			say("minigw connect <host[:port]> [--token T]   save router address and token (" + storeName + ")\n" +
 				"minigw status | models | disconnect\n" +
-				"minigw share add|remove [folder] | list    share a folder outside your home folder with the router\n" +
+				"minigw share add|remove [folder] | list    also share a system or hidden folder with the router\n" +
+				"minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)\n" +
 				"minigw [claude options …]                    run Claude Code through the router")
 		}
 		if first == "--minigw-help" {
@@ -293,6 +294,15 @@ func main() {
 	}
 
 	// Claude Code prek routerja.
+	// --minigw-ro (ali MINIGW_SHARE=ro): mapa samo za branje; zastavica ne gre naprej v claude.
+	readOnly := os.Getenv("MINIGW_SHARE") == "ro"
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--minigw-ro" {
+			readOnly = true
+			args = append(args[:i], args[i+1:]...)
+			i--
+		}
+	}
 	saved := requireConnection()
 	c := route(saved)
 	env := []string{
@@ -346,11 +356,15 @@ func main() {
 	}
 	env = append(env, "ANTHROPIC_CUSTOM_HEADERS="+headers)
 
-	share := &shareClient{c: c, session: sid, root: cwd}
+	share := &shareClient{c: c, session: sid, root: cwd, readOnly: readOnly}
 	if wantShare && sid != "" {
 		if share.register() {
 			share.start(4)
-			fmt.Fprintf(os.Stderr, "minigw: sharing %s with %s for Claude CLI models with tools (MINIGW_SHARE=0 to turn off)\n", cwd, routerHost)
+			mode := "read-write"
+			if readOnly {
+				mode = "read-only"
+			}
+			fmt.Fprintf(os.Stderr, "minigw: sharing %s %s with %s for agent models (--minigw-ro = read-only, MINIGW_SHARE=0 = off)\n", cwd, mode, routerHost)
 		} else {
 			fmt.Fprintln(os.Stderr, "minigw: router did not accept the folder; Claude CLI models with tools will not see it")
 		}

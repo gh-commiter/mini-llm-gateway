@@ -170,6 +170,7 @@ extension Router {
         let agent = (body["tools"] as? [Any])?.isEmpty == false
         var cwd = FileManager.default.temporaryDirectory.appendingPathComponent("minigateway-chat", isDirectory: true)
         var extra: [String] = []
+        var readOnly = false
         var prompt = ClaudeCLI.prompt(history: all.dropLast(), last: last)
         if agent {
             let clientCwd = req.header("x-claude-mini-cwd")
@@ -184,7 +185,8 @@ extension Router {
             extra = config.claudeCLI.allowedRoots.split(separator: ",").map { ClaudeCLI.expand($0.trimmingCharacters(in: .whitespaces)) }
                 .filter { $0 != "/" && !$0.isEmpty && $0 != dir.path && FileManager.default.fileExists(atPath: $0) }
             if let shared, let clientCwd {
-                prompt = "The user's folder \(clientCwd) (on their Mac) is mounted here as \(shared.path), your working directory. Map paths under \(clientCwd) to it.\n\n" + prompt
+                readOnly = await Self.shares.isReadOnly(session: req.header("x-claude-mini-session") ?? "")
+                prompt = Self.mountNote(clientCwd, shared, readOnly: readOnly) + "\n\n" + prompt
             }
         } else {
             try? FileManager.default.createDirectory(at: cwd, withIntermediateDirectories: true)
@@ -196,7 +198,7 @@ extension Router {
         let existing = agent ? await Self.codexSessions.get(ClaudeCLI.key(all.dropLast(), scope: scope)) : nil
         if existing != nil { prompt = last.text }
         let args = Codex.args(cwd: cwd, extraDirs: extra, agent: agent, output: output, model: model,
-                              write: config.codex.write, network: config.codex.network, resume: existing)
+                              write: config.codex.write && !readOnly, network: config.codex.network, resume: existing)
         let sessions = Self.codexSessions
         return await replyWhenDone(body: body, model: "claude-codex", rid: rid, writer: writer) {
             let (text, thread) = try await Codex.run(exe, args: args, cwd: cwd, prompt: prompt, output: output) { [onActivity] s in
