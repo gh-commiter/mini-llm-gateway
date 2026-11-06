@@ -231,12 +231,14 @@ The folder's own Claude Code settings and hooks are not loaded on the router Mac
 
 ## 5. Router settings
 
-Settings of the menu bar app on the router Mac (**Settings…**). Client options (`minigw share`, `--minigw-ro`,
+Settings of the menu bar app on the router Mac (**Settings…**, laid out like System Settings). Client options (`minigw share`, `--minigw-ro`,
 `MINIGW_SHARE`) are in [4. Use](#4-use).
 
 - **General** – listen address and port (default `127.0.0.1:8765`; use `0.0.0.0` or a LAN IP for other computers),
   allowed client IPs, unencrypted connections, access token, and About (version, build commit, license).
-- **LiteLLM / OpenRouter** – base URL, API key, and a switch per discovered model.
+- **Gateways** (LiteLLM, OpenRouter or any other Anthropic-compatible one) – name, base URL, API key, and a switch
+  per discovered model. **+ / −** under the sidebar adds or removes gateways, so you can use several, each with its own
+  key and models.
 - **Siri AI** – off by default; turning it on asks for Accessibility permission. Privacy warning and **Devices**:
   which other computers may use Siri (this Mac always may).
 - **Apple Foundation Models** – on-device model and its instructions.
