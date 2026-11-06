@@ -225,8 +225,8 @@ public final class Router: Sendable {
         }
         if config.claudeCLI.enabled, await probes.ok("claude-cli") {  // vgrajeni opus/sonnet/haiku so že v izbirniku Claude Code
             data += ["opus", "sonnet", "haiku"].map { m in
-                ["type": "model", "id": ClaudeCLI.chatPrefix + m, "display_name": "\(m.capitalized) chat · Claude CLI",
-                 "description": "claude -p · \(m) · no tools", "created_at": created]
+                ["type": "model", "id": ClaudeCLI.agentPrefix + m, "display_name": "\(m.capitalized) · Claude CLI",
+                 "description": "claude -p · \(m) · tools in your folder", "created_at": created]
             }
         }
         return ["data": data, "has_more": false,

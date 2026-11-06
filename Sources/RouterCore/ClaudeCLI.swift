@@ -1,16 +1,42 @@
 import CryptoKit
 import Foundation
 
-/// Ponudnik `claude -p`: vgrajeni modeli Claude Code (opus/sonnet/haiku/fable) in `claude-chat-<m>`.
+/// Ponudnik `claude -p`: vgrajeni modeli Claude Code (opus/sonnet/haiku/fable), `claude-cli-<m>` (agent) in `claude-chat-<m>` (brez orodij).
 public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
     public var enabled = false
     public var executable = ""                       // prazno = samodejno iskanje
     public var allowedRoots = "~/Development"        // ločeno z vejico
     public var tools = "Read,Grep,Glob"              // na voljo in samodejno dovoljena; prazno = brez orodij
     public var permissionMode = "dontAsk"            // brez vprašanj: kar ni dovoljeno, je zavrnjeno
+    public var allowLocalTools = false               // vsa orodja Claude Code na tem Macu brez vprašanj; preglasi tools/permissionMode
+    public var disabledTools: [String] = []          // izjeme pri allowLocalTools (tabela v nastavitvah)
     public var settingSources = "project,local"      // uporabnikove nastavitve (hooki, vtičniki) se ne naložijo
 
     public init() {}
+
+    /// Orodja z dostopom do datotek: dovoljena le v mapi seje in dovoljenih mapah (preverja Claude Code oz. sandbox).
+    static let pathTools: Set<String> = ["Read", "Edit", "Write", "MultiEdit", "NotebookEdit", "Glob", "Grep", "LS", "Bash"]
+
+    /// Orodja in dovoljenja agenta (claude -p ne more vprašati: kar ni dovoljeno, je zavrnjeno).
+    /// Z »Allow local tools« ima agent vsa orodja, a datoteke le v `cwd` in dovoljenih mapah:
+    /// Read/Edit/Write zunaj teh map niso dovoljeni, Bash teče v sandboxu Claude Code (brez branja domače mape,
+    /// pisanje le v teh mapah, omrežje dovoljeno), izhoda iz sandboxa ni.
+    func agentArgs(cwd: URL, allTools: [String]) -> [String] {
+        guard allowLocalTools else { return ["--tools", tools, "--allowedTools", tools, "--permission-mode", permissionMode] }
+        let dirs = [cwd.path] + allowedRoots.split(separator: ",").map { ClaudeCLI.expand($0.trimmingCharacters(in: .whitespaces)) }
+            .filter { $0 != "/" && !$0.isEmpty && $0 != cwd.path && FileManager.default.fileExists(atPath: $0) }
+        let sandbox: [String: Any] = ["sandbox": [
+            "enabled": true, "failIfUnavailable": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
+            "network": ["allowedDomains": ["*"]],
+            "filesystem": ["denyRead": ["~"], "allowRead": dirs, "allowWrite": dirs],
+        ]]
+        let settings = String(decoding: try! JSONSerialization.data(withJSONObject: sandbox, options: [.sortedKeys]), as: UTF8.self)
+        let others = allTools.filter { !Self.pathTools.contains($0) && !disabledTools.contains($0) }
+        return ["--tools", "default", "--permission-mode", "acceptEdits", "--settings", settings]
+            + dirs.dropFirst().flatMap { ["--add-dir", $0] }
+            + (others.isEmpty ? [] : ["--allowedTools", others.joined(separator: ",")])
+            + (disabledTools.isEmpty ? [] : ["--disallowedTools", disabledTools.joined(separator: ",")])
+    }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -20,19 +46,22 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
         allowedRoots = try c.decodeIfPresent(String.self, forKey: .allowedRoots) ?? d.allowedRoots
         tools = try c.decodeIfPresent(String.self, forKey: .tools) ?? d.tools
         permissionMode = try c.decodeIfPresent(String.self, forKey: .permissionMode) ?? d.permissionMode
+        allowLocalTools = try c.decodeIfPresent(Bool.self, forKey: .allowLocalTools) ?? d.allowLocalTools
+        disabledTools = try c.decodeIfPresent([String].self, forKey: .disabledTools) ?? d.disabledTools
         settingSources = try c.decodeIfPresent(String.self, forKey: .settingSources) ?? d.settingSources
     }
 }
 
 public enum ClaudeCLI {
     static let families = ["opus", "sonnet", "haiku", "fable"]
-    static let chatPrefix = "claude-chat-"
+    static let chatPrefix = "claude-chat-"  // brez orodij; ni več v seznamu, ostane zaradi shranjenih izbir
+    static let agentPrefix = "claude-cli-"  // agent z orodji v mapi seje (tudi priklopljeni mapi z drugega Maca)
 
     /// Model za `claude --model` in ali je način vsiljeno »chat« (brez orodij).
     static func match(_ model: String) -> (cliModel: String, chatOnly: Bool)? {
-        if model.hasPrefix(chatPrefix) {
-            let m = String(model.dropFirst(chatPrefix.count))
-            return families.contains(where: { m.hasPrefix($0) || m.hasPrefix("claude-\($0)") }) ? (m, true) : nil
+        for (prefix, chat) in [(chatPrefix, true), (agentPrefix, false)] where model.hasPrefix(prefix) {
+            let m = String(model.dropFirst(prefix.count))
+            return families.contains(where: { m.hasPrefix($0) || m.hasPrefix("claude-\($0)") }) ? (m, chat) : nil
         }
         if families.contains(model) { return (model, false) }
         return families.contains(where: { model.hasPrefix("claude-\($0)") }) ? (model, false) : nil
@@ -107,6 +136,31 @@ public enum ClaudeCLI {
         return .success(text.split(whereSeparator: \.isNewline).last.map(String.init) ?? text)
     }
 
+    /// Vgrajena orodja te različice Claude Code: prva vrstica `claude -p` (init) jih našteje, nato proces ustavimo,
+    /// še preden pošlje zahtevo modelu.
+    public static func availableTools(_ configured: String) async -> [String] {
+        guard let exe = executable(configured) else { return [] }
+        return await Task.detached {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: exe)
+            p.arguments = ["-p", "x", "--model", "haiku", "--output-format", "stream-json", "--verbose", "--tools", "default",
+                           "--setting-sources", "", "--strict-mcp-config", "--no-session-persistence"]
+            p.currentDirectoryURL = FileManager.default.temporaryDirectory
+            let out = Pipe()
+            p.standardOutput = out
+            p.standardError = FileHandle.nullDevice
+            p.standardInput = FileHandle.nullDevice
+            guard (try? p.run()) != nil else { return [] }
+            let killer = DispatchWorkItem { if p.isRunning { p.terminate() } }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 15, execute: killer)
+            defer { killer.cancel(); if p.isRunning { p.terminate() } }
+            var line = Data()
+            while let b = try? out.fileHandleForReading.read(upToCount: 1), let c = b.first, c != 10 { line.append(c) }
+            let tools = (try? JSONSerialization.jsonObject(with: line) as? [String: Any])?["tools"] as? [String]
+            return (tools ?? []).sorted()
+        }.value
+    }
+
     public struct ValidationError: Error, LocalizedError {
         public let message: String
         init(_ m: String) { message = m }
@@ -147,6 +201,17 @@ public enum ClaudeCLI {
         let allowed = roots.split(separator: ",").map { expand($0.trimmingCharacters(in: .whitespaces)) }.filter { $0 != "/" }
         guard allowed.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) else { return nil }
         return URL(fileURLWithPath: path, isDirectory: true)
+    }
+}
+
+/// Orodja nameščenega Claude Code (za --allowedTools), enkrat na izvršljivo datoteko.
+actor ToolList {
+    private var cache: [String: [String]] = [:]
+    func get(_ executable: String) async -> [String] {
+        if let t = cache[executable] { return t }
+        let t = await ClaudeCLI.availableTools(executable)
+        if !t.isEmpty { cache[executable] = t }
+        return t
     }
 }
 
@@ -235,6 +300,7 @@ struct StreamTranslator {
 extension Router {
     static let sessions = SessionRegistry()
     static let shares = ShareHub()
+    static let toolList = ToolList()
 
     /// Naslov tega routerja za lokalni mount_webdav.
     var localBase: String {
@@ -287,8 +353,8 @@ extension Router {
                 sessionID = id
                 prompt = ClaudeCLI.prompt(history: history, last: last)
             }
-            args += ["--tools", cfg.tools, "--allowedTools", cfg.tools, "--permission-mode", cfg.permissionMode,
-                     "--setting-sources", shared == nil ? cfg.settingSources : ""]  // hooki iz mape odjemalca ne tečejo tukaj
+            let allTools = cfg.allowLocalTools ? await Self.toolList.get(cfg.executable) : []
+            args += cfg.agentArgs(cwd: dir, allTools: allTools) + ["--setting-sources", shared == nil ? cfg.settingSources : ""]  // hooki iz mape odjemalca ne tečejo tukaj
         } else {
             cwd = FileManager.default.temporaryDirectory.appendingPathComponent("minigateway-chat", isDirectory: true)
             try? FileManager.default.createDirectory(at: cwd, withIntermediateDirectories: true)

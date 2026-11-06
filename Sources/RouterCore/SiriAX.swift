@@ -31,8 +31,9 @@ enum SiriAX {
         !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty
     }
 
-    /// Koren AX drevesa aplikacije z oknom. `open -a` (ne -g: brez okna Siri nima polja za vnos);
-    /// zagon ne krade fokusa.
+    /// Koren AX drevesa aplikacije z oknom. `open -j -a` (ne -g: brez okna Siri nima polja za vnos);
+    /// zagon ne krade fokusa, aplikacijo, ki jo zažene router, takoj skrije (skrita okna AX še vidi, Siri dela naprej).
+    /// Okna na drugem namizju (Space) AX ne vidi: Siri ne sme biti dodeljena drugemu namizju.
     static func app() async -> AXUIElement? {
         for attempt in 0..<2 {
             if let a = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first {
@@ -42,12 +43,17 @@ enum SiriAX {
             if attempt == 0 {
                 let p = Process()
                 p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-                p.arguments = ["-a", appPath]
+                p.arguments = ["-j", "-a", appPath]
                 try? p.run()
                 for _ in 0..<20 {
                     try? await Task.sleep(for: .milliseconds(250))
-                    if let a = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first,
-                       !windows(AXUIElementCreateApplication(a.processIdentifier)).isEmpty { break }
+                    if let a = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first {
+                        let root = AXUIElementCreateApplication(a.processIdentifier)
+                        if !windows(root).isEmpty {
+                            AXUIElementSetAttributeValue(root, kAXHiddenAttribute as CFString, kCFBooleanTrue)
+                            break
+                        }
+                    }
                 }
             }
         }

@@ -16,6 +16,8 @@ struct SettingsView: View {
     @State private var claudeStatus = (ok: true, text: "")
     @State private var axTrusted = AXIsProcessTrusted()
     @State private var cliStatus = ""
+    @State private var cliTools: [String] = []
+    @State private var selectedRoot: String?
 
     enum Pane: Hashable {
         case general, provider(String), siri, appleFM, claudeCLI
@@ -192,12 +194,65 @@ struct SettingsView: View {
                 .font(.caption)
             }
             Section {
-                TextField("Allowed folders (comma-separated)", text: $draft.claudeCLI.allowedRoots)
-                TextField("Tools (comma-separated; empty = none)", text: $draft.claudeCLI.tools)
-                Picker("Permission mode", selection: $draft.claudeCLI.permissionMode) {
-                    ForEach(["dontAsk", "acceptEdits", "auto", "plan"], id: \.self) { Text(verbatim: $0) }
+                ForEach(roots, id: \.self) { root in
+                    Label { Text(verbatim: root) } icon: { Image(systemName: "folder") }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                        .listRowBackground(selectedRoot == root ? Color.accentColor.opacity(0.2) : nil)
+                        .onTapGesture { selectedRoot = selectedRoot == root ? nil : root }
+                }
+                HStack(spacing: 0) {
+                    Button { addRoot() } label: { Image(systemName: "plus").frame(width: 22, height: 18) }
+                        .help("Add Folder…").accessibilityLabel("Add Folder…")
+                    Divider().frame(height: 16)
+                    Button { removeRoot() } label: { Image(systemName: "minus").frame(width: 22, height: 18) }
+                        .disabled(selectedRoot == nil).accessibilityLabel("Remove")
+                    Spacer()
+                }
+                .buttonStyle(.borderless)
+            } header: {
+                Text("Allowed folders")
+            } footer: {
+                Text("Agents work only in these folders. Folders shared from other Macs (minigw) are included automatically.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section {
+                Toggle("Allow local tools", isOn: $draft.claudeCLI.allowLocalTools)
+                    .help(String(localized: "Agents get every Claude Code tool on this Mac, but files only in the allowed folders: commands run in a sandbox that cannot read your home folder or write outside these folders."))
+                if !draft.claudeCLI.allowLocalTools {
+                    TextField("Tools (comma-separated; empty = none)", text: $draft.claudeCLI.tools)
+                    Picker("Permission mode", selection: $draft.claudeCLI.permissionMode) {
+                        ForEach(["dontAsk", "acceptEdits", "auto", "plan"], id: \.self) { Text(verbatim: $0) }
+                    }
                 }
                 TextField("Setting sources", text: $draft.claudeCLI.settingSources)
+            }
+            if draft.claudeCLI.allowLocalTools {
+                Section {
+                    ForEach(cliTools, id: \.self) { t in
+                        Toggle(isOn: Binding(get: { !draft.claudeCLI.disabledTools.contains(t) },
+                                             set: { on in
+                                                 draft.claudeCLI.disabledTools.removeAll { $0 == t }
+                                                 if !on { draft.claudeCLI.disabledTools.append(t) }
+                                             })) { Text(verbatim: t) }
+                    }
+                } header: {
+                    HStack {
+                        Text("Tools")
+                        Spacer()
+                        EqualWidthHStack {
+                            WideButton("Enable All") { draft.claudeCLI.disabledTools = [] }
+                            WideButton("Disable All") { draft.claudeCLI.disabledTools = cliTools }
+                        }
+                        .disabled(cliTools.isEmpty)
+                    }
+                    .controlSize(.small)
+                }
+                .task(id: draft.claudeCLI.executable) {
+                    // Izjeme, ki jih ta različica Claude Code ne pozna, ostanejo v nastavitvah in so tudi prikazane.
+                    let found = await ClaudeCLI.availableTools(draft.claudeCLI.executable)
+                    cliTools = Array(Set(found + draft.claudeCLI.disabledTools)).sorted()
+                }
             }
             Section {
                 LabeledContent {
@@ -253,6 +308,27 @@ struct SettingsView: View {
         case .failure(let e):
             return (false, String(localized: "Invalid: \(e.message)"))
         }
+    }
+
+    /// Dovoljene mape (shranjene ločeno z vejico, kot doslej).
+    private var roots: [String] {
+        draft.claudeCLI.allowedRoots.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+
+    private func addRoot() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = true
+        panel.prompt = String(localized: "Add")
+        guard panel.runModal() == .OK else { return }
+        let added = panel.urls.map { ($0.path as NSString).abbreviatingWithTildeInPath }.filter { !roots.contains($0) }
+        draft.claudeCLI.allowedRoots = (roots + added).joined(separator: ",")
+    }
+
+    private func removeRoot() {
+        draft.claudeCLI.allowedRoots = roots.filter { $0 != selectedRoot }.joined(separator: ",")
+        selectedRoot = nil
     }
 
     private func chooseClaude() {

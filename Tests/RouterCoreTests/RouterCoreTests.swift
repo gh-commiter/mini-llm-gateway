@@ -112,10 +112,26 @@ func makeRouter(session: URLSession = .shared) -> Router {
 
 
 
-@Test func cliModelMatching() {
+@Test func cliModelMatching() throws {
     #expect(ClaudeCLI.match("claude-opus-5-5")! == ("claude-opus-5-5", false))
     #expect(ClaudeCLI.match("haiku")! == ("haiku", false))
     #expect(ClaudeCLI.match("claude-chat-sonnet")! == ("sonnet", true))
+    #expect(ClaudeCLI.match("claude-cli-sonnet")! == ("sonnet", false))
+    var cli = ClaudeCLIConfig()
+    let cwd = URL(fileURLWithPath: "/tmp/session")
+    #expect(cli.agentArgs(cwd: cwd, allTools: []) == ["--tools", "Read,Grep,Glob", "--allowedTools", "Read,Grep,Glob", "--permission-mode", "dontAsk"])
+    cli.allowLocalTools = true
+    cli.allowedRoots = "/tmp"
+    cli.disabledTools = ["WebSearch"]
+    let a = cli.agentArgs(cwd: cwd, allTools: ["Bash", "Edit", "Read", "Task", "WebFetch", "WebSearch"])
+    #expect(!a.contains("--dangerously-skip-permissions") && a.contains("acceptEdits"))
+    #expect(a.contains("--add-dir") && a.contains("/tmp"))
+    // datotečna orodja niso splošno dovoljena (veljajo le v mapah), ostala da; izjeme ostanejo zavrnjene
+    #expect(a[a.firstIndex(of: "--allowedTools")! + 1] == "Task,WebFetch")
+    #expect(a.suffix(2) == ["--disallowedTools", "WebSearch"])
+    let settings = try JSONSerialization.jsonObject(with: Data(a[a.firstIndex(of: "--settings")! + 1].utf8)) as! [String: Any]
+    let sb = settings["sandbox"] as! [String: Any], fs = sb["filesystem"] as! [String: [String]]
+    #expect(sb["allowUnsandboxedCommands"] as? Bool == false && fs["denyRead"] == ["~"] && fs["allowWrite"] == ["/tmp/session", "/tmp"])
     #expect(ClaudeCLI.match("claude-siri-ai") == nil)
     #expect(ClaudeCLI.match("claude-chat-gpt") == nil)
 }
@@ -189,7 +205,7 @@ func makeRouter(session: URLSession = .shared) -> Router {
     let on = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]))
     let w2 = FakeWriter()
     await on.handle(request("GET", "/v1/models", headers: ["x-api-key": "tok"]), writer: w2)
-    #expect(w2.text.contains("claude-chat-opus") && w2.text.contains("claude-chat-haiku"))
+    #expect(w2.text.contains("claude-cli-opus") && w2.text.contains("claude-cli-haiku") && !w2.text.contains("claude-chat-"))
     let w3 = FakeWriter()  // agent brez veljavne mape → jasna napaka, brez zagona claude
     await on.handle(request("POST", "/v1/messages", headers: ["x-api-key": "tok", "x-claude-mini-cwd": "/nonexistent"],
                             body: #"{"model":"claude-opus-5-5","tools":[{"name":"Read"}],"messages":[{"role":"user","content":"hi"}]}"#), writer: w3)
@@ -465,4 +481,10 @@ func makeRouter(session: URLSession = .shared) -> Router {
     defer { bad.stop() }
     #expect(bad.localPort != proxy.stablePort && bad.localPort != 0)  // port zaseden → naključen
     #expect(await get(bad.localURL, "/v1/models").0 == 0)  // napačen ključ: router prekine
+}
+
+@Test func availableToolsFromInstalledClaude() async throws {
+    try #require(ClaudeCLI.detected != nil)  // brez nameščenega Claude Code ni česa preveriti
+    let tools = await ClaudeCLI.availableTools("")
+    #expect(tools.contains("Bash") && tools.contains("Edit") && tools.contains("Read"))
 }
