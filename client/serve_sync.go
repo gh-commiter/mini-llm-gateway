@@ -2,7 +2,7 @@ package main
 
 // minigw serve: mape odjemalcev le v načinu sync (kot ShareHub v RouterCore/Shares.swift). minigw sprašuje po poslih
 // (long poll); SYNC-PUSH pred agentom pošlje manifest in datoteke v kopijo, SYNC-PULL po agentu prevzame spremembe.
-// Kopija je v scratch/sync/<naprava>/<mapa>; do nje pride le naprava, ki je mapo registrirala.
+// Kopija je v scratch/sync/<lastnik>/<mapa>; do nje pride le lastnik, ki je mapo registriral (naprava ali »local«).
 
 import (
 	"context"
@@ -16,17 +16,17 @@ import (
 )
 
 type serveShare struct {
-	session, key, cwd, copy, device string
-	readOnly                        bool
-	jobs                            chan davJob
-	replies                         map[string]chan davResponse
-	done                            chan struct{} // zaprt ob odjavi: zbudi čakajoče
-	lastSeen                        time.Time
-	state                           map[string]syncEntry  // kopija, kot jo ima odjemalec; nil = še ni prenosa
-	incoming                        map[string]syncEntry  // zadnji manifest odjemalca (preverjanje prejetih datotek)
-	pending                         map[string]*syncEntry // poslane spremembe agenta (nil = izbris) do potrditve
-	big                             map[string]bool       // že javljene prevelike datoteke
-	execKnown                       bool                  // odjemalec pozna bit x (ne Windows)
+	session, key, cwd, copy, owner string
+	readOnly                       bool
+	jobs                           chan davJob
+	replies                        map[string]chan davResponse
+	done                           chan struct{} // zaprt ob odjavi: zbudi čakajoče
+	lastSeen                       time.Time
+	state                          map[string]syncEntry  // kopija, kot jo ima odjemalec; nil = še ni prenosa
+	incoming                       map[string]syncEntry  // zadnji manifest odjemalca (preverjanje prejetih datotek)
+	pending                        map[string]*syncEntry // poslane spremembe agenta (nil = izbris) do potrditve
+	big                            map[string]bool       // že javljene prevelike datoteke
+	execKnown                      bool                  // odjemalec pozna bit x (ne Windows)
 }
 
 type shareHub struct {
@@ -56,9 +56,9 @@ func (h *shareHub) byKey(key string) *serveShare {
 	return nil
 }
 
-// share: le za napravo, ki je mapo registrirala (druga z istim ključem je ne doseže). Klicati pod h.mu.
-func (h *shareHub) share(key, device string) *serveShare {
-	if s := h.byKey(key); s != nil && s.device == device {
+// share: le za lastnika, ki je mapo registriral (drug z istim ključem je ne doseže; "" nikoli). Klicati pod h.mu.
+func (h *shareHub) share(key, owner string) *serveShare {
+	if s := h.byKey(key); s != nil && owner != "" && s.owner == owner {
 		return s
 	}
 	return nil
@@ -80,11 +80,11 @@ func (h *shareHub) isRefused(session string) bool {
 }
 
 // register: false, če ima seja že mapo drugega lastnika (brez njegovega ključa je ni mogoče prevzeti).
-func (h *shareHub) register(session, cwd, key string, readOnly bool, copy, device string) (string, bool) {
+func (h *shareHub) register(session, cwd, key string, readOnly bool, copy, owner string) (string, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if s := h.bySession[session]; s != nil {
-		if s.key != key {
+		if s.key != key || s.owner != owner {
 			return "", false
 		}
 		if s.cwd == cwd && s.readOnly == readOnly && s.copy == copy {
@@ -94,7 +94,7 @@ func (h *shareHub) register(session, cwd, key string, readOnly bool, copy, devic
 		h.close(s)
 	}
 	delete(h.refused, session)
-	s := &serveShare{session: session, key: newKey(), cwd: cwd, copy: copy, device: device, readOnly: readOnly,
+	s := &serveShare{session: session, key: newKey(), cwd: cwd, copy: copy, owner: owner, readOnly: readOnly,
 		jobs: make(chan davJob, 64), replies: map[string]chan davResponse{}, done: make(chan struct{}),
 		lastSeen: time.Now(), big: map[string]bool{}, execKnown: true}
 	h.bySession[session] = s
@@ -125,18 +125,18 @@ func (h *shareHub) close(s *serveShare) {
 	close(s.done)
 }
 
-func (h *shareHub) unregister(key string) {
+func (h *shareHub) unregister(key, owner string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if s := h.byKey(key); s != nil {
+	if s := h.share(key, owner); s != nil {
 		h.close(s)
 	}
 }
 
 // poll: naslednji posel ali nil po 25 s; false, če mape ni (→ 404, minigw se registrira znova).
-func (h *shareHub) poll(ctx context.Context, key string) (*davJob, bool) {
+func (h *shareHub) poll(ctx context.Context, key, owner string) (*davJob, bool) {
 	h.mu.Lock()
-	s := h.byKey(key)
+	s := h.share(key, owner)
 	if s != nil {
 		s.lastSeen = time.Now()
 	}
@@ -155,9 +155,9 @@ func (h *shareHub) poll(ctx context.Context, key string) (*davJob, bool) {
 	return nil, true
 }
 
-func (h *shareHub) reply(key string, r davReply) bool {
+func (h *shareHub) reply(key, owner string, r davReply) bool {
 	h.mu.Lock()
-	s := h.byKey(key)
+	s := h.share(key, owner)
 	var ch chan davResponse
 	if s != nil {
 		s.lastSeen = time.Now()
@@ -193,15 +193,15 @@ func (h *shareHub) send(s *serveShare, method string, timeout time.Duration) *da
 	return nil
 }
 
-// waitShare: mapa seje (le naprave, ki jo je registrirala). wait: po ponovnem zagonu routerja počaka do 30 s,
+// waitShare: mapa seje (le lastnika, ki jo je registriral). wait: po ponovnem zagonu routerja počaka do 30 s,
 // da jo minigw znova registrira; ne čaka na seje, zavrnjene zaradi načina direct.
-func (h *shareHub) waitShare(ctx context.Context, session, device string, wait bool) *serveShare {
+func (h *shareHub) waitShare(ctx context.Context, session, owner string, wait bool) *serveShare {
 	for i := 0; ; i++ {
 		h.mu.Lock()
 		s, refused := h.bySession[session], h.refused[session]
 		h.mu.Unlock()
 		if s != nil {
-			if s.device != device {
+			if owner == "" || s.owner != owner {
 				return nil
 			}
 			return s
@@ -214,8 +214,8 @@ func (h *shareHub) waitShare(ctx context.Context, session, device string, wait b
 }
 
 // lock: ena zahteva agenta naenkrat na kopijo (prenos → agent → prevzem); "" = seja nima kopije. Napaka = prekinjeno.
-func (h *shareHub) lock(ctx context.Context, session, device string, wait bool) (string, error) {
-	s := h.waitShare(ctx, session, device, wait)
+func (h *shareHub) lock(ctx context.Context, session, owner string, wait bool) (string, error) {
+	s := h.waitShare(ctx, session, owner, wait)
 	if s == nil {
 		return "", ctx.Err()
 	}
@@ -296,9 +296,9 @@ func syncDiff(old, cur map[string]syncEntry, root string) syncChanges {
 
 // syncManifest: manifest odjemalca → poti, ki jih kopija potrebuje; datoteke, ki jih odjemalec nima več, izbriše.
 // Še nepotrjenih sprememb agenta (kept) ne prepiše in ne izbriše; gredo z naslednjim prevzemom.
-func (h *shareHub) syncManifest(key string, files []syncEntry, execKnown bool, device string) (need, kept []string, ok bool) {
+func (h *shareHub) syncManifest(key string, files []syncEntry, execKnown bool, owner string) (need, kept []string, ok bool) {
 	h.mu.Lock()
-	s := h.share(key, device)
+	s := h.share(key, owner)
 	if s == nil {
 		h.mu.Unlock()
 		return nil, nil, false
@@ -361,10 +361,10 @@ func (h *shareHub) syncManifest(key string, files []syncEntry, execKnown bool, d
 }
 
 // syncPut: datoteka iz manifesta; vsebina se mora ujemati z njim. Status HTTP.
-func (h *shareHub) syncPut(key, path string, data []byte, device string) int {
+func (h *shareHub) syncPut(key, path string, data []byte, owner string) int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	s := h.share(key, device)
+	s := h.share(key, owner)
 	if s == nil {
 		return 404
 	}
@@ -392,9 +392,9 @@ func (h *shareHub) syncPut(key, path string, data []byte, device string) int {
 }
 
 // syncChanges: spremembe agenta od zadnjega prenosa; stanje se premakne šele s potrditvijo (syncAck).
-func (h *shareHub) syncChanges(key, device string) (syncChanges, bool) {
+func (h *shareHub) syncChanges(key, owner string) (syncChanges, bool) {
 	h.mu.Lock()
-	s := h.share(key, device)
+	s := h.share(key, owner)
 	if s == nil || s.readOnly || s.state == nil {
 		h.mu.Unlock()
 		return syncChanges{}, false
@@ -426,10 +426,10 @@ func (h *shareHub) syncChanges(key, device string) (syncChanges, bool) {
 }
 
 // syncAck: minigw potrdi poti, ki jih je obdelal (zapisal, izbrisal ali shranil kot spor).
-func (h *shareHub) syncAck(key string, paths []string, device string) bool {
+func (h *shareHub) syncAck(key string, paths []string, owner string) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	s := h.share(key, device)
+	s := h.share(key, owner)
 	if s == nil || s.state == nil {
 		return false
 	}
@@ -449,9 +449,9 @@ func (h *shareHub) syncAck(key string, paths []string, device string) bool {
 }
 
 // syncGet: datoteka kopije za minigw (le poslane spremembe, nikoli prezrte ali zunaj kopije).
-func (h *shareHub) syncGet(key, path, device string) ([]byte, bool) {
+func (h *shareHub) syncGet(key, path, owner string) ([]byte, bool) {
 	h.mu.Lock()
-	s := h.share(key, device)
+	s := h.share(key, owner)
 	if s == nil || s.readOnly || s.pending[path] == nil {
 		h.mu.Unlock()
 		return nil, false

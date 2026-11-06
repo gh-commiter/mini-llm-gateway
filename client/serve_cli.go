@@ -15,6 +15,9 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -54,20 +57,128 @@ func cliMatch(model string) (string, bool, bool) {
 	return model, false, fam(model) && strings.HasPrefix(model, "claude-")
 }
 
-func (s *server) claudeExe() string {
-	if s.cfg.Claude != "" {
-		if st, err := os.Stat(s.cfg.Claude); err == nil && !st.IsDir() {
-			return s.cfg.Claude
+// validModel: ID modela (tudi za --model): male črke, števke, ».-[]« (npr. »claude-opus-4-8[1m]«).
+var validModel = regexp.MustCompile(`^[a-z0-9][a-z0-9.\-\[\]]{0,63}$`)
+
+// resolveClaude: claude.exe (ali claude) ali node + cli.js; nikoli .cmd/.bat: Windows jih zažene prek cmd.exe, ki
+// argumente razčleni drugače, kot jih Go kodira (BatBadBut, vrivanje ukazov). nil = ni nameščen.
+func resolveClaude(configured string) ([]string, error) {
+	p := configured
+	if p == "" {
+		if runtime.GOOS == "windows" {
+			p, _ = exec.LookPath("claude.exe")
 		}
-		return ""
+		if p == "" {
+			if p, _ = exec.LookPath("claude"); p == "" {
+				return nil, nil
+			}
+		}
+	} else if st, err := os.Stat(p); err != nil || st.IsDir() {
+		return nil, fmt.Errorf("claude not found at %s (\"claude\" in the config)", p)
 	}
-	p, _ := exec.LookPath("claude")
-	return p
+	ext := strings.ToLower(filepath.Ext(p))
+	if runtime.GOOS != "windows" || ext == ".exe" {
+		return []string{p}, nil
+	}
+	// Ovojnica npm (claude.cmd): paket je v node_modules ob njej.
+	js := filepath.Join(filepath.Dir(p), "node_modules", "@anthropic-ai", "claude-code", "cli.js")
+	node, _ := exec.LookPath("node.exe")
+	if _, err := os.Stat(js); err != nil || node == "" {
+		return nil, fmt.Errorf("%s is not an .exe and minigw serve does not run batch files (unsafe argument quoting): install the native Claude Code (claude.exe) or set \"claude\" in the config to it", p)
+	}
+	return []string{node, js}, nil
+}
+
+func hasBash(tools string) bool {
+	for _, t := range strings.Split(tools, ",") {
+		if strings.TrimSpace(t) == "Bash" {
+			return true
+		}
+	}
+	return false
+}
+
+// Orodja z dostopom do datotek: dovoljena le v delovni mapi (./**).
+var pathTools = map[string]bool{"Read": true, "Edit": true, "Write": true, "MultiEdit": true, "NotebookEdit": true, "Glob": true, "Grep": true, "LS": true}
+
+// ruleAbs: absolutna pot za pravilo dovoljenj Claude Code (»//pot«; Windows »C:\x« → »//c/x«).
+func ruleAbs(p string) string {
+	p = filepath.ToSlash(p)
+	if len(p) >= 2 && p[1] == ':' {
+		p = "/" + strings.ToLower(p[:1]) + p[2:]
+	}
+	return "/" + p
+}
+
+// agentArgs: orodja agenta le v delovni mapi; mapa nastavitev (žeton, ključ routerja) prepovedana. Razen na Windows še
+// sandbox Claude Code (kot ClaudeCLI.agentArgs): Bash ne bere domače mape in piše le v kopijo; z Bash je obvezen.
+func (s *server) agentArgs(dir string) []string {
+	var tools, allowed []string
+	for _, t := range strings.Split(s.cfg.Tools, ",") {
+		switch t = strings.TrimSpace(t); {
+		case t == "":
+			continue
+		case pathTools[t]:
+			allowed = append(allowed, t+"(./**)")
+		case t != "Bash" || runtime.GOOS == "windows": // Bash v sandboxu dovoli autoAllowBashIfSandboxed
+			allowed = append(allowed, t)
+		}
+		tools = append(tools, t)
+	}
+	cfg := ruleAbs(s.cfgDir) + "/**"
+	args := []string{"--tools", strings.Join(tools, ","), "--allowedTools", strings.Join(allowed, ","),
+		"--disallowedTools", "Read(" + cfg + "),Edit(" + cfg + "),Write(" + cfg + ")", "--permission-mode", s.cfg.PermissionMode}
+	if runtime.GOOS != "windows" {
+		settings, _ := json.Marshal(map[string]any{"sandbox": map[string]any{
+			"enabled": true, "failIfUnavailable": hasBash(s.cfg.Tools), "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
+			"network":    map[string]any{"allowedDomains": []string{"*"}},
+			"filesystem": map[string]any{"denyRead": []string{"~", s.cfgDir}, "allowRead": []string{dir}, "allowWrite": []string{dir}},
+		}})
+		args = append(args, "--settings", string(settings))
+	}
+	return args
+}
+
+// promptFile: besedilo za --system-prompt-file / --append-system-prompt-file (0600, ne v argv).
+func (s *server) promptFile(text string) (string, error) {
+	f, err := os.CreateTemp(s.cfg.scratch("prompts"), "p-*.txt")
+	if err != nil {
+		return "", err
+	}
+	_, err = f.WriteString(text)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return f.Name(), err
+}
+
+// tailBuffer: zadnjih 4000 bajtov (stderr procesa claude).
+type tailBuffer struct {
+	mu sync.Mutex
+	b  []byte
+}
+
+func (t *tailBuffer) Write(p []byte) (int, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.b = append(t.b, p...); len(t.b) > 8000 {
+		t.b = append([]byte{}, t.b[len(t.b)-4000:]...)
+	}
+	return len(p), nil
+}
+
+func (t *tailBuffer) String() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if len(t.b) > 4000 {
+		return string(t.b[len(t.b)-4000:])
+	}
+	return string(t.b)
 }
 
 func (s *server) modelList() map[string]any {
 	data := []map[string]any{}
-	if s.claudeExe() != "" {
+	if len(s.claude) > 0 {
 		for _, m := range cliFamilies[:3] {
 			data = append(data, map[string]any{"type": "model", "id": cliAgentPrefix + m,
 				"display_name": strings.ToUpper(m[:1]) + m[1:] + " · Claude CLI",
@@ -298,6 +409,9 @@ func (s *server) messages(w http.ResponseWriter, r *req) (int, string) {
 		return writeError(w, r.rid, 400, "Body must be JSON with a model field"), ""
 	}
 	cliModel, chat, ok := cliMatch(model)
+	if !validModel.MatchString(model) || !validModel.MatchString(cliModel) {
+		return writeError(w, r.rid, 400, "Invalid model name"), "?"
+	}
 	if !ok {
 		return writeError(w, r.rid, 404, "Unknown model: "+model), model
 	}
@@ -306,7 +420,7 @@ func (s *server) messages(w http.ResponseWriter, r *req) (int, string) {
 	}
 	tools, _ := body["tools"].([]any)
 	if len(tools) > 0 { // sync: ena zahteva agenta naenkrat na kopijo
-		copyDir, err := s.hub.lock(r.Context(), r.h("x-claude-mini-session"), r.deviceID(), r.h("x-claude-mini-share") == "1")
+		copyDir, err := s.hub.lock(r.Context(), r.h("x-claude-mini-session"), r.owner(), r.h("x-claude-mini-share") == "1")
 		if err != nil {
 			return 499, model // Claude Code je med čakanjem prekinil
 		}
@@ -326,10 +440,11 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	args := []string{"-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
 		"--model", cliModel, "--strict-mcp-config", "--setting-sources", ""} // hooki in nastavitve iz mape odjemalca ne tečejo tukaj
 	prompt, session, scope, sessionID := last.text, r.h("x-claude-mini-session"), "", ""
-	var dir string
+	var dir, extra string // extra: --append-system-prompt-file ali --system-prompt-file
+	extraFlag := "--append-system-prompt-file"
 	if !chat {
 		clientCwd := r.h("x-claude-mini-cwd")
-		share := s.hub.waitShare(r.Context(), session, r.deviceID(), r.h("x-claude-mini-share") == "1")
+		share := s.hub.waitShare(r.Context(), session, r.owner(), r.h("x-claude-mini-share") == "1")
 		switch {
 		case share != nil:
 			if dir = s.hub.push(share); dir == "" {
@@ -341,12 +456,12 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			} else {
 				note += " whose changed source files are copied back to the user when you finish. Map paths under " + clientCwd + " to it."
 			}
-			args = append(args, "--append-system-prompt", note)
+			extra = note
 		case s.hub.isRefused(session) || s.cfg.Folder == "":
 			return writeError(w, r.rid, 400, refusedDirect)
 		default:
 			dir = s.cfg.Folder
-			args = append(args, "--append-system-prompt", "Your working directory is "+dir+" on the router, not the user's folder "+clientCwd+".")
+			extra = "Your working directory is " + dir + " on the router, not the user's folder " + clientCwd + "."
 		}
 		scope = session + "|" + dir
 		if id := s.sessions.get(transcriptKey(history, scope)); id != "" {
@@ -357,21 +472,32 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			args = append(args, "--session-id", sessionID)
 			prompt = cliPrompt(history, last)
 		}
-		args = append(args, "--tools", s.cfg.Tools, "--allowedTools", s.cfg.Tools, "--permission-mode", s.cfg.PermissionMode)
+		args = append(args, s.agentArgs(dir)...)
 	} else {
 		dir = s.cfg.scratch("chat")
 		prompt = cliPrompt(history, last)
 		args = append(args, "--tools", "", "--no-session-persistence")
-		if sys := systemText(body["system"]); sys != "" {
-			args = append(args, "--system-prompt", sys)
+		extra, extraFlag = systemText(body["system"]), "--system-prompt-file"
+	}
+	if extra != "" { // prosto besedilo (glave odjemalca, sistemski poziv) nikoli v argv
+		f, err := s.promptFile(extra)
+		if err != nil {
+			return writeError(w, r.rid, 500, "Cannot write the prompt file: "+err.Error())
 		}
+		defer os.Remove(f)
+		args = append(args, extraFlag, f)
 	}
 
-	exe := s.claudeExe()
-	if exe == "" {
+	if len(s.claude) == 0 {
 		return writeError(w, r.rid, 503, "claude not found on the router (install Claude Code or set \"claude\" in the config)")
 	}
-	cmd := exec.CommandContext(r.Context(), exe, args...)
+	select { // največ 6 procesov claude hkrati
+	case s.procs <- struct{}{}:
+		defer func() { <-s.procs }()
+	case <-r.Context().Done():
+		return 499
+	}
+	cmd := exec.CommandContext(r.Context(), s.claude[0], append(s.claude[1:], args...)...)
 	cmd.Dir = dir
 	for _, e := range os.Environ() { // sicer bi notranji claude klical nazaj ta router
 		if !strings.HasPrefix(e, "ANTHROPIC_") && !strings.HasPrefix(e, "CLAUDE_CODE_") && !strings.HasPrefix(e, "CLAUDECODE=") {
@@ -379,8 +505,8 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		}
 	}
 	cmd.Stdin = strings.NewReader(prompt)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
+	stderr := &tailBuffer{}
+	cmd.Stderr = stderr
 	stdout, err := cmd.StdoutPipe()
 	if err == nil {
 		err = cmd.Start()
@@ -434,7 +560,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			before := t.step
 			send(t.feed(line))
 			if t.step != before {
-				s.log.Printf("%s step: %s", r.rid, t.step)
+				s.log.Printf("%s step: %q", r.rid, t.step)
 			}
 		}
 		if err != nil {
@@ -451,10 +577,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	}
 	msg := t.resultError
 	if msg == "" && werr != nil && t.text == "" {
-		if msg = strings.TrimSpace(stderr.String()); len(msg) > 4000 {
-			msg = msg[len(msg)-4000:]
-		}
-		if msg == "" {
+		if msg = strings.TrimSpace(stderr.String()); msg == "" {
 			msg = "claude failed: " + werr.Error()
 		}
 	}

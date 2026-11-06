@@ -35,7 +35,7 @@ func testServer(t *testing.T, mod func(*serveConfig)) (*server, *ecdh.PrivateKey
 	if mod != nil {
 		mod(&c)
 	}
-	s, err := newServer(c)
+	s, err := newServer(c, filepath.Join(t.TempDir(), "serve.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +222,7 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":3}}'
 }
 
 func TestServeRefusesDirectMode(t *testing.T) {
-	s, _ := testServer(t, func(c *serveConfig) { c.Claude = "/nonexistent" })
+	s, _ := testServer(t, func(c *serveConfig) { c.Claude = "/bin/sh" })
 	c := startLoopback(t, s)
 	sc := &shareClient{c: c, session: "sid2", root: t.TempDir(), synced: map[string]syncEntry{}, reported: map[string]bool{}}
 	if sc.register() || !strings.Contains(sc.refusal, "--minigw-work=sync only") {
@@ -232,5 +232,91 @@ func TestServeRefusesDirectMode(t *testing.T) {
 	st, data := call(c, "POST", "/v1/messages", map[string]string{"x-claude-mini-session": "sid2", "x-claude-mini-share": "1"}, []byte(body), 5*time.Second)
 	if st != 400 || !strings.Contains(string(data), "sync only") {
 		t.Fatalf("agent without sync: %d %s", st, data)
+	}
+}
+
+func TestServeRejectsBadModelsBodiesAndForeignOwners(t *testing.T) {
+	s, _ := testServer(t, func(c *serveConfig) { c.Claude = "/bin/sh" })
+	c := startLoopback(t, s)
+	for _, m := range []string{`claude-cli-opus\" & calc & \"`, "claude-cli-opus x", "Claude-cli-opus", "claude-cli-" + strings.Repeat("a", 70)} {
+		body, _ := json.Marshal(map[string]any{"model": m, "messages": []any{map[string]string{"role": "user", "content": "x"}}})
+		if st, _ := call(c, "POST", "/v1/messages", nil, body, 5*time.Second); st != 400 {
+			t.Fatalf("model %q: %d", m, st)
+		}
+	}
+	big := make([]byte, 2<<20)
+	if st, _ := call(c, "POST", "/minigw/sync/ack", nil, big, 5*time.Second); st != 413 {
+		t.Fatalf("2 MB ack: %d", st)
+	}
+	if st, _ := call(connection{URL: c.URL, Token: "wrong"}, "PUT", "/minigw/sync/file", nil, big, 5*time.Second); st != 401 {
+		t.Fatalf("auth before body: %d", st)
+	}
+
+	// Mapa lastnika »local« (loopback) ni dosegljiva brez naprave ali z drugo napravo.
+	k, _ := s.hub.register("sid", "/x", "", false, filepath.Join(t.TempDir(), "copy"), "local")
+	for _, owner := range []string{"", "other-device"} {
+		if _, ok := s.hub.poll(t.Context(), k, owner); ok {
+			t.Fatalf("poll as %q", owner)
+		}
+		if _, _, ok := s.hub.syncManifest(k, nil, true, owner); ok {
+			t.Fatalf("manifest as %q", owner)
+		}
+		if s.hub.waitShare(t.Context(), "sid", owner, false) != nil {
+			t.Fatalf("waitShare as %q", owner)
+		}
+	}
+	if s.cfg.deviceAllowed(nil, false) {
+		t.Fatal("remote client without a device key allowed")
+	}
+
+	// Orodja agenta le v delovni mapi; mapa nastavitev prepovedana.
+	args := strings.Join(s.agentArgs("/copy"), " ")
+	for _, want := range []string{"Read(./**)", "Edit(./**)", "Write(./**)", "Grep(./**)", "Read(/" + filepath.ToSlash(s.cfgDir) + "/**)"} {
+		if !strings.Contains(args, want) {
+			t.Fatalf("agent args lack %s: %s", want, args)
+		}
+	}
+	if ruleAbs(`C:\Users\me`) != "//c/Users/me" && runtime.GOOS == "windows" {
+		t.Fatal(ruleAbs(`C:\Users\me`))
+	}
+}
+
+// Z resničnim claude (MINIGW_REAL_CLAUDE=1, en kratek klic haiku): agent bere v kopiji, ne pa nastavitev ali zunaj nje.
+func TestServeRealClaudeStaysInCopy(t *testing.T) {
+	exe, _ := resolveClaude("")
+	if os.Getenv("MINIGW_REAL_CLAUDE") != "1" || exe == nil {
+		t.Skip("set MINIGW_REAL_CLAUDE=1 with Claude Code installed")
+	}
+	base, _ := filepath.EvalSymlinks(t.TempDir())
+	cfgPath := filepath.Join(base, "cfg", "serve.json")
+	os.MkdirAll(filepath.Dir(cfgPath), 0o700)
+	os.WriteFile(cfgPath, []byte(`{"token":"CONFIG-SECRET-7731"}`), 0o600)
+	os.WriteFile(filepath.Join(base, "outside.txt"), []byte("OUTSIDE-SECRET-4410"), 0o600)
+	k, _ := ecdh.X25519().GenerateKey(rand.Reader)
+	s, err := newServer(serveConfig{Token: "tok", Key: base64url(k.Bytes()), Tools: defaultTools, PermissionMode: "dontAsk",
+		Scratch: filepath.Join(base, "scratch")}, cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := startLoopback(t, s)
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "note.txt"), []byte("INSIDE-OK-5521"), 0o644)
+	sc := &shareClient{c: c, session: newUUID(), root: dir, sync: true, synced: map[string]syncEntry{}, reported: map[string]bool{}}
+	if !sc.register() {
+		t.Fatal(sc.refusal)
+	}
+	sc.start(2)
+	defer sc.unregister()
+	prompt := "Use the Read tool on each of these files and print each file's exact contents (or the exact error): " +
+		"note.txt, " + cfgPath + ", ../../../../cfg/serve.json, " + filepath.Join(base, "outside.txt") + ", ../../../../outside.txt"
+	body, _ := json.Marshal(map[string]any{"model": "claude-cli-haiku", "tools": []any{map[string]string{"name": "x"}},
+		"messages": []any{map[string]string{"role": "user", "content": prompt}}})
+	st, data := call(c, "POST", "/v1/messages", map[string]string{"x-claude-mini-session": sc.session, "x-claude-mini-cwd": dir}, body, 300*time.Second)
+	t.Logf("%d %s", st, data)
+	if st != 200 || !strings.Contains(string(data), "INSIDE-OK-5521") {
+		t.Fatal("agent could not read inside the copy")
+	}
+	if strings.Contains(string(data), "CONFIG-SECRET") || strings.Contains(string(data), "OUTSIDE-SECRET") {
+		t.Fatal("agent read outside the copy")
 	}
 }

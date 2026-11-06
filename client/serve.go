@@ -23,6 +23,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,7 +47,21 @@ type serveConfig struct {
 	PermissionMode string        `json:"permissionMode"`
 	Devices        []serveDevice `json:"devices"`
 	AllowAnyDevice bool          `json:"allowAnyDevice,omitempty"` // le pri praznem seznamu: vsaka naprava z žetonom
+	// Bash v tools na Windows teče brez sandboxa (dostop do vsega, kar sme uporabnik): le z izrecnim dovoljenjem.
+	AllowUnsandboxedBash bool `json:"allowUnsandboxedBash,omitempty"`
 }
+
+const serveHelp = `minigw serve: a Mini Gateway router on this computer (Windows, Linux) for minigw clients.
+
+  minigw serve init [--port N] [--folder DIR] [--config FILE]   create the config, print the minigw connect line
+  minigw serve allow <device id> [name] [--config FILE]         allow a client device
+  minigw serve [--port N] [--folder DIR] [--config FILE]        run the router
+
+Clients use: MINIGW_WORK=sync minigw … (folder mounts are macOS only).
+Unknown devices are refused; the log prints their ID. Before minigw serve allow, compare the ID with the one on the
+client (it is the device key of the computer that just connected): anyone with the token can try to connect.
+Connections from this computer itself (loopback) skip the device check and encryption: do not forward the port to
+loopback (ssh -L, netsh portproxy, a reverse proxy), or remote clients get the same trust.`
 
 // Privzeta orodja: urejanje datotek v kopiji; Bash (brez sandboxa na Windows) le, če ga nastavitve dodajo.
 const defaultTools = "Read,Grep,Glob,Edit,Write,MultiEdit"
@@ -86,6 +101,7 @@ func saveServeConfig(path string, c serveConfig) {
 	if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
 		fail("cannot save " + path + ": " + err.Error())
 	}
+	os.Chmod(path, 0o600) // WriteFile ohrani način obstoječe datoteke
 }
 
 func (c serveConfig) privateKey() (*ecdh.PrivateKey, error) {
@@ -96,16 +112,9 @@ func (c serveConfig) privateKey() (*ecdh.PrivateKey, error) {
 	return ecdh.X25519().NewPrivateKey(b)
 }
 
+// scratch: podmapa scratch (c.Scratch nastavi newServer).
 func (c serveConfig) scratch(sub string) string {
-	base := c.Scratch
-	if base == "" {
-		dir, err := os.UserCacheDir()
-		if err != nil {
-			dir = os.TempDir()
-		}
-		base = filepath.Join(dir, "minigw", "scratch")
-	}
-	p := filepath.Join(base, sub)
+	p := filepath.Join(c.Scratch, sub)
 	os.MkdirAll(p, 0o700)
 	return p
 }
@@ -114,6 +123,9 @@ func (c serveConfig) scratch(sub string) string {
 func (c serveConfig) deviceAllowed(d *serveDevice, loopback bool) bool {
 	if loopback {
 		return true
+	}
+	if d == nil { // oddaljen odjemalec brez ključa naprave nikoli
+		return false
 	}
 	if len(c.Devices) == 0 {
 		return c.AllowAnyDevice
@@ -135,6 +147,7 @@ func serveCommand(args []string) {
 	cfgPath := fs.String("config", defaultServeConfigPath(), "config file")
 	port := fs.Int("port", 0, "port (default 8765)")
 	folder := fs.String("folder", "", "folder for agents that do not sync (--minigw-work=sync is preferred)")
+	fs.Usage = func() { fmt.Fprintln(os.Stderr, serveHelp) }
 	var rest []string
 	if sub == "allow" { // minigw serve allow <id> [ime] [--config f]
 		for len(args) > 0 && !strings.HasPrefix(args[0], "-") {
@@ -194,8 +207,11 @@ func serveCommand(args []string) {
 		say("allowed device " + rest[0] + " (restart minigw serve)")
 		return
 	case "":
+	case "help":
+		say(serveHelp)
+		return
 	default:
-		fail("usage: minigw serve [init|allow <id>] [--port N] [--folder DIR] [--config FILE]")
+		fail("unknown command minigw serve " + sub + "\n\n" + serveHelp)
 	}
 
 	c, err := loadServeConfig(*cfgPath)
@@ -215,7 +231,7 @@ func serveCommand(args []string) {
 		}
 		c.Folder = abs
 	}
-	s, err := newServer(c)
+	s, err := newServer(c, *cfgPath)
 	if err != nil {
 		fail(err.Error())
 	}
@@ -224,7 +240,7 @@ func serveCommand(args []string) {
 		fail(err.Error())
 	}
 	s.log.Printf("minigw %s serving on :%d (MGW2), claude=%q folder=%q scratch=%q devices=%d", version, c.Port,
-		s.claudeExe(), c.Folder, c.scratch(""), len(c.Devices))
+		strings.Join(s.claude, " "), c.Folder, s.cfg.Scratch, len(c.Devices))
 	fail(s.serve(ln).Error())
 }
 
@@ -241,16 +257,37 @@ func localIP() string {
 
 type server struct {
 	cfg      serveConfig
+	cfgDir   string   // mapa nastavitev (žeton, ključ routerja): agentu prepovedana
+	claude   []string // claude.exe ali node + cli.js; prazno = ni nameščen
 	key      *ecdh.PrivateKey
 	log      *log.Logger
 	hub      *shareHub
 	sessions sessionRegistry
+	procs    chan struct{} // največ hkratnih procesov claude
 }
 
-func newServer(c serveConfig) (*server, error) {
+func newServer(c serveConfig, cfgPath string) (*server, error) {
 	k, err := c.privateKey()
 	if err != nil || c.Token == "" {
 		return nil, errors.New("config needs token and key: run minigw serve init")
+	}
+	cfgDir, _ := filepath.Abs(filepath.Dir(cfgPath))
+	if c.Scratch == "" {
+		dir, err := os.UserCacheDir()
+		if err != nil {
+			return nil, errors.New("no cache folder for copies (" + err.Error() + "): set \"scratch\" in the config")
+		}
+		c.Scratch = filepath.Join(dir, "minigw", "scratch")
+	}
+	if c.Scratch, err = filepath.Abs(c.Scratch); err != nil || under(c.Scratch, cfgDir) {
+		return nil, errors.New("scratch must not be inside the config folder " + cfgDir)
+	}
+	exe, err := resolveClaude(c.Claude)
+	if err != nil {
+		return nil, err
+	}
+	if hasBash(c.Tools) && runtime.GOOS == "windows" && !c.AllowUnsandboxedBash {
+		return nil, errors.New("tools contains Bash, but Windows has no sandbox for it: remove Bash from tools, or set \"allowUnsandboxedBash\": true to let agents run any command as this user")
 	}
 	out := io.Writer(os.Stderr)
 	if c.Log != "" {
@@ -260,47 +297,86 @@ func newServer(c serveConfig) (*server, error) {
 		}
 		out = f
 	}
-	return &server{cfg: c, key: k, log: log.New(out, "", log.LstdFlags), hub: newShareHub(), sessions: sessionRegistry{m: map[string]string{}}}, nil
+	s := &server{cfg: c, cfgDir: cfgDir, claude: exe, key: k, log: log.New(out, "", log.LstdFlags), hub: newShareHub(),
+		sessions: sessionRegistry{m: map[string]string{}}, procs: make(chan struct{}, 6)}
+	switch {
+	case !hasBash(c.Tools):
+	case runtime.GOOS == "windows":
+		s.log.Printf("WARNING: Bash is allowed without a sandbox: agents can run any command as this user")
+	default:
+		s.log.Printf("WARNING: Bash is allowed; it runs only in Claude Code's sandbox (on Linux it needs bubblewrap and socat)")
+	}
+	if len(exe) == 0 {
+		s.log.Printf("WARNING: claude not found (install Claude Code or set \"claude\" in the config); no models")
+	}
+	return s, nil
 }
 
 func (s *server) serve(ln net.Listener) error {
-	srv := &http.Server{Handler: s, ReadHeaderTimeout: 120 * time.Second, MaxHeaderBytes: 64 << 10,
+	// Brez ReadTimeout/WriteTimeout: prekinila bi dolge odgovore agenta (telo ima rok v handle).
+	srv := &http.Server{Handler: s, ReadHeaderTimeout: 30 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 64 << 10,
 		ErrorLog: log.New(io.Discard, "", 0),
 		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
 			return context.WithValue(ctx, connKey{}, c.(*serveConn))
 		}}
 	srv.SetKeepAlivesEnabled(false) // ena zahteva na povezavo, kot router na macOS
-	conns := make(chan net.Conn)
-	l := &serveListener{Listener: ln, conns: conns}
-	go func() {
-		for {
-			raw, err := ln.Accept()
-			if err != nil {
-				close(conns)
+	l := &serveListener{Listener: ln, conns: make(chan net.Conn), done: make(chan struct{})}
+	go s.acceptLoop(l)
+	return srv.Serve(l)
+}
+
+// acceptLoop: napaka sprejema (npr. preveč odprtih datotek) → počakaj in poskusi znova; konec le ob zaprtem poslušanju.
+// Največ 256 povezav hkrati v rokovanju; ostale se takoj zaprejo.
+func (s *server) acceptLoop(l *serveListener) {
+	defer close(l.done)
+	sem := make(chan struct{}, 256)
+	delay := 5 * time.Millisecond
+	for {
+		raw, err := l.Listener.Accept()
+		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
 				return
 			}
-			go func() {
-				if c := s.accept(raw); c != nil {
-					conns <- c
-				}
-			}()
+			time.Sleep(delay)
+			delay = min(2*delay, time.Second)
+			continue
 		}
-	}()
-	return srv.Serve(l)
+		delay = 5 * time.Millisecond
+		select {
+		case sem <- struct{}{}:
+		default:
+			raw.Close()
+			continue
+		}
+		go func() {
+			c := s.accept(raw)
+			<-sem
+			if c == nil {
+				return
+			}
+			select {
+			case l.conns <- c:
+			case <-l.done:
+				c.Close()
+			}
+		}()
+	}
 }
 
 // serveListener: http.Server dobi le povezave po rokovanju (in dokazu naprave).
 type serveListener struct {
 	net.Listener
 	conns chan net.Conn
+	done  chan struct{} // zaprt, ko se acceptLoop konča
 }
 
 func (l *serveListener) Accept() (net.Conn, error) {
-	c, ok := <-l.conns
-	if !ok {
+	select {
+	case c := <-l.conns:
+		return c, nil
+	case <-l.done:
 		return nil, net.ErrClosed
 	}
-	return c, nil
 }
 
 type connKey struct{}
@@ -365,7 +441,7 @@ func (c *serveConn) Write(p []byte) (int, error) {
 func (s *server) accept(raw net.Conn) *serveConn {
 	host, _, _ := net.SplitHostPort(raw.RemoteAddr().String())
 	c := &serveConn{Conn: raw, br: bufio.NewReaderSize(raw, 64<<10), peer: host}
-	raw.SetDeadline(time.Now().Add(120 * time.Second)) // zastalo rokovanje
+	raw.SetDeadline(time.Now().Add(10 * time.Second)) // zastalo rokovanje
 	head, err := c.br.Peek(4)
 	switch {
 	case err != nil:
@@ -375,7 +451,7 @@ func (s *server) accept(raw net.Conn) *serveConn {
 			return c
 		}
 	case string(head) == "MGW1":
-		s.log.Printf("%s refused: ChaCha20 (MGW1) connection; this router supports MGW2 (AES-GCM) only", host)
+		s.log.Printf("%s refused: ChaCha20 (MGW1) connection; this router supports MGW2 (AES-GCM) only: update minigw", strconv.Quote(host))
 	case !c.loopback():
 		body := `{"type":"error","error":{"type":"permission_error","message":"Unencrypted connections from other computers are off: use minigw connect with the router key"}}`
 		fmt.Fprintf(raw, "HTTP/1.1 426 Upgrade Required\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s", len(body), body)
@@ -454,11 +530,15 @@ type req struct {
 
 func (r *req) h(name string) string { return r.Header.Get(name) }
 
-func (r *req) deviceID() string {
-	if r.conn.device == nil {
-		return ""
+// owner: lastnik map te zahteve: naprava, »local« za loopback brez naprave, sicer "" (do map ne pride).
+func (r *req) owner() string {
+	switch {
+	case r.conn.device != nil:
+		return r.conn.device.ID
+	case r.conn.loopback():
+		return "local"
 	}
-	return r.conn.device.ID
+	return ""
 }
 
 func (s *server) ServeHTTP(w http.ResponseWriter, hr *http.Request) {
@@ -466,15 +546,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, hr *http.Request) {
 	b := make([]byte, 16)
 	rand.Read(b)
 	r := &req{Request: hr, conn: hr.Context().Value(connKey{}).(*serveConn), rid: fmt.Sprintf("req_%x", b)}
-	body, err := io.ReadAll(http.MaxBytesReader(w, hr.Body, maxSyncFile))
-	r.body = body
-	var status int
-	var model string
-	if err != nil {
-		status = writeError(w, r.rid, 413, "Request body too large")
-	} else {
-		status, model = s.route(w, r)
-	}
+	status, model := s.handle(w, r)
 	if hr.URL.Path == "/minigw/share/next" && status == 204 {
 		return // long poll vsakih 25 s: brez vrstice
 	}
@@ -485,8 +557,44 @@ func (s *server) ServeHTTP(w http.ResponseWriter, hr *http.Request) {
 	if model == "" {
 		model = "-"
 	}
-	s.log.Printf("%s %s %s %s model=%s status=%d %dms bytes=%d", r.rid, who, hr.Method, hr.URL.Path, model, status,
-		time.Since(start).Milliseconds(), len(body))
+	s.log.Printf("%s %s %s %s model=%s status=%d %dms bytes=%d", r.rid, who, strconv.Quote(hr.Method), strconv.Quote(hr.URL.Path),
+		strconv.Quote(model), status, time.Since(start).Milliseconds(), len(r.body))
+}
+
+// bigBodies: zahteve s telesom do 64 MB (kot router na macOS); ostale do 1 MB.
+var bigBodies = map[string]bool{"PUT /minigw/sync/file": true, "POST /v1/messages": true, "POST /v1/messages/count_tokens": true}
+
+// handle: overitev in naprava pred branjem telesa; telo z rokom (brez ReadTimeout, ki bi prekinil dolg odgovor).
+func (s *server) handle(w http.ResponseWriter, r *req) (int, string) {
+	switch r.Method + " " + r.URL.Path {
+	case "GET /health/live":
+		return writeJSON(w, r.rid, 200, map[string]string{"status": "ok"}), ""
+	case "GET /health/ready":
+		return writeJSON(w, r.rid, 200, map[string]any{"status": "ok", "providers": map[string]bool{"claude-cli": len(s.claude) > 0}}), ""
+	}
+	if !s.authorized(r) {
+		return writeError(w, r.rid, 401, "Invalid or missing token"), ""
+	}
+	if !s.cfg.deviceAllowed(r.conn.device, r.conn.loopback()) {
+		if d := r.conn.device; d != nil {
+			s.log.Printf("%s refused unknown device %q %s; compare the ID with the client, then to allow it run: minigw serve allow %s %q", r.rid, d.Name, d.ID, d.ID, d.Name)
+			return writeError(w, r.rid, 403, fmt.Sprintf("Device %q is not allowed on this router: on the router run minigw serve allow %s", d.Name, d.ID)), ""
+		}
+		return writeError(w, r.rid, 403, "This router needs a device key: update minigw and run minigw connect again"), ""
+	}
+	limit := int64(1 << 20)
+	if bigBodies[r.Method+" "+r.URL.Path] {
+		limit = maxSyncFile
+	}
+	rc := http.NewResponseController(w)
+	rc.SetReadDeadline(time.Now().Add(120 * time.Second))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
+	rc.SetReadDeadline(time.Time{})
+	if err != nil {
+		return writeError(w, r.rid, 413, "Request body too large or too slow"), ""
+	}
+	r.body = body
+	return s.route(w, r)
 }
 
 func writeJSON(w http.ResponseWriter, rid string, status int, obj any) int {
@@ -526,25 +634,10 @@ func (s *server) authorized(r *req) bool {
 	return given != "" && subtle.ConstantTimeCompare([]byte(given), []byte(s.cfg.Token)) == 1
 }
 
+// route: po overitvi, napravi in branju telesa.
 func (s *server) route(w http.ResponseWriter, r *req) (int, string) {
 	path := r.URL.Path
-	switch r.Method + " " + path {
-	case "GET /health/live":
-		return writeJSON(w, r.rid, 200, map[string]string{"status": "ok"}), ""
-	case "GET /health/ready":
-		return writeJSON(w, r.rid, 200, map[string]any{"status": "ok", "providers": map[string]bool{"claude-cli": s.claudeExe() != ""}}), ""
-	}
-	if !s.authorized(r) {
-		return writeError(w, r.rid, 401, "Invalid or missing token"), ""
-	}
-	if !s.cfg.deviceAllowed(r.conn.device, r.conn.loopback()) {
-		if d := r.conn.device; d != nil {
-			s.log.Printf("%s refused unknown device %q %s; to allow it run: minigw serve allow %s %q", r.rid, d.Name, d.ID, d.ID, d.Name)
-			return writeError(w, r.rid, 403, fmt.Sprintf("Device %q is not allowed on this router: on the router run minigw serve allow %s", d.Name, d.ID)), ""
-		}
-		return writeError(w, r.rid, 403, "This router needs a device key: update minigw and run minigw connect again"), ""
-	}
-	dev := r.deviceID()
+	dev := r.owner()
 	key := r.h("x-share-key")
 	switch r.Method + " " + path {
 	case "GET /v1/models":
@@ -562,9 +655,6 @@ func (s *server) route(w http.ResponseWriter, r *req) (int, string) {
 			return writeError(w, r.rid, 400, refusedDirect), ""
 		}
 		owner := dev
-		if owner == "" && r.conn.loopback() {
-			owner = "local"
-		}
 		if owner == "" {
 			return writeError(w, r.rid, 400, "Sync needs an encrypted connection with a device key (run minigw connect again)"), ""
 		}
@@ -580,10 +670,10 @@ func (s *server) route(w http.ResponseWriter, r *req) (int, string) {
 		}
 		return writeJSON(w, r.rid, 200, map[string]string{"key": k}), ""
 	case "DELETE /minigw/share":
-		s.hub.unregister(key)
+		s.hub.unregister(key, dev)
 		return writeStatus(w, 204, "", nil), ""
 	case "GET /minigw/share/next":
-		job, ok := s.hub.poll(r.Context(), key)
+		job, ok := s.hub.poll(r.Context(), key, dev)
 		if !ok {
 			return writeError(w, r.rid, 404, "No such share"), ""
 		}
@@ -596,7 +686,7 @@ func (s *server) route(w http.ResponseWriter, r *req) (int, string) {
 		if json.Unmarshal(r.body, &rep) != nil {
 			return writeError(w, r.rid, 400, "Bad reply"), ""
 		}
-		if !s.hub.reply(key, rep) {
+		if !s.hub.reply(key, dev, rep) {
 			return writeStatus(w, 404, "", nil), ""
 		}
 		return writeStatus(w, 204, "", nil), ""

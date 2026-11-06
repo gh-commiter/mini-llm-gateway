@@ -66,5 +66,5 @@ out=$(MINIGW_SHARE=1 MINIGW_WORK=sync $mg -p --model claude-cli-haiku "Copy src/
 print -r -- "$out" | grep -q "done by fake claude" || fail "answer: $out"
 [[ $(<agent.txt) == $'pineapple-42\nedited on linux' ]] || fail "agent.txt not synced back: $(cat agent.txt 2>&1)"
 docker exec $NAME sh -c 'cat /root/.cache/minigw/scratch/sync/*/*/src/note.txt' | grep -q pineapple-42 || fail "copy on the router"
-docker logs $NAME 2>&1 | grep -q "step: Write agent.txt" || fail "agent step not logged"
+docker logs $NAME 2>&1 | grep -q 'step: "Write agent.txt"' || fail "agent step not logged"
 print "serve e2e ok"
