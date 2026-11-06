@@ -148,6 +148,9 @@ func main() {
 		first = args[0]
 	}
 	switch first {
+	case "serve":
+		serveCommand(args[1:])
+		return
 	case "share":
 		shareCommand(args[1:])
 		return
@@ -182,7 +185,7 @@ func main() {
 			d := newDeviceKey()
 			c.Device = &d
 		}
-		st, _ := getJSON(route(c), "/v1/models")
+		st, m := getJSON(route(c), "/v1/models")
 		switch {
 		case st == 200:
 			saveConnection(c)
@@ -193,6 +196,11 @@ func main() {
 			say("Connected to " + c.URL + enc)
 		case st == 401:
 			fail("router at " + c.URL + " rejected the token")
+		case st == 403: // naprava še ni dovoljena: ključ naprave ostane, da ga router lahko doda
+			saveConnection(c)
+			e, _ := m["error"].(map[string]any)
+			msg, _ := e["message"].(string)
+			fail("router at " + c.URL + " refused this device: " + msg + "\nthen run minigw connect again")
 		case st == 426:
 			fail("router at " + c.URL + " needs an encrypted connection: copy the token again (it includes the router key)")
 		case st == 0 && c.isLocal():
@@ -286,6 +294,7 @@ func main() {
 				"minigw share add|remove [folder] | list    also share a system or hidden folder with the router\n" +
 				"minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)\n" +
 				"minigw --minigw-work=sync [claude args]    agents work in a synced copy on the router (or MINIGW_WORK=sync)\n" +
+				"minigw serve [init|allow <id>] [--port N] [--folder DIR] [--config FILE]   run a router here (Windows, Linux)\n" +
 				"minigw [claude options …]                    run Claude Code through the router")
 		}
 		if first == "--minigw-help" {
@@ -384,7 +393,11 @@ func main() {
 			}
 			fmt.Fprintf(os.Stderr, "minigw: %s %s %s with %s for agent models (--minigw-ro = read-only, MINIGW_SHARE=0 = off)\n", verb, cwd, mode, routerHost)
 		} else {
-			fmt.Fprintln(os.Stderr, "minigw: router did not accept the folder; Claude CLI models with tools will not see it")
+			why := "router did not accept the folder"
+			if share.refusal != "" {
+				why += ": " + share.refusal
+			}
+			fmt.Fprintln(os.Stderr, "minigw: "+why+"; Claude CLI models with tools will not see it")
 		}
 	} else if !saved.isLocal() && os.Getenv("MINIGW_SHARE") != "0" {
 		fmt.Fprintf(os.Stderr, "minigw: %s is not shared with the router, so agent models (Codex, Claude CLI, Grok) cannot see it; to share it run: minigw share add\n", cwd)
