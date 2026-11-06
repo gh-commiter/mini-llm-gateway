@@ -642,3 +642,20 @@ final class SeenDevices: @unchecked Sendable {
     #expect(get("GET", "big").status == 413)
     #expect(get("GET", "big", ["range": "bytes=0-99"]).body.count == 100)
 }
+
+@Test func scratchFolderMovesAndFallsBack() throws {
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent("scratch-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: base) }
+    var c = RouterConfig()
+    c.scratchFolder = base.appendingPathComponent("a").path
+    let chat = c.scratch("chat")
+    #expect(chat.path.hasPrefix(base.path))
+    try Data("x".utf8).write(to: chat.appendingPathComponent("f.txt"))
+    let new = base.appendingPathComponent("b")
+    try RouterConfig.moveScratch(from: c.scratchURL, to: new)
+    #expect(FileManager.default.fileExists(atPath: new.appendingPathComponent("chat/f.txt").path))
+    #expect(!FileManager.default.fileExists(atPath: c.scratchURL.path))
+    #expect(throws: (any Error).self) { try RouterConfig.moveScratch(from: new, to: new.appendingPathComponent("inside")) }
+    c.scratchFolder = "/Volumes/NoSuchDisk-\(UUID().uuidString)/Scratch"  // disk ni priklopljen → privzeta mapa
+    #expect(c.scratch("chat").path.hasPrefix(RouterConfig.defaultScratch.path))
+}

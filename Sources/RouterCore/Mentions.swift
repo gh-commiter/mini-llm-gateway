@@ -51,12 +51,10 @@ enum Mentions {
     }
 
     static let media: Set<String> = ["png", "jpg", "jpeg", "heic", "gif", "tiff", "webp", "pdf"]
-    static let mediaDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("Mini Gateway/attachments", isDirectory: true)
 
     /// Slike in PDF (omenjeni ali v omenjeni mapi) kopira v mapo priponk, od koder jih Siri priloži sama.
     /// Mapa hrani le priponke zadnjega vprašanja.
-    static func stageMedia(_ urls: [URL], limit: Int = 4) -> [URL] {
+    static func stageMedia(_ urls: [URL], into mediaDir: URL, limit: Int = 4) -> [URL] {
         let fm = FileManager.default
         let all = urls.flatMap { u -> [URL] in
             var isDir: ObjCBool = false

@@ -257,6 +257,7 @@ struct SettingsView: View {
             Section("Token") {
                 TokenRow()
             }
+            ScratchSection(draft: $draft)
             Section("About") {
                 LabeledContent("Version") { Text(verbatim: "\(MenuView.version) (\(MenuView.build))").textSelection(.enabled) }
                 LabeledContent("License") {
@@ -859,5 +860,68 @@ struct ProviderPane: View {
             if on { list.append(id) }
             provider.enabledModels = list
         })
+    }
+}
+
+/// Mapa za začasne datoteke agentov; premik prenese vsebino (npr. na hiter zunanji SSD).
+struct ScratchSection: View {
+    @Binding var draft: RouterConfig
+    @State private var moving = false
+    @State private var failure: String?
+
+    private var shown: String { (draft.scratchURL.path as NSString).abbreviatingWithTildeInPath }
+
+    var body: some View {
+        Section {
+            LabeledContent("Folder") {
+                HStack {
+                    if moving { ProgressView().controlSize(.small) }
+                    Text(verbatim: shown).truncationMode(.middle).lineLimit(1).textSelection(.enabled)
+                }
+            }
+            HStack {
+                Spacer()
+                EqualWidthHStack {
+                    WideButton("Show in Finder") {
+                        try? FileManager.default.createDirectory(at: draft.scratchURL, withIntermediateDirectories: true)
+                        NSWorkspace.shared.activateFileViewerSelecting([draft.scratchURL])
+                    }
+                    WideButton("Default") { move(to: nil) }.disabled(draft.scratchFolder.isEmpty || moving)
+                    WideButton("Choose…") { choose() }.disabled(moving)
+                }
+            }
+        } header: {
+            Text("Scratch folder")
+        } footer: {
+            Text("Temporary files of agents: conversations, outputs, attachments. Choosing another folder moves its contents there, for example to a fast external SSD. If that disk is not connected, the default folder is used.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .alert(String(localized: "The scratch folder could not be moved"), isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
+            Button("OK") { failure = nil }
+        } message: { Text(verbatim: failure ?? "") }
+    }
+
+    private func choose() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.prompt = String(localized: "Choose")
+        panel.directoryURL = draft.scratchURL.deletingLastPathComponent()
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        move(to: url)
+    }
+
+    /// nil = privzeta mapa.
+    private func move(to url: URL?) {
+        let old = draft.scratchURL, new = url ?? RouterConfig.defaultScratch
+        moving = true
+        Task.detached {
+            let error: String? = { do { try RouterConfig.moveScratch(from: old, to: new); return nil } catch { return error.localizedDescription } }()
+            await MainActor.run {
+                moving = false
+                if let error { failure = error } else { draft.scratchFolder = url?.path ?? "" }
+            }
+        }
     }
 }

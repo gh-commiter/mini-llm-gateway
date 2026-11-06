@@ -217,7 +217,7 @@ extension Router {
                     let names = await Mentions.names(in: question)
                     let files = Mentions.find(names, question: question, in: root)
                     context = Mentions.attachments(files, root: root)
-                    media = Mentions.stageMedia(files)
+                    media = Mentions.stageMedia(files, into: config.scratch("attachments"))
                     if !media.isEmpty { context += "Also attached as files: " + media.map(\.lastPathComponent).joined(separator: ", ") + "\n\n" }
                     Self.log.notice("\(rid, privacy: .public) siri mentions=\(names.count) attached=\(files.count) media=\(media.count)")
                 }

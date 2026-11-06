@@ -377,7 +377,7 @@ extension Router {
             let allTools = cfg.allowLocalTools ? await Self.toolList.get(cfg.executable) : []
             args += cfg.agentArgs(cwd: dir, allTools: allTools) + ["--setting-sources", shared == nil ? cfg.settingSources : ""]  // hooki iz mape odjemalca ne tečejo tukaj
         } else {
-            cwd = FileManager.default.temporaryDirectory.appendingPathComponent("minigateway-chat", isDirectory: true)
+            cwd = config.scratch("chat")
             try? FileManager.default.createDirectory(at: cwd, withIntermediateDirectories: true)
             prompt = ClaudeCLI.prompt(history: history, last: last)
             args += ["--tools", "", "--no-session-persistence", "--setting-sources", ""]

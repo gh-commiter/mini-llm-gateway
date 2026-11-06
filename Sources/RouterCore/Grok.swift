@@ -161,7 +161,7 @@ extension Router {
             return await error(400, "invalid_request_error", "Last message must be from the user", rid: rid, writer: writer)
         }
         let agent = (body["tools"] as? [Any])?.isEmpty == false
-        var cwd = FileManager.default.temporaryDirectory.appendingPathComponent("minigateway-chat", isDirectory: true)
+        var cwd = config.scratch("chat")
         var extra: [String] = []
         var readOnly = false
         var prompt = ClaudeCLI.prompt(history: all.dropLast(), last: last)

@@ -71,8 +71,47 @@ public struct RouterConfig: Codable, Sendable, Equatable {
     public var devices: [DeviceConfig] = []
     public var codex = CodexConfig()
     public var grok = GrokConfig()
+    public var scratchFolder = ""  // prazno = defaultScratch (Caches); npr. hiter zunanji SSD
 
     public init() {}
+
+    /// Začasne datoteke agentov (pogovori, izhodi, priponke; pozneje delovne kopije in build izhodi).
+    public static let defaultScratch = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("dev.trojar.minigateway/Scratch", isDirectory: true)
+
+    public var scratchURL: URL {
+        scratchFolder.isEmpty ? Self.defaultScratch
+            : URL(fileURLWithPath: (scratchFolder as NSString).expandingTildeInPath, isDirectory: true)
+    }
+
+    /// Podmapa scratch mape (ustvari jo); če izbrani disk ni dosegljiv (izklopljen SSD), privzeta mapa.
+    public func scratch(_ sub: String) -> URL {
+        let fm = FileManager.default
+        for base in [scratchURL, Self.defaultScratch] {
+            let dir = base.appendingPathComponent(sub, isDirectory: true)
+            if (try? fm.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])) != nil {
+                return dir
+            }
+        }
+        return fm.temporaryDirectory.appendingPathComponent(sub, isDirectory: true)
+    }
+
+    /// Premakne vsebino scratch mape v novo (tudi na drug disk); ime, ki že obstaja v cilju, se zamenja.
+    public static func moveScratch(from old: URL, to new: URL) throws {
+        let fm = FileManager.default
+        let o = old.standardizedFileURL.path, n = new.standardizedFileURL.path
+        guard o != n else { return }
+        guard !n.hasPrefix(o + "/"), !o.hasPrefix(n + "/") else {
+            throw CocoaError(.fileWriteInvalidFileName, userInfo: [NSLocalizedDescriptionKey: "The new folder is inside the old one or the other way round."])
+        }
+        try fm.createDirectory(at: new, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        for item in (try? fm.contentsOfDirectory(at: old, includingPropertiesForKeys: nil)) ?? [] {
+            let dst = new.appendingPathComponent(item.lastPathComponent)
+            if fm.fileExists(atPath: dst.path) { try fm.removeItem(at: dst) }
+            try fm.moveItem(at: item, to: dst)
+        }
+        try? fm.removeItem(at: old)  // prazna stara mapa
+    }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -88,6 +127,7 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         devices = try c.decodeIfPresent([DeviceConfig].self, forKey: .devices) ?? d.devices
         codex = try c.decodeIfPresent(CodexConfig.self, forKey: .codex) ?? d.codex
         grok = try c.decodeIfPresent(GrokConfig.self, forKey: .grok) ?? d.grok
+        scratchFolder = try c.decodeIfPresent(String.self, forKey: .scratchFolder) ?? d.scratchFolder
     }
 
     /// Siri ima osebni kontekst tega Maca: lokalno vedno, z drugih Macov le odobrene naprave.

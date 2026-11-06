@@ -168,7 +168,7 @@ extension Router {
             return await error(400, "invalid_request_error", "Last message must be from the user", rid: rid, writer: writer)
         }
         let agent = (body["tools"] as? [Any])?.isEmpty == false
-        var cwd = FileManager.default.temporaryDirectory.appendingPathComponent("minigateway-chat", isDirectory: true)
+        var cwd = config.scratch("chat")
         var extra: [String] = []
         var readOnly = false
         var prompt = ClaudeCLI.prompt(history: all.dropLast(), last: last)
@@ -191,7 +191,7 @@ extension Router {
         } else {
             try? FileManager.default.createDirectory(at: cwd, withIntermediateDirectories: true)
         }
-        let output = FileManager.default.temporaryDirectory.appendingPathComponent("codex-\(rid).txt")
+        let output = config.scratch("tmp").appendingPathComponent("codex-\(rid).txt")
         defer { try? FileManager.default.removeItem(at: output) }
         // Nadaljevanje niti Codex (prebrane datoteke, rezultati ukazov): ključ je dosedanji pogovor v tej mapi.
         let scope = Self.agentScope("codex", req, cwd: cwd)
