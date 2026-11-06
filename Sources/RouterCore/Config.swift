@@ -160,6 +160,8 @@ public struct Keychain: SecretStore {
     /// Privzeti ključi, dokler uporabnik ne vpiše svojega (niso skrivnost; LiteLLM LITELLM_MASTER_KEY iz claude-local).
     public static let defaultKeys = ["litellm": "sk-local-1234"]
 
+    public func delete(_ account: String) { SecItemDelete(query(account) as CFDictionary) }
+
     public func set(_ account: String, _ value: String) {
         let data = Data(value.utf8)
         if SecItemUpdate(query(account) as CFDictionary, [kSecValueData as String: data] as CFDictionary) == errSecItemNotFound {

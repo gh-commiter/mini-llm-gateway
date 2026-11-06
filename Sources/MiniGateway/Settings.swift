@@ -43,8 +43,8 @@ struct SettingsView: View {
               about: String(localized: "Address, port and access token of the router, and the app version."))]
             + draft.providers.map { p in
                 Item(pane: .provider(p.id), title: p.name,
-                     symbol: p.id == "openrouter" ? "point.3.connected.trianglepath.dotted" : "server.rack",
-                     color: p.id == "openrouter" ? .purple : .blue,
+                     symbol: p.baseURL.contains("openrouter.ai") ? "point.3.connected.trianglepath.dotted" : "server.rack",
+                     color: p.baseURL.contains("openrouter.ai") ? .purple : .blue,
                      about: String(localized: "Models of an Anthropic-compatible gateway, passed through to Claude Code."))
             }
             + [Item(pane: .siri, title: "Siri AI", symbol: "waveform", color: .pink,
@@ -57,6 +57,41 @@ struct SettingsView: View {
                     about: String(localized: "OpenAI Codex CLI as an agent model in the session's folder.")),
                Item(pane: .grok, title: "Grok CLI", symbol: "sparkle", color: .indigo,
                     about: String(localized: "xAI Grok CLI as an agent model in the session's folder."))]
+    }
+
+    @State private var removing = false
+
+    private var selectedProvider: ProviderConfig? {
+        if case .provider(let id)? = pane { return draft.providers.first { $0.id == id } }
+        return nil
+    }
+
+    enum GatewayKind { case litellm, openrouter, other }
+
+    private func kind(_ p: ProviderConfig) -> GatewayKind {
+        p.baseURL.contains("openrouter.ai") ? .openrouter
+            : p.id == "litellm" || p.name.hasPrefix("LiteLLM") ? .litellm : .other
+    }
+
+    /// Nov prehod (več LiteLLM, OpenRouter ali drugih, vsak s svojim ključem in modeli), takoj za zadnjim iste vrste.
+    private func addProvider(_ k: GatewayKind, _ base: String, _ url: String) {
+        var name = base, n = 2
+        while draft.providers.contains(where: { $0.name == name }) { name = "\(base) \(n)"; n += 1 }
+        let p = ProviderConfig(id: "gw-" + UUID().uuidString.prefix(8).lowercased(), name: name, enabled: false,
+                               baseURL: url, aliases: "", enabledModels: k == .openrouter ? [] : nil)
+        let at = draft.providers.lastIndex { kind($0) == k }.map { $0 + 1 } ?? draft.providers.count
+        draft.providers.insert(p, at: at)
+        pane = .provider(p.id)
+    }
+
+    private func removeProvider() {
+        guard let p = selectedProvider else { return }
+        draft.providers.removeAll { $0.id == p.id }
+        keys[p.id] = nil
+        state.keychain.delete(p.id)
+        back.removeAll { $0 == .provider(p.id) }; forward.removeAll { $0 == .provider(p.id) }
+        navigating = true
+        pane = .general
     }
 
     /// Puščica: prejšnji panel iz `from`, trenutni v `to`.
@@ -74,6 +109,28 @@ struct SettingsView: View {
                     Label { Text(verbatim: item.title) } icon: { IconTile(symbol: item.symbol, color: item.color) }
                         .tag(item.pane)
                 }
+            }
+            .safeAreaInset(edge: .bottom) {
+                HStack(spacing: 0) {
+                    Menu {
+                        Button("LiteLLM") { addProvider(.litellm, "LiteLLM", "http://localhost:4000") }
+                        Button("OpenRouter") { addProvider(.openrouter, "OpenRouter", "https://openrouter.ai/api") }
+                        Button("Other Anthropic-compatible gateway") { addProvider(.other, String(localized: "Gateway"), "https://") }
+                    } label: { Image(systemName: "plus").frame(width: 22, height: 18) }
+                        .menuIndicator(.hidden).fixedSize()
+                        .help(String(localized: "Add Gateway")).accessibilityLabel(String(localized: "Add Gateway"))
+                    Divider().frame(height: 16)
+                    Button { removing = true } label: { Image(systemName: "minus").frame(width: 22, height: 18) }
+                        .disabled(selectedProvider == nil).accessibilityLabel(String(localized: "Remove"))
+                    Spacer()
+                }
+                .buttonStyle(.borderless)
+                .padding(.horizontal, 12).padding(.vertical, 8)
+            }
+            .confirmationDialog(String(localized: "Remove \(selectedProvider?.name ?? "")?"), isPresented: $removing) {
+                Button("Remove", role: .destructive) { removeProvider() }
+            } message: {
+                Text("Its settings and API key are deleted from this Mac.")
             }
             .frame(minWidth: 220)  // v običajnem oknu SwiftUI navigationSplitViewColumnWidth prezre
             .navigationSplitViewColumnWidth(min: 220, ideal: 230, max: 280)
@@ -699,6 +756,7 @@ struct ProviderPane: View {
                 Toggle("Enabled", isOn: Binding(get: { provider.enabled && !key.isEmpty }, set: { provider.enabled = $0 }))
                     .disabled(key.isEmpty)
                     .help(key.isEmpty ? String(localized: "Enter an API key to enable") : "")
+                TextField("Name", text: $provider.name)
                 TextField("Base URL", text: $provider.baseURL)
                 SecureField(savedKey.isEmpty ? "API key"
                             : savedKey == Keychain.defaultKeys[provider.id] ? "API key (default; enter to replace)"
