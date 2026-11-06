@@ -22,11 +22,30 @@ enum AppleFM {
 
     private static let reminder = try! NSRegularExpression(pattern: "<system-reminder>[\\s\\S]*?</system-reminder>")
 
+    private static let lineNumbers = try! NSRegularExpression(pattern: "(?m)^ *\\d+\\t")
+    private static let readPath = try! NSRegularExpression(pattern: "\"file_path\"\\s*:\\s*\"([^\"]+)\"")
+
     /// Claude Code v uporabniška sporočila vstavlja dolge <system-reminder> bloke (CLAUDE.md, okolje …),
-    /// ki bi sami napolnili 8K kontekst.
+    /// ki bi sami napolnili 8K kontekst. Izjema: datoteke, omenjene z @ (Claude Code jih pošlje kot rezultat
+    /// orodja Read) — njihova vsebina ostane, brez številk vrstic, z imenom datoteke.
     static func stripReminders(_ s: String) -> String {
-        reminder.stringByReplacingMatches(in: s, range: NSRange(s.startIndex..., in: s), withTemplate: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var out = s
+        for m in reminder.matches(in: s, range: NSRange(s.startIndex..., in: s)).reversed() {
+            guard let r = Range(m.range, in: out) else { continue }
+            let block = String(out[r])
+            var keep = ""
+            if block.contains("Called the Read tool with the following input:"),
+               let p = readPath.firstMatch(in: block, range: NSRange(block.startIndex..., in: block)),
+               let pr = Range(p.range(at: 1), in: block) {
+                keep = "Attached file \(block[pr]):"
+            } else if let start = block.range(of: "Result of calling the Read tool:") {
+                let body = String(block[start.upperBound...].dropLast("</system-reminder>".count))
+                let text = lineNumbers.stringByReplacingMatches(in: body, range: NSRange(body.startIndex..., in: body), withTemplate: "")
+                keep = "```\n" + text.trimmingCharacters(in: .whitespacesAndNewlines) + "\n```"
+            }
+            out.replaceSubrange(r, with: keep)
+        }
+        return out.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Najnovejše izmenjave, ki skupaj z navodili in zadnjim sporočilom ostanejo v proračunu.

@@ -322,6 +322,11 @@ func makeRouter(session: URLSession = .shared) -> Router {
 
 @Test func fmStripsRemindersAndFitsBudget() async {
     #expect(AppleFM.stripReminders("<system-reminder>\nCLAUDE.md …\n</system-reminder>\nWhat is 2+2?") == "What is 2+2?")
+    // @datoteka: Claude Code pošlje rezultat orodja Read v opomniku → vsebina ostane, brez številk vrstic
+    let at = "<system-reminder>\nCalled the Read tool with the following input: {\"file_path\":\"/x/NOTES.md\"}\n</system-reminder>"
+    #expect(AppleFM.stripReminders(at) == "Attached file /x/NOTES.md:")
+    let result = "<system-reminder>\nResult of calling the Read tool:\n     1\t# Test\n     2\tPORT=8765\n</system-reminder>\n<system-reminder>\nOther\n</system-reminder>\nPovzemi @NOTES.md"
+    #expect(AppleFM.stripReminders(result) == "```\n# Test\nPORT=8765\n```\n\nPovzemi @NOTES.md")
     let turns = (1...6).map { ClaudeCLI.Turn(role: $0 % 2 == 1 ? "user" : "assistant", text: String(repeating: "w", count: $0 * 10)) }
     // števec = znaki; navodila 5, zadnje 60 → ostane 35 za zgodovino: turn 5 (50) ne gre več
     var fit = await AppleFM.fit(turns, instructions: "12345", budget: 100) { $0.count }
@@ -539,4 +544,24 @@ final class SeenDevices: @unchecked Sendable {
     #expect(a.contains("workspace-write") && !a.contains("danger-full-access") && !a.contains("--dangerously-bypass-approvals-and-sandbox"))
     #expect(a.contains("--add-dir") && a.contains("/tmp/x") && a.contains("/tmp/s"))
     #expect(Codex.args(cwd: cwd, extraDirs: [], agent: false, output: out).contains("read-only"))
+}
+
+@Test func mentionedFilesFoundAndAttached() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("mentions-\(UUID().uuidString)")
+    let fm = FileManager.default
+    try fm.createDirectory(at: root.appendingPathComponent("docs/kb"), withIntermediateDirectories: true)
+    try fm.createDirectory(at: root.appendingPathComponent("node_modules/x"), withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: root) }
+    try "# Projekt\nPORT=1".write(to: root.appendingPathComponent("CLAUDE.md"), atomically: true, encoding: .utf8)
+    try "kb note".write(to: root.appendingPathComponent("docs/kb/arch.md"), atomically: true, encoding: .utf8)
+    try "skip".write(to: root.appendingPathComponent("node_modules/x/CLAUDE.md"), atomically: true, encoding: .utf8)
+    try Data([0, 1, 2]).write(to: root.appendingPathComponent("docs/kb/blob.bin"))
+
+    let names = await Mentions.names(in: "povzemi ./CLAUDE.md prosim")
+    #expect(names.contains("./CLAUDE.md"))  // brez Apple FM: ime s končnico
+    #expect(Mentions.find([], question: "kaj piše v zapiskih v kb?", in: root).map(\.lastPathComponent) == ["kb"])  // cela beseda
+    let hits = Mentions.find(["CLAUDE.md", "kb"], in: root)
+    #expect(hits.map(\.lastPathComponent).sorted() == ["CLAUDE.md", "kb"])  // node_modules preskočen
+    let text = Mentions.attachments(hits, root: root)
+    #expect(text.contains("Attached file CLAUDE.md:") && text.contains("PORT=1") && text.contains("docs/kb/arch.md") && !text.contains("blob.bin"))
 }
