@@ -762,7 +762,7 @@ final class SeenDevices: @unchecked Sendable {
     for e in ch.changed { blobs[e.path] = await hub.syncGet(key: key, path: e.path) }
     #expect(await hub.syncGet(key: key, path: "build/out.o") == nil)               // prezrto ne gre nazaj
     let (notes, done) = Sync.apply(ch, root: client, state: &state) { blobs[$0] }
-    #expect(done == ["a.txt", "c.txt", "new/n.txt", "b.txt", "d.txt"])
+    #expect(done == ["b.txt", "d.txt", "a.txt", "c.txt", "new/n.txt"])  // izbrisi najprej
     #expect(await hub.syncAck(key: key, done))
     #expect(read(client, "a.txt") == "agent a" && read(client, "new/n.txt") == "agent n" && read(client, "b.txt") == nil)
     #expect(read(client, "c.txt") == "user c" && read(client, "c.txt.minigw-conflict") == "agent c")  // spor: obe različici
@@ -864,24 +864,204 @@ final class SeenDevices: @unchecked Sendable {
     #expect(try #require(await hub.syncManifest(key: key, Array(state.values))).kept.isEmpty)
 }
 
-@Test func syncLockSerializesCopy() async throws {
-    let hub = ShareHub()
-    let copy = URL(fileURLWithPath: "/tmp/lock-" + UUID().uuidString)
-    _ = await hub.register(session: "l1", cwd: "/a", key: nil, copy: copy)
-    _ = await hub.register(session: "l2", cwd: "/a", key: nil, copy: copy)
-    #expect(await hub.lock(session: "none") == nil)
-    #expect(await hub.lock(session: "l1") == copy)
-    let second = Task { await hub.lock(session: "l2") }
-    try await Task.sleep(for: .milliseconds(100))
-    let order = Order()
-    let waiter = Task { _ = await second.value; await order.add("second") }
-    await order.add("unlock"); await hub.unlock(copy)
-    _ = await waiter.value
-    #expect(await order.items == ["unlock", "second"])
-    await hub.unlock(copy)
+/// minigw za teste: odgovarja na SYNC-PUSH in SYNC-PULL kot ShareClient (zaporedno, z istim stanjem).
+final class FakeMinigw: @unchecked Sendable {
+    let hub: ShareHub, key: String, root: URL
+    var state: [String: Sync.Entry] = [:], notes: [String] = []
+    var failGet: Set<String> = []  // prenos teh poti ne uspe (brez potrditve)
+    init(_ hub: ShareHub, key: String, root: URL) { self.hub = hub; self.key = key; self.root = root }
+
+    func serve() -> Task<Void, Never> {
+        Task {
+            while !Task.isCancelled {
+                guard case .some(.some(let job)) = await hub.poll(key: key, wait: 1) else { continue }
+                if job.method == "SYNC-PUSH" {
+                    let files = Sync.scan(root, previous: state).files
+                    for p in await hub.syncManifest(key: key, Array(files.values))?.need ?? [] {
+                        _ = await hub.syncPut(key: key, path: p, data: (try? Data(contentsOf: root.appendingPathComponent(p))) ?? Data())
+                    }
+                    state = files
+                } else if let ch = await hub.syncChanges(key: key) {
+                    var blobs: [String: Data] = [:]
+                    for e in ch.changed where !failGet.contains(e.path) { blobs[e.path] = await hub.syncGet(key: key, path: e.path) }
+                    let (n, done) = Sync.apply(ch, root: root, state: &state) { blobs[$0] }
+                    notes += n
+                    _ = await hub.syncAck(key: key, done)
+                }
+                _ = await hub.reply(key: key, DAVReply(id: job.id, response: DAVResponse(200)))
+            }
+        }
+    }
 }
 
-actor Order { var items: [String] = []; func add(_ s: String) { items.append(s) } }
+/// Dva agenta v isti mapi hkrati, vsak v svojem klonu: različni datoteki prideta obe, ista datoteka → spor pri drugem.
+@Test func syncParallelRunsInOneFolder() async throws {
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent("syncpar-" + UUID().uuidString)
+    let client = base.appendingPathComponent("client"), copy = base.appendingPathComponent("sync/local/x")
+    let runsDir = base.appendingPathComponent("sync/runs")
+    defer { try? FileManager.default.removeItem(at: base) }
+    func put(_ root: URL, _ p: String, _ s: String) throws {
+        try FileManager.default.createDirectory(at: root.appendingPathComponent(p).deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(s.utf8).write(to: root.appendingPathComponent(p))
+    }
+    func read(_ root: URL, _ p: String) -> String? { (try? Data(contentsOf: root.appendingPathComponent(p))).map { String(decoding: $0, as: UTF8.self) } }
+    try FileManager.default.createDirectory(at: client, withIntermediateDirectories: true)
+    for p in ["a.txt", "b.txt", "c.txt", "d.txt"] { try put(client, p, "v1") }
+
+    let hub = ShareHub()
+    let key = try #require(await hub.register(session: "p", cwd: client.path, key: nil, copy: copy))
+    let minigw = FakeMinigw(hub, key: key, root: client)
+    let server = minigw.serve()
+    defer { server.cancel() }
+    func mount(_ run: String) async -> URL? {
+        await ShareHub.$run.withValue(run) { await hub.mount(session: "p", cwd: client.path, base: "") }
+    }
+
+    // Oba prenosa pred katerim koli agentom; vsak dobi svoj klon, prvi vedno ».0«.
+    let d1 = try #require(await mount("r1")), d2 = try #require(await mount("r2"))
+    #expect(d1 == runsDir.appendingPathComponent("local-x.0") && d2 == runsDir.appendingPathComponent("local-x.1"))
+    #expect(read(d1, "a.txt") == "v1" && read(d2, "a.txt") == "v1")
+    try put(d1, "a.txt", "agent1"); try put(d2, "b.txt", "agent2")               // različni datoteki
+    try put(d1, "c.txt", "one"); try put(d2, "c.txt", "two")                     // ista datoteka
+    try FileManager.default.removeItem(at: d1.appendingPathComponent("d.txt")); try put(d2, "d.txt", "two")
+    #expect(read(copy, "a.txt") == "v1")                                         // kopija ostane nedotaknjena med delom
+
+    await ShareHub.$run.withValue("r1") { await hub.syncBack(session: "p") }
+    await hub.finish(run: "r1")
+    await ShareHub.$run.withValue("r2") { await hub.syncBack(session: "p") }
+    await hub.finish(run: "r2")
+
+    #expect(read(client, "a.txt") == "agent1" && read(client, "b.txt") == "agent2")
+    #expect(read(client, "c.txt") == "one" && read(client, "c.txt.minigw-conflict") == "two")  // drugi ne prepiše prvega
+    #expect(read(client, "d.txt") == nil && read(client, "d.txt.minigw-conflict") == "two")
+    #expect(minigw.notes.filter { $0.hasPrefix("conflict:") }.count == 2)
+    #expect(((try? FileManager.default.contentsOfDirectory(atPath: runsDir.path)) ?? []).isEmpty)  // kloni odstranjeni
+    #expect(read(copy, "a.txt") == "agent1" && read(copy, "b.txt") == "agent2")  // združeno v kopijo
+
+    // Naslednji prenos je spet le razlika: uporabnikova c.txt in d.txt ostaneta zmagovalki; klon je spet ».0«.
+    #expect(try #require(await mount("r3")) == runsDir.appendingPathComponent("local-x.0"))
+    #expect(read(copy, "c.txt") == "one" && read(copy, "d.txt") == nil)
+    await hub.finish(run: "r3")
+}
+
+/// Pregled: R1 in R2 spremenita f.txt; R2 je prevzet, R1 prekinjen. R1 ne sme prepisati R2 ne v kopiji ne pri odjemalcu.
+/// Agent zamenja datoteko »a« z mapo »a/b«: nova datoteka pride do odjemalca in v kopijo.
+@Test func syncCancelledRunDoesNotOverwriteOtherRun() async throws {
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent("syncrev-" + UUID().uuidString)
+    let client = base.appendingPathComponent("client"), copy = base.appendingPathComponent("sync/local/x")
+    defer { try? FileManager.default.removeItem(at: base) }
+    func put(_ root: URL, _ p: String, _ s: String) throws {
+        try FileManager.default.createDirectory(at: root.appendingPathComponent(p).deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(s.utf8).write(to: root.appendingPathComponent(p))
+    }
+    func read(_ root: URL, _ p: String) -> String? { (try? Data(contentsOf: root.appendingPathComponent(p))).map { String(decoding: $0, as: UTF8.self) } }
+    try FileManager.default.createDirectory(at: client, withIntermediateDirectories: true)
+    try put(client, "f.txt", "v1"); try put(client, "a", "file")
+    let hub = ShareHub()
+    let key = try #require(await hub.register(session: "p", cwd: client.path, key: nil, copy: copy))
+    let minigw = FakeMinigw(hub, key: key, root: client)
+    let server = minigw.serve()
+    defer { server.cancel() }
+    func mount(_ run: String) async -> URL? { await ShareHub.$run.withValue(run) { await hub.mount(session: "p", cwd: client.path, base: "") } }
+    func pull(_ run: String) async { await ShareHub.$run.withValue(run) { await hub.syncBack(session: "p") }; await hub.finish(run: run) }
+
+    let d1 = try #require(await mount("r1")), d2 = try #require(await mount("r2"))
+    try put(d1, "f.txt", "one-agent1"); try put(d2, "f.txt", "two")
+    await pull("r2")
+    #expect(read(client, "f.txt") == "two")
+    await hub.finish(run: "r1")                                                   // prekinjen: brez prevzema
+    #expect(read(copy, "f.txt") == "two" && read(copy, "f.txt.minigw-agent") == "one-agent1")
+    _ = try #require(await mount("r3"))
+    await pull("r3")
+    #expect(read(client, "f.txt") == "two" && read(client, "f.txt.minigw-agent") == "one-agent1")  // obe deli pri uporabniku
+
+    let d4 = try #require(await mount("r4"))
+    try FileManager.default.removeItem(at: d4.appendingPathComponent("a")); try put(d4, "a/b", "new")
+    await pull("r4")
+    #expect(read(client, "a/b") == "new" && read(copy, "a/b") == "new")
+    _ = try #require(await mount("r5"))
+    await pull("r5")
+    #expect(read(client, "a/b") == "new" && read(copy, "a/b") == "new")
+    // In nazaj: mapa »a/« → datoteka »a«.
+    let d6 = try #require(await mount("r6"))
+    try FileManager.default.removeItem(at: d6.appendingPathComponent("a")); try put(d6, "a", "file again")
+    await pull("r6")
+    #expect(read(client, "a") == "file again" && read(copy, "a") == "file again")
+}
+
+/// Obratni vrstni red: R1 prekinjen (združen) pred prevzemom R2. R3 ne sme tiho prepisati R2 z različico R1.
+/// Nato: prevzem R4 za f.txt ne uspe, R5 medtem spremeni kopijo → različica R4 pride kot f.txt.minigw-agent.
+@Test func syncCancelFinishesBeforeOtherPull() async throws {
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent("syncrev2-" + UUID().uuidString)
+    let client = base.appendingPathComponent("client"), copy = base.appendingPathComponent("sync/local/x")
+    defer { try? FileManager.default.removeItem(at: base) }
+    func put(_ root: URL, _ p: String, _ s: String) throws { try Data(s.utf8).write(to: root.appendingPathComponent(p)) }
+    func read(_ root: URL, _ p: String) -> String? { (try? Data(contentsOf: root.appendingPathComponent(p))).map { String(decoding: $0, as: UTF8.self) } }
+    try FileManager.default.createDirectory(at: client, withIntermediateDirectories: true)
+    try put(client, "f.txt", "v1")
+    let hub = ShareHub()
+    let key = try #require(await hub.register(session: "p", cwd: client.path, key: nil, copy: copy))
+    let minigw = FakeMinigw(hub, key: key, root: client)
+    let server = minigw.serve()
+    defer { server.cancel() }
+    func mount(_ run: String) async -> URL? { await ShareHub.$run.withValue(run) { await hub.mount(session: "p", cwd: client.path, base: "") } }
+    func pull(_ run: String) async { await ShareHub.$run.withValue(run) { await hub.syncBack(session: "p") }; await hub.finish(run: run) }
+
+    let d1 = try #require(await mount("r1")), d2 = try #require(await mount("r2"))
+    try put(d1, "f.txt", "one-agent1"); try put(d2, "f.txt", "two")
+    await hub.finish(run: "r1")                                                   // prekinjen pred prevzemom R2
+    await pull("r2")
+    #expect(read(client, "f.txt") == "two")
+    _ = try #require(await mount("r3"))
+    await pull("r3")
+    #expect(read(client, "f.txt") == "two" && read(client, "f.txt.minigw-conflict") == "one-agent1")  // spor, ne prepis
+    _ = try #require(await mount("r3b"))
+    await pull("r3b")
+    #expect(read(client, "f.txt") == "two")                                       // in tudi pozneje ne
+
+    // Prevzem ene poti ne uspe; drug agent medtem spremeni kopijo → različica agenta pride kot .minigw-agent.
+    try FileManager.default.removeItem(at: client.appendingPathComponent("f.txt.minigw-conflict"))
+    let d4 = try #require(await mount("r4")), d5 = try #require(await mount("r5"))
+    try put(d4, "f.txt", "four"); try put(d5, "f.txt", "five")
+    await pull("r5")
+    minigw.failGet = ["f.txt"]
+    await pull("r4")
+    minigw.failGet = []
+    #expect(read(client, "f.txt") == "five" && read(copy, "f.txt.minigw-agent") == "four")
+    _ = try #require(await mount("r6"))
+    await pull("r6")
+    #expect(read(client, "f.txt") == "five" && read(client, "f.txt.minigw-agent") == "four")
+    let leftovers = FileManager.default.enumerator(atPath: copy.path)?.compactMap { $0 as? String }.filter { $0.hasSuffix(".minigw-conflict") }
+    #expect(leftovers == [])                                                     // v kopiji se spori ne kopičijo
+}
+
+/// Prekinjeno izvajanje: brez klona; delo agenta pred prekinitvijo ostane v kopiji (»kept«) za naslednji prevzem.
+@Test func syncCancelledRunLeavesNoClone() async throws {
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent("synccancel-" + UUID().uuidString)
+    let client = base.appendingPathComponent("client"), copy = base.appendingPathComponent("sync/local/y")
+    let runsDir = base.appendingPathComponent("sync/runs")
+    defer { try? FileManager.default.removeItem(at: base) }
+    try FileManager.default.createDirectory(at: client, withIntermediateDirectories: true)
+    try Data("v1".utf8).write(to: client.appendingPathComponent("a.txt"))
+    let hub = ShareHub()
+    let key = try #require(await hub.register(session: "c", cwd: client.path, key: nil, copy: copy))
+    let minigw = FakeMinigw(hub, key: key, root: client)
+    let server = minigw.serve()
+    defer { server.cancel() }
+
+    // Prekinjeno pred prenosom: nič.
+    let early = Task { await ShareHub.$run.withValue("c0") { await hub.mount(session: "c", cwd: client.path, base: "") } }
+    early.cancel()
+    #expect(await early.value == nil)
+    await hub.finish(run: "c0")
+    // Prekinjeno med agentom (brez prevzema): finish združi in odstrani klon.
+    let dir = try #require(await ShareHub.$run.withValue("c1") { await hub.mount(session: "c", cwd: client.path, base: "") })
+    try Data("agent".utf8).write(to: dir.appendingPathComponent("a.txt"))
+    await hub.finish(run: "c1")
+    #expect(!FileManager.default.fileExists(atPath: dir.path))
+    #expect(((try? FileManager.default.contentsOfDirectory(atPath: runsDir.path)) ?? []).isEmpty)
+    #expect(try #require(await hub.syncManifest(key: key, Array(minigw.state.values))).kept == ["a.txt"])
+}
 
 @Test func syncRefusesUnpairedRemoteClient() async {
     let r = Router(config: RouterConfig(), token: "tok", secrets: FakeSecrets(values: [:]))
@@ -904,17 +1084,20 @@ actor Order { var items: [String] = []; func add(_ s: String) { items.append(s) 
     let (_, done) = Sync.apply(ch, root: root, state: &state) { _ in nil }
     let mode = try FileManager.default.attributesOfItem(atPath: root.appendingPathComponent("run.sh").path)[.posixPermissions] as? NSNumber
     #expect((mode?.intValue ?? 0) & 0o100 != 0)
-    #expect(done == ["run.sh", "../bad", "../gone"])  // neveljavne potrjene, sicer bi ostale v čakanju
+    #expect(done == ["../gone", "run.sh", "../bad"])  // neveljavne potrjene, sicer bi ostale v čakanju
 }
 
-@Test func syncLockWaitsForRegistration() async {
+@Test func syncMountWaitsForRegistration() async throws {
     let hub = ShareHub()
-    let copy = URL(fileURLWithPath: "/tmp/lockwait-" + UUID().uuidString)
-    let late = Task { await hub.lock(session: "late", wait: true) }
+    let copy = FileManager.default.temporaryDirectory.appendingPathComponent("lockwait-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: copy) }
+    let late = Task { await hub.mount(session: "late", cwd: nil, base: "", wait: true) }
     try? await Task.sleep(for: .milliseconds(200))
-    _ = await hub.register(session: "late", cwd: "/a", key: nil, copy: copy)
+    let key = try #require(await hub.register(session: "late", cwd: "/a", key: nil, copy: copy))
+    guard case .some(.some(let job)) = await hub.poll(key: key, wait: 5) else { Issue.record("no job"); return }
+    #expect(job.method == "SYNC-PUSH")
+    _ = await hub.reply(key: key, DAVReply(id: job.id, response: DAVResponse(200)))
     #expect(await late.value == copy)
-    await hub.unlock(copy)
 }
 
 /// Uporabnik chmod +x (in sprememba) → prenos → agent te datoteke ne spremeni → prevzem ohrani bit x.
@@ -1016,15 +1199,12 @@ actor Order { var items: [String] = []; func add(_ s: String) { items.append(s) 
     let copy = FileManager.default.temporaryDirectory.appendingPathComponent("syncdev-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: copy) }
     let key = try #require(await hub.register(session: "d", cwd: "/a", key: nil, copy: copy, device: "dev1"))
-    #expect(await hub.lock(session: "d") == nil)
-    #expect(await hub.lock(session: "d", device: "dev2") == nil)
+    #expect(await hub.mount(session: "d", cwd: nil, base: "http://127.0.0.1:1") == nil)
     #expect(await hub.mount(session: "d", cwd: nil, base: "http://127.0.0.1:1", device: "dev2") == nil)
     #expect(await hub.syncManifest(key: key, [], device: "dev2") == nil)
     #expect(await hub.syncPut(key: key, path: "a", data: Data(), device: nil) == 404)
     #expect(await hub.syncChanges(key: key, device: "dev2") == nil)
     #expect(await hub.syncManifest(key: key, [], device: "dev1") != nil)
-    #expect(await hub.lock(session: "d", device: "dev1") == copy)
-    await hub.unlock(copy)
 }
 
 @Test func readOnlySyncHasItsOwnCopy() async throws {
