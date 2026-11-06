@@ -137,6 +137,12 @@ struct SettingsView: View {
             Section("Token") {
                 TokenRow()
             }
+            Section("About") {
+                LabeledContent("Version") { Text(verbatim: "\(MenuView.version) (\(MenuView.build))").textSelection(.enabled) }
+                LabeledContent("License") {
+                    Link("MIT License", destination: URL(string: "https://github.com/gh-commiter/mini-llm-gateway/blob/main/LICENSE")!)
+                }
+            }
         }
     }
 

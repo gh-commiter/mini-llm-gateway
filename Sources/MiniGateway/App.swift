@@ -194,12 +194,15 @@ final class AppState: ObservableObject {
 }
 
 struct MenuView: View {
+    static let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+    static let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
     @EnvironmentObject var state: AppState
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         Text(verbatim: state.status)
+        Text("Version \(Self.version) (\(Self.build))")
         Divider()
         ForEach(state.inflight) { r in
             Text(verbatim: "⏳ \(r.model)  \(Duration.seconds(Int(Date().timeIntervalSince(r.time))).formatted(.time(pattern: .minuteSecond)))"
