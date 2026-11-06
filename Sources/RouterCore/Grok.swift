@@ -1,0 +1,195 @@
+import Foundation
+
+/// Ponudnik `grok -p` (xAI Grok Build CLI): agent v mapi seje, kot Codex. Omejitve postavi jedro (sandbox Grok):
+/// »workspace« bere povsod, piše le v mapo seje in začasne mape; »read-only« ne piše v projekt.
+public struct GrokConfig: Codable, Sendable, Equatable {
+    public var enabled = false
+    public var executable = ""            // prazno = samodejno iskanje
+    public var enabledModels: [String]?   // nil = vsi modeli računa; seznam = le ti
+    public var write = true               // sandbox workspace (sicer read-only)
+    public init() {}
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = GrokConfig()
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? d.enabled
+        executable = try c.decodeIfPresent(String.self, forKey: .executable) ?? d.executable
+        enabledModels = try c.decodeIfPresent([String].self, forKey: .enabledModels)
+        write = try c.decodeIfPresent(Bool.self, forKey: .write) ?? d.write
+    }
+
+    public func isModelEnabled(_ m: String) -> Bool { enabledModels?.contains(m) ?? true }
+
+    public mutating func setModel(_ m: String, _ on: Bool, all: [String]) {
+        var list = enabledModels ?? all
+        list.removeAll { $0 == m }
+        if on { list.append(m) }
+        enabledModels = Set(list) == Set(all) ? nil : list
+    }
+}
+
+public enum Grok {
+    static let ids: Set<String> = ["claude-grok"]
+    static let prefix = "claude-grok-"
+    public static let detected: String? = ClaudeCLI.locate("grok")
+
+    public static func executable(_ configured: String) -> String? {
+        configured.isEmpty ? detected : [(configured as NSString).expandingTildeInPath].first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
+    /// Model za `grok -m` (nil = privzeti); nil, če ime ni Grok.
+    static func match(_ model: String) -> String?? {
+        if ids.contains(model) { return .some(nil) }
+        return model.hasPrefix(prefix) && model.count > prefix.count ? .some(String(model.dropFirst(prefix.count))) : .none
+    }
+
+    /// Modeli računa iz `grok models` (vrstice »  * grok-4.7 (default)« ali »  grok-…«).
+    public static func catalog(_ exe: String) -> [String] {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: exe)
+        p.arguments = ["models"]
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = FileHandle.nullDevice
+        p.standardInput = FileHandle.nullDevice
+        guard (try? p.run()) != nil else { return [] }
+        let text = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        p.waitUntilExit()
+        guard let start = text.range(of: "Available models:") else { return [] }
+        return text[start.upperBound...].split(whereSeparator: \.isNewline).compactMap { line in
+            let t = line.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "*- "))
+            return t.split(separator: " ").first.map(String.init).flatMap { $0.isEmpty ? nil : $0 }
+        }
+    }
+
+    static func args(cwd: URL, extraDirs: [String], agent: Bool, model: String?, write: Bool) -> [String] {
+        var a = ["--cwd", cwd.path, "--output-format", "streaming-json", "--prompt-file", "/dev/stdin"]
+        if let model { a += ["-m", model] }
+        if agent && write {
+            // Jedrni sandbox omeji pisanje na mapo seje (dodatnih map »workspace« ne dovoli, zato brez --add-dir);
+            // znotraj njega orodja brez vprašanj (headless).
+            a += ["--sandbox", "workspace", "--always-approve"]
+        } else {
+            a += ["--sandbox", "read-only"]
+        }
+        return a
+    }
+
+    struct Failure: Error { let message: String }
+
+    /// Dogodek `streaming-json`: korak (za Activity), besedilo ali konec.
+    enum Event: Equatable { case step(String), text(String), toolCall, end(String?), error(String) }
+
+    static func event(_ line: Data) -> Event? {
+        guard let o = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { return nil }
+        switch o["type"] as? String {
+        case "text": return (o["data"] as? String).map(Event.text)
+        case "tool_call":
+            let input = o["rawInput"] as? [String: Any] ?? [:]
+            let arg = ["command", "target_file", "path", "target_directory", "query", "url"].lazy.compactMap { input[$0] as? String }.first ?? ""
+            return .step("\(o["title"] as? String ?? "tool") \(arg.prefix(120))".trimmingCharacters(in: .whitespaces))
+        case "end": return .end(o["sessionId"] as? String)
+        case "error": return .error(o["message"] as? String ?? "grok error")
+        default: return nil
+        }
+    }
+
+    final class Handle: @unchecked Sendable { let p = Process() }
+
+    /// Zažene grok in vrne končni odgovor (besedilo po zadnjem klicu orodja); prekinitev odjemalca ustavi grok.
+    /// Vrne končni odgovor in ID Grokove seje (za nadaljevanje z -r).
+    static func run(_ exe: String, args: [String], cwd: URL, prompt: String,
+                    onStep: @escaping @Sendable (String) -> Void) async throws -> (String, String?) {
+        let h = Handle()
+        return try await withTaskCancellationHandler {
+            try await Task.detached { () throws -> (String, String?) in
+                let p = h.p
+                p.executableURL = URL(fileURLWithPath: exe)
+                p.arguments = args
+                p.currentDirectoryURL = cwd
+                let input = Pipe(), events = Pipe(), errors = Pipe()
+                p.standardInput = input
+                p.standardOutput = events
+                p.standardError = errors
+                final class Box: @unchecked Sendable { var data = Data() }
+                let stderr = Box()
+                let errReader = Thread { stderr.data = errors.fileHandleForReading.readDataToEndOfFile() }
+                try p.run()
+                errReader.start()
+                input.fileHandleForWriting.write(Data(prompt.utf8))
+                try? input.fileHandleForWriting.close()
+                var buf = Data(), answer = "", failure: String?, session: String?
+                while case let chunk = events.fileHandleForReading.availableData, !chunk.isEmpty {
+                    buf.append(chunk)
+                    while let nl = buf.firstIndex(of: 10) {
+                        switch event(buf[buf.startIndex..<nl]) {
+                        case .step(let s)?: onStep(s); answer = ""  // odgovor je besedilo po zadnjem orodju
+                        case .text(let t)?: answer += t
+                        case .error(let m)?: failure = m
+                        case .end(let id)?: session = id
+                        default: break
+                        }
+                        buf = Data(buf[(nl + 1)...])
+                    }
+                }
+                p.waitUntilExit()
+                while errReader.isExecuting { usleep(10_000) }
+                let text = answer.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard failure == nil, !text.isEmpty else {
+                    let tail = String(decoding: stderr.data.suffix(400), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+                    throw Failure(message: failure ?? "grok exited with \(p.terminationStatus)" + (tail.isEmpty ? "" : ": \(tail)"))
+                }
+                return (text, session)
+            }.value
+        } onCancel: { if h.p.isRunning { h.p.terminate() } }
+    }
+}
+
+extension Router {
+    func runGrok(_ req: HTTPRequest, body: [String: Any], model: String?, rid: String, writer: ResponseWriter) async -> Int {
+        guard let exe = Grok.executable(config.grok.executable) else {
+            return await error(503, "api_error", "Grok CLI not found (Mini Gateway → Settings → Grok CLI)", rid: rid, writer: writer)
+        }
+        let all = ClaudeCLI.turns(body)
+        guard let last = all.last, last.role == "user" else {
+            return await error(400, "invalid_request_error", "Last message must be from the user", rid: rid, writer: writer)
+        }
+        let agent = (body["tools"] as? [Any])?.isEmpty == false
+        var cwd = FileManager.default.temporaryDirectory.appendingPathComponent("minigateway-chat", isDirectory: true)
+        var extra: [String] = []
+        var prompt = ClaudeCLI.prompt(history: all.dropLast(), last: last)
+        if agent {
+            let clientCwd = req.header("x-claude-mini-cwd")
+            let shared = await Self.shares.mount(session: req.header("x-claude-mini-session") ?? "", cwd: clientCwd, base: localBase,
+                                                 wait: req.header("x-claude-mini-share") == "1")
+            guard let dir = shared ?? ClaudeCLI.resolveCwd(clientCwd, roots: config.claudeCLI.allowedRoots) else {
+                return await error(400, "invalid_request_error",
+                                   "cwd_unavailable: folder \(clientCwd ?? "(none)") does not exist on this Mac or is outside the allowed folders",
+                                   rid: rid, writer: writer)
+            }
+            cwd = dir
+            extra = config.claudeCLI.allowedRoots.split(separator: ",").map { ClaudeCLI.expand($0.trimmingCharacters(in: .whitespaces)) }
+                .filter { $0 != "/" && !$0.isEmpty && $0 != dir.path && FileManager.default.fileExists(atPath: $0) }
+            if let shared, let clientCwd {
+                prompt = "The user's folder \(clientCwd) (on their Mac) is mounted here as \(shared.path), your working directory. Map paths under \(clientCwd) to it.\n\n" + prompt
+            }
+        } else {
+            try? FileManager.default.createDirectory(at: cwd, withIntermediateDirectories: true)
+        }
+        var args = Grok.args(cwd: cwd, extraDirs: extra, agent: agent, model: model, write: config.grok.write)
+        // Nadaljevanje Grokove seje (prebrane datoteke, rezultati ukazov): ključ je dosedanji pogovor v tej mapi.
+        let scope = "grok|" + (req.header("x-claude-mini-session") ?? "") + "|" + cwd.path
+        if agent, let existing = await Self.grokSessions.get(ClaudeCLI.key(all.dropLast(), scope: scope)) {
+            args += ["-r", existing]
+            prompt = last.text
+        }
+        let sessions = Self.grokSessions
+        return await replyWhenDone(body: body, model: "claude-grok", rid: rid, writer: writer) {
+            let (text, session) = try await Grok.run(exe, args: args, cwd: cwd, prompt: prompt) { [onActivity] s in onActivity(.step(id: rid, text: s)) }
+            if agent, let session {
+                await sessions.set(ClaudeCLI.key(all + [ClaudeCLI.Turn(role: "assistant", text: text)], scope: scope), session)
+            }
+            return (text, [])
+        }
+    }
+}

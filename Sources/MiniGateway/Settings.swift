@@ -20,9 +20,10 @@ struct SettingsView: View {
     @State private var selectedRoot: String?
     @State private var selectedDevice: String?
     @State private var codexModels: [Codex.Model] = []
+    @State private var grokModels: [String] = []
 
     enum Pane: Hashable {
-        case general, provider(String), siri, appleFM, claudeCLI, codex
+        case general, provider(String), siri, appleFM, claudeCLI, codex, grok
     }
 
     private struct Item: Identifiable {
@@ -43,7 +44,8 @@ struct SettingsView: View {
             + [Item(pane: .siri, title: "Siri AI", symbol: "waveform", color: .pink),
                Item(pane: .appleFM, title: "Apple Foundation Models", symbol: "apple.intelligence", color: .orange),
                Item(pane: .claudeCLI, title: "Claude CLI", symbol: "terminal.fill", color: .brown),
-               Item(pane: .codex, title: "Codex CLI", symbol: "chevron.left.forwardslash.chevron.right", color: .teal)]
+               Item(pane: .codex, title: "Codex CLI", symbol: "chevron.left.forwardslash.chevron.right", color: .teal),
+               Item(pane: .grok, title: "Grok CLI", symbol: "sparkle", color: .indigo)]
     }
 
     var body: some View {
@@ -114,6 +116,7 @@ struct SettingsView: View {
         case .appleFM: appleFM
         case .claudeCLI: claudeCLI
         case .codex: codex
+        case .grok: grok
         }
     }
 
@@ -279,6 +282,49 @@ struct SettingsView: View {
                 Text("Sandbox")
             } footer: {
                 Text("The claude-codex models (one per Codex model of your account) run “codex exec” as an agent in the session's folder, also in folders shared from other Macs. Its sandbox writes only to that folder and the allowed folders from Claude CLI; reads are not limited. Sign in once with “codex login”.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var grok: some View {
+        Form {
+            Section {
+                Toggle("Enabled", isOn: $draft.grok.enabled)
+                LabeledContent("Executable (empty = auto-detect)") {
+                    TextField("", text: $draft.grok.executable, prompt: Text(verbatim: Grok.detected ?? "grok"))
+                        .labelsHidden()
+                }
+            }
+            Section {
+                ForEach(grokModels, id: \.self) { m in
+                    Toggle(isOn: Binding(get: { draft.grok.isModelEnabled(m) }, set: { draft.grok.setModel(m, $0, all: grokModels) })) {
+                        Text(verbatim: m)
+                    }
+                }
+            } header: {
+                HStack {
+                    Text("Models")
+                    Spacer()
+                    EqualWidthHStack {
+                        WideButton("Enable All") { draft.grok.enabledModels = nil }
+                        WideButton("Disable All") { draft.grok.enabledModels = [] }
+                    }
+                    .disabled(grokModels.isEmpty)
+                }
+                .controlSize(.small)
+            }
+            .task(id: draft.grok.executable) {
+                let exe = draft.grok.executable
+                grokModels = await Task.detached { Grok.executable(exe).map(Grok.catalog) ?? [] }.value
+            }
+            foldersSection
+            Section {
+                Toggle("Allow writing in the session's folder", isOn: $draft.grok.write)
+            } header: {
+                Text("Sandbox")
+            } footer: {
+                Text("The claude-grok models run “grok -p” as an agent in the session's folder, also in folders shared from other Macs. Grok's kernel sandbox (workspace) lets it write only to that folder; reads are not limited. Without writing it runs read-only. Sign in once with “grok login”.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

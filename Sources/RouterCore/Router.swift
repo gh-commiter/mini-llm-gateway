@@ -157,6 +157,12 @@ public final class Router: Sendable {
                     }
                     return (await runSiri(req, body: body, rid: rid, writer: writer), model, "siri-ai")
                 }
+                if config.grok.enabled, let grokModel = Grok.match(model), grokModel.map(config.grok.isModelEnabled) ?? true {
+                    if req.path.hasSuffix("/count_tokens") {
+                        return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "grok")
+                    }
+                    return (await runGrok(req, body: body, model: grokModel, rid: rid, writer: writer), model, "grok")
+                }
                 if config.codex.enabled, let codexModel = Codex.match(model), codexModel.map(config.codex.isModelEnabled) ?? true {
                     if req.path.hasSuffix("/count_tokens") {
                         return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "codex")
@@ -267,6 +273,14 @@ public final class Router: Sendable {
                 ["type": "model", "id": Codex.prefix + m.slug, "display_name": "\(m.name) · Codex CLI",
                  "description": "codex exec · \(m.slug)\(m.window.map { " · \($0 / 1000)K" } ?? "") · tools in your folder",
                  "created_at": created]
+            }
+        }
+        if config.grok.enabled, let exe = Grok.executable(config.grok.executable) {
+            data.append(["type": "model", "id": "claude-grok", "display_name": "Grok · Grok CLI",
+                         "description": "grok -p · default model · tools in your folder", "created_at": created])
+            data += Grok.catalog(exe).filter { config.grok.isModelEnabled($0) }.map { m in
+                ["type": "model", "id": Grok.prefix + m, "display_name": "\(m) · Grok CLI",
+                 "description": "grok -p · \(m) · tools in your folder", "created_at": created]
             }
         }
         return ["data": data, "has_more": false,
