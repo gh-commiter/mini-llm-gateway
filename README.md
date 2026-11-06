@@ -5,6 +5,11 @@ the **Siri AI** app, **Apple Foundation Models** (on-device), the **Claude Code 
 and any Anthropic-compatible upstream such as **LiteLLM** or **OpenRouter**. The router runs on a Mac; the `minigw`
 client runs on macOS, Windows and Linux. Pick a model with `/model`, or give each Claude Code subagent its own.
 
+**Why.** Sometimes you want a second opinion: a review by Codex, a quick check by Grok, an answer from a local model
+or from Siri, without leaving Claude Code. And sometimes Claude has to share the work: Mini Gateway was inspired by
+a Claude Ultra plan that used up 100% of its weekly quota on day 2. Routine tasks can go to other or local models,
+so Claude stays free for the work that needs it.
+
 ## Contents
 
 - [1. What it does](#1-what-it-does)
@@ -54,17 +59,18 @@ and the agent works on your files, while they stay on the client.
 | `claude-apple-fm` | Apple Foundation Models | On-device, streaming, ~8K context (history trimmed automatically). No tools. |
 | `opus`, `sonnet`, `haiku`, `fable` | `claude -p` | Runs your local Claude Code as an agent in the session's folder; sessions resume with `--resume`. Listed in `/model` as `claude-cli-*`; `claude-chat-*` = no tools. Tools: read-only by default; **Allow local tools** (Settings → Claude CLI) gives every Claude Code tool on the router Mac (commands, builds), with a table to exclude single tools. Files stay in the session folder and the allowed folders: file tools are refused outside them, and commands run in Claude Code's sandbox (no reads of the home folder, writes only in these folders, network allowed). |
 | `claude-codex`, `claude-codex-<model>` | `codex exec` (OpenAI Codex CLI) | Off by default (Settings → Codex CLI). One entry per enabled Codex model of your account (model table, allowed folders and sandbox switches in Settings → Codex CLI). Runs Codex as an agent in the session's folder, like `claude -p`. Its sandbox writes only to that folder and the allowed folders. Within a conversation Codex continues its own thread (`codex exec resume`), also after `minigw -c` or `--resume`. |
-| `claude-grok`, `claude-grok-<model>` | `grok -p` (xAI Grok Build CLI) | Off by default (Settings → Grok CLI). Agent in the session's folder; Grok's kernel sandbox (`workspace`) limits writes to that folder, or `read-only`. |
-| discovered models | LiteLLM, OpenRouter | Pure passthrough (tools, streaming). Models and context windows are discovered from the upstream; enable the ones you want. |
+| `claude-grok`, `claude-grok-<model>` | `grok -p` (xAI Grok Build CLI) | Off by default (Settings → Grok CLI). Agent in the session's folder; Grok's kernel sandbox (`workspace`) limits writes to that folder, or `read-only`. Within a conversation Grok continues its own session (`-r`). |
+| discovered models | LiteLLM, OpenRouter or any Anthropic-compatible gateway | Pure passthrough (tools, streaming). Add as many gateways as you like, each with its own key. Models and context windows are discovered from the upstream; enable the ones you want. |
 
 The router speaks the Anthropic Messages API (`/v1/messages`, `/v1/models`, `count_tokens`), so Claude Code
 sees it as a regular LLM gateway. Only models that were verified to work are listed.
 
 ## 2. Requirements
 
-- macOS 27 on Apple Silicon
-- Claude Code (`claude`) in your `PATH` for the CLI provider and the `minigw` command
-- The **Siri AI** app, for the Siri provider
+- Router: macOS 27 on Apple Silicon
+- Client (`minigw`): macOS, Windows or Linux, with Claude Code (`claude`) in your `PATH`
+- Optional on the router Mac, for their providers: Claude Code, the **Siri AI** app, [Codex CLI](https://github.com/openai/codex),
+  Grok CLI, a LiteLLM or OpenRouter account
 
 ## 3. Install
 
