@@ -299,7 +299,7 @@ trademark of Anthropic, PBC; Codex and OpenAI are trademarks of OpenAI; Grok is 
 Mini Gateway only connects tools that others built:
 
 - [Anthropic](https://www.anthropic.com): [Claude Code](https://claude.com/claude-code) and the Claude models. Claude Code
-  is the client the whole project is made for, and Claude also wrote much of the code.
+  is the client the whole project is made for, and Claude wrote all of the code.
 - [OpenAI](https://openai.com): [Codex CLI](https://github.com/openai/codex).
 - [xAI](https://x.ai): Grok CLI.
 - [Apple](https://www.apple.com): the Siri AI app and the [Foundation Models](https://developer.apple.com/documentation/foundationmodels) framework.
