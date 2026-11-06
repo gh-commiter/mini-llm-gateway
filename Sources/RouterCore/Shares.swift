@@ -273,15 +273,17 @@ public actor ShareHub {
     }
 
     /// Spremembe agenta v klonu nazaj v kopijo (pod zaklepom), da je naslednji prenos spet le razlika.
-    /// Pot, ki se je v kopiji od klona spremenila (drug agent ali prenos), ne prepiše: različico zapiše kot
-    /// `<pot>.minigw-conflict` v kopijo. Nepotrjene ostanejo v kopiji (»kept«) z izvorno različico v keptBase.
+    /// Pot, ki se je v kopiji od klona spremenila (drug agent ali prenos), ne prepiše. Če je minigw ni potrdil, gre
+    /// različica agenta v kopijo kot `<pot>.minigw-agent` (nova datoteka, z naslednjim prevzemom do uporabnika).
+    /// Nepotrjene združene ostanejo v kopiji (»kept«) z izvorno različico v keptBase.
     /// ponytail: le sinhronizirane datoteke; prezrti izhod gradnje (.build, node_modules) ostane v klonu in izgine z njim,
     /// zato vsako izvajanje gradi od stanja kopije. Združi tudi te, če bo inkrementalna gradnja prepočasna.
+    /// ponytail: nepotrjen izbris v spremenjeni kopiji se opusti (ostane različica kopije).
     private func merge(_ r: Run) async {
         guard !r.merged, !r.share.readOnly else { return }
         r.merged = true
-        let (start, clone, copy) = (r.start, r.clone, r.copy)
-        let applied = await Task.detached { () -> [String] in
+        let (start, clone, copy, acked) = (r.start, r.clone, r.copy, r.acked)
+        let (applied, touched) = await Task.detached { () -> ([String], Set<String>) in
             let fm = FileManager.default
             let ch = Sync.diff(old: start, new: Sync.scan(clone, previous: start).files, root: clone)
             func unchanged(_ p: String, _ dst: URL) -> Bool { Sync.entry(dst, path: p, previous: start[p])?.sha256 == start[p]?.sha256 }
@@ -293,8 +295,10 @@ public actor ShareHub {
             }
             for e in ch.changed {
                 guard let src = Sync.resolve(e.path, root: clone), let dst = Sync.resolve(e.path, root: copy) else { continue }
+                if let old = Sync.resolve(e.path + ".minigw-conflict", root: copy) { try? fm.removeItem(at: old) }  // ostanek 7e10925
                 let ok = unchanged(e.path, dst)
-                guard let target = ok ? dst : Sync.resolve(e.path + ".minigw-conflict", root: copy) else { continue }
+                if !ok, acked.contains(e.path) { continue }  // odjemalec jo že ima; kopija ostane drugemu izvajanju
+                guard let target = ok ? dst : Sync.resolve(e.path + ".minigw-agent", root: copy) else { continue }
                 // Mapa → datoteka: le prazna mapa (nikoli rekurzivno; preskočene poti v njej ostanejo).
                 var dir: ObjCBool = false
                 if fm.fileExists(atPath: target.path, isDirectory: &dir), dir.boolValue { rmdir(target.path) } else { try? fm.removeItem(at: target) }
@@ -303,9 +307,14 @@ public actor ShareHub {
                     Router.log.error("sync: cannot merge \(e.path, privacy: .public) into the copy")
                 } else if ok { applied.append(e.path) }
             }
-            return applied
+            return (applied, Set(ch.changed.map(\.path) + ch.deleted))
         }.value
-        for p in applied where !r.acked.contains(p) { r.share.keptBase.updateValue(r.base[p]?.sha256, forKey: p) }
+        // keptBase: potrjeno in v kopiji = odjemalec ima različico kopije; nepotrjeno združeno = izvor tega agenta.
+        // Ni združeno (kopija se je spremenila): ostane, kar velja za različico v kopiji.
+        for p in acked where !touched.contains(p) { r.share.keptBase[p] = nil }
+        for p in applied {
+            if acked.contains(p) { r.share.keptBase[p] = nil } else { r.share.keptBase.updateValue(r.base[p]?.sha256, forKey: p) }
+        }
     }
 
     /// Konec izvajanja (tudi ob napaki ali prekinitvi): združi, če prevzema ni bilo, in odstrani klon.
@@ -396,7 +405,9 @@ public actor ShareHub {
     func syncAck(key: String, _ paths: [String], device: String? = nil) -> Bool {
         guard let s = share(key: key, device: device), s.state != nil else { return false }
         for p in paths {
-            if let e = s.pending.removeValue(forKey: p) { s.state?[p] = e; s.keptBase[p] = nil; s.pulling?.acked.insert(p) }
+            guard let e = s.pending.removeValue(forKey: p) else { continue }
+            s.state?[p] = e
+            if let r = s.pulling { r.acked.insert(p) } else { s.keptBase[p] = nil }  // izvajanje: keptBase uredi merge
         }
         return true
     }
