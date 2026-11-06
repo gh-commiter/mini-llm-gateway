@@ -195,7 +195,7 @@ final class AppState: ObservableObject {
 
 struct MenuView: View {
     static let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
-    static let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
+    static let build = Bundle.main.object(forInfoDictionaryKey: "MGCommit") as? String ?? "?"  // commit (build.sh)
     @EnvironmentObject var state: AppState
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings

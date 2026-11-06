@@ -37,6 +37,10 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 cp "$DERIVED/Build/Products/Release/MiniGateway" "$APP/Contents/MacOS/MiniGateway"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+# Commit, iz katerega je zgrajeno (v meniju in About); -dirty, če koda ni commitana.
+commit=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
+git diff --quiet HEAD -- Sources client Resources Package.swift 2>/dev/null || commit+=-dirty
+plutil -replace MGCommit -string "$commit" "$APP/Contents/Info.plist"
 mkdir -p "$APP/Contents/Resources/en.lproj"  # izvorni jezik (fallback); prevodi iz katalogov spodaj
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 for catalog in Resources/*.xcstrings; do
