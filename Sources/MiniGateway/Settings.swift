@@ -60,6 +60,15 @@ struct SettingsView: View {
     }
 
     @State private var removing = false
+    static let builtIn: Set<String> = ["litellm", "openrouter"]  // privzeta prehoda: le izklop, ne odstranitev
+    static let startURLs: Set<String> = ["http://localhost:4000", "https://openrouter.ai/api", "https://"]
+
+    /// Izbrani prehod ima kaj nastavljenega: ključ, vklop, svoj naslov ali aliase.
+    private var configured: Bool {
+        guard let p = selectedProvider else { return false }
+        return p.enabled || !p.aliases.isEmpty || !Self.startURLs.contains(p.baseURL)
+            || !(keys[p.id] ?? "").isEmpty || state.keychain.lookup(p.id).value?.isEmpty == false
+    }
 
     private var selectedProvider: ProviderConfig? {
         if case .provider(let id)? = pane { return draft.providers.first { $0.id == id } }
@@ -85,7 +94,7 @@ struct SettingsView: View {
     }
 
     private func removeProvider() {
-        guard let p = selectedProvider else { return }
+        guard let p = selectedProvider, !Self.builtIn.contains(p.id) else { return }
         draft.providers.removeAll { $0.id == p.id }
         keys[p.id] = nil
         state.keychain.delete(p.id)
@@ -120,8 +129,14 @@ struct SettingsView: View {
                         .menuIndicator(.hidden).fixedSize()
                         .help(String(localized: "Add Gateway")).accessibilityLabel(String(localized: "Add Gateway"))
                     Divider().frame(height: 16)
-                    Button { removing = true } label: { Image(systemName: "minus").frame(width: 22, height: 18) }
-                        .disabled(selectedProvider == nil).accessibilityLabel(String(localized: "Remove"))
+                    // Nenastavljen (pravkar dodan) prehod izgine brez vprašanja; nastavljen šele po potrditvi.
+                    Button { if configured { removing = true } else { removeProvider() } } label: {
+                        Image(systemName: "minus").frame(width: 22, height: 18)
+                    }
+                        .disabled(selectedProvider.map { Self.builtIn.contains($0.id) } ?? true)
+                        .help(selectedProvider.map { Self.builtIn.contains($0.id) } == true
+                              ? String(localized: "The built-in gateways cannot be removed; turn them off instead.") : "")
+                        .accessibilityLabel(String(localized: "Remove"))
                     Spacer()
                 }
                 .buttonStyle(.borderless)
@@ -130,7 +145,11 @@ struct SettingsView: View {
             .confirmationDialog(String(localized: "Remove \(selectedProvider?.name ?? "")?"), isPresented: $removing) {
                 Button("Remove", role: .destructive) { removeProvider() }
             } message: {
-                Text("Its settings and API key are deleted from this Mac.")
+                if selectedProvider?.enabled == true {
+                    Text("This gateway is on: Claude Code sessions that use its models stop working. Its settings and API key are deleted from this Mac.")
+                } else {
+                    Text("Its settings and API key are deleted from this Mac.")
+                }
             }
             .frame(minWidth: 220)  // v običajnem oknu SwiftUI navigationSplitViewColumnWidth prezre
             .navigationSplitViewColumnWidth(min: 220, ideal: 230, max: 280)
