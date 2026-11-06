@@ -233,6 +233,9 @@ func syncWrite(full string, data []byte, mtime int64, exec, keepX bool) error {
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		return err
 	}
+	if st, err := os.Lstat(full); err == nil && st.IsDir() {
+		os.Remove(full) // prazna mapa na mestu datoteke (mapa → datoteka); polna ostane in pisanje ne uspe
+	}
 	tmp, err := os.CreateTemp(filepath.Dir(full), ".minigw-*")
 	if err != nil {
 		return err
@@ -279,6 +282,33 @@ func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch fu
 			return ch.Base[p]
 		}
 		return before[p]
+	}
+	for _, p := range ch.Deleted { // pred spremembami: datoteka »a« → mapa »a/…«
+		if protectedPath(p) {
+			notes = append(notes, "not deleted "+p+": protected path")
+			done = append(done, p)
+			continue
+		}
+		if ignoredPath(rules, p) {
+			done = append(done, p)
+			continue
+		}
+		done = append(done, p)
+		full, ok := syncResolve(p, root)
+		if !ok {
+			continue
+		}
+		local, has := syncEntryOf(full, p, state)
+		if !has {
+			delete(state, p)
+			continue
+		}
+		if local.SHA256 != base(p) {
+			notes = append(notes, "conflict: "+p+" was deleted on the router but changed here; kept")
+			continue
+		}
+		os.Remove(full)
+		delete(state, p)
 	}
 	for _, e := range ch.Changed {
 		if protectedPath(e.Path) {
@@ -337,33 +367,6 @@ func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch fu
 		}
 		state[e.Path] = e
 		done = append(done, e.Path)
-	}
-	for _, p := range ch.Deleted {
-		if protectedPath(p) {
-			notes = append(notes, "not deleted "+p+": protected path")
-			done = append(done, p)
-			continue
-		}
-		if ignoredPath(rules, p) {
-			done = append(done, p)
-			continue
-		}
-		done = append(done, p)
-		full, ok := syncResolve(p, root)
-		if !ok {
-			continue
-		}
-		local, has := syncEntryOf(full, p, state)
-		if !has {
-			delete(state, p)
-			continue
-		}
-		if local.SHA256 != base(p) {
-			notes = append(notes, "conflict: "+p+" was deleted on the router but changed here; kept")
-			continue
-		}
-		os.Remove(full)
-		delete(state, p)
 	}
 	for _, p := range ch.Skipped {
 		notes = append(notes, "not copied back (larger than 64 MB): "+p)

@@ -361,6 +361,7 @@ extension Router {
                 args += ["--append-system-prompt", Self.mountNote(clientCwd, shared, readOnly: readOnly, synced: synced)]
             }
             guard let dir = shared ?? (synced ? nil : ClaudeCLI.resolveCwd(clientCwd, roots: cfg.allowedRoots)) else {
+                if synced, Task.isCancelled { return 499 }  // Claude Code je prekinil med čakanjem na prenos
                 if synced { return await error(502, "api_error", "Syncing \(clientCwd ?? "the folder") to the router failed (see minigw output)", rid: rid, writer: writer) }
                 return await error(400, "invalid_request_error",
                                    "cwd_unavailable: folder \(req.header("x-claude-mini-cwd") ?? "(none)") does not exist on this Mac or is outside the allowed folders",
@@ -454,6 +455,7 @@ extension Router {
         } catch {
             pinger?.cancel()
             p.terminate()
+            _ = await firstOf(Task { await exit.wait() }, within: .seconds(5))  // sync: klon se odstrani šele po koncu agenta
             return headSent ? 200 : 499
         }
         let status = await exit.wait()

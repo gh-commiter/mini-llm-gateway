@@ -164,6 +164,7 @@ public enum Sync {
         let fm = FileManager.default
         let old = ((try? fm.attributesOfItem(atPath: url.path))?[.posixPermissions] as? NSNumber)?.intValue ?? 0o644
         try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        rmdir(url.path)  // prazna mapa na mestu datoteke (mapa → datoteka); polna ostane in pisanje ne uspe
         try data.write(to: url, options: .atomic)
         try fm.setAttributes([.modificationDate: Date(timeIntervalSince1970: Double(mtime) / 1000),
                               .posixPermissions: exec.map { withExec(old, $0) } ?? old], ofItemAtPath: url.path)
@@ -180,12 +181,14 @@ public enum Sync {
     }
 
     /// Router: kaj je agent spremenil v kopiji (`new`, pod `root`) glede na stanje odjemalca (`old`).
-    /// Izbris le, če na poti ni ničesar: na novo prezrta ali prevelika datoteka ni izbrisana.
+    /// Izbris le, če na poti ni datoteke ali povezave: na novo prezrta ali prevelika datoteka ni izbrisana; mapa na njenem
+    /// mestu (datoteka »a« → »a/b«) pa je izbris.
     public static func diff(old: [String: Entry], new: [String: Entry], root: URL) -> Changes {
         Changes(changed: new.values.filter { old[$0.path]?.sha256 != $0.sha256 || old[$0.path]?.exec != $0.exec }
                     .sorted { $0.path < $1.path },
                 deleted: old.keys.filter { p in
-                    new[p] == nil && (try? FileManager.default.attributesOfItem(atPath: root.appendingPathComponent(p).path)) == nil
+                    let t = (try? FileManager.default.attributesOfItem(atPath: root.appendingPathComponent(p).path))?[.type] as? FileAttributeType
+                    return new[p] == nil && (t == nil || t == .typeDirectory)
                 }.sorted())
     }
 
@@ -198,6 +201,16 @@ public enum Sync {
         let ignore = Ignore(root: root)
         var notes: [String] = [], done: [String] = []
         let before = state, base = { (p: String) in ch.base.map { $0[p] } ?? before[p]?.sha256 }
+        for p in ch.deleted {  // pred spremembami: datoteka »a« → mapa »a/…«
+            if isProtected(p) { notes.append("not deleted \(p): protected path"); done.append(p); continue }
+            if ignore.covers(p) { done.append(p); continue }
+            done.append(p)
+            guard let url = resolve(p, root: root) else { continue }
+            guard let local = entry(url, path: p, previous: state[p]) else { state[p] = nil; continue }
+            if local.sha256 != base(p) { notes.append("conflict: \(p) was deleted on the router but changed here; kept"); continue }
+            try? FileManager.default.removeItem(at: url)
+            state[p] = nil
+        }
         for e in ch.changed {
             if isProtected(e.path) { notes.append("skipped \(e.path): protected path"); done.append(e.path); continue }
             if ignore.covers(e.path) { notes.append("skipped \(e.path): ignored here"); done.append(e.path); continue }
@@ -231,16 +244,6 @@ public enum Sync {
                 state[e.path] = e
                 done.append(e.path)
             } catch { notes.append("cannot write \(e.path): \(error.localizedDescription)") }
-        }
-        for p in ch.deleted {
-            if isProtected(p) { notes.append("not deleted \(p): protected path"); done.append(p); continue }
-            if ignore.covers(p) { done.append(p); continue }
-            done.append(p)
-            guard let url = resolve(p, root: root) else { continue }
-            guard let local = entry(url, path: p, previous: state[p]) else { state[p] = nil; continue }
-            if local.sha256 != base(p) { notes.append("conflict: \(p) was deleted on the router but changed here; kept"); continue }
-            try? FileManager.default.removeItem(at: url)
-            state[p] = nil
         }
         notes += ch.skipped.map { "not copied back (larger than 64 MB): \($0)" }
         return (notes, done)

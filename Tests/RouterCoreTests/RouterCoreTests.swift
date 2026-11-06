@@ -762,7 +762,7 @@ final class SeenDevices: @unchecked Sendable {
     for e in ch.changed { blobs[e.path] = await hub.syncGet(key: key, path: e.path) }
     #expect(await hub.syncGet(key: key, path: "build/out.o") == nil)               // prezrto ne gre nazaj
     let (notes, done) = Sync.apply(ch, root: client, state: &state) { blobs[$0] }
-    #expect(done == ["a.txt", "c.txt", "new/n.txt", "b.txt", "d.txt"])
+    #expect(done == ["b.txt", "d.txt", "a.txt", "c.txt", "new/n.txt"])  // izbrisi najprej
     #expect(await hub.syncAck(key: key, done))
     #expect(read(client, "a.txt") == "agent a" && read(client, "new/n.txt") == "agent n" && read(client, "b.txt") == nil)
     #expect(read(client, "c.txt") == "user c" && read(client, "c.txt.minigw-conflict") == "agent c")  // spor: obe različici
@@ -943,6 +943,51 @@ final class FakeMinigw: @unchecked Sendable {
     await hub.finish(run: "r3")
 }
 
+/// Pregled: R1 in R2 spremenita f.txt; R2 je prevzet, R1 prekinjen. R1 ne sme prepisati R2 ne v kopiji ne pri odjemalcu.
+/// Agent zamenja datoteko »a« z mapo »a/b«: nova datoteka pride do odjemalca in v kopijo.
+@Test func syncCancelledRunDoesNotOverwriteOtherRun() async throws {
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent("syncrev-" + UUID().uuidString)
+    let client = base.appendingPathComponent("client"), copy = base.appendingPathComponent("sync/local/x")
+    defer { try? FileManager.default.removeItem(at: base) }
+    func put(_ root: URL, _ p: String, _ s: String) throws {
+        try FileManager.default.createDirectory(at: root.appendingPathComponent(p).deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(s.utf8).write(to: root.appendingPathComponent(p))
+    }
+    func read(_ root: URL, _ p: String) -> String? { (try? Data(contentsOf: root.appendingPathComponent(p))).map { String(decoding: $0, as: UTF8.self) } }
+    try FileManager.default.createDirectory(at: client, withIntermediateDirectories: true)
+    try put(client, "f.txt", "v1"); try put(client, "a", "file")
+    let hub = ShareHub()
+    let key = try #require(await hub.register(session: "p", cwd: client.path, key: nil, copy: copy))
+    let minigw = FakeMinigw(hub, key: key, root: client)
+    let server = minigw.serve()
+    defer { server.cancel() }
+    func mount(_ run: String) async -> URL? { await ShareHub.$run.withValue(run) { await hub.mount(session: "p", cwd: client.path, base: "") } }
+    func pull(_ run: String) async { await ShareHub.$run.withValue(run) { await hub.syncBack(session: "p") }; await hub.finish(run: run) }
+
+    let d1 = try #require(await mount("r1")), d2 = try #require(await mount("r2"))
+    try put(d1, "f.txt", "one-agent1"); try put(d2, "f.txt", "two")
+    await pull("r2")
+    #expect(read(client, "f.txt") == "two")
+    await hub.finish(run: "r1")                                                   // prekinjen: brez prevzema
+    #expect(read(copy, "f.txt") == "two" && read(copy, "f.txt.minigw-conflict") == "one-agent1")
+    _ = try #require(await mount("r3"))
+    await pull("r3")
+    #expect(read(client, "f.txt") == "two")                                       // delo R2 ostane
+
+    let d4 = try #require(await mount("r4"))
+    try FileManager.default.removeItem(at: d4.appendingPathComponent("a")); try put(d4, "a/b", "new")
+    await pull("r4")
+    #expect(read(client, "a/b") == "new" && read(copy, "a/b") == "new")
+    _ = try #require(await mount("r5"))
+    await pull("r5")
+    #expect(read(client, "a/b") == "new" && read(copy, "a/b") == "new")
+    // In nazaj: mapa »a/« → datoteka »a«.
+    let d6 = try #require(await mount("r6"))
+    try FileManager.default.removeItem(at: d6.appendingPathComponent("a")); try put(d6, "a", "file again")
+    await pull("r6")
+    #expect(read(client, "a") == "file again" && read(copy, "a") == "file again")
+}
+
 /// Prekinjeno izvajanje: brez klona; delo agenta pred prekinitvijo ostane v kopiji (»kept«) za naslednji prevzem.
 @Test func syncCancelledRunLeavesNoClone() async throws {
     let base = FileManager.default.temporaryDirectory.appendingPathComponent("synccancel-" + UUID().uuidString)
@@ -992,7 +1037,7 @@ final class FakeMinigw: @unchecked Sendable {
     let (_, done) = Sync.apply(ch, root: root, state: &state) { _ in nil }
     let mode = try FileManager.default.attributesOfItem(atPath: root.appendingPathComponent("run.sh").path)[.posixPermissions] as? NSNumber
     #expect((mode?.intValue ?? 0) & 0o100 != 0)
-    #expect(done == ["run.sh", "../bad", "../gone"])  // neveljavne potrjene, sicer bi ostale v čakanju
+    #expect(done == ["../gone", "run.sh", "../bad"])  // neveljavne potrjene, sicer bi ostale v čakanju
 }
 
 @Test func syncMountWaitsForRegistration() async throws {

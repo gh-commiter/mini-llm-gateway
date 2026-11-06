@@ -81,6 +81,7 @@ final class AppState: ObservableObject {
     init() {
         config.save()  // starejši JSON blob v preferences → berljiva struktura
         ShareHub.cleanupStale()
+        try? FileManager.default.removeItem(at: config.scratch("sync").appendingPathComponent("runs"))  // kloni prejšnjega zagona
         start()
     }
 

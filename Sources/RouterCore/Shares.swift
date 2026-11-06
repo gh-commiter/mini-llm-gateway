@@ -42,6 +42,7 @@ public actor ShareHub {
         var big: Set<String> = []                         // sync: že javljene prevelike datoteke
         var execKnown = true                              // sync: odjemalec pozna bit x (ne Windows)
         var pulling: Run?                                 // sync: izvajanje, katerega spremembe minigw prav zdaj prevzema
+        var keptBase: [String: String?] = [:]             // sync: združeno brez potrditve → različica, iz katere je agent začel
         let device: String?                               // naprava, ki je mapo registrirala (dokaz Noise); nil = lokalno
         init(session: String, cwd: String, readOnly: Bool, copy: URL?, device: String?) {
             self.session = session; self.cwd = cwd; self.readOnly = readOnly; self.copy = copy; self.device = device
@@ -54,6 +55,7 @@ public actor ShareHub {
         let base: [String: Sync.Entry]   // stanje odjemalca ob klonu: od tod so spremembe za prevzem in različice »base«
         let start: [String: Sync.Entry]  // klon ob začetku: od tod so spremembe agenta, ki gredo nazaj v kopijo
         var merged = false
+        var acked: Set<String> = []      // poti, ki jih je minigw potrdil ob prevzemu tega izvajanja
         init(share: Share, copy: URL, clone: URL, base: [String: Sync.Entry], start: [String: Sync.Entry]) {
             self.share = share; self.copy = copy; self.clone = clone; self.base = base; self.start = start
         }
@@ -271,24 +273,39 @@ public actor ShareHub {
     }
 
     /// Spremembe agenta v klonu nazaj v kopijo (pod zaklepom), da je naslednji prenos spet le razlika.
-    /// Nepotrjene ostanejo v kopiji kot doslej (»kept«) in gredo z naslednjim prevzemom.
+    /// Pot, ki se je v kopiji od klona spremenila (drug agent ali prenos), ne prepiše: različico zapiše kot
+    /// `<pot>.minigw-conflict` v kopijo. Nepotrjene ostanejo v kopiji (»kept«) z izvorno različico v keptBase.
     /// ponytail: le sinhronizirane datoteke; prezrti izhod gradnje (.build, node_modules) ostane v klonu in izgine z njim,
     /// zato vsako izvajanje gradi od stanja kopije. Združi tudi te, če bo inkrementalna gradnja prepočasna.
     private func merge(_ r: Run) async {
         guard !r.merged, !r.share.readOnly else { return }
         r.merged = true
         let (start, clone, copy) = (r.start, r.clone, r.copy)
-        await Task.detached {
+        let applied = await Task.detached { () -> [String] in
             let fm = FileManager.default
             let ch = Sync.diff(old: start, new: Sync.scan(clone, previous: start).files, root: clone)
+            func unchanged(_ p: String, _ dst: URL) -> Bool { Sync.entry(dst, path: p, previous: start[p])?.sha256 == start[p]?.sha256 }
+            var applied: [String] = []
+            for p in ch.deleted {  // pred spremembami: datoteka »a« → mapa »a/…«
+                guard let dst = Sync.resolve(p, root: copy), unchanged(p, dst) else { continue }
+                try? fm.removeItem(at: dst)
+                applied.append(p)
+            }
             for e in ch.changed {
                 guard let src = Sync.resolve(e.path, root: clone), let dst = Sync.resolve(e.path, root: copy) else { continue }
-                try? fm.removeItem(at: dst)
-                try? fm.createDirectory(at: dst.deletingLastPathComponent(), withIntermediateDirectories: true)
-                _ = Self.clone(src, to: dst)
+                let ok = unchanged(e.path, dst)
+                guard let target = ok ? dst : Sync.resolve(e.path + ".minigw-conflict", root: copy) else { continue }
+                // Mapa → datoteka: le prazna mapa (nikoli rekurzivno; preskočene poti v njej ostanejo).
+                var dir: ObjCBool = false
+                if fm.fileExists(atPath: target.path, isDirectory: &dir), dir.boolValue { rmdir(target.path) } else { try? fm.removeItem(at: target) }
+                if (try? fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)) == nil
+                    || !Self.clone(src, to: target) {
+                    Router.log.error("sync: cannot merge \(e.path, privacy: .public) into the copy")
+                } else if ok { applied.append(e.path) }
             }
-            for p in ch.deleted { if let dst = Sync.resolve(p, root: copy) { try? fm.removeItem(at: dst) } }
+            return applied
         }.value
+        for p in applied where !r.acked.contains(p) { r.share.keptBase.updateValue(r.base[p]?.sha256, forKey: p) }
     }
 
     /// Konec izvajanja (tudi ob napaki ali prekinitvi): združi, če prevzema ni bilo, in odstrani klon.
@@ -339,6 +356,7 @@ public actor ShareHub {
         for p in gone {
             if let url = Sync.resolve(p, root: copy) { try? FileManager.default.removeItem(at: url) }
             state[p] = nil
+            s.keptBase[p] = nil
         }
         s.state = state
         s.incoming = Dictionary(valid.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
@@ -352,6 +370,7 @@ public actor ShareHub {
         guard let e = s.incoming[path], let url = Sync.resolve(path, root: copy) else { return 403 }
         guard Sync.sha256(data) == e.sha256 else { return 409 }  // spremenjena med prenosom
         do { try Sync.write(data, to: url, mtime: e.mtime, exec: s.execKnown ? e.exec : nil) } catch { return 500 }
+        s.keptBase[path] = nil
         s.state?[path] = s.execKnown ? e : Sync.entry(url, path: path, previous: nil) ?? e  // Windows: dejanski način kopije
         return 204
     }
@@ -364,7 +383,9 @@ public actor ShareHub {
         s.lastSeen = Date()
         let (current, skipped) = await Task.detached { Sync.scan(copy, previous: prev) }.value
         var ch = Sync.diff(old: prev, new: current, root: copy)
-        ch.base = Dictionary(uniqueKeysWithValues: (ch.changed.map(\.path) + ch.deleted).compactMap { p in prev[p].map { (p, $0.sha256) } })
+        ch.base = Dictionary(uniqueKeysWithValues: (ch.changed.map(\.path) + ch.deleted).compactMap { p in
+            (s.keptBase[p] ?? prev[p]?.sha256).map { (p, $0) }  // združeno brez potrditve: izvorna različica
+        })
         ch.skipped = skipped.filter { !s.big.contains($0) }
         s.big = Set(skipped)
         s.pending = Dictionary(uniqueKeysWithValues: ch.changed.map { ($0.path, Optional($0)) } + ch.deleted.map { ($0, nil) })
@@ -374,7 +395,9 @@ public actor ShareHub {
     /// minigw potrdi poti, ki jih je obdelal (zapisal, izbrisal ali shranil kot spor).
     func syncAck(key: String, _ paths: [String], device: String? = nil) -> Bool {
         guard let s = share(key: key, device: device), s.state != nil else { return false }
-        for p in paths { if let e = s.pending.removeValue(forKey: p) { s.state?[p] = e } }
+        for p in paths {
+            if let e = s.pending.removeValue(forKey: p) { s.state?[p] = e; s.keptBase[p] = nil; s.pulling?.acked.insert(p) }
+        }
         return true
     }
 

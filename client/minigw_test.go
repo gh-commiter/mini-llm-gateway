@@ -177,7 +177,7 @@ func TestSyncApplyConflicts(t *testing.T) {
 		ch.Changed = append(ch.Changed, syncEntry{Path: p, Size: int64(len(blobs[p])), Mtime: 1700000000123, SHA256: sha256Hex(blobs[p])})
 	}
 	notes, done := syncApply(ch, root, state, func(p string) []byte { return blobs[p] })
-	if strings.Join(done, ",") != "a.txt,c.txt,new/n.txt,b.txt,d.txt" {
+	if strings.Join(done, ",") != "b.txt,d.txt,a.txt,c.txt,new/n.txt" {
 		t.Fatalf("done: %v", done)
 	}
 	if read("a.txt") != "agent a" || read("new/n.txt") != "agent n" || read("b.txt") != "<none>" {
@@ -240,6 +240,31 @@ func TestSyncApplyParallelRunsUseBase(t *testing.T) {
 	}
 	if len(n) != 2 || !strings.HasPrefix(n[0], "conflict:") || !strings.HasPrefix(n[1], "conflict:") {
 		t.Fatalf("notes: %v", n)
+	}
+}
+
+// Agent zamenja datoteko »a« z mapo »a/b«: izbris »a« gre pred zapisom »a/b«; in nazaj (prazna mapa → datoteka).
+func TestSyncApplyFileToFolder(t *testing.T) {
+	root := t.TempDir()
+	os.WriteFile(filepath.Join(root, "a"), []byte("file"), 0o644)
+	state, _ := syncScan(root, nil)
+	b := []byte("new")
+	ch := syncChanges{Deleted: []string{"a"}, Changed: []syncEntry{{Path: "a/b", Size: 3, Mtime: 1, SHA256: sha256Hex(b)}},
+		Base: map[string]string{"a": sha256Hex([]byte("file"))}}
+	if notes, done := syncApply(ch, root, state, func(string) []byte { return b }); len(done) != 2 || len(notes) != 0 {
+		t.Fatalf("file → folder: %v %v", notes, done)
+	}
+	if got, _ := os.ReadFile(filepath.Join(root, "a", "b")); string(got) != "new" {
+		t.Fatalf("a/b = %q", got)
+	}
+	f := []byte("file again")
+	ch = syncChanges{Deleted: []string{"a/b"}, Changed: []syncEntry{{Path: "a", Size: 10, Mtime: 1, SHA256: sha256Hex(f)}},
+		Base: map[string]string{"a/b": sha256Hex(b)}}
+	if notes, done := syncApply(ch, root, state, func(string) []byte { return f }); len(done) != 2 || len(notes) != 0 {
+		t.Fatalf("folder → file: %v %v", notes, done)
+	}
+	if got, _ := os.ReadFile(filepath.Join(root, "a")); string(got) != "file again" {
+		t.Fatalf("a = %q", got)
 	}
 }
 
@@ -357,7 +382,7 @@ func TestSyncApplyExecOnlyAndInvalidPath(t *testing.T) {
 	if st, _ := os.Stat(filepath.Join(root, "run.sh")); st.Mode().Perm()&0o100 == 0 {
 		t.Fatalf("exec bit not applied: %v", st.Mode())
 	}
-	if strings.Join(done, ",") != "run.sh,../bad,../gone" {
+	if strings.Join(done, ",") != "../gone,run.sh,../bad" {
 		t.Fatalf("done: %v", done)
 	}
 }
