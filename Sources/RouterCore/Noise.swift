@@ -98,6 +98,7 @@ public enum Noise {
     /// Promet po rokovanju: `send` šifrira proti drugi strani, `receive` dešifrira od nje.
     public struct Session: Sendable {
         public let send: Cipher, receive: Cipher
+        public let hash: Data  // h po rokovanju: enak na obeh straneh, edinstven za povezavo (vezava dokaza naprave)
     }
 
     // MARK: odjemalec (minigw)
@@ -125,7 +126,7 @@ public enum Noise {
             s.mixKey(try Noise.dh(e, re))
             _ = try s.decryptAndHash(Data(msg.dropFirst(32)))
             let (a, b) = s.split()
-            return Session(send: a, receive: b)
+            return Session(send: a, receive: b, hash: s.h)
         }
     }
 
@@ -145,7 +146,46 @@ public enum Noise {
         s.mixKey(try dh(e, re))
         let reply = pub + s.encryptAndHash(Data())
         let (a, b) = s.split()
-        return (reply, Session(send: b, receive: a))
+        return (reply, Session(send: b, receive: a, hash: s.h))
+    }
+
+    // MARK: naprava (minigw)
+
+    /// Prvi šifrirani podatki odjemalca: »DEV1« + javni ključ naprave (Ed25519, 32) + podpis (64) + dolžina imena (1) + ime.
+    /// Podpis pokrije hash rokovanja te povezave, zato ga ni mogoče prestreči in uporabiti drugje.
+    public static let deviceMagic = Data("DEV1".utf8)
+
+    public struct Device: Sendable, Equatable {
+        public let id: String    // base64url javnega ključa naprave
+        public let name: String
+    }
+
+    static func deviceMessage(_ hash: Data, _ name: Data) -> Data { Data("minigw-device".utf8) + hash + name }
+
+    public static func deviceProof(_ key: Curve25519.Signing.PrivateKey, name: String, hash: Data) -> Data {
+        let n = Data(name.utf8.prefix(255))
+        let sig = try! key.signature(for: deviceMessage(hash, n))
+        return deviceMagic + key.publicKey.rawRepresentation + sig + Data([UInt8(n.count)]) + n
+    }
+
+    public enum DeviceRead: Equatable { case needMore, absent, invalid, device(Device) }
+
+    /// Iz začetka dešifriranih podatkov prebere dokaz naprave (in ga odstrani). `absent`: starejši minigw, takoj HTTP.
+    public static func readDevice(_ plain: inout Data, hash: Data) -> DeviceRead {
+        let m = deviceMagic.count
+        guard !plain.isEmpty else { return .needMore }
+        guard plain.count >= m else { return deviceMagic.starts(with: plain) ? .needMore : .absent }
+        guard plain.starts(with: deviceMagic) else { return .absent }
+        let fixed = m + 32 + 64 + 1
+        guard plain.count >= fixed else { return .needMore }
+        let b = [UInt8](plain)
+        let len = Int(b[fixed - 1])
+        guard plain.count >= fixed + len else { return .needMore }
+        let pub = Data(b[m..<m + 32]), sig = Data(b[m + 32..<m + 96]), name = Data(b[fixed..<fixed + len])
+        plain = Data(b[(fixed + len)...])
+        guard let key = try? Curve25519.Signing.PublicKey(rawRepresentation: pub),
+              key.isValidSignature(sig, for: deviceMessage(hash, name)) else { return .invalid }
+        return .device(Device(id: base64url(pub), name: String(decoding: name, as: UTF8.self)))
     }
 
     // MARK: okvirji (2 bajta dolžina, big endian, kot pri Noise)

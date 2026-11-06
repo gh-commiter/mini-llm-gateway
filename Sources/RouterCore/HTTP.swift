@@ -7,6 +7,7 @@ public struct HTTPRequest: Sendable {
     public var headers: [String: String]  // imena v malih črkah
     public var body: Data
     public var peer = ""  // IP odjemalca
+    public var device: Noise.Device?  // minigw z dokazom naprave (šifrirana povezava)
 
     public func header(_ name: String) -> String? { headers[name.lowercased()] }
 }

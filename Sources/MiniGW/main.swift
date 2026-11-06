@@ -1,5 +1,6 @@
 // minigw — zažene Claude Code prek Mini Gateway.
 // Podpisan pomožni program v Mini Gateway.app (Contents/Helpers); Install v PATH naredi povezavo nanj.
+import CryptoKit
 import Foundation
 import RouterCore
 import Security
@@ -15,6 +16,7 @@ struct Connection: Codable {
     var url: String
     var token: String
     var key: String?  // javni ključ routerja (Noise); niz »Copy Token« = <žeton>#<ključ>
+    var device: String?  // zasebni ključ te naprave (Ed25519, base64url); router po njem dovoli Siri
 
     var isLocal: Bool { ["127.0.0.1", "localhost", "::1"].contains(URLComponents(string: url)?.host ?? "") }
 }
@@ -23,7 +25,14 @@ struct Connection: Codable {
 var proxy: NoiseProxy?
 func route(_ c: Connection) -> Connection {
     guard !c.isLocal else { return c }
-    guard let k = c.key.flatMap(Noise.fromBase64url), let p = NoiseProxy(routerURL: c.url, routerKey: k) else {
+    var c = c
+    if c.device == nil {  // povezava iz minigw 0.4.3 ali starejšega: ključ naprave ustvari zdaj
+        c.device = Noise.base64url(Curve25519.Signing.PrivateKey().rawRepresentation)
+        saveConnection(c)
+    }
+    let device = c.device.flatMap(Noise.fromBase64url).flatMap { try? Curve25519.Signing.PrivateKey(rawRepresentation: $0) }
+        .map { (key: $0, name: Host.current().localizedName ?? ProcessInfo.processInfo.hostName) }
+    guard let k = c.key.flatMap(Noise.fromBase64url), let p = NoiseProxy(routerURL: c.url, routerKey: k, device: device) else {
         fail("no router key: copy the token again (Mini Gateway 0.4+ → Copy Token) and run minigw connect")
     }
     do { try p.start() } catch { fail("cannot start the local encrypted proxy: \(error)") }
@@ -152,7 +161,7 @@ func requireConnection() -> Connection {
 
 // MARK: ukazi
 
-let minigwVersion = "0.4.3"  // bump-version.sh
+let minigwVersion = "0.4.4"  // bump-version.sh
 var args = Array(CommandLine.arguments.dropFirst())
 
 switch args.first {
@@ -163,7 +172,7 @@ case "connect":
     if let i = args.firstIndex(of: "--token"), i + 1 < args.count { token = args[i + 1] }
     guard !token.isEmpty else { fail("missing --token (copy it from Mini Gateway → Settings → General → Copy Token)") }
     let parts = token.split(separator: "#", maxSplits: 1).map(String.init)
-    let c = Connection(url: normalize(args[1]), token: parts[0], key: parts.count > 1 ? parts[1] : nil)
+    let c = Connection(url: normalize(args[1]), token: parts[0], key: parts.count > 1 ? parts[1] : nil, device: saved?.device ?? Noise.base64url(Curve25519.Signing.PrivateKey().rawRepresentation))
     let (status, _) = get(route(c), "/v1/models")
     switch status {
     case 200: saveConnection(c); say("Connected to \(c.url)" + (c.isLocal ? "" : " (encrypted)"))

@@ -133,10 +133,19 @@ enum SiriAX {
         return AXUIElementPerformAction(b, kAXPressAction as CFString) == .success
     }
 
+    /// Vpiše in pošlje; uspeh šele, ko se polje izprazni (Siri potrditev včasih prezre, besedilo pa ostane v polju).
     static func send(_ root: AXUIElement, _ text: String) -> Bool {
         guard let field = find(root, ID.composer),
               AXUIElementSetAttributeValue(field, kAXValueAttribute as CFString, text as CFString) == .success else { return false }
-        usleep(300_000)
-        return AXUIElementPerformAction(field, "AXConfirm" as CFString) == .success
+        func pending() -> Bool { !((attr(field, kAXValueAttribute) as? String) ?? "").isEmpty }
+        for _ in 0..<4 {
+            usleep(300_000)
+            AXUIElementSetAttributeValue(field, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+            guard AXUIElementPerformAction(field, "AXConfirm" as CFString) == .success else { continue }
+            for _ in 0..<8 where pending() { usleep(250_000) }
+            if !pending() { return true }
+        }
+        AXUIElementSetAttributeValue(field, kAXValueAttribute as CFString, "" as CFString)  // ne pusti napol poslanega
+        return false
     }
 }

@@ -18,6 +18,7 @@ struct SettingsView: View {
     @State private var cliStatus = ""
     @State private var cliTools: [String] = []
     @State private var selectedRoot: String?
+    @State private var selectedDevice: String?
 
     enum Pane: Hashable {
         case general, provider(String), siri, appleFM, claudeCLI
@@ -61,6 +62,10 @@ struct SettingsView: View {
         .frame(minWidth: 760, idealWidth: 820, minHeight: 520, idealHeight: 640)
         .onAppear {
             if !loaded { draft = state.config; loaded = true }
+        }
+        // Nove naprave doda aplikacija sama (ob prvi povezavi): prenesi jih v osnutek, da jih uveljavitev ne izbriše.
+        .onChange(of: state.config.devices) { _, devices in
+            draft.devices += devices.filter { d in !draft.devices.contains { $0.id == d.id } }
         }
         // Samodejna uveljavitev: 0,8 s po zadnji spremembi.
         .task(id: draft) {
@@ -126,6 +131,31 @@ struct SettingsView: View {
             Section("Token") {
                 TokenRow()
             }
+            Section {
+                ForEach($draft.devices) { $d in
+                    Toggle(isOn: $d.siri) {
+                        Text(verbatim: d.name)
+                        Text(state.deviceSeen[d.id].map { String(localized: "Last seen \($0.formatted(date: .omitted, time: .shortened))") }
+                             ?? String(localized: "Not seen since Mini Gateway started"))
+                    }
+                    .contentShape(Rectangle())
+                    .listRowBackground(selectedDevice == d.id ? Color.accentColor.opacity(0.2) : nil)
+                    .onTapGesture { selectedDevice = selectedDevice == d.id ? nil : d.id }
+                }
+                HStack(spacing: 0) {
+                    Button { draft.devices.removeAll { $0.id == selectedDevice }; selectedDevice = nil } label: {
+                        Image(systemName: "minus").frame(width: 22, height: 18)
+                    }
+                    .disabled(selectedDevice == nil).accessibilityLabel("Remove")
+                    Spacer()
+                }
+                .buttonStyle(.borderless)
+            } header: {
+                Text("Devices")
+            } footer: {
+                Text("Macs that connected with minigw. The switch allows Siri AI, which answers with this Mac's personal data. This Mac always has it. A removed device appears again when it connects, with Siri off.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -135,6 +165,13 @@ struct SettingsView: View {
                 Toggle("Enabled", isOn: $draft.siri.enabled)
                 TextField("Timeout (s)", value: $draft.siri.timeout, format: .number)
                     .disabled(!draft.siri.enabled)
+            } footer: {
+                Label {
+                    Text("Siri answers with the personal context of this Mac's user (notes, documents, messages that Apple Intelligence can use). Anyone with the router token, also from another Mac, can get answers from it. Siri cannot read your project files.")
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                }
+                .font(.caption)
             }
             Section {
                 LabeledContent {

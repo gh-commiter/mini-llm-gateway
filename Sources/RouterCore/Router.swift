@@ -29,14 +29,17 @@ public final class Router: Sendable {
     let secrets: SecretStore
     let session: URLSession
     let onLog: @Sendable (RequestLog) -> Void
+    let onDevice: @Sendable (Noise.Device) -> Void  // aplikacija doda novo napravo v nastavitve, beleži »zadnjič«
     let catalog: Catalog
     let probes = Probes()
     static let log = Logger(subsystem: "dev.trojar.minigateway", category: "router")
 
     public init(config: RouterConfig, token: String, secrets: SecretStore,
                 session: URLSession = Router.defaultSession,
-                onLog: @escaping @Sendable (RequestLog) -> Void = { _ in }) {
+                onLog: @escaping @Sendable (RequestLog) -> Void = { _ in },
+                onDevice: @escaping @Sendable (Noise.Device) -> Void = { _ in }) {
         self.config = config
+        self.onDevice = onDevice
         self.token = token
         self.secrets = secrets
         self.session = session
@@ -67,6 +70,7 @@ public final class Router: Sendable {
     public func handle(_ req: HTTPRequest, writer: ResponseWriter) async {
         let start = Date()
         let rid = "req_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+        if let d = req.device { onDevice(d) }
         let (status, model, provider) = await route(req, rid: rid, writer: writer)
         writer.close()
         let ms = Int(Date().timeIntervalSince(start) * 1000)
@@ -118,7 +122,7 @@ public final class Router: Sendable {
 
         switch (req.method, req.path) {
         case ("GET", "/v1/models"):
-            return (await json(200, await modelList(), rid: rid, writer: writer), nil, nil)
+            return (await json(200, await modelList(siri: config.siriAllowed(peer: req.peer, device: req.device)), rid: rid, writer: writer), nil, nil)
 
         case ("POST", "/v1/messages"), ("POST", "/v1/messages/count_tokens"):
             guard let body = try? JSONSerialization.jsonObject(with: req.body) as? [String: Any],
@@ -127,6 +131,12 @@ public final class Router: Sendable {
             }
             guard let r = await catalog.route(model) else {
                 if config.siri.enabled, Siri.ids.contains(model) {
+                    guard config.siriAllowed(peer: req.peer, device: req.device) else {
+                        let who = req.device.map { "device “\($0.name)”" } ?? "this client (update minigw to 0.4.4 or newer)"
+                        return (await error(400, "invalid_request_error",  // 403 Claude Code prikaže kot napako prijave
+                                            "Siri AI is not allowed for \(who): allow it in Mini Gateway → Settings → General → Devices",
+                                            rid: rid, writer: writer), model, "siri-ai")
+                    }
                     if req.path.hasSuffix("/count_tokens") {
                         return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "siri-ai")
                     }
@@ -206,7 +216,7 @@ public final class Router: Sendable {
         return a.count == b.count && zip(a, b).reduce(0) { $0 | ($1.0 ^ $1.1) } == 0
     }
 
-    func modelList() async -> [String: Any] {
+    func modelList(siri siriAllowed: Bool = true) async -> [String: Any] {
         let created = ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: 1_767_225_600))
         var seen: Set<String> = []
         var data: [[String: Any]] = await catalog.working().compactMap { r in
@@ -215,9 +225,9 @@ public final class Router: Sendable {
             return ["type": "model", "id": r.alias, "display_name": "\(r.name) · \(r.provider.name)",
                     "description": "\(r.provider.name) · \(r.upstream)\(window)", "created_at": created]
         }
-        if config.siri.enabled, SiriAX.trusted(prompt: false), FileManager.default.fileExists(atPath: SiriAX.appPath) {
+        if config.siri.enabled, siriAllowed, SiriAX.trusted(prompt: false), FileManager.default.fileExists(atPath: SiriAX.appPath) {
             data.append(["type": "model", "id": "claude-siri-ai", "display_name": "Siri AI",
-                         "description": "Siri AI app · conversation, no tools", "created_at": created])
+                         "description": "Siri AI app · no tools · uses this Mac's personal data", "created_at": created])
         }
         if config.appleFM.enabled, case .available = SystemLanguageModel.default.availability {
             data.append(["type": "model", "id": "claude-apple-fm", "display_name": "Apple Foundation Models",

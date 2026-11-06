@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Testing
 @testable import RouterCore
@@ -458,7 +459,9 @@ func makeRouter(session: URLSession = .shared) -> Router {
     var c = RouterConfig()
     c.host = "127.0.0.1"; c.port = 18_765
     let key = Noise.newKey()
-    let server = RouterServer(router: Router(config: c, token: "tok", secrets: FakeSecrets(values: [:])), key: key)
+    let seen = SeenDevices()
+    let server = RouterServer(router: Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]),
+                                             onDevice: { d in seen.add(d) }), key: key)
     try server.start()
     defer { server.stop() }
     try await Task.sleep(for: .milliseconds(200))
@@ -476,6 +479,16 @@ func makeRouter(session: URLSession = .shared) -> Router {
     let (s, body) = await get(proxy.localURL, "/v1/models")
     #expect(s == 200 && body.contains("\"data\""))
 
+    #expect(seen.all.isEmpty)  // proxy brez ključa naprave (starejši minigw) deluje, le brez naprave
+
+    let dev = Curve25519.Signing.PrivateKey()
+    let withDevice = try #require(NoiseProxy(routerURL: "http://127.0.0.1:18765", routerKey: key.publicKey.rawRepresentation,
+                                             device: (key: dev, name: "Test Air")))
+    try withDevice.start()
+    defer { withDevice.stop() }
+    #expect(await get(withDevice.localURL, "/v1/models").0 == 200)
+    #expect(seen.all == [Noise.Device(id: Noise.base64url(dev.publicKey.rawRepresentation), name: "Test Air")])
+
     let bad = try #require(NoiseProxy(routerURL: "http://127.0.0.1:18765", routerKey: Noise.newKey().publicKey.rawRepresentation))
     try bad.start()
     defer { bad.stop() }
@@ -487,4 +500,34 @@ func makeRouter(session: URLSession = .shared) -> Router {
     try #require(ClaudeCLI.detected != nil)  // brez nameščenega Claude Code ni česa preveriti
     let tools = await ClaudeCLI.availableTools("")
     #expect(tools.contains("Bash") && tools.contains("Edit") && tools.contains("Read"))
+}
+
+final class SeenDevices: @unchecked Sendable {
+    private let lock = NSLock()
+    private var list: [Noise.Device] = []
+    func add(_ d: Noise.Device) { lock.withLock { list.append(d) } }
+    var all: [Noise.Device] { lock.withLock { list.reduce(into: []) { r, d in if !r.contains(d) { r.append(d) } } } }  // brez ponovitev
+}
+
+@Test func deviceProofBoundToConnection() throws {
+    let key = Curve25519.Signing.PrivateKey(), h = Data(repeating: 7, count: 32)
+    var good = Noise.deviceProof(key, name: "Air", hash: h) + Data("GET / HTTP/1.1\r\n".utf8)
+    #expect(Noise.readDevice(&good, hash: h) == .device(Noise.Device(id: Noise.base64url(key.publicKey.rawRepresentation), name: "Air")))
+    #expect(good == Data("GET / HTTP/1.1\r\n".utf8))  // ostanek je HTTP
+    var replay = Noise.deviceProof(key, name: "Air", hash: h)
+    #expect(Noise.readDevice(&replay, hash: Data(repeating: 8, count: 32)) == .invalid)  // druga povezava
+    var partial = Data(Noise.deviceProof(key, name: "Air", hash: h).prefix(50))
+    #expect(Noise.readDevice(&partial, hash: h) == .needMore)
+    var http = Data("GET /v1/models HTTP/1.1\r\n".utf8)
+    #expect(Noise.readDevice(&http, hash: h) == .absent)
+    var empty = Data()
+    #expect(Noise.readDevice(&empty, hash: h) == .needMore)
+
+    var c = RouterConfig()
+    let d = Noise.Device(id: "abc", name: "Air")
+    #expect(c.siriAllowed(peer: "127.0.0.1", device: nil))       // lokalno vedno
+    #expect(!c.siriAllowed(peer: "10.0.0.5", device: d))         // nova naprava: ne
+    #expect(!c.siriAllowed(peer: "10.0.0.5", device: nil))       // brez dokaza: ne
+    c.devices = [DeviceConfig(id: "abc", name: "Air", siri: true)]
+    #expect(c.siriAllowed(peer: "10.0.0.5", device: d))
 }

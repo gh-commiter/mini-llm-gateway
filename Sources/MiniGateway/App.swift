@@ -33,6 +33,7 @@ final class AppState: ObservableObject {
     @Published var status = String(localized: "Stopped")
     @Published var running = false
     @Published var logs: [RequestLog] = []
+    @Published var deviceSeen: [String: Date] = [:]  // zadnja zahteva naprave (le v pomnilniku)
     let keychain = Keychain()
     private var server: RouterServer?
     private let log = Logger(subsystem: "dev.trojar.minigateway", category: "app")
@@ -80,12 +81,14 @@ final class AppState: ObservableObject {
     }
 
     func start() {
-        let router = Router(config: config, token: token, secrets: keychain) { [weak self] entry in
+        let router = Router(config: config, token: token, secrets: keychain, onLog: { [weak self] entry in
             Task { @MainActor in
                 guard let self else { return }
                 self.logs = Array(([entry] + self.logs).prefix(500))
             }
-        }
+        }, onDevice: { [weak self] device in
+            Task { @MainActor in self?.seen(device) }
+        })
         let s = RouterServer(router: router, key: routerKey)
         s.onState = { [weak self] state in
             Task { @MainActor in self?.show(state) }
@@ -128,6 +131,14 @@ final class AppState: ObservableObject {
         server?.stop()
         server = nil
         start()
+    }
+
+    /// Nova naprava se doda v nastavitve brez ponovnega zagona (Siri zanjo ostane izklopljena, dokler je ne vklopiš).
+    private func seen(_ d: Noise.Device) {
+        if deviceSeen[d.id].map({ Date().timeIntervalSince($0) > 30 }) ?? true { deviceSeen[d.id] = Date() }
+        guard !config.devices.contains(where: { $0.id == d.id }) else { return }
+        config.devices.append(DeviceConfig(id: d.id, name: d.name))
+        config.save()
     }
 
     func apply(_ c: RouterConfig) {

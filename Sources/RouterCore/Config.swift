@@ -45,6 +45,14 @@ public struct ProviderConfig: Codable, Identifiable, Sendable, Equatable {
     }
 }
 
+/// Naprava z minigw (ključ naprave iz šifrirane povezave). Nove se dodajo same, Siri je privzeto izklopljena.
+public struct DeviceConfig: Codable, Sendable, Equatable, Identifiable {
+    public var id: String     // base64url javnega ključa naprave
+    public var name: String
+    public var siri = false
+    public init(id: String, name: String, siri: Bool = false) { self.id = id; self.name = name; self.siri = siri }
+}
+
 public struct RouterConfig: Codable, Sendable, Equatable {
     public var host = "127.0.0.1"
     public var port: UInt16 = 8765
@@ -60,6 +68,7 @@ public struct RouterConfig: Codable, Sendable, Equatable {
     public var claudeCLI = ClaudeCLIConfig()
     public var appleFM = AppleFMConfig()
     public var siri = SiriConfig()
+    public var devices: [DeviceConfig] = []
 
     public init() {}
 
@@ -74,6 +83,12 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         claudeCLI = try c.decodeIfPresent(ClaudeCLIConfig.self, forKey: .claudeCLI) ?? d.claudeCLI
         appleFM = try c.decodeIfPresent(AppleFMConfig.self, forKey: .appleFM) ?? d.appleFM
         siri = try c.decodeIfPresent(SiriConfig.self, forKey: .siri) ?? d.siri
+        devices = try c.decodeIfPresent([DeviceConfig].self, forKey: .devices) ?? d.devices
+    }
+
+    /// Siri ima osebni kontekst tega Maca: lokalno vedno, z drugih Macov le odobrene naprave.
+    public func siriAllowed(peer: String, device: Noise.Device?) -> Bool {
+        RouterServer.isLoopback(peer) || devices.contains { $0.id == device?.id && $0.siri }
     }
 
     public var allowedClientList: Set<String> {

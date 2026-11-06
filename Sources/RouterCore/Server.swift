@@ -100,9 +100,12 @@ public final class RouterServer: @unchecked Sendable {
                 }
                 return
             }
-            self.feed(conn, raw: buf, plain: Data(), peer: peer, session: nil, end: end)
+            self.feed(conn, raw: buf, plain: Data(), peer: peer, session: nil, device: .done(nil), end: end)
         }
     }
+
+    /// Naprava šifrirane povezave: najprej neprebrana, nato znana (ali nil pri starejšem minigw / navadnem HTTP).
+    enum DeviceState { case unchecked, done(Noise.Device?) }
 
     private func handshake(_ conn: NWConnection, _ buf: Data, peer: String) {
         guard buf.count >= Noise.handshakeLength else {
@@ -118,23 +121,33 @@ public final class RouterServer: @unchecked Sendable {
             return
         }
         conn.send(content: reply, completion: .contentProcessed { _ in })
-        feed(conn, raw: Data(buf.dropFirst(Noise.handshakeLength)), plain: Data(), peer: peer, session: session, end: false)
+        feed(conn, raw: Data(buf.dropFirst(Noise.handshakeLength)), plain: Data(), peer: peer, session: session, device: .unchecked, end: false)
     }
 
-    private func receive(_ conn: NWConnection, raw: Data, plain: Data, peer: String, session: Noise.Session?) {
+    private func receive(_ conn: NWConnection, raw: Data, plain: Data, peer: String, session: Noise.Session?, device: DeviceState) {
         conn.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, done, error in
             guard let self else { return }
             var raw = raw
             if let data { raw.append(data) }
-            self.feed(conn, raw: raw, plain: plain, peer: peer, session: session, end: done || error != nil)
+            self.feed(conn, raw: raw, plain: plain, peer: peer, session: session, device: device, end: done || error != nil)
         }
     }
 
-    private func feed(_ conn: NWConnection, raw: Data, plain: Data, peer: String, session: Noise.Session?, end: Bool) {
-        var raw = raw, plain = plain
+    private func feed(_ conn: NWConnection, raw: Data, plain: Data, peer: String, session: Noise.Session?, device: DeviceState, end: Bool) {
+        var raw = raw, plain = plain, device = device
         if let session {
             guard let p = try? Noise.unframe(&raw, session.receive) else { conn.cancel(); return }
             plain.append(p)
+            if case .unchecked = device {
+                switch Noise.readDevice(&plain, hash: session.hash) {
+                case .needMore:
+                    if end { conn.cancel() } else { receive(conn, raw: raw, plain: plain, peer: peer, session: session, device: device) }
+                    return
+                case .invalid: conn.cancel(); return  // ponarejen ali tuj podpis
+                case .absent: device = .done(nil)
+                case .device(let d): device = .done(d)
+                }
+            }
         } else {
             plain.append(raw); raw = Data()
         }
@@ -143,11 +156,12 @@ public final class RouterServer: @unchecked Sendable {
         if case .needMore = parsed {} else { pending.remove(ObjectIdentifier(conn)) }
         switch parsed {
         case .needMore:
-            if end { conn.cancel() } else { receive(conn, raw: raw, plain: plain, peer: peer, session: session) }
+            if end { conn.cancel() } else { receive(conn, raw: raw, plain: plain, peer: peer, session: session, device: device) }
         case .error(let status, let message):
             Task { await self.router.reject(status: status, message: message, writer: w) }
         case .request(var req):
             req.peer = peer
+            if case .done(let d) = device { req.device = d }
             let allowed = router.config.allowedClientList
             if Self.isLoopback(peer), !allowed.isEmpty, !allowed.contains(peer), !req.path.hasPrefix("/dav/") {
                 conn.cancel()
