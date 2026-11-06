@@ -7,6 +7,22 @@ Claude Code subagent its own.
 
 <img src="Resources/AppIcon-preview.png" width="128" alt="Mini Gateway icon">
 
+## Contents
+
+- [What it does](#what-it-does)
+- [Requirements](#requirements)
+- [Install](#install)
+  - [Another Mac (client only)](#another-mac-client-only)
+  - [Windows and Linux (client only)](#windows-and-linux-client-only)
+  - [Homebrew](#homebrew)
+- [Use](#use)
+- [Claude Code plugin](#claude-code-plugin)
+- [Settings](#settings)
+- [Security notes](#security-notes)
+- [Build from source](#build-from-source)
+- [Disclaimer](#disclaimer)
+- [License](#license)
+
 ## What it does
 
 | Model in `/model` | Provider | Notes |
