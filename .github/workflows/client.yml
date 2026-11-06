@@ -1,0 +1,33 @@
+name: minigw client
+
+on:
+  push:
+    branches: [main]
+    paths: ["client/**", ".github/workflows/client.yml"]
+  pull_request:
+    paths: ["client/**", ".github/workflows/client.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: client/go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - run: go vet ./...
+      - run: go test ./...
+      - name: Cross-build (Windows, Linux, macOS)
+        run: |
+          for target in windows/amd64 windows/arm64 linux/amd64 linux/arm64 darwin/arm64; do
+            GOOS=${target%/*} GOARCH=${target#*/} CGO_ENABLED=0 go build -trimpath -o /dev/null . || exit 1
+            GOOS=${target%/*} GOARCH=${target#*/} go vet ./... || exit 1
+          done
