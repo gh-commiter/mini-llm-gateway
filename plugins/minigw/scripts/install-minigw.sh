@@ -25,23 +25,26 @@ mkdir -p "$BIN"
 if [ "$os" = darwin ]; then
   # macOS: podpisan minigw (Developer ID, ekipa in identifikator) iz minigw.zip ali že nameščen (brew).
   valid() { [ -x "$1" ] && codesign --verify --strict -R="$REQ" "$1" 2>/dev/null; }
-  if ! valid "$EXE"; then
+  # Nameščen minigw (brew, aplikacija) ima vedno prednost pred preneseno kopijo: posodablja ga brew.
+  other=""
+  for c in "$(command -v minigw 2>/dev/null || true)" /opt/homebrew/bin/minigw /usr/local/bin/minigw \
+           "/Applications/Mini Gateway.app/Contents/Helpers/minigw"; do
+    [ -n "$c" ] && [ "$c" != "$EXE" ] && valid "$c" && { other=$c; break; }
+  done
+  if [ -n "$other" ]; then
+    [ "$(readlink "$EXE" 2>/dev/null)" = "$other" ] || { rm -f "$EXE"; ln -s "$other" "$EXE"; }
+  elif ! valid "$EXE"; then
     rm -f "$EXE"
-    other=$(command -v minigw 2>/dev/null || true)
-    if [ -n "$other" ] && valid "$other"; then
-      ln -sf "$other" "$EXE"
+    tmp=$(mktemp -d) || exit 0
+    if curl -fsSL -o "$tmp/minigw.zip" "$base/minigw.zip" && curl -fsSL -o "$tmp/SHA256SUMS" "$base/SHA256SUMS" \
+       && [ "$(sha "$tmp/minigw.zip")" = "$(grep ' minigw.zip$' "$tmp/SHA256SUMS" | cut -d' ' -f1)" ] \
+       && ditto -x -k "$tmp/minigw.zip" "$tmp/x" && valid "$tmp/x/minigw"; then
+      mv "$tmp/x/minigw" "$EXE"
     else
-      tmp=$(mktemp -d) || exit 0
-      if curl -fsSL -o "$tmp/minigw.zip" "$base/minigw.zip" && curl -fsSL -o "$tmp/SHA256SUMS" "$base/SHA256SUMS" \
-         && [ "$(sha "$tmp/minigw.zip")" = "$(grep ' minigw.zip$' "$tmp/SHA256SUMS" | cut -d' ' -f1)" ] \
-         && ditto -x -k "$tmp/minigw.zip" "$tmp/x" && valid "$tmp/x/minigw"; then
-        mv "$tmp/x/minigw" "$EXE"
-      else
-        echo "minigw plugin: could not download or verify minigw from github.com/$REPO; gateway skills are unavailable."
-        rm -rf "$tmp"; exit 0
-      fi
-      rm -rf "$tmp"
+      echo "minigw plugin: could not download or verify minigw from github.com/$REPO; gateway skills are unavailable."
+      rm -rf "$tmp"; exit 0
     fi
+    rm -rf "$tmp"
   fi
 elif [ ! -x "$EXE" ]; then
   # Windows/Linux: ena izvršljiva datoteka (Go, brez odvisnosti); kontrolna vsota iz SHA256SUMS iste izdaje.
