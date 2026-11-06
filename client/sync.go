@@ -13,6 +13,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -65,14 +66,50 @@ func parseIgnore(gitignore string) []ignoreRule {
 	return rules
 }
 
+// caseFold: datotečni sistem brez razlike v velikih črkah (APFS, NTFS): pravila veljajo ne glede na črke.
+var caseFold = runtime.GOOS == "darwin" || runtime.GOOS == "windows"
+
+// normName: ime, kot ga vidi tak datotečni sistem (Windows odreže končne pike in presledke: ».GIT.« = ».git«).
+// normName: upper→lower preslika ſ, ı, K (Kelvin) v ASCII; »git~1« je kratko 8.3 ime ».git« na Windows.
+// ponytail: ime, ne kanonična pot; ob simlinkanem staršu preveri kanonično pot (issue v Gitei).
+func normName(c string) string {
+	n := strings.ToLower(strings.ToUpper(strings.TrimRight(c, ". ")))
+	if shortGit.MatchString(n) {
+		return ".git"
+	}
+	return n
+}
+
+var shortGit = regexp.MustCompile(`^git~[0-9]+$`)
+
+// protectedPath: pot, ki je prevzem nikoli ne zapiše ali izbriše: git (tudi ».GIT«, ».git.«) in nastavitve, ki
+// zaganjajo ukaze (.claude/settings*.json, .vscode/tasks.json, .envrc).
+func protectedPath(rel string) bool {
+	comps := strings.Split(rel, "/")
+	for i, c := range comps {
+		if comps[i] = normName(c); comps[i] == ".git" {
+			return true
+		}
+	}
+	last, parent := comps[len(comps)-1], ""
+	if len(comps) > 1 {
+		parent = comps[len(comps)-2]
+	}
+	return last == ".envrc" || (parent == ".vscode" && last == "tasks.json") ||
+		(parent == ".claude" && strings.HasPrefix(last, "settings") && strings.HasSuffix(last, ".json"))
+}
+
 func ignored(rules []ignoreRule, rel string, isDir bool) bool {
 	name := path.Base(rel)
 	for _, r := range rules {
-		target := name
+		target, pattern := name, r.pattern
 		if r.anchored {
 			target = rel
 		}
-		if ok, _ := path.Match(r.pattern, target); ok && (!r.dirOnly || isDir) {
+		if caseFold {
+			target, pattern = strings.ToLower(target), strings.ToLower(pattern)
+		}
+		if ok, _ := path.Match(pattern, target); ok && (!r.dirOnly || isDir) {
 			return true
 		}
 	}
@@ -108,6 +145,12 @@ func syncScan(root string, prev map[string]syncEntry) (map[string]syncEntry, []s
 		}
 		rel, _ := filepath.Rel(root, p)
 		rel = filepath.ToSlash(rel)
+		if normName(d.Name()) == ".git" { // tudi ».GIT«: nikoli ne gre na router
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 		if d.IsDir() {
 			if ignored(rules, rel, true) {
 				return filepath.SkipDir
@@ -224,6 +267,11 @@ func withExec(mode os.FileMode, exec bool) os.FileMode {
 func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch func(string) []byte) (notes, done []string) {
 	rules := loadIgnore(root)
 	for _, e := range ch.Changed {
+		if protectedPath(e.Path) {
+			notes = append(notes, "skipped "+e.Path+": protected path")
+			done = append(done, e.Path)
+			continue
+		}
 		if ignoredPath(rules, e.Path) {
 			notes = append(notes, "skipped "+e.Path+": ignored here")
 			done = append(done, e.Path)
@@ -277,6 +325,11 @@ func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch fu
 		done = append(done, e.Path)
 	}
 	for _, p := range ch.Deleted {
+		if protectedPath(p) {
+			notes = append(notes, "not deleted "+p+": protected path")
+			done = append(done, p)
+			continue
+		}
 		if ignoredPath(rules, p) {
 			done = append(done, p)
 			continue

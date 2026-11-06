@@ -75,21 +75,15 @@ func normalize(_ s: String) -> String {
 // MARK: HTTP do routerja
 
 func get(_ c: Connection, _ path: String) -> (Int, [String: Any]?) {
-    guard let url = URL(string: c.url + path) else { fail("invalid router URL \(c.url)") }
-    var r = URLRequest(url: url, timeoutInterval: 5)
-    r.setValue("Bearer \(c.token)", forHTTPHeaderField: "authorization")
-    let done = DispatchSemaphore(value: 0)
-    var result: (Int, [String: Any]?) = (0, nil)
-    URLSession.shared.dataTask(with: r) { data, resp, _ in
-        result = ((resp as? HTTPURLResponse)?.statusCode ?? 0,
-                  data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] })
-        done.signal()
-    }.resume()
-    done.wait()
-    return result
+    guard URL(string: c.url + path) != nil else { fail("invalid router URL \(c.url)") }
+    let (s, d) = call(c, "GET", path, timeout: 5)
+    return (s, d.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] })
 }
 
-/// Poljubna zahteva; telo odgovora kot Data (0 = ni povezave).
+/// Največji odgovor routerja v pomnilniku (datoteka do 64 MB + glave); router ni zaupanja vreden.
+let maxReply = 80 << 20
+
+/// Poljubna zahteva; telo odgovora kot Data (0 = ni povezave). Telo gre najprej v začasno datoteko, ne v pomnilnik.
 func call(_ c: Connection, _ method: String, _ path: String, _ headers: [String: String] = [:], _ body: Data? = nil,
           timeout: TimeInterval) -> (Int, Data?) {
     var r = URLRequest(url: URL(string: c.url + path)!, timeoutInterval: timeout)
@@ -99,8 +93,9 @@ func call(_ c: Connection, _ method: String, _ path: String, _ headers: [String:
     for (k, v) in headers { r.setValue(v, forHTTPHeaderField: k) }
     let done = DispatchSemaphore(value: 0)
     var result: (Int, Data?) = (0, nil)
-    URLSession.shared.dataTask(with: r) { data, resp, _ in
-        result = ((resp as? HTTPURLResponse)?.statusCode ?? 0, data)
+    URLSession.shared.downloadTask(with: r) { file, resp, _ in
+        let size = file.flatMap { try? $0.resourceValues(forKeys: [.fileSizeKey]).fileSize } ?? 0
+        result = ((resp as? HTTPURLResponse)?.statusCode ?? 0, size <= maxReply ? file.flatMap { try? Data(contentsOf: $0) } : nil)
         done.signal()
     }.resume()
     done.wait()
@@ -147,9 +142,11 @@ final class ShareClient: @unchecked Sendable {
             switch s {
             case 200:
                 guard let d, let job = try? JSONDecoder().decode(DAVJob.self, from: d) else { continue }
-                let r = job.method == "SYNC-PUSH" ? DAVResponse(syncLock.withLock { push(k) } ? 200 : 500)
+                // Router ni zaupanja vreden: Sync.jobAllowed (SYNC-* le v sync, PULL ne pri --minigw-ro, WebDAV le v direct).
+                let r = !Sync.jobAllowed(job.method, sync: sync, readOnly: readOnly, write: Self.writeMethods.contains(job.method))
+                    ? DAVResponse(403)
+                    : job.method == "SYNC-PUSH" ? DAVResponse(syncLock.withLock { push(k) } ? 200 : 500)
                     : job.method == "SYNC-PULL" ? DAVResponse(syncLock.withLock { pull(k) } ? 200 : 500)
-                    : sync || (readOnly && Self.writeMethods.contains(job.method)) ? DAVResponse(403)  // sync: brez WebDAV
                     : WebDAV.handle(method: job.method, path: job.path, headers: job.headers, body: job.body, root: root, prefix: job.prefix)
                 guard let body = try? JSONEncoder().encode(DAVReply(id: job.id, response: r)) else { continue }
                 _ = call(c, "POST", "/minigw/share/reply", ["x-share-key": k, "content-type": "application/json"], body, timeout: 120)

@@ -338,3 +338,107 @@ func TestSyncApplyRespectsUserExecBit(t *testing.T) {
 		t.Fatalf("agent chmod +x not applied: %v", mode(a))
 	}
 }
+
+// Router ni zaupanja vreden: SYNC-* le v načinu sync, SYNC-PULL ne pri --minigw-ro, WebDAV le v direct.
+func TestShareJobsOnlyInTheirMode(t *testing.T) {
+	root := t.TempDir()
+	os.WriteFile(filepath.Join(root, "a.txt"), []byte("x"), 0o644)
+	ro := &shareClient{root: root, sync: true, readOnly: true, synced: map[string]syncEntry{}, reported: map[string]bool{}}
+	if r := ro.handle(davJob{Method: "SYNC-PULL"}, "k"); r.Status != 403 {
+		t.Fatalf("ro SYNC-PULL: %d", r.Status)
+	}
+	direct := &shareClient{root: root, synced: map[string]syncEntry{}, reported: map[string]bool{}}
+	for _, m := range []string{"SYNC-PULL", "SYNC-PUSH", "SYNC-X"} {
+		if r := direct.handle(davJob{Method: m}, "k"); r.Status != 403 {
+			t.Fatalf("direct %s: %d", m, r.Status)
+		}
+	}
+	rw := &shareClient{root: root, sync: true}
+	if r := rw.handle(davJob{Method: "DELETE", Path: "/dav/s/a.txt", Prefix: "/dav/s"}, "k"); r.Status != 403 {
+		t.Fatalf("sync WebDAV: %d", r.Status)
+	}
+	if r := direct.handle(davJob{Method: "GET", Path: "/dav/s/a.txt", Prefix: "/dav/s"}, "k"); r.Status != 200 {
+		t.Fatalf("direct GET: %d", r.Status)
+	}
+	if b, _ := os.ReadFile(filepath.Join(root, "a.txt")); string(b) != "x" {
+		t.Fatal("folder changed")
+	}
+}
+
+func TestSyncNeverTouchesGitOrCommandSettings(t *testing.T) {
+	for _, p := range []string{".git/config", ".GIT/hooks/post-checkout", "a/.Git./hooks/x", ".git /x", ".claude/settings.json",
+		".Claude/Settings.Local.json", "sub/.vscode/tasks.json", ".envrc", "x/.ENVRC"} {
+		if !protectedPath(p) {
+			t.Errorf("%q not protected", p)
+		}
+	}
+	for _, p := range []string{"src/git.go", ".gitignore", ".claude/agents/a.md", ".vscode/settings.json", "envrc"} {
+		if protectedPath(p) {
+			t.Errorf("%q protected", p)
+		}
+	}
+	if caseFold && !ignored(parseIgnore(""), "Node_Modules", true) {
+		t.Error("ignore rules are case-sensitive on a case-insensitive file system")
+	}
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, ".GIT"), 0o755)
+	os.WriteFile(filepath.Join(root, ".GIT", "config"), []byte("x"), 0o644)
+	os.WriteFile(filepath.Join(root, "a.txt"), []byte("y"), 0o644)
+	state, _ := syncScan(root, nil)
+	if len(state) != 1 {
+		t.Fatalf(".GIT synced: %v", state)
+	}
+	evil := []byte("#!/bin/sh")
+	ch := syncChanges{Deleted: []string{".GIT/config"}}
+	for _, p := range []string{".GIT/hooks/post-checkout", ".claude/settings.json", ".envrc"} {
+		ch.Changed = append(ch.Changed, syncEntry{Path: p, Size: int64(len(evil)), Mtime: 1, SHA256: sha256Hex(evil), Exec: true})
+	}
+	notes, done := syncApply(ch, root, state, func(string) []byte { return evil })
+	if len(done) != 4 || len(notes) != 4 {
+		t.Fatalf("notes %v done %v", notes, done)
+	}
+	for _, p := range []string{".GIT/hooks", ".claude", ".envrc"} {
+		if _, err := os.Lstat(filepath.Join(root, p)); err == nil {
+			t.Fatalf("%s written", p)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, ".GIT", "config")); err != nil {
+		t.Fatal(".GIT/config deleted")
+	}
+}
+
+// COPY ne sledi vgnezdenim simbolnim povezavam iz mape.
+func TestDavCopySkipsNestedSymlinks(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "root")
+	os.MkdirAll(filepath.Join(root, "d"), 0o755)
+	os.WriteFile(filepath.Join(base, "secret"), []byte("no"), 0o644)
+	os.WriteFile(filepath.Join(root, "d", "f.txt"), []byte("ok"), 0o644)
+	if err := os.Symlink(filepath.Join(base, "secret"), filepath.Join(root, "d", "link")); err != nil {
+		t.Skip("no symlinks:", err)
+	}
+	os.Symlink(base, filepath.Join(root, "d", "up"))
+	r := davHandle("COPY", "/dav/s/d", map[string]string{"destination": "http://x/dav/s/e"}, nil, root, "/dav/s")
+	if r.Status != 201 {
+		t.Fatalf("COPY: %d", r.Status)
+	}
+	if b, _ := os.ReadFile(filepath.Join(root, "e", "f.txt")); string(b) != "ok" {
+		t.Fatal("file not copied")
+	}
+	for _, p := range []string{"link", "up"} {
+		if _, err := os.Lstat(filepath.Join(root, "e", p)); err == nil {
+			t.Fatalf("symlink %s followed or copied", p)
+		}
+	}
+}
+
+func TestProtectedPathShortAndFoldedNames(t *testing.T) {
+	for _, p := range []string{"GIT~1/hooks/post-checkout", "git~12/config", ".claude/ſettings.json", ".vscode/taſks.json"} {
+		if !protectedPath(p) {
+			t.Errorf("%s should be protected", p)
+		}
+	}
+	if protectedPath("src/git~x.txt") {
+		t.Error("git~x is not a short name")
+	}
+}

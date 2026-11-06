@@ -648,14 +648,34 @@ final class SeenDevices: @unchecked Sendable {
     defer { try? FileManager.default.removeItem(at: base) }
     var c = RouterConfig()
     c.scratchFolder = base.appendingPathComponent("a").path
+    #expect(c.scratchURL.path == base.appendingPathComponent("a/Mini Gateway Scratch").path)  // lastna podmapa
     let chat = c.scratch("chat")
-    #expect(chat.path.hasPrefix(base.path))
+    #expect(chat.path.hasPrefix(c.scratchURL.path))
     try Data("x".utf8).write(to: chat.appendingPathComponent("f.txt"))
-    let new = base.appendingPathComponent("b")
+    // Izbrana mapa z uporabnikovimi datotekami: premik ne briše ničesar, le doda svojo podmapo.
+    let chosen = base.appendingPathComponent("b")
+    try FileManager.default.createDirectory(at: chosen.appendingPathComponent("chat"), withIntermediateDirectories: true)
+    try Data("user".utf8).write(to: chosen.appendingPathComponent("chat/mine.txt"))
+    let new = RouterConfig.dedicated(chosen)
+    #expect(RouterConfig.dedicated(new) == new)                      // že pravo ime → brez nove podmape
     try RouterConfig.moveScratch(from: c.scratchURL, to: new)
     #expect(FileManager.default.fileExists(atPath: new.appendingPathComponent("chat/f.txt").path))
-    #expect(!FileManager.default.fileExists(atPath: c.scratchURL.path))
-    #expect(throws: (any Error).self) { try RouterConfig.moveScratch(from: new, to: new.appendingPathComponent("inside")) }
+    #expect(FileManager.default.fileExists(atPath: chosen.appendingPathComponent("chat/mine.txt").path))
+    #expect(!FileManager.default.fileExists(atPath: c.scratchURL.path))  // prazna stara mapa odstranjena
+    // Cilj že ima podmapo: napaka, nič se ne premakne ali izbriše.
+    let other = base.appendingPathComponent("c/Mini Gateway Scratch")
+    try FileManager.default.createDirectory(at: other.appendingPathComponent("chat"), withIntermediateDirectories: true)
+    try Data("keep".utf8).write(to: other.appendingPathComponent("chat/keep.txt"))
+    #expect(throws: (any Error).self) { try RouterConfig.moveScratch(from: new, to: other) }
+    #expect(FileManager.default.fileExists(atPath: other.appendingPathComponent("chat/keep.txt").path))
+    #expect(FileManager.default.fileExists(atPath: new.appendingPathComponent("chat/f.txt").path))
+    // Neznane datoteke v stari mapi ostanejo, z njimi tudi stara mapa.
+    try Data("?".utf8).write(to: new.appendingPathComponent("notes.txt"))
+    let d = base.appendingPathComponent("d/Mini Gateway Scratch")
+    try RouterConfig.moveScratch(from: new, to: d)
+    #expect(FileManager.default.fileExists(atPath: new.appendingPathComponent("notes.txt").path))
+    #expect(FileManager.default.fileExists(atPath: d.appendingPathComponent("chat/f.txt").path))
+    #expect(throws: (any Error).self) { try RouterConfig.moveScratch(from: d, to: d.appendingPathComponent("inside")) }
     c.scratchFolder = "/Volumes/NoSuchDisk-\(UUID().uuidString)/Scratch"  // disk ni priklopljen → privzeta mapa
     #expect(c.scratch("chat").path.hasPrefix(RouterConfig.defaultScratch.path))
 }
@@ -787,7 +807,7 @@ final class SeenDevices: @unchecked Sendable {
     #expect(await send("POST", "/minigw/sync/manifest", k, manifest).text.contains("a b.txt"))
     #expect(await send("PUT", "/minigw/sync/file", k.merging(["x-sync-path": "..%2Fx"]) { $1 }, "hi").status == 403)
     #expect(await send("PUT", "/minigw/sync/file", k.merging(["x-sync-path": Sync.encode(entry.path)]) { $1 }, "hi").status == 204)
-    let file = scratch.appendingPathComponent("sync/local/\(Sync.folderID(cwd))/dir/a b.txt")
+    let file = c.scratchURL.appendingPathComponent("sync/local/\(Sync.folderID(cwd))/dir/a b.txt")
     #expect((try? String(contentsOf: file, encoding: .utf8)) == "hi")
     try Data("agent".utf8).write(to: file)
     let ch = await send("GET", "/minigw/sync/changes", k)
@@ -941,4 +961,106 @@ actor Order { var items: [String] = []; func add(_ s: String) { items.append(s) 
     try chmod(a, 0o644); state["a.sh"] = Sync.scan(client).files["a.sh"]
     _ = Sync.apply(Sync.Changes(changed: [x]), root: client, state: &state) { _ in agent }
     #expect(mode(a) == 0o755)
+}
+
+@Test func syncJobAllowedOnlyInItsMode() {
+    #expect(Sync.jobAllowed("SYNC-PUSH", sync: true, readOnly: true, write: false))
+    #expect(!Sync.jobAllowed("SYNC-PULL", sync: true, readOnly: true, write: false))   // --minigw-ro: router ne piše
+    #expect(Sync.jobAllowed("SYNC-PULL", sync: true, readOnly: false, write: false))
+    #expect(!Sync.jobAllowed("SYNC-PULL", sync: false, readOnly: false, write: false)) // direct: brez SYNC-*
+    #expect(!Sync.jobAllowed("SYNC-PUSH", sync: false, readOnly: false, write: false))
+    #expect(!Sync.jobAllowed("SYNC-OTHER", sync: true, readOnly: false, write: false))
+    #expect(!Sync.jobAllowed("GET", sync: true, readOnly: false, write: false))        // sync: brez WebDAV
+    #expect(Sync.jobAllowed("GET", sync: false, readOnly: true, write: false))
+    #expect(!Sync.jobAllowed("PUT", sync: false, readOnly: true, write: true))
+}
+
+@Test func syncNeverTouchesGitOrCommandSettings() async throws {
+    for p in [".git/config", ".GIT/hooks/post-checkout", "a/.Git./hooks/x", ".git /x", ".claude/settings.json", ".Claude/Settings.Local.json",
+              "sub/.vscode/tasks.json", ".envrc", "x/.ENVRC"] {
+        #expect(Sync.isProtected(p), "\(p)")
+    }
+    for p in ["src/git.swift", ".gitignore", ".claude/agents/a.md", ".vscode/settings.json", "envrc"] { #expect(!Sync.isProtected(p), "\(p)") }
+    #expect(Sync.Ignore(gitignore: "").ignored("Node_Modules", isDir: true))   // brez razlike v velikih črkah (APFS)
+
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent("syncgit-" + UUID().uuidString)
+    let client = base.appendingPathComponent("client"), copy = base.appendingPathComponent("copy")
+    defer { try? FileManager.default.removeItem(at: base) }
+    try FileManager.default.createDirectory(at: client.appendingPathComponent(".GIT"), withIntermediateDirectories: true)
+    try Data("x".utf8).write(to: client.appendingPathComponent(".GIT/config"))
+    try Data("y".utf8).write(to: client.appendingPathComponent("a.txt"))
+    #expect(Set(Sync.scan(client).files.keys) == ["a.txt"])                   // ».GIT« ne gre na router
+
+    var state = Sync.scan(client).files
+    let evil = Data("#!/bin/sh".utf8)
+    let ch = Sync.Changes(changed: [".GIT/hooks/post-checkout", ".claude/settings.json", ".envrc"].map {
+        Sync.Entry(path: $0, size: Int64(evil.count), mtime: 1, sha256: Sync.sha256(evil), exec: true)
+    }, deleted: [".GIT/config"])
+    let (notes, done) = Sync.apply(ch, root: client, state: &state) { _ in evil }
+    #expect(done.count == 4 && notes.count == 4)
+    #expect(!FileManager.default.fileExists(atPath: client.appendingPathComponent(".GIT/hooks").path))
+    #expect(!FileManager.default.fileExists(atPath: client.appendingPathComponent(".claude").path))
+    #expect(!FileManager.default.fileExists(atPath: client.appendingPathComponent(".envrc").path))
+    #expect(FileManager.default.fileExists(atPath: client.appendingPathComponent(".GIT/config").path))
+
+    // Router: odjemalec ne more poslati ».GIT/…« v kopijo.
+    let hub = ShareHub()
+    let key = try #require(await hub.register(session: "g", cwd: client.path, key: nil, copy: copy))
+    let e = Sync.Entry(path: ".GIT/hooks/pre-commit", size: Int64(evil.count), mtime: 1, sha256: Sync.sha256(evil))
+    #expect(try #require(await hub.syncManifest(key: key, [e])).need.isEmpty)
+    #expect(await hub.syncPut(key: key, path: e.path, data: evil) == 403)
+}
+
+@Test func shareBoundToRegisteringDevice() async throws {
+    let hub = ShareHub()
+    let copy = FileManager.default.temporaryDirectory.appendingPathComponent("syncdev-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: copy) }
+    let key = try #require(await hub.register(session: "d", cwd: "/a", key: nil, copy: copy, device: "dev1"))
+    #expect(await hub.lock(session: "d") == nil)
+    #expect(await hub.lock(session: "d", device: "dev2") == nil)
+    #expect(await hub.mount(session: "d", cwd: nil, base: "http://127.0.0.1:1", device: "dev2") == nil)
+    #expect(await hub.syncManifest(key: key, [], device: "dev2") == nil)
+    #expect(await hub.syncPut(key: key, path: "a", data: Data(), device: nil) == 404)
+    #expect(await hub.syncChanges(key: key, device: "dev2") == nil)
+    #expect(await hub.syncManifest(key: key, [], device: "dev1") != nil)
+    #expect(await hub.lock(session: "d", device: "dev1") == copy)
+    await hub.unlock(copy)
+}
+
+@Test func readOnlySyncHasItsOwnCopy() async throws {
+    let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("syncrocopy-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: scratch) }
+    var c = RouterConfig()
+    c.scratchFolder = scratch.path
+    let r = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]))
+    let cwd = "/p-" + UUID().uuidString
+    var keys: [String] = []
+    for mode in ["ro", "rw"] {
+        var q = request("POST", "/minigw/share", headers: ["Authorization": "Bearer tok", "x-claude-mini-session": UUID().uuidString,
+                                                           "x-claude-mini-cwd": cwd, "x-claude-mini-work": "sync", "x-share-mode": mode])
+        q.peer = "127.0.0.1"
+        let w = FakeWriter()
+        await r.handle(q, writer: w)
+        keys.append(try #require(w.text.split(separator: "\"").dropFirst(3).first.map(String.init)))
+    }
+    for k in keys {
+        var q = request("POST", "/minigw/sync/manifest", headers: ["Authorization": "Bearer tok", "x-share-key": k], body: "[]")
+        q.peer = "127.0.0.1"
+        await r.handle(q, writer: FakeWriter())
+    }
+    let dir = c.scratchURL.appendingPathComponent("sync/local")
+    let names = Set((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? [])
+    #expect(names == [Sync.folderID(cwd), Sync.folderID(cwd) + "-ro"])
+}
+
+@Test func agentModelNamesAreSlugs() {
+    #expect(Router.validModel("gpt-5.1-codex") && Router.validModel("openai/o3:high") && Router.validModel("grok_4"))
+    for m in ["", "-c", "--config=x", "a b", "a;rm", "a\nb", "ž"] { #expect(!Router.validModel(m), "\(m)") }
+}
+
+@Test func syncProtectsShortAndFoldedNames() {
+    for p in ["GIT~1/hooks/post-checkout", "git~12/config", ".claude/ſettings.json", ".vscode/taſks.json"] {
+        #expect(Sync.isProtected(p), "\(p)")
+    }
+    #expect(!Sync.isProtected("src/git~x.txt"))
 }

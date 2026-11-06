@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -94,18 +95,7 @@ func (s *shareClient) work() {
 			if json.Unmarshal(data, &job) != nil {
 				continue
 			}
-			r := dav(403, nil, nil)
-			if job.Method == "SYNC-PUSH" || job.Method == "SYNC-PULL" {
-				s.syncMu.Lock()
-				ok := (job.Method == "SYNC-PUSH" && s.syncPush(k)) || (job.Method == "SYNC-PULL" && s.syncPull(k))
-				s.syncMu.Unlock()
-				if r = dav(500, nil, nil); ok {
-					r = dav(200, nil, nil)
-				}
-			} else if !s.sync && (!s.readOnly || !writeMethods[job.Method]) { // sync: brez WebDAV
-				r = davHandle(job.Method, job.Path, job.Headers, job.Body, s.root, job.Prefix)
-			}
-			body, err := json.Marshal(davReply{ID: job.ID, Response: r})
+			body, err := json.Marshal(davReply{ID: job.ID, Response: s.handle(job, k)})
 			if err != nil {
 				continue
 			}
@@ -125,6 +115,29 @@ func (s *shareClient) work() {
 	}
 }
 
+// handle: posel routerja. Router ni zaupanja vreden: SYNC-* le v načinu sync, SYNC-PULL (piše v mapo) nikoli pri
+// --minigw-ro, WebDAV le v načinu direct (pisanje ne pri --minigw-ro).
+func (s *shareClient) handle(job davJob, k string) davResponse {
+	switch {
+	case strings.HasPrefix(job.Method, "SYNC-"):
+		if !s.sync || (job.Method == "SYNC-PULL" && s.readOnly) || (job.Method != "SYNC-PUSH" && job.Method != "SYNC-PULL") {
+			return dav(403, nil, nil)
+		}
+		s.syncMu.Lock()
+		defer s.syncMu.Unlock()
+		if (job.Method == "SYNC-PUSH" && s.syncPush(k)) || (job.Method == "SYNC-PULL" && s.syncPull(k)) {
+			return dav(200, nil, nil)
+		}
+		return dav(500, nil, nil)
+	case s.sync || (s.readOnly && writeMethods[job.Method]):
+		return dav(403, nil, nil)
+	}
+	return davHandle(job.Method, job.Path, job.Headers, job.Body, s.root, job.Prefix)
+}
+
+// maxReply: največji odgovor routerja v pomnilniku (datoteka do 64 MB + glave).
+const maxReply = 80 << 20
+
 // call: poljubna zahteva do routerja (prek lokalnega proxyja); 0 = ni povezave.
 func call(c connection, method, path string, headers map[string]string, body []byte, timeout time.Duration) (int, []byte) {
 	req, err := http.NewRequest(method, c.URL+path, bytes.NewReader(body))
@@ -140,6 +153,6 @@ func call(c connection, method, path string, headers map[string]string, body []b
 		return 0, nil
 	}
 	defer resp.Body.Close()
-	data, _ := io.ReadAll(resp.Body)
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, maxReply))
 	return resp.StatusCode, data
 }

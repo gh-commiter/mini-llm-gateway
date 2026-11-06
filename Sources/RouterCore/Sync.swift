@@ -57,7 +57,8 @@ public enum Sync {
         public func ignored(_ rel: String, isDir: Bool) -> Bool {
             let name = String(rel.split(separator: "/").last ?? "")
             return rules.contains { r in
-                (!r.dirOnly || isDir) && fnmatch(r.pattern, r.anchored ? rel : name, r.anchored ? FNM_PATHNAME : 0) == 0
+                // APFS je brez razlike v velikih črkah → tudi pravila
+                (!r.dirOnly || isDir) && fnmatch(r.pattern, r.anchored ? rel : name, (r.anchored ? FNM_PATHNAME : 0) | FNM_CASEFOLD) == 0
             }
         }
 
@@ -68,6 +69,34 @@ public enum Sync {
         }
     }
 
+    /// Ime, kot ga vidi datotečni sistem brez razlike v črkah (Windows odreže končne pike in presledke: ».GIT.« = ».git«).
+    static func normName(_ c: String) -> String {
+        // upper→lower preslika ſ, ı, K (Kelvin) v ASCII; »git~1« je kratko 8.3 ime ».git« na Windows.
+        // ponytail: ime, ne kanonična pot; ob simlinkanem staršu preveri kanonično pot (issue v Gitei).
+        var n = c.uppercased().lowercased()
+        while n.hasSuffix(".") || n.hasSuffix(" ") { n.removeLast() }
+        return n.range(of: #"^git~[0-9]+$"#, options: .regularExpression) != nil ? ".git" : n
+    }
+
+    /// Pot vsebuje ».git« v kateri koli obliki: nikoli v kopiji ali iz nje.
+    public static func isGitPath(_ rel: String) -> Bool { rel.split(separator: "/").contains { normName(String($0)) == ".git" } }
+
+    /// Pot, ki je prevzem nikoli ne zapiše ali izbriše: git in nastavitve, ki zaganjajo ukaze
+    /// (.claude/settings*.json, .vscode/tasks.json, .envrc).
+    public static func isProtected(_ rel: String) -> Bool {
+        let c = rel.split(separator: "/").map { normName(String($0)) }
+        let last = c.last ?? "", parent = c.count > 1 ? c[c.count - 2] : ""
+        return isGitPath(rel) || last == ".envrc" || (parent == ".vscode" && last == "tasks.json")
+            || (parent == ".claude" && last.hasPrefix("settings") && last.hasSuffix(".json"))
+    }
+
+    /// Posel routerja za minigw (router ni zaupanja vreden): SYNC-* le v načinu sync, SYNC-PULL nikoli pri --minigw-ro,
+    /// WebDAV le v načinu direct (pisanje ne pri --minigw-ro).
+    public static func jobAllowed(_ method: String, sync: Bool, readOnly: Bool, write: Bool) -> Bool {
+        if method.hasPrefix("SYNC-") { return sync && (method == "SYNC-PUSH" || (method == "SYNC-PULL" && !readOnly)) }
+        return !sync && !(readOnly && write)
+    }
+
     /// Datoteke pod `root` brez prezrtih in simbolnih povezav. Zgoščuje le, kar ima drugo velikost ali čas kot v `previous`.
     public static func scan(_ root: URL, previous: [String: Entry] = [:]) -> (files: [String: Entry], skipped: [String]) {
         let ignore = Ignore(root: root)
@@ -75,6 +104,7 @@ public enum Sync {
         func walk(_ dir: URL, _ rel: String) {
             for name in ((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []).sorted() {
                 let r = rel.isEmpty ? name : rel + "/" + name, url = dir.appendingPathComponent(name)
+                if normName(name) == ".git" { continue }  // tudi ».GIT«
                 guard let a = try? FileManager.default.attributesOfItem(atPath: url.path) else { continue }  // ne sledi povezavam
                 switch a[.type] as? FileAttributeType {
                 case .typeDirectory?:
@@ -164,6 +194,7 @@ public enum Sync {
         let ignore = Ignore(root: root)
         var notes: [String] = [], done: [String] = []
         for e in ch.changed {
+            if isProtected(e.path) { notes.append("skipped \(e.path): protected path"); done.append(e.path); continue }
             if ignore.covers(e.path) { notes.append("skipped \(e.path): ignored here"); done.append(e.path); continue }
             guard let url = resolve(e.path, root: root) else {  // potrjena, sicer bi jo router pošiljal v nedogled
                 notes.append("skipped \(e.path): invalid path here"); done.append(e.path); continue
@@ -197,6 +228,7 @@ public enum Sync {
             } catch { notes.append("cannot write \(e.path): \(error.localizedDescription)") }
         }
         for p in ch.deleted {
+            if isProtected(p) { notes.append("not deleted \(p): protected path"); done.append(p); continue }
             if ignore.covers(p) { done.append(p); continue }
             done.append(p)
             guard let url = resolve(p, root: root) else { continue }

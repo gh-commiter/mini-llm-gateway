@@ -14,6 +14,9 @@ DERIVED=.build/xcode
 identities=$(security find-identity -v -p codesigning)
 pick() { print -r -- "$identities" | grep -oE "\"$1: [^\"]+\"" | head -1 | tr -d '"' || true }
 if [[ $MODE == --release ]]; then
+  # Izdaja le iz commitane kode (tudi brez nesledenih datotek).
+  [[ -z $(git status --porcelain -- Sources client Resources Package.swift) ]] \
+    || { print -u2 "Release zahteva commitano kodo (git status -- Sources client Resources Package.swift ni prazen)."; exit 1 }
   IDENTITY=${SIGN_IDENTITY:-$(pick "Developer ID Application")}
   [[ $IDENTITY == "Developer ID Application:"* ]] || { print -u2 "Release zahteva potrdilo Developer ID Application (Xcode → Settings → Accounts → Manage Certificates → +)."; exit 1 }
 else
@@ -39,7 +42,7 @@ cp "$DERIVED/Build/Products/Release/MiniGateway" "$APP/Contents/MacOS/MiniGatewa
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 # Commit, iz katerega je zgrajeno (v meniju in About); -dirty, če koda ni commitana.
 commit=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
-git diff --quiet HEAD -- Sources client Resources Package.swift 2>/dev/null || commit+=-dirty
+[[ -z $(git status --porcelain -- Sources client Resources Package.swift 2>/dev/null) ]] || commit+=-dirty  # tudi nesledene
 plutil -replace MGCommit -string "$commit" "$APP/Contents/Info.plist"
 mkdir -p "$APP/Contents/Resources/en.lproj"  # izvorni jezik (fallback); prevodi iz katalogov spodaj
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"

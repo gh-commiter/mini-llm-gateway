@@ -41,8 +41,9 @@ public actor ShareHub {
         var pending: [String: Sync.Entry?] = [:]          // sync: poslane spremembe agenta (nil = izbris) do potrditve
         var big: Set<String> = []                         // sync: že javljene prevelike datoteke
         var execKnown = true                              // sync: odjemalec pozna bit x (ne Windows)
-        init(session: String, cwd: String, readOnly: Bool, copy: URL?) {
-            self.session = session; self.cwd = cwd; self.readOnly = readOnly; self.copy = copy
+        let device: String?                               // naprava, ki je mapo registrirala (dokaz Noise); nil = lokalno
+        init(session: String, cwd: String, readOnly: Bool, copy: URL?, device: String?) {
+            self.session = session; self.cwd = cwd; self.readOnly = readOnly; self.copy = copy; self.device = device
         }
     }
 
@@ -53,16 +54,20 @@ public actor ShareHub {
 
     private func share(key: String) -> Share? { bySession.values.first { $0.key == key } }
 
+    /// Share seje, le za napravo, ki ga je registrirala (druga naprava z istim ID seje ali ključem ga ne doseže).
+    private func share(session: String, device: String?) -> Share? { bySession[session].flatMap { $0.device == device ? $0 : nil } }
+    private func share(key: String, device: String?) -> Share? { share(key: key).flatMap { $0.device == device ? $0 : nil } }
+
     /// nil: seja že ima share drugega lastnika (brez njegovega ključa je ni mogoče prevzeti).
     /// `copy`: način sync (kopija v scratch/sync), sicer priklop.
-    func register(session: String, cwd: String, key: String?, readOnly: Bool = false, copy: URL? = nil) -> String? {
+    func register(session: String, cwd: String, key: String?, readOnly: Bool = false, copy: URL? = nil, device: String? = nil) -> String? {
         if let s = bySession[session] {
             guard s.key == key else { return nil }
             if s.cwd == cwd, s.readOnly == readOnly, s.copy == copy { s.lastSeen = Date(); return s.key }
             bySession[session] = nil
             close(s)
         }
-        let s = Share(session: session, cwd: cwd, readOnly: readOnly, copy: copy)
+        let s = Share(session: session, cwd: cwd, readOnly: readOnly, copy: copy, device: device)
         bySession[session] = s
         if reaper == nil {
             reaper = Task { [weak self] in
@@ -173,11 +178,11 @@ public actor ShareHub {
 
     /// Mapa seje na tem Macu (priklopi ob prvi uporabi); nil, če seja nima mape odjemalca.
     /// `wait`: odjemalec deli mapo (minigw), a je po ponovnem zagonu routerja še ni znova registriral → počakaj do 30 s.
-    func mount(session: String, cwd: String?, base: String, wait: Bool = false) async -> URL? {
+    func mount(session: String, cwd: String?, base: String, wait: Bool = false, device: String? = nil) async -> URL? {
         if wait, !session.isEmpty {
             for _ in 0..<60 where bySession[session] == nil { try? await Task.sleep(for: .milliseconds(500)) }
         }
-        guard let s = bySession[session], cwd == nil || cwd == s.cwd else { return nil }
+        guard let s = share(session: session, device: device), cwd == nil || cwd == s.cwd else { return nil }
         if let copy = s.copy { return await syncJob(s, "SYNC-PUSH") ? copy : nil }
         if let mp = s.mountPoint, Self.isMounted(mp) { return mp }
         if let t = s.mounting { return await t.value }
@@ -210,11 +215,11 @@ public actor ShareHub {
 
     /// Ena zahteva agenta naenkrat na kopijo (prenos → agent → prevzem); nil = seja ni v načinu sync.
     /// `wait`: po ponovnem zagonu routerja počaka (do 30 s), da minigw mapo znova registrira (kot mount).
-    func lock(session: String, wait: Bool = false) async -> URL? {
+    func lock(session: String, wait: Bool = false, device: String? = nil) async -> URL? {
         if wait, !session.isEmpty {
             for _ in 0..<60 where bySession[session] == nil { try? await Task.sleep(for: .milliseconds(500)) }
         }
-        guard let copy = bySession[session]?.copy else { return nil }
+        guard let copy = share(session: session, device: device)?.copy else { return nil }
         if busy[copy] == nil { busy[copy] = [] } else { await withCheckedContinuation { busy[copy]!.append($0) } }
         return copy
     }
@@ -238,8 +243,8 @@ public actor ShareHub {
     /// Manifest odjemalca → poti, ki jih kopija potrebuje; datoteke, ki jih odjemalec nima več, izbriše.
     /// Še nepotrjenih sprememb agenta (`kept`) ne prepiše in ne izbriše; gredo z naslednjim prevzemom.
     /// ponytail: briše le neprezrte datoteke po pravilih kopije; prezrte (izhod gradnje) ostanejo, tudi če jih odjemalec ne prezre več.
-    func syncManifest(key: String, _ files: [Sync.Entry], execKnown: Bool = true) async -> (need: [String], kept: [String])? {
-        guard let s = share(key: key), let copy = s.copy else { return nil }
+    func syncManifest(key: String, _ files: [Sync.Entry], execKnown: Bool = true, device: String? = nil) async -> (need: [String], kept: [String])? {
+        guard let s = share(key: key, device: device), let copy = s.copy else { return nil }
         s.lastSeen = Date()
         s.execKnown = execKnown
         try? FileManager.default.createDirectory(at: copy, withIntermediateDirectories: true)
@@ -249,7 +254,7 @@ public actor ShareHub {
         let base = s.readOnly ? current : s.state ?? current
         let agent = Sync.diff(old: base, new: current, root: copy)
         let kept = Set(agent.changed.map(\.path) + agent.deleted)
-        let valid = files.filter { Sync.resolve($0.path, root: copy) != nil }
+        let valid = files.filter { Sync.resolve($0.path, root: copy) != nil && !Sync.isGitPath($0.path) }  // ».GIT/hooks« ne
         let (need, gone) = Sync.plan(client: valid, copy: current, keep: kept)
         var state = current
         for p in kept { state[p] = base[p] }
@@ -263,8 +268,8 @@ public actor ShareHub {
     }
 
     /// Datoteka iz manifesta; vsebina se mora ujemati z njim. Status HTTP.
-    func syncPut(key: String, path: String, data: Data) -> Int {
-        guard let s = share(key: key), let copy = s.copy else { return 404 }
+    func syncPut(key: String, path: String, data: Data, device: String? = nil) -> Int {
+        guard let s = share(key: key, device: device), let copy = s.copy else { return 404 }
         s.lastSeen = Date()
         guard let e = s.incoming[path], let url = Sync.resolve(path, root: copy) else { return 403 }
         guard Sync.sha256(data) == e.sha256 else { return 409 }  // spremenjena med prenosom
@@ -274,8 +279,8 @@ public actor ShareHub {
     }
 
     /// Spremembe agenta od zadnjega prenosa; stanje se premakne šele s potrditvijo (syncAck). nil = ni seje ali samo branje.
-    func syncChanges(key: String) async -> Sync.Changes? {
-        guard let s = share(key: key), let copy = s.copy, !s.readOnly, let prev = s.state else { return nil }
+    func syncChanges(key: String, device: String? = nil) async -> Sync.Changes? {
+        guard let s = share(key: key, device: device), let copy = s.copy, !s.readOnly, let prev = s.state else { return nil }
         s.lastSeen = Date()
         let (current, skipped) = await Task.detached { Sync.scan(copy, previous: prev) }.value
         var ch = Sync.diff(old: prev, new: current, root: copy)
@@ -286,15 +291,15 @@ public actor ShareHub {
     }
 
     /// minigw potrdi poti, ki jih je obdelal (zapisal, izbrisal ali shranil kot spor).
-    func syncAck(key: String, _ paths: [String]) -> Bool {
-        guard let s = share(key: key), s.state != nil else { return false }
+    func syncAck(key: String, _ paths: [String], device: String? = nil) -> Bool {
+        guard let s = share(key: key, device: device), s.state != nil else { return false }
         for p in paths { if let e = s.pending.removeValue(forKey: p) { s.state?[p] = e } }
         return true
     }
 
     /// Datoteka kopije za minigw (le poslane spremembe, nikoli prezrte ali zunaj kopije).
-    func syncGet(key: String, path: String) -> Data? {
-        guard let s = share(key: key), let copy = s.copy, !s.readOnly, (s.pending[path] ?? nil) != nil,
+    func syncGet(key: String, path: String, device: String? = nil) -> Data? {
+        guard let s = share(key: key, device: device), let copy = s.copy, !s.readOnly, (s.pending[path] ?? nil) != nil,
               let url = Sync.resolve(path, root: copy) else { return nil }
         s.lastSeen = Date()
         return try? Data(contentsOf: url)

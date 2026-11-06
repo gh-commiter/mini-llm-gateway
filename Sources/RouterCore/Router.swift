@@ -211,9 +211,11 @@ public final class Router: Sendable {
                 return (await error(400, "invalid_request_error", "Sync needs an encrypted connection with a device key (run minigw connect again)",
                                     rid: rid, writer: writer), nil, "share")
             }
-            let copy = sync ? config.scratch("sync").appendingPathComponent(owner!).appendingPathComponent(Sync.folderID(cwd)) : nil
+            let readOnly = req.header("x-share-mode") == "ro"
+            let copy = sync ? config.scratch("sync").appendingPathComponent(owner!)  // samo za branje: ločena kopija
+                .appendingPathComponent(Sync.folderID(cwd) + (readOnly ? "-ro" : "")) : nil
             guard let key = await Self.shares.register(session: session, cwd: cwd, key: req.header("x-share-key"),
-                                                       readOnly: req.header("x-share-mode") == "ro", copy: copy) else {
+                                                       readOnly: readOnly, copy: copy, device: req.device?.id) else {
                 return (await error(409, "invalid_request_error", "Session already has a folder", rid: rid, writer: writer), nil, "share")
             }
             return (await json(200, ["key": key], rid: rid, writer: writer), nil, "share")
@@ -242,31 +244,31 @@ public final class Router: Sendable {
                 return (await error(400, "invalid_request_error", "Bad manifest", rid: rid, writer: writer), nil, "share")
             }
             guard let r = await Self.shares.syncManifest(key: req.header("x-share-key") ?? "", files,
-                                                         execKnown: req.header("x-sync-exec") != "none") else {  // Windows
+                                                         execKnown: req.header("x-sync-exec") != "none", device: req.device?.id) else {  // Windows
                 return (await error(404, "not_found_error", "No such share", rid: rid, writer: writer), nil, "share")
             }
             return (await json(200, ["need": r.need, "kept": r.kept], rid: rid, writer: writer), nil, "share")
         case ("POST", "/minigw/sync/ack"):
             guard let paths = try? JSONDecoder().decode([String].self, from: req.body),
-                  await Self.shares.syncAck(key: req.header("x-share-key") ?? "", paths) else {
+                  await Self.shares.syncAck(key: req.header("x-share-key") ?? "", paths, device: req.device?.id) else {
                 return (await error(404, "not_found_error", "No such share", rid: rid, writer: writer), nil, "share")
             }
             try? await writer.write(HTTPResponse.head(status: 204, headers: [], contentLength: 0))
             return (204, nil, "share")
         case ("PUT", "/minigw/sync/file"):
             let st = await Self.shares.syncPut(key: req.header("x-share-key") ?? "",
-                                               path: req.header("x-sync-path")?.removingPercentEncoding ?? "", data: req.body)
+                                               path: req.header("x-sync-path")?.removingPercentEncoding ?? "", data: req.body, device: req.device?.id)
             try? await writer.write(HTTPResponse.head(status: st, headers: [], contentLength: 0))
             return (st, nil, "share")
         case ("GET", "/minigw/sync/changes"):
-            guard let ch = await Self.shares.syncChanges(key: req.header("x-share-key") ?? ""), let body = try? JSONEncoder().encode(ch) else {
+            guard let ch = await Self.shares.syncChanges(key: req.header("x-share-key") ?? "", device: req.device?.id), let body = try? JSONEncoder().encode(ch) else {
                 return (await error(404, "not_found_error", "No such share", rid: rid, writer: writer), nil, "share")
             }
             try? await writer.write(HTTPResponse.head(status: 200, headers: [("Content-Type", "application/json")], contentLength: body.count) + body)
             return (200, nil, "share")
         case ("GET", "/minigw/sync/file"):
             guard let body = await Self.shares.syncGet(key: req.header("x-share-key") ?? "",
-                                                       path: req.header("x-sync-path")?.removingPercentEncoding ?? "") else {
+                                                       path: req.header("x-sync-path")?.removingPercentEncoding ?? "", device: req.device?.id) else {
                 return (await error(404, "not_found_error", "No such file", rid: rid, writer: writer), nil, "share")
             }
             try? await writer.write(HTTPResponse.head(status: 200, headers: [("Content-Type", "application/octet-stream")], contentLength: body.count) + body)
@@ -285,7 +287,8 @@ public final class Router: Sendable {
     func exclusive(_ req: HTTPRequest, _ run: () async -> Int) async -> Int {
         let tools = ((try? JSONSerialization.jsonObject(with: req.body) as? [String: Any])?["tools"] as? [Any])?.isEmpty == false
         guard tools, let copy = await Self.shares.lock(session: req.header("x-claude-mini-session") ?? "",
-                                                       wait: req.header("x-claude-mini-share") == "1") else { return await run() }
+                                                       wait: req.header("x-claude-mini-share") == "1", device: req.device?.id)
+        else { return await run() }
         if Task.isCancelled {  // Claude Code je med čakanjem prekinil: brez prenosa in agenta
             await Self.shares.unlock(copy)
             return 499

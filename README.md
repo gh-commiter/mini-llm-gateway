@@ -235,6 +235,20 @@ The router caches folder listings (PROPFIND) for 10 seconds, like davfs2's `dir_
 the cache at once, changes made on the client outside the mount show up within 10 seconds.
 The folder's own Claude Code settings and hooks are not loaded on the router Mac. Set `MINIGW_SHARE=0` to turn it off.
 
+**Sync instead of a mount (for builds).** `minigw --minigw-work=sync …` (or `MINIGW_WORK=sync`) copies the folder to the
+router's Scratch folder before each agent request and copies the files the agent changed back after it. Agents and
+builds then work on the router's local disk.
+- **Sent to the router:** only changed files, compared by size, time and SHA-256.
+- **Never sent, never copied back:**
+  - files matched by `.gitignore` or the built-in list (`.git`, `target/`, `.build/`, `node_modules/`, `build/`,
+    `dist/`, `DerivedData/` …);
+  - files the agent puts into `.git`, `.claude/settings*.json`, `.vscode/tasks.json` or `.envrc`.
+- **Conflicts:** if you changed a file the agent also changed, yours stays and the agent's version is saved next to it
+  as `<name>.minigw-conflict`.
+- **Read-only:** with `--minigw-ro` nothing comes back.
+- **The router copy is kept between requests,** so the next sync and the next build are incremental.
+- **Agents in the same folder run one after another.**
+
 ## 5. Router settings
 
 Settings of the menu bar app on the router Mac (**Settings…**, laid out like System Settings). Client options (`minigw share`, `--minigw-ro`,

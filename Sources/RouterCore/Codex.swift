@@ -160,6 +160,9 @@ public enum Codex {
 
 extension Router {
     func runCodex(_ req: HTTPRequest, body: [String: Any], model: String?, rid: String, writer: ResponseWriter) async -> Int {
+        if let model, !Self.validModel(model) {
+            return await error(400, "invalid_request_error", "Invalid model name", rid: rid, writer: writer)
+        }
         guard let exe = Codex.executable(config.codex.executable) else {
             return await error(503, "api_error", "Codex CLI not found (Mini Gateway → Settings → Claude CLI → Codex)", rid: rid, writer: writer)
         }
@@ -175,7 +178,7 @@ extension Router {
         if agent {
             let clientCwd = req.header("x-claude-mini-cwd")
             let shared = await Self.shares.mount(session: req.header("x-claude-mini-session") ?? "", cwd: clientCwd, base: localBase,
-                                                 wait: req.header("x-claude-mini-share") == "1")
+                                                 wait: req.header("x-claude-mini-share") == "1", device: req.device?.id)
             let synced = await Self.shares.isSync(session: req.header("x-claude-mini-session") ?? "")
             guard let dir = shared ?? (synced ? nil : ClaudeCLI.resolveCwd(clientCwd, roots: config.claudeCLI.allowedRoots)) else {
                 if synced { return await error(502, "api_error", "Syncing \(clientCwd ?? "the folder") to the router failed (see minigw output)", rid: rid, writer: writer) }
@@ -212,6 +215,11 @@ extension Router {
             }
             return (text, [])
         }
+    }
+
+    /// Ime modela za -m (Codex, Grok): le [A-Za-z0-9._:/-], ne na začetku »-« (sicer bi bila zastavica CLI).
+    static func validModel(_ m: String) -> Bool {
+        !m.isEmpty && !m.hasPrefix("-") && m.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || "._:/-".contains($0)) }
     }
 
     /// Ponudnik brez pretoka (Siri, Codex): pri pretoku glave in message_start takoj, med čakanjem ping, nato cel odgovor.

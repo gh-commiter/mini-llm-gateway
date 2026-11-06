@@ -340,10 +340,14 @@ func writeAtomic(p string, data []byte) error {
 	return nil
 }
 
+// copyTree: simbolnim povezavam (tudi vgnezdenim) ne sledi in jih preskoči: njihov cilj je lahko zunaj mape.
 func copyTree(src, dst string) error {
-	info, err := os.Stat(src)
+	info, err := os.Lstat(src)
 	if err != nil {
 		return err
+	}
+	if !info.IsDir() && !info.Mode().IsRegular() {
+		return nil
 	}
 	if !info.IsDir() {
 		in, err := os.Open(src)

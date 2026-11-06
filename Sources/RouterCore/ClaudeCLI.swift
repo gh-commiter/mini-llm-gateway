@@ -354,7 +354,7 @@ extension Router {
             // Mapa odjemalca (minigw na drugem Macu) ima prednost pred enako potjo na tem Macu.
             let clientCwd = req.header("x-claude-mini-cwd")
             let shared = await Self.shares.mount(session: req.header("x-claude-mini-session") ?? "", cwd: clientCwd, base: localBase,
-                                                 wait: req.header("x-claude-mini-share") == "1")
+                                                 wait: req.header("x-claude-mini-share") == "1", device: req.device?.id)
             let synced = await Self.shares.isSync(session: req.header("x-claude-mini-session") ?? "")
             if let shared, let clientCwd {
                 let readOnly = await Self.shares.isReadOnly(session: req.header("x-claude-mini-session") ?? "")

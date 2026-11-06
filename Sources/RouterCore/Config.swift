@@ -81,8 +81,16 @@ public struct RouterConfig: Codable, Sendable, Equatable {
 
     public var scratchURL: URL {
         scratchFolder.isEmpty ? Self.defaultScratch
-            : URL(fileURLWithPath: (scratchFolder as NSString).expandingTildeInPath, isDirectory: true)
+            : Self.dedicated(URL(fileURLWithPath: (scratchFolder as NSString).expandingTildeInPath, isDirectory: true))
     }
+
+    /// Izbrana mapa dobi lastno podmapo (nikoli ne pišemo med uporabnikove datoteke), razen če se že tako imenuje.
+    public static func dedicated(_ folder: URL) -> URL {
+        folder.lastPathComponent == dedicatedName ? folder : folder.appendingPathComponent(dedicatedName, isDirectory: true)
+    }
+    public static let dedicatedName = "Mini Gateway Scratch"
+    /// Podmape, ki jih uporablja scratch(_:); premik prenese le te.
+    public static let scratchSubfolders = ["chat", "sync", "tmp", "attachments"]
 
     /// Podmapa scratch mape (ustvari jo); če izbrani disk ni dosegljiv (izklopljen SSD), privzeta mapa.
     public func scratch(_ sub: String) -> URL {
@@ -96,7 +104,8 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         return fm.temporaryDirectory.appendingPathComponent(sub, isDirectory: true)
     }
 
-    /// Premakne vsebino scratch mape v novo (tudi na drug disk); ime, ki že obstaja v cilju, se zamenja.
+    /// Premakne znane podmape scratch mape v novo (tudi na drug disk). Obstoječega v cilju ne briše: napaka.
+    /// Staro mapo odstrani le, če je prazna.
     public static func moveScratch(from old: URL, to new: URL) throws {
         let fm = FileManager.default
         let o = old.standardizedFileURL.path, n = new.standardizedFileURL.path
@@ -104,13 +113,13 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         guard !n.hasPrefix(o + "/"), !o.hasPrefix(n + "/") else {
             throw CocoaError(.fileWriteInvalidFileName, userInfo: [NSLocalizedDescriptionKey: "The new folder is inside the old one or the other way round."])
         }
-        try fm.createDirectory(at: new, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        for item in (try? fm.contentsOfDirectory(at: old, includingPropertiesForKeys: nil)) ?? [] {
-            let dst = new.appendingPathComponent(item.lastPathComponent)
-            if fm.fileExists(atPath: dst.path) { try fm.removeItem(at: dst) }
-            try fm.moveItem(at: item, to: dst)
+        let items = scratchSubfolders.filter { fm.fileExists(atPath: old.appendingPathComponent($0).path) }
+        if let taken = items.first(where: { fm.fileExists(atPath: new.appendingPathComponent($0).path) }) {
+            throw CocoaError(.fileWriteFileExists, userInfo: [NSLocalizedDescriptionKey: "The new folder already contains “\(taken)”."])
         }
-        try? fm.removeItem(at: old)  // prazna stara mapa
+        try fm.createDirectory(at: new, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        for name in items { try fm.moveItem(at: old.appendingPathComponent(name), to: new.appendingPathComponent(name)) }
+        rmdir(old.path)  // le prazna
     }
 
     public init(from decoder: Decoder) throws {

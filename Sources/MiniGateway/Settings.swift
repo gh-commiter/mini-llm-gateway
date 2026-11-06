@@ -893,7 +893,7 @@ struct ScratchSection: View {
         } header: {
             Text("Scratch folder")
         } footer: {
-            Text("Temporary files of agents: conversations, outputs, attachments. Choosing another folder moves its contents there, for example to a fast external SSD. If that disk is not connected, the default folder is used.")
+            Text("Temporary files of agents: conversations, outputs, attachments. Choosing another folder moves them into a “Mini Gateway Scratch” folder inside it, for example on a fast external SSD. If that disk is not connected, the default folder is used.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .alert(String(localized: "The scratch folder could not be moved"), isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
@@ -914,7 +914,7 @@ struct ScratchSection: View {
 
     /// nil = privzeta mapa.
     private func move(to url: URL?) {
-        let old = draft.scratchURL, new = url ?? RouterConfig.defaultScratch
+        let old = draft.scratchURL, new = url.map(RouterConfig.dedicated) ?? RouterConfig.defaultScratch
         moving = true
         Task.detached {
             let error: String? = { do { try RouterConfig.moveScratch(from: old, to: new); return nil } catch { return error.localizedDescription } }()
