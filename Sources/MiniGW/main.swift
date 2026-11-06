@@ -32,7 +32,7 @@ func route(_ c: Connection) -> Connection {
     }
     let device = c.device.flatMap(Noise.fromBase64url).flatMap { try? Curve25519.Signing.PrivateKey(rawRepresentation: $0) }
         .map { (key: $0, name: Host.current().localizedName ?? ProcessInfo.processInfo.hostName) }
-    guard let k = c.key.flatMap(Noise.fromBase64url), let p = NoiseProxy(routerURL: c.url, routerKey: k, device: device) else {
+    guard let k = c.key.flatMap(Noise.fromBase64url), let p = NoiseProxy(routerURL: c.url, routerKey: k, device: device, suite: .aesGCM) else {  // MGW2: tudi router minigw serve
         fail("no router key: copy the token again (Mini Gateway 0.4+ → Copy Token) and run minigw connect")
     }
     do { try p.start() } catch { fail("cannot start the local encrypted proxy: \(error)") }
@@ -303,10 +303,14 @@ case "connect":
     guard !token.isEmpty else { fail("missing --token (copy it from Mini Gateway → Settings → General → Copy Token)") }
     let parts = token.split(separator: "#", maxSplits: 1).map(String.init)
     let c = Connection(url: normalize(args[1]), token: parts[0], key: parts.count > 1 ? parts[1] : nil, device: saved?.device ?? Noise.base64url(Curve25519.Signing.PrivateKey().rawRepresentation))
-    let (status, _) = get(route(c), "/v1/models")
+    let (status, body) = get(route(c), "/v1/models")
     switch status {
     case 200: saveConnection(c); say("Connected to \(c.url)" + (c.isLocal ? "" : " (encrypted)"))
     case 401: fail("router at \(c.url) rejected the token")
+    case 403:  // naprava še ni dovoljena (minigw serve): ključ naprave ostane, da ga router lahko doda
+        saveConnection(c)
+        let msg = (body?["error"] as? [String: Any])?["message"] as? String ?? ""
+        fail("router at \(c.url) refused this device: \(msg)\nthen run minigw connect again")
     case 426: fail("router at \(c.url) needs an encrypted connection: copy the token again (it includes the router key)")
     case 0: fail(c.isLocal ? "cannot reach \(c.url)" : "cannot reach \(c.url), or the router key does not match (copy the token again)")
     default: fail("router at \(c.url) answered HTTP \(status)")

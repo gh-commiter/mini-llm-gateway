@@ -40,6 +40,7 @@ type shareClient struct {
 	synced   map[string]syncEntry // manifest ob zadnjem prenosu (zgoščevanje, spori)
 	reported map[string]bool      // že javljene prevelike datoteke
 	unpulled bool                 // spremembe agenta, ki niso bile prevzete in potrjene
+	refusal  string               // sporočilo routerja ob zavrnjeni registraciji (npr. le način sync)
 }
 
 var writeMethods = map[string]bool{"PUT": true, "DELETE": true, "MKCOL": true, "MOVE": true, "COPY": true, "PROPPATCH": true, "LOCK": true}
@@ -62,9 +63,14 @@ func (s *shareClient) register() bool {
 		"x-claude-mini-session": s.session, "x-claude-mini-cwd": s.root, "x-share-key": s.currentKey(), "x-share-mode": s.mode(),
 		"x-claude-mini-work": work}, nil, 10*time.Second)
 	var r struct {
-		Key string `json:"key"`
+		Key   string `json:"key"`
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
 	}
-	if st != 200 || json.Unmarshal(data, &r) != nil || r.Key == "" {
+	err := json.Unmarshal(data, &r)
+	if st != 200 || err != nil || r.Key == "" {
+		s.refusal = r.Error.Message
 		return false
 	}
 	s.mu.Lock()

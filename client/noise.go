@@ -145,12 +145,51 @@ func newInitiator(routerKey []byte) (*initiator, error) {
 	if err != nil {
 		return nil, err
 	}
+	return &initiator{s: newSymmetric(routerKey), e: e, rs: rs}, nil
+}
+
+// newSymmetric: h0 = ime protokola, prologue »MGW2«, nato vnaprej znan ključ routerja (<- s).
+func newSymmetric(routerKey []byte) symmetric {
 	h0 := make([]byte, 32)
 	copy(h0, protocolName)
-	i := &initiator{s: symmetric{ck: h0, h: append([]byte{}, h0...)}, e: e, rs: rs}
-	i.s.mixHash(noiseMagic)
-	i.s.mixHash(routerKey) // <- s: vnaprej znan ključ routerja
-	return i, nil
+	s := symmetric{ck: h0, h: append([]byte{}, h0...)}
+	s.mixHash(noiseMagic)
+	s.mixHash(routerKey)
+	return s
+}
+
+// respond: router (minigw serve): <- e, es; -> e, ee. Vrne odgovor (48 bajtov) in sejo; napačen ključ → napaka.
+func respond(msg []byte, key *ecdh.PrivateKey) ([]byte, *noiseSession, error) {
+	if len(msg) != handshakeLen {
+		return nil, nil, errors.New("noise: bad handshake length")
+	}
+	s := newSymmetric(key.PublicKey().Bytes())
+	re, err := ecdh.X25519().NewPublicKey(msg[:32])
+	if err != nil {
+		return nil, nil, err
+	}
+	s.mixHash(msg[:32])
+	dh, err := key.ECDH(re)
+	if err != nil {
+		return nil, nil, err
+	}
+	s.mixKey(dh)
+	if _, err := s.decryptAndHash(msg[32:]); err != nil {
+		return nil, nil, err
+	}
+	e, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, nil, err
+	}
+	pub := e.PublicKey().Bytes()
+	s.mixHash(pub)
+	if dh, err = e.ECDH(re); err != nil {
+		return nil, nil, err
+	}
+	s.mixKey(dh)
+	reply := append(pub, s.encryptAndHash(nil)...)
+	a, b := noiseHKDF(s.ck, nil)
+	return reply, &noiseSession{send: newNoiseCipher(b), receive: newNoiseCipher(a), hash: s.h}, nil
 }
 
 // first: -> e, es
