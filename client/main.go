@@ -285,6 +285,7 @@ func main() {
 				"minigw status | models | disconnect\n" +
 				"minigw share add|remove [folder] | list    also share a system or hidden folder with the router\n" +
 				"minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)\n" +
+				"minigw --minigw-work=sync [claude args]    agents work in a synced copy on the router (or MINIGW_WORK=sync)\n" +
 				"minigw [claude options …]                    run Claude Code through the router")
 		}
 		if first == "--minigw-help" {
@@ -296,12 +297,24 @@ func main() {
 	// Claude Code prek routerja.
 	// --minigw-ro (ali MINIGW_SHARE=ro): mapa samo za branje; zastavica ne gre naprej v claude.
 	readOnly := os.Getenv("MINIGW_SHARE") == "ro"
+	// --minigw-work=sync (ali MINIGW_WORK=sync): agenti delajo v kopiji na routerju namesto v priklopu; privzeto direct.
+	work := os.Getenv("MINIGW_WORK")
+	if work == "" {
+		work = "direct"
+	}
 	for i := 0; i < len(args); i++ {
-		if args[i] == "--minigw-ro" {
-			readOnly = true
+		if args[i] == "--minigw-ro" || strings.HasPrefix(args[i], "--minigw-work=") {
+			if args[i] == "--minigw-ro" {
+				readOnly = true
+			} else {
+				work = strings.TrimPrefix(args[i], "--minigw-work=")
+			}
 			args = append(args[:i], args[i+1:]...)
 			i--
 		}
+	}
+	if work != "direct" && work != "sync" {
+		fail("unknown --minigw-work=" + work + " (use direct or sync)")
 	}
 	saved := requireConnection()
 	c := route(saved)
@@ -356,7 +369,8 @@ func main() {
 	}
 	env = append(env, "ANTHROPIC_CUSTOM_HEADERS="+headers)
 
-	share := &shareClient{c: c, session: sid, root: cwd, readOnly: readOnly}
+	share := &shareClient{c: c, session: sid, root: cwd, readOnly: readOnly, sync: work == "sync",
+		synced: map[string]syncEntry{}, reported: map[string]bool{}}
 	if wantShare && sid != "" {
 		if share.register() {
 			share.start(4)
@@ -364,7 +378,11 @@ func main() {
 			if readOnly {
 				mode = "read-only"
 			}
-			fmt.Fprintf(os.Stderr, "minigw: sharing %s %s with %s for agent models (--minigw-ro = read-only, MINIGW_SHARE=0 = off)\n", cwd, mode, routerHost)
+			verb := "sharing"
+			if share.sync {
+				verb = "syncing"
+			}
+			fmt.Fprintf(os.Stderr, "minigw: %s %s %s with %s for agent models (--minigw-ro = read-only, MINIGW_SHARE=0 = off)\n", verb, cwd, mode, routerHost)
 		} else {
 			fmt.Fprintln(os.Stderr, "minigw: router did not accept the folder; Claude CLI models with tools will not see it")
 		}

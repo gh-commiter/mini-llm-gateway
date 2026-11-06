@@ -315,8 +315,10 @@ extension Router {
     static let codexSessions = SessionRegistry()
 
     /// Navodilo agentu za priklopljeno mapo odjemalca (macOS, Windows ali Linux).
-    static func mountNote(_ clientCwd: String, _ shared: URL, readOnly: Bool) -> String {
-        "The user's folder \(clientCwd) (on their computer) is mounted here as \(shared.path), your working directory. Map paths under \(clientCwd) to it."
+    static func mountNote(_ clientCwd: String, _ shared: URL, readOnly: Bool, synced: Bool = false) -> String {
+        (synced ? "The user's folder \(clientCwd) (on their computer) is synced here as \(shared.path), your working directory: a local copy"
+            + (readOnly ? "" : " whose changed source files are copied back to the user when you finish") + ". Map paths under \(clientCwd) to it."
+            : "The user's folder \(clientCwd) (on their computer) is mounted here as \(shared.path), your working directory. Map paths under \(clientCwd) to it.")
             + (readOnly ? " The folder is shared read-only: do not try to create, change or delete files in it."
                 + " Open SQLite databases with the URI file:<path>?mode=ro&immutable=1 (no journal or lock files)." : "")
     }
@@ -353,11 +355,13 @@ extension Router {
             let clientCwd = req.header("x-claude-mini-cwd")
             let shared = await Self.shares.mount(session: req.header("x-claude-mini-session") ?? "", cwd: clientCwd, base: localBase,
                                                  wait: req.header("x-claude-mini-share") == "1")
+            let synced = await Self.shares.isSync(session: req.header("x-claude-mini-session") ?? "")
             if let shared, let clientCwd {
                 let readOnly = await Self.shares.isReadOnly(session: req.header("x-claude-mini-session") ?? "")
-                args += ["--append-system-prompt", Self.mountNote(clientCwd, shared, readOnly: readOnly)]
+                args += ["--append-system-prompt", Self.mountNote(clientCwd, shared, readOnly: readOnly, synced: synced)]
             }
-            guard let dir = shared ?? ClaudeCLI.resolveCwd(clientCwd, roots: cfg.allowedRoots) else {
+            guard let dir = shared ?? (synced ? nil : ClaudeCLI.resolveCwd(clientCwd, roots: cfg.allowedRoots)) else {
+                if synced { return await error(502, "api_error", "Syncing \(clientCwd ?? "the folder") to the router failed (see minigw output)", rid: rid, writer: writer) }
                 return await error(400, "invalid_request_error",
                                    "cwd_unavailable: folder \(req.header("x-claude-mini-cwd") ?? "(none)") does not exist on this Mac or is outside the allowed folders",
                                    rid: rid, writer: writer)
@@ -452,8 +456,10 @@ extension Router {
             p.terminate()
             return headSent ? 200 : 499
         }
-        pinger?.cancel()
         let status = await exit.wait()
+        // sync: spremembe agenta k odjemalcu pred koncem odgovora (Claude Code jih nato že vidi); med tem še ping
+        if agent { await Self.shares.syncBack(session: req.header("x-claude-mini-session") ?? "") }
+        pinger?.cancel()
         let errText = await errTask.value
 
         if let msg = t.resultError ?? (status != 0 && t.text.isEmpty ? (errText.isEmpty ? "claude exited with \(status)" : errText) : nil) {

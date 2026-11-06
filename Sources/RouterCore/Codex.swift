@@ -176,7 +176,9 @@ extension Router {
             let clientCwd = req.header("x-claude-mini-cwd")
             let shared = await Self.shares.mount(session: req.header("x-claude-mini-session") ?? "", cwd: clientCwd, base: localBase,
                                                  wait: req.header("x-claude-mini-share") == "1")
-            guard let dir = shared ?? ClaudeCLI.resolveCwd(clientCwd, roots: config.claudeCLI.allowedRoots) else {
+            let synced = await Self.shares.isSync(session: req.header("x-claude-mini-session") ?? "")
+            guard let dir = shared ?? (synced ? nil : ClaudeCLI.resolveCwd(clientCwd, roots: config.claudeCLI.allowedRoots)) else {
+                if synced { return await error(502, "api_error", "Syncing \(clientCwd ?? "the folder") to the router failed (see minigw output)", rid: rid, writer: writer) }
                 return await error(400, "invalid_request_error",
                                    "cwd_unavailable: folder \(clientCwd ?? "(none)") does not exist on this Mac or is outside the allowed folders",
                                    rid: rid, writer: writer)
@@ -186,7 +188,7 @@ extension Router {
                 .filter { $0 != "/" && !$0.isEmpty && $0 != dir.path && FileManager.default.fileExists(atPath: $0) }
             if let shared, let clientCwd {
                 readOnly = await Self.shares.isReadOnly(session: req.header("x-claude-mini-session") ?? "")
-                prompt = Self.mountNote(clientCwd, shared, readOnly: readOnly) + "\n\n" + prompt
+                prompt = Self.mountNote(clientCwd, shared, readOnly: readOnly, synced: synced) + "\n\n" + prompt
             }
         } else {
             try? FileManager.default.createDirectory(at: cwd, withIntermediateDirectories: true)
@@ -199,11 +201,12 @@ extension Router {
         if existing != nil { prompt = last.text }
         let args = Codex.args(cwd: cwd, extraDirs: extra, agent: agent, output: output, model: model,
                               write: config.codex.write && !readOnly, network: config.codex.network, resume: existing)
-        let sessions = Self.codexSessions
+        let sessions = Self.codexSessions, session = req.header("x-claude-mini-session") ?? ""
         return await replyWhenDone(body: body, model: "claude-codex", rid: rid, writer: writer) {
             let (text, thread) = try await Codex.run(exe, args: args, cwd: cwd, prompt: prompt, output: output) { [onActivity] s in
                 onActivity(.step(id: rid, text: s))
             }
+            if agent { await Self.shares.syncBack(session: session) }  // sync: spremembe agenta k odjemalcu pred odgovorom
             if agent, let thread {
                 await sessions.set(ClaudeCLI.key(all + [ClaudeCLI.Turn(role: "assistant", text: text)], scope: scope), thread)
             }

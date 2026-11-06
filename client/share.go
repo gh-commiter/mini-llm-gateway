@@ -32,8 +32,13 @@ type shareClient struct {
 	session  string
 	root     string
 	readOnly bool // pisanje zavrne minigw sam (router mapo priklopi tudi rdonly)
+	sync     bool // --minigw-work=sync: router dobi kopijo namesto priklopa (sync.go)
 	mu       sync.Mutex
 	key      string
+	syncMu   sync.Mutex
+	synced   map[string]syncEntry // manifest ob zadnjem prenosu (zgoščevanje, spori)
+	reported map[string]bool      // že javljene prevelike datoteke
+	unpulled bool                 // spremembe agenta, ki niso bile prevzete in potrjene
 }
 
 var writeMethods = map[string]bool{"PUT": true, "DELETE": true, "MKCOL": true, "MOVE": true, "COPY": true, "PROPPATCH": true, "LOCK": true}
@@ -48,8 +53,13 @@ func (s *shareClient) mode() string {
 func (s *shareClient) currentKey() string { s.mu.Lock(); defer s.mu.Unlock(); return s.key }
 
 func (s *shareClient) register() bool {
+	work := "direct"
+	if s.sync {
+		work = "sync"
+	}
 	st, data := call(s.c, "POST", "/minigw/share", map[string]string{
-		"x-claude-mini-session": s.session, "x-claude-mini-cwd": s.root, "x-share-key": s.currentKey(), "x-share-mode": s.mode()}, nil, 10*time.Second)
+		"x-claude-mini-session": s.session, "x-claude-mini-cwd": s.root, "x-share-key": s.currentKey(), "x-share-mode": s.mode(),
+		"x-claude-mini-work": work}, nil, 10*time.Second)
 	var r struct {
 		Key string `json:"key"`
 	}
@@ -85,7 +95,14 @@ func (s *shareClient) work() {
 				continue
 			}
 			r := dav(403, nil, nil)
-			if !s.readOnly || !writeMethods[job.Method] {
+			if job.Method == "SYNC-PUSH" || job.Method == "SYNC-PULL" {
+				s.syncMu.Lock()
+				ok := (job.Method == "SYNC-PUSH" && s.syncPush(k)) || (job.Method == "SYNC-PULL" && s.syncPull(k))
+				s.syncMu.Unlock()
+				if r = dav(500, nil, nil); ok {
+					r = dav(200, nil, nil)
+				}
+			} else if !s.sync && (!s.readOnly || !writeMethods[job.Method]) { // sync: brez WebDAV
 				r = davHandle(job.Method, job.Path, job.Headers, job.Body, s.root, job.Prefix)
 			}
 			body, err := json.Marshal(davReply{ID: job.ID, Response: r})
@@ -95,6 +112,11 @@ func (s *shareClient) work() {
 			call(s.c, "POST", "/minigw/share/reply", map[string]string{"x-share-key": k, "content-type": "application/json"}, body, 120*time.Second)
 		case 204:
 		case 404:
+			s.syncMu.Lock()
+			if s.sync && s.unpulled { // nova registracija: router ne pozna več nepotrjenih sprememb
+				s.note("the router restarted; the agent's changes that were not copied back may be overwritten by the next sync")
+			}
+			s.syncMu.Unlock()
 			s.register() // router se je znova zagnal
 			time.Sleep(time.Second)
 		default:

@@ -109,21 +109,26 @@ func call(_ c: Connection, _ method: String, _ path: String, _ headers: [String:
 
 /// Trenutna mapa za claude -p na Mac miniju: router jo priklopi (mount_webdav), minigw streže datoteke.
 /// Mac mini odjemalca ne doseže, zato vse teče po povezavah, ki jih odpre minigw (long poll).
+/// --minigw-work=sync: namesto priklopa router dobi kopijo (Sync); pred agentom jo minigw posodobi, po njem prevzame spremembe.
 final class ShareClient: @unchecked Sendable {
-    let c: Connection, session: String, root: URL, readOnly: Bool
+    let c: Connection, session: String, root: URL, readOnly: Bool, sync: Bool
     static let writeMethods: Set<String> = ["PUT", "DELETE", "MKCOL", "MOVE", "COPY", "PROPPATCH", "LOCK"]
     private let lock = NSLock()
     private var current = ""
     var key: String { lock.withLock { current } }
+    private let syncLock = NSLock()
+    private var synced: [String: Sync.Entry] = [:]  // manifest ob zadnjem prenosu (zgoščevanje, spori)
+    private var reported: Set<String> = []          // že javljene prevelike datoteke
+    private var unpulled = false                    // spremembe agenta, ki niso bile prevzete in potrjene
 
-    init(_ c: Connection, session: String, root: URL, readOnly: Bool) {
-        self.c = c; self.session = session; self.root = root; self.readOnly = readOnly
+    init(_ c: Connection, session: String, root: URL, readOnly: Bool, sync: Bool) {
+        self.c = c; self.session = session; self.root = root; self.readOnly = readOnly; self.sync = sync
     }
 
     func register() -> Bool {
         let (s, d) = call(c, "POST", "/minigw/share",
                           ["x-claude-mini-session": session, "x-claude-mini-cwd": root.path, "x-share-key": key,
-                           "x-share-mode": readOnly ? "ro" : "rw"], timeout: 10)
+                           "x-share-mode": readOnly ? "ro" : "rw", "x-claude-mini-work": sync ? "sync" : "direct"], timeout: 10)
         guard s == 200, let d, let k = (try? JSONSerialization.jsonObject(with: d) as? [String: Any])?["key"] as? String else { return false }
         lock.withLock { current = k }
         return true
@@ -142,19 +147,74 @@ final class ShareClient: @unchecked Sendable {
             switch s {
             case 200:
                 guard let d, let job = try? JSONDecoder().decode(DAVJob.self, from: d) else { continue }
-                let r = readOnly && Self.writeMethods.contains(job.method) ? DAVResponse(403)
+                let r = job.method == "SYNC-PUSH" ? DAVResponse(syncLock.withLock { push(k) } ? 200 : 500)
+                    : job.method == "SYNC-PULL" ? DAVResponse(syncLock.withLock { pull(k) } ? 200 : 500)
+                    : sync || (readOnly && Self.writeMethods.contains(job.method)) ? DAVResponse(403)  // sync: brez WebDAV
                     : WebDAV.handle(method: job.method, path: job.path, headers: job.headers, body: job.body, root: root, prefix: job.prefix)
                 guard let body = try? JSONEncoder().encode(DAVReply(id: job.id, response: r)) else { continue }
                 _ = call(c, "POST", "/minigw/share/reply", ["x-share-key": k, "content-type": "application/json"], body, timeout: 120)
             case 204:
                 continue
             case 404:
+                if sync, syncLock.withLock({ unpulled }) {  // nova registracija: router ne pozna več nepotrjenih sprememb
+                    note("the router restarted; the agent's changes that were not copied back may be overwritten by the next sync")
+                }
                 _ = register()  // router se je znova zagnal
                 sleep(1)
             default:
                 sleep(2)        // router nedosegljiv: poskusi znova
             }
         }
+    }
+
+    private func note(_ s: String) { err.write(Data(("minigw: " + s + "\n").utf8)) }
+
+    /// Pred agentom: manifest k routerju, nato datoteke, ki jih potrebuje.
+    private func push(_ k: String) -> Bool {
+        let (files, skipped) = Sync.scan(root, previous: synced)
+        for p in skipped where reported.insert(p).inserted { note("not synced (larger than 64 MB): \(p)") }
+        guard let body = try? JSONEncoder().encode(Array(files.values)) else { return false }
+        let (s, d) = call(c, "POST", "/minigw/sync/manifest", ["x-share-key": k, "content-type": "application/json"], body, timeout: 300)
+        let reply = s == 200 ? d.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } : nil
+        guard let need = reply?["need"] as? [String] else { note("sync to the router failed (HTTP \(s))"); return false }
+        // Neuspešen prenos in »kept« (router je obdržal agentovo različico): stanje poti ostane staro, da prevzem zazna spor.
+        var next = files
+        for p in reply?["kept"] as? [String] ?? [] {
+            next[p] = synced[p]
+            note("the agent's change to \(p) is not copied back yet; kept on the router")
+        }
+        for p in need {
+            guard files[p] != nil, let url = Sync.resolve(p, root: root), let data = try? Data(contentsOf: url) else { next[p] = synced[p]; continue }
+            let (st, _) = call(c, "PUT", "/minigw/sync/file", ["x-share-key": k, "x-sync-path": Sync.encode(p)], data, timeout: 300)
+            if st != 204 {
+                next[p] = synced[p]
+                note(st == 409 ? "\(p) changed during sync; it goes with the next request" : "cannot sync \(p) (HTTP \(st))")
+            }
+        }
+        synced = next
+        return true
+    }
+
+    /// Po agentu: spremembe kopije v mapo (spori → <ime>.minigw-conflict).
+    private func pull(_ k: String) -> Bool {
+        let (s, d) = call(c, "GET", "/minigw/sync/changes", ["x-share-key": k], timeout: 300)
+        guard s == 200, let d, let ch = try? JSONDecoder().decode(Sync.Changes.self, from: d) else {
+            note("cannot get the agent's changes from the router (HTTP \(s))"); unpulled = true; return false
+        }
+        let (notes, done) = Sync.apply(ch, root: root, state: &synced) { p in
+            let (st, data) = call(c, "GET", "/minigw/sync/file", ["x-share-key": k, "x-sync-path": Sync.encode(p)], timeout: 300)
+            return st == 200 ? data : nil
+        }
+        notes.forEach(note)
+        // Potrditev: router šele zdaj šteje te spremembe za prevzete; ostale pošlje znova.
+        unpulled = done.count < ch.changed.count + ch.deleted.count
+        if !done.isEmpty, let body = try? JSONEncoder().encode(done),
+           call(c, "POST", "/minigw/sync/ack", ["x-share-key": k, "content-type": "application/json"], body, timeout: 60).0 != 204 {
+            note("the router did not confirm the copied-back changes; they come again next time")
+            unpulled = true
+        }
+        if !ch.changed.isEmpty || !ch.deleted.isEmpty { note("synced back from the router: \(ch.changed.count) changed, \(ch.deleted.count) deleted") }
+        return true
     }
 }
 
@@ -229,6 +289,11 @@ var args = Array(CommandLine.arguments.dropFirst())
 // --minigw-ro (ali MINIGW_SHARE=ro): mapa samo za branje; zastavica ne gre naprej v claude.
 let readOnly = args.contains("--minigw-ro") || ProcessInfo.processInfo.environment["MINIGW_SHARE"] == "ro"
 args.removeAll { $0 == "--minigw-ro" }
+// --minigw-work=sync (ali MINIGW_WORK=sync): agenti delajo v kopiji na routerju namesto v priklopu; privzeto direct.
+var work = ProcessInfo.processInfo.environment["MINIGW_WORK"] ?? "direct"
+for a in args where a.hasPrefix("--minigw-work=") { work = String(a.dropFirst("--minigw-work=".count)) }
+args.removeAll { $0.hasPrefix("--minigw-work=") }
+guard ["direct", "sync"].contains(work) else { fail("unknown --minigw-work=\(work) (use direct or sync)") }
 
 switch args.first {
 case "share":
@@ -286,6 +351,7 @@ case "--minigw-help", "-h", "--help", "-v", "--version":
         minigw status | models | disconnect
         minigw share add|remove [folder] | list    also share a system or hidden folder with the router
         minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)
+        minigw --minigw-work=sync [claude args]    agents work in a synced copy on the router (or MINIGW_WORK=sync)
         minigw [claude options …]                    run Claude Code through the router
         """)
     }
@@ -348,7 +414,7 @@ guard proxy != nil || (wantShare && !sid.isEmpty) else {
     fail("cannot run claude: \(String(cString: strerror(errno))) (is Claude Code installed and in PATH?)", code: 127)
 }
 
-let share = ShareClient(c, session: sid, root: URL(fileURLWithPath: cwd), readOnly: readOnly)
+let share = ShareClient(c, session: sid, root: URL(fileURLWithPath: cwd), readOnly: readOnly, sync: work == "sync")
 if !wantShare && remoteRouter && shareEnv != "0" {
     err.write(Data("minigw: \(cwd) is not shared with the router, so agent models (Codex, Claude CLI, Grok) cannot see it; to share it run: minigw share add\n".utf8))
 }
@@ -356,7 +422,7 @@ if !wantShare || sid.isEmpty {
     // le šifrirani proxy
 } else if share.register() {
     share.start()
-    err.write(Data("minigw: sharing \(cwd) \(readOnly ? "read-only" : "read-write") with \(routerHost) for agent models (--minigw-ro = read-only, MINIGW_SHARE=0 = off)\n".utf8))
+    err.write(Data("minigw: \(work == "sync" ? "syncing" : "sharing") \(cwd) \(readOnly ? "read-only" : "read-write") with \(routerHost) for agent models (--minigw-ro = read-only, MINIGW_SHARE=0 = off)\n".utf8))
 } else {
     err.write(Data("minigw: router did not accept the folder; Claude CLI models with tools will not see it\n".utf8))
 }

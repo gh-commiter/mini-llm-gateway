@@ -1,9 +1,13 @@
 package main
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -92,5 +96,245 @@ func TestDavGetRangeAndLimit(t *testing.T) {
 	}
 	if r := davHandle("GET", "/p/big.bin", map[string]string{"range": "bytes=0-99"}, nil, root, "/p"); r.Status != 206 || len(r.Body) != 100 {
 		t.Fatalf("big range: %d %d", r.Status, len(r.Body))
+	}
+}
+
+func TestSyncIgnoreRules(t *testing.T) {
+	r := parseIgnore("# komentar\n*.log\n/out\nsrc/gen/\n!keep.log\n")
+	cases := []struct {
+		rel  string
+		dir  bool
+		want bool
+	}{
+		{".git", true, true}, {"a/node_modules", true, true}, {"x/.DS_Store", false, true},
+		{"build", false, false}, {"a/b/debug.log", false, true}, {"keep.log", false, true},
+		{"out", true, true}, {"a/out", true, false}, {"src/gen", true, true}, {"lib/src/gen", true, false},
+		{"a.swift.minigw-conflict", false, true}, {"main.swift", false, false},
+	}
+	for _, c := range cases {
+		if got := ignored(r, c.rel, c.dir); got != c.want {
+			t.Errorf("ignored(%q, dir=%v) = %v", c.rel, c.dir, got)
+		}
+	}
+}
+
+func TestSyncScanAndPaths(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "proj")
+	for _, d := range []string{".git", "node_modules/x", "src"} {
+		os.MkdirAll(filepath.Join(root, d), 0o755)
+	}
+	for _, f := range []string{".git/HEAD", "node_modules/x/i.js", "src/a.swift", "app.log"} {
+		os.WriteFile(filepath.Join(root, f), []byte(f), 0o644)
+	}
+	os.WriteFile(filepath.Join(root, ".gitignore"), []byte("*.log\r\n"), 0o644)
+	os.WriteFile(filepath.Join(base, "secret"), []byte("no"), 0o644)
+	os.Symlink(base, filepath.Join(root, "link"))
+	files, skipped := syncScan(root, nil)
+	if len(files) != 2 || files["src/a.swift"].SHA256 != sha256Hex([]byte("src/a.swift")) || files[".gitignore"].Path == "" || len(skipped) != 0 {
+		t.Fatalf("scan: %v %v", files, skipped)
+	}
+	fake := files["src/a.swift"]
+	fake.SHA256 = "cached" // brez ponovnega zgoščevanja, ko sta velikost in čas enaka
+	if again, _ := syncScan(root, map[string]syncEntry{"src/a.swift": fake}); again["src/a.swift"].SHA256 != "cached" {
+		t.Fatal("rehashed an unchanged file")
+	}
+	for _, p := range []string{"src/a.swift", "src/new/b.txt"} {
+		if _, ok := syncResolve(p, root); !ok {
+			t.Errorf("%s rejected", p)
+		}
+	}
+	for _, p := range []string{"../secret", "/etc/passwd", "src/../../secret", "src//a", `a\b`, "", "link/secret", "link/new.txt"} {
+		if _, ok := syncResolve(p, root); ok {
+			t.Errorf("%q escaped root", p)
+		}
+	}
+}
+
+func TestSyncApplyConflicts(t *testing.T) {
+	root := t.TempDir()
+	put := func(p, s string) {
+		os.MkdirAll(filepath.Dir(filepath.Join(root, p)), 0o755)
+		os.WriteFile(filepath.Join(root, p), []byte(s), 0o644)
+	}
+	read := func(p string) string {
+		b, err := os.ReadFile(filepath.Join(root, p))
+		if err != nil {
+			return "<none>"
+		}
+		return string(b)
+	}
+	for _, p := range []string{"a.txt", "b.txt", "c.txt", "d.txt"} {
+		put(p, "v1 "+p)
+	}
+	state, _ := syncScan(root, nil)
+	put("c.txt", "user c") // uporabnik med agentom
+	put("d.txt", "user d")
+	blobs := map[string][]byte{"a.txt": []byte("agent a"), "c.txt": []byte("agent c"), "new/n.txt": []byte("agent n")}
+	ch := syncChanges{Deleted: []string{"b.txt", "d.txt"}}
+	for _, p := range []string{"a.txt", "c.txt", "new/n.txt"} {
+		ch.Changed = append(ch.Changed, syncEntry{Path: p, Size: int64(len(blobs[p])), Mtime: 1700000000123, SHA256: sha256Hex(blobs[p])})
+	}
+	notes, done := syncApply(ch, root, state, func(p string) []byte { return blobs[p] })
+	if strings.Join(done, ",") != "a.txt,c.txt,new/n.txt,b.txt,d.txt" {
+		t.Fatalf("done: %v", done)
+	}
+	if read("a.txt") != "agent a" || read("new/n.txt") != "agent n" || read("b.txt") != "<none>" {
+		t.Fatalf("not applied: %q %q %q", read("a.txt"), read("new/n.txt"), read("b.txt"))
+	}
+	if read("c.txt") != "user c" || read("c.txt.minigw-conflict") != "agent c" || read("d.txt") != "user d" {
+		t.Fatalf("conflict overwritten: %q %q %q", read("c.txt"), read("c.txt.minigw-conflict"), read("d.txt"))
+	}
+	if len(notes) != 2 || !strings.HasPrefix(notes[0], "conflict:") || !strings.HasPrefix(notes[1], "conflict:") {
+		t.Fatalf("notes: %v", notes)
+	}
+	if st, _ := os.Stat(filepath.Join(root, "a.txt")); st.ModTime().UnixMilli() != 1700000000123 || state["a.txt"].Mtime != 1700000000123 {
+		t.Fatal("mtime not taken from the router")
+	}
+}
+
+func TestSyncApplySkipsIgnoredAndKeepsMode(t *testing.T) {
+	root := t.TempDir()
+	os.WriteFile(filepath.Join(root, "run.sh"), []byte("old"), 0o755)
+	state, _ := syncScan(root, nil)
+	if !state["run.sh"].Exec {
+		t.Fatal("exec flag missing")
+	}
+	blobs := map[string][]byte{"run.sh": []byte("new"), "node_modules/p/i.js": []byte("x"), ".git/config": []byte("evil"), "tool": []byte("t")}
+	ch := syncChanges{}
+	for _, p := range []string{"run.sh", "node_modules/p/i.js", ".git/config", "tool"} {
+		ch.Changed = append(ch.Changed, syncEntry{Path: p, Size: int64(len(blobs[p])), Mtime: 1700000000000, SHA256: sha256Hex(blobs[p]), Exec: p == "tool" || p == "run.sh"})
+	}
+	_, done := syncApply(ch, root, state, func(p string) []byte { return blobs[p] })
+	if len(done) != 4 {
+		t.Fatalf("done: %v", done)
+	}
+	for _, p := range []string{"node_modules", ".git"} {
+		if _, err := os.Lstat(filepath.Join(root, p)); err == nil {
+			t.Fatalf("%s written although ignored", p)
+		}
+	}
+	if st, _ := os.Stat(filepath.Join(root, "run.sh")); st.Mode().Perm() != 0o755 {
+		t.Fatalf("run.sh mode %v", st.Mode())
+	}
+	if st, _ := os.Stat(filepath.Join(root, "tool")); st.Mode().Perm()&0o100 == 0 {
+		t.Fatalf("tool mode %v", st.Mode())
+	}
+}
+
+// Neuspešen PUT: stanje poti ostane staro (prevzem nato zazna spor); poti zunaj manifesta se ne pošljejo.
+func TestSyncPushKeepsOldStateOnFailedUpload(t *testing.T) {
+	root := t.TempDir()
+	os.WriteFile(filepath.Join(root, "a.txt"), []byte("v1"), 0o644)
+	os.WriteFile(filepath.Join(root, "secret.log"), []byte("x"), 0o644)
+	os.WriteFile(filepath.Join(root, ".gitignore"), []byte("*.log\n"), 0o644)
+	puts := []string{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/minigw/sync/manifest":
+			json.NewEncoder(w).Encode(map[string]any{"need": []string{"a.txt", "secret.log"}, "kept": []string{}})
+		case "/minigw/sync/file":
+			puts = append(puts, r.Header.Get("x-sync-path"))
+			w.WriteHeader(409)
+		}
+	}))
+	defer srv.Close()
+	old := syncEntry{Path: "a.txt", Size: 2, Mtime: 1, SHA256: "old"}
+	s := &shareClient{c: connection{URL: srv.URL}, root: root, sync: true, synced: map[string]syncEntry{"a.txt": old}, reported: map[string]bool{}}
+	if !s.syncPush("k") {
+		t.Fatal("push failed")
+	}
+	if strings.Join(puts, ",") != "a.txt" {
+		t.Fatalf("uploaded %v", puts)
+	}
+	if s.synced["a.txt"] != old || s.synced[".gitignore"].SHA256 == "" {
+		t.Fatalf("state %v", s.synced)
+	}
+	if _, ok := s.synced["secret.log"]; ok {
+		t.Fatal("ignored file in state")
+	}
+}
+
+// Pull ni uspel → uporabnik spremeni (ali izbriše) datoteko → push (router jo vrne kot »kept«) → pull: spor, ne prepis.
+func TestSyncKeptIsNotTreatedAsSynced(t *testing.T) {
+	root := t.TempDir()
+	put := func(p, s string) { os.WriteFile(filepath.Join(root, p), []byte(s), 0o644) }
+	read := func(p string) string {
+		b, err := os.ReadFile(filepath.Join(root, p))
+		if err != nil {
+			return "<none>"
+		}
+		return string(b)
+	}
+	put("x.txt", "v1")
+	put("y.txt", "v1")
+	synced, _ := syncScan(root, nil) // stanje po zadnjem uspešnem prenosu
+	put("x.txt", "user edit")
+	os.Remove(filepath.Join(root, "y.txt"))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"need": []string{}, "kept": []string{"x.txt", "y.txt"}})
+	}))
+	defer srv.Close()
+	s := &shareClient{c: connection{URL: srv.URL}, root: root, sync: true, synced: synced, reported: map[string]bool{}}
+	if !s.syncPush("k") {
+		t.Fatal("push failed")
+	}
+	if s.synced["x.txt"].SHA256 != sha256Hex([]byte("v1")) || s.synced["y.txt"].SHA256 != sha256Hex([]byte("v1")) {
+		t.Fatalf("kept path marked as synced: %v", s.synced)
+	}
+	agent := []byte("agent")
+	ch := syncChanges{}
+	for _, p := range []string{"x.txt", "y.txt"} {
+		ch.Changed = append(ch.Changed, syncEntry{Path: p, Size: 5, Mtime: 1, SHA256: sha256Hex(agent)})
+	}
+	notes, _ := syncApply(ch, root, s.synced, func(string) []byte { return agent })
+	if read("x.txt") != "user edit" || read("x.txt.minigw-conflict") != "agent" {
+		t.Fatalf("user edit overwritten: %q", read("x.txt"))
+	}
+	if read("y.txt") != "<none>" || read("y.txt.minigw-conflict") != "agent" || len(notes) != 2 {
+		t.Fatalf("deleted file came back silently: %q %v", read("y.txt"), notes)
+	}
+}
+
+func TestSyncApplyExecOnlyAndInvalidPath(t *testing.T) {
+	root := t.TempDir()
+	os.WriteFile(filepath.Join(root, "run.sh"), []byte("x"), 0o644)
+	state, _ := syncScan(root, nil)
+	e := state["run.sh"]
+	e.Exec = true
+	_, done := syncApply(syncChanges{Changed: []syncEntry{e, {Path: "../bad", SHA256: "z"}}, Deleted: []string{"../gone"}}, root, state,
+		func(string) []byte { return nil })
+	if st, _ := os.Stat(filepath.Join(root, "run.sh")); st.Mode().Perm()&0o100 == 0 {
+		t.Fatalf("exec bit not applied: %v", st.Mode())
+	}
+	if strings.Join(done, ",") != "run.sh,../bad,../gone" {
+		t.Fatalf("done: %v", done)
+	}
+}
+
+// Uporabnikov bit x ostane; agentov chmod +x s spremembo vsebine pride do odjemalca.
+func TestSyncApplyRespectsUserExecBit(t *testing.T) {
+	root := t.TempDir()
+	a, b := filepath.Join(root, "a.sh"), filepath.Join(root, "b.sh")
+	os.WriteFile(a, []byte("v1"), 0o644)
+	os.WriteFile(b, []byte("v1"), 0o644)
+	state, _ := syncScan(root, nil)
+	mode := func(p string) os.FileMode { st, _ := os.Stat(p); return st.Mode().Perm() }
+	os.Chmod(b, 0o755) // uporabnik po prenosu
+	e := state["b.sh"]
+	notes, _ := syncApply(syncChanges{Changed: []syncEntry{e}}, root, state, func(string) []byte { return nil })
+	if mode(b) != 0o755 || len(notes) != 1 || !strings.HasPrefix(notes[0], "kept your file mode") {
+		t.Fatalf("user x bit changed: %v %v", mode(b), notes)
+	}
+	agent := []byte("agent")
+	edit := syncEntry{Path: "b.sh", Size: 5, Mtime: 1, SHA256: sha256Hex(agent)}
+	syncApply(syncChanges{Changed: []syncEntry{edit}}, root, state, func(string) []byte { return agent })
+	if mode(b) != 0o755 {
+		t.Fatalf("agent edit cleared the user's x bit: %v", mode(b))
+	}
+	x := syncEntry{Path: "a.sh", Size: 5, Mtime: 2, SHA256: sha256Hex(agent), Exec: true}
+	syncApply(syncChanges{Changed: []syncEntry{x}}, root, state, func(string) []byte { return agent })
+	if mode(a) != 0o755 {
+		t.Fatalf("agent chmod +x not applied: %v", mode(a))
 	}
 }
