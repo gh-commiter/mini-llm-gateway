@@ -18,7 +18,7 @@ Claude Code subagent its own.
     - [3.2.2 Another Mac](#322-another-mac)
     - [3.2.3 Windows and Linux](#323-windows-and-linux)
 - [4. Use](#4-use)
-- [5. Settings](#5-settings)
+- [5. Router settings](#5-router-settings)
 - [6. Security notes](#6-security-notes)
 - [7. Build from source](#7-build-from-source)
 - [8. Disclaimer](#8-disclaimer)
@@ -207,14 +207,20 @@ The router caches folder listings (PROPFIND) for 10 seconds, like davfs2's `dir_
 the cache at once, changes made on the client outside the mount show up within 10 seconds.
 The folder's own Claude Code settings and hooks are not loaded on the router Mac. Set `MINIGW_SHARE=0` to turn it off.
 
-## 5. Settings
+## 5. Router settings
 
-- **General** – listen address and port (default `127.0.0.1:8765`; use `0.0.0.0` or a LAN IP for other Macs),
-  allowed client IPs, access token.
+Settings of the menu bar app on the router Mac (**Settings…**). Client options (`minigw share`, `--minigw-ro`,
+`MINIGW_SHARE`) are in [4. Use](#4-use).
+
+- **General** – listen address and port (default `127.0.0.1:8765`; use `0.0.0.0` or a LAN IP for other computers),
+  allowed client IPs, unencrypted connections, access token, and About (version, build commit, license).
 - **LiteLLM / OpenRouter** – base URL, API key, and a switch per discovered model.
-- **Siri AI** – off by default. Turning it on asks for Accessibility permission.
+- **Siri AI** – off by default; turning it on asks for Accessibility permission. Privacy warning and **Devices**:
+  which other computers may use Siri (this Mac always may).
 - **Apple Foundation Models** – on-device model and its instructions.
-- **Claude CLI** – path to `claude`, allowed folders, tools, permission mode; install or download `minigw`.
+- **Claude CLI** – path to `claude`, allowed folders, **Allow local tools** with a table to exclude tools; install or
+  download `minigw`.
+- **Codex CLI** / **Grok CLI** – off by default; model table, write and network switches for their sandbox.
 
 Changes apply immediately. Keys and the access token are stored in the Keychain, settings in
 `~/Library/Preferences/dev.trojar.minigateway.plist`.
