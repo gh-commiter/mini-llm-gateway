@@ -142,7 +142,7 @@ public final class Router: Sendable {
                     }
                     return (await runSiri(req, body: body, rid: rid, writer: writer), model, "siri-ai")
                 }
-                if config.codex.enabled, let codexModel = Codex.match(model) {
+                if config.codex.enabled, let codexModel = Codex.match(model), codexModel.map(config.codex.isModelEnabled) ?? true {
                     if req.path.hasSuffix("/count_tokens") {
                         return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "codex")
                     }
@@ -248,7 +248,7 @@ public final class Router: Sendable {
         if config.codex.enabled, let exe = Codex.executable(config.codex.executable) {
             data.append(["type": "model", "id": "claude-codex", "display_name": "Codex · Codex CLI",
                          "description": "codex exec · default model · tools in your folder", "created_at": created])
-            data += Codex.catalog(exe).map { m in
+            data += Codex.catalog(exe).filter { config.codex.isModelEnabled($0.slug) }.map { m in
                 ["type": "model", "id": Codex.prefix + m.slug, "display_name": "\(m.name) · Codex CLI",
                  "description": "codex exec · \(m.slug)\(m.window.map { " · \($0 / 1000)K" } ?? "") · tools in your folder",
                  "created_at": created]

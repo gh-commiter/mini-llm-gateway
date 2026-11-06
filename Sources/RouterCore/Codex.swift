@@ -3,14 +3,29 @@ import Foundation
 /// Ponudnik `codex exec` (OpenAI Codex CLI): agent v mapi seje, kot `claude -p`.
 public struct CodexConfig: Codable, Sendable, Equatable {
     public var enabled = false
-    public var executable = ""  // prazno = samodejno iskanje
+    public var executable = ""            // prazno = samodejno iskanje
+    public var enabledModels: [String]?   // nil = vsi modeli računa (tudi prihodnji); seznam = le ti
+    public var write = true               // sandbox workspace-write (sicer read-only)
+    public var network = true             // omrežje za ukaze v sandboxu (npr. gradnja)
     public init() {}
+
+    public func isModelEnabled(_ slug: String) -> Bool { enabledModels?.contains(slug) ?? true }
+
+    public mutating func setModel(_ slug: String, _ on: Bool, all: [String]) {
+        var list = enabledModels ?? all
+        list.removeAll { $0 == slug }
+        if on { list.append(slug) }
+        enabledModels = Set(list) == Set(all) ? nil : list
+    }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = CodexConfig()
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? d.enabled
         executable = try c.decodeIfPresent(String.self, forKey: .executable) ?? d.executable
+        enabledModels = try c.decodeIfPresent([String].self, forKey: .enabledModels)
+        write = try c.decodeIfPresent(Bool.self, forKey: .write) ?? d.write
+        network = try c.decodeIfPresent(Bool.self, forKey: .network) ?? d.network
     }
 }
 
@@ -25,10 +40,10 @@ public enum Codex {
         return model.hasPrefix(prefix) && model.count > prefix.count ? .some(String(model.dropFirst(prefix.count))) : .none
     }
 
-    struct Model: Sendable { let slug: String, name: String, description: String, window: Int? }
+    public struct Model: Sendable { public let slug: String, name: String, description: String, window: Int? }
 
     /// Modeli računa (`codex debug models`, vidni v izbirniku Codex); ob napaki prazno.
-    static func catalog(_ exe: String) -> [Model] {
+    public static func catalog(_ exe: String) -> [Model] {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: exe)
         p.arguments = ["debug", "models"]
@@ -49,19 +64,23 @@ public enum Codex {
     }
     public static let detected: String? = ClaudeCLI.locate("codex")
 
-    static func executable(_ configured: String) -> String? {
+    public static func executable(_ configured: String) -> String? {
         configured.isEmpty ? detected : [(configured as NSString).expandingTildeInPath].first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
     /// Argumenti: agent piše le v mapi seje in dovoljenih mapah (sandbox Codex), omrežje za gradnjo dovoljeno.
     /// Brez orodij (naslovi, povzetki) le branje v začasni mapi.
-    static func args(cwd: URL, extraDirs: [String], agent: Bool, output: URL, model: String? = nil) -> [String] {
-        ["exec", "--skip-git-repo-check", "--ephemeral", "--color", "never", "-C", cwd.path, "-o", output.path]
-            + (model.map { ["-m", $0] } ?? [])
-            + (agent ? ["--sandbox", "workspace-write", "-c", "sandbox_workspace_write.network_access=true"]
-                       + extraDirs.flatMap { ["--add-dir", $0] }
-                     : ["--sandbox", "read-only"])
-            + ["-"]  // navodila prek stdin (brez omejitve dolžine argumentov)
+    static func args(cwd: URL, extraDirs: [String], agent: Bool, output: URL, model: String? = nil,
+                     write: Bool = true, network: Bool = true) -> [String] {
+        var a = ["exec", "--skip-git-repo-check", "--ephemeral", "--color", "never", "-C", cwd.path, "-o", output.path]
+        if let model { a += ["-m", model] }
+        if agent && write {
+            a += ["--sandbox", "workspace-write", "-c", "sandbox_workspace_write.network_access=\(network)"]
+            for d in extraDirs { a += ["--add-dir", d] }
+        } else {
+            a += ["--sandbox", "read-only"]
+        }
+        return a + ["-"]  // navodila prek stdin (brez omejitve dolžine argumentov)
     }
 
     struct Failure: Error { let message: String }
@@ -130,7 +149,8 @@ extension Router {
         }
         let output = FileManager.default.temporaryDirectory.appendingPathComponent("codex-\(rid).txt")
         defer { try? FileManager.default.removeItem(at: output) }
-        let args = Codex.args(cwd: cwd, extraDirs: extra, agent: agent, output: output, model: model)
+        let args = Codex.args(cwd: cwd, extraDirs: extra, agent: agent, output: output, model: model,
+                              write: config.codex.write, network: config.codex.network)
         return await replyWhenDone(body: body, model: "claude-codex", rid: rid, writer: writer) {
             (try await Codex.run(exe, args: args, cwd: cwd, prompt: prompt, output: output), [])
         }

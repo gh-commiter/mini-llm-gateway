@@ -547,6 +547,14 @@ final class SeenDevices: @unchecked Sendable {
     #expect(Codex.args(cwd: cwd, extraDirs: [], agent: true, output: out, model: "gpt-6-luna").contains("gpt-6-luna"))
     #expect(Codex.match("claude-codex")! == nil && Codex.match("claude-codex-gpt-6-luna")! == "gpt-6-luna")
     #expect(Codex.match("claude-codex-") == nil && Codex.match("claude-opus-5-5") == nil)
+    #expect(Codex.args(cwd: cwd, extraDirs: ["/tmp/x"], agent: true, output: out, write: false).contains("read-only"))
+    #expect(Codex.args(cwd: cwd, extraDirs: [], agent: true, output: out, network: false).contains("sandbox_workspace_write.network_access=false"))
+    var cx = CodexConfig()
+    #expect(cx.isModelEnabled("a"))
+    cx.setModel("a", false, all: ["a", "b"])
+    #expect(!cx.isModelEnabled("a") && cx.isModelEnabled("b"))
+    cx.setModel("a", true, all: ["a", "b"])
+    #expect(cx.enabledModels == nil)  // vsi vklopljeni → tudi prihodnji modeli
 }
 
 @Test func mentionedFilesFoundAndAttached() async throws {

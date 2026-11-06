@@ -19,6 +19,7 @@ struct SettingsView: View {
     @State private var cliTools: [String] = []
     @State private var selectedRoot: String?
     @State private var selectedDevice: String?
+    @State private var codexModels: [Codex.Model] = []
 
     enum Pane: Hashable {
         case general, provider(String), siri, appleFM, claudeCLI, codex
@@ -210,6 +211,33 @@ struct SettingsView: View {
         }
     }
 
+    /// Dovoljene mape: skupne za Claude CLI in Codex.
+    private var foldersSection: some View {
+        Section {
+            ForEach(roots, id: \.self) { root in
+                Label { Text(verbatim: root) } icon: { Image(systemName: "folder") }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .listRowBackground(selectedRoot == root ? Color.accentColor.opacity(0.2) : nil)
+                    .onTapGesture { selectedRoot = selectedRoot == root ? nil : root }
+            }
+            HStack(spacing: 0) {
+                Button { addRoot() } label: { Image(systemName: "plus").frame(width: 22, height: 18) }
+                    .help("Add Folder…").accessibilityLabel("Add Folder…")
+                Divider().frame(height: 16)
+                Button { removeRoot() } label: { Image(systemName: "minus").frame(width: 22, height: 18) }
+                    .disabled(selectedRoot == nil).accessibilityLabel("Remove")
+                Spacer()
+            }
+            .buttonStyle(.borderless)
+        } header: {
+            Text("Allowed folders")
+        } footer: {
+            Text("Agents work only in these folders. Folders shared from other Macs (minigw) are included automatically.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
     private var codex: some View {
         Form {
             Section {
@@ -218,6 +246,37 @@ struct SettingsView: View {
                     TextField("", text: $draft.codex.executable, prompt: Text(verbatim: Codex.detected ?? "codex"))
                         .labelsHidden()
                 }
+            }
+            Section {
+                ForEach(codexModels, id: \.slug) { m in
+                    Toggle(isOn: Binding(get: { draft.codex.isModelEnabled(m.slug) }, set: { draft.codex.setModel(m.slug, $0, all: codexModels.map(\.slug)) })) {
+                        Text(verbatim: m.name)
+                        Text(verbatim: m.slug + (m.window.map { " · \($0 / 1000)K" } ?? ""))
+                    }
+                }
+            } header: {
+                HStack {
+                    Text("Models")
+                    Spacer()
+                    EqualWidthHStack {
+                        WideButton("Enable All") { draft.codex.enabledModels = nil }
+                        WideButton("Disable All") { draft.codex.enabledModels = [] }
+                    }
+                    .disabled(codexModels.isEmpty)
+                }
+                .controlSize(.small)
+            }
+            .task(id: draft.codex.executable) {
+                let exe = draft.codex.executable
+                codexModels = await Task.detached { Codex.executable(exe).map(Codex.catalog) ?? [] }.value
+            }
+            foldersSection
+            Section {
+                Toggle("Allow writing in the session's folder", isOn: $draft.codex.write)
+                Toggle("Allow network access for commands", isOn: $draft.codex.network)
+                    .disabled(!draft.codex.write)
+            } header: {
+                Text("Sandbox")
             } footer: {
                 Text("The claude-codex models (one per Codex model of your account) run “codex exec” as an agent in the session's folder, also in folders shared from other Macs. Its sandbox writes only to that folder and the allowed folders from Claude CLI; reads are not limited. Sign in once with “codex login”.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -247,29 +306,7 @@ struct SettingsView: View {
                 }
                 .font(.caption)
             }
-            Section {
-                ForEach(roots, id: \.self) { root in
-                    Label { Text(verbatim: root) } icon: { Image(systemName: "folder") }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                        .listRowBackground(selectedRoot == root ? Color.accentColor.opacity(0.2) : nil)
-                        .onTapGesture { selectedRoot = selectedRoot == root ? nil : root }
-                }
-                HStack(spacing: 0) {
-                    Button { addRoot() } label: { Image(systemName: "plus").frame(width: 22, height: 18) }
-                        .help("Add Folder…").accessibilityLabel("Add Folder…")
-                    Divider().frame(height: 16)
-                    Button { removeRoot() } label: { Image(systemName: "minus").frame(width: 22, height: 18) }
-                        .disabled(selectedRoot == nil).accessibilityLabel("Remove")
-                    Spacer()
-                }
-                .buttonStyle(.borderless)
-            } header: {
-                Text("Allowed folders")
-            } footer: {
-                Text("Agents work only in these folders. Folders shared from other Macs (minigw) are included automatically.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
+            foldersSection
             Section {
                 Toggle("Allow local tools", isOn: $draft.claudeCLI.allowLocalTools)
                     .help(String(localized: "Agents get every Claude Code tool on this Mac, but files only in the allowed folders: commands run in a sandbox that cannot read your home folder or write outside these folders."))
