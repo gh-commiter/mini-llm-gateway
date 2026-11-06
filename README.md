@@ -15,8 +15,8 @@ Claude Code subagent its own.
   - [Another Mac (client only)](#another-mac-client-only)
   - [Windows and Linux (client only)](#windows-and-linux-client-only)
   - [Homebrew](#homebrew)
+  - [Claude Code plugin](#claude-code-plugin)
 - [Use](#use)
-- [Claude Code plugin](#claude-code-plugin)
 - [Settings](#settings)
 - [Security notes](#security-notes)
 - [Build from source](#build-from-source)
@@ -147,34 +147,7 @@ Another Mac (client only). Both casks also install Claude Code (`claude-code`) i
 brew install --cask gh-commiter/mini-gateway/minigw
 ```
 
-## Use
-
-```sh
-minigw                                  # Claude Code through the router; choose models with /model
-minigw --model claude-apple-fm -p "Hi"  # any claude option works
-minigw status                           # router, providers, number of models
-minigw models                           # list available models
-minigw connect 192.168.1.20 --token …   # use a router on another Mac
-```
-
-Subagents can use router models too, e.g. `model: claude-siri-ai` in `.claude/agents/<name>.md`.
-
-**Another Mac and Claude CLI models with tools.** `opus`, `sonnet`, `haiku` and `fable` run `claude -p` as an agent on
-the router Mac. When `minigw` talks to a router on another Mac, it shares the current folder with it for the length
-of the session: the router mounts it (built-in WebDAV, through the connection `minigw` opens, so the router Mac does
-not need to reach the client) and the agent works on your files. Nothing to install on either side. Any project
-folder is shared, also outside your home folder (for example `D:\Projects\app` on Windows or `/Volumes/Disk/app`),
-but never a drive or volume root, the home folder itself, system folders (`C:\Windows`, `Program Files`, `/usr`,
-`/System` …), other users' home folders, `~/Library`, `AppData` or hidden folders such as `~/.ssh`. To share one of
-those anyway, run `minigw share add` in it (`minigw share list`, `minigw share remove`); a root is always refused.
-**Read-only:** `minigw --minigw-ro …` (or `MINIGW_SHARE=ro`, for example in the `env` of Claude Code's settings for the
-plugin) shares the folder read-only: minigw refuses every write, the router mounts it read-only and runs Codex and
-Grok in their read-only sandbox. Agents read files up to 32 MB in one piece (larger ones only in ranges).
-The router caches folder listings (PROPFIND) for 10 seconds, like davfs2's `dir_refresh`; writes through the mount clear
-the cache at once, changes made on the client outside the mount show up within 10 seconds.
-The folder's own Claude Code settings and hooks are not loaded on the router Mac. Set `MINIGW_SHARE=0` to turn it off.
-
-## Claude Code plugin
+### Claude Code plugin
 
 This repository is also a Claude Code plugin marketplace. The `minigw` plugin lets any Claude Code session use
 Mini Gateway models through the `minigw` client: Claude runs `minigw -p --model <model> "…"` in the current folder
@@ -203,6 +176,33 @@ Claude can also pick these skills by itself when they fit the request. Install (
 ```
 /plugin install minigw --marketplace gh-commiter/mini-llm-gateway
 ```
+
+## Use
+
+```sh
+minigw                                  # Claude Code through the router; choose models with /model
+minigw --model claude-apple-fm -p "Hi"  # any claude option works
+minigw status                           # router, providers, number of models
+minigw models                           # list available models
+minigw connect 192.168.1.20 --token …   # use a router on another Mac
+```
+
+Subagents can use router models too, e.g. `model: claude-siri-ai` in `.claude/agents/<name>.md`.
+
+**Another Mac and Claude CLI models with tools.** `opus`, `sonnet`, `haiku` and `fable` run `claude -p` as an agent on
+the router Mac. When `minigw` talks to a router on another Mac, it shares the current folder with it for the length
+of the session: the router mounts it (built-in WebDAV, through the connection `minigw` opens, so the router Mac does
+not need to reach the client) and the agent works on your files. Nothing to install on either side. Any project
+folder is shared, also outside your home folder (for example `D:\Projects\app` on Windows or `/Volumes/Disk/app`),
+but never a drive or volume root, the home folder itself, system folders (`C:\Windows`, `Program Files`, `/usr`,
+`/System` …), other users' home folders, `~/Library`, `AppData` or hidden folders such as `~/.ssh`. To share one of
+those anyway, run `minigw share add` in it (`minigw share list`, `minigw share remove`); a root is always refused.
+**Read-only:** `minigw --minigw-ro …` (or `MINIGW_SHARE=ro`, for example in the `env` of Claude Code's settings for the
+plugin) shares the folder read-only: minigw refuses every write, the router mounts it read-only and runs Codex and
+Grok in their read-only sandbox. Agents read files up to 32 MB in one piece (larger ones only in ranges).
+The router caches folder listings (PROPFIND) for 10 seconds, like davfs2's `dir_refresh`; writes through the mount clear
+the cache at once, changes made on the client outside the mount show up within 10 seconds.
+The folder's own Claude Code settings and hooks are not loaded on the router Mac. Set `MINIGW_SHARE=0` to turn it off.
 
 ## Settings
 
