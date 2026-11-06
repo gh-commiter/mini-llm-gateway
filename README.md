@@ -9,22 +9,22 @@ Claude Code subagent its own.
 
 ## Contents
 
-- [What it does](#what-it-does)
-- [Requirements](#requirements)
-- [Install](#install)
-  - [Router (Mac)](#router-mac)
-  - [Client (minigw)](#client-minigw)
-    - [Claude Code plugin](#claude-code-plugin)
-    - [Another Mac](#another-mac)
-    - [Windows and Linux](#windows-and-linux)
-- [Use](#use)
-- [Settings](#settings)
-- [Security notes](#security-notes)
-- [Build from source](#build-from-source)
-- [Disclaimer](#disclaimer)
-- [License](#license)
+- [1. What it does](#1-what-it-does)
+- [2. Requirements](#2-requirements)
+- [3. Install](#3-install)
+  - [3.1 Router (Mac)](#31-router-mac)
+  - [3.2 Client (minigw)](#32-client-minigw)
+    - [3.2.1 Claude Code plugin](#321-claude-code-plugin)
+    - [3.2.2 Another Mac](#322-another-mac)
+    - [3.2.3 Windows and Linux](#323-windows-and-linux)
+- [4. Use](#4-use)
+- [5. Settings](#5-settings)
+- [6. Security notes](#6-security-notes)
+- [7. Build from source](#7-build-from-source)
+- [8. Disclaimer](#8-disclaimer)
+- [9. License](#9-license)
 
-## What it does
+## 1. What it does
 
 | Model in `/model` | Provider | Notes |
 |---|---|---|
@@ -38,18 +38,18 @@ Claude Code subagent its own.
 The router speaks the Anthropic Messages API (`/v1/messages`, `/v1/models`, `count_tokens`), so Claude Code
 sees it as a regular LLM gateway. Only models that were verified to work are listed.
 
-## Requirements
+## 2. Requirements
 
 - macOS 27 on Apple Silicon
 - Claude Code (`claude`) in your `PATH` for the CLI provider and the `minigw` command
 - The **Siri AI** app, for the Siri provider
 
-## Install
+## 3. Install
 
 Mini Gateway has two parts: the **router** (the menu bar app, on one Mac) and the **client** `minigw` (on every
 computer that uses it: the same Mac, other Macs, Windows, Linux).
 
-### Router (Mac)
+### 3.1 Router (Mac)
 
 1. Install Claude Code if you don't have it yet, then sign in once by running `claude`.
    Check whether it is already installed:
@@ -86,11 +86,11 @@ brew install --cask gh-commiter/mini-gateway/mini-gateway
 Then **Settings… → Claude CLI → Install** for `minigw`. The cask also installs Claude Code (`claude-code`) if it is
 not installed yet.
 
-### Client (minigw)
+### 3.2 Client (minigw)
 
 `minigw` runs wherever Claude Code runs. Pick one way to install it.
 
-#### Claude Code plugin
+#### 3.2.1 Claude Code plugin
 
 This repository is also a Claude Code plugin marketplace. The `minigw` plugin lets any Claude Code session use
 Mini Gateway models through the `minigw` client: Claude runs `minigw -p --model <model> "…"` in the current folder
@@ -120,7 +120,7 @@ Claude can also pick these skills by itself when they fit the request. Install (
 /plugin install minigw --marketplace gh-commiter/mini-llm-gateway
 ```
 
-#### Another Mac
+#### 3.2.2 Another Mac
 
 On a Mac that should use the router running on your Mac, one command installs Claude Code (with Homebrew if
 present, otherwise the native installer) and the signed `minigw` command into your `PATH`:
@@ -144,7 +144,7 @@ With Homebrew (tap as above; also installs Claude Code if missing):
 brew install --cask gh-commiter/mini-gateway/minigw
 ```
 
-#### Windows and Linux
+#### 3.2.3 Windows and Linux
 
 The router runs on a Mac; `minigw` runs wherever Claude Code runs. For Windows and Linux it is a single executable
 without dependencies (`client/`, Go standard library only), in [Releases](../../releases):
@@ -178,9 +178,9 @@ minigw connect mini.local --token '<token>'
 
 The connection is stored in Windows Credential Manager, on Linux in `~/.config/minigw/connection.json` (mode 0600).
 Windows and Linux clients encrypt with AES-256-GCM, the macOS client with ChaCha20-Poly1305; the router accepts both.
-With the [Claude Code plugin](#claude-code-plugin) you can skip all of this: it downloads and checks `minigw` itself.
+With the [Claude Code plugin](#321-claude-code-plugin) you can skip all of this: it downloads and checks `minigw` itself.
 
-## Use
+## 4. Use
 
 ```sh
 minigw                                  # Claude Code through the router; choose models with /model
@@ -207,7 +207,7 @@ The router caches folder listings (PROPFIND) for 10 seconds, like davfs2's `dir_
 the cache at once, changes made on the client outside the mount show up within 10 seconds.
 The folder's own Claude Code settings and hooks are not loaded on the router Mac. Set `MINIGW_SHARE=0` to turn it off.
 
-## Settings
+## 5. Settings
 
 - **General** – listen address and port (default `127.0.0.1:8765`; use `0.0.0.0` or a LAN IP for other Macs),
   allowed client IPs, access token.
@@ -219,7 +219,7 @@ The folder's own Claude Code settings and hooks are not loaded on the router Mac
 Changes apply immediately. Keys and the access token are stored in the Keychain, settings in
 `~/Library/Preferences/dev.trojar.minigateway.plist`.
 
-## Security notes
+## 6. Security notes
 
 - Every request needs the router's token; the server listens only on `127.0.0.1` unless you change it.
 - The Claude CLI provider runs `claude -p` with tools in the client's folder: it only runs inside the allowed
@@ -233,7 +233,7 @@ Changes apply immediately. Keys and the access token are stored in the Keychain,
 - The Siri provider uses Accessibility UI automation of the Siri AI app. It only touches that app, but
   Accessibility is a powerful permission.
 
-## Build from source
+## 7. Build from source
 
 ```sh
 ./build.sh            # build, sign (Developer ID if available, else Apple Development)
@@ -250,7 +250,7 @@ xcrun notarytool store-credentials minigateway-notary --key AuthKey_XXXX.p8 --ke
 Set `SIGN_IDENTITY` or `NOTARY_PROFILE` to override the defaults. The app icon is drawn by
 `swift scripts/make-icon.swift`.
 
-## Disclaimer
+## 8. Disclaimer
 
 Mini Gateway is provided **"AS IS", without warranty of any kind**, express or implied. Use it at your own risk.
 The authors are not liable for any damage, data loss, costs (for example API usage billed by a provider) or other
@@ -258,6 +258,6 @@ claims arising from its use. Mini Gateway is an independent project and is not a
 Apple or Anthropic. The Siri provider automates the Siri AI user interface, which has no public API and may change
 with any macOS update. Siri and Apple are trademarks of Apple Inc.; Claude is a trademark of Anthropic, PBC.
 
-## License
+## 9. License
 
 [MIT](LICENSE)
