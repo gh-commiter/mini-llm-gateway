@@ -1,9 +1,11 @@
 ---
 name: codex
 description: Hand a self-contained task to OpenAI Codex (GPT-6.1-Sol) through Mini Gateway. Codex runs on the router Mac, but minigw shares the current folder with it, so Codex reads, edits and runs commands in your files here, and reports what it did.
-argument-hint: <task>
+argument-hint: "[--ro] <task>"
 allowed-tools: Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw *)
 ---
+
+If the arguments start with `--ro` (or the user asks Codex only to look, analyse or answer without changing files), share the folder read-only: put `--minigw-ro` right after `minigw` and drop `--ro` from the task. Otherwise Codex may edit files.
 
 Run the task with Bash (timeout 600000 ms, or in the background for long work):
 

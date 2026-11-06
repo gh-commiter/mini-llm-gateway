@@ -169,12 +169,14 @@ new release is out. No brew needed. Connect once with
 
 | Skill | Model | Use |
 |---|---|---|
-| `/minigw:ask <model> <question>` | any gateway model | Ask a specific model (`minigw models` lists them) |
-| `/minigw:review [what]` | `claude-codex-gpt-6-astra` | Independent review of the current changes, a plan or a bug analysis |
-| `/minigw:codex <task>` | `claude-codex-gpt-6.1-sol` | Hand a self-contained task to Codex in the current folder |
+| `/minigw:ask [--ro] <model> <question>` | any gateway model | Ask a specific model (`/minigw:models` lists them) |
+| `/minigw:review [--rw] [what]` | `claude-codex-gpt-6-astra` | Independent review of the current changes, a plan or a bug analysis (folder read-only unless `--rw`) |
+| `/minigw:codex [--ro] <task>` | `claude-codex-gpt-6.1-sol` | Hand a self-contained task to Codex in the current folder (`--ro`: read-only) |
 | `/minigw:siri <question>` | `claude-siri-ai` | Questions about the router Mac's personal context (Siri must be allowed for the device) |
 | `/minigw:on-device <text>` | `claude-apple-fm` | Short private answers on-device |
 | `/minigw:status` | – | Connection and available models |
+| `/minigw:models` | – | Gateway models, grouped by provider |
+| `/minigw:version` | – | Versions of minigw, Claude Code and the plugin |
 | `/minigw:connect <router> <token>` | – | One-time connection to the router Mac |
 | `/minigw:share [folder]` | – | Share a folder that minigw does not share by itself, such as a system folder |
 
