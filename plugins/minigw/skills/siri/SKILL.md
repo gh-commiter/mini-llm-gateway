@@ -1,0 +1,12 @@
+---
+name: siri
+description: Ask Siri AI on the router Mac through Mini Gateway. Use for questions about the router Mac user's personal context (calendar, notes, documents that Apple Intelligence can use), or a short question about files that are named in it. Siri must be allowed for this Mac in Mini Gateway.
+argument-hint: <question>
+allowed-tools: Bash(minigw *)
+---
+
+```sh
+minigw -p --model claude-siri-ai "<question; name any project files it needs, the router attaches them>"
+```
+
+Show Siri's answer. If it fails with "Siri AI is not allowed for device", tell the user to allow this Mac in Mini Gateway → Settings → Siri AI → Devices.

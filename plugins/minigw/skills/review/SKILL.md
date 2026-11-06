@@ -1,0 +1,21 @@
+---
+name: review
+description: Get an independent review of the current changes, a plan or a bug analysis from OpenAI Codex (GPT-6-Astra) through Mini Gateway. Use when the user asks for a second opinion or a review by another model.
+argument-hint: [what to review]
+allowed-tools: Bash(minigw *), Bash(git diff*), Bash(git status*)
+---
+
+1. Collect what to review: the user's argument, or `git diff` and `git diff --staged` in a git repository.
+2. Run the review with Bash (timeout 600000 ms):
+
+```sh
+minigw -p --model claude-codex-gpt-6-astra "$(cat <<'PROMPT'
+You are an independent reviewer. Do not modify files.
+Goal of the change: <one or two sentences>
+Review the following in the current folder and report concrete problems first (bug, wrong assumption, missing case, security), with file and line, then smaller improvements briefly:
+<diff, file names or plan>
+PROMPT
+)"
+```
+
+3. Show the findings, most important first. Say which ones you agree with and why, then ask whether to apply fixes.

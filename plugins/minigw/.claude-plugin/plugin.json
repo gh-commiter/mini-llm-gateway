@@ -1,7 +1,7 @@
 {
   "name": "minigw",
-  "version": "0.1.0",
-  "description": "Subagents and skills that use Mini Gateway models. They work only when Claude Code runs through minigw (or on the router Mac).",
+  "version": "0.2.0",
+  "description": "Use Mini Gateway models (Codex, Siri AI, Apple Foundation Models and more) from any Claude Code session through the minigw client.",
   "author": {
     "name": "gh-commiter"
   }

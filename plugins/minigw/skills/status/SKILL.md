@@ -1,6 +1,7 @@
 ---
 name: status
 description: Show the Mini Gateway connection and the models available through it. Use when the user asks whether the router works or which gateway models exist.
+allowed-tools: Bash(minigw *)
 ---
 
 Run these commands and summarize the result for the user in a few lines (router reachable or not, encrypted or not, which providers work, how many models):
