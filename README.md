@@ -12,10 +12,11 @@ Claude Code subagent its own.
 - [What it does](#what-it-does)
 - [Requirements](#requirements)
 - [Install](#install)
-  - [Another Mac (client only)](#another-mac-client-only)
-  - [Windows and Linux (client only)](#windows-and-linux-client-only)
-  - [Homebrew](#homebrew)
-  - [Claude Code plugin](#claude-code-plugin)
+  - [Router (Mac)](#router-mac)
+  - [Client (minigw)](#client-minigw)
+    - [Claude Code plugin](#claude-code-plugin)
+    - [Another Mac](#another-mac)
+    - [Windows and Linux](#windows-and-linux)
 - [Use](#use)
 - [Settings](#settings)
 - [Security notes](#security-notes)
@@ -45,6 +46,11 @@ sees it as a regular LLM gateway. Only models that were verified to work are lis
 
 ## Install
 
+Mini Gateway has two parts: the **router** (the menu bar app, on one Mac) and the **client** `minigw` (on every
+computer that uses it: the same Mac, other Macs, Windows, Linux).
+
+### Router (Mac)
+
 1. Install Claude Code if you don't have it yet, then sign in once by running `claude`.
    Check whether it is already installed:
 
@@ -69,7 +75,52 @@ sees it as a regular LLM gateway. Only models that were verified to work are lis
 3. Open the DMG, drag **Mini Gateway** to **Applications** and open it. It lives in the menu bar.
 4. **Settings… → Claude CLI → Install** puts the `minigw` command in your `PATH` and connects it.
 
-### Another Mac (client only)
+With Homebrew instead of the DMG (add the tap once):
+
+```sh
+brew tap gh-commiter/mini-gateway https://github.com/gh-commiter/mini-llm-gateway
+brew trust --tap gh-commiter/mini-gateway
+brew install --cask gh-commiter/mini-gateway/mini-gateway
+```
+
+Then **Settings… → Claude CLI → Install** for `minigw`. The cask also installs Claude Code (`claude-code`) if it is
+not installed yet.
+
+### Client (minigw)
+
+`minigw` runs wherever Claude Code runs. Pick one way to install it.
+
+#### Claude Code plugin
+
+This repository is also a Claude Code plugin marketplace. The `minigw` plugin lets any Claude Code session use
+Mini Gateway models through the `minigw` client: Claude runs `minigw -p --model <model> "…"` in the current folder
+and uses the answer. The session itself does not have to run through the router, so it works with your normal Claude
+login, Remote Control and so on. The plugin brings its own `minigw` on macOS, Windows (Git Bash)
+and Linux: at session start it uses an installed one or downloads it from the latest release into its data folder and
+checks the SHA-256 (on macOS also the Developer ID signature). A downloaded copy is updated at session start when a
+new release is out. No brew needed. Connect once with
+`/minigw:connect <router-mac> <token>` (the token goes to the Keychain or Windows Credential Manager).
+
+| Skill | Model | Use |
+|---|---|---|
+| `/minigw:ask [--ro] <model> <question>` | any gateway model | Ask a specific model (`/minigw:models` lists them) |
+| `/minigw:review [--rw] [what]` | `claude-codex-gpt-6-astra` | Independent review of the current changes, a plan or a bug analysis (folder read-only unless `--rw`) |
+| `/minigw:codex [--ro] <task>` | `claude-codex-gpt-6.1-sol` | Hand a self-contained task to Codex in the current folder (`--ro`: read-only) |
+| `/minigw:siri <question>` | `claude-siri-ai` | Questions about the router Mac's personal context (Siri must be allowed for the device) |
+| `/minigw:on-device <text>` | `claude-apple-fm` | Short private answers on-device |
+| `/minigw:status` | – | Connection and available models |
+| `/minigw:models` | – | Gateway models, grouped by provider |
+| `/minigw:version` | – | Versions of minigw, Claude Code and the plugin |
+| `/minigw:connect <router> <token>` | – | One-time connection to the router Mac |
+| `/minigw:share [folder]` | – | Share a folder that minigw does not share by itself, such as a system folder |
+
+Claude can also pick these skills by itself when they fit the request. Install (Claude Code 2.1.275 or later):
+
+```
+/plugin install minigw --marketplace gh-commiter/mini-llm-gateway
+```
+
+#### Another Mac
 
 On a Mac that should use the router running on your Mac, one command installs Claude Code (with Homebrew if
 present, otherwise the native installer) and the signed `minigw` command into your `PATH`:
@@ -87,7 +138,13 @@ curl -fsSL https://github.com/gh-commiter/mini-llm-gateway/releases/latest/downl
 
 The script checks the download against `SHA256SUMS` and the Developer ID signature before installing.
 
-### Windows and Linux (client only)
+With Homebrew (tap as above; also installs Claude Code if missing):
+
+```sh
+brew install --cask gh-commiter/mini-gateway/minigw
+```
+
+#### Windows and Linux
 
 The router runs on a Mac; `minigw` runs wherever Claude Code runs. For Windows and Linux it is a single executable
 without dependencies (`client/`, Go standard library only), in [Releases](../../releases):
@@ -121,61 +178,7 @@ minigw connect mini.local --token '<token>'
 
 The connection is stored in Windows Credential Manager, on Linux in `~/.config/minigw/connection.json` (mode 0600).
 Windows and Linux clients encrypt with AES-256-GCM, the macOS client with ChaCha20-Poly1305; the router accepts both.
-With the Claude Code plugin (below) you can skip all of this: it downloads and checks `minigw` itself.
-
-### Homebrew
-
-The app and the client command are separate casks in this repository. Add the tap once:
-
-```sh
-brew tap gh-commiter/mini-gateway https://github.com/gh-commiter/mini-llm-gateway
-```
-
-```sh
-brew trust --tap gh-commiter/mini-gateway
-```
-
-Router Mac (the app; then **Settings… → Claude CLI → Install** for `minigw`):
-
-```sh
-brew install --cask gh-commiter/mini-gateway/mini-gateway
-```
-
-Another Mac (client only). Both casks also install Claude Code (`claude-code`) if it is not installed yet:
-
-```sh
-brew install --cask gh-commiter/mini-gateway/minigw
-```
-
-### Claude Code plugin
-
-This repository is also a Claude Code plugin marketplace. The `minigw` plugin lets any Claude Code session use
-Mini Gateway models through the `minigw` client: Claude runs `minigw -p --model <model> "…"` in the current folder
-and uses the answer. The session itself does not have to run through the router, so it works with your normal Claude
-login, Remote Control and so on. The plugin brings its own `minigw` on macOS, Windows (Git Bash)
-and Linux: at session start it uses an installed one or downloads it from the latest release into its data folder and
-checks the SHA-256 (on macOS also the Developer ID signature). A downloaded copy is updated at session start when a
-new release is out. No brew needed. Connect once with
-`/minigw:connect <router-mac> <token>` (the token goes to the Keychain or Windows Credential Manager).
-
-| Skill | Model | Use |
-|---|---|---|
-| `/minigw:ask [--ro] <model> <question>` | any gateway model | Ask a specific model (`/minigw:models` lists them) |
-| `/minigw:review [--rw] [what]` | `claude-codex-gpt-6-astra` | Independent review of the current changes, a plan or a bug analysis (folder read-only unless `--rw`) |
-| `/minigw:codex [--ro] <task>` | `claude-codex-gpt-6.1-sol` | Hand a self-contained task to Codex in the current folder (`--ro`: read-only) |
-| `/minigw:siri <question>` | `claude-siri-ai` | Questions about the router Mac's personal context (Siri must be allowed for the device) |
-| `/minigw:on-device <text>` | `claude-apple-fm` | Short private answers on-device |
-| `/minigw:status` | – | Connection and available models |
-| `/minigw:models` | – | Gateway models, grouped by provider |
-| `/minigw:version` | – | Versions of minigw, Claude Code and the plugin |
-| `/minigw:connect <router> <token>` | – | One-time connection to the router Mac |
-| `/minigw:share [folder]` | – | Share a folder that minigw does not share by itself, such as a system folder |
-
-Claude can also pick these skills by itself when they fit the request. Install (Claude Code 2.1.275 or later):
-
-```
-/plugin install minigw --marketplace gh-commiter/mini-llm-gateway
-```
+With the [Claude Code plugin](#claude-code-plugin) you can skip all of this: it downloads and checks `minigw` itself.
 
 ## Use
 
