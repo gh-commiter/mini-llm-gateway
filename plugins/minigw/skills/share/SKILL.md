@@ -1,11 +1,11 @@
 ---
 name: share
-description: Share the current folder (or a given one) with the Mini Gateway router, so agent models (Codex, Claude CLI, Grok) can read and edit it. Use when minigw says a folder "is not shared with the router", for example a project outside the home folder such as D:\Projects on Windows.
+description: Share the current folder (or a given one) with the Mini Gateway router, so agent models (Codex, Claude CLI, Grok) can read and edit it. Only needed when minigw says a folder "is not shared with the router" (system folders, hidden folders); project folders are shared automatically.
 argument-hint: "[folder | list | remove [folder]]"
 allowed-tools: Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw *)
 ---
 
-Folders under the home folder are shared automatically. Other folders are shared once the user adds them; the setting is permanent.
+Project folders are shared automatically, on any drive. System and hidden folders are shared once the user adds them; the setting is permanent.
 
 - No argument or a folder: `"${CLAUDE_PLUGIN_DATA}/bin/minigw" share add [folder]`
 - `list`: `"${CLAUDE_PLUGIN_DATA}/bin/minigw" share list`

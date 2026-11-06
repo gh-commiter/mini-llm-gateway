@@ -170,6 +170,23 @@ func sharedFolders() -> [String] {
         .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
 }
 
+/// Projektna mapa kjer koli (tudi /Volumes/Disk/projekt), razen korena diska ali priklopa, domače mape same,
+/// sistemskih map, domačih map drugih ter skritih map in ~/Library.
+func autoShare(_ path: String) -> Bool {
+    let home = NSHomeDirectory()
+    let p = URL(fileURLWithPath: path).standardizedFileURL.path
+    guard p != "/", p != home else { return false }
+    if p.hasPrefix(home + "/") {
+        let top = String(p.dropFirst(home.count + 1).split(separator: "/").first ?? "")
+        return !top.hasPrefix(".") && top != "Library"
+    }
+    let parts = p.split(separator: "/").map { $0.lowercased() }
+    let system: Set<String> = ["system", "library", "usr", "bin", "sbin", "etc", "private", "var", "dev", "opt", "applications",
+                               "users", "home", "root", "proc", "sys", "boot", "tmp", "run", "snap", "nix", "cores"]
+    guard let top = parts.first, !top.hasPrefix("."), !system.contains(top) else { return false }
+    return !["volumes", "mnt", "media"].contains(top) || parts.count >= 3
+}
+
 func shareCommand(_ a: [String]) -> Never {
     let sub = a.first ?? "list"
     let dir = URL(fileURLWithPath: a.count > 1 ? a[1] : FileManager.default.currentDirectoryPath).standardizedFileURL.path
@@ -203,7 +220,7 @@ func shareCommand(_ a: [String]) -> Never {
 
 // MARK: ukazi
 
-let minigwVersion = "0.5.4"  // bump-version.sh
+let minigwVersion = "0.5.5"  // bump-version.sh
 var args = Array(CommandLine.arguments.dropFirst())
 
 switch args.first {
@@ -307,15 +324,12 @@ if sid.isEmpty {
 let argv = (["claude"] + args).map { strdup($0) } + [nil]
 let cwd = FileManager.default.currentDirectoryPath
 let routerHost = URLComponents(string: saved.url)?.host ?? ""
-// Mapo deli le z oddaljenim routerjem in le pod domačo mapo (nikoli cele domače mape); MINIGW_SHARE=0/1 preglasi.
+// Mapo deli le z oddaljenim routerjem (pravilo v autoShare, enako kot odjemalec Go); MINIGW_SHARE=0/1 preglasi.
 let shareEnv = ProcessInfo.processInfo.environment["MINIGW_SHARE"]
-// Brez ~/Library in skritih map v domači (.ssh, .gnupg …): tam le z MINIGW_SHARE=1.
-let underHome = cwd.hasPrefix(NSHomeDirectory() + "/") ? String(cwd.dropFirst(NSHomeDirectory().count + 1)) : nil
 let remoteRouter = !["127.0.0.1", "localhost", "::1"].contains(routerHost)
 let wantShare = shareEnv == "1"
     || (shareEnv != "0" && remoteRouter
-        && (underHome.map { !$0.hasPrefix(".") && $0 != "Library" && !$0.hasPrefix("Library/") } == true
-            || sharedFolders().contains { cwd == $0 || cwd.hasPrefix($0 + "/") }))
+        && (autoShare(cwd) || sharedFolders().contains { cwd == $0 || cwd.hasPrefix($0 + "/") }))
 
 // x-claude-mini-share: router po ponovnem zagonu počaka, da se mapa znova registrira (namesto napake cwd_unavailable).
 setenv("ANTHROPIC_CUSTOM_HEADERS", "x-claude-mini-session: \(sid)\nx-claude-mini-cwd: \(cwd)" + (wantShare ? "\nx-claude-mini-share: 1" : ""), 1)

@@ -12,13 +12,12 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"time"
 )
 
-const version = "0.5.4" // bump-version.sh
+const version = "0.5.5" // bump-version.sh
 
 type connection struct {
 	URL    string  `json:"url"`
@@ -380,23 +379,41 @@ func shareWanted(cwd string, local bool) bool {
 			return true
 		}
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
+	return autoShare(cwd)
+}
+
+// Sistemske mape (prva raven pod korenom diska, male črke): nikoli samodejno.
+var systemTop = map[string]bool{
+	"windows": true, "program files": true, "program files (x86)": true, "programdata": true, "users": true,
+	"perflogs": true, "recovery": true, "system volume information": true,
+	"system": true, "library": true, "usr": true, "bin": true, "sbin": true, "etc": true, "private": true,
+	"var": true, "dev": true, "opt": true, "applications": true, "home": true, "root": true, "proc": true,
+	"sys": true, "boot": true, "tmp": true, "run": true, "snap": true, "nix": true, "cores": true,
+}
+
+// Priklopi diskov: koren priklopa (/Volumes/X, /mnt/X) je kot koren diska.
+var mountTop = map[string]bool{"volumes": true, "mnt": true, "media": true}
+
+// autoShare: projektna mapa kjer koli (tudi D:\Projekti, /Volumes/Disk/projekt), razen korena diska ali priklopa,
+// domače mape same, sistemskih map, domačih map drugih ter skritih map in AppData/Library v domači.
+func autoShare(cwd string) bool {
+	cwd = filepath.Clean(cwd)
+	home, _ := os.UserHomeDir()
+	if filepath.Dir(cwd) == cwd || (home != "" && strings.EqualFold(cwd, filepath.Clean(home))) {
 		return false
 	}
-	rel, err := filepath.Rel(home, cwd)
-	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+	if home != "" {
+		if rel, err := filepath.Rel(home, cwd); err == nil && !strings.HasPrefix(rel, "..") {
+			top := strings.ToLower(strings.SplitN(filepath.ToSlash(rel), "/", 2)[0])
+			return !strings.HasPrefix(top, ".") && top != "library" && top != "appdata"
+		}
+	}
+	parts := strings.Split(strings.Trim(filepath.ToSlash(cwd[len(filepath.VolumeName(cwd)):]), "/"), "/")
+	top := strings.ToLower(parts[0])
+	if strings.HasPrefix(top, ".") || strings.HasPrefix(top, "$") || systemTop[top] {
 		return false
 	}
-	top := strings.SplitN(filepath.ToSlash(rel), "/", 2)[0]
-	if strings.HasPrefix(top, ".") {
-		return false
-	}
-	excluded := map[string]bool{"Library": true, "AppData": true}
-	if runtime.GOOS == "windows" {
-		return !excluded[top] && !strings.EqualFold(top, "AppData")
-	}
-	return !excluded[top]
+	return !mountTop[top] || len(parts) >= 3
 }
 
 // runClaude: claude kot podproces (minigw ostane za proxy in mapo); Ctrl+C dobi claude.

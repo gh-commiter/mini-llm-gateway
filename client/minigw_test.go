@@ -45,9 +45,6 @@ func TestShareCommandAndWanted(t *testing.T) {
 	t.Setenv("MINIGW_SHARE", "")
 	sub := filepath.Join(proj, "src")
 	os.Mkdir(sub, 0o755)
-	if shareWanted(sub, false) {
-		t.Fatal("folder outside home shared without share add")
-	}
 	shareCommand([]string{"add", proj})
 	if !shareWanted(sub, false) || !shareWanted(proj, false) {
 		t.Fatal("added folder or its subfolder not shared")
@@ -58,8 +55,21 @@ func TestShareCommandAndWanted(t *testing.T) {
 	if shareAllowed(filepath.VolumeName(proj)+string(filepath.Separator)) || shareAllowed(cfg) {
 		t.Fatal("drive root or home folder allowed")
 	}
-	shareCommand([]string{"remove", proj})
-	if shareWanted(sub, false) {
-		t.Fatal("removed folder still shared")
+}
+
+func TestAutoShare(t *testing.T) {
+	home, _ := os.UserHomeDir()
+	yes := []string{filepath.Join(home, "Development", "x"), "/Volumes/Java/importers/app", "/srv/projects/app"}
+	no := []string{"/", home, filepath.Join(home, ".ssh"), filepath.Join(home, "Library", "Mail"), "/Volumes/Java",
+		"/usr/local/src", "/System/Library", "/Users/other/Documents", "/Applications/X.app", "/tmp/x"}
+	for _, p := range yes {
+		if !autoShare(p) {
+			t.Errorf("%s should be shared", p)
+		}
+	}
+	for _, p := range no {
+		if autoShare(p) {
+			t.Errorf("%s should not be shared", p)
+		}
 	}
 }
