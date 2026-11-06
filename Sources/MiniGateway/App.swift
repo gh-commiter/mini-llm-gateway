@@ -19,10 +19,15 @@ struct MiniGatewayApp: App {
         } label: {
             Image(nsImage: menuBarImage(listening: state.running, active: state.inflight.count))
         }
-        Settings {
+        // Običajno okno (ne scena Settings, ki sredini orodno vrstico): puščici in naslov levo kot v System Settings.
+        Window("Settings", id: "settings") {
             SettingsView().environmentObject(state)
         }
         .windowResizability(.contentMinSize)
+        .defaultPosition(.top)  // kot okno nastavitev; nato si macOS zapomni položaj
+        .defaultSize(width: 980, height: 680)
+        .windowToolbarStyle(.unified)
+        .commands { CommandGroup(replacing: .appSettings) { SettingsMenuItem() } }
         Window("Activity", id: "activity") {
             ActivityView().environmentObject(state)
         }
@@ -193,12 +198,19 @@ final class AppState: ObservableObject {
     }
 }
 
+/// ⌘, v meniju aplikacije (prej ga je dala scena Settings).
+struct SettingsMenuItem: View {
+    @Environment(\.openWindow) private var openWindow
+    var body: some View {
+        Button("Settings…") { openWindow(id: "settings"); bringToFront("settings") }.keyboardShortcut(",")
+    }
+}
+
 struct MenuView: View {
     static let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
     static let build = Bundle.main.object(forInfoDictionaryKey: "MGCommit") as? String ?? "?"  // commit (build.sh)
     @EnvironmentObject var state: AppState
     @Environment(\.openWindow) private var openWindow
-    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         Text(verbatim: state.status)
@@ -225,8 +237,8 @@ struct MenuView: View {
             NSPasteboard.general.setString(state.connectToken, forType: .string)
         }
         Button("Settings…") {
-            openSettings()
-            bringToFront("Settings")
+            openWindow(id: "settings")
+            bringToFront("settings")
         }
         Button("Quit") {
             AppDelegate.quitRequested = true

@@ -12,6 +12,9 @@ struct SettingsView: View {
     @State private var loaded = false
     @State private var keys: [String: String] = [:]
     @State private var pane: Pane? = .general
+    @State private var back: [Pane] = []      // zgodovina za puščici (kot System Settings)
+    @State private var forward: [Pane] = []
+    @State private var navigating = false     // sprememba s puščico: ne zapiši v zgodovino
     @State private var search = ""
     @State private var claudeStatus = (ok: true, text: "")
     @State private var axTrusted = AXIsProcessTrusted()
@@ -31,21 +34,37 @@ struct SettingsView: View {
         let title: String
         let symbol: String
         let color: Color
+        var about = ""
         var id: Pane { pane }
     }
 
     private var items: [Item] {
-        [Item(pane: .general, title: String(localized: "General"), symbol: "gearshape.fill", color: .gray)]
+        [Item(pane: .general, title: String(localized: "General"), symbol: "gearshape.fill", color: .gray,
+              about: String(localized: "Address, port and access token of the router, and the app version."))]
             + draft.providers.map { p in
                 Item(pane: .provider(p.id), title: p.name,
                      symbol: p.id == "openrouter" ? "point.3.connected.trianglepath.dotted" : "server.rack",
-                     color: p.id == "openrouter" ? .purple : .blue)
+                     color: p.id == "openrouter" ? .purple : .blue,
+                     about: String(localized: "Models of an Anthropic-compatible gateway, passed through to Claude Code."))
             }
-            + [Item(pane: .siri, title: "Siri AI", symbol: "waveform", color: .pink),
-               Item(pane: .appleFM, title: "Apple Foundation Models", symbol: "apple.intelligence", color: .orange),
-               Item(pane: .claudeCLI, title: "Claude CLI", symbol: "terminal.fill", color: .brown),
-               Item(pane: .codex, title: "Codex CLI", symbol: "chevron.left.forwardslash.chevron.right", color: .teal),
-               Item(pane: .grok, title: "Grok CLI", symbol: "sparkle", color: .indigo)]
+            + [Item(pane: .siri, title: "Siri AI", symbol: "waveform", color: .pink,
+                    about: String(localized: "The Siri AI app as a model, driven in the background.")),
+               Item(pane: .appleFM, title: "Apple Foundation Models", symbol: "apple.intelligence", color: .orange,
+                    about: String(localized: "Apple's on-device model: private, without a network.")),
+               Item(pane: .claudeCLI, title: "Claude CLI", symbol: "terminal.fill", color: .brown,
+                    about: String(localized: "Your local Claude Code as an agent model, with tools in the allowed folders.")),
+               Item(pane: .codex, title: "Codex CLI", symbol: "chevron.left.forwardslash.chevron.right", color: .teal,
+                    about: String(localized: "OpenAI Codex CLI as an agent model in the session's folder.")),
+               Item(pane: .grok, title: "Grok CLI", symbol: "sparkle", color: .indigo,
+                    about: String(localized: "xAI Grok CLI as an agent model in the session's folder."))]
+    }
+
+    /// Puščica: prejšnji panel iz `from`, trenutni v `to`.
+    private func go(_ from: inout [Pane], _ to: inout [Pane]) {
+        guard let target = from.popLast() else { return }
+        if let pane { to.append(pane) }
+        navigating = true
+        pane = target
     }
 
     var body: some View {
@@ -56,12 +75,26 @@ struct SettingsView: View {
                         .tag(item.pane)
                 }
             }
+            .frame(minWidth: 220)  // v običajnem oknu SwiftUI navigationSplitViewColumnWidth prezre
+            .navigationSplitViewColumnWidth(min: 220, ideal: 230, max: 280)
             .searchable(text: $search, placement: .sidebar)
-            .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 280)
+            .toolbar(removing: .sidebarToggle)  // System Settings nima gumba za stransko vrstico
         } detail: {
             detail
                 .formStyle(.grouped)
                 .navigationTitle(items.first { $0.pane == pane }?.title ?? "")
+                .toolbar(removing: .title)
+                .toolbar {
+                    ToolbarItemGroup(placement: .navigation) {
+                        Button { go(&back, &forward) } label: { Image(systemName: "chevron.left") }
+                            .disabled(back.isEmpty).help(String(localized: "Back"))
+                        Button { go(&forward, &back) } label: { Image(systemName: "chevron.right") }
+                            .disabled(forward.isEmpty).help(String(localized: "Forward"))
+                    }
+                }
+        }
+        .onChange(of: pane) { old, _ in
+            if navigating { navigating = false } else if let old { back.append(old); forward = [] }
         }
         .frame(minWidth: 760, idealWidth: 820, minHeight: 520, idealHeight: 640)
         .onAppear {
@@ -105,12 +138,22 @@ struct SettingsView: View {
         }
     }
 
+    /// Kartica na vrhu panela kot v System Settings: velika ikona, naslov, opis.
+    private var header: some View {
+        let item = items.first { $0.pane == pane } ?? items[0]
+        return PaneHeader(symbol: item.symbol, color: item.color, title: item.title, about: item.about)
+    }
+
     @ViewBuilder private var detail: some View {
         switch pane ?? .general {
         case .general: general
         case .provider(let id):
             if let i = draft.providers.firstIndex(where: { $0.id == id }) {
-                ProviderPane(provider: $draft.providers[i], keyInput: keyBinding(id), savedKey: state.keychain.get(id) ?? "")
+                ProviderPane(header: PaneHeader(symbol: items.first { $0.pane == pane }?.symbol ?? "server.rack",
+                                                color: items.first { $0.pane == pane }?.color ?? .blue,
+                                                title: draft.providers[i].name,
+                                                about: items.first { $0.pane == pane }?.about ?? ""),
+                             provider: $draft.providers[i], keyInput: keyBinding(id), savedKey: state.keychain.get(id) ?? "")
             }
         case .siri: siri
         case .appleFM: appleFM
@@ -122,6 +165,7 @@ struct SettingsView: View {
 
     private var general: some View {
         Form {
+            header
             Section {
                 LoginItemRow()
             }
@@ -148,6 +192,7 @@ struct SettingsView: View {
 
     private var siri: some View {
         Form {
+            header
             Section {
                 Toggle("Enabled", isOn: $draft.siri.enabled)
                 TextField("Timeout (s)", value: $draft.siri.timeout, format: .number)
@@ -210,6 +255,7 @@ struct SettingsView: View {
 
     private var appleFM: some View {
         Form {
+            header
             Section {
                 Toggle("Enabled", isOn: $draft.appleFM.enabled)
             }
@@ -249,6 +295,7 @@ struct SettingsView: View {
 
     private var codex: some View {
         Form {
+            header
             Section {
                 Toggle("Enabled", isOn: $draft.codex.enabled)
                 LabeledContent("Executable (empty = auto-detect)") {
@@ -295,6 +342,7 @@ struct SettingsView: View {
 
     private var grok: some View {
         Form {
+            header
             Section {
                 Toggle("Enabled", isOn: $draft.grok.enabled)
                 LabeledContent("Executable (empty = auto-detect)") {
@@ -338,6 +386,7 @@ struct SettingsView: View {
 
     private var claudeCLI: some View {
         Form {
+            header
             Section {
                 Toggle("Enabled", isOn: $draft.claudeCLI.enabled)
             }
@@ -563,6 +612,26 @@ struct LoginItemRow: View {
 }
 
 /// Ikona v barvni zaobljeni ploščici, kot v Sistemskih nastavitvah.
+struct PaneHeader: View {
+    let symbol: String, color: Color, title: String, about: String
+
+    var body: some View {
+        Section {
+            VStack(spacing: 6) {
+                Image(systemName: symbol)
+                    .font(.system(size: 30, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 52, height: 52)
+                    .background(color.gradient, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                Text(verbatim: title).font(.title2.bold())
+                Text(verbatim: about).font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+        }
+    }
+}
+
 struct IconTile: View {
     let symbol: String
     let color: Color
@@ -602,6 +671,7 @@ struct TokenRow: View {
 
 /// Ponudnik: povezava in modeli, ki jih ponuja (vsak s stikalom za objavo v /model).
 struct ProviderPane: View {
+    let header: PaneHeader
     @Binding var provider: ProviderConfig
     @Binding var keyInput: String
     let savedKey: String
@@ -623,6 +693,7 @@ struct ProviderPane: View {
 
     var body: some View {
         Form {
+            header
             Section {
                 // Brez ključa ponudnik ne more delovati → stikalo izklopljeno in onemogočeno.
                 Toggle("Enabled", isOn: Binding(get: { provider.enabled && !key.isEmpty }, set: { provider.enabled = $0 }))
