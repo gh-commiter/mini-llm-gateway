@@ -317,7 +317,8 @@ extension Router {
     /// Navodilo agentu za priklopljeno mapo odjemalca (macOS, Windows ali Linux).
     static func mountNote(_ clientCwd: String, _ shared: URL, readOnly: Bool) -> String {
         "The user's folder \(clientCwd) (on their computer) is mounted here as \(shared.path), your working directory. Map paths under \(clientCwd) to it."
-            + (readOnly ? " The folder is shared read-only: do not try to create, change or delete files in it." : "")
+            + (readOnly ? " The folder is shared read-only: do not try to create, change or delete files in it."
+                + " Open SQLite databases with the URI file:<path>?mode=ro&immutable=1 (no journal or lock files)." : "")
     }
     static let toolList = ToolList()
 
