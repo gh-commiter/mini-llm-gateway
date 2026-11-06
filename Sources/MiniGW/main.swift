@@ -161,7 +161,7 @@ func requireConnection() -> Connection {
 
 // MARK: ukazi
 
-let minigwVersion = "0.4.9"  // bump-version.sh
+let minigwVersion = "0.5.0"  // bump-version.sh
 var args = Array(CommandLine.arguments.dropFirst())
 
 switch args.first {
@@ -251,9 +251,9 @@ for (i, a) in args.enumerated() {
     default: break
     }
 }
-if sid.isEmpty && !own {
-    sid = UUID().uuidString.lowercased()
-    args = ["--session-id", sid] + args
+if sid.isEmpty {
+    sid = UUID().uuidString.lowercased()  // tudi pri -c/--continue: router po njem deli mapo
+    if !own { args = ["--session-id", sid] + args }
 }
 
 let argv = (["claude"] + args).map { strdup($0) } + [nil]

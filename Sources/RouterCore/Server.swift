@@ -85,11 +85,11 @@ public final class RouterServer: @unchecked Sendable {
             var buf = buf
             if let data { buf.append(data) }
             let end = done || error != nil
-            if buf.count < Noise.magic.count, Noise.magic.starts(with: buf), !end {
+            if buf.count < 4, Data("MGW".utf8).starts(with: buf.prefix(3)), !end {
                 return self.sniff(conn, buf, peer: peer)
             }
-            if buf.starts(with: Noise.magic) {
-                return self.handshake(conn, Data(buf.dropFirst(Noise.magic.count)), peer: peer)
+            if buf.count >= 4, let suite = Noise.Suite.from(magic: Data(buf.prefix(4))) {
+                return self.handshake(conn, Data(buf.dropFirst(4)), peer: peer, suite: suite)
             }
             guard Self.isLoopback(peer) || self.router.config.allowPlainRemote else {
                 let body = Data(#"{"type":"error","error":{"type":"permission_error","message":"Unencrypted connections from other Macs are off: update minigw to 0.4 or newer"}}"#.utf8)
@@ -107,16 +107,16 @@ public final class RouterServer: @unchecked Sendable {
     /// Naprava šifrirane povezave: najprej neprebrana, nato znana (ali nil pri starejšem minigw / navadnem HTTP).
     enum DeviceState { case unchecked, done(Noise.Device?) }
 
-    private func handshake(_ conn: NWConnection, _ buf: Data, peer: String) {
+    private func handshake(_ conn: NWConnection, _ buf: Data, peer: String, suite: Noise.Suite) {
         guard buf.count >= Noise.handshakeLength else {
             conn.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, done, error in
                 guard let self, let data, !data.isEmpty else { conn.cancel(); return }
                 if (done || error != nil) && buf.count + data.count < Noise.handshakeLength { conn.cancel(); return }
-                self.handshake(conn, buf + data, peer: peer)
+                self.handshake(conn, buf + data, peer: peer, suite: suite)
             }
             return
         }
-        guard let key, let (reply, session) = try? Noise.respond(Data(buf.prefix(Noise.handshakeLength)), key: key) else {
+        guard let key, let (reply, session) = try? Noise.respond(Data(buf.prefix(Noise.handshakeLength)), key: key, suite: suite) else {
             conn.cancel()  // napačen ključ routerja ali poškodovano sporočilo
             return
         }

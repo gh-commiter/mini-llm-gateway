@@ -488,7 +488,7 @@ func makeRouter(session: URLSession = .shared) -> Router {
 
     let dev = Curve25519.Signing.PrivateKey()
     let withDevice = try #require(NoiseProxy(routerURL: "http://127.0.0.1:18765", routerKey: key.publicKey.rawRepresentation,
-                                             device: (key: dev, name: "Test Air")))
+                                             device: (key: dev, name: "Test Air"), suite: .aesGCM))  // AESGCM kot minigw.exe
     try withDevice.start()
     defer { withDevice.stop() }
     #expect(await get(withDevice.localURL, "/v1/models").0 == 200)
@@ -588,4 +588,20 @@ final class SeenDevices: @unchecked Sendable {
     var t = StreamTranslator(model: "m")
     _ = t.feed(Data(#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"docs/x.md"}}]}}"#.utf8))
     #expect(t.step == "Read docs/x.md")
+}
+
+@Test func noiseSuitesInteroperate() throws {
+    let key = Noise.newKey()
+    for suite in Noise.Suite.allCases {
+        var i = Noise.Initiator(routerKey: key.publicKey.rawRepresentation, suite: suite)
+        let m1 = try i.first()
+        let (m2, server) = try Noise.respond(m1, key: key, suite: suite)
+        let client = try i.finish(m2)
+        #expect(client.hash == server.hash)
+        var buf = Noise.frames(Data("hello \(suite)".utf8), client.send)
+        #expect(try Noise.unframe(&buf, server.receive) == Data("hello \(suite)".utf8))
+    }
+    // napačna šifra na strežniku → rokovanje ne uspe (ime protokola je v hashu)
+    var i = Noise.Initiator(routerKey: key.publicKey.rawRepresentation, suite: .aesGCM)
+    #expect(throws: (any Error).self) { try Noise.respond(try i.first(), key: key, suite: .chachaPoly) }
 }

@@ -70,6 +70,42 @@ curl -fsSL https://github.com/gh-commiter/mini-llm-gateway/releases/latest/downl
 
 The script checks the download against `SHA256SUMS` and the Developer ID signature before installing.
 
+### Windows and Linux (client only)
+
+The router runs on a Mac; `minigw` runs wherever Claude Code runs. For Windows and Linux it is a single executable
+without dependencies (`client/`, Go standard library only), in [Releases](../../releases):
+
+| System | File |
+|---|---|
+| Windows x64 / ARM64 | `minigw-windows-amd64.exe` / `minigw-windows-arm64.exe` |
+| Linux x64 / ARM64 | `minigw-linux-amd64` / `minigw-linux-arm64` (static, any distribution) |
+
+Check it against `SHA256SUMS`, rename it to `minigw` (`minigw.exe` on Windows) and put it in your `PATH`. Linux:
+
+```sh
+curl -fsSLo minigw https://github.com/gh-commiter/mini-llm-gateway/releases/latest/download/minigw-linux-amd64
+curl -fsSL https://github.com/gh-commiter/mini-llm-gateway/releases/latest/download/SHA256SUMS | grep ' minigw-linux-amd64$' | sed 's/minigw-linux-amd64$/minigw/' | sha256sum -c -
+chmod +x minigw && sudo mv minigw /usr/local/bin/
+```
+
+Windows (PowerShell; compare the hash with `SHA256SUMS`):
+
+```powershell
+Invoke-WebRequest https://github.com/gh-commiter/mini-llm-gateway/releases/latest/download/minigw-windows-amd64.exe -OutFile $HOME\minigw.exe
+Get-FileHash $HOME\minigw.exe -Algorithm SHA256
+```
+
+Then connect once with the token from **Settings… → General → Copy Token** on the router Mac (quote it, it
+contains `#`):
+
+```sh
+minigw connect mini.local --token '<token>'
+```
+
+The connection is stored in Windows Credential Manager, on Linux in `~/.config/minigw/connection.json` (mode 0600).
+Windows and Linux clients encrypt with AES-256-GCM, the macOS client with ChaCha20-Poly1305; the router accepts both.
+With the Claude Code plugin (below) you can skip all of this: it downloads and checks `minigw` itself.
+
 ### Homebrew
 
 The app and the client command are separate casks in this repository. Add the tap once:
@@ -118,9 +154,10 @@ The folder's own Claude Code settings and hooks are not loaded on the router Mac
 This repository is also a Claude Code plugin marketplace. The `minigw` plugin lets any Claude Code session use
 Mini Gateway models through the `minigw` client: Claude runs `minigw -p --model <model> "…"` in the current folder
 and uses the answer. The session itself does not have to run through the router, so it works with your normal Claude
-login, Remote Control and so on. The plugin brings its own `minigw`: at session start it uses an installed one or
-downloads it from the latest release into its data folder, checks the SHA-256 and the Developer ID signature. No brew
-needed. Connect once with `/minigw:connect <router-mac> <token>` (the token goes to the Keychain).
+login, Remote Control and so on. The plugin brings its own `minigw` on macOS, Windows (Git Bash)
+and Linux: at session start it uses an installed one or downloads it from the latest release into its data folder and
+checks the SHA-256 (on macOS also the Developer ID signature). No brew needed. Connect once with
+`/minigw:connect <router-mac> <token>` (the token goes to the Keychain or Windows Credential Manager).
 
 | Skill | Model | Use |
 |---|---|---|

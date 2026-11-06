@@ -1,38 +1,60 @@
 import CryptoKit
 import Foundation
 
-/// Šifrirana povezava minigw ↔ router v slogu WireGuard: Noise_NK_25519_ChaChaPoly_SHA256.
+/// Šifrirana povezava minigw ↔ router v slogu WireGuard: Noise_NK_25519_<šifra>_SHA256.
+/// Šifro izbere odjemalec s prvimi štirimi bajti (kot pri SSH router podpira več šifer): »MGW1« = ChaChaPoly
+/// (macOS minigw), »MGW2« = AESGCM (minigw.exe za Windows/Linux, le standardna knjižnica Go). Ime protokola je
+/// v hashu rokovanja, zato zamenjave šifre ni mogoče podtakniti.
 /// Router ima stalni ključ (javni del dobi minigw skupaj z žetonom), odjemalec je anonimen in se overi
 /// z žetonom v šifriranem HTTP. Vsaka TCP povezava: magic + rokovanje (1 RTT), nato okvirji, v katerih teče
 /// navaden HTTP. Ključi seje so nova, zato je prejšnji promet varen tudi ob kraji ključa routerja.
 public enum Noise {
-    public static let magic = Data("MGW1".utf8)
-    static let protocolName = Data("Noise_NK_25519_ChaChaPoly_SHA256".utf8)  // točno 32 bajtov = HASHLEN
+    public static let magic = Data("MGW1".utf8)  // privzeta šifra (ChaChaPoly)
+
+    public enum Suite: Sendable, CaseIterable {
+        case chachaPoly, aesGCM
+        public var magic: Data { Data((self == .chachaPoly ? "MGW1" : "MGW2").utf8) }
+        /// h0 = ime protokola, z ničlami dopolnjeno na 32 bajtov (HASHLEN), kot v Noise.
+        var protocolName: Data {
+            var d = Data((self == .chachaPoly ? "Noise_NK_25519_ChaChaPoly_SHA256" : "Noise_NK_25519_AESGCM_SHA256").utf8)
+            if d.count < 32 { d += Data(count: 32 - d.count) }
+            return d
+        }
+        public static func from(magic m: Data) -> Suite? { allCases.first { $0.magic == m } }
+    }
     public static let handshakeLength = 48                                     // e (32) + prazen šifriran payload (16)
     public static let maxPlain = 65535 - 16
 
     public enum Failure: Error { case badMessage, decrypt }
 
-    /// Smerni šifrirni ključ s števcem (nonce = 4 ničle + LE64 števec, kot v Noise).
+    /// Smerni šifrirni ključ s števcem. Nonce kot v Noise: 4 ničle + 64-bitni števec,
+    /// pri ChaChaPoly little endian, pri AESGCM big endian.
     public final class Cipher: @unchecked Sendable {
         private let key: SymmetricKey
+        private let suite: Suite
         private var n: UInt64 = 0
         private let lock = NSLock()
         /// Šifriranje + pošiljanje kot celota: sočasni zapisi (npr. ping med tokom) ne smejo zamenjati vrstnega reda okvirjev.
         public let sendLock = NSLock()
-        init(_ key: SymmetricKey) { self.key = key }
+        init(_ key: SymmetricKey, _ suite: Suite = .chachaPoly) { self.key = key; self.suite = suite }
 
-        static func nonce(_ n: UInt64) -> ChaChaPoly.Nonce {
+        func nonceBytes(_ n: UInt64) -> Data {
             var d = Data(count: 4)
-            withUnsafeBytes(of: n.littleEndian) { d.append(contentsOf: $0) }
-            return try! ChaChaPoly.Nonce(data: d)
+            withUnsafeBytes(of: suite == .chachaPoly ? n.littleEndian : n.bigEndian) { d.append(contentsOf: $0) }
+            return d
         }
 
         public func seal(_ plain: Data, ad: Data = Data()) -> Data {
             lock.withLock {
                 defer { n += 1 }
-                let box = try! ChaChaPoly.seal(plain, using: key, nonce: Self.nonce(n), authenticating: ad)
-                return box.ciphertext + box.tag
+                switch suite {
+                case .chachaPoly:
+                    let box = try! ChaChaPoly.seal(plain, using: key, nonce: ChaChaPoly.Nonce(data: nonceBytes(n)), authenticating: ad)
+                    return box.ciphertext + box.tag
+                case .aesGCM:
+                    let box = try! AES.GCM.seal(plain, using: key, nonce: AES.GCM.Nonce(data: nonceBytes(n)), authenticating: ad)
+                    return box.ciphertext + box.tag
+                }
             }
         }
 
@@ -40,8 +62,16 @@ public enum Noise {
             try lock.withLock {
                 guard c.count >= 16 else { throw Failure.decrypt }
                 defer { n += 1 }
-                let box = try ChaChaPoly.SealedBox(nonce: Self.nonce(n), ciphertext: c.dropLast(16), tag: c.suffix(16))
-                do { return try ChaChaPoly.open(box, using: key, authenticating: ad) } catch { throw Failure.decrypt }
+                do {
+                    switch suite {
+                    case .chachaPoly:
+                        let box = try ChaChaPoly.SealedBox(nonce: ChaChaPoly.Nonce(data: nonceBytes(n)), ciphertext: c.dropLast(16), tag: c.suffix(16))
+                        return try ChaChaPoly.open(box, using: key, authenticating: ad)
+                    case .aesGCM:
+                        let box = try AES.GCM.SealedBox(nonce: AES.GCM.Nonce(data: nonceBytes(n)), ciphertext: c.dropLast(16), tag: c.suffix(16))
+                        return try AES.GCM.open(box, using: key, authenticating: ad)
+                    }
+                } catch { throw Failure.decrypt }
             }
         }
     }
@@ -50,10 +80,12 @@ public enum Noise {
     struct Symmetric {
         var ck: Data, h: Data
         var k: Cipher?
+        let suite: Suite
 
-        init(prologue: Data, responderStatic: Data) {
-            h = Noise.protocolName; ck = h
-            mixHash(prologue)
+        init(suite: Suite, responderStatic: Data) {
+            self.suite = suite
+            h = suite.protocolName; ck = h
+            mixHash(suite.magic)  // prologue
             mixHash(responderStatic)  // vnaprej znan ključ routerja (<- s)
         }
 
@@ -61,7 +93,7 @@ public enum Noise {
 
         mutating func mixKey(_ ikm: Data) {
             let (a, b) = Noise.hkdf(ck, ikm)
-            ck = a; k = Cipher(SymmetricKey(data: b))
+            ck = a; k = Cipher(SymmetricKey(data: b), suite)
         }
 
         mutating func encryptAndHash(_ p: Data) -> Data {
@@ -78,7 +110,7 @@ public enum Noise {
 
         func split() -> (Cipher, Cipher) {
             let (a, b) = Noise.hkdf(ck, Data())
-            return (Cipher(SymmetricKey(data: a)), Cipher(SymmetricKey(data: b)))
+            return (Cipher(SymmetricKey(data: a), suite), Cipher(SymmetricKey(data: b), suite))
         }
     }
 
@@ -108,7 +140,11 @@ public enum Noise {
         let e = Curve25519.KeyAgreement.PrivateKey()
         let rs: Data
 
-        public init(routerKey: Data) { rs = routerKey; s = Symmetric(prologue: Noise.magic, responderStatic: routerKey) }
+        public let suite: Suite
+
+        public init(routerKey: Data, suite: Suite = .chachaPoly) {
+            rs = routerKey; self.suite = suite; s = Symmetric(suite: suite, responderStatic: routerKey)
+        }
 
         /// -> e, es
         public mutating func first() throws -> Data {
@@ -133,9 +169,9 @@ public enum Noise {
     // MARK: router
 
     /// <- s; -> e, es; <- e, ee. Vrne odgovor in sejo; napačen ključ ali poškodba → napaka.
-    public static func respond(_ msg: Data, key: Curve25519.KeyAgreement.PrivateKey) throws -> (Data, Session) {
+    public static func respond(_ msg: Data, key: Curve25519.KeyAgreement.PrivateKey, suite: Suite = .chachaPoly) throws -> (Data, Session) {
         guard msg.count == handshakeLength else { throw Failure.badMessage }
-        var s = Symmetric(prologue: magic, responderStatic: key.publicKey.rawRepresentation)
+        var s = Symmetric(suite: suite, responderStatic: key.publicKey.rawRepresentation)
         let re = Data(msg.prefix(32))
         s.mixHash(re)
         s.mixKey(try dh(key, re))

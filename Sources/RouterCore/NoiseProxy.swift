@@ -7,15 +7,17 @@ import Network
 public final class NoiseProxy: @unchecked Sendable {
     private let host: NWEndpoint.Host, port: NWEndpoint.Port, routerKey: Data
     private let device: (key: Curve25519.Signing.PrivateKey, name: String)?  // dokaz naprave v vsaki povezavi
+    private let suite: Noise.Suite
     private let queue = DispatchQueue(label: "dev.trojar.minigateway.proxy")
     private var listener: NWListener?
     public private(set) var localPort: UInt16 = 0
     public var localURL: String { "http://127.0.0.1:\(localPort)" }
 
-    public init?(routerURL: String, routerKey: Data, device: (key: Curve25519.Signing.PrivateKey, name: String)? = nil) {
+    public init?(routerURL: String, routerKey: Data, device: (key: Curve25519.Signing.PrivateKey, name: String)? = nil,
+                 suite: Noise.Suite = .chachaPoly) {
         guard let u = URLComponents(string: routerURL), let h = u.host, let p = NWEndpoint.Port(rawValue: UInt16(u.port ?? 8765)),
               routerKey.count == 32 else { return nil }
-        host = NWEndpoint.Host(h); port = p; self.routerKey = routerKey; self.device = device
+        host = NWEndpoint.Host(h); port = p; self.routerKey = routerKey; self.device = device; self.suite = suite
     }
 
     /// Stalen lokalni port za ta router: Claude Code hrani seznam modelov skupaj z ANTHROPIC_BASE_URL,
@@ -54,12 +56,12 @@ public final class NoiseProxy: @unchecked Sendable {
     private func accept(_ local: NWConnection) {
         let remote = NWConnection(host: host, port: port, using: .tcp)
         func fail() { local.cancel(); remote.cancel() }
-        var hs = Noise.Initiator(routerKey: routerKey)
+        var hs = Noise.Initiator(routerKey: routerKey, suite: suite)
         remote.stateUpdateHandler = { [weak self] state in
             switch state {
             case .ready:
                 guard let first = try? hs.first() else { return fail() }
-                remote.send(content: Noise.magic + first, completion: .contentProcessed { _ in })
+                remote.send(content: hs.suite.magic + first, completion: .contentProcessed { _ in })
                 self?.readHandshake(local, remote, Data()) { reply in
                     guard let reply, let session = try? hs.finish(reply) else { return fail() }
                     if let d = self?.device {

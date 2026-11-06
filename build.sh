@@ -80,7 +80,15 @@ if [[ $MODE == --release ]]; then
   xcrun notarytool submit "$CLI_ZIP" --keychain-profile "${NOTARY_PROFILE:-minigateway-notary}" --wait
   cp install.sh "$OUT/install.sh"
 
-  (cd $OUT && shasum -a 256 "${ZIP:t}" "${DMG:t}" minigw.zip install.sh | tee SHA256SUMS)
+  # Odjemalec za Windows in Linux (client/, Go, le standardna knjižnica): ena izvršljiva datoteka na sistem.
+  GO_BINS=()
+  for t in windows/amd64 windows/arm64 linux/amd64 linux/arm64; do
+    os=${t%/*}; arch=${t#*/}; name=minigw-$os-$arch; [[ $os == windows ]] && name+=.exe || true
+    (cd client && CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath -ldflags "-s -w" -o "../$OUT/$name" .)
+    GO_BINS+=$name
+  done
+
+  (cd $OUT && shasum -a 256 "${ZIP:t}" "${DMG:t}" minigw.zip install.sh $GO_BINS | tee SHA256SUMS)
   # Homebrew (Casks/, tap = ta repozitorij): različica in kontrolni vsoti te izdaje
   for cask file in Casks/mini-gateway.rb "$ZIP" Casks/minigw.rb "$CLI_ZIP"; do
     sed -i '' -e "s/^  version \".*\"/  version \"$VERSION\"/" \
