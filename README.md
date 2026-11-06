@@ -306,6 +306,8 @@ Mini Gateway only connects tools that others built:
 - [LiteLLM](https://github.com/BerriAI/litellm) by BerriAI and [OpenRouter](https://openrouter.ai): upstream model gateways.
 - [The Noise Protocol Framework](https://noiseprotocol.org) by Trevor Perrin: the encrypted connection between `minigw` and the router.
 
+Thank you to everyone behind these projects for making them available. Mini Gateway would not exist without them.
+
 ## 10. License
 
 [MIT](LICENSE)
