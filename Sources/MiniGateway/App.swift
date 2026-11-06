@@ -322,6 +322,25 @@ func bringToFront(_ match: String) {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor static var quitRequested = false
 
+    /// Posnetki zaslona za README: le ob zagonu z MG_SNAPSHOT_DIR; obvestilo »dev.trojar.minigateway.snapshot«
+    /// z imenom zapiše vidno okno nastavitev v to mapo (lastno okno, brez dovoljenja za snemanje zaslona).
+    @MainActor
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        guard let dir = ProcessInfo.processInfo.environment["MG_SNAPSHOT_DIR"] else { return }
+        DistributedNotificationCenter.default().addObserver(forName: .init("dev.trojar.minigateway.snapshot"),
+                                                            object: nil, queue: .main) { n in
+            let name = String((n.object as? String ?? "settings").filter { $0.isLetter || $0.isNumber || $0 == "-" }.prefix(40))
+            MainActor.assumeIsolated {
+                guard let w = NSApp.windows.first(where: { $0.isVisible && $0.styleMask.contains(.titled) }),
+                      let view = w.contentView?.superview ?? w.contentView,
+                      let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+                view.cacheDisplay(in: view.bounds, to: rep)
+                try? rep.representation(using: .png, properties: [:])?
+                    .write(to: URL(fileURLWithPath: dir).appendingPathComponent(name + ".png"))
+            }
+        }
+    }
+
     @MainActor
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         // Quit Apple event (odjava, Dock, osascript) = pravi izhod; Cmd+Q iz menija nima Apple eventa.
