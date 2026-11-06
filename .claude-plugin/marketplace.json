@@ -1,0 +1,12 @@
+{
+  "name": "mini-gateway",
+  "owner": { "name": "gh-commiter" },
+  "description": "Plugins for Mini Gateway, a macOS LLM gateway compatible with the Claude Code CLI",
+  "plugins": [
+    {
+      "name": "minigw",
+      "source": "./plugins/minigw",
+      "description": "Subagents and skills that use Mini Gateway models (Codex, Siri AI, Apple Foundation Models). Run Claude Code through minigw."
+    }
+  ]
+}

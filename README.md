@@ -113,6 +113,31 @@ not need to reach the client) and the agent works on your files. Nothing to inst
 inside your home folder are shared: never the home folder itself, `~/Library` or hidden folders such as `~/.ssh`.
 The folder's own Claude Code settings and hooks are not loaded on the router Mac. Set `MINIGW_SHARE=0` to turn it off.
 
+## Claude Code plugin
+
+This repository is also a Claude Code plugin marketplace. The `minigw` plugin adds subagents and skills that use
+Mini Gateway models:
+
+| Name | Model | Use |
+|---|---|---|
+| `minigw:codex-review` (subagent) | `claude-codex-gpt-6-astra` | Independent review of a change, plan or bug analysis; does not change files |
+| `minigw:codex` (subagent) | `claude-codex-gpt-6.1-sol` | Hand a self-contained task to Codex in the current folder |
+| `minigw:siri` (subagent) | `claude-siri-ai` | Questions about the router Mac's personal context (Siri must be allowed for the device) |
+| `minigw:on-device` (subagent) | `claude-apple-fm` | Short private answers on-device |
+| `/minigw:status` (skill) | – | Connection and available models |
+| `/minigw:second-opinion` (skill) | – | Sends the current changes to `minigw:codex-review` |
+
+Install (Claude Code 2.1.275 or later):
+
+```
+/plugin install minigw --marketplace gh-commiter/mini-llm-gateway
+```
+
+The plugin only works when Claude Code runs through `minigw` (or on the router Mac): a plugin cannot set the gateway
+address. The subagents are called by the main model, so pick a main model that runs tools in Claude Code itself
+(LiteLLM or OpenRouter models). The `claude-cli-*` and `claude-codex*` models are agents on the router Mac and do not
+see the plugin.
+
 ## Settings
 
 - **General** – listen address and port (default `127.0.0.1:8765`; use `0.0.0.0` or a LAN IP for other Macs),

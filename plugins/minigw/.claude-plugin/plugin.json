@@ -1,0 +1,8 @@
+{
+  "name": "minigw",
+  "version": "0.1.0",
+  "description": "Subagents and skills that use Mini Gateway models. They work only when Claude Code runs through minigw (or on the router Mac).",
+  "author": {
+    "name": "gh-commiter"
+  }
+}
