@@ -169,11 +169,14 @@ public enum ClaudeCLI {
 
     /// `command -v claude` v uporabnikovi prijavni lupini (njegov PATH), nato običajna mesta namestitve.
     /// Izračuna se enkrat ob prvi uporabi.
-    public static let detected: String? = {
+    public static let detected: String? = locate("claude", also: ["\(NSHomeDirectory())/.claude/local/claude"])
+
+    /// `command -v <name>` v prijavni lupini, nato običajna mesta namestitve.
+    static func locate(_ name: String, also extra: [String] = []) -> String? {
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
         let p = Process()
         p.executableURL = URL(fileURLWithPath: shell)
-        p.arguments = ["-lic", "command -v claude"]
+        p.arguments = ["-lic", "command -v \(name)"]
         let out = Pipe()
         p.standardOutput = out
         p.standardError = FileHandle.nullDevice
@@ -184,9 +187,9 @@ public enum ClaudeCLI {
             found = text.split(whereSeparator: \.isNewline).map(String.init).filter { $0.hasPrefix("/") }.reversed()
         }
         let home = NSHomeDirectory()
-        let candidates = found + ["\(home)/.local/bin/claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude", "\(home)/.claude/local/claude"]
+        let candidates = found + ["\(home)/.local/bin/\(name)", "/opt/homebrew/bin/\(name)", "/usr/local/bin/\(name)"] + extra
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
-    }()
+    }
 
     static func expand(_ path: String) -> String {
         URL(fileURLWithPath: (path as NSString).expandingTildeInPath).standardizedFileURL.resolvingSymlinksInPath().path

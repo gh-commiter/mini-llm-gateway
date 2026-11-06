@@ -131,6 +131,23 @@ struct SettingsView: View {
             Section("Token") {
                 TokenRow()
             }
+        }
+    }
+
+    private var siri: some View {
+        Form {
+            Section {
+                Toggle("Enabled", isOn: $draft.siri.enabled)
+                TextField("Timeout (s)", value: $draft.siri.timeout, format: .number)
+                    .disabled(!draft.siri.enabled)
+            } footer: {
+                Label {
+                    Text("Siri answers with the personal context of this Mac's user (notes, documents, messages that Apple Intelligence can use). Other Macs get it only when you allow them below. Siri cannot read your project files.")
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                }
+                .font(.caption)
+            }
             Section {
                 ForEach($draft.devices) { $d in
                     Toggle(isOn: $d.siri) {
@@ -153,25 +170,8 @@ struct SettingsView: View {
             } header: {
                 Text("Devices")
             } footer: {
-                Text("Macs that connected with minigw. The switch allows Siri AI, which answers with this Mac's personal data. This Mac always has it. A removed device appears again when it connects, with Siri off.")
+                Text("Macs that connected with minigw (0.4.4 or newer). The switch allows Siri AI for that Mac. This Mac always has it. A removed device appears again when it connects, with Siri off.")
                     .font(.caption).foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private var siri: some View {
-        Form {
-            Section {
-                Toggle("Enabled", isOn: $draft.siri.enabled)
-                TextField("Timeout (s)", value: $draft.siri.timeout, format: .number)
-                    .disabled(!draft.siri.enabled)
-            } footer: {
-                Label {
-                    Text("Siri answers with the personal context of this Mac's user (notes, documents, messages that Apple Intelligence can use). Anyone with the router token, also from another Mac, can get answers from it. Siri cannot read your project files.")
-                } icon: {
-                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                }
-                .font(.caption)
             }
             Section {
                 LabeledContent {
@@ -290,6 +290,18 @@ struct SettingsView: View {
                     let found = await ClaudeCLI.availableTools(draft.claudeCLI.executable)
                     cliTools = Array(Set(found + draft.claudeCLI.disabledTools)).sorted()
                 }
+            }
+            Section {
+                Toggle("Enabled", isOn: $draft.codex.enabled)
+                LabeledContent("Executable (empty = auto-detect)") {
+                    TextField("", text: $draft.codex.executable, prompt: Text(verbatim: Codex.detected ?? "codex"))
+                        .labelsHidden()
+                }
+            } header: {
+                Text("Codex")
+            } footer: {
+                Text("Model claude-codex runs “codex exec” as an agent in the session's folder (also folders shared from other Macs). Its sandbox writes only to that folder and the allowed folders; reads are not limited. Sign in once with “codex login”.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section {
                 LabeledContent {

@@ -202,47 +202,12 @@ extension Router {
             return await error(400, "invalid_request_error", "Last message must be from the user", rid: rid, writer: writer)
         }
         let scope = req.header("x-claude-mini-session") ?? ""
-        let stream = body["stream"] as? Bool == true
-        var t = StreamTranslator(model: body["model"] as? String ?? "claude-siri-ai")
-        var pinger: Task<Void, Never>?
-
-        do {
-            if stream {  // Siri nima pretoka: glave in message_start takoj, med čakanjem ping, nato cel odgovor
-                try await writer.write(HTTPResponse.head(status: 200, headers: [
-                    ("Content-Type", "text/event-stream"), ("Cache-Control", "no-cache"), ("request-id", rid),
-                ]) + t.start().reduce(Data(), +))
-                pinger = Task {
-                    while !Task.isCancelled {
-                        try? await Task.sleep(for: .seconds(10))
-                        if Task.isCancelled { break }
-                        try? await writer.write(StreamTranslator.sse("ping", ["type": "ping"]))
-                    }
-                }
-            }
+        return await replyWhenDone(body: body, model: "claude-siri-ai", rid: rid, writer: writer) {
             let reply = try await SiriEngine.shared.ask(turns, scope: scope, cfg: config.siri)
-            pinger?.cancel()
             Self.log.notice("\(rid, privacy: .public) siri thread=\(reply.newThread ? "new" : "continued", privacy: .public) marker=\(reply.markerMissing ? "missing" : "ok", privacy: .public)")
-            let delta = t.emit(reply.text)
-            t.usage = ["output_tokens": reply.text.utf8.count / 4]
-            if stream {
-                try await writer.write(delta + t.finish().reduce(Data(), +))
-                return 200
-            }
             var headers = [("x-siri-thread", reply.newThread ? "new" : "continued")]
             if reply.markerMissing { headers.append(("x-siri-end-marker", "missing")) }
-            let data = (try? JSONSerialization.data(withJSONObject: t.message(), options: [.withoutEscapingSlashes])) ?? Data()
-            try? await writer.write(HTTPResponse.head(status: 200, headers: [("Content-Type", "application/json"), ("request-id", rid)] + headers,
-                                                      contentLength: data.count) + data)
-            return 200
-        } catch {
-            pinger?.cancel()
-            let (status, type, message) = (error as? SiriError)?.status ?? (500, "api_error", "\(error)")
-            Self.log.error("\(rid, privacy: .public) siri failed: \(message, privacy: .public)")
-            if stream {
-                try? await writer.write(StreamTranslator.sse("error", ["type": "error", "error": ["type": type, "message": message]]))
-                return status
-            }
-            return await self.error(status, type, message, rid: rid, writer: writer)
+            return (reply.text, headers)
         }
     }
 }

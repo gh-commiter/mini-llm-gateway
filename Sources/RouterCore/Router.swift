@@ -2,8 +2,8 @@ import Foundation
 import FoundationModels
 import os
 
-public struct RequestLog: Sendable, Identifiable {
-    public let id = UUID()
+public struct RequestLog: Sendable, Identifiable, Codable {
+    public var id = UUID()
     public let time: Date
     public let method: String
     public let path: String
@@ -134,13 +134,19 @@ public final class Router: Sendable {
                     guard config.siriAllowed(peer: req.peer, device: req.device) else {
                         let who = req.device.map { "device “\($0.name)”" } ?? "this client (update minigw to 0.4.4 or newer)"
                         return (await error(400, "invalid_request_error",  // 403 Claude Code prikaže kot napako prijave
-                                            "Siri AI is not allowed for \(who): allow it in Mini Gateway → Settings → General → Devices",
+                                            "Siri AI is not allowed for \(who): allow it in Mini Gateway → Settings → Siri AI → Devices",
                                             rid: rid, writer: writer), model, "siri-ai")
                     }
                     if req.path.hasSuffix("/count_tokens") {
                         return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "siri-ai")
                     }
                     return (await runSiri(req, body: body, rid: rid, writer: writer), model, "siri-ai")
+                }
+                if config.codex.enabled, Codex.ids.contains(model) {
+                    if req.path.hasSuffix("/count_tokens") {
+                        return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "codex")
+                    }
+                    return (await runCodex(req, body: body, rid: rid, writer: writer), model, "codex")
                 }
                 if config.appleFM.enabled, AppleFM.ids.contains(model) {
                     if req.path.hasSuffix("/count_tokens") {
@@ -238,6 +244,10 @@ public final class Router: Sendable {
                 ["type": "model", "id": ClaudeCLI.agentPrefix + m, "display_name": "\(m.capitalized) · Claude CLI",
                  "description": "claude -p · \(m) · tools in your folder", "created_at": created]
             }
+        }
+        if config.codex.enabled, Codex.executable(config.codex.executable) != nil {
+            data.append(["type": "model", "id": "claude-codex", "display_name": "Codex · Codex CLI",
+                         "description": "codex exec · tools in your folder", "created_at": created])
         }
         return ["data": data, "has_more": false,
                 "first_id": data.first?["id"] ?? NSNull(), "last_id": data.last?["id"] ?? NSNull()]

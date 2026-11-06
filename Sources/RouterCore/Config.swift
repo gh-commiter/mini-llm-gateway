@@ -69,6 +69,7 @@ public struct RouterConfig: Codable, Sendable, Equatable {
     public var appleFM = AppleFMConfig()
     public var siri = SiriConfig()
     public var devices: [DeviceConfig] = []
+    public var codex = CodexConfig()
 
     public init() {}
 
@@ -84,6 +85,7 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         appleFM = try c.decodeIfPresent(AppleFMConfig.self, forKey: .appleFM) ?? d.appleFM
         siri = try c.decodeIfPresent(SiriConfig.self, forKey: .siri) ?? d.siri
         devices = try c.decodeIfPresent([DeviceConfig].self, forKey: .devices) ?? d.devices
+        codex = try c.decodeIfPresent(CodexConfig.self, forKey: .codex) ?? d.codex
     }
 
     /// Siri ima osebni kontekst tega Maca: lokalno vedno, z drugih Macov le odobrene naprave.

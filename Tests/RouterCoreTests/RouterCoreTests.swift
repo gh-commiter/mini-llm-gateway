@@ -531,3 +531,12 @@ final class SeenDevices: @unchecked Sendable {
     c.devices = [DeviceConfig(id: "abc", name: "Air", siri: true)]
     #expect(c.siriAllowed(peer: "10.0.0.5", device: d))
 }
+
+@Test func codexArgsSandboxed() {
+    let out = URL(fileURLWithPath: "/tmp/o.txt"), cwd = URL(fileURLWithPath: "/tmp/s")
+    let a = Codex.args(cwd: cwd, extraDirs: ["/tmp/x"], agent: true, output: out)
+    #expect(a.starts(with: ["exec"]) && a.last == "-")
+    #expect(a.contains("workspace-write") && !a.contains("danger-full-access") && !a.contains("--dangerously-bypass-approvals-and-sandbox"))
+    #expect(a.contains("--add-dir") && a.contains("/tmp/x") && a.contains("/tmp/s"))
+    #expect(Codex.args(cwd: cwd, extraDirs: [], agent: false, output: out).contains("read-only"))
+}

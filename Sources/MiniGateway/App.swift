@@ -32,7 +32,15 @@ final class AppState: ObservableObject {
     @Published var config = RouterConfig.load()
     @Published var status = String(localized: "Stopped")
     @Published var running = false
-    @Published var logs: [RequestLog] = []
+    /// Zgodovina (Activity): le metapodatki zahtev, nikoli vsebina; ohrani se ob ponovnem zagonu.
+    @Published var logs: [RequestLog] = AppState.loadLogs() {
+        didSet { try? JSONEncoder().encode(logs).write(to: Self.logsFile, options: .atomic) }
+    }
+    static let logsFile = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("Mini Gateway/activity.json")
+    static func loadLogs() -> [RequestLog] {
+        (try? JSONDecoder().decode([RequestLog].self, from: Data(contentsOf: logsFile))) ?? []
+    }
     @Published var deviceSeen: [String: Date] = [:]  // zadnja zahteva naprave (le v pomnilniku)
     let keychain = Keychain()
     private var server: RouterServer?
