@@ -20,7 +20,8 @@ client runs on macOS, Windows and Linux. Pick a model with `/model`, or give eac
 - [6. Security notes](#6-security-notes)
 - [7. Build from source](#7-build-from-source)
 - [8. Disclaimer](#8-disclaimer)
-- [9. License](#9-license)
+- [9. Credits](#9-credits)
+- [10. License](#10-license)
 
 ## 1. What it does
 
@@ -289,9 +290,22 @@ Set `SIGN_IDENTITY` or `NOTARY_PROFILE` to override the defaults. The app icon i
 Mini Gateway is provided **"AS IS", without warranty of any kind**, express or implied. Use it at your own risk.
 The authors are not liable for any damage, data loss, costs (for example API usage billed by a provider) or other
 claims arising from its use. Mini Gateway is an independent project and is not affiliated with or endorsed by
-Apple or Anthropic. The Siri provider automates the Siri AI user interface, which has no public API and may change
-with any macOS update. Siri and Apple are trademarks of Apple Inc.; Claude is a trademark of Anthropic, PBC.
+Apple, Anthropic, OpenAI, xAI, BerriAI or OpenRouter. The Siri provider automates the Siri AI user interface, which
+has no public API and may change with any macOS update. Siri and Apple are trademarks of Apple Inc.; Claude is a
+trademark of Anthropic, PBC; Codex and OpenAI are trademarks of OpenAI; Grok is a trademark of xAI.
 
-## 9. License
+## 9. Credits
+
+Mini Gateway only connects tools that others built:
+
+- [Anthropic](https://www.anthropic.com): [Claude Code](https://claude.com/claude-code) and the Claude models. Claude Code
+  is the client the whole project is made for, and Claude also wrote much of the code.
+- [OpenAI](https://openai.com): [Codex CLI](https://github.com/openai/codex).
+- [xAI](https://x.ai): Grok CLI.
+- [Apple](https://www.apple.com): the Siri AI app and the [Foundation Models](https://developer.apple.com/documentation/foundationmodels) framework.
+- [LiteLLM](https://github.com/BerriAI/litellm) by BerriAI and [OpenRouter](https://openrouter.ai): upstream model gateways.
+- [The Noise Protocol Framework](https://noiseprotocol.org) by Trevor Perrin: the encrypted connection between `minigw` and the router.
+
+## 10. License
 
 [MIT](LICENSE)
