@@ -161,7 +161,7 @@ func requireConnection() -> Connection {
 
 // MARK: ukazi
 
-let minigwVersion = "0.5.0"  // bump-version.sh
+let minigwVersion = "0.5.1"  // bump-version.sh
 var args = Array(CommandLine.arguments.dropFirst())
 
 switch args.first {
@@ -245,7 +245,10 @@ var sid = ""
 var own = false
 for (i, a) in args.enumerated() {
     switch a {
-    case "-r", "--resume": if i + 1 < args.count { sid = args[i + 1] }
+    case "-r", "--resume":  // brez ID-ja = izbirnik sej v claude; nikoli skupaj z --session-id
+        own = true
+        if i + 1 < args.count, !args[i + 1].hasPrefix("-") { sid = args[i + 1] }
+    case let a where a.hasPrefix("--resume="): own = true; sid = String(a.dropFirst("--resume=".count))
     case "--session-id": if i + 1 < args.count { sid = args[i + 1] }; own = true
     case "-c", "--continue": own = true
     default: break

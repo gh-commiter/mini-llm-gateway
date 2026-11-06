@@ -18,7 +18,7 @@ import (
 	"time"
 )
 
-const version = "0.5.0" // bump-version.sh
+const version = "0.5.1" // bump-version.sh
 
 type connection struct {
 	URL    string  `json:"url"`
@@ -305,8 +305,9 @@ func main() {
 	sid, own := "", false
 	for i, a := range args {
 		switch a {
-		case "-r", "--resume":
-			if i+1 < len(args) {
+		case "-r", "--resume": // brez ID-ja = izbirnik sej v claude; nikoli skupaj z --session-id
+			own = true
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
 				sid = args[i+1]
 			}
 		case "--session-id":
@@ -316,6 +317,10 @@ func main() {
 			own = true
 		case "-c", "--continue":
 			own = true
+		default:
+			if strings.HasPrefix(a, "--resume=") {
+				own, sid = true, strings.TrimPrefix(a, "--resume=")
+			}
 		}
 	}
 	if sid == "" {
