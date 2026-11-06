@@ -152,6 +152,7 @@ func requireConnection() -> Connection {
 
 // MARK: ukazi
 
+let minigwVersion = "0.4.1"  // bump-version.sh
 var args = Array(CommandLine.arguments.dropFirst())
 
 switch args.first {
@@ -201,13 +202,19 @@ case "models":
     }
     exit(0)
 
-case "--minigw-help":
-    say("""
-    minigw connect <host[:port]> [--token T]   save router address and token (Keychain)
-    minigw status | models | disconnect
-    minigw [claude options …]                    run Claude Code through the router
-    """)
-    exit(0)
+case "--minigw-help", "-h", "--help", "-v", "--version":
+    if args.first == "-v" || args.first == "--version" { say("minigw \(minigwVersion)") } else {
+        say("""
+        minigw connect <host[:port]> [--token T]   save router address and token (Keychain)
+        minigw status | models | disconnect
+        minigw [claude options …]                    run Claude Code through the router
+        """)
+    }
+    guard args.first != "--minigw-help" else { exit(0) }
+    // Le podatki o claude: brez routerja, seje in deljenja mape.
+    let argv = (["claude"] + args).map { strdup($0) } + [nil]
+    execvp("claude", argv)
+    fail("cannot run claude: \(String(cString: strerror(errno)))", code: 127)
 
 default:
     break
