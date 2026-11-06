@@ -146,6 +146,12 @@ public enum Grok {
 }
 
 extension Router {
+    /// Ključ za nadaljevanje seje agenta: naprava + mapa odjemalca. ID seje routerja in pot priklopa
+    /// se pri `minigw -c`/`--resume` zamenjata, zato nista v ključu.
+    static func agentScope(_ provider: String, _ req: HTTPRequest, cwd: URL) -> String {
+        [provider, req.device?.id ?? "local", req.header("x-claude-mini-cwd") ?? cwd.path].joined(separator: "|")
+    }
+
     func runGrok(_ req: HTTPRequest, body: [String: Any], model: String?, rid: String, writer: ResponseWriter) async -> Int {
         guard let exe = Grok.executable(config.grok.executable) else {
             return await error(503, "api_error", "Grok CLI not found (Mini Gateway → Settings → Grok CLI)", rid: rid, writer: writer)
@@ -178,7 +184,7 @@ extension Router {
         }
         var args = Grok.args(cwd: cwd, extraDirs: extra, agent: agent, model: model, write: config.grok.write)
         // Nadaljevanje Grokove seje (prebrane datoteke, rezultati ukazov): ključ je dosedanji pogovor v tej mapi.
-        let scope = "grok|" + (req.header("x-claude-mini-session") ?? "") + "|" + cwd.path
+        let scope = Self.agentScope("grok", req, cwd: cwd)
         if agent, let existing = await Self.grokSessions.get(ClaudeCLI.key(all.dropLast(), scope: scope)) {
             args += ["-r", existing]
             prompt = last.text

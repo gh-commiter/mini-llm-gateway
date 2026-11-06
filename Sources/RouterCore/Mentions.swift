@@ -50,6 +50,31 @@ enum Mentions {
         return hits
     }
 
+    static let media: Set<String> = ["png", "jpg", "jpeg", "heic", "gif", "tiff", "webp", "pdf"]
+    static let mediaDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("Mini Gateway/attachments", isDirectory: true)
+
+    /// Slike in PDF (omenjeni ali v omenjeni mapi) kopira v mapo priponk, od koder jih Siri priloži sama.
+    /// Mapa hrani le priponke zadnjega vprašanja.
+    static func stageMedia(_ urls: [URL], limit: Int = 4) -> [URL] {
+        let fm = FileManager.default
+        let all = urls.flatMap { u -> [URL] in
+            var isDir: ObjCBool = false
+            fm.fileExists(atPath: u.path, isDirectory: &isDir)
+            return isDir.boolValue ? filesIn(u) : [u]
+        }.filter { media.contains($0.pathExtension.lowercased()) }
+        try? fm.removeItem(at: mediaDir)
+        guard !all.isEmpty, (try? fm.createDirectory(at: mediaDir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])) != nil
+        else { return [] }
+        var out: [URL] = []
+        for u in all where out.count < limit {
+            let name = out.contains { $0.lastPathComponent == u.lastPathComponent } ? "\(out.count)-\(u.lastPathComponent)" : u.lastPathComponent
+            let dst = mediaDir.appendingPathComponent(name)
+            if (try? fm.copyItem(at: u, to: dst)) != nil { out.append(dst) }
+        }
+        return out
+    }
+
     /// Vsebina besedilnih datotek (mapa → njene datoteke na prvi ravni), skupaj največ `budget` bajtov.
     static let header = "The user attached these files from their project. Answer only from them; do not search elsewhere.\n\n"
 

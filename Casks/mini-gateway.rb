@@ -1,6 +1,6 @@
 cask "mini-gateway" do
-  version "0.5.2"
-  sha256 "2ca9f0812fbb02f51835afd42358d1a8d5cf386bd4115f81510701796d16d42d"
+  version "0.5.3"
+  sha256 "e14c2347ce46950a95b00ad9e9109455b9270b95a423e634a517dc08ef49af80"
 
   url "https://github.com/gh-commiter/mini-llm-gateway/releases/download/v#{version}/Mini-Gateway-#{version}.zip"
   name "Mini Gateway"

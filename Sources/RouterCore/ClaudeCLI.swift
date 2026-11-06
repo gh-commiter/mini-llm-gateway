@@ -312,6 +312,7 @@ extension Router {
     static let sessions = SessionRegistry()
     static let shares = ShareHub()
     static let grokSessions = SessionRegistry()
+    static let codexSessions = SessionRegistry()
     static let toolList = ToolList()
 
     /// Naslov tega routerja za lokalni mount_webdav.

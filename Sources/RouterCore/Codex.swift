@@ -70,9 +70,10 @@ public enum Codex {
 
     /// Argumenti: agent piše le v mapi seje in dovoljenih mapah (sandbox Codex), omrežje za gradnjo dovoljeno.
     /// Brez orodij (naslovi, povzetki) le branje v začasni mapi.
+    /// `resume`: ID niti Codex za nadaljevanje (možnosti exec, tudi sandbox, veljajo tudi zanj).
     static func args(cwd: URL, extraDirs: [String], agent: Bool, output: URL, model: String? = nil,
-                     write: Bool = true, network: Bool = true) -> [String] {
-        var a = ["exec", "--json", "--skip-git-repo-check", "--ephemeral", "--color", "never", "-C", cwd.path, "-o", output.path]
+                     write: Bool = true, network: Bool = true, resume: String? = nil) -> [String] {
+        var a = ["exec", "--json", "--skip-git-repo-check", "--color", "never", "-C", cwd.path, "-o", output.path]
         if let model { a += ["-m", model] }
         if agent && write {
             a += ["--sandbox", "workspace-write", "-c", "sandbox_workspace_write.network_access=\(network)"]
@@ -80,6 +81,8 @@ public enum Codex {
         } else {
             a += ["--sandbox", "read-only"]
         }
+        if !agent { a.append("--ephemeral") }  // naslovi, povzetki: brez zapisa seje
+        if let resume { a += ["resume", resume] }
         return a + ["-"]  // navodila prek stdin (brez omejitve dolžine argumentov)
     }
 
@@ -106,11 +109,17 @@ public enum Codex {
         }
     }
 
+    /// ID niti iz `{"type":"thread.started","thread_id":…}`.
+    static func threadId(_ line: Data) -> String? {
+        guard let o = try? JSONSerialization.jsonObject(with: line) as? [String: Any], o["type"] as? String == "thread.started" else { return nil }
+        return o["thread_id"] as? String
+    }
+
     static func run(_ exe: String, args: [String], cwd: URL, prompt: String, output: URL,
-                    onStep: @escaping @Sendable (String) -> Void = { _ in }) async throws -> String {
+                    onStep: @escaping @Sendable (String) -> Void = { _ in }) async throws -> (String, String?) {
         let h = Handle()
         return try await withTaskCancellationHandler {
-            try await Task.detached { () throws -> String in
+            try await Task.detached { () throws -> (String, String?) in
                 let p = h.p
                 p.executableURL = URL(fileURLWithPath: exe)
                 p.arguments = args
@@ -126,11 +135,13 @@ public enum Codex {
                 errReader.start()
                 input.fileHandleForWriting.write(Data(prompt.utf8))
                 try? input.fileHandleForWriting.close()
-                var buf = Data()
+                var buf = Data(), thread: String?
                 while case let chunk = events.fileHandleForReading.availableData, !chunk.isEmpty {
                     buf.append(chunk)
                     while let nl = buf.firstIndex(of: 10) {
-                        if let s = step(buf[buf.startIndex..<nl]) { onStep(s) }
+                        let line = buf[buf.startIndex..<nl]
+                        if thread == nil { thread = threadId(line) }
+                        if let s = step(line) { onStep(s) }
                         buf = Data(buf[(nl + 1)...])
                     }
                 }
@@ -141,7 +152,7 @@ public enum Codex {
                     let tail = String(decoding: stderr.suffix(400), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
                     throw Failure(message: "codex exited with \(p.terminationStatus)" + (tail.isEmpty ? "" : ": \(tail)"))
                 }
-                return text
+                return (text, thread)
             }.value
         } onCancel: { if h.p.isRunning { h.p.terminate() } }
     }
@@ -180,12 +191,21 @@ extension Router {
         }
         let output = FileManager.default.temporaryDirectory.appendingPathComponent("codex-\(rid).txt")
         defer { try? FileManager.default.removeItem(at: output) }
+        // Nadaljevanje niti Codex (prebrane datoteke, rezultati ukazov): ključ je dosedanji pogovor v tej mapi.
+        let scope = Self.agentScope("codex", req, cwd: cwd)
+        let existing = agent ? await Self.codexSessions.get(ClaudeCLI.key(all.dropLast(), scope: scope)) : nil
+        if existing != nil { prompt = last.text }
         let args = Codex.args(cwd: cwd, extraDirs: extra, agent: agent, output: output, model: model,
-                              write: config.codex.write, network: config.codex.network)
+                              write: config.codex.write, network: config.codex.network, resume: existing)
+        let sessions = Self.codexSessions
         return await replyWhenDone(body: body, model: "claude-codex", rid: rid, writer: writer) {
-            (try await Codex.run(exe, args: args, cwd: cwd, prompt: prompt, output: output) { [onActivity] s in
+            let (text, thread) = try await Codex.run(exe, args: args, cwd: cwd, prompt: prompt, output: output) { [onActivity] s in
                 onActivity(.step(id: rid, text: s))
-            }, [])
+            }
+            if agent, let thread {
+                await sessions.set(ClaudeCLI.key(all + [ClaudeCLI.Turn(role: "assistant", text: text)], scope: scope), thread)
+            }
+            return (text, [])
         }
     }
 

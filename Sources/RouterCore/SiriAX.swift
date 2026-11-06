@@ -16,6 +16,10 @@ enum SiriAX {
         static let modelResponse = "modelResponse"
         static let newChat = "newChatButton"
         static let composer = "promptViewTextField"
+        static let attach = "addAttachmentButton"
+        static let openPanel = "open-panel"
+        static let ok = "OKButton"
+        static let cancel = "CancelButton"
     }
 
     struct Item: Equatable {
@@ -131,6 +135,63 @@ enum SiriAX {
     static func newChat(_ root: AXUIElement) -> Bool {
         guard let b = find(root, ID.newChat) else { return false }
         return AXUIElementPerformAction(b, kAXPressAction as CFString) == .success
+    }
+
+    static func parent(_ el: AXUIElement) -> AXUIElement? { attr(el, "AXParent").map { $0 as! AXUIElement } }
+
+    static func first(_ el: AXUIElement, depth: Int = 0, where f: (AXUIElement) -> Bool) -> AXUIElement? {
+        if f(el) { return el }
+        guard depth < 40 else { return nil }
+        for c in children(el) { if let x = first(c, depth: depth + 1, where: f) { return x } }
+        return nil
+    }
+
+    static func poll<T>(_ seconds: Double, _ f: () -> T?) async -> T? {
+        for _ in 0..<Int(seconds * 4) {
+            if let v = f() { return v }
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        return f()
+    }
+
+    /// Priloži datoteko iz `url.deletingLastPathComponent()` prek gumba za priponke → »Files« (Siri sama bere slike in PDF).
+    /// Okno odpre zadnjo mapo (NSNavLastRootDirectory), zato jo nastavimo na mapo priponk; vrstico izberemo z AXSelected.
+    static func attach(_ root: AXUIElement, _ url: URL) async -> Bool {
+        CFPreferencesSetAppValue("NSNavLastRootDirectory" as CFString, url.deletingLastPathComponent().path as CFString, bundleID as CFString)
+        CFPreferencesAppSynchronize(bundleID as CFString)
+        // Menijska vrstica (Conversation → Attach File…) je brez fokusa onemogočena; meni gumba + se včasih
+        // ne odpre v prvo, zato pritisk ponovimo.
+        guard let button = find(root, ID.attach) else { return false }
+        var item: AXUIElement?
+        for _ in 0..<3 where item == nil {
+            AXUIElementPerformAction(button, kAXPressAction as CFString)
+            item = await poll(1.5) {
+                let items = (first(button) { attr($0, "AXRole") as? String == "AXMenu" }).map(children) ?? []
+                let titled = items.filter { !((attr($0, "AXTitle") as? String) ?? "").isEmpty }
+                return titled.first { attr($0, "AXTitle") as? String == "Files" } ?? titled.last  // Photos, Files
+            }
+        }
+        guard let item, AXUIElementPerformAction(item, kAXPressAction as CFString) == .success,
+              let panel = await poll(5, { find(root, ID.openPanel) }) else { return false }
+        func close(_ id: String) -> Bool {
+            find(panel, id).map { AXUIElementPerformAction($0, kAXPressAction as CFString) == .success } ?? false
+        }
+        guard let cell = await poll(4, { first(panel) { attr($0, "AXRole") as? String == "AXTextField" && attr($0, "AXValue") as? String == url.lastPathComponent } }) else {
+            _ = close(ID.cancel); return false
+        }
+        // Pogled seznama: vrstica (AXRow) z AXSelected. Pogled stolpcev: AXGroup v AXList; nastavitvi vrneta napako,
+        // izbira pa obvelja (zato šteje omogočen gumb Open).
+        var row: AXUIElement? = cell
+        while let r = row, attr(r, "AXRole") as? String != "AXRow" { row = parent(r) }
+        if let row {
+            AXUIElementSetAttributeValue(row, kAXSelectedAttribute as CFString, kCFBooleanTrue)
+        } else if let group = parent(cell), let list = parent(group) {
+            AXUIElementSetAttributeValue(group, kAXSelectedAttribute as CFString, kCFBooleanTrue)
+            AXUIElementSetAttributeValue(list, "AXSelectedChildren" as CFString, [group] as CFArray)
+        }
+        guard await poll(2, { find(panel, ID.ok).flatMap { attr($0, "AXEnabled") as? Bool == true ? true : nil } }) != nil,
+              close(ID.ok) else { _ = close(ID.cancel); return false }
+        return await poll(3, { find(root, ID.openPanel) == nil ? true : nil }) != nil
     }
 
     /// Vpiše in pošlje; uspeh šele, ko se polje izprazni (Siri potrditev včasih prezre, besedilo pa ostane v polju).

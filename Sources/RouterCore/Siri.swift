@@ -95,7 +95,8 @@ actor SiriEngine {
     }
 
     /// `context`: vsebina omenjenih datotek; gre le v poslano besedilo, ne v ključe niti (nadaljevanje pogovora ostane).
-    func ask(_ turns: [ClaudeCLI.Turn], scope: String, cfg: SiriConfig, context: String = "") async throws -> Reply {
+    /// `files`: slike in PDF, ki jih Siri priloži prek okna »Files«.
+    func ask(_ turns: [ClaudeCLI.Turn], scope: String, cfg: SiriConfig, context: String = "", files: [URL] = []) async throws -> Reply {
         let reqKey = ClaudeCLI.key(turns, scope: scope)
         done = done.filter { Date().timeIntervalSince($0.value.1) < 600 }
         // Claude Code ob napaki ali prekinitvi ponovi zahtevo: Siri istega sporočila ne dobi dvakrat.
@@ -107,7 +108,7 @@ actor SiriEngine {
         let previous = tail
         let task = Task { () -> Reply in
             await previous?.value
-            return try await self.run(turns, scope: scope, cfg: cfg, context: context)
+            return try await self.run(turns, scope: scope, cfg: cfg, context: context, files: files)
         }
         tail = Task { _ = try? await task.value }
         inflight[reqKey] = task
@@ -120,7 +121,7 @@ actor SiriEngine {
         return reply
     }
 
-    private func run(_ turns: [ClaudeCLI.Turn], scope: String, cfg: SiriConfig, context: String) async throws -> Reply {
+    private func run(_ turns: [ClaudeCLI.Turn], scope: String, cfg: SiriConfig, context: String, files: [URL]) async throws -> Reply {
         guard SiriAX.trusted(prompt: false) else { throw SiriError.permission }  // dialog sproži le vklop v nastavitvah
         guard let root = await SiriAX.app() else { throw SiriError.unavailable }
         let deadline = Date().addingTimeInterval(cfg.timeout)
@@ -140,6 +141,7 @@ actor SiriEngine {
         let before = SiriAX.transcript(root).count
         let marker = "END-" + String(UUID().uuidString.prefix(4)).lowercased()
         let prompt = context + (newThread ? Siri.packed(history: history, last: last) : last) + Siri.instruction(marker)
+        for f in files where await !SiriAX.attach(root, f) { throw SiriError.uiFailed("attach \(f.lastPathComponent)") }
         guard SiriAX.send(root, prompt) else { throw SiriError.uiFailed("send") }
 
         var seen = ""
@@ -206,7 +208,7 @@ extension Router {
         let clientCwd = req.header("x-claude-mini-cwd")
         return await replyWhenDone(body: body, model: "claude-siri-ai", rid: rid, writer: writer) {
             // Datoteke, omenjene v vprašanju, iz mape seje (priklopljene z drugega Maca ali dovoljene tukaj).
-            var context = ""
+            var context = "", media: [URL] = []
             if let question = turns.last?.text {
                 let root: URL? = await Self.shares.mount(session: scope, cwd: clientCwd, base: localBase,
                                                  wait: req.header("x-claude-mini-share") == "1")
@@ -215,10 +217,12 @@ extension Router {
                     let names = await Mentions.names(in: question)
                     let files = Mentions.find(names, question: question, in: root)
                     context = Mentions.attachments(files, root: root)
-                    Self.log.notice("\(rid, privacy: .public) siri mentions=\(names.count) attached=\(files.count)")
+                    media = Mentions.stageMedia(files)
+                    if !media.isEmpty { context += "Also attached as files: " + media.map(\.lastPathComponent).joined(separator: ", ") + "\n\n" }
+                    Self.log.notice("\(rid, privacy: .public) siri mentions=\(names.count) attached=\(files.count) media=\(media.count)")
                 }
             }
-            let reply = try await SiriEngine.shared.ask(turns, scope: scope, cfg: config.siri, context: context)
+            let reply = try await SiriEngine.shared.ask(turns, scope: scope, cfg: config.siri, context: context, files: media)
             Self.log.notice("\(rid, privacy: .public) siri thread=\(reply.newThread ? "new" : "continued", privacy: .public) marker=\(reply.markerMissing ? "missing" : "ok", privacy: .public)")
             var headers = [("x-siri-thread", reply.newThread ? "new" : "continued")]
             if reply.markerMissing { headers.append(("x-siri-end-marker", "missing")) }
