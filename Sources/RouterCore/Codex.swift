@@ -72,7 +72,7 @@ public enum Codex {
     /// Brez orodij (naslovi, povzetki) le branje v začasni mapi.
     static func args(cwd: URL, extraDirs: [String], agent: Bool, output: URL, model: String? = nil,
                      write: Bool = true, network: Bool = true) -> [String] {
-        var a = ["exec", "--skip-git-repo-check", "--ephemeral", "--color", "never", "-C", cwd.path, "-o", output.path]
+        var a = ["exec", "--json", "--skip-git-repo-check", "--ephemeral", "--color", "never", "-C", cwd.path, "-o", output.path]
         if let model { a += ["-m", model] }
         if agent && write {
             a += ["--sandbox", "workspace-write", "-c", "sandbox_workspace_write.network_access=\(network)"]
@@ -88,7 +88,26 @@ public enum Codex {
     final class Handle: @unchecked Sendable { let p = Process() }
 
     /// Zažene codex in vrne zadnje sporočilo agenta; prekinitev odjemalca ustavi codex.
-    static func run(_ exe: String, args: [String], cwd: URL, prompt: String, output: URL) async throws -> String {
+    /// Korak iz dogodka `codex exec --json` (ukaz ali vmesno sporočilo agenta), za Activity.
+    static func step(_ line: Data) -> String? {
+        guard let obj = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+              let item = obj["item"] as? [String: Any] else { return nil }
+        switch (obj["type"] as? String, item["type"] as? String) {
+        case ("item.started", "command_execution"?):
+            var cmd = item["command"] as? String ?? ""
+            if let r = cmd.range(of: "-lc '"), cmd.hasSuffix("'") { cmd = String(cmd[r.upperBound...].dropLast()) }  // /bin/zsh -lc '…'
+            return "$ " + cmd.prefix(120)
+        case ("item.completed", "agent_message"?):
+            return (item["text"] as? String).map { String($0.split(separator: "\n").first ?? "").prefix(120) }.map(String.init)
+        case ("item.started", let t?) where t != "reasoning":
+            return t.replacingOccurrences(of: "_", with: " ")
+        default:
+            return nil
+        }
+    }
+
+    static func run(_ exe: String, args: [String], cwd: URL, prompt: String, output: URL,
+                    onStep: @escaping @Sendable (String) -> Void = { _ in }) async throws -> String {
         let h = Handle()
         return try await withTaskCancellationHandler {
             try await Task.detached { () throws -> String in
@@ -97,13 +116,25 @@ public enum Codex {
                 p.arguments = args
                 p.currentDirectoryURL = cwd
                 let input = Pipe(), errors = Pipe()
+                let events = Pipe()
                 p.standardInput = input
-                p.standardOutput = FileHandle.nullDevice
+                p.standardOutput = events
                 p.standardError = errors
+                var stderr = Data()
+                let errReader = Thread { stderr = errors.fileHandleForReading.readDataToEndOfFile() }  // ne blokira pipe
                 try p.run()
+                errReader.start()
                 input.fileHandleForWriting.write(Data(prompt.utf8))
                 try? input.fileHandleForWriting.close()
-                let stderr = errors.fileHandleForReading.readDataToEndOfFile()
+                var buf = Data()
+                while case let chunk = events.fileHandleForReading.availableData, !chunk.isEmpty {
+                    buf.append(chunk)
+                    while let nl = buf.firstIndex(of: 10) {
+                        if let s = step(buf[buf.startIndex..<nl]) { onStep(s) }
+                        buf = Data(buf[(nl + 1)...])
+                    }
+                }
+                while errReader.isExecuting { usleep(10_000) }
                 p.waitUntilExit()
                 let text = (try? String(contentsOf: output, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 guard p.terminationStatus == 0, !text.isEmpty else {
@@ -152,7 +183,9 @@ extension Router {
         let args = Codex.args(cwd: cwd, extraDirs: extra, agent: agent, output: output, model: model,
                               write: config.codex.write, network: config.codex.network)
         return await replyWhenDone(body: body, model: "claude-codex", rid: rid, writer: writer) {
-            (try await Codex.run(exe, args: args, cwd: cwd, prompt: prompt, output: output), [])
+            (try await Codex.run(exe, args: args, cwd: cwd, prompt: prompt, output: output) { [onActivity] s in
+                onActivity(.step(id: rid, text: s))
+            }, [])
         }
     }
 

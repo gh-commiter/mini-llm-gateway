@@ -13,6 +13,13 @@ public struct RequestLog: Sendable, Identifiable, Codable {
     public let ms: Int
 }
 
+/// Tekoča zahteva za »Activity«: začetek, zadnji korak agenta (ukaz, datoteka), konec. Le metapodatki.
+public enum Activity: Sendable {
+    case started(id: String, time: Date, model: String)
+    case step(id: String, text: String)
+    case finished(id: String)
+}
+
 struct Route: Sendable {
     let provider: ProviderConfig
     let name: String      // ime v nastavitvah ali ID pri upstreamu
@@ -30,6 +37,7 @@ public final class Router: Sendable {
     let session: URLSession
     let onLog: @Sendable (RequestLog) -> Void
     let onDevice: @Sendable (Noise.Device) -> Void  // aplikacija doda novo napravo v nastavitve, beleži »zadnjič«
+    let onActivity: @Sendable (Activity) -> Void
     let catalog: Catalog
     let probes = Probes()
     static let log = Logger(subsystem: "dev.trojar.minigateway", category: "router")
@@ -37,9 +45,11 @@ public final class Router: Sendable {
     public init(config: RouterConfig, token: String, secrets: SecretStore,
                 session: URLSession = Router.defaultSession,
                 onLog: @escaping @Sendable (RequestLog) -> Void = { _ in },
-                onDevice: @escaping @Sendable (Noise.Device) -> Void = { _ in }) {
+                onDevice: @escaping @Sendable (Noise.Device) -> Void = { _ in },
+                onActivity: @escaping @Sendable (Activity) -> Void = { _ in }) {
         self.config = config
         self.onDevice = onDevice
+        self.onActivity = onActivity
         self.token = token
         self.secrets = secrets
         self.session = session
@@ -71,6 +81,11 @@ public final class Router: Sendable {
         let start = Date()
         let rid = "req_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
         if let d = req.device { onDevice(d) }
+        let tracked = req.method == "POST" && req.path.hasPrefix("/v1/messages") && !req.path.hasSuffix("/count_tokens")
+        if tracked, let model = (try? JSONSerialization.jsonObject(with: req.body) as? [String: Any])?["model"] as? String {
+            onActivity(.started(id: rid, time: start, model: model))
+        }
+        defer { if tracked { onActivity(.finished(id: rid)) } }
         let (status, model, provider) = await route(req, rid: rid, writer: writer)
         writer.close()
         let ms = Int(Date().timeIntervalSince(start) * 1000)

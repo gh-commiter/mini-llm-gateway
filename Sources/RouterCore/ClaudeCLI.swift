@@ -235,6 +235,7 @@ struct StreamTranslator {
     let messageID = "msg_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
     private(set) var text = ""
     private(set) var resultError: String?
+    private(set) var step: String?  // zadnje orodje agenta, npr. »Read docs/x.md« (za Activity)
     var usage: [String: Any] = [:]
 
     func start() -> [Data] {
@@ -263,6 +264,13 @@ struct StreamTranslator {
                     return [emit(t)]
                 }
             default: break
+            }
+        case "assistant":  // celotno sporočilo z vhodi orodij (le glavni agent)
+            guard obj["parent_tool_use_id"] == nil || obj["parent_tool_use_id"] is NSNull else { return [] }
+            for b in ((obj["message"] as? [String: Any])?["content"] as? [[String: Any]]) ?? [] where b["type"] as? String == "tool_use" {
+                let input = b["input"] as? [String: Any] ?? [:]
+                let arg = ["command", "file_path", "pattern", "path", "url", "query", "description"].lazy.compactMap { input[$0] as? String }.first ?? ""
+                step = "\(b["name"] as? String ?? "tool") \(arg.prefix(120))".trimmingCharacters(in: .whitespaces)
             }
         case "result":
             usage = obj["usage"] as? [String: Any] ?? [:]
@@ -423,7 +431,9 @@ extension Router {
                     }
                 }
                 for try await line in stdout.fileHandleForReading.bytes.lines {
+                    let before = t.step
                     try await send(t.feed(Data(line.utf8)))
+                    if let s = t.step, s != before { onActivity(.step(id: rid, text: s)) }
                 }
             } onCancel: {
                 p.terminate()

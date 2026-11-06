@@ -14,8 +14,10 @@ struct MiniGatewayApp: App {
     @StateObject private var state = AppState()
 
     var body: some Scene {
-        MenuBarExtra("Mini Gateway", systemImage: state.running ? "arrow.triangle.branch" : "exclamationmark.triangle") {
+        MenuBarExtra {
             MenuView().environmentObject(state)
+        } label: {
+            Image(nsImage: menuBarImage(listening: state.running, active: state.inflight.count))
         }
         Settings {
             SettingsView().environmentObject(state)
@@ -25,6 +27,27 @@ struct MiniGatewayApp: App {
             ActivityView().environmentObject(state)
         }
     }
+}
+
+/// Ikona menijske vrstice: znak routerja, ob tekočih zahtevah še kovanček s številom (številka sredinsko).
+/// Ena slika (template), ker menijska vrstica sestavljenih oznak SwiftUI ne izriše zanesljivo.
+@MainActor
+func menuBarImage(listening: Bool, active: Int) -> NSImage {
+    let cfg = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
+    let icon = NSImage(systemSymbolName: listening ? "arrow.triangle.branch" : "exclamationmark.triangle",
+                       accessibilityDescription: "Mini Gateway")?.withSymbolConfiguration(cfg) ?? NSImage()
+    guard active > 0 else { icon.isTemplate = true; return icon }
+    let coin = NSImage(systemSymbolName: active <= 50 ? "\(active).circle.fill" : "ellipsis.circle.fill",
+                       accessibilityDescription: nil)?.withSymbolConfiguration(cfg) ?? NSImage()
+    let gap: CGFloat = 3, h = max(icon.size.height, coin.size.height)
+    let image = NSImage(size: NSSize(width: icon.size.width + gap + coin.size.width, height: h), flipped: false) { _ in
+        icon.draw(in: NSRect(x: 0, y: (h - icon.size.height) / 2, width: icon.size.width, height: icon.size.height))
+        coin.draw(in: NSRect(x: icon.size.width + gap, y: (h - coin.size.height) / 2, width: coin.size.width, height: coin.size.height))
+        return true
+    }
+    image.isTemplate = true
+    image.accessibilityDescription = "Mini Gateway, \(active) active"
+    return image
 }
 
 @MainActor
@@ -42,6 +65,10 @@ final class AppState: ObservableObject {
         (try? JSONDecoder().decode([RequestLog].self, from: Data(contentsOf: logsFile))) ?? []
     }
     @Published var deviceSeen: [String: Date] = [:]  // zadnja zahteva naprave (le v pomnilniku)
+
+    /// Tekoče zahteve modelom (najnovejša zgoraj), z zadnjim korakom agenta.
+    struct Running: Identifiable { let id: String; let time: Date; let model: String; var step: String? }
+    @Published var inflight: [Running] = []
     let keychain = Keychain()
     private var server: RouterServer?
     private let log = Logger(subsystem: "dev.trojar.minigateway", category: "app")
@@ -97,6 +124,15 @@ final class AppState: ObservableObject {
             }
         }, onDevice: { [weak self] device in
             Task { @MainActor in self?.seen(device) }
+        }, onActivity: { [weak self] event in
+            Task { @MainActor in
+                guard let self else { return }
+                switch event {
+                case .started(let id, let time, let model): self.inflight.insert(Running(id: id, time: time, model: model), at: 0)
+                case .step(let id, let text): if let i = self.inflight.firstIndex(where: { $0.id == id }) { self.inflight[i].step = text }
+                case .finished(let id): self.inflight.removeAll { $0.id == id }
+                }
+            }
         })
         let s = RouterServer(router: router, key: routerKey)
         s.onState = { [weak self] state in
@@ -165,7 +201,11 @@ struct MenuView: View {
     var body: some View {
         Text(verbatim: state.status)
         Divider()
-        if state.logs.isEmpty {
+        ForEach(state.inflight) { r in
+            Text(verbatim: "⏳ \(r.model)  \(Duration.seconds(Int(Date().timeIntervalSince(r.time))).formatted(.time(pattern: .minuteSecond)))"
+                 + (r.step.map { "  · \($0.prefix(60))" } ?? ""))
+        }
+        if state.logs.isEmpty && state.inflight.isEmpty {
             Text("No requests")
         } else {
             ForEach(state.logs.prefix(10)) { l in
@@ -205,6 +245,32 @@ struct ActivityView: View {
     }
 
     var body: some View {
+        VStack(spacing: 0) {
+            if !state.inflight.isEmpty {
+                // Tekoče zahteve: čas se osveži vsako sekundo, korak agenta sproti.
+                TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(state.inflight) { r in
+                            HStack(spacing: 8) {
+                                ProgressView().controlSize(.small)
+                                Text(verbatim: r.model).fontWeight(.medium)
+                                Text(verbatim: Duration.seconds(Int(ctx.date.timeIntervalSince(r.time))).formatted(.time(pattern: .minuteSecond)))
+                                    .monospacedDigit().foregroundStyle(.secondary)
+                                Text(verbatim: r.step ?? String(localized: "Working…")).lineLimit(1).truncationMode(.middle)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+                }
+                Divider()
+            }
+            table
+        }
+    }
+
+    private var table: some View {
         Table(rows) {
             TableColumn("Time") { Text($0.time.formatted(date: .abbreviated, time: .standard)) }
             TableColumn("Status") { Text(verbatim: String($0.status)).foregroundStyle($0.status < 400 ? Color.primary : Color.red) }
