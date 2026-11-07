@@ -205,7 +205,8 @@ func finalize(repo, wt, branch, base, agent, out string) string {
 		tip = base
 	}
 	parents := []string{tip} // veja se pri odjemalcu le premika naprej
-	if p, _ := g(nil, tmp, "rev-parse", "-q", "--verify", "refs/heads/"+branch+"^{commit}"); shaRe.MatchString(p) && p != tip {
+	prev, _ := g(nil, tmp, "rev-parse", "-q", "--verify", "refs/heads/"+branch+"^{commit}")
+	if p := prev; shaRe.MatchString(p) && p != tip {
 		if ancestor(tip, p) {
 			tip, parents = p, []string{p}
 		} else if !ancestor(p, tip) {
@@ -235,11 +236,18 @@ func finalize(repo, wt, branch, base, agent, out string) string {
 	if tip == base {
 		return tip // agent ni spremenil ničesar
 	}
-	if _, err := g(nil, tmp, "bundle", "create", out, "refs/heads/"+branch, "^"+base); err != nil || !isBundle(out) {
-		return ""
+	_, err = g(nil, tmp, "bundle", "create", out, "refs/heads/"+branch, "^"+base)
+	if err == nil && isBundle(out) {
+		_, err = gitRun(repo, tmp, nil, "--git-dir", repo, "-c", "transfer.fsckObjects=true", "-c", "fetch.fsckObjects=true",
+			"bundle", "unbundle", out) // objekti tudi v zrcalo (klon izgine); fsck zavrne npr. drevo z ».git«
 	}
-	if _, err := gitRun(repo, tmp, nil, "--git-dir", repo, "-c", "transfer.fsckObjects=true", "-c", "fetch.fsckObjects=true",
-		"bundle", "unbundle", out); err != nil { // objekti tudi v zrcalo (klon izgine)
+	if err != nil || !isBundle(out) { // ref zrcala nazaj: sicer bi kazal na objekte, ki jih ni (le v klonu)
+		if shaRe.MatchString(prev) {
+			g(nil, tmp, "update-ref", "refs/heads/"+branch, prev)
+		} else {
+			g(nil, tmp, "update-ref", "-d", "refs/heads/"+branch)
+		}
+		os.Remove(out)
 		return ""
 	}
 	return tip

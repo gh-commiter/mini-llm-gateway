@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -104,5 +105,45 @@ func TestWorktreeTreePaths(t *testing.T) {
 		if _, err := worktreeTree("/s", "dev", c[0], c[1]); err == nil {
 			t.Fatalf("accepted %v", c)
 		}
+	}
+}
+
+// Agentov commit, ki ga fsck zavrne (drevo z ».git«): brez rezultata in ref zrcala ne kaže na manjkajoče objekte
+// (sicer bi vsak naslednji klon zrcala padel).
+func TestWorktreeFinalizeRejectedKeepsMirror(t *testing.T) {
+	root := t.TempDir()
+	client, repo, wt := filepath.Join(root, "c"), filepath.Join(root, "repos", "d", "r.git"), filepath.Join(root, "wt")
+	os.MkdirAll(client, 0o755)
+	gitT(t, client, "init", "-q", "-b", "main")
+	writeT(t, filepath.Join(client, "a.txt"), "a\n")
+	gitT(t, client, "add", "a.txt")
+	gitT(t, client, "commit", "-qm", "first")
+	head := gitT(t, client, "rev-parse", "HEAD")
+	b := filepath.Join(root, "push.bundle")
+	gitUser(client, nil, "update-ref", "refs/minigw/push", head)
+	gitUser(client, nil, "bundle", "create", b, "refs/minigw/push")
+	if ensureMirror(repo) != nil || !importBase(repo, b, head, "refs/minigw/base/x") || !makeClone(repo, wt, "minigw/claude-12345678-0", head) {
+		t.Fatal("mirror or clone")
+	}
+	blob := gitT(t, wt, "hash-object", "-w", "--stdin")
+	cmd := func(in string, a ...string) string {
+		c := exec.Command("git", append([]string{"-C", wt}, a...)...)
+		c.Stdin = strings.NewReader(in)
+		out, err := c.Output()
+		if err != nil {
+			t.Fatalf("git %v: %v", a, err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	e := cmd("100644 blob "+blob+"\thooks-post-checkout\n", "mktree")
+	top := cmd("040000 tree "+e+"\t.git\n", "mktree")
+	c := cmd("", "-c", "user.name=a", "-c", "user.email=a@x", "commit-tree", top, "-p", head, "-m", "dot git")
+	cmd("", "update-ref", "HEAD", c)
+	if tip := finalize(repo, wt, "minigw/claude-12345678-0", head, "claude", filepath.Join(root, "out.bundle")); tip != "" {
+		t.Fatalf("finalize accepted a .git tree: %s", tip)
+	}
+	os.RemoveAll(wt)
+	if !makeClone(repo, filepath.Join(root, "wt2"), "minigw/claude-12345678-1", head) {
+		t.Fatal("mirror broken after a rejected result")
 	}
 }
