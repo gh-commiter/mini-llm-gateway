@@ -21,11 +21,18 @@ nav { width: 220px; flex: none; background: var(--side); padding: 14px 10px; pos
 nav .title { font-weight: 600; margin: 2px 8px 12px; }
 nav .item { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; border: 0; background: none;
   color: var(--text); padding: 5px 8px; border-radius: 6px; font: inherit; cursor: pointer; }
-nav .item.sub { padding-left: 30px; }
 nav .item.sel { background: var(--sel); }
 nav .ico { width: 20px; height: 20px; border-radius: 5px; display: inline-flex; align-items: center; justify-content: center;
   color: #fff; font-size: 11px; font-weight: 700; flex: none; }
-nav .footer { display: flex; gap: 4px; margin: 4px 0 0 30px; }
+nav input.search { width: 100%; max-width: none; margin: 0 0 10px; padding: 3px 8px; border-radius: 6px; }
+nav .spacer { flex: 1; }
+nav .footer { display: flex; align-items: center; gap: 2px; margin: 8px 4px 0; position: relative; }
+nav .footer .divider { width: 1px; height: 14px; background: var(--inputline); }
+nav .menu { position: absolute; bottom: 28px; left: 0; background: var(--panel); border-radius: 8px; padding: 4px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.25); display: flex; flex-direction: column; min-width: 240px; }
+nav .menu button { width: auto; height: auto; text-align: left; font-size: 13px; padding: 5px 10px; border-radius: 5px; }
+nav .menu button:hover { background: var(--accent); color: #fff; }
+.hidden { display: none !important; }
 nav .footer button { width: 24px; height: 22px; border: 0; background: none; color: var(--text); font-size: 16px; cursor: pointer; border-radius: 4px; }
 nav .footer button:disabled { color: var(--muted); cursor: default; }
 main { flex: 1; padding: 20px 28px 40px; }
@@ -120,7 +127,8 @@ const S = {
   rotated: ["New token: run the new line on each client.", "Nov žeton: novo vrstico zaženi na vsakem odjemalcu."],
   waiting: ["Waiting for approval", "Čakajo na odobritev"], allowed: ["Allowed devices", "Dovoljene naprave"], none: ["None", "Nobena"],
   noWaiting: ["No device is waiting.", "Nobena naprava ne čaka."], allow: ["Allow", "Dovoli"], deny: ["Deny", "Zavrni"], remove: ["Remove", "Odstrani"],
-  removeAsk: ["Remove %s?", "Odstranim %s?"], addGateway: ["Add Gateway", "Dodaj prehod"], name: ["Name", "Ime"], url: ["Base URL", "Osnovni URL"],
+  removeAsk: ["Remove %s?", "Odstranim %s?"], addGateway: ["Add Gateway", "Dodaj prehod"], search: ["Search", "Iskanje"],
+  otherGateway: ["Other Anthropic-compatible gateway", "Drug Anthropic-združljiv prehod"], gateway: ["Gateway", "Prehod"], gatewayDesc: ["Models of an Anthropic-compatible gateway, passed through to Claude Code.", "Modeli Anthropic-združljivega prehoda, posredovani Claude Code."], name: ["Name", "Ime"], url: ["Base URL", "Osnovni URL"],
   key: ["API key", "Ključ API"], keyStored: ["Stored in the system's secret store (Credential Manager); never shown.", "V shrambi skrivnosti sistema (Credential Manager); nikoli prikazan."],
   keyNew: ["Type a new key to replace it", "Vpiši nov ključ za zamenjavo"], noKey: ["No key", "Brez ključa"],
   urlNeedsKey: ["Type the API key again to save a new URL.", "Za nov URL znova vpiši ključ API."],
@@ -308,7 +316,7 @@ const pages = {
     const bulk = on => save(n2, async () => { await api("POST", "/gateways/" + encodeURIComponent(name) + "/models", {all: on}); await load(); });
     load();
     return [
-      card("linear-gradient(#ffcc00,#ff9500)", "⇄", name, g.baseURL),
+      card(gwIcon(g)[0], gwIcon(g)[1], name, t("gatewayDesc")),
       group(row(t("url"), url), row(labelSub(t("key"), g.hasKey ? "••••••••" : t("noKey")), key)), n1,
       section(t("models"), button(t("enableAll"), () => bulk(true)), button(t("disableAll"), () => bulk(false))),
       el("div", {class: "filter", style: "margin:0 4px 8px"}, filter,
@@ -317,14 +325,15 @@ const pages = {
     ];
   },
 
-  async addGateway() {
+  async addGateway(preset) {
+    const [pname, purl, pins] = PRESETS[preset] || PRESETS.other;
     const n = note(t("keyStored"));
-    const name = el("input", {type: "text", placeholder: "OpenRouter"}), url = el("input", {type: "text", placeholder: "https://openrouter.ai/api"});
+    const name = el("input", {type: "text", value: pname || t("gateway")}), url = el("input", {type: "text", value: purl});
     const key = el("input", {type: "password", autocomplete: "off"});
-    let insecure = false;
+    let insecure = pins;
     return [
       card("linear-gradient(#ffcc00,#ff9500)", "+", t("addGateway"), t("gatewaysDesc")),
-      group(row(t("name"), name), row(t("url"), url), row(t("key"), key), row(t("insecure"), toggle(false, v => { insecure = v; }))),
+      group(row(t("name"), name), row(t("url"), url), row(t("key"), key), row(t("insecure"), toggle(insecure, v => { insecure = v; }))),
       el("div", {class: "row", style: "justify-content:flex-end;padding:8px 0"}, buttons(button(t("add"), () => save(n, async () => {
         const r = await api("POST", "/gateways", {name: name.value.trim(), baseURL: url.value.trim(), key: key.value.trim(), insecure});
         await nav(); show("gateway", r.gateway.name);
@@ -376,27 +385,40 @@ const pages = {
 };
 
 let current = "general", currentArg = "", gateways = [];
+// Ikone stranske vrstice (kot na Macu: barvna ploščica z znakom).
+const ICON = {general: ["#8e8e93", "⚙"], devices: ["#007aff", "⌘"], claude: ["#b8743c", ">_"], codex: ["#30b0c7", "</>"], grok: ["#5856d6", "✦"]};
+const gwIcon = g => /openrouter\.ai/.test(g.baseURL) ? ["#af52de", "◈"] : ["#007aff", "▤"];
+let search = "";
+const PRESETS = {litellm: ["LiteLLM", "http://localhost:4000", true], openrouter: ["OpenRouter", "https://openrouter.ai/api", false], other: [null, "https://", false]};
+
 async function nav() {
   try { gateways = (await api("GET", "/gateways")).gateways; } catch (e) { gateways = []; }
-  const item = (page, label, color, glyph, arg, sub) => {
-    const b = el("button", {class: "item" + (sub ? " sub" : "") + (current === page && currentArg === (arg || "") ? " sel" : ""),
-      onclick: () => show(page, arg)}, sub ? null : el("span", {class: "ico", textContent: glyph, style: "background:" + color}), label);
-    return b;
-  };
+  const item = (page, label, [color, glyph], arg) => el("button", {class: "item" + (current === page && currentArg === (arg || "") ? " sel" : ""),
+    onclick: () => show(page, arg)}, el("span", {class: "ico", textContent: glyph, style: "background:" + color}), label);
   const sel = current === "gateway" ? currentArg : "";
+  const items = [
+    ["general", t("general"), ICON.general],
+    ...gateways.map(g => ["gateway", g.name, gwIcon(g), g.name]),
+    ["claude", t("claude"), ICON.claude],
+    ...(pages.codex ? [["codex", "Codex CLI", ICON.codex]] : []),
+    ...(pages.grok ? [["grok", "Grok CLI", ICON.grok]] : []),
+    ["devices", t("devices"), ICON.devices],
+  ].filter(x => !search || x[1].toLowerCase().includes(search.toLowerCase()));
+  const find = el("input", {type: "text", class: "left search", placeholder: t("search"), value: search});
+  find.addEventListener("input", () => { search = find.value; nav().then(() => { const f = document.querySelector("nav .search"); f.focus(); f.setSelectionRange(search.length, search.length); }); });
+  const menu = el("div", {class: "menu hidden"},
+    ...Object.keys(PRESETS).map(k => el("button", {textContent: k === "other" ? t("otherGateway") : PRESETS[k][0], onclick: () => { menu.classList.add("hidden"); show("addGateway", k); }})));
   document.getElementById("nav").replaceChildren(
-    el("div", {class: "title", textContent: "Mini Gateway"}),
-    item("general", t("general"), "#8e8e93", "⚙"),
-    item("devices", t("devices"), "#007aff", "⌘"),
-    item("claude", t("claude"), "#b8743c", ">_"),
-    el("div", {class: "item", style: "cursor:default"}, el("span", {class: "ico", textContent: "⇄", style: "background:#ff9500"}), t("gateways")),
-    ...gateways.map(g => item("gateway", g.name, "", "", g.name, true)),
+    find,
+    ...items.map(x => item(x[0], x[1], x[2], x[3])),
+    el("div", {class: "spacer"}),
     el("div", {class: "footer"},
-      el("button", {textContent: "+", title: t("addGateway"), onclick: () => show("addGateway")}),
+      el("button", {textContent: "+", title: t("addGateway"), onclick: () => menu.classList.toggle("hidden")}),
+      el("span", {class: "divider"}),
       el("button", {textContent: "−", title: t("remove"), disabled: !sel, onclick: async () => {
         if (!confirm(t("removeGateway", sel))) return;
         try { await api("DELETE", "/gateways/" + encodeURIComponent(sel)); await show("general"); } catch (e) { toast(e.message); }
-      }})));
+      }}), menu));
 }
 
 async function show(page, arg) {
