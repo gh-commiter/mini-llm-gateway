@@ -31,6 +31,8 @@ type agentMounts struct {
 	env    []string // dodatne spremenljivke (Copilot: žeton prijave pod bwrap)
 	// protect: le za branje znotraj pisljive mape (worktree: .git/config, hooks, info klona), vezano za rw.
 	protect []string
+	// pins: mape, ki morajo biti same točke priklopa (L1: .git klona, da ga ni mogoče preimenovati in zamenjati).
+	pins []string
 }
 
 // packageRoot: mapa, ki jo CLI pod domačo mapo potrebuje: različica nvm (~/.nvm/versions/node/<v>), sicer najbližja
@@ -51,7 +53,8 @@ func packageRoot(home, exe string) string {
 
 // bwrapArgs: vse kot je (/), nato prazna domača mapa in mapa nastavitev, potrebne mape nazaj, skrite vtičnice.
 // hidden: prazne mape takoj za domačo (Scratch zunaj nje); mape agenta v njih se nato vežejo nazaj.
-func bwrapArgs(home, cfgDir string, hidden, ro, rw, protect, hideFiles, hideDirs []string) []string {
+// rehide (H1): Scratch, če ga vsebuje kakšna pisljiva mapa: po rw znova tmpfs, nato le poti v njem (klon, Maven, objekti).
+func bwrapArgs(home, cfgDir string, hidden, ro, rw []string, rehide string, pins, protect, hideFiles, hideDirs []string) []string {
 	// --unshare-pid in svoj /proc: ukazi agenta ne vidijo drugih procesov (okolje copilota z žetonom v /proc/<pid>/environ).
 	a := []string{"--dev-bind", "/", "/", "--die-with-parent", "--unshare-pid", "--proc", "/proc", "--tmpfs", home}
 	for _, d := range hidden {
@@ -61,6 +64,23 @@ func bwrapArgs(home, cfgDir string, hidden, ro, rw, protect, hideFiles, hideDirs
 		a = append(a, "--ro-bind", d, d)
 	}
 	for _, d := range rw { // mape ali posamezne datoteke (prijava CLI)
+		a = append(a, "--bind", d, d)
+	}
+	if rehide != "" {
+		in := func(p string) bool { return p != rehide && strings.HasPrefix(p, rehide+string(filepath.Separator)) }
+		a = append(a, "--tmpfs", rehide)
+		for _, d := range ro {
+			if in(d) {
+				a = append(a, "--ro-bind", d, d)
+			}
+		}
+		for _, d := range rw {
+			if in(d) {
+				a = append(a, "--bind", d, d)
+			}
+		}
+	}
+	for _, d := range pins {
 		a = append(a, "--bind", d, d)
 	}
 	for _, d := range protect {

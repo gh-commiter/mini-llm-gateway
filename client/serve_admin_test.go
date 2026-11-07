@@ -547,7 +547,8 @@ func TestScratchProblem(t *testing.T) {
 	for _, c := range []struct {
 		p    string
 		want string
-	}{{"/", "root"}, {home, "home"}, {filepath.Dir(home), "home"}, {os.TempDir(), "temporary"}, {filepath.Join(proj, "in"), "allowed"},
+	}{{"/", "root"}, {home, "home"}, {filepath.Dir(home), map[bool]string{true: "root", false: "home"}[filepath.Dir(filepath.Dir(home)) == filepath.Dir(home) || filepath.Dir(home) == "/"]},
+		{os.TempDir(), "temporary"}, {filepath.Join(proj, "in"), "allowed"},
 		{d, "allowed"}, {filepath.Join(d, "ok"), ""}} {
 		if got := scratchProblem(c.p, []string{proj}); (c.want == "") != (got == "") || !strings.Contains(got, c.want) {
 			t.Fatalf("%s: %q (want %q)", c.p, got, c.want)

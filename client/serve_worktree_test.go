@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/ecdh"
+	"crypto/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -93,6 +95,12 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
 	}
 	if _, err := os.Stat(filepath.Join(client, "agent0.txt")); err == nil {
 		t.Fatal("agent file in the user's working copy")
+	}
+	// L3: na Windows Claude v načinu worktree le z »Allow commands without a sandbox«
+	worktreeNeedsUnsandboxed = true
+	defer func() { worktreeNeedsUnsandboxed = runtime.GOOS == "windows" }()
+	if st, data := call(c, "POST", "/v1/messages", h, []byte(body), 30*time.Second); st != 400 || !strings.Contains(string(data), "Allow commands without a sandbox") {
+		t.Fatalf("windows rule: %d %s", st, data)
 	}
 }
 
@@ -211,4 +219,54 @@ echo "done" > "$out"
 		t.Fatalf("the clone's .git/config was writable under bwrap: %s", got)
 	}
 	t.Logf("clone .git/config write: %s", got)
+}
+
+// H1 (1. plast): dovoljena mapa okoli Scratch ali v njem: ob zagonu ne velja (Claude in Codex izklopljena), PATCH 400.
+func TestAllowedFolderAroundScratch(t *testing.T) {
+	parent := t.TempDir()
+	scratch := filepath.Join(parent, "scratch")
+	os.MkdirAll(scratch, 0o700)
+	k, _ := ecdh.X25519().GenerateKey(rand.Reader)
+	c := serveConfig{Token: "tok", Key: base64url(k.Bytes()), Tools: defaultTools, PermissionMode: "dontAsk", Scratch: scratch,
+		AllowedFolders: []string{parent}, Codex: agentCLI{Enabled: true}}
+	s, err := newServer(c, filepath.Join(t.TempDir(), "serve.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.conf(); !got.ClaudeDisabled || got.Codex.Enabled || len(got.AllowedFolders) != 0 {
+		t.Fatalf("startup with an allowed folder around Scratch: %+v", got)
+	}
+	inside := filepath.Join(scratch, "repos")
+	os.MkdirAll(inside, 0o700)
+	for _, f := range []string{parent, inside} {
+		cc := s.conf()
+		cc.AllowedFolders = []string{f}
+		if _, err := checkAgent(&cc, s.cfgDir); err == nil || !strings.Contains(err.Error(), "scratch folder") {
+			t.Fatalf("%s accepted: %v", f, err)
+		}
+	}
+}
+
+// L5: git prehoda ima rok; razlog brez rezultata gre odjemalcu (413 s sporočilom), ne tiho 404.
+func TestWorktreeLimits(t *testing.T) {
+	old := gitTimeout
+	t.Cleanup(func() { gitTimeout = old })
+	gitTimeout = time.Nanosecond
+	if _, err := gitRun(filepath.Join(t.TempDir(), "repos", "d", "r.git"), "", nil, "--version"); err == nil {
+		t.Fatal("git ran past its timeout")
+	}
+	if cloneTooLarge(t.TempDir()) != "" {
+		t.Fatal("empty clone too large")
+	}
+	h := newShareHub()
+	key, _ := h.registerTree("s", "/p", "", &shareTree{repo: "/r", worktrees: t.TempDir(), slots: map[string]*wtSlot{}}, "dev")
+	if _, st, _ := h.worktreeResult(key, "dev"); st != 404 {
+		t.Fatalf("no result: %d", st)
+	}
+	h.mu.Lock()
+	h.bySession["s"].tree.resultErr = "the agent's clone is too large"
+	h.mu.Unlock()
+	if _, st, why := h.worktreeResult(key, "dev"); st != 413 || !strings.Contains(why, "too large") {
+		t.Fatalf("reason: %d %s", st, why)
+	}
 }

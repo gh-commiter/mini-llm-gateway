@@ -37,7 +37,8 @@ type shareHub struct {
 	busy      map[string]chan struct{} // ena zahteva agenta naenkrat na kopijo
 	refused   map[string]bool          // seje, ki so želele način direct
 	reaper    sync.Once
-	expired   time.Time // zadnje čiščenje starih kopij (#1, #9)
+	expired   time.Time            // zadnje čiščenje starih kopij (#1, #9)
+	logf      func(string, ...any) // dnevnik prehoda (worktree: zakaj veje ni)
 }
 
 // #1, #9: meje kopije (manifest odjemalca) in življenjska doba neuporabljenih kopij.
@@ -128,7 +129,7 @@ func removeOldCopies(root string, active map[string]bool, now time.Time) {
 }
 
 func newShareHub() *shareHub {
-	return &shareHub{bySession: map[string]*serveShare{}, busy: map[string]chan struct{}{}, refused: map[string]bool{}}
+	return &shareHub{bySession: map[string]*serveShare{}, busy: map[string]chan struct{}{}, refused: map[string]bool{}, logf: func(string, ...any) {}}
 }
 
 func newKey() string {

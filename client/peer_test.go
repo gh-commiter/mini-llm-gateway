@@ -166,7 +166,7 @@ func TestHardenRouter(t *testing.T) {
 
 // R3, R5: domača mapa in mapa nastavitev prazni; programi le za branje, mape agenta za pisanje, vtičnice skrite.
 func TestBwrapArgs(t *testing.T) {
-	a := strings.Join(bwrapArgs("/home/u", "/home/u/.config/minigw", []string{"/srv/scratch"}, []string{"/home/u/.nvm"}, []string{"/home/u/.codex", "/s/copy"}, []string{"/s/copy/.git/config"},
+	a := strings.Join(bwrapArgs("/home/u", "/home/u/.config/minigw", []string{"/srv/scratch"}, []string{"/home/u/.nvm"}, []string{"/home/u/.codex", "/s/copy"}, "", nil, []string{"/s/copy/.git/config"},
 		[]string{"/run/user/1/bus"}, []string{"/tmp/dbus-x"}), " ")
 	want := "--dev-bind / / --die-with-parent --unshare-pid --proc /proc --tmpfs /home/u --tmpfs /srv/scratch --ro-bind /home/u/.nvm /home/u/.nvm --bind /home/u/.codex /home/u/.codex " +
 		"--bind /s/copy /s/copy --ro-bind /s/copy/.git/config /s/copy/.git/config --tmpfs /home/u/.config/minigw --ro-bind /dev/null /run/user/1/bus --tmpfs /tmp/dbus-x"
@@ -218,5 +218,22 @@ func TestPackageRoot(t *testing.T) {
 	}
 	if r := packageRoot(home, home+"/.grok/bin/grok"); r != home+"/.grok/bin" {
 		t.Fatalf("plain: %s", r)
+	}
+}
+
+// H1 (2. plast), L1: dovoljena mapa okoli Scratch: po rw znova tmpfs na Scratch, nato klon in objekti; .git klona je
+// točka priklopa pred zaščitenimi datotekami.
+func TestBwrapRehidesScratch(t *testing.T) {
+	a := strings.Join(bwrapArgs("/home/u", "/home/u/.config/minigw", nil, []string{"/s/repos/d/r.git/objects"},
+		[]string{"/s/worktrees/d/r/claude-x-0", "/srv"}, "/srv/s", []string{"/s/worktrees/d/r/claude-x-0/.git"},
+		[]string{"/s/worktrees/d/r/claude-x-0/.git/config"}, nil, nil), " ")
+	want := "--bind /srv /srv --tmpfs /srv/s --bind /s/worktrees/d/r/claude-x-0/.git /s/worktrees/d/r/claude-x-0/.git " +
+		"--ro-bind /s/worktrees/d/r/claude-x-0/.git/config /s/worktrees/d/r/claude-x-0/.git/config"
+	if !strings.Contains(a, want) {
+		t.Fatalf("bwrap args:\n%s\nwant …%s…", a, want)
+	}
+	b := strings.Join(bwrapArgs("/home/u", "/c", nil, []string{"/srv/s/repos/d/r.git/objects"}, []string{"/srv", "/srv/s/worktrees/d/r/x"}, "/srv/s", nil, nil, nil, nil), " ")
+	if !strings.Contains(b, "--tmpfs /srv/s --ro-bind /srv/s/repos/d/r.git/objects /srv/s/repos/d/r.git/objects --bind /srv/s/worktrees/d/r/x /srv/s/worktrees/d/r/x") {
+		t.Fatalf("rebinds inside Scratch: %s", b)
 	}
 }

@@ -13,13 +13,14 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,9 +30,43 @@ type shareTree struct {
 	repo, worktrees, sub string             // golo zrcalo, mapa klonov, pot cwd v repozitoriju ("" = koren)
 	slots                map[string]*wtSlot // agent → klon (zaporedne zahteve iste seje nadaljujejo v njem)
 	pushing, result      string             // bundle, ki ga minigw prav zdaj nalaga / prevzema
+	resultErr            string             // L5: zakaj rezultata ni (odjemalec ga dobi ob WORKTREE-PULL)
 }
 
 type wtSlot struct{ wt, branch, base string }
+
+// worktreeNeedsUnsandboxed (L3): na Windows Claude v načinu worktree le z »Allow commands without a sandbox«.
+var worktreeNeedsUnsandboxed = runtime.GOOS == "windows"
+
+// gitTimeout (L5): git prehoda (uvoz, klon, finalize) se ustavi, če traja dlje.
+var gitTimeout = 10 * time.Minute
+
+// cloneTooLarge (L5): klon, ki ga »git add -A« ne sme zapisati v zrcalo (meje kot kopija sync); "" = v redu.
+func cloneTooLarge(wt string) string {
+	files, bytes := 0, int64(0)
+	filepath.WalkDir(wt, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() && d.Name() == ".git" && filepath.Dir(p) == wt {
+			return filepath.SkipDir
+		}
+		if d.Type().IsRegular() {
+			files++
+			if fi, err := d.Info(); err == nil {
+				bytes += fi.Size()
+			}
+		}
+		if files > maxSyncFiles || bytes > maxSyncBytes {
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	if files > maxSyncFiles || bytes > maxSyncBytes {
+		return fmt.Sprintf("the agent's clone is too large to return (more than %d files or %d GB); add build output to .gitignore", maxSyncFiles, maxSyncBytes>>30)
+	}
+	return ""
+}
 
 const maxIncoming = int64(4) << 30 // največji bundle odjemalca (prvi prenos velikega repozitorija)
 
@@ -58,7 +93,10 @@ func gitRun(repo, cwd string, env []string, args ...string) (string, error) {
 	guard := []string{"-c", "core.hooksPath=" + hooks, "-c", "core.fsmonitor=false", "-c", "submodule.recurse=false",
 		"-c", "protocol.allow=never", "-c", "protocol.file.allow=always", "-c", "maintenance.auto=false", "-c", "gc.auto=0",
 		"-c", "core.commitGraph=false", "-c", "core.multiPackIndex=false"}
-	cmd := exec.Command(exe, append(guard, args...)...)
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout) // L5
+	defer cancel()
+	cmd := exec.CommandContext(ctx, exe, append(guard, args...)...)
+	cmd.WaitDelay = 5 * time.Second
 	cmd.Dir = cwd
 	for _, e := range os.Environ() {
 		if !strings.HasPrefix(strings.ToUpper(e), "GIT_") {
@@ -179,15 +217,24 @@ func realDir(p string) bool {
 // na Linuxu kdaj ostanejo živi po koncu zahteve.
 func finalize(repo, wt, branch, base, agent, out string) string {
 	git, objects := filepath.Join(wt, ".git"), filepath.Join(wt, ".git", "objects")
-	if !realDir(git) || !realDir(objects) {
+	if !realDir(git) {
 		return ""
 	}
-	// objects/info klona (alternates, commit-graph) je agentov: zamenja ga le alternates zrcala.
-	info := filepath.Join(objects, "info")
-	if err := os.RemoveAll(info); err != nil || os.Mkdir(info, 0o755) != nil {
+	// L2: objects/info klona (alternates, commit-graph) je agentov: zamenja ga le alternates zrcala, vse relativno na .git
+	// (os.Root: povezava ali spoj na objects ali info ne preusmeri brisanja ali pisanja ven).
+	root, err := os.OpenRoot(git)
+	if err != nil {
 		return ""
 	}
-	if os.WriteFile(filepath.Join(info, "alternates"), []byte(filepath.ToSlash(filepath.Join(repo, "objects"))+"\n"), 0o644) != nil {
+	defer root.Close()
+	if st, err := root.Lstat("objects"); err != nil || !st.IsDir() || st.Mode()&os.ModeSymlink != 0 {
+		return ""
+	}
+	info := filepath.Join("objects", "info")
+	if err := root.RemoveAll(info); err != nil || root.Mkdir(info, 0o755) != nil {
+		return ""
+	}
+	if root.WriteFile(filepath.Join(info, "alternates"), []byte(filepath.ToSlash(filepath.Join(repo, "objects"))+"\n"), 0o644) != nil {
 		return ""
 	}
 	tmp, err := os.MkdirTemp(filepath.Dir(repo), ".finalize-")
@@ -421,18 +468,27 @@ func (h *shareHub) worktreeBack(s *serveShare, agent string) {
 	}
 	killInside(slot.wt)
 	out := t.repo + ".result"
-	tip := finalize(t.repo, slot.wt, slot.branch, slot.base, agent, out)
 	defer os.Remove(out)
-	if tip == "" || tip == slot.base {
-		return
+	why, tip := cloneTooLarge(slot.wt), ""
+	if why == "" {
+		if tip = finalize(t.repo, slot.wt, slot.branch, slot.base, agent, out); tip == slot.base {
+			return // agent ni spremenil ničesar
+		} else if tip == "" {
+			why = "the gateway could not save the agent's work as a branch (see the gateway log)"
+		} else if st, err := os.Stat(out); err != nil || st.Size() > maxSyncFile {
+			why = "the agent's branch is larger than 64 MB; it stays on the gateway's mirror (" + slot.branch + ")"
+		}
+	}
+	if why != "" {
+		h.logf("worktree %s (%s): %s", slot.branch, s.session, why)
 	}
 	h.mu.Lock()
-	t.result = out
+	t.result, t.resultErr = out, why
 	h.mu.Unlock()
 	body, _ := json.Marshal(map[string]string{"branch": slot.branch, "tip": tip})
 	h.sendJob(s, "WORKTREE-PULL", body, 300*time.Second)
 	h.mu.Lock()
-	t.result = ""
+	t.result, t.resultErr = "", ""
 	h.mu.Unlock()
 }
 
@@ -469,23 +525,29 @@ func (h *shareHub) worktreePut(key string, part int, data []byte, owner string) 
 }
 
 // worktreeResult: bundle veje za odjemalca med WORKTREE-PULL.
-func (h *shareHub) worktreeResult(key, owner string) ([]byte, bool) {
+func (h *shareHub) worktreeResult(key, owner string) ([]byte, int, string) {
 	h.mu.Lock()
 	s := h.share(key, owner)
-	file := ""
+	file, why := "", ""
 	if s != nil && s.tree != nil {
 		s.lastSeen = time.Now()
-		file = s.tree.result
+		file, why = s.tree.result, s.tree.resultErr
 	}
 	h.mu.Unlock()
-	if file == "" {
-		return nil, false
+	switch {
+	case why != "":
+		return nil, 413, why
+	case file == "":
+		return nil, 404, "No result"
 	}
 	if st, err := os.Lstat(file); err != nil || !st.Mode().IsRegular() || st.Size() > maxSyncFile {
-		return nil, false
+		return nil, 413, "the agent's branch is larger than 64 MB"
 	}
 	b, err := os.ReadFile(file)
-	return b, err == nil
+	if err != nil {
+		return nil, 500, err.Error()
+	}
+	return b, 200, ""
 }
 
 // dropClones: ob koncu seje kloni gredo (veje ostanejo v zrcalu in pri odjemalcu). Pod h.mu.
@@ -544,29 +606,6 @@ func worktreeTree(scratch, owner, top, cwd string) (*shareTree, error) {
 	id := sha256Hex([]byte(top))[:16]
 	return &shareTree{repo: filepath.Join(scratch, "repos", owner, id+".git"), worktrees: filepath.Join(scratch, "worktrees", owner, id),
 		sub: sub, slots: map[string]*wtSlot{}}, nil
-}
-
-// killInside: Linux: procesi istega uporabnika s trenutno mapo v klonu (agent v ozadju) pred finalize.
-func killInside(wt string) {
-	if runtime.GOOS != "linux" {
-		return
-	}
-	root, err := filepath.EvalSymlinks(wt)
-	if err != nil {
-		return
-	}
-	ents, _ := os.ReadDir("/proc")
-	for _, e := range ents {
-		pid, err := strconv.Atoi(e.Name())
-		if err != nil || pid <= 1 || pid == os.Getpid() {
-			continue
-		}
-		if cwd, err := os.Readlink("/proc/" + e.Name() + "/cwd"); err == nil && (cwd == root || strings.HasPrefix(cwd, root+"/")) {
-			if p, err := os.FindProcess(pid); err == nil {
-				p.Kill()
-			}
-		}
-	}
 }
 
 // isWorktree: seja dela v načinu worktree (pred mount: Grok in agenti brez pisanja ga zavrnejo).

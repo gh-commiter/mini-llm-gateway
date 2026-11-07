@@ -415,6 +415,9 @@ extension Router {
                     throw AdminError(400, "tools: comma-separated tool names, e.g. Read,Grep,Glob")
                 }
                 if let path, !path.isEmpty, case .failure(let e) = ClaudeCLI.validate(path) { throw AdminError(400, "claude: \(e)") }
+                if let folders, let bad = folders.split(separator: ",").map(String.init).first(where: { RouterConfig.overlapsScratch($0, scratch: c.scratchURL) }) {
+                    throw AdminError(400, "allowed folder \(bad.trimmingCharacters(in: .whitespaces)) contains or is inside the scratch folder \(c.scratchURL.path) (agents could change the gateway's mirrors and other devices' copies): choose another folder")
+                }
                 let n = try await hooks.update { c in
                     if let enabled { c.claudeCLI.enabled = enabled }
                     if let path { c.claudeCLI.executable = path }

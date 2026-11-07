@@ -184,22 +184,40 @@ func scratchPaths(scratch string) []string {
 	return out
 }
 
+// scratchOverlaps (H1): dovoljene mape, ki vsebujejo Scratch ali so v njem (kanonično).
+func scratchOverlaps(allowed []string, scratch string) []string {
+	if scratch == "" {
+		return nil
+	}
+	sc := realPath(scratch)
+	var bad []string
+	for _, a := range allowed {
+		if ra := realPath(a); under(sc, ra) || under(ra, sc) {
+			bad = append(bad, a)
+		}
+	}
+	return bad
+}
+
+// realPath: kanonično; za pot, ki je še ni, prek najbližje obstoječe nadrejene mape.
+func realPath(p string) string {
+	p, rest := filepath.Clean(p), ""
+	for {
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			return filepath.Join(r, rest)
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return filepath.Join(p, rest)
+		}
+		rest, p = filepath.Join(filepath.Base(p), rest), parent
+	}
+}
+
 // scratchProblem (M1): Scratch ni koren diska, domača mapa ali mapa nad njo, začasna mapa ali mapa v dovoljeni mapi
 // agentov (ali obratno): tam bi agenti brali kopije drugih naprav. "" = v redu.
 func scratchProblem(scratch string, allowed []string) string {
-	real := func(p string) string { // kanonično; za pot, ki je še ni, prek najbližje obstoječe nadrejene mape
-		p, rest := filepath.Clean(p), ""
-		for {
-			if r, err := filepath.EvalSymlinks(p); err == nil {
-				return filepath.Join(r, rest)
-			}
-			parent := filepath.Dir(p)
-			if parent == p {
-				return filepath.Join(p, rest)
-			}
-			rest, p = filepath.Join(filepath.Base(p), rest), parent
-		}
-	}
+	real := realPath
 	sc := real(scratch)
 	if filepath.Dir(sc) == sc {
 		return "it is a disk root"
@@ -595,6 +613,10 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		share := s.hub.waitShare(r.Context(), session, r.owner(), r.h("x-claude-mini-share") == "1")
 		switch {
 		case share != nil && share.tree != nil:
+			if worktreeNeedsUnsandboxed && !s.conf().AllowUnsandboxedBash { // L3: kot Codex in Copilot na Windows
+				return writeError(w, r.rid, 400, "Claude CLI in worktree mode on Windows needs \"Allow commands without a sandbox\" "+
+					"(settings page → Claude CLI): Claude Code's own git runs there without a sandbox; use sync")
+			}
 			if dir = s.hub.push(share, "claude"); dir == "" {
 				return writeError(w, r.rid, 502, "Cloning "+clientCwd+" on the gateway failed (worktree mode; see minigw output)")
 			}

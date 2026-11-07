@@ -418,9 +418,10 @@ and gives each agent its own clone on a branch `minigw/<agent>-<session>-<n>`; p
 - **On `minigw serve` (Windows, Linux)** worktree works the same way: the gateway's own `git` from PATH (no system or global
   config, hooks, fsmonitor or submodules), one clone per session and agent, so one branch `minigw/<agent>-<session>-0`.
   Agent requests run one at a time per device and repository: also two sessions of the same device in the same
-  repository wait for each other (sync: one at a time per device and folder). On Linux Codex and Copilot run under bwrap with the clone writable
-  and its `.git/config`, `hooks` and `info` read-only; Claude CLI in Claude Code's sandbox; on Windows the usual rule
-  ("Allow commands without a sandbox"). The settings for build network (Settings → General → Worktree mode) exist only on
+  repository wait for each other (sync: one at a time per device and folder). On Linux Codex and Copilot run under bwrap with the clone writable,
+  its `.git` folder fixed in place (it cannot be renamed or replaced) and `.git/config`, `hooks` and `info` read-only;
+  Claude CLI in Claude Code's sandbox; on Windows every agent, Claude CLI included, needs "Allow commands without a
+  sandbox". An allowed folder may not contain the Scratch folder or sit inside it (refused, and ignored at start). The settings for build network (Settings → General → Worktree mode) exist only on
   the Mac. Native mode and `minigw run` stay Mac-only.
 
 **Native: the folder is the gateway's own SMB share.** When the client works in an SMB mount of a gateway share (for

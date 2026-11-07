@@ -424,3 +424,24 @@ private func acceptPeerPort(_ fd: Int32) -> (Int32, UInt16) {
     let wt = cfg.worktreeArgs(root: URL(fileURLWithPath: "/w"), maven: URL(fileURLWithPath: "/m"), cwd: URL(fileURLWithPath: "/w"), allTools: [], network: false, scratch: scratch)
     #expect(wt[wt.firstIndex(of: "--settings")! + 1].contains("Mini Gateway Scratch"))
 }
+
+/// H1: dovoljena mapa okoli Scratch ali v njem: API jo zavrne, starejša nastavitev ne pride v peskovnik agenta.
+@Test func allowedFolderAroundScratchRefused() async throws {
+    let fm = FileManager.default
+    let tmp = fm.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("minigw-test-h1-" + UUID().uuidString)
+    defer { try? fm.removeItem(at: tmp) }
+    let scratch = tmp.appendingPathComponent("s")
+    try fm.createDirectory(at: RouterConfig.dedicated(scratch).appendingPathComponent("repos"), withIntermediateDirectories: true)
+    var c = RouterConfig()
+    c.scratchFolder = scratch.path
+    let app = FakeApp(c)
+    for bad in [tmp.path, RouterConfig.dedicated(scratch).appendingPathComponent("repos").path] {
+        let r = await admin(app.router(), "PATCH", "/agents/claude", body: #"{"folders":"\#(bad)"}"#)
+        #expect(r.status == 400 && r.text.contains("scratch folder"), "\(bad): \(r.text)")
+    }
+    var cfg = ClaudeCLIConfig()
+    cfg.allowLocalTools = true
+    cfg.allowedRoots = tmp.path
+    let args = cfg.agentArgs(cwd: URL(fileURLWithPath: "/p"), allTools: [], scratch: c.scratchURL)
+    #expect(!args.contains(tmp.path) && !args[args.firstIndex(of: "--settings")! + 1].contains(#""allowWrite":["\/p","#))
+}

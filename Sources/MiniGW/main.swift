@@ -270,7 +270,10 @@ final class ShareClient: @unchecked Sendable {
         guard let top, let branch = (try? JSONSerialization.jsonObject(with: job.body) as? [String: Any])?["branch"] as? String,
               Worktree.validBranch(branch) else { return DAVResponse(403) }
         let (s, d) = call(c, "GET", "/minigw/worktree/result", ["x-share-key": k], timeout: 600)
-        guard s == 200, let d else { note("worktree: cannot get \(branch) from the gateway (HTTP \(s))"); return DAVResponse(500) }
+        guard s == 200, let d else {  // L5: razlog prehoda (prevelik klon ali veja), sicer status
+            let why = d.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }.flatMap { ($0["error"] as? [String: Any])?["message"] as? String }
+            note("worktree: cannot get \(branch) from the gateway: \(why.map(clean) ?? "HTTP \(s)")"); return DAVResponse(500)
+        }
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("minigw-\(UUID().uuidString).bundle")
         defer { try? FileManager.default.removeItem(at: file) }
         guard (try? d.write(to: file)) != nil else { return DAVResponse(500) }

@@ -106,7 +106,7 @@ func bwrapReady(cfgDir string) string {
 		t, err2 := exec.LookPath("true")
 		home, _ := os.UserHomeDir()
 		if err == nil && err2 == nil && home != "" &&
-			exec.Command(p, append(bwrapArgs(home, cfgDir, nil, nil, nil, nil, nil, nil), "--", t)...).Run() == nil {
+			exec.Command(p, append(bwrapArgs(home, cfgDir, nil, nil, nil, "", nil, nil, nil, nil), "--", t)...).Run() == nil {
 			bwrapPath = p
 		}
 	})
@@ -194,13 +194,26 @@ func agentWrap(exe string, args []string, m agentMounts) (string, []string) {
 	if m.hide != "" && exists(m.hide) && !inside(real(m.hide), home) { // v domači mapi jo skrije že --tmpfs home
 		hidden = []string{real(m.hide)}
 	}
-	var protect []string
+	var protect, pins []string
 	for _, p := range m.protect {
 		if exists(p) {
 			protect = append(protect, real(p))
 		}
 	}
-	return bw, append(append(bwrapArgs(home, real(m.cfgDir), hidden, ro, rw, protect, hideFiles, hideDirs), "--", exe), args...)
+	for _, p := range m.pins {
+		if exists(p) {
+			pins = append(pins, real(p))
+		}
+	}
+	rehide := "" // H1: pisljiva mapa vsebuje Scratch (tudi v domači mapi, ki jo sicer skrije --tmpfs home)
+	if m.hide != "" && exists(m.hide) {
+		for _, d := range rw {
+			if inside(real(m.hide), d) {
+				rehide = real(m.hide)
+			}
+		}
+	}
+	return bw, append(append(bwrapArgs(home, real(m.cfgDir), hidden, ro, rw, rehide, pins, protect, hideFiles, hideDirs), "--", exe), args...)
 }
 
 // listenerIsOurs (F2): vrata poslušajo le procesi tega uporabnika (uid iz /proc/net/tcp{,6}); nič najdenega = ne.

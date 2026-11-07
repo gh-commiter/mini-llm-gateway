@@ -634,6 +634,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 		withTree := func(m agentMounts) agentMounts { // worktree: Maven agentov, objekti zrcala (branje), .git klona le za branje
 			if inTree {
 				m.rw, m.ro = append(m.rw, maven), append(m.ro, objects)
+				m.pins = []string{filepath.Join(wt, ".git")} // L1: .git klona je točka priklopa (mv/rm: EBUSY)
 				for _, d := range []string{"config", "hooks", "info", "commondir"} {
 					m.protect = append(m.protect, filepath.Join(wt, ".git", d))
 				}

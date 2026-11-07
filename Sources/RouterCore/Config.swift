@@ -111,6 +111,15 @@ public struct RouterConfig: Codable, Sendable, Equatable {
     }
     public static let dedicatedName = "Mini Gateway Scratch"
 
+    /// H1: dovoljena mapa vsebuje Scratch ali je v njem (agenti bi pisali v zrcala in kopije drugih naprav).
+    public static func overlapsScratch(_ root: String, scratch: URL) -> Bool {
+        let p = ClaudeCLI.expand(root.trimmingCharacters(in: .whitespaces))
+        guard !p.isEmpty else { return false }
+        let r = Sync.real(URL(fileURLWithPath: p))?.path ?? p, s = Sync.real(scratch)?.path ?? scratch.standardizedFileURL.path
+        func inside(_ a: String, _ b: String) -> Bool { a == b || a.hasPrefix(b == "/" ? "/" : b + "/") }
+        return inside(s, r) || inside(r, s)
+    }
+
     /// M1, L1: izbrana mapa za Scratch (Settings in API); nil = v redu, sicer razlog. Scratch hrani kopije drugih naprav
     /// in zrcala, ki jih bere git prehoda: ne sme biti koren diska, domača mapa ali mapa, ki jo vsebuje, začasna mapa
     /// ali mapa v dovoljeni mapi agentov (ali obratno), in »Mini Gateway Scratch« v njej ne sme biti povezava.

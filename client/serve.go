@@ -419,6 +419,15 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	if !validAddress(c.Address) {
 		return nil, errors.New("address " + c.Address + ": use empty (all), 0.0.0.0, :: or 127.0.0.1, so that minigw gw and the admin API reach the gateway on 127.0.0.1; limit clients with a firewall")
 	}
+	// H1: dovoljena mapa, ki vsebuje Scratch (ali je v njem), bi agentom pokazala zrcala in kopije drugih naprav:
+	// ob zagonu (ročno urejen serve.json) take mape ne veljajo, Claude CLI in Codex sta izklopljena, opozorilo v dnevniku.
+	var overlapWarn string
+	if bad := scratchOverlaps(c.AllowedFolders, c.Scratch); len(bad) > 0 {
+		overlapWarn = "WARNING: allowed folder(s) " + strings.Join(bad, ", ") + " contain or are inside the scratch folder " + c.Scratch +
+			": Claude CLI and Codex are off until you remove them (settings page → Claude CLI → Allowed folders)"
+		c.AllowedFolders = slices.DeleteFunc(slices.Clone(c.AllowedFolders), func(f string) bool { return slices.Contains(bad, f) })
+		c.ClaudeDisabled, c.Codex.Enabled = true, false
+	}
 	exe, err := checkAgent(&c, cfgDir)
 	if err != nil {
 		return nil, err
@@ -445,6 +454,10 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	case runtime.GOOS == "windows" || !hasBash(c.Tools):
 	default:
 		s.log.Printf("WARNING: Bash is allowed; it runs only in Claude Code's sandbox (on Linux it needs bubblewrap and socat)")
+	}
+	s.hub.logf = s.log.Printf
+	if overlapWarn != "" {
+		s.log.Print(overlapWarn)
 	}
 	if protectErr != nil {
 		s.log.Printf("WARNING: cannot make %s private to this user (%v): other users of this computer may read the token, the gateway key and the admin secret; use the default config folder", cfgDir, protectErr)
@@ -483,6 +496,10 @@ func checkAgent(c *serveConfig, cfgDir string) ([]string, error) {
 			return nil, err
 		}
 		c.AllowedFolders[i] = real
+	}
+	if bad := scratchOverlaps(c.AllowedFolders, c.Scratch); len(bad) > 0 { // H1: PATCH, minigw gw claude --folders, serve.json
+		return nil, errors.New("allowed folder " + bad[0] + " contains or is inside the scratch folder " + c.Scratch +
+			" (agents could change the gateway's mirrors and other devices' copies): choose another folder")
 	}
 	if c.AllowLocalTools && runtime.GOOS == "windows" && !c.AllowUnsandboxedBash {
 		return nil, errors.New("local tools include commands (Bash, PowerShell), which have no sandbox on Windows: also set \"allowUnsandboxedBash\": true, or turn local tools off")
@@ -1083,9 +1100,9 @@ func (s *server) route(w http.ResponseWriter, r *req) (int, string) {
 		}
 		return writeStatus(w, s.hub.worktreePut(key, part, r.body, dev), "", nil), ""
 	case "GET /minigw/worktree/result":
-		data, ok := s.hub.worktreeResult(key, dev)
-		if !ok {
-			return writeError(w, r.rid, 404, "No result"), ""
+		data, st, why := s.hub.worktreeResult(key, dev)
+		if st != 200 {
+			return writeError(w, r.rid, st, why), ""
 		}
 		return writeStatus(w, 200, "application/octet-stream", data), ""
 	case "PUT /minigw/sync/file":
