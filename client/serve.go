@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -56,6 +57,8 @@ const serveHelp = `minigw serve: a Mini Gateway router on this computer (Windows
 
   minigw serve init [--port N] [--folder DIR] [--config FILE]   create the config, print the minigw connect line
   minigw serve allow <device id> [name] [--config FILE]         allow a client device
+  minigw serve deny <device id or name> [--config FILE]         remove an allowed device
+  minigw serve devices [--config FILE]                          list the allowed devices
   minigw serve [--port N] [--folder DIR] [--config FILE]        run the router
   minigw serve gateway add|remove|list|models …                 Anthropic-compatible gateways (OpenRouter, LiteLLM)
 
@@ -154,7 +157,7 @@ func serveCommand(args []string) {
 	disable := fs.String("disable", "", "gateway models: disable these models (comma-separated, or all)")
 	fs.Usage = func() { fmt.Fprintln(os.Stderr, serveHelp+"\n\n"+gatewayHelp) }
 	var rest []string
-	if sub == "allow" || sub == "gateway" { // minigw serve allow <id> [ime] [--config f]
+	if sub == "allow" || sub == "deny" || sub == "gateway" { // minigw serve allow <id> [ime] [--config f]
 		for len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 			rest, args = append(rest, args[0]), args[1:]
 		}
@@ -196,6 +199,9 @@ func serveCommand(args []string) {
 		if len(rest) == 0 {
 			fail("usage: minigw serve allow <device id> [name]")
 		}
+		if !validDeviceID(rest[0]) {
+			fail(strconv.Quote(rest[0]) + " is not a device ID (43 characters, base64url): copy it from the router log or from the client's refusal message")
+		}
 		c, err := loadServeConfig(*cfgPath)
 		if err != nil {
 			fail("cannot read " + *cfgPath + " (run minigw serve init first): " + err.Error())
@@ -210,6 +216,47 @@ func serveCommand(args []string) {
 		c.Devices = append(c.Devices, serveDevice{ID: rest[0], Name: name})
 		saveServeConfig(*cfgPath, c)
 		say("allowed device " + rest[0] + " (restart minigw serve)")
+		return
+	case "deny":
+		if len(rest) == 0 {
+			fail("usage: minigw serve deny <device id or name>")
+		}
+		c, err := loadServeConfig(*cfgPath)
+		if err != nil {
+			fail("cannot read " + *cfgPath + ": " + err.Error())
+		}
+		want := strings.Join(rest, " ")
+		i := slices.IndexFunc(c.Devices, func(d serveDevice) bool { return d.ID == want })
+		if i < 0 { // ime le, če je enolično
+			for j, d := range c.Devices {
+				if d.Name == want {
+					if i >= 0 {
+						fail("several devices are named " + strconv.Quote(want) + ": use the device ID (minigw serve devices)")
+					}
+					i = j
+				}
+			}
+		}
+		if i < 0 {
+			fail("no allowed device " + strconv.Quote(want) + " (minigw serve devices lists them)")
+		}
+		d := c.Devices[i]
+		c.Devices = slices.Delete(c.Devices, i, i+1)
+		saveServeConfig(*cfgPath, c)
+		say(fmt.Sprintf("removed device %s %q (restart minigw serve)", d.ID, d.Name))
+		return
+	case "devices":
+		c, err := loadServeConfig(*cfgPath)
+		if err != nil {
+			fail("cannot read " + *cfgPath + ": " + err.Error())
+		}
+		for _, d := range c.Devices {
+			say(clean(fmt.Sprintf("%s  %s", d.ID, d.Name)))
+		}
+		if len(c.Devices) == 0 {
+			say(map[bool]string{true: "no devices listed: any device with the token is allowed (allowAnyDevice)",
+				false: "no devices allowed"}[c.AllowAnyDevice])
+		}
 		return
 	case "gateway":
 		gatewayCommand(*cfgPath, rest, *insecure, *enable, *disable, os.Stdin)
@@ -258,6 +305,12 @@ func serveCommand(args []string) {
 	}
 	go s.modelList() // odkrivanje modelov prehodov v ozadju
 	fail(s.serve(ln).Error())
+}
+
+// validDeviceID: ID, kot ga izpiše zavrnitev (base64url 32 bajtov javnega ključa, 43 znakov).
+func validDeviceID(id string) bool {
+	b, err := fromBase64url(id)
+	return err == nil && len(b) == 32 && base64url(b) == id
 }
 
 // localIP: prvi naslov IPv4, ki ni loopback (za vrstico minigw connect).

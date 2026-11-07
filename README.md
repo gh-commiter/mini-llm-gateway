@@ -223,7 +223,8 @@ minigw serve                 # port 8765; --port, --folder, --config
 
 On each client run the printed `minigw connect` line. The first connect from a new device is refused and the router
 log shows `minigw serve allow <id> "<name>"`. Anyone with the token can try to connect, so compare the ID with the
-device you just connected before you allow it, then restart `minigw serve`.
+device you just connected before you allow it, then restart `minigw serve`. `minigw serve devices` lists the allowed
+devices and `minigw serve deny <id or name>` removes one.
 
 The config (`%AppData%\minigw\serve.json`, `~/.config/minigw/serve.json`, mode 0600) holds the token, the router key,
 the allowed devices and the agent's `tools` (default `Read,Grep,Glob,Edit,Write,MultiEdit`, limited to the copy).
