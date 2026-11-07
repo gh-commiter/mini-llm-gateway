@@ -167,6 +167,7 @@ const S = {
   copilotCommandsAsk: ["Copilot then runs commands as this user. On Linux with bwrap they run in the sandbox (home folder hidden, writing only to the session's folder and a temporary folder); otherwise they can read and change everything this user can, including gateway settings, and use the network. Commands need the token below (fine-grained, only “Copilot Requests”) and can use it to make Copilot requests on your account. Allow only if you trust the devices that use Copilot.",
     "Copilot nato izvaja ukaze kot ta uporabnik. Na Linuxu z bwrap tečejo v sandboxu (domača mapa skrita, pisanje le v mapo seje in začasno mapo); sicer lahko berejo in spreminjajo vse, kar ta uporabnik, tudi nastavitve prehoda, in uporabljajo omrežje. Ukazi potrebujejo žeton spodaj (fine-grained, le »Copilot Requests«) in lahko z njim pošiljajo zahteve Copilot na tvoj račun. Dovoli le, če zaupaš napravam, ki uporabljajo Copilot."],
   copilotToken: ["GitHub token for commands (fine-grained, only “Copilot Requests”)", "Žeton GitHub za ukaze (fine-grained, le »Copilot Requests«)"],
+  copilotTokenShort: ["This is not a whole GitHub token (at least 40 characters)", "To ni cel žeton GitHub (vsaj 40 znakov)"],
   copilotTokenSaved: ["Token saved; enter a new one to replace it", "Žeton shranjen; vnesi novega za zamenjavo"],
   copilotFooter: ["The claude-copilot models run Copilot CLI as an agent in the synced copy of the client's folder, on Linux under bwrap with a fresh Copilot home for each request. By default it may only read that folder; with writing on it may edit files there. Commands only with “Allow commands” and the token above. On Linux it signs in with the GitHub CLI (gh auth login) or that token; on Windows it uses this user's Copilot sign-in (copilot login) and ~/.copilot.",
     "Modeli claude-copilot poženejo Copilot CLI kot agenta v sinhronizirani kopiji mape odjemalca, na Linuxu pod bwrap s svežo domačo mapo Copilot za vsako zahtevo. Privzeto sme mapo le brati; s pisanjem sme v njej urejati datoteke. Ukazi le z »Dovoli ukaze« in žetonom zgoraj. Na Linuxu se prijavi z GitHub CLI (gh auth login) ali tem žetonom; na Windows uporabi prijavo Copilot tega uporabnika (copilot login) in ~/.copilot."],
@@ -371,7 +372,12 @@ async function copilotPane() {
   }), !a.write || locked);
   // Žeton le za pisanje (API ga ne vrne); prazno polje ga ne izbriše.
   const token = el("input", {type: "password", autocomplete: "off", placeholder: a.hasToken ? t("copilotTokenSaved") : "github_pat_…"});
-  autosave(token, n2, v => !v ? Promise.resolve() : patch({token: v}).then(r => { token.value = ""; token.placeholder = t("copilotTokenSaved"); return r; }), () => t("saved"));
+  // L6: shrani ob change (Enter ali izhod iz polja), ne ob vsaki tipki; žeton GitHub ima vsaj 40 znakov.
+  token.addEventListener("change", () => {
+    const v = token.value.trim();
+    if (v) save(n2, () => v.length < 40 ? Promise.reject(new Error(t("copilotTokenShort"))) :
+      patch({token: v}).then(r => { token.value = ""; token.placeholder = t("copilotTokenSaved"); return r; }));
+  });
   return [
     card(...ICON.copilot, "Copilot CLI", t("copilotDesc")),
     group(row(labelSub(t("enabled"), bare ? t(locked ? "agentLockedWin" : "agentWarnWin") : null),
