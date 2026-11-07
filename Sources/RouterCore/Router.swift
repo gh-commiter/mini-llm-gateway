@@ -170,13 +170,13 @@ public final class Router: Sendable {
                     if req.path.hasSuffix("/count_tokens") {
                         return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "grok")
                     }
-                    return (await syncRun(agent: "grok") { await runGrok(req, body: body, model: grokModel, rid: rid, writer: writer) }, model, "grok")
+                    return (await syncRun(agent: "grok") { await runGrok(req, body: body, model: grokModel, rid: rid, writer: await early(req, body, rid, writer)) }, model, "grok")
                 }
                 if config.codex.enabled, let codexModel = Codex.match(model), codexModel.map(config.codex.isModelEnabled) ?? true {
                     if req.path.hasSuffix("/count_tokens") {
                         return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "codex")
                     }
-                    return (await syncRun(agent: "codex") { await runCodex(req, body: body, model: codexModel, rid: rid, writer: writer) }, model, "codex")
+                    return (await syncRun(agent: "codex") { await runCodex(req, body: body, model: codexModel, rid: rid, writer: await early(req, body, rid, writer)) }, model, "codex")
                 }
                 if config.foundry.enabled, model.hasPrefix(Foundry.prefix), Self.validModel(String(model.dropFirst(Foundry.prefix.count))) {
                     if req.path.hasSuffix("/count_tokens") {
@@ -194,7 +194,7 @@ public final class Router: Sendable {
                     if req.path.hasSuffix("/count_tokens") {
                         return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "claude-cli")
                     }
-                    return (await syncRun(agent: "claude") { await runCLI(req, body: body, cliModel: m.cliModel, chatOnly: m.chatOnly, rid: rid, writer: writer) },
+                    return (await syncRun(agent: "claude") { await runCLI(req, body: body, cliModel: m.cliModel, chatOnly: m.chatOnly, rid: rid, writer: await early(req, body, rid, writer)) },
                             model, "claude-cli")
                 }
                 return (await error(404, "not_found_error", "Unknown model: \(model)", rid: rid, writer: writer), model, nil)
@@ -353,6 +353,16 @@ public final class Router: Sendable {
 
     /// sync: izvajanje agenta v svojem klonu kopije (ShareHub.run); zaklep kopije velja le za prenos, prevzem in združitev,
     /// zato agenti v isti mapi delajo vzporedno. Klon se odstrani tudi ob napaki ali prekinitvi.
+    /// #4: agent v sinhronizirani mapi s pretokom: glava 200 in komentarji SSE takoj, prenos mape lahko traja minute
+    /// (Claude Code bi po 10 minutah brez bajtov poskusil znova). Drugače isti writer.
+    func early(_ req: HTTPRequest, _ body: [String: Any], _ rid: String, _ writer: ResponseWriter) async -> ResponseWriter {
+        guard body["stream"] as? Bool == true, (body["tools"] as? [Any])?.isEmpty == false,
+              let sid = req.header("x-claude-mini-session"), await Self.shares.isSync(session: sid) else { return writer }
+        let w = EarlyStreamWriter(writer)
+        await w.begin(rid: rid)
+        return w
+    }
+
     func syncRun(agent: String, _ run: () async -> Int) async -> Int {
         let id = UUID().uuidString
         let status = await ShareHub.$run.withValue(id) { await ShareHub.$agent.withValue(agent) { await run() } }

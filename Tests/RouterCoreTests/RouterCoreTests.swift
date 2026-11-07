@@ -1442,3 +1442,16 @@ final class FakeMinigw: @unchecked Sendable {
     #expect(keys == [nfc])
     #expect(Sync.resolve(nfc, root: root).map { FileManager.default.fileExists(atPath: $0.path) } == true)
 }
+
+/// #4: glava in komentarji SSE pred prenosom mape; glava ponudnika izpuščena, napaka kot dogodek SSE.
+@Test func earlyStreamBeforeFolderSync() async throws {
+    let ok = FakeWriter(), w = EarlyStreamWriter(ok)
+    await w.begin(rid: "r1")
+    try await w.write(HTTPResponse.head(status: 200, headers: [("Content-Type", "text/event-stream")]) + Data("event: message_start\ndata: {}\n\n".utf8))
+    #expect(ok.text.components(separatedBy: "HTTP/1.1").count == 2 && ok.text.contains(": syncing the folder") && ok.text.contains("event: message_start"))
+    let bad = FakeWriter(), e = EarlyStreamWriter(bad)
+    await e.begin(rid: "r2")
+    let body = Data(#"{"error":{"message":"Syncing /p to the gateway failed","type":"api_error"},"type":"error"}"#.utf8)
+    try await e.write(HTTPResponse.head(status: 502, headers: [("Content-Type", "application/json")], contentLength: body.count) + body)
+    #expect(bad.text.hasPrefix("HTTP/1.1 200") && !bad.text.contains("502") && bad.text.contains("event: error") && bad.text.contains("Syncing /p to the gateway failed"))
+}

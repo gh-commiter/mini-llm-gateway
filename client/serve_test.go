@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"net"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -428,5 +429,30 @@ func TestSyncCopiesExpireAndQuota(t *testing.T) {
 	}
 	if syncOverQuota([]syncEntry{{Path: "a", Size: 10}}) != "" || !strings.Contains(syncOverQuota([]syncEntry{{Path: "b", Size: maxSyncBytes + 1}}), "too large") {
 		t.Fatal("quota")
+	}
+}
+
+// #4: glava SSE in komentarji pred prenosom mape; napaka po tem kot dogodek SSE.
+func TestEarlyStreamWriter(t *testing.T) {
+	o := earlyInterval
+	t.Cleanup(func() { earlyInterval = o })
+	earlyInterval = 20 * time.Millisecond
+	rec := httptest.NewRecorder()
+	e := newEarlyWriter(rec, "r1")
+	time.Sleep(70 * time.Millisecond)
+	writeError(e, "r1", 502, "Syncing /p to the gateway failed")
+	e.done()
+	b := rec.Body.String()
+	if rec.Code != 200 || !strings.Contains(b, ": syncing the folder") || !strings.Contains(b, ": keep-alive") ||
+		!strings.Contains(b, "event: error") || !strings.Contains(b, "Syncing /p to the gateway failed") {
+		t.Fatalf("early stream: %d %q", rec.Code, b)
+	}
+	rec2 := httptest.NewRecorder()
+	e2 := newEarlyWriter(rec2, "r2")
+	e2.Header().Set("Content-Type", "text/event-stream")
+	e2.WriteHeader(200)
+	e2.Write([]byte("event: message_start\ndata: {}\n\n"))
+	if !strings.Contains(rec2.Body.String(), "event: message_start") || strings.Contains(rec2.Body.String(), "event: error") {
+		t.Fatalf("pass-through: %q", rec2.Body.String())
 	}
 }
