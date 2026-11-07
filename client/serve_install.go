@@ -75,8 +75,11 @@ func serviceFile(goos, exe, cfgPath string) string {
 </dict>
 </plist>
 `
-	case "windows":
-		return `"` + exe + `" serve --config "` + cfgPath + `"` // poti na Windows ne vsebujejo »"«
+	case "windows": // pladenj, če je ob exe; poti na Windows ne vsebujejo »"«
+		if tray := trayBeside(exe); tray != "" {
+			return `"` + tray + `" tray --config "` + cfgPath + `"`
+		}
+		return `"` + exe + `" serve --config "` + cfgPath + `"`
 	}
 	return ""
 }
@@ -108,6 +111,9 @@ func serviceCommand(sub, goos, cfgPath string) (string, error) {
 	case "windows install":
 		if err := runValueSet(runValueName, serviceFile(goos, exe, cfgPath)); err != nil {
 			return "", err
+		}
+		if trayBeside(exe) != "" {
+			return "Mini Gateway (tray icon) starts at sign-in (HKCU Run " + runValueName + ")", nil
 		}
 		return "minigw serve starts at sign-in (HKCU Run " + runValueName + "); to start it now run: minigw serve", nil
 	case "windows uninstall":

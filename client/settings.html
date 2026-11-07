@@ -1,0 +1,221 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf" content="{{CSRF}}">
+<title>Mini Gateway</title>
+<style nonce="{{NONCE}}">
+:root { color-scheme: light dark; --bg: #f5f5f7; --panel: #fff; --text: #1d1d1f; --muted: #6e6e73; --line: #d2d2d7;
+  --accent: #0a66d8; --side: #ececee; --sel: #d6d6db; --warn: #b25000; --err: #c4161c; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #1e1e1e; --panel: #2a2a2c; --text: #f5f5f7; --muted: #a1a1a6; --line: #3a3a3c; --accent: #3b8cff;
+    --side: #252527; --sel: #3a3a3c; --warn: #ffa64d; --err: #ff6961; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; font: 14px/1.4 system-ui, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); display: flex; min-height: 100vh; }
+nav { width: 200px; flex: none; background: var(--side); padding: 16px 8px; position: sticky; top: 0; height: 100vh; }
+nav h1 { font-size: 15px; margin: 0 8px 12px; }
+nav button { display: block; width: 100%; text-align: left; border: 0; background: none; color: var(--text); padding: 6px 10px; border-radius: 6px; font: inherit; cursor: pointer; }
+nav button.sel { background: var(--sel); }
+main { flex: 1; padding: 24px 32px; max-width: 860px; }
+h2 { font-size: 20px; margin: 0 0 16px; }
+h3 { font-size: 13px; color: var(--muted); margin: 20px 0 6px; font-weight: 600; }
+.box { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 4px 14px; }
+.row { display: flex; align-items: center; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+.row:last-child { border-bottom: 0; }
+.row > label, .row > .label { flex: 1; }
+.row input[type=text], .row input[type=password], .row input[type=number] { width: 320px; max-width: 55%; }
+input { font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); }
+.mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; word-break: break-all; }
+.muted { color: var(--muted); font-size: 12px; }
+.warn { color: var(--warn); font-size: 12px; }
+.buttons { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 8px; }
+button.b { font: inherit; padding: 4px 12px; min-width: 90px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--text); cursor: pointer; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+#msg { min-height: 20px; margin: 0 0 10px; font-size: 13px; }
+#msg.err { color: var(--err); }
+.hidden { display: none; }
+</style>
+</head>
+<body>
+<nav id="nav"><h1>Mini Gateway</h1></nav>
+<main><div id="msg"></div><div id="page"></div></main>
+<script nonce="{{NONCE}}">
+"use strict";
+const CSRF = document.querySelector('meta[name=csrf]').content;
+const SL = (navigator.language || "").toLowerCase().startsWith("sl");
+const S = {
+  general: ["General", "Splošno"], devices: ["Devices", "Naprave"], gateways: ["Gateways", "Prehodi"], claude: ["Claude CLI", "Claude CLI"],
+  status: ["Status", "Stanje"], running: ["Running", "Teče"], version: ["Version", "Različica"], startup: ["Starts at sign-in", "Zagon ob prijavi"],
+  yes: ["Yes", "Da"], no: ["No", "Ne"], port: ["Port", "Vrata"], address: ["Address (empty = all)", "Naslov (prazno = vsi)"],
+  save: ["Save", "Shrani"], saved: ["Saved.", "Shranjeno."], restart: ["Saved. Restart the router to use the new port or address.", "Shranjeno. Za nova vrata ali naslov znova zaženi router."],
+  connect: ["Connect line for clients", "Vrstica za odjemalce"], copy: ["Copy", "Kopiraj"], copied: ["Copied.", "Kopirano."],
+  rotate: ["New token", "Nov žeton"], rotateAsk: ["Make a new token? Every client must connect again with the new line.", "Naredim nov žeton? Vsak odjemalec se mora znova povezati z novo vrstico."],
+  rotated: ["New token. Run the new line on each client.", "Nov žeton. Novo vrstico zaženi na vsakem odjemalcu."],
+  allowed: ["Allowed devices", "Dovoljene naprave"], waiting: ["Waiting for approval", "Čakajo na odobritev"], none: ["None", "Nobena"],
+  allow: ["Allow", "Dovoli"], deny: ["Deny", "Zavrni"], remove: ["Remove", "Odstrani"],
+  compare: ["Compare the ID with the one on the client before you allow it.", "Pred odobritvijo primerjaj ID s tistim na odjemalcu."],
+  add: ["Add gateway", "Dodaj prehod"], name: ["Name", "Ime"], url: ["Base URL", "Osnovni URL"], key: ["API key", "Ključ API"],
+  insecure: ["Allow http (localhost or a private IP only)", "Dovoli http (le localhost ali zasebni IP)"], addBtn: ["Add", "Dodaj"],
+  keyNote: ["The key is stored in the system's secret store and is never shown.", "Ključ gre v shrambo skrivnosti sistema in se nikoli ne prikaže."],
+  models: ["Models", "Modeli"], filter: ["Filter", "Filter"], showAll: ["Show all", "Pokaži vse"], load: ["Show models", "Pokaži modele"],
+  removeAsk: ["Remove gateway %s and its key?", "Odstranim prehod %s in njegov ključ?"], noKey: ["no key", "brez ključa"],
+  enabledOf: ["%s of %s enabled", "vklopljenih %s od %s"], loading: ["Loading…", "Nalagam …"],
+  path: ["Path to claude (empty = PATH)", "Pot do claude (prazno = PATH)"], tools: ["Tools", "Orodja"], folder: ["Folder for agents without sync (empty = none)", "Mapa za agente brez sinhronizacije (prazno = brez)"],
+  bash: ["Allow Bash without a sandbox", "Dovoli Bash brez sandboxa"], found: ["Found", "Najden"], notFound: ["Not found", "Ni najden"],
+  bashWarn: ["Windows has no sandbox for Bash: agents can then run any command as you and read the gateway keys and the admin secret.",
+    "Windows nima sandboxa za Bash: agenti lahko tedaj zaženejo kateri koli ukaz kot ti in preberejo ključe prehodov in skrivnost API."],
+};
+const t = (k, ...a) => { let s = (S[k] || [k, k])[SL ? 1 : 0]; for (const x of a) s = s.replace("%s", x); return s; };
+document.documentElement.lang = SL ? "sl" : "en";
+
+// el: element brez innerHTML (podatki routerja so besedilo, nikoli HTML).
+function el(tag, props, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(props || {})) {
+    if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else if (k === "class") e.className = v;
+    else if (v !== false && v !== undefined) e[k] = v;
+  }
+  for (const k of kids.flat()) if (k !== null && k !== undefined) e.append(k);
+  return e;
+}
+const row = (label, ...right) => el("div", {class: "row"}, el("span", {class: "label"}, label), ...right);
+const button = (text, onclick, primary) => el("button", {class: "b" + (primary ? " primary" : ""), textContent: text, onclick});
+const box = (...rows) => el("div", {class: "box"}, ...rows);
+
+function say(text, err) { const m = document.getElementById("msg"); m.textContent = text || ""; m.className = err ? "err" : ""; }
+
+async function api(method, path, body) {
+  const r = await fetch("/minigw/admin/v1" + path, {method, credentials: "same-origin",
+    headers: {"X-CSRF": CSRF, "Content-Type": "application/json"}, body: body === undefined ? undefined : JSON.stringify(body)});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error((j.error && j.error.message) || ("HTTP " + r.status));
+  return j;
+}
+const run = fn => async () => { try { say(""); await fn(); } catch (e) { say(e.message, true); } };
+
+const pages = {
+  async general() {
+    const [st, g] = await Promise.all([api("GET", "/status"), api("GET", "/general")]);
+    const port = el("input", {type: "number", value: g.port, min: 1, max: 65535});
+    const addr = el("input", {type: "text", value: g.address, placeholder: "0.0.0.0"});
+    const line = el("input", {type: "text", value: g.connect, readOnly: true, class: "mono"});
+    return [
+      el("h3", {textContent: t("status")}),
+      box(row(t("running"), el("span", {textContent: t(st.running ? "yes" : "no")})),
+          row(t("version"), el("span", {textContent: st.version})),
+          row(t("startup"), el("span", {textContent: t(st.installed ? "yes" : "no")}))),
+      el("h3", {textContent: t("general")}),
+      box(row(t("port"), port), row(t("address"), addr),
+          row("", el("div", {class: "buttons"}, button(t("save"), run(async () => {
+            const r = await api("PATCH", "/general", {port: Number(port.value), address: addr.value.trim()});
+            say(t(r.restartRequired ? "restart" : "saved"));
+          }), true)))),
+      el("h3", {textContent: t("connect")}),
+      box(row(line), row("", el("div", {class: "buttons"},
+        button(t("copy"), run(async () => { await navigator.clipboard.writeText(line.value); say(t("copied")); })),
+        button(t("rotate"), run(async () => {
+          if (!confirm(t("rotateAsk"))) return;
+          line.value = (await api("POST", "/general/token")).connect; say(t("rotated"));
+        }))))),
+    ];
+  },
+
+  async devices() {
+    const d = await api("GET", "/devices");
+    const dev = (x, buttons) => el("div", {class: "row"},
+      el("div", {class: "label"}, el("div", {textContent: x.name || "—"}), el("div", {class: "mono muted", textContent: x.id}),
+        x.address ? el("div", {class: "muted", textContent: x.address + " · " + new Date(x.time).toLocaleString()}) : null),
+      el("div", {class: "buttons"}, ...buttons));
+    const act = (method, path, body) => run(async () => { await api(method, path, body); show("devices"); });
+    return [
+      el("h3", {textContent: t("waiting")}),
+      box(d.pending.length ? d.pending.map(x => dev(x, [
+        button(t("allow"), act("POST", "/devices", {id: x.id, name: x.name}), true),
+        button(t("deny"), act("DELETE", "/devices/" + encodeURIComponent(x.id)))])) : row(t("none"))),
+      el("p", {class: "muted", textContent: t("compare")}),
+      el("h3", {textContent: t("allowed")}),
+      box(d.devices.length ? d.devices.map(x => dev(x, [button(t("remove"), act("DELETE", "/devices/" + encodeURIComponent(x.id)))])) : row(t("none"))),
+    ];
+  },
+
+  async gateways() {
+    const g = await api("GET", "/gateways");
+    const out = [];
+    for (const gw of g.gateways) {
+      const list = el("div");
+      const filter = el("input", {type: "text", placeholder: t("filter")});
+      const all = el("input", {type: "checkbox"});
+      const load = run(async () => {
+        list.replaceChildren(row(t("loading")));
+        const r = await api("GET", "/gateways/" + encodeURIComponent(gw.name) + "/models?filter=" + encodeURIComponent(filter.value.trim()));
+        const shown = r.models.filter(m => m.enabled || all.checked || filter.value.trim());
+        const on = r.models.filter(m => m.enabled).length;
+        list.replaceChildren(row(el("span", {class: "muted", textContent: t("enabledOf", on, r.models.length)})),
+          ...shown.map(m => {
+            const cb = el("input", {type: "checkbox", checked: m.enabled, onchange: run(async () => {
+              await api("POST", "/gateways/" + encodeURIComponent(gw.name) + "/models", cb.checked ? {enable: [m.id]} : {disable: [m.id]});
+            })});
+            return el("label", {class: "row"}, cb, el("span", {class: "label"}, el("span", {textContent: m.model}),
+              el("span", {class: "muted", textContent: " " + m.id + (m.window ? " · " + Math.round(m.window / 1000) + "K" : "")})));
+          }));
+      });
+      filter.addEventListener("keydown", e => { if (e.key === "Enter") load(); });
+      out.push(el("h3", {textContent: gw.name}), box(
+        row(el("span", {class: "mono", textContent: gw.baseURL + (gw.hasKey ? "" : " · " + t("noKey"))}),
+          el("div", {class: "buttons"}, button(t("remove"), run(async () => {
+            if (!confirm(t("removeAsk", gw.name))) return;
+            await api("DELETE", "/gateways/" + encodeURIComponent(gw.name)); show("gateways");
+          })))),
+        row(t("models"), filter, el("label", {}, all, " " + t("showAll")), el("div", {class: "buttons"}, button(t("load"), load))),
+        list));
+    }
+    const name = el("input", {type: "text"}), url = el("input", {type: "text", placeholder: "https://openrouter.ai/api"});
+    const key = el("input", {type: "password", autocomplete: "off"}), insecure = el("input", {type: "checkbox"});
+    out.push(el("h3", {textContent: t("add")}), box(
+      row(t("name"), name), row(t("url"), url), row(t("key"), key), row(t("insecure"), insecure),
+      row(el("span", {class: "muted", textContent: t("keyNote")}), el("div", {class: "buttons"}, button(t("addBtn"), run(async () => {
+        const r = await api("POST", "/gateways", {name: name.value.trim(), baseURL: url.value.trim(), key: key.value.trim(), insecure: insecure.checked});
+        key.value = "";
+        await show("gateways");
+        say(r.gateway.name + ": " + t("enabledOf", r.models.filter(m => m.enabled).length, r.models.length));
+      }), true)))));
+    return out;
+  },
+
+  async claude() {
+    const c = await api("GET", "/agents/claude");
+    const path = el("input", {type: "text", value: c.path}), tools = el("input", {type: "text", value: c.tools});
+    const folder = el("input", {type: "text", value: c.folder}), bash = el("input", {type: "checkbox", checked: c.allowUnsandboxedBash});
+    return [
+      box(row(t(c.found ? "found" : "notFound")), row(t("path"), path), row(t("tools"), tools), row(t("folder"), folder),
+        row(el("div", {class: "label"}, el("div", {textContent: t("bash")}), el("div", {class: "warn", textContent: t("bashWarn")})), bash),
+        row("", el("div", {class: "buttons"}, button(t("save"), run(async () => {
+          await api("PATCH", "/agents/claude", {path: path.value.trim(), tools: tools.value, folder: folder.value.trim(), allowUnsandboxedBash: bash.checked});
+          await show("claude"); say(t("saved"));
+        }), true)))),
+    ];
+  },
+};
+
+let current = "general";
+async function show(name) {
+  current = name;
+  for (const b of document.querySelectorAll("nav button")) b.classList.toggle("sel", b.dataset.page === name);
+  try {
+    const content = await pages[name]();
+    document.getElementById("page").replaceChildren(el("h2", {textContent: t(name)}), ...content);
+  } catch (e) { say(e.message, true); }
+}
+for (const p of Object.keys(pages)) {
+  const b = el("button", {textContent: t(p), onclick: () => { say(""); show(p); }});
+  b.dataset.page = p;
+  document.getElementById("nav").append(b);
+}
+setInterval(() => { if (current === "devices" && document.visibilityState === "visible") show("devices"); }, 5000);
+show("general");
+</script>
+</body>
+</html>

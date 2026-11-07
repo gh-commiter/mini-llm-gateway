@@ -111,6 +111,32 @@ func adminSecret(cfgDir string) (string, error) {
 // adminHTTP: odjemalec na tem računalniku (naslov TCP, ne glave), Host za DNS rebinding, skrivnost; brez CORS.
 // Loopback sicer preskoči preverjanje naprave; skrbniški API kljub temu zahteva skrivnost.
 func (s *server) adminHTTP(w http.ResponseWriter, r *req) int {
+	if st := localOnly(w, r); st != 0 {
+		return st
+	}
+	if auth := r.h("authorization"); strings.HasPrefix(auth, "Bearer ") { // CLI
+		if s.admin == "" || subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(auth, "Bearer ")), []byte(s.admin)) != 1 {
+			return writeError(w, r.rid, 401, "Invalid or missing admin secret (admin.secret in the config folder)")
+		}
+	} else { // stran z nastavitvami: piškotek seje in X-CSRF pri vsaki spremembi
+		sess, ok := s.settings.session(r)
+		if !ok {
+			return writeError(w, r.rid, 401, "Invalid or missing admin secret (admin.secret in the config folder)")
+		}
+		if r.Method != "GET" && subtle.ConstantTimeCompare([]byte(r.h("x-csrf")), []byte(sess.csrf)) != 1 {
+			return writeError(w, r.rid, 403, "Missing or wrong X-CSRF header: reload the settings page")
+		}
+	}
+	if !readBody(w, r, 1<<20) {
+		return writeError(w, r.rid, 413, "Request body too large or too slow")
+	}
+	status, obj := s.adminDo(r.Method, strings.TrimPrefix(r.URL.RequestURI(), adminPrefix), r.body)
+	return writeJSON(w, r.rid, status, obj)
+}
+
+// localOnly: odjemalec na tem računalniku (naslov TCP, ne glave) in Host 127.0.0.1/localhost s temi vrati (DNS
+// rebinding). 0 = v redu, sicer je odgovor že poslan.
+func localOnly(w http.ResponseWriter, r *req) int {
 	if !r.conn.loopback() {
 		return writeError(w, r.rid, 403, "The admin API is only available on the router computer")
 	}
@@ -118,16 +144,7 @@ func (s *server) adminHTTP(w http.ResponseWriter, r *req) int {
 	if !slices.Contains([]string{"127.0.0.1:" + port, "localhost:" + port, "[::1]:" + port}, strings.ToLower(r.Host)) {
 		return writeError(w, r.rid, 403, "Host must be 127.0.0.1:"+port+" or localhost:"+port)
 	}
-	auth := r.h("authorization")
-	if !strings.HasPrefix(auth, "Bearer ") || s.admin == "" ||
-		subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(auth, "Bearer ")), []byte(s.admin)) != 1 {
-		return writeError(w, r.rid, 401, "Invalid or missing admin secret (admin.secret in the config folder)")
-	}
-	if !readBody(w, r, 1<<20) {
-		return writeError(w, r.rid, 413, "Request body too large or too slow")
-	}
-	status, obj := s.adminDo(r.Method, strings.TrimPrefix(r.URL.RequestURI(), adminPrefix), r.body)
-	return writeJSON(w, r.rid, status, obj)
+	return 0
 }
 
 // offlineServer: router ne teče; isti API spreminja le serve.json in shrambo ključev.
@@ -232,6 +249,15 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		}
 		return 200, map[string]any{"device": apiDevice{ID: d.ID, Name: d.Name}, "added": added}
 	case "DELETE devices/{}":
+		s.mu.Lock() // čakajoča naprava (zavrni): le iz seznama čakajočih
+		if j := slices.IndexFunc(s.pending, func(p apiDevice) bool { return p.ID == arg }); j >= 0 &&
+			!slices.ContainsFunc(s.cfg.Devices, func(d serveDevice) bool { return d.ID == arg }) {
+			d := s.pending[j]
+			s.pending = slices.Delete(s.pending, j, j+1)
+			s.mu.Unlock()
+			return 200, map[string]any{"device": apiDevice{ID: d.ID, Name: d.Name}, "pending": true}
+		}
+		s.mu.Unlock()
 		var gone serveDevice
 		err := s.update(func(c *serveConfig) error {
 			i := slices.IndexFunc(c.Devices, func(d serveDevice) bool { return d.ID == arg })
@@ -487,6 +513,14 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		}
 		c := s.conf()
 		return 200, apiGeneral{Port: c.Port, Address: c.Address, Connect: connectLine(c), RestartRequired: !s.offline}
+	case "POST settings/{}":
+		if arg != "login" {
+			return fail(404, "Not found: "+method+" "+uri)
+		}
+		if s.offline {
+			return fail(503, "minigw serve is not running")
+		}
+		return 200, map[string]string{"url": s.settingsLoginURL()}
 	case "POST general/{}":
 		if arg != "token" {
 			return fail(404, "Not found: "+method+" "+uri)

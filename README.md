@@ -227,6 +227,17 @@ log shows `minigw serve allow <id> "<name>"`. Anyone with the token can try to c
 device you just connected before you allow it. `minigw router devices` lists the allowed devices and the ones
 waiting, `minigw router devices deny <id or name>` removes one.
 
+**Windows tray.** `minigw-tray-windows-amd64.exe` (or `-arm64.exe`) is the same router with an icon in the
+notification area instead of a console window. On first start it creates the config. Its menu shows the status,
+devices waiting for approval (Allow / Deny, with a notification when one appears), **Settings…**, **Copy connect
+line**, **Start at sign-in**, the log (`minigw-serve.log` in the config folder) and Quit. Put it next to
+`minigw.exe`, and `minigw serve install` starts the tray at sign-in instead of the console router.
+
+**Settings page.** **Settings…** opens `http://127.0.0.1:<port>/minigw/settings` in the browser with a one-time
+link (60 s): General (port, address, connect line, new token), Devices, Gateways (key, models) and Claude CLI.
+Changes apply at once. On Linux, `minigw router settings` prints such a link; open it on the router computer or
+through `ssh -L <port>:127.0.0.1:<port>` with the same port on both ends (the page checks the port).
+
 **Changing the router.** `minigw router status|devices|gateway|claude|token` (also as `minigw serve allow`, `deny`,
 `devices`, `gateway`) changes the running router at once, through its admin API; when it does not run, it changes
 `serve.json`. Port and address need a restart. `minigw router token rotate` makes a new token and prints the new

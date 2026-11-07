@@ -15,6 +15,11 @@ except where a response says `"restartRequired": true`.
   base64url without padding (43 characters), in the file `admin.secret` (mode 0600) in the router's config folder
   (the folder agents may not read). The router creates it on first start. Missing or wrong: `401`. The router's
   client token is not the admin secret.
+- **Settings page session** (instead of the secret): `GET /minigw/settings/login?t=<one-time token>` (valid 60 s,
+  once) sets the cookie `minigw_settings` (HttpOnly, SameSite=Strict, Path=/minigw/) and redirects to
+  `/minigw/settings`. A request with that cookie may use the API; every method other than GET also needs the header
+  `X-CSRF` with the session's value, which the page has embedded. Missing cookie: `401`; missing or wrong `X-CSRF`:
+  `403`. `POST /settings/login` (below) or the tray gives the one-time link.
 - Loopback skips the device check and encryption for normal API calls; the admin API still needs the secret.
 - No CORS headers, on any response. A browser page cannot read responses or send the header without a preflight,
   which fails.
@@ -56,7 +61,7 @@ General  {"port": number, "address": string, "connect": string, "restartRequired
 | `GET /status` | – | `{"running", "version", "port", "address", "installed", "devices": n, "pending": n, "claude": Claude, "gateways": [Gateway]}` |
 | `GET /devices` | – | `{"devices": [Device], "pending": [Device], "allowAnyDevice": bool}` |
 | `POST /devices` | `{"id", "name"}` | `{"device": Device, "added": bool}`; removes it from pending |
-| `DELETE /devices/{id or name}` | – | `{"device": Device}`; a name must be unique |
+| `DELETE /devices/{id or name}` | – | `{"device": Device}`; a pending device is only removed from pending (`"pending": true`); a name must be unique |
 | `GET /gateways` | – | `{"gateways": [Gateway]}` |
 | `POST /gateways` | `{"name", "baseURL", "key", "insecure"}` | `{"gateway": Gateway, "keyStore": string, "models": [Model]}` |
 | `DELETE /gateways/{name}` | – | `{"name"}`; also deletes the key |
@@ -67,6 +72,7 @@ General  {"port": number, "address": string, "connect": string, "restartRequired
 | `GET /general` | – | General |
 | `PATCH /general` | any of `{"port", "address"}` | General with `"restartRequired": true` |
 | `POST /general/token` | – | General with the new token in `connect`; the old token stops working at once |
+| `POST /settings/login` | – | `{"url"}`: a one-time link to the settings page (60 s); `503` when the router does not run |
 
 Notes:
 

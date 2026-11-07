@@ -181,15 +181,10 @@ func serveCommand(args []string) {
 	switch sub {
 	case "init":
 		c, err := loadServeConfig(*cfgPath)
-		if err != nil {
-			if !errors.Is(err, os.ErrNotExist) {
-				fail(err.Error())
-			}
-			k, _ := ecdh.X25519().GenerateKey(rand.Reader)
-			t := make([]byte, 24)
-			rand.Read(t)
-			c = serveConfig{Token: "mgw-" + base64url(t), Key: base64url(k.Bytes()), Port: 8765, Tools: defaultTools,
-				PermissionMode: "dontAsk", Devices: []serveDevice{}}
+		if errors.Is(err, os.ErrNotExist) {
+			c = newServeConfig()
+		} else if err != nil {
+			fail(err.Error())
 		}
 		if *port != 0 {
 			c.Port = *port
@@ -248,8 +243,24 @@ func serveCommand(args []string) {
 	if err != nil {
 		fail(err.Error())
 	}
+	s.announce(ln)
+	fail(s.serve(ln).Error())
+}
+
+// newServeConfig: nov žeton in ključ routerja (serve init, prvi zagon pladnja).
+func newServeConfig() serveConfig {
+	k, _ := ecdh.X25519().GenerateKey(rand.Reader)
+	t := make([]byte, 24)
+	rand.Read(t)
+	return serveConfig{Token: "mgw-" + base64url(t), Key: base64url(k.Bytes()), Port: 8765, Tools: defaultTools,
+		PermissionMode: "dontAsk", Devices: []serveDevice{}}
+}
+
+// announce: vrstica zagona, opozorila o ključih prehodov in odkrivanje modelov v ozadju.
+func (s *server) announce(ln net.Listener) {
+	c := s.conf()
 	s.log.Printf("minigw %s serving on %s (MGW2), claude=%q folder=%q scratch=%q devices=%d gateways=%d", version, ln.Addr(),
-		strings.Join(s.claudeExe(), " "), c.Folder, s.conf().Scratch, len(c.Devices), len(c.Gateways))
+		strings.Join(s.claudeExe(), " "), c.Folder, c.Scratch, len(c.Devices), len(c.Gateways))
 	for _, g := range c.Gateways {
 		if key, where := keyGet(s.cfgDir, g.Name); key == "" {
 			s.log.Printf("WARNING: gateway %s has no API key: run minigw serve gateway add %s %s", g.Name, g.Name, g.BaseURL)
@@ -258,7 +269,6 @@ func serveCommand(args []string) {
 		}
 	}
 	go s.modelList() // odkrivanje modelov prehodov v ozadju
-	fail(s.serve(ln).Error())
 }
 
 // validDeviceID: ID, kot ga izpiše zavrnitev (base64url 32 bajtov javnega ključa, 43 znakov).
@@ -287,6 +297,7 @@ type server struct {
 	pending  []apiDevice // nedavno zavrnjene naprave (največ 20)
 	admin    string      // skrivnost skrbniškega API (admin.secret)
 	offline  bool        // minigw router brez tekočega routerja: le serve.json
+	settings settingsState
 	key      *ecdh.PrivateKey
 	log      *log.Logger
 	hub      *shareHub
@@ -697,6 +708,9 @@ func (s *server) handle(w http.ResponseWriter, r *req) (int, string) {
 	}
 	if r.URL.Path == adminPrefix || strings.HasPrefix(r.URL.Path, adminPrefix+"/") {
 		return s.adminHTTP(w, r), ""
+	}
+	if r.URL.Path == "/minigw/settings" || r.URL.Path == "/minigw/settings/login" {
+		return s.settingsHTTP(w, r), ""
 	}
 	if !s.authorized(r) {
 		return writeError(w, r.rid, 401, "Invalid or missing token"), ""

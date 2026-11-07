@@ -153,6 +153,10 @@ func getJSON(c connection, path string) (int, map[string]any) {
 
 func main() {
 	args := os.Args[1:]
+	if isTrayExe(os.Args[0]) { // minigw-tray.exe: router z ikono v območju za obvestila
+		trayCommand(args)
+		return
+	}
 	first := ""
 	if len(args) > 0 {
 		first = args[0]
@@ -163,6 +167,9 @@ func main() {
 		return
 	case "router":
 		routerCommand(args[1:], os.Stdin)
+		return
+	case "tray":
+		trayCommand(args[1:])
 		return
 	case "share":
 		shareCommand(args[1:])

@@ -94,6 +94,12 @@ if [[ $MODE == --release ]]; then
     (cd client && CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath -ldflags "-s -w" -o "../$OUT/$name" .)
     GO_BINS+=$name
   done
+  # Pladenj za Windows: isti program brez konzole (minigw-tray*.exe zažene router z ikono v območju za obvestila).
+  for arch in amd64 arm64; do
+    name=minigw-tray-windows-$arch.exe
+    (cd client && CGO_ENABLED=0 GOOS=windows GOARCH=$arch go build -trimpath -ldflags "-s -w -H=windowsgui" -o "../$OUT/$name" .)
+    GO_BINS+=$name
+  done
 
   (cd $OUT && shasum -a 256 "${ZIP:t}" "${DMG:t}" minigw.zip install.sh $GO_BINS | tee SHA256SUMS)
   # Homebrew (Casks/, tap = ta repozitorij): različica in kontrolni vsoti te izdaje

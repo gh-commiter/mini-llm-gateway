@@ -28,6 +28,7 @@ runs; otherwise they go to serve.json.
   minigw router gateway models <name> [text] [--all] [--enable m1,m2|all] [--disable m1,m2|all]
   minigw router claude [--path FILE] [--tools T1,T2] [--folder DIR] [--allow-unsandboxed-bash=true|false]
   minigw router token [rotate]                               print the connect line; rotate makes a new token
+  minigw router settings                                     a one-time link (60 s) to the settings page
 
 All take --config FILE (default: the minigw serve config).`
 
@@ -340,6 +341,11 @@ func routerCommand(args []string, in io.Reader) {
 			say("On each client run:")
 		}
 		say("  " + g.Connect)
+	case "settings":
+		need(1, 1)
+		var r struct{ URL string }
+		a.do("POST", "/settings/login", nil, &r)
+		say("Open within 60 seconds (once), in a browser on this computer:\n  " + r.URL)
 	default:
 		fail("unknown command minigw router " + pos[0] + "\n\n" + routerHelp)
 	}
