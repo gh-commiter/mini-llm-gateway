@@ -26,6 +26,7 @@ mkdir -p "$BIN"
 
 
 ver() { "$1" --version 2>/dev/null | head -1 | sed 's/^minigw //'; }
+MIN=0.5.18  # najnižji minigw za ta vtičnik (profili: --name, @<profil>, --minigw-profile)
 older() { [ -n "$1" ] && [ -n "$2" ] && [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" = "$1" ]; }
 
 # verify_sums <sums> <sig>: najprej ssh-keygen; sicer že nameščen minigw, a le 0.5.17 ali novejši (pozna verify-sums)
@@ -81,7 +82,7 @@ if [ "$os" = darwin ]; then
   other=""
   for c in "$(command -v minigw 2>/dev/null || true)" /opt/homebrew/bin/minigw /usr/local/bin/minigw \
            "/Applications/Mini Gateway.app/Contents/Helpers/minigw"; do
-    [ -n "$c" ] && [ "$c" != "$EXE" ] && valid "$c" && { other=$c; break; }
+    [ -n "$c" ] && [ "$c" != "$EXE" ] && valid "$c" && ! older "$(ver "$c")" "$MIN" && { other=$c; break; }  # prestar: prenos
   done
   if [ -n "$other" ]; then
     [ "$(readlink "$EXE" 2>/dev/null)" = "$other" ] || { rm -f "$EXE"; ln -s "$other" "$EXE"; }
@@ -96,6 +97,11 @@ else
       echo "minigw plugin: could not download or verify $asset from github.com/$REPO${unsigned:+ ($unsigned)}; gateway skills are unavailable."; exit 0; }
   fi
 fi
+
+# Prestar minigw (zadnja izdaja ali nameščen ga še ne more zamenjati): skilli s profili tega ne smejo uporabiti.
+cur=$(ver "$EXE")
+case $cur in *[!0-9.]*) cur="" ;; esac
+older "$cur" "$MIN" && echo "minigw plugin: minigw $cur is older than $MIN, which this plugin needs for profiles (--name, @<profile>): run /minigw:gw update."
 
 # L4 (0.5.17): posodobitev zavrnjena (podpis), obstoječa ostane: povej, zakaj.
 [ -n "$unsigned" ] && [ -x "$EXE" ] && echo "minigw plugin: not updated: $unsigned; the installed minigw stays."

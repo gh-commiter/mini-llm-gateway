@@ -197,7 +197,7 @@ public enum Sync {
     }
 
     /// Kanonična pot (realpath); resolvingSymlinksInPath odreže »/private« in pusti povezavo »/var«.
-    static func real(_ url: URL) -> URL? {
+    public static func real(_ url: URL) -> URL? {
         guard let p = realpath(url.path, nil) else { return nil }
         defer { free(p) }
         return URL(fileURLWithPath: String(cString: p))

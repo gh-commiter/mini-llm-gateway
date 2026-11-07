@@ -5,6 +5,8 @@ argument-hint: "[--ro] [--profile <p>] <model>[@<profile>] <question or task>"
 allowed-tools: Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw *)
 ---
 
+Profiles (`--name`, `profiles`, `--minigw-profile`, `<model>@<profile>`) need minigw 0.5.18 or newer: if the first line of `"${CLAUDE_PLUGIN_DATA}/bin/minigw" --version` is older, tell the user to run `/minigw:gw update` and do not use them (an older minigw passes them to claude).
+
 Run the question through Mini Gateway with the `minigw` client, in the current folder:
 
 ```sh

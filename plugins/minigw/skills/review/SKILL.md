@@ -5,6 +5,8 @@ argument-hint: "[--rw] [--profile <p>] [what to review]"
 allowed-tools: Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw *), Bash(git diff*), Bash(git status*)
 ---
 
+Profiles (`--name`, `profiles`, `--minigw-profile`, `<model>@<profile>`) need minigw 0.5.18 or newer: if the first line of `"${CLAUDE_PLUGIN_DATA}/bin/minigw" --version` is older, tell the user to run `/minigw:gw update` and do not use them (an older minigw passes them to claude).
+
 1. Collect what to review: the user's argument, or `git diff` and `git diff --staged` in a git repository.
 2. Run the review with Bash (timeout 600000 ms). The folder is shared read-only (`--minigw-ro`): the reviewer cannot change files. Leave out `--minigw-ro` only if the user passed `--rw` (for example so the reviewer may run a build that writes output):
 

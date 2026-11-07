@@ -748,6 +748,11 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			if !filepath.IsAbs(scratch) || under(scratch, s.cfgDir) || under(s.cfgDir, scratch) {
 				return fail(400, "scratch folder: an absolute path outside the config folder")
 			}
+			if *b.Scratch != "" {
+				if why := scratchProblem(scratch, s.conf().AllowedFolders); why != "" { // M1, kot na Macu
+					return fail(400, "scratch folder: "+why)
+				}
+			}
 			if err := protectScratch(scratch); err != nil {
 				return fail(400, "scratch folder "+scratch+": "+err.Error()+" (use a folder of your own)")
 			}

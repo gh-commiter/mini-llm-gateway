@@ -345,7 +345,7 @@ func updateMSI(dir string) (string, error) {
 	if err := fetchRelease(asset, msi); err != nil {
 		return "", errors.New("Mini Gateway was installed with the MSI (" + dir + "); cannot get the new MSI: " + err.Error())
 	}
-	if err := runCmd("msiexec", "/i", msi, "/passive", "/norestart"); err != nil {
+	if err := runCmd(msiexecPath(), "/i", msi, "/passive", "/norestart"); err != nil { // L5: ne iz PATH
 		return "", err
 	}
 	return "updated with the MSI of v" + version + " in " + dir + "; Mini Gateway is in the notification area", nil

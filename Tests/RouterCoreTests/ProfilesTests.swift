@@ -10,11 +10,14 @@ import Testing
     let names = ["mini", "win"]
     #expect(Profiles.split("claude-cli-opus@win", names: names) == ("claude-cli-opus", "win"))
     for m in ["claude-opus-4@20250514", "x@other", "plain", "@win"] { #expect(Profiles.split(m, names: names).profile == nil, "\(m)") }
-    let (b, p) = Profiles.routeBody(Data(#"{"model":"claude-cli-opus@win","max_tokens":5}"#.utf8), names: names)
+    let (b, p, bare) = Profiles.routeBody(Data(#"{"model":"claude-cli-opus@win","max_tokens":5}"#.utf8), names: names)
     let o = try? JSONSerialization.jsonObject(with: b) as? [String: Any]
-    #expect(p == "win" && o?["model"] as? String == "claude-cli-opus" && o?["max_tokens"] as? Int == 5)
+    #expect(p == "win" && bare == "claude-cli-opus" && o?["model"] as? String == "claude-cli-opus" && o?["max_tokens"] as? Int == 5)
     let raw = Data(#"{"model":"x@other"}"#.utf8)
-    #expect(Profiles.routeBody(raw, names: names) == (raw, nil))
+    let r = Profiles.routeBody(raw, names: names)
+    #expect(r.body == raw && r.profile == nil && r.model == "x@other")
+    #expect(Profiles.isAgentModel("claude-cli-opus") && Profiles.isAgentModel("claude-codex") && Profiles.isAgentModel("claude-copilot-gpt")
+            && !Profiles.isAgentModel("claude-siri-ai") && !Profiles.isAgentModel("claude-chat-haiku"))
 }
 
 @Test func profileModelsMerge() {
@@ -33,7 +36,7 @@ private final class FakeGateway: @unchecked Sendable {
     var port: UInt16 { listener.port?.rawValue ?? 0 }
     var log: [String] { lock.withLock { seen } }
 
-    init(models: String) throws {
+    init(models: String, redirect: String? = nil) throws {
         let p = NWParameters.tcp
         p.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
         listener = try NWListener(using: p)
@@ -41,17 +44,20 @@ private final class FakeGateway: @unchecked Sendable {
         listener.stateUpdateHandler = { if case .ready = $0 { ready.signal() } }
         listener.newConnectionHandler = { [unowned self] c in
             c.start(queue: .global())
-            self.read(c, Data(), models)
+            self.read(c, Data(), models, redirect)
         }
         listener.start(queue: .global())
         ready.wait()
     }
 
-    private func read(_ c: NWConnection, _ buf: Data, _ models: String) {
+    private func read(_ c: NWConnection, _ buf: Data, _ models: String, _ redirect: String?) {
         c.receive(minimumIncompleteLength: 1, maximumLength: 1 << 20) { d, _, end, _ in
             let b = buf + (d ?? Data())
-            guard case .request(let r) = HTTPParser.parse(b) else { return end ? c.cancel() : self.read(c, b, models) }
+            guard case .request(let r) = HTTPParser.parse(b) else { return end ? c.cancel() : self.read(c, b, models, redirect) }
             var body = Data(#"{"ok":true}"#.utf8)
+            if let redirect, r.path == "/v1/models" {
+                return c.send(content: HTTPResponse.head(status: 302, headers: [("Location", redirect)], contentLength: 0), completion: .contentProcessed { _ in c.cancel() })
+            }
             if r.path == "/v1/models" { body = Data(#"{"data":[\#(models)]}"#.utf8) } else {
                 let m = (try? JSONSerialization.jsonObject(with: r.body) as? [String: Any])?["model"] as? String ?? ""
                 self.lock.withLock { self.seen.append("\(r.header("authorization") ?? "")|\(m)|\(r.header("x-claude-mini-share") ?? "")|\(r.header("connection") ?? "")") }
@@ -87,10 +93,33 @@ private func send(_ url: String, _ method: String, _ path: String, secret: Strin
     let (st, list) = try await send(m.localURL, "GET", "/v1/models", secret: m.secret)
     #expect(st == 200 && list.contains(#""claude-siri-ai""#) && list.contains(#""claude-siri-ai@mini""#)
             && list.contains(#""claude-cli-opus@win""#) && !list.contains("@off"))
+    // model brez orodij (npr. naslov seje) mape ne deli
+    #expect(try await send(m.localURL, "POST", "/v1/messages", secret: m.secret, body: #"{"model":"claude-chat-haiku@win"}"#).0 == 200)
+    #expect(shares.n == 0 && g2.log == ["Bearer tok-win|claude-chat-haiku||close"])
     for _ in 0..<2 { #expect(try await send(m.localURL, "POST", "/v1/messages", secret: m.secret, body: #"{"model":"claude-cli-opus@win"}"#) == (200, #"{"ok":true}"#)) }
     #expect(try await send(m.localURL, "POST", "/v1/messages/count_tokens", secret: m.secret, body: #"{"model":"claude-siri-ai"}"#).0 == 200)
-    #expect(g2.log == ["Bearer tok-win|claude-cli-opus|1|close", "Bearer tok-win|claude-cli-opus|1|close"])
+    #expect(g2.log.suffix(2) == ["Bearer tok-win|claude-cli-opus|1|close", "Bearer tok-win|claude-cli-opus|1|close"])
     #expect(g1.log == ["Bearer tok-mini|claude-siri-ai|1|close"])
     #expect(shares.n == 1)
-    #expect(try await send(m.localURL, "POST", "/v1/messages", secret: m.secret, body: #"{"model":"x@off"}"#).0 == 502)
+    let (st5, e5) = try await send(m.localURL, "POST", "/v1/messages", secret: m.secret, body: #"{"model":"x@off"}"#)
+    #expect(st5 == 502 && e5.contains("gateway off is not reachable (minigw status)"), "\(e5)")
+    // I4: kontrolni znaki v vrednosti glave → 400
+    var bad = URLRequest(url: URL(string: m.localURL + "/v1/messages")!)
+    bad.httpMethod = "POST"; bad.setValue("Bearer \(m.secret)", forHTTPHeaderField: "authorization")
+    bad.setValue("a\u{7f}b", forHTTPHeaderField: "x-claude-mini-cwd"); bad.httpBody = Data(#"{"model":"claude-siri-ai"}"#.utf8)
+    #expect((try await URLSession.shared.data(for: bad).1 as! HTTPURLResponse).statusCode == 400)
+}
+
+/// L2: seznam modelov ne sledi preusmeritvi drugega prehoda (žeton ne gre na drug proxy).
+@Test func profileMuxModelsDoNotFollowRedirects() async throws {
+    let other = try FakeGateway(models: #"{"id":"stolen"}"#)
+    let g = try FakeGateway(models: "", redirect: "http://127.0.0.1:\(other.port)/v1/models")
+    let ok = try FakeGateway(models: #"{"id":"claude-siri-ai"}"#)
+    defer { other.listener.cancel(); g.listener.cancel(); ok.listener.cancel() }
+    let m = ProfileMux(targets: [.init(name: "mini", url: "http://127.0.0.1:\(ok.port)", token: "t1"),
+                                 .init(name: "evil", url: "http://127.0.0.1:\(g.port)", token: "t2")])
+    try m.start()
+    defer { m.stop() }
+    let (st, list) = try await send(m.localURL, "GET", "/v1/models", secret: m.secret)
+    #expect(st == 200 && !list.contains("stolen") && list.contains("claude-siri-ai"))
 }

@@ -287,8 +287,8 @@ func worktreeClaudeArgs(args []string, wt, maven, objects string) []string {
 		}
 		if sb, _ := st["sandbox"].(map[string]any); sb != nil {
 			if fs, _ := sb["filesystem"].(map[string]any); fs != nil {
-				fs["allowWrite"] = append(toStrings(fs["allowWrite"]), maven)
-				fs["allowRead"] = append(toStrings(fs["allowRead"]), maven, objects)
+				fs["allowWrite"] = append(toStrings(fs["allowWrite"]), wt, maven) // koren klona (tudi .git za commit), ko je cwd podmapa
+				fs["allowRead"] = append(toStrings(fs["allowRead"]), wt, maven, objects)
 				var deny []string
 				for _, d := range []string{"config", "hooks", "info", "commondir"} {
 					deny = append(deny, filepath.Join(wt, ".git", d))
@@ -298,6 +298,15 @@ func worktreeClaudeArgs(args []string, wt, maven, objects string) []string {
 		}
 		b, _ := json.Marshal(st)
 		args[i+1] = string(b)
+	}
+	args = append(args, "--add-dir", wt) // koren klona tudi za orodja Read/Edit, ko je cwd podmapa
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "--allowedTools" && args[i+1] != "" {
+			for _, t := range []string{"Read", "Edit", "Write", "MultiEdit", "Glob", "Grep"} {
+				args[i+1] += "," + t + "(" + ruleAbs(wt) + "/**)"
+			}
+			break
+		}
 	}
 	var edits []string
 	for _, p := range []string{"/.git", "/.git/**", "/**/.git", "/**/.git/**"} {

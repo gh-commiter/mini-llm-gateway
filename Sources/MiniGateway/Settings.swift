@@ -1080,13 +1080,23 @@ struct ScratchSection: View {
 
     /// nil = privzeta mapa.
     private func move(to url: URL?) {
-        let old = draft.scratchURL, new = url.map(RouterConfig.dedicated) ?? RouterConfig.defaultScratch
+        // M1, L1: ista pravila kot API; shrani se kanonična pot. L3: ne med sejami minigw ali agenti.
+        if let url, let why = RouterConfig.scratchProblem(url, allowedRoots: draft.claudeCLI.allowedRoots) {
+            failure = String(localized: "This folder cannot hold the scratch folder: \(why).")
+            return
+        }
+        let real = url.map { Sync.real($0) ?? $0 }
+        let old = draft.scratchURL, new = real.map(RouterConfig.dedicated) ?? RouterConfig.defaultScratch
         moving = true
         Task.detached {
+            if await Router.scratchInUse() {
+                await MainActor.run { moving = false; failure = String(localized: "minigw sessions or agents are active. Move the scratch folder when no minigw session runs.") }
+                return
+            }
             let error: String? = { do { try RouterConfig.moveScratch(from: old, to: new); return nil } catch { return error.localizedDescription } }()
             await MainActor.run {
                 moving = false
-                if let error { failure = error } else { draft.scratchFolder = url?.path ?? "" }
+                if let error { failure = error } else { draft.scratchFolder = real?.path ?? "" }
             }
         }
     }

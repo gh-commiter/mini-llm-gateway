@@ -107,7 +107,7 @@ func route(p profile) connection {
 
 func routeErr(p profile) (connection, error) {
 	c := p.conn
-	if c.isLocal() {
+	if c.isLocal() && c.Key == nil { // L3: s ključem prehoda tudi lokalno šifrirano (drug lokalni uporabnik na vratih ne dobi žetona)
 		return c, nil
 	}
 	if c.Key == nil {
@@ -153,7 +153,7 @@ func profileStatus(p profile) bool {
 	} else if st == 0 {
 		state = "unreachable"
 	}
-	if !p.conn.isLocal() {
+	if !p.conn.isLocal() || p.conn.Key != nil {
 		state += ", encrypted"
 	}
 	say("Gateway:   " + p.conn.URL + " (" + state + ")")
@@ -199,7 +199,10 @@ func main() {
 		return
 	}
 	for i := 0; i < len(args); i++ { // --minigw-profile <ime>: cel ukaz le s tem prehodom (#17)
-		if v, ok := strings.CutPrefix(args[i], "--minigw-profile="); ok || (args[i] == "--minigw-profile" && i+1 < len(args)) {
+		if args[i] == "--minigw-profile" && i+1 >= len(args) {
+			fail("--minigw-profile needs a profile name")
+		}
+		if v, ok := strings.CutPrefix(args[i], "--minigw-profile="); ok || args[i] == "--minigw-profile" {
 			n := 2
 			if ok {
 				n = 1
@@ -300,7 +303,7 @@ func main() {
 		case st == 200:
 			saveProfile(name, c)
 			enc := ""
-			if !c.isLocal() {
+			if !c.isLocal() || c.Key != nil {
 				enc = " (encrypted)"
 			}
 			say("Connected to " + c.URL + enc + as)
@@ -329,7 +332,7 @@ func main() {
 				name = args[i+1]
 			}
 		}
-		if loadProfile(name) == nil {
+		if !validProfile(name) || loadProfile(name) == nil { // L1: ime gre v pot ali ime poverilnice
 			fail("no profile " + name)
 		}
 		storeDelete(name)
@@ -600,7 +603,7 @@ func main() {
 		if len(targets) > 1 {
 			mux := newGatewayMux(targets)
 			if err := mux.start(); err != nil {
-				fail("cannot start the local gateway router: " + err.Error())
+				fail("cannot start minigw's local proxy: " + err.Error())
 			}
 			env[0], env[1] = "ANTHROPIC_BASE_URL="+mux.url(), "ANTHROPIC_AUTH_TOKEN="+mux.secret
 			fmt.Fprintf(os.Stderr, "minigw: %d gateways; models of %s also without a suffix, the others as <model>@<profile> (minigw models)\n", len(targets), ps[0].name)

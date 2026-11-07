@@ -7,6 +7,17 @@ import Network
 public enum Profiles {
     public static let defaultName = "default"
 
+    /// L2: zahteve z žetonom prehoda nikoli ne sledijo preusmeritvi (npr. na proxy drugega profila na 127.0.0.1).
+    final class NoRedirect: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+        func urlSession(_ s: URLSession, task: URLSessionTask, willPerformHTTPRedirection r: HTTPURLResponse, newRequest: URLRequest) async -> URLRequest? { nil }
+    }
+    public static let session = URLSession(configuration: .ephemeral, delegate: NoRedirect(), delegateQueue: nil)
+
+    /// Modeli agentov, ki delajo v mapi odjemalca: le zanje se mapa deli z drugim prehodom.
+    public static func isAgentModel(_ m: String) -> Bool {
+        ["claude-cli-", "claude-codex", "claude-grok", "claude-copilot"].contains { m.hasPrefix($0) }
+    }
+
     /// Male črke, števke in »-« (do 32): ime gre v pripono modela, ime poverilnice in datoteke.
     public static func valid(_ n: String) -> Bool {
         n.range(of: "^[a-z0-9][a-z0-9-]{0,31}$", options: .regularExpression) != nil
@@ -19,14 +30,14 @@ public enum Profiles {
         return names.contains(p) ? (String(model[..<at]), p) : (model, nil)
     }
 
-    /// Telo zahteve z modelom brez pripone in ime profila; sicer telo, kot je, in nil.
-    public static func routeBody(_ body: Data, names: [String]) -> (body: Data, profile: String?) {
-        guard var o = try? JSONSerialization.jsonObject(with: body) as? [String: Any], let model = o["model"] as? String else { return (body, nil) }
+    /// Telo zahteve z modelom brez pripone, ime profila in model brez pripone; sicer telo, kot je, in nil.
+    public static func routeBody(_ body: Data, names: [String]) -> (body: Data, profile: String?, model: String) {
+        guard var o = try? JSONSerialization.jsonObject(with: body) as? [String: Any], let model = o["model"] as? String else { return (body, nil, "") }
         let (bare, p) = split(model, names: names)
-        guard let p else { return (body, nil) }
+        guard let p else { return (body, nil, model) }
         o["model"] = bare
-        guard let nb = try? JSONSerialization.data(withJSONObject: o) else { return (body, nil) }
-        return (nb, p)
+        guard let nb = try? JSONSerialization.data(withJSONObject: o) else { return (body, nil, model) }
+        return (nb, p, bare)
     }
 
     /// Vsak model s pripono @profil, privzeti (prvi) še brez nje; nil = noben prehod ni odgovoril.
@@ -87,7 +98,12 @@ public final class ProfileMux: @unchecked Sendable {
         params.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: lp)
         let l = try NWListener(using: params)
         let ready = DispatchSemaphore(value: 0)
-        l.stateUpdateHandler = { s in if case .ready = s { ready.signal() } else if case .failed = s { ready.signal() } }
+        l.stateUpdateHandler = { s in  // I5: .waiting (npr. zaseden port) je napaka: naključen port, ne čakanje
+            switch s {
+            case .ready, .failed, .waiting, .cancelled: ready.signal()
+            default: break
+            }
+        }
         l.newConnectionHandler = { [weak self] c in self?.accept(c) }
         l.start(queue: queue)
         ready.wait()
@@ -132,13 +148,18 @@ public final class ProfileMux: @unchecked Sendable {
     }
 
     private func handle(_ r: HTTPRequest, _ c: NWConnection) {
-        guard authorized(r) else { return respond(c, 401, Self.error("invalid token for the local minigw gateway router")) }
+        guard authorized(r) else { return respond(c, 401, Self.error("invalid token for minigw's local proxy")) }
+        // I4: brez kontrolnih znakov v cilju zahteve in vrednostih glav (se posredujejo prehodu)
+        let bad = { (s: String) in s.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7f } }
+        guard !bad(r.path), !bad(r.query ?? ""), !r.headers.contains(where: { bad($0.key) || bad($0.value) }) else {
+            return respond(c, 400, Self.error("control characters in the request"))
+        }
         if r.method == "GET", r.path == "/v1/models" { return models(c) }
         var t = targets[0], body = r.body
         if r.method == "POST", r.path.hasPrefix("/v1/messages") {
-            let (nb, p) = Profiles.routeBody(r.body, names: targets.map(\.name))
+            let (nb, p, model) = Profiles.routeBody(r.body, names: targets.map(\.name))
             if let p, let x = targets.first(where: { $0.name == p }) { t = x; body = nb }
-            if t.name != targets[0].name, let hook = shareHooks[t.name] {
+            if t.name != targets[0].name, Profiles.isAgentModel(model), let hook = shareHooks[t.name] {  // le model agenta deli mapo
                 lock.lock()  // eno registracijo; druge zahteve za ta prehod počakajo nanjo
                 if shared[t.name] == nil { shared[t.name] = hook() }
                 lock.unlock()
@@ -169,7 +190,7 @@ public final class ProfileMux: @unchecked Sendable {
                 remote.send(content: Data(head.utf8) + body, completion: .contentProcessed { _ in })
                 self?.pump(remote, local, first: true, t.name)
             case .failed, .waiting:
-                if !started { started = true; remote.cancel(); self?.respond(local, 502, Self.error("gateway \(t.name) is not reachable")) }
+                if !started { started = true; remote.cancel(); self?.respond(local, 502, Self.error("gateway \(t.name) is not reachable (minigw status)")) }
             default: break
             }
         }
@@ -182,7 +203,7 @@ public final class ProfileMux: @unchecked Sendable {
         remote.receive(minimumIncompleteLength: 1, maximumLength: 256 * 1024) { [weak self] data, _, end, error in
             if let data, !data.isEmpty { local.send(content: data, completion: .contentProcessed { _ in }) }
             if end || error != nil {
-                if first, data?.isEmpty ?? true { self?.respond(local, 502, Self.error("gateway \(name) closed the connection")); remote.cancel(); return }
+                if first, data?.isEmpty ?? true { self?.respond(local, 502, Self.error("gateway \(name) is not reachable (minigw status)")); remote.cancel(); return }
                 local.send(content: nil, contentContext: .finalMessage, isComplete: true, completion: .contentProcessed { _ in local.cancel() })
                 remote.cancel()
                 return
@@ -199,7 +220,7 @@ public final class ProfileMux: @unchecked Sendable {
             var req = URLRequest(url: url, timeoutInterval: 10)
             req.setValue("Bearer \(t.token)", forHTTPHeaderField: "authorization")
             g.enter()
-            URLSession.shared.dataTask(with: req) { d, resp, _ in
+            Profiles.session.dataTask(with: req) { d, resp, _ in
                 defer { g.leave() }
                 guard (resp as? HTTPURLResponse)?.statusCode == 200, let d,
                       let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return }

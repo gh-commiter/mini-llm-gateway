@@ -38,6 +38,9 @@ func profilePath(name string) string {
 }
 
 func storeLoad(name string) ([]byte, error) {
+	if !validProfile(name) {
+		return nil, errNotFound
+	}
 	data, err := os.ReadFile(profilePath(name))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, errNotFound
@@ -46,13 +49,20 @@ func storeLoad(name string) ([]byte, error) {
 }
 
 func storeSave(name string, data []byte) error {
+	if !validProfile(name) {
+		return errors.New("invalid profile name")
+	}
 	if err := os.MkdirAll(filepath.Dir(profilePath(name)), 0o700); err != nil {
 		return err
 	}
 	return os.WriteFile(profilePath(name), data, 0o600)
 }
 
-func storeDelete(name string) { os.Remove(profilePath(name)) }
+func storeDelete(name string) {
+	if validProfile(name) {
+		os.Remove(profilePath(name))
+	}
+}
 
 // storeNames: imena shranjenih profilov (neveljavna imena datotek prezre).
 func storeNames() []string {
@@ -170,6 +180,7 @@ func regRunSet(string, string) error   { return errors.New("the registry exists 
 func regRunGet(string) (string, error) { return "", errNotFound }
 func regRunDel(string)                 {}
 func msiInstallDir() string            { return "" }
+func msiexecPath() string              { return "msiexec" }
 
 func protectDir(string) error { return nil } // drugod: mapa 0700, datoteke 0600
 

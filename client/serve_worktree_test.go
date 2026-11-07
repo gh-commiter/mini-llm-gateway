@@ -147,3 +147,16 @@ func TestWorktreeFinalizeRejectedKeepsMirror(t *testing.T) {
 		t.Fatal("mirror broken after a rejected result")
 	}
 }
+
+// Claude v klonu, ko je cwd podmapa: koren klona v peskovniku (branje, pisanje, --add-dir, pravila orodij), .git klona ne.
+func TestWorktreeClaudeArgs(t *testing.T) {
+	args := []string{"--allowedTools", "Read(./**)", "--disallowedTools", "Read(/cfg/**)", "--settings",
+		`{"sandbox":{"filesystem":{"allowRead":["/w/sub"],"allowWrite":["/w/sub"],"denyRead":["~"]}}}`}
+	got := strings.Join(worktreeClaudeArgs(args, "/w", "/m", "/r/objects"), " ")
+	for _, want := range []string{`"allowWrite":["/w/sub","/w","/m"]`, `"allowRead":["/w/sub","/w","/m","/r/objects"]`, "--add-dir /w",
+		"Edit(//w/**)", `"denyWrite":["/w/.git/config"`, "Edit(//w/.git/**)"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %s in\n%s", want, got)
+		}
+	}
+}

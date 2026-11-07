@@ -9,16 +9,20 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestRouteBodyAndMerge(t *testing.T) {
 	names := []string{"mini", "win"}
-	b, n := routeBody([]byte(`{"model":"claude-cli-opus@win","max_tokens":5}`), names)
+	b, n, bare := routeBody([]byte(`{"model":"claude-cli-opus@win","max_tokens":5}`), names)
+	if bare != "claude-cli-opus" || !isAgentModel(bare) || isAgentModel("claude-siri-ai") || isAgentModel("claude-apple-fm") {
+		t.Fatalf("agent model: %q", bare)
+	}
 	if n != "win" || !strings.Contains(string(b), `"model":"claude-cli-opus"`) || !strings.Contains(string(b), `"max_tokens":5`) {
 		t.Fatalf("route: %s %s", n, b)
 	}
 	for _, m := range []string{"claude-opus-4@20250514", "x@other", "plain"} { // ni profil: model ostane cel
-		if b, n := routeBody([]byte(`{"model":"`+m+`"}`), names); n != "" || string(b) != `{"model":"`+m+`"}` {
+		if b, n, _ := routeBody([]byte(`{"model":"`+m+`"}`), names); n != "" || string(b) != `{"model":"`+m+`"}` {
 			t.Fatalf("%s: %s %s", m, n, b)
 		}
 	}
@@ -92,6 +96,11 @@ func TestGatewayMux(t *testing.T) {
 			t.Fatalf("models: %d %s", st, b)
 		}
 	}
+	// Model brez orodij (npr. naslov seje) ne deli mape z drugim prehodom; glave mape tja ni.
+	do("POST", "/v1/messages", m.secret, `{"model":"claude-chat-haiku@win"}`, "X-Claude-Mini-Share", "1")
+	if g := <-g2; shares.Load() != 0 || g.share != "" {
+		t.Fatalf("non-agent model shared the folder: %d %+v", shares.Load(), g)
+	}
 	for range 2 {
 		do("POST", "/v1/messages", m.secret, `{"model":"claude-cli-opus@win"}`, "X-Claude-Mini-Share", "1")
 		if g := <-g2; g != (seen{"Bearer tok-win", "claude-cli-opus", "1"}) {
@@ -118,6 +127,18 @@ func TestGatewayMux(t *testing.T) {
 		t.Fatalf("reply: %d %s", st, b)
 	}
 	<-g2
+}
+
+// L2: zahteva z žetonom prehoda ne sledi preusmeritvi (žeton ne gre na drug proxy na 127.0.0.1).
+func TestCallDoesNotFollowRedirects(t *testing.T) {
+	var got atomic.Value
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { got.Store(r.Header.Get("Authorization")) }))
+	defer other.Close()
+	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, other.URL+"/v1/models", 302) }))
+	defer gw.Close()
+	if st, _ := call(connection{URL: gw.URL, Token: "secret"}, "GET", "/v1/models", nil, nil, 5*time.Second); st != 302 || got.Load() != nil {
+		t.Fatalf("followed: %d %v", st, got.Load())
+	}
 }
 
 func TestGatewayMuxUnreachable(t *testing.T) {
