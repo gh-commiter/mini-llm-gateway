@@ -10,6 +10,7 @@ struct SettingsView: View {
     @EnvironmentObject var state: AppState
     @State private var draft = RouterConfig()
     @State private var loaded = false
+    @State private var base = RouterConfig()  // nastavitve, na katerih temelji osnutek (za tristransko združitev)
     @State private var keys: [String: String] = [:]
     @State private var pane: Pane? = .general
     @State private var back: [Pane] = []      // zgodovina za puščici (kot System Settings)
@@ -174,20 +175,25 @@ struct SettingsView: View {
         }
         .frame(minWidth: 760, idealWidth: 820, minHeight: 520, idealHeight: 640)
         .onAppear {
-            if !loaded { draft = state.config; loaded = true }
+            if !loaded { draft = state.config; base = state.config; loaded = true }
         }
         // Spremembe od drugod (minigw router, nova naprava): tristranska združitev z osnutkom (tudi odstranitve), da
         // samodejna uveljavitev osnutka ne povozi sprememb skrbniškega API in ne zavrže tipkanja.
         .onChange(of: state.config) { old, new in
             guard loaded else { return }
-            draft = RouterConfig.merge(draft: draft, old: old, new: new)
+            draft = RouterConfig.merge(draft: draft, old: base, new: new)
+            base = new
         }
         // Samodejna uveljavitev: 0,8 s po zadnji spremembi.
         .task(id: draft) {
             guard loaded, draft != state.config else { return }
             try? await Task.sleep(for: .milliseconds(800))
             guard !Task.isCancelled, !(draft.claudeCLI.enabled && !claudeStatus.ok) else { return }
-            state.apply(draft)
+            // Tik pred uveljavitvijo še enkrat združi: sprememba skrbniškega API v istem koraku glavne niti ostane.
+            let merged = RouterConfig.merge(draft: draft, old: base, new: state.config)
+            state.apply(merged)
+            base = merged
+            draft = merged
         }
         .task(id: keys) {
             guard keys.values.contains(where: { !$0.isEmpty }) else { return }

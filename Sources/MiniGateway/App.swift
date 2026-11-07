@@ -127,11 +127,14 @@ final class AppState: ObservableObject {
     /// Skrivnost skrbniškega API (docs/admin-api.md) v Keychainu aplikacije, ne v datoteki: agenti Codex in Grok
     /// berejo datoteke povsod, Keychaina ne. Po žici gre le dokaz MGW-Admin, nikoli ona.
     lazy var adminSecret: String = {
-        if let o = keychain.lookup("admin").value.flatMap({ try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }),
+        if let o = adminItem.lookup("admin").value.flatMap({ try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }),
            let s = o["secret"] as? String, s.count >= 43 { return s }
         if let v = keychain.lookup("admin-secret").value, v.count >= 43 { return v }  // razvojna različica 3c
         return Noise.base64url(Self.random32())
     }()
+
+    /// Vnos »admin« le v prijavnem keychainu (glej Keychain.loginOnly).
+    let adminItem = Keychain(loginOnly: true)
 
     /// Vnos »admin« v Keychainu aplikacije: skrivnost, vrata in javni ključ routerja. minigw router iz njega izve, s kom
     /// govori (ne iz datoteke ali spremenljivk okolja, ki bi jih lahko podtaknil drug proces). Zapis le ob spremembi.
@@ -140,7 +143,7 @@ final class AppState: ObservableObject {
             "secret": adminSecret, "port": Int(config.port), "key": Noise.base64url(k.publicKey.rawRepresentation),
         ], options: [.sortedKeys]) else { return }
         let s = String(decoding: d, as: UTF8.self)
-        if keychain.lookup("admin").value != s { keychain.set("admin", s) }
+        if adminItem.lookup("admin").value != s { adminItem.set("admin", s) }
         if keychain.lookup("admin-secret").status == errSecSuccess { keychain.delete("admin-secret") }
         try? FileManager.default.removeItem(at: Self.logsFile.deletingLastPathComponent().appendingPathComponent("router.json"))
     }

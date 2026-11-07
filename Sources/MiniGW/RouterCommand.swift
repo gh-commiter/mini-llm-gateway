@@ -30,7 +30,7 @@ private struct AdminConnection {
         if ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"] != nil {
             fail("CFFIXED_USER_HOME is set: minigw router does not run with a redirected home folder")
         }
-        let (v, st) = Keychain().lookup("admin")
+        let (v, st) = Keychain(loginOnly: true).lookup("admin")  // le prijavni keychain: drug ga ne zasenči
         guard st == errSecSuccess, let o = v.flatMap({ try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }),
               let secret = o["secret"] as? String, let port = (o["port"] as? Int).flatMap(UInt16.init(exactly:)),
               let key = (o["key"] as? String).flatMap(Noise.fromBase64url), key.count == 32 else {

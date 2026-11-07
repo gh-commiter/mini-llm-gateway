@@ -204,16 +204,34 @@ public protocol SecretStore: Sendable {
 
 public struct Keychain: SecretStore {
     public let service: String
-    public init(service: String = "dev.trojar.minigateway") { self.service = service }
+    /// Le prijavni keychain (vnos »admin«): keychain, ki je na seznamu iskanja pred njim, vnosa ne more zasenčiti.
+    public let loginOnly: Bool
+    public init(service: String = "dev.trojar.minigateway", loginOnly: Bool = false) { self.service = service; self.loginOnly = loginOnly }
 
-    private func query(_ account: String) -> [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword,
-         kSecAttrService as String: service,
-         kSecAttrAccount as String: account]
+    /// Prijavni keychain po poti iz baze uporabnikov (getpwuid, ne HOME/CFFIXED_USER_HOME). Za aplikacijo Developer ID
+    /// brez profila je to preprostejše kot keychain za zaščito podatkov (ta zahteva pravice dostopne skupine).
+    static func loginKeychain() -> SecKeychain? {
+        guard let pw = getpwuid(getuid()), let dir = pw.pointee.pw_dir else { return nil }
+        let path = String(cString: dir) + "/Library/Keychains/login.keychain-db"
+        guard FileManager.default.fileExists(atPath: path) else { return nil }
+        var kc: SecKeychain?
+        return SecKeychainOpen(path, &kc) == errSecSuccess ? kc : nil
+    }
+
+    /// nil = vnos je le v prijavnem keychainu, a tega ni (brez zamenjave z drugim keychainom).
+    private func query(_ account: String, adding: Bool = false) -> [String: Any]? {
+        var q: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                                kSecAttrService as String: service,
+                                kSecAttrAccount as String: account]
+        if loginOnly {
+            guard let kc = Self.loginKeychain() else { return nil }
+            if adding { q[kSecUseKeychain as String] = kc } else { q[kSecMatchSearchList as String] = [kc] }
+        }
+        return q
     }
 
     public func get(_ account: String) -> String? {
-        var q = query(account)
+        guard var q = query(account) else { return nil }
         q[kSecReturnData as String] = true
         q[kSecMatchLimit as String] = kSecMatchLimitOne
         var out: CFTypeRef?
@@ -224,7 +242,7 @@ public struct Keychain: SecretStore {
 
     /// Vrednost in status (errSecItemNotFound = vnosa ni; druga napaka = keychain zaklenjen ali brez dovoljenja).
     public func lookup(_ account: String) -> (value: String?, status: OSStatus) {
-        var q = query(account)
+        guard var q = query(account) else { return (nil, errSecNoSuchKeychain) }
         q[kSecReturnData as String] = true
         q[kSecMatchLimit as String] = kSecMatchLimitOne
         var out: CFTypeRef?
@@ -235,12 +253,15 @@ public struct Keychain: SecretStore {
     /// Privzeti ključi, dokler uporabnik ne vpiše svojega (niso skrivnost; LiteLLM LITELLM_MASTER_KEY iz claude-local).
     public static let defaultKeys = ["litellm": "sk-local-1234"]
 
-    public func delete(_ account: String) { SecItemDelete(query(account) as CFDictionary) }
+    public func delete(_ account: String) {
+        if let q = query(account) { SecItemDelete(q as CFDictionary) }
+    }
 
     public func set(_ account: String, _ value: String) {
         let data = Data(value.utf8)
-        if SecItemUpdate(query(account) as CFDictionary, [kSecValueData as String: data] as CFDictionary) == errSecItemNotFound {
-            var add = query(account)
+        guard let q = query(account) else { return }
+        if SecItemUpdate(q as CFDictionary, [kSecValueData as String: data] as CFDictionary) == errSecItemNotFound,
+           var add = query(account, adding: true) {
             add[kSecValueData as String] = data
             SecItemAdd(add as CFDictionary, nil)
         }
