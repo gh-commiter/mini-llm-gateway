@@ -316,7 +316,11 @@ builds then work on the gateway's local disk.
 - **Never sent, never copied back:**
   - files matched by `.gitignore` or the built-in list (`.git`, `target/`, `.build/`, `node_modules/`, `build/`,
     `dist/`, `DerivedData/` …);
-  - files the agent puts into `.git`, `.claude/settings*.json`, `.vscode/tasks.json` or `.envrc`.
+  - files the agent puts into `.git`, `.claude/settings*.json`, `.vscode/tasks.json` or `.envrc`, also through a link
+    in your folder (for example `hooks → .git/hooks`): the check uses the real path.
+- **The list above is defence in depth, not a sandbox for your folder:** an agent that may write can still add code
+  that runs on your computer later, for example in `.husky/`, `.githooks/`, `package.json` scripts, a `Makefile` or
+  `.mcp.json`. Review an agent's changes before you run builds or hooks, or share the folder read-only.
 - **Conflicts:** if you changed a file the agent also changed, yours stays and the agent's version is saved next to it
   as `<name>.minigw-conflict`.
 - **Read-only:** with `--minigw-ro` nothing comes back.

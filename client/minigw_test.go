@@ -548,3 +548,31 @@ func TestSyncIgnoreSkipsLinkedOrSpecialGitignore(t *testing.T) {
 		}
 	}
 }
+
+// #11: zaščita velja za kanonično pot: povezava hooks → .git/hooks ne pusti pisanja ali brisanja v .git.
+func TestSyncProtectedThroughLink(t *testing.T) {
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, ".git", "hooks"), 0o755)
+	os.WriteFile(filepath.Join(root, ".git", "hooks", "old"), []byte("x"), 0o644)
+	if os.Symlink(filepath.Join(".git", "hooks"), filepath.Join(root, "hooks")) != nil {
+		t.Skip("no symlinks here")
+	}
+	data := []byte("#!/bin/sh\necho owned\n")
+	sum := sha256Hex(data)
+	ch := syncChanges{Changed: []syncEntry{{Path: "hooks/pre-commit", Size: int64(len(data)), SHA256: sum},
+		{Path: "src/ok.txt", Size: int64(len(data)), SHA256: sum}}, Deleted: []string{"hooks/old"}}
+	notes, _ := syncApply(ch, root, map[string]syncEntry{"hooks/old": {Path: "hooks/old", SHA256: sha256Hex([]byte("x"))}},
+		func(string) []byte { return data })
+	if _, err := os.Stat(filepath.Join(root, ".git", "hooks", "pre-commit")); err == nil {
+		t.Fatalf("wrote into .git through a link: %v", notes)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".git", "hooks", "old")); err != nil {
+		t.Fatalf("deleted from .git through a link: %v", notes)
+	}
+	if b, _ := os.ReadFile(filepath.Join(root, "src", "ok.txt")); string(b) != string(data) {
+		t.Fatalf("normal file not written: %v", notes)
+	}
+	if !strings.Contains(strings.Join(notes, "\n"), "protected path (through a link)") {
+		t.Fatalf("notes: %v", notes)
+	}
+}

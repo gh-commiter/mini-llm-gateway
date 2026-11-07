@@ -1336,3 +1336,22 @@ final class FakeMinigw: @unchecked Sendable {
     // pravi proces: ta testni program ni webdavfs_agent
     #expect(!PeerProcess.isWebDAVAgent(getpid()))
 }
+
+/// #11: zaščita velja za kanonično pot: povezava hooks → .git/hooks ne pusti pisanja ali brisanja v .git.
+@Test func syncProtectedThroughLink() throws {
+    let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("p11-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root.appendingPathComponent(".git/hooks"), withIntermediateDirectories: true)
+    try Data("x".utf8).write(to: root.appendingPathComponent(".git/hooks/old"))
+    try FileManager.default.createSymbolicLink(atPath: root.appendingPathComponent("hooks").path, withDestinationPath: ".git/hooks")
+    let data = Data("#!/bin/sh\necho owned\n".utf8), sum = Sync.sha256(data)
+    let ch = Sync.Changes(changed: [Sync.Entry(path: "hooks/pre-commit", size: Int64(data.count), mtime: 0, sha256: sum),
+                                    Sync.Entry(path: "src/ok.txt", size: Int64(data.count), mtime: 0, sha256: sum)],
+                          deleted: ["hooks/old"], base: ["hooks/old": Sync.sha256(Data("x".utf8))])
+    var state: [String: Sync.Entry] = [:]
+    let (notes, _) = Sync.apply(ch, root: root, state: &state) { _ in data }
+    #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent(".git/hooks/pre-commit").path))
+    #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent(".git/hooks/old").path))
+    #expect((try? Data(contentsOf: root.appendingPathComponent("src/ok.txt"))) == data)
+    #expect(notes.contains { $0.contains("protected path (through a link)") })
+}

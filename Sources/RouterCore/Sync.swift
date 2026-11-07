@@ -185,6 +185,25 @@ public enum Sync {
         return WebDAV.resolve("/" + comps.map(encode).joined(separator: "/"), prefix: "", root: root)?.0
     }
 
+    /// #11: zaščita tudi za kanonično pot (povezava hooks → .git/hooks): kanonična pot najglobljega obstoječega prednika
+    /// z manjkajočim koncem, relativno na kanonični koren; nečitljiva pot ali pot zunaj korena = zaščitena.
+    static func protectedCanonical(_ url: URL, root: URL) -> Bool {
+        guard let r = real(root)?.path else { return true }
+        var p = url.path, rest: [String] = []
+        while true {
+            if let c = real(URL(fileURLWithPath: p))?.path {
+                let full = ([c] + rest).joined(separator: "/")
+                guard full == r || full.hasPrefix(r + "/") else { return true }
+                let rel = String(full.dropFirst(r.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                return !rel.isEmpty && isProtected(rel)
+            }
+            let parent = (p as NSString).deletingLastPathComponent
+            guard parent != p, !parent.isEmpty else { return true }
+            rest.insert((p as NSString).lastPathComponent, at: 0)
+            p = parent
+        }
+    }
+
     /// Atomarno zapiše datoteko (ustvari mape), nastavi čas spremembe druge strani. Način obstoječe (sicer 0644) ostane,
     /// biti x pa sledijo `exec`; nil = druga stran bita x ne pozna (Windows) → ostanejo.
     public static func write(_ data: Data, to url: URL, mtime: Int64, exec: Bool?) throws {
@@ -233,6 +252,7 @@ public enum Sync {
             if ignore.covers(p) { done.append(p); continue }
             done.append(p)
             guard let url = resolve(p, root: root) else { continue }
+            if protectedCanonical(url, root: root) { notes.append("not deleted \(p): protected path (through a link)"); continue }
             guard let local = entry(url, path: p, previous: state[p]) else { state[p] = nil; continue }
             if local.sha256 != base(p) { notes.append("conflict: \(p) was deleted on the gateway but changed here; kept"); continue }
             try? FileManager.default.removeItem(at: url)
@@ -244,6 +264,7 @@ public enum Sync {
             guard let url = resolve(e.path, root: root) else {  // potrjena, sicer bi jo router pošiljal v nedogled
                 notes.append("skipped \(e.path): invalid path here"); done.append(e.path); continue
             }
+            if protectedCanonical(url, root: root) { notes.append("skipped \(e.path): protected path (through a link)"); done.append(e.path); continue }
             if let local = entry(url, path: e.path, previous: state[e.path]), local.sha256 == e.sha256 {
                 // Le bit x, in le če ga uporabnik od prenosa ni spremenil sam.
                 if local.exec != e.exec, local.exec != state[e.path]?.exec {  // stanje ostane: bit ostane uporabnikov

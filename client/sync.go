@@ -75,7 +75,6 @@ var caseFold = runtime.GOOS == "darwin" || runtime.GOOS == "windows"
 
 // normName: ime, kot ga vidi tak datotečni sistem (Windows odreže končne pike in presledke: ».GIT.« = ».git«).
 // normName: upper→lower preslika ſ, ı, K (Kelvin) v ASCII; »git~1« je kratko 8.3 ime ».git« na Windows.
-// ponytail: ime, ne kanonična pot; ob simlinkanem staršu preveri kanonično pot (issue v Gitei).
 func normName(c string) string {
 	n := strings.ToLower(strings.ToUpper(strings.TrimRight(c, ". ")))
 	if shortGit.MatchString(n) {
@@ -232,6 +231,31 @@ func syncEntryOf(full, rel string, prev map[string]syncEntry) (syncEntry, bool) 
 
 func sha256Hex(b []byte) string { s := sha256.Sum256(b); return hex.EncodeToString(s[:]) }
 
+// protectedCanonical (#11): zaščita velja tudi za kanonično pot: uporabnikova povezava v mapi (hooks → .git/hooks)
+// bi sicer pisanje v »hooks/pre-commit« pustila. Kanonična pot najglobljega obstoječega prednika (Windows: dolga imena)
+// skupaj z manjkajočim koncem; nečitljiva pot = zaščitena.
+func protectedCanonical(full, root string) bool {
+	r, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return true
+	}
+	p, rest := full, ""
+	for {
+		if c, err := filepath.EvalSymlinks(p); err == nil {
+			rel, err := filepath.Rel(r, filepath.Join(c, rest))
+			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				return true
+			}
+			return rel != "." && protectedPath(filepath.ToSlash(rel))
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return true
+		}
+		rest, p = filepath.Join(filepath.Base(p), rest), parent
+	}
+}
+
 // syncResolve: relativna pot druge strani → datoteka pod root; false za »..«, absolutno pot, »\«, prazne dele ali pobeg
 // prek povezave (preveri davResolve).
 func syncResolve(rel, root string) (string, bool) {
@@ -329,6 +353,10 @@ func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch fu
 		if !ok {
 			continue
 		}
+		if protectedCanonical(full, root) {
+			notes = append(notes, "not deleted "+p+": protected path (through a link)")
+			continue
+		}
 		local, has := syncEntryOf(full, p, state)
 		if !has {
 			delete(state, p)
@@ -355,6 +383,11 @@ func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch fu
 		full, ok := syncResolve(e.Path, root)
 		if !ok { // potrjena, sicer bi jo router pošiljal v nedogled
 			notes = append(notes, "skipped "+e.Path+": invalid path here")
+			done = append(done, e.Path)
+			continue
+		}
+		if protectedCanonical(full, root) {
+			notes = append(notes, "skipped "+e.Path+": protected path (through a link)")
 			done = append(done, e.Path)
 			continue
 		}
