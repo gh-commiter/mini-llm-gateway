@@ -13,7 +13,21 @@ import Foundation
 /// Agentov klon je v celoti agentov (tudi .git/config, hooks): router v njem nikoli ne zažene git z njegovim .git;
 /// bere le datoteki HEAD in ref, objekte pa prek GIT_ALTERNATE_OBJECT_DIRECTORIES z nastavitvami zrcala.
 public enum Worktree {
-    static let git = "/usr/bin/git"
+    /// Pravi git, ne /usr/bin/git: ta je shim xcrun, ki izvede, kar piše v predpomnilniku xcrun ($TMPDIR/xcrun_db ali
+    /// env xcrun_db), in ta bi ga lahko podtaknil agent. Enkrat ob zagonu: xcode-select -p (pravi program), sicer Command
+    /// Line Tools; zadnja možnost /usr/bin/git z xcrun_nocache=1 (run tega tudi sicer nastavi).
+    static let git: String = {
+        let p = Process(), out = Pipe()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/xcode-select")
+        p.arguments = ["-p"]
+        p.standardOutput = out; p.standardError = FileHandle.nullDevice
+        let dev = (try? p.run()).map { _ -> String in
+            let d = out.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
+            return String(decoding: d, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        } ?? ""
+        return [dev + "/usr/bin/git", "/Library/Developer/CommandLineTools/usr/bin/git"]
+            .first { !$0.hasPrefix("/usr/bin") && FileManager.default.isExecutableFile(atPath: $0) } ?? "/usr/bin/git"
+    }()
 
     /// git z izhodom; `safe`: brez sistemske in uporabniške nastavitve in brez hookov (router, prevzem pri odjemalcu).
     @discardableResult
@@ -31,6 +45,7 @@ public enum Worktree {
         if safe { env["GIT_CONFIG_NOSYSTEM"] = "1"; env["GIT_CONFIG_GLOBAL"] = "/dev/null" }
         env["GIT_TERMINAL_PROMPT"] = "0"
         env.merge(extra) { $1 }
+        env["xcrun_db"] = nil; env["xcrun_nocache"] = "1"  // tudi če bi git klical shim xcrun: brez predpomnilnika
         // posix_spawn s POSIX_SPAWN_CLOEXEC_DEFAULT: git ne podeduje odprtih datotek routerja (vtičnice odjemalcev),
         // kot bi jih s Process.
         var o: [Int32] = [0, 0], i: [Int32] = [0, 0]
@@ -150,10 +165,10 @@ public enum Worktree {
 
     /// Skupni pisljivi predpomnilniki gradnje (začasne mape, DerivedData).
     /// ponytail: DerivedData je skupen z lastnikovimi projekti; ločen (-derivedDataPath), če bo treba.
-    static func caches(home: String = NSHomeDirectory()) -> [String] {
-        let tmp = Sync.real(URL(fileURLWithPath: NSTemporaryDirectory()))?.deletingLastPathComponent().path
-        return ["\(home)/Library/Developer/Xcode/DerivedData", "/private/tmp"] + (tmp.map { [$0] } ?? [])
-    }
+    /// Nikoli DARWIN_USER_TEMP_DIR in DARWIN_USER_CACHE_DIR (/var/folders/…/T, …/C) ali njuna nadrejena mapa: tam sta
+    /// predpomnilnik xcrun (xcrun_db, po njem /usr/bin/git in drugi shimi izvedejo program) in ModuleCache clang.
+    /// Agent ima svoj TMPDIR in ModuleCache v .build klona (harnessEnv), DerivedData z -derivedDataPath .build/DerivedData.
+    static func caches(home: String = NSHomeDirectory()) -> [String] { ["/private/tmp"] }
 
     /// Okolje procesov agenta (claude -p, codex, grok) v načinu worktree. Ti sami (zunaj peskovnika orodij) poganjajo git
     /// v klonu, ki ga agent lahko spremeni: nastavitve iz ukazne vrstice preglasijo .git/config klona (fsmonitor, hooki,
@@ -166,7 +181,9 @@ public enum Worktree {
         let git = root.appendingPathComponent(".git").path
         var env = ["GIT_CONFIG_COUNT": String(pairs.count), "GIT_ATTR_SOURCE": "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
                    "GIT_DIR": git, "GIT_WORK_TREE": root.path, "GIT_COMMON_DIR": git,
-                   "MAVEN_OPTS": "-Dmaven.repo.local=\(maven.path)"]
+                   "MAVEN_OPTS": "-Dmaven.repo.local=\(maven.path) -Djava.io.tmpdir=\(root.appendingPathComponent(".build/tmp").path)",
+                   "TMPDIR": root.appendingPathComponent(".build/tmp").path + "/",
+                   "CLANG_MODULE_CACHE_PATH": root.appendingPathComponent(".build/ModuleCache").path, "xcrun_nocache": "1"]
         for (i, (k, v)) in pairs.enumerated() { env["GIT_CONFIG_KEY_\(i)"] = k; env["GIT_CONFIG_VALUE_\(i)"] = v }
         return env
     }
@@ -242,11 +259,24 @@ public enum Worktree {
         let dotGit = wt.appendingPathComponent(".git"), objectsDir = dotGit.appendingPathComponent("objects")
         guard Sync.real(dotGit)?.path == (Sync.real(wt)?.path).map({ $0 + "/.git" }),
               Sync.real(objectsDir)?.path == (Sync.real(wt)?.path).map({ $0 + "/.git/objects" }) else { return nil }
-        let info = objectsDir.appendingPathComponent("info")
-        try? FileManager.default.removeItem(at: info)  // povezava info: odstrani le povezavo
+        // Brisanje in zapis relativno na deskriptor mape objects (O_NOFOLLOW_ANY): zamenjava poti s povezavo med preverjanjem
+        // in dejanjem ne preusmeri ničesar.
+        guard let realObjects = Sync.real(objectsDir)?.path, case let objFd = open(realObjects, O_RDONLY | O_DIRECTORY | O_NOFOLLOW_ANY),
+              objFd >= 0 else { return nil }
+        defer { close(objFd) }
+        removeAt(objFd, "info")
         defer {
-            try? FileManager.default.createDirectory(at: info, withIntermediateDirectories: false)
-            try? Data((repo.appendingPathComponent("objects").path + "\n").utf8).write(to: info.appendingPathComponent("alternates"))
+            mkdirat(objFd, "info", 0o755)
+            let infoFd = openat(objFd, "info", O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+            if infoFd >= 0 {
+                let f = openat(infoFd, "alternates", O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0o644)
+                if f >= 0 {
+                    let line = Data((repo.appendingPathComponent("objects").path + "\n").utf8)
+                    _ = line.withUnsafeBytes { write(f, $0.baseAddress, $0.count) }
+                    close(f)
+                }
+                close(infoFd)
+            }
         }
         // Začasna mapa v Scratch (ob zrcalu), ne v sistemski začasni mapi.
         let tmp = repo.deletingLastPathComponent().appendingPathComponent(".finalize-" + UUID().uuidString, isDirectory: true)
@@ -287,23 +317,34 @@ public enum Worktree {
         return tip
     }
 
+    /// Izbriše `name` v mapi `dir` (deskriptor) brez sledenja povezavam: povezavo kot povezavo, mapo rekurzivno prek openat.
+    static func removeAt(_ dir: Int32, _ name: String) {
+        if unlinkat(dir, name, 0) == 0 || errno == ENOENT { return }
+        let fd = openat(dir, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+        guard fd >= 0, let d = fdopendir(fd) else { if fd >= 0 { close(fd) }; return }
+        var names: [String] = []
+        while let e = readdir(d) {
+            let n = withUnsafeBytes(of: e.pointee.d_name) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+            if n != ".", n != ".." { names.append(n) }
+        }
+        for n in names { removeAt(dirfd(d), n) }
+        closedir(d)  // zapre tudi fd
+        unlinkat(dir, name, AT_REMOVEDIR)
+    }
+
     /// Branje le v klonu, zrcalu in začasni mapi (ne v domači mapi); pisanje le v zrcalo, začasno mapo in `out`.
     static func finalizeProfile(wt: URL, repo: URL, tmp: URL, out: URL) -> String? {
         guard let w = Sync.real(wt)?.path, let r = Sync.real(repo)?.path, let t = Sync.real(tmp)?.path,
-              let o = Sync.real(out.deletingLastPathComponent())?.appendingPathComponent(out.lastPathComponent).path,
-              let sysTmp = Sync.real(URL(fileURLWithPath: NSTemporaryDirectory()))?.path
+              let o = Sync.real(out.deletingLastPathComponent())?.appendingPathComponent(out.lastPathComponent).path
         else { return nil }
-        let cache = URL(fileURLWithPath: sysTmp).deletingLastPathComponent().appendingPathComponent("C").path, xcrun = sysTmp + "/xcrun_db"
         let q = { (p: String) in "\"" + p.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\"" }
         // Vsebina (file-read-data) privzeto nikjer, le sistem, git (Xcode) in ta klon, zrcalo, začasna mapa: ne domača mapa,
         // ne zrcala drugih naprav v Scratch. Metapodatki ostanejo (git razreši poti prek nadrejenih map).
         return "(version 1)\n(allow default)\n(deny file-read-data (subpath \"/\"))\n"
             + "(allow file-read-data (literal \"/\") (subpath \"/bin\") (subpath \"/usr\") (subpath \"/System\") (subpath \"/Library\")"
-            + " (subpath \"/private/var/db\") (subpath \"/dev\") (regex #\"^/Applications/Xcode[^/]*\\.app(/|$)\") (subpath \(q(cache)))"
-            + " (literal \(q(xcrun))) (literal \(q(xcrun + ".lock")))"  // predpomnilnik xcrun (/usr/bin/git → Xcode)
+            + " (subpath \"/private/var/db\") (subpath \"/dev\") (regex #\"^/Applications/Xcode[^/]*\\.app(/|$)\")"
             + " (subpath \(q(w))) (subpath \(q(r))) (subpath \(q(t))) (literal \(q(o))) (literal \(q(o + ".lock"))))\n"
-            + "(deny file-write*)\n(allow file-write* (regex #\"^/dev/\") (subpath \(q(r))) (subpath \(q(t))) (subpath \(q(cache)))"
-            + " (literal \(q(xcrun))) (literal \(q(xcrun + ".lock")))"
+            + "(deny file-write*)\n(allow file-write* (regex #\"^/dev/\") (subpath \(q(r))) (subpath \(q(t)))"
             + " (literal \(q(o))) (literal \(q(o + ".lock"))))\n"  // bundle create piše <out>.lock in ga preimenuje
     }
 
@@ -381,6 +422,10 @@ extension ShareHub {
         try? FileManager.default.removeItem(at: incoming)
         if ok, let snapshot {
             slots[k] = Slot(wt: wt, branch: branch, base: snapshot); runSlot[id] = k
+            for d in [".build/tmp", ".build/ModuleCache"] {  // TMPDIR in ModuleCache agenta (harnessEnv)
+                try? FileManager.default.createDirectory(at: wt.appendingPathComponent(d), withIntermediateDirectories: true,
+                                                         attributes: [.posixPermissions: 0o700])
+            }
             try? FileManager.default.createDirectory(at: tree.worktrees.appendingPathComponent(".maven"), withIntermediateDirectories: true)
         }
         unlock(tree.repo)

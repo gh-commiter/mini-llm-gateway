@@ -76,7 +76,9 @@ public enum Codex {
         var a = ["exec", "--json", "--skip-git-repo-check", "--color", "never", "-C", cwd.path, "-o", output.path]
         if let model { a += ["-m", model] }
         if agent && write {
-            a += ["--sandbox", "workspace-write", "-c", "sandbox_workspace_write.network_access=\(network)"]
+            // $TMPDIR (/var/folders/…/T) ni pisljiv: tam je predpomnilnik xcrun (shim /usr/bin/git ga izvede); TMPDIR je zasebna mapa.
+            a += ["--sandbox", "workspace-write", "-c", "sandbox_workspace_write.network_access=\(network)",
+                  "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true"]
             for d in extraDirs { a += ["--add-dir", d] }
         } else {
             a += ["--sandbox", "read-only"]
@@ -218,6 +220,12 @@ extension Router {
         }
         let output = config.scratch("tmp").appendingPathComponent("codex-\(rid).txt")
         defer { try? FileManager.default.removeItem(at: output) }
+        // Zasebni TMPDIR v /private/tmp (pisljiv v sandboxu Codex), ne $TMPDIR uporabnika (glej Codex.args).
+        let privateTmp = URL(fileURLWithPath: "/private/tmp/minigw-codex-\(rid)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: privateTmp, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: privateTmp) }
+        let codexEnv = tree.map { Worktree.harnessEnv(root: $0.root, maven: $0.maven) }
+            ?? ["TMPDIR": privateTmp.path + "/", "CLANG_MODULE_CACHE_PATH": privateTmp.appendingPathComponent("ModuleCache").path, "xcrun_nocache": "1"]
         // Nadaljevanje niti Codex (prebrane datoteke, rezultati ukazov): ključ je dosedanji pogovor v tej mapi.
         let scope = Self.agentScope("codex", req, cwd: cwd)
         let existing = agent ? await Self.codexSessions.get(ClaudeCLI.key(all.dropLast(), scope: scope)) : nil
@@ -228,7 +236,7 @@ extension Router {
         let sessions = Self.codexSessions, session = req.header("x-claude-mini-session") ?? ""
         return await replyWhenDone(body: body, model: "claude-codex", rid: rid, writer: writer) {
             let (text, thread) = try await Codex.run(exe, args: args, cwd: cwd, prompt: prompt, output: output,
-                                                         env: tree.map { Worktree.harnessEnv(root: $0.root, maven: $0.maven) } ?? [:]) { [onActivity] s in
+                                                         env: codexEnv) { [onActivity] s in
                 onActivity(.step(id: rid, text: s))
             }
             if agent { await Self.shares.syncBack(session: session) }  // sync: spremembe agenta k odjemalcu pred odgovorom

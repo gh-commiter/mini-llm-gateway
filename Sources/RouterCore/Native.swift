@@ -170,7 +170,19 @@ public enum Native {
                         e(home + "/Library/org.swift.swiftpm/repositories/") + "[^/]+/(config|hooks)(/|$)"])
     }
 
-    static func sandboxProfile(dir: String, home: String = NSHomeDirectory(), network: Bool, hidden: [String] = [], routerPort: Int? = nil) -> String? {
+    /// Podmape DARWIN_USER_TEMP_DIR, ki jih Foundation (atomarno pisanje: TemporaryItems) in storitev gradnje SwiftPM/Xcode
+    /// (TemporaryDirectory.XXXX) uporabljata ne glede na TMPDIR; brez njiju swift build in xcodebuild ne uspeta. Mapa sama
+    /// (xcrun_db) in DARWIN_USER_CACHE_DIR ostaneta zaprti. Vzorec za sandbox-exec.
+    static func darwinTempChildren() -> String? {
+        var b = [CChar](repeating: 0, count: 1024)
+        guard confstr(_CS_DARWIN_USER_TEMP_DIR, &b, b.count) > 0,
+              let t = Sync.real(URL(fileURLWithPath: String(cString: b)))?.path else { return nil }
+        return "^" + NSRegularExpression.escapedPattern(for: t) + "/(TemporaryItems|TemporaryDirectory\\.[^/]+)(/|$)"
+    }
+
+    /// `runTmp`: TMPDIR in ModuleCache tega zagona (v Scratch, ki je sicer skrit).
+    static func sandboxProfile(dir: String, home: String = NSHomeDirectory(), network: Bool, hidden: [String] = [], routerPort: Int? = nil,
+                               runTmp: String? = nil) -> String? {
         let writable = [dir] + buildCaches(home: home)
         for p in writable where FileManager.default.fileExists(atPath: p) && Sync.real(URL(fileURLWithPath: p))?.path != p { return nil }
         let q = { (p: String) in "\"" + p.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\"" }
@@ -187,12 +199,14 @@ public enum Native {
         let secretFiles = [".netrc", ".git-credentials", ".npmrc", ".pypirc", ".gradle/gradle.properties", ".zsh_history",
                            ".bash_history"].map { home + "/" + $0 }
         return "(version 1)\n(allow default)\n(deny file-write*)\n"
-            + "(allow file-write* (regex #\"^/dev/\")" + writable.map { " (subpath \(q($0)))" }.joined() + ")\n"
+            + "(allow file-write* (regex #\"^/dev/\")" + writable.map { " (subpath \(q($0)))" }.joined()
+            + (darwinTempChildren().map { " (regex #\"" + $0 + "\")" } ?? "") + ")\n"
             + "(deny file-write*" + rules("subpath", [dir + "/.git"] + denies.paths)
             + denies.regexes.map { " (regex #\"" + $0.replacingOccurrences(of: "\"", with: "\\\"") + "\")" }.joined() + ")\n"
             + "(deny file-read*" + rules("subpath", secretDirs) + rules("literal", secretFiles) + ")\n"
             // Nastavitve aplikacije: datoteka in domena cfprefsd skupaj (le ena od obeh branja ne prepreči).
             + "(deny file-read* file-write*" + rules("subpath", hidden + [home + "/Library/Preferences/dev.trojar.minigateway.plist"]) + ")\n"
+            + (runTmp.map { "(allow file-read* file-write*" + rules("subpath", [$0]) + ")\n" } ?? "")
             // Sistemske storitve mimo datotek: nastavitve (cfprefsd), opravila launchd, odpiranje aplikacij, Apple Events.
             // mvn, swift build in xcodebuild delujejo brez izjem.
             + "(deny user-preference-write)\n(deny user-preference-read (preference-domain \"dev.trojar.minigateway\"))\n"
@@ -208,10 +222,11 @@ public enum Native {
     }
 
     /// Pisanje, ki ga gradnja potrebuje zunaj mape: Maven, Xcode, SwiftPM, predpomnilniki, začasne mape (kanonične).
+    /// Ne DARWIN_USER_TEMP_DIR/DARWIN_USER_CACHE_DIR (/var/folders/…): predpomnilnik xcrun bi izvedel podtaknjen program.
+    /// Gradnja ima svoj TMPDIR in ModuleCache (`runTmp` v sandboxProfile); iz DARWIN_USER_TEMP_DIR le `darwinTempChildren`.
     static func buildCaches(home: String = NSHomeDirectory()) -> [String] {
-        let tmp = Sync.real(URL(fileURLWithPath: NSTemporaryDirectory()))?.deletingLastPathComponent().path  // …/T in …/C
-        return ["\(home)/.m2", "\(home)/.swiftpm", "\(home)/Library/Developer", "\(home)/Library/Caches",
-                "\(home)/Library/org.swift.swiftpm", "/private/tmp"] + (tmp.map { [$0] } ?? [])
+        ["\(home)/.m2", "\(home)/.swiftpm", "\(home)/Library/Developer", "\(home)/Library/Caches",
+         "\(home)/Library/org.swift.swiftpm", "/private/tmp"]
     }
 
     /// Procesi (istega uporabnika, razen tega), ki imajo pisalni konec cevi, katere bralni konec je `fd` tega procesa.
@@ -403,9 +418,15 @@ extension Router {
         }
         // Mapa je lahko po dokazu zamenjana s povezavo (npr. na domačo mapo): znova kanonična in v dovoljenih mapah,
         // profil peskovnika iz dobesedne poti (sandboxProfile zavrne povezave).
+        // Svoj TMPDIR in ModuleCache v Scratch (ne /var/folders/…, glej buildCaches); odstrani se po zagonu.
+        let runTmp = config.scratch("tmp").appendingPathComponent("run-" + rid, isDirectory: true)
+        try? FileManager.default.createDirectory(at: runTmp.appendingPathComponent("ModuleCache"), withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: runTmp) }
         guard Sync.real(dir)?.path == dir.path, ClaudeCLI.resolveCwd(dir.path, roots: config.claudeCLI.allowedRoots)?.path == dir.path,
               let profile = Native.sandboxProfile(dir: dir.path, network: config.devices.first { $0.id == d.id }?.runNetwork ?? true,
-                                                  hidden: [config.scratchURL.path, RouterConfig.defaultScratch.path], routerPort: Int(config.port)) else {
+                                                  hidden: [config.scratchURL.path, RouterConfig.defaultScratch.path], routerPort: Int(config.port),
+                                                  runTmp: Sync.real(runTmp)?.path) else {
             return await error(403, "permission_error", "minigw run: the folder or a build cache folder (~/.m2, ~/Library/Caches …) is a link or not allowed", rid: rid, writer: writer)
         }
         guard await Self.natives.startRun(d.id) else {
@@ -415,6 +436,9 @@ extension Router {
         var env = ProcessInfo.processInfo.environment
         for k in env.keys where k.hasPrefix("ANTHROPIC_") || k.hasPrefix("CLAUDE_CODE_") || k == "CLAUDECODE" || k == "SSH_AUTH_SOCK" { env[k] = nil }
         env["PATH"] = (env["PATH"].map { $0 + ":" } ?? "") + "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        env["TMPDIR"] = runTmp.path + "/"; env["CLANG_MODULE_CACHE_PATH"] = runTmp.appendingPathComponent("ModuleCache").path
+        env["MAVEN_OPTS"] = ((env["MAVEN_OPTS"].map { $0 + " " }) ?? "") + "-Djava.io.tmpdir=" + runTmp.path  // Java ne bere TMPDIR
+        env["xcrun_db"] = nil; env["xcrun_nocache"] = "1"
         guard let exe = Native.executable(argv[0], dir: dir, path: env["PATH"]!) else {
             return await error(404, "not_found_error", "minigw run: \(argv[0]) not found on the gateway", rid: rid, writer: writer)
         }

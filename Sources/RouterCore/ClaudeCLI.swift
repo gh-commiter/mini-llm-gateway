@@ -51,7 +51,9 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
         let sandbox: [String: Any] = ["sandbox": [
             "enabled": true, "failIfUnavailable": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
             "network": ["allowedDomains": network ? ["*"] : []],
-            "filesystem": ["denyRead": ["~"], "allowRead": dirs + Self.mavenConfig(), "allowWrite": dirs,
+            // TemporaryItems (atomarno pisanje Foundation); TemporaryDirectory.* storitve gradnje Swift se tu ne da izraziti.
+            "filesystem": ["denyRead": ["~"], "allowRead": dirs + Self.mavenConfig() + Self.temporaryItems(),
+                           "allowWrite": dirs + Self.temporaryItems(),
                            "denyWrite": ["config", "hooks", "info", "commondir"].map { root.path + "/.git/" + $0 }
                                + Native.buildCacheDenies().paths],
         ]]
@@ -63,6 +65,13 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
             + (cwd.path == root.path ? [] : ["--add-dir", root.path])
             + (others.isEmpty ? [] : ["--allowedTools", others.joined(separator: ",")])
             + ["--disallowedTools", (disabledTools + gitEdits).joined(separator: ",")]
+    }
+
+    /// DARWIN_USER_TEMP_DIR/TemporaryItems (ne mapa sama: tam je xcrun_db).
+    static func temporaryItems() -> [String] {
+        var b = [CChar](repeating: 0, count: 1024)
+        guard confstr(_CS_DARWIN_USER_TEMP_DIR, &b, b.count) > 0, let t = Sync.real(URL(fileURLWithPath: String(cString: b))) else { return [] }
+        return [t.appendingPathComponent("TemporaryItems").path]
     }
 
     /// ~/.m2/settings.xml in toolchains.xml (dobesedno in kanonično, če sta povezavi).

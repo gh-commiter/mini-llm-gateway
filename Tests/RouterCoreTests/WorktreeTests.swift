@@ -196,14 +196,13 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
     }
     let env = Worktree.harnessEnv(root: root, maven: maven)
     #expect(env["GIT_DIR"] == root.path + "/.git" && env["GIT_WORK_TREE"] == root.path && env["GIT_COMMON_DIR"] == root.path + "/.git"
-            && env["MAVEN_OPTS"] == "-Dmaven.repo.local=" + maven.path)
+            && env["MAVEN_OPTS"] == "-Dmaven.repo.local=" + maven.path + " -Djava.io.tmpdir=" + root.path + "/.build/tmp")
     #expect((sb["network"] as? [String: [String]])?["allowedDomains"] == [])
     #expect(a.contains("--add-dir") && a.contains("default") && a.contains("acceptEdits"))
     #expect(Array((fs["denyWrite"] ?? []).prefix(4)) == ["config", "hooks", "info", "commondir"].map { root.path + "/.git/" + $0 })
     #expect(a[a.firstIndex(of: "--disallowedTools")! + 1].contains("Edit(/" + root.path + "/**/.git/**)"))
     #expect(Worktree.scratchIsSafe(URL(fileURLWithPath: NSHomeDirectory() + "/Library/Caches/dev.trojar.minigateway/Scratch")))
-    #expect(!Worktree.scratchIsSafe(URL(fileURLWithPath: "/private/tmp/scratch"))
-            && !Worktree.scratchIsSafe(URL(fileURLWithPath: NSHomeDirectory() + "/Library/Developer/Xcode/DerivedData/s")))
+    #expect(!Worktree.scratchIsSafe(URL(fileURLWithPath: "/private/tmp/scratch")))
     #expect(Worktree.validBranch("minigw/claude-0123abcd-2") && !Worktree.validBranch("main") && !Worktree.validBranch("minigw/x/../../main"))
 
     #expect(SharedFolders.candidates(work: "auto", readOnly: true, smb: true, git: true) == ["direct"])
@@ -315,6 +314,32 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
     #expect(g(client, "rev-parse", branch) == before)
 }
 
+/// L1 (0.5.16): objects/info klona kot povezava ven: finalize odstrani le povezavo in naredi svojo mapo (deskriptor, brez sledenja).
+@Test func worktreeFinalizeRemovesSymlinkedInfoOnly() async throws {
+    let (root, client, tree) = try fixture()
+    defer { cleanup(root) }
+    let hub = ShareHub(), session = UUID().uuidString
+    let key = try #require(await hub.register(session: session, cwd: client.path, key: nil, device: "dev", tree: tree))
+    let loop = fakeClient(hub, key: key, top: client)
+    defer { loop.cancel() }
+    let outside = root.appendingPathComponent("outside-info")
+    try file(outside, "keep", "keep\n")
+    var clone: URL?
+    _ = try await agentRun(hub, session) { dir in
+        clone = dir
+        try file(dir, "ok.txt", "ok\n")
+        let info = dir.appendingPathComponent(".git/objects/info")
+        try FileManager.default.removeItem(at: info)
+        try FileManager.default.createSymbolicLink(at: info, withDestinationURL: outside)
+    }
+    let info = try #require(clone).appendingPathComponent(".git/objects/info")
+    #expect((try? String(contentsOf: outside.appendingPathComponent("keep"), encoding: .utf8)) == "keep\n")
+    #expect(!FileManager.default.fileExists(atPath: outside.appendingPathComponent("alternates").path))
+    let attrs = try? FileManager.default.attributesOfItem(atPath: info.path)
+    #expect(attrs?[.type] as? FileAttributeType == .typeDirectory)
+    #expect(g(client, "show", "minigw/claude-\(String(Sync.folderID(session).prefix(8)))-0:ok.txt") == "ok")
+}
+
 /// N2: git v finalize ne bere vsebine zunaj klona, zrcala in svoje začasne mape (domača mapa, zrcala drugih naprav).
 @Test func worktreeFinalizeProfileDeniesOtherReads() throws {
     let scratch = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Caches/minigw-test-" + UUID().uuidString)
@@ -356,4 +381,79 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
     _ = try await agentRun(hub, session) { dir in try file(dir, "two.txt", "2\n") }
     #expect(g(client, "rev-parse", branch) == before)
     #expect(!FileManager.default.fileExists(atPath: linked.appendingPathComponent("two.txt").path))
+}
+
+/// H1 (0.5.16): agenti in minigw run ne pišejo v DARWIN_USER_TEMP_DIR/DARWIN_USER_CACHE_DIR ali njuno nadrejeno mapo
+/// (predpomnilnik xcrun, ModuleCache); svoj TMPDIR in ModuleCache imajo v .build klona.
+@Test func worktreeNoDarwinTempOrCacheIsWritable() throws {
+    func confstrPath(_ name: Int32) -> String? {
+        var b = [CChar](repeating: 0, count: 1024)
+        guard confstr(name, &b, b.count) > 0 else { return nil }
+        return Sync.real(URL(fileURLWithPath: String(cString: b)))?.path
+    }
+    let darwin = [confstrPath(_CS_DARWIN_USER_TEMP_DIR), confstrPath(_CS_DARWIN_USER_CACHE_DIR)].compactMap { $0 }
+    #expect(darwin.count == 2)
+    let root = URL(fileURLWithPath: "/Volumes/X/Scratch/worktrees/dev/x/claude-1")
+    let a = ClaudeCLIConfig().worktreeArgs(root: root, maven: root, cwd: root, allTools: [], network: true)
+    let settings = try #require(a.firstIndex(of: "--settings").map { a[$0 + 1] })
+    let claudeWrite = (((try JSONSerialization.jsonObject(with: Data(settings.utf8)) as? [String: Any])?["sandbox"] as? [String: Any])?["filesystem"]
+                       as? [String: [String]])?["allowWrite"] ?? []
+    let lists = [Worktree.writable(root: root, maven: root.deletingLastPathComponent().appendingPathComponent(".maven")),
+                 Native.buildCaches(), claudeWrite]
+    for list in lists {
+        for w in list {
+            let real = Sync.real(URL(fileURLWithPath: w))?.path ?? w
+            for d in darwin { #expect(!(d == real || d.hasPrefix(real + "/") || d == w || d.hasPrefix(w + "/")), "\(w) covers \(d)") }
+        }
+    }
+    // minigw run: iz DARWIN_USER_TEMP_DIR le TemporaryItems in TemporaryDirectory.* (ne xcrun_db, ne mapa sama)
+    let rx = try NSRegularExpression(pattern: try #require(Native.darwinTempChildren()))
+    func matches(_ p: String) -> Bool { rx.firstMatch(in: p, range: NSRange(p.startIndex..., in: p)) != nil }
+    #expect(matches(darwin[0] + "/TemporaryItems/x") && matches(darwin[0] + "/TemporaryDirectory.Ab12/y"))
+    #expect(!matches(darwin[0] + "/xcrun_db") && !matches(darwin[0]) && !matches(darwin[0] + "/TemporaryItemsX"))
+    let env = Worktree.harnessEnv(root: root, maven: root)
+    #expect(env["TMPDIR"] == root.path + "/.build/tmp/" && env["CLANG_MODULE_CACHE_PATH"] == root.path + "/.build/ModuleCache"
+            && env["xcrun_nocache"] == "1")
+    let codex = Codex.args(cwd: root, extraDirs: [], agent: true, output: root, write: true)
+    #expect(codex.contains("sandbox_workspace_write.exclude_tmpdir_env_var=true"))
+}
+
+/// H1: git routerja ne gre skozi shim xcrun: podtaknjen predpomnilnik (env xcrun_db) nima učinka. Kontrola: shim
+/// /usr/bin/git z istim predpomnilnikom izvede podtaknjen program.
+@Test func routerGitIgnoresPoisonedXcrunCache() throws {
+    #expect(!Worktree.git.hasPrefix("/usr/bin/"))
+    let dir = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("xcrun-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    // Pravi predpomnilnik za git, nato v njem pot do gita zamenjana s podtaknjenim programom enake dolžine.
+    func shim(_ env: [String: String]) {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        p.arguments = ["--version"]
+        p.environment = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("xcrun") }.merging(env) { $1 }
+        p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+        try? p.run(); p.waitUntilExit()
+    }
+    let db = dir.appendingPathComponent("db")
+    shim(["xcrun_db": db.path])
+    let data = try Data(contentsOf: db)
+    let text = String(decoding: data, as: UTF8.self)
+    let real = try #require(text.components(separatedBy: CharacterSet(charactersIn: "\0\n|")).first { $0.hasSuffix("/usr/bin/git") && $0.hasPrefix("/") })
+    let fakeDir = "/private/tmp/minigw-xcrun-" + UUID().uuidString.prefix(8)
+    guard real.count > fakeDir.count + 5 else { return }  // pot Xcode prekratka za zamenjavo enake dolžine (ni preizkusa)
+    let fake = fakeDir + "/" + String(repeating: "x", count: real.count - fakeDir.count - 5) + "/git"
+    try FileManager.default.createDirectory(atPath: (fake as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: fakeDir) }
+    let marker = fakeDir + "/PWNED"
+    try Data("#!/bin/sh\ntouch \(marker)\n".utf8).write(to: URL(fileURLWithPath: fake))
+    chmod(fake, 0o755)
+    let poison = dir.appendingPathComponent("poison")
+    var bytes = data  // zamenjava po bajtih (predpomnilnik je binaren); dolžine enake: zapis ostane veljaven
+    while let r = bytes.range(of: Data(real.utf8)) { bytes.replaceSubrange(r, with: Data(fake.utf8)) }
+    try bytes.write(to: poison)
+
+    Worktree.run(["--version"], env: ["xcrun_db": poison.path])
+    #expect(!FileManager.default.fileExists(atPath: marker))
+    shim(["xcrun_db": poison.path])  // kontrola: shim podtaknjeni program izvede
+    #expect(FileManager.default.fileExists(atPath: marker))
 }
