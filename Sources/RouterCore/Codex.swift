@@ -287,7 +287,8 @@ extension Router {
             pinger?.cancel()
             let (status, type, message) = (error as? SiriError)?.status
                 ?? (error as? Codex.Failure).map { (502, "api_error", $0.message) }
-                ?? (error as? Grok.Failure).map { (502, "api_error", $0.message) } ?? (500, "api_error", "\(error)")
+                ?? (error as? Grok.Failure).map { (502, "api_error", $0.message) }
+                ?? (error as? Copilot.Failure).map { (502, "api_error", $0.message) } ?? (500, "api_error", "\(error)")
             Self.log.error("\(rid, privacy: .public) \(model, privacy: .public) failed: \(message, privacy: .public)")
             if stream {
                 try? await writer.write(StreamTranslator.sse("error", ["type": "error", "error": ["type": type, "message": message]]))
