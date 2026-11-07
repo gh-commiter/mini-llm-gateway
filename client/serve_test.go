@@ -512,7 +512,7 @@ func TestDeviceRulesLikeMac(t *testing.T) {
 	for i := 0; i < 25; i++ {
 		s.addPending(serveDevice{ID: fmt.Sprint("id", i)}, "a", "")
 	}
-	s.addPending(serveDevice{ID: "id0"}, "b", "Linux · minigw 0.5.18")
+	s.addPending(serveDevice{ID: "id0"}, "b", "Linux, minigw 0.5.18")
 	if len(s.pending) != 20 || s.pending[0].ID != "id0" || s.pending[0].Address != "b" || s.pending[0].Client == "" || s.pending[19].ID != "id19" {
 		t.Fatalf("pending: %+v", s.pending)
 	}
@@ -522,9 +522,17 @@ func TestDeviceRulesLikeMac(t *testing.T) {
 func TestAllowedDeviceClientInfo(t *testing.T) {
 	id := base64url(newDevice("PC").key.Public().(ed25519.PublicKey))
 	s, _, base := liveServer(t, func(c *serveConfig) { c.Devices = []serveDevice{{ID: id, Name: "PC"}} })
-	s.deviceSeen(serveDevice{ID: id, Name: "PC"}, "Windows · minigw 0.5.18")
+	s.deviceSeen(serveDevice{ID: id, Name: "PC"}, "Windows, minigw 0.5.18")
 	s.deviceSeen(serveDevice{ID: id, Name: "PC"}, "")
-	if st, b := adminNoise(t, s, base, s.admin, "GET", adminPrefix+"/devices", ""); st != 200 || !strings.Contains(b, `"client":"Windows · minigw 0.5.18"`) || !strings.Contains(b, `"lastSeen":"`) {
+	if st, b := adminNoise(t, s, base, s.admin, "GET", adminPrefix+"/devices", ""); st != 200 || !strings.Contains(b, `"client":"Windows, minigw 0.5.18"`) || !strings.Contains(b, `"lastSeen":"`) {
 		t.Fatalf("devices: %d %s", st, b)
+	}
+}
+
+// Podatek odjemalca le v ASCII: URLSession na Macu pošlje druge znake v glavi kot Latin-1 in prehod na Macu (UTF-8)
+// zahtevo zavrne (»Bad request header«).
+func TestClientInfoIsASCII(t *testing.T) {
+	if s := clientInfo(); strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || r > 0x7e }) || !strings.Contains(s, ", minigw "+version) {
+		t.Fatalf("clientInfo: %q", s)
 	}
 }
