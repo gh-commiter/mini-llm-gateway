@@ -112,7 +112,9 @@ public enum Sync {
         func walk(_ dir: URL, _ rel: String) {
             let names = trusted ? (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) : list(dir)
             for name in (names ?? []).sorted() {
-                let r = rel.isEmpty ? name : rel + "/" + name, url = dir.appendingPathComponent(name)
+                // #3: ime v manifestu je NFC (Windows, Linux); datoteka ostane pod svojim imenom (APFS najde obe obliki).
+                let key = name.precomposedStringWithCanonicalMapping
+                let r = rel.isEmpty ? key : rel + "/" + key, url = dir.appendingPathComponent(name)
                 if normName(name) == ".git" { continue }  // tudi ».GIT«
                 guard let a = try? FileManager.default.attributesOfItem(atPath: url.path) else { continue }  // ne sledi povezavam
                 switch a[.type] as? FileAttributeType {

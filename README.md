@@ -329,6 +329,9 @@ builds then work on the gateway's local disk.
   (add build output and large data to `.gitignore`). Copies of all devices are in the gateway's Scratch folder: agents
   that can read every file of the gateway's user (Codex and Grok on the Mac, any agent on Windows) can read them
   too. Keep Scratch on APFS (or NTFS, ext4): exFAT ignores the folder's private permissions.
+- **Names:** files whose names differ only in upper and lower case (`A.txt` and `a.txt`) are not synced, with a note.
+  Accented names travel in NFC, as Windows and Linux write them; the Mac finds a file under either form. A Linux
+  folder that holds the decomposed (NFD) form of a name may get a second, NFC copy of that file back.
 - **Agents in the same folder run one after another.**
 
 **Worktree: a git repository, results as branches.** `minigw --minigw-work=worktree …` (or `MINIGW_WORK=worktree`) sends

@@ -1430,3 +1430,15 @@ final class FakeMinigw: @unchecked Sendable {
 @Test func syncCaseCollisions() {
     #expect(Sync.caseCollisions(["A.txt", "a.txt", "src/B.go", "src/b.GO", "ok.txt"]) == ["A.txt", "a.txt", "src/B.go", "src/b.GO"])
 }
+
+/// #3: ime v NFD (Finder) gre v manifest kot NFC, kot ga pošljeta Windows in Linux; datoteka se najde pod obema.
+@Test func syncNamesAreNFC() throws {
+    let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("p3-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let nfd = "c\u{30C}a.txt", nfc = "\u{10D}a.txt"  // »ča.txt«
+    try Data("x".utf8).write(to: root.appendingPathComponent(nfd))
+    let keys = Array(Sync.scan(root, trusted: true).files.keys)
+    #expect(keys == [nfc])
+    #expect(Sync.resolve(nfc, root: root).map { FileManager.default.fileExists(atPath: $0.path) } == true)
+}

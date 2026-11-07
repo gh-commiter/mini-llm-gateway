@@ -467,6 +467,7 @@ public actor ShareHub {
     /// ponytail: briše le neprezrte datoteke po pravilih kopije; prezrte (izhod gradnje) ostanejo, tudi če jih odjemalec ne prezre več.
     func syncManifest(key: String, _ files: [Sync.Entry], execKnown: Bool = true, device: String? = nil) async -> (need: [String], kept: [String])? {
         guard let s = share(key: key, device: device), let copy = s.copy else { return nil }
+        let files = files.map { e -> Sync.Entry in var e = e; e.path = e.path.precomposedStringWithCanonicalMapping; return e }  // #3: NFC (starejši minigw na Macu: NFD)
         s.lastSeen = Date()
         Self.touchUsed(copy)
         s.execKnown = execKnown
@@ -493,6 +494,7 @@ public actor ShareHub {
 
     /// Datoteka iz manifesta; vsebina se mora ujemati z njim. Status HTTP.
     func syncPut(key: String, path: String, data: Data, device: String? = nil) -> Int {
+        let path = path.precomposedStringWithCanonicalMapping  // #3
         guard let s = share(key: key, device: device), let copy = s.copy else { return 404 }
         s.lastSeen = Date()
         guard let e = s.incoming[path], let url = Sync.resolve(path, root: copy) else { return 403 }
@@ -522,6 +524,7 @@ public actor ShareHub {
 
     /// minigw potrdi poti, ki jih je obdelal (zapisal, izbrisal ali shranil kot spor).
     func syncAck(key: String, _ paths: [String], device: String? = nil) -> Bool {
+        let paths = paths.map(\.precomposedStringWithCanonicalMapping)  // #3
         guard let s = share(key: key, device: device), s.state != nil else { return false }
         for p in paths {
             guard let e = s.pending.removeValue(forKey: p) else { continue }
@@ -533,6 +536,7 @@ public actor ShareHub {
 
     /// Datoteka kopije za minigw (le poslane spremembe, nikoli prezrte ali zunaj kopije).
     func syncGet(key: String, path: String, device: String? = nil) -> Data? {
+        let path = path.precomposedStringWithCanonicalMapping  // #3
         guard let s = share(key: key, device: device), let copy = s.pulling?.clone ?? s.copy, !s.readOnly, (s.pending[path] ?? nil) != nil,
               Sync.resolve(path, root: copy) != nil, let root = Sync.real(copy) else { return nil }
         s.lastSeen = Date()
