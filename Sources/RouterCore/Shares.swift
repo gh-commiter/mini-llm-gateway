@@ -84,6 +84,7 @@ public actor ShareHub {
     /// Agent izvajanja (claude, codex, grok): ime veje worktree.
     @TaskLocal public static var agent: String?
     private var runs: [String: Run] = [:]
+    static let maxRunsPerCopy = 4
     var slots: [String: Slot] = [:]      // worktree: »<seja>|<agent>|<n>« → klon
     var runSlot: [String: String] = [:]  // worktree: izvajanje → mesto
 
@@ -301,6 +302,11 @@ public actor ShareHub {
     /// Klon kopije za izvajanje `id` (APFS: takoj, brez dodatnega prostora) v scratch/sync/runs; kliče se pod zaklepom.
     /// Mesto ».<n>« je najnižje prosto: zaporedna izvajanja imajo isto pot (nadaljevanje seje Claude je vezano na mapo).
     private func clone(_ s: Share, _ copy: URL, _ id: String) async -> URL? {
+        // #22: največ maxRunsPerCopy hkratnih izvajanj na kopijo: brez clonefile (zunanji disk) je vsak klon cela kopija.
+        guard runs.values.filter({ $0.copy == copy }).count < Self.maxRunsPerCopy else {
+            Router.log.error("sync: \(Self.maxRunsPerCopy) agent runs already work in this folder; refusing another")
+            return nil
+        }
         let dir = copy.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("runs", isDirectory: true)
         let name = copy.deletingLastPathComponent().lastPathComponent + "-" + copy.lastPathComponent
         var n = 0

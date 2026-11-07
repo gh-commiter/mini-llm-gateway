@@ -1373,3 +1373,21 @@ final class FakeMinigw: @unchecked Sendable {
         #expect(known ? got == "agent" : (got == "user edit" && conflict == "agent"))
     }
 }
+
+/// #22: največ ShareHub.maxRunsPerCopy hkratnih izvajanj na kopijo; po koncu enega je mesto spet prosto.
+@Test func syncRunsPerCopyAreCapped() async throws {
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent("sync22-" + UUID().uuidString)
+    let client = base.appendingPathComponent("client"), copy = base.appendingPathComponent("sync/local/x")
+    defer { try? FileManager.default.removeItem(at: base) }
+    try FileManager.default.createDirectory(at: client, withIntermediateDirectories: true)
+    try Data("v1".utf8).write(to: client.appendingPathComponent("f.txt"))
+    let hub = ShareHub()
+    let key = try #require(await hub.register(session: "p", cwd: client.path, key: nil, copy: copy))
+    let server = FakeMinigw(hub, key: key, root: client).serve()
+    defer { server.cancel() }
+    func mount(_ run: String) async -> URL? { await ShareHub.$run.withValue(run) { await hub.mount(session: "p", cwd: client.path, base: "") } }
+    for i in 0..<ShareHub.maxRunsPerCopy { #expect(await mount("r\(i)") != nil) }
+    #expect(await mount("over") == nil)
+    await hub.finish(run: "r0")
+    #expect(await mount("again") != nil)
+}
