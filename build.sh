@@ -19,6 +19,9 @@ if [[ $MODE == --release ]]; then
     || { print -u2 "Release zahteva commitano kodo (git status -- Sources client Resources Package.swift ni prazen)."; exit 1 }
   IDENTITY=${SIGN_IDENTITY:-$(pick "Developer ID Application")}
   [[ $IDENTITY == "Developer ID Application:"* ]] || { print -u2 "Release zahteva potrdilo Developer ID Application (Xcode → Settings → Accounts → Manage Certificates → +)."; exit 1 }
+  # #8: SHA256SUMS podpiše ključ izdaj zunaj repozitorija (zasebni delovni prostor); javni ključ je pripet v odjemalcih.
+  SIGNING_KEY=${MINIGW_SIGNING_KEY:-../.secrets/release-signing-key}
+  [[ -r $SIGNING_KEY ]] || { print -u2 "Release needs the signing key $SIGNING_KEY (or MINIGW_SIGNING_KEY): SHA256SUMS must be signed."; exit 1 }
 else
   IDENTITY=${SIGN_IDENTITY:-$(pick "Developer ID Application")}
   [[ -n $IDENTITY ]] || IDENTITY=$(pick "Apple Development")
@@ -102,6 +105,13 @@ if [[ $MODE == --release ]]; then
   done
 
   (cd $OUT && shasum -a 256 "${ZIP:t}" "${DMG:t}" minigw.zip install.sh $GO_BINS | tee SHA256SUMS)
+  rm -f $OUT/SHA256SUMS.sig
+  ssh-keygen -Y sign -q -f "$SIGNING_KEY" -n minigw-release $OUT/SHA256SUMS || { print -u2 "Signing SHA256SUMS failed"; exit 1 }
+  print -r -- "$(grep -v '^#' client/release_sig.go | grep -o 'ssh-ed25519 [A-Za-z0-9+/=]*' | head -1)" \
+    | sed 's/^/minigw-release namespaces="minigw-release" /' > $OUT/.signers
+  ssh-keygen -Y verify -f $OUT/.signers -I minigw-release -n minigw-release -s $OUT/SHA256SUMS.sig < $OUT/SHA256SUMS >/dev/null \
+    || { print -u2 "SHA256SUMS.sig does not verify with the key pinned in client/release_sig.go"; exit 1 }
+  rm -f $OUT/.signers
   # Homebrew (Casks/, tap = ta repozitorij): različica in kontrolni vsoti te izdaje
   for cask file in Casks/mini-gateway.rb "$ZIP" Casks/minigw.rb "$CLI_ZIP"; do
     sed -i '' -e "s/^  version \".*\"/  version \"$VERSION\"/" \

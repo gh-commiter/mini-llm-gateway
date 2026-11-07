@@ -192,13 +192,20 @@ in [Releases](../../releases):
 | Windows x64 / ARM64 | `minigw-windows-amd64.exe` / `minigw-windows-arm64.exe` |
 | Linux x64 / ARM64 | `minigw-linux-amd64` / `minigw-linux-arm64` (static, any distribution) |
 
-Check it against `SHA256SUMS`, rename it to `minigw` (`minigw.exe` on Windows) and put it in your `PATH`. Linux:
+Check that `SHA256SUMS` is signed by Mini Gateway and the file matches it, rename it to `minigw` (`minigw.exe` on
+Windows) and put it in your `PATH`. Linux:
 
 ```sh
-curl -fsSLo minigw https://github.com/gh-commiter/mini-llm-gateway/releases/latest/download/minigw-linux-amd64
-curl -fsSL https://github.com/gh-commiter/mini-llm-gateway/releases/latest/download/SHA256SUMS | grep ' minigw-linux-amd64$' | sed 's/minigw-linux-amd64$/minigw/' | sha256sum -c -
-chmod +x minigw && sudo mv minigw /usr/local/bin/
+R=https://github.com/gh-commiter/mini-llm-gateway/releases/latest/download
+curl -fsSLO $R/minigw-linux-amd64 -O $R/SHA256SUMS -O $R/SHA256SUMS.sig
+echo 'minigw-release namespaces="minigw-release" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINt++OHn+HHmR9mmA2UI+B0osuilO2GP0ddEzNp0GTrH' > signers
+ssh-keygen -Y verify -f signers -I minigw-release -n minigw-release -s SHA256SUMS.sig < SHA256SUMS
+grep ' minigw-linux-amd64$' SHA256SUMS | sha256sum -c -
+mv minigw-linux-amd64 minigw && chmod +x minigw && sudo mv minigw /usr/local/bin/
 ```
+
+The plugin, `install.sh` and `minigw serve install` check this signature themselves: `SHA256SUMS` is signed with a
+key that is not on GitHub, so a changed release is refused.
 
 Windows (PowerShell; compare the hash with `SHA256SUMS`):
 

@@ -163,6 +163,20 @@ func main() {
 		first = args[0]
 	}
 	switch first {
+	case "verify-sums": // #8 (skrit): podpis SHA256SUMS za install-minigw.sh; izhod 0 = podpisano s pripetim ključem
+		if len(args) != 3 {
+			fail("usage: minigw verify-sums SHA256SUMS SHA256SUMS.sig")
+		}
+		sums, err1 := os.ReadFile(args[1])
+		sig, err2 := os.ReadFile(args[2])
+		if err1 != nil || err2 != nil {
+			fail("cannot read SHA256SUMS or its signature")
+		}
+		if err := verifyReleaseSums(sums, sig); err != nil {
+			fail("SHA256SUMS: " + err.Error())
+		}
+		say("SHA256SUMS: good signature")
+		return
 	case agentReaperCmd: // pomočnik za procese agentov (Linux)
 		agentReaperMain(args[1:])
 		return
