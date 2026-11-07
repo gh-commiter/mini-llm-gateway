@@ -273,8 +273,9 @@ func TestServeInstallWithMSI(t *testing.T) {
 	cfg := filepath.Join(t.TempDir(), "serve.json")
 	saveServeConfig(cfg, serveConfig{Token: "tok"})
 	var calls, got []string
-	o1, o2, o3 := msiDir, fetchRelease, runCmd
-	t.Cleanup(func() { msiDir, fetchRelease, runCmd = o1, o2, o3 })
+	o1, o2, o3, o4 := msiDir, fetchRelease, runCmd, installedVersion
+	t.Cleanup(func() { msiDir, fetchRelease, runCmd, installedVersion = o1, o2, o3, o4 })
+	installedVersion = func(string) string { return "0.0.1" }
 	msiDir = func() string { return `C:\Users\ana\AppData\Local\Programs\Mini Gateway\` }
 	fetchRelease = func(asset, dst string) error {
 		got = append(got, asset)
@@ -292,6 +293,18 @@ func TestServeInstallWithMSI(t *testing.T) {
 		!strings.Contains(msg, "updated with the MSI") {
 		t.Fatalf("install: %v %q %v %v", err, msg, got, calls)
 	}
+	// Vrstica 9: ista različica → nič; novejša nameščena → ne nazaj (brez prenosa in msiexec).
+	calls, got = nil, nil
+	for v, want := range map[string]string{version: "already up to date", "99.0.0": "is newer than this minigw"} {
+		installedVersion = func(string) string { return v }
+		if msg, err := installWindows(os.Args[0], cfg); err != nil || !strings.Contains(msg, want) || len(calls) != 0 || len(got) != 0 {
+			t.Fatalf("%s: %v %q %v %v", v, err, msg, calls, got)
+		}
+	}
+	if !versionLess("0.5.9", "0.5.10") || versionLess("0.5.10", "0.5.9") || versionLess("1.0", "1.0") {
+		t.Fatal("versionLess")
+	}
+	installedVersion = func(string) string { return "" }
 	fetchRelease = func(string, string) error { return errors.New("not signed") }
 	if _, err := installWindows(os.Args[0], cfg); err == nil || !strings.Contains(err.Error(), "installed with the MSI") {
 		t.Fatalf("download error: %v", err)
