@@ -260,7 +260,9 @@ it up.
 **Settings page.** **Settings…** opens `http://127.0.0.1:<port>/minigw/settings` in the browser with a one-time
 link (60 s). It has the panes of the Mac's Settings window ([5. Gateway settings](#5-gateway-settings)), light or dark
 as the system. Changes apply at once. On Linux, `minigw gw settings` prints such a link; open it on the gateway computer or
-through `ssh -L <port>:127.0.0.1:<port>` with the same port on both ends (the page checks the port).
+through `ssh -L <port>:127.0.0.1:<port>` with the same port on both ends (the page checks the port). With the Windows
+tray, **Choose…** next to Allowed folders and **Browse…** next to a program's path open the Windows file dialog on the
+gateway computer; elsewhere you type the path.
 
 **Changing the gateway.** `minigw gw status|devices|provider|claude|token` (also as `minigw serve allow`, `deny`,
 `devices`, `provider`) changes the running gateway at once, through its admin API; when it does not run, it changes

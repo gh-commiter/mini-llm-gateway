@@ -25,6 +25,9 @@ const (
 	sessionIdle    = 30 * time.Minute
 )
 
+// pickFunc: okno za izbiro mape (kind "folder") ali programa ("exe") na tem računalniku; "" = preklic.
+type pickFunc func(kind string) (string, error)
+
 type settingsState struct {
 	mu       sync.Mutex
 	logins   map[string]time.Time // enkratni žeton → rok
@@ -127,7 +130,8 @@ func (s *server) settingsHTTP(w http.ResponseWriter, r *req) int {
 		nonce := randomToken()
 		h.Set("Content-Security-Policy", "default-src 'none'; script-src 'nonce-"+nonce+"'; style-src 'nonce-"+nonce+
 			"'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
-		return writeStatus(w, 200, "text/html; charset=utf-8", []byte(strings.ReplaceAll(settingsPage, "{{NONCE}}", nonce)))
+		page := strings.NewReplacer("{{NONCE}}", nonce, "{{PICKER}}", strconv.FormatBool(s.pick.Load() != nil)).Replace(settingsPage)
+		return writeStatus(w, 200, "text/html; charset=utf-8", []byte(page))
 	case "POST /minigw/settings/login":
 		if st := s.refuseAgentPeer(w, r); st != 0 { // R4
 			return st
@@ -146,6 +150,35 @@ func (s *server) settingsHTTP(w http.ResponseWriter, r *req) int {
 			return writeError(w, r.rid, 401, "This settings link has expired or was already used. Open Settings… again.")
 		}
 		return writeJSON(w, r.rid, 200, map[string]string{"session": id})
+	case "POST /minigw/settings/pick": // Izberi… / Prebrskaj…: okno pladnja, pot nazaj na stran
+		if st := s.refuseAgentPeer(w, r); st != 0 {
+			return st
+		}
+		if !s.settings.valid(r.h(settingsHeader)) {
+			return writeError(w, r.rid, 401, "Sign in to Settings again (Settings… in the tray menu)")
+		}
+		if !readBody(w, r, 4<<10) {
+			return writeError(w, r.rid, 413, "Request body too large or too slow")
+		}
+		var b struct {
+			Kind string `json:"kind"`
+		}
+		if err := decodeStrict(r.body, &b); err != nil || (b.Kind != "folder" && b.Kind != "exe") {
+			return writeError(w, r.rid, 400, `kind must be "folder" or "exe"`)
+		}
+		pick := s.pick.Load()
+		if pick == nil {
+			return writeError(w, r.rid, 501, "No file dialog here: type the path")
+		}
+		if !s.picking.CompareAndSwap(false, true) {
+			return writeError(w, r.rid, 409, "A file dialog is already open on the gateway computer")
+		}
+		defer s.picking.Store(false)
+		path, err := (*pick)(b.Kind)
+		if err != nil {
+			return writeError(w, r.rid, 500, "File dialog: "+err.Error())
+		}
+		return writeJSON(w, r.rid, 200, map[string]string{"path": path})
 	case "POST /minigw/settings/logout":
 		s.settings.logout(r.h(settingsHeader))
 		return writeJSON(w, r.rid, 200, map[string]bool{"ok": true})
