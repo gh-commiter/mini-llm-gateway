@@ -329,6 +329,8 @@ func main() {
 				"minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)\n" +
 				"minigw --minigw-work=sync [claude args]    agents work in a synced copy on the router (or MINIGW_WORK=sync)\n" +
 				"minigw --minigw-work=native [claude args]  folder is the router's SMB share: agents work in it there (or MINIGW_WORK=native)\n" +
+				"minigw --minigw-work=worktree [claude args]  git repository: agents work in a clone on the router, results come back as branches minigw/…\n" +
+				"minigw --minigw-work=auto [claude args]    router share → native, git repository → worktree, otherwise sync (--minigw-ro → direct)\n" +
 				"minigw run [--] <command> [args …]          run a build in this folder on the router (SMB share, allowed in its Settings)\n" +
 				"minigw serve [init|allow <id>] [--port N] [--folder DIR] [--config FILE]   run a router here (Windows, Linux)\n" +
 				"minigw router status|devices|gateway|claude|token …                    change the router here, live\n" +
@@ -358,7 +360,7 @@ func main() {
 		}
 	}
 	if work != "" && !workModes[work] { // native: mapa je prek SMB mapa routerja (native.go)
-		fail("unknown --minigw-work=" + work + " (use direct, sync or native)")
+		fail("unknown --minigw-work=" + work + " (use direct, sync, native, worktree or auto)")
 	}
 	cwd, _ := os.Getwd()
 	asked := work
@@ -366,8 +368,8 @@ func main() {
 		asked = f.Work
 	}
 	work, readOnly = workMode(work, lookupSharedFolder(sharedFolders(), cwd), readOnly)
-	if asked == "native" && work != "native" {
-		fmt.Fprintln(os.Stderr, "minigw: native mode cannot be read-only; sharing read-only over the network instead")
+	if (asked == "native" || asked == "worktree") && work != asked {
+		fmt.Fprintln(os.Stderr, "minigw: "+asked+" mode cannot be read-only; sharing read-only over the network instead")
 	}
 	saved := requireConnection()
 	c := route(saved)
@@ -421,16 +423,33 @@ func main() {
 	}
 	env = append(env, "ANTHROPIC_CUSTOM_HEADERS="+headers)
 
-	share := &shareClient{c: c, session: sid, root: cwd, readOnly: readOnly, sync: work == "sync", native: work == "native",
-		synced: map[string]syncEntry{}, reported: map[string]bool{}}
+	// Načini po vrsti (auto: native → worktree → sync); naslednji, če router prejšnjega ne sprejme.
+	top := ""
+	if work == "auto" || work == "worktree" {
+		top = gitToplevel(cwd)
+	}
+	_, _, smb := nativeDetect(cwd)
+	share := &shareClient{c: c, session: sid, root: cwd, readOnly: readOnly, synced: map[string]syncEntry{}, reported: map[string]bool{}}
 	if wantShare && sid != "" {
-		ok := share.register()
-		if !ok && share.native { // native ni mogoč → kot direct
-			fmt.Fprintln(os.Stderr, "minigw: native mode not available: "+share.refusal+"; sharing over the network instead")
-			share.native, share.refusal = false, ""
-			ok = share.register()
+		tries := workCandidates(work, readOnly, work == "auto" && smb, top != "")
+		if work == "worktree" && top == "" {
+			fmt.Fprintln(os.Stderr, "minigw: "+cwd+" is not in a git repository; worktree mode is not possible")
 		}
-		if ok && share.native {
+		ok := false
+		for i, w := range tries {
+			share = &shareClient{c: c, session: sid, root: cwd, readOnly: readOnly, sync: w == "sync", native: w == "native",
+				worktree: w == "worktree", top: top, synced: map[string]syncEntry{}, reported: map[string]bool{}}
+			if ok = share.register(); ok {
+				break
+			}
+			if i+1 < len(tries) {
+				fmt.Fprintln(os.Stderr, "minigw: "+w+" mode not available: "+clean(share.refusal)+"; trying "+tries[i+1])
+			}
+		}
+		if ok && share.worktree {
+			share.start(4)
+			fmt.Fprintf(os.Stderr, "minigw: agent models work in a clone of this git repository on %s; their work comes back as branches minigw/… (worktree)\n", routerHost)
+		} else if ok && share.native {
 			share.start(4)
 			fmt.Fprintf(os.Stderr, "minigw: %s is a folder of %s (SMB): agent models work in it there directly (native)\n", cwd, routerHost)
 		} else if ok {
@@ -553,7 +572,7 @@ type sharedFolder struct {
 	ReadOnly bool
 }
 
-var workModes = map[string]bool{"direct": true, "sync": true, "native": true}
+var workModes = map[string]bool{"direct": true, "sync": true, "native": true, "worktree": true, "auto": true}
 
 func sharedFolders() []sharedFolder {
 	data, _ := os.ReadFile(sharedFoldersFile())
@@ -620,7 +639,7 @@ func workMode(flag string, saved *sharedFolder, readOnly bool) (string, bool) {
 		work = "direct"
 	}
 	ro := readOnly || (saved != nil && saved.ReadOnly)
-	if work == "native" && ro {
+	if (work == "native" || work == "worktree") && ro { // worktree vrne vejo: samo za branje → direct
 		work = "direct"
 	}
 	return work, ro
@@ -661,7 +680,7 @@ func shareCommand(args []string) {
 		}
 	}
 	if work != "" && !workModes[work] {
-		fail("unknown --work=" + work + " (use direct, sync or native)")
+		fail("unknown --work=" + work + " (use direct, sync, native, worktree or auto)")
 	}
 	if work == "native" && ro {
 		fail("--work=native cannot be read-only (the agent works in the router's own folder)")

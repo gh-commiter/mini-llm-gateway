@@ -110,8 +110,12 @@ func call(_ c: Connection, _ method: String, _ path: String, _ headers: [String:
 /// Mac mini odjemalca ne doseže, zato vse teče po povezavah, ki jih odpre minigw (long poll).
 /// --minigw-work=sync: namesto priklopa router dobi kopijo (Sync); pred agentom jo minigw posodobi, po njem prevzame spremembe.
 final class ShareClient: @unchecked Sendable {
-    let c: Connection, session: String, root: URL, readOnly: Bool, sync: Bool, native: Bool
-    var refusal = ""  // zakaj router mape ni sprejel (native)
+    let c: Connection, session: String, root: URL, readOnly: Bool, kind: String  // direct, sync, native, worktree
+    let top: String?  // worktree: koren repozitorija git
+    var sync: Bool { kind == "sync" }
+    var native: Bool { kind == "native" }
+    var worktree: Bool { kind == "worktree" }
+    var refusal = ""  // zakaj router mape ni sprejel
     static let writeMethods: Set<String> = ["PUT", "DELETE", "MKCOL", "MOVE", "COPY", "PROPPATCH", "LOCK"]
     private let lock = NSLock()
     private var current = ""
@@ -121,20 +125,25 @@ final class ShareClient: @unchecked Sendable {
     private var reported: Set<String> = []          // že javljene prevelike datoteke
     private var unpulled = false                    // spremembe agenta, ki niso bile prevzete in potrjene
 
-    init(_ c: Connection, session: String, root: URL, readOnly: Bool, sync: Bool, native: Bool = false) {
-        self.c = c; self.session = session; self.root = root; self.readOnly = readOnly; self.sync = sync; self.native = native
+    init(_ c: Connection, session: String, root: URL, readOnly: Bool, kind: String, top: String? = nil) {
+        self.c = c; self.session = session; self.root = root; self.readOnly = readOnly; self.kind = kind; self.top = top
     }
 
     func register() -> Bool {
         var h = ["x-claude-mini-session": session, "x-claude-mini-cwd": root.path, "x-share-key": key,
-                 "x-share-mode": readOnly ? "ro" : "rw", "x-claude-mini-work": native ? "native" : sync ? "sync" : "direct"]
+                 "x-share-mode": readOnly ? "ro" : "rw", "x-claude-mini-work": kind]
+        if worktree { h["x-worktree-top"] = top ?? "" }
         if native {  // vsaka registracija (tudi po ponovnem zagonu routerja) z novim dokazom
             let (proof, why) = nativeProof(c, root.path)
             guard let proof else { refusal = why; return false }
             h.merge(proof) { $1 }
         }
         let (s, d) = call(c, "POST", "/minigw/share", h, timeout: 10)
-        guard s == 200, let d, let k = (try? JSONSerialization.jsonObject(with: d) as? [String: Any])?["key"] as? String else { return false }
+        let o = d.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        guard s == 200, let k = o?["key"] as? String else {
+            if refusal.isEmpty { refusal = ((o?["error"] as? [String: Any])?["message"] as? String).map(clean) ?? "HTTP \(s)" }
+            return false
+        }
         lock.withLock { current = k }
         return true
     }
@@ -153,7 +162,11 @@ final class ShareClient: @unchecked Sendable {
             case 200:
                 guard let d, let job = try? JSONDecoder().decode(DAVJob.self, from: d) else { continue }
                 // Router ni zaupanja vreden: Sync.jobAllowed (SYNC-* le v sync, PULL ne pri --minigw-ro, WebDAV le v direct).
-                let r = native || !Sync.jobAllowed(job.method, sync: sync, readOnly: readOnly, write: Self.writeMethods.contains(job.method))
+                // worktree: le WORKTREE-PUSH (posnetek k routerju) in WORKTREE-PULL (veja agenta kot ref).
+                let r = worktree ? (job.method == "WORKTREE-PUSH" ? syncLock.withLock { wtPush(k, job) }
+                                    : job.method == "WORKTREE-PULL" ? syncLock.withLock { wtPull(k, job) } : DAVResponse(403))
+                    : native || job.method.hasPrefix("WORKTREE-")
+                        || !Sync.jobAllowed(job.method, sync: sync, readOnly: readOnly, write: Self.writeMethods.contains(job.method))
                     ? DAVResponse(403)
                     : job.method == "SYNC-PUSH" ? DAVResponse(syncLock.withLock { push(k) } ? 200 : 500)
                     : job.method == "SYNC-PULL" ? DAVResponse(syncLock.withLock { pull(k) } ? 200 : 500)
@@ -175,6 +188,40 @@ final class ShareClient: @unchecked Sendable {
     }
 
     private func note(_ s: String) { err.write(Data(("minigw: " + clean(s) + "\n").utf8)) }
+
+    /// worktree: posnetek stanja (brez spremembe indeksa ali vej) in bundle manjkajočih objektov po delih do 32 MB.
+    private func wtPush(_ k: String, _ job: DAVJob) -> DAVResponse {
+        let have = (try? JSONSerialization.jsonObject(with: job.body) as? [String: Any])?["have"] as? [String] ?? []
+        guard let top, let snap = Worktree.snapshot(top: top) else { note("worktree: cannot take a snapshot (no commit yet?)"); return DAVResponse(500) }
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("minigw-\(UUID().uuidString).bundle")
+        defer { try? FileManager.default.removeItem(at: file) }
+        guard let made = Worktree.bundle(top: top, snapshot: snap, have: have, to: file) else { note("worktree: git bundle failed"); return DAVResponse(500) }
+        if made, let h = FileHandle(forReadingAtPath: file.path) {
+            defer { try? h.close() }
+            var part = 0
+            while let d = try? h.read(upToCount: 32 << 20), !d.isEmpty {
+                guard call(c, "PUT", "/minigw/worktree/bundle", ["x-share-key": k, "x-part": String(part)], d, timeout: 600).0 == 204 else {
+                    note("worktree: upload to the router failed"); return DAVResponse(500)
+                }
+                part += 1
+            }
+        }
+        return DAVResponse(200, [:], (try? JSONSerialization.data(withJSONObject: ["snapshot": snap])) ?? Data())
+    }
+
+    /// worktree: veja agenta iz routerja le kot ref (Worktree.fetch: fsck, brez hookov, podmodulov, checkouta).
+    private func wtPull(_ k: String, _ job: DAVJob) -> DAVResponse {
+        guard let top, let branch = (try? JSONSerialization.jsonObject(with: job.body) as? [String: Any])?["branch"] as? String,
+              Worktree.validBranch(branch) else { return DAVResponse(403) }
+        let (s, d) = call(c, "GET", "/minigw/worktree/result", ["x-share-key": k], timeout: 600)
+        guard s == 200, let d else { note("worktree: cannot get \(branch) from the router (HTTP \(s))"); return DAVResponse(500) }
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("minigw-\(UUID().uuidString).bundle")
+        defer { try? FileManager.default.removeItem(at: file) }
+        guard (try? d.write(to: file)) != nil else { return DAVResponse(500) }
+        if let why = Worktree.fetch(top: top, bundle: file, branch: branch) { note("worktree: " + why); return DAVResponse(500) }
+        note("the agent's work is on branch \(branch) (git log \(branch); merge it when you are ready)")
+        return DAVResponse(200)
+    }
 
     /// Pred agentom: manifest k routerju, nato datoteke, ki jih potrebuje.
     private func push(_ k: String) -> Bool {
@@ -320,7 +367,7 @@ func shareCommand(_ a: [String]) -> Never {
     for x in a.dropFirst() {
         if x.hasPrefix("--work=") { work = String(x.dropFirst(7)) } else if x == "--ro" { ro = true } else { rest.append(x) }
     }
-    if let work, !SharedFolders.modes.contains(work) { fail("unknown --work=\(work) (use direct, sync or native)") }
+    if let work, !SharedFolders.modes.contains(work) { fail("unknown --work=\(work) (use direct, sync, native, worktree or auto)") }
     if work == "native", ro { fail("--work=native cannot be read-only (the agent works in the router's own folder)") }
     let dir = URL(fileURLWithPath: rest.first ?? FileManager.default.currentDirectoryPath).standardizedFileURL.path
     guard SharedFolders.validPath(dir) else { fail("folder names with tabs or line breaks cannot be shared") }
@@ -369,7 +416,7 @@ args.removeAll { $0 == "--minigw-ro" }
 var workFlag = ProcessInfo.processInfo.environment["MINIGW_WORK"].flatMap { $0.isEmpty ? nil : $0 }
 for a in args where a.hasPrefix("--minigw-work=") { workFlag = String(a.dropFirst("--minigw-work=".count)) }
 args.removeAll { $0.hasPrefix("--minigw-work=") }
-if let w = workFlag, !SharedFolders.modes.contains(w) { fail("unknown --minigw-work=\(w) (use direct, sync or native)") }
+if let w = workFlag, !SharedFolders.modes.contains(w) { fail("unknown --minigw-work=\(w) (use direct, sync, native, worktree or auto)") }
 
 switch args.first {
 case "share":
@@ -447,6 +494,8 @@ case "--minigw-help", "-h", "--help", "-v", "--version":
         minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)
         minigw --minigw-work=sync [claude args]    agents work in a synced copy on the router (or MINIGW_WORK=sync)
         minigw --minigw-work=native [claude args]  folder is the router's SMB share: agents work in it there (or MINIGW_WORK=native)
+        minigw --minigw-work=worktree [claude args]  git repository: agents work in a clone on the router, results come back as branches minigw/…
+        minigw --minigw-work=auto [claude args]    router share → native, git repository → worktree, otherwise sync (--minigw-ro → direct)
         minigw run [--] <command> [args …]          run a build in this folder on the router (SMB share, allowed in its Settings)
         minigw [claude options …]                    run Claude Code through the router
         """)
@@ -516,15 +565,22 @@ guard proxy != nil || (wantShare && !sid.isEmpty) else {
     fail("cannot run claude: \(String(cString: strerror(errno))) (is Claude Code installed and in PATH?)", code: 127)
 }
 
-var share = ShareClient(c, session: sid, root: URL(fileURLWithPath: cwd), readOnly: readOnly, sync: work == "sync", native: work == "native")
 if !wantShare && remoteRouter && shareEnv != "0" {
     err.write(Data("minigw: \(cwd) is not shared with the router, so agent models (Codex, Claude CLI, Grok) cannot see it; to share it run: minigw share add\n".utf8))
 }
-var registered = wantShare && !sid.isEmpty && share.register()
-if wantShare, !sid.isEmpty, !registered, share.native {  // native ni mogoč → kot direct
-    err.write(Data("minigw: native mode not available: \(share.refusal); sharing over the network instead\n".utf8))
-    share = ShareClient(c, session: sid, root: URL(fileURLWithPath: cwd), readOnly: readOnly, sync: false)
-    registered = share.register()
+// Načini po vrsti (auto: native → worktree → sync); naslednji, če router prejšnjega ne sprejme.
+let top = ["auto", "worktree"].contains(work) ? Worktree.toplevel(cwd) : nil
+let smb = work == "auto" && Native.detect(cwd: cwd, override: ProcessInfo.processInfo.environment["MINIGW_NATIVE_MOUNT"]) != nil
+var share = ShareClient(c, session: sid, root: URL(fileURLWithPath: cwd), readOnly: readOnly, kind: "direct")
+var registered = false
+if wantShare, !sid.isEmpty {
+    let tries = SharedFolders.candidates(work: work, readOnly: readOnly, smb: smb, git: top != nil)
+    if work == "worktree", top == nil { err.write(Data("minigw: \(cwd) is not in a git repository; worktree mode is not possible\n".utf8)) }
+    for (i, w) in tries.enumerated() {
+        share = ShareClient(c, session: sid, root: URL(fileURLWithPath: cwd), readOnly: readOnly, kind: w, top: top)
+        if share.register() { registered = true; break }
+        if i + 1 < tries.count { err.write(Data("minigw: \(w) mode not available: \(share.refusal); trying \(tries[i + 1])\n".utf8)) }
+    }
 }
 if !wantShare || sid.isEmpty {
     // le šifrirani proxy
@@ -532,6 +588,8 @@ if !wantShare || sid.isEmpty {
     share.start()
     if share.native {
         err.write(Data("minigw: \(cwd) is a folder of \(routerHost) (SMB): agent models work in it there directly (native)\n".utf8))
+    } else if share.worktree {
+        err.write(Data("minigw: agent models work in a clone of this git repository on \(routerHost); their work comes back as branches minigw/… (worktree)\n".utf8))
     } else {
         err.write(Data("minigw: \(share.sync ? "syncing" : "sharing") \(cwd) \(readOnly ? "read-only" : "read-write") with \(routerHost) for agent models (--minigw-ro = read-only, MINIGW_SHARE=0 = off)\n".utf8))
     }

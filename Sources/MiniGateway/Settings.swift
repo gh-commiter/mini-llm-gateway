@@ -267,6 +267,15 @@ struct SettingsView: View {
             }
             ScratchSection(draft: $draft)
             Section {
+                Toggle("Network for builds", isOn: $draft.worktreeNetwork)
+                Toggle("Network for Codex builds", isOn: $draft.worktreeCodexNetwork)
+                    .help(String(localized: "Codex can read all files of this Mac's user, so network for its builds is off by default."))
+            } header: {
+                Text("Worktree mode")
+            } footer: {
+                Text("Agents in worktree mode (minigw --minigw-work=worktree) work in a git clone on this Mac: Claude CLI with Bash in Claude Code's sandbox, Codex in its own sandbox (Grok is not supported yet). They write only to the clone, their own Maven repository and temporary folders. These switches let their builds download (Maven, SwiftPM); Codex can read all your files, so its network is off by default.").font(.caption).foregroundStyle(.secondary)
+            }
+            Section {
                 TextField("Allowed commands", text: $draft.runCommands)
                 ForEach($draft.devices) { $d in
                     Toggle(isOn: $d.run) { Text(verbatim: d.name) }

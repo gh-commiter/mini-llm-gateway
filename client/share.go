@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -32,9 +33,11 @@ type shareClient struct {
 	c        connection
 	session  string
 	root     string
-	readOnly bool // pisanje zavrne minigw sam (router mapo priklopi tudi rdonly)
-	sync     bool // --minigw-work=sync: router dobi kopijo namesto priklopa (sync.go)
-	native   bool // --minigw-work=native: router dela v svoji mapi (native.go); posla routerja ni
+	readOnly bool   // pisanje zavrne minigw sam (router mapo priklopi tudi rdonly)
+	sync     bool   // --minigw-work=sync: router dobi kopijo namesto priklopa (sync.go)
+	native   bool   // --minigw-work=native: router dela v svoji mapi (native.go); posla routerja ni
+	worktree bool   // --minigw-work=worktree: posnetek kot bundle, veja agenta nazaj kot ref (worktree.go)
+	top      string // worktree: koren repozitorija git
 	mu       sync.Mutex
 	key      string
 	syncMu   sync.Mutex
@@ -63,6 +66,9 @@ func (s *shareClient) register() bool {
 	h := map[string]string{
 		"x-claude-mini-session": s.session, "x-claude-mini-cwd": s.root, "x-share-key": s.currentKey(), "x-share-mode": s.mode(),
 		"x-claude-mini-work": work}
+	if s.worktree {
+		h["x-claude-mini-work"], h["x-worktree-top"] = "worktree", filepath.ToSlash(s.top)
+	}
 	if s.native { // vsaka registracija (tudi po ponovnem zagonu routerja) z novim dokazom
 		proof, why := nativeProof(s.c, s.root)
 		if proof == nil {
@@ -138,7 +144,15 @@ func (s *shareClient) work() {
 // --minigw-ro, WebDAV le v načinu direct (pisanje ne pri --minigw-ro).
 func (s *shareClient) handle(job davJob, k string) davResponse {
 	switch {
-	case s.native:
+	case s.worktree && job.Method == "WORKTREE-PUSH":
+		s.syncMu.Lock()
+		defer s.syncMu.Unlock()
+		return s.wtPush(k, job)
+	case s.worktree && job.Method == "WORKTREE-PULL":
+		s.syncMu.Lock()
+		defer s.syncMu.Unlock()
+		return s.wtPull(k, job)
+	case s.native, s.worktree, strings.HasPrefix(job.Method, "WORKTREE-"):
 		return dav(403, nil, nil)
 	case strings.HasPrefix(job.Method, "SYNC-"):
 		if !s.sync || (job.Method == "SYNC-PULL" && s.readOnly) || (job.Method != "SYNC-PUSH" && job.Method != "SYNC-PULL") {

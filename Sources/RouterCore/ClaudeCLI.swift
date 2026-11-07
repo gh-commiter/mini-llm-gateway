@@ -42,6 +42,37 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
             + (disabledTools.isEmpty ? [] : ["--disallowedTools", disabledTools.joined(separator: ",")])
     }
 
+    /// --minigw-work=worktree: vsa orodja (tudi Bash) vedno v peskovniku Claude Code (brez stikala za izklop):
+    /// pisanje le v klon in predpomnilnike gradnje (Worktree.writable), branje domače mape le tam, omrežje po nastavitvi.
+    /// denyWrite: .git klona (config, hooks, info, commondir) in nastavitve gradnje lastnika (Native.buildCacheDenies).
+    /// Iz ~/.m2 le branje settings.xml in toolchains.xml (Maven); pisanje le v svoj lokalni repozitorij (MAVEN_OPTS).
+    func worktreeArgs(root: URL, maven: URL, cwd: URL, allTools: [String], network: Bool) -> [String] {
+        let dirs = Worktree.writable(root: root, maven: maven)
+        let sandbox: [String: Any] = ["sandbox": [
+            "enabled": true, "failIfUnavailable": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
+            "network": ["allowedDomains": network ? ["*"] : []],
+            "filesystem": ["denyRead": ["~"], "allowRead": dirs + Self.mavenConfig(), "allowWrite": dirs,
+                           "denyWrite": ["config", "hooks", "info", "commondir"].map { root.path + "/.git/" + $0 }
+                               + Native.buildCacheDenies().paths],
+        ]]
+        let settings = String(decoding: try! JSONSerialization.data(withJSONObject: sandbox, options: [.sortedKeys]), as: UTF8.self)
+        let others = allTools.filter { !Self.pathTools.contains($0) && !disabledTools.contains($0) }
+        // Urejanje .git (tudi ugnezdenega) z orodji Edit/Write ne: nastavitve in hooke bere git, ki ga poganja sam claude.
+        let gitEdits = ["/.git", "/.git/**", "/**/.git", "/**/.git/**"].map { "Edit(/" + root.path + $0 + ")" }
+        return ["--tools", "default", "--permission-mode", "acceptEdits", "--settings", settings]
+            + (cwd.path == root.path ? [] : ["--add-dir", root.path])
+            + (others.isEmpty ? [] : ["--allowedTools", others.joined(separator: ",")])
+            + ["--disallowedTools", (disabledTools + gitEdits).joined(separator: ",")]
+    }
+
+    /// ~/.m2/settings.xml in toolchains.xml (dobesedno in kanonično, če sta povezavi).
+    static func mavenConfig(home: String = NSHomeDirectory()) -> [String] {
+        ["settings.xml", "toolchains.xml"].flatMap { f -> [String] in
+            let p = home + "/.m2/" + f
+            return Sync.real(URL(fileURLWithPath: p)).map { $0.path == p ? [p] : [p, $0.path] } ?? [p]
+        }
+    }
+
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = ClaudeCLIConfig()
@@ -320,8 +351,14 @@ extension Router {
     static let codexSessions = SessionRegistry()
 
     /// Navodilo agentu za priklopljeno mapo odjemalca (macOS, Windows ali Linux).
-    static func mountNote(_ clientCwd: String, _ shared: URL, readOnly: Bool, synced: Bool = false) -> String {
-        (synced ? "The user's folder \(clientCwd) (on their computer) is synced here as \(shared.path), your working directory: a local copy"
+    static func mountNote(_ clientCwd: String, _ shared: URL, readOnly: Bool, synced: Bool = false, branch: String? = nil) -> String {
+        if let branch {
+            return "The user's folder \(clientCwd) (on their computer, a git repository) is a clone here at \(shared.path), your working"
+                + " directory, on branch \(branch). Map paths under \(clientCwd) to it. Commit your work on this branch; changes you leave"
+                + " uncommitted are committed for you at the end. The branch goes back to the user's repository; their files are not changed."
+                + " Build output (.build, target, DerivedData) is never committed; build Xcode projects with -derivedDataPath .build/DerivedData."
+        }
+        return (synced ? "The user's folder \(clientCwd) (on their computer) is synced here as \(shared.path), your working directory: a local copy"
             + (readOnly ? "" : " whose changed source files are copied back to the user when you finish") + ". Map paths under \(clientCwd) to it."
             : "The user's folder \(clientCwd) (on their computer) is mounted here as \(shared.path), your working directory. Map paths under \(clientCwd) to it.")
             + (readOnly ? " The folder is shared read-only: do not try to create, change or delete files in it."
@@ -362,9 +399,10 @@ extension Router {
                                                  wait: req.header("x-claude-mini-share") == "1", device: req.device?.id,
                                                  roots: config.claudeCLI.allowedRoots)
             let synced = await Self.shares.isSync(session: req.header("x-claude-mini-session") ?? "")
+            let tree = await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "")
             if let shared, let clientCwd {
                 let readOnly = await Self.shares.isReadOnly(session: req.header("x-claude-mini-session") ?? "")
-                args += ["--append-system-prompt", Self.mountNote(clientCwd, shared, readOnly: readOnly, synced: synced)]
+                args += ["--append-system-prompt", Self.mountNote(clientCwd, shared, readOnly: readOnly, synced: synced, branch: tree?.branch)]
             }
             guard let dir = shared ?? (synced ? nil : ClaudeCLI.resolveCwd(clientCwd, roots: cfg.allowedRoots)) else {
                 if synced, Task.isCancelled { return 499 }  // Claude Code je prekinil med čakanjem na prenos
@@ -385,8 +423,10 @@ extension Router {
                 sessionID = id
                 prompt = ClaudeCLI.prompt(history: history, last: last)
             }
-            let allTools = cfg.allowLocalTools ? await Self.toolList.get(cfg.executable) : []
-            args += cfg.agentArgs(cwd: dir, allTools: allTools) + ["--setting-sources", shared == nil ? cfg.settingSources : ""]  // hooki iz mape odjemalca ne tečejo tukaj
+            let allTools = cfg.allowLocalTools || tree != nil ? await Self.toolList.get(cfg.executable) : []
+            args += (tree.map { cfg.worktreeArgs(root: $0.root, maven: $0.maven, cwd: dir, allTools: allTools, network: config.worktreeNetwork) }
+                     ?? cfg.agentArgs(cwd: dir, allTools: allTools))
+                + ["--setting-sources", shared == nil ? cfg.settingSources : ""]  // hooki iz mape odjemalca ne tečejo tukaj
         } else {
             cwd = config.scratch("chat")
             try? FileManager.default.createDirectory(at: cwd, withIntermediateDirectories: true)
@@ -416,6 +456,9 @@ extension Router {
             env[k] = nil  // sicer bi notranji claude klical nazaj ta router
         }
         env["PATH"] = (env["PATH"].map { $0 + ":" } ?? "") + "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        if agent, let t = await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "") {
+            env.merge(Worktree.harnessEnv(root: t.root, maven: t.maven)) { $1 }
+        }
         p.environment = env
         let stdin = Pipe(), stdout = Pipe(), stderr = Pipe()
         p.standardInput = stdin

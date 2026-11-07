@@ -167,13 +167,13 @@ public final class Router: Sendable {
                     if req.path.hasSuffix("/count_tokens") {
                         return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "grok")
                     }
-                    return (await syncRun { await runGrok(req, body: body, model: grokModel, rid: rid, writer: writer) }, model, "grok")
+                    return (await syncRun(agent: "grok") { await runGrok(req, body: body, model: grokModel, rid: rid, writer: writer) }, model, "grok")
                 }
                 if config.codex.enabled, let codexModel = Codex.match(model), codexModel.map(config.codex.isModelEnabled) ?? true {
                     if req.path.hasSuffix("/count_tokens") {
                         return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "codex")
                     }
-                    return (await syncRun { await runCodex(req, body: body, model: codexModel, rid: rid, writer: writer) }, model, "codex")
+                    return (await syncRun(agent: "codex") { await runCodex(req, body: body, model: codexModel, rid: rid, writer: writer) }, model, "codex")
                 }
                 if config.appleFM.enabled, AppleFM.ids.contains(model) {
                     if req.path.hasSuffix("/count_tokens") {
@@ -185,7 +185,7 @@ public final class Router: Sendable {
                     if req.path.hasSuffix("/count_tokens") {
                         return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "claude-cli")
                     }
-                    return (await syncRun { await runCLI(req, body: body, cliModel: m.cliModel, chatOnly: m.chatOnly, rid: rid, writer: writer) },
+                    return (await syncRun(agent: "claude") { await runCLI(req, body: body, cliModel: m.cliModel, chatOnly: m.chatOnly, rid: rid, writer: writer) },
                             model, "claude-cli")
                 }
                 return (await error(404, "not_found_error", "Unknown model: \(model)", rid: rid, writer: writer), model, nil)
@@ -224,15 +224,37 @@ public final class Router: Sendable {
                 }
                 native = dir
             }
-            if sync, owner == nil {
+            // --minigw-work=worktree: golo zrcalo v scratch/repos/<naprava>/<repozitorij>.git, kloni v scratch/worktrees (Worktree).
+            let worktree = req.header("x-claude-mini-work") == "worktree"
+            if sync || worktree, owner == nil {
                 return (await error(400, "invalid_request_error", "Sync needs an encrypted connection with a device key (run minigw connect again)",
                                     rid: rid, writer: writer), nil, "share")
             }
             let readOnly = req.header("x-share-mode") == "ro"
+            var tree: ShareHub.Tree?
+            if worktree {
+                let top = req.header("x-worktree-top") ?? ""
+                guard Worktree.scratchIsSafe(config.scratchURL) else {
+                    return (await error(400, "invalid_request_error", "Worktree mode: the Scratch folder must not be in a temporary or build cache folder",
+                                        rid: rid, writer: writer), nil, "share")
+                }
+                guard !readOnly, !top.isEmpty, cwd == top || cwd.hasPrefix(top.hasSuffix("/") ? top : top + "/") else {
+                    return (await error(400, "invalid_request_error", "Worktree mode needs a writable git repository that contains the folder",
+                                        rid: rid, writer: writer), nil, "share")
+                }
+                let sub = String(cwd.dropFirst(top.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                guard sub.isEmpty || !sub.split(separator: "/", omittingEmptySubsequences: false)
+                    .contains(where: { $0.isEmpty || $0 == "." || $0 == ".." || $0.contains("\0") || Sync.isGitPath(String($0)) }) else {
+                    return (await error(400, "invalid_request_error", "Bad folder path", rid: rid, writer: writer), nil, "share")
+                }
+                let id = Sync.folderID(top)
+                tree = ShareHub.Tree(repo: config.scratch("repos").appendingPathComponent(owner!).appendingPathComponent(id + ".git"),
+                                     worktrees: config.scratch("worktrees").appendingPathComponent(owner!).appendingPathComponent(id), sub: sub)
+            }
             let copy = sync ? config.scratch("sync").appendingPathComponent(owner!)  // samo za branje: ločena kopija
                 .appendingPathComponent(Sync.folderID(cwd) + (readOnly ? "-ro" : "")) : nil
             guard let key = await Self.shares.register(session: session, cwd: cwd, key: req.header("x-share-key"),
-                                                       readOnly: readOnly, copy: copy, device: req.device?.id, native: native) else {
+                                                       readOnly: readOnly, copy: copy, device: req.device?.id, native: native, tree: tree) else {
                 return (await error(409, "invalid_request_error", "Session already has a folder", rid: rid, writer: writer), nil, "share")
             }
             return (await json(200, ["key": key], rid: rid, writer: writer), nil, "share")
@@ -290,6 +312,18 @@ public final class Router: Sendable {
             }
             try? await writer.write(HTTPResponse.head(status: 200, headers: [("Content-Type", "application/octet-stream")], contentLength: body.count) + body)
             return (200, nil, "share")
+        // minigw --minigw-work=worktree: bundle stanja k routerju (po delih), bundle veje agenta nazaj.
+        case ("PUT", "/minigw/worktree/bundle"):
+            let st = await Self.shares.worktreePut(key: req.header("x-share-key") ?? "", part: Int(req.header("x-part") ?? "") ?? -1,
+                                                   data: req.body, device: req.device?.id)
+            try? await writer.write(HTTPResponse.head(status: st, headers: [], contentLength: 0))
+            return (st, nil, "share")
+        case ("GET", "/minigw/worktree/result"):
+            guard let body = await Self.shares.worktreeResult(key: req.header("x-share-key") ?? "", device: req.device?.id) else {
+                return (await error(404, "not_found_error", "No result", rid: rid, writer: writer), nil, "share")
+            }
+            try? await writer.write(HTTPResponse.head(status: 200, headers: [("Content-Type", "application/octet-stream")], contentLength: body.count) + body)
+            return (200, nil, "share")
         case ("POST", "/minigw/native"):
             return (await nativeChallenge(req, rid: rid, writer: writer), nil, "share")
         case ("POST", "/minigw/run"):
@@ -306,9 +340,9 @@ public final class Router: Sendable {
 
     /// sync: izvajanje agenta v svojem klonu kopije (ShareHub.run); zaklep kopije velja le za prenos, prevzem in združitev,
     /// zato agenti v isti mapi delajo vzporedno. Klon se odstrani tudi ob napaki ali prekinitvi.
-    func syncRun(_ run: () async -> Int) async -> Int {
+    func syncRun(agent: String, _ run: () async -> Int) async -> Int {
         let id = UUID().uuidString
-        let status = await ShareHub.$run.withValue(id) { await run() }
+        let status = await ShareHub.$run.withValue(id) { await ShareHub.$agent.withValue(agent) { await run() } }
         await Self.shares.finish(run: id)
         return status
     }

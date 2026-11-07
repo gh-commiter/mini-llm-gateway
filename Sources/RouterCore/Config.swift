@@ -87,6 +87,10 @@ public struct RouterConfig: Codable, Sendable, Equatable {
     public var scratchFolder = ""  // prazno = defaultScratch (Caches); npr. hiter zunanji SSD
     /// minigw run: dovoljeni ukazi (prvi argument, ločeno z vejico). Ni peskovnik: gradnja izvaja kodo projekta.
     public var runCommands = "mvn, swift, xcodebuild"
+    /// --minigw-work=worktree: ukazi agentov (Bash, Codex, Grok) smejo v omrežje (Maven, SwiftPM prenašajo odvisnosti).
+    public var worktreeNetwork = true
+    /// Codex v načinu worktree bere vse datoteke: omrežje privzeto izklopljeno (in le, če ga Codex sicer sme).
+    public var worktreeCodexNetwork = false
 
     public init() {}
 
@@ -105,7 +109,7 @@ public struct RouterConfig: Codable, Sendable, Equatable {
     }
     public static let dedicatedName = "Mini Gateway Scratch"
     /// Podmape, ki jih uporablja scratch(_:); premik prenese le te.
-    public static let scratchSubfolders = ["chat", "sync", "tmp", "attachments"]
+    public static let scratchSubfolders = ["chat", "sync", "tmp", "attachments", "repos", "worktrees"]
 
     /// Podmapa scratch mape (ustvari jo); če izbrani disk ni dosegljiv (izklopljen SSD), privzeta mapa.
     public func scratch(_ sub: String) -> URL {
@@ -153,6 +157,8 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         grok = try c.decodeIfPresent(GrokConfig.self, forKey: .grok) ?? d.grok
         scratchFolder = try c.decodeIfPresent(String.self, forKey: .scratchFolder) ?? d.scratchFolder
         runCommands = try c.decodeIfPresent(String.self, forKey: .runCommands) ?? d.runCommands
+        worktreeNetwork = try c.decodeIfPresent(Bool.self, forKey: .worktreeNetwork) ?? d.worktreeNetwork
+        worktreeCodexNetwork = try c.decodeIfPresent(Bool.self, forKey: .worktreeCodexNetwork) ?? d.worktreeCodexNetwork
     }
 
     /// Siri ima osebni kontekst tega Maca: lokalno vedno, z drugih Macov le odobrene naprave.
@@ -169,7 +175,7 @@ public struct RouterConfig: Codable, Sendable, Equatable {
             if draft[keyPath: kp] == old[keyPath: kp] { d[keyPath: kp] = new[keyPath: kp] }
         }
         take(\.host); take(\.port); take(\.allowedClients); take(\.allowPlainRemote); take(\.claudeCLI); take(\.appleFM)
-        take(\.siri); take(\.codex); take(\.grok); take(\.scratchFolder); take(\.runCommands)
+        take(\.siri); take(\.codex); take(\.grok); take(\.scratchFolder); take(\.runCommands); take(\.worktreeNetwork); take(\.worktreeCodexNetwork)
         d.devices = mergeList(draft.devices, old.devices, new.devices)
         d.providers = mergeList(draft.providers, old.providers, new.providers)
         return d

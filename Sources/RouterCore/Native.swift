@@ -153,19 +153,34 @@ public enum Native {
     /// branje povsod razen skrivnosti uporabnika, omrežje po izbiri naprave. Poti so dobesedne: če katera obstaja in
     /// njena kanonična pot ni ista (povezava), vrne nil (zamenjava mape s povezavo ne razširi pisanja).
     /// Preizkušeno z mvn package, swift build --disable-sandbox in xcodebuild build: nobena prepoved ni bila odveč.
+    /// Nastavitve gradnje, ki jih izvede naslednja gradnja lastnika (zunaj peskovnika): nikoli pisanje iz peskovnika.
+    /// `paths` dobesedno in kanonično (peskovnik primerja razrešene poti; ~/.swiftpm/configuration je povezava),
+    /// `regexes` za vzorce (nastavitve Maven, config in hooks repozitorijev SwiftPM).
+    public static func buildCacheDenies(home: String = NSHomeDirectory()) -> (paths: [String], regexes: [String]) {
+        let literal = ["\(home)/.swiftpm/configuration", "\(home)/.swiftpm/security",
+                       "\(home)/Library/org.swift.swiftpm/configuration", "\(home)/Library/org.swift.swiftpm/security",
+                       "\(home)/.m2/extensions.xml", "\(home)/.m2/settings.xml", "\(home)/.m2/settings-security.xml",
+                       "\(home)/.m2/toolchains.xml"]
+        var seen = Set<String>()
+        let paths = literal.flatMap { p in Sync.real(URL(fileURLWithPath: p)).map { $0.path == p ? [p] : [p, $0.path] } ?? [p] }
+            .filter { seen.insert($0).inserted }
+        let e = { (p: String) in "^" + NSRegularExpression.escapedPattern(for: p) }
+        return (paths, [e(home + "/.m2/settings") + "[^/]*\\.xml$",
+                        e(home + "/Library/Caches/org.swift.swiftpm/repositories/") + "[^/]+/(config|hooks)(/|$)",
+                        e(home + "/Library/org.swift.swiftpm/repositories/") + "[^/]+/(config|hooks)(/|$)"])
+    }
+
     static func sandboxProfile(dir: String, home: String = NSHomeDirectory(), network: Bool, hidden: [String] = [], routerPort: Int? = nil) -> String? {
         let writable = [dir] + buildCaches(home: home)
         for p in writable where FileManager.default.fileExists(atPath: p) && Sync.real(URL(fileURLWithPath: p))?.path != p { return nil }
         let q = { (p: String) in "\"" + p.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\"" }
-        let rx = { (p: String) in "#\"^" + NSRegularExpression.escapedPattern(for: p).replacingOccurrences(of: "\"", with: "\\\"") }  // brez podvajanja \\
         // Peskovnik primerja razrešene poti: vsako pravilo za dobesedno in (če obstaja) kanonično pot (~/.swiftpm/configuration → …).
         func both(_ p: String) -> [String] { Sync.real(URL(fileURLWithPath: p)).map { $0.path == p ? [p] : [p, $0.path] } ?? [p] }
         func rules(_ kind: String, _ paths: [String]) -> String {
             var seen = Set<String>()
             return paths.flatMap(both).filter { seen.insert($0).inserted }.map { " (\(kind) \(q($0)))" }.joined()
         }
-        let swiftpm = ["\(home)/.swiftpm/configuration", "\(home)/.swiftpm/security",
-                       "\(home)/Library/org.swift.swiftpm/configuration", "\(home)/Library/org.swift.swiftpm/security"]
+        let denies = buildCacheDenies(home: home)
         let secretDirs = [".ssh", ".aws", ".gnupg", ".config", ".docker", ".kube", "Library/Keychains", "Library/Cookies",
                           "Library/Application Support", "Library/Containers", "Library/Group Containers", "Library/Mail",
                           "Library/Messages"].map { home + "/" + $0 }
@@ -173,10 +188,8 @@ public enum Native {
                            ".bash_history"].map { home + "/" + $0 }
         return "(version 1)\n(allow default)\n(deny file-write*)\n"
             + "(allow file-write* (regex #\"^/dev/\")" + writable.map { " (subpath \(q($0)))" }.joined() + ")\n"
-            + "(deny file-write*" + rules("subpath", [dir + "/.git"] + swiftpm) + rules("literal", [home + "/.m2/extensions.xml"])
-            + " (regex \(rx(home + "/.m2/settings"))[^/]*\\.xml$\")"
-            + " (regex \(rx(home + "/Library/Caches/org.swift.swiftpm/repositories/"))[^/]+/(config|hooks)(/|$)\")"
-            + " (regex \(rx(home + "/Library/org.swift.swiftpm/repositories/"))[^/]+/(config|hooks)(/|$)\"))\n"
+            + "(deny file-write*" + rules("subpath", [dir + "/.git"] + denies.paths)
+            + denies.regexes.map { " (regex #\"" + $0.replacingOccurrences(of: "\"", with: "\\\"") + "\")" }.joined() + ")\n"
             + "(deny file-read*" + rules("subpath", secretDirs) + rules("literal", secretFiles) + ")\n"
             // Nastavitve aplikacije: datoteka in domena cfprefsd skupaj (le ena od obeh branja ne prepreči).
             + "(deny file-read* file-write*" + rules("subpath", hidden + [home + "/Library/Preferences/dev.trojar.minigateway.plist"]) + ")\n"

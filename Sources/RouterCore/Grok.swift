@@ -156,6 +156,11 @@ extension Router {
     }
 
     func runGrok(_ req: HTTPRequest, body: [String: Any], model: String?, rid: String, writer: ResponseWriter) async -> Int {
+        // Grok nima zaščite .git v peskovniku, njegov program pa poganja git zunaj njega (in ~/.grok je pisljiv).
+        if (body["tools"] as? [Any])?.isEmpty == false, await Self.shares.isWorktree(session: req.header("x-claude-mini-session") ?? "") {
+            return await error(400, "invalid_request_error", "Grok is not supported in worktree mode yet; use sync (MINIGW_WORK=sync)",
+                               rid: rid, writer: writer)
+        }
         if let model, !Self.validModel(model) {
             return await error(400, "invalid_request_error", "Invalid model name", rid: rid, writer: writer)
         }

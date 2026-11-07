@@ -115,7 +115,7 @@ public enum Codex {
         return o["thread_id"] as? String
     }
 
-    static func run(_ exe: String, args: [String], cwd: URL, prompt: String, output: URL,
+    static func run(_ exe: String, args: [String], cwd: URL, prompt: String, output: URL, env extra: [String: String] = [:],
                     onStep: @escaping @Sendable (String) -> Void = { _ in }) async throws -> (String, String?) {
         let h = Handle()
         return try await withTaskCancellationHandler {
@@ -125,6 +125,7 @@ public enum Codex {
                 p.arguments = args
                 p.currentDirectoryURL = cwd
                 p.environment = ProcessInfo.processInfo.environment.filter { $0.key != "SSH_AUTH_SOCK" }  // brez agenta ključev SSH
+                    .merging(extra) { $1 }
                 let input = Pipe(), errors = Pipe()
                 let events = Pipe()
                 p.standardInput = input
@@ -163,6 +164,13 @@ public enum Codex {
 
 extension Router {
     func runCodex(_ req: HTTPRequest, body: [String: Any], model: String?, rid: String, writer: ResponseWriter) async -> Int {
+        // worktree: agent mora pisati (klon); lastnikova nastavitev »brez pisanja« velja, zato zavrni.
+        if !config.codex.write, (body["tools"] as? [Any])?.isEmpty == false,
+           await Self.shares.isWorktree(session: req.header("x-claude-mini-session") ?? "") {
+            return await error(400, "invalid_request_error",
+                               "Codex may not write (Mini Gateway → Settings → Codex), so worktree mode is not possible; use sync",
+                               rid: rid, writer: writer)
+        }
         if let model, !Self.validModel(model) {
             return await error(400, "invalid_request_error", "Invalid model name", rid: rid, writer: writer)
         }
@@ -177,6 +185,7 @@ extension Router {
         var cwd = config.scratch("chat")
         var extra: [String] = []
         var readOnly = false
+        var tree: (root: URL, branch: String, maven: URL)?
         var prompt = ClaudeCLI.prompt(history: all.dropLast(), last: last)
         if agent {
             let clientCwd = req.header("x-claude-mini-cwd")
@@ -194,9 +203,15 @@ extension Router {
             cwd = dir
             extra = config.claudeCLI.allowedRoots.split(separator: ",").map { ClaudeCLI.expand($0.trimmingCharacters(in: .whitespaces)) }
                 .filter { $0 != "/" && !$0.isEmpty && $0 != dir.path && FileManager.default.fileExists(atPath: $0) }
+            // worktree: pisljiv le klon (koren, ne dovoljene mape)
+            tree = await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "")
+            if let tree {
+                try? FileManager.default.createDirectory(at: tree.maven, withIntermediateDirectories: true)
+                extra = (tree.root.path == dir.path ? [] : [tree.root.path]) + [tree.maven.path]
+            }
             if let shared, let clientCwd {
                 readOnly = await Self.shares.isReadOnly(session: req.header("x-claude-mini-session") ?? "")
-                prompt = Self.mountNote(clientCwd, shared, readOnly: readOnly, synced: synced) + "\n\n" + prompt
+                prompt = Self.mountNote(clientCwd, shared, readOnly: readOnly, synced: synced, branch: tree?.branch) + "\n\n" + prompt
             }
         } else {
             try? FileManager.default.createDirectory(at: cwd, withIntermediateDirectories: true)
@@ -208,10 +223,12 @@ extension Router {
         let existing = agent ? await Self.codexSessions.get(ClaudeCLI.key(all.dropLast(), scope: scope)) : nil
         if existing != nil { prompt = last.text }
         let args = Codex.args(cwd: cwd, extraDirs: extra, agent: agent, output: output, model: model,
-                              write: config.codex.write && !readOnly, network: config.codex.network, resume: existing)
+                              write: config.codex.write && !readOnly, network: config.codex.network && (tree == nil || config.worktreeCodexNetwork),
+                              resume: existing)
         let sessions = Self.codexSessions, session = req.header("x-claude-mini-session") ?? ""
         return await replyWhenDone(body: body, model: "claude-codex", rid: rid, writer: writer) {
-            let (text, thread) = try await Codex.run(exe, args: args, cwd: cwd, prompt: prompt, output: output) { [onActivity] s in
+            let (text, thread) = try await Codex.run(exe, args: args, cwd: cwd, prompt: prompt, output: output,
+                                                         env: tree.map { Worktree.harnessEnv(root: $0.root, maven: $0.maven) } ?? [:]) { [onActivity] s in
                 onActivity(.step(id: rid, text: s))
             }
             if agent { await Self.shares.syncBack(session: session) }  // sync: spremembe agenta k odjemalcu pred odgovorom
