@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- GitHub Copilot CLI as an agent model, compatible with the Claude Code CLI: `claude-copilot` and `claude-copilot-<model>`
+  (Mac app and `minigw serve`; off by default). Read-only by default; writing, web access and commands are separate
+  switches. Copilot always runs in a sandbox (Mac `sandbox-exec`, Linux bwrap) with a fresh Copilot home per request.
+  It signs in with its own fine-grained GitHub token with only the Copilot Requests permission
+  (`minigw gw copilot token` or Settings; required on the Mac and for commands, which also need a confirmation). Plugin 0.5.5: `/minigw:copilot`.
 - `minigw run` can no longer write `~/Library/Caches`, where apps keep code they load unchecked at start (for example the
   Copilot CLI's package). `mvn`, `swift build` and `xcodebuild` builds work without it.
 - If you used Codex with writing or `minigw run` in 0.5.15, run `xcrun -k` once to clear the xcrun cache.

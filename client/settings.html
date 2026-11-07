@@ -159,6 +159,17 @@ const S = {
   allowedFoldersShared: ["Shared with Claude CLI. The agent may also write here (Codex).", "Skupne s Claude CLI. Agent sme pisati tudi sem (Codex)."],
   codexFooter: ["The claude-codex models (one per Codex model of your account) run “codex exec” as an agent in the synced copy of the client's folder. Its sandbox writes only to that folder and the allowed folders. Devices that use Codex can read every file this user can read. Sign in once with “codex login”.",
     "Modeli claude-codex (eden za vsak model Codex tvojega računa) poženejo »codex exec« kot agenta v sinhronizirani kopiji mape odjemalca. Njegov sandbox piše le v to mapo in dovoljene mape. Naprave, ki uporabljajo Codex, lahko berejo vsako datoteko, ki jo lahko bere ta uporabnik. Enkrat se prijavi z »codex login«."],
+  copilotDesc: ["GitHub Copilot CLI as an agent model in the session's folder.", "GitHub Copilot CLI kot model agenta v mapi seje."],
+  copilotNotFound: ["copilot not found: install the Copilot CLI or set the path.", "copilot ni najden: namesti Copilot CLI ali vpiši pot."],
+  copilotModels: ["Models (comma-separated; empty = only the default, “auto”)", "Modeli (ločeni z vejico; prazno = le privzeti, »auto«)"],
+  allowWeb: ["Allow web access (fetch tool)", "Dovoli dostop do spleta (orodje fetch)"],
+  allowCommands: ["Allow commands", "Dovoli ukaze"],
+  copilotCommandsAsk: ["Copilot then runs commands as this user. On Linux with bwrap they run in the sandbox (home folder hidden, writing only to the session's folder and a temporary folder); otherwise they can read and change everything this user can, including gateway settings, and use the network. Commands need the token below (fine-grained, only “Copilot Requests”) and can use it to make Copilot requests on your account. Allow only if you trust the devices that use Copilot.",
+    "Copilot nato izvaja ukaze kot ta uporabnik. Na Linuxu z bwrap tečejo v sandboxu (domača mapa skrita, pisanje le v mapo seje in začasno mapo); sicer lahko berejo in spreminjajo vse, kar ta uporabnik, tudi nastavitve prehoda, in uporabljajo omrežje. Ukazi potrebujejo žeton spodaj (fine-grained, le »Copilot Requests«) in lahko z njim pošiljajo zahteve Copilot na tvoj račun. Dovoli le, če zaupaš napravam, ki uporabljajo Copilot."],
+  copilotToken: ["GitHub token for commands (fine-grained, only “Copilot Requests”)", "Žeton GitHub za ukaze (fine-grained, le »Copilot Requests«)"],
+  copilotTokenSaved: ["Token saved; enter a new one to replace it", "Žeton shranjen; vnesi novega za zamenjavo"],
+  copilotFooter: ["The claude-copilot models run Copilot CLI as an agent in the synced copy of the client's folder, on Linux under bwrap with a fresh Copilot home for each request. By default it may only read that folder; with writing on it may edit files there. Commands only with “Allow commands” and the token above. On Linux it signs in with the GitHub CLI (gh auth login) or that token; on Windows it uses this user's Copilot sign-in (copilot login) and ~/.copilot.",
+    "Modeli claude-copilot poženejo Copilot CLI kot agenta v sinhronizirani kopiji mape odjemalca, na Linuxu pod bwrap s svežo domačo mapo Copilot za vsako zahtevo. Privzeto sme mapo le brati; s pisanjem sme v njej urejati datoteke. Ukazi le z »Dovoli ukaze« in žetonom zgoraj. Na Linuxu se prijavi z GitHub CLI (gh auth login) ali tem žetonom; na Windows uporabi prijavo Copilot tega uporabnika (copilot login) in ~/.copilot."],
   foundryDesc: ["Microsoft Foundry Local: models on this computer, without the cloud.", "Microsoft Foundry Local: modeli na tem računalniku, brez oblaka."],
   foundryMissing: ["Foundry Local is not installed. Windows: winget install Microsoft.FoundryLocal; macOS: brew tap microsoft/foundrylocal && brew install foundrylocal. Then download a model, e.g. foundry model download phi-4-mini.",
     "Foundry Local ni nameščen. Windows: winget install Microsoft.FoundryLocal; macOS: brew tap microsoft/foundrylocal && brew install foundrylocal. Nato prenesi model, npr. foundry model download phi-4-mini."],
@@ -342,11 +353,46 @@ async function agentPane(kind) {
   ];
 }
 
+// copilotPane: kot agentPane, a modeli so našteta imena (Copilot nima seznama modelov), pisanje je privzeto izklopljeno,
+// ukazi le z izrecnim potrdilom.
+async function copilotPane() {
+  const [a, c, st] = await Promise.all([api("GET", "/agents/copilot"), api("GET", "/agents/claude"), api("GET", "/status")]);
+  const n1 = note(), n2 = note(), n3 = note(t("copilotFooter"));
+  const patch = body => api("PATCH", "/agents/copilot", body);
+  const path = el("input", {type: "text", value: a.path, placeholder: a.exe || "copilot"});
+  const status = el("span", {class: "sub"}, el("span", {class: "dot" + (a.found ? " ok" : "")}), a.found ? t("detectedAt", a.exe, "").replace(/ · $/, "") : t("copilotNotFound"));
+  autosave(path, n1, async v => { await patch({path: v}); show("copilot"); });
+  const models = el("input", {type: "text", value: (a.models || []).join(", "), placeholder: "gpt-5.2, claude-sonnet-4.5"});
+  autosave(models, n1, v => patch({models: v.split(",").map(x => x.trim()).filter(Boolean)}));
+  const bare = st.agentsUnsandboxed, locked = bare && !c.allowUnsandboxedBash;
+  const commands = toggle(a.commands, (v, i) => save(n2, async () => {
+    if (v && !confirm(t("copilotCommandsAsk"))) { i.checked = false; return; }
+    await patch({commands: v});
+  }), !a.write || locked);
+  // Žeton le za pisanje (API ga ne vrne); prazno polje ga ne izbriše.
+  const token = el("input", {type: "password", autocomplete: "off", placeholder: a.hasToken ? t("copilotTokenSaved") : "github_pat_…"});
+  autosave(token, n2, v => !v ? Promise.resolve() : patch({token: v}).then(r => { token.value = ""; token.placeholder = t("copilotTokenSaved"); return r; }), () => t("saved"));
+  return [
+    card(...ICON.copilot, "Copilot CLI", t("copilotDesc")),
+    group(row(labelSub(t("enabled"), bare ? t(locked ? "agentLockedWin" : "agentWarnWin") : null),
+        toggle(a.enabled && !locked, v => save(n1, async () => { await patch({enabled: v}); nav(); }), locked)),
+      row(labelSub(t("path")), path), row(labelSub(t("copilotModels")), models)),
+    el("div", {class: "note"}, status), n1,
+    section(t("sandbox")),
+    group(row(t("allowWrite"), toggle(a.write, v => save(n2, async () => { await patch({write: v}); show("copilot"); }), locked)),
+      row(t("allowWeb"), toggle(a.network, v => save(n2, () => patch({network: v})), locked)),
+      row(t("allowCommands"), commands),
+      row(labelSub(t("copilotToken")), token)),
+    n2, n3,
+  ];
+}
+
 // --- panoji ---
 
 const pages = {
   codex: () => agentPane("codex"),
   grok: () => agentPane("grok"),
+  copilot: () => copilotPane(),
   async foundry() {
     const [f, m] = await Promise.all([api("GET", "/foundry"), api("GET", "/foundry/models").catch(e => ({models: [], error: e.message}))]);
     const n1 = note(), n2 = note(t("auto")), n3 = note(t("foundryFooter"));
@@ -610,7 +656,7 @@ const pages = {
 
 let current = "general", currentArg = "", gateways = [];
 // Ikone stranske vrstice (kot na Macu: barvna ploščica z znakom).
-const ICON = {general: ["#8e8e93", "⚙"], devices: ["#007aff", "⌘"], claude: ["#b8743c", ">_"], codex: ["#30b0c7", "</>"], grok: ["#5856d6", "✦"], foundry: ["#0f6cbd", "◈"]};
+const ICON = {general: ["#8e8e93", "⚙"], devices: ["#007aff", "⌘"], claude: ["#b8743c", ">_"], codex: ["#30b0c7", "</>"], grok: ["#5856d6", "✦"], copilot: ["#6e7781", "◎"], foundry: ["#0f6cbd", "◈"]};
 const gwIcon = g => /openrouter\.ai/.test(g.baseURL) ? ["#af52de", "◈"] : ["#007aff", "▤"];
 let search = "";
 const PRESETS = {litellm: ["LiteLLM", "http://localhost:4000", true], openrouter: ["OpenRouter", "https://openrouter.ai/api", false], other: [null, "https://", false]};
@@ -626,6 +672,7 @@ async function nav() {
     ["claude", t("claude"), ICON.claude],
     ...(pages.codex ? [["codex", "Codex CLI", ICON.codex]] : []),
     ...(pages.grok ? [["grok", "Grok CLI", ICON.grok]] : []),
+    ["copilot", "Copilot CLI", ICON.copilot],
     ["foundry", "Foundry Local", ICON.foundry],
     ["devices", t("devices"), ICON.devices],
   ].filter(x => !search || x[1].toLowerCase().includes(search.toLowerCase()));

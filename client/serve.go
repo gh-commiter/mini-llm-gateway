@@ -65,6 +65,7 @@ type serveConfig struct {
 	Codex            agentCLI      `json:"codex"`                    // Codex CLI (serve_agents.go), privzeto izklopljen
 	Grok             agentCLI      `json:"grok"`                     // Grok CLI, privzeto izklopljen
 	Foundry          foundryConfig `json:"foundry"`                  // Foundry Local na napravi (foundry.go), privzeto izklopljen
+	Copilot          agentCLI      `json:"copilot"`                  // GitHub Copilot CLI, privzeto izklopljen (le branje)
 }
 
 const serveHelp = `minigw serve: Mini Gateway, the LLM gateway, on this computer (Windows, Linux) for minigw clients.

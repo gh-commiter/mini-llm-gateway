@@ -359,7 +359,7 @@ func (s *server) loadGateways() {
 // shadowsCLI: model prehoda z imenom claude-cli-… ali claude-chat-… bi zakril ponudnika claude -p.
 func shadowsCLI(upstream string) bool {
 	p := publishedID(upstream)
-	for _, own := range []string{codexKind.prefix, grokKind.prefix} { // L3: tudi imena Codex in Grok
+	for _, own := range []string{codexKind.prefix, grokKind.prefix, copilotKind.prefix} { // L3: tudi imena Codex, Grok, Copilot
 		if p == own || strings.HasPrefix(p, own+"-") {
 			return true
 		}

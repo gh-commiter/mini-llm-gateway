@@ -447,3 +447,47 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     #expect(try connect(["-U", sock], sandboxed: false) == 0)  // kontrola: poslušalca sta tam
     #expect(try connect(["-z", "127.0.0.1", String(port)], sandboxed: false) == 0)
 }
+
+/// Mapa seje v skriti mapi (sinhronizirana kopija, klon v Scratch): le ta je vidna; mapa, ki skrito vsebuje, je ne razkrije.
+@Test func sandboxProfileFolderInsideHiddenScratch() throws {
+    let fm = FileManager.default
+    let base = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("hid-" + UUID().uuidString)
+    defer { try? fm.removeItem(at: base) }
+    let scratch = base.appendingPathComponent("scratch"), mine = scratch.appendingPathComponent("sync/mine"), other = scratch.appendingPathComponent("sync/other")
+    for d in [mine, other] { try fm.createDirectory(at: d, withIntermediateDirectories: true) }
+    try Data("s".utf8).write(to: other.appendingPathComponent("secret.txt"))
+    try Data("m".utf8).write(to: mine.appendingPathComponent("a.txt"))
+    func sh(_ profile: String, _ script: String) throws -> Int32 {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
+        p.arguments = ["-p", profile, "/bin/sh", "-c", script]
+        p.standardError = FileHandle.nullDevice
+        try p.run(); p.waitUntilExit()
+        return p.terminationStatus
+    }
+    // R3: brez izrecne `visible` ostane tudi mapa seje skrita.
+    let none = try #require(Native.sandboxProfile(dir: mine.path, network: false, hidden: [scratch.path], writable: [mine.path]))
+    #expect(try sh(none, "cat \(mine.path)/a.txt") != 0 && sh(none, "echo x > \(mine.path)/b.txt") != 0)
+    let ro = try #require(Native.sandboxProfile(dir: mine.path, network: false, hidden: [scratch.path], writable: [], visible: mine.path))
+    #expect(try sh(ro, "cat \(mine.path)/a.txt") == 0 && sh(ro, "echo x > \(mine.path)/b.txt") != 0)
+    #expect(try sh(ro, "cat \(other.path)/secret.txt") != 0)
+    let rw = try #require(Native.sandboxProfile(dir: mine.path, network: false, hidden: [scratch.path], writable: [mine.path], visible: mine.path))
+    #expect(try sh(rw, "echo x > \(mine.path)/b.txt") == 0 && sh(rw, "cat \(other.path)/secret.txt") != 0)
+    let outer = try #require(Native.sandboxProfile(dir: base.path, network: false, hidden: [scratch.path], writable: [base.path]))
+    #expect(try sh(outer, "cat \(other.path)/secret.txt") != 0 && sh(outer, "echo x > \(scratch.path)/x") != 0)
+}
+
+/// R3: delovna mapa nikoli v Scratch (privzetem ali izbranem), tudi če je ta med dovoljenimi mapami.
+@Test func resolveCwdRejectsScratch() throws {
+    let fm = FileManager.default
+    let base = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("rs-" + UUID().uuidString)
+    defer { try? fm.removeItem(at: base) }
+    let scratch = base.appendingPathComponent("Mini Gateway Scratch"), inScratch = scratch.appendingPathComponent("sync/x"), proj = base.appendingPathComponent("proj")
+    for d in [inScratch, proj] { try fm.createDirectory(at: d, withIntermediateDirectories: true) }
+    #expect(ClaudeCLI.resolveCwd(proj.path, roots: base.path, scratch: scratch) != nil)
+    #expect(ClaudeCLI.resolveCwd(inScratch.path, roots: base.path, scratch: scratch) == nil && ClaudeCLI.resolveCwd(scratch.path, roots: base.path, scratch: scratch) == nil)
+    #expect(Native.resolve(share: "S", path: "sync/x", shares: ["S": scratch.path], roots: base.path, scratch: scratch) == nil)
+    let def = RouterConfig.defaultScratch.appendingPathComponent("chat")
+    try fm.createDirectory(at: def, withIntermediateDirectories: true)
+    #expect(ClaudeCLI.resolveCwd(def.path, roots: NSHomeDirectory()) == nil)  // privzeti Scratch vedno
+}

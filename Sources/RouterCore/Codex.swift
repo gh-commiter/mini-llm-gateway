@@ -193,9 +193,9 @@ extension Router {
             let clientCwd = req.header("x-claude-mini-cwd")
             let shared = await Self.shares.mount(session: req.header("x-claude-mini-session") ?? "", cwd: clientCwd, base: localBase,
                                                  wait: req.header("x-claude-mini-share") == "1", device: req.device?.id,
-                                                 roots: config.claudeCLI.allowedRoots)
+                                                 roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL)
             let synced = await Self.shares.isSync(session: req.header("x-claude-mini-session") ?? "")
-            guard let dir = shared ?? (synced ? nil : ClaudeCLI.resolveCwd(clientCwd, roots: config.claudeCLI.allowedRoots)) else {
+            guard let dir = shared ?? (synced ? nil : ClaudeCLI.resolveCwd(clientCwd, roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL)) else {
                 if synced, Task.isCancelled { return 499 }  // Claude Code je prekinil med čakanjem na prenos
                 if synced { return await error(502, "api_error", "Syncing \(clientCwd ?? "the folder") to the gateway failed (see minigw output)", rid: rid, writer: writer) }
                 return await error(400, "invalid_request_error",
@@ -287,7 +287,8 @@ extension Router {
             pinger?.cancel()
             let (status, type, message) = (error as? SiriError)?.status
                 ?? (error as? Codex.Failure).map { (502, "api_error", $0.message) }
-                ?? (error as? Grok.Failure).map { (502, "api_error", $0.message) } ?? (500, "api_error", "\(error)")
+                ?? (error as? Grok.Failure).map { (502, "api_error", $0.message) }
+                ?? (error as? Copilot.Failure).map { (502, "api_error", $0.message) } ?? (500, "api_error", "\(error)")
             Self.log.error("\(rid, privacy: .public) \(model, privacy: .public) failed: \(message, privacy: .public)")
             if stream {
                 try? await writer.write(StreamTranslator.sse("error", ["type": "error", "error": ["type": type, "message": message]]))

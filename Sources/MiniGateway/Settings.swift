@@ -24,12 +24,13 @@ struct SettingsView: View {
     @State private var selectedRoot: String?
     @State private var selectedDevice: String?
     @State private var codexModels: [Codex.Model] = []
+    @State private var askCopilotCommands = false
     @State private var grokModels: [String] = []
     @State private var foundryModels: [Foundry.Model] = []
     @State private var foundryStatus = ""
 
     enum Pane: Hashable {
-        case general, provider(String), siri, appleFM, foundry, claudeCLI, codex, grok
+        case general, provider(String), siri, appleFM, foundry, claudeCLI, codex, copilot, grok
     }
 
     private struct Item: Identifiable {
@@ -60,6 +61,8 @@ struct SettingsView: View {
                     about: String(localized: "Your local Claude Code as an agent model, with tools in the allowed folders.")),
                Item(pane: .codex, title: "Codex CLI", symbol: "chevron.left.forwardslash.chevron.right", color: .teal,
                     about: String(localized: "OpenAI Codex CLI as an agent model in the session's folder.")),
+               Item(pane: .copilot, title: "Copilot CLI", symbol: "person.2.wave.2", color: .gray,
+                    about: String(localized: "GitHub Copilot CLI as an agent model in the session's folder.")),
                Item(pane: .grok, title: "Grok CLI", symbol: "sparkle", color: .indigo,
                     about: String(localized: "xAI Grok CLI as an agent model in the session's folder."))]
     }
@@ -247,6 +250,7 @@ struct SettingsView: View {
         case .appleFM: appleFM
         case .claudeCLI: claudeCLI
         case .codex: codex
+        case .copilot: copilot
         case .grok: grok
         case .foundry: foundry
         }
@@ -511,6 +515,41 @@ struct SettingsView: View {
                 Text("The claude-codex models (one per Codex model of your account) run “codex exec” as an agent in the session's folder, also in folders shared from other Macs. Its sandbox writes only to that folder and the allowed folders from Claude CLI. Devices that use Codex can read every file this user can read, and they share this Mac's Codex sessions (~/.codex). Sign in once with “codex login”.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+        }
+    }
+
+    private var copilot: some View {
+        Form {
+            header
+            Section {
+                Toggle("Enabled", isOn: $draft.copilot.enabled)
+                LabeledContent("Executable (empty = auto-detect)") {
+                    TextField("", text: $draft.copilot.executable, prompt: Text(verbatim: Copilot.detected ?? "copilot"))
+                        .labelsHidden()
+                }
+                TextField("Models (comma-separated; empty = only the default, “auto”)", text: $draft.copilot.models)
+            }
+            Section {
+                Toggle("Allow writing in the session's folder", isOn: $draft.copilot.write)
+                Toggle("Allow web access (fetch tool)", isOn: $draft.copilot.network)
+                Toggle("Allow commands (in a sandbox)", isOn: Binding(get: { draft.copilot.commands },
+                                                set: { on in if on { askCopilotCommands = true } else { draft.copilot.commands = false } }))
+                    .disabled(!draft.copilot.write)
+                SecureField(state.keychain.lookup(Copilot.tokenAccount).value?.isEmpty == false
+                            ? "GitHub token for Copilot (saved; enter to replace)"
+                            : "GitHub token for Copilot (fine-grained, only “Copilot Requests”)", text: keyBinding(Copilot.tokenAccount))
+            } header: {
+                Text("Sandbox")
+            } footer: {
+                Text("The claude-copilot models run Copilot CLI as an agent in the session's folder, also in folders shared from other Macs, always in a sandbox with a fresh Copilot home for each request. By default it may only read the session's folder; with writing on it may edit files there. It signs in only with the token below, a fine-grained token with only the “Copilot Requests” permission, never with the GitHub CLI's sign-in, which other agents could read.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .alert("Allow Copilot to run commands?", isPresented: $askCopilotCommands) {
+            Button("Allow Commands", role: .destructive) { draft.copilot.commands = true }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Copilot then runs commands as you on this Mac, in a sandbox that writes only to the session's folder and a temporary folder, and hides your keys, sign-ins and app data; commands can still read your other files and use the network. Commands can use the Copilot token to make Copilot requests on your account. Allow only if you trust the devices that use Copilot.")
         }
     }
 

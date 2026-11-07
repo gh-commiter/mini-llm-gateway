@@ -33,6 +33,8 @@ runs; otherwise they go to serve.json.
   minigw gw provider models <name> [text] [--all] [--enable m1,m2|all] [--disable m1,m2|all]
   minigw gw claude [--path FILE] [--tools T1,T2] [--folder DIR] [--allow-unsandboxed-bash=true|false]
   minigw gw token [rotate]                              print the connect line; rotate makes a new token
+  minigw gw copilot token [remove]                      Copilot's token for commands (fine-grained, only Copilot
+                                                        Requests), read from stdin or asked for
   minigw gw settings                                    a one-time link (60 s) to the settings page
 
 All take --config FILE (default: the minigw serve config).`
@@ -438,6 +440,25 @@ func routerCommand(args []string, in io.Reader) {
 			say("On each client run:")
 		}
 		say("  " + g.Connect)
+	case "copilot":
+		need(2, 3)
+		if pos[1] != "token" || (len(pos) == 3 && pos[2] != "remove") {
+			fail(routerHelp)
+		}
+		token := ""
+		if len(pos) == 2 {
+			t, err := readKey(in, "Copilot token (github_pat_…, only the Copilot Requests permission)")
+			if err != nil {
+				fail(err.Error())
+			}
+			token = t
+		}
+		a.do("PATCH", "/agents/copilot", map[string]any{"token": token}, nil)
+		if token == "" {
+			say("removed Copilot's token")
+		} else {
+			say("Copilot's token stored in the key store")
+		}
 	case "settings":
 		need(1, 1)
 		var r struct{ URL string }

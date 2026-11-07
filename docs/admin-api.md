@@ -142,6 +142,7 @@ Notes:
 | `GET /foundry`, `PATCH` | any of `{"enabled", "path", "instructions", "models"}` | `{"enabled", "path", "found", "exe", "running", "error", "instructions", "models": [string] \| null}`: Foundry Local on this computer |
 | `GET /foundry/models` | – | `{"models": [{"name", "vision", "enabled"}]}`: models downloaded in Foundry Local; `503` when it is not installed or does not answer (Go gateway and the Mac app) |
 | `GET /agents/grok`, `PATCH` | any of `{"enabled", "path", "write", "models"}` | `{"enabled", "path", "found", "write", "models"}` |
+| `GET /agents/copilot`, `PATCH` | any of `{"enabled", "path", "write", "network", "commands", "models", "token"}` | `{"enabled", "path", "found", "write", "network", "commands", "models": [string], "hasToken"}` |
 | `GET /siri`, `PATCH` | any of `{"enabled", "timeout", "allow": [id], "deny": [id]}` | `{"enabled", "timeout", "devices": [{"id", "name", "siri"}]}` |
 | `GET /run`, `PATCH` (Mac) | any of `{"commands", "allow": [id], "deny": [id], "allowNetwork": [id], "denyNetwork": [id]}` | `{"commands", "devices": [{"id", "name", "run", "network"}]}` |
 
@@ -149,6 +150,20 @@ Notes:
 sandbox may use the network (default: off); `models: null` = all the account's models. `allow`/`deny` switch Siri for known
 devices (Siri uses this Mac's personal data). `run` allows `minigw run` for a device (off by default): it runs the
 listed commands (comma-separated, first argument only) in a native folder on the Mac, so it is code execution there.
+Copilot: `write` lets it edit files in the session's folder (default: off, read-only), `network` allows its web tool,
+`commands` its shell (an explicit opt-in that needs `write` and `token`; Windows also needs "Allow commands without a
+sandbox"). On the Mac Copilot always runs in a `sandbox-exec` profile and on Linux under bwrap, each request with a fresh
+`COPILOT_HOME` that is deleted afterwards; only the session state is kept between turns. `token` is write-only like
+provider keys: a fine-grained personal access token (`github_pat_…`) with only the Copilot Requests permission, stored in
+the Keychain or the OS key store (`""` removes it); `hasToken` says whether one is stored. The Mac app needs it for every
+Copilot request (other sandboxed agents could read a token in Copilot's environment, so never the GitHub CLI's), and
+commands need it everywhere. On Linux without commands the gateway may instead pass its own `COPILOT_GITHUB_TOKEN`/
+`GH_TOKEN`/`GITHUB_TOKEN` or the GitHub CLI's (`gh auth token`), always as `COPILOT_GITHUB_TOKEN` (agents there have their
+own PID namespace). Only `events.jsonl` and `workspace.yaml` of a session are kept between turns. When the Copilot binary
+changes or its package cache is missing, the gateway runs `copilot --version` once outside the sandbox (no prompt, no
+model call, no token) so that Copilot can unpack its package, which the sandbox can only read. On Windows Copilot uses this user's own sign-in and `~/.copilot`. `models` lists model names
+(Copilot has no model list; empty = only `claude-copilot`, Copilot's default); other names are refused (`404`), and a name
+that is not a valid model name is a `400`.
 
 ## Mac app
 

@@ -217,7 +217,7 @@ func (s *server) modelList() map[string]any {
 				"description":  "claude -p · " + m + " · tools in your synced folder", "created_at": "2026-01-01T00:00:00Z"})
 		}
 	}
-	data = append(append(append(data, s.agentModelList(codexKind)...), s.agentModelList(grokKind)...), s.foundryModelList()...)
+	data = append(append(append(append(data, s.agentModelList(codexKind)...), s.agentModelList(grokKind)...), s.agentModelList(copilotKind)...), s.foundryModelList()...)
 	var first, last any
 	if len(data) > 0 {
 		first, last = data[0]["id"], data[len(data)-1]["id"]
@@ -462,12 +462,12 @@ func (s *server) messages(w http.ResponseWriter, r *req) (int, string) {
 	if g, m, ok := s.gatewayRoute(model, !isCLI); ok { // prehodi pred claude-cli (kot Router.swift); ID-ji z »/« (OpenRouter)
 		return s.passthrough(w, r, g, m), model
 	}
-	for _, k := range []agentKind{codexKind, grokKind} { // Codex in Grok (kot na Macu: claude-codex…, claude-grok…)
+	for _, k := range []agentKind{codexKind, grokKind, copilotKind} { // kot na Macu: claude-codex…, claude-grok…, claude-copilot…
 		m, ok := k.match(model)
 		if !ok {
 			continue
 		}
-		if ac := k.conf(s.conf()); !ac.Enabled || (m != "" && !ac.modelEnabled(m)) {
+		if ac := k.conf(s.conf()); !ac.Enabled || (m != "" && !ac.allowsModel(k, m)) {
 			return writeError(w, r.rid, 404, "Unknown model: "+model), model
 		}
 		if strings.HasSuffix(r.URL.Path, "/count_tokens") {

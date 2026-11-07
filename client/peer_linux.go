@@ -106,7 +106,7 @@ func bwrapReady(cfgDir string) string {
 		t, err2 := exec.LookPath("true")
 		home, _ := os.UserHomeDir()
 		if err == nil && err2 == nil && home != "" &&
-			exec.Command(p, append(bwrapArgs(home, cfgDir, nil, nil, nil, nil), "--", t)...).Run() == nil {
+			exec.Command(p, append(bwrapArgs(home, cfgDir, nil, nil, nil, nil, nil), "--", t)...).Run() == nil {
 			bwrapPath = p
 		}
 	})
@@ -149,6 +149,11 @@ func agentWrap(exe string, args []string, m agentMounts) (string, []string) {
 	if r := real(exe); inside(r, home) {
 		add(&ro, packageRoot(home, r))
 	}
+	for _, p := range m.ro {
+		if exists(p) {
+			add(&ro, real(p))
+		}
+	}
 	if m.state != "" {
 		os.MkdirAll(m.state, 0o700)
 		add(&rw, real(m.state))
@@ -185,7 +190,11 @@ func agentWrap(exe string, args []string, m agentMounts) (string, []string) {
 			hide(p)
 		}
 	}
-	return bw, append(append(bwrapArgs(home, real(m.cfgDir), ro, rw, hideFiles, hideDirs), "--", exe), args...)
+	var hidden []string
+	if m.hide != "" && exists(m.hide) && !inside(real(m.hide), home) { // v domači mapi jo skrije že --tmpfs home
+		hidden = []string{real(m.hide)}
+	}
+	return bw, append(append(bwrapArgs(home, real(m.cfgDir), hidden, ro, rw, hideFiles, hideDirs), "--", exe), args...)
 }
 
 // listenerIsOurs (F2): vrata poslušajo le procesi tega uporabnika (uid iz /proc/net/tcp{,6}); nič najdenega = ne.

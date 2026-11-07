@@ -130,7 +130,7 @@ public enum Native {
 
     /// Shema + relativna pot → mapa tega Maca; nil, če sheme ni, pot pobegne iz nje (»..«, povezava) ali mapa ni v
     /// dovoljenih mapah (`roots`, Settings → Allowed folders). Shema brez razlike v velikih črkah (SMB).
-    public static func resolve(share: String, path rel: String, shares: [String: String], roots: String) -> URL? {
+    public static func resolve(share: String, path rel: String, shares: [String: String], roots: String, scratch: URL? = nil) -> URL? {
         guard let base = shares.first(where: { $0.key.caseInsensitiveCompare(share) == .orderedSame })?.value,
               let root = Sync.real(URL(fileURLWithPath: base)) else { return nil }
         let comps = rel.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
@@ -138,7 +138,7 @@ public enum Native {
         else { return nil }
         guard let dir = Sync.real(rel.isEmpty ? root : root.appendingPathComponent(rel)),
               dir.path == root.path || dir.path.hasPrefix(root.path + "/"),
-              ClaudeCLI.resolveCwd(dir.path, roots: roots) != nil else { return nil }
+              ClaudeCLI.resolveCwd(dir.path, roots: roots, scratch: scratch) != nil else { return nil }
         return dir  // kanonična: označba se piše z O_NOFOLLOW_ANY
     }
 
@@ -188,9 +188,12 @@ public enum Native {
     }
 
     /// `runTmp`: TMPDIR in ModuleCache tega zagona (v Scratch, ki je sicer skrit).
+    /// `writable`: namesto mape in predpomnilnikov gradnje (agent Copilot: le mapa s pisanjem, sicer nič).
+    /// `visible`: izrecna pot v skriti mapi (sinhronizirana kopija ali klon iz ShareHub), ki ostane vidna (pisljiva, če je
+    /// v `writable`); nikoli izpeljana iz `dir` (R3).
     static func sandboxProfile(dir: String, home: String = NSHomeDirectory(), network: Bool, hidden: [String] = [], routerPort: Int? = nil,
-                               runTmp: String? = nil) -> String? {
-        let writable = [dir] + buildCaches(home: home)
+                               runTmp: String? = nil, writable only: [String]? = nil, visible: String? = nil) -> String? {
+        let writable = only ?? ([dir] + buildCaches(home: home))
         for p in writable where FileManager.default.fileExists(atPath: p) && Sync.real(URL(fileURLWithPath: p))?.path != p { return nil }
         let q = { (p: String) in "\"" + p.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\"" }
         // Peskovnik primerja razrešene poti: vsako pravilo za dobesedno in (če obstaja) kanonično pot (~/.swiftpm/configuration → …).
@@ -208,12 +211,18 @@ public enum Native {
         return "(version 1)\n(allow default)\n(deny file-write*)\n"
             + "(allow file-write* (regex #\"^/dev/\")" + writable.map { " (subpath \(q($0)))" }.joined() + ")\n"
             + (darwinTempRules() ?? "")
+            // Skrite mape (Scratch): ne vsebina, seznam in pisanje; metapodatki (stat) da, sicer mkdir -p in realpath v
+            // dovoljeni podmapi ne delujeta. Izrecno vidna mapa seje v njej (sinhronizirana kopija, klon) spet le ta.
+            // Dovolitev mora imenovati file-read-data: file-read* ne preglasi ožje prepovedi.
+            + (hidden.isEmpty ? "" : "(deny file-read-data file-write*" + rules("subpath", hidden) + ")\n")
+            + (visible.map { "(allow file-read* file-read-data" + rules("subpath", [$0]) + ")\n" } ?? "")
+            + (visible.flatMap { writable.contains($0) ? "(allow file-write*" + rules("subpath", [$0]) + ")\n" : nil } ?? "")
             + "(deny file-write*" + rules("subpath", [dir + "/.git"] + denies.paths)
             + denies.regexes.map { " (regex #\"" + $0.replacingOccurrences(of: "\"", with: "\\\"") + "\")" }.joined() + ")\n"
             + "(deny file-read*" + rules("subpath", secretDirs) + rules("literal", secretFiles) + ")\n"
             // Nastavitve aplikacije: datoteka in domena cfprefsd skupaj (le ena od obeh branja ne prepreči).
-            + "(deny file-read* file-write*" + rules("subpath", hidden + [home + "/Library/Preferences/dev.trojar.minigateway.plist"]) + ")\n"
-            + (runTmp.map { "(allow file-read* file-write*" + rules("subpath", [$0]) + ")\n" } ?? "")
+            + "(deny file-read* file-write*" + rules("subpath", [home + "/Library/Preferences/dev.trojar.minigateway.plist"]) + ")\n"
+            + (runTmp.map { "(allow file-read* file-read-data file-write*" + rules("subpath", [$0]) + ")\n" } ?? "")
             // Sistemske storitve mimo datotek: nastavitve (cfprefsd), opravila launchd, odpiranje aplikacij, Apple Events.
             // mvn, swift build in xcodebuild delujejo brez izjem.
             + "(deny user-preference-write)\n(deny user-preference-read (preference-domain \"dev.trojar.minigateway\"))\n"
@@ -276,17 +285,20 @@ public enum Native {
         return a
     }
 
-    /// Ukaz v lastni skupini procesov (kill(-pid) ustavi tudi podprocese), stdin /dev/null, druge datoteke aplikacije
-    /// zaprte (POSIX_SPAWN_CLOEXEC_DEFAULT). Vrne pid in bralni konec stdout in stderr.
-    static func spawnGroup(_ exe: String, _ args: [String], dir: URL, env: [String: String]) -> (pid: pid_t, out: FileHandle, err: FileHandle)? {
-        var o: [Int32] = [0, 0], e: [Int32] = [0, 0]
+    /// Ukaz v lastni skupini procesov (kill(-pid) ustavi tudi podprocese), stdin /dev/null (ali cev z `input`), druge
+    /// datoteke aplikacije zaprte (POSIX_SPAWN_CLOEXEC_DEFAULT). Vrne pid, bralni konec stdout in stderr ter pisalni konec stdin.
+    static func spawnGroup(_ exe: String, _ args: [String], dir: URL, env: [String: String], input: Bool = false)
+        -> (pid: pid_t, out: FileHandle, err: FileHandle, input: FileHandle?)? {
+        var o: [Int32] = [0, 0], e: [Int32] = [0, 0], i: [Int32] = [-1, -1]
         guard pipe(&o) == 0 else { return nil }
         guard pipe(&e) == 0 else { close(o[0]); close(o[1]); return nil }
-        for fd in o + e { _ = fcntl(fd, F_SETFD, FD_CLOEXEC) }  // takoj: drug zagon v aplikaciji jih ne podeduje (dup2 v otroku ga počisti)
+        guard !input || pipe(&i) == 0 else { for fd in o + e { close(fd) }; return nil }
+        for fd in o + e + i where fd >= 0 { _ = fcntl(fd, F_SETFD, FD_CLOEXEC) }  // takoj: drug zagon v aplikaciji jih ne podeduje (dup2 v otroku ga počisti)
+        if input { _ = fcntl(i[1], F_SETNOSIGPIPE, 1) }  // EPIPE namesto SIGPIPE, če otrok konča pred branjem
         var fa: posix_spawn_file_actions_t?, at: posix_spawnattr_t?
         posix_spawn_file_actions_init(&fa); posix_spawnattr_init(&at)
-        defer { posix_spawn_file_actions_destroy(&fa); posix_spawnattr_destroy(&at); close(o[1]); close(e[1]) }
-        posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0)
+        defer { posix_spawn_file_actions_destroy(&fa); posix_spawnattr_destroy(&at); close(o[1]); close(e[1]); if input { close(i[0]) } }
+        if input { posix_spawn_file_actions_adddup2(&fa, i[0], 0) } else { posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0) }
         posix_spawn_file_actions_adddup2(&fa, o[1], 1)
         posix_spawn_file_actions_adddup2(&fa, e[1], 2)
         posix_spawn_file_actions_addchdir_np(&fa, dir.path)
@@ -295,8 +307,9 @@ public enum Native {
         let argv = ([exe] + args).map { strdup($0) } + [nil], envp = env.map { strdup("\($0.key)=\($0.value)") } + [nil]
         defer { argv.forEach { free($0) }; envp.forEach { free($0) } }
         var pid: pid_t = 0
-        guard posix_spawn(&pid, exe, &fa, &at, argv, envp) == 0 else { close(o[0]); close(e[0]); return nil }
-        return (pid, FileHandle(fileDescriptor: o[0], closeOnDealloc: true), FileHandle(fileDescriptor: e[0], closeOnDealloc: true))
+        guard posix_spawn(&pid, exe, &fa, &at, argv, envp) == 0 else { close(o[0]); close(e[0]); if input { close(i[1]) }; return nil }
+        return (pid, FileHandle(fileDescriptor: o[0], closeOnDealloc: true), FileHandle(fileDescriptor: e[0], closeOnDealloc: true),
+                input ? FileHandle(fileDescriptor: i[1], closeOnDealloc: true) : nil)
     }
 
     /// Izvršljiva datoteka ukaza: z »/« relativno na mapo (npr. ./mvnw), sicer v PATH.
@@ -410,7 +423,7 @@ extension Router {
               let share = b["share"] as? String, let path = b["path"] as? String else {
             return await error(400, "invalid_request_error", "Body must be JSON with share and path", rid: rid, writer: writer)
         }
-        guard let dir = Native.resolve(share: share, path: path, shares: shares(), roots: config.claudeCLI.allowedRoots) else {
+        guard let dir = Native.resolve(share: share, path: path, shares: shares(), roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL) else {
             return await error(403, "permission_error",
                                "Native mode: \(share)/\(path) is not a folder of an SMB share in this Mac's allowed folders (Settings → Claude CLI → Allowed folders)",
                                rid: rid, writer: writer)
@@ -449,7 +462,7 @@ extension Router {
         try? FileManager.default.createDirectory(at: runTmp.appendingPathComponent("ModuleCache"), withIntermediateDirectories: true,
                                                  attributes: [.posixPermissions: 0o700])
         defer { try? FileManager.default.removeItem(at: runTmp) }
-        guard Sync.real(dir)?.path == dir.path, ClaudeCLI.resolveCwd(dir.path, roots: config.claudeCLI.allowedRoots)?.path == dir.path,
+        guard Sync.real(dir)?.path == dir.path, ClaudeCLI.resolveCwd(dir.path, roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL)?.path == dir.path,
               let profile = Native.sandboxProfile(dir: dir.path, network: config.devices.first { $0.id == d.id }?.runNetwork ?? true,
                                                   hidden: [config.scratchURL.path, RouterConfig.defaultScratch.path], routerPort: Int(config.port),
                                                   runTmp: Sync.real(runTmp)?.path) else {
@@ -469,7 +482,7 @@ extension Router {
             return await error(404, "not_found_error", "minigw run: \(argv[0]) not found on the gateway", rid: rid, writer: writer)
         }
         let args = Array(Native.withoutNestedSandbox(argv).dropFirst())
-        guard let (pid, out, err) = Native.spawnGroup("/usr/bin/sandbox-exec", ["-p", profile, exe] + args, dir: dir, env: env) else {
+        guard let (pid, out, err, _) = Native.spawnGroup("/usr/bin/sandbox-exec", ["-p", profile, exe] + args, dir: dir, env: env) else {
             return await self.error(500, "api_error", "minigw run: cannot start \(argv[0])", rid: rid, writer: writer)
         }
         let (frames, written, closeFrames) = Self.frames([("o", out), ("e", err)])

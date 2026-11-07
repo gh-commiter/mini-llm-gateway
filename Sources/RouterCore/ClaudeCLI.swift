@@ -232,15 +232,18 @@ public enum ClaudeCLI {
         URL(fileURLWithPath: (path as NSString).expandingTildeInPath).standardizedFileURL.resolvingSymlinksInPath().path
     }
 
-    /// Delovna mapa mora obstajati in biti pod dovoljenimi korenskimi mapami.
+    /// Delovna mapa mora obstajati in biti pod dovoljenimi korenskimi mapami, nikoli v Scratch (privzeti ali `scratch`:
+    /// tam so kopije drugih naprav in stanje agentov, ki ga peskovniki skrijejo; R3).
     /// Kanonični poti (realpath, tudi »/private«), da povezava nikjer v poti ne pelje ven.
-    static func resolveCwd(_ raw: String?, roots: String) -> URL? {
+    static func resolveCwd(_ raw: String?, roots: String, scratch: URL? = nil) -> URL? {
         guard let raw, !raw.isEmpty, let path = Sync.real(URL(fileURLWithPath: expand(raw)))?.path else { return nil }
         var isDir: ObjCBool = false
         guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else { return nil }
         let allowed = roots.split(separator: ",").compactMap { Sync.real(URL(fileURLWithPath: expand($0.trimmingCharacters(in: .whitespaces))))?.path }
             .filter { $0 != "/" }
         guard allowed.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) else { return nil }
+        let hidden = ([RouterConfig.defaultScratch] + [scratch].compactMap { $0 }).map { (Sync.real($0) ?? $0.standardizedFileURL).path }
+        guard !hidden.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) else { return nil }
         return URL(fileURLWithPath: path, isDirectory: true)
     }
 }
@@ -401,14 +404,14 @@ extension Router {
             let clientCwd = req.header("x-claude-mini-cwd")
             let shared = await Self.shares.mount(session: req.header("x-claude-mini-session") ?? "", cwd: clientCwd, base: localBase,
                                                  wait: req.header("x-claude-mini-share") == "1", device: req.device?.id,
-                                                 roots: config.claudeCLI.allowedRoots)
+                                                 roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL)
             let synced = await Self.shares.isSync(session: req.header("x-claude-mini-session") ?? "")
             let tree = await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "")
             if let shared, let clientCwd {
                 let readOnly = await Self.shares.isReadOnly(session: req.header("x-claude-mini-session") ?? "")
                 args += ["--append-system-prompt", Self.mountNote(clientCwd, shared, readOnly: readOnly, synced: synced, branch: tree?.branch)]
             }
-            guard let dir = shared ?? (synced ? nil : ClaudeCLI.resolveCwd(clientCwd, roots: cfg.allowedRoots)) else {
+            guard let dir = shared ?? (synced ? nil : ClaudeCLI.resolveCwd(clientCwd, roots: cfg.allowedRoots, scratch: config.scratchURL)) else {
                 if synced, Task.isCancelled { return 499 }  // Claude Code je prekinil med čakanjem na prenos
                 if synced { return await error(502, "api_error", "Syncing \(clientCwd ?? "the folder") to the gateway failed (see minigw output)", rid: rid, writer: writer) }
                 return await error(400, "invalid_request_error",

@@ -323,6 +323,7 @@ extension Router {
             switch arg {
             case "claude": return (200, claudeInfo(c.claudeCLI))
             case "codex": return (200, codexInfo(c.codex))
+            case "copilot": return (200, copilotInfo(c.copilot))
             case "grok": return (200, grokInfo(c.grok))
             default: throw AdminError(404, "no agent \(arg)")
             }
@@ -373,6 +374,29 @@ extension Router {
                     }
                 }
                 return (200, claudeInfo(n.claudeCLI))
+            case "copilot":
+                // Kot codex; models = seznam imen (Copilot nima seznama modelov), commands = ukazi lupine (privolitev).
+                // token: le za pisanje (kot ključi ponudnikov); "" ga izbriše.
+                let b = try AdminBody(body, ["enabled", "path", "write", "network", "commands", "models", "token"])
+                let enabled = try b.bool("enabled"), path = try b.string("path"), write = try b.bool("write")
+                let network = try b.bool("network"), commands = try b.bool("commands"), models = try b.models("models")
+                let token = try b.string("token")
+                if let token, !token.isEmpty, !Copilot.validToken(token) {
+                    throw AdminError(400, "token: a fine-grained personal access token (github_pat_…) with only the Copilot Requests permission")
+                }
+                if let path, !path.isEmpty, !FileManager.default.isExecutableFile(atPath: path) { throw AdminError(400, "not an executable: \(path)") }
+                if case let list?? = models, let bad = list.first(where: { !Self.validModel($0) }) { throw AdminError(400, "invalid model name: \(bad)") }
+                let n = try await hooks.update(keys: token.map { [Copilot.tokenAccount: $0.isEmpty ? nil : $0] } ?? [:]) { c in
+                    if let enabled { c.copilot.enabled = enabled }
+                    if let path { c.copilot.executable = path }
+                    if let write { c.copilot.write = write }
+                    if let network { c.copilot.network = network }
+                    if let commands { c.copilot.commands = commands }
+                    if let models { c.copilot.models = (models ?? []).joined(separator: ", ") }  // null = le privzeti model
+                }
+                var info = copilotInfo(n.copilot)
+                if let token { info["hasToken"] = !token.isEmpty }  // ključ se shrani šele po odgovoru (ponovni zagon)
+                return (200, info)
             case "codex", "grok":
                 let b = try AdminBody(body, arg == "codex" ? ["enabled", "path", "write", "network", "models"] : ["enabled", "path", "write", "models"])
                 let enabled = try b.bool("enabled"), path = try b.string("path"), write = try b.bool("write")
@@ -444,6 +468,12 @@ extension Router {
     func codexInfo(_ c: CodexConfig) -> [String: Any] {
         ["enabled": c.enabled, "path": c.executable, "found": Codex.executable(c.executable) != nil, "write": c.write,
          "network": c.network, "models": c.enabledModels.map { $0 as Any } ?? NSNull()]
+    }
+
+    func copilotInfo(_ c: CopilotConfig) -> [String: Any] {
+        ["enabled": c.enabled, "path": c.executable, "found": Copilot.executable(c.executable) != nil, "write": c.write,
+         "network": c.network, "commands": c.commands, "models": c.modelList,
+         "hasToken": !(secrets.get(Copilot.tokenAccount) ?? "").isEmpty]
     }
 
     func foundryInfo(_ c: FoundryConfig) async -> [String: Any] {

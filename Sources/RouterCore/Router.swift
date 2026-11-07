@@ -184,6 +184,12 @@ public final class Router: Sendable {
                     }
                     return (await runFoundry(req, body: body, model: String(model.dropFirst(Foundry.prefix.count)), rid: rid, writer: writer), model, "foundry")
                 }
+                if config.copilot.enabled, let copilotModel = Copilot.match(model) {
+                    if req.path.hasSuffix("/count_tokens") {
+                        return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "copilot")
+                    }
+                    return (await syncRun(agent: "copilot") { await runCopilot(req, body: body, model: copilotModel, rid: rid, writer: writer) }, model, "copilot")
+                }
                 if config.appleFM.enabled, AppleFM.ids.contains(model) {
                     if req.path.hasSuffix("/count_tokens") {
                         return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "apple-fm")
@@ -412,6 +418,14 @@ public final class Router: Sendable {
                 ["type": "model", "id": Codex.prefix + m.slug, "display_name": "\(m.name) · Codex CLI",
                  "description": "codex exec · \(m.slug)\(m.window.map { " · \($0 / 1000)K" } ?? "") · tools in your folder",
                  "created_at": created]
+            }
+        }
+        if config.copilot.enabled, Copilot.executable(config.copilot.executable) != nil {
+            data.append(["type": "model", "id": "claude-copilot", "display_name": "Copilot · Copilot CLI",
+                         "description": "copilot -p · default model (auto) · tools in your folder", "created_at": created])
+            data += config.copilot.modelList.map { m in
+                ["type": "model", "id": Copilot.prefix + m, "display_name": "\(m) · Copilot CLI",
+                 "description": "copilot -p · \(m) · tools in your folder", "created_at": created]
             }
         }
         if config.grok.enabled, let exe = Grok.executable(config.grok.executable) {
