@@ -28,6 +28,7 @@ struct SettingsView: View {
     @State private var grokModels: [String] = []
     @State private var foundryModels: [Foundry.Model] = []
     @State private var foundryStatus = ""
+    @State private var foundryFound: String?  // samodejno najdena pot (iskanje v .task, ne ob vsakem izrisu)
 
     enum Pane: Hashable {
         case general, provider(String), siri, appleFM, foundry, claudeCLI, codex, copilot, grok, devices
@@ -421,7 +422,7 @@ struct SettingsView: View {
             Section {
                 Toggle("Enabled", isOn: $draft.foundry.enabled)
                 LabeledContent("Executable (empty = auto-detect)") {
-                    TextField("", text: $draft.foundry.executable, prompt: Text(verbatim: Foundry.executable("") ?? "foundry"))
+                    TextField("", text: $draft.foundry.executable, prompt: Text(verbatim: foundryFound ?? "foundry"))
                         .labelsHidden()
                 }
             } footer: {
@@ -448,7 +449,8 @@ struct SettingsView: View {
                 .controlSize(.small)
             }
             .task(id: draft.foundry.executable) {
-                let exe = Foundry.executable(draft.foundry.executable)
+                foundryFound = await Foundry.executable("")
+                let exe = await Foundry.executable(draft.foundry.executable)
                 guard exe != nil else {
                     foundryModels = []
                     foundryStatus = String(localized: "Foundry Local is not installed: brew tap microsoft/foundrylocal && brew install foundrylocal; then download a model, e.g. foundry model download phi-4-mini.")
@@ -532,7 +534,8 @@ struct SettingsView: View {
             }
             .task(id: draft.codex.executable) {
                 let exe = draft.codex.executable
-                codexModels = await Task.detached { Codex.executable(exe).map(Codex.catalog) ?? [] }.value
+                let path = await Codex.executable(exe)
+                codexModels = await Task.detached { path.map(Codex.catalog) ?? [] }.value
             }
             foldersSection
             Section {
@@ -613,7 +616,8 @@ struct SettingsView: View {
             }
             .task(id: draft.grok.executable) {
                 let exe = draft.grok.executable
-                grokModels = await Task.detached { Grok.executable(exe).map(Grok.catalog) ?? [] }.value
+                let path = await Grok.executable(exe)
+                grokModels = await Task.detached { path.map(Grok.catalog) ?? [] }.value
             }
             foldersSection
             Section {

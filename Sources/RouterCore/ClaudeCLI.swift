@@ -146,8 +146,8 @@ public enum ClaudeCLI {
     }
 
     /// Nastavljena pot ali, če je prazna, samodejno najdena.
-    static func executable(_ configured: String) -> String? {
-        configured.isEmpty ? detected : [(configured as NSString).expandingTildeInPath].first { FileManager.default.isExecutableFile(atPath: $0) }
+    static func executable(_ configured: String) async -> String? {
+        configured.isEmpty ? await Detected.path("claude") : [(configured as NSString).expandingTildeInPath].first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
     /// Ali je datoteka res Claude Code: izvršljiva in `--version` izpiše »Claude Code«.
@@ -176,7 +176,7 @@ public enum ClaudeCLI {
     /// Vgrajena orodja te različice Claude Code: prva vrstica `claude -p` (init) jih našteje, nato proces ustavimo,
     /// še preden pošlje zahtevo modelu.
     public static func availableTools(_ configured: String) async -> [String] {
-        guard let exe = executable(configured) else { return [] }
+        guard let exe = await executable(configured) else { return [] }
         return await offPool {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: exe)
@@ -205,8 +205,8 @@ public enum ClaudeCLI {
     }
 
     /// `command -v claude` v uporabnikovi prijavni lupini (njegov PATH), nato običajna mesta namestitve.
-    /// Izračuna se enkrat ob prvi uporabi.
-    public static let detected: String? = locate("claude", also: ["\(NSHomeDirectory())/.claude/local/claude"])
+    /// Za nastavitve (glavna nit); router: `await executable("")`.
+    public static var detected: String? { Detected.pathNow("claude") }
 
     /// `command -v <name>` v prijavni lupini, nato običajna mesta namestitve.
     static func locate(_ name: String, also extra: [String] = []) -> String? {
@@ -450,7 +450,7 @@ extension Router {
             try await writer.write(chunks.reduce(Data(), +))
         }
 
-        guard let exe = ClaudeCLI.executable(cfg.executable) else {
+        guard let exe = await ClaudeCLI.executable(cfg.executable) else {
             return await error(503, "api_error", cfg.executable.isEmpty ? "claude not found; set its path in Mini Gateway settings"
                                                                          : "claude not found at \(cfg.executable)", rid: rid, writer: writer)
         }
@@ -564,5 +564,41 @@ final class ExitWaiter: @unchecked Sendable {
             lock.lock()
             if let s = status { lock.unlock(); c.resume(returning: s) } else { waiter = c; lock.unlock() }
         }
+    }
+}
+
+/// Programi agentov v prijavni lupini uporabnika (`zsh -lic`, sekunde): poiščejo se enkrat, ob zagonu routerja, na svoji niti.
+/// Router počaka z `await` (nit bazena Swift concurrency ostane prosta); nastavitve s `pathNow` (glavna nit).
+public enum Detected {
+    private static let group = DispatchGroup()
+    nonisolated(unsafe) private static var paths: [String: String] = [:]  // zapisano enkrat pred group.leave()
+    private static let started: Void = {
+        group.enter()
+        Thread {
+            let names = ["claude", "codex", "copilot", "grok"], lock = NSLock()
+            var found: [String: String] = [:]
+            DispatchQueue.concurrentPerform(iterations: names.count) { i in
+                let extra = names[i] == "claude" ? ["\(NSHomeDirectory())/.claude/local/claude"] : []
+                if let p = ClaudeCLI.locate(names[i], also: extra) { lock.withLock { found[names[i]] = p } }
+            }
+            paths = found
+            group.leave()
+        }.start()
+    }()
+
+    /// Začne iskanje (ob zagonu routerja).
+    public static func start() { started }
+
+    static func path(_ name: String) async -> String? {
+        start()
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in group.notify(queue: .global()) { c.resume() } }
+        return paths[name]
+    }
+
+    /// Blokira klicočo nit, dokler iskanje ne konča: le nastavitve (glavna nit), nikoli v bazenu.
+    public static func pathNow(_ name: String) -> String? {
+        start()
+        group.wait()
+        return paths[name]
     }
 }

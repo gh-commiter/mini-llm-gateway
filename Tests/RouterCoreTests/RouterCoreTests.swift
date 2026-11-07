@@ -359,9 +359,9 @@ func makeRouter(session: URLSession = .shared) -> Router {
     #expect(Siri.packed(history: long, last: "q", limit: 1000).count <= 1100)
 }
 
-@Test func claudeExecutableResolution() {
-    #expect(ClaudeCLI.executable("/nonexistent/claude") == nil)  // ročna pot nima rezerve
-    #expect(ClaudeCLI.executable("/bin/ls") == "/bin/ls")
+@Test func claudeExecutableResolution() async {
+    #expect(await ClaudeCLI.executable("/nonexistent/claude") == nil)  // ročna pot nima rezerve
+    #expect(await ClaudeCLI.executable("/bin/ls") == "/bin/ls")
 }
 
 @Test func claudeExecutableValidation() {
@@ -379,6 +379,32 @@ func makeRouter(session: URLSession = .shared) -> Router {
     #expect(await firstOf(slow, within: .milliseconds(100)) == nil)
     #expect(ContinuousClock.now - t0 < .seconds(30))
     #expect(await firstOf(Task { 7 }, within: .seconds(1)) == 7)
+}
+
+/// Agenti (grok, codex, copilot) tečejo vso sejo: njihovo branje ne sme zasesti bazena Swift concurrency (ena nit na jedro),
+/// sicer router pri več hkratnih agentih kot jeder ne odgovori niti na /health.
+@Test func manyAgentRunsDoNotStallHealth() async throws {
+    let dir = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("pool-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let fake = dir.appendingPathComponent("agent"), gate = dir.appendingPathComponent("go")
+    try Data("#!/bin/sh\nwhile [ ! -e '\(gate.path)' ]; do sleep 0.1; done\n".utf8).write(to: fake)  // teče, dokler test ne reče
+    chmod(fake.path, 0o755)
+    let n = 2 * ProcessInfo.processInfo.activeProcessorCount + 2
+    let runs = (0..<n).map { i in
+        Task { _ = try? await (i.isMultiple(of: 2) ? Grok.run(fake.path, args: [], cwd: dir, prompt: "x", onStep: { _ in })
+                                                   : Codex.run(fake.path, args: [], cwd: dir, prompt: "x", output: dir.appendingPathComponent("o\(i)"))) }
+    }
+    // Agente ustavi nit po 20 s, ne naloga: zasedenega bazena (pred popravkom) ne bi nikoli dočakala.
+    Thread { Thread.sleep(forTimeInterval: 20); FileManager.default.createFile(atPath: gate.path, contents: nil) }.start()
+    let t0 = ContinuousClock.now  // pred čakanjem: tudi to nadaljevanje potrebuje nit bazena
+    try await Task.sleep(for: .milliseconds(500))  // agenti zagnani in v branju
+    let r = Router(config: RouterConfig(), token: "tok", secrets: FakeSecrets(values: [:]))
+    let w = FakeWriter()
+    await r.handle(request("GET", "/health/live"), writer: w)
+    #expect(w.status == 200 && ContinuousClock.now - t0 < .seconds(10))  // pred popravkom: šele po koncu agentov (20 s)
+    FileManager.default.createFile(atPath: gate.path, contents: nil)
+    for t in runs { await t.value }
 }
 
 @Test func configRoundTripsAsReadablePlistAndMigratesJSON() throws {

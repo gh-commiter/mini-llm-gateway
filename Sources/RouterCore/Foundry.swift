@@ -38,8 +38,8 @@ public enum Foundry {
 
     public struct Model: Sendable, Equatable { public let name: String, vision: Bool }
 
-    public static func executable(_ configured: String) -> String? {
-        configured.isEmpty ? ClaudeCLI.locate("foundry")
+    public static func executable(_ configured: String) async -> String? {
+        configured.isEmpty ? await offPool { ClaudeCLI.locate("foundry") }
             : [(configured as NSString).expandingTildeInPath].first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
@@ -236,7 +236,7 @@ extension Router {
     public static let foundry = FoundryHub()
 
     func foundryModelList(created: String) async -> [[String: Any]] {
-        guard config.foundry.enabled, let ms = try? await Self.foundry.list(Foundry.executable(config.foundry.executable)) else { return [] }
+        guard config.foundry.enabled, let ms = try? await Self.foundry.list(await Foundry.executable(config.foundry.executable)) else { return [] }
         return ms.filter { config.foundry.isModelEnabled($0.name) }.map { m in
             ["type": "model", "id": Foundry.prefix + m.name, "display_name": "\(m.name) · Foundry Local",
              "description": "Foundry Local · on this Mac · no tools", "created_at": created]
@@ -244,7 +244,7 @@ extension Router {
     }
 
     func runFoundry(_ req: HTTPRequest, body: [String: Any], model: String, rid: String, writer: ResponseWriter) async -> Int {
-        let fc = config.foundry, exe = Foundry.executable(fc.executable)
+        let fc = config.foundry, exe = await Foundry.executable(fc.executable)
         let models: [Foundry.Model]
         do { models = try await Self.foundry.list(exe) } catch { return await self.error(503, "api_error", "\(error)", rid: rid, writer: writer) }
         guard let m = models.first(where: { $0.name == model }), fc.isModelEnabled(model) else {
