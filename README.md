@@ -231,8 +231,7 @@ minigw connect hpx360.local --name win --token '<token>'   # a second gateway as
 ```
 
 The connection is stored in Windows Credential Manager, on Linux in `~/.config/minigw/connection.json` (mode 0600),
-other profiles under `minigw:router:<profile>` and `connections/<profile>.json`
-([Several gateways at once](#4-use)).
+other profiles in `connections/<profile>.json` there ([Several gateways at once](#4-use)).
 All clients encrypt with AES-256-GCM; the Mac gateway also accepts ChaCha20-Poly1305 from older macOS clients.
 
 #### 3.2.4 Gateway on Windows or Linux without the plugin (minigw serve)
@@ -346,8 +345,8 @@ minigw disconnect --name win
 - The folder is shared with another gateway only when that gateway gets its first request for an agent model
   (`claude-cli-*`, `claude-codex*`, `claude-grok*`, `claude-copilot*`), in the same work mode
   (`--minigw-work`). A Windows or Linux gateway needs `--minigw-work=sync`, `worktree` or `auto`.
-- Each profile keeps its own address, token and gateway key: Keychain on the Mac, Credential Manager on Windows
-  (`minigw:router:<profile>`), on Linux `~/.config/minigw/connections/<profile>.json` (mode 0600). The device key is
+- Each profile keeps its own address, token and gateway key: Keychain on the Mac, Credential Manager on Windows, on Linux
+  `~/.config/minigw/connections/<profile>.json` (mode 0600). The device key is
   one per client, so every gateway recognises the same device.
 
 **Another Mac and Claude CLI models with tools.** `opus`, `sonnet`, `haiku` and `fable` run `claude -p` as an agent on
@@ -469,16 +468,18 @@ example `/Volumes/Java/projects` mounted from the gateway's `/Volumes/Java`), `m
 ## 5. Gateway settings
 
 Settings of the menu bar app on the gateway Mac (**Settings…**, laid out like System Settings). On Windows and Linux
-the settings page of `minigw serve` has the same panes, without Siri AI and Apple Foundation Models. Open it with **Settings…** in the tray or `/minigw:gw settings`. [docs/windows-parity.md](docs/windows-parity.md)
+the settings page of `minigw serve` has the same panes. Mac only: Siri AI, Apple Foundation Models, the WebDAV folder
+mount (direct mode), native mode, `minigw run`, and the build network switches of worktree mode. Open the page with
+**Settings…** in the tray or `/minigw:gw settings`. [docs/windows-parity.md](docs/windows-parity.md)
 lists every control on both. Client options (`minigw share`, `--minigw-work`, `--minigw-ro`) are in [4. Use](#4-use).
 
 - **General** – listen address and port (default `127.0.0.1:8765`; `0.0.0.0` for other computers), access token,
-  scratch folder (agents' temporary files; another folder moves them, for example to a fast SSD), and About. On
-  Windows and Linux also unencrypted connections.
+  scratch folder (agents' temporary files; another folder moves them, for example to a fast SSD; **Choose…** with the
+  Windows tray), and About.
   Mac only: **Worktree mode** (network for builds, network for Codex builds) and **minigw run** (which Macs may run
   builds in a folder of this Mac's SMB share, each with or without network).
-- **Devices** (both) – **Allow any device with the token** (only while no device is allowed), allowed client IPs, on
-  the Mac unencrypted connections from other Macs; devices **waiting for approval** with name (editable), ID, address,
+- **Devices** (both) – **Allow any device with the token** (only while no device is allowed), allowed client IPs,
+  unencrypted connections from other computers; devices **waiting for approval** with name (editable), ID, address,
   time, OS and minigw version, **Allow** / **Reject**; **allowed devices** with name (rename), ID, last seen,
   **Copy ID** / **Remove**. The Mac also shows waiting devices in the menu bar with a notification.
 - **Providers** (LiteLLM, OpenRouter or any other Anthropic-compatible one) – name, base URL, API key, and a switch

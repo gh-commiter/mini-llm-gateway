@@ -2,7 +2,8 @@
 
 Every control of the Mac app's Settings window (Sources/MiniGateway/Settings.swift) and its counterpart in
 `minigw serve` (the settings page `/minigw/settings`, the admin API in [admin-api.md](admin-api.md) and
-`serve.json`). Siri AI and Apple Foundation Models exist only on the Mac.
+`serve.json`). Mac only: Siri AI, Apple Foundation Models, the WebDAV folder mount (direct mode), native mode,
+`minigw run`, and the build network switches of worktree mode.
 
 | Mac pane · control | Windows/Linux | API field | Note |
 |---|---|---|---|
@@ -11,9 +12,9 @@ Every control of the Mac app's Settings window (Sources/MiniGateway/Settings.swi
 | General · Open at Login | General · Start at sign-in | `PATCH general {startAtSignIn}` | Windows: Run value for the tray. Linux: `minigw serve install`. |
 | General · Address, Port | same | `general.address`, `general.port` | Address only empty, `0.0.0.0`, `::` or `127.0.0.1` (the admin API needs 127.0.0.1); a change needs a restart. |
 | Devices · Allowed clients (IP; empty = all) | same | `general.allowedClients` | Connections from other IPs are closed; this computer is always allowed. |
-| Devices · Allow unencrypted connections from other Macs | General · Allow unencrypted connections from other computers | `general.allowPlainRemote` | Such clients have no device key: they also need "Allow any device" (Devices). |
+| Devices · Allow unencrypted connections from other Macs | Devices · Allow unencrypted connections from other computers | `general.allowPlainRemote` | Such clients have no device key: they also need "Allow any device" (Devices). |
 | General · Token: Show, Copy Token, New Token | same | `GET general.connect`, `POST general/token` | A new token also ends settings page sessions. |
-| General · Scratch folder: Choose…, Default, Show in Finder | Scratch folder: path field, Default | `general.scratch` | A browser cannot pick folders or open Explorer; a new folder applies to new sessions, existing copies are not moved. |
+| General · Scratch folder: Choose…, Default, Show in Finder | Scratch folder: path field, Choose… (Windows tray), Default | `general.scratch` | With the Windows tray Choose… opens the folder dialog; on Linux and without the tray the path is typed. No Show in Explorer. A new folder applies to new sessions, existing copies are not moved. |
 | General · About: Version (build), License | same | `status.version`, `status.build` | |
 | Provider · Enabled (off without a key) | same | `PATCH providers/{name} {enabled}` | |
 | Provider · Name, Base URL, Allow http (localhost, a private IP or a .local name only) | same | `PATCH providers/{name} {name, baseURL, insecure}` (Mac: Settings, `POST providers`) | Same rule on both: `https`, or `http` with Allow http to localhost, a private IP or a `.local` name (not a name without a dot: a DNS search domain can make it public). Mac providers with such an `http` URL from before keep working (Allow http on); others need `https`. Renaming moves the key (Go). |
@@ -23,11 +24,11 @@ Every control of the Mac app's Settings window (Sources/MiniGateway/Settings.swi
 | Sidebar + / − for providers | same | `POST providers`, `DELETE providers/{name}` | |
 | Devices: allow any device, allowed clients (IP), waiting (editable name, ID, address, time, OS and minigw version; Allow/Reject; warning when the name equals an allowed device's), allowed (rename, ID, last seen, OS and minigw version; Copy ID, Remove) | same | `devices`, `PATCH devices/{id} {name}`, `general.allowAnyDevice`, `general.allowedClients` | Same pane and approval on both; waiting devices also in the menu bar (Mac) and tray (Windows). Siri per device stays in the Mac's Siri pane; unencrypted connections: Mac "from other Macs", Go "from other computers". |
 | Claude CLI · Enabled | same | `agents/claude.enabled` | |
-| Claude CLI · Executable, Choose…, detected path and version | Executable, Find, detected path and version | `agents/claude.path`, `.exe`, `.version` | A browser cannot pick files: the path is typed, Find auto-detects. |
+| Claude CLI · Executable, Choose…, detected path and version | Executable, Find, Browse… (Windows tray), detected path and version | `agents/claude.path`, `.exe`, `.version` | With the Windows tray Browse… opens the file dialog (also for Codex, Grok and Copilot); on Linux and without the tray the path is typed. Find auto-detects. |
 | Claude CLI · Allowed folders (+/−) | same | `agents/claude.folders` | Absolute paths, not near the config folder; also `--add-dir` and the sandbox. |
 | Claude CLI · Allow local tools, tool table (exclude) | same | `.allowLocalTools`, `.disabledTools`, `GET agents/claude/tools` | On Windows it needs "Allow commands without a sandbox" (no sandbox for Bash). |
 | Claude CLI · Tools (text), Permission mode | Tools (switches), Permission mode | `.tools`, `.permissionMode` | Only without local tools, as on the Mac. |
-| Claude CLI · Setting sources | same | `.settingSources` | Default empty on minigw serve (the Mac: `project,local`): hooks from a client's folder would run on the gateway. |
+| Claude CLI · Setting sources | same | `.settingSources` | Default empty on both; the old Mac default `project,local` migrates to empty (hooks from an agent's folder would run outside the sandbox). |
 | Claude CLI · Command-line tool: Install, Download… | Command-line tool: status, Download… | `status.installDir` | Installed with `minigw serve install`. |
 | Codex CLI · Enabled, Executable | same | `agents/codex.enabled`, `.path`, `.found` | Off by default. Models `claude-codex` (default model) and `claude-codex-<slug>`. Windows: the native `codex.exe` (also the one inside the npm package). |
 | Codex CLI · Models: a switch per model, Enable All, Disable All | same | `agents/codex.models`, `GET agents/codex/models` | From `codex debug models`; null = all, also future ones. |

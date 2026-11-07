@@ -491,8 +491,7 @@ const pages = {
       group(win ? row(t("startup"), toggle(st.installed, on => save(n1, () => api("PATCH", "/general", {startAtSignIn: on}))))
                 : row(t("startup"), value(st.installed ? t("installedYes") : t("startupHint")))),
       n1,
-      group(row(t("address"), field("address", g.address, "0.0.0.0")), row(t("port"), field("port", g.port, "", true)),
-        row(labelSub(t("plainRemote"), t("plainRemoteHelp")), toggle(g.allowPlainRemote, v => save(n2, () => api("PATCH", "/general", {allowPlainRemote: v}))))),
+      group(row(t("address"), field("address", g.address, "0.0.0.0")), row(t("port"), field("port", g.port, "", true))),
       n2,
       section(t("token")),
       group(row(el("div", {class: "label", style: "min-width:0"}, line), buttons(showBtn,
@@ -505,6 +504,10 @@ const pages = {
       n3,
       section(t("scratch")),
       group(row(scratch), el("div", {class: "row", style: "justify-content:flex-end"}, buttons(
+        PICKER ? button(t("choose"), () => save(n4, async () => {  // pladenj na Windows: okno za izbiro mape
+          const p = await pick("folder");
+          if (p) { const r = await api("PATCH", "/general", {scratch: p}); scratch.value = r.scratch; }
+        })) : null,
         button(t("default"), () => save(n4, async () => { const r = await api("PATCH", "/general", {scratch: ""}); scratch.value = r.scratch; }))))),
       n4,
       section(t("status")),
@@ -550,7 +553,8 @@ const pages = {
     return [
       card(...ICON.devices, t("devices"), t("devicesDesc")),
       group(row(labelSub(t("anyDevice"), t("anyDeviceHelp")), toggle(g.allowAnyDevice, v => save(n2, () => api("PATCH", "/general", {allowAnyDevice: v})))),
-        row(t("allowedClients"), clients)),
+        row(t("allowedClients"), clients),
+        row(labelSub(t("plainRemote"), t("plainRemoteHelp")), toggle(g.allowPlainRemote, v => save(n2, () => api("PATCH", "/general", {allowPlainRemote: v}))))),
       n2,
       section(t("waiting")), waiting,
       section(t("allowed")),

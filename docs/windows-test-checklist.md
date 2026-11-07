@@ -27,3 +27,37 @@ One pass with the combined build, before the release. Each item: what to do, wha
 - Codex with writing off, and Grok: refused with "use sync".
 - Gateway without git on PATH: register refused with "git is not installed on the gateway".
 - After the session: the clone in `<scratch>\worktrees\<device>\…` is removed; the mirror in `<scratch>\repos` stays.
+
+## Devices (gateway on Windows)
+- Connect a new client: it waits in the tray menu (Waiting for approval) and on the settings page (Devices), with a tray
+  notice. The row shows `<user>@<computer>`, ID, address, time, OS and minigw version.
+- Edit the name in the waiting row, then Allow: the device is allowed under that name. Reject: it disappears; its next
+  connect waits again.
+- `minigw gw devices allow <id> --name Laptop` and `minigw gw devices rename <id> --name Desk`: the name changes on the
+  page at once. `minigw gw devices deny <id>` removes it (a name is not accepted).
+- A waiting device with the same name as an allowed one shows ⚠ (same name).
+- Allowed devices show last seen and OS/version; Copy ID copies the ID.
+- "Allow any device with the token" can be turned on only while the allowed list is empty; with a device allowed it is off.
+- A client without a device key (an old minigw, or plain HTTP from another computer) is refused unless the list is empty
+  and "Allow any device" is on.
+- Devices pane: Allowed clients (IP) and "Allow unencrypted connections" are there, not under General.
+
+## Providers
+- LiteLLM and OpenRouter are always listed (off until a key is set). They can be turned off, but not removed or renamed
+  (page, `minigw gw provider remove`, admin API: 400).
+- Add a provider at `http://localhost:4000`, `http://192.168.x.y` or `http://name.local` with "Allow http": accepted.
+  Without the switch: refused.
+- `http://example.com` or `http://gateway` (a name without a dot): refused even with the switch.
+
+## minigw gw CLI on Windows
+- `minigw gw claude --folders C:\Projects --allow-local-tools=true`: folders and local tools show on the page.
+  (Local tools also need "Allow commands without a sandbox" on Windows: refused otherwise.)
+- `minigw gw autostart off` / `on`: the HKCU Run value for the tray goes away / comes back (tray menu "Start at sign-in").
+
+## Scratch rules
+- Settings page → General → Scratch folder: `C:\`, your home folder, `%TEMP%`, or a folder inside an allowed folder:
+  refused with a reason. Choose… (tray) opens the folder dialog.
+- Claude CLI → Allowed folders: add `%LOCALAPPDATA%` (it contains the default scratch folder) or a folder inside Scratch:
+  refused ("contains or is inside the scratch folder"). The same with `minigw gw claude --folders`.
+- Put such a folder into `serve.json` by hand and restart: the gateway starts, the log says Claude CLI and Codex are
+  off until you remove it.
