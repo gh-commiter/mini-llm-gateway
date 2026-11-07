@@ -5,10 +5,13 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -33,17 +36,80 @@ All take --config FILE (default: the minigw serve config).`
 
 type adminClient struct {
 	base, secret string  // tekoči router
+	routerKey    []byte  // javni ključ routerja: Noise preveri, da je na vratih res ta router
 	off          *server // router ne teče
 }
 
-var adminHTTPClient = &http.Client{Transport: &http.Transport{}, Timeout: 60 * time.Second} // brez posrednika
+// errNotRouter: na vratih je drug program (rokovanje Noise s ključem routerja ne uspe); skrivnost ni bila poslana.
+var errNotRouter = errors.New("not this router")
+
+// noiseClientConn: HTTP v okvirjih MGW2 (kot noiseProxy), za skrbniški API na 127.0.0.1.
+type noiseClientConn struct {
+	net.Conn
+	sess       *noiseSession
+	raw, plain []byte
+}
+
+func (c *noiseClientConn) Write(p []byte) (int, error) {
+	if _, err := c.Conn.Write(frames(p, c.sess.send)); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
+func (c *noiseClientConn) Read(p []byte) (int, error) {
+	buf := make([]byte, 64<<10)
+	for len(c.plain) == 0 {
+		n, err := c.Conn.Read(buf)
+		if n > 0 {
+			plain, rest, ferr := unframe(append(c.raw, buf[:n]...), c.sess.receive)
+			if ferr != nil {
+				return 0, ferr
+			}
+			c.raw, c.plain = rest, append(c.plain, plain...)
+		}
+		if err != nil && len(c.plain) == 0 {
+			return 0, err
+		}
+	}
+	n := copy(p, c.plain)
+	c.plain = c.plain[n:]
+	return n, nil
+}
+
+// dialAdmin: TCP na 127.0.0.1 in rokovanje Noise NK s ključem routerja iz serve.json. Kdor zasede vrata brez
+// zasebnega ključa routerja, rokovanja ne konča in nikoli ne dobi skrivnosti ali ključev prehodov.
+func dialAdmin(ctx context.Context, addr string, routerKey []byte) (net.Conn, error) {
+	c, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	hs, err := newInitiator(routerKey)
+	first, ferr := hs.first()
+	if err != nil || ferr != nil {
+		c.Close()
+		return nil, errNotRouter
+	}
+	c.SetDeadline(time.Now().Add(10 * time.Second))
+	reply := make([]byte, handshakeLen)
+	if _, err := c.Write(append(append([]byte{}, noiseMagic...), first...)); err == nil {
+		_, err = io.ReadFull(c, reply)
+	}
+	sess, herr := hs.finish(reply)
+	if err != nil || herr != nil {
+		c.Close()
+		return nil, fmt.Errorf("%w: %v", errNotRouter, errors.Join(err, herr))
+	}
+	c.SetDeadline(time.Time{})
+	return &noiseClientConn{Conn: c, sess: sess}, nil
+}
 
 func (a *adminClient) http(method, path string, body []byte, timeout time.Duration) (int, []byte, error) {
 	r, _ := http.NewRequest(method, a.base+path, bytes.NewReader(body))
 	r.Header.Set("authorization", "Bearer "+a.secret)
 	r.Header.Set("content-type", "application/json")
-	c := *adminHTTPClient
-	c.Timeout = timeout
+	c := &http.Client{Timeout: timeout, Transport: &http.Transport{DisableKeepAlives: true, // brez posrednika
+		DialContext: func(ctx context.Context, _, addr string) (net.Conn, error) { return dialAdmin(ctx, addr, a.routerKey) }}}
 	resp, err := c.Do(r)
 	if err != nil {
 		return 0, nil, err
@@ -61,10 +127,14 @@ func openAdmin(cfgPath string) *adminClient {
 	}
 	a := &adminClient{}
 	cfgDir, _ := filepath.Abs(filepath.Dir(cfgPath))
-	if b, err := os.ReadFile(filepath.Join(cfgDir, "admin.secret")); err == nil {
+	k, kerr := c.privateKey()
+	if b, err := os.ReadFile(filepath.Join(cfgDir, "admin.secret")); err == nil && kerr == nil {
 		a.base, a.secret = "http://127.0.0.1:"+strconv.Itoa(c.Port)+adminPrefix, strings.TrimSpace(string(b))
+		a.routerKey = k.PublicKey().Bytes()
 		status, _, err := a.http("GET", "/status", nil, 3*time.Second)
 		switch {
+		case errors.Is(err, errNotRouter):
+			fmt.Fprintf(os.Stderr, "minigw: port %d answers, but not as the router of %s (wrong key): changing that file only; nothing was sent to it\n", c.Port, cfgPath)
 		case err != nil: // ne teče
 		case status == 200:
 			return a

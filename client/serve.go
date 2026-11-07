@@ -108,11 +108,32 @@ func saveServeConfig(path string, c serveConfig) {
 
 func writeServeConfig(path string, c serveConfig) error {
 	data, _ := json.MarshalIndent(c, "", "  ")
-	os.MkdirAll(filepath.Dir(path), 0o700)
-	if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
+	if err := writeFileAtomic(path, append(data, '\n')); err != nil {
 		return errors.New("cannot save " + path + ": " + err.Error())
 	}
-	return os.Chmod(path, 0o600) // WriteFile ohrani način obstoječe datoteke
+	return nil
+}
+
+// writeFileAtomic: nova datoteka 0600 v isti mapi, Sync, preimenovanje: povezava na poti se ne sledi, datoteka ni
+// nikoli širša od 0600 in nikoli napol zapisana.
+func writeFileAtomic(path string, data []byte) error {
+	os.MkdirAll(filepath.Dir(path), 0o700)
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name()) // po uspešnem preimenovanju ne obstaja več
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
 }
 
 // connectLine: vrstica za odjemalce (žeton#javni ključ routerja).
@@ -199,6 +220,9 @@ func serveCommand(args []string) {
 			c.Folder = abs
 		}
 		saveServeConfig(*cfgPath, c)
+		if abs, _ := filepath.Abs(filepath.Dir(*cfgPath)); protectConfigDir(abs) != nil {
+			say("WARNING: cannot make " + abs + " private to this user: use the default config folder")
+		}
 		if connectLine(c) == "" {
 			fail("invalid key in " + *cfgPath)
 		}
@@ -320,6 +344,10 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 			return nil, fmt.Errorf("gateway %s in the config: %v", g.Name, err)
 		}
 	}
+	protectErr := protectConfigDir(cfgDir)
+	if !validAddress(c.Address) {
+		return nil, errors.New("address " + c.Address + ": use empty (all), 0.0.0.0, :: or 127.0.0.1, so that minigw router and the admin API reach the router on 127.0.0.1; limit clients with a firewall")
+	}
 	exe, err := checkAgent(&c, cfgDir)
 	if err != nil {
 		return nil, err
@@ -340,11 +368,15 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 		sessions: sessionRegistry{m: map[string]string{}}, procs: make(chan struct{}, 6),
 		gwSlots: make(chan struct{}, 16)}
 	switch {
-	case !hasBash(c.Tools):
-	case runtime.GOOS == "windows":
-		s.log.Printf("WARNING: Bash is allowed without a sandbox: agents can run any command as this user and read the gateway API keys in Credential Manager and the admin secret")
+	case runtime.GOOS == "windows" && len(unsandboxedTools(c.Tools)) > 0:
+		s.log.Printf("WARNING: %s allowed without a sandbox: agents can run any command as this user and read the gateway API keys in Credential Manager and the admin secret",
+			strings.Join(unsandboxedTools(c.Tools), ", "))
+	case runtime.GOOS == "windows" || !hasBash(c.Tools):
 	default:
 		s.log.Printf("WARNING: Bash is allowed; it runs only in Claude Code's sandbox (on Linux it needs bubblewrap and socat)")
+	}
+	if protectErr != nil {
+		s.log.Printf("WARNING: cannot make %s private to this user (%v): other users of this computer may read the token, the router key and the admin secret; use the default config folder", cfgDir, protectErr)
 	}
 	if len(exe) == 0 {
 		s.log.Printf("WARNING: claude not found (install Claude Code or set \"claude\" in the config); no models")
@@ -356,19 +388,62 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 // Za zagon in za spremembe prek skrbniškega API.
 func checkAgent(c *serveConfig, cfgDir string) ([]string, error) {
 	if c.Folder != "" {
-		c.Folder, _ = filepath.Abs(c.Folder)
-		if under(cfgDir, c.Folder) || under(c.Folder, cfgDir) { // agent bi dosegel žeton in ključ routerja
-			return nil, errors.New("folder must not contain or be inside the config folder " + cfgDir)
+		abs, _ := filepath.Abs(c.Folder)
+		real, err := filepath.EvalSymlinks(abs) // povezava v mapo nastavitev ne sme obiti preverjanja
+		if err != nil {
+			return nil, errors.New("folder: " + err.Error())
 		}
+		realCfg, err := filepath.EvalSymlinks(cfgDir)
+		if err != nil {
+			realCfg = cfgDir
+		}
+		for _, f := range []string{abs, real} {
+			for _, d := range []string{cfgDir, realCfg} {
+				if under(d, f) || under(f, d) { // agent bi dosegel žeton in ključ routerja
+					return nil, errors.New("folder must not contain or be inside the config folder " + cfgDir)
+				}
+			}
+		}
+		c.Folder = real
 	}
 	exe, err := resolveClaude(c.Claude)
 	if err != nil {
 		return nil, err
 	}
-	if hasBash(c.Tools) && runtime.GOOS == "windows" && !c.AllowUnsandboxedBash {
-		return nil, errors.New("tools contains Bash, but Windows has no sandbox for it: remove Bash from tools, or set \"allowUnsandboxedBash\": true to let agents run any command as this user (and read the gateway API keys in Credential Manager and the admin secret)")
+	if t := unsandboxedTools(c.Tools); len(t) > 0 && runtime.GOOS == "windows" && !c.AllowUnsandboxedBash {
+		return nil, errors.New("tools " + strings.Join(t, ", ") + " have no sandbox on Windows: remove them from tools, or set \"allowUnsandboxedBash\": true to let agents run any command as this user (and read the gateway API keys in Credential Manager and the admin secret)")
 	}
 	return exe, nil
+}
+
+// windowsSafeTools: orodja, ki na Windows ne poganjajo ukazov (dostop do datotek omeji Claude Code na ./**).
+// Vse drugo (Bash, PowerShell, neznana imena) na Windows zahteva allowUnsandboxedBash.
+var windowsSafeTools = map[string]bool{"Read": true, "Grep": true, "Glob": true, "LS": true, "Edit": true, "Write": true,
+	"MultiEdit": true, "NotebookEdit": true, "NotebookRead": true, "WebFetch": true, "WebSearch": true, "TodoWrite": true}
+
+func unsandboxedTools(tools string) []string {
+	var out []string
+	for _, t := range strings.Split(tools, ",") {
+		if t = strings.TrimSpace(t); t != "" && !windowsSafeTools[t] {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// protectConfigDir: na Windows mapa nastavitev zunaj %AppData% dobi DACL samo za lastnika (v %AppData% je že
+// zasebna). Drugod je mapa 0700.
+func protectConfigDir(cfgDir string) error {
+	appData, err := os.UserConfigDir()
+	if runtime.GOOS != "windows" || (err == nil && under(cfgDir, appData)) {
+		return nil
+	}
+	return protectDir(cfgDir)
+}
+
+// validAddress: naslov, na katerem router posluša tudi na 127.0.0.1 (skrbniški API in minigw router ga potrebujeta).
+func validAddress(a string) bool {
+	return a == "" || a == "0.0.0.0" || a == "::" || a == "127.0.0.1"
 }
 
 // conf: posnetek nastavitev; rezine se ne spreminjajo na mestu (update jih kopira).
@@ -386,7 +461,7 @@ func (s *server) claudeExe() []string {
 
 // update: sprememba velja takoj in se shrani. f teče dvakrat (na serve.json in na tekoče nastavitve, ki imajo še
 // zastavice ukazne vrstice in privzete vrednosti), zato brez stranskih učinkov.
-func (s *server) update(f func(*serveConfig) error) error {
+func (s *server) update(f func(*serveConfig) error, commit ...func()) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	clone := func(c serveConfig) serveConfig {
@@ -412,6 +487,9 @@ func (s *server) update(f func(*serveConfig) error) error {
 		return err
 	}
 	s.cfg = live
+	for _, c := range commit { // pod s.mu, šele ko sta oba prehoda uspela
+		c()
+	}
 	return nil
 }
 

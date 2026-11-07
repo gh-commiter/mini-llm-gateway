@@ -16,6 +16,11 @@ except where a response says `"restartRequired": true`.
   (the folder agents may not read). The router creates it on first start. Missing or wrong: `401`. The router's
   client token is not the admin secret.
 - Loopback skips the device check and encryption for normal API calls; the admin API still needs the secret.
+- **Clients authenticate the router before they send the secret.** Something else may listen on the port (the
+  router is stopped, another program took it). The CLI therefore speaks MGW2 (Noise NK) to `127.0.0.1` with the
+  router's public key from the config; a program without the router's private key cannot finish the handshake and
+  never sees the secret or a gateway key. A loopback Noise connection is still a loopback peer.
+- The router must listen on `127.0.0.1` as well: `address` is empty (all), `0.0.0.0`, `::` or `127.0.0.1`.
 - No CORS headers, on any response. A browser page cannot read responses or send the header without a preflight,
   which fails.
 - Bodies are JSON, at most 1 MB. Unknown fields in a body are an error.

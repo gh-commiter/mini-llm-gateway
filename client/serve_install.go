@@ -43,9 +43,9 @@ func servicePath(goos string) string {
 	return ""
 }
 
-// systemdQuote: argument v ExecStart (narekovaji, \ in % ubežani).
+// systemdQuote: argument v ExecStart (narekovaji, \, % in $ ubežani; novih vrstic serviceCommand ne dovoli).
 func systemdQuote(s string) string {
-	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`, "%", "%%").Replace(s) + `"`
+	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`, "%", "%%", "$", "$$").Replace(s) + `"`
 }
 
 func xmlText(s string) string {
@@ -99,6 +99,9 @@ func serviceCommand(sub, goos, cfgPath string) (string, error) {
 		return "", err
 	}
 	cfgPath, _ = filepath.Abs(cfgPath)
+	if strings.ContainsAny(exe+cfgPath, "\r\n\x00") || (goos == "windows" && strings.Contains(exe+cfgPath, `"`)) {
+		return "", errors.New("the program or config path contains a line break or quote: move it to a plain path")
+	}
 	if _, err := os.Stat(cfgPath); sub == "install" && err != nil {
 		return "", errors.New("no " + cfgPath + ": run minigw serve init first")
 	}

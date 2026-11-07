@@ -166,3 +166,30 @@ func regRunDel(name string) {
 	n, _ := syscall.UTF16PtrFromString(name)
 	procRegDelete.Call(h, uintptr(unsafe.Pointer(n)))
 }
+
+// protectDir: zaščiten DACL samo za lastnika in SYSTEM (mapa nastavitev zunaj %AppData%, kjer ni privzeto zasebna).
+func protectDir(dir string) error {
+	var (
+		pConvert = advapi32.NewProc("ConvertStringSecurityDescriptorToSecurityDescriptorW")
+		pGetDacl = advapi32.NewProc("GetSecurityDescriptorDacl")
+		pSetSec  = advapi32.NewProc("SetNamedSecurityInfoW")
+		pFree    = syscall.NewLazyDLL("kernel32.dll").NewProc("LocalFree")
+	)
+	var sd uintptr
+	sddl, _ := syscall.UTF16PtrFromString("D:P(A;OICI;FA;;;OW)(A;OICI;FA;;;SY)")
+	if r, _, err := pConvert.Call(uintptr(unsafe.Pointer(sddl)), 1 /* SDDL_REVISION_1 */, uintptr(unsafe.Pointer(&sd)), 0); r == 0 {
+		return err
+	}
+	defer pFree.Call(sd)
+	var present, defaulted int32
+	var dacl uintptr
+	if r, _, err := pGetDacl.Call(sd, uintptr(unsafe.Pointer(&present)), uintptr(unsafe.Pointer(&dacl)), uintptr(unsafe.Pointer(&defaulted))); r == 0 {
+		return err
+	}
+	name, _ := syscall.UTF16PtrFromString(dir)
+	const seFileObject, daclInfo, protectedDacl = 1, 0x4, 0x80000000
+	if r, _, _ := pSetSec.Call(uintptr(unsafe.Pointer(name)), seFileObject, daclInfo|protectedDacl, 0, 0, dacl, 0); r != 0 {
+		return syscall.Errno(r)
+	}
+	return nil
+}
