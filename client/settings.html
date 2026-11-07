@@ -137,6 +137,9 @@ const S = {
   allowedFoldersHint: ["Agents work only in the session's folder and these folders. Type a full path and press +.",
     "Agenti delajo le v mapi seje in v teh mapah. Vpiši celo pot in pritisni +."],
   localTools: ["Allow local tools", "Dovoli lokalna orodja"],
+  askOthers: ["May ask other models", "Sme vprašati druge modele"],
+  askOthersHelp: ["The agent may ask another model of this gateway (for example Codex) with minigw, in the same folder and with the same device's rights; one level deep, never its own kind. Codex needs Allow network access for it.",
+    "Agent sme z minigw vprašati drug model tega prehoda (npr. Codex), v isti mapi in s pravicami iste naprave; le en nivo globlje, nikoli iste vrste. Codex za to potrebuje Dovoli omrežje."],
   localToolsHelp: ["Agents get every Claude Code tool, but files only in the allowed folders: commands run in Claude Code's sandbox.",
     "Agenti dobijo vsa orodja Claude Code, a datoteke le v dovoljenih mapah: ukazi tečejo v sandboxu Claude Code."],
   localToolsWin: ["Every Claude Code tool, including commands: on Windows this needs “Allow commands without a sandbox”.",
@@ -390,7 +393,8 @@ async function agentPane(kind) {
     ...(codex ? [section(t("allowedFolders")), folderList(c.folders, v => api("PATCH", "/agents/claude", {folders: v}), t("allowedFoldersShared"), win)] : []),
     section(t("sandbox")),
     group(row(t("allowWrite"), toggle(a.write, v => save(n2, async () => { await patch({write: v}); show(kind); }), locked)),
-      codex ? row(t("allowNetwork"), toggle(a.network, v => save(n2, () => patch({network: v})), !a.write || locked)) : null),
+      codex ? row(t("allowNetwork"), toggle(a.network, v => save(n2, () => patch({network: v})), !a.write || locked)) : null,
+      row(labelSub(t("askOthers"), t("askOthersHelp")), toggle(a.askOthers, v => save(n2, () => patch({askOthers: v})), locked))),
     n2, n3,
   ];
 }
@@ -429,7 +433,8 @@ async function copilotPane() {
     group(row(t("allowWrite"), toggle(a.write, v => save(n2, async () => { await patch({write: v}); show("copilot"); }), locked)),
       row(t("allowWeb"), toggle(a.network, v => save(n2, () => patch({network: v})), locked)),
       row(t("allowCommands"), commands),
-      row(labelSub(t("copilotToken")), token)),
+      row(labelSub(t("copilotToken")), token),
+      row(labelSub(t("askOthers"), t("askOthersHelp")), toggle(a.askOthers, v => save(n2, () => patch({askOthers: v})), locked))),
     n2, n3,
   ];
 }
@@ -708,7 +713,8 @@ const pages = {
       el("div", {style: "height:12px"}),
       group(row(labelSub(t("localTools"), win ? t("localToolsWin") : t("localToolsHelp")), toggle(c.allowLocalTools, v => save(n2, async () => { await patch({allowLocalTools: v}); show("claude"); }))),
         c.allowLocalTools ? null : row(t("permissionMode"), mode),
-        row(labelSub(t("settingSources"), t("settingSourcesHelp")), sources)),
+        row(labelSub(t("settingSources"), t("settingSourcesHelp")), sources),
+        row(labelSub(t("askOthers"), t("askOthersHelp")), toggle(c.askOthers, v => save(n2, () => patch({askOthers: v}))))),
       n2,
       ...toolsPart,
       section(t("folder")), group(row(folder)), n3,

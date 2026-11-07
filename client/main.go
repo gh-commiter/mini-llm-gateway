@@ -237,6 +237,9 @@ func main() {
 	if len(args) > 0 {
 		first = args[0]
 	}
+	if agentConn() != nil && (first == "connect" || first == "disconnect" || first == "profiles") {
+		fail("minigw runs inside an agent of the gateway (MINIGW_AGENT_URL): " + first + " is not available here")
+	}
 	switch first {
 	case "verify-sums": // #8 (skrit): podpis SHA256SUMS za install-minigw.sh; izhod 0 = podpisano s pripetim ključem
 		if len(args) != 3 {

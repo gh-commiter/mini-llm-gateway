@@ -60,6 +60,7 @@ type serveConfig struct {
 	ClaudeDisabled   bool          `json:"claudeDisabled,omitempty"`   // Claude CLI izklopljen (privzeto vklopljen)
 	AllowedFolders   []string      `json:"allowedFolders,omitempty"`   // dodatne mape, v katerih agenti smejo delati
 	AllowLocalTools  bool          `json:"allowLocalTools,omitempty"`  // vsa orodja Claude Code (razen DisabledTools)
+	ClaudeAskOthers  bool          `json:"claudeAskOthers,omitempty"`  // agent Claude CLI sme vprašati druge modele
 	DisabledTools    []string      `json:"disabledTools,omitempty"`
 	SettingSources   string        `json:"settingSources,omitempty"` // --setting-sources; prazno = brez (hooki iz mape ne tečejo)
 	Codex            agentCLI      `json:"codex"`                    // Codex CLI (serve_agents.go), privzeto izklopljen
@@ -929,6 +930,9 @@ func (s *server) handle(w http.ResponseWriter, r *req) (int, string) {
 	if r.URL.Path == "/minigw/settings" || r.URL.Path == "/minigw/settings/login" || r.URL.Path == "/minigw/settings/logout" ||
 		r.URL.Path == "/minigw/settings/pick" {
 		return s.settingsHTTP(w, r), ""
+	}
+	if r.h(agentChainHeader) != "" && runOf(r) == nil { // veriga agentov je le v prehodu; od zunaj je ponarejena
+		return writeError(w, r.rid, 400, "The "+agentChainHeader+" header is not accepted"), ""
 	}
 	if !s.authorized(r) {
 		return writeError(w, r.rid, 401, "Invalid or missing token"), ""

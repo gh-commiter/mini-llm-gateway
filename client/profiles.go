@@ -72,8 +72,21 @@ func saveProfile(name string, c connection) {
 	}
 }
 
-// loadProfiles: shranjeni profili, privzeti prvi; z --minigw-profile le ta.
+// agentConn: minigw teče v agentu prehoda (MINIGW_AGENT_URL in MINIGW_AGENT_TOKEN): le ta povezava, brez profilov,
+// proxyja, šifriranja in deljenja mape (prehod sam doda napravo, sejo in mapo klicatelja).
+func agentConn() *connection {
+	u, t := os.Getenv("MINIGW_AGENT_URL"), os.Getenv("MINIGW_AGENT_TOKEN")
+	if u == "" || t == "" {
+		return nil
+	}
+	return &connection{URL: u, Token: t}
+}
+
+// loadProfiles: shranjeni profili, privzeti prvi; z --minigw-profile le ta. V agentu prehoda le njegova povezava.
 func loadProfiles() []profile {
+	if c := agentConn(); c != nil {
+		return []profile{{"agent", *c}}
+	}
 	names := profileNames()
 	def := defaultName(names)
 	if profileFlag != "" {

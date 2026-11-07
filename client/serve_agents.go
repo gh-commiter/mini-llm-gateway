@@ -37,6 +37,7 @@ type agentCLI struct {
 	Network    bool     `json:"network,omitempty"`    // Codex: omrežje za ukaze v sandboxu; Copilot: spletna orodja (url)
 	Write      bool     `json:"write,omitempty"`      // Copilot: pisanje (privzeto le branje)
 	Commands   bool     `json:"commands,omitempty"`   // Copilot: ukazi lupine (izrecno dovoljenje)
+	AskOthers  bool     `json:"askOthers,omitempty"`  // agent sme vprašati druge modele tega prehoda (serve_agentcalls.go)
 }
 
 func (a agentCLI) modelEnabled(m string) bool { return a.Models == nil || slices.Contains(a.Models, m) }
@@ -512,6 +513,9 @@ func parseGrokEvent(line []byte) (grokEvent, bool) {
 
 // agentFolder: sinhronizirana kopija mape odjemalca za agenta (le sync); st != 0 = odgovor že poslan.
 func (s *server) agentFolder(w http.ResponseWriter, r *req, label, agent string) (dir, note string, readOnly bool, st int) {
+	if p := runOf(r); p != nil { // vprašal ga je drug agent: njegova mapa, brez novega prenosa
+		return p.dir, nestedNote(p), p.readOnly, 0
+	}
 	session, clientCwd := r.h("x-claude-mini-session"), r.h("x-claude-mini-cwd")
 	share := s.hub.waitShare(r.Context(), session, r.owner(), r.h("x-claude-mini-share") == "1")
 	switch {
@@ -567,6 +571,9 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 	if r.h("x-claude-mini-session") == "" {
 		return writeError(w, r.rid, 400, k.prefix+" needs a synced folder: run minigw with MINIGW_WORK=sync in a project folder")
 	}
+	if why := chainRefusal(r, k.name); why != "" { // vprašani agent: globina in brez ponovitve vrste
+		return writeError(w, r.rid, 403, why)
+	}
 	if s.hub.isWorktree(r.h("x-claude-mini-session")) && (k.name == "grok" || !ac.canWrite(k)) { // besedila kot na Macu
 		msg := "Grok is not supported in worktree mode yet; use sync (MINIGW_WORK=sync)"
 		if k.name != "grok" {
@@ -606,11 +613,13 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			}
 		}
 	}
-	select { // skupaj s claude največ 6 procesov hkrati
-	case s.procs <- struct{}{}:
-		defer func() { <-s.procs }()
-	case <-r.Context().Done():
-		return 499
+	if runOf(r) == nil { // vprašani agent ne čaka na mesto, ki ga drži klicatelj
+		select { // skupaj s claude največ 6 procesov hkrati
+		case s.procs <- struct{}{}:
+			defer func() { <-s.procs }()
+		case <-r.Context().Done():
+			return 499
+		}
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), agentTimeout) // L5
 	defer cancel()
@@ -631,7 +640,13 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 		m := agentMounts{cfgDir: s.cfgDir, state: state, envVar: strings.ToUpper(k.bin) + "_HOME", files: files, rw: append([]string{dir, tmp}, extra...),
 			hide: c.Scratch}
 		wt, _, maven, objects, inTree := s.hub.worktreeOf(r.h("x-claude-mini-session"), k.name)
+		if p := runOf(r); p != nil { // klon klicatelja
+			wt, maven, objects, inTree = p.wt, p.maven, p.objects, p.wt != ""
+		}
+		run, runEnv := s.startRun(r, k.name, dir, readOnly, wt, maven, objects) // »May ask other models«
+		defer run.stop()
 		withTree := func(m agentMounts) agentMounts { // worktree: Maven agentov, objekti zrcala (branje), .git klona le za branje
+			m.env = append(m.env, runEnv...)
 			if inTree {
 				m.rw, m.ro = append(m.rw, maven), append(m.ro, objects)
 				m.pins = []string{filepath.Join(wt, ".git")} // L1: .git klona je točka priklopa (mv/rm: EBUSY)
@@ -746,7 +761,9 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			return "", err
 		}
 		if agent {
-			s.hub.syncBack(r.h("x-claude-mini-session"), k.name) // spremembe agenta k odjemalcu pred odgovorom
+			if runOf(r) == nil { // vprašani agent: spremembe prenese klicatelj na koncu
+				s.hub.syncBack(r.h("x-claude-mini-session"), k.name) // spremembe agenta k odjemalcu pred odgovorom
+			}
 			if thread != "" {
 				s.sessions.set(transcriptKey(append(slices.Clone(all), turn{"assistant", text}), scope), thread)
 			}
@@ -764,7 +781,7 @@ func agentEnv(env []string) []string {
 	for _, e := range env {
 		name, _, _ := strings.Cut(e, "=")
 		if strings.HasPrefix(name, "ANTHROPIC_") || strings.HasPrefix(name, "CLAUDE_CODE_") || slices.Contains([]string{"CLAUDECODE",
-			"DBUS_SESSION_BUS_ADDRESS", "SSH_AUTH_SOCK", "GPG_AGENT_INFO", "GNOME_KEYRING_CONTROL", "CODEX_HOME", "GROK_HOME",
+			"DBUS_SESSION_BUS_ADDRESS", "SSH_AUTH_SOCK", "GPG_AGENT_INFO", "GNOME_KEYRING_CONTROL", "CODEX_HOME", "GROK_HOME", "MINIGW_AGENT_URL", "MINIGW_AGENT_TOKEN",
 			"GH_TOKEN", "GITHUB_TOKEN"}, name) || strings.HasPrefix(name, "COPILOT_") {
 			continue
 		}
