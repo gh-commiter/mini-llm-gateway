@@ -245,8 +245,8 @@ func TestRouterCLIOnlineAndOffline(t *testing.T) {
 	if c, _ := loadServeConfig(off); len(c.Devices) != 1 {
 		t.Fatalf("offline allow: %+v", c.Devices)
 	}
-	dash := "-" + id[1:] // ID z vodilnim »-« ni zastavica (prej je občasno ustavil test)
-	for !validDeviceID(dash) {
+	dash := "-" + id[1:]                     // ID z vodilnim »-« ni zastavica (prej je občasno ustavil test)
+	for !validDeviceID(dash) || dash == id { // id se lahko že sam začne z »-« (1 od 64): to bi bila ista naprava
 		dash = "-" + base64url(newDevice("X").key.Public().(ed25519.PublicKey))[1:]
 	}
 	if out := run(off, "devices", "allow", dash); out != "allowed device "+dash+"\n" {
