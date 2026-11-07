@@ -202,7 +202,7 @@ private func acceptPeerPort(_ fd: Int32) -> (Int32, UInt16) {
         let (s, peerPort) = acceptPeerPort(l)
         defer { close(s) }
         #expect(PeerProcess.pid(localPort: peerPort, remotePort: routerPort) == getpid())
-        #expect(PeerProcess.refusal(peerPort: peerPort, routerPort: routerPort, appPID: getpid())?.contains("started by Mini Gateway") == true)
+        #expect(PeerProcess.refusal(peerPort: peerPort, routerPort: routerPort, appPID: getpid()) == "admin requests from agent processes are not allowed")
         #expect(PeerProcess.refusal(peerPort: peerPort, routerPort: routerPort, appPID: 999_999) == nil)
         #expect(PeerProcess.refusal(peerPort: 1, routerPort: routerPort, appPID: 999_999)?.contains("cannot identify") == true)
     }
@@ -220,7 +220,7 @@ private func acceptPeerPort(_ fd: Int32) -> (Int32, UInt16) {
         let (s, peerPort) = acceptPeerPort(l)
         defer { close(s) }
         #expect(PeerProcess.pid(localPort: peerPort, remotePort: routerPort) == nc.processIdentifier)
-        #expect(PeerProcess.refusal(peerPort: peerPort, routerPort: routerPort, appPID: getpid())?.contains("started by Mini Gateway") == true)
+        #expect(PeerProcess.refusal(peerPort: peerPort, routerPort: routerPort, appPID: getpid()) == "admin requests from agent processes are not allowed")
     }
 
     /// Proces v sandboxu je zavrnjen, tudi če ni potomec aplikacije (dvojni fork se ne izogne sandboxu).

@@ -9,10 +9,10 @@ public enum PeerProcess {
         guard let pid = pid(localPort: peerPort, remotePort: routerPort) else {
             return "cannot identify the process on this Mac that sent the request"
         }
-        if isSandboxed(pid) { return "a sandboxed process (an agent) may not use the admin API" }
+        if isSandboxed(pid) { return "admin requests from agent processes are not allowed (sandboxed process)" }
         var p = pid
         for _ in 0..<64 {  // otrok, vnuk … aplikacije: agent ali ukaz agenta
-            if p == appPID { return "a process started by Mini Gateway (an agent) may not use the admin API" }
+            if p == appPID { return "admin requests from agent processes are not allowed" }
             guard let pp = parent(p), pp > 1, pp != p else { return nil }
             p = pp
         }
