@@ -34,6 +34,7 @@ type shareClient struct {
 	root     string
 	readOnly bool // pisanje zavrne minigw sam (router mapo priklopi tudi rdonly)
 	sync     bool // --minigw-work=sync: router dobi kopijo namesto priklopa (sync.go)
+	native   bool // --minigw-work=native: router dela v svoji mapi (native.go); posla routerja ni
 	mu       sync.Mutex
 	key      string
 	syncMu   sync.Mutex
@@ -59,9 +60,21 @@ func (s *shareClient) register() bool {
 	if s.sync {
 		work = "sync"
 	}
-	st, data := call(s.c, "POST", "/minigw/share", map[string]string{
+	h := map[string]string{
 		"x-claude-mini-session": s.session, "x-claude-mini-cwd": s.root, "x-share-key": s.currentKey(), "x-share-mode": s.mode(),
-		"x-claude-mini-work": work}, nil, 10*time.Second)
+		"x-claude-mini-work": work}
+	if s.native { // vsaka registracija (tudi po ponovnem zagonu routerja) z novim dokazom
+		proof, why := nativeProof(s.c, s.root)
+		if proof == nil {
+			s.refusal = why
+			return false
+		}
+		for k, v := range proof {
+			h[k] = v
+		}
+		h["x-claude-mini-work"] = "native"
+	}
+	st, data := call(s.c, "POST", "/minigw/share", h, nil, 10*time.Second)
 	var r struct {
 		Key   string `json:"key"`
 		Error struct {
@@ -125,6 +138,8 @@ func (s *shareClient) work() {
 // --minigw-ro, WebDAV le v načinu direct (pisanje ne pri --minigw-ro).
 func (s *shareClient) handle(job davJob, k string) davResponse {
 	switch {
+	case s.native:
+		return dav(403, nil, nil)
 	case strings.HasPrefix(job.Method, "SYNC-"):
 		if !s.sync || (job.Method == "SYNC-PULL" && s.readOnly) || (job.Method != "SYNC-PUSH" && job.Method != "SYNC-PULL") {
 			return dav(403, nil, nil)

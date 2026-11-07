@@ -175,6 +175,8 @@ func main() {
 	case "share":
 		shareCommand(args[1:])
 		return
+	case "run":
+		os.Exit(runCommand(args[1:]))
 	case "connect":
 		if len(args) < 2 {
 			fail("usage: minigw connect <host[:port]> [--token '<token>']")
@@ -315,6 +317,8 @@ func main() {
 				"minigw share add|remove [folder] | list    also share a system or hidden folder with the router\n" +
 				"minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)\n" +
 				"minigw --minigw-work=sync [claude args]    agents work in a synced copy on the router (or MINIGW_WORK=sync)\n" +
+				"minigw --minigw-work=native [claude args]  folder is the router's SMB share: agents work in it there (or MINIGW_WORK=native)\n" +
+				"minigw run [--] <command> [args …]          run a build in this folder on the router (SMB share, allowed in its Settings)\n" +
 				"minigw serve [init|allow <id>] [--port N] [--folder DIR] [--config FILE]   run a router here (Windows, Linux)\n" +
 				"minigw router status|devices|gateway|claude|token …                    change the router here, live\n" +
 				"minigw [claude options …]                    run Claude Code through the router")
@@ -344,8 +348,11 @@ func main() {
 			i--
 		}
 	}
-	if work != "direct" && work != "sync" {
-		fail("unknown --minigw-work=" + work + " (use direct or sync)")
+	if work != "direct" && work != "sync" && work != "native" { // native: mapa je prek SMB mapa routerja (native.go)
+		fail("unknown --minigw-work=" + work + " (use direct, sync or native)")
+	}
+	if work == "native" && readOnly {
+		fail("--minigw-work=native cannot be read-only (the agent works in the router's own folder)")
 	}
 	saved := requireConnection()
 	c := route(saved)
@@ -400,10 +407,19 @@ func main() {
 	}
 	env = append(env, "ANTHROPIC_CUSTOM_HEADERS="+headers)
 
-	share := &shareClient{c: c, session: sid, root: cwd, readOnly: readOnly, sync: work == "sync",
+	share := &shareClient{c: c, session: sid, root: cwd, readOnly: readOnly, sync: work == "sync", native: work == "native",
 		synced: map[string]syncEntry{}, reported: map[string]bool{}}
 	if wantShare && sid != "" {
-		if share.register() {
+		ok := share.register()
+		if !ok && share.native { // native ni mogoč → kot direct
+			fmt.Fprintln(os.Stderr, "minigw: native mode not available: "+share.refusal+"; sharing over the network instead")
+			share.native, share.refusal = false, ""
+			ok = share.register()
+		}
+		if ok && share.native {
+			share.start(4)
+			fmt.Fprintf(os.Stderr, "minigw: %s is a folder of %s (SMB): agent models work in it there directly (native)\n", cwd, routerHost)
+		} else if ok {
 			share.start(4)
 			mode := "read-write"
 			if readOnly {
