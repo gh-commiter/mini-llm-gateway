@@ -33,10 +33,28 @@ type agentCLI struct {
 	Executable string   `json:"executable,omitempty"` // prazno = iz PATH
 	Models     []string `json:"models"`               // null = vsi modeli računa (tudi prihodnji); seznam = le ti
 	ReadOnly   bool     `json:"readOnly,omitempty"`   // brez pisanja v mapo seje
-	Network    bool     `json:"network,omitempty"`    // Codex: omrežje za ukaze v sandboxu (privzeto izklopljeno)
+	Network    bool     `json:"network,omitempty"`    // Codex: omrežje za ukaze v sandboxu; Copilot: spletna orodja (url)
+	Write      bool     `json:"write,omitempty"`      // Copilot: pisanje (privzeto le branje)
+	Commands   bool     `json:"commands,omitempty"`   // Copilot: ukazi lupine (izrecno dovoljenje)
 }
 
 func (a agentCLI) modelEnabled(m string) bool { return a.Models == nil || slices.Contains(a.Models, m) }
+
+// canWrite: Codex in Grok pišeta, razen z ReadOnly; Copilot le z Write (privzeto le branje, kot na Macu).
+func (a agentCLI) canWrite(k agentKind) bool {
+	if k.name == "copilot" {
+		return a.Write
+	}
+	return !a.ReadOnly
+}
+
+// allowsModel: Codex, Grok: model računa (nil = vsi); Copilot: le našteta imena (Copilot nima seznama modelov).
+func (a agentCLI) allowsModel(k agentKind, m string) bool {
+	if k.name == "copilot" {
+		return slices.Contains(a.Models, m)
+	}
+	return a.modelEnabled(m)
+}
 
 type agentKind struct {
 	name, prefix, bin string
@@ -44,8 +62,9 @@ type agentKind struct {
 }
 
 var (
-	codexKind = agentKind{"codex", "claude-codex", "codex", func(c serveConfig) agentCLI { return c.Codex }}
-	grokKind  = agentKind{"grok", "claude-grok", "grok", func(c serveConfig) agentCLI { return c.Grok }}
+	codexKind   = agentKind{"codex", "claude-codex", "codex", func(c serveConfig) agentCLI { return c.Codex }}
+	grokKind    = agentKind{"grok", "claude-grok", "grok", func(c serveConfig) agentCLI { return c.Grok }}
+	copilotKind = agentKind{"copilot", "claude-copilot", "copilot", func(c serveConfig) agentCLI { return c.Copilot }}
 )
 
 // match: »claude-codex« = privzeti model ("", true), »claude-codex-<m>« = m; ok=false, če ime ni tega agenta.
@@ -220,6 +239,78 @@ func grokArgs(cwd, promptFile, cfgDir string, agent bool, model string, write bo
 	return a
 }
 
+// copilotMaxPrompt: navodilo gre v ukazno vrstico (-p; stdin pri -p ne velja), ARG_MAX: konec pogovora ostane.
+const copilotMaxPrompt = 200_000
+
+// copilotArgs: kot Copilot.args na Macu. Nikoli --allow-all-tools/-paths/-urls, --allow-all ali --yolo: v načinu -p Copilot
+// zavrne vsako orodje brez --allow-tool; zavrnitve so tu še izrecno. Privzeto le branje; write le z dovoljenjem; lupina le
+// z dovoljenjem (commands), gh in security tudi tedaj ne; url le z omrežjem. Brez sistemske začasne mape, vgrajenih MCP
+// (GitHub s prijavo uporabnika), vprašanj in samodejnih posodobitev; seja po --session-id.
+func copilotArgs(prompt string, extraDirs []string, agent bool, model string, write, commands, network bool, session string) []string {
+	if r := []rune(prompt); len(r) > copilotMaxPrompt {
+		prompt = string(r[len(r)-copilotMaxPrompt:])
+	}
+	a := []string{"-p", prompt, "--output-format", "json", "--no-ask-user", "--disable-builtin-mcps", "--disallow-temp-dir",
+		"--no-auto-update", "--no-color", "--session-id", session}
+	if model != "" {
+		a = append(a, "--model", model)
+	}
+	for _, d := range extraDirs {
+		a = append(a, "--add-dir", d)
+	}
+	allow, deny := []string{}, []string{"memory"}
+	pick := func(on bool, tool string) {
+		if on {
+			allow = append(allow, tool)
+		} else {
+			deny = append(deny, tool)
+		}
+	}
+	pick(agent, "read")
+	pick(agent && write, "write")
+	pick(agent && commands, "shell")
+	if agent && commands {
+		deny = append(deny, "shell(gh:*)", "shell(security:*)")
+	}
+	pick(agent && network, "url")
+	for _, t := range allow {
+		a = append(a, "--allow-tool", t)
+	}
+	for _, t := range deny {
+		a = append(a, "--deny-tool", t)
+	}
+	return a
+}
+
+// copilotEvent: dogodek »--output-format json« (JSONL): odgovor (assistant.message z vsebino) ali korak (tool.*start).
+func copilotEvent(line []byte) (text, step string) {
+	var o struct {
+		Type string `json:"type"`
+		Data struct {
+			Content  string `json:"content"`
+			ToolName string `json:"toolName"`
+			Name     string `json:"name"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(line, &o) != nil {
+		return "", ""
+	}
+	switch {
+	case o.Type == "assistant.message":
+		return o.Data.Content, ""
+	case strings.HasPrefix(o.Type, "tool.") && strings.HasSuffix(o.Type, "start"):
+		n := o.Data.ToolName
+		if n == "" {
+			n = o.Data.Name
+		}
+		if n == "" {
+			n = "tool"
+		}
+		return "", n
+	}
+	return "", ""
+}
+
 // codexStep: korak iz dogodka »codex exec --json« (ukaz ali vmesno sporočilo) za dnevnik; "" = brez koraka.
 func codexStep(line []byte) string {
 	var o struct {
@@ -362,7 +453,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			extra = append(extra, f)
 		}
 	}
-	write := !ac.ReadOnly && !readOnly
+	write := ac.canWrite(k) && !readOnly
 	scope := k.name + "|" + r.owner() + "|" + r.h("x-claude-mini-cwd")
 	resume := ""
 	if agent {
@@ -396,7 +487,25 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 		}
 		defer restoreAuth(state, k)
 		m := agentMounts{cfgDir: s.cfgDir, state: state, envVar: strings.ToUpper(k.bin) + "_HOME", files: files, rw: append([]string{dir, tmp}, extra...)}
-		if k.name == "codex" {
+		if k.name == "copilot" {
+			if resume == "" {
+				resume = newUUID() // nova seja: svoj ID, da jo naslednja zahteva nadaljuje (--session-id)
+			}
+			home, _ := os.UserHomeDir()
+			m.ro = []string{filepath.Join(home, ".cache", "copilot")} // razširjen paket (Linux, pod bwrap)
+			args := copilotArgs(prompt, extra, agent, model, write, ac.Commands, ac.Network, resume)
+			var answer string
+			err = s.runAgentProcess(ctx, r, exe, args, m, dir, "", func(line []byte) {
+				t, st := copilotEvent(line)
+				if t != "" {
+					answer = t // odgovor je zadnje sporočilo agenta
+				}
+				if st != "" {
+					s.log.Printf("%s step: %q", r.rid, st)
+				}
+			})
+			text, thread = strings.TrimSpace(answer), resume
+		} else if k.name == "codex" {
 			out := filepath.Join(tmp, "codex.txt")
 			args := codexArgs(dir, extra, agent, out, model, write, ac.Network, resume)
 			err = s.runAgentProcess(ctx, r, exe, args, m, dir, prompt, func(line []byte) {
@@ -460,7 +569,8 @@ func agentEnv(env []string) []string {
 	for _, e := range env {
 		name, _, _ := strings.Cut(e, "=")
 		if strings.HasPrefix(name, "ANTHROPIC_") || strings.HasPrefix(name, "CLAUDE_CODE_") || slices.Contains([]string{"CLAUDECODE",
-			"DBUS_SESSION_BUS_ADDRESS", "SSH_AUTH_SOCK", "GPG_AGENT_INFO", "GNOME_KEYRING_CONTROL", "CODEX_HOME", "GROK_HOME"}, name) {
+			"DBUS_SESSION_BUS_ADDRESS", "SSH_AUTH_SOCK", "GPG_AGENT_INFO", "GNOME_KEYRING_CONTROL", "CODEX_HOME", "GROK_HOME",
+			"COPILOT_HOME", "COPILOT_ASSISTED_APPROVAL"}, name) || strings.HasPrefix(name, "COPILOT_ALLOW") {
 			continue
 		}
 		out = append(out, e)
@@ -476,6 +586,12 @@ func agentAuthFiles(k agentKind) (real string, names []string) {
 			real = filepath.Join(home, ".codex")
 		}
 		return real, []string{"auth.json", "config.toml"}
+	}
+	if k.name == "copilot" { // prijava: shramba poverilnic ali (brez nje) config.json
+		if real = os.Getenv("COPILOT_HOME"); real == "" {
+			real = filepath.Join(home, ".copilot")
+		}
+		return real, []string{"config.json"}
 	}
 	if real = os.Getenv("GROK_HOME"); real == "" {
 		real = filepath.Join(home, ".grok")
@@ -651,10 +767,17 @@ func (s *server) agentModelList(k agentKind) []map[string]any {
 	if !ac.Enabled || exe == "" || !s.agentsAllowed(c) {
 		return nil
 	}
-	label := map[string]string{"codex": "Codex CLI", "grok": "Grok CLI"}[k.name]
-	run := map[string]string{"codex": "codex exec", "grok": "grok -p"}[k.name]
+	label := map[string]string{"codex": "Codex CLI", "grok": "Grok CLI", "copilot": "Copilot CLI"}[k.name]
+	run := map[string]string{"codex": "codex exec", "grok": "grok -p", "copilot": "copilot -p"}[k.name]
 	out := []map[string]any{{"type": "model", "id": k.prefix, "display_name": strings.SplitN(label, " ", 2)[0] + " · " + label,
 		"description": run + " · default model · tools in your synced folder", "created_at": "2026-01-01T00:00:00Z"}}
+	if k.name == "copilot" { // ni seznama modelov: le našteti
+		for _, m := range ac.Models {
+			out = append(out, map[string]any{"type": "model", "id": k.prefix + "-" + m, "display_name": m + " · " + label,
+				"description": run + " · " + m + " · tools in your synced folder", "created_at": "2026-01-01T00:00:00Z"})
+		}
+		return out
+	}
 	for _, m := range agentCatalog(k, exe) {
 		if !ac.modelEnabled(m.Slug) {
 			continue

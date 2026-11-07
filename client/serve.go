@@ -64,6 +64,7 @@ type serveConfig struct {
 	SettingSources   string   `json:"settingSources,omitempty"` // --setting-sources; prazno = brez (hooki iz mape ne tečejo)
 	Codex            agentCLI `json:"codex"`                    // Codex CLI (serve_agents.go), privzeto izklopljen
 	Grok             agentCLI `json:"grok"`                     // Grok CLI, privzeto izklopljen
+	Copilot          agentCLI `json:"copilot"`                  // GitHub Copilot CLI, privzeto izklopljen (le branje)
 }
 
 const serveHelp = `minigw serve: Mini Gateway, the LLM gateway, on this computer (Windows, Linux) for minigw clients.

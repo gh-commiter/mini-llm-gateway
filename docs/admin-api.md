@@ -140,6 +140,7 @@ Notes:
 | `GET /agents/codex`, `PATCH` | any of `{"enabled", "path", "write", "network", "models"}` | `{"enabled", "path", "found", "write", "network", "models": [string] \| null}` |
 | `GET /agents/codex/models`, `GET /agents/grok/models` | – | `{"models": [{"slug", "name", "description"?, "window"?, "enabled"}]}`: the account's models (Go gateway) |
 | `GET /agents/grok`, `PATCH` | any of `{"enabled", "path", "write", "models"}` | `{"enabled", "path", "found", "write", "models"}` |
+| `GET /agents/copilot`, `PATCH` | any of `{"enabled", "path", "write", "network", "commands", "models"}` | `{"enabled", "path", "found", "write", "network", "commands", "models": [string]}` |
 | `GET /siri`, `PATCH` | any of `{"enabled", "timeout", "allow": [id], "deny": [id]}` | `{"enabled", "timeout", "devices": [{"id", "name", "siri"}]}` |
 | `GET /run`, `PATCH` (Mac) | any of `{"commands", "allow": [id], "deny": [id], "allowNetwork": [id], "denyNetwork": [id]}` | `{"commands", "devices": [{"id", "name", "run", "network"}]}` |
 
@@ -147,6 +148,10 @@ Notes:
 sandbox may use the network (default: off); `models: null` = all the account's models. `allow`/`deny` switch Siri for known
 devices (Siri uses this Mac's personal data). `run` allows `minigw run` for a device (off by default): it runs the
 listed commands (comma-separated, first argument only) in a native folder on the Mac, so it is code execution there.
+Copilot: `write` lets it edit files in the session's folder (default: off, read-only), `network` allows its web tool,
+`commands` its shell (an explicit opt-in: on the Mac Copilot then runs in the `minigw run` sandbox; on Linux under bwrap;
+Windows needs "Allow commands without a sandbox"). `models` lists model names (Copilot has no model list; empty = only
+`claude-copilot`, Copilot's default); a name that is not a valid model name is a `400`.
 
 ## Mac app
 

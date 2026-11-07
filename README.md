@@ -61,6 +61,7 @@ and the agent works on your files, while they stay on the client.
 | `opus`, `sonnet`, `haiku`, `fable` | `claude -p` | Runs your local Claude Code as an agent in the session's folder; sessions resume with `--resume`. Listed in `/model` as `claude-cli-*`; `claude-chat-*` = no tools. Tools: read-only by default; **Allow local tools** (Settings → Claude CLI) gives every Claude Code tool on the gateway Mac (commands, builds), with a table to exclude single tools. Files stay in the session folder and the allowed folders: file tools are refused outside them, and commands run in Claude Code's sandbox (no reads of the home folder, writes only in these folders, network allowed). |
 | `claude-codex`, `claude-codex-<model>` | `codex exec` (OpenAI Codex CLI) | Off by default (Settings → Codex CLI). One entry per enabled Codex model of your account (model table, allowed folders and sandbox switches in Settings → Codex CLI). Runs Codex as an agent in the session's folder, like `claude -p`. Its sandbox writes only to that folder and the allowed folders. Within a conversation Codex continues its own thread (`codex exec resume`), also after `minigw -c` or `--resume`. |
 | `claude-grok`, `claude-grok-<model>` | `grok -p` (xAI Grok Build CLI) | Off by default (Settings → Grok CLI). Agent in the session's folder; Grok's kernel sandbox (`workspace`) limits writes to that folder, or `read-only`. Within a conversation Grok continues its own session (`-r`). |
+| `claude-copilot`, `claude-copilot-<model>` | `copilot -p` (GitHub Copilot CLI) | Off by default (Settings → Copilot CLI). `claude-copilot` uses Copilot's default (`auto`); list other models by name (Copilot has no model list). Copilot has no sandbox for its own file tools, so it only reads the session's folder unless **Allow writing** is on (then it edits files there). No commands unless **Allow commands** (confirmed; on the Mac Copilot then runs in the same sandbox as `minigw run`, writing only to the folder, home folder hidden); `gh` and `security` stay denied. No GitHub MCP server, no temporary folder of this computer. It signs in as this computer's user (`copilot login`, or the GitHub CLI's sign-in). Within a conversation Copilot continues its own session (`--session-id`). |
 | discovered models | LiteLLM, OpenRouter or any Anthropic-compatible provider | Pure passthrough (tools, streaming). Add as many providers as you like, each with its own key. Models and context windows are discovered from the upstream; enable the ones you want. |
 
 The gateway speaks the Anthropic Messages API (`/v1/messages`, `/v1/models`, `count_tokens`), so Claude Code
@@ -71,7 +72,7 @@ sees it as a regular LLM gateway. Only models that were verified to work are lis
 - Gateway: macOS 27 on Apple Silicon, or Windows or Linux with `minigw serve` (no Siri or Apple models)
 - Client (`minigw`): macOS, Windows or Linux, with Claude Code (`claude`) in your `PATH`
 - Optional on the gateway Mac, for their providers: Claude Code, the **Siri AI** app, [Codex CLI](https://github.com/openai/codex),
-  Grok CLI, a LiteLLM or OpenRouter account
+  Grok CLI, GitHub Copilot CLI, a LiteLLM or OpenRouter account
 
 ## 3. Install
 
@@ -408,6 +409,7 @@ the settings page of `minigw serve` has the same panes, except Siri AI and Apple
 - **Claude CLI** – path to `claude`, allowed folders, **Allow local tools** with a table to exclude tools; install or
   download `minigw`.
 - **Codex CLI** / **Grok CLI** – off by default; model table, write and network switches for their sandbox.
+- **Copilot CLI** – off by default; models by name, switches for writing, web access and commands (read-only by default).
 
 <table>
 <tr><td><img src="docs/images/general.png" width="400" alt="Settings: General"></td>
@@ -475,6 +477,7 @@ Mini Gateway only connects tools that others built:
   is the client the whole project is made for, and Claude wrote all of the code.
 - [OpenAI](https://openai.com): [Codex CLI](https://github.com/openai/codex).
 - [xAI](https://x.ai): Grok CLI.
+- [GitHub](https://github.com): [Copilot CLI](https://github.com/github/copilot-cli).
 - [Apple](https://www.apple.com): the Siri AI app and the [Foundation Models](https://developer.apple.com/documentation/foundationmodels) framework.
 - [LiteLLM](https://github.com/BerriAI/litellm) by BerriAI and [OpenRouter](https://openrouter.ai): upstream model providers.
 - [The Noise Protocol Framework](https://noiseprotocol.org) by Trevor Perrin: the encrypted connection between `minigw` and the gateway.

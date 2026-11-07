@@ -149,6 +149,11 @@ func agentWrap(exe string, args []string, m agentMounts) (string, []string) {
 	if r := real(exe); inside(r, home) {
 		add(&ro, packageRoot(home, r))
 	}
+	for _, p := range m.ro {
+		if exists(p) {
+			add(&ro, real(p))
+		}
+	}
 	if m.state != "" {
 		os.MkdirAll(m.state, 0o700)
 		add(&rw, real(m.state))

@@ -608,7 +608,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		}
 		return 200, map[string]any{"models": append([]agentModel{}, models...)}
 	case "GET agents/{}", "PATCH agents/{}":
-		if k, ok := map[string]agentKind{"codex": codexKind, "grok": grokKind}[arg]; ok {
+		if k, ok := map[string]agentKind{"codex": codexKind, "grok": grokKind, "copilot": copilotKind}[arg]; ok {
 			return s.agentAPI(method, k, body)
 		}
 		if arg != "claude" {
@@ -796,9 +796,15 @@ func (s *server) agentAPI(method string, k agentKind, body []byte) (int, any) {
 	info := func() map[string]any {
 		ac := k.conf(s.conf())
 		exe, _ := resolveAgent(k, ac.Executable)
-		o := map[string]any{"enabled": ac.Enabled, "path": ac.Executable, "found": exe != "", "exe": exe, "write": !ac.ReadOnly, "models": ac.Models}
-		if k.name == "codex" {
+		o := map[string]any{"enabled": ac.Enabled, "path": ac.Executable, "found": exe != "", "exe": exe, "write": ac.canWrite(k), "models": ac.Models}
+		if k.name != "grok" {
 			o["network"] = ac.Network
+		}
+		if k.name == "copilot" {
+			o["commands"] = ac.Commands
+			if ac.Models == nil {
+				o["models"] = []string{} // Copilot: imena modelov (ni seznama računa); prazno = le privzeti
+			}
 		}
 		return o
 	}
@@ -806,17 +812,21 @@ func (s *server) agentAPI(method string, k agentKind, body []byte) (int, any) {
 		return 200, info()
 	}
 	var b struct {
-		Enabled *bool           `json:"enabled"`
-		Path    *string         `json:"path"`
-		Write   *bool           `json:"write"`
-		Network *bool           `json:"network"`
-		Models  json.RawMessage `json:"models"` // null = vsi; seznam = le ti; brez polja = brez spremembe
+		Enabled  *bool           `json:"enabled"`
+		Path     *string         `json:"path"`
+		Write    *bool           `json:"write"`
+		Network  *bool           `json:"network"`
+		Commands *bool           `json:"commands"` // Copilot: ukazi lupine (izrecno dovoljenje)
+		Models   json.RawMessage `json:"models"`   // null = vsi; seznam = le ti; brez polja = brez spremembe
 	}
 	if err := decodeStrict(body, &b); err != nil {
 		return 400, errorBody(400, err.Error())
 	}
-	if b.Network != nil && k.name != "codex" {
-		return 400, errorBody(400, "network: Codex only")
+	if b.Network != nil && k.name == "grok" {
+		return 400, errorBody(400, "network: Codex and Copilot only")
+	}
+	if b.Commands != nil && k.name != "copilot" {
+		return 400, errorBody(400, "commands: Copilot only")
 	}
 	var models []string
 	setModels := len(b.Models) > 0
@@ -844,7 +854,10 @@ func (s *server) agentAPI(method string, k agentKind, body []byte) (int, any) {
 			ac.Executable = *b.Path
 		}
 		if b.Write != nil {
-			ac.ReadOnly = !*b.Write
+			ac.ReadOnly, ac.Write = !*b.Write, *b.Write
+		}
+		if b.Commands != nil {
+			ac.Commands = *b.Commands
 		}
 		if b.Network != nil {
 			ac.Network = *b.Network
@@ -852,9 +865,12 @@ func (s *server) agentAPI(method string, k agentKind, body []byte) (int, any) {
 		if setModels {
 			ac.Models = slices.Clone(models)
 		}
-		if k.name == "codex" {
+		switch k.name {
+		case "codex":
 			c.Codex = ac
-		} else {
+		case "copilot":
+			c.Copilot = ac
+		default:
 			c.Grok = ac
 		}
 		return nil

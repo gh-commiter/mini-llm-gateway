@@ -159,6 +159,15 @@ const S = {
   allowedFoldersShared: ["Shared with Claude CLI. The agent may also write here (Codex).", "Skupne s Claude CLI. Agent sme pisati tudi sem (Codex)."],
   codexFooter: ["The claude-codex models (one per Codex model of your account) run “codex exec” as an agent in the synced copy of the client's folder. Its sandbox writes only to that folder and the allowed folders. Devices that use Codex can read every file this user can read. Sign in once with “codex login”.",
     "Modeli claude-codex (eden za vsak model Codex tvojega računa) poženejo »codex exec« kot agenta v sinhronizirani kopiji mape odjemalca. Njegov sandbox piše le v to mapo in dovoljene mape. Naprave, ki uporabljajo Codex, lahko berejo vsako datoteko, ki jo lahko bere ta uporabnik. Enkrat se prijavi z »codex login«."],
+  copilotDesc: ["GitHub Copilot CLI as an agent model in the session's folder.", "GitHub Copilot CLI kot model agenta v mapi seje."],
+  copilotNotFound: ["copilot not found: install the Copilot CLI or set the path.", "copilot ni najden: namesti Copilot CLI ali vpiši pot."],
+  copilotModels: ["Models (comma-separated; empty = only the default, “auto”)", "Modeli (ločeni z vejico; prazno = le privzeti, »auto«)"],
+  allowWeb: ["Allow web access (fetch tool)", "Dovoli dostop do spleta (orodje fetch)"],
+  allowCommands: ["Allow commands", "Dovoli ukaze"],
+  copilotCommandsAsk: ["Copilot then runs commands as this user. On Linux with bwrap they run in the sandbox (home folder hidden); otherwise they can read and change everything this user can, including gateway settings, use the network and your GitHub sign-in. Allow only if you trust the devices that use Copilot.",
+    "Copilot nato izvaja ukaze kot ta uporabnik. Na Linuxu z bwrap tečejo v sandboxu (domača mapa skrita); sicer lahko berejo in spreminjajo vse, kar ta uporabnik, tudi nastavitve prehoda, uporabljajo omrežje in tvojo prijavo GitHub. Dovoli le, če zaupaš napravam, ki uporabljajo Copilot."],
+  copilotFooter: ["The claude-copilot models run “copilot -p” as an agent in the synced copy of the client's folder. Copilot CLI has no sandbox for its own file tools: by default it may only read that folder; with writing on it may edit files there. Commands only with “Allow commands”. Sign in once with “copilot login”.",
+    "Modeli claude-copilot poženejo »copilot -p« kot agenta v sinhronizirani kopiji mape odjemalca. Copilot CLI za svoja orodja za datoteke nima sandboxa: privzeto sme mapo le brati; s pisanjem sme v njej urejati datoteke. Ukazi le z »Dovoli ukaze«. Enkrat se prijavi z »copilot login«."],
   grokFooter: ["The claude-grok models run “grok -p” as an agent in the synced copy of the client's folder. Grok's sandbox (workspace) lets it write only to that folder. Devices that use Grok can read every file this user can read. Without writing it runs read-only. Sign in once with “grok login”.",
     "Modeli claude-grok poženejo »grok -p« kot agenta v sinhronizirani kopiji mape odjemalca. Sandbox Grok (workspace) dovoli pisanje le v to mapo. Naprave, ki uporabljajo Grok, lahko berejo vsako datoteko, ki jo lahko bere ta uporabnik. Brez pisanja teče samo za branje. Enkrat se prijavi z »grok login«."],
   generalDesc: ["Address, port and access token of the gateway, and its state.", "Naslov, vrata in žeton prehoda ter njegovo stanje."],
@@ -335,11 +344,42 @@ async function agentPane(kind) {
   ];
 }
 
+// copilotPane: kot agentPane, a modeli so našteta imena (Copilot nima seznama modelov), pisanje je privzeto izklopljeno,
+// ukazi le z izrecnim potrdilom.
+async function copilotPane() {
+  const [a, c, st] = await Promise.all([api("GET", "/agents/copilot"), api("GET", "/agents/claude"), api("GET", "/status")]);
+  const n1 = note(), n2 = note(), n3 = note(t("copilotFooter"));
+  const patch = body => api("PATCH", "/agents/copilot", body);
+  const path = el("input", {type: "text", value: a.path, placeholder: a.exe || "copilot"});
+  const status = el("span", {class: "sub"}, el("span", {class: "dot" + (a.found ? " ok" : "")}), a.found ? t("detectedAt", a.exe, "").replace(/ · $/, "") : t("copilotNotFound"));
+  autosave(path, n1, async v => { await patch({path: v}); show("copilot"); });
+  const models = el("input", {type: "text", value: (a.models || []).join(", "), placeholder: "gpt-5.2, claude-sonnet-4.5"});
+  autosave(models, n1, v => patch({models: v.split(",").map(x => x.trim()).filter(Boolean)}));
+  const bare = st.agentsUnsandboxed, locked = bare && !c.allowUnsandboxedBash;
+  const commands = toggle(a.commands, (v, i) => save(n2, async () => {
+    if (v && !confirm(t("copilotCommandsAsk"))) { i.checked = false; return; }
+    await patch({commands: v});
+  }), !a.write || locked);
+  return [
+    card(...ICON.copilot, "Copilot CLI", t("copilotDesc")),
+    group(row(labelSub(t("enabled"), bare ? t(locked ? "agentLockedWin" : "agentWarnWin") : null),
+        toggle(a.enabled && !locked, v => save(n1, async () => { await patch({enabled: v}); nav(); }), locked)),
+      row(labelSub(t("path")), path), row(labelSub(t("copilotModels")), models)),
+    el("div", {class: "note"}, status), n1,
+    section(t("sandbox")),
+    group(row(t("allowWrite"), toggle(a.write, v => save(n2, async () => { await patch({write: v}); show("copilot"); }), locked)),
+      row(t("allowWeb"), toggle(a.network, v => save(n2, () => patch({network: v})), locked)),
+      row(t("allowCommands"), commands)),
+    n2, n3,
+  ];
+}
+
 // --- panoji ---
 
 const pages = {
   codex: () => agentPane("codex"),
   grok: () => agentPane("grok"),
+  copilot: () => copilotPane(),
   async general() {
     const [st, g, d] = await Promise.all([api("GET", "/status"), api("GET", "/general"), api("GET", "/devices")]);
     const win = st.os === "windows";
@@ -571,7 +611,7 @@ const pages = {
 
 let current = "general", currentArg = "", gateways = [];
 // Ikone stranske vrstice (kot na Macu: barvna ploščica z znakom).
-const ICON = {general: ["#8e8e93", "⚙"], devices: ["#007aff", "⌘"], claude: ["#b8743c", ">_"], codex: ["#30b0c7", "</>"], grok: ["#5856d6", "✦"]};
+const ICON = {general: ["#8e8e93", "⚙"], devices: ["#007aff", "⌘"], claude: ["#b8743c", ">_"], codex: ["#30b0c7", "</>"], grok: ["#5856d6", "✦"], copilot: ["#6e7781", "◎"]};
 const gwIcon = g => /openrouter\.ai/.test(g.baseURL) ? ["#af52de", "◈"] : ["#007aff", "▤"];
 let search = "";
 const PRESETS = {litellm: ["LiteLLM", "http://localhost:4000", true], openrouter: ["OpenRouter", "https://openrouter.ai/api", false], other: [null, "https://", false]};
@@ -587,6 +627,7 @@ async function nav() {
     ["claude", t("claude"), ICON.claude],
     ...(pages.codex ? [["codex", "Codex CLI", ICON.codex]] : []),
     ...(pages.grok ? [["grok", "Grok CLI", ICON.grok]] : []),
+    ["copilot", "Copilot CLI", ICON.copilot],
     ["devices", t("devices"), ICON.devices],
   ].filter(x => !search || x[1].toLowerCase().includes(search.toLowerCase()));
   const find = el("input", {type: "text", class: "left search", placeholder: t("search"), value: search});

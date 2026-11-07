@@ -26,6 +26,7 @@ type agentMounts struct {
 	envVar string   // CODEX_HOME ali GROK_HOME (kaže na state)
 	files  []string // prave datoteke prijave (~/.codex/auth.json …), na katere kaže stanje: branje in pisanje
 	rw     []string // kopija mape, začasna mapa zahteve, dovoljene mape
+	ro     []string // dodatno le za branje (Copilot: razširjen paket v ~/.cache/copilot)
 }
 
 // packageRoot: mapa, ki jo CLI pod domačo mapo potrebuje: različica nvm (~/.nvm/versions/node/<v>), sicer najbližja
