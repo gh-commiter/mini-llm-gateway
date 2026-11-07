@@ -31,7 +31,9 @@ runs; otherwise they go to serve.json.
   minigw gw provider add <name> <baseURL> [--insecure]   the API key is read from stdin or asked for
   minigw gw provider remove <name> | list
   minigw gw provider models <name> [text] [--all] [--enable m1,m2|all] [--disable m1,m2|all]
-  minigw gw claude [--path FILE] [--tools T1,T2] [--folder DIR] [--allow-unsandboxed-bash=true|false]
+  minigw gw claude [--path FILE] [--tools T1,T2] [--folders DIR1,DIR2] [--allow-local-tools=true|false]
+                  [--folder DIR] [--allow-unsandboxed-bash=true|false]   (the last two: minigw serve only)
+  minigw gw autostart on|off                            Windows: start the tray at sign-in (Linux: minigw serve install)
   minigw gw token [rotate]                              print the connect line; rotate makes a new token
   minigw gw copilot token [remove]                      Copilot's token for commands (fine-grained, only Copilot
                                                         Requests), read from stdin or asked for
@@ -215,6 +217,8 @@ func routerCommand(args []string, in io.Reader) {
 	tools := fs.String("tools", "", "claude: the agent's tools")
 	folder := fs.String("folder", "", "claude: folder for agents that do not sync (empty = none)")
 	bash := fs.String("allow-unsandboxed-bash", "", "claude: true or false")
+	folders := fs.String("folders", "", "claude: allowed folders, comma-separated (as on the Mac)")
+	localTools := fs.String("allow-local-tools", "", "claude: true or false")
 	fs.Usage = func() { fmt.Fprintln(os.Stderr, routerHelp) }
 	var pos []string // ukazi in zastavice v poljubnem vrstnem redu
 	for {
@@ -394,7 +398,7 @@ func routerCommand(args []string, in io.Reader) {
 	case "claude":
 		need(1, 1)
 		var c apiClaude
-		if set["path"] || set["tools"] || set["folder"] || set["allow-unsandboxed-bash"] {
+		if set["path"] || set["tools"] || set["folder"] || set["allow-unsandboxed-bash"] || set["folders"] || set["allow-local-tools"] {
 			body := map[string]any{}
 			if set["path"] {
 				body["path"] = *path
@@ -416,6 +420,16 @@ func routerCommand(args []string, in io.Reader) {
 				}
 				body["allowUnsandboxedBash"] = b
 			}
+			if set["folders"] {
+				body["folders"] = *folders
+			}
+			if set["allow-local-tools"] {
+				b, err := strconv.ParseBool(*localTools)
+				if err != nil {
+					fail("--allow-local-tools: true or false")
+				}
+				body["allowLocalTools"] = b
+			}
 			a.do("PATCH", "/agents/claude", body, &c)
 		} else {
 			a.do("GET", "/agents/claude", nil, &c)
@@ -424,7 +438,16 @@ func routerCommand(args []string, in io.Reader) {
 		if path == "" {
 			path = "(from PATH)"
 		}
-		say(clean(fmt.Sprintf("path: %s, found: %v\ntools: %s\nallowUnsandboxedBash: %v\nfolder: %s", path, c.Found, c.Tools, c.AllowUnsandboxedBash, c.Folder)))
+		say(clean(fmt.Sprintf("path: %s, found: %v\ntools: %s\nallowLocalTools: %v\nfolders: %s\nallowUnsandboxedBash: %v\nfolder: %s",
+			path, c.Found, c.Tools, c.AllowLocalTools, c.Folders, c.AllowUnsandboxedBash, c.Folder)))
+
+	case "autostart": // kot na Macu; Linux: API pove, naj se uporabi minigw serve install
+		need(2, 2)
+		if pos[1] != "on" && pos[1] != "off" {
+			fail(routerHelp)
+		}
+		a.do("PATCH", "/general", map[string]any{"startAtSignIn": pos[1] == "on"}, nil)
+		say(map[bool]string{true: "Mini Gateway starts at sign-in", false: "Mini Gateway no longer starts at sign-in"}[pos[1] == "on"])
 
 	case "token":
 		need(1, 2)

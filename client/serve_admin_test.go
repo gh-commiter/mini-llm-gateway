@@ -232,6 +232,11 @@ func TestRouterCLIOnlineAndOffline(t *testing.T) {
 	if out := run(cfg, "claude", "--tools", "Read"); !strings.Contains(out, "tools: Read\n") || s.conf().Tools != "Read" {
 		t.Fatalf("claude: %q", out)
 	}
+	dir := t.TempDir() // vrstica 2 revizije: ista zastavica kot na Macu
+	if out := run(cfg, "claude", "--folders", dir, "--allow-local-tools=true"); !strings.Contains(out, "allowLocalTools: true\n") ||
+		!strings.Contains(out, "folders: ") || !s.conf().AllowLocalTools || len(s.conf().AllowedFolders) != 1 {
+		t.Fatalf("claude folders: %q %+v", out, s.conf().AllowedFolders)
+	}
 	if out := run(cfg, "token"); !strings.Contains(out, "minigw connect") {
 		t.Fatalf("token: %q", out)
 	}
