@@ -30,7 +30,7 @@ struct SettingsView: View {
     @State private var foundryStatus = ""
 
     enum Pane: Hashable {
-        case general, provider(String), siri, appleFM, foundry, claudeCLI, codex, copilot, grok
+        case general, provider(String), siri, appleFM, foundry, claudeCLI, codex, copilot, grok, devices
     }
 
     private struct Item: Identifiable {
@@ -64,7 +64,9 @@ struct SettingsView: View {
                Item(pane: .copilot, title: "Copilot CLI", symbol: "person.2.wave.2", color: .gray,
                     about: String(localized: "GitHub Copilot CLI as an agent model in the session's folder.")),
                Item(pane: .grok, title: "Grok CLI", symbol: "sparkle", color: .indigo,
-                    about: String(localized: "xAI Grok CLI as an agent model in the session's folder."))]
+                    about: String(localized: "xAI Grok CLI as an agent model in the session's folder.")),
+               Item(pane: .devices, title: String(localized: "Devices"), symbol: "laptopcomputer.and.iphone", color: .blue,
+                    about: String(localized: "Computers that use this gateway, and from which addresses clients may connect."))]
     }
 
     @State private var removing = false
@@ -122,7 +124,7 @@ struct SettingsView: View {
     var body: some View {
         NavigationSplitView {
             List(selection: $pane) {
-                ForEach(items.filter { search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) }) { item in
+                ForEach(items.filter { search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) || $0.about.localizedCaseInsensitiveContains(search) }) { item in
                     Label { Text(verbatim: item.title) } icon: { IconTile(symbol: item.symbol, color: item.color) }
                         .tag(item.pane)
                 }
@@ -253,6 +255,7 @@ struct SettingsView: View {
         case .copilot: copilot
         case .grok: grok
         case .foundry: foundry
+        case .devices: devices
         }
     }
 
@@ -265,9 +268,6 @@ struct SettingsView: View {
             Section {
                 TextField("Address", text: $draft.host)
                 TextField("Port", value: $draft.port, format: .number.grouping(.never))
-                TextField("Allowed clients (IP; empty = all)", text: $draft.allowedClients)
-                Toggle("Allow unencrypted connections from other Macs", isOn: $draft.allowPlainRemote)
-                    .help(String(localized: "minigw 0.4 and newer always encrypts. Turn on only for other clients on a trusted network."))
             } footer: {
                 Text("Changes are applied automatically.").font(.caption).foregroundStyle(.secondary)
             }
@@ -326,23 +326,8 @@ struct SettingsView: View {
             }
             Section {
                 ForEach($draft.devices) { $d in
-                    Toggle(isOn: $d.siri) {
-                        Text(verbatim: d.name)
-                        Text(state.deviceSeen[d.id].map { String(localized: "Last seen \($0.formatted(date: .omitted, time: .shortened))") }
-                             ?? String(localized: "Not seen since Mini Gateway started"))
-                    }
-                    .contentShape(Rectangle())
-                    .listRowBackground(selectedDevice == d.id ? Color.accentColor.opacity(0.2) : nil)
-                    .onTapGesture { selectedDevice = selectedDevice == d.id ? nil : d.id }
+                    Toggle(isOn: $d.siri) { Text(verbatim: d.name) }
                 }
-                HStack(spacing: 0) {
-                    Button { draft.devices.removeAll { $0.id == selectedDevice }; selectedDevice = nil } label: {
-                        Image(systemName: "minus").frame(width: 22, height: 18)
-                    }
-                    .disabled(selectedDevice == nil).accessibilityLabel("Remove")
-                    Spacer()
-                }
-                .buttonStyle(.borderless)
             } header: {
                 Text("Devices")
             } footer: {
@@ -368,6 +353,51 @@ struct SettingsView: View {
                             .foregroundStyle(axTrusted ? Color.green : Color.orange)
                     }
                 }
+            }
+        }
+    }
+
+    /// Naprave (kot podokno Devices na strani nastavitev minigw serve): naslovi odjemalcev, seznam naprav z ID-jem in
+    /// zadnjim stikom, odstranitev. Nova naprava se doda sama ob prvi povezavi (brez odobritve, kot doslej).
+    private var devices: some View {
+        Form {
+            header
+            Section {
+                TextField("Allowed clients (IP; empty = all)", text: $draft.allowedClients)
+                Toggle("Allow unencrypted connections from other Macs", isOn: $draft.allowPlainRemote)
+                    .help(String(localized: "minigw 0.4 and newer always encrypts. Turn on only for other clients on a trusted network."))
+            }
+            Section {
+                ForEach(draft.devices) { d in
+                    LabeledContent {
+                        Button("Copy ID") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(d.id, forType: .string)
+                        }
+                    } label: {
+                        Text(verbatim: d.name)
+                        Text(verbatim: d.id).font(.caption.monospaced()).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                        Text(state.deviceSeen[d.id].map { String(localized: "Last seen \($0.formatted(date: .omitted, time: .shortened))") }
+                             ?? String(localized: "Not seen since Mini Gateway started"))
+                    }
+                    .contentShape(Rectangle())
+                    .listRowBackground(selectedDevice == d.id ? Color.accentColor.opacity(0.2) : nil)
+                    .onTapGesture { selectedDevice = selectedDevice == d.id ? nil : d.id }
+                }
+                if draft.devices.isEmpty { Text("None").foregroundStyle(.secondary) }
+                HStack(spacing: 0) {
+                    Button { draft.devices.removeAll { $0.id == selectedDevice }; selectedDevice = nil } label: {
+                        Image(systemName: "minus").frame(width: 22, height: 18)
+                    }
+                    .disabled(selectedDevice == nil).accessibilityLabel("Remove")
+                    Spacer()
+                }
+                .buttonStyle(.borderless)
+            } header: {
+                Text("Devices")
+            } footer: {
+                Text("Macs that connect with minigw (0.4.4 or newer) are added here automatically. Siri AI and minigw run are switched on per device in their panes. A removed device appears again when it connects, with both off.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
     }
