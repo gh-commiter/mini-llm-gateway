@@ -372,6 +372,8 @@ type server struct {
 	admin    string      // skrivnost skrbniškega API (admin.secret)
 	offline  bool        // minigw router brez tekočega routerja: le serve.json
 	settings settingsState
+	pick     atomic.Pointer[pickFunc] // izbirno okno pladnja (Windows); nil = ni GUI
+	picking  atomic.Bool              // eno okno naenkrat
 	// agentsRunning: tekoči procesi agentov (claude, codex, grok), za status in posodobitev brez prekinitve
 	agentsRunning atomic.Int32
 	foundry       foundryState // Foundry Local: vrata, modeli
@@ -903,7 +905,8 @@ func (s *server) handle(w http.ResponseWriter, r *req) (int, string) {
 	if r.URL.Path == adminPrefix || strings.HasPrefix(r.URL.Path, adminPrefix+"/") {
 		return s.adminHTTP(w, r), ""
 	}
-	if r.URL.Path == "/minigw/settings" || r.URL.Path == "/minigw/settings/login" || r.URL.Path == "/minigw/settings/logout" {
+	if r.URL.Path == "/minigw/settings" || r.URL.Path == "/minigw/settings/login" || r.URL.Path == "/minigw/settings/logout" ||
+		r.URL.Path == "/minigw/settings/pick" {
 		return s.settingsHTTP(w, r), ""
 	}
 	if !s.authorized(r) {
