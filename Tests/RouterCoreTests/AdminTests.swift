@@ -221,13 +221,15 @@ private func acceptPeerPort(_ fd: Int32) -> (Int32, UInt16) {
     return (c, UInt16(bigEndian: a.sin_port))
 }
 
-@Suite struct AdminPeerProcess {
+/// Zaporedno: otrok iz refusesAChildProcess (Process podeduje odprte datoteke) bi sicer podedoval vtičnico drugega testa.
+@Suite(.serialized) struct AdminPeerProcess {
     /// Odjemalec je ta proces: »aplikacija« sama (oz. njen otrok) je zavrnjena, tuja aplikacija ne; neznan proces zavrnjen.
     @Test func identifiesTheClientProcess() throws {
         let (l, routerPort) = listener()
         defer { close(l) }
         let c = socket(AF_INET, SOCK_STREAM, 0)
         defer { close(c) }
+        _ = fcntl(c, F_SETFD, FD_CLOEXEC)  // otroci vzporednih testov je ne podedujejo (sicer dva procesa z vtičnico)
         var a = sockaddr_in()
         a.sin_family = sa_family_t(AF_INET); a.sin_addr.s_addr = inet_addr("127.0.0.1"); a.sin_port = routerPort.bigEndian
         _ = withUnsafePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(c, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }

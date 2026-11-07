@@ -266,6 +266,22 @@ struct SettingsView: View {
                 TokenRow()
             }
             ScratchSection(draft: $draft)
+            Section {
+                TextField("Allowed commands", text: $draft.runCommands)
+                ForEach($draft.devices) { $d in
+                    Toggle(isOn: $d.run) { Text(verbatim: d.name) }
+                    Toggle("Network", isOn: $d.runNetwork).disabled(!d.run).padding(.leading, 20)
+                }
+            } header: {
+                Text(verbatim: "minigw run")
+            } footer: {
+                Label {
+                    Text("minigw run is outside the agent sandbox: it runs the project's build with your full rights. Macs switched on here may run these commands in a folder they use from this Mac's SMB share (native mode). A sandbox reduces what the build can do (it writes only to that folder and the build caches, and your keys and app data are hidden), but it is not a security boundary: allow only Macs you would trust with your user account. Network: the build may download (Maven).")
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                }
+                .font(.caption)
+            }
             Section("About") {
                 LabeledContent("Version") { Text(verbatim: "\(MenuView.version) (\(MenuView.build))").textSelection(.enabled) }
                 LabeledContent("License") {

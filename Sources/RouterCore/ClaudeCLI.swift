@@ -200,12 +200,13 @@ public enum ClaudeCLI {
     }
 
     /// Delovna mapa mora obstajati in biti pod dovoljenimi korenskimi mapami.
+    /// Kanonični poti (realpath, tudi »/private«), da povezava nikjer v poti ne pelje ven.
     static func resolveCwd(_ raw: String?, roots: String) -> URL? {
-        guard let raw, !raw.isEmpty else { return nil }
-        let path = expand(raw)
+        guard let raw, !raw.isEmpty, let path = Sync.real(URL(fileURLWithPath: expand(raw)))?.path else { return nil }
         var isDir: ObjCBool = false
         guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else { return nil }
-        let allowed = roots.split(separator: ",").map { expand($0.trimmingCharacters(in: .whitespaces)) }.filter { $0 != "/" }
+        let allowed = roots.split(separator: ",").compactMap { Sync.real(URL(fileURLWithPath: expand($0.trimmingCharacters(in: .whitespaces))))?.path }
+            .filter { $0 != "/" }
         guard allowed.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) else { return nil }
         return URL(fileURLWithPath: path, isDirectory: true)
     }
@@ -358,7 +359,8 @@ extension Router {
             // Mapa odjemalca (minigw na drugem Macu) ima prednost pred enako potjo na tem Macu.
             let clientCwd = req.header("x-claude-mini-cwd")
             let shared = await Self.shares.mount(session: req.header("x-claude-mini-session") ?? "", cwd: clientCwd, base: localBase,
-                                                 wait: req.header("x-claude-mini-share") == "1", device: req.device?.id)
+                                                 wait: req.header("x-claude-mini-share") == "1", device: req.device?.id,
+                                                 roots: config.claudeCLI.allowedRoots)
             let synced = await Self.shares.isSync(session: req.header("x-claude-mini-session") ?? "")
             if let shared, let clientCwd {
                 let readOnly = await Self.shares.isReadOnly(session: req.header("x-claude-mini-session") ?? "")

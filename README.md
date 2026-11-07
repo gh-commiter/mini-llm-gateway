@@ -322,6 +322,43 @@ builds then work on the router's local disk.
 - **The router copy is kept between requests,** so the next sync and the next build are incremental.
 - **Agents in the same folder run one after another.**
 
+**Native: the folder is the router's own SMB share.** When the client works in an SMB mount of a router share (for
+example `/Volumes/Java/eureko-modules` mounted from the router's `/Volumes/Java`), `minigw --minigw-work=native …`
+(or `MINIGW_WORK=native`) lets agents work directly in the router's folder: no mount back, no copy.
+`minigw run -- mvn -q verify` runs a build there and streams its output and exit code back.
+- **Mode per folder:** `minigw share add --work=native` (or `sync`, `direct`, with `--ro` for read-only) in a folder
+  saves its default mode for it and its subfolders in minigw's share list (never in the project); `minigw share list`
+  shows it. `--minigw-work=` or `MINIGW_WORK` still wins for one run.
+- **Proof, not a path:** minigw sends the share name and the path under it; the router writes a check file with random
+  content into its folder, and minigw must read it back through its mount. A folder with the same path elsewhere fails.
+  The check is for correctness (the same folder), not a permission: permission comes from the token, the device, the
+  share and the allowed folders.
+- **Only allowed folders:** the folder must be in a writable SMB share of the router (System Settings → Sharing) and
+  inside its **Allowed folders**; the router checks it again on every request. Agents keep the same sandbox and folder
+  rules.
+- **Like `direct`:** the agent can change every file in the folder, also `.git`, `.claude/settings*.json` and
+  `.vscode/tasks.json`. Use `sync` for a folder where those must stay protected. Native cannot be read-only:
+  `--minigw-ro` (or a saved `--ro`) uses the read-only mount instead.
+- **`minigw run` is off by default:** turn it on per device in **Settings → General → minigw run**, or with the admin
+  API (`PATCH /run`). Only the listed commands run (default `mvn, swift, xcodebuild`), without a shell, at most two at
+  a time per device. It is outside the agent sandbox: the build runs the project's code with your rights on the router.
+  The run sandbox below reduces what a build can do, but it is defence in depth, not a security boundary: enable
+  `minigw run` only for devices you would trust with your user account on the router. A sandbox (`sandbox-exec`) lets it write only to the folder (not its `.git`), `~/.m2`
+  (not `settings*.xml`, `extensions.xml`), `~/Library/Developer`, `~/Library/Caches`, SwiftPM's folders (not their
+  configuration, repository `config` and `hooks`) and temporary folders, and hides `~/.ssh`, `~/.aws`, `~/.gnupg`,
+  `~/.netrc`, `~/.git-credentials`, `~/.npmrc`, `~/.pypirc`, `~/.gradle/gradle.properties`, shell histories, `~/.config`,
+  `~/.docker`, `~/.kube`, the keychains, cookies, `~/Library/Application Support`, `Containers`, `Group Containers`,
+  `Mail`, `Messages`, Mini Gateway's Scratch folder and preferences (rules cover the resolved paths of links too). The
+  router refuses the run when the folder or one of the writable folders is a link. Network is on per device (switch it
+  off in Settings or with `"denyNetwork"`); off is best effort: it blocks direct connections and `nsurlsessiond`, but
+  another system service could still reach the network for the build. The sandbox also blocks writing preferences, reading
+  Mini Gateway's, creating launchd jobs, opening apps and sending Apple events. A sandbox inside it is not possible, so the router runs `swift build|test|run|package` with
+  `--disable-sandbox` and `xcodebuild` without its package and script sandboxes. Stopping minigw stops the whole
+  process group. In a terminal minigw shows only colours from the output, no other escape sequences.
+- If the folder is not a router share, minigw falls back to the usual mount. On Linux (cifs) and Windows (UNC path or
+  mapped drive) detection is automatic; elsewhere set `MINIGW_NATIVE_MOUNT=<share>=<mount folder>`. The Go router
+  (`minigw serve`) does not support native yet.
+
 ## 5. Router settings
 
 Settings of the menu bar app on the router Mac (**Settings…**, laid out like System Settings). On Windows and Linux
