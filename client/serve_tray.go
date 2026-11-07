@@ -88,7 +88,7 @@ func trayMenu(st apiStatus, pending []apiDevice, sl bool) []trayItem {
 		}
 		return en
 	}
-	status := fmt.Sprintf("Running on :%d · %s · %s", st.Port, plural(st.Devices, "device", "devices"), plural(len(st.Gateways), "gateway", "gateways"))
+	status := fmt.Sprintf("Running on :%d · %s · %s", st.Port, plural(st.Devices, "device", "devices"), plural(len(st.Gateways), "provider", "providers"))
 	if sl {
 		status = fmt.Sprintf("Teče na :%d · naprav: %d · prehodov: %d", st.Port, st.Devices, len(st.Gateways))
 	}

@@ -93,7 +93,8 @@ type apiStatus struct {
 	Devices    int          `json:"devices"`
 	Pending    int          `json:"pending"`
 	Claude     apiClaude    `json:"claude"`
-	Gateways   []apiGateway `json:"gateways"`
+	Providers  []apiGateway `json:"providers"`
+	Gateways   []apiGateway `json:"gateways"`             // starejše ime za providers (do 0.5.14)
 	OS         string       `json:"os"`                   // windows, linux, darwin (stran: ukazi brez sandboxa)
 	InstallDir string       `json:"installDir,omitempty"` // minigw serve install
 	Tray       bool         `json:"tray"`                 // pladenj teče (Windows)
@@ -164,10 +165,10 @@ func (s *server) adminHTTP(w http.ResponseWriter, r *req) int {
 	case strings.HasPrefix(auth, adminScheme): // CLI: dokaz skrivnosti, vezan na to povezavo Noise
 		if r.conn.sess == nil || s.admin == "" ||
 			subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(auth, adminScheme)), []byte(adminProof(s.admin, r.conn.sess.hash))) != 1 {
-			return writeError(w, r.rid, 401, "Invalid admin proof: use minigw router (an encrypted connection with the router key)")
+			return writeError(w, r.rid, 401, "Invalid admin proof: use minigw gw (an encrypted connection with the gateway key)")
 		}
 	case auth != "": // npr. Bearer: skrivnost ne sme nikoli po žici
-		return writeError(w, r.rid, 401, "The admin API takes MGW-Admin over an encrypted connection (minigw router), never the secret itself")
+		return writeError(w, r.rid, 401, "The admin API takes MGW-Admin over an encrypted connection (minigw gw), never the secret itself")
 	case !s.settings.valid(r.h(settingsHeader)): // stran z nastavitvami: seja v glavi (brez piškotkov)
 		return writeError(w, r.rid, 401, "Invalid or missing admin secret (admin.secret in the config folder)")
 	}
@@ -195,7 +196,7 @@ func adminProof(secret string, h []byte) string {
 // rebinding). 0 = v redu, sicer je odgovor že poslan.
 func localOnly(w http.ResponseWriter, r *req) int {
 	if !r.conn.loopback() {
-		return writeError(w, r.rid, 403, "The admin API is only available on the router computer")
+		return writeError(w, r.rid, 403, "The admin API is only available on the gateway computer")
 	}
 	_, port, _ := net.SplitHostPort(r.conn.LocalAddr().String())
 	if !slices.Contains([]string{"127.0.0.1:" + port, "localhost:" + port, "[::1]:" + port}, strings.ToLower(r.Host)) {
@@ -254,6 +255,9 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		}
 		seg = append(seg, v)
 	}
+	if seg[0] == "gateways" { // starejše ime (do 0.5.14), ostane kot alias
+		seg[0] = "providers"
+	}
 	route, arg := method+" "+seg[0], ""
 	switch len(seg) {
 	case 1:
@@ -276,6 +280,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			}
 		}
 		s.mu.RLock()
+		st.Providers = st.Gateways
 		st.Pending = len(s.pending)
 		s.mu.RUnlock()
 		return 200, st
@@ -298,7 +303,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			return fail(400, err.Error())
 		}
 		if !validDeviceID(d.ID) {
-			return fail(400, strconv.Quote(d.ID)+" is not a device ID (43 characters, base64url): copy it from the router log or from the client's refusal message")
+			return fail(400, strconv.Quote(d.ID)+" is not a device ID (43 characters, base64url): copy it from the gateway log or from the client's refusal message")
 		}
 		added := false
 		err := s.update(func(c *serveConfig) error {
@@ -349,9 +354,10 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		}
 		return 200, map[string]any{"device": apiDevice{ID: gone.ID, Name: gone.Name}}
 
-	case "GET gateways":
-		return 200, map[string]any{"gateways": s.apiGateways(s.conf())}
-	case "POST gateways":
+	case "GET providers":
+		list := s.apiGateways(s.conf())
+		return 200, map[string]any{"providers": list, "gateways": list} // gateways: starejše ime
+	case "POST providers":
 		var b struct {
 			Name     string `json:"name"`
 			BaseURL  string `json:"baseURL"`
@@ -362,7 +368,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			return fail(400, err.Error())
 		}
 		if !validGatewayName.MatchString(b.Name) {
-			return fail(400, "gateway name: letters, digits, . _ - (up to 32)")
+			return fail(400, "provider name: letters, digits, . _ - (up to 32)")
 		}
 		base, err := checkGatewayURL(b.BaseURL, b.Insecure)
 		if err != nil {
@@ -378,7 +384,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		}
 		models, err := discoverGateway(g, b.Key)
 		if err != nil {
-			return fail(400, "gateway not added: "+err.Error())
+			return fail(400, "provider not added: "+err.Error())
 		}
 		if !exists && len(models) > 20 { // OpenRouter: več sto modelov, izbereš sam (kot na Macu)
 			g.Models = []string{}
@@ -389,7 +395,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			return fail(500, "cannot store the API key: "+err.Error())
 		}
 		if strings.HasPrefix(where, "WARNING") {
-			s.log.Printf("gateway %s: API key: %s", b.Name, where)
+			s.log.Printf("provider %s: API key: %s", b.Name, where)
 		}
 		err = s.update(func(c *serveConfig) error {
 			if i := slices.IndexFunc(c.Gateways, func(x serveGateway) bool { return x.Name == g.Name }); i >= 0 {
@@ -408,8 +414,8 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			return fail(500, err.Error())
 		}
 		s.gateways.forget(g.Name)
-		return 200, map[string]any{"gateway": s.apiGateway(g), "keyStore": where, "models": apiModels(g, models, "")}
-	case "PATCH gateways/{}": // ime, vklop, URL (ključ ostane), aliasi; kot polja prehoda v nastavitvah na Macu
+		return 200, map[string]any{"provider": s.apiGateway(g), "gateway": s.apiGateway(g), "keyStore": where, "models": apiModels(g, models, "")}
+	case "PATCH providers/{}": // ime, vklop, URL (ključ ostane), aliasi; kot polja prehoda v nastavitvah na Macu
 		var b struct {
 			Name     *string `json:"name"`
 			Enabled  *bool   `json:"enabled"`
@@ -422,7 +428,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		}
 		g, ok := findGateway(s.conf(), arg)
 		if !ok {
-			return fail(404, "no gateway "+arg)
+			return fail(404, "no provider "+arg)
 		}
 		if b.Insecure != nil {
 			g.Insecure = *b.Insecure
@@ -449,10 +455,10 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		}
 		if b.Name != nil && *b.Name != arg {
 			if !validGatewayName.MatchString(*b.Name) {
-				return fail(400, "gateway name: letters, digits, . _ - (up to 32)")
+				return fail(400, "provider name: letters, digits, . _ - (up to 32)")
 			}
 			if _, taken := findGateway(s.conf(), *b.Name); taken {
-				return fail(400, "a gateway named "+*b.Name+" already exists")
+				return fail(400, "a provider named "+*b.Name+" already exists")
 			}
 			g.Name = *b.Name
 		}
@@ -467,7 +473,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		if err := s.update(func(c *serveConfig) error {
 			i := slices.IndexFunc(c.Gateways, func(x serveGateway) bool { return x.Name == arg })
 			if i < 0 {
-				return errors.New("no gateway " + arg)
+				return errors.New("no provider " + arg)
 			}
 			g.Models = slices.Clone(c.Gateways[i].Models)
 			c.Gateways[i] = g
@@ -483,12 +489,12 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		}
 		s.gateways.forget(arg)
 		s.gateways.forget(g.Name)
-		return 200, map[string]any{"gateway": s.apiGateway(g)}
-	case "DELETE gateways/{}":
+		return 200, map[string]any{"provider": s.apiGateway(g), "gateway": s.apiGateway(g)}
+	case "DELETE providers/{}":
 		err := s.update(func(c *serveConfig) error {
 			i := slices.IndexFunc(c.Gateways, func(x serveGateway) bool { return x.Name == arg })
 			if i < 0 {
-				return errors.New("no gateway " + arg)
+				return errors.New("no provider " + arg)
 			}
 			c.Gateways = slices.Delete(c.Gateways, i, i+1)
 			return nil
@@ -499,10 +505,10 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		keyDel(s.cfgDir, arg)
 		s.gateways.forget(arg)
 		return 200, map[string]any{"name": arg}
-	case "GET gateways/{}/models", "POST gateways/{}/models":
+	case "GET providers/{}/models", "POST providers/{}/models":
 		g, ok := findGateway(s.conf(), arg)
 		if !ok {
-			return fail(404, "no gateway "+arg)
+			return fail(404, "no provider "+arg)
 		}
 		key, _ := keyGet(s.cfgDir, g.Name)
 		models, err := discoverGateway(g, key)
@@ -539,7 +545,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		for _, v := range b.Enable {
 			id, ok := upstream(v)
 			if !ok {
-				return fail(400, "gateway "+g.Name+" has no model "+v)
+				return fail(400, "provider "+g.Name+" has no model "+v)
 			}
 			if !g.enabled(id) {
 				g.Models = append(slices.Clone(g.Models), id)
@@ -550,7 +556,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			for _, v := range b.Disable {
 				id, ok := upstream(v)
 				if !ok {
-					return fail(400, "gateway "+g.Name+" has no model "+v)
+					return fail(400, "provider "+g.Name+" has no model "+v)
 				}
 				off = append(off, id)
 			}
@@ -565,7 +571,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		err = s.update(func(c *serveConfig) error {
 			i := slices.IndexFunc(c.Gateways, func(x serveGateway) bool { return x.Name == g.Name })
 			if i < 0 {
-				return errors.New("no gateway " + g.Name)
+				return errors.New("no provider " + g.Name)
 			}
 			c.Gateways[i].Models = slices.Clone(g.Models)
 			return nil

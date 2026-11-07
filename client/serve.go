@@ -66,13 +66,13 @@ type serveConfig struct {
 	Grok             agentCLI `json:"grok"`                     // Grok CLI, privzeto izklopljen
 }
 
-const serveHelp = `minigw serve: a Mini Gateway router on this computer (Windows, Linux) for minigw clients.
+const serveHelp = `minigw serve: Mini Gateway, the LLM gateway, on this computer (Windows, Linux) for minigw clients.
 
   minigw serve init [--port N] [--folder DIR] [--config FILE]   create the config, print the minigw connect line
-  minigw serve install | uninstall [--config FILE]              start the router at sign-in (per user, no admin)
-  minigw serve [--port N] [--folder DIR] [--config FILE]        run the router
-  minigw router status|devices|gateway|claude|token …           show or change the router, live if it runs
-  minigw serve allow|deny|devices|gateway|status …              the same as minigw router devices allow|deny, …
+  minigw serve install | uninstall [--config FILE]              start the gateway at sign-in (per user, no admin)
+  minigw serve [--port N] [--folder DIR] [--config FILE]        run the gateway
+  minigw gw status|devices|provider|claude|token …              show or change the gateway, live if it runs
+  minigw serve allow|deny|devices|provider|status …             the same as minigw gw devices allow|deny, …
 
 Clients use: MINIGW_WORK=sync minigw … (folder mounts are macOS only).
 Unknown devices are refused; the log prints their ID. Before minigw serve allow, compare the ID with the one on the
@@ -225,7 +225,7 @@ func serveCommand(args []string) {
 	case "allow", "deny":
 		routerCommand(append([]string{"devices", sub}, args...), os.Stdin)
 		return
-	case "devices", "gateway", "status":
+	case "devices", "provider", "gateway", "status":
 		routerCommand(append([]string{sub}, args...), os.Stdin)
 		return
 	}
@@ -266,8 +266,8 @@ func serveCommand(args []string) {
 		say("Config: " + *cfgPath)
 		say("On each client run:")
 		say("  " + connectLine(c))
-		say("Then start the router with: minigw serve" + map[bool]string{true: "", false: " --config " + *cfgPath}[*cfgPath == defaultServeConfigPath()])
-		say("Unknown devices are refused; the router log shows how to allow one (minigw serve allow <id>).")
+		say("Then start the gateway with: minigw serve" + map[bool]string{true: "", false: " --config " + *cfgPath}[*cfgPath == defaultServeConfigPath()])
+		say("Unknown devices are refused; the gateway log shows how to allow one (minigw serve allow <id>).")
 		return
 	case "install", "uninstall":
 		msg, err := serviceCommand(sub, runtime.GOOS, *cfgPath)
@@ -331,11 +331,11 @@ func newServeConfig() serveConfig {
 // announce: vrstica zagona, opozorila o ključih prehodov in odkrivanje modelov v ozadju.
 func (s *server) announce(ln net.Listener) {
 	c := s.conf()
-	s.log.Printf("minigw %s serving on %s (MGW2), claude=%q folder=%q scratch=%q devices=%d gateways=%d", version, ln.Addr(),
+	s.log.Printf("minigw %s serving on %s (MGW2), claude=%q folder=%q scratch=%q devices=%d providers=%d", version, ln.Addr(),
 		strings.Join(s.claudeExe(), " "), c.Folder, c.Scratch, len(c.Devices), len(c.Gateways))
 	for _, g := range c.Gateways {
 		if key, where := keyGet(s.cfgDir, g.Name); key == "" {
-			s.log.Printf("WARNING: gateway %s has no API key: run minigw serve gateway add %s %s", g.Name, g.Name, g.BaseURL)
+			s.log.Printf("WARNING: provider %s has no API key: run minigw gw provider add %s %s", g.Name, g.Name, g.BaseURL)
 		} else if strings.HasSuffix(where, ".json") && runtime.GOOS == "linux" {
 			s.log.Printf("WARNING: gateway %s: no Secret Service (secret-tool), the API key is in %s (mode 0600)", g.Name, where)
 		}
@@ -400,10 +400,10 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	}
 	for i, g := range c.Gateways { // ročno urejen serve.json: ista pravila kot gateway add
 		if !validGatewayName.MatchString(g.Name) {
-			return nil, fmt.Errorf("gateway name %q in the config: letters, digits, . _ - (up to 32)", g.Name)
+			return nil, fmt.Errorf("provider name %q in the config: letters, digits, . _ - (up to 32)", g.Name)
 		}
 		if c.Gateways[i].BaseURL, err = checkGatewayURL(g.BaseURL, g.Insecure); err != nil {
-			return nil, fmt.Errorf("gateway %s in the config: %v", g.Name, err)
+			return nil, fmt.Errorf("provider %s in the config: %v", g.Name, err)
 		}
 	}
 	protectErr := protectConfigDir(cfgDir)
@@ -411,7 +411,7 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 		return nil, fmt.Errorf("the config folder %s %v: use a folder of your own", cfgDir, protectErr)
 	}
 	if !validAddress(c.Address) {
-		return nil, errors.New("address " + c.Address + ": use empty (all), 0.0.0.0, :: or 127.0.0.1, so that minigw router and the admin API reach the router on 127.0.0.1; limit clients with a firewall")
+		return nil, errors.New("address " + c.Address + ": use empty (all), 0.0.0.0, :: or 127.0.0.1, so that minigw gw and the admin API reach the gateway on 127.0.0.1; limit clients with a firewall")
 	}
 	exe, err := checkAgent(&c, cfgDir)
 	if err != nil {
@@ -434,14 +434,14 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 		gwSlots: make(chan struct{}, 16)}
 	switch {
 	case runtime.GOOS == "windows" && len(unsandboxedTools(c.Tools)) > 0:
-		s.log.Printf("WARNING: %s allowed without a sandbox: agents can run any command as this user and read the gateway API keys in Credential Manager and the admin secret",
+		s.log.Printf("WARNING: %s allowed without a sandbox: agents can run any command as this user and read the provider API keys in Credential Manager and the admin secret",
 			strings.Join(unsandboxedTools(c.Tools), ", "))
 	case runtime.GOOS == "windows" || !hasBash(c.Tools):
 	default:
 		s.log.Printf("WARNING: Bash is allowed; it runs only in Claude Code's sandbox (on Linux it needs bubblewrap and socat)")
 	}
 	if protectErr != nil {
-		s.log.Printf("WARNING: cannot make %s private to this user (%v): other users of this computer may read the token, the router key and the admin secret; use the default config folder", cfgDir, protectErr)
+		s.log.Printf("WARNING: cannot make %s private to this user (%v): other users of this computer may read the token, the gateway key and the admin secret; use the default config folder", cfgDir, protectErr)
 	}
 	if len(exe) == 0 {
 		s.log.Printf("WARNING: claude not found (install Claude Code or set \"claude\" in the config); no models")
@@ -500,7 +500,7 @@ func checkAgent(c *serveConfig, cfgDir string) ([]string, error) {
 		return nil, err
 	}
 	if t := unsandboxedTools(c.Tools); len(t) > 0 && runtime.GOOS == "windows" && !c.AllowUnsandboxedBash {
-		return nil, errors.New("tools " + strings.Join(t, ", ") + " have no sandbox on Windows: remove them from tools, or set \"allowUnsandboxedBash\": true to let agents run any command as this user (and read the gateway API keys in Credential Manager and the admin secret)")
+		return nil, errors.New("tools " + strings.Join(t, ", ") + " have no sandbox on Windows: remove them from tools, or set \"allowUnsandboxedBash\": true to let agents run any command as this user (and read the provider API keys in Credential Manager and the admin secret)")
 	}
 	return exe, nil
 }
@@ -598,7 +598,7 @@ func (s *server) update(f func(*serveConfig) error, commit ...func()) error {
 		return err
 	}
 	if file = clone(file); f(&file) != nil {
-		return errors.New("serve.json differs from the running router: restart minigw serve")
+		return errors.New("serve.json differs from the running gateway: restart minigw serve")
 	}
 	if err := writeServeConfig(s.cfgPath, file); err != nil {
 		return err
@@ -773,12 +773,12 @@ func (s *server) accept(raw net.Conn) *serveConn {
 			return c
 		}
 	case string(head) == "MGW1":
-		s.log.Printf("%s refused: ChaCha20 (MGW1) connection; this router supports MGW2 (AES-GCM) only: update minigw", strconv.Quote(host))
+		s.log.Printf("%s refused: ChaCha20 (MGW1) connection; this gateway supports MGW2 (AES-GCM) only: update minigw", strconv.Quote(host))
 	case !c.loopback() && s.conf().AllowPlainRemote: // izrecno vklopljeno: brez šifriranja in brez ključa naprave
 		raw.SetDeadline(time.Time{})
 		return c
 	case !c.loopback():
-		body := `{"type":"error","error":{"type":"permission_error","message":"Unencrypted connections from other computers are off: use minigw connect with the router key"}}`
+		body := `{"type":"error","error":{"type":"permission_error","message":"Unencrypted connections from other computers are off: use minigw connect with the gateway key"}}`
 		fmt.Fprintf(raw, "HTTP/1.1 426 Upgrade Required\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s", len(body), body)
 	default:
 		raw.SetDeadline(time.Time{})
@@ -910,9 +910,9 @@ func (s *server) handle(w http.ResponseWriter, r *req) (int, string) {
 		if d := r.conn.device; d != nil {
 			s.addPending(*d, r.conn.peer)
 			s.log.Printf("%s refused unknown device %q %s; compare the ID with the client, then to allow it run: minigw serve allow %s %q", r.rid, d.Name, d.ID, d.ID, d.Name)
-			return writeError(w, r.rid, 403, fmt.Sprintf("Device %q is not allowed on this router: on the router run minigw serve allow %s", d.Name, d.ID)), ""
+			return writeError(w, r.rid, 403, fmt.Sprintf("Device %q is not allowed on this gateway: on the gateway run minigw serve allow %s", d.Name, d.ID)), ""
 		}
-		return writeError(w, r.rid, 403, "This router needs a device key: update minigw and run minigw connect again"), ""
+		return writeError(w, r.rid, 403, "This gateway needs a device key: update minigw and run minigw connect again"), ""
 	}
 	limit := int64(1 << 20)
 	if bigBodies[r.Method+" "+r.URL.Path] {
@@ -1067,4 +1067,4 @@ func (s *server) route(w http.ResponseWriter, r *req) (int, string) {
 	return writeError(w, r.rid, 404, "Not found: "+r.Method+" "+path), ""
 }
 
-const refusedDirect = "this router supports --minigw-work=sync only (no folder mount on Windows or Linux): run minigw with MINIGW_WORK=sync"
+const refusedDirect = "this gateway supports --minigw-work=sync only (no folder mount on Windows or Linux): run minigw with MINIGW_WORK=sync"

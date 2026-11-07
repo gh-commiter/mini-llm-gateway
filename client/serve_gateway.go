@@ -86,20 +86,20 @@ var validGatewayName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$`)
 func checkGatewayURL(raw string, insecure bool) (string, error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return "", errors.New("invalid gateway URL: " + raw)
+		return "", errors.New("invalid provider URL: " + raw)
 	}
 	switch u.Scheme {
 	case "https":
 	case "http":
 		ip := net.ParseIP(u.Hostname())
 		if u.Hostname() != "localhost" && (ip == nil || !(ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast())) {
-			return "", errors.New("gateway URL must be https (http only to localhost or a private IP, with --insecure)")
+			return "", errors.New("provider URL must be https (http only to localhost or a private IP, with --insecure)")
 		}
 		if !insecure {
-			return "", errors.New("http sends the API key unencrypted: add --insecure for a gateway on localhost or a private IP")
+			return "", errors.New("http sends the API key unencrypted: add --insecure for a provider on localhost or a private IP")
 		}
 	default:
-		return "", errors.New("gateway URL must be https: " + raw)
+		return "", errors.New("provider URL must be https: " + raw)
 	}
 	return strings.TrimSuffix(strings.TrimSuffix(u.String(), "/"), "/v1"), nil
 }
@@ -293,7 +293,7 @@ func (s *server) gatewayModels(g serveGateway, wait bool) []gwModel {
 		go func() {
 			key, _ := keyGet(s.cfgDir, g.Name)
 			var ms []gwModel
-			err := errors.New("no API key: run minigw serve gateway add " + g.Name)
+			err := errors.New("no API key: run minigw gw provider add " + g.Name)
 			if key != "" {
 				ms, err = discoverGateway(g, key)
 			}
@@ -302,7 +302,7 @@ func (s *server) gatewayModels(g serveGateway, wait bool) []gwModel {
 				e.models, e.ok, e.at, e.failed = ms, true, time.Now(), time.Time{}
 			} else {
 				e.failed = time.Now()
-				s.log.Printf("gateway %s: %v", g.Name, err)
+				s.log.Printf("provider %s: %v", g.Name, err)
 			}
 			e.loading = nil
 			c.mu.Unlock()
@@ -399,11 +399,11 @@ func (s *server) passthrough(w http.ResponseWriter, r *req, g serveGateway, m gw
 	case s.gwSlots <- struct{}{}:
 		defer func() { <-s.gwSlots }()
 	default:
-		return writeError(w, r.rid, 429, "Too many gateway requests at once on this router: try again")
+		return writeError(w, r.rid, 429, "Too many provider requests at once on this gateway: try again")
 	}
 	key, _ := keyGet(s.cfgDir, g.Name)
 	if key == "" {
-		return writeError(w, r.rid, 503, "No API key configured for "+g.Name+": run minigw serve gateway add "+g.Name)
+		return writeError(w, r.rid, 503, "No API key configured for "+g.Name+": run minigw gw provider add "+g.Name)
 	}
 	var body map[string]json.RawMessage
 	if json.Unmarshal(r.body, &body) != nil {
@@ -478,7 +478,7 @@ func upstreamError(w http.ResponseWriter, rid, name string, resp *http.Response)
 	status := resp.StatusCode
 	switch {
 	case status == 401 || status == 403: // brez besedila upstreama
-		msg, status = fmt.Sprintf("HTTP %d, check the API key (minigw serve gateway add %s)", status, name), 502
+		msg, status = fmt.Sprintf("HTTP %d, check the API key (minigw gw provider add %s)", status, name), 502
 	case status < 400 || status > 599:
 		msg, status = fmt.Sprintf("HTTP %d: %s", status, msg), 502
 	}

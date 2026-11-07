@@ -335,7 +335,7 @@ func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch fu
 			continue
 		}
 		if local.SHA256 != base(p) {
-			notes = append(notes, "conflict: "+p+" was deleted on the router but changed here; kept")
+			notes = append(notes, "conflict: "+p+" was deleted on the gateway but changed here; kept")
 			continue
 		}
 		os.Remove(full)
@@ -382,10 +382,10 @@ func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch fu
 		if local.SHA256 != base(e.Path) {            // spremenjena (ali izbrisana) tudi tukaj
 			c, ok := syncResolve(e.Path+".minigw-conflict", root)
 			if !ok || syncWrite(c, data, e.Mtime, e.Exec, false) != nil {
-				notes = append(notes, "conflict: "+e.Path+" changed here and on the router; the router's version could not be saved")
+				notes = append(notes, "conflict: "+e.Path+" changed here and on the gateway; the gateway's version could not be saved")
 				continue
 			}
-			notes = append(notes, "conflict: "+e.Path+" changed here and on the router; kept yours, the router's version is in "+e.Path+".minigw-conflict")
+			notes = append(notes, "conflict: "+e.Path+" changed here and on the gateway; kept yours, the gateway's version is in "+e.Path+".minigw-conflict")
 			done = append(done, e.Path)
 			continue
 		}
@@ -432,7 +432,7 @@ func (s *shareClient) syncPush(k string) bool {
 		Kept []string `json:"kept"`
 	}
 	if st != 200 || json.Unmarshal(data, &r) != nil || r.Need == nil {
-		s.note(fmt.Sprintf("sync to the router failed (HTTP %d)", st))
+		s.note(fmt.Sprintf("sync to the gateway failed (HTTP %d)", st))
 		return false
 	}
 	// Neuspešen prenos in »kept« (router je obdržal agentovo različico): stanje poti ostane staro, da prevzem zazna spor.
@@ -445,7 +445,7 @@ func (s *shareClient) syncPush(k string) bool {
 	}
 	for _, p := range r.Kept {
 		keepOld(p)
-		s.note("the agent's change to " + p + " is not copied back yet; kept on the router")
+		s.note("the agent's change to " + p + " is not copied back yet; kept on the gateway")
 	}
 	for _, p := range r.Need {
 		full, ok := syncResolve(p, s.root)
@@ -473,7 +473,7 @@ func (s *shareClient) syncPull(k string) bool {
 	st, data := call(s.c, "GET", "/minigw/sync/changes", map[string]string{"x-share-key": k}, nil, 300*time.Second)
 	var ch syncChanges
 	if st != 200 || json.Unmarshal(data, &ch) != nil {
-		s.note(fmt.Sprintf("cannot get the agent's changes from the router (HTTP %d)", st))
+		s.note(fmt.Sprintf("cannot get the agent's changes from the gateway (HTTP %d)", st))
 		s.unpulled = true
 		return false
 	}
@@ -492,12 +492,12 @@ func (s *shareClient) syncPull(k string) bool {
 	if len(done) > 0 {
 		body, _ := json.Marshal(done)
 		if st, _ := call(s.c, "POST", "/minigw/sync/ack", map[string]string{"x-share-key": k, "content-type": "application/json"}, body, 60*time.Second); st != 204 {
-			s.note("the router did not confirm the copied-back changes; they come again next time")
+			s.note("the gateway did not confirm the copied-back changes; they come again next time")
 			s.unpulled = true
 		}
 	}
 	if len(ch.Changed)+len(ch.Deleted) > 0 {
-		s.note(fmt.Sprintf("synced back from the router: %d changed, %d deleted", len(ch.Changed), len(ch.Deleted)))
+		s.note(fmt.Sprintf("synced back from the gateway: %d changed, %d deleted", len(ch.Changed), len(ch.Deleted)))
 	}
 	return true
 }

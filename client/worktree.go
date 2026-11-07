@@ -117,10 +117,10 @@ func isBundle(path string) bool {
 // ki jih agentova nima, ostane uporabnikova. "" = uspeh.
 func gitFetchBranch(top, bundle, branch string) string {
 	if !branchRe.MatchString(branch) {
-		return "invalid branch name from the router"
+		return "invalid branch name from the gateway"
 	}
 	if !isBundle(bundle) {
-		return "the router did not send a git bundle"
+		return "the gateway did not send a git bundle"
 	}
 	if cur, _ := gitUser(top, nil, "symbolic-ref", "-q", "HEAD"); cur == "refs/heads/"+branch {
 		return branch + " is checked out here; not updated"
@@ -133,7 +133,7 @@ func gitFetchBranch(top, bundle, branch string) string {
 	defer gitUser(top, nil, "update-ref", "-d", "refs/minigw/incoming")
 	nw, _ := gitUser(top, nil, "rev-parse", "-q", "--verify", "refs/minigw/incoming^{commit}")
 	if err != nil || !shaRe.MatchString(nw) {
-		return "git fetch of " + branch + " failed (the router's branch was rejected)"
+		return "git fetch of " + branch + " failed (the gateway's branch was rejected)"
 	}
 	// Premik veje z git fetch brez sile: git sam zavrne nehitro posodobitev in vejo, izvlečeno v kateri koli delovni mapi.
 	if _, e := gitUser(top, nil, "-c", "fetch.recurseSubmodules=false", "-c", "submodule.recurse=false", "-c", "maintenance.auto=false",
@@ -182,7 +182,7 @@ func (s *shareClient) wtPush(k string, job davJob) davResponse {
 			if n > 0 {
 				if st, _ := call(s.c, "PUT", "/minigw/worktree/bundle", map[string]string{"x-share-key": k, "x-part": strconv.Itoa(part)},
 					buf[:n], 10*time.Minute); st != 204 {
-					s.note("worktree: upload to the router failed")
+					s.note("worktree: upload to the gateway failed")
 					return dav(500, nil, nil)
 				}
 			}
@@ -203,7 +203,7 @@ func (s *shareClient) wtPull(k string, job davJob) davResponse {
 	}
 	st, data := call(s.c, "GET", "/minigw/worktree/result", map[string]string{"x-share-key": k}, nil, 10*time.Minute)
 	if st != 200 {
-		s.note(fmt.Sprintf("worktree: cannot get %s from the router (HTTP %d)", req.Branch, st))
+		s.note(fmt.Sprintf("worktree: cannot get %s from the gateway (HTTP %d)", req.Branch, st))
 		return dav(500, nil, nil)
 	}
 	dir, err := os.MkdirTemp("", "minigw-") // 0700

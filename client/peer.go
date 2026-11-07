@@ -63,7 +63,7 @@ func bwrapArgs(home, cfgDir string, ro, rw, hideFiles, hideDirs []string) []stri
 	return a
 }
 
-var errAgentPeer = errors.New("this request comes from an agent process of the router: the admin API refuses it")
+var errAgentPeer = errors.New("this request comes from an agent process of the gateway: the admin API refuses it")
 
 // adminPeerCheck: nil = odjemalec ni agent tega routerja.
 func adminPeerCheck(c net.Conn) error {

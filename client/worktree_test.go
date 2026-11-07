@@ -157,7 +157,7 @@ func TestWorktreeFetchChecksBundleAndKeepsUserCommits(t *testing.T) {
 	branch := "minigw/claude-0123abcd-0"
 	notBundle := filepath.Join(root, "x.bundle")
 	writeT(t, notBundle, "not a bundle\n")
-	if why := gitFetchBranch(client, notBundle, branch); why != "the router did not send a git bundle" {
+	if why := gitFetchBranch(client, notBundle, branch); why != "the gateway did not send a git bundle" {
 		t.Fatalf("not a bundle: %q", why)
 	}
 	if gitFetchBranch(client, filepath.Join(client, ".git"), branch) == "" {

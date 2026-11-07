@@ -120,7 +120,7 @@ async function signIn() {
 const SL = (navigator.language || "").toLowerCase().startsWith("sl");
 document.documentElement.lang = SL ? "sl" : "en";
 const S = {
-  general: ["General", "Splošno"], devices: ["Devices", "Naprave"], gateways: ["Gateways", "Prehodi"], claude: ["Claude CLI", "Claude CLI"],
+  general: ["General", "Splošno"], devices: ["Devices", "Naprave"], gateways: ["Providers", "Ponudniki"], claude: ["Claude CLI", "Claude CLI"],
   about: ["About", "O aplikaciji"], license: ["License", "Licenca"], copyToken: ["Copy Token", "Kopiraj žeton"],
   allowedClients: ["Allowed clients (IP; empty = all)", "Dovoljeni odjemalci (IP; prazno = vsi)"],
   plainRemote: ["Allow unencrypted connections from other computers", "Dovoli nešifrirane povezave z drugih računalnikov"],
@@ -143,8 +143,8 @@ const S = {
     "Prazno = brez. project/local naložita nastavitve in hooke iz mape odjemalca, ki tedaj tečejo na tem računalniku."],
   noTools: ["No tools found (is claude installed and signed in?)", "Ni najdenih orodij (je claude nameščen in prijavljen?)"],
   cliTool: ["Command-line tool", "Ukaz v terminalu"], installedAt: ["Installed: %s", "Nameščeno: %s"], download: ["Download…", "Prenos …"],
-  cliHint: ["minigw runs Claude Code through a router, e.g. minigw --model claude-cli-opus; minigw serve install installs it here, Download gets it for another computer.",
-    "minigw zažene Claude Code prek routerja, npr. minigw --model claude-cli-opus; minigw serve install ga namesti tukaj, Prenos ga prenese za drug računalnik."],
+  cliHint: ["minigw runs Claude Code through a gateway, e.g. minigw --model claude-cli-opus; minigw serve install installs it here, Download gets it for another computer.",
+    "minigw zažene Claude Code prek prehoda, npr. minigw --model claude-cli-opus; minigw serve install ga namesti tukaj, Prenos ga prenese za drug računalnik."],
   codexDesc: ["OpenAI Codex CLI as an agent model in the session's folder.", "OpenAI Codex CLI kot model agenta v mapi seje."],
   grokDesc: ["xAI Grok CLI as an agent model in the session's folder.", "xAI Grok CLI kot model agenta v mapi seje."],
   codexNotFound: ["codex not found: install the Codex CLI (on Windows the native codex.exe) or set the path.", "codex ni najden: namesti Codex CLI (na Windows izvorni codex.exe) ali vpiši pot."],
@@ -152,27 +152,27 @@ const S = {
   noModels: ["No models (sign in once with the CLI's login command)", "Ni modelov (enkrat se prijavi z ukazom login tega CLI)"],
   sandbox: ["Sandbox", "Sandbox"], allowWrite: ["Allow writing in the session's folder", "Dovoli pisanje v mapo seje"],
   allowNetwork: ["Allow network access for commands", "Dovoli omrežje za ukaze"],
-  agentLockedWin: ["Here (Windows, or Linux without bwrap) this needs “Allow commands without a sandbox” under Claude CLI: the agent can read and change everything this user can, including router settings.",
-    "Tu (Windows ali Linux brez bwrap) to zahteva »Dovoli ukaze brez sandboxa« pod Claude CLI: agent lahko bere in spreminja vse, kar ta uporabnik, tudi nastavitve routerja."],
-  agentWarnWin: ["Here the agent runs without a sandbox: it can read and change everything this user can, including router settings.",
-    "Tu agent teče brez sandboxa: lahko bere in spreminja vse, kar ta uporabnik, tudi nastavitve routerja."],
+  agentLockedWin: ["Here (Windows, or Linux without bwrap) this needs “Allow commands without a sandbox” under Claude CLI: the agent can read and change everything this user can, including gateway settings.",
+    "Tu (Windows ali Linux brez bwrap) to zahteva »Dovoli ukaze brez sandboxa« pod Claude CLI: agent lahko bere in spreminja vse, kar ta uporabnik, tudi nastavitve prehoda."],
+  agentWarnWin: ["Here the agent runs without a sandbox: it can read and change everything this user can, including gateway settings.",
+    "Tu agent teče brez sandboxa: lahko bere in spreminja vse, kar ta uporabnik, tudi nastavitve prehoda."],
   allowedFoldersShared: ["Shared with Claude CLI. The agent may also write here (Codex).", "Skupne s Claude CLI. Agent sme pisati tudi sem (Codex)."],
   codexFooter: ["The claude-codex models (one per Codex model of your account) run “codex exec” as an agent in the synced copy of the client's folder. Its sandbox writes only to that folder and the allowed folders. Devices that use Codex can read every file this user can read. Sign in once with “codex login”.",
     "Modeli claude-codex (eden za vsak model Codex tvojega računa) poženejo »codex exec« kot agenta v sinhronizirani kopiji mape odjemalca. Njegov sandbox piše le v to mapo in dovoljene mape. Naprave, ki uporabljajo Codex, lahko berejo vsako datoteko, ki jo lahko bere ta uporabnik. Enkrat se prijavi z »codex login«."],
   grokFooter: ["The claude-grok models run “grok -p” as an agent in the synced copy of the client's folder. Grok's sandbox (workspace) lets it write only to that folder. Devices that use Grok can read every file this user can read. Without writing it runs read-only. Sign in once with “grok login”.",
     "Modeli claude-grok poženejo »grok -p« kot agenta v sinhronizirani kopiji mape odjemalca. Sandbox Grok (workspace) dovoli pisanje le v to mapo. Naprave, ki uporabljajo Grok, lahko berejo vsako datoteko, ki jo lahko bere ta uporabnik. Brez pisanja teče samo za branje. Enkrat se prijavi z »grok login«."],
-  generalDesc: ["Address, port and access token of the router, and its state.", "Naslov, vrata in žeton routerja ter njegovo stanje."],
-  devicesDesc: ["Computers that may use this router. Compare a waiting device's ID with the one on the client before you allow it.",
-    "Računalniki, ki smejo uporabljati ta router. ID čakajoče naprave pred odobritvijo primerjaj s tistim na odjemalcu."],
+  generalDesc: ["Address, port and access token of the gateway, and its state.", "Naslov, vrata in žeton prehoda ter njegovo stanje."],
+  devicesDesc: ["Computers that may use this gateway. Compare a waiting device's ID with the one on the client before you allow it.",
+    "Računalniki, ki smejo uporabljati ta prehod. ID čakajoče naprave pred odobritvijo primerjaj s tistim na odjemalcu."],
   gatewaysDesc: ["Anthropic-compatible upstreams such as OpenRouter or LiteLLM, each with its own key and models.",
     "Anthropic-združljivi ponudniki, npr. OpenRouter ali LiteLLM, vsak s svojim ključem in modeli."],
   claudeDesc: ["Your local Claude Code as an agent model, with tools in the synced folder.", "Lokalni Claude Code kot model agenta, z orodji v sinhronizirani mapi."],
-  status: ["Status", "Stanje"], router: ["Router", "Router"], runningOn: ["Running on port %s", "Teče na vratih %s"], version: ["Version", "Različica"],
+  status: ["Status", "Stanje"], router: ["Gateway", "Prehod"], runningOn: ["Running on port %s", "Teče na vratih %s"], version: ["Version", "Različica"],
   devicesN: ["%s allowed · %s waiting", "dovoljenih %s · čaka %s"], installed: ["Installed", "Nameščeno"], notInstalled: ["Not installed (minigw serve install)", "Ni nameščeno (minigw serve install)"],
   tray: ["Tray icon", "Ikona v pladnju"], trayOn: ["Running", "Teče"], trayOff: ["Not running", "Ne teče"],
   startup: ["Start at sign-in", "Zaženi ob prijavi"], startupHint: ["Set up with minigw serve install", "Nastavi z minigw serve install"],
   network: ["Network", "Omrežje"], address: ["Address (empty = all)", "Naslov (prazno = vsi)"], port: ["Port", "Vrata"],
-  restart: ["Saved. Restart the router to use the new port or address.", "Shranjeno. Za nova vrata ali naslov znova zaženi router."],
+  restart: ["Saved. Restart the gateway to use the new port or address.", "Shranjeno. Za nova vrata ali naslov znova zaženi prehod."],
   auto: ["Changes are applied automatically.", "Spremembe se uveljavijo same."], saving: ["Saving…", "Shranjujem …"], saved: ["Saved.", "Shranjeno."],
   token: ["Token", "Žeton"], show: ["Show", "Pokaži"], hide: ["Hide", "Skrij"], copy: ["Copy", "Kopiraj"], newToken: ["New Token", "Nov žeton"],
   copied: ["Copied.", "Kopirano."], connectHint: ["Run this line on each client.", "To vrstico zaženi na vsakem odjemalcu."],
@@ -183,21 +183,21 @@ const S = {
     "Le dokler je seznam dovoljenih naprav prazen. Sicer vsaka nova naprava čaka na odobritev."],
   waiting: ["Waiting for approval", "Čakajo na odobritev"], allowed: ["Allowed devices", "Dovoljene naprave"], none: ["None", "Nobena"],
   noWaiting: ["No device is waiting.", "Nobena naprava ne čaka."], allow: ["Allow", "Dovoli"], deny: ["Deny", "Zavrni"], remove: ["Remove", "Odstrani"],
-  removeAsk: ["Remove %s?", "Odstranim %s?"], addGateway: ["Add Gateway", "Dodaj prehod"], search: ["Search", "Iskanje"],
-  otherGateway: ["Other Anthropic-compatible gateway", "Drug Anthropic-združljiv prehod"], gateway: ["Gateway", "Prehod"], keySaved: ["API key (saved; enter to replace)", "Ključ API (shranjen; vpiši za zamenjavo)"],
+  removeAsk: ["Remove %s?", "Odstranim %s?"], addGateway: ["Add Provider", "Dodaj ponudnika"], search: ["Search", "Iskanje"],
+  otherGateway: ["Other Anthropic-compatible provider", "Drug Anthropic-združljiv ponudnik"], gateway: ["Provider", "Ponudnik"], keySaved: ["API key (saved; enter to replace)", "Ključ API (shranjen; vpiši za zamenjavo)"],
   keyStoredShort: ["In the system's secret store; never shown", "V shrambi skrivnosti sistema; nikoli prikazan"],
   enterKey: ["Enter an API key to enable", "Za vklop vpiši ključ API"], searchModels: ["Search models", "Iskanje modelov"],
   enableToLoad: ["Enable the provider to load its models", "Za seznam modelov vklopi ponudnika"], refresh: ["Refresh", "Osveži"],
   aliases: ["Aliases (advanced)", "Aliasi (napredno)"],
   aliasesHint: ["One per line “alias = upstream ID, context window” (e.g. qwen = qwen/qwen3-coder, 128k). When set, these define the models instead of the table.",
-    "Ena na vrstico »alias = ID pri upstreamu, okno« (npr. qwen = qwen/qwen3-coder, 128k). Če so nastavljeni, določijo modele namesto tabele."], gatewayDesc: ["Models of an Anthropic-compatible gateway, passed through to Claude Code.", "Modeli Anthropic-združljivega prehoda, posredovani Claude Code."], name: ["Name", "Ime"], url: ["Base URL", "Osnovni URL"],
+    "Ena na vrstico »alias = ID pri upstreamu, okno« (npr. qwen = qwen/qwen3-coder, 128k). Če so nastavljeni, določijo modele namesto tabele."], gatewayDesc: ["Models of an Anthropic-compatible provider, passed through to Claude Code.", "Modeli Anthropic-združljivega ponudnika, posredovani Claude Code."], name: ["Name", "Ime"], url: ["Base URL", "Osnovni URL"],
   key: ["API key", "Ključ API"], keyStored: ["Stored in the system's secret store (Credential Manager); never shown.", "V shrambi skrivnosti sistema (Credential Manager); nikoli prikazan."],
   keyNew: ["Type a new key to replace it", "Vpiši nov ključ za zamenjavo"], noKey: ["No key", "Brez ključa"],
   urlNeedsKey: ["Type the API key again to save a new URL.", "Za nov URL znova vpiši ključ API."],
   insecure: ["Allow http (localhost or a private IP only)", "Dovoli http (le localhost ali zasebni IP)"], add: ["Add", "Dodaj"],
   models: ["Models", "Modeli"], filter: ["Filter", "Filter"], showAll: ["Show all", "Vsi"], enableAll: ["Enable All", "Vklopi vse"], disableAll: ["Disable All", "Izklopi vse"],
   enabledOf: ["%s of %s enabled", "vklopljenih %s od %s"], loading: ["Loading…", "Nalagam …"], hidden: ["%s disabled models hidden: use the filter or Show all.", "Skritih izklopljenih modelov: %s; uporabi filter ali Vsi."],
-  removeGateway: ["Remove gateway %s and its key?", "Odstranim prehod %s in njegov ključ?"],
+  removeGateway: ["Remove provider %s and its key?", "Odstranim ponudnika %s in njegov ključ?"],
   path: ["Executable (empty = auto-detect)", "Program (prazno = samodejno)"], find: ["Find", "Poišči"],
   detected: ["%s · %s", "%s · %s"], notFound: ["claude not found: install Claude Code (on Windows the native claude.exe) or set the path.",
     "claude ni najden: namesti Claude Code (na Windows izvorni claude.exe) ali vpiši pot."],
@@ -205,11 +205,11 @@ const S = {
   folderHint: ["Agents normally work in a synced copy of the client's folder; this is only for clients without sync.",
     "Agenti običajno delajo v sinhronizirani kopiji mape odjemalca; to je le za odjemalce brez sinhronizacije."],
   unsandboxed: ["Allow commands without a sandbox", "Dovoli ukaze brez sandboxa"],
-  unsandboxedWarn: ["Windows has no sandbox for commands: agents can then run anything as you and read the gateway keys and the admin secret.",
-    "Windows nima sandboxa za ukaze: agenti lahko tedaj zaženejo karkoli kot ti in preberejo ključe prehodov in skrivnost API."],
+  unsandboxedWarn: ["Windows has no sandbox for commands: agents can then run anything as you and read the provider keys and the admin secret.",
+    "Windows nima sandboxa za ukaze: agenti lahko tedaj zaženejo karkoli kot ti in preberejo ključe ponudnikov in skrivnost API."],
   sandboxNote: ["Bash runs in Claude Code's sandbox (on Linux it needs bubblewrap and socat).", "Bash teče v sandboxu Claude Code (na Linuxu potrebuje bubblewrap in socat)."],
-  signin: ["Not signed in, or the session has expired. Open Settings… from the tray icon again (or run minigw router settings).",
-    "Ni prijave ali je seja potekla. Znova odpri Nastavitve … v ikoni pladnja (ali zaženi minigw router settings)."],
+  signin: ["Not signed in, or the session has expired. Open Settings… from the tray icon again (or run minigw gw settings).",
+    "Ni prijave ali je seja potekla. Znova odpri Nastavitve … v ikoni pladnja (ali zaženi minigw gw settings)."],
 };
 const t = (k, ...a) => { let s = (S[k] || [k, k])[SL ? 1 : 0]; for (const x of a) s = s.replace("%s", x); return s; };
 const TOOLS = [
@@ -380,7 +380,7 @@ const pages = {
       group(
         row(t("router"), el("span", {class: "value"}, el("span", {class: "dot" + (st.running ? " ok" : "")}), t("runningOn", st.port))),
         row(t("devices"), value(t("devicesN", st.devices, d.pending.length))),
-        row(t("gateways"), value(String(st.gateways.length))),
+        row(t("gateways"), value(String(st.providers.length))),
         row(t("installed"), value(st.installDir || t("notInstalled"), !!st.installDir)),
         win ? row(t("tray"), value(t(st.tray ? "trayOn" : "trayOff"))) : null),
       section(t("about")),
@@ -416,18 +416,18 @@ const pages = {
   },
 
   async gateway(name) {
-    const gs = (await api("GET", "/gateways")).gateways;
+    const gs = (await api("GET", "/providers")).providers;
     const g = gs.find(x => x.name === name);
     if (!g) { current = "general"; return pages.general(); }
     const enc = encodeURIComponent(name);
     const n1 = note(t("auto")), n2 = note(), n3 = note(t("aliasesHint"));
-    const patch = body => api("PATCH", "/gateways/" + enc, body);
+    const patch = body => api("PATCH", "/providers/" + enc, body);
     const nameIn = el("input", {type: "text", value: g.name});
     autosave(nameIn, n1, async v => { const r = await patch({name: v}); show("gateway", r.gateway.name); return r; });
     const url = el("input", {type: "text", value: g.baseURL});
     autosave(url, n1, v => patch({baseURL: v}));
     const key = el("input", {type: "password", autocomplete: "off", placeholder: g.hasKey ? t("keySaved") : t("key")});
-    autosave(key, n1, v => api("POST", "/gateways", {name, baseURL: url.value.trim(), key: v, insecure: g.insecure}).then(r => { key.value = ""; show("gateway", name); return r; }),
+    autosave(key, n1, v => api("POST", "/providers", {name, baseURL: url.value.trim(), key: v, insecure: g.insecure}).then(r => { key.value = ""; show("gateway", name); return r; }),
       () => t("saved"));
     const aliases = el("textarea", {class: "mono", rows: 4, value: g.aliases, placeholder: "qwen = qwen/qwen3-coder, 128k"});
     autosave(aliases, n3, v => patch({aliases: v}));
@@ -444,18 +444,18 @@ const pages = {
       list.replaceChildren(...sorted.map(m => row(labelSub(m.id, m.model === m.id ? null : "/model " + m.model),
         value(m.window ? Math.round(m.window / 1000) + "K" : ""),
         toggle(m.enabled, (v, i) => save(n2, async () => {
-          try { await api("POST", "/gateways/" + enc + "/models", v ? {enable: [m.id]} : {disable: [m.id]}); m.enabled = v; render(); }
+          try { await api("POST", "/providers/" + enc + "/models", v ? {enable: [m.id]} : {disable: [m.id]}); m.enabled = v; render(); }
           catch (e) { i.checked = !v; throw e; }
         })))));
     };
     const load = async () => {
       if (!g.enabled) return;
       status.textContent = t("loading");
-      try { models = (await api("GET", "/gateways/" + enc + "/models")).models; render(); }
+      try { models = (await api("GET", "/providers/" + enc + "/models")).models; render(); }
       catch (e) { status.textContent = "⚠ " + e.message; list.replaceChildren(); }
     };
     search.addEventListener("input", render);
-    const bulk = on => save(n2, async () => { await api("POST", "/gateways/" + enc + "/models", {all: on}); await load(); });
+    const bulk = on => save(n2, async () => { await api("POST", "/providers/" + enc + "/models", {all: on}); await load(); });
     load();
     return [
       card(gwIcon(g)[0], gwIcon(g)[1], name, t("gatewayDesc")),
@@ -485,7 +485,7 @@ const pages = {
       card("linear-gradient(#ffcc00,#ff9500)", "+", t("addGateway"), t("gatewaysDesc")),
       group(row(t("name"), name), row(t("url"), url), row(t("key"), key), row(t("insecure"), toggle(insecure, v => { insecure = v; }))),
       el("div", {class: "row", style: "justify-content:flex-end;padding:8px 0"}, buttons(button(t("add"), () => save(n, async () => {
-        const r = await api("POST", "/gateways", {name: name.value.trim(), baseURL: url.value.trim(), key: key.value.trim(), insecure});
+        const r = await api("POST", "/providers", {name: name.value.trim(), baseURL: url.value.trim(), key: key.value.trim(), insecure});
         await nav(); show("gateway", r.gateway.name);
       }), true))),
       n,
@@ -577,7 +577,7 @@ let search = "";
 const PRESETS = {litellm: ["LiteLLM", "http://localhost:4000", true], openrouter: ["OpenRouter", "https://openrouter.ai/api", false], other: [null, "https://", false]};
 
 async function nav() {
-  try { gateways = (await api("GET", "/gateways")).gateways; } catch (e) { gateways = []; }
+  try { gateways = (await api("GET", "/providers")).providers; } catch (e) { gateways = []; }
   const item = (page, label, [color, glyph], arg) => el("button", {class: "item" + (current === page && currentArg === (arg || "") ? " sel" : ""),
     onclick: () => show(page, arg)}, el("span", {class: "ico", textContent: glyph, style: "background:" + color}), label);
   const sel = current === "gateway" ? currentArg : "";
@@ -602,7 +602,7 @@ async function nav() {
       el("span", {class: "divider"}),
       el("button", {textContent: "−", title: t("remove"), disabled: !sel, onclick: async () => {
         if (!confirm(t("removeGateway", sel))) return;
-        try { await api("DELETE", "/gateways/" + encodeURIComponent(sel)); await show("general"); } catch (e) { toast(e.message); }
+        try { await api("DELETE", "/providers/" + encodeURIComponent(sel)); await show("general"); } catch (e) { toast(e.message); }
       }}), menu));
 }
 

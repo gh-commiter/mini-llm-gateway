@@ -118,11 +118,11 @@ func route(c connection) connection {
 		return c
 	}
 	if c.Key == nil {
-		fail("no router key: copy the token again (Mini Gateway → Copy Token) and run minigw connect")
+		fail("no gateway key: copy the token again (Mini Gateway → Copy Token) and run minigw connect")
 	}
 	key, err := fromBase64url(*c.Key)
 	if err != nil || len(key) != 32 {
-		fail("invalid router key: copy the token again (Mini Gateway → Copy Token)")
+		fail("invalid gateway key: copy the token again (Mini Gateway → Copy Token)")
 	}
 	if c.Device == nil { // povezava brez ključa naprave: ustvari ga zdaj
 		d := newDeviceKey()
@@ -169,7 +169,7 @@ func main() {
 	case "serve":
 		serveCommand(args[1:])
 		return
-	case "router":
+	case "gw", "router": // router: starejše ime, skrit alias
 		routerCommand(args[1:], os.Stdin)
 		return
 	case "tray":
@@ -198,7 +198,7 @@ func main() {
 			}
 		}
 		if token == "-" { // F3: s stdin (cev) ali s terminala brez odmeva, ne v argv
-			t, err := readKey(os.Stdin, "router token")
+			t, err := readKey(os.Stdin, "gateway token")
 			if err != nil {
 				fail(err.Error())
 			}
@@ -228,20 +228,20 @@ func main() {
 			}
 			say("Connected to " + c.URL + enc)
 		case st == 401:
-			fail("router at " + c.URL + " rejected the token")
+			fail("gateway at " + c.URL + " rejected the token")
 		case st == 403: // naprava še ni dovoljena: ključ naprave ostane, da ga router lahko doda
 			saveConnection(c)
 			e, _ := m["error"].(map[string]any)
 			msg, _ := e["message"].(string)
-			fail("router at " + c.URL + " refused this device: " + clean(msg) + "\nthen run minigw connect again")
+			fail("gateway at " + c.URL + " refused this device: " + clean(msg) + "\nthen run minigw connect again")
 		case st == 426:
-			fail("router at " + c.URL + " needs an encrypted connection: copy the token again (it includes the router key)")
+			fail("gateway at " + c.URL + " needs an encrypted connection: copy the token again (it includes the gateway key)")
 		case st == 0 && c.isLocal():
 			fail("cannot reach " + c.URL)
 		case st == 0:
-			fail("cannot reach " + c.URL + ", or the router key does not match (copy the token again)")
+			fail("cannot reach " + c.URL + ", or the gateway key does not match (copy the token again)")
 		default:
-			fail(fmt.Sprintf("router at %s answered HTTP %d", c.URL, st))
+			fail(fmt.Sprintf("gateway at %s answered HTTP %d", c.URL, st))
 		}
 		return
 
@@ -263,7 +263,7 @@ func main() {
 		if !saved.isLocal() {
 			state += ", encrypted"
 		}
-		say("Router:    " + saved.URL + " (" + state + ")")
+		say("Gateway:   " + saved.URL + " (" + state + ")")
 		if p, ok := ready["providers"].(map[string]any); ok {
 			names := make([]string, 0, len(p))
 			for k := range p {
@@ -322,19 +322,19 @@ func main() {
 		if first == "-v" || first == "--version" {
 			say("minigw " + version)
 		} else {
-			say("minigw connect <host[:port]> [--token T|-]  save router address and token (" + storeName + "; - = stdin)\n" +
+			say("minigw connect <host[:port]> [--token T|-]  save gateway address and token (" + storeName + "; - = stdin)\n" +
 				"minigw status | models | disconnect\n" +
-				"minigw share add|remove [folder] | list    also share a system or hidden folder with the router\n" +
+				"minigw share add|remove [folder] | list    also share a system or hidden folder with the gateway\n" +
 				"minigw share add --work=native|sync|direct [--ro] [folder]   default mode for that folder (flag/env wins)\n" +
 				"minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)\n" +
-				"minigw --minigw-work=sync [claude args]    agents work in a synced copy on the router (or MINIGW_WORK=sync)\n" +
-				"minigw --minigw-work=native [claude args]  folder is the router's SMB share: agents work in it there (or MINIGW_WORK=native)\n" +
-				"minigw --minigw-work=worktree [claude args]  git repository: agents work in a clone on the router, results come back as branches minigw/…\n" +
-				"minigw --minigw-work=auto [claude args]    router share → native, git repository → worktree, otherwise sync (--minigw-ro → direct)\n" +
-				"minigw run [--] <command> [args …]          run a build in this folder on the router (SMB share, allowed in its Settings)\n" +
-				"minigw serve [init|allow <id>] [--port N] [--folder DIR] [--config FILE]   run a router here (Windows, Linux)\n" +
-				"minigw router status|devices|gateway|claude|token …                    change the router here, live\n" +
-				"minigw [claude options …]                    run Claude Code through the router")
+				"minigw --minigw-work=sync [claude args]    agents work in a synced copy on the gateway (or MINIGW_WORK=sync)\n" +
+				"minigw --minigw-work=native [claude args]  folder is the gateway's SMB share: agents work in it there (or MINIGW_WORK=native)\n" +
+				"minigw --minigw-work=worktree [claude args]  git repository: agents work in a clone on the gateway, results come back as branches minigw/…\n" +
+				"minigw --minigw-work=auto [claude args]    gateway share → native, git repository → worktree, otherwise sync (--minigw-ro → direct)\n" +
+				"minigw run [--] <command> [args …]          run a build in this folder on the gateway (SMB share, allowed in its Settings)\n" +
+				"minigw serve [init|allow <id>] [--port N] [--folder DIR] [--config FILE]   run a gateway here (Windows, Linux)\n" +
+				"minigw gw status|devices|provider|claude|token …  change the gateway here, live (minigw gw help)\n" +
+				"minigw [claude options …]                    run Claude Code through the gateway")
 		}
 		if first == "--minigw-help" {
 			return
@@ -464,7 +464,7 @@ func main() {
 			}
 			fmt.Fprintf(os.Stderr, "minigw: %s %s %s with %s for agent models (--minigw-ro = read-only, MINIGW_SHARE=0 = off)\n", verb, cwd, mode, routerHost)
 		} else {
-			why := "router did not accept the folder"
+			why := "gateway did not accept the folder"
 			if share.refusal != "" {
 				why += ": " + clean(share.refusal)
 			}
@@ -475,7 +475,7 @@ func main() {
 		if os.Getenv("MINIGW_SHARE") == "" {
 			why = " (not shared automatically)"
 		}
-		fmt.Fprintf(os.Stderr, "minigw: %s is not shared with the router%s, so agent models (Codex, Claude CLI, Grok) cannot see it; to share it run: minigw share add (or MINIGW_SHARE=1 for this run)\n", cwd, why)
+		fmt.Fprintf(os.Stderr, "minigw: %s is not shared with the gateway%s, so agent models (Codex, Claude CLI, Grok) cannot see it; to share it run: minigw share add (or MINIGW_SHARE=1 for this run)\n", cwd, why)
 	}
 	code := runClaude(args, env)
 	share.unregister()
@@ -683,7 +683,7 @@ func shareCommand(args []string) {
 		fail("unknown --work=" + work + " (use direct, sync, native, worktree or auto)")
 	}
 	if work == "native" && ro {
-		fail("--work=native cannot be read-only (the agent works in the router's own folder)")
+		fail("--work=native cannot be read-only (the agent works in the gateway's own folder)")
 	}
 	dir, _ := os.Getwd()
 	if len(rest) > 0 {
@@ -736,7 +736,7 @@ func shareCommand(args []string) {
 			}
 		}
 		save(append(keep, e))
-		fmt.Println("shared with the router from now on:", describe(e), "(and its subfolders)")
+		fmt.Println("shared with the gateway from now on:", describe(e), "(and its subfolders)")
 	case "remove":
 		save(keep)
 		fmt.Println("no longer shared:", dir)

@@ -475,7 +475,7 @@ func (s *server) messages(w http.ResponseWriter, r *req) (int, string) {
 		return writeError(w, r.rid, 404, "Unknown model: "+model), model
 	}
 	if s.conf().ClaudeDisabled {
-		return writeError(w, r.rid, 404, "Claude CLI is turned off on this router (settings → Claude CLI)"), model
+		return writeError(w, r.rid, 404, "Claude CLI is turned off on this gateway (settings → Claude CLI)"), model
 	}
 	if strings.HasSuffix(r.URL.Path, "/count_tokens") {
 		return writeJSON(w, r.rid, 200, map[string]int{"input_tokens": len(r.body) / 4}), model
@@ -510,7 +510,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		switch {
 		case share != nil:
 			if dir = s.hub.push(share); dir == "" {
-				return writeError(w, r.rid, 502, "Syncing "+clientCwd+" to the router failed (see minigw output)")
+				return writeError(w, r.rid, 502, "Syncing "+clientCwd+" to the gateway failed (see minigw output)")
 			}
 			note := "The user's folder " + clientCwd + " (on their computer) is synced here as " + dir + ", your working directory: a local copy"
 			if share.readOnly {
@@ -522,13 +522,13 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		case s.hub.isRefused(session): // odjemalec je poslal mapo brez sync
 			return writeError(w, r.rid, 400, refusedDirect)
 		case folder == "" && r.h("x-claude-mini-share") == "1": // mapa je bila napovedana, a ni prišla
-			return writeError(w, r.rid, 400, "The folder "+clientCwd+" did not reach this router: see the minigw message when it started")
+			return writeError(w, r.rid, 400, "The folder "+clientCwd+" did not reach this gateway: see the minigw message when it started")
 		case folder == "": // odjemalec mape ni delil (npr. /tmp, ki se ne deli samodejno)
-			return writeError(w, r.rid, 400, "The folder "+clientCwd+" is not shared with the router, so Claude CLI agents cannot work in it: "+
+			return writeError(w, r.rid, 400, "The folder "+clientCwd+" is not shared with the gateway, so Claude CLI agents cannot work in it: "+
 				"in that folder run minigw share add (or MINIGW_SHARE=1 for one run), then start minigw again")
 		default:
 			dir = folder
-			extra = "Your working directory is " + dir + " on the router, not the user's folder " + clientCwd + "."
+			extra = "Your working directory is " + dir + " on the gateway, not the user's folder " + clientCwd + "."
 		}
 		scope = session + "|" + dir
 		if id := s.sessions.get(transcriptKey(history, scope)); id != "" {
@@ -557,7 +557,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 
 	exe := s.claudeExe()
 	if len(exe) == 0 {
-		return writeError(w, r.rid, 503, "claude not found on the router (install Claude Code or set \"claude\" in the config)")
+		return writeError(w, r.rid, 503, "claude not found on the gateway (install Claude Code or set \"claude\" in the config)")
 	}
 	select { // največ 6 procesov claude hkrati
 	case s.procs <- struct{}{}:
@@ -650,7 +650,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		if tail := strings.TrimSpace(stderr.String()); tail != "" {
 			s.log.Printf("%s claude stderr: %s", r.rid, tail)
 		}
-		msg = "claude failed (" + werr.Error() + "); details are in the router log, request " + r.rid
+		msg = "claude failed (" + werr.Error() + "); details are in the gateway log, request " + r.rid
 	}
 	if msg != "" {
 		s.log.Printf("%s claude failed: %s", r.rid, msg)

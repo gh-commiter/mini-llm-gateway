@@ -28,7 +28,7 @@ type noiseProxy struct {
 func newNoiseProxy(routerURL string, routerKey []byte, dev *device) (*noiseProxy, error) {
 	u, err := url.Parse(routerURL)
 	if err != nil || u.Hostname() == "" || len(routerKey) != 32 {
-		return nil, fmt.Errorf("invalid router %q or key", routerURL)
+		return nil, fmt.Errorf("invalid gateway %q or key", routerURL)
 	}
 	port := u.Port()
 	if port == "" {

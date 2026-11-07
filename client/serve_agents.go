@@ -307,7 +307,7 @@ func (s *server) agentFolder(w http.ResponseWriter, r *req, label string) (dir, 
 	switch {
 	case share != nil:
 		if dir = s.hub.push(share); dir == "" {
-			return "", "", false, writeError(w, r.rid, 502, "Syncing "+clientCwd+" to the router failed (see minigw output)")
+			return "", "", false, writeError(w, r.rid, 502, "Syncing "+clientCwd+" to the gateway failed (see minigw output)")
 		}
 		note = "The user's folder " + clientCwd + " (on their computer) is synced here as " + dir + ", your working directory: a local copy"
 		if share.readOnly {
@@ -319,9 +319,9 @@ func (s *server) agentFolder(w http.ResponseWriter, r *req, label string) (dir, 
 	case s.hub.isRefused(session):
 		return "", "", false, writeError(w, r.rid, 400, refusedDirect)
 	case r.h("x-claude-mini-share") == "1":
-		return "", "", false, writeError(w, r.rid, 400, "The folder "+clientCwd+" did not reach this router: see the minigw message when it started")
+		return "", "", false, writeError(w, r.rid, 400, "The folder "+clientCwd+" did not reach this gateway: see the minigw message when it started")
 	}
-	return "", "", false, writeError(w, r.rid, 400, "The folder "+clientCwd+" is not shared with the router, so "+label+" agents cannot work in it: "+
+	return "", "", false, writeError(w, r.rid, 400, "The folder "+clientCwd+" is not shared with the gateway, so "+label+" agents cannot work in it: "+
 		"in that folder run minigw share add (or MINIGW_SHARE=1 for one run), then start minigw again")
 }
 
@@ -330,15 +330,15 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 	c := s.conf()
 	ac := k.conf(c)
 	if !s.agentsAllowed(c) {
-		return writeError(w, r.rid, 403, k.bin+" needs \"Allow commands without a sandbox\" (Claude CLI settings) on this router (Windows, "+
-			"or Linux without bwrap): it can read and change everything this user can, including the router's settings")
+		return writeError(w, r.rid, 403, k.bin+" needs \"Allow commands without a sandbox\" (Claude CLI settings) on this gateway (Windows, "+
+			"or Linux without bwrap): it can read and change everything this user can, including the gateway's settings")
 	}
 	if model != "" && !validAgentModel.MatchString(model) {
 		return writeError(w, r.rid, 400, "Invalid model name")
 	}
 	exe, err := resolveAgent(k, ac.Executable)
 	if err != nil || exe == "" {
-		return writeError(w, r.rid, 503, k.bin+" not found on the router (install it or set its path in the settings)")
+		return writeError(w, r.rid, 503, k.bin+" not found on the gateway (install it or set its path in the settings)")
 	}
 	all := turns(body)
 	if len(all) == 0 || all[len(all)-1].role != "user" {
@@ -575,7 +575,7 @@ func (s *server) runAgentProcess(ctx context.Context, r *req, exe string, args [
 		if ctx.Err() == context.DeadlineExceeded {
 			return fmt.Errorf("%s stopped after %v", filepath.Base(exe), agentTimeout)
 		}
-		return fmt.Errorf("%s failed (%v); details are in the router log, request %s", filepath.Base(exe), err, r.rid)
+		return fmt.Errorf("%s failed (%v); details are in the gateway log, request %s", filepath.Base(exe), err, r.rid)
 	}
 	return nil
 }

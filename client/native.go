@@ -128,11 +128,11 @@ func nativeProof(c connection, cwd string) (map[string]string, string) {
 	if st != 200 || r.File != ".minigw-native-"+r.ID || !markerName.MatchString(r.File) { // router ni zaupanja vreden
 		switch {
 		case st == 404:
-			return nil, "the router does not support native mode"
+			return nil, "the gateway does not support native mode"
 		case r.Error.Message != "":
 			return nil, clean(r.Error.Message)
 		}
-		return nil, fmt.Sprintf("the router refused native mode (HTTP %d)", st)
+		return nil, fmt.Sprintf("the gateway refused native mode (HTTP %d)", st)
 	}
 	for i := 0; i < markerTries; i++ { // SMB: nova datoteka je lahko vidna z zamikom
 		if v, ok := readMarker(filepath.Join(cwd, r.File)); ok {
@@ -140,7 +140,7 @@ func nativeProof(c connection, cwd string) (map[string]string, string) {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	return nil, cwd + " is not the router's folder " + share + "/" + rel + " (its check file is not visible here)"
+	return nil, cwd + " is not the gateway's folder " + share + "/" + rel + " (its check file is not visible here)"
 }
 
 // readMarker: le navadna datoteka (odprta brez sledenja povezavi, glej openMarker), največ 128 bajtov.
@@ -229,7 +229,7 @@ func runCommand(args []string) int {
 	cwd, _ := os.Getwd()
 	proof, why := nativeProof(c, cwd)
 	if proof == nil {
-		fail("cannot run on the router: " + why)
+		fail("cannot run on the gateway: " + why)
 	}
 	body, _ := json.Marshal(map[string][]string{"argv": args})
 	req, _ := http.NewRequest("POST", c.URL+"/minigw/run", bytes.NewReader(body))
@@ -240,14 +240,14 @@ func runCommand(args []string) int {
 	}
 	resp, err := http.DefaultClient.Do(req) // brez časovne omejitve: gradnja traja; router pošlje »p« vsakih 15 s
 	if err != nil {
-		fail("cannot reach the router: " + err.Error())
+		fail("cannot reach the gateway: " + err.Error())
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		var r struct{ Error struct{ Message string } }
 		json.NewDecoder(resp.Body).Decode(&r)
 		if r.Error.Message == "" {
-			r.Error.Message = fmt.Sprintf("the router answered HTTP %d", resp.StatusCode)
+			r.Error.Message = fmt.Sprintf("the gateway answered HTTP %d", resp.StatusCode)
 		}
 		fail(clean(r.Error.Message))
 	}
@@ -301,7 +301,7 @@ func runOutput(body io.Reader, stdout, stderr io.Writer) int {
 			}
 		}
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "minigw: lost the connection to the router")
+			fmt.Fprintln(os.Stderr, "minigw: lost the connection to the gateway")
 			return 255
 		}
 	}

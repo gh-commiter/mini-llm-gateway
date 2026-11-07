@@ -67,7 +67,7 @@ func serviceFile(goos, exe, cfgPath string) (string, error) {
 func serviceText(goos, exe, cfgPath string) string {
 	switch goos {
 	case "linux":
-		return "[Unit]\nDescription=Mini Gateway router (minigw serve)\nAfter=network-online.target\n\n[Service]\nExecStart=" +
+		return "[Unit]\nDescription=Mini Gateway (minigw serve)\nAfter=network-online.target\n\n[Service]\nExecStart=" +
 			systemdQuote(exe) + " serve --config " + systemdQuote(cfgPath) + "\nRestart=on-failure\n\n[Install]\nWantedBy=default.target\n"
 	case "windows": // pladenj, če je ob exe; poti na Windows ne vsebujejo »"«
 		if tray := trayBeside(exe); tray != "" {

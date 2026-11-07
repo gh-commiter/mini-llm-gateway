@@ -23,17 +23,17 @@ import (
 	"time"
 )
 
-const routerHelp = `minigw router: show or change the minigw serve router on this computer. Changes apply at once when it
+const routerHelp = `minigw gw: show or change the minigw serve gateway on this computer. Changes apply at once when it
 runs; otherwise they go to serve.json.
 
-  minigw router status
-  minigw router devices [allow <device id> [name] | deny <device id or name>]
-  minigw router gateway add <name> <baseURL> [--insecure]    the API key is read from stdin or asked for
-  minigw router gateway remove <name> | list
-  minigw router gateway models <name> [text] [--all] [--enable m1,m2|all] [--disable m1,m2|all]
-  minigw router claude [--path FILE] [--tools T1,T2] [--folder DIR] [--allow-unsandboxed-bash=true|false]
-  minigw router token [rotate]                               print the connect line; rotate makes a new token
-  minigw router settings                                     a one-time link (60 s) to the settings page
+  minigw gw status
+  minigw gw devices [allow <device id> [name] | deny <device id or name>]
+  minigw gw provider add <name> <baseURL> [--insecure]   the API key is read from stdin or asked for
+  minigw gw provider remove <name> | list
+  minigw gw provider models <name> [text] [--all] [--enable m1,m2|all] [--disable m1,m2|all]
+  minigw gw claude [--path FILE] [--tools T1,T2] [--folder DIR] [--allow-unsandboxed-bash=true|false]
+  minigw gw token [rotate]                              print the connect line; rotate makes a new token
+  minigw gw settings                                    a one-time link (60 s) to the settings page
 
 All take --config FILE (default: the minigw serve config).`
 
@@ -44,7 +44,7 @@ type adminClient struct {
 }
 
 // errNotRouter: na vratih je drug program (rokovanje Noise s ključem routerja ne uspe); skrivnost ni bila poslana.
-var errNotRouter = errors.New("not this router")
+var errNotRouter = errors.New("not this gateway")
 
 // noiseClientConn: HTTP v okvirjih MGW2 (kot noiseProxy), za skrbniški API na 127.0.0.1.
 type noiseClientConn struct {
@@ -152,14 +152,14 @@ func openAdmin(cfgPath string) *adminClient {
 		status, _, err := a.http("GET", "/status", nil, 3*time.Second)
 		switch {
 		case errors.Is(err, errNotRouter):
-			fmt.Fprintf(os.Stderr, "minigw: port %d answers, but not as the router of %s (wrong key): changing that file only; nothing was sent to it\n", c.Port, cfgPath)
+			fmt.Fprintf(os.Stderr, "minigw: port %d answers, but not as the gateway of %s (wrong key): changing that file only; nothing was sent to it\n", c.Port, cfgPath)
 		case err != nil: // ne teče
 		case status == 200:
 			return a
 		case status == 401 || status == 403:
-			fail(fmt.Sprintf("the router on port %d refused the admin request (HTTP %d): is it the router of %s?", c.Port, status, cfgPath))
+			fail(fmt.Sprintf("the gateway on port %d refused the admin request (HTTP %d): is it the gateway of %s?", c.Port, status, cfgPath))
 		default:
-			fmt.Fprintf(os.Stderr, "minigw: port %d answers without the admin API (another program, or an older minigw serve): changing %s; restart that router\n", c.Port, cfgPath)
+			fmt.Fprintf(os.Stderr, "minigw: port %d answers without the admin API (another program, or an older minigw serve): changing %s; restart that gateway\n", c.Port, cfgPath)
 		}
 	}
 	if a.off, err = offlineServer(cfgPath); err != nil {
@@ -180,7 +180,7 @@ func (a *adminClient) do(method, path string, body, out any) {
 	if a.off == nil {
 		var err error
 		if status, resp, err = a.http(method, path, data, 60*time.Second); err != nil {
-			fail("router admin API: " + err.Error())
+			fail("gateway admin API: " + err.Error())
 		}
 	} else {
 		st, obj := a.off.adminDo(method, path, data)
@@ -203,12 +203,12 @@ func (a *adminClient) do(method, path string, body, out any) {
 func must(b []byte, _ error) []byte { return b }
 
 func routerCommand(args []string, in io.Reader) {
-	fs := flag.NewFlagSet("minigw router", flag.ExitOnError)
+	fs := flag.NewFlagSet("minigw gw", flag.ExitOnError)
 	cfgPath := fs.String("config", defaultServeConfigPath(), "config file")
-	insecure := fs.Bool("insecure", false, "gateway add: allow http to localhost or a private IP")
-	enable := fs.String("enable", "", "gateway models: enable these models (comma-separated, or all)")
-	disable := fs.String("disable", "", "gateway models: disable these models (comma-separated, or all)")
-	all := fs.Bool("all", false, "gateway models: also list the disabled models")
+	insecure := fs.Bool("insecure", false, "provider add: allow http to localhost or a private IP")
+	enable := fs.String("enable", "", "provider models: enable these models (comma-separated, or all)")
+	disable := fs.String("disable", "", "provider models: disable these models (comma-separated, or all)")
+	all := fs.Bool("all", false, "provider models: also list the disabled models")
 	path := fs.String("path", "", "claude: path to claude (empty = PATH)")
 	tools := fs.String("tools", "", "claude: the agent's tools")
 	folder := fs.String("folder", "", "claude: folder for agents that do not sync (empty = none)")
@@ -248,7 +248,7 @@ func routerCommand(args []string, in io.Reader) {
 		if st.Running {
 			state = "running, changes apply at once"
 		}
-		say("router: " + state)
+		say("gateway: " + state)
 		addr := st.Address
 		if addr == "" {
 			addr = "all addresses"
@@ -258,7 +258,7 @@ func routerCommand(args []string, in io.Reader) {
 			"": "does not start on its own (minigw serve install)"}[st.Autostart])
 		say(fmt.Sprintf("agent requests running: %d", st.Agents))
 		say(installedInfo(runtime.GOOS))
-		say(fmt.Sprintf("devices: %d allowed, %d waiting (minigw router devices)", st.Devices, st.Pending))
+		say(fmt.Sprintf("devices: %d allowed, %d waiting (minigw gw devices)", st.Devices, st.Pending))
 		claude := "not found"
 		if st.Claude.Found {
 			claude = "found"
@@ -271,9 +271,9 @@ func routerCommand(args []string, in io.Reader) {
 			}
 			ready := ""
 			if st.Running {
-				ready = map[bool]string{true: ", ready", false: ", models not loaded (see the router log)"}[g.Ready]
+				ready = map[bool]string{true: ", ready", false: ", models not loaded (see the gateway log)"}[g.Ready]
 			}
-			say(clean(fmt.Sprintf("gateway %s: %s, models enabled: %s%s", g.Name, g.BaseURL, n, ready)))
+			say(clean(fmt.Sprintf("provider %s: %s, models enabled: %s%s", g.Name, g.BaseURL, n, ready)))
 		}
 
 	case "devices":
@@ -291,7 +291,7 @@ func routerCommand(args []string, in io.Reader) {
 				say(map[bool]string{true: "no devices listed: any device with the token is allowed (allowAnyDevice)", false: "no devices allowed"}[d.AllowAnyDevice])
 			}
 			for _, x := range d.Pending {
-				say(clean(fmt.Sprintf("waiting: %s  %q from %s at %s; compare the ID with the client, then: minigw router devices allow %s", x.ID, x.Name, x.Address, x.Time, x.ID)))
+				say(clean(fmt.Sprintf("waiting: %s  %q from %s at %s; compare the ID with the client, then: minigw gw devices allow %s", x.ID, x.Name, x.Address, x.Time, x.ID)))
 			}
 		case pos[1] == "allow" && len(pos) >= 3:
 			var r struct {
@@ -308,7 +308,7 @@ func routerCommand(args []string, in io.Reader) {
 			fail(routerHelp)
 		}
 
-	case "gateway":
+	case "provider", "gateway": // gateway: starejše ime, skrit alias
 		if len(pos) < 2 {
 			fail(routerHelp)
 		}
@@ -325,14 +325,14 @@ func routerCommand(args []string, in io.Reader) {
 				Models   []apiModel
 			}
 			a.do("POST", "/gateways", map[string]any{"name": pos[2], "baseURL": pos[3], "key": key, "insecure": *insecure}, &r)
-			say(fmt.Sprintf("gateway %s: %d models, %s enabled; API key stored in %s", pos[2], len(r.Models), enabledText(r.Models), r.KeyStore))
+			say(fmt.Sprintf("provider %s: %d models, %s enabled; API key stored in %s", pos[2], len(r.Models), enabledText(r.Models), r.KeyStore))
 			if len(r.Models) > 0 && enabledText(r.Models) == "0" {
-				say("enable models with: minigw router gateway models " + pos[2] + " --enable <id>,<id> (find them with: minigw router gateway models " + pos[2] + " <text>)")
+				say("enable models with: minigw gw provider models " + pos[2] + " --enable <id>,<id> (find them with: minigw gw provider models " + pos[2] + " <text>)")
 			}
 		case "remove":
 			need(3, 3)
 			a.do("DELETE", "/gateways/"+esc(pos[2]), nil, nil)
-			say("removed gateway " + pos[2] + " and its API key")
+			say("removed provider " + pos[2] + " and its API key")
 		case "list":
 			need(2, 2)
 			var r struct{ Gateways []apiGateway }
@@ -343,6 +343,9 @@ func routerCommand(args []string, in io.Reader) {
 					n = strconv.Itoa(len(g.Models))
 				}
 				say(clean(fmt.Sprintf("%s  %s  models enabled: %s", g.Name, g.BaseURL, n)))
+			}
+			if len(r.Gateways) == 0 {
+				say("no providers (add one with: minigw gw provider add <name> <baseURL>)")
 			}
 		case "models":
 			need(3, 4)
@@ -380,7 +383,7 @@ func routerCommand(args []string, in io.Reader) {
 				}
 			}
 			if hidden > 0 {
-				say(fmt.Sprintf("%d disabled models not shown: add --all, or a text to search (minigw router gateway models %s haiku)", hidden, pos[2]))
+				say(fmt.Sprintf("%d disabled models not shown: add --all, or a text to search (minigw gw provider models %s haiku)", hidden, pos[2]))
 			}
 		default:
 			fail(routerHelp)
@@ -441,7 +444,7 @@ func routerCommand(args []string, in io.Reader) {
 		a.do("POST", "/settings/login", nil, &r)
 		say("Open within 60 seconds (once), in a browser on this computer:\n  " + r.URL)
 	default:
-		fail("unknown command minigw router " + pos[0] + "\n\n" + routerHelp)
+		fail("unknown command minigw gw " + pos[0] + "\n\n" + routerHelp)
 	}
 }
 

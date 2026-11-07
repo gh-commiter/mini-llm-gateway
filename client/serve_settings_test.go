@@ -129,7 +129,7 @@ func TestTrayMenu(t *testing.T) {
 	id := base64url(newDevice("PC").key.Public().(ed25519.PublicKey))
 	st := apiStatus{Port: 8765, Devices: 1, Gateways: []apiGateway{{Name: "or"}}, Installed: true}
 	m := trayMenu(st, []apiDevice{{ID: id, Name: "PC\x1b[31m\u202e\u200b"}}, false) // ESC, bidi, ničelna širina ven
-	if m[0].Text != "Running on :8765 · 1 device · 1 gateway" || !m[0].Disabled {
+	if m[0].Text != "Running on :8765 · 1 device · 1 provider" || !m[0].Disabled {
 		t.Fatalf("status line: %+v", m[0])
 	}
 	if m[1].Text != "Waiting for approval (1)" || m[1].Sub[0].Text != "PC[31m ("+id+")" ||

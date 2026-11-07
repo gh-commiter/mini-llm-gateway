@@ -219,7 +219,7 @@ func TestRouterCLIOnlineAndOffline(t *testing.T) {
 	run := func(cfg string, args ...string) string {
 		return stdout(t, func() { routerCommand(append(args, "--config", cfg), strings.NewReader("")) })
 	}
-	if out := run(cfg, "status"); !strings.Contains(out, "router: running") {
+	if out := run(cfg, "status"); !strings.Contains(out, "gateway: running") {
 		t.Fatalf("status: %q", out)
 	}
 	id := base64url(newDevice("PC").key.Public().(ed25519.PublicKey))
@@ -238,7 +238,7 @@ func TestRouterCLIOnlineAndOffline(t *testing.T) {
 
 	off := filepath.Join(t.TempDir(), "serve.json")
 	saveServeConfig(off, serveConfig{Token: "tok", Key: s.cfg.Key, Port: freePort(t)})
-	if out := run(off, "status"); !strings.Contains(out, "router: not running") {
+	if out := run(off, "status"); !strings.Contains(out, "gateway: not running") {
 		t.Fatalf("offline status: %q", out)
 	}
 	run(off, "devices", "allow", id)
@@ -530,5 +530,27 @@ func TestScratchFolderProtected(t *testing.T) {
 	os.Symlink(open, link)
 	if st, _ := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/general", `{"scratch":"`+link+`"}`); st != 400 {
 		t.Fatalf("symlink accepted: %d", st)
+	}
+}
+
+// Ime: »gateway« je ta računalnik, »provider« upstream; /providers je kanonično, /gateways in minigw router alias.
+func TestProvidersNamesAndAliases(t *testing.T) {
+	s, cfg, base := liveServer(t, nil)
+	for _, p := range []string{"/providers", "/gateways"} {
+		if st, b := adminNoise(t, s, base, s.admin, "GET", adminPrefix+p, ""); st != 200 || !strings.Contains(b, `"providers":[]`) || !strings.Contains(b, `"gateways":[]`) {
+			t.Fatalf("%s: %d %s", p, st, b)
+		}
+	}
+	if st, b := adminNoise(t, s, base, s.admin, "GET", adminPrefix+"/status", ""); st != 200 || !strings.Contains(b, `"providers":`) || !strings.Contains(b, `"gateways":`) {
+		t.Fatalf("status: %d %s", st, b)
+	}
+	run := func(args ...string) string {
+		return stdout(t, func() { routerCommand(append(args, "--config", cfg), strings.NewReader("")) })
+	}
+	if out := run("provider", "list"); !strings.HasPrefix(out, "no providers") {
+		t.Fatalf("gw provider list: %q", out)
+	}
+	if run("provider", "list") != run("gateway", "list") {
+		t.Fatal("gateway alias differs")
 	}
 }

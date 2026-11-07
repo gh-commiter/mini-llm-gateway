@@ -129,7 +129,7 @@ func (s *shareClient) work() {
 		case 404:
 			s.syncMu.Lock()
 			if s.sync && s.unpulled { // nova registracija: router ne pozna več nepotrjenih sprememb
-				s.note("the router restarted; the agent's changes that were not copied back may be overwritten by the next sync")
+				s.note("the gateway restarted; the agent's changes that were not copied back may be overwritten by the next sync")
 			}
 			s.syncMu.Unlock()
 			s.register() // router se je znova zagnal

@@ -150,7 +150,7 @@ func trayRun(cfgPath string) {
 		messageBox("Mini Gateway cannot start: " + err.Error())
 		os.Exit(1)
 	}
-	go func() { s.log.Printf("router stopped: %v", s.serve(ln)) }()
+	go func() { s.log.Printf("gateway stopped: %v", s.serve(ln)) }()
 	lang, _, _ := pGetUILanguage.Call()
 	t := &tray{s: s, cfgPath: cfgPath, logPath: logPath, sl: lang&0x3ff == 0x24, seen: map[string]bool{}}
 	theTray = t
