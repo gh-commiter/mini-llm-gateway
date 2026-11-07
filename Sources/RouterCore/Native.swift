@@ -160,7 +160,9 @@ public enum Native {
         let literal = ["\(home)/.swiftpm/configuration", "\(home)/.swiftpm/security",
                        "\(home)/Library/org.swift.swiftpm/configuration", "\(home)/Library/org.swift.swiftpm/security",
                        "\(home)/.m2/extensions.xml", "\(home)/.m2/settings.xml", "\(home)/.m2/settings-security.xml",
-                       "\(home)/.m2/toolchains.xml"]
+                       "\(home)/.m2/toolchains.xml",
+                       // Paket copilot (index.js …), ki ga copilot ob vsakem zagonu naloži nepreverjenega (C1).
+                       "\(home)/Library/Caches/copilot"]
         var seen = Set<String>()
         let paths = literal.flatMap { p in Sync.real(URL(fileURLWithPath: p)).map { $0.path == p ? [p] : [p, $0.path] } ?? [p] }
             .filter { seen.insert($0).inserted }
@@ -226,11 +228,14 @@ public enum Native {
             + (network ? "" : "(deny network-outbound (remote ip))\n(deny mach-lookup (global-name-regex #\"^com\\.apple\\.nsurlsessiond\"))\n")
     }
 
-    /// Pisanje, ki ga gradnja potrebuje zunaj mape: Maven, Xcode, SwiftPM, predpomnilniki, začasne mape (kanonične).
+    /// Pisanje, ki ga gradnja potrebuje zunaj mape: Maven, Xcode, SwiftPM, začasne mape (kanonične).
+    /// Ne ~/Library/Caches (C1): tam so programi, ki jih aplikacije naložijo brez preverjanja (npr. ~/Library/Caches/copilot).
+    /// Preverjeno: mvn package, swift build (z odvisnostjo; SwiftPM brez svojega predpomnilnika le opozori) in
+    /// xcodebuild build projekta .xcodeproj delujejo brez njega.
     /// Ne DARWIN_USER_TEMP_DIR/DARWIN_USER_CACHE_DIR (/var/folders/…): predpomnilnik xcrun bi izvedel podtaknjen program.
     /// Gradnja ima svoj TMPDIR in ModuleCache (`runTmp` v sandboxProfile); iz DARWIN_USER_TEMP_DIR le `darwinTempRules`.
     static func buildCaches(home: String = NSHomeDirectory()) -> [String] {
-        ["\(home)/.m2", "\(home)/.swiftpm", "\(home)/Library/Developer", "\(home)/Library/Caches",
+        ["\(home)/.m2", "\(home)/.swiftpm", "\(home)/Library/Developer",
          "\(home)/Library/org.swift.swiftpm", "/private/tmp"]
     }
 
@@ -432,7 +437,7 @@ extension Router {
               let profile = Native.sandboxProfile(dir: dir.path, network: config.devices.first { $0.id == d.id }?.runNetwork ?? true,
                                                   hidden: [config.scratchURL.path, RouterConfig.defaultScratch.path], routerPort: Int(config.port),
                                                   runTmp: Sync.real(runTmp)?.path) else {
-            return await error(403, "permission_error", "minigw run: the folder or a build cache folder (~/.m2, ~/Library/Caches …) is a link or not allowed", rid: rid, writer: writer)
+            return await error(403, "permission_error", "minigw run: the folder or a build cache folder (~/.m2, ~/Library/Developer …) is a link or not allowed", rid: rid, writer: writer)
         }
         guard await Self.natives.startRun(d.id) else {
             return await error(429, "rate_limit_error", "minigw run: this device already runs \(NativeHub.runsPerDevice) commands", rid: rid, writer: writer)

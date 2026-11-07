@@ -361,7 +361,10 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     #expect(try sh("echo x > \(h)/Library/Caches/org.swift.swiftpm/repositories/r/hooks/post-checkout") != 0)
     #expect(try sh("cat \(h)/scratch/chat.txt") != 0 && sh("echo x > \(h)/scratch/new") != 0)  // P2
     #expect(try sh("cat \(h)/.git-credentials") != 0 && sh("cat \(h)/Library/Containers/app/data") != 0)  // P4
-    #expect(try sh("echo x > \(h)/Library/Caches/ok") == 0)  // predpomnilniki ostanejo pisljivi
+    // C1: ~/Library/Caches ni pisljiv (programi, ki jih aplikacije naložijo, npr. paket copilot); gradnja v .build in ~/.m2.
+    #expect(try sh("echo x > \(h)/Library/Caches/ok") != 0 && sh("mkdir -p \(h)/Library/Caches/copilot/pkg") != 0)
+    #expect(Native.buildCacheDenies(home: h).paths.contains(h + "/Library/Caches/copilot"))
+    #expect(try sh("echo x > \(h)/.swiftpm/ok") == 0)  // predpomnilniki gradnje ostanejo pisljivi
     #expect(Native.sandboxProfile(dir: h + "/proj", home: h, network: false)?.contains(#"(deny mach-lookup (global-name-regex #"^com\.apple\.nsurlsessiond"))"#) == true)  // P5
 }
 
