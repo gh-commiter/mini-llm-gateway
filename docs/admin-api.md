@@ -134,5 +134,6 @@ The Mac app keeps its settings in its preferences and Keychain; the Settings win
   may be `0.0.0.0`, `::` or `127.0.0.1`. A port or address change restarts the listener, so there is no
   `restartRequired`.
 - **status:** `pending` is always 0; `installed` is Open at Login.
-- **Not on the Mac:** `POST /settings/login` (the app has its own Settings window).
+- **Not on the Mac:** the settings page and its sessions (`/minigw/settings`, `POST /settings/login`): the app has
+  its own Settings window, so only the admin secret (`minigw router`) opens the API, and it never sets cookies.
 

@@ -81,23 +81,36 @@ extension Router {
     /// Le s tega računalnika (naslov povezave, ne glava), Host 127.0.0.1/localhost pri navadnem HTTP (DNS rebinding;
     /// brskalnik ne govori Noise), skrivnost v konstantnem času, brez CORS, telo do 1 MB.
     func adminHTTP(_ req: HTTPRequest, rid: String, writer: ResponseWriter) async -> Int {
-        guard let admin else { return await error(404, "not_found_error", "Not found: \(req.method) \(req.path)", rid: rid, writer: writer) }
+        guard let admin else { return await adminError(404, "Not found: \(req.method) \(req.path)", rid: rid, writer: writer) }
         guard RouterServer.isLoopback(req.peer) else {
-            return await error(403, "permission_error", "The admin API is only available on the router computer", rid: rid, writer: writer)
+            return await adminError(403, "The admin API is only available on the router computer", rid: rid, writer: writer)
         }
         let p = String(config.port)
         if !req.encrypted, !["127.0.0.1:" + p, "localhost:" + p, "[::1]:" + p].contains((req.header("host") ?? "").lowercased()) {
-            return await error(403, "permission_error", "Host must be 127.0.0.1:\(p) or localhost:\(p)", rid: rid, writer: writer)
+            return await adminError(403, "Host must be 127.0.0.1:\(p) or localhost:\(p)", rid: rid, writer: writer)
         }
         let given = req.header("authorization").flatMap { $0.hasPrefix("Bearer ") ? String($0.dropFirst(7)) : nil } ?? ""
         let a = Array(given.utf8), b = Array(admin.secret.utf8)
         guard !b.isEmpty, a.count == b.count, zip(a, b).reduce(0, { $0 | ($1.0 ^ $1.1) }) == 0 else {
-            return await error(401, "authentication_error", "Invalid or missing admin secret (minigw reads it from the app's Keychain)", rid: rid, writer: writer)
+            return await adminError(401, "Invalid or missing admin secret (minigw reads it from the app's Keychain)", rid: rid, writer: writer)
         }
-        guard req.body.count <= 1 << 20 else { return await error(413, "request_too_large", "Request body too large", rid: rid, writer: writer) }
+        guard req.body.count <= 1 << 20 else { return await adminError(413, "Request body too large", rid: rid, writer: writer) }
         let (status, obj) = await adminDo(req.method, path: String(req.path.dropFirst(Self.adminPrefix.count)), query: req.query,
                                           body: req.body, hooks: admin)
-        return await json(status, obj, rid: rid, writer: writer)
+        return await adminReply(status, obj, rid: rid, writer: writer)
+    }
+
+    /// Odgovor skrbniškega API: nikoli v predpomnilnik (vsebuje žeton, ključe naprav); brez piškotkov in CORS.
+    func adminReply(_ status: Int, _ obj: Any, rid: String, writer: ResponseWriter) async -> Int {
+        let body = (try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys, .withoutEscapingSlashes])) ?? Data("{}".utf8)
+        try? await writer.write(HTTPResponse.head(status: status, headers: [
+            ("Content-Type", "application/json"), ("Cache-Control", "no-store"), ("request-id", rid),
+        ], contentLength: body.count) + body)
+        return status
+    }
+
+    func adminError(_ status: Int, _ message: String, rid: String, writer: ResponseWriter) async -> Int {
+        await adminReply(status, ["type": "error", "error": ["type": Self.errorType(status), "message": message]], rid: rid, writer: writer)
     }
 
     func adminDo(_ method: String, path: String, query: String?, body: Data, hooks: AdminHooks) async -> (Int, Any) {

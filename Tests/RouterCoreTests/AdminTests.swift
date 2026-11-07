@@ -57,6 +57,8 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
         #expect(await admin(r, "GET", "/status", auth: "tok").status == 401)  // žeton routerja ni skrivnost API
         let w = await admin(r, "GET", "/status")
         #expect(w.text.contains(#""running":true"#) && !w.text.lowercased().contains("access-control"))
+        #expect(w.text.contains("Cache-Control: no-store") && !w.text.lowercased().contains("set-cookie"))
+        #expect(await admin(r, "GET", "/status", auth: nil).text.contains("Cache-Control: no-store"))  // tudi napake
         // Brez kavljev (npr. testni router) skrbniškega API ni.
         let bare = Router(config: RouterConfig(), token: "tok", secrets: FakeSecrets(values: [:]))
         #expect(await admin(bare, "GET", "/status").status == 404)
