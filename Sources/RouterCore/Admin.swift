@@ -326,6 +326,30 @@ extension Router {
             case "grok": return (200, grokInfo(c.grok))
             default: throw AdminError(404, "no agent \(arg)")
             }
+        case "GET foundry":
+            return (200, await foundryInfo(c.foundry))
+        case "GET foundry/{}":
+            guard arg == "models" else { throw AdminError(404, "Not found: \(method) \(path)") }
+            do {
+                let ms = try await Router.foundry.list(Foundry.executable(c.foundry.executable))
+                return (200, ["models": ms.map { ["name": $0.name, "vision": $0.vision, "enabled": c.foundry.isModelEnabled($0.name)] }])
+            } catch { throw AdminError(503, (error as? Foundry.RequestError)?.message ?? "\(error)") }
+        case "PATCH foundry":
+            let b = try AdminBody(body, ["enabled", "path", "instructions", "models"])
+            let enabled = try b.bool("enabled"), path = try b.string("path"), instructions = try b.string("instructions"), models = try b.models("models")
+            if let path, !path.isEmpty, !FileManager.default.isExecutableFile(atPath: (path as NSString).expandingTildeInPath) {
+                throw AdminError(400, "not an executable: \(path)")
+            }
+            if let instructions, instructions.count > 8000 { throw AdminError(400, "instructions: up to 8000 characters") }
+            if let models, let list = models, let bad = list.first(where: { !Router.validModel($0) }) { throw AdminError(400, "not a model name: \(bad)") }
+            let n = try await hooks.update { c in
+                if let enabled { c.foundry.enabled = enabled }
+                if let path { c.foundry.executable = path }
+                if let instructions { c.foundry.instructions = instructions }
+                if let models { c.foundry.enabledModels = models }
+            }
+            await Router.foundry.forget()
+            return (200, await foundryInfo(n.foundry))
         case "PATCH agents/{}":
             switch arg {
             case "claude":
@@ -420,6 +444,12 @@ extension Router {
     func codexInfo(_ c: CodexConfig) -> [String: Any] {
         ["enabled": c.enabled, "path": c.executable, "found": Codex.executable(c.executable) != nil, "write": c.write,
          "network": c.network, "models": c.enabledModels.map { $0 as Any } ?? NSNull()]
+    }
+
+    func foundryInfo(_ c: FoundryConfig) async -> [String: Any] {
+        let exe = Foundry.executable(c.executable)
+        return ["enabled": c.enabled, "path": c.executable, "found": exe != nil, "exe": exe ?? "", "running": await Router.foundry.running,
+                "error": await Router.foundry.lastError, "instructions": c.instructions, "models": c.enabledModels.map { $0 as Any } ?? NSNull()]
     }
 
     func grokInfo(_ c: GrokConfig) -> [String: Any] {

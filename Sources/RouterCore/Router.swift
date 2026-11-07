@@ -175,6 +175,12 @@ public final class Router: Sendable {
                     }
                     return (await syncRun(agent: "codex") { await runCodex(req, body: body, model: codexModel, rid: rid, writer: writer) }, model, "codex")
                 }
+                if config.foundry.enabled, model.hasPrefix(Foundry.prefix), Self.validModel(String(model.dropFirst(Foundry.prefix.count))) {
+                    if req.path.hasSuffix("/count_tokens") {
+                        return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "foundry")
+                    }
+                    return (await runFoundry(req, body: body, model: String(model.dropFirst(Foundry.prefix.count)), rid: rid, writer: writer), model, "foundry")
+                }
                 if config.appleFM.enabled, AppleFM.ids.contains(model) {
                     if req.path.hasSuffix("/count_tokens") {
                         return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "apple-fm")
@@ -395,6 +401,7 @@ public final class Router: Sendable {
                  "description": "grok -p · \(m) · tools in your folder", "created_at": created]
             }
         }
+        data += await foundryModelList(created: created)
         return ["data": data, "has_more": false,
                 "first_id": data.first?["id"] ?? NSNull(), "last_id": data.last?["id"] ?? NSNull()]
     }

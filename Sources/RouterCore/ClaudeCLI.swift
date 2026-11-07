@@ -275,6 +275,7 @@ struct StreamTranslator {
     private(set) var resultError: String?
     private(set) var step: String?  // zadnje orodje agenta, npr. »Read docs/x.md« (za Activity)
     var usage: [String: Any] = [:]
+    var stop = "end_turn"  // stop_reason (Foundry Local: max_tokens pri length)
 
     func start() -> [Data] {
         [Self.sse("message_start", ["type": "message_start", "message": [
@@ -324,14 +325,14 @@ struct StreamTranslator {
         let out = (usage["output_tokens"] as? Int) ?? 0
         return [Self.sse("content_block_stop", ["type": "content_block_stop", "index": 0]),
                 Self.sse("message_delta", ["type": "message_delta",
-                                           "delta": ["stop_reason": "end_turn", "stop_sequence": NSNull()] as [String: Any],
+                                           "delta": ["stop_reason": stop, "stop_sequence": NSNull()] as [String: Any],
                                            "usage": ["output_tokens": out]]),
                 Self.sse("message_stop", ["type": "message_stop"])]
     }
 
     func message() -> [String: Any] {
         ["id": messageID, "type": "message", "role": "assistant", "model": model,
-         "content": [["type": "text", "text": text]], "stop_reason": "end_turn", "stop_sequence": NSNull(),
+         "content": [["type": "text", "text": text]], "stop_reason": stop, "stop_sequence": NSNull(),
          "usage": ["input_tokens": (usage["input_tokens"] as? Int) ?? 0, "output_tokens": (usage["output_tokens"] as? Int) ?? 0]]
     }
 

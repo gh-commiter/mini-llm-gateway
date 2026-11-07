@@ -84,6 +84,7 @@ public struct RouterConfig: Codable, Sendable, Equatable {
     public var devices: [DeviceConfig] = []
     public var codex = CodexConfig()
     public var grok = GrokConfig()
+    public var foundry = FoundryConfig()  // Foundry Local na tem Macu (Foundry.swift)
     public var scratchFolder = ""  // prazno = defaultScratch (Caches); npr. hiter zunanji SSD
     /// minigw run: dovoljeni ukazi (prvi argument, ločeno z vejico). Ni peskovnik: gradnja izvaja kodo projekta.
     public var runCommands = "mvn, swift, xcodebuild"
@@ -155,6 +156,7 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         devices = try c.decodeIfPresent([DeviceConfig].self, forKey: .devices) ?? d.devices
         codex = try c.decodeIfPresent(CodexConfig.self, forKey: .codex) ?? d.codex
         grok = try c.decodeIfPresent(GrokConfig.self, forKey: .grok) ?? d.grok
+        foundry = try c.decodeIfPresent(FoundryConfig.self, forKey: .foundry) ?? d.foundry
         scratchFolder = try c.decodeIfPresent(String.self, forKey: .scratchFolder) ?? d.scratchFolder
         runCommands = try c.decodeIfPresent(String.self, forKey: .runCommands) ?? d.runCommands
         worktreeNetwork = try c.decodeIfPresent(Bool.self, forKey: .worktreeNetwork) ?? d.worktreeNetwork
@@ -175,7 +177,7 @@ public struct RouterConfig: Codable, Sendable, Equatable {
             if draft[keyPath: kp] == old[keyPath: kp] { d[keyPath: kp] = new[keyPath: kp] }
         }
         take(\.host); take(\.port); take(\.allowedClients); take(\.allowPlainRemote); take(\.claudeCLI); take(\.appleFM)
-        take(\.siri); take(\.codex); take(\.grok); take(\.scratchFolder); take(\.runCommands); take(\.worktreeNetwork); take(\.worktreeCodexNetwork)
+        take(\.siri); take(\.codex); take(\.grok); take(\.foundry); take(\.scratchFolder); take(\.runCommands); take(\.worktreeNetwork); take(\.worktreeCodexNetwork)
         d.devices = mergeList(draft.devices, old.devices, new.devices)
         d.providers = mergeList(draft.providers, old.providers, new.providers)
         return d
