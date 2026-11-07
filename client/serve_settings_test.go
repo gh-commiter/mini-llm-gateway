@@ -4,120 +4,123 @@ import (
 	"crypto/ed25519"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
 
-// settingsGet: zahteva brez sledenja preusmeritvam (piškotek in Location preverja test).
-func settingsGet(t *testing.T, base, host, path string, cookie *http.Cookie) *http.Response {
+// settingsCall: zahteva na strani ali API; vrne status, telo in glave (piškotkov ne sme biti nikoli).
+func settingsCall(t *testing.T, base, host, method, path, session, body string) (int, string, http.Header) {
 	t.Helper()
-	r, _ := http.NewRequest("GET", base+path, nil)
+	r, _ := http.NewRequest(method, base+path, strings.NewReader(body))
 	r.Host = host
-	if cookie != nil {
-		r.AddCookie(cookie)
+	if session != "" {
+		r.Header.Set(settingsHeader, session)
 	}
-	c := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	resp, err := c.Do(r)
+	resp, err := http.DefaultClient.Do(r)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return resp
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.Header.Get("Set-Cookie") != "" {
+		t.Errorf("%s %s set a cookie", method, path)
+	}
+	return resp.StatusCode, string(b), resp.Header
 }
 
-func TestSettingsLoginAndCSRF(t *testing.T) {
+func TestSettingsSessionWithoutCookies(t *testing.T) {
 	s, _, base := liveServer(t, nil)
 	host := strings.TrimPrefix(base, "http://")
-	token := func() string { u, _ := url.Parse(s.settingsLoginURL()); return u.Query().Get("t") }
-
-	if r := settingsGet(t, base, host, "/minigw/settings", nil); r.StatusCode != 401 {
-		t.Fatalf("page without cookie: %d", r.StatusCode)
+	token := func() string {
+		u := s.settingsLoginURL()
+		if !strings.Contains(u, "/minigw/settings#t=") { // žeton v fragmentu, ne v poizvedbi
+			t.Fatalf("login URL: %s", u)
+		}
+		return u[strings.Index(u, "#t=")+3:]
 	}
-	if r := settingsGet(t, base, host, "/minigw/settings/login?t=bogus", nil); r.StatusCode != 401 {
-		t.Fatalf("bad token: %d", r.StatusCode)
+	login := func(tok string) (int, string) {
+		st, b, _ := settingsCall(t, base, host, "POST", "/minigw/settings/login", "", `{"t":"`+tok+`"}`)
+		return st, b
+	}
+
+	// Stran: statična, brez skrivnosti, CSP z nonce, brez okvirjev; tudi brez seje.
+	st, page, h := settingsCall(t, base, host, "GET", "/minigw/settings", "", "")
+	nonce := regexp.MustCompile(`'nonce-([^']+)'`).FindStringSubmatch(h.Get("Content-Security-Policy"))
+	if st != 200 || nonce == nil || !strings.Contains(page, `<script nonce="`+nonce[1]+`">`) || h.Get("X-Frame-Options") != "DENY" ||
+		strings.Contains(page, "{{") || strings.Contains(page, s.admin) || strings.Contains(page, "'tok#") || strings.Contains(strings.ToLower(page), "csrf") {
+		t.Fatalf("page: %d %v", st, h)
+	}
+
+	// Prijava le s POST, enkrat, v 60 s.
+	tok := token()
+	if st, _, _ := settingsCall(t, base, host, "GET", "/minigw/settings/login?t="+tok, "", ""); st != 405 {
+		t.Fatalf("login via GET: %d", st)
+	}
+	if st, _ := login("bogus"); st != 401 {
+		t.Fatalf("bad token: %d", st)
+	}
+	if st, _, _ := settingsCall(t, "http://"+host, "evil.example:"+strings.Split(host, ":")[1], "POST", "/minigw/settings/login", "", `{"t":"`+tok+`"}`); st != 403 {
+		t.Fatalf("login with a foreign Host: %d", st)
+	}
+	st, b := login(tok)
+	session := regexp.MustCompile(`"session":"([^"]+)"`).FindStringSubmatch(b)
+	if st != 200 || session == nil {
+		t.Fatalf("login: %d %s", st, b)
+	}
+	if st, _ := login(tok); st != 401 {
+		t.Fatalf("token used twice: %d", st)
 	}
 	expired := token()
 	s.settings.mu.Lock()
 	s.settings.logins[expired] = time.Now().Add(-time.Second)
 	s.settings.mu.Unlock()
-	if r := settingsGet(t, base, host, "/minigw/settings/login?t="+expired, nil); r.StatusCode != 401 {
-		t.Fatalf("expired token: %d", r.StatusCode)
-	}
-	tok := token()
-	if r := settingsGet(t, "http://"+host, "evil.example:"+strings.Split(host, ":")[1], "/minigw/settings/login?t="+tok, nil); r.StatusCode != 403 {
-		t.Fatalf("login with a foreign Host: %d", r.StatusCode)
-	}
-	r := settingsGet(t, base, host, "/minigw/settings/login?t="+tok, nil)
-	var cookie *http.Cookie
-	for _, c := range r.Cookies() {
-		if c.Name == settingsCookie {
-			cookie = c
-		}
-	}
-	if r.StatusCode != 303 || r.Header.Get("Location") != "/minigw/settings" || cookie == nil || !cookie.HttpOnly ||
-		cookie.SameSite != http.SameSiteStrictMode || cookie.Path != "/minigw/" {
-		t.Fatalf("login: %d %v %+v", r.StatusCode, r.Header, cookie)
-	}
-	if r := settingsGet(t, base, host, "/minigw/settings/login?t="+tok, nil); r.StatusCode != 401 {
-		t.Fatalf("token used twice: %d", r.StatusCode)
+	if st, _ := login(expired); st != 401 {
+		t.Fatalf("expired token: %d", st)
 	}
 
-	// Stran: CSP z nonce, brez okvirjev; CSRF iz seje v strani.
-	r = settingsGet(t, base, host, "/minigw/settings", cookie)
-	page, _ := io.ReadAll(r.Body)
-	csp := r.Header.Get("Content-Security-Policy")
-	nonce := regexp.MustCompile(`'nonce-([^']+)'`).FindStringSubmatch(csp)
-	csrf := regexp.MustCompile(`<meta name="csrf" content="([^"]+)">`).FindSubmatch(page)
-	if r.StatusCode != 200 || nonce == nil || !strings.Contains(csp, "default-src 'none'") || !strings.Contains(csp, "frame-ancestors 'none'") ||
-		r.Header.Get("X-Frame-Options") != "DENY" || !strings.Contains(string(page), `<script nonce="`+nonce[1]+`">`) || csrf == nil ||
-		strings.Contains(string(page), "{{") {
-		t.Fatalf("page: %d CSP %q", r.StatusCode, csp)
+	// API: brez glave seje ali z napačno 401; s pravo 200 (branje in sprememba); no-store.
+	if st, _, _ := settingsCall(t, base, host, "GET", adminPrefix+"/general", "", ""); st != 401 {
+		t.Fatalf("API without session: %d", st)
 	}
-	if r := settingsGet(t, base, "evil.example:"+strings.Split(host, ":")[1], "/minigw/settings", cookie); r.StatusCode != 403 {
-		t.Fatalf("page with a foreign Host: %d", r.StatusCode)
+	if st, _, _ := settingsCall(t, base, host, "GET", adminPrefix+"/general", "wrong", ""); st != 401 {
+		t.Fatalf("API with a wrong session: %d", st)
+	}
+	st, _, h = settingsCall(t, base, host, "GET", adminPrefix+"/general", session[1], "")
+	if st != 200 || h.Get("Cache-Control") != "no-store" {
+		t.Fatalf("API with session: %d %v", st, h)
+	}
+	if st, _, _ := settingsCall(t, base, host, "PATCH", adminPrefix+"/agents/claude", session[1], `{"tools":"Read"}`); st != 200 || s.conf().Tools != "Read" {
+		t.Fatalf("PATCH with session: %d", st)
 	}
 
-	// Skrbniški API s piškotkom: branje brez CSRF, sprememba le s pravim X-CSRF.
-	call := func(method, path, csrfHeader, body string) int {
-		req, _ := http.NewRequest(method, base+adminPrefix+path, strings.NewReader(body))
-		req.AddCookie(cookie)
-		if csrfHeader != "" {
-			req.Header.Set("X-CSRF", csrfHeader)
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp.Body.Close()
-		return resp.StatusCode
+	// Mirovanje 30 min; odjava; nov žeton routerja konča vse seje.
+	s.settings.mu.Lock()
+	s.settings.sessions[session[1]] = time.Now().Add(-31 * time.Minute)
+	s.settings.mu.Unlock()
+	if st, _, _ := settingsCall(t, base, host, "GET", adminPrefix+"/status", session[1], ""); st != 401 {
+		t.Fatalf("idle session: %d", st)
 	}
-	// Piškotek brez CSRF ne bere ničesar (drug strežnik na 127.0.0.1 dobi piškotek, ne vrednosti iz strani).
-	for _, path := range []string{"/status", "/general", "/devices", "/gateways"} {
-		if st := call("GET", path, "", ""); st != 403 {
-			t.Fatalf("GET %s with cookie only: %d", path, st)
-		}
+	_, b = login(token())
+	s2 := regexp.MustCompile(`"session":"([^"]+)"`).FindStringSubmatch(b)[1]
+	settingsCall(t, base, host, "POST", "/minigw/settings/logout", s2, "")
+	if st, _, _ := settingsCall(t, base, host, "GET", adminPrefix+"/status", s2, ""); st != 401 {
+		t.Fatalf("after logout: %d", st)
 	}
-	if st := call("GET", "/general", string(csrf[1]), ""); st != 200 {
-		t.Fatalf("GET with cookie and CSRF: %d", st)
+	_, b = login(token())
+	s3 := regexp.MustCompile(`"session":"([^"]+)"`).FindStringSubmatch(b)[1]
+	if st, _, _ := settingsCall(t, base, host, "POST", adminPrefix+"/general/token", s3, ""); st != 200 {
+		t.Fatalf("rotate: %d", st)
 	}
-	if st := call("PATCH", "/agents/claude", "", `{"tools":"Read"}`); st != 403 {
-		t.Fatalf("PATCH without CSRF: %d", st)
-	}
-	if st := call("PATCH", "/agents/claude", "wrong", `{"tools":"Read"}`); st != 403 {
-		t.Fatalf("PATCH with a wrong CSRF: %d", st)
-	}
-	if st := call("PATCH", "/agents/claude", string(csrf[1]), `{"tools":"Read"}`); st != 200 || s.conf().Tools != "Read" {
-		t.Fatalf("PATCH with CSRF: %d %q", st, s.conf().Tools)
-	}
-	if st := call("POST", "/general/token", string(csrf[1]), ""); st != 200 {
-		t.Fatalf("token rotate with CSRF: %d", st)
+	if st, _, _ := settingsCall(t, base, host, "GET", adminPrefix+"/status", s3, ""); st != 401 {
+		t.Fatalf("session after token rotation: %d", st)
 	}
 	// Bearer za CLI ostane; prijavna povezava tudi prek API.
-	if st, b := adminReq(t, base, host, s.admin, "POST", adminPrefix+"/settings/login", ""); st != 200 || !strings.Contains(b, "/minigw/settings/login?t=") {
+	if st, b := adminReq(t, base, host, s.admin, "POST", adminPrefix+"/settings/login", ""); st != 200 || !strings.Contains(b, "/minigw/settings#t=") {
 		t.Fatalf("settings login via API: %d %s", st, b)
 	}
 }
@@ -125,11 +128,11 @@ func TestSettingsLoginAndCSRF(t *testing.T) {
 func TestTrayMenu(t *testing.T) {
 	id := base64url(newDevice("PC").key.Public().(ed25519.PublicKey))
 	st := apiStatus{Port: 8765, Devices: 1, Gateways: []apiGateway{{Name: "or"}}, Installed: true}
-	m := trayMenu(st, []apiDevice{{ID: id, Name: "PC\x1b[31m"}}, false)
+	m := trayMenu(st, []apiDevice{{ID: id, Name: "PC\x1b[31m\u202e\u200b"}}, false) // ESC, bidi, ničelna širina ven
 	if m[0].Text != "Running on :8765 · 1 device · 1 gateway" || !m[0].Disabled {
 		t.Fatalf("status line: %+v", m[0])
 	}
-	if m[1].Text != "Waiting for approval (1)" || m[1].Sub[0].Text != "PC[31m ("+id[:8]+"…)" ||
+	if m[1].Text != "Waiting for approval (1)" || m[1].Sub[0].Text != "PC[31m ("+id+")" ||
 		m[1].Sub[0].Sub[0].Action != "allow:"+id || m[1].Sub[0].Sub[1].Action != "deny:"+id {
 		t.Fatalf("pending: %+v", m[1])
 	}
@@ -173,7 +176,11 @@ func TestTrayDeviceActionsAndInstallValue(t *testing.T) {
 	if trayBeside(exe) != "" {
 		t.Fatal("tray found where there is none")
 	}
-	tray := filepath.Join(dir, "minigw-tray-windows-amd64.exe")
+	os.WriteFile(filepath.Join(dir, "minigw-tray-evil.exe"), nil, 0o755) // le natančna imena
+	if trayBeside(exe) != "" {
+		t.Fatal("tray found by a loose name")
+	}
+	tray := filepath.Join(dir, "minigw-tray-windows-"+runtime.GOARCH+".exe")
 	os.WriteFile(tray, nil, 0o755)
 	if trayBeside(exe) != tray || !isTrayExe(tray) || isTrayExe(exe) {
 		t.Fatalf("trayBeside: %q", trayBeside(exe))

@@ -53,6 +53,8 @@ var (
 	pGlobalAlloc         = kernel32.NewProc("GlobalAlloc")
 	pGlobalLock          = kernel32.NewProc("GlobalLock")
 	pGlobalUnlock        = kernel32.NewProc("GlobalUnlock")
+	pGlobalFree          = kernel32.NewProc("GlobalFree")
+	pRegisterClipFormat  = user32.NewProc("RegisterClipboardFormatW")
 	pMoveMemory          = kernel32.NewProc("RtlMoveMemory")
 	pGetUILanguage       = kernel32.NewProc("GetUserDefaultUILanguage")
 )
@@ -129,8 +131,12 @@ func messageBox(text string) {
 	pMessageBox.Call(0, uintptr(unsafe.Pointer(u16(text))), uintptr(unsafe.Pointer(u16("Mini Gateway"))), 0x10 /* MB_ICONERROR */)
 }
 
-func shellOpen(target string) {
-	pShellExecute.Call(0, uintptr(unsafe.Pointer(u16("open"))), uintptr(unsafe.Pointer(u16(target))), 0, 0, 1 /* SW_SHOWNORMAL */)
+func shellOpen(target, params string) {
+	p := uintptr(0)
+	if params != "" {
+		p = uintptr(unsafe.Pointer(u16(params)))
+	}
+	pShellExecute.Call(0, uintptr(unsafe.Pointer(u16("open"))), uintptr(unsafe.Pointer(u16(target))), p, 0, 1 /* SW_SHOWNORMAL */)
 }
 
 func trayRun(cfgPath string) {
@@ -318,7 +324,7 @@ func (t *tray) do(action string, st apiStatus) {
 	switch action {
 	case "":
 	case "settings":
-		shellOpen(t.s.settingsLoginURL())
+		shellOpen(t.s.settingsLoginURL(), "")
 	case "copy":
 		if err := setClipboard(t.hwnd, connectLine(t.s.conf())); err != nil {
 			messageBox(err.Error())
@@ -329,7 +335,7 @@ func (t *tray) do(action string, st apiStatus) {
 			messageBox(err.Error())
 		}
 	case "log":
-		shellOpen(t.logPath)
+		shellOpen("notepad.exe", `"`+t.logPath+`"`) // dnevnik vedno kot besedilo, ne s privzetim programom za .log
 	case "quit":
 		pShellNotifyIcon.Call(nimDelete, uintptr(unsafe.Pointer(t.data(0))))
 		os.Exit(0)
@@ -348,14 +354,34 @@ func setClipboard(hwnd uintptr, text string) error {
 	}
 	defer pCloseClipboard.Call()
 	pEmptyClipboard.Call()
-	h, _, _ := pGlobalAlloc.Call(0x0002 /* GMEM_MOVEABLE */, uintptr(len(u)*2))
+	if err := clipboardData(13 /* CF_UNICODETEXT */, unsafe.Pointer(&u[0]), len(u)*2); err != nil {
+		return err
+	}
+	// Vrstica vsebuje žeton: ne v zgodovino odložišča in ne v sinhronizacijo v oblak.
+	var zero uint32
+	for _, name := range []string{"ExcludeClipboardContentFromMonitorProcessing", "CanIncludeInClipboardHistory", "CanUploadToCloudClipboard"} {
+		if f, _, _ := pRegisterClipFormat.Call(uintptr(unsafe.Pointer(u16(name)))); f != 0 {
+			clipboardData(f, unsafe.Pointer(&zero), 4)
+		}
+	}
+	return nil
+}
+
+// clipboardData: kopija v GlobalAlloc; ob napaki pomnilnik sprosti (po uspehu je last odložišča).
+func clipboardData(format uintptr, data unsafe.Pointer, size int) error {
+	h, _, _ := pGlobalAlloc.Call(0x0002 /* GMEM_MOVEABLE */, uintptr(size))
 	if h == 0 {
 		return fmt.Errorf("clipboard: no memory")
 	}
 	p, _, _ := pGlobalLock.Call(h)
-	pMoveMemory.Call(p, uintptr(unsafe.Pointer(&u[0])), uintptr(len(u)*2))
+	if p == 0 {
+		pGlobalFree.Call(h)
+		return fmt.Errorf("clipboard: GlobalLock failed")
+	}
+	pMoveMemory.Call(p, uintptr(data), uintptr(size))
 	pGlobalUnlock.Call(h)
-	if r, _, err := pSetClipboardData.Call(13 /* CF_UNICODETEXT */, h); r == 0 {
+	if r, _, err := pSetClipboardData.Call(format, h); r == 0 {
+		pGlobalFree.Call(h)
 		return fmt.Errorf("clipboard: %v", err)
 	}
 	return nil

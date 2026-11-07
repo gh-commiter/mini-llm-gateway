@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 )
 
 var errNotFound = errors.New("not found")
@@ -146,3 +147,5 @@ func regRunGet(string) (string, error) { return "", errNotFound }
 func regRunDel(string)                 {}
 
 func protectDir(string) error { return nil } // drugod: mapa 0700, datoteke 0600
+
+var listenControl func(network, address string, c syscall.RawConn) error // drugod privzeto (brez SO_REUSEPORT)

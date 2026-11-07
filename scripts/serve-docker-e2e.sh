@@ -123,7 +123,7 @@ docker logs $NAME 2>&1 | grep -q 'step: "Write agent.txt"' || fail "agent step n
 # Gateway: http only with --insecure; the key from stdin goes to a 0600 file (no secret-tool here), never serve.json.
 # Settings page: the router gives a one-time link; from outside the container it is refused (login and CSRF: Go tests).
 LINK=$(mgr router settings | tail -1 | tr -d ' ')
-[[ $LINK == http://127.0.0.1:8765/minigw/settings/login\?t=* ]] || fail "settings link: $LINK"
+[[ $LINK == http://127.0.0.1:8765/minigw/settings\#t=* ]] || fail "settings link: $LINK"  # žeton v fragmentu
 [[ $(curl -s -o /dev/null -w "%{http_code}" "${LINK/127.0.0.1:8765/127.0.0.1:$PORT}") == 426 ]] || fail "settings link reachable from outside"
 # Added and changed live through the admin API: no restart.
 print sk-e2e-gateway-key | mgr serve gateway add fake http://127.0.0.1:9000 2>/dev/null && fail "http gateway without --insecure accepted"

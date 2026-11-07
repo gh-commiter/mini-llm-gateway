@@ -173,10 +173,38 @@ func protectDir(dir string) error {
 		pConvert = advapi32.NewProc("ConvertStringSecurityDescriptorToSecurityDescriptorW")
 		pGetDacl = advapi32.NewProc("GetSecurityDescriptorDacl")
 		pSetSec  = advapi32.NewProc("SetNamedSecurityInfoW")
+		pGetSec  = advapi32.NewProc("GetNamedSecurityInfoW")
 		pFree    = syscall.NewLazyDLL("kernel32.dll").NewProc("LocalFree")
 	)
+	// SID trenutnega uporabnika iz žetona procesa (ne OW: lastnika lahko spremeni drug).
+	tok, err := syscall.OpenCurrentProcessToken()
+	if err != nil {
+		return err
+	}
+	defer tok.Close()
+	tu, err := tok.GetTokenUser()
+	if err != nil {
+		return err
+	}
+	me, err := tu.User.Sid.String()
+	if err != nil {
+		return err
+	}
+	name, _ := syscall.UTF16PtrFromString(dir)
+	const seFileObject, ownerInfo, daclInfo, protectedDacl = 1, 0x1, 0x4, 0x80000000
+	var owner *syscall.SID
+	var osd uintptr
+	if r, _, _ := pGetSec.Call(uintptr(unsafe.Pointer(name)), seFileObject, ownerInfo, uintptr(unsafe.Pointer(&owner)), 0, 0, 0,
+		uintptr(unsafe.Pointer(&osd))); r != 0 {
+		return syscall.Errno(r)
+	}
+	ownerSID, _ := owner.String()
+	pFree.Call(osd)
+	if ownerSID != me {
+		return errForeignOwner
+	}
 	var sd uintptr
-	sddl, _ := syscall.UTF16PtrFromString("D:P(A;OICI;FA;;;OW)(A;OICI;FA;;;SY)")
+	sddl, _ := syscall.UTF16PtrFromString("D:P(A;OICI;FA;;;" + me + ")(A;OICI;FA;;;SY)")
 	if r, _, err := pConvert.Call(uintptr(unsafe.Pointer(sddl)), 1 /* SDDL_REVISION_1 */, uintptr(unsafe.Pointer(&sd)), 0); r == 0 {
 		return err
 	}
@@ -186,10 +214,19 @@ func protectDir(dir string) error {
 	if r, _, err := pGetDacl.Call(sd, uintptr(unsafe.Pointer(&present)), uintptr(unsafe.Pointer(&dacl)), uintptr(unsafe.Pointer(&defaulted))); r == 0 {
 		return err
 	}
-	name, _ := syscall.UTF16PtrFromString(dir)
-	const seFileObject, daclInfo, protectedDacl = 1, 0x4, 0x80000000
 	if r, _, _ := pSetSec.Call(uintptr(unsafe.Pointer(name)), seFileObject, daclInfo|protectedDacl, 0, 0, dacl, 0); r != 0 {
 		return syscall.Errno(r)
 	}
 	return nil
+}
+
+// listenControl: SO_EXCLUSIVEADDRUSE (= ^SO_REUSEADDR): drug proces ne more poslušati na istih vratih.
+func listenControl(_, _ string, c syscall.RawConn) error {
+	var serr error
+	if err := c.Control(func(fd uintptr) {
+		serr = syscall.SetsockoptInt(syscall.Handle(fd), syscall.SOL_SOCKET, ^syscall.SO_REUSEADDR, 1)
+	}); err != nil {
+		return err
+	}
+	return serr
 }
