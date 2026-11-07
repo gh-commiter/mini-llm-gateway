@@ -44,7 +44,23 @@ const (
 	maxSyncFiles = 100_000
 	maxSyncBytes = int64(8) << 30
 	copyLifetime = 14 * 24 * time.Hour
+	maxCopies    = 32 // M2: kopij na napravo (vsaka do maxSyncBytes)
 )
+
+// tooManyCopies: nova kopija (sync/<naprava>/<mapa>) bi presegla maxCopies; obstoječa sme vedno naprej.
+func tooManyCopies(copyDir string) bool {
+	if _, err := os.Lstat(copyDir); err == nil {
+		return false
+	}
+	ents, _ := os.ReadDir(filepath.Dir(copyDir))
+	n := 0
+	for _, e := range ents {
+		if e.IsDir() {
+			n++
+		}
+	}
+	return n >= maxCopies
+}
 
 // syncOverQuota: "" = v mejah, sicer sporočilo za odjemalca.
 func syncOverQuota(files []syncEntry) string {
@@ -453,7 +469,7 @@ func (h *shareHub) syncPut(key, path string, data []byte, owner string) int {
 		return 403
 	}
 	want := e.SHA256
-	if sha256Hex(data) != want {
+	if int64(len(data)) != e.Size || sha256Hex(data) != want { // M2: kvota šteje velikost iz manifesta
 		return 409 // spremenjena med prenosom
 	}
 	if syncPutWrite(full, data, e.Mtime, e.Exec, !execKnown) != nil {

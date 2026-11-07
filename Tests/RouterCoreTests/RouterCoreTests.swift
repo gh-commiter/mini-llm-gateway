@@ -1449,6 +1449,24 @@ final class FakeMinigw: @unchecked Sendable {
     #expect(Sync.overQuota([Sync.Entry(path: "big", size: Sync.maxBytes + 1, mtime: 0, sha256: "x")])?.contains("too large") == true)
 }
 
+/// M2: velikost iz manifesta je zavezujoča (kvota); največ maxCopies kopij na napravo.
+@Test func syncPutSizeAndCopyLimit() async throws {
+    let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("m2-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let hub = ShareHub(), data = Data("hello".utf8)
+    let key = try #require(await hub.register(session: "m2", cwd: "/c", key: nil, copy: root.appendingPathComponent("copy")))
+    _ = try #require(await hub.syncManifest(key: key, [Sync.Entry(path: "a.txt", size: 0, mtime: 1, sha256: Sync.sha256(data))]))
+    #expect(await hub.syncPut(key: key, path: "a.txt", data: data) == 409)
+
+    let dev = root.appendingPathComponent("dev")
+    for i in 0..<Sync.maxCopies {
+        #expect(!Sync.tooManyCopies(dev.appendingPathComponent("\(i)")))
+        try FileManager.default.createDirectory(at: dev.appendingPathComponent("\(i)"), withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: dev.appendingPathComponent("\(i).used").path, contents: nil)
+    }
+    #expect(Sync.tooManyCopies(dev.appendingPathComponent("new")) && !Sync.tooManyCopies(dev.appendingPathComponent("0")))
+}
+
 /// #2: imena, ki se razlikujejo le v velikih črkah.
 @Test func syncCaseCollisions() {
     #expect(Sync.caseCollisions(["A.txt", "a.txt", "src/B.go", "src/b.GO", "ok.txt"]) == ["A.txt", "a.txt", "src/B.go", "src/b.GO"])

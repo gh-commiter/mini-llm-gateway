@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -374,6 +375,31 @@ func TestServeAllowDenyDevices(t *testing.T) {
 	serveCommand([]string{"devices", "--config", cfg})
 	if c, _ = loadServeConfig(cfg); len(c.Devices) != 0 {
 		t.Fatalf("after deny by ID: %+v", c.Devices)
+	}
+}
+
+// M2: velikost iz manifesta je zavezujoča (kvota); največ maxCopies kopij na napravo.
+func TestSyncPutSizeAndCopyLimit(t *testing.T) {
+	h := newShareHub()
+	copyDir := t.TempDir()
+	key, _ := h.register("s1", "/c", "", false, copyDir, "dev")
+	data := []byte("hello")
+	if _, _, ok := h.syncManifest(key, []syncEntry{{Path: "a.txt", Size: 0, SHA256: sha256Hex(data)}}, true, "dev"); !ok {
+		t.Fatal("manifest")
+	}
+	if st := h.syncPut(key, "a.txt", data, "dev"); st != 409 {
+		t.Fatalf("size mismatch: %d", st)
+	}
+	root := t.TempDir()
+	for i := range maxCopies {
+		if tooManyCopies(filepath.Join(root, strconv.Itoa(i))) {
+			t.Fatalf("refused copy %d", i)
+		}
+		os.Mkdir(filepath.Join(root, strconv.Itoa(i)), 0o700)
+		os.WriteFile(filepath.Join(root, strconv.Itoa(i)+".used"), nil, 0o600)
+	}
+	if !tooManyCopies(filepath.Join(root, "new")) || tooManyCopies(filepath.Join(root, "0")) {
+		t.Fatal("copy limit")
 	}
 }
 

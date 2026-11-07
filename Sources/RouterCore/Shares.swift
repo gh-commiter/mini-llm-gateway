@@ -499,7 +499,7 @@ public actor ShareHub {
         guard let s = share(key: key, device: device), let copy = s.copy else { return 404 }
         s.lastSeen = Date()
         guard let e = s.incoming[path], let url = Sync.resolve(path, root: copy) else { return 403 }
-        guard Sync.sha256(data) == e.sha256 else { return 409 }  // spremenjena med prenosom
+        guard Int64(data.count) == e.size, Sync.sha256(data) == e.sha256 else { return 409 }  // spremenjena med prenosom; M2: kvota šteje velikost
         do { try Sync.write(data, to: url, mtime: e.mtime, exec: s.execKnown ? e.exec : nil) } catch { return 500 }
         s.keptBase[path] = nil
         s.state?[path] = s.execKnown ? e : Sync.entry(url, path: path, previous: nil) ?? e  // Windows: dejanski način kopije

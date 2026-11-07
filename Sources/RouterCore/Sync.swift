@@ -142,6 +142,15 @@ public enum Sync {
             + "add build output and large data to .gitignore, or use a smaller folder"
     }
 
+    /// M2: nova kopija (sync/<naprava>/<mapa>) bi presegla maxCopies; obstoječa sme vedno naprej.
+    static let maxCopies = 32
+    static func tooManyCopies(_ copy: URL) -> Bool {
+        let fm = FileManager.default
+        if (try? fm.attributesOfItem(atPath: copy.path)) != nil { return false }
+        let items = (try? fm.contentsOfDirectory(at: copy.deletingLastPathComponent(), includingPropertiesForKeys: [.isDirectoryKey])) ?? []
+        return items.filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }.count >= maxCopies
+    }
+
     /// #2: poti, ki se razlikujejo le v velikih črkah (A.txt in a.txt): na routerju brez razlikovanja črk bi bile ena
     /// datoteka, zato ne gredo nikamor.
     public static func caseCollisions(_ paths: Set<String>) -> [String] {

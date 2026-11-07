@@ -268,6 +268,10 @@ public final class Router: Sendable {
             }
             let copy = sync ? config.scratch("sync").appendingPathComponent(owner!)  // samo za branje: ločena kopija
                 .appendingPathComponent(Sync.folderID(cwd) + (readOnly ? "-ro" : "")) : nil
+            if let copy, Sync.tooManyCopies(copy) {
+                return (await error(429, "rate_limit_error", "This device already has \(Sync.maxCopies) synced folders on the gateway; unused ones expire after 14 days",
+                                    rid: rid, writer: writer), nil, "share")
+            }
             guard let key = await Self.shares.register(session: session, cwd: cwd, key: req.header("x-share-key"),
                                                        readOnly: readOnly, copy: copy, device: req.device?.id, native: native, tree: tree) else {
                 return (await error(409, "invalid_request_error", "Session already has a folder", rid: rid, writer: writer), nil, "share")
