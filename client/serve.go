@@ -55,15 +55,16 @@ type serveConfig struct {
 	AllowUnsandboxedBash bool           `json:"allowUnsandboxedBash,omitempty"`
 	Gateways             []serveGateway `json:"gateways,omitempty"` // ključi v shrambi sistema, ne tu (serve_gateway.go)
 	// Kot nastavitve na Macu (docs/windows-parity.md).
-	AllowedClients   string   `json:"allowedClients,omitempty"`   // IP naslovi, ločeni z vejico ali presledkom; prazno = vsi
-	AllowPlainRemote bool     `json:"allowPlainRemote,omitempty"` // navaden HTTP z drugih računalnikov (brez ključa naprave)
-	ClaudeDisabled   bool     `json:"claudeDisabled,omitempty"`   // Claude CLI izklopljen (privzeto vklopljen)
-	AllowedFolders   []string `json:"allowedFolders,omitempty"`   // dodatne mape, v katerih agenti smejo delati
-	AllowLocalTools  bool     `json:"allowLocalTools,omitempty"`  // vsa orodja Claude Code (razen DisabledTools)
-	DisabledTools    []string `json:"disabledTools,omitempty"`
-	SettingSources   string   `json:"settingSources,omitempty"` // --setting-sources; prazno = brez (hooki iz mape ne tečejo)
-	Codex            agentCLI `json:"codex"`                    // Codex CLI (serve_agents.go), privzeto izklopljen
-	Grok             agentCLI `json:"grok"`                     // Grok CLI, privzeto izklopljen
+	AllowedClients   string        `json:"allowedClients,omitempty"`   // IP naslovi, ločeni z vejico ali presledkom; prazno = vsi
+	AllowPlainRemote bool          `json:"allowPlainRemote,omitempty"` // navaden HTTP z drugih računalnikov (brez ključa naprave)
+	ClaudeDisabled   bool          `json:"claudeDisabled,omitempty"`   // Claude CLI izklopljen (privzeto vklopljen)
+	AllowedFolders   []string      `json:"allowedFolders,omitempty"`   // dodatne mape, v katerih agenti smejo delati
+	AllowLocalTools  bool          `json:"allowLocalTools,omitempty"`  // vsa orodja Claude Code (razen DisabledTools)
+	DisabledTools    []string      `json:"disabledTools,omitempty"`
+	SettingSources   string        `json:"settingSources,omitempty"` // --setting-sources; prazno = brez (hooki iz mape ne tečejo)
+	Codex            agentCLI      `json:"codex"`                    // Codex CLI (serve_agents.go), privzeto izklopljen
+	Grok             agentCLI      `json:"grok"`                     // Grok CLI, privzeto izklopljen
+	Foundry          foundryConfig `json:"foundry"`                  // Foundry Local na napravi (foundry.go), privzeto izklopljen
 }
 
 const serveHelp = `minigw serve: Mini Gateway, the LLM gateway, on this computer (Windows, Linux) for minigw clients.
@@ -372,6 +373,7 @@ type server struct {
 	settings settingsState
 	// agentsRunning: tekoči procesi agentov (claude, codex, grok), za status in posodobitev brez prekinitve
 	agentsRunning atomic.Int32
+	foundry       foundryState // Foundry Local: vrata, modeli
 	key           *ecdh.PrivateKey
 	log           *log.Logger
 	hub           *shareHub

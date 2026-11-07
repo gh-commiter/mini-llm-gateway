@@ -217,7 +217,7 @@ func (s *server) modelList() map[string]any {
 				"description":  "claude -p · " + m + " · tools in your synced folder", "created_at": "2026-01-01T00:00:00Z"})
 		}
 	}
-	data = append(append(data, s.agentModelList(codexKind)...), s.agentModelList(grokKind)...)
+	data = append(append(append(data, s.agentModelList(codexKind)...), s.agentModelList(grokKind)...), s.foundryModelList()...)
 	var first, last any
 	if len(data) > 0 {
 		first, last = data[0]["id"], data[len(data)-1]["id"]
@@ -321,6 +321,7 @@ func (r *sessionRegistry) set(k, v string) {
 // translator: stream-json → dogodki SSE enega besedilnega bloka (kot StreamTranslator).
 type translator struct {
 	model, id, text, resultError, step string
+	stop                               string // stop_reason; prazno = end_turn
 	usage                              map[string]any
 }
 
@@ -416,18 +417,25 @@ func (t *translator) feed(line []byte) []byte {
 	return nil
 }
 
+func (t *translator) stopReason() string {
+	if t.stop == "" {
+		return "end_turn"
+	}
+	return t.stop
+}
+
 func (t *translator) tokens(k string) int { f, _ := t.usage[k].(float64); return int(f) }
 
 func (t *translator) finish() []byte {
 	return append(append(sse("content_block_stop", map[string]any{"type": "content_block_stop", "index": 0}),
-		sse("message_delta", map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": "end_turn", "stop_sequence": nil},
+		sse("message_delta", map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": t.stopReason(), "stop_sequence": nil},
 			"usage": map[string]int{"output_tokens": t.tokens("output_tokens")}})...),
 		sse("message_stop", map[string]string{"type": "message_stop"})...)
 }
 
 func (t *translator) message() map[string]any {
 	return map[string]any{"id": t.id, "type": "message", "role": "assistant", "model": t.model,
-		"content": []any{map[string]string{"type": "text", "text": t.text}}, "stop_reason": "end_turn", "stop_sequence": nil,
+		"content": []any{map[string]string{"type": "text", "text": t.text}}, "stop_reason": t.stopReason(), "stop_sequence": nil,
 		"usage": map[string]int{"input_tokens": t.tokens("input_tokens"), "output_tokens": t.tokens("output_tokens")}}
 }
 
@@ -466,6 +474,15 @@ func (s *server) messages(w http.ResponseWriter, r *req) (int, string) {
 			}
 		}
 		return s.runAgent(w, r, body, k, m), model
+	}
+	if m, ok := strings.CutPrefix(model, foundryPrefix); ok { // Foundry Local (na napravi, kot Apple FM na Macu)
+		if !validAgentModel.MatchString(m) || !s.conf().Foundry.Enabled {
+			return writeError(w, r.rid, 404, "Unknown model: "+model), model
+		}
+		if strings.HasSuffix(r.URL.Path, "/count_tokens") {
+			return writeJSON(w, r.rid, 200, map[string]int{"input_tokens": len(r.body) / 4}), model
+		}
+		return s.runFoundry(w, r, body, m), model
 	}
 	cliModel, chat, ok := cliMatch(model)
 	if !validModel.MatchString(model) || !validModel.MatchString(cliModel) {
