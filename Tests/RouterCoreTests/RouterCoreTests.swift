@@ -460,16 +460,38 @@ func makeRouter(session: URLSession = .shared) -> Router {
     #expect(throws: (any Error).self) { try Noise.respond(try wrong.first(), key: key) }
 }
 
+/// Prost port TCP na 127.0.0.1 (#18: stalen port 18765 je bil včasih zaseden).
+func freeTCPPort() -> UInt16 {
+    let fd = socket(AF_INET, SOCK_STREAM, 0)
+    defer { close(fd) }
+    var a = sockaddr_in(sin_len: UInt8(MemoryLayout<sockaddr_in>.size), sin_family: sa_family_t(AF_INET), sin_port: 0,
+                        sin_addr: in_addr(s_addr: inet_addr("127.0.0.1")), sin_zero: (0, 0, 0, 0, 0, 0, 0, 0))
+    var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+    _ = withUnsafeMutablePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, len) } }
+    _ = withUnsafeMutablePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &len) } }
+    return UInt16(bigEndian: a.sin_port)
+}
+
+/// Ali na portu 127.0.0.1 nekdo posluša.
+func portInUse(_ port: UInt16) -> Bool {
+    let fd = socket(AF_INET, SOCK_STREAM, 0)
+    defer { close(fd) }
+    var a = sockaddr_in(sin_len: UInt8(MemoryLayout<sockaddr_in>.size), sin_family: sa_family_t(AF_INET), sin_port: port.bigEndian,
+                        sin_addr: in_addr(s_addr: inet_addr("127.0.0.1")), sin_zero: (0, 0, 0, 0, 0, 0, 0, 0))
+    return withUnsafeMutablePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } } == 0
+}
+
 @Test func encryptedProxyToRouter() async throws {
     var c = RouterConfig()
-    c.host = "127.0.0.1"; c.port = 18_765
+    let routerPort = freeTCPPort(), routerURL = "http://127.0.0.1:\(routerPort)"
+    c.host = "127.0.0.1"; c.port = routerPort
     let key = Noise.newKey()
     let seen = SeenDevices()
     let server = RouterServer(router: Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]),
                                              onDevice: { d in seen.add(d) }), key: key)
     try server.start()
     defer { server.stop() }
-    try await Task.sleep(for: .milliseconds(200))
+    for _ in 0..<100 where !portInUse(routerPort) { try await Task.sleep(for: .milliseconds(50)) }  // namesto fiksnega čakanja
 
     func get(_ base: String, _ path: String) async -> (Int, String) {
         var r = URLRequest(url: URL(string: base + path)!, timeoutInterval: 5)
@@ -477,24 +499,25 @@ func makeRouter(session: URLSession = .shared) -> Router {
         guard let (d, resp) = try? await URLSession.shared.data(for: r) else { return (0, "") }
         return ((resp as! HTTPURLResponse).statusCode, String(decoding: d, as: UTF8.self))
     }
-    let proxy = try #require(NoiseProxy(routerURL: "http://127.0.0.1:18765", routerKey: key.publicKey.rawRepresentation))
+    let proxy = try #require(NoiseProxy(routerURL: routerURL, routerKey: key.publicKey.rawRepresentation))
+    let stableTaken = portInUse(proxy.stablePort)  // drug program na stalnem portu: proxy vzame naključnega
     try proxy.start()
     defer { proxy.stop() }
-    #expect(proxy.localPort == proxy.stablePort)  // stalen URL → Claude Code obdrži modele routerja
+    #expect(proxy.localPort == proxy.stablePort || stableTaken)  // stalen URL → Claude Code obdrži modele routerja
     let (s, body) = await get(proxy.localURL, "/v1/models")
     #expect(s == 200 && body.contains("\"data\""))
 
     #expect(seen.all.isEmpty)  // proxy brez ključa naprave (starejši minigw) deluje, le brez naprave
 
     let dev = Curve25519.Signing.PrivateKey()
-    let withDevice = try #require(NoiseProxy(routerURL: "http://127.0.0.1:18765", routerKey: key.publicKey.rawRepresentation,
+    let withDevice = try #require(NoiseProxy(routerURL: routerURL, routerKey: key.publicKey.rawRepresentation,
                                              device: (key: dev, name: "Test Air"), suite: .aesGCM))  // AESGCM kot minigw.exe
     try withDevice.start()
     defer { withDevice.stop() }
     #expect(await get(withDevice.localURL, "/v1/models").0 == 200)
     #expect(seen.all == [Noise.Device(id: Noise.base64url(dev.publicKey.rawRepresentation), name: "Test Air")])
 
-    let bad = try #require(NoiseProxy(routerURL: "http://127.0.0.1:18765", routerKey: Noise.newKey().publicKey.rawRepresentation))
+    let bad = try #require(NoiseProxy(routerURL: routerURL, routerKey: Noise.newKey().publicKey.rawRepresentation))
     try bad.start()
     defer { bad.stop() }
     #expect(bad.localPort != proxy.stablePort && bad.localPort != 0)  // port zaseden → naključen
