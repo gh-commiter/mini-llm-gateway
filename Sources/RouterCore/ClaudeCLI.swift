@@ -42,6 +42,23 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
             + (disabledTools.isEmpty ? [] : ["--disallowedTools", disabledTools.joined(separator: ",")])
     }
 
+    /// --minigw-work=worktree: vsa orodja (tudi Bash) vedno v peskovniku Claude Code (brez stikala za izklop):
+    /// pisanje le v klon in predpomnilnike gradnje (Worktree.writable), branje domače mape le tam, omrežje po nastavitvi.
+    func worktreeArgs(root: URL, cwd: URL, allTools: [String], network: Bool) -> [String] {
+        let dirs = Worktree.writable(root: root)
+        let sandbox: [String: Any] = ["sandbox": [
+            "enabled": true, "failIfUnavailable": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
+            "network": ["allowedDomains": network ? ["*"] : []],
+            "filesystem": ["denyRead": ["~"], "allowRead": dirs, "allowWrite": dirs],
+        ]]
+        let settings = String(decoding: try! JSONSerialization.data(withJSONObject: sandbox, options: [.sortedKeys]), as: UTF8.self)
+        let others = allTools.filter { !Self.pathTools.contains($0) && !disabledTools.contains($0) }
+        return ["--tools", "default", "--permission-mode", "acceptEdits", "--settings", settings]
+            + (cwd.path == root.path ? [] : ["--add-dir", root.path])
+            + (others.isEmpty ? [] : ["--allowedTools", others.joined(separator: ",")])
+            + (disabledTools.isEmpty ? [] : ["--disallowedTools", disabledTools.joined(separator: ",")])
+    }
+
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = ClaudeCLIConfig()
@@ -320,8 +337,13 @@ extension Router {
     static let codexSessions = SessionRegistry()
 
     /// Navodilo agentu za priklopljeno mapo odjemalca (macOS, Windows ali Linux).
-    static func mountNote(_ clientCwd: String, _ shared: URL, readOnly: Bool, synced: Bool = false) -> String {
-        (synced ? "The user's folder \(clientCwd) (on their computer) is synced here as \(shared.path), your working directory: a local copy"
+    static func mountNote(_ clientCwd: String, _ shared: URL, readOnly: Bool, synced: Bool = false, branch: String? = nil) -> String {
+        if let branch {
+            return "The user's folder \(clientCwd) (on their computer, a git repository) is a clone here at \(shared.path), your working"
+                + " directory, on branch \(branch). Map paths under \(clientCwd) to it. Commit your work on this branch; changes you leave"
+                + " uncommitted are committed for you at the end. The branch goes back to the user's repository; their files are not changed."
+        }
+        return (synced ? "The user's folder \(clientCwd) (on their computer) is synced here as \(shared.path), your working directory: a local copy"
             + (readOnly ? "" : " whose changed source files are copied back to the user when you finish") + ". Map paths under \(clientCwd) to it."
             : "The user's folder \(clientCwd) (on their computer) is mounted here as \(shared.path), your working directory. Map paths under \(clientCwd) to it.")
             + (readOnly ? " The folder is shared read-only: do not try to create, change or delete files in it."
@@ -362,9 +384,10 @@ extension Router {
                                                  wait: req.header("x-claude-mini-share") == "1", device: req.device?.id,
                                                  roots: config.claudeCLI.allowedRoots)
             let synced = await Self.shares.isSync(session: req.header("x-claude-mini-session") ?? "")
+            let tree = await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "")
             if let shared, let clientCwd {
                 let readOnly = await Self.shares.isReadOnly(session: req.header("x-claude-mini-session") ?? "")
-                args += ["--append-system-prompt", Self.mountNote(clientCwd, shared, readOnly: readOnly, synced: synced)]
+                args += ["--append-system-prompt", Self.mountNote(clientCwd, shared, readOnly: readOnly, synced: synced, branch: tree?.branch)]
             }
             guard let dir = shared ?? (synced ? nil : ClaudeCLI.resolveCwd(clientCwd, roots: cfg.allowedRoots)) else {
                 if synced, Task.isCancelled { return 499 }  // Claude Code je prekinil med čakanjem na prenos
@@ -385,8 +408,10 @@ extension Router {
                 sessionID = id
                 prompt = ClaudeCLI.prompt(history: history, last: last)
             }
-            let allTools = cfg.allowLocalTools ? await Self.toolList.get(cfg.executable) : []
-            args += cfg.agentArgs(cwd: dir, allTools: allTools) + ["--setting-sources", shared == nil ? cfg.settingSources : ""]  // hooki iz mape odjemalca ne tečejo tukaj
+            let allTools = cfg.allowLocalTools || tree != nil ? await Self.toolList.get(cfg.executable) : []
+            args += (tree.map { cfg.worktreeArgs(root: $0.root, cwd: dir, allTools: allTools, network: config.worktreeNetwork) }
+                     ?? cfg.agentArgs(cwd: dir, allTools: allTools))
+                + ["--setting-sources", shared == nil ? cfg.settingSources : ""]  // hooki iz mape odjemalca ne tečejo tukaj
         } else {
             cwd = config.scratch("chat")
             try? FileManager.default.createDirectory(at: cwd, withIntermediateDirectories: true)

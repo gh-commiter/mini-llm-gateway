@@ -170,6 +170,7 @@ extension Router {
         var cwd = config.scratch("chat")
         var extra: [String] = []
         var readOnly = false
+        var tree: (root: URL, branch: String)?
         var prompt = ClaudeCLI.prompt(history: all.dropLast(), last: last)
         if agent {
             let clientCwd = req.header("x-claude-mini-cwd")
@@ -187,14 +188,17 @@ extension Router {
             cwd = dir
             extra = config.claudeCLI.allowedRoots.split(separator: ",").map { ClaudeCLI.expand($0.trimmingCharacters(in: .whitespaces)) }
                 .filter { $0 != "/" && !$0.isEmpty && $0 != dir.path && FileManager.default.fileExists(atPath: $0) }
+            // worktree: pisljiv le klon (koren, ne dovoljene mape)
+            tree = await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "")
+            if let tree { cwd = tree.root; extra = [] }  // sandbox Grok piše le v --cwd: koren klona
             if let shared, let clientCwd {
                 readOnly = await Self.shares.isReadOnly(session: req.header("x-claude-mini-session") ?? "")
-                prompt = Self.mountNote(clientCwd, shared, readOnly: readOnly, synced: synced) + "\n\n" + prompt
+                prompt = Self.mountNote(clientCwd, shared, readOnly: readOnly, synced: synced, branch: tree?.branch) + "\n\n" + prompt
             }
         } else {
             try? FileManager.default.createDirectory(at: cwd, withIntermediateDirectories: true)
         }
-        var args = Grok.args(cwd: cwd, extraDirs: extra, agent: agent, model: model, write: config.grok.write && !readOnly)
+        var args = Grok.args(cwd: cwd, extraDirs: extra, agent: agent, model: model, write: tree != nil || config.grok.write && !readOnly)
         // Nadaljevanje Grokove seje (prebrane datoteke, rezultati ukazov): ključ je dosedanji pogovor v tej mapi.
         let scope = Self.agentScope("grok", req, cwd: cwd)
         if agent, let existing = await Self.grokSessions.get(ClaudeCLI.key(all.dropLast(), scope: scope)) {

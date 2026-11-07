@@ -6,12 +6,12 @@ import Foundation
 public enum SharedFolders {
     public struct Entry: Equatable, Sendable {
         public var path: String
-        public var work: String?     // direct, sync ali native; nil = privzeto
+        public var work: String?     // direct, sync, native, worktree ali auto; nil = privzeto
         public var readOnly = false
         public init(path: String, work: String? = nil, readOnly: Bool = false) { self.path = path; self.work = work; self.readOnly = readOnly }
     }
 
-    public static let modes = ["direct", "sync", "native"]
+    public static let modes = ["direct", "sync", "native", "worktree", "auto"]
 
     public static func parse(_ text: String) -> [Entry] {
         text.split(whereSeparator: \.isNewline).compactMap { line in
@@ -42,9 +42,23 @@ public enum SharedFolders {
 
     /// Način za en zagon: --minigw-work= / MINIGW_WORK > shranjen za mapo > direct. Shranjen --ro velja vedno; native
     /// samo za branje ni mogoč → direct samo za branje (tudi lažen router, ki native zavrne, ne odpre pisanja).
+    /// Worktree samo za branje prav tako ne (agent vrne vejo) → direct samo za branje; auto se razreši v `candidates`.
     public static func mode(flag: String?, saved: Entry?, readOnly: Bool) -> (work: String, readOnly: Bool) {
         let ro = readOnly || saved?.readOnly == true, work = flag ?? saved?.work ?? "direct"
-        return (work == "native" && ro ? "direct" : work, ro)
+        return (["native", "worktree"].contains(work) && ro ? "direct" : work, ro)
+    }
+
+    /// Načini, ki jih minigw poskusi po vrsti (naslednji, če router prejšnjega ne sprejme).
+    /// auto: samo za branje → direct; mapa na shemi SMB routerja → native; repozitorij git → worktree; sicer sync.
+    /// Izrecen native ali worktree, ki ni mogoč, pade na direct (kot doslej).
+    public static func candidates(work: String, readOnly: Bool, smb: Bool, git: Bool) -> [String] {
+        switch work {
+        case "auto" where readOnly: return ["direct"]
+        case "auto": return (smb ? ["native"] : []) + (git ? ["worktree"] : []) + ["sync", "direct"]
+        case "native": return ["native", "direct"]
+        case "worktree": return git ? ["worktree", "direct"] : ["direct"]
+        default: return [work]
+        }
     }
 
     /// Pot za seznam: ena vrstica, tabulator loči možnosti.

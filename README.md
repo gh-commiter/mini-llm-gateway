@@ -322,6 +322,23 @@ builds then work on the router's local disk.
 - **The router copy is kept between requests,** so the next sync and the next build are incremental.
 - **Agents in the same folder run one after another.**
 
+**Worktree: a git repository, results as branches.** `minigw --minigw-work=worktree …` (or `MINIGW_WORK=worktree`) sends
+the repository to a mirror in the router's Scratch folder (git bundles over the encrypted connection, only missing objects)
+and gives each agent its own clone on a branch `minigw/<agent>-<session>-<n>`; parallel agents get separate branches.
+- **Your exact state:** the agent starts from `HEAD` plus your uncommitted and new (not ignored) files, saved as a commit
+  "minigw: your uncommitted changes" with a temporary index; your index, branches and files are not changed.
+- **Results come back as branches only:** after each request the router commits what the agent left uncommitted and minigw
+  fetches the branch into your repository (`git log minigw/…`, then merge it yourself). It is never checked out; the fetch
+  checks objects (fsck) and runs no hooks, submodules or filters, and `.git/config` is not changed. The router never runs
+  git with the agent's own `.git` (config, hooks).
+- **Sandboxed agents:** Claude CLI agents get Bash, always in Claude Code's sandbox; Codex and Grok use their own sandboxes
+  with the clone as the writable folder. They write only to the clone and the build caches (`~/.m2`, SwiftPM,
+  `~/Library/Developer`, temporary folders), not to your home folder; network for builds is on (Settings → General →
+  Worktree mode). The Scratch folder must not be a temporary or build cache folder.
+- **`--minigw-work=auto`:** read-only (`--minigw-ro`) → direct; a folder on the router's SMB share → native; a git
+  repository → worktree; otherwise sync. Each falls back to the next when the router does not accept it (the Go router
+  `minigw serve` supports sync only). A saved per-folder mode (`minigw share add --work=…`) and the flag still win.
+
 **Native: the folder is the router's own SMB share.** When the client works in an SMB mount of a router share (for
 example `/Volumes/Java/projects` mounted from the router's `/Volumes/Java`), `minigw --minigw-work=native …`
 (or `MINIGW_WORK=native`) lets agents work directly in the router's folder: no mount back, no copy.

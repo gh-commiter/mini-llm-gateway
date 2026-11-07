@@ -45,9 +45,25 @@ public actor ShareHub {
         var keptBase: [String: String?] = [:]             // sync: združeno brez potrditve → različica, iz katere je agent začel
         let device: String?                               // naprava, ki je mapo registrirala (dokaz Noise); nil = lokalno
         let native: URL?                                  // native: mapa tega Maca, ki jo odjemalec vidi prek SMB (dokazano)
-        init(session: String, cwd: String, readOnly: Bool, copy: URL?, device: String?, native: URL? = nil) {
+        let tree: Tree?                                   // worktree: zrcalo in kloni agentov (glej Worktree)
+        var pushing: URL?                                 // worktree: bundle, ki ga minigw prav zdaj nalaga (WORKTREE-PUSH)
+        var result: URL?                                  // worktree: bundle veje, ki ga minigw prav zdaj prevzema (WORKTREE-PULL)
+        init(session: String, cwd: String, readOnly: Bool, copy: URL?, device: String?, native: URL? = nil, tree: Tree? = nil) {
             self.session = session; self.cwd = cwd; self.readOnly = readOnly; self.copy = copy; self.device = device; self.native = native
+            self.tree = tree
         }
+    }
+
+    /// worktree: golo zrcalo repozitorija odjemalca, mapa klonov in pot cwd v repozitoriju (»« = koren).
+    struct Tree: Equatable, Sendable {
+        let repo: URL, worktrees: URL, sub: String
+    }
+
+    /// worktree: klon agenta na svoji veji; zaporedne zahteve iste seje in agenta nadaljujejo v njem (busy = v izvajanju).
+    final class Slot {
+        let wt: URL, branch: String, base: String
+        var busy = true
+        init(wt: URL, branch: String, base: String) { self.wt = wt; self.branch = branch; self.base = base }
     }
 
     /// sync: eno izvajanje agenta v svojem klonu kopije (vzporedna izvajanja v isti mapi).
@@ -64,7 +80,11 @@ public actor ShareHub {
 
     /// ID izvajanja agenta (Router.syncRun): mount ga poveže s klonom, syncBack in finish ga najdeta.
     @TaskLocal public static var run: String?
+    /// Agent izvajanja (claude, codex, grok): ime veje worktree.
+    @TaskLocal public static var agent: String?
     private var runs: [String: Run] = [:]
+    var slots: [String: Slot] = [:]      // worktree: »<seja>|<agent>|<n>« → klon
+    var runSlot: [String: String] = [:]  // worktree: izvajanje → mesto
 
     private var bySession: [String: Share] = [:]
     private var reaper: Task<Void, Never>?
@@ -75,19 +95,19 @@ public actor ShareHub {
 
     /// Share seje, le za napravo, ki ga je registrirala (druga naprava z istim ID seje ali ključem ga ne doseže).
     private func share(session: String, device: String?) -> Share? { bySession[session].flatMap { $0.device == device ? $0 : nil } }
-    private func share(key: String, device: String?) -> Share? { share(key: key).flatMap { $0.device == device ? $0 : nil } }
+    func share(key: String, device: String?) -> Share? { share(key: key).flatMap { $0.device == device ? $0 : nil } }
 
     /// nil: seja že ima share drugega lastnika (brez njegovega ključa je ni mogoče prevzeti).
     /// `copy`: način sync (kopija v scratch/sync), `native`: dokazana mapa tega Maca, sicer priklop.
     func register(session: String, cwd: String, key: String?, readOnly: Bool = false, copy: URL? = nil, device: String? = nil,
-                  native: URL? = nil) -> String? {
+                  native: URL? = nil, tree: Tree? = nil) -> String? {
         if let s = bySession[session] {
             guard s.key == key else { return nil }
-            if s.cwd == cwd, s.readOnly == readOnly, s.copy == copy, s.native == native { s.lastSeen = Date(); return s.key }
+            if s.cwd == cwd, s.readOnly == readOnly, s.copy == copy, s.native == native, s.tree == tree { s.lastSeen = Date(); return s.key }
             bySession[session] = nil
             close(s)
         }
-        let s = Share(session: session, cwd: cwd, readOnly: readOnly, copy: copy, device: device, native: native)
+        let s = Share(session: session, cwd: cwd, readOnly: readOnly, copy: copy, device: device, native: native, tree: tree)
         bySession[session] = s
         if reaper == nil {
             reaper = Task { [weak self] in
@@ -104,7 +124,7 @@ public actor ShareHub {
     func isReadOnly(session: String) -> Bool { bySession[session]?.readOnly ?? false }
 
     /// Seja dela v sinhronizirani kopiji (ne v priklopu).
-    func isSync(session: String) -> Bool { bySession[session]?.copy != nil }
+    func isSync(session: String) -> Bool { bySession[session].map { $0.copy != nil || $0.tree != nil } ?? false }
 
     func unregister(key: String) {
         guard let s = share(key: key) else { return }
@@ -121,6 +141,7 @@ public actor ShareHub {
     }
 
     private func close(_ s: Share) {
+        dropSlots(session: s.session)
         for (_, k) in s.pollers { k.resume(returning: nil) }
         for (_, k) in s.replies { k.resume(returning: nil) }
         s.pollers = [:]; s.replies = [:]
@@ -177,7 +198,7 @@ public actor ShareHub {
     }
 
     /// Zahteva za minigw (naslednji long poll); nil, če ne odgovori v `timeout` sekundah.
-    private func send(_ s: Share, _ job: DAVJob, timeout: Double) async -> DAVResponse? {
+    func send(_ s: Share, _ job: DAVJob, timeout: Double) async -> DAVResponse? {
         await withCheckedContinuation { k in
             s.replies[job.id] = k
             if let (pid, p) = s.pollers.first { s.pollers[pid] = nil; p.resume(returning: job) } else { s.jobs.append(job) }
@@ -204,6 +225,7 @@ public actor ShareHub {
             for _ in 0..<60 where bySession[session] == nil { try? await Task.sleep(for: .milliseconds(500)) }
         }
         guard let s = share(session: session, device: device), cwd == nil || cwd == s.cwd else { return nil }
+        if let tree = s.tree { return await worktreeMount(s, tree) }
         if let native = s.native {  // ista mapa: brez priklopa in kopije; še vedno ista kanonična pot in v dovoljenih mapah
             guard Sync.real(native)?.path == native.path, let roots, ClaudeCLI.resolveCwd(native.path, roots: roots) != nil else { return nil }
             return native
@@ -247,7 +269,7 @@ public actor ShareHub {
     private var busy: [URL: [CheckedContinuation<Void, Never>]] = [:]
 
     /// En prenos, prevzem ali združitev naenkrat na kopijo; agenti medtem delajo vzporedno vsak v svojem klonu.
-    private func acquire(_ copy: URL) async {
+    func acquire(_ copy: URL) async {
         if busy[copy] == nil { busy[copy] = [] } else { await withCheckedContinuation { busy[copy]!.append($0) } }
     }
 
@@ -351,6 +373,7 @@ public actor ShareHub {
 
     /// Konec izvajanja (tudi ob napaki ali prekinitvi): združi, če prevzema ni bilo, in odstrani klon.
     func finish(run id: String) async {
+        if let k = runSlot.removeValue(forKey: id) { slots[k]?.busy = false }  // worktree: mesto spet prosto
         guard let r = runs[id] else { return }
         if !r.merged, !r.share.readOnly { await acquire(r.copy); await merge(r); unlock(r.copy) }
         await Task.detached { try? FileManager.default.removeItem(at: r.clone) }.value
@@ -360,6 +383,7 @@ public actor ShareHub {
     /// Po agentu: minigw prevzame spremembe klona izvajanja (ne pri --minigw-ro), nato gredo v kopijo.
     /// Konča se pred odgovorom, da jih Claude Code že vidi.
     func syncBack(session: String) async {
+        if let s = bySession[session], let tree = s.tree { await worktreeBack(s, tree); return }
         guard let s = bySession[session], let copy = s.copy, !s.readOnly else { return }
         let r = Self.run.flatMap { runs[$0] }.flatMap { $0.share === s ? $0 : nil }
         await acquire(copy)  // en prevzem naenkrat: zahteve minigw (changes/file/ack) veljajo za s.pulling

@@ -267,6 +267,13 @@ struct SettingsView: View {
             }
             ScratchSection(draft: $draft)
             Section {
+                Toggle("Network for builds", isOn: $draft.worktreeNetwork)
+            } header: {
+                Text("Worktree mode")
+            } footer: {
+                Text("Agents in worktree mode (minigw --minigw-work=worktree) work in a git clone on this Mac and run commands only in Claude Code's, Codex's or Grok's sandbox: they write only to the clone and the build caches. This switch lets their builds download (Maven, SwiftPM).").font(.caption).foregroundStyle(.secondary)
+            }
+            Section {
                 TextField("Allowed commands", text: $draft.runCommands)
                 ForEach($draft.devices) { $d in
                     Toggle(isOn: $d.run) { Text(verbatim: d.name) }
