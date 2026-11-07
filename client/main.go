@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const version = "0.5.14" // bump-version.sh
@@ -40,7 +41,7 @@ func say(s string) { fmt.Println(s) }
 // clean: besedilo routerja brez kontrolnih znakov (razen \n), da ne krmili terminala.
 func clean(s string) string {
 	return strings.Map(func(r rune) rune {
-		if r != '\n' && (r < 0x20 || r >= 0x7f && r <= 0x9f) {
+		if r != '\n' && (r < 0x20 || r >= 0x7f && r <= 0x9f || unicode.Is(unicode.Cf, r)) { // tudi bidi, ničelna širina
 			return -1
 		}
 		return r

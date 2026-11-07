@@ -3,7 +3,6 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="csrf" content="{{CSRF}}">
 <title>Mini Gateway</title>
 <style nonce="{{NONCE}}">
 :root { color-scheme: light dark; --bg: #f5f5f7; --panel: #fff; --text: #1d1d1f; --muted: #6e6e73; --line: #d2d2d7;
@@ -43,7 +42,20 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 <main><div id="msg"></div><div id="page"></div></main>
 <script nonce="{{NONCE}}">
 "use strict";
-const CSRF = document.querySelector('meta[name=csrf]').content;
+// Seja: enkratni žeton iz fragmenta (#t=…, strežnik ga ne vidi) → POST login → ID v sessionStorage (le ta zavihek,
+// ta shema, gostitelj in vrata); vsak klic ga pošlje v glavi X-Minigw-Session. Brez piškotkov.
+let SESSION = "";
+try { SESSION = sessionStorage.getItem("minigw-session") || ""; } catch (e) {}
+async function signIn() {
+  const tok = new URLSearchParams(location.hash.slice(1)).get("t");
+  history.replaceState(null, "", location.pathname);  // žeton ne ostane v naslovu ali zgodovini
+  if (!tok) return;
+  const r = await fetch("/minigw/settings/login", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({t: tok})});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error((j.error && j.error.message) || ("HTTP " + r.status));
+  SESSION = j.session;
+  try { sessionStorage.setItem("minigw-session", SESSION); } catch (e) {}
+}
 const SL = (navigator.language || "").toLowerCase().startsWith("sl");
 const S = {
   general: ["General", "Splošno"], devices: ["Devices", "Naprave"], gateways: ["Gateways", "Prehodi"], claude: ["Claude CLI", "Claude CLI"],
@@ -64,6 +76,8 @@ const S = {
   enabledOf: ["%s of %s enabled", "vklopljenih %s od %s"], loading: ["Loading…", "Nalagam …"],
   path: ["Path to claude (empty = PATH)", "Pot do claude (prazno = PATH)"], tools: ["Tools", "Orodja"], folder: ["Folder for agents without sync (empty = none)", "Mapa za agente brez sinhronizacije (prazno = brez)"],
   bash: ["Allow Bash without a sandbox", "Dovoli Bash brez sandboxa"], found: ["Found", "Najden"], notFound: ["Not found", "Ni najden"],
+  signin: ["Not signed in, or the session has expired. Open Settings… from the tray icon again (or run minigw router settings).",
+    "Ni prijave ali je seja potekla. Znova odpri Nastavitve … v ikoni pladnja (ali zaženi minigw router settings)."],
   bashWarn: ["Windows has no sandbox for Bash: agents can then run any command as you and read the gateway keys and the admin secret.",
     "Windows nima sandboxa za Bash: agenti lahko tedaj zaženejo kateri koli ukaz kot ti in preberejo ključe prehodov in skrivnost API."],
 };
@@ -88,9 +102,10 @@ const box = (...rows) => el("div", {class: "box"}, ...rows);
 function say(text, err) { const m = document.getElementById("msg"); m.textContent = text || ""; m.className = err ? "err" : ""; }
 
 async function api(method, path, body) {
-  const r = await fetch("/minigw/admin/v1" + path, {method, credentials: "same-origin",
-    headers: {"X-CSRF": CSRF, "Content-Type": "application/json"}, body: body === undefined ? undefined : JSON.stringify(body)});
+  const r = await fetch("/minigw/admin/v1" + path, {method, credentials: "omit",
+    headers: {"X-Minigw-Session": SESSION, "Content-Type": "application/json"}, body: body === undefined ? undefined : JSON.stringify(body)});
   const j = await r.json().catch(() => ({}));
+  if (r.status === 401) throw new Error(t("signin"));
   if (!r.ok) throw new Error((j.error && j.error.message) || ("HTTP " + r.status));
   return j;
 }
@@ -215,7 +230,7 @@ for (const p of Object.keys(pages)) {
   document.getElementById("nav").append(b);
 }
 setInterval(() => { if (current === "devices" && document.visibilityState === "visible") show("devices"); }, 5000);
-show("general");
+signIn().then(() => show("general"), e => say(e.message, true));
 </script>
 </body>
 </html>

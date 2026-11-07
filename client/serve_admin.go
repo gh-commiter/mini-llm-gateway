@@ -120,6 +120,7 @@ func adminSecret(cfgDir string) (string, error) {
 // adminHTTP: odjemalec na tem računalniku (naslov TCP, ne glave), Host za DNS rebinding, skrivnost; brez CORS.
 // Loopback sicer preskoči preverjanje naprave; skrbniški API kljub temu zahteva skrivnost.
 func (s *server) adminHTTP(w http.ResponseWriter, r *req) int {
+	w.Header().Set("Cache-Control", "no-store")
 	if st := localOnly(w, r); st != 0 {
 		return st
 	}
@@ -127,16 +128,10 @@ func (s *server) adminHTTP(w http.ResponseWriter, r *req) int {
 		if s.admin == "" || subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(auth, "Bearer ")), []byte(s.admin)) != 1 {
 			return writeError(w, r.rid, 401, "Invalid or missing admin secret (admin.secret in the config folder)")
 		}
-	} else { // stran z nastavitvami: piškotek seje in X-CSRF pri vsaki zahtevi, tudi branju (piškotek na 127.0.0.1
-		// dobi tudi drug lokalni strežnik na drugih vratih; vrednost CSRF je le v strani)
-		sess, ok := s.settings.session(r)
-		if !ok {
-			return writeError(w, r.rid, 401, "Invalid or missing admin secret (admin.secret in the config folder)")
-		}
-		if subtle.ConstantTimeCompare([]byte(r.h("x-csrf")), []byte(sess.csrf)) != 1 {
-			return writeError(w, r.rid, 403, "Missing or wrong X-CSRF header: reload the settings page")
-		}
+	} else if !s.settings.valid(r.h(settingsHeader)) { // stran z nastavitvami: seja v glavi (brez piškotkov)
+		return writeError(w, r.rid, 401, "Invalid or missing admin secret (admin.secret in the config folder)")
 	}
+
 	if !readBody(w, r, 1<<20) {
 		return writeError(w, r.rid, 413, "Request body too large or too slow")
 	}
@@ -552,6 +547,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		if err := s.update(func(c *serveConfig) error { c.Token = token; return nil }); err != nil {
 			return fail(500, err.Error())
 		}
+		s.settings.clear() // nov žeton konča tudi seje strani z nastavitvami
 		c := s.conf()
 		return 200, apiGeneral{Port: c.Port, Address: c.Address, Connect: connectLine(c)}
 	}

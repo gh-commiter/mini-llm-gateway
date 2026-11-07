@@ -16,12 +16,15 @@ except where a response says `"restartRequired": true`.
   (the folder agents may not read; the Mac app keeps it in its Keychain instead, see [Mac app](#mac-app)). The
   router creates it on first start. Missing or wrong: `401`. The router's
   client token is not the admin secret.
-- **Settings page session** (instead of the secret): `GET /minigw/settings/login?t=<one-time token>` (valid 60 s,
-  once) sets the cookie `minigw_settings` (HttpOnly, SameSite=Strict, Path=/minigw/) and redirects to
-  `/minigw/settings`. A request with that cookie may use the API only with the header `X-CSRF` set to the session's value,
-  which the page has embedded; this holds for every method, GET too, because browsers send a 127.0.0.1 cookie to
-  every port. Missing cookie: `401`; missing or wrong `X-CSRF`:
-  `403`. `POST /settings/login` (below) or the tray gives the one-time link.
+- **Settings page session** (instead of the secret), without cookies: browsers send a `127.0.0.1` cookie to every
+  port, so any local web server would get it. The tray or `POST /settings/login` (below) opens
+  `/minigw/settings#t=<one-time token>`; the token is in the fragment, so it never reaches a server in a request
+  line. The page is static and holds no secret. Its script drops the fragment, sends
+  `POST /minigw/settings/login {"t": …}` (valid 60 s, once) and gets `{"session": id}`, which it keeps in
+  `sessionStorage` (scheme, host and port) and sends as `X-Minigw-Session` on every API call. A page from another
+  origin cannot send that header without a preflight, which fails (no CORS). Missing or wrong: `401`. A session ends
+  after 30 minutes without use, with `POST /minigw/settings/logout`, or when the router token is rotated.
+- Every admin API response has `Cache-Control: no-store`.
 - Loopback skips the device check and encryption for normal API calls; the admin API still needs the secret.
 - **Clients authenticate the router before they send the secret.** Something else may listen on the port (the
   router is stopped, another program took it). The CLI therefore speaks MGW2 (Noise NK) to `127.0.0.1` with the
@@ -79,7 +82,7 @@ General  {"port": number, "address": string, "connect": string, "restartRequired
 | `GET /general` | – | General |
 | `PATCH /general` | any of `{"port", "address"}` | General with `"restartRequired": true` |
 | `POST /general/token` | – | General with the new token in `connect`; the old token stops working at once |
-| `POST /settings/login` | – | `{"url"}`: a one-time link to the settings page (60 s); `503` when the router does not run |
+| `POST /settings/login` | – | `{"url"}`: a one-time link to the settings page (`…/minigw/settings#t=…`, 60 s); `503` when the router does not run |
 
 Notes:
 

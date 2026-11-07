@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,14 +23,15 @@ func isTrayExe(arg0 string) bool {
 	return strings.HasPrefix(strings.ToLower(filepath.Base(arg0)), "minigw-tray")
 }
 
-// trayBeside: minigw-tray*.exe ob exe (za serve install); exe sam, če je že pladenj.
+// trayBeside: pladenj ob exe (za serve install), le z natančnim imenom; exe sam, če je že pladenj.
 func trayBeside(exe string) string {
 	if isTrayExe(exe) {
 		return exe
 	}
-	m, _ := filepath.Glob(filepath.Join(filepath.Dir(exe), "minigw-tray*.exe"))
-	if len(m) > 0 {
-		return m[0]
+	for _, n := range []string{"minigw-tray.exe", "minigw-tray-windows-" + runtime.GOARCH + ".exe"} {
+		if st, err := os.Stat(filepath.Join(filepath.Dir(exe), n)); err == nil && st.Mode().IsRegular() {
+			return filepath.Join(filepath.Dir(exe), n)
+		}
 	}
 	return ""
 }
@@ -80,7 +82,7 @@ func trayMenu(st apiStatus, pending []apiDevice, sl bool) []trayItem {
 			if name == "" {
 				name = "?"
 			}
-			sub = append(sub, trayItem{Text: clean(name) + " (" + d.ID[:min(8, len(d.ID))] + "…)", Sub: []trayItem{
+			sub = append(sub, trayItem{Text: clean(name) + " (" + d.ID + ")", Sub: []trayItem{
 				{Text: tr("Allow", "Dovoli"), Action: "allow:" + d.ID},
 				{Text: tr("Deny", "Zavrni"), Action: "deny:" + d.ID},
 			}})
@@ -198,7 +200,7 @@ func startTrayRouter(cfgPath string) (*server, net.Listener, string, bool, error
 		return nil, nil, "", false, err
 	}
 	s.log.SetOutput(rl)
-	ln, err := net.Listen("tcp", net.JoinHostPort(c.Address, strconv.Itoa(c.Port)))
+	ln, err := listenRouter(c)
 	if err != nil {
 		return nil, nil, "", false, fmt.Errorf("port %d: %v (is minigw serve already running?)", c.Port, err)
 	}

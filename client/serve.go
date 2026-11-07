@@ -214,10 +214,15 @@ func serveCommand(args []string) {
 			abs, _ := filepath.Abs(*folder)
 			c.Folder = abs
 		}
-		saveServeConfig(*cfgPath, c)
-		if abs, _ := filepath.Abs(filepath.Dir(*cfgPath)); protectConfigDir(abs) != nil {
+		abs, _ := filepath.Abs(filepath.Dir(*cfgPath)) // zasebna mapa pred prvim zapisom žetona in ključa
+		os.MkdirAll(abs, 0o700)
+		if err := protectConfigDir(abs); errors.Is(err, errForeignOwner) {
+			fail(abs + " " + err.Error() + ": use a folder of your own")
+		} else if err != nil {
 			say("WARNING: cannot make " + abs + " private to this user: use the default config folder")
 		}
+		saveServeConfig(*cfgPath, c)
+
 		if connectLine(c) == "" {
 			fail("invalid key in " + *cfgPath)
 		}
@@ -263,12 +268,17 @@ func serveCommand(args []string) {
 	if err != nil {
 		fail(err.Error())
 	}
-	ln, err := net.Listen("tcp", net.JoinHostPort(c.Address, strconv.Itoa(c.Port)))
+	ln, err := listenRouter(c)
 	if err != nil {
 		fail(err.Error())
 	}
 	s.announce(ln)
 	fail(s.serve(ln).Error())
+}
+
+// listenRouter: na Windows z SO_EXCLUSIVEADDRUSE (listenControl), da drug proces ne prevzame vrat.
+func listenRouter(c serveConfig) (net.Listener, error) {
+	return (&net.ListenConfig{Control: listenControl}).Listen(context.Background(), "tcp", net.JoinHostPort(c.Address, strconv.Itoa(c.Port)))
 }
 
 // newServeConfig: nov žeton in ključ routerja (serve init, prvi zagon pladnja).
@@ -356,6 +366,9 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 		}
 	}
 	protectErr := protectConfigDir(cfgDir)
+	if errors.Is(protectErr, errForeignOwner) {
+		return nil, fmt.Errorf("the config folder %s %v: use a folder of your own", cfgDir, protectErr)
+	}
 	if !validAddress(c.Address) {
 		return nil, errors.New("address " + c.Address + ": use empty (all), 0.0.0.0, :: or 127.0.0.1, so that minigw router and the admin API reach the router on 127.0.0.1; limit clients with a firewall")
 	}
@@ -441,6 +454,8 @@ func unsandboxedTools(tools string) []string {
 	}
 	return out
 }
+
+var errForeignOwner = errors.New("is owned by another user")
 
 // protectConfigDir: na Windows mapa nastavitev zunaj %AppData% dobi DACL samo za lastnika (v %AppData% je že
 // zasebna). Drugod je mapa 0700.
@@ -787,7 +802,7 @@ func (s *server) handle(w http.ResponseWriter, r *req) (int, string) {
 	if r.URL.Path == adminPrefix || strings.HasPrefix(r.URL.Path, adminPrefix+"/") {
 		return s.adminHTTP(w, r), ""
 	}
-	if r.URL.Path == "/minigw/settings" || r.URL.Path == "/minigw/settings/login" {
+	if r.URL.Path == "/minigw/settings" || r.URL.Path == "/minigw/settings/login" || r.URL.Path == "/minigw/settings/logout" {
 		return s.settingsHTTP(w, r), ""
 	}
 	if !s.authorized(r) {
