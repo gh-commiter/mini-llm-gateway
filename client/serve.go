@@ -299,7 +299,7 @@ func serveCommand(args []string) {
 	for _, g := range c.Gateways {
 		if key, where := keyGet(s.cfgDir, g.Name); key == "" {
 			s.log.Printf("WARNING: gateway %s has no API key: run minigw serve gateway add %s %s", g.Name, g.Name, g.BaseURL)
-		} else if strings.HasSuffix(where, ".json") {
+		} else if strings.HasSuffix(where, ".json") && runtime.GOOS == "linux" {
 			s.log.Printf("WARNING: gateway %s: no Secret Service (secret-tool), the API key is in %s (mode 0600)", g.Name, where)
 		}
 	}

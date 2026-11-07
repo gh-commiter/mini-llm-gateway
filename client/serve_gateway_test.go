@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -249,5 +250,25 @@ func TestServeGatewayURLRules(t *testing.T) {
 	c.Gateways = []serveGateway{{Name: "gw", BaseURL: "http://gw.example"}}
 	if _, err := newServer(c, filepath.Join(t.TempDir(), "serve.json")); err == nil || !strings.Contains(err.Error(), "https") {
 		t.Fatalf("http gateway accepted: %v", err)
+	}
+}
+
+// Na macOS ključ v gateway-keys.json (0600), nikoli v Keychain.
+func TestServeGatewayKeyFileOnMac(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS only")
+	}
+	dir := t.TempDir()
+	if where, err := osKeySet(dir, "gw", gwKey); err != nil || !strings.HasSuffix(where, "gateway-keys.json (mode 0600)") {
+		t.Fatalf("set: %q %v", where, err)
+	}
+	if st, _ := os.Stat(filepath.Join(dir, "gateway-keys.json")); st == nil || st.Mode().Perm() != 0o600 {
+		t.Fatalf("key file mode: %v", st)
+	}
+	if k, _ := osKeyGet(dir, "gw"); k != gwKey {
+		t.Fatalf("get: %q", k)
+	}
+	if osKeyDel(dir, "gw"); func() bool { b, _ := os.ReadFile(filepath.Join(dir, "gateway-keys.json")); return strings.Contains(string(b), gwKey) }() {
+		t.Fatal("not deleted")
 	}
 }
