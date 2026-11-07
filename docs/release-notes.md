@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Several gateways at once (profiles, #17):** `minigw connect <host> --name <profile>` keeps every gateway, for
+  example the Mac mini and a Windows gateway side by side. Models of other profiles are `<model>@<profile>`; the
+  default profile's also appear without a suffix. An unreachable gateway is left out of the list, and `minigw status`
+  shows each profile. The existing connection becomes the profile `default` with nothing to do. Plugin 0.5.7:
+  `/minigw:connect --name`, and status and models show every profile.
 - GitHub Copilot CLI as an agent model, compatible with the Claude Code CLI: `claude-copilot` and `claude-copilot-<model>`
   (Mac app and `minigw serve`; off by default). Read-only by default; writing, web access and commands are separate
   switches. Copilot always runs in a sandbox (Mac `sandbox-exec`, Linux bwrap) with a fresh Copilot home per request.

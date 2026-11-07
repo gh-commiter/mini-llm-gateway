@@ -15,6 +15,7 @@ PROMPT
 ```
 
 - `--ro` in the arguments (or a task that only reads or answers): put `--minigw-ro` right after `minigw`, so agent models get the folder read-only and cannot change files.
+- A model ending in `@<profile>` (for example `claude-cli-opus@win`) runs on that profile's gateway; keep the suffix.
 - If the user did not name a model, run `"${CLAUDE_PLUGIN_DATA}/bin/minigw" models` and pick a fitting one, or ask.
 - Agent models (`claude-codex*`, `claude-cli-*`) run on the gateway Mac but work in the current folder, which minigw shares with it: they read, edit and run commands in your files. Give them a self-contained task. If minigw prints that the folder "is not shared with the gateway", suggest `/minigw:share`.
 - Siri AI and Apple Foundation Models have no tools. Name the files they need in the question; the gateway adds them.

@@ -4,7 +4,7 @@ description: Show the Mini Gateway connection and the models available through i
 allowed-tools: Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw *)
 ---
 
-Run these commands and summarize the result for the user in a few lines (gateway reachable or not, encrypted or not, which providers work, how many models):
+Run these commands and summarize the result for the user in a few lines (gateway reachable or not, encrypted or not, which providers work, how many models). With several profiles, `status` shows a block per profile and `models` lists the default profile's models without a suffix and every profile's as `<model>@<profile>`; name each profile and say which one is not reachable:
 
 ```sh
 "${CLAUDE_PLUGIN_DATA}/bin/minigw" status

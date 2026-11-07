@@ -302,6 +302,29 @@ minigw connect 192.168.1.20 --token …   # use a gateway on another Mac
 
 Subagents can use gateway models too, e.g. `model: claude-siri-ai` in `.claude/agents/<name>.md`.
 
+**Several gateways at once (profiles).** One client can use, for example, the Mac mini and a Windows gateway in the
+same session:
+
+```sh
+minigw connect mini.local --name mini --token -     # each gateway is a profile
+minigw connect hpx360.local --name win --token -
+minigw profiles                                     # list; * marks the default
+minigw profiles default mini                        # its models also appear without a suffix
+minigw --model claude-cli-opus@win -p "…"           # <model>@<profile> runs on that gateway
+minigw --minigw-profile win …                       # this command uses only that gateway
+minigw disconnect --name win
+```
+
+- The connection you had before is the profile `default`; nothing changes while it is the only one.
+- With several profiles, `minigw` puts a small router on `127.0.0.1` (with its own token) in front of Claude Code. It
+  sends `<model>@<profile>` to that gateway without the suffix. `/model` and `minigw models` list every reachable
+  gateway's models; one that cannot be reached is left out, and `minigw status` shows it.
+- The folder is shared with another gateway only when that gateway gets its first request, in the same work mode
+  (`--minigw-work`). A Windows or Linux gateway needs `--minigw-work=sync` (or `auto`).
+- Each profile keeps its own address, token and gateway key: Keychain on the Mac, Credential Manager on Windows
+  (`minigw:router:<profile>`), on Linux `~/.config/minigw/connections/<profile>.json` (mode 0600). The device key is
+  one per client, so every gateway recognises the same device.
+
 **Another Mac and Claude CLI models with tools.** `opus`, `sonnet`, `haiku` and `fable` run `claude -p` as an agent on
 the gateway Mac. When `minigw` talks to a gateway on another Mac, it shares the current folder with it for the length
 of the session: the gateway mounts it (built-in WebDAV, through the connection `minigw` opens, so the gateway Mac does
