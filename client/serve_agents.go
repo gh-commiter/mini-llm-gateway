@@ -614,14 +614,19 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			return "", err
 		}
 		defer restoreAuth(state, k)
-		m := agentMounts{cfgDir: s.cfgDir, state: state, envVar: strings.ToUpper(k.bin) + "_HOME", files: files, rw: append([]string{dir, tmp}, extra...)}
+		m := agentMounts{cfgDir: s.cfgDir, state: state, envVar: strings.ToUpper(k.bin) + "_HOME", files: files, rw: append([]string{dir, tmp}, extra...),
+			hide: c.Scratch}
 		if k.name == "copilot" {
 			if resume == "" {
 				resume = newUUID() // nova seja: svoj ID, da jo naslednja zahteva nadaljuje (--session-id)
 			}
-			home, _ := os.UserHomeDir()
-			m.ro = []string{filepath.Join(home, ".cache", "copilot")} // razširjen paket (Linux, pod bwrap)
-			m.rw = []string{dir, tmp}                                 // brez drugih dovoljenih map (M3)
+			cache, _ := os.UserCacheDir()
+			m.ro = []string{filepath.Join(cache, "copilot")} // razširjen paket (Linux, pod bwrap)
+			m.rw = []string{dir, tmp}                        // brez drugih dovoljenih map (M3)
+			// R9: mapa seje ne sme vsebovati paketa copilot (orodje write bi ga spremenilo za naslednji zagon brez bwrap).
+			if pkg := filepath.Join(cache, "copilot"); pkg == dir || strings.HasPrefix(pkg, dir+string(filepath.Separator)) {
+				return "", errors.New("copilot: the session's folder contains Copilot's package cache (" + pkg + ")")
+			}
 			token := pat
 			if token == "" {
 				token = copilotToken(ctx)

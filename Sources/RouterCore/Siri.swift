@@ -217,7 +217,7 @@ extension Router {
                 // poti (kot pri agentih): ob neuspelem prenosu Siri dobi vprašanje brez prilog.
                 let shared = await Self.shares.mount(session: scope, cwd: clientCwd, base: localBase,
                                                      wait: req.header("x-claude-mini-share") == "1", device: req.device?.id,
-                                                     roots: config.claudeCLI.allowedRoots)
+                                                     roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL)
                 let synced = await Self.shares.isSync(session: scope)
                 let root = Self.mentionRoot(shared: shared, synced: synced) { ClaudeCLI.resolveCwd(clientCwd, roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL) }
                 if shared == nil, synced { Self.log.error("\(rid, privacy: .public) siri: syncing the folder failed; no attachments") }

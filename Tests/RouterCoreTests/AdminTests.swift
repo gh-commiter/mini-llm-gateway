@@ -119,7 +119,8 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
         #expect(st.contains(#""providers":"#) && st.contains(#""gateways":"#))  // providers kanonično, gateways starejše ime
         let pv = await admin(app.router(), "GET", "/providers", host: "127.0.0.1:9999")
         #expect(pv.status == 200 && pv.text.contains(#""providers":"#) && pv.text.contains(#""gateways":"#))
-        #expect(st.contains(#""autostart":"sign-in""#) && st.contains(#""agents":0"#) && st.contains(#""installed":true"#))
+        // agents: števec je globalen (vzporedni testi agentov), zato le število (I1).
+        #expect(st.contains(#""autostart":"sign-in""#) && st.range(of: #""agents":\d+"#, options: .regularExpression) != nil && st.contains(#""installed":true"#))
         let t = await admin(app.router(), "POST", "/general/token", host: "127.0.0.1:9999")
         #expect(t.status == 200 && t.text.contains("newtok#KEY"))
     }

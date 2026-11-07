@@ -207,3 +207,23 @@ private func field(_ text: String, _ name: String) -> String {
     let none = await ask(Router(config: c, token: "tok", secrets: FakeSecrets(values: [:])))
     #expect(none.status == 503 && none.text.contains("minigw gw copilot token"))
 }
+
+/// R9: mapa seje, ki vsebuje paket copilot (~/Library/Caches/copilot), je zavrnjena (pisanje bi ga spremenilo).
+@Test func copilotRefusesFolderWithItsPackageCache() async throws {
+    let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("copilot-r9-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let bin = root.appendingPathComponent("bin")
+    try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+    let caches = try #require(Sync.real(URL(fileURLWithPath: NSHomeDirectory() + "/Library/Caches")))
+    var c = RouterConfig()
+    c.copilot.enabled = true; c.copilot.executable = try fakeCopilot(bin).path; c.copilot.write = true
+    c.claudeCLI.allowedRoots = caches.path
+    c.scratchFolder = root.appendingPathComponent("scratch").path
+    let r = Router(config: c, token: "tok", secrets: FakeSecrets(values: [Copilot.tokenAccount: "github_pat_test"]))
+    var q = request("POST", "/v1/messages", headers: ["Authorization": "Bearer tok", "x-claude-mini-session": UUID().uuidString, "x-claude-mini-cwd": caches.path],
+                    body: #"{"model":"claude-copilot","max_tokens":5,"tools":[{"name":"x","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":"go"}]}"#)
+    q.peer = "127.0.0.1"
+    let w = FakeWriter()
+    await r.handle(q, writer: w)
+    #expect(w.status == 403 && w.text.contains("package cache"))
+}

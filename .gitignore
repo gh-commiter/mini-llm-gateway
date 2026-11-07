@@ -22,3 +22,6 @@ xcuserdata/
 .omc/
 .secrets/
 .claude/
+
+# Lokalna gradnja odjemalca (go build v client/)
+/client/minigw

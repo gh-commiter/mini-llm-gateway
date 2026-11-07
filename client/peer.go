@@ -27,6 +27,7 @@ type agentMounts struct {
 	files  []string // prave datoteke prijave (~/.codex/auth.json …), na katere kaže stanje: branje in pisanje
 	rw     []string // kopija mape, začasna mapa zahteve, dovoljene mape
 	ro     []string // dodatno le za branje (Copilot: razširjen paket v ~/.cache/copilot)
+	hide   string   // mapa, skrita tudi zunaj domače mape (Scratch: kopije drugih naprav, stanje agentov; I3)
 	env    []string // dodatne spremenljivke (Copilot: žeton prijave pod bwrap)
 }
 
@@ -47,9 +48,13 @@ func packageRoot(home, exe string) string {
 }
 
 // bwrapArgs: vse kot je (/), nato prazna domača mapa in mapa nastavitev, potrebne mape nazaj, skrite vtičnice.
-func bwrapArgs(home, cfgDir string, ro, rw, hideFiles, hideDirs []string) []string {
+// hidden: prazne mape takoj za domačo (Scratch zunaj nje); mape agenta v njih se nato vežejo nazaj.
+func bwrapArgs(home, cfgDir string, hidden, ro, rw, hideFiles, hideDirs []string) []string {
 	// --unshare-pid in svoj /proc: ukazi agenta ne vidijo drugih procesov (okolje copilota z žetonom v /proc/<pid>/environ).
 	a := []string{"--dev-bind", "/", "/", "--die-with-parent", "--unshare-pid", "--proc", "/proc", "--tmpfs", home}
+	for _, d := range hidden {
+		a = append(a, "--tmpfs", d)
+	}
 	for _, d := range ro {
 		a = append(a, "--ro-bind", d, d)
 	}

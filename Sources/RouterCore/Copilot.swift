@@ -262,7 +262,7 @@ extension Router {
             let clientCwd = req.header("x-claude-mini-cwd")
             let shared = await Self.shares.mount(session: req.header("x-claude-mini-session") ?? "", cwd: clientCwd, base: localBase,
                                                  wait: req.header("x-claude-mini-share") == "1", device: req.device?.id,
-                                                 roots: config.claudeCLI.allowedRoots)
+                                                 roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL)
             let synced = await Self.shares.isSync(session: req.header("x-claude-mini-session") ?? "")
             guard let dir = shared ?? (synced ? nil : ClaudeCLI.resolveCwd(clientCwd, roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL)) else {
                 if synced, Task.isCancelled { return 499 }
@@ -282,6 +282,12 @@ extension Router {
         let write = cfg.write && !readOnly, commands = agent && cfg.commands && write  // peskovnik piše v mapo: ukazi le s pisanjem (tudi ne pri --ro)
         let base = ProcessInfo.processInfo.environment
         let root = tree?.root ?? cwd
+        // R9: mapa seje ne sme vsebovati paketa copilot (orodje write bi ga spremenilo za naslednji zagon brez peskovnika).
+        let homes = Set([NSHomeDirectory(), Sync.real(URL(fileURLWithPath: NSHomeDirectory()))?.path ?? NSHomeDirectory()])
+        if agent, homes.map({ $0 + "/Library/Caches/copilot" }).contains(where: { $0 == root.path || $0.hasPrefix(root.path + "/") }) {
+            return await error(403, "permission_error", "Copilot: the session's folder contains Copilot's package cache (~/Library/Caches/copilot)",
+                               rid: rid, writer: writer)
+        }
         guard let sandbox = Native.sandboxProfile(dir: root.path, network: true,
                                                   hidden: [config.scratchURL.path, RouterConfig.defaultScratch.path], routerPort: Int(config.port),
                                                   runTmp: reqDir.path, writable: agent && write ? [root.path] : [], visible: visible?.path) else {
@@ -298,7 +304,8 @@ extension Router {
         if let existing, Copilot.copySession(store.appendingPathComponent(existing), to: home.appendingPathComponent("session-state/" + existing)) {
             prompt = last.text
         }
-        await Task.detached { Copilot.prepare(exe, base: base, home: home, cwd: tmp) }.value
+        let prepHome = reqDir.appendingPathComponent("p")  // svoj prazen COPILOT_HOME, ne domača mapa seje (R9)
+        await Task.detached { Copilot.prepare(exe, base: base, home: prepHome, cwd: tmp) }.value
         let args = Copilot.args(agent: agent, model: model, write: write, commands: commands,
                                 network: cfg.network && (tree == nil || config.worktreeCodexNetwork), session: session)
         let sessions = Self.copilotSessions, client = req.header("x-claude-mini-session") ?? ""

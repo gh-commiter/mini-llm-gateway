@@ -276,14 +276,15 @@ public actor ShareHub {
     /// Mapa seje na tem Macu (priklopi ob prvi uporabi); nil, če seja nima mape odjemalca.
     /// `wait`: odjemalec deli mapo (minigw), a je po ponovnem zagonu routerja še ni znova registriral → počakaj do 30 s.
     /// `roots`: dovoljene mape (native: mapa se preveri ob vsakem krogu).
-    func mount(session: String, cwd: String?, base: String, wait: Bool = false, device: String? = nil, roots: String? = nil) async -> URL? {
+    func mount(session: String, cwd: String?, base: String, wait: Bool = false, device: String? = nil, roots: String? = nil,
+               scratch: URL? = nil) async -> URL? {
         if wait, !session.isEmpty {
             for _ in 0..<60 where bySession[session] == nil { try? await Task.sleep(for: .milliseconds(500)) }
         }
         guard let s = share(session: session, device: device), cwd == nil || cwd == s.cwd else { return nil }
         if let tree = s.tree { return await worktreeMount(s, tree) }
         if let native = s.native {  // ista mapa: brez priklopa in kopije; še vedno ista kanonična pot in v dovoljenih mapah
-            guard Sync.real(native)?.path == native.path, let roots, ClaudeCLI.resolveCwd(native.path, roots: roots) != nil else { return nil }
+            guard Sync.real(native)?.path == native.path, let roots, ClaudeCLI.resolveCwd(native.path, roots: roots, scratch: scratch) != nil else { return nil }
             return native
         }
         if let copy = s.copy {  // zaklep le za prenos; agent nato dela v svojem klonu (brez izvajanja, npr. Siri: v kopiji)
