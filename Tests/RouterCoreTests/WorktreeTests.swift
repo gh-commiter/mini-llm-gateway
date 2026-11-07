@@ -505,3 +505,47 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
     }
     #expect(g(client, "for-each-ref", "refs/heads/minigw").isEmpty)  // brez rezultata
 }
+
+/// git s stdin (mktree, hash-object) v mapi `dir`.
+private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> String {
+    let p = Process(), out = Pipe(), inp = Pipe()
+    p.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    p.arguments = ["-C", dir.path, "-c", "user.name=t", "-c", "user.email=t@x"] + args
+    p.environment = ProcessInfo.processInfo.environment.merging(["xcrun_nocache": "1"]) { $1 }
+    p.standardOutput = out; p.standardInput = inp; p.standardError = FileHandle.nullDevice
+    try p.run()
+    inp.fileHandleForWriting.write(Data(input.utf8)); try inp.fileHandleForWriting.close()
+    let d = out.fileHandleForReading.readDataToEndOfFile()
+    p.waitUntilExit()
+    return String(decoding: d, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+/// Agentov commit, ki ga fsck zavrne (drevo z ».git«): brez rezultata, ref zrcala ne kaže na manjkajoče objekte, zato
+/// naslednji klon in izvajanje na istem zrcalu delujeta (kot TestWorktreeFinalizeRejectedKeepsMirror v Go).
+@Test func worktreeFinalizeRejectedKeepsMirrorUsable() async throws {
+    let (root, client, tree) = try fixture()
+    defer { cleanup(root) }
+    let hub = ShareHub(), session = UUID().uuidString
+    let key = try #require(await hub.register(session: session, cwd: client.path, key: nil, device: "dev", tree: tree))
+    let loop = fakeClient(hub, key: key, top: client)
+    defer { loop.cancel() }
+    _ = try await agentRun(hub, session) { dir in
+        let head = g(dir, "rev-parse", "HEAD")
+        let blob = try gIn(dir, "#!/bin/sh\necho pwned\n", "hash-object", "-w", "--stdin")
+        let hooks = try gIn(dir, "100644 blob \(blob)\tpost-checkout\n", "mktree")
+        let top = try gIn(dir, "040000 tree \(hooks)\t.git\n", "mktree")
+        let c = try gIn(dir, "", "commit-tree", top, "-p", head, "-m", "dot git")
+        g(dir, "update-ref", "HEAD", c)
+    }
+    let before = Set(g(client, "for-each-ref", "--format=%(refname)", "refs/heads/minigw").split(separator: "\n").map(String.init))
+    #expect(!before.contains { !g(client, "ls-tree", "-r", "--name-only", $0).isEmpty && g(client, "ls-tree", "--name-only", $0).contains(".git") })
+    let mirrorRefs = g(tree.repo, "--git-dir", tree.repo.path, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads")
+    for line in mirrorRefs.split(separator: "\n") {  // vsak ref zrcala kaže na obstoječ commit
+        let sha = String(line.split(separator: " ").last ?? "")
+        #expect(Worktree.run(["--git-dir", tree.repo.path, "cat-file", "-e", sha + "^{commit}"], cwd: root.path, safe: false).status == 0, "\(line)")
+    }
+    // Novo izvajanje na istem zrcalu: klon in rezultat delujeta.
+    _ = try await agentRun(hub, session) { dir in try file(dir, "after.txt", "after\n") }
+    let branches = g(client, "for-each-ref", "--format=%(refname:short)", "refs/heads/minigw").split(separator: "\n").map(String.init)
+    #expect(branches.contains { g(client, "show", "\($0):after.txt") == "after" }, "\(branches)")
+}
