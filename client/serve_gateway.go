@@ -402,9 +402,10 @@ func upstreamError(w http.ResponseWriter, rid, name string, resp *http.Response)
 const gatewayHelp = `minigw serve gateway add <name> <baseURL> [--insecure]   add or update; the API key is read from stdin
 minigw serve gateway remove <name>
 minigw serve gateway list
+minigw serve gateway models <name> [text] [--all]   enabled models; with text or --all also the disabled ones
 minigw serve gateway models <name> [--enable m1,m2|all] [--disable m1,m2|all]`
 
-func gatewayCommand(cfgPath string, args []string, insecure bool, enable, disable string, in io.Reader) {
+func gatewayCommand(cfgPath string, args []string, insecure bool, enable, disable string, all bool, in io.Reader) {
 	if len(args) == 0 {
 		fail(gatewayHelp)
 	}
@@ -483,6 +484,10 @@ func gatewayCommand(cfgPath string, args []string, insecure bool, enable, disabl
 			say(fmt.Sprintf("%s  %s  models enabled: %s", g.Name, g.BaseURL, n))
 		}
 	case "models":
+		filter := ""
+		if len(args) == 3 { // models <ime> <besedilo>: vsi modeli, ki ga vsebujejo
+			filter, args = strings.ToLower(args[2]), args[:2]
+		}
 		need(1)
 		i := find(args[1])
 		if i < 0 {
@@ -509,6 +514,10 @@ func gatewayCommand(cfgPath string, args []string, insecure bool, enable, disabl
 			return out
 		}
 		changed := enable != "" || disable != ""
+		before := map[string]bool{}
+		for _, m := range models {
+			before[m.id] = g.enabled(m.id)
+		}
 		switch {
 		case enable == "all":
 			g.Models = nil
@@ -532,7 +541,21 @@ func gatewayCommand(cfgPath string, args []string, insecure bool, enable, disabl
 			}
 			g.Models = append([]string{}, keep...)
 		}
+		hidden := 0 // OpenRouter: več sto modelov; brez izbire le vklopljeni
 		for _, m := range models {
+			show := g.enabled(m.id) || all
+			switch {
+			case changed:
+				show = before[m.id] != g.enabled(m.id)
+			case filter != "":
+				show = strings.Contains(strings.ToLower(publishedID(m.id)), filter)
+			}
+			if !show {
+				if !changed && filter == "" {
+					hidden++
+				}
+				continue
+			}
 			mark := "[ ]"
 			if g.enabled(m.id) {
 				mark = "[x]"
@@ -542,6 +565,9 @@ func gatewayCommand(cfgPath string, args []string, insecure bool, enable, disabl
 				w = fmt.Sprintf("  %dK", m.window/1000)
 			}
 			say(clean(fmt.Sprintf("%s %s  (/model %s)%s", mark, m.id, publishedID(m.id), w)))
+		}
+		if hidden > 0 {
+			say(fmt.Sprintf("%d disabled models not shown: add --all, or a text to search (minigw serve gateway models %s haiku)", hidden, g.Name))
 		}
 		if changed {
 			saveServeConfig(cfgPath, c)

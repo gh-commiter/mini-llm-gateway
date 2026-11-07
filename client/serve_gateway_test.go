@@ -207,8 +207,22 @@ func TestServeGatewayCLIKeepsKeyOutOfConfig(t *testing.T) {
 	cfg := filepath.Join(t.TempDir(), "serve.json")
 	saveServeConfig(cfg, serveConfig{Token: "tok", Key: "k"})
 
-	gatewayCommand(cfg, []string{"add", "gw", up.URL}, true, "", "", strings.NewReader(gwKey+"\n"))
-	gatewayCommand(cfg, []string{"models", "gw"}, false, "", "other-z,claude-off-w", nil)
+	gatewayCommand(cfg, []string{"add", "gw", up.URL}, true, "", "", false, strings.NewReader(gwKey+"\n"))
+	// Izpis: pri spremembi le spremenjeni modeli, sicer vklopljeni in število skritih; besedilo ali --all pokaže vse.
+	out := stdout(t, func() { gatewayCommand(cfg, []string{"models", "gw"}, false, "", "other-z,claude-off-w", false, nil) })
+	if out != "[ ] off-w  (/model claude-off-w)\n[ ] other-z  (/model claude-other-z)\n2 enabled (restart minigw serve)\n" {
+		t.Fatalf("--disable output: %q", out)
+	}
+	if out = stdout(t, func() { gatewayCommand(cfg, []string{"models", "gw"}, false, "", "", false, nil) }); !strings.Contains(out, "[x] gpt-y") ||
+		strings.Contains(out, "other-z") || !strings.Contains(out, "2 disabled models not shown") {
+		t.Fatalf("models output: %q", out)
+	}
+	if out = stdout(t, func() { gatewayCommand(cfg, []string{"models", "gw", "OFF"}, false, "", "", false, nil) }); out != "[ ] off-w  (/model claude-off-w)\n" {
+		t.Fatalf("filter output: %q", out)
+	}
+	if out = stdout(t, func() { gatewayCommand(cfg, []string{"models", "gw"}, false, "", "", true, nil) }); strings.Count(out, "\n") != 4 {
+		t.Fatalf("--all output: %q", out)
+	}
 	data, _ := os.ReadFile(cfg)
 	if strings.Contains(string(data), gwKey) || keys["gw"] != gwKey {
 		t.Fatalf("key in config or not stored: %s", data)
@@ -218,7 +232,7 @@ func TestServeGatewayCLIKeepsKeyOutOfConfig(t *testing.T) {
 		strings.Join(c.Gateways[0].Models, ",") != "anthropic/claude-x,gpt-y" {
 		t.Fatalf("config: %+v", c.Gateways)
 	}
-	gatewayCommand(cfg, []string{"remove", "gw"}, false, "", "", nil)
+	gatewayCommand(cfg, []string{"remove", "gw"}, false, "", "", false, nil)
 	if c, _ = loadServeConfig(cfg); len(c.Gateways) != 0 || keys["gw"] != "" {
 		t.Fatalf("remove: %+v %v", c.Gateways, keys)
 	}
@@ -356,4 +370,16 @@ func TestServeGatewayNoCLIShadowAndLimit(t *testing.T) {
 	if st != 429 || !strings.Contains(string(data), "rate_limit_error") {
 		t.Fatalf("limit: %d %s", st, data)
 	}
+}
+
+// stdout: izpis funkcije (say piše na os.Stdout).
+func stdout(t *testing.T, f func()) string {
+	r, w, _ := os.Pipe()
+	old := os.Stdout
+	os.Stdout = w
+	f()
+	os.Stdout = old
+	w.Close()
+	b, _ := io.ReadAll(r)
+	return string(b)
 }

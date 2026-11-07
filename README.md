@@ -238,6 +238,7 @@ check and encryption: do not forward the port to loopback (`ssh -L`, `netsh inte
 ```sh
 minigw serve gateway add openrouter https://openrouter.ai/api   # asks for the API key (or reads it from stdin)
 minigw serve gateway models openrouter --enable anthropic/claude-sonnet-4.5,openai/gpt-5
+minigw serve gateway models openrouter haiku                    # enabled models; a text or --all also shows the others
 minigw serve gateway list                                       # also: gateway remove <name>
 ```
 

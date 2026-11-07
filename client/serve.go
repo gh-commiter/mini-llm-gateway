@@ -155,6 +155,7 @@ func serveCommand(args []string) {
 	insecure := fs.Bool("insecure", false, "gateway add: allow http to localhost or a private IP")
 	enable := fs.String("enable", "", "gateway models: enable these models (comma-separated, or all)")
 	disable := fs.String("disable", "", "gateway models: disable these models (comma-separated, or all)")
+	allModels := fs.Bool("all", false, "gateway models: also list the disabled models")
 	fs.Usage = func() { fmt.Fprintln(os.Stderr, serveHelp+"\n\n"+gatewayHelp) }
 	var rest []string
 	if sub == "allow" || sub == "deny" || sub == "gateway" { // minigw serve allow <id> [ime] [--config f]
@@ -259,7 +260,7 @@ func serveCommand(args []string) {
 		}
 		return
 	case "gateway":
-		gatewayCommand(*cfgPath, rest, *insecure, *enable, *disable, os.Stdin)
+		gatewayCommand(*cfgPath, rest, *insecure, *enable, *disable, *allModels, os.Stdin)
 		return
 	case "":
 	case "help":
