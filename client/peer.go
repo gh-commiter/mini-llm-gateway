@@ -28,6 +28,7 @@ type agentMounts struct {
 	rw     []string // kopija mape, začasna mapa zahteve, dovoljene mape
 	ro     []string // dodatno le za branje (Copilot: razširjen paket v ~/.cache/copilot)
 	hide   string   // mapa, skrita tudi zunaj domače mape (Scratch: kopije drugih naprav, stanje agentov; I3)
+	noNet  bool     // brez omrežja (--unshare-net; priprava paketa Copilot, #26)
 	env    []string // dodatne spremenljivke (Copilot: žeton prijave pod bwrap)
 	// protect: le za branje znotraj pisljive mape (worktree: .git/config, hooks, info klona), vezano za rw.
 	protect []string
@@ -182,6 +183,47 @@ func procListenUIDs(table []byte, port int) []int {
 		}
 	}
 	return out
+}
+
+// procListenInodes (L3): inode vtičnic, ki poslušajo na vratih (stolpec 9 v /proc/net/tcp{,6}).
+func procListenInodes(table []byte, port int) []string {
+	var out []string
+	for _, line := range strings.Split(string(table), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 10 || f[3] != "0A" {
+			continue
+		}
+		if _, p, ok := procAddr(f[1]); ok && p == port {
+			out = append(out, f[9])
+		}
+	}
+	return out
+}
+
+// listenerInDir (L3): vsak program, ki posluša na vratih, je pod mapo namestitve dir (kanonično). Kjer programov ni
+// mogoče našteti (macOS: minigw serve le za razvoj; Foundry na Macu preveri aplikacija), velja.
+func listenerInDir(port int, dir string) bool {
+	exes, ok := listenerExes(port)
+	if !ok {
+		return true
+	}
+	root := realPath(dir)
+	for _, e := range exes {
+		if !under(realPath(e), root) {
+			return false
+		}
+	}
+	return len(exes) > 0
+}
+
+// foundryInstallDir: mapa programa foundry ali, če je to »bin«, njena nadrejena (npr. Homebrew Cellar/<različica>).
+// ponytail: strežnik mora biti pod njo; drugačna postavitev paketa bi ga zavrnila.
+func foundryInstallDir(exe string) string {
+	d := filepath.Dir(realPath(exe))
+	if strings.EqualFold(filepath.Base(d), "bin") {
+		d = filepath.Dir(d)
+	}
+	return d
 }
 
 // tcpListenPIDs (F2): PID-ji iz tabele GetExtendedTcpTable, ki poslušajo na vratih (stanje 2 = LISTEN).

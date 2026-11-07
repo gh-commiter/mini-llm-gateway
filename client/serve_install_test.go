@@ -344,3 +344,34 @@ func TestReleaseDownloadNeedsSignature(t *testing.T) {
 		t.Fatal("installed without a good signature")
 	}
 }
+
+// #25: brez vračanja na starejšo izdajo (serve install) in podpisana VERSION v SHA256SUMS mora biti ta.
+func TestServeInstallRefusesDowngrade(t *testing.T) {
+	old, oldAllow := installedVersion, allowDowngrade
+	t.Cleanup(func() { installedVersion, allowDowngrade = old, oldAllow })
+	target := filepath.Join(t.TempDir(), "minigw")
+	os.WriteFile(target, []byte("x"), 0o755)
+	installedVersion = func(string) string { return "99.0.0" }
+	if err := refuseDowngrade(target); err == nil || !strings.Contains(err.Error(), "--allow-downgrade") {
+		t.Fatalf("newer installed: %v", err)
+	}
+	allowDowngrade = true
+	if err := refuseDowngrade(target); err != nil {
+		t.Fatalf("--allow-downgrade: %v", err)
+	}
+	allowDowngrade = false
+	installedVersion = func(string) string { return "0.0.1" }
+	if err := refuseDowngrade(target); err != nil {
+		t.Fatalf("older installed: %v", err)
+	}
+	sum := strings.Repeat("a", 64)
+	if w, err := sumsWant([]byte("VERSION "+version+"\n"+sum+"  minigw-linux-arm64\n"), "minigw-linux-arm64"); err != nil || w != sum {
+		t.Fatalf("sums: %q %v", w, err)
+	}
+	if _, err := sumsWant([]byte("VERSION 0.0.1\n"+sum+"  minigw-linux-arm64\n"), "minigw-linux-arm64"); err == nil {
+		t.Fatal("VERSION of another release accepted")
+	}
+	if w, err := sumsWant([]byte(sum+"  minigw-linux-arm64\n"), "minigw-linux-arm64"); err != nil || w != sum { // starejša izdaja brez VERSION
+		t.Fatalf("old sums: %q %v", w, err)
+	}
+}

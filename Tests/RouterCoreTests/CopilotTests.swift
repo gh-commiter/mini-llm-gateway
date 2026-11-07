@@ -127,7 +127,7 @@ private func field(_ text: String, _ name: String) -> String {
     let req = (Sync.real(c.scratch("copilot/req")) ?? c.scratch("copilot/req")).path
     #expect(home.hasPrefix(req + "/") && !FileManager.default.fileExists(atPath: home))  // svež, v Scratch (R2), po zagonu izbrisan
     // R7: priprava paketa enkrat brez peskovnika in brez žetona.
-    #expect(try String(contentsOf: bin.appendingPathComponent("version.log"), encoding: .utf8).hasPrefix("token=none"))
+    #expect(!FileManager.default.fileExists(atPath: bin.appendingPathComponent("version.log").path))  // #26: v peskovniku (zunaj ne piše)
     #expect(field(w.text, "TURN") == "1" && field(w.text, "HOOKS") == "no")
 
     // Naslednji zavoj iste seje: stanje seje ostane (brez povezave), podtaknjen hooks.json ne (C2).
@@ -226,4 +226,35 @@ private func field(_ text: String, _ name: String) -> String {
     let w = FakeWriter()
     await r.handle(q, writer: w)
     #expect(w.status == 403 && w.text.contains("package cache"))
+}
+
+/// #26: copilot --version (priprava paketa) v peskovniku brez omrežja: piše le v svojo začasno mapo (in paket), ne drugam;
+/// dovoljena mapa, ki vsebuje paket Copilot, je zavrnjena.
+@Test func copilotPrepareIsSandboxedAndCacheFoldersRefused() async throws {
+    let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("prep-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let req = root.appendingPathComponent("req"), tmp = req.appendingPathComponent("t"), outside = root.appendingPathComponent("outside")
+    for d in [tmp, outside] { try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true) }
+    let exe = root.appendingPathComponent("copilot")
+    try Data("""
+    #!/bin/sh
+    echo in > "$PWD/inside.txt"
+    echo out > "\(outside.path)/x.txt" 2>/dev/null
+    /usr/bin/curl -s -m 2 -o /dev/null https://example.com && echo net > "$PWD/net.txt"
+    exit 0
+    """.utf8).write(to: exe)
+    chmod(exe.path, 0o755)
+    let box = try #require(Native.sandboxProfile(dir: tmp.path, network: false, hidden: [], runTmp: req.path, writable: []))
+    Copilot.prepare(exe.path, base: ["PATH": "/usr/bin:/bin"], home: req.appendingPathComponent("p"), cwd: tmp, sandbox: box)
+    #expect(FileManager.default.fileExists(atPath: tmp.appendingPathComponent("inside.txt").path))
+    #expect(!FileManager.default.fileExists(atPath: outside.appendingPathComponent("x.txt").path))
+    #expect(!FileManager.default.fileExists(atPath: tmp.appendingPathComponent("net.txt").path))  // brez omrežja
+
+    #expect(RouterConfig.overlapsCopilotCache(RouterConfig.copilotCache.appendingPathComponent("pkg").path))
+    #expect(RouterConfig.overlapsCopilotCache(NSHomeDirectory() + "/Library/Caches") && !RouterConfig.overlapsCopilotCache(root.path))
+    var c = RouterConfig()
+    c.scratchFolder = root.path  // Scratch drugje: zavrne le pravilo za paket Copilot
+    let app = FakeApp(c)
+    let w = await admin(app.router(), "PATCH", "/agents/claude", body: #"{"folders":"~/Library/Caches"}"#)
+    #expect(w.status == 400 && w.text.contains("Copilot's package cache"))
 }

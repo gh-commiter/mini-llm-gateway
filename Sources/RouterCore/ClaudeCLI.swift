@@ -30,6 +30,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
         let dirs = [cwd.path] + allowedRoots.split(separator: ",").map { ClaudeCLI.expand($0.trimmingCharacters(in: .whitespaces)) }
             .filter { $0 != "/" && !$0.isEmpty && $0 != cwd.path && FileManager.default.fileExists(atPath: $0) }
             .filter { r in scratch.map { !RouterConfig.overlapsScratch(r, scratch: $0) } ?? true }  // H1: starejše nastavitve
+            .filter { !RouterConfig.overlapsCopilotCache($0) }  // #26: ne paketa Copilot
         let sandbox: [String: Any] = ["sandbox": [
             "enabled": true, "failIfUnavailable": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
             "network": ["allowedDomains": ["*"]],

@@ -117,7 +117,7 @@ func (s *server) agentArgs(dir string) []string {
 	c := s.conf()
 	dirs := []string{dir} // delovna mapa in dovoljene mape (kot allowedRoots na Macu)
 	for _, f := range c.AllowedFolders {
-		if f != dir && len(scratchOverlaps([]string{f}, c.Scratch)) == 0 { // L1: ne mape okoli Scratch (kot na Macu)
+		if f != dir && len(scratchOverlaps([]string{f}, c.Scratch)) == 0 && len(copilotCacheOverlaps([]string{f})) == 0 { // L1, #26
 			dirs = append(dirs, f)
 		}
 	}

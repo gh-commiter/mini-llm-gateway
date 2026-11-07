@@ -201,7 +201,7 @@ func (s *server) foundryEndpoint(ctx context.Context) (string, error) {
 				if !foundryCheck(ctx, base) {
 					continue
 				}
-				if !listenerIsOurs(p) { // F2: vrata posluša proces drugega uporabnika
+				if !listenerIsOurs(p) || !listenerInDir(p, foundryInstallDir(exe)) { // F2, L3: drug uporabnik ali program zunaj namestitve
 					foreign = true
 					continue
 				}

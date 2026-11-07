@@ -177,7 +177,15 @@ public actor FoundryHub {
     var running: Bool { base != nil }
 
     private var retryAt = Date.distantPast  // F6: po neuspehu 30 s brez novega iskanja ali zagona
-    nonisolated(unsafe) static var listenerIsOurs: @Sendable (UInt16) -> Bool = { PeerProcess.listenerIsOurs(port: $0) }  // testi
+    nonisolated(unsafe) static var listenerIsOurs: @Sendable (UInt16, String) -> Bool = { PeerProcess.listenerIsOurs(port: $0, installDir: $1) }  // testi
+
+    /// Mapa namestitve Foundry Local: mapa programa ali, če je to »bin«, njena nadrejena (npr. Homebrew Cellar/<različica>).
+    /// ponytail: strežnik mora biti pod njo; drugačna postavitev paketa bi ga zavrnila (»another user's process«).
+    static func installDir(_ exe: String) -> String {
+        let real = Sync.real(URL(fileURLWithPath: exe)) ?? URL(fileURLWithPath: exe)
+        let dir = real.deletingLastPathComponent()
+        return (dir.lastPathComponent.lowercased() == "bin" ? dir.deletingLastPathComponent() : dir).path
+    }
 
     func endpoint(_ exe: String?) async throws -> URL {
         if let base, Date().timeIntervalSince(checked) < 60 { return base }
@@ -191,7 +199,7 @@ public actor FoundryHub {
                 guard let p = Foundry.port(out), let u = URL(string: "http://127.0.0.1:\(p)") else { continue }
                 guard let d = try? await Foundry.get(u.appendingPathComponent("openai/status"), timeout: 5),
                       (try? JSONSerialization.jsonObject(with: d) as? [String: Any])?["Endpoints"] is [Any] else { continue }
-                guard Self.listenerIsOurs(UInt16(p)) else { foreign = true; continue }  // F2: vrata drugega uporabnika
+                guard Self.listenerIsOurs(UInt16(p), Self.installDir(exe)) else { foreign = true; continue }  // F2, L3: drug uporabnik ali program
                 return u
             }
             return nil

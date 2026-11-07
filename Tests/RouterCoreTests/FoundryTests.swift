@@ -65,7 +65,7 @@ final class FoundryStub: URLProtocol, @unchecked Sendable {
         let oldSession = Foundry.session, oldCommand = FoundryHub.command, oldOurs = FoundryHub.listenerIsOurs
         Foundry.session = URLSession(configuration: c)
         FoundryHub.command = { _, args, _ in args == ["server", "status"] ? "running on http://127.0.0.1:5273/openai/status" : "" }
-        FoundryHub.listenerIsOurs = { _ in true }  // stub: na 5273 nihče ne posluša
+        FoundryHub.listenerIsOurs = { _, _ in true }  // stub: na 5273 nihče ne posluša
         defer { Foundry.session = oldSession; FoundryHub.command = oldCommand; FoundryHub.listenerIsOurs = oldOurs }
         await Router.foundry.forget()
         FoundryStub.requests = []
@@ -104,6 +104,13 @@ final class FoundryStub: URLProtocol, @unchecked Sendable {
         _ = withUnsafeMutablePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &len) } }
         let port = UInt16(bigEndian: a.sin_port)
         #expect(PeerProcess.listenerIsOurs(port: port))
+        // L3: tudi program poslušalca (ta testni proces) mora biti v mapi namestitve.
+        var buf = [CChar](repeating: 0, count: 4096)
+        _ = proc_pidpath(getpid(), &buf, UInt32(buf.count))
+        let me = try #require(Sync.real(URL(fileURLWithPath: String(cString: buf))))
+        #expect(PeerProcess.listenerIsOurs(port: port, installDir: me.deletingLastPathComponent().path))
+        #expect(!PeerProcess.listenerIsOurs(port: port, installDir: "/opt/homebrew/Cellar/foundrylocal"))
+        #expect(FoundryHub.installDir("/opt/x/Cellar/foundrylocal/1.0/bin/foundry").hasSuffix("/foundrylocal/1.0"))
         #expect(!PeerProcess.listenerIsOurs(port: freeTCPPort()))
         // F5, F7
         #expect(Foundry.count(42) == 42 && Foundry.count(-1) == nil && Foundry.count(2_000_000_000) == nil && Foundry.count("7") == nil)

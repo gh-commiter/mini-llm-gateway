@@ -372,7 +372,20 @@ var copilotPrepared sync.Map
 // copilotPrepare: paket (~/.cache/copilot/pkg/<platforma>/<različica>) razširi copilot sam ob prvem zagonu nove različice;
 // pod bwrap (predpomnilnik le za branje) ne more. Ob novi izvršljivi datoteki ali brez mape pkg enkrat »copilot --version«
 // brez bwrap: uporabnikov program, brez navodila agenta in klica modela, svež COPILOT_HOME, brez žetona (R7).
-func copilotPrepare(ctx context.Context, exe, home, cwd string) {
+// copilotCacheDir: paket Copilot CLI (koda, ki jo copilot --version razširi in naloži).
+func copilotCacheDir() string {
+	cache, _ := os.UserCacheDir()
+	return filepath.Join(cache, "copilot")
+}
+
+// copilotCacheOverlaps (#26): dovoljene mape, ki vsebujejo paket Copilot ali so v njem (kot scratchOverlaps).
+func copilotCacheOverlaps(allowed []string) []string {
+	return scratchOverlaps(allowed, copilotCacheDir())
+}
+
+// copilotPrepare: pod bwrap brez omrežja (#26): podtaknjena koda v paketu ne vidi nastavitev, ključev in omrežja;
+// pisanje le v paket in začasni COPILOT_HOME.
+func copilotPrepare(ctx context.Context, exe, home, cwd, cfgDir string) {
 	if runtime.GOOS != "linux" {
 		return // Windows: brez peskovnika
 	}
@@ -393,7 +406,10 @@ func copilotPrepare(ctx context.Context, exe, home, cwd string) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute) // razširitev ~200 MB
 	defer cancel()
-	cmd := exec.CommandContext(ctx, exe, "--version")
+	os.MkdirAll(copilotCacheDir(), 0o700)
+	os.MkdirAll(home, 0o700)
+	name, args := agentWrap(exe, []string{"--version"}, agentMounts{cfgDir: cfgDir, rw: []string{copilotCacheDir(), home, cwd}, noNet: true})
+	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = cwd
 	cmd.Env = append(agentEnv(os.Environ()), "COPILOT_HOME="+home, "COPILOT_AUTO_UPDATE=false")
 	if cmd.Run() == nil {
@@ -582,7 +598,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 	prompt := note + "\n\n" + cliPrompt(history, last)
 	var extra []string
 	for _, f := range c.AllowedFolders {
-		if f != dir && len(scratchOverlaps([]string{f}, c.Scratch)) == 0 { // L1: ne mape okoli Scratch (kot na Macu)
+		if f != dir && len(scratchOverlaps([]string{f}, c.Scratch)) == 0 && len(copilotCacheOverlaps([]string{f})) == 0 { // L1, #26
 			extra = append(extra, f)
 		}
 	}
@@ -674,7 +690,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 					prompt = note + "\n\n" + cliPrompt(history, last) // stanja seje ni: ves pogovor
 				}
 			}
-			copilotPrepare(ctx, exe, filepath.Join(tmp, "prep"), tmp)
+			copilotPrepare(ctx, exe, filepath.Join(tmp, "prep"), tmp, s.cfgDir)
 			args := copilotArgs(agent, model, write, ac.Commands, ac.Network, resume)
 			var answer string
 			err = s.runAgentProcess(ctx, r, exe, args, withTree(m), dir, prompt, func(line []byte) {

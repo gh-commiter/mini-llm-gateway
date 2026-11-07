@@ -237,6 +237,7 @@ func serveCommand(args []string) {
 	cfgPath := fs.String("config", defaultServeConfigPath(), "config file")
 	port := fs.Int("port", 0, "port (default 8765)")
 	folder := fs.String("folder", "", "folder for agents that do not sync (--minigw-work=sync is preferred)")
+	fs.BoolVar(&allowDowngrade, "allow-downgrade", false, "install: replace a newer installed minigw (#25)")
 	fs.Usage = func() { fmt.Fprintln(os.Stderr, serveHelp) }
 	fs.Parse(args)
 
@@ -425,9 +426,9 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	// H1: dovoljena mapa, ki vsebuje Scratch (ali je v njem), bi agentom pokazala zrcala in kopije drugih naprav:
 	// ob zagonu (ročno urejen serve.json) take mape ne veljajo, Claude CLI in Codex sta izklopljena, opozorilo v dnevniku.
 	var overlapWarn string
-	if bad := scratchOverlaps(c.AllowedFolders, c.Scratch); len(bad) > 0 {
+	if bad := append(scratchOverlaps(c.AllowedFolders, c.Scratch), copilotCacheOverlaps(c.AllowedFolders)...); len(bad) > 0 {
 		overlapWarn = "WARNING: allowed folder(s) " + strings.Join(bad, ", ") + " contain or are inside the scratch folder " + c.Scratch +
-			": Claude CLI and Codex are off until you remove them (settings page → Claude CLI → Allowed folders)"
+			" or Copilot's package cache " + copilotCacheDir() + ": Claude CLI and Codex are off until you remove them (settings page → Claude CLI → Allowed folders)"
 		c.AllowedFolders = slices.DeleteFunc(slices.Clone(c.AllowedFolders), func(f string) bool { return slices.Contains(bad, f) })
 		c.ClaudeDisabled, c.Codex.Enabled = true, false
 	}
@@ -503,6 +504,10 @@ func checkAgent(c *serveConfig, cfgDir string) ([]string, error) {
 	if bad := scratchOverlaps(c.AllowedFolders, c.Scratch); len(bad) > 0 { // H1: PATCH, minigw gw claude --folders, serve.json
 		return nil, errors.New("allowed folder " + bad[0] + " contains or is inside the scratch folder " + c.Scratch +
 			" (agents could change the gateway's mirrors and other devices' copies): choose another folder")
+	}
+	if bad := copilotCacheOverlaps(c.AllowedFolders); len(bad) > 0 { // #26
+		return nil, errors.New("allowed folder " + bad[0] + " contains or is inside Copilot's package cache " + copilotCacheDir() +
+			" (agents could plant code the gateway runs): choose another folder")
 	}
 	if c.AllowLocalTools && runtime.GOOS == "windows" && !c.AllowUnsandboxedBash {
 		return nil, errors.New("local tools include commands (Bash, PowerShell), which have no sandbox on Windows: also set \"allowUnsandboxedBash\": true, or turn local tools off")
