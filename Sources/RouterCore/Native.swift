@@ -148,6 +148,7 @@ public enum Native {
         return list.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.contains(first)
     }
 
+    /// Obramba v globino, ne varnostna meja (začne z allow default): run je za naprave, ki jim zaupaš svoj uporabniški račun.
     /// Peskovnik za `minigw run`: pisanje le v mapo in predpomnilnike gradnje (ne v .git, nastavitve Maven in SwiftPM),
     /// branje povsod razen skrivnosti uporabnika, omrežje po izbiri naprave. Poti so dobesedne: če katera obstaja in
     /// njena kanonična pot ni ista (povezava), vrne nil (zamenjava mape s povezavo ne razširi pisanja).
@@ -177,7 +178,13 @@ public enum Native {
             + " (regex \(rx(home + "/Library/Caches/org.swift.swiftpm/repositories/"))[^/]+/(config|hooks)(/|$)\")"
             + " (regex \(rx(home + "/Library/org.swift.swiftpm/repositories/"))[^/]+/(config|hooks)(/|$)\"))\n"
             + "(deny file-read*" + rules("subpath", secretDirs) + rules("literal", secretFiles) + ")\n"
-            + (hidden.isEmpty ? "" : "(deny file-read* file-write*" + rules("subpath", hidden) + ")\n")
+            // Nastavitve aplikacije: datoteka in domena cfprefsd skupaj (le ena od obeh branja ne prepreči).
+            + "(deny file-read* file-write*" + rules("subpath", hidden + [home + "/Library/Preferences/dev.trojar.minigateway.plist"]) + ")\n"
+            // Sistemske storitve mimo datotek: nastavitve (cfprefsd), opravila launchd, odpiranje aplikacij, Apple Events.
+            // mvn, swift build in xcodebuild delujejo brez izjem.
+            + "(deny user-preference-write)\n(deny user-preference-read (preference-domain \"dev.trojar.minigateway\"))\n"
+            + "(deny job-creation)\n(deny lsopen)\n(deny appleevent-send)\n"
+            + "(deny mach-lookup (global-name \"com.apple.coreservices.launchservicesd\"))\n"
             + (network ? "" : "(deny network-outbound (remote ip))\n(deny mach-lookup (global-name-regex #\"^com\\.apple\\.nsurlsessiond\"))\n")
     }
 
@@ -379,8 +386,7 @@ extension Router {
         // profil peskovnika iz dobesedne poti (sandboxProfile zavrne povezave).
         guard Sync.real(dir)?.path == dir.path, ClaudeCLI.resolveCwd(dir.path, roots: config.claudeCLI.allowedRoots)?.path == dir.path,
               let profile = Native.sandboxProfile(dir: dir.path, network: config.devices.first { $0.id == d.id }?.runNetwork ?? true,
-                                                  hidden: [config.scratchURL.path, RouterConfig.defaultScratch.path,
-                                                           NSHomeDirectory() + "/Library/Preferences/dev.trojar.minigateway.plist"]) else {
+                                                  hidden: [config.scratchURL.path, RouterConfig.defaultScratch.path]) else {
             return await error(403, "permission_error", "minigw run: the folder or a build cache folder (~/.m2, ~/Library/Caches …) is a link or not allowed", rid: rid, writer: writer)
         }
         guard await Self.natives.startRun(d.id) else {

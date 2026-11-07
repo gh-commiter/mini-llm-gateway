@@ -332,8 +332,9 @@ example `/Volumes/Java/eureko-modules` mounted from the router's `/Volumes/Java`
   `--minigw-ro` (or a saved `--ro`) uses the read-only mount instead.
 - **`minigw run` is off by default:** turn it on per device in **Settings → General → minigw run**, or with the admin
   API (`PATCH /run`). Only the listed commands run (default `mvn, swift, xcodebuild`), without a shell, at most two at
-  a time per device. It is outside the agent sandbox: the build runs the project's code with your rights on the router,
-  so allow only devices you trust. A sandbox (`sandbox-exec`) lets it write only to the folder (not its `.git`), `~/.m2`
+  a time per device. It is outside the agent sandbox: the build runs the project's code with your rights on the router.
+  The run sandbox below reduces what a build can do, but it is defence in depth, not a security boundary: enable
+  `minigw run` only for devices you would trust with your user account on the router. A sandbox (`sandbox-exec`) lets it write only to the folder (not its `.git`), `~/.m2`
   (not `settings*.xml`, `extensions.xml`), `~/Library/Developer`, `~/Library/Caches`, SwiftPM's folders (not their
   configuration, repository `config` and `hooks`) and temporary folders, and hides `~/.ssh`, `~/.aws`, `~/.gnupg`,
   `~/.netrc`, `~/.git-credentials`, `~/.npmrc`, `~/.pypirc`, `~/.gradle/gradle.properties`, shell histories, `~/.config`,
@@ -341,7 +342,8 @@ example `/Volumes/Java/eureko-modules` mounted from the router's `/Volumes/Java`
   `Mail`, `Messages`, Mini Gateway's Scratch folder and preferences (rules cover the resolved paths of links too). The
   router refuses the run when the folder or one of the writable folders is a link. Network is on per device (switch it
   off in Settings or with `"denyNetwork"`); off is best effort: it blocks direct connections and `nsurlsessiond`, but
-  another system service could still reach the network for the build. A sandbox inside it is not possible, so the router runs `swift build|test|run|package` with
+  another system service could still reach the network for the build. The sandbox also blocks writing preferences, reading
+  Mini Gateway's, creating launchd jobs, opening apps and sending Apple events. A sandbox inside it is not possible, so the router runs `swift build|test|run|package` with
   `--disable-sandbox` and `xcodebuild` without its package and script sandboxes. Stopping minigw stops the whole
   process group. In a terminal minigw shows only colours from the output, no other escape sequences.
 - If the folder is not a router share, minigw falls back to the usual mount. On Linux (cifs) and Windows (UNC path or

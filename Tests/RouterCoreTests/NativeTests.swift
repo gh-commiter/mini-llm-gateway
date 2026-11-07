@@ -373,3 +373,29 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     #expect(String(decoding: c + d, as: UTF8.self) == "č")
     #expect(Native.terminalSafe(Data([0x61, 0xC2])) == Data([0x61]))  // osamljen končni C2
 }
+
+/// Q1: build ne doseže sistemskih storitev (nastavitve aplikacije, launchd). Ob nepričakovanem uspehu počisti.
+@Test func nativeRunProfileBlocksSystemServices() throws {
+    let dir = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("q1-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let profile = try #require(Native.sandboxProfile(dir: dir.path, network: true))
+    func run(_ exe: String, _ args: [String], sandboxed: Bool = true) throws -> Int32 {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: sandboxed ? "/usr/bin/sandbox-exec" : exe)
+        p.arguments = sandboxed ? ["-p", profile, exe] + args : args
+        p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+        try p.run(); p.waitUntilExit()
+        return p.terminationStatus
+    }
+    let key = "minigwSandboxTest" + UUID().uuidString.prefix(8)
+    let wrote = try run("/usr/bin/defaults", ["write", "dev.trojar.minigateway", key, "1"])
+    if wrote == 0 { _ = try run("/usr/bin/defaults", ["delete", "dev.trojar.minigateway", key], sandboxed: false) }
+    #expect(wrote != 0)
+    #expect(try run("/usr/bin/defaults", ["read", "dev.trojar.minigateway"]) != 0)
+    let label = "dev.minigw.sandbox-test." + UUID().uuidString
+    let submitted = try run("/bin/launchctl", ["submit", "-l", label, "--", "/usr/bin/true"])
+    if submitted == 0 { _ = try run("/bin/launchctl", ["remove", label], sandboxed: false) }
+    #expect(submitted != 0)
+    #expect(profile.contains("(deny lsopen)") && profile.contains("(deny appleevent-send)") && profile.contains("(deny job-creation)"))
+}

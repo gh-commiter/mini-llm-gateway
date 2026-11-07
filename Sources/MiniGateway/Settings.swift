@@ -276,7 +276,7 @@ struct SettingsView: View {
                 Text(verbatim: "minigw run")
             } footer: {
                 Label {
-                    Text("minigw run is outside the agent sandbox: it runs the project's build with your full rights. Macs switched on here may run these commands in a folder they use from this Mac's SMB share (native mode); a sandbox limits it to writing in that folder and the build caches and hides your keys and app data. Network: the build may download (Maven). Allow only Macs you trust.")
+                    Text("minigw run is outside the agent sandbox: it runs the project's build with your full rights. Macs switched on here may run these commands in a folder they use from this Mac's SMB share (native mode). A sandbox reduces what the build can do (it writes only to that folder and the build caches, and your keys and app data are hidden), but it is not a security boundary: allow only Macs you would trust with your user account. Network: the build may download (Maven).")
                 } icon: {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                 }
