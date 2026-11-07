@@ -459,6 +459,9 @@ item (the admin secret); `minigw` talks to the app only after the app proves its
   unencrypted clients) is accepted only while no device is allowed and **Allow any device with the token** is on.
   **Reject** is not a block list: a rejected device can ask again with the token. To lock someone out, remove their
   device and rotate the token (**New Token**). A device's name is only a label: compare the ID.
+- **Providers over http.** A provider's API key goes over `http` only to localhost, a private or loopback IP or a
+  `.local` name, and only with **Allow http** on. Such names and addresses are no proof that the provider is on your
+  own network (a VPN, another Wi-Fi or a spoofed mDNS answer can serve them), so prefer `https`.
 - Every request needs the gateway's token; the server listens only on `127.0.0.1` unless you change it.
 - The Claude CLI provider runs `claude -p` with tools in the client's folder: it only runs inside the allowed
   folders and uses the tools and permission mode you configure (default: read-only, `dontAsk`).

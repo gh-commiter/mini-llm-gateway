@@ -120,7 +120,9 @@ Notes:
 - `POST /devices` takes only a valid device ID. `pending` lists the last 20 devices that were refused since the
   gateway started (in memory), newest last.
 - `POST /providers` adds or replaces a provider. Name: letters, digits, `. _ -`, up to 32. `baseURL` without `/v1`;
-  it must be `https`, or `http` to localhost, a private or loopback IP or a `.local` name (not a name without a dot)
+  it must be `https`, or `http` to localhost, a private or loopback IP or a `.local` name (not a name without a dot).
+  A `.local` name or a private address is no proof that the provider is on your LAN (another network, a VPN or a
+  spoofed mDNS answer can answer it), so `http` also needs the explicit `"insecure": true` / Allow http switch
   with `"insecure": true`. LiteLLM and OpenRouter are built in: always listed, `DELETE` and renaming are refused. The gateway lists the models
   with the key before it saves anything, and stores the key in the system's secret store (Credential Manager,
   Keychain or Secret Service), never in the config. `keyStore` says where. A new provider with more than 20 models

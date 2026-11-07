@@ -251,7 +251,7 @@ func (s *server) deviceSeen(d serveDevice, client string) {
 // 64 znakov (M1, kot Noise.cleanName na Macu). Ime je le oznaka; identiteta je ključ naprave.
 func cleanDeviceName(s string) string {
 	s = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+		if unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp) { // L2: tudi U+2028, U+2029
 			return -1
 		}
 		return r

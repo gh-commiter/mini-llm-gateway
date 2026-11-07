@@ -106,6 +106,7 @@ private func newID() -> String { Noise.base64url(Curve25519.Signing.PrivateKey()
 @Test func deviceNamesAreCleanedAndQuoted() {
     #expect(Noise.cleanName("  PC\n192.168.1.20 · x\u{202E}\u{200B}\t ") == "PC192.168.1.20 · x")
     #expect(Noise.cleanName(String(repeating: "a", count: 100)).count == 64)
+    #expect(Noise.cleanName("PC\u{2028}10.0.0.1\u{2029}x") == "PC10.0.0.1x")  // L2: ločilo vrstice in odstavka
     #expect(Noise.quoted("a\"b\\c\nd\u{202E}") == #""a\"b\\c\u{a}d\u{202e}""#)
     let p = DeviceLog.Pending(id: "x", name: "PC\n10.0.0.1", address: "", client: "", time: Date())
     #expect(Router.refusal(Noise.Device(id: "x", name: p.name)).contains(#""PC\u{a}10.0.0.1""#))

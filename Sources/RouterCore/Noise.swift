@@ -227,9 +227,8 @@ public enum Noise {
     /// Ime naprave (ali podatek odjemalca) za prikaz: brez kontrolnih in oblikovnih znakov (nove vrstice, bidi, ničelne
     /// širine), obrezano, največ 64 znakov (M1). Ime je le oznaka, nikoli pooblastilo (to je ključ naprave).
     public static func cleanName(_ s: String) -> String {
-        let kept = String(String.UnicodeScalarView(s.unicodeScalars.filter {
-            $0.properties.generalCategory != .control && $0.properties.generalCategory != .format
-        }))
+        let drop: Set<Unicode.GeneralCategory> = [.control, .format, .lineSeparator, .paragraphSeparator]  // Cc, Cf, Zl, Zp (L2)
+        let kept = String(String.UnicodeScalarView(s.unicodeScalars.filter { !drop.contains($0.properties.generalCategory) }))
         return String(kept.trimmingCharacters(in: .whitespacesAndNewlines).prefix(64))
     }
 

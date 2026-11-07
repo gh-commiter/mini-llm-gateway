@@ -502,6 +502,9 @@ func TestDeviceRulesLikeMac(t *testing.T) {
 	if got := cleanDeviceName("  PC\n192.168.1.20 · x\u202e\u200b\t "); got != "PC192.168.1.20 · x" {
 		t.Fatalf("clean: %q", got)
 	}
+	if got := cleanDeviceName("PC\u202810.0.0.1\u2029x"); got != "PC10.0.0.1x" { // L2
+		t.Fatalf("Zl/Zp: %q", got)
+	}
 	if got := cleanDeviceName(strings.Repeat("ž", 100)); len([]rune(got)) != 64 {
 		t.Fatalf("cap: %d", len([]rune(got)))
 	}
