@@ -182,7 +182,7 @@ func main() {
 		os.Exit(runCommand(args[1:]))
 	case "connect":
 		if len(args) < 2 {
-			fail("usage: minigw connect <host[:port]> [--token '<token>']")
+			fail("usage: minigw connect <host[:port]> [--token '<token>' | --token -]   (- reads it from stdin)")
 		}
 		saved := loadConnection()
 		token := ""
@@ -196,6 +196,13 @@ func main() {
 			if a == "--token" && i+1 < len(args) {
 				token = args[i+1]
 			}
+		}
+		if token == "-" { // F3: s stdin (cev) ali s terminala brez odmeva, ne v argv
+			t, err := readKey(os.Stdin, "router token")
+			if err != nil {
+				fail(err.Error())
+			}
+			token = t
 		}
 		if token == "" {
 			fail("missing --token (copy it from Mini Gateway → Settings → General → Copy Token)")
@@ -315,7 +322,7 @@ func main() {
 		if first == "-v" || first == "--version" {
 			say("minigw " + version)
 		} else {
-			say("minigw connect <host[:port]> [--token T]   save router address and token (" + storeName + ")\n" +
+			say("minigw connect <host[:port]> [--token T|-]  save router address and token (" + storeName + "; - = stdin)\n" +
 				"minigw status | models | disconnect\n" +
 				"minigw share add|remove [folder] | list    also share a system or hidden folder with the router\n" +
 				"minigw share add --work=native|sync|direct [--ro] [folder]   default mode for that folder (flag/env wins)\n" +

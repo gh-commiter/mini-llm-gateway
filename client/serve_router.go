@@ -315,7 +315,7 @@ func routerCommand(args []string, in io.Reader) {
 		switch pos[1] {
 		case "add":
 			need(4, 4)
-			key, err := readKey(in, pos[2])
+			key, err := readKey(in, "API key for "+pos[2])
 			if err != nil {
 				fail(err.Error())
 			}

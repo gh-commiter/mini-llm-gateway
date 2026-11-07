@@ -486,11 +486,12 @@ func upstreamError(w http.ResponseWriter, rid, name string, resp *http.Response)
 }
 
 // readKey: ključ s stdin (cev) ali s terminala brez odmeva; nikoli iz argv. Le natisljivi ASCII (gre v glavo HTTP).
-func readKey(in io.Reader, name string) (string, error) {
+// what: kaj se bere (»API key for openrouter«, »router token«).
+func readKey(in io.Reader, what string) (string, error) {
 	var line string
 	var err error
 	if f, ok := in.(*os.File); ok && isTerminal(f) {
-		fmt.Fprintf(os.Stderr, "API key for %s: ", name)
+		fmt.Fprintf(os.Stderr, "%s: ", what)
 		line, err = readHidden(f)
 		fmt.Fprintln(os.Stderr)
 	} else {
@@ -500,11 +501,11 @@ func readKey(in io.Reader, name string) (string, error) {
 	}
 	key := strings.TrimSpace(line)
 	if key == "" {
-		return "", errors.New("no API key (pipe it on stdin or type it at the prompt)")
+		return "", errors.New("no " + what + " (pipe it on stdin or type it at the prompt)")
 	}
 	for _, ch := range key {
 		if ch < 0x21 || ch > 0x7e {
-			return "", errors.New("the API key must be printable ASCII without spaces")
+			return "", errors.New("the " + what + " must be printable ASCII without spaces")
 		}
 	}
 	if err != nil && !errors.Is(err, io.EOF) {

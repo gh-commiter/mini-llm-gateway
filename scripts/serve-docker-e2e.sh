@@ -98,7 +98,7 @@ mgr ${=ALLOW#minigw }
 # (426 for plain HTTP; over an encrypted connection the API itself answers 403, see TestAdminAPIAuth).
 [[ $(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:$PORT/minigw/admin/v1/status \
   -H "authorization: Bearer $(<$T/cfg/admin.secret)" -H "host: 127.0.0.1:$PORT") == 426 ]] || fail "admin API reachable from outside"
-$mg connect $IP:$PORT --token "$TOKEN" | grep -q "(encrypted)" || fail "connect"
+print -rn -- "$TOKEN" | $mg connect $IP:$PORT --token - | grep -q "(encrypted)" || fail "connect (token from stdin)"
 $mg models | grep -q claude-cli-haiku || fail "models"
 
 # Direct mode is refused with a clear message.

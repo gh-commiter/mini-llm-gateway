@@ -42,11 +42,11 @@ Rules:
 2. `open -a "Mini Gateway"`. Then retry `"$M" router status` for up to 20 seconds, until it answers.
 3. `"$M" router autostart on` (Open at Login).
 
-**Then, on every system**, connect this computer's minigw to its own router. If `"$M" status` shows a connection to another router, ask first: minigw keeps one connection. The token goes from one command to the other and is never printed:
+**Then, on every system**, connect this computer's minigw to its own router. If `"$M" status` shows a connection to another router, ask first: minigw keeps one connection. The token goes on stdin from one command to the other: it is never printed and never in a command line:
 
 ```sh
 l=$("$M" router token | sed -n 's/^  minigw connect //p'); p=${l%% *}; p=${p##*:}; t=${l#*--token \'}; t=${t%\'}
-"$M" connect "127.0.0.1:$p" --token "$t" && "$M" router status
+printf '%s' "$t" | "$M" connect "127.0.0.1:$p" --token - && "$M" router status
 ```
 
 For other computers, `/minigw:serve token` shows the connect line to run there (or `/minigw:connect` on them).

@@ -386,10 +386,11 @@ case "run":
     guard let proof else { fail("cannot run on the router: \(why)") }
     exit(runRemote(c, argv, proof))
 case "connect":
-    guard args.count >= 2 else { fail("usage: minigw connect <host[:port]> [--token <token>]") }
+    guard args.count >= 2 else { fail("usage: minigw connect <host[:port]> [--token <token> | --token -]   (- reads it from stdin)") }
     let saved = loadConnection()
     var token = saved.map { $0.token + ($0.key.map { "#" + $0 } ?? "") } ?? ""
     if let i = args.firstIndex(of: "--token"), i + 1 < args.count { token = args[i + 1] }
+    if token == "-" { token = readKey("router token") }  // F3: s stdin ali brez odmeva, ne v argv
     guard !token.isEmpty else { fail("missing --token (copy it from Mini Gateway → Settings → General → Copy Token)") }
     let parts = token.split(separator: "#", maxSplits: 1).map(String.init)
     let c = Connection(url: normalize(args[1]), token: parts[0], key: parts.count > 1 ? parts[1] : nil, device: saved?.device ?? Noise.base64url(Curve25519.Signing.PrivateKey().rawRepresentation))
@@ -438,7 +439,7 @@ case "models":
 case "--minigw-help", "-h", "--help", "-v", "--version":
     if args.first == "-v" || args.first == "--version" { say("minigw \(minigwVersion)") } else {
         say("""
-        minigw connect <host[:port]> [--token T]   save router address and token (Keychain)
+        minigw connect <host[:port]> [--token T|-]  save router address and token (Keychain; - = stdin)
         minigw status | models | disconnect
         minigw share add|remove [folder] | list    also share a system or hidden folder with the router
         minigw share add --work=native|sync|direct [--ro] [folder]   default mode for that folder (flag/env wins)

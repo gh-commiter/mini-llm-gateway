@@ -93,18 +93,19 @@ private func appOwner() -> uid_t? {
 }
 
 /// Ključ s stdin (cev) ali s terminala brez odmeva; nikoli iz argv. Le natisljivi ASCII (gre v glavo HTTP).
-private func readKey(_ name: String) -> String {
+/// what: kaj se bere (»API key for openrouter«, »router token«).
+func readKey(_ what: String) -> String {
     var line = ""
     if isatty(0) == 1 {
         var buf = [CChar](repeating: 0, count: 8192)
-        guard readpassphrase("API key for \(name): ", &buf, buf.count, RPP_REQUIRE_TTY) != nil else { fail("no API key") }
+        guard readpassphrase("\(what): ", &buf, buf.count, RPP_REQUIRE_TTY) != nil else { fail("no \(what)") }
         line = String(cString: buf)
     } else {
         line = String(decoding: FileHandle.standardInput.readData(ofLength: 8192), as: UTF8.self)
     }
     let key = line.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !key.isEmpty else { fail("no API key (pipe it on stdin or type it at the prompt)") }
-    guard key.unicodeScalars.allSatisfy({ (0x21...0x7e).contains($0.value) }) else { fail("the API key must be printable ASCII without spaces") }
+    guard !key.isEmpty else { fail("no \(what) (pipe it on stdin or type it at the prompt)") }
+    guard key.unicodeScalars.allSatisfy({ (0x21...0x7e).contains($0.value) }) else { fail("the \(what) must be printable ASCII without spaces") }
     return key
 }
 
@@ -183,7 +184,7 @@ func routerCommand(_ argv: [String]) {
         switch pos[1] {
         case "add":
             need(4, 4)
-            let key = readKey(pos[2])
+            let key = readKey("API key for \(pos[2])")
             let r = a.call("POST", "/gateways", ["name": pos[2], "baseURL": pos[3], "key": key, "insecure": flags["insecure"] == "true"])
             let models = r["models"] as? [[String: Any]] ?? []
             say("gateway \(pos[2]): \(models.count) models, \(enabledCount(models)) enabled; API key stored in \(r["keyStore"] as? String ?? "the Keychain")")
