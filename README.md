@@ -133,7 +133,7 @@ Remote Control and so on.
 | `/minigw:status` | – | Connection and available models |
 | `/minigw:models` | – | Gateway models, grouped by provider |
 | `/minigw:version` | – | Versions of minigw, Claude Code and the plugin |
-| `/minigw:connect <gateway> <token>` | – | One-time connection to the gateway |
+| `/minigw:connect [--name <profile>] <gateway> <token>` | – | One-time connection to a gateway; `--name` adds another one as a profile |
 | `/minigw:share [folder]` | – | Share a folder that minigw does not share by itself, such as a system folder |
 
 Claude can also pick these skills by itself when they fit the request.
@@ -319,10 +319,11 @@ minigw disconnect --name win
 ```
 
 - The connection you had before is the profile `default`; nothing changes while it is the only one.
-- With several profiles, `minigw` puts a small router on `127.0.0.1` (with its own token) in front of Claude Code. It
+- With several profiles, `minigw` puts a local proxy on `127.0.0.1` (with its own token) in front of Claude Code. It
   sends `<model>@<profile>` to that gateway without the suffix. `/model` and `minigw models` list every reachable
   gateway's models; one that cannot be reached is left out, and `minigw status` shows it.
-- The folder is shared with another gateway only when that gateway gets its first request, in the same work mode
+- The folder is shared with another gateway only when that gateway gets its first request for an agent model
+  (`claude-cli-*`, `claude-codex*`, `claude-grok*`, `claude-copilot*`), in the same work mode
   (`--minigw-work`). A Windows or Linux gateway needs `--minigw-work=sync` (or `auto`).
 - Each profile keeps its own address, token and gateway key: Keychain on the Mac, Credential Manager on Windows
   (`minigw:router:<profile>`), on Linux `~/.config/minigw/connections/<profile>.json` (mode 0600). The device key is
