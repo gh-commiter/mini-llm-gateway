@@ -54,7 +54,8 @@ public enum Sync {
         }
 
         public init(root: URL) {
-            self.init(gitignore: (try? String(contentsOf: root.appendingPathComponent(".gitignore"), encoding: .utf8)) ?? "")
+            // Le navadna datoteka do 1 MB (ne povezava, FIFO ali naprava); sicer kot brez .gitignore.
+            self.init(gitignore: Sync.read(root.appendingPathComponent(".gitignore"), max: 1 << 20).map { String(decoding: $0, as: UTF8.self) } ?? "")
         }
 
         public func ignored(_ rel: String, isDir: Bool) -> Bool {
@@ -133,11 +134,32 @@ public enum Sync {
         let mtime = Int64((((a[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0) * 1000).rounded())
         let exec = ((a[.posixPermissions] as? NSNumber)?.intValue ?? 0) & 0o100 != 0
         if var p = previous, p.size == size, p.mtime == mtime { p.path = path; p.exec = exec; return p }
-        guard let f = FileHandle(forReadingAtPath: url.path) else { return nil }
-        defer { try? f.close() }
+        guard let f = openRegular(url) else { return nil }
         var h = SHA256()
         while let d = try? f.read(upToCount: 1 << 20), !d.isEmpty { h.update(data: d) }
         return Entry(path: path, size: size, mtime: mtime, sha256: hex(h.finalize()), exec: exec)
+    }
+
+    /// Navadna datoteka, odprta brez sledenja povezavi (`any`: nikjer v poti, pot mora biti kanonična) in brez čakanja na FIFO.
+    static func openRegular(_ url: URL, any: Bool = false) -> FileHandle? {
+        let fd = Darwin.open(url.path, O_RDONLY | O_NONBLOCK | (any ? O_NOFOLLOW_ANY : O_NOFOLLOW))
+        guard fd >= 0 else { return nil }
+        let f = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        var st = stat()
+        return fstat(fd, &st) == 0 && st.st_mode & S_IFMT == S_IFREG ? f : nil
+    }
+
+    /// Kanonična pot (realpath); resolvingSymlinksInPath odreže »/private« in pusti povezavo »/var«.
+    static func real(_ url: URL) -> URL? {
+        guard let p = realpath(url.path, nil) else { return nil }
+        defer { free(p) }
+        return URL(fileURLWithPath: String(cString: p))
+    }
+
+    /// Vsebina navadne datoteke (glej openRegular); nil, če je večja od `max`.
+    static func read(_ url: URL, max: Int, any: Bool = false) -> Data? {
+        guard let f = openRegular(url, any: any), let d = try? f.read(upToCount: max + 1) ?? Data(), d.count <= max else { return nil }
+        return d
     }
 
     public static func sha256(_ d: Data) -> String { hex(SHA256.hash(data: d)) }

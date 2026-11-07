@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -130,9 +131,30 @@ func ignoredPath(rules []ignoreRule, rel string) bool {
 	return false
 }
 
+// loadIgnore: le navadna datoteka do 1 MB (ne povezava ven iz root, FIFO ali naprava); sicer kot brez .gitignore.
 func loadIgnore(root string) []ignoreRule {
-	gi, _ := os.ReadFile(filepath.Join(root, ".gitignore"))
+	gi, _ := readRegular(root, ".gitignore", 1<<20)
 	return parseIgnore(strings.ReplaceAll(string(gi), "\r", ""))
+}
+
+// readRegular: navadna datoteka rel pod root do max bajtov. os.Root ne sledi povezavi ven iz root (tudi ne prek
+// podtaknjene starševske mape), O_NONBLOCK ne čaka na FIFO.
+func readRegular(root, rel string, max int64) ([]byte, bool) {
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, false
+	}
+	defer r.Close()
+	f, err := r.OpenFile(filepath.FromSlash(rel), os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, false
+	}
+	defer f.Close()
+	if st, err := f.Stat(); err != nil || !st.Mode().IsRegular() || st.Size() > max {
+		return nil, false
+	}
+	data, err := io.ReadAll(io.LimitReader(f, max+1))
+	return data, err == nil && int64(len(data)) <= max
 }
 
 // syncScan: datoteke pod root brez prezrtih in simbolnih povezav; zgoščuje le, kar ima drugo velikost ali čas kot v prev.
@@ -186,11 +208,14 @@ func syncEntryOf(full, rel string, prev map[string]syncEntry) (syncEntry, bool) 
 		p.Exec = e.Exec
 		return p, true
 	}
-	f, err := os.Open(full)
+	f, err := os.OpenFile(full, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return syncEntry{}, false
 	}
 	defer f.Close()
+	if st, err := f.Stat(); err != nil || !os.SameFile(info, st) { // vmes zamenjana s povezavo ali FIFO
+		return syncEntry{}, false
+	}
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
 		return syncEntry{}, false
@@ -374,7 +399,7 @@ func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch fu
 	return notes, done
 }
 
-func (s *shareClient) note(msg string) { fmt.Fprintln(os.Stderr, "minigw: "+msg) }
+func (s *shareClient) note(msg string) { fmt.Fprintln(os.Stderr, "minigw: "+clean(msg)) }
 
 // syncPush: pred agentom manifest k routerju, nato datoteke, ki jih potrebuje.
 func (s *shareClient) syncPush(k string) bool {

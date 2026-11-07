@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -515,5 +516,26 @@ func TestProtectedPathShortAndFoldedNames(t *testing.T) {
 	}
 	if protectedPath("src/git~x.txt") {
 		t.Error("git~x is not a short name")
+	}
+}
+
+// .gitignore kot povezava ven iz korena ali FIFO: prezrta, brez čakanja.
+func TestSyncIgnoreSkipsLinkedOrSpecialGitignore(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "root")
+	os.Mkdir(root, 0o755)
+	os.WriteFile(filepath.Join(base, "outside"), []byte("*.txt\n"), 0o644)
+	gi := filepath.Join(root, ".gitignore")
+	if os.Symlink(filepath.Join(base, "outside"), gi) == nil && ignored(loadIgnore(root), "a.txt", false) {
+		t.Fatal(".gitignore followed a link out of the root")
+	}
+	os.Remove(gi)
+	if exec.Command("mkfifo", gi).Run() == nil && ignored(loadIgnore(root), "a.txt", false) { // brez mkfifo (Windows): preskoči
+		t.Fatal("FIFO .gitignore was read")
+	}
+	os.Remove(gi)
+	os.WriteFile(gi, []byte("*.txt\n"), 0o644)
+	if !ignored(loadIgnore(root), "a.txt", false) {
+		t.Fatal("regular .gitignore not read")
 	}
 }

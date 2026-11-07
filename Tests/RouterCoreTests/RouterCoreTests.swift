@@ -1244,3 +1244,68 @@ final class FakeMinigw: @unchecked Sendable {
     }
     #expect(!Sync.isProtected("src/git~x.txt"))
 }
+
+/// Povezava, ki jo agent podtakne v klon ali kopijo (datoteka ali starševska mapa), ne prenese vsebine cilja:
+/// ne v kopijo (merge → clone) ne k odjemalcu (syncGet → Sync.read).
+@Test func syncNeverFollowsSymlinksFromClone() throws {
+    let fm = FileManager.default
+    let base = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("synclink-" + UUID().uuidString)
+    defer { try? fm.removeItem(at: base) }
+    let secret = base.appendingPathComponent("outside/secret"), clone = base.appendingPathComponent("clone")
+    try fm.createDirectory(at: secret.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try fm.createDirectory(at: clone, withIntermediateDirectories: true)
+    try Data("secret".utf8).write(to: secret)
+    try fm.createSymbolicLink(at: clone.appendingPathComponent("a.txt"), withDestinationURL: secret)
+    try fm.createSymbolicLink(at: clone.appendingPathComponent("dir"), withDestinationURL: secret.deletingLastPathComponent())
+    for src in [clone.appendingPathComponent("a.txt"), clone.appendingPathComponent("dir/secret")] {
+        let dst = base.appendingPathComponent("copy-" + UUID().uuidString)
+        #expect(!ShareHub.clone(src, to: dst) && !fm.fileExists(atPath: dst.path), "\(src.path)")
+        #expect(Sync.read(src, max: 1 << 20, any: true) == nil, "\(src.path)")
+    }
+    try Data("ok".utf8).write(to: clone.appendingPathComponent("b.txt"))
+    #expect(Sync.read(clone.appendingPathComponent("b.txt"), max: 1 << 20, any: true) == Data("ok".utf8))
+}
+
+/// .gitignore kot povezava ven iz korena ali FIFO: prezrta, brez čakanja.
+@Test func syncIgnoreSkipsLinkedOrSpecialGitignore() throws {
+    let fm = FileManager.default
+    let base = fm.temporaryDirectory.appendingPathComponent("syncgi-" + UUID().uuidString)
+    defer { try? fm.removeItem(at: base) }
+    let root = base.appendingPathComponent("root")
+    try fm.createDirectory(at: root, withIntermediateDirectories: true)
+    try Data("*.txt\n".utf8).write(to: base.appendingPathComponent("outside"))
+    try fm.createSymbolicLink(at: root.appendingPathComponent(".gitignore"), withDestinationURL: base.appendingPathComponent("outside"))
+    #expect(!Sync.Ignore(root: root).ignored("a.txt", isDir: false))
+    try fm.removeItem(at: root.appendingPathComponent(".gitignore"))
+    #expect(mkfifo(root.appendingPathComponent(".gitignore").path, 0o600) == 0)
+    #expect(!Sync.Ignore(root: root).ignored("a.txt", isDir: false))
+    try fm.removeItem(at: root.appendingPathComponent(".gitignore"))
+    try Data("*.txt\n".utf8).write(to: root.appendingPathComponent(".gitignore"))
+    #expect(Sync.Ignore(root: root).ignored("a.txt", isDir: false))
+}
+
+/// Dva agenta v sporu s kopijo: oba ostaneta (f.txt.minigw-agent, f.txt.minigw-agent-2).
+@Test func syncTwoAgentConflictsBothSurvive() async throws {
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent("syncagents-" + UUID().uuidString)
+    let client = base.appendingPathComponent("client"), copy = base.appendingPathComponent("sync/local/x")
+    defer { try? FileManager.default.removeItem(at: base) }
+    func put(_ root: URL, _ p: String, _ s: String) throws { try Data(s.utf8).write(to: root.appendingPathComponent(p)) }
+    func read(_ root: URL, _ p: String) -> String? { (try? Data(contentsOf: root.appendingPathComponent(p))).map { String(decoding: $0, as: UTF8.self) } }
+    try FileManager.default.createDirectory(at: client, withIntermediateDirectories: true)
+    try put(client, "f.txt", "v1")
+    let hub = ShareHub()
+    let key = try #require(await hub.register(session: "p", cwd: client.path, key: nil, copy: copy))
+    let minigw = FakeMinigw(hub, key: key, root: client)
+    let server = minigw.serve()
+    defer { server.cancel() }
+    func mount(_ run: String) async -> URL? { await ShareHub.$run.withValue(run) { await hub.mount(session: "p", cwd: client.path, base: "") } }
+
+    let d1 = try #require(await mount("r1")), d2 = try #require(await mount("r2")), d3 = try #require(await mount("r3"))
+    try put(d1, "f.txt", "one"); try put(d2, "f.txt", "two"); try put(d3, "f.txt", "three")
+    await ShareHub.$run.withValue("r3") { await hub.syncBack(session: "p") }
+    await hub.finish(run: "r3")
+    await hub.finish(run: "r1")                                                   // prekinjena: spor s kopijo
+    await hub.finish(run: "r2")
+    #expect(read(copy, "f.txt") == "three")
+    #expect(read(copy, "f.txt.minigw-agent") == "one" && read(copy, "f.txt.minigw-agent-2") == "two")
+}

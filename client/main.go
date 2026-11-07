@@ -37,6 +37,16 @@ func (c connection) isLocal() bool {
 
 func say(s string) { fmt.Println(s) }
 
+// clean: besedilo routerja brez kontrolnih znakov (razen \n), da ne krmili terminala.
+func clean(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r != '\n' && (r < 0x20 || r >= 0x7f && r <= 0x9f) {
+			return -1
+		}
+		return r
+	}, s)
+}
+
 func fail(s string, code ...int) {
 	fmt.Fprintln(os.Stderr, "minigw: "+s)
 	if len(code) > 0 {
@@ -200,7 +210,7 @@ func main() {
 			saveConnection(c)
 			e, _ := m["error"].(map[string]any)
 			msg, _ := e["message"].(string)
-			fail("router at " + c.URL + " refused this device: " + msg + "\nthen run minigw connect again")
+			fail("router at " + c.URL + " refused this device: " + clean(msg) + "\nthen run minigw connect again")
 		case st == 426:
 			fail("router at " + c.URL + " needs an encrypted connection: copy the token again (it includes the router key)")
 		case st == 0 && c.isLocal():
@@ -395,7 +405,7 @@ func main() {
 		} else {
 			why := "router did not accept the folder"
 			if share.refusal != "" {
-				why += ": " + share.refusal
+				why += ": " + clean(share.refusal)
 			}
 			fmt.Fprintln(os.Stderr, "minigw: "+why+"; Claude CLI models with tools will not see it")
 		}

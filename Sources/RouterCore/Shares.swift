@@ -260,7 +260,9 @@ public actor ShareHub {
         let start = await Task.detached { () -> [String: Sync.Entry]? in
             try? FileManager.default.removeItem(at: clone)  // ostanek prekinjenega zagona
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            guard Self.clone(copy, to: clone) else { return nil }
+            // kanonični poti: clone ne sledi povezavam nikjer v poti
+            guard let src = Sync.real(copy), let to = Sync.real(dir)?.appendingPathComponent(clone.lastPathComponent),
+                  Self.clone(src, to: to) else { return nil }
             return readOnly ? [:] : Sync.scan(clone, previous: base).files
         }.value
         guard let start else { return nil }
@@ -268,8 +270,14 @@ public actor ShareHub {
         return clone
     }
 
+    /// Nikoli ne sledi povezavi (agent jo lahko podtakne po preverjanju poti): ob ELOOP ni kopije. Brez CLONE_NOFOLLOW,
+    /// ki bi povezavo prepisal kot povezavo; CLONE_NOFOLLOW_ANY zavrne tudi zadnji del poti. Brez APFS kopira le
+    /// navadno datoteko ali mapo (povezave v njej ostanejo povezave).
     static func clone(_ src: URL, to dst: URL) -> Bool {
-        clonefile(src.path, dst.path, 0) == 0 || (try? FileManager.default.copyItem(at: src, to: dst)) != nil
+        if clonefile(src.path, dst.path, UInt32(CLONE_NOFOLLOW_ANY)) == 0 { return true }
+        var st = stat()
+        guard errno != ELOOP, lstat(src.path, &st) == 0, st.st_mode & S_IFMT == S_IFREG || st.st_mode & S_IFMT == S_IFDIR else { return false }
+        return (try? FileManager.default.copyItem(at: src, to: dst)) != nil
     }
 
     /// Spremembe agenta v klonu nazaj v kopijo (pod zaklepom), da je naslednji prenos spet le razlika.
@@ -286,6 +294,7 @@ public actor ShareHub {
         let (applied, touched) = await Task.detached { () -> ([String], Set<String>) in
             let fm = FileManager.default
             let ch = Sync.diff(old: start, new: Sync.scan(clone, previous: start).files, root: clone)
+            let (realClone, realCopy) = (Sync.real(clone), Sync.real(copy))  // za clone brez povezav v poti
             func unchanged(_ p: String, _ dst: URL) -> Bool { Sync.entry(dst, path: p, previous: start[p])?.sha256 == start[p]?.sha256 }
             var applied: [String] = []
             for p in ch.deleted {  // pred spremembami: datoteka »a« → mapa »a/…«
@@ -294,16 +303,19 @@ public actor ShareHub {
                 applied.append(p)
             }
             for e in ch.changed {
-                guard let src = Sync.resolve(e.path, root: clone), let dst = Sync.resolve(e.path, root: copy) else { continue }
+                guard Sync.resolve(e.path, root: clone) != nil, let dst = Sync.resolve(e.path, root: copy) else { continue }
                 if let old = Sync.resolve(e.path + ".minigw-conflict", root: copy) { try? fm.removeItem(at: old) }  // ostanek 7e10925
                 let ok = unchanged(e.path, dst)
                 if !ok, acked.contains(e.path) { continue }  // odjemalec jo že ima; kopija ostane drugemu izvajanju
-                guard let target = ok ? dst : Sync.resolve(e.path + ".minigw-agent", root: copy) else { continue }
+                var agent = e.path + ".minigw-agent", n = 1  // spor: prosto ime (-2, -3 …), da drugi agent ne prepiše prvega
+                while !ok, let u = Sync.resolve(agent, root: copy), fm.fileExists(atPath: u.path) { n += 1; agent = e.path + ".minigw-agent-\(n)" }
+                let rel = ok ? e.path : agent
+                guard let target = Sync.resolve(rel, root: copy), let realClone, let realCopy else { continue }
                 // Mapa → datoteka: le prazna mapa (nikoli rekurzivno; preskočene poti v njej ostanejo).
                 var dir: ObjCBool = false
                 if fm.fileExists(atPath: target.path, isDirectory: &dir), dir.boolValue { rmdir(target.path) } else { try? fm.removeItem(at: target) }
                 if (try? fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)) == nil
-                    || !Self.clone(src, to: target) {
+                    || !Self.clone(realClone.appendingPathComponent(e.path), to: realCopy.appendingPathComponent(rel)) {
                     Router.log.error("sync: cannot merge \(e.path, privacy: .public) into the copy")
                 } else if ok { applied.append(e.path) }
             }
@@ -415,9 +427,9 @@ public actor ShareHub {
     /// Datoteka kopije za minigw (le poslane spremembe, nikoli prezrte ali zunaj kopije).
     func syncGet(key: String, path: String, device: String? = nil) -> Data? {
         guard let s = share(key: key, device: device), let copy = s.pulling?.clone ?? s.copy, !s.readOnly, (s.pending[path] ?? nil) != nil,
-              let url = Sync.resolve(path, root: copy) else { return nil }
+              Sync.resolve(path, root: copy) != nil, let root = Sync.real(copy) else { return nil }
         s.lastSeen = Date()
-        return try? Data(contentsOf: url)
+        return Sync.read(root.appendingPathComponent(path), max: Int(Sync.maxFile), any: true)  // agent ne podtakne povezave
     }
 
     /// Ob zagonu aplikacije: priklopi prejšnjega zagona kažejo na skrivnosti, ki jih router ne pozna več → odklopi.

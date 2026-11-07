@@ -81,7 +81,12 @@ final class AppState: ObservableObject {
     init() {
         config.save()  // starejši JSON blob v preferences → berljiva struktura
         ShareHub.cleanupStale()
-        try? FileManager.default.removeItem(at: config.scratch("sync").appendingPathComponent("runs"))  // kloni prejšnjega zagona
+        // Kloni prejšnjega zagona: le imena klonov (<lastnik>-<16 hex>[-ro].<n>), nikoli cela mapa.
+        let runs = config.scratch("sync").appendingPathComponent("runs")
+        for n in (try? FileManager.default.contentsOfDirectory(atPath: runs.path)) ?? []
+        where n.range(of: #"^.+-[0-9a-f]{16}(-ro)?\.[0-9]+$"#, options: .regularExpression) != nil {
+            try? FileManager.default.removeItem(at: runs.appendingPathComponent(n))
+        }
         start()
     }
 

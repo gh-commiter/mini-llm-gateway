@@ -8,6 +8,10 @@ import Security
 let service = "dev.trojar.minigateway.cli"
 let out = FileHandle.standardOutput, err = FileHandle.standardError
 func say(_ s: String) { out.write(Data((s + "\n").utf8)) }
+/// Besedilo routerja brez kontrolnih znakov (razen \n), da ne krmili terminala.
+func clean(_ s: String) -> String {
+    String(String.UnicodeScalarView(s.unicodeScalars.filter { $0 == "\n" || !($0.value < 0x20 || (0x7f...0x9f).contains($0.value)) }))
+}
 func fail(_ s: String, code: Int32 = 1) -> Never { err.write(Data(("minigw: " + s + "\n").utf8)); exit(code) }
 
 // MARK: shranjena povezava (Keychain ukaza; ne vsebuje je nobena datoteka)
@@ -164,7 +168,7 @@ final class ShareClient: @unchecked Sendable {
         }
     }
 
-    private func note(_ s: String) { err.write(Data(("minigw: " + s + "\n").utf8)) }
+    private func note(_ s: String) { err.write(Data(("minigw: " + clean(s) + "\n").utf8)) }
 
     /// Pred agentom: manifest k routerju, nato datoteke, ki jih potrebuje.
     private func push(_ k: String) -> Bool {
@@ -310,7 +314,7 @@ case "connect":
     case 403:  // naprava še ni dovoljena (minigw serve): ključ naprave ostane, da ga router lahko doda
         saveConnection(c)
         let msg = (body?["error"] as? [String: Any])?["message"] as? String ?? ""
-        fail("router at \(c.url) refused this device: \(msg)\nthen run minigw connect again")
+        fail("router at \(c.url) refused this device: \(clean(msg))\nthen run minigw connect again")
     case 426: fail("router at \(c.url) needs an encrypted connection: copy the token again (it includes the router key)")
     case 0: fail(c.isLocal ? "cannot reach \(c.url)" : "cannot reach \(c.url), or the router key does not match (copy the token again)")
     default: fail("router at \(c.url) answered HTTP \(status)")

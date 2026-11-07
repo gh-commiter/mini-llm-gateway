@@ -458,10 +458,8 @@ func (h *shareHub) syncGet(key, path, owner string) ([]byte, bool) {
 	}
 	s.lastSeen = time.Now()
 	h.mu.Unlock()
-	full, ok := syncResolve(path, s.copy)
-	if !ok {
+	if _, ok := syncResolve(path, s.copy); !ok {
 		return nil, false
 	}
-	data, err := os.ReadFile(full)
-	return data, err == nil
+	return readRegular(s.copy, path, maxSyncFile) // agent ne podtakne povezave ven iz kopije
 }
