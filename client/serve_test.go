@@ -155,8 +155,13 @@ func TestServeSyncAgentRoundTrip(t *testing.T) {
 	tmp := t.TempDir()
 	fake := filepath.Join(tmp, "claude")
 	argsFile := filepath.Join(tmp, "args")
+	envFile := filepath.Join(tmp, "env")
+	for _, k := range []string{"GH_TOKEN", "GITHUB_TOKEN", "COPILOT_GITHUB_TOKEN", "SSH_AUTH_SOCK"} { // M1: claude dobi agentEnv
+		t.Setenv(k, "leak")
+	}
 	os.WriteFile(fake, []byte(`#!/bin/sh
 printf '%s\n' "$@" > "`+argsFile+`"
+env > "`+envFile+`"
 cat > /dev/null
 cat src.txt > agent.txt
 echo '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Write","input":{"file_path":"agent.txt"}}]}}'
@@ -187,6 +192,9 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":3}}'
 	args, _ := os.ReadFile(argsFile)
 	if !strings.Contains(string(args), "--setting-sources\n\n") || !strings.Contains(string(args), "--session-id") {
 		t.Fatalf("args: %q", args)
+	}
+	if env, _ := os.ReadFile(envFile); len(env) == 0 || strings.Contains(string(env), "=leak") {
+		t.Fatalf("claude env: %q", env)
 	}
 
 	// Streaming: SSE z message_stop; druga zahteva iste zgodovine nadaljuje sejo (--resume).

@@ -603,11 +603,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	}
 	cmd := exec.CommandContext(r.Context(), exe[0], append(exe[1:], args...)...)
 	cmd.Dir = dir
-	for _, e := range os.Environ() { // sicer bi notranji claude klical nazaj ta router
-		if !strings.HasPrefix(e, "ANTHROPIC_") && !strings.HasPrefix(e, "CLAUDE_CODE_") && !strings.HasPrefix(e, "CLAUDECODE=") {
-			cmd.Env = append(cmd.Env, e)
-		}
-	}
+	cmd.Env = agentEnv(os.Environ()) // brez ANTHROPIC_* (klic nazaj v router), žetonov GitHub/Copilot in agentov ključev (M1)
 	cmd.Stdin = strings.NewReader(prompt)
 	stderr := &tailBuffer{}
 	cmd.Stderr = stderr
