@@ -1391,3 +1391,19 @@ final class FakeMinigw: @unchecked Sendable {
     await hub.finish(run: "r0")
     #expect(await mount("again") != nil)
 }
+
+/// #23: mapa kopije, zamenjana s povezavo ven, se pri pregledu ne izpiše (odprta z O_NOFOLLOW_ANY).
+@Test func syncListDoesNotFollowASwappedFolder() throws {
+    let base = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("p23-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: base) }
+    let root = base.appendingPathComponent("copy"), outside = base.appendingPathComponent("home")
+    try FileManager.default.createDirectory(at: root.appendingPathComponent("src"), withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+    try Data("x".utf8).write(to: root.appendingPathComponent("src/čšž.txt"))
+    try Data("secret".utf8).write(to: outside.appendingPathComponent("private-name.txt"))
+    try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("swapped"), withDestinationURL: outside)
+    #expect(Sync.list(root.appendingPathComponent("src")) == ["čšž.txt"])
+    #expect(Sync.list(root.appendingPathComponent("swapped")) == nil)
+    let (files, skipped) = Sync.scan(root)
+    #expect(!files.keys.contains { $0.contains("private-name") } && !skipped.contains { $0.contains("private-name") })
+}

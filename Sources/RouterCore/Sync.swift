@@ -110,7 +110,8 @@ public enum Sync {
         let ignore = Ignore(root: root, follow: trusted)
         var files: [String: Entry] = [:], skipped: [String] = []
         func walk(_ dir: URL, _ rel: String) {
-            for name in ((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []).sorted() {
+            let names = trusted ? (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) : list(dir)
+            for name in (names ?? []).sorted() {
                 let r = rel.isEmpty ? name : rel + "/" + name, url = dir.appendingPathComponent(name)
                 if normName(name) == ".git" { continue }  // tudi ».GIT«
                 guard let a = try? FileManager.default.attributesOfItem(atPath: url.path) else { continue }  // ne sledi povezavam
@@ -128,6 +129,21 @@ public enum Sync {
         }
         walk(root, "")
         return (files, skipped)
+    }
+
+    /// #23: imena v mapi kopije ali klona, odprte z O_NOFOLLOW_ANY: mapa, ki jo ostanek agenta po razvrstitvi zamenja s
+    /// povezavo (npr. na domačo mapo), se ne odpre, zato se ne izpiše drevo zunaj korena.
+    static func list(_ dir: URL) -> [String]? {
+        let fd = open(dir.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW_ANY | O_CLOEXEC)
+        guard fd >= 0 else { return nil }
+        guard let d = fdopendir(fd) else { close(fd); return nil }
+        defer { closedir(d) }
+        var out: [String] = []
+        while let e = readdir(d) {
+            let name = withUnsafeBytes(of: e.pointee.d_name) { String(decoding: $0.prefix(Int(e.pointee.d_namlen)), as: UTF8.self) }
+            if name != "." && name != ".." { out.append(name) }
+        }
+        return out
     }
 
     /// Ena datoteka; nil, če ne obstaja ali ni navadna datoteka.
