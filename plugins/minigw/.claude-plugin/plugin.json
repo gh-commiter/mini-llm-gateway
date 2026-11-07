@@ -1,6 +1,6 @@
 {
   "name": "minigw",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "description": "Use Mini Gateway models (Codex, Siri AI, Apple Foundation Models and more) from any Claude Code session through the minigw client.",
   "author": {
     "name": "gh-commiter"

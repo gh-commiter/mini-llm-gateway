@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- If you used Codex with writing or `minigw run` in 0.5.15, run `xcrun -k` once to clear the xcrun cache.
+- Agents and `minigw run` can no longer write this Mac's shared temporary and cache folders (`/var/folders/…`), where
+  the xcrun cache tells `/usr/bin/git` and the other developer tools what to run; they get their own temporary folder.
+  The gateway runs git directly, never through the xcrun cache. `minigw run` builds Maven, Swift and Xcode projects as
+  before; a `swift build` or `xcodebuild` by an agent in worktree mode may fail (use `minigw run` or sync mode).
+- `/minigw:connect` and `install.sh` pass the token on stdin, so it never appears in the process list (plugin 0.5.4).
 - One command to install the gateway, compatible with the Claude Code CLI: `/minigw:gw install` (plugin 0.5.3).
   Mac: the app with Homebrew and Open at Login. Windows: the tray at sign-in. Linux: systemd, at boot when linger
   works. `/minigw:gw update` when a session start says a newer gateway is out.
