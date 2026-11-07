@@ -37,6 +37,11 @@ trap 'rm -rf "$TMP"' EXIT
 say "Downloading minigw…"
 curl -fsSL -o "$TMP/minigw.zip" "$BASE/minigw.zip"
 curl -fsSL -o "$TMP/SHA256SUMS" "$BASE/SHA256SUMS"
+curl -fsSL -o "$TMP/SHA256SUMS.sig" "$BASE/SHA256SUMS.sig" || die "no SHA256SUMS.sig in the release"
+# SHA256SUMS je podpisan s ključem Mini Gateway (ključ pripet tu); ssh-keygen je del macOS.
+printf '%s\n' 'minigw-release namespaces="minigw-release" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINt++OHn+HHmR9mmA2UI+B0osuilO2GP0ddEzNp0GTrH' > "$TMP/signers"
+ssh-keygen -Y verify -f "$TMP/signers" -I minigw-release -n minigw-release -s "$TMP/SHA256SUMS.sig" < "$TMP/SHA256SUMS" >/dev/null 2>&1 \
+  || die "SHA256SUMS is not signed by Mini Gateway"
 (cd "$TMP" && grep ' minigw.zip$' SHA256SUMS | shasum -a 256 -c - >/dev/null) || die "checksum mismatch"
 ditto -x -k "$TMP/minigw.zip" "$TMP/out"
 codesign --verify --strict "$TMP/out/minigw" || die "invalid signature"

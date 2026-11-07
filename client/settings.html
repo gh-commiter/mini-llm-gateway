@@ -170,6 +170,13 @@ const S = {
   copilotTokenSaved: ["Token saved; enter a new one to replace it", "Žeton shranjen; vnesi novega za zamenjavo"],
   copilotFooter: ["The claude-copilot models run Copilot CLI as an agent in the synced copy of the client's folder, on Linux under bwrap with a fresh Copilot home for each request. By default it may only read that folder; with writing on it may edit files there. Commands only with “Allow commands” and the token above. On Linux it signs in with the GitHub CLI (gh auth login) or that token; on Windows it uses this user's Copilot sign-in (copilot login) and ~/.copilot.",
     "Modeli claude-copilot poženejo Copilot CLI kot agenta v sinhronizirani kopiji mape odjemalca, na Linuxu pod bwrap s svežo domačo mapo Copilot za vsako zahtevo. Privzeto sme mapo le brati; s pisanjem sme v njej urejati datoteke. Ukazi le z »Dovoli ukaze« in žetonom zgoraj. Na Linuxu se prijavi z GitHub CLI (gh auth login) ali tem žetonom; na Windows uporabi prijavo Copilot tega uporabnika (copilot login) in ~/.copilot."],
+  foundryDesc: ["Microsoft Foundry Local: models on this computer, without the cloud.", "Microsoft Foundry Local: modeli na tem računalniku, brez oblaka."],
+  foundryMissing: ["Foundry Local is not installed. Windows: winget install Microsoft.FoundryLocal; macOS: brew tap microsoft/foundrylocal && brew install foundrylocal. Then download a model, e.g. foundry model download phi-4-mini.",
+    "Foundry Local ni nameščen. Windows: winget install Microsoft.FoundryLocal; macOS: brew tap microsoft/foundrylocal && brew install foundrylocal. Nato prenesi model, npr. foundry model download phi-4-mini."],
+  foundryRunning: ["Running", "Teče"], foundryStopped: ["Found; it starts with the first request", "Najden; zažene se ob prvi zahtevi"],
+  instructions: ["Instructions", "Navodila"], foundryInstallFirst: ["Install Foundry Local first (see above).", "Najprej namesti Foundry Local (glej zgoraj)."], foundryNoModels: ["No downloaded models: foundry model download <model>", "Ni prenesenih modelov: foundry model download <model>"],
+  foundryFooter: ["The claude-foundry models run on this computer with Foundry Local: conversation only, no tools; images only for models that take them. Claude Code's long system prompt is not sent; the instructions above are. Downloaded models appear here (foundry model download …).",
+    "Modeli claude-foundry tečejo na tem računalniku s Foundry Local: le pogovor, brez orodij; slike le za modele, ki jih sprejmejo. Dolga sistemska navodila Claude Code se ne pošljejo, navodila zgoraj pa. Tu so preneseni modeli (foundry model download …)."],
   grokFooter: ["The claude-grok models run “grok -p” as an agent in the synced copy of the client's folder. Grok's sandbox (workspace) lets it write only to that folder. Devices that use Grok can read every file this user can read. Without writing it runs read-only. Sign in once with “grok login”.",
     "Modeli claude-grok poženejo »grok -p« kot agenta v sinhronizirani kopiji mape odjemalca. Sandbox Grok (workspace) dovoli pisanje le v to mapo. Naprave, ki uporabljajo Grok, lahko berejo vsako datoteko, ki jo lahko bere ta uporabnik. Brez pisanja teče samo za branje. Enkrat se prijavi z »grok login«."],
   generalDesc: ["Address, port and access token of the gateway, and its state.", "Naslov, vrata in žeton prehoda ter njegovo stanje."],
@@ -386,6 +393,38 @@ const pages = {
   codex: () => agentPane("codex"),
   grok: () => agentPane("grok"),
   copilot: () => copilotPane(),
+  async foundry() {
+    const [f, m] = await Promise.all([api("GET", "/foundry"), api("GET", "/foundry/models").catch(e => ({models: [], error: e.message}))]);
+    const n1 = note(), n2 = note(t("auto")), n3 = note(t("foundryFooter"));
+    const patch = body => api("PATCH", "/foundry", body);
+    const path = el("input", {type: "text", value: f.path, placeholder: f.exe || "foundry"});
+    autosave(path, n2, async v => { const r = await patch({path: v}); show("foundry"); return r; });
+    const instr = el("textarea", {rows: 3, value: f.instructions});
+    autosave(instr, n2, v => patch({instructions: v}));
+    const status = el("span", {class: "sub"}, el("span", {class: "dot" + (f.running ? " ok" : "")}),
+      !f.found ? t("foundryMissing") : f.running ? t("foundryRunning") : (f.error || t("foundryStopped")));
+    const models = m.models, all = models.map(x => x.name);
+    let enabled = f.models === null ? null : [...f.models];
+    const setModel = (name, on) => {
+      let list = enabled === null ? [...all] : enabled.filter(x => x !== name);
+      if (on) list.push(name);
+      enabled = list.length === all.length && all.every(x => list.includes(x)) ? null : list;
+      return patch({models: enabled});
+    };
+    const list = group(models.length ? models.map(x => row(labelSub(x.name, x.vision ? "text · images" : "text"),
+        toggle(x.enabled, (v, i) => save(n1, async () => { try { await setModel(x.name, v); } catch (e) { i.checked = !v; throw e; } }))))
+      : [row(el("span", {class: "label sub", textContent: !f.found ? t("foundryInstallFirst") : (m.error || t("foundryNoModels"))}))]);
+    const bulk = on => save(n1, async () => { await patch({models: on ? null : []}); show("foundry"); });
+    return [
+      card(...ICON.foundry, "Foundry Local", t("foundryDesc")),
+      group(row(t("enabled"), toggle(f.enabled, v => save(n2, async () => { await patch({enabled: v}); nav(); }))),
+        row(labelSub(t("path")), path)),
+      el("div", {class: "note"}, status),
+      el("h3", {}, el("span", {textContent: t("models")}), buttons(button(t("enableAll"), () => bulk(true)), button(t("disableAll"), () => bulk(false)))),
+      list, n1,
+      section(t("instructions")), group(row(instr)), n2, n3,
+    ];
+  },
   async general() {
     const [st, g, d] = await Promise.all([api("GET", "/status"), api("GET", "/general"), api("GET", "/devices")]);
     const win = st.os === "windows";
@@ -617,7 +656,7 @@ const pages = {
 
 let current = "general", currentArg = "", gateways = [];
 // Ikone stranske vrstice (kot na Macu: barvna ploščica z znakom).
-const ICON = {general: ["#8e8e93", "⚙"], devices: ["#007aff", "⌘"], claude: ["#b8743c", ">_"], codex: ["#30b0c7", "</>"], grok: ["#5856d6", "✦"], copilot: ["#6e7781", "◎"]};
+const ICON = {general: ["#8e8e93", "⚙"], devices: ["#007aff", "⌘"], claude: ["#b8743c", ">_"], codex: ["#30b0c7", "</>"], grok: ["#5856d6", "✦"], copilot: ["#6e7781", "◎"], foundry: ["#0f6cbd", "◈"]};
 const gwIcon = g => /openrouter\.ai/.test(g.baseURL) ? ["#af52de", "◈"] : ["#007aff", "▤"];
 let search = "";
 const PRESETS = {litellm: ["LiteLLM", "http://localhost:4000", true], openrouter: ["OpenRouter", "https://openrouter.ai/api", false], other: [null, "https://", false]};
@@ -634,6 +673,7 @@ async function nav() {
     ...(pages.codex ? [["codex", "Codex CLI", ICON.codex]] : []),
     ...(pages.grok ? [["grok", "Grok CLI", ICON.grok]] : []),
     ["copilot", "Copilot CLI", ICON.copilot],
+    ["foundry", "Foundry Local", ICON.foundry],
     ["devices", t("devices"), ICON.devices],
   ].filter(x => !search || x[1].toLowerCase().includes(search.toLowerCase()));
   const find = el("input", {type: "text", class: "left search", placeholder: t("search"), value: search});

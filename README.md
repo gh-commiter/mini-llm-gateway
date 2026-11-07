@@ -58,6 +58,7 @@ and the agent works on your files, while they stay on the client.
 |---|---|---|
 | `claude-siri-ai` | Siri AI app (macOS 27) | Driven through Accessibility, in the background. Conversation only, no tools. Keeps a real Siri thread per Claude Code conversation. **Privacy:** Siri answers with the personal context of the gateway Mac's user (notes, documents), so other Macs get it only when you allow the device (Settings → Siri AI → Devices; minigw 0.4.4 or newer proves its device key over the encrypted connection). This Mac always has it. It cannot read folders itself: files you mention (`@CLAUDE.md`, or names like “CLAUDE.md”, “kb” that exist in the session folder) are found by the gateway and added to the question as text (up to 16 KB; names extracted on-device with Apple Foundation Models). Images and PDFs (up to 4) are attached in the Siri app itself, so Siri reads them. |
 | `claude-apple-fm` | Apple Foundation Models | On-device, streaming, ~8K context (history trimmed automatically). No tools. |
+| `claude-foundry-<model>` | [Foundry Local](https://github.com/microsoft/Foundry-Local) (Windows, Linux, Mac) | On-device models of Microsoft Foundry Local, off by default (Settings → Foundry Local). Conversation only, streaming; images for models that take them. The gateway finds the local server (`foundry server status`), starts it when needed and loads the model. |
 | `opus`, `sonnet`, `haiku`, `fable` | `claude -p` | Runs your local Claude Code as an agent in the session's folder; sessions resume with `--resume`. Listed in `/model` as `claude-cli-*`; `claude-chat-*` = no tools. Tools: read-only by default; **Allow local tools** (Settings → Claude CLI) gives every Claude Code tool on the gateway Mac (commands, builds), with a table to exclude single tools. Files stay in the session folder and the allowed folders: file tools are refused outside them, and commands run in Claude Code's sandbox (no reads of the home folder, writes only in these folders, network allowed). |
 | `claude-codex`, `claude-codex-<model>` | `codex exec` (OpenAI Codex CLI) | Off by default (Settings → Codex CLI). One entry per enabled Codex model of your account (model table, allowed folders and sandbox switches in Settings → Codex CLI). Runs Codex as an agent in the session's folder, like `claude -p`. Its sandbox writes only to that folder and the allowed folders. Within a conversation Codex continues its own thread (`codex exec resume`), also after `minigw -c` or `--resume`. |
 | `claude-grok`, `claude-grok-<model>` | `grok -p` (xAI Grok Build CLI) | Off by default (Settings → Grok CLI). Agent in the session's folder; Grok's kernel sandbox (`workspace`) limits writes to that folder, or `read-only`. Within a conversation Grok continues its own session (`-r`). |
@@ -192,13 +193,20 @@ in [Releases](../../releases):
 | Windows x64 / ARM64 | `minigw-windows-amd64.exe` / `minigw-windows-arm64.exe` |
 | Linux x64 / ARM64 | `minigw-linux-amd64` / `minigw-linux-arm64` (static, any distribution) |
 
-Check it against `SHA256SUMS`, rename it to `minigw` (`minigw.exe` on Windows) and put it in your `PATH`. Linux:
+Check that `SHA256SUMS` is signed by Mini Gateway and the file matches it, rename it to `minigw` (`minigw.exe` on
+Windows) and put it in your `PATH`. Linux:
 
 ```sh
-curl -fsSLo minigw https://github.com/gh-commiter/mini-llm-gateway/releases/latest/download/minigw-linux-amd64
-curl -fsSL https://github.com/gh-commiter/mini-llm-gateway/releases/latest/download/SHA256SUMS | grep ' minigw-linux-amd64$' | sed 's/minigw-linux-amd64$/minigw/' | sha256sum -c -
-chmod +x minigw && sudo mv minigw /usr/local/bin/
+R=https://github.com/gh-commiter/mini-llm-gateway/releases/latest/download
+curl -fsSLO $R/minigw-linux-amd64 -O $R/SHA256SUMS -O $R/SHA256SUMS.sig
+echo 'minigw-release namespaces="minigw-release" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINt++OHn+HHmR9mmA2UI+B0osuilO2GP0ddEzNp0GTrH' > signers
+ssh-keygen -Y verify -f signers -I minigw-release -n minigw-release -s SHA256SUMS.sig < SHA256SUMS
+grep ' minigw-linux-amd64$' SHA256SUMS | sha256sum -c -
+mv minigw-linux-amd64 minigw && chmod +x minigw && sudo mv minigw /usr/local/bin/
 ```
+
+The plugin, `install.sh` and `minigw serve install` check this signature themselves: `SHA256SUMS` is signed with a
+key that is not on GitHub, so a changed release is refused.
 
 Windows (PowerShell; compare the hash with `SHA256SUMS`):
 
@@ -316,11 +324,22 @@ builds then work on the gateway's local disk.
 - **Never sent, never copied back:**
   - files matched by `.gitignore` or the built-in list (`.git`, `target/`, `.build/`, `node_modules/`, `build/`,
     `dist/`, `DerivedData/` …);
-  - files the agent puts into `.git`, `.claude/settings*.json`, `.vscode/tasks.json` or `.envrc`.
+  - files the agent puts into `.git`, `.claude/settings*.json`, `.vscode/tasks.json` or `.envrc`, also through a link
+    in your folder (for example `hooks → .git/hooks`): the check uses the real path.
+- **The list above is defence in depth, not a sandbox for your folder:** an agent that may write can still add code
+  that runs on your computer later, for example in `.husky/`, `.githooks/`, `package.json` scripts, a `Makefile` or
+  `.mcp.json`. Review an agent's changes before you run builds or hooks, or share the folder read-only.
 - **Conflicts:** if you changed a file the agent also changed, yours stays and the agent's version is saved next to it
   as `<name>.minigw-conflict`.
 - **Read-only:** with `--minigw-ro` nothing comes back.
 - **The gateway copy is kept between requests,** so the next sync and the next build are incremental.
+  A copy that no session used for 14 days is deleted. A folder with more than 100 000 files or 8 GB is refused
+  (add build output and large data to `.gitignore`). Copies of all devices are in the gateway's Scratch folder: agents
+  that can read every file of the gateway's user (Codex and Grok on the Mac, any agent on Windows) can read them
+  too. Keep Scratch on APFS (or NTFS, ext4): exFAT ignores the folder's private permissions.
+- **Names:** files whose names differ only in upper and lower case (`A.txt` and `a.txt`) are not synced, with a note.
+  Accented names travel in NFC, as Windows and Linux write them; the Mac finds a file under either form. A Linux
+  folder that holds the decomposed (NFD) form of a name may get a second, NFC copy of that file back.
 - **Agents in the same folder run one after another.**
 
 **Worktree: a git repository, results as branches.** `minigw --minigw-work=worktree …` (or `MINIGW_WORK=worktree`) sends
@@ -440,6 +459,9 @@ item (the admin secret); `minigw` talks to the app only after the app proves its
   **Allow unencrypted connections from other Macs** (for other clients, on a trusted network).
 - With a remote gateway, `minigw` gives the gateway Mac read and write access to the current folder while it runs
   (nothing outside it). Use it only with a gateway Mac you trust.
+- The gateway Mac mounts a shared folder with macOS's own WebDAV client. The mount URL contains a secret that local
+  processes can see (`mount`, `ps`), so the gateway serves a mount only to the system `webdavfs_agent` process that
+  its own mount started: an agent or another local user with the URL is refused.
 - The Siri provider uses Accessibility UI automation of the Siri AI app. It only touches that app, but
   Accessibility is a powerful permission.
 

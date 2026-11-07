@@ -694,6 +694,24 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		}
 		return 200, s.claudeInfo()
 
+	case "GET foundry", "PATCH foundry":
+		return s.foundryAPI(method, body)
+	case "GET foundry/{}":
+		if arg != "models" {
+			return fail(404, "Not found: "+method+" "+uri)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		models, err := s.foundryModels(ctx)
+		if err != nil {
+			return fail(503, err.Error())
+		}
+		fc := s.conf().Foundry
+		out := []map[string]any{}
+		for _, m := range models {
+			out = append(out, map[string]any{"name": m.Name, "vision": m.Vision, "enabled": fc.modelEnabled(m.Name)})
+		}
+		return 200, map[string]any{"models": out}
 	case "GET general":
 		return 200, s.apiGeneral(false)
 	case "PATCH general":
@@ -1028,4 +1046,69 @@ func (c *gwCatalog) ready(name string) bool {
 	defer c.mu.Unlock()
 	e := c.m[name]
 	return e != nil && e.ok
+}
+
+// foundryAPI: /foundry (Foundry Local): enabled, path, found, running, instructions, models (null = vsi).
+func (s *server) foundryAPI(method string, body []byte) (int, any) {
+	info := func() map[string]any {
+		fc := s.conf().Foundry
+		exe := resolveFoundry(fc.Executable)
+		s.foundry.mu.Lock()
+		running, lastErr := s.foundry.base != "", s.foundry.lastError
+		s.foundry.mu.Unlock()
+		return map[string]any{"enabled": fc.Enabled, "path": fc.Executable, "found": exe != "", "exe": exe, "running": running,
+			"error": lastErr, "instructions": fc.instructions(), "models": fc.Models}
+	}
+	if method == "GET" {
+		return 200, info()
+	}
+	var b struct {
+		Enabled      *bool           `json:"enabled"`
+		Path         *string         `json:"path"`
+		Instructions *string         `json:"instructions"`
+		Models       json.RawMessage `json:"models"`
+	}
+	if err := decodeStrict(body, &b); err != nil {
+		return 400, errorBody(400, err.Error())
+	}
+	var models []string
+	setModels := len(b.Models) > 0
+	if setModels && string(b.Models) != "null" {
+		if json.Unmarshal(b.Models, &models) != nil || models == nil {
+			return 400, errorBody(400, "models must be null or a list of model names")
+		}
+		for _, m := range models {
+			if !foundryValidModel(m) {
+				return 400, errorBody(400, "not a model name: "+m)
+			}
+		}
+	}
+	if b.Path != nil && *b.Path != "" && resolveFoundry(*b.Path) == "" {
+		return 400, errorBody(400, "path: no foundry program at "+*b.Path)
+	}
+	if b.Instructions != nil && len(*b.Instructions) > 8000 {
+		return 400, errorBody(400, "instructions: up to 8000 characters")
+	}
+	err := s.update(func(c *serveConfig) error {
+		if b.Enabled != nil {
+			c.Foundry.Enabled = *b.Enabled
+		}
+		if b.Path != nil {
+			c.Foundry.Executable = *b.Path
+		}
+		if b.Instructions != nil {
+			c.Foundry.Instructions = *b.Instructions
+		}
+		if setModels {
+			c.Foundry.Models = models
+		}
+		return nil
+	})
+	if err != nil {
+		return 400, errorBody(400, err.Error())
+	}
+	s.foundry.mu.Lock()
+	s.foundry.base, s.foundry.models = "", nil // nova pot ali vklop: znova poišči
+	s.foundry.mu.Unlock()
+	return 200, info()
 }

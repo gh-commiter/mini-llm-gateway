@@ -28,3 +28,8 @@
 - New names: Mini Gateway is the **gateway**; OpenRouter, LiteLLM and other upstreams are **providers**
   (Settings → Providers). `minigw gw …` and `minigw gw provider …` replace `minigw router …` and `router gateway …`,
   which still work in this release; the admin API has `/providers` (`/gateways` still works).
+- Foundry Local (Microsoft) as an on-device provider on Windows, Linux and the Mac: `claude-foundry-<model>`, off by
+  default (Settings → Foundry Local).
+- Release files are signed: `SHA256SUMS.sig` (ssh-keygen, key not on GitHub). The plugin, `install.sh` and
+  `minigw serve install` refuse a release whose SHA256SUMS is not signed by Mini Gateway; a first install without
+  `ssh-keygen` stops with a message.

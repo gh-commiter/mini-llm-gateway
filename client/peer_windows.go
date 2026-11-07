@@ -157,3 +157,56 @@ func tcpOwnerPID(ours, peer *net.TCPAddr) (uint32, error) {
 	}
 	return 0, errors.New("cannot find the client's connection in the TCP table")
 }
+
+// listenerIsOurs (F2): vsak proces, ki posluša na vratih, ima isti uporabniški SID kot ta proces.
+func listenerIsOurs(port int) bool {
+	self, err := processSID(uint32(os.Getpid()))
+	if err != nil {
+		return false
+	}
+	var pids []uint32
+	for _, v6 := range []bool{false, true} {
+		af := uintptr(2)
+		if v6 {
+			af = 23
+		}
+		size := uint32(64 << 10)
+		for range 5 {
+			buf := make([]byte, size)
+			r, _, _ := pGetTCPTable.Call(uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&size)), 0, af, 5, 0)
+			if r == 122 {
+				size += 4 << 10
+				continue
+			}
+			if r == 0 {
+				pids = append(pids, tcpListenPIDs(buf, v6, port)...)
+			}
+			break
+		}
+	}
+	for _, pid := range pids {
+		if sid, err := processSID(pid); err != nil || sid != self {
+			return false
+		}
+	}
+	return len(pids) > 0
+}
+
+// processSID: uporabniški SID procesa (žeton, TokenUser).
+func processSID(pid uint32) (string, error) {
+	h, err := syscall.OpenProcess(0x1000 /* PROCESS_QUERY_LIMITED_INFORMATION */, false, pid)
+	if err != nil {
+		return "", err
+	}
+	defer syscall.CloseHandle(h)
+	var tok syscall.Token
+	if err := syscall.OpenProcessToken(h, syscall.TOKEN_QUERY, &tok); err != nil {
+		return "", err
+	}
+	defer tok.Close()
+	u, err := tok.GetTokenUser()
+	if err != nil {
+		return "", err
+	}
+	return u.User.Sid.String()
+}

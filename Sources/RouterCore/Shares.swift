@@ -33,6 +33,7 @@ public actor ShareHub {
         var lastSeen = Date()
         var mountPoint: URL?
         var mounting: Task<URL?, Never>?
+        var davPID: pid_t?  // webdavfs_agent, ki je priklopil to mapo (#7): le on sme v /dav/<skrivnost>
         var props: [String: (DAVResponse, Date)] = [:]  // predpomnilnik PROPFIND (kot dir_refresh pri davfs2)
         var writeCount = 0                                // pisanje med čakajočim PROPFIND: odgovora ne shrani
         let copy: URL?                                    // sync: kopija na routerju namesto priklopa
@@ -83,6 +84,42 @@ public actor ShareHub {
     /// Agent izvajanja (claude, codex, grok): ime veje worktree.
     @TaskLocal public static var agent: String?
     private var runs: [String: Run] = [:]
+    static let maxRunsPerCopy = 4
+
+    /// #1, #9: kopije (scratch/sync/<naprava>/<mapa>), ki jih 14 dni ni uporabila nobena seja, se izbrišejo; oznaka
+    /// rabe je datoteka <kopija>.used ob kopiji (v kopiji bi se sinhronizirala nazaj). Največ enkrat na dan.
+    static let copyLifetime: TimeInterval = 14 * 86400
+    private var lastExpire = Date.distantPast
+
+    static func touchUsed(_ copy: URL) {
+        let marker = copy.appendingPathExtension("used")
+        if !FileManager.default.createFile(atPath: marker.path, contents: nil) { return }
+    }
+
+    func expireCopies(_ root: URL, now: Date = Date(), force: Bool = false) async {
+        guard force || now.timeIntervalSince(lastExpire) > 86400 else { return }
+        lastExpire = now
+        let active = Set(bySession.values.compactMap { $0.copy?.standardizedFileURL.path })
+        await Task.detached { Self.removeOld(root, active: active, now: now) }.value
+    }
+
+    static func removeOld(_ root: URL, active: Set<String>, now: Date) {
+        let fm = FileManager.default
+        for owner in (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [] where owner.lastPathComponent != "runs" {
+            for copy in (try? fm.contentsOfDirectory(at: owner, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey])) ?? [] {
+                guard copy.pathExtension != "used", (try? copy.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true,
+                      (try? copy.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true,
+                      !active.contains(copy.standardizedFileURL.path) else { continue }
+                let marker = copy.appendingPathExtension("used")
+                let used = ((try? fm.attributesOfItem(atPath: marker.path))?[.modificationDate] as? Date)
+                    ?? ((try? fm.attributesOfItem(atPath: copy.path))?[.modificationDate] as? Date) ?? now
+                if now.timeIntervalSince(used) > copyLifetime {
+                    try? fm.removeItem(at: copy)
+                    try? fm.removeItem(at: marker)
+                }
+            }
+        }
+    }
     var slots: [String: Slot] = [:]      // worktree: »<seja>|<agent>|<n>« → klon
     var runSlot: [String: String] = [:]  // worktree: izvajanje → mesto
 
@@ -180,8 +217,25 @@ public actor ShareHub {
 
     // MARK: mount_webdav (lokalno)
 
-    func dav(secret: String, method: String, path: String, headers: [String: String], body: Data) async -> DAVResponse? {
+    /// Proces, ki sme v /dav te mape (nil = zavrni): že izbrani webdavfs_agent, ali med priklopom routerja prvi sistemski
+    /// webdavfs_agent na povezavi. Agent, ki sam pokliče mount_webdav s prebrano skrivnostjo, dobi drug proces.
+    static func davClaim(_ claimed: pid_t?, mounting: Bool, find: () -> pid_t?, owns: (pid_t) -> Bool, isAgent: (pid_t) -> Bool) -> pid_t? {
+        if let claimed { return owns(claimed) ? claimed : nil }
+        guard mounting, let pid = find(), isAgent(pid) else { return nil }
+        return pid
+    }
+
+    /// Kdo kliče /dav: `find` vrne edini proces na povezavi (počasno: vsi procesi), `owns(pid)` hitro preveri znanega.
+    enum DAVPeer { case unchecked, process(find: @Sendable () -> pid_t?, owns: @Sendable (pid_t) -> Bool) }
+
+    func dav(secret: String, method: String, path: String, headers: [String: String], body: Data, peer: DAVPeer = .unchecked) async -> DAVResponse? {
         guard let s = bySession.values.first(where: { $0.secret == secret }) else { return nil }
+        // #7: skrivnost je v URL priklopa (mount, ps): agent ali drug uporabnik bi z njo dosegel tujo mapo. Mapo sme brati
+        // le sistemski webdavfs_agent, ki ga je med priklopom zagnal router (prvi med priklopom), nato samo on.
+        if case .process(let find, let owns) = peer {
+            guard let pid = Self.davClaim(s.davPID, mounting: s.mounting != nil, find: find, owns: owns, isAgent: PeerProcess.isWebDAVAgent) else { return nil }
+            s.davPID = pid
+        }
         // Vsak PROPFIND je pot router → odjemalec → nazaj; agenti (rg, find) jih pošljejo na tisoče.
         // ponytail: 10 s TTL in praznjenje ob pisanju prek priklopa; spremembe mimo priklopa vidne z do 10 s zamude.
         let cacheKey = method == "PROPFIND" ? [path, headers["depth"] ?? "", String(body.hashValue)].joined(separator: "|") : nil
@@ -243,6 +297,7 @@ public actor ShareHub {
         }
         if let mp = s.mountPoint, Self.isMounted(mp) { return mp }
         if let t = s.mounting { return await t.value }
+        s.davPID = nil  // nov priklop: nov webdavfs_agent
         let mp = Self.mountsDir.appendingPathComponent(s.dir, isDirectory: true)
         let url = "\(base)/dav/\(s.secret)/", name = URL(fileURLWithPath: s.cwd).lastPathComponent
         let options = s.readOnly ? ["-o", "rdonly"] : []
@@ -282,6 +337,11 @@ public actor ShareHub {
     /// Klon kopije za izvajanje `id` (APFS: takoj, brez dodatnega prostora) v scratch/sync/runs; kliče se pod zaklepom.
     /// Mesto ».<n>« je najnižje prosto: zaporedna izvajanja imajo isto pot (nadaljevanje seje Claude je vezano na mapo).
     private func clone(_ s: Share, _ copy: URL, _ id: String) async -> URL? {
+        // #22: največ maxRunsPerCopy hkratnih izvajanj na kopijo: brez clonefile (zunanji disk) je vsak klon cela kopija.
+        guard runs.values.filter({ $0.copy == copy }).count < Self.maxRunsPerCopy else {
+            Router.log.error("sync: \(Self.maxRunsPerCopy) agent runs already work in this folder; refusing another")
+            return nil
+        }
         let dir = copy.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("runs", isDirectory: true)
         let name = copy.deletingLastPathComponent().lastPathComponent + "-" + copy.lastPathComponent
         var n = 0
@@ -407,7 +467,9 @@ public actor ShareHub {
     /// ponytail: briše le neprezrte datoteke po pravilih kopije; prezrte (izhod gradnje) ostanejo, tudi če jih odjemalec ne prezre več.
     func syncManifest(key: String, _ files: [Sync.Entry], execKnown: Bool = true, device: String? = nil) async -> (need: [String], kept: [String])? {
         guard let s = share(key: key, device: device), let copy = s.copy else { return nil }
+        let files = files.map { e -> Sync.Entry in var e = e; e.path = e.path.precomposedStringWithCanonicalMapping; return e }  // #3: NFC (starejši minigw na Macu: NFD)
         s.lastSeen = Date()
+        Self.touchUsed(copy)
         s.execKnown = execKnown
         try? FileManager.default.createDirectory(at: copy, withIntermediateDirectories: true)
         let prev = s.state ?? [:]
@@ -432,6 +494,7 @@ public actor ShareHub {
 
     /// Datoteka iz manifesta; vsebina se mora ujemati z njim. Status HTTP.
     func syncPut(key: String, path: String, data: Data, device: String? = nil) -> Int {
+        let path = path.precomposedStringWithCanonicalMapping  // #3
         guard let s = share(key: key, device: device), let copy = s.copy else { return 404 }
         s.lastSeen = Date()
         guard let e = s.incoming[path], let url = Sync.resolve(path, root: copy) else { return 403 }
@@ -461,6 +524,7 @@ public actor ShareHub {
 
     /// minigw potrdi poti, ki jih je obdelal (zapisal, izbrisal ali shranil kot spor).
     func syncAck(key: String, _ paths: [String], device: String? = nil) -> Bool {
+        let paths = paths.map(\.precomposedStringWithCanonicalMapping)  // #3
         guard let s = share(key: key, device: device), s.state != nil else { return false }
         for p in paths {
             guard let e = s.pending.removeValue(forKey: p) else { continue }
@@ -472,6 +536,7 @@ public actor ShareHub {
 
     /// Datoteka kopije za minigw (le poslane spremembe, nikoli prezrte ali zunaj kopije).
     func syncGet(key: String, path: String, device: String? = nil) -> Data? {
+        let path = path.precomposedStringWithCanonicalMapping  // #3
         guard let s = share(key: key, device: device), let copy = s.pulling?.clone ?? s.copy, !s.readOnly, (s.pending[path] ?? nil) != nil,
               Sync.resolve(path, root: copy) != nil, let root = Sync.real(copy) else { return nil }
         s.lastSeen = Date()

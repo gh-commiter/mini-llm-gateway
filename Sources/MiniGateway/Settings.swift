@@ -26,9 +26,11 @@ struct SettingsView: View {
     @State private var codexModels: [Codex.Model] = []
     @State private var askCopilotCommands = false
     @State private var grokModels: [String] = []
+    @State private var foundryModels: [Foundry.Model] = []
+    @State private var foundryStatus = ""
 
     enum Pane: Hashable {
-        case general, provider(String), siri, appleFM, claudeCLI, codex, copilot, grok
+        case general, provider(String), siri, appleFM, foundry, claudeCLI, codex, copilot, grok
     }
 
     private struct Item: Identifiable {
@@ -53,6 +55,8 @@ struct SettingsView: View {
                     about: String(localized: "The Siri AI app as a model, driven in the background.")),
                Item(pane: .appleFM, title: "Apple Foundation Models", symbol: "apple.intelligence", color: .orange,
                     about: String(localized: "Apple's on-device model: private, without a network.")),
+               Item(pane: .foundry, title: "Foundry Local", symbol: "cpu", color: .blue,
+                    about: String(localized: "Microsoft Foundry Local: models on this Mac, without the cloud.")),
                Item(pane: .claudeCLI, title: "Claude CLI", symbol: "terminal.fill", color: .brown,
                     about: String(localized: "Your local Claude Code as an agent model, with tools in the allowed folders.")),
                Item(pane: .codex, title: "Codex CLI", symbol: "chevron.left.forwardslash.chevron.right", color: .teal,
@@ -248,6 +252,7 @@ struct SettingsView: View {
         case .codex: codex
         case .copilot: copilot
         case .grok: grok
+        case .foundry: foundry
         }
     }
 
@@ -376,6 +381,65 @@ struct SettingsView: View {
             Section("Instructions") {
                 TextEditor(text: $draft.appleFM.instructions)
                     .frame(minHeight: 60)
+            }
+        }
+    }
+
+    private var foundry: some View {
+        Form {
+            header
+            Section {
+                Toggle("Enabled", isOn: $draft.foundry.enabled)
+                LabeledContent("Executable (empty = auto-detect)") {
+                    TextField("", text: $draft.foundry.executable, prompt: Text(verbatim: Foundry.executable("") ?? "foundry"))
+                        .labelsHidden()
+                }
+            } footer: {
+                Text(verbatim: foundryStatus).font(.caption).foregroundStyle(.secondary)
+            }
+            Section {
+                ForEach(foundryModels, id: \.name) { m in
+                    Toggle(isOn: Binding(get: { draft.foundry.isModelEnabled(m.name) },
+                                         set: { draft.foundry.setModel(m.name, $0, all: foundryModels.map(\.name)) })) {
+                        Text(verbatim: m.name)
+                        Text(m.vision ? "Text and images" : "Text").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            } header: {
+                HStack {
+                    Text("Models")
+                    Spacer()
+                    EqualWidthHStack {
+                        WideButton("Enable All") { draft.foundry.enabledModels = nil }
+                        WideButton("Disable All") { draft.foundry.enabledModels = [] }
+                    }
+                    .disabled(foundryModels.isEmpty)
+                }
+                .controlSize(.small)
+            }
+            .task(id: draft.foundry.executable) {
+                let exe = Foundry.executable(draft.foundry.executable)
+                guard exe != nil else {
+                    foundryModels = []
+                    foundryStatus = String(localized: "Foundry Local is not installed: brew tap microsoft/foundrylocal && brew install foundrylocal; then download a model, e.g. foundry model download phi-4-mini.")
+                    return
+                }
+                do {
+                    foundryModels = try await Router.foundry.list(exe)
+                    foundryStatus = foundryModels.isEmpty ? String(localized: "No downloaded models: foundry model download <model>") : ""
+                } catch {
+                    foundryModels = []
+                    foundryStatus = (error as? Foundry.RequestError)?.message ?? error.localizedDescription
+                }
+            }
+            Section {
+                TextEditor(text: $draft.foundry.instructions)
+                    .frame(minHeight: 60)
+            } header: {
+                Text("Instructions")
+            } footer: {
+                Text("The claude-foundry models run on this Mac with Foundry Local: conversation only, no tools; images only for models that take them. Claude Code's long system prompt is not sent; these instructions are.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
     }

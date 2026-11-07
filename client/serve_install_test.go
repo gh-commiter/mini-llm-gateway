@@ -1,10 +1,17 @@
 package main
 
 import (
+	"bytes"
+	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/sha256"
+	"crypto/sha512"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -16,6 +23,36 @@ import (
 	"testing"
 )
 
+// sshPublicLine, sshSign: ključ in podpis SSHSIG, kot ju naredi ssh-keygen (-Y sign, sha512), za teste.
+func sshPublicLine(pub ed25519.PublicKey) string {
+	var b bytes.Buffer
+	putSSHString(&b, []byte("ssh-ed25519"))
+	putSSHString(&b, pub)
+	return "ssh-ed25519 " + base64.StdEncoding.EncodeToString(b.Bytes())
+}
+
+func sshSign(priv ed25519.PrivateKey, msg []byte, ns string) []byte {
+	var pubBlob, sigBlob, signed, out bytes.Buffer
+	putSSHString(&pubBlob, []byte("ssh-ed25519"))
+	putSSHString(&pubBlob, priv.Public().(ed25519.PublicKey))
+	h := sha512.Sum512(msg)
+	signed.WriteString("SSHSIG")
+	putSSHString(&signed, []byte(ns))
+	putSSHString(&signed, nil)
+	putSSHString(&signed, []byte("sha512"))
+	putSSHString(&signed, h[:])
+	putSSHString(&sigBlob, []byte("ssh-ed25519"))
+	putSSHString(&sigBlob, ed25519.Sign(priv, signed.Bytes()))
+	out.WriteString("SSHSIG")
+	binary.Write(&out, binary.BigEndian, uint32(1))
+	putSSHString(&out, pubBlob.Bytes())
+	putSSHString(&out, []byte(ns))
+	putSSHString(&out, nil)
+	putSSHString(&out, []byte("sha512"))
+	putSSHString(&out, sigBlob.Bytes())
+	return []byte("-----BEGIN SSH SIGNATURE-----\n" + base64.StdEncoding.EncodeToString(out.Bytes()) + "\n-----END SSH SIGNATURE-----\n")
+}
+
 // fakeRelease: izdaja na GitHubu (TLS) s sredstvom pladnja in SHA256SUMS; sum "" = prava vsota.
 func fakeRelease(t *testing.T, sum string, redirectTo string) []byte {
 	t.Helper()
@@ -25,10 +62,18 @@ func fakeRelease(t *testing.T, sum string, redirectTo string) []byte {
 		h := sha256.Sum256(body)
 		sum = hex.EncodeToString(h[:])
 	}
+	sums := fmt.Sprintf("%s  minigw-windows-amd64.exe\n%s  %s\n", strings.Repeat("0", 64), sum, asset)
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader) // #8: podpis s testnim ključem, pripetim samo v testu
+	oldKeys := releaseKeys
+	t.Cleanup(func() { releaseKeys = oldKeys })
+	releaseKeys = []string{sshPublicLine(pub)}
+	sig := sshSign(priv, []byte(sums), releaseNamespace)
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case strings.HasSuffix(r.URL.Path, "/SHA256SUMS.sig"):
+			w.Write(sig)
 		case strings.HasSuffix(r.URL.Path, "/SHA256SUMS"):
-			fmt.Fprintf(w, "%s  minigw-windows-amd64.exe\n%s  %s\n", strings.Repeat("0", 64), sum, asset)
+			io.WriteString(w, sums)
 		case redirectTo != "":
 			http.Redirect(w, r, redirectTo, http.StatusFound)
 		case strings.HasSuffix(r.URL.Path, "/"+asset):
@@ -237,5 +282,19 @@ func TestTrayStartupOnlyRunValue(t *testing.T) {
 	}
 	if trayStartup(false, cfg); reg[runValueName] != "" {
 		t.Fatal("off")
+	}
+}
+
+// #8: brez podpisa ali s tujim podpisom se pladenj ne namesti.
+func TestReleaseDownloadNeedsSignature(t *testing.T) {
+	fakeRelease(t, "", "")
+	_, other, _ := ed25519.GenerateKey(rand.Reader)
+	releaseKeys = []string{sshPublicLine(other.Public().(ed25519.PublicKey))} // drug ključ kot ta, ki je podpisal
+	dst := filepath.Join(t.TempDir(), "tray.exe")
+	if err := downloadVerified("minigw-tray-windows-"+runtime.GOARCH+".exe", dst); err == nil || !strings.Contains(err.Error(), "not signed by Mini Gateway") {
+		t.Fatalf("foreign signature: %v", err)
+	}
+	if _, err := os.Stat(dst); err == nil {
+		t.Fatal("installed without a good signature")
 	}
 }

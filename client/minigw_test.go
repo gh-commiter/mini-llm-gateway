@@ -548,3 +548,75 @@ func TestSyncIgnoreSkipsLinkedOrSpecialGitignore(t *testing.T) {
 		}
 	}
 }
+
+// #11: zaščita velja za kanonično pot: povezava hooks → .git/hooks ne pusti pisanja ali brisanja v .git.
+func TestSyncProtectedThroughLink(t *testing.T) {
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, ".git", "hooks"), 0o755)
+	os.WriteFile(filepath.Join(root, ".git", "hooks", "old"), []byte("x"), 0o644)
+	if os.Symlink(filepath.Join(".git", "hooks"), filepath.Join(root, "hooks")) != nil {
+		t.Skip("no symlinks here")
+	}
+	data := []byte("#!/bin/sh\necho owned\n")
+	sum := sha256Hex(data)
+	ch := syncChanges{Changed: []syncEntry{{Path: "hooks/pre-commit", Size: int64(len(data)), SHA256: sum},
+		{Path: "src/ok.txt", Size: int64(len(data)), SHA256: sum}}, Deleted: []string{"hooks/old"}}
+	notes, _ := syncApply(ch, root, map[string]syncEntry{"hooks/old": {Path: "hooks/old", SHA256: sha256Hex([]byte("x"))}},
+		func(string) []byte { return data })
+	if _, err := os.Stat(filepath.Join(root, ".git", "hooks", "pre-commit")); err == nil {
+		t.Fatalf("wrote into .git through a link: %v", notes)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".git", "hooks", "old")); err != nil {
+		t.Fatalf("deleted from .git through a link: %v", notes)
+	}
+	if b, _ := os.ReadFile(filepath.Join(root, "src", "ok.txt")); string(b) != string(data) {
+		t.Fatalf("normal file not written: %v", notes)
+	}
+	if !strings.Contains(strings.Join(notes, "\n"), "protected path (through a link)") {
+		t.Fatalf("notes: %v", notes)
+	}
+}
+
+// #20: osnovo pošlje router; neznana različica ne prepiše uporabnikove spremembe med izvajanjem.
+func TestSyncBaseMustBeAVersionWeSent(t *testing.T) {
+	for _, known := range []bool{false, true} {
+		root := t.TempDir()
+		os.WriteFile(filepath.Join(root, "a.txt"), []byte("user edit"), 0o644)
+		state := map[string]syncEntry{"a.txt": {Path: "a.txt", SHA256: sha256Hex([]byte("orig"))}}
+		agent := []byte("agent")
+		ch := syncChanges{Changed: []syncEntry{{Path: "a.txt", Size: int64(len(agent)), SHA256: sha256Hex(agent)}},
+			Base:  map[string]string{"a.txt": sha256Hex([]byte("user edit"))}, // router je izvedel trenutno različico
+			Known: func(p, sha string) bool { return known }}
+		syncApply(ch, root, state, func(string) []byte { return agent })
+		got, _ := os.ReadFile(filepath.Join(root, "a.txt"))
+		conflict, _ := os.ReadFile(filepath.Join(root, "a.txt.minigw-conflict"))
+		if !known && (string(got) != "user edit" || string(conflict) != "agent") {
+			t.Fatalf("unknown base overwrote the user's edit: %q / %q", got, conflict)
+		}
+		if known && string(got) != "agent" { // različica, ki jo je odjemalec res poslal: prepis je pravilen
+			t.Fatalf("known base: %q", got)
+		}
+	}
+}
+
+// #2: imena, ki se razlikujejo le v velikih črkah, ne gredo na router.
+func TestCaseCollisions(t *testing.T) {
+	got := caseCollisions(map[string]syncEntry{"A.txt": {}, "a.txt": {}, "src/B.go": {}, "src/b.GO": {}, "ok.txt": {}})
+	if strings.Join(got, ",") != "A.txt,a.txt,src/B.go,src/b.GO" {
+		t.Fatalf("collisions: %v", got)
+	}
+}
+
+// #6: datoteka samo za branje se posodobi in ostane samo za branje (Windows: atribut dol in nazaj gor).
+func TestSyncWriteReadOnlyFile(t *testing.T) {
+	full := filepath.Join(t.TempDir(), "ro.txt")
+	os.WriteFile(full, []byte("old"), 0o444)
+	if err := syncWrite(full, []byte("new"), 0, false, true); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(full)
+	st, _ := os.Stat(full)
+	if string(b) != "new" || st.Mode().Perm()&0o200 != 0 {
+		t.Fatalf("read-only file: %q %v", b, st.Mode())
+	}
+}

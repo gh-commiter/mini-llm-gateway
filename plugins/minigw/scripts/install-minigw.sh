@@ -11,7 +11,9 @@ DATA="${CLAUDE_PLUGIN_DATA:-$HOME/.claude/plugins/data/minigw}"
 BIN="$DATA/bin"
 EXE="$BIN/minigw"
 
-base="https://github.com/$REPO/releases/latest/download"
+base="${MINIGW_RELEASE_BASE:-https://github.com/$REPO/releases/latest/download}"  # testi: lažna izdaja (podpis je pripet)
+# #8: SHA256SUMS je podpisan s ključem Mini Gateway (ssh-keygen -Y sign -n minigw-release); ključ je pripet tu.
+SIGNER='minigw-release namespaces="minigw-release" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINt++OHn+HHmR9mmA2UI+B0osuilO2GP0ddEzNp0GTrH'
 sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi; }
 case "$(uname -m)" in arm64|aarch64) arch=arm64 ;; *) arch=amd64 ;; esac
 case "$(uname -s)" in
@@ -22,8 +24,27 @@ case "$(uname -s)" in
 esac
 mkdir -p "$BIN"
 
-# Kontrolne vsote zadnje izdaje: po njih se prenesena kopija posodobi (brez omrežja ostane obstoječa).
-sums=$(curl -fsSL --max-time 20 "$base/SHA256SUMS" 2>/dev/null || true)
+# verify_sums <sums> <sig>: že nameščen minigw (preverjen ob namestitvi) ali ssh-keygen; brez obeh ni preverjanja.
+verify_sums() {
+  if [ -x "$EXE" ] && [ ! -L "$EXE" ] && "$EXE" verify-sums "$1" "$2" >/dev/null 2>&1; then return 0; fi
+  command -v ssh-keygen >/dev/null 2>&1 || return 2
+  a=$(mktemp) || return 1
+  printf '%s\n' "$SIGNER" > "$a"
+  ssh-keygen -Y verify -f "$a" -I minigw-release -n minigw-release -s "$2" < "$1" >/dev/null 2>&1; r=$?
+  rm -f "$a"; return $r
+}
+
+# Kontrolne vsote zadnje izdaje: po njih se prenesena kopija posodobi (brez omrežja ostane obstoječa). Le podpisane
+# (#8): sicer ni posodobitve (obstoječa ostane) in ne prve namestitve.
+sums="" unsigned=""
+st=$(mktemp -d) && if curl -fsSL --max-time 20 -o "$st/s" "$base/SHA256SUMS" 2>/dev/null && curl -fsSL --max-time 20 -o "$st/sig" "$base/SHA256SUMS.sig" 2>/dev/null; then
+  verify_sums "$st/s" "$st/sig"; case $? in
+    0) sums=$(cat "$st/s") ;;
+    2) unsigned="cannot check the release signature: install OpenSSH (ssh-keygen)" ;;
+    *) unsigned="the release's SHA256SUMS is not signed by Mini Gateway" ;;
+  esac
+fi
+rm -rf "$st"
 want() { printf '%s\n' "$sums" | grep " $1\$" | cut -d' ' -f1; }
 stamp="$BIN/.asset.sha256"  # vsota prenesenega paketa (na macOS je to minigw.zip, ne izvršljiva datoteka)
 
@@ -54,13 +75,13 @@ if [ "$os" = darwin ]; then
     [ "$(readlink "$EXE" 2>/dev/null)" = "$other" ] || { rm -f "$EXE"; ln -s "$other" "$EXE"; }
   elif [ -L "$EXE" ] || ! valid "$EXE" || { [ -n "$(want minigw.zip)" ] && [ "$(cat "$stamp" 2>/dev/null)" != "$(want minigw.zip)" ]; }; then
     fetch minigw.zip || valid "$EXE" || {
-      echo "minigw plugin: could not download or verify minigw from github.com/$REPO; gateway skills are unavailable."; exit 0; }
+      echo "minigw plugin: could not download or verify minigw from github.com/$REPO${unsigned:+ ($unsigned)}; gateway skills are unavailable."; exit 0; }
   fi
 else
   # Windows/Linux: ena izvršljiva datoteka (Go, brez odvisnosti); kontrolna vsota iz SHA256SUMS iste izdaje.
   if [ ! -x "$EXE" ] || { [ -n "$(want "$asset")" ] && [ "$(sha "$EXE")" != "$(want "$asset")" ]; }; then
     fetch "$asset" || [ -x "$EXE" ] || {
-      echo "minigw plugin: could not download or verify $asset from github.com/$REPO; gateway skills are unavailable."; exit 0; }
+      echo "minigw plugin: could not download or verify $asset from github.com/$REPO${unsigned:+ ($unsigned)}; gateway skills are unavailable."; exit 0; }
   fi
 fi
 

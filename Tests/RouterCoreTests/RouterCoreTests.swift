@@ -460,16 +460,38 @@ func makeRouter(session: URLSession = .shared) -> Router {
     #expect(throws: (any Error).self) { try Noise.respond(try wrong.first(), key: key) }
 }
 
+/// Prost port TCP na 127.0.0.1 (#18: stalen port 18765 je bil včasih zaseden).
+func freeTCPPort() -> UInt16 {
+    let fd = socket(AF_INET, SOCK_STREAM, 0)
+    defer { close(fd) }
+    var a = sockaddr_in(sin_len: UInt8(MemoryLayout<sockaddr_in>.size), sin_family: sa_family_t(AF_INET), sin_port: 0,
+                        sin_addr: in_addr(s_addr: inet_addr("127.0.0.1")), sin_zero: (0, 0, 0, 0, 0, 0, 0, 0))
+    var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+    _ = withUnsafeMutablePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, len) } }
+    _ = withUnsafeMutablePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &len) } }
+    return UInt16(bigEndian: a.sin_port)
+}
+
+/// Ali na portu 127.0.0.1 nekdo posluša.
+func portInUse(_ port: UInt16) -> Bool {
+    let fd = socket(AF_INET, SOCK_STREAM, 0)
+    defer { close(fd) }
+    var a = sockaddr_in(sin_len: UInt8(MemoryLayout<sockaddr_in>.size), sin_family: sa_family_t(AF_INET), sin_port: port.bigEndian,
+                        sin_addr: in_addr(s_addr: inet_addr("127.0.0.1")), sin_zero: (0, 0, 0, 0, 0, 0, 0, 0))
+    return withUnsafeMutablePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } } == 0
+}
+
 @Test func encryptedProxyToRouter() async throws {
     var c = RouterConfig()
-    c.host = "127.0.0.1"; c.port = 18_765
+    let routerPort = freeTCPPort(), routerURL = "http://127.0.0.1:\(routerPort)"
+    c.host = "127.0.0.1"; c.port = routerPort
     let key = Noise.newKey()
     let seen = SeenDevices()
     let server = RouterServer(router: Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]),
                                              onDevice: { d in seen.add(d) }), key: key)
     try server.start()
     defer { server.stop() }
-    try await Task.sleep(for: .milliseconds(200))
+    for _ in 0..<100 where !portInUse(routerPort) { try await Task.sleep(for: .milliseconds(50)) }  // namesto fiksnega čakanja
 
     func get(_ base: String, _ path: String) async -> (Int, String) {
         var r = URLRequest(url: URL(string: base + path)!, timeoutInterval: 5)
@@ -477,24 +499,25 @@ func makeRouter(session: URLSession = .shared) -> Router {
         guard let (d, resp) = try? await URLSession.shared.data(for: r) else { return (0, "") }
         return ((resp as! HTTPURLResponse).statusCode, String(decoding: d, as: UTF8.self))
     }
-    let proxy = try #require(NoiseProxy(routerURL: "http://127.0.0.1:18765", routerKey: key.publicKey.rawRepresentation))
+    let proxy = try #require(NoiseProxy(routerURL: routerURL, routerKey: key.publicKey.rawRepresentation))
+    let stableTaken = portInUse(proxy.stablePort)  // drug program na stalnem portu: proxy vzame naključnega
     try proxy.start()
     defer { proxy.stop() }
-    #expect(proxy.localPort == proxy.stablePort)  // stalen URL → Claude Code obdrži modele routerja
+    #expect(proxy.localPort == proxy.stablePort || stableTaken)  // stalen URL → Claude Code obdrži modele routerja
     let (s, body) = await get(proxy.localURL, "/v1/models")
     #expect(s == 200 && body.contains("\"data\""))
 
     #expect(seen.all.isEmpty)  // proxy brez ključa naprave (starejši minigw) deluje, le brez naprave
 
     let dev = Curve25519.Signing.PrivateKey()
-    let withDevice = try #require(NoiseProxy(routerURL: "http://127.0.0.1:18765", routerKey: key.publicKey.rawRepresentation,
+    let withDevice = try #require(NoiseProxy(routerURL: routerURL, routerKey: key.publicKey.rawRepresentation,
                                              device: (key: dev, name: "Test Air"), suite: .aesGCM))  // AESGCM kot minigw.exe
     try withDevice.start()
     defer { withDevice.stop() }
     #expect(await get(withDevice.localURL, "/v1/models").0 == 200)
     #expect(seen.all == [Noise.Device(id: Noise.base64url(dev.publicKey.rawRepresentation), name: "Test Air")])
 
-    let bad = try #require(NoiseProxy(routerURL: "http://127.0.0.1:18765", routerKey: Noise.newKey().publicKey.rawRepresentation))
+    let bad = try #require(NoiseProxy(routerURL: routerURL, routerKey: Noise.newKey().publicKey.rawRepresentation))
     try bad.start()
     defer { bad.stop() }
     #expect(bad.localPort != proxy.stablePort && bad.localPort != 0)  // port zaseden → naključen
@@ -1229,7 +1252,7 @@ final class FakeMinigw: @unchecked Sendable {
         await r.handle(q, writer: FakeWriter())
     }
     let dir = c.scratchURL.appendingPathComponent("sync/local")
-    let names = Set((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? [])
+    let names = Set(((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []).filter { !$0.hasSuffix(".used") })  // oznake rabe (#1)
     #expect(names == [Sync.folderID(cwd), Sync.folderID(cwd) + "-ro"])
 }
 
@@ -1319,4 +1342,147 @@ final class FakeMinigw: @unchecked Sendable {
     await hub.finish(run: "r2")
     #expect(read(copy, "f.txt") == "three")
     #expect(read(copy, "f.txt.minigw-agent") == "one" && read(copy, "f.txt.minigw-agent-2") == "two")
+}
+
+/// #7: /dav/<skrivnost> le za webdavfs_agent, ki ga je pognal priklop routerja (skrivnost je vidna v mount in ps).
+@Test func davOnlyForTheMountingAgent() {
+    let agent: (pid_t) -> Bool = { $0 == 100 }
+    // med priklopom: prvi sistemski webdavfs_agent je izbran
+    #expect(ShareHub.davClaim(nil, mounting: true, find: { 100 }, owns: { _ in false }, isAgent: agent) == 100)
+    // brez priklopa routerja (agent je sam pognal mount_webdav s skrivnostjo): zavrnjeno
+    #expect(ShareHub.davClaim(nil, mounting: false, find: { 100 }, owns: { _ in true }, isAgent: agent) == nil)
+    // drug proces (curl agenta, drug uporabnik) tudi med priklopom: zavrnjeno
+    #expect(ShareHub.davClaim(nil, mounting: true, find: { 200 }, owns: { _ in true }, isAgent: agent) == nil)
+    // po izbiri: le isti proces na povezavi
+    #expect(ShareHub.davClaim(100, mounting: false, find: { 100 }, owns: { $0 == 100 }, isAgent: agent) == 100)
+    #expect(ShareHub.davClaim(100, mounting: false, find: { 200 }, owns: { _ in false }, isAgent: agent) == nil)
+    // pravi proces: ta testni program ni webdavfs_agent
+    #expect(!PeerProcess.isWebDAVAgent(getpid()))
+}
+
+/// #11: zaščita velja za kanonično pot: povezava hooks → .git/hooks ne pusti pisanja ali brisanja v .git.
+@Test func syncProtectedThroughLink() throws {
+    let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("p11-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root.appendingPathComponent(".git/hooks"), withIntermediateDirectories: true)
+    try Data("x".utf8).write(to: root.appendingPathComponent(".git/hooks/old"))
+    try FileManager.default.createSymbolicLink(atPath: root.appendingPathComponent("hooks").path, withDestinationPath: ".git/hooks")
+    let data = Data("#!/bin/sh\necho owned\n".utf8), sum = Sync.sha256(data)
+    let ch = Sync.Changes(changed: [Sync.Entry(path: "hooks/pre-commit", size: Int64(data.count), mtime: 0, sha256: sum),
+                                    Sync.Entry(path: "src/ok.txt", size: Int64(data.count), mtime: 0, sha256: sum)],
+                          deleted: ["hooks/old"], base: ["hooks/old": Sync.sha256(Data("x".utf8))])
+    var state: [String: Sync.Entry] = [:]
+    let (notes, _) = Sync.apply(ch, root: root, state: &state) { _ in data }
+    #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent(".git/hooks/pre-commit").path))
+    #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent(".git/hooks/old").path))
+    #expect((try? Data(contentsOf: root.appendingPathComponent("src/ok.txt"))) == data)
+    #expect(notes.contains { $0.contains("protected path (through a link)") })
+}
+
+/// #20: neznana osnova (router jo je izvedel iz prenosa) ne prepiše uporabnikove spremembe med izvajanjem.
+@Test func syncBaseMustBeAVersionWeSent() throws {
+    for known in [false, true] {
+        let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("p20-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data("user edit".utf8).write(to: root.appendingPathComponent("a.txt"))
+        var state = ["a.txt": Sync.Entry(path: "a.txt", size: 4, mtime: 0, sha256: Sync.sha256(Data("orig".utf8)))]
+        let agent = Data("agent".utf8)
+        let ch = Sync.Changes(changed: [Sync.Entry(path: "a.txt", size: Int64(agent.count), mtime: 0, sha256: Sync.sha256(agent))],
+                              base: ["a.txt": Sync.sha256(Data("user edit".utf8))])
+        _ = Sync.apply(ch, root: root, state: &state, known: { _, _ in known }) { _ in agent }
+        let got = try String(contentsOf: root.appendingPathComponent("a.txt"), encoding: .utf8)
+        let conflict = try? String(contentsOf: root.appendingPathComponent("a.txt.minigw-conflict"), encoding: .utf8)
+        #expect(known ? got == "agent" : (got == "user edit" && conflict == "agent"))
+    }
+}
+
+/// #22: največ ShareHub.maxRunsPerCopy hkratnih izvajanj na kopijo; po koncu enega je mesto spet prosto.
+@Test func syncRunsPerCopyAreCapped() async throws {
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent("sync22-" + UUID().uuidString)
+    let client = base.appendingPathComponent("client"), copy = base.appendingPathComponent("sync/local/x")
+    defer { try? FileManager.default.removeItem(at: base) }
+    try FileManager.default.createDirectory(at: client, withIntermediateDirectories: true)
+    try Data("v1".utf8).write(to: client.appendingPathComponent("f.txt"))
+    let hub = ShareHub()
+    let key = try #require(await hub.register(session: "p", cwd: client.path, key: nil, copy: copy))
+    let server = FakeMinigw(hub, key: key, root: client).serve()
+    defer { server.cancel() }
+    func mount(_ run: String) async -> URL? { await ShareHub.$run.withValue(run) { await hub.mount(session: "p", cwd: client.path, base: "") } }
+    for i in 0..<ShareHub.maxRunsPerCopy { #expect(await mount("r\(i)") != nil) }
+    #expect(await mount("over") == nil)
+    await hub.finish(run: "r0")
+    #expect(await mount("again") != nil)
+}
+
+/// #23: mapa kopije, zamenjana s povezavo ven, se pri pregledu ne izpiše (odprta z O_NOFOLLOW_ANY).
+@Test func syncListDoesNotFollowASwappedFolder() throws {
+    let base = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("p23-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: base) }
+    let root = base.appendingPathComponent("copy"), outside = base.appendingPathComponent("home")
+    try FileManager.default.createDirectory(at: root.appendingPathComponent("src"), withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+    try Data("x".utf8).write(to: root.appendingPathComponent("src/čšž.txt"))
+    try Data("secret".utf8).write(to: outside.appendingPathComponent("private-name.txt"))
+    try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("swapped"), withDestinationURL: outside)
+    #expect(Sync.list(root.appendingPathComponent("src")) == ["čšž.txt"])
+    #expect(Sync.list(root.appendingPathComponent("swapped")) == nil)
+    let (files, skipped) = Sync.scan(root)
+    #expect(!files.keys.contains { $0.contains("private-name") } && !skipped.contains { $0.contains("private-name") })
+}
+
+/// #1, #9: kopije, neuporabljene 14 dni, se izbrišejo (ne dejavne, ne runs); manifest nad mejo je zavrnjen.
+@Test func syncCopiesExpireAndQuota() throws {
+    let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("p1-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let fm = FileManager.default, old = Date().addingTimeInterval(-15 * 86400)
+    for p in ["dev/old", "dev/fresh", "dev/active", "runs/clone"] { try fm.createDirectory(at: root.appendingPathComponent(p), withIntermediateDirectories: true) }
+    for p in ["dev/old", "dev/active", "runs/clone"] { try fm.setAttributes([.modificationDate: old], ofItemAtPath: root.appendingPathComponent(p).path) }
+    ShareHub.touchUsed(root.appendingPathComponent("dev/fresh"))
+    fm.createFile(atPath: root.appendingPathComponent("dev/old.used").path, contents: nil)
+    try fm.setAttributes([.modificationDate: old], ofItemAtPath: root.appendingPathComponent("dev/old.used").path)
+    ShareHub.removeOld(root, active: [root.appendingPathComponent("dev/active").standardizedFileURL.path], now: Date())
+    #expect(!fm.fileExists(atPath: root.appendingPathComponent("dev/old").path) && !fm.fileExists(atPath: root.appendingPathComponent("dev/old.used").path))
+    for p in ["dev/fresh", "dev/active", "runs/clone"] { #expect(fm.fileExists(atPath: root.appendingPathComponent(p).path), "\(p)") }
+
+    #expect(Sync.overQuota([Sync.Entry(path: "a", size: 10, mtime: 0, sha256: "x")]) == nil)
+    #expect(Sync.overQuota([Sync.Entry(path: "big", size: Sync.maxBytes + 1, mtime: 0, sha256: "x")])?.contains("too large") == true)
+}
+
+/// #2: imena, ki se razlikujejo le v velikih črkah.
+@Test func syncCaseCollisions() {
+    #expect(Sync.caseCollisions(["A.txt", "a.txt", "src/B.go", "src/b.GO", "ok.txt"]) == ["A.txt", "a.txt", "src/B.go", "src/b.GO"])
+}
+
+/// #3: ime v NFD (Finder) gre v manifest kot NFC, kot ga pošljeta Windows in Linux; datoteka se najde pod obema.
+@Test func syncNamesAreNFC() throws {
+    let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("p3-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let nfd = "c\u{30C}a.txt", nfc = "\u{10D}a.txt"  // »ča.txt«
+    try Data("x".utf8).write(to: root.appendingPathComponent(nfd))
+    let keys = Array(Sync.scan(root, trusted: true).files.keys)
+    #expect(keys == [nfc])
+    #expect(Sync.resolve(nfc, root: root).map { FileManager.default.fileExists(atPath: $0.path) } == true)
+}
+
+/// #4: glava in komentarji SSE pred prenosom mape; glava ponudnika izpuščena, napaka kot dogodek SSE.
+@Test func earlyStreamBeforeFolderSync() async throws {
+    let ok = FakeWriter(), w = EarlyStreamWriter(ok)
+    await w.begin(rid: "r1")
+    try await w.write(HTTPResponse.head(status: 200, headers: [("Content-Type", "text/event-stream")]) + Data("event: message_start\ndata: {}\n\n".utf8))
+    #expect(ok.text.components(separatedBy: "HTTP/1.1").count == 2 && ok.text.contains(": syncing the folder") && ok.text.contains("event: message_start"))
+    let bad = FakeWriter(), e = EarlyStreamWriter(bad)
+    await e.begin(rid: "r2")
+    let body = Data(#"{"error":{"message":"Syncing /p to the gateway failed","type":"api_error"},"type":"error"}"#.utf8)
+    try await e.write(HTTPResponse.head(status: 502, headers: [("Content-Type", "application/json")], contentLength: body.count) + body)
+    #expect(bad.text.hasPrefix("HTTP/1.1 200") && !bad.text.contains("502") && bad.text.contains("event: error") && bad.text.contains("Syncing /p to the gateway failed"))
+}
+
+/// #10: Siri v načinu sync po neuspelem prenosu ne bere mape tega Maca na isti poti.
+@Test func siriMentionsNoFallbackInSync() {
+    let local = URL(fileURLWithPath: "/Users/x/proj"), copy = URL(fileURLWithPath: "/scratch/sync/dev/abc")
+    #expect(Router.mentionRoot(shared: nil, synced: true) { local } == nil)
+    #expect(Router.mentionRoot(shared: copy, synced: true) { local } == copy)
+    #expect(Router.mentionRoot(shared: nil, synced: false) { local } == local)
 }

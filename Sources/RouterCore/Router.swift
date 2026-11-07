@@ -122,8 +122,11 @@ public final class Router: Sendable {
                 return (404, nil, nil)
             }
             let secret = String(req.path.dropFirst(5).prefix { $0 != "/" })
+            let peerPort = req.peerPort, port = config.port
+            let peer = ShareHub.DAVPeer.process(find: { PeerProcess.pid(localPort: peerPort, remotePort: port) },
+                                                owns: { PeerProcess.owns($0, localPort: peerPort, remotePort: port) })
             guard let r = await Self.shares.dav(secret: secret, method: req.method, path: req.path,
-                                                headers: req.headers, body: req.body) else {
+                                                headers: req.headers, body: req.body, peer: peer) else {
                 try? await writer.write(HTTPResponse.head(status: 404, headers: [], contentLength: 0))
                 return (404, nil, nil)
             }
@@ -167,13 +170,19 @@ public final class Router: Sendable {
                     if req.path.hasSuffix("/count_tokens") {
                         return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "grok")
                     }
-                    return (await syncRun(agent: "grok") { await runGrok(req, body: body, model: grokModel, rid: rid, writer: writer) }, model, "grok")
+                    return (await syncRun(agent: "grok") { await runGrok(req, body: body, model: grokModel, rid: rid, writer: await early(req, body, rid, writer)) }, model, "grok")
                 }
                 if config.codex.enabled, let codexModel = Codex.match(model), codexModel.map(config.codex.isModelEnabled) ?? true {
                     if req.path.hasSuffix("/count_tokens") {
                         return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "codex")
                     }
-                    return (await syncRun(agent: "codex") { await runCodex(req, body: body, model: codexModel, rid: rid, writer: writer) }, model, "codex")
+                    return (await syncRun(agent: "codex") { await runCodex(req, body: body, model: codexModel, rid: rid, writer: await early(req, body, rid, writer)) }, model, "codex")
+                }
+                if config.foundry.enabled, model.hasPrefix(Foundry.prefix), Foundry.validModel(String(model.dropFirst(Foundry.prefix.count))) {
+                    if req.path.hasSuffix("/count_tokens") {
+                        return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "foundry")
+                    }
+                    return (await runFoundry(req, body: body, model: String(model.dropFirst(Foundry.prefix.count)), rid: rid, writer: writer), model, "foundry")
                 }
                 if config.copilot.enabled, let copilotModel = Copilot.match(model) {
                     if req.path.hasSuffix("/count_tokens") {
@@ -191,7 +200,7 @@ public final class Router: Sendable {
                     if req.path.hasSuffix("/count_tokens") {
                         return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "claude-cli")
                     }
-                    return (await syncRun(agent: "claude") { await runCLI(req, body: body, cliModel: m.cliModel, chatOnly: m.chatOnly, rid: rid, writer: writer) },
+                    return (await syncRun(agent: "claude") { await runCLI(req, body: body, cliModel: m.cliModel, chatOnly: m.chatOnly, rid: rid, writer: await early(req, body, rid, writer)) },
                             model, "claude-cli")
                 }
                 return (await error(404, "not_found_error", "Unknown model: \(model)", rid: rid, writer: writer), model, nil)
@@ -288,6 +297,10 @@ public final class Router: Sendable {
             guard let files = try? JSONDecoder().decode([Sync.Entry].self, from: req.body) else {
                 return (await error(400, "invalid_request_error", "Bad manifest", rid: rid, writer: writer), nil, "share")
             }
+            if let why = Sync.overQuota(files) {  // #1, #9: odjemalec ne napolni diska routerja
+                return (await error(413, "invalid_request_error", why, rid: rid, writer: writer), nil, "share")
+            }
+            await Self.shares.expireCopies(config.scratch("sync"))  // #1, #9: največ enkrat na dan
             guard let r = await Self.shares.syncManifest(key: req.header("x-share-key") ?? "", files,
                                                          execKnown: req.header("x-sync-exec") != "none", device: req.device?.id) else {  // Windows
                 return (await error(404, "not_found_error", "No such share", rid: rid, writer: writer), nil, "share")
@@ -346,6 +359,16 @@ public final class Router: Sendable {
 
     /// sync: izvajanje agenta v svojem klonu kopije (ShareHub.run); zaklep kopije velja le za prenos, prevzem in združitev,
     /// zato agenti v isti mapi delajo vzporedno. Klon se odstrani tudi ob napaki ali prekinitvi.
+    /// #4: agent v sinhronizirani mapi s pretokom: glava 200 in komentarji SSE takoj, prenos mape lahko traja minute
+    /// (Claude Code bi po 10 minutah brez bajtov poskusil znova). Drugače isti writer.
+    func early(_ req: HTTPRequest, _ body: [String: Any], _ rid: String, _ writer: ResponseWriter) async -> ResponseWriter {
+        guard body["stream"] as? Bool == true, (body["tools"] as? [Any])?.isEmpty == false,
+              let sid = req.header("x-claude-mini-session"), await Self.shares.isSync(session: sid) else { return writer }
+        let w = EarlyStreamWriter(writer)
+        await w.begin(rid: rid)
+        return w
+    }
+
     func syncRun(agent: String, _ run: () async -> Int) async -> Int {
         let id = UUID().uuidString
         let status = await ShareHub.$run.withValue(id) { await ShareHub.$agent.withValue(agent) { await run() } }
@@ -409,6 +432,7 @@ public final class Router: Sendable {
                  "description": "grok -p · \(m) · tools in your folder", "created_at": created]
             }
         }
+        data += await foundryModelList(created: created)
         return ["data": data, "has_more": false,
                 "first_id": data.first?["id"] ?? NSNull(), "last_id": data.last?["id"] ?? NSNull()]
     }

@@ -253,6 +253,13 @@ func downloadVerified(asset, dst string) error {
 	if err != nil {
 		return err
 	}
+	sig, err := releaseGet("SHA256SUMS.sig", 16<<10)
+	if err != nil {
+		return errors.New("SHA256SUMS.sig of v" + version + ": " + err.Error())
+	}
+	if err := verifyReleaseSums(sums, sig); err != nil { // #8: vsote podpisane s pripetim ključem
+		return errors.New("SHA256SUMS of v" + version + " is not signed by Mini Gateway: " + err.Error())
+	}
 	want := ""
 	for _, line := range strings.Split(string(sums), "\n") {
 		if f := strings.Fields(line); len(f) == 2 && strings.TrimPrefix(f[1], "*") == asset {

@@ -21,3 +21,6 @@ func agentReaperMain([]string) { os.Exit(2) }
 func startAgent(cmd *exec.Cmd) error { return cmd.Start() }
 
 func peerCheck(ours, peer *net.TCPAddr) error { return nil }
+
+// listenerIsOurs: na macOS je Foundry Local stvar aplikacije (Foundry.swift preveri uid); minigw serve tu je za razvoj.
+func listenerIsOurs(port int) bool { return true }

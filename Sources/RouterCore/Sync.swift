@@ -110,8 +110,11 @@ public enum Sync {
         let ignore = Ignore(root: root, follow: trusted)
         var files: [String: Entry] = [:], skipped: [String] = []
         func walk(_ dir: URL, _ rel: String) {
-            for name in ((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []).sorted() {
-                let r = rel.isEmpty ? name : rel + "/" + name, url = dir.appendingPathComponent(name)
+            let names = trusted ? (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) : list(dir)
+            for name in (names ?? []).sorted() {
+                // #3: ime v manifestu je NFC (Windows, Linux); datoteka ostane pod svojim imenom (APFS najde obe obliki).
+                let key = name.precomposedStringWithCanonicalMapping
+                let r = rel.isEmpty ? key : rel + "/" + key, url = dir.appendingPathComponent(name)
                 if normName(name) == ".git" { continue }  // tudi ».GIT«
                 guard let a = try? FileManager.default.attributesOfItem(atPath: url.path) else { continue }  // ne sledi povezavam
                 switch a[.type] as? FileAttributeType {
@@ -128,6 +131,36 @@ public enum Sync {
         }
         walk(root, "")
         return (files, skipped)
+    }
+
+    /// #1, #9: največ datotek in bajtov na kopijo (manifest odjemalca); nil = v mejah, sicer sporočilo.
+    static let maxFiles = 100_000, maxBytes: Int64 = 8 << 30
+    static func overQuota(_ files: [Entry]) -> String? {
+        let bytes = files.reduce(Int64(0)) { $0 + max(0, $1.size) }
+        guard files.count > maxFiles || bytes > maxBytes else { return nil }
+        return "The folder is too large to sync (\(files.count) files, \(bytes >> 20) MB; the limit is \(maxFiles) files and \(maxBytes >> 30) GB): "
+            + "add build output and large data to .gitignore, or use a smaller folder"
+    }
+
+    /// #2: poti, ki se razlikujejo le v velikih črkah (A.txt in a.txt): na routerju brez razlikovanja črk bi bile ena
+    /// datoteka, zato ne gredo nikamor.
+    public static func caseCollisions(_ paths: Set<String>) -> [String] {
+        Dictionary(grouping: paths, by: { $0.lowercased() }).values.filter { $0.count > 1 }.flatMap { $0 }.sorted()
+    }
+
+    /// #23: imena v mapi kopije ali klona, odprte z O_NOFOLLOW_ANY: mapa, ki jo ostanek agenta po razvrstitvi zamenja s
+    /// povezavo (npr. na domačo mapo), se ne odpre, zato se ne izpiše drevo zunaj korena.
+    static func list(_ dir: URL) -> [String]? {
+        let fd = open(dir.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW_ANY | O_CLOEXEC)
+        guard fd >= 0 else { return nil }
+        guard let d = fdopendir(fd) else { close(fd); return nil }
+        defer { closedir(d) }
+        var out: [String] = []
+        while let e = readdir(d) {
+            let name = withUnsafeBytes(of: e.pointee.d_name) { String(decoding: $0.prefix(Int(e.pointee.d_namlen)), as: UTF8.self) }
+            if name != "." && name != ".." { out.append(name) }
+        }
+        return out
     }
 
     /// Ena datoteka; nil, če ne obstaja ali ni navadna datoteka.
@@ -185,6 +218,25 @@ public enum Sync {
         return WebDAV.resolve("/" + comps.map(encode).joined(separator: "/"), prefix: "", root: root)?.0
     }
 
+    /// #11: zaščita tudi za kanonično pot (povezava hooks → .git/hooks): kanonična pot najglobljega obstoječega prednika
+    /// z manjkajočim koncem, relativno na kanonični koren; nečitljiva pot ali pot zunaj korena = zaščitena.
+    static func protectedCanonical(_ url: URL, root: URL) -> Bool {
+        guard let r = real(root)?.path else { return true }
+        var p = url.path, rest: [String] = []
+        while true {
+            if let c = real(URL(fileURLWithPath: p))?.path {
+                let full = ([c] + rest).joined(separator: "/")
+                guard full == r || full.hasPrefix(r + "/") else { return true }
+                let rel = String(full.dropFirst(r.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                return !rel.isEmpty && isProtected(rel)
+            }
+            let parent = (p as NSString).deletingLastPathComponent
+            guard parent != p, !parent.isEmpty else { return true }
+            rest.insert((p as NSString).lastPathComponent, at: 0)
+            p = parent
+        }
+    }
+
     /// Atomarno zapiše datoteko (ustvari mape), nastavi čas spremembe druge strani. Način obstoječe (sicer 0644) ostane,
     /// biti x pa sledijo `exec`; nil = druga stran bita x ne pozna (Windows) → ostanejo.
     public static func write(_ data: Data, to url: URL, mtime: Int64, exec: Bool?) throws {
@@ -223,16 +275,24 @@ public enum Sync {
     /// začel (`ch.base`; spremenil jo je uporabnik ali drug agent), ne prepiše: različico routerja zapiše kot
     /// `<ime>.minigw-conflict`. Poti, prezrte pri odjemalcu, preskoči.
     /// `state` = manifest ob prenosu. Vrne sporočila za stderr in obdelane poti (potrditev routerju).
-    public static func apply(_ ch: Changes, root: URL, state: inout [String: Entry],
+    public static func apply(_ ch: Changes, root: URL, state: inout [String: Entry], known: ((String, String) -> Bool)? = nil,
                              fetch: (String) -> Data?) -> (notes: [String], done: [String]) {
         let ignore = Ignore(root: root, follow: true)  // odjemalec: mapa uporabnika
         var notes: [String] = [], done: [String] = []
-        let before = state, base = { (p: String) in ch.base.map { $0[p] } ?? before[p]?.sha256 }
+        let before = state
+        // #20: osnovo pošlje router; velja le različica, ki jo je ta odjemalec poslal. Sicer osnova, ki je nobena datoteka
+        // nima: uporabnikova sprememba med izvajanjem ostane, agentova gre v .minigw-conflict.
+        let base = { (p: String) -> String? in
+            guard let b = ch.base else { return before[p]?.sha256 }
+            if let v = b[p], v != before[p]?.sha256, let known, !known(p, v) { return "\u{0}unknown base" }
+            return b[p]
+        }
         for p in ch.deleted {  // pred spremembami: datoteka »a« → mapa »a/…«
             if isProtected(p) { notes.append("not deleted \(p): protected path"); done.append(p); continue }
             if ignore.covers(p) { done.append(p); continue }
             done.append(p)
             guard let url = resolve(p, root: root) else { continue }
+            if protectedCanonical(url, root: root) { notes.append("not deleted \(p): protected path (through a link)"); continue }
             guard let local = entry(url, path: p, previous: state[p]) else { state[p] = nil; continue }
             if local.sha256 != base(p) { notes.append("conflict: \(p) was deleted on the gateway but changed here; kept"); continue }
             try? FileManager.default.removeItem(at: url)
@@ -244,6 +304,7 @@ public enum Sync {
             guard let url = resolve(e.path, root: root) else {  // potrjena, sicer bi jo router pošiljal v nedogled
                 notes.append("skipped \(e.path): invalid path here"); done.append(e.path); continue
             }
+            if protectedCanonical(url, root: root) { notes.append("skipped \(e.path): protected path (through a link)"); done.append(e.path); continue }
             if let local = entry(url, path: e.path, previous: state[e.path]), local.sha256 == e.sha256 {
                 // Le bit x, in le če ga uporabnik od prenosa ni spremenil sam.
                 if local.exec != e.exec, local.exec != state[e.path]?.exec {  // stanje ostane: bit ostane uporabnikov

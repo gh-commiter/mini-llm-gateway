@@ -36,6 +36,8 @@ type syncChanges struct {
 	// Base: sha256 različice, iz katere je agent začel, za vsako spremenjeno in izbrisano pot (ni ključa = datoteke ni
 	// bilo). Pišemo ali brišemo le, če je datoteka še ta različica. nil = starejši router → stanje ob prenosu.
 	Base map[string]string `json:"base"`
+	// Known (#20, ni v JSON): ali je odjemalec to različico poti res poslal routerju; nil = brez preverjanja (testi).
+	Known func(path, sha string) bool `json:"-"`
 }
 
 // maxSyncFile: cela datoteka gre v eni zahtevi; router sprejme telo do 64 MB.
@@ -75,7 +77,6 @@ var caseFold = runtime.GOOS == "darwin" || runtime.GOOS == "windows"
 
 // normName: ime, kot ga vidi tak datotečni sistem (Windows odreže končne pike in presledke: ».GIT.« = ».git«).
 // normName: upper→lower preslika ſ, ı, K (Kelvin) v ASCII; »git~1« je kratko 8.3 ime ».git« na Windows.
-// ponytail: ime, ne kanonična pot; ob simlinkanem staršu preveri kanonično pot (issue v Gitei).
 func normName(c string) string {
 	n := strings.ToLower(strings.ToUpper(strings.TrimRight(c, ". ")))
 	if shortGit.MatchString(n) {
@@ -232,6 +233,31 @@ func syncEntryOf(full, rel string, prev map[string]syncEntry) (syncEntry, bool) 
 
 func sha256Hex(b []byte) string { s := sha256.Sum256(b); return hex.EncodeToString(s[:]) }
 
+// protectedCanonical (#11): zaščita velja tudi za kanonično pot: uporabnikova povezava v mapi (hooks → .git/hooks)
+// bi sicer pisanje v »hooks/pre-commit« pustila. Kanonična pot najglobljega obstoječega prednika (Windows: dolga imena)
+// skupaj z manjkajočim koncem; nečitljiva pot = zaščitena.
+func protectedCanonical(full, root string) bool {
+	r, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return true
+	}
+	p, rest := full, ""
+	for {
+		if c, err := filepath.EvalSymlinks(p); err == nil {
+			rel, err := filepath.Rel(r, filepath.Join(c, rest))
+			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				return true
+			}
+			return rel != "." && protectedPath(filepath.ToSlash(rel))
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return true
+		}
+		rest, p = filepath.Join(filepath.Base(p), rest), parent
+	}
+}
+
 // syncResolve: relativna pot druge strani → datoteka pod root; false za »..«, absolutno pot, »\«, prazne dele ali pobeg
 // prek povezave (preveri davResolve).
 func syncResolve(rel, root string) (string, bool) {
@@ -272,14 +298,25 @@ func syncWrite(full string, data []byte, mtime int64, exec, keepX bool) error {
 		return err
 	}
 	_, err = tmp.Write(data)
+	readOnlyWin := runtime.GOOS == "windows" && mode&0o200 == 0 // #6: Windows ne preimenuje čez datoteko samo za branje
 	if err == nil {
-		err = tmp.Chmod(mode)
+		if readOnlyWin {
+			err = tmp.Chmod(0o666)
+		} else {
+			err = tmp.Chmod(mode)
+		}
 	}
 	if cerr := tmp.Close(); err == nil {
 		err = cerr
 	}
+	if err == nil && readOnlyWin {
+		os.Chmod(full, 0o666) // atribut samo za branje dol; po preimenovanju spet gor
+	}
 	if err == nil {
 		err = os.Rename(tmp.Name(), full)
+	}
+	if err == nil && readOnlyWin {
+		err = os.Chmod(full, mode)
 	}
 	if err != nil {
 		os.Remove(tmp.Name())
@@ -309,10 +346,16 @@ func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch fu
 		before[p] = e.SHA256
 	}
 	base := func(p string) string {
-		if ch.Base != nil {
-			return ch.Base[p]
+		if ch.Base == nil {
+			return before[p]
 		}
-		return before[p]
+		b, ok := ch.Base[p]
+		// #20: osnovo pošlje router; velja le različica, ki jo je ta odjemalec poslal (ali je ni bilo). Sicer osnova, ki
+		// je nobena datoteka nima: uporabnikova sprememba med izvajanjem ostane, agentova gre v .minigw-conflict.
+		if ok && b != before[p] && ch.Known != nil && !ch.Known(p, b) {
+			return "\x00unknown base"
+		}
+		return b
 	}
 	for _, p := range ch.Deleted { // pred spremembami: datoteka »a« → mapa »a/…«
 		if protectedPath(p) {
@@ -329,6 +372,10 @@ func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch fu
 		if !ok {
 			continue
 		}
+		if protectedCanonical(full, root) {
+			notes = append(notes, "not deleted "+p+": protected path (through a link)")
+			continue
+		}
 		local, has := syncEntryOf(full, p, state)
 		if !has {
 			delete(state, p)
@@ -337,6 +384,9 @@ func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch fu
 		if local.SHA256 != base(p) {
 			notes = append(notes, "conflict: "+p+" was deleted on the gateway but changed here; kept")
 			continue
+		}
+		if runtime.GOOS == "windows" { // #6: datoteke samo za branje Windows ne izbriše
+			os.Chmod(full, 0o666)
 		}
 		os.Remove(full)
 		delete(state, p)
@@ -355,6 +405,11 @@ func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch fu
 		full, ok := syncResolve(e.Path, root)
 		if !ok { // potrjena, sicer bi jo router pošiljal v nedogled
 			notes = append(notes, "skipped "+e.Path+": invalid path here")
+			done = append(done, e.Path)
+			continue
+		}
+		if protectedCanonical(full, root) {
+			notes = append(notes, "skipped "+e.Path+": protected path (through a link)")
 			done = append(done, e.Path)
 			continue
 		}
@@ -408,8 +463,33 @@ func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch fu
 func (s *shareClient) note(msg string) { fmt.Fprintln(os.Stderr, "minigw: "+clean(msg)) }
 
 // syncPush: pred agentom manifest k routerju, nato datoteke, ki jih potrebuje.
+// caseCollisions (#2): poti, ki se razlikujejo le v velikih črkah (A.txt in a.txt): na routerju z APFS ali NTFS bi
+// bile ena datoteka, zato ne gredo nikamor.
+func caseCollisions(files map[string]syncEntry) []string {
+	byFold := map[string][]string{}
+	for p := range files {
+		f := strings.ToLower(p)
+		byFold[f] = append(byFold[f], p)
+	}
+	var out []string
+	for _, ps := range byFold {
+		if len(ps) > 1 {
+			out = append(out, ps...)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 func (s *shareClient) syncPush(k string) bool {
 	files, skipped := syncScan(s.root, s.synced, true)
+	for _, p := range caseCollisions(files) {
+		delete(files, p)
+		if !s.reported["case:"+p] {
+			s.reported["case:"+p] = true
+			s.note("not synced: " + p + " differs from another file only in upper and lower case")
+		}
+	}
 	for _, p := range skipped {
 		if !s.reported[p] {
 			s.reported[p] = true
@@ -432,7 +512,12 @@ func (s *shareClient) syncPush(k string) bool {
 		Kept []string `json:"kept"`
 	}
 	if st != 200 || json.Unmarshal(data, &r) != nil || r.Need == nil {
-		s.note(fmt.Sprintf("sync to the gateway failed (HTTP %d)", st))
+		var e struct{ Error struct{ Message string } }
+		if json.Unmarshal(data, &e); e.Error.Message != "" {
+			s.note("sync to the gateway failed: " + e.Error.Message)
+		} else {
+			s.note(fmt.Sprintf("sync to the gateway failed (HTTP %d)", st))
+		}
 		return false
 	}
 	// Neuspešen prenos in »kept« (router je obdržal agentovo različico): stanje poti ostane staro, da prevzem zazna spor.
@@ -465,8 +550,20 @@ func (s *shareClient) syncPush(k string) bool {
 		}
 	}
 	s.synced = files
+	if s.sent == nil {
+		s.sent = map[string]map[string]bool{}
+	}
+	for p, e := range files { // različice, ki jih ima router od tega odjemalca (#20)
+		if s.sent[p] == nil || len(s.sent[p]) > 64 {
+			s.sent[p] = map[string]bool{}
+		}
+		s.sent[p][e.SHA256] = true
+	}
 	return true
 }
+
+// sentVersion: ali je ta odjemalec v tej seji poslal (ali obdržal) to različico poti.
+func (s *shareClient) sentVersion(p, sha string) bool { return s.sent[p][sha] }
 
 // syncPull: po agentu spremembe kopije v mapo (spori → <ime>.minigw-conflict).
 func (s *shareClient) syncPull(k string) bool {
@@ -477,6 +574,7 @@ func (s *shareClient) syncPull(k string) bool {
 		s.unpulled = true
 		return false
 	}
+	ch.Known = s.sentVersion
 	notes, done := syncApply(ch, s.root, s.synced, func(p string) []byte {
 		st, b := call(s.c, "GET", "/minigw/sync/file", map[string]string{"x-share-key": k, "x-sync-path": url.PathEscape(p)}, nil, 300*time.Second)
 		if st != 200 {

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"net"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -365,5 +366,93 @@ func TestServeAllowDenyDevices(t *testing.T) {
 	serveCommand([]string{"devices", "--config", cfg})
 	if c, _ = loadServeConfig(cfg); len(c.Devices) != 0 {
 		t.Fatalf("after deny by ID: %+v", c.Devices)
+	}
+}
+
+// #21: pisanje prenesene datoteke ne drži skupnega zaklepa (počasen prenos ne ustavi drugih map).
+func TestSyncPutWritesWithoutTheHubLock(t *testing.T) {
+	h := newShareHub()
+	copyDir := t.TempDir()
+	key, ok := h.register("s1", "/c", "", false, copyDir, "dev")
+	if !ok {
+		t.Fatal("register")
+	}
+	data := []byte("hello")
+	if _, _, ok := h.syncManifest(key, []syncEntry{{Path: "a.txt", Size: 5, SHA256: sha256Hex(data)}}, true, "dev"); !ok {
+		t.Fatal("manifest")
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	o := syncPutWrite
+	t.Cleanup(func() { syncPutWrite = o })
+	syncPutWrite = func(full string, d []byte, m int64, x, k bool) error {
+		close(entered)
+		<-release
+		return o(full, d, m, x, k)
+	}
+	done := make(chan int)
+	go func() { done <- h.syncPut(key, "a.txt", data, "dev") }()
+	<-entered
+	if !h.mu.TryLock() {
+		t.Fatal("hub lock held while writing")
+	}
+	h.mu.Unlock()
+	close(release)
+	if st := <-done; st != 204 {
+		t.Fatalf("put: %d", st)
+	}
+	if b, _ := os.ReadFile(filepath.Join(copyDir, "a.txt")); string(b) != "hello" {
+		t.Fatalf("copy: %q", b)
+	}
+}
+
+// #1, #9: kopije, neuporabljene 14 dni, se izbrišejo (ne dejavne, ne runs); manifest nad mejo je zavrnjen.
+func TestSyncCopiesExpireAndQuota(t *testing.T) {
+	root := t.TempDir()
+	old := time.Now().Add(-15 * 24 * time.Hour)
+	for _, p := range []string{"dev/old", "dev/fresh", "dev/active", "runs/clone"} {
+		os.MkdirAll(filepath.Join(root, p), 0o700)
+	}
+	for _, p := range []string{"dev/old", "dev/active", "runs/clone"} {
+		os.Chtimes(filepath.Join(root, p), old, old)
+	}
+	touchUsed(filepath.Join(root, "dev", "fresh"))
+	os.WriteFile(filepath.Join(root, "dev", "old.used"), nil, 0o600)
+	os.Chtimes(filepath.Join(root, "dev", "old.used"), old, old)
+	removeOldCopies(root, map[string]bool{filepath.Join(root, "dev", "active"): true}, time.Now())
+	if _, err := os.Stat(filepath.Join(root, "dev", "old")); err == nil {
+		t.Fatal("old copy kept")
+	}
+	for _, p := range []string{"dev/fresh", "dev/active", "runs/clone"} {
+		if _, err := os.Stat(filepath.Join(root, p)); err != nil {
+			t.Fatalf("%s removed", p)
+		}
+	}
+	if syncOverQuota([]syncEntry{{Path: "a", Size: 10}}) != "" || !strings.Contains(syncOverQuota([]syncEntry{{Path: "b", Size: maxSyncBytes + 1}}), "too large") {
+		t.Fatal("quota")
+	}
+}
+
+// #4: glava SSE in komentarji pred prenosom mape; napaka po tem kot dogodek SSE.
+func TestEarlyStreamWriter(t *testing.T) {
+	o := earlyInterval
+	t.Cleanup(func() { earlyInterval = o })
+	earlyInterval = 20 * time.Millisecond
+	rec := httptest.NewRecorder()
+	e := newEarlyWriter(rec, "r1")
+	time.Sleep(70 * time.Millisecond)
+	writeError(e, "r1", 502, "Syncing /p to the gateway failed")
+	e.done()
+	b := rec.Body.String()
+	if rec.Code != 200 || !strings.Contains(b, ": syncing the folder") || !strings.Contains(b, ": keep-alive") ||
+		!strings.Contains(b, "event: error") || !strings.Contains(b, "Syncing /p to the gateway failed") {
+		t.Fatalf("early stream: %d %q", rec.Code, b)
+	}
+	rec2 := httptest.NewRecorder()
+	e2 := newEarlyWriter(rec2, "r2")
+	e2.Header().Set("Content-Type", "text/event-stream")
+	e2.WriteHeader(200)
+	e2.Write([]byte("event: message_start\ndata: {}\n\n"))
+	if !strings.Contains(rec2.Body.String(), "event: message_start") || strings.Contains(rec2.Body.String(), "event: error") {
+		t.Fatalf("pass-through: %q", rec2.Body.String())
 	}
 }
