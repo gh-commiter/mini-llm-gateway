@@ -280,6 +280,28 @@ extension Router {
                 if let i = c.providers.firstIndex(where: { $0.id == gw.id }) { c.providers[i] = gw } else { c.providers.append(gw) }
             }
             return (200, ["provider": gateway(p, ready: false), "gateway": gateway(p, ready: false), "keyStore": "the Keychain", "models": apiModels(p, models, filter: "")])
+        case "PATCH gateways/{}":  // ime, vklop, URL (ključ ostane pod id), aliasi; kot minigw serve
+            guard var p = c.providers.first(where: { $0.name == arg }) else { throw AdminError(404, "no provider \(arg)") }
+            let b = try AdminBody(body, ["name", "enabled", "baseURL", "insecure", "aliases"])
+            if let u = try b.string("baseURL") { p.baseURL = try Self.checkGatewayURL(u, insecure: try b.bool("insecure") ?? false) }
+            if let e = try b.bool("enabled") { p.enabled = e }
+            if let a = try b.string("aliases") {
+                guard a.utf8.count <= 64 << 10 else { throw AdminError(400, "aliases: too long") }
+                p.aliases = a
+            }
+            if let n = try b.string("name"), n != arg {
+                guard !n.isEmpty, n.count <= 64, !n.contains("/"), !n.unicodeScalars.contains(where: { $0.value < 0x20 }) else {
+                    throw AdminError(400, "provider name: 1-64 characters, no / or control characters")
+                }
+                guard !c.providers.contains(where: { $0.name == n }) else { throw AdminError(400, "a provider named \(n) already exists") }
+                p.name = n
+            }
+            let gw = p
+            _ = try await hooks.update { c in
+                guard let i = c.providers.firstIndex(where: { $0.id == gw.id }) else { throw AdminError(404, "no provider \(arg)") }
+                c.providers[i] = gw
+            }
+            return (200, ["provider": gateway(p, ready: false), "gateway": gateway(p, ready: false)])
         case "DELETE gateways/{}":
             guard let p = c.providers.first(where: { $0.name == arg }) else { throw AdminError(404, "no provider \(arg)") }
             _ = try await hooks.update(keys: [p.id: nil]) { c in c.providers.removeAll { $0.id == p.id } }
@@ -327,6 +349,26 @@ extension Router {
             case "grok": return (200, grokInfo(c.grok))
             default: throw AdminError(404, "no agent \(arg)")
             }
+        case "GET agents/{}/tools":
+            guard arg == "claude" else { throw AdminError(404, "no agent \(arg)") }
+            return (200, ["tools": await Self.toolList.get(c.claudeCLI.executable)])
+        case "GET agents/{}/models":  // Codex, Grok: modeli računa (kot minigw serve)
+            switch arg {
+            case "codex":
+                guard let exe = Codex.executable(c.codex.executable) else { return (200, ["models": [Any]()]) }
+                let ms = await Task.detached { Codex.catalog(exe) }.value
+                return (200, ["models": ms.map { m -> [String: Any] in
+                    var o: [String: Any] = ["slug": m.slug, "name": m.name, "enabled": c.codex.isModelEnabled(m.slug)]
+                    if !m.description.isEmpty { o["description"] = m.description }
+                    if let w = m.window { o["window"] = w }
+                    return o
+                }])
+            case "grok":
+                guard let exe = Grok.executable(c.grok.executable) else { return (200, ["models": [Any]()]) }
+                let ms = await Task.detached { Grok.catalog(exe) }.value
+                return (200, ["models": ms.map { ["slug": $0, "name": $0, "enabled": c.grok.enabledModels?.contains($0) ?? true] }])
+            default: throw AdminError(404, "no agent \(arg)")
+            }
         case "GET foundry":
             return (200, await foundryInfo(c.foundry))
         case "GET foundry/{}":
@@ -354,7 +396,14 @@ extension Router {
         case "PATCH agents/{}":
             switch arg {
             case "claude":
-                let b = try AdminBody(body, ["enabled", "path", "tools", "folders", "allowLocalTools", "disabledTools"])
+                let b = try AdminBody(body, ["enabled", "path", "tools", "folders", "allowLocalTools", "disabledTools", "permissionMode", "settingSources"])
+                let mode = try b.string("permissionMode"), sources = try b.string("settingSources").map { $0.replacingOccurrences(of: " ", with: "") }
+                if let mode, !["dontAsk", "acceptEdits", "auto", "plan"].contains(mode) {
+                    throw AdminError(400, "permission mode: dontAsk, acceptEdits, auto or plan")
+                }
+                if let sources, sources.range(of: "^((user|project|local)(,(user|project|local))*)?$", options: .regularExpression) == nil {
+                    throw AdminError(400, "setting sources: comma-separated user, project, local (or empty)")
+                }
                 let enabled = try b.bool("enabled"), path = try b.string("path"), folders = try b.string("folders")
                 let local = try b.bool("allowLocalTools"), disabled = try b.strings("disabledTools")
                 let tools = try b.string("tools").map { $0.replacingOccurrences(of: " ", with: "") }
@@ -369,6 +418,8 @@ extension Router {
                     if let folders { c.claudeCLI.allowedRoots = folders }
                     if let local { c.claudeCLI.allowLocalTools = local }
                     if let disabled { c.claudeCLI.disabledTools = disabled }
+                    if let mode { c.claudeCLI.permissionMode = mode }
+                    if let sources { c.claudeCLI.settingSources = sources }
                     if c.claudeCLI.enabled, ClaudeCLI.executable(c.claudeCLI.executable) == nil {
                         throw AdminError(400, "claude not found: set path")
                     }
@@ -424,7 +475,18 @@ extension Router {
         case "GET general":
             return (200, general(c, connect: hooks.connect))
         case "PATCH general":
-            let b = try AdminBody(body, ["port", "address", "allowedClients", "allowPlainRemote", "startAtSignIn"])
+            let b = try AdminBody(body, ["port", "address", "allowedClients", "allowPlainRemote", "startAtSignIn", "scratch"])
+            if let scratch = try b.string("scratch") {  // kot Settings: vsebino premakne v »Mini Gateway Scratch« v izbrani mapi; "" = privzeta
+                var dir: ObjCBool = false
+                let url = scratch.isEmpty ? nil : URL(fileURLWithPath: (scratch as NSString).expandingTildeInPath, isDirectory: true)
+                if let url, !url.path.hasPrefix("/") || !FileManager.default.fileExists(atPath: url.path, isDirectory: &dir) || !dir.boolValue {
+                    throw AdminError(400, "scratch folder: an existing folder (absolute path)")
+                }
+                do { try RouterConfig.moveScratch(from: c.scratchURL, to: url.map(RouterConfig.dedicated) ?? RouterConfig.defaultScratch) }
+                catch { throw AdminError(500, "scratch folder: \(error.localizedDescription)") }
+                let n = try await hooks.update { c in c.scratchFolder = url?.path ?? "" }
+                if b.o.count == 1 { return (200, general(n, connect: hooks.connect)) }
+            }
             let port = try b.int("port"), address = try b.string("address"), clients = try b.string("allowedClients")
             let plain = try b.bool("allowPlainRemote")
             if let on = try b.bool("startAtSignIn") {
@@ -462,7 +524,8 @@ extension Router {
 
     func claudeInfo(_ c: ClaudeCLIConfig) -> [String: Any] {
         ["enabled": c.enabled, "path": c.executable, "found": ClaudeCLI.executable(c.executable) != nil, "tools": c.tools,
-         "folders": c.allowedRoots, "allowLocalTools": c.allowLocalTools, "disabledTools": c.disabledTools]
+         "folders": c.allowedRoots, "allowLocalTools": c.allowLocalTools, "disabledTools": c.disabledTools,
+         "permissionMode": c.permissionMode, "settingSources": c.settingSources]
     }
 
     func codexInfo(_ c: CodexConfig) -> [String: Any] {
@@ -498,6 +561,7 @@ extension Router {
 
     func general(_ c: RouterConfig, connect: String) -> [String: Any] {
         ["port": Int(c.port), "address": c.host, "allowedClients": c.allowedClients, "allowPlainRemote": c.allowPlainRemote,
+         "scratch": c.scratchURL.path,
          "connect": "minigw connect \(c.host == "0.0.0.0" || c.host == "::" ? Self.localIP() : c.host):\(c.port) --token '\(connect)'"]
     }
 

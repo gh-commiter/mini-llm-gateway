@@ -327,3 +327,55 @@ private func acceptPeerPort(_ fd: Int32) -> (Int32, UInt16) {
     #expect(m.devices.map(\.id) == ["a", "c"] && m.devices[0].name == "A (renamed)")
     #expect(RouterConfig.merge(draft: old, old: old, new: new) == new)  // brez neshranjenih sprememb: vse iz new
 }
+
+/// Revizija pariteta, vrstica 6: končne točke minigw serve tudi v aplikaciji.
+@Test func adminParityWithServe() async throws {
+    let fm = FileManager.default
+    let tmp = fm.temporaryDirectory.appendingPathComponent("adm6-" + UUID().uuidString)
+    defer { try? fm.removeItem(at: tmp) }
+    let a = tmp.appendingPathComponent("a"), b = tmp.appendingPathComponent("b")
+    try fm.createDirectory(at: RouterConfig.dedicated(a).appendingPathComponent("sync"), withIntermediateDirectories: true)
+    try fm.createDirectory(at: b, withIntermediateDirectories: true)
+    fm.createFile(atPath: RouterConfig.dedicated(a).appendingPathComponent("sync/x").path, contents: Data("x".utf8))
+    var c = RouterConfig()
+    c.scratchFolder = a.path
+    c.providers = [ProviderConfig(id: "gw-1", name: "or", enabled: true, baseURL: "https://openrouter.ai/api", aliases: ""),
+                   ProviderConfig(id: "gw-2", name: "lite", enabled: true, baseURL: "https://lite.example", aliases: "")]
+    c.claudeCLI.executable = "/nonexistent/claude"
+    c.codex.executable = "/nonexistent/codex"
+    c.grok.executable = "/nonexistent/grok"
+    let app = FakeApp(c)
+
+    // PATCH /providers/{name}: ime, vklop, aliasi; ključ ostane pod id
+    #expect(await admin(app.router(), "PATCH", "/providers/or", body: #"{"name":"open","enabled":false,"aliases":"x = y"}"#).status == 200)
+    let p = app.config.providers[0]
+    #expect(p.id == "gw-1" && p.name == "open" && !p.enabled && p.aliases == "x = y")
+    #expect(await admin(app.router(), "PATCH", "/providers/open", body: #"{"name":"lite"}"#).status == 400)
+    #expect(await admin(app.router(), "PATCH", "/providers/open", body: #"{"baseURL":"http://example.com"}"#).status == 400)
+    #expect(await admin(app.router(), "PATCH", "/providers/nope", body: #"{"enabled":true}"#).status == 404)
+    #expect(await admin(app.router(), "PATCH", "/providers/open", body: #"{"bogus":1}"#).status == 400)
+
+    // permissionMode, settingSources
+    #expect(await admin(app.router(), "PATCH", "/agents/claude", body: #"{"permissionMode":"bogus"}"#).status == 400)
+    #expect(await admin(app.router(), "PATCH", "/agents/claude", body: #"{"settingSources":"user,evil"}"#).status == 400)
+    let w = await admin(app.router(), "PATCH", "/agents/claude", body: #"{"permissionMode":"plan","settingSources":"user, project"}"#)
+    #expect(w.status == 200 && w.text.contains(#""permissionMode":"plan""#))
+    #expect(app.config.claudeCLI.permissionMode == "plan" && app.config.claudeCLI.settingSources == "user,project")
+
+    // GET agents/claude/tools, agents/{codex,grok}/models (brez programa prazno), drugi agenti 404
+    let t = await admin(app.router(), "GET", "/agents/claude/tools")
+    #expect(t.status == 200 && t.text.contains(#""tools":[]"#))
+    for k in ["codex", "grok"] {
+        let m = await admin(app.router(), "GET", "/agents/\(k)/models")
+        #expect(m.status == 200 && m.text.contains(#""models":[]"#), "\(k)")
+    }
+    #expect(await admin(app.router(), "GET", "/agents/copilot/models").status == 404)
+    #expect(await admin(app.router(), "GET", "/agents/codex/tools").status == 404)
+
+    // scratch: premik v izbrano mapo, kot Settings; relativna pot 400
+    #expect(await admin(app.router(), "PATCH", "/general", body: #"{"scratch":"relative/x"}"#).status == 400)
+    let g = await admin(app.router(), "PATCH", "/general", body: #"{"scratch":"\#(b.path)"}"#)
+    #expect(g.status == 200 && app.config.scratchFolder == b.path)
+    #expect(fm.fileExists(atPath: RouterConfig.dedicated(b).appendingPathComponent("sync/x").path))
+    #expect(!fm.fileExists(atPath: RouterConfig.dedicated(a).appendingPathComponent("sync/x").path))
+}

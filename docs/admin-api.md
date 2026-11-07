@@ -138,7 +138,7 @@ Notes:
 | Method and path | Body | Response |
 |---|---|---|
 | `GET /agents/codex`, `PATCH` | any of `{"enabled", "path", "write", "network", "models"}` | `{"enabled", "path", "found", "write", "network", "models": [string] \| null}` |
-| `GET /agents/codex/models`, `GET /agents/grok/models` | – | `{"models": [{"slug", "name", "description"?, "window"?, "enabled"}]}`: the account's models (Go gateway) |
+| `GET /agents/codex/models`, `GET /agents/grok/models` | – | `{"models": [{"slug", "name", "description"?, "window"?, "enabled"}]}`: the account's models |
 | `GET /foundry`, `PATCH` | any of `{"enabled", "path", "instructions", "models"}` | `{"enabled", "path", "found", "exe", "running", "error", "instructions", "models": [string] \| null}`: Foundry Local on this computer |
 | `GET /foundry/models` | – | `{"models": [{"name", "vision", "enabled"}]}`: models downloaded in Foundry Local; `503` when it is not installed or does not answer (Go gateway and the Mac app) |
 | `GET /agents/grok`, `PATCH` | any of `{"enabled", "path", "write", "models"}` | `{"enabled", "path", "found", "write", "models"}` |
@@ -194,12 +194,16 @@ The Mac app keeps its settings in its preferences and Keychain; the Settings win
   Keychain only after the config change succeeds, and before the app restarts the gateway (the gateway reads provider
   keys when it starts). Providers with manual
   aliases (Settings → Advanced) list their discovered models here, but route by their aliases.
-- **agents/claude:** `{"enabled", "path", "found", "tools", "folders", "allowLocalTools", "disabledTools"}`.
+  `PATCH /providers/{name}` takes the same fields as on Go. The key stays under the provider's ID, so a new name keeps it.
+- **agents/claude:** `{"enabled", "path", "found", "tools", "folders", "allowLocalTools", "disabledTools",
+  "permissionMode", "settingSources"}`; `PATCH` takes the last two with the same rules as Go. `GET /agents/claude/tools`
+  and `GET /agents/{codex,grok}/models` answer as on Go.
   `folders` is the comma-separated list of allowed folders. There is no `folder` or `allowUnsandboxedBash`: with
   `allowLocalTools`, Bash runs in Claude Code's sandbox.
 - **general:** also `allowedClients` (IP addresses, comma-separated; empty = all) and `allowPlainRemote`. `address`
   may be `0.0.0.0`, `::` or `127.0.0.1`. A port or address change restarts the listener, so there is no
-  `restartRequired`.
+  `restartRequired`. `scratch` is an existing folder: as in Settings, the scratch content moves into a
+  `Mini Gateway Scratch` folder inside it (`""` = the default folder); `GET` returns the folder in use.
 - **status:** `pending` is always 0; `installed` is Open at Login.
 - **Not on the Mac:** the settings page and its sessions (`/minigw/settings`, `POST /settings/login`): the app has
   its own Settings window, so only the admin secret (`minigw gw`) opens the API, and it never sets cookies.
