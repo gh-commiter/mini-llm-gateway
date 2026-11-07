@@ -25,7 +25,7 @@ func copilotRules(a []string) (allow, deny []string) {
 }
 
 func TestCopilotArgs(t *testing.T) {
-	ro := copilotArgs("hi", nil, true, "", false, false, false, "s1")
+	ro := copilotArgs(nil, true, "", false, false, false, "s1")
 	allow, deny := copilotRules(ro)
 	if slices.ContainsFunc(ro, func(x string) bool { return slices.Contains(copilotForbidden, x) }) {
 		t.Fatalf("forbidden flag: %q", ro)
@@ -39,28 +39,24 @@ func TestCopilotArgs(t *testing.T) {
 			t.Errorf("missing %s", f)
 		}
 	}
-	if i := slices.Index(ro, "--session-id"); i < 0 || ro[i+1] != "s1" || ro[slices.Index(ro, "-p")+1] != "hi" {
+	if i := slices.Index(ro, "--session-id"); i < 0 || ro[i+1] != "s1" || slices.Contains(ro, "-p") { // navodilo na stdin
 		t.Fatalf("session/prompt: %q", ro)
 	}
-	w := copilotArgs("x", []string{"/wt"}, true, "gpt-5.2", true, true, true, "s")
+	w := copilotArgs([]string{"/wt"}, true, "gpt-5.2", true, true, true, "s")
 	allow, deny = copilotRules(w)
 	if !slices.Equal(allow, []string{"read", "write", "shell", "url"}) || !slices.Contains(deny, "shell(gh:*)") || !slices.Contains(deny, "shell(security:*)") {
 		t.Fatalf("write+commands: allow %q deny %q", allow, deny)
 	}
-	if allow, deny := copilotRules(copilotArgs("x", nil, true, "", false, true, false, "s")); !slices.Equal(allow, []string{"read"}) ||
+	if allow, deny := copilotRules(copilotArgs(nil, true, "", false, true, false, "s")); !slices.Equal(allow, []string{"read"}) ||
 		!slices.Contains(deny, "shell") {
 		t.Fatalf("commands without write (or --ro): allow %q deny %q", allow, deny)
 	}
 	if w[slices.Index(w, "--model")+1] != "gpt-5.2" || w[slices.Index(w, "--add-dir")+1] != "/wt" {
 		t.Fatalf("model/add-dir: %q", w)
 	}
-	chat := copilotArgs("x", nil, false, "", true, true, true, "s")
+	chat := copilotArgs(nil, false, "", true, true, true, "s")
 	if allow, deny = copilotRules(chat); len(allow) != 0 || !slices.Contains(deny, "read") {
 		t.Fatalf("chat: allow %q deny %q", allow, deny)
-	}
-	big := copilotArgs(strings.Repeat("a", copilotMaxPrompt+5)+"END", nil, false, "", false, false, false, "s")
-	if len([]rune(big[1])) != copilotMaxPrompt || !strings.HasSuffix(big[1], "END") {
-		t.Fatal("prompt not capped at the end")
 	}
 	if txt, _ := copilotEvent([]byte(`{"type":"assistant.message","data":{"content":"Hi!"}}`)); txt != "Hi!" {
 		t.Fatal("assistant.message")
@@ -119,6 +115,7 @@ func TestCopilotThroughRouter(t *testing.T) {
 	copilot := filepath.Join(bin, "copilot")
 	os.WriteFile(copilot, []byte(`#!/bin/sh
 printf '%s\n' "$@" "home=$COPILOT_HOME" "token=${COPILOT_GITHUB_TOKEN:+set}" > "`+argsFile+`"
+cat > "`+argsFile+`.stdin"
 echo '{"type":"session.start","data":{"sessionId":"x"}}'
 echo '{"type":"assistant.message","data":{"content":"first"}}'
 echo '{"type":"assistant.message","data":{"content":"copilot says hi"}}'
@@ -151,7 +148,7 @@ echo '{"type":"assistant.message","data":{"content":"copilot says hi"}}'
 	defer sc.unregister()
 	h := map[string]string{"x-claude-mini-session": "sidp", "x-claude-mini-cwd": dir, "content-type": "application/json"}
 	ask := func(model string) (int, string) {
-		st, data := call(c, "POST", "/v1/messages", h, []byte(`{"model":"`+model+`","tools":[{"name":"x"}],"messages":[{"role":"user","content":"hi"}]}`), 30*time.Second)
+		st, data := call(c, "POST", "/v1/messages", h, []byte(`{"model":"`+model+`","tools":[{"name":"x"}],"messages":[{"role":"user","content":"PROMPT_MARKER"}]}`), 30*time.Second)
 		return st, string(data)
 	}
 	args := func() []string {
@@ -168,6 +165,11 @@ echo '{"type":"assistant.message","data":{"content":"copilot says hi"}}'
 		slices.ContainsFunc(a, func(x string) bool { return slices.Contains(copilotForbidden, x) }) ||
 		!strings.HasPrefix(a[len(a)-2], "home="+s.conf().Scratch+"/state/") {
 		t.Fatalf("copilot args: %q", a)
+	}
+	// Navodilo na stdin, ne v argumentih (ps, /proc/<pid>/cmdline).
+	if in, _ := os.ReadFile(argsFile + ".stdin"); !strings.Contains(string(in), "PROMPT_MARKER") ||
+		slices.ContainsFunc(a, func(x string) bool { return strings.Contains(x, "PROMPT_MARKER") }) {
+		t.Fatalf("prompt not on stdin: %q / %q", in, a)
 	}
 	if want := map[bool]string{true: "token=set", false: "token="}[runtime.GOOS == "linux"]; a[len(a)-1] != want {
 		t.Fatalf("token handoff: %q, want %q", a[len(a)-1], want)

@@ -45,17 +45,14 @@ public enum Copilot {
         configured.isEmpty ? detected : [(configured as NSString).expandingTildeInPath].first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
-    /// Največ znakov navodila v ukazni vrstici (-p; stdin pri -p ne velja): ARG_MAX je 1 MB skupaj z okoljem.
-    static let maxPrompt = 200_000
-
     /// Argumenti. Nikoli --allow-all-tools, --allow-all-paths, --allow-all-urls, --allow-all ali --yolo; v načinu -p
     /// Copilot zavrne vsako orodje brez pravila --allow-tool, zato so zavrnitve tu le za jasnost (deny velja pred allow).
     /// Poti: le mapa seje (in `extraDirs`), brez sistemske začasne mape (tam je predpomnilnik xcrun). Brez vgrajenih
     /// strežnikov MCP (GitHub z uporabnikovo prijavo), brez vprašanj in samodejnih posodobitev; seja po `session`.
-    static func args(prompt: String, extraDirs: [String], agent: Bool, model: String?, write: Bool, commands: Bool,
+    /// Navodilo gre na stdin (brez -p; preverjeno s copilot 1.0.107), ne v ukazno vrstico: to vidijo `ps` in drugi uporabniki.
+    static func args(extraDirs: [String], agent: Bool, model: String?, write: Bool, commands: Bool,
                      network: Bool, session: String) -> [String] {
-        var a = ["-p", prompt.count > maxPrompt ? String(prompt.suffix(maxPrompt)) : prompt, "--output-format", "json",
-                 "--no-ask-user", "--disable-builtin-mcps", "--disallow-temp-dir", "--no-auto-update", "--no-color",
+        var a = ["--output-format", "json", "--no-ask-user", "--disable-builtin-mcps", "--disallow-temp-dir", "--no-auto-update", "--no-color",
                  "--disable-client-telemetry", "--secret-env-vars=" + tokenVars.joined(separator: ","), "--session-id", session]
         if let model { a += ["--model", model] }
         for d in extraDirs { a += ["--add-dir", d] }
@@ -128,7 +125,7 @@ public enum Copilot {
     final class Handle: @unchecked Sendable { let p = Process() }
 
     /// Zažene copilot (`sandbox`: profil sandbox-exec za ukaze lupine) in vrne zadnje sporočilo agenta.
-    static func run(_ exe: String, args: [String], cwd: URL, env: [String: String], sandbox: String?,
+    static func run(_ exe: String, args: [String], prompt: String, cwd: URL, env: [String: String], sandbox: String?,
                     onStep: @escaping @Sendable (String) -> Void) async throws -> String {
         let h = Handle()
         return try await withTaskCancellationHandler {
@@ -138,8 +135,8 @@ public enum Copilot {
                 p.arguments = sandbox.map { ["-p", $0, exe] + args } ?? args
                 p.currentDirectoryURL = cwd
                 p.environment = env
-                let events = Pipe(), errors = Pipe()
-                p.standardInput = FileHandle.nullDevice
+                let input = Pipe(), events = Pipe(), errors = Pipe()
+                p.standardInput = input
                 p.standardOutput = events
                 p.standardError = errors
                 var stderr = Data()
@@ -148,6 +145,11 @@ public enum Copilot {
                 AgentCount.running.add(1, ordering: .relaxed)
                 defer { AgentCount.running.subtract(1, ordering: .relaxed) }
                 errReader.start()
+                _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)  // EPIPE namesto SIGPIPE
+                Thread {  // ločeno od branja dogodkov: velik pogovor ne zaklene cevi; try?: copilot je lahko že končal
+                    try? input.fileHandleForWriting.write(contentsOf: Data(prompt.utf8))
+                    try? input.fileHandleForWriting.close()
+                }.start()
                 var buf = Data(), answer = ""
                 while case let chunk = events.fileHandleForReading.availableData, !chunk.isEmpty {
                     buf.append(chunk)
@@ -256,11 +258,11 @@ extension Router {
         let existing = agent ? await Self.copilotSessions.get(ClaudeCLI.key(all.dropLast(), scope: scope)) : nil
         if existing != nil { prompt = last.text }
         let session = existing ?? UUID().uuidString.lowercased()
-        let args = Copilot.args(prompt: prompt, extraDirs: extra, agent: agent, model: model, write: write, commands: commands,
+        let args = Copilot.args(extraDirs: extra, agent: agent, model: model, write: write, commands: commands,
                                 network: cfg.network && (tree == nil || config.worktreeCodexNetwork), session: session)
         let sessions = Self.copilotSessions, client = req.header("x-claude-mini-session") ?? ""
         return await replyWhenDone(body: body, model: "claude-copilot", rid: rid, writer: writer) {
-            let text = try await Copilot.run(exe, args: args, cwd: cwd, env: env, sandbox: sandbox) { [onActivity] s in
+            let text = try await Copilot.run(exe, args: args, prompt: prompt, cwd: cwd, env: env, sandbox: sandbox) { [onActivity] s in
                 onActivity(.step(id: rid, text: s))
             }
             if agent { await Self.shares.syncBack(session: client) }  // sync: spremembe agenta k odjemalcu pred odgovorom

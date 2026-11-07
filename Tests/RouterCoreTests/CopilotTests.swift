@@ -16,28 +16,24 @@ private func rules(_ a: [String]) -> (allow: [String], deny: [String]) {
 }
 
 @Test func copilotArgsReadOnlyByDefaultAndNeverAllowAll() {
-    let ro = Copilot.args(prompt: "hi", extraDirs: [], agent: true, model: nil, write: false, commands: false, network: false, session: "s1")
+    let ro = Copilot.args(extraDirs: [], agent: true, model: nil, write: false, commands: false, network: false, session: "s1")
     #expect(!ro.contains { forbidden.contains($0) })
     #expect(rules(ro).allow == ["read"] && Set(rules(ro).deny) == ["memory", "write", "shell", "url"])
     for f in ["--disallow-temp-dir", "--disable-builtin-mcps", "--no-ask-user", "--no-auto-update", "--disable-client-telemetry",
               "--secret-env-vars=COPILOT_GITHUB_TOKEN,GH_TOKEN,GITHUB_TOKEN"] { #expect(ro.contains(f)) }
-    #expect(ro[ro.firstIndex(of: "--session-id")! + 1] == "s1" && ro[ro.firstIndex(of: "-p")! + 1] == "hi" && !ro.contains("--model"))
+    #expect(ro[ro.firstIndex(of: "--session-id")! + 1] == "s1" && !ro.contains("-p") && !ro.contains("--model"))  // navodilo na stdin
 
-    let w = Copilot.args(prompt: "x", extraDirs: ["/wt"], agent: true, model: "gpt-5.2", write: true, commands: false, network: true, session: "s")
+    let w = Copilot.args(extraDirs: ["/wt"], agent: true, model: "gpt-5.2", write: true, commands: false, network: true, session: "s")
     #expect(rules(w).allow == ["read", "write", "url"] && rules(w).deny.contains("shell") && !w.contains { forbidden.contains($0) })
     #expect(w[w.firstIndex(of: "--model")! + 1] == "gpt-5.2" && w[w.firstIndex(of: "--add-dir")! + 1] == "/wt")
 
-    let c = Copilot.args(prompt: "x", extraDirs: [], agent: true, model: nil, write: true, commands: true, network: false, session: "s")
+    let c = Copilot.args(extraDirs: [], agent: true, model: nil, write: true, commands: true, network: false, session: "s")
     #expect(rules(c).allow.contains("shell") && rules(c).deny.contains("shell(gh:*)") && rules(c).deny.contains("shell(security:*)"))
-    let cro = Copilot.args(prompt: "x", extraDirs: [], agent: true, model: nil, write: false, commands: true, network: false, session: "s")
+    let cro = Copilot.args(extraDirs: [], agent: true, model: nil, write: false, commands: true, network: false, session: "s")
     #expect(rules(cro).allow == ["read"] && rules(cro).deny.contains("shell"))  // ukazi brez pisanja (ali --ro): ne
 
-    let chat = Copilot.args(prompt: "x", extraDirs: [], agent: false, model: nil, write: true, commands: true, network: true, session: "s")
+    let chat = Copilot.args(extraDirs: [], agent: false, model: nil, write: true, commands: true, network: true, session: "s")
     #expect(rules(chat).allow.isEmpty && Set(rules(chat).deny) == ["memory", "read", "write", "shell", "url"])  // brez orodij: nič
-
-    let big = Copilot.args(prompt: String(repeating: "a", count: Copilot.maxPrompt + 10) + "END", extraDirs: [], agent: false, model: nil,
-                           write: false, commands: false, network: false, session: "s")
-    #expect(big[1].count == Copilot.maxPrompt && big[1].hasSuffix("END"))  // ARG_MAX: konec pogovora ostane
 }
 
 @Test func copilotModelsEnvAndEvents() throws {
@@ -70,6 +66,7 @@ private func fakeCopilot(_ dir: URL) throws -> URL {
     for a in "$@"; do printf '%s\\n' "$a"; done > "\(dir.path)/args"
     env > "\(dir.path)/env"
     pwd > "\(dir.path)/cwd"
+    cat > "\(dir.path)/stdin"
     echo '{"type":"session.start","data":{"sessionId":"x"}}'
     echo '{"type":"tool.execution_start","data":{"toolName":"view"}}'
     echo '{"type":"assistant.message","data":{"content":"first","toolRequests":[{}]}}'
@@ -106,6 +103,8 @@ private func fakeCopilot(_ dir: URL) throws -> URL {
     let args = try String(contentsOf: bin.appendingPathComponent("args"), encoding: .utf8).split(separator: "\n").map(String.init)
     #expect(!args.contains { forbidden.contains($0) } && rules(args).deny.contains("write") && rules(args).deny.contains("shell"))
     #expect(args[args.firstIndex(of: "--model")! + 1] == "gpt-5.2")
+    // Navodilo na stdin, ne v argumentih (ps, /proc/<pid>/cmdline).
+    #expect(try String(contentsOf: bin.appendingPathComponent("stdin"), encoding: .utf8).contains("read a.txt") && !args.contains { $0.contains("read a.txt") })
     #expect(try String(contentsOf: bin.appendingPathComponent("cwd"), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines) == proj.path)
     let env = try String(contentsOf: bin.appendingPathComponent("env"), encoding: .utf8)
     #expect(env.contains("COPILOT_HOME=" + (Sync.real(c.scratch("copilot"))?.path ?? "")) || env.contains("COPILOT_HOME=" + c.scratch("copilot").path))

@@ -239,18 +239,13 @@ func grokArgs(cwd, promptFile, cfgDir string, agent bool, model string, write bo
 	return a
 }
 
-// copilotMaxPrompt: navodilo gre v ukazno vrstico (-p; stdin pri -p ne velja), ARG_MAX: konec pogovora ostane.
-const copilotMaxPrompt = 200_000
-
 // copilotArgs: kot Copilot.args na Macu. Nikoli --allow-all-tools/-paths/-urls, --allow-all ali --yolo: v načinu -p Copilot
 // zavrne vsako orodje brez --allow-tool; zavrnitve so tu še izrecno. Privzeto le branje; write le z dovoljenjem; lupina le
 // z dovoljenjem (commands), gh in security tudi tedaj ne; url le z omrežjem. Brez sistemske začasne mape, vgrajenih MCP
 // (GitHub s prijavo uporabnika), vprašanj in samodejnih posodobitev; seja po --session-id.
-func copilotArgs(prompt string, extraDirs []string, agent bool, model string, write, commands, network bool, session string) []string {
-	if r := []rune(prompt); len(r) > copilotMaxPrompt {
-		prompt = string(r[len(r)-copilotMaxPrompt:])
-	}
-	a := []string{"-p", prompt, "--output-format", "json", "--no-ask-user", "--disable-builtin-mcps", "--disallow-temp-dir",
+// Navodilo gre na stdin (brez -p; preverjeno s copilot 1.0.107), ne v ukazno vrstico: to vidijo ps in /proc/<pid>/cmdline.
+func copilotArgs(extraDirs []string, agent bool, model string, write, commands, network bool, session string) []string {
+	a := []string{"--output-format", "json", "--no-ask-user", "--disable-builtin-mcps", "--disallow-temp-dir",
 		"--no-auto-update", "--no-color", "--disable-client-telemetry",
 		"--secret-env-vars=" + strings.Join(copilotTokenVars, ","), "--session-id", session}
 	if model != "" {
@@ -534,9 +529,9 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 					m.env = []string{"COPILOT_GITHUB_TOKEN=" + t}
 				}
 			}
-			args := copilotArgs(prompt, extra, agent, model, write, ac.Commands, ac.Network, resume)
+			args := copilotArgs(extra, agent, model, write, ac.Commands, ac.Network, resume)
 			var answer string
-			err = s.runAgentProcess(ctx, r, exe, args, m, dir, "", func(line []byte) {
+			err = s.runAgentProcess(ctx, r, exe, args, m, dir, prompt, func(line []byte) {
 				t, st := copilotEvent(line)
 				if t != "" {
 					answer = t // odgovor je zadnje sporočilo agenta
