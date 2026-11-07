@@ -140,6 +140,7 @@ func nativeProof(c connection, cwd string) (map[string]string, string) {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
+	call(c, "DELETE", "/minigw/native", map[string]string{"x-native-id": r.ID}, nil, 5*time.Second) // označba ne ostane do TTL
 	return nil, cwd + " is not the gateway's folder " + share + "/" + rel + " (its check file is not visible here)"
 }
 

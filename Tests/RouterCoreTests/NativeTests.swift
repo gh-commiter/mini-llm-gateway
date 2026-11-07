@@ -167,6 +167,17 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     #expect(await run(on, #"{"argv":["bash","-c","id"]}"#, await challenge(on, f, device: "dev"), device: "dev").status == 403)  // ni na seznamu
     #expect(await run(on, #"{"argv":["/bin/sh","-c","id"]}"#, await challenge(on, f, device: "dev"), device: "dev").status == 403)
     #expect(await run(on, argv, nil, device: "dev").status == 403)  // brez dokaza mape
+    // Zavrnjeni izzivi ne pustijo označb v mapi (ne šele po TTL).
+    func markers() -> [String] { ((try? FileManager.default.contentsOfDirectory(atPath: f.project.path)) ?? []).filter { $0.hasPrefix(".minigw-native-") } }
+    #expect(markers().isEmpty, "\(markers())")
+    // Odjemalec označbe ne vidi (lažna mapa): DELETE /minigw/native jo odstrani; tuja naprava je ne more.
+    let open = try #require(await challenge(on, f, device: "dev"))
+    let wOther = FakeWriter()
+    await on.handle(nativeReq("DELETE", "/minigw/native", ["x-native-id": open.id], "", device: "other"), writer: wOther)
+    #expect(markers() == [open.file])
+    let wOwn = FakeWriter()
+    await on.handle(nativeReq("DELETE", "/minigw/native", ["x-native-id": open.id], "", device: "dev"), writer: wOwn)
+    #expect(wOwn.status == 204 && markers().isEmpty)
 
     let ok = await run(on, argv, await challenge(on, f, device: "dev"), device: "dev")
     #expect(ok.status == 200)

@@ -339,6 +339,10 @@ public final class Router: Sendable {
             return (200, nil, "share")
         case ("POST", "/minigw/native"):
             return (await nativeChallenge(req, rid: rid, writer: writer), nil, "share")
+        case ("DELETE", "/minigw/native"):
+            let st = await nativeDiscard(req)
+            try? await writer.write(HTTPResponse.head(status: st, headers: [], contentLength: 0))
+            return (st, nil, "share")
         case ("POST", "/minigw/run"):
             return (await runCommand(req, rid: rid, writer: writer), nil, "run")
         case ("DELETE", "/minigw/share"):

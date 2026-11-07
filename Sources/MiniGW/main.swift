@@ -300,6 +300,7 @@ func nativeProof(_ c: Connection, _ cwd: String) -> (proof: [String: String]?, w
         }
         usleep(200_000)
     }
+    _ = call(c, "DELETE", "/minigw/native", ["x-native-id": id], nil, timeout: 5)  // označba ne ostane v mapi do TTL
     return (nil, "\(cwd) is not the gateway's folder \(m.share)/\(m.path) (its check file is not visible here)")
 }
 

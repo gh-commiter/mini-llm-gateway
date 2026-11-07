@@ -351,6 +351,12 @@ public actor NativeHub {
         return c.dir
     }
 
+    /// Izziv, ki ga odjemalec ne bo rešil (zavrnjen run, označba ni vidna): takoj ven, z označbo; le lastnikov.
+    func discard(id: String, owner: String) {
+        guard let c = pending[id], c.owner == owner else { return }
+        drop(id)
+    }
+
     private func drop(_ id: String) {
         guard let c = pending.removeValue(forKey: id) else { return }
         unlink(c.marker.path)
@@ -389,6 +395,12 @@ extension Router {
     /// Lastnik izziva in shema: naprava (dokaz Noise) ali »local« za loopback; oddaljen odjemalec brez ključa naprave nima native.
     static func nativeOwner(_ req: HTTPRequest) -> String? { req.device?.id ?? (RouterServer.isLoopback(req.peer) ? "local" : nil) }
 
+    /// DELETE /minigw/native (x-native-id): odjemalec označbe ni videl (ni mapa tega Maca): izziv takoj ven.
+    func nativeDiscard(_ req: HTTPRequest) async -> Int {
+        if let owner = Self.nativeOwner(req) { await Self.natives.discard(id: req.header("x-native-id") ?? "", owner: owner) }
+        return 204
+    }
+
     /// POST /minigw/native {"share", "path"} → {"id", "file"}: označba v preslikani mapi.
     func nativeChallenge(_ req: HTTPRequest, rid: String, writer: ResponseWriter, shares: () -> [String: String] = Native.localShares) async -> Int {
         guard let owner = Self.nativeOwner(req) else {
@@ -413,13 +425,17 @@ extension Router {
     /// Odgovor: vrstice »o <base64>« (stdout), »e <base64>« (stderr), »p« (ping), na koncu »x <izhodna koda>«.
     /// Le naprave z vklopljenim »minigw run« in le ukazi s seznama; brez lupine, stdin prazen.
     func runCommand(_ req: HTTPRequest, rid: String, writer: ResponseWriter) async -> Int {
+        // Zavrnitev pred preverjanjem: izziv (in označba v mapi) gre takoj ven, ne šele po TTL.
+        let challenge = req.header("x-native-id") ?? ""
         guard let d = req.device, config.devices.contains(where: { $0.id == d.id && $0.run }) else {
+            if let owner = Self.nativeOwner(req) { await Self.natives.discard(id: challenge, owner: owner) }
             return await error(403, "permission_error",
                                "minigw run is not allowed for this device: allow it in Mini Gateway → Settings → General → minigw run",
                                rid: rid, writer: writer)
         }
         guard let b = try? JSONSerialization.jsonObject(with: req.body) as? [String: Any], let argv = b["argv"] as? [String],
               Native.commandAllowed(argv, list: config.runCommands) else {
+            await Self.natives.discard(id: challenge, owner: d.id)
             return await error(403, "permission_error",
                                "minigw run: the command is not in the allowed commands (\(config.runCommands))", rid: rid, writer: writer)
         }

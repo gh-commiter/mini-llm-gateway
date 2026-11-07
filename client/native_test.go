@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -41,10 +42,17 @@ func TestNativeSMBPath(t *testing.T) {
 	}
 }
 
+var nativeDiscards atomic.Int32 // DELETE /minigw/native v testih
+
 // fakeNativeRouter: kot router Mac: označba v `routerDir` za shemo Java/projects, odgovor `file` (lažni router).
 func fakeNativeRouter(t *testing.T, routerDir string, status int, file string) (connection, *string) {
 	var marker string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "DELETE" { // odjemalec označbe ni videl: izziv ven
+			nativeDiscards.Add(1)
+			w.WriteHeader(204)
+			return
+		}
 		var b struct{ Share, Path string }
 		json.NewDecoder(r.Body).Decode(&b)
 		if status != 200 {
@@ -86,7 +94,8 @@ func TestNativeProof(t *testing.T) {
 	os.MkdirAll(filepath.Join(spoof, "projects"), 0o755)
 	t.Setenv("MINIGW_NATIVE_MOUNT", "Java="+spoof)
 	c, _ = fakeNativeRouter(t, project, 200, "")
-	if p, why := nativeProof(c, filepath.Join(spoof, "projects")); p != nil || !strings.Contains(why, "check file is not visible") {
+	before := nativeDiscards.Load()
+	if p, why := nativeProof(c, filepath.Join(spoof, "projects")); p != nil || !strings.Contains(why, "check file is not visible") || nativeDiscards.Load() != before+1 {
 		t.Fatalf("spoof: %v %s", p, why)
 	}
 
