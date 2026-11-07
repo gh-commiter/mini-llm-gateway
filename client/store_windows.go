@@ -57,9 +57,26 @@ func credTargetFor(name string) string {
 	return credTarget + ":" + name
 }
 
-func storeLoad(name string) ([]byte, error)    { return credLoad(credTargetFor(name)) }
-func storeSave(name string, data []byte) error { return credSave(credTargetFor(name), data) }
-func storeDelete(name string)                  { credDelete(credTargetFor(name)) }
+// Neveljavno ime (L1) nikoli ne doseže poverilnice: ».." ali »x:y« bi zadela drug cilj.
+func storeLoad(name string) ([]byte, error) {
+	if !validProfile(name) {
+		return nil, errNotFound
+	}
+	return credLoad(credTargetFor(name))
+}
+
+func storeSave(name string, data []byte) error {
+	if !validProfile(name) {
+		return errors.New("invalid profile name")
+	}
+	return credSave(credTargetFor(name), data)
+}
+
+func storeDelete(name string) {
+	if validProfile(name) {
+		credDelete(credTargetFor(name))
+	}
+}
 
 // storeNames: imena profilov iz Credential Manager (CredEnumerateW s filtrom minigw:router*).
 func storeNames() []string {

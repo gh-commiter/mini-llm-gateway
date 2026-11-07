@@ -38,7 +38,7 @@ struct RouteError: Error { let message: String }
 
 func routeResult(_ p: Profile) -> Result<Connection, RouteError> {
     var c = p.conn
-    guard !c.isLocal else { return .success(c) }
+    guard !(c.isLocal && c.key == nil) else { return .success(c) }  // L3: s ključem prehoda tudi lokalno šifrirano
     if c.device == nil {  // povezava iz minigw 0.4.3 ali starejšega: en ključ naprave za ves odjemalec
         c.device = anyDevice() ?? Noise.base64url(Curve25519.Signing.PrivateKey().rawRepresentation)
         saveProfile(p.name, c)
@@ -152,7 +152,7 @@ func call(_ c: Connection, _ method: String, _ path: String, _ headers: [String:
     for (k, v) in headers { r.setValue(v, forHTTPHeaderField: k) }
     let done = DispatchSemaphore(value: 0)
     var result: (Int, Data?) = (0, nil)
-    URLSession.shared.downloadTask(with: r) { file, resp, _ in
+    Profiles.session.downloadTask(with: r) { file, resp, _ in  // L2: brez preusmeritev
         let size = file.flatMap { try? $0.resourceValues(forKeys: [.fileSizeKey]).fileSize } ?? 0
         result = ((resp as? HTTPURLResponse)?.statusCode ?? 0, size <= maxReply ? file.flatMap { try? Data(contentsOf: $0) } : nil)
         done.signal()
@@ -372,7 +372,7 @@ func runRemote(_ c: Connection, _ argv: [String], _ proof: [String: String]) -> 
     Task {
         defer { done.signal() }
         do {
-            let (bytes, resp) = try await URLSession.shared.bytes(for: r)
+            let (bytes, resp) = try await Profiles.session.bytes(for: r)
             guard (resp as? HTTPURLResponse)?.statusCode == 200 else {
                 var d = Data()
                 for try await b in bytes { d.append(b); if d.count > 1 << 16 { break } }
@@ -407,7 +407,7 @@ func profileStatus(_ p: Profile) -> Bool {
     case .failure(let e): say("Gateway:   \(p.conn.url) (\(e.message))"); return false
     }
     let (s, ready) = get(c, "/health/ready")
-    say("Gateway:   \(p.conn.url) (\(s == 200 ? "reachable" : s == 0 ? "unreachable" : "HTTP \(s)")\(p.conn.isLocal ? "" : ", encrypted"))")
+    say("Gateway:   \(p.conn.url) (\(s == 200 ? "reachable" : s == 0 ? "unreachable" : "HTTP \(s)")\(p.conn.isLocal && p.conn.key == nil ? "" : ", encrypted"))")
     if let pr = ready?["providers"] as? [String: Bool] {
         say("Providers: " + pr.keys.sorted().map { "\($0) \(pr[$0]! ? "✓" : "✗")" }.joined(separator: ", "))
     }
@@ -544,7 +544,7 @@ case "connect":
     let asProfile = name != Profiles.defaultName || names.contains { $0 != Profiles.defaultName } ? " as profile \(name)" : ""
     let (status, body) = get(route(Profile(name: name, conn: c)), "/v1/models")
     switch status {
-    case 200: saveProfile(name, c); say("Connected to \(c.url)" + (c.isLocal ? "" : " (encrypted)") + asProfile)
+    case 200: saveProfile(name, c); say("Connected to \(c.url)" + (c.isLocal && c.key == nil ? "" : " (encrypted)") + asProfile)
     case 401: fail("gateway at \(c.url) rejected the token")
     case 403:  // naprava še ni dovoljena (minigw serve): ključ naprave ostane, da ga prehod lahko doda
         saveProfile(name, c)
@@ -732,7 +732,7 @@ if !wantShare || sid.isEmpty {
 }
 
 /// Načini po vrsti (auto: native → worktree → sync); naslednji, če prehod prejšnjega ne sprejme.
-func registerShare(_ c: Connection, tries: [String], quiet: Bool) -> (ShareClient, Bool) {
+@Sendable func registerShare(_ c: Connection, tries: [String], quiet: Bool) -> (ShareClient, Bool) {
     var sc = ShareClient(c, session: sid, root: URL(fileURLWithPath: cwd), readOnly: readOnly, kind: "direct")
     for (i, w) in tries.enumerated() {
         sc = ShareClient(c, session: sid, root: URL(fileURLWithPath: cwd), readOnly: readOnly, kind: w, top: top)
@@ -775,7 +775,7 @@ if profiles.count > 1 {
     }
     if targets.count > 1 {
         let m = ProfileMux(targets: targets, share: hooks)
-        do { try m.start() } catch { fail("cannot start the local gateway router: \(error)") }
+        do { try m.start() } catch { fail("cannot start minigw's local proxy: \(error)") }
         mux = m
         setenv("ANTHROPIC_BASE_URL", m.localURL, 1)
         setenv("ANTHROPIC_AUTH_TOKEN", m.secret, 1)

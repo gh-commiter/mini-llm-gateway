@@ -54,6 +54,14 @@ func TestProfilesStoreAndMigration(t *testing.T) {
 	if ps := loadProfiles(); len(ps) != 1 || ps[0].name != "default" { // izbrani privzeti ne obstaja več
 		t.Fatalf("after delete: %+v", ps)
 	}
+	// L1: neveljavno ime ne doseže datoteke izven connections/ (npr. ../connection = privzeti profil).
+	storeDelete("../connection")
+	if c := loadProfile("../connection"); c != nil || storeSave("../x", []byte("{}")) == nil {
+		t.Fatal("invalid name reached the store")
+	}
+	if _, err := os.Stat(storePath()); err != nil {
+		t.Fatal("../connection deleted the default profile")
+	}
 	for _, n := range []string{"", "Win", "-x", "a b", "a/b", "..", strings.Repeat("a", 33), "x@y"} {
 		if validProfile(n) {
 			t.Fatalf("valid: %q", n)
