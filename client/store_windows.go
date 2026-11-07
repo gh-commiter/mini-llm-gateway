@@ -230,3 +230,22 @@ func listenControl(_, _ string, c syscall.RawConn) error {
 	}
 	return serr
 }
+
+// knownConfigDir: RoamingAppData iz SHGetKnownFolderPath, ne iz %APPDATA% (ta je spremenljivka okolja).
+func knownConfigDir() (string, error) {
+	folderRoamingAppData := syscall.GUID{Data1: 0x3EB685DB, Data2: 0x65F9, Data3: 0x4CF6, Data4: [8]byte{0xA0, 0x3A, 0xE3, 0xEF, 0x65, 0x72, 0x9F, 0x3D}}
+	var p *uint16
+	r, _, _ := syscall.NewLazyDLL("shell32.dll").NewProc("SHGetKnownFolderPath").Call(uintptr(unsafe.Pointer(&folderRoamingAppData)), 0, 0, uintptr(unsafe.Pointer(&p)))
+	if r != 0 || p == nil {
+		return "", syscall.Errno(r)
+	}
+	defer syscall.NewLazyDLL("ole32.dll").NewProc("CoTaskMemFree").Call(uintptr(unsafe.Pointer(p)))
+	return syscall.UTF16ToString(unsafe.Slice(p, 32768)[:wcslen(p)]), nil
+}
+
+func wcslen(p *uint16) int {
+	n := 0
+	for s := unsafe.Slice(p, 32768); n < len(s) && s[n] != 0; n++ {
+	}
+	return n
+}

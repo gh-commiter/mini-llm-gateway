@@ -4,6 +4,7 @@ package main
 // (adminDo) spremeni serve.json in shrambo ključev. minigw serve allow|deny|devices|gateway|status so vzdevki.
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -80,7 +81,7 @@ func (c *noiseClientConn) Read(p []byte) (int, error) {
 
 // dialAdmin: TCP na 127.0.0.1 in rokovanje Noise NK s ključem routerja iz serve.json. Kdor zasede vrata brez
 // zasebnega ključa routerja, rokovanja ne konča in nikoli ne dobi skrivnosti ali ključev prehodov.
-func dialAdmin(ctx context.Context, addr string, routerKey []byte) (net.Conn, error) {
+func dialAdmin(ctx context.Context, addr string, routerKey []byte) (*noiseClientConn, error) {
 	c, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, err
@@ -105,13 +106,28 @@ func dialAdmin(ctx context.Context, addr string, routerKey []byte) (net.Conn, er
 	return &noiseClientConn{Conn: c, sess: sess}, nil
 }
 
+// http: ena zahteva na novi povezavi Noise; glava MGW-Admin je dokaz, vezan na rokovanje te povezave (skrivnost
+// nikoli ne gre po žici).
 func (a *adminClient) http(method, path string, body []byte, timeout time.Duration) (int, []byte, error) {
-	r, _ := http.NewRequest(method, a.base+path, bytes.NewReader(body))
-	r.Header.Set("authorization", "Bearer "+a.secret)
+	r, err := http.NewRequest(method, a.base+path, bytes.NewReader(body))
+	if err != nil {
+		return 0, nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	c, err := dialAdmin(ctx, r.URL.Host, a.routerKey)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer c.Close()
+	c.SetDeadline(time.Now().Add(timeout))
+	r.Header.Set("authorization", adminScheme+adminProof(a.secret, c.sess.hash))
 	r.Header.Set("content-type", "application/json")
-	c := &http.Client{Timeout: timeout, Transport: &http.Transport{DisableKeepAlives: true, // brez posrednika
-		DialContext: func(ctx context.Context, _, addr string) (net.Conn, error) { return dialAdmin(ctx, addr, a.routerKey) }}}
-	resp, err := c.Do(r)
+	r.Close = true
+	if err := r.Write(c); err != nil {
+		return 0, nil, err
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(c), r)
 	if err != nil {
 		return 0, nil, err
 	}

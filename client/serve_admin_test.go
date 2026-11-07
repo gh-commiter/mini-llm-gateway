@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"context"
 	"crypto/ecdh"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -10,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -42,6 +45,17 @@ func liveServer(t *testing.T, mod func(*serveConfig)) (*server, string, string) 
 	return s, cfg, fmt.Sprintf("http://127.0.0.1:%d", c.Port)
 }
 
+// adminNoise: zahteva kot minigw router (Noise s ključem routerja, dokaz MGW-Admin iz skrivnosti secret).
+func adminNoise(t *testing.T, s *server, base, secret, method, path, body string) (int, string) {
+	t.Helper()
+	a := &adminClient{base: base, secret: secret, routerKey: s.key.PublicKey().Bytes()}
+	st, b, err := a.http(method, path, []byte(body), 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return st, string(b)
+}
+
 func adminReq(t *testing.T, base, host, auth, method, path, body string) (int, string) {
 	t.Helper()
 	r, _ := http.NewRequest(method, base+path, strings.NewReader(body))
@@ -70,14 +84,13 @@ func TestAdminAPIAuth(t *testing.T) {
 	if st == nil || st.Mode().Perm() != 0o600 || len(s.admin) != 43 {
 		t.Fatalf("admin.secret: %v %q", st, s.admin)
 	}
+	// Navaden HTTP: skrivnost (Bearer) ni nikoli sprejeta; Host se preveri pred overitvijo.
 	for _, tc := range []struct {
 		host, auth string
 		want       int
 	}{
-		{host, s.admin, 200},
-		{"localhost:" + strings.Split(host, ":")[1], s.admin, 200},
+		{host, s.admin, 401},
 		{host, "", 401},
-		{host, s.admin + "x", 401},
 		{host, "tok", 401}, // žeton routerja ni skrivnost API
 		{"evil.example:" + strings.Split(host, ":")[1], s.admin, 403}, // DNS rebinding
 		{"127.0.0.1:1", s.admin, 403},
@@ -88,6 +101,18 @@ func TestAdminAPIAuth(t *testing.T) {
 	}
 	if got, _ := adminReq(t, base, "", "", "OPTIONS", adminPrefix+"/status", ""); got != 401 { // brez CORS preflight
 		t.Errorf("OPTIONS: %d", got)
+	}
+	// Prek Noise z dokazom MGW-Admin: pravi 200, napačna skrivnost 401; dokaz po navadnem HTTP 401 (ni rokovanja).
+	if st, b := adminNoise(t, s, base, s.admin, "GET", adminPrefix+"/status", ""); st != 200 || !strings.Contains(b, `"running":true`) {
+		t.Fatalf("noise proof: %d %s", st, b)
+	}
+	if st, _ := adminNoise(t, s, base, s.admin+"x", "GET", adminPrefix+"/status", ""); st != 401 {
+		t.Fatalf("noise with a wrong secret: %d", st)
+	}
+	r0, _ := http.NewRequest("GET", base+adminPrefix+"/status", nil)
+	r0.Header.Set("authorization", adminScheme+adminProof(s.admin, make([]byte, 32)))
+	if resp, err := http.DefaultClient.Do(r0); err != nil || resp.StatusCode != 401 {
+		t.Fatalf("proof over plain HTTP: %v %v", resp, err)
 	}
 	// Šifrirana povezava z drugega računalnika (pipe ni loopback): zavrnjena, tudi s pravo skrivnostjo.
 	r := pipeRequest(t, s, s.key.PublicKey().Bytes(), newDevice("Mac"),
@@ -103,7 +128,7 @@ func TestAdminAPILiveApply(t *testing.T) {
 	s, cfg, base := liveServer(t, nil)
 	host := strings.TrimPrefix(base, "http://")
 	admin := func(method, path, body string) (int, string) {
-		return adminReq(t, base, host, s.admin, method, path, body)
+		return adminNoise(t, s, base, s.admin, method, path, body)
 	}
 	models := func() string {
 		_, b := adminReq(t, base, host, "tok", "GET", "/v1/models", "")
@@ -327,9 +352,8 @@ func TestRouterCLINeverSendsSecretToSquatter(t *testing.T) {
 
 func TestAdminReviewFixes(t *testing.T) {
 	s, cfg, base := liveServer(t, nil)
-	host := strings.TrimPrefix(base, "http://")
 	admin := func(method, path, body string) (int, string) {
-		return adminReq(t, base, host, s.admin, method, path, body)
+		return adminNoise(t, s, base, s.admin, method, path, body)
 	}
 
 	// I2: podatki za objektom JSON; L1: naslov, na katerem 127.0.0.1 ne bi delal.
@@ -378,5 +402,63 @@ func TestAdminReviewFixes(t *testing.T) {
 	}
 	if _, err := serviceCommand("install", "linux", filepath.Join(t.TempDir(), "x\nExecStartPre=evil", "serve.json")); err == nil {
 		t.Fatal("newline in the config path accepted")
+	}
+}
+
+// S1: lažen strežnik s svojim ključem (npr. preusmerjena mapa nastavitev) dobi le dokaz, vezan na svoje rokovanje:
+// ne skrivnosti in nič, kar bi veljalo pri pravem routerju.
+func TestAdminProofIsBoundToTheConnection(t *testing.T) {
+	s, _, base := liveServer(t, nil)
+	fake, _ := ecdh.X25519().GenerateKey(rand.Reader)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	got := make(chan string, 1)
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		msg := make([]byte, 4+handshakeLen)
+		io.ReadFull(c, msg)
+		reply, sess, err := respond(msg[4:], fake)
+		if err != nil {
+			got <- ""
+			return
+		}
+		c.Write(reply)
+		var raw, plain []byte
+		buf := make([]byte, 64<<10)
+		for !strings.Contains(string(plain), "\r\n\r\n") {
+			n, err := c.Read(buf)
+			if err != nil {
+				break
+			}
+			var p []byte
+			p, raw, _ = unframe(append(raw, buf[:n]...), sess.receive)
+			plain = append(plain, p...)
+		}
+		got <- string(plain)
+	}()
+	a := &adminClient{base: "http://" + ln.Addr().String(), secret: s.admin, routerKey: fake.PublicKey().Bytes()}
+	a.http("GET", adminPrefix+"/status", nil, 3*time.Second)
+	req := <-got
+	auth := regexp.MustCompile(`(?i)authorization: (.*)\r\n`).FindStringSubmatch(req)
+	if auth == nil || strings.Contains(req, s.admin) || !strings.HasPrefix(auth[1], adminScheme) {
+		t.Fatalf("fake server got: %q", req)
+	}
+	// Ponovitev dokaza pri pravem routerju (druga povezava, drug h): 401.
+	c, err := dialAdmin(context.Background(), strings.TrimPrefix(base, "http://"), s.key.PublicKey().Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	fmt.Fprintf(c, "GET %s/status HTTP/1.1\r\nHost: %s\r\nAuthorization: %s\r\nConnection: close\r\n\r\n", adminPrefix, strings.TrimPrefix(base, "http://"), auth[1])
+	resp, err := http.ReadResponse(bufio.NewReader(c), nil)
+	if err != nil || resp.StatusCode != 401 {
+		t.Fatalf("replayed proof: %v %v", resp, err)
 	}
 }

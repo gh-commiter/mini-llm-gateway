@@ -11,10 +11,16 @@ except where a response says `"restartRequired": true`.
   a header. A request from another address gets `403`, even with the right secret.
 - **Host header** must be `127.0.0.1:<port>`, `localhost:<port>` or `[::1]:<port>` (the port the connection came
   in on). Anything else gets `403`. This blocks DNS rebinding from a web page.
-- **Admin secret:** `Authorization: Bearer <secret>`, compared in constant time. The secret is 32 random bytes,
-  base64url without padding (43 characters), in the file `admin.secret` (mode 0600) in the router's config folder
-  (the folder agents may not read). The router creates it on first start. Missing or wrong: `401`. The router's
-  client token is not the admin secret.
+- **Admin secret, never sent:** 32 random bytes, base64url without padding (43 characters), in the file
+  `admin.secret` (mode 0600) in the router's config folder (the folder agents may not read). The router creates it
+  on first start. A client speaks MGW2 (Noise NK) to `127.0.0.1` with the router's public key and sends
+  `Authorization: MGW-Admin <base64url(HMAC-SHA256(key = the secret as stored, "minigw-admin-v1" || h))>`, where
+  `h` is that connection's Noise handshake hash. The router computes the same value from its own `h` and compares
+  in constant time. A fake server (its own key, its own handshake) gets a proof that is valid nowhere else; a
+  request without Noise, or with `Bearer`, gets `401`. The router's client token is not the admin secret.
+- **The client finds the config without the environment:** `minigw router` resolves the default config folder from
+  the user database (Unix) or the RoamingAppData known folder (Windows), not from `HOME`, `XDG_CONFIG_HOME` or
+  `%APPDATA%`, so another process cannot point it at a fake `serve.json` with a fake router key.
 - **Settings page session** (instead of the secret), without cookies: browsers send a `127.0.0.1` cookie to every
   port, so any local web server would get it. The tray or `POST /settings/login` (below) opens
   `/minigw/settings#t=<one-time token>`; the token is in the fragment, so it never reaches a server in a request
@@ -25,7 +31,7 @@ except where a response says `"restartRequired": true`.
   after 30 minutes without use, with `POST /minigw/settings/logout`, or when the router token is rotated.
 - Every admin API response has `Cache-Control: no-store`.
 - Loopback skips the device check and encryption for normal API calls; the admin API still needs the secret.
-- **Clients authenticate the router before they send the secret.** Something else may listen on the port (the
+- **Clients authenticate the router first.** Something else may listen on the port (the
   router is stopped, another program took it). The CLI therefore speaks MGW2 (Noise NK) to `127.0.0.1` with the
   router's public key from the config; a program without the router's private key cannot finish the handshake and
   never sees the secret or a gateway key. A loopback Noise connection is still a loopback peer.

@@ -120,7 +120,7 @@ func TestSettingsSessionWithoutCookies(t *testing.T) {
 		t.Fatalf("session after token rotation: %d", st)
 	}
 	// Bearer za CLI ostane; prijavna povezava tudi prek API.
-	if st, b := adminReq(t, base, host, s.admin, "POST", adminPrefix+"/settings/login", ""); st != 200 || !strings.Contains(b, "/minigw/settings#t=") {
+	if st, b := adminNoise(t, s, base, s.admin, "POST", adminPrefix+"/settings/login", ""); st != 200 || !strings.Contains(b, "/minigw/settings#t=") {
 		t.Fatalf("settings login via API: %d %s", st, b)
 	}
 }
