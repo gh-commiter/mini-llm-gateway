@@ -188,6 +188,22 @@ func agentWrap(exe string, args []string, m agentMounts) (string, []string) {
 	return bw, append(append(bwrapArgs(home, real(m.cfgDir), ro, rw, hideFiles, hideDirs), "--", exe), args...)
 }
 
+// listenerIsOurs (F2): vrata poslušajo le procesi tega uporabnika (uid iz /proc/net/tcp{,6}); nič najdenega = ne.
+func listenerIsOurs(port int) bool {
+	var uids []int
+	for _, f := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
+		if b, err := os.ReadFile(f); err == nil {
+			uids = append(uids, procListenUIDs(b, port)...)
+		}
+	}
+	for _, u := range uids {
+		if u != os.Getuid() {
+			return false
+		}
+	}
+	return len(uids) > 0
+}
+
 func peerCheck(ours, peer *net.TCPAddr) error {
 	inode := ""
 	for _, f := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {

@@ -125,19 +125,43 @@ public enum Foundry {
     }
 
     /// CLI z rokom (status, start).
+    /// F1: »start« brez cevi (strežnik v ozadju bi jo držal odprto); drugi ukazi berejo izpis le do roka, tudi če cev
+    /// drži otrok. Vrne izpis (največ 64 KB); pri »start« prazno ob uspehu, »failed« sicer.
     static func run(_ exe: String, _ args: [String], timeout: TimeInterval) -> String {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: exe)
         p.arguments = args
-        let out = Pipe()
-        p.standardOutput = out; p.standardError = out; p.standardInput = FileHandle.nullDevice
-        guard (try? p.run()) != nil else { return "" }
-        let killer = DispatchWorkItem { if p.isRunning { p.terminate() } }
-        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: killer)
-        let d = out.fileHandleForReading.readDataToEndOfFile()
-        killer.cancel()
-        return String(decoding: d.prefix(64 << 10), as: UTF8.self)
+        p.standardInput = FileHandle.nullDevice
+        let exited = DispatchSemaphore(value: 0)
+        p.terminationHandler = { _ in exited.signal() }
+        if args.last == "start" {
+            p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+            guard (try? p.run()) != nil else { return "failed" }
+            if exited.wait(timeout: .now() + timeout) == .timedOut { p.terminate(); return "failed" }
+            return p.terminationStatus == 0 ? "" : "failed"
+        }
+        final class Box: @unchecked Sendable { let lock = NSLock(); var data = Data() }
+        let out = Pipe(), box = Box(), eof = DispatchSemaphore(value: 0)
+        p.standardOutput = out; p.standardError = out
+        out.fileHandleForReading.readabilityHandler = { h in
+            let d = h.availableData
+            if d.isEmpty { h.readabilityHandler = nil; eof.signal(); return }
+            box.lock.withLock { if box.data.count < 64 << 10 { box.data.append(d) } }
+        }
+        guard (try? p.run()) != nil else { out.fileHandleForReading.readabilityHandler = nil; return "" }
+        let deadline = DispatchTime.now() + timeout
+        if eof.wait(timeout: deadline) == .timedOut || exited.wait(timeout: deadline) == .timedOut {
+            out.fileHandleForReading.readabilityHandler = nil
+            if p.isRunning { p.terminate() }
+        }
+        return box.lock.withLock { String(decoding: box.data.prefix(64 << 10), as: UTF8.self) }
     }
+
+    /// F7: ime gre v pot /openai/load/<ime>: brez »/« in »..«.
+    static func validModel(_ m: String) -> Bool { Router.validModel(m) && !m.contains("/") && !m.contains("..") }
+
+    /// F5: število žetonov le v 0…1e9.
+    static func count(_ v: Any?) -> Int? { (v as? Int).flatMap { (0...1_000_000_000).contains($0) ? $0 : nil } }
 }
 
 /// Najdena vrata, modeli in naloženi modeli (predpomnjeno).
@@ -152,25 +176,37 @@ public actor FoundryHub {
 
     var running: Bool { base != nil }
 
+    private var retryAt = Date.distantPast  // F6: po neuspehu 30 s brez novega iskanja ali zagona
+    nonisolated(unsafe) static var listenerIsOurs: @Sendable (UInt16) -> Bool = { PeerProcess.listenerIsOurs(port: $0) }  // testi
+
     func endpoint(_ exe: String?) async throws -> URL {
         if let base, Date().timeIntervalSince(checked) < 60 { return base }
-        guard let exe else { lastError = Foundry.install; throw Foundry.RequestError(message: Foundry.install) }
+        if Date() < retryAt { throw Foundry.RequestError(message: lastError) }
+        func fail(_ m: String) -> Foundry.RequestError { base = nil; lastError = m; retryAt = Date().addingTimeInterval(30); return Foundry.RequestError(message: m) }
+        guard let exe else { throw fail(Foundry.install) }
+        var foreign = false
         func find() async -> URL? {
             for sub in ["server", "service"] {
                 let out = await Task.detached { Self.command(exe, [sub, "status"], 20) }.value
                 guard let p = Foundry.port(out), let u = URL(string: "http://127.0.0.1:\(p)") else { continue }
-                if let d = try? await Foundry.get(u.appendingPathComponent("openai/status"), timeout: 5),
-                   (try? JSONSerialization.jsonObject(with: d) as? [String: Any])?["Endpoints"] is [Any] { return u }
+                guard let d = try? await Foundry.get(u.appendingPathComponent("openai/status"), timeout: 5),
+                      (try? JSONSerialization.jsonObject(with: d) as? [String: Any])?["Endpoints"] is [Any] else { continue }
+                guard Self.listenerIsOurs(UInt16(p)) else { foreign = true; continue }  // F2: vrata drugega uporabnika
+                return u
             }
             return nil
         }
         var u = await find()
-        if u == nil {
-            for sub in ["server", "service"] { _ = await Task.detached { Self.command(exe, [sub, "start"], 120) }.value }
-            u = await find()
+        if u == nil, !foreign {
+            for sub in ["server", "service"] {  // F6: »service« le, če »server« ni uspel
+                _ = await Task.detached { Self.command(exe, [sub, "start"], 120) }.value
+                if let found = await find() { u = found; break }
+            }
         }
-        guard let u else { base = nil; lastError = "Foundry Local does not answer (foundry server status)"; throw Foundry.RequestError(message: lastError) }
-        base = u; checked = Date(); lastError = ""
+        guard let u else {
+            throw fail(foreign ? "Foundry Local's port belongs to another user's process: not used" : "Foundry Local does not answer (foundry server status)")
+        }
+        base = u; checked = Date(); lastError = ""; retryAt = .distantPast
         return u
     }
 
@@ -186,7 +222,7 @@ public actor FoundryHub {
                 if let n = m["name"] as? String { vision[n] = info.contains("image") }
             }
         }
-        let out = names.filter { Router.validModel($0) }.map { Foundry.Model(name: $0, vision: vision[$0] ?? false) }
+        let out = names.filter(Foundry.validModel).map { Foundry.Model(name: $0, vision: vision[$0] ?? false) }
         models = out; modelsAt = Date()
         return out
     }
@@ -234,7 +270,8 @@ extension Router {
             var t = StreamTranslator(model: Foundry.prefix + model)
             func usage(_ u: [String: Any]?) {
                 guard let u else { return }
-                t.usage = ["input_tokens": u["prompt_tokens"] as? Int ?? 0, "output_tokens": u["completion_tokens"] as? Int ?? 0]
+                if let n = Foundry.count(u["prompt_tokens"]) { t.usage["input_tokens"] = n }  // F5
+                if let n = Foundry.count(u["completion_tokens"]) { t.usage["output_tokens"] = n }
             }
             if !stream {
                 let (d, resp) = try await Foundry.session.data(for: r)
@@ -258,7 +295,7 @@ extension Router {
             var total = 0
             for try await line in bytes.lines {
                 total += line.utf8.count
-                guard total <= Foundry.maxBody, Date() < deadline else {
+                guard total <= Foundry.maxBody, line.utf8.count <= 1 << 20, Date() < deadline else {  // F4: tudi vrstica do 1 MB
                     try await writer.write(StreamTranslator.sse("error", ["type": "error", "error": ["type": "api_error", "message": "Foundry Local: answer too large or too slow"]]))
                     return 502
                 }

@@ -178,7 +178,7 @@ public final class Router: Sendable {
                     }
                     return (await syncRun(agent: "codex") { await runCodex(req, body: body, model: codexModel, rid: rid, writer: await early(req, body, rid, writer)) }, model, "codex")
                 }
-                if config.foundry.enabled, model.hasPrefix(Foundry.prefix), Self.validModel(String(model.dropFirst(Foundry.prefix.count))) {
+                if config.foundry.enabled, model.hasPrefix(Foundry.prefix), Foundry.validModel(String(model.dropFirst(Foundry.prefix.count))) {
                     if req.path.hasSuffix("/count_tokens") {
                         return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "foundry")
                     }

@@ -62,10 +62,11 @@ final class FoundryStub: URLProtocol, @unchecked Sendable {
     @Test func throughTheGateway() async throws {
         let c = URLSessionConfiguration.ephemeral
         c.protocolClasses = [FoundryStub.self]
-        let oldSession = Foundry.session, oldCommand = FoundryHub.command
+        let oldSession = Foundry.session, oldCommand = FoundryHub.command, oldOurs = FoundryHub.listenerIsOurs
         Foundry.session = URLSession(configuration: c)
         FoundryHub.command = { _, args, _ in args == ["server", "status"] ? "running on http://127.0.0.1:5273/openai/status" : "" }
-        defer { Foundry.session = oldSession; FoundryHub.command = oldCommand }
+        FoundryHub.listenerIsOurs = { _ in true }  // stub: na 5273 nihče ne posluša
+        defer { Foundry.session = oldSession; FoundryHub.command = oldCommand; FoundryHub.listenerIsOurs = oldOurs }
         await Router.foundry.forget()
         FoundryStub.requests = []
         var cfg = RouterConfig()
@@ -88,5 +89,28 @@ final class FoundryStub: URLProtocol, @unchecked Sendable {
         #expect(FoundryStub.requests.count == 2 && FoundryStub.requests.first?["model"] as? String == "phi-4-mini-generic-cpu" && FoundryStub.requests.first?["tools"] == nil)
         let unknown = await call("POST", "/v1/messages", #"{"model":"claude-foundry-nope","messages":[{"role":"user","content":"hi"}]}"#)
         #expect(unknown.contains("404"))
+    }
+
+    /// F1, F2, F5, F7.
+    @Test func reviewFixes() throws {
+        // F2: lastni poslušalec je naš; port brez poslušalca ne.
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        defer { close(fd) }
+        var a = sockaddr_in(sin_len: UInt8(MemoryLayout<sockaddr_in>.size), sin_family: sa_family_t(AF_INET), sin_port: 0,
+                            sin_addr: in_addr(s_addr: inet_addr("127.0.0.1")), sin_zero: (0, 0, 0, 0, 0, 0, 0, 0))
+        var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+        _ = withUnsafeMutablePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, len) } }
+        _ = listen(fd, 1)
+        _ = withUnsafeMutablePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &len) } }
+        let port = UInt16(bigEndian: a.sin_port)
+        #expect(PeerProcess.listenerIsOurs(port: port))
+        #expect(!PeerProcess.listenerIsOurs(port: freeTCPPort()))
+        // F5, F7
+        #expect(Foundry.count(42) == 42 && Foundry.count(-1) == nil && Foundry.count(2_000_000_000) == nil && Foundry.count("7") == nil)
+        #expect(!Foundry.validModel("a/b") && !Foundry.validModel("x..y") && !Foundry.validModel("-rf") && Foundry.validModel("phi-4-mini-generic-cpu"))
+        // F1: izpis ukaza do roka, tudi ko otrok drži cev odprto
+        let start = Date()
+        let out = Foundry.run("/bin/sh", ["-c", "(sleep 30 &); echo out"], timeout: 1)
+        #expect(out.contains("out") && Date().timeIntervalSince(start) < 5)
     }
 }

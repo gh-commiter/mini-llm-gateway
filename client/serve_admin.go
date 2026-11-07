@@ -1049,7 +1049,7 @@ func (s *server) foundryAPI(method string, body []byte) (int, any) {
 			return 400, errorBody(400, "models must be null or a list of model names")
 		}
 		for _, m := range models {
-			if !validAgentModel.MatchString(m) {
+			if !foundryValidModel(m) {
 				return 400, errorBody(400, "not a model name: "+m)
 			}
 		}

@@ -489,7 +489,7 @@ func (s *server) messages(w http.ResponseWriter, r *req) (int, string) {
 		return s.runAgent(w, r, body, k, m), model
 	}
 	if m, ok := strings.CutPrefix(model, foundryPrefix); ok { // Foundry Local (na napravi, kot Apple FM na Macu)
-		if !validAgentModel.MatchString(m) || !s.conf().Foundry.Enabled {
+		if !foundryValidModel(m) || !s.conf().Foundry.Enabled {
 			return writeError(w, r.rid, 404, "Unknown model: "+model), model
 		}
 		if strings.HasSuffix(r.URL.Path, "/count_tokens") {

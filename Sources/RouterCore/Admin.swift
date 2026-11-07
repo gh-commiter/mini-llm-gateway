@@ -341,7 +341,7 @@ extension Router {
                 throw AdminError(400, "not an executable: \(path)")
             }
             if let instructions, instructions.count > 8000 { throw AdminError(400, "instructions: up to 8000 characters") }
-            if let models, let list = models, let bad = list.first(where: { !Router.validModel($0) }) { throw AdminError(400, "not a model name: \(bad)") }
+            if let models, let list = models, let bad = list.first(where: { !Foundry.validModel($0) }) { throw AdminError(400, "not a model name: \(bad)") }
             let n = try await hooks.update { c in
                 if let enabled { c.foundry.enabled = enabled }
                 if let path { c.foundry.executable = path }

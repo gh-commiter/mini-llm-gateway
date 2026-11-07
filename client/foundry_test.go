@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -197,5 +199,78 @@ func TestFoundryTimeout(t *testing.T) {
 	st, _ := adminReq(t, base, strings.TrimPrefix(base, "http://"), "tok", "POST", "/v1/messages", `{"model":"claude-foundry-m","messages":[{"role":"user","content":"hi"}]}`)
 	if st == 200 || time.Since(start) > 3*time.Second {
 		t.Fatalf("slow Foundry: %d after %v", st, time.Since(start))
+	}
+}
+
+// F2, F5, F7: lastnik poslušalca, števila porabe, imena modelov.
+func TestFoundryReviewFixes(t *testing.T) {
+	tcp := "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n" +
+		"   0: 0100007F:1495 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 111 1\n" +
+		"   1: 0100007F:1495 0100007F:C350 01 00000000:00000000 00:00000000 00000000  2000        0 112 1\n"
+	if u := procListenUIDs([]byte(tcp), 5269); len(u) != 1 || u[0] != 1000 {
+		t.Fatalf("listen uids: %v", u)
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	if !listenerIsOurs(ln.Addr().(*net.TCPAddr).Port) {
+		t.Fatal("own listener not recognized")
+	}
+	free, _ := net.Listen("tcp", "127.0.0.1:0")
+	port := free.Addr().(*net.TCPAddr).Port
+	free.Close()
+	if (runtime.GOOS == "linux" || runtime.GOOS == "windows") && listenerIsOurs(port) {
+		t.Fatal("a port nobody listens on counts as ours")
+	}
+	for _, v := range []any{-1.0, 2e9, "7", nil} {
+		if _, ok := foundryCount(v); ok {
+			t.Errorf("usage %v accepted", v)
+		}
+	}
+	if n, ok := foundryCount(42.0); !ok || n != 42 {
+		t.Fatal("usage 42")
+	}
+	for _, m := range []string{"a/b", "x..y", "-rf", "../load"} {
+		if foundryValidModel(m) {
+			t.Errorf("model %q accepted", m)
+		}
+	}
+	if !foundryValidModel("phi-4-mini-generic-cpu") || !foundryValidModel("qwen2.5-0.5b") {
+		t.Fatal("valid names refused")
+	}
+}
+
+// F3: pretok nad mejo velikosti se konča z napako, ne s tihim end_turn.
+func TestFoundryStreamTooLarge(t *testing.T) {
+	big := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/openai/status":
+			io.WriteString(w, `{"Endpoints":[]}`)
+		case "/openai/models":
+			io.WriteString(w, `["m"]`)
+		case "/v1/chat/completions":
+			for range 200 {
+				io.WriteString(w, `data: {"choices":[{"delta":{"content":"`+strings.Repeat("x", 100)+`"}}]}`+"\n\n")
+			}
+			io.WriteString(w, "data: [DONE]\n\n")
+		default:
+			io.WriteString(w, `{}`)
+		}
+	}))
+	defer big.Close()
+	port := big.URL[strings.LastIndex(big.URL, ":")+1:]
+	o, om := foundryCommand, foundryMaxBody
+	t.Cleanup(func() { foundryCommand, foundryMaxBody = o, om })
+	foundryCommand = func(context.Context, string, ...string) (string, error) {
+		return "on http://127.0.0.1:" + port + "/", nil
+	}
+	foundryMaxBody = 4 << 10
+	exe, _ := os.Executable()
+	_, _, base := liveServer(t, func(c *serveConfig) { c.Foundry = foundryConfig{Enabled: true, Executable: exe} })
+	_, b := adminReq(t, base, strings.TrimPrefix(base, "http://"), "tok", "POST", "/v1/messages", `{"model":"claude-foundry-m","stream":true,"messages":[{"role":"user","content":"hi"}]}`)
+	if !strings.Contains(b, "event: error") || !strings.Contains(b, "larger than") || strings.Contains(b, "message_stop") {
+		t.Fatalf("too large: %s", b[max(0, len(b)-300):])
 	}
 }

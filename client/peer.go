@@ -133,3 +133,48 @@ func tcpTablePID(table []byte, v6 bool, peer, ours *net.TCPAddr) uint32 {
 	}
 	return 0
 }
+
+// procListenUIDs (F2): uid procesov, ki poslušajo na vratih (/proc/net/tcp{,6}: stanje 0A = LISTEN, polje 7 = uid).
+func procListenUIDs(table []byte, port int) []int {
+	var out []int
+	for _, line := range strings.Split(string(table), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 8 || f[3] != "0A" {
+			continue
+		}
+		if _, p, ok := procAddr(f[1]); ok && p == port {
+			if uid, err := strconv.Atoi(f[7]); err == nil {
+				out = append(out, uid)
+			}
+		}
+	}
+	return out
+}
+
+// tcpListenPIDs (F2): PID-ji iz tabele GetExtendedTcpTable, ki poslušajo na vratih (stanje 2 = LISTEN).
+func tcpListenPIDs(table []byte, v6 bool, port int) []uint32 {
+	if len(table) < 4 {
+		return nil
+	}
+	n := int(binary.LittleEndian.Uint32(table))
+	size := 24
+	if v6 {
+		size = 56
+	}
+	var out []uint32
+	for i := 0; i < n && 4+(i+1)*size <= len(table); i++ {
+		r := table[4+i*size : 4+(i+1)*size]
+		var state uint32
+		var lp int
+		var pid uint32
+		if v6 {
+			lp, state, pid = int(r[20])<<8|int(r[21]), binary.LittleEndian.Uint32(r[48:]), binary.LittleEndian.Uint32(r[52:])
+		} else {
+			state, lp, pid = binary.LittleEndian.Uint32(r[0:]), int(r[8])<<8|int(r[9]), binary.LittleEndian.Uint32(r[20:])
+		}
+		if state == 2 && lp == port {
+			out = append(out, pid)
+		}
+	}
+	return out
+}

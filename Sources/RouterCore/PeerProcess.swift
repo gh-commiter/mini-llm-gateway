@@ -53,6 +53,34 @@ public enum PeerProcess {
         return false
     }
 
+    /// Foundry Local (F2): vsi procesi, ki poslušajo na tem portu TCP, so tega uporabnika (procesov drugih uporabnikov
+    /// libproc ne pokaže, zato tak port ostane brez najdenega poslušalca in velja za tujega).
+    public static func listenerIsOurs(port: UInt16) -> Bool {
+        let n = proc_listallpids(nil, 0)
+        guard n > 0 else { return false }
+        var pids = [pid_t](repeating: 0, count: Int(n) + 64)
+        let count = proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size))
+        let infoSize = Int32(MemoryLayout<socket_fdinfo>.size)
+        var found = false
+        for pid in pids.prefix(max(0, Int(count))) where pid > 0 {
+            let size = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, nil, 0)
+            guard size > 0 else { continue }
+            var fds = [proc_fdinfo](repeating: proc_fdinfo(), count: Int(size) / MemoryLayout<proc_fdinfo>.stride + 8)
+            let got = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, &fds, Int32(fds.count * MemoryLayout<proc_fdinfo>.stride))
+            for fd in fds.prefix(max(0, Int(got)) / MemoryLayout<proc_fdinfo>.stride) where fd.proc_fdtype == PROX_FDTYPE_SOCKET {
+                var si = socket_fdinfo()
+                guard proc_pidfdinfo(pid, fd.proc_fd, PROC_PIDFDSOCKETINFO, &si, infoSize) == infoSize, si.psi.soi_kind == SOCKINFO_TCP,
+                      si.psi.soi_proto.pri_tcp.tcpsi_state == TSI_S_LISTEN,
+                      UInt16(bigEndian: UInt16(truncatingIfNeeded: si.psi.soi_proto.pri_tcp.tcpsi_ini.insi_lport)) == port else { continue }
+                var bsd = proc_bsdinfo()
+                guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &bsd, Int32(MemoryLayout<proc_bsdinfo>.size)) == Int32(MemoryLayout<proc_bsdinfo>.size),
+                      bsd.pbi_uid == getuid() else { return false }
+                found = true
+            }
+        }
+        return found
+    }
+
     static func pid(localPort: UInt16, remotePort: UInt16) -> pid_t? {
         let all = Set(pids(localPort: localPort, remotePort: remotePort))
         return all.count == 1 ? all.first : nil

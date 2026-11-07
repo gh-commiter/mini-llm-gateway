@@ -16,10 +16,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os/exec"
+	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -37,8 +40,9 @@ type foundryConfig struct {
 const (
 	foundryPrefix       = "claude-foundry-"
 	foundryInstructions = "You are a helpful assistant running on-device. Answer concisely."
-	foundryMaxBody      = 8 << 20 // odgovor modela največ 8 MB
 )
+
+var foundryMaxBody int64 = 8 << 20 // odgovor modela največ 8 MB (testi: manj)
 
 var (
 	foundryTimeout     = 10 * time.Minute // en odgovor (vključno z nalaganjem modela)
@@ -73,13 +77,22 @@ var foundryClient = &http.Client{
 	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 }
 
+// runFoundryCLI (F1): »start« brez cevi (strežnik v ozadju bi jih držal odprte); pri drugih ukazih WaitDelay zapre
+// cevi, ki jih drži otrok, 5 s po koncu ukaza. Izpis največ 64 KB.
 func runFoundryCLI(ctx context.Context, exe string, args ...string) (string, error) {
-	out, err := exec.CommandContext(ctx, exe, args...).CombinedOutput()
-	return string(out), err
+	cmd := exec.CommandContext(ctx, exe, args...)
+	cmd.WaitDelay = 5 * time.Second
+	if len(args) > 1 && args[1] == "start" {
+		return "", cmd.Run() // Stdout, Stderr nil: /dev/null
+	}
+	out, err := cmd.CombinedOutput()
+	return string(out[:min(len(out), 64<<10)]), err
 }
 
 // foundryState: najdena končna točka in seznam modelov (predpomnjeno).
 type foundryState struct {
+	discover  sync.Mutex // F1: iskanje in zagon (klici CLI) brez mu, da /foundry ne čaka
+	retryAt   time.Time  // F6: po neuspelem iskanju ali zagonu 30 s brez novega poskusa
 	mu        sync.Mutex
 	base      string // http://127.0.0.1:<vrata>
 	checked   time.Time
@@ -94,14 +107,16 @@ type foundryModel struct {
 	Vision bool   `json:"vision"`
 }
 
+// resolveFoundry: nastavljena pot ali iz PATH; na Windows le .exe (F9, kot resolveAgent: ovoj .cmd bi tekel prek cmd.exe).
 func resolveFoundry(path string) string {
-	if path != "" {
-		if p, err := exec.LookPath(path); err == nil {
-			return p
-		}
+	name := path
+	if name == "" {
+		name = "foundry"
+	}
+	p, err := exec.LookPath(name)
+	if err != nil || (runtime.GOOS == "windows" && !strings.EqualFold(filepath.Ext(p), ".exe")) {
 		return ""
 	}
-	p, _ := exec.LookPath("foundry")
 	return p
 }
 
@@ -146,16 +161,36 @@ func foundryGet(ctx context.Context, u string, timeout time.Duration, out any) e
 // foundryEndpoint: tekoči strežnik Foundry Local; če je nameščen in ustavljen, ga zažene.
 func (s *server) foundryEndpoint(ctx context.Context) (string, error) {
 	st := &s.foundry
-	st.mu.Lock()
-	defer st.mu.Unlock()
-	if st.base != "" && time.Since(st.checked) < time.Minute {
-		return st.base, nil
+	cached := func() (string, error, bool) {
+		st.mu.Lock()
+		defer st.mu.Unlock()
+		if st.base != "" && time.Since(st.checked) < time.Minute {
+			return st.base, nil, true
+		}
+		if time.Now().Before(st.retryAt) { // F6
+			return "", errors.New(st.lastError), true
+		}
+		return "", nil, false
+	}
+	if b, err, ok := cached(); ok {
+		return b, err
+	}
+	st.discover.Lock()
+	defer st.discover.Unlock()
+	if b, err, ok := cached(); ok { // medtem ga je našla druga zahteva
+		return b, err
+	}
+	fail := func(msg string) (string, error) {
+		st.mu.Lock()
+		st.base, st.lastError, st.retryAt = "", msg, time.Now().Add(30*time.Second)
+		st.mu.Unlock()
+		return "", errors.New(msg)
 	}
 	exe := resolveFoundry(s.conf().Foundry.Executable)
 	if exe == "" {
-		st.base, st.lastError = "", errFoundryNotFound.Error()
-		return "", errFoundryNotFound
+		return fail(errFoundryNotFound.Error())
 	}
+	foreign := false
 	find := func() string {
 		for _, sub := range []string{"server", "service"} { // »service« pri starejših različicah
 			cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
@@ -163,15 +198,20 @@ func (s *server) foundryEndpoint(ctx context.Context) (string, error) {
 			cancel()
 			if p := foundryPort(out); p != 0 {
 				base := "http://127.0.0.1:" + strconv.Itoa(p)
-				if foundryCheck(ctx, base) {
-					return base
+				if !foundryCheck(ctx, base) {
+					continue
 				}
+				if !listenerIsOurs(p) { // F2: vrata posluša proces drugega uporabnika
+					foreign = true
+					continue
+				}
+				return base
 			}
 		}
 		return ""
 	}
 	base := find()
-	if base == "" {
+	if base == "" && !foreign {
 		for _, sub := range []string{"server", "service"} {
 			cctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 			_, err := foundryCommand(cctx, exe, sub, "start")
@@ -183,10 +223,14 @@ func (s *server) foundryEndpoint(ctx context.Context) (string, error) {
 		base = find()
 	}
 	if base == "" {
-		st.base, st.lastError = "", "Foundry Local does not answer (foundry server status)"
-		return "", errors.New(st.lastError)
+		if foreign {
+			return fail("Foundry Local's port belongs to another user's process: not used")
+		}
+		return fail("Foundry Local does not answer (foundry server status)")
 	}
-	st.base, st.checked, st.lastError = base, time.Now(), ""
+	st.mu.Lock()
+	st.base, st.checked, st.lastError, st.retryAt = base, time.Now(), "", time.Time{}
+	st.mu.Unlock()
 	return base, nil
 }
 
@@ -218,7 +262,7 @@ func (s *server) foundryModels(ctx context.Context) ([]foundryModel, error) {
 	}
 	var out []foundryModel
 	for _, n := range names {
-		if validAgentModel.MatchString(n) {
+		if foundryValidModel(n) {
 			out = append(out, foundryModel{Name: n, Vision: vision[n]})
 		}
 	}
@@ -379,6 +423,17 @@ func lastImages(body map[string]any) []string {
 	return out
 }
 
+// foundryCount (F5): število žetonov le, če je končno in v 0…1e9.
+func foundryCount(v any) (float64, bool) {
+	f, ok := v.(float64)
+	return f, ok && !math.IsNaN(f) && !math.IsInf(f, 0) && f >= 0 && f <= 1e9
+}
+
+// foundryValidModel (F7): ime gre v pot /openai/load/<ime>: brez »/« in »..«.
+func foundryValidModel(m string) bool {
+	return validAgentModel.MatchString(m) && !strings.Contains(m, "/") && !strings.Contains(m, "..")
+}
+
 // foundryStop: finish_reason → stop_reason.
 func foundryStop(reason string) string {
 	if reason == "length" {
@@ -439,20 +494,21 @@ func (s *server) runFoundry(w http.ResponseWriter, r *req, body map[string]any, 
 		return writeError(w, r.rid, 502, "Foundry Local: "+err.Error())
 	}
 	defer resp.Body.Close()
-	limited := io.LimitReader(resp.Body, foundryMaxBody)
+	limited := &io.LimitedReader{R: resp.Body, N: foundryMaxBody}
 	if resp.StatusCode != 200 {
 		msg, _ := io.ReadAll(io.LimitReader(limited, 2000))
-		s.log.Printf("%s Foundry Local HTTP %d: %s", r.rid, resp.StatusCode, msg)
+		s.log.Printf("%s Foundry Local HTTP %d: %q", r.rid, resp.StatusCode, msg) // F8
 		return writeError(w, r.rid, 502, fmt.Sprintf("Foundry Local answered HTTP %d (see the gateway log)", resp.StatusCode))
 	}
 	idb := make([]byte, 16)
 	rand.Read(idb)
 	t := &translator{model: foundryPrefix + model, id: fmt.Sprintf("msg_%x", idb), usage: map[string]any{}}
 	usage := func(u map[string]any) {
-		if u == nil {
-			return
+		for from, to := range map[string]string{"prompt_tokens": "input_tokens", "completion_tokens": "output_tokens"} {
+			if v, ok := foundryCount(u[from]); ok {
+				t.usage[to] = v
+			}
 		}
-		t.usage["input_tokens"], t.usage["output_tokens"] = u["prompt_tokens"], u["completion_tokens"]
 	}
 	if !stream {
 		var o struct {
@@ -506,13 +562,15 @@ func (s *server) runFoundry(w http.ResponseWriter, r *req, body map[string]any, 
 			}
 		}
 	}
-	if err := sc.Err(); err != nil || ctx.Err() != nil {
+	if err := sc.Err(); err != nil || ctx.Err() != nil || limited.N <= 0 {
 		if r.Context().Err() != nil {
 			return 499
 		}
 		msg := "Foundry Local: the answer stopped"
 		if ctx.Err() != nil {
 			msg = fmt.Sprintf("Foundry Local: no answer within %v", foundryTimeout)
+		} else if limited.N <= 0 { // F3: ne tiho »end_turn« pri prirezanem odgovoru
+			msg = fmt.Sprintf("Foundry Local: the answer is larger than %d MB", foundryMaxBody>>20)
 		}
 		send(sse("error", map[string]any{"type": "error", "error": map[string]string{"type": "api_error", "message": msg}}))
 		return 502
