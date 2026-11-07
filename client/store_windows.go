@@ -178,6 +178,24 @@ func regRunSet(name, value string) error {
 	return nil
 }
 
+// msiInstallDir: mapa namestitve MSI (HKCU\Software\Mini Gateway\InstallDir, zapiše jo minigw.wxs); "" brez MSI.
+// Ključa ne ustvari (RegOpenKeyExW, ne RegCreateKeyExW).
+func msiInstallDir() string {
+	sub, _ := syscall.UTF16PtrFromString(`Software\Mini Gateway`)
+	var h uintptr
+	if r, _, _ := advapi32.NewProc("RegOpenKeyExW").Call(0x80000001, uintptr(unsafe.Pointer(sub)), 0, 0x0001 /* KEY_QUERY_VALUE */, uintptr(unsafe.Pointer(&h))); r != 0 {
+		return ""
+	}
+	defer procRegClose.Call(h)
+	n, _ := syscall.UTF16PtrFromString("InstallDir")
+	buf := make([]uint16, 1024)
+	size := uint32(len(buf) * 2)
+	if r, _, _ := procRegQuery.Call(h, uintptr(unsafe.Pointer(n)), 0, 0, uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&size))); r != 0 {
+		return ""
+	}
+	return syscall.UTF16ToString(buf[:size/2])
+}
+
 func regRunGet(name string) (string, error) {
 	h, err := runKeyOpen()
 	if err != nil {

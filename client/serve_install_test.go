@@ -268,6 +268,36 @@ func TestServeInstallFiles(t *testing.T) {
 	}
 }
 
+// Vrstica 13 revizije: namestitev z MSI posodobi novi MSI (msiexec), odstrani se v Aplikacijah; datotek ne prepiše.
+func TestServeInstallWithMSI(t *testing.T) {
+	cfg := filepath.Join(t.TempDir(), "serve.json")
+	saveServeConfig(cfg, serveConfig{Token: "tok"})
+	var calls, got []string
+	o1, o2, o3 := msiDir, fetchRelease, runCmd
+	t.Cleanup(func() { msiDir, fetchRelease, runCmd = o1, o2, o3 })
+	msiDir = func() string { return `C:\Users\ana\AppData\Local\Programs\Mini Gateway\` }
+	fetchRelease = func(asset, dst string) error { got = append(got, asset); return os.WriteFile(dst, []byte("msi"), 0o600) }
+	runCmd = func(name string, args ...string) error {
+		calls = append(calls, name+" "+args[0]+" "+strings.Join(args[2:], " "))
+		if b, _ := os.ReadFile(args[1]); string(b) != "msi" {
+			t.Errorf("msiexec got %s", args[1])
+		}
+		return nil
+	}
+	msg, err := installWindows(os.Args[0], cfg)
+	if err != nil || !slices.Equal(got, []string{"minigw-windows-" + runtime.GOARCH + ".msi"}) || !slices.Equal(calls, []string{"msiexec /i /passive /norestart"}) ||
+		!strings.Contains(msg, "updated with the MSI") {
+		t.Fatalf("install: %v %q %v %v", err, msg, got, calls)
+	}
+	fetchRelease = func(string, string) error { return errors.New("not signed") }
+	if _, err := installWindows(os.Args[0], cfg); err == nil || !strings.Contains(err.Error(), "installed with the MSI") {
+		t.Fatalf("download error: %v", err)
+	}
+	if _, err := uninstallWindows(cfg); err == nil || !strings.Contains(err.Error(), "Settings → Apps") {
+		t.Fatalf("uninstall: %v", err)
+	}
+}
+
 // Meni pladnja: le vrednost Run (celotna namestitev bi zaprla pladenj, ki jo je sprožil).
 func TestTrayStartupOnlyRunValue(t *testing.T) {
 	reg := map[string]string{}

@@ -129,7 +129,9 @@ var (
 	envPathGet      = regEnvPathGet
 	envPathSet      = regEnvPathSet // HKCU\Environment Path (REG_EXPAND_SZ) in WM_SETTINGCHANGE
 	moveOnReboot    = moveFileOnReboot
-	userHomeFn      = userHome // testi: začasna mapa namesto prave ~/.local/bin
+	userHomeFn      = userHome         // testi: začasna mapa namesto prave ~/.local/bin
+	msiDir          = msiInstallDir    // Windows: namestitev z MSI (vrstica 13 revizije)
+	fetchRelease    = downloadVerified // sredstvo izdaje, preverjeno po podpisanem SHA256SUMS
 )
 
 // installDir: kam namestitev kopira minigw.
@@ -284,6 +286,9 @@ func installWindows(exe, cfgPath string) (string, error) {
 	if err := protectConfigDir(filepath.Dir(cfgPath)); errors.Is(err, errForeignOwner) {
 		return "", errors.New(filepath.Dir(cfgPath) + " " + err.Error() + ": use a config folder of your own")
 	}
+	if d := msiDir(); d != "" { // MSI ima datoteke in vnose: posodobi ga novi MSI, ne kopija čez njegove datoteke
+		return updateMSI(d)
+	}
 	dir := installDir("windows")
 	if dir == "" {
 		return "", errors.New("cannot find the user programs folder (LocalAppData\\Programs)")
@@ -328,7 +333,28 @@ func installWindows(exe, cfgPath string) (string, error) {
 	return "installed to " + dir + "; " + what + "; open a new terminal for minigw on PATH" + note, nil
 }
 
+// updateMSI: MSI te izdaje (preverjen po podpisanem SHA256SUMS) namesti msiexec; MSI sam zapre in zažene pladenj.
+func updateMSI(dir string) (string, error) {
+	asset := "minigw-windows-" + runtime.GOARCH + ".msi"
+	tmp, err := os.MkdirTemp("", "minigw-msi-")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(tmp)
+	msi := filepath.Join(tmp, asset)
+	if err := fetchRelease(asset, msi); err != nil {
+		return "", errors.New("Mini Gateway was installed with the MSI (" + dir + "); cannot get the new MSI: " + err.Error())
+	}
+	if err := runCmd("msiexec", "/i", msi, "/passive", "/norestart"); err != nil {
+		return "", err
+	}
+	return "updated with the MSI of v" + version + " in " + dir + "; Mini Gateway is in the notification area", nil
+}
+
 func uninstallWindows(cfgPath string) (string, error) {
+	if d := msiDir(); d != "" { // vnos MSI v Aplikacijah bi sicer ostal brez datotek
+		return "", errors.New("Mini Gateway was installed with the MSI (" + d + "): remove it in Settings → Apps → Installed apps → Mini Gateway → Uninstall; the config and keys stay in " + filepath.Dir(cfgPath))
+	}
 	dir := installDir("windows")
 	trayClose()
 	runValueDel(runValueName)
@@ -370,6 +396,9 @@ func installedInfo(goos string) string {
 	s := "installed in " + dir + ": " + strings.TrimSpace(string(out))
 	if goos == "windows" {
 		s += map[bool]string{true: ", tray running", false: ", tray not running"}[trayRunning()]
+		if msiDir() != "" {
+			s += ", installed with the MSI (update: /minigw:gw update; remove: Settings → Apps)"
+		}
 	}
 	return s
 }

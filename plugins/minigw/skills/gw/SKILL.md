@@ -1,7 +1,7 @@
 ---
 name: gw
 description: Install, update, check or remove Mini Gateway on this computer (Windows and Linux run minigw serve, macOS runs the Mini Gateway app), and manage it (devices, providers, Claude CLI, token, settings page). Use for /minigw:gw install|update|uninstall|status and when the user wants to change the gateway on this computer.
-argument-hint: install | update | uninstall | status | devices [allow <id> | deny <id>] | provider add|remove|list|models | claude … | token [rotate] | settings
+argument-hint: install | update | uninstall | status | devices [allow <id> | deny <id>] | provider add|remove|list|models | claude … | copilot token [remove] | autostart on|off | token [rotate] | settings | modes
 allowed-tools: Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw *)
 ---
 
@@ -56,12 +56,13 @@ For other computers, `/minigw:gw token` shows the connect line to run there (or 
 ## update
 
 1. Run `"$M" gw status`. If `agent requests running` is more than 0, tell the user that the update stops them, and ask whether to go on or wait.
-2. Windows and Linux: `"$M" serve install`. The plugin's minigw is the latest release: it replaces the installed copy and restarts the gateway (Windows also the tray).
+2. Windows and Linux: `"$M" serve install`. The plugin's minigw is the latest release: it replaces the installed copy and restarts the gateway (Windows also the tray). If `gw status` says "installed with the MSI", the same command downloads the release's MSI (checked against the signed `SHA256SUMS`) and runs it.
 3. macOS: if `brew list --cask gh-commiter/mini-gateway/mini-gateway` succeeds, run `brew upgrade --cask gh-commiter/mini-gateway/mini-gateway`. Otherwise point to the DMG. The running app keeps the old version until it restarts. Ask the user, then run `osascript -e 'quit app "Mini Gateway"'` and `open -a "Mini Gateway"`.
 4. `"$M" gw status` and report the new version.
 
 ## uninstall
 
+- Windows installed with the MSI (`gw status` says so): `serve uninstall` refuses. Tell the user: Settings → Apps → Installed apps → Mini Gateway → Uninstall. The config stays.
 - Windows and Linux: `"$M" serve uninstall`. It stops the gateway and removes autostart. The config (with devices and providers) stays. On Linux, linger stays on. `loginctl disable-linger` turns it off if the user wants.
 - macOS: `"$M" gw autostart off`. Remove the app only if the user asks: `brew uninstall --cask gh-commiter/mini-gateway/mini-gateway`, or move it to the Trash.
 
@@ -78,6 +79,17 @@ Everything else goes to `"$M" gw …`. It changes the running gateway at once (o
 - `devices deny <id or name>`.
 - `provider add <name> <baseURL> [--insecure]` needs an API key. Never pass it yourself. Print the full path (`echo "$M"`). Ask the user to run, in this session, `! "<that path>" gw provider add <name> <baseURL>`. minigw then asks for the key without showing it. `--insecure` allows `http` (localhost or a private IP only).
 - `provider list`, `provider remove <name>`, `provider models <name> [text] [--all] [--enable m1,m2|all] [--disable m1,m2|all]`.
-- `claude`: on Windows and Linux `[--path FILE] [--tools T1,T2] [--folder DIR] [--allow-unsandboxed-bash=true|false]`. On the Mac `[--path FILE] [--tools T1,T2] [--folders DIR1,DIR2] [--allow-local-tools=true|false]`. Windows has no sandbox for commands: before `--allow-unsandboxed-bash=true`, tell the user that agents can then run any command as them.
+- `claude [--path FILE] [--tools T1,T2] [--folders DIR1,DIR2] [--allow-local-tools=true|false]` on every system; Windows and Linux also `[--folder DIR] [--allow-unsandboxed-bash=true|false]`. Windows has no sandbox for commands: before `--allow-unsandboxed-bash=true`, tell the user that agents can then run any command as them.
+- `copilot token [remove]`: Copilot's own GitHub token (fine-grained, only "Copilot Requests"). Never pass it yourself: ask the user to run `! "<path of $M>" gw copilot token`; minigw asks for it without showing it.
+- `autostart on|off`: Mac Open at Login; Windows the tray at sign-in. Linux: use `serve install` / `serve uninstall`.
 - `token`: prints the connect line for other computers (the user asked for it, so show it). `token rotate`: ask first. Every client must connect again with the new line.
 - `settings` (Windows and Linux): prints a one-time link to the settings page, valid for 60 seconds. Tell the user to open it now. On the Mac, the settings are the app's Settings window (menu bar icon → Settings…).
+
+## modes
+
+How agents get the client's folder (`minigw --minigw-work=<mode> …`, or `MINIGW_WORK`; per folder `minigw share add --work=<mode>`):
+- `direct`: the gateway Mac mounts the folder (default; Mac gateway only).
+- `sync`: a copy on the gateway, changes come back after each request (needed for Windows and Linux gateways).
+- `worktree`: a git repository; the agent works in a clone, its work comes back as branch `minigw/…` (Mac gateway).
+- `native`: the folder is the gateway Mac's own SMB share; agents work in it directly. `minigw run -- <command>` runs a build there (allowed per device in the gateway's Settings; Mac only).
+- `auto`: native for a gateway share, worktree for a git repository, otherwise sync.

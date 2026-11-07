@@ -169,6 +169,7 @@ func readHidden(f *os.File) (string, error) {
 func regRunSet(string, string) error   { return errors.New("the registry exists on Windows only") }
 func regRunGet(string) (string, error) { return "", errNotFound }
 func regRunDel(string)                 {}
+func msiInstallDir() string            { return "" }
 
 func protectDir(string) error { return nil } // drugod: mapa 0700, datoteke 0600
 
