@@ -15,6 +15,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"os/exec"
@@ -244,15 +246,13 @@ func grokArgs(cwd, promptFile, cfgDir string, agent bool, model string, write bo
 // z dovoljenjem (commands), gh in security tudi tedaj ne; url le z omrežjem. Brez sistemske začasne mape, vgrajenih MCP
 // (GitHub s prijavo uporabnika), vprašanj in samodejnih posodobitev; seja po --session-id.
 // Navodilo gre na stdin (brez -p; preverjeno s copilot 1.0.107), ne v ukazno vrstico: to vidijo ps in /proc/<pid>/cmdline.
-func copilotArgs(extraDirs []string, agent bool, model string, write, commands, network bool, session string) []string {
+// Brez --add-dir (M3): ta naloži .github/skills in .github/agents mape kot zaupanja vredne; agent vidi le mapo seje.
+func copilotArgs(agent bool, model string, write, commands, network bool, session string) []string {
 	a := []string{"--output-format", "json", "--no-ask-user", "--disable-builtin-mcps", "--disallow-temp-dir",
 		"--no-auto-update", "--no-color", "--disable-client-telemetry",
 		"--secret-env-vars=" + strings.Join(copilotTokenVars, ","), "--session-id", session}
 	if model != "" {
 		a = append(a, "--model", model)
-	}
-	for _, d := range extraDirs {
-		a = append(a, "--add-dir", d)
 	}
 	allow, deny := []string{}, []string{"memory"}
 	pick := func(on bool, tool string) {
@@ -285,13 +285,21 @@ var copilotTokenVars = []string{"COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKE
 // copilotGH: GitHub CLI (var: testi podtaknejo lažnega).
 var copilotGH = func() string { p, _ := exec.LookPath("gh"); return p }
 
-// copilotToken: žeton GitHub CLI (»gh auth token«, zunaj bwrap) za copilot pod bwrap, ki skrije ~/.config/gh, shrambo
-// ključev in D-Bus (na Macu pod sandbox-exec copilot 1.0.107: »No authentication information found«). "", če ima router
-// žeton že v okolju (ta gre copilotu naprej), ali brez gh oz. prijave.
+// copilotKey: ime žetona za ukaze (fine-grained PAT le z »Copilot Requests«) v shrambi ključev; »:« ime ponudnika ne more imeti.
+const copilotKey = "agent:copilot"
+
+// validCopilotToken: le fine-grained PAT (github_pat_…), natisljiv ASCII brez presledkov.
+func validCopilotToken(t string) bool {
+	return strings.HasPrefix(t, "github_pat_") && len(t) <= 255 && !strings.ContainsFunc(t, func(r rune) bool { return r < 0x21 || r > 0x7e })
+}
+
+// copilotToken: žeton iz okolja routerja ali GitHub CLI (»gh auth token«, zunaj bwrap; največ 10 s) za copilot pod bwrap,
+// ki skrije ~/.config/gh, shrambo ključev in D-Bus (na Macu pod sandbox-exec copilot 1.0.107: »No authentication
+// information found«). Okolje agenta žetonov nima (agentEnv). "" brez žetona, gh ali prijave.
 func copilotToken(ctx context.Context) string {
 	for _, v := range copilotTokenVars {
-		if os.Getenv(v) != "" {
-			return ""
+		if t := os.Getenv(v); t != "" {
+			return t
 		}
 	}
 	gh := copilotGH()
@@ -311,6 +319,37 @@ func copilotToken(ctx context.Context) string {
 		return ""
 	}
 	return t
+}
+
+// copyRegularTree: le navadne datoteke in mape; povezav ne kopira in jim ne sledi (stanje seje Copilot iz peskovnika, C2).
+func copyRegularTree(src, dst string) error {
+	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(src, p)
+		to := filepath.Join(dst, rel)
+		switch {
+		case d.IsDir():
+			return os.MkdirAll(to, 0o700)
+		case d.Type().IsRegular():
+			in, err := os.Open(p)
+			if err != nil {
+				return err
+			}
+			defer in.Close()
+			if fi, err := in.Stat(); err != nil || !fi.Mode().IsRegular() { // med Lstat in Open zamenjana s povezavo
+				return nil
+			}
+			out, err := os.OpenFile(to, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+			if err != nil {
+				return err
+			}
+			_, err = io.Copy(out, in)
+			return errors.Join(err, out.Close())
+		}
+		return nil
+	})
 }
 
 // copilotEvent: dogodek »--output-format json« (JSONL): odgovor (assistant.message z vsebino) ali korak (tool.*start).
@@ -485,6 +524,15 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 		}
 	}
 	write := ac.canWrite(k) && !readOnly
+	// H1: ukazi Copilot le z namenskim žetonom (ukaz lahko prebere okolje copilota; žeton gh ima vse pravice uporabnika).
+	pat := ""
+	if k.name == "copilot" {
+		pat, _ = keyGet(s.cfgDir, copilotKey)
+		if agent && write && ac.Commands && pat == "" {
+			return writeError(w, r.rid, 503, "Copilot commands need their own GitHub token (fine-grained, only the \"Copilot Requests\" "+
+				"permission): minigw gw copilot token")
+		}
+	}
 	scope := k.name + "|" + r.owner() + "|" + r.h("x-claude-mini-cwd")
 	resume := ""
 	if agent {
@@ -524,12 +572,29 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			}
 			home, _ := os.UserHomeDir()
 			m.ro = []string{filepath.Join(home, ".cache", "copilot")} // razširjen paket (Linux, pod bwrap)
-			if runtime.GOOS == "linux" {
-				if t := copilotToken(ctx); t != "" {
-					m.env = []string{"COPILOT_GITHUB_TOKEN=" + t}
+			m.rw = []string{dir, tmp}                                 // brez drugih dovoljenih map (M3)
+			token := pat
+			if token == "" {
+				token = copilotToken(ctx)
+			}
+			if token == "" && runtime.GOOS == "linux" {
+				return "", errors.New("copilot: no GitHub sign-in on the gateway; sign in with the GitHub CLI (gh auth login) or set a token (minigw gw copilot token)")
+			}
+			if token != "" {
+				m.env = []string{"COPILOT_GITHUB_TOKEN=" + token}
+			}
+			// C2: svež COPILOT_HOME vsake zahteve (hooki, nastavitve, zaupane mape prejšnjega zagona ne obstajajo); med
+			// zahtevami ostane le stanje seje (brez povezav) v stanju naprave, ki ga bwrap ne vidi. Windows: pravi ~/.copilot (I1).
+			store := ""
+			if state != "" {
+				store = filepath.Join(state, "sessions")
+				m.state, m.files = filepath.Join(tmp, "home"), nil
+				if copyRegularTree(filepath.Join(store, resume), filepath.Join(m.state, "session-state", resume)) != nil {
+					os.MkdirAll(filepath.Join(m.state, "session-state"), 0o700)
+					prompt = note + "\n\n" + cliPrompt(history, last) // stanja seje ni: ves pogovor
 				}
 			}
-			args := copilotArgs(extra, agent, model, write, ac.Commands, ac.Network, resume)
+			args := copilotArgs(agent, model, write, ac.Commands, ac.Network, resume)
 			var answer string
 			err = s.runAgentProcess(ctx, r, exe, args, m, dir, prompt, func(line []byte) {
 				t, st := copilotEvent(line)
@@ -541,6 +606,18 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 				}
 			})
 			text, thread = strings.TrimSpace(answer), resume
+			if err == nil && agent && store != "" {
+				next := filepath.Join(store, resume+".new-"+filepath.Base(tmp))
+				if copyRegularTree(filepath.Join(m.state, "session-state", resume), next) == nil {
+					os.RemoveAll(filepath.Join(store, resume))
+					if os.Rename(next, filepath.Join(store, resume)) != nil {
+						thread = "" // stanje ni shranjeno: naslednja zahteva začne znova
+					}
+				} else {
+					thread = ""
+				}
+				os.RemoveAll(next)
+			}
 		} else if k.name == "codex" {
 			out := filepath.Join(tmp, "codex.txt")
 			args := codexArgs(dir, extra, agent, out, model, write, ac.Network, resume)
@@ -598,15 +675,16 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 }
 
 // agentEnv: okolje za Codex in Grok: brez spremenljivk, ki bi notranji CLI usmerile nazaj v ta router, in brez
-// vtičnic agentov ključev in seje D-Bus (N2: SSH, GPG, GNOME Keyring, Secret Service); CODEX_HOME in GROK_HOME
-// nastavi runAgentProcess.
+// vtičnic agentov ključev in seje D-Bus (N2: SSH, GPG, GNOME Keyring, Secret Service), brez žetonov GitHub in vseh
+// COPILOT_* (COPILOT_ALLOW_ALL, COPILOT_PROVIDER_API_KEY_COMMAND …); CODEX_HOME, GROK_HOME in COPILOT_HOME nastavi
+// runAgentProcess, žeton Copilot runAgent.
 func agentEnv(env []string) []string {
 	var out []string
 	for _, e := range env {
 		name, _, _ := strings.Cut(e, "=")
 		if strings.HasPrefix(name, "ANTHROPIC_") || strings.HasPrefix(name, "CLAUDE_CODE_") || slices.Contains([]string{"CLAUDECODE",
 			"DBUS_SESSION_BUS_ADDRESS", "SSH_AUTH_SOCK", "GPG_AGENT_INFO", "GNOME_KEYRING_CONTROL", "CODEX_HOME", "GROK_HOME",
-			"COPILOT_HOME", "COPILOT_ASSISTED_APPROVAL"}, name) || strings.HasPrefix(name, "COPILOT_ALLOW") {
+			"GH_TOKEN", "GITHUB_TOKEN"}, name) || strings.HasPrefix(name, "COPILOT_") {
 			continue
 		}
 		out = append(out, e)
@@ -623,11 +701,8 @@ func agentAuthFiles(k agentKind) (real string, names []string) {
 		}
 		return real, []string{"auth.json", "config.toml"}
 	}
-	if k.name == "copilot" { // prijava: shramba poverilnic ali (brez nje) config.json
-		if real = os.Getenv("COPILOT_HOME"); real == "" {
-			real = filepath.Join(home, ".copilot")
-		}
-		return real, []string{"config.json"}
+	if k.name == "copilot" { // M1: ne prave config.json; prijava je žeton iz okolja (copilotToken ali namenski žeton)
+		return filepath.Join(home, ".copilot"), nil
 	}
 	if real = os.Getenv("GROK_HOME"); real == "" {
 		real = filepath.Join(home, ".grok")
@@ -690,6 +765,9 @@ var agentTimeout = 30 * time.Minute
 
 // runAgentProcess: proces z navodili na stdin, vsaka vrstica stdout v onLine; prekinitev odjemalca ali rok ga ustavi.
 // Stderr gre le v dnevnik (I1): odjemalec dobi kratko sporočilo.
+// maxAgentLine: največja vrstica izhoda agenta (JSONL).
+const maxAgentLine = 1 << 20
+
 func (s *server) runAgentProcess(ctx context.Context, r *req, exe string, args []string, m agentMounts, dir, stdin string, onLine func([]byte)) error {
 	name, args := agentWrap(exe, args, m) // Linux: domača mapa in mapa nastavitev skriti (bwrap), če je na voljo
 	cmd := exec.CommandContext(ctx, name, args...)
@@ -711,11 +789,22 @@ func (s *server) runAgentProcess(ctx context.Context, r *req, exe string, args [
 	s.agentsRunning.Add(1)
 	defer s.agentsRunning.Add(-1)
 	br := bufio.NewReader(stdout)
+	var line []byte
+	skip := false // L4: vrstica nad maxAgentLine se zavrže (pomnilnik)
 	for {
-		line, err := br.ReadBytes('\n')
+		chunk, err := br.ReadSlice('\n')
+		if !skip {
+			if line = append(line, chunk...); len(line) > maxAgentLine {
+				line, skip = nil, true
+			}
+		}
+		if err == bufio.ErrBufferFull {
+			continue
+		}
 		if len(line) > 0 {
 			onLine(line)
 		}
+		line, skip = nil, false
 		if err != nil {
 			break
 		}

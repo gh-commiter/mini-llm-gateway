@@ -164,10 +164,12 @@ const S = {
   copilotModels: ["Models (comma-separated; empty = only the default, “auto”)", "Modeli (ločeni z vejico; prazno = le privzeti, »auto«)"],
   allowWeb: ["Allow web access (fetch tool)", "Dovoli dostop do spleta (orodje fetch)"],
   allowCommands: ["Allow commands", "Dovoli ukaze"],
-  copilotCommandsAsk: ["Copilot then runs commands as this user. On Linux with bwrap they run in the sandbox (home folder hidden); otherwise they can read and change everything this user can, including gateway settings, use the network and your GitHub sign-in. Allow only if you trust the devices that use Copilot.",
-    "Copilot nato izvaja ukaze kot ta uporabnik. Na Linuxu z bwrap tečejo v sandboxu (domača mapa skrita); sicer lahko berejo in spreminjajo vse, kar ta uporabnik, tudi nastavitve prehoda, uporabljajo omrežje in tvojo prijavo GitHub. Dovoli le, če zaupaš napravam, ki uporabljajo Copilot."],
-  copilotFooter: ["The claude-copilot models run “copilot -p” as an agent in the synced copy of the client's folder. Copilot CLI has no sandbox for its own file tools: by default it may only read that folder; with writing on it may edit files there. Commands only with “Allow commands”. Sign in once with “copilot login”.",
-    "Modeli claude-copilot poženejo »copilot -p« kot agenta v sinhronizirani kopiji mape odjemalca. Copilot CLI za svoja orodja za datoteke nima sandboxa: privzeto sme mapo le brati; s pisanjem sme v njej urejati datoteke. Ukazi le z »Dovoli ukaze«. Enkrat se prijavi z »copilot login«."],
+  copilotCommandsAsk: ["Copilot then runs commands as this user. On Linux with bwrap they run in the sandbox (home folder hidden, writing only to the session's folder and a temporary folder); otherwise they can read and change everything this user can, including gateway settings, and use the network. Commands can read the GitHub token Copilot uses, so they need their own fine-grained token with only the “Copilot Requests” permission (below). Allow only if you trust the devices that use Copilot.",
+    "Copilot nato izvaja ukaze kot ta uporabnik. Na Linuxu z bwrap tečejo v sandboxu (domača mapa skrita, pisanje le v mapo seje in začasno mapo); sicer lahko berejo in spreminjajo vse, kar ta uporabnik, tudi nastavitve prehoda, in uporabljajo omrežje. Ukazi lahko preberejo žeton GitHub, ki ga uporablja Copilot, zato potrebujejo svoj fine-grained žeton le z dovoljenjem »Copilot Requests« (spodaj). Dovoli le, če zaupaš napravam, ki uporabljajo Copilot."],
+  copilotToken: ["GitHub token for commands (fine-grained, only “Copilot Requests”)", "Žeton GitHub za ukaze (fine-grained, le »Copilot Requests«)"],
+  copilotTokenSaved: ["Token saved; enter a new one to replace it", "Žeton shranjen; vnesi novega za zamenjavo"],
+  copilotFooter: ["The claude-copilot models run Copilot CLI as an agent in the synced copy of the client's folder, on Linux under bwrap with a fresh Copilot home for each request. By default it may only read that folder; with writing on it may edit files there. Commands only with “Allow commands” and the token above. On Linux it signs in with the GitHub CLI (gh auth login) or that token; on Windows it uses this user's Copilot sign-in (copilot login) and ~/.copilot.",
+    "Modeli claude-copilot poženejo Copilot CLI kot agenta v sinhronizirani kopiji mape odjemalca, na Linuxu pod bwrap s svežo domačo mapo Copilot za vsako zahtevo. Privzeto sme mapo le brati; s pisanjem sme v njej urejati datoteke. Ukazi le z »Dovoli ukaze« in žetonom zgoraj. Na Linuxu se prijavi z GitHub CLI (gh auth login) ali tem žetonom; na Windows uporabi prijavo Copilot tega uporabnika (copilot login) in ~/.copilot."],
   grokFooter: ["The claude-grok models run “grok -p” as an agent in the synced copy of the client's folder. Grok's sandbox (workspace) lets it write only to that folder. Devices that use Grok can read every file this user can read. Without writing it runs read-only. Sign in once with “grok login”.",
     "Modeli claude-grok poženejo »grok -p« kot agenta v sinhronizirani kopiji mape odjemalca. Sandbox Grok (workspace) dovoli pisanje le v to mapo. Naprave, ki uporabljajo Grok, lahko berejo vsako datoteko, ki jo lahko bere ta uporabnik. Brez pisanja teče samo za branje. Enkrat se prijavi z »grok login«."],
   generalDesc: ["Address, port and access token of the gateway, and its state.", "Naslov, vrata in žeton prehoda ter njegovo stanje."],
@@ -360,6 +362,9 @@ async function copilotPane() {
     if (v && !confirm(t("copilotCommandsAsk"))) { i.checked = false; return; }
     await patch({commands: v});
   }), !a.write || locked);
+  // Žeton le za pisanje (API ga ne vrne); prazno polje ga ne izbriše.
+  const token = el("input", {type: "password", autocomplete: "off", placeholder: a.hasToken ? t("copilotTokenSaved") : "github_pat_…"});
+  autosave(token, n2, v => !v ? Promise.resolve() : patch({token: v}).then(r => { token.value = ""; token.placeholder = t("copilotTokenSaved"); return r; }), () => t("saved"));
   return [
     card(...ICON.copilot, "Copilot CLI", t("copilotDesc")),
     group(row(labelSub(t("enabled"), bare ? t(locked ? "agentLockedWin" : "agentWarnWin") : null),
@@ -369,7 +374,8 @@ async function copilotPane() {
     section(t("sandbox")),
     group(row(t("allowWrite"), toggle(a.write, v => save(n2, async () => { await patch({write: v}); show("copilot"); }), locked)),
       row(t("allowWeb"), toggle(a.network, v => save(n2, () => patch({network: v})), locked)),
-      row(t("allowCommands"), commands)),
+      row(t("allowCommands"), commands),
+      row(labelSub(t("copilotToken")), token)),
     n2, n3,
   ];
 }

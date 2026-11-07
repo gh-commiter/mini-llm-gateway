@@ -168,7 +168,7 @@ func TestHardenRouter(t *testing.T) {
 func TestBwrapArgs(t *testing.T) {
 	a := strings.Join(bwrapArgs("/home/u", "/home/u/.config/minigw", []string{"/home/u/.nvm"}, []string{"/home/u/.codex", "/s/copy"},
 		[]string{"/run/user/1/bus"}, []string{"/tmp/dbus-x"}), " ")
-	want := "--dev-bind / / --die-with-parent --tmpfs /home/u --ro-bind /home/u/.nvm /home/u/.nvm --bind /home/u/.codex /home/u/.codex " +
+	want := "--dev-bind / / --die-with-parent --unshare-pid --proc /proc --tmpfs /home/u --ro-bind /home/u/.nvm /home/u/.nvm --bind /home/u/.codex /home/u/.codex " +
 		"--bind /s/copy /s/copy --tmpfs /home/u/.config/minigw --ro-bind /dev/null /run/user/1/bus --tmpfs /tmp/dbus-x"
 	if a != want {
 		t.Fatalf("bwrap args:\n%s\n%s", a, want)

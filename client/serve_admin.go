@@ -802,6 +802,8 @@ func (s *server) agentAPI(method string, k agentKind, body []byte) (int, any) {
 		}
 		if k.name == "copilot" {
 			o["commands"] = ac.Commands
+			t, _ := keyGet(s.cfgDir, copilotKey)
+			o["hasToken"] = t != "" // žeton le za pisanje
 			if ac.Models == nil {
 				o["models"] = []string{} // Copilot: imena modelov (ni seznama računa); prazno = le privzeti
 			}
@@ -817,6 +819,7 @@ func (s *server) agentAPI(method string, k agentKind, body []byte) (int, any) {
 		Write    *bool           `json:"write"`
 		Network  *bool           `json:"network"`
 		Commands *bool           `json:"commands"` // Copilot: ukazi lupine (izrecno dovoljenje)
+		Token    *string         `json:"token"`    // Copilot: žeton za ukaze (le za pisanje; "" ga izbriše)
 		Models   json.RawMessage `json:"models"`   // null = vsi; seznam = le ti; brez polja = brez spremembe
 	}
 	if err := decodeStrict(body, &b); err != nil {
@@ -825,8 +828,18 @@ func (s *server) agentAPI(method string, k agentKind, body []byte) (int, any) {
 	if b.Network != nil && k.name == "grok" {
 		return 400, errorBody(400, "network: Codex and Copilot only")
 	}
-	if b.Commands != nil && k.name != "copilot" {
-		return 400, errorBody(400, "commands: Copilot only")
+	if (b.Commands != nil || b.Token != nil) && k.name != "copilot" {
+		return 400, errorBody(400, "commands, token: Copilot only")
+	}
+	if b.Token != nil && *b.Token != "" && !validCopilotToken(*b.Token) {
+		return 400, errorBody(400, "token: a fine-grained personal access token (github_pat_…) with only the Copilot Requests permission")
+	}
+	if b.Token != nil { // pred nastavitvami: ključ ni del datoteke nastavitev
+		if *b.Token == "" {
+			keyDel(s.cfgDir, copilotKey)
+		} else if _, err := keySet(s.cfgDir, copilotKey, *b.Token); err != nil {
+			return 500, errorBody(500, "token not stored: "+err.Error())
+		}
 	}
 	var models []string
 	setModels := len(b.Models) > 0

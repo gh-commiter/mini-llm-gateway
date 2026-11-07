@@ -25,9 +25,9 @@ func copilotRules(a []string) (allow, deny []string) {
 }
 
 func TestCopilotArgs(t *testing.T) {
-	ro := copilotArgs(nil, true, "", false, false, false, "s1")
+	ro := copilotArgs(true, "", false, false, false, "s1")
 	allow, deny := copilotRules(ro)
-	if slices.ContainsFunc(ro, func(x string) bool { return slices.Contains(copilotForbidden, x) }) {
+	if slices.ContainsFunc(ro, func(x string) bool { return slices.Contains(copilotForbidden, x) || x == "--add-dir" }) { // M3
 		t.Fatalf("forbidden flag: %q", ro)
 	}
 	if !slices.Equal(allow, []string{"read"}) || !slices.Equal(deny, []string{"memory", "write", "shell", "url"}) {
@@ -42,19 +42,19 @@ func TestCopilotArgs(t *testing.T) {
 	if i := slices.Index(ro, "--session-id"); i < 0 || ro[i+1] != "s1" || slices.Contains(ro, "-p") { // navodilo na stdin
 		t.Fatalf("session/prompt: %q", ro)
 	}
-	w := copilotArgs([]string{"/wt"}, true, "gpt-5.2", true, true, true, "s")
+	w := copilotArgs(true, "gpt-5.2", true, true, true, "s")
 	allow, deny = copilotRules(w)
 	if !slices.Equal(allow, []string{"read", "write", "shell", "url"}) || !slices.Contains(deny, "shell(gh:*)") || !slices.Contains(deny, "shell(security:*)") {
 		t.Fatalf("write+commands: allow %q deny %q", allow, deny)
 	}
-	if allow, deny := copilotRules(copilotArgs(nil, true, "", false, true, false, "s")); !slices.Equal(allow, []string{"read"}) ||
+	if allow, deny := copilotRules(copilotArgs(true, "", false, true, false, "s")); !slices.Equal(allow, []string{"read"}) ||
 		!slices.Contains(deny, "shell") {
 		t.Fatalf("commands without write (or --ro): allow %q deny %q", allow, deny)
 	}
-	if w[slices.Index(w, "--model")+1] != "gpt-5.2" || w[slices.Index(w, "--add-dir")+1] != "/wt" {
-		t.Fatalf("model/add-dir: %q", w)
+	if w[slices.Index(w, "--model")+1] != "gpt-5.2" {
+		t.Fatalf("model: %q", w)
 	}
-	chat := copilotArgs(nil, false, "", true, true, true, "s")
+	chat := copilotArgs(false, "", true, true, true, "s")
 	if allow, deny = copilotRules(chat); len(allow) != 0 || !slices.Contains(deny, "read") {
 		t.Fatalf("chat: allow %q deny %q", allow, deny)
 	}
@@ -64,7 +64,8 @@ func TestCopilotArgs(t *testing.T) {
 	if _, st := copilotEvent([]byte(`{"type":"tool.execution_start","data":{"toolName":"view"}}`)); st != "view" {
 		t.Fatal("tool step")
 	}
-	env := agentEnv([]string{"COPILOT_ALLOW_ALL=true", "COPILOT_ALLOW_ALL_TOOLS=1", "COPILOT_ASSISTED_APPROVAL=1", "COPILOT_HOME=/x", "PATH=/bin"})
+	env := agentEnv([]string{"COPILOT_ALLOW_ALL=true", "COPILOT_ALLOW_ALL_TOOLS=1", "COPILOT_ASSISTED_APPROVAL=1", "COPILOT_HOME=/x", "PATH=/bin",
+		"COPILOT_PROVIDER_API_KEY_COMMAND=touch /tmp/x", "COPILOT_CLI_DIST_DIR=/evil", "GH_TOKEN=u", "GITHUB_TOKEN=u", "COPILOT_GITHUB_TOKEN=u"})
 	if !slices.Equal(env, []string{"PATH=/bin"}) {
 		t.Fatalf("env: %q", env)
 	}
@@ -72,6 +73,9 @@ func TestCopilotArgs(t *testing.T) {
 	if !c.allowsModel(copilotKind, "gpt-5.2") || c.allowsModel(copilotKind, "other") || (agentCLI{}).allowsModel(copilotKind, "x") ||
 		(agentCLI{}).canWrite(copilotKind) || !(agentCLI{}).canWrite(codexKind) {
 		t.Fatal("models/write defaults")
+	}
+	if !validCopilotToken("github_pat_11A_x") || validCopilotToken("gho_x") || validCopilotToken("github_pat_a b") {
+		t.Fatal("token validation")
 	}
 }
 
@@ -100,9 +104,9 @@ func TestCopilotToken(t *testing.T) {
 	if got := copilotToken(t.Context()); got != "" {
 		t.Fatalf("invalid output accepted: %q", got)
 	}
-	t.Setenv("GH_TOKEN", "x")
-	if got := copilotToken(t.Context()); got != "" {
-		t.Fatalf("env token present, got %q", got)
+	t.Setenv("GH_TOKEN", "envtok") // žeton iz okolja routerja ima prednost (agentEnv ga agentu sicer ne da)
+	if got := copilotToken(t.Context()); got != "envtok" {
+		t.Fatalf("env token: got %q", got)
 	}
 }
 
@@ -114,11 +118,17 @@ func TestCopilotThroughRouter(t *testing.T) {
 	argsFile := filepath.Join(bin, "args")
 	copilot := filepath.Join(bin, "copilot")
 	os.WriteFile(copilot, []byte(`#!/bin/sh
-printf '%s\n' "$@" "home=$COPILOT_HOME" "token=${COPILOT_GITHUB_TOKEN:+set}" > "`+argsFile+`"
+id=""; prev=""; for a in "$@"; do [ "$prev" = --session-id ] && id="$a"; prev="$a"; done
+printf '%s\n' "$@" "home=$COPILOT_HOME" "token=$COPILOT_GITHUB_TOKEN" > "`+argsFile+`"
 cat > "`+argsFile+`.stdin"
+st="$COPILOT_HOME/session-state/$id"; mkdir -p "$st"
+n=$(cat "$st/count" 2>/dev/null || echo 0); echo $((n + 1)) > "$st/count"
+hooks=no; [ -e "$COPILOT_HOME/hooks.json" ] && hooks=yes
+link=no; [ -L "$st/link" ] && link=yes
+echo '{}' > "$COPILOT_HOME/hooks.json"; ln -s /etc "$st/link" 2>/dev/null
 echo '{"type":"session.start","data":{"sessionId":"x"}}'
 echo '{"type":"assistant.message","data":{"content":"first"}}'
-echo '{"type":"assistant.message","data":{"content":"copilot says hi"}}'
+echo '{"type":"assistant.message","data":{"content":"copilot says hi turn='$((n + 1))' hooks='$hooks' link='$link'"}}'
 `), 0o755)
 	for _, v := range copilotTokenVars {
 		t.Setenv(v, "")
@@ -147,8 +157,12 @@ echo '{"type":"assistant.message","data":{"content":"copilot says hi"}}'
 	sc.start(2)
 	defer sc.unregister()
 	h := map[string]string{"x-claude-mini-session": "sidp", "x-claude-mini-cwd": dir, "content-type": "application/json"}
-	ask := func(model string) (int, string) {
-		st, data := call(c, "POST", "/v1/messages", h, []byte(`{"model":"`+model+`","tools":[{"name":"x"}],"messages":[{"role":"user","content":"PROMPT_MARKER"}]}`), 30*time.Second)
+	ask := func(model string, history ...string) (int, string) {
+		msgs := `{"role":"user","content":"PROMPT_MARKER"}`
+		if len(history) == 1 {
+			msgs += `,{"role":"assistant","content":"` + history[0] + `"},{"role":"user","content":"next"}`
+		}
+		st, data := call(c, "POST", "/v1/messages", h, []byte(`{"model":"`+model+`","tools":[{"name":"x"}],"messages":[`+msgs+`]}`), 30*time.Second)
 		return st, string(data)
 	}
 	args := func() []string {
@@ -156,23 +170,31 @@ echo '{"type":"assistant.message","data":{"content":"copilot says hi"}}'
 		return strings.Split(strings.TrimSpace(string(b)), "\n")
 	}
 	st, b := ask("claude-copilot-gpt-5.2")
-	if st != 200 || !strings.Contains(b, "copilot says hi") || strings.Contains(b, "first") {
+	if st != 200 || !strings.Contains(b, "copilot says hi turn=1 hooks=no") || strings.Contains(b, "first") {
 		t.Fatalf("copilot: %d %s", st, b)
 	}
 	a := args()
+	home := strings.TrimPrefix(a[len(a)-2], "home=")
 	allow, deny := copilotRules(a)
 	if !slices.Equal(allow, []string{"read"}) || !slices.Contains(deny, "write") || !slices.Contains(deny, "shell") ||
 		slices.ContainsFunc(a, func(x string) bool { return slices.Contains(copilotForbidden, x) }) ||
-		!strings.HasPrefix(a[len(a)-2], "home="+s.conf().Scratch+"/state/") {
+		!strings.HasPrefix(home, s.conf().Scratch+"/tmp/req-") {
 		t.Fatalf("copilot args: %q", a)
+	}
+	if _, err := os.Stat(home); err == nil {
+		t.Fatal("per-request COPILOT_HOME not removed")
 	}
 	// Navodilo na stdin, ne v argumentih (ps, /proc/<pid>/cmdline).
 	if in, _ := os.ReadFile(argsFile + ".stdin"); !strings.Contains(string(in), "PROMPT_MARKER") ||
 		slices.ContainsFunc(a, func(x string) bool { return strings.Contains(x, "PROMPT_MARKER") }) {
 		t.Fatalf("prompt not on stdin: %q / %q", in, a)
 	}
-	if want := map[bool]string{true: "token=set", false: "token="}[runtime.GOOS == "linux"]; a[len(a)-1] != want {
-		t.Fatalf("token handoff: %q, want %q", a[len(a)-1], want)
+	if a[len(a)-1] != "token=gho_Test123" { // žeton GitHub CLI (agentEnv sam ne da nobenega)
+		t.Fatalf("token handoff: %q", a[len(a)-1])
+	}
+	// C2: naslednji zavoj: stanje seje ostane (brez povezave), podtaknjen hooks.json pa ne.
+	if st, b := ask("claude-copilot-gpt-5.2", "copilot says hi turn=1 hooks=no link=no"); st != 200 || !strings.Contains(b, "turn=2 hooks=no link=no") {
+		t.Fatalf("second turn: %d %s", st, b)
 	}
 	if st, _ := ask("claude-copilot-unknown"); st != 404 {
 		t.Fatalf("unlisted model: %d", st)
@@ -188,7 +210,21 @@ echo '{"type":"assistant.message","data":{"content":"copilot says hi"}}'
 	if st, _ := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/agents/codex", `{"commands":true}`); st != 400 {
 		t.Fatal("codex commands accepted")
 	}
-	ask("claude-copilot")
+	// H1: ukazi brez namenskega žetona: zavrnjeno; z njim gre ta žeton (ne gh).
+	if st, b := ask("claude-copilot"); st != 503 || !strings.Contains(b, "Copilot Requests") {
+		t.Fatalf("commands without token: %d %s", st, b)
+	}
+	if st, _ := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/agents/copilot", `{"token":"gho_classic"}`); st != 400 {
+		t.Fatal("classic token accepted")
+	}
+	if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/agents/copilot", `{"token":"github_pat_cmd1"}`); st != 200 ||
+		!strings.Contains(b, `"hasToken":true`) || strings.Contains(b, "github_pat_cmd1") {
+		t.Fatalf("token: %d %s", st, b)
+	}
+	if st, b := ask("claude-copilot"); st != 200 || args()[len(args())-1] != "token=github_pat_cmd1" {
+		t.Fatalf("commands with token: %d %s %q", st, b, args())
+	}
+	defer adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/agents/copilot", `{"token":""}`)
 	if allow, deny = copilotRules(args()); !slices.Contains(allow, "write") || !slices.Contains(allow, "shell") || !slices.Contains(deny, "shell(gh:*)") {
 		t.Fatalf("after PATCH: allow %q deny %q", allow, deny)
 	}

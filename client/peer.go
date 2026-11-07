@@ -48,7 +48,8 @@ func packageRoot(home, exe string) string {
 
 // bwrapArgs: vse kot je (/), nato prazna domača mapa in mapa nastavitev, potrebne mape nazaj, skrite vtičnice.
 func bwrapArgs(home, cfgDir string, ro, rw, hideFiles, hideDirs []string) []string {
-	a := []string{"--dev-bind", "/", "/", "--die-with-parent", "--tmpfs", home}
+	// --unshare-pid in svoj /proc: ukazi agenta ne vidijo drugih procesov (okolje copilota z žetonom v /proc/<pid>/environ).
+	a := []string{"--dev-bind", "/", "/", "--die-with-parent", "--unshare-pid", "--proc", "/proc", "--tmpfs", home}
 	for _, d := range ro {
 		a = append(a, "--ro-bind", d, d)
 	}
