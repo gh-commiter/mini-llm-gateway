@@ -24,14 +24,26 @@ case "$(uname -s)" in
 esac
 mkdir -p "$BIN"
 
-# verify_sums <sums> <sig>: že nameščen minigw (preverjen ob namestitvi) ali ssh-keygen; brez obeh ni preverjanja.
+
+ver() { "$1" --version 2>/dev/null | head -1 | sed 's/^minigw //'; }
+older() { [ -n "$1" ] && [ -n "$2" ] && [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" = "$1" ]; }
+
+# verify_sums <sums> <sig>: najprej ssh-keygen; sicer že nameščen minigw, a le 0.5.17 ali novejši (pozna verify-sums)
+# in le z natanko pričakovanim izpisom. Starejši minigw neznan ukaz preda claude, ki lahko vrne 0 (H1 0.5.17).
+# 0 = podpisano, 1 = ni podpisano, 2 = ni s čim preveriti.
 verify_sums() {
-  if [ -x "$EXE" ] && [ ! -L "$EXE" ] && "$EXE" verify-sums "$1" "$2" >/dev/null 2>&1; then return 0; fi
-  command -v ssh-keygen >/dev/null 2>&1 || return 2
-  a=$(mktemp) || return 1
-  printf '%s\n' "$SIGNER" > "$a"
-  ssh-keygen -Y verify -f "$a" -I minigw-release -n minigw-release -s "$2" < "$1" >/dev/null 2>&1; r=$?
-  rm -f "$a"; return $r
+  if command -v ssh-keygen >/dev/null 2>&1; then
+    a=$(mktemp) || return 1
+    printf '%s\n' "$SIGNER" > "$a"
+    ssh-keygen -Y verify -f "$a" -I minigw-release -n minigw-release -s "$2" < "$1" >/dev/null 2>&1; r=$?
+    rm -f "$a"; [ $r -eq 0 ] && return 0 || return 1
+  fi
+  [ -x "$EXE" ] && [ ! -L "$EXE" ] || return 2
+  v=$(ver "$EXE")
+  case $v in *[!0-9.]*|"") return 2 ;; esac
+  older "$v" 0.5.17 && return 2
+  [ "$("$EXE" verify-sums "$1" "$2" 2>/dev/null)" = "SHA256SUMS: good signature" ] && return 0
+  return 1
 }
 
 # Kontrolne vsote zadnje izdaje: po njih se prenesena kopija posodobi (brez omrežja ostane obstoječa). Le podpisane
@@ -85,9 +97,10 @@ else
   fi
 fi
 
+# L4 (0.5.17): posodobitev zavrnjena (podpis), obstoječa ostane: povej, zakaj.
+[ -n "$unsigned" ] && [ -x "$EXE" ] && echo "minigw plugin: not updated: $unsigned; the installed minigw stays."
+
 # Nameščen prehod starejši od izdaje: le namig (posodobitev bi prekinila tekoče zahteve agentov).
-ver() { "$1" --version 2>/dev/null | head -1 | sed 's/^minigw //'; }
-older() { [ -n "$1" ] && [ -n "$2" ] && [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" = "$1" ]; }
 old=""; new=$(ver "$EXE")
 case "$os" in
   darwin) app="/Applications/Mini Gateway.app"
