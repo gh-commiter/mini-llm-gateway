@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- `minigw gw claude --folders … --allow-local-tools=true|false` and `minigw gw autostart on|off` now work on Windows and
+  Linux too (the same flags as on the Mac); `--folder` and `--allow-unsandboxed-bash` stay as `minigw serve` extras.
+- The Mac's admin API has what `minigw serve` has: `PATCH /providers/{name}` (rename, on/off, URL, aliases),
+  `GET /agents/claude/tools`, `GET /agents/{codex,grok}/models`, permission mode and setting sources for Claude CLI, and
+  the scratch folder (moved like in Settings).
+- An MSI install on Windows is recognized: `minigw serve install` and `/minigw:gw update` update it with the release's
+  MSI (checked against the signed `SHA256SUMS`; nothing happens when it is already up to date or newer), and
+  `minigw serve uninstall` points to Settings → Apps. Plugin 0.5.8: `/minigw:gw` covers the Copilot token, autostart and
+  the work modes.
 - **Claude CLI on the Mac no longer loads a folder's `.claude/settings*.json` by default** (setting sources empty, as on
   `minigw serve`): an agent with local tools could otherwise write hooks there that the next session runs outside the
   sandbox. If you never changed "Setting sources", it changes on its own; a value you set yourself stays.

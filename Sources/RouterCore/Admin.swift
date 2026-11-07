@@ -283,13 +283,19 @@ extension Router {
         case "PATCH gateways/{}":  // ime, vklop, URL (ključ ostane pod id), aliasi; kot minigw serve
             guard var p = c.providers.first(where: { $0.name == arg }) else { throw AdminError(404, "no provider \(arg)") }
             let b = try AdminBody(body, ["name", "enabled", "baseURL", "insecure", "aliases"])
-            if let u = try b.string("baseURL") { p.baseURL = try Self.checkGatewayURL(u, insecure: try b.bool("insecure") ?? false) }
+            let newURL = try b.string("baseURL"), insecure = try b.bool("insecure")
+            if newURL != nil || insecure != nil {  // kot Go: tudi sam »insecure« znova preveri URL
+                p.baseURL = try Self.checkGatewayURL(newURL ?? p.baseURL, insecure: insecure ?? false)
+            }
             if let e = try b.bool("enabled") { p.enabled = e }
             if let a = try b.string("aliases") {
                 guard a.utf8.count <= 64 << 10 else { throw AdminError(400, "aliases: too long") }
                 p.aliases = a
             }
             if let n = try b.string("name"), n != arg {
+                guard !Self.builtInProviderIDs.contains(p.id), !Self.builtInProviderIDs.contains(n.lowercased()) else {
+                    throw AdminError(400, "LiteLLM and OpenRouter are built in: they keep their names")
+                }
                 guard Self.validProviderName(n) else { throw AdminError(400, "provider name: letters, digits, . _ - (up to 32)") }
                 p.name = n
             }
@@ -599,6 +605,9 @@ extension Router {
         if AgentCount.running.load(ordering: .relaxed) > 0 { return true }
         return await shares.hasSessions
     }
+
+    /// Privzeta ponudnika (LiteLLM, OpenRouter): ime ostane (kot builtinGateway na Go).
+    static let builtInProviderIDs: Set<String> = ["litellm", "openrouter"]
 
     /// L4: ime ponudnika kot na Go (validGatewayName): gre v imena modelov in poti API.
     static func validProviderName(_ n: String) -> Bool { n.range(of: "^[A-Za-z0-9._-]{1,32}$", options: .regularExpression) != nil }

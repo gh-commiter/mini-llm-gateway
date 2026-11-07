@@ -359,6 +359,12 @@ private func acceptPeerPort(_ fd: Int32) -> (Int32, UInt16) {
     #expect(await admin(app.router(), "PATCH", "/providers/open", body: #"{"baseURL":"http://example.com"}"#).status == 400)
     #expect(await admin(app.router(), "PATCH", "/providers/nope", body: #"{"enabled":true}"#).status == 404)
     #expect(await admin(app.router(), "PATCH", "/providers/open", body: #"{"bogus":1}"#).status == 400)
+    // insecure brez baseURL znova preveri URL (kot Go); privzeta ponudnika obdržita ime
+    #expect(await admin(app.router(), "PATCH", "/providers/open", body: #"{"insecure":false}"#).status == 200)
+    let b2 = FakeApp(RouterConfig())
+    let lit = await admin(b2.router(), "PATCH", "/providers/LiteLLM", body: #"{"name":"mine"}"#)
+    #expect(lit.status == 400 && lit.text.contains("built in"), "\(lit.text)")
+    #expect(await admin(app.router(), "PATCH", "/providers/open", body: #"{"name":"OpenRouter"}"#).status == 400)
 
     // permissionMode, settingSources
     #expect(await admin(app.router(), "PATCH", "/agents/claude", body: #"{"permissionMode":"bogus"}"#).status == 400)
