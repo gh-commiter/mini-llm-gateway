@@ -327,9 +327,9 @@ func (s *server) agentFolder(w http.ResponseWriter, r *req, label string) (dir, 
 func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k agentKind, model string) int {
 	c := s.conf()
 	ac := k.conf(c)
-	if !agentsAllowed(c) {
-		return writeError(w, r.rid, 403, k.bin+" on Windows needs \"Allow commands without a sandbox\" (Claude CLI settings): it can read and change "+
-			"everything this user can, including the router's settings")
+	if !s.agentsAllowed(c) {
+		return writeError(w, r.rid, 403, k.bin+" needs \"Allow commands without a sandbox\" (Claude CLI settings) on this router (Windows, "+
+			"or Linux without bwrap): it can read and change everything this user can, including the router's settings")
 	}
 	if model != "" && !validAgentModel.MatchString(model) {
 		return writeError(w, r.rid, 400, "Invalid model name")
@@ -382,11 +382,20 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 	return s.replyWhenDone(w, r, body, func() (string, error) {
 		var text, thread string
 		var err error
+		tmp, err := os.MkdirTemp(c.scratch("tmp"), "req-*") // le ta zahteva (pod bwrap vidna namesto cele mape tmp)
+		if err != nil {
+			return "", err
+		}
+		defer os.RemoveAll(tmp)
+		home, _ := os.UserHomeDir()
+		m := agentMounts{cfgDir: s.cfgDir, state: filepath.Join(home, "."+k.bin), rw: append([]string{dir, tmp}, extra...)}
+		if v := os.Getenv("CODEX_HOME"); k.name == "codex" && v != "" {
+			m.state = v
+		}
 		if k.name == "codex" {
-			out := filepath.Join(c.scratch("tmp"), "codex-"+r.rid+".txt")
-			defer os.Remove(out)
+			out := filepath.Join(tmp, "codex.txt")
 			args := codexArgs(dir, extra, agent, out, model, write, ac.Network, resume)
-			err = s.runAgentProcess(ctx, r, exe, args, dir, prompt, func(line []byte) {
+			err = s.runAgentProcess(ctx, r, exe, args, m, dir, prompt, func(line []byte) {
 				if t := codexThread(line); t != "" && thread == "" {
 					thread = t
 				}
@@ -397,14 +406,13 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			b, _ := os.ReadFile(out)
 			text = strings.TrimSpace(string(b))
 		} else {
-			pf, perr := s.promptFile(prompt)
-			if perr != nil {
-				return "", perr
+			pf := filepath.Join(tmp, "prompt.txt")
+			if err := os.WriteFile(pf, []byte(prompt), 0o600); err != nil {
+				return "", err
 			}
-			defer os.Remove(pf)
 			args := grokArgs(dir, pf, s.cfgDir, agent, model, write, resume)
 			var answer, failure string
-			err = s.runAgentProcess(ctx, r, exe, args, dir, "", func(line []byte) {
+			err = s.runAgentProcess(ctx, r, exe, args, m, dir, "", func(line []byte) {
 				e, ok := parseGrokEvent(line)
 				switch {
 				case !ok:
@@ -445,8 +453,8 @@ var agentTimeout = 30 * time.Minute
 
 // runAgentProcess: proces z navodili na stdin, vsaka vrstica stdout v onLine; prekinitev odjemalca ali rok ga ustavi.
 // Stderr gre le v dnevnik (I1): odjemalec dobi kratko sporočilo.
-func (s *server) runAgentProcess(ctx context.Context, r *req, exe string, args []string, dir, stdin string, onLine func([]byte)) error {
-	name, args := agentWrap(exe, args, s.cfgDir) // Linux: mapa nastavitev skrita (bwrap), če je na voljo
+func (s *server) runAgentProcess(ctx context.Context, r *req, exe string, args []string, m agentMounts, dir, stdin string, onLine func([]byte)) error {
+	name, args := agentWrap(exe, args, m) // Linux: domača mapa in mapa nastavitev skriti (bwrap), če je na voljo
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	for _, e := range os.Environ() { // notranji agent ne kliče nazaj tega routerja; brez seje D-Bus (Secret Service)
@@ -460,7 +468,7 @@ func (s *server) runAgentProcess(ctx context.Context, r *req, exe string, args [
 	cmd.Stderr = stderr
 	stdout, err := cmd.StdoutPipe()
 	if err == nil {
-		err = startAgent(cmd) // Windows: v Job agentov (peer check)
+		err = startAgent(cmd) // Windows: Job agentov; Linux: pomočnik subreaper (peer check)
 	}
 	if err != nil {
 		return err
@@ -546,16 +554,18 @@ func (s *server) replyWhenDone(w http.ResponseWriter, r *req, body map[string]an
 	return writeJSON(w, r.rid, 200, t.message())
 }
 
-// agentsAllowed: na Windows Codex in Grok nimata preverjenega sandboxa (berejo in pišejo vse, kar uporabnik):
-// le z izrecnim allowUnsandboxedBash, v vsakem načinu (H1).
-func agentsAllowed(c serveConfig) bool { return runtime.GOOS != "windows" || c.AllowUnsandboxedBash }
+// agentsAllowed: brez sandboxa, ki skrije skrivnosti routerja (Windows; Linux brez delujočega bwrap), Codex in Grok
+// bereta in pišeta vse, kar uporabnik: le z izrecnim allowUnsandboxedBash, v vsakem načinu (H1, R3).
+func (s *server) agentsAllowed(c serveConfig) bool {
+	return agentSandboxed(s.cfgDir) || c.AllowUnsandboxedBash
+}
 
 // agentModelList: claude-codex in claude-codex-<model> (vklopljeni), enako za Grok; le vklopljen agent z najdenim CLI.
 func (s *server) agentModelList(k agentKind) []map[string]any {
 	c := s.conf()
 	ac := k.conf(c)
 	exe, _ := resolveAgent(k, ac.Executable)
-	if !ac.Enabled || exe == "" || !agentsAllowed(c) {
+	if !ac.Enabled || exe == "" || !s.agentsAllowed(c) {
 		return nil
 	}
 	label := map[string]string{"codex": "Codex CLI", "grok": "Grok CLI"}[k.name]

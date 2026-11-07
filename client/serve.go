@@ -305,6 +305,7 @@ func serveCommand(args []string) {
 	if err != nil {
 		fail(err.Error())
 	}
+	hardenRouter() // Linux: ni dumpable (agenti ne berejo pomnilnika routerja)
 	ln, err := listenRouter(c)
 	if err != nil {
 		fail(err.Error())

@@ -119,6 +119,7 @@ echo '{"type":"text","data":"says hi"}'
 echo '{"type":"end","sessionId":"s9"}'
 `), 0o755)
 	s, _, base := liveServer(t, func(c *serveConfig) {
+		c.AllowUnsandboxedBash = true // Linux brez bwrap (Docker): sicer Codex in Grok ne tečeta
 		c.Codex = agentCLI{Enabled: true, Executable: codex}
 		c.Grok = agentCLI{Enabled: true, Executable: grok, Models: []string{}}
 	})
@@ -183,16 +184,15 @@ echo '{"type":"end","sessionId":"s9"}'
 	}
 }
 
-// H1: na Windows Codex in Grok le z izrecnim dovoljenjem za ukaze brez sandboxa.
-func TestAgentsOnWindowsNeedOptIn(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		if agentsAllowed(serveConfig{}) || !agentsAllowed(serveConfig{AllowUnsandboxedBash: true}) {
-			t.Fatal("windows opt-in")
-		}
-		return
+// H1, R3: brez sandboxa, ki skrije skrivnosti (Windows; Linux brez bwrap), Codex in Grok le z izrecnim dovoljenjem.
+func TestAgentsWithoutSandboxNeedOptIn(t *testing.T) {
+	s := &server{cfgDir: t.TempDir()}
+	sandboxed := agentSandboxed(s.cfgDir)
+	if (runtime.GOOS == "windows" && sandboxed) || (runtime.GOOS == "darwin" && !sandboxed) {
+		t.Fatalf("%s sandboxed=%v", runtime.GOOS, sandboxed)
 	}
-	if !agentsAllowed(serveConfig{}) {
-		t.Fatal("other systems use the CLI sandbox")
+	if s.agentsAllowed(serveConfig{}) != sandboxed || !s.agentsAllowed(serveConfig{AllowUnsandboxedBash: true}) {
+		t.Fatal("opt-in")
 	}
 }
 

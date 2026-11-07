@@ -14,6 +14,35 @@ import (
 	"strings"
 )
 
+// agentReaperCmd: skriti ukaz minigw za pomočnika, pod katerim teče agent (Linux, startAgent).
+const agentReaperCmd = "__minigw-agent"
+
+// agentMounts: kaj Codex ali Grok pod bwrap še vidita (Linux): mapa nastavitev je vedno skrita.
+type agentMounts struct {
+	cfgDir string
+	state  string   // ~/.codex ali ~/.grok (prijava, seje): branje in pisanje
+	rw     []string // kopija mape, začasna mapa zahteve, dovoljene mape
+}
+
+// bwrapArgs: vse kot je (/), nato prazna domača mapa in mapa nastavitev, potrebne mape nazaj, skrite vtičnice.
+func bwrapArgs(home, cfgDir string, ro, rw, hideFiles, hideDirs []string) []string {
+	a := []string{"--dev-bind", "/", "/", "--die-with-parent", "--tmpfs", home}
+	for _, d := range ro {
+		a = append(a, "--ro-bind", d, d)
+	}
+	for _, d := range rw {
+		a = append(a, "--bind", d, d)
+	}
+	a = append(a, "--tmpfs", cfgDir)
+	for _, f := range hideFiles {
+		a = append(a, "--ro-bind", "/dev/null", f)
+	}
+	for _, d := range hideDirs {
+		a = append(a, "--tmpfs", d)
+	}
+	return a
+}
+
 var errAgentPeer = errors.New("this request comes from an agent process of the router: the admin API refuses it")
 
 // adminPeerCheck: nil = odjemalec ni agent tega routerja.

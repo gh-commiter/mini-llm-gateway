@@ -2,42 +2,177 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
+	"os/signal"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
+	"time"
 )
 
-// startAgent: na Linuxu brez posebnosti (procesi agentov so potomci routerja; peerCheck hodi po verigi staršev).
-func startAgent(cmd *exec.Cmd) error { return cmd.Start() }
+// Linux: vsak agent (claude, codex, grok) teče pod pomočnikom »minigw __minigw-agent«, ki je subreaper
+// (PR_SET_CHILD_SUBREAPER): osirotel potomec (dvojni fork) se prevesi nanj, ne na init, zato veriga staršev do
+// routerja ostane (R1). Pomočnik požanje vse svoje potomce (Wait4(-1) v routerju bi kradel stanja procesov os/exec)
+// in ob koncu agenta ali ob SIGTERM ubije ostale, zato agent ne pusti procesov za sabo.
+func startAgent(cmd *exec.Cmd) error {
+	cmd.Args = append([]string{"/proc/self/exe", agentReaperCmd, cmd.Path}, cmd.Args[1:]...) // tudi, ko je minigw že zamenjan
+	cmd.Path = "/proc/self/exe"
+	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGTERM} // router umre: pomočnik pospravi
+	if cmd.Cancel != nil {                                             // CommandContext: SIGTERM, da pomočnik pospravi
+		cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+		cmd.WaitDelay = 10 * time.Second
+	}
+	return cmd.Start()
+}
+
+// agentReaperMain: pomočnik (glej startAgent): args = program in argumenti agenta.
+func agentReaperMain(args []string) {
+	if len(args) == 0 {
+		os.Exit(2)
+	}
+	syscall.RawSyscall(syscall.SYS_PRCTL, 36 /* PR_SET_CHILD_SUBREAPER */, 1, 0)
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT)
+	exe, err := exec.LookPath(args[0])
+	var pid int
+	if err == nil {
+		pid, err = syscall.ForkExec(exe, args, &syscall.ProcAttr{Env: os.Environ(), Files: []uintptr{0, 1, 2},
+			Sys: &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}})
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "minigw: cannot start "+args[0]+": "+err.Error())
+		os.Exit(127)
+	}
+	var stop atomic.Bool
+	go func() {
+		<-sigs
+		stop.Store(true)
+		syscall.Kill(-pid, syscall.SIGKILL)
+		killChildren()
+	}()
+	code := 0
+	for {
+		var ws syscall.WaitStatus
+		p, err := syscall.Wait4(-1, &ws, 0, nil)
+		if err == syscall.EINTR {
+			continue
+		}
+		if err != nil { // ECHILD: nobenega potomca več
+			break
+		}
+		if p == pid {
+			stop.Store(true)
+			if code = ws.ExitStatus(); ws.Signaled() {
+				code = 128 + int(ws.Signal())
+			}
+			syscall.Kill(-pid, syscall.SIGKILL)
+		}
+		if stop.Load() {
+			killChildren() // osiroteli so zdaj otroci pomočnika (prevesijo se ob izhodu starša, pred žetvijo)
+		}
+	}
+	os.Exit(code)
+}
+
+// killChildren: SIGKILL vsem otrokom tega procesa (iz /proc/*/stat).
+func killChildren() {
+	self := os.Getpid()
+	ents, _ := os.ReadDir("/proc")
+	for _, e := range ents {
+		if pid, err := strconv.Atoi(e.Name()); err == nil && procPPID(pid) == self {
+			syscall.Kill(pid, syscall.SIGKILL)
+		}
+	}
+}
+
+// hardenRouter: router ni »dumpable« (R2): drug proces istega uporabnika (agent) ne bere /proc/<router>/mem ali
+// environ in se ne more nanj pripeti s ptrace. Branje /proc drugih procesov (peerCheck) ostane.
+func hardenRouter() { syscall.RawSyscall(syscall.SYS_PRCTL, 4 /* PR_SET_DUMPABLE */, 0, 0) }
 
 var (
 	bwrapOnce sync.Once
 	bwrapPath string // "" = bwrap ni nameščen ali ne deluje (npr. brez uporabniških imenskih prostorov)
 )
 
-// agentWrap: Codex in Grok pod bwrap, kjer je mapa nastavitev prazen tmpfs, vtičnica seje D-Bus pa skrita (Secret
-// Service s ključi prehodov). Sicer vse ostane, kot je (njun sandbox deluje v njem). Brez bwrap: brez ovoja (H1.5).
-func agentWrap(exe string, args []string, cfgDir string) (string, []string) {
+func bwrapReady(cfgDir string) string {
 	bwrapOnce.Do(func() {
 		p, err := exec.LookPath("bwrap")
 		t, err2 := exec.LookPath("true")
-		if err == nil && err2 == nil && exec.Command(p, "--dev-bind", "/", "/", "--tmpfs", cfgDir, "--", t).Run() == nil {
+		home, _ := os.UserHomeDir()
+		if err == nil && err2 == nil && home != "" &&
+			exec.Command(p, append(bwrapArgs(home, cfgDir, nil, nil, nil, nil), "--", t)...).Run() == nil {
 			bwrapPath = p
 		}
 	})
-	if bwrapPath == "" {
+	return bwrapPath
+}
+
+// agentSandboxed: Codex in Grok sta zaprta pred skrivnostmi routerja le pod bwrap; sicer le z izrecnim dovoljenjem.
+func agentSandboxed(cfgDir string) bool { return bwrapReady(cfgDir) != "" }
+
+// agentWrap: Codex ali Grok pod bwrap (R3): domača mapa in mapa nastavitev sta prazna, nazaj pridejo le mape s
+// programi (samo za branje), mapa CLI (~/.codex, ~/.grok: prijava, seje), kopija mape in dovoljene mape. Skrita sta
+// tudi D-Bus seje (Secret Service s ključi prehodov) in /tmp/dbus-*. Poti brez simbolnih povezav (R5).
+func agentWrap(exe string, args []string, m agentMounts) (string, []string) {
+	bw := bwrapReady(m.cfgDir)
+	if bw == "" {
 		return exe, args
 	}
-	w := []string{"--dev-bind", "/", "/", "--tmpfs", cfgDir, "--die-with-parent"}
-	if rt := os.Getenv("XDG_RUNTIME_DIR"); rt != "" {
-		if _, err := os.Stat(rt + "/bus"); err == nil {
-			w = append(w, "--ro-bind", "/dev/null", rt+"/bus")
+	real := func(p string) string {
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			return r
+		}
+		return p
+	}
+	home, _ := os.UserHomeDir()
+	home = real(home)
+	var ro []string
+	top := func(p string) { // mapa s programom pod domačo: njena mapa prve ravni (npr. ~/.nvm, ~/.local)
+		if rel, err := filepath.Rel(home, real(p)); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+			if d := filepath.Join(home, strings.Split(rel, string(filepath.Separator))[0]); !slices.Contains(ro, d) {
+				ro = append(ro, d)
+			}
 		}
 	}
-	return bwrapPath, append(append(w, "--", exe), args...)
+	top(exe)
+	for _, d := range filepath.SplitList(os.Getenv("PATH")) {
+		if _, err := os.Stat(d); err == nil {
+			top(d)
+		}
+	}
+	var rw []string
+	if m.state != "" {
+		os.MkdirAll(m.state, 0o700)
+		rw = append(rw, real(m.state))
+	}
+	for _, d := range m.rw {
+		if _, err := os.Stat(d); err == nil {
+			rw = append(rw, real(d))
+		}
+	}
+	ro = slices.DeleteFunc(ro, func(d string) bool { return slices.Contains(rw, d) })
+	var hideFiles, hideDirs []string
+	if rt := os.Getenv("XDG_RUNTIME_DIR"); rt != "" {
+		if _, err := os.Stat(rt + "/bus"); err == nil {
+			hideFiles = append(hideFiles, real(rt+"/bus"))
+		}
+	}
+	bus, _ := filepath.Glob("/tmp/dbus-*")
+	for _, b := range bus {
+		if fi, err := os.Lstat(b); err == nil && fi.IsDir() {
+			hideDirs = append(hideDirs, b)
+		} else if err == nil && fi.Mode()&os.ModeSymlink == 0 {
+			hideFiles = append(hideFiles, b)
+		}
+	}
+	return bw, append(append(bwrapArgs(home, real(m.cfgDir), ro, rw, hideFiles, hideDirs), "--", exe), args...)
 }
 
 func peerCheck(ours, peer *net.TCPAddr) error {

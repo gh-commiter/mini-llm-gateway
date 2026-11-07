@@ -152,15 +152,15 @@ const S = {
   noModels: ["No models (sign in once with the CLI's login command)", "Ni modelov (enkrat se prijavi z ukazom login tega CLI)"],
   sandbox: ["Sandbox", "Sandbox"], allowWrite: ["Allow writing in the session's folder", "Dovoli pisanje v mapo seje"],
   allowNetwork: ["Allow network access for commands", "Dovoli omrežje za ukaze"],
-  agentLockedWin: ["On Windows this needs “Allow commands without a sandbox” under Claude CLI: the agent can read and change everything this user can, including router settings.",
-    "Na Windows to zahteva »Dovoli ukaze brez sandboxa« pod Claude CLI: agent lahko bere in spreminja vse, kar ta uporabnik, tudi nastavitve routerja."],
-  agentWarnWin: ["On Windows the agent runs without a sandbox: it can read and change everything this user can, including router settings.",
-    "Na Windows agent teče brez sandboxa: lahko bere in spreminja vse, kar ta uporabnik, tudi nastavitve routerja."],
-  allowedFoldersShared: ["Shared with Claude CLI. The agent may also write here (Codex); reads are not limited.", "Skupne s Claude CLI. Agent sme pisati tudi sem (Codex); branje ni omejeno."],
-  codexFooter: ["The claude-codex models (one per Codex model of your account) run “codex exec” as an agent in the synced copy of the client's folder. Its sandbox writes only to that folder and the allowed folders; reads are not limited. Sign in once with “codex login”.",
-    "Modeli claude-codex (eden za vsak model Codex tvojega računa) poženejo »codex exec« kot agenta v sinhronizirani kopiji mape odjemalca. Njegov sandbox piše le v to mapo in dovoljene mape; branje ni omejeno. Enkrat se prijavi z »codex login«."],
-  grokFooter: ["The claude-grok models run “grok -p” as an agent in the synced copy of the client's folder. Grok's sandbox (workspace) lets it write only to that folder; reads are not limited. Without writing it runs read-only. Sign in once with “grok login”.",
-    "Modeli claude-grok poženejo »grok -p« kot agenta v sinhronizirani kopiji mape odjemalca. Sandbox Grok (workspace) dovoli pisanje le v to mapo; branje ni omejeno. Brez pisanja teče samo za branje. Enkrat se prijavi z »grok login«."],
+  agentLockedWin: ["Here (Windows, or Linux without bwrap) this needs “Allow commands without a sandbox” under Claude CLI: the agent can read and change everything this user can, including router settings.",
+    "Tu (Windows ali Linux brez bwrap) to zahteva »Dovoli ukaze brez sandboxa« pod Claude CLI: agent lahko bere in spreminja vse, kar ta uporabnik, tudi nastavitve routerja."],
+  agentWarnWin: ["Here the agent runs without a sandbox: it can read and change everything this user can, including router settings.",
+    "Tu agent teče brez sandboxa: lahko bere in spreminja vse, kar ta uporabnik, tudi nastavitve routerja."],
+  allowedFoldersShared: ["Shared with Claude CLI. The agent may also write here (Codex).", "Skupne s Claude CLI. Agent sme pisati tudi sem (Codex)."],
+  codexFooter: ["The claude-codex models (one per Codex model of your account) run “codex exec” as an agent in the synced copy of the client's folder. Its sandbox writes only to that folder and the allowed folders. Devices that use Codex can read every file this user can read. Sign in once with “codex login”.",
+    "Modeli claude-codex (eden za vsak model Codex tvojega računa) poženejo »codex exec« kot agenta v sinhronizirani kopiji mape odjemalca. Njegov sandbox piše le v to mapo in dovoljene mape. Naprave, ki uporabljajo Codex, lahko berejo vsako datoteko, ki jo lahko bere ta uporabnik. Enkrat se prijavi z »codex login«."],
+  grokFooter: ["The claude-grok models run “grok -p” as an agent in the synced copy of the client's folder. Grok's sandbox (workspace) lets it write only to that folder. Devices that use Grok can read every file this user can read. Without writing it runs read-only. Sign in once with “grok login”.",
+    "Modeli claude-grok poženejo »grok -p« kot agenta v sinhronizirani kopiji mape odjemalca. Sandbox Grok (workspace) dovoli pisanje le v to mapo. Naprave, ki uporabljajo Grok, lahko berejo vsako datoteko, ki jo lahko bere ta uporabnik. Brez pisanja teče samo za branje. Enkrat se prijavi z »grok login«."],
   generalDesc: ["Address, port and access token of the router, and its state.", "Naslov, vrata in žeton routerja ter njegovo stanje."],
   devicesDesc: ["Computers that may use this router. Compare a waiting device's ID with the one on the client before you allow it.",
     "Računalniki, ki smejo uporabljati ta router. ID čakajoče naprave pred odobritvijo primerjaj s tistim na odjemalcu."],
@@ -318,10 +318,10 @@ async function agentPane(kind) {
       toggle(x.enabled, (v, i) => save(n1, async () => { try { await setModel(x.slug, v); } catch (e) { i.checked = !v; throw e; } }))))
     : [row(el("span", {class: "label sub", textContent: a.found ? t("noModels") : t(kind + "NotFound")}))]);
   const bulk = on => save(n1, async () => { await patch({models: on ? null : []}); show(kind); });
-  const locked = win && !c.allowUnsandboxedBash;  // H1: na Windows le z izrecnim dovoljenjem
+  const bare = st.agentsUnsandboxed, locked = bare && !c.allowUnsandboxedBash;  // H1, R3: brez sandboxa le z izrecnim dovoljenjem
   return [
     card(...ICON[kind], codex ? "Codex CLI" : "Grok CLI", t(kind + "Desc")),
-    group(row(labelSub(t("enabled"), win ? t(locked ? "agentLockedWin" : "agentWarnWin") : null),
+    group(row(labelSub(t("enabled"), bare ? t(locked ? "agentLockedWin" : "agentWarnWin") : null),
         toggle(a.enabled && !locked, v => save(n1, async () => { await patch({enabled: v}); nav(); }), locked)),
       row(labelSub(t("path")), path)),
     el("div", {class: "note"}, status),

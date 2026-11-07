@@ -29,13 +29,18 @@ except where a response says `"restartRequired": true`.
   `sessionStorage` (scheme, host and port) and sends as `X-Minigw-Session` on every API call. A page from another
   origin cannot send that header without a preflight, which fails (no CORS). Missing or wrong: `401`. A session ends
   after 30 minutes without use, with `POST /minigw/settings/logout`, or when the router token is rotated.
-- **Agents are refused** (Go router, Linux and Windows): an `MGW-Admin` request from a process that the router
-  started, or one of its descendants, gets `403`, even with the right secret. Linux: the client's socket in
-  `/proc/net/tcp{,6}` → the processes holding it → their parents up to PID 1; under the systemd unit also the
-  unit's cgroup (it keeps orphaned descendants). Windows: every agent (claude, codex, grok) runs in one Job object
-  of the router (created suspended, added, then resumed); the client's PID comes from `GetExtendedTcpTable` and
-  `IsProcessInJob` decides. If the process cannot be found or read, the request is refused. The settings page
-  session is not checked this way: it needs a one-time link from the tray or the admin API.
+- **Agents are refused** (Go router, Linux and Windows): an admin request (`MGW-Admin`, a settings page session, or
+  `POST /minigw/settings/login`) from a process that the router started, or one of its descendants, gets `403`,
+  even with the right secret.
+  - Linux: the client's socket in `/proc/net/tcp{,6}` → the processes holding it → their parents up to PID 1.
+    Every agent (claude, codex, grok) runs under a small helper (`minigw __minigw-agent`) that is a child
+    subreaper: a descendant whose parent exits (double fork) moves to the helper, not to init, so the chain to the
+    router stays. The helper reaps its own subtree and kills what is left when the agent ends. Under the systemd
+    unit the unit's cgroup is checked too. The router is not dumpable (`PR_SET_DUMPABLE 0`), so agents cannot read
+    its memory or environment.
+  - Windows: every agent runs in one Job object of the router (created suspended, added, then resumed); the
+    client's PID comes from `GetExtendedTcpTable` and `IsProcessInJob` decides.
+  - If the process cannot be found or read, the request is refused.
 - Every admin API response has `Cache-Control: no-store`.
 - Loopback skips the device check and encryption for normal API calls; the admin API still needs the secret.
 - **Clients authenticate the router first.** Something else may listen on the port (the
@@ -84,7 +89,7 @@ General  {"port": number, "address": string, "connect": string, "restartRequired
 
 | Method and path | Body | Response |
 |---|---|---|
-| `GET /status` | – | `{"running", "version", "port", "address", "installed", "devices": n, "pending": n, "claude": Claude, "gateways": [Gateway], "os", "installDir"?, "tray", "autostart", "agents": n}` |
+| `GET /status` | – | `{"running", "version", "port", "address", "installed", "devices": n, "pending": n, "claude": Claude, "gateways": [Gateway], "os", "installDir"?, "tray", "autostart", "agents": n, "agentsUnsandboxed"}` |
 | `GET /devices` | – | `{"devices": [Device], "pending": [Device], "allowAnyDevice": bool}` |
 | `POST /devices` | `{"id", "name"}` | `{"device": Device, "added": bool}`; removes it from pending |
 | `DELETE /devices/{id or name}` | – | `{"device": Device}`; a pending device is only removed from pending (`"pending": true`); a name must be unique |
@@ -115,7 +120,8 @@ Notes:
   `installDir` the folder of `minigw serve install` (only when minigw is installed there), `tray` whether the
   Windows tray runs. `autostart` is `"boot"` (Linux with linger: the router starts without anyone signing in),
   `"sign-in"`, or `""` (it does not start on its own). `agents` counts the claude, codex and grok processes that
-  run right now; an update stops them, so check it first. `PATCH /general {"startAtSignIn"}` sets the Windows Run
+  run right now; an update stops them, so check it first. `agentsUnsandboxed` (Go router): Codex and Grok have no sandbox here that hides the router's secrets
+  (Windows, Linux without a working `bwrap`), so they run only with `allowUnsandboxedBash`. `PATCH /general {"startAtSignIn"}` sets the Windows Run
   value for the running router and, on the Mac, Open at Login; Linux answers `400` (use `minigw serve install`).
   The Mac app leaves `os`, `installDir` and `tray` out.
 - `POST /gateways/{name}/models`: `all` first (true = all, false = none), then `enable`, then `disable`.
@@ -134,7 +140,7 @@ Notes:
 | `GET /siri`, `PATCH` | any of `{"enabled", "timeout", "allow": [id], "deny": [id]}` | `{"enabled", "timeout", "devices": [{"id", "name", "siri"}]}` |
 
 `write`: the agent's sandbox may write in the session's folder (else read-only); `network`: commands in Codex's
-sandbox may use the network (default: off on the Go router, on on the Mac); `models: null` = all the account's models. `allow`/`deny` switch Siri for known
+sandbox may use the network (default: off); `models: null` = all the account's models. `allow`/`deny` switch Siri for known
 devices (Siri uses this Mac's personal data).
 
 ## Mac app

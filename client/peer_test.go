@@ -1,13 +1,16 @@
 package main
 
 import (
+	"bufio"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -58,15 +61,24 @@ func TestPeerTables(t *testing.T) {
 	}
 }
 
-// H1: proces, ki ga je pognal router (agent), ne pride skozi skrbniški API, tudi s pravo skrivnostjo.
+// Testni program je tudi pomočnik agentov (startAgent na Linuxu požene /proc/self/exe __minigw-agent …).
+func TestMain(m *testing.M) {
+	if len(os.Args) > 1 && os.Args[1] == agentReaperCmd {
+		agentReaperMain(os.Args[2:])
+	}
+	os.Exit(m.Run())
+}
+
+// H1, R1, R4: proces, ki ga je pognal router (agent), tudi vnuk po dvojnem forku, ne pride skozi skrbniški API
+// (s pravo skrivnostjo) in ne do prijave strani z nastavitvami.
 func TestAdminRefusesAgentProcess(t *testing.T) {
 	if runtime.GOOS != "linux" && runtime.GOOS != "windows" {
 		t.Skip("peer check: Linux and Windows (the Mac app has PeerProcess)")
 	}
 	s, _, base := liveServer(t, nil)
-	child := func(start func(*exec.Cmd) error) string {
-		cmd := exec.Command(os.Args[0], "-test.run=^TestPeerHelper$")
-		cmd.Env = append(os.Environ(), "MINIGW_PEER_HELPER="+base+"|"+s.admin+"|"+hex.EncodeToString(s.key.PublicKey().Bytes()))
+	env := "MINIGW_PEER_HELPER=" + base + "|" + s.admin + "|" + hex.EncodeToString(s.key.PublicKey().Bytes())
+	run := func(cmd *exec.Cmd, start func(*exec.Cmd) error) string {
+		cmd.Env = append(os.Environ(), env, "T="+os.Args[0])
 		var out strings.Builder
 		cmd.Stdout = &out
 		if err := start(cmd); err != nil {
@@ -75,11 +87,29 @@ func TestAdminRefusesAgentProcess(t *testing.T) {
 		cmd.Wait()
 		return out.String()
 	}
-	if out := child(startAgent); !strings.Contains(out, "status 403") || !strings.Contains(out, "agent process") {
+	child := func(start func(*exec.Cmd) error, mode string) string {
+		return run(exec.Command(os.Args[0], "-test.run=^TestPeerHelper$", mode), start)
+	}
+	plain := func(c *exec.Cmd) error { return c.Start() }
+	if out := child(startAgent, ""); !strings.Contains(out, "status 403") || !strings.Contains(out, "agent process") {
 		t.Fatalf("agent got through: %q", out)
 	}
+	if out := child(startAgent, "login"); !strings.Contains(out, "status 403") { // R4: pred preverjanjem povezave
+		t.Fatalf("agent reached the settings login: %q", out)
+	}
+	if runtime.GOOS == "linux" {
+		// R1: srednji proces takoj konča; vnuk se prevesi na pomočnika (subreaper), ne na init.
+		fork := `sh -c '(sleep 0.5; exec "$T" -test.run=^TestPeerHelper$) & exit 0'; sleep 3`
+		if out := run(exec.Command("/bin/sh", "-c", fork), startAgent); !strings.Contains(out, "status 403") {
+			t.Fatalf("double-forked agent got through: %q", out)
+		}
+		// Kontrola: brez pomočnika veriga razpade (zato je pomočnik potreben, in test bi to opazil).
+		if out := run(exec.Command("/bin/sh", "-c", fork), plain); !strings.Contains(out, "status 200") {
+			t.Fatalf("control: %q", out)
+		}
+	}
 	if runtime.GOOS == "windows" { // Windows: zunaj Joba agentov je odjemalec dovoljen
-		if out := child(func(c *exec.Cmd) error { return c.Start() }); !strings.Contains(out, "status 200") {
+		if out := child(plain, ""); !strings.Contains(out, "status 200") {
 			t.Fatalf("plain process refused: %q", out)
 		}
 	}
@@ -94,22 +124,74 @@ func TestPeerHelper(t *testing.T) {
 		t.Skip("helper for TestAdminRefusesAgentProcess")
 	}
 	p := strings.SplitN(v, "|", 3)
+	if slices.Contains(os.Args, "login") {
+		resp, err := http.Post(p[0]+"/minigw/settings/login", "application/json", strings.NewReader(`{"t":"x"}`))
+		if err == nil {
+			fmt.Printf("status %d\n", resp.StatusCode)
+		}
+		return
+	}
 	key, _ := hex.DecodeString(p[2])
 	a := &adminClient{base: p[0], secret: p[1], routerKey: key}
 	st, b, err := a.http("GET", adminPrefix+"/status", nil, 5*time.Second)
 	fmt.Printf("status %d %s %v\n", st, b, err)
 }
 
+// R2: router ni dumpable (drug proces ne bere njegovega environ), sam pa še bere /proc drugih procesov.
+func TestHardenRouter(t *testing.T) {
+	if os.Getenv("MINIGW_DUMP_HELPER") == "1" {
+		hardenRouter()
+		_, e1 := os.ReadDir(fmt.Sprintf("/proc/%d/fd", os.Getppid()))
+		_, e2 := os.ReadDir("/proc/self/fd")
+		fmt.Printf("scan %v %v\n", e1, e2)
+		time.Sleep(2 * time.Second)
+		return
+	}
+	if runtime.GOOS != "linux" || os.Getuid() == 0 {
+		t.Skip("Linux, as a normal user (root may have CAP_SYS_PTRACE)")
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestHardenRouter$")
+	cmd.Env = append(os.Environ(), "MINIGW_DUMP_HELPER=1")
+	out, _ := cmd.StdoutPipe()
+	cmd.Start()
+	defer cmd.Wait()
+	line, _ := bufio.NewReader(out).ReadString('\n')
+	if line != "scan <nil> <nil>\n" {
+		t.Fatalf("router cannot read /proc: %q", line)
+	}
+	if _, err := os.ReadFile(fmt.Sprintf("/proc/%d/environ", cmd.Process.Pid)); err == nil {
+		t.Fatal("environ of a non-dumpable router is readable")
+	}
+}
+
+// R3, R5: domača mapa in mapa nastavitev prazni; programi le za branje, mape agenta za pisanje, vtičnice skrite.
+func TestBwrapArgs(t *testing.T) {
+	a := strings.Join(bwrapArgs("/home/u", "/home/u/.config/minigw", []string{"/home/u/.nvm"}, []string{"/home/u/.codex", "/s/copy"},
+		[]string{"/run/user/1/bus"}, []string{"/tmp/dbus-x"}), " ")
+	want := "--dev-bind / / --die-with-parent --tmpfs /home/u --ro-bind /home/u/.nvm /home/u/.nvm --bind /home/u/.codex /home/u/.codex " +
+		"--bind /s/copy /s/copy --tmpfs /home/u/.config/minigw --ro-bind /dev/null /run/user/1/bus --tmpfs /tmp/dbus-x"
+	if a != want {
+		t.Fatalf("bwrap args:\n%s\n%s", a, want)
+	}
+}
+
 // H1.5: na Linuxu z bwrap Codex in Grok ne vidita mape nastavitev.
 func TestAgentWrapHidesConfig(t *testing.T) {
-	cfg := t.TempDir()
+	home, _ := os.UserHomeDir()
+	cfg, _ := os.MkdirTemp(home, "cfg") // pod domačo, kot privzeta mapa nastavitev
+	defer os.RemoveAll(cfg)
 	os.WriteFile(cfg+"/serve.json", []byte("SECRET"), 0o600)
-	name, args := agentWrap("/bin/sh", []string{"-c", "cat " + cfg + "/serve.json; echo end"}, cfg)
+	os.WriteFile(home+"/.minigw-test-private", []byte("PRIVATE"), 0o600)
+	defer os.Remove(home + "/.minigw-test-private")
+	copyDir := t.TempDir()
+	os.WriteFile(copyDir+"/src.txt", []byte("COPY"), 0o600)
+	name, args := agentWrap("/bin/sh", []string{"-c", "cat " + cfg + "/serve.json " + home + "/.minigw-test-private " + copyDir + "/src.txt; echo end"},
+		agentMounts{cfgDir: cfg, rw: []string{copyDir}})
 	if name == "/bin/sh" {
 		t.Skip("no usable bwrap (Linux with user namespaces)")
 	}
 	out, _ := exec.Command(name, args...).CombinedOutput()
-	if strings.Contains(string(out), "SECRET") || !strings.Contains(string(out), "end") {
-		t.Fatalf("config visible under bwrap: %q", out)
+	if strings.Contains(string(out), "SECRET") || strings.Contains(string(out), "PRIVATE") || !strings.Contains(string(out), "COPY") || !strings.Contains(string(out), "end") {
+		t.Fatalf("home or config visible under bwrap: %q", out)
 	}
 }

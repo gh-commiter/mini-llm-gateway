@@ -163,6 +163,9 @@ func main() {
 		first = args[0]
 	}
 	switch first {
+	case agentReaperCmd: // pomočnik za procese agentov (Linux)
+		agentReaperMain(args[1:])
+		return
 	case "serve":
 		serveCommand(args[1:])
 		return

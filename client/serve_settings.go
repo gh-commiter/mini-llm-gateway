@@ -129,6 +129,9 @@ func (s *server) settingsHTTP(w http.ResponseWriter, r *req) int {
 			"'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 		return writeStatus(w, 200, "text/html; charset=utf-8", []byte(strings.ReplaceAll(settingsPage, "{{NONCE}}", nonce)))
 	case "POST /minigw/settings/login":
+		if st := s.refuseAgentPeer(w, r); st != 0 { // R4
+			return st
+		}
 		if !readBody(w, r, 4<<10) {
 			return writeError(w, r.rid, 413, "Request body too large or too slow")
 		}

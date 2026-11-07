@@ -99,6 +99,8 @@ type apiStatus struct {
 	Tray       bool         `json:"tray"`                 // pladenj teče (Windows)
 	Agents     int          `json:"agents"`               // tekoči procesi agentov (claude, codex, grok)
 	Autostart  string       `json:"autostart"`            // "boot", "sign-in" ali "" (minigw serve install)
+	// AgentsUnsandboxed: Codex in Grok tu nimata sandboxa, ki skrije skrivnosti (Windows, Linux brez bwrap).
+	AgentsUnsandboxed bool `json:"agentsUnsandboxed"`
 }
 
 // adminSecret: 32 naključnih bajtov (base64url) v admin.secret (0600) v mapi nastavitev, ki je agentom prepovedana.
@@ -142,6 +144,15 @@ func adminSecret(cfgDir string) (string, error) {
 	return "", errors.New(p + " is invalid: delete it, minigw serve creates a new one")
 }
 
+// refuseAgentPeer: 403, če zahtevo pošlje proces agenta tega routerja (ali tega ni mogoče ugotoviti).
+func (s *server) refuseAgentPeer(w http.ResponseWriter, r *req) int {
+	if err := adminPeerCheck(r.conn); err != nil {
+		s.log.Printf("%s admin API refused: %v", r.rid, err)
+		return writeError(w, r.rid, 403, "Admin API refused: "+err.Error())
+	}
+	return 0
+}
+
 // adminHTTP: odjemalec na tem računalniku (naslov TCP, ne glave), Host za DNS rebinding, skrivnost; brez CORS.
 // Loopback sicer preskoči preverjanje naprave; skrbniški API kljub temu zahteva skrivnost.
 func (s *server) adminHTTP(w http.ResponseWriter, r *req) int {
@@ -155,14 +166,13 @@ func (s *server) adminHTTP(w http.ResponseWriter, r *req) int {
 			subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(auth, adminScheme)), []byte(adminProof(s.admin, r.conn.sess.hash))) != 1 {
 			return writeError(w, r.rid, 401, "Invalid admin proof: use minigw router (an encrypted connection with the router key)")
 		}
-		if err := adminPeerCheck(r.conn); err != nil { // H1: agent tega routerja ne sme spreminjati routerja
-			s.log.Printf("%s admin API refused: %v", r.rid, err)
-			return writeError(w, r.rid, 403, "Admin API refused: "+err.Error())
-		}
 	case auth != "": // npr. Bearer: skrivnost ne sme nikoli po žici
 		return writeError(w, r.rid, 401, "The admin API takes MGW-Admin over an encrypted connection (minigw router), never the secret itself")
 	case !s.settings.valid(r.h(settingsHeader)): // stran z nastavitvami: seja v glavi (brez piškotkov)
 		return writeError(w, r.rid, 401, "Invalid or missing admin secret (admin.secret in the config folder)")
+	}
+	if st := s.refuseAgentPeer(w, r); st != 0 { // H1, R4: agent tega routerja ne sme spreminjati routerja
+		return st
 	}
 
 	if !readBody(w, r, 1<<20) {
@@ -259,7 +269,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		c := s.conf()
 		st := apiStatus{Running: !s.offline, Version: version, Port: c.Port, Address: c.Address, Installed: serviceInstalled(runtime.GOOS),
 			Devices: len(c.Devices), Claude: s.claudeInfo(), Gateways: s.apiGateways(c), OS: runtime.GOOS, Tray: trayRunning(), Build: buildCommit(),
-			Agents: int(s.agentsRunning.Load()), Autostart: autostart(runtime.GOOS)}
+			Agents: int(s.agentsRunning.Load()), Autostart: autostart(runtime.GOOS), AgentsUnsandboxed: !agentSandboxed(s.cfgDir)}
 		if d := installDir(runtime.GOOS); d != "" { // le če je minigw tam res nameščen
 			if _, err := os.Stat(filepath.Join(d, map[bool]string{true: "minigw.exe", false: "minigw"}[runtime.GOOS == "windows"])); err == nil {
 				st.InstallDir = d
