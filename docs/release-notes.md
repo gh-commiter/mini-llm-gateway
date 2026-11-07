@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Windows installer: `minigw-windows-amd64.msi` and `minigw-windows-arm64.msi` install the gateway with the tray for this
+  user, without admin rights (the same as `minigw serve install`: PATH, Start menu, start at sign-in). Listed in the
+  signed `SHA256SUMS`; the MSI itself is not code-signed yet, so SmartScreen warns.
 - GitHub Copilot CLI as an agent model, compatible with the Claude Code CLI: `claude-copilot` and `claude-copilot-<model>`
   (Mac app and `minigw serve`; off by default). Read-only by default; writing, web access and commands are separate
   switches. Copilot always runs in a sandbox (Mac `sandbox-exec`, Linux bwrap) with a fresh Copilot home per request.

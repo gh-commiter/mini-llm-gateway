@@ -99,7 +99,8 @@ Linux (without Siri and Apple models). The default way to install both is the Cl
    ```
 
    - **Mac:** installs the Mini Gateway app with Homebrew (it asks first) and turns on Open at Login.
-   - **Windows:** installs `minigw serve` with the tray icon and starts it at sign-in.
+   - **Windows:** installs `minigw serve` with the tray icon and starts it at sign-in. Or use the Windows installer
+     (MSI) instead ([3.2.4](#324-gateway-on-windows-or-linux-without-the-plugin-minigw-serve)).
    - **Linux:** installs `minigw serve` as a systemd user unit. It starts at boot when linger can be turned on,
      otherwise at sign-in. The skill then shows the one `sudo` line that turns linger on.
 
@@ -256,6 +257,15 @@ notification area instead of a console window. On first start it creates the con
 devices waiting for approval (Allow / Deny, with a notification when one appears), **Settings…**, **Copy connect
 line**, **Start at sign-in**, the log (`minigw-serve.log` in the config folder) and Quit. `minigw serve install` sets
 it up.
+
+**Windows installer (MSI).** Instead of the two commands, download `minigw-windows-amd64.msi` (or `-arm64.msi`) from
+the [latest release](https://github.com/gh-commiter/mini-llm-gateway/releases/latest) and open it. It installs for
+this user only, without admin rights, the same as `minigw serve install`: `minigw.exe` and `minigw-tray.exe` in
+`%LocalAppData%\Programs\Mini Gateway`, minigw on your PATH, a Start menu entry, and the tray at sign-in. It then
+starts the tray, which creates the config on first start; copy the connect line from its menu. Running a newer MSI
+updates it. Remove it in Settings → Apps (not with `minigw serve uninstall`); the config and keys stay. The MSI is
+not code-signed yet, so SmartScreen warns: **More info → Run anyway**. Compare its hash with the signed
+`SHA256SUMS` first. The ARM64 package needs Windows 11.
 
 **Settings page.** **Settings…** opens `http://127.0.0.1:<port>/minigw/settings` in the browser with a one-time
 link (60 s). It has the panes of the Mac's Settings window ([5. Gateway settings](#5-gateway-settings)), light or dark
