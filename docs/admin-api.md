@@ -137,20 +137,22 @@ Notes:
   The Mac app leaves `os`, `installDir` and `tray` out.
 - `POST /providers/{name}/models`: `all` first (true = all, false = none), then `enable`, then `disable`.
 - The Go gateway's Claude also has `"enabled", "folders"` (comma-separated allowed folders), `"allowLocalTools",
-  "disabledTools", "permissionMode", "settingSources"`, as on the Mac; see [windows-parity.md](windows-parity.md).
+  "disabledTools", "permissionMode", "settingSources", "askOthers"`, as on the Mac; see [windows-parity.md](windows-parity.md).
 - `PATCH /agents/claude`: the gateway checks the path, that the folder exists and is not near the config folder,
   and that Bash on Windows has `allowUnsandboxedBash`.
+- `askOthers` (every agent, off by default): the agent may ask another model of the same gateway with minigw, through a
+  loopback port and token valid only for that run (`MINIGW_AGENT_URL`, `MINIGW_AGENT_TOKEN`).
 - Agents other than Claude get their own `agents/{name}` resource when a gateway has them (the Mac: `codex`,
   `grok`); a gateway answers `404` for agents it does not have, and for `siri`.
 
 | Method and path | Body | Response |
 |---|---|---|
-| `GET /agents/codex`, `PATCH` | any of `{"enabled", "path", "write", "network", "models"}` | `{"enabled", "path", "found", "write", "network", "models": [string] \| null}` |
+| `GET /agents/codex`, `PATCH` | any of `{"enabled", "path", "write", "network", "models", "askOthers"}` | `{"enabled", "path", "found", "write", "network", "models": [string] \| null, "askOthers"}` |
 | `GET /agents/codex/models`, `GET /agents/grok/models` | – | `{"models": [{"slug", "name", "description"?, "window"?, "enabled"}]}`: the account's models |
 | `GET /foundry`, `PATCH` | any of `{"enabled", "path", "instructions", "models"}` | `{"enabled", "path", "found", "exe", "running", "error", "instructions", "models": [string] \| null}`: Foundry Local on this computer |
 | `GET /foundry/models` | – | `{"models": [{"name", "vision", "enabled"}]}`: models downloaded in Foundry Local; `503` when it is not installed or does not answer (Go gateway and the Mac app) |
-| `GET /agents/grok`, `PATCH` | any of `{"enabled", "path", "write", "models"}` | `{"enabled", "path", "found", "write", "models"}` |
-| `GET /agents/copilot`, `PATCH` | any of `{"enabled", "path", "write", "network", "commands", "models", "token"}` | `{"enabled", "path", "found", "write", "network", "commands", "models": [string], "hasToken"}` |
+| `GET /agents/grok`, `PATCH` | any of `{"enabled", "path", "write", "models", "askOthers"}` | `{"enabled", "path", "found", "write", "models", "askOthers"}` |
+| `GET /agents/copilot`, `PATCH` | any of `{"enabled", "path", "write", "network", "commands", "models", "token", "askOthers"}` | `{"enabled", "path", "found", "write", "network", "commands", "models": [string], "hasToken", "askOthers"}` |
 | `GET /siri`, `PATCH` | any of `{"enabled", "timeout", "allow": [id], "deny": [id]}` | `{"enabled", "timeout", "devices": [{"id", "name", "siri"}]}` |
 | `GET /run`, `PATCH` (Mac) | any of `{"commands", "allow": [id], "deny": [id], "allowNetwork": [id], "denyNetwork": [id]}` | `{"commands", "devices": [{"id", "name", "run", "network"}]}` |
 

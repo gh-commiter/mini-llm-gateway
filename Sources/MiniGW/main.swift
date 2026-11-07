@@ -120,8 +120,17 @@ func defaultName(_ names: [String]) -> String {
 /// --minigw-profile <ime>: cel ukaz le s tem prehodom.
 var profileFlag: String?
 
-/// Shranjeni profili, privzeti prvi; z --minigw-profile le ta.
+/// minigw teče v agentu prehoda (MINIGW_AGENT_URL in MINIGW_AGENT_TOKEN): le ta povezava, brez profilov, proxyja,
+/// šifriranja in deljenja mape (prehod sam doda napravo, sejo in mapo klicatelja).
+func agentConn() -> Connection? {
+    let e = ProcessInfo.processInfo.environment
+    guard let u = e["MINIGW_AGENT_URL"], !u.isEmpty, let t = e["MINIGW_AGENT_TOKEN"], !t.isEmpty else { return nil }
+    return Connection(url: u, token: t)
+}
+
+/// Shranjeni profili, privzeti prvi; z --minigw-profile le ta. V agentu prehoda le njegova povezava.
 func loadProfiles() -> [Profile] {
+    if let c = agentConn() { return [Profile(name: "agent", conn: c)] }
     var names = profileNames()
     var def = defaultName(names)
     if let f = profileFlag {
@@ -525,6 +534,10 @@ while let i = args.firstIndex(where: { $0 == "--minigw-profile" || $0.hasPrefix(
         guard i + 1 < args.count else { fail("--minigw-profile needs a profile name") }
         profileFlag = args[i + 1]; args.removeSubrange(i...i + 1)
     } else { profileFlag = String(args[i].dropFirst("--minigw-profile=".count)); args.remove(at: i) }
+}
+
+if agentConn() != nil, let first = args.first, ["connect", "disconnect", "profiles"].contains(first) {
+    fail("minigw runs inside an agent of the gateway (MINIGW_AGENT_URL): \(first) is not available here")
 }
 
 switch args.first {

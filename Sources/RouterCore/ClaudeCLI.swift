@@ -15,6 +15,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
     public var allowLocalTools = false               // vsa orodja Claude Code na tem Macu brez vprašanj; preglasi tools/permissionMode
     public var disabledTools: [String] = []          // izjeme pri allowLocalTools (tabela v nastavitvah)
     public var settingSources = ""                   // M2: brez nastavitev map (hooki iz dovoljene mape bi tekli zunaj sandboxa), kot Go
+    public var askOthers = false          // »May ask other models«: agent vpraša drug model prehoda (AgentRun)
 
     public init() {}
 
@@ -95,6 +96,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
         allowLocalTools = try c.decodeIfPresent(Bool.self, forKey: .allowLocalTools) ?? d.allowLocalTools
         disabledTools = try c.decodeIfPresent([String].self, forKey: .disabledTools) ?? d.disabledTools
         settingSources = try c.decodeIfPresent(String.self, forKey: .settingSources) ?? d.settingSources
+        askOthers = try c.decodeIfPresent(Bool.self, forKey: .askOthers) ?? d.askOthers
         if settingSources == "project,local" { settingSources = "" }  // M2: stara privzeta vrednost → nova; izrecna druga ostane
     }
 }
@@ -408,6 +410,7 @@ extension Router {
         var prompt = last.text
         var sessionID: String?
         var registryKey: String?
+        var sharedDir: URL?
 
         if agent {
             // Mapa odjemalca (minigw na drugem Macu) ima prednost pred enako potjo na tem Macu.
@@ -429,6 +432,7 @@ extension Router {
                                    rid: rid, writer: writer)
             }
             cwd = dir
+            sharedDir = shared
             let scope = (req.header("x-claude-mini-session") ?? "") + "|" + dir.path
             registryKey = scope
             if let existing = await Self.sessions.get(ClaudeCLI.key(history, scope: scope)) {
@@ -477,6 +481,9 @@ extension Router {
         if agent, let t = await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "") {
             env.merge(Worktree.harnessEnv(root: t.root, maven: t.maven)) { $1 }
         }
+        let run = agent ? await startAgentRun(req, kind: "claude", dir: sharedDir) : nil
+        defer { run?.stop() }
+        for k in ["MINIGW_AGENT_URL", "MINIGW_AGENT_TOKEN"] { env[k] = run?.env[k] }
         p.environment = env
         let stdin = Pipe(), stdout = Pipe(), stderr = Pipe()
         p.standardInput = stdin

@@ -576,6 +576,8 @@ struct SettingsView: View {
                 Toggle("Allow writing in the session's folder", isOn: $draft.codex.write)
                 Toggle("Allow network access for commands", isOn: $draft.codex.network)
                     .disabled(!draft.codex.write)
+                Toggle("May ask other models", isOn: $draft.codex.askOthers)
+                    .help(String(localized: "The agent may ask another model of this gateway (for example Codex) with minigw, in the same folder and with the same device's rights; one level deep, never its own kind. Codex needs “Allow network access for commands” for it."))
             } header: {
                 Text("Sandbox")
             } footer: {
@@ -605,6 +607,8 @@ struct SettingsView: View {
                 SecureField(state.keychain.lookup(Copilot.tokenAccount).value?.isEmpty == false
                             ? "GitHub token for Copilot (saved; enter to replace)"
                             : "GitHub token for Copilot (fine-grained, only “Copilot Requests”)", text: keyBinding(Copilot.tokenAccount))
+                Toggle("May ask other models", isOn: $draft.copilot.askOthers)
+                    .help(String(localized: "The agent may ask another model of this gateway (for example Codex) with minigw, in the same folder and with the same device's rights; one level deep, never its own kind. Codex needs “Allow network access for commands” for it."))
             } header: {
                 Text("Sandbox")
             } footer: {
@@ -655,6 +659,8 @@ struct SettingsView: View {
             }
             Section {
                 Toggle("Allow writing in the session's folder", isOn: $draft.grok.write)
+                Toggle("May ask other models", isOn: $draft.grok.askOthers)
+                    .help(String(localized: "The agent may ask another model of this gateway (for example Codex) with minigw, in the same folder and with the same device's rights; one level deep, never its own kind. Codex needs “Allow network access for commands” for it."))
             } header: {
                 Text("Sandbox")
             } footer: {
@@ -698,6 +704,8 @@ struct SettingsView: View {
                     }
                 }
                 TextField("Setting sources", text: $draft.claudeCLI.settingSources)
+                Toggle("May ask other models", isOn: $draft.claudeCLI.askOthers)
+                    .help(String(localized: "The agent may ask another model of this gateway (for example Codex) with minigw, in the same folder and with the same device's rights; one level deep, never its own kind. Codex needs “Allow network access for commands” for it."))
             }
             if draft.claudeCLI.allowLocalTools {
                 Section {

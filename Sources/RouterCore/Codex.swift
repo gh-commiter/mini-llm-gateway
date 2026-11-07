@@ -7,6 +7,7 @@ public struct CodexConfig: Codable, Sendable, Equatable {
     public var enabledModels: [String]?   // nil = vsi modeli računa (tudi prihodnji); seznam = le ti
     public var write = true               // sandbox workspace-write (sicer read-only)
     public var network = false            // omrežje za ukaze v sandboxu (npr. gradnja); privzeto izklopljeno kot v Go
+    public var askOthers = false          // »May ask other models«: agent vpraša drug model prehoda (AgentRun)
     public init() {}
 
     public func isModelEnabled(_ slug: String) -> Bool { enabledModels?.contains(slug) ?? true }
@@ -26,6 +27,7 @@ public struct CodexConfig: Codable, Sendable, Equatable {
         enabledModels = try c.decodeIfPresent([String].self, forKey: .enabledModels)
         write = try c.decodeIfPresent(Bool.self, forKey: .write) ?? d.write
         network = try c.decodeIfPresent(Bool.self, forKey: .network) ?? d.network
+        askOthers = try c.decodeIfPresent(Bool.self, forKey: .askOthers) ?? d.askOthers
     }
 }
 
@@ -190,6 +192,7 @@ extension Router {
         var readOnly = false
         var tree: (root: URL, branch: String, maven: URL)?
         var prompt = ClaudeCLI.prompt(history: all.dropLast(), last: last)
+        var sharedDir: URL?
         if agent {
             let clientCwd = req.header("x-claude-mini-cwd")
             let shared = await Self.shares.mount(session: req.header("x-claude-mini-session") ?? "", cwd: clientCwd, base: localBase,
@@ -204,6 +207,7 @@ extension Router {
                                    rid: rid, writer: writer)
             }
             cwd = dir
+            sharedDir = shared
             extra = config.claudeCLI.allowedRoots.split(separator: ",").map { ClaudeCLI.expand($0.trimmingCharacters(in: .whitespaces)) }
                 .filter { $0 != "/" && !$0.isEmpty && $0 != dir.path && FileManager.default.fileExists(atPath: $0) }
                 .filter { !RouterConfig.overlapsScratch($0, scratch: config.scratchURL) }  // H1: ne zrcal in kopij drugih naprav
@@ -226,8 +230,11 @@ extension Router {
         let privateTmp = URL(fileURLWithPath: "/private/tmp/minigw-codex-\(rid)", isDirectory: true)
         try? FileManager.default.createDirectory(at: privateTmp, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         defer { try? FileManager.default.removeItem(at: privateTmp) }
-        let codexEnv = tree.map { Worktree.harnessEnv(root: $0.root, maven: $0.maven) }
-            ?? ["TMPDIR": privateTmp.path + "/", "CLANG_MODULE_CACHE_PATH": privateTmp.appendingPathComponent("ModuleCache").path, "xcrun_nocache": "1"]
+        let run = agent ? await startAgentRun(req, kind: "codex", dir: sharedDir) : nil
+        defer { run?.stop() }
+        let codexEnv = (tree.map { Worktree.harnessEnv(root: $0.root, maven: $0.maven) }
+            ?? ["TMPDIR": privateTmp.path + "/", "CLANG_MODULE_CACHE_PATH": privateTmp.appendingPathComponent("ModuleCache").path, "xcrun_nocache": "1"])
+            .merging(run?.env ?? [:]) { $1 }
         // Nadaljevanje niti Codex (prebrane datoteke, rezultati ukazov): ključ je dosedanji pogovor v tej mapi.
         let scope = Self.agentScope("codex", req, cwd: cwd)
         let existing = agent ? await Self.codexSessions.get(ClaudeCLI.key(all.dropLast(), scope: scope)) : nil

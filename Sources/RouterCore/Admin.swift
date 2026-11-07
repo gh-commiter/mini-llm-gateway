@@ -424,7 +424,7 @@ extension Router {
         case "PATCH agents/{}":
             switch arg {
             case "claude":
-                let b = try AdminBody(body, ["enabled", "path", "tools", "folders", "allowLocalTools", "disabledTools", "permissionMode", "settingSources"])
+                let b = try AdminBody(body, ["enabled", "path", "tools", "folders", "allowLocalTools", "disabledTools", "permissionMode", "settingSources", "askOthers"])
                 let mode = try b.string("permissionMode"), sources = try b.string("settingSources").map { $0.replacingOccurrences(of: " ", with: "") }
                 if let mode, !["dontAsk", "acceptEdits", "auto", "plan"].contains(mode) {
                     throw AdminError(400, "permission mode: dontAsk, acceptEdits, auto or plan")
@@ -433,7 +433,7 @@ extension Router {
                     throw AdminError(400, "setting sources: comma-separated user, project, local (or empty)")
                 }
                 let enabled = try b.bool("enabled"), path = try b.string("path"), folders = try b.string("folders")
-                let local = try b.bool("allowLocalTools"), disabled = try b.strings("disabledTools")
+                let local = try b.bool("allowLocalTools"), disabled = try b.strings("disabledTools"), ask = try b.bool("askOthers")
                 let tools = try b.string("tools").map { $0.replacingOccurrences(of: " ", with: "") }
                 if let t = tools, !t.isEmpty, t.range(of: #"^[A-Za-z0-9_]+(,[A-Za-z0-9_]+)*$"#, options: .regularExpression) == nil {
                     throw AdminError(400, "tools: comma-separated tool names, e.g. Read,Grep,Glob")
@@ -452,6 +452,7 @@ extension Router {
                     if let disabled { c.claudeCLI.disabledTools = disabled }
                     if let mode { c.claudeCLI.permissionMode = mode }
                     if let sources { c.claudeCLI.settingSources = sources }
+                    if let ask { c.claudeCLI.askOthers = ask }
                     if c.claudeCLI.enabled, !found {
                         throw AdminError(400, "claude not found: set path")
                     }
@@ -460,10 +461,10 @@ extension Router {
             case "copilot":
                 // Kot codex; models = seznam imen (Copilot nima seznama modelov), commands = ukazi lupine (privolitev).
                 // token: le za pisanje (kot ključi ponudnikov); "" ga izbriše.
-                let b = try AdminBody(body, ["enabled", "path", "write", "network", "commands", "models", "token"])
+                let b = try AdminBody(body, ["enabled", "path", "write", "network", "commands", "models", "token", "askOthers"])
                 let enabled = try b.bool("enabled"), path = try b.string("path"), write = try b.bool("write")
                 let network = try b.bool("network"), commands = try b.bool("commands"), models = try b.models("models")
-                let token = try b.string("token")
+                let token = try b.string("token"), ask = try b.bool("askOthers")
                 if let token, !token.isEmpty, !Copilot.validToken(token) {
                     throw AdminError(400, "token: a fine-grained personal access token (github_pat_…) with only the Copilot Requests permission")
                 }
@@ -475,15 +476,16 @@ extension Router {
                     if let write { c.copilot.write = write }
                     if let network { c.copilot.network = network }
                     if let commands { c.copilot.commands = commands }
+                    if let ask { c.copilot.askOthers = ask }
                     if let models { c.copilot.models = (models ?? []).joined(separator: ", ") }  // null = le privzeti model
                 }
                 var info = await copilotInfo(n.copilot)
                 if let token { info["hasToken"] = !token.isEmpty }  // ključ se shrani šele po odgovoru (ponovni zagon)
                 return (200, info)
             case "codex", "grok":
-                let b = try AdminBody(body, arg == "codex" ? ["enabled", "path", "write", "network", "models"] : ["enabled", "path", "write", "models"])
+                let b = try AdminBody(body, arg == "codex" ? ["enabled", "path", "write", "network", "models", "askOthers"] : ["enabled", "path", "write", "models", "askOthers"])
                 let enabled = try b.bool("enabled"), path = try b.string("path"), write = try b.bool("write")
-                let network = try b.bool("network"), models = try b.models("models")
+                let network = try b.bool("network"), models = try b.models("models"), ask = try b.bool("askOthers")
                 if let path, !path.isEmpty, !FileManager.default.isExecutableFile(atPath: path) { throw AdminError(400, "not an executable: \(path)") }
                 let n = try await hooks.update { c in
                     if arg == "codex" {
@@ -492,11 +494,13 @@ extension Router {
                         if let write { c.codex.write = write }
                         if let network { c.codex.network = network }
                         if let models { c.codex.enabledModels = models }
+                        if let ask { c.codex.askOthers = ask }
                     } else {
                         if let enabled { c.grok.enabled = enabled }
                         if let path { c.grok.executable = path }
                         if let write { c.grok.write = write }
                         if let models { c.grok.enabledModels = models }
+                        if let ask { c.grok.askOthers = ask }
                     }
                 }
                 return (200, arg == "codex" ? await codexInfo(n.codex) : await grokInfo(n.grok))
@@ -569,18 +573,18 @@ extension Router {
     func claudeInfo(_ c: ClaudeCLIConfig) async -> [String: Any] {
         ["enabled": c.enabled, "path": c.executable, "found": await ClaudeCLI.executable(c.executable) != nil, "tools": c.tools,
          "folders": c.allowedRoots, "allowLocalTools": c.allowLocalTools, "disabledTools": c.disabledTools,
-         "permissionMode": c.permissionMode, "settingSources": c.settingSources]
+         "permissionMode": c.permissionMode, "settingSources": c.settingSources, "askOthers": c.askOthers]
     }
 
     func codexInfo(_ c: CodexConfig) async -> [String: Any] {
         ["enabled": c.enabled, "path": c.executable, "found": await Codex.executable(c.executable) != nil, "write": c.write,
-         "network": c.network, "models": c.enabledModels.map { $0 as Any } ?? NSNull()]
+         "network": c.network, "models": c.enabledModels.map { $0 as Any } ?? NSNull(), "askOthers": c.askOthers]
     }
 
     func copilotInfo(_ c: CopilotConfig) async -> [String: Any] {
         ["enabled": c.enabled, "path": c.executable, "found": await Copilot.executable(c.executable) != nil, "write": c.write,
          "network": c.network, "commands": c.commands, "models": c.modelList,
-         "hasToken": !(secrets.get(Copilot.tokenAccount) ?? "").isEmpty]
+         "hasToken": !(secrets.get(Copilot.tokenAccount) ?? "").isEmpty, "askOthers": c.askOthers]
     }
 
     func foundryInfo(_ c: FoundryConfig) async -> [String: Any] {
@@ -591,7 +595,7 @@ extension Router {
 
     func grokInfo(_ c: GrokConfig) async -> [String: Any] {
         ["enabled": c.enabled, "path": c.executable, "found": await Grok.executable(c.executable) != nil, "write": c.write,
-         "models": c.enabledModels.map { $0 as Any } ?? NSNull()]
+         "models": c.enabledModels.map { $0 as Any } ?? NSNull(), "askOthers": c.askOthers]
     }
 
     func runInfo(_ c: RouterConfig) -> [String: Any] {
