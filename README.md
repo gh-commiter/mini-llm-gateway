@@ -322,11 +322,22 @@ example `/Volumes/Java/eureko-modules` mounted from the router's `/Volumes/Java`
   shows it. `--minigw-work=` or `MINIGW_WORK` still wins for one run.
 - **Proof, not a path:** minigw sends the share name and the path under it; the router writes a check file with random
   content into its folder, and minigw must read it back through its mount. A folder with the same path elsewhere fails.
-- **Only allowed folders:** the folder must be in an SMB share of the router (System Settings → Sharing) and inside its
-  **Allowed folders**. Agents keep the same sandbox and folder rules.
+  The check is for correctness (the same folder), not a permission: permission comes from the token, the device, the
+  share and the allowed folders.
+- **Only allowed folders:** the folder must be in a writable SMB share of the router (System Settings → Sharing) and
+  inside its **Allowed folders**; the router checks it again on every request. Agents keep the same sandbox and folder
+  rules.
+- **Like `direct`:** the agent can change every file in the folder, also `.git`, `.claude/settings*.json` and
+  `.vscode/tasks.json`. Use `sync` for a folder where those must stay protected. Native cannot be read-only:
+  `--minigw-ro` (or a saved `--ro`) uses the read-only mount instead.
 - **`minigw run` is off by default:** turn it on per device in **Settings → General → minigw run**, or with the admin
-  API (`PATCH /run`). Only the listed commands run (default `mvn, swift, xcodebuild`), without a shell. A build runs the
-  project's code as your user on the router, so allow only devices you trust.
+  API (`PATCH /run`). Only the listed commands run (default `mvn, swift, xcodebuild`), without a shell, at most two at
+  a time per device. It is outside the agent sandbox: the build runs the project's code with your rights on the router,
+  so allow only devices you trust. A sandbox (`sandbox-exec`) limits only where it writes: the folder, the allowed
+  folders, `~/.m2`, `~/Library/Developer`, `~/Library/Caches`, SwiftPM's folders and temporary folders; reading and the
+  network stay open. A sandbox inside it is not possible, so the router runs `swift build|test|run|package` with
+  `--disable-sandbox` and `xcodebuild` without its package and script sandboxes. Stopping minigw stops the whole
+  process group. In a terminal minigw shows only colours from the output, no other escape sequences.
 - If the folder is not a router share, minigw falls back to the usual mount. On Linux (cifs) and Windows (UNC path or
   mapped drive) detection is automatic; elsewhere set `MINIGW_NATIVE_MOUNT=<share>=<mount folder>`. The Go router
   (`minigw serve`) does not support native yet.

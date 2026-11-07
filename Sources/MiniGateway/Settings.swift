@@ -275,7 +275,7 @@ struct SettingsView: View {
                 Text(verbatim: "minigw run")
             } footer: {
                 Label {
-                    Text("Macs switched on here may run these commands with minigw run, in a folder they use from this Mac's SMB share (native mode). A build runs the project's code as your user on this Mac: allow only Macs you trust.")
+                    Text("minigw run is outside the agent sandbox: it runs the project's build with your full rights. Macs switched on here may run these commands in a folder they use from this Mac's SMB share (native mode); a sandbox limits only where the build writes (the folder, allowed folders, build caches). Allow only Macs you trust.")
                 } icon: {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                 }

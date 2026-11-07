@@ -267,10 +267,11 @@ func runRemote(_ c: Connection, _ argv: [String], _ proof: [String: String]) -> 
                 err.write(Data("minigw: \(clean(msg ?? "the router answered HTTP \((resp as? HTTPURLResponse)?.statusCode ?? 0)"))\n".utf8))
                 return
             }
-            for try await line in bytes.lines {  // izhod ukaza gre nespremenjen (barve gradnje)
+            let (ttyOut, ttyErr) = (isatty(1) == 1, isatty(2) == 1)  // terminal: le barve, brez drugih zaporedij routerja
+            for try await line in bytes.lines {
                 let v = String(line.dropFirst(2))
-                if line.hasPrefix("o "), let d = Data(base64Encoded: v) { out.write(d) }
-                else if line.hasPrefix("e "), let d = Data(base64Encoded: v) { err.write(d) }
+                if line.hasPrefix("o "), let d = Data(base64Encoded: v) { out.write(ttyOut ? Native.terminalSafe(d) : d) }
+                else if line.hasPrefix("e "), let d = Data(base64Encoded: v) { err.write(ttyErr ? Native.terminalSafe(d) : d) }
                 else if line.hasPrefix("x "), let n = Int32(v) { box.code = n }
             }
         } catch { err.write(Data("minigw: lost the connection to the router: \(error.localizedDescription)\n".utf8)) }
@@ -321,6 +322,7 @@ func shareCommand(_ a: [String]) -> Never {
     if let work, !SharedFolders.modes.contains(work) { fail("unknown --work=\(work) (use direct, sync or native)") }
     if work == "native", ro { fail("--work=native cannot be read-only (the agent works in the router's own folder)") }
     let dir = URL(fileURLWithPath: rest.first ?? FileManager.default.currentDirectoryPath).standardizedFileURL.path
+    guard SharedFolders.validPath(dir) else { fail("folder names with tabs or line breaks cannot be shared") }
     var list = sharedFolders()
     func save() {
         try? FileManager.default.createDirectory(at: sharedFoldersFile.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -497,9 +499,11 @@ let wantShare = shareEnv == "1"
     || (shareEnv != "0" && remoteRouter
         && (autoShare(cwd) || SharedFolders.lookup(sharedFolders(), cwd: cwd) != nil))
 let mode = SharedFolders.mode(flag: workFlag, saved: SharedFolders.lookup(sharedFolders(), cwd: cwd), readOnly: readOnly)
+if (workFlag ?? SharedFolders.lookup(sharedFolders(), cwd: cwd)?.work) == "native", mode.work != "native" {
+    err.write(Data("minigw: native mode cannot be read-only; sharing read-only over the network instead\n".utf8))
+}
 let work = mode.work
 readOnly = mode.readOnly
-if work == "native", readOnly { fail("--minigw-work=native cannot be read-only (the agent works in the router's own folder)") }
 
 // x-claude-mini-share: router po ponovnem zagonu počaka, da se mapa znova registrira (namesto napake cwd_unavailable).
 setenv("ANTHROPIC_CUSTOM_HEADERS", "x-claude-mini-session: \(sid)\nx-claude-mini-cwd: \(cwd)" + (wantShare ? "\nx-claude-mini-share: 1" : ""), 1)

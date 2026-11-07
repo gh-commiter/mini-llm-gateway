@@ -211,7 +211,8 @@ extension Router {
             var context = "", media: [URL] = []
             if let question = turns.last?.text {
                 let root: URL? = await Self.shares.mount(session: scope, cwd: clientCwd, base: localBase,
-                                                 wait: req.header("x-claude-mini-share") == "1", device: req.device?.id)
+                                                 wait: req.header("x-claude-mini-share") == "1", device: req.device?.id,
+                                                 roots: config.claudeCLI.allowedRoots)
                     ?? ClaudeCLI.resolveCwd(clientCwd, roots: config.claudeCLI.allowedRoots)
                 if let root {
                     let names = await Mentions.names(in: question)

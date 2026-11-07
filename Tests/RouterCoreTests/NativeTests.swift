@@ -37,8 +37,16 @@ import Testing
         \t\tname:\tOff
         \t\tshared:\t0
     \t}
+
+    name:\t\tRO
+    path:\t\t/Volumes/RO
+    \tsmb:\t{
+        \t\tname:\tRO
+        \t\tshared:\t1
+        \t\tread-only:\t1
+    \t}
     """
-    #expect(Native.smbShares(listing) == ["Java": "/Volumes/Java"])
+    #expect(Native.smbShares(listing) == ["Java": "/Volumes/Java"])  // ne izklopljena in ne samo za branje (L5)
 }
 
 /// Mapa »share« (kot /Volumes/Java), projekt v njej, mapa zunaj dovoljenih in povezava ven.
@@ -107,7 +115,15 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     let session = UUID().uuidString
     #expect(await register(c.id, proof, session: session).status == 200)
     #expect(!FileManager.default.fileExists(atPath: f.project.appendingPathComponent(c.file).path))  // označba izbrisana
-    #expect(await Router.shares.mount(session: session, cwd: nil, base: "http://127.0.0.1:1")?.path == f.project.path)
+    #expect(await Router.shares.mount(session: session, cwd: nil, base: "http://127.0.0.1:1", roots: f.project.path)?.path == f.project.path)
+    #expect(await Router.shares.mount(session: session, cwd: nil, base: "http://127.0.0.1:1", roots: f.outside.path) == nil)  // ni več dovoljena
+    // Mapa zamenjana s povezavo (npr. prek SMB) po dokazu: krog je zavrnjen.
+    let moved = f.root.appendingPathComponent("moved")
+    try FileManager.default.moveItem(at: f.project, to: moved)
+    try FileManager.default.createSymbolicLink(at: f.project, withDestinationURL: f.outside)
+    #expect(await Router.shares.mount(session: session, cwd: nil, base: "http://127.0.0.1:1", roots: f.share.path) == nil)
+    try FileManager.default.removeItem(at: f.project)
+    try FileManager.default.moveItem(at: moved, to: f.project)
     #expect(await register(c.id, proof, session: UUID().uuidString).status == 403)  // izziv velja enkrat
 
     // Ista pot, druga mapa (lokalna mapa z enakim imenom, ne priklop routerja): označbe tam ni → ni dokaza.
@@ -201,5 +217,67 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     #expect(SharedFolders.mode(flag: nil, saved: nil, readOnly: false) == ("direct", false))
     let java = SharedFolders.lookup(list, cwd: "/Volumes/Java/x")
     #expect(SharedFolders.mode(flag: nil, saved: java, readOnly: false) == ("sync", true))
-    #expect(SharedFolders.mode(flag: "native", saved: java, readOnly: false) == ("native", false))  // shranjen --ro ne velja za native
+    // M1: shranjen --ro ostane tudi z native (→ direct samo za branje), ne glede na odgovor routerja
+    #expect(SharedFolders.mode(flag: "native", saved: java, readOnly: false) == ("direct", true))
+    #expect(SharedFolders.mode(flag: "native", saved: nil, readOnly: true) == ("direct", true))
+    #expect(SharedFolders.validPath("/Volumes/Java/a b") && !SharedFolders.validPath("/x\t--work=native") && !SharedFolders.validPath("/x\n/y"))
+}
+
+@Test func nativeChallengeOwnerAndLimits() async throws {
+    let f = try nativeFixture()
+    defer { try? FileManager.default.removeItem(at: f.root) }
+    let hub = NativeHub(), records = f.root.appendingPathComponent("records")
+    // L2: napačen lastnik izziva ne porabi; pravi ga nato reši.
+    let c = try #require(await hub.challenge(dir: f.project, owner: "a", records: records))
+    let proof = try #require(Native.readMarker(f.project.appendingPathComponent(c.file)))
+    #expect(await hub.verify(id: c.id, proof: proof, owner: "b") == nil)
+    #expect(await hub.verify(id: c.id, proof: proof, owner: "a")?.path == f.project.path)
+    #expect(((try? FileManager.default.contentsOfDirectory(atPath: records.path)) ?? []).isEmpty)  // zapis izbrisan
+    // L3: največ 4 odprti na lastnika; drug lastnik ni omejen.
+    for _ in 0..<4 { #expect(await hub.challenge(dir: f.project, owner: "a", records: records) != nil) }
+    #expect(await hub.challenge(dir: f.project, owner: "a", records: records) == nil)
+    #expect(await hub.challenge(dir: f.project, owner: "b", records: records) != nil)
+    // L3: po sesutju zagon pobriše označbe iz zapisov (in nič drugega).
+    let keep = f.project.appendingPathComponent("keep.txt")
+    try Data("x".utf8).write(to: keep)
+    try Data(keep.path.utf8).write(to: records.appendingPathComponent("forged"))
+    NativeHub.cleanupStale(records)
+    let left = (try? FileManager.default.contentsOfDirectory(atPath: f.project.path)) ?? []
+    #expect(left.contains("keep.txt") && !left.contains { $0.hasPrefix(".minigw-native-") })
+    #expect(((try? FileManager.default.contentsOfDirectory(atPath: records.path)) ?? []).isEmpty)
+    // L4: največ 2 hkratna minigw run na napravo.
+    let (r1, r2, r3) = (await hub.startRun("d"), await hub.startRun("d"), await hub.startRun("d"))
+    #expect(r1 && r2 && !r3)
+    await hub.endRun("d")
+    #expect(await hub.startRun("d"))
+}
+
+@Test func nativeTerminalSafeKeepsOnlyColours() {
+    let input = "\u{1B}[1;31mred\u{1B}[0m\r\n\u{1B}]0;title\u{07}\u{1B}]52;c;Zm9v\u{1B}\\\u{1B}P1$q\u{1B}\\\u{1B}[6n\u{1B}[2J\u{1B}[?1049h\u{07}ok\t\u{1B}"
+    #expect(String(decoding: Native.terminalSafe(Data(input.utf8)), as: UTF8.self) == "\u{1B}[1;31mred\u{1B}[0m\r\nok\t")
+    #expect(Native.withoutNestedSandbox(["swift", "build", "-c", "release"]) == ["swift", "build", "--disable-sandbox", "-c", "release"])
+    #expect(Native.withoutNestedSandbox(["swift", "--version"]) == ["swift", "--version"])
+    #expect(Native.withoutNestedSandbox(["mvn", "-q"]) == ["mvn", "-q"])
+}
+
+@Test func nativeRunIsSandboxedAndEndsWithItsGroup() async throws {
+    let f = try nativeFixture()
+    defer { try? FileManager.default.removeItem(at: f.root) }
+    let on = nativeRouter(f.project.path, devices: [DeviceConfig(id: "dev", name: "Air", run: true)])
+    let outside = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".minigw-sandbox-test-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: outside) }
+    func run(_ script: String) async -> FakeWriter {
+        let c = await challenge(on, f, device: "dev")
+        let proof = Native.readMarker(f.project.appendingPathComponent(c.file)) ?? ""
+        let body = String(decoding: try! JSONSerialization.data(withJSONObject: ["argv": ["sh", "-c", script]]), as: UTF8.self)
+        let w = FakeWriter()
+        await on.handle(nativeReq("POST", "/minigw/run", ["x-native-id": c.id, "x-native-proof": proof], body, device: "dev"), writer: w)
+        return w
+    }
+    let w = await run("echo in > inside.txt; echo out > '\(outside.path)'; echo $?")
+    #expect(w.status == 200 && FileManager.default.fileExists(atPath: f.project.appendingPathComponent("inside.txt").path))
+    #expect(!FileManager.default.fileExists(atPath: outside.path))  // M4: pisanje zunaj mape zavrnjeno
+    let start = Date()
+    let bg = await run("sleep 30 & echo started")  // L4: proces v ozadju drži stdout; skupina se ustavi
+    #expect(bg.text.hasSuffix("x 0\n") && Date().timeIntervalSince(start) < 10)
 }

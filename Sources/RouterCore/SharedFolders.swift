@@ -40,9 +40,13 @@ public enum SharedFolders {
             .max { $0.path.count < $1.path.count }
     }
 
-    /// Način za en zagon: --minigw-work= / MINIGW_WORK > shranjen za mapo > direct. Shranjen --ro velja, razen v native.
+    /// Način za en zagon: --minigw-work= / MINIGW_WORK > shranjen za mapo > direct. Shranjen --ro velja vedno; native
+    /// samo za branje ni mogoč → direct samo za branje (tudi lažen router, ki native zavrne, ne odpre pisanja).
     public static func mode(flag: String?, saved: Entry?, readOnly: Bool) -> (work: String, readOnly: Bool) {
-        let work = flag ?? saved?.work ?? "direct"
-        return (work, readOnly || (saved?.readOnly == true && work != "native"))
+        let ro = readOnly || saved?.readOnly == true, work = flag ?? saved?.work ?? "direct"
+        return (work == "native" && ro ? "direct" : work, ro)
     }
+
+    /// Pot za seznam: ena vrstica, tabulator loči možnosti.
+    public static func validPath(_ p: String) -> Bool { !p.contains { $0 == "\t" || $0 == "\n" || $0 == "\r" } }
 }

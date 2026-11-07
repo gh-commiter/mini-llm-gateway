@@ -628,4 +628,5 @@ final class Once: @unchecked Sendable {
     private let lock = NSLock()
     private var done = false
     func claim() -> Bool { lock.withLock { defer { done = true }; return !done } }
+    var claimed: Bool { lock.withLock { done } }
 }
