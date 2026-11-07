@@ -124,6 +124,7 @@ public enum Codex {
                 p.executableURL = URL(fileURLWithPath: exe)
                 p.arguments = args
                 p.currentDirectoryURL = cwd
+                p.environment = ProcessInfo.processInfo.environment.filter { $0.key != "SSH_AUTH_SOCK" }  // brez agenta ključev SSH
                 let input = Pipe(), errors = Pipe()
                 let events = Pipe()
                 p.standardInput = input

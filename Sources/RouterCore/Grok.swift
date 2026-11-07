@@ -107,6 +107,7 @@ public enum Grok {
                 p.executableURL = URL(fileURLWithPath: exe)
                 p.arguments = args
                 p.currentDirectoryURL = cwd
+                p.environment = ProcessInfo.processInfo.environment.filter { $0.key != "SSH_AUTH_SOCK" }  // brez agenta ključev SSH
                 let input = Pipe(), events = Pipe(), errors = Pipe()
                 p.standardInput = input
                 p.standardOutput = events
