@@ -93,7 +93,7 @@ Linux (without Siri and Apple models). The default way to install both is the Cl
 3. On the router computer:
 
    ```
-   /minigw:serve install
+   /minigw:gw install
    ```
 
    - **Mac:** installs the Mini Gateway app with Homebrew (it asks first) and turns on Open at Login.
@@ -101,7 +101,7 @@ Linux (without Siri and Apple models). The default way to install both is the Cl
    - **Linux:** installs `minigw serve` as a systemd user unit. It starts at boot when linger can be turned on,
      otherwise at sign-in. The skill then shows the one `sudo` line that turns linger on.
 
-   It also connects the router computer's own `minigw` to the router. `/minigw:serve status` shows the same
+   It also connects the router computer's own `minigw` to the router. `/minigw:gw status` shows the same
    summary on every system: running, version, autostart, devices, gateways.
 4. On every other computer:
 
@@ -109,14 +109,14 @@ Linux (without Siri and Apple models). The default way to install both is the Cl
    /minigw:connect <router> <token>
    ```
 
-   `/minigw:serve token` on the router prints the token (on the Mac also **Settings… → General → Copy Token**).
-   A Windows or Linux router refuses a new device until you allow it there: `/minigw:serve devices` shows it, and
+   `/minigw:gw token` on the router prints the token (on the Mac also **Settings… → General → Copy Token**).
+   A Windows or Linux router refuses a new device until you allow it there: `/minigw:gw devices` shows it, and
    the skill asks you to compare the ID before it allows the device.
 
 The plugin brings its own `minigw` on macOS, Windows (Git Bash) and Linux. At session start it uses an installed
 one or downloads it from the latest release into its data folder, and checks the SHA-256 (on macOS also the
 Developer ID signature). When the installed router is older than the release, the session start shows one line
-with `/minigw:serve update`. Nothing is updated without you: an update stops the agent requests that run on the
+with `/minigw:gw update`. Nothing is updated without you: an update stops the agent requests that run on the
 router. The session itself does not have to run through the router, so it works with your normal Claude login,
 Remote Control and so on.
 
@@ -127,7 +127,7 @@ Remote Control and so on.
 | `/minigw:codex [--ro] <task>` | `claude-codex-gpt-6.1-sol` | Hand a self-contained task to Codex in the current folder (`--ro`: read-only) |
 | `/minigw:siri <question>` | `claude-siri-ai` | Questions about the router Mac's personal context (Siri must be allowed for the device) |
 | `/minigw:on-device <text>` | `claude-apple-fm` | Short private answers on-device |
-| `/minigw:serve install\|update\|uninstall\|status` | – | The router on this computer; also `devices`, `gateway`, `claude`, `token`, `settings` |
+| `/minigw:gw install\|update\|uninstall\|status` | – | The router on this computer; also `devices`, `gateway`, `claude`, `token`, `settings` |
 | `/minigw:status` | – | Connection and available models |
 | `/minigw:models` | – | Gateway models, grouped by provider |
 | `/minigw:version` | – | Versions of minigw, Claude Code and the plugin |
@@ -223,7 +223,7 @@ Siri or Apple models. Agents work in a synced copy of the client's folder, so cl
 (folder mounts need the Mac router). Install Claude Code there (on Windows the native `claude.exe`; `minigw serve`
 does not run `claude.cmd`).
 
-`/minigw:serve install` runs these two commands. `minigw serve install` copies minigw to a fixed place, adds it to
+`/minigw:gw install` runs these two commands. `minigw serve install` copies minigw to a fixed place, adds it to
 PATH and starts the router now and at sign-in, all without admin rights. On Windows it installs to
 `%LocalAppData%\Programs\Mini Gateway` (with the tray icon; downloaded and checked against the release's
 `SHA256SUMS` if `minigw-tray*.exe` is not next to `minigw.exe`). On Linux it installs to `~/.local/bin` with a
@@ -365,7 +365,7 @@ example `/Volumes/Java/projects` mounted from the router's `/Volumes/Java`), `mi
 
 Settings of the menu bar app on the router Mac (**Settings…**, laid out like System Settings). On Windows and Linux
 the settings page of `minigw serve` has the same panes, except Siri AI and Apple Foundation Models, plus a
-**Devices** pane (allowed and waiting devices). Open it with **Settings…** in the tray or `/minigw:serve settings`.
+**Devices** pane (allowed and waiting devices). Open it with **Settings…** in the tray or `/minigw:gw settings`.
 [docs/windows-parity.md](docs/windows-parity.md) lists every control on both. Client options (`minigw share`,
 `--minigw-ro`, `MINIGW_SHARE`) are in [4. Use](#4-use).
 

@@ -1,6 +1,6 @@
 ---
-name: serve
-description: Install, update, check or remove the Mini Gateway router on this computer (Windows and Linux run minigw serve, macOS runs the Mini Gateway app), and manage it (devices, gateways, Claude CLI, token, settings page). Use for /minigw:serve install|update|uninstall|status and when the user wants to change the router on this computer.
+name: gw
+description: Install, update, check or remove the Mini Gateway router on this computer (Windows and Linux run minigw serve, macOS runs the Mini Gateway app), and manage it (devices, gateways, Claude CLI, token, settings page). Use for /minigw:gw install|update|uninstall|status and when the user wants to change the router on this computer.
 argument-hint: install | update | uninstall | status | devices [allow <id> | deny <id>] | gateway add|remove|list|models | claude … | token [rotate] | settings
 allowed-tools: Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw *)
 ---
@@ -49,7 +49,7 @@ l=$("$M" router token | sed -n 's/^  minigw connect //p'); p=${l%% *}; p=${p##*:
 printf '%s' "$t" | "$M" connect "127.0.0.1:$p" --token - && "$M" router status
 ```
 
-For other computers, `/minigw:serve token` shows the connect line to run there (or `/minigw:connect` on them).
+For other computers, `/minigw:gw token` shows the connect line to run there (or `/minigw:connect` on them).
 
 ## update
 
@@ -65,7 +65,7 @@ For other computers, `/minigw:serve token` shows the connect line to run there (
 
 ## status
 
-`"$M" router status`. Summarize: running, version, autostart (at boot / at sign-in / no), running agent requests, devices (allowed, waiting), gateways (models, ready). If it is not installed, suggest `/minigw:serve install`.
+`"$M" router status`. Summarize: running, version, autostart (at boot / at sign-in / no), running agent requests, devices (allowed, waiting), gateways (models, ready). If it is not installed, suggest `/minigw:gw install`.
 
 ## Managing the router
 

@@ -369,7 +369,7 @@ func installedInfo(goos string) string {
 
 func serviceCommand(sub, goos, cfgPath string) (string, error) {
 	if goos == "darwin" && sub == "install" { // F4: na Macu je router aplikacija (uninstall še pospravi starejšo namestitev)
-		return "", errors.New("on macOS install the Mini Gateway app (/minigw:serve install)")
+		return "", errors.New("on macOS install the Mini Gateway app (/minigw:gw install)")
 	}
 	exe, err := os.Executable()
 	if err != nil {

@@ -2,9 +2,9 @@
 
 ## Unreleased
 
-- One command to install the router, compatible with the Claude Code CLI: `/minigw:serve install` (plugin 0.5.0).
+- One command to install the router, compatible with the Claude Code CLI: `/minigw:gw install` (plugin 0.5.2).
   Mac: the app with Homebrew and Open at Login. Windows: the tray at sign-in. Linux: systemd, at boot when linger
-  works. `/minigw:serve update` when a session start says a newer router is out.
+  works. `/minigw:gw update` when a session start says a newer router is out.
 - The settings page of `minigw serve` (Windows, Linux) has the panes of the Mac's Settings, with Codex CLI and
   Grok CLI.
 - Codex and Grok on `minigw serve` are off by default and run only in a synced folder. On Linux they need `bwrap`

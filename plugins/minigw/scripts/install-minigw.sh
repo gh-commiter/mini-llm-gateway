@@ -80,7 +80,7 @@ esac
 # Le številke in pike: izpis gre Claudu kot kontekst (F6).
 case $new in *[!0-9.]*) new="" ;; esac
 case $old in *[!0-9.]*) old="" ;; esac
-older "$old" "$new" && echo "Mini Gateway router $old is installed, $new is available: /minigw:serve update"
+older "$old" "$new" && echo "Mini Gateway router $old is installed, $new is available: /minigw:gw update"
 
 # Claudov Bash najde »minigw« tudi brez poti.
 [ -n "${CLAUDE_ENV_FILE:-}" ] && echo "export PATH=\"\$PATH:$BIN\"" >> "$CLAUDE_ENV_FILE"

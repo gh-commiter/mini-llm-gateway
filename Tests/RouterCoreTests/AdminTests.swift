@@ -113,7 +113,7 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
         #expect(app.config.port == 9999 && app.config.allowedClients == "192.168.1.7")
         #expect(await admin(app.router(), "PATCH", "/general", body: #"{"address":"192.168.1.5"}"#, host: "127.0.0.1:9999").status == 400)
         #expect(await admin(app.router(), "PATCH", "/general", body: #"{"allowedClients":"not-an-ip"}"#, host: "127.0.0.1:9999").status == 400)
-        // Open at Login prek API (skill /minigw:serve install) in enak povzetek kot Go: autostart, agents.
+        // Open at Login prek API (skill /minigw:gw install) in enak povzetek kot Go: autostart, agents.
         #expect(await admin(app.router(), "PATCH", "/general", body: #"{"startAtSignIn":true}"#, host: "127.0.0.1:9999").status == 200 && app.login)
         let st = await admin(app.router(), "GET", "/status", host: "127.0.0.1:9999").text
         #expect(st.contains(#""autostart":"sign-in""#) && st.contains(#""agents":0"#) && st.contains(#""installed":true"#))
