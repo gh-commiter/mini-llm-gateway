@@ -29,6 +29,13 @@ except where a response says `"restartRequired": true`.
   `sessionStorage` (scheme, host and port) and sends as `X-Minigw-Session` on every API call. A page from another
   origin cannot send that header without a preflight, which fails (no CORS). Missing or wrong: `401`. A session ends
   after 30 minutes without use, with `POST /minigw/settings/logout`, or when the router token is rotated.
+- **Agents are refused** (Go router, Linux and Windows): an `MGW-Admin` request from a process that the router
+  started, or one of its descendants, gets `403`, even with the right secret. Linux: the client's socket in
+  `/proc/net/tcp{,6}` → the processes holding it → their parents up to PID 1; under the systemd unit also the
+  unit's cgroup (it keeps orphaned descendants). Windows: every agent (claude, codex, grok) runs in one Job object
+  of the router (created suspended, added, then resumed); the client's PID comes from `GetExtendedTcpTable` and
+  `IsProcessInJob` decides. If the process cannot be found or read, the request is refused. The settings page
+  session is not checked this way: it needs a one-time link from the tray or the admin API.
 - Every admin API response has `Cache-Control: no-store`.
 - Loopback skips the device check and encryption for normal API calls; the admin API still needs the secret.
 - **Clients authenticate the router first.** Something else may listen on the port (the

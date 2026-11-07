@@ -155,6 +155,10 @@ func (s *server) adminHTTP(w http.ResponseWriter, r *req) int {
 			subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(auth, adminScheme)), []byte(adminProof(s.admin, r.conn.sess.hash))) != 1 {
 			return writeError(w, r.rid, 401, "Invalid admin proof: use minigw router (an encrypted connection with the router key)")
 		}
+		if err := adminPeerCheck(r.conn); err != nil { // H1: agent tega routerja ne sme spreminjati routerja
+			s.log.Printf("%s admin API refused: %v", r.rid, err)
+			return writeError(w, r.rid, 403, "Admin API refused: "+err.Error())
+		}
 	case auth != "": // npr. Bearer: skrivnost ne sme nikoli po žici
 		return writeError(w, r.rid, 401, "The admin API takes MGW-Admin over an encrypted connection (minigw router), never the secret itself")
 	case !s.settings.valid(r.h(settingsHeader)): // stran z nastavitvami: seja v glavi (brez piškotkov)
@@ -899,7 +903,7 @@ func claudeTools(exe []string) []string {
 	cmd.Dir = os.TempDir()
 	out, err := cmd.StdoutPipe()
 	tools := []string{}
-	if err == nil && cmd.Start() == nil {
+	if err == nil && startAgent(cmd) == nil {
 		line, _ := bufio.NewReader(out).ReadBytes('\n')
 		cmd.Process.Kill()
 		cmd.Wait()

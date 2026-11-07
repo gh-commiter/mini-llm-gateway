@@ -1,0 +1,86 @@
+package main
+
+// Skrbniški API in procesi agentov (varnostni pregled H1, kot PeerProcess na Macu): agent (claude, codex, grok) z
+// omrežjem bi lahko pognal »minigw router …« in prevzel router. Zahtevo MGW-Admin zavrnemo, če jo pošlje proces, ki
+// izhaja iz tega routerja: Linux prek /proc (vtičnica → proces → veriga staršev, in cgroup enote systemd), Windows
+// prek tabele TCP (PID) in objekta Job, v katerem tečejo vsi agenti. Kar ni jasno, zavrnemo (fail closed).
+
+import (
+	"encoding/binary"
+	"encoding/hex"
+	"errors"
+	"net"
+	"strconv"
+	"strings"
+)
+
+var errAgentPeer = errors.New("this request comes from an agent process of the router: the admin API refuses it")
+
+// adminPeerCheck: nil = odjemalec ni agent tega routerja.
+func adminPeerCheck(c net.Conn) error {
+	ours, ok1 := c.LocalAddr().(*net.TCPAddr)
+	peer, ok2 := c.RemoteAddr().(*net.TCPAddr)
+	if !ok1 || !ok2 {
+		return errors.New("not a TCP connection")
+	}
+	return peerCheck(ours, peer)
+}
+
+// procAddr: naslov iz /proc/net/tcp{,6} (»0100007F:1F90«; IP po 32-bitnih besedah v vrstnem redu gostitelja).
+func procAddr(s string) (net.IP, int, bool) {
+	h, p, ok := strings.Cut(s, ":")
+	b, err := hex.DecodeString(h)
+	port, err2 := strconv.ParseUint(p, 16, 16)
+	if !ok || err != nil || err2 != nil || (len(b) != 4 && len(b) != 16) {
+		return nil, 0, false
+	}
+	for i := 0; i < len(b); i += 4 {
+		b[i], b[i+1], b[i+2], b[i+3] = b[i+3], b[i+2], b[i+1], b[i]
+	}
+	return net.IP(b), int(port), true
+}
+
+// procSocketInode: inode vtičnice odjemalca (njen lokalni naslov je naš oddaljeni in obratno); "" = ni najdena.
+func procSocketInode(table []byte, peer, ours *net.TCPAddr) string {
+	for _, line := range strings.Split(string(table), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 10 {
+			continue
+		}
+		lip, lport, ok1 := procAddr(f[1])
+		rip, rport, ok2 := procAddr(f[2])
+		if ok1 && ok2 && lport == peer.Port && rport == ours.Port && lip.Equal(peer.IP) && rip.Equal(ours.IP) {
+			return f[9]
+		}
+	}
+	return ""
+}
+
+// tcpTablePID: PID iz tabele GetExtendedTcpTable (TCP_TABLE_OWNER_PID_ALL) za povezavo odjemalca; 0 = ni najdena.
+// IPv4: vrstice po 24 bajtov (stanje, lokalni naslov, vrata, oddaljeni naslov, vrata, PID); IPv6: 56 bajtov.
+func tcpTablePID(table []byte, v6 bool, peer, ours *net.TCPAddr) uint32 {
+	if len(table) < 4 {
+		return 0
+	}
+	n := int(binary.LittleEndian.Uint32(table))
+	size := 24
+	if v6 {
+		size = 56
+	}
+	for i := 0; i < n && 4+(i+1)*size <= len(table); i++ {
+		r := table[4+i*size : 4+(i+1)*size]
+		var lip, rip net.IP
+		var lp, rp, pid int
+		if v6 {
+			lip, rip = net.IP(r[0:16]), net.IP(r[24:40])
+			lp, rp, pid = int(r[20])<<8|int(r[21]), int(r[44])<<8|int(r[45]), int(binary.LittleEndian.Uint32(r[52:]))
+		} else {
+			lip, rip = net.IP(r[4:8]), net.IP(r[12:16])
+			lp, rp, pid = int(r[8])<<8|int(r[9]), int(r[16])<<8|int(r[17]), int(binary.LittleEndian.Uint32(r[20:]))
+		}
+		if lp == peer.Port && rp == ours.Port && lip.Equal(peer.IP) && rip.Equal(ours.IP) {
+			return uint32(pid)
+		}
+	}
+	return 0
+}

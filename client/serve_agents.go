@@ -458,7 +458,7 @@ func (s *server) runAgentProcess(ctx context.Context, r *req, exe string, args [
 	cmd.Stderr = stderr
 	stdout, err := cmd.StdoutPipe()
 	if err == nil {
-		err = cmd.Start()
+		err = startAgent(cmd) // Windows: v Job agentov (peer check)
 	}
 	if err != nil {
 		return err

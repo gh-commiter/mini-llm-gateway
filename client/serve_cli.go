@@ -577,7 +577,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	cmd.Stderr = stderr
 	stdout, err := cmd.StdoutPipe()
 	if err == nil {
-		err = cmd.Start()
+		err = startAgent(cmd) // Windows: v Job agentov (peer check)
 	}
 	if err != nil {
 		return writeError(w, r.rid, 500, "Cannot start claude: "+err.Error())
