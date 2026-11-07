@@ -148,7 +148,11 @@ func TestServeInstallFiles(t *testing.T) {
 	tray := fakeRelease(t, "", "") // pladnja ni ob exe: prenos iz izdaje
 
 	bin := filepath.Join(home, ".local", "bin", "minigw")
-	for _, goos := range []string{"linux", "darwin", "windows"} {
+	// F4: na macOS je router aplikacija.
+	if _, err := serviceCommand("install", "darwin", cfg); err == nil || !strings.Contains(err.Error(), "install the Mini Gateway app") || serviceInstalled("darwin") {
+		t.Fatalf("darwin install: %v", err)
+	}
+	for _, goos := range []string{"linux", "windows"} {
 		calls = nil
 		msg, err := serviceCommand("install", goos, cfg)
 		if err != nil {
@@ -179,12 +183,6 @@ func TestServeInstallFiles(t *testing.T) {
 			}
 			if a, _, _ := fileSHA256(bin); a == "" {
 				t.Fatal("minigw not copied to ~/.local/bin")
-			}
-		case "darwin":
-			data, _ := os.ReadFile(servicePath(goos))
-			if !strings.Contains(string(data), "<string>"+bin+"</string>") || !strings.Contains(string(data), "<string>"+cfg+"</string>") ||
-				!slices.Contains(calls, fmt.Sprintf("launchctl bootstrap gui/%d %s", os.Getuid(), servicePath(goos))) {
-				t.Fatalf("plist: %s calls %v", data, calls)
 			}
 		case "windows":
 			dir := filepath.Join(home, "Programs", "Mini Gateway")

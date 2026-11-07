@@ -1,12 +1,11 @@
 package main
 
 // minigw serve install|uninstall: router ob prijavi, za tega uporabnika in brez skrbniških pravic.
-// Windows: vrednost HKCU …\Run (faza 3b: minigw-tray.exe); Linux: uporabniška enota systemd; macOS: LaunchAgent.
+// Windows: vrednost HKCU …\Run (faza 3b: minigw-tray.exe); Linux: uporabniška enota systemd; macOS: le odstranitev starejšega LaunchAgenta (router je aplikacija).
 
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -56,13 +55,7 @@ func systemdQuote(s string) string {
 	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`, "%", "%%", "$", "$$").Replace(s) + `"`
 }
 
-func xmlText(s string) string {
-	var b strings.Builder
-	xml.EscapeText(&b, []byte(s))
-	return b.String()
-}
-
-// serviceFile: vsebina enote, LaunchAgenta ali ukazne vrstice za Run. Pot z novo vrstico ali NUL (na Windows tudi
+// serviceFile: vsebina enote systemd ali ukazne vrstice za Run. Pot z novo vrstico ali NUL (na Windows tudi
 // »"«) bi dodala vrstico ali argument: zavrnjena tu, za vse klicatelje (I3).
 func serviceFile(goos, exe, cfgPath string) (string, error) {
 	if strings.ContainsAny(exe+cfgPath, "\r\n\x00") || (goos == "windows" && strings.Contains(exe+cfgPath, `"`)) {
@@ -76,21 +69,6 @@ func serviceText(goos, exe, cfgPath string) string {
 	case "linux":
 		return "[Unit]\nDescription=Mini Gateway router (minigw serve)\nAfter=network-online.target\n\n[Service]\nExecStart=" +
 			systemdQuote(exe) + " serve --config " + systemdQuote(cfgPath) + "\nRestart=on-failure\n\n[Install]\nWantedBy=default.target\n"
-	case "darwin":
-		home, _ := os.UserHomeDir()
-		return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>Label</key><string>` + launchdLabel + `</string>
-	<key>ProgramArguments</key>
-	<array><string>` + xmlText(exe) + `</string><string>serve</string><string>--config</string><string>` + xmlText(cfgPath) + `</string></array>
-	<key>RunAtLoad</key><true/>
-	<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
-	<key>StandardErrorPath</key><string>` + xmlText(filepath.Join(home, "Library", "Logs", "minigw-serve.log")) + `</string>
-</dict>
-</plist>
-`
 	case "windows": // pladenj, če je ob exe; poti na Windows ne vsebujejo »"«
 		if tray := trayBeside(exe); tray != "" {
 			return `"` + tray + `" tray --config "` + cfgPath + `"`
@@ -390,6 +368,9 @@ func installedInfo(goos string) string {
 }
 
 func serviceCommand(sub, goos, cfgPath string) (string, error) {
+	if goos == "darwin" && sub == "install" { // F4: na Macu je router aplikacija (uninstall še pospravi starejšo namestitev)
+		return "", errors.New("on macOS install the Mini Gateway app (/minigw:serve install)")
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		return "", err
@@ -408,7 +389,7 @@ func serviceCommand(sub, goos, cfgPath string) (string, error) {
 		return installWindows(exe, cfgPath)
 	case "windows uninstall":
 		return uninstallWindows(cfgPath)
-	case "linux install", "darwin install":
+	case "linux install":
 		target := filepath.Join(installDir(goos), "minigw")
 		if err := installFile(exe, target); err != nil {
 			return "", err
@@ -424,29 +405,22 @@ func serviceCommand(sub, goos, cfgPath string) (string, error) {
 		if err := os.WriteFile(p, []byte(unit), 0o644); err != nil {
 			return "", err
 		}
-		if goos == "linux" {
-			if err := runCmd("systemctl", "--user", "daemon-reload"); err != nil {
-				return "", err
-			}
-			if err := runCmd("systemctl", "--user", "enable", systemdUnit); err != nil {
-				return "", err
-			}
-			if err := runCmd("systemctl", "--user", "restart", systemdUnit); err != nil { // posodobitev: nova različica takoj
-				return "", err
-			}
-			// Zagon ob vklopu brez prijave: linger (polkit brez root, sicer sudo brez gesla).
-			log := " (" + p + "); log: journalctl --user -u " + systemdUnit
-			u := userName()
-			if lingerOn(u) || runCmd("loginctl", "enable-linger", u) == nil || runCmd("sudo", "-n", "loginctl", "enable-linger", u) == nil {
-				return "minigw serve runs now and at boot, also without signing in" + log, nil
-			}
-			return "minigw serve runs now and at sign-in" + log + "\nTo start Mini Gateway at boot without logging in, run: sudo loginctl enable-linger " + u, nil
-		}
-		runCmd("launchctl", "bootout", uid, p) // že naložen: znova
-		if err := runCmd("launchctl", "bootstrap", uid, p); err != nil {
+		if err := runCmd("systemctl", "--user", "daemon-reload"); err != nil {
 			return "", err
 		}
-		return "minigw serve runs now and at sign-in (" + p + ")", nil
+		if err := runCmd("systemctl", "--user", "enable", systemdUnit); err != nil {
+			return "", err
+		}
+		if err := runCmd("systemctl", "--user", "restart", systemdUnit); err != nil { // posodobitev: nova različica takoj
+			return "", err
+		}
+		// Zagon ob vklopu brez prijave: linger (polkit brez root, sicer sudo brez gesla).
+		log := " (" + p + "); log: journalctl --user -u " + systemdUnit
+		u := userName()
+		if lingerOn(u) || runCmd("loginctl", "enable-linger", u) == nil || runCmd("sudo", "-n", "loginctl", "enable-linger", u) == nil {
+			return "minigw serve runs now and at boot, also without signing in" + log, nil
+		}
+		return "minigw serve runs now and at sign-in" + log + "\nTo start Mini Gateway at boot without logging in, run: sudo loginctl enable-linger " + u, nil
 	case "linux uninstall":
 		runCmd("systemctl", "--user", "disable", "--now", systemdUnit)
 		os.Remove(p)

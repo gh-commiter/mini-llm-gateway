@@ -191,7 +191,7 @@ echo '{"type":"end","sessionId":"s9"}'
 func TestAgentsWithoutSandboxNeedOptIn(t *testing.T) {
 	s := &server{cfgDir: t.TempDir()}
 	sandboxed := agentSandboxed(s.cfgDir)
-	if (runtime.GOOS == "windows" && sandboxed) || (runtime.GOOS == "darwin" && !sandboxed) {
+	if runtime.GOOS != "linux" && sandboxed { // F4: le Linux z bwrap
 		t.Fatalf("%s sandboxed=%v", runtime.GOOS, sandboxed)
 	}
 	if s.agentsAllowed(serveConfig{}) != sandboxed || !s.agentsAllowed(serveConfig{AllowUnsandboxedBash: true}) {
