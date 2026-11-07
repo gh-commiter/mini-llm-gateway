@@ -12,7 +12,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 // liveServer: router na 127.0.0.1 s serve.json (vrata v nastavitvah = vrata poslušanja, kot pri pravem zagonu).
@@ -270,5 +272,111 @@ func TestServeInstallFiles(t *testing.T) {
 	}
 	if q := systemdQuote(`C:\a "b" 100%`); q != `"C:\\a \"b\" 100%%"` {
 		t.Fatalf("systemd quote: %s", q)
+	}
+}
+
+// M1: program na vratih routerja, ki ni ta router, ne dobi skrivnosti ali ključev; minigw router dela brez routerja.
+func TestRouterCLINeverSendsSecretToSquatter(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	var mu sync.Mutex
+	var got []byte
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				c.SetDeadline(time.Now().Add(3 * time.Second))
+				c.Write([]byte(strings.Repeat("HTTP/1.1 200 OK\r\n", 20))) // dovolj bajtov za »odgovor« rokovanja
+				buf := make([]byte, 64<<10)
+				for {
+					n, err := c.Read(buf)
+					mu.Lock()
+					got = append(got, buf[:n]...)
+					mu.Unlock()
+					if err != nil {
+						return
+					}
+				}
+			}()
+		}
+	}()
+	k, _ := ecdh.X25519().GenerateKey(rand.Reader)
+	cfg := filepath.Join(t.TempDir(), "serve.json")
+	saveServeConfig(cfg, serveConfig{Token: "tok", Key: base64url(k.Bytes()), Port: ln.Addr().(*net.TCPAddr).Port})
+	secret := strings.Repeat("S", 43)
+	os.WriteFile(filepath.Join(filepath.Dir(cfg), "admin.secret"), []byte(secret+"\n"), 0o600)
+	fakeKeys(t)
+	id := base64url(newDevice("PC").key.Public().(ed25519.PublicKey))
+	stdout(t, func() { routerCommand([]string{"devices", "allow", id, "--config", cfg}, strings.NewReader("")) })
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) == 0 || strings.Contains(string(got), secret) || strings.Contains(string(got), "Bearer") {
+		t.Fatalf("squatter got %d bytes: %q", len(got), got)
+	}
+	if c, _ := loadServeConfig(cfg); len(c.Devices) != 1 {
+		t.Fatalf("not applied to serve.json: %+v", c.Devices)
+	}
+}
+
+func TestAdminReviewFixes(t *testing.T) {
+	s, cfg, base := liveServer(t, nil)
+	host := strings.TrimPrefix(base, "http://")
+	admin := func(method, path, body string) (int, string) {
+		return adminReq(t, base, host, s.admin, method, path, body)
+	}
+
+	// I2: podatki za objektom JSON; L1: naslov, na katerem 127.0.0.1 ne bi delal.
+	if st, b := admin("PATCH", adminPrefix+"/agents/claude", `{"tools":"Read"}{"tools":"Bash"}`); st != 400 || !strings.Contains(b, "after the JSON") {
+		t.Fatalf("trailing data: %d %s", st, b)
+	}
+	if st, _ := admin("PATCH", adminPrefix+"/general", `{"address":"192.168.1.5"}`); st != 400 {
+		t.Fatal("LAN-only address accepted")
+	}
+	if st, _ := admin("PATCH", adminPrefix+"/general", `{"address":"0.0.0.0"}`); st != 200 {
+		t.Fatal("0.0.0.0 refused")
+	}
+	// L6: relativna mapa prek API; povezava v mapo nastavitev.
+	if st, _ := admin("PATCH", adminPrefix+"/agents/claude", `{"folder":"rel/dir"}`); st != 400 {
+		t.Fatal("relative folder accepted")
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	os.Symlink(filepath.Dir(cfg), link)
+	if st, b := admin("PATCH", adminPrefix+"/agents/claude", `{"folder":"`+link+`"}`); st != 400 || !strings.Contains(b, "config folder") {
+		t.Fatalf("symlink to the config folder: %d %s", st, b)
+	}
+
+	// L2: serve.json se zapiše na novo (povezava na poti se ne sledi), 0600.
+	outside := filepath.Join(t.TempDir(), "outside.json")
+	data, _ := os.ReadFile(cfg)
+	os.WriteFile(outside, data, 0o644)
+	os.Remove(cfg)
+	os.Symlink(outside, cfg)
+	if st, _ := admin("PATCH", adminPrefix+"/agents/claude", `{"tools":"Glob,LS"}`); st != 200 {
+		t.Fatal("update")
+	}
+	if b, _ := os.ReadFile(outside); strings.Contains(string(b), "Glob,LS") {
+		t.Fatal("symlink at serve.json followed")
+	}
+	if st, _ := os.Lstat(cfg); st == nil || st.Mode()&os.ModeSymlink != 0 || st.Mode().Perm() != 0o600 {
+		t.Fatalf("serve.json: %v", st)
+	}
+
+	// L5: na Windows vse razen znanih varnih orodij potrebuje allowUnsandboxedBash.
+	if got := unsandboxedTools("Read, Grep,PowerShell,Bash,Mystery,WebFetch"); strings.Join(got, ",") != "PowerShell,Bash,Mystery" {
+		t.Fatalf("unsandboxed tools: %v", got)
+	}
+	// L7: $ v ExecStart; nove vrstice v poteh zavrnjene.
+	if q := systemdQuote("/a$HOME"); q != `"/a$$HOME"` {
+		t.Fatalf("systemd $: %s", q)
+	}
+	if _, err := serviceCommand("install", "linux", filepath.Join(t.TempDir(), "x\nExecStartPre=evil", "serve.json")); err == nil {
+		t.Fatal("newline in the config path accepted")
 	}
 }

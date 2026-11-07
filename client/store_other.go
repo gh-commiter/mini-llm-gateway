@@ -111,26 +111,9 @@ func osKeySet(cfgDir, name, key string) (string, error) {
 	return where, writeKeys(cfgDir, m)
 }
 
-// writeKeys: nova datoteka (0600) in preimenovanje: povezava na poti se ne sledi, datoteka ni nikoli širša od 0600.
 func writeKeys(cfgDir string, m map[string]string) error {
 	data, _ := json.MarshalIndent(m, "", "  ")
-	os.MkdirAll(cfgDir, 0o700)
-	f, err := os.CreateTemp(cfgDir, ".gateway-keys-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(f.Name()) // po uspešnem preimenovanju ne obstaja več
-	_, err = f.Write(data)
-	if err == nil {
-		err = f.Sync()
-	}
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
-	if err != nil {
-		return err
-	}
-	return os.Rename(f.Name(), keyFile(cfgDir))
+	return writeFileAtomic(keyFile(cfgDir), data)
 }
 
 func osKeyDel(cfgDir, name string) {
@@ -161,3 +144,5 @@ func readHidden(f *os.File) (string, error) {
 func regRunSet(string, string) error   { return errors.New("the registry exists on Windows only") }
 func regRunGet(string) (string, error) { return "", errNotFound }
 func regRunDel(string)                 {}
+
+func protectDir(string) error { return nil } // drugod: mapa 0700, datoteke 0600

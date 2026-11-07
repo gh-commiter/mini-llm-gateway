@@ -79,33 +79,42 @@ type apiStatus struct {
 // adminSecret: 32 naključnih bajtov (base64url) v admin.secret (0600) v mapi nastavitev, ki je agentom prepovedana.
 func adminSecret(cfgDir string) (string, error) {
 	p := filepath.Join(cfgDir, "admin.secret")
-	for range 2 {
-		if b, err := os.ReadFile(p); err == nil {
+	for range 20 { // drug proces jo morda prav zdaj ustvarja: počakaj, da je zapisana
+		b, err := os.ReadFile(p)
+		if err == nil {
 			if s := strings.TrimSpace(string(b)); len(s) >= 43 {
 				return s, nil
 			}
-			return "", errors.New(p + " is invalid: delete it, minigw serve creates a new one")
+			time.Sleep(50 * time.Millisecond)
+			continue
 		}
-		b := make([]byte, 32)
-		rand.Read(b)
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		r := make([]byte, 32)
+		rand.Read(r)
 		os.MkdirAll(cfgDir, 0o700)
 		f, err := os.OpenFile(p, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if errors.Is(err, os.ErrExist) {
-			continue // hkrati ustvaril drug proces
+			time.Sleep(50 * time.Millisecond)
+			continue
 		}
 		if err != nil {
 			return "", err
 		}
-		_, err = f.WriteString(base64url(b) + "\n")
+		_, err = f.WriteString(base64url(r) + "\n")
+		if err == nil {
+			err = f.Sync()
+		}
 		if cerr := f.Close(); err == nil {
 			err = cerr
 		}
 		if err != nil {
 			return "", err
 		}
-		return base64url(b), nil
+		return base64url(r), nil
 	}
-	return "", errors.New("cannot create " + p)
+	return "", errors.New(p + " is invalid: delete it, minigw serve creates a new one")
 }
 
 // adminHTTP: odjemalec na tem računalniku (naslov TCP, ne glave), Host za DNS rebinding, skrivnost; brez CORS.
@@ -175,6 +184,9 @@ func decodeStrict(body []byte, v any) error {
 	d.DisallowUnknownFields()
 	if err := d.Decode(v); err != nil {
 		return errors.New("bad JSON body: " + err.Error())
+	}
+	if d.Decode(&struct{}{}) != io.EOF {
+		return errors.New("bad JSON body: data after the JSON object")
 	}
 	return nil
 }
@@ -317,6 +329,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		if !exists && len(models) > 20 { // OpenRouter: več sto modelov, izbereš sam (kot na Macu)
 			g.Models = []string{}
 		}
+		oldKey, _ := keyGet(s.cfgDir, b.Name)
 		where, err := keySet(s.cfgDir, b.Name, b.Key)
 		if err != nil {
 			return fail(500, "cannot store the API key: "+err.Error())
@@ -332,7 +345,12 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			}
 			return nil
 		})
-		if err != nil {
+		if err != nil { // ključ nazaj, kot je bil
+			if oldKey != "" {
+				keySet(s.cfgDir, b.Name, oldKey)
+			} else {
+				keyDel(s.cfgDir, b.Name)
+			}
 			return fail(500, err.Error())
 		}
 		s.gateways.forget(g.Name)
@@ -455,10 +473,14 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			}
 		}
 		if b.Folder != nil && *b.Folder != "" {
+			if !filepath.IsAbs(*b.Folder) {
+				return fail(400, "folder must be an absolute path")
+			}
 			if st, err := os.Stat(*b.Folder); err != nil || !st.IsDir() {
 				return fail(400, "not a folder: "+*b.Folder)
 			}
 		}
+		var exe []string
 		err := s.update(func(c *serveConfig) error {
 			if b.Path != nil {
 				c.Claude = *b.Path
@@ -472,12 +494,10 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			if b.Folder != nil {
 				c.Folder = *b.Folder
 			}
-			exe, err := checkAgent(c, s.cfgDir)
-			if err == nil {
-				s.claude = exe // pod s.mu (update); enako za obe kopiji
-			}
+			e, err := checkAgent(c, s.cfgDir)
+			exe = e
 			return err
-		})
+		}, func() { s.claude = exe })
 		if err != nil {
 			return fail(400, err.Error())
 		}
@@ -497,8 +517,8 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		if b.Port != nil && (*b.Port < 1 || *b.Port > 65535) {
 			return fail(400, "port must be 1-65535")
 		}
-		if b.Address != nil && *b.Address != "" && net.ParseIP(*b.Address) == nil {
-			return fail(400, "address must be an IP address, or empty for all")
+		if b.Address != nil && !validAddress(*b.Address) {
+			return fail(400, "address: use empty (all), 0.0.0.0, :: or 127.0.0.1, so that the admin API stays reachable on 127.0.0.1; limit clients with a firewall")
 		}
 		if err := s.update(func(c *serveConfig) error {
 			if b.Port != nil {
