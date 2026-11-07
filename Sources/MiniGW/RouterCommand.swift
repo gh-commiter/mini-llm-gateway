@@ -169,6 +169,10 @@ func routerCommand(_ argv: [String]) {
             if list.isEmpty {
                 say(d["allowAnyDevice"] as? Bool == true ? "no devices listed: any device with the token is allowed (allowAnyDevice)" : "no devices allowed")
             }
+            for x in d["pending"] as? [[String: Any]] ?? [] {
+                let id = x["id"] as? String ?? ""
+                say(clean("waiting: \(id)  \"\(x["name"] as? String ?? "")\" from \(x["address"] as? String ?? "") at \(x["time"] as? String ?? ""); compare the ID with the client, then: minigw gw devices allow \(id)"))
+            }
         } else if pos[1] == "allow", pos.count >= 3 {
             let r = a.call("POST", "/devices", ["id": pos[2], "name": pos[3...].joined(separator: " ")])
             let id = (r["device"] as? [String: Any])?["id"] as? String ?? pos[2]
@@ -176,7 +180,7 @@ func routerCommand(_ argv: [String]) {
         } else if pos[1] == "deny", pos.count >= 3 {
             let r = a.call("DELETE", "/devices/" + esc(pos[2...].joined(separator: " ")))
             let d = r["device"] as? [String: Any] ?? [:]
-            say(clean("removed device \(d["id"] as? String ?? "") \"\(d["name"] as? String ?? "")\""))
+            say(clean("\(r["pending"] as? Bool == true ? "rejected waiting" : "removed") device \(d["id"] as? String ?? "") \"\(d["name"] as? String ?? "")\""))
         } else {
             fail(routerHelp)
         }

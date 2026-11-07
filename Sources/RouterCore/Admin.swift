@@ -188,23 +188,38 @@ extension Router {
             let list = await gateways(c)
             return (200, ["running": true, "version": hooks.version, "port": Int(c.port), "address": c.host, "installed": hooks.installed(),
                           "autostart": hooks.installed() ? "sign-in" : "", "agents": AgentCount.running.load(ordering: .relaxed),
-                          "devices": c.devices.count, "pending": 0, "claude": claudeInfo(c.claudeCLI), "gateways": list, "providers": list])
+                          "devices": c.devices.count, "pending": Router.deviceLog.pending.count, "claude": claudeInfo(c.claudeCLI), "gateways": list, "providers": list])
 
-        // Naprave: Mac sprejme vsako napravo z žetonom in jo doda sam; seznam določa Siri (glej /siri).
+        // Naprave kot v minigw serve: dovoljene (z zadnjim stikom), čakajoče na odobritev, allowAnyDevice.
         case "GET devices":
-            return (200, ["devices": c.devices.map { ["id": $0.id, "name": $0.name, "siri": $0.siri] }, "pending": [], "allowAnyDevice": true])
+            let iso = ISO8601DateFormatter()
+            let list: [[String: Any]] = c.devices.map { d in
+                var o: [String: Any] = ["id": d.id, "name": d.name, "siri": d.siri]
+                if let t = Router.deviceLog.lastSeen(d.id) { o["lastSeen"] = iso.string(from: t) }
+                return o
+            }
+            let pending: [[String: Any]] = Router.deviceLog.pending.map {
+                ["id": $0.id, "name": $0.name, "address": $0.address, "time": iso.string(from: $0.time)]
+            }
+            return (200, ["devices": list, "pending": pending, "allowAnyDevice": c.allowAnyDevice])
         case "POST devices":
             let b = try AdminBody(body, ["id", "name"])
-            let id = try b.string("id") ?? "", name = try b.string("name") ?? ""
+            let id = try b.string("id") ?? "", given = try b.string("name") ?? ""
             guard Self.validDeviceID(id) else {
                 throw AdminError(400, "\"\(id)\" is not a device ID (43 characters, base64url): copy it from the client's minigw status")
             }
+            let waiting = Router.deviceLog.pending.first { $0.id == id }
+            let name = given.isEmpty ? waiting?.name ?? "" : given
             let added = !c.devices.contains { $0.id == id }
             _ = try await hooks.update { c in
                 if !c.devices.contains(where: { $0.id == id }) { c.devices.append(DeviceConfig(id: id, name: name)) }
             }
+            Router.deviceLog.removePending(id)
             return (200, ["device": ["id": id, "name": name], "added": added])
         case "DELETE devices/{}":
+            if !c.devices.contains(where: { $0.id == arg }), let p = Router.deviceLog.removePending(arg) {  // zavrni čakajočo
+                return (200, ["device": ["id": p.id, "name": p.name], "pending": true])
+            }
             var gone = c.devices.first { $0.id == arg }
             if gone == nil {
                 let named = c.devices.filter { $0.name == arg }
@@ -424,9 +439,9 @@ extension Router {
         case "GET general":
             return (200, general(c, connect: hooks.connect))
         case "PATCH general":
-            let b = try AdminBody(body, ["port", "address", "allowedClients", "allowPlainRemote", "startAtSignIn"])
+            let b = try AdminBody(body, ["port", "address", "allowedClients", "allowPlainRemote", "allowAnyDevice", "startAtSignIn"])
             let port = try b.int("port"), address = try b.string("address"), clients = try b.string("allowedClients")
-            let plain = try b.bool("allowPlainRemote")
+            let plain = try b.bool("allowPlainRemote"), any = try b.bool("allowAnyDevice")
             if let on = try b.bool("startAtSignIn") {
                 guard let set = hooks.setInstalled else { throw AdminError(400, "startAtSignIn: not available here") }
                 do { try set(on) } catch { throw AdminError(500, "Open at Login: \(error.localizedDescription)") }
@@ -446,6 +461,7 @@ extension Router {
                 if let address { c.host = address }
                 if let clients { c.allowedClients = clients }
                 if let plain { c.allowPlainRemote = plain }
+                if let any { c.allowAnyDevice = any }
             }
             return (200, general(n, connect: hooks.connect))  // aplikacija znova zažene router: brez restartRequired
         case "POST general/{}":
@@ -498,6 +514,7 @@ extension Router {
 
     func general(_ c: RouterConfig, connect: String) -> [String: Any] {
         ["port": Int(c.port), "address": c.host, "allowedClients": c.allowedClients, "allowPlainRemote": c.allowPlainRemote,
+         "allowAnyDevice": c.allowAnyDevice,
          "connect": "minigw connect \(c.host == "0.0.0.0" || c.host == "::" ? Self.localIP() : c.host):\(c.port) --token '\(connect)'"]
     }
 

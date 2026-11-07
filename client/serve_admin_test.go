@@ -173,8 +173,32 @@ func TestAdminAPILiveApply(t *testing.T) {
 	if r := pipeRequest(t, s, pub, mac, get); !strings.HasPrefix(r, "HTTP/1.1 200") {
 		t.Fatalf("allowed device not live: %q", r)
 	}
-	if _, b := admin("GET", adminPrefix+"/devices", ""); !strings.Contains(b, `"pending":[]`) {
-		t.Fatalf("pending after allow: %s", b)
+	if _, b := admin("GET", adminPrefix+"/devices", ""); !strings.Contains(b, `"pending":[]`) || !strings.Contains(b, `"lastSeen":"`) {
+		t.Fatalf("pending after allow, last seen: %s", b)
+	}
+	// Allow le z ID-jem: ime iz čakajoče naprave; naprava brez imena ga dobi ob naslednji povezavi.
+	pc := newDevice("PC")
+	pcID := base64url(pc.key.Public().(ed25519.PublicKey))
+	pipeRequest(t, s, pub, pc, get)
+	if st, b := admin("POST", adminPrefix+"/devices", `{"id":"`+pcID+`"}`); st != 200 || !strings.Contains(b, `"name":"PC"`) {
+		t.Fatalf("allow by id: %d %s", st, b)
+	}
+	s.update(func(c *serveConfig) error { c.Devices[len(c.Devices)-1].Name = ""; return nil })
+	if r := pipeRequest(t, s, pub, pc, get); !strings.HasPrefix(r, "HTTP/1.1 200") || s.conf().Devices[len(s.conf().Devices)-1].Name != "PC" {
+		t.Fatalf("name not filled: %q %+v", r, s.conf().Devices)
+	}
+	// Reject: le iz seznama čakajočih.
+	spy := newDevice("Spy")
+	spyID := base64url(spy.key.Public().(ed25519.PublicKey))
+	pipeRequest(t, s, pub, spy, get)
+	if st, b := admin("DELETE", adminPrefix+"/devices/"+spyID, ""); st != 200 || !strings.Contains(b, `"pending":true`) {
+		t.Fatalf("reject: %d %s", st, b)
+	}
+	if _, b := admin("GET", adminPrefix+"/devices", ""); strings.Contains(b, spyID) {
+		t.Fatalf("rejected device still listed: %s", b)
+	}
+	if st, _ := admin("DELETE", adminPrefix+"/devices/PC", ""); st != 200 {
+		t.Fatal("remove PC")
 	}
 	if st, _ := admin("DELETE", adminPrefix+"/devices/Mac", ""); st != 200 {
 		t.Fatal("deny by name")

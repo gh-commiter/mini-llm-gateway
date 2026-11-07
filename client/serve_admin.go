@@ -32,10 +32,11 @@ import (
 const adminPrefix = "/minigw/admin/v1"
 
 type apiDevice struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Address string `json:"address,omitempty"` // le pri čakajočih
-	Time    string `json:"time,omitempty"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Address  string `json:"address,omitempty"` // le pri čakajočih
+	Time     string `json:"time,omitempty"`
+	LastSeen string `json:"lastSeen,omitempty"` // le pri dovoljenih, od zagona
 }
 
 type apiModel struct {
@@ -216,6 +217,25 @@ func offlineServer(cfgPath string) (*server, error) {
 	return &server{cfg: c, cfgPath: cfgPath, cfgDir: cfgDir, claude: exe, offline: true, log: log.New(io.Discard, "", 0)}, nil
 }
 
+// deviceSeen: zadnji stik dovoljene naprave; ime, če ga naprava (dodana le z ID-jem ali s starejšim minigw) še nima.
+func (s *server) deviceSeen(d serveDevice) {
+	s.seen.Store(d.ID, time.Now())
+	if d.Name == "" {
+		return
+	}
+	s.mu.RLock()
+	missing := slices.ContainsFunc(s.cfg.Devices, func(x serveDevice) bool { return x.ID == d.ID && x.Name == "" })
+	s.mu.RUnlock()
+	if missing {
+		s.update(func(c *serveConfig) error {
+			if i := slices.IndexFunc(c.Devices, func(x serveDevice) bool { return x.ID == d.ID && x.Name == "" }); i >= 0 {
+				c.Devices[i].Name = d.Name
+			}
+			return nil
+		})
+	}
+}
+
 func (s *server) addPending(d serveDevice, addr string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -290,7 +310,11 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		out := map[string]any{"devices": []apiDevice{}, "allowAnyDevice": c.AllowAnyDevice}
 		var list []apiDevice
 		for _, d := range c.Devices {
-			list = append(list, apiDevice{ID: d.ID, Name: d.Name})
+			x := apiDevice{ID: d.ID, Name: d.Name}
+			if t, ok := s.seen.Load(d.ID); ok {
+				x.LastSeen = t.(time.Time).UTC().Format(time.RFC3339)
+			}
+			list = append(list, x)
 		}
 		s.mu.RLock()
 		pending := slices.Clone(s.pending)
@@ -307,6 +331,9 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		}
 		added := false
 		err := s.update(func(c *serveConfig) error {
+			if j := slices.IndexFunc(s.pending, func(p apiDevice) bool { return p.ID == d.ID }); j >= 0 && d.Name == "" {
+				d.Name = s.pending[j].Name // »allow <id>« brez imena: ime iz čakajoče naprave (kot na Macu)
+			}
 			s.pending = slices.DeleteFunc(s.pending, func(p apiDevice) bool { return p.ID == d.ID })
 			if slices.ContainsFunc(c.Devices, func(x serveDevice) bool { return x.ID == d.ID }) {
 				return nil

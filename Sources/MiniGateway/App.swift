@@ -18,7 +18,7 @@ struct MiniGatewayApp: App {
         MenuBarExtra {
             MenuView().environmentObject(state)
         } label: {
-            Image(nsImage: menuBarImage(listening: state.running, active: state.inflight.count))
+            Image(nsImage: menuBarImage(listening: state.running, active: state.inflight.count, waiting: state.pending.count))
         }
         // Običajno okno (ne scena Settings, ki sredini orodno vrstico): puščici in naslov levo kot v System Settings.
         Window("Settings", id: "settings") {
@@ -38,21 +38,32 @@ struct MiniGatewayApp: App {
 /// Ikona menijske vrstice: znak routerja, ob tekočih zahtevah še kovanček s številom (številka sredinsko).
 /// Ena slika (template), ker menijska vrstica sestavljenih oznak SwiftUI ne izriše zanesljivo.
 @MainActor
-func menuBarImage(listening: Bool, active: Int) -> NSImage {
+/// Ikona v menijski vrstici: število dejavnih zahtev in značka za naprave, ki čakajo na odobritev (kot pladenj na Windows).
+func menuBarImage(listening: Bool, active: Int, waiting: Int = 0) -> NSImage {
     let cfg = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
     let icon = NSImage(systemSymbolName: listening ? "arrow.triangle.branch" : "exclamationmark.triangle",
                        accessibilityDescription: "Mini Gateway")?.withSymbolConfiguration(cfg) ?? NSImage()
-    guard active > 0 else { icon.isTemplate = true; return icon }
-    let coin = NSImage(systemSymbolName: active <= 50 ? "\(active).circle.fill" : "ellipsis.circle.fill",
-                       accessibilityDescription: nil)?.withSymbolConfiguration(cfg) ?? NSImage()
-    let gap: CGFloat = 3, h = max(icon.size.height, coin.size.height)
-    let image = NSImage(size: NSSize(width: icon.size.width + gap + coin.size.width, height: h), flipped: false) { _ in
-        icon.draw(in: NSRect(x: 0, y: (h - icon.size.height) / 2, width: icon.size.width, height: icon.size.height))
-        coin.draw(in: NSRect(x: icon.size.width + gap, y: (h - coin.size.height) / 2, width: coin.size.width, height: coin.size.height))
+    var parts = [icon]
+    if active > 0 {
+        parts.append(NSImage(systemSymbolName: active <= 50 ? "\(active).circle.fill" : "ellipsis.circle.fill",
+                             accessibilityDescription: nil)?.withSymbolConfiguration(cfg) ?? NSImage())
+    }
+    if waiting > 0 {
+        parts.append(NSImage(systemSymbolName: "person.crop.circle.badge.questionmark", accessibilityDescription: nil)?.withSymbolConfiguration(cfg) ?? NSImage())
+    }
+    guard parts.count > 1 else { icon.isTemplate = true; return icon }
+    let gap: CGFloat = 3, h = parts.map(\.size.height).max() ?? 0
+    let width = parts.map(\.size.width).reduce(0, +) + gap * CGFloat(parts.count - 1)
+    let image = NSImage(size: NSSize(width: width, height: h), flipped: false) { _ in
+        var x: CGFloat = 0
+        for p in parts {
+            p.draw(in: NSRect(x: x, y: (h - p.size.height) / 2, width: p.size.width, height: p.size.height))
+            x += p.size.width + gap
+        }
         return true
     }
     image.isTemplate = true
-    image.accessibilityDescription = "Mini Gateway, \(active) active"
+    image.accessibilityDescription = "Mini Gateway, \(active) active" + (waiting > 0 ? ", \(waiting) waiting for approval" : "")
     return image
 }
 
@@ -71,6 +82,7 @@ final class AppState: ObservableObject {
         (try? JSONDecoder().decode([RequestLog].self, from: Data(contentsOf: logsFile))) ?? []
     }
     @Published var deviceSeen: [String: Date] = [:]  // zadnja zahteva naprave (le v pomnilniku)
+    @Published var pending: [DeviceLog.Pending] = []  // naprave, ki čakajo na odobritev (Router.deviceLog)
 
     /// Tekoče zahteve modelom (najnovejša zgoraj), z zadnjim korakom agenta.
     struct Running: Identifiable { let id: String; let time: Date; let model: String; var step: String? }
@@ -81,6 +93,9 @@ final class AppState: ObservableObject {
 
     init() {
         config.save()  // starejši JSON blob v preferences → berljiva struktura
+        Router.deviceLog.onChange = { [weak self] in
+            Task { @MainActor in self?.pending = Router.deviceLog.pending }
+        }
         ShareHub.cleanupStale()
         NativeHub.cleanupStale(config.scratch("tmp").appendingPathComponent("native-markers"))  // označbe native po sesutju
         Worktree.prune(scratch: config.scratchURL)  // worktree: zrcala, ki jih 30 dni ni uporabil noben agent
@@ -244,12 +259,25 @@ final class AppState: ObservableObject {
     }
 
     /// Nova naprava se doda v nastavitve brez ponovnega zagona (Siri zanjo ostane izklopljena, dokler je ne vklopiš).
+    /// Zadnji stik dovoljene naprave; ime, če ga naprava (dodana brez imena, npr. z ID-jem) še nima. Nova naprava čaka na
+    /// odobritev (Router.deviceLog), ne doda se več sama.
     private func seen(_ d: Noise.Device) {
+        guard let i = config.devices.firstIndex(where: { $0.id == d.id }) else { return }
         if deviceSeen[d.id].map({ Date().timeIntervalSince($0) > 30 }) ?? true { deviceSeen[d.id] = Date() }
-        guard !config.devices.contains(where: { $0.id == d.id }) else { return }
-        config.devices.append(DeviceConfig(id: d.id, name: d.name))
-        config.save()
+        if config.devices[i].name.isEmpty, !d.name.isEmpty {
+            config.devices[i].name = d.name
+            config.save()
+        }
     }
+
+    func allow(_ p: DeviceLog.Pending) {
+        var c = config
+        if !c.devices.contains(where: { $0.id == p.id }) { c.devices.append(DeviceConfig(id: p.id, name: p.name)) }
+        Router.deviceLog.removePending(p.id)
+        apply(c)
+    }
+
+    func reject(_ p: DeviceLog.Pending) { Router.deviceLog.removePending(p.id) }
 
     func apply(_ c: RouterConfig) {
         config = c
@@ -290,6 +318,19 @@ struct MenuView: View {
         Button("Activity…") {
             openWindow(id: "activity")
             bringToFront("activity")
+        }
+        if !state.pending.isEmpty {  // kot pladenj na Windows: odobritev ali zavrnitev iz menija
+            Divider()
+            Menu("Waiting for approval (\(state.pending.count))") {
+                ForEach(state.pending) { p in
+                    Menu {
+                        Button("Allow") { state.allow(p) }
+                        Button("Reject") { state.reject(p) }
+                    } label: {
+                        Text(verbatim: "\(p.name.isEmpty ? "—" : p.name) · \(p.id.prefix(8))… · \(p.address)")
+                    }
+                }
+            }
         }
         Divider()
         Button("Copy Token") {

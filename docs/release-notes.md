@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Devices are the same on the Mac and on `minigw serve`: a new device waits for approval (Settings → Devices,
+  the menu bar, `minigw gw devices allow`) unless the list is empty and "Allow any device with the token" is on.
+  Devices you already use stay allowed. Both panes show the allowed IP addresses, waiting and allowed devices with
+  their ID and when they were last seen; Windows now shows a device's name.
 - GitHub Copilot CLI as an agent model, compatible with the Claude Code CLI: `claude-copilot` and `claude-copilot-<model>`
   (Mac app and `minigw serve`; off by default). Read-only by default; writing, web access and commands are separate
   switches. Copilot always runs in a sandbox (Mac `sandbox-exec`, Linux bwrap) with a fresh Copilot home per request.

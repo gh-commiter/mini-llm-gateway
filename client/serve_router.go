@@ -303,9 +303,12 @@ func routerCommand(args []string, in io.Reader) {
 			a.do("POST", "/devices", apiDevice{ID: pos[2], Name: strings.Join(pos[3:], " ")}, &r)
 			say(map[bool]string{true: "allowed device ", false: "already allowed: "}[r.Added] + r.Device.ID)
 		case pos[1] == "deny" && len(pos) >= 3:
-			var r struct{ Device apiDevice }
+			var r struct {
+				Device  apiDevice
+				Pending bool
+			}
 			a.do("DELETE", "/devices/"+esc(strings.Join(pos[2:], " ")), nil, &r)
-			say(clean(fmt.Sprintf("removed device %s %q", r.Device.ID, r.Device.Name)))
+			say(clean(fmt.Sprintf("%s device %s %q", map[bool]string{true: "rejected waiting", false: "removed"}[r.Pending], r.Device.ID, r.Device.Name)))
 		default:
 			fail(routerHelp)
 		}

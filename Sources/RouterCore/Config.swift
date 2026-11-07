@@ -82,6 +82,9 @@ public struct RouterConfig: Codable, Sendable, Equatable {
     public var appleFM = AppleFMConfig()
     public var siri = SiriConfig()
     public var devices: [DeviceConfig] = []
+    /// Kot minigw serve: neznana naprava z žetonom je dovoljena le, dokler je seznam prazen in je to vklopljeno; sicer čaka
+    /// na odobritev (Settings → Devices, minigw gw devices allow). Starejše nastavitve: glej init(from:).
+    public var allowAnyDevice = false
     public var codex = CodexConfig()
     public var copilot = CopilotConfig()
     public var grok = GrokConfig()
@@ -155,6 +158,9 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         appleFM = try c.decodeIfPresent(AppleFMConfig.self, forKey: .appleFM) ?? d.appleFM
         siri = try c.decodeIfPresent(SiriConfig.self, forKey: .siri) ?? d.siri
         devices = try c.decodeIfPresent([DeviceConfig].self, forKey: .devices) ?? d.devices
+        // Nastavitve pred odobritvijo naprav (vsaka naprava je bila sprejeta in dodana): naštete ostanejo dovoljene, pri
+        // praznem seznamu ostane dovoljena vsaka (brez dela za uporabnika).
+        allowAnyDevice = try c.decodeIfPresent(Bool.self, forKey: .allowAnyDevice) ?? devices.isEmpty
         codex = try c.decodeIfPresent(CodexConfig.self, forKey: .codex) ?? d.codex
         copilot = try c.decodeIfPresent(CopilotConfig.self, forKey: .copilot) ?? d.copilot
         grok = try c.decodeIfPresent(GrokConfig.self, forKey: .grok) ?? d.grok
@@ -170,6 +176,11 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         RouterServer.isLoopback(peer) || devices.contains { $0.id == device?.id && $0.siri }
     }
 
+    /// Naprava s seznama; neznana le pri praznem seznamu z allowAnyDevice (kot deviceAllowed v minigw serve).
+    public func deviceAllowed(_ id: String) -> Bool {
+        devices.contains { $0.id == id } || (devices.isEmpty && allowAnyDevice)
+    }
+
     /// Tristranska združitev za okno Settings ob spremembi od drugod (skrbniški API, nova naprava): kar uporabnik v
     /// osnutku ni spremenil (enako kot old), prevzame iz new; pri napravah in prehodih tudi dodane, odstranjene in
     /// drugje spremenjene elemente. Tako samodejna uveljavitev osnutka ne povozi sprememb skrbniškega API.
@@ -178,7 +189,7 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         func take<T: Equatable>(_ kp: WritableKeyPath<RouterConfig, T>) {
             if draft[keyPath: kp] == old[keyPath: kp] { d[keyPath: kp] = new[keyPath: kp] }
         }
-        take(\.host); take(\.port); take(\.allowedClients); take(\.allowPlainRemote); take(\.claudeCLI); take(\.appleFM)
+        take(\.host); take(\.port); take(\.allowedClients); take(\.allowPlainRemote); take(\.allowAnyDevice); take(\.claudeCLI); take(\.appleFM)
         take(\.siri); take(\.codex); take(\.copilot); take(\.grok); take(\.foundry); take(\.scratchFolder); take(\.runCommands); take(\.worktreeNetwork); take(\.worktreeCodexNetwork)
         d.devices = mergeList(draft.devices, old.devices, new.devices)
         d.providers = mergeList(draft.providers, old.providers, new.providers)

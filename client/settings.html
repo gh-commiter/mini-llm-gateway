@@ -41,6 +41,7 @@ main { flex: 1; padding: 20px 28px 40px; }
 .card .ico { width: 52px; height: 52px; border-radius: 12px; display: inline-flex; align-items: center; justify-content: center;
   color: #fff; font-size: 22px; font-weight: 700; }
 .card h1 { font-size: 20px; margin: 8px 0 4px; }
+.ico svg { width: 74%; height: 74%; }
 .card p { margin: 0; color: var(--muted); }
 h3 { font-size: 13px; margin: 18px 4px 6px; display: flex; align-items: center; justify-content: space-between; }
 .group { background: var(--panel); border-radius: 10px; }
@@ -201,7 +202,9 @@ const S = {
   anyDeviceHelp: ["Only while the list of allowed devices is empty. Otherwise each new device waits for approval.",
     "Le dokler je seznam dovoljenih naprav prazen. Sicer vsaka nova naprava čaka na odobritev."],
   waiting: ["Waiting for approval", "Čakajo na odobritev"], allowed: ["Allowed devices", "Dovoljene naprave"], none: ["None", "Nobena"],
-  noWaiting: ["No device is waiting.", "Nobena naprava ne čaka."], allow: ["Allow", "Dovoli"], deny: ["Deny", "Zavrni"], remove: ["Remove", "Odstrani"],
+  noWaiting: ["No device is waiting.", "Nobena naprava ne čaka."], allow: ["Allow", "Dovoli"], deny: ["Reject", "Zavrni"], remove: ["Remove", "Odstrani"],
+  copyId: ["Copy ID", "Kopiraj ID"], lastSeen: ["Last seen %s", "Nazadnje %s"], notSeen: ["Not seen since the gateway started", "Ni se povezala od zagona prehoda"],
+  devicesFooter: ["A removed device has to be allowed again when it connects.", "Odstranjeno napravo moraš ob naslednji povezavi znova dovoliti."],
   removeAsk: ["Remove %s?", "Odstranim %s?"], addGateway: ["Add Provider", "Dodaj ponudnika"], search: ["Search", "Iskanje"],
   otherGateway: ["Other Anthropic-compatible provider", "Drug Anthropic-združljiv ponudnik"], gateway: ["Provider", "Ponudnik"], keySaved: ["API key (saved; enter to replace)", "Ključ API (shranjen; vpiši za zamenjavo)"],
   keyStoredShort: ["In the system's secret store; never shown", "V shrambi skrivnosti sistema; nikoli prikazan"],
@@ -263,8 +266,23 @@ function toggle(checked, onchange, disabled) {
   i.addEventListener("change", () => onchange(i.checked, i));
   return el("label", {class: "switch"}, i, el("span"));
 }
+// glyphNode: znak ali funkcija, ki vrne SVG (ikona Devices kot laptopcomputer.and.iphone na Macu).
+function glyphNode(glyph) { return typeof glyph === "function" ? glyph() : glyph; }
+
+function devicesGlyph() {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  const shape = (tag, attrs) => { const e = document.createElementNS(ns, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); svg.append(e); };
+  shape("rect", {x: 2.5, y: 5, width: 13, height: 9.5, rx: 1.5, fill: "none", stroke: "#fff", "stroke-width": 1.8});
+  shape("rect", {x: 0.5, y: 16, width: 17, height: 2, rx: 1, fill: "#fff"});
+  shape("rect", {x: 15.5, y: 8, width: 7, height: 12, rx: 1.6, fill: "#007aff", stroke: "#fff", "stroke-width": 1.8});
+  shape("rect", {x: 17.8, y: 17.2, width: 2.4, height: 0.9, rx: 0.45, fill: "#fff"});
+  return svg;
+}
+
 function card(color, glyph, title, desc) {
-  return el("div", {class: "card"}, el("div", {class: "ico", textContent: glyph, style: "background:" + color}), el("h1", {textContent: title}), el("p", {textContent: desc}));
+  return el("div", {class: "card"}, el("div", {class: "ico", style: "background:" + color}, glyphNode(glyph)), el("h1", {textContent: title}), el("p", {textContent: desc}));
 }
 
 function toast(text) {
@@ -450,9 +468,7 @@ const pages = {
       group(win ? row(t("startup"), toggle(st.installed, on => save(n1, () => api("PATCH", "/general", {startAtSignIn: on}))))
                 : row(t("startup"), value(st.installed ? t("installedYes") : t("startupHint")))),
       n1,
-      group(row(t("address"), field("address", g.address, "0.0.0.0")), row(t("port"), field("port", g.port, "", true)),
-        row(t("allowedClients"), field("allowedClients", g.allowedClients, "192.168.1.20, 192.168.1.21")),
-        row(labelSub(t("plainRemote"), t("plainRemoteHelp")), toggle(g.allowPlainRemote, v => save(n2, () => api("PATCH", "/general", {allowPlainRemote: v}))))),
+      group(row(t("address"), field("address", g.address, "0.0.0.0")), row(t("port"), field("port", g.port, "", true))),
       n2,
       section(t("token")),
       group(row(el("div", {class: "label", style: "min-width:0"}, line), buttons(showBtn,
@@ -480,29 +496,35 @@ const pages = {
           textContent: "MIT License", class: "link"}))),
     ];
   },
+  // devices: enako kot podokno Devices na Macu: vsaka naprava z žetonom in naslovi odjemalcev, čakajoče (Allow, Reject),
+  // dovoljene (ime, ID, zadnji stik; Copy ID, Remove).
   async devices() {
-    const d = await api("GET", "/devices");
-    const n = note();
+    const [d, g] = await Promise.all([api("GET", "/devices"), api("GET", "/general")]);
+    const n = note(), n2 = note(t("auto"));
     const act = (method, path, body) => save(n, async () => { await api(method, path, body); show("devices"); });
-    const id = x => el("div", {class: "label"}, el("div", {textContent: x.name || "—"}),
-      el("span", {class: "sub mono ellipsis", textContent: x.id, title: x.id}),
-      x.address ? el("div", {class: "sub", textContent: x.address + " · " + new Date(x.time).toLocaleString()}) : null);
-    const copyId = x => button(t("copy"), async () => { await navigator.clipboard.writeText(x.id); n.className = "note"; n.textContent = t("copied"); });
+    const when = x => new Date(x).toLocaleString();
+    const id = (x, sub) => el("div", {class: "label"}, el("div", {textContent: x.name || "—"}),
+      el("span", {class: "sub mono ellipsis", textContent: x.id, title: x.id}), el("div", {class: "sub", textContent: sub}));
+    const copyId = x => button(t("copyId"), async () => { await navigator.clipboard.writeText(x.id); n.className = "note"; n.textContent = t("copied"); });
+    const clients = el("input", {type: "text", value: g.allowedClients, placeholder: "192.168.1.20, 192.168.1.21"});
+    autosave(clients, n2, v => api("PATCH", "/general", {allowedClients: v}), r => t(r.restartRequired ? "restart" : "saved"));
     const waiting = d.pending.length
-      ? el("div", {class: "group hi"}, ...d.pending.map(x => row(id(x), buttons(
+      ? el("div", {class: "group hi"}, ...d.pending.map(x => row(id(x, x.address + " · " + when(x.time)), buttons(
           button(t("allow"), () => act("POST", "/devices", {id: x.id, name: x.name}), true),
           button(t("deny"), () => act("DELETE", "/devices/" + encodeURIComponent(x.id)))))))
       : group(row(el("span", {class: "label sub", textContent: t("noWaiting")})));
-    const g = await api("GET", "/general");
     return [
       card(...ICON.devices, t("devices"), t("devicesDesc")),
-      group(row(labelSub(t("anyDevice"), t("anyDeviceHelp")), toggle(g.allowAnyDevice, v => save(n, () => api("PATCH", "/general", {allowAnyDevice: v}))))),
+      group(row(labelSub(t("anyDevice"), t("anyDeviceHelp")), toggle(g.allowAnyDevice, v => save(n2, () => api("PATCH", "/general", {allowAnyDevice: v})))),
+        row(t("allowedClients"), clients),
+        row(labelSub(t("plainRemote"), t("plainRemoteHelp")), toggle(g.allowPlainRemote, v => save(n2, () => api("PATCH", "/general", {allowPlainRemote: v}))))),
+      n2,
       section(t("waiting")), waiting,
       section(t("allowed")),
-      group(d.devices.length ? d.devices.map(x => row(id(x), buttons(copyId(x),
+      group(d.devices.length ? d.devices.map(x => row(id(x, x.lastSeen ? t("lastSeen", when(x.lastSeen)) : t("notSeen")), buttons(copyId(x),
         button(t("remove"), () => { if (confirm(t("removeAsk", x.name || x.id))) act("DELETE", "/devices/" + encodeURIComponent(x.id)); }))))
         : row(el("span", {class: "label sub", textContent: t("none")}))),
-      n,
+      el("p", {class: "note", textContent: t("devicesFooter")}), n,
     ];
   },
 
@@ -662,7 +684,7 @@ const pages = {
 
 let current = "general", currentArg = "", gateways = [];
 // Ikone stranske vrstice (kot na Macu: barvna ploščica z znakom).
-const ICON = {general: ["#8e8e93", "⚙"], devices: ["#007aff", "⌘"], claude: ["#b8743c", ">_"], codex: ["#30b0c7", "</>"], grok: ["#5856d6", "✦"], copilot: ["#6e7781", "◎"], foundry: ["#0f6cbd", "◈"]};
+const ICON = {general: ["#8e8e93", "⚙"], devices: ["#007aff", devicesGlyph], claude: ["#b8743c", ">_"], codex: ["#30b0c7", "</>"], grok: ["#5856d6", "✦"], copilot: ["#6e7781", "◎"], foundry: ["#0f6cbd", "◈"]};
 const gwIcon = g => /openrouter\.ai/.test(g.baseURL) ? ["#af52de", "◈"] : ["#007aff", "▤"];
 let search = "";
 const PRESETS = {litellm: ["LiteLLM", "http://localhost:4000", true], openrouter: ["OpenRouter", "https://openrouter.ai/api", false], other: [null, "https://", false]};
@@ -670,7 +692,7 @@ const PRESETS = {litellm: ["LiteLLM", "http://localhost:4000", true], openrouter
 async function nav() {
   try { gateways = (await api("GET", "/providers")).providers; } catch (e) { gateways = []; }
   const item = (page, label, [color, glyph], arg) => el("button", {class: "item" + (current === page && currentArg === (arg || "") ? " sel" : ""),
-    onclick: () => show(page, arg)}, el("span", {class: "ico", textContent: glyph, style: "background:" + color}), label);
+    onclick: () => show(page, arg)}, el("span", {class: "ico", style: "background:" + color}, glyphNode(glyph)), label);
   const sel = current === "gateway" ? currentArg : "";
   const items = [
     ["general", t("general"), ICON.general],

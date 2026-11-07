@@ -143,6 +143,17 @@ public final class Router: Sendable {
         guard authorized(req) else {
             return (await error(401, "authentication_error", "Invalid or missing token", rid: rid, writer: writer), nil, nil)
         }
+        // Naprava (minigw 0.4.4+) z drugega računalnika: le dovoljena; neznana čaka na odobritev (kot minigw serve).
+        if let d = req.device, !RouterServer.isLoopback(req.peer) {
+            guard config.deviceAllowed(d.id) else {
+                Self.deviceLog.addPending(id: d.id, name: d.name, address: req.peer)
+                Self.log.info("\(rid, privacy: .public) refused unknown device \(d.name, privacy: .public) \(d.id, privacy: .public)")
+                return (await error(403, "permission_error",
+                                    "Device “\(d.name)” is not allowed on this gateway: allow it in Mini Gateway → Settings → Devices (compare the ID \(d.id)), or run minigw gw devices allow \(d.id)",
+                                    rid: rid, writer: writer), nil, nil)
+            }
+            Self.deviceLog.seen(d.id)
+        }
 
         switch (req.method, req.path) {
         case ("GET", "/v1/models"):

@@ -20,7 +20,7 @@ Every control of the Mac app's Settings window (Sources/MiniGateway/Settings.swi
 | Provider · Models: search, N of M enabled, Enable All, Disable All, refresh, a switch per model, context size | same | `GET/POST providers/{name}/models` | Enable All = all, also future models. |
 | Provider · Aliases (advanced) | same | `PATCH providers/{name} {aliases}` | `alias = upstream ID, window` per line; when set they define the models. |
 | Sidebar + / − for providers | same | `POST providers`, `DELETE providers/{name}` | |
-| Siri AI · Devices (Siri per device) | Devices: allowed, waiting (Allow/Deny), Remove, Allow any device | `devices`, `general.allowAnyDevice` | minigw serve has an allow-list; the Mac admits every device with the token. |
+| Devices: allow any device, allowed clients (IP), waiting (Allow/Reject), allowed (Copy ID, Remove, last seen) | same | `devices`, `general.allowAnyDevice`, `general.allowedClients` | Same pane and approval on both; waiting devices also in the menu bar (Mac) and tray (Windows). Siri per device stays in the Mac's Siri pane; unencrypted connections: Mac "from other Macs", Go "from other computers". |
 | Claude CLI · Enabled | same | `agents/claude.enabled` | |
 | Claude CLI · Executable, Choose…, detected path and version | Executable, Find, detected path and version | `agents/claude.path`, `.exe`, `.version` | A browser cannot pick files: the path is typed, Find auto-detects. |
 | Claude CLI · Allowed folders (+/−) | same | `agents/claude.folders` | Absolute paths, not near the config folder; also `--add-dir` and the sandbox. |
