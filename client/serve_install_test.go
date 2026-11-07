@@ -276,7 +276,10 @@ func TestServeInstallWithMSI(t *testing.T) {
 	o1, o2, o3 := msiDir, fetchRelease, runCmd
 	t.Cleanup(func() { msiDir, fetchRelease, runCmd = o1, o2, o3 })
 	msiDir = func() string { return `C:\Users\ana\AppData\Local\Programs\Mini Gateway\` }
-	fetchRelease = func(asset, dst string) error { got = append(got, asset); return os.WriteFile(dst, []byte("msi"), 0o600) }
+	fetchRelease = func(asset, dst string) error {
+		got = append(got, asset)
+		return os.WriteFile(dst, []byte("msi"), 0o600)
+	}
 	runCmd = func(name string, args ...string) error {
 		calls = append(calls, name+" "+args[0]+" "+strings.Join(args[2:], " "))
 		if b, _ := os.ReadFile(args[1]); string(b) != "msi" {

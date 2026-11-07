@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Claude CLI on the Mac no longer loads a folder's `.claude/settings*.json` by default** (setting sources empty, as on
+  `minigw serve`): an agent with local tools could otherwise write hooks there that the next session runs outside the
+  sandbox. If you never changed "Setting sources", it changes on its own; a value you set yourself stays.
+- **Scratch folder rules** (Settings, `minigw gw`, admin API, Mac and `minigw serve`): not the disk root, your home folder
+  or a folder above it, a temporary folder, or a folder inside or around an allowed folder of the agents; the Claude
+  agent sandbox never reads Scratch, also on an external disk. On the Mac a move waits until no minigw session runs.
 - **Several gateways at once (profiles, #17):** `minigw connect <host> --name <profile>` keeps every gateway, for
   example the Mac mini and a Windows gateway side by side. Models of other profiles are `<model>@<profile>`; the
   default profile's also appear without a suffix. An unreachable gateway is left out of the list, and `minigw status`
