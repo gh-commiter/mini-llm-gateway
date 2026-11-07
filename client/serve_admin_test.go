@@ -430,3 +430,77 @@ func TestAdminSettingsFields(t *testing.T) {
 		t.Fatalf("startAtSignIn off Windows: %d %s", st, b)
 	}
 }
+
+// Parnost z Macom: dovoljeni odjemalci, navaden HTTP od drugod, izklop Claude CLI, dovoljene mape, lokalna orodja.
+func TestParityGeneralAndClaude(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake claude is a shell script")
+	}
+	work := t.TempDir()
+	s, _, base := liveServer(t, nil)
+	admin := func(method, path, body string) (int, string) {
+		return adminNoise(t, s, base, s.admin, method, path, body)
+	}
+
+	// Dovoljeni odjemalci in navaden HTTP: pipe ni loopback (naslov »pipe«).
+	plain := func() string {
+		l := pipeListener{make(chan net.Conn, 1)}
+		go s.serve(l)
+		defer close(l.ch)
+		a, b := net.Pipe()
+		l.ch <- b
+		a.SetDeadline(time.Now().Add(5 * time.Second))
+		go a.Write([]byte("GET /health/live HTTP/1.1\r\nHost: x\r\n\r\n"))
+		r, _ := io.ReadAll(a)
+		return string(r)
+	}
+	if r := plain(); !strings.HasPrefix(r, "HTTP/1.1 426") {
+		t.Fatalf("plain remote off: %q", r)
+	}
+	if st, b := admin("PATCH", adminPrefix+"/general", `{"allowPlainRemote":true,"allowedClients":"192.168.1.7, 10.0.0.2"}`); st != 200 || !strings.Contains(b, `"allowPlainRemote":true`) {
+		t.Fatalf("general: %d %s", st, b)
+	}
+	if r := plain(); r != "" { // »pipe« ni na seznamu dovoljenih: povezava zaprta
+		t.Fatalf("client not in allowedClients: %q", r)
+	}
+	if !s.conf().clientAllowed("10.0.0.2") || s.conf().clientAllowed("10.0.0.3") || !(serveConfig{}).clientAllowed("1.2.3.4") {
+		t.Fatal("clientAllowed")
+	}
+	admin("PATCH", adminPrefix+"/general", `{"allowedClients":""}`)
+	if r := plain(); !strings.HasPrefix(r, "HTTP/1.1 200") {
+		t.Fatalf("plain remote on: %q", r)
+	}
+	if st, _ := admin("PATCH", adminPrefix+"/general", `{"allowedClients":"not-an-ip"}`); st != 400 {
+		t.Fatal("bad IP accepted")
+	}
+	if st, b := admin("PATCH", adminPrefix+"/general", `{"scratch":"`+filepath.Join(work, "scratch")+`"}`); st != 200 || s.conf().Scratch != filepath.Join(work, "scratch") {
+		t.Fatalf("scratch: %d %s", st, b)
+	}
+
+	// Claude CLI: izklop skrije modele; mape, lokalna orodja in izjeme v argumentih.
+	if st, _ := admin("PATCH", adminPrefix+"/agents/claude", `{"enabled":false}`); st != 200 {
+		t.Fatal("disable")
+	}
+	if _, b := adminReq(t, base, strings.TrimPrefix(base, "http://"), "tok", "GET", "/v1/models", ""); strings.Contains(b, "claude-cli-") {
+		t.Fatalf("claude-cli listed while off: %s", b)
+	}
+	st, b := admin("PATCH", adminPrefix+"/agents/claude", `{"enabled":true,"folders":"`+work+`","allowLocalTools":true,"disabledTools":["WebSearch"],"settingSources":"project"}`)
+	if st != 200 || !strings.Contains(b, `"allowLocalTools":true`) || !strings.Contains(b, `"folders":"`) {
+		t.Fatalf("claude: %d %s", st, b)
+	}
+	args := strings.Join(s.agentArgs("/copy"), " ")
+	realWork, _ := filepath.EvalSymlinks(work)
+	for _, want := range []string{"--tools default", "--permission-mode acceptEdits", "WebSearch", "--add-dir " + realWork, "Read(" + ruleAbs(realWork) + "/**)", `"allowWrite":["/copy","` + realWork + `"]`} {
+		if !strings.Contains(args, want) {
+			t.Fatalf("agent args miss %q: %s", want, args)
+		}
+	}
+	for _, bad := range []string{`{"folders":"relative/dir"}`, `{"permissionMode":"bypassPermissions"}`, `{"settingSources":"project;rm"}`, `{"disabledTools":["Bad Tool"]}`} {
+		if st, _ := admin("PATCH", adminPrefix+"/agents/claude", bad); st != 400 {
+			t.Fatalf("accepted %s", bad)
+		}
+	}
+	if st, b := admin("GET", adminPrefix+"/status", ""); st != 200 || !strings.Contains(b, `"build"`) && buildCommit() != "" {
+		t.Fatalf("status build: %s", b)
+	}
+}

@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -114,26 +115,56 @@ func ruleAbs(p string) string {
 // sandbox Claude Code (kot ClaudeCLI.agentArgs): Bash ne bere domače mape in piše le v kopijo; z Bash je obvezen.
 func (s *server) agentArgs(dir string) []string {
 	c := s.conf()
-	var tools, allowed []string
-	for _, t := range strings.Split(c.Tools, ",") {
-		switch t = strings.TrimSpace(t); {
-		case t == "":
-			continue
-		case pathTools[t]:
-			allowed = append(allowed, t+"(./**)")
-		case t != "Bash" || runtime.GOOS == "windows": // Bash v sandboxu dovoli autoAllowBashIfSandboxed
-			allowed = append(allowed, t)
+	dirs := []string{dir} // delovna mapa in dovoljene mape (kot allowedRoots na Macu)
+	for _, f := range c.AllowedFolders {
+		if f != dir {
+			dirs = append(dirs, f)
 		}
-		tools = append(tools, t)
+	}
+	scope := func(t string) []string { // orodje z dostopom do datotek le v teh mapah
+		out := []string{t + "(./**)"}
+		for _, d := range dirs[1:] {
+			out = append(out, t+"("+ruleAbs(d)+"/**)")
+		}
+		return out
 	}
 	cfg := ruleAbs(s.cfgDir) + "/**"
-	args := []string{"--tools", strings.Join(tools, ","), "--allowedTools", strings.Join(allowed, ","),
-		"--disallowedTools", "Read(" + cfg + "),Edit(" + cfg + "),Write(" + cfg + ")", "--permission-mode", c.PermissionMode}
+	deny := []string{"Read(" + cfg + ")", "Edit(" + cfg + ")", "Write(" + cfg + ")"}
+	var args []string
+	if c.AllowLocalTools { // vsa orodja Claude Code razen izjem; datoteke le v mapah, Bash v sandboxu (kot na Macu)
+		var allowed []string
+		for t := range pathTools {
+			if !slices.Contains(c.DisabledTools, t) {
+				allowed = append(allowed, scope(t)...)
+			}
+		}
+		slices.Sort(allowed)
+		args = []string{"--tools", "default", "--allowedTools", strings.Join(allowed, ","), "--permission-mode", "acceptEdits",
+			"--disallowedTools", strings.Join(append(deny, c.DisabledTools...), ",")}
+	} else {
+		var tools, allowed []string
+		for _, t := range strings.Split(c.Tools, ",") {
+			switch t = strings.TrimSpace(t); {
+			case t == "":
+				continue
+			case pathTools[t]:
+				allowed = append(allowed, scope(t)...)
+			case t != "Bash" || runtime.GOOS == "windows": // Bash v sandboxu dovoli autoAllowBashIfSandboxed
+				allowed = append(allowed, t)
+			}
+			tools = append(tools, t)
+		}
+		args = []string{"--tools", strings.Join(tools, ","), "--allowedTools", strings.Join(allowed, ","),
+			"--disallowedTools", strings.Join(deny, ","), "--permission-mode", c.PermissionMode}
+	}
+	for _, d := range dirs[1:] {
+		args = append(args, "--add-dir", d)
+	}
 	if runtime.GOOS != "windows" {
 		settings, _ := json.Marshal(map[string]any{"sandbox": map[string]any{
-			"enabled": true, "failIfUnavailable": hasBash(c.Tools), "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
+			"enabled": true, "failIfUnavailable": hasBash(c.Tools) || c.AllowLocalTools, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
 			"network":    map[string]any{"allowedDomains": []string{"*"}},
-			"filesystem": map[string]any{"denyRead": []string{"~", s.cfgDir}, "allowRead": []string{dir}, "allowWrite": []string{dir}},
+			"filesystem": map[string]any{"denyRead": []string{"~", s.cfgDir}, "allowRead": dirs, "allowWrite": dirs},
 		}})
 		args = append(args, "--settings", string(settings))
 	}
@@ -179,7 +210,7 @@ func (t *tailBuffer) String() string {
 
 func (s *server) modelList() map[string]any {
 	data := append([]map[string]any{}, s.gatewayModelList()...)
-	if len(s.claudeExe()) > 0 {
+	if len(s.claudeExe()) > 0 && !s.conf().ClaudeDisabled {
 		for _, m := range cliFamilies[:3] {
 			data = append(data, map[string]any{"type": "model", "id": cliAgentPrefix + m,
 				"display_name": strings.ToUpper(m[:1]) + m[1:] + " · Claude CLI",
@@ -420,6 +451,9 @@ func (s *server) messages(w http.ResponseWriter, r *req) (int, string) {
 	if !ok {
 		return writeError(w, r.rid, 404, "Unknown model: "+model), model
 	}
+	if s.conf().ClaudeDisabled {
+		return writeError(w, r.rid, 404, "Claude CLI is turned off on this router (settings → Claude CLI)"), model
+	}
 	if strings.HasSuffix(r.URL.Path, "/count_tokens") {
 		return writeJSON(w, r.rid, 200, map[string]int{"input_tokens": len(r.body) / 4}), model
 	}
@@ -443,7 +477,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	}
 	last, history := all[len(all)-1], all[:len(all)-1]
 	args := []string{"-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
-		"--model", cliModel, "--strict-mcp-config", "--setting-sources", ""} // hooki in nastavitve iz mape odjemalca ne tečejo tukaj
+		"--model", cliModel, "--strict-mcp-config", "--setting-sources", s.conf().SettingSources} // privzeto prazno: hooki iz mape odjemalca ne tečejo
 	prompt, session, scope, sessionID := last.text, r.h("x-claude-mini-session"), "", ""
 	var dir, extra string // extra: --append-system-prompt-file ali --system-prompt-file
 	extraFlag := "--append-system-prompt-file"

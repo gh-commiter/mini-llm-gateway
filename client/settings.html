@@ -67,6 +67,14 @@ button.btn.primary { background: var(--accent); color: #fff; }
 button.btn:disabled { opacity: .5; cursor: default; }
 h3 button.btn { font-weight: 400; }
 input.wide { width: 100%; max-width: none; }
+select { font: inherit; padding: 3px 8px; border: 1px solid var(--inputline); border-radius: 6px; background: var(--input); color: var(--text); }
+a.link { color: var(--accent); text-decoration: none; }
+a.btn { text-decoration: none; text-align: center; display: inline-block; }
+.row.selected { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.row.plusminus { min-height: 30px; gap: 2px; }
+.row.plusminus button { border: 0; background: none; color: var(--text); font-size: 16px; width: 24px; cursor: pointer; }
+.row.plusminus button:disabled { color: var(--muted); cursor: default; }
+.row.plusminus .divider { width: 1px; height: 14px; background: var(--inputline); }
 .switch { position: relative; width: 38px; height: 22px; flex: none; }
 .switch input { opacity: 0; width: 0; height: 0; position: absolute; }
 .switch span { position: absolute; inset: 0; background: var(--btn); border-radius: 11px; cursor: pointer; transition: background .15s; }
@@ -108,6 +116,30 @@ const SL = (navigator.language || "").toLowerCase().startsWith("sl");
 document.documentElement.lang = SL ? "sl" : "en";
 const S = {
   general: ["General", "Splošno"], devices: ["Devices", "Naprave"], gateways: ["Gateways", "Prehodi"], claude: ["Claude CLI", "Claude CLI"],
+  about: ["About", "O aplikaciji"], license: ["License", "Licenca"], copyToken: ["Copy Token", "Kopiraj žeton"],
+  allowedClients: ["Allowed clients (IP; empty = all)", "Dovoljeni odjemalci (IP; prazno = vsi)"],
+  plainRemote: ["Allow unencrypted connections from other computers", "Dovoli nešifrirane povezave z drugih računalnikov"],
+  plainRemoteHelp: ["minigw always encrypts. Turn on only for other clients on a trusted network; they have no device key, so they also need “any device” under Devices.",
+    "minigw vedno šifrira. Vklopi le za druge odjemalce v zaupanja vrednem omrežju; nimajo ključa naprave, zato potrebujejo še »vsaka naprava« pod Naprave."],
+  scratch: ["Scratch folder", "Mapa za začasne datoteke"], default: ["Default", "Privzeto"],
+  scratchHint: ["Temporary files of agents: synced copies, conversations, attachments. A new folder applies to new sessions; existing copies stay where they are.",
+    "Začasne datoteke agentov: sinhronizirane kopije, pogovori, priponke. Nova mapa velja za nove seje; obstoječe kopije ostanejo, kjer so."],
+  installedYes: ["minigw serve install", "minigw serve install"], enabled: ["Enabled", "Vklopljeno"],
+  detectedAt: ["Detected: %s · %s", "Najdeno: %s · %s"], allowedFolders: ["Allowed folders", "Dovoljene mape"], addFolder: ["Add Folder", "Dodaj mapo"],
+  allowedFoldersHint: ["Agents work only in the session's folder and these folders. Type a full path and press +.",
+    "Agenti delajo le v mapi seje in v teh mapah. Vpiši celo pot in pritisni +."],
+  localTools: ["Allow local tools", "Dovoli lokalna orodja"],
+  localToolsHelp: ["Agents get every Claude Code tool, but files only in the allowed folders: commands run in Claude Code's sandbox.",
+    "Agenti dobijo vsa orodja Claude Code, a datoteke le v dovoljenih mapah: ukazi tečejo v sandboxu Claude Code."],
+  localToolsWin: ["Every Claude Code tool, including commands: on Windows this needs “Allow commands without a sandbox”.",
+    "Vsa orodja Claude Code, tudi ukazi: na Windows to zahteva »Dovoli ukaze brez sandboxa«."],
+  permissionMode: ["Permission mode", "Način dovoljenj"], settingSources: ["Setting sources", "Viri nastavitev"],
+  settingSourcesHelp: ["Empty = none. project/local load settings and hooks from the client's folder, which then run on this computer.",
+    "Prazno = brez. project/local naložita nastavitve in hooke iz mape odjemalca, ki tedaj tečejo na tem računalniku."],
+  noTools: ["No tools found (is claude installed and signed in?)", "Ni najdenih orodij (je claude nameščen in prijavljen?)"],
+  cliTool: ["Command-line tool", "Ukaz v terminalu"], installedAt: ["Installed: %s", "Nameščeno: %s"], download: ["Download…", "Prenos …"],
+  cliHint: ["minigw runs Claude Code through a router, e.g. minigw --model claude-cli-opus; minigw serve install installs it here, Download gets it for another computer.",
+    "minigw zažene Claude Code prek routerja, npr. minigw --model claude-cli-opus; minigw serve install ga namesti tukaj, Prenos ga prenese za drug računalnik."],
   generalDesc: ["Address, port and access token of the router, and its state.", "Naslov, vrata in žeton routerja ter njegovo stanje."],
   devicesDesc: ["Computers that may use this router. Compare a waiting device's ID with the one on the client before you allow it.",
     "Računalniki, ki smejo uporabljati ta router. ID čakajoče naprave pred odobritvijo primerjaj s tistim na odjemalcu."],
@@ -125,6 +157,9 @@ const S = {
   copied: ["Copied.", "Kopirano."], connectHint: ["Run this line on each client.", "To vrstico zaženi na vsakem odjemalcu."],
   rotateAsk: ["Make a new token? Every client must connect again with the new line.", "Naredim nov žeton? Vsak odjemalec se mora znova povezati z novo vrstico."],
   rotated: ["New token: run the new line on each client.", "Nov žeton: novo vrstico zaženi na vsakem odjemalcu."],
+  anyDevice: ["Allow any device with the token", "Dovoli vsako napravo z žetonom"],
+  anyDeviceHelp: ["Only while the list of allowed devices is empty. Otherwise each new device waits for approval.",
+    "Le dokler je seznam dovoljenih naprav prazen. Sicer vsaka nova naprava čaka na odobritev."],
   waiting: ["Waiting for approval", "Čakajo na odobritev"], allowed: ["Allowed devices", "Dovoljene naprave"], none: ["None", "Nobena"],
   noWaiting: ["No device is waiting.", "Nobena naprava ne čaka."], allow: ["Allow", "Dovoli"], deny: ["Deny", "Zavrni"], remove: ["Remove", "Odstrani"],
   removeAsk: ["Remove %s?", "Odstranim %s?"], addGateway: ["Add Gateway", "Dodaj prehod"], search: ["Search", "Iskanje"],
@@ -211,48 +246,79 @@ function autosave(input, n, fn, ok) {
   input.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(() => save(n, () => fn(input.value.trim()), ok), 800); });
 }
 
+// folderList: seznam map s + / − (kot »Allowed folders« na Macu). Brskalnik ne more izbrati mape: pot se vpiše.
+function folderList(csv, send, hint, win) {
+  const list = (csv || "").split(",").map(x => x.trim()).filter(Boolean);
+  let sel = null;
+  const n = note(hint);
+  const box = el("div", {class: "group"});
+  const input = el("input", {type: "text", class: "left wide", placeholder: win ? "C:\\Users\\you\\Projects" : "/home/you/projects"});
+  const commit = next => save(n, async () => { await send(next.join(",")); list.splice(0, list.length, ...next); sel = null; render(); }, () => hint);
+  const render = () => box.replaceChildren(
+    ...list.map(f => { const r = row(el("span", {class: "label mono", textContent: "📁 " + f}));
+      r.classList.toggle("selected", f === sel); r.addEventListener("click", () => { sel = sel === f ? null : f; render(); }); return r; }),
+    row(input),
+    el("div", {class: "row plusminus"},
+      el("button", {textContent: "+", title: t("addFolder"), onclick: () => { const v = input.value.trim(); if (v && !list.includes(v)) { commit([...list, v]); input.value = ""; } }}),
+      el("span", {class: "divider"}),
+      el("button", {textContent: "−", title: t("remove"), disabled: !sel, onclick: () => commit(list.filter(f => f !== sel))})));
+  input.addEventListener("keydown", e => { if (e.key === "Enter") box.querySelector(".plusminus button").click(); });
+  render();
+  return el("div", {}, box, n);
+}
+
 // --- panoji ---
 
 const pages = {
   async general() {
     const [st, g, d] = await Promise.all([api("GET", "/status"), api("GET", "/general"), api("GET", "/devices")]);
     const win = st.os === "windows";
-    const n1 = note(t("auto")), n2 = note(), n3 = note(t("connectHint"));
-    const port = el("input", {type: "number", value: g.port, min: 1, max: 65535});
-    const addr = el("input", {type: "text", value: g.address, placeholder: "0.0.0.0"});
-    autosave(port, n2, v => api("PATCH", "/general", {port: Number(v)}), r => t(r.restartRequired ? "restart" : "saved"));
-    autosave(addr, n2, v => api("PATCH", "/general", {address: v}), r => t(r.restartRequired ? "restart" : "saved"));
+    const n1 = note(), n2 = note(t("auto")), n3 = note(), n4 = note(t("scratchHint"));
+    const field = (key, value, placeholder, number) => {
+      const i = el("input", {type: number ? "number" : "text", value, placeholder: placeholder || ""});
+      autosave(i, n2, v => api("PATCH", "/general", {[key]: number ? Number(v) : v}), r => t(r.restartRequired ? "restart" : "saved"));
+      return i;
+    };
     let shown = false;
     const line = value("•".repeat(28), true);
     const showBtn = button(t("show"), () => { shown = !shown; line.textContent = shown ? g.connect : "•".repeat(28); showBtn.textContent = t(shown ? "hide" : "show"); });
+    const scratch = el("input", {type: "text", class: "left wide", value: g.scratch});
+    autosave(scratch, n4, v => api("PATCH", "/general", {scratch: v}));
     return [
-      card("linear-gradient(#9a9aa0,#6e6e73)", "⚙", t("general"), t("generalDesc")),
-      section(t("status")),
-      group(
-        row(t("router"), el("span", {class: "value"}, el("span", {class: "dot" + (st.running ? " ok" : "")}), t("runningOn", st.port))),
-        row(t("devices"), value(t("devicesN", st.devices, d.pending.length))),
-        row(t("gateways"), value(String(st.gateways.length))),
-        row(t("version"), value(st.version)),
-        row(t("installed"), value(st.installDir || t("notInstalled"), !!st.installDir)),
-        win ? row(t("tray"), value(t(st.tray ? "trayOn" : "trayOff"))) : null),
-      el("div", {style: "height:12px"}),
+      card(...ICON.general, t("general"), t("generalDesc")),
       group(win ? row(t("startup"), toggle(st.installed, on => save(n1, () => api("PATCH", "/general", {startAtSignIn: on}))))
-                : row(t("startup"), value(st.installed ? "✓" : t("startupHint")))),
+                : row(t("startup"), value(st.installed ? t("installedYes") : t("startupHint")))),
       n1,
-      section(t("network")),
-      group(row(t("address"), addr), row(t("port"), port)), n2,
+      group(row(t("address"), field("address", g.address, "0.0.0.0")), row(t("port"), field("port", g.port, "", true)),
+        row(t("allowedClients"), field("allowedClients", g.allowedClients, "192.168.1.20, 192.168.1.21")),
+        row(labelSub(t("plainRemote"), t("plainRemoteHelp")), toggle(g.allowPlainRemote, v => save(n2, () => api("PATCH", "/general", {allowPlainRemote: v}))))),
+      n2,
       section(t("token")),
       group(row(el("div", {class: "label", style: "min-width:0"}, line), buttons(showBtn,
-        button(t("copy"), async () => { await navigator.clipboard.writeText(g.connect); n3.className = "note"; n3.textContent = t("copied"); }),
+        button(t("copyToken"), async () => { await navigator.clipboard.writeText(g.connect); n3.className = "note"; n3.textContent = t("copied"); }),
         button(t("newToken"), async () => {
           if (!confirm(t("rotateAsk"))) return;
           const r = await save(n3, () => api("POST", "/general/token"), () => t("rotated"));
           if (r) { g.connect = r.connect; if (shown) line.textContent = r.connect; }
         })))),
       n3,
+      section(t("scratch")),
+      group(row(scratch), el("div", {class: "row", style: "justify-content:flex-end"}, buttons(
+        button(t("default"), () => save(n4, async () => { const r = await api("PATCH", "/general", {scratch: ""}); scratch.value = r.scratch; }))))),
+      n4,
+      section(t("status")),
+      group(
+        row(t("router"), el("span", {class: "value"}, el("span", {class: "dot" + (st.running ? " ok" : "")}), t("runningOn", st.port))),
+        row(t("devices"), value(t("devicesN", st.devices, d.pending.length))),
+        row(t("gateways"), value(String(st.gateways.length))),
+        row(t("installed"), value(st.installDir || t("notInstalled"), !!st.installDir)),
+        win ? row(t("tray"), value(t(st.tray ? "trayOn" : "trayOff"))) : null),
+      section(t("about")),
+      group(row(t("version"), value(st.version + (st.build ? " (" + st.build + ")" : ""))),
+        row(t("license"), el("a", {href: "https://github.com/gh-commiter/mini-llm-gateway/blob/main/LICENSE", target: "_blank", rel: "noopener noreferrer",
+          textContent: "MIT License", class: "link"}))),
     ];
   },
-
   async devices() {
     const d = await api("GET", "/devices");
     const n = note();
@@ -266,8 +332,10 @@ const pages = {
           button(t("allow"), () => act("POST", "/devices", {id: x.id, name: x.name}), true),
           button(t("deny"), () => act("DELETE", "/devices/" + encodeURIComponent(x.id)))))))
       : group(row(el("span", {class: "label sub", textContent: t("noWaiting")})));
+    const g = await api("GET", "/general");
     return [
-      card("linear-gradient(#5ac8fa,#007aff)", "⌘", t("devices"), t("devicesDesc")),
+      card(...ICON.devices, t("devices"), t("devicesDesc")),
+      group(row(labelSub(t("anyDevice"), t("anyDeviceHelp")), toggle(g.allowAnyDevice, v => save(n, () => api("PATCH", "/general", {allowAnyDevice: v}))))),
       section(t("waiting")), waiting,
       section(t("allowed")),
       group(d.devices.length ? d.devices.map(x => row(id(x), buttons(copyId(x),
@@ -345,15 +413,16 @@ const pages = {
   async claude() {
     const [c, st] = await Promise.all([api("GET", "/agents/claude"), api("GET", "/status")]);
     const win = st.os === "windows";
-    const n1 = note(), n2 = note(), n3 = note(t("folderHint"));
+    const n0 = note(), n1 = note(), n2 = note(), n3 = note(t("folderHint")), n4 = note(t("cliHint"));
+    const patch = body => api("PATCH", "/agents/claude", body);
     const on = new Set((c.tools || "").split(",").filter(Boolean));
     const path = el("input", {type: "text", value: c.path, placeholder: c.exe || (win ? "C:\\Users\\you\\.local\\bin\\claude.exe" : "/usr/local/bin/claude")});
-    const status = el("span", {class: "value"});
+    const status = el("span", {class: "sub"});
     const showStatus = x => status.replaceChildren(el("span", {class: "dot" + (x.found ? " ok" : "")}),
-      x.found ? t("detected", x.version || "claude", x.exe || "") : t("notFound"));
+      x.found ? (x.path ? (x.version || "claude") : t("detectedAt", x.exe || "", x.version || "")) : t("notFound"));
     showStatus(c);
-    autosave(path, n1, async v => showStatus(await api("PATCH", "/agents/claude", {path: v})));
-    const sendTools = async () => { const r = await api("PATCH", "/agents/claude", {tools: [...on].join(",")}); showStatus(r); };
+    autosave(path, n1, async v => showStatus(await patch({path: v})));
+    const sendTools = async () => showStatus(await patch({tools: [...on].join(",")}));
     const toolRow = ([name, en, sl], disabled) => row(labelSub(name, SL ? sl : en), toggle(on.has(name), (v, i) => save(n2, async () => {
       v ? on.add(name) : on.delete(name);
       try { await sendTools(); } catch (e) { v ? on.delete(name) : on.add(name); i.checked = !v; throw e; }
@@ -361,25 +430,59 @@ const pages = {
     const bulk = v => save(n2, async () => { for (const [n] of TOOLS) v ? on.add(n) : on.delete(n); await sendTools(); show("claude"); });
     const cmdLocked = win && !c.allowUnsandboxedBash;
     const folder = el("input", {type: "text", class: "left wide", value: c.folder, placeholder: win ? "C:\\Users\\you\\Projects" : "/home/you/projects"});
-    autosave(folder, n3, v => api("PATCH", "/agents/claude", {folder: v}));
+    autosave(folder, n3, v => patch({folder: v}));
+    const sources = el("input", {type: "text", value: c.settingSources, placeholder: t("none")});
+    autosave(sources, n2, v => patch({settingSources: v}));
+    const mode = el("select", {}, ...["dontAsk", "acceptEdits", "auto", "plan"].map(m => el("option", {value: m, textContent: m, selected: c.permissionMode === m})));
+    mode.addEventListener("change", () => save(n2, () => patch({permissionMode: mode.value})));
+
+    // Z »Allow local tools« ima agent vsa orodja Claude Code razen izjem (tabela kot na Macu); sicer izbrana orodja.
+    let toolsPart;
+    if (c.allowLocalTools) {
+      const list = group(row(el("span", {class: "label sub", textContent: t("loading")})));
+      const off = new Set(c.disabledTools || []);
+      api("GET", "/agents/claude/tools").then(r => {
+        const all = [...new Set([...r.tools, ...off])].sort();
+        const send = () => patch({disabledTools: [...off]});
+        list.replaceChildren(...(all.length ? all.map(name => row(name, toggle(!off.has(name), (v, i) => save(n2, async () => {
+          v ? off.delete(name) : off.add(name);
+          try { await send(); } catch (e) { v ? off.add(name) : off.delete(name); i.checked = !v; throw e; }
+        })))) : [row(el("span", {class: "label sub", textContent: t("noTools")}))]));
+        list.bulk = v => save(n2, async () => { off.clear(); if (!v) all.forEach(x => off.add(x)); await send(); show("claude"); });
+      }, e => list.replaceChildren(row(el("span", {class: "label", textContent: e.message}))));
+      toolsPart = [section(t("tools"), button(t("enableAll"), () => list.bulk && list.bulk(true)), button(t("disableAll"), () => list.bulk && list.bulk(false))), list];
+    } else {
+      toolsPart = [
+        section(t("tools"), button(t("enableAll"), () => bulk(true)), button(t("disableAll"), () => bulk(false))),
+        group(TOOLS.map(x => toolRow(x, false))),
+        section(t("commands")),
+        group(win ? row(labelSub(t("unsandboxed"), null), toggle(c.allowUnsandboxedBash, v => save(n2, async () => {
+            const body = {allowUnsandboxedBash: v};
+            if (!v) { for (const [n] of COMMANDS) on.delete(n); body.tools = [...on].join(","); }
+            await patch(body); show("claude");
+          }))) : null,
+          win ? row(el("div", {class: "label warn", textContent: t("unsandboxedWarn")})) : row(el("div", {class: "label sub", textContent: t("sandboxNote")})),
+          COMMANDS.filter(x => win || x[0] !== "PowerShell").map(x => toolRow(x, cmdLocked))),
+      ];
+    }
     return [
-      card("linear-gradient(#d4915a,#a8632d)", ">_", t("claude"), t("claudeDesc")),
-      group(row(labelSub(t("status")), status),
-        row(t("path"), path, button(t("find"), () => save(n1, async () => { path.value = ""; showStatus(await api("PATCH", "/agents/claude", {path: ""})); })))),
-      n1,
-      section(t("tools"), button(t("enableAll"), () => bulk(true)), button(t("disableAll"), () => bulk(false))),
-      group(TOOLS.map(x => toolRow(x, false))),
-      section(t("commands")),
-      group(win ? row(labelSub(t("unsandboxed"), null), toggle(c.allowUnsandboxedBash, v => save(n2, async () => {
-          const body = {allowUnsandboxedBash: v};
-          if (!v) { for (const [n] of COMMANDS) on.delete(n); body.tools = [...on].join(","); }
-          await api("PATCH", "/agents/claude", body); show("claude");
-        }))) : null,
-        win ? row(el("div", {class: "label warn", textContent: t("unsandboxedWarn")})) : row(el("div", {class: "label sub", textContent: t("sandboxNote")})),
-        COMMANDS.filter(x => win || x[0] !== "PowerShell").map(x => toolRow(x, cmdLocked))),
+      card(...ICON.claude, t("claude"), t("claudeDesc")),
+      group(row(t("enabled"), toggle(c.enabled, v => save(n0, () => patch({enabled: v}))))), n0,
+      group(row(labelSub(t("path")), path, button(t("find"), () => save(n1, async () => { path.value = ""; showStatus(await patch({path: ""})); })))),
+      el("div", {class: "note"}, status), n1,
+      section(t("allowedFolders")), folderList(c.folders, v => patch({folders: v}), t("allowedFoldersHint"), win),
+      el("div", {style: "height:12px"}),
+      group(row(labelSub(t("localTools"), win ? t("localToolsWin") : t("localToolsHelp")), toggle(c.allowLocalTools, v => save(n2, async () => { await patch({allowLocalTools: v}); show("claude"); }))),
+        c.allowLocalTools ? null : row(t("permissionMode"), mode),
+        row(labelSub(t("settingSources"), t("settingSourcesHelp")), sources)),
       n2,
-      section(t("folder")),
-      group(row(folder)), n3,
+      ...toolsPart,
+      section(t("folder")), group(row(folder)), n3,
+      section(t("cliTool")),
+      group(row(labelSub("minigw", st.installDir ? t("installedAt", st.installDir) : t("notInstalled")),
+        buttons(el("a", {class: "btn", href: "https://github.com/gh-commiter/mini-llm-gateway/releases/latest", target: "_blank", rel: "noopener noreferrer",
+          textContent: t("download")})))),
+      n4,
     ];
   },
 };

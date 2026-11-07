@@ -4,6 +4,7 @@ package main
 // admin.secret. adminDo služi HTTP in minigw router brez tekočega routerja (spremeni le serve.json), zato ena koda.
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -20,6 +21,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
@@ -53,25 +55,36 @@ type apiGateway struct {
 }
 
 type apiClaude struct {
-	Path                 string `json:"path"` // prazno = iz PATH
-	Found                bool   `json:"found"`
-	Tools                string `json:"tools"`
-	AllowUnsandboxedBash bool   `json:"allowUnsandboxedBash"`
-	Folder               string `json:"folder"`
-	Exe                  string `json:"exe,omitempty"`     // najdena pot (tudi pri samodejnem iskanju)
-	ClaudeVersion        string `json:"version,omitempty"` // claude --version
+	Path                 string   `json:"path"` // prazno = iz PATH
+	Found                bool     `json:"found"`
+	Tools                string   `json:"tools"`
+	AllowUnsandboxedBash bool     `json:"allowUnsandboxedBash"`
+	Folder               string   `json:"folder"`
+	Exe                  string   `json:"exe,omitempty"`     // najdena pot (tudi pri samodejnem iskanju)
+	ClaudeVersion        string   `json:"version,omitempty"` // claude --version
+	Enabled              bool     `json:"enabled"`
+	Folders              string   `json:"folders"` // dovoljene mape, ločene z vejico (kot na Macu)
+	AllowLocalTools      bool     `json:"allowLocalTools"`
+	DisabledTools        []string `json:"disabledTools"`
+	PermissionMode       string   `json:"permissionMode"`
+	SettingSources       string   `json:"settingSources"`
 }
 
 type apiGeneral struct {
-	Port            int    `json:"port"`
-	Address         string `json:"address"`
-	Connect         string `json:"connect"`
-	RestartRequired bool   `json:"restartRequired,omitempty"`
+	Port             int    `json:"port"`
+	Address          string `json:"address"`
+	Connect          string `json:"connect"`
+	RestartRequired  bool   `json:"restartRequired,omitempty"`
+	AllowedClients   string `json:"allowedClients"`
+	AllowPlainRemote bool   `json:"allowPlainRemote"`
+	AllowAnyDevice   bool   `json:"allowAnyDevice"`
+	Scratch          string `json:"scratch"`
 }
 
 type apiStatus struct {
 	Running    bool         `json:"running"`
 	Version    string       `json:"version"`
+	Build      string       `json:"build,omitempty"` // commit gradnje (vcs.revision)
 	Port       int          `json:"port"`
 	Address    string       `json:"address"`
 	Installed  bool         `json:"installed"`
@@ -237,7 +250,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 	case "GET status":
 		c := s.conf()
 		st := apiStatus{Running: !s.offline, Version: version, Port: c.Port, Address: c.Address, Installed: serviceInstalled(runtime.GOOS),
-			Devices: len(c.Devices), Claude: s.claudeInfo(), Gateways: s.apiGateways(c), OS: runtime.GOOS, Tray: trayRunning()}
+			Devices: len(c.Devices), Claude: s.claudeInfo(), Gateways: s.apiGateways(c), OS: runtime.GOOS, Tray: trayRunning(), Build: buildCommit()}
 		if d := installDir(runtime.GOOS); d != "" { // le če je minigw tam res nameščen
 			if _, err := os.Stat(filepath.Join(d, map[bool]string{true: "minigw.exe", false: "minigw"}[runtime.GOOS == "windows"])); err == nil {
 				st.InstallDir = d
@@ -473,6 +486,11 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		}
 		return 200, map[string]any{"models": apiModels(g, models, ""), "changed": append([]apiModel{}, changed...)}
 
+	case "GET agents/{}/tools":
+		if arg != "claude" {
+			return fail(404, "no agent "+arg)
+		}
+		return 200, map[string]any{"tools": claudeTools(s.claudeExe())}
 	case "GET agents/{}", "PATCH agents/{}":
 		if arg != "claude" {
 			return fail(404, "no agent "+arg+" (this router has claude only)")
@@ -481,10 +499,16 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			return 200, s.claudeInfo()
 		}
 		var b struct {
-			Path                 *string `json:"path"`
-			Tools                *string `json:"tools"`
-			AllowUnsandboxedBash *bool   `json:"allowUnsandboxedBash"`
-			Folder               *string `json:"folder"`
+			Path                 *string   `json:"path"`
+			Tools                *string   `json:"tools"`
+			AllowUnsandboxedBash *bool     `json:"allowUnsandboxedBash"`
+			Folder               *string   `json:"folder"`
+			Enabled              *bool     `json:"enabled"`
+			Folders              *string   `json:"folders"`
+			AllowLocalTools      *bool     `json:"allowLocalTools"`
+			DisabledTools        *[]string `json:"disabledTools"`
+			PermissionMode       *string   `json:"permissionMode"`
+			SettingSources       *string   `json:"settingSources"`
 		}
 		if err := decodeStrict(body, &b); err != nil {
 			return fail(400, err.Error())
@@ -502,6 +526,14 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 				return fail(400, "not a folder: "+*b.Folder)
 			}
 		}
+		var folders []string
+		if b.Folders != nil {
+			for _, f := range strings.Split(*b.Folders, ",") {
+				if f = strings.TrimSpace(f); f != "" {
+					folders = append(folders, f)
+				}
+			}
+		}
 		var exe []string
 		err := s.update(func(c *serveConfig) error {
 			if b.Path != nil {
@@ -516,6 +548,24 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			if b.Folder != nil {
 				c.Folder = *b.Folder
 			}
+			if b.Enabled != nil {
+				c.ClaudeDisabled = !*b.Enabled
+			}
+			if b.Folders != nil {
+				c.AllowedFolders = slices.Clone(folders)
+			}
+			if b.AllowLocalTools != nil {
+				c.AllowLocalTools = *b.AllowLocalTools
+			}
+			if b.DisabledTools != nil {
+				c.DisabledTools = slices.Clone(*b.DisabledTools)
+			}
+			if b.PermissionMode != nil {
+				c.PermissionMode = *b.PermissionMode
+			}
+			if b.SettingSources != nil {
+				c.SettingSources = strings.ReplaceAll(*b.SettingSources, " ", "")
+			}
 			e, err := checkAgent(c, s.cfgDir)
 			exe = e
 			return err
@@ -526,13 +576,16 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		return 200, s.claudeInfo()
 
 	case "GET general":
-		c := s.conf()
-		return 200, apiGeneral{Port: c.Port, Address: c.Address, Connect: connectLine(c)}
+		return 200, s.apiGeneral(false)
 	case "PATCH general":
 		var b struct {
-			Port          *int    `json:"port"`
-			Address       *string `json:"address"`
-			StartAtSignIn *bool   `json:"startAtSignIn"`
+			Port             *int    `json:"port"`
+			Address          *string `json:"address"`
+			StartAtSignIn    *bool   `json:"startAtSignIn"`
+			AllowedClients   *string `json:"allowedClients"`
+			AllowPlainRemote *bool   `json:"allowPlainRemote"`
+			AllowAnyDevice   *bool   `json:"allowAnyDevice"`
+			Scratch          *string `json:"scratch"`
 		}
 		if err := decodeStrict(body, &b); err != nil {
 			return fail(400, err.Error())
@@ -543,6 +596,25 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		if b.Address != nil && !validAddress(*b.Address) {
 			return fail(400, "address: use empty (all), 0.0.0.0, :: or 127.0.0.1, so that the admin API stays reachable on 127.0.0.1; limit clients with a firewall")
 		}
+		if b.AllowedClients != nil {
+			for _, ip := range strings.FieldsFunc(*b.AllowedClients, func(r rune) bool { return r == ',' || r == ' ' }) {
+				if net.ParseIP(ip) == nil {
+					return fail(400, "allowedClients: "+ip+" is not an IP address")
+				}
+			}
+		}
+		scratch := ""
+		if b.Scratch != nil { // prazno = privzeta mapa; velja za nove seje (obstoječe kopije ostanejo, kjer so)
+			if scratch = *b.Scratch; scratch == "" {
+				scratch = defaultScratch()
+			}
+			if !filepath.IsAbs(scratch) || under(scratch, s.cfgDir) || under(s.cfgDir, scratch) {
+				return fail(400, "scratch folder: an absolute path outside the config folder")
+			}
+			if err := os.MkdirAll(scratch, 0o700); err != nil {
+				return fail(400, "scratch folder: "+err.Error())
+			}
+		}
 		if b.StartAtSignIn != nil { // Windows: vrednost Run za ta router (pladenj); drugod storitev namesti minigw serve install
 			if runtime.GOOS != "windows" {
 				return fail(400, "on this system use minigw serve install or minigw serve uninstall")
@@ -551,6 +623,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 				return fail(500, err.Error())
 			}
 		}
+		restart := b.Port != nil || b.Address != nil
 		if err := s.update(func(c *serveConfig) error {
 			if b.Port != nil {
 				c.Port = *b.Port
@@ -558,12 +631,23 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			if b.Address != nil {
 				c.Address = *b.Address
 			}
+			if b.AllowedClients != nil {
+				c.AllowedClients = *b.AllowedClients
+			}
+			if b.AllowPlainRemote != nil {
+				c.AllowPlainRemote = *b.AllowPlainRemote
+			}
+			if b.AllowAnyDevice != nil {
+				c.AllowAnyDevice = *b.AllowAnyDevice
+			}
+			if b.Scratch != nil {
+				c.Scratch = scratch
+			}
 			return nil
 		}); err != nil {
 			return fail(500, err.Error())
 		}
-		c := s.conf()
-		return 200, apiGeneral{Port: c.Port, Address: c.Address, Connect: connectLine(c), RestartRequired: !s.offline}
+		return 200, s.apiGeneral(restart && !s.offline)
 	case "POST settings/{}":
 		if arg != "login" {
 			return fail(404, "Not found: "+method+" "+uri)
@@ -583,8 +667,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			return fail(500, err.Error())
 		}
 		s.settings.clear() // nov žeton konča tudi seje strani z nastavitvami
-		c := s.conf()
-		return 200, apiGeneral{Port: c.Port, Address: c.Address, Connect: connectLine(c)}
+		return 200, s.apiGeneral(false)
 	}
 	return fail(404, "Not found: "+method+" "+uri)
 }
@@ -597,9 +680,73 @@ func findGateway(c serveConfig, name string) (serveGateway, bool) {
 	return c.Gateways[i], true
 }
 
+func (s *server) apiGeneral(restart bool) apiGeneral {
+	c := s.conf()
+	return apiGeneral{Port: c.Port, Address: c.Address, Connect: connectLine(c), RestartRequired: restart, AllowedClients: c.AllowedClients,
+		AllowPlainRemote: c.AllowPlainRemote, AllowAnyDevice: c.AllowAnyDevice, Scratch: c.Scratch}
+}
+
+// buildCommit: commit gradnje (go build iz gita), kot »Version 0.5.14 (d62bf92)« na Macu.
+func buildCommit() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return ""
+	}
+	rev, dirty := "", false
+	for _, kv := range info.Settings {
+		switch kv.Key {
+		case "vcs.revision":
+			rev = kv.Value[:min(7, len(kv.Value))]
+		case "vcs.modified":
+			dirty = kv.Value == "true"
+		}
+	}
+	if dirty && rev != "" {
+		rev += "+"
+	}
+	return rev
+}
+
+var claudeToolLists sync.Map // pot → orodja te različice Claude Code
+
+// claudeTools: orodja Claude Code (dogodek init pri »claude -p --tools default«), kot ClaudeCLI.availableTools na Macu;
+// proces se ustavi po prvi vrstici (pred klicem modela), največ 15 s; v predpomnilniku po poti.
+func claudeTools(exe []string) []string {
+	if len(exe) == 0 {
+		return []string{}
+	}
+	key := strings.Join(exe, "\x00")
+	if v, ok := claudeToolLists.Load(key); ok {
+		return v.([]string)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, exe[0], append(exe[1:], "-p", "x", "--model", "haiku", "--output-format", "stream-json", "--verbose",
+		"--tools", "default", "--setting-sources", "", "--strict-mcp-config", "--no-session-persistence")...)
+	cmd.Dir = os.TempDir()
+	out, err := cmd.StdoutPipe()
+	tools := []string{}
+	if err == nil && cmd.Start() == nil {
+		line, _ := bufio.NewReader(out).ReadBytes('\n')
+		cmd.Process.Kill()
+		cmd.Wait()
+		var init struct{ Tools []string }
+		if json.Unmarshal(line, &init) == nil && init.Tools != nil {
+			tools = init.Tools
+		}
+	}
+	slices.Sort(tools)
+	if len(tools) > 0 {
+		claudeToolLists.Store(key, tools)
+	}
+	return tools
+}
+
 func (s *server) claudeInfo() apiClaude {
 	c, exe := s.conf(), s.claudeExe()
-	info := apiClaude{Path: c.Claude, Found: len(exe) > 0, Tools: c.Tools, AllowUnsandboxedBash: c.AllowUnsandboxedBash, Folder: c.Folder}
+	info := apiClaude{Path: c.Claude, Found: len(exe) > 0, Tools: c.Tools, AllowUnsandboxedBash: c.AllowUnsandboxedBash, Folder: c.Folder,
+		Enabled: !c.ClaudeDisabled, Folders: strings.Join(c.AllowedFolders, ","), AllowLocalTools: c.AllowLocalTools,
+		DisabledTools: append([]string{}, c.DisabledTools...), PermissionMode: c.PermissionMode, SettingSources: c.SettingSources}
 	if len(exe) > 0 {
 		info.Exe, info.ClaudeVersion = exe[len(exe)-1], claudeVersion(exe)
 	}

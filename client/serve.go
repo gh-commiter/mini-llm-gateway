@@ -23,6 +23,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -52,6 +53,14 @@ type serveConfig struct {
 	// Bash v tools na Windows teče brez sandboxa (dostop do vsega, kar sme uporabnik): le z izrecnim dovoljenjem.
 	AllowUnsandboxedBash bool           `json:"allowUnsandboxedBash,omitempty"`
 	Gateways             []serveGateway `json:"gateways,omitempty"` // ključi v shrambi sistema, ne tu (serve_gateway.go)
+	// Kot nastavitve na Macu (docs/windows-parity.md).
+	AllowedClients   string   `json:"allowedClients,omitempty"`   // IP naslovi, ločeni z vejico ali presledkom; prazno = vsi
+	AllowPlainRemote bool     `json:"allowPlainRemote,omitempty"` // navaden HTTP z drugih računalnikov (brez ključa naprave)
+	ClaudeDisabled   bool     `json:"claudeDisabled,omitempty"`   // Claude CLI izklopljen (privzeto vklopljen)
+	AllowedFolders   []string `json:"allowedFolders,omitempty"`   // dodatne mape, v katerih agenti smejo delati
+	AllowLocalTools  bool     `json:"allowLocalTools,omitempty"`  // vsa orodja Claude Code (razen DisabledTools)
+	DisabledTools    []string `json:"disabledTools,omitempty"`
+	SettingSources   string   `json:"settingSources,omitempty"` // --setting-sources; prazno = brez (hooki iz mape ne tečejo)
 }
 
 const serveHelp = `minigw serve: a Mini Gateway router on this computer (Windows, Linux) for minigw clients.
@@ -168,6 +177,21 @@ func (c serveConfig) scratch(sub string) string {
 	p := filepath.Join(c.Scratch, sub)
 	os.MkdirAll(p, 0o700)
 	return p
+}
+
+// clientAllowed: IP na seznamu dovoljenih odjemalcev (prazen seznam = vsi), kot allowedClients na Macu.
+func (c serveConfig) clientAllowed(ip string) bool {
+	list := strings.FieldsFunc(c.AllowedClients, func(r rune) bool { return r == ',' || r == ' ' })
+	if len(list) == 0 {
+		return true
+	}
+	p := net.ParseIP(ip)
+	for _, a := range list {
+		if q := net.ParseIP(a); q != nil && p != nil && q.Equal(p) {
+			return true
+		}
+	}
+	return false
 }
 
 // deviceAllowed: naprava s seznama; neznana le pri praznem seznamu z allowAnyDevice. Loopback (ta računalnik) vedno.
@@ -358,11 +382,9 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	}
 	cfgDir, _ := filepath.Abs(filepath.Dir(cfgPath))
 	if c.Scratch == "" {
-		dir, err := os.UserCacheDir()
-		if err != nil {
-			return nil, errors.New("no cache folder for copies (" + err.Error() + "): set \"scratch\" in the config")
+		if c.Scratch = defaultScratch(); c.Scratch == "" {
+			return nil, errors.New("no cache folder for copies: set \"scratch\" in the config")
 		}
-		c.Scratch = filepath.Join(dir, "minigw", "scratch")
 	}
 	if c.Scratch, err = filepath.Abs(c.Scratch); err != nil || under(c.Scratch, cfgDir) {
 		return nil, errors.New("scratch must not be inside the config folder " + cfgDir)
@@ -418,27 +440,51 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	return s, nil
 }
 
+// defaultScratch: kopije map in pogovori v mapi predpomnilnika uporabnika.
+func defaultScratch() string {
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "minigw", "scratch")
+}
+
 // checkAgent: mapa ne sme biti blizu mape nastavitev, claude mora obstajati, Bash na Windows le z dovoljenjem.
 // Za zagon in za spremembe prek skrbniškega API.
 func checkAgent(c *serveConfig, cfgDir string) ([]string, error) {
 	if c.Folder != "" {
-		abs, _ := filepath.Abs(c.Folder)
-		real, err := filepath.EvalSymlinks(abs) // povezava v mapo nastavitev ne sme obiti preverjanja
+		real, err := checkFolder(c.Folder, cfgDir)
 		if err != nil {
-			return nil, errors.New("folder: " + err.Error())
-		}
-		realCfg, err := filepath.EvalSymlinks(cfgDir)
-		if err != nil {
-			realCfg = cfgDir
-		}
-		for _, f := range []string{abs, real} {
-			for _, d := range []string{cfgDir, realCfg} {
-				if under(d, f) || under(f, d) { // agent bi dosegel žeton in ključ routerja
-					return nil, errors.New("folder must not contain or be inside the config folder " + cfgDir)
-				}
-			}
+			return nil, err
 		}
 		c.Folder = real
+	}
+	for i, f := range c.AllowedFolders {
+		if f == "" || !filepath.IsAbs(f) {
+			return nil, errors.New("allowed folder must be an absolute path: " + f)
+		}
+		real, err := checkFolder(f, cfgDir)
+		if err != nil {
+			return nil, err
+		}
+		c.AllowedFolders[i] = real
+	}
+	if c.AllowLocalTools && runtime.GOOS == "windows" && !c.AllowUnsandboxedBash {
+		return nil, errors.New("local tools include commands (Bash, PowerShell), which have no sandbox on Windows: also set \"allowUnsandboxedBash\": true, or turn local tools off")
+	}
+	for _, t := range c.DisabledTools {
+		if !validTools.MatchString(t) {
+			return nil, errors.New("disabled tool: not a tool name: " + t)
+		}
+	}
+	if !validSources.MatchString(c.SettingSources) {
+		return nil, errors.New("setting sources: comma-separated user, project, local (or empty)")
+	}
+	if c.PermissionMode == "" {
+		c.PermissionMode = "dontAsk"
+	}
+	if !slices.Contains([]string{"dontAsk", "acceptEdits", "auto", "plan"}, c.PermissionMode) {
+		return nil, errors.New("permission mode: dontAsk, acceptEdits, auto or plan")
 	}
 	exe, err := resolveClaude(c.Claude)
 	if err != nil {
@@ -448,6 +494,32 @@ func checkAgent(c *serveConfig, cfgDir string) ([]string, error) {
 		return nil, errors.New("tools " + strings.Join(t, ", ") + " have no sandbox on Windows: remove them from tools, or set \"allowUnsandboxedBash\": true to let agents run any command as this user (and read the gateway API keys in Credential Manager and the admin secret)")
 	}
 	return exe, nil
+}
+
+var validSources = regexp.MustCompile(`^((user|project|local)(,(user|project|local))*)?$`)
+
+// checkFolder: mapa obstaja (povezave razrešene) in ni v mapi nastavitev ali okoli nje.
+func checkFolder(f, cfgDir string) (string, error) {
+	abs, _ := filepath.Abs(f)
+	real, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", errors.New("folder: " + err.Error())
+	}
+	if st, err := os.Stat(real); err != nil || !st.IsDir() {
+		return "", errors.New("not a folder: " + f)
+	}
+	realCfg, err := filepath.EvalSymlinks(cfgDir)
+	if err != nil {
+		realCfg = cfgDir
+	}
+	for _, a := range []string{abs, real} {
+		for _, d := range []string{cfgDir, realCfg} {
+			if under(d, a) || under(a, d) { // agent bi dosegel žeton in ključ routerja
+				return "", errors.New("folder must not contain or be inside the config folder " + cfgDir)
+			}
+		}
+	}
+	return real, nil
 }
 
 // windowsSafeTools: orodja, ki na Windows ne poganjajo ukazov (dostop do datotek omeji Claude Code na ./**).
@@ -678,6 +750,10 @@ func (c *serveConn) Write(p []byte) (int, error) {
 func (s *server) accept(raw net.Conn) *serveConn {
 	host, _, _ := net.SplitHostPort(raw.RemoteAddr().String())
 	c := &serveConn{Conn: raw, br: bufio.NewReaderSize(raw, 64<<10), peer: host}
+	if !c.loopback() && !s.conf().clientAllowed(host) { // dovoljeni odjemalci (IP); loopback vedno
+		raw.Close()
+		return nil
+	}
 	raw.SetDeadline(time.Now().Add(10 * time.Second)) // zastalo rokovanje
 	head, err := c.br.Peek(4)
 	switch {
@@ -689,6 +765,9 @@ func (s *server) accept(raw net.Conn) *serveConn {
 		}
 	case string(head) == "MGW1":
 		s.log.Printf("%s refused: ChaCha20 (MGW1) connection; this router supports MGW2 (AES-GCM) only: update minigw", strconv.Quote(host))
+	case !c.loopback() && s.conf().AllowPlainRemote: // izrecno vklopljeno: brez šifriranja in brez ključa naprave
+		raw.SetDeadline(time.Time{})
+		return c
 	case !c.loopback():
 		body := `{"type":"error","error":{"type":"permission_error","message":"Unencrypted connections from other computers are off: use minigw connect with the router key"}}`
 		fmt.Fprintf(raw, "HTTP/1.1 426 Upgrade Required\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s", len(body), body)

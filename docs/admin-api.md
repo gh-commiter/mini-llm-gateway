@@ -67,7 +67,8 @@ Claude   {"path": string, "found": bool, "tools": string, "allowUnsandboxedBash"
           "exe"?: string, "version"?: string}
          path: "" = from PATH; tools: comma-separated tool names; folder: "" = only synced copies; exe: the
          claude that was found; version: its `claude --version` (both only when found; Go router only).
-General  {"port": number, "address": string, "connect": string, "restartRequired"?: true}
+General  {"port": number, "address": string, "connect": string, "restartRequired"?: true, "allowedClients": string,
+          "allowPlainRemote": bool, "allowAnyDevice": bool, "scratch": string}
          address: "" = all addresses; connect: the "minigw connect …" line for clients (contains the token).
 ```
 
@@ -85,9 +86,10 @@ General  {"port": number, "address": string, "connect": string, "restartRequired
 | `GET /gateways/{name}/models?filter=text` | – | `{"models": [Model]}`; filter: part of `model`, any case |
 | `POST /gateways/{name}/models` | `{"all"?: bool, "enable"?: [id or model], "disable"?: [id or model]}` | `{"models": [Model], "changed": [Model]}` |
 | `GET /agents/claude` | – | Claude |
+| `GET /agents/claude/tools` | – | `{"tools": [string]}`: the tools of this Claude Code (for the exclude table with local tools) |
 | `PATCH /agents/claude` | any of `{"path", "tools", "allowUnsandboxedBash", "folder"}` | Claude |
 | `GET /general` | – | General |
-| `PATCH /general` | any of `{"port", "address", "startAtSignIn"}` | General with `"restartRequired": true` |
+| `PATCH /general` | any of `{"port", "address", "startAtSignIn", "allowedClients", "allowPlainRemote", "allowAnyDevice", "scratch"}` | General; `"restartRequired": true` for port or address |
 | `POST /general/token` | – | General with the new token in `connect`; the old token stops working at once |
 | `POST /settings/login` | – | `{"url"}`: a one-time link to the settings page (`…/minigw/settings#t=…`, 60 s); `503` when the router does not run |
 
@@ -105,6 +107,8 @@ Notes:
   Windows tray runs. `PATCH /general {"startAtSignIn"}` sets the Windows Run value for the running router; other
   systems answer `400` (use `minigw serve install`). The Mac app has its own Settings window and leaves these out.
 - `POST /gateways/{name}/models`: `all` first (true = all, false = none), then `enable`, then `disable`.
+- The Go router's Claude also has `"enabled", "folders"` (comma-separated allowed folders), `"allowLocalTools",
+  "disabledTools", "permissionMode", "settingSources"`, as on the Mac; see [windows-parity.md](windows-parity.md).
 - `PATCH /agents/claude`: the router checks the path, that the folder exists and is not near the config folder,
   and that Bash on Windows has `allowUnsandboxedBash`.
 - Agents other than Claude get their own `agents/{name}` resource when a router has them (the Mac: `codex`,
