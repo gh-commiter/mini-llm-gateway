@@ -177,7 +177,7 @@ func (t *tailBuffer) String() string {
 }
 
 func (s *server) modelList() map[string]any {
-	data := []map[string]any{}
+	data := append([]map[string]any{}, s.gatewayModelList()...)
 	if len(s.claude) > 0 {
 		for _, m := range cliFamilies[:3] {
 			data = append(data, map[string]any{"type": "model", "id": cliAgentPrefix + m,
@@ -407,6 +407,9 @@ func (s *server) messages(w http.ResponseWriter, r *req) (int, string) {
 	}
 	if model == "" {
 		return writeError(w, r.rid, 400, "Body must be JSON with a model field"), ""
+	}
+	if g, m, ok := s.gatewayRoute(model); ok { // prehodi pred claude-cli (kot Router.swift); ID-ji z »/« (OpenRouter)
+		return s.passthrough(w, r, g, m), model
 	}
 	cliModel, chat, ok := cliMatch(model)
 	if !validModel.MatchString(model) || !validModel.MatchString(cliModel) {

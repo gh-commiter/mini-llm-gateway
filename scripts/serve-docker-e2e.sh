@@ -1,7 +1,9 @@
 #!/bin/zsh
 # End-to-end test of »minigw serve« on Linux (Docker) with the Go minigw on this Mac:
-# init → connect (unknown device refused) → serve allow → connect → MINIGW_WORK=sync minigw -p → agent's change comes back.
-# The router runs a fake »claude« that copies src/note.txt to agent.txt and prints valid stream-json.
+# init → connect (unknown device refused) → serve allow → connect → MINIGW_WORK=sync minigw -p → agent's change comes back,
+# then a gateway: serve gateway add (key on stdin) → minigw -p with the gateway model → answer from the fake gateway.
+# The router runs a fake »claude« that copies src/note.txt to agent.txt and prints valid stream-json, and a fake
+# Anthropic-compatible gateway on 127.0.0.1:9000 inside the container.
 # Uses its own HOME for minigw and Claude Code, so the user's own connection is not touched.
 emulate -L zsh; set -eu
 ROOT=${0:A:h:h}
@@ -28,6 +30,44 @@ echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"typ
 echo '{"type":"result","subtype":"success","usage":{"input_tokens":5,"output_tokens":4}}'
 EOF
 chmod +x $T/bin/claude
+mkdir $T/fakegw
+cat > $T/fakegw/main.go <<'EOF'
+package main
+
+import (
+	"fmt"
+	"net/http"
+)
+
+func main() {
+	http.ListenAndServe("127.0.0.1:9000", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("authorization") != "Bearer sk-e2e-gateway-key" {
+			http.Error(w, `{"type":"error","error":{"type":"authentication_error","message":"bad key"}}`, 401)
+			return
+		}
+		switch r.URL.Path {
+		case "/v1/models":
+			fmt.Fprint(w, `{"data":[{"id":"echo","context_length":100000},{"id":"other"}]}`)
+		case "/v1/messages/count_tokens":
+			fmt.Fprint(w, `{"input_tokens":10}`)
+		default:
+			w.Header().Set("Content-Type", "text/event-stream")
+			for _, e := range [][2]string{
+				{"message_start", `{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"echo","content":[],"stop_reason":null,"usage":{"input_tokens":5,"output_tokens":0}}}`},
+				{"content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`},
+				{"content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"pong from fake gateway"}}`},
+				{"content_block_stop", `{"type":"content_block_stop","index":0}`},
+				{"message_delta", `{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":4}}`},
+				{"message_stop", `{"type":"message_stop"}`},
+			} {
+				fmt.Fprintf(w, "event: %s\ndata: %s\n\n", e[0], e[1])
+				w.(http.Flusher).Flush()
+			}
+		}
+	}))
+}
+EOF
+(cd $T/fakegw && go mod init fakegw >/dev/null 2>&1 && GOOS=linux GOARCH=arm64 go build -o $T/bin/fakegw .)
 
 dock() { docker run --rm -v $T/bin:/opt/mgw:ro -v $T/cfg:/cfg debian:stable-slim /opt/mgw/minigw "$@" }
 LINE=$(dock serve init --config /cfg/serve.json | grep "minigw connect")
@@ -35,7 +75,7 @@ TOKEN=${${LINE#*--token \'}%\'}
 start() {
   docker rm -f $NAME >/dev/null 2>&1 || true
   docker run -d --name $NAME -p $PORT:8765 -e PATH=/opt/mgw:/usr/bin:/bin -v $T/bin:/opt/mgw:ro -v $T/cfg:/cfg \
-    debian:stable-slim /opt/mgw/minigw serve --config /cfg/serve.json >/dev/null
+    debian:stable-slim sh -c '/opt/mgw/fakegw & exec /opt/mgw/minigw serve --config /cfg/serve.json' >/dev/null
   for i in {1..50}; do curl -s -o /dev/null http://127.0.0.1:$PORT/health/live && return; sleep 0.2; done
   fail "router did not start"
 }
@@ -67,4 +107,21 @@ print -r -- "$out" | grep -q "done by fake claude" || fail "answer: $out"
 [[ $(<agent.txt) == $'pineapple-42\nedited on linux' ]] || fail "agent.txt not synced back: $(cat agent.txt 2>&1)"
 docker exec $NAME sh -c 'cat /root/.cache/minigw/scratch/sync/*/*/src/note.txt' | grep -q pineapple-42 || fail "copy on the router"
 docker logs $NAME 2>&1 | grep -q 'step: "Write agent.txt"' || fail "agent step not logged"
+
+# Gateway: http only with --insecure; the key from stdin goes to a 0600 file (no secret-tool here), never serve.json.
+print sk-e2e-gateway-key | docker exec -i $NAME /opt/mgw/minigw serve gateway add fake http://127.0.0.1:9000 --config /cfg/serve.json 2>/dev/null \
+  && fail "http gateway without --insecure accepted"
+print sk-e2e-gateway-key | docker exec -i $NAME /opt/mgw/minigw serve gateway add fake http://127.0.0.1:9000 --insecure --config /cfg/serve.json \
+  | grep -q "2 models, all enabled" || fail "gateway add"
+docker exec $NAME /opt/mgw/minigw serve gateway models fake --disable other --config /cfg/serve.json | grep -q '^\[ \] other' || fail "gateway models"
+grep -q sk-e2e $T/cfg/serve.json && fail "API key in serve.json"
+[[ $(stat -f %Lp $T/cfg/gateway-keys.json) == 600 ]] || fail "key file mode"
+start
+$mg models | grep -q claude-echo || fail "gateway model not listed"
+$mg models | grep -q claude-other && fail "disabled gateway model listed"
+out=$(MINIGW_WORK=sync $mg -p --model claude-echo "ping" 2>&1) || fail "minigw -p gateway: $out"
+print -r -- "$out" | grep -q "pong from fake gateway" || fail "gateway answer: $out"
+docker logs $NAME 2>&1 | grep -q 'model="claude-echo" status=200' || fail "gateway request not logged"
+docker logs $NAME 2>&1 | grep -q 'WARNING: gateway fake: no Secret Service' || fail "no key file warning"
+docker logs $NAME 2>&1 | grep -q sk-e2e && fail "API key in the log"
 print "serve e2e ok"

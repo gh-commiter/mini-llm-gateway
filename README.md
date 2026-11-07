@@ -212,7 +212,7 @@ With the [Claude Code plugin](#321-claude-code-plugin) you can skip all of this:
 #### 3.2.4 Router on Windows or Linux (minigw serve)
 
 `minigw serve` turns a Windows or Linux computer into a small router: `claude -p` on that computer as
-`claude-cli-opus`, `claude-cli-sonnet` and `claude-cli-haiku`, no Siri, Apple models or gateways. Agents work in a
+`claude-cli-opus`, `claude-cli-sonnet` and `claude-cli-haiku`, plus gateways; no Siri or Apple models. Agents work in a
 synced copy of the client's folder, so clients run with `MINIGW_WORK=sync` (folder mounts need the Mac router).
 Install Claude Code there (on Windows the native `claude.exe`; `minigw serve` does not run `claude.cmd`).
 
@@ -230,6 +230,20 @@ the allowed devices and the agent's `tools` (default `Read,Grep,Glob,Edit,Write,
 `Bash` runs in Claude Code's sandbox on Linux (needs `bubblewrap` and `socat`); on Windows there is no sandbox, so it
 also needs `"allowUnsandboxedBash": true`. Connections from the router computer itself (loopback) skip the device
 check and encryption: do not forward the port to loopback (`ssh -L`, `netsh interface portproxy`, a reverse proxy).
+
+**Gateways.** Any Anthropic-compatible upstream (OpenRouter, LiteLLM) works as on the Mac, with the same model names.
+
+```sh
+minigw serve gateway add openrouter https://openrouter.ai/api   # asks for the API key (or reads it from stdin)
+minigw serve gateway models openrouter --enable anthropic/claude-sonnet-4.5,openai/gpt-5
+minigw serve gateway list                                       # also: gateway remove <name>
+```
+
+The router lists the enabled models with the claude-cli ones and passes requests through unchanged, streaming
+included. A gateway with more than 20 models starts with none enabled. The URL must be `https`; `http` works only
+to localhost or a private IP, with `--insecure`. The API key is never in `serve.json`: it is in Credential Manager
+on Windows, in the Secret Service (`secret-tool`) on Linux, or in `gateway-keys.json` (mode 0600) next to
+`serve.json` if there is no Secret Service. Restart `minigw serve` after a change.
 
 ## 4. Use
 

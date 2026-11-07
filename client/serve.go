@@ -2,7 +2,7 @@ package main
 
 // minigw serve: majhen router Mini Gateway za Windows in Linux (kot RouterCore/Server.swift in Router.swift).
 // Le šifra MGW2 (AES-GCM, v standardni knjižnici Go), ponudnik claude -p (serve_cli.go) in sinhronizirana kopija
-// mape odjemalca (serve_sync.go). Navaden HTTP le z loopback. Brez Siri, Apple FM in prehodov.
+// mape odjemalca (serve_sync.go) in prehodi (serve_gateway.go). Navaden HTTP le z loopback. Brez Siri in Apple FM.
 
 import (
 	"bufio"
@@ -48,7 +48,8 @@ type serveConfig struct {
 	Devices        []serveDevice `json:"devices"`
 	AllowAnyDevice bool          `json:"allowAnyDevice,omitempty"` // le pri praznem seznamu: vsaka naprava z žetonom
 	// Bash v tools na Windows teče brez sandboxa (dostop do vsega, kar sme uporabnik): le z izrecnim dovoljenjem.
-	AllowUnsandboxedBash bool `json:"allowUnsandboxedBash,omitempty"`
+	AllowUnsandboxedBash bool           `json:"allowUnsandboxedBash,omitempty"`
+	Gateways             []serveGateway `json:"gateways,omitempty"` // ključi v shrambi sistema, ne tu (serve_gateway.go)
 }
 
 const serveHelp = `minigw serve: a Mini Gateway router on this computer (Windows, Linux) for minigw clients.
@@ -56,6 +57,7 @@ const serveHelp = `minigw serve: a Mini Gateway router on this computer (Windows
   minigw serve init [--port N] [--folder DIR] [--config FILE]   create the config, print the minigw connect line
   minigw serve allow <device id> [name] [--config FILE]         allow a client device
   minigw serve [--port N] [--folder DIR] [--config FILE]        run the router
+  minigw serve gateway add|remove|list|models …                 Anthropic-compatible gateways (OpenRouter, LiteLLM)
 
 Clients use: MINIGW_WORK=sync minigw … (folder mounts are macOS only).
 Unknown devices are refused; the log prints their ID. Before minigw serve allow, compare the ID with the one on the
@@ -147,9 +149,12 @@ func serveCommand(args []string) {
 	cfgPath := fs.String("config", defaultServeConfigPath(), "config file")
 	port := fs.Int("port", 0, "port (default 8765)")
 	folder := fs.String("folder", "", "folder for agents that do not sync (--minigw-work=sync is preferred)")
-	fs.Usage = func() { fmt.Fprintln(os.Stderr, serveHelp) }
+	insecure := fs.Bool("insecure", false, "gateway add: allow http to localhost or a private IP")
+	enable := fs.String("enable", "", "gateway models: enable these models (comma-separated, or all)")
+	disable := fs.String("disable", "", "gateway models: disable these models (comma-separated, or all)")
+	fs.Usage = func() { fmt.Fprintln(os.Stderr, serveHelp+"\n\n"+gatewayHelp) }
 	var rest []string
-	if sub == "allow" { // minigw serve allow <id> [ime] [--config f]
+	if sub == "allow" || sub == "gateway" { // minigw serve allow <id> [ime] [--config f]
 		for len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 			rest, args = append(rest, args[0]), args[1:]
 		}
@@ -206,9 +211,12 @@ func serveCommand(args []string) {
 		saveServeConfig(*cfgPath, c)
 		say("allowed device " + rest[0] + " (restart minigw serve)")
 		return
+	case "gateway":
+		gatewayCommand(*cfgPath, rest, *insecure, *enable, *disable, os.Stdin)
+		return
 	case "":
 	case "help":
-		say(serveHelp)
+		say(serveHelp + "\n\n" + gatewayHelp)
 		return
 	default:
 		fail("unknown command minigw serve " + sub + "\n\n" + serveHelp)
@@ -239,8 +247,16 @@ func serveCommand(args []string) {
 	if err != nil {
 		fail(err.Error())
 	}
-	s.log.Printf("minigw %s serving on :%d (MGW2), claude=%q folder=%q scratch=%q devices=%d", version, c.Port,
-		strings.Join(s.claude, " "), c.Folder, s.cfg.Scratch, len(c.Devices))
+	s.log.Printf("minigw %s serving on :%d (MGW2), claude=%q folder=%q scratch=%q devices=%d gateways=%d", version, c.Port,
+		strings.Join(s.claude, " "), c.Folder, s.cfg.Scratch, len(c.Devices), len(c.Gateways))
+	for _, g := range c.Gateways {
+		if key, where := keyGet(s.cfgDir, g.Name); key == "" {
+			s.log.Printf("WARNING: gateway %s has no API key: run minigw serve gateway add %s %s", g.Name, g.Name, g.BaseURL)
+		} else if strings.HasSuffix(where, ".json") {
+			s.log.Printf("WARNING: gateway %s: no Secret Service (secret-tool), the API key is in %s (mode 0600)", g.Name, where)
+		}
+	}
+	go s.modelList() // odkrivanje modelov prehodov v ozadju
 	fail(s.serve(ln).Error())
 }
 
@@ -264,6 +280,7 @@ type server struct {
 	hub      *shareHub
 	sessions sessionRegistry
 	procs    chan struct{} // največ hkratnih procesov claude
+	gateways gwCatalog
 }
 
 func newServer(c serveConfig, cfgPath string) (*server, error) {
@@ -286,6 +303,14 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 		c.Folder, _ = filepath.Abs(c.Folder)
 		if under(cfgDir, c.Folder) || under(c.Folder, cfgDir) { // agent bi dosegel žeton in ključ routerja
 			return nil, errors.New("folder must not contain or be inside the config folder " + cfgDir)
+		}
+	}
+	for i, g := range c.Gateways { // ročno urejen serve.json: ista pravila kot gateway add
+		if !validGatewayName.MatchString(g.Name) {
+			return nil, fmt.Errorf("gateway name %q in the config: letters, digits, . _ - (up to 32)", g.Name)
+		}
+		if c.Gateways[i].BaseURL, err = checkGatewayURL(g.BaseURL, g.Insecure); err != nil {
+			return nil, fmt.Errorf("gateway %s in the config: %v", g.Name, err)
 		}
 	}
 	exe, err := resolveClaude(c.Claude)
@@ -633,7 +658,8 @@ func writeJSON(w http.ResponseWriter, rid string, status int, obj any) int {
 }
 
 func writeError(w http.ResponseWriter, rid string, status int, msg string) int {
-	t := map[int]string{401: "authentication_error", 403: "permission_error", 404: "not_found_error", 413: "request_too_large"}[status]
+	t := map[int]string{401: "authentication_error", 403: "permission_error", 404: "not_found_error", 413: "request_too_large",
+		429: "rate_limit_error", 529: "overloaded_error"}[status]
 	if t == "" {
 		t = "invalid_request_error"
 		if status >= 500 {
