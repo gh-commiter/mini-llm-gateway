@@ -51,7 +51,10 @@ public struct DeviceConfig: Codable, Sendable, Equatable, Identifiable {
     public var name: String
     public var siri = false
     public var run = false    // minigw run: ukazi na tem Macu v mapi native (izvajanje kode), privzeto izklopljeno
-    public init(id: String, name: String, siri: Bool = false, run: Bool = false) { self.id = id; self.name = name; self.siri = siri; self.run = run }
+    public var runNetwork = true  // minigw run sme v omrežje (Maven prenaša odvisnosti)
+    public init(id: String, name: String, siri: Bool = false, run: Bool = false, runNetwork: Bool = true) {
+        self.id = id; self.name = name; self.siri = siri; self.run = run; self.runNetwork = runNetwork
+    }
 
     public init(from decoder: Decoder) throws {  // starejše nastavitve brez »run«
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -59,6 +62,7 @@ public struct DeviceConfig: Codable, Sendable, Equatable, Identifiable {
         name = try c.decode(String.self, forKey: .name)
         siri = try c.decodeIfPresent(Bool.self, forKey: .siri) ?? false
         run = try c.decodeIfPresent(Bool.self, forKey: .run) ?? false
+        runNetwork = try c.decodeIfPresent(Bool.self, forKey: .runNetwork) ?? true
     }
 }
 

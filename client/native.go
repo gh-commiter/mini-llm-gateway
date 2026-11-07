@@ -161,11 +161,15 @@ func readMarker(p string) (string, bool) {
 }
 
 // terminalSafe: izhod minigw run za terminal (kot Native.terminalSafe): le barve SGR (ESC[…m) in \n \r \t \b;
-// brez OSC, DCS, APC, PM, drugih CSI in kontrolnih znakov. Brez stanja med kosi.
+// brez OSC, DCS, APC, PM, drugih CSI, kontrolnih znakov in C1 v UTF-8 (C2 80–C2 9F). Brez stanja med kosi.
 func terminalSafe(b []byte) []byte {
 	out := make([]byte, 0, len(b))
 	for i := 0; i < len(b); {
 		c := b[i]
+		if c == 0xc2 && i+1 < len(b) && b[i+1] >= 0x80 && b[i+1] <= 0x9f { // C1 v UTF-8 (U+0080–U+009F)
+			i += 2
+			continue
+		}
 		if c != 0x1b {
 			if c >= 0x20 && c != 0x7f || c == '\n' || c == '\r' || c == '\t' || c == '\b' {
 				out = append(out, c)

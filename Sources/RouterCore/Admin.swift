@@ -232,15 +232,16 @@ extension Router {
         case "GET run":
             return (200, runInfo(c))
         case "PATCH run":
-            let b = try AdminBody(body, ["commands", "allow", "deny"])
+            let b = try AdminBody(body, ["commands", "allow", "deny", "allowNetwork", "denyNetwork"])
             let commands = try b.string("commands"), allow = try b.strings("allow") ?? [], deny = try b.strings("deny") ?? []
+            let allowNet = try b.strings("allowNetwork") ?? [], denyNet = try b.strings("denyNetwork") ?? []
             if let commands, commands.unicodeScalars.contains(where: { $0.value < 0x20 }) { throw AdminError(400, "commands: no control characters") }
             let n = try await hooks.update { c in
                 if let commands { c.runCommands = commands }
-                for (ids, v) in [(allow, true), (deny, false)] {
+                for (ids, v, net) in [(allow, true, false), (deny, false, false), (allowNet, true, true), (denyNet, false, true)] {
                     for id in ids {
                         guard let i = c.devices.firstIndex(where: { $0.id == id }) else { throw AdminError(400, "no device \(id)") }
-                        c.devices[i].run = v
+                        if net { c.devices[i].runNetwork = v } else { c.devices[i].run = v }
                     }
                 }
             }
@@ -416,7 +417,7 @@ extension Router {
     }
 
     func runInfo(_ c: RouterConfig) -> [String: Any] {
-        ["commands": c.runCommands, "devices": c.devices.map { ["id": $0.id, "name": $0.name, "run": $0.run] }]
+        ["commands": c.runCommands, "devices": c.devices.map { ["id": $0.id, "name": $0.name, "run": $0.run, "network": $0.runNetwork] }]
     }
 
     func siriInfo(_ c: RouterConfig) -> [String: Any] {

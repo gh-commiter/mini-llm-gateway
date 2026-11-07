@@ -192,6 +192,7 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     #expect(await admin(app.router(), "PATCH", "/run", body: #"{"allow":["\#(id)"],"commands":"mvn, ./mvnw"}"#).status == 200)
     #expect(app.config.devices[0].run && app.config.runCommands == "mvn, ./mvnw")
     #expect(await admin(app.router(), "PATCH", "/run", body: #"{"deny":["\#(id)"]}"#).status == 200 && !app.config.devices[0].run)
+    #expect(await admin(app.router(), "PATCH", "/run", body: #"{"denyNetwork":["\#(id)"]}"#).text.contains(#""network":false"#) && !app.config.devices[0].runNetwork)
     #expect(await admin(app.router(), "PATCH", "/run", body: #"{"allow":["nope"]}"#).status == 400)
     #expect(await admin(app.router(), "PATCH", "/run", body: #"{"run":true}"#).status == 400)  // neznano polje
     #expect(await admin(app.router(), "GET", "/run", auth: nil).status == 401)
@@ -255,6 +256,7 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
 @Test func nativeTerminalSafeKeepsOnlyColours() {
     let input = "\u{1B}[1;31mred\u{1B}[0m\r\n\u{1B}]0;title\u{07}\u{1B}]52;c;Zm9v\u{1B}\\\u{1B}P1$q\u{1B}\\\u{1B}[6n\u{1B}[2J\u{1B}[?1049h\u{07}ok\t\u{1B}"
     #expect(String(decoding: Native.terminalSafe(Data(input.utf8)), as: UTF8.self) == "\u{1B}[1;31mred\u{1B}[0m\r\nok\t")
+    #expect(String(decoding: Native.terminalSafe(Data("a\u{9B}2Jb\u{9D}0;x\u{07}č€".utf8)), as: UTF8.self) == "a2Jb0;xč€")  // N4: C1 v UTF-8
     #expect(Native.withoutNestedSandbox(["swift", "build", "-c", "release"]) == ["swift", "build", "--disable-sandbox", "-c", "release"])
     #expect(Native.withoutNestedSandbox(["swift", "--version"]) == ["swift", "--version"])
     #expect(Native.withoutNestedSandbox(["mvn", "-q"]) == ["mvn", "-q"])
@@ -275,10 +277,53 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
         await on.handle(nativeReq("POST", "/minigw/run", ["x-native-id": c.id, "x-native-proof": proof], body, device: "dev-sbx"), writer: w)
         return w
     }
-    let w = await run("echo in > inside.txt; echo out > '\(outside.path)'; echo $?")
+    try FileManager.default.createDirectory(at: f.project.appendingPathComponent(".git"), withIntermediateDirectories: true)
+    let w = await run("echo in > inside.txt; echo out > '\(outside.path)'; echo hook > .git/hook")
     #expect(w.status == 200 && FileManager.default.fileExists(atPath: f.project.appendingPathComponent("inside.txt").path))
     #expect(!FileManager.default.fileExists(atPath: outside.path))  // M4: pisanje zunaj mape zavrnjeno
+    #expect(!FileManager.default.fileExists(atPath: f.project.appendingPathComponent(".git/hook").path))  // N2: .git
     let start = Date()
     let bg = await run("sleep 30 & echo started")  // L4: proces v ozadju drži stdout; skupina se ustavi
     #expect(bg.text.hasSuffix("x 0\n") && Date().timeIntervalSince(start) < 10)
+    // N3: vnuk v svoji seji (setsid) drži cev: najden po cevi in ustavljen, tok se zapre.
+    let mark = "minigw-setsid-" + UUID().uuidString
+    let start2 = Date()
+    let ss = await run("perl -MPOSIX -e 'POSIX::setsid(); $0 = \"\(mark)\"; sleep 30' & echo started")
+    #expect(ss.text.hasSuffix("x 0\n") && Date().timeIntervalSince(start2) < 10)
+    try await Task.sleep(for: .milliseconds(300))
+    let left = Process(), pipe = Pipe()
+    left.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep"); left.arguments = ["-f", mark]; left.standardOutput = pipe
+    try left.run(); left.waitUntilExit()
+    #expect(left.terminationStatus == 1)  // nič ne ostane
+}
+
+@Test func nativeRunRechecksFolderAfterProof() async throws {  // N1
+    let f = try nativeFixture()
+    defer { try? FileManager.default.removeItem(at: f.root) }
+    let r = nativeRouter(f.project.path, devices: [DeviceConfig(id: "dev-n1", name: "Air", run: true)])
+    let c = await challenge(r, f, device: "dev-n1")
+    let proof = try #require(Native.readMarker(f.project.appendingPathComponent(c.file)))
+    let moved = f.root.appendingPathComponent("moved")  // po dokazu: mapa → povezava (npr. na domačo mapo)
+    try FileManager.default.moveItem(at: f.project, to: moved)
+    try FileManager.default.createSymbolicLink(at: f.project, withDestinationURL: f.outside)
+    let w = FakeWriter()
+    await r.handle(nativeReq("POST", "/minigw/run", ["x-native-id": c.id, "x-native-proof": proof], #"{"argv":["sh","-c","touch pwned"]}"#, device: "dev-n1"), writer: w)
+    #expect(w.status == 403 && !FileManager.default.fileExists(atPath: f.outside.appendingPathComponent("pwned").path))
+}
+
+@Test func nativeRunProfile() throws {  // N2
+    let home = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("home-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: home) }
+    try FileManager.default.createDirectory(at: home.appendingPathComponent(".m2"), withIntermediateDirectories: true)
+    let p = try #require(Native.sandboxProfile(dir: "/Volumes/Java/proj", home: home.path, network: true))
+    #expect(p.contains(#"(subpath "/Volumes/Java/proj")"#) && p.contains(#"(subpath "/Volumes/Java/proj/.git")"#))
+    #expect(!p.contains("Development") && !p.contains("network-outbound"))
+    #expect(p.contains("(deny file-read* (literal \"\(home.path)/.netrc\")") && p.contains("/.ssh\")") && p.contains("Application Support"))
+    #expect(Native.sandboxProfile(dir: "/Volumes/Java/proj", home: home.path, network: false)?.contains("(deny network-outbound (remote ip))") == true)
+    // povezava namesto predpomnilnika (ali mape) → brez profila
+    try FileManager.default.removeItem(at: home.appendingPathComponent(".m2"))
+    try FileManager.default.createSymbolicLink(at: home.appendingPathComponent(".m2"), withDestinationURL: URL(fileURLWithPath: "/"))
+    #expect(Native.sandboxProfile(dir: "/Volumes/Java/proj", home: home.path, network: true) == nil)
+    let old = try JSONDecoder().decode(DeviceConfig.self, from: Data(#"{"id":"a","name":"Air","run":true}"#.utf8))
+    #expect(old.runNetwork)  // privzeto vklopljeno
 }

@@ -48,7 +48,8 @@ public enum Native {
 
     /// Izhod `minigw run` za terminal: obdrži le barve (SGR, ESC[…m), \n \r \t \b; izpusti OSC, DCS, APC, PM, druge CSI in
     /// kontrolne znake (router ni zaupanja vreden: naslov okna, odložišče, poizvedbe terminala). Brez stanja med kosi:
-    /// nedokončano zaporedje na koncu kosa izpade. ponytail: 8-bitni C1 (0x9B …) ostane; UTF-8 terminali ga ne izvajajo.
+    /// nedokončano zaporedje na koncu kosa izpade. Tudi C1 v UTF-8 (C2 80–C2 9F). ponytail: goli bajt 0x9B ostane
+    /// (neveljaven UTF-8, terminali v UTF-8 ga ne izvajajo).
     public static func terminalSafe(_ d: Data) -> Data {
         let b = [UInt8](d)
         var out = Data(capacity: b.count), i = 0
@@ -74,6 +75,7 @@ public enum Native {
                     i += 2
                 }
             } else {
+                if c == 0xC2, i + 1 < b.count, (0x80...0x9F).contains(b[i + 1]) { i += 2; continue }  // C1 v UTF-8 (U+0080–U+009F)
                 if c >= 0x20 && c != 0x7F || [0x0A, 0x0D, 0x09, 0x08].contains(c) { out.append(c) }
                 i += 1
             }
@@ -133,20 +135,56 @@ public enum Native {
         return list.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.contains(first)
     }
 
-    /// Peskovnik za `minigw run`: pisanje le v mapo, dovoljene mape in predpomnilnike gradnje; branje in omrežje ostaneta.
-    /// Nekanonične in neobstoječe poti izpusti (peskovnik primerja kanonične).
-    static func sandboxProfile(writable: [String]) -> String {
+    /// Peskovnik za `minigw run`: pisanje le v mapo in predpomnilnike gradnje (ne v .git, nastavitve Maven in SwiftPM),
+    /// branje povsod razen skrivnosti uporabnika, omrežje po izbiri naprave. Poti so dobesedne: če katera obstaja in
+    /// njena kanonična pot ni ista (povezava), vrne nil (zamenjava mape s povezavo ne razširi pisanja).
+    /// Preizkušeno z mvn package, swift build --disable-sandbox in xcodebuild build: nobena prepoved ni bila odveč.
+    static func sandboxProfile(dir: String, home: String = NSHomeDirectory(), network: Bool) -> String? {
+        let writable = [dir] + buildCaches(home: home)
+        for p in writable where FileManager.default.fileExists(atPath: p) && Sync.real(URL(fileURLWithPath: p))?.path != p { return nil }
         let q = { (p: String) in "\"" + p.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\"" }
-        let paths = Set(writable.compactMap { Sync.real(URL(fileURLWithPath: $0))?.path }).filter { $0 != "/" }.sorted()
-        return "(version 1)\n(allow default)\n(deny file-write*)\n(allow file-write* (regex #\"^/dev/\")"
-            + paths.map { " (subpath \(q($0)))" }.joined() + ")\n"
+        let rx = { (p: String) in "\"^" + NSRegularExpression.escapedPattern(for: p).replacingOccurrences(of: "\"", with: "\\\"") + "\"" }  // #"…" brez podvajanja \\
+        let secrets = [".ssh", ".aws", ".gnupg", ".config", ".docker", ".kube", "Library/Keychains", "Library/Cookies",
+                       "Library/Application Support"].map { " (subpath \(q(home + "/" + $0)))" }.joined()
+        return "(version 1)\n(allow default)\n(deny file-write*)\n"
+            + "(allow file-write* (regex #\"^/dev/\")" + writable.map { " (subpath \(q($0)))" }.joined() + ")\n"
+            + "(deny file-write* (subpath \(q(dir + "/.git"))) (literal \(q(home + "/.m2/extensions.xml")))"
+            + " (regex #\(rx(home + "/.m2/settings").dropLast())[^/]*\\.xml$\")"
+            + " (subpath \(q(home + "/.swiftpm/configuration")))"
+            + " (regex #\(rx(home + "/Library/org.swift.swiftpm/repositories/").dropLast())[^/]+/(config|hooks)(/|$)\"))\n"
+            + "(deny file-read* (literal \(q(home + "/.netrc")))\(secrets))\n"
+            + (network ? "" : "(deny network-outbound (remote ip))\n")
     }
 
-    /// Pisanje, ki ga gradnja potrebuje zunaj mape: Maven, Xcode, SwiftPM, predpomnilniki, začasne mape.
+    /// Pisanje, ki ga gradnja potrebuje zunaj mape: Maven, Xcode, SwiftPM, predpomnilniki, začasne mape (kanonične).
     static func buildCaches(home: String = NSHomeDirectory()) -> [String] {
-        let tmp = URL(fileURLWithPath: NSTemporaryDirectory()).deletingLastPathComponent().path  // …/T in …/C uporabnika
+        let tmp = Sync.real(URL(fileURLWithPath: NSTemporaryDirectory()))?.deletingLastPathComponent().path  // …/T in …/C
         return ["\(home)/.m2", "\(home)/.swiftpm", "\(home)/Library/Developer", "\(home)/Library/Caches",
-                "\(home)/Library/org.swift.swiftpm", "/private/tmp", tmp]
+                "\(home)/Library/org.swift.swiftpm", "/private/tmp"] + (tmp.map { [$0] } ?? [])
+    }
+
+    /// Procesi (istega uporabnika, razen tega), ki imajo pisalni konec cevi, katere bralni konec je `fd` tega procesa.
+    static func pipeWriters(of fd: Int32) -> [pid_t] {
+        let size = Int32(MemoryLayout<pipe_fdinfo>.size)
+        var mine = pipe_fdinfo()
+        guard proc_pidfdinfo(getpid(), fd, PROC_PIDFDPIPEINFO, &mine, size) == size else { return [] }
+        let peer = mine.pipeinfo.pipe_peerhandle
+        let n = proc_listallpids(nil, 0)
+        guard n > 0 else { return [] }
+        var pids = [pid_t](repeating: 0, count: Int(n) + 64)
+        let count = proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size))
+        var out: [pid_t] = []
+        for pid in pids.prefix(max(0, Int(count))) where pid > 0 && pid != getpid() {
+            let bytes = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, nil, 0)
+            guard bytes > 0 else { continue }
+            var fds = [proc_fdinfo](repeating: proc_fdinfo(), count: Int(bytes) / MemoryLayout<proc_fdinfo>.stride + 8)
+            let got = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, &fds, Int32(fds.count * MemoryLayout<proc_fdinfo>.stride))
+            for f in fds.prefix(max(0, Int(got)) / MemoryLayout<proc_fdinfo>.stride) where f.proc_fdtype == PROX_FDTYPE_PIPE {
+                var pi = pipe_fdinfo()
+                if proc_pidfdinfo(pid, f.proc_fd, PROC_PIDFDPIPEINFO, &pi, size) == size, pi.pipeinfo.pipe_handle == peer { out.append(pid); break }
+            }
+        }
+        return out
     }
 
     /// V peskovniku drug peskovnik ni mogoč (sandbox_apply: Operation not permitted), zato SwiftPM in Xcode brez svojega.
@@ -168,6 +206,7 @@ public enum Native {
         var o: [Int32] = [0, 0], e: [Int32] = [0, 0]
         guard pipe(&o) == 0 else { return nil }
         guard pipe(&e) == 0 else { close(o[0]); close(o[1]); return nil }
+        for fd in o + e { _ = fcntl(fd, F_SETFD, FD_CLOEXEC) }  // takoj: drug zagon v aplikaciji jih ne podeduje (dup2 v otroku ga počisti)
         var fa: posix_spawn_file_actions_t?, at: posix_spawnattr_t?
         posix_spawn_file_actions_init(&fa); posix_spawnattr_init(&at)
         defer { posix_spawn_file_actions_destroy(&fa); posix_spawnattr_destroy(&at); close(o[1]); close(e[1]) }
@@ -311,6 +350,12 @@ extension Router {
         guard let dir = await Self.natives.verify(id: req.header("x-native-id") ?? "", proof: req.header("x-native-proof") ?? "", owner: d.id) else {
             return await error(403, "permission_error", "minigw run: the folder check failed (the folder is not this Mac's shared folder)", rid: rid, writer: writer)
         }
+        // Mapa je lahko po dokazu zamenjana s povezavo (npr. na domačo mapo): znova kanonična in v dovoljenih mapah,
+        // profil peskovnika iz dobesedne poti (sandboxProfile zavrne povezave).
+        guard Sync.real(dir)?.path == dir.path, ClaudeCLI.resolveCwd(dir.path, roots: config.claudeCLI.allowedRoots)?.path == dir.path,
+              let profile = Native.sandboxProfile(dir: dir.path, network: config.devices.first { $0.id == d.id }?.runNetwork ?? true) else {
+            return await error(403, "permission_error", "minigw run: the folder or a build cache folder (~/.m2, ~/Library/Caches …) is a link or not allowed", rid: rid, writer: writer)
+        }
         guard await Self.natives.startRun(d.id) else {
             return await error(429, "rate_limit_error", "minigw run: this device already runs \(NativeHub.runsPerDevice) commands", rid: rid, writer: writer)
         }
@@ -321,22 +366,24 @@ extension Router {
         guard let exe = Native.executable(argv[0], dir: dir, path: env["PATH"]!) else {
             return await error(404, "not_found_error", "minigw run: \(argv[0]) not found on the router", rid: rid, writer: writer)
         }
-        // Peskovnik: pisanje le v mapo, dovoljene mape in predpomnilnike gradnje (glej sandboxProfile).
-        let roots = config.claudeCLI.allowedRoots.split(separator: ",").map { ClaudeCLI.expand($0.trimmingCharacters(in: .whitespaces)) }
-        let profile = Native.sandboxProfile(writable: [dir.path] + roots + Native.buildCaches())
         let args = Array(Native.withoutNestedSandbox(argv).dropFirst())
         guard let (pid, out, err) = Native.spawnGroup("/usr/bin/sandbox-exec", ["-p", profile, exe] + args, dir: dir, env: env) else {
             return await self.error(500, "api_error", "minigw run: cannot start \(argv[0])", rid: rid, writer: writer)
         }
-        // Skupina procesov: ob prekinitvi SIGTERM, po 5 s SIGKILL; po koncu glavnega procesa po 2 s SIGKILL ostankom
-        // (proces v ozadju, ki drži stdout, bi sicer odgovor zadržal v nedogled).
+        let (frames, written, closeFrames) = Self.frames([("o", out), ("e", err)])
+        // Skupina procesov: ob prekinitvi SIGTERM, po 5 s SIGKILL. Po koncu glavnega procesa in 2 s: SIGKILL skupini in
+        // vsakemu procesu s pisalnim koncem cevi (tudi setsid), nato se tok zapre, tudi če cev še kdo drži.
         // ponytail: pid skupine je lahko po izhodu znova dodeljen; ob 2–5 s in zaporednih pid je tveganje zanemarljivo.
         let exit = ExitWaiter()  // en čakalec
         Thread {
             var st: Int32 = 0
             while waitpid(pid, &st, 0) == -1 && errno == EINTR {}
             exit.done(st & 0x7f == 0 ? (st >> 8) & 0xff : 128 + (st & 0x7f))
-            DispatchQueue.global().asyncAfter(deadline: .now() + 2) { _ = Darwin.kill(-pid, SIGKILL) }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
+                _ = Darwin.kill(-pid, SIGKILL)
+                for h in [out, err] { for w in Native.pipeWriters(of: h.fileDescriptor) { _ = Darwin.kill(w, SIGKILL) } }
+                DispatchQueue.global().asyncAfter(deadline: .now() + 1) { closeFrames() }
+            }
         }.start()
         @Sendable func stop() {
             Darwin.kill(-pid, SIGTERM)
@@ -347,7 +394,6 @@ extension Router {
         await withTaskCancellationHandler {
             do {
                 try await writer.write(HTTPResponse.head(status: 200, headers: [("Content-Type", "text/plain"), ("Cache-Control", "no-cache"), ("request-id", rid)]))
-                let (frames, written) = Self.frames([("o", out), ("e", err)])
                 for await f in frames { try await writer.write(f.data); if f.counted { written() } }  // en pisec
                 code = await exit.wait()
                 try await writer.write(Data("x \(code)\n".utf8))
@@ -362,24 +408,28 @@ extension Router {
 }
 
 extension Router {
-    /// Vrstice »<oznaka> <base64>« iz cevi do EOF vseh, vmes »p« vsakih 15 s (gradnja lahko dolgo molči).
+    /// Vrstice »<oznaka> <base64>« iz cevi do EOF vseh (ali `close()`), vmes »p« vsakih 15 s (gradnja lahko dolgo molči).
     /// Največ `limit` kosov čaka na pisanje: bralec nato počaka (gradnja se upočasni, pomnilnik ne raste).
-    /// `written()` po vsakem zapisanem kosu s `counted`.
+    /// `written()` po vsakem zapisanem kosu s `counted`; `close()` konča bralce (poll, največ 0,5 s) in tok.
     static func frames(_ pipes: [(String, FileHandle)], limit: Int = 64)
-        -> (AsyncStream<(data: Data, counted: Bool)>, written: @Sendable () -> Void) {
+        -> (AsyncStream<(data: Data, counted: Bool)>, written: @Sendable () -> Void, close: @Sendable () -> Void) {
         let room = DispatchSemaphore(value: limit), gone = Once()
         let stream = AsyncStream<(data: Data, counted: Bool)> { k in
             k.onTermination = { _ in _ = gone.claim() }
             let open = DispatchGroup()
             for (tag, h) in pipes {
                 open.enter()
-                Thread {  // availableData blokira
+                Thread {
                     defer { open.leave() }
-                    while true {
-                        let d = h.availableData
-                        if d.isEmpty { return }
-                        while room.wait(timeout: .now() + 1) == .timedOut { if gone.claimed { return } }
-                        k.yield((Data("\(tag) \(d.base64EncodedString())\n".utf8), true))
+                    var buf = [UInt8](repeating: 0, count: 1 << 16)
+                    var p = pollfd(fd: h.fileDescriptor, events: Int16(POLLIN), revents: 0)
+                    while !gone.claimed {
+                        let r = poll(&p, 1, 500)
+                        if r == 0 || (r < 0 && errno == EINTR) { continue }
+                        let n = r < 0 ? -1 : read(h.fileDescriptor, &buf, buf.count)
+                        if n <= 0 { return }  // EOF ali napaka
+                        while room.wait(timeout: .now() + 0.5) == .timedOut { if gone.claimed { return } }
+                        k.yield((Data("\(tag) \(Data(buf[0..<n]).base64EncodedString())\n".utf8), true))
                     }
                 }.start()
             }
@@ -391,6 +441,6 @@ extension Router {
                 }
             }
         }
-        return (stream, { room.signal() })
+        return (stream, { room.signal() }, { _ = gone.claim() })
     }
 }

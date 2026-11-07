@@ -119,7 +119,7 @@ Notes:
 | `GET /agents/codex`, `PATCH` | any of `{"enabled", "path", "write", "network", "models"}` | `{"enabled", "path", "found", "write", "network", "models": [string] \| null}` |
 | `GET /agents/grok`, `PATCH` | any of `{"enabled", "path", "write", "models"}` | `{"enabled", "path", "found", "write", "models"}` |
 | `GET /siri`, `PATCH` | any of `{"enabled", "timeout", "allow": [id], "deny": [id]}` | `{"enabled", "timeout", "devices": [{"id", "name", "siri"}]}` |
-| `GET /run`, `PATCH` (Mac) | any of `{"commands", "allow": [id], "deny": [id]}` | `{"commands", "devices": [{"id", "name", "run"}]}` |
+| `GET /run`, `PATCH` (Mac) | any of `{"commands", "allow": [id], "deny": [id], "allowNetwork": [id], "denyNetwork": [id]}` | `{"commands", "devices": [{"id", "name", "run", "network"}]}` |
 
 `write`: the agent's sandbox may write in the session's folder (else read-only); `network`: commands in Codex's
 sandbox may use the network; `models: null` = all the account's models. `allow`/`deny` switch Siri for known

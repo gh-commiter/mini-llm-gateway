@@ -225,6 +225,9 @@ func TestTerminalSafeKeepsOnlyColours(t *testing.T) { // L1
 	if got := string(terminalSafe([]byte(in))); got != "\x1b[1;31mred\x1b[0m\r\nok\t" {
 		t.Fatalf("%q", got)
 	}
+	if got := string(terminalSafe([]byte("a\u009b2Jb\u009d0;x\u0007č€"))); got != "a2Jb0;xč€" { // N4: C1 v UTF-8
+		t.Fatalf("C1: %q", got)
+	}
 }
 
 func TestMountinfoRoot(t *testing.T) { // I3: priklop podmape (bind) in prefixpath
