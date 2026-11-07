@@ -216,10 +216,16 @@ With the [Claude Code plugin](#321-claude-code-plugin) you can skip all of this:
 synced copy of the client's folder, so clients run with `MINIGW_WORK=sync` (folder mounts need the Mac router).
 Install Claude Code there (on Windows the native `claude.exe`; `minigw serve` does not run `claude.cmd`).
 
+The setup is one command after `minigw serve init`: `minigw serve install` copies minigw to a fixed place, adds it to
+PATH, starts the router now and at sign-in, all without admin rights. On Windows it installs to
+`%LocalAppData%\Programs\Mini Gateway` (with the tray icon; downloaded and checked against the release's
+`SHA256SUMS` if `minigw-tray*.exe` is not next to `minigw.exe`); on Linux to `~/.local/bin` with a systemd user unit.
+Run it again to update; `minigw serve uninstall` removes it and keeps the config and keys.
+
 ```sh
 minigw serve init            # creates the config with a new token and router key, prints the minigw connect line
-minigw serve                 # port 8765; --port, --folder, --config
-minigw serve install         # start it at sign-in (Windows: HKCU Run; Linux: systemd user unit), no admin rights
+minigw serve install         # install, start now and at sign-in
+minigw serve                 # or run it in this terminal: port 8765; --port, --folder, --config
 ```
 
 On each client run the printed `minigw connect` line. The first connect from a new device is refused and the router
@@ -230,8 +236,8 @@ waiting, `minigw router devices deny <id or name>` removes one.
 **Windows tray.** `minigw-tray-windows-amd64.exe` (or `-arm64.exe`) is the same router with an icon in the
 notification area instead of a console window. On first start it creates the config. Its menu shows the status,
 devices waiting for approval (Allow / Deny, with a notification when one appears), **Settings…**, **Copy connect
-line**, **Start at sign-in**, the log (`minigw-serve.log` in the config folder) and Quit. Put it next to
-`minigw.exe`, and `minigw serve install` starts the tray at sign-in instead of the console router.
+line**, **Start at sign-in**, the log (`minigw-serve.log` in the config folder) and Quit. `minigw serve install` sets
+it up.
 
 **Settings page.** **Settings…** opens `http://127.0.0.1:<port>/minigw/settings` in the browser with a one-time
 link (60 s): General (port, address, connect line, new token), Devices, Gateways (key, models) and Claude CLI.

@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -250,6 +251,7 @@ func routerCommand(args []string, in io.Reader) {
 		}
 		say(fmt.Sprintf("version %s, port %d on %s", st.Version, st.Port, addr))
 		say(map[bool]string{true: "starts at sign-in (minigw serve uninstall to stop that)", false: "does not start at sign-in (minigw serve install)"}[st.Installed])
+		say(installedInfo(runtime.GOOS))
 		say(fmt.Sprintf("devices: %d allowed, %d waiting (minigw router devices)", st.Devices, st.Pending))
 		claude := "not found"
 		if st.Claude.Found {

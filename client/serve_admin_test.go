@@ -246,60 +246,6 @@ func TestRouterCLIOnlineAndOffline(t *testing.T) {
 	}
 }
 
-func TestServeInstallFiles(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
-	cfg := filepath.Join(home, "my cfg", "serve.json")
-	saveServeConfig(cfg, serveConfig{Token: "tok"})
-	exe, _ := os.Executable()
-	var calls []string
-	reg := map[string]string{}
-	oldRun, oldSet, oldGet, oldDel := runCmd, runValueSet, runValueGet, runValueDel
-	t.Cleanup(func() { runCmd, runValueSet, runValueGet, runValueDel = oldRun, oldSet, oldGet, oldDel })
-	runCmd = func(name string, args ...string) error {
-		calls = append(calls, name+" "+strings.Join(args, " "))
-		return nil
-	}
-	runValueSet = func(n, v string) error { reg[n] = v; return nil }
-	runValueGet = func(n string) (string, error) { return reg[n], nil }
-	runValueDel = func(n string) { delete(reg, n) }
-
-	for _, goos := range []string{"linux", "darwin", "windows"} {
-		calls = nil
-		if _, err := serviceCommand("install", goos, cfg); err != nil {
-			t.Fatalf("%s install: %v", goos, err)
-		}
-		if !serviceInstalled(goos) {
-			t.Fatalf("%s: not installed", goos)
-		}
-		switch goos {
-		case "linux":
-			data, _ := os.ReadFile(servicePath(goos))
-			if !strings.Contains(string(data), `ExecStart="`+exe+`" serve --config "`+cfg+`"`) ||
-				strings.Join(calls, ";") != "systemctl --user daemon-reload;systemctl --user enable --now minigw-serve.service" {
-				t.Fatalf("unit: %s calls %v", data, calls)
-			}
-		case "darwin":
-			data, _ := os.ReadFile(servicePath(goos))
-			if !strings.Contains(string(data), "<string>"+cfg+"</string>") || !strings.Contains(string(data), "<key>RunAtLoad</key><true/>") ||
-				!slices.Contains(calls, fmt.Sprintf("launchctl bootstrap gui/%d %s", os.Getuid(), servicePath(goos))) {
-				t.Fatalf("plist: %s calls %v", data, calls)
-			}
-		case "windows":
-			if reg[runValueName] != `"`+exe+`" serve --config "`+cfg+`"` {
-				t.Fatalf("run value: %q", reg[runValueName])
-			}
-		}
-		if _, err := serviceCommand("uninstall", goos, cfg); err != nil || serviceInstalled(goos) {
-			t.Fatalf("%s uninstall: %v", goos, err)
-		}
-	}
-	if q := systemdQuote(`C:\a "b" 100%`); q != `"C:\\a \"b\" 100%%"` {
-		t.Fatalf("systemd quote: %s", q)
-	}
-}
-
 // M1: program na vratih routerja, ki ni ta router, ne dobi skrivnosti ali ključev; minigw router dela brez routerja.
 func TestRouterCLINeverSendsSecretToSquatter(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

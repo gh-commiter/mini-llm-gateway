@@ -9,7 +9,10 @@ import (
 	"bufio"
 	"errors"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -118,9 +121,11 @@ var (
 	procRegClose  = advapi32.NewProc("RegCloseKey")
 )
 
-func runKeyOpen() (uintptr, error) {
+func runKeyOpen() (uintptr, error) { return regOpen(runKey) }
+
+func regOpen(key string) (uintptr, error) {
 	const hkcu, access = 0x80000001, 0x0002 | 0x0001 // KEY_SET_VALUE | KEY_QUERY_VALUE
-	sub, _ := syscall.UTF16PtrFromString(runKey)
+	sub, _ := syscall.UTF16PtrFromString(key)
 	var h uintptr
 	if r, _, _ := procRegCreate.Call(hkcu, uintptr(unsafe.Pointer(sub)), 0, 0, 0, access, 0, uintptr(unsafe.Pointer(&h)), 0); r != 0 {
 		return 0, syscall.Errno(r)
@@ -248,4 +253,120 @@ func wcslen(p *uint16) int {
 	for s := unsafe.Slice(p, 32768); n < len(s) && s[n] != 0; n++ {
 	}
 	return n
+}
+
+// --- minigw serve install ---
+
+const (
+	trayMutexName = `Local\MiniGatewayRouter`
+	trayClassName = "MiniGatewayTray"
+)
+
+var (
+	user32dll  = syscall.NewLazyDLL("user32.dll")
+	kernel32dl = syscall.NewLazyDLL("kernel32.dll")
+)
+
+func knownFolder(g syscall.GUID) string {
+	var p *uint16
+	r, _, _ := syscall.NewLazyDLL("shell32.dll").NewProc("SHGetKnownFolderPath").Call(uintptr(unsafe.Pointer(&g)), 0, 0, uintptr(unsafe.Pointer(&p)))
+	if r != 0 || p == nil {
+		return ""
+	}
+	defer syscall.NewLazyDLL("ole32.dll").NewProc("CoTaskMemFree").Call(uintptr(unsafe.Pointer(p)))
+	return syscall.UTF16ToString(unsafe.Slice(p, 32768)[:wcslen(p)])
+}
+
+// knownUserProgramsDir: FOLDERID_UserProgramFiles (%LocalAppData%\Programs), sicer LocalAppData\Programs.
+func knownUserProgramsDir() string {
+	if d := knownFolder(syscall.GUID{Data1: 0x5CD7AEE2, Data2: 0x2219, Data3: 0x4A67, Data4: [8]byte{0xB8, 0x5D, 0x6C, 0x9C, 0xE1, 0x56, 0x60, 0xCB}}); d != "" {
+		return d
+	}
+	if d := knownFolder(syscall.GUID{Data1: 0xF1B32785, Data2: 0x6FBA, Data3: 0x4FCF, Data4: [8]byte{0x9D, 0x55, 0x7B, 0x8E, 0x7F, 0x15, 0x70, 0x91}}); d != "" {
+		return filepath.Join(d, "Programs")
+	}
+	return ""
+}
+
+func trayMutexExists() bool {
+	name, _ := syscall.UTF16PtrFromString(trayMutexName)
+	h, _, _ := kernel32dl.NewProc("OpenMutexW").Call(0x00100000 /* SYNCHRONIZE */, 0, uintptr(unsafe.Pointer(name)))
+	if h == 0 {
+		return false
+	}
+	syscall.CloseHandle(syscall.Handle(h))
+	return true
+}
+
+// closeRunningTray: WM_CLOSE oknu pladnja, nato do 10 s čakanja, da mutex izgine.
+func closeRunningTray() error {
+	if !trayMutexExists() {
+		return nil
+	}
+	class, _ := syscall.UTF16PtrFromString(trayClassName)
+	if h, _, _ := user32dll.NewProc("FindWindowW").Call(uintptr(unsafe.Pointer(class)), 0); h != 0 {
+		user32dll.NewProc("PostMessageW").Call(h, 0x0010 /* WM_CLOSE */, 0, 0)
+	}
+	for range 50 {
+		if !trayMutexExists() {
+			return nil
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return errors.New("the running Mini Gateway tray did not quit: quit it from its menu, then run minigw serve install again")
+}
+
+func startProcessDetached(exe string, args ...string) error {
+	cmd := exec.Command(exe, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x00000008 | 0x00000200} // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	return cmd.Process.Release()
+}
+
+func moveFileOnReboot(path string) error {
+	p, _ := syscall.UTF16PtrFromString(path)
+	if r, _, err := kernel32dl.NewProc("MoveFileExW").Call(uintptr(unsafe.Pointer(p)), 0, 0x4 /* MOVEFILE_DELAY_UNTIL_REBOOT */); r == 0 {
+		return err
+	}
+	return nil
+}
+
+// regEnvPathGet/Set: uporabniški PATH (HKCU\Environment\Path, REG_EXPAND_SZ); po spremembi WM_SETTINGCHANGE.
+func regEnvPathGet() (string, error) {
+	h, err := regOpen("Environment")
+	if err != nil {
+		return "", err
+	}
+	defer procRegClose.Call(h)
+	n, _ := syscall.UTF16PtrFromString("Path")
+	buf := make([]uint16, 32768)
+	size := uint32(len(buf) * 2)
+	r, _, _ := procRegQuery.Call(h, uintptr(unsafe.Pointer(n)), 0, 0, uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&size)))
+	if r == 2 { // ERROR_FILE_NOT_FOUND: še brez uporabniškega PATH
+		return "", nil
+	}
+	if r != 0 {
+		return "", syscall.Errno(r)
+	}
+	return syscall.UTF16ToString(buf[:size/2]), nil
+}
+
+func regEnvPathSet(value string) error {
+	h, err := regOpen("Environment")
+	if err != nil {
+		return err
+	}
+	defer procRegClose.Call(h)
+	n, _ := syscall.UTF16PtrFromString("Path")
+	v, _ := syscall.UTF16FromString(value)
+	if r, _, _ := procRegSet.Call(h, uintptr(unsafe.Pointer(n)), 0, 2 /* REG_EXPAND_SZ */, uintptr(unsafe.Pointer(&v[0])), uintptr(len(v)*2)); r != 0 {
+		return syscall.Errno(r)
+	}
+	env, _ := syscall.UTF16PtrFromString("Environment")
+	var res uintptr
+	user32dll.NewProc("SendMessageTimeoutW").Call(0xffff /* HWND_BROADCAST */, 0x001A /* WM_SETTINGCHANGE */, 0,
+		uintptr(unsafe.Pointer(env)), 0x0002 /* SMTO_ABORTIFHUNG */, 5000, uintptr(unsafe.Pointer(&res)))
+	return nil
 }

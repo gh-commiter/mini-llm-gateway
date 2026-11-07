@@ -162,3 +162,12 @@ func knownConfigDir() (string, error) {
 	}
 	return filepath.Join(u.HomeDir, ".config"), nil
 }
+
+// Namestitev s programsko mapo, pladnjem in PATH je le na Windows.
+func knownUserProgramsDir() string                 { return "" }
+func trayMutexExists() bool                        { return false }
+func closeRunningTray() error                      { return nil }
+func startProcessDetached(string, ...string) error { return errors.New("Windows only") }
+func moveFileOnReboot(string) error                { return errors.New("Windows only") }
+func regEnvPathGet() (string, error)               { return "", errors.New("Windows only") }
+func regEnvPathSet(string) error                   { return errors.New("Windows only") }

@@ -1,0 +1,198 @@
+package main
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
+	"runtime"
+	"slices"
+	"strings"
+	"testing"
+)
+
+// fakeRelease: izdaja na GitHubu (TLS) s sredstvom pladnja in SHA256SUMS; sum "" = prava vsota.
+func fakeRelease(t *testing.T, sum string, redirectTo string) []byte {
+	t.Helper()
+	asset := "minigw-tray-windows-" + runtime.GOARCH + ".exe"
+	body := []byte("fake tray " + runtime.GOARCH)
+	if sum == "" {
+		h := sha256.Sum256(body)
+		sum = hex.EncodeToString(h[:])
+	}
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/SHA256SUMS"):
+			fmt.Fprintf(w, "%s  minigw-windows-amd64.exe\n%s  %s\n", strings.Repeat("0", 64), sum, asset)
+		case redirectTo != "":
+			http.Redirect(w, r, redirectTo, http.StatusFound)
+		case strings.HasSuffix(r.URL.Path, "/"+asset):
+			w.Write(body)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	u, _ := url.Parse(srv.URL)
+	oldBase, oldHosts, oldHTTP := releaseBase, releaseHosts, releaseHTTP
+	t.Cleanup(func() { releaseBase, releaseHosts, releaseHTTP = oldBase, oldHosts, oldHTTP })
+	releaseBase = srv.URL + "/gh-commiter/mini-llm-gateway/releases/download/v" + version
+	releaseHosts = map[string]bool{u.Hostname(): true, "objects.githubusercontent.com": true}
+	releaseHTTP = srv.Client()
+	releaseHTTP.CheckRedirect = releaseRedirect
+	return body
+}
+
+func TestReleaseDownloadVerified(t *testing.T) {
+	asset := "minigw-tray-windows-" + runtime.GOARCH + ".exe"
+	dst := filepath.Join(t.TempDir(), "minigw-tray.exe")
+	body := fakeRelease(t, "", "")
+	if err := downloadVerified(asset, dst); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(dst); string(got) != string(body) {
+		t.Fatalf("downloaded: %q", got)
+	}
+	fakeRelease(t, strings.Repeat("a", 64), "") // napačna vsota: nič ne ostane
+	os.Remove(dst)
+	if err := downloadVerified(asset, dst); err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("bad sum: %v", err)
+	}
+	if _, err := os.Stat(dst); err == nil {
+		t.Fatal("file kept after a bad sum")
+	}
+	fakeRelease(t, "", "https://evil.example/tray.exe") // preusmeritev na tuj gostitelj
+	if err := downloadVerified(asset, dst); err == nil || !strings.Contains(err.Error(), "refused redirect") {
+		t.Fatalf("foreign redirect: %v", err)
+	}
+	releaseBase = "http://127.0.0.1:1/x" // le https
+	if err := downloadVerified(asset, dst); err == nil || !strings.Contains(err.Error(), "https") {
+		t.Fatalf("plain http: %v", err)
+	}
+}
+
+func TestInstallFileAndPath(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	os.WriteFile(src, []byte("program"), 0o755)
+	dst := filepath.Join(dir, "sub", "minigw.exe")
+	if err := installFile(src, dst); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(dst); string(b) != "program" {
+		t.Fatalf("copy: %q", b)
+	}
+	if err := installFile(dst, dst); err != nil { // že teče od tam: brez kopije
+		t.Fatal(err)
+	}
+	if err := installData([]byte("x"), dst, strings.Repeat("0", 64), 1); err == nil {
+		t.Fatal("bad sum accepted")
+	}
+
+	p, add := pathWith(`C:\Windows;C:\Tools\`, `C:\Users\u\AppData\Local\Programs\Mini Gateway`)
+	if !add || p != `C:\Windows;C:\Tools\;C:\Users\u\AppData\Local\Programs\Mini Gateway` {
+		t.Fatalf("append: %q", p)
+	}
+	if again, add := pathWith(p, `c:\users\u\appdata\local\programs\mini gateway\`); add || again != p { // idempotentno
+		t.Fatalf("second append: %q %v", again, add)
+	}
+	if empty, _ := pathWith("", `C:\MG`); empty != `C:\MG` {
+		t.Fatalf("empty PATH: %q", empty)
+	}
+	if out := pathWithout(p, `C:\Users\u\AppData\Local\Programs\Mini Gateway`); out != `C:\Windows;C:\Tools\` {
+		t.Fatalf("remove: %q", out)
+	}
+}
+
+func TestServeInstallFiles(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	cfg := filepath.Join(home, "my cfg", "serve.json")
+	saveServeConfig(cfg, serveConfig{Token: "tok"})
+	exe, _ := os.Executable()
+	var calls, started []string
+	reg := map[string]string{}
+	envPath := `C:\Windows`
+	o1, o2, o3, o4, o5, o6, o7, o8, o9, o10 := runCmd, runValueSet, runValueGet, runValueDel, userHomeFn, userProgramsDir, trayClose, startDetached, envPathGet, envPathSet
+	t.Cleanup(func() {
+		runCmd, runValueSet, runValueGet, runValueDel, userHomeFn, userProgramsDir, trayClose, startDetached, envPathGet, envPathSet = o1, o2, o3, o4, o5, o6, o7, o8, o9, o10
+	})
+	runCmd = func(name string, args ...string) error {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		return nil
+	}
+	runValueSet = func(n, v string) error { reg[n] = v; return nil }
+	runValueGet = func(n string) (string, error) { return reg[n], nil }
+	runValueDel = func(n string) { delete(reg, n) }
+	userHomeFn = func() string { return home }
+	userProgramsDir = func() string { return filepath.Join(home, "Programs") }
+	closed := 0
+	trayClose = func() error { closed++; return nil }
+	startDetached = func(e string, a ...string) error { started = append(started, e+" "+strings.Join(a, " ")); return nil }
+	envPathGet = func() (string, error) { return envPath, nil }
+	envPathSet = func(v string) error { envPath = v; return nil }
+	tray := fakeRelease(t, "", "") // pladnja ni ob exe: prenos iz izdaje
+
+	bin := filepath.Join(home, ".local", "bin", "minigw")
+	for _, goos := range []string{"linux", "darwin", "windows"} {
+		calls = nil
+		msg, err := serviceCommand("install", goos, cfg)
+		if err != nil {
+			t.Fatalf("%s install: %v", goos, err)
+		}
+		if !serviceInstalled(goos) {
+			t.Fatalf("%s: not installed", goos)
+		}
+		switch goos {
+		case "linux":
+			data, _ := os.ReadFile(servicePath(goos))
+			if !strings.Contains(string(data), `ExecStart="`+bin+`" serve --config "`+cfg+`"`) ||
+				strings.Join(calls, ";") != "systemctl --user daemon-reload;systemctl --user enable --now minigw-serve.service" {
+				t.Fatalf("unit: %s calls %v", data, calls)
+			}
+			if a, _, _ := fileSHA256(bin); a == "" {
+				t.Fatal("minigw not copied to ~/.local/bin")
+			}
+		case "darwin":
+			data, _ := os.ReadFile(servicePath(goos))
+			if !strings.Contains(string(data), "<string>"+bin+"</string>") || !strings.Contains(string(data), "<string>"+cfg+"</string>") ||
+				!slices.Contains(calls, fmt.Sprintf("launchctl bootstrap gui/%d %s", os.Getuid(), servicePath(goos))) {
+				t.Fatalf("plist: %s calls %v", data, calls)
+			}
+		case "windows":
+			dir := filepath.Join(home, "Programs", "Mini Gateway")
+			want := `"` + filepath.Join(dir, "minigw-tray.exe") + `" tray --config "` + cfg + `"`
+			gotTray, _ := os.ReadFile(filepath.Join(dir, "minigw-tray.exe"))
+			a, _, _ := fileSHA256(exe)
+			b, _, _ := fileSHA256(filepath.Join(dir, "minigw.exe"))
+			if reg[runValueName] != want || string(gotTray) != string(tray) || a != b || closed != 1 ||
+				!strings.HasSuffix(envPath, ";"+dir) || len(started) != 1 || !strings.Contains(msg, "notification area") {
+				t.Fatalf("windows: run %q path %q started %v closed %d msg %q", reg[runValueName], envPath, started, closed, msg)
+			}
+			if _, err := serviceCommand("install", goos, cfg); err != nil || strings.Count(envPath, dir) != 1 { // posodobitev: PATH enkrat
+				t.Fatalf("reinstall: %v %q", err, envPath)
+			}
+		}
+		msg, err = serviceCommand("uninstall", goos, cfg)
+		if err != nil || serviceInstalled(goos) {
+			t.Fatalf("%s uninstall: %v", goos, err)
+		}
+		if goos == "windows" {
+			dir := filepath.Join(home, "Programs", "Mini Gateway")
+			if envPath != `C:\Windows` || !strings.Contains(msg, filepath.Dir(cfg)) {
+				t.Fatalf("uninstall: path %q msg %q", envPath, msg)
+			}
+			if _, err := os.Stat(filepath.Join(dir, "minigw.exe")); err == nil {
+				t.Fatal("program files kept")
+			}
+		}
+	}
+	if q := systemdQuote(`C:\a "b" 100%`); q != `"C:\\a \"b\" 100%%"` {
+		t.Fatalf("systemd quote: %s", q)
+	}
+}

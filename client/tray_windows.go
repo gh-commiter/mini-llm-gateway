@@ -141,7 +141,7 @@ func shellOpen(target, params string) {
 
 func trayRun(cfgPath string) {
 	runtime.LockOSThread() // okno in zanka sporočil na eni niti
-	if _, _, err := pCreateMutex.Call(0, 0, uintptr(unsafe.Pointer(u16(`Local\MiniGatewayRouter`)))); err == syscall.Errno(183) {
+	if _, _, err := pCreateMutex.Call(0, 0, uintptr(unsafe.Pointer(u16(trayMutexName)))); err == syscall.Errno(183) {
 		messageBox("Mini Gateway is already running: see its icon in the notification area.")
 		return
 	}
@@ -181,7 +181,7 @@ func (t *tray) tr(en, sl string) string {
 
 func (t *tray) create() error {
 	inst, _, _ := pGetModuleHandle.Call(0)
-	wc := wndClassEx{WndProc: syscall.NewCallback(trayProc), Instance: inst, ClassName: u16("MiniGatewayTray")}
+	wc := wndClassEx{WndProc: syscall.NewCallback(trayProc), Instance: inst, ClassName: u16(trayClassName)}
 	wc.Size = uint32(unsafe.Sizeof(wc))
 	if r, _, err := pRegisterClassEx.Call(uintptr(unsafe.Pointer(&wc))); r == 0 {
 		return fmt.Errorf("RegisterClassEx: %v", err)
@@ -259,6 +259,9 @@ func trayProc(hwnd, m, wp, lp uintptr) uintptr {
 	case m == wmTimer:
 		t.poll()
 		return 0
+	case m == 0x0010: // WM_CLOSE: minigw serve install (posodobitev) ali uninstall zapre pladenj
+		pShellNotifyIcon.Call(nimDelete, uintptr(unsafe.Pointer(t.data(0))))
+		os.Exit(0)
 	case uint32(m) == t.recreated && t.recreated != 0:
 		t.addIcon()
 		return 0
