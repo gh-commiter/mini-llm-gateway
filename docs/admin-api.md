@@ -116,7 +116,8 @@ Notes:
 - `POST /devices` takes only a valid device ID. `pending` lists the last 20 devices that were refused since the
   gateway started (in memory), newest last.
 - `POST /providers` adds or replaces a provider. Name: letters, digits, `. _ -`, up to 32. `baseURL` without `/v1`;
-  it must be `https`, or `http` to localhost or a private IP with `"insecure": true`. The gateway lists the models
+  it must be `https`, or `http` to localhost, a private IP or a local-network name (`.local`, a name without a dot)
+  with `"insecure": true`. LiteLLM and OpenRouter are built in: always listed, `DELETE` and renaming are refused. The gateway lists the models
   with the key before it saves anything, and stores the key in the system's secret store (Credential Manager,
   Keychain or Secret Service), never in the config. `keyStore` says where. A new provider with more than 20 models
   starts with none enabled. The key is never returned.
@@ -190,7 +191,8 @@ The Mac app keeps its settings in its preferences and Keychain; the Settings win
   devices stay allowed, and an empty list keeps `allowAnyDevice` on. `GET /devices` also has a `siri` flag per
   device. This Mac (loopback) is always allowed.
 - **Providers:** each has `"enabled"`. `name` is the provider's name in Settings. `POST` turns the provider on and
-  applies the same URL rule as Go; providers added in Settings may still use any `http` URL. The key goes to the
+  applies the same URL rule as Go, and so do providers set in Settings ("Allow http"); providers with an `http` URL
+  from before this rule have Allow http on. The key goes to the
   Keychain only after the config change succeeds, and before the app restarts the gateway (the gateway reads provider
   keys when it starts). Providers with manual
   aliases (Settings → Advanced) list their discovered models here, but route by their aliases.

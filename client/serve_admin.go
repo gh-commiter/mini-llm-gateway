@@ -481,6 +481,9 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			g.Aliases = *b.Aliases
 		}
 		if b.Name != nil && *b.Name != arg {
+			if builtinGateway(arg) || builtinGateway(*b.Name) {
+				return fail(400, "LiteLLM and OpenRouter are built in: they keep their names")
+			}
 			if !validGatewayName.MatchString(*b.Name) {
 				return fail(400, "provider name: letters, digits, . _ - (up to 32)")
 			}
@@ -518,6 +521,9 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		s.gateways.forget(g.Name)
 		return 200, map[string]any{"provider": s.apiGateway(g), "gateway": s.apiGateway(g)}
 	case "DELETE providers/{}":
+		if builtinGateway(arg) {
+			return fail(400, arg+" is built in: turn it off instead")
+		}
 		err := s.update(func(c *serveConfig) error {
 			i := slices.IndexFunc(c.Gateways, func(x serveGateway) bool { return x.Name == arg })
 			if i < 0 {

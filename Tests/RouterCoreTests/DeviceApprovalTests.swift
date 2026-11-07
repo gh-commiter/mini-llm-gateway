@@ -57,3 +57,25 @@ private func newID() -> String { Noise.base64url(Curve25519.Signing.PrivateKey()
     app.config.devices = []
     #expect(await ask(other, "Spy").status == 200)
 }
+
+/// Allow http kot minigw serve: obstoječi http ponudniki z vklopljenim stikalom; https vedno; http le do localhost ali
+/// zasebnega IP in le s stikalom (sicer ponudnik ne dobi ključa).
+@Test func providerAllowHTTPRule() async throws {
+    let old = try JSONDecoder().decode([ProviderConfig].self, from: Data(#"""
+    [{"id":"a","name":"A","enabled":true,"baseURL":"http://localhost:4000","aliases":""},
+     {"id":"b","name":"B","enabled":true,"baseURL":"https://openrouter.ai/api","aliases":""}]
+    """#.utf8))
+    #expect(old[0].insecure && !old[1].insecure && old[0].urlError == nil && old[1].urlError == nil)
+    #expect(RouterConfig().providers.first { $0.id == "litellm" }?.insecure == true)  // privzeti LiteLLM: http://localhost:4000
+    var p = ProviderConfig(id: "x", name: "X", enabled: true, baseURL: "http://192.168.1.5:4000", aliases: "", insecure: false)
+    #expect(p.urlError != nil)  // http brez stikala
+    p.insecure = true
+    #expect(p.urlError == nil)
+    p.baseURL = "http://mini.local:4000"
+    #expect(p.urlError == nil)  // ime v lokalnem omrežju (isto kot minigw serve)
+    p.baseURL = "http://example.com"
+    #expect(p.urlError != nil)  // javni naslov: nikoli http
+    if case .failure(let f) = await Discovery.load(p, key: "k") { #expect(f.message.contains("https")) } else { Issue.record("loaded") }
+    let fresh = try JSONDecoder().decode(ProviderConfig.self, from: JSONEncoder().encode(ProviderConfig(id: "y", name: "Y", enabled: false, baseURL: "http://localhost:1", aliases: "", insecure: false)))
+    #expect(!fresh.insecure)  // shranjena izbira ostane
+}

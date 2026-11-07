@@ -6,16 +6,17 @@ Every control of the Mac app's Settings window (Sources/MiniGateway/Settings.swi
 
 | Mac pane · control | Windows/Linux | API field | Note |
 |---|---|---|---|
-| Sidebar: search, items with icons, + (LiteLLM, OpenRouter, other) / − | same | – | Devices is its own pane (on the Mac it is part of Siri AI). |
+| Sidebar: search, items with icons, + (LiteLLM, OpenRouter, other) / − | same | – | Same order: General, providers, (Siri AI, Apple FM: Mac only), Foundry Local, Claude CLI, Codex CLI, Copilot CLI, Grok CLI, Devices. |
+| Built-in providers LiteLLM and OpenRouter | same | `GET providers` | Always listed, off until a key is set, can be turned off but not removed or renamed (`DELETE` 400). Defaults: LiteLLM `http://localhost:4000` with Allow http, OpenRouter `https://openrouter.ai/api` with no model enabled. A provider named litellm or openrouter is the built-in one. |
 | General · Open at Login | General · Start at sign-in | `PATCH general {startAtSignIn}` | Windows: Run value for the tray. Linux: `minigw serve install`. |
 | General · Address, Port | same | `general.address`, `general.port` | Address only empty, `0.0.0.0`, `::` or `127.0.0.1` (the admin API needs 127.0.0.1); a change needs a restart. |
-| General · Allowed clients (IP; empty = all) | same | `general.allowedClients` | Connections from other IPs are closed; this computer is always allowed. |
-| General · Allow unencrypted connections from other Macs | Allow unencrypted connections from other computers | `general.allowPlainRemote` | Such clients have no device key: they also need "Allow any device" (Devices). |
+| Devices · Allowed clients (IP; empty = all) | same | `general.allowedClients` | Connections from other IPs are closed; this computer is always allowed. |
+| Devices · Allow unencrypted connections from other Macs | General · Allow unencrypted connections from other computers | `general.allowPlainRemote` | Such clients have no device key: they also need "Allow any device" (Devices). |
 | General · Token: Show, Copy Token, New Token | same | `GET general.connect`, `POST general/token` | A new token also ends settings page sessions. |
 | General · Scratch folder: Choose…, Default, Show in Finder | Scratch folder: path field, Default | `general.scratch` | A browser cannot pick folders or open Explorer; a new folder applies to new sessions, existing copies are not moved. |
 | General · About: Version (build), License | same | `status.version`, `status.build` | |
 | Provider · Enabled (off without a key) | same | `PATCH providers/{name} {enabled}` | |
-| Provider · Name, Base URL | same | `PATCH providers/{name} {name, baseURL, insecure}` | Renaming moves the key; `http` only to localhost or a private IP with "Allow http". |
+| Provider · Name, Base URL, Allow http (localhost or a private IP only) | same | `PATCH providers/{name} {name, baseURL, insecure}` (Mac: Settings, `POST providers`) | Same rule on both: `https`, or `http` with Allow http to localhost, a private IP or a local-network name (`.local`, no dot). Mac providers with an `http` URL from before keep working (Allow http on). Renaming moves the key (Go). |
 | Provider · API key (saved; enter to replace) | same | `POST providers {name, baseURL, key, insecure}` | Key in Credential Manager / Secret Service, never shown. |
 | Provider · Models: search, N of M enabled, Enable All, Disable All, refresh, a switch per model, context size | same | `GET/POST providers/{name}/models` | Enable All = all, also future models. |
 | Provider · Aliases (advanced) | same | `PATCH providers/{name} {aliases}` | `alias = upstream ID, window` per line; when set they define the models. |

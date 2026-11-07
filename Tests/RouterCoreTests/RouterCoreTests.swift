@@ -391,7 +391,7 @@ func makeRouter(session: URLSession = .shared) -> Router {
     if case .failure(let f) = await Discovery.load(p, key: "") { #expect(f.message == "No API key") } else { Issue.record("no key") }
     if case .failure(let f) = await Discovery.load(p, key: "k") { #expect(f.message.hasPrefix("Cannot connect") && f.message.contains("Local Network")) } else { Issue.record("connect") }
     var bad = p; bad.baseURL = "not a url"
-    if case .failure(let f) = await Discovery.load(bad, key: "k") { #expect(f.message == "Invalid base URL") } else { Issue.record("url") }
+    if case .failure(let f) = await Discovery.load(bad, key: "k") { #expect(f.message.hasPrefix("invalid provider URL")) } else { Issue.record("url") }
     #expect(Discovery.isLocal("192.168.1.20") && Discovery.isLocal("mini.local") && !Discovery.isLocal("openrouter.ai"))
 }
 

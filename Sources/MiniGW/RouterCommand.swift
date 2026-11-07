@@ -203,10 +203,12 @@ func routerCommand(_ argv: [String]) {
             say("removed provider \(pos[2]) and its API key")
         case "list":
             need(2, 2)
-            for g in a.call("GET", "/gateways")["gateways"] as? [[String: Any]] ?? [] {
+            let list = a.call("GET", "/gateways")["gateways"] as? [[String: Any]] ?? []
+            for g in list {
                 let n = (g["models"] as? [String]).map { String($0.count) } ?? "all"
                 say(clean("\(g["name"] as? String ?? "")  \(g["baseURL"] as? String ?? "")  models enabled: \(n)"))
             }
+            if list.isEmpty { say("no providers (add one with: minigw gw provider add <name> <baseURL>)") }
         case "models":
             need(3, 4)
             if flags["enable"] != nil || flags["disable"] != nil {

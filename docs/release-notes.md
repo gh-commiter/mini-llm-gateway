@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Providers: the Mac has "Allow http (localhost or a private IP only)" like `minigw serve`, with the same rule on both
+  (local-network names such as `mini.local` count as local). Providers with an `http` URL keep working. LiteLLM and
+  OpenRouter are always listed on `minigw serve` too (off until a key is set; they can be turned off, not removed).
 - Devices are the same on the Mac and on `minigw serve`: a new device waits for approval (Settings → Devices,
   the menu bar, `minigw gw devices allow`) unless the list is empty and "Allow any device with the token" is on.
   Devices you already use stay allowed. Both panes show the allowed IP addresses, waiting and allowed devices with

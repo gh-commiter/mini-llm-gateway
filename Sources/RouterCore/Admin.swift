@@ -283,6 +283,7 @@ extension Router {
             let old = c.providers.first { $0.name == name }
             var p = old ?? ProviderConfig(id: "gw-" + UUID().uuidString.prefix(8).lowercased(), name: name, enabled: true, baseURL: base, aliases: "")
             p.baseURL = base
+            p.insecure = try b.bool("insecure") ?? false
             p.enabled = true
             let models: [Discovery.Model]
             switch await Discovery.load(p, key: key, session: session) {
@@ -519,7 +520,7 @@ extension Router {
     }
 
     func gateway(_ p: ProviderConfig, ready: Bool) -> [String: Any] {
-        ["name": p.name, "baseURL": p.baseURL, "insecure": p.baseURL.hasPrefix("http://"), "enabled": p.enabled,
+        ["name": p.name, "baseURL": p.baseURL, "insecure": p.insecure, "enabled": p.enabled,
          "models": p.enabledModels.map { $0 as Any } ?? NSNull(), "hasKey": !(secrets.get(p.id) ?? "").isEmpty, "ready": ready]
     }
 
@@ -550,7 +551,10 @@ extension Router {
         switch u.scheme {
         case "https": break
         case "http":
-            guard host == "localhost" || isPrivateIP(host) else {
+            // Lokalno: localhost, zasebni IP, ime v lokalnem omrežju (.local, ime brez pike); isto pravilo kot minigw serve.
+            let h = host.lowercased()
+            let lanName = h.hasSuffix(".local") || (!h.contains(".") && !h.contains(":") && !h.hasPrefix("["))
+            guard h == "localhost" || lanName || isPrivateIP(host) else {
                 throw AdminError(400, "provider URL must be https (http only to localhost or a private IP, with insecure)")
             }
             guard insecure else { throw AdminError(400, "http sends the API key unencrypted: set insecure for a provider on localhost or a private IP") }

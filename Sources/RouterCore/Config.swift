@@ -9,10 +9,30 @@ public struct ProviderConfig: Codable, Identifiable, Sendable, Equatable {
     public var baseURL: String     // brez /v1
     public var aliases: String     // napredno: vrstice »alias = upstream, okno«; prazno = odkriti modeli
     public var enabledModels: [String]?  // nil = vsi odkriti (tudi prihodnji); seznam = le ti
+    /// Allow http (insecure), kot minigw serve: http le do localhost ali zasebnega IP in le s tem stikalom.
+    public var insecure = false
 
-    public init(id: String, name: String, enabled: Bool, baseURL: String, aliases: String, enabledModels: [String]? = nil) {
+    public init(id: String, name: String, enabled: Bool, baseURL: String, aliases: String, enabledModels: [String]? = nil,
+                insecure: Bool? = nil) {
         self.id = id; self.name = name; self.enabled = enabled; self.baseURL = baseURL; self.aliases = aliases
         self.enabledModels = enabledModels
+        self.insecure = insecure ?? baseURL.hasPrefix("http://")
+    }
+
+    public init(from decoder: Decoder) throws {  // starejše nastavitve brez »insecure«: http ponudniki z vklopljenim stikalom
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        enabled = try c.decode(Bool.self, forKey: .enabled)
+        baseURL = try c.decode(String.self, forKey: .baseURL)
+        aliases = try c.decodeIfPresent(String.self, forKey: .aliases) ?? ""
+        enabledModels = try c.decodeIfPresent([String].self, forKey: .enabledModels)
+        insecure = try c.decodeIfPresent(Bool.self, forKey: .insecure) ?? baseURL.hasPrefix("http://")
+    }
+
+    /// Razlog, zakaj naslova ni mogoče uporabiti (isto pravilo kot skrbniški API in minigw serve); nil = v redu.
+    public var urlError: String? {
+        do { _ = try Router.checkGatewayURL(baseURL, insecure: insecure); return nil } catch let e as AdminError { return e.message } catch { return "\(error)" }
     }
 
     public func isModelEnabled(_ upstream: String) -> Bool { enabledModels?.contains(upstream) ?? true }

@@ -561,7 +561,7 @@ func TestScratchFolderProtected(t *testing.T) {
 func TestProvidersNamesAndAliases(t *testing.T) {
 	s, cfg, base := liveServer(t, nil)
 	for _, p := range []string{"/providers", "/gateways"} {
-		if st, b := adminNoise(t, s, base, s.admin, "GET", adminPrefix+p, ""); st != 200 || !strings.Contains(b, `"providers":[]`) || !strings.Contains(b, `"gateways":[]`) {
+		if st, b := adminNoise(t, s, base, s.admin, "GET", adminPrefix+p, ""); st != 200 || !strings.Contains(b, `"providers":[{"name":"LiteLLM"`) || !strings.Contains(b, `"gateways":[{"name":"LiteLLM"`) {
 			t.Fatalf("%s: %d %s", p, st, b)
 		}
 	}
@@ -571,7 +571,7 @@ func TestProvidersNamesAndAliases(t *testing.T) {
 	run := func(args ...string) string {
 		return stdout(t, func() { routerCommand(append(args, "--config", cfg), strings.NewReader("")) })
 	}
-	if out := run("provider", "list"); !strings.HasPrefix(out, "no providers") {
+	if out := run("provider", "list"); !strings.HasPrefix(out, "LiteLLM  http://localhost:4000") || !strings.Contains(out, "OpenRouter") {
 		t.Fatalf("gw provider list: %q", out)
 	}
 	if run("provider", "list") != run("gateway", "list") {

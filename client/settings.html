@@ -267,6 +267,9 @@ function toggle(checked, onchange, disabled) {
   return el("label", {class: "switch"}, i, el("span"));
 }
 // glyphNode: znak ali funkcija, ki vrne SVG (ikona Devices kot laptopcomputer.and.iphone na Macu).
+// Vgrajena ponudnika (kot na Macu): vedno na seznamu, izklop da, odstranitev ne.
+const BUILTIN = ["litellm", "openrouter"];
+
 function glyphNode(glyph) { return typeof glyph === "function" ? glyph() : glyph; }
 
 function devicesGlyph() {
@@ -468,7 +471,8 @@ const pages = {
       group(win ? row(t("startup"), toggle(st.installed, on => save(n1, () => api("PATCH", "/general", {startAtSignIn: on}))))
                 : row(t("startup"), value(st.installed ? t("installedYes") : t("startupHint")))),
       n1,
-      group(row(t("address"), field("address", g.address, "0.0.0.0")), row(t("port"), field("port", g.port, "", true))),
+      group(row(t("address"), field("address", g.address, "0.0.0.0")), row(t("port"), field("port", g.port, "", true)),
+        row(labelSub(t("plainRemote"), t("plainRemoteHelp")), toggle(g.allowPlainRemote, v => save(n2, () => api("PATCH", "/general", {allowPlainRemote: v}))))),
       n2,
       section(t("token")),
       group(row(el("div", {class: "label", style: "min-width:0"}, line), buttons(showBtn,
@@ -516,8 +520,7 @@ const pages = {
     return [
       card(...ICON.devices, t("devices"), t("devicesDesc")),
       group(row(labelSub(t("anyDevice"), t("anyDeviceHelp")), toggle(g.allowAnyDevice, v => save(n2, () => api("PATCH", "/general", {allowAnyDevice: v})))),
-        row(t("allowedClients"), clients),
-        row(labelSub(t("plainRemote"), t("plainRemoteHelp")), toggle(g.allowPlainRemote, v => save(n2, () => api("PATCH", "/general", {allowPlainRemote: v}))))),
+        row(t("allowedClients"), clients)),
       n2,
       section(t("waiting")), waiting,
       section(t("allowed")),
@@ -535,7 +538,7 @@ const pages = {
     const enc = encodeURIComponent(name);
     const n1 = note(t("auto")), n2 = note(), n3 = note(t("aliasesHint"));
     const patch = body => api("PATCH", "/providers/" + enc, body);
-    const nameIn = el("input", {type: "text", value: g.name});
+    const nameIn = el("input", {type: "text", value: g.name, disabled: BUILTIN.includes(g.name.toLowerCase())});
     autosave(nameIn, n1, async v => { const r = await patch({name: v}); show("gateway", r.gateway.name); return r; });
     const url = el("input", {type: "text", value: g.baseURL});
     autosave(url, n1, v => patch({baseURL: v}));
@@ -697,11 +700,11 @@ async function nav() {
   const items = [
     ["general", t("general"), ICON.general],
     ...gateways.map(g => ["gateway", g.name, gwIcon(g), g.name]),
+    ["foundry", "Foundry Local", ICON.foundry],  // vrstni red kot na Macu (brez Siri AI in Apple FM)
     ["claude", t("claude"), ICON.claude],
     ...(pages.codex ? [["codex", "Codex CLI", ICON.codex]] : []),
-    ...(pages.grok ? [["grok", "Grok CLI", ICON.grok]] : []),
     ["copilot", "Copilot CLI", ICON.copilot],
-    ["foundry", "Foundry Local", ICON.foundry],
+    ...(pages.grok ? [["grok", "Grok CLI", ICON.grok]] : []),
     ["devices", t("devices"), ICON.devices],
   ].filter(x => !search || x[1].toLowerCase().includes(search.toLowerCase()));
   const find = el("input", {type: "text", class: "left search", placeholder: t("search"), value: search});
@@ -715,7 +718,7 @@ async function nav() {
     el("div", {class: "footer"},
       el("button", {textContent: "+", title: t("addGateway"), onclick: () => menu.classList.toggle("hidden")}),
       el("span", {class: "divider"}),
-      el("button", {textContent: "−", title: t("remove"), disabled: !sel, onclick: async () => {
+      el("button", {textContent: "−", title: t("remove"), disabled: !sel || BUILTIN.includes(sel.toLowerCase()), onclick: async () => {
         if (!confirm(t("removeGateway", sel))) return;
         try { await api("DELETE", "/providers/" + encodeURIComponent(sel)); await show("general"); } catch (e) { toast(e.message); }
       }}), menu));

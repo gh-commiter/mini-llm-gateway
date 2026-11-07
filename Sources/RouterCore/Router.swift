@@ -461,6 +461,9 @@ public final class Router: Sendable {
                      rid: String, writer: ResponseWriter) async -> Int {
         var body = body
         body["model"] = r.upstream
+        if let e = r.provider.urlError {  // http brez Allow http ali do javnega naslova: ključ ne gre nešifriran
+            return await error(502, "api_error", "\(r.provider.name): \(e)", rid: rid, writer: writer)
+        }
         let base = r.provider.baseURL.hasSuffix("/") ? String(r.provider.baseURL.dropLast()) : r.provider.baseURL
         guard let url = URL(string: base + req.path + (req.query.map { "?" + $0 } ?? "")),
               let data = try? JSONSerialization.data(withJSONObject: body) else {
@@ -651,6 +654,7 @@ public enum Discovery {
 
     /// Modeli ali razlog, zakaj jih ni (za nastavitve in dnevnik).
     public static func load(_ p: ProviderConfig, key: String, session: URLSession = Router.defaultSession) async -> Result<[Model], Failure> {
+        if let e = p.urlError { return .failure(Failure(message: e)) }
         guard !key.isEmpty else { return .failure(Failure(message: String(localized: "No API key"))) }
         let list: [String: Any]
         do { list = try await fetch(p, "/v1/models", key: key, session: session) } catch { return .failure(error) }

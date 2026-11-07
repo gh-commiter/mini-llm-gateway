@@ -121,6 +121,7 @@ func loadServeConfig(path string) (serveConfig, error) {
 	if c.PermissionMode == "" {
 		c.PermissionMode = "dontAsk"
 	}
+	ensureBuiltinGateways(&c)
 	return c, nil
 }
 
@@ -391,6 +392,7 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 		return nil, errors.New("config needs token and key: run minigw serve init")
 	}
 	cfgDir, _ := filepath.Abs(filepath.Dir(cfgPath))
+	ensureBuiltinGateways(&c)
 	if c.Scratch == "" {
 		if c.Scratch = defaultScratch(); c.Scratch == "" {
 			return nil, errors.New("no cache folder for copies: set \"scratch\" in the config")

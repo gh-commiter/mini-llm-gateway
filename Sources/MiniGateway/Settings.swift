@@ -636,7 +636,6 @@ struct SettingsView: View {
                 let exe = draft.grok.executable
                 grokModels = await Task.detached { Grok.executable(exe).map(Grok.catalog) ?? [] }.value
             }
-            foldersSection
             Section {
                 Toggle("Allow writing in the session's folder", isOn: $draft.grok.write)
             } header: {
@@ -965,6 +964,10 @@ struct ProviderPane: View {
                     .help(key.isEmpty ? String(localized: "Enter an API key to enable") : "")
                 TextField("Name", text: $provider.name)
                 TextField("Base URL", text: $provider.baseURL)
+                Toggle("Allow http (localhost or a private IP only)", isOn: $provider.insecure)
+                if let e = provider.urlError, !provider.baseURL.isEmpty, provider.baseURL != "https://" {
+                    Text(verbatim: e).font(.caption).foregroundStyle(.red)
+                }
                 SecureField(savedKey.isEmpty ? "API key"
                             : savedKey == Keychain.defaultKeys[provider.id] ? "API key (default; enter to replace)"
                             : "API key (saved; enter to replace)", text: $keyInput)

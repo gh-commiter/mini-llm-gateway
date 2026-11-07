@@ -33,6 +33,29 @@ type serveGateway struct {
 	Aliases  string   `json:"aliases,omitempty"`  // vrstice »alias = upstream ID, okno«; določijo modele namesto tabele (kot na Macu)
 }
 
+// builtinGateways: kot vgrajena ponudnika na Macu: vedno na seznamu, izklopljena, dokler nimata ključa; izklop da,
+// odstranitev in preimenovanje ne. Obstoječ ponudnik z enakim imenom (ne glede na velikost črk) je vgrajeni (ključ ostane).
+var builtinGateways = []serveGateway{
+	{Name: "LiteLLM", BaseURL: "http://localhost:4000", Insecure: true, Disabled: true},
+	{Name: "OpenRouter", BaseURL: "https://openrouter.ai/api", Models: []string{}, Disabled: true}, // več sto modelov: izbereš sam
+}
+
+func builtinGateway(name string) bool {
+	return slices.ContainsFunc(builtinGateways, func(b serveGateway) bool { return strings.EqualFold(b.Name, name) })
+}
+
+// ensureBuiltinGateways: manjkajoča vgrajena ponudnika na začetek seznama (kot na Macu).
+func ensureBuiltinGateways(c *serveConfig) {
+	var add []serveGateway
+	for _, b := range builtinGateways {
+		if !slices.ContainsFunc(c.Gateways, func(g serveGateway) bool { return strings.EqualFold(g.Name, b.Name) }) {
+			b.Models = slices.Clone(b.Models)
+			add = append(add, b)
+		}
+	}
+	c.Gateways = append(add, c.Gateways...)
+}
+
 type aliasPair struct {
 	alias, upstream string
 	window          int
@@ -91,8 +114,12 @@ func checkGatewayURL(raw string, insecure bool) (string, error) {
 	switch u.Scheme {
 	case "https":
 	case "http":
-		ip := net.ParseIP(u.Hostname())
-		if u.Hostname() != "localhost" && (ip == nil || !(ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast())) {
+		// Lokalno: localhost, zasebni IP, ime v lokalnem omrežju (.local, ime brez pike); isto pravilo kot na Macu.
+		h := strings.ToLower(u.Hostname())
+		ip := net.ParseIP(h)
+		local := h == "localhost" || strings.HasSuffix(h, ".local") || (ip == nil && !strings.Contains(h, ".") && !strings.Contains(h, ":")) ||
+			(ip != nil && (ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()))
+		if !local {
 			return "", errors.New("provider URL must be https (http only to localhost or a private IP, with --insecure)")
 		}
 		if !insecure {
