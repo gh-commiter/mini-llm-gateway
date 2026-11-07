@@ -100,7 +100,7 @@ public actor ShareHub {
         guard force || now.timeIntervalSince(lastExpire) > 86400 else { return }
         lastExpire = now
         let active = Set(bySession.values.compactMap { $0.copy?.standardizedFileURL.path })
-        await Task.detached { Self.removeOld(root, active: active, now: now) }.value
+        await offPool { Self.removeOld(root, active: active, now: now) }
     }
 
     static func removeOld(_ root: URL, active: Set<String>, now: Date) {
@@ -349,14 +349,14 @@ public actor ShareHub {
         while runs.values.contains(where: { $0.clone.lastPathComponent == "\(name).\(n)" }) { n += 1 }
         let clone = dir.appendingPathComponent("\(name).\(n)", isDirectory: true)
         let base = s.readOnly ? [:] : s.state ?? [:], readOnly = s.readOnly
-        let start = await Task.detached { () -> [String: Sync.Entry]? in
+        let start = await offPool { () -> [String: Sync.Entry]? in
             try? FileManager.default.removeItem(at: clone)  // ostanek prekinjenega zagona
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             // kanonični poti: clone ne sledi povezavam nikjer v poti
             guard let src = Sync.real(copy), let to = Sync.real(dir)?.appendingPathComponent(clone.lastPathComponent),
                   Self.clone(src, to: to, trustedSource: true) else { return nil }
             return readOnly ? [:] : Sync.scan(clone, previous: base).files
-        }.value
+        }
         guard let start else { return nil }
         runs[id] = Run(share: s, copy: copy, clone: clone, base: base, start: start)
         return clone
@@ -396,7 +396,7 @@ public actor ShareHub {
         guard !r.merged, !r.share.readOnly else { return }
         r.merged = true
         let (start, clone, copy, acked) = (r.start, r.clone, r.copy, r.acked)
-        let (applied, touched) = await Task.detached { () -> ([String], Set<String>) in
+        let (applied, touched) = await offPool { () -> ([String], Set<String>) in
             let fm = FileManager.default
             let ch = Sync.diff(old: start, new: Sync.scan(clone, previous: start).files, root: clone)
             let (realClone, realCopy) = (Sync.real(clone), Sync.real(copy))  // za clone brez povezav v poti
@@ -425,7 +425,7 @@ public actor ShareHub {
                 } else if ok { applied.append(e.path) }
             }
             return (applied, Set(ch.changed.map(\.path) + ch.deleted))
-        }.value
+        }
         // keptBase: potrjeno in v kopiji = odjemalec ima različico kopije; nepotrjeno združeno = izvor tega agenta.
         // Ni združeno (kopija se je spremenila): ostane, kar velja za različico v kopiji.
         for p in acked where !touched.contains(p) { r.share.keptBase[p] = nil }
@@ -439,7 +439,7 @@ public actor ShareHub {
         releaseSlot(run: id)  // worktree: mesto spet prosto
         guard let r = runs[id] else { return }
         if !r.merged, !r.share.readOnly { await acquire(r.copy); await merge(r); unlock(r.copy) }
-        await Task.detached { try? FileManager.default.removeItem(at: r.clone) }.value
+        await offPool { try? FileManager.default.removeItem(at: r.clone) }
         runs[id] = nil  // šele po odstranitvi: mesto ».<n>« je spet prosto
     }
 
@@ -474,7 +474,7 @@ public actor ShareHub {
         s.execKnown = execKnown
         try? FileManager.default.createDirectory(at: copy, withIntermediateDirectories: true)
         let prev = s.state ?? [:]
-        let current = await Task.detached { Sync.scan(copy, previous: prev).files }.value  // zunaj akterja
+        let current = await offPool { Sync.scan(copy, previous: prev).files }  // zunaj akterja
         // Prvi prenos te registracije: stanje ni znano → kopija velja za usklajeno. Pri --minigw-ro je kopija zavrženo delo.
         let base = s.readOnly ? current : s.state ?? current
         let agent = Sync.diff(old: base, new: current, root: copy)
@@ -512,7 +512,7 @@ public actor ShareHub {
         guard let s = share(key: key, device: device), let copy = s.pulling?.clone ?? s.copy, !s.readOnly,
               let prev = s.pulling?.base ?? s.state else { return nil }
         s.lastSeen = Date()
-        let (current, skipped) = await Task.detached { Sync.scan(copy, previous: prev) }.value
+        let (current, skipped) = await offPool { Sync.scan(copy, previous: prev) }
         var ch = Sync.diff(old: prev, new: current, root: copy)
         ch.base = Dictionary(uniqueKeysWithValues: (ch.changed.map(\.path) + ch.deleted).compactMap { p in
             (s.keptBase[p] ?? prev[p]?.sha256).map { (p, $0) }  // združeno brez potrditve: izvorna različica

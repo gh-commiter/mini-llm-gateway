@@ -305,7 +305,7 @@ extension Router {
             prompt = last.text
         }
         let prepHome = reqDir.appendingPathComponent("p")  // svoj prazen COPILOT_HOME, ne domača mapa seje (R9)
-        await Task.detached { Copilot.prepare(exe, base: base, home: prepHome, cwd: tmp) }.value
+        await offPool { Copilot.prepare(exe, base: base, home: prepHome, cwd: tmp) }
         let args = Copilot.args(agent: agent, model: model, write: write, commands: commands,
                                 network: cfg.network && (tree == nil || config.worktreeCodexNetwork), session: session)
         let sessions = Self.copilotSessions, client = req.header("x-claude-mini-session") ?? ""

@@ -177,7 +177,7 @@ public enum ClaudeCLI {
     /// še preden pošlje zahtevo modelu.
     public static func availableTools(_ configured: String) async -> [String] {
         guard let exe = executable(configured) else { return [] }
-        return await Task.detached {
+        return await offPool {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: exe)
             p.arguments = ["-p", "x", "--model", "haiku", "--output-format", "stream-json", "--verbose", "--tools", "default",
@@ -195,7 +195,7 @@ public enum ClaudeCLI {
             while let b = try? out.fileHandleForReading.read(upToCount: 1), let c = b.first, c != 10 { line.append(c) }
             let tools = (try? JSONSerialization.jsonObject(with: line) as? [String: Any])?["tools"] as? [String]
             return (tools ?? []).sorted()
-        }.value
+        }
     }
 
     public struct ValidationError: Error, LocalizedError {

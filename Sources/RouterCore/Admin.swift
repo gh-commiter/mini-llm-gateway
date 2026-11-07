@@ -356,7 +356,7 @@ extension Router {
             switch arg {
             case "codex":
                 guard let exe = Codex.executable(c.codex.executable) else { return (200, ["models": [Any]()]) }
-                let ms = await Task.detached { Codex.catalog(exe) }.value
+                let ms = await offPool { Codex.catalog(exe) }
                 return (200, ["models": ms.map { m -> [String: Any] in
                     var o: [String: Any] = ["slug": m.slug, "name": m.name, "enabled": c.codex.isModelEnabled(m.slug)]
                     if !m.description.isEmpty { o["description"] = m.description }
@@ -365,7 +365,7 @@ extension Router {
                 }])
             case "grok":
                 guard let exe = Grok.executable(c.grok.executable) else { return (200, ["models": [Any]()]) }
-                let ms = await Task.detached { Grok.catalog(exe) }.value
+                let ms = await offPool { Grok.catalog(exe) }
                 return (200, ["models": ms.map { ["slug": $0, "name": $0, "enabled": c.grok.enabledModels?.contains($0) ?? true] }])
             default: throw AdminError(404, "no agent \(arg)")
             }

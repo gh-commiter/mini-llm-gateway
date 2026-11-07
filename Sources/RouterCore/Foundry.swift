@@ -187,7 +187,7 @@ public actor FoundryHub {
         var foreign = false
         func find() async -> URL? {
             for sub in ["server", "service"] {
-                let out = await Task.detached { Self.command(exe, [sub, "status"], 20) }.value
+                let out = await offPool { Self.command(exe, [sub, "status"], 20) }
                 guard let p = Foundry.port(out), let u = URL(string: "http://127.0.0.1:\(p)") else { continue }
                 guard let d = try? await Foundry.get(u.appendingPathComponent("openai/status"), timeout: 5),
                       (try? JSONSerialization.jsonObject(with: d) as? [String: Any])?["Endpoints"] is [Any] else { continue }
@@ -199,7 +199,7 @@ public actor FoundryHub {
         var u = await find()
         if u == nil, !foreign {
             for sub in ["server", "service"] {  // F6: »service« le, če »server« ni uspel
-                _ = await Task.detached { Self.command(exe, [sub, "start"], 120) }.value
+                _ = await offPool { Self.command(exe, [sub, "start"], 120) }
                 if let found = await find() { u = found; break }
             }
         }

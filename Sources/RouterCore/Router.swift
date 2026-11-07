@@ -65,9 +65,11 @@ public final class Router: Sendable {
             await catalog.refreshAll()  // odkrivanje modelov takoj ob vklopu/shranjevanju
             if cli.enabled {
                 await probes.start("claude-cli") {
-                    guard let exe = ClaudeCLI.executable(cli.executable) else { return false }
-                    if case .success = ClaudeCLI.validate(exe) { return true }
-                    return false
+                    await offPool {
+                        guard let exe = ClaudeCLI.executable(cli.executable) else { return false }
+                        if case .success = ClaudeCLI.validate(exe) { return true }
+                        return false
+                    }
                 }
             }
         }
@@ -693,6 +695,12 @@ public enum Discovery {
         guard o.count == 4 else { return false }
         return o[0] == 10 || o[0] == 127 || (o[0] == 192 && o[1] == 168) || (o[0] == 172 && (16...31).contains(o[1])) || (o[0] == 169 && o[1] == 254)
     }
+}
+
+/// Blokirajoče delo (procesi, git, drevesa datotek) na svoji niti. Ne Task.detached: ta teče v skupnem bazenu Swift
+/// concurrency (ena nit na jedro); blokirane niti ga izčrpajo in zahteve routerja ter časovniki (firstOf) čakajo.
+func offPool<T: Sendable>(_ work: @escaping @Sendable () -> T) async -> T {
+    await withCheckedContinuation { c in Thread { c.resume(returning: work()) }.start() }
 }
 
 /// Rezultat opravila ali `nil` po `within`; ne čaka na opravilo, ki teče dlje (withTaskGroup bi čakal).
