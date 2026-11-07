@@ -22,6 +22,7 @@ if [[ $MODE == --release ]]; then
   # #8: SHA256SUMS podpiše ključ izdaj zunaj repozitorija (zasebni delovni prostor); javni ključ je pripet v odjemalcih.
   SIGNING_KEY=${MINIGW_SIGNING_KEY:-../.secrets/release-signing-key}
   [[ -r $SIGNING_KEY ]] || { print -u2 "Release needs the signing key $SIGNING_KEY (or MINIGW_SIGNING_KEY): SHA256SUMS must be signed."; exit 1 }
+  command -v wixl >/dev/null || { print -u2 "Release needs wixl for the Windows MSI: brew install msitools"; exit 1 }
 else
   IDENTITY=${SIGN_IDENTITY:-$(pick "Developer ID Application")}
   [[ -n $IDENTITY ]] || IDENTITY=$(pick "Apple Development")
@@ -103,6 +104,9 @@ if [[ $MODE == --release ]]; then
     (cd client && CGO_ENABLED=0 GOOS=windows GOARCH=$arch go build -trimpath -ldflags "-s -w -H=windowsgui" -o "../$OUT/$name" .)
     GO_BINS+=$name
   done
+  # Namestitveni paket za Windows (wixl): minigw-windows-<arch>.msi, v SHA256SUMS in zato podpisan.
+  scripts/build-msi.sh $VERSION $OUT
+  GO_BINS+=(minigw-windows-amd64.msi minigw-windows-arm64.msi)
 
   (cd $OUT && shasum -a 256 "${ZIP:t}" "${DMG:t}" minigw.zip install.sh $GO_BINS | tee SHA256SUMS)
   rm -f $OUT/SHA256SUMS.sig

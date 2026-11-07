@@ -125,6 +125,58 @@ func TestSettingsSessionWithoutCookies(t *testing.T) {
 	}
 }
 
+// Izberi… / Prebrskaj…: seja kot pri spremembah, le POST; brez GUI 501, drugo okno 409; zmožnost na strani.
+func TestSettingsPick(t *testing.T) {
+	s, _, base := liveServer(t, nil)
+	host := strings.TrimPrefix(base, "http://")
+	u := s.settingsLoginURL()
+	_, b, _ := settingsCall(t, base, host, "POST", "/minigw/settings/login", "", `{"t":"`+u[strings.Index(u, "#t=")+3:]+`"}`)
+	session := regexp.MustCompile(`"session":"([^"]+)"`).FindStringSubmatch(b)[1]
+	pick := func(sess, body string) (int, string) {
+		st, b, _ := settingsCall(t, base, host, "POST", "/minigw/settings/pick", sess, body)
+		return st, b
+	}
+	for _, c := range []struct {
+		sess, body string
+		want       int
+	}{{"", `{"kind":"folder"}`, 401}, {"wrong", `{"kind":"folder"}`, 401}, {session, `{"kind":"x"}`, 400},
+		{session, `{"kind":"folder","x":1}`, 400}, {session, `{"kind":"folder"}`, 501}} {
+		if st, b := pick(c.sess, c.body); st != c.want {
+			t.Fatalf("%q %s: %d %s (want %d)", c.sess, c.body, st, b, c.want)
+		}
+	}
+	if st, _, _ := settingsCall(t, base, host, "GET", "/minigw/settings/pick", session, ""); st != 405 {
+		t.Fatalf("GET: %d", st)
+	}
+	if _, page, _ := settingsCall(t, base, host, "GET", "/minigw/settings", "", ""); !strings.Contains(page, "const PICKER = false;") {
+		t.Fatal("page must report no picker")
+	}
+
+	// Pladenj: okno odprto (čaka), drugo 409; po izbiri pot, ob preklicu "".
+	entered, release := make(chan string), make(chan string)
+	f := pickFunc(func(kind string) (string, error) { entered <- kind; return <-release, nil })
+	s.pick.Store(&f)
+	if _, page, _ := settingsCall(t, base, host, "GET", "/minigw/settings", "", ""); !strings.Contains(page, "const PICKER = true;") {
+		t.Fatal("page must report the picker")
+	}
+	done := make(chan string)
+	go func() { _, b := pick(session, `{"kind":"exe"}`); done <- b }()
+	if k := <-entered; k != "exe" {
+		t.Fatalf("kind: %s", k)
+	}
+	if st, _ := pick(session, `{"kind":"folder"}`); st != 409 {
+		t.Fatalf("second dialog: %d", st)
+	}
+	release <- `C:\Program Files\claude.exe`
+	if b := <-done; !strings.Contains(b, `"path":"C:\\Program Files\\claude.exe"`) {
+		t.Fatalf("path: %s", b)
+	}
+	go func() { <-entered; release <- "" }()
+	if st, b := pick(session, `{"kind":"folder"}`); st != 200 || !strings.Contains(b, `"path":""`) {
+		t.Fatalf("cancel: %d %s", st, b)
+	}
+}
+
 func TestTrayMenu(t *testing.T) {
 	id := base64url(newDevice("PC").key.Public().(ed25519.PublicKey))
 	st := apiStatus{Port: 8765, Devices: 1, Gateways: []apiGateway{{Name: "or"}}, Installed: true}

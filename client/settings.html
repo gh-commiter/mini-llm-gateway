@@ -104,6 +104,7 @@ a.btn { text-decoration: none; text-align: center; display: inline-block; }
 // v glavi X-Minigw-Session. Brez piškotkov. Vse spremembe se uveljavijo same (kot nastavitve na Macu).
 let SESSION = "";
 try { SESSION = sessionStorage.getItem("minigw-session") || ""; } catch (e) {}
+const PICKER = {{PICKER}};  // pladenj na Windows: okno za izbiro mape ali programa (POST /minigw/settings/pick)
 let START = ["general", ""];  // #p=<pano>&g=<prehod>: povezava naravnost v pano
 async function signIn() {
   const q = new URLSearchParams(location.hash.slice(1)), tok = q.get("t");
@@ -131,6 +132,7 @@ const S = {
     "Začasne datoteke agentov: sinhronizirane kopije, pogovori, priponke. Nova mapa velja za nove seje; obstoječe kopije ostanejo, kjer so."],
   installedYes: ["minigw serve install", "minigw serve install"], enabled: ["Enabled", "Vklopljeno"],
   detectedAt: ["Detected: %s · %s", "Najdeno: %s · %s"], allowedFolders: ["Allowed folders", "Dovoljene mape"], addFolder: ["Add Folder", "Dodaj mapo"],
+  choose: ["Choose…", "Izberi…"], browse: ["Browse…", "Prebrskaj…"],
   allowedFoldersHint: ["Agents work only in the session's folder and these folders. Type a full path and press +.",
     "Agenti delajo le v mapi seje in v teh mapah. Vpiši celo pot in pritisni +."],
   localTools: ["Allow local tools", "Dovoli lokalna orodja"],
@@ -282,6 +284,21 @@ async function api(method, path, body) {
   return j;
 }
 
+// pick: okno za izbiro na računalniku prehoda (kind "folder" ali "exe"); "" ob preklicu.
+async function pick(kind) {
+  const r = await fetch("/minigw/settings/pick", {method: "POST", credentials: "omit",
+    headers: {"X-Minigw-Session": SESSION, "Content-Type": "application/json"}, body: JSON.stringify({kind})});
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 401) throw new Error(t("signin"));
+  if (!r.ok) throw new Error((j.error && j.error.message) || ("HTTP " + r.status));
+  return j.path || "";
+}
+// browse: »Prebrskaj…« ob poti programa; izbrana pot se shrani kot vpisana.
+const browse = (input, n, apply) => PICKER ? button(t("browse"), () => save(n, async () => {
+  const p = await pick("exe");
+  if (p) { input.value = p; await apply(p); }
+})) : null;
+
 // save: sprememba takoj (stikala) ali 0,8 s po zadnjem tipkanju; »Shranjeno« ali napaka pod skupino.
 async function save(n, fn, ok) {
   n.className = "note"; n.textContent = t("saving");
@@ -292,7 +309,7 @@ function autosave(input, n, fn, ok) {
   input.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(() => save(n, () => fn(input.value.trim()), ok), 800); });
 }
 
-// folderList: seznam map s + / − (kot »Allowed folders« na Macu). Brskalnik ne more izbrati mape: pot se vpiše.
+// folderList: seznam map s + / − (kot »Allowed folders« na Macu). Pot se vpiše ali, s pladnjem na Windows, izbere (Izberi…).
 function folderList(csv, send, hint, win) {
   const list = (csv || "").split(",").map(x => x.trim()).filter(Boolean);
   let sel = null;
@@ -303,7 +320,10 @@ function folderList(csv, send, hint, win) {
   const render = () => box.replaceChildren(
     ...list.map(f => { const r = row(el("span", {class: "label mono", textContent: "📁 " + f}));
       r.classList.toggle("selected", f === sel); r.addEventListener("click", () => { sel = sel === f ? null : f; render(); }); return r; }),
-    row(input),
+    row(input, PICKER ? button(t("choose"), async () => {
+      try { const p = await pick("folder"); if (p && !list.includes(p)) commit([...list, p]); }
+      catch (e) { n.className = "note err"; n.textContent = e.message; }
+    }) : null),
     el("div", {class: "row plusminus"},
       el("button", {textContent: "+", title: t("addFolder"), onclick: () => { const v = input.value.trim(); if (v && !list.includes(v)) { commit([...list, v]); input.value = ""; } }}),
       el("span", {class: "divider"}),
@@ -342,7 +362,7 @@ async function agentPane(kind) {
     card(...ICON[kind], codex ? "Codex CLI" : "Grok CLI", t(kind + "Desc")),
     group(row(labelSub(t("enabled"), bare ? t(locked ? "agentLockedWin" : "agentWarnWin") : null),
         toggle(a.enabled && !locked, v => save(n1, async () => { await patch({enabled: v}); nav(); }), locked)),
-      row(labelSub(t("path")), path)),
+      row(labelSub(t("path")), path, browse(path, n1, async v => { await patch({path: v}); show(kind); }))),
     el("div", {class: "note"}, status),
     el("h3", {}, el("span", {textContent: t("models")}), buttons(button(t("enableAll"), () => bulk(true)), button(t("disableAll"), () => bulk(false)))),
     list, n1,
@@ -382,7 +402,7 @@ async function copilotPane() {
     card(...ICON.copilot, "Copilot CLI", t("copilotDesc")),
     group(row(labelSub(t("enabled"), bare ? t(locked ? "agentLockedWin" : "agentWarnWin") : null),
         toggle(a.enabled && !locked, v => save(n1, async () => { await patch({enabled: v}); nav(); }), locked)),
-      row(labelSub(t("path")), path), row(labelSub(t("copilotModels")), models)),
+      row(labelSub(t("path")), path, browse(path, n1, async v => { await patch({path: v}); show("copilot"); })), row(labelSub(t("copilotModels")), models)),
     el("div", {class: "note"}, status), n1,
     section(t("sandbox")),
     group(row(t("allowWrite"), toggle(a.write, v => save(n2, async () => { await patch({write: v}); show("copilot"); }), locked)),
@@ -641,7 +661,8 @@ const pages = {
     return [
       card(...ICON.claude, t("claude"), t("claudeDesc")),
       group(row(t("enabled"), toggle(c.enabled, v => save(n0, () => patch({enabled: v}))))), n0,
-      group(row(labelSub(t("path")), path, button(t("find"), () => save(n1, async () => { path.value = ""; showStatus(await patch({path: ""})); })))),
+      group(row(labelSub(t("path")), path, button(t("find"), () => save(n1, async () => { path.value = ""; showStatus(await patch({path: ""})); })),
+        browse(path, n1, async v => showStatus(await patch({path: v}))))),
       el("div", {class: "note"}, status), n1,
       section(t("allowedFolders")), folderList(c.folders, v => patch({folders: v}), t("allowedFoldersHint"), win),
       el("div", {style: "height:12px"}),

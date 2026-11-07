@@ -99,7 +99,8 @@ Linux (without Siri and Apple models). The default way to install both is the Cl
    ```
 
    - **Mac:** installs the Mini Gateway app with Homebrew (it asks first) and turns on Open at Login.
-   - **Windows:** installs `minigw serve` with the tray icon and starts it at sign-in.
+   - **Windows:** installs `minigw serve` with the tray icon and starts it at sign-in. Or use the Windows installer
+     (MSI) instead ([3.2.4](#324-gateway-on-windows-or-linux-without-the-plugin-minigw-serve)).
    - **Linux:** installs `minigw serve` as a systemd user unit. It starts at boot when linger can be turned on,
      otherwise at sign-in. The skill then shows the one `sudo` line that turns linger on.
 
@@ -208,11 +209,17 @@ mv minigw-linux-amd64 minigw && chmod +x minigw && sudo mv minigw /usr/local/bin
 The plugin, `install.sh` and `minigw serve install` check this signature themselves: `SHA256SUMS` is signed with a
 key that is not on GitHub, so a changed release is refused.
 
-Windows (PowerShell; compare the hash with `SHA256SUMS`):
+Windows (PowerShell; `ssh-keygen` comes with Windows 10 and later; the same steps check the MSI,
+`minigw-windows-amd64.msi`). `cmd /c` passes `SHA256SUMS` unchanged, which a PowerShell pipe would not:
 
 ```powershell
-Invoke-WebRequest https://github.com/gh-commiter/mini-llm-gateway/releases/latest/download/minigw-windows-amd64.exe -OutFile $HOME\minigw.exe
-Get-FileHash $HOME\minigw.exe -Algorithm SHA256
+cd $HOME
+$R = "https://github.com/gh-commiter/mini-llm-gateway/releases/latest/download"
+foreach ($f in "minigw-windows-amd64.exe", "SHA256SUMS", "SHA256SUMS.sig") { Invoke-WebRequest "$R/$f" -OutFile $f }
+Set-Content signers 'minigw-release namespaces="minigw-release" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINt++OHn+HHmR9mmA2UI+B0osuilO2GP0ddEzNp0GTrH' -Encoding ascii
+cmd /c "ssh-keygen -Y verify -f signers -I minigw-release -n minigw-release -s SHA256SUMS.sig < SHA256SUMS"
+(Get-FileHash minigw-windows-amd64.exe -Algorithm SHA256).Hash.ToLower()   # must match its line in SHA256SUMS
+Rename-Item minigw-windows-amd64.exe minigw.exe
 ```
 
 Then connect once with the gateway's token (quote it, it contains `#`):
@@ -260,10 +267,21 @@ devices waiting for approval (Allow / Deny, with a notification when one appears
 line**, **Start at sign-in**, the log (`minigw-serve.log` in the config folder) and Quit. `minigw serve install` sets
 it up.
 
+**Windows installer (MSI).** Instead of the two commands, download `minigw-windows-amd64.msi` (or `-arm64.msi`) from
+the [latest release](https://github.com/gh-commiter/mini-llm-gateway/releases/latest) and open it. It installs for
+this user only, without admin rights, the same as `minigw serve install`: `minigw.exe` and `minigw-tray.exe` in
+`%LocalAppData%\Programs\Mini Gateway`, minigw on your PATH, a Start menu entry, and the tray at sign-in. It then
+starts the tray, which creates the config on first start; copy the connect line from its menu. Running a newer MSI
+updates it. Remove it in Settings → Apps (not with `minigw serve uninstall`); the config and keys stay. The MSI is
+not code-signed yet, so SmartScreen warns: **More info → Run anyway**. Check it first against the signed
+`SHA256SUMS`, as in [3.2.3](#323-client-on-windows-and-linux). The ARM64 package needs Windows 11.
+
 **Settings page.** **Settings…** opens `http://127.0.0.1:<port>/minigw/settings` in the browser with a one-time
 link (60 s). It has the panes of the Mac's Settings window ([5. Gateway settings](#5-gateway-settings)), light or dark
 as the system. Changes apply at once. On Linux, `minigw gw settings` prints such a link; open it on the gateway computer or
-through `ssh -L <port>:127.0.0.1:<port>` with the same port on both ends (the page checks the port).
+through `ssh -L <port>:127.0.0.1:<port>` with the same port on both ends (the page checks the port). With the Windows
+tray, **Choose…** next to Allowed folders and **Browse…** next to a program's path open the Windows file dialog on the
+gateway computer; elsewhere you type the path.
 
 **Changing the gateway.** `minigw gw status|devices|provider|claude|token` (also as `minigw serve allow`, `deny`,
 `devices`, `provider`) changes the running gateway at once, through its admin API; when it does not run, it changes

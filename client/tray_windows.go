@@ -121,6 +121,7 @@ type tray struct {
 	recreated uint32 // TaskbarCreated
 	seen      map[string]bool
 	pending   []apiDevice
+	picks     chan pickReq // izbirno okno (picker_windows.go)
 }
 
 var theTray *tray // okenska procedura je ena za proces
@@ -152,12 +153,14 @@ func trayRun(cfgPath string) {
 	}
 	go func() { s.log.Printf("gateway stopped: %v", s.serve(ln)) }()
 	lang, _, _ := pGetUILanguage.Call()
-	t := &tray{s: s, cfgPath: cfgPath, logPath: logPath, sl: lang&0x3ff == 0x24, seen: map[string]bool{}}
+	t := &tray{s: s, cfgPath: cfgPath, logPath: logPath, sl: lang&0x3ff == 0x24, seen: map[string]bool{}, picks: make(chan pickReq, 1)}
 	theTray = t
 	if err := t.create(); err != nil {
 		messageBox("Mini Gateway: " + err.Error())
 		os.Exit(1)
 	}
+	pf := pickFunc(t.pick)
+	s.pick.Store(&pf) // stran z nastavitvami: Izberi… in Prebrskaj…
 	if fresh {
 		t.balloon(t.tr("Mini Gateway is ready", "Mini Gateway je pripravljen"),
 			t.tr("Copy the connect line from this icon's menu and run it on each client.", "V meniju te ikone kopiraj vrstico za povezavo in jo zaženi na vsakem odjemalcu."))
@@ -255,6 +258,9 @@ func trayProc(hwnd, m, wp, lp uintptr) uintptr {
 	case t == nil:
 	case m == wmTray && (lp == wmRButtonUp || lp == wmLButtonUp):
 		t.menu()
+		return 0
+	case m == wmPick:
+		t.onPick()
 		return 0
 	case m == wmTimer:
 		t.poll()
