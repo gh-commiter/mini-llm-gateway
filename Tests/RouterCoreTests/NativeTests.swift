@@ -161,7 +161,8 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     }
     let off = nativeRouter(f.share.path, devices: [DeviceConfig(id: "dev", name: "Air")])
     #expect(await run(off, argv, await challenge(off, f, device: "dev"), device: "dev").status == 403)  // privzeto izklopljeno
-    let on = nativeRouter(f.share.path, devices: [DeviceConfig(id: "dev", name: "Air", run: true)])
+    // »other«: dovoljena naprava brez minigw run (neznana naprava je zavrnjena že prej, glej deviceApproval…).
+    let on = nativeRouter(f.share.path, devices: [DeviceConfig(id: "dev", name: "Air", run: true), DeviceConfig(id: "other", name: "Other")])
     #expect(await run(on, argv, await challenge(on, f), device: nil).status == 403)  // lokalno brez naprave: ne
     #expect(await run(on, argv, await challenge(on, f, device: "other"), device: "other").status == 403)  // druga naprava
     #expect(await run(on, #"{"argv":["bash","-c","id"]}"#, await challenge(on, f, device: "dev"), device: "dev").status == 403)  // ni na seznamu

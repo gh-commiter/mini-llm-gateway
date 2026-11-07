@@ -295,7 +295,8 @@ public enum Worktree {
         if !ancestor(base, tip) { tip = base }
         // Veja se pri odjemalcu le premika naprej (prevzem brez sile): prejšnji vrh (s commitom routerja) je prednik novega.
         var parents = [tip]
-        if case let p = run(g + ["rev-parse", "-q", "--verify", "refs/heads/\(branch)^{commit}"], env: env), isSHA(p.out), p.out != tip {
+        let prev = run(g + ["rev-parse", "-q", "--verify", "refs/heads/\(branch)^{commit}"], env: env)
+        if case let p = prev, isSHA(p.out), p.out != tip {
             if ancestor(tip, p.out) { tip = p.out; parents = [tip] } else if !ancestor(p.out, tip) { parents = [tip, p.out] }
         }
         let idx = tmp.appendingPathComponent("index").path
@@ -310,9 +311,15 @@ public enum Worktree {
         guard run(g + ["update-ref", "refs/heads/" + branch, tip], env: env).status == 0 else { return nil }
         try? FileManager.default.removeItem(at: out)
         guard tip != base else { return tip }  // agent ni spremenil ničesar
+        // Objekti tudi v zrcalo (klon izgine); fsck zavrne npr. drevo z ».git«. Ob neuspehu ref zrcala nazaj (ali ga ni):
+        // sicer bi kazal na objekte, ki so bili le v klonu, in vsak naslednji klon zrcala bi padel (kot b246c91 v Go).
         guard run(g + ["bundle", "create", out.path, "refs/heads/" + branch, "^" + base], env: env).status == 0, isBundle(out),
               run(g + ["-c", "transfer.fsckObjects=true", "-c", "fetch.fsckObjects=true", "bundle", "unbundle", out.path], env: [:]).status == 0
-        else { return nil }  // objekti tudi v zrcalo (klon izgine)
+        else {
+            _ = run(g + (isSHA(prev.out) ? ["update-ref", "refs/heads/" + branch, prev.out] : ["update-ref", "-d", "refs/heads/" + branch]), env: [:])
+            try? FileManager.default.removeItem(at: out)
+            return nil
+        }
         return tip
     }
 

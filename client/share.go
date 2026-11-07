@@ -188,6 +188,7 @@ func call(c connection, method, path string, headers map[string]string, body []b
 		return 0, nil
 	}
 	req.Header.Set("authorization", "Bearer "+c.Token)
+	req.Header.Set("X-Minigw-Client", clientInfo()) // OS in različica za vrstico čakajoče naprave (starejši prehodi jo prezrejo)
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}

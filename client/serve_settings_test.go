@@ -210,8 +210,8 @@ func TestTrayDeviceActionsAndInstallValue(t *testing.T) {
 	s, _, _ := liveServer(t, nil)
 	a, b := newDevice("A"), newDevice("B")
 	aID, bID := base64url(a.key.Public().(ed25519.PublicKey)), base64url(b.key.Public().(ed25519.PublicKey))
-	s.addPending(serveDevice{ID: aID, Name: "A"}, "10.0.0.2")
-	s.addPending(serveDevice{ID: bID, Name: "B"}, "10.0.0.3")
+	s.addPending(serveDevice{ID: aID, Name: "A"}, "10.0.0.2", "")
+	s.addPending(serveDevice{ID: bID, Name: "B"}, "10.0.0.3", "")
 	_, pending := s.trayState()
 	if err := s.trayDevice("allow:"+aID, pending); err != nil {
 		t.Fatal(err)

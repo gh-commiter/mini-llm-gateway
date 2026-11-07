@@ -27,7 +27,7 @@ const routerHelp = `minigw gw: show or change the minigw serve gateway on this c
 runs; otherwise they go to serve.json.
 
   minigw gw status
-  minigw gw devices [allow <device id> [name] | deny <device id or name>]
+  minigw gw devices [allow <device id> [--name N] | rename <device id> --name N | deny <device id>]
   minigw gw provider add <name> <baseURL> [--insecure]   the API key is read from stdin or asked for
   minigw gw provider remove <name> | list
   minigw gw provider models <name> [text] [--all] [--enable m1,m2|all] [--disable m1,m2|all]
@@ -213,6 +213,7 @@ func routerCommand(args []string, in io.Reader) {
 	enable := fs.String("enable", "", "provider models: enable these models (comma-separated, or all)")
 	disable := fs.String("disable", "", "provider models: disable these models (comma-separated, or all)")
 	all := fs.Bool("all", false, "provider models: also list the disabled models")
+	devName := fs.String("name", "", "devices allow/rename: the device's name (a label; the ID identifies it)")
 	path := fs.String("path", "", "claude: path to claude (empty = PATH)")
 	tools := fs.String("tools", "", "claude: the agent's tools")
 	folder := fs.String("folder", "", "claude: folder for agents that do not sync (empty = none)")
@@ -291,25 +292,45 @@ func routerCommand(args []string, in io.Reader) {
 			}
 			a.do("GET", "/devices", nil, &d)
 			for _, x := range d.Devices {
-				say(clean(fmt.Sprintf("%s  %s", x.ID, x.Name)))
+				client := ""
+				if x.Client != "" {
+					client = fmt.Sprintf(" (%q)", x.Client)
+				}
+				say(fmt.Sprintf("%s  %q%s", x.ID, x.Name, client))
 			}
 			if len(d.Devices) == 0 {
 				say(map[bool]string{true: "no devices listed: any device with the token is allowed (allowAnyDevice)", false: "no devices allowed"}[d.AllowAnyDevice])
 			}
 			for _, x := range d.Pending {
-				say(clean(fmt.Sprintf("waiting: %s  %q from %s at %s; compare the ID with the client, then: minigw gw devices allow %s", x.ID, x.Name, x.Address, x.Time, x.ID)))
+				client := ""
+				if x.Client != "" {
+					client = fmt.Sprintf(" (%q)", x.Client)
+				}
+				say(fmt.Sprintf("waiting: %s  %q from %q%s at %s; compare the ID with the client (minigw status), then: minigw gw devices allow %s [--name N]",
+					x.ID, x.Name, x.Address, client, x.Time, x.ID))
 			}
 		case pos[1] == "allow" && len(pos) >= 3:
+			name := *devName
+			if name == "" { // starejša oblika: allow <id> <ime>
+				name = strings.Join(pos[3:], " ")
+			}
 			var r struct {
 				Device apiDevice
 				Added  bool
 			}
-			a.do("POST", "/devices", apiDevice{ID: pos[2], Name: strings.Join(pos[3:], " ")}, &r)
-			say(map[bool]string{true: "allowed device ", false: "already allowed: "}[r.Added] + r.Device.ID)
-		case pos[1] == "deny" && len(pos) >= 3:
+			a.do("POST", "/devices", apiDevice{ID: pos[2], Name: name}, &r)
+			say(fmt.Sprintf("%s%s %q", map[bool]string{true: "allowed device ", false: "already allowed: "}[r.Added], r.Device.ID, r.Device.Name))
+		case pos[1] == "rename" && len(pos) == 3 && *devName != "":
 			var r struct{ Device apiDevice }
-			a.do("DELETE", "/devices/"+esc(strings.Join(pos[2:], " ")), nil, &r)
-			say(clean(fmt.Sprintf("removed device %s %q", r.Device.ID, r.Device.Name)))
+			a.do("PATCH", "/devices/"+esc(pos[2]), map[string]string{"name": *devName}, &r)
+			say(fmt.Sprintf("renamed device %s to %q", r.Device.ID, r.Device.Name))
+		case pos[1] == "deny" && len(pos) == 3:
+			var r struct {
+				Device  apiDevice
+				Pending bool
+			}
+			a.do("DELETE", "/devices/"+esc(pos[2]), nil, &r)
+			say(fmt.Sprintf("%s device %s %q", map[bool]string{true: "rejected waiting", false: "removed"}[r.Pending], r.Device.ID, r.Device.Name))
 		default:
 			fail(routerHelp)
 		}

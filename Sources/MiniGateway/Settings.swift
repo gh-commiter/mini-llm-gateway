@@ -22,7 +22,13 @@ struct SettingsView: View {
     @State private var cliStatus = ""
     @State private var cliTools: [String] = []
     @State private var selectedRoot: String?
-    @State private var selectedDevice: String?
+    @State private var removingDevice: DeviceConfig?
+    @State private var allowNames: [String: String] = [:]  // ime čakajoče naprave, preden jo dovoliš
+
+    static func lastSeen(_ id: String) -> String {
+        Router.deviceLog.lastSeen(id).map { String(localized: "Last seen \($0.formatted(date: .abbreviated, time: .shortened))") }
+            ?? String(localized: "Not seen since the gateway started")
+    }
     @State private var codexModels: [Codex.Model] = []
     @State private var askCopilotCommands = false
     @State private var grokModels: [String] = []
@@ -67,11 +73,11 @@ struct SettingsView: View {
                Item(pane: .grok, title: "Grok CLI", symbol: "sparkle", color: .indigo,
                     about: String(localized: "xAI Grok CLI as an agent model in the session's folder.")),
                Item(pane: .devices, title: String(localized: "Devices"), symbol: "laptopcomputer.and.iphone", color: .blue,
-                    about: String(localized: "Computers that use this gateway, and from which addresses clients may connect."))]
+                    about: String(localized: "Computers that may use this gateway. Compare a waiting device's ID with the one on the client before you allow it."))]
     }
 
     @State private var removing = false
-    static let builtIn: Set<String> = ["litellm", "openrouter"]  // privzeta prehoda: le izklop, ne odstranitev
+    static let builtIn = RouterConfig.builtInProviders  // privzeta prehoda: le izklop, ne odstranitev
     static let startURLs: Set<String> = ["http://localhost:4000", "https://openrouter.ai/api", "https://"]
 
     /// Izbrani prehod ima kaj nastavljenega: ključ, vklop, svoj naslov ali aliase.
@@ -358,48 +364,76 @@ struct SettingsView: View {
         }
     }
 
-    /// Naprave (kot podokno Devices na strani nastavitev minigw serve): naslovi odjemalcev, seznam naprav z ID-jem in
-    /// zadnjim stikom, odstranitev. Nova naprava se doda sama ob prvi povezavi (brez odobritve, kot doslej).
+    /// Naprave, enako kot podokno Devices na strani nastavitev minigw serve: dovoljenje za vsako napravo z žetonom in
+    /// naslovi odjemalcev, naprave, ki čakajo na odobritev (Allow, Reject), dovoljene naprave (Copy ID, Remove).
     private var devices: some View {
         Form {
             header
             Section {
-                TextField("Allowed clients (IP; empty = all)", text: $draft.allowedClients)
+                Toggle(isOn: $draft.allowAnyDevice) {
+                    Text("Allow any device with the token")
+                    Text("Only while the list of allowed devices is empty. Otherwise each new device waits for approval.")
+                }
+                TextField("Allowed clients (IP; empty = all)", text: $draft.allowedClients, prompt: Text(verbatim: "192.168.1.20, 192.168.1.21"))
                 Toggle("Allow unencrypted connections from other Macs", isOn: $draft.allowPlainRemote)
                     .help(String(localized: "minigw 0.4 and newer always encrypts. Turn on only for other clients on a trusted network."))
             }
-            Section {
-                ForEach(draft.devices) { d in
+            Section("Waiting for approval") {
+                ForEach(state.pending) { p in
                     LabeledContent {
-                        Button("Copy ID") {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(d.id, forType: .string)
+                        EqualWidthHStack {
+                            WideButton("Allow") { state.allow(p, name: allowNames[p.id]) }.buttonStyle(.borderedProminent)
+                            WideButton("Reject") { state.reject(p) }
                         }
                     } label: {
-                        Text(verbatim: d.name)
-                        Text(verbatim: d.id).font(.caption.monospaced()).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
-                        Text(state.deviceSeen[d.id].map { String(localized: "Last seen \($0.formatted(date: .omitted, time: .shortened))") }
-                             ?? String(localized: "Not seen since Mini Gateway started"))
+                        TextField("Name", text: Binding(get: { allowNames[p.id] ?? p.name }, set: { allowNames[p.id] = $0 }))
+                            .labelsHidden()
+                        Text(verbatim: p.id).font(.caption.monospaced()).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                        Text(verbatim: ([p.address, p.time.formatted(date: .abbreviated, time: .shortened)] + (p.client.isEmpty ? [] : [p.client]))
+                            .joined(separator: " · "))
+                        if state.nameTaken(p) {
+                            Text("Same name as an allowed device: compare the ID.").foregroundStyle(.orange)
+                        }
                     }
-                    .contentShape(Rectangle())
-                    .listRowBackground(selectedDevice == d.id ? Color.accentColor.opacity(0.2) : nil)
-                    .onTapGesture { selectedDevice = selectedDevice == d.id ? nil : d.id }
+                    .listRowBackground(Color.yellow.opacity(0.14))  // kot poudarjena skupina na strani nastavitev
+                }
+                if state.pending.isEmpty { Text("No device is waiting.").foregroundStyle(.secondary) }
+            }
+            Section {
+                TimelineView(.periodic(from: .now, by: 15)) { _ in  // zadnji stik iz Router.deviceLog
+                    ForEach($draft.devices) { $d in
+                        LabeledContent {
+                            EqualWidthHStack {
+                                WideButton("Copy ID") {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(d.id, forType: .string)
+                                }
+                                WideButton("Remove") { removingDevice = d }
+                            }
+                        } label: {
+                            DeviceNameField(name: $d.name)
+                            Text(verbatim: d.id).font(.caption.monospaced()).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                            Text(([Self.lastSeen(d.id)] + [Router.deviceLog.client(d.id)].compactMap { $0 }).joined(separator: " · "))
+                        }
+                    }
                 }
                 if draft.devices.isEmpty { Text("None").foregroundStyle(.secondary) }
-                HStack(spacing: 0) {
-                    Button { draft.devices.removeAll { $0.id == selectedDevice }; selectedDevice = nil } label: {
-                        Image(systemName: "minus").frame(width: 22, height: 18)
-                    }
-                    .disabled(selectedDevice == nil).accessibilityLabel("Remove")
-                    Spacer()
-                }
-                .buttonStyle(.borderless)
             } header: {
-                Text("Devices")
+                Text("Allowed devices")
             } footer: {
-                Text("Macs that connect with minigw (0.4.4 or newer) are added here automatically. Siri AI and minigw run are switched on per device in their panes. A removed device appears again when it connects, with both off.")
+                Text("A removed device has to be allowed again when it connects. Siri AI and minigw run are switched on per device in their panes.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+        }
+        .alert(Text(String(localized: "Remove \(removingDevice.map { $0.name.isEmpty ? $0.id : $0.name } ?? "")?")),
+               isPresented: Binding(get: { removingDevice != nil }, set: { if !$0 { removingDevice = nil } })) {
+            Button("Remove", role: .destructive) {
+                if let d = removingDevice { draft.devices.removeAll { $0.id == d.id } }
+                removingDevice = nil
+            }
+            Button("Cancel", role: .cancel) { removingDevice = nil }
+        } message: {
+            Text("It can no longer use this gateway until you allow it again.")
         }
     }
 
@@ -619,7 +653,6 @@ struct SettingsView: View {
                 let path = await Grok.executable(exe)
                 grokModels = await Task.detached { path.map(Grok.catalog) ?? [] }.value
             }
-            foldersSection
             Section {
                 Toggle("Allow writing in the session's folder", isOn: $draft.grok.write)
             } header: {
@@ -924,6 +957,30 @@ struct TokenRow: View {
 }
 
 /// Ponudnik: povezava in modeli, ki jih ponuja (vsak s stikalom za objavo v /model).
+/// Ime dovoljene naprave: shrani se ob Return ali ko polje izgubi fokus, očiščeno kot v API (Noise.cleanName); prazno
+/// ime ohrani staro (enako kot spletna stran in PATCH devices).
+struct DeviceNameField: View {
+    @Binding var name: String
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        TextField("Name", text: $text, prompt: Text(verbatim: "—"))
+            .labelsHidden()
+            .focused($focused)
+            .onAppear { text = name }
+            .onChange(of: name) { _, n in if !focused { text = n } }
+            .onSubmit(commit)
+            .onChange(of: focused) { _, f in if !f { commit() } }
+    }
+
+    private func commit() {
+        let c = Noise.cleanName(text)
+        if !c.isEmpty, c != name { name = c }
+        text = c.isEmpty ? name : c
+    }
+}
+
 struct ProviderPane: View {
     let header: PaneHeader
     @Binding var provider: ProviderConfig
@@ -954,7 +1011,12 @@ struct ProviderPane: View {
                     .disabled(key.isEmpty)
                     .help(key.isEmpty ? String(localized: "Enter an API key to enable") : "")
                 TextField("Name", text: $provider.name)
+                    .disabled(RouterConfig.builtInProviders.contains(provider.id))  // vgrajena: ime ostane (kot minigw serve)
                 TextField("Base URL", text: $provider.baseURL)
+                Toggle("Allow http (localhost, a private IP or a .local name only)", isOn: $provider.insecure)
+                if let e = provider.urlError, !provider.baseURL.isEmpty, provider.baseURL != "https://" {
+                    Text(verbatim: e).font(.caption).foregroundStyle(.red)
+                }
                 SecureField(savedKey.isEmpty ? "API key"
                             : savedKey == Keychain.defaultKeys[provider.id] ? "API key (default; enter to replace)"
                             : "API key (saved; enter to replace)", text: $keyInput)

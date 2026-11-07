@@ -11,7 +11,9 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"os/user"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -86,12 +88,29 @@ func newDeviceKey() string {
 	return base64url(seed)
 }
 
+// deviceName: ime za odobritev na prehodu, <uporabnik>@<ime računalnika>, da se dva uporabnika istega računalnika
+// razlikujeta. Prehod ga očisti (cleanDeviceName); je le oznaka, identiteta je ključ naprave.
 func deviceName() string {
-	if n := os.Getenv("COMPUTERNAME"); n != "" {
-		return n
+	u := os.Getenv("USER")
+	if cur, err := user.Current(); err == nil && cur.Username != "" {
+		u = cur.Username
 	}
-	n, _ := os.Hostname()
-	return n
+	if i := strings.LastIndex(u, "\\"); i >= 0 { // Windows: DOMENA\uporabnik
+		u = u[i+1:]
+	}
+	h := computerName()
+	if h == "" {
+		h, _ = os.Hostname()
+	}
+	if u == "" {
+		return h
+	}
+	return u + "@" + h
+}
+
+// clientInfo: »Windows · minigw 0.5.18« za čakajočo napravo na prehodu.
+func clientInfo() string {
+	return map[string]string{"windows": "Windows", "darwin": "macOS", "linux": "Linux"}[runtime.GOOS] + " · minigw " + version
 }
 
 var proxy *noiseProxy

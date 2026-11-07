@@ -143,6 +143,32 @@ public final class Router: Sendable {
         guard authorized(req) else {
             return (await error(401, "authentication_error", "Invalid or missing token", rid: rid, writer: writer), nil, nil)
         }
+        // Z drugega računalnika le dovoljena naprava (kot minigw serve); neznana čaka na odobritev. Brez ključa naprave
+        // (minigw pred 0.4.4, nešifriran odjemalec) le pri praznem seznamu z allowAnyDevice (H1).
+        if !RouterServer.isLoopback(req.peer) {
+            guard let d = req.device else {
+                guard config.devices.isEmpty && config.allowAnyDevice else {
+                    return (await error(403, "permission_error", "This gateway needs a device key: update minigw and run minigw connect again",
+                                        rid: rid, writer: writer), nil, nil)
+                }
+                return await routeAllowed(req, rid: rid, writer: writer)
+            }
+            guard config.deviceAllowed(d.id) else {
+                Self.deviceLog.addPending(id: d.id, name: d.name, address: req.peer, client: Noise.cleanName(req.header("x-minigw-client") ?? ""))
+                Self.log.info("\(rid, privacy: .public) refused unknown device \(d.name, privacy: .public) \(d.id, privacy: .public)")
+                return (await error(403, "permission_error", Self.refusal(d), rid: rid, writer: writer), nil, nil)
+            }
+            Self.deviceLog.seen(d.id, client: Noise.cleanName(req.header("x-minigw-client") ?? ""))
+        }
+        return await routeAllowed(req, rid: rid, writer: writer)
+    }
+
+    /// Ena besedilo zavrnitve v Go in Swift.
+    static func refusal(_ d: Noise.Device) -> String {
+        "Device \(Noise.quoted(d.name)) is not allowed on this gateway: allow it in Settings → Devices (compare the ID \(d.id)), or run minigw gw devices allow \(d.id)"
+    }
+
+    private func routeAllowed(_ req: HTTPRequest, rid: String, writer: ResponseWriter) async -> (Int, String?, String?) {
 
         switch (req.method, req.path) {
         case ("GET", "/v1/models"):
@@ -450,6 +476,9 @@ public final class Router: Sendable {
                      rid: String, writer: ResponseWriter) async -> Int {
         var body = body
         body["model"] = r.upstream
+        if let e = r.provider.urlError {  // http brez Allow http ali do javnega naslova: ključ ne gre nešifriran
+            return await error(502, "api_error", "\(r.provider.name): \(e)", rid: rid, writer: writer)
+        }
         let base = r.provider.baseURL.hasSuffix("/") ? String(r.provider.baseURL.dropLast()) : r.provider.baseURL
         guard let url = URL(string: base + req.path + (req.query.map { "?" + $0 } ?? "")),
               let data = try? JSONSerialization.data(withJSONObject: body) else {
@@ -640,6 +669,7 @@ public enum Discovery {
 
     /// Modeli ali razlog, zakaj jih ni (za nastavitve in dnevnik).
     public static func load(_ p: ProviderConfig, key: String, session: URLSession = Router.defaultSession) async -> Result<[Model], Failure> {
+        if let e = p.urlError { return .failure(Failure(message: e)) }
         guard !key.isEmpty else { return .failure(Failure(message: String(localized: "No API key"))) }
         let list: [String: Any]
         do { list = try await fetch(p, "/v1/models", key: key, session: session) } catch { return .failure(error) }

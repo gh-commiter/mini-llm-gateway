@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -100,9 +101,13 @@ func trayMenu(st apiStatus, pending []apiDevice, sl bool) []trayItem {
 			if name == "" {
 				name = "?"
 			}
-			sub = append(sub, trayItem{Text: clean(name) + " (" + d.ID + ")", Sub: []trayItem{
+			text := clean(name) + " (" + d.ID + ")"
+			if d.Client != "" {
+				text += " · " + clean(d.Client)
+			}
+			sub = append(sub, trayItem{Text: text, Sub: []trayItem{
 				{Text: tr("Allow", "Dovoli"), Action: "allow:" + d.ID},
-				{Text: tr("Deny", "Zavrni"), Action: "deny:" + d.ID},
+				{Text: tr("Reject", "Zavrni"), Action: "deny:" + d.ID},
 			}})
 		}
 		items = append(items, trayItem{Text: fmt.Sprintf("%s (%d)", tr("Waiting for approval", "Čaka na odobritev"), len(pending)), Sub: sub})
@@ -122,11 +127,16 @@ func trayMenu(st apiStatus, pending []apiDevice, sl bool) []trayItem {
 // trayState: stanje in čakajoče naprave iz skrbniškega API v istem procesu.
 func (s *server) trayState() (apiStatus, []apiDevice) {
 	var st apiStatus
-	var d struct{ Pending []apiDevice }
+	var d struct{ Devices, Pending []apiDevice }
 	_, obj := s.adminDo("GET", "/status", nil)
 	json.Unmarshal(must(json.Marshal(obj)), &st)
 	_, obj = s.adminDo("GET", "/devices", nil)
 	json.Unmarshal(must(json.Marshal(obj)), &d)
+	for i, p := range d.Pending { // isto ime kot dovoljena naprava: opozorilo (ime je le oznaka, primerjaj ID)
+		if p.Name != "" && slices.ContainsFunc(d.Devices, func(x apiDevice) bool { return strings.EqualFold(x.Name, p.Name) }) {
+			d.Pending[i].Name = "⚠ " + p.Name
+		}
+	}
 	return st, d.Pending
 }
 

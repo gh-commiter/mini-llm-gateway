@@ -101,7 +101,8 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
         #expect(await admin(app.router(), "GET", "/devices").text.contains(id))  // nov router (po apply) jo vidi
         #expect(await admin(app.router(), "PATCH", "/siri", body: #"{"enabled":true,"allow":["\#(id)"]}"#).status == 200)
         #expect(app.config.siri.enabled && app.config.devices[0].siri)
-        #expect(await admin(app.router(), "DELETE", "/devices/PC").status == 200 && app.config.devices.isEmpty)
+        #expect(await admin(app.router(), "DELETE", "/devices/PC").status == 404)  // le po ID-ju: ime je oznaka
+        #expect(await admin(app.router(), "DELETE", "/devices/\(id)").status == 200 && app.config.devices.isEmpty)
 
         #expect(await admin(app.router(), "PATCH", "/agents/claude", body: #"{"tools":"Read, Grep","folders":"~/src"}"#).status == 200)
         #expect(app.config.claudeCLI.tools == "Read,Grep" && app.config.claudeCLI.allowedRoots == "~/src")

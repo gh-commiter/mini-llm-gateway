@@ -1,7 +1,7 @@
 ---
 name: gw
 description: Install, update, check or remove Mini Gateway on this computer (Windows and Linux run minigw serve, macOS runs the Mini Gateway app), and manage it (devices, providers, Claude CLI, token, settings page). Use for /minigw:gw install|update|uninstall|status and when the user wants to change the gateway on this computer.
-argument-hint: install | update | uninstall | status | devices [allow <id> | deny <id>] | provider add|remove|list|models | claude … | copilot token [remove] | autostart on|off | token [rotate] | settings | modes
+argument-hint: install | update | uninstall | status | devices [allow <id> [--name N] | rename <id> --name N | deny <id>] | provider add|remove|list|models | claude … | copilot token [remove] | autostart on|off | token [rotate] | settings | modes
 allowed-tools: Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw *)
 ---
 
@@ -76,8 +76,9 @@ For other computers, `/minigw:gw token` shows the connect line to run there (or 
 Everything else goes to `"$M" gw …`. It changes the running gateway at once (on Windows and Linux also when it is stopped: then serve.json).
 
 - `devices`: lists allowed and waiting devices.
-- `devices allow <id> [name]`: first run `devices`. Show the user the waiting device's name and full ID. Ask them to compare it with `minigw status` on that computer. Run `allow` only after they confirm. Anyone with the token can try to connect.
-- `devices deny <id or name>`.
+- `devices allow <id> [--name N]`: first run `devices`. Show the user the waiting device's name, full ID, OS and minigw version. Ask them to compare the ID with `minigw status` on that computer. Run `allow` only after they confirm. Anyone with the token can try to connect, and a name proves nothing (a waiting device may copy an allowed device's name).
+- `devices rename <id> --name N`: the name is only a label.
+- `devices deny <id>`: removes an allowed device or rejects a waiting one (by ID only). Reject is not a block list: to lock someone out, also rotate the token.
 - `provider add <name> <baseURL> [--insecure]` needs an API key. Never pass it yourself. Print the full path (`echo "$M"`). Ask the user to run, in this session, `! "<that path>" gw provider add <name> <baseURL>`. minigw then asks for the key without showing it. `--insecure` allows `http` (localhost or a private IP only).
 - `provider list`, `provider remove <name>`, `provider models <name> [text] [--all] [--enable m1,m2|all] [--disable m1,m2|all]`.
 - `claude [--path FILE] [--tools T1,T2] [--folders DIR1,DIR2] [--allow-local-tools=true|false]` on every system; Windows and Linux also `[--folder DIR] [--allow-unsandboxed-bash=true|false]`. Windows has no sandbox for commands: before `--allow-unsandboxed-bash=true`, tell the user that agents can then run any command as them.
