@@ -598,3 +598,11 @@ func TestSyncBaseMustBeAVersionWeSent(t *testing.T) {
 		}
 	}
 }
+
+// #2: imena, ki se razlikujejo le v velikih črkah, ne gredo na router.
+func TestCaseCollisions(t *testing.T) {
+	got := caseCollisions(map[string]syncEntry{"A.txt": {}, "a.txt": {}, "src/B.go": {}, "src/b.GO": {}, "ok.txt": {}})
+	if strings.Join(got, ",") != "A.txt,a.txt,src/B.go,src/b.GO" {
+		t.Fatalf("collisions: %v", got)
+	}
+}

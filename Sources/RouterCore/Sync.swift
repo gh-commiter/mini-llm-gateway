@@ -140,6 +140,12 @@ public enum Sync {
             + "add build output and large data to .gitignore, or use a smaller folder"
     }
 
+    /// #2: poti, ki se razlikujejo le v velikih črkah (A.txt in a.txt): na routerju brez razlikovanja črk bi bile ena
+    /// datoteka, zato ne gredo nikamor.
+    public static func caseCollisions(_ paths: Set<String>) -> [String] {
+        Dictionary(grouping: paths, by: { $0.lowercased() }).values.filter { $0.count > 1 }.flatMap { $0 }.sorted()
+    }
+
     /// #23: imena v mapi kopije ali klona, odprte z O_NOFOLLOW_ANY: mapa, ki jo ostanek agenta po razvrstitvi zamenja s
     /// povezavo (npr. na domačo mapo), se ne odpre, zato se ne izpiše drevo zunaj korena.
     static func list(_ dir: URL) -> [String]? {

@@ -449,8 +449,33 @@ func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch fu
 func (s *shareClient) note(msg string) { fmt.Fprintln(os.Stderr, "minigw: "+clean(msg)) }
 
 // syncPush: pred agentom manifest k routerju, nato datoteke, ki jih potrebuje.
+// caseCollisions (#2): poti, ki se razlikujejo le v velikih črkah (A.txt in a.txt): na routerju z APFS ali NTFS bi
+// bile ena datoteka, zato ne gredo nikamor.
+func caseCollisions(files map[string]syncEntry) []string {
+	byFold := map[string][]string{}
+	for p := range files {
+		f := strings.ToLower(p)
+		byFold[f] = append(byFold[f], p)
+	}
+	var out []string
+	for _, ps := range byFold {
+		if len(ps) > 1 {
+			out = append(out, ps...)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 func (s *shareClient) syncPush(k string) bool {
 	files, skipped := syncScan(s.root, s.synced, true)
+	for _, p := range caseCollisions(files) {
+		delete(files, p)
+		if !s.reported["case:"+p] {
+			s.reported["case:"+p] = true
+			s.note("not synced: " + p + " differs from another file only in upper and lower case")
+		}
+	}
 	for _, p := range skipped {
 		if !s.reported[p] {
 			s.reported[p] = true

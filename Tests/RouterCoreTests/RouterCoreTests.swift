@@ -1425,3 +1425,8 @@ final class FakeMinigw: @unchecked Sendable {
     #expect(Sync.overQuota([Sync.Entry(path: "a", size: 10, mtime: 0, sha256: "x")]) == nil)
     #expect(Sync.overQuota([Sync.Entry(path: "big", size: Sync.maxBytes + 1, mtime: 0, sha256: "x")])?.contains("too large") == true)
 }
+
+/// #2: imena, ki se razlikujejo le v velikih črkah.
+@Test func syncCaseCollisions() {
+    #expect(Sync.caseCollisions(["A.txt", "a.txt", "src/B.go", "src/b.GO", "ok.txt"]) == ["A.txt", "a.txt", "src/B.go", "src/b.GO"])
+}
