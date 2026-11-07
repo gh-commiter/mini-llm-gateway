@@ -892,7 +892,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, hr *http.Request) {
 }
 
 // bigBodies: zahteve s telesom do 64 MB (kot router na macOS); ostale do 1 MB.
-var bigBodies = map[string]bool{"PUT /minigw/sync/file": true, "POST /v1/messages": true, "POST /v1/messages/count_tokens": true}
+var bigBodies = map[string]bool{"PUT /minigw/sync/file": true, "PUT /minigw/worktree/bundle": true, "POST /v1/messages": true, "POST /v1/messages/count_tokens": true}
 
 // handle: overitev in naprava pred branjem telesa; telo z rokom (brez ReadTimeout, ki bi prekinil dolg odgovor).
 func (s *server) handle(w http.ResponseWriter, r *req) (int, string) {
@@ -997,13 +997,34 @@ func (s *server) route(w http.ResponseWriter, r *req) (int, string) {
 		if session == "" || cwd == "" {
 			return writeError(w, r.rid, 400, "Missing session or cwd"), ""
 		}
-		if r.h("x-claude-mini-work") != "sync" { // brez priklopa WebDAV na Windows in Linux
+		work := r.h("x-claude-mini-work")
+		if work != "sync" && work != "worktree" { // brez priklopa WebDAV in mape SMB na Windows in Linux
 			s.hub.refuse(session)
 			return writeError(w, r.rid, 400, refusedDirect), ""
 		}
 		owner := dev
 		if owner == "" {
 			return writeError(w, r.rid, 400, "Sync needs an encrypted connection with a device key (run minigw connect again)"), ""
+		}
+		if work == "worktree" { // golo zrcalo v scratch/repos/<naprava>/<repo>.git, kloni v scratch/worktrees (serve_worktree.go)
+			if r.h("x-share-mode") == "ro" {
+				return writeError(w, r.rid, 400, "Worktree mode needs a writable git repository that contains the folder"), ""
+			}
+			if _, err := gitExe(); err != nil {
+				return writeError(w, r.rid, 400, "Worktree mode: git is not installed on the gateway"), ""
+			}
+			t, err := worktreeTree(s.conf().Scratch, owner, r.h("x-worktree-top"), cwd)
+			if err != nil {
+				return writeError(w, r.rid, 400, err.Error()), ""
+			}
+			if tooManyCopies(t.worktrees) {
+				return writeError(w, r.rid, 429, fmt.Sprintf("This device already has %d repositories on the gateway; unused ones expire after 30 days", maxCopies)), ""
+			}
+			k, ok := s.hub.registerTree(session, cwd, key, t, dev)
+			if !ok {
+				return writeError(w, r.rid, 409, "Session already has a folder"), ""
+			}
+			return writeJSON(w, r.rid, 200, map[string]string{"key": k}), ""
 		}
 		ro := r.h("x-share-mode") == "ro"
 		suffix := ""
@@ -1054,6 +1075,18 @@ func (s *server) route(w http.ResponseWriter, r *req) (int, string) {
 			return writeError(w, r.rid, 404, "No such share"), ""
 		}
 		return writeJSON(w, r.rid, 200, map[string][]string{"need": need, "kept": kept}), ""
+	case "PUT /minigw/worktree/bundle":
+		part, err := strconv.Atoi(r.h("x-part"))
+		if err != nil {
+			part = -1
+		}
+		return writeStatus(w, s.hub.worktreePut(key, part, r.body, dev), "", nil), ""
+	case "GET /minigw/worktree/result":
+		data, ok := s.hub.worktreeResult(key, dev)
+		if !ok {
+			return writeError(w, r.rid, 404, "No result"), ""
+		}
+		return writeStatus(w, 200, "application/octet-stream", data), ""
 	case "PUT /minigw/sync/file":
 		p, _ := url.PathUnescape(r.h("x-sync-path"))
 		return writeStatus(w, s.hub.syncPut(key, p, r.body, dev), "", nil), ""

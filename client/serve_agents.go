@@ -511,12 +511,18 @@ func parseGrokEvent(line []byte) (grokEvent, bool) {
 // --- zahteve ---
 
 // agentFolder: sinhronizirana kopija mape odjemalca za agenta (le sync); st != 0 = odgovor že poslan.
-func (s *server) agentFolder(w http.ResponseWriter, r *req, label string) (dir, note string, readOnly bool, st int) {
+func (s *server) agentFolder(w http.ResponseWriter, r *req, label, agent string) (dir, note string, readOnly bool, st int) {
 	session, clientCwd := r.h("x-claude-mini-session"), r.h("x-claude-mini-cwd")
 	share := s.hub.waitShare(r.Context(), session, r.owner(), r.h("x-claude-mini-share") == "1")
 	switch {
+	case share != nil && share.tree != nil:
+		if dir = s.hub.push(share, agent); dir == "" {
+			return "", "", false, writeError(w, r.rid, 502, "Cloning "+clientCwd+" on the gateway failed (worktree mode; see minigw output)")
+		}
+		_, branch, _, _, _ := s.hub.worktreeOf(r.h("x-claude-mini-session"), agent)
+		return dir, worktreeNote(clientCwd, dir, branch), false, 0
 	case share != nil:
-		if dir = s.hub.push(share); dir == "" {
+		if dir = s.hub.push(share, agent); dir == "" {
 			return "", "", false, writeError(w, r.rid, 502, "Syncing "+clientCwd+" to the gateway failed (see minigw output)")
 		}
 		note = "The user's folder " + clientCwd + " (on their computer) is synced here as " + dir + ", your working directory: a local copy"
@@ -561,7 +567,11 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 	if r.h("x-claude-mini-session") == "" {
 		return writeError(w, r.rid, 400, k.prefix+" needs a synced folder: run minigw with MINIGW_WORK=sync in a project folder")
 	}
-	dir, note, readOnly, st := s.agentFolder(w, r, k.bin)
+	if s.hub.isWorktree(r.h("x-claude-mini-session")) && (k.name == "grok" || !ac.canWrite(k)) { // kot na Macu
+		return writeError(w, r.rid, 400, k.prefix+" cannot work in worktree mode"+map[bool]string{true: " yet", false: " without writing (turn on writing in its settings)"}[k.name == "grok"]+
+			": use --minigw-work=sync for it")
+	}
+	dir, note, readOnly, st := s.agentFolder(w, r, k.bin, k.name)
 	if st != 0 {
 		return st
 	}
@@ -616,6 +626,17 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 		defer restoreAuth(state, k)
 		m := agentMounts{cfgDir: s.cfgDir, state: state, envVar: strings.ToUpper(k.bin) + "_HOME", files: files, rw: append([]string{dir, tmp}, extra...),
 			hide: c.Scratch}
+		wt, _, maven, objects, inTree := s.hub.worktreeOf(r.h("x-claude-mini-session"), k.name)
+		withTree := func(m agentMounts) agentMounts { // worktree: Maven agentov, objekti zrcala (branje), .git klona le za branje
+			if inTree {
+				m.rw, m.ro = append(m.rw, maven), append(m.ro, objects)
+				for _, d := range []string{"config", "hooks", "info", "commondir"} {
+					m.protect = append(m.protect, filepath.Join(wt, ".git", d))
+				}
+				m.env = append(m.env, worktreeHarnessEnv(wt, maven)...)
+			}
+			return m
+		}
 		if k.name == "copilot" {
 			if resume == "" {
 				resume = newUUID() // nova seja: svoj ID, da jo naslednja zahteva nadaljuje (--session-id)
@@ -651,7 +672,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			copilotPrepare(ctx, exe, filepath.Join(tmp, "prep"), tmp)
 			args := copilotArgs(agent, model, write, ac.Commands, ac.Network, resume)
 			var answer string
-			err = s.runAgentProcess(ctx, r, exe, args, m, dir, prompt, func(line []byte) {
+			err = s.runAgentProcess(ctx, r, exe, args, withTree(m), dir, prompt, func(line []byte) {
 				t, st := copilotEvent(line)
 				if t != "" {
 					answer = t // odgovor je zadnje sporočilo agenta
@@ -676,7 +697,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 		} else if k.name == "codex" {
 			out := filepath.Join(tmp, "codex.txt")
 			args := codexArgs(dir, extra, agent, out, model, write, ac.Network, resume)
-			err = s.runAgentProcess(ctx, r, exe, args, m, dir, prompt, func(line []byte) {
+			err = s.runAgentProcess(ctx, r, exe, args, withTree(m), dir, prompt, func(line []byte) {
 				if t := codexThread(line); t != "" && thread == "" {
 					thread = t
 				}
@@ -693,7 +714,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			}
 			args := grokArgs(dir, pf, s.cfgDir, agent, model, write, resume)
 			var answer, failure string
-			err = s.runAgentProcess(ctx, r, exe, args, m, dir, "", func(line []byte) {
+			err = s.runAgentProcess(ctx, r, exe, args, withTree(m), dir, "", func(line []byte) {
 				e, ok := parseGrokEvent(line)
 				switch {
 				case !ok:
@@ -720,7 +741,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			return "", err
 		}
 		if agent {
-			s.hub.syncBack(r.h("x-claude-mini-session")) // spremembe agenta k odjemalcu pred odgovorom
+			s.hub.syncBack(r.h("x-claude-mini-session"), k.name) // spremembe agenta k odjemalcu pred odgovorom
 			if thread != "" {
 				s.sessions.set(transcriptKey(append(slices.Clone(all), turn{"assistant", text}), scope), thread)
 			}

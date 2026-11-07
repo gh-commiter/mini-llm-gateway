@@ -73,7 +73,9 @@ func (s *shareClient) register() bool {
 	if s.native { // vsaka registracija (tudi po ponovnem zagonu routerja) z novim dokazom
 		proof, why := nativeProof(s.c, s.root)
 		if proof == nil {
+			s.mu.Lock()
 			s.refusal = why
+			s.mu.Unlock()
 			return false
 		}
 		for k, v := range proof {
@@ -90,7 +92,9 @@ func (s *shareClient) register() bool {
 	}
 	err := json.Unmarshal(data, &r)
 	if st != 200 || err != nil || r.Key == "" {
+		s.mu.Lock() // ponovna registracija teče iz več delavcev hkrati
 		s.refusal = r.Error.Message
+		s.mu.Unlock()
 		return false
 	}
 	s.mu.Lock()

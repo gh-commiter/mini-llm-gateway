@@ -539,13 +539,20 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		"--model", cliModel, "--strict-mcp-config", "--setting-sources", s.conf().SettingSources} // privzeto prazno: hooki iz mape odjemalca ne tečejo
 	prompt, session, scope, sessionID := last.text, r.h("x-claude-mini-session"), "", ""
 	var dir, extra string // extra: --append-system-prompt-file ali --system-prompt-file
+	var worktreeEnv []string
 	extraFlag := "--append-system-prompt-file"
 	if !chat {
 		clientCwd, folder := r.h("x-claude-mini-cwd"), s.conf().Folder
 		share := s.hub.waitShare(r.Context(), session, r.owner(), r.h("x-claude-mini-share") == "1")
 		switch {
+		case share != nil && share.tree != nil:
+			if dir = s.hub.push(share, "claude"); dir == "" {
+				return writeError(w, r.rid, 502, "Cloning "+clientCwd+" on the gateway failed (worktree mode; see minigw output)")
+			}
+			_, branch, _, _, _ := s.hub.worktreeOf(session, "claude")
+			extra = worktreeNote(clientCwd, dir, branch)
 		case share != nil:
-			if dir = s.hub.push(share); dir == "" {
+			if dir = s.hub.push(share, "claude"); dir == "" {
 				return writeError(w, r.rid, 502, "Syncing "+clientCwd+" to the gateway failed (see minigw output)")
 			}
 			note := "The user's folder " + clientCwd + " (on their computer) is synced here as " + dir + ", your working directory: a local copy"
@@ -576,6 +583,10 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			prompt = cliPrompt(history, last)
 		}
 		args = append(args, s.agentArgs(dir)...)
+		if wt, _, maven, objects, ok := s.hub.worktreeOf(session, "claude"); ok {
+			args = worktreeClaudeArgs(args, wt, maven, objects)
+			worktreeEnv = worktreeHarnessEnv(wt, maven)
+		}
 	} else {
 		dir = s.conf().scratch("chat")
 		prompt = cliPrompt(history, last)
@@ -603,7 +614,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	}
 	cmd := exec.CommandContext(r.Context(), exe[0], append(exe[1:], args...)...)
 	cmd.Dir = dir
-	cmd.Env = agentEnv(os.Environ()) // brez ANTHROPIC_* (klic nazaj v router), žetonov GitHub/Copilot in agentov ključev (M1)
+	cmd.Env = append(agentEnv(os.Environ()), worktreeEnv...) // brez ANTHROPIC_* (klic nazaj v router), žetonov GitHub/Copilot in agentov ključev (M1)
 	cmd.Stdin = strings.NewReader(prompt)
 	stderr := &tailBuffer{}
 	cmd.Stderr = stderr
@@ -675,7 +686,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	}
 	// sync: spremembe agenta k odjemalcu pred koncem odgovora (Claude Code jih nato že vidi); med tem še ping
 	if !chat {
-		s.hub.syncBack(session)
+		s.hub.syncBack(session, "claude")
 	}
 	msg := t.resultError
 	if msg == "" && werr != nil && t.text == "" { // stderr le v dnevnik (I1)

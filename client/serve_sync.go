@@ -28,6 +28,7 @@ type serveShare struct {
 	pending                        map[string]*syncEntry // poslane spremembe agenta (nil = izbris) do potrditve
 	big                            map[string]bool       // že javljene prevelike datoteke
 	execKnown                      bool                  // odjemalec pozna bit x (ne Windows)
+	tree                           *shareTree            // worktree: zrcalo in kloni agentov (serve_worktree.go); nil = sync
 }
 
 type shareHub struct {
@@ -97,6 +98,7 @@ func (h *shareHub) expireCopies(root string, now time.Time) {
 	}
 	h.mu.Unlock()
 	removeOldCopies(root, active, now)
+	pruneMirrors(filepath.Dir(root), now) // worktree: zrcala, ki jih 30 dni ni uporabil noben agent
 }
 
 func removeOldCopies(root string, active map[string]bool, now time.Time) {
@@ -207,8 +209,24 @@ func (h *shareHub) reap(after time.Duration) {
 	}
 }
 
+// registerTree: kot register, a mapa seje je repozitorij git (worktree); copy je mapa klonov (zaklep na repozitorij).
+func (h *shareHub) registerTree(session, cwd, key string, t *shareTree, owner string) (string, bool) {
+	k, ok := h.register(session, cwd, key, false, t.worktrees, owner)
+	if ok {
+		h.mu.Lock()
+		if s := h.bySession[session]; s != nil && s.tree == nil {
+			s.tree = t
+		}
+		h.mu.Unlock()
+	}
+	return k, ok
+}
+
 // close: pod h.mu.
 func (h *shareHub) close(s *serveShare) {
+	if s.tree != nil {
+		dropClones(s.tree)
+	}
 	delete(h.bySession, s.session)
 	close(s.done)
 }
@@ -261,7 +279,11 @@ func (h *shareHub) reply(key, owner string, r davReply) bool {
 
 // send: posel za minigw (naslednji long poll); nil, če ne odgovori v timeout.
 func (h *shareHub) send(s *serveShare, method string, timeout time.Duration) *davResponse {
-	job := davJob{ID: newKey(), Method: method, Headers: map[string]string{}, Body: []byte{}} // macOS minigw ne sprejme null
+	return h.sendJob(s, method, []byte{}, timeout) // macOS minigw ne sprejme null
+}
+
+func (h *shareHub) sendJob(s *serveShare, method string, body []byte, timeout time.Duration) *davResponse {
+	job := davJob{ID: newKey(), Method: method, Headers: map[string]string{}, Body: body}
 	ch := make(chan davResponse, 1)
 	h.mu.Lock()
 	s.replies[job.ID] = ch
@@ -330,7 +352,11 @@ func (h *shareHub) unlock(copy string) {
 }
 
 // push: minigw naj posodobi kopijo (SYNC-PUSH); vrne kopijo ali "". Prvi prenos velike mape traja.
-func (h *shareHub) push(s *serveShare) string {
+// worktree: klon agenta (nov iz posnetka odjemalca ali od prejšnje zahteve te seje).
+func (h *shareHub) push(s *serveShare, agent string) string {
+	if s.tree != nil {
+		return h.worktreeMount(s, agent)
+	}
 	if r := h.send(s, "SYNC-PUSH", 900*time.Second); r != nil && r.Status == 200 {
 		return s.copy
 	}
@@ -338,11 +364,13 @@ func (h *shareHub) push(s *serveShare) string {
 }
 
 // syncBack: po agentu minigw prevzame spremembe kopije (ne pri --minigw-ro), pred koncem odgovora.
-func (h *shareHub) syncBack(session string) {
+func (h *shareHub) syncBack(session, agent string) {
 	h.mu.Lock()
 	s := h.bySession[session]
 	h.mu.Unlock()
-	if s != nil && !s.readOnly {
+	if s != nil && s.tree != nil {
+		h.worktreeBack(s, agent)
+	} else if s != nil && !s.readOnly {
 		h.send(s, "SYNC-PULL", 900*time.Second)
 	}
 }

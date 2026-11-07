@@ -166,10 +166,10 @@ func TestHardenRouter(t *testing.T) {
 
 // R3, R5: domača mapa in mapa nastavitev prazni; programi le za branje, mape agenta za pisanje, vtičnice skrite.
 func TestBwrapArgs(t *testing.T) {
-	a := strings.Join(bwrapArgs("/home/u", "/home/u/.config/minigw", []string{"/srv/scratch"}, []string{"/home/u/.nvm"}, []string{"/home/u/.codex", "/s/copy"},
+	a := strings.Join(bwrapArgs("/home/u", "/home/u/.config/minigw", []string{"/srv/scratch"}, []string{"/home/u/.nvm"}, []string{"/home/u/.codex", "/s/copy"}, []string{"/s/copy/.git/config"},
 		[]string{"/run/user/1/bus"}, []string{"/tmp/dbus-x"}), " ")
 	want := "--dev-bind / / --die-with-parent --unshare-pid --proc /proc --tmpfs /home/u --tmpfs /srv/scratch --ro-bind /home/u/.nvm /home/u/.nvm --bind /home/u/.codex /home/u/.codex " +
-		"--bind /s/copy /s/copy --tmpfs /home/u/.config/minigw --ro-bind /dev/null /run/user/1/bus --tmpfs /tmp/dbus-x"
+		"--bind /s/copy /s/copy --ro-bind /s/copy/.git/config /s/copy/.git/config --tmpfs /home/u/.config/minigw --ro-bind /dev/null /run/user/1/bus --tmpfs /tmp/dbus-x"
 	if a != want {
 		t.Fatalf("bwrap args:\n%s\n%s", a, want)
 	}
