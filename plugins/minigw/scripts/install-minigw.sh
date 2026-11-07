@@ -64,6 +64,21 @@ else
   fi
 fi
 
+# Nameščen router starejši od izdaje: le namig (posodobitev bi prekinila tekoče zahteve agentov).
+ver() { "$1" --version 2>/dev/null | head -1 | sed 's/^minigw //'; }
+older() { [ -n "$1" ] && [ -n "$2" ] && [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" = "$1" ]; }
+old=""; new=$(ver "$EXE")
+case "$os" in
+  darwin) app="/Applications/Mini Gateway.app"
+    [ -d "$app" ] && old=$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist" 2>/dev/null)
+    # minigw vtičnika je tu lahko kar minigw aplikacije: zadnja izdaja iz preusmeritve releases/latest
+    new=$(curl -fsS -o /dev/null --max-time 10 -w '%{redirect_url}' "https://github.com/$REPO/releases/latest" 2>/dev/null | sed -n 's|.*/tag/v||p') ;;
+  linux) [ -f "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/minigw-serve.service" ] && old=$(ver "$HOME/.local/bin/minigw") ;;
+  windows) [ -n "${LOCALAPPDATA:-}" ] && command -v cygpath >/dev/null 2>&1 &&
+    old=$(ver "$(cygpath -u "$LOCALAPPDATA")/Programs/Mini Gateway/minigw.exe") ;;
+esac
+older "$old" "$new" && echo "Mini Gateway router $old is installed, $new is available: /minigw:serve update"
+
 # Claudov Bash najde »minigw« tudi brez poti.
 [ -n "${CLAUDE_ENV_FILE:-}" ] && echo "export PATH=\"\$PATH:$BIN\"" >> "$CLAUDE_ENV_FILE"
 if "$EXE" status >/dev/null 2>&1; then
