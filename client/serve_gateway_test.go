@@ -299,3 +299,38 @@ func TestServeGatewayDeadDoesNotDelayCLI(t *testing.T) {
 		t.Fatalf("unknown model: %d after %v (want 404 after about 2 s)", st, d)
 	}
 }
+
+// Prehod ne more zakriti claude-cli (G4); pri 16 hkratnih zahtevah 429 (G5).
+func TestServeGatewayNoCLIShadowAndLimit(t *testing.T) {
+	fakeKeys(t)["gw"] = gwKey
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			io.WriteString(w, `{"data":[{"id":"claude-cli-haiku"},{"id":"cli-sonnet"},{"id":"chat-opus"},{"id":"claude-chat-x"},{"id":"echo"}]}`)
+		default:
+			io.WriteString(w, `{"input_tokens":42}`)
+		}
+	}))
+	defer up.Close()
+	s, _ := testServer(t, func(c *serveConfig) {
+		c.Claude = "/bin/sh"
+		c.Gateways = []serveGateway{{Name: "gw", BaseURL: up.URL, Insecure: true}}
+	})
+	conn := startLoopback(t, s)
+	_, list := call(conn, "GET", "/v1/models", nil, nil, 5*time.Second)
+	if strings.Contains(string(list), "gw · claude-cli") || strings.Contains(string(list), "cli-sonnet · gw") ||
+		strings.Contains(string(list), "claude-chat-x · gw") || strings.Contains(string(list), "chat-opus") || !strings.Contains(string(list), "claude-echo") {
+		t.Fatalf("models: %s", list)
+	}
+	body := []byte(`{"model":"claude-cli-haiku","messages":[]}`)
+	if _, data := call(conn, "POST", "/v1/messages/count_tokens", nil, body, 5*time.Second); strings.Contains(string(data), "42") {
+		t.Fatalf("gateway shadowed claude-cli: %s", data)
+	}
+	for range cap(s.gwSlots) {
+		s.gwSlots <- struct{}{}
+	}
+	st, data := call(conn, "POST", "/v1/messages/count_tokens", nil, []byte(`{"model":"claude-echo","messages":[]}`), 5*time.Second)
+	if st != 429 || !strings.Contains(string(data), "rate_limit_error") {
+		t.Fatalf("limit: %d %s", st, data)
+	}
+}

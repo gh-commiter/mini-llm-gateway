@@ -75,17 +75,32 @@ type gwModel struct {
 	window int    // 0 = neznano
 }
 
-// gwClient: brez preusmeritev (ključ ne gre drugam), roki za povezavo in glavo odgovora.
-var gwClient = func() *http.Client {
-	t := http.DefaultTransport.(*http.Transport).Clone()
-	t.ResponseHeaderTimeout = 10 * time.Minute // odgovor brez toka pride šele na koncu
-	return &http.Client{Transport: t, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+// gwClients: brez preusmeritev (ključ ne gre drugam), roki za povezavo in glavo odgovora. Za http (--insecure) brez
+// HTTP_PROXY: ključ bi šel nešifriran prek posrednika.
+var gwClients = func() [2]*http.Client {
+	var out [2]*http.Client
+	for i := range out {
+		t := http.DefaultTransport.(*http.Transport).Clone()
+		t.ResponseHeaderTimeout = 10 * time.Minute // odgovor brez toka pride šele na koncu
+		if i == 1 {
+			t.Proxy = nil
+		}
+		out[i] = &http.Client{Transport: t, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	}
+	return out
 }()
+
+func (g serveGateway) client() *http.Client {
+	if g.Insecure {
+		return gwClients[1]
+	}
+	return gwClients[0]
+}
 
 func gwFetch(ctx context.Context, g serveGateway, key, path string) (map[string]any, error) {
 	r, _ := http.NewRequestWithContext(ctx, "GET", g.BaseURL+path, nil)
 	r.Header.Set("authorization", "Bearer "+key)
-	resp, err := gwClient.Do(r)
+	resp, err := g.client().Do(r)
 	if err != nil {
 		return nil, errors.New("cannot connect: " + err.Error())
 	}
@@ -166,6 +181,7 @@ type gwEntry struct {
 	models  []gwModel
 	ok      bool
 	at      time.Time
+	failed  time.Time // zadnja napaka: nov poskus šele po 45 s
 	loading chan struct{}
 }
 
@@ -186,6 +202,10 @@ func (s *server) gatewayModels(g serveGateway, wait bool) []gwModel {
 		c.mu.Unlock()
 		return e.models
 	}
+	if e.loading == nil && time.Since(e.failed) < 45*time.Second {
+		c.mu.Unlock()
+		return e.models
+	}
 	if e.loading == nil {
 		done := make(chan struct{})
 		e.loading = done
@@ -198,8 +218,9 @@ func (s *server) gatewayModels(g serveGateway, wait bool) []gwModel {
 			}
 			c.mu.Lock()
 			if err == nil {
-				e.models, e.ok, e.at = ms, true, time.Now()
+				e.models, e.ok, e.at, e.failed = ms, true, time.Now(), time.Time{}
 			} else {
+				e.failed = time.Now()
 				s.log.Printf("gateway %s: %v", g.Name, err)
 			}
 			e.loading = nil
@@ -229,9 +250,12 @@ func (s *server) gatewayRoute(model string, wait bool) (serveGateway, gwModel, b
 		if w && !wait {
 			break
 		}
+		if w {
+			s.loadGateways()
+		}
 		for _, g := range s.cfg.Gateways {
-			for _, m := range s.gatewayModels(g, w) {
-				if g.enabled(m.id) && (m.id == model || publishedID(m.id) == model) {
+			for _, m := range s.gatewayModels(g, false) {
+				if g.enabled(m.id) && !shadowsCLI(m.id) && (m.id == model || publishedID(m.id) == model) {
 					return g, m, true
 				}
 			}
@@ -240,13 +264,29 @@ func (s *server) gatewayRoute(model string, wait bool) (serveGateway, gwModel, b
 	return serveGateway{}, gwModel{}, false
 }
 
+// loadGateways: počaka na prehode, ki se nalagajo prvič, vse hkrati (skupaj največ 2 s).
+func (s *server) loadGateways() {
+	var wg sync.WaitGroup
+	for _, g := range s.cfg.Gateways {
+		wg.Go(func() { s.gatewayModels(g, true) })
+	}
+	wg.Wait()
+}
+
+// shadowsCLI: model prehoda z imenom claude-cli-… ali claude-chat-… bi zakril ponudnika claude -p.
+func shadowsCLI(upstream string) bool {
+	p := publishedID(upstream)
+	return strings.HasPrefix(p, cliAgentPrefix) || strings.HasPrefix(p, cliChatPrefix)
+}
+
 func (s *server) gatewayModelList() []map[string]any {
 	var data []map[string]any
 	seen := map[string]bool{}
+	s.loadGateways()
 	for _, g := range s.cfg.Gateways {
-		for _, m := range s.gatewayModels(g, true) {
+		for _, m := range s.gatewayModels(g, false) {
 			id := publishedID(m.id)
-			if !g.enabled(m.id) || seen[id] { // prvi prehod z imenom zmaga
+			if !g.enabled(m.id) || seen[id] || shadowsCLI(m.id) { // prvi prehod z imenom zmaga
 				continue
 			}
 			seen[id] = true
@@ -266,6 +306,12 @@ func (s *server) passthrough(w http.ResponseWriter, r *req, g serveGateway, m gw
 	if m.window > 0 && r.URL.Path == "/v1/messages" && len(r.body)/4 > m.window {
 		// ponytail: ocena bajti/4 (kot na Macu); upstream count_tokens, če bo premalo natančna
 		return writeError(w, r.rid, 400, fmt.Sprintf("prompt is too long: %d tokens > %d maximum", len(r.body)/4, m.window))
+	}
+	select { // največ 16 hkratnih zahtev k prehodom
+	case s.gwSlots <- struct{}{}:
+		defer func() { <-s.gwSlots }()
+	default:
+		return writeError(w, r.rid, 429, "Too many gateway requests at once on this router: try again")
 	}
 	key, _ := keyGet(s.cfgDir, g.Name)
 	if key == "" {
@@ -291,7 +337,7 @@ func (s *server) passthrough(w http.ResponseWriter, r *req, g serveGateway, m gw
 			up.Header.Set(h, v)
 		}
 	}
-	resp, err := gwClient.Do(up)
+	resp, err := g.client().Do(up)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return 499
@@ -336,14 +382,15 @@ func upstreamError(w http.ResponseWriter, rid, name string, resp *http.Response)
 		msg = e.Error.Message
 	}
 	if msg == "" {
-		if msg = strings.TrimSpace(string(data)); len(msg) > 300 {
-			msg = msg[:300]
-		}
+		msg = string(data)
+	}
+	if msg = strings.TrimSpace(clean(msg)); len(msg) > 300 {
+		msg = msg[:300]
 	}
 	status := resp.StatusCode
 	switch {
-	case status == 401 || status == 403:
-		msg, status = fmt.Sprintf("HTTP %d, check the API key (minigw serve gateway add %s): %s", status, name, msg), 502
+	case status == 401 || status == 403: // brez besedila upstreama
+		msg, status = fmt.Sprintf("HTTP %d, check the API key (minigw serve gateway add %s)", status, name), 502
 	case status < 400 || status > 599:
 		msg, status = fmt.Sprintf("HTTP %d: %s", status, msg), 502
 	}
