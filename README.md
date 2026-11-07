@@ -458,23 +458,28 @@ example `/Volumes/Java/projects` mounted from the gateway's `/Volumes/Java`), `m
 ## 5. Gateway settings
 
 Settings of the menu bar app on the gateway Mac (**Settings…**, laid out like System Settings). On Windows and Linux
-the settings page of `minigw serve` has the same panes, except Siri AI and Apple Foundation Models, plus a
-**Devices** pane (allowed and waiting devices). Open it with **Settings…** in the tray or `/minigw:gw settings`.
-[docs/windows-parity.md](docs/windows-parity.md) lists every control on both. Client options (`minigw share`,
-`--minigw-ro`, `MINIGW_SHARE`) are in [4. Use](#4-use).
+the settings page of `minigw serve` has the same panes, without Siri AI and Apple Foundation Models. Open it with **Settings…** in the tray or `/minigw:gw settings`. [docs/windows-parity.md](docs/windows-parity.md)
+lists every control on both. Client options (`minigw share`, `--minigw-work`, `--minigw-ro`) are in [4. Use](#4-use).
 
-- **General** – listen address and port (default `127.0.0.1:8765`; use `0.0.0.0` or a LAN IP for other computers),
-  allowed client IPs, unencrypted connections, access token, and About (version, build commit, license).
+- **General** – listen address and port (default `127.0.0.1:8765`; `0.0.0.0` for other computers), access token,
+  scratch folder (agents' temporary files; another folder moves them, for example to a fast SSD), and About.
+  Mac only: **Worktree mode** (network for builds, network for Codex builds) and **minigw run** (which Macs may run
+  builds in a folder of this Mac's SMB share, each with or without network).
 - **Providers** (LiteLLM, OpenRouter or any other Anthropic-compatible one) – name, base URL, API key, and a switch
-  per discovered model. **+ / −** under the sidebar adds or removes providers, so you can use several, each with its own
-  key and models.
-- **Siri AI** – off by default; turning it on asks for Accessibility permission. Privacy warning and **Devices**:
-  which other computers may use Siri (this Mac always may).
-- **Apple Foundation Models** – on-device model and its instructions.
+  per discovered model. **+ / −** under the sidebar adds or removes providers.
+- **Siri AI** (Mac) – off by default; turning it on asks for Accessibility permission. Privacy note and the devices
+  that may use Siri (this Mac always may).
+- **Apple Foundation Models** (Mac) – on-device model and its instructions.
+- **Foundry Local** – off by default; Microsoft's on-device models, their switches and instructions.
 - **Claude CLI** – path to `claude`, allowed folders, **Allow local tools** with a table to exclude tools; install or
-  download `minigw`.
-- **Codex CLI** / **Grok CLI** – off by default; model table, write and network switches for their sandbox.
-- **Copilot CLI** – off by default; models by name, switches for writing, web access and commands (read-only by default).
+  download `minigw`. On Windows also **Allow commands without a sandbox**. With the Windows tray, **Browse…** and
+  **Choose…** open the file dialog.
+- **Codex CLI** / **Copilot CLI** / **Grok CLI** – off by default; models, and switches for writing and network
+  (Copilot: also commands, with its own GitHub token).
+- **Devices** – the computers that use this gateway; on the Mac also allowed client IPs and unencrypted connections
+  (on the settings page they are under General). On the Mac every
+  device with the token is added on its own (**Copy ID**, last seen); on Windows and Linux a new device waits until
+  you allow it.
 
 <table>
 <tr><td><img src="docs/images/general.png" width="400" alt="Settings: General"></td>
@@ -486,7 +491,7 @@ the settings page of `minigw serve` has the same panes, except Siri AI and Apple
 Changes apply immediately. Keys and the access token are stored in the Keychain, settings in
 `~/Library/Preferences/dev.trojar.minigateway.plist`.
 
-**From the command line.** `minigw gw status|devices|provider|claude|token` changes the same settings on this
+**From the command line.** `minigw gw status|devices|provider|claude|copilot token|autostart|token` changes the same settings on this
 Mac, with the same commands as on Windows and Linux (`minigw gw help`), for example
 `minigw gw provider add Lab https://gw.example` (the key comes from stdin or a hidden prompt) or
 `minigw gw provider models OpenRouter --enable anthropic/claude-sonnet-4.5`. The app must be running; the
