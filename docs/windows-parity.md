@@ -28,4 +28,8 @@ Every control of the Mac app's Settings window (Sources/MiniGateway/Settings.swi
 | Claude CLI · Tools (text), Permission mode | Tools (switches), Permission mode | `.tools`, `.permissionMode` | Only without local tools, as on the Mac. |
 | Claude CLI · Setting sources | same | `.settingSources` | Default empty on minigw serve (the Mac: `project,local`): hooks from a client's folder would run on the router. |
 | Claude CLI · Command-line tool: Install, Download… | Command-line tool: status, Download… | `status.installDir` | Installed with `minigw serve install`. |
+| Codex CLI · Enabled, Executable | same | `agents/codex.enabled`, `.path`, `.found` | Off by default. Models `claude-codex` (default model) and `claude-codex-<slug>`. Windows: the native `codex.exe` (also the one inside the npm package). |
+| Codex CLI · Models: a switch per model, Enable All, Disable All | same | `agents/codex.models`, `GET agents/codex/models` | From `codex debug models`; null = all, also future ones. |
+| Codex CLI · Allowed folders | same (shared with Claude CLI) | `agents/claude.folders` | Passed as `--add-dir` in workspace-write. |
+| Codex CLI · Sandbox: Allow writing, Allow network access | same | `.write`, `.network` | `workspace-write` with `sandbox_workspace_write.network_access`, else `read-only`; resume with `codex exec resume <thread>`. On Linux Codex uses Landlock and seccomp. On Windows writing needs "Allow commands without a sandbox" until Codex's Windows sandbox is checked. Sync mode only. |
 | – | Claude CLI · Allow commands without a sandbox; folder for agents without sync | `.allowUnsandboxedBash`, `.folder` | Windows has no sandbox for commands; minigw serve only. |

@@ -217,6 +217,7 @@ func (s *server) modelList() map[string]any {
 				"description":  "claude -p · " + m + " · tools in your synced folder", "created_at": "2026-01-01T00:00:00Z"})
 		}
 	}
+	data = append(append(data, s.agentModelList(codexKind)...), s.agentModelList(grokKind)...)
 	var first, last any
 	if len(data) > 0 {
 		first, last = data[0]["id"], data[len(data)-1]["id"]
@@ -444,6 +445,28 @@ func (s *server) messages(w http.ResponseWriter, r *req) (int, string) {
 	if g, m, ok := s.gatewayRoute(model, !isCLI); ok { // prehodi pred claude-cli (kot Router.swift); ID-ji z »/« (OpenRouter)
 		return s.passthrough(w, r, g, m), model
 	}
+	for _, k := range []agentKind{codexKind, grokKind} { // Codex in Grok (kot na Macu: claude-codex…, claude-grok…)
+		m, ok := k.match(model)
+		if !ok {
+			continue
+		}
+		if ac := k.conf(s.conf()); !ac.Enabled || (m != "" && !ac.modelEnabled(m)) {
+			return writeError(w, r.rid, 404, "Unknown model: "+model), model
+		}
+		if strings.HasSuffix(r.URL.Path, "/count_tokens") {
+			return writeJSON(w, r.rid, 200, map[string]int{"input_tokens": len(r.body) / 4}), model
+		}
+		if tools, _ := body["tools"].([]any); len(tools) > 0 { // sync: ena zahteva agenta naenkrat na kopijo
+			copyDir, err := s.hub.lock(r.Context(), r.h("x-claude-mini-session"), r.owner(), r.h("x-claude-mini-share") == "1")
+			if err != nil {
+				return 499, model
+			}
+			if copyDir != "" {
+				defer s.hub.unlock(copyDir)
+			}
+		}
+		return s.runAgent(w, r, body, k, m), model
+	}
 	cliModel, chat, ok := cliMatch(model)
 	if !validModel.MatchString(model) || !validModel.MatchString(cliModel) {
 		return writeError(w, r.rid, 400, "Invalid model name"), "?"
@@ -559,6 +582,8 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	if err != nil {
 		return writeError(w, r.rid, 500, "Cannot start claude: "+err.Error())
 	}
+	s.agentsRunning.Add(1)
+	defer s.agentsRunning.Add(-1)
 
 	idb := make([]byte, 16)
 	rand.Read(idb)

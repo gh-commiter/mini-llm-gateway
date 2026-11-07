@@ -29,6 +29,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -61,6 +62,8 @@ type serveConfig struct {
 	AllowLocalTools  bool     `json:"allowLocalTools,omitempty"`  // vsa orodja Claude Code (razen DisabledTools)
 	DisabledTools    []string `json:"disabledTools,omitempty"`
 	SettingSources   string   `json:"settingSources,omitempty"` // --setting-sources; prazno = brez (hooki iz mape ne tečejo)
+	Codex            agentCLI `json:"codex"`                    // Codex CLI (serve_agents.go), privzeto izklopljen
+	Grok             agentCLI `json:"grok"`                     // Grok CLI, privzeto izklopljen
 }
 
 const serveHelp = `minigw serve: a Mini Gateway router on this computer (Windows, Linux) for minigw clients.
@@ -366,13 +369,15 @@ type server struct {
 	admin    string      // skrivnost skrbniškega API (admin.secret)
 	offline  bool        // minigw router brez tekočega routerja: le serve.json
 	settings settingsState
-	key      *ecdh.PrivateKey
-	log      *log.Logger
-	hub      *shareHub
-	sessions sessionRegistry
-	procs    chan struct{} // največ hkratnih procesov claude
-	gwSlots  chan struct{} // največ hkratnih zahtev k prehodom
-	gateways gwCatalog
+	// agentsRunning: tekoči procesi agentov (claude, codex, grok), za status in posodobitev brez prekinitve
+	agentsRunning atomic.Int32
+	key           *ecdh.PrivateKey
+	log           *log.Logger
+	hub           *shareHub
+	sessions      sessionRegistry
+	procs         chan struct{} // največ hkratnih procesov claude
+	gwSlots       chan struct{} // največ hkratnih zahtev k prehodom
+	gateways      gwCatalog
 }
 
 func newServer(c serveConfig, cfgPath string) (*server, error) {

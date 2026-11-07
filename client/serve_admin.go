@@ -97,6 +97,7 @@ type apiStatus struct {
 	OS         string       `json:"os"`                   // windows, linux, darwin (stran: ukazi brez sandboxa)
 	InstallDir string       `json:"installDir,omitempty"` // minigw serve install
 	Tray       bool         `json:"tray"`                 // pladenj teče (Windows)
+	Agents     int          `json:"agents"`               // tekoči procesi agentov (claude, codex, grok)
 }
 
 // adminSecret: 32 naključnih bajtov (base64url) v admin.secret (0600) v mapi nastavitev, ki je agentom prepovedana.
@@ -252,7 +253,8 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 	case "GET status":
 		c := s.conf()
 		st := apiStatus{Running: !s.offline, Version: version, Port: c.Port, Address: c.Address, Installed: serviceInstalled(runtime.GOOS),
-			Devices: len(c.Devices), Claude: s.claudeInfo(), Gateways: s.apiGateways(c), OS: runtime.GOOS, Tray: trayRunning(), Build: buildCommit()}
+			Devices: len(c.Devices), Claude: s.claudeInfo(), Gateways: s.apiGateways(c), OS: runtime.GOOS, Tray: trayRunning(), Build: buildCommit(),
+			Agents: int(s.agentsRunning.Load())}
 		if d := installDir(runtime.GOOS); d != "" { // le če je minigw tam res nameščen
 			if _, err := os.Stat(filepath.Join(d, map[bool]string{true: "minigw.exe", false: "minigw"}[runtime.GOOS == "windows"])); err == nil {
 				st.InstallDir = d
@@ -569,9 +571,27 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			return fail(404, "no agent "+arg)
 		}
 		return 200, map[string]any{"tools": claudeTools(s.claudeExe())}
+	case "GET agents/{}/models": // Codex, Grok: modeli računa za tabelo v nastavitvah
+		k, ok := map[string]agentKind{"codex": codexKind, "grok": grokKind}[arg]
+		if !ok {
+			return fail(404, "no agent "+arg)
+		}
+		ac := k.conf(s.conf())
+		exe, err := resolveAgent(k, ac.Executable)
+		if err != nil || exe == "" {
+			return 200, map[string]any{"models": []agentModel{}}
+		}
+		models := agentCatalog(k, exe)
+		for i := range models {
+			models[i].Enabled = ac.modelEnabled(models[i].Slug)
+		}
+		return 200, map[string]any{"models": append([]agentModel{}, models...)}
 	case "GET agents/{}", "PATCH agents/{}":
+		if k, ok := map[string]agentKind{"codex": codexKind, "grok": grokKind}[arg]; ok {
+			return s.agentAPI(method, k, body)
+		}
 		if arg != "claude" {
-			return fail(404, "no agent "+arg+" (this router has claude only)")
+			return fail(404, "no agent "+arg)
 		}
 		if method == "GET" {
 			return 200, s.claudeInfo()
@@ -748,6 +768,80 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		return 200, s.apiGeneral(false)
 	}
 	return fail(404, "Not found: "+method+" "+uri)
+}
+
+// agentAPI: agents/codex in agents/grok, ista oblika JSON kot na Macu (enabled, path, found, write, network, models).
+func (s *server) agentAPI(method string, k agentKind, body []byte) (int, any) {
+	info := func() map[string]any {
+		ac := k.conf(s.conf())
+		exe, _ := resolveAgent(k, ac.Executable)
+		o := map[string]any{"enabled": ac.Enabled, "path": ac.Executable, "found": exe != "", "exe": exe, "write": !ac.ReadOnly, "models": ac.Models}
+		if k.name == "codex" {
+			o["network"] = !ac.NoNetwork
+		}
+		return o
+	}
+	if method == "GET" {
+		return 200, info()
+	}
+	var b struct {
+		Enabled *bool           `json:"enabled"`
+		Path    *string         `json:"path"`
+		Write   *bool           `json:"write"`
+		Network *bool           `json:"network"`
+		Models  json.RawMessage `json:"models"` // null = vsi; seznam = le ti; brez polja = brez spremembe
+	}
+	if err := decodeStrict(body, &b); err != nil {
+		return 400, errorBody(400, err.Error())
+	}
+	if b.Network != nil && k.name != "codex" {
+		return 400, errorBody(400, "network: Codex only")
+	}
+	var models []string
+	setModels := len(b.Models) > 0
+	if setModels && string(b.Models) != "null" {
+		if json.Unmarshal(b.Models, &models) != nil || models == nil {
+			return 400, errorBody(400, "models must be null or a list of model names")
+		}
+		for _, m := range models {
+			if !validAgentModel.MatchString(m) {
+				return 400, errorBody(400, "not a model name: "+m)
+			}
+		}
+	}
+	if b.Path != nil && *b.Path != "" {
+		if _, err := resolveAgent(k, *b.Path); err != nil {
+			return 400, errorBody(400, err.Error())
+		}
+	}
+	err := s.update(func(c *serveConfig) error {
+		ac := k.conf(*c)
+		if b.Enabled != nil {
+			ac.Enabled = *b.Enabled
+		}
+		if b.Path != nil {
+			ac.Executable = *b.Path
+		}
+		if b.Write != nil {
+			ac.ReadOnly = !*b.Write
+		}
+		if b.Network != nil {
+			ac.NoNetwork = !*b.Network
+		}
+		if setModels {
+			ac.Models = slices.Clone(models)
+		}
+		if k.name == "codex" {
+			c.Codex = ac
+		} else {
+			c.Grok = ac
+		}
+		return nil
+	})
+	if err != nil {
+		return 500, errorBody(500, err.Error())
+	}
+	return 200, info()
 }
 
 func findGateway(c serveConfig, name string) (serveGateway, bool) {
