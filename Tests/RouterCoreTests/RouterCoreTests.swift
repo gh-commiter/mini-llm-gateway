@@ -1455,3 +1455,11 @@ final class FakeMinigw: @unchecked Sendable {
     try await e.write(HTTPResponse.head(status: 502, headers: [("Content-Type", "application/json")], contentLength: body.count) + body)
     #expect(bad.text.hasPrefix("HTTP/1.1 200") && !bad.text.contains("502") && bad.text.contains("event: error") && bad.text.contains("Syncing /p to the gateway failed"))
 }
+
+/// #10: Siri v načinu sync po neuspelem prenosu ne bere mape tega Maca na isti poti.
+@Test func siriMentionsNoFallbackInSync() {
+    let local = URL(fileURLWithPath: "/Users/x/proj"), copy = URL(fileURLWithPath: "/scratch/sync/dev/abc")
+    #expect(Router.mentionRoot(shared: nil, synced: true) { local } == nil)
+    #expect(Router.mentionRoot(shared: copy, synced: true) { local } == copy)
+    #expect(Router.mentionRoot(shared: nil, synced: false) { local } == local)
+}

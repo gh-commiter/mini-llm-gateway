@@ -197,6 +197,9 @@ actor SiriEngine {
 }
 
 extension Router {
+    /// Mapa za priloge Siri: priklopljena ali sinhronizirana mapa odjemalca; mapa tega Maca na isti poti le zunaj sync (#10).
+    static func mentionRoot(shared: URL?, synced: Bool, local: () -> URL?) -> URL? { shared ?? (synced ? nil : local()) }
+
     func runSiri(_ req: HTTPRequest, body: [String: Any], rid: String, writer: ResponseWriter) async -> Int {
         let turns = ClaudeCLI.turns(body)
             .map { ClaudeCLI.Turn(role: $0.role, text: AppleFM.stripReminders($0.text)) }
@@ -210,10 +213,14 @@ extension Router {
             // Datoteke, omenjene v vprašanju, iz mape seje (priklopljene z drugega Maca ali dovoljene tukaj).
             var context = "", media: [URL] = []
             if let question = turns.last?.text {
-                let root: URL? = await Self.shares.mount(session: scope, cwd: clientCwd, base: localBase,
-                                                 wait: req.header("x-claude-mini-share") == "1", device: req.device?.id,
-                                                 roots: config.claudeCLI.allowedRoots)
-                    ?? ClaudeCLI.resolveCwd(clientCwd, roots: config.claudeCLI.allowedRoots)
+                // Prenos (sync) teče pod zaklepom kopije v mount. #10: v načinu sync ni nadomestka z mapo tega Maca na isti
+                // poti (kot pri agentih): ob neuspelem prenosu Siri dobi vprašanje brez prilog.
+                let shared = await Self.shares.mount(session: scope, cwd: clientCwd, base: localBase,
+                                                     wait: req.header("x-claude-mini-share") == "1", device: req.device?.id,
+                                                     roots: config.claudeCLI.allowedRoots)
+                let synced = await Self.shares.isSync(session: scope)
+                let root = Self.mentionRoot(shared: shared, synced: synced) { ClaudeCLI.resolveCwd(clientCwd, roots: config.claudeCLI.allowedRoots) }
+                if shared == nil, synced { Self.log.error("\(rid, privacy: .public) siri: syncing the folder failed; no attachments") }
                 if let root {
                     let names = await Mentions.names(in: question)
                     let files = Mentions.find(names, question: question, in: root)
