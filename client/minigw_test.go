@@ -606,3 +606,17 @@ func TestCaseCollisions(t *testing.T) {
 		t.Fatalf("collisions: %v", got)
 	}
 }
+
+// #6: datoteka samo za branje se posodobi in ostane samo za branje (Windows: atribut dol in nazaj gor).
+func TestSyncWriteReadOnlyFile(t *testing.T) {
+	full := filepath.Join(t.TempDir(), "ro.txt")
+	os.WriteFile(full, []byte("old"), 0o444)
+	if err := syncWrite(full, []byte("new"), 0, false, true); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(full)
+	st, _ := os.Stat(full)
+	if string(b) != "new" || st.Mode().Perm()&0o200 != 0 {
+		t.Fatalf("read-only file: %q %v", b, st.Mode())
+	}
+}

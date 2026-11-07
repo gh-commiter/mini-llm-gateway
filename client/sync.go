@@ -298,14 +298,25 @@ func syncWrite(full string, data []byte, mtime int64, exec, keepX bool) error {
 		return err
 	}
 	_, err = tmp.Write(data)
+	readOnlyWin := runtime.GOOS == "windows" && mode&0o200 == 0 // #6: Windows ne preimenuje čez datoteko samo za branje
 	if err == nil {
-		err = tmp.Chmod(mode)
+		if readOnlyWin {
+			err = tmp.Chmod(0o666)
+		} else {
+			err = tmp.Chmod(mode)
+		}
 	}
 	if cerr := tmp.Close(); err == nil {
 		err = cerr
 	}
+	if err == nil && readOnlyWin {
+		os.Chmod(full, 0o666) // atribut samo za branje dol; po preimenovanju spet gor
+	}
 	if err == nil {
 		err = os.Rename(tmp.Name(), full)
+	}
+	if err == nil && readOnlyWin {
+		err = os.Chmod(full, mode)
 	}
 	if err != nil {
 		os.Remove(tmp.Name())
@@ -373,6 +384,9 @@ func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch fu
 		if local.SHA256 != base(p) {
 			notes = append(notes, "conflict: "+p+" was deleted on the gateway but changed here; kept")
 			continue
+		}
+		if runtime.GOOS == "windows" { // #6: datoteke samo za branje Windows ne izbriše
+			os.Chmod(full, 0o666)
 		}
 		os.Remove(full)
 		delete(state, p)
