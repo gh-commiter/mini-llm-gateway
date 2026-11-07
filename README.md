@@ -349,9 +349,11 @@ example `/Volumes/Java/eureko-modules` mounted from the router's `/Volumes/Java`
   `~/.netrc`, `~/.git-credentials`, `~/.npmrc`, `~/.pypirc`, `~/.gradle/gradle.properties`, shell histories, `~/.config`,
   `~/.docker`, `~/.kube`, the keychains, cookies, `~/Library/Application Support`, `Containers`, `Group Containers`,
   `Mail`, `Messages`, Mini Gateway's Scratch folder and preferences (rules cover the resolved paths of links too). The
-  router refuses the run when the folder or one of the writable folders is a link. Network is on per device (switch it
-  off in Settings or with `"denyNetwork"`); off is best effort: it blocks direct connections and `nsurlsessiond`, but
-  another system service could still reach the network for the build. The sandbox also blocks writing preferences, reading
+  router refuses the run when the folder or one of the writable folders is a link. Unix sockets are blocked (only DNS
+  and syslog are allowed), so a build cannot reach Docker (`docker run -v $HOME …`) or an SSH agent, and the router's own
+  port is always blocked. Network is on per device (switch it off in Settings or with `"denyNetwork"`); off is best
+  effort: it blocks direct connections and `nsurlsessiond`, but another system service could still reach the network
+  for the build. The sandbox also blocks writing preferences, reading
   Mini Gateway's, creating launchd jobs, opening apps and sending Apple events. A sandbox inside it is not possible, so the router runs `swift build|test|run|package` with
   `--disable-sandbox` and `xcodebuild` without its package and script sandboxes. Stopping minigw stops the whole
   process group. In a terminal minigw shows only colours from the output, no other escape sequences.

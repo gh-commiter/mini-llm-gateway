@@ -317,7 +317,7 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     try FileManager.default.createDirectory(at: home.appendingPathComponent(".m2"), withIntermediateDirectories: true)
     let p = try #require(Native.sandboxProfile(dir: "/Volumes/Java/proj", home: home.path, network: true))
     #expect(p.contains(#"(subpath "/Volumes/Java/proj")"#) && p.contains(#"(subpath "/Volumes/Java/proj/.git")"#))
-    #expect(!p.contains("Development") && !p.contains("network-outbound"))
+    #expect(!p.contains("Development") && !p.contains("(deny network-outbound (remote ip))"))
     #expect(p.contains("(literal \"\(home.path)/.netrc\")") && p.contains("/.ssh\")") && p.contains("Application Support"))
     #expect(Native.sandboxProfile(dir: "/Volumes/Java/proj", home: home.path, network: false)?.contains("(deny network-outbound (remote ip))") == true)
     // povezava namesto predpomnilnika (ali mape) → brez profila
@@ -398,4 +398,38 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     if submitted == 0 { _ = try run("/bin/launchctl", ["remove", label], sandboxed: false) }
     #expect(submitted != 0)
     #expect(profile.contains("(deny lsopen)") && profile.contains("(deny appleevent-send)") && profile.contains("(deny job-creation)"))
+}
+
+/// F1, F2: z omrežjem run ne doseže vtičnic unix (npr. docker.sock) ne vrat routerja; kontrola brez peskovnika jih doseže.
+@Test func nativeRunProfileBlocksUnixSocketsAndRouterPort() throws {
+    let dir = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("f1-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let port = Int.random(in: 40000...50000)
+    let profile = try #require(Native.sandboxProfile(dir: dir.path, network: true, routerPort: port))
+    let sock = "/tmp/mgw-\(UUID().uuidString.prefix(8)).sock"
+    defer { unlink(sock) }
+    func listener(_ args: [String]) throws -> Process {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/nc")
+        p.arguments = args
+        p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+        try p.run()
+        return p
+    }
+    func connect(_ args: [String], sandboxed: Bool) throws -> Int32 {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: sandboxed ? "/usr/bin/sandbox-exec" : "/usr/bin/nc")
+        p.arguments = sandboxed ? ["-p", profile, "/usr/bin/nc"] + args : args
+        p.standardInput = FileHandle.nullDevice; p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+        try p.run(); p.waitUntilExit()
+        return p.terminationStatus
+    }
+    let unix = try listener(["-lU", sock]), tcp = try listener(["-lk", "127.0.0.1", String(port)])
+    defer { unix.terminate(); tcp.terminate() }
+    Thread.sleep(forTimeInterval: 0.5)
+    #expect(try connect(["-U", sock], sandboxed: true) != 0)
+    #expect(try connect(["-z", "127.0.0.1", String(port)], sandboxed: true) != 0)
+    #expect(try connect(["-U", sock], sandboxed: false) == 0)  // kontrola: poslušalca sta tam
+    #expect(try connect(["-z", "127.0.0.1", String(port)], sandboxed: false) == 0)
 }

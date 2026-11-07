@@ -153,7 +153,7 @@ public enum Native {
     /// branje povsod razen skrivnosti uporabnika, omrežje po izbiri naprave. Poti so dobesedne: če katera obstaja in
     /// njena kanonična pot ni ista (povezava), vrne nil (zamenjava mape s povezavo ne razširi pisanja).
     /// Preizkušeno z mvn package, swift build --disable-sandbox in xcodebuild build: nobena prepoved ni bila odveč.
-    static func sandboxProfile(dir: String, home: String = NSHomeDirectory(), network: Bool, hidden: [String] = []) -> String? {
+    static func sandboxProfile(dir: String, home: String = NSHomeDirectory(), network: Bool, hidden: [String] = [], routerPort: Int? = nil) -> String? {
         let writable = [dir] + buildCaches(home: home)
         for p in writable where FileManager.default.fileExists(atPath: p) && Sync.real(URL(fileURLWithPath: p))?.path != p { return nil }
         let q = { (p: String) in "\"" + p.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\"" }
@@ -185,6 +185,12 @@ public enum Native {
             + "(deny user-preference-write)\n(deny user-preference-read (preference-domain \"dev.trojar.minigateway\"))\n"
             + "(deny job-creation)\n(deny lsopen)\n(deny appleevent-send)\n"
             + "(deny mach-lookup (global-name \"com.apple.coreservices.launchservicesd\"))\n"
+            // Vtičnice unix (npr. docker.sock: »docker run -v $HOME« bi obšel peskovnik) le za DNS in syslog (F1);
+            // vrata routerja nikoli (F2), tudi z omrežjem.
+            + "(deny network-outbound (remote unix-socket))\n"
+            + "(allow network-outbound (remote unix-socket (path-literal \"/private/var/run/mDNSResponder\"))"
+            + " (remote unix-socket (path-literal \"/private/var/run/syslog\")))\n"
+            + (routerPort.map { "(deny network-outbound (remote ip \"localhost:\($0)\"))\n" } ?? "")
             + (network ? "" : "(deny network-outbound (remote ip))\n(deny mach-lookup (global-name-regex #\"^com\\.apple\\.nsurlsessiond\"))\n")
     }
 
@@ -386,7 +392,7 @@ extension Router {
         // profil peskovnika iz dobesedne poti (sandboxProfile zavrne povezave).
         guard Sync.real(dir)?.path == dir.path, ClaudeCLI.resolveCwd(dir.path, roots: config.claudeCLI.allowedRoots)?.path == dir.path,
               let profile = Native.sandboxProfile(dir: dir.path, network: config.devices.first { $0.id == d.id }?.runNetwork ?? true,
-                                                  hidden: [config.scratchURL.path, RouterConfig.defaultScratch.path]) else {
+                                                  hidden: [config.scratchURL.path, RouterConfig.defaultScratch.path], routerPort: Int(config.port)) else {
             return await error(403, "permission_error", "minigw run: the folder or a build cache folder (~/.m2, ~/Library/Caches …) is a link or not allowed", rid: rid, writer: writer)
         }
         guard await Self.natives.startRun(d.id) else {
@@ -394,7 +400,7 @@ extension Router {
         }
         defer { Task { await Self.natives.endRun(d.id) } }
         var env = ProcessInfo.processInfo.environment
-        for k in env.keys where k.hasPrefix("ANTHROPIC_") || k.hasPrefix("CLAUDE_CODE_") || k == "CLAUDECODE" { env[k] = nil }
+        for k in env.keys where k.hasPrefix("ANTHROPIC_") || k.hasPrefix("CLAUDE_CODE_") || k == "CLAUDECODE" || k == "SSH_AUTH_SOCK" { env[k] = nil }
         env["PATH"] = (env["PATH"].map { $0 + ":" } ?? "") + "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
         guard let exe = Native.executable(argv[0], dir: dir, path: env["PATH"]!) else {
             return await error(404, "not_found_error", "minigw run: \(argv[0]) not found on the router", rid: rid, writer: writer)
