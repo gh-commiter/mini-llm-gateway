@@ -367,3 +367,35 @@ func TestServeAllowDenyDevices(t *testing.T) {
 		t.Fatalf("after deny by ID: %+v", c.Devices)
 	}
 }
+
+// #21: pisanje prenesene datoteke ne drži skupnega zaklepa (počasen prenos ne ustavi drugih map).
+func TestSyncPutWritesWithoutTheHubLock(t *testing.T) {
+	h := newShareHub()
+	copyDir := t.TempDir()
+	key, ok := h.register("s1", "/c", "", false, copyDir, "dev")
+	if !ok {
+		t.Fatal("register")
+	}
+	data := []byte("hello")
+	if _, _, ok := h.syncManifest(key, []syncEntry{{Path: "a.txt", Size: 5, SHA256: sha256Hex(data)}}, true, "dev"); !ok {
+		t.Fatal("manifest")
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	o := syncPutWrite
+	t.Cleanup(func() { syncPutWrite = o })
+	syncPutWrite = func(full string, d []byte, m int64, x, k bool) error { close(entered); <-release; return o(full, d, m, x, k) }
+	done := make(chan int)
+	go func() { done <- h.syncPut(key, "a.txt", data, "dev") }()
+	<-entered
+	if !h.mu.TryLock() {
+		t.Fatal("hub lock held while writing")
+	}
+	h.mu.Unlock()
+	close(release)
+	if st := <-done; st != 204 {
+		t.Fatalf("put: %d", st)
+	}
+	if b, _ := os.ReadFile(filepath.Join(copyDir, "a.txt")); string(b) != "hello" {
+		t.Fatalf("copy: %q", b)
+	}
+}

@@ -361,29 +361,43 @@ func (h *shareHub) syncManifest(key string, files []syncEntry, execKnown bool, o
 }
 
 // syncPut: datoteka iz manifesta; vsebina se mora ujemati z njim. Status HTTP.
+var syncPutWrite = syncWrite // testi: počasno pisanje
+
+// Pisanje (do 64 MB) teče brez h.mu (#21): počasen prenos ne ustavi pollov in odgovorov drugih map.
 func (h *shareHub) syncPut(key, path string, data []byte, owner string) int {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	s := h.share(key, owner)
 	if s == nil {
+		h.mu.Unlock()
 		return 404
 	}
 	s.lastSeen = time.Now()
 	e, listed := s.incoming[path]
-	full, ok := syncResolve(path, s.copy)
+	copyDir, execKnown := s.copy, s.execKnown
+	h.mu.Unlock()
+	full, ok := syncResolve(path, copyDir)
 	if !listed || !ok {
 		return 403
 	}
-	if sha256Hex(data) != e.SHA256 {
+	want := e.SHA256
+	if sha256Hex(data) != want {
 		return 409 // spremenjena med prenosom
 	}
-	if syncWrite(full, data, e.Mtime, e.Exec, !s.execKnown) != nil {
+	if syncPutWrite(full, data, e.Mtime, e.Exec, !execKnown) != nil {
 		return 500
 	}
-	if !s.execKnown { // Windows: dejanski način kopije
+	if !execKnown { // Windows: dejanski način kopije
 		if a, ok := syncEntryOf(full, path, nil); ok {
 			e = a
 		}
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.share(key, owner) != s { // med pisanjem odjavljena ali zamenjana
+		return 404
+	}
+	if cur, still := s.incoming[path]; !still || cur.SHA256 != want {
+		return 409 // nov manifest med pisanjem: odjemalec pošlje znova
 	}
 	if s.state != nil {
 		s.state[path] = e
