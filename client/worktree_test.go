@@ -184,4 +184,19 @@ func TestWorktreeFetchChecksBundleAndKeepsUserCommits(t *testing.T) {
 	if gitT(t, client, "rev-parse", branch) != mine {
 		t.Fatal("the user's commit was overwritten")
 	}
+
+	// N3: veja, izvlečena v povezani delovni mapi, se ne premakne (git fetch brez sile).
+	gitT(t, other, "fetch", "-q", client, "+refs/heads/"+branch+":refs/heads/"+branch) // »router« ima zdaj uporabnikov vrh …
+	linked := filepath.Join(root, "linked")
+	gitT(t, client, "worktree", "add", "-q", linked, branch)
+	c := gitT(t, other, "commit-tree", gitT(t, other, "rev-parse", "HEAD^{tree}"), "-p", mine, "-m", "three")
+	gitT(t, other, "update-ref", "refs/heads/"+branch, c) // … in hitro posodobitev nanj
+	b3 := filepath.Join(root, "three.bundle")
+	gitT(t, other, "bundle", "create", b3, "refs/heads/"+branch, "^"+base)
+	if why := gitFetchBranch(client, b3, branch); !strings.Contains(why, "checked out") {
+		t.Fatalf("checked out in a linked worktree: %q", why)
+	}
+	if gitT(t, client, "rev-parse", branch) != mine {
+		t.Fatal("a branch checked out in a linked worktree was moved")
+	}
 }

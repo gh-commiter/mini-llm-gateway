@@ -284,3 +284,76 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
         #expect(w.status == 400 && w.text.contains(model == "claude-grok" ? "Grok is not supported in worktree mode" : "Codex may not write"), "\(model): \(w.text)")
     }
 }
+
+/// N1: agent zamenja .git/objects klona s povezavo ven: finalize ne briše in ne piše tam (in ne vrne veje).
+/// Izhod gradnje (.build, target) nikoli v vejo (info/exclude zrcala).
+@Test func worktreeFinalizeRefusesSymlinkedObjectsAndSkipsBuildOutput() async throws {
+    let (root, client, tree) = try fixture()
+    defer { cleanup(root) }
+    let hub = ShareHub(), session = UUID().uuidString
+    let key = try #require(await hub.register(session: session, cwd: client.path, key: nil, device: "dev", tree: tree))
+    let loop = fakeClient(hub, key: key, top: client)
+    defer { loop.cancel() }
+    let branch = "minigw/claude-\(String(Sync.folderID(session).prefix(8)))-0"
+    _ = try await agentRun(hub, session) { dir in
+        try file(dir, "ok.txt", "ok\n"); try file(dir, ".build/debug/app", "bin"); try file(dir, "target/app.jar", "jar")
+    }
+    #expect(g(client, "show", "\(branch):ok.txt") == "ok")
+    #expect(!g(client, "ls-tree", "-r", "--name-only", branch).contains(".build") && !g(client, "ls-tree", "-r", "--name-only", branch).contains("target/"))
+
+    let outside = root.appendingPathComponent("outside")
+    try file(outside, "info/keep", "keep\n")
+    let before = g(client, "rev-parse", branch)
+    _ = try await agentRun(hub, session) { dir in
+        try file(dir, "more.txt", "more\n")
+        let objects = dir.appendingPathComponent(".git/objects")
+        try FileManager.default.moveItem(at: objects, to: root.appendingPathComponent("moved-objects"))
+        try FileManager.default.createSymbolicLink(at: objects, withDestinationURL: outside)
+    }
+    #expect(FileManager.default.fileExists(atPath: outside.appendingPathComponent("info/keep").path))
+    #expect(!FileManager.default.fileExists(atPath: outside.appendingPathComponent("info/alternates").path))
+    #expect(g(client, "rev-parse", branch) == before)
+}
+
+/// N2: git v finalize ne bere vsebine zunaj klona, zrcala in svoje začasne mape (domača mapa, zrcala drugih naprav).
+@Test func worktreeFinalizeProfileDeniesOtherReads() throws {
+    let scratch = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Caches/minigw-test-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: scratch) }
+    let repo = scratch.appendingPathComponent("repos/dev/x.git"), other = scratch.appendingPathComponent("repos/other/y.git")
+    let wt = scratch.appendingPathComponent("worktrees/dev/x/claude-1"), tmp = scratch.appendingPathComponent("repos/dev/.finalize-1")
+    for d in [repo, other, wt, tmp] { try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true) }
+    try file(other, "config", "secret of another device\n")
+    try file(wt, "a.txt", "clone\n")
+    let profile = try #require(Worktree.finalizeProfile(wt: wt, repo: repo, tmp: tmp, out: scratch.appendingPathComponent("repos/dev/x.git.result")))
+    func cat(_ u: URL) throws -> Int32 {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
+        p.arguments = ["-p", profile, "/bin/cat", u.path]
+        p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+        try p.run(); p.waitUntilExit()
+        return p.terminationStatus
+    }
+    #expect(try cat(wt.appendingPathComponent("a.txt")) == 0)
+    #expect(try cat(other.appendingPathComponent("config")) != 0)
+    #expect(try cat(URL(fileURLWithPath: NSHomeDirectory() + "/.zshrc")) != 0 || !FileManager.default.fileExists(atPath: NSHomeDirectory() + "/.zshrc"))
+    #expect(try cat(URL(fileURLWithPath: "/private/etc/hosts")) != 0)  // tudi zunaj domače mape privzeto ne
+    #expect(Worktree.run(["--version"], cwd: tmp.path, sandbox: profile).status == 0)  // git (Xcode) teče
+}
+
+/// N3: veja, izvlečena v povezani delovni mapi uporabnika, se ne premakne (git fetch brez sile jo zavrne).
+@Test func worktreeBranchCheckedOutInLinkedWorktreeIsNotMoved() async throws {
+    let (root, client, tree) = try fixture()
+    defer { cleanup(root) }
+    let hub = ShareHub(), session = UUID().uuidString
+    let key = try #require(await hub.register(session: session, cwd: client.path, key: nil, device: "dev", tree: tree))
+    let loop = fakeClient(hub, key: key, top: client)
+    defer { loop.cancel() }
+    let branch = "minigw/claude-\(String(Sync.folderID(session).prefix(8)))-0"
+    _ = try await agentRun(hub, session) { dir in try file(dir, "one.txt", "1\n") }
+    let linked = root.appendingPathComponent("linked")
+    g(client, "worktree", "add", "-q", linked.path, branch)
+    let before = g(client, "rev-parse", branch)
+    _ = try await agentRun(hub, session) { dir in try file(dir, "two.txt", "2\n") }
+    #expect(g(client, "rev-parse", branch) == before)
+    #expect(!FileManager.default.fileExists(atPath: linked.appendingPathComponent("two.txt").path))
+}

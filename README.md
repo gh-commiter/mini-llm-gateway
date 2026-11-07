@@ -339,7 +339,8 @@ and gives each agent its own clone on a branch `minigw/<agent>-<session>-<n>`; p
   clone as the writable folder (not when Codex may not write: then worktree mode is refused). Grok is not supported in
   worktree mode yet (use sync). They write only to the clone, their own Maven repository (`MAVEN_OPTS`), DerivedData and
   temporary folders, never to your `~/.m2` settings, plugins or SwiftPM configuration; Claude cannot read your home
-  folder. Network for builds: on for Claude (its sandbox hides your files), off for Codex (it can read all your files);
+  folder (from `~/.m2` only `settings.xml` and `toolchains.xml`). DerivedData is shared with your own Xcode projects:
+  agents should build with `xcodebuild -derivedDataPath .build/DerivedData` (inside the clone). Network for builds: on for Claude (its sandbox hides your files), off for Codex (it can read all your files);
   Settings → General → Worktree mode. The Scratch folder must not be a temporary or build cache folder; mirrors unused for
   30 days are removed.
 - **`--minigw-work=auto`:** read-only (`--minigw-ro`) → direct; a folder on the router's SMB share → native; a git

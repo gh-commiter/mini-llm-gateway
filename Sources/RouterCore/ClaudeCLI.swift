@@ -45,13 +45,13 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
     /// --minigw-work=worktree: vsa orodja (tudi Bash) vedno v peskovniku Claude Code (brez stikala za izklop):
     /// pisanje le v klon in predpomnilnike gradnje (Worktree.writable), branje domače mape le tam, omrežje po nastavitvi.
     /// denyWrite: .git klona (config, hooks, info, commondir) in nastavitve gradnje lastnika (Native.buildCacheDenies).
-    /// Branje ~/.m2 (settings.xml, toolchains.xml) za Maven; pisanje le v svoj lokalni repozitorij (MAVEN_OPTS).
+    /// Iz ~/.m2 le branje settings.xml in toolchains.xml (Maven); pisanje le v svoj lokalni repozitorij (MAVEN_OPTS).
     func worktreeArgs(root: URL, maven: URL, cwd: URL, allTools: [String], network: Bool) -> [String] {
         let dirs = Worktree.writable(root: root, maven: maven)
         let sandbox: [String: Any] = ["sandbox": [
             "enabled": true, "failIfUnavailable": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
             "network": ["allowedDomains": network ? ["*"] : []],
-            "filesystem": ["denyRead": ["~"], "allowRead": dirs + [NSHomeDirectory() + "/.m2"], "allowWrite": dirs,
+            "filesystem": ["denyRead": ["~"], "allowRead": dirs + Self.mavenConfig(), "allowWrite": dirs,
                            "denyWrite": ["config", "hooks", "info", "commondir"].map { root.path + "/.git/" + $0 }
                                + Native.buildCacheDenies().paths],
         ]]
@@ -63,6 +63,14 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
             + (cwd.path == root.path ? [] : ["--add-dir", root.path])
             + (others.isEmpty ? [] : ["--allowedTools", others.joined(separator: ",")])
             + ["--disallowedTools", (disabledTools + gitEdits).joined(separator: ",")]
+    }
+
+    /// ~/.m2/settings.xml in toolchains.xml (dobesedno in kanonično, če sta povezavi).
+    static func mavenConfig(home: String = NSHomeDirectory()) -> [String] {
+        ["settings.xml", "toolchains.xml"].flatMap { f -> [String] in
+            let p = home + "/.m2/" + f
+            return Sync.real(URL(fileURLWithPath: p)).map { $0.path == p ? [p] : [p, $0.path] } ?? [p]
+        }
     }
 
     public init(from decoder: Decoder) throws {
@@ -348,6 +356,7 @@ extension Router {
             return "The user's folder \(clientCwd) (on their computer, a git repository) is a clone here at \(shared.path), your working"
                 + " directory, on branch \(branch). Map paths under \(clientCwd) to it. Commit your work on this branch; changes you leave"
                 + " uncommitted are committed for you at the end. The branch goes back to the user's repository; their files are not changed."
+                + " Build output (.build, target, DerivedData) is never committed; build Xcode projects with -derivedDataPath .build/DerivedData."
         }
         return (synced ? "The user's folder \(clientCwd) (on their computer) is synced here as \(shared.path), your working directory: a local copy"
             + (readOnly ? "" : " whose changed source files are copied back to the user when you finish") + ". Map paths under \(clientCwd) to it."

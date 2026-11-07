@@ -21,27 +21,45 @@ public enum Worktree {
     /// `sandbox`: profil sandbox-exec (finalize: branje le v klonu, zrcalu in začasni mapi).
     static func run(_ args: [String], cwd: String? = nil, env extra: [String: String] = [:], safe: Bool = true, hooks: Bool = true,
                     input: Data? = nil, sandbox: String? = nil) -> (status: Int32, out: String) {
-        let p = Process(), out = Pipe(), inp = Pipe()
         let guardrails = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "submodule.recurse=false",
                           "-c", "protocol.allow=never", "-c", "protocol.file.allow=always", "-c", "maintenance.auto=false", "-c", "gc.auto=0",
                           "-c", "core.commitGraph=false", "-c", "core.multiPackIndex=false"]
         let gitArgs = (safe ? guardrails : hooks ? [] : ["-c", "core.hooksPath=/dev/null"]) + args
-        p.executableURL = URL(fileURLWithPath: sandbox == nil ? git : "/usr/bin/sandbox-exec")
-        p.arguments = sandbox.map { ["-p", $0, git] + gitArgs } ?? gitArgs
-        if let cwd { p.currentDirectoryURL = URL(fileURLWithPath: cwd) }
+        let exe = sandbox == nil ? git : "/usr/bin/sandbox-exec"
         var env = ProcessInfo.processInfo.environment
         for k in env.keys where k.hasPrefix("GIT_") { env[k] = nil }
         if safe { env["GIT_CONFIG_NOSYSTEM"] = "1"; env["GIT_CONFIG_GLOBAL"] = "/dev/null" }
         env["GIT_TERMINAL_PROMPT"] = "0"
-        p.environment = env.merging(extra) { $1 }
-        p.standardOutput = out
-        p.standardError = FileHandle.nullDevice
-        p.standardInput = input == nil ? FileHandle.nullDevice : inp
-        guard (try? p.run()) != nil else { return (-1, "") }
-        if let input { try? inp.fileHandleForWriting.write(contentsOf: input); try? inp.fileHandleForWriting.close() }
-        let data = out.fileHandleForReading.readDataToEndOfFile()
-        p.waitUntilExit()
-        return (p.terminationStatus, String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
+        env.merge(extra) { $1 }
+        // posix_spawn s POSIX_SPAWN_CLOEXEC_DEFAULT: git ne podeduje odprtih datotek routerja (vtičnice odjemalcev),
+        // kot bi jih s Process.
+        var o: [Int32] = [0, 0], i: [Int32] = [0, 0]
+        guard pipe(&o) == 0 else { return (-1, "") }
+        guard pipe(&i) == 0 else { close(o[0]); close(o[1]); return (-1, "") }
+        for fd in o + i { _ = fcntl(fd, F_SETFD, FD_CLOEXEC) }
+        var fa: posix_spawn_file_actions_t?, at: posix_spawnattr_t?
+        posix_spawn_file_actions_init(&fa); posix_spawnattr_init(&at)
+        defer { posix_spawn_file_actions_destroy(&fa); posix_spawnattr_destroy(&at) }
+        if input == nil { posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0) } else { posix_spawn_file_actions_adddup2(&fa, i[0], 0) }
+        posix_spawn_file_actions_adddup2(&fa, o[1], 1)
+        posix_spawn_file_actions_addopen(&fa, 2, "/dev/null", O_WRONLY, 0)
+        if let cwd { posix_spawn_file_actions_addchdir_np(&fa, cwd) }
+        posix_spawnattr_setflags(&at, Int16(POSIX_SPAWN_CLOEXEC_DEFAULT))
+        let argv = ([exe] + (sandbox.map { ["-p", $0, git] } ?? []) + gitArgs).map { strdup($0) } + [nil]
+        let envp = env.map { strdup("\($0.key)=\($0.value)") } + [nil]
+        defer { argv.forEach { free($0) }; envp.forEach { free($0) } }
+        var pid: pid_t = 0
+        let rc = posix_spawn(&pid, exe, &fa, &at, argv, envp)
+        close(o[1]); close(i[0])
+        guard rc == 0 else { close(o[0]); close(i[1]); return (-1, "") }
+        let w = FileHandle(fileDescriptor: i[1], closeOnDealloc: true)
+        if let input { try? w.write(contentsOf: input) }
+        try? w.close()
+        let data = FileHandle(fileDescriptor: o[0], closeOnDealloc: true).readDataToEndOfFile()
+        var st: Int32 = 0
+        while waitpid(pid, &st, 0) == -1 && errno == EINTR {}
+        let status = st & 0x7f == 0 ? (st >> 8) & 0xff : 128 + (st & 0x7f)
+        return (status, String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     /// Datoteka je git bundle (v2 ali v3): sicer je git fetch ne dobi (npr. pot do repozitorija namesto bundla).
@@ -108,12 +126,16 @@ public enum Worktree {
         defer { run(["update-ref", "-d", "refs/minigw/incoming"], cwd: top, safe: false, hooks: false) }
         let new = run(["rev-parse", "-q", "--verify", "refs/minigw/incoming^{commit}"], cwd: top, safe: false, hooks: false).out
         guard r.status == 0, isSHA(new) else { return "git fetch of \(branch) failed (the router's branch was rejected)" }
+        // Premik veje z git fetch brez sile: git sam zavrne nehitro posodobitev in vejo, izvlečeno v kateri koli delovni mapi.
+        let u = run(["-c", "fetch.recurseSubmodules=false", "-c", "submodule.recurse=false", "-c", "maintenance.auto=false", "-c", "gc.auto=0",
+                     "fetch", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--quiet",
+                     ".", "refs/minigw/incoming:refs/heads/\(branch)"], cwd: top, safe: false, hooks: false)
+        if u.status == 0 { return nil }
         let old = run(["rev-parse", "-q", "--verify", "refs/heads/" + branch], cwd: top, safe: false, hooks: false).out
         if isSHA(old), run(["merge-base", "--is-ancestor", old, new], cwd: top, safe: false, hooks: false).status != 0 {
             return "\(branch) has commits here that the agent's version does not have; kept yours, the agent's work was not fetched"
         }
-        let u = run(["update-ref", "refs/heads/" + branch, new] + (isSHA(old) ? [old] : []), cwd: top, safe: false, hooks: false)
-        return u.status == 0 ? nil : "cannot update \(branch)"
+        return "cannot update \(branch) (is it checked out in a worktree?)"
     }
 
     // MARK: router
@@ -160,11 +182,16 @@ public enum Worktree {
         run(["--git-dir", repo.path, "for-each-ref", "--format=%(objectname)"]).out.split(separator: "\n").map(String.init).filter(isSHA)
     }
 
+    /// info/exclude zrcala: izhod gradnje (.build, target, DerivedData …) nikoli v vejo, tudi brez .gitignore projekta
+    /// (finalize dela z GIT_DIR zrcala).
     static func ensureMirror(_ repo: URL) -> Bool {
         if FileManager.default.fileExists(atPath: repo.appendingPathComponent("HEAD").path) { return true }
         try? FileManager.default.createDirectory(at: repo.deletingLastPathComponent(), withIntermediateDirectories: true,
                                                  attributes: [.posixPermissions: 0o700])
-        return run(["init", "-q", "--bare", repo.path]).status == 0
+        guard run(["init", "-q", "--bare", repo.path]).status == 0 else { return false }
+        let exclude = Sync.defaultIgnore.filter { $0 != ".git/" }.joined(separator: "\n") + "\n"
+        try? FileManager.default.createDirectory(at: repo.appendingPathComponent("info"), withIntermediateDirectories: true)
+        return (try? Data(exclude.utf8).write(to: repo.appendingPathComponent("info/exclude"))) != nil
     }
 
     /// Uvoz bundla odjemalca (ref refs/minigw/push) kot `base` zrcala; brez bundla mora posnetek v zrcalu že obstajati.
@@ -211,14 +238,20 @@ public enum Worktree {
     /// zato zamenjava datoteke s povezavo med »git add« ne prebere ničesar drugega.
     static func finalize(repo: URL, wt: URL, branch: String, base: String, agent: String, out: URL) -> String? {
         killProcesses(in: wt)
-        let info = wt.appendingPathComponent(".git/objects/info")
-        try? FileManager.default.removeItem(at: info)
+        // .git in objects klona morata biti pravi mapi (ne povezavi ven): sicer brisanje in pisanje spodaj zadeneta tujo mapo.
+        let dotGit = wt.appendingPathComponent(".git"), objectsDir = dotGit.appendingPathComponent("objects")
+        guard Sync.real(dotGit)?.path == (Sync.real(wt)?.path).map({ $0 + "/.git" }),
+              Sync.real(objectsDir)?.path == (Sync.real(wt)?.path).map({ $0 + "/.git/objects" }) else { return nil }
+        let info = objectsDir.appendingPathComponent("info")
+        try? FileManager.default.removeItem(at: info)  // povezava info: odstrani le povezavo
         defer {
-            try? FileManager.default.createDirectory(at: info, withIntermediateDirectories: true)
+            try? FileManager.default.createDirectory(at: info, withIntermediateDirectories: false)
             try? Data((repo.appendingPathComponent("objects").path + "\n").utf8).write(to: info.appendingPathComponent("alternates"))
         }
-        guard let tmp = try? FileManager.default.url(for: .itemReplacementDirectory, in: .userDomainMask,
-                                                       appropriateFor: repo, create: true) else { return nil }
+        // Začasna mapa v Scratch (ob zrcalu), ne v sistemski začasni mapi.
+        let tmp = repo.deletingLastPathComponent().appendingPathComponent(".finalize-" + UUID().uuidString, isDirectory: true)
+        guard (try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])) != nil
+        else { return nil }
         defer { try? FileManager.default.removeItem(at: tmp) }
         guard let box = finalizeProfile(wt: wt, repo: repo, tmp: tmp, out: out) else { return nil }
         let objects = wt.appendingPathComponent(".git/objects").path
@@ -258,13 +291,19 @@ public enum Worktree {
     static func finalizeProfile(wt: URL, repo: URL, tmp: URL, out: URL) -> String? {
         guard let w = Sync.real(wt)?.path, let r = Sync.real(repo)?.path, let t = Sync.real(tmp)?.path,
               let o = Sync.real(out.deletingLastPathComponent())?.appendingPathComponent(out.lastPathComponent).path,
-              let sys = Sync.real(URL(fileURLWithPath: NSTemporaryDirectory()))?.deletingLastPathComponent().path else { return nil }
+              let sysTmp = Sync.real(URL(fileURLWithPath: NSTemporaryDirectory()))?.path
+        else { return nil }
+        let cache = URL(fileURLWithPath: sysTmp).deletingLastPathComponent().appendingPathComponent("C").path, xcrun = sysTmp + "/xcrun_db"
         let q = { (p: String) in "\"" + p.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\"" }
-        let home = Sync.real(URL(fileURLWithPath: NSHomeDirectory()))?.path ?? NSHomeDirectory()
-        // Vsebina (file-read-data), ne metapodatki: git razreši poti (realpath) tudi prek nadrejenih map.
-        return "(version 1)\n(allow default)\n(deny file-read-data (subpath \(q(home))) (subpath \(q(Sync.real(wt.deletingLastPathComponent())?.path ?? w))))\n"
-            + "(allow file-read-data (subpath \(q(w))) (subpath \(q(r))) (subpath \(q(t))) (subpath \(q(sys))) (literal \(q(o))) (literal \(q(o + ".lock"))))\n"
-            + "(deny file-write*)\n(allow file-write* (regex #\"^/dev/\") (subpath \(q(r))) (subpath \(q(t))) (subpath \(q(sys)))"
+        // Vsebina (file-read-data) privzeto nikjer, le sistem, git (Xcode) in ta klon, zrcalo, začasna mapa: ne domača mapa,
+        // ne zrcala drugih naprav v Scratch. Metapodatki ostanejo (git razreši poti prek nadrejenih map).
+        return "(version 1)\n(allow default)\n(deny file-read-data (subpath \"/\"))\n"
+            + "(allow file-read-data (literal \"/\") (subpath \"/bin\") (subpath \"/usr\") (subpath \"/System\") (subpath \"/Library\")"
+            + " (subpath \"/private/var/db\") (subpath \"/dev\") (regex #\"^/Applications/Xcode[^/]*\\.app(/|$)\") (subpath \(q(cache)))"
+            + " (literal \(q(xcrun))) (literal \(q(xcrun + ".lock")))"  // predpomnilnik xcrun (/usr/bin/git → Xcode)
+            + " (subpath \(q(w))) (subpath \(q(r))) (subpath \(q(t))) (literal \(q(o))) (literal \(q(o + ".lock"))))\n"
+            + "(deny file-write*)\n(allow file-write* (regex #\"^/dev/\") (subpath \(q(r))) (subpath \(q(t))) (subpath \(q(cache)))"
+            + " (literal \(q(xcrun))) (literal \(q(xcrun + ".lock")))"
             + " (literal \(q(o))) (literal \(q(o + ".lock"))))\n"  // bundle create piše <out>.lock in ga preimenuje
     }
 

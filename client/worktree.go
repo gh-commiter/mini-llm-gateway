@@ -135,18 +135,19 @@ func gitFetchBranch(top, bundle, branch string) string {
 	if err != nil || !shaRe.MatchString(nw) {
 		return "git fetch of " + branch + " failed (the router's branch was rejected)"
 	}
+	// Premik veje z git fetch brez sile: git sam zavrne nehitro posodobitev in vejo, izvlečeno v kateri koli delovni mapi.
+	if _, e := gitUser(top, nil, "-c", "fetch.recurseSubmodules=false", "-c", "submodule.recurse=false", "-c", "maintenance.auto=false",
+		"-c", "gc.auto=0", "fetch", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--quiet",
+		".", "refs/minigw/incoming:refs/heads/"+branch); e == nil {
+		return ""
+	}
 	old, _ := gitUser(top, nil, "rev-parse", "-q", "--verify", "refs/heads/"+branch)
-	args := []string{"update-ref", "refs/heads/" + branch, nw}
 	if shaRe.MatchString(old) {
 		if _, e := gitUser(top, nil, "merge-base", "--is-ancestor", old, nw); e != nil {
 			return branch + " has commits here that the agent's version does not have; kept yours, the agent's work was not fetched"
 		}
-		args = append(args, old)
 	}
-	if _, e := gitUser(top, nil, args...); e != nil {
-		return "cannot update " + branch
-	}
-	return ""
+	return "cannot update " + branch + " (is it checked out in a worktree?)"
 }
 
 // wtPush: WORKTREE-PUSH — posnetek, bundle po delih do 32 MB, odgovor {"snapshot"}.
