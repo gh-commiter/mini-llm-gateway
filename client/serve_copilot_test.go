@@ -118,14 +118,15 @@ func TestCopilotThroughRouter(t *testing.T) {
 	argsFile := filepath.Join(bin, "args")
 	copilot := filepath.Join(bin, "copilot")
 	os.WriteFile(copilot, []byte(`#!/bin/sh
+if [ "$1" = --version ]; then echo "token=${COPILOT_GITHUB_TOKEN:-none}" >> "`+argsFile+`.version"; exit 0; fi
 id=""; prev=""; for a in "$@"; do [ "$prev" = --session-id ] && id="$a"; prev="$a"; done
 printf '%s\n' "$@" "home=$COPILOT_HOME" "token=$COPILOT_GITHUB_TOKEN" > "`+argsFile+`"
 cat > "`+argsFile+`.stdin"
 st="$COPILOT_HOME/session-state/$id"; mkdir -p "$st"
-n=$(cat "$st/count" 2>/dev/null || echo 0); echo $((n + 1)) > "$st/count"
-hooks=no; [ -e "$COPILOT_HOME/hooks.json" ] && hooks=yes
+n=$(cat "$st/events.jsonl" 2>/dev/null || echo 0); echo $((n + 1)) > "$st/events.jsonl"
+hooks=no; [ -e "$COPILOT_HOME/hooks.json" ] && hooks=yes; [ -e "$st/checkpoints" ] && hooks=checkpoints
 link=no; [ -L "$st/link" ] && link=yes
-echo '{}' > "$COPILOT_HOME/hooks.json"; ln -s /etc "$st/link" 2>/dev/null
+echo '{}' > "$COPILOT_HOME/hooks.json"; ln -s /etc "$st/link" 2>/dev/null; mkdir -p "$st/checkpoints"
 echo '{"type":"session.start","data":{"sessionId":"x"}}'
 echo '{"type":"assistant.message","data":{"content":"first"}}'
 echo '{"type":"assistant.message","data":{"content":"copilot says hi turn='$((n + 1))' hooks='$hooks' link='$link'"}}'
@@ -192,7 +193,11 @@ echo '{"type":"assistant.message","data":{"content":"copilot says hi turn='$((n 
 	if a[len(a)-1] != "token=gho_Test123" { // žeton GitHub CLI (agentEnv sam ne da nobenega)
 		t.Fatalf("token handoff: %q", a[len(a)-1])
 	}
-	// C2: naslednji zavoj: stanje seje ostane (brez povezave), podtaknjen hooks.json pa ne.
+	// R7: na Linuxu enkrat »--version« brez bwrap in brez žetona (razširitev paketa).
+	if v, _ := os.ReadFile(argsFile + ".version"); runtime.GOOS == "linux" && !strings.HasPrefix(string(v), "token=none") {
+		t.Fatalf("prepare: %q", v)
+	}
+	// C2, R6: naslednji zavoj: le events.jsonl in workspace.yaml ostaneta (brez povezave, checkpoints), hooks.json ne.
 	if st, b := ask("claude-copilot-gpt-5.2", "copilot says hi turn=1 hooks=no link=no"); st != 200 || !strings.Contains(b, "turn=2 hooks=no link=no") {
 		t.Fatalf("second turn: %d %s", st, b)
 	}
@@ -227,5 +232,30 @@ echo '{"type":"assistant.message","data":{"content":"copilot says hi turn='$((n 
 	defer adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/agents/copilot", `{"token":""}`)
 	if allow, deny = copilotRules(args()); !slices.Contains(allow, "write") || !slices.Contains(allow, "shell") || !slices.Contains(deny, "shell(gh:*)") {
 		t.Fatalf("after PATCH: allow %q deny %q", allow, deny)
+	}
+}
+
+// R4, R6: le events.jsonl in workspace.yaml, le navadne datoteke iz prave mape; povezava (datoteka ali mapa) ne.
+func TestCopySession(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges")
+	}
+	d := t.TempDir()
+	src, secret := filepath.Join(d, "s"), filepath.Join(d, "secret")
+	os.MkdirAll(filepath.Join(src, "checkpoints"), 0o700)
+	os.WriteFile(secret, []byte("s"), 0o600)
+	os.WriteFile(filepath.Join(src, "events.jsonl"), []byte("e"), 0o600)
+	os.WriteFile(filepath.Join(src, "checkpoints", "x"), []byte("c"), 0o600)
+	os.Symlink(secret, filepath.Join(src, "workspace.yaml"))
+	if err := copySession(src, filepath.Join(d, "o")); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadDir(filepath.Join(d, "o"))
+	if len(got) != 1 || got[0].Name() != "events.jsonl" {
+		t.Fatalf("copied %v", got)
+	}
+	os.Symlink(src, filepath.Join(d, "link"))
+	if copySession(filepath.Join(d, "link"), filepath.Join(d, "o2")) == nil {
+		t.Fatal("followed a linked session folder")
 	}
 }

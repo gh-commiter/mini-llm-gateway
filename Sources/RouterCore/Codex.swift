@@ -195,7 +195,7 @@ extension Router {
                                                  wait: req.header("x-claude-mini-share") == "1", device: req.device?.id,
                                                  roots: config.claudeCLI.allowedRoots)
             let synced = await Self.shares.isSync(session: req.header("x-claude-mini-session") ?? "")
-            guard let dir = shared ?? (synced ? nil : ClaudeCLI.resolveCwd(clientCwd, roots: config.claudeCLI.allowedRoots)) else {
+            guard let dir = shared ?? (synced ? nil : ClaudeCLI.resolveCwd(clientCwd, roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL)) else {
                 if synced, Task.isCancelled { return 499 }  // Claude Code je prekinil med čakanjem na prenos
                 if synced { return await error(502, "api_error", "Syncing \(clientCwd ?? "the folder") to the gateway failed (see minigw output)", rid: rid, writer: writer) }
                 return await error(400, "invalid_request_error",

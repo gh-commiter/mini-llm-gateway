@@ -64,22 +64,25 @@ private func rules(_ a: [String]) -> (allow: [String], deny: [String]) {
 }
 
 /// Lažen copilot (v peskovniku: zapisovati sme le v COPILOT_HOME zahteve): v odgovoru pove argumente, mapo, okolje in
-/// stanje seje; šteje zavoje v session-state/<id>, podtakne povezavo in hooks.json (ne smeta ostati za naslednji zavoj).
+/// stanje seje; šteje zavoje v session-state/<id>/events.jsonl, podtakne povezavo, checkpoints in hooks.json (ne smejo
+/// ostati za naslednji zavoj). `--version` (priprava paketa, brez peskovnika) zapiše, ali je imel žeton.
 private func fakeCopilot(_ dir: URL, _ extra: String = "") throws -> URL {
     let exe = dir.appendingPathComponent("copilot")
     try Data("""
     #!/bin/sh
+    if [ "$1" = --version ]; then echo "token=${COPILOT_GITHUB_TOKEN:-none}" >> "\(dir.path)/version.log"; exit 0; fi
     id=""; prev=""; for a in "$@"; do [ "$prev" = --session-id ] && id="$a"; prev="$a"; done
     st="$COPILOT_HOME/session-state/$id"; mkdir -p "$st"
-    n=$(cat "$st/count" 2>/dev/null || echo 0); echo $((n + 1)) > "$st/count"
+    n=$(cat "$st/events.jsonl" 2>/dev/null || echo 0); echo $((n + 1)) > "$st/events.jsonl"
     hooks=no; [ -e "$COPILOT_HOME/hooks.json" ] && hooks=yes
     link=no; [ -L "$st/link" ] && link=yes
-    echo '{}' > "$COPILOT_HOME/hooks.json"; ln -s /etc "$st/link"
+    [ -e "$st/checkpoints" ] && hooks=checkpoints
+    echo '{}' > "$COPILOT_HOME/hooks.json"; ln -s /etc "$st/link"; mkdir -p "$st/checkpoints"
     stdin=$(cat | grep -c 'read a.txt')
     \(extra)
     echo '{"type":"tool.execution_start","data":{"toolName":"view"}}'
     echo '{"type":"assistant.message","data":{"content":"first","toolRequests":[{}]}}'
-    printf '{"type":"assistant.message","data":{"content":"ARGS=%s CWD=%s HOME=%s TOKEN=%s STDIN=%s TURN=%s HOOKS=%s LINK=%s ALLOW=%s"}}\\n' \\
+    printf '{"type":"assistant.message","data":{"content":"ARGS=%s;CWD=%s;HOME=%s;TOKEN=%s;STDIN=%s;TURN=%s;HOOKS=%s;LINK=%s;ALLOW=%s;"}}\\n' \\
       "$(echo "$@" | tr ' ' '|')" "$(pwd)" "$COPILOT_HOME" "$COPILOT_GITHUB_TOKEN" "$stdin" "$((n + 1))" "$hooks" "$link" "${COPILOT_ALLOW_ALL:-}"
     """.utf8).write(to: exe)
     chmod(exe.path, 0o755)
@@ -88,7 +91,7 @@ private func fakeCopilot(_ dir: URL, _ extra: String = "") throws -> URL {
 
 private func field(_ text: String, _ name: String) -> String {
     guard let r = text.range(of: name + "=") else { return "" }
-    return String(text[r.upperBound...].prefix { $0 != " " && $0 != "\"" })
+    return String(text[r.upperBound...].prefix { $0 != ";" && $0 != "\"" })
 }
 
 @Test func copilotRunsThroughTheRouterWithFakeBinary() async throws {
@@ -121,7 +124,10 @@ private func field(_ text: String, _ name: String) -> String {
     #expect(field(w.text, "STDIN") == "1" && !args.contains { $0.contains("read a.txt") })  // navodilo na stdin, ne v argumentih
     #expect(field(w.text, "CWD") == proj.path && field(w.text, "TOKEN") == "github_pat_test" && field(w.text, "ALLOW").isEmpty)
     let home = field(w.text, "HOME")
-    #expect(home.hasPrefix("/private/tmp/minigw-copilot-") && !FileManager.default.fileExists(atPath: home))  // svež, po zagonu izbrisan
+    let req = (Sync.real(c.scratch("copilot/req")) ?? c.scratch("copilot/req")).path
+    #expect(home.hasPrefix(req + "/") && !FileManager.default.fileExists(atPath: home))  // svež, v Scratch (R2), po zagonu izbrisan
+    // R7: priprava paketa enkrat brez peskovnika in brez žetona.
+    #expect(try String(contentsOf: bin.appendingPathComponent("version.log"), encoding: .utf8).hasPrefix("token=none"))
     #expect(field(w.text, "TURN") == "1" && field(w.text, "HOOKS") == "no")
 
     // Naslednji zavoj iste seje: stanje seje ostane (brez povezave), podtaknjen hooks.json ne (C2).
@@ -164,8 +170,7 @@ private func field(_ text: String, _ name: String) -> String {
     #expect(await admin(app.router(), "PATCH", "/agents/copilot", body: #"{"token":""}"#).status == 200 && app.keys[Copilot.tokenAccount] == nil)
 }
 
-/// Ukazi lupine (z dovoljenjem): le z namenskim žetonom; pišejo v mapo seje in COPILOT_HOME zahteve, ne v domačo mapo.
-/// Brez ukazov in brez žetona: prijava GitHub CLI (lažni gh, nikoli pravi).
+/// Ukazi lupine (z dovoljenjem): pišejo v mapo seje in COPILOT_HOME zahteve, ne v domačo mapo. Brez namenskega žetona nič.
 @Test func copilotCommandsRunInTheSandbox() async throws {
     let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("copilot-sb-" + UUID().uuidString)
     let outside = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".minigw-copilot-test-" + UUID().uuidString)
@@ -179,13 +184,6 @@ private func field(_ text: String, _ name: String) -> String {
     echo '{"type":"assistant.message","data":{"content":"WROTE='$inside$out$cache' TOKEN='$COPILOT_GITHUB_TOKEN'"}}'
     exit 0
     """)
-    let gh = bin.appendingPathComponent("gh")
-    try Data("#!/bin/sh\n[ \"$*\" = 'auth token --hostname github.com' ] && echo gho_Test123\n".utf8).write(to: gh)
-    chmod(gh.path, 0o755)
-    let realGh = Copilot.gh
-    Copilot.gh = gh.path
-    defer { Copilot.gh = realGh }
-    #expect(Copilot.ghToken() == "gho_Test123")
     var c = RouterConfig()
     c.copilot.enabled = true; c.copilot.executable = exe.path; c.copilot.write = true; c.copilot.commands = true
     c.claudeCLI.allowedRoots = proj.path
@@ -204,10 +202,8 @@ private func field(_ text: String, _ name: String) -> String {
     let w = await ask(Router(config: c, token: "tok", secrets: FakeSecrets(values: [Copilot.tokenAccount: "github_pat_cmd"])))
     #expect(w.status == 200 && w.text.contains("WROTE=011") && w.text.contains("TOKEN=github_pat_cmd"))  // mapa da; domača mapa, ~/Library/Caches ne
     #expect(FileManager.default.fileExists(atPath: proj.appendingPathComponent("inside.txt").path) && !FileManager.default.fileExists(atPath: outside.path))
-    // Brez ukazov: prijava GitHub CLI (v peskovniku je copilot ne najde sam).
-    if Copilot.tokenVars.allSatisfy({ (ProcessInfo.processInfo.environment[$0] ?? "").isEmpty }) {
-        c.copilot.commands = false
-        let g = await ask(Router(config: c, token: "tok", secrets: FakeSecrets(values: [:])))
-        #expect(g.status == 200 && g.text.contains("TOKEN=gho_Test123"))
-    }
+    // R1: tudi brez ukazov le namenski žeton (nikoli GitHub CLI ali okolje).
+    c.copilot.commands = false
+    let none = await ask(Router(config: c, token: "tok", secrets: FakeSecrets(values: [:])))
+    #expect(none.status == 503 && none.text.contains("minigw gw copilot token"))
 }

@@ -16,7 +16,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"net/http"
 	"os"
 	"os/exec"
@@ -321,35 +320,85 @@ func copilotToken(ctx context.Context) string {
 	return t
 }
 
-// copyRegularTree: le navadne datoteke in mape; povezav ne kopira in jim ne sledi (stanje seje Copilot iz peskovnika, C2).
-func copyRegularTree(src, dst string) error {
-	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
+// copilotSessionFiles: datoteke stanja seje, ki jih copilot potrebuje za nadaljevanje (preverjeno s copilot 1.0.107);
+// checkpoints, rewind-file-snapshots, files … ne gredo med zahtevami (R6).
+var copilotSessionFiles = []string{"events.jsonl", "workspace.yaml"}
+
+// copySession: le copilotSessionFiles, le navadne datoteke iz prave mape (ne povezave): brez sledenja povezavi
+// (openMarker) in ista datoteka kot pri Lstat (R4). Napaka, če ni nobene.
+func copySession(src, dst string) error {
+	if di, err := os.Lstat(src); err != nil || !di.IsDir() {
+		return errors.New("no session state")
+	}
+	if err := os.MkdirAll(dst, 0o700); err != nil {
+		return err
+	}
+	n := 0
+	for _, name := range copilotSessionFiles {
+		p := filepath.Join(src, name)
+		li, err := os.Lstat(p)
+		if err != nil || !li.Mode().IsRegular() {
+			continue
+		}
+		in, err := openMarker(p)
+		if err != nil {
+			continue
+		}
+		fi, err := in.Stat()
+		if err != nil || !fi.Mode().IsRegular() || !os.SameFile(li, fi) {
+			in.Close()
+			continue
+		}
+		out, err := os.OpenFile(filepath.Join(dst, name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err == nil {
+			_, err = io.Copy(out, in)
+			err = errors.Join(err, out.Close())
+		}
+		in.Close()
 		if err != nil {
 			return err
 		}
-		rel, _ := filepath.Rel(src, p)
-		to := filepath.Join(dst, rel)
-		switch {
-		case d.IsDir():
-			return os.MkdirAll(to, 0o700)
-		case d.Type().IsRegular():
-			in, err := os.Open(p)
-			if err != nil {
-				return err
-			}
-			defer in.Close()
-			if fi, err := in.Stat(); err != nil || !fi.Mode().IsRegular() { // med Lstat in Open zamenjana s povezavo
-				return nil
-			}
-			out, err := os.OpenFile(to, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-			if err != nil {
-				return err
-			}
-			_, err = io.Copy(out, in)
-			return errors.Join(err, out.Close())
+		n++
+	}
+	if n == 0 {
+		return errors.New("no session state")
+	}
+	return nil
+}
+
+// copilotPrepared: izvršljive datoteke (pot|velikost|čas), za katere je paket copilot razširjen.
+var copilotPrepared sync.Map
+
+// copilotPrepare: paket (~/.cache/copilot/pkg/<platforma>/<različica>) razširi copilot sam ob prvem zagonu nove različice;
+// pod bwrap (predpomnilnik le za branje) ne more. Ob novi izvršljivi datoteki ali brez mape pkg enkrat »copilot --version«
+// brez bwrap: uporabnikov program, brez navodila agenta in klica modela, svež COPILOT_HOME, brez žetona (R7).
+func copilotPrepare(ctx context.Context, exe, home, cwd string) {
+	if runtime.GOOS != "linux" {
+		return // Windows: brez peskovnika
+	}
+	real, err := filepath.EvalSymlinks(exe)
+	if err != nil {
+		real = exe
+	}
+	st, err := os.Stat(real)
+	if err != nil {
+		return
+	}
+	key := fmt.Sprintf("%s|%d|%d", real, st.Size(), st.ModTime().UnixNano())
+	cache, _ := os.UserCacheDir()
+	if _, done := copilotPrepared.Load(key); done {
+		if _, err := os.Stat(filepath.Join(cache, "copilot", "pkg")); err == nil {
+			return
 		}
-		return nil
-	})
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute) // razširitev ~200 MB
+	defer cancel()
+	cmd := exec.CommandContext(ctx, exe, "--version")
+	cmd.Dir = cwd
+	cmd.Env = append(agentEnv(os.Environ()), "COPILOT_HOME="+home, "COPILOT_AUTO_UPDATE=false")
+	if cmd.Run() == nil {
+		copilotPrepared.Store(key, true)
+	}
 }
 
 // copilotEvent: dogodek »--output-format json« (JSONL): odgovor (assistant.message z vsebino) ali korak (tool.*start).
@@ -589,11 +638,12 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			if state != "" {
 				store = filepath.Join(state, "sessions")
 				m.state, m.files = filepath.Join(tmp, "home"), nil
-				if copyRegularTree(filepath.Join(store, resume), filepath.Join(m.state, "session-state", resume)) != nil {
+				if copySession(filepath.Join(store, resume), filepath.Join(m.state, "session-state", resume)) != nil {
 					os.MkdirAll(filepath.Join(m.state, "session-state"), 0o700)
 					prompt = note + "\n\n" + cliPrompt(history, last) // stanja seje ni: ves pogovor
 				}
 			}
+			copilotPrepare(ctx, exe, filepath.Join(tmp, "prep"), tmp)
 			args := copilotArgs(agent, model, write, ac.Commands, ac.Network, resume)
 			var answer string
 			err = s.runAgentProcess(ctx, r, exe, args, m, dir, prompt, func(line []byte) {
@@ -608,7 +658,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			text, thread = strings.TrimSpace(answer), resume
 			if err == nil && agent && store != "" {
 				next := filepath.Join(store, resume+".new-"+filepath.Base(tmp))
-				if copyRegularTree(filepath.Join(m.state, "session-state", resume), next) == nil {
+				if copySession(filepath.Join(m.state, "session-state", resume), next) == nil {
 					os.RemoveAll(filepath.Join(store, resume))
 					if os.Rename(next, filepath.Join(store, resume)) != nil {
 						thread = "" // stanje ni shranjeno: naslednja zahteva začne znova

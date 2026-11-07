@@ -219,7 +219,7 @@ extension Router {
                                                      wait: req.header("x-claude-mini-share") == "1", device: req.device?.id,
                                                      roots: config.claudeCLI.allowedRoots)
                 let synced = await Self.shares.isSync(session: scope)
-                let root = Self.mentionRoot(shared: shared, synced: synced) { ClaudeCLI.resolveCwd(clientCwd, roots: config.claudeCLI.allowedRoots) }
+                let root = Self.mentionRoot(shared: shared, synced: synced) { ClaudeCLI.resolveCwd(clientCwd, roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL) }
                 if shared == nil, synced { Self.log.error("\(rid, privacy: .public) siri: syncing the folder failed; no attachments") }
                 if let root {
                     let names = await Mentions.names(in: question)

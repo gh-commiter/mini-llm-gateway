@@ -18,8 +18,8 @@ PROMPT
 )"
 ```
 
-Copilot on the gateway is read-only unless its settings allow writing, and runs commands only with "Allow commands" and
-its own GitHub token (`minigw gw copilot token` on the gateway): if it says it cannot edit or run something, tell the user
+Copilot on the gateway needs its own GitHub token (`minigw gw copilot token` on the gateway), is read-only unless its
+settings allow writing, and runs commands only with "Allow commands": if it says it cannot edit or run something, tell the user
 which switch in Mini Gateway → Settings → Copilot CLI it needs. If
 minigw prints that the folder "is not shared with the gateway", run `"${CLAUDE_PLUGIN_DATA}/bin/minigw" share add` and run
 the task again. Check any changed files yourself (for example `git diff`) before telling the user it is done.
