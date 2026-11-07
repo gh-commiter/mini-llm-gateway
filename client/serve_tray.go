@@ -62,6 +62,20 @@ func plural(n int, one, many string) string {
 	return strconv.Itoa(n) + " " + many
 }
 
+// trayStartup: »Zaženi ob prijavi« v meniju pladnja: le vrednost Run za ta exe (brez kopiranja in zapiranja pladnja).
+func trayStartup(on bool, cfgPath string) error {
+	if !on {
+		runValueDel(runValueName)
+		return nil
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	cfgPath, _ = filepath.Abs(cfgPath)
+	return runValueSet(runValueName, serviceFile("windows", exe, cfgPath))
+}
+
 // trayMenu: meni pladnja iz stanja routerja (vse prek skrbniškega API).
 func trayMenu(st apiStatus, pending []apiDevice, sl bool) []trayItem {
 	tr := func(en, s string) string {

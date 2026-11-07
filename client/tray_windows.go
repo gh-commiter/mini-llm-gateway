@@ -332,9 +332,8 @@ func (t *tray) do(action string, st apiStatus) {
 		if err := setClipboard(t.hwnd, connectLine(t.s.conf())); err != nil {
 			messageBox(err.Error())
 		}
-	case "startup":
-		sub := map[bool]string{true: "uninstall", false: "install"}[st.Installed]
-		if _, err := serviceCommand(sub, "windows", t.cfgPath); err != nil {
+	case "startup": // le vrednost Run za ta pladenj (celotna namestitev bi zaprla ta pladenj in čakala nase)
+		if err := trayStartup(!st.Installed, t.cfgPath); err != nil {
 			messageBox(err.Error())
 		}
 	case "log":

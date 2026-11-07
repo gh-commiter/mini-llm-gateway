@@ -196,3 +196,20 @@ func TestServeInstallFiles(t *testing.T) {
 		t.Fatalf("systemd quote: %s", q)
 	}
 }
+
+// Meni pladnja: le vrednost Run (celotna namestitev bi zaprla pladenj, ki jo je sprožil).
+func TestTrayStartupOnlyRunValue(t *testing.T) {
+	reg := map[string]string{}
+	o1, o2, o3 := runValueSet, runValueDel, trayClose
+	t.Cleanup(func() { runValueSet, runValueDel, trayClose = o1, o2, o3 })
+	runValueSet = func(n, v string) error { reg[n] = v; return nil }
+	runValueDel = func(n string) { delete(reg, n) }
+	trayClose = func() error { t.Fatal("the tray menu must not close the tray"); return nil }
+	cfg := filepath.Join(t.TempDir(), "serve.json")
+	if err := trayStartup(true, cfg); err != nil || !strings.Contains(reg[runValueName], cfg) {
+		t.Fatalf("on: %v %q", err, reg)
+	}
+	if trayStartup(false, cfg); reg[runValueName] != "" {
+		t.Fatal("off")
+	}
+}
