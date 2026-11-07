@@ -93,7 +93,7 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
     @Test func liveApplyThroughAppConfig() async throws {
         let app = FakeApp()
         let id = Noise.base64url(Curve25519.Signing.PrivateKey().publicKey.rawRepresentation)
-        #expect(await admin(app.router(), "POST", "/devices", body: #"{"id":"10.192.31.5"}"#).status == 400)
+        #expect(await admin(app.router(), "POST", "/devices", body: #"{"id":"203.0.113.5"}"#).status == 400)
         let w = await admin(app.router(), "POST", "/devices", body: #"{"id":"\#(id)","name":"PC"}"#)
         #expect(w.status == 200 && w.text.contains(#""added":true"#))
         #expect(app.config.devices.map(\.id) == [id])  // Settings opazuje te nastavitve

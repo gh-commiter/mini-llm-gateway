@@ -5,7 +5,7 @@ import Foundation
 /// Agent in ukazi tečejo neposredno v tej mapi (brez priklopa WebDAV ali kopije).
 ///
 /// Zaznavanje (odjemalec ničesar ne dokaže s potjo):
-/// 1. minigw iz priklopa (statfs, /proc/self/mountinfo, UNC) pošlje ime sheme SMB in relativno pot (`Java`, `eureko-modules`).
+/// 1. minigw iz priklopa (statfs, /proc/self/mountinfo, UNC) pošlje ime sheme SMB in relativno pot (`Java`, `projects`).
 /// 2. Router ime preslika v svojo mapo (`sharing -l`); mapa mora ostati v shemi in biti v dovoljenih mapah (Settings).
 /// 3. Router v mapo zapiše `.minigw-native-<id>` z naključno vsebino; minigw jo prebere skozi svoj priklop in jo vrne.
 ///    Le kdor vidi prav to mapo, pozna vsebino: enaka pot na drugem disku ali druga mapa ne zadošča.

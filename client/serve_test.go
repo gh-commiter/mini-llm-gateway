@@ -343,7 +343,7 @@ func TestServeFolderNotNearConfig(t *testing.T) {
 
 func TestServeAllowDenyDevices(t *testing.T) {
 	id := base64url(newDevice("Mac").key.Public().(ed25519.PublicKey))
-	for _, bad := range []string{"10.192.31.5", "", id[:42], id + "A", strings.Replace(id, id[:1], "+", 1), base64url(make([]byte, 31))} {
+	for _, bad := range []string{"203.0.113.5", "", id[:42], id + "A", strings.Replace(id, id[:1], "+", 1), base64url(make([]byte, 31))} {
 		if validDeviceID(bad) {
 			t.Errorf("accepted %q", bad)
 		}

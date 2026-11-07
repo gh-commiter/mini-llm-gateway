@@ -164,7 +164,7 @@ func TestAdminAPILiveApply(t *testing.T) {
 	if _, b := admin("GET", adminPrefix+"/devices", ""); !strings.Contains(b, `"pending":[{"id":"`+macID+`","name":"Mac",`) {
 		t.Fatalf("pending: %s", b)
 	}
-	if st, b := admin("POST", adminPrefix+"/devices", `{"id":"10.192.31.5"}`); st != 400 || !strings.Contains(b, "not a device ID") {
+	if st, b := admin("POST", adminPrefix+"/devices", `{"id":"203.0.113.5"}`); st != 400 || !strings.Contains(b, "not a device ID") {
 		t.Fatalf("bad id: %d %s", st, b)
 	}
 	if st, b := admin("POST", adminPrefix+"/devices", `{"id":"`+macID+`","name":"Mac"}`); st != 200 || !strings.Contains(b, `"added":true`) {

@@ -4,10 +4,10 @@ import Testing
 @testable import RouterCore
 
 @Test func nativeSMBPathFromMount() {
-    let a = Native.smbPath(source: "//uros@mini._smb._tcp.local/Java", mountPoint: "/Volumes/Java", cwd: "/Volumes/Java/eureko-modules/apps")
-    #expect(a?.share == "Java" && a?.path == "eureko-modules/apps")
-    let b = Native.smbPath(source: "//u@h/Uros%20Trojar%E2%80%99s%20Public%20Folder/sub", mountPoint: "/Volumes/Public", cwd: "/Volumes/Public")
-    #expect(b?.share == "Uros Trojar’s Public Folder" && b?.path == "sub")
+    let a = Native.smbPath(source: "//user@server._smb._tcp.local/Java", mountPoint: "/Volumes/Java", cwd: "/Volumes/Java/projects/apps")
+    #expect(a?.share == "Java" && a?.path == "projects/apps")
+    let b = Native.smbPath(source: "//u@h/Jane%20Doe%E2%80%99s%20Public%20Folder/sub", mountPoint: "/Volumes/Public", cwd: "/Volumes/Public")
+    #expect(b?.share == "Jane Doe’s Public Folder" && b?.path == "sub")
     #expect(Native.smbPath(source: "//h/Java", mountPoint: "/Volumes/Java", cwd: "/Volumes/JavaX/p") == nil)  // ne pod priklopom
     #expect(Native.smbPath(source: "/dev/disk3s1", mountPoint: "/", cwd: "/Users/x") == nil)
     #expect(Native.detect(cwd: NSTemporaryDirectory()) == nil)  // lokalni disk
@@ -52,7 +52,7 @@ import Testing
 /// Mapa »share« (kot /Volumes/Java), projekt v njej, mapa zunaj dovoljenih in povezava ven.
 private func nativeFixture() throws -> (root: URL, share: URL, project: URL, outside: URL) {
     let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("native-" + UUID().uuidString)
-    let share = root.appendingPathComponent("Java"), project = share.appendingPathComponent("eureko-modules")
+    let share = root.appendingPathComponent("Java"), project = share.appendingPathComponent("projects")
     let outside = share.appendingPathComponent("private")
     for d in [project, outside, root.appendingPathComponent("elsewhere")] { try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true) }
     try FileManager.default.createSymbolicLink(at: project.appendingPathComponent("link"), withDestinationURL: root.appendingPathComponent("elsewhere"))
@@ -63,12 +63,12 @@ private func nativeFixture() throws -> (root: URL, share: URL, project: URL, out
     let f = try nativeFixture()
     defer { try? FileManager.default.removeItem(at: f.root) }
     let shares = ["Java": f.share.path], roots = f.project.path
-    #expect(Native.resolve(share: "java", path: "eureko-modules", shares: shares, roots: roots)?.path == f.project.path)  // brez razlike v črkah
+    #expect(Native.resolve(share: "java", path: "projects", shares: shares, roots: roots)?.path == f.project.path)  // brez razlike v črkah
     #expect(Native.resolve(share: "Java", path: "private", shares: shares, roots: roots) == nil)  // ni v dovoljenih mapah
     #expect(Native.resolve(share: "Java", path: "", shares: shares, roots: roots) == nil)
-    #expect(Native.resolve(share: "Java", path: "eureko-modules/../private", shares: shares, roots: f.share.path) == nil)
-    #expect(Native.resolve(share: "Java", path: "eureko-modules/link", shares: shares, roots: f.root.path) == nil)  // povezava ven iz sheme
-    #expect(Native.resolve(share: "Other", path: "eureko-modules", shares: shares, roots: roots) == nil)
+    #expect(Native.resolve(share: "Java", path: "projects/../private", shares: shares, roots: f.share.path) == nil)
+    #expect(Native.resolve(share: "Java", path: "projects/link", shares: shares, roots: f.root.path) == nil)  // povezava ven iz sheme
+    #expect(Native.resolve(share: "Other", path: "projects", shares: shares, roots: roots) == nil)
     #expect(Native.resolve(share: "Java", path: "/etc", shares: shares, roots: "/") == nil)
 }
 
@@ -88,7 +88,7 @@ private func nativeReq(_ m: String, _ p: String, _ h: [String: String] = [:], _ 
 }
 
 /// Izziv za shemo »Java« v fixture; vrne id in ime označbe.
-private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, outside: URL), path: String = "eureko-modules",
+private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, outside: URL), path: String = "projects",
                        device: String? = nil) async -> (status: Int, id: String, file: String) {
     let w = FakeWriter()
     _ = await r.nativeChallenge(nativeReq("POST", "/minigw/native", [:], #"{"share":"Java","path":"\#(path)"}"#, device: device),
@@ -103,7 +103,7 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     let r = nativeRouter(f.project.path)
     func register(_ id: String, _ proof: String, session: String) async -> FakeWriter {
         let w = FakeWriter()
-        await r.handle(nativeReq("POST", "/minigw/share", ["x-claude-mini-session": session, "x-claude-mini-cwd": "/Volumes/Java/eureko-modules",
+        await r.handle(nativeReq("POST", "/minigw/share", ["x-claude-mini-session": session, "x-claude-mini-cwd": "/Volumes/Java/projects",
                                                            "x-claude-mini-work": "native", "x-native-id": id, "x-native-proof": proof]), writer: w)
         return w
     }
@@ -127,7 +127,7 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     #expect(await register(c.id, proof, session: UUID().uuidString).status == 403)  // izziv velja enkrat
 
     // Ista pot, druga mapa (lokalna mapa z enakim imenom, ne priklop routerja): označbe tam ni → ni dokaza.
-    let spoofDir = f.root.appendingPathComponent("elsewhere/Java/eureko-modules")
+    let spoofDir = f.root.appendingPathComponent("elsewhere/Java/projects")
     try FileManager.default.createDirectory(at: spoofDir, withIntermediateDirectories: true)
     let s = await challenge(r, f)
     #expect(s.status == 200 && Native.readMarker(spoofDir.appendingPathComponent(s.file)) == nil)
@@ -142,7 +142,7 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     let other = await challenge(r, f, device: "dev-a")
     let p2 = try #require(Native.readMarker(f.project.appendingPathComponent(other.file)))
     #expect(await register(other.id, p2, session: UUID().uuidString).status == 403)  // »local«, ne dev-a
-    var remote = nativeReq("POST", "/minigw/native", [:], #"{"share":"Java","path":"eureko-modules"}"#)
+    var remote = nativeReq("POST", "/minigw/native", [:], #"{"share":"Java","path":"projects"}"#)
     remote.peer = "192.0.2.7"
     let w = FakeWriter()
     _ = await r.nativeChallenge(remote, rid: "t", writer: w, shares: { ["Java": f.share.path] })
@@ -201,15 +201,15 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
 @Test func sharedFoldersKeepModePerFolder() {
     let old = SharedFolders.parse("/Volumes/Data/a\n\n  /Volumes/Data/b  \n")  // starejša datoteka: le poti
     #expect(old == [SharedFolders.Entry(path: "/Volumes/Data/a"), SharedFolders.Entry(path: "/Volumes/Data/b")])
-    let list = [SharedFolders.Entry(path: "/Volumes/Java/eureko-modules", work: "native"),
+    let list = [SharedFolders.Entry(path: "/Volumes/Java/projects", work: "native"),
                 SharedFolders.Entry(path: "/Volumes/Java", work: "sync", readOnly: true),
                 SharedFolders.Entry(path: "/Volumes/Java/my folder")]
     let text = SharedFolders.format(list)
-    #expect(text == "/Volumes/Java/eureko-modules\t--work=native\n/Volumes/Java\t--work=sync --ro\n/Volumes/Java/my folder\n")
+    #expect(text == "/Volumes/Java/projects\t--work=native\n/Volumes/Java\t--work=sync --ro\n/Volumes/Java/my folder\n")
     #expect(SharedFolders.parse(text) == list)
     #expect(SharedFolders.parse("/p\t--work=bogus --ro") == [SharedFolders.Entry(path: "/p", readOnly: true)])
 
-    let apps = SharedFolders.lookup(list, cwd: "/Volumes/Java/eureko-modules/apps")  // najbolj natančna mapa
+    let apps = SharedFolders.lookup(list, cwd: "/Volumes/Java/projects/apps")  // najbolj natančna mapa
     #expect(apps?.work == "native")
     #expect(SharedFolders.lookup(list, cwd: "/Volumes/Java/other")?.work == "sync")
     #expect(SharedFolders.lookup(list, cwd: "/Volumes/JavaX") == nil)

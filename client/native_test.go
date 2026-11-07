@@ -16,8 +16,8 @@ import (
 
 func TestNativeSMBPath(t *testing.T) {
 	for _, c := range []struct{ src, mp, cwd, share, rel string }{
-		{"//uros@mini._smb._tcp.local/Java", "/mnt/java", "/mnt/java/eureko-modules/apps", "Java", "eureko-modules/apps"},
-		{"//h/Uros%20Public/sub", "/mnt/p", "/mnt/p", "Uros Public", "sub"},
+		{"//user@server._smb._tcp.local/Java", "/mnt/java", "/mnt/java/projects/apps", "Java", "projects/apps"},
+		{"//h/Jane%20Public/sub", "/mnt/p", "/mnt/p", "Jane Public", "sub"},
 		{`\\mini\Java`, "/mnt/j", "/mnt/j/x", "Java", "x"},
 	} {
 		if s, r, ok := smbPath(c.src, c.mp, c.cwd); !ok || s != c.share || r != c.rel {
@@ -41,7 +41,7 @@ func TestNativeSMBPath(t *testing.T) {
 	}
 }
 
-// fakeNativeRouter: kot router Mac: označba v `routerDir` za shemo Java/eureko-modules, odgovor `file` (lažni router).
+// fakeNativeRouter: kot router Mac: označba v `routerDir` za shemo Java/projects, odgovor `file` (lažni router).
 func fakeNativeRouter(t *testing.T, routerDir string, status int, file string) (connection, *string) {
 	var marker string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -52,7 +52,7 @@ func fakeNativeRouter(t *testing.T, routerDir string, status int, file string) (
 			w.Write([]byte(`{"error":{"message":"not in the allowed folders"}}`))
 			return
 		}
-		if b.Share != "Java" || b.Path != "eureko-modules" {
+		if b.Share != "Java" || b.Path != "projects" {
 			t.Errorf("claim %q %q", b.Share, b.Path)
 		}
 		id := "0123456789abcdef0123456789abcdef"
@@ -71,7 +71,7 @@ func TestNativeProof(t *testing.T) {
 	markerTries = 1
 	root := t.TempDir()
 	share := filepath.Join(root, "Java")
-	project := filepath.Join(share, "eureko-modules")
+	project := filepath.Join(share, "projects")
 	os.MkdirAll(project, 0o755)
 
 	// Prava mapa (»priklop« je ista mapa): dokaz je vsebina označbe.
@@ -83,10 +83,10 @@ func TestNativeProof(t *testing.T) {
 
 	// Ista shema in pot, druga mapa: označbe tukaj ni → brez dokaza.
 	spoof := filepath.Join(root, "local", "Java")
-	os.MkdirAll(filepath.Join(spoof, "eureko-modules"), 0o755)
+	os.MkdirAll(filepath.Join(spoof, "projects"), 0o755)
 	t.Setenv("MINIGW_NATIVE_MOUNT", "Java="+spoof)
 	c, _ = fakeNativeRouter(t, project, 200, "")
-	if p, why := nativeProof(c, filepath.Join(spoof, "eureko-modules")); p != nil || !strings.Contains(why, "check file is not visible") {
+	if p, why := nativeProof(c, filepath.Join(spoof, "projects")); p != nil || !strings.Contains(why, "check file is not visible") {
 		t.Fatalf("spoof: %v %s", p, why)
 	}
 
@@ -139,10 +139,10 @@ func TestSharedFolderModes(t *testing.T) {
 	if len(old) != 2 || old[0] != (sharedFolder{Path: "/data/a"}) || old[1] != (sharedFolder{Path: "/data/b"}) {
 		t.Fatalf("old format: %+v", old)
 	}
-	list := []sharedFolder{{Path: "/mnt/java/eureko-modules", Work: "native"}, {Path: "/mnt/java", Work: "sync", ReadOnly: true}, {Path: "/mnt/java/my folder"}}
+	list := []sharedFolder{{Path: "/mnt/java/projects", Work: "native"}, {Path: "/mnt/java", Work: "sync", ReadOnly: true}, {Path: "/mnt/java/my folder"}}
 	text := formatSharedFolders(list)
 	// ista oblika kot SharedFolders.format v minigw za macOS (ista datoteka)
-	if text != "/mnt/java/eureko-modules\t--work=native\n/mnt/java\t--work=sync --ro\n/mnt/java/my folder\n" {
+	if text != "/mnt/java/projects\t--work=native\n/mnt/java\t--work=sync --ro\n/mnt/java/my folder\n" {
 		t.Fatalf("format: %q", text)
 	}
 	if got := parseSharedFolders(text); len(got) != 3 || got[0] != list[0] || got[1] != list[1] || got[2] != list[2] {
@@ -151,7 +151,7 @@ func TestSharedFolderModes(t *testing.T) {
 	if got := parseSharedFolders("/p\t--work=bogus --ro"); got[0] != (sharedFolder{Path: "/p", ReadOnly: true}) {
 		t.Fatalf("bogus mode: %+v", got)
 	}
-	apps := lookupSharedFolder(list, "/mnt/java/eureko-modules/apps") // najbolj natančna mapa
+	apps := lookupSharedFolder(list, "/mnt/java/projects/apps") // najbolj natančna mapa
 	if apps == nil || apps.Work != "native" || lookupSharedFolder(list, "/mnt/javax") != nil {
 		t.Fatalf("lookup: %+v", apps)
 	}
@@ -180,7 +180,7 @@ func TestShareAddSavesMode(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("AppData", filepath.Join(home, "AppData"))
-	proj := filepath.Join(t.TempDir(), "eureko-modules")
+	proj := filepath.Join(t.TempDir(), "projects")
 	os.MkdirAll(proj, 0o755)
 	shareCommand([]string{"add", "--work=native", proj})
 	shareCommand([]string{"add", proj, "--work=sync", "--ro"}) // znova: zamenja način, ne podvoji
@@ -231,8 +231,8 @@ func TestTerminalSafeKeepsOnlyColours(t *testing.T) { // L1
 }
 
 func TestMountinfoRoot(t *testing.T) { // I3: priklop podmape (bind) in prefixpath
-	info := "40 25 0:44 /eureko /mnt/e rw - cifs //mini/Java rw\n41 25 0:45 /p /mnt/p rw - cifs //mini/Java/p rw\n"
-	if src, _, _ := smbFromMountinfo(info, "/mnt/e/x"); src != "//mini/Java/eureko" {
+	info := "40 25 0:44 /proj /mnt/e rw - cifs //mini/Java rw\n41 25 0:45 /p /mnt/p rw - cifs //mini/Java/p rw\n"
+	if src, _, _ := smbFromMountinfo(info, "/mnt/e/x"); src != "//mini/Java/proj" {
 		t.Errorf("bind: %q", src)
 	}
 	if src, _, _ := smbFromMountinfo(info, "/mnt/p"); src != "//mini/Java/p" {

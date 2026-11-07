@@ -323,7 +323,7 @@ builds then work on the router's local disk.
 - **Agents in the same folder run one after another.**
 
 **Native: the folder is the router's own SMB share.** When the client works in an SMB mount of a router share (for
-example `/Volumes/Java/eureko-modules` mounted from the router's `/Volumes/Java`), `minigw --minigw-work=native …`
+example `/Volumes/Java/projects` mounted from the router's `/Volumes/Java`), `minigw --minigw-work=native …`
 (or `MINIGW_WORK=native`) lets agents work directly in the router's folder: no mount back, no copy.
 `minigw run -- mvn -q verify` runs a build there and streams its output and exit code back.
 - **Mode per folder:** `minigw share add --work=native` (or `sync`, `direct`, with `--ro` for read-only) in a folder
