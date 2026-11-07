@@ -6,6 +6,8 @@
   (Mac app and `minigw serve`; off by default). Read-only by default; writing, web access and commands are separate
   switches (commands need a confirmation; on the Mac they run in the `minigw run` sandbox, on Linux under bwrap). Plugin
   0.5.5: `/minigw:copilot`.
+- `minigw run` can no longer write `~/Library/Caches`, where apps keep code they load unchecked at start (for example the
+  Copilot CLI's package). `mvn`, `swift build` and `xcodebuild` builds work without it.
 - If you used Codex with writing or `minigw run` in 0.5.15, run `xcrun -k` once to clear the xcrun cache.
 - Agents and `minigw run` can no longer write this Mac's shared temporary and cache folders (`/var/folders/…`), where
   the xcrun cache tells `/usr/bin/git` and the other developer tools what to run; they get their own temporary folder.
