@@ -57,7 +57,8 @@ func request(_ method: String, _ target: String, headers: [String: String] = [:]
     var raw = "\(method) \(target) HTTP/1.1\r\nHost: x\r\nContent-Length: \(body.utf8.count)\r\n"
     for (k, v) in headers { raw += "\(k): \(v)\r\n" }
     raw += "\r\n" + body
-    guard case .request(let r) = HTTPParser.parse(Data(raw.utf8)) else { fatalError("parse failed") }
+    guard case .request(var r) = HTTPParser.parse(Data(raw.utf8)) else { fatalError("parse failed") }
+    r.peer = "127.0.0.1"  // ta Mac (prava zahteva ima vedno naslov); oddaljene teste nastavijo peer sami
     return r
 }
 
@@ -66,7 +67,7 @@ func makeRouter(session: URLSession = .shared) -> Router {
     c.providers = [
         ProviderConfig(id: "openrouter", name: "OpenRouter", enabled: true, baseURL: "https://up.example/api/",
                        aliases: "or-qwen = qwen/qwen3-coder, 1k\n# komentar\nanthropic/claude-sonnet"),
-        ProviderConfig(id: "litellm", name: "LiteLLM", enabled: false, baseURL: "http://x", aliases: "qwen-local = q"),
+        ProviderConfig(id: "litellm", name: "LiteLLM", enabled: false, baseURL: "http://x.local", aliases: "qwen-local = q"),
     ]
     return Router(config: c, token: "tok", secrets: FakeSecrets(values: ["openrouter": "or-key"]), session: session)
 }
@@ -230,7 +231,7 @@ func makeRouter(session: URLSession = .shared) -> Router {
         let cfg = URLSessionConfiguration.ephemeral
         cfg.protocolClasses = [StubUpstream.self]
         var c = RouterConfig()
-        c.providers = [ProviderConfig(id: "litellm", name: "LiteLLM", enabled: true, baseURL: "http://lite", aliases: "")]
+        c.providers = [ProviderConfig(id: "litellm", name: "LiteLLM", enabled: true, baseURL: "http://lite.local", aliases: "")]
         let r = Router(config: c, token: "tok", secrets: FakeSecrets(values: ["litellm": "k"]), session: URLSession(configuration: cfg))
         let w = FakeWriter()
         await r.handle(request("GET", "/v1/models", headers: ["x-api-key": "tok"]), writer: w)
@@ -248,7 +249,7 @@ func makeRouter(session: URLSession = .shared) -> Router {
         let cfg = URLSessionConfiguration.ephemeral
         cfg.protocolClasses = [StubUpstream.self]
         var c = RouterConfig()
-        c.providers = [ProviderConfig(id: "or", name: "OR", enabled: true, baseURL: "http://or", aliases: "coder = qwen/qwen3-coder")]
+        c.providers = [ProviderConfig(id: "or", name: "OR", enabled: true, baseURL: "http://or.local", aliases: "coder = qwen/qwen3-coder")]
         let r = Router(config: c, token: "tok", secrets: FakeSecrets(values: ["or": "k"]), session: URLSession(configuration: cfg))
         let w = FakeWriter()
         await r.handle(request("GET", "/v1/models", headers: ["x-api-key": "tok"]), writer: w)
@@ -261,7 +262,7 @@ func makeRouter(session: URLSession = .shared) -> Router {
         cfg.protocolClasses = [StubUpstream.self]
         for (enabled, expectLite, expectQwen) in [(["lite/model"], true, false), ([], false, false), (nil as [String]?, true, true)] {
             var c = RouterConfig()
-            c.providers = [ProviderConfig(id: "or", name: "OR", enabled: true, baseURL: "http://or", aliases: "", enabledModels: enabled)]
+            c.providers = [ProviderConfig(id: "or", name: "OR", enabled: true, baseURL: "http://or.local", aliases: "", enabledModels: enabled)]
             let r = Router(config: c, token: "tok", secrets: FakeSecrets(values: ["or": "k"]), session: URLSession(configuration: cfg))
             let w = FakeWriter()
             await r.handle(request("GET", "/v1/models", headers: ["x-api-key": "tok"]), writer: w)
@@ -391,7 +392,7 @@ func makeRouter(session: URLSession = .shared) -> Router {
     if case .failure(let f) = await Discovery.load(p, key: "") { #expect(f.message == "No API key") } else { Issue.record("no key") }
     if case .failure(let f) = await Discovery.load(p, key: "k") { #expect(f.message.hasPrefix("Cannot connect") && f.message.contains("Local Network")) } else { Issue.record("connect") }
     var bad = p; bad.baseURL = "not a url"
-    if case .failure(let f) = await Discovery.load(bad, key: "k") { #expect(f.message == "Invalid base URL") } else { Issue.record("url") }
+    if case .failure(let f) = await Discovery.load(bad, key: "k") { #expect(f.message.hasPrefix("invalid provider URL")) } else { Issue.record("url") }
     #expect(Discovery.isLocal("192.168.1.20") && Discovery.isLocal("mini.local") && !Discovery.isLocal("openrouter.ai"))
 }
 
@@ -1089,9 +1090,11 @@ final class FakeMinigw: @unchecked Sendable {
 @Test func syncRefusesUnpairedRemoteClient() async {
     let r = Router(config: RouterConfig(), token: "tok", secrets: FakeSecrets(values: [:]))
     let w = FakeWriter()
-    await r.handle(request("POST", "/minigw/share", headers: ["Authorization": "Bearer tok", "x-claude-mini-session": UUID().uuidString,
-                                                             "x-claude-mini-cwd": "/p", "x-claude-mini-work": "sync"]), writer: w)
-    #expect(w.status == 400 && w.text.contains("device key"))
+    var q = request("POST", "/minigw/share", headers: ["Authorization": "Bearer tok", "x-claude-mini-session": UUID().uuidString,
+                                                      "x-claude-mini-cwd": "/p", "x-claude-mini-work": "sync"])
+    q.peer = "192.0.2.4"
+    await r.handle(q, writer: w)
+    #expect(w.status == 403 && w.text.contains("device key"))  // oddaljen brez ključa naprave: že prehod (H1)
 }
 
 @Test func syncExecOnlyChangeAndInvalidPathsAreDone() throws {

@@ -188,32 +188,54 @@ extension Router {
             let list = await gateways(c)
             return (200, ["running": true, "version": hooks.version, "port": Int(c.port), "address": c.host, "installed": hooks.installed(),
                           "autostart": hooks.installed() ? "sign-in" : "", "agents": AgentCount.running.load(ordering: .relaxed),
-                          "devices": c.devices.count, "pending": 0, "claude": claudeInfo(c.claudeCLI), "gateways": list, "providers": list])
+                          "devices": c.devices.count, "pending": Router.deviceLog.pending.count, "claude": claudeInfo(c.claudeCLI), "gateways": list, "providers": list])
 
-        // Naprave: Mac sprejme vsako napravo z žetonom in jo doda sam; seznam določa Siri (glej /siri).
+        // Naprave kot v minigw serve: dovoljene (z zadnjim stikom), čakajoče na odobritev, allowAnyDevice.
         case "GET devices":
-            return (200, ["devices": c.devices.map { ["id": $0.id, "name": $0.name, "siri": $0.siri] }, "pending": [], "allowAnyDevice": true])
+            let iso = ISO8601DateFormatter()
+            let list: [[String: Any]] = c.devices.map { d in
+                var o: [String: Any] = ["id": d.id, "name": d.name, "siri": d.siri]
+                if let t = Router.deviceLog.lastSeen(d.id) { o["lastSeen"] = iso.string(from: t) }
+                if let cl = Router.deviceLog.client(d.id) { o["client"] = cl }
+                return o
+            }
+            let pending: [[String: Any]] = Router.deviceLog.pending.map {
+                ["id": $0.id, "name": $0.name, "address": $0.address, "client": $0.client, "time": iso.string(from: $0.time)]
+            }
+            return (200, ["devices": list, "pending": pending, "allowAnyDevice": c.allowAnyDevice])
         case "POST devices":
             let b = try AdminBody(body, ["id", "name"])
-            let id = try b.string("id") ?? "", name = try b.string("name") ?? ""
+            let id = try b.string("id") ?? "", given = try b.string("name") ?? ""
             guard Self.validDeviceID(id) else {
                 throw AdminError(400, "\"\(id)\" is not a device ID (43 characters, base64url): copy it from the client's minigw status")
             }
+            let waiting = Router.deviceLog.pending.first { $0.id == id }
+            let name = Noise.cleanName(given.isEmpty ? waiting?.name ?? "" : given)
             let added = !c.devices.contains { $0.id == id }
             _ = try await hooks.update { c in
                 if !c.devices.contains(where: { $0.id == id }) { c.devices.append(DeviceConfig(id: id, name: name)) }
             }
+            Router.deviceLog.removePending(id)
             return (200, ["device": ["id": id, "name": name], "added": added])
         case "DELETE devices/{}":
-            var gone = c.devices.first { $0.id == arg }
-            if gone == nil {
-                let named = c.devices.filter { $0.name == arg }
-                guard named.count <= 1 else { throw AdminError(400, "several devices are named \"\(arg)\": use the device ID") }
-                gone = named.first
+            if !c.devices.contains(where: { $0.id == arg }), let p = Router.deviceLog.removePending(arg) {  // zavrni čakajočo
+                return (200, ["device": ["id": p.id, "name": p.name], "pending": true])
             }
-            guard let gone else { throw AdminError(400, "no allowed device \"\(arg)\"") }
+            // Le po ID-ju: ime je oznaka, nikoli identiteta.
+            guard let gone = c.devices.first(where: { $0.id == arg }) else {
+                throw AdminError(404, "no allowed or waiting device with the ID \(arg) (minigw gw devices lists the IDs)")
+            }
             _ = try await hooks.update { c in c.devices.removeAll { $0.id == gone.id } }
             return (200, ["device": ["id": gone.id, "name": gone.name]])
+        case "PATCH devices/{}":  // preimenovanje dovoljene naprave (ime je le oznaka)
+            let b = try AdminBody(body, ["name"])
+            let name = Noise.cleanName(try b.string("name") ?? "")
+            guard !name.isEmpty else { throw AdminError(400, "name: 1-64 printable characters") }
+            guard c.devices.contains(where: { $0.id == arg }) else { throw AdminError(404, "no allowed device with the ID \(arg)") }
+            _ = try await hooks.update { c in
+                if let i = c.devices.firstIndex(where: { $0.id == arg }) { c.devices[i].name = name }
+            }
+            return (200, ["device": ["id": arg, "name": name]])
 
         case "GET siri":
             return (200, siriInfo(c))
@@ -268,6 +290,7 @@ extension Router {
             let old = c.providers.first { $0.name == name }
             var p = old ?? ProviderConfig(id: "gw-" + UUID().uuidString.prefix(8).lowercased(), name: name, enabled: true, baseURL: base, aliases: "")
             p.baseURL = base
+            p.insecure = try b.bool("insecure") ?? false
             p.enabled = true
             let models: [Discovery.Model]
             switch await Discovery.load(p, key: key, session: session) {
@@ -282,6 +305,7 @@ extension Router {
             return (200, ["provider": gateway(p, ready: false), "gateway": gateway(p, ready: false), "keyStore": "the Keychain", "models": apiModels(p, models, filter: "")])
         case "DELETE gateways/{}":
             guard let p = c.providers.first(where: { $0.name == arg }) else { throw AdminError(404, "no provider \(arg)") }
+            guard !RouterConfig.builtInProviders.contains(p.id) else { throw AdminError(400, "\(p.name) is built in: turn it off instead") }
             _ = try await hooks.update(keys: [p.id: nil]) { c in c.providers.removeAll { $0.id == p.id } }
             return (200, ["name": arg])
         case "GET gateways/{}/models", "POST gateways/{}/models":
@@ -424,9 +448,9 @@ extension Router {
         case "GET general":
             return (200, general(c, connect: hooks.connect))
         case "PATCH general":
-            let b = try AdminBody(body, ["port", "address", "allowedClients", "allowPlainRemote", "startAtSignIn"])
+            let b = try AdminBody(body, ["port", "address", "allowedClients", "allowPlainRemote", "allowAnyDevice", "startAtSignIn"])
             let port = try b.int("port"), address = try b.string("address"), clients = try b.string("allowedClients")
-            let plain = try b.bool("allowPlainRemote")
+            let plain = try b.bool("allowPlainRemote"), any = try b.bool("allowAnyDevice")
             if let on = try b.bool("startAtSignIn") {
                 guard let set = hooks.setInstalled else { throw AdminError(400, "startAtSignIn: not available here") }
                 do { try set(on) } catch { throw AdminError(500, "Open at Login: \(error.localizedDescription)") }
@@ -446,6 +470,7 @@ extension Router {
                 if let address { c.host = address }
                 if let clients { c.allowedClients = clients }
                 if let plain { c.allowPlainRemote = plain }
+                if let any { c.allowAnyDevice = any }
             }
             return (200, general(n, connect: hooks.connect))  // aplikacija znova zažene router: brez restartRequired
         case "POST general/{}":
@@ -498,11 +523,12 @@ extension Router {
 
     func general(_ c: RouterConfig, connect: String) -> [String: Any] {
         ["port": Int(c.port), "address": c.host, "allowedClients": c.allowedClients, "allowPlainRemote": c.allowPlainRemote,
+         "allowAnyDevice": c.allowAnyDevice,
          "connect": "minigw connect \(c.host == "0.0.0.0" || c.host == "::" ? Self.localIP() : c.host):\(c.port) --token '\(connect)'"]
     }
 
     func gateway(_ p: ProviderConfig, ready: Bool) -> [String: Any] {
-        ["name": p.name, "baseURL": p.baseURL, "insecure": p.baseURL.hasPrefix("http://"), "enabled": p.enabled,
+        ["name": p.name, "baseURL": p.baseURL, "insecure": p.insecure, "enabled": p.enabled,
          "models": p.enabledModels.map { $0 as Any } ?? NSNull(), "hasKey": !(secrets.get(p.id) ?? "").isEmpty, "ready": ready]
     }
 
@@ -533,10 +559,13 @@ extension Router {
         switch u.scheme {
         case "https": break
         case "http":
-            guard host == "localhost" || isPrivateIP(host) else {
-                throw AdminError(400, "provider URL must be https (http only to localhost or a private IP, with insecure)")
+            // Lokalno: localhost, zasebni ali loopback IP, ime .local (mDNS); isto pravilo kot minigw serve. Ime brez pike ne:
+            // iskalna domena DNS ga lahko naredi javnega.
+            let h = host.lowercased()
+            guard h == "localhost" || h.hasSuffix(".local") || isPrivateIP(host) else {
+                throw AdminError(400, "provider URL must be https (http only to localhost, a private IP or a .local name, with insecure)")
             }
-            guard insecure else { throw AdminError(400, "http sends the API key unencrypted: set insecure for a provider on localhost or a private IP") }
+            guard insecure else { throw AdminError(400, "http sends the API key unencrypted: set insecure for a provider on localhost, a private IP or a .local name") }
         default:
             throw AdminError(400, "provider URL must be https: \(raw)")
         }

@@ -113,8 +113,9 @@ Linux (without Siri and Apple models). The default way to install both is the Cl
    ```
 
    `/minigw:gw token` on the gateway prints the token (on the Mac also **Settings… → General → Copy Token**).
-   A Windows or Linux gateway refuses a new device until you allow it there: `/minigw:gw devices` shows it, and
-   the skill asks you to compare the ID before it allows the device.
+   The gateway refuses a new device until you allow it: on the Mac in **Settings… → Devices** or from the menu bar
+   (Waiting for approval), on Windows in the tray or the settings page, or with `/minigw:gw devices allow <id>`.
+   Compare the ID with the one `minigw status` shows on the client first.
 
 The plugin brings its own `minigw` on macOS, Windows (Git Bash) and Linux. At session start it uses an installed
 one or downloads it from the latest release into its data folder, and checks the SHA-256 (on macOS also the
@@ -254,13 +255,14 @@ minigw serve                 # or run it in this terminal: port 8765; --port, --
 ```
 
 On each client run the printed `minigw connect` line. The first connect from a new device is refused and the gateway
-log shows `minigw serve allow <id> "<name>"`. Anyone with the token can try to connect, so compare the ID with the
+log shows `minigw gw devices allow <id>`. Anyone with the token can try to connect, so compare the ID with the
 device you just connected before you allow it. `minigw gw devices` lists the allowed devices and the ones
-waiting, `minigw gw devices deny <id or name>` removes one.
+waiting, `minigw gw devices allow <id> [--name N]` allows one, `rename <id> --name N` renames it, and
+`minigw gw devices deny <id>` removes or rejects one. The name is only a label; the ID identifies the device.
 
 **Windows tray.** `minigw-tray-windows-amd64.exe` (or `-arm64.exe`) is the same gateway with an icon in the
 notification area instead of a console window. On first start it creates the config. Its menu shows the status,
-devices waiting for approval (Allow / Deny, with a notification when one appears), **Settings…**, **Copy connect
+devices waiting for approval (Allow / Reject, with a notification when one appears), **Settings…**, **Copy connect
 line**, **Start at sign-in**, the log (`minigw-serve.log` in the config folder) and Quit. `minigw serve install` sets
 it up.
 
@@ -430,13 +432,16 @@ example `/Volumes/Java/projects` mounted from the gateway's `/Volumes/Java`), `m
 ## 5. Gateway settings
 
 Settings of the menu bar app on the gateway Mac (**Settings…**, laid out like System Settings). On Windows and Linux
-the settings page of `minigw serve` has the same panes, except Siri AI and Apple Foundation Models, plus a
-**Devices** pane (allowed and waiting devices). Open it with **Settings…** in the tray or `/minigw:gw settings`.
+the settings page of `minigw serve` has the same panes, except Siri AI and Apple Foundation Models. Open it with **Settings…** in the tray or `/minigw:gw settings`.
 [docs/windows-parity.md](docs/windows-parity.md) lists every control on both. Client options (`minigw share`,
 `--minigw-ro`, `MINIGW_SHARE`) are in [4. Use](#4-use).
 
 - **General** – listen address and port (default `127.0.0.1:8765`; use `0.0.0.0` or a LAN IP for other computers),
-  allowed client IPs, unencrypted connections, access token, and About (version, build commit, license).
+  access token, and About (version, build commit, license). On Windows and Linux also unencrypted connections.
+- **Devices** (both) – **Allow any device with the token** (only while no device is allowed), allowed client IPs, on
+  the Mac unencrypted connections from other Macs; devices **waiting for approval** with name (editable), ID, address,
+  time, OS and minigw version, **Allow** / **Reject**; **allowed devices** with name (rename), ID, last seen,
+  **Copy ID** / **Remove**. The Mac also shows waiting devices in the menu bar with a notification.
 - **Providers** (LiteLLM, OpenRouter or any other Anthropic-compatible one) – name, base URL, API key, and a switch
   per discovered model. **+ / −** under the sidebar adds or removes providers, so you can use several, each with its own
   key and models.
@@ -468,6 +473,13 @@ item (the admin secret); `minigw` talks to the app only after the app proves its
 
 ## 6. Security notes
 
+- **Devices.** A new device waits for approval on both gateways; a client without a device key (minigw before 0.4.4,
+  unencrypted clients) is accepted only while no device is allowed and **Allow any device with the token** is on.
+  **Reject** is not a block list: a rejected device can ask again with the token. To lock someone out, remove their
+  device and rotate the token (**New Token**). A device's name is only a label: compare the ID.
+- **Providers over http.** A provider's API key goes over `http` only to localhost, a private or loopback IP or a
+  `.local` name, and only with **Allow http** on. Such names and addresses are no proof that the provider is on your
+  own network (a VPN, another Wi-Fi or a spoofed mDNS answer can serve them), so prefer `https`.
 - Every request needs the gateway's token; the server listens only on `127.0.0.1` unless you change it.
 - The Claude CLI provider runs `claude -p` with tools in the client's folder: it only runs inside the allowed
   folders and uses the tools and permission mode you configure (default: read-only, `dontAsk`).

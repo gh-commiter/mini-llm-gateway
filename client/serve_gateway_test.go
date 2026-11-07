@@ -230,12 +230,12 @@ func TestServeGatewayCLIKeepsKeyOutOfConfig(t *testing.T) {
 		t.Fatalf("key in config or not stored: %s", data)
 	}
 	c, _ := loadServeConfig(cfg)
-	if len(c.Gateways) != 1 || c.Gateways[0].BaseURL != up.URL || !c.Gateways[0].Insecure ||
-		strings.Join(c.Gateways[0].Models, ",") != "anthropic/claude-x,gpt-y" {
+	g, ok := findGateway(c, "gw")
+	if len(c.Gateways) != 3 || !ok || g.BaseURL != up.URL || !g.Insecure || strings.Join(g.Models, ",") != "anthropic/claude-x,gpt-y" {
 		t.Fatalf("config: %+v", c.Gateways)
 	}
 	run("gateway", "remove", "gw")
-	if c, _ = loadServeConfig(cfg); len(c.Gateways) != 0 || keys["gw"] != "" {
+	if c, _ = loadServeConfig(cfg); len(c.Gateways) != 2 || keys["gw"] != "" { // le vgrajena LiteLLM in OpenRouter
 		t.Fatalf("remove: %+v %v", c.Gateways, keys)
 	}
 }
@@ -453,5 +453,39 @@ func TestGatewayParityAliasesEnableRename(t *testing.T) {
 	}
 	if p := aliasPairs("a = b, 1.5M\n\nc"); len(p) != 2 || p[0] != (aliasPair{"a", "b", 1500000}) || p[1] != (aliasPair{"c", "c", 0}) {
 		t.Fatalf("aliasPairs: %+v", p)
+	}
+}
+
+// Vgrajena ponudnika kot na Macu: vedno na seznamu (izklopljena), obstoječ »litellm« je vgrajeni (brez podvojitve),
+// odstranitev in preimenovanje ne.
+func TestBuiltinGateways(t *testing.T) {
+	c := serveConfig{Gateways: []serveGateway{{Name: "litellm", BaseURL: "http://10.0.0.5:4000", Insecure: true}}}
+	ensureBuiltinGateways(&c)
+	if len(c.Gateways) != 2 || c.Gateways[0].Name != "OpenRouter" || !c.Gateways[0].Disabled || c.Gateways[0].Models == nil ||
+		c.Gateways[1].Name != "litellm" || c.Gateways[1].BaseURL != "http://10.0.0.5:4000" || c.Gateways[1].Disabled {
+		t.Fatalf("migration: %+v", c.Gateways)
+	}
+	for u, ok := range map[string]bool{"http://mini.local:4000": true, "http://mini:4000": false, "http://10.0.0.5": true,
+		"http://example.com": false, "http://8.8.8.8": false} { // ime v lokalnem omrežju kot zasebni IP (isto kot na Macu)
+		if _, err := checkGatewayURL(u, true); (err == nil) != ok {
+			t.Fatalf("%s: %v", u, err)
+		}
+	}
+	var fresh serveConfig
+	ensureBuiltinGateways(&fresh)
+	if len(fresh.Gateways) != 2 || fresh.Gateways[0].Name != "LiteLLM" || fresh.Gateways[0].BaseURL != "http://localhost:4000" ||
+		!fresh.Gateways[0].Insecure || !fresh.Gateways[0].Disabled || fresh.Gateways[1].BaseURL != "https://openrouter.ai/api" {
+		t.Fatalf("defaults: %+v", fresh.Gateways)
+	}
+	s, _, base := liveServer(t, nil)
+	if st, b := adminNoise(t, s, base, s.admin, "DELETE", adminPrefix+"/providers/LiteLLM", ""); st != 400 || !strings.Contains(b, "built in") {
+		t.Fatalf("delete built-in: %d %s", st, b)
+	}
+	if st, _ := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/providers/OpenRouter", `{"name":"OR"}`); st != 400 {
+		t.Fatal("renamed a built-in")
+	}
+	if st, b := adminNoise(t, s, base, s.admin, "GET", adminPrefix+"/providers", ""); st != 200 ||
+		!strings.Contains(b, `"name":"LiteLLM"`) || !strings.Contains(b, `"name":"OpenRouter"`) {
+		t.Fatalf("list: %d %s", st, b)
 	}
 }

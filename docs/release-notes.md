@@ -5,6 +5,23 @@
 - Windows installer: `minigw-windows-amd64.msi` and `minigw-windows-arm64.msi` install the gateway with the tray for this
   user, without admin rights (the same as `minigw serve install`: PATH, Start menu, start at sign-in). Listed in the
   signed `SHA256SUMS`; the MSI itself is not code-signed yet, so SmartScreen warns.
+- Clients without a device key (minigw before 0.4.4, unencrypted clients from other computers) are accepted only while
+  no device is allowed and "Allow any device with the token" is on, on the Mac as on `minigw serve`. Update minigw on
+  such clients.
+- Waiting devices show `<user>@<computer>` and the client's OS and minigw version; you can edit the name before you
+  allow a device and rename it later (`minigw gw devices allow <id> --name N`, `rename`). Devices are identified by
+  their ID only: `deny` and the admin API no longer take a name. The Mac notifies you when a device starts waiting.
+  Plugin 0.5.8: `/minigw:connect` explains how to approve a refused device.
+- Providers: the Mac has "Allow http (localhost, a private IP or a .local name only)" like `minigw serve`, with the same
+  rule on both. Existing Mac providers at `http://localhost`, a private or loopback IP, or a `.local` name keep working
+  (the switch is turned on for them). Any other `http` provider, for example at a public host or a name without a dot,
+  no longer gets the API key: change its URL to `https`. LiteLLM and OpenRouter are always listed on `minigw serve` too
+  (off until a key is set; they can be turned off, not removed or renamed), and on the Mac they can no longer be
+  removed through `minigw gw provider remove`.
+- Devices are the same on the Mac and on `minigw serve`: a new device waits for approval (Settings → Devices,
+  the menu bar, `minigw gw devices allow`) unless the list is empty and "Allow any device with the token" is on.
+  Devices you already use stay allowed. Both panes show the allowed IP addresses, waiting and allowed devices with
+  their ID and when they were last seen; Windows now shows a device's name.
 - GitHub Copilot CLI as an agent model, compatible with the Claude Code CLI: `claude-copilot` and `claude-copilot-<model>`
   (Mac app and `minigw serve`; off by default). Read-only by default; writing, web access and commands are separate
   switches. Copilot always runs in a sandbox (Mac `sandbox-exec`, Linux bwrap) with a fresh Copilot home per request.

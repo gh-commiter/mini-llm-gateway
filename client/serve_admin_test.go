@@ -173,10 +173,40 @@ func TestAdminAPILiveApply(t *testing.T) {
 	if r := pipeRequest(t, s, pub, mac, get); !strings.HasPrefix(r, "HTTP/1.1 200") {
 		t.Fatalf("allowed device not live: %q", r)
 	}
-	if _, b := admin("GET", adminPrefix+"/devices", ""); !strings.Contains(b, `"pending":[]`) {
-		t.Fatalf("pending after allow: %s", b)
+	if _, b := admin("GET", adminPrefix+"/devices", ""); !strings.Contains(b, `"pending":[]`) || !strings.Contains(b, `"lastSeen":"`) {
+		t.Fatalf("pending after allow, last seen: %s", b)
 	}
-	if st, _ := admin("DELETE", adminPrefix+"/devices/Mac", ""); st != 200 {
+	// Allow le z ID-jem: ime iz čakajoče naprave; naprava brez imena ga dobi ob naslednji povezavi.
+	pc := newDevice("PC")
+	pcID := base64url(pc.key.Public().(ed25519.PublicKey))
+	pipeRequest(t, s, pub, pc, get)
+	if st, b := admin("POST", adminPrefix+"/devices", `{"id":"`+pcID+`"}`); st != 200 || !strings.Contains(b, `"name":"PC"`) {
+		t.Fatalf("allow by id: %d %s", st, b)
+	}
+	s.update(func(c *serveConfig) error { c.Devices[len(c.Devices)-1].Name = ""; return nil })
+	if r := pipeRequest(t, s, pub, pc, get); !strings.HasPrefix(r, "HTTP/1.1 200") || s.conf().Devices[len(s.conf().Devices)-1].Name != "PC" {
+		t.Fatalf("name not filled: %q %+v", r, s.conf().Devices)
+	}
+	// Reject: le iz seznama čakajočih.
+	spy := newDevice("Spy")
+	spyID := base64url(spy.key.Public().(ed25519.PublicKey))
+	pipeRequest(t, s, pub, spy, get)
+	if st, b := admin("DELETE", adminPrefix+"/devices/"+spyID, ""); st != 200 || !strings.Contains(b, `"pending":true`) {
+		t.Fatalf("reject: %d %s", st, b)
+	}
+	if _, b := admin("GET", adminPrefix+"/devices", ""); strings.Contains(b, spyID) {
+		t.Fatalf("rejected device still listed: %s", b)
+	}
+	if st, _ := admin("DELETE", adminPrefix+"/devices/PC", ""); st != 404 { // le po ID-ju: ime je oznaka
+		t.Fatal("delete by name")
+	}
+	if st, b := admin("PATCH", adminPrefix+"/devices/"+pcID, `{"name":"Work\u202ePC\n"}`); st != 200 || !strings.Contains(b, `"name":"WorkPC"`) {
+		t.Fatalf("rename: %d %s", st, b)
+	}
+	if st, _ := admin("DELETE", adminPrefix+"/devices/"+pcID, ""); st != 200 {
+		t.Fatal("remove PC")
+	}
+	if st, _ := admin("DELETE", adminPrefix+"/devices/"+macID, ""); st != 200 {
 		t.Fatal("deny by name")
 	}
 	if r := pipeRequest(t, s, pub, mac, get); !strings.HasPrefix(r, "HTTP/1.1 403") {
@@ -223,7 +253,7 @@ func TestRouterCLIOnlineAndOffline(t *testing.T) {
 		t.Fatalf("status: %q", out)
 	}
 	id := base64url(newDevice("PC").key.Public().(ed25519.PublicKey))
-	if out := run(cfg, "devices", "allow", id, "My", "PC"); out != "allowed device "+id+"\n" {
+	if out := run(cfg, "devices", "allow", id, "My", "PC"); out != "allowed device "+id+" \"My PC\"\n" {
 		t.Fatalf("allow: %q", out)
 	}
 	if c := s.conf(); len(c.Devices) != 1 || c.Devices[0].Name != "My PC" {
@@ -249,7 +279,7 @@ func TestRouterCLIOnlineAndOffline(t *testing.T) {
 	for !validDeviceID(dash) || dash == id { // id se lahko že sam začne z »-« (1 od 64): to bi bila ista naprava
 		dash = "-" + base64url(newDevice("X").key.Public().(ed25519.PublicKey))[1:]
 	}
-	if out := run(off, "devices", "allow", dash); out != "allowed device "+dash+"\n" {
+	if out := run(off, "devices", "allow", dash); out != "allowed device "+dash+" \"\"\n" {
 		t.Fatalf("dash id: %q", out)
 	}
 }
@@ -537,7 +567,7 @@ func TestScratchFolderProtected(t *testing.T) {
 func TestProvidersNamesAndAliases(t *testing.T) {
 	s, cfg, base := liveServer(t, nil)
 	for _, p := range []string{"/providers", "/gateways"} {
-		if st, b := adminNoise(t, s, base, s.admin, "GET", adminPrefix+p, ""); st != 200 || !strings.Contains(b, `"providers":[]`) || !strings.Contains(b, `"gateways":[]`) {
+		if st, b := adminNoise(t, s, base, s.admin, "GET", adminPrefix+p, ""); st != 200 || !strings.Contains(b, `"providers":[{"name":"LiteLLM"`) || !strings.Contains(b, `"gateways":[{"name":"LiteLLM"`) {
 			t.Fatalf("%s: %d %s", p, st, b)
 		}
 	}
@@ -547,7 +577,7 @@ func TestProvidersNamesAndAliases(t *testing.T) {
 	run := func(args ...string) string {
 		return stdout(t, func() { routerCommand(append(args, "--config", cfg), strings.NewReader("")) })
 	}
-	if out := run("provider", "list"); !strings.HasPrefix(out, "no providers") {
+	if out := run("provider", "list"); !strings.HasPrefix(out, "LiteLLM  http://localhost:4000") || !strings.Contains(out, "OpenRouter") {
 		t.Fatalf("gw provider list: %q", out)
 	}
 	if run("provider", "list") != run("gateway", "list") {

@@ -70,9 +70,11 @@ the user.
 ## Types
 
 ```text
-Device   {"id": string, "name": string, "address"?: string, "time"?: string}
+Device   {"id": string, "name": string, "address"?: string, "client"?: string, "time"?: string, "lastSeen"?: string}
          id: base64url of the device's 32-byte Ed25519 public key (43 characters), as the refusal message shows it.
-         address and time (RFC 3339, UTC) only for pending devices.
+         address, client (OS and minigw version, from newer clients) and time (RFC 3339, UTC) only for pending
+         devices; lastSeen only for allowed devices that made a request since the gateway started. name is a label
+         (control and format characters removed, at most 64 characters); only the ID identifies a device.
 Model    {"id": string, "model": string, "window"?: number, "enabled": bool}
          id: the ID at the provider; model: the name for /model (the id, or "claude-" + id when the id contains
          neither "claude" nor "anthropic"); window: context window in tokens, if known.
@@ -94,8 +96,9 @@ General  {"port": number, "address": string, "connect": string, "restartRequired
 |---|---|---|
 | `GET /status` | – | `{"running", "version", "port", "address", "installed", "devices": n, "pending": n, "claude": Claude, "providers": [Provider], "os", "installDir"?, "tray", "autostart", "agents": n, "agentsUnsandboxed"}` |
 | `GET /devices` | – | `{"devices": [Device], "pending": [Device], "allowAnyDevice": bool}` |
-| `POST /devices` | `{"id", "name"}` | `{"device": Device, "added": bool}`; removes it from pending |
-| `DELETE /devices/{id or name}` | – | `{"device": Device}`; a pending device is only removed from pending (`"pending": true`); a name must be unique |
+| `POST /devices` | `{"id", "name"}` | `{"device": Device, "added": bool}`; removes it from pending; without a name, the pending device's name |
+| `PATCH /devices/{id}` | `{"name"}` | `{"device": Device}`; renames an allowed device |
+| `DELETE /devices/{id}` | – | `{"device": Device}`; by ID only; a pending device is only removed from pending (`"pending": true`), which is not a block list |
 | `GET /providers` | – | `{"providers": [Provider]}` |
 | `POST /providers` | `{"name", "baseURL", "key", "insecure"}` | `{"provider": Provider, "keyStore": string, "models": [Model]}` |
 | `PATCH /providers/{name}` | any of `{"name", "enabled", "baseURL", "insecure", "aliases"}` | `{"provider": Provider}`; a new name moves the key; the key stays for a new URL |
@@ -112,10 +115,15 @@ General  {"port": number, "address": string, "connect": string, "restartRequired
 
 Notes:
 
+- A remote client without a device key (minigw before 0.4.4, unencrypted clients) is allowed only while the device list
+  is empty and `allowAnyDevice` is on; otherwise 403 "This gateway needs a device key". The same on the Mac and Go.
 - `POST /devices` takes only a valid device ID. `pending` lists the last 20 devices that were refused since the
   gateway started (in memory), newest last.
 - `POST /providers` adds or replaces a provider. Name: letters, digits, `. _ -`, up to 32. `baseURL` without `/v1`;
-  it must be `https`, or `http` to localhost or a private IP with `"insecure": true`. The gateway lists the models
+  it must be `https`, or `http` to localhost, a private or loopback IP or a `.local` name (not a name without a dot).
+  A `.local` name or a private address is no proof that the provider is on your LAN (another network, a VPN or a
+  spoofed mDNS answer can answer it), so `http` also needs the explicit `"insecure": true` / Allow http switch
+  with `"insecure": true`. LiteLLM and OpenRouter are built in: always listed, `DELETE` and renaming are refused. The gateway lists the models
   with the key before it saves anything, and stores the key in the system's secret store (Credential Manager,
   Keychain or Secret Service), never in the config. `keyStore` says where. A new provider with more than 20 models
   starts with none enabled. The key is never returned.
@@ -184,23 +192,24 @@ The Mac app keeps its settings in its preferences and Keychain; the Settings win
 - **Order of checks:** loopback peer → Host (plain HTTP only; over Noise there is no browser) → `MGW-Admin` proof →
   process check.
 - **No offline mode:** without the running app, `minigw gw` stops with a message (settings live in the app).
-- **Devices:** the Mac accepts every device with the token and adds it to the list itself; the list decides Siri.
-  `GET /devices` returns `"allowAnyDevice": true`, `"pending": []` and a `siri` flag per device. `POST` adds a
-  device; `DELETE` removes it, but it comes back on its next connection (it only loses Siri). To lock a device out,
-  rotate the token. The admin API can add a device ID that never connected and allow Siri for it (`PATCH /siri`);
-  only someone with the admin secret on this Mac can do that, and that device still needs the token.
+- **Devices:** as in Go: an unknown device waits for approval (`pending`, also in the menu bar and Settings →
+  Devices), unless the list is empty and `allowAnyDevice` is on. Settings from before approval keep working: listed
+  devices stay allowed, and an empty list keeps `allowAnyDevice` on. `GET /devices` also has a `siri` flag per
+  device. This Mac (loopback) is always allowed.
 - **Providers:** each has `"enabled"`. `name` is the provider's name in Settings. `POST` turns the provider on and
-  applies the same URL rule as Go; providers added in Settings may still use any `http` URL. The key goes to the
+  applies the same URL rule as Go, and so do providers set in Settings ("Allow http"); providers with an `http` URL
+  from before this rule have Allow http on, and those at other hosts are refused until they use `https`. `DELETE` of
+  the built-in LiteLLM and OpenRouter returns 400 as in Go. The key goes to the
   Keychain only after the config change succeeds, and before the app restarts the gateway (the gateway reads provider
   keys when it starts). Providers with manual
   aliases (Settings → Advanced) list their discovered models here, but route by their aliases.
 - **agents/claude:** `{"enabled", "path", "found", "tools", "folders", "allowLocalTools", "disabledTools"}`.
   `folders` is the comma-separated list of allowed folders. There is no `folder` or `allowUnsandboxedBash`: with
   `allowLocalTools`, Bash runs in Claude Code's sandbox.
-- **general:** also `allowedClients` (IP addresses, comma-separated; empty = all) and `allowPlainRemote`. `address`
+- **general:** also `allowedClients` (IP addresses, comma-separated; empty = all), `allowPlainRemote` and `allowAnyDevice`. `address`
   may be `0.0.0.0`, `::` or `127.0.0.1`. A port or address change restarts the listener, so there is no
   `restartRequired`.
-- **status:** `pending` is always 0; `installed` is Open at Login.
+- **status:** `installed` is Open at Login.
 - **Not on the Mac:** the settings page and its sessions (`/minigw/settings`, `POST /settings/login`): the app has
   its own Settings window, so only the admin secret (`minigw gw`) opens the API, and it never sets cookies.
 
