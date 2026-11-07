@@ -169,8 +169,9 @@ type gwEntry struct {
 	loading chan struct{}
 }
 
-// models: počaka največ 2 s (discovery v Claude Code ima 3 s); medtem velja zadnji znani seznam.
-func (s *server) gatewayModels(g serveGateway) []gwModel {
+// gatewayModels: zadnji znani seznam takoj (star seznam se osveži v ozadju). Le pri prvem nalaganju in z wait počaka
+// največ 2 s (discovery v Claude Code ima 3 s), da mrtev prehod ne zadrži vsake zahteve.
+func (s *server) gatewayModels(g serveGateway, wait bool) []gwModel {
 	c := &s.gateways
 	c.mu.Lock()
 	if c.m == nil {
@@ -207,6 +208,10 @@ func (s *server) gatewayModels(g serveGateway) []gwModel {
 		}()
 	}
 	done := e.loading
+	if e.ok || !wait {
+		c.mu.Unlock()
+		return e.models
+	}
 	c.mu.Unlock()
 	select {
 	case <-done:
@@ -218,11 +223,17 @@ func (s *server) gatewayModels(g serveGateway) []gwModel {
 }
 
 // gatewayRoute: prvi prehod v vrstnem redu nastavitev z vklopljenim modelom (ID pri upstreamu ali objavljeni ID).
-func (s *server) gatewayRoute(model string) (serveGateway, gwModel, bool) {
-	for _, g := range s.cfg.Gateways {
-		for _, m := range s.gatewayModels(g) {
-			if g.enabled(m.id) && (m.id == model || publishedID(m.id) == model) {
-				return g, m, true
+// Najprej zadnji znani seznami; z wait (neznan model) še počaka na prehode, ki se nalagajo prvič.
+func (s *server) gatewayRoute(model string, wait bool) (serveGateway, gwModel, bool) {
+	for _, w := range []bool{false, true} {
+		if w && !wait {
+			break
+		}
+		for _, g := range s.cfg.Gateways {
+			for _, m := range s.gatewayModels(g, w) {
+				if g.enabled(m.id) && (m.id == model || publishedID(m.id) == model) {
+					return g, m, true
+				}
 			}
 		}
 	}
@@ -233,7 +244,7 @@ func (s *server) gatewayModelList() []map[string]any {
 	var data []map[string]any
 	seen := map[string]bool{}
 	for _, g := range s.cfg.Gateways {
-		for _, m := range s.gatewayModels(g) {
+		for _, m := range s.gatewayModels(g, true) {
 			id := publishedID(m.id)
 			if !g.enabled(m.id) || seen[id] { // prvi prehod z imenom zmaga
 				continue

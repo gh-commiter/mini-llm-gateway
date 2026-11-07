@@ -408,7 +408,8 @@ func (s *server) messages(w http.ResponseWriter, r *req) (int, string) {
 	if model == "" {
 		return writeError(w, r.rid, 400, "Body must be JSON with a model field"), ""
 	}
-	if g, m, ok := s.gatewayRoute(model); ok { // prehodi pred claude-cli (kot Router.swift); ID-ji z »/« (OpenRouter)
+	_, _, isCLI := cliMatch(model)                     // model claude-cli ne čaka na odkrivanje prehodov
+	if g, m, ok := s.gatewayRoute(model, !isCLI); ok { // prehodi pred claude-cli (kot Router.swift); ID-ji z »/« (OpenRouter)
 		return s.passthrough(w, r, g, m), model
 	}
 	cliModel, chat, ok := cliMatch(model)

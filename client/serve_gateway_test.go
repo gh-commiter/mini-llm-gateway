@@ -268,7 +268,34 @@ func TestServeGatewayKeyFileOnMac(t *testing.T) {
 	if k, _ := osKeyGet(dir, "gw"); k != gwKey {
 		t.Fatalf("get: %q", k)
 	}
-	if osKeyDel(dir, "gw"); func() bool { b, _ := os.ReadFile(filepath.Join(dir, "gateway-keys.json")); return strings.Contains(string(b), gwKey) }() {
+	if osKeyDel(dir, "gw"); func() bool {
+		b, _ := os.ReadFile(filepath.Join(dir, "gateway-keys.json"))
+		return strings.Contains(string(b), gwKey)
+	}() {
 		t.Fatal("not deleted")
+	}
+}
+
+// Prehod, ki ne odgovori: model claude-cli ne čaka nanj, neznan model največ 2 s (prvo nalaganje).
+func TestServeGatewayDeadDoesNotDelayCLI(t *testing.T) {
+	fakeKeys(t)["dead"] = gwKey
+	block := make(chan struct{})
+	up := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-block }))
+	t.Cleanup(up.Close)
+	t.Cleanup(func() { close(block) }) // teče pred up.Close
+	s, _ := testServer(t, func(c *serveConfig) {
+		c.Claude = "/bin/sh"
+		c.Gateways = []serveGateway{{Name: "dead", BaseURL: up.URL, Insecure: true}}
+	})
+	conn := startLoopback(t, s)
+	start := time.Now()
+	st, _ := call(conn, "POST", "/v1/messages/count_tokens", nil, []byte(`{"model":"claude-cli-haiku","messages":[]}`), 5*time.Second)
+	if d := time.Since(start); st != 200 || d > time.Second {
+		t.Fatalf("claude-cli waited for the gateway: %d after %v", st, d)
+	}
+	start = time.Now()
+	st, _ = call(conn, "POST", "/v1/messages", nil, []byte(`{"model":"claude-nope","messages":[]}`), 5*time.Second)
+	if d := time.Since(start); st != 404 || d < 1500*time.Millisecond || d > 3*time.Second {
+		t.Fatalf("unknown model: %d after %v (want 404 after about 2 s)", st, d)
 	}
 }
