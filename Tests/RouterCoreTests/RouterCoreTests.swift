@@ -1320,3 +1320,19 @@ final class FakeMinigw: @unchecked Sendable {
     #expect(read(copy, "f.txt") == "three")
     #expect(read(copy, "f.txt.minigw-agent") == "one" && read(copy, "f.txt.minigw-agent-2") == "two")
 }
+
+/// #7: /dav/<skrivnost> le za webdavfs_agent, ki ga je pognal priklop routerja (skrivnost je vidna v mount in ps).
+@Test func davOnlyForTheMountingAgent() {
+    let agent: (pid_t) -> Bool = { $0 == 100 }
+    // med priklopom: prvi sistemski webdavfs_agent je izbran
+    #expect(ShareHub.davClaim(nil, mounting: true, find: { 100 }, owns: { _ in false }, isAgent: agent) == 100)
+    // brez priklopa routerja (agent je sam pognal mount_webdav s skrivnostjo): zavrnjeno
+    #expect(ShareHub.davClaim(nil, mounting: false, find: { 100 }, owns: { _ in true }, isAgent: agent) == nil)
+    // drug proces (curl agenta, drug uporabnik) tudi med priklopom: zavrnjeno
+    #expect(ShareHub.davClaim(nil, mounting: true, find: { 200 }, owns: { _ in true }, isAgent: agent) == nil)
+    // po izbiri: le isti proces na povezavi
+    #expect(ShareHub.davClaim(100, mounting: false, find: { 100 }, owns: { $0 == 100 }, isAgent: agent) == 100)
+    #expect(ShareHub.davClaim(100, mounting: false, find: { 200 }, owns: { _ in false }, isAgent: agent) == nil)
+    // pravi proces: ta testni program ni webdavfs_agent
+    #expect(!PeerProcess.isWebDAVAgent(getpid()))
+}

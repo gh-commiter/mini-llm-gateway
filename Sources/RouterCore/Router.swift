@@ -122,8 +122,11 @@ public final class Router: Sendable {
                 return (404, nil, nil)
             }
             let secret = String(req.path.dropFirst(5).prefix { $0 != "/" })
+            let peerPort = req.peerPort, port = config.port
+            let peer = ShareHub.DAVPeer.process(find: { PeerProcess.pid(localPort: peerPort, remotePort: port) },
+                                                owns: { PeerProcess.owns($0, localPort: peerPort, remotePort: port) })
             guard let r = await Self.shares.dav(secret: secret, method: req.method, path: req.path,
-                                                headers: req.headers, body: req.body) else {
+                                                headers: req.headers, body: req.body, peer: peer) else {
                 try? await writer.write(HTTPResponse.head(status: 404, headers: [], contentLength: 0))
                 return (404, nil, nil)
             }

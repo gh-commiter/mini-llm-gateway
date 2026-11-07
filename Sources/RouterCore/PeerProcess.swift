@@ -24,6 +24,35 @@ public enum PeerProcess {
         return "cannot check the parent processes of the client"
     }
 
+    /// Pot izvršljive datoteke procesa (jedro, ni mogoče ponarediti).
+    static func path(_ pid: pid_t) -> String? {
+        var buf = [CChar](repeating: 0, count: 4096)
+        return proc_pidpath(pid, &buf, UInt32(buf.count)) > 0 ? String(cString: buf) : nil
+    }
+
+    /// Sistemski webdavfs_agent (pod SIP): edini, ki sme priklopiti mapo odjemalca.
+    static func isWebDAVAgent(_ pid: pid_t) -> Bool {
+        guard let p = path(pid) else { return false }
+        return (p.hasPrefix("/System/") || p.hasPrefix("/usr/libexec/") || p.hasPrefix("/usr/sbin/")) && p.split(separator: "/").last == "webdavfs_agent"
+    }
+
+    /// Ali ima ta proces vtičnico TCP lokalna → oddaljena vrata (hitro preverjanje enega procesa).
+    static func owns(_ pid: pid_t, localPort: UInt16, remotePort: UInt16) -> Bool {
+        let size = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, nil, 0)
+        guard size > 0 else { return false }
+        var fds = [proc_fdinfo](repeating: proc_fdinfo(), count: Int(size) / MemoryLayout<proc_fdinfo>.stride + 8)
+        let got = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, &fds, Int32(fds.count * MemoryLayout<proc_fdinfo>.stride))
+        let infoSize = Int32(MemoryLayout<socket_fdinfo>.size)
+        for fd in fds.prefix(max(0, Int(got)) / MemoryLayout<proc_fdinfo>.stride) where fd.proc_fdtype == PROX_FDTYPE_SOCKET {
+            var si = socket_fdinfo()
+            guard proc_pidfdinfo(pid, fd.proc_fd, PROC_PIDFDSOCKETINFO, &si, infoSize) == infoSize, si.psi.soi_kind == SOCKINFO_TCP else { continue }
+            let ini = si.psi.soi_proto.pri_tcp.tcpsi_ini
+            if UInt16(bigEndian: UInt16(truncatingIfNeeded: ini.insi_lport)) == localPort,
+               UInt16(bigEndian: UInt16(truncatingIfNeeded: ini.insi_fport)) == remotePort { return true }
+        }
+        return false
+    }
+
     static func pid(localPort: UInt16, remotePort: UInt16) -> pid_t? {
         let all = Set(pids(localPort: localPort, remotePort: remotePort))
         return all.count == 1 ? all.first : nil

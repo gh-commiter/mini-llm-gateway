@@ -439,6 +439,9 @@ item (the admin secret); `minigw` talks to the app only after the app proves its
   **Allow unencrypted connections from other Macs** (for other clients, on a trusted network).
 - With a remote gateway, `minigw` gives the gateway Mac read and write access to the current folder while it runs
   (nothing outside it). Use it only with a gateway Mac you trust.
+- The gateway Mac mounts a shared folder with macOS's own WebDAV client. The mount URL contains a secret that local
+  processes can see (`mount`, `ps`), so the gateway serves a mount only to the system `webdavfs_agent` process that
+  its own mount started: an agent or another local user with the URL is refused.
 - The Siri provider uses Accessibility UI automation of the Siri AI app. It only touches that app, but
   Accessibility is a powerful permission.
 

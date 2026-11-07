@@ -33,6 +33,7 @@ public actor ShareHub {
         var lastSeen = Date()
         var mountPoint: URL?
         var mounting: Task<URL?, Never>?
+        var davPID: pid_t?  // webdavfs_agent, ki je priklopil to mapo (#7): le on sme v /dav/<skrivnost>
         var props: [String: (DAVResponse, Date)] = [:]  // predpomnilnik PROPFIND (kot dir_refresh pri davfs2)
         var writeCount = 0                                // pisanje med čakajočim PROPFIND: odgovora ne shrani
         let copy: URL?                                    // sync: kopija na routerju namesto priklopa
@@ -180,8 +181,25 @@ public actor ShareHub {
 
     // MARK: mount_webdav (lokalno)
 
-    func dav(secret: String, method: String, path: String, headers: [String: String], body: Data) async -> DAVResponse? {
+    /// Proces, ki sme v /dav te mape (nil = zavrni): že izbrani webdavfs_agent, ali med priklopom routerja prvi sistemski
+    /// webdavfs_agent na povezavi. Agent, ki sam pokliče mount_webdav s prebrano skrivnostjo, dobi drug proces.
+    static func davClaim(_ claimed: pid_t?, mounting: Bool, find: () -> pid_t?, owns: (pid_t) -> Bool, isAgent: (pid_t) -> Bool) -> pid_t? {
+        if let claimed { return owns(claimed) ? claimed : nil }
+        guard mounting, let pid = find(), isAgent(pid) else { return nil }
+        return pid
+    }
+
+    /// Kdo kliče /dav: `find` vrne edini proces na povezavi (počasno: vsi procesi), `owns(pid)` hitro preveri znanega.
+    enum DAVPeer { case unchecked, process(find: @Sendable () -> pid_t?, owns: @Sendable (pid_t) -> Bool) }
+
+    func dav(secret: String, method: String, path: String, headers: [String: String], body: Data, peer: DAVPeer = .unchecked) async -> DAVResponse? {
         guard let s = bySession.values.first(where: { $0.secret == secret }) else { return nil }
+        // #7: skrivnost je v URL priklopa (mount, ps): agent ali drug uporabnik bi z njo dosegel tujo mapo. Mapo sme brati
+        // le sistemski webdavfs_agent, ki ga je med priklopom zagnal router (prvi med priklopom), nato samo on.
+        if case .process(let find, let owns) = peer {
+            guard let pid = Self.davClaim(s.davPID, mounting: s.mounting != nil, find: find, owns: owns, isAgent: PeerProcess.isWebDAVAgent) else { return nil }
+            s.davPID = pid
+        }
         // Vsak PROPFIND je pot router → odjemalec → nazaj; agenti (rg, find) jih pošljejo na tisoče.
         // ponytail: 10 s TTL in praznjenje ob pisanju prek priklopa; spremembe mimo priklopa vidne z do 10 s zamude.
         let cacheKey = method == "PROPFIND" ? [path, headers["depth"] ?? "", String(body.hashValue)].joined(separator: "|") : nil
@@ -243,6 +261,7 @@ public actor ShareHub {
         }
         if let mp = s.mountPoint, Self.isMounted(mp) { return mp }
         if let t = s.mounting { return await t.value }
+        s.davPID = nil  // nov priklop: nov webdavfs_agent
         let mp = Self.mountsDir.appendingPathComponent(s.dir, isDirectory: true)
         let url = "\(base)/dav/\(s.secret)/", name = URL(fileURLWithPath: s.cwd).lastPathComponent
         let options = s.readOnly ? ["-o", "rdonly"] : []
