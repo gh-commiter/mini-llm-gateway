@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Namestitveni paket za Windows (wixl, brew msitools): na uporabnika, brez skrbniških pravic. Naredi isto kot
+     minigw serve install (mapa, PATH, vrednost Run z istim imenom in ukazom, zagon pladnja), a tabele MSI to ob
+     odstranitvi tudi pospravijo. Nastavitve (%AppData%\minigw) in ključi ostanejo. Gradi scripts/build-msi.sh. -->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*" Name="Mini Gateway" Version="$(var.Version)" Manufacturer="Mini Gateway" Language="1033"
+           UpgradeCode="5B0B7C3E-6E0B-4C64-9D2C-7E1F4A8B2C10">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perUser"/>
+    <MajorUpgrade DowngradeErrorMessage="A newer Mini Gateway is already installed."/>
+    <Media Id="1" Cabinet="minigw.cab" EmbedCab="yes"/>
+    <Icon Id="tray.ico" SourceFile="$(var.Icon)"/>
+    <Property Id="ARPPRODUCTICON" Value="tray.ico"/>
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="LocalAppDataFolder">
+        <Directory Id="ProgramsDir" Name="Programs">
+          <Directory Id="INSTALLDIR" Name="Mini Gateway"/>
+        </Directory>
+      </Directory>
+      <Directory Id="ProgramMenuFolder"/>
+    </Directory>
+    <DirectoryRef Id="INSTALLDIR">
+      <Component Id="Main" Guid="*">
+        <RegistryValue Root="HKCU" Key="Software\Mini Gateway" Name="InstallDir" Type="string" Value="[INSTALLDIR]" KeyPath="yes"/>
+        <File Id="minigw" Name="minigw.exe" Source="$(var.Exe)"/>
+        <File Id="tray" Name="minigw-tray.exe" Source="$(var.Tray)"/>
+        <!-- Kot serviceText("windows", …) v serve_install.go: serve install, status in meni pladnja ga prepoznajo. -->
+        <RegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run" Name="MiniGatewayRouter" Type="string"
+                       Value="&quot;[INSTALLDIR]minigw-tray.exe&quot; tray --config &quot;[AppDataFolder]minigw\serve.json&quot;"/>
+        <!-- »-«: ob odstranitvi le naš del uporabniškega PATH -->
+        <Environment Id="Path" Name="-PATH" Value="[INSTALLDIR]" Part="last" Action="set" System="no" Permanent="no"/>
+        <Shortcut Id="StartMenu" Directory="ProgramMenuFolder" Name="Mini Gateway" Target="[INSTALLDIR]minigw-tray.exe"
+                  Arguments="tray" WorkingDirectory="INSTALLDIR" Icon="tray.ico"/>
+        <RemoveFolder Id="RemoveInstallDir" On="uninstall"/>
+      </Component>
+    </DirectoryRef>
+    <Feature Id="All" Level="1"><ComponentRef Id="Main"/></Feature>
+
+    <!-- Pred zamenjavo ali odstranitvijo datotek zapri pladenj: WM_CLOSE (taskkill brez /F, kot closeRunningTray),
+         5 s, nato /F; orodja z absolutno potjo (L1: cmd sicer najprej išče v trenutni mapi). Stari minigw.exe (0.5.17) tega ukaza še nima, zato cmd in ne minigw. wixl ne pozna
+         Directory= pri CustomAction: pot do cmd.exe je v lastnosti (tip 51 + 50). -->
+    <CustomAction Id="SetCmd" Property="CMDEXE" Value="[SystemFolder]cmd.exe"/>
+    <CustomAction Id="CloseTray" Property="CMDEXE" Return="ignore" Execute="immediate"
+                  ExeCommand="/c &quot;[SystemFolder]tasklist.exe /FI &quot;IMAGENAME eq minigw-tray.exe&quot; 2&gt;nul | [SystemFolder]find.exe /I &quot;minigw-tray.exe&quot; &gt;nul &amp;&amp; ([SystemFolder]taskkill.exe /IM minigw-tray.exe &gt;nul 2&gt;&amp;1 &amp; [SystemFolder]PING.EXE -n 6 127.0.0.1 &gt;nul &amp; [SystemFolder]taskkill.exe /F /IM minigw-tray.exe &gt;nul 2&gt;&amp;1)&quot;"/>
+    <!-- Po namestitvi zaženi pladenj; ob prvem zagonu sam ustvari serve.json in pokaže, kje je vrstica za povezavo. -->
+    <CustomAction Id="StartTray" FileKey="tray" ExeCommand="tray --config &quot;[AppDataFolder]minigw\serve.json&quot;" Return="asyncNoWait" Impersonate="yes"/>
+    <InstallExecuteSequence>
+      <Custom Action="SetCmd" After="CostFinalize"/>
+      <Custom Action="CloseTray" After="SetCmd"/>
+      <Custom Action="StartTray" After="InstallFinalize">NOT (REMOVE~="ALL")</Custom>
+    </InstallExecuteSequence>
+  </Product>
+</Wix>
