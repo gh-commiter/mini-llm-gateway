@@ -263,15 +263,16 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
 @Test func nativeRunIsSandboxedAndEndsWithItsGroup() async throws {
     let f = try nativeFixture()
     defer { try? FileManager.default.removeItem(at: f.root) }
-    let on = nativeRouter(f.project.path, devices: [DeviceConfig(id: "dev", name: "Air", run: true)])
+    // lastna naprava: Router.natives je skupen, testi tečejo vzporedno (največ 2 run na napravo)
+    let on = nativeRouter(f.project.path, devices: [DeviceConfig(id: "dev-sbx", name: "Air", run: true)])
     let outside = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".minigw-sandbox-test-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: outside) }
     func run(_ script: String) async -> FakeWriter {
-        let c = await challenge(on, f, device: "dev")
+        let c = await challenge(on, f, device: "dev-sbx")
         let proof = Native.readMarker(f.project.appendingPathComponent(c.file)) ?? ""
         let body = String(decoding: try! JSONSerialization.data(withJSONObject: ["argv": ["sh", "-c", script]]), as: UTF8.self)
         let w = FakeWriter()
-        await on.handle(nativeReq("POST", "/minigw/run", ["x-native-id": c.id, "x-native-proof": proof], body, device: "dev"), writer: w)
+        await on.handle(nativeReq("POST", "/minigw/run", ["x-native-id": c.id, "x-native-proof": proof], body, device: "dev-sbx"), writer: w)
         return w
     }
     let w = await run("echo in > inside.txt; echo out > '\(outside.path)'; echo $?")
