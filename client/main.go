@@ -14,8 +14,10 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 )
@@ -58,31 +60,13 @@ func fail(s string, code ...int) {
 	os.Exit(1)
 }
 
-func loadConnection() *connection {
-	data, err := storeLoad()
-	if err != nil {
-		return nil
-	}
-	var c connection
-	if json.Unmarshal(data, &c) != nil {
-		return nil
-	}
-	return &c
-}
-
-func saveConnection(c connection) {
-	data, _ := json.Marshal(c)
-	if err := storeSave(data); err != nil {
-		fail("cannot save the connection to " + storeName + ": " + err.Error())
-	}
-}
-
-func requireConnection() connection {
-	c := loadConnection()
-	if c == nil {
+// requireProfile: profil tega ukaza (--minigw-profile ali privzeti).
+func requireProfile() profile {
+	ps := loadProfiles()
+	if len(ps) == 0 {
 		fail("not connected; run: minigw connect <host[:port]> --token '<token>'")
 	}
-	return *c
+	return ps[0]
 }
 
 // normalize: »192.168.1.20«, »192.168.1.20:8765«, »mini.local«, »http://…« → osnovni URL.
@@ -131,37 +115,93 @@ func clientInfo() string {
 
 var proxy *noiseProxy
 
-// route: oddaljen router → vse gre šifrirano prek lokalnega proxyja; lokalno navaden HTTP.
-func route(c connection) connection {
-	if c.isLocal() {
-		return c
+// route: oddaljen prehod → vse gre šifrirano prek lokalnega proxyja; lokalno navaden HTTP.
+func route(p profile) connection {
+	c, err := routeErr(p)
+	if err != nil {
+		fail(err.Error())
+	}
+	return c
+}
+
+func routeErr(p profile) (connection, error) {
+	c := p.conn
+	if c.isLocal() && c.Key == nil { // L3: s ključem prehoda tudi lokalno šifrirano (drug lokalni uporabnik na vratih ne dobi žetona)
+		return c, nil
 	}
 	if c.Key == nil {
-		fail("no gateway key: copy the token again (Mini Gateway → Copy Token) and run minigw connect")
+		return c, fmt.Errorf("no gateway key for profile %s: copy the token again (Mini Gateway → Copy Token) and run minigw connect", p.name)
 	}
 	key, err := fromBase64url(*c.Key)
 	if err != nil || len(key) != 32 {
-		fail("invalid gateway key: copy the token again (Mini Gateway → Copy Token)")
+		return c, fmt.Errorf("invalid gateway key for profile %s: copy the token again (Mini Gateway → Copy Token)", p.name)
 	}
-	if c.Device == nil { // povezava brez ključa naprave: ustvari ga zdaj
-		d := newDeviceKey()
-		c.Device = &d
-		saveConnection(c)
+	if c.Device == nil { // povezava brez ključa naprave: en ključ za ves odjemalec
+		if c.Device = anyDevice(); c.Device == nil {
+			d := newDeviceKey()
+			c.Device = &d
+		}
+		saveProfile(p.name, c)
 	}
 	var dev *device
 	if seed, err := fromBase64url(*c.Device); err == nil && len(seed) == ed25519.SeedSize {
 		dev = &device{key: ed25519.NewKeyFromSeed(seed), name: deviceName()}
 	}
-	p, err := newNoiseProxy(c.URL, key, dev)
+	np, err := newNoiseProxy(c.URL, key, dev)
 	if err == nil {
-		err = p.start()
+		err = np.start()
 	}
 	if err != nil {
-		fail("cannot start the local encrypted proxy: " + err.Error())
+		return c, fmt.Errorf("cannot start the local encrypted proxy: %v", err)
 	}
-	proxy = p
-	c.URL = p.localURL()
-	return c
+	c.URL = np.localURL()
+	return c, nil
+}
+
+// profileStatus: naslov, dosegljivost, ponudniki in število modelov enega profila; true = dosegljiv.
+func profileStatus(p profile) bool {
+	c, err := routeErr(p)
+	if err != nil {
+		say("Gateway:   " + p.conn.URL + " (" + err.Error() + ")")
+		return false
+	}
+	st, ready := getJSON(c, "/health/ready")
+	state := fmt.Sprintf("HTTP %d", st)
+	if st == 200 {
+		state = "reachable"
+	} else if st == 0 {
+		state = "unreachable"
+	}
+	if !p.conn.isLocal() || p.conn.Key != nil {
+		state += ", encrypted"
+	}
+	say("Gateway:   " + p.conn.URL + " (" + state + ")")
+	if pr, ok := ready["providers"].(map[string]any); ok {
+		names := make([]string, 0, len(pr))
+		for k := range pr {
+			names = append(names, k)
+		}
+		sort.Strings(names)
+		out := []string{}
+		for _, k := range names {
+			mark := "✗"
+			if v, _ := pr[k].(bool); v {
+				mark = "✓"
+			}
+			out = append(out, k+" "+mark)
+		}
+		say("Providers: " + strings.Join(out, ", "))
+	}
+	ms, models := getJSON(c, "/v1/models")
+	count := "–"
+	if ms == 200 {
+		d, _ := models["data"].([]any)
+		count = fmt.Sprint(len(d))
+	} else if ms == 401 {
+		count = "token rejected"
+	}
+	say("Models:    " + count)
+	return st == 200
 }
 
 func getJSON(c connection, path string) (int, map[string]any) {
@@ -176,6 +216,22 @@ func main() {
 	if isTrayExe(os.Args[0]) { // minigw-tray.exe: router z ikono v območju za obvestila
 		trayCommand(args)
 		return
+	}
+	for i := 0; i < len(args); i++ { // --minigw-profile <ime>: cel ukaz le s tem prehodom (#17)
+		if args[i] == "--minigw-profile" && i+1 >= len(args) {
+			fail("--minigw-profile needs a profile name")
+		}
+		if v, ok := strings.CutPrefix(args[i], "--minigw-profile="); ok || args[i] == "--minigw-profile" {
+			n := 2
+			if ok {
+				n = 1
+			} else {
+				v = args[i+1]
+			}
+			profileFlag = v
+			args = append(args[:i], args[i+n:]...)
+			i--
+		}
 	}
 	first := ""
 	if len(args) > 0 {
@@ -215,19 +271,27 @@ func main() {
 		os.Exit(runCommand(args[1:]))
 	case "connect":
 		if len(args) < 2 {
-			fail("usage: minigw connect <host[:port]> [--token '<token>' | --token -]   (- reads it from stdin)")
+			fail("usage: minigw connect <host[:port]> [--name <profile>] [--token '<token>' | --token -]   (- reads it from stdin)")
 		}
-		saved := loadConnection()
+		names := profileNames()
+		name := defaultName(names) // brez --name: zamenja privzeti profil (kot prej edino povezavo)
 		token := ""
-		if saved != nil {
-			token = saved.Token
-			if saved.Key != nil {
-				token += "#" + *saved.Key
-			}
-		}
 		for i, a := range args {
 			if a == "--token" && i+1 < len(args) {
 				token = args[i+1]
+			}
+			if a == "--name" && i+1 < len(args) {
+				name = args[i+1]
+			}
+		}
+		if !validProfile(name) {
+			fail("invalid --name " + name + " (lowercase letters, digits and -, up to 32)")
+		}
+		saved := loadProfile(name)
+		if saved != nil && token == "" {
+			token = saved.Token
+			if saved.Key != nil {
+				token += "#" + *saved.Key
 			}
 		}
 		if token == "-" { // F3: s stdin (cev) ali s terminala brez odmeva, ne v argv
@@ -245,25 +309,27 @@ func main() {
 		if len(parts) > 1 {
 			c.Key = &parts[1]
 		}
-		if saved != nil && saved.Device != nil {
-			c.Device = saved.Device
-		} else {
+		if c.Device = anyDevice(); c.Device == nil { // en ključ naprave za vse profile
 			d := newDeviceKey()
 			c.Device = &d
 		}
-		st, m := getJSON(route(c), "/v1/models")
+		as := ""
+		if name != defaultProfile || slices.ContainsFunc(names, func(n string) bool { return n != defaultProfile }) {
+			as = " as profile " + name
+		}
+		st, m := getJSON(route(profile{name, c}), "/v1/models")
 		switch {
 		case st == 200:
-			saveConnection(c)
+			saveProfile(name, c)
 			enc := ""
-			if !c.isLocal() {
+			if !c.isLocal() || c.Key != nil {
 				enc = " (encrypted)"
 			}
-			say("Connected to " + c.URL + enc)
+			say("Connected to " + c.URL + enc + as)
 		case st == 401:
 			fail("gateway at " + c.URL + " rejected the token")
 		case st == 403: // naprava še ni dovoljena: ključ naprave ostane, da ga router lahko doda
-			saveConnection(c)
+			saveProfile(name, c)
 			e, _ := m["error"].(map[string]any)
 			msg, _ := e["message"].(string)
 			fail("gateway at " + c.URL + " refused this device: " + clean(msg) + "\nthen run minigw connect again")
@@ -279,74 +345,92 @@ func main() {
 		return
 
 	case "disconnect":
-		storeDelete()
-		say("Disconnected")
+		name := requireProfile().name
+		for i, a := range args {
+			if a == "--name" && i+1 < len(args) {
+				name = args[i+1]
+			}
+		}
+		if !validProfile(name) || loadProfile(name) == nil { // L1: ime gre v pot ali ime poverilnice
+			fail("no profile " + name)
+		}
+		storeDelete(name)
+		if len(profileNames()) == 0 && name == defaultProfile {
+			say("Disconnected")
+		} else {
+			say("Disconnected profile " + name)
+		}
+		return
+
+	case "profiles":
+		profilesCommand(args[1:])
 		return
 
 	case "status":
-		saved := requireConnection()
-		c := route(saved)
-		st, ready := getJSON(c, "/health/ready")
-		state := fmt.Sprintf("HTTP %d", st)
-		if st == 200 {
-			state = "reachable"
-		} else if st == 0 {
-			state = "unreachable"
+		ps := loadProfiles()
+		if len(ps) == 0 {
+			requireProfile()
 		}
-		if !saved.isLocal() {
-			state += ", encrypted"
-		}
-		say("Gateway:   " + saved.URL + " (" + state + ")")
-		if p, ok := ready["providers"].(map[string]any); ok {
-			names := make([]string, 0, len(p))
-			for k := range p {
-				names = append(names, k)
-			}
-			sort.Strings(names)
-			out := []string{}
-			for _, k := range names {
-				mark := "✗"
-				if v, _ := p[k].(bool); v {
-					mark = "✓"
+		ok := true
+		for i, p := range ps {
+			if len(ps) > 1 {
+				if i > 0 {
+					say("")
 				}
-				out = append(out, k+" "+mark)
+				say("Profile:   " + p.name + map[bool]string{true: " (default: its models also appear without @" + p.name + ")", false: ""}[i == 0])
 			}
-			say("Providers: " + strings.Join(out, ", "))
+			if !profileStatus(p) && i == 0 {
+				ok = false
+			}
 		}
-		ms, models := getJSON(c, "/v1/models")
-		count := "–"
-		if ms == 200 {
-			d, _ := models["data"].([]any)
-			count = fmt.Sprint(len(d))
-		} else if ms == 401 {
-			count = "token rejected"
-		}
-		say("Models:    " + count)
-		if st != 200 {
+		if !ok {
 			os.Exit(1)
 		}
 		return
 
 	case "models":
-		c := route(requireConnection())
-		st, models := getJSON(c, "/v1/models")
-		data, _ := models["data"].([]any)
-		if st != 200 || data == nil {
-			if st == 401 {
-				fail("token rejected")
+		ps := loadProfiles()
+		if len(ps) == 0 {
+			requireProfile()
+		}
+		var data []map[string]any
+		if len(ps) == 1 {
+			st, models := getJSON(route(ps[0]), "/v1/models")
+			raw, _ := models["data"].([]any)
+			if st != 200 || raw == nil {
+				if st == 401 {
+					fail("token rejected")
+				}
+				fail(fmt.Sprintf("cannot list models (HTTP %d)", st))
 			}
-			fail(fmt.Sprintf("cannot list models (HTTP %d)", st))
+			for _, m := range raw {
+				mm, _ := m.(map[string]any)
+				data = append(data, mm)
+			}
+		} else {
+			lists, names := make([][]map[string]any, len(ps)), make([]string, len(ps))
+			for i, p := range ps {
+				names[i] = p.name
+				if c, err := routeErr(p); err == nil {
+					lists[i] = fetchModels(c)
+				}
+				if lists[i] == nil {
+					fmt.Fprintln(os.Stderr, "minigw: gateway "+p.name+" ("+p.conn.URL+") is not reachable; its models are left out")
+				}
+			}
+			if data = mergeModels(lists, names); data == nil {
+				fail("no gateway is reachable (minigw status)")
+			}
 		}
 		width := 0
 		for _, m := range data {
-			if id, _ := m.(map[string]any)["id"].(string); len(id) > width {
+			if id, _ := m["id"].(string); len(id) > width {
 				width = len(id)
 			}
 		}
 		for _, m := range data {
-			mm, _ := m.(map[string]any)
-			id, _ := mm["id"].(string)
-			desc, _ := mm["description"].(string)
+			id, _ := m["id"].(string)
+			desc, _ := m["description"].(string)
 			say(fmt.Sprintf("%-*s  %s", width, id, desc))
 		}
 		return
@@ -355,8 +439,10 @@ func main() {
 		if first == "-v" || first == "--version" {
 			say("minigw " + version)
 		} else {
-			say("minigw connect <host[:port]> [--token T|-]  save gateway address and token (" + storeName + "; - = stdin)\n" +
-				"minigw status | models | disconnect\n" +
+			say("minigw connect <host[:port]> [--name P] [--token T|-]  save a gateway as profile P (" + storeName + "; - = stdin)\n" +
+				"minigw status | models | disconnect [--name P]   all profiles; models of other profiles end in @P\n" +
+				"minigw profiles [default P]                list profiles, or pick the default (its models also without @P)\n" +
+				"minigw --minigw-profile P …                 use only profile P for this command\n" +
 				"minigw share add|remove [folder] | list    also share a system or hidden folder with the gateway\n" +
 				"minigw share add --work=native|sync|direct [--ro] [folder]   default mode for that folder (flag/env wins)\n" +
 				"minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)\n" +
@@ -404,8 +490,12 @@ func main() {
 	if (asked == "native" || asked == "worktree") && work != asked {
 		fmt.Fprintln(os.Stderr, "minigw: "+asked+" mode cannot be read-only; sharing read-only over the network instead")
 	}
-	saved := requireConnection()
-	c := route(saved)
+	ps := loadProfiles()
+	if len(ps) == 0 {
+		requireProfile()
+	}
+	saved := ps[0].conn // privzeti profil: mapa, glave in modeli brez pripone kot prej
+	c := route(ps[0])
 	env := []string{
 		"ANTHROPIC_BASE_URL=" + c.URL,
 		"ANTHROPIC_AUTH_TOKEN=" + c.Token,
@@ -468,17 +558,8 @@ func main() {
 		if work == "worktree" && top == "" {
 			fmt.Fprintln(os.Stderr, "minigw: "+cwd+" is not in a git repository; worktree mode is not possible")
 		}
-		ok := false
-		for i, w := range tries {
-			share = &shareClient{c: c, session: sid, root: cwd, readOnly: readOnly, sync: w == "sync", native: w == "native",
-				worktree: w == "worktree", top: top, synced: map[string]syncEntry{}, reported: map[string]bool{}}
-			if ok = share.register(); ok {
-				break
-			}
-			if i+1 < len(tries) {
-				fmt.Fprintln(os.Stderr, "minigw: "+w+" mode not available: "+clean(share.refusal)+"; trying "+tries[i+1])
-			}
-		}
+		var ok bool
+		share, ok = registerShare(c, sid, cwd, readOnly, top, tries, false)
 		if ok && share.worktree {
 			share.start(4)
 			fmt.Fprintf(os.Stderr, "minigw: agent models work in a clone of this git repository on %s; their work comes back as branches minigw/… (worktree)\n", routerHost)
@@ -510,9 +591,67 @@ func main() {
 		}
 		fmt.Fprintf(os.Stderr, "minigw: %s is not shared with the gateway%s, so agent models (Codex, Claude CLI, Grok) cannot see it; to share it run: minigw share add (or MINIGW_SHARE=1 for this run)\n", cwd, why)
 	}
+	// Več profilov: lokalni usmerjevalnik pred Claude Code; mapa pri drugem prehodu ob prvi zahtevi zanj (#17).
+	var mu sync.Mutex
+	var extra []*shareClient
+	if len(ps) > 1 {
+		targets := []*muxTarget{{name: ps[0].name, conn: c}}
+		for _, p := range ps[1:] {
+			rc, err := routeErr(p)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "minigw: "+err.Error()+"; its models are left out")
+				continue
+			}
+			t := &muxTarget{name: p.name, conn: rc}
+			if sid != "" && shareWanted(cwd, p.conn.isLocal()) {
+				t.share = func() bool {
+					sc, ok := registerShare(rc, sid, cwd, readOnly, top, workCandidates(work, readOnly, work == "auto" && smb, top != ""), true)
+					if !ok {
+						fmt.Fprintln(os.Stderr, "minigw: gateway "+p.name+" did not accept the folder: "+clean(sc.refusal))
+						return false
+					}
+					sc.start(4)
+					mu.Lock()
+					extra = append(extra, sc)
+					mu.Unlock()
+					return true
+				}
+			}
+			targets = append(targets, t)
+		}
+		if len(targets) > 1 {
+			mux := newGatewayMux(targets)
+			if err := mux.start(); err != nil {
+				fail("cannot start minigw's local proxy: " + err.Error())
+			}
+			env[0], env[1] = "ANTHROPIC_BASE_URL="+mux.url(), "ANTHROPIC_AUTH_TOKEN="+mux.secret
+			fmt.Fprintf(os.Stderr, "minigw: %d gateways; models of %s also without a suffix, the others as <model>@<profile> (minigw models)\n", len(targets), ps[0].name)
+		}
+	}
 	code := runClaude(args, env)
 	share.unregister()
+	mu.Lock()
+	for _, sc := range extra {
+		sc.unregister()
+	}
+	mu.Unlock()
 	os.Exit(code)
+}
+
+// registerShare: načini po vrsti (auto: native → worktree → sync); naslednji, če prehod prejšnjega ne sprejme.
+func registerShare(c connection, sid, cwd string, readOnly bool, top string, tries []string, quiet bool) (*shareClient, bool) {
+	sc := &shareClient{c: c, session: sid, root: cwd, readOnly: readOnly, synced: map[string]syncEntry{}, reported: map[string]bool{}}
+	for i, w := range tries {
+		sc = &shareClient{c: c, session: sid, root: cwd, readOnly: readOnly, sync: w == "sync", native: w == "native",
+			worktree: w == "worktree", top: top, synced: map[string]syncEntry{}, reported: map[string]bool{}}
+		if sc.register() {
+			return sc, true
+		}
+		if i+1 < len(tries) && !quiet {
+			fmt.Fprintln(os.Stderr, "minigw: "+w+" mode not available: "+clean(sc.refusal)+"; trying "+tries[i+1])
+		}
+	}
+	return sc, false
 }
 
 // shareWanted: mapo deli le z oddaljenim routerjem in le pod domačo mapo (nikoli cele domače mape,

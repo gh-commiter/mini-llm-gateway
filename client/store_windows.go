@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 	"unsafe"
@@ -34,12 +35,13 @@ type credential struct {
 }
 
 var (
-	advapi32    = syscall.NewLazyDLL("advapi32.dll")
-	procWrite   = advapi32.NewProc("CredWriteW")
-	procRead    = advapi32.NewProc("CredReadW")
-	procDelete  = advapi32.NewProc("CredDeleteW")
-	procFree    = advapi32.NewProc("CredFree")
-	errNotFound = errors.New("not found")
+	advapi32      = syscall.NewLazyDLL("advapi32.dll")
+	procWrite     = advapi32.NewProc("CredWriteW")
+	procRead      = advapi32.NewProc("CredReadW")
+	procDelete    = advapi32.NewProc("CredDeleteW")
+	procFree      = advapi32.NewProc("CredFree")
+	procEnumerate = advapi32.NewProc("CredEnumerateW")
+	errNotFound   = errors.New("not found")
 )
 
 const (
@@ -47,9 +49,55 @@ const (
 	credPersistLocalMachine = 2
 )
 
-func storeLoad() ([]byte, error)  { return credLoad(credTarget) }
-func storeSave(data []byte) error { return credSave(credTarget, data) }
-func storeDelete()                { credDelete(credTarget) }
+// credTargetFor: profil »default« je prejšnja edina povezava (minigw:router), drugi minigw:router:<ime> (#17).
+func credTargetFor(name string) string {
+	if name == defaultProfile {
+		return credTarget
+	}
+	return credTarget + ":" + name
+}
+
+// Neveljavno ime (L1) nikoli ne doseže poverilnice: ».." ali »x:y« bi zadela drug cilj.
+func storeLoad(name string) ([]byte, error) {
+	if !validProfile(name) {
+		return nil, errNotFound
+	}
+	return credLoad(credTargetFor(name))
+}
+
+func storeSave(name string, data []byte) error {
+	if !validProfile(name) {
+		return errors.New("invalid profile name")
+	}
+	return credSave(credTargetFor(name), data)
+}
+
+func storeDelete(name string) {
+	if validProfile(name) {
+		credDelete(credTargetFor(name))
+	}
+}
+
+// storeNames: imena profilov iz Credential Manager (CredEnumerateW s filtrom minigw:router*).
+func storeNames() []string {
+	filter, _ := syscall.UTF16PtrFromString(credTarget + "*")
+	var n uint32
+	var list **credential
+	if r, _, _ := procEnumerate.Call(uintptr(unsafe.Pointer(filter)), 0, uintptr(unsafe.Pointer(&n)), uintptr(unsafe.Pointer(&list))); r == 0 {
+		return nil
+	}
+	defer procFree.Call(uintptr(unsafe.Pointer(list)))
+	var out []string
+	for _, c := range unsafe.Slice(list, n) {
+		t := syscall.UTF16ToString(unsafe.Slice(c.TargetName, wcslen(c.TargetName)))
+		if t == credTarget {
+			out = append(out, defaultProfile)
+		} else if name, ok := strings.CutPrefix(t, credTarget+":"); ok && validProfile(name) && name != defaultProfile {
+			out = append(out, name)
+		}
+	}
+	return out
+}
 
 func credLoad(name string) ([]byte, error) {
 	target, _ := syscall.UTF16PtrFromString(name)
@@ -145,6 +193,33 @@ func regRunSet(name, value string) error {
 		return syscall.Errno(r)
 	}
 	return nil
+}
+
+// msiexecPath: msiexec.exe iz sistemske mape (GetSystemDirectoryW), ne iz PATH (L5).
+func msiexecPath() string {
+	buf := make([]uint16, 260)
+	if n, _, _ := kernel32.NewProc("GetSystemDirectoryW").Call(uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf))); n > 0 && int(n) < len(buf) {
+		return filepath.Join(syscall.UTF16ToString(buf[:n]), "msiexec.exe")
+	}
+	return filepath.Join(os.Getenv("SystemRoot"), "System32", "msiexec.exe")
+}
+
+// msiInstallDir: mapa namestitve MSI (HKCU\Software\Mini Gateway\InstallDir, zapiše jo minigw.wxs); "" brez MSI.
+// Ključa ne ustvari (RegOpenKeyExW, ne RegCreateKeyExW).
+func msiInstallDir() string {
+	sub, _ := syscall.UTF16PtrFromString(`Software\Mini Gateway`)
+	var h uintptr
+	if r, _, _ := advapi32.NewProc("RegOpenKeyExW").Call(0x80000001, uintptr(unsafe.Pointer(sub)), 0, 0x0001 /* KEY_QUERY_VALUE */, uintptr(unsafe.Pointer(&h))); r != 0 {
+		return ""
+	}
+	defer procRegClose.Call(h)
+	n, _ := syscall.UTF16PtrFromString("InstallDir")
+	buf := make([]uint16, 1024)
+	size := uint32(len(buf) * 2)
+	if r, _, _ := procRegQuery.Call(h, uintptr(unsafe.Pointer(n)), 0, 0, uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&size))); r != 0 {
+		return ""
+	}
+	return syscall.UTF16ToString(buf[:size/2])
 }
 
 func regRunGet(name string) (string, error) {

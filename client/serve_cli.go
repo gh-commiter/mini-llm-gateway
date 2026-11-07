@@ -117,7 +117,7 @@ func (s *server) agentArgs(dir string) []string {
 	c := s.conf()
 	dirs := []string{dir} // delovna mapa in dovoljene mape (kot allowedRoots na Macu)
 	for _, f := range c.AllowedFolders {
-		if f != dir {
+		if f != dir && len(scratchOverlaps([]string{f}, c.Scratch)) == 0 { // L1: ne mape okoli Scratch (kot na Macu)
 			dirs = append(dirs, f)
 		}
 	}
@@ -163,12 +163,79 @@ func (s *server) agentArgs(dir string) []string {
 	if runtime.GOOS != "windows" {
 		settings, _ := json.Marshal(map[string]any{"sandbox": map[string]any{
 			"enabled": true, "failIfUnavailable": hasBash(c.Tools) || c.AllowLocalTools, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
-			"network":    map[string]any{"allowedDomains": []string{"*"}},
-			"filesystem": map[string]any{"denyRead": []string{"~", s.cfgDir}, "allowRead": dirs, "allowWrite": dirs},
+			"network": map[string]any{"allowedDomains": []string{"*"}},
+			// M1: Scratch (kopije drugih naprav, zrcala) tudi zunaj domače mape; mapa seje v njem ostane berljiva (allowRead).
+			"filesystem": map[string]any{"denyRead": append([]string{"~", s.cfgDir}, scratchPaths(c.Scratch)...), "allowRead": dirs, "allowWrite": dirs},
 		}})
 		args = append(args, "--settings", string(settings))
 	}
 	return args
+}
+
+// scratchPaths: Scratch dobesedno in kanonično (za denyRead peskovnika Claude).
+func scratchPaths(scratch string) []string {
+	if scratch == "" {
+		return nil
+	}
+	out := []string{scratch}
+	if r, err := filepath.EvalSymlinks(scratch); err == nil && r != scratch {
+		out = append(out, r)
+	}
+	return out
+}
+
+// scratchOverlaps (H1): dovoljene mape, ki vsebujejo Scratch ali so v njem (kanonično).
+func scratchOverlaps(allowed []string, scratch string) []string {
+	if scratch == "" {
+		return nil
+	}
+	sc := realPath(scratch)
+	var bad []string
+	for _, a := range allowed {
+		if ra := realPath(a); under(sc, ra) || under(ra, sc) {
+			bad = append(bad, a)
+		}
+	}
+	return bad
+}
+
+// realPath: kanonično; za pot, ki je še ni, prek najbližje obstoječe nadrejene mape.
+func realPath(p string) string {
+	p, rest := filepath.Clean(p), ""
+	for {
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			return filepath.Join(r, rest)
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return filepath.Join(p, rest)
+		}
+		rest, p = filepath.Join(filepath.Base(p), rest), parent
+	}
+}
+
+// scratchProblem (M1): Scratch ni koren diska, domača mapa ali mapa nad njo, začasna mapa ali mapa v dovoljeni mapi
+// agentov (ali obratno): tam bi agenti brali kopije drugih naprav. "" = v redu.
+func scratchProblem(scratch string, allowed []string) string {
+	real := realPath
+	sc := real(scratch)
+	if filepath.Dir(sc) == sc {
+		return "it is a disk root"
+	}
+	if home, _ := os.UserHomeDir(); home != "" && under(real(home), sc) {
+		return "it is your home folder or contains it"
+	}
+	for _, t := range []string{os.TempDir(), "/tmp", "/var/tmp", "/private/tmp", "/private/var/folders"} {
+		if t != "" && under(sc, real(t)) {
+			return "it is a temporary folder"
+		}
+	}
+	for _, a := range allowed {
+		if ra := real(a); under(sc, ra) || under(ra, sc) {
+			return "it is inside or contains the allowed folder " + a
+		}
+	}
+	return ""
 }
 
 // promptFile: besedilo za --system-prompt-file / --append-system-prompt-file (0600, ne v argv).
@@ -539,13 +606,24 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		"--model", cliModel, "--strict-mcp-config", "--setting-sources", s.conf().SettingSources} // privzeto prazno: hooki iz mape odjemalca ne tečejo
 	prompt, session, scope, sessionID := last.text, r.h("x-claude-mini-session"), "", ""
 	var dir, extra string // extra: --append-system-prompt-file ali --system-prompt-file
+	var worktreeEnv []string
 	extraFlag := "--append-system-prompt-file"
 	if !chat {
 		clientCwd, folder := r.h("x-claude-mini-cwd"), s.conf().Folder
 		share := s.hub.waitShare(r.Context(), session, r.owner(), r.h("x-claude-mini-share") == "1")
 		switch {
+		case share != nil && share.tree != nil:
+			if worktreeNeedsUnsandboxed && !s.conf().AllowUnsandboxedBash { // L3: kot Codex in Copilot na Windows
+				return writeError(w, r.rid, 400, "Claude CLI in worktree mode on Windows needs \"Allow commands without a sandbox\" "+
+					"(settings page → Claude CLI): Claude Code's own git runs there without a sandbox; use sync")
+			}
+			if dir = s.hub.push(share, "claude"); dir == "" {
+				return writeError(w, r.rid, 502, "Cloning "+clientCwd+" on the gateway failed (worktree mode; see minigw output)")
+			}
+			_, branch, _, _, _ := s.hub.worktreeOf(session, "claude")
+			extra = worktreeNote(clientCwd, dir, branch)
 		case share != nil:
-			if dir = s.hub.push(share); dir == "" {
+			if dir = s.hub.push(share, "claude"); dir == "" {
 				return writeError(w, r.rid, 502, "Syncing "+clientCwd+" to the gateway failed (see minigw output)")
 			}
 			note := "The user's folder " + clientCwd + " (on their computer) is synced here as " + dir + ", your working directory: a local copy"
@@ -576,6 +654,10 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			prompt = cliPrompt(history, last)
 		}
 		args = append(args, s.agentArgs(dir)...)
+		if wt, _, maven, objects, ok := s.hub.worktreeOf(session, "claude"); ok {
+			args = worktreeClaudeArgs(args, wt, maven, objects)
+			worktreeEnv = worktreeHarnessEnv(wt, maven)
+		}
 	} else {
 		dir = s.conf().scratch("chat")
 		prompt = cliPrompt(history, last)
@@ -603,7 +685,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	}
 	cmd := exec.CommandContext(r.Context(), exe[0], append(exe[1:], args...)...)
 	cmd.Dir = dir
-	cmd.Env = agentEnv(os.Environ()) // brez ANTHROPIC_* (klic nazaj v router), žetonov GitHub/Copilot in agentov ključev (M1)
+	cmd.Env = append(agentEnv(os.Environ()), worktreeEnv...) // brez ANTHROPIC_* (klic nazaj v router), žetonov GitHub/Copilot in agentov ključev (M1)
 	cmd.Stdin = strings.NewReader(prompt)
 	stderr := &tailBuffer{}
 	cmd.Stderr = stderr
@@ -675,7 +757,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	}
 	// sync: spremembe agenta k odjemalcu pred koncem odgovora (Claude Code jih nato že vidi); med tem še ping
 	if !chat {
-		s.hub.syncBack(session)
+		s.hub.syncBack(session, "claude")
 	}
 	msg := t.resultError
 	if msg == "" && werr != nil && t.text == "" { // stderr le v dnevnik (I1)

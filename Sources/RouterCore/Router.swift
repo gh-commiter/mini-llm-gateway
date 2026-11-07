@@ -57,6 +57,7 @@ public final class Router: Sendable {
         self.secrets = secrets
         self.session = session
         self.onLog = onLog
+        Detected.start()  // programi agentov (zsh -lic) se iščejo na svoji niti, preden jih zahteva potrebuje
         // Brez ključa ponudnik ne deluje → kot izklopljen (ne objavi modelov, ne usmerja, ne poskuša odkrivanja).
         catalog = Catalog(providers: config.providers.filter { $0.enabled && !(secrets.get($0.id) ?? "").isEmpty },
                           secrets: secrets, session: session)
@@ -65,9 +66,8 @@ public final class Router: Sendable {
             await catalog.refreshAll()  // odkrivanje modelov takoj ob vklopu/shranjevanju
             if cli.enabled {
                 await probes.start("claude-cli") {
-                    guard let exe = ClaudeCLI.executable(cli.executable) else { return false }
-                    if case .success = ClaudeCLI.validate(exe) { return true }
-                    return false
+                    guard let exe = await ClaudeCLI.executable(cli.executable) else { return false }
+                    return await offPool { if case .success = ClaudeCLI.validate(exe) { true } else { false } }
                 }
             }
         }
@@ -441,7 +441,7 @@ public final class Router: Sendable {
                  "description": "claude -p · \(m) · tools in your folder", "created_at": created]
             }
         }
-        if config.codex.enabled, let exe = Codex.executable(config.codex.executable) {
+        if config.codex.enabled, let exe = await Codex.executable(config.codex.executable) {
             data.append(["type": "model", "id": "claude-codex", "display_name": "Codex · Codex CLI",
                          "description": "codex exec · default model · tools in your folder", "created_at": created])
             data += Codex.catalog(exe).filter { config.codex.isModelEnabled($0.slug) }.map { m in
@@ -450,7 +450,7 @@ public final class Router: Sendable {
                  "created_at": created]
             }
         }
-        if config.copilot.enabled, Copilot.executable(config.copilot.executable) != nil {
+        if config.copilot.enabled, await Copilot.executable(config.copilot.executable) != nil {
             data.append(["type": "model", "id": "claude-copilot", "display_name": "Copilot · Copilot CLI",
                          "description": "copilot -p · default model (auto) · tools in your folder", "created_at": created])
             data += config.copilot.modelList.map { m in
@@ -458,7 +458,7 @@ public final class Router: Sendable {
                  "description": "copilot -p · \(m) · tools in your folder", "created_at": created]
             }
         }
-        if config.grok.enabled, let exe = Grok.executable(config.grok.executable) {
+        if config.grok.enabled, let exe = await Grok.executable(config.grok.executable) {
             data.append(["type": "model", "id": "claude-grok", "display_name": "Grok · Grok CLI",
                          "description": "grok -p · default model · tools in your folder", "created_at": created])
             data += Grok.catalog(exe).filter { config.grok.isModelEnabled($0) }.map { m in
@@ -723,6 +723,17 @@ public enum Discovery {
         guard o.count == 4 else { return false }
         return o[0] == 10 || o[0] == 127 || (o[0] == 192 && o[1] == 168) || (o[0] == 172 && (16...31).contains(o[1])) || (o[0] == 169 && o[1] == 254)
     }
+}
+
+/// Blokirajoče delo (procesi, git, drevesa datotek) na svoji niti. Ne Task.detached: ta teče v skupnem bazenu Swift
+/// concurrency (ena nit na jedro); blokirane niti ga izčrpajo in zahteve routerja ter časovniki (firstOf) čakajo.
+func offPool<T: Sendable>(_ work: @escaping @Sendable () -> T) async -> T {
+    await withCheckedContinuation { c in Thread { c.resume(returning: work()) }.start() }
+}
+
+/// offPool za delo, ki lahko vrže napako (agenti: proces teče vso sejo).
+func offPool<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
+    try await withCheckedThrowingContinuation { c in Thread { c.resume(with: Result { try work() }) }.start() }
 }
 
 /// Rezultat opravila ali `nil` po `within`; ne čaka na opravilo, ki teče dlje (withTaskGroup bi čakal).

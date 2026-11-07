@@ -13,8 +13,8 @@ final class FakeApp: @unchecked Sendable {
     init(_ c: RouterConfig = RouterConfig()) { config = c }
 
     /// Router, kot ga aplikacija zgradi ob vsakem zagonu (apply znova zažene router z novimi nastavitvami).
-    func router(session: URLSession = .shared) -> Router {
-        let hooks = AdminHooks(secret: adminSecret, connect: "tok#KEY", version: "9.9", installed: { self.lock.withLock { self.login } },
+    func router(session: URLSession = .shared, scratchInUse: Bool? = nil) -> Router {
+        var hooks = AdminHooks(secret: adminSecret, connect: "tok#KEY", version: "9.9", installed: { self.lock.withLock { self.login } },
                                setInstalled: { on in self.lock.withLock { self.login = on } },
                                commit: { f, keys in
                                    try self.lock.withLock {
@@ -26,6 +26,7 @@ final class FakeApp: @unchecked Sendable {
                                    }
                                },
                                rotateToken: { "newtok#KEY" })
+        if let busy = scratchInUse { hooks.scratchInUse = { busy } }
         return lock.withLock { Router(config: config, token: "tok", secrets: FakeSecrets(values: keys), session: session, admin: hooks) }
     }
 }
@@ -154,17 +155,19 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
     @Test func fakeResponderGetsNothingReusable() async throws {
         // Pravi router (strežnik Noise) in lažen odgovornik z lastnim ključem.
         let app = FakeApp()
-        app.config.host = "127.0.0.1"; app.config.port = 18_767
+        let port = freeTCPPort()  // ne stalen 18767: vzporedni testi in drugi zagoni na istem Macu
+        app.config.host = "127.0.0.1"; app.config.port = port
         let realKey = Noise.newKey()
         let server = RouterServer(router: app.router(), key: realKey)
         try server.start()
         defer { server.stop() }
-        try await Task.sleep(for: .milliseconds(200))
+        for _ in 0..<100 where !portInUse(port) { try await Task.sleep(for: .milliseconds(50)) }
         let fakeKey = Noise.newKey()
         let (l, fakePort) = listener()
         defer { close(l) }
         let got = Received()
-        DispatchQueue.global().async {
+        // Lastna nit, ne DispatchQueue.global(): pod obremenitvijo (vzporedni testi) blok tam začne prepozno.
+        Thread {
             let c = accept(l, nil, nil)
             defer { close(c) }
             func read(_ n: Int) -> Data {
@@ -183,21 +186,21 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
                 if let p = try? Noise.unframe(&raw, session.receive) { plain += p }
             }
             got.add(plain)
-        }
+        }.start()
         let secret = adminSecret
         _ = AdminClient(port: fakePort, routerKey: fakeKey.publicKey.rawRepresentation)
-            .request("GET", Router.adminPrefix + "/status", nil, authorization: { h in AdminHooks.scheme + AdminHooks.proof(secret: secret, hash: h) }, timeout: 3)
-        try await Task.sleep(for: .milliseconds(100))
+            .request("GET", Router.adminPrefix + "/status", nil, authorization: { h in AdminHooks.scheme + AdminHooks.proof(secret: secret, hash: h) }, timeout: 30)
+        for _ in 0..<300 where got.data.isEmpty { try await Task.sleep(for: .milliseconds(50)) }  // namesto fiksnih 100 ms
         let text = String(decoding: got.data, as: UTF8.self)
         let captured = try #require(text.split(separator: "\r\n").first { $0.lowercased().hasPrefix("authorization: ") }).dropFirst("authorization: ".count)
         #expect(captured.hasPrefix(AdminHooks.scheme) && !text.contains(adminSecret))
         // Ponovitev pri pravem routerju: druga povezava, drug h → 401; pravi dokaz → 200.
-        let real = AdminClient(port: 18_767, routerKey: realKey.publicKey.rawRepresentation)
+        let real = AdminClient(port: port, routerKey: realKey.publicKey.rawRepresentation)
         let replay = String(captured)
-        #expect(real.request("GET", Router.adminPrefix + "/status", nil, authorization: { _ in replay }, timeout: 3).0 == 401)
-        #expect(real.request("GET", Router.adminPrefix + "/status", nil, authorization: { h in AdminHooks.scheme + AdminHooks.proof(secret: secret, hash: h) }, timeout: 3).0 == 200)
+        #expect(real.request("GET", Router.adminPrefix + "/status", nil, authorization: { _ in replay }, timeout: 30).0 == 401)
+        #expect(real.request("GET", Router.adminPrefix + "/status", nil, authorization: { h in AdminHooks.scheme + AdminHooks.proof(secret: secret, hash: h) }, timeout: 30).0 == 200)
         // Brez ključa routerja (program na vratih ne konča rokovanja): 0, nič poslano.
-        #expect(AdminClient(port: 18_767, routerKey: Noise.newKey().publicKey.rawRepresentation).request("GET", "/health/live", nil, timeout: 3).0 == 0)
+        #expect(AdminClient(port: port, routerKey: Noise.newKey().publicKey.rawRepresentation).request("GET", "/health/live", nil, timeout: 30).0 == 0)
     }
 }
 
@@ -327,4 +330,121 @@ private func acceptPeerPort(_ fd: Int32) -> (Int32, UInt16) {
     #expect(m.port == 9000 && m.claudeCLI.tools == "Read,Grep")
     #expect(m.devices.map(\.id) == ["a", "c"] && m.devices[0].name == "A (renamed)")
     #expect(RouterConfig.merge(draft: old, old: old, new: new) == new)  // brez neshranjenih sprememb: vse iz new
+}
+
+/// Revizija pariteta, vrstica 6, in varnostni pregled parity-cli (M1, L1-L4): končne točke minigw serve tudi v aplikaciji.
+@Test func adminParityWithServe() async throws {
+    let fm = FileManager.default
+    // Scratch v domači mapi (začasne mape so zavrnjene, M1)
+    let tmp = fm.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("minigw-test-adm6-" + UUID().uuidString)
+    defer { try? fm.removeItem(at: tmp) }
+    let a = tmp.appendingPathComponent("a"), b = tmp.appendingPathComponent("b"), allowed = tmp.appendingPathComponent("proj")
+    try fm.createDirectory(at: RouterConfig.dedicated(a).appendingPathComponent("sync"), withIntermediateDirectories: true)
+    try fm.createDirectory(at: b, withIntermediateDirectories: true)
+    try fm.createDirectory(at: allowed.appendingPathComponent("inner"), withIntermediateDirectories: true)
+    fm.createFile(atPath: RouterConfig.dedicated(a).appendingPathComponent("sync/x").path, contents: Data("x".utf8))
+    var c = RouterConfig()
+    c.scratchFolder = a.path
+    c.claudeCLI.allowedRoots = allowed.path
+    c.providers = [ProviderConfig(id: "gw-1", name: "or", enabled: true, baseURL: "https://openrouter.ai/api", aliases: ""),
+                   ProviderConfig(id: "gw-2", name: "lite", enabled: true, baseURL: "https://lite.example", aliases: "")]
+    c.claudeCLI.executable = "/nonexistent/claude"
+    c.codex.executable = "/nonexistent/codex"
+    c.grok.executable = "/nonexistent/grok"
+    let app = FakeApp(c)
+
+    // PATCH /providers/{name}: ime, vklop, aliasi; ključ ostane pod id; L4: imena kot na Go, zasedeno v update
+    #expect(await admin(app.router(), "PATCH", "/providers/or", body: #"{"name":"open","enabled":false,"aliases":"x = y"}"#).status == 200)
+    let p = app.config.providers[0]
+    #expect(p.id == "gw-1" && p.name == "open" && !p.enabled && p.aliases == "x = y")
+    #expect(await admin(app.router(), "PATCH", "/providers/open", body: #"{"name":"lite"}"#).status == 400)
+    #expect(await admin(app.router(), "PATCH", "/providers/open", body: #"{"name":"has space"}"#).status == 400)
+    #expect(await admin(app.router(), "PATCH", "/providers/open", body: #"{"baseURL":"http://example.com"}"#).status == 400)
+    #expect(await admin(app.router(), "PATCH", "/providers/nope", body: #"{"enabled":true}"#).status == 404)
+    #expect(await admin(app.router(), "PATCH", "/providers/open", body: #"{"bogus":1}"#).status == 400)
+    // insecure brez baseURL znova preveri URL (kot Go); privzeta ponudnika obdržita ime
+    #expect(await admin(app.router(), "PATCH", "/providers/open", body: #"{"insecure":false}"#).status == 200)
+    let b2 = FakeApp(RouterConfig())
+    let lit = await admin(b2.router(), "PATCH", "/providers/LiteLLM", body: #"{"name":"mine"}"#)
+    #expect(lit.status == 400 && lit.text.contains("built in"), "\(lit.text)")
+    #expect(await admin(app.router(), "PATCH", "/providers/open", body: #"{"name":"OpenRouter"}"#).status == 400)
+
+    // permissionMode, settingSources
+    #expect(await admin(app.router(), "PATCH", "/agents/claude", body: #"{"permissionMode":"bogus"}"#).status == 400)
+    #expect(await admin(app.router(), "PATCH", "/agents/claude", body: #"{"settingSources":"user,evil"}"#).status == 400)
+    let w = await admin(app.router(), "PATCH", "/agents/claude", body: #"{"permissionMode":"plan","settingSources":"user, project"}"#)
+    #expect(w.status == 200 && w.text.contains(#""permissionMode":"plan""#))
+    #expect(app.config.claudeCLI.permissionMode == "plan" && app.config.claudeCLI.settingSources == "user,project")
+
+    // GET agents/claude/tools, agents/{codex,grok}/models (brez programa prazno), drugi agenti 404
+    let t = await admin(app.router(), "GET", "/agents/claude/tools")
+    #expect(t.status == 200 && t.text.contains(#""tools":[]"#))
+    for k in ["codex", "grok"] {
+        let m = await admin(app.router(), "GET", "/agents/\(k)/models")
+        #expect(m.status == 200 && m.text.contains(#""models":[]"#), "\(k)")
+    }
+    #expect(await admin(app.router(), "GET", "/agents/copilot/models").status == 404)
+    #expect(await admin(app.router(), "GET", "/agents/codex/tools").status == 404)
+
+    // scratch: M1/L1 pravila poti (vse 400, nič premaknjeno), L2 neveljaven port ne premakne, L3 seje → 409
+    for bad in ["relative/x", "/", NSHomeDirectory(), tmp.path, allowed.path, allowed.appendingPathComponent("inner").path,
+                fm.temporaryDirectory.path, "/nonexistent-minigw"] {
+        let r = await admin(app.router(), "PATCH", "/general", body: #"{"scratch":"\#(bad)"}"#)
+        #expect(r.status == 400, "\(bad): \(r.text)")
+    }
+    #expect(await admin(app.router(), "PATCH", "/general", body: #"{"scratch":"\#(b.path)","port":0}"#).status == 400)
+    let linked = tmp.appendingPathComponent("linked")
+    try fm.createDirectory(at: linked, withIntermediateDirectories: true)
+    try fm.createSymbolicLink(at: RouterConfig.dedicated(linked), withDestinationURL: b)
+    #expect(await admin(app.router(), "PATCH", "/general", body: #"{"scratch":"\#(linked.path)"}"#).status == 400)
+    #expect(app.config.scratchFolder == a.path && fm.fileExists(atPath: RouterConfig.dedicated(a).appendingPathComponent("sync/x").path))
+    let busy = FakeApp(app.config)
+    var hooks = busy.router().admin!
+    hooks.scratchInUse = { true }
+    #expect(await admin(Router(config: busy.config, token: "tok", secrets: FakeSecrets(values: [:]), admin: hooks),
+                        "PATCH", "/general", body: #"{"scratch":"\#(b.path)"}"#).status == 409)
+    let ok = await admin(app.router(scratchInUse: false), "PATCH", "/general", body: #"{"scratch":"\#(b.path)"}"#)
+    #expect(ok.status == 200 && app.config.scratchFolder == (Sync.real(b)?.path ?? b.path), "\(ok.text)")
+    #expect(fm.fileExists(atPath: RouterConfig.dedicated(b).appendingPathComponent("sync/x").path))
+    #expect(!fm.fileExists(atPath: RouterConfig.dedicated(a).appendingPathComponent("sync/x").path))
+}
+
+/// M2: stara privzeta settingSources (project,local) postane "", izrecna druga ostane.
+@Test func settingSourcesMigration() throws {
+    let old = try JSONDecoder().decode(ClaudeCLIConfig.self, from: Data(#"{"settingSources":"project,local"}"#.utf8))
+    let custom = try JSONDecoder().decode(ClaudeCLIConfig.self, from: Data(#"{"settingSources":"user"}"#.utf8))
+    #expect(old.settingSources == "" && custom.settingSources == "user" && ClaudeCLIConfig().settingSources == "")
+}
+
+/// M1: Scratch v denyRead peskovnika Claude (dobesedno in kanonično), mapa seje ostane berljiva.
+@Test func scratchDeniedInClaudeSandbox() {
+    var cfg = ClaudeCLIConfig()
+    cfg.allowLocalTools = true
+    let scratch = URL(fileURLWithPath: "/Volumes/SSD/Mini Gateway Scratch")
+    let args = cfg.agentArgs(cwd: URL(fileURLWithPath: "/Volumes/SSD/Mini Gateway Scratch/sync/d/x"), allTools: [], scratch: scratch)
+    let s = args[args.firstIndex(of: "--settings")! + 1]
+    #expect(s.contains(#""denyRead":["~","\/Volumes\/SSD\/Mini Gateway Scratch"]"#) || s.contains(#""denyRead":["~","/Volumes/SSD/Mini Gateway Scratch"]"#), "\(s)")
+    let wt = cfg.worktreeArgs(root: URL(fileURLWithPath: "/w"), maven: URL(fileURLWithPath: "/m"), cwd: URL(fileURLWithPath: "/w"), allTools: [], network: false, scratch: scratch)
+    #expect(wt[wt.firstIndex(of: "--settings")! + 1].contains("Mini Gateway Scratch"))
+}
+
+/// H1: dovoljena mapa okoli Scratch ali v njem: API jo zavrne, starejša nastavitev ne pride v peskovnik agenta.
+@Test func allowedFolderAroundScratchRefused() async throws {
+    let fm = FileManager.default
+    let tmp = fm.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("minigw-test-h1-" + UUID().uuidString)
+    defer { try? fm.removeItem(at: tmp) }
+    let scratch = tmp.appendingPathComponent("s")
+    try fm.createDirectory(at: RouterConfig.dedicated(scratch).appendingPathComponent("repos"), withIntermediateDirectories: true)
+    var c = RouterConfig()
+    c.scratchFolder = scratch.path
+    let app = FakeApp(c)
+    for bad in [tmp.path, RouterConfig.dedicated(scratch).appendingPathComponent("repos").path] {
+        let r = await admin(app.router(), "PATCH", "/agents/claude", body: #"{"folders":"\#(bad)"}"#)
+        #expect(r.status == 400 && r.text.contains("scratch folder"), "\(bad): \(r.text)")
+    }
+    var cfg = ClaudeCLIConfig()
+    cfg.allowLocalTools = true
+    cfg.allowedRoots = tmp.path
+    let args = cfg.agentArgs(cwd: URL(fileURLWithPath: "/p"), allTools: [], scratch: c.scratchURL)
+    #expect(!args.contains(tmp.path) && !args[args.firstIndex(of: "--settings")! + 1].contains(#""allowWrite":["\/p","#))
 }

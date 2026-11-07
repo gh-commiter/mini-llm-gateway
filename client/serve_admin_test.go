@@ -262,6 +262,11 @@ func TestRouterCLIOnlineAndOffline(t *testing.T) {
 	if out := run(cfg, "claude", "--tools", "Read"); !strings.Contains(out, "tools: Read\n") || s.conf().Tools != "Read" {
 		t.Fatalf("claude: %q", out)
 	}
+	dir := t.TempDir() // vrstica 2 revizije: ista zastavica kot na Macu
+	if out := run(cfg, "claude", "--folders", dir, "--allow-local-tools=true"); !strings.Contains(out, "allowLocalTools: true\n") ||
+		!strings.Contains(out, "folders: ") || !s.conf().AllowLocalTools || len(s.conf().AllowedFolders) != 1 {
+		t.Fatalf("claude folders: %q %+v", out, s.conf().AllowedFolders)
+	}
 	if out := run(cfg, "token"); !strings.Contains(out, "minigw connect") {
 		t.Fatalf("token: %q", out)
 	}
@@ -510,8 +515,14 @@ func TestParityGeneralAndClaude(t *testing.T) {
 	if st, _ := admin("PATCH", adminPrefix+"/general", `{"allowedClients":"not-an-ip"}`); st != 400 {
 		t.Fatal("bad IP accepted")
 	}
-	if st, b := admin("PATCH", adminPrefix+"/general", `{"scratch":"`+filepath.Join(work, "scratch")+`"}`); st != 200 || s.conf().Scratch != filepath.Join(work, "scratch") {
+	sc := filepath.Join(nonTempDir(t), "scratch") // M1: začasne mape so zavrnjene
+	if st, b := admin("PATCH", adminPrefix+"/general", `{"scratch":"`+sc+`"}`); st != 200 || s.conf().Scratch != sc {
 		t.Fatalf("scratch: %d %s", st, b)
+	}
+	for _, bad := range []string{filepath.Join(t.TempDir(), "x"), "/"} { // začasna mapa, koren diska
+		if st, _ := admin("PATCH", adminPrefix+"/general", `{"scratch":"`+bad+`"}`); st != 400 {
+			t.Fatalf("scratch %s accepted: %d", bad, st)
+		}
 	}
 
 	// Claude CLI: izklop skrije modele; mape, lokalna orodja in izjeme v argumentih.
@@ -542,13 +553,49 @@ func TestParityGeneralAndClaude(t *testing.T) {
 	}
 }
 
+// nonTempDir: mapa za Scratch v testih, zunaj začasnih map (M1 jih zavrne); izbriše se po testu.
+func nonTempDir(t *testing.T) string {
+	t.Helper()
+	base, err := os.UserCacheDir()
+	if err != nil {
+		t.Skip("no user cache folder")
+	}
+	d, err := os.MkdirTemp(base, "minigw-test-")
+	if err != nil {
+		t.Skip(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(d) })
+	return d
+}
+
+// M1: Scratch ni koren, domača mapa, začasna mapa ali v dovoljeni mapi (ali okoli nje); v denyRead peskovnika Claude.
+func TestScratchProblem(t *testing.T) {
+	home, _ := os.UserHomeDir()
+	d := nonTempDir(t)
+	proj := filepath.Join(d, "proj")
+	os.MkdirAll(filepath.Join(proj, "in"), 0o755)
+	for _, c := range []struct {
+		p    string
+		want string
+	}{{"/", "root"}, {home, "home"}, {filepath.Dir(home), map[bool]string{true: "root", false: "home"}[filepath.Dir(filepath.Dir(home)) == filepath.Dir(home) || filepath.Dir(home) == "/"]},
+		{os.TempDir(), "temporary"}, {filepath.Join(proj, "in"), "allowed"},
+		{d, "allowed"}, {filepath.Join(d, "ok"), ""}} {
+		if got := scratchProblem(c.p, []string{proj}); (c.want == "") != (got == "") || !strings.Contains(got, c.want) {
+			t.Fatalf("%s: %q (want %q)", c.p, got, c.want)
+		}
+	}
+	if p := scratchPaths(d); len(p) == 0 || p[0] != d {
+		t.Fatalf("paths %v", p)
+	}
+}
+
 // L2: mapa scratch je le naša (0700) in ni simbolna povezava.
 func TestScratchFolderProtected(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows: DACL (protectDir)")
 	}
 	s, _, base := liveServer(t, nil)
-	open := filepath.Join(t.TempDir(), "open")
+	open := filepath.Join(nonTempDir(t), "open")
 	os.Mkdir(open, 0o755)
 	if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/general", `{"scratch":"`+open+`"}`); st != 200 {
 		t.Fatalf("scratch: %d %s", st, b)
@@ -556,7 +603,7 @@ func TestScratchFolderProtected(t *testing.T) {
 	if fi, _ := os.Stat(open); fi.Mode().Perm() != 0o700 {
 		t.Fatalf("mode %v", fi.Mode())
 	}
-	link := filepath.Join(t.TempDir(), "link")
+	link := filepath.Join(nonTempDir(t), "link")
 	os.Symlink(open, link)
 	if st, _ := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/general", `{"scratch":"`+link+`"}`); st != 400 {
 		t.Fatalf("symlink accepted: %d", st)

@@ -76,7 +76,8 @@ const serveHelp = `minigw serve: Mini Gateway, the LLM gateway, on this computer
   minigw gw status|devices|provider|claude|token …              show or change the gateway, live if it runs
   minigw serve allow|deny|devices|provider|status …             the same as minigw gw devices allow|deny, …
 
-Clients use: MINIGW_WORK=sync minigw … (folder mounts are macOS only).
+Clients use: MINIGW_WORK=sync, worktree (a git repository, results as branches) or auto minigw … (folder mounts,
+native mode and minigw run are macOS only).
 Unknown devices are refused; the log prints their ID. Before minigw serve allow, compare the ID with the one on the
 client (it is the device key of the computer that just connected): anyone with the token can try to connect.
 Connections from this computer itself (loopback) skip the device check and encryption: do not forward the port to
@@ -421,6 +422,15 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	if !validAddress(c.Address) {
 		return nil, errors.New("address " + c.Address + ": use empty (all), 0.0.0.0, :: or 127.0.0.1, so that minigw gw and the admin API reach the gateway on 127.0.0.1; limit clients with a firewall")
 	}
+	// H1: dovoljena mapa, ki vsebuje Scratch (ali je v njem), bi agentom pokazala zrcala in kopije drugih naprav:
+	// ob zagonu (ročno urejen serve.json) take mape ne veljajo, Claude CLI in Codex sta izklopljena, opozorilo v dnevniku.
+	var overlapWarn string
+	if bad := scratchOverlaps(c.AllowedFolders, c.Scratch); len(bad) > 0 {
+		overlapWarn = "WARNING: allowed folder(s) " + strings.Join(bad, ", ") + " contain or are inside the scratch folder " + c.Scratch +
+			": Claude CLI and Codex are off until you remove them (settings page → Claude CLI → Allowed folders)"
+		c.AllowedFolders = slices.DeleteFunc(slices.Clone(c.AllowedFolders), func(f string) bool { return slices.Contains(bad, f) })
+		c.ClaudeDisabled, c.Codex.Enabled = true, false
+	}
 	exe, err := checkAgent(&c, cfgDir)
 	if err != nil {
 		return nil, err
@@ -447,6 +457,10 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	case runtime.GOOS == "windows" || !hasBash(c.Tools):
 	default:
 		s.log.Printf("WARNING: Bash is allowed; it runs only in Claude Code's sandbox (on Linux it needs bubblewrap and socat)")
+	}
+	s.hub.logf = s.log.Printf
+	if overlapWarn != "" {
+		s.log.Print(overlapWarn)
 	}
 	if protectErr != nil {
 		s.log.Printf("WARNING: cannot make %s private to this user (%v): other users of this computer may read the token, the gateway key and the admin secret; use the default config folder", cfgDir, protectErr)
@@ -485,6 +499,10 @@ func checkAgent(c *serveConfig, cfgDir string) ([]string, error) {
 			return nil, err
 		}
 		c.AllowedFolders[i] = real
+	}
+	if bad := scratchOverlaps(c.AllowedFolders, c.Scratch); len(bad) > 0 { // H1: PATCH, minigw gw claude --folders, serve.json
+		return nil, errors.New("allowed folder " + bad[0] + " contains or is inside the scratch folder " + c.Scratch +
+			" (agents could change the gateway's mirrors and other devices' copies): choose another folder")
 	}
 	if c.AllowLocalTools && runtime.GOOS == "windows" && !c.AllowUnsandboxedBash {
 		return nil, errors.New("local tools include commands (Bash, PowerShell), which have no sandbox on Windows: also set \"allowUnsandboxedBash\": true, or turn local tools off")
@@ -895,7 +913,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, hr *http.Request) {
 }
 
 // bigBodies: zahteve s telesom do 64 MB (kot router na macOS); ostale do 1 MB.
-var bigBodies = map[string]bool{"PUT /minigw/sync/file": true, "POST /v1/messages": true, "POST /v1/messages/count_tokens": true}
+var bigBodies = map[string]bool{"PUT /minigw/sync/file": true, "PUT /minigw/worktree/bundle": true, "POST /v1/messages": true, "POST /v1/messages/count_tokens": true}
 
 // handle: overitev in naprava pred branjem telesa; telo z rokom (brez ReadTimeout, ki bi prekinil dolg odgovor).
 func (s *server) handle(w http.ResponseWriter, r *req) (int, string) {
@@ -1003,13 +1021,34 @@ func (s *server) route(w http.ResponseWriter, r *req) (int, string) {
 		if session == "" || cwd == "" {
 			return writeError(w, r.rid, 400, "Missing session or cwd"), ""
 		}
-		if r.h("x-claude-mini-work") != "sync" { // brez priklopa WebDAV na Windows in Linux
+		work := r.h("x-claude-mini-work")
+		if work != "sync" && work != "worktree" { // brez priklopa WebDAV in mape SMB na Windows in Linux
 			s.hub.refuse(session)
 			return writeError(w, r.rid, 400, refusedDirect), ""
 		}
 		owner := dev
 		if owner == "" {
 			return writeError(w, r.rid, 400, "Sync needs an encrypted connection with a device key (run minigw connect again)"), ""
+		}
+		if work == "worktree" { // golo zrcalo v scratch/repos/<naprava>/<repo>.git, kloni v scratch/worktrees (serve_worktree.go)
+			if r.h("x-share-mode") == "ro" {
+				return writeError(w, r.rid, 400, "Worktree mode needs a writable git repository that contains the folder"), ""
+			}
+			if _, err := gitExe(); err != nil {
+				return writeError(w, r.rid, 400, "Worktree mode: git is not installed on the gateway"), ""
+			}
+			t, err := worktreeTree(s.conf().Scratch, owner, r.h("x-worktree-top"), cwd)
+			if err != nil {
+				return writeError(w, r.rid, 400, err.Error()), ""
+			}
+			if tooManyCopies(t.worktrees) {
+				return writeError(w, r.rid, 429, fmt.Sprintf("This device already has %d repositories on the gateway; unused ones expire after 30 days", maxCopies)), ""
+			}
+			k, ok := s.hub.registerTree(session, cwd, key, t, dev)
+			if !ok {
+				return writeError(w, r.rid, 409, "Session already has a folder"), ""
+			}
+			return writeJSON(w, r.rid, 200, map[string]string{"key": k}), ""
 		}
 		ro := r.h("x-share-mode") == "ro"
 		suffix := ""
@@ -1060,6 +1099,18 @@ func (s *server) route(w http.ResponseWriter, r *req) (int, string) {
 			return writeError(w, r.rid, 404, "No such share"), ""
 		}
 		return writeJSON(w, r.rid, 200, map[string][]string{"need": need, "kept": kept}), ""
+	case "PUT /minigw/worktree/bundle":
+		part, err := strconv.Atoi(r.h("x-part"))
+		if err != nil {
+			part = -1
+		}
+		return writeStatus(w, s.hub.worktreePut(key, part, r.body, dev), "", nil), ""
+	case "GET /minigw/worktree/result":
+		data, st, why := s.hub.worktreeResult(key, dev)
+		if st != 200 {
+			return writeError(w, r.rid, st, why), ""
+		}
+		return writeStatus(w, 200, "application/octet-stream", data), ""
 	case "PUT /minigw/sync/file":
 		p, _ := url.PathUnescape(r.h("x-sync-path"))
 		return writeStatus(w, s.hub.syncPut(key, p, r.body, dev), "", nil), ""
@@ -1086,4 +1137,4 @@ func (s *server) route(w http.ResponseWriter, r *req) (int, string) {
 	return writeError(w, r.rid, 404, "Not found: "+r.Method+" "+path), ""
 }
 
-const refusedDirect = "this gateway supports --minigw-work=sync only (no folder mount on Windows or Linux): run minigw with MINIGW_WORK=sync"
+const refusedDirect = "this gateway supports --minigw-work=sync and worktree (no folder mount or native mode on Windows or Linux): run minigw with MINIGW_WORK=sync, worktree or auto"

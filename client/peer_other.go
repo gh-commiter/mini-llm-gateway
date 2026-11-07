@@ -24,3 +24,6 @@ func peerCheck(ours, peer *net.TCPAddr) error { return nil }
 
 // listenerIsOurs: na macOS je Foundry Local stvar aplikacije (Foundry.swift preveri uid); minigw serve tu je za razvoj.
 func listenerIsOurs(port int) bool { return true }
+
+// bwrapReady: bwrap je le na Linuxu.
+func bwrapReady(string) string { return "" }

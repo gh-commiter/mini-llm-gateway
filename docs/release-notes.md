@@ -2,26 +2,57 @@
 
 ## Unreleased
 
-- Windows installer: `minigw-windows-amd64.msi` and `minigw-windows-arm64.msi` install the gateway with the tray for this
-  user, without admin rights (the same as `minigw serve install`: PATH, Start menu, start at sign-in). Listed in the
-  signed `SHA256SUMS`; the MSI itself is not code-signed yet, so SmartScreen warns.
-- Clients without a device key (minigw before 0.4.4, unencrypted clients from other computers) are accepted only while
-  no device is allowed and "Allow any device with the token" is on, on the Mac as on `minigw serve`. Update minigw on
-  such clients.
-- Waiting devices show `<user>@<computer>` and the client's OS and minigw version; you can edit the name before you
-  allow a device and rename it later (`minigw gw devices allow <id> --name N`, `rename`). Devices are identified by
-  their ID only: `deny` and the admin API no longer take a name. The Mac notifies you when a device starts waiting.
-  Plugin 0.5.8: `/minigw:connect` explains how to approve a refused device.
-- Providers: the Mac has "Allow http (localhost, a private IP or a .local name only)" like `minigw serve`, with the same
-  rule on both. Existing Mac providers at `http://localhost`, a private or loopback IP, or a `.local` name keep working
-  (the switch is turned on for them). Any other `http` provider, for example at a public host or a name without a dot,
-  no longer gets the API key: change its URL to `https`. LiteLLM and OpenRouter are always listed on `minigw serve` too
-  (off until a key is set; they can be turned off, not removed or renamed), and on the Mac they can no longer be
-  removed through `minigw gw provider remove`.
-- Devices are the same on the Mac and on `minigw serve`: a new device waits for approval (Settings → Devices,
-  the menu bar, `minigw gw devices allow`) unless the list is empty and "Allow any device with the token" is on.
-  Devices you already use stay allowed. Both panes show the allowed IP addresses, waiting and allowed devices with
-  their ID and when they were last seen; Windows now shows a device's name.
+- **Several gateways at once (profiles, #17):** `minigw connect <host> --name <profile>` keeps every gateway, for
+  example the Mac mini and a Windows gateway side by side. Models of other profiles are `<model>@<profile>`; the
+  default profile's also appear without a suffix. An unreachable gateway is left out of the list, and `minigw status`
+  shows each profile. The existing connection becomes the profile `default` with nothing to do.
+- **Worktree mode on `minigw serve` (Windows, Linux):** `--minigw-work=worktree` (and `auto` for a git repository) now
+  also works with a Windows or Linux gateway, as on the Mac: the agent works in a clone on its own branch, and the branch
+  comes back to your repository (fetched fast-forward only, no hooks or filters). Native mode and `minigw run` stay
+  Mac-only.
+  **Changed behaviour:** `--minigw-work=auto` on a git repository with a Windows or Linux
+  gateway now gives you a branch `minigw/…` instead of changing your files through a synced copy. To keep the old
+  behaviour, run `minigw share add --work=sync` in that folder (or `MINIGW_WORK=sync`).
+- **Windows installer:** `minigw-windows-amd64.msi` and `minigw-windows-arm64.msi` install the gateway with the tray for
+  this user, without admin rights (the same as `minigw serve install`: PATH, Start menu, start at sign-in). Listed in
+  the signed `SHA256SUMS`; the MSI itself is not code-signed yet, so SmartScreen warns. On an MSI install,
+  `minigw serve install` updates with the release's MSI (nothing happens when it is already up to date or newer), and
+  `minigw serve uninstall` points to Settings → Apps.
+- **File and folder pickers on Windows:** with the tray, the settings page has **Choose…** next to Allowed folders and
+  **Browse…** next to a program's path, which open the Windows file dialog. On Linux and without the tray you type the
+  path.
+- **Devices are the same on the Mac and on `minigw serve`:** a new device waits for approval (Settings → Devices, the menu
+  bar or the tray, `minigw gw devices allow <id> [--name N]`) unless the list is empty and "Allow any device with the
+  token" is on. Waiting devices show `<user>@<computer>`, the client's OS and minigw version; you can edit the name
+  before you allow a device and rename it later (`rename`). Both panes show the allowed IP addresses, unencrypted
+  connections, and waiting and allowed devices with their ID and when they were last seen; the Mac notifies you when a
+  device starts waiting. Devices are identified by their ID only: `deny` and the admin API no longer take a name.
+  Devices you already use stay allowed. Clients without a device key (minigw before 0.4.4, unencrypted clients from
+  other computers) are accepted only while no device is allowed and "Allow any device with the token" is on: update
+  minigw on such clients.
+- **Providers:** the Mac has "Allow http (localhost, a private IP or a .local name only)" like `minigw serve`, with the
+  same rule on both. Existing Mac providers at `http://localhost`, a private or loopback IP, or a `.local` name keep
+  working (the switch is turned on for them). Any other `http` provider, for example at a public host or a name without
+  a dot, no longer gets the API key: change its URL to `https`. LiteLLM and OpenRouter are always listed on
+  `minigw serve` too (off until a key is set; they can be turned off, not removed or renamed), and on the Mac they can
+  no longer be removed through `minigw gw provider remove`.
+- `minigw gw claude --folders … --allow-local-tools=true|false` and `minigw gw autostart on|off` now work on Windows and
+  Linux too (the same flags as on the Mac); `--folder` and `--allow-unsandboxed-bash` stay as `minigw serve` extras.
+- The Mac's admin API has what `minigw serve` has: `PATCH /providers/{name}` (rename, on/off, URL, aliases),
+  `GET /agents/claude/tools`, `GET /agents/{codex,grok}/models`, permission mode and setting sources for Claude CLI, and
+  the scratch folder (moved like in Settings).
+- **Claude CLI on the Mac no longer loads a folder's `.claude/settings*.json` by default** (setting sources empty, as on
+  `minigw serve`): an agent with local tools could otherwise write hooks there that the next session runs outside the
+  sandbox. If you never changed "Setting sources", it changes on its own; a value you set yourself stays.
+- **Scratch folder rules** (Settings, `minigw gw`, admin API, Mac and `minigw serve`): not the disk root, your home folder
+  or a folder above it, a temporary folder, or a folder inside or around an allowed folder of the agents; and an allowed
+  folder cannot contain the scratch folder or sit inside it. The Claude agent sandbox never reads Scratch, also on an
+  external disk. On the Mac a move waits until no minigw session runs.
+- Plugin 0.5.9 (needs minigw 0.5.18): `/minigw:connect --name` and profiles in every skill, `/minigw:connect` explains how
+  to approve a refused device, and `/minigw:gw` covers the Copilot token, autostart and the work modes.
+
+## 0.5.17
+
 - GitHub Copilot CLI as an agent model, compatible with the Claude Code CLI: `claude-copilot` and `claude-copilot-<model>`
   (Mac app and `minigw serve`; off by default). Read-only by default; writing, web access and commands are separate
   switches. Copilot always runs in a sandbox (Mac `sandbox-exec`, Linux bwrap) with a fresh Copilot home per request.

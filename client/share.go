@@ -73,7 +73,9 @@ func (s *shareClient) register() bool {
 	if s.native { // vsaka registracija (tudi po ponovnem zagonu routerja) z novim dokazom
 		proof, why := nativeProof(s.c, s.root)
 		if proof == nil {
+			s.mu.Lock()
 			s.refusal = why
+			s.mu.Unlock()
 			return false
 		}
 		for k, v := range proof {
@@ -90,7 +92,9 @@ func (s *shareClient) register() bool {
 	}
 	err := json.Unmarshal(data, &r)
 	if st != 200 || err != nil || r.Key == "" {
+		s.mu.Lock() // ponovna registracija teče iz več delavcev hkrati
 		s.refusal = r.Error.Message
+		s.mu.Unlock()
 		return false
 	}
 	s.mu.Lock()
@@ -175,6 +179,9 @@ func (s *shareClient) handle(job davJob, k string) davResponse {
 const maxReply = 80 << 20
 
 // call: poljubna zahteva do routerja (prek lokalnega proxyja); 0 = ni povezave.
+// noRedirect (L2): zahteva z žetonom prehoda nikoli ne sledi preusmeritvi (npr. na proxy drugega profila na 127.0.0.1).
+func noRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
 func call(c connection, method, path string, headers map[string]string, body []byte, timeout time.Duration) (int, []byte) {
 	req, err := http.NewRequest(method, c.URL+path, bytes.NewReader(body))
 	if err != nil {
@@ -185,7 +192,7 @@ func call(c connection, method, path string, headers map[string]string, body []b
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
-	resp, err := (&http.Client{Timeout: timeout}).Do(req)
+	resp, err := (&http.Client{Timeout: timeout, CheckRedirect: noRedirect}).Do(req)
 	if err != nil {
 		return 0, nil
 	}

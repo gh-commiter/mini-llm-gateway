@@ -25,8 +25,6 @@ struct Connection: Codable {
     var isLocal: Bool { ["127.0.0.1", "localhost", "::1"].contains(URLComponents(string: url)?.host ?? "") }
 }
 
-/// Oddaljen router: vse (Claude Code, minigw, mapa) gre šifrirano prek lokalnega proxyja; lokalno navaden HTTP.
-var proxy: NoiseProxy?
 /// Ime naprave za odobritev na prehodu: <uporabnik>@<ime računalnika> (Sharing → Computer Name), da se dva uporabnika
 /// istega Maca razlikujeta. Prehod ga očisti (Noise.cleanName); je le oznaka.
 func deviceName() -> String {
@@ -36,31 +34,46 @@ func deviceName() -> String {
 /// OS in različica za vrstico čakajoče naprave (glava x-minigw-client; starejši prehodi jo prezrejo).
 let clientInfo = "macOS · minigw \(minigwVersion)"
 
-func route(_ c: Connection) -> Connection {
-    guard !c.isLocal else { return c }
-    var c = c
-    if c.device == nil {  // povezava iz minigw 0.4.3 ali starejšega: ključ naprave ustvari zdaj
-        c.device = Noise.base64url(Curve25519.Signing.PrivateKey().rawRepresentation)
-        saveConnection(c)
+/// Oddaljen prehod: vse (Claude Code, minigw, mapa) gre šifrirano prek lokalnega proxyja; lokalno navaden HTTP.
+var proxies: [NoiseProxy] = []
+func route(_ p: Profile) -> Connection {
+    switch routeResult(p) {
+    case .success(let c): return c
+    case .failure(let e): fail(e.message)
+    }
+}
+
+struct RouteError: Error { let message: String }
+
+func routeResult(_ p: Profile) -> Result<Connection, RouteError> {
+    var c = p.conn
+    guard !(c.isLocal && c.key == nil) else { return .success(c) }  // L3: s ključem prehoda tudi lokalno šifrirano
+    if c.device == nil {  // povezava iz minigw 0.4.3 ali starejšega: en ključ naprave za ves odjemalec
+        c.device = anyDevice() ?? Noise.base64url(Curve25519.Signing.PrivateKey().rawRepresentation)
+        saveProfile(p.name, c)
     }
     let device = c.device.flatMap(Noise.fromBase64url).flatMap { try? Curve25519.Signing.PrivateKey(rawRepresentation: $0) }
         .map { (key: $0, name: deviceName()) }
-    guard let k = c.key.flatMap(Noise.fromBase64url), let p = NoiseProxy(routerURL: c.url, routerKey: k, device: device, suite: .aesGCM) else {  // MGW2: tudi router minigw serve
-        fail("no router key: copy the token again (Mini Gateway 0.4+ → Copy Token) and run minigw connect")
+    guard let k = c.key.flatMap(Noise.fromBase64url), let np = NoiseProxy(routerURL: c.url, routerKey: k, device: device, suite: .aesGCM) else {  // MGW2: tudi minigw serve
+        return .failure(RouteError(message: "no gateway key for profile \(p.name): copy the token again (Mini Gateway → Copy Token) and run minigw connect"))
     }
-    do { try p.start() } catch { fail("cannot start the local encrypted proxy: \(error)") }
-    proxy = p
-    var r = c
-    r.url = p.localURL
-    return r
+    do { try np.start() } catch { return .failure(RouteError(message: "cannot start the local encrypted proxy: \(error)")) }
+    proxies.append(np)
+    c.url = np.localURL
+    return .success(c)
 }
 
-func keychainQuery() -> [String: Any] {
-    [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: "router"]
+// MARK: profili (#17): »router« je prejšnja edina povezava = profil default, drugi »router:<ime>«; ključ naprave en
+
+struct Profile { let name: String; let conn: Connection }
+
+func keychainQuery(_ name: String = Profiles.defaultName) -> [String: Any] {
+    [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
+     kSecAttrAccount as String: name == Profiles.defaultName ? "router" : "router:" + name]
 }
 
-func loadConnection() -> Connection? {
-    var q = keychainQuery()
+func loadProfile(_ name: String) -> Connection? {
+    var q = keychainQuery(name)
     q[kSecReturnData as String] = true
     q[kSecMatchLimit as String] = kSecMatchLimitOne
     var item: CFTypeRef?
@@ -68,14 +81,56 @@ func loadConnection() -> Connection? {
     return try? JSONDecoder().decode(Connection.self, from: d)
 }
 
-func saveConnection(_ c: Connection) {
+func saveProfile(_ name: String, _ c: Connection) {
     let data = try! JSONEncoder().encode(c)
-    if SecItemUpdate(keychainQuery() as CFDictionary, [kSecValueData as String: data] as CFDictionary) == errSecItemNotFound {
-        var add = keychainQuery()
+    if SecItemUpdate(keychainQuery(name) as CFDictionary, [kSecValueData as String: data] as CFDictionary) == errSecItemNotFound {
+        var add = keychainQuery(name)
         add[kSecValueData as String] = data
         guard SecItemAdd(add as CFDictionary, nil) == errSecSuccess else { fail("cannot save to Keychain") }
     }
 }
+
+/// Imena profilov iz Keychain (le atributi, brez gesel).
+func profileNames() -> [String] {
+    var q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service]
+    q[kSecReturnAttributes as String] = true
+    q[kSecMatchLimit as String] = kSecMatchLimitAll
+    var items: CFTypeRef?
+    guard SecItemCopyMatching(q as CFDictionary, &items) == errSecSuccess, let list = items as? [[String: Any]] else { return [] }
+    let names = list.compactMap { a -> String? in
+        guard let acc = a[kSecAttrAccount as String] as? String else { return nil }
+        if acc == "router" { return Profiles.defaultName }
+        guard acc.hasPrefix("router:") else { return nil }
+        let n = String(acc.dropFirst(7))
+        return Profiles.valid(n) && n != Profiles.defaultName ? n : nil
+    }
+    return Array(Set(names)).sorted()
+}
+
+var defaultProfileFile: URL { sharedFoldersFile.deletingLastPathComponent().appendingPathComponent("default-profile") }
+
+/// Izbrani privzeti (minigw profiles default), sicer »default«, sicer prvi.
+func defaultName(_ names: [String]) -> String {
+    let n = ((try? String(contentsOf: defaultProfileFile, encoding: .utf8)) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    if names.contains(n) { return n }
+    return names.contains(Profiles.defaultName) || names.isEmpty ? Profiles.defaultName : names[0]
+}
+
+/// --minigw-profile <ime>: cel ukaz le s tem prehodom.
+var profileFlag: String?
+
+/// Shranjeni profili, privzeti prvi; z --minigw-profile le ta.
+func loadProfiles() -> [Profile] {
+    var names = profileNames()
+    var def = defaultName(names)
+    if let f = profileFlag {
+        guard names.contains(f) else { fail("no profile \(f) (minigw profiles lists them)") }
+        def = f; names = [f]
+    }
+    return ([def] + names.filter { $0 != def }).compactMap { n in loadProfile(n).map { Profile(name: n, conn: $0) } }
+}
+
+func anyDevice() -> String? { profileNames().lazy.compactMap { loadProfile($0)?.device }.first }
 
 /// »192.168.1.20«, »192.168.1.20:8765«, »mini.local«, »http://…« → osnovni URL.
 func normalize(_ s: String) -> String {
@@ -107,7 +162,7 @@ func call(_ c: Connection, _ method: String, _ path: String, _ headers: [String:
     for (k, v) in headers { r.setValue(v, forHTTPHeaderField: k) }
     let done = DispatchSemaphore(value: 0)
     var result: (Int, Data?) = (0, nil)
-    URLSession.shared.downloadTask(with: r) { file, resp, _ in
+    Profiles.session.downloadTask(with: r) { file, resp, _ in  // L2: brez preusmeritev
         let size = file.flatMap { try? $0.resourceValues(forKeys: [.fileSizeKey]).fileSize } ?? 0
         result = ((resp as? HTTPURLResponse)?.statusCode ?? 0, size <= maxReply ? file.flatMap { try? Data(contentsOf: $0) } : nil)
         done.signal()
@@ -225,7 +280,10 @@ final class ShareClient: @unchecked Sendable {
         guard let top, let branch = (try? JSONSerialization.jsonObject(with: job.body) as? [String: Any])?["branch"] as? String,
               Worktree.validBranch(branch) else { return DAVResponse(403) }
         let (s, d) = call(c, "GET", "/minigw/worktree/result", ["x-share-key": k], timeout: 600)
-        guard s == 200, let d else { note("worktree: cannot get \(branch) from the gateway (HTTP \(s))"); return DAVResponse(500) }
+        guard s == 200, let d else {  // L5: razlog prehoda (prevelik klon ali veja), sicer status
+            let why = d.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }.flatMap { ($0["error"] as? [String: Any])?["message"] as? String }
+            note("worktree: cannot get \(branch) from the gateway: \(why.map(clean) ?? "HTTP \(s)")"); return DAVResponse(500)
+        }
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("minigw-\(UUID().uuidString).bundle")
         defer { try? FileManager.default.removeItem(at: file) }
         guard (try? d.write(to: file)) != nil else { return DAVResponse(500) }
@@ -327,7 +385,7 @@ func runRemote(_ c: Connection, _ argv: [String], _ proof: [String: String]) -> 
     Task {
         defer { done.signal() }
         do {
-            let (bytes, resp) = try await URLSession.shared.bytes(for: r)
+            let (bytes, resp) = try await Profiles.session.bytes(for: r)
             guard (resp as? HTTPURLResponse)?.statusCode == 200 else {
                 var d = Data()
                 for try await b in bytes { d.append(b); if d.count > 1 << 16 { break } }
@@ -349,9 +407,31 @@ func runRemote(_ c: Connection, _ argv: [String], _ proof: [String: String]) -> 
     return box.code
 }
 
-func requireConnection() -> Connection {
-    guard let c = loadConnection() else { fail("not connected; run: minigw connect <host[:port]> --token <token>") }
-    return c
+func requireProfile() -> Profile {
+    guard let p = loadProfiles().first else { fail("not connected; run: minigw connect <host[:port]> --token <token>") }
+    return p
+}
+
+/// Naslov, dosegljivost, ponudniki in število modelov enega profila; true = dosegljiv.
+func profileStatus(_ p: Profile) -> Bool {
+    let c: Connection
+    switch routeResult(p) {
+    case .success(let r): c = r
+    case .failure(let e): say("Gateway:   \(p.conn.url) (\(e.message))"); return false
+    }
+    let (s, ready) = get(c, "/health/ready")
+    say("Gateway:   \(p.conn.url) (\(s == 200 ? "reachable" : s == 0 ? "unreachable" : "HTTP \(s)")\(p.conn.isLocal && p.conn.key == nil ? "" : ", encrypted"))")
+    if let pr = ready?["providers"] as? [String: Bool] {
+        say("Providers: " + pr.keys.sorted().map { "\($0) \(pr[$0]! ? "✓" : "✗")" }.joined(separator: ", "))
+    }
+    let (ms, models) = get(c, "/v1/models")
+    say("Models:    " + (ms == 200 ? "\((models?["data"] as? [Any])?.count ?? 0)" : ms == 401 ? "token rejected" : "–"))
+    return s == 200
+}
+
+func fetchModels(_ c: Connection) -> [[String: Any]]? {
+    let (s, m) = get(c, "/v1/models")
+    return s == 200 ? (m?["data"] as? [[String: Any]] ?? []) : nil
 }
 
 // MARK: deljene mape
@@ -438,6 +518,13 @@ var workFlag = ProcessInfo.processInfo.environment["MINIGW_WORK"].flatMap { $0.i
 for a in args where a.hasPrefix("--minigw-work=") { workFlag = String(a.dropFirst("--minigw-work=".count)) }
 args.removeAll { $0.hasPrefix("--minigw-work=") }
 if let w = workFlag, !SharedFolders.modes.contains(w) { fail("unknown --minigw-work=\(w) (use direct, sync, native, worktree or auto)") }
+// --minigw-profile <ime> (ali =ime): cel ukaz le s tem prehodom (#17).
+while let i = args.firstIndex(where: { $0 == "--minigw-profile" || $0.hasPrefix("--minigw-profile=") }) {
+    if args[i] == "--minigw-profile" {
+        guard i + 1 < args.count else { fail("--minigw-profile needs a profile name") }
+        profileFlag = args[i + 1]; args.removeSubrange(i...i + 1)
+    } else { profileFlag = String(args[i].dropFirst("--minigw-profile=".count)); args.remove(at: i) }
+}
 
 switch args.first {
 case "share":
@@ -449,25 +536,31 @@ case "run":
     var argv = Array(args.dropFirst())
     if argv.first == "--" { argv.removeFirst() }
     guard !argv.isEmpty else { fail("usage: minigw run [--] <command> [args …]") }
-    let c = route(requireConnection())
+    let c = route(requireProfile())
     let (proof, why) = nativeProof(c, FileManager.default.currentDirectoryPath)
     guard let proof else { fail("cannot run on the gateway: \(why)") }
     exit(runRemote(c, argv, proof))
 case "connect":
-    guard args.count >= 2 else { fail("usage: minigw connect <host[:port]> [--token <token> | --token -]   (- reads it from stdin)") }
-    let saved = loadConnection()
+    guard args.count >= 2 else { fail("usage: minigw connect <host[:port]> [--name <profile>] [--token <token> | --token -]   (- reads it from stdin)") }
+    let names = profileNames()
+    var name = defaultName(names)  // brez --name: zamenja privzeti profil (kot prej edino povezavo)
+    if let i = args.firstIndex(of: "--name"), i + 1 < args.count { name = args[i + 1] }
+    guard Profiles.valid(name) else { fail("invalid --name \(name) (lowercase letters, digits and -, up to 32)") }
+    let saved = loadProfile(name)
     var token = saved.map { $0.token + ($0.key.map { "#" + $0 } ?? "") } ?? ""
     if let i = args.firstIndex(of: "--token"), i + 1 < args.count { token = args[i + 1] }
     if token == "-" { token = readKey("gateway token") }  // F3: s stdin ali brez odmeva, ne v argv
     guard !token.isEmpty else { fail("missing --token (copy it from Mini Gateway → Settings → General → Copy Token)") }
     let parts = token.split(separator: "#", maxSplits: 1).map(String.init)
-    let c = Connection(url: normalize(args[1]), token: parts[0], key: parts.count > 1 ? parts[1] : nil, device: saved?.device ?? Noise.base64url(Curve25519.Signing.PrivateKey().rawRepresentation))
-    let (status, body) = get(route(c), "/v1/models")
+    let c = Connection(url: normalize(args[1]), token: parts[0], key: parts.count > 1 ? parts[1] : nil,
+                       device: anyDevice() ?? Noise.base64url(Curve25519.Signing.PrivateKey().rawRepresentation))  // en ključ za vse profile
+    let asProfile = name != Profiles.defaultName || names.contains { $0 != Profiles.defaultName } ? " as profile \(name)" : ""
+    let (status, body) = get(route(Profile(name: name, conn: c)), "/v1/models")
     switch status {
-    case 200: saveConnection(c); say("Connected to \(c.url)" + (c.isLocal ? "" : " (encrypted)"))
+    case 200: saveProfile(name, c); say("Connected to \(c.url)" + (c.isLocal && c.key == nil ? "" : " (encrypted)") + asProfile)
     case 401: fail("gateway at \(c.url) rejected the token")
-    case 403:  // naprava še ni dovoljena (minigw serve): ključ naprave ostane, da ga router lahko doda
-        saveConnection(c)
+    case 403:  // naprava še ni dovoljena (minigw serve): ključ naprave ostane, da ga prehod lahko doda
+        saveProfile(name, c)
         let msg = (body?["error"] as? [String: Any])?["message"] as? String ?? ""
         fail("gateway at \(c.url) refused this device: \(clean(msg))\nthen run minigw connect again")
     case 426: fail("gateway at \(c.url) needs an encrypted connection: copy the token again (it includes the gateway key)")
@@ -477,26 +570,59 @@ case "connect":
     exit(0)
 
 case "disconnect":
-    SecItemDelete(keychainQuery() as CFDictionary)
-    say("Disconnected")
+    var name = requireProfile().name
+    if let i = args.firstIndex(of: "--name"), i + 1 < args.count { name = args[i + 1] }
+    guard Profiles.valid(name), loadProfile(name) != nil else { fail("no profile \(name)") }
+    SecItemDelete(keychainQuery(name) as CFDictionary)
+    say(profileNames().isEmpty && name == Profiles.defaultName ? "Disconnected" : "Disconnected profile \(name)")
+    exit(0)
+
+case "profiles":
+    let names = profileNames()
+    switch Array(args.dropFirst()) {
+    case [], ["list"]:
+        guard !names.isEmpty else { fail("no profiles; run: minigw connect <host[:port]> --name <name> --token -") }
+        let def = defaultName(names)
+        for n in names { say((n == def ? "* " : "  ") + n + "  " + (loadProfile(n)?.url ?? "?")) }
+    case let a where a.count == 2 && a[0] == "default":
+        guard names.contains(a[1]) else { fail("no profile \(a[1])") }
+        try? FileManager.default.createDirectory(at: defaultProfileFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+        guard (try? (a[1] + "\n").write(to: defaultProfileFile, atomically: true, encoding: .utf8)) != nil else { fail("cannot save \(defaultProfileFile.path)") }
+        say("Default profile: \(a[1]) (its models also appear without @\(a[1]))")
+    default: fail("usage: minigw profiles [list] | minigw profiles default <name>")
+    }
     exit(0)
 
 case "status":
-    let saved = requireConnection()
-    let c = route(saved)
-    let (s, ready) = get(c, "/health/ready")
-    say("Gateway:   \(saved.url) (\(s == 200 ? "reachable" : s == 0 ? "unreachable" : "HTTP \(s)")\(saved.isLocal ? "" : ", encrypted"))")
-    if let p = ready?["providers"] as? [String: Bool] {
-        say("Providers: " + p.keys.sorted().map { "\($0) \(p[$0]! ? "✓" : "✗")" }.joined(separator: ", "))
+    let ps = loadProfiles()
+    if ps.isEmpty { _ = requireProfile() }
+    var ok = true
+    for (i, p) in ps.enumerated() {
+        if ps.count > 1 {
+            if i > 0 { say("") }
+            say("Profile:   \(p.name)" + (i == 0 ? " (default: its models also appear without @\(p.name))" : ""))
+        }
+        if !profileStatus(p), i == 0 { ok = false }
     }
-    let (ms, models) = get(c, "/v1/models")
-    say("Models:    " + (ms == 200 ? "\((models?["data"] as? [Any])?.count ?? 0)" : ms == 401 ? "token rejected" : "–"))
-    exit(s == 200 ? 0 : 1)
+    exit(ok ? 0 : 1)
 
 case "models":
-    let c = route(requireConnection())
-    let (s, models) = get(c, "/v1/models")
-    guard s == 200, let data = models?["data"] as? [[String: Any]] else { fail(s == 401 ? "token rejected" : "cannot list models (HTTP \(s))") }
+    let ps = loadProfiles()
+    if ps.isEmpty { _ = requireProfile() }
+    var data: [[String: Any]]
+    if ps.count == 1 {
+        let (s, models) = get(route(ps[0]), "/v1/models")
+        guard s == 200, let d = models?["data"] as? [[String: Any]] else { fail(s == 401 ? "token rejected" : "cannot list models (HTTP \(s))") }
+        data = d
+    } else {
+        let lists = ps.map { p -> [[String: Any]]? in
+            let l = (try? routeResult(p).get()).flatMap(fetchModels)
+            if l == nil { err.write(Data("minigw: gateway \(p.name) (\(p.conn.url)) is not reachable; its models are left out\n".utf8)) }
+            return l
+        }
+        guard let m = Profiles.merge(lists, names: ps.map(\.name)) else { fail("no gateway is reachable (minigw status)") }
+        data = m
+    }
     let width = data.compactMap { ($0["id"] as? String)?.count }.max() ?? 0
     for m in data {
         let id = m["id"] as? String ?? "?"
@@ -507,8 +633,10 @@ case "models":
 case "--minigw-help", "-h", "--help", "-v", "--version":
     if args.first == "-v" || args.first == "--version" { say("minigw \(minigwVersion)") } else {
         say("""
-        minigw connect <host[:port]> [--token T|-]  save gateway address and token (Keychain; - = stdin)
-        minigw status | models | disconnect
+        minigw connect <host[:port]> [--name P] [--token T|-]  save a gateway as profile P (Keychain; - = stdin)
+        minigw status | models | disconnect [--name P]   all profiles; models of other profiles end in @P
+        minigw profiles [default P]                list profiles, or pick the default (its models also without @P)
+        minigw --minigw-profile P …                 use only profile P for this command
         minigw share add|remove [folder] | list    also share a system or hidden folder with the gateway
         minigw share add --work=native|sync|direct [--ro] [folder]   default mode for that folder (flag/env wins)
         minigw gw status|devices|provider|claude|token …    change the Mini Gateway app on this Mac (minigw gw help)
@@ -533,8 +661,10 @@ default:
 
 // MARK: Claude Code prek routerja
 
-let saved = requireConnection()
-let c = route(saved)
+let profiles = loadProfiles()
+if profiles.isEmpty { _ = requireProfile() }
+let saved = profiles[0].conn  // privzeti profil: mapa, glave in modeli brez pripone kot prej
+let c = route(profiles[0])
 setenv("ANTHROPIC_BASE_URL", c.url, 1)
 setenv("ANTHROPIC_AUTH_TOKEN", c.token, 1)
 setenv("ANTHROPIC_API_KEY", "", 1)
@@ -581,7 +711,7 @@ readOnly = mode.readOnly
 setenv("ANTHROPIC_CUSTOM_HEADERS", "x-claude-mini-session: \(sid)\nx-claude-mini-cwd: \(cwd)" + (wantShare ? "\nx-claude-mini-share: 1" : ""), 1)
 
 // Brez proxyja in brez mape: minigw ni več potreben → exec.
-guard proxy != nil || (wantShare && !sid.isEmpty) else {
+guard !proxies.isEmpty || (wantShare && !sid.isEmpty) || profiles.count > 1 else {
     execvp("claude", argv)
     fail("cannot run claude: \(String(cString: strerror(errno))) (is Claude Code installed and in PATH?)", code: 127)
 }
@@ -597,11 +727,7 @@ var registered = false
 if wantShare, !sid.isEmpty {
     let tries = SharedFolders.candidates(work: work, readOnly: readOnly, smb: smb, git: top != nil)
     if work == "worktree", top == nil { err.write(Data("minigw: \(cwd) is not in a git repository; worktree mode is not possible\n".utf8)) }
-    for (i, w) in tries.enumerated() {
-        share = ShareClient(c, session: sid, root: URL(fileURLWithPath: cwd), readOnly: readOnly, kind: w, top: top)
-        if share.register() { registered = true; break }
-        if i + 1 < tries.count { err.write(Data("minigw: \(w) mode not available: \(share.refusal); trying \(tries[i + 1])\n".utf8)) }
-    }
+    (share, registered) = registerShare(c, tries: tries, quiet: false)
 }
 if !wantShare || sid.isEmpty {
     // le šifrirani proxy
@@ -618,6 +744,58 @@ if !wantShare || sid.isEmpty {
     err.write(Data("minigw: gateway did not accept the folder; Claude CLI models with tools will not see it\n".utf8))
 }
 
+/// Načini po vrsti (auto: native → worktree → sync); naslednji, če prehod prejšnjega ne sprejme.
+@Sendable func registerShare(_ c: Connection, tries: [String], quiet: Bool) -> (ShareClient, Bool) {
+    var sc = ShareClient(c, session: sid, root: URL(fileURLWithPath: cwd), readOnly: readOnly, kind: "direct")
+    for (i, w) in tries.enumerated() {
+        sc = ShareClient(c, session: sid, root: URL(fileURLWithPath: cwd), readOnly: readOnly, kind: w, top: top)
+        if sc.register() { return (sc, true) }
+        if i + 1 < tries.count, !quiet { err.write(Data("minigw: \(w) mode not available: \(sc.refusal); trying \(tries[i + 1])\n".utf8)) }
+    }
+    return (sc, false)
+}
+
+// Več profilov: lokalni usmerjevalnik pred Claude Code; mapa pri drugem prehodu ob prvi zahtevi zanj (#17).
+final class Extras: @unchecked Sendable {
+    private let lock = NSLock()
+    private var list: [ShareClient] = []
+    func add(_ s: ShareClient) { lock.withLock { list.append(s) } }
+    func unregister() { lock.withLock { list }.forEach { $0.unregister() } }
+}
+let extras = Extras()
+var mux: ProfileMux?
+if profiles.count > 1 {
+    var targets = [ProfileMux.Target(name: profiles[0].name, url: c.url, token: c.token)]
+    var hooks: [String: @Sendable () -> Bool] = [:]
+    let tries = SharedFolders.candidates(work: work, readOnly: readOnly, smb: smb, git: top != nil)
+    for p in profiles.dropFirst() {
+        let rc: Connection
+        switch routeResult(p) {
+        case .success(let r): rc = r
+        case .failure(let e): err.write(Data("minigw: \(e.message); its models are left out\n".utf8)); continue
+        }
+        targets.append(ProfileMux.Target(name: p.name, url: rc.url, token: rc.token))
+        let remote = !p.conn.isLocal
+        let want = shareEnv == "1" || (shareEnv != "0" && remote && (autoShare(cwd) || SharedFolders.lookup(sharedFolders(), cwd: cwd) != nil))
+        guard want, !sid.isEmpty else { continue }
+        let name = p.name
+        hooks[name] = {
+            let (sc, ok) = registerShare(rc, tries: tries, quiet: true)
+            guard ok else { err.write(Data("minigw: gateway \(name) did not accept the folder: \(sc.refusal)\n".utf8)); return false }
+            sc.start(); extras.add(sc)
+            return true
+        }
+    }
+    if targets.count > 1 {
+        let m = ProfileMux(targets: targets, share: hooks)
+        do { try m.start() } catch { fail("cannot start minigw's local proxy: \(error)") }
+        mux = m
+        setenv("ANTHROPIC_BASE_URL", m.localURL, 1)
+        setenv("ANTHROPIC_AUTH_TOKEN", m.secret, 1)
+        err.write(Data("minigw: \(targets.count) gateways; models of \(profiles[0].name) also without a suffix, the others as <model>@<profile> (minigw models)\n".utf8))
+    }
+}
+
 // claude kot podproces (minigw mora ostati za share); Ctrl+C dobi claude.
 signal(SIGINT, SIG_IGN)
 signal(SIGQUIT, SIG_IGN)
@@ -630,10 +808,11 @@ posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETSIGDEF))
 var pid: pid_t = 0
 let rc = posix_spawnp(&pid, "claude", nil, &attr, argv, environ)
 guard rc == 0 else {
-    share.unregister()
+    share.unregister(); extras.unregister()
     fail("cannot run claude: \(String(cString: strerror(rc))) (is Claude Code installed and in PATH?)", code: 127)
 }
 var status: Int32 = 0
 while waitpid(pid, &status, 0) == -1 && errno == EINTR {}
 share.unregister()
+extras.unregister()
 exit(status & 0x7f == 0 ? (status >> 8) & 0xff : 128 + (status & 0x7f))

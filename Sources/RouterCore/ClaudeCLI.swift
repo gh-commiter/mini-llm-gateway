@@ -14,7 +14,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
     public var permissionMode = "dontAsk"            // brez vprašanj: kar ni dovoljeno, je zavrnjeno
     public var allowLocalTools = false               // vsa orodja Claude Code na tem Macu brez vprašanj; preglasi tools/permissionMode
     public var disabledTools: [String] = []          // izjeme pri allowLocalTools (tabela v nastavitvah)
-    public var settingSources = "project,local"      // uporabnikove nastavitve (hooki, vtičniki) se ne naložijo
+    public var settingSources = ""                   // M2: brez nastavitev map (hooki iz dovoljene mape bi tekli zunaj sandboxa), kot Go
 
     public init() {}
 
@@ -25,14 +25,15 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
     /// Z »Allow local tools« ima agent vsa orodja, a datoteke le v `cwd` in dovoljenih mapah:
     /// Read/Edit/Write zunaj teh map niso dovoljeni, Bash teče v sandboxu Claude Code (brez branja domače mape,
     /// pisanje le v teh mapah, omrežje dovoljeno), izhoda iz sandboxa ni.
-    func agentArgs(cwd: URL, allTools: [String]) -> [String] {
+    func agentArgs(cwd: URL, allTools: [String], scratch: URL? = nil) -> [String] {
         guard allowLocalTools else { return ["--tools", tools, "--allowedTools", tools, "--permission-mode", permissionMode] }
         let dirs = [cwd.path] + allowedRoots.split(separator: ",").map { ClaudeCLI.expand($0.trimmingCharacters(in: .whitespaces)) }
             .filter { $0 != "/" && !$0.isEmpty && $0 != cwd.path && FileManager.default.fileExists(atPath: $0) }
+            .filter { r in scratch.map { !RouterConfig.overlapsScratch(r, scratch: $0) } ?? true }  // H1: starejše nastavitve
         let sandbox: [String: Any] = ["sandbox": [
             "enabled": true, "failIfUnavailable": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
             "network": ["allowedDomains": ["*"]],
-            "filesystem": ["denyRead": ["~"], "allowRead": dirs, "allowWrite": dirs],
+            "filesystem": ["denyRead": ["~"] + Self.scratchPaths(scratch), "allowRead": dirs, "allowWrite": dirs],
         ]]
         let settings = String(decoding: try! JSONSerialization.data(withJSONObject: sandbox, options: [.sortedKeys]), as: UTF8.self)
         let others = allTools.filter { !Self.pathTools.contains($0) && !disabledTools.contains($0) }
@@ -46,14 +47,14 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
     /// pisanje le v klon in predpomnilnike gradnje (Worktree.writable), branje domače mape le tam, omrežje po nastavitvi.
     /// denyWrite: .git klona (config, hooks, info, commondir) in nastavitve gradnje lastnika (Native.buildCacheDenies).
     /// Iz ~/.m2 le branje settings.xml in toolchains.xml (Maven); pisanje le v svoj lokalni repozitorij (MAVEN_OPTS).
-    func worktreeArgs(root: URL, maven: URL, cwd: URL, allTools: [String], network: Bool) -> [String] {
+    func worktreeArgs(root: URL, maven: URL, cwd: URL, allTools: [String], network: Bool, scratch: URL? = nil) -> [String] {
         let dirs = Worktree.writable(root: root, maven: maven)
         let sandbox: [String: Any] = ["sandbox": [
             "enabled": true, "failIfUnavailable": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
             "network": ["allowedDomains": network ? ["*"] : []],
             // Nič iz DARWIN_USER_TEMP_DIR (peskovnik Claude Code ne zna »le znotraj mape«): swift build in xcodebuild
             // agenta lahko ne uspeta (gradnja z minigw run ali v načinu sync); Maven deluje.
-            "filesystem": ["denyRead": ["~"], "allowRead": dirs + Self.mavenConfig(), "allowWrite": dirs,
+            "filesystem": ["denyRead": ["~"] + Self.scratchPaths(scratch), "allowRead": dirs + Self.mavenConfig(), "allowWrite": dirs,
                            "denyWrite": ["config", "hooks", "info", "commondir"].map { root.path + "/.git/" + $0 }
                                + Native.buildCacheDenies().paths],
         ]]
@@ -65,6 +66,14 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
             + (cwd.path == root.path ? [] : ["--add-dir", root.path])
             + (others.isEmpty ? [] : ["--allowedTools", others.joined(separator: ",")])
             + ["--disallowedTools", (disabledTools + gitEdits).joined(separator: ",")]
+    }
+
+    /// M1: Scratch (kopije drugih naprav, zrcala) dobesedno in kanonično v denyRead: tudi zunaj domače mape (zunanji SSD).
+    /// Mapa seje in klon v njem ostaneta berljiva (allowRead je natančnejši). denyWrite ne: zapisovati je dovoljeno le v
+    /// allowWrite (mapa seje, klon, dovoljene mape), Scratch pa ne sme biti v dovoljeni mapi (scratchProblem).
+    static func scratchPaths(_ scratch: URL?) -> [String] {
+        guard let scratch else { return [] }
+        return Array(Set([scratch.path, Sync.real(scratch)?.path].compactMap { $0 })).sorted()
     }
 
     /// ~/.m2/settings.xml in toolchains.xml (dobesedno in kanonično, če sta povezavi).
@@ -86,6 +95,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
         allowLocalTools = try c.decodeIfPresent(Bool.self, forKey: .allowLocalTools) ?? d.allowLocalTools
         disabledTools = try c.decodeIfPresent([String].self, forKey: .disabledTools) ?? d.disabledTools
         settingSources = try c.decodeIfPresent(String.self, forKey: .settingSources) ?? d.settingSources
+        if settingSources == "project,local" { settingSources = "" }  // M2: stara privzeta vrednost → nova; izrecna druga ostane
     }
 }
 
@@ -146,8 +156,8 @@ public enum ClaudeCLI {
     }
 
     /// Nastavljena pot ali, če je prazna, samodejno najdena.
-    static func executable(_ configured: String) -> String? {
-        configured.isEmpty ? detected : [(configured as NSString).expandingTildeInPath].first { FileManager.default.isExecutableFile(atPath: $0) }
+    static func executable(_ configured: String) async -> String? {
+        configured.isEmpty ? await Detected.path("claude") : [(configured as NSString).expandingTildeInPath].first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
     /// Ali je datoteka res Claude Code: izvršljiva in `--version` izpiše »Claude Code«.
@@ -176,8 +186,8 @@ public enum ClaudeCLI {
     /// Vgrajena orodja te različice Claude Code: prva vrstica `claude -p` (init) jih našteje, nato proces ustavimo,
     /// še preden pošlje zahtevo modelu.
     public static func availableTools(_ configured: String) async -> [String] {
-        guard let exe = executable(configured) else { return [] }
-        return await Task.detached {
+        guard let exe = await executable(configured) else { return [] }
+        return await offPool {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: exe)
             p.arguments = ["-p", "x", "--model", "haiku", "--output-format", "stream-json", "--verbose", "--tools", "default",
@@ -195,7 +205,7 @@ public enum ClaudeCLI {
             while let b = try? out.fileHandleForReading.read(upToCount: 1), let c = b.first, c != 10 { line.append(c) }
             let tools = (try? JSONSerialization.jsonObject(with: line) as? [String: Any])?["tools"] as? [String]
             return (tools ?? []).sorted()
-        }.value
+        }
     }
 
     public struct ValidationError: Error, LocalizedError {
@@ -205,8 +215,8 @@ public enum ClaudeCLI {
     }
 
     /// `command -v claude` v uporabnikovi prijavni lupini (njegov PATH), nato običajna mesta namestitve.
-    /// Izračuna se enkrat ob prvi uporabi.
-    public static let detected: String? = locate("claude", also: ["\(NSHomeDirectory())/.claude/local/claude"])
+    /// Za nastavitve (glavna nit); router: `await executable("")`.
+    public static var detected: String? { Detected.pathNow("claude") }
 
     /// `command -v <name>` v prijavni lupini, nato običajna mesta namestitve.
     static func locate(_ name: String, also extra: [String] = []) -> String? {
@@ -431,8 +441,9 @@ extension Router {
                 prompt = ClaudeCLI.prompt(history: history, last: last)
             }
             let allTools = cfg.allowLocalTools || tree != nil ? await Self.toolList.get(cfg.executable) : []
-            args += (tree.map { cfg.worktreeArgs(root: $0.root, maven: $0.maven, cwd: dir, allTools: allTools, network: config.worktreeNetwork) }
-                     ?? cfg.agentArgs(cwd: dir, allTools: allTools))
+            args += (tree.map { cfg.worktreeArgs(root: $0.root, maven: $0.maven, cwd: dir, allTools: allTools, network: config.worktreeNetwork,
+                                                 scratch: config.scratchURL) }
+                     ?? cfg.agentArgs(cwd: dir, allTools: allTools, scratch: config.scratchURL))
                 + ["--setting-sources", shared == nil ? cfg.settingSources : ""]  // hooki iz mape odjemalca ne tečejo tukaj
         } else {
             cwd = config.scratch("chat")
@@ -450,7 +461,7 @@ extension Router {
             try await writer.write(chunks.reduce(Data(), +))
         }
 
-        guard let exe = ClaudeCLI.executable(cfg.executable) else {
+        guard let exe = await ClaudeCLI.executable(cfg.executable) else {
             return await error(503, "api_error", cfg.executable.isEmpty ? "claude not found; set its path in Mini Gateway settings"
                                                                          : "claude not found at \(cfg.executable)", rid: rid, writer: writer)
         }
@@ -564,5 +575,41 @@ final class ExitWaiter: @unchecked Sendable {
             lock.lock()
             if let s = status { lock.unlock(); c.resume(returning: s) } else { waiter = c; lock.unlock() }
         }
+    }
+}
+
+/// Programi agentov v prijavni lupini uporabnika (`zsh -lic`, sekunde): poiščejo se enkrat, ob zagonu routerja, na svoji niti.
+/// Router počaka z `await` (nit bazena Swift concurrency ostane prosta); nastavitve s `pathNow` (glavna nit).
+public enum Detected {
+    private static let group = DispatchGroup()
+    nonisolated(unsafe) private static var paths: [String: String] = [:]  // zapisano enkrat pred group.leave()
+    private static let started: Void = {
+        group.enter()
+        Thread {
+            let names = ["claude", "codex", "copilot", "grok"], lock = NSLock()
+            var found: [String: String] = [:]
+            DispatchQueue.concurrentPerform(iterations: names.count) { i in
+                let extra = names[i] == "claude" ? ["\(NSHomeDirectory())/.claude/local/claude"] : []
+                if let p = ClaudeCLI.locate(names[i], also: extra) { lock.withLock { found[names[i]] = p } }
+            }
+            paths = found
+            group.leave()
+        }.start()
+    }()
+
+    /// Začne iskanje (ob zagonu routerja).
+    public static func start() { started }
+
+    static func path(_ name: String) async -> String? {
+        start()
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in group.notify(queue: .global()) { c.resume() } }
+        return paths[name]
+    }
+
+    /// Blokira klicočo nit, dokler iskanje ne konča: le nastavitve (glavna nit), nikoli v bazenu.
+    public static func pathNow(_ name: String) -> String? {
+        start()
+        group.wait()
+        return paths[name]
     }
 }

@@ -16,6 +16,8 @@ public struct AdminHooks: Sendable {
     public var rotateToken: @Sendable () async -> String  // nova vrstica za odjemalce
     /// Proces odjemalca (vrata odjemalca, vrata routerja) → razlog za zavrnitev ali nil (PeerProcess.refusal).
     public var peerCheck: (@Sendable (UInt16, UInt16) -> String?)?
+    /// L3: Scratch v rabi (agenti, registrirane mape); testi ga zamenjajo.
+    public var scratchInUse: @Sendable () async -> Bool = { await Router.scratchInUse() }
 
     public init(secret: String, connect: String, version: String, installed: @escaping @Sendable () -> Bool,
                 setInstalled: (@Sendable (Bool) throws -> Void)? = nil,
@@ -188,7 +190,7 @@ extension Router {
             let list = await gateways(c)
             return (200, ["running": true, "version": hooks.version, "port": Int(c.port), "address": c.host, "installed": hooks.installed(),
                           "autostart": hooks.installed() ? "sign-in" : "", "agents": AgentCount.running.load(ordering: .relaxed),
-                          "devices": c.devices.count, "pending": Router.deviceLog.pending.count, "claude": claudeInfo(c.claudeCLI), "gateways": list, "providers": list])
+                          "devices": c.devices.count, "pending": Router.deviceLog.pending.count, "claude": await claudeInfo(c.claudeCLI), "gateways": list, "providers": list])
 
         // Naprave kot v minigw serve: dovoljene (z zadnjim stikom), čakajoče na odobritev, allowAnyDevice.
         case "GET devices":
@@ -280,9 +282,7 @@ extension Router {
         case "POST gateways":
             let b = try AdminBody(body, ["name", "baseURL", "key", "insecure"])
             let name = try b.string("name") ?? "", key = try b.string("key") ?? ""
-            guard !name.isEmpty, name.count <= 64, !name.contains("/"), !name.unicodeScalars.contains(where: { $0.value < 0x20 }) else {
-                throw AdminError(400, "provider name: 1-64 characters, no / or control characters")
-            }
+            guard Self.validProviderName(name) else { throw AdminError(400, "provider name: letters, digits, . _ - (up to 32)") }
             let base = try Self.checkGatewayURL(try b.string("baseURL") ?? "", insecure: try b.bool("insecure") ?? false)
             guard !key.isEmpty, key.unicodeScalars.allSatisfy({ (0x21...0x7e).contains($0.value) }) else {
                 throw AdminError(400, "the API key must be printable ASCII without spaces")
@@ -303,6 +303,32 @@ extension Router {
                 if let i = c.providers.firstIndex(where: { $0.id == gw.id }) { c.providers[i] = gw } else { c.providers.append(gw) }
             }
             return (200, ["provider": gateway(p, ready: false), "gateway": gateway(p, ready: false), "keyStore": "the Keychain", "models": apiModels(p, models, filter: "")])
+        case "PATCH gateways/{}":  // ime, vklop, URL (ključ ostane pod id), aliasi; kot minigw serve
+            guard var p = c.providers.first(where: { $0.name == arg }) else { throw AdminError(404, "no provider \(arg)") }
+            let b = try AdminBody(body, ["name", "enabled", "baseURL", "insecure", "aliases"])
+            let newURL = try b.string("baseURL"), insecure = try b.bool("insecure")
+            if newURL != nil || insecure != nil {  // kot Go: tudi sam »insecure« znova preveri URL
+                p.baseURL = try Self.checkGatewayURL(newURL ?? p.baseURL, insecure: insecure ?? false)
+            }
+            if let e = try b.bool("enabled") { p.enabled = e }
+            if let a = try b.string("aliases") {
+                guard a.utf8.count <= 64 << 10 else { throw AdminError(400, "aliases: too long") }
+                p.aliases = a
+            }
+            if let n = try b.string("name"), n != arg {
+                guard !RouterConfig.builtInProviders.contains(p.id), !RouterConfig.builtInProviders.contains(n.lowercased()) else {
+                    throw AdminError(400, "LiteLLM and OpenRouter are built in: they keep their names")
+                }
+                guard Self.validProviderName(n) else { throw AdminError(400, "provider name: letters, digits, . _ - (up to 32)") }
+                p.name = n
+            }
+            let gw = p
+            _ = try await hooks.update { c in  // L4: ime zasedeno? Preveri se na trenutnih nastavitvah, ne na posnetku.
+                guard let i = c.providers.firstIndex(where: { $0.id == gw.id }) else { throw AdminError(404, "no provider \(arg)") }
+                if c.providers.contains(where: { $0.id != gw.id && $0.name == gw.name }) { throw AdminError(400, "a provider named \(gw.name) already exists") }
+                c.providers[i] = gw
+            }
+            return (200, ["provider": gateway(p, ready: false), "gateway": gateway(p, ready: false)])
         case "DELETE gateways/{}":
             guard let p = c.providers.first(where: { $0.name == arg }) else { throw AdminError(404, "no provider \(arg)") }
             guard !RouterConfig.builtInProviders.contains(p.id) else { throw AdminError(400, "\(p.name) is built in: turn it off instead") }
@@ -345,10 +371,30 @@ extension Router {
 
         case "GET agents/{}":
             switch arg {
-            case "claude": return (200, claudeInfo(c.claudeCLI))
-            case "codex": return (200, codexInfo(c.codex))
-            case "copilot": return (200, copilotInfo(c.copilot))
-            case "grok": return (200, grokInfo(c.grok))
+            case "claude": return (200, await claudeInfo(c.claudeCLI))
+            case "codex": return (200, await codexInfo(c.codex))
+            case "copilot": return (200, await copilotInfo(c.copilot))
+            case "grok": return (200, await grokInfo(c.grok))
+            default: throw AdminError(404, "no agent \(arg)")
+            }
+        case "GET agents/{}/tools":
+            guard arg == "claude" else { throw AdminError(404, "no agent \(arg)") }
+            return (200, ["tools": await Self.toolList.get(c.claudeCLI.executable)])
+        case "GET agents/{}/models":  // Codex, Grok: modeli računa (kot minigw serve)
+            switch arg {
+            case "codex":
+                guard let exe = await Codex.executable(c.codex.executable) else { return (200, ["models": [Any]()]) }
+                let ms = await offPool { Codex.catalog(exe) }
+                return (200, ["models": ms.map { m -> [String: Any] in
+                    var o: [String: Any] = ["slug": m.slug, "name": m.name, "enabled": c.codex.isModelEnabled(m.slug)]
+                    if !m.description.isEmpty { o["description"] = m.description }
+                    if let w = m.window { o["window"] = w }
+                    return o
+                }])
+            case "grok":
+                guard let exe = await Grok.executable(c.grok.executable) else { return (200, ["models": [Any]()]) }
+                let ms = await offPool { Grok.catalog(exe) }
+                return (200, ["models": ms.map { ["slug": $0, "name": $0, "enabled": c.grok.enabledModels?.contains($0) ?? true] }])
             default: throw AdminError(404, "no agent \(arg)")
             }
         case "GET foundry":
@@ -356,7 +402,7 @@ extension Router {
         case "GET foundry/{}":
             guard arg == "models" else { throw AdminError(404, "Not found: \(method) \(path)") }
             do {
-                let ms = try await Router.foundry.list(Foundry.executable(c.foundry.executable))
+                let ms = try await Router.foundry.list(await Foundry.executable(c.foundry.executable))
                 return (200, ["models": ms.map { ["name": $0.name, "vision": $0.vision, "enabled": c.foundry.isModelEnabled($0.name)] }])
             } catch { throw AdminError(503, (error as? Foundry.RequestError)?.message ?? "\(error)") }
         case "PATCH foundry":
@@ -378,7 +424,14 @@ extension Router {
         case "PATCH agents/{}":
             switch arg {
             case "claude":
-                let b = try AdminBody(body, ["enabled", "path", "tools", "folders", "allowLocalTools", "disabledTools"])
+                let b = try AdminBody(body, ["enabled", "path", "tools", "folders", "allowLocalTools", "disabledTools", "permissionMode", "settingSources"])
+                let mode = try b.string("permissionMode"), sources = try b.string("settingSources").map { $0.replacingOccurrences(of: " ", with: "") }
+                if let mode, !["dontAsk", "acceptEdits", "auto", "plan"].contains(mode) {
+                    throw AdminError(400, "permission mode: dontAsk, acceptEdits, auto or plan")
+                }
+                if let sources, sources.range(of: "^((user|project|local)(,(user|project|local))*)?$", options: .regularExpression) == nil {
+                    throw AdminError(400, "setting sources: comma-separated user, project, local (or empty)")
+                }
                 let enabled = try b.bool("enabled"), path = try b.string("path"), folders = try b.string("folders")
                 let local = try b.bool("allowLocalTools"), disabled = try b.strings("disabledTools")
                 let tools = try b.string("tools").map { $0.replacingOccurrences(of: " ", with: "") }
@@ -386,6 +439,10 @@ extension Router {
                     throw AdminError(400, "tools: comma-separated tool names, e.g. Read,Grep,Glob")
                 }
                 if let path, !path.isEmpty, case .failure(let e) = ClaudeCLI.validate(path) { throw AdminError(400, "claude: \(e)") }
+                if let folders, let bad = folders.split(separator: ",").map(String.init).first(where: { RouterConfig.overlapsScratch($0, scratch: c.scratchURL) }) {
+                    throw AdminError(400, "allowed folder \(bad.trimmingCharacters(in: .whitespaces)) contains or is inside the scratch folder \(c.scratchURL.path) (agents could change the gateway's mirrors and other devices' copies): choose another folder")
+                }
+                let found = await ClaudeCLI.executable(path ?? config.claudeCLI.executable) != nil
                 let n = try await hooks.update { c in
                     if let enabled { c.claudeCLI.enabled = enabled }
                     if let path { c.claudeCLI.executable = path }
@@ -393,11 +450,13 @@ extension Router {
                     if let folders { c.claudeCLI.allowedRoots = folders }
                     if let local { c.claudeCLI.allowLocalTools = local }
                     if let disabled { c.claudeCLI.disabledTools = disabled }
-                    if c.claudeCLI.enabled, ClaudeCLI.executable(c.claudeCLI.executable) == nil {
+                    if let mode { c.claudeCLI.permissionMode = mode }
+                    if let sources { c.claudeCLI.settingSources = sources }
+                    if c.claudeCLI.enabled, !found {
                         throw AdminError(400, "claude not found: set path")
                     }
                 }
-                return (200, claudeInfo(n.claudeCLI))
+                return (200, await claudeInfo(n.claudeCLI))
             case "copilot":
                 // Kot codex; models = seznam imen (Copilot nima seznama modelov), commands = ukazi lupine (privolitev).
                 // token: le za pisanje (kot ključi ponudnikov); "" ga izbriše.
@@ -418,7 +477,7 @@ extension Router {
                     if let commands { c.copilot.commands = commands }
                     if let models { c.copilot.models = (models ?? []).joined(separator: ", ") }  // null = le privzeti model
                 }
-                var info = copilotInfo(n.copilot)
+                var info = await copilotInfo(n.copilot)
                 if let token { info["hasToken"] = !token.isEmpty }  // ključ se shrani šele po odgovoru (ponovni zagon)
                 return (200, info)
             case "codex", "grok":
@@ -440,7 +499,7 @@ extension Router {
                         if let models { c.grok.enabledModels = models }
                     }
                 }
-                return (200, arg == "codex" ? codexInfo(n.codex) : grokInfo(n.grok))
+                return (200, arg == "codex" ? await codexInfo(n.codex) : await grokInfo(n.grok))
             default:
                 throw AdminError(404, "no agent \(arg)")
             }
@@ -448,14 +507,10 @@ extension Router {
         case "GET general":
             return (200, general(c, connect: hooks.connect))
         case "PATCH general":
-            let b = try AdminBody(body, ["port", "address", "allowedClients", "allowPlainRemote", "allowAnyDevice", "startAtSignIn"])
+            let b = try AdminBody(body, ["port", "address", "allowedClients", "allowPlainRemote", "allowAnyDevice", "startAtSignIn", "scratch"])
             let port = try b.int("port"), address = try b.string("address"), clients = try b.string("allowedClients")
-            let plain = try b.bool("allowPlainRemote"), any = try b.bool("allowAnyDevice")
-            if let on = try b.bool("startAtSignIn") {
-                guard let set = hooks.setInstalled else { throw AdminError(400, "startAtSignIn: not available here") }
-                do { try set(on) } catch { throw AdminError(500, "Open at Login: \(error.localizedDescription)") }
-                if b.o.count == 1 { return (200, general(c, connect: hooks.connect)) }  // brez ponovnega zagona routerja
-            }
+            let plain = try b.bool("allowPlainRemote"), any = try b.bool("allowAnyDevice"), scratch = try b.string("scratch")
+            // L2: vse preverjeno pred kakršno koli spremembo (premik Scratch ali Open at Login)
             if let port, !(1...65535).contains(port) { throw AdminError(400, "port must be 1-65535") }
             if let address, !["0.0.0.0", "::", "127.0.0.1"].contains(address) {
                 throw AdminError(400, "address: use 0.0.0.0, :: or 127.0.0.1, so that the admin API stays reachable on 127.0.0.1; limit clients with allowedClients")
@@ -465,7 +520,33 @@ extension Router {
                     throw AdminError(400, "allowedClients: \(ip) is not an IP address")
                 }
             }
+            // Scratch (kot Settings: vsebina gre v »Mini Gateway Scratch« v izbrani mapi; "" = privzeta). M1, L1: pravila
+            // poti, shrani se kanonična pot; L3: ne med sejami.
+            var newScratch: String?
+            if let scratch {
+                if !scratch.isEmpty {
+                    let expanded = (scratch as NSString).expandingTildeInPath
+                    guard expanded.hasPrefix("/") else { throw AdminError(400, "scratch folder: an absolute path") }
+                    let url = URL(fileURLWithPath: expanded, isDirectory: true)
+                    if let why = RouterConfig.scratchProblem(url, allowedRoots: c.claudeCLI.allowedRoots) { throw AdminError(400, "scratch folder: \(why)") }
+                    newScratch = Sync.real(url)?.path ?? url.path
+                } else { newScratch = "" }
+                if await hooks.scratchInUse() {
+                    throw AdminError(409, "scratch folder: minigw sessions or agents are active; move it when no minigw session runs")
+                }
+            }
+            if let on = try b.bool("startAtSignIn") {
+                guard let set = hooks.setInstalled else { throw AdminError(400, "startAtSignIn: not available here") }
+                do { try set(on) } catch { throw AdminError(500, "Open at Login: \(error.localizedDescription)") }
+                if b.o.count == 1 { return (200, general(c, connect: hooks.connect)) }  // brez ponovnega zagona routerja
+            }
+            let moveTo = newScratch
             let n = try await hooks.update { c in
+                if let newScratch = moveTo, newScratch != c.scratchFolder {  // L2: premik v isti spremembi nastavitev (trenutna, ne posnetek)
+                    let to = newScratch.isEmpty ? RouterConfig.defaultScratch : RouterConfig.dedicated(URL(fileURLWithPath: newScratch, isDirectory: true))
+                    do { try RouterConfig.moveScratch(from: c.scratchURL, to: to) } catch { throw AdminError(500, "scratch folder: \(error.localizedDescription)") }
+                    c.scratchFolder = newScratch
+                }
                 if let port { c.port = UInt16(port) }
                 if let address { c.host = address }
                 if let clients { c.allowedClients = clients }
@@ -485,30 +566,31 @@ extension Router {
 
     // MARK: oblike JSON (docs/admin-api.md)
 
-    func claudeInfo(_ c: ClaudeCLIConfig) -> [String: Any] {
-        ["enabled": c.enabled, "path": c.executable, "found": ClaudeCLI.executable(c.executable) != nil, "tools": c.tools,
-         "folders": c.allowedRoots, "allowLocalTools": c.allowLocalTools, "disabledTools": c.disabledTools]
+    func claudeInfo(_ c: ClaudeCLIConfig) async -> [String: Any] {
+        ["enabled": c.enabled, "path": c.executable, "found": await ClaudeCLI.executable(c.executable) != nil, "tools": c.tools,
+         "folders": c.allowedRoots, "allowLocalTools": c.allowLocalTools, "disabledTools": c.disabledTools,
+         "permissionMode": c.permissionMode, "settingSources": c.settingSources]
     }
 
-    func codexInfo(_ c: CodexConfig) -> [String: Any] {
-        ["enabled": c.enabled, "path": c.executable, "found": Codex.executable(c.executable) != nil, "write": c.write,
+    func codexInfo(_ c: CodexConfig) async -> [String: Any] {
+        ["enabled": c.enabled, "path": c.executable, "found": await Codex.executable(c.executable) != nil, "write": c.write,
          "network": c.network, "models": c.enabledModels.map { $0 as Any } ?? NSNull()]
     }
 
-    func copilotInfo(_ c: CopilotConfig) -> [String: Any] {
-        ["enabled": c.enabled, "path": c.executable, "found": Copilot.executable(c.executable) != nil, "write": c.write,
+    func copilotInfo(_ c: CopilotConfig) async -> [String: Any] {
+        ["enabled": c.enabled, "path": c.executable, "found": await Copilot.executable(c.executable) != nil, "write": c.write,
          "network": c.network, "commands": c.commands, "models": c.modelList,
          "hasToken": !(secrets.get(Copilot.tokenAccount) ?? "").isEmpty]
     }
 
     func foundryInfo(_ c: FoundryConfig) async -> [String: Any] {
-        let exe = Foundry.executable(c.executable)
+        let exe = await Foundry.executable(c.executable)
         return ["enabled": c.enabled, "path": c.executable, "found": exe != nil, "exe": exe ?? "", "running": await Router.foundry.running,
                 "error": await Router.foundry.lastError, "instructions": c.instructions, "models": c.enabledModels.map { $0 as Any } ?? NSNull()]
     }
 
-    func grokInfo(_ c: GrokConfig) -> [String: Any] {
-        ["enabled": c.enabled, "path": c.executable, "found": Grok.executable(c.executable) != nil, "write": c.write,
+    func grokInfo(_ c: GrokConfig) async -> [String: Any] {
+        ["enabled": c.enabled, "path": c.executable, "found": await Grok.executable(c.executable) != nil, "write": c.write,
          "models": c.enabledModels.map { $0 as Any } ?? NSNull()]
     }
 
@@ -523,7 +605,7 @@ extension Router {
 
     func general(_ c: RouterConfig, connect: String) -> [String: Any] {
         ["port": Int(c.port), "address": c.host, "allowedClients": c.allowedClients, "allowPlainRemote": c.allowPlainRemote,
-         "allowAnyDevice": c.allowAnyDevice,
+         "scratch": c.scratchURL.path, "allowAnyDevice": c.allowAnyDevice,
          "connect": "minigw connect \(c.host == "0.0.0.0" || c.host == "::" ? Self.localIP() : c.host):\(c.port) --token '\(connect)'"]
     }
 
@@ -546,6 +628,15 @@ extension Router {
     }
 
     // MARK: preverjanja (enaka kot v Go minigw serve)
+
+    /// L3: Scratch uporabljajo agenti ali registrirane mape minigw (premik bi jim vzel kopije in klone).
+    public static func scratchInUse() async -> Bool {
+        if AgentCount.running.load(ordering: .relaxed) > 0 { return true }
+        return await shares.hasSessions
+    }
+
+    /// L4: ime ponudnika kot na Go (validGatewayName): gre v imena modelov in poti API.
+    static func validProviderName(_ n: String) -> Bool { n.range(of: "^[A-Za-z0-9._-]{1,32}$", options: .regularExpression) != nil }
 
     static func validDeviceID(_ id: String) -> Bool {
         id.count == 43 && Noise.fromBase64url(id).map { $0.count == 32 && Noise.base64url($0) == id } == true

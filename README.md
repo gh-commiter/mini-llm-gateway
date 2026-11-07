@@ -135,7 +135,7 @@ Remote Control and so on.
 | `/minigw:status` | – | Connection and available models |
 | `/minigw:models` | – | Gateway models, grouped by provider |
 | `/minigw:version` | – | Versions of minigw, Claude Code and the plugin |
-| `/minigw:connect <gateway> <token>` | – | One-time connection to the gateway |
+| `/minigw:connect [--name <profile>] <gateway> <token>` | – | One-time connection to a gateway; `--name` adds another one as a profile |
 | `/minigw:share [folder]` | – | Share a folder that minigw does not share by itself, such as a system folder |
 
 Claude can also pick these skills by itself when they fit the request.
@@ -227,17 +227,20 @@ Then connect once with the gateway's token (quote it, it contains `#`):
 
 ```sh
 minigw connect mini.local --token '<token>'
+minigw connect hpx360.local --name win --token '<token>'   # a second gateway as profile "win" (both stay)
 ```
 
-The connection is stored in Windows Credential Manager, on Linux in `~/.config/minigw/connection.json` (mode 0600).
+The connection is stored in Windows Credential Manager, on Linux in `~/.config/minigw/connection.json` (mode 0600),
+other profiles in `connections/<profile>.json` there ([Several gateways at once](#4-use)).
 All clients encrypt with AES-256-GCM; the Mac gateway also accepts ChaCha20-Poly1305 from older macOS clients.
 
 #### 3.2.4 Gateway on Windows or Linux without the plugin (minigw serve)
 
 `minigw serve` turns a Windows or Linux computer into a small gateway: `claude -p` on that computer as
 `claude-cli-opus`, `claude-cli-sonnet` and `claude-cli-haiku`, Codex and Grok (off by default), plus providers; no
-Siri or Apple models. Agents work in a synced copy of the client's folder, so clients run with `MINIGW_WORK=sync`
-(folder mounts need the Mac gateway). Install Claude Code there (on Windows the native `claude.exe`; `minigw serve`
+Siri or Apple models. Agents work in a synced copy of the client's folder or, for a git repository, in a clone on a
+branch (worktree mode), so clients run with `MINIGW_WORK=sync`, `worktree` or `auto` (folder mounts, native mode and
+`minigw run` need the Mac gateway). Install Claude Code there (on Windows the native `claude.exe`; `minigw serve`
 does not run `claude.cmd`).
 
 `/minigw:gw install` runs these two commands. `minigw serve install` copies minigw to a fixed place, adds it to
@@ -316,11 +319,35 @@ on Windows, in the Secret Service (`secret-tool`) on Linux, or in `gateway-keys.
 minigw                                  # Claude Code through the gateway; choose models with /model
 minigw --model claude-apple-fm -p "Hi"  # any claude option works
 minigw status                           # gateway, providers, number of models
-minigw models                           # list available models
-minigw connect 192.168.1.20 --token …   # use a gateway on another Mac
+minigw models                           # list available models (<model>@<profile> for other gateways)
+minigw connect 192.168.1.20 --token …   # use a gateway on another Mac (--name P adds it as profile P)
 ```
 
 Subagents can use gateway models too, e.g. `model: claude-siri-ai` in `.claude/agents/<name>.md`.
+
+**Several gateways at once (profiles).** One client can use, for example, the Mac mini and a Windows gateway in the
+same session:
+
+```sh
+minigw connect mini.local --name mini --token -     # each gateway is a profile
+minigw connect hpx360.local --name win --token -
+minigw profiles                                     # list; * marks the default
+minigw profiles default mini                        # its models also appear without a suffix
+minigw --model claude-cli-opus@win -p "…"           # <model>@<profile> runs on that gateway
+minigw --minigw-profile win …                       # this command uses only that gateway
+minigw disconnect --name win
+```
+
+- The connection you had before is the profile `default`; nothing changes while it is the only one.
+- With several profiles, `minigw` puts a local proxy on `127.0.0.1` (with its own token) in front of Claude Code. It
+  sends `<model>@<profile>` to that gateway without the suffix. `/model` and `minigw models` list every reachable
+  gateway's models; one that cannot be reached is left out, and `minigw status` shows it.
+- The folder is shared with another gateway only when that gateway gets its first request for an agent model
+  (`claude-cli-*`, `claude-codex*`, `claude-grok*`, `claude-copilot*`), in the same work mode
+  (`--minigw-work`). A Windows or Linux gateway needs `--minigw-work=sync`, `worktree` or `auto`.
+- Each profile keeps its own address, token and gateway key: Keychain on the Mac, Credential Manager on Windows, on Linux
+  `~/.config/minigw/connections/<profile>.json` (mode 0600). The device key is
+  one per client, so every gateway recognises the same device.
 
 **Another Mac and Claude CLI models with tools.** `opus`, `sonnet`, `haiku` and `fable` run `claude -p` as an agent on
 the gateway Mac. When `minigw` talks to a gateway on another Mac, it shares the current folder with it for the length
@@ -330,6 +357,7 @@ folder is shared, also outside your home folder (for example `D:\Projects\app` o
 but never a drive or volume root, the home folder itself, system folders (`C:\Windows`, `Program Files`, `/usr`,
 `/System` …), other users' home folders, `~/Library`, `AppData` or hidden folders such as `~/.ssh`. To share one of
 those anyway, run `minigw share add` in it (`minigw share list`, `minigw share remove`); a root is always refused.
+The list is per computer: with several profiles every gateway gets the folder on its first agent request.
 **Read-only:** `minigw --minigw-ro …` (or `MINIGW_SHARE=ro`, for example in the `env` of Claude Code's settings for the
 plugin) shares the folder read-only: minigw refuses every write, the gateway mounts it read-only and runs Codex and
 Grok in their read-only sandbox. Agents read files up to 32 MB in one piece (larger ones only in ranges).
@@ -387,8 +415,15 @@ and gives each agent its own clone on a branch `minigw/<agent>-<session>-<n>`; p
   30 days are removed.
 - **`--minigw-work=auto`:** read-only (`--minigw-ro`) → direct; a folder on the gateway's SMB share → native; a git
   repository → worktree, then sync (never direct read-write: `.git` is not protected there); otherwise sync, then direct.
-  The Go gateway (`minigw serve`) supports sync only. A saved per-folder mode (`minigw share add --work=…`) and the flag
-  still win.
+  A saved per-folder mode (`minigw share add --work=…`) and the flag still win.
+- **On `minigw serve` (Windows, Linux)** worktree works the same way: the gateway's own `git` from PATH (no system or global
+  config, hooks, fsmonitor or submodules), one clone per session and agent, so one branch `minigw/<agent>-<session>-0`.
+  Agent requests run one at a time per device and repository: also two sessions of the same device in the same
+  repository wait for each other (sync: one at a time per device and folder). On Linux Codex and Copilot run under bwrap with the clone writable,
+  its `.git` folder fixed in place (it cannot be renamed or replaced) and `.git/config`, `hooks` and `info` read-only;
+  Claude CLI in Claude Code's sandbox; on Windows every agent, Claude CLI included, needs "Allow commands without a
+  sandbox". An allowed folder may not contain the Scratch folder or sit inside it (refused, and ignored at start). The settings for build network (Settings → General → Worktree mode) exist only on
+  the Mac. Native mode and `minigw run` stay Mac-only.
 
 **Native: the folder is the gateway's own SMB share.** When the client works in an SMB mount of a gateway share (for
 example `/Volumes/Java/projects` mounted from the gateway's `/Volumes/Java`), `minigw --minigw-work=native …`
@@ -396,7 +431,8 @@ example `/Volumes/Java/projects` mounted from the gateway's `/Volumes/Java`), `m
 `minigw run -- mvn -q verify` runs a build there and streams its output and exit code back.
 - **Mode per folder:** `minigw share add --work=native` (or `sync`, `direct`, with `--ro` for read-only) in a folder
   saves its default mode for it and its subfolders in minigw's share list (never in the project); `minigw share list`
-  shows it. `--minigw-work=` or `MINIGW_WORK` still wins for one run.
+  shows it. `--minigw-work=` or `MINIGW_WORK` still wins for one run. `minigw run` uses the default profile, or
+  `--minigw-profile P`.
 - **Proof, not a path:** minigw sends the share name and the path under it; the gateway writes a check file with random
   content into its folder, and minigw must read it back through its mount. A folder with the same path elsewhere fails.
   The check is for correctness (the same folder), not a permission: permission comes from the token, the device, the
@@ -432,26 +468,31 @@ example `/Volumes/Java/projects` mounted from the gateway's `/Volumes/Java`), `m
 ## 5. Gateway settings
 
 Settings of the menu bar app on the gateway Mac (**Settings…**, laid out like System Settings). On Windows and Linux
-the settings page of `minigw serve` has the same panes, except Siri AI and Apple Foundation Models. Open it with **Settings…** in the tray or `/minigw:gw settings`.
-[docs/windows-parity.md](docs/windows-parity.md) lists every control on both. Client options (`minigw share`,
-`--minigw-ro`, `MINIGW_SHARE`) are in [4. Use](#4-use).
+the settings page of `minigw serve` has the same panes. Mac only: Siri AI, Apple Foundation Models, the WebDAV folder
+mount (direct mode), native mode, `minigw run`, and the build network switches of worktree mode. Open the page with
+**Settings…** in the tray or `/minigw:gw settings`. [docs/windows-parity.md](docs/windows-parity.md)
+lists every control on both. Client options (`minigw share`, `--minigw-work`, `--minigw-ro`) are in [4. Use](#4-use).
 
-- **General** – listen address and port (default `127.0.0.1:8765`; use `0.0.0.0` or a LAN IP for other computers),
-  access token, and About (version, build commit, license). On Windows and Linux also unencrypted connections.
-- **Devices** (both) – **Allow any device with the token** (only while no device is allowed), allowed client IPs, on
-  the Mac unencrypted connections from other Macs; devices **waiting for approval** with name (editable), ID, address,
+- **General** – listen address and port (default `127.0.0.1:8765`; `0.0.0.0` for other computers), access token,
+  scratch folder (agents' temporary files; another folder moves them, for example to a fast SSD; **Choose…** with the
+  Windows tray), and About.
+  Mac only: **Worktree mode** (network for builds, network for Codex builds) and **minigw run** (which Macs may run
+  builds in a folder of this Mac's SMB share, each with or without network).
+- **Devices** (both) – **Allow any device with the token** (only while no device is allowed), allowed client IPs,
+  unencrypted connections from other computers; devices **waiting for approval** with name (editable), ID, address,
   time, OS and minigw version, **Allow** / **Reject**; **allowed devices** with name (rename), ID, last seen,
   **Copy ID** / **Remove**. The Mac also shows waiting devices in the menu bar with a notification.
 - **Providers** (LiteLLM, OpenRouter or any other Anthropic-compatible one) – name, base URL, API key, and a switch
-  per discovered model. **+ / −** under the sidebar adds or removes providers, so you can use several, each with its own
-  key and models.
-- **Siri AI** – off by default; turning it on asks for Accessibility permission. Privacy warning and **Devices**:
-  which other computers may use Siri (this Mac always may).
-- **Apple Foundation Models** – on-device model and its instructions.
+  per discovered model. **+ / −** under the sidebar adds or removes providers.
+- **Siri AI** (Mac) – off by default; turning it on asks for Accessibility permission. Privacy note and the devices
+  that may use Siri (this Mac always may).
+- **Apple Foundation Models** (Mac) – on-device model and its instructions.
+- **Foundry Local** – off by default; Microsoft's on-device models, their switches and instructions.
 - **Claude CLI** – path to `claude`, allowed folders, **Allow local tools** with a table to exclude tools; install or
-  download `minigw`.
-- **Codex CLI** / **Grok CLI** – off by default; model table, write and network switches for their sandbox.
-- **Copilot CLI** – off by default; models by name, switches for writing, web access and commands (read-only by default).
+  download `minigw`. On Windows also **Allow commands without a sandbox**. With the Windows tray, **Browse…** and
+  **Choose…** open the file dialog.
+- **Codex CLI** / **Copilot CLI** / **Grok CLI** – off by default; models, and switches for writing and network
+  (Copilot: also commands, with its own GitHub token).
 
 <table>
 <tr><td><img src="docs/images/general.png" width="400" alt="Settings: General"></td>
@@ -463,7 +504,7 @@ the settings page of `minigw serve` has the same panes, except Siri AI and Apple
 Changes apply immediately. Keys and the access token are stored in the Keychain, settings in
 `~/Library/Preferences/dev.trojar.minigateway.plist`.
 
-**From the command line.** `minigw gw status|devices|provider|claude|token` changes the same settings on this
+**From the command line.** `minigw gw status|devices|provider|claude|copilot token|autostart|token` changes the same settings on this
 Mac, with the same commands as on Windows and Linux (`minigw gw help`), for example
 `minigw gw provider add Lab https://gw.example` (the key comes from stdin or a hidden prompt) or
 `minigw gw provider models OpenRouter --enable anthropic/claude-sonnet-4.5`. The app must be running; the

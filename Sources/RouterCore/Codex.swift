@@ -62,10 +62,11 @@ public enum Codex {
                          window: m["context_window"] as? Int)
         }
     }
-    public static let detected: String? = ClaudeCLI.locate("codex")
+    /// Za nastavitve (glavna nit); router: `await executable("")`.
+    public static var detected: String? { Detected.pathNow("codex") }
 
-    public static func executable(_ configured: String) -> String? {
-        configured.isEmpty ? detected : [(configured as NSString).expandingTildeInPath].first { FileManager.default.isExecutableFile(atPath: $0) }
+    public static func executable(_ configured: String) async -> String? {
+        configured.isEmpty ? await Detected.path("codex") : [(configured as NSString).expandingTildeInPath].first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
     /// Argumenti: agent piše le v mapi seje in dovoljenih mapah (sandbox Codex), omrežje za gradnjo dovoljeno.
@@ -121,7 +122,7 @@ public enum Codex {
                     onStep: @escaping @Sendable (String) -> Void = { _ in }) async throws -> (String, String?) {
         let h = Handle()
         return try await withTaskCancellationHandler {
-            try await Task.detached { () throws -> (String, String?) in
+            try await offPool { () throws -> (String, String?) in
                 let p = h.p
                 p.executableURL = URL(fileURLWithPath: exe)
                 p.arguments = args
@@ -159,7 +160,7 @@ public enum Codex {
                     throw Failure(message: "codex exited with \(p.terminationStatus)" + (tail.isEmpty ? "" : ": \(tail)"))
                 }
                 return (text, thread)
-            }.value
+            }
         } onCancel: { if h.p.isRunning { h.p.terminate() } }
     }
 }
@@ -176,7 +177,7 @@ extension Router {
         if let model, !Self.validModel(model) {
             return await error(400, "invalid_request_error", "Invalid model name", rid: rid, writer: writer)
         }
-        guard let exe = Codex.executable(config.codex.executable) else {
+        guard let exe = await Codex.executable(config.codex.executable) else {
             return await error(503, "api_error", "Codex CLI not found (Mini Gateway → Settings → Claude CLI → Codex)", rid: rid, writer: writer)
         }
         let all = ClaudeCLI.turns(body)
@@ -205,6 +206,7 @@ extension Router {
             cwd = dir
             extra = config.claudeCLI.allowedRoots.split(separator: ",").map { ClaudeCLI.expand($0.trimmingCharacters(in: .whitespaces)) }
                 .filter { $0 != "/" && !$0.isEmpty && $0 != dir.path && FileManager.default.fileExists(atPath: $0) }
+                .filter { !RouterConfig.overlapsScratch($0, scratch: config.scratchURL) }  // H1: ne zrcal in kopij drugih naprav
             // worktree: pisljiv le klon (koren, ne dovoljene mape)
             tree = await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "")
             if let tree {

@@ -203,7 +203,14 @@ func (s *shareClient) wtPull(k string, job davJob) davResponse {
 	}
 	st, data := call(s.c, "GET", "/minigw/worktree/result", map[string]string{"x-share-key": k}, nil, 10*time.Minute)
 	if st != 200 {
-		s.note(fmt.Sprintf("worktree: cannot get %s from the gateway (HTTP %d)", req.Branch, st))
+		var e struct {
+			Error struct{ Message string } `json:"error"`
+		}
+		why := fmt.Sprintf("HTTP %d", st)
+		if json.Unmarshal(data, &e) == nil && e.Error.Message != "" {
+			why = clean(e.Error.Message)
+		}
+		s.note(fmt.Sprintf("worktree: cannot get %s from the gateway: %s", req.Branch, why))
 		return dav(500, nil, nil)
 	}
 	dir, err := os.MkdirTemp("", "minigw-") // 0700

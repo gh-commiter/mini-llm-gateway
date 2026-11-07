@@ -226,7 +226,7 @@ func runCommand(args []string) int {
 	if len(args) == 0 {
 		fail("usage: minigw run [--] <command> [args …]")
 	}
-	c := route(requireConnection())
+	c := route(requireProfile())
 	cwd, _ := os.Getwd()
 	proof, why := nativeProof(c, cwd)
 	if proof == nil {
@@ -239,7 +239,7 @@ func runCommand(args []string) int {
 	for k, v := range proof {
 		req.Header.Set(k, v)
 	}
-	resp, err := http.DefaultClient.Do(req) // brez časovne omejitve: gradnja traja; router pošlje »p« vsakih 15 s
+	resp, err := (&http.Client{CheckRedirect: noRedirect}).Do(req) // brez časovne omejitve: gradnja traja; router pošlje »p« vsakih 15 s
 	if err != nil {
 		fail("cannot reach the gateway: " + err.Error())
 	}

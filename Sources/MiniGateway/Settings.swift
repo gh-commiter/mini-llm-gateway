@@ -34,6 +34,7 @@ struct SettingsView: View {
     @State private var grokModels: [String] = []
     @State private var foundryModels: [Foundry.Model] = []
     @State private var foundryStatus = ""
+    @State private var foundryFound: String?  // samodejno najdena pot (iskanje v .task, ne ob vsakem izrisu)
 
     enum Pane: Hashable {
         case general, provider(String), siri, appleFM, foundry, claudeCLI, codex, copilot, grok, devices
@@ -455,7 +456,7 @@ struct SettingsView: View {
             Section {
                 Toggle("Enabled", isOn: $draft.foundry.enabled)
                 LabeledContent("Executable (empty = auto-detect)") {
-                    TextField("", text: $draft.foundry.executable, prompt: Text(verbatim: Foundry.executable("") ?? "foundry"))
+                    TextField("", text: $draft.foundry.executable, prompt: Text(verbatim: foundryFound ?? "foundry"))
                         .labelsHidden()
                 }
             } footer: {
@@ -482,7 +483,8 @@ struct SettingsView: View {
                 .controlSize(.small)
             }
             .task(id: draft.foundry.executable) {
-                let exe = Foundry.executable(draft.foundry.executable)
+                foundryFound = await Foundry.executable("")
+                let exe = await Foundry.executable(draft.foundry.executable)
                 guard exe != nil else {
                     foundryModels = []
                     foundryStatus = String(localized: "Foundry Local is not installed: brew tap microsoft/foundrylocal && brew install foundrylocal; then download a model, e.g. foundry model download phi-4-mini.")
@@ -566,7 +568,8 @@ struct SettingsView: View {
             }
             .task(id: draft.codex.executable) {
                 let exe = draft.codex.executable
-                codexModels = await Task.detached { Codex.executable(exe).map(Codex.catalog) ?? [] }.value
+                let path = await Codex.executable(exe)
+                codexModels = await Task.detached { path.map(Codex.catalog) ?? [] }.value
             }
             foldersSection
             Section {
@@ -647,7 +650,8 @@ struct SettingsView: View {
             }
             .task(id: draft.grok.executable) {
                 let exe = draft.grok.executable
-                grokModels = await Task.detached { Grok.executable(exe).map(Grok.catalog) ?? [] }.value
+                let path = await Grok.executable(exe)
+                grokModels = await Task.detached { path.map(Grok.catalog) ?? [] }.value
             }
             Section {
                 Toggle("Allow writing in the session's folder", isOn: $draft.grok.write)
@@ -790,7 +794,14 @@ struct SettingsView: View {
         panel.allowsMultipleSelection = true
         panel.prompt = String(localized: "Add")
         guard panel.runModal() == .OK else { return }
-        let added = panel.urls.map { ($0.path as NSString).abbreviatingWithTildeInPath }.filter { !roots.contains($0) }
+        let all = panel.urls.map { ($0.path as NSString).abbreviatingWithTildeInPath }.filter { !roots.contains($0) }
+        let added = all.filter { !RouterConfig.overlapsScratch($0, scratch: draft.scratchURL) }  // H1
+        if added.count < all.count {
+            let a = NSAlert()
+            a.messageText = String(localized: "A folder that contains the scratch folder, or is inside it, cannot be an allowed folder.")
+            a.informativeText = String(localized: "Agents could change the gateway's mirrors and other devices' copies there. Choose another folder, or move the scratch folder (General).")
+            a.runModal()
+        }
         draft.claudeCLI.allowedRoots = (roots + added).joined(separator: ",")
     }
 
@@ -1142,13 +1153,23 @@ struct ScratchSection: View {
 
     /// nil = privzeta mapa.
     private func move(to url: URL?) {
-        let old = draft.scratchURL, new = url.map(RouterConfig.dedicated) ?? RouterConfig.defaultScratch
+        // M1, L1: ista pravila kot API; shrani se kanonična pot. L3: ne med sejami minigw ali agenti.
+        if let url, let why = RouterConfig.scratchProblem(url, allowedRoots: draft.claudeCLI.allowedRoots) {
+            failure = String(localized: "This folder cannot hold the scratch folder: \(why).")
+            return
+        }
+        let real = url.map { Sync.real($0) ?? $0 }
+        let old = draft.scratchURL, new = real.map(RouterConfig.dedicated) ?? RouterConfig.defaultScratch
         moving = true
         Task.detached {
+            if await Router.scratchInUse() {
+                await MainActor.run { moving = false; failure = String(localized: "minigw sessions or agents are active. Move the scratch folder when no minigw session runs.") }
+                return
+            }
             let error: String? = { do { try RouterConfig.moveScratch(from: old, to: new); return nil } catch { return error.localizedDescription } }()
             await MainActor.run {
                 moving = false
-                if let error { failure = error } else { draft.scratchFolder = url?.path ?? "" }
+                if let error { failure = error } else { draft.scratchFolder = real?.path ?? "" }
             }
         }
     }
