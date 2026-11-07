@@ -471,10 +471,13 @@ struct SettingsView: View {
                 Toggle("Allow commands (in a sandbox)", isOn: Binding(get: { draft.copilot.commands },
                                                 set: { on in if on { askCopilotCommands = true } else { draft.copilot.commands = false } }))
                     .disabled(!draft.copilot.write)
+                SecureField(state.keychain.lookup(Copilot.tokenAccount).value?.isEmpty == false
+                            ? "GitHub token for commands (saved; enter to replace)"
+                            : "GitHub token for commands (fine-grained, only “Copilot Requests”)", text: keyBinding(Copilot.tokenAccount))
             } header: {
                 Text("Sandbox")
             } footer: {
-                Text("The claude-copilot models run “copilot -p” as an agent in the session's folder, also in folders shared from other Macs. Copilot CLI has no sandbox for its own file tools: by default it may only read the session's folder; with writing on it may edit files there. It signs in as this Mac's user (“copilot login”, or the GitHub CLI's sign-in).")
+                Text("The claude-copilot models run Copilot CLI as an agent in the session's folder, also in folders shared from other Macs, always in a sandbox with a fresh Copilot home for each request. By default it may only read the session's folder; with writing on it may edit files there. It signs in with the GitHub CLI's sign-in (gh), or with the token below.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -482,7 +485,7 @@ struct SettingsView: View {
             Button("Allow Commands", role: .destructive) { draft.copilot.commands = true }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Copilot then runs commands as you on this Mac, in a sandbox that writes only to the session's folder and hides your keys, sign-ins and app data; commands can still read your other files and use the network. Copilot signs in with your GitHub CLI token, which commands do not see. Allow only if you trust the devices that use Copilot.")
+            Text("Copilot then runs commands as you on this Mac, in a sandbox that writes only to the session's folder and a temporary folder, and hides your keys, sign-ins and app data; commands can still read your other files and use the network. Commands can read the GitHub token Copilot uses, so they need their own fine-grained token with only the “Copilot Requests” permission. Allow only if you trust the devices that use Copilot.")
         }
     }
 

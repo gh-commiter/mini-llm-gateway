@@ -140,7 +140,7 @@ Notes:
 | `GET /agents/codex`, `PATCH` | any of `{"enabled", "path", "write", "network", "models"}` | `{"enabled", "path", "found", "write", "network", "models": [string] \| null}` |
 | `GET /agents/codex/models`, `GET /agents/grok/models` | – | `{"models": [{"slug", "name", "description"?, "window"?, "enabled"}]}`: the account's models (Go gateway) |
 | `GET /agents/grok`, `PATCH` | any of `{"enabled", "path", "write", "models"}` | `{"enabled", "path", "found", "write", "models"}` |
-| `GET /agents/copilot`, `PATCH` | any of `{"enabled", "path", "write", "network", "commands", "models"}` | `{"enabled", "path", "found", "write", "network", "commands", "models": [string]}` |
+| `GET /agents/copilot`, `PATCH` | any of `{"enabled", "path", "write", "network", "commands", "models", "token"}` | `{"enabled", "path", "found", "write", "network", "commands", "models": [string], "hasToken"}` |
 | `GET /siri`, `PATCH` | any of `{"enabled", "timeout", "allow": [id], "deny": [id]}` | `{"enabled", "timeout", "devices": [{"id", "name", "siri"}]}` |
 | `GET /run`, `PATCH` (Mac) | any of `{"commands", "allow": [id], "deny": [id], "allowNetwork": [id], "denyNetwork": [id]}` | `{"commands", "devices": [{"id", "name", "run", "network"}]}` |
 
@@ -149,10 +149,16 @@ sandbox may use the network (default: off); `models: null` = all the account's m
 devices (Siri uses this Mac's personal data). `run` allows `minigw run` for a device (off by default): it runs the
 listed commands (comma-separated, first argument only) in a native folder on the Mac, so it is code execution there.
 Copilot: `write` lets it edit files in the session's folder (default: off, read-only), `network` allows its web tool,
-`commands` its shell (an explicit opt-in that needs `write`: on the Mac Copilot then runs in the `minigw run` sandbox; on Linux under bwrap;
-Windows needs "Allow commands without a sandbox"). Where the sandbox hides the GitHub sign-in (Mac with commands, Linux), the
-gateway passes the GitHub CLI token (`gh auth token`) as `COPILOT_GITHUB_TOKEN`; Copilot keeps it from its commands. `models` lists model names (Copilot has no model list; empty = only
-`claude-copilot`, Copilot's default); a name that is not a valid model name is a `400`.
+`commands` its shell (an explicit opt-in that needs `write` and `token`; Windows also needs "Allow commands without a
+sandbox"). On the Mac Copilot always runs in a `sandbox-exec` profile and on Linux under bwrap, each request with a fresh
+`COPILOT_HOME` that is deleted afterwards; only the session state is kept between turns. `token` is write-only like
+provider keys: a fine-grained personal access token (`github_pat_…`) with only the Copilot Requests permission, stored in
+the Keychain or the OS key store (`""` removes it); `hasToken` says whether one is stored. Commands always use that token,
+because a command can read the environment of the Copilot process. Without commands the gateway passes that token, the
+gateway's own `COPILOT_GITHUB_TOKEN`/`GH_TOKEN`/`GITHUB_TOKEN`, or the GitHub CLI's (`gh auth token`) as
+`COPILOT_GITHUB_TOKEN`. On Windows Copilot uses this user's own sign-in and `~/.copilot`. `models` lists model names
+(Copilot has no model list; empty = only `claude-copilot`, Copilot's default); other names are refused (`404`), and a name
+that is not a valid model name is a `400`.
 
 ## Mac app
 

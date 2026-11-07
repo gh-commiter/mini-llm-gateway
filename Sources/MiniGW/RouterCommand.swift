@@ -17,6 +17,8 @@ minigw gw: show or change the Mini Gateway app on this Mac. Changes apply at onc
   minigw gw provider models <name> [text] [--all] [--enable m1,m2|all] [--disable m1,m2|all]
   minigw gw claude [--path FILE] [--tools T1,T2] [--folders DIR1,DIR2] [--allow-local-tools=true|false]
   minigw gw token [rotate]                              print the connect line; rotate makes a new token
+  minigw gw copilot token [remove]                      Copilot's token for commands (fine-grained, only Copilot
+                                                        Requests), read from stdin or asked for
   minigw gw autostart on|off                            Open at Login (Settings → General)
 """
 
@@ -258,6 +260,13 @@ func routerCommand(_ argv: [String]) {
             say("On each client run:")
         }
         say("  " + (g["connect"] as? String ?? ""))
+
+    case "copilot":
+        need(2, 3)
+        guard pos[1] == "token", pos.count == 2 || pos[2] == "remove" else { fail(routerHelp) }
+        let token = pos.count == 3 ? "" : readKey("Copilot token (github_pat_…, only the Copilot Requests permission)")
+        _ = a.call("PATCH", "/agents/copilot", ["token": token])
+        say(token.isEmpty ? "removed Copilot's token" : "Copilot's token stored in the Keychain")
 
     case "settings":
         fail("on the Mac use the app's Settings window (menu bar icon → Settings…)")

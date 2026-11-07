@@ -188,9 +188,10 @@ public enum Native {
     }
 
     /// `runTmp`: TMPDIR in ModuleCache tega zagona (v Scratch, ki je sicer skrit).
+    /// `writable`: namesto mape in predpomnilnikov gradnje (agent Copilot: le mapa s pisanjem, sicer nič).
     static func sandboxProfile(dir: String, home: String = NSHomeDirectory(), network: Bool, hidden: [String] = [], routerPort: Int? = nil,
-                               runTmp: String? = nil) -> String? {
-        let writable = [dir] + buildCaches(home: home)
+                               runTmp: String? = nil, writable only: [String]? = nil) -> String? {
+        let writable = only ?? ([dir] + buildCaches(home: home))
         for p in writable where FileManager.default.fileExists(atPath: p) && Sync.real(URL(fileURLWithPath: p))?.path != p { return nil }
         let q = { (p: String) in "\"" + p.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\"" }
         // Peskovnik primerja razrešene poti: vsako pravilo za dobesedno in (če obstaja) kanonično pot (~/.swiftpm/configuration → …).
@@ -200,6 +201,8 @@ public enum Native {
             return paths.flatMap(both).filter { seen.insert($0).inserted }.map { " (\(kind) \(q($0)))" }.joined()
         }
         let denies = buildCacheDenies(home: home)
+        // Mapa v skriti mapi (ne obratno: mapa, ki skrito vsebuje, je ne razkrije).
+        let inHidden = hidden.flatMap(both).contains { h in both(dir).contains { $0.hasPrefix(h + "/") } }
         let secretDirs = [".ssh", ".aws", ".gnupg", ".config", ".docker", ".kube", "Library/Keychains", "Library/Cookies",
                           "Library/Application Support", "Library/Containers", "Library/Group Containers", "Library/Mail",
                           "Library/Messages"].map { home + "/" + $0 }
@@ -208,11 +211,15 @@ public enum Native {
         return "(version 1)\n(allow default)\n(deny file-write*)\n"
             + "(allow file-write* (regex #\"^/dev/\")" + writable.map { " (subpath \(q($0)))" }.joined() + ")\n"
             + (darwinTempRules() ?? "")
+            // Skrite mape (Scratch); mapa seje je lahko v njej (sinhronizirana kopija, klon): spet le ta.
+            + (hidden.isEmpty ? "" : "(deny file-read* file-write*" + rules("subpath", hidden) + ")\n")
+            + (inHidden ? "(allow file-read*" + rules("subpath", [dir]) + ")\n" : "")
+            + (inHidden && writable.contains(dir) ? "(allow file-write*" + rules("subpath", [dir]) + ")\n" : "")
             + "(deny file-write*" + rules("subpath", [dir + "/.git"] + denies.paths)
             + denies.regexes.map { " (regex #\"" + $0.replacingOccurrences(of: "\"", with: "\\\"") + "\")" }.joined() + ")\n"
             + "(deny file-read*" + rules("subpath", secretDirs) + rules("literal", secretFiles) + ")\n"
             // Nastavitve aplikacije: datoteka in domena cfprefsd skupaj (le ena od obeh branja ne prepreči).
-            + "(deny file-read* file-write*" + rules("subpath", hidden + [home + "/Library/Preferences/dev.trojar.minigateway.plist"]) + ")\n"
+            + "(deny file-read* file-write*" + rules("subpath", [home + "/Library/Preferences/dev.trojar.minigateway.plist"]) + ")\n"
             + (runTmp.map { "(allow file-read* file-write*" + rules("subpath", [$0]) + ")\n" } ?? "")
             // Sistemske storitve mimo datotek: nastavitve (cfprefsd), opravila launchd, odpiranje aplikacij, Apple Events.
             // mvn, swift build in xcodebuild delujejo brez izjem.
