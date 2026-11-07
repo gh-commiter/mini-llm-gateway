@@ -238,8 +238,9 @@ All clients encrypt with AES-256-GCM; the Mac gateway also accepts ChaCha20-Poly
 
 `minigw serve` turns a Windows or Linux computer into a small gateway: `claude -p` on that computer as
 `claude-cli-opus`, `claude-cli-sonnet` and `claude-cli-haiku`, Codex and Grok (off by default), plus providers; no
-Siri or Apple models. Agents work in a synced copy of the client's folder, so clients run with `MINIGW_WORK=sync`
-(folder mounts need the Mac gateway). Install Claude Code there (on Windows the native `claude.exe`; `minigw serve`
+Siri or Apple models. Agents work in a synced copy of the client's folder or, for a git repository, in a clone on a
+branch (worktree mode), so clients run with `MINIGW_WORK=sync`, `worktree` or `auto` (folder mounts, native mode and
+`minigw run` need the Mac gateway). Install Claude Code there (on Windows the native `claude.exe`; `minigw serve`
 does not run `claude.cmd`).
 
 `/minigw:gw install` runs these two commands. `minigw serve install` copies minigw to a fixed place, adds it to
@@ -412,8 +413,13 @@ and gives each agent its own clone on a branch `minigw/<agent>-<session>-<n>`; p
   30 days are removed.
 - **`--minigw-work=auto`:** read-only (`--minigw-ro`) → direct; a folder on the gateway's SMB share → native; a git
   repository → worktree, then sync (never direct read-write: `.git` is not protected there); otherwise sync, then direct.
-  The Go gateway (`minigw serve`) supports sync only. A saved per-folder mode (`minigw share add --work=…`) and the flag
-  still win.
+  A saved per-folder mode (`minigw share add --work=…`) and the flag still win.
+- **On `minigw serve` (Windows, Linux)** worktree works the same way: the gateway's own `git` from PATH (no system or global
+  config, hooks, fsmonitor or submodules), one clone per session and agent (requests of a session run one after another,
+  so there is one branch `minigw/<agent>-<session>-0`). On Linux Codex and Copilot run under bwrap with the clone writable
+  and its `.git/config`, `hooks` and `info` read-only; Claude CLI in Claude Code's sandbox; on Windows the usual rule
+  ("Allow commands without a sandbox"). The settings for build network (Settings → General → Worktree mode) exist only on
+  the Mac. Native mode and `minigw run` stay Mac-only.
 
 **Native: the folder is the gateway's own SMB share.** When the client works in an SMB mount of a gateway share (for
 example `/Volumes/Java/projects` mounted from the gateway's `/Volumes/Java`), `minigw --minigw-work=native …`

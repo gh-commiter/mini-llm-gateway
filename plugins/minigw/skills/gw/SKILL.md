@@ -90,6 +90,6 @@ Everything else goes to `"$M" gw …`. It changes the running gateway at once (o
 How agents get the client's folder (`minigw --minigw-work=<mode> …`, or `MINIGW_WORK`; per folder `minigw share add --work=<mode>`):
 - `direct`: the gateway Mac mounts the folder (default; Mac gateway only).
 - `sync`: a copy on the gateway, changes come back after each request (needed for Windows and Linux gateways).
-- `worktree`: a git repository; the agent works in a clone, its work comes back as branch `minigw/…` (Mac gateway).
+- `worktree`: a git repository; the agent works in a clone, its work comes back as branch `minigw/…` (Mac and minigw serve; Grok not).
 - `native`: the folder is the gateway Mac's own SMB share; agents work in it directly. `minigw run -- <command>` runs a build there (allowed per device in the gateway's Settings; Mac only).
 - `auto`: native for a gateway share, worktree for a git repository, otherwise sync.

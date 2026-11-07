@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Worktree mode on `minigw serve` (Windows, Linux):** `--minigw-work=worktree` (and `auto` for a git repository) now
+  also works with a Windows or Linux gateway, as on the Mac: the agent works in a clone on its own branch, and the branch
+  comes back to your repository (fetched fast-forward only, no hooks or filters). Native mode and `minigw run` stay
+  Mac-only. Plugin 0.5.9.
 - **Several gateways at once (profiles, #17):** `minigw connect <host> --name <profile>` keeps every gateway, for
   example the Mac mini and a Windows gateway side by side. Models of other profiles are `<model>@<profile>`; the
   default profile's also appear without a suffix. An unreachable gateway is left out of the list, and `minigw status`
