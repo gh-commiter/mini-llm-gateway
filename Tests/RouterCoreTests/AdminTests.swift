@@ -153,17 +153,19 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
     @Test func fakeResponderGetsNothingReusable() async throws {
         // Pravi router (strežnik Noise) in lažen odgovornik z lastnim ključem.
         let app = FakeApp()
-        app.config.host = "127.0.0.1"; app.config.port = 18_767
+        let port = freeTCPPort()  // ne stalen 18767: vzporedni testi in drugi zagoni na istem Macu
+        app.config.host = "127.0.0.1"; app.config.port = port
         let realKey = Noise.newKey()
         let server = RouterServer(router: app.router(), key: realKey)
         try server.start()
         defer { server.stop() }
-        try await Task.sleep(for: .milliseconds(200))
+        for _ in 0..<100 where !portInUse(port) { try await Task.sleep(for: .milliseconds(50)) }
         let fakeKey = Noise.newKey()
         let (l, fakePort) = listener()
         defer { close(l) }
         let got = Received()
-        DispatchQueue.global().async {
+        // Lastna nit, ne DispatchQueue.global(): pod obremenitvijo (vzporedni testi) blok tam začne prepozno.
+        Thread {
             let c = accept(l, nil, nil)
             defer { close(c) }
             func read(_ n: Int) -> Data {
@@ -182,21 +184,21 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
                 if let p = try? Noise.unframe(&raw, session.receive) { plain += p }
             }
             got.add(plain)
-        }
+        }.start()
         let secret = adminSecret
         _ = AdminClient(port: fakePort, routerKey: fakeKey.publicKey.rawRepresentation)
-            .request("GET", Router.adminPrefix + "/status", nil, authorization: { h in AdminHooks.scheme + AdminHooks.proof(secret: secret, hash: h) }, timeout: 3)
-        try await Task.sleep(for: .milliseconds(100))
+            .request("GET", Router.adminPrefix + "/status", nil, authorization: { h in AdminHooks.scheme + AdminHooks.proof(secret: secret, hash: h) }, timeout: 30)
+        for _ in 0..<300 where got.data.isEmpty { try await Task.sleep(for: .milliseconds(50)) }  // namesto fiksnih 100 ms
         let text = String(decoding: got.data, as: UTF8.self)
         let captured = try #require(text.split(separator: "\r\n").first { $0.lowercased().hasPrefix("authorization: ") }).dropFirst("authorization: ".count)
         #expect(captured.hasPrefix(AdminHooks.scheme) && !text.contains(adminSecret))
         // Ponovitev pri pravem routerju: druga povezava, drug h → 401; pravi dokaz → 200.
-        let real = AdminClient(port: 18_767, routerKey: realKey.publicKey.rawRepresentation)
+        let real = AdminClient(port: port, routerKey: realKey.publicKey.rawRepresentation)
         let replay = String(captured)
-        #expect(real.request("GET", Router.adminPrefix + "/status", nil, authorization: { _ in replay }, timeout: 3).0 == 401)
-        #expect(real.request("GET", Router.adminPrefix + "/status", nil, authorization: { h in AdminHooks.scheme + AdminHooks.proof(secret: secret, hash: h) }, timeout: 3).0 == 200)
+        #expect(real.request("GET", Router.adminPrefix + "/status", nil, authorization: { _ in replay }, timeout: 30).0 == 401)
+        #expect(real.request("GET", Router.adminPrefix + "/status", nil, authorization: { h in AdminHooks.scheme + AdminHooks.proof(secret: secret, hash: h) }, timeout: 30).0 == 200)
         // Brez ključa routerja (program na vratih ne konča rokovanja): 0, nič poslano.
-        #expect(AdminClient(port: 18_767, routerKey: Noise.newKey().publicKey.rawRepresentation).request("GET", "/health/live", nil, timeout: 3).0 == 0)
+        #expect(AdminClient(port: port, routerKey: Noise.newKey().publicKey.rawRepresentation).request("GET", "/health/live", nil, timeout: 30).0 == 0)
     }
 }
 

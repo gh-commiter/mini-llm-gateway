@@ -204,8 +204,14 @@ func makeRouter(session: URLSession = .shared) -> Router {
     #expect(w1.status == 404)
     c.claudeCLI.enabled = true
     let on = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]))
-    let w2 = FakeWriter()
-    await on.handle(request("GET", "/v1/models", headers: ["x-api-key": "tok"]), writer: w2)
+    // Preizkus `claude --version` ima pri zahtevi 2 s (odkrivanje v Claude Code), sicer »še ne«; pod obremenitvijo
+    // (vzporedni testi, druge gradnje) traja dlje, zato kot Claude Code: vprašaj znova.
+    var w2 = FakeWriter()
+    for _ in 0..<15 {
+        w2 = FakeWriter()
+        await on.handle(request("GET", "/v1/models", headers: ["x-api-key": "tok"]), writer: w2)
+        if w2.text.contains("claude-cli-opus") { break }
+    }
     #expect(w2.text.contains("claude-cli-opus") && w2.text.contains("claude-cli-haiku") && !w2.text.contains("claude-chat-"))
     let w3 = FakeWriter()  // agent brez veljavne mape → jasna napaka, brez zagona claude
     await on.handle(request("POST", "/v1/messages", headers: ["x-api-key": "tok", "x-claude-mini-cwd": "/nonexistent"],
@@ -366,10 +372,12 @@ func makeRouter(session: URLSession = .shared) -> Router {
 }
 
 @Test func firstOfDoesNotWaitForSlowTask() async {
-    let slow = Task { try? await Task.sleep(for: .seconds(3)); return 1 }
+    // Počasna naloga 60 s, meja 30 s: pod obremenitvijo nadaljevanje testa zamudi, a še vedno ne čaka počasne.
+    let slow = Task { try? await Task.sleep(for: .seconds(60)); return 1 }
+    defer { slow.cancel() }
     let t0 = ContinuousClock.now
     #expect(await firstOf(slow, within: .milliseconds(100)) == nil)
-    #expect(ContinuousClock.now - t0 < .seconds(1))
+    #expect(ContinuousClock.now - t0 < .seconds(30))
     #expect(await firstOf(Task { 7 }, within: .seconds(1)) == 7)
 }
 
@@ -494,7 +502,8 @@ func portInUse(_ port: UInt16) -> Bool {
     for _ in 0..<100 where !portInUse(routerPort) { try await Task.sleep(for: .milliseconds(50)) }  // namesto fiksnega čakanja
 
     func get(_ base: String, _ path: String) async -> (Int, String) {
-        var r = URLRequest(url: URL(string: base + path)!, timeoutInterval: 5)
+        // 30 s, ne 5: pod obremenitvijo (vzporedni testi, druge gradnje) router odgovori pozneje; preverja se pot, ne hitrost.
+        var r = URLRequest(url: URL(string: base + path)!, timeoutInterval: 30)
         r.setValue("Bearer tok", forHTTPHeaderField: "authorization")
         guard let (d, resp) = try? await URLSession.shared.data(for: r) else { return (0, "") }
         return ((resp as! HTTPURLResponse).statusCode, String(decoding: d, as: UTF8.self))
