@@ -446,10 +446,12 @@ var agentTimeout = 30 * time.Minute
 // runAgentProcess: proces z navodili na stdin, vsaka vrstica stdout v onLine; prekinitev odjemalca ali rok ga ustavi.
 // Stderr gre le v dnevnik (I1): odjemalec dobi kratko sporočilo.
 func (s *server) runAgentProcess(ctx context.Context, r *req, exe string, args []string, dir, stdin string, onLine func([]byte)) error {
-	cmd := exec.CommandContext(ctx, exe, args...)
+	name, args := agentWrap(exe, args, s.cfgDir) // Linux: mapa nastavitev skrita (bwrap), če je na voljo
+	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
-	for _, e := range os.Environ() { // notranji agent ne kliče nazaj tega routerja
-		if !strings.HasPrefix(e, "ANTHROPIC_") && !strings.HasPrefix(e, "CLAUDE_CODE_") && !strings.HasPrefix(e, "CLAUDECODE=") {
+	for _, e := range os.Environ() { // notranji agent ne kliče nazaj tega routerja; brez seje D-Bus (Secret Service)
+		if !strings.HasPrefix(e, "ANTHROPIC_") && !strings.HasPrefix(e, "CLAUDE_CODE_") && !strings.HasPrefix(e, "CLAUDECODE=") &&
+			(runtime.GOOS != "linux" || !strings.HasPrefix(e, "DBUS_SESSION_BUS_ADDRESS=")) {
 			cmd.Env = append(cmd.Env, e)
 		}
 	}

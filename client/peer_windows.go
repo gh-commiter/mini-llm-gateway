@@ -65,6 +65,8 @@ func createAgentJob() {
 }
 
 // startAgent: proces ustvarjen ustavljen, dodan v Job in šele nato pognan (pred tem ne more ustvariti otrok).
+func agentWrap(exe string, args []string, cfgDir string) (string, []string) { return exe, args }
+
 func startAgent(cmd *exec.Cmd) error {
 	agentJobOnce.Do(createAgentJob)
 	if agentJobErr != nil {

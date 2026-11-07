@@ -7,10 +7,38 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // startAgent: na Linuxu brez posebnosti (procesi agentov so potomci routerja; peerCheck hodi po verigi staršev).
 func startAgent(cmd *exec.Cmd) error { return cmd.Start() }
+
+var (
+	bwrapOnce sync.Once
+	bwrapPath string // "" = bwrap ni nameščen ali ne deluje (npr. brez uporabniških imenskih prostorov)
+)
+
+// agentWrap: Codex in Grok pod bwrap, kjer je mapa nastavitev prazen tmpfs, vtičnica seje D-Bus pa skrita (Secret
+// Service s ključi prehodov). Sicer vse ostane, kot je (njun sandbox deluje v njem). Brez bwrap: brez ovoja (H1.5).
+func agentWrap(exe string, args []string, cfgDir string) (string, []string) {
+	bwrapOnce.Do(func() {
+		p, err := exec.LookPath("bwrap")
+		t, err2 := exec.LookPath("true")
+		if err == nil && err2 == nil && exec.Command(p, "--dev-bind", "/", "/", "--tmpfs", cfgDir, "--", t).Run() == nil {
+			bwrapPath = p
+		}
+	})
+	if bwrapPath == "" {
+		return exe, args
+	}
+	w := []string{"--dev-bind", "/", "/", "--tmpfs", cfgDir, "--die-with-parent"}
+	if rt := os.Getenv("XDG_RUNTIME_DIR"); rt != "" {
+		if _, err := os.Stat(rt + "/bus"); err == nil {
+			w = append(w, "--ro-bind", "/dev/null", rt+"/bus")
+		}
+	}
+	return bwrapPath, append(append(w, "--", exe), args...)
+}
 
 func peerCheck(ours, peer *net.TCPAddr) error {
 	inode := ""

@@ -99,3 +99,17 @@ func TestPeerHelper(t *testing.T) {
 	st, b, err := a.http("GET", adminPrefix+"/status", nil, 5*time.Second)
 	fmt.Printf("status %d %s %v\n", st, b, err)
 }
+
+// H1.5: na Linuxu z bwrap Codex in Grok ne vidita mape nastavitev.
+func TestAgentWrapHidesConfig(t *testing.T) {
+	cfg := t.TempDir()
+	os.WriteFile(cfg+"/serve.json", []byte("SECRET"), 0o600)
+	name, args := agentWrap("/bin/sh", []string{"-c", "cat " + cfg + "/serve.json; echo end"}, cfg)
+	if name == "/bin/sh" {
+		t.Skip("no usable bwrap (Linux with user namespaces)")
+	}
+	out, _ := exec.Command(name, args...).CombinedOutput()
+	if strings.Contains(string(out), "SECRET") || !strings.Contains(string(out), "end") {
+		t.Fatalf("config visible under bwrap: %q", out)
+	}
+}
