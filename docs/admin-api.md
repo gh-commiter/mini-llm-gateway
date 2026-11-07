@@ -70,10 +70,11 @@ the user.
 ## Types
 
 ```text
-Device   {"id": string, "name": string, "address"?: string, "time"?: string, "lastSeen"?: string}
+Device   {"id": string, "name": string, "address"?: string, "client"?: string, "time"?: string, "lastSeen"?: string}
          id: base64url of the device's 32-byte Ed25519 public key (43 characters), as the refusal message shows it.
-         address and time (RFC 3339, UTC) only for pending devices; lastSeen only for allowed devices that made a
-         request since the gateway started.
+         address, client (OS and minigw version, from newer clients) and time (RFC 3339, UTC) only for pending
+         devices; lastSeen only for allowed devices that made a request since the gateway started. name is a label
+         (control and format characters removed, at most 64 characters); only the ID identifies a device.
 Model    {"id": string, "model": string, "window"?: number, "enabled": bool}
          id: the ID at the provider; model: the name for /model (the id, or "claude-" + id when the id contains
          neither "claude" nor "anthropic"); window: context window in tokens, if known.
@@ -96,7 +97,8 @@ General  {"port": number, "address": string, "connect": string, "restartRequired
 | `GET /status` | – | `{"running", "version", "port", "address", "installed", "devices": n, "pending": n, "claude": Claude, "providers": [Provider], "os", "installDir"?, "tray", "autostart", "agents": n, "agentsUnsandboxed"}` |
 | `GET /devices` | – | `{"devices": [Device], "pending": [Device], "allowAnyDevice": bool}` |
 | `POST /devices` | `{"id", "name"}` | `{"device": Device, "added": bool}`; removes it from pending; without a name, the pending device's name |
-| `DELETE /devices/{id or name}` | – | `{"device": Device}`; a pending device is only removed from pending (`"pending": true`); a name must be unique |
+| `PATCH /devices/{id}` | `{"name"}` | `{"device": Device}`; renames an allowed device |
+| `DELETE /devices/{id}` | – | `{"device": Device}`; by ID only; a pending device is only removed from pending (`"pending": true`), which is not a block list |
 | `GET /providers` | – | `{"providers": [Provider]}` |
 | `POST /providers` | `{"name", "baseURL", "key", "insecure"}` | `{"provider": Provider, "keyStore": string, "models": [Model]}` |
 | `PATCH /providers/{name}` | any of `{"name", "enabled", "baseURL", "insecure", "aliases"}` | `{"provider": Provider}`; a new name moves the key; the key stays for a new URL |
@@ -113,6 +115,8 @@ General  {"port": number, "address": string, "connect": string, "restartRequired
 
 Notes:
 
+- A remote client without a device key (minigw before 0.4.4, unencrypted clients) is allowed only while the device list
+  is empty and `allowAnyDevice` is on; otherwise 403 "This gateway needs a device key". The same on the Mac and Go.
 - `POST /devices` takes only a valid device ID. `pending` lists the last 20 devices that were refused since the
   gateway started (in memory), newest last.
 - `POST /providers` adds or replaces a provider. Name: letters, digits, `. _ -`, up to 32. `baseURL` without `/v1`;

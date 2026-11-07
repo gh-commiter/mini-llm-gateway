@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Clients without a device key (minigw before 0.4.4, unencrypted clients from other computers) are accepted only while
+  no device is allowed and "Allow any device with the token" is on, on the Mac as on `minigw serve`. Update minigw on
+  such clients.
+- Waiting devices show `<user>@<computer>` and the client's OS and minigw version; you can edit the name before you
+  allow a device and rename it later (`minigw gw devices allow <id> --name N`, `rename`). Devices are identified by
+  their ID only: `deny` and the admin API no longer take a name. The Mac notifies you when a device starts waiting.
+  Plugin 0.5.8: `/minigw:connect` explains how to approve a refused device.
 - Providers: the Mac has "Allow http (localhost or a private IP only)" like `minigw serve`, with the same rule on both
   (local-network names such as `mini.local` count as local). Providers with an `http` URL keep working. LiteLLM and
   OpenRouter are always listed on `minigw serve` too (off until a key is set; they can be turned off, not removed).

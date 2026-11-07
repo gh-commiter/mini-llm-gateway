@@ -6,6 +6,7 @@ import RouterCore
 import Security
 import ServiceManagement
 import SwiftUI
+import UserNotifications
 
 // Izvorni jezik vmesnika je angleščina; prevodi so v Resources/Localizable.xcstrings.
 
@@ -81,7 +82,6 @@ final class AppState: ObservableObject {
     static func loadLogs() -> [RequestLog] {
         (try? JSONDecoder().decode([RequestLog].self, from: Data(contentsOf: logsFile))) ?? []
     }
-    @Published var deviceSeen: [String: Date] = [:]  // zadnja zahteva naprave (le v pomnilniku)
     @Published var pending: [DeviceLog.Pending] = []  // naprave, ki čakajo na odobritev (Router.deviceLog)
 
     /// Tekoče zahteve modelom (najnovejša zgoraj), z zadnjim korakom agenta.
@@ -94,7 +94,7 @@ final class AppState: ObservableObject {
     init() {
         config.save()  // starejši JSON blob v preferences → berljiva struktura
         Router.deviceLog.onChange = { [weak self] in
-            Task { @MainActor in self?.pending = Router.deviceLog.pending }
+            Task { @MainActor in self?.pendingChanged(Router.deviceLog.pending) }
         }
         ShareHub.cleanupStale()
         NativeHub.cleanupStale(config.scratch("tmp").appendingPathComponent("native-markers"))  // označbe native po sesutju
@@ -259,20 +259,43 @@ final class AppState: ObservableObject {
     }
 
     /// Nova naprava se doda v nastavitve brez ponovnega zagona (Siri zanjo ostane izklopljena, dokler je ne vklopiš).
-    /// Zadnji stik dovoljene naprave; ime, če ga naprava (dodana brez imena, npr. z ID-jem) še nima. Nova naprava čaka na
-    /// odobritev (Router.deviceLog), ne doda se več sama.
+    /// Ime dovoljene naprave, ki ga (dodana le z ID-jem) še nima. Zadnji stik: Router.deviceLog.lastSeen. Nova naprava
+    /// čaka na odobritev (Router.deviceLog), ne doda se več sama.
     private func seen(_ d: Noise.Device) {
         guard let i = config.devices.firstIndex(where: { $0.id == d.id }) else { return }
-        if deviceSeen[d.id].map({ Date().timeIntervalSince($0) > 30 }) ?? true { deviceSeen[d.id] = Date() }
         if config.devices[i].name.isEmpty, !d.name.isEmpty {
             config.devices[i].name = d.name
             config.save()
         }
     }
 
-    func allow(_ p: DeviceLog.Pending) {
+    /// Nova čakajoča naprava: obvestilo (dovoljenje ob prvi; brez njega ostane značka v menijski vrstici).
+    private func pendingChanged(_ now: [DeviceLog.Pending]) {
+        let before = Set(pending.map(\.id))
+        pending = now
+        let fresh = now.filter { !before.contains($0.id) }
+        guard !fresh.isEmpty else { return }
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            guard granted else { return }
+            for p in fresh {
+                let n = UNMutableNotificationContent()
+                n.title = String(localized: "Device waiting for approval")
+                n.body = "\(p.name.isEmpty ? "—" : p.name) · \(p.id.prefix(16))… · \(p.address)"
+                center.add(UNNotificationRequest(identifier: "pending-" + p.id, content: n, trigger: nil))
+            }
+        }
+    }
+
+    /// Naprava z istim imenom kot dovoljena: opozorilo ob odobritvi (ime je le oznaka, primerjaj ID).
+    func nameTaken(_ p: DeviceLog.Pending) -> Bool {
+        !p.name.isEmpty && config.devices.contains { $0.id != p.id && $0.name.caseInsensitiveCompare(p.name) == .orderedSame }
+    }
+
+    func allow(_ p: DeviceLog.Pending, name: String? = nil) {
         var c = config
-        if !c.devices.contains(where: { $0.id == p.id }) { c.devices.append(DeviceConfig(id: p.id, name: p.name)) }
+        let n = Noise.cleanName(name ?? p.name)
+        if !c.devices.contains(where: { $0.id == p.id }) { c.devices.append(DeviceConfig(id: p.id, name: n.isEmpty ? p.name : n)) }
         Router.deviceLog.removePending(p.id)
         apply(c)
     }
@@ -327,7 +350,8 @@ struct MenuView: View {
                         Button("Allow") { state.allow(p) }
                         Button("Reject") { state.reject(p) }
                     } label: {
-                        Text(verbatim: "\(p.name.isEmpty ? "—" : p.name) · \(p.id.prefix(8))… · \(p.address)")
+                        Text(verbatim: (state.nameTaken(p) ? "⚠︎ " : "") + "\(p.name.isEmpty ? "—" : p.name) · \(p.id.prefix(16))… · \(p.address)"
+                             + (p.client.isEmpty ? "" : " · \(p.client)"))
                     }
                 }
             }

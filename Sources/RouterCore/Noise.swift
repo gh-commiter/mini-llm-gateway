@@ -221,7 +221,32 @@ public enum Noise {
         plain = Data(b[(fixed + len)...])
         guard let key = try? Curve25519.Signing.PublicKey(rawRepresentation: pub),
               key.isValidSignature(sig, for: deviceMessage(hash, name)) else { return .invalid }
-        return .device(Device(id: base64url(pub), name: String(decoding: name, as: UTF8.self)))
+        return .device(Device(id: base64url(pub), name: cleanName(String(decoding: name, as: UTF8.self))))
+    }
+
+    /// Ime naprave (ali podatek odjemalca) za prikaz: brez kontrolnih in oblikovnih znakov (nove vrstice, bidi, ničelne
+    /// širine), obrezano, največ 64 znakov (M1). Ime je le oznaka, nikoli pooblastilo (to je ključ naprave).
+    public static func cleanName(_ s: String) -> String {
+        let kept = String(String.UnicodeScalarView(s.unicodeScalars.filter {
+            $0.properties.generalCategory != .control && $0.properties.generalCategory != .format
+        }))
+        return String(kept.trimmingCharacters(in: .whitespacesAndNewlines).prefix(64))
+    }
+
+    /// Ime v narekovajih z ubežnimi znaki (kot %q v Go), za vrstice v terminalu.
+    public static func quoted(_ s: String) -> String {
+        var out = "\""
+        for u in s.unicodeScalars {
+            switch u {
+            case "\"": out += "\\\""
+            case "\\": out += "\\\\"
+            default:
+                let c = u.properties.generalCategory
+                out += c == .control || c == .format || c == .lineSeparator || c == .paragraphSeparator
+                    ? String(format: "\\u{%x}", u.value) : String(u)
+            }
+        }
+        return out + "\""
     }
 
     // MARK: okvirji (2 bajta dolžina, big endian, kot pri Noise)

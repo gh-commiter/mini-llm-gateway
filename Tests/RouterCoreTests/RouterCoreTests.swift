@@ -57,7 +57,8 @@ func request(_ method: String, _ target: String, headers: [String: String] = [:]
     var raw = "\(method) \(target) HTTP/1.1\r\nHost: x\r\nContent-Length: \(body.utf8.count)\r\n"
     for (k, v) in headers { raw += "\(k): \(v)\r\n" }
     raw += "\r\n" + body
-    guard case .request(let r) = HTTPParser.parse(Data(raw.utf8)) else { fatalError("parse failed") }
+    guard case .request(var r) = HTTPParser.parse(Data(raw.utf8)) else { fatalError("parse failed") }
+    r.peer = "127.0.0.1"  // ta Mac (prava zahteva ima vedno naslov); oddaljene teste nastavijo peer sami
     return r
 }
 
@@ -1089,9 +1090,11 @@ final class FakeMinigw: @unchecked Sendable {
 @Test func syncRefusesUnpairedRemoteClient() async {
     let r = Router(config: RouterConfig(), token: "tok", secrets: FakeSecrets(values: [:]))
     let w = FakeWriter()
-    await r.handle(request("POST", "/minigw/share", headers: ["Authorization": "Bearer tok", "x-claude-mini-session": UUID().uuidString,
-                                                             "x-claude-mini-cwd": "/p", "x-claude-mini-work": "sync"]), writer: w)
-    #expect(w.status == 400 && w.text.contains("device key"))
+    var q = request("POST", "/minigw/share", headers: ["Authorization": "Bearer tok", "x-claude-mini-session": UUID().uuidString,
+                                                      "x-claude-mini-cwd": "/p", "x-claude-mini-work": "sync"])
+    q.peer = "192.0.2.4"
+    await r.handle(q, writer: w)
+    #expect(w.status == 403 && w.text.contains("device key"))  // oddaljen brez ključa naprave: že prehod (H1)
 }
 
 @Test func syncExecOnlyChangeAndInvalidPathsAreDone() throws {

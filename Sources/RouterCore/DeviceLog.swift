@@ -2,15 +2,19 @@ import Foundation
 
 /// Naprave, ki čakajo na odobritev (največ 20, kot minigw serve), in zadnji stik dovoljenih. Le v pomnilniku aplikacije:
 /// preživi ponovni zagon routerja (sprememba nastavitev), ne aplikacije. `onChange`: aplikacija osveži meni in Settings.
+/// L1: poln seznam obdrži najstarejše čakajoče (novi ključi jih ne izrinejo); onChange največ enkrat na sekundo.
 public final class DeviceLog: @unchecked Sendable {
     public struct Pending: Sendable, Equatable, Identifiable {
         public let id: String, name: String, address: String
+        public let client: String  // OS in različica minigw (glava x-minigw-client); prazno pri starejših odjemalcih
         public let time: Date
     }
+    public static let limit = 20
     private let lock = NSLock()
     private var waiting: [Pending] = []
     private var seenAt: [String: Date] = [:]
     private var change: (@Sendable () -> Void)?
+    private var lastNotify = Date.distantPast, notifyQueued = false
 
     public init() {}
 
@@ -25,13 +29,17 @@ public final class DeviceLog: @unchecked Sendable {
 
     public func seen(_ id: String) { lock.withLock { seenAt[id] = Date() } }
 
-    public func addPending(id: String, name: String, address: String) {
-        lock.withLock {
-            waiting.removeAll { $0.id == id }
-            waiting.append(Pending(id: id, name: name, address: address, time: Date()))
-            if waiting.count > 20 { waiting.removeFirst(waiting.count - 20) }
+    public func addPending(id: String, name: String, address: String, client: String = "") {
+        let changed: Bool = lock.withLock {
+            if let i = waiting.firstIndex(where: { $0.id == id }) {  // ista naprava: osveži, mesto ostane
+                waiting[i] = Pending(id: id, name: name, address: address, client: client.isEmpty ? waiting[i].client : client, time: Date())
+                return true
+            }
+            guard waiting.count < Self.limit else { return false }
+            waiting.append(Pending(id: id, name: name, address: address, client: client, time: Date()))
+            return true
         }
-        onChange?()
+        if changed { notify() }
     }
 
     @discardableResult
@@ -40,8 +48,29 @@ public final class DeviceLog: @unchecked Sendable {
             guard let i = waiting.firstIndex(where: { $0.id == id }) else { return nil }
             return waiting.remove(at: i)
         }
-        if p != nil { onChange?() }
+        if p != nil { notify() }
         return p
+    }
+
+    /// Največ enkrat na sekundo; sprememba med tem pride z zakasnjenim klicem.
+    private func notify() {
+        let (now, f): (Bool, (@Sendable () -> Void)?) = lock.withLock {
+            let wait = 1 - Date().timeIntervalSince(lastNotify)
+            if wait <= 0 { lastNotify = Date(); return (true, change) }
+            if notifyQueued { return (false, nil) }
+            notifyQueued = true
+            DispatchQueue.global().asyncAfter(deadline: .now() + wait) { [weak self] in
+                guard let self else { return }
+                let f = self.lock.withLock { () -> (@Sendable () -> Void)? in
+                    self.notifyQueued = false
+                    self.lastNotify = Date()
+                    return self.change
+                }
+                f?()
+            }
+            return (false, nil)
+        }
+        if now { f?() }
     }
 }
 

@@ -27,6 +27,15 @@ struct Connection: Codable {
 
 /// Oddaljen router: vse (Claude Code, minigw, mapa) gre šifrirano prek lokalnega proxyja; lokalno navaden HTTP.
 var proxy: NoiseProxy?
+/// Ime naprave za odobritev na prehodu: <uporabnik>@<ime računalnika> (Sharing → Computer Name), da se dva uporabnika
+/// istega Maca razlikujeta. Prehod ga očisti (Noise.cleanName); je le oznaka.
+func deviceName() -> String {
+    "\(NSUserName())@\(Host.current().localizedName ?? ProcessInfo.processInfo.hostName)"
+}
+
+/// OS in različica za vrstico čakajoče naprave (glava x-minigw-client; starejši prehodi jo prezrejo).
+let clientInfo = "macOS · minigw \(minigwVersion)"
+
 func route(_ c: Connection) -> Connection {
     guard !c.isLocal else { return c }
     var c = c
@@ -35,7 +44,7 @@ func route(_ c: Connection) -> Connection {
         saveConnection(c)
     }
     let device = c.device.flatMap(Noise.fromBase64url).flatMap { try? Curve25519.Signing.PrivateKey(rawRepresentation: $0) }
-        .map { (key: $0, name: Host.current().localizedName ?? ProcessInfo.processInfo.hostName) }
+        .map { (key: $0, name: deviceName()) }
     guard let k = c.key.flatMap(Noise.fromBase64url), let p = NoiseProxy(routerURL: c.url, routerKey: k, device: device, suite: .aesGCM) else {  // MGW2: tudi router minigw serve
         fail("no router key: copy the token again (Mini Gateway 0.4+ → Copy Token) and run minigw connect")
     }
@@ -94,6 +103,7 @@ func call(_ c: Connection, _ method: String, _ path: String, _ headers: [String:
     r.httpMethod = method
     r.httpBody = body
     r.setValue("Bearer \(c.token)", forHTTPHeaderField: "authorization")
+    r.setValue(clientInfo, forHTTPHeaderField: "x-minigw-client")
     for (k, v) in headers { r.setValue(v, forHTTPHeaderField: k) }
     let done = DispatchSemaphore(value: 0)
     var result: (Int, Data?) = (0, nil)

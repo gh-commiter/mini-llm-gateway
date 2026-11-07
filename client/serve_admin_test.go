@@ -197,10 +197,16 @@ func TestAdminAPILiveApply(t *testing.T) {
 	if _, b := admin("GET", adminPrefix+"/devices", ""); strings.Contains(b, spyID) {
 		t.Fatalf("rejected device still listed: %s", b)
 	}
-	if st, _ := admin("DELETE", adminPrefix+"/devices/PC", ""); st != 200 {
+	if st, _ := admin("DELETE", adminPrefix+"/devices/PC", ""); st != 404 { // le po ID-ju: ime je oznaka
+		t.Fatal("delete by name")
+	}
+	if st, b := admin("PATCH", adminPrefix+"/devices/"+pcID, `{"name":"Work\u202ePC\n"}`); st != 200 || !strings.Contains(b, `"name":"WorkPC"`) {
+		t.Fatalf("rename: %d %s", st, b)
+	}
+	if st, _ := admin("DELETE", adminPrefix+"/devices/"+pcID, ""); st != 200 {
 		t.Fatal("remove PC")
 	}
-	if st, _ := admin("DELETE", adminPrefix+"/devices/Mac", ""); st != 200 {
+	if st, _ := admin("DELETE", adminPrefix+"/devices/"+macID, ""); st != 200 {
 		t.Fatal("deny by name")
 	}
 	if r := pipeRequest(t, s, pub, mac, get); !strings.HasPrefix(r, "HTTP/1.1 403") {
@@ -247,7 +253,7 @@ func TestRouterCLIOnlineAndOffline(t *testing.T) {
 		t.Fatalf("status: %q", out)
 	}
 	id := base64url(newDevice("PC").key.Public().(ed25519.PublicKey))
-	if out := run(cfg, "devices", "allow", id, "My", "PC"); out != "allowed device "+id+"\n" {
+	if out := run(cfg, "devices", "allow", id, "My", "PC"); out != "allowed device "+id+" \"My PC\"\n" {
 		t.Fatalf("allow: %q", out)
 	}
 	if c := s.conf(); len(c.Devices) != 1 || c.Devices[0].Name != "My PC" {
@@ -273,7 +279,7 @@ func TestRouterCLIOnlineAndOffline(t *testing.T) {
 	for !validDeviceID(dash) || dash == id { // id se lahko že sam začne z »-« (1 od 64): to bi bila ista naprava
 		dash = "-" + base64url(newDevice("X").key.Public().(ed25519.PublicKey))[1:]
 	}
-	if out := run(off, "devices", "allow", dash); out != "allowed device "+dash+"\n" {
+	if out := run(off, "devices", "allow", dash); out != "allowed device "+dash+" \"\"\n" {
 		t.Fatalf("dash id: %q", out)
 	}
 }

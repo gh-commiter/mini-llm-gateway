@@ -11,6 +11,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -27,6 +28,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 const adminPrefix = "/minigw/admin/v1"
@@ -35,6 +37,7 @@ type apiDevice struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
 	Address  string `json:"address,omitempty"` // le pri čakajočih
+	Client   string `json:"client,omitempty"`  // le pri čakajočih: OS in različica minigw (glava X-Minigw-Client)
 	Time     string `json:"time,omitempty"`
 	LastSeen string `json:"lastSeen,omitempty"` // le pri dovoljenih, od zagona
 }
@@ -236,13 +239,40 @@ func (s *server) deviceSeen(d serveDevice) {
 	}
 }
 
-func (s *server) addPending(d serveDevice, addr string) {
+// cleanDeviceName: ime naprave (ali podatek odjemalca) za prikaz: brez kontrolnih in oblikovnih znakov, obrezano, največ
+// 64 znakov (M1, kot Noise.cleanName na Macu). Ime je le oznaka; identiteta je ključ naprave.
+func cleanDeviceName(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, strings.ToValidUTF8(s, ""))
+	r := []rune(strings.TrimSpace(s))
+	return strings.TrimSpace(string(r[:min(len(r), 64)]))
+}
+
+var errNoDevice = errors.New("no such device")
+
+// deviceRefusal: isto besedilo kot na Macu.
+func deviceRefusal(d serveDevice) string {
+	return fmt.Sprintf("Device %q is not allowed on this gateway: allow it in Settings → Devices (compare the ID %s), or run minigw gw devices allow %s", d.Name, d.ID, d.ID)
+}
+
+// addPending: največ 20; poln seznam obdrži najstarejše (novi ključi jih ne izrinejo, L1); ista naprava se osveži na mestu.
+func (s *server) addPending(d serveDevice, addr, client string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.pending = slices.DeleteFunc(s.pending, func(p apiDevice) bool { return p.ID == d.ID })
-	s.pending = append(s.pending, apiDevice{ID: d.ID, Name: d.Name, Address: addr, Time: time.Now().UTC().Format(time.RFC3339)})
-	if n := len(s.pending); n > 20 {
-		s.pending = slices.Clone(s.pending[n-20:])
+	now := time.Now().UTC().Format(time.RFC3339)
+	if i := slices.IndexFunc(s.pending, func(p apiDevice) bool { return p.ID == d.ID }); i >= 0 {
+		if client == "" {
+			client = s.pending[i].Client
+		}
+		s.pending[i] = apiDevice{ID: d.ID, Name: d.Name, Address: addr, Client: client, Time: now}
+		return
+	}
+	if len(s.pending) < 20 {
+		s.pending = append(s.pending, apiDevice{ID: d.ID, Name: d.Name, Address: addr, Client: client, Time: now})
 	}
 }
 
@@ -330,6 +360,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			return fail(400, strconv.Quote(d.ID)+" is not a device ID (43 characters, base64url): copy it from the gateway log or from the client's refusal message")
 		}
 		added := false
+		d.Name = cleanDeviceName(d.Name)
 		err := s.update(func(c *serveConfig) error {
 			if j := slices.IndexFunc(s.pending, func(p apiDevice) bool { return p.ID == d.ID }); j >= 0 && d.Name == "" {
 				d.Name = s.pending[j].Name // »allow <id>« brez imena: ime iz čakajoče naprave (kot na Macu)
@@ -358,28 +389,41 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		s.mu.Unlock()
 		var gone serveDevice
 		err := s.update(func(c *serveConfig) error {
-			i := slices.IndexFunc(c.Devices, func(d serveDevice) bool { return d.ID == arg })
-			if i < 0 { // ime le, če je enolično
-				for j, d := range c.Devices {
-					if d.Name == arg {
-						if i >= 0 {
-							return errors.New("several devices are named " + strconv.Quote(arg) + ": use the device ID")
-						}
-						i = j
-					}
-				}
-			}
+			i := slices.IndexFunc(c.Devices, func(d serveDevice) bool { return d.ID == arg }) // le po ID-ju: ime je oznaka
 			if i < 0 {
-				return errors.New("no allowed device " + strconv.Quote(arg))
+				return errNoDevice
 			}
 			gone = c.Devices[i]
 			c.Devices = slices.Delete(c.Devices, i, i+1)
 			return nil
 		})
 		if err != nil {
-			return fail(400, err.Error())
+			return fail(404, "no allowed or waiting device with the ID "+arg+" (minigw gw devices lists the IDs)")
 		}
 		return 200, map[string]any{"device": apiDevice{ID: gone.ID, Name: gone.Name}}
+	case "PATCH devices/{}": // preimenovanje dovoljene naprave (ime je le oznaka)
+		var b struct {
+			Name string `json:"name"`
+		}
+		if err := decodeStrict(body, &b); err != nil {
+			return fail(400, err.Error())
+		}
+		name := cleanDeviceName(b.Name)
+		if name == "" {
+			return fail(400, "name: 1-64 printable characters")
+		}
+		err := s.update(func(c *serveConfig) error {
+			i := slices.IndexFunc(c.Devices, func(d serveDevice) bool { return d.ID == arg })
+			if i < 0 {
+				return errNoDevice
+			}
+			c.Devices[i].Name = name
+			return nil
+		})
+		if err != nil {
+			return fail(404, "no allowed device with the ID "+arg)
+		}
+		return 200, map[string]any{"device": apiDevice{ID: arg, Name: name}}
 
 	case "GET providers":
 		list := s.apiGateways(s.conf())

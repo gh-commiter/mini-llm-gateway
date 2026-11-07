@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http/httptest"
@@ -101,7 +102,7 @@ func TestServeNoiseHandshakeTokenAndDevices(t *testing.T) {
 	if r := pipeRequest(t, s, pub, mac, get("wrong")); !strings.HasPrefix(r, "HTTP/1.1 401") {
 		t.Fatalf("wrong token: %q", r)
 	}
-	if r := pipeRequest(t, s, pub, newDevice("Other"), get("tok")); !strings.HasPrefix(r, "HTTP/1.1 403") || !strings.Contains(r, "minigw serve allow") {
+	if r := pipeRequest(t, s, pub, newDevice("Other"), get("tok")); !strings.HasPrefix(r, "HTTP/1.1 403") || !strings.Contains(r, "Settings → Devices") || !strings.Contains(r, "minigw gw devices allow") {
 		t.Fatalf("unknown device: %q", r)
 	}
 	if r := pipeRequest(t, s, pub, nil, get("tok")); !strings.HasPrefix(r, "HTTP/1.1 403") {
@@ -366,10 +367,10 @@ func TestServeAllowDenyDevices(t *testing.T) {
 	other := base64url(newDevice("PC").key.Public().(ed25519.PublicKey))
 	serveCommand([]string{"allow", id, "Mac", "Book", "--config", cfg})
 	serveCommand([]string{"allow", other, "PC", "--config", cfg})
-	serveCommand([]string{"deny", "Mac", "Book", "--config", cfg}) // po imenu
+	serveCommand([]string{"deny", id, "--config", cfg}) // le po ID-ju (ime je oznaka)
 	c, _ := loadServeConfig(cfg)
 	if len(c.Devices) != 1 || c.Devices[0].ID != other {
-		t.Fatalf("after deny by name: %+v", c.Devices)
+		t.Fatalf("after deny: %+v", c.Devices)
 	}
 	serveCommand([]string{"deny", other, "--config", cfg}) // po ID
 	serveCommand([]string{"devices", "--config", cfg})
@@ -488,5 +489,28 @@ func TestEarlyStreamWriter(t *testing.T) {
 	e2.Write([]byte("event: message_start\ndata: {}\n\n"))
 	if !strings.Contains(rec2.Body.String(), "event: message_start") || strings.Contains(rec2.Body.String(), "event: error") {
 		t.Fatalf("pass-through: %q", rec2.Body.String())
+	}
+}
+
+// H1, M1, L1: odjemalec brez ključa le pri praznem seznamu z allowAnyDevice; ime očiščeno; poln seznam čakajočih obdrži
+// najstarejše.
+func TestDeviceRulesLikeMac(t *testing.T) {
+	listed := serveConfig{Devices: []serveDevice{{ID: "a"}}, AllowAnyDevice: true}
+	if listed.deviceAllowed(nil, false) || !(serveConfig{AllowAnyDevice: true}).deviceAllowed(nil, false) || (serveConfig{}).deviceAllowed(nil, false) {
+		t.Fatal("keyless remote client")
+	}
+	if got := cleanDeviceName("  PC\n192.168.1.20 · x\u202e\u200b\t "); got != "PC192.168.1.20 · x" {
+		t.Fatalf("clean: %q", got)
+	}
+	if got := cleanDeviceName(strings.Repeat("ž", 100)); len([]rune(got)) != 64 {
+		t.Fatalf("cap: %d", len([]rune(got)))
+	}
+	s := &server{}
+	for i := 0; i < 25; i++ {
+		s.addPending(serveDevice{ID: fmt.Sprint("id", i)}, "a", "")
+	}
+	s.addPending(serveDevice{ID: "id0"}, "b", "Linux · minigw 0.5.18")
+	if len(s.pending) != 20 || s.pending[0].ID != "id0" || s.pending[0].Address != "b" || s.pending[0].Client == "" || s.pending[19].ID != "id19" {
+		t.Fatalf("pending: %+v", s.pending)
 	}
 }

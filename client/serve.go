@@ -205,11 +205,11 @@ func (c serveConfig) deviceAllowed(d *serveDevice, loopback bool) bool {
 	if loopback {
 		return true
 	}
-	if d == nil { // oddaljen odjemalec brez ključa naprave nikoli
-		return false
-	}
-	if len(c.Devices) == 0 {
+	if len(c.Devices) == 0 { // tudi odjemalec brez ključa naprave (kot na Macu)
 		return c.AllowAnyDevice
+	}
+	if d == nil { // oddaljen odjemalec brez ključa naprave pri nepraznem seznamu nikoli
+		return false
 	}
 	for _, a := range c.Devices {
 		if d != nil && a.ID == d.ID {
@@ -337,7 +337,7 @@ func (s *server) announce(ln net.Listener) {
 	s.log.Printf("minigw %s serving on %s (MGW2), claude=%q folder=%q scratch=%q devices=%d providers=%d", version, ln.Addr(),
 		strings.Join(s.claudeExe(), " "), c.Folder, c.Scratch, len(c.Devices), len(c.Gateways))
 	for _, g := range c.Gateways {
-		if key, where := keyGet(s.cfgDir, g.Name); key == "" {
+		if key, where := keyGet(s.cfgDir, g.Name); key == "" && !g.Disabled { // izklopljen (npr. vgrajen brez ključa): brez opozorila
 			s.log.Printf("WARNING: provider %s has no API key: run minigw gw provider add %s %s", g.Name, g.Name, g.BaseURL)
 		} else if strings.HasSuffix(where, ".json") && runtime.GOOS == "linux" {
 			s.log.Printf("WARNING: gateway %s: no Secret Service (secret-tool), the API key is in %s (mode 0600)", g.Name, where)
@@ -845,7 +845,7 @@ func (c *serveConn) readDevice() error {
 	if !ed25519.Verify(ed25519.PublicKey(pub), msg, sig) {
 		return errors.New("invalid device proof")
 	}
-	c.device = &serveDevice{ID: base64url(pub), Name: string(name)}
+	c.device = &serveDevice{ID: base64url(pub), Name: cleanDeviceName(string(name))}
 	c.pending = c.pending[fixed+n:]
 	return nil
 }
@@ -914,9 +914,9 @@ func (s *server) handle(w http.ResponseWriter, r *req) (int, string) {
 	}
 	if !s.conf().deviceAllowed(r.conn.device, r.conn.loopback()) {
 		if d := r.conn.device; d != nil {
-			s.addPending(*d, r.conn.peer)
-			s.log.Printf("%s refused unknown device %q %s; compare the ID with the client, then to allow it run: minigw serve allow %s %q", r.rid, d.Name, d.ID, d.ID, d.Name)
-			return writeError(w, r.rid, 403, fmt.Sprintf("Device %q is not allowed on this gateway: on the gateway run minigw serve allow %s", d.Name, d.ID)), ""
+			s.addPending(*d, r.conn.peer, cleanDeviceName(r.Header.Get("X-Minigw-Client")))
+			s.log.Printf("%s refused unknown device %q %s; compare the ID with the client, then to allow it run: minigw gw devices allow %s", r.rid, d.Name, d.ID, d.ID)
+			return writeError(w, r.rid, 403, deviceRefusal(*d)), ""
 		}
 		return writeError(w, r.rid, 403, "This gateway needs a device key: update minigw and run minigw connect again"), ""
 	}

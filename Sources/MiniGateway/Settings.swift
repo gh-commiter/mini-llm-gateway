@@ -23,6 +23,12 @@ struct SettingsView: View {
     @State private var cliTools: [String] = []
     @State private var selectedRoot: String?
     @State private var removingDevice: DeviceConfig?
+    @State private var allowNames: [String: String] = [:]  // ime čakajoče naprave, preden jo dovoliš
+
+    static func lastSeen(_ id: String) -> String {
+        Router.deviceLog.lastSeen(id).map { String(localized: "Last seen \($0.formatted(date: .abbreviated, time: .shortened))") }
+            ?? String(localized: "Not seen since the gateway started")
+    }
     @State private var codexModels: [Codex.Model] = []
     @State private var askCopilotCommands = false
     @State private var grokModels: [String] = []
@@ -367,7 +373,7 @@ struct SettingsView: View {
                     Text("Allow any device with the token")
                     Text("Only while the list of allowed devices is empty. Otherwise each new device waits for approval.")
                 }
-                TextField("Allowed clients (IP; empty = all)", text: $draft.allowedClients)
+                TextField("Allowed clients (IP; empty = all)", text: $draft.allowedClients, prompt: Text(verbatim: "192.168.1.20, 192.168.1.21"))
                 Toggle("Allow unencrypted connections from other Macs", isOn: $draft.allowPlainRemote)
                     .help(String(localized: "minigw 0.4 and newer always encrypts. Turn on only for other clients on a trusted network."))
             }
@@ -375,32 +381,39 @@ struct SettingsView: View {
                 ForEach(state.pending) { p in
                     LabeledContent {
                         EqualWidthHStack {
-                            WideButton("Allow") { state.allow(p) }
+                            WideButton("Allow") { state.allow(p, name: allowNames[p.id]) }.buttonStyle(.borderedProminent)
                             WideButton("Reject") { state.reject(p) }
                         }
                     } label: {
-                        Text(verbatim: p.name.isEmpty ? "—" : p.name)
+                        TextField("Name", text: Binding(get: { allowNames[p.id] ?? p.name }, set: { allowNames[p.id] = $0 }))
+                            .labelsHidden()
                         Text(verbatim: p.id).font(.caption.monospaced()).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
-                        Text(verbatim: "\(p.address) · \(p.time.formatted(date: .abbreviated, time: .shortened))")
+                        Text(verbatim: ([p.address, p.time.formatted(date: .abbreviated, time: .shortened)] + (p.client.isEmpty ? [] : [p.client]))
+                            .joined(separator: " · "))
+                        if state.nameTaken(p) {
+                            Text("Same name as an allowed device: compare the ID.").foregroundStyle(.orange)
+                        }
                     }
+                    .listRowBackground(Color.yellow.opacity(0.14))  // kot poudarjena skupina na strani nastavitev
                 }
                 if state.pending.isEmpty { Text("No device is waiting.").foregroundStyle(.secondary) }
             }
             Section {
-                ForEach(draft.devices) { d in
-                    LabeledContent {
-                        EqualWidthHStack {
-                            WideButton("Copy ID") {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(d.id, forType: .string)
+                TimelineView(.periodic(from: .now, by: 15)) { _ in  // zadnji stik iz Router.deviceLog
+                    ForEach($draft.devices) { $d in
+                        LabeledContent {
+                            EqualWidthHStack {
+                                WideButton("Copy ID") {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(d.id, forType: .string)
+                                }
+                                WideButton("Remove") { removingDevice = d }
                             }
-                            WideButton("Remove") { removingDevice = d }
+                        } label: {
+                            TextField("Name", text: $d.name, prompt: Text(verbatim: "—")).labelsHidden()
+                            Text(verbatim: d.id).font(.caption.monospaced()).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                            Text(Self.lastSeen(d.id))
                         }
-                    } label: {
-                        Text(verbatim: d.name.isEmpty ? "—" : d.name)
-                        Text(verbatim: d.id).font(.caption.monospaced()).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
-                        Text(state.deviceSeen[d.id].map { String(localized: "Last seen \($0.formatted(date: .omitted, time: .shortened))") }
-                             ?? String(localized: "Not seen since Mini Gateway started"))
                     }
                 }
                 if draft.devices.isEmpty { Text("None").foregroundStyle(.secondary) }

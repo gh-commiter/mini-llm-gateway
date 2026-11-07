@@ -11,7 +11,7 @@ let routerHelp = """
 minigw gw: show or change the Mini Gateway app on this Mac. Changes apply at once; the app must be running.
 
   minigw gw status
-  minigw gw devices [allow <device id> [name] | deny <device id or name>]
+  minigw gw devices [allow <device id> [--name N] | rename <device id> --name N | deny <device id>]
   minigw gw provider add <name> <baseURL> [--insecure]   the API key is read from stdin or asked for
   minigw gw provider remove <name> | list
   minigw gw provider models <name> [text] [--all] [--enable m1,m2|all] [--disable m1,m2|all]
@@ -123,7 +123,7 @@ private func esc(_ s: String) -> String { s.addingPercentEncoding(withAllowedCha
 func routerCommand(_ argv: [String]) {
     // Ukazi in zastavice v poljubnem vrstnem redu (»--x v« ali »--x=v«).
     var pos: [String] = [], flags: [String: String] = [:]
-    let valued: Set<String> = ["enable", "disable", "path", "tools", "folders", "allow-local-tools", "folder", "allow-unsandboxed-bash", "config"]
+    let valued: Set<String> = ["name", "enable", "disable", "path", "tools", "folders", "allow-local-tools", "folder", "allow-unsandboxed-bash", "config"]
     var i = 0
     while i < argv.count {
         let a = argv[i]
@@ -162,25 +162,30 @@ func routerCommand(_ argv: [String]) {
         }
 
     case "devices":
+        let q = Noise.quoted  // ime naprave iz omrežja: v narekovajih z ubežnimi znaki (kot %q v Go)
         if pos.count == 1 {
             let d = a.call("GET", "/devices")
             let list = d["devices"] as? [[String: Any]] ?? []
-            for x in list { say(clean("\(x["id"] as? String ?? "")  \(x["name"] as? String ?? "")")) }
+            for x in list { say("\(x["id"] as? String ?? "")  \(q(x["name"] as? String ?? ""))") }
             if list.isEmpty {
                 say(d["allowAnyDevice"] as? Bool == true ? "no devices listed: any device with the token is allowed (allowAnyDevice)" : "no devices allowed")
             }
             for x in d["pending"] as? [[String: Any]] ?? [] {
-                let id = x["id"] as? String ?? ""
-                say(clean("waiting: \(id)  \"\(x["name"] as? String ?? "")\" from \(x["address"] as? String ?? "") at \(x["time"] as? String ?? ""); compare the ID with the client, then: minigw gw devices allow \(id)"))
+                let id = x["id"] as? String ?? "", client = x["client"] as? String ?? ""
+                say("waiting: \(id)  \(q(x["name"] as? String ?? "")) from \(q(x["address"] as? String ?? ""))\(client.isEmpty ? "" : " (" + q(client) + ")") at \(x["time"] as? String ?? ""); compare the ID with the client (minigw status), then: minigw gw devices allow \(id) [--name N]")
             }
-        } else if pos[1] == "allow", pos.count >= 3 {
-            let r = a.call("POST", "/devices", ["id": pos[2], "name": pos[3...].joined(separator: " ")])
-            let id = (r["device"] as? [String: Any])?["id"] as? String ?? pos[2]
-            say((r["added"] as? Bool == true ? "allowed device " : "already allowed: ") + id)
-        } else if pos[1] == "deny", pos.count >= 3 {
-            let r = a.call("DELETE", "/devices/" + esc(pos[2...].joined(separator: " ")))
+        } else if pos[1] == "allow", pos.count >= 3 {  // starejša oblika: allow <id> <ime>
+            let r = a.call("POST", "/devices", ["id": pos[2], "name": flags["name"] ?? pos[3...].joined(separator: " ")])
             let d = r["device"] as? [String: Any] ?? [:]
-            say(clean("\(r["pending"] as? Bool == true ? "rejected waiting" : "removed") device \(d["id"] as? String ?? "") \"\(d["name"] as? String ?? "")\""))
+            say((r["added"] as? Bool == true ? "allowed device " : "already allowed: ") + "\(d["id"] as? String ?? pos[2]) \(q(d["name"] as? String ?? ""))")
+        } else if pos[1] == "rename", pos.count == 3, let name = flags["name"] {
+            let r = a.call("PATCH", "/devices/" + esc(pos[2]), ["name": name])
+            let d = r["device"] as? [String: Any] ?? [:]
+            say("renamed device \(d["id"] as? String ?? "") to \(q(d["name"] as? String ?? ""))")
+        } else if pos[1] == "deny", pos.count == 3 {
+            let r = a.call("DELETE", "/devices/" + esc(pos[2]))
+            let d = r["device"] as? [String: Any] ?? [:]
+            say("\(r["pending"] as? Bool == true ? "rejected waiting" : "removed") device \(d["id"] as? String ?? "") \(q(d["name"] as? String ?? ""))")
         } else {
             fail(routerHelp)
         }

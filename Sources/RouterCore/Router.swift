@@ -143,17 +143,32 @@ public final class Router: Sendable {
         guard authorized(req) else {
             return (await error(401, "authentication_error", "Invalid or missing token", rid: rid, writer: writer), nil, nil)
         }
-        // Naprava (minigw 0.4.4+) z drugega računalnika: le dovoljena; neznana čaka na odobritev (kot minigw serve).
-        if let d = req.device, !RouterServer.isLoopback(req.peer) {
+        // Z drugega računalnika le dovoljena naprava (kot minigw serve); neznana čaka na odobritev. Brez ključa naprave
+        // (minigw pred 0.4.4, nešifriran odjemalec) le pri praznem seznamu z allowAnyDevice (H1).
+        if !RouterServer.isLoopback(req.peer) {
+            guard let d = req.device else {
+                guard config.devices.isEmpty && config.allowAnyDevice else {
+                    return (await error(403, "permission_error", "This gateway needs a device key: update minigw and run minigw connect again",
+                                        rid: rid, writer: writer), nil, nil)
+                }
+                return await routeAllowed(req, rid: rid, writer: writer)
+            }
             guard config.deviceAllowed(d.id) else {
-                Self.deviceLog.addPending(id: d.id, name: d.name, address: req.peer)
+                Self.deviceLog.addPending(id: d.id, name: d.name, address: req.peer, client: Noise.cleanName(req.header("x-minigw-client") ?? ""))
                 Self.log.info("\(rid, privacy: .public) refused unknown device \(d.name, privacy: .public) \(d.id, privacy: .public)")
-                return (await error(403, "permission_error",
-                                    "Device “\(d.name)” is not allowed on this gateway: allow it in Mini Gateway → Settings → Devices (compare the ID \(d.id)), or run minigw gw devices allow \(d.id)",
-                                    rid: rid, writer: writer), nil, nil)
+                return (await error(403, "permission_error", Self.refusal(d), rid: rid, writer: writer), nil, nil)
             }
             Self.deviceLog.seen(d.id)
         }
+        return await routeAllowed(req, rid: rid, writer: writer)
+    }
+
+    /// Ena besedilo zavrnitve v Go in Swift.
+    static func refusal(_ d: Noise.Device) -> String {
+        "Device \(Noise.quoted(d.name)) is not allowed on this gateway: allow it in Settings → Devices (compare the ID \(d.id)), or run minigw gw devices allow \(d.id)"
+    }
+
+    private func routeAllowed(_ req: HTTPRequest, rid: String, writer: ResponseWriter) async -> (Int, String?, String?) {
 
         switch (req.method, req.path) {
         case ("GET", "/v1/models"):

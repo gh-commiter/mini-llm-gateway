@@ -79,3 +79,72 @@ private func newID() -> String { Noise.base64url(Curve25519.Signing.PrivateKey()
     let fresh = try JSONDecoder().decode(ProviderConfig.self, from: JSONEncoder().encode(ProviderConfig(id: "y", name: "Y", enabled: false, baseURL: "http://localhost:1", aliases: "", insecure: false)))
     #expect(!fresh.insecure)  // shranjena izbira ostane
 }
+
+/// H1: z drugega računalnika brez ključa naprave le pri praznem seznamu z allowAnyDevice (kot minigw serve).
+@Test func keylessRemoteClientsNeedEmptyListAndAnyDevice() async throws {
+    func ask(_ c: RouterConfig) async -> FakeWriter {
+        var q = request("GET", "/v1/models", headers: ["Authorization": "Bearer tok"])
+        q.peer = "192.0.2.10"  // brez q.device: minigw pred 0.4.4 ali nešifriran odjemalec
+        let w = FakeWriter()
+        await Router(config: c, token: "tok", secrets: FakeSecrets(values: [:])).handle(q, writer: w)
+        return w
+    }
+    var c = RouterConfig()
+    c.devices = [DeviceConfig(id: newID(), name: "Air")]
+    c.allowAnyDevice = true
+    let w = await ask(c)
+    #expect(w.status == 403 && w.text.contains("needs a device key"))  // seznam ni prazen
+    c.devices = []
+    #expect(await ask(c).status == 200)
+    c.allowAnyDevice = false
+    #expect(await ask(c).status == 403)
+}
+
+/// M1: ime naprave brez kontrolnih in oblikovnih znakov, največ 64; v terminalu v narekovajih (kot %q).
+@Test func deviceNamesAreCleanedAndQuoted() {
+    #expect(Noise.cleanName("  PC\n192.168.1.20 · x\u{202E}\u{200B}\t ") == "PC192.168.1.20 · x")
+    #expect(Noise.cleanName(String(repeating: "a", count: 100)).count == 64)
+    #expect(Noise.quoted("a\"b\\c\nd\u{202E}") == #""a\"b\\c\u{a}d\u{202e}""#)
+    let p = DeviceLog.Pending(id: "x", name: "PC\n10.0.0.1", address: "", client: "", time: Date())
+    #expect(Router.refusal(Noise.Device(id: "x", name: p.name)).contains(#""PC\u{a}10.0.0.1""#))
+}
+
+/// L1: poln seznam obdrži najstarejše; ista naprava se osveži na mestu (tudi podatek odjemalca ostane).
+@Test func deviceLogKeepsOldestAndThrottles() async throws {
+    let log = DeviceLog()
+    let calls = Counter()
+    log.onChange = { calls.add() }
+    for i in 0..<25 { log.addPending(id: "id\(i)", name: "n\(i)", address: "a", client: i == 0 ? "macOS · minigw 0.5.18" : "") }
+    #expect(log.pending.count == DeviceLog.limit && log.pending.first?.id == "id0" && !log.pending.contains { $0.id == "id24" })
+    log.addPending(id: "id0", name: "n0", address: "b")
+    #expect(log.pending.first?.address == "b" && log.pending.first?.client == "macOS · minigw 0.5.18")
+    #expect(calls.value <= 2)  // največ enkrat na sekundo (+ zakasnjen klic)
+    for _ in 0..<30 where calls.value < 2 { try await Task.sleep(for: .milliseconds(100)) }  // zakasnjen klic (tudi pod obremenitvijo)
+    #expect(calls.value == 2, "\(calls.value)")
+}
+
+final class Counter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var n = 0
+    func add() { lock.withLock { n += 1 } }
+    var value: Int { lock.withLock { n } }
+}
+
+/// Ime je le oznaka: preimenovanje po ID-ju, brisanje le po ID-ju; podatek odjemalca pri čakajoči napravi.
+@Test func deviceRenameAndClientInfo() async throws {
+    let id = newID(), waiting = newID()
+    var c = RouterConfig()
+    c.devices = [DeviceConfig(id: id, name: "Air")]
+    let app = FakeApp(c)
+    let renamed = await admin(app.router(), "PATCH", "/devices/\(id)", body: #"{"name":"Uroš\u202e Air"}"#)
+    #expect(renamed.status == 200 && app.config.devices[0].name == "Uroš Air")
+    #expect(await admin(app.router(), "PATCH", "/devices/\(id)", body: #"{"name":"\n"}"#).status == 400)
+    #expect(await admin(app.router(), "DELETE", "/devices/Uroš%20Air").status == 404)
+    var q = request("GET", "/v1/models", headers: ["Authorization": "Bearer tok", "x-minigw-client": "Windows · minigw 0.5.18\u{7}"])
+    q.peer = "192.0.2.11"
+    q.device = Noise.Device(id: waiting, name: "u@PC")
+    await app.router().handle(q, writer: FakeWriter())
+    #expect(await admin(app.router(), "GET", "/devices").text.contains(#""client":"Windows · minigw 0.5.18""#))
+    let allowed = await admin(app.router(), "POST", "/devices", body: #"{"id":"\#(waiting)","name":"Office PC"}"#)
+    #expect(allowed.status == 200 && app.config.devices.contains { $0.id == waiting && $0.name == "Office PC" })
+}

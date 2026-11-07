@@ -203,7 +203,7 @@ const S = {
     "Le dokler je seznam dovoljenih naprav prazen. Sicer vsaka nova naprava čaka na odobritev."],
   waiting: ["Waiting for approval", "Čakajo na odobritev"], allowed: ["Allowed devices", "Dovoljene naprave"], none: ["None", "Nobena"],
   noWaiting: ["No device is waiting.", "Nobena naprava ne čaka."], allow: ["Allow", "Dovoli"], deny: ["Reject", "Zavrni"], remove: ["Remove", "Odstrani"],
-  copyId: ["Copy ID", "Kopiraj ID"], lastSeen: ["Last seen %s", "Nazadnje %s"], notSeen: ["Not seen since the gateway started", "Ni se povezala od zagona prehoda"],
+  copyId: ["Copy ID", "Kopiraj ID"], sameName: ["Same name as an allowed device: compare the ID.", "Isto ime kot dovoljena naprava: primerjaj ID."], lastSeen: ["Last seen %s", "Nazadnje %s"], notSeen: ["Not seen since the gateway started", "Ni se povezala od zagona prehoda"],
   devicesFooter: ["A removed device has to be allowed again when it connects.", "Odstranjeno napravo moraš ob naslednji povezavi znova dovoliti."],
   removeAsk: ["Remove %s?", "Odstranim %s?"], addGateway: ["Add Provider", "Dodaj ponudnika"], search: ["Search", "Iskanje"],
   otherGateway: ["Other Anthropic-compatible provider", "Drug Anthropic-združljiv ponudnik"], gateway: ["Provider", "Ponudnik"], keySaved: ["API key (saved; enter to replace)", "Ključ API (shranjen; vpiši za zamenjavo)"],
@@ -507,15 +507,25 @@ const pages = {
     const n = note(), n2 = note(t("auto"));
     const act = (method, path, body) => save(n, async () => { await api(method, path, body); show("devices"); });
     const when = x => new Date(x).toLocaleString();
-    const id = (x, sub) => el("div", {class: "label"}, el("div", {textContent: x.name || "—"}),
-      el("span", {class: "sub mono ellipsis", textContent: x.id, title: x.id}), el("div", {class: "sub", textContent: sub}));
+    // Ime je le oznaka (identiteta je ID): pri čakajoči se uredi pred Allow, pri dovoljeni se preimenuje (PATCH).
+    const nameField = (value, onSave) => {
+      const i = el("input", {type: "text", class: "left", value, placeholder: "—", maxLength: 64});
+      if (onSave) autosave(i, n, v => v ? onSave(v) : Promise.resolve(), () => t("saved"));
+      return i;
+    };
+    const id = (x, first, ...subs) => el("div", {class: "label"}, first,
+      el("span", {class: "sub mono ellipsis", textContent: x.id, title: x.id}), ...subs.filter(Boolean).map(sub => el("div", {class: "sub", textContent: sub})));
+    const taken = x => x.name && d.devices.some(a => a.name.toLowerCase() === x.name.toLowerCase());
     const copyId = x => button(t("copyId"), async () => { await navigator.clipboard.writeText(x.id); n.className = "note"; n.textContent = t("copied"); });
     const clients = el("input", {type: "text", value: g.allowedClients, placeholder: "192.168.1.20, 192.168.1.21"});
     autosave(clients, n2, v => api("PATCH", "/general", {allowedClients: v}), r => t(r.restartRequired ? "restart" : "saved"));
     const waiting = d.pending.length
-      ? el("div", {class: "group hi"}, ...d.pending.map(x => row(id(x, x.address + " · " + when(x.time)), buttons(
-          button(t("allow"), () => act("POST", "/devices", {id: x.id, name: x.name}), true),
-          button(t("deny"), () => act("DELETE", "/devices/" + encodeURIComponent(x.id)))))))
+      ? el("div", {class: "group hi"}, ...d.pending.map(x => {
+          const nm = nameField(x.name);
+          return row(id(x, nm, [x.address, when(x.time), x.client].filter(Boolean).join(" · "), taken(x) ? "⚠ " + t("sameName") : null), buttons(
+            button(t("allow"), () => act("POST", "/devices", {id: x.id, name: nm.value.trim()}), true),
+            button(t("deny"), () => act("DELETE", "/devices/" + encodeURIComponent(x.id)))));
+        }))
       : group(row(el("span", {class: "label sub", textContent: t("noWaiting")})));
     return [
       card(...ICON.devices, t("devices"), t("devicesDesc")),
@@ -524,7 +534,8 @@ const pages = {
       n2,
       section(t("waiting")), waiting,
       section(t("allowed")),
-      group(d.devices.length ? d.devices.map(x => row(id(x, x.lastSeen ? t("lastSeen", when(x.lastSeen)) : t("notSeen")), buttons(copyId(x),
+      group(d.devices.length ? d.devices.map(x => row(id(x, nameField(x.name, v => api("PATCH", "/devices/" + encodeURIComponent(x.id), {name: v})),
+        x.lastSeen ? t("lastSeen", when(x.lastSeen)) : t("notSeen")), buttons(copyId(x),
         button(t("remove"), () => { if (confirm(t("removeAsk", x.name || x.id))) act("DELETE", "/devices/" + encodeURIComponent(x.id)); }))))
         : row(el("span", {class: "label sub", textContent: t("none")}))),
       el("p", {class: "note", textContent: t("devicesFooter")}), n,

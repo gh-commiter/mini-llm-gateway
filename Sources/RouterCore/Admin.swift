@@ -199,7 +199,7 @@ extension Router {
                 return o
             }
             let pending: [[String: Any]] = Router.deviceLog.pending.map {
-                ["id": $0.id, "name": $0.name, "address": $0.address, "time": iso.string(from: $0.time)]
+                ["id": $0.id, "name": $0.name, "address": $0.address, "client": $0.client, "time": iso.string(from: $0.time)]
             }
             return (200, ["devices": list, "pending": pending, "allowAnyDevice": c.allowAnyDevice])
         case "POST devices":
@@ -209,7 +209,7 @@ extension Router {
                 throw AdminError(400, "\"\(id)\" is not a device ID (43 characters, base64url): copy it from the client's minigw status")
             }
             let waiting = Router.deviceLog.pending.first { $0.id == id }
-            let name = given.isEmpty ? waiting?.name ?? "" : given
+            let name = Noise.cleanName(given.isEmpty ? waiting?.name ?? "" : given)
             let added = !c.devices.contains { $0.id == id }
             _ = try await hooks.update { c in
                 if !c.devices.contains(where: { $0.id == id }) { c.devices.append(DeviceConfig(id: id, name: name)) }
@@ -220,15 +220,21 @@ extension Router {
             if !c.devices.contains(where: { $0.id == arg }), let p = Router.deviceLog.removePending(arg) {  // zavrni čakajočo
                 return (200, ["device": ["id": p.id, "name": p.name], "pending": true])
             }
-            var gone = c.devices.first { $0.id == arg }
-            if gone == nil {
-                let named = c.devices.filter { $0.name == arg }
-                guard named.count <= 1 else { throw AdminError(400, "several devices are named \"\(arg)\": use the device ID") }
-                gone = named.first
+            // Le po ID-ju: ime je oznaka, nikoli identiteta.
+            guard let gone = c.devices.first(where: { $0.id == arg }) else {
+                throw AdminError(404, "no allowed or waiting device with the ID \(arg) (minigw gw devices lists the IDs)")
             }
-            guard let gone else { throw AdminError(400, "no allowed device \"\(arg)\"") }
             _ = try await hooks.update { c in c.devices.removeAll { $0.id == gone.id } }
             return (200, ["device": ["id": gone.id, "name": gone.name]])
+        case "PATCH devices/{}":  // preimenovanje dovoljene naprave (ime je le oznaka)
+            let b = try AdminBody(body, ["name"])
+            let name = Noise.cleanName(try b.string("name") ?? "")
+            guard !name.isEmpty else { throw AdminError(400, "name: 1-64 printable characters") }
+            guard c.devices.contains(where: { $0.id == arg }) else { throw AdminError(404, "no allowed device with the ID \(arg)") }
+            _ = try await hooks.update { c in
+                if let i = c.devices.firstIndex(where: { $0.id == arg }) { c.devices[i].name = name }
+            }
+            return (200, ["device": ["id": arg, "name": name]])
 
         case "GET siri":
             return (200, siriInfo(c))
