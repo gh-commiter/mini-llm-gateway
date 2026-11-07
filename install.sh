@@ -57,7 +57,7 @@ say "Installed: $DIR/minigw"
 if [ $# -ge 1 ]; then
   printf 'Gateway token for %s: ' "$1" >/dev/tty
   stty -echo </dev/tty; read -r TOKEN </dev/tty; stty echo </dev/tty; printf '\n' >/dev/tty
-  "$DIR/minigw" connect "$1" --token "$TOKEN"
+  printf '%s\n' "$TOKEN" | "$DIR/minigw" connect "$1" --token -  # stdin: the token never appears in the process arguments
 else
   say "Next: minigw connect <gateway>[:port] --token <token>"
 fi
