@@ -511,3 +511,24 @@ func TestParityGeneralAndClaude(t *testing.T) {
 		t.Fatalf("status build: %s", b)
 	}
 }
+
+// L2: mapa scratch je le naša (0700) in ni simbolna povezava.
+func TestScratchFolderProtected(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows: DACL (protectDir)")
+	}
+	s, _, base := liveServer(t, nil)
+	open := filepath.Join(t.TempDir(), "open")
+	os.Mkdir(open, 0o755)
+	if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/general", `{"scratch":"`+open+`"}`); st != 200 {
+		t.Fatalf("scratch: %d %s", st, b)
+	}
+	if fi, _ := os.Stat(open); fi.Mode().Perm() != 0o700 {
+		t.Fatalf("mode %v", fi.Mode())
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	os.Symlink(open, link)
+	if st, _ := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/general", `{"scratch":"`+link+`"}`); st != 400 {
+		t.Fatalf("symlink accepted: %d", st)
+	}
+}

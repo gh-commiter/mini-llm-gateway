@@ -714,8 +714,8 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			if !filepath.IsAbs(scratch) || under(scratch, s.cfgDir) || under(s.cfgDir, scratch) {
 				return fail(400, "scratch folder: an absolute path outside the config folder")
 			}
-			if err := os.MkdirAll(scratch, 0o700); err != nil {
-				return fail(400, "scratch folder: "+err.Error())
+			if err := protectScratch(scratch); err != nil {
+				return fail(400, "scratch folder "+scratch+": "+err.Error()+" (use a folder of your own)")
 			}
 		}
 		if b.StartAtSignIn != nil { // Windows: vrednost Run za ta router (pladenj); drugod storitev namesti minigw serve install

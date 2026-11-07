@@ -199,6 +199,12 @@ func TestServeInstallFiles(t *testing.T) {
 			if _, err := serviceCommand("install", goos, cfg); err != nil || strings.Count(envPath, dir) != 1 { // posodobitev: PATH enkrat
 				t.Fatalf("reinstall: %v %q", err, envPath)
 			}
+			before := envPath // L1: PATH, ki ga ni mogoče prebrati, ostane, kot je
+			envPathGet = func() (string, error) { return "", errors.New("registry busy") }
+			if _, err := serviceCommand("install", goos, cfg); err == nil || envPath != before {
+				t.Fatalf("PATH read error: %v %q", err, envPath)
+			}
+			envPathGet = func() (string, error) { return envPath, nil }
 		}
 		msg, err = serviceCommand("uninstall", goos, cfg)
 		if err != nil || serviceInstalled(goos) {

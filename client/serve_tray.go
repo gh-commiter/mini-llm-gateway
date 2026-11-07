@@ -73,7 +73,11 @@ func trayStartup(on bool, cfgPath string) error {
 		return err
 	}
 	cfgPath, _ = filepath.Abs(cfgPath)
-	return runValueSet(runValueName, serviceFile("windows", exe, cfgPath))
+	v, err := serviceFile("windows", exe, cfgPath)
+	if err != nil {
+		return err
+	}
+	return runValueSet(runValueName, v)
 }
 
 // trayMenu: meni pladnja iz stanja routerja (vse prek skrbniškega API).

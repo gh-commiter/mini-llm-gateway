@@ -173,6 +173,14 @@ func regRunDel(name string) {
 }
 
 // protectDir: zaščiten DACL samo za lastnika in SYSTEM (mapa nastavitev zunaj %AppData%, kjer ni privzeto zasebna).
+// protectScratch (L2): kot mapa nastavitev (DACL le za uporabnika; tuj lastnik = zavrnitev).
+func protectScratch(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	return protectDir(dir)
+}
+
 func protectDir(dir string) error {
 	var (
 		pConvert = advapi32.NewProc("ConvertStringSecurityDescriptorToSecurityDescriptorW")
@@ -341,16 +349,22 @@ func regEnvPathGet() (string, error) {
 	}
 	defer procRegClose.Call(h)
 	n, _ := syscall.UTF16PtrFromString("Path")
-	buf := make([]uint16, 32768)
-	size := uint32(len(buf) * 2)
-	r, _, _ := procRegQuery.Call(h, uintptr(unsafe.Pointer(n)), 0, 0, uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&size)))
-	if r == 2 { // ERROR_FILE_NOT_FOUND: še brez uporabniškega PATH
-		return "", nil
+	size := uint32(32768 * 2)
+	for range 3 {
+		buf := make([]uint16, size/2+1)
+		r, _, _ := procRegQuery.Call(h, uintptr(unsafe.Pointer(n)), 0, 0, uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&size)))
+		switch r {
+		case 0:
+			return syscall.UTF16ToString(buf[:size/2]), nil
+		case 2: // ERROR_FILE_NOT_FOUND: še brez uporabniškega PATH
+			return "", nil
+		case 234: // ERROR_MORE_DATA: size je zdaj potrebna velikost
+			continue
+		default:
+			return "", syscall.Errno(r)
+		}
 	}
-	if r != 0 {
-		return "", syscall.Errno(r)
-	}
-	return syscall.UTF16ToString(buf[:size/2]), nil
+	return "", errors.New("the user PATH keeps growing while it is read")
 }
 
 func regEnvPathSet(value string) error {

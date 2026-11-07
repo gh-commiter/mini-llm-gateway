@@ -62,8 +62,16 @@ func xmlText(s string) string {
 	return b.String()
 }
 
-// serviceFile: vsebina enote, LaunchAgenta ali ukazne vrstice za Run.
-func serviceFile(goos, exe, cfgPath string) string {
+// serviceFile: vsebina enote, LaunchAgenta ali ukazne vrstice za Run. Pot z novo vrstico ali NUL (na Windows tudi
+// »"«) bi dodala vrstico ali argument: zavrnjena tu, za vse klicatelje (I3).
+func serviceFile(goos, exe, cfgPath string) (string, error) {
+	if strings.ContainsAny(exe+cfgPath, "\r\n\x00") || (goos == "windows" && strings.Contains(exe+cfgPath, `"`)) {
+		return "", errors.New("the program or config path contains a line break or quote: move it to a plain path")
+	}
+	return serviceText(goos, exe, cfgPath), nil
+}
+
+func serviceText(goos, exe, cfgPath string) string {
 	switch goos {
 	case "linux":
 		return "[Unit]\nDescription=Mini Gateway router (minigw serve)\nAfter=network-online.target\n\n[Service]\nExecStart=" +
@@ -309,7 +317,10 @@ func installWindows(exe, cfgPath string) (string, error) {
 	} else if err := downloadVerified("minigw-tray-windows-"+runtime.GOARCH+".exe", tray); err != nil {
 		tray, note = "", "\nNo tray icon: minigw-tray.exe was not next to minigw.exe and the download failed ("+err.Error()+"); minigw serve starts at sign-in instead."
 	}
-	path, _ := envPathGet()
+	path, err := envPathGet()
+	if err != nil { // L1: ob napaki ne prepiši uporabnikovega PATH
+		return "", fmt.Errorf("cannot read the user PATH: %v", err)
+	}
 	if np, add := pathWith(path, dir); add {
 		if err := envPathSet(np); err != nil {
 			return "", err
@@ -384,8 +395,8 @@ func serviceCommand(sub, goos, cfgPath string) (string, error) {
 		return "", err
 	}
 	cfgPath, _ = filepath.Abs(cfgPath)
-	if strings.ContainsAny(exe+cfgPath, "\r\n\x00") || (goos == "windows" && strings.Contains(exe+cfgPath, `"`)) {
-		return "", errors.New("the program or config path contains a line break or quote: move it to a plain path")
+	if _, err := serviceFile(goos, exe, cfgPath); err != nil {
+		return "", err
 	}
 	if _, err := os.Stat(cfgPath); sub == "install" && err != nil {
 		return "", errors.New("no " + cfgPath + ": run minigw serve init first")
@@ -406,7 +417,11 @@ func serviceCommand(sub, goos, cfgPath string) (string, error) {
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			return "", err
 		}
-		if err := os.WriteFile(p, []byte(serviceFile(goos, exe, cfgPath)), 0o644); err != nil {
+		unit, err := serviceFile(goos, exe, cfgPath)
+		if err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(p, []byte(unit), 0o644); err != nil {
 			return "", err
 		}
 		if goos == "linux" {

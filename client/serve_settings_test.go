@@ -185,7 +185,10 @@ func TestTrayDeviceActionsAndInstallValue(t *testing.T) {
 	if trayBeside(exe) != tray || !isTrayExe(tray) || isTrayExe(exe) {
 		t.Fatalf("trayBeside: %q", trayBeside(exe))
 	}
-	if v := serviceFile("windows", exe, `C:\cfg\serve.json`); v != `"`+tray+`" tray --config "C:\cfg\serve.json"` {
+	if _, err := serviceFile("windows", exe, `C:\cfg\"x`); err == nil { // I3
+		t.Fatal("quote in a Run value accepted")
+	}
+	if v, _ := serviceFile("windows", exe, `C:\cfg\serve.json`); v != `"`+tray+`" tray --config "C:\cfg\serve.json"` {
 		t.Fatalf("run value: %s", v)
 	}
 }

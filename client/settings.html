@@ -614,7 +614,7 @@ async function show(page, arg) {
   } catch (e) { toast(e.message); }
 }
 setInterval(() => { if (current === "devices" && document.visibilityState === "visible" && !document.activeElement.matches("input")) show("devices"); }, 5000);
-signIn().then(() => show(START[0] in pages ? START[0] : "general", START[1]), e => toast(e.message));
+signIn().then(() => show(Object.hasOwn(pages, START[0]) ? START[0] : "general", START[1]), e => toast(e.message));
 </script>
 </body>
 </html>

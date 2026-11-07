@@ -394,6 +394,9 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	if c.Scratch, err = filepath.Abs(c.Scratch); err != nil || under(c.Scratch, cfgDir) {
 		return nil, errors.New("scratch must not be inside the config folder " + cfgDir)
 	}
+	if err := protectScratch(c.Scratch); err != nil {
+		return nil, fmt.Errorf("scratch folder %s: %v: use a folder of your own", c.Scratch, err)
+	}
 	for i, g := range c.Gateways { // ročno urejen serve.json: ista pravila kot gateway add
 		if !validGatewayName.MatchString(g.Name) {
 			return nil, fmt.Errorf("gateway name %q in the config: letters, digits, . _ - (up to 32)", g.Name)
