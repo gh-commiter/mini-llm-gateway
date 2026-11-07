@@ -63,8 +63,10 @@ Model    {"id": string, "model": string, "window"?: number, "enabled": bool}
          neither "claude" nor "anthropic"); window: context window in tokens, if known.
 Gateway  {"name": string, "baseURL": string, "insecure": bool, "models": [string] | null, "hasKey": bool, "ready": bool}
          models: enabled gateway IDs; null = all discovered, now and later. ready: model list loaded.
-Claude   {"path": string, "found": bool, "tools": string, "allowUnsandboxedBash": bool, "folder": string}
-         path: "" = from PATH; tools: comma-separated tool names; folder: "" = only synced copies.
+Claude   {"path": string, "found": bool, "tools": string, "allowUnsandboxedBash": bool, "folder": string,
+          "exe"?: string, "version"?: string}
+         path: "" = from PATH; tools: comma-separated tool names; folder: "" = only synced copies; exe: the
+         claude that was found; version: its `claude --version` (both only when found; Go router only).
 General  {"port": number, "address": string, "connect": string, "restartRequired"?: true}
          address: "" = all addresses; connect: the "minigw connect …" line for clients (contains the token).
 ```
@@ -73,7 +75,7 @@ General  {"port": number, "address": string, "connect": string, "restartRequired
 
 | Method and path | Body | Response |
 |---|---|---|
-| `GET /status` | – | `{"running", "version", "port", "address", "installed", "devices": n, "pending": n, "claude": Claude, "gateways": [Gateway]}` |
+| `GET /status` | – | `{"running", "version", "port", "address", "installed", "devices": n, "pending": n, "claude": Claude, "gateways": [Gateway], "os", "installDir"?, "tray"}` |
 | `GET /devices` | – | `{"devices": [Device], "pending": [Device], "allowAnyDevice": bool}` |
 | `POST /devices` | `{"id", "name"}` | `{"device": Device, "added": bool}`; removes it from pending |
 | `DELETE /devices/{id or name}` | – | `{"device": Device}`; a pending device is only removed from pending (`"pending": true`); a name must be unique |
@@ -85,7 +87,7 @@ General  {"port": number, "address": string, "connect": string, "restartRequired
 | `GET /agents/claude` | – | Claude |
 | `PATCH /agents/claude` | any of `{"path", "tools", "allowUnsandboxedBash", "folder"}` | Claude |
 | `GET /general` | – | General |
-| `PATCH /general` | any of `{"port", "address"}` | General with `"restartRequired": true` |
+| `PATCH /general` | any of `{"port", "address", "startAtSignIn"}` | General with `"restartRequired": true` |
 | `POST /general/token` | – | General with the new token in `connect`; the old token stops working at once |
 | `POST /settings/login` | – | `{"url"}`: a one-time link to the settings page (`…/minigw/settings#t=…`, 60 s); `503` when the router does not run |
 
@@ -98,6 +100,10 @@ Notes:
   with the key before it saves anything, and stores the key in the system's secret store (Credential Manager,
   Keychain or Secret Service), never in the config. `keyStore` says where. A new gateway with more than 20 models
   starts with none enabled. The key is never returned.
+- `status`: `os` is `windows`, `linux` or `darwin` (the settings page uses it for commands without a sandbox),
+  `installDir` the folder of `minigw serve install` (only when minigw is installed there), `tray` whether the
+  Windows tray runs. `PATCH /general {"startAtSignIn"}` sets the Windows Run value for the running router; other
+  systems answer `400` (use `minigw serve install`). The Mac app has its own Settings window and leaves these out.
 - `POST /gateways/{name}/models`: `all` first (true = all, false = none), then `enable`, then `disable`.
 - `PATCH /agents/claude`: the router checks the path, that the folder exists and is not near the config folder,
   and that Bash on Windows has `allowUnsandboxedBash`.

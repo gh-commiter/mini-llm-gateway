@@ -3,52 +3,92 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Mini Gateway</title>
+<title>Mini Gateway Settings</title>
 <style nonce="{{NONCE}}">
-:root { color-scheme: light dark; --bg: #f5f5f7; --panel: #fff; --text: #1d1d1f; --muted: #6e6e73; --line: #d2d2d7;
-  --accent: #0a66d8; --side: #ececee; --sel: #d6d6db; --warn: #b25000; --err: #c4161c; }
+:root { color-scheme: light dark; --bg: #ececec; --side: #e2e2e4; --panel: #ffffff; --text: #1d1d1f; --muted: #6e6e73;
+  --line: #e5e5ea; --accent: #0a66d8; --sel: #d0d0d5; --btn: #e8e8ed; --ok: #28a745; --err: #d70015; --warn: #b25000;
+  --hi: #fff7e0; --hiline: #f0c36d; --input: #ffffff; --inputline: #d2d2d7; }
 @media (prefers-color-scheme: dark) {
-  :root { --bg: #1e1e1e; --panel: #2a2a2c; --text: #f5f5f7; --muted: #a1a1a6; --line: #3a3a3c; --accent: #3b8cff;
-    --side: #252527; --sel: #3a3a3c; --warn: #ffa64d; --err: #ff6961; }
+  :root { --bg: #1e1e1e; --side: #262628; --panel: #2c2c2e; --text: #f5f5f7; --muted: #98989d; --line: #3a3a3c;
+    --accent: #3b8cff; --sel: #3a3a3c; --btn: #3a3a3c; --ok: #32d74b; --err: #ff6961; --warn: #ffa64d;
+    --hi: #3a3220; --hiline: #8a6d2f; --input: #1c1c1e; --inputline: #48484a; }
 }
 * { box-sizing: border-box; }
-body { margin: 0; font: 14px/1.4 system-ui, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); display: flex; min-height: 100vh; }
-nav { width: 200px; flex: none; background: var(--side); padding: 16px 8px; position: sticky; top: 0; height: 100vh; }
-nav h1 { font-size: 15px; margin: 0 8px 12px; }
-nav button { display: block; width: 100%; text-align: left; border: 0; background: none; color: var(--text); padding: 6px 10px; border-radius: 6px; font: inherit; cursor: pointer; }
-nav button.sel { background: var(--sel); }
-main { flex: 1; padding: 24px 32px; max-width: 860px; }
-h2 { font-size: 20px; margin: 0 0 16px; }
-h3 { font-size: 13px; color: var(--muted); margin: 20px 0 6px; font-weight: 600; }
-.box { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 4px 14px; }
-.row { display: flex; align-items: center; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--line); }
-.row:last-child { border-bottom: 0; }
-.row > label, .row > .label { flex: 1; }
-.row input[type=text], .row input[type=password], .row input[type=number] { width: 320px; max-width: 55%; }
-input { font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); }
-.mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; word-break: break-all; }
-.muted { color: var(--muted); font-size: 12px; }
+body { margin: 0; font: 13px/1.4 -apple-system, system-ui, "Segoe UI", sans-serif; background: var(--bg); color: var(--text);
+  display: flex; min-height: 100vh; }
+nav { width: 220px; flex: none; background: var(--side); padding: 14px 10px; position: sticky; top: 0; height: 100vh;
+  display: flex; flex-direction: column; }
+nav .title { font-weight: 600; margin: 2px 8px 12px; }
+nav .item { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; border: 0; background: none;
+  color: var(--text); padding: 5px 8px; border-radius: 6px; font: inherit; cursor: pointer; }
+nav .item.sub { padding-left: 30px; }
+nav .item.sel { background: var(--sel); }
+nav .ico { width: 20px; height: 20px; border-radius: 5px; display: inline-flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 11px; font-weight: 700; flex: none; }
+nav .footer { display: flex; gap: 4px; margin: 4px 0 0 30px; }
+nav .footer button { width: 24px; height: 22px; border: 0; background: none; color: var(--text); font-size: 16px; cursor: pointer; border-radius: 4px; }
+nav .footer button:disabled { color: var(--muted); cursor: default; }
+main { flex: 1; padding: 20px 28px 40px; }
+.content { max-width: 680px; margin: 0 auto; }
+.card { background: var(--panel); border-radius: 12px; padding: 18px; text-align: center; margin-bottom: 12px; }
+.card .ico { width: 52px; height: 52px; border-radius: 12px; display: inline-flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 22px; font-weight: 700; }
+.card h1 { font-size: 20px; margin: 8px 0 4px; }
+.card p { margin: 0; color: var(--muted); }
+h3 { font-size: 13px; margin: 18px 4px 6px; display: flex; align-items: center; justify-content: space-between; }
+.group { background: var(--panel); border-radius: 10px; }
+.group.hi { background: var(--hi); box-shadow: inset 0 0 0 1px var(--hiline); }
+.row { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 7px 12px; }
+.row + .row { border-top: 1px solid var(--line); }
+.row .label { flex: 1; min-width: 0; }
+.row .sub { color: var(--muted); font-size: 12px; }
+.value { color: var(--muted); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mono { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 12px; }
+.ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+.note { color: var(--muted); font-size: 11px; margin: 6px 4px 0; min-height: 14px; }
+.note.err { color: var(--err); }
 .warn { color: var(--warn); font-size: 12px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; background: var(--err); }
+.dot.ok { background: var(--ok); }
+input[type=text], input[type=password], input[type=number] { font: inherit; padding: 4px 8px; border: 1px solid var(--inputline);
+  border-radius: 6px; background: var(--input); color: var(--text); width: 280px; max-width: 60%; text-align: right; }
+input.left { text-align: left; }
+input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 .buttons { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 8px; }
-button.b { font: inherit; padding: 4px 12px; min-width: 90px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--text); cursor: pointer; }
-button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-#msg { min-height: 20px; margin: 0 0 10px; font-size: 13px; }
-#msg.err { color: var(--err); }
-.hidden { display: none; }
+button.btn { font: inherit; padding: 3px 12px; min-width: 84px; border-radius: 6px; border: 0; background: var(--btn); color: var(--text); cursor: pointer; }
+button.btn.primary { background: var(--accent); color: #fff; }
+button.btn:disabled { opacity: .5; cursor: default; }
+h3 button.btn { font-weight: 400; }
+input.wide { width: 100%; max-width: none; }
+.switch { position: relative; width: 38px; height: 22px; flex: none; }
+.switch input { opacity: 0; width: 0; height: 0; position: absolute; }
+.switch span { position: absolute; inset: 0; background: var(--btn); border-radius: 11px; cursor: pointer; transition: background .15s; }
+.switch span::after { content: ""; position: absolute; width: 18px; height: 18px; left: 2px; top: 2px; background: #fff; border-radius: 50%;
+  box-shadow: 0 1px 2px rgba(0,0,0,.3); transition: left .15s; }
+.switch input:checked + span { background: var(--accent); }
+.switch input:checked + span::after { left: 18px; }
+.switch input:disabled + span { opacity: .4; cursor: default; }
+.filter { display: flex; gap: 8px; align-items: center; }
+.filter input { width: 180px; text-align: left; }
+#msg { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); background: var(--panel); color: var(--err);
+  padding: 6px 12px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,.2); display: none; }
 </style>
 </head>
 <body>
-<nav id="nav"><h1>Mini Gateway</h1></nav>
-<main><div id="msg"></div><div id="page"></div></main>
+<nav id="nav"></nav>
+<main><div class="content" id="page"></div></main>
+<div id="msg"></div>
 <script nonce="{{NONCE}}">
 "use strict";
-// Seja: enkratni žeton iz fragmenta (#t=…, strežnik ga ne vidi) → POST login → ID v sessionStorage (le ta zavihek,
-// ta shema, gostitelj in vrata); vsak klic ga pošlje v glavi X-Minigw-Session. Brez piškotkov.
+// Seja: enkratni žeton iz fragmenta (#t=…, strežnik ga ne vidi) → POST login → ID v sessionStorage; vsak klic ga pošlje
+// v glavi X-Minigw-Session. Brez piškotkov. Vse spremembe se uveljavijo same (kot nastavitve na Macu).
 let SESSION = "";
 try { SESSION = sessionStorage.getItem("minigw-session") || ""; } catch (e) {}
+let START = ["general", ""];  // #p=<pano>&g=<prehod>: povezava naravnost v pano
 async function signIn() {
-  const tok = new URLSearchParams(location.hash.slice(1)).get("t");
-  history.replaceState(null, "", location.pathname);  // žeton ne ostane v naslovu ali zgodovini
+  const q = new URLSearchParams(location.hash.slice(1)), tok = q.get("t");
+  if (q.get("p")) START = [q.get("p"), q.get("g") || ""];
+  history.replaceState(null, "", location.pathname);
   if (!tok) return;
   const r = await fetch("/minigw/settings/login", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({t: tok})});
   const j = await r.json().catch(() => ({}));
@@ -56,33 +96,59 @@ async function signIn() {
   SESSION = j.session;
   try { sessionStorage.setItem("minigw-session", SESSION); } catch (e) {}
 }
+
 const SL = (navigator.language || "").toLowerCase().startsWith("sl");
+document.documentElement.lang = SL ? "sl" : "en";
 const S = {
   general: ["General", "Splošno"], devices: ["Devices", "Naprave"], gateways: ["Gateways", "Prehodi"], claude: ["Claude CLI", "Claude CLI"],
-  status: ["Status", "Stanje"], running: ["Running", "Teče"], version: ["Version", "Različica"], startup: ["Starts at sign-in", "Zagon ob prijavi"],
-  yes: ["Yes", "Da"], no: ["No", "Ne"], port: ["Port", "Vrata"], address: ["Address (empty = all)", "Naslov (prazno = vsi)"],
-  save: ["Save", "Shrani"], saved: ["Saved.", "Shranjeno."], restart: ["Saved. Restart the router to use the new port or address.", "Shranjeno. Za nova vrata ali naslov znova zaženi router."],
-  connect: ["Connect line for clients", "Vrstica za odjemalce"], copy: ["Copy", "Kopiraj"], copied: ["Copied.", "Kopirano."],
-  rotate: ["New token", "Nov žeton"], rotateAsk: ["Make a new token? Every client must connect again with the new line.", "Naredim nov žeton? Vsak odjemalec se mora znova povezati z novo vrstico."],
-  rotated: ["New token. Run the new line on each client.", "Nov žeton. Novo vrstico zaženi na vsakem odjemalcu."],
-  allowed: ["Allowed devices", "Dovoljene naprave"], waiting: ["Waiting for approval", "Čakajo na odobritev"], none: ["None", "Nobena"],
-  allow: ["Allow", "Dovoli"], deny: ["Deny", "Zavrni"], remove: ["Remove", "Odstrani"],
-  compare: ["Compare the ID with the one on the client before you allow it.", "Pred odobritvijo primerjaj ID s tistim na odjemalcu."],
-  add: ["Add gateway", "Dodaj prehod"], name: ["Name", "Ime"], url: ["Base URL", "Osnovni URL"], key: ["API key", "Ključ API"],
-  insecure: ["Allow http (localhost or a private IP only)", "Dovoli http (le localhost ali zasebni IP)"], addBtn: ["Add", "Dodaj"],
-  keyNote: ["The key is stored in the system's secret store and is never shown.", "Ključ gre v shrambo skrivnosti sistema in se nikoli ne prikaže."],
-  models: ["Models", "Modeli"], filter: ["Filter", "Filter"], showAll: ["Show all", "Pokaži vse"], load: ["Show models", "Pokaži modele"],
-  removeAsk: ["Remove gateway %s and its key?", "Odstranim prehod %s in njegov ključ?"], noKey: ["no key", "brez ključa"],
-  enabledOf: ["%s of %s enabled", "vklopljenih %s od %s"], loading: ["Loading…", "Nalagam …"],
-  path: ["Path to claude (empty = PATH)", "Pot do claude (prazno = PATH)"], tools: ["Tools", "Orodja"], folder: ["Folder for agents without sync (empty = none)", "Mapa za agente brez sinhronizacije (prazno = brez)"],
-  bash: ["Allow Bash without a sandbox", "Dovoli Bash brez sandboxa"], found: ["Found", "Najden"], notFound: ["Not found", "Ni najden"],
+  generalDesc: ["Address, port and access token of the router, and its state.", "Naslov, vrata in žeton routerja ter njegovo stanje."],
+  devicesDesc: ["Computers that may use this router. Compare a waiting device's ID with the one on the client before you allow it.",
+    "Računalniki, ki smejo uporabljati ta router. ID čakajoče naprave pred odobritvijo primerjaj s tistim na odjemalcu."],
+  gatewaysDesc: ["Anthropic-compatible upstreams such as OpenRouter or LiteLLM, each with its own key and models.",
+    "Anthropic-združljivi ponudniki, npr. OpenRouter ali LiteLLM, vsak s svojim ključem in modeli."],
+  claudeDesc: ["Your local Claude Code as an agent model, with tools in the synced folder.", "Lokalni Claude Code kot model agenta, z orodji v sinhronizirani mapi."],
+  status: ["Status", "Stanje"], router: ["Router", "Router"], runningOn: ["Running on port %s", "Teče na vratih %s"], version: ["Version", "Različica"],
+  devicesN: ["%s allowed · %s waiting", "dovoljenih %s · čaka %s"], installed: ["Installed", "Nameščeno"], notInstalled: ["Not installed (minigw serve install)", "Ni nameščeno (minigw serve install)"],
+  tray: ["Tray icon", "Ikona v pladnju"], trayOn: ["Running", "Teče"], trayOff: ["Not running", "Ne teče"],
+  startup: ["Start at sign-in", "Zaženi ob prijavi"], startupHint: ["Set up with minigw serve install", "Nastavi z minigw serve install"],
+  network: ["Network", "Omrežje"], address: ["Address (empty = all)", "Naslov (prazno = vsi)"], port: ["Port", "Vrata"],
+  restart: ["Saved. Restart the router to use the new port or address.", "Shranjeno. Za nova vrata ali naslov znova zaženi router."],
+  auto: ["Changes are applied automatically.", "Spremembe se uveljavijo same."], saving: ["Saving…", "Shranjujem …"], saved: ["Saved.", "Shranjeno."],
+  token: ["Token", "Žeton"], show: ["Show", "Pokaži"], hide: ["Hide", "Skrij"], copy: ["Copy", "Kopiraj"], newToken: ["New Token", "Nov žeton"],
+  copied: ["Copied.", "Kopirano."], connectHint: ["Run this line on each client.", "To vrstico zaženi na vsakem odjemalcu."],
+  rotateAsk: ["Make a new token? Every client must connect again with the new line.", "Naredim nov žeton? Vsak odjemalec se mora znova povezati z novo vrstico."],
+  rotated: ["New token: run the new line on each client.", "Nov žeton: novo vrstico zaženi na vsakem odjemalcu."],
+  waiting: ["Waiting for approval", "Čakajo na odobritev"], allowed: ["Allowed devices", "Dovoljene naprave"], none: ["None", "Nobena"],
+  noWaiting: ["No device is waiting.", "Nobena naprava ne čaka."], allow: ["Allow", "Dovoli"], deny: ["Deny", "Zavrni"], remove: ["Remove", "Odstrani"],
+  removeAsk: ["Remove %s?", "Odstranim %s?"], addGateway: ["Add Gateway", "Dodaj prehod"], name: ["Name", "Ime"], url: ["Base URL", "Osnovni URL"],
+  key: ["API key", "Ključ API"], keyStored: ["Stored in the system's secret store (Credential Manager); never shown.", "V shrambi skrivnosti sistema (Credential Manager); nikoli prikazan."],
+  keyNew: ["Type a new key to replace it", "Vpiši nov ključ za zamenjavo"], noKey: ["No key", "Brez ključa"],
+  urlNeedsKey: ["Type the API key again to save a new URL.", "Za nov URL znova vpiši ključ API."],
+  insecure: ["Allow http (localhost or a private IP only)", "Dovoli http (le localhost ali zasebni IP)"], add: ["Add", "Dodaj"],
+  models: ["Models", "Modeli"], filter: ["Filter", "Filter"], showAll: ["Show all", "Vsi"], enableAll: ["Enable All", "Vklopi vse"], disableAll: ["Disable All", "Izklopi vse"],
+  enabledOf: ["%s of %s enabled", "vklopljenih %s od %s"], loading: ["Loading…", "Nalagam …"], hidden: ["%s disabled models hidden: use the filter or Show all.", "Skritih izklopljenih modelov: %s; uporabi filter ali Vsi."],
+  removeGateway: ["Remove gateway %s and its key?", "Odstranim prehod %s in njegov ključ?"],
+  path: ["Executable (empty = auto-detect)", "Program (prazno = samodejno)"], find: ["Find", "Poišči"],
+  detected: ["%s · %s", "%s · %s"], notFound: ["claude not found: install Claude Code (on Windows the native claude.exe) or set the path.",
+    "claude ni najden: namesti Claude Code (na Windows izvorni claude.exe) ali vpiši pot."],
+  tools: ["Tools", "Orodja"], commands: ["Commands", "Ukazi"], folder: ["Folder for agents without sync (empty = none)", "Mapa za agente brez sinhronizacije (prazno = brez)"],
+  folderHint: ["Agents normally work in a synced copy of the client's folder; this is only for clients without sync.",
+    "Agenti običajno delajo v sinhronizirani kopiji mape odjemalca; to je le za odjemalce brez sinhronizacije."],
+  unsandboxed: ["Allow commands without a sandbox", "Dovoli ukaze brez sandboxa"],
+  unsandboxedWarn: ["Windows has no sandbox for commands: agents can then run anything as you and read the gateway keys and the admin secret.",
+    "Windows nima sandboxa za ukaze: agenti lahko tedaj zaženejo karkoli kot ti in preberejo ključe prehodov in skrivnost API."],
+  sandboxNote: ["Bash runs in Claude Code's sandbox (on Linux it needs bubblewrap and socat).", "Bash teče v sandboxu Claude Code (na Linuxu potrebuje bubblewrap in socat)."],
   signin: ["Not signed in, or the session has expired. Open Settings… from the tray icon again (or run minigw router settings).",
     "Ni prijave ali je seja potekla. Znova odpri Nastavitve … v ikoni pladnja (ali zaženi minigw router settings)."],
-  bashWarn: ["Windows has no sandbox for Bash: agents can then run any command as you and read the gateway keys and the admin secret.",
-    "Windows nima sandboxa za Bash: agenti lahko tedaj zaženejo kateri koli ukaz kot ti in preberejo ključe prehodov in skrivnost API."],
 };
 const t = (k, ...a) => { let s = (S[k] || [k, k])[SL ? 1 : 0]; for (const x of a) s = s.replace("%s", x); return s; };
-document.documentElement.lang = SL ? "sl" : "en";
+const TOOLS = [
+  ["Read", "Read files", "Branje datotek"], ["Grep", "Search file contents", "Iskanje po vsebini"], ["Glob", "Find files by name", "Iskanje datotek po imenu"],
+  ["LS", "List folders", "Seznam map"], ["Edit", "Edit files", "Urejanje datotek"], ["Write", "Create and overwrite files", "Ustvarjanje in prepis datotek"],
+  ["MultiEdit", "Several edits in one file", "Več popravkov v eni datoteki"], ["NotebookEdit", "Edit Jupyter notebooks", "Urejanje zvezkov Jupyter"],
+  ["WebFetch", "Fetch web pages", "Branje spletnih strani"], ["WebSearch", "Search the web", "Iskanje po spletu"], ["TodoWrite", "Task list", "Seznam opravil"],
+];
+const COMMANDS = [["Bash", "Run shell commands", "Ukazi lupine"], ["PowerShell", "Run PowerShell commands", "Ukazi PowerShell"]];
 
 // el: element brez innerHTML (podatki routerja so besedilo, nikoli HTML).
 function el(tag, props, ...kids) {
@@ -90,16 +156,33 @@ function el(tag, props, ...kids) {
   for (const [k, v] of Object.entries(props || {})) {
     if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
     else if (k === "class") e.className = v;
-    else if (v !== false && v !== undefined) e[k] = v;
+    else if (v !== false && v !== undefined && v !== null) e[k] = v;
   }
-  for (const k of kids.flat()) if (k !== null && k !== undefined) e.append(k);
+  for (const k of kids.flat()) if (k !== null && k !== undefined && k !== false) e.append(k);
   return e;
 }
-const row = (label, ...right) => el("div", {class: "row"}, el("span", {class: "label"}, label), ...right);
-const button = (text, onclick, primary) => el("button", {class: "b" + (primary ? " primary" : ""), textContent: text, onclick});
-const box = (...rows) => el("div", {class: "box"}, ...rows);
+const row = (label, ...right) => el("div", {class: "row"}, typeof label === "string" ? el("span", {class: "label", textContent: label}) : label, ...right);
+const labelSub = (main, sub) => el("div", {class: "label"}, el("div", {textContent: main}), sub ? el("div", {class: "sub", textContent: sub}) : null);
+const group = (...rows) => el("div", {class: "group"}, ...rows);
+const button = (text, onclick, primary) => el("button", {class: "btn" + (primary ? " primary" : ""), textContent: text, onclick});
+const buttons = (...b) => el("div", {class: "buttons"}, ...b);
+const value = (text, mono) => el("span", {class: "value" + (mono ? " mono" : ""), textContent: text, title: text});
+const note = text => el("div", {class: "note", textContent: text || ""});
+const section = (title, ...right) => el("h3", {}, el("span", {textContent: title}), right.length ? buttons(...right) : null);
+function toggle(checked, onchange, disabled) {
+  const i = el("input", {type: "checkbox", checked, disabled});
+  i.addEventListener("change", () => onchange(i.checked, i));
+  return el("label", {class: "switch"}, i, el("span"));
+}
+function card(color, glyph, title, desc) {
+  return el("div", {class: "card"}, el("div", {class: "ico", textContent: glyph, style: "background:" + color}), el("h1", {textContent: title}), el("p", {textContent: desc}));
+}
 
-function say(text, err) { const m = document.getElementById("msg"); m.textContent = text || ""; m.className = err ? "err" : ""; }
+function toast(text) {
+  const m = document.getElementById("msg");
+  m.textContent = text; m.style.display = text ? "block" : "none";
+  clearTimeout(toast.timer); if (text) toast.timer = setTimeout(() => toast(""), 6000);
+}
 
 async function api(method, path, body) {
   const r = await fetch("/minigw/admin/v1" + path, {method, credentials: "omit",
@@ -109,128 +192,222 @@ async function api(method, path, body) {
   if (!r.ok) throw new Error((j.error && j.error.message) || ("HTTP " + r.status));
   return j;
 }
-const run = fn => async () => { try { say(""); await fn(); } catch (e) { say(e.message, true); } };
+
+// save: sprememba takoj (stikala) ali 0,8 s po zadnjem tipkanju; »Shranjeno« ali napaka pod skupino.
+async function save(n, fn, ok) {
+  n.className = "note"; n.textContent = t("saving");
+  try { const r = await fn(); n.textContent = ok ? ok(r) : t("saved"); return r; } catch (e) { n.className = "note err"; n.textContent = e.message; }
+}
+function autosave(input, n, fn, ok) {
+  let timer;
+  input.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(() => save(n, () => fn(input.value.trim()), ok), 800); });
+}
+
+// --- panoji ---
 
 const pages = {
   async general() {
-    const [st, g] = await Promise.all([api("GET", "/status"), api("GET", "/general")]);
+    const [st, g, d] = await Promise.all([api("GET", "/status"), api("GET", "/general"), api("GET", "/devices")]);
+    const win = st.os === "windows";
+    const n1 = note(t("auto")), n2 = note(), n3 = note(t("connectHint"));
     const port = el("input", {type: "number", value: g.port, min: 1, max: 65535});
     const addr = el("input", {type: "text", value: g.address, placeholder: "0.0.0.0"});
-    const line = el("input", {type: "text", value: g.connect, readOnly: true, class: "mono"});
+    autosave(port, n2, v => api("PATCH", "/general", {port: Number(v)}), r => t(r.restartRequired ? "restart" : "saved"));
+    autosave(addr, n2, v => api("PATCH", "/general", {address: v}), r => t(r.restartRequired ? "restart" : "saved"));
+    let shown = false;
+    const line = value("•".repeat(28), true);
+    const showBtn = button(t("show"), () => { shown = !shown; line.textContent = shown ? g.connect : "•".repeat(28); showBtn.textContent = t(shown ? "hide" : "show"); });
     return [
-      el("h3", {textContent: t("status")}),
-      box(row(t("running"), el("span", {textContent: t(st.running ? "yes" : "no")})),
-          row(t("version"), el("span", {textContent: st.version})),
-          row(t("startup"), el("span", {textContent: t(st.installed ? "yes" : "no")}))),
-      el("h3", {textContent: t("general")}),
-      box(row(t("port"), port), row(t("address"), addr),
-          row("", el("div", {class: "buttons"}, button(t("save"), run(async () => {
-            const r = await api("PATCH", "/general", {port: Number(port.value), address: addr.value.trim()});
-            say(t(r.restartRequired ? "restart" : "saved"));
-          }), true)))),
-      el("h3", {textContent: t("connect")}),
-      box(row(line), row("", el("div", {class: "buttons"},
-        button(t("copy"), run(async () => { await navigator.clipboard.writeText(line.value); say(t("copied")); })),
-        button(t("rotate"), run(async () => {
+      card("linear-gradient(#9a9aa0,#6e6e73)", "⚙", t("general"), t("generalDesc")),
+      section(t("status")),
+      group(
+        row(t("router"), el("span", {class: "value"}, el("span", {class: "dot" + (st.running ? " ok" : "")}), t("runningOn", st.port))),
+        row(t("devices"), value(t("devicesN", st.devices, d.pending.length))),
+        row(t("gateways"), value(String(st.gateways.length))),
+        row(t("version"), value(st.version)),
+        row(t("installed"), value(st.installDir || t("notInstalled"), !!st.installDir)),
+        win ? row(t("tray"), value(t(st.tray ? "trayOn" : "trayOff"))) : null),
+      el("div", {style: "height:12px"}),
+      group(win ? row(t("startup"), toggle(st.installed, on => save(n1, () => api("PATCH", "/general", {startAtSignIn: on}))))
+                : row(t("startup"), value(st.installed ? "✓" : t("startupHint")))),
+      n1,
+      section(t("network")),
+      group(row(t("address"), addr), row(t("port"), port)), n2,
+      section(t("token")),
+      group(row(el("div", {class: "label", style: "min-width:0"}, line), buttons(showBtn,
+        button(t("copy"), async () => { await navigator.clipboard.writeText(g.connect); n3.className = "note"; n3.textContent = t("copied"); }),
+        button(t("newToken"), async () => {
           if (!confirm(t("rotateAsk"))) return;
-          line.value = (await api("POST", "/general/token")).connect; say(t("rotated"));
-        }))))),
+          const r = await save(n3, () => api("POST", "/general/token"), () => t("rotated"));
+          if (r) { g.connect = r.connect; if (shown) line.textContent = r.connect; }
+        })))),
+      n3,
     ];
   },
 
   async devices() {
     const d = await api("GET", "/devices");
-    const dev = (x, buttons) => el("div", {class: "row"},
-      el("div", {class: "label"}, el("div", {textContent: x.name || "—"}), el("div", {class: "mono muted", textContent: x.id}),
-        x.address ? el("div", {class: "muted", textContent: x.address + " · " + new Date(x.time).toLocaleString()}) : null),
-      el("div", {class: "buttons"}, ...buttons));
-    const act = (method, path, body) => run(async () => { await api(method, path, body); show("devices"); });
+    const n = note();
+    const act = (method, path, body) => save(n, async () => { await api(method, path, body); show("devices"); });
+    const id = x => el("div", {class: "label"}, el("div", {textContent: x.name || "—"}),
+      el("span", {class: "sub mono ellipsis", textContent: x.id, title: x.id}),
+      x.address ? el("div", {class: "sub", textContent: x.address + " · " + new Date(x.time).toLocaleString()}) : null);
+    const copyId = x => button(t("copy"), async () => { await navigator.clipboard.writeText(x.id); n.className = "note"; n.textContent = t("copied"); });
+    const waiting = d.pending.length
+      ? el("div", {class: "group hi"}, ...d.pending.map(x => row(id(x), buttons(
+          button(t("allow"), () => act("POST", "/devices", {id: x.id, name: x.name}), true),
+          button(t("deny"), () => act("DELETE", "/devices/" + encodeURIComponent(x.id)))))))
+      : group(row(el("span", {class: "label sub", textContent: t("noWaiting")})));
     return [
-      el("h3", {textContent: t("waiting")}),
-      box(d.pending.length ? d.pending.map(x => dev(x, [
-        button(t("allow"), act("POST", "/devices", {id: x.id, name: x.name}), true),
-        button(t("deny"), act("DELETE", "/devices/" + encodeURIComponent(x.id)))])) : row(t("none"))),
-      el("p", {class: "muted", textContent: t("compare")}),
-      el("h3", {textContent: t("allowed")}),
-      box(d.devices.length ? d.devices.map(x => dev(x, [button(t("remove"), act("DELETE", "/devices/" + encodeURIComponent(x.id)))])) : row(t("none"))),
+      card("linear-gradient(#5ac8fa,#007aff)", "⌘", t("devices"), t("devicesDesc")),
+      section(t("waiting")), waiting,
+      section(t("allowed")),
+      group(d.devices.length ? d.devices.map(x => row(id(x), buttons(copyId(x),
+        button(t("remove"), () => { if (confirm(t("removeAsk", x.name || x.id))) act("DELETE", "/devices/" + encodeURIComponent(x.id)); }))))
+        : row(el("span", {class: "label sub", textContent: t("none")}))),
+      n,
     ];
   },
 
-  async gateways() {
-    const g = await api("GET", "/gateways");
-    const out = [];
-    for (const gw of g.gateways) {
-      const list = el("div");
-      const filter = el("input", {type: "text", placeholder: t("filter")});
-      const all = el("input", {type: "checkbox"});
-      const load = run(async () => {
-        list.replaceChildren(row(t("loading")));
-        const r = await api("GET", "/gateways/" + encodeURIComponent(gw.name) + "/models?filter=" + encodeURIComponent(filter.value.trim()));
-        const shown = r.models.filter(m => m.enabled || all.checked || filter.value.trim());
-        const on = r.models.filter(m => m.enabled).length;
-        list.replaceChildren(row(el("span", {class: "muted", textContent: t("enabledOf", on, r.models.length)})),
-          ...shown.map(m => {
-            const cb = el("input", {type: "checkbox", checked: m.enabled, onchange: run(async () => {
-              await api("POST", "/gateways/" + encodeURIComponent(gw.name) + "/models", cb.checked ? {enable: [m.id]} : {disable: [m.id]});
-            })});
-            return el("label", {class: "row"}, cb, el("span", {class: "label"}, el("span", {textContent: m.model}),
-              el("span", {class: "muted", textContent: " " + m.id + (m.window ? " · " + Math.round(m.window / 1000) + "K" : "")})));
-          }));
-      });
-      filter.addEventListener("keydown", e => { if (e.key === "Enter") load(); });
-      out.push(el("h3", {textContent: gw.name}), box(
-        row(el("span", {class: "mono", textContent: gw.baseURL + (gw.hasKey ? "" : " · " + t("noKey"))}),
-          el("div", {class: "buttons"}, button(t("remove"), run(async () => {
-            if (!confirm(t("removeAsk", gw.name))) return;
-            await api("DELETE", "/gateways/" + encodeURIComponent(gw.name)); show("gateways");
+  async gateway(name) {
+    const gs = (await api("GET", "/gateways")).gateways;
+    const g = gs.find(x => x.name === name);
+    if (!g) { current = "general"; return pages.general(); }
+    const n1 = note(t("keyStored")), n2 = note();
+    const url = el("input", {type: "text", value: g.baseURL});
+    const key = el("input", {type: "password", autocomplete: "off", placeholder: g.hasKey ? t("keyNew") : t("noKey")});
+    const saveGw = () => {
+      if (!key.value.trim()) { n1.className = "note"; n1.textContent = t("urlNeedsKey"); return; }
+      save(n1, () => api("POST", "/gateways", {name, baseURL: url.value.trim(), key: key.value.trim(), insecure: url.value.trim().startsWith("http://")}),
+        r => { key.value = ""; return t("saved") + " " + t("enabledOf", r.models.filter(m => m.enabled).length, r.models.length); });
+    };
+    let timer;
+    for (const i of [url, key]) i.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(saveGw, 800); });
+
+    const filter = el("input", {type: "text", class: "left", placeholder: t("filter")});
+    let all = false, models = [];
+    const list = group(row(el("span", {class: "label sub", textContent: t("loading")})));
+    const render = () => {
+      const f = filter.value.trim().toLowerCase();
+      const shown = models.filter(m => f ? m.model.toLowerCase().includes(f) : (all || m.enabled));
+      const on = models.filter(m => m.enabled).length;
+      list.replaceChildren(
+        row(el("span", {class: "label sub", textContent: t("enabledOf", on, models.length)})),
+        ...shown.map(m => row(labelSub(m.model, m.model === m.id ? null : m.id), value(m.window ? Math.round(m.window / 1000) + "K" : ""),
+          toggle(m.enabled, (v, i) => save(n2, async () => {
+            try { await api("POST", "/gateways/" + encodeURIComponent(name) + "/models", v ? {enable: [m.id]} : {disable: [m.id]}); m.enabled = v; }
+            catch (e) { i.checked = !v; throw e; }
           })))),
-        row(t("models"), filter, el("label", {}, all, " " + t("showAll")), el("div", {class: "buttons"}, button(t("load"), load))),
-        list));
-    }
-    const name = el("input", {type: "text"}), url = el("input", {type: "text", placeholder: "https://openrouter.ai/api"});
-    const key = el("input", {type: "password", autocomplete: "off"}), insecure = el("input", {type: "checkbox"});
-    out.push(el("h3", {textContent: t("add")}), box(
-      row(t("name"), name), row(t("url"), url), row(t("key"), key), row(t("insecure"), insecure),
-      row(el("span", {class: "muted", textContent: t("keyNote")}), el("div", {class: "buttons"}, button(t("addBtn"), run(async () => {
-        const r = await api("POST", "/gateways", {name: name.value.trim(), baseURL: url.value.trim(), key: key.value.trim(), insecure: insecure.checked});
-        key.value = "";
-        await show("gateways");
-        say(r.gateway.name + ": " + t("enabledOf", r.models.filter(m => m.enabled).length, r.models.length));
-      }), true)))));
-    return out;
+        !f && !all && models.length > on ? row(el("span", {class: "label sub", textContent: t("hidden", models.length - on)})) : null);
+    };
+    const load = async () => {
+      try { models = (await api("GET", "/gateways/" + encodeURIComponent(name) + "/models")).models; render(); }
+      catch (e) { list.replaceChildren(row(el("span", {class: "label", textContent: e.message}))); }
+    };
+    filter.addEventListener("input", render);
+    const bulk = on => save(n2, async () => { await api("POST", "/gateways/" + encodeURIComponent(name) + "/models", {all: on}); await load(); });
+    load();
+    return [
+      card("linear-gradient(#ffcc00,#ff9500)", "⇄", name, g.baseURL),
+      group(row(t("url"), url), row(labelSub(t("key"), g.hasKey ? "••••••••" : t("noKey")), key)), n1,
+      section(t("models"), button(t("enableAll"), () => bulk(true)), button(t("disableAll"), () => bulk(false))),
+      el("div", {class: "filter", style: "margin:0 4px 8px"}, filter,
+        el("label", {class: "sub", style: "display:flex;gap:6px;align-items:center"}, toggle(false, v => { all = v; render(); }), t("showAll"))),
+      list, n2,
+    ];
+  },
+
+  async addGateway() {
+    const n = note(t("keyStored"));
+    const name = el("input", {type: "text", placeholder: "OpenRouter"}), url = el("input", {type: "text", placeholder: "https://openrouter.ai/api"});
+    const key = el("input", {type: "password", autocomplete: "off"});
+    let insecure = false;
+    return [
+      card("linear-gradient(#ffcc00,#ff9500)", "+", t("addGateway"), t("gatewaysDesc")),
+      group(row(t("name"), name), row(t("url"), url), row(t("key"), key), row(t("insecure"), toggle(false, v => { insecure = v; }))),
+      el("div", {class: "row", style: "justify-content:flex-end;padding:8px 0"}, buttons(button(t("add"), () => save(n, async () => {
+        const r = await api("POST", "/gateways", {name: name.value.trim(), baseURL: url.value.trim(), key: key.value.trim(), insecure});
+        await nav(); show("gateway", r.gateway.name);
+      }), true))),
+      n,
+    ];
   },
 
   async claude() {
-    const c = await api("GET", "/agents/claude");
-    const path = el("input", {type: "text", value: c.path}), tools = el("input", {type: "text", value: c.tools});
-    const folder = el("input", {type: "text", value: c.folder}), bash = el("input", {type: "checkbox", checked: c.allowUnsandboxedBash});
+    const [c, st] = await Promise.all([api("GET", "/agents/claude"), api("GET", "/status")]);
+    const win = st.os === "windows";
+    const n1 = note(), n2 = note(), n3 = note(t("folderHint"));
+    const on = new Set((c.tools || "").split(",").filter(Boolean));
+    const path = el("input", {type: "text", value: c.path, placeholder: c.exe || (win ? "C:\\Users\\you\\.local\\bin\\claude.exe" : "/usr/local/bin/claude")});
+    const status = el("span", {class: "value"});
+    const showStatus = x => status.replaceChildren(el("span", {class: "dot" + (x.found ? " ok" : "")}),
+      x.found ? t("detected", x.version || "claude", x.exe || "") : t("notFound"));
+    showStatus(c);
+    autosave(path, n1, async v => showStatus(await api("PATCH", "/agents/claude", {path: v})));
+    const sendTools = async () => { const r = await api("PATCH", "/agents/claude", {tools: [...on].join(",")}); showStatus(r); };
+    const toolRow = ([name, en, sl], disabled) => row(labelSub(name, SL ? sl : en), toggle(on.has(name), (v, i) => save(n2, async () => {
+      v ? on.add(name) : on.delete(name);
+      try { await sendTools(); } catch (e) { v ? on.delete(name) : on.add(name); i.checked = !v; throw e; }
+    }), disabled));
+    const bulk = v => save(n2, async () => { for (const [n] of TOOLS) v ? on.add(n) : on.delete(n); await sendTools(); show("claude"); });
+    const cmdLocked = win && !c.allowUnsandboxedBash;
+    const folder = el("input", {type: "text", class: "left wide", value: c.folder, placeholder: win ? "C:\\Users\\you\\Projects" : "/home/you/projects"});
+    autosave(folder, n3, v => api("PATCH", "/agents/claude", {folder: v}));
     return [
-      box(row(t(c.found ? "found" : "notFound")), row(t("path"), path), row(t("tools"), tools), row(t("folder"), folder),
-        row(el("div", {class: "label"}, el("div", {textContent: t("bash")}), el("div", {class: "warn", textContent: t("bashWarn")})), bash),
-        row("", el("div", {class: "buttons"}, button(t("save"), run(async () => {
-          await api("PATCH", "/agents/claude", {path: path.value.trim(), tools: tools.value, folder: folder.value.trim(), allowUnsandboxedBash: bash.checked});
-          await show("claude"); say(t("saved"));
-        }), true)))),
+      card("linear-gradient(#d4915a,#a8632d)", ">_", t("claude"), t("claudeDesc")),
+      group(row(labelSub(t("status")), status),
+        row(t("path"), path, button(t("find"), () => save(n1, async () => { path.value = ""; showStatus(await api("PATCH", "/agents/claude", {path: ""})); })))),
+      n1,
+      section(t("tools"), button(t("enableAll"), () => bulk(true)), button(t("disableAll"), () => bulk(false))),
+      group(TOOLS.map(x => toolRow(x, false))),
+      section(t("commands")),
+      group(win ? row(labelSub(t("unsandboxed"), null), toggle(c.allowUnsandboxedBash, v => save(n2, async () => {
+          const body = {allowUnsandboxedBash: v};
+          if (!v) { for (const [n] of COMMANDS) on.delete(n); body.tools = [...on].join(","); }
+          await api("PATCH", "/agents/claude", body); show("claude");
+        }))) : null,
+        win ? row(el("div", {class: "label warn", textContent: t("unsandboxedWarn")})) : row(el("div", {class: "label sub", textContent: t("sandboxNote")})),
+        COMMANDS.filter(x => win || x[0] !== "PowerShell").map(x => toolRow(x, cmdLocked))),
+      n2,
+      section(t("folder")),
+      group(row(folder)), n3,
     ];
   },
 };
 
-let current = "general";
-async function show(name) {
-  current = name;
-  for (const b of document.querySelectorAll("nav button")) b.classList.toggle("sel", b.dataset.page === name);
+let current = "general", currentArg = "", gateways = [];
+async function nav() {
+  try { gateways = (await api("GET", "/gateways")).gateways; } catch (e) { gateways = []; }
+  const item = (page, label, color, glyph, arg, sub) => {
+    const b = el("button", {class: "item" + (sub ? " sub" : "") + (current === page && currentArg === (arg || "") ? " sel" : ""),
+      onclick: () => show(page, arg)}, sub ? null : el("span", {class: "ico", textContent: glyph, style: "background:" + color}), label);
+    return b;
+  };
+  const sel = current === "gateway" ? currentArg : "";
+  document.getElementById("nav").replaceChildren(
+    el("div", {class: "title", textContent: "Mini Gateway"}),
+    item("general", t("general"), "#8e8e93", "⚙"),
+    item("devices", t("devices"), "#007aff", "⌘"),
+    item("claude", t("claude"), "#b8743c", ">_"),
+    el("div", {class: "item", style: "cursor:default"}, el("span", {class: "ico", textContent: "⇄", style: "background:#ff9500"}), t("gateways")),
+    ...gateways.map(g => item("gateway", g.name, "", "", g.name, true)),
+    el("div", {class: "footer"},
+      el("button", {textContent: "+", title: t("addGateway"), onclick: () => show("addGateway")}),
+      el("button", {textContent: "−", title: t("remove"), disabled: !sel, onclick: async () => {
+        if (!confirm(t("removeGateway", sel))) return;
+        try { await api("DELETE", "/gateways/" + encodeURIComponent(sel)); await show("general"); } catch (e) { toast(e.message); }
+      }})));
+}
+
+async function show(page, arg) {
+  current = page; currentArg = arg || "";
+  await nav();
   try {
-    const content = await pages[name]();
-    document.getElementById("page").replaceChildren(el("h2", {textContent: t(name)}), ...content);
-  } catch (e) { say(e.message, true); }
+    document.getElementById("page").replaceChildren(...(await pages[page](arg)));
+  } catch (e) { toast(e.message); }
 }
-for (const p of Object.keys(pages)) {
-  const b = el("button", {textContent: t(p), onclick: () => { say(""); show(p); }});
-  b.dataset.page = p;
-  document.getElementById("nav").append(b);
-}
-setInterval(() => { if (current === "devices" && document.visibilityState === "visible") show("devices"); }, 5000);
-signIn().then(() => show("general"), e => say(e.message, true));
+setInterval(() => { if (current === "devices" && document.visibilityState === "visible" && !document.activeElement.matches("input")) show("devices"); }, 5000);
+signIn().then(() => show(START[0] in pages ? START[0] : "general", START[1]), e => toast(e.message));
 </script>
 </body>
 </html>

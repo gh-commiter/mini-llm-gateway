@@ -5,6 +5,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/json"
@@ -15,12 +16,14 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -55,6 +58,8 @@ type apiClaude struct {
 	Tools                string `json:"tools"`
 	AllowUnsandboxedBash bool   `json:"allowUnsandboxedBash"`
 	Folder               string `json:"folder"`
+	Exe                  string `json:"exe,omitempty"`     // najdena pot (tudi pri samodejnem iskanju)
+	ClaudeVersion        string `json:"version,omitempty"` // claude --version
 }
 
 type apiGeneral struct {
@@ -65,15 +70,18 @@ type apiGeneral struct {
 }
 
 type apiStatus struct {
-	Running   bool         `json:"running"`
-	Version   string       `json:"version"`
-	Port      int          `json:"port"`
-	Address   string       `json:"address"`
-	Installed bool         `json:"installed"`
-	Devices   int          `json:"devices"`
-	Pending   int          `json:"pending"`
-	Claude    apiClaude    `json:"claude"`
-	Gateways  []apiGateway `json:"gateways"`
+	Running    bool         `json:"running"`
+	Version    string       `json:"version"`
+	Port       int          `json:"port"`
+	Address    string       `json:"address"`
+	Installed  bool         `json:"installed"`
+	Devices    int          `json:"devices"`
+	Pending    int          `json:"pending"`
+	Claude     apiClaude    `json:"claude"`
+	Gateways   []apiGateway `json:"gateways"`
+	OS         string       `json:"os"`                   // windows, linux, darwin (stran: ukazi brez sandboxa)
+	InstallDir string       `json:"installDir,omitempty"` // minigw serve install
+	Tray       bool         `json:"tray"`                 // pladenj teče (Windows)
 }
 
 // adminSecret: 32 naključnih bajtov (base64url) v admin.secret (0600) v mapi nastavitev, ki je agentom prepovedana.
@@ -229,7 +237,12 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 	case "GET status":
 		c := s.conf()
 		st := apiStatus{Running: !s.offline, Version: version, Port: c.Port, Address: c.Address, Installed: serviceInstalled(runtime.GOOS),
-			Devices: len(c.Devices), Claude: s.claudeInfo(), Gateways: s.apiGateways(c)}
+			Devices: len(c.Devices), Claude: s.claudeInfo(), Gateways: s.apiGateways(c), OS: runtime.GOOS, Tray: trayRunning()}
+		if d := installDir(runtime.GOOS); d != "" { // le če je minigw tam res nameščen
+			if _, err := os.Stat(filepath.Join(d, map[bool]string{true: "minigw.exe", false: "minigw"}[runtime.GOOS == "windows"])); err == nil {
+				st.InstallDir = d
+			}
+		}
 		s.mu.RLock()
 		st.Pending = len(s.pending)
 		s.mu.RUnlock()
@@ -517,8 +530,9 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		return 200, apiGeneral{Port: c.Port, Address: c.Address, Connect: connectLine(c)}
 	case "PATCH general":
 		var b struct {
-			Port    *int    `json:"port"`
-			Address *string `json:"address"`
+			Port          *int    `json:"port"`
+			Address       *string `json:"address"`
+			StartAtSignIn *bool   `json:"startAtSignIn"`
 		}
 		if err := decodeStrict(body, &b); err != nil {
 			return fail(400, err.Error())
@@ -528,6 +542,14 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		}
 		if b.Address != nil && !validAddress(*b.Address) {
 			return fail(400, "address: use empty (all), 0.0.0.0, :: or 127.0.0.1, so that the admin API stays reachable on 127.0.0.1; limit clients with a firewall")
+		}
+		if b.StartAtSignIn != nil { // Windows: vrednost Run za ta router (pladenj); drugod storitev namesti minigw serve install
+			if runtime.GOOS != "windows" {
+				return fail(400, "on this system use minigw serve install or minigw serve uninstall")
+			}
+			if err := trayStartup(*b.StartAtSignIn, s.cfgPath); err != nil {
+				return fail(500, err.Error())
+			}
 		}
 		if err := s.update(func(c *serveConfig) error {
 			if b.Port != nil {
@@ -576,8 +598,28 @@ func findGateway(c serveConfig, name string) (serveGateway, bool) {
 }
 
 func (s *server) claudeInfo() apiClaude {
-	c := s.conf()
-	return apiClaude{Path: c.Claude, Found: len(s.claudeExe()) > 0, Tools: c.Tools, AllowUnsandboxedBash: c.AllowUnsandboxedBash, Folder: c.Folder}
+	c, exe := s.conf(), s.claudeExe()
+	info := apiClaude{Path: c.Claude, Found: len(exe) > 0, Tools: c.Tools, AllowUnsandboxedBash: c.AllowUnsandboxedBash, Folder: c.Folder}
+	if len(exe) > 0 {
+		info.Exe, info.ClaudeVersion = exe[len(exe)-1], claudeVersion(exe)
+	}
+	return info
+}
+
+var claudeVersions sync.Map // pot → izpis claude --version (enkrat na pot)
+
+// claudeVersion: »2.1.319 (Claude Code)«; največ 5 s, rezultat v predpomnilniku.
+func claudeVersion(exe []string) string {
+	key := strings.Join(exe, "\x00")
+	if v, ok := claudeVersions.Load(key); ok {
+		return v.(string)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, _ := exec.CommandContext(ctx, exe[0], append(exe[1:], "--version")...).Output()
+	v := strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0])
+	claudeVersions.Store(key, v)
+	return v
 }
 
 func (s *server) apiGateway(g serveGateway) apiGateway {

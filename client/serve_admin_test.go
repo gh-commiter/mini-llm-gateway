@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -406,5 +407,26 @@ func TestAdminProofIsBoundToTheConnection(t *testing.T) {
 	resp, err := http.ReadResponse(bufio.NewReader(c), nil)
 	if err != nil || resp.StatusCode != 401 {
 		t.Fatalf("replayed proof: %v %v", resp, err)
+	}
+}
+
+// Razširitve za stran z nastavitvami: os, pladenj in namestitev v status; najdena pot in različica claude.
+func TestAdminSettingsFields(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake claude is a shell script")
+	}
+	fake := filepath.Join(t.TempDir(), "claude")
+	os.WriteFile(fake, []byte("#!/bin/sh\necho '9.8.7 (Claude Code)'\n"), 0o755)
+	s, _, base := liveServer(t, func(c *serveConfig) { c.Claude = fake })
+	st, b := adminNoise(t, s, base, s.admin, "GET", adminPrefix+"/status", "")
+	if st != 200 || !strings.Contains(b, `"os":"`+runtime.GOOS+`"`) || !strings.Contains(b, `"tray":false`) {
+		t.Fatalf("status: %d %s", st, b)
+	}
+	st, b = adminNoise(t, s, base, s.admin, "GET", adminPrefix+"/agents/claude", "")
+	if st != 200 || !strings.Contains(b, `"exe":"`+fake+`"`) || !strings.Contains(b, `"version":"9.8.7 (Claude Code)"`) {
+		t.Fatalf("claude: %d %s", st, b)
+	}
+	if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/general", `{"startAtSignIn":true}`); st != 400 || !strings.Contains(b, "minigw serve install") {
+		t.Fatalf("startAtSignIn off Windows: %d %s", st, b)
 	}
 }
