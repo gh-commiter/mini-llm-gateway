@@ -559,6 +559,31 @@ func portInUse(_ port: UInt16) -> Bool {
     #expect(await get(bad.localURL, "/v1/models").0 == 0)  // napačen ključ: router prekine
 }
 
+/// Drug lokalni program ne more poslušati na vratih routerja (in prevzeti povezav Claude Code), tudi z SO_REUSEADDR in
+/// SO_REUSEPORT, na 127.0.0.1 ali 0.0.0.0: allowLocalEndpointReuse (hiter ponovni zagon) ne odpre deljenja vrat.
+@Test func routerPortCannotBeSharedByAnotherListener() async throws {
+    var c = RouterConfig()
+    let port = freeTCPPort()
+    c.host = "127.0.0.1"; c.port = port
+    let server = RouterServer(router: Router(config: c, token: "tok", secrets: FakeSecrets(values: [:])))
+    try server.start()
+    defer { server.stop() }
+    for _ in 0..<100 where !portInUse(port) { try await Task.sleep(for: .milliseconds(50)) }
+    #expect(portInUse(port))
+    for host in ["127.0.0.1", "0.0.0.0"] {
+        for opts in [[SO_REUSEADDR], [SO_REUSEPORT], [SO_REUSEADDR, SO_REUSEPORT]] {
+            let fd = socket(AF_INET, SOCK_STREAM, 0)
+            defer { close(fd) }
+            var one: Int32 = 1
+            for o in opts { setsockopt(fd, SOL_SOCKET, o, &one, socklen_t(MemoryLayout<Int32>.size)) }
+            var a = sockaddr_in(sin_len: UInt8(MemoryLayout<sockaddr_in>.size), sin_family: sa_family_t(AF_INET), sin_port: port.bigEndian,
+                                sin_addr: in_addr(s_addr: inet_addr(host)), sin_zero: (0, 0, 0, 0, 0, 0, 0, 0))
+            let bound = withUnsafePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+            #expect(bound != 0 && errno == EADDRINUSE, "\(host) \(opts)")
+        }
+    }
+}
+
 @Test func availableToolsFromInstalledClaude() async throws {
     try #require(ClaudeCLI.detected != nil)  // brez nameščenega Claude Code ni česa preveriti
     let tools = await ClaudeCLI.availableTools("")
