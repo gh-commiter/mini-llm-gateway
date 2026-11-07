@@ -229,7 +229,8 @@ devices and `minigw serve deny <id or name>` removes one.
 The config (`%AppData%\minigw\serve.json`, `~/.config/minigw/serve.json`, mode 0600) holds the token, the router key,
 the allowed devices and the agent's `tools` (default `Read,Grep,Glob,Edit,Write,MultiEdit`, limited to the copy).
 `Bash` runs in Claude Code's sandbox on Linux (needs `bubblewrap` and `socat`); on Windows there is no sandbox, so it
-also needs `"allowUnsandboxedBash": true`. Connections from the router computer itself (loopback) skip the device
+also needs `"allowUnsandboxedBash": true`; agents can then run any command as you and read the gateway API keys in
+Credential Manager. Connections from the router computer itself (loopback) skip the device
 check and encryption: do not forward the port to loopback (`ssh -L`, `netsh interface portproxy`, a reverse proxy).
 
 **Gateways.** Any Anthropic-compatible upstream (OpenRouter, LiteLLM) works as on the Mac, with the same model names.

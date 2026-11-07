@@ -274,6 +274,29 @@ func TestServeGatewayKeyFileOnMac(t *testing.T) {
 	}() {
 		t.Fatal("not deleted")
 	}
+	// Pokvarjena datoteka: napaka, ne tiho prazen seznam (G3).
+	path := filepath.Join(dir, "gateway-keys.json")
+	os.WriteFile(path, []byte("{broken"), 0o600)
+	if _, err := osKeySet(dir, "gw", gwKey); err == nil {
+		t.Fatal("corrupt key file overwritten")
+	}
+	if b, _ := os.ReadFile(path); string(b) != "{broken" {
+		t.Fatalf("corrupt key file changed: %q", b)
+	}
+	// Povezava na poti: zamenjana, cilj nedotaknjen.
+	outside := filepath.Join(t.TempDir(), "outside")
+	os.WriteFile(outside, []byte("{}"), 0o644)
+	os.Remove(path)
+	os.Symlink(outside, path)
+	if _, err := osKeySet(dir, "gw", gwKey); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(outside); string(b) != "{}" {
+		t.Fatalf("symlink followed: %q", b)
+	}
+	if st, _ := os.Lstat(path); st == nil || st.Mode()&os.ModeSymlink != 0 || st.Mode().Perm() != 0o600 {
+		t.Fatalf("key file: %v", st)
+	}
 }
 
 // Prehod, ki ne odgovori: model claude-cli ne čaka nanj, neznan model največ 2 s (prvo nalaganje).

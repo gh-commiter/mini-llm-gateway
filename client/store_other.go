@@ -9,6 +9,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -50,11 +51,20 @@ const storeName = "a private file"
 
 func keyFile(cfgDir string) string { return filepath.Join(cfgDir, "gateway-keys.json") }
 
-func fileKeys(cfgDir string) map[string]string {
+// fileKeys: manjkajoča datoteka = prazno; pokvarjena = napaka (sicer bi naslednji add izbrisal vse ključe).
+func fileKeys(cfgDir string) (map[string]string, error) {
 	m := map[string]string{}
-	data, _ := os.ReadFile(keyFile(cfgDir))
-	json.Unmarshal(data, &m)
-	return m
+	data, err := os.ReadFile(keyFile(cfgDir))
+	if errors.Is(err, os.ErrNotExist) {
+		return m, nil
+	}
+	if err == nil {
+		err = json.Unmarshal(data, &m)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("%s: %v", keyFile(cfgDir), err)
+	}
+	return m, nil
 }
 
 func secretTool() string {
@@ -71,7 +81,8 @@ func osKeyGet(cfgDir, name string) (string, string) {
 			return strings.TrimSpace(string(out)), "the Secret Service"
 		}
 	}
-	return fileKeys(cfgDir)[name], keyFile(cfgDir)
+	m, _ := fileKeys(cfgDir)
+	return m[name], keyFile(cfgDir)
 }
 
 // osKeySet: ključ nikoli v argv (secret-tool ga bere s stdin).
@@ -80,7 +91,7 @@ func osKeySet(cfgDir, name, key string) (string, error) {
 		cmd := exec.Command(tool, "store", "--label=minigw gateway "+name, "service", "minigw", "gateway", name)
 		cmd.Stdin = strings.NewReader(key)
 		if cmd.Run() == nil {
-			m := fileKeys(cfgDir) // starejša kopija v datoteki ne sme ostati
+			m, _ := fileKeys(cfgDir) // starejša kopija v datoteki ne sme ostati
 			if _, ok := m[name]; ok {
 				delete(m, name)
 				writeKeys(cfgDir, m)
@@ -88,7 +99,10 @@ func osKeySet(cfgDir, name, key string) (string, error) {
 			return "the Secret Service", nil
 		}
 	}
-	m := fileKeys(cfgDir)
+	m, err := fileKeys(cfgDir)
+	if err != nil {
+		return "", err
+	}
 	m[name] = key
 	where := keyFile(cfgDir) + " (mode 0600)"
 	if runtime.GOOS == "linux" {
@@ -97,20 +111,33 @@ func osKeySet(cfgDir, name, key string) (string, error) {
 	return where, writeKeys(cfgDir, m)
 }
 
+// writeKeys: nova datoteka (0600) in preimenovanje: povezava na poti se ne sledi, datoteka ni nikoli širša od 0600.
 func writeKeys(cfgDir string, m map[string]string) error {
 	data, _ := json.MarshalIndent(m, "", "  ")
 	os.MkdirAll(cfgDir, 0o700)
-	if err := os.WriteFile(keyFile(cfgDir), data, 0o600); err != nil {
+	f, err := os.CreateTemp(cfgDir, ".gateway-keys-*")
+	if err != nil {
 		return err
 	}
-	return os.Chmod(keyFile(cfgDir), 0o600)
+	defer os.Remove(f.Name()) // po uspešnem preimenovanju ne obstaja več
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), keyFile(cfgDir))
 }
 
 func osKeyDel(cfgDir, name string) {
 	if tool := secretTool(); tool != "" {
 		exec.Command(tool, "clear", "service", "minigw", "gateway", name).Run()
 	}
-	if m := fileKeys(cfgDir); m[name] != "" {
+	if m, err := fileKeys(cfgDir); err == nil && m[name] != "" {
 		delete(m, name)
 		writeKeys(cfgDir, m)
 	}

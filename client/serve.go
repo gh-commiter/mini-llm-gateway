@@ -372,7 +372,7 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 		return nil, err
 	}
 	if hasBash(c.Tools) && runtime.GOOS == "windows" && !c.AllowUnsandboxedBash {
-		return nil, errors.New("tools contains Bash, but Windows has no sandbox for it: remove Bash from tools, or set \"allowUnsandboxedBash\": true to let agents run any command as this user")
+		return nil, errors.New("tools contains Bash, but Windows has no sandbox for it: remove Bash from tools, or set \"allowUnsandboxedBash\": true to let agents run any command as this user (and read the gateway API keys in Credential Manager)")
 	}
 	out := io.Writer(os.Stderr)
 	if c.Log != "" {
@@ -388,7 +388,7 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	switch {
 	case !hasBash(c.Tools):
 	case runtime.GOOS == "windows":
-		s.log.Printf("WARNING: Bash is allowed without a sandbox: agents can run any command as this user")
+		s.log.Printf("WARNING: Bash is allowed without a sandbox: agents can run any command as this user and read the gateway API keys in Credential Manager")
 	default:
 		s.log.Printf("WARNING: Bash is allowed; it runs only in Claude Code's sandbox (on Linux it needs bubblewrap and socat)")
 	}
