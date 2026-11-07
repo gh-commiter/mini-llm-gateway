@@ -144,6 +144,32 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         RouterServer.isLoopback(peer) || devices.contains { $0.id == device?.id && $0.siri }
     }
 
+    /// Tristranska združitev za okno Settings ob spremembi od drugod (skrbniški API, nova naprava): kar uporabnik v
+    /// osnutku ni spremenil (enako kot old), prevzame iz new; pri napravah in prehodih tudi dodane, odstranjene in
+    /// drugje spremenjene elemente. Tako samodejna uveljavitev osnutka ne povozi sprememb skrbniškega API.
+    public static func merge(draft: RouterConfig, old: RouterConfig, new: RouterConfig) -> RouterConfig {
+        var d = draft
+        func take<T: Equatable>(_ kp: WritableKeyPath<RouterConfig, T>) {
+            if draft[keyPath: kp] == old[keyPath: kp] { d[keyPath: kp] = new[keyPath: kp] }
+        }
+        take(\.host); take(\.port); take(\.allowedClients); take(\.allowPlainRemote); take(\.claudeCLI); take(\.appleFM)
+        take(\.siri); take(\.codex); take(\.grok); take(\.scratchFolder)
+        d.devices = mergeList(draft.devices, old.devices, new.devices)
+        d.providers = mergeList(draft.providers, old.providers, new.providers)
+        return d
+    }
+
+    static func mergeList<T: Equatable & Identifiable>(_ d: [T], _ o: [T], _ n: [T]) -> [T] {
+        if d == o { return n }
+        func find(_ a: [T], _ id: T.ID) -> T? { a.first { $0.id == id } }
+        var out = d.filter { x in !(find(o, x.id) != nil && find(n, x.id) == nil) }  // drugje odstranjeni
+        for i in out.indices {  // drugje spremenjeni, v osnutku ne
+            if let ox = find(o, out[i].id), ox == out[i], let nx = find(n, out[i].id) { out[i] = nx }
+        }
+        out += n.filter { x in find(o, x.id) == nil && find(out, x.id) == nil }  // drugje dodani
+        return out
+    }
+
     public var allowedClientList: Set<String> {
         Set(allowedClients.split(whereSeparator: { $0 == "," || $0.isWhitespace }).map(String.init))
     }

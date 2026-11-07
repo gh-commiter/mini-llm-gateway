@@ -14,15 +14,15 @@ final class FakeApp: @unchecked Sendable {
     /// Router, kot ga aplikacija zgradi ob vsakem zagonu (apply znova zažene router z novimi nastavitvami).
     func router(session: URLSession = .shared) -> Router {
         let hooks = AdminHooks(secret: adminSecret, connect: "tok#KEY", version: "9.9", installed: { false },
-                               update: { f in
+                               commit: { f, keys in
                                    try self.lock.withLock {
                                        var c = self.config
                                        try f(&c)
+                                       for (a, k) in keys { self.keys[a] = k }  // ključi le po uspešni spremembi
                                        self.config = c
                                        return c
                                    }
                                },
-                               setKey: { a, k in self.lock.withLock { self.keys[a] = k } },
                                rotateToken: { "newtok#KEY" })
         return lock.withLock { Router(config: config, token: "tok", secrets: FakeSecrets(values: keys), session: session, admin: hooks) }
     }
@@ -30,13 +30,18 @@ final class FakeApp: @unchecked Sendable {
 
 let adminSecret = String(repeating: "S", count: 43)
 
+let testHash = Data(repeating: 7, count: 32)  // h rokovanja Noise v testih
+
+/// Zahteva kot minigw router: povezava Noise (h) in dokaz MGW-Admin; encrypted: false = navaden HTTP z Bearer.
 func admin(_ r: Router, _ method: String, _ path: String, body: String = "", host: String = "127.0.0.1:8765",
-           auth: String? = adminSecret, peer: String = "127.0.0.1", encrypted: Bool = false) async -> FakeWriter {
+           auth: String? = adminSecret, peer: String = "127.0.0.1", encrypted: Bool = true, proofHash: Data? = nil) async -> FakeWriter {
     var h = ["Host": host]
-    if let auth { h["Authorization"] = "Bearer " + auth }
+    if let auth {
+        h["Authorization"] = encrypted ? AdminHooks.scheme + AdminHooks.proof(secret: auth, hash: proofHash ?? testHash) : "Bearer " + auth
+    }
     var req = request(method, Router.adminPrefix + path, headers: h, body: body)
     req.peer = peer
-    req.encrypted = encrypted
+    req.noiseHash = encrypted ? testHash : nil
     let w = FakeWriter()
     await r.handle(req, writer: w)
     return w
@@ -48,10 +53,12 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
         #expect(await admin(r, "GET", "/status").status == 200)
         #expect(await admin(r, "GET", "/status", host: "localhost:8765").status == 200)
         #expect(await admin(r, "GET", "/status", peer: "192.168.1.9").status == 403)  // naslov povezave, ne glava
-        #expect(await admin(r, "GET", "/status", peer: "192.168.1.9", encrypted: true).status == 403)
-        #expect(await admin(r, "GET", "/status", host: "evil.example:8765").status == 403)  // DNS rebinding
-        #expect(await admin(r, "GET", "/status", host: "127.0.0.1:1").status == 403)
-        #expect(await admin(r, "GET", "/status", host: "x", encrypted: true).status == 200)  // Noise: ni brskalnik
+        #expect(await admin(r, "GET", "/status", peer: "192.168.1.9", encrypted: false).status == 403)
+        #expect(await admin(r, "GET", "/status", host: "evil.example:8765", encrypted: false).status == 403)  // DNS rebinding, pred overitvijo
+        #expect(await admin(r, "GET", "/status", host: "127.0.0.1:1", encrypted: false).status == 403)
+        #expect(await admin(r, "GET", "/status", host: "x").status == 200)  // Noise: ni brskalnik
+        #expect(await admin(r, "GET", "/status", encrypted: false).status == 401)  // Bearer s pravo skrivnostjo: nikoli
+        #expect(await admin(r, "GET", "/status", proofHash: Data(repeating: 8, count: 32)).status == 401)  // dokaz druge povezave
         #expect(await admin(r, "GET", "/status", auth: nil).status == 401)
         #expect(await admin(r, "GET", "/status", auth: adminSecret + "x").status == 401)
         #expect(await admin(r, "GET", "/status", auth: "tok").status == 401)  // žeton routerja ni skrivnost API
@@ -71,6 +78,9 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
         #expect(await admin(r, "PATCH", "/agents/claude", body: #"{"tools":"Read"}x"#).status == 400)
         #expect(await admin(r, "PATCH", "/agents/claude", body: #"{"tools":"Read"}{"tools":"Bash"}"#).status == 400)
         #expect(await admin(r, "PATCH", "/agents/claude", body: #"{"allowLocalTools":1}"#).status == 400)  // 1 ni true
+        let dup = await admin(r, "PATCH", "/agents/claude", body: #"{"tools":"Read","tools":"Bash"}"#)  // kot Go
+        #expect(dup.status == 400 && dup.text.contains("duplicate field"))
+        #expect(AdminBody.duplicateKey(Data(#"{"a":{"b":1,"b":2},"c":["\"a\":"],"d":1}"#.utf8)) == nil)  // le prva raven
         #expect(await admin(r, "PATCH", "/general", body: #"{"port":true}"#).status == 400)
         #expect(await admin(r, "PATCH", "/agents/claude", body: #"{"tools":"Read;rm"}"#).status == 400)
         #expect(await admin(r, "PATCH", "/agents/claude", body: "[1]").status == 400)
@@ -128,39 +138,55 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
         #expect(app.config.providers.isEmpty && app.keys[p.id] == nil)
     }
 
-    /// M1: program, ki zasede vrata routerja, nikoli ne dobi skrivnosti: proxy minigw pošlje HTTP šele po rokovanju.
-    @Test func squatterNeverGetsTheSecret() async throws {
-        let got = Received()
-        let squatter = try NWListener(using: .tcp, on: .any)
-        squatter.newConnectionHandler = { c in
-            c.start(queue: .global())
-            c.send(content: Data(repeating: 0x41, count: 200), completion: .contentProcessed { _ in })  // »odgovor« rokovanja
-            func read() {
-                c.receive(minimumIncompleteLength: 1, maximumLength: 65536) { d, _, end, e in
-                    if let d { got.add(d) }
-                    if end || e != nil { c.cancel() } else { read() }
-                }
-            }
-            read()
-        }
-        let ready = DispatchSemaphore(value: 0)
-        squatter.stateUpdateHandler = { if case .ready = $0 { ready.signal() } }
-        squatter.start(queue: .global())
-        ready.wait()
-        defer { squatter.cancel() }
-        let port = try #require(squatter.port?.rawValue)
-        let proxy = try #require(NoiseProxy(routerURL: "http://127.0.0.1:\(port)", routerKey: Noise.newKey().publicKey.rawRepresentation, suite: .aesGCM))
-        try proxy.start()
-        defer { proxy.stop() }
-        var r = URLRequest(url: URL(string: proxy.localURL + Router.adminPrefix + "/gateways")!, timeoutInterval: 3)
-        r.httpMethod = "POST"
-        r.setValue("Bearer " + adminSecret, forHTTPHeaderField: "authorization")
-        r.httpBody = Data(#"{"key":"sk-gateway-secret"}"#.utf8)
-        _ = try? await URLSession.shared.data(for: r)
+    /// S1: lažen strežnik z lastnim ključem (podtaknjen ključ routerja) konča rokovanje, a dobi le dokaz, vezan na to
+    /// rokovanje: ne skrivnosti in nič, kar bi pravi router sprejel.
+    @Test func fakeResponderGetsNothingReusable() async throws {
+        // Pravi router (strežnik Noise) in lažen odgovornik z lastnim ključem.
+        let app = FakeApp()
+        app.config.host = "127.0.0.1"; app.config.port = 18_767
+        let realKey = Noise.newKey()
+        let server = RouterServer(router: app.router(), key: realKey)
+        try server.start()
+        defer { server.stop() }
         try await Task.sleep(for: .milliseconds(200))
-        let bytes = String(decoding: got.data, as: UTF8.self)
-        #expect(!got.data.isEmpty)  // proxy je res poskusil (rokovanje)
-        #expect(!bytes.contains(adminSecret) && !bytes.contains("Bearer") && !bytes.contains("sk-gateway-secret"))
+        let fakeKey = Noise.newKey()
+        let (l, fakePort) = listener()
+        defer { close(l) }
+        let got = Received()
+        DispatchQueue.global().async {
+            let c = accept(l, nil, nil)
+            defer { close(c) }
+            func read(_ n: Int) -> Data {
+                var d = Data(), buf = [UInt8](repeating: 0, count: 65536)
+                while d.count < n { let k = Darwin.read(c, &buf, min(buf.count, n - d.count)); if k <= 0 { break }; d += buf[0..<k] }
+                return d
+            }
+            let msg = read(4 + Noise.handshakeLength)
+            guard let (reply, session) = try? Noise.respond(Data(msg.dropFirst(4)), key: fakeKey, suite: .aesGCM) else { return }
+            _ = reply.withUnsafeBytes { write(c, $0.baseAddress, $0.count) }
+            var raw = Data(), plain = Data(), buf = [UInt8](repeating: 0, count: 65536)
+            while !String(decoding: plain, as: UTF8.self).contains("\r\n\r\n") {
+                let k = Darwin.read(c, &buf, buf.count)
+                if k <= 0 { break }
+                raw += buf[0..<k]
+                if let p = try? Noise.unframe(&raw, session.receive) { plain += p }
+            }
+            got.add(plain)
+        }
+        let secret = adminSecret
+        _ = AdminClient(port: fakePort, routerKey: fakeKey.publicKey.rawRepresentation)
+            .request("GET", Router.adminPrefix + "/status", nil, authorization: { h in AdminHooks.scheme + AdminHooks.proof(secret: secret, hash: h) }, timeout: 3)
+        try await Task.sleep(for: .milliseconds(100))
+        let text = String(decoding: got.data, as: UTF8.self)
+        let captured = try #require(text.split(separator: "\r\n").first { $0.lowercased().hasPrefix("authorization: ") }).dropFirst("authorization: ".count)
+        #expect(captured.hasPrefix(AdminHooks.scheme) && !text.contains(adminSecret))
+        // Ponovitev pri pravem routerju: druga povezava, drug h → 401; pravi dokaz → 200.
+        let real = AdminClient(port: 18_767, routerKey: realKey.publicKey.rawRepresentation)
+        let replay = String(captured)
+        #expect(real.request("GET", Router.adminPrefix + "/status", nil, authorization: { _ in replay }, timeout: 3).0 == 401)
+        #expect(real.request("GET", Router.adminPrefix + "/status", nil, authorization: { h in AdminHooks.scheme + AdminHooks.proof(secret: secret, hash: h) }, timeout: 3).0 == 200)
+        // Brez ključa routerja (program na vratih ne konča rokovanja): 0, nič poslano.
+        #expect(AdminClient(port: 18_767, routerKey: Noise.newKey().publicKey.rawRepresentation).request("GET", "/health/live", nil, timeout: 3).0 == 0)
     }
 }
 
@@ -203,7 +229,8 @@ private func acceptPeerPort(_ fd: Int32) -> (Int32, UInt16) {
         defer { close(s) }
         #expect(PeerProcess.pid(localPort: peerPort, remotePort: routerPort) == getpid())
         #expect(PeerProcess.refusal(peerPort: peerPort, routerPort: routerPort, appPID: getpid()) == "admin requests from agent processes are not allowed")
-        #expect(PeerProcess.refusal(peerPort: peerPort, routerPort: routerPort, appPID: 999_999) == nil)
+        #expect(PeerProcess.refusal(peerPort: peerPort, routerPort: routerPort, appPID: 999_999) == nil)  // veriga do PID 1, tudi prek root »login«
+        #expect(PeerProcess.parent(1) == 0 && PeerProcess.parent(999_999) == nil)
         #expect(PeerProcess.refusal(peerPort: 1, routerPort: routerPort, appPID: 999_999)?.contains("cannot identify") == true)
     }
 
@@ -240,12 +267,14 @@ private func acceptPeerPort(_ fd: Int32) -> (Int32, UInt16) {
 
     @Test func adminAPIRefusesWhatPeerCheckRefuses() async {
         let app = FakeApp()
-        let hooks = AdminHooks(secret: adminSecret, connect: "", version: "", installed: { false }, update: { f in
+        let hooks = AdminHooks(secret: adminSecret, connect: "", version: "", installed: { false }, commit: { f, _ in
             var c = app.config; try f(&c); return c
-        }, setKey: { _, _ in }, rotateToken: { "" }, peerCheck: { peer, router in peer == 4242 && router == 8765 ? "an agent" : nil })
+        }, rotateToken: { "" }, peerCheck: { peer, router in peer == 4242 && router == 8765 ? "an agent" : nil })
         let r = Router(config: RouterConfig(), token: "tok", secrets: FakeSecrets(values: [:]), admin: hooks)
-        var req = request("GET", Router.adminPrefix + "/status", headers: ["Host": "127.0.0.1:8765", "Authorization": "Bearer " + adminSecret])
+        var req = request("GET", Router.adminPrefix + "/status", headers: ["Host": "127.0.0.1:8765",
+                          "Authorization": AdminHooks.scheme + AdminHooks.proof(secret: adminSecret, hash: testHash)])
         req.peer = "127.0.0.1"
+        req.noiseHash = testHash
         req.peerPort = 4242
         let w = FakeWriter()
         await r.handle(req, writer: w)
@@ -255,4 +284,21 @@ private func acceptPeerPort(_ fd: Int32) -> (Int32, UInt16) {
         await r.handle(req, writer: ok)
         #expect(ok.status == 200)
     }
+}
+
+/// S7: okno Settings z neshranjenimi spremembami ne povozi sprememb skrbniškega API (tudi odstranitev).
+@Test func settingsDraftMergesOutsideChanges() {
+    var old = RouterConfig()
+    old.devices = [DeviceConfig(id: "a", name: "A"), DeviceConfig(id: "b", name: "B")]
+    old.claudeCLI.tools = "Read"
+    var draft = old
+    draft.port = 9000  // uporabnik tipka
+    draft.devices[0].name = "A (renamed)"
+    var new = old  // skrbniški API: nova orodja, b odstranjena, c dodana, a nespremenjena
+    new.claudeCLI.tools = "Read,Grep"
+    new.devices = [DeviceConfig(id: "a", name: "A"), DeviceConfig(id: "c", name: "C")]
+    let m = RouterConfig.merge(draft: draft, old: old, new: new)
+    #expect(m.port == 9000 && m.claudeCLI.tools == "Read,Grep")
+    #expect(m.devices.map(\.id) == ["a", "c"] && m.devices[0].name == "A (renamed)")
+    #expect(RouterConfig.merge(draft: old, old: old, new: new) == new)  // brez neshranjenih sprememb: vse iz new
 }

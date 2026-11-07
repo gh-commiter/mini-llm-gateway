@@ -176,12 +176,11 @@ struct SettingsView: View {
         .onAppear {
             if !loaded { draft = state.config; loaded = true }
         }
-        // Spremembe od drugod (minigw router, nova naprava): brez neshranjenih sprememb okno prevzame nastavitve;
-        // sicer le nove naprave, da uveljavitev osnutka ne izbriše naprave in ne zavrže tipkanja.
+        // Spremembe od drugod (minigw router, nova naprava): tristranska združitev z osnutkom (tudi odstranitve), da
+        // samodejna uveljavitev osnutka ne povozi sprememb skrbniškega API in ne zavrže tipkanja.
         .onChange(of: state.config) { old, new in
             guard loaded else { return }
-            if draft == old { draft = new; return }
-            draft.devices += new.devices.filter { d in !draft.devices.contains { $0.id == d.id } }
+            draft = RouterConfig.merge(draft: draft, old: old, new: new)
         }
         // Samodejna uveljavitev: 0,8 s po zadnji spremembi.
         .task(id: draft) {

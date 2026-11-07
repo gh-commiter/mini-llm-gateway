@@ -1,7 +1,7 @@
 // minigw router: nastavitve aplikacije Mini Gateway na tem Macu prek skrbniškega API (docs/admin-api.md), z istimi
 // ukazi in izpisom kot minigw router v Go. Nastavitve so v aplikaciji (UserDefaults, Keychain): brez tekoče
-// aplikacije ni sprememb. Skrivnost gre le prek Noise s ključem routerja (router.json), zato je program, ki zasede
-// vrata, ne dobi (M1).
+// aplikacije ni sprememb. Vrata, ključ routerja in skrivnost so v Keychainu aplikacije; po žici gre le dokaz MGW-Admin
+// (HMAC nad rokovanjem Noise), zato lažen strežnik ali program na vratih ne dobi ničesar uporabnega (S1, M1).
 import CryptoKit
 import Foundation
 import RouterCore
@@ -20,59 +20,46 @@ minigw router: show or change the Mini Gateway app on this Mac. Changes apply at
 """
 
 private struct AdminConnection {
-    let base: String
+    let port: UInt16
+    let key: Data     // javni ključ routerja (Keychain aplikacije)
     let secret: String
-    let proxy: NoiseProxy
 
-    /// router.json (vrata, javni ključ) → lokalni proxy Noise do aplikacije → šele nato skrivnost iz Keychaina.
+    /// Vnos »admin« v Keychainu aplikacije (skrivnost, vrata, javni ključ): brez datotek in spremenljivk okolja, ki bi
+    /// jih podtaknil drug proces. Skrivnost nikoli ne gre po žici, le dokaz MGW-Admin, vezan na rokovanje.
     static func open() -> AdminConnection {
-        let file = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Mini Gateway/router.json")
-        guard let d = try? Data(contentsOf: file), let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
-              let port = o["port"] as? Int, let key = (o["key"] as? String).flatMap(Noise.fromBase64url) else {
-            fail("Mini Gateway is not running or is too old: start the app (its settings live in the app, so minigw router needs it)")
+        if ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"] != nil {
+            fail("CFFIXED_USER_HOME is set: minigw router does not run with a redirected home folder")
         }
-        guard let p = NoiseProxy(routerURL: "http://127.0.0.1:\(port)", routerKey: key, suite: .aesGCM) else { fail("bad router.json") }
-        do { try p.start() } catch { fail("cannot start the local encrypted proxy: \(error)") }
-        let probe = AdminConnection(base: p.localURL, secret: "", proxy: p)
-        guard probe.raw("GET", "/health/live", nil).0 == 200 else {  // rokovanje s ključem aplikacije, brez skrivnosti
+        let (v, st) = Keychain().lookup("admin")
+        guard st == errSecSuccess, let o = v.flatMap({ try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }),
+              let secret = o["secret"] as? String, let port = (o["port"] as? Int).flatMap(UInt16.init(exactly:)),
+              let key = (o["key"] as? String).flatMap(Noise.fromBase64url), key.count == 32 else {
+            fail(st == errSecItemNotFound ? "Mini Gateway has not set up the admin API yet: update the app and start it"
+                 : "cannot read Mini Gateway's admin item from the Keychain (OSStatus \(st)): allow minigw when macOS asks")
+        }
+        let a = AdminConnection(port: port, key: key, secret: secret)
+        guard a.raw("GET", "/health/live", nil).0 == 200 else {  // rokovanje s ključem aplikacije, brez dokaza
             fail("Mini Gateway does not answer on port \(port) with its router key: start the app (if it runs, another program uses that port; nothing was sent to it)")
         }
-        let (v, st) = Keychain().lookup("admin-secret")
-        guard st == errSecSuccess, let secret = v, !secret.isEmpty else {
-            fail(st == errSecItemNotFound ? "the app has no admin secret yet: update Mini Gateway and start it again"
-                 : "cannot read the admin secret from the Keychain (OSStatus \(st)): allow minigw when macOS asks")
-        }
-        return AdminConnection(base: p.localURL, secret: secret, proxy: p)
+        return a
     }
 
-    func raw(_ method: String, _ path: String, _ body: Data?) -> (Int, Data?) {
-        var r = URLRequest(url: URL(string: base + path)!, timeoutInterval: 60)
-        r.httpMethod = method
-        r.httpBody = body
-        if !secret.isEmpty { r.setValue("Bearer \(secret)", forHTTPHeaderField: "authorization") }
-        r.setValue("application/json", forHTTPHeaderField: "content-type")
-        let done = DispatchSemaphore(value: 0)
-        var result: (Int, Data?) = (0, nil)
-        URLSession.shared.dataTask(with: r) { d, resp, _ in
-            result = ((resp as? HTTPURLResponse)?.statusCode ?? 0, d)
-            done.signal()
-        }.resume()
-        done.wait()
-        return result
+    func raw(_ method: String, _ path: String, _ body: Data?, proof: Bool = false) -> (Int, Data?) {
+        let c = AdminClient(port: port, routerKey: key)
+        guard proof else { return c.request(method, path, body) }
+        let s = secret
+        return c.request(method, path, body, authorization: { h in AdminHooks.scheme + AdminHooks.proof(secret: s, hash: h) })
     }
 
     /// Napaka API konča ukaz z njenim sporočilom.
     func call(_ method: String, _ path: String, _ body: [String: Any]? = nil) -> [String: Any] {
         let data = body.flatMap { try? JSONSerialization.data(withJSONObject: $0) }
-        let (status, d) = raw(method, Self.adminPrefix + path, data)
+        let (status, d) = raw(method, Router.adminPrefix + path, data, proof: true)
         let o = d.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
         guard status != 0 else { fail("lost the connection to Mini Gateway") }
         guard status < 300 else { fail(clean(((o["error"] as? [String: Any])?["message"] as? String) ?? "HTTP \(status)")) }
         return o
     }
-
-    static let adminPrefix = "/minigw/admin/v1"
 }
 
 /// Ključ s stdin (cev) ali s terminala brez odmeva; nikoli iz argv. Le natisljivi ASCII (gre v glavo HTTP).
@@ -122,7 +109,6 @@ func routerCommand(_ argv: [String]) {
     }
     func need(_ min: Int, _ max: Int) { if pos.count < min || pos.count > max { fail(routerHelp) } }
     let a = AdminConnection.open()
-    defer { a.proxy.stop() }
 
     switch pos[0] {
     case "status":

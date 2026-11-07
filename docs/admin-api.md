@@ -118,23 +118,30 @@ devices (Siri uses this Mac's personal data).
 
 The Mac app keeps its settings in its preferences and Keychain; the Settings window shows API changes at once.
 
-- **Admin secret:** in the app's Keychain (account `admin-secret`), not in a file: Codex and Grok agents on the
-  Mac may read files anywhere, but not the Keychain. `minigw router` reads it with the user's consent (macOS asks
-  once). The app writes `~/Library/Application Support/Mini Gateway/router.json` with the port and the router's
-  public key (no secret); `minigw router` uses the key to speak Noise to the app before it reads the secret.
-- **No agents:** the app finds the process behind each admin connection (libproc: the process with that loopback
-  TCP socket; `LOCAL_PEERPID` works only for Unix sockets) and refuses it (`403`) when it is sandboxed or descends
-  from the app, as agents and the commands they run do. A process it cannot identify (another user, already gone)
-  is refused too. So an agent that runs `minigw router` gets nothing, even after "Always Allow" in the Keychain.
-- **Host header:** checked for plain HTTP only. Over Noise (`minigw router`) there is no browser, and the request
-  comes through minigw's local proxy, so its Host names the proxy's port.
+- **Admin secret and the router's identity:** one item in the app's Keychain (account `admin`: JSON with
+  `secret`, `port` and the router's public `key`), not a file: Codex and Grok agents on the Mac may read files
+  anywhere, but not the Keychain, and a file or environment variable (`CFFIXED_USER_HOME`) could be faked by another
+  process. `minigw router` reads the item with the user's consent (macOS asks once), refuses to run with
+  `CFFIXED_USER_HOME` set, speaks Noise directly to `127.0.0.1:<port>` with that key (no local proxy) and sends only
+  the `MGW-Admin` proof; the secret never leaves the Keychain.
+- **No agents (defence in depth, after the proof):** the app finds the process behind each admin connection (libproc:
+  the process with that TCP socket, both addresses loopback in the socket's family; `LOCAL_PEERPID` works only for
+  Unix sockets). It refuses (`403` "admin requests from agent processes are not allowed") when there is not exactly
+  one such process, when it is sandboxed (`sandbox_check`; a child that double-forks away stays sandboxed), when it
+  descends from the app (parents via `sysctl KERN_PROC_PID`), or when the chain of parents cannot be read up to
+  PID 1. So an agent that runs `minigw router` gets nothing, even after "Always Allow" in the Keychain.
+- **Order of checks:** loopback peer → Host (plain HTTP only; over Noise there is no browser) → `MGW-Admin` proof →
+  process check.
 - **No offline mode:** without the running app, `minigw router` stops with a message (settings live in the app).
 - **Devices:** the Mac accepts every device with the token and adds it to the list itself; the list decides Siri.
   `GET /devices` returns `"allowAnyDevice": true`, `"pending": []` and a `siri` flag per device. `POST` adds a
   device; `DELETE` removes it, but it comes back on its next connection (it only loses Siri). To lock a device out,
-  rotate the token.
+  rotate the token. The admin API can add a device ID that never connected and allow Siri for it (`PATCH /siri`);
+  only someone with the admin secret on this Mac can do that, and that device still needs the token.
 - **Gateways:** each has `"enabled"`. `name` is the gateway's name in Settings. `POST` turns the gateway on and
-  applies the same URL rule as Go; gateways added in Settings may still use any `http` URL. Gateways with manual
+  applies the same URL rule as Go; gateways added in Settings may still use any `http` URL. The key goes to the
+  Keychain only after the config change succeeds, and before the app restarts the router (the router reads gateway
+  keys when it starts). Gateways with manual
   aliases (Settings → Advanced) list their discovered models here, but route by their aliases.
 - **agents/claude:** `{"enabled", "path", "found", "tools", "folders", "allowLocalTools", "disabledTools"}`.
   `folders` is the comma-separated list of allowed folders. There is no `folder` or `allowUnsandboxedBash`: with

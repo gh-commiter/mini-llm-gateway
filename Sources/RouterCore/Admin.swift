@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Kar skrbniški API (docs/admin-api.md) potrebuje od aplikacije. Nastavitve so aplikacijine: `update` jih spremeni
@@ -8,19 +9,30 @@ public struct AdminHooks: Sendable {
     public var connect: String                     // »Copy Token«: žeton#ključ routerja
     public var version: String
     public var installed: @Sendable () -> Bool     // zagon ob prijavi
-    public var update: @Sendable (@escaping @Sendable (inout RouterConfig) throws -> Void) async throws -> RouterConfig
-    public var setKey: @Sendable (_ account: String, _ key: String?) -> Void  // nil = izbriši
+    /// Sprememba nastavitev; ključi (račun → ključ, nil = izbriši) gredo v Keychain šele, ko f uspe, in pred ponovnim
+    /// zagonom routerja (ta ob zagonu prebere ključe prehodov).
+    public var commit: @Sendable (@escaping @Sendable (inout RouterConfig) throws -> Void, [String: String?]) async throws -> RouterConfig
     public var rotateToken: @Sendable () async -> String  // nova vrstica za odjemalce
     /// Proces odjemalca (vrata odjemalca, vrata routerja) → razlog za zavrnitev ali nil (PeerProcess.refusal).
     public var peerCheck: (@Sendable (UInt16, UInt16) -> String?)?
 
     public init(secret: String, connect: String, version: String, installed: @escaping @Sendable () -> Bool,
-                update: @escaping @Sendable (@escaping @Sendable (inout RouterConfig) throws -> Void) async throws -> RouterConfig,
-                setKey: @escaping @Sendable (String, String?) -> Void, rotateToken: @escaping @Sendable () async -> String,
-                peerCheck: (@Sendable (UInt16, UInt16) -> String?)? = nil) {
+                commit: @escaping @Sendable (@escaping @Sendable (inout RouterConfig) throws -> Void, [String: String?]) async throws -> RouterConfig,
+                rotateToken: @escaping @Sendable () async -> String, peerCheck: (@Sendable (UInt16, UInt16) -> String?)? = nil) {
         self.secret = secret; self.connect = connect; self.version = version; self.installed = installed
-        self.update = update; self.setKey = setKey; self.rotateToken = rotateToken; self.peerCheck = peerCheck
+        self.commit = commit; self.rotateToken = rotateToken; self.peerCheck = peerCheck
     }
+
+    func update(keys: [String: String?] = [:], _ f: @escaping @Sendable (inout RouterConfig) throws -> Void) async throws -> RouterConfig {
+        try await commit(f, keys)
+    }
+
+    /// HMAC-SHA256(skrivnost, "minigw-admin-v1" || h): odjemalec ne pošlje skrivnosti, le dokaz, vezan na rokovanje
+    /// te povezave (lažen strežnik z lastnim ključem dobi dokaz, ki ne velja nikjer drugje).
+    public static func proof(secret: String, hash: Data) -> String {
+        Noise.base64url(Data(HMAC<SHA256>.authenticationCode(for: Data("minigw-admin-v1".utf8) + hash, using: SymmetricKey(data: Data(secret.utf8)))))
+    }
+    public static let scheme = "MGW-Admin "
 }
 
 struct AdminError: Error {
@@ -37,8 +49,34 @@ struct AdminBody {
         guard let o = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
             throw AdminError(400, "bad JSON body: expected one JSON object")
         }
+        if let k = Self.duplicateKey(data) { throw AdminError(400, "bad JSON body: duplicate field \"\(k)\"") }
         if let k = o.keys.sorted().first(where: { !allowed.contains($0) }) { throw AdminError(400, "bad JSON body: unknown field \"\(k)\"") }
         self.o = o
+    }
+
+    /// Ključ, ki se v objektu na prvi ravni ponovi (JSONSerialization obdrži enega; Go jih zavrne).
+    static func duplicateKey(_ data: Data) -> String? {
+        let b = [UInt8](data)
+        var depth = 0, i = 0, seen = Set<String>()
+        while i < b.count {
+            switch b[i] {
+            case UInt8(ascii: "{"), UInt8(ascii: "["): depth += 1
+            case UInt8(ascii: "}"), UInt8(ascii: "]"): depth -= 1
+            case UInt8(ascii: "\""):
+                var j = i + 1
+                while j < b.count, b[j] != UInt8(ascii: "\"") { j += b[j] == UInt8(ascii: "\\") ? 2 : 1 }
+                var k = j + 1
+                while k < b.count, [9, 10, 13, 32].contains(b[k]) { k += 1 }
+                if depth == 1, k < b.count, b[k] == UInt8(ascii: ":"), let key = (try? JSONSerialization.jsonObject(
+                    with: Data(b[i...min(j, b.count - 1)]), options: .fragmentsAllowed)) as? String, !seen.insert(key).inserted {
+                    return key
+                }
+                i = j
+            default: break
+            }
+            i += 1
+        }
+        return nil
     }
 
     func has(_ k: String) -> Bool { o[k] != nil }
@@ -85,22 +123,27 @@ extension Router {
     /// brskalnik ne govori Noise), skrivnost v konstantnem času, brez CORS, telo do 1 MB.
     func adminHTTP(_ req: HTTPRequest, rid: String, writer: ResponseWriter) async -> Int {
         guard let admin else { return await adminError(404, "Not found: \(req.method) \(req.path)", rid: rid, writer: writer) }
+        // Vrstni red: loopback → Host (le navaden HTTP) → dokaz MGW-Admin → proces odjemalca.
         guard RouterServer.isLoopback(req.peer) else {
             return await adminError(403, "The admin API is only available on the router computer", rid: rid, writer: writer)
-        }
-        // Agent (otrok aplikacije ali proces v sandboxu) ne sme do API, tudi z ukradeno skrivnostjo ali prek minigw.
-        if let check = admin.peerCheck, let why = check(req.peerPort, config.port) {
-            Self.log.error("admin API refused: \(why, privacy: .public)")
-            return await adminError(403, why, rid: rid, writer: writer)
         }
         let p = String(config.port)
         if !req.encrypted, !["127.0.0.1:" + p, "localhost:" + p, "[::1]:" + p].contains((req.header("host") ?? "").lowercased()) {
             return await adminError(403, "Host must be 127.0.0.1:\(p) or localhost:\(p)", rid: rid, writer: writer)
         }
-        let given = req.header("authorization").flatMap { $0.hasPrefix("Bearer ") ? String($0.dropFirst(7)) : nil } ?? ""
-        let a = Array(given.utf8), b = Array(admin.secret.utf8)
-        guard !b.isEmpty, a.count == b.count, zip(a, b).reduce(0, { $0 | ($1.0 ^ $1.1) }) == 0 else {
-            return await adminError(401, "Invalid or missing admin secret (minigw reads it from the app's Keychain)", rid: rid, writer: writer)
+        let auth = req.header("authorization") ?? ""
+        guard auth.hasPrefix(AdminHooks.scheme), let h = req.noiseHash, !admin.secret.isEmpty else {
+            return await adminError(401, "The admin API takes MGW-Admin over an encrypted connection (minigw router), never the secret itself",
+                                    rid: rid, writer: writer)
+        }
+        let a = Array(auth.dropFirst(AdminHooks.scheme.count).utf8), b = Array(AdminHooks.proof(secret: admin.secret, hash: h).utf8)
+        guard a.count == b.count, zip(a, b).reduce(0, { $0 | ($1.0 ^ $1.1) }) == 0 else {
+            return await adminError(401, "Invalid admin proof: use minigw router", rid: rid, writer: writer)
+        }
+        // Obramba v globino: agent (otrok aplikacije ali proces v sandboxu) ne sme do API niti z dokazom.
+        if let check = admin.peerCheck, let why = check(req.peerPort, config.port) {
+            Self.log.error("admin API refused: \(why, privacy: .public)")
+            return await adminError(403, why, rid: rid, writer: writer)
         }
         guard req.body.count <= 1 << 20 else { return await adminError(413, "Request body too large", rid: rid, writer: writer) }
         let (status, obj) = await adminDo(req.method, path: String(req.path.dropFirst(Self.adminPrefix.count)), query: req.query,
@@ -207,22 +250,14 @@ extension Router {
             case .failure(let f): throw AdminError(400, "gateway not added: \(f.message)")
             }
             if old == nil, models.count > 20 { p.enabledModels = [] }  // OpenRouter: več sto modelov, izbereš sam
-            let oldKey = old.flatMap { secrets.get($0.id) }
-            hooks.setKey(p.id, key)
             let gw = p
-            do {
-                _ = try await hooks.update { c in
-                    if let i = c.providers.firstIndex(where: { $0.id == gw.id }) { c.providers[i] = gw } else { c.providers.append(gw) }
-                }
-            } catch {
-                hooks.setKey(p.id, oldKey)  // ključ nazaj, kot je bil
-                throw error
+            _ = try await hooks.update(keys: [p.id: key]) { c in  // ključ šele po uspešni spremembi, pred ponovnim zagonom
+                if let i = c.providers.firstIndex(where: { $0.id == gw.id }) { c.providers[i] = gw } else { c.providers.append(gw) }
             }
             return (200, ["gateway": gateway(p, ready: false), "keyStore": "the Keychain", "models": apiModels(p, models, filter: "")])
         case "DELETE gateways/{}":
             guard let p = c.providers.first(where: { $0.name == arg }) else { throw AdminError(404, "no gateway \(arg)") }
-            _ = try await hooks.update { c in c.providers.removeAll { $0.id == p.id } }
-            hooks.setKey(p.id, nil)
+            _ = try await hooks.update(keys: [p.id: nil]) { c in c.providers.removeAll { $0.id == p.id } }
             return (200, ["name": arg])
         case "GET gateways/{}/models", "POST gateways/{}/models":
             guard var p = c.providers.first(where: { $0.name == arg }) else { throw AdminError(404, "no gateway \(arg)") }
