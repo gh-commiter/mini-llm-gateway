@@ -166,9 +166,10 @@ func TestSharedFolderModes(t *testing.T) {
 		{"sync", apps, "sync", false}, // zastavica zmaga
 		{"", nil, "direct", false},
 		{"", java, "sync", true},
-		{"native", java, "native", false}, // shranjen --ro ne velja za native
+		{"native", java, "direct", true}, // M1: shranjen --ro ostane; native samo za branje → direct samo za branje
+		{"native", nil, "direct", true},
 	} {
-		if w, ro := workMode(c.flag, c.saved, false); w != c.work || ro != c.ro {
+		if w, ro := workMode(c.flag, c.saved, c.saved == nil && c.flag == "native"); w != c.work || ro != c.ro {
 			t.Errorf("workMode(%q, %+v) = %s %v", c.flag, c.saved, w, ro)
 		}
 	}
@@ -189,5 +190,49 @@ func TestShareAddSavesMode(t *testing.T) {
 	shareCommand([]string{"remove", proj})
 	if got := sharedFolders(); len(got) != 0 {
 		t.Fatalf("removed: %+v", got)
+	}
+}
+
+func TestShareRefusesLineBreaksAndTabs(t *testing.T) { // L6
+	if !validSharePath("/mnt/java/a b") || validSharePath("/x\t--work=native") || validSharePath("/x\n/y") || validSharePath("/x\r") {
+		t.Fatal("validSharePath")
+	}
+}
+
+func TestReadMarkerRefusesLinksAndBigFiles(t *testing.T) { // M2
+	d := t.TempDir()
+	os.WriteFile(filepath.Join(d, "secret"), []byte("s3cret"), 0o600)
+	os.Symlink(filepath.Join(d, "secret"), filepath.Join(d, "link"))
+	os.WriteFile(filepath.Join(d, "big"), bytes.Repeat([]byte("a"), 129), 0o600)
+	os.WriteFile(filepath.Join(d, "ok"), []byte("nonce\n"), 0o600)
+	os.Mkdir(filepath.Join(d, "dir"), 0o700)
+	if _, ok := readMarker(filepath.Join(d, "link")); ok {
+		t.Error("followed a symlink")
+	}
+	if _, ok := readMarker(filepath.Join(d, "big")); ok {
+		t.Error("read more than 128 bytes")
+	}
+	if _, ok := readMarker(filepath.Join(d, "dir")); ok {
+		t.Error("read a folder")
+	}
+	if v, ok := readMarker(filepath.Join(d, "ok")); !ok || v != "nonce" {
+		t.Errorf("regular file: %q %v", v, ok)
+	}
+}
+
+func TestTerminalSafeKeepsOnlyColours(t *testing.T) { // L1
+	in := "\x1b[1;31mred\x1b[0m\r\n\x1b]0;title\x07\x1b]52;c;Zm9v\x1b\\\x1bP1$q\x1b\\\x1b[6n\x1b[2J\x1b[?1049h\x07ok\t\x1b"
+	if got := string(terminalSafe([]byte(in))); got != "\x1b[1;31mred\x1b[0m\r\nok\t" {
+		t.Fatalf("%q", got)
+	}
+}
+
+func TestMountinfoRoot(t *testing.T) { // I3: priklop podmape (bind) in prefixpath
+	info := "40 25 0:44 /eureko /mnt/e rw - cifs //mini/Java rw\n41 25 0:45 /p /mnt/p rw - cifs //mini/Java/p rw\n"
+	if src, _, _ := smbFromMountinfo(info, "/mnt/e/x"); src != "//mini/Java/eureko" {
+		t.Errorf("bind: %q", src)
+	}
+	if src, _, _ := smbFromMountinfo(info, "/mnt/p"); src != "//mini/Java/p" {
+		t.Errorf("prefixpath: %q", src)
 	}
 }

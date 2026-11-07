@@ -351,9 +351,13 @@ func main() {
 		fail("unknown --minigw-work=" + work + " (use direct, sync or native)")
 	}
 	cwd, _ := os.Getwd()
+	asked := work
+	if f := lookupSharedFolder(sharedFolders(), cwd); asked == "" && f != nil {
+		asked = f.Work
+	}
 	work, readOnly = workMode(work, lookupSharedFolder(sharedFolders(), cwd), readOnly)
-	if work == "native" && readOnly {
-		fail("--minigw-work=native cannot be read-only (the agent works in the router's own folder)")
+	if asked == "native" && work != "native" {
+		fmt.Fprintln(os.Stderr, "minigw: native mode cannot be read-only; sharing read-only over the network instead")
 	}
 	saved := requireConnection()
 	c := route(saved)
@@ -595,7 +599,8 @@ func lookupSharedFolder(list []sharedFolder, cwd string) *sharedFolder {
 	return best
 }
 
-// workMode: --minigw-work= / MINIGW_WORK > način mape iz »minigw share add --work=…« > direct; shranjen --ro velja, razen v native.
+// workMode: --minigw-work= / MINIGW_WORK > način mape iz »minigw share add --work=…« > direct. Shranjen --ro velja vedno;
+// native samo za branje ni mogoč → direct samo za branje (tudi lažen router, ki native zavrne, ne odpre pisanja).
 func workMode(flag string, saved *sharedFolder, readOnly bool) (string, bool) {
 	work := flag
 	if work == "" && saved != nil {
@@ -604,8 +609,15 @@ func workMode(flag string, saved *sharedFolder, readOnly bool) (string, bool) {
 	if work == "" {
 		work = "direct"
 	}
-	return work, readOnly || (saved != nil && saved.ReadOnly && work != "native")
+	ro := readOnly || (saved != nil && saved.ReadOnly)
+	if work == "native" && ro {
+		work = "direct"
+	}
+	return work, ro
 }
+
+// validSharePath: ena vrstica seznama; tabulator loči možnosti.
+func validSharePath(p string) bool { return !strings.ContainsAny(p, "\t\r\n") }
 
 // under: path je folder ali v njem (na Windows brez razlike v velikih črkah).
 func under(path, folder string) bool {
@@ -649,6 +661,9 @@ func shareCommand(args []string) {
 		dir = rest[0]
 	}
 	dir, _ = filepath.Abs(dir)
+	if !validSharePath(dir) {
+		fail("folder names with tabs or line breaks cannot be shared")
+	}
 	list := sharedFolders()
 	save := func(l []sharedFolder) {
 		f := sharedFoldersFile()

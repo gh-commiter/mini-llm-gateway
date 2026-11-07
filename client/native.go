@@ -84,6 +84,10 @@ func smbFromMountinfo(info, cwd string) (source, mountPoint string, ok bool) {
 			continue
 		}
 		source, mountPoint, ok = unescapeMount(f[sep+2]), mp, true
+		// Polje 4: podmapa sheme pri priklopu bind (pri cifs prefixpath je že v viru).
+		if root := unescapeMount(f[3]); root != "/" && !strings.HasSuffix(strings.TrimSuffix(source, "/"), root) {
+			source = strings.TrimSuffix(source, "/") + root
+		}
 	}
 	return
 }
@@ -139,14 +143,71 @@ func nativeProof(c connection, cwd string) (map[string]string, string) {
 	return nil, cwd + " is not the router's folder " + share + "/" + rel + " (its check file is not visible here)"
 }
 
-// readMarker: le navadna datoteka do 128 bajtov.
+// readMarker: le navadna datoteka (odprta brez sledenja povezavi, glej openMarker), največ 128 bajtov.
 func readMarker(p string) (string, bool) {
-	st, err := os.Lstat(p)
-	if err != nil || !st.Mode().IsRegular() || st.Size() > 128 {
+	f, err := openMarker(p)
+	if err != nil {
 		return "", false
 	}
-	b, err := os.ReadFile(p)
-	return strings.TrimSpace(string(b)), err == nil
+	defer f.Close()
+	if st, err := f.Stat(); err != nil || !st.Mode().IsRegular() {
+		return "", false
+	}
+	b, err := io.ReadAll(io.LimitReader(f, 129))
+	if err != nil || len(b) > 128 {
+		return "", false
+	}
+	return strings.TrimSpace(string(b)), true
+}
+
+// terminalSafe: izhod minigw run za terminal (kot Native.terminalSafe): le barve SGR (ESC[…m) in \n \r \t \b;
+// brez OSC, DCS, APC, PM, drugih CSI in kontrolnih znakov. Brez stanja med kosi.
+func terminalSafe(b []byte) []byte {
+	out := make([]byte, 0, len(b))
+	for i := 0; i < len(b); {
+		c := b[i]
+		if c != 0x1b {
+			if c >= 0x20 && c != 0x7f || c == '\n' || c == '\r' || c == '\t' || c == '\b' {
+				out = append(out, c)
+			}
+			i++
+			continue
+		}
+		if i+1 >= len(b) {
+			break
+		}
+		switch k := b[i+1]; k {
+		case '[':
+			j := i + 2
+			for j < len(b) && b[j] >= 0x30 && b[j] <= 0x3f {
+				j++
+			}
+			params, inter := b[i+2:j], false
+			for j < len(b) && b[j] >= 0x20 && b[j] <= 0x2f {
+				j, inter = j+1, true
+			}
+			if j >= len(b) || b[j] < 0x40 || b[j] > 0x7e {
+				return out // nedokončano
+			}
+			if b[j] == 'm' && !inter && strings.Trim(string(params), "0123456789;") == "" {
+				out = append(out, b[i:j+1]...)
+			}
+			i = j + 1
+		case ']', 'P', 'X', '^', '_':
+			j := i + 2 // niz do BEL ali ST (ESC \\)
+			for j < len(b) && b[j] != 0x07 && !(b[j] == 0x1b && j+1 < len(b) && b[j+1] == '\\') {
+				j++
+			}
+			if j < len(b) && b[j] == 0x1b {
+				i = j + 2
+			} else {
+				i = j + 1
+			}
+		default:
+			i += 2
+		}
+	}
+	return out
 }
 
 // runCommand: minigw run [--] <ukaz> … v tej mapi na routerju; izhodna koda kot ukaz (255 = povezava prekinjena).
@@ -183,7 +244,22 @@ func runCommand(args []string) int {
 		}
 		fail(clean(r.Error.Message))
 	}
-	return runOutput(resp.Body, os.Stdout, os.Stderr)
+	return runOutput(resp.Body, ttySafe(os.Stdout), ttySafe(os.Stderr))
+}
+
+// ttySafe: terminal dobi le varna zaporedja (terminalSafe); datoteka ali cev izhod nespremenjen.
+func ttySafe(f *os.File) io.Writer {
+	if st, err := f.Stat(); err == nil && st.Mode()&os.ModeCharDevice != 0 {
+		return safeWriter{f}
+	}
+	return f
+}
+
+type safeWriter struct{ w io.Writer }
+
+func (s safeWriter) Write(p []byte) (int, error) {
+	_, err := s.w.Write(terminalSafe(p))
+	return len(p), err
 }
 
 // runOutput: vrstice »o|e <base64>«, »p«, »x <koda>« → izhod ukaza (nespremenjen, barve gradnje) in koda.
