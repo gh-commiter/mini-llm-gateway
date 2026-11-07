@@ -34,8 +34,7 @@ private struct AdminConnection {
         guard st == errSecSuccess, let o = v.flatMap({ try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }),
               let secret = o["secret"] as? String, let port = (o["port"] as? Int).flatMap(UInt16.init(exactly:)),
               let key = (o["key"] as? String).flatMap(Noise.fromBase64url), key.count == 32 else {
-            fail(st == errSecItemNotFound ? "Mini Gateway has not set up the admin API yet: update the app and start it"
-                 : "cannot read Mini Gateway's admin item from the Keychain (OSStatus \(st)): allow minigw when macOS asks")
+            fail(keychainHint(st))
         }
         let a = AdminConnection(port: port, key: key, secret: secret)
         guard a.raw("GET", "/health/live", nil).0 == 200 else {  // rokovanje s ključem aplikacije, brez dokaza
@@ -60,6 +59,36 @@ private struct AdminConnection {
         guard status < 300 else { fail(clean(((o["error"] as? [String: Any])?["message"] as? String) ?? "HTTP \(status)")) }
         return o
     }
+}
+
+/// Jasno sporočilo za napako Keychaina pri vnosu »admin«.
+private func keychainHint(_ st: OSStatus) -> String {
+    let me = userName(getuid())
+    if let owner = appOwner(), owner != getuid() || st == errSecNoSuchKeychain {
+        return "run minigw router as the user who runs Mini Gateway (\(userName(owner))), not as \(me)"
+    }
+    switch st {
+    case errSecNoSuchKeychain: return "run minigw router as the user who runs Mini Gateway, not as \(me) (\(me) has no login keychain)"
+    case errSecItemNotFound: return "start Mini Gateway 0.5.15 or newer once, so it can create the admin item"
+    case errSecAuthFailed, errSecUserCanceled, errSecInteractionNotAllowed: return "allow minigw when macOS asks (Keychain)"
+    default: return "cannot read Mini Gateway's admin item from the Keychain (OSStatus \(st))"
+    }
+}
+
+private func userName(_ uid: uid_t) -> String { getpwuid(uid).flatMap { String(cString: $0.pointee.pw_name) } ?? "uid \(uid)" }
+
+/// Lastnik tekočega procesa MiniGateway (sysctl KERN_PROC_PID: bere tudi procese drugih uporabnikov).
+private func appOwner() -> uid_t? {
+    var pids = [pid_t](repeating: 0, count: 8192)
+    let n = Int(proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size)))
+    for pid in pids.prefix(max(0, n)) where pid > 0 {
+        var info = kinfo_proc(), size = MemoryLayout<kinfo_proc>.stride
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0 else { continue }
+        let name = withUnsafeBytes(of: info.kp_proc.p_comm) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+        if name == "MiniGateway" { return info.kp_eproc.e_ucred.cr_uid }
+    }
+    return nil
 }
 
 /// Ključ s stdin (cev) ali s terminala brez odmeva; nikoli iz argv. Le natisljivi ASCII (gre v glavo HTTP).
