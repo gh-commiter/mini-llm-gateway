@@ -235,17 +235,17 @@ func TestServeRefusesDirectMode(t *testing.T) {
 	s, _ := testServer(t, func(c *serveConfig) { c.Claude = "/bin/sh" })
 	c := startLoopback(t, s)
 	sc := &shareClient{c: c, session: "sid2", root: t.TempDir(), synced: map[string]syncEntry{}, reported: map[string]bool{}}
-	if sc.register() || !strings.Contains(sc.refusal, "--minigw-work=sync only") {
+	if sc.register() || !strings.Contains(sc.refusal, "--minigw-work=sync and worktree") {
 		t.Fatalf("direct mode accepted: %q", sc.refusal)
 	}
 	body := `{"model":"claude-cli-haiku","tools":[{"name":"x"}],"messages":[{"role":"user","content":"go"}]}`
 	st, data := call(c, "POST", "/v1/messages", map[string]string{"x-claude-mini-session": "sid2", "x-claude-mini-share": "1"}, []byte(body), 5*time.Second)
-	if st != 400 || !strings.Contains(string(data), "sync only") {
+	if st != 400 || !strings.Contains(string(data), "sync and worktree") {
 		t.Fatalf("agent without sync: %d %s", st, data)
 	}
 	// Brez mape (ni glave share): sporočilo o deljenju, ne o sync.
 	st, data = call(c, "POST", "/v1/messages", map[string]string{"x-claude-mini-session": "sid3", "x-claude-mini-cwd": "/tmp/x"}, []byte(body), 5*time.Second)
-	if st != 400 || !strings.Contains(string(data), "/tmp/x is not shared") || !strings.Contains(string(data), "minigw share add") || strings.Contains(string(data), "sync only") {
+	if st != 400 || !strings.Contains(string(data), "/tmp/x is not shared") || !strings.Contains(string(data), "minigw share add") || strings.Contains(string(data), "sync and worktree") {
 		t.Fatalf("agent without share: %d %s", st, data)
 	}
 }

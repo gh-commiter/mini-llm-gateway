@@ -6,6 +6,9 @@
   also works with a Windows or Linux gateway, as on the Mac: the agent works in a clone on its own branch, and the branch
   comes back to your repository (fetched fast-forward only, no hooks or filters). Native mode and `minigw run` stay
   Mac-only. Plugin 0.5.9.
+  **Changed behaviour:** `--minigw-work=auto` on a git repository with a Windows or Linux
+  gateway now gives you a branch `minigw/…` instead of changing your files through a synced copy. To keep the old
+  behaviour, run `minigw share add --work=sync` in that folder (or `MINIGW_WORK=sync`).
 - `minigw gw claude --folders … --allow-local-tools=true|false` and `minigw gw autostart on|off` now work on Windows and
   Linux too (the same flags as on the Mac); `--folder` and `--allow-unsandboxed-bash` stay as `minigw serve` extras.
 - The Mac's admin API has what `minigw serve` has: `PATCH /providers/{name}` (rename, on/off, URL, aliases),

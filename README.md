@@ -343,7 +343,7 @@ minigw disconnect --name win
   gateway's models; one that cannot be reached is left out, and `minigw status` shows it.
 - The folder is shared with another gateway only when that gateway gets its first request for an agent model
   (`claude-cli-*`, `claude-codex*`, `claude-grok*`, `claude-copilot*`), in the same work mode
-  (`--minigw-work`). A Windows or Linux gateway needs `--minigw-work=sync` (or `auto`).
+  (`--minigw-work`). A Windows or Linux gateway needs `--minigw-work=sync`, `worktree` or `auto`.
 - Each profile keeps its own address, token and gateway key: Keychain on the Mac, Credential Manager on Windows
   (`minigw:router:<profile>`), on Linux `~/.config/minigw/connections/<profile>.json` (mode 0600). The device key is
   one per client, so every gateway recognises the same device.
@@ -416,8 +416,9 @@ and gives each agent its own clone on a branch `minigw/<agent>-<session>-<n>`; p
   repository → worktree, then sync (never direct read-write: `.git` is not protected there); otherwise sync, then direct.
   A saved per-folder mode (`minigw share add --work=…`) and the flag still win.
 - **On `minigw serve` (Windows, Linux)** worktree works the same way: the gateway's own `git` from PATH (no system or global
-  config, hooks, fsmonitor or submodules), one clone per session and agent (requests of a session run one after another,
-  so there is one branch `minigw/<agent>-<session>-0`). On Linux Codex and Copilot run under bwrap with the clone writable
+  config, hooks, fsmonitor or submodules), one clone per session and agent, so one branch `minigw/<agent>-<session>-0`.
+  Agent requests run one at a time per device and repository: also two sessions of the same device in the same
+  repository wait for each other (sync: one at a time per device and folder). On Linux Codex and Copilot run under bwrap with the clone writable
   and its `.git/config`, `hooks` and `info` read-only; Claude CLI in Claude Code's sandbox; on Windows the usual rule
   ("Allow commands without a sandbox"). The settings for build network (Settings → General → Worktree mode) exist only on
   the Mac. Native mode and `minigw run` stay Mac-only.

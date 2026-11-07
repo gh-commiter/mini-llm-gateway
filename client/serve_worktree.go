@@ -267,11 +267,12 @@ func worktreeHarnessEnv(wt, maven string) []string {
 }
 
 // worktreeNote: navodilo agentu v klonu.
+// Besedilo kot ClaudeCLI.mountNote na Macu, brez stavka o minigw run (ta je le na Macu).
 func worktreeNote(clientCwd, dir, branch string) string {
-	return "The user's git repository " + clientCwd + " (on their computer) is cloned here as " + dir + ", your working directory, " +
-		"on branch " + branch + ". Work and commit there; what you leave uncommitted is committed for you. When you finish, the branch " +
-		"goes back to the user as " + branch + " (their working copy and other branches stay as they are). Map paths under " +
-		clientCwd + " to it."
+	return "The user's folder " + clientCwd + " (on their computer, a git repository) is a clone here at " + dir + ", your working" +
+		" directory, on branch " + branch + ". Map paths under " + clientCwd + " to it. Commit your work on this branch; changes you leave" +
+		" uncommitted are committed for you at the end. The branch goes back to the user's repository; their files are not changed." +
+		" Build output (.build, target, DerivedData) is never committed."
 }
 
 // worktreeClaudeArgs: v peskovniku Claude Code (ne Windows) še pisanje v Maven agentov in branje objektov zrcala; .git

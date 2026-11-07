@@ -160,3 +160,55 @@ func TestWorktreeClaudeArgs(t *testing.T) {
 		}
 	}
 }
+
+// Codex v klonu (Linux: pod bwrap): commit in necommitano pride kot veja; .git/config klona je le za branje (protect).
+func TestServeWorktreeCodexSandbox(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake codex is a shell script")
+	}
+	root := t.TempDir()
+	client := filepath.Join(root, "client")
+	os.MkdirAll(client, 0o755)
+	gitT(t, client, "init", "-q", "-b", "main")
+	writeT(t, filepath.Join(client, "a.txt"), "a\n")
+	gitT(t, client, "add", "-A")
+	gitT(t, client, "commit", "-qm", "first")
+	codex := filepath.Join(root, "codex")
+	writeT(t, codex, `#!/bin/sh
+if [ "$1" = debug ]; then echo '{"models":[]}'; exit 0; fi
+out=""; prev=""
+for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done
+cat > /dev/null
+echo codex > codex.txt; git add codex.txt && git -c user.name=c -c user.email=c@x commit -qm codex
+if echo "[core]" >> "$GIT_DIR/config" 2>/dev/null; then echo written > cfgwrite.txt; else echo denied > cfgwrite.txt; fi
+echo '{"type":"thread.started","thread_id":"t1"}'
+echo "done" > "$out"
+`)
+	os.Chmod(codex, 0o755)
+	s, _ := testServer(t, func(c *serveConfig) {
+		c.AllowUnsandboxedBash = runtime.GOOS != "linux" || bwrapReady(t.TempDir()) == "" // brez bwrap le z izrecnim dovoljenjem
+		t.Setenv("CODEX_HOME", t.TempDir())
+		c.Codex = agentCLI{Enabled: true, Executable: codex}
+	})
+	c := startLoopback(t, s)
+	sc := &shareClient{c: c, session: "sidx", root: client, worktree: true, top: filepath.ToSlash(client), synced: map[string]syncEntry{}, reported: map[string]bool{}}
+	if !sc.register() {
+		t.Fatal("register failed: " + sc.refusal)
+	}
+	sc.start(2)
+	defer sc.unregister()
+	h := map[string]string{"x-claude-mini-session": "sidx", "x-claude-mini-cwd": client, "content-type": "application/json"}
+	body := `{"model":"claude-codex","tools":[{"name":"x"}],"messages":[{"role":"user","content":"go"}]}`
+	if st, data := call(c, "POST", "/v1/messages", h, []byte(body), 60*time.Second); st != 200 || !strings.Contains(string(data), "done") {
+		t.Fatalf("codex: %d %s", st, data)
+	}
+	branch := "minigw/codex-" + sha256Hex([]byte("sidx"))[:8] + "-0"
+	if gitT(t, client, "show", branch+":codex.txt") != "codex" {
+		t.Fatal("codex commit not on the branch")
+	}
+	got := gitT(t, client, "show", branch+":cfgwrite.txt")
+	if runtime.GOOS == "linux" && bwrapReady(t.TempDir()) != "" && got != "denied" {
+		t.Fatalf("the clone's .git/config was writable under bwrap: %s", got)
+	}
+	t.Logf("clone .git/config write: %s", got)
+}

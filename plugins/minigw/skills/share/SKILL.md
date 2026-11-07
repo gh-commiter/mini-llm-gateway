@@ -13,6 +13,6 @@ Project folders are shared automatically, on any drive. System and hidden folder
 - `list`: `"${CLAUDE_PLUGIN_DATA}/bin/minigw" share list`
 - `remove [folder]`: `"${CLAUDE_PLUGIN_DATA}/bin/minigw" share remove [folder]`
 
-The setting is per computer, not per gateway: with several profiles another gateway gets the folder only on its first request for an agent model (`claude-cli-*`, `claude-codex*`, `claude-grok*`, `claude-copilot*`) in that session. A Windows or Linux gateway needs sync: `share add --work=sync [folder]` (or `--work=auto`).
+The setting is per computer, not per gateway: with several profiles another gateway gets the folder only on its first request for an agent model (`claude-cli-*`, `claude-codex*`, `claude-grok*`, `claude-copilot*`) in that session. A Windows or Linux gateway needs sync or worktree: `share add --work=sync|worktree [folder]`, or `--work=auto` (worktree for a git repository, otherwise sync).
 
 minigw refuses a drive root or the home folder itself. Report the result in one line. Sharing applies to the next minigw command.

@@ -76,7 +76,8 @@ const serveHelp = `minigw serve: Mini Gateway, the LLM gateway, on this computer
   minigw gw status|devices|provider|claude|token …              show or change the gateway, live if it runs
   minigw serve allow|deny|devices|provider|status …             the same as minigw gw devices allow|deny, …
 
-Clients use: MINIGW_WORK=sync minigw … (folder mounts are macOS only).
+Clients use: MINIGW_WORK=sync, worktree (a git repository, results as branches) or auto minigw … (folder mounts,
+native mode and minigw run are macOS only).
 Unknown devices are refused; the log prints their ID. Before minigw serve allow, compare the ID with the one on the
 client (it is the device key of the computer that just connected): anyone with the token can try to connect.
 Connections from this computer itself (loopback) skip the device check and encryption: do not forward the port to
@@ -1113,4 +1114,4 @@ func (s *server) route(w http.ResponseWriter, r *req) (int, string) {
 	return writeError(w, r.rid, 404, "Not found: "+r.Method+" "+path), ""
 }
 
-const refusedDirect = "this gateway supports --minigw-work=sync only (no folder mount on Windows or Linux): run minigw with MINIGW_WORK=sync"
+const refusedDirect = "this gateway supports --minigw-work=sync and worktree (no folder mount or native mode on Windows or Linux): run minigw with MINIGW_WORK=sync, worktree or auto"

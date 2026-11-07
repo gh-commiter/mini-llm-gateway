@@ -567,9 +567,13 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 	if r.h("x-claude-mini-session") == "" {
 		return writeError(w, r.rid, 400, k.prefix+" needs a synced folder: run minigw with MINIGW_WORK=sync in a project folder")
 	}
-	if s.hub.isWorktree(r.h("x-claude-mini-session")) && (k.name == "grok" || !ac.canWrite(k)) { // kot na Macu
-		return writeError(w, r.rid, 400, k.prefix+" cannot work in worktree mode"+map[bool]string{true: " yet", false: " without writing (turn on writing in its settings)"}[k.name == "grok"]+
-			": use --minigw-work=sync for it")
+	if s.hub.isWorktree(r.h("x-claude-mini-session")) && (k.name == "grok" || !ac.canWrite(k)) { // besedila kot na Macu
+		msg := "Grok is not supported in worktree mode yet; use sync (MINIGW_WORK=sync)"
+		if k.name != "grok" {
+			pane := map[string]string{"codex": "Codex", "copilot": "Copilot CLI"}[k.name]
+			msg = strings.ToUpper(k.name[:1]) + k.name[1:] + " may not write (settings page → " + pane + "), so worktree mode is not possible; use sync"
+		}
+		return writeError(w, r.rid, 400, msg)
 	}
 	dir, note, readOnly, st := s.agentFolder(w, r, k.bin, k.name)
 	if st != 0 {

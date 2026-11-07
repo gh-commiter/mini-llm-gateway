@@ -84,7 +84,6 @@ printf '[core]\n\tfsmonitor = touch $MARKS/gw-fsmonitor\n[filter "evil"]\n\tclea
 mkdir -p "\$GIT_DIR/hooks"; print -l '#!/bin/sh' 'touch $MARKS/gw-hook' > "\$GIT_DIR/hooks/post-commit"; chmod +x "\$GIT_DIR/hooks/post-commit"
 print x > left2.txt
 EOF
-sed -i '' 's/^print /echo /' $T/agent1.sh
 E2E_N=1 run
 [[ -z $(ls $MARKS) ]] || fail "c: something ran: $(ls $MARKS)"
 same || fail "c: the user's repository changed"

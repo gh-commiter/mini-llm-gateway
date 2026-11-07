@@ -210,3 +210,6 @@ func processSID(pid uint32) (string, error) {
 	}
 	return u.User.Sid.String()
 }
+
+// bwrapReady: bwrap je le na Linuxu.
+func bwrapReady(string) string { return "" }
