@@ -83,9 +83,10 @@ func (s *server) startRun(r *req, kind, dir string, readOnly bool, wt, maven, ob
 	} else {
 		run.chain = []string{kind}
 	}
+	peer := r.conn.peer // naslov izvirne zahteve: ista pravila naprave in loopback kot za klicatelja
 	run.srv = &http.Server{Handler: s.runHandler(run), ReadHeaderTimeout: 30 * time.Second, MaxHeaderBytes: 64 << 10,
 		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
-			return context.WithValue(ctx, connKey{}, &serveConn{Conn: c, br: bufio.NewReader(c), peer: "127.0.0.1", device: run.device})
+			return context.WithValue(ctx, connKey{}, &serveConn{Conn: c, br: bufio.NewReader(c), peer: peer, device: run.device})
 		}}
 	go run.srv.Serve(ln)
 	return run, []string{"MINIGW_AGENT_URL=" + run.url, "MINIGW_AGENT_TOKEN=" + run.token}

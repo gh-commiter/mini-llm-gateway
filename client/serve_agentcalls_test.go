@@ -19,7 +19,7 @@ func TestAgentRunListener(t *testing.T) {
 	parent := httptest.NewRequest("POST", "/v1/messages", nil)
 	parent.Header.Set("X-Claude-Mini-Session", "sid1")
 	parent.Header.Set("X-Claude-Mini-Cwd", "/client/dir")
-	r := &req{Request: parent, conn: &serveConn{device: dev}}
+	r := &req{Request: parent, conn: &serveConn{device: dev, peer: "10.0.0.9"}}
 	run, env := s.startRun(r, "claude", "/copy", false, "", "", "")
 	if run == nil || len(env) != 2 || !strings.HasPrefix(env[0], "MINIGW_AGENT_URL=http://127.0.0.1:") || env[1] != "MINIGW_AGENT_TOKEN="+run.token {
 		t.Fatalf("env: %v", env)
@@ -47,6 +47,12 @@ func TestAgentRunListener(t *testing.T) {
 			t.Fatalf("%s: %d", p, st)
 		}
 	}
+	if st := get("/v1/models", run.token); st != 403 { // oddaljena naprava, ki je prehod ne pozna: kot izvirna zahteva
+		t.Fatalf("models for an unknown remote device: %d", st)
+	}
+	s.mu.Lock()
+	s.cfg.Devices = []serveDevice{*dev}
+	s.mu.Unlock()
 	if st := get("/v1/models", run.token); st != 200 {
 		t.Fatalf("models: %d", st)
 	}
