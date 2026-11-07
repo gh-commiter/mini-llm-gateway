@@ -117,10 +117,10 @@ private func newID() -> String { Noise.base64url(Curve25519.Signing.PrivateKey()
     let log = DeviceLog()
     let calls = Counter()
     log.onChange = { calls.add() }
-    for i in 0..<25 { log.addPending(id: "id\(i)", name: "n\(i)", address: "a", client: i == 0 ? "macOS · minigw 0.5.18" : "") }
+    for i in 0..<25 { log.addPending(id: "id\(i)", name: "n\(i)", address: "a", client: i == 0 ? "macOS, minigw 0.5.18" : "") }
     #expect(log.pending.count == DeviceLog.limit && log.pending.first?.id == "id0" && !log.pending.contains { $0.id == "id24" })
     log.addPending(id: "id0", name: "n0", address: "b")
-    #expect(log.pending.first?.address == "b" && log.pending.first?.client == "macOS · minigw 0.5.18")
+    #expect(log.pending.first?.address == "b" && log.pending.first?.client == "macOS, minigw 0.5.18")
     #expect(calls.value <= 2)  // največ enkrat na sekundo (+ zakasnjen klic)
     for _ in 0..<30 where calls.value < 2 { try await Task.sleep(for: .milliseconds(100)) }  // zakasnjen klic (tudi pod obremenitvijo)
     #expect(calls.value == 2, "\(calls.value)")
@@ -143,11 +143,11 @@ final class Counter: @unchecked Sendable {
     #expect(renamed.status == 200 && app.config.devices[0].name == "Uroš Air")
     #expect(await admin(app.router(), "PATCH", "/devices/\(id)", body: #"{"name":"\n"}"#).status == 400)
     #expect(await admin(app.router(), "DELETE", "/devices/Uroš%20Air").status == 404)
-    var q = request("GET", "/v1/models", headers: ["Authorization": "Bearer tok", "x-minigw-client": "Windows · minigw 0.5.18\u{7}"])
+    var q = request("GET", "/v1/models", headers: ["Authorization": "Bearer tok", "x-minigw-client": "Windows, minigw 0.5.18\u{7}"])
     q.peer = "192.0.2.11"
     q.device = Noise.Device(id: waiting, name: "u@PC")
     await app.router().handle(q, writer: FakeWriter())
-    #expect(await admin(app.router(), "GET", "/devices").text.contains(#""client":"Windows · minigw 0.5.18""#))
+    #expect(await admin(app.router(), "GET", "/devices").text.contains(#""client":"Windows, minigw 0.5.18""#))
     let allowed = await admin(app.router(), "POST", "/devices", body: #"{"id":"\#(waiting)","name":"Office PC"}"#)
     #expect(allowed.status == 200 && app.config.devices.contains { $0.id == waiting && $0.name == "Office PC" })
 }
@@ -158,11 +158,11 @@ final class Counter: @unchecked Sendable {
     var c = RouterConfig()
     c.devices = [DeviceConfig(id: id, name: "PC")]
     let app = FakeApp(c)
-    var q = request("GET", "/v1/models", headers: ["Authorization": "Bearer tok", "x-minigw-client": "Windows · minigw 0.5.18"])
+    var q = request("GET", "/v1/models", headers: ["Authorization": "Bearer tok", "x-minigw-client": "Windows, minigw 0.5.18"])
     q.peer = "192.0.2.12"
     q.device = Noise.Device(id: id, name: "PC")
     await app.router().handle(q, writer: FakeWriter())
-    #expect(await admin(app.router(), "GET", "/devices").text.contains(#""client":"Windows · minigw 0.5.18""#))
+    #expect(await admin(app.router(), "GET", "/devices").text.contains(#""client":"Windows, minigw 0.5.18""#))
     let del = await admin(app.router(), "DELETE", "/gateways/LiteLLM")
     #expect(del.status == 400 && del.text.contains("built in") && app.config.providers.contains { $0.id == "litellm" })
 }
