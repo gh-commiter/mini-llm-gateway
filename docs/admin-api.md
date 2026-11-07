@@ -61,7 +61,8 @@ Device   {"id": string, "name": string, "address"?: string, "time"?: string}
 Model    {"id": string, "model": string, "window"?: number, "enabled": bool}
          id: the ID at the gateway; model: the name for /model (the id, or "claude-" + id when the id contains
          neither "claude" nor "anthropic"); window: context window in tokens, if known.
-Gateway  {"name": string, "baseURL": string, "insecure": bool, "models": [string] | null, "hasKey": bool, "ready": bool}
+Gateway  {"name": string, "baseURL": string, "insecure": bool, "models": [string] | null, "hasKey": bool, "ready": bool,
+          "enabled": bool, "aliases": string}
          models: enabled gateway IDs; null = all discovered, now and later. ready: model list loaded.
 Claude   {"path": string, "found": bool, "tools": string, "allowUnsandboxedBash": bool, "folder": string,
           "exe"?: string, "version"?: string}
@@ -82,6 +83,7 @@ General  {"port": number, "address": string, "connect": string, "restartRequired
 | `DELETE /devices/{id or name}` | – | `{"device": Device}`; a pending device is only removed from pending (`"pending": true`); a name must be unique |
 | `GET /gateways` | – | `{"gateways": [Gateway]}` |
 | `POST /gateways` | `{"name", "baseURL", "key", "insecure"}` | `{"gateway": Gateway, "keyStore": string, "models": [Model]}` |
+| `PATCH /gateways/{name}` | any of `{"name", "enabled", "baseURL", "insecure", "aliases"}` | `{"gateway": Gateway}`; a new name moves the key; the key stays for a new URL |
 | `DELETE /gateways/{name}` | – | `{"name"}`; also deletes the key |
 | `GET /gateways/{name}/models?filter=text` | – | `{"models": [Model]}`; filter: part of `model`, any case |
 | `POST /gateways/{name}/models` | `{"all"?: bool, "enable"?: [id or model], "disable"?: [id or model]}` | `{"models": [Model], "changed": [Model]}` |

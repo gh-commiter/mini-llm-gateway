@@ -67,6 +67,11 @@ button.btn.primary { background: var(--accent); color: #fff; }
 button.btn:disabled { opacity: .5; cursor: default; }
 h3 button.btn { font-weight: 400; }
 input.wide { width: 100%; max-width: none; }
+textarea { font: inherit; width: 100%; padding: 6px 8px; border: 1px solid var(--inputline); border-radius: 6px; background: var(--input); color: var(--text); resize: vertical; }
+details.advanced { margin-top: 18px; }
+details.advanced summary { font-weight: 600; cursor: pointer; margin: 0 4px 6px; }
+button.btn.icon { min-width: 28px; padding: 3px 8px; }
+.hbar { display: flex; gap: 8px; align-items: center; }
 select { font: inherit; padding: 3px 8px; border: 1px solid var(--inputline); border-radius: 6px; background: var(--input); color: var(--text); }
 a.link { color: var(--accent); text-decoration: none; }
 a.btn { text-decoration: none; text-align: center; display: inline-block; }
@@ -163,7 +168,13 @@ const S = {
   waiting: ["Waiting for approval", "Čakajo na odobritev"], allowed: ["Allowed devices", "Dovoljene naprave"], none: ["None", "Nobena"],
   noWaiting: ["No device is waiting.", "Nobena naprava ne čaka."], allow: ["Allow", "Dovoli"], deny: ["Deny", "Zavrni"], remove: ["Remove", "Odstrani"],
   removeAsk: ["Remove %s?", "Odstranim %s?"], addGateway: ["Add Gateway", "Dodaj prehod"], search: ["Search", "Iskanje"],
-  otherGateway: ["Other Anthropic-compatible gateway", "Drug Anthropic-združljiv prehod"], gateway: ["Gateway", "Prehod"], gatewayDesc: ["Models of an Anthropic-compatible gateway, passed through to Claude Code.", "Modeli Anthropic-združljivega prehoda, posredovani Claude Code."], name: ["Name", "Ime"], url: ["Base URL", "Osnovni URL"],
+  otherGateway: ["Other Anthropic-compatible gateway", "Drug Anthropic-združljiv prehod"], gateway: ["Gateway", "Prehod"], keySaved: ["API key (saved; enter to replace)", "Ključ API (shranjen; vpiši za zamenjavo)"],
+  keyStoredShort: ["In the system's secret store; never shown", "V shrambi skrivnosti sistema; nikoli prikazan"],
+  enterKey: ["Enter an API key to enable", "Za vklop vpiši ključ API"], searchModels: ["Search models", "Iskanje modelov"],
+  enableToLoad: ["Enable the provider to load its models", "Za seznam modelov vklopi ponudnika"], refresh: ["Refresh", "Osveži"],
+  aliases: ["Aliases (advanced)", "Aliasi (napredno)"],
+  aliasesHint: ["One per line “alias = upstream ID, context window” (e.g. qwen = qwen/qwen3-coder, 128k). When set, these define the models instead of the table.",
+    "Ena na vrstico »alias = ID pri upstreamu, okno« (npr. qwen = qwen/qwen3-coder, 128k). Če so nastavljeni, določijo modele namesto tabele."], gatewayDesc: ["Models of an Anthropic-compatible gateway, passed through to Claude Code.", "Modeli Anthropic-združljivega prehoda, posredovani Claude Code."], name: ["Name", "Ime"], url: ["Base URL", "Osnovni URL"],
   key: ["API key", "Ključ API"], keyStored: ["Stored in the system's secret store (Credential Manager); never shown.", "V shrambi skrivnosti sistema (Credential Manager); nikoli prikazan."],
   keyNew: ["Type a new key to replace it", "Vpiši nov ključ za zamenjavo"], noKey: ["No key", "Brez ključa"],
   urlNeedsKey: ["Type the API key again to save a new URL.", "Za nov URL znova vpiši ključ API."],
@@ -349,47 +360,59 @@ const pages = {
     const gs = (await api("GET", "/gateways")).gateways;
     const g = gs.find(x => x.name === name);
     if (!g) { current = "general"; return pages.general(); }
-    const n1 = note(t("keyStored")), n2 = note();
+    const enc = encodeURIComponent(name);
+    const n1 = note(t("auto")), n2 = note(), n3 = note(t("aliasesHint"));
+    const patch = body => api("PATCH", "/gateways/" + enc, body);
+    const nameIn = el("input", {type: "text", value: g.name});
+    autosave(nameIn, n1, async v => { const r = await patch({name: v}); show("gateway", r.gateway.name); return r; });
     const url = el("input", {type: "text", value: g.baseURL});
-    const key = el("input", {type: "password", autocomplete: "off", placeholder: g.hasKey ? t("keyNew") : t("noKey")});
-    const saveGw = () => {
-      if (!key.value.trim()) { n1.className = "note"; n1.textContent = t("urlNeedsKey"); return; }
-      save(n1, () => api("POST", "/gateways", {name, baseURL: url.value.trim(), key: key.value.trim(), insecure: url.value.trim().startsWith("http://")}),
-        r => { key.value = ""; return t("saved") + " " + t("enabledOf", r.models.filter(m => m.enabled).length, r.models.length); });
-    };
-    let timer;
-    for (const i of [url, key]) i.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(saveGw, 800); });
+    autosave(url, n1, v => patch({baseURL: v}));
+    const key = el("input", {type: "password", autocomplete: "off", placeholder: g.hasKey ? t("keySaved") : t("key")});
+    autosave(key, n1, v => api("POST", "/gateways", {name, baseURL: url.value.trim(), key: v, insecure: g.insecure}).then(r => { key.value = ""; show("gateway", name); return r; }),
+      () => t("saved"));
+    const aliases = el("textarea", {class: "mono", rows: 4, value: g.aliases, placeholder: "qwen = qwen/qwen3-coder, 128k"});
+    autosave(aliases, n3, v => patch({aliases: v}));
 
-    const filter = el("input", {type: "text", class: "left", placeholder: t("filter")});
-    let all = false, models = [];
-    const list = group(row(el("span", {class: "label sub", textContent: t("loading")})));
+    const search = el("input", {type: "text", class: "left", placeholder: t("searchModels")});
+    let models = [];
+    const status = el("span", {class: "sub", textContent: t(g.enabled ? "loading" : "enableToLoad")});
+    const list = group();
     const render = () => {
-      const f = filter.value.trim().toLowerCase();
-      const shown = models.filter(m => f ? m.model.toLowerCase().includes(f) : (all || m.enabled));
-      const on = models.filter(m => m.enabled).length;
-      list.replaceChildren(
-        row(el("span", {class: "label sub", textContent: t("enabledOf", on, models.length)})),
-        ...shown.map(m => row(labelSub(m.model, m.model === m.id ? null : m.id), value(m.window ? Math.round(m.window / 1000) + "K" : ""),
-          toggle(m.enabled, (v, i) => save(n2, async () => {
-            try { await api("POST", "/gateways/" + encodeURIComponent(name) + "/models", v ? {enable: [m.id]} : {disable: [m.id]}); m.enabled = v; }
-            catch (e) { i.checked = !v; throw e; }
-          })))),
-        !f && !all && models.length > on ? row(el("span", {class: "label sub", textContent: t("hidden", models.length - on)})) : null);
+      const f = search.value.trim().toLowerCase();
+      const hits = models.filter(m => !f || m.id.toLowerCase().includes(f) || m.model.toLowerCase().includes(f));
+      const sorted = [...hits.filter(m => m.enabled), ...hits.filter(m => !m.enabled)];  // vklopljeni najprej (kot na Macu)
+      status.textContent = t("enabledOf", models.filter(m => m.enabled).length, models.length);
+      list.replaceChildren(...sorted.map(m => row(labelSub(m.id, m.model === m.id ? null : "/model " + m.model),
+        value(m.window ? Math.round(m.window / 1000) + "K" : ""),
+        toggle(m.enabled, (v, i) => save(n2, async () => {
+          try { await api("POST", "/gateways/" + enc + "/models", v ? {enable: [m.id]} : {disable: [m.id]}); m.enabled = v; render(); }
+          catch (e) { i.checked = !v; throw e; }
+        })))));
     };
     const load = async () => {
-      try { models = (await api("GET", "/gateways/" + encodeURIComponent(name) + "/models")).models; render(); }
-      catch (e) { list.replaceChildren(row(el("span", {class: "label", textContent: e.message}))); }
+      if (!g.enabled) return;
+      status.textContent = t("loading");
+      try { models = (await api("GET", "/gateways/" + enc + "/models")).models; render(); }
+      catch (e) { status.textContent = "⚠ " + e.message; list.replaceChildren(); }
     };
-    filter.addEventListener("input", render);
-    const bulk = on => save(n2, async () => { await api("POST", "/gateways/" + encodeURIComponent(name) + "/models", {all: on}); await load(); });
+    search.addEventListener("input", render);
+    const bulk = on => save(n2, async () => { await api("POST", "/gateways/" + enc + "/models", {all: on}); await load(); });
     load();
     return [
       card(gwIcon(g)[0], gwIcon(g)[1], name, t("gatewayDesc")),
-      group(row(t("url"), url), row(labelSub(t("key"), g.hasKey ? "••••••••" : t("noKey")), key)), n1,
-      section(t("models"), button(t("enableAll"), () => bulk(true)), button(t("disableAll"), () => bulk(false))),
-      el("div", {class: "filter", style: "margin:0 4px 8px"}, filter,
-        el("label", {class: "sub", style: "display:flex;gap:6px;align-items:center"}, toggle(false, v => { all = v; render(); }), t("showAll"))),
+      group(
+        row(labelSub(t("enabled"), g.hasKey ? null : t("enterKey")), toggle(g.enabled && g.hasKey, v => save(n1, async () => { await patch({enabled: v}); show("gateway", name); }), !g.hasKey)),
+        row(t("name"), nameIn), row(t("url"), url),
+        row(labelSub(t("insecure"), null), toggle(g.insecure, v => save(n1, () => patch({insecure: v})))),
+        row(labelSub(t("key"), t("keyStoredShort")), key)),
+      n1,
+      el("h3", {}, el("span", {textContent: t("models")}), el("div", {class: "hbar"},
+        buttons(button(t("enableAll"), () => bulk(true)), button(t("disableAll"), () => bulk(false))),
+        el("button", {class: "btn icon", textContent: "↻", title: t("refresh"), disabled: !g.enabled, onclick: () => load()}))),
+      el("div", {class: "note", style: "margin:0 4px 6px"}, status),
+      el("div", {class: "filter", style: "margin:0 4px 8px"}, search),
       list, n2,
+      el("details", {class: "advanced"}, el("summary", {textContent: t("aliases")}), group(row(aliases)), n3),
     ];
   },
 

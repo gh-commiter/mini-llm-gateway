@@ -395,3 +395,63 @@ func freePort(t *testing.T) int {
 	defer ln.Close()
 	return ln.Addr().(*net.TCPAddr).Port
 }
+
+// Parnost s prehodi na Macu: aliasi, vklop, preimenovanje (ključ gre zraven), URL brez novega ključa.
+func TestGatewayParityAliasesEnableRename(t *testing.T) {
+	keys := fakeKeys(t)
+	keys["gw"] = gwKey
+	got := make(chan map[string]json.RawMessage, 4)
+	up := fakeUpstream(t, nil, got, nil)
+	s, _, base := liveServer(t, func(c *serveConfig) {
+		c.Gateways = []serveGateway{{Name: "gw", BaseURL: up.URL, Insecure: true}}
+	})
+	admin := func(method, path, body string) (int, string) {
+		return adminNoise(t, s, base, s.admin, method, path, body)
+	}
+	models := func() string {
+		_, b := adminReq(t, base, strings.TrimPrefix(base, "http://"), "tok", "GET", "/v1/models", "")
+		return b
+	}
+	if !strings.Contains(models(), `"claude-gpt-y"`) {
+		t.Fatalf("discovered: %s", models())
+	}
+	// Aliasi določijo modele namesto tabele; okno iz alias ali iz odkritih modelov.
+	if st, b := admin("PATCH", adminPrefix+"/gateways/gw", `{"aliases":"# comment\nfast = gpt-y\nanthropic/claude-x, 64k"}`); st != 200 || !strings.Contains(b, `"aliases":"# comment`) {
+		t.Fatalf("aliases: %d %s", st, b)
+	}
+	m := models()
+	if !strings.Contains(m, `"claude-fast"`) || !strings.Contains(m, "gw · gpt-y · 8K") || !strings.Contains(m, "gw · anthropic/claude-x · 64K") || strings.Contains(m, `"claude-other-z"`) {
+		t.Fatalf("alias models: %s", m)
+	}
+	req, _ := http.NewRequest("POST", base+"/v1/messages", strings.NewReader(`{"model":"claude-fast","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("authorization", "Bearer tok")
+	req.Header.Set("anthropic-version", "2023-06-01")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if b := <-got; resp.StatusCode != 429 || string(b["model"]) != `"gpt-y"` { // gpt-y pri lažnem upstreamu vrne 429
+		t.Fatalf("alias routed to %s (%d)", b["model"], resp.StatusCode)
+	}
+	// Izklop: brez modelov; preimenovanje premakne ključ; URL brez ključa.
+	admin("PATCH", adminPrefix+"/gateways/gw", `{"enabled":false,"aliases":""}`)
+	if strings.Contains(models(), "claude-gpt-y") {
+		t.Fatal("disabled gateway listed")
+	}
+	if st, b := admin("PATCH", adminPrefix+"/gateways/gw", `{"enabled":true,"name":"lab"}`); st != 200 || keys["lab"] != gwKey || keys["gw"] != "" {
+		t.Fatalf("rename: %d %s %v", st, b, keys)
+	}
+	if !strings.Contains(models(), "lab · gpt-y") {
+		t.Fatalf("after rename: %s", models())
+	}
+	if st, _ := admin("PATCH", adminPrefix+"/gateways/lab", `{"baseURL":"http://gw.example","insecure":false}`); st != 400 {
+		t.Fatal("http URL without insecure accepted")
+	}
+	if st, _ := admin("PATCH", adminPrefix+"/gateways/lab", `{"name":"bad name!"}`); st != 400 {
+		t.Fatal("bad name accepted")
+	}
+	if p := aliasPairs("a = b, 1.5M\n\nc"); len(p) != 2 || p[0] != (aliasPair{"a", "b", 1500000}) || p[1] != (aliasPair{"c", "c", 0}) {
+		t.Fatalf("aliasPairs: %+v", p)
+	}
+}

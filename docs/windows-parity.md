@@ -14,6 +14,12 @@ Every control of the Mac app's Settings window (Sources/MiniGateway/Settings.swi
 | General · Token: Show, Copy Token, New Token | same | `GET general.connect`, `POST general/token` | A new token also ends settings page sessions. |
 | General · Scratch folder: Choose…, Default, Show in Finder | Scratch folder: path field, Default | `general.scratch` | A browser cannot pick folders or open Explorer; a new folder applies to new sessions, existing copies are not moved. |
 | General · About: Version (build), License | same | `status.version`, `status.build` | |
+| Gateway · Enabled (off without a key) | same | `PATCH gateways/{name} {enabled}` | |
+| Gateway · Name, Base URL | same | `PATCH gateways/{name} {name, baseURL, insecure}` | Renaming moves the key; `http` only to localhost or a private IP with "Allow http". |
+| Gateway · API key (saved; enter to replace) | same | `POST gateways {name, baseURL, key, insecure}` | Key in Credential Manager / Secret Service, never shown. |
+| Gateway · Models: search, N of M enabled, Enable All, Disable All, refresh, a switch per model, context size | same | `GET/POST gateways/{name}/models` | Enable All = all, also future models. |
+| Gateway · Aliases (advanced) | same | `PATCH gateways/{name} {aliases}` | `alias = upstream ID, window` per line; when set they define the models. |
+| Sidebar + / − for gateways | same | `POST gateways`, `DELETE gateways/{name}` | |
 | Siri AI · Devices (Siri per device) | Devices: allowed, waiting (Allow/Deny), Remove, Allow any device | `devices`, `general.allowAnyDevice` | minigw serve has an allow-list; the Mac admits every device with the token. |
 | Claude CLI · Enabled | same | `agents/claude.enabled` | |
 | Claude CLI · Executable, Choose…, detected path and version | Executable, Find, detected path and version | `agents/claude.path`, `.exe`, `.version` | A browser cannot pick files: the path is typed, Find auto-detects. |

@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -28,6 +29,48 @@ type serveGateway struct {
 	BaseURL  string   `json:"baseURL"`            // brez /v1
 	Models   []string `json:"models"`             // null = vsi odkriti; seznam = le ti (ID pri upstreamu)
 	Insecure bool     `json:"insecure,omitempty"` // http do localhost ali zasebnega IP (gateway add --insecure)
+	Disabled bool     `json:"disabled,omitempty"` // izklopljen v nastavitvah (privzeto vklopljen)
+	Aliases  string   `json:"aliases,omitempty"`  // vrstice »alias = upstream ID, okno«; določijo modele namesto tabele (kot na Macu)
+}
+
+type aliasPair struct {
+	alias, upstream string
+	window          int
+}
+
+// aliasPairs: »alias = upstream, 128k« ali le »upstream«; prazne vrstice in »#« preskoči (kot ProviderConfig.aliasPairs).
+func aliasPairs(text string) []aliasPair {
+	var out []aliasPair
+	for _, line := range strings.Split(text, "\n") {
+		if line = strings.TrimSpace(line); line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		left, win, _ := strings.Cut(line, ",")
+		alias, up, ok := strings.Cut(left, "=")
+		alias, up = strings.TrimSpace(alias), strings.TrimSpace(up)
+		if !ok || alias == "" || up == "" {
+			alias, up = strings.TrimSpace(left), strings.TrimSpace(left)
+		}
+		out = append(out, aliasPair{alias, up, windowTokens(strings.TrimSpace(win))})
+	}
+	return out
+}
+
+// windowTokens: »128k«, »1M«, »200000« → število tokenov (0 = neznano).
+func windowTokens(s string) int {
+	t := strings.ToLower(s)
+	mul := 1.0
+	switch {
+	case strings.HasSuffix(t, "k"):
+		mul, t = 1e3, strings.TrimSuffix(t, "k")
+	case strings.HasSuffix(t, "m"):
+		mul, t = 1e6, strings.TrimSuffix(t, "m")
+	}
+	f, err := strconv.ParseFloat(t, 64)
+	if err != nil {
+		return 0
+	}
+	return int(f * mul)
 }
 
 func (g serveGateway) enabled(upstream string) bool {
@@ -72,6 +115,45 @@ func publishedID(upstream string) string {
 type gwModel struct {
 	id     string // pri upstreamu
 	window int    // 0 = neznano
+	name   string // alias (ime za /model); prazno = id
+}
+
+func (m gwModel) route() string {
+	if m.name != "" {
+		return m.name
+	}
+	return m.id
+}
+
+// gatewayRoutes: modeli prehoda za /model in usmerjanje: izklopljen prehod nobenega; z aliasi ti (okno iz alias ali
+// odkritih modelov), sicer vklopljeni odkriti modeli.
+func (s *server) gatewayRoutes(g serveGateway) []gwModel {
+	if g.Disabled {
+		return nil
+	}
+	found := s.gatewayModels(g, false)
+	if pairs := aliasPairs(g.Aliases); len(pairs) > 0 {
+		win := map[string]int{}
+		for _, m := range found {
+			win[m.id] = m.window
+		}
+		var out []gwModel
+		for _, p := range pairs {
+			w := p.window
+			if w == 0 {
+				w = win[p.upstream]
+			}
+			out = append(out, gwModel{id: p.upstream, window: w, name: p.alias})
+		}
+		return out
+	}
+	var out []gwModel
+	for _, m := range found {
+		if g.enabled(m.id) {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // gwClients: brez preusmeritev (ključ ne gre drugam), roki za povezavo in glavo odgovora. Za http (--insecure) brez
@@ -147,7 +229,7 @@ func discoverGateway(g serveGateway, key string) ([]gwModel, error) {
 		}
 		w := window(m, "context_length", "max_input_tokens", "context_window")
 		missing = missing || w == 0
-		out = append(out, gwModel{id, w})
+		out = append(out, gwModel{id: id, window: w})
 	}
 	if missing {
 		if info, err := gwFetch(ctx, g, key, "/model/info"); err == nil {
@@ -253,8 +335,8 @@ func (s *server) gatewayRoute(model string, wait bool) (serveGateway, gwModel, b
 			s.loadGateways()
 		}
 		for _, g := range s.conf().Gateways {
-			for _, m := range s.gatewayModels(g, false) {
-				if g.enabled(m.id) && !shadowsCLI(m.id) && (m.id == model || publishedID(m.id) == model) {
+			for _, m := range s.gatewayRoutes(g) {
+				if !shadowsCLI(m.route()) && (m.route() == model || publishedID(m.route()) == model) {
 					return g, m, true
 				}
 			}
@@ -267,7 +349,9 @@ func (s *server) gatewayRoute(model string, wait bool) (serveGateway, gwModel, b
 func (s *server) loadGateways() {
 	var wg sync.WaitGroup
 	for _, g := range s.conf().Gateways {
-		wg.Go(func() { s.gatewayModels(g, true) })
+		if !g.Disabled {
+			wg.Go(func() { s.gatewayModels(g, true) })
+		}
 	}
 	wg.Wait()
 }
@@ -283,9 +367,9 @@ func (s *server) gatewayModelList() []map[string]any {
 	seen := map[string]bool{}
 	s.loadGateways()
 	for _, g := range s.conf().Gateways {
-		for _, m := range s.gatewayModels(g, false) {
-			id := publishedID(m.id)
-			if !g.enabled(m.id) || seen[id] || shadowsCLI(m.id) { // prvi prehod z imenom zmaga
+		for _, m := range s.gatewayRoutes(g) {
+			id := publishedID(m.route())
+			if seen[id] || shadowsCLI(m.route()) { // prvi prehod z imenom zmaga
 				continue
 			}
 			seen[id] = true
@@ -293,7 +377,7 @@ func (s *server) gatewayModelList() []map[string]any {
 			if m.window > 0 {
 				window = fmt.Sprintf(" · %dK", m.window/1000)
 			}
-			data = append(data, map[string]any{"type": "model", "id": id, "display_name": m.id + " · " + g.Name,
+			data = append(data, map[string]any{"type": "model", "id": id, "display_name": m.route() + " · " + g.Name,
 				"description": g.Name + " · " + m.id + window, "created_at": "2026-01-01T00:00:00Z"})
 		}
 	}

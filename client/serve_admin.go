@@ -52,6 +52,8 @@ type apiGateway struct {
 	Models   []string `json:"models"` // null = vsi odkriti
 	HasKey   bool     `json:"hasKey"`
 	Ready    bool     `json:"ready"` // seznam modelov naložen (le pri tekočem routerju)
+	Enabled  bool     `json:"enabled"`
+	Aliases  string   `json:"aliases"`
 }
 
 type apiClaude struct {
@@ -390,6 +392,81 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		}
 		s.gateways.forget(g.Name)
 		return 200, map[string]any{"gateway": s.apiGateway(g), "keyStore": where, "models": apiModels(g, models, "")}
+	case "PATCH gateways/{}": // ime, vklop, URL (ključ ostane), aliasi; kot polja prehoda v nastavitvah na Macu
+		var b struct {
+			Name     *string `json:"name"`
+			Enabled  *bool   `json:"enabled"`
+			BaseURL  *string `json:"baseURL"`
+			Insecure *bool   `json:"insecure"`
+			Aliases  *string `json:"aliases"`
+		}
+		if err := decodeStrict(body, &b); err != nil {
+			return fail(400, err.Error())
+		}
+		g, ok := findGateway(s.conf(), arg)
+		if !ok {
+			return fail(404, "no gateway "+arg)
+		}
+		if b.Insecure != nil {
+			g.Insecure = *b.Insecure
+		}
+		if b.BaseURL != nil || b.Insecure != nil {
+			u := g.BaseURL
+			if b.BaseURL != nil {
+				u = *b.BaseURL
+			}
+			base, err := checkGatewayURL(u, g.Insecure)
+			if err != nil {
+				return fail(400, err.Error())
+			}
+			g.BaseURL = base
+		}
+		if b.Enabled != nil {
+			g.Disabled = !*b.Enabled
+		}
+		if b.Aliases != nil {
+			if len(*b.Aliases) > 64<<10 {
+				return fail(400, "aliases: too long")
+			}
+			g.Aliases = *b.Aliases
+		}
+		if b.Name != nil && *b.Name != arg {
+			if !validGatewayName.MatchString(*b.Name) {
+				return fail(400, "gateway name: letters, digits, . _ - (up to 32)")
+			}
+			if _, taken := findGateway(s.conf(), *b.Name); taken {
+				return fail(400, "a gateway named "+*b.Name+" already exists")
+			}
+			g.Name = *b.Name
+		}
+		if g.Name != arg { // ključ gre pod novo ime
+			key, _ := keyGet(s.cfgDir, arg)
+			if key != "" {
+				if _, err := keySet(s.cfgDir, g.Name, key); err != nil {
+					return fail(500, "cannot move the API key: "+err.Error())
+				}
+			}
+		}
+		if err := s.update(func(c *serveConfig) error {
+			i := slices.IndexFunc(c.Gateways, func(x serveGateway) bool { return x.Name == arg })
+			if i < 0 {
+				return errors.New("no gateway " + arg)
+			}
+			g.Models = slices.Clone(c.Gateways[i].Models)
+			c.Gateways[i] = g
+			return nil
+		}); err != nil {
+			if g.Name != arg {
+				keyDel(s.cfgDir, g.Name)
+			}
+			return fail(500, err.Error())
+		}
+		if g.Name != arg {
+			keyDel(s.cfgDir, arg)
+		}
+		s.gateways.forget(arg)
+		s.gateways.forget(g.Name)
+		return 200, map[string]any{"gateway": s.apiGateway(g)}
 	case "DELETE gateways/{}":
 		err := s.update(func(c *serveConfig) error {
 			i := slices.IndexFunc(c.Gateways, func(x serveGateway) bool { return x.Name == arg })
@@ -416,6 +493,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			return fail(502, err.Error())
 		}
 		if method == "GET" {
+			s.gateways.forget(g.Name) // osvežitev (gumb ↻): router znova naloži seznam
 			return 200, map[string]any{"models": apiModels(g, models, u.Query().Get("filter"))}
 		}
 		var b struct {
@@ -771,7 +849,8 @@ func claudeVersion(exe []string) string {
 
 func (s *server) apiGateway(g serveGateway) apiGateway {
 	key, _ := keyGet(s.cfgDir, g.Name)
-	return apiGateway{Name: g.Name, BaseURL: g.BaseURL, Insecure: g.Insecure, Models: g.Models, HasKey: key != "", Ready: s.gateways.ready(g.Name)}
+	return apiGateway{Name: g.Name, BaseURL: g.BaseURL, Insecure: g.Insecure, Models: g.Models, HasKey: key != "", Ready: s.gateways.ready(g.Name),
+		Enabled: !g.Disabled, Aliases: g.Aliases}
 }
 
 func (s *server) apiGateways(c serveConfig) []apiGateway {
