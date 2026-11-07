@@ -16,6 +16,7 @@ M="${CLAUDE_PLUGIN_DATA}/bin/minigw"; uname -s
 Profiles: `"$M" status` shows each gateway this client uses; the one at `127.0.0.1` is the gateway on this computer. `install`, `update`, `uninstall` and `gw …` change only that one; for another profile run `/minigw:gw` on its computer.
 
 Rules:
+- Profiles (`--name`, `profiles`, `--minigw-profile`, `<model>@<profile>`) need minigw 0.5.18 or newer: if the first line of `"$M" --version` is older, tell the user to run `/minigw:gw update` and do not use them (an older minigw passes them to claude).
 - Never put an API key in a command line. Never print the gateway token. `serve init` and `gw token` print it in the connect line: send their output to `/dev/null`, unless the user asked for the connect line.
 - Never update on your own. An update restarts the gateway and stops the agent requests that run on it.
 - Report what happened in a few lines: running or not, version, starts at boot / at sign-in / not on its own.

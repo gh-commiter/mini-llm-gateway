@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -27,7 +28,7 @@ type muxTarget struct {
 	// share: registrira mapo pri tem prehodu ob prvi zahtevi zanj (nil = privzeti profil, ki jo registrira main).
 	share  func() bool
 	once   sync.Once
-	shared bool
+	shared atomic.Bool
 }
 
 type gatewayMux struct {
@@ -48,14 +49,14 @@ func newGatewayMux(targets []*muxTarget) *gatewayMux {
 				pr.Out.Header.Del("X-Api-Key")
 				if !first { // privzeti dobi glavo iz ANTHROPIC_CUSTOM_HEADERS; drugi le, če je mapa pri njem registrirana
 					pr.Out.Header.Del("X-Claude-Mini-Share")
-					if t.shared {
+					if t.shared.Load() {
 						pr.Out.Header.Set("X-Claude-Mini-Share", "1")
 					}
 				}
 			},
 			FlushInterval: -1, // SSE sproti
 			ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-				muxError(w, 502, "gateway "+t.name+" is not reachable: "+err.Error())
+				muxError(w, 502, "gateway "+t.name+" is not reachable (minigw status)")
 			},
 		}
 	}
@@ -106,7 +107,7 @@ func (m *gatewayMux) authorized(r *http.Request) bool {
 
 func (m *gatewayMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !m.authorized(r) {
-		muxError(w, 401, "invalid token for the local minigw gateway router")
+		muxError(w, 401, "invalid token for minigw's local proxy")
 		return
 	}
 	if r.Method == "GET" && r.URL.Path == "/v1/models" {
@@ -120,7 +121,7 @@ func (m *gatewayMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			muxError(w, 413, "request body too large")
 			return
 		}
-		nb, name := routeBody(body, m.names())
+		nb, name, model := routeBody(body, m.names())
 		for _, x := range m.targets {
 			if x.name == name {
 				t, body = x, nb
@@ -128,30 +129,40 @@ func (m *gatewayMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		r.Body, r.ContentLength = io.NopCloser(bytes.NewReader(body)), int64(len(body))
 		r.Header.Del("Content-Length")
-		if t.share != nil {
-			t.once.Do(func() { t.shared = t.share() })
+		if t.share != nil && isAgentModel(model) { // mapa le ob prvi zahtevi za model agenta (ne npr. haiku za naslov)
+			t.once.Do(func() { t.shared.Store(t.share()) })
 		}
 	}
 	t.proxy.ServeHTTP(w, r)
 }
 
-// routeBody: model s pripono profila → telo brez pripone in ime profila; sicer telo, kot je, in "".
-func routeBody(body []byte, names []string) ([]byte, string) {
+// isAgentModel: modeli agentov, ki delajo v mapi odjemalca (claude-cli-*, claude-codex*, claude-grok*, claude-copilot*).
+func isAgentModel(m string) bool {
+	for _, p := range []string{"claude-cli-", "claude-codex", "claude-grok", "claude-copilot"} {
+		if strings.HasPrefix(m, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// routeBody: model s pripono profila → telo brez pripone, ime profila in model brez pripone; sicer telo, kot je, "".
+func routeBody(body []byte, names []string) ([]byte, string, string) {
 	var m map[string]json.RawMessage
 	var model string
 	if json.Unmarshal(body, &m) != nil || json.Unmarshal(m["model"], &model) != nil {
-		return body, ""
+		return body, "", ""
 	}
 	bare, name := splitModel(model, names)
 	if name == "" {
-		return body, ""
+		return body, "", model
 	}
 	m["model"], _ = json.Marshal(bare)
 	nb, err := json.Marshal(m)
 	if err != nil {
-		return body, ""
+		return body, "", model
 	}
-	return nb, name
+	return nb, name, bare
 }
 
 // models: seznami vseh prehodov hkrati; nedosegljiv izpade (minigw status ga pokaže).

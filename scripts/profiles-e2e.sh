@@ -9,7 +9,8 @@
 emulate -L zsh; set -eu
 cd ${0:A:h}/..
 T=${$(mktemp -d):A}; SPID=""
-trap '[[ -n $SPID ]] && kill $SPID 2>/dev/null; pbcopy </dev/null; rm -rf $T' EXIT
+S2PID=""
+trap '[[ -n $SPID ]] && kill $SPID 2>/dev/null; [[ -n $S2PID ]] && kill $S2PID 2>/dev/null; pbcopy </dev/null; rm -rf $T' EXIT
 fail() { print -u2 "FAIL: $*"; exit 1 }
 (cd client && go build -o $T/minigw .)
 M=$T/minigw; PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1])')
@@ -24,19 +25,31 @@ SPID=$!
 for i in {1..50}; do curl -s -o /dev/null http://127.0.0.1:$PORT/health/live && break; sleep 0.2; done
 kill -0 $SPID 2>/dev/null || fail "serve did not start: $(<$T/serve.log)"
 
-# default: aplikacija (Copy Token v meniju; odložišče se izprazni)
-osascript -e 'tell application "System Events" to tell process "Mini Gateway"' \
-  -e 'click menu bar item 1 of menu bar 2' -e 'delay 0.4' \
-  -e 'click menu item "Copy Token" of menu 1 of menu bar item 1 of menu bar 2' -e 'end tell' >/dev/null
-sleep 0.5
-pbpaste | gw connect 127.0.0.1 --token - > $T/c1.txt || fail "connect app: $(<$T/c1.txt)"
-pbcopy </dev/null
-[[ $(<$T/c1.txt) == "Connected to http://127.0.0.1:8765" ]] || fail "first connect output changed: $(<$T/c1.txt)"
+# default: aplikacija (Copy Token v meniju; odložišče se izprazni). Brez menija (aplikacija ni dostopna prek
+# Accessibility) drug lokalni minigw serve na 127.0.0.1 s ključem (L3: tudi lokalno šifrirano).
+DEFURL=http://127.0.0.1:8765
+if osascript -e 'tell application "System Events" to tell (first process whose bundle identifier is "dev.trojar.minigateway")' \
+     -e 'click menu bar item 1 of menu bar 2' -e 'delay 0.4' \
+     -e 'click menu item "Copy Token" of menu 1 of menu bar item 1 of menu bar 2' -e 'end tell' >/dev/null 2>&1; then
+  sleep 0.5
+  pbpaste | gw connect 127.0.0.1 --token - > $T/c1.txt || fail "connect app: $(<$T/c1.txt)"
+  pbcopy </dev/null
+else
+  print "(the app's menu is not reachable through Accessibility: a second minigw serve is the default gateway)"
+  P2=$(python3 -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1])')
+  "$M" serve init --config $T/serve2/serve.json --port $P2 > $T/init2.txt
+  "$M" serve --config $T/serve2/serve.json > $T/serve2.log 2>&1 &
+  S2PID=$!
+  for i in {1..50}; do curl -s -o /dev/null http://127.0.0.1:$P2/health/live && break; sleep 0.2; done
+  grep -o "\-\-token '[^']*'" $T/init2.txt | cut -d"'" -f2 | gw connect 127.0.0.1:$P2 --token - > $T/c1.txt || fail "connect serve2: $(<$T/c1.txt)"
+  DEFURL=http://127.0.0.1:$P2
+fi
+[[ $(<$T/c1.txt) == "Connected to $DEFURL (encrypted)" ]] || fail "first connect output changed: $(<$T/c1.txt)"
 
 # serve: šifrirano (ime ni 127.0.0.1/localhost, zato Noise); po zanki naprava ne čaka na odobritev
 print -r -- $TOKEN | gw connect localhost.:$PORT --name serve --token - > $T/c3.txt 2>&1 || fail "connect serve: $(<$T/c3.txt)"
 grep -q "(encrypted) as profile serve" $T/c3.txt || fail "connect serve: $(<$T/c3.txt)"
-[[ $(gw profiles) == $'* default  http://127.0.0.1:8765\n  serve  http://localhost.:'$PORT ]] || fail "profiles: $(gw profiles)"
+[[ $(gw profiles) == "* default  $DEFURL"$'\n'"  serve  http://localhost.:$PORT" ]] || fail "profiles: $(gw profiles)"
 # en ključ naprave za oba profila
 CFG="$H/Library/Application Support/minigw"
 [[ $(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["device"]==json.load(open(sys.argv[2]))["device"])' $CFG/connection.json $CFG/connections/serve.json) == True ]] || fail "device keys differ"

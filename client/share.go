@@ -175,6 +175,9 @@ func (s *shareClient) handle(job davJob, k string) davResponse {
 const maxReply = 80 << 20
 
 // call: poljubna zahteva do routerja (prek lokalnega proxyja); 0 = ni povezave.
+// noRedirect (L2): zahteva z žetonom prehoda nikoli ne sledi preusmeritvi (npr. na proxy drugega profila na 127.0.0.1).
+func noRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
 func call(c connection, method, path string, headers map[string]string, body []byte, timeout time.Duration) (int, []byte) {
 	req, err := http.NewRequest(method, c.URL+path, bytes.NewReader(body))
 	if err != nil {
@@ -184,7 +187,7 @@ func call(c connection, method, path string, headers map[string]string, body []b
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
-	resp, err := (&http.Client{Timeout: timeout}).Do(req)
+	resp, err := (&http.Client{Timeout: timeout, CheckRedirect: noRedirect}).Do(req)
 	if err != nil {
 		return 0, nil
 	}

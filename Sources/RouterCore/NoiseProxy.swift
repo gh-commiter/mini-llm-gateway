@@ -39,7 +39,7 @@ public final class NoiseProxy: @unchecked Sendable {
         let ready = DispatchSemaphore(value: 0)
         l.stateUpdateHandler = { state in
             switch state {
-            case .ready, .failed, .cancelled: ready.signal()
+            case .ready, .failed, .waiting, .cancelled: ready.signal()  // I5: .waiting = napaka, ne čakanje
             default: break
             }
         }

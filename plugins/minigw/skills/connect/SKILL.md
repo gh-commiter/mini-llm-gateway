@@ -5,6 +5,8 @@ argument-hint: "[--name <profile>] <gateway[:port]> <token from Mini Gateway →
 allowed-tools: Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw *)
 ---
 
+Profiles (`--name`, `profiles`, `--minigw-profile`, `<model>@<profile>`) need minigw 0.5.18 or newer: if the first line of `"${CLAUDE_PLUGIN_DATA}/bin/minigw" --version` is older, tell the user to run `/minigw:gw update` and do not use them (an older minigw passes them to claude).
+
 Run, with the address and the full token string on the line between the markers (`--token -` reads it from stdin, so it
 never appears in the process list):
 
