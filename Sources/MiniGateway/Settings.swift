@@ -176,9 +176,12 @@ struct SettingsView: View {
         .onAppear {
             if !loaded { draft = state.config; loaded = true }
         }
-        // Nove naprave doda aplikacija sama (ob prvi povezavi): prenesi jih v osnutek, da jih uveljavitev ne izbriše.
-        .onChange(of: state.config.devices) { _, devices in
-            draft.devices += devices.filter { d in !draft.devices.contains { $0.id == d.id } }
+        // Spremembe od drugod (minigw router, nova naprava): brez neshranjenih sprememb okno prevzame nastavitve;
+        // sicer le nove naprave, da uveljavitev osnutka ne izbriše naprave in ne zavrže tipkanja.
+        .onChange(of: state.config) { old, new in
+            guard loaded else { return }
+            if draft == old { draft = new; return }
+            draft.devices += new.devices.filter { d in !draft.devices.contains { $0.id == d.id } }
         }
         // Samodejna uveljavitev: 0,8 s po zadnji spremembi.
         .task(id: draft) {

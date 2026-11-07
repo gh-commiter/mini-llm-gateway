@@ -334,6 +334,14 @@ Settings of the menu bar app on the router Mac (**Settings…**, laid out like S
 Changes apply immediately. Keys and the access token are stored in the Keychain, settings in
 `~/Library/Preferences/dev.trojar.minigateway.plist`.
 
+**From the command line.** `minigw router status|devices|gateway|claude|token` changes the same settings on this
+Mac, with the same commands as on Windows and Linux (`minigw router help`), for example
+`minigw router gateway add Lab https://gw.example` (the key comes from stdin or a hidden prompt) or
+`minigw router gateway models OpenRouter --enable anthropic/claude-sonnet-4.5`. The app must be running; the
+Settings window shows the change at once. The first time, macOS asks whether `minigw` may use the app's Keychain
+item (the admin secret); `minigw` talks to the app only after the app proves its router key. The API is in
+[docs/admin-api.md](docs/admin-api.md).
+
 ## 6. Security notes
 
 - Every request needs the router's token; the server listens only on `127.0.0.1` unless you change it.

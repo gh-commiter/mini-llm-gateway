@@ -1,7 +1,7 @@
 # Mini Gateway admin API (v1)
 
-One API to configure a router on its own computer. The Go router (`minigw serve`) implements it; the Mac app will
-implement the same API. `minigw router …`, the Windows tray and the settings page use it. Changes apply at once,
+One API to configure a router on its own computer. The Go router (`minigw serve`) and the Mac app implement it;
+[Mac differences](#mac-app) are listed at the end. `minigw router …`, the Windows tray and the settings page use it. Changes apply at once,
 except where a response says `"restartRequired": true`.
 
 ## Access
@@ -13,7 +13,8 @@ except where a response says `"restartRequired": true`.
   in on). Anything else gets `403`. This blocks DNS rebinding from a web page.
 - **Admin secret:** `Authorization: Bearer <secret>`, compared in constant time. The secret is 32 random bytes,
   base64url without padding (43 characters), in the file `admin.secret` (mode 0600) in the router's config folder
-  (the folder agents may not read). The router creates it on first start. Missing or wrong: `401`. The router's
+  (the folder agents may not read; the Mac app keeps it in its Keychain instead, see [Mac app](#mac-app)). The
+  router creates it on first start. Missing or wrong: `401`. The router's
   client token is not the admin secret.
 - **Settings page session** (instead of the secret): `GET /minigw/settings/login?t=<one-time token>` (valid 60 s,
   once) sets the cookie `minigw_settings` (HttpOnly, SameSite=Strict, Path=/minigw/) and redirects to
@@ -92,5 +93,43 @@ Notes:
 - `POST /gateways/{name}/models`: `all` first (true = all, false = none), then `enable`, then `disable`.
 - `PATCH /agents/claude`: the router checks the path, that the folder exists and is not near the config folder,
   and that Bash on Windows has `allowUnsandboxedBash`.
-- Agents (Codex, Grok, Copilot) get their own `agents/{name}` resource when a router supports them; a router
-  answers `404` for agents it does not have.
+- Agents other than Claude get their own `agents/{name}` resource when a router has them (the Mac: `codex`,
+  `grok`); a router answers `404` for agents it does not have, and for `siri`.
+
+| Method and path | Body | Response |
+|---|---|---|
+| `GET /agents/codex`, `PATCH` | any of `{"enabled", "path", "write", "network", "models"}` | `{"enabled", "path", "found", "write", "network", "models": [string] \| null}` |
+| `GET /agents/grok`, `PATCH` | any of `{"enabled", "path", "write", "models"}` | `{"enabled", "path", "found", "write", "models"}` |
+| `GET /siri`, `PATCH` | any of `{"enabled", "timeout", "allow": [id], "deny": [id]}` | `{"enabled", "timeout", "devices": [{"id", "name", "siri"}]}` |
+
+`write`: the agent's sandbox may write in the session's folder (else read-only); `network`: commands in Codex's
+sandbox may use the network; `models: null` = all the account's models. `allow`/`deny` switch Siri for known
+devices (Siri uses this Mac's personal data).
+
+## Mac app
+
+The Mac app keeps its settings in its preferences and Keychain; the Settings window shows API changes at once.
+
+- **Admin secret:** in the app's Keychain (account `admin-secret`), not in a file: Codex and Grok agents on the
+  Mac may read files anywhere, but not the Keychain. `minigw router` reads it with the user's consent (macOS asks
+  once). The app writes `~/Library/Application Support/Mini Gateway/router.json` with the port and the router's
+  public key (no secret); `minigw router` uses the key to speak Noise to the app before it reads the secret.
+- **Host header:** checked for plain HTTP only. Over Noise (`minigw router`) there is no browser, and the request
+  comes through minigw's local proxy, so its Host names the proxy's port.
+- **No offline mode:** without the running app, `minigw router` stops with a message (settings live in the app).
+- **Devices:** the Mac accepts every device with the token and adds it to the list itself; the list decides Siri.
+  `GET /devices` returns `"allowAnyDevice": true`, `"pending": []` and a `siri` flag per device. `POST` adds a
+  device; `DELETE` removes it, but it comes back on its next connection (it only loses Siri). To lock a device out,
+  rotate the token.
+- **Gateways:** each has `"enabled"`. `name` is the gateway's name in Settings. `POST` turns the gateway on and
+  applies the same URL rule as Go; gateways added in Settings may still use any `http` URL. Gateways with manual
+  aliases (Settings → Advanced) list their discovered models here, but route by their aliases.
+- **agents/claude:** `{"enabled", "path", "found", "tools", "folders", "allowLocalTools", "disabledTools"}`.
+  `folders` is the comma-separated list of allowed folders. There is no `folder` or `allowUnsandboxedBash`: with
+  `allowLocalTools`, Bash runs in Claude Code's sandbox.
+- **general:** also `allowedClients` (IP addresses, comma-separated; empty = all) and `allowPlainRemote`. `address`
+  may be `0.0.0.0`, `::` or `127.0.0.1`. A port or address change restarts the listener, so there is no
+  `restartRequired`.
+- **status:** `pending` is always 0; `installed` is Open at Login.
+- **Not on the Mac:** `POST /settings/login` (the app has its own Settings window).
+

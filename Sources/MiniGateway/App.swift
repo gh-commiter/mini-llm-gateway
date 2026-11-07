@@ -4,6 +4,7 @@ import ApplicationServices
 import os
 import RouterCore
 import Security
+import ServiceManagement
 import SwiftUI
 
 // Izvorni jezik vmesnika je angleščina; prevodi so v Resources/Localizable.xcstrings.
@@ -122,6 +123,53 @@ final class AppState: ObservableObject {
     /// Kar kopira »Copy Token«: žeton in javni ključ routerja (minigw z drugega Maca z njim preveri router).
     var connectToken: String { token + (routerKey.map { "#" + Noise.base64url($0.publicKey.rawRepresentation) } ?? "") }
 
+    /// Skrivnost skrbniškega API (docs/admin-api.md) v Keychainu aplikacije, ne v datoteki: agenti Codex in Grok
+    /// berejo datoteke povsod, Keychaina ne. minigw router jo prebere z dovoljenjem uporabnika (vprašanje Keychaina).
+    lazy var adminSecret: String = {
+        if let v = keychain.lookup("admin-secret").value, v.count >= 43 { return v }
+        var b = [UInt8](repeating: 0, count: 32)
+        _ = SecRandomCopyBytes(kSecRandomDefault, b.count, &b)
+        let s = Noise.base64url(Data(b))
+        keychain.set("admin-secret", s)
+        return s
+    }()
+
+    /// Vrata in javni ključ routerja za minigw router (brez skrivnosti): minigw z njim preveri, da na vratih res
+    /// teče ta aplikacija (Noise), preden pošlje skrivnost.
+    static let routerInfoFile = logsFile.deletingLastPathComponent().appendingPathComponent("router.json")
+
+    private func writeRouterInfo() {
+        guard let k = routerKey,
+              let d = try? JSONSerialization.data(withJSONObject: ["port": Int(config.port), "key": Noise.base64url(k.publicKey.rawRepresentation)])
+        else { return }
+        try? FileManager.default.createDirectory(at: Self.routerInfoFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? d.write(to: Self.routerInfoFile, options: .atomic)
+    }
+
+    /// Skrbniški API spreminja iste nastavitve kot okno Settings (apply: shrani in znova zažene router).
+    private func adminHooks() -> AdminHooks {
+        AdminHooks(secret: adminSecret, connect: connectToken, version: MenuView.version,
+                   installed: { SMAppService.mainApp.status == .enabled },
+                   update: { [self] f in  // AppState živi ves čas aplikacije
+                       try await MainActor.run {
+                           var c = self.config
+                           try f(&c)
+                           self.apply(c)
+                           return c
+                       }
+                   },
+                   setKey: { account, key in
+                       let kc = Keychain()
+                       if let key { kc.set(account, key) } else { kc.delete(account) }
+                   },
+                   rotateToken: { [self] in
+                       await MainActor.run {
+                           self.regenerateToken()
+                           return self.connectToken
+                       }
+                   })
+    }
+
     func regenerateToken() {
         keychain.set("inbound-token", Self.newToken())
         restart()
@@ -144,7 +192,8 @@ final class AppState: ObservableObject {
                 case .finished(let id): self.inflight.removeAll { $0.id == id }
                 }
             }
-        })
+        }, admin: adminHooks())
+        writeRouterInfo()
         let s = RouterServer(router: router, key: routerKey)
         s.onState = { [weak self] state in
             Task { @MainActor in self?.show(state) }
