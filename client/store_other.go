@@ -29,22 +29,45 @@ func storePath() string {
 	return filepath.Join(dir, "minigw", "connection.json")
 }
 
-func storeLoad() ([]byte, error) {
-	data, err := os.ReadFile(storePath())
+// profilePath: profil »default« je prejšnja edina povezava (connection.json), drugi v connections/<ime>.json (#17).
+func profilePath(name string) string {
+	if name == defaultProfile {
+		return storePath()
+	}
+	return filepath.Join(filepath.Dir(storePath()), "connections", name+".json")
+}
+
+func storeLoad(name string) ([]byte, error) {
+	data, err := os.ReadFile(profilePath(name))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, errNotFound
 	}
 	return data, err
 }
 
-func storeSave(data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(storePath()), 0o700); err != nil {
+func storeSave(name string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(profilePath(name)), 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(storePath(), data, 0o600)
+	return os.WriteFile(profilePath(name), data, 0o600)
 }
 
-func storeDelete() { os.Remove(storePath()) }
+func storeDelete(name string) { os.Remove(profilePath(name)) }
+
+// storeNames: imena shranjenih profilov (neveljavna imena datotek prezre).
+func storeNames() []string {
+	var out []string
+	if _, err := os.Stat(storePath()); err == nil {
+		out = append(out, defaultProfile)
+	}
+	ents, _ := os.ReadDir(filepath.Join(filepath.Dir(storePath()), "connections"))
+	for _, e := range ents {
+		if n, ok := strings.CutSuffix(e.Name(), ".json"); ok && validProfile(n) && n != defaultProfile && e.Type().IsRegular() {
+			out = append(out, n)
+		}
+	}
+	return out
+}
 
 const storeName = "a private file"
 

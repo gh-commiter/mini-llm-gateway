@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 	"unsafe"
@@ -34,12 +35,13 @@ type credential struct {
 }
 
 var (
-	advapi32    = syscall.NewLazyDLL("advapi32.dll")
-	procWrite   = advapi32.NewProc("CredWriteW")
-	procRead    = advapi32.NewProc("CredReadW")
-	procDelete  = advapi32.NewProc("CredDeleteW")
-	procFree    = advapi32.NewProc("CredFree")
-	errNotFound = errors.New("not found")
+	advapi32      = syscall.NewLazyDLL("advapi32.dll")
+	procWrite     = advapi32.NewProc("CredWriteW")
+	procRead      = advapi32.NewProc("CredReadW")
+	procDelete    = advapi32.NewProc("CredDeleteW")
+	procFree      = advapi32.NewProc("CredFree")
+	procEnumerate = advapi32.NewProc("CredEnumerateW")
+	errNotFound   = errors.New("not found")
 )
 
 const (
@@ -47,9 +49,38 @@ const (
 	credPersistLocalMachine = 2
 )
 
-func storeLoad() ([]byte, error)  { return credLoad(credTarget) }
-func storeSave(data []byte) error { return credSave(credTarget, data) }
-func storeDelete()                { credDelete(credTarget) }
+// credTargetFor: profil »default« je prejšnja edina povezava (minigw:router), drugi minigw:router:<ime> (#17).
+func credTargetFor(name string) string {
+	if name == defaultProfile {
+		return credTarget
+	}
+	return credTarget + ":" + name
+}
+
+func storeLoad(name string) ([]byte, error)    { return credLoad(credTargetFor(name)) }
+func storeSave(name string, data []byte) error { return credSave(credTargetFor(name), data) }
+func storeDelete(name string)                  { credDelete(credTargetFor(name)) }
+
+// storeNames: imena profilov iz Credential Manager (CredEnumerateW s filtrom minigw:router*).
+func storeNames() []string {
+	filter, _ := syscall.UTF16PtrFromString(credTarget + "*")
+	var n uint32
+	var list **credential
+	if r, _, _ := procEnumerate.Call(uintptr(unsafe.Pointer(filter)), 0, uintptr(unsafe.Pointer(&n)), uintptr(unsafe.Pointer(&list))); r == 0 {
+		return nil
+	}
+	defer procFree.Call(uintptr(unsafe.Pointer(list)))
+	var out []string
+	for _, c := range unsafe.Slice(list, n) {
+		t := syscall.UTF16ToString(unsafe.Slice(c.TargetName, wcslen(c.TargetName)))
+		if t == credTarget {
+			out = append(out, defaultProfile)
+		} else if name, ok := strings.CutPrefix(t, credTarget+":"); ok && validProfile(name) && name != defaultProfile {
+			out = append(out, name)
+		}
+	}
+	return out
+}
 
 func credLoad(name string) ([]byte, error) {
 	target, _ := syscall.UTF16PtrFromString(name)

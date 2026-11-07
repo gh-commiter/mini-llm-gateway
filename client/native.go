@@ -226,7 +226,7 @@ func runCommand(args []string) int {
 	if len(args) == 0 {
 		fail("usage: minigw run [--] <command> [args …]")
 	}
-	c := route(requireConnection())
+	c := route(requireProfile())
 	cwd, _ := os.Getwd()
 	proof, why := nativeProof(c, cwd)
 	if proof == nil {
