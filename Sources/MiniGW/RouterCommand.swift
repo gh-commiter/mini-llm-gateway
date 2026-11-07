@@ -166,7 +166,10 @@ func routerCommand(_ argv: [String]) {
         if pos.count == 1 {
             let d = a.call("GET", "/devices")
             let list = d["devices"] as? [[String: Any]] ?? []
-            for x in list { say("\(x["id"] as? String ?? "")  \(q(x["name"] as? String ?? ""))") }
+            for x in list {
+                let client = (x["client"] as? String).map { " (" + q($0) + ")" } ?? ""
+                say("\(x["id"] as? String ?? "")  \(q(x["name"] as? String ?? ""))\(client)")
+            }
             if list.isEmpty {
                 say(d["allowAnyDevice"] as? Bool == true ? "no devices listed: any device with the token is allowed (allowAnyDevice)" : "no devices allowed")
             }

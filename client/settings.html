@@ -216,7 +216,7 @@ const S = {
   key: ["API key", "Ključ API"], keyStored: ["Stored in the system's secret store (Credential Manager); never shown.", "V shrambi skrivnosti sistema (Credential Manager); nikoli prikazan."],
   keyNew: ["Type a new key to replace it", "Vpiši nov ključ za zamenjavo"], noKey: ["No key", "Brez ključa"],
   urlNeedsKey: ["Type the API key again to save a new URL.", "Za nov URL znova vpiši ključ API."],
-  insecure: ["Allow http (localhost or a private IP only)", "Dovoli http (le localhost ali zasebni IP)"], add: ["Add", "Dodaj"],
+  insecure: ["Allow http (localhost, a private IP or a .local name only)", "Dovoli http (le localhost, zasebni IP ali ime .local)"], add: ["Add", "Dodaj"],
   models: ["Models", "Modeli"], filter: ["Filter", "Filter"], showAll: ["Show all", "Vsi"], enableAll: ["Enable All", "Vklopi vse"], disableAll: ["Disable All", "Izklopi vse"],
   enabledOf: ["%s of %s enabled", "vklopljenih %s od %s"], loading: ["Loading…", "Nalagam …"], hidden: ["%s disabled models hidden: use the filter or Show all.", "Skritih izklopljenih modelov: %s; uporabi filter ali Vsi."],
   removeGateway: ["Remove provider %s and its key?", "Odstranim ponudnika %s in njegov ključ?"],
@@ -535,7 +535,7 @@ const pages = {
       section(t("waiting")), waiting,
       section(t("allowed")),
       group(d.devices.length ? d.devices.map(x => row(id(x, nameField(x.name, v => api("PATCH", "/devices/" + encodeURIComponent(x.id), {name: v})),
-        x.lastSeen ? t("lastSeen", when(x.lastSeen)) : t("notSeen")), buttons(copyId(x),
+        [x.lastSeen ? t("lastSeen", when(x.lastSeen)) : t("notSeen"), x.client].filter(Boolean).join(" · ")), buttons(copyId(x),
         button(t("remove"), () => { if (confirm(t("removeAsk", x.name || x.id))) act("DELETE", "/devices/" + encodeURIComponent(x.id)); }))))
         : row(el("span", {class: "label sub", textContent: t("none")}))),
       el("p", {class: "note", textContent: t("devicesFooter")}), n,

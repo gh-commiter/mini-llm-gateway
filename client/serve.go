@@ -370,7 +370,7 @@ type server struct {
 	cfgDir   string      // mapa nastavitev (žeton, ključ routerja): agentu prepovedana
 	claude   []string    // claude.exe ali node + cli.js; prazno = ni nameščen
 	pending  []apiDevice // nedavno zavrnjene naprave (največ 20)
-	seen     sync.Map    // ID naprave → time.Time zadnje zahteve (le v pomnilniku, kot na Macu)
+	seen     sync.Map    // ID naprave → deviceStamp: zadnja zahteva, OS in različica (le v pomnilniku, kot na Macu)
 	admin    string      // skrivnost skrbniškega API (admin.secret)
 	offline  bool        // minigw router brez tekočega routerja: le serve.json
 	settings settingsState
@@ -921,7 +921,7 @@ func (s *server) handle(w http.ResponseWriter, r *req) (int, string) {
 		return writeError(w, r.rid, 403, "This gateway needs a device key: update minigw and run minigw connect again"), ""
 	}
 	if d := r.conn.device; d != nil && !r.conn.loopback() {
-		s.deviceSeen(*d)
+		s.deviceSeen(*d, cleanDeviceName(r.Header.Get("X-Minigw-Client")))
 	}
 	limit := int64(1 << 20)
 	if bigBodies[r.Method+" "+r.URL.Path] {

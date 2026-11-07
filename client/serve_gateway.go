@@ -114,16 +114,16 @@ func checkGatewayURL(raw string, insecure bool) (string, error) {
 	switch u.Scheme {
 	case "https":
 	case "http":
-		// Lokalno: localhost, zasebni IP, ime v lokalnem omrežju (.local, ime brez pike); isto pravilo kot na Macu.
+		// Lokalno: localhost, zasebni ali loopback IP, ime .local (mDNS); isto pravilo kot na Macu. Ime brez pike ne:
+		// iskalna domena DNS ga lahko naredi javnega.
 		h := strings.ToLower(u.Hostname())
 		ip := net.ParseIP(h)
-		local := h == "localhost" || strings.HasSuffix(h, ".local") || (ip == nil && !strings.Contains(h, ".") && !strings.Contains(h, ":")) ||
-			(ip != nil && (ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()))
+		local := h == "localhost" || strings.HasSuffix(h, ".local") || (ip != nil && (ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()))
 		if !local {
-			return "", errors.New("provider URL must be https (http only to localhost or a private IP, with --insecure)")
+			return "", errors.New("provider URL must be https (http only to localhost, a private IP or a .local name, with --insecure)")
 		}
 		if !insecure {
-			return "", errors.New("http sends the API key unencrypted: add --insecure for a provider on localhost or a private IP")
+			return "", errors.New("http sends the API key unencrypted: add --insecure for a provider on localhost, a private IP or a .local name")
 		}
 	default:
 		return "", errors.New("provider URL must be https: " + raw)

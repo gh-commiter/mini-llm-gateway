@@ -196,6 +196,7 @@ extension Router {
             let list: [[String: Any]] = c.devices.map { d in
                 var o: [String: Any] = ["id": d.id, "name": d.name, "siri": d.siri]
                 if let t = Router.deviceLog.lastSeen(d.id) { o["lastSeen"] = iso.string(from: t) }
+                if let cl = Router.deviceLog.client(d.id) { o["client"] = cl }
                 return o
             }
             let pending: [[String: Any]] = Router.deviceLog.pending.map {
@@ -304,6 +305,7 @@ extension Router {
             return (200, ["provider": gateway(p, ready: false), "gateway": gateway(p, ready: false), "keyStore": "the Keychain", "models": apiModels(p, models, filter: "")])
         case "DELETE gateways/{}":
             guard let p = c.providers.first(where: { $0.name == arg }) else { throw AdminError(404, "no provider \(arg)") }
+            guard !RouterConfig.builtInProviders.contains(p.id) else { throw AdminError(400, "\(p.name) is built in: turn it off instead") }
             _ = try await hooks.update(keys: [p.id: nil]) { c in c.providers.removeAll { $0.id == p.id } }
             return (200, ["name": arg])
         case "GET gateways/{}/models", "POST gateways/{}/models":
@@ -557,13 +559,13 @@ extension Router {
         switch u.scheme {
         case "https": break
         case "http":
-            // Lokalno: localhost, zasebni IP, ime v lokalnem omrežju (.local, ime brez pike); isto pravilo kot minigw serve.
+            // Lokalno: localhost, zasebni ali loopback IP, ime .local (mDNS); isto pravilo kot minigw serve. Ime brez pike ne:
+            // iskalna domena DNS ga lahko naredi javnega.
             let h = host.lowercased()
-            let lanName = h.hasSuffix(".local") || (!h.contains(".") && !h.contains(":") && !h.hasPrefix("["))
-            guard h == "localhost" || lanName || isPrivateIP(host) else {
-                throw AdminError(400, "provider URL must be https (http only to localhost or a private IP, with insecure)")
+            guard h == "localhost" || h.hasSuffix(".local") || isPrivateIP(host) else {
+                throw AdminError(400, "provider URL must be https (http only to localhost, a private IP or a .local name, with insecure)")
             }
-            guard insecure else { throw AdminError(400, "http sends the API key unencrypted: set insecure for a provider on localhost or a private IP") }
+            guard insecure else { throw AdminError(400, "http sends the API key unencrypted: set insecure for a provider on localhost, a private IP or a .local name") }
         default:
             throw AdminError(400, "provider URL must be https: \(raw)")
         }

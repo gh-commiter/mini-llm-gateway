@@ -288,7 +288,11 @@ func routerCommand(args []string, in io.Reader) {
 			}
 			a.do("GET", "/devices", nil, &d)
 			for _, x := range d.Devices {
-				say(fmt.Sprintf("%s  %q", x.ID, x.Name))
+				client := ""
+				if x.Client != "" {
+					client = fmt.Sprintf(" (%q)", x.Client)
+				}
+				say(fmt.Sprintf("%s  %q%s", x.ID, x.Name, client))
 			}
 			if len(d.Devices) == 0 {
 				say(map[bool]string{true: "no devices listed: any device with the token is allowed (allowAnyDevice)", false: "no devices allowed"}[d.AllowAnyDevice])

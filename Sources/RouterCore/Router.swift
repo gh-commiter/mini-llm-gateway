@@ -158,7 +158,7 @@ public final class Router: Sendable {
                 Self.log.info("\(rid, privacy: .public) refused unknown device \(d.name, privacy: .public) \(d.id, privacy: .public)")
                 return (await error(403, "permission_error", Self.refusal(d), rid: rid, writer: writer), nil, nil)
             }
-            Self.deviceLog.seen(d.id)
+            Self.deviceLog.seen(d.id, client: Noise.cleanName(req.header("x-minigw-client") ?? ""))
         }
         return await routeAllowed(req, rid: rid, writer: writer)
     }

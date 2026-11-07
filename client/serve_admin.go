@@ -37,7 +37,7 @@ type apiDevice struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
 	Address  string `json:"address,omitempty"` // le pri čakajočih
-	Client   string `json:"client,omitempty"`  // le pri čakajočih: OS in različica minigw (glava X-Minigw-Client)
+	Client   string `json:"client,omitempty"`  // OS in različica minigw (glava X-Minigw-Client), pri dovoljenih od zagona
 	Time     string `json:"time,omitempty"`
 	LastSeen string `json:"lastSeen,omitempty"` // le pri dovoljenih, od zagona
 }
@@ -221,8 +221,16 @@ func offlineServer(cfgPath string) (*server, error) {
 }
 
 // deviceSeen: zadnji stik dovoljene naprave; ime, če ga naprava (dodana le z ID-jem ali s starejšim minigw) še nima.
-func (s *server) deviceSeen(d serveDevice) {
-	s.seen.Store(d.ID, time.Now())
+type deviceStamp struct {
+	time   time.Time
+	client string // OS in različica (zadnja neprazna glava X-Minigw-Client)
+}
+
+func (s *server) deviceSeen(d serveDevice, client string) {
+	if old, ok := s.seen.Load(d.ID); ok && client == "" {
+		client = old.(deviceStamp).client
+	}
+	s.seen.Store(d.ID, deviceStamp{time.Now(), client})
 	if d.Name == "" {
 		return
 	}
@@ -341,8 +349,8 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		var list []apiDevice
 		for _, d := range c.Devices {
 			x := apiDevice{ID: d.ID, Name: d.Name}
-			if t, ok := s.seen.Load(d.ID); ok {
-				x.LastSeen = t.(time.Time).UTC().Format(time.RFC3339)
+			if v, ok := s.seen.Load(d.ID); ok {
+				x.LastSeen, x.Client = v.(deviceStamp).time.UTC().Format(time.RFC3339), v.(deviceStamp).client
 			}
 			list = append(list, x)
 		}

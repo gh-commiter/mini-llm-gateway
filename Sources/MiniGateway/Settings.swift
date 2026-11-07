@@ -76,7 +76,7 @@ struct SettingsView: View {
     }
 
     @State private var removing = false
-    static let builtIn: Set<String> = ["litellm", "openrouter"]  // privzeta prehoda: le izklop, ne odstranitev
+    static let builtIn = RouterConfig.builtInProviders  // privzeta prehoda: le izklop, ne odstranitev
     static let startURLs: Set<String> = ["http://localhost:4000", "https://openrouter.ai/api", "https://"]
 
     /// Izbrani prehod ima kaj nastavljenega: ključ, vklop, svoj naslov ali aliase.
@@ -410,9 +410,9 @@ struct SettingsView: View {
                                 WideButton("Remove") { removingDevice = d }
                             }
                         } label: {
-                            TextField("Name", text: $d.name, prompt: Text(verbatim: "—")).labelsHidden()
+                            DeviceNameField(name: $d.name)
                             Text(verbatim: d.id).font(.caption.monospaced()).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
-                            Text(Self.lastSeen(d.id))
+                            Text(([Self.lastSeen(d.id)] + [Router.deviceLog.client(d.id)].compactMap { $0 }).joined(separator: " · "))
                         }
                     }
                 }
@@ -946,6 +946,30 @@ struct TokenRow: View {
 }
 
 /// Ponudnik: povezava in modeli, ki jih ponuja (vsak s stikalom za objavo v /model).
+/// Ime dovoljene naprave: shrani se ob Return ali ko polje izgubi fokus, očiščeno kot v API (Noise.cleanName); prazno
+/// ime ohrani staro (enako kot spletna stran in PATCH devices).
+struct DeviceNameField: View {
+    @Binding var name: String
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        TextField("Name", text: $text, prompt: Text(verbatim: "—"))
+            .labelsHidden()
+            .focused($focused)
+            .onAppear { text = name }
+            .onChange(of: name) { _, n in if !focused { text = n } }
+            .onSubmit(commit)
+            .onChange(of: focused) { _, f in if !f { commit() } }
+    }
+
+    private func commit() {
+        let c = Noise.cleanName(text)
+        if !c.isEmpty, c != name { name = c }
+        text = c.isEmpty ? name : c
+    }
+}
+
 struct ProviderPane: View {
     let header: PaneHeader
     @Binding var provider: ProviderConfig
@@ -976,8 +1000,9 @@ struct ProviderPane: View {
                     .disabled(key.isEmpty)
                     .help(key.isEmpty ? String(localized: "Enter an API key to enable") : "")
                 TextField("Name", text: $provider.name)
+                    .disabled(RouterConfig.builtInProviders.contains(provider.id))  // vgrajena: ime ostane (kot minigw serve)
                 TextField("Base URL", text: $provider.baseURL)
-                Toggle("Allow http (localhost or a private IP only)", isOn: $provider.insecure)
+                Toggle("Allow http (localhost, a private IP or a .local name only)", isOn: $provider.insecure)
                 if let e = provider.urlError, !provider.baseURL.isEmpty, provider.baseURL != "https://" {
                     Text(verbatim: e).font(.caption).foregroundStyle(.red)
                 }

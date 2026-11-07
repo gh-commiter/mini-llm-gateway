@@ -102,6 +102,8 @@ public struct RouterConfig: Codable, Sendable, Equatable {
     public var appleFM = AppleFMConfig()
     public var siri = SiriConfig()
     public var devices: [DeviceConfig] = []
+    /// Vgrajena ponudnika (kot builtinGateways v minigw serve): vedno na seznamu, izklop da, odstranitev in preimenovanje ne.
+    public static let builtInProviders: Set<String> = ["litellm", "openrouter"]
     /// Kot minigw serve: neznana naprava z žetonom je dovoljena le, dokler je seznam prazen in je to vklopljeno; sicer čaka
     /// na odobritev (Settings → Devices, minigw gw devices allow). Starejše nastavitve: glej init(from:).
     public var allowAnyDevice = false

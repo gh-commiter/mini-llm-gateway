@@ -67,7 +67,7 @@ func makeRouter(session: URLSession = .shared) -> Router {
     c.providers = [
         ProviderConfig(id: "openrouter", name: "OpenRouter", enabled: true, baseURL: "https://up.example/api/",
                        aliases: "or-qwen = qwen/qwen3-coder, 1k\n# komentar\nanthropic/claude-sonnet"),
-        ProviderConfig(id: "litellm", name: "LiteLLM", enabled: false, baseURL: "http://x", aliases: "qwen-local = q"),
+        ProviderConfig(id: "litellm", name: "LiteLLM", enabled: false, baseURL: "http://x.local", aliases: "qwen-local = q"),
     ]
     return Router(config: c, token: "tok", secrets: FakeSecrets(values: ["openrouter": "or-key"]), session: session)
 }
@@ -231,7 +231,7 @@ func makeRouter(session: URLSession = .shared) -> Router {
         let cfg = URLSessionConfiguration.ephemeral
         cfg.protocolClasses = [StubUpstream.self]
         var c = RouterConfig()
-        c.providers = [ProviderConfig(id: "litellm", name: "LiteLLM", enabled: true, baseURL: "http://lite", aliases: "")]
+        c.providers = [ProviderConfig(id: "litellm", name: "LiteLLM", enabled: true, baseURL: "http://lite.local", aliases: "")]
         let r = Router(config: c, token: "tok", secrets: FakeSecrets(values: ["litellm": "k"]), session: URLSession(configuration: cfg))
         let w = FakeWriter()
         await r.handle(request("GET", "/v1/models", headers: ["x-api-key": "tok"]), writer: w)
@@ -249,7 +249,7 @@ func makeRouter(session: URLSession = .shared) -> Router {
         let cfg = URLSessionConfiguration.ephemeral
         cfg.protocolClasses = [StubUpstream.self]
         var c = RouterConfig()
-        c.providers = [ProviderConfig(id: "or", name: "OR", enabled: true, baseURL: "http://or", aliases: "coder = qwen/qwen3-coder")]
+        c.providers = [ProviderConfig(id: "or", name: "OR", enabled: true, baseURL: "http://or.local", aliases: "coder = qwen/qwen3-coder")]
         let r = Router(config: c, token: "tok", secrets: FakeSecrets(values: ["or": "k"]), session: URLSession(configuration: cfg))
         let w = FakeWriter()
         await r.handle(request("GET", "/v1/models", headers: ["x-api-key": "tok"]), writer: w)
@@ -262,7 +262,7 @@ func makeRouter(session: URLSession = .shared) -> Router {
         cfg.protocolClasses = [StubUpstream.self]
         for (enabled, expectLite, expectQwen) in [(["lite/model"], true, false), ([], false, false), (nil as [String]?, true, true)] {
             var c = RouterConfig()
-            c.providers = [ProviderConfig(id: "or", name: "OR", enabled: true, baseURL: "http://or", aliases: "", enabledModels: enabled)]
+            c.providers = [ProviderConfig(id: "or", name: "OR", enabled: true, baseURL: "http://or.local", aliases: "", enabledModels: enabled)]
             let r = Router(config: c, token: "tok", secrets: FakeSecrets(values: ["or": "k"]), session: URLSession(configuration: cfg))
             let w = FakeWriter()
             await r.handle(request("GET", "/v1/models", headers: ["x-api-key": "tok"]), writer: w)

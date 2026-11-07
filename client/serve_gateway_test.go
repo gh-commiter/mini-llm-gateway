@@ -465,7 +465,7 @@ func TestBuiltinGateways(t *testing.T) {
 		c.Gateways[1].Name != "litellm" || c.Gateways[1].BaseURL != "http://10.0.0.5:4000" || c.Gateways[1].Disabled {
 		t.Fatalf("migration: %+v", c.Gateways)
 	}
-	for u, ok := range map[string]bool{"http://mini.local:4000": true, "http://mini:4000": true, "http://10.0.0.5": true,
+	for u, ok := range map[string]bool{"http://mini.local:4000": true, "http://mini:4000": false, "http://10.0.0.5": true,
 		"http://example.com": false, "http://8.8.8.8": false} { // ime v lokalnem omrežju kot zasebni IP (isto kot na Macu)
 		if _, err := checkGatewayURL(u, true); (err == nil) != ok {
 			t.Fatalf("%s: %v", u, err)
