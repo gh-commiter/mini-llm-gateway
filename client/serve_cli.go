@@ -460,8 +460,13 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 				note += " whose changed source files are copied back to the user when you finish. Map paths under " + clientCwd + " to it."
 			}
 			extra = note
-		case s.hub.isRefused(session) || s.cfg.Folder == "":
+		case s.hub.isRefused(session): // odjemalec je poslal mapo brez sync
 			return writeError(w, r.rid, 400, refusedDirect)
+		case s.cfg.Folder == "" && r.h("x-claude-mini-share") == "1": // mapa je bila napovedana, a ni prišla
+			return writeError(w, r.rid, 400, "The folder "+clientCwd+" did not reach this router: see the minigw message when it started")
+		case s.cfg.Folder == "": // odjemalec mape ni delil (npr. /tmp, ki se ne deli samodejno)
+			return writeError(w, r.rid, 400, "The folder "+clientCwd+" is not shared with the router, so Claude CLI agents cannot work in it: "+
+				"in that folder run minigw share add (or MINIGW_SHARE=1 for one run), then start minigw again")
 		default:
 			dir = s.cfg.Folder
 			extra = "Your working directory is " + dir + " on the router, not the user's folder " + clientCwd + "."

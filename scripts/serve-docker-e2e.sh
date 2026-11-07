@@ -100,6 +100,12 @@ cd $T/home/proj
 print "pineapple-42" > src/note.txt
 out=$(MINIGW_SHARE=1 MINIGW_WORK=direct $mg -p --model claude-cli-haiku "hi" 2>&1 || true)
 print -r -- "$out" | grep -q "sync only" || fail "direct mode not refused clearly: $out"
+# A folder outside HOME is not shared automatically: minigw warns, the router says so too (not "sync only").
+mkdir -p $T/noshare
+out=$(cd $T/noshare && MINIGW_WORK=sync $mg -p --model claude-cli-haiku "hi" 2>&1 || true)
+print -r -- "$out" | grep -q "is not shared with the router (not shared automatically)" || fail "no client warning: $out"
+print -r -- "$out" | grep -q "Claude CLI agents cannot work in it" || fail "unshared folder: $out"
+print -r -- "$out" | grep -q "sync only" && fail "unshared folder reported as direct mode: $out"
 
 # Sync: real Claude Code here → router in Docker → fake claude edits the copy → change comes back.
 out=$(MINIGW_SHARE=1 MINIGW_WORK=sync $mg -p --model claude-cli-haiku "Copy src/note.txt to agent.txt" 2>&1) || fail "minigw -p: $out"

@@ -233,6 +233,11 @@ func TestServeRefusesDirectMode(t *testing.T) {
 	if st != 400 || !strings.Contains(string(data), "sync only") {
 		t.Fatalf("agent without sync: %d %s", st, data)
 	}
+	// Brez mape (ni glave share): sporočilo o deljenju, ne o sync.
+	st, data = call(c, "POST", "/v1/messages", map[string]string{"x-claude-mini-session": "sid3", "x-claude-mini-cwd": "/tmp/x"}, []byte(body), 5*time.Second)
+	if st != 400 || !strings.Contains(string(data), "/tmp/x is not shared") || !strings.Contains(string(data), "minigw share add") || strings.Contains(string(data), "sync only") {
+		t.Fatalf("agent without share: %d %s", st, data)
+	}
 }
 
 func TestServeRejectsBadModelsBodiesAndForeignOwners(t *testing.T) {
