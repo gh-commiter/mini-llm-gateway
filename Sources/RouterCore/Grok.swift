@@ -98,7 +98,7 @@ public enum Grok {
 
     /// Zažene grok in vrne končni odgovor (besedilo po zadnjem klicu orodja); prekinitev odjemalca ustavi grok.
     /// Vrne končni odgovor in ID Grokove seje (za nadaljevanje z -r).
-    static func run(_ exe: String, args: [String], cwd: URL, prompt: String,
+    static func run(_ exe: String, args: [String], cwd: URL, prompt: String, env extra: [String: String] = [:],
                     onStep: @escaping @Sendable (String) -> Void) async throws -> (String, String?) {
         let h = Handle()
         return try await withTaskCancellationHandler {
@@ -108,6 +108,7 @@ public enum Grok {
                 p.arguments = args
                 p.currentDirectoryURL = cwd
                 p.environment = ProcessInfo.processInfo.environment.filter { $0.key != "SSH_AUTH_SOCK" }  // brez agenta ključev SSH
+                    .merging(extra) { $1 }
                 let input = Pipe(), events = Pipe(), errors = Pipe()
                 p.standardInput = input
                 p.standardOutput = events
@@ -207,7 +208,7 @@ extension Router {
         }
         let sessions = Self.grokSessions, client = req.header("x-claude-mini-session") ?? ""
         return await replyWhenDone(body: body, model: "claude-grok", rid: rid, writer: writer) {
-            let (text, session) = try await Grok.run(exe, args: args, cwd: cwd, prompt: prompt) { [onActivity] s in onActivity(.step(id: rid, text: s)) }
+            let (text, session) = try await Grok.run(exe, args: args, cwd: cwd, prompt: prompt, env: tree == nil ? [:] : Worktree.harnessEnv) { [onActivity] s in onActivity(.step(id: rid, text: s)) }
             if agent { await Self.shares.syncBack(session: client) }  // sync: spremembe agenta k odjemalcu pred odgovorom
             if agent, let session {
                 await sessions.set(ClaudeCLI.key(all + [ClaudeCLI.Turn(role: "assistant", text: text)], scope: scope), session)

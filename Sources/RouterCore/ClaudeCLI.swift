@@ -49,14 +49,17 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
         let sandbox: [String: Any] = ["sandbox": [
             "enabled": true, "failIfUnavailable": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
             "network": ["allowedDomains": network ? ["*"] : []],
-            "filesystem": ["denyRead": ["~"], "allowRead": dirs, "allowWrite": dirs],
+            "filesystem": ["denyRead": ["~"], "allowRead": dirs, "allowWrite": dirs,
+                           "denyWrite": ["config", "hooks", "info"].map { root.path + "/.git/" + $0 }],  // tudi obvezna zaščita CC
         ]]
         let settings = String(decoding: try! JSONSerialization.data(withJSONObject: sandbox, options: [.sortedKeys]), as: UTF8.self)
         let others = allTools.filter { !Self.pathTools.contains($0) && !disabledTools.contains($0) }
+        // Urejanje .git (tudi ugnezdenega) z orodji Edit/Write ne: nastavitve in hooke bere git, ki ga poganja sam claude.
+        let gitEdits = ["/.git", "/.git/**", "/**/.git", "/**/.git/**"].map { "Edit(/" + root.path + $0 + ")" }
         return ["--tools", "default", "--permission-mode", "acceptEdits", "--settings", settings]
             + (cwd.path == root.path ? [] : ["--add-dir", root.path])
             + (others.isEmpty ? [] : ["--allowedTools", others.joined(separator: ",")])
-            + (disabledTools.isEmpty ? [] : ["--disallowedTools", disabledTools.joined(separator: ",")])
+            + ["--disallowedTools", (disabledTools + gitEdits).joined(separator: ",")]
     }
 
     public init(from decoder: Decoder) throws {
@@ -441,6 +444,7 @@ extension Router {
             env[k] = nil  // sicer bi notranji claude klical nazaj ta router
         }
         env["PATH"] = (env["PATH"].map { $0 + ":" } ?? "") + "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        if agent, await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "") != nil { env.merge(Worktree.harnessEnv) { $1 } }
         p.environment = env
         let stdin = Pipe(), stdout = Pipe(), stderr = Pipe()
         p.standardInput = stdin

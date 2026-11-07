@@ -115,7 +115,7 @@ public enum Codex {
         return o["thread_id"] as? String
     }
 
-    static func run(_ exe: String, args: [String], cwd: URL, prompt: String, output: URL,
+    static func run(_ exe: String, args: [String], cwd: URL, prompt: String, output: URL, env extra: [String: String] = [:],
                     onStep: @escaping @Sendable (String) -> Void = { _ in }) async throws -> (String, String?) {
         let h = Handle()
         return try await withTaskCancellationHandler {
@@ -125,6 +125,7 @@ public enum Codex {
                 p.arguments = args
                 p.currentDirectoryURL = cwd
                 p.environment = ProcessInfo.processInfo.environment.filter { $0.key != "SSH_AUTH_SOCK" }  // brez agenta ključev SSH
+                    .merging(extra) { $1 }
                 let input = Pipe(), errors = Pipe()
                 let events = Pipe()
                 p.standardInput = input
@@ -216,7 +217,8 @@ extension Router {
                               resume: existing)
         let sessions = Self.codexSessions, session = req.header("x-claude-mini-session") ?? ""
         return await replyWhenDone(body: body, model: "claude-codex", rid: rid, writer: writer) {
-            let (text, thread) = try await Codex.run(exe, args: args, cwd: cwd, prompt: prompt, output: output) { [onActivity] s in
+            let (text, thread) = try await Codex.run(exe, args: args, cwd: cwd, prompt: prompt, output: output,
+                                                         env: tree == nil ? [:] : Worktree.harnessEnv) { [onActivity] s in
                 onActivity(.step(id: rid, text: s))
             }
             if agent { await Self.shares.syncBack(session: session) }  // sync: spremembe agenta k odjemalcu pred odgovorom

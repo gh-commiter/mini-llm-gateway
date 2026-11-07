@@ -106,6 +106,17 @@ public enum Worktree {
                 "\(home)/Library/Caches/org.swift.swiftpm", "/private/tmp"] + (tmp.map { [$0] } ?? [])
     }
 
+    /// Okolje procesov agenta (claude -p, codex, grok) v načinu worktree. Ti sami (zunaj peskovnika orodij) poganjajo git
+    /// v klonu, ki ga agent lahko spremeni: nastavitve iz ukazne vrstice preglasijo .git/config klona (fsmonitor, hooki,
+    /// datoteka atributov), GIT_ATTR_SOURCE = prazno drevo izklopi .gitattributes klona (filtri, textconv).
+    /// ponytail: .git/info/attributes klona ostane; v peskovniku Claude Code je .git/config zaščiten, Codex ima .git le za branje.
+    public static let harnessEnv: [String: String] = {
+        let pairs = [("core.fsmonitor", "false"), ("core.hooksPath", "/dev/null"), ("core.attributesFile", "/dev/null")]
+        var env = ["GIT_CONFIG_COUNT": String(pairs.count), "GIT_ATTR_SOURCE": "4b825dc642cb6eb9a060e54bf8d69288fbee4904"]
+        for (i, (k, v)) in pairs.enumerated() { env["GIT_CONFIG_KEY_\(i)"] = k; env["GIT_CONFIG_VALUE_\(i)"] = v }
+        return env
+    }()
+
     /// Scratch (zrcala) ni v nobeni pisljivi mapi agentov (npr. izbran v /tmp): sicer worktree ni varen.
     static func scratchIsSafe(_ scratch: URL, home: String = NSHomeDirectory()) -> Bool {
         let s = (Sync.real(scratch) ?? scratch).path

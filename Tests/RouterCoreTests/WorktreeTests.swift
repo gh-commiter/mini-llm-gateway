@@ -171,6 +171,8 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
     #expect(!(fs["allowWrite"] ?? []).contains { $0.hasSuffix("/Library/Caches") || $0.hasSuffix("/Development") })  // ne scratch, ne dovoljene mape
     #expect((sb["network"] as? [String: [String]])?["allowedDomains"] == [])
     #expect(a.contains("--add-dir") && a.contains("default") && a.contains("acceptEdits"))
+    #expect(fs["denyWrite"] == ["config", "hooks", "info"].map { root.path + "/.git/" + $0 })
+    #expect(a[a.firstIndex(of: "--disallowedTools")! + 1].contains("Edit(/" + root.path + "/**/.git/**)"))
     #expect(Worktree.scratchIsSafe(URL(fileURLWithPath: NSHomeDirectory() + "/Library/Caches/dev.trojar.minigateway/Scratch")))
     #expect(!Worktree.scratchIsSafe(URL(fileURLWithPath: "/private/tmp/scratch")) && !Worktree.scratchIsSafe(URL(fileURLWithPath: NSHomeDirectory() + "/.m2/s")))
     #expect(Worktree.validBranch("minigw/claude-0123abcd-2") && !Worktree.validBranch("main") && !Worktree.validBranch("minigw/x/../../main"))
@@ -182,4 +184,31 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
     #expect(SharedFolders.candidates(work: "worktree", readOnly: false, smb: false, git: false) == ["direct"])
     #expect(SharedFolders.mode(flag: nil, saved: SharedFolders.Entry(path: "/p", work: "worktree"), readOnly: true) == ("direct", true))
     #expect(SharedFolders.mode(flag: "auto", saved: SharedFolders.Entry(path: "/p", work: "sync"), readOnly: false) == ("auto", false))
+}
+
+/// Agent si v klonu nastavi fsmonitor, filter (.gitattributes) in hook: git, ki ga poganja sam agent (claude -p, codex,
+/// grok zunaj peskovnika orodij), z okoljem harnessEnv ne zažene ničesar; brez njega (kontrola) bi.
+@Test func worktreeHarnessGitIgnoresTheClonesConfig() throws {
+    let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("harness-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let repo = root.appendingPathComponent("wt"), marks = root.appendingPathComponent("marks")
+    try FileManager.default.createDirectory(at: marks, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+    g(repo, "init", "-q"); try file(repo, "a.txt", "a\n"); g(repo, "add", "-A"); g(repo, "commit", "-qm", "a")
+    g(repo, "config", "core.fsmonitor", "touch \(marks.path)/fsmonitor; true")
+    g(repo, "config", "filter.evil.clean", "touch \(marks.path)/clean; cat")
+    try file(repo, ".gitattributes", "* filter=evil\n")
+    try file(repo, ".git/hooks/pre-commit", "#!/bin/sh\ntouch \(marks.path)/hook\n")
+    chmod(repo.appendingPathComponent(".git/hooks/pre-commit").path, 0o755)
+    try file(repo, "a.txt", "changed\n")
+    func agentGit(_ env: [String: String]) {
+        for args in [["status", "--porcelain"], ["diff"], ["add", "-A"], ["-c", "user.name=a", "-c", "user.email=a@x", "commit", "-qm", "x"]] {
+            Worktree.run(args, cwd: repo.path, env: env, safe: false)
+        }
+    }
+    agentGit(Worktree.harnessEnv)
+    #expect(((try? FileManager.default.contentsOfDirectory(atPath: marks.path)) ?? []).isEmpty)
+    try file(repo, "a.txt", "again\n")
+    agentGit([:])  // kontrola: brez okolja se vse troje zažene
+    #expect(Set((try? FileManager.default.contentsOfDirectory(atPath: marks.path)) ?? []) == ["fsmonitor", "clean", "hook"])
 }
