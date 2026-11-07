@@ -37,7 +37,9 @@ const (
 )
 
 // comCall: metoda i objekta COM (prvi kazalec objekta je vtabela). Argumenti, ki so kazalci, morajo biti na kopici
-// in živi do konca klica (runtime.KeepAlive pri klicatelju).
+// in živi do konca klica (runtime.KeepAlive pri klicatelju): //go:uintptrescapes jih premakne na kopico (M1).
+//
+//go:uintptrescapes
 func comCall(obj unsafe.Pointer, i int, args ...uintptr) uint32 {
 	fn := *(*uintptr)(unsafe.Add(*(*unsafe.Pointer)(obj), i*int(unsafe.Sizeof(uintptr(0)))))
 	r, _, _ := syscall.SyscallN(fn, append([]uintptr{uintptr(obj)}, args...)...)
@@ -62,7 +64,13 @@ func (t *tray) pick(kind string) (string, error) {
 	default:
 		return "", fmt.Errorf("a file dialog is already open")
 	}
-	pPostMessage.Call(t.hwnd, wmPick, 0, 0)
+	if ok, _, _ := pPostMessage.Call(t.hwnd, wmPick, 0, 0); ok == 0 { // L1: brez sporočila nihče ne odgovori
+		select {
+		case <-t.picks:
+		default:
+		}
+		return "", fmt.Errorf("the tray window did not take the request")
+	}
 	r := <-req.done
 	return r.path, r.err
 }
