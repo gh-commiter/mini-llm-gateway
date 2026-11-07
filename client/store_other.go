@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -149,3 +150,15 @@ func regRunDel(string)                 {}
 func protectDir(string) error { return nil } // drugod: mapa 0700, datoteke 0600
 
 var listenControl func(network, address string, c syscall.RawConn) error // drugod privzeto (brez SO_REUSEPORT)
+
+// knownConfigDir: domača mapa iz baze uporabnikov (os/user), ne iz HOME/XDG_CONFIG_HOME.
+func knownConfigDir() (string, error) {
+	u, err := user.Current()
+	if err != nil || u.HomeDir == "" {
+		return "", errors.New("no home folder")
+	}
+	if runtime.GOOS == "darwin" {
+		return filepath.Join(u.HomeDir, "Library", "Application Support"), nil
+	}
+	return filepath.Join(u.HomeDir, ".config"), nil
+}

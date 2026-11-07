@@ -72,11 +72,21 @@ loopback (ssh -L, netsh portproxy, a reverse proxy), or remote clients get the s
 const defaultTools = "Read,Grep,Glob,Edit,Write,MultiEdit"
 
 func defaultServeConfigPath() string {
-	dir, err := os.UserConfigDir()
+	dir, err := configBase()
 	if err != nil {
 		dir = "."
 	}
 	return filepath.Join(dir, "minigw", "serve.json")
+}
+
+// configBase: mapa nastavitev brez spremenljivk okolja (XDG_CONFIG_HOME, HOME, APPDATA): proces, ki jih nastavi, ne
+// sme minigw router preusmeriti na lažen serve.json. Windows: znana mapa RoamingAppData; drugod domača mapa iz baze
+// uporabnikov. Šele če to ne uspe, os.UserConfigDir.
+func configBase() (string, error) {
+	if dir, err := knownConfigDir(); err == nil && dir != "" {
+		return dir, nil
+	}
+	return os.UserConfigDir()
 }
 
 func loadServeConfig(path string) (serveConfig, error) {
@@ -460,7 +470,7 @@ var errForeignOwner = errors.New("is owned by another user")
 // protectConfigDir: na Windows mapa nastavitev zunaj %AppData% dobi DACL samo za lastnika (v %AppData% je že
 // zasebna). Drugod je mapa 0700.
 func protectConfigDir(cfgDir string) error {
-	appData, err := os.UserConfigDir()
+	appData, err := configBase()
 	if runtime.GOOS != "windows" || (err == nil && under(cfgDir, appData)) {
 		return nil
 	}

@@ -124,11 +124,15 @@ func (s *server) adminHTTP(w http.ResponseWriter, r *req) int {
 	if st := localOnly(w, r); st != 0 {
 		return st
 	}
-	if auth := r.h("authorization"); strings.HasPrefix(auth, "Bearer ") { // CLI
-		if s.admin == "" || subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(auth, "Bearer ")), []byte(s.admin)) != 1 {
-			return writeError(w, r.rid, 401, "Invalid or missing admin secret (admin.secret in the config folder)")
+	switch auth := r.h("authorization"); {
+	case strings.HasPrefix(auth, adminScheme): // CLI: dokaz skrivnosti, vezan na to povezavo Noise
+		if r.conn.sess == nil || s.admin == "" ||
+			subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(auth, adminScheme)), []byte(adminProof(s.admin, r.conn.sess.hash))) != 1 {
+			return writeError(w, r.rid, 401, "Invalid admin proof: use minigw router (an encrypted connection with the router key)")
 		}
-	} else if !s.settings.valid(r.h(settingsHeader)) { // stran z nastavitvami: seja v glavi (brez piškotkov)
+	case auth != "": // npr. Bearer: skrivnost ne sme nikoli po žici
+		return writeError(w, r.rid, 401, "The admin API takes MGW-Admin over an encrypted connection (minigw router), never the secret itself")
+	case !s.settings.valid(r.h(settingsHeader)): // stran z nastavitvami: seja v glavi (brez piškotkov)
 		return writeError(w, r.rid, 401, "Invalid or missing admin secret (admin.secret in the config folder)")
 	}
 
@@ -137,6 +141,15 @@ func (s *server) adminHTTP(w http.ResponseWriter, r *req) int {
 	}
 	status, obj := s.adminDo(r.Method, strings.TrimPrefix(r.URL.RequestURI(), adminPrefix), r.body)
 	return writeJSON(w, r.rid, status, obj)
+}
+
+// adminScheme in adminProof: odjemalec ne pošlje skrivnosti, le HMAC-SHA256(skrivnost, "minigw-admin-v1" || h), kjer
+// je h zgoščena vrednost rokovanja Noise te povezave. Lažen strežnik (svoj ključ, svoje rokovanje) dobi dokaz, ki ne
+// velja nikjer drugje.
+const adminScheme = "MGW-Admin "
+
+func adminProof(secret string, h []byte) string {
+	return base64url(hmacSHA256([]byte(secret), append([]byte("minigw-admin-v1"), h...)))
 }
 
 // localOnly: odjemalec na tem računalniku (naslov TCP, ne glave) in Host 127.0.0.1/localhost s temi vrati (DNS
