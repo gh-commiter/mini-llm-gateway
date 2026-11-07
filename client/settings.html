@@ -312,7 +312,7 @@ async function agentPane(kind) {
     enabled = list.length === all.length && all.every(x => list.includes(x)) ? null : list;  // vsi = tudi prihodnji (kot setModel na Macu)
     return patch({models: enabled});
   };
-  const list = group(models.length ? models.map(x => row(labelSub(x.name, x.slug + (x.window ? " · " + Math.round(x.window / 1000) + "K" : "")),
+  const list = group(models.length ? models.map(x => row(labelSub(x.name, [x.name === x.slug ? "" : x.slug, x.window ? Math.round(x.window / 1000) + "K" : ""].filter(Boolean).join(" · ")),
       toggle(x.enabled, (v, i) => save(n1, async () => { try { await setModel(x.slug, v); } catch (e) { i.checked = !v; throw e; } }))))
     : [row(el("span", {class: "label sub", textContent: a.found ? t("noModels") : t(kind + "NotFound")}))]);
   const bulk = on => save(n1, async () => { await patch({models: on ? null : []}); show(kind); });
@@ -324,7 +324,7 @@ async function agentPane(kind) {
     el("div", {class: "note"}, status),
     el("h3", {}, el("span", {textContent: t("models")}), buttons(button(t("enableAll"), () => bulk(true)), button(t("disableAll"), () => bulk(false)))),
     list, n1,
-    section(t("allowedFolders")), folderList(c.folders, v => api("PATCH", "/agents/claude", {folders: v}), t("allowedFoldersShared"), win),
+    ...(codex ? [section(t("allowedFolders")), folderList(c.folders, v => api("PATCH", "/agents/claude", {folders: v}), t("allowedFoldersShared"), win)] : []),
     section(t("sandbox")),
     group(row(labelSub(t("allowWrite"), writeLocked ? t("writeLockedWin") : null), toggle(a.write && !writeLocked, v => save(n2, async () => { await patch({write: v}); show(kind); }), writeLocked)),
       codex ? row(t("allowNetwork"), toggle(a.network, v => save(n2, () => patch({network: v})), !a.write || writeLocked)) : null),
@@ -336,6 +336,7 @@ async function agentPane(kind) {
 
 const pages = {
   codex: () => agentPane("codex"),
+  grok: () => agentPane("grok"),
   async general() {
     const [st, g, d] = await Promise.all([api("GET", "/status"), api("GET", "/general"), api("GET", "/devices")]);
     const win = st.os === "windows";
