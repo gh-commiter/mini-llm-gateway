@@ -41,11 +41,29 @@ public actor ShareHub {
         var pending: [String: Sync.Entry?] = [:]          // sync: poslane spremembe agenta (nil = izbris) do potrditve
         var big: Set<String> = []                         // sync: že javljene prevelike datoteke
         var execKnown = true                              // sync: odjemalec pozna bit x (ne Windows)
+        var pulling: Run?                                 // sync: izvajanje, katerega spremembe minigw prav zdaj prevzema
+        var keptBase: [String: String?] = [:]             // sync: združeno brez potrditve → različica, iz katere je agent začel
         let device: String?                               // naprava, ki je mapo registrirala (dokaz Noise); nil = lokalno
         init(session: String, cwd: String, readOnly: Bool, copy: URL?, device: String?) {
             self.session = session; self.cwd = cwd; self.readOnly = readOnly; self.copy = copy; self.device = device
         }
     }
+
+    /// sync: eno izvajanje agenta v svojem klonu kopije (vzporedna izvajanja v isti mapi).
+    final class Run {
+        let share: Share, copy: URL, clone: URL
+        let base: [String: Sync.Entry]   // stanje odjemalca ob klonu: od tod so spremembe za prevzem in različice »base«
+        let start: [String: Sync.Entry]  // klon ob začetku: od tod so spremembe agenta, ki gredo nazaj v kopijo
+        var merged = false
+        var acked: Set<String> = []      // poti, ki jih je minigw potrdil ob prevzemu tega izvajanja
+        init(share: Share, copy: URL, clone: URL, base: [String: Sync.Entry], start: [String: Sync.Entry]) {
+            self.share = share; self.copy = copy; self.clone = clone; self.base = base; self.start = start
+        }
+    }
+
+    /// ID izvajanja agenta (Router.syncRun): mount ga poveže s klonom, syncBack in finish ga najdeta.
+    @TaskLocal public static var run: String?
+    private var runs: [String: Run] = [:]
 
     private var bySession: [String: Share] = [:]
     private var reaper: Task<Void, Never>?
@@ -183,7 +201,15 @@ public actor ShareHub {
             for _ in 0..<60 where bySession[session] == nil { try? await Task.sleep(for: .milliseconds(500)) }
         }
         guard let s = share(session: session, device: device), cwd == nil || cwd == s.cwd else { return nil }
-        if let copy = s.copy { return await syncJob(s, "SYNC-PUSH") ? copy : nil }
+        if let copy = s.copy {  // zaklep le za prenos; agent nato dela v svojem klonu (brez izvajanja, npr. Siri: v kopiji)
+            await acquire(copy)
+            var dir: URL?
+            if !Task.isCancelled, await syncJob(s, "SYNC-PUSH") {
+                if let id = Self.run { dir = await clone(s, copy, id) } else { dir = copy }
+            }
+            unlock(copy)
+            return dir
+        }
         if let mp = s.mountPoint, Self.isMounted(mp) { return mp }
         if let t = s.mounting { return await t.value }
         let mp = Self.mountsDir.appendingPathComponent(s.dir, isDirectory: true)
@@ -213,28 +239,106 @@ public actor ShareHub {
 
     private var busy: [URL: [CheckedContinuation<Void, Never>]] = [:]
 
-    /// Ena zahteva agenta naenkrat na kopijo (prenos → agent → prevzem); nil = seja ni v načinu sync.
-    /// `wait`: po ponovnem zagonu routerja počaka (do 30 s), da minigw mapo znova registrira (kot mount).
-    func lock(session: String, wait: Bool = false, device: String? = nil) async -> URL? {
-        if wait, !session.isEmpty {
-            for _ in 0..<60 where bySession[session] == nil { try? await Task.sleep(for: .milliseconds(500)) }
-        }
-        guard let copy = share(session: session, device: device)?.copy else { return nil }
+    /// En prenos, prevzem ali združitev naenkrat na kopijo; agenti medtem delajo vzporedno vsak v svojem klonu.
+    private func acquire(_ copy: URL) async {
         if busy[copy] == nil { busy[copy] = [] } else { await withCheckedContinuation { busy[copy]!.append($0) } }
-        return copy
     }
 
     func unlock(_ copy: URL) {
         if var w = busy[copy], !w.isEmpty { let k = w.removeFirst(); busy[copy] = w; k.resume() } else { busy[copy] = nil }
     }
 
-    /// Po agentu: minigw prevzame spremembe kopije (ne pri --minigw-ro). Konča se pred odgovorom, da jih Claude Code že vidi.
-    func syncBack(session: String) async {
-        guard let s = bySession[session], s.copy != nil, !s.readOnly else { return }
-        _ = await syncJob(s, "SYNC-PULL")
+    /// Klon kopije za izvajanje `id` (APFS: takoj, brez dodatnega prostora) v scratch/sync/runs; kliče se pod zaklepom.
+    /// Mesto ».<n>« je najnižje prosto: zaporedna izvajanja imajo isto pot (nadaljevanje seje Claude je vezano na mapo).
+    private func clone(_ s: Share, _ copy: URL, _ id: String) async -> URL? {
+        let dir = copy.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("runs", isDirectory: true)
+        let name = copy.deletingLastPathComponent().lastPathComponent + "-" + copy.lastPathComponent
+        var n = 0
+        while runs.values.contains(where: { $0.clone.lastPathComponent == "\(name).\(n)" }) { n += 1 }
+        let clone = dir.appendingPathComponent("\(name).\(n)", isDirectory: true)
+        let base = s.readOnly ? [:] : s.state ?? [:], readOnly = s.readOnly
+        let start = await Task.detached { () -> [String: Sync.Entry]? in
+            try? FileManager.default.removeItem(at: clone)  // ostanek prekinjenega zagona
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            guard Self.clone(copy, to: clone) else { return nil }
+            return readOnly ? [:] : Sync.scan(clone, previous: base).files
+        }.value
+        guard let start else { return nil }
+        runs[id] = Run(share: s, copy: copy, clone: clone, base: base, start: start)
+        return clone
     }
 
-    /// minigw naj prenese (SYNC-PUSH) ali prevzame (SYNC-PULL); zaporedje zagotavlja lock().
+    static func clone(_ src: URL, to dst: URL) -> Bool {
+        clonefile(src.path, dst.path, 0) == 0 || (try? FileManager.default.copyItem(at: src, to: dst)) != nil
+    }
+
+    /// Spremembe agenta v klonu nazaj v kopijo (pod zaklepom), da je naslednji prenos spet le razlika.
+    /// Pot, ki se je v kopiji od klona spremenila (drug agent ali prenos), ne prepiše. Če je minigw ni potrdil, gre
+    /// različica agenta v kopijo kot `<pot>.minigw-agent` (nova datoteka, z naslednjim prevzemom do uporabnika).
+    /// Nepotrjene združene ostanejo v kopiji (»kept«) z izvorno različico v keptBase.
+    /// ponytail: le sinhronizirane datoteke; prezrti izhod gradnje (.build, node_modules) ostane v klonu in izgine z njim,
+    /// zato vsako izvajanje gradi od stanja kopije. Združi tudi te, če bo inkrementalna gradnja prepočasna.
+    /// ponytail: nepotrjen izbris v spremenjeni kopiji se opusti (ostane različica kopije).
+    private func merge(_ r: Run) async {
+        guard !r.merged, !r.share.readOnly else { return }
+        r.merged = true
+        let (start, clone, copy, acked) = (r.start, r.clone, r.copy, r.acked)
+        let (applied, touched) = await Task.detached { () -> ([String], Set<String>) in
+            let fm = FileManager.default
+            let ch = Sync.diff(old: start, new: Sync.scan(clone, previous: start).files, root: clone)
+            func unchanged(_ p: String, _ dst: URL) -> Bool { Sync.entry(dst, path: p, previous: start[p])?.sha256 == start[p]?.sha256 }
+            var applied: [String] = []
+            for p in ch.deleted {  // pred spremembami: datoteka »a« → mapa »a/…«
+                guard let dst = Sync.resolve(p, root: copy), unchanged(p, dst) else { continue }
+                try? fm.removeItem(at: dst)
+                applied.append(p)
+            }
+            for e in ch.changed {
+                guard let src = Sync.resolve(e.path, root: clone), let dst = Sync.resolve(e.path, root: copy) else { continue }
+                if let old = Sync.resolve(e.path + ".minigw-conflict", root: copy) { try? fm.removeItem(at: old) }  // ostanek 7e10925
+                let ok = unchanged(e.path, dst)
+                if !ok, acked.contains(e.path) { continue }  // odjemalec jo že ima; kopija ostane drugemu izvajanju
+                guard let target = ok ? dst : Sync.resolve(e.path + ".minigw-agent", root: copy) else { continue }
+                // Mapa → datoteka: le prazna mapa (nikoli rekurzivno; preskočene poti v njej ostanejo).
+                var dir: ObjCBool = false
+                if fm.fileExists(atPath: target.path, isDirectory: &dir), dir.boolValue { rmdir(target.path) } else { try? fm.removeItem(at: target) }
+                if (try? fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)) == nil
+                    || !Self.clone(src, to: target) {
+                    Router.log.error("sync: cannot merge \(e.path, privacy: .public) into the copy")
+                } else if ok { applied.append(e.path) }
+            }
+            return (applied, Set(ch.changed.map(\.path) + ch.deleted))
+        }.value
+        // keptBase: potrjeno in v kopiji = odjemalec ima različico kopije; nepotrjeno združeno = izvor tega agenta.
+        // Ni združeno (kopija se je spremenila): ostane, kar velja za različico v kopiji.
+        for p in acked where !touched.contains(p) { r.share.keptBase[p] = nil }
+        for p in applied {
+            if acked.contains(p) { r.share.keptBase[p] = nil } else { r.share.keptBase.updateValue(r.base[p]?.sha256, forKey: p) }
+        }
+    }
+
+    /// Konec izvajanja (tudi ob napaki ali prekinitvi): združi, če prevzema ni bilo, in odstrani klon.
+    func finish(run id: String) async {
+        guard let r = runs[id] else { return }
+        if !r.merged, !r.share.readOnly { await acquire(r.copy); await merge(r); unlock(r.copy) }
+        await Task.detached { try? FileManager.default.removeItem(at: r.clone) }.value
+        runs[id] = nil  // šele po odstranitvi: mesto ».<n>« je spet prosto
+    }
+
+    /// Po agentu: minigw prevzame spremembe klona izvajanja (ne pri --minigw-ro), nato gredo v kopijo.
+    /// Konča se pred odgovorom, da jih Claude Code že vidi.
+    func syncBack(session: String) async {
+        guard let s = bySession[session], let copy = s.copy, !s.readOnly else { return }
+        let r = Self.run.flatMap { runs[$0] }.flatMap { $0.share === s ? $0 : nil }
+        await acquire(copy)  // en prevzem naenkrat: zahteve minigw (changes/file/ack) veljajo za s.pulling
+        s.pulling = r
+        _ = await syncJob(s, "SYNC-PULL")
+        s.pulling = nil
+        if let r { await merge(r) }
+        unlock(copy)
+    }
+
+    /// minigw naj prenese (SYNC-PUSH) ali prevzame (SYNC-PULL); zaporedje zagotavlja zaklep kopije.
     private func syncJob(_ s: Share, _ method: String) async -> Bool {
         let job = DAVJob(id: UUID().uuidString, method: method, path: "", prefix: "", headers: [:], body: Data())
         return await send(s, job, timeout: 900)?.status == 200  // prvi prenos velike mape traja
@@ -261,6 +365,7 @@ public actor ShareHub {
         for p in gone {
             if let url = Sync.resolve(p, root: copy) { try? FileManager.default.removeItem(at: url) }
             state[p] = nil
+            s.keptBase[p] = nil
         }
         s.state = state
         s.incoming = Dictionary(valid.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
@@ -274,16 +379,22 @@ public actor ShareHub {
         guard let e = s.incoming[path], let url = Sync.resolve(path, root: copy) else { return 403 }
         guard Sync.sha256(data) == e.sha256 else { return 409 }  // spremenjena med prenosom
         do { try Sync.write(data, to: url, mtime: e.mtime, exec: s.execKnown ? e.exec : nil) } catch { return 500 }
+        s.keptBase[path] = nil
         s.state?[path] = s.execKnown ? e : Sync.entry(url, path: path, previous: nil) ?? e  // Windows: dejanski način kopije
         return 204
     }
 
-    /// Spremembe agenta od zadnjega prenosa; stanje se premakne šele s potrditvijo (syncAck). nil = ni seje ali samo branje.
+    /// Spremembe agenta (v klonu izvajanja, sicer v kopiji) od prenosa; stanje se premakne šele s potrditvijo (syncAck).
+    /// nil = ni seje ali samo branje.
     func syncChanges(key: String, device: String? = nil) async -> Sync.Changes? {
-        guard let s = share(key: key, device: device), let copy = s.copy, !s.readOnly, let prev = s.state else { return nil }
+        guard let s = share(key: key, device: device), let copy = s.pulling?.clone ?? s.copy, !s.readOnly,
+              let prev = s.pulling?.base ?? s.state else { return nil }
         s.lastSeen = Date()
         let (current, skipped) = await Task.detached { Sync.scan(copy, previous: prev) }.value
         var ch = Sync.diff(old: prev, new: current, root: copy)
+        ch.base = Dictionary(uniqueKeysWithValues: (ch.changed.map(\.path) + ch.deleted).compactMap { p in
+            (s.keptBase[p] ?? prev[p]?.sha256).map { (p, $0) }  // združeno brez potrditve: izvorna različica
+        })
         ch.skipped = skipped.filter { !s.big.contains($0) }
         s.big = Set(skipped)
         s.pending = Dictionary(uniqueKeysWithValues: ch.changed.map { ($0.path, Optional($0)) } + ch.deleted.map { ($0, nil) })
@@ -293,13 +404,17 @@ public actor ShareHub {
     /// minigw potrdi poti, ki jih je obdelal (zapisal, izbrisal ali shranil kot spor).
     func syncAck(key: String, _ paths: [String], device: String? = nil) -> Bool {
         guard let s = share(key: key, device: device), s.state != nil else { return false }
-        for p in paths { if let e = s.pending.removeValue(forKey: p) { s.state?[p] = e } }
+        for p in paths {
+            guard let e = s.pending.removeValue(forKey: p) else { continue }
+            s.state?[p] = e
+            if let r = s.pulling { r.acked.insert(p) } else { s.keptBase[p] = nil }  // izvajanje: keptBase uredi merge
+        }
         return true
     }
 
     /// Datoteka kopije za minigw (le poslane spremembe, nikoli prezrte ali zunaj kopije).
     func syncGet(key: String, path: String, device: String? = nil) -> Data? {
-        guard let s = share(key: key, device: device), let copy = s.copy, !s.readOnly, (s.pending[path] ?? nil) != nil,
+        guard let s = share(key: key, device: device), let copy = s.pulling?.clone ?? s.copy, !s.readOnly, (s.pending[path] ?? nil) != nil,
               let url = Sync.resolve(path, root: copy) else { return nil }
         s.lastSeen = Date()
         return try? Data(contentsOf: url)

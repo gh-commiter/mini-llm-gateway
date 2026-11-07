@@ -20,6 +20,7 @@ so Claude stays free for the work that needs it.
     - [3.2.1 Claude Code plugin](#321-claude-code-plugin)
     - [3.2.2 Another Mac](#322-another-mac)
     - [3.2.3 Windows and Linux](#323-windows-and-linux)
+    - [3.2.4 Router on Windows or Linux (minigw serve)](#324-router-on-windows-or-linux-minigw-serve)
 - [4. Use](#4-use)
 - [5. Router settings](#5-router-settings)
 - [6. Security notes](#6-security-notes)
@@ -205,8 +206,30 @@ minigw connect mini.local --token '<token>'
 ```
 
 The connection is stored in Windows Credential Manager, on Linux in `~/.config/minigw/connection.json` (mode 0600).
-Windows and Linux clients encrypt with AES-256-GCM, the macOS client with ChaCha20-Poly1305; the router accepts both.
+All clients encrypt with AES-256-GCM; the Mac router also accepts ChaCha20-Poly1305 from older macOS clients.
 With the [Claude Code plugin](#321-claude-code-plugin) you can skip all of this: it downloads and checks `minigw` itself.
+
+#### 3.2.4 Router on Windows or Linux (minigw serve)
+
+`minigw serve` turns a Windows or Linux computer into a small router: `claude -p` on that computer as
+`claude-cli-opus`, `claude-cli-sonnet` and `claude-cli-haiku`, no Siri, Apple models or gateways. Agents work in a
+synced copy of the client's folder, so clients run with `MINIGW_WORK=sync` (folder mounts need the Mac router).
+Install Claude Code there (on Windows the native `claude.exe`; `minigw serve` does not run `claude.cmd`).
+
+```sh
+minigw serve init            # creates the config with a new token and router key, prints the minigw connect line
+minigw serve                 # port 8765; --port, --folder, --config
+```
+
+On each client run the printed `minigw connect` line. The first connect from a new device is refused and the router
+log shows `minigw serve allow <id> "<name>"`. Anyone with the token can try to connect, so compare the ID with the
+device you just connected before you allow it, then restart `minigw serve`.
+
+The config (`%AppData%\minigw\serve.json`, `~/.config/minigw/serve.json`, mode 0600) holds the token, the router key,
+the allowed devices and the agent's `tools` (default `Read,Grep,Glob,Edit,Write,MultiEdit`, limited to the copy).
+`Bash` runs in Claude Code's sandbox on Linux (needs `bubblewrap` and `socat`); on Windows there is no sandbox, so it
+also needs `"allowUnsandboxedBash": true`. Connections from the router computer itself (loopback) skip the device
+check and encryption: do not forward the port to loopback (`ssh -L`, `netsh interface portproxy`, a reverse proxy).
 
 ## 4. Use
 
