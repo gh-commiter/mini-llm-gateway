@@ -161,7 +161,7 @@ func TestServeInstallFiles(t *testing.T) {
 		case "linux":
 			data, _ := os.ReadFile(servicePath(goos))
 			if !strings.Contains(string(data), `ExecStart="`+bin+`" serve --config "`+cfg+`"`) ||
-				strings.Join(calls, ";") != "systemctl --user daemon-reload;systemctl --user enable --now minigw-serve.service;loginctl enable-linger ana" ||
+				strings.Join(calls, ";") != "systemctl --user daemon-reload;systemctl --user enable minigw-serve.service;systemctl --user restart minigw-serve.service;loginctl enable-linger ana" ||
 				!strings.Contains(msg, "at boot") {
 				t.Fatalf("unit: %s calls %v msg %q", data, calls, msg)
 			}

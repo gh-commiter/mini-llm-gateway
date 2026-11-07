@@ -413,7 +413,10 @@ func serviceCommand(sub, goos, cfgPath string) (string, error) {
 			if err := runCmd("systemctl", "--user", "daemon-reload"); err != nil {
 				return "", err
 			}
-			if err := runCmd("systemctl", "--user", "enable", "--now", systemdUnit); err != nil {
+			if err := runCmd("systemctl", "--user", "enable", systemdUnit); err != nil {
+				return "", err
+			}
+			if err := runCmd("systemctl", "--user", "restart", systemdUnit); err != nil { // posodobitev: nova različica takoj
 				return "", err
 			}
 			// Zagon ob vklopu brez prijave: linger (polkit brez root, sicer sudo brez gesla).
