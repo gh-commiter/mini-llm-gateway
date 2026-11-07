@@ -1229,7 +1229,7 @@ final class FakeMinigw: @unchecked Sendable {
         await r.handle(q, writer: FakeWriter())
     }
     let dir = c.scratchURL.appendingPathComponent("sync/local")
-    let names = Set((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? [])
+    let names = Set(((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []).filter { !$0.hasSuffix(".used") })  // oznake rabe (#1)
     #expect(names == [Sync.folderID(cwd), Sync.folderID(cwd) + "-ro"])
 }
 
