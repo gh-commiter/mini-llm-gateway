@@ -235,9 +235,22 @@ private func acceptPeerPort(_ fd: Int32) -> (Int32, UInt16) {
         _ = withUnsafePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(c, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
         let (s, peerPort) = acceptPeerPort(l)
         defer { close(s) }
-        #expect(PeerProcess.pid(localPort: peerPort, remotePort: routerPort) == getpid())
-        #expect(PeerProcess.refusal(peerPort: peerPort, routerPort: routerPort, appPID: getpid()) == "admin requests from agent processes are not allowed")
-        #expect(PeerProcess.refusal(peerPort: peerPort, routerPort: routerPort, appPID: 999_999) == nil)  // veriga do PID 1, tudi prek root »login«
+        func holders() -> String {  // diagnostika: procesi z vtičnico (otrok vzporednega testa, ki jo je podedoval?)
+            PeerProcess.pids(localPort: peerPort, remotePort: routerPort).map { p -> String in
+                var b = [CChar](repeating: 0, count: 4096); proc_pidpath(p, &b, 4096); return "\(p) \(String(cString: b))"
+            }.joined(separator: ", ")
+        }
+        // Med posix_spawn vzporednega testa ima otrok za trenutek kopijo vseh datotek (tudi FD_CLOEXEC, do exec): drug proces
+        // z isto vtičnico je lahko bežen. Zato vsako preverjanje do 2 s, dokler ne velja.
+        func eventually(_ ok: () -> Bool) -> Bool {
+            for _ in 0..<40 { if ok() { return true }; usleep(50_000) }
+            return false
+        }
+        #expect(eventually { PeerProcess.pid(localPort: peerPort, remotePort: routerPort) == getpid() }, "\(holders())")
+        #expect(eventually { PeerProcess.refusal(peerPort: peerPort, routerPort: routerPort, appPID: getpid())
+                    == "admin requests from agent processes are not allowed" }, "\(holders())")
+        #expect(eventually { PeerProcess.refusal(peerPort: peerPort, routerPort: routerPort, appPID: 999_999) == nil },  // veriga do PID 1
+                "\(PeerProcess.refusal(peerPort: peerPort, routerPort: routerPort, appPID: 999_999) ?? ""): \(holders())")
         #expect(PeerProcess.parent(1) == 0 && PeerProcess.parent(999_999) == nil)
         #expect(PeerProcess.refusal(peerPort: 1, routerPort: routerPort, appPID: 999_999)?.contains("cannot identify") == true)
     }
