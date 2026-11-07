@@ -13,6 +13,8 @@ M="${CLAUDE_PLUGIN_DATA}/bin/minigw"; uname -s
 
 `Darwin` is macOS. `Linux` is Linux. `MINGW*`, `MSYS*` or `CYGWIN*` is Windows (Git Bash runs `minigw.exe`). If `$M` is missing, the plugin could not download it at session start: a new session retries (it needs GitHub once).
 
+Profiles: `"$M" status` shows each gateway this client uses; the one at `127.0.0.1` is the gateway on this computer. `install`, `update`, `uninstall` and `gw …` change only that one; for another profile run `/minigw:gw` on its computer.
+
 Rules:
 - Never put an API key in a command line. Never print the gateway token. `serve init` and `gw token` print it in the connect line: send their output to `/dev/null`, unless the user asked for the connect line.
 - Never update on your own. An update restarts the gateway and stops the agent requests that run on it.
@@ -42,11 +44,11 @@ Rules:
 2. `open -a "Mini Gateway"`. Then retry `"$M" gw status` for up to 20 seconds, until it answers.
 3. `"$M" gw autostart on` (Open at Login).
 
-**Then, on every system**, connect this computer's minigw to its own gateway. If `"$M" status` shows a connection to another gateway, ask first: minigw keeps one connection. The token goes on stdin from one command to the other: it is never printed and never in a command line:
+**Then, on every system**, connect this computer's minigw to its own gateway as profile `local`; other profiles stay. Skip it if `"$M" profiles` already lists `127.0.0.1`. The token goes on stdin from one command to the other: it is never printed and never in a command line:
 
 ```sh
 l=$("$M" gw token | sed -n 's/^  minigw connect //p'); p=${l%% *}; p=${p##*:}; t=${l#*--token \'}; t=${t%\'}
-printf '%s' "$t" | "$M" connect "127.0.0.1:$p" --token - && "$M" gw status
+printf '%s' "$t" | "$M" connect "127.0.0.1:$p" --name local --token - && "$M" gw status
 ```
 
 For other computers, `/minigw:gw token` shows the connect line to run there (or `/minigw:connect` on them).
@@ -65,7 +67,7 @@ For other computers, `/minigw:gw token` shows the connect line to run there (or 
 
 ## status
 
-`"$M" gw status`. Summarize: running, version, autostart (at boot / at sign-in / no), running agent requests, devices (allowed, waiting), providers (models, ready). If it is not installed, suggest `/minigw:gw install`.
+`"$M" gw status`. Summarize: running, version, autostart (at boot / at sign-in / no), running agent requests, devices (allowed, waiting), providers (models, ready). Then `"$M" status`: list each profile (reachable or not) and say which one is this computer (`127.0.0.1`). If it is not installed, suggest `/minigw:gw install`.
 
 ## Managing the gateway
 

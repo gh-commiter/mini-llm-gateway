@@ -12,3 +12,5 @@ Run these commands and summarize the result for the user in a few lines (gateway
 ```
 
 If it is not connected, suggest `/minigw:connect <gateway> <token>`. If the file is missing, the plugin could not install it at session start (it needs network access to GitHub once); a new session retries.
+
+One gateway only: add `--minigw-profile <p>` after `minigw`.

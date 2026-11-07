@@ -17,7 +17,8 @@ MINIGW_TOKEN
 - `--name <profile>` (lowercase letters, digits and `-`) adds or replaces that gateway and keeps the others, for
   example `--name mini` for the Mac mini and `--name win` for a Windows gateway. Use it whenever the user connects a
   second gateway; without it the default profile is replaced. Models of other profiles are then `<model>@<profile>`.
-- `minigw profiles` lists the profiles, `minigw profiles default <name>` picks the one whose models also appear without
-  a suffix, and `minigw disconnect --name <profile>` removes one.
+- List: `"${CLAUDE_PLUGIN_DATA}/bin/minigw" profiles` (`*` = default).
+- Default (its models also without a suffix): `"${CLAUDE_PLUGIN_DATA}/bin/minigw" profiles default <profile>`.
+- Remove one: `"${CLAUDE_PLUGIN_DATA}/bin/minigw" disconnect --name <profile>`; without `--name` it removes the default.
 
 Then run `"${CLAUDE_PLUGIN_DATA}/bin/minigw" status` and report the result. minigw stores the token in the system credential store: the macOS Keychain, Windows Credential Manager, or on Linux `~/.config/minigw/connection.json` and `connections/<profile>.json` (mode 0600). Do not repeat the token back to the user.

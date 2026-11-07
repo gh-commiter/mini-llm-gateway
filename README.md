@@ -219,9 +219,12 @@ Then connect once with the gateway's token (quote it, it contains `#`):
 
 ```sh
 minigw connect mini.local --token '<token>'
+minigw connect hpx360.local --name win --token '<token>'   # a second gateway as profile "win" (both stay)
 ```
 
-The connection is stored in Windows Credential Manager, on Linux in `~/.config/minigw/connection.json` (mode 0600).
+The connection is stored in Windows Credential Manager, on Linux in `~/.config/minigw/connection.json` (mode 0600),
+other profiles under `minigw:router:<profile>` and `connections/<profile>.json`
+([Several gateways at once](#4-use)).
 All clients encrypt with AES-256-GCM; the Mac gateway also accepts ChaCha20-Poly1305 from older macOS clients.
 
 #### 3.2.4 Gateway on Windows or Linux without the plugin (minigw serve)
@@ -296,8 +299,8 @@ on Windows, in the Secret Service (`secret-tool`) on Linux, or in `gateway-keys.
 minigw                                  # Claude Code through the gateway; choose models with /model
 minigw --model claude-apple-fm -p "Hi"  # any claude option works
 minigw status                           # gateway, providers, number of models
-minigw models                           # list available models
-minigw connect 192.168.1.20 --token …   # use a gateway on another Mac
+minigw models                           # list available models (<model>@<profile> for other gateways)
+minigw connect 192.168.1.20 --token …   # use a gateway on another Mac (--name P adds it as profile P)
 ```
 
 Subagents can use gateway models too, e.g. `model: claude-siri-ai` in `.claude/agents/<name>.md`.
@@ -333,6 +336,7 @@ folder is shared, also outside your home folder (for example `D:\Projects\app` o
 but never a drive or volume root, the home folder itself, system folders (`C:\Windows`, `Program Files`, `/usr`,
 `/System` …), other users' home folders, `~/Library`, `AppData` or hidden folders such as `~/.ssh`. To share one of
 those anyway, run `minigw share add` in it (`minigw share list`, `minigw share remove`); a root is always refused.
+The list is per computer: with several profiles every gateway gets the folder on its first agent request.
 **Read-only:** `minigw --minigw-ro …` (or `MINIGW_SHARE=ro`, for example in the `env` of Claude Code's settings for the
 plugin) shares the folder read-only: minigw refuses every write, the gateway mounts it read-only and runs Codex and
 Grok in their read-only sandbox. Agents read files up to 32 MB in one piece (larger ones only in ranges).
@@ -399,7 +403,8 @@ example `/Volumes/Java/projects` mounted from the gateway's `/Volumes/Java`), `m
 `minigw run -- mvn -q verify` runs a build there and streams its output and exit code back.
 - **Mode per folder:** `minigw share add --work=native` (or `sync`, `direct`, with `--ro` for read-only) in a folder
   saves its default mode for it and its subfolders in minigw's share list (never in the project); `minigw share list`
-  shows it. `--minigw-work=` or `MINIGW_WORK` still wins for one run.
+  shows it. `--minigw-work=` or `MINIGW_WORK` still wins for one run. `minigw run` uses the default profile, or
+  `--minigw-profile P`.
 - **Proof, not a path:** minigw sends the share name and the path under it; the gateway writes a check file with random
   content into its folder, and minigw must read it back through its mount. A folder with the same path elsewhere fails.
   The check is for correctness (the same folder), not a permission: permission comes from the token, the device, the
