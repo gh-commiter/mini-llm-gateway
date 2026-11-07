@@ -419,7 +419,7 @@ struct SettingsView: View {
             } header: {
                 Text("Sandbox")
             } footer: {
-                Text("The claude-codex models (one per Codex model of your account) run “codex exec” as an agent in the session's folder, also in folders shared from other Macs. Its sandbox writes only to that folder and the allowed folders from Claude CLI; reads are not limited. Sign in once with “codex login”.")
+                Text("The claude-codex models (one per Codex model of your account) run “codex exec” as an agent in the session's folder, also in folders shared from other Macs. Its sandbox writes only to that folder and the allowed folders from Claude CLI. Devices that use Codex can read every file this user can read. Sign in once with “codex login”.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -463,7 +463,7 @@ struct SettingsView: View {
             } header: {
                 Text("Sandbox")
             } footer: {
-                Text("The claude-grok models run “grok -p” as an agent in the session's folder, also in folders shared from other Macs. Grok's kernel sandbox (workspace) lets it write only to that folder; reads are not limited. Without writing it runs read-only. Sign in once with “grok login”.")
+                Text("The claude-grok models run “grok -p” as an agent in the session's folder, also in folders shared from other Macs. Grok's kernel sandbox (workspace) lets it write only to that folder. Devices that use Grok can read every file this user can read. Without writing it runs read-only. Sign in once with “grok login”.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

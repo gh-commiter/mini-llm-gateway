@@ -6,7 +6,7 @@ public struct CodexConfig: Codable, Sendable, Equatable {
     public var executable = ""            // prazno = samodejno iskanje
     public var enabledModels: [String]?   // nil = vsi modeli računa (tudi prihodnji); seznam = le ti
     public var write = true               // sandbox workspace-write (sicer read-only)
-    public var network = true             // omrežje za ukaze v sandboxu (npr. gradnja)
+    public var network = false            // omrežje za ukaze v sandboxu (npr. gradnja); privzeto izklopljeno kot v Go
     public init() {}
 
     public func isModelEnabled(_ slug: String) -> Bool { enabledModels?.contains(slug) ?? true }
@@ -72,7 +72,7 @@ public enum Codex {
     /// Brez orodij (naslovi, povzetki) le branje v začasni mapi.
     /// `resume`: ID niti Codex za nadaljevanje (možnosti exec, tudi sandbox, veljajo tudi zanj).
     static func args(cwd: URL, extraDirs: [String], agent: Bool, output: URL, model: String? = nil,
-                     write: Bool = true, network: Bool = true, resume: String? = nil) -> [String] {
+                     write: Bool = true, network: Bool = false, resume: String? = nil) -> [String] {
         var a = ["exec", "--json", "--skip-git-repo-check", "--color", "never", "-C", cwd.path, "-o", output.path]
         if let model { a += ["-m", model] }
         if agent && write {
