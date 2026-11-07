@@ -122,6 +122,7 @@ final class ShareClient: @unchecked Sendable {
     var key: String { lock.withLock { current } }
     private let syncLock = NSLock()
     private var synced: [String: Sync.Entry] = [:]  // manifest ob zadnjem prenosu (zgoščevanje, spori)
+    private var sent: [String: Set<String>] = [:]   // pot → različice, ki jih je router dobil od tega odjemalca (#20)
     private var reported: Set<String> = []          // že javljene prevelike datoteke
     private var unpulled = false                    // spremembe agenta, ki niso bile prevzete in potrjene
 
@@ -246,6 +247,7 @@ final class ShareClient: @unchecked Sendable {
             }
         }
         synced = next
+        for (p, e) in next { if (sent[p]?.count ?? 0) > 64 { sent[p] = [] }; sent[p, default: []].insert(e.sha256) }
         return true
     }
 
@@ -255,7 +257,8 @@ final class ShareClient: @unchecked Sendable {
         guard s == 200, let d, let ch = try? JSONDecoder().decode(Sync.Changes.self, from: d) else {
             note("cannot get the agent's changes from the gateway (HTTP \(s))"); unpulled = true; return false
         }
-        let (notes, done) = Sync.apply(ch, root: root, state: &synced) { p in
+        let known = sent
+        let (notes, done) = Sync.apply(ch, root: root, state: &synced, known: { p, sha in known[p]?.contains(sha) == true }) { p in
             let (st, data) = call(c, "GET", "/minigw/sync/file", ["x-share-key": k, "x-sync-path": Sync.encode(p)], timeout: 300)
             return st == 200 ? data : nil
         }

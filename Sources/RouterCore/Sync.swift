@@ -242,11 +242,18 @@ public enum Sync {
     /// začel (`ch.base`; spremenil jo je uporabnik ali drug agent), ne prepiše: različico routerja zapiše kot
     /// `<ime>.minigw-conflict`. Poti, prezrte pri odjemalcu, preskoči.
     /// `state` = manifest ob prenosu. Vrne sporočila za stderr in obdelane poti (potrditev routerju).
-    public static func apply(_ ch: Changes, root: URL, state: inout [String: Entry],
+    public static func apply(_ ch: Changes, root: URL, state: inout [String: Entry], known: ((String, String) -> Bool)? = nil,
                              fetch: (String) -> Data?) -> (notes: [String], done: [String]) {
         let ignore = Ignore(root: root, follow: true)  // odjemalec: mapa uporabnika
         var notes: [String] = [], done: [String] = []
-        let before = state, base = { (p: String) in ch.base.map { $0[p] } ?? before[p]?.sha256 }
+        let before = state
+        // #20: osnovo pošlje router; velja le različica, ki jo je ta odjemalec poslal. Sicer osnova, ki je nobena datoteka
+        // nima: uporabnikova sprememba med izvajanjem ostane, agentova gre v .minigw-conflict.
+        let base = { (p: String) -> String? in
+            guard let b = ch.base else { return before[p]?.sha256 }
+            if let v = b[p], v != before[p]?.sha256, let known, !known(p, v) { return "\u{0}unknown base" }
+            return b[p]
+        }
         for p in ch.deleted {  // pred spremembami: datoteka »a« → mapa »a/…«
             if isProtected(p) { notes.append("not deleted \(p): protected path"); done.append(p); continue }
             if ignore.covers(p) { done.append(p); continue }

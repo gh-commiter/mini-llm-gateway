@@ -1355,3 +1355,21 @@ final class FakeMinigw: @unchecked Sendable {
     #expect((try? Data(contentsOf: root.appendingPathComponent("src/ok.txt"))) == data)
     #expect(notes.contains { $0.contains("protected path (through a link)") })
 }
+
+/// #20: neznana osnova (router jo je izvedel iz prenosa) ne prepiše uporabnikove spremembe med izvajanjem.
+@Test func syncBaseMustBeAVersionWeSent() throws {
+    for known in [false, true] {
+        let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("p20-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data("user edit".utf8).write(to: root.appendingPathComponent("a.txt"))
+        var state = ["a.txt": Sync.Entry(path: "a.txt", size: 4, mtime: 0, sha256: Sync.sha256(Data("orig".utf8)))]
+        let agent = Data("agent".utf8)
+        let ch = Sync.Changes(changed: [Sync.Entry(path: "a.txt", size: Int64(agent.count), mtime: 0, sha256: Sync.sha256(agent))],
+                              base: ["a.txt": Sync.sha256(Data("user edit".utf8))])
+        _ = Sync.apply(ch, root: root, state: &state, known: { _, _ in known }) { _ in agent }
+        let got = try String(contentsOf: root.appendingPathComponent("a.txt"), encoding: .utf8)
+        let conflict = try? String(contentsOf: root.appendingPathComponent("a.txt.minigw-conflict"), encoding: .utf8)
+        #expect(known ? got == "agent" : (got == "user edit" && conflict == "agent"))
+    }
+}

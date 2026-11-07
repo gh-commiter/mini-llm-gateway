@@ -36,6 +36,8 @@ type syncChanges struct {
 	// Base: sha256 različice, iz katere je agent začel, za vsako spremenjeno in izbrisano pot (ni ključa = datoteke ni
 	// bilo). Pišemo ali brišemo le, če je datoteka še ta različica. nil = starejši router → stanje ob prenosu.
 	Base map[string]string `json:"base"`
+	// Known (#20, ni v JSON): ali je odjemalec to različico poti res poslal routerju; nil = brez preverjanja (testi).
+	Known func(path, sha string) bool `json:"-"`
 }
 
 // maxSyncFile: cela datoteka gre v eni zahtevi; router sprejme telo do 64 MB.
@@ -333,10 +335,16 @@ func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch fu
 		before[p] = e.SHA256
 	}
 	base := func(p string) string {
-		if ch.Base != nil {
-			return ch.Base[p]
+		if ch.Base == nil {
+			return before[p]
 		}
-		return before[p]
+		b, ok := ch.Base[p]
+		// #20: osnovo pošlje router; velja le različica, ki jo je ta odjemalec poslal (ali je ni bilo). Sicer osnova, ki
+		// je nobena datoteka nima: uporabnikova sprememba med izvajanjem ostane, agentova gre v .minigw-conflict.
+		if ok && b != before[p] && ch.Known != nil && !ch.Known(p, b) {
+			return "\x00unknown base"
+		}
+		return b
 	}
 	for _, p := range ch.Deleted { // pred spremembami: datoteka »a« → mapa »a/…«
 		if protectedPath(p) {
@@ -498,8 +506,20 @@ func (s *shareClient) syncPush(k string) bool {
 		}
 	}
 	s.synced = files
+	if s.sent == nil {
+		s.sent = map[string]map[string]bool{}
+	}
+	for p, e := range files { // različice, ki jih ima router od tega odjemalca (#20)
+		if s.sent[p] == nil || len(s.sent[p]) > 64 {
+			s.sent[p] = map[string]bool{}
+		}
+		s.sent[p][e.SHA256] = true
+	}
 	return true
 }
+
+// sentVersion: ali je ta odjemalec v tej seji poslal (ali obdržal) to različico poti.
+func (s *shareClient) sentVersion(p, sha string) bool { return s.sent[p][sha] }
 
 // syncPull: po agentu spremembe kopije v mapo (spori → <ime>.minigw-conflict).
 func (s *shareClient) syncPull(k string) bool {
@@ -510,6 +530,7 @@ func (s *shareClient) syncPull(k string) bool {
 		s.unpulled = true
 		return false
 	}
+	ch.Known = s.sentVersion
 	notes, done := syncApply(ch, s.root, s.synced, func(p string) []byte {
 		st, b := call(s.c, "GET", "/minigw/sync/file", map[string]string{"x-share-key": k, "x-sync-path": url.PathEscape(p)}, nil, 300*time.Second)
 		if st != 200 {

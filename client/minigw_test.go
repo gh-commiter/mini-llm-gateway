@@ -576,3 +576,25 @@ func TestSyncProtectedThroughLink(t *testing.T) {
 		t.Fatalf("notes: %v", notes)
 	}
 }
+
+// #20: osnovo pošlje router; neznana različica ne prepiše uporabnikove spremembe med izvajanjem.
+func TestSyncBaseMustBeAVersionWeSent(t *testing.T) {
+	for _, known := range []bool{false, true} {
+		root := t.TempDir()
+		os.WriteFile(filepath.Join(root, "a.txt"), []byte("user edit"), 0o644)
+		state := map[string]syncEntry{"a.txt": {Path: "a.txt", SHA256: sha256Hex([]byte("orig"))}}
+		agent := []byte("agent")
+		ch := syncChanges{Changed: []syncEntry{{Path: "a.txt", Size: int64(len(agent)), SHA256: sha256Hex(agent)}},
+			Base:  map[string]string{"a.txt": sha256Hex([]byte("user edit"))}, // router je izvedel trenutno različico
+			Known: func(p, sha string) bool { return known }}
+		syncApply(ch, root, state, func(string) []byte { return agent })
+		got, _ := os.ReadFile(filepath.Join(root, "a.txt"))
+		conflict, _ := os.ReadFile(filepath.Join(root, "a.txt.minigw-conflict"))
+		if !known && (string(got) != "user edit" || string(conflict) != "agent") {
+			t.Fatalf("unknown base overwrote the user's edit: %q / %q", got, conflict)
+		}
+		if known && string(got) != "agent" { // različica, ki jo je odjemalec res poslal: prepis je pravilen
+			t.Fatalf("known base: %q", got)
+		}
+	}
+}

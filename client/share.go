@@ -41,10 +41,11 @@ type shareClient struct {
 	mu       sync.Mutex
 	key      string
 	syncMu   sync.Mutex
-	synced   map[string]syncEntry // manifest ob zadnjem prenosu (zgoščevanje, spori)
-	reported map[string]bool      // že javljene prevelike datoteke
-	unpulled bool                 // spremembe agenta, ki niso bile prevzete in potrjene
-	refusal  string               // sporočilo routerja ob zavrnjeni registraciji (npr. le način sync)
+	synced   map[string]syncEntry       // manifest ob zadnjem prenosu (zgoščevanje, spori)
+	sent     map[string]map[string]bool // pot → različice (sha256), ki jih je router dobil od tega odjemalca (#20)
+	reported map[string]bool            // že javljene prevelike datoteke
+	unpulled bool                       // spremembe agenta, ki niso bile prevzete in potrjene
+	refusal  string                     // sporočilo routerja ob zavrnjeni registraciji (npr. le način sync)
 }
 
 var writeMethods = map[string]bool{"PUT": true, "DELETE": true, "MKCOL": true, "MOVE": true, "COPY": true, "PROPPATCH": true, "LOCK": true}
