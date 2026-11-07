@@ -8,16 +8,16 @@ import RouterCore
 import Security
 
 let routerHelp = """
-minigw router: show or change the Mini Gateway app on this Mac. Changes apply at once; the app must be running.
+minigw gw: show or change the Mini Gateway app on this Mac. Changes apply at once; the app must be running.
 
-  minigw router status
-  minigw router devices [allow <device id> [name] | deny <device id or name>]
-  minigw router gateway add <name> <baseURL> [--insecure]    the API key is read from stdin or asked for
-  minigw router gateway remove <name> | list
-  minigw router gateway models <name> [text] [--all] [--enable m1,m2|all] [--disable m1,m2|all]
-  minigw router claude [--path FILE] [--tools T1,T2] [--folders DIR1,DIR2] [--allow-local-tools=true|false]
-  minigw router token [rotate]                               print the connect line; rotate makes a new token
-  minigw router autostart on|off                             Open at Login (Settings → General)
+  minigw gw status
+  minigw gw devices [allow <device id> [name] | deny <device id or name>]
+  minigw gw provider add <name> <baseURL> [--insecure]   the API key is read from stdin or asked for
+  minigw gw provider remove <name> | list
+  minigw gw provider models <name> [text] [--all] [--enable m1,m2|all] [--disable m1,m2|all]
+  minigw gw claude [--path FILE] [--tools T1,T2] [--folders DIR1,DIR2] [--allow-local-tools=true|false]
+  minigw gw token [rotate]                              print the connect line; rotate makes a new token
+  minigw gw autostart on|off                            Open at Login (Settings → General)
 """
 
 private struct AdminConnection {
@@ -29,7 +29,7 @@ private struct AdminConnection {
     /// jih podtaknil drug proces. Skrivnost nikoli ne gre po žici, le dokaz MGW-Admin, vezan na rokovanje.
     static func open() -> AdminConnection {
         if ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"] != nil {
-            fail("CFFIXED_USER_HOME is set: minigw router does not run with a redirected home folder")
+            fail("CFFIXED_USER_HOME is set: minigw gw does not run with a redirected home folder")
         }
         let (v, st) = Keychain(loginOnly: true).lookup("admin")  // le prijavni keychain: drug ga ne zasenči
         guard st == errSecSuccess, let o = v.flatMap({ try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }),
@@ -39,7 +39,7 @@ private struct AdminConnection {
         }
         let a = AdminConnection(port: port, key: key, secret: secret)
         guard a.raw("GET", "/health/live", nil).0 == 200 else {  // rokovanje s ključem aplikacije, brez dokaza
-            fail("Mini Gateway does not answer on port \(port) with its router key: start the app (if it runs, another program uses that port; nothing was sent to it)")
+            fail("Mini Gateway does not answer on port \(port) with its gateway key: start the app (if it runs, another program uses that port; nothing was sent to it)")
         }
         return a
     }
@@ -66,10 +66,10 @@ private struct AdminConnection {
 private func keychainHint(_ st: OSStatus) -> String {
     let me = userName(getuid())
     if let owner = appOwner(), owner != getuid() || st == errSecNoSuchKeychain {
-        return "run minigw router as the user who runs Mini Gateway (\(userName(owner))), not as \(me)"
+        return "run minigw gw as the user who runs Mini Gateway (\(userName(owner))), not as \(me)"
     }
     switch st {
-    case errSecNoSuchKeychain: return "run minigw router as the user who runs Mini Gateway, not as \(me) (\(me) has no login keychain)"
+    case errSecNoSuchKeychain: return "run minigw gw as the user who runs Mini Gateway, not as \(me) (\(me) has no login keychain)"
     case errSecItemNotFound: return "start Mini Gateway 0.5.15 or newer once, so it can create the admin item"
     case errSecAuthFailed, errSecUserCanceled, errSecInteractionNotAllowed: return "allow minigw when macOS asks (Keychain)"
     default: return "cannot read Mini Gateway's admin item from the Keychain (OSStatus \(st))"
@@ -146,17 +146,17 @@ func routerCommand(_ argv: [String]) {
     case "status":
         need(1, 1)
         let st = a.call("GET", "/status")
-        say("router: running, changes apply at once")
+        say("gateway: running, changes apply at once")
         say("version \(st["version"] as? String ?? "?"), port \(st["port"] as? Int ?? 0) on \(st["address"] as? String ?? "?")")
         say(st["installed"] as? Bool == true ? "starts at sign-in (Settings → General → Open at Login)" : "does not start at sign-in (Settings → General → Open at Login)")
         say("agent requests running: \(st["agents"] as? Int ?? 0)")
-        say("devices: \(st["devices"] as? Int ?? 0) allowed, \(st["pending"] as? Int ?? 0) waiting (minigw router devices)")
+        say("devices: \(st["devices"] as? Int ?? 0) allowed, \(st["pending"] as? Int ?? 0) waiting (minigw gw devices)")
         let c = st["claude"] as? [String: Any] ?? [:]
         say(clean("claude: \(c["found"] as? Bool == true ? "found" : "not found"), tools \(c["tools"] as? String ?? "")"))
         for g in st["gateways"] as? [[String: Any]] ?? [] {
             let n = (g["models"] as? [String]).map { String($0.count) } ?? "all"
-            let ready = g["enabled"] as? Bool == false ? ", off" : g["ready"] as? Bool == true ? ", ready" : ", models not loaded (see the router log)"
-            say(clean("gateway \(g["name"] as? String ?? ""): \(g["baseURL"] as? String ?? ""), models enabled: \(n)\(ready)"))
+            let ready = g["enabled"] as? Bool == false ? ", off" : g["ready"] as? Bool == true ? ", ready" : ", models not loaded (see the gateway log)"
+            say(clean("provider \(g["name"] as? String ?? ""): \(g["baseURL"] as? String ?? ""), models enabled: \(n)\(ready)"))
         }
 
     case "devices":
@@ -179,7 +179,7 @@ func routerCommand(_ argv: [String]) {
             fail(routerHelp)
         }
 
-    case "gateway":
+    case "provider", "gateway":  // gateway: starejše ime, skrit alias
         guard pos.count >= 2 else { fail(routerHelp) }
         switch pos[1] {
         case "add":
@@ -187,14 +187,14 @@ func routerCommand(_ argv: [String]) {
             let key = readKey("API key for \(pos[2])")
             let r = a.call("POST", "/gateways", ["name": pos[2], "baseURL": pos[3], "key": key, "insecure": flags["insecure"] == "true"])
             let models = r["models"] as? [[String: Any]] ?? []
-            say("gateway \(pos[2]): \(models.count) models, \(enabledCount(models)) enabled; API key stored in \(r["keyStore"] as? String ?? "the Keychain")")
+            say("provider \(pos[2]): \(models.count) models, \(enabledCount(models)) enabled; API key stored in \(r["keyStore"] as? String ?? "the Keychain")")
             if !models.isEmpty, enabledCount(models) == 0 {
-                say("enable models with: minigw router gateway models \(pos[2]) --enable <id>,<id> (find them with: minigw router gateway models \(pos[2]) <text>)")
+                say("enable models with: minigw gw provider models \(pos[2]) --enable <id>,<id> (find them with: minigw gw provider models \(pos[2]) <text>)")
             }
         case "remove":
             need(3, 3)
             _ = a.call("DELETE", "/gateways/" + esc(pos[2]))
-            say("removed gateway \(pos[2]) and its API key")
+            say("removed provider \(pos[2]) and its API key")
         case "list":
             need(2, 2)
             for g in a.call("GET", "/gateways")["gateways"] as? [[String: Any]] ?? [] {
@@ -221,7 +221,7 @@ func routerCommand(_ argv: [String]) {
             for m in r["models"] as? [[String: Any]] ?? [] {
                 if m["enabled"] as? Bool == true || flags["all"] != nil || !filter.isEmpty { say(modelLine(m)) } else { hidden += 1 }
             }
-            if hidden > 0 { say("\(hidden) disabled models not shown: add --all, or a text to search (minigw router gateway models \(pos[2]) haiku)") }
+            if hidden > 0 { say("\(hidden) disabled models not shown: add --all, or a text to search (minigw gw provider models \(pos[2]) haiku)") }
         default:
             fail(routerHelp)
         }
@@ -262,6 +262,6 @@ func routerCommand(_ argv: [String]) {
     case "settings":
         fail("on the Mac use the app's Settings window (menu bar icon → Settings…)")
     default:
-        fail("unknown command minigw router \(pos[0])\n\n" + routerHelp)
+        fail("unknown command minigw gw \(pos[0])\n\n" + routerHelp)
     }
 }

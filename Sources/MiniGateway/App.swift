@@ -115,7 +115,7 @@ final class AppState: ObservableObject {
         if st == errSecSuccess, let b = v.flatMap({ Data(base64Encoded: $0) }),
            let k = try? Curve25519.KeyAgreement.PrivateKey(rawRepresentation: b) { return k }
         guard st == errSecItemNotFound else {
-            log.error("router key unavailable (\(st)); encrypted connections off")
+            log.error("gateway key unavailable (\(st)); encrypted connections off")
             return nil
         }
         let k = Noise.newKey()

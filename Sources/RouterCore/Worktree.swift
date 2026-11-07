@@ -113,8 +113,8 @@ public enum Worktree {
     /// FETCH_HEAD in checkouta; .git/config ostane nespremenjen. nil = uspeh, sicer razlog.
     /// Brez sile: če veja tukaj ni prednik agentove (uporabnik je nanjo commital), ostane uporabnikova.
     public static func fetch(top: String, bundle: URL, branch: String) -> String? {
-        guard validBranch(branch) else { return "invalid branch name from the router" }
-        guard isBundle(bundle) else { return "the router did not send a git bundle" }
+        guard validBranch(branch) else { return "invalid branch name from the gateway" }
+        guard isBundle(bundle) else { return "the gateway did not send a git bundle" }
         if run(["symbolic-ref", "-q", "HEAD"], cwd: top, safe: false).out == "refs/heads/" + branch {
             return "\(branch) is checked out here; not updated"
         }
@@ -125,7 +125,7 @@ public enum Worktree {
                      bundle.path, "+refs/heads/\(branch):refs/minigw/incoming"], cwd: top, safe: false, hooks: false)
         defer { run(["update-ref", "-d", "refs/minigw/incoming"], cwd: top, safe: false, hooks: false) }
         let new = run(["rev-parse", "-q", "--verify", "refs/minigw/incoming^{commit}"], cwd: top, safe: false, hooks: false).out
-        guard r.status == 0, isSHA(new) else { return "git fetch of \(branch) failed (the router's branch was rejected)" }
+        guard r.status == 0, isSHA(new) else { return "git fetch of \(branch) failed (the gateway's branch was rejected)" }
         // Premik veje z git fetch brez sile: git sam zavrne nehitro posodobitev in vejo, izvlečeno v kateri koli delovni mapi.
         let u = run(["-c", "fetch.recurseSubmodules=false", "-c", "submodule.recurse=false", "-c", "maintenance.auto=false", "-c", "gc.auto=0",
                      "fetch", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--quiet",

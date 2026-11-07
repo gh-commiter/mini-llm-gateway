@@ -41,12 +41,12 @@ struct SettingsView: View {
 
     private var items: [Item] {
         [Item(pane: .general, title: String(localized: "General"), symbol: "gearshape.fill", color: .gray,
-              about: String(localized: "Address, port and access token of the router, and the app version."))]
+              about: String(localized: "Address, port and access token of the gateway, and the app version."))]
             + draft.providers.map { p in
                 Item(pane: .provider(p.id), title: p.name,
                      symbol: p.baseURL.contains("openrouter.ai") ? "point.3.connected.trianglepath.dotted" : "server.rack",
                      color: p.baseURL.contains("openrouter.ai") ? .purple : .blue,
-                     about: String(localized: "Models of an Anthropic-compatible gateway, passed through to Claude Code."))
+                     about: String(localized: "Models of an Anthropic-compatible provider, passed through to Claude Code."))
             }
             + [Item(pane: .siri, title: "Siri AI", symbol: "waveform", color: .pink,
                     about: String(localized: "The Siri AI app as a model, driven in the background.")),
@@ -125,10 +125,10 @@ struct SettingsView: View {
                     Menu {
                         Button("LiteLLM") { addProvider(.litellm, "LiteLLM", "http://localhost:4000") }
                         Button("OpenRouter") { addProvider(.openrouter, "OpenRouter", "https://openrouter.ai/api") }
-                        Button("Other Anthropic-compatible gateway") { addProvider(.other, String(localized: "Gateway"), "https://") }
+                        Button("Other Anthropic-compatible provider") { addProvider(.other, String(localized: "Provider"), "https://") }
                     } label: { Image(systemName: "plus").frame(width: 22, height: 18) }
                         .menuIndicator(.hidden).fixedSize()
-                        .help(String(localized: "Add Gateway")).accessibilityLabel(String(localized: "Add Gateway"))
+                        .help(String(localized: "Add Provider")).accessibilityLabel(String(localized: "Add Provider"))
                     Divider().frame(height: 16)
                     // Nenastavljen (pravkar dodan) prehod izgine brez vprašanja; nastavljen šele po potrditvi.
                     Button { if configured { removing = true } else { removeProvider() } } label: {
@@ -136,7 +136,7 @@ struct SettingsView: View {
                     }
                         .disabled(selectedProvider.map { Self.builtIn.contains($0.id) } ?? true)
                         .help(selectedProvider.map { Self.builtIn.contains($0.id) } == true
-                              ? String(localized: "The built-in gateways cannot be removed; turn them off instead.") : "")
+                              ? String(localized: "The built-in providers cannot be removed; turn them off instead.") : "")
                         .accessibilityLabel(String(localized: "Remove"))
                     Spacer()
                 }
@@ -147,7 +147,7 @@ struct SettingsView: View {
                 Button("Remove", role: .destructive) { removeProvider() }
             } message: {
                 if selectedProvider?.enabled == true {
-                    Text("This gateway is on: Claude Code sessions that use its models stop working. Its settings and API key are deleted from this Mac.")
+                    Text("This provider is on: Claude Code sessions that use its models stop working. Its settings and API key are deleted from this Mac.")
                 } else {
                     Text("Its settings and API key are deleted from this Mac.")
                 }
@@ -569,7 +569,7 @@ struct SettingsView: View {
             } header: {
                 Text("Command-line tool")
             } footer: {
-                Text("Starts Claude Code through this router, e.g. “minigw --model claude-apple-fm”. Also: minigw connect | status | models | disconnect. Install links the signed command into your PATH and connects it; Download saves a copy for another Mac.")
+                Text("Starts Claude Code through this gateway, e.g. “minigw --model claude-apple-fm”. Also: minigw connect | status | models | disconnect. Install links the signed command into your PATH and connects it; Download saves a copy for another Mac.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

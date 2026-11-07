@@ -416,7 +416,7 @@ extension Router {
         for k in env.keys where k.hasPrefix("ANTHROPIC_") || k.hasPrefix("CLAUDE_CODE_") || k == "CLAUDECODE" || k == "SSH_AUTH_SOCK" { env[k] = nil }
         env["PATH"] = (env["PATH"].map { $0 + ":" } ?? "") + "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
         guard let exe = Native.executable(argv[0], dir: dir, path: env["PATH"]!) else {
-            return await error(404, "not_found_error", "minigw run: \(argv[0]) not found on the router", rid: rid, writer: writer)
+            return await error(404, "not_found_error", "minigw run: \(argv[0]) not found on the gateway", rid: rid, writer: writer)
         }
         let args = Array(Native.withoutNestedSandbox(argv).dropFirst())
         guard let (pid, out, err) = Native.spawnGroup("/usr/bin/sandbox-exec", ["-p", profile, exe] + args, dir: dir, env: env) else {

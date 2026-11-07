@@ -127,7 +127,7 @@ extension Router {
         guard let admin else { return await adminError(404, "Not found: \(req.method) \(req.path)", rid: rid, writer: writer) }
         // Vrstni red: loopback → Host (le navaden HTTP) → dokaz MGW-Admin → proces odjemalca.
         guard RouterServer.isLoopback(req.peer) else {
-            return await adminError(403, "The admin API is only available on the router computer", rid: rid, writer: writer)
+            return await adminError(403, "The admin API is only available on the gateway computer", rid: rid, writer: writer)
         }
         let p = String(config.port)
         if !req.encrypted, !["127.0.0.1:" + p, "localhost:" + p, "[::1]:" + p].contains((req.header("host") ?? "").lowercased()) {
@@ -135,12 +135,12 @@ extension Router {
         }
         let auth = req.header("authorization") ?? ""
         guard auth.hasPrefix(AdminHooks.scheme), let h = req.noiseHash, !admin.secret.isEmpty else {
-            return await adminError(401, "The admin API takes MGW-Admin over an encrypted connection (minigw router), never the secret itself",
+            return await adminError(401, "The admin API takes MGW-Admin over an encrypted connection (minigw gw), never the secret itself",
                                     rid: rid, writer: writer)
         }
         let a = Array(auth.dropFirst(AdminHooks.scheme.count).utf8), b = Array(AdminHooks.proof(secret: admin.secret, hash: h).utf8)
         guard a.count == b.count, zip(a, b).reduce(0, { $0 | ($1.0 ^ $1.1) }) == 0 else {
-            return await adminError(401, "Invalid admin proof: use minigw router", rid: rid, writer: writer)
+            return await adminError(401, "Invalid admin proof: use minigw gw", rid: rid, writer: writer)
         }
         // Obramba v globino: agent (otrok aplikacije ali proces v sandboxu) ne sme do API niti z dokazom.
         if let check = admin.peerCheck, let why = check(req.peerPort, config.port) {
@@ -177,16 +177,18 @@ extension Router {
     }
 
     private func adminRoute(_ method: String, path: String, query: String?, body: Data, hooks: AdminHooks) async throws -> (Int, Any) {
-        let seg = path.split(separator: "/", omittingEmptySubsequences: true).map { $0.removingPercentEncoding ?? String($0) }
+        var seg = path.split(separator: "/", omittingEmptySubsequences: true).map { $0.removingPercentEncoding ?? String($0) }
+        if seg.first == "providers" { seg[0] = "gateways" }  // /providers je kanonično ime, /gateways starejše (ostane)
         guard !seg.isEmpty, seg.count <= 3 else { throw AdminError(404, "Not found: \(method) \(path)") }
         let arg = seg.count > 1 ? seg[1] : ""
         let route = method + " " + seg[0] + (seg.count > 1 ? "/{}" : "") + (seg.count > 2 ? "/" + seg[2] : "")
         let c = config
         switch route {
         case "GET status":
+            let list = await gateways(c)
             return (200, ["running": true, "version": hooks.version, "port": Int(c.port), "address": c.host, "installed": hooks.installed(),
                           "autostart": hooks.installed() ? "sign-in" : "", "agents": AgentCount.running.load(ordering: .relaxed),
-                          "devices": c.devices.count, "pending": 0, "claude": claudeInfo(c.claudeCLI), "gateways": await gateways(c)])
+                          "devices": c.devices.count, "pending": 0, "claude": claudeInfo(c.claudeCLI), "gateways": list, "providers": list])
 
         // Naprave: Mac sprejme vsako napravo z žetonom in jo doda sam; seznam določa Siri (glej /siri).
         case "GET devices":
@@ -251,12 +253,13 @@ extension Router {
             return (200, runInfo(n))
 
         case "GET gateways":
-            return (200, ["gateways": await gateways(c)])
+            let list = await gateways(c)
+            return (200, ["providers": list, "gateways": list])
         case "POST gateways":
             let b = try AdminBody(body, ["name", "baseURL", "key", "insecure"])
             let name = try b.string("name") ?? "", key = try b.string("key") ?? ""
             guard !name.isEmpty, name.count <= 64, !name.contains("/"), !name.unicodeScalars.contains(where: { $0.value < 0x20 }) else {
-                throw AdminError(400, "gateway name: 1-64 characters, no / or control characters")
+                throw AdminError(400, "provider name: 1-64 characters, no / or control characters")
             }
             let base = try Self.checkGatewayURL(try b.string("baseURL") ?? "", insecure: try b.bool("insecure") ?? false)
             guard !key.isEmpty, key.unicodeScalars.allSatisfy({ (0x21...0x7e).contains($0.value) }) else {
@@ -269,20 +272,20 @@ extension Router {
             let models: [Discovery.Model]
             switch await Discovery.load(p, key: key, session: session) {
             case .success(let m): models = m
-            case .failure(let f): throw AdminError(400, "gateway not added: \(f.message)")
+            case .failure(let f): throw AdminError(400, "provider not added: \(f.message)")
             }
             if old == nil, models.count > 20 { p.enabledModels = [] }  // OpenRouter: več sto modelov, izbereš sam
             let gw = p
             _ = try await hooks.update(keys: [p.id: key]) { c in  // ključ šele po uspešni spremembi, pred ponovnim zagonom
                 if let i = c.providers.firstIndex(where: { $0.id == gw.id }) { c.providers[i] = gw } else { c.providers.append(gw) }
             }
-            return (200, ["gateway": gateway(p, ready: false), "keyStore": "the Keychain", "models": apiModels(p, models, filter: "")])
+            return (200, ["provider": gateway(p, ready: false), "gateway": gateway(p, ready: false), "keyStore": "the Keychain", "models": apiModels(p, models, filter: "")])
         case "DELETE gateways/{}":
-            guard let p = c.providers.first(where: { $0.name == arg }) else { throw AdminError(404, "no gateway \(arg)") }
+            guard let p = c.providers.first(where: { $0.name == arg }) else { throw AdminError(404, "no provider \(arg)") }
             _ = try await hooks.update(keys: [p.id: nil]) { c in c.providers.removeAll { $0.id == p.id } }
             return (200, ["name": arg])
         case "GET gateways/{}/models", "POST gateways/{}/models":
-            guard var p = c.providers.first(where: { $0.name == arg }) else { throw AdminError(404, "no gateway \(arg)") }
+            guard var p = c.providers.first(where: { $0.name == arg }) else { throw AdminError(404, "no provider \(arg)") }
             let models: [Discovery.Model]
             switch await Discovery.load(p, key: secrets.get(p.id) ?? "", session: session) {
             case .success(let m): models = m
@@ -296,7 +299,7 @@ extension Router {
             let all = try b.bool("all"), enable = try b.strings("enable") ?? [], disable = try b.strings("disable") ?? []
             func upstream(_ v: String) throws -> String {
                 guard let m = models.first(where: { $0.id == v || ProviderConfig.publishedID($0.id) == v }) else {
-                    throw AdminError(400, "gateway \(p.name) has no model \(v)")
+                    throw AdminError(400, "provider \(p.name) has no model \(v)")
                 }
                 return m.id
             }
@@ -309,7 +312,7 @@ extension Router {
             }
             let enabled = p.enabledModels, gw = p
             _ = try await hooks.update { c in
-                guard let i = c.providers.firstIndex(where: { $0.id == gw.id }) else { throw AdminError(404, "no gateway \(gw.name)") }
+                guard let i = c.providers.firstIndex(where: { $0.id == gw.id }) else { throw AdminError(404, "no provider \(gw.name)") }
                 c.providers[i].enabledModels = enabled
             }
             let now = apiModels(p, models, filter: "")
@@ -466,16 +469,16 @@ extension Router {
     static func checkGatewayURL(_ raw: String, insecure: Bool) throws -> String {
         let s = raw.trimmingCharacters(in: .whitespaces)
         guard let u = URLComponents(string: s), let host = u.host, !host.isEmpty, u.user == nil, u.password == nil,
-              u.query == nil, u.fragment == nil else { throw AdminError(400, "invalid gateway URL: \(raw)") }
+              u.query == nil, u.fragment == nil else { throw AdminError(400, "invalid provider URL: \(raw)") }
         switch u.scheme {
         case "https": break
         case "http":
             guard host == "localhost" || isPrivateIP(host) else {
-                throw AdminError(400, "gateway URL must be https (http only to localhost or a private IP, with insecure)")
+                throw AdminError(400, "provider URL must be https (http only to localhost or a private IP, with insecure)")
             }
-            guard insecure else { throw AdminError(400, "http sends the API key unencrypted: set insecure for a gateway on localhost or a private IP") }
+            guard insecure else { throw AdminError(400, "http sends the API key unencrypted: set insecure for a provider on localhost or a private IP") }
         default:
-            throw AdminError(400, "gateway URL must be https: \(raw)")
+            throw AdminError(400, "provider URL must be https: \(raw)")
         }
         var out = s
         while out.hasSuffix("/") { out.removeLast() }

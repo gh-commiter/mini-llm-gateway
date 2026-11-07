@@ -234,7 +234,7 @@ public enum Sync {
             done.append(p)
             guard let url = resolve(p, root: root) else { continue }
             guard let local = entry(url, path: p, previous: state[p]) else { state[p] = nil; continue }
-            if local.sha256 != base(p) { notes.append("conflict: \(p) was deleted on the router but changed here; kept"); continue }
+            if local.sha256 != base(p) { notes.append("conflict: \(p) was deleted on the gateway but changed here; kept"); continue }
             try? FileManager.default.removeItem(at: url)
             state[p] = nil
         }
@@ -259,9 +259,9 @@ public enum Sync {
             if local?.sha256 != base(e.path) {  // spremenjena (ali izbrisana) tudi tukaj
                 guard let c = resolve(e.path + ".minigw-conflict", root: root),
                       (try? write(data, to: c, mtime: e.mtime, exec: e.exec)) != nil else {
-                    notes.append("conflict: \(e.path) changed here and on the router; the router's version could not be saved"); continue
+                    notes.append("conflict: \(e.path) changed here and on the gateway; the gateway's version could not be saved"); continue
                 }
-                notes.append("conflict: \(e.path) changed here and on the router; kept yours, the router's version is in \(e.path).minigw-conflict")
+                notes.append("conflict: \(e.path) changed here and on the gateway; kept yours, the gateway's version is in \(e.path).minigw-conflict")
                 done.append(e.path)
                 continue
             }

@@ -250,7 +250,7 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
     defer { cleanup(root) }
     let notBundle = root.appendingPathComponent("x.bundle")
     try Data("not a bundle\n".utf8).write(to: notBundle)
-    #expect(Worktree.fetch(top: client.path, bundle: notBundle, branch: "minigw/claude-0123abcd-0") == "the router did not send a git bundle")
+    #expect(Worktree.fetch(top: client.path, bundle: notBundle, branch: "minigw/claude-0123abcd-0") == "the gateway did not send a git bundle")
     #expect(Worktree.fetch(top: client.path, bundle: client.appendingPathComponent(".git"), branch: "minigw/claude-0123abcd-0") != nil)
     #expect(Worktree.ensureMirror(tree.repo) && !Worktree.importBase(tree.repo, bundle: notBundle, snapshot: String(repeating: "a", count: 40), base: "refs/minigw/base/x"))
 
