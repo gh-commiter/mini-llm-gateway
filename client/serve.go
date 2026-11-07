@@ -2,7 +2,7 @@ package main
 
 // minigw serve: majhen router Mini Gateway za Windows in Linux (kot RouterCore/Server.swift in Router.swift).
 // Le šifra MGW2 (AES-GCM, v standardni knjižnici Go), ponudnik claude -p (serve_cli.go) in sinhronizirana kopija
-// mape odjemalca (serve_sync.go). Navaden HTTP le z loopback. Brez Siri, Apple FM in prehodov.
+// mape odjemalca (serve_sync.go) in prehodi (serve_gateway.go). Navaden HTTP le z loopback. Brez Siri in Apple FM.
 
 import (
 	"bufio"
@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -48,14 +49,18 @@ type serveConfig struct {
 	Devices        []serveDevice `json:"devices"`
 	AllowAnyDevice bool          `json:"allowAnyDevice,omitempty"` // le pri praznem seznamu: vsaka naprava z žetonom
 	// Bash v tools na Windows teče brez sandboxa (dostop do vsega, kar sme uporabnik): le z izrecnim dovoljenjem.
-	AllowUnsandboxedBash bool `json:"allowUnsandboxedBash,omitempty"`
+	AllowUnsandboxedBash bool           `json:"allowUnsandboxedBash,omitempty"`
+	Gateways             []serveGateway `json:"gateways,omitempty"` // ključi v shrambi sistema, ne tu (serve_gateway.go)
 }
 
 const serveHelp = `minigw serve: a Mini Gateway router on this computer (Windows, Linux) for minigw clients.
 
   minigw serve init [--port N] [--folder DIR] [--config FILE]   create the config, print the minigw connect line
   minigw serve allow <device id> [name] [--config FILE]         allow a client device
+  minigw serve deny <device id or name> [--config FILE]         remove an allowed device
+  minigw serve devices [--config FILE]                          list the allowed devices
   minigw serve [--port N] [--folder DIR] [--config FILE]        run the router
+  minigw serve gateway add|remove|list|models …                 Anthropic-compatible gateways (OpenRouter, LiteLLM)
 
 Clients use: MINIGW_WORK=sync minigw … (folder mounts are macOS only).
 Unknown devices are refused; the log prints their ID. Before minigw serve allow, compare the ID with the one on the
@@ -147,9 +152,13 @@ func serveCommand(args []string) {
 	cfgPath := fs.String("config", defaultServeConfigPath(), "config file")
 	port := fs.Int("port", 0, "port (default 8765)")
 	folder := fs.String("folder", "", "folder for agents that do not sync (--minigw-work=sync is preferred)")
-	fs.Usage = func() { fmt.Fprintln(os.Stderr, serveHelp) }
+	insecure := fs.Bool("insecure", false, "gateway add: allow http to localhost or a private IP")
+	enable := fs.String("enable", "", "gateway models: enable these models (comma-separated, or all)")
+	disable := fs.String("disable", "", "gateway models: disable these models (comma-separated, or all)")
+	allModels := fs.Bool("all", false, "gateway models: also list the disabled models")
+	fs.Usage = func() { fmt.Fprintln(os.Stderr, serveHelp+"\n\n"+gatewayHelp) }
 	var rest []string
-	if sub == "allow" { // minigw serve allow <id> [ime] [--config f]
+	if sub == "allow" || sub == "deny" || sub == "gateway" { // minigw serve allow <id> [ime] [--config f]
 		for len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 			rest, args = append(rest, args[0]), args[1:]
 		}
@@ -191,6 +200,9 @@ func serveCommand(args []string) {
 		if len(rest) == 0 {
 			fail("usage: minigw serve allow <device id> [name]")
 		}
+		if !validDeviceID(rest[0]) {
+			fail(strconv.Quote(rest[0]) + " is not a device ID (43 characters, base64url): copy it from the router log or from the client's refusal message")
+		}
 		c, err := loadServeConfig(*cfgPath)
 		if err != nil {
 			fail("cannot read " + *cfgPath + " (run minigw serve init first): " + err.Error())
@@ -206,9 +218,53 @@ func serveCommand(args []string) {
 		saveServeConfig(*cfgPath, c)
 		say("allowed device " + rest[0] + " (restart minigw serve)")
 		return
+	case "deny":
+		if len(rest) == 0 {
+			fail("usage: minigw serve deny <device id or name>")
+		}
+		c, err := loadServeConfig(*cfgPath)
+		if err != nil {
+			fail("cannot read " + *cfgPath + ": " + err.Error())
+		}
+		want := strings.Join(rest, " ")
+		i := slices.IndexFunc(c.Devices, func(d serveDevice) bool { return d.ID == want })
+		if i < 0 { // ime le, če je enolično
+			for j, d := range c.Devices {
+				if d.Name == want {
+					if i >= 0 {
+						fail("several devices are named " + strconv.Quote(want) + ": use the device ID (minigw serve devices)")
+					}
+					i = j
+				}
+			}
+		}
+		if i < 0 {
+			fail("no allowed device " + strconv.Quote(want) + " (minigw serve devices lists them)")
+		}
+		d := c.Devices[i]
+		c.Devices = slices.Delete(c.Devices, i, i+1)
+		saveServeConfig(*cfgPath, c)
+		say(fmt.Sprintf("removed device %s %q (restart minigw serve)", d.ID, d.Name))
+		return
+	case "devices":
+		c, err := loadServeConfig(*cfgPath)
+		if err != nil {
+			fail("cannot read " + *cfgPath + ": " + err.Error())
+		}
+		for _, d := range c.Devices {
+			say(clean(fmt.Sprintf("%s  %s", d.ID, d.Name)))
+		}
+		if len(c.Devices) == 0 {
+			say(map[bool]string{true: "no devices listed: any device with the token is allowed (allowAnyDevice)",
+				false: "no devices allowed"}[c.AllowAnyDevice])
+		}
+		return
+	case "gateway":
+		gatewayCommand(*cfgPath, rest, *insecure, *enable, *disable, *allModels, os.Stdin)
+		return
 	case "":
 	case "help":
-		say(serveHelp)
+		say(serveHelp + "\n\n" + gatewayHelp)
 		return
 	default:
 		fail("unknown command minigw serve " + sub + "\n\n" + serveHelp)
@@ -239,9 +295,23 @@ func serveCommand(args []string) {
 	if err != nil {
 		fail(err.Error())
 	}
-	s.log.Printf("minigw %s serving on :%d (MGW2), claude=%q folder=%q scratch=%q devices=%d", version, c.Port,
-		strings.Join(s.claude, " "), c.Folder, s.cfg.Scratch, len(c.Devices))
+	s.log.Printf("minigw %s serving on :%d (MGW2), claude=%q folder=%q scratch=%q devices=%d gateways=%d", version, c.Port,
+		strings.Join(s.claude, " "), c.Folder, s.cfg.Scratch, len(c.Devices), len(c.Gateways))
+	for _, g := range c.Gateways {
+		if key, where := keyGet(s.cfgDir, g.Name); key == "" {
+			s.log.Printf("WARNING: gateway %s has no API key: run minigw serve gateway add %s %s", g.Name, g.Name, g.BaseURL)
+		} else if strings.HasSuffix(where, ".json") && runtime.GOOS == "linux" {
+			s.log.Printf("WARNING: gateway %s: no Secret Service (secret-tool), the API key is in %s (mode 0600)", g.Name, where)
+		}
+	}
+	go s.modelList() // odkrivanje modelov prehodov v ozadju
 	fail(s.serve(ln).Error())
+}
+
+// validDeviceID: ID, kot ga izpiše zavrnitev (base64url 32 bajtov javnega ključa, 43 znakov).
+func validDeviceID(id string) bool {
+	b, err := fromBase64url(id)
+	return err == nil && len(b) == 32 && base64url(b) == id
 }
 
 // localIP: prvi naslov IPv4, ki ni loopback (za vrstico minigw connect).
@@ -264,6 +334,8 @@ type server struct {
 	hub      *shareHub
 	sessions sessionRegistry
 	procs    chan struct{} // največ hkratnih procesov claude
+	gwSlots  chan struct{} // največ hkratnih zahtev k prehodom
+	gateways gwCatalog
 }
 
 func newServer(c serveConfig, cfgPath string) (*server, error) {
@@ -288,12 +360,20 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 			return nil, errors.New("folder must not contain or be inside the config folder " + cfgDir)
 		}
 	}
+	for i, g := range c.Gateways { // ročno urejen serve.json: ista pravila kot gateway add
+		if !validGatewayName.MatchString(g.Name) {
+			return nil, fmt.Errorf("gateway name %q in the config: letters, digits, . _ - (up to 32)", g.Name)
+		}
+		if c.Gateways[i].BaseURL, err = checkGatewayURL(g.BaseURL, g.Insecure); err != nil {
+			return nil, fmt.Errorf("gateway %s in the config: %v", g.Name, err)
+		}
+	}
 	exe, err := resolveClaude(c.Claude)
 	if err != nil {
 		return nil, err
 	}
 	if hasBash(c.Tools) && runtime.GOOS == "windows" && !c.AllowUnsandboxedBash {
-		return nil, errors.New("tools contains Bash, but Windows has no sandbox for it: remove Bash from tools, or set \"allowUnsandboxedBash\": true to let agents run any command as this user")
+		return nil, errors.New("tools contains Bash, but Windows has no sandbox for it: remove Bash from tools, or set \"allowUnsandboxedBash\": true to let agents run any command as this user (and read the gateway API keys in Credential Manager)")
 	}
 	out := io.Writer(os.Stderr)
 	if c.Log != "" {
@@ -304,11 +384,12 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 		out = f
 	}
 	s := &server{cfg: c, cfgDir: cfgDir, claude: exe, key: k, log: log.New(out, "", log.LstdFlags), hub: newShareHub(),
-		sessions: sessionRegistry{m: map[string]string{}}, procs: make(chan struct{}, 6)}
+		sessions: sessionRegistry{m: map[string]string{}}, procs: make(chan struct{}, 6),
+		gwSlots: make(chan struct{}, 16)}
 	switch {
 	case !hasBash(c.Tools):
 	case runtime.GOOS == "windows":
-		s.log.Printf("WARNING: Bash is allowed without a sandbox: agents can run any command as this user")
+		s.log.Printf("WARNING: Bash is allowed without a sandbox: agents can run any command as this user and read the gateway API keys in Credential Manager")
 	default:
 		s.log.Printf("WARNING: Bash is allowed; it runs only in Claude Code's sandbox (on Linux it needs bubblewrap and socat)")
 	}
@@ -633,7 +714,8 @@ func writeJSON(w http.ResponseWriter, rid string, status int, obj any) int {
 }
 
 func writeError(w http.ResponseWriter, rid string, status int, msg string) int {
-	t := map[int]string{401: "authentication_error", 403: "permission_error", 404: "not_found_error", 413: "request_too_large"}[status]
+	t := map[int]string{401: "authentication_error", 403: "permission_error", 404: "not_found_error", 413: "request_too_large",
+		429: "rate_limit_error", 529: "overloaded_error"}[status]
 	if t == "" {
 		t = "invalid_request_error"
 		if status >= 500 {

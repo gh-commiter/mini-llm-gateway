@@ -177,7 +177,7 @@ func (t *tailBuffer) String() string {
 }
 
 func (s *server) modelList() map[string]any {
-	data := []map[string]any{}
+	data := append([]map[string]any{}, s.gatewayModelList()...)
 	if len(s.claude) > 0 {
 		for _, m := range cliFamilies[:3] {
 			data = append(data, map[string]any{"type": "model", "id": cliAgentPrefix + m,
@@ -408,6 +408,10 @@ func (s *server) messages(w http.ResponseWriter, r *req) (int, string) {
 	if model == "" {
 		return writeError(w, r.rid, 400, "Body must be JSON with a model field"), ""
 	}
+	_, _, isCLI := cliMatch(model)                     // model claude-cli ne čaka na odkrivanje prehodov
+	if g, m, ok := s.gatewayRoute(model, !isCLI); ok { // prehodi pred claude-cli (kot Router.swift); ID-ji z »/« (OpenRouter)
+		return s.passthrough(w, r, g, m), model
+	}
 	cliModel, chat, ok := cliMatch(model)
 	if !validModel.MatchString(model) || !validModel.MatchString(cliModel) {
 		return writeError(w, r.rid, 400, "Invalid model name"), "?"
@@ -457,8 +461,13 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 				note += " whose changed source files are copied back to the user when you finish. Map paths under " + clientCwd + " to it."
 			}
 			extra = note
-		case s.hub.isRefused(session) || s.cfg.Folder == "":
+		case s.hub.isRefused(session): // odjemalec je poslal mapo brez sync
 			return writeError(w, r.rid, 400, refusedDirect)
+		case s.cfg.Folder == "" && r.h("x-claude-mini-share") == "1": // mapa je bila napovedana, a ni prišla
+			return writeError(w, r.rid, 400, "The folder "+clientCwd+" did not reach this router: see the minigw message when it started")
+		case s.cfg.Folder == "": // odjemalec mape ni delil (npr. /tmp, ki se ne deli samodejno)
+			return writeError(w, r.rid, 400, "The folder "+clientCwd+" is not shared with the router, so Claude CLI agents cannot work in it: "+
+				"in that folder run minigw share add (or MINIGW_SHARE=1 for one run), then start minigw again")
 		default:
 			dir = s.cfg.Folder
 			extra = "Your working directory is " + dir + " on the router, not the user's folder " + clientCwd + "."

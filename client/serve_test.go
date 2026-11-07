@@ -233,6 +233,11 @@ func TestServeRefusesDirectMode(t *testing.T) {
 	if st != 400 || !strings.Contains(string(data), "sync only") {
 		t.Fatalf("agent without sync: %d %s", st, data)
 	}
+	// Brez mape (ni glave share): sporočilo o deljenju, ne o sync.
+	st, data = call(c, "POST", "/v1/messages", map[string]string{"x-claude-mini-session": "sid3", "x-claude-mini-cwd": "/tmp/x"}, []byte(body), 5*time.Second)
+	if st != 400 || !strings.Contains(string(data), "/tmp/x is not shared") || !strings.Contains(string(data), "minigw share add") || strings.Contains(string(data), "sync only") {
+		t.Fatalf("agent without share: %d %s", st, data)
+	}
 }
 
 func TestServeRejectsBadModelsBodiesAndForeignOwners(t *testing.T) {
@@ -330,5 +335,32 @@ func TestServeFolderNotNearConfig(t *testing.T) {
 		if (err != nil) != bad {
 			t.Fatalf("folder %s: %v", folder, err)
 		}
+	}
+}
+
+func TestServeAllowDenyDevices(t *testing.T) {
+	id := base64url(newDevice("Mac").key.Public().(ed25519.PublicKey))
+	for _, bad := range []string{"10.192.31.5", "", id[:42], id + "A", strings.Replace(id, id[:1], "+", 1), base64url(make([]byte, 31))} {
+		if validDeviceID(bad) {
+			t.Errorf("accepted %q", bad)
+		}
+	}
+	if !validDeviceID(id) {
+		t.Fatalf("refused %q", id)
+	}
+	cfg := filepath.Join(t.TempDir(), "serve.json")
+	saveServeConfig(cfg, serveConfig{Token: "tok", Key: "k"})
+	other := base64url(newDevice("PC").key.Public().(ed25519.PublicKey))
+	serveCommand([]string{"allow", id, "Mac", "Book", "--config", cfg})
+	serveCommand([]string{"allow", other, "PC", "--config", cfg})
+	serveCommand([]string{"deny", "Mac", "Book", "--config", cfg}) // po imenu
+	c, _ := loadServeConfig(cfg)
+	if len(c.Devices) != 1 || c.Devices[0].ID != other {
+		t.Fatalf("after deny by name: %+v", c.Devices)
+	}
+	serveCommand([]string{"deny", other, "--config", cfg}) // po ID
+	serveCommand([]string{"devices", "--config", cfg})
+	if c, _ = loadServeConfig(cfg); len(c.Devices) != 0 {
+		t.Fatalf("after deny by ID: %+v", c.Devices)
 	}
 }

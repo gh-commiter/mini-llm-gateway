@@ -410,7 +410,11 @@ func main() {
 			fmt.Fprintln(os.Stderr, "minigw: "+why+"; Claude CLI models with tools will not see it")
 		}
 	} else if !saved.isLocal() && os.Getenv("MINIGW_SHARE") != "0" {
-		fmt.Fprintf(os.Stderr, "minigw: %s is not shared with the router, so agent models (Codex, Claude CLI, Grok) cannot see it; to share it run: minigw share add\n", cwd)
+		why := "" // samodejno se ne delijo sistemske, skrite in domača mapa
+		if os.Getenv("MINIGW_SHARE") == "" {
+			why = " (not shared automatically)"
+		}
+		fmt.Fprintf(os.Stderr, "minigw: %s is not shared with the router%s, so agent models (Codex, Claude CLI, Grok) cannot see it; to share it run: minigw share add (or MINIGW_SHARE=1 for this run)\n", cwd, why)
 	}
 	code := runClaude(args, env)
 	share.unregister()

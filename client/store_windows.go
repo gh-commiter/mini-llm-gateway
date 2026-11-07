@@ -6,7 +6,9 @@ package main
 // šifrirano z uporabnikovo prijavo. Brez zunanjih knjižnic: advapi32 neposredno.
 
 import (
+	"bufio"
 	"errors"
+	"os"
 	"syscall"
 	"unsafe"
 )
@@ -42,8 +44,12 @@ const (
 	credPersistLocalMachine = 2
 )
 
-func storeLoad() ([]byte, error) {
-	target, _ := syscall.UTF16PtrFromString(credTarget)
+func storeLoad() ([]byte, error)  { return credLoad(credTarget) }
+func storeSave(data []byte) error { return credSave(credTarget, data) }
+func storeDelete()                { credDelete(credTarget) }
+
+func credLoad(name string) ([]byte, error) {
+	target, _ := syscall.UTF16PtrFromString(name)
 	var c *credential
 	r, _, err := procRead.Call(uintptr(unsafe.Pointer(target)), credTypeGeneric, 0, uintptr(unsafe.Pointer(&c)))
 	if r == 0 {
@@ -56,8 +62,8 @@ func storeLoad() ([]byte, error) {
 	return append([]byte{}, unsafe.Slice(c.CredentialBlob, c.CredentialBlobSize)...), nil
 }
 
-func storeSave(data []byte) error {
-	target, _ := syscall.UTF16PtrFromString(credTarget)
+func credSave(name string, data []byte) error {
+	target, _ := syscall.UTF16PtrFromString(name)
 	user, _ := syscall.UTF16PtrFromString("minigw")
 	c := credential{Type: credTypeGeneric, TargetName: target, UserName: user, Persist: credPersistLocalMachine,
 		CredentialBlobSize: uint32(len(data))}
@@ -70,9 +76,33 @@ func storeSave(data []byte) error {
 	return nil
 }
 
-func storeDelete() {
-	target, _ := syscall.UTF16PtrFromString(credTarget)
+func credDelete(name string) {
+	target, _ := syscall.UTF16PtrFromString(name)
 	procDelete.Call(uintptr(unsafe.Pointer(target)), credTypeGeneric, 0)
+}
+
+// Ključi prehodov (minigw serve gateway): generična poverilnica minigw/gateway/<ime>.
+func osKeyGet(_, name string) (string, string) {
+	b, _ := credLoad("minigw/gateway/" + name)
+	return string(b), storeName
+}
+
+func osKeySet(_, name, key string) (string, error) {
+	return storeName, credSave("minigw/gateway/"+name, []byte(key))
+}
+
+func osKeyDel(_, name string) { credDelete("minigw/gateway/" + name) }
+
+// readHidden: vrstica s konzole brez odmeva (ENABLE_ECHO_INPUT izklopljen).
+func readHidden(f *os.File) (string, error) {
+	k := syscall.NewLazyDLL("kernel32.dll")
+	get, set := k.NewProc("GetConsoleMode"), k.NewProc("SetConsoleMode")
+	var mode uint32
+	if r, _, _ := get.Call(f.Fd(), uintptr(unsafe.Pointer(&mode))); r != 0 {
+		set.Call(f.Fd(), uintptr(mode&^0x4))
+		defer set.Call(f.Fd(), uintptr(mode))
+	}
+	return bufio.NewReader(f).ReadString('\n')
 }
 
 const storeName = "Windows Credential Manager"
