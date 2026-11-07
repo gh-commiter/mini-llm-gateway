@@ -133,3 +133,61 @@ func TestServeHasNoNative(t *testing.T) {
 		}
 	}
 }
+
+func TestSharedFolderModes(t *testing.T) {
+	old := parseSharedFolders("/data/a\r\n\n  /data/b  \n") // starejša datoteka: le poti
+	if len(old) != 2 || old[0] != (sharedFolder{Path: "/data/a"}) || old[1] != (sharedFolder{Path: "/data/b"}) {
+		t.Fatalf("old format: %+v", old)
+	}
+	list := []sharedFolder{{Path: "/mnt/java/eureko-modules", Work: "native"}, {Path: "/mnt/java", Work: "sync", ReadOnly: true}, {Path: "/mnt/java/my folder"}}
+	text := formatSharedFolders(list)
+	// ista oblika kot SharedFolders.format v minigw za macOS (ista datoteka)
+	if text != "/mnt/java/eureko-modules\t--work=native\n/mnt/java\t--work=sync --ro\n/mnt/java/my folder\n" {
+		t.Fatalf("format: %q", text)
+	}
+	if got := parseSharedFolders(text); len(got) != 3 || got[0] != list[0] || got[1] != list[1] || got[2] != list[2] {
+		t.Fatalf("round trip: %+v", got)
+	}
+	if got := parseSharedFolders("/p\t--work=bogus --ro"); got[0] != (sharedFolder{Path: "/p", ReadOnly: true}) {
+		t.Fatalf("bogus mode: %+v", got)
+	}
+	apps := lookupSharedFolder(list, "/mnt/java/eureko-modules/apps") // najbolj natančna mapa
+	if apps == nil || apps.Work != "native" || lookupSharedFolder(list, "/mnt/javax") != nil {
+		t.Fatalf("lookup: %+v", apps)
+	}
+	java := lookupSharedFolder(list, "/mnt/java/x")
+	for _, c := range []struct {
+		flag  string
+		saved *sharedFolder
+		work  string
+		ro    bool
+	}{
+		{"", apps, "native", false},
+		{"sync", apps, "sync", false}, // zastavica zmaga
+		{"", nil, "direct", false},
+		{"", java, "sync", true},
+		{"native", java, "native", false}, // shranjen --ro ne velja za native
+	} {
+		if w, ro := workMode(c.flag, c.saved, false); w != c.work || ro != c.ro {
+			t.Errorf("workMode(%q, %+v) = %s %v", c.flag, c.saved, w, ro)
+		}
+	}
+}
+
+func TestShareAddSavesMode(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("AppData", filepath.Join(home, "AppData"))
+	proj := filepath.Join(t.TempDir(), "eureko-modules")
+	os.MkdirAll(proj, 0o755)
+	shareCommand([]string{"add", "--work=native", proj})
+	shareCommand([]string{"add", proj, "--work=sync", "--ro"}) // znova: zamenja način, ne podvoji
+	if got := sharedFolders(); len(got) != 1 || got[0] != (sharedFolder{Path: proj, Work: "sync", ReadOnly: true}) {
+		t.Fatalf("saved: %+v", got)
+	}
+	shareCommand([]string{"remove", proj})
+	if got := sharedFolders(); len(got) != 0 {
+		t.Fatalf("removed: %+v", got)
+	}
+}

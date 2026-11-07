@@ -315,6 +315,7 @@ func main() {
 			say("minigw connect <host[:port]> [--token T]   save router address and token (" + storeName + ")\n" +
 				"minigw status | models | disconnect\n" +
 				"minigw share add|remove [folder] | list    also share a system or hidden folder with the router\n" +
+				"minigw share add --work=native|sync|direct [--ro] [folder]   default mode for that folder (flag/env wins)\n" +
 				"minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)\n" +
 				"minigw --minigw-work=sync [claude args]    agents work in a synced copy on the router (or MINIGW_WORK=sync)\n" +
 				"minigw --minigw-work=native [claude args]  folder is the router's SMB share: agents work in it there (or MINIGW_WORK=native)\n" +
@@ -333,10 +334,8 @@ func main() {
 	// --minigw-ro (ali MINIGW_SHARE=ro): mapa samo za branje; zastavica ne gre naprej v claude.
 	readOnly := os.Getenv("MINIGW_SHARE") == "ro"
 	// --minigw-work=sync (ali MINIGW_WORK=sync): agenti delajo v kopiji na routerju namesto v priklopu; privzeto direct.
+	// Prednost: --minigw-work= / MINIGW_WORK > način mape iz »minigw share add --work=…« > direct.
 	work := os.Getenv("MINIGW_WORK")
-	if work == "" {
-		work = "direct"
-	}
 	for i := 0; i < len(args); i++ {
 		if args[i] == "--minigw-ro" || strings.HasPrefix(args[i], "--minigw-work=") {
 			if args[i] == "--minigw-ro" {
@@ -348,9 +347,11 @@ func main() {
 			i--
 		}
 	}
-	if work != "direct" && work != "sync" && work != "native" { // native: mapa je prek SMB mapa routerja (native.go)
+	if work != "" && !workModes[work] { // native: mapa je prek SMB mapa routerja (native.go)
 		fail("unknown --minigw-work=" + work + " (use direct, sync or native)")
 	}
+	cwd, _ := os.Getwd()
+	work, readOnly = workMode(work, lookupSharedFolder(sharedFolders(), cwd), readOnly)
 	if work == "native" && readOnly {
 		fail("--minigw-work=native cannot be read-only (the agent works in the router's own folder)")
 	}
@@ -394,7 +395,6 @@ func main() {
 		}
 	}
 
-	cwd, _ := os.Getwd()
 	u, _ := url.Parse(saved.URL)
 	routerHost := ""
 	if u != nil {
@@ -461,12 +461,7 @@ func shareWanted(cwd string, local bool) bool {
 	if local {
 		return false
 	}
-	for _, f := range sharedFolders() {
-		if under(cwd, f) {
-			return true
-		}
-	}
-	return autoShare(cwd)
+	return lookupSharedFolder(sharedFolders(), cwd) != nil || autoShare(cwd)
 }
 
 // Sistemske mape (prva raven pod korenom diska, male črke): nikoli samodejno.
@@ -536,15 +531,80 @@ func sharedFoldersFile() string {
 	return filepath.Join(dir, "minigw", "shared-folders")
 }
 
-func sharedFolders() []string {
+// sharedFolder: vrstica seznama; za tabulatorjem neobvezno »--work=<način> --ro« (privzeti način mape in podmap).
+// Starejše datoteke (le poti) veljajo naprej; ista oblika kot minigw v aplikaciji (SharedFolders.swift).
+type sharedFolder struct {
+	Path     string
+	Work     string // "" = privzeto
+	ReadOnly bool
+}
+
+var workModes = map[string]bool{"direct": true, "sync": true, "native": true}
+
+func sharedFolders() []sharedFolder {
 	data, _ := os.ReadFile(sharedFoldersFile())
-	var out []string
-	for _, l := range strings.Split(strings.ReplaceAll(string(data), "\r", ""), "\n") {
-		if l = strings.TrimSpace(l); l != "" {
-			out = append(out, l)
+	return parseSharedFolders(string(data))
+}
+
+func parseSharedFolders(text string) []sharedFolder {
+	var out []sharedFolder
+	for _, l := range strings.Split(strings.ReplaceAll(text, "\r", ""), "\n") {
+		path, opts, _ := strings.Cut(l, "\t")
+		if path = strings.TrimSpace(path); path == "" {
+			continue
 		}
+		f := sharedFolder{Path: path}
+		for _, o := range strings.Fields(opts) {
+			if w, ok := strings.CutPrefix(o, "--work="); ok && workModes[w] {
+				f.Work = w
+			}
+			f.ReadOnly = f.ReadOnly || o == "--ro"
+		}
+		out = append(out, f)
 	}
 	return out
+}
+
+func formatSharedFolders(list []sharedFolder) string {
+	var b strings.Builder
+	for _, f := range list {
+		var o []string
+		if f.Work != "" {
+			o = append(o, "--work="+f.Work)
+		}
+		if f.ReadOnly {
+			o = append(o, "--ro")
+		}
+		b.WriteString(f.Path)
+		if len(o) > 0 {
+			b.WriteString("\t" + strings.Join(o, " "))
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// lookupSharedFolder: najbolj natančna mapa s seznama, v kateri je cwd.
+func lookupSharedFolder(list []sharedFolder, cwd string) *sharedFolder {
+	var best *sharedFolder
+	for i := range list {
+		if under(cwd, list[i].Path) && (best == nil || len(list[i].Path) > len(best.Path)) {
+			best = &list[i]
+		}
+	}
+	return best
+}
+
+// workMode: --minigw-work= / MINIGW_WORK > način mape iz »minigw share add --work=…« > direct; shranjen --ro velja, razen v native.
+func workMode(flag string, saved *sharedFolder, readOnly bool) (string, bool) {
+	work := flag
+	if work == "" && saved != nil {
+		work = saved.Work
+	}
+	if work == "" {
+		work = "direct"
+	}
+	return work, readOnly || (saved != nil && saved.ReadOnly && work != "native")
 }
 
 // under: path je folder ali v njem (na Windows brez razlike v velikih črkah).
@@ -567,17 +627,53 @@ func shareCommand(args []string) {
 	if len(args) > 0 {
 		sub = args[0]
 	}
+	// add: --work=direct|sync|native in --ro = privzeti način te mape in podmap (zastavica ob zagonu ima prednost)
+	work, ro, rest := "", false, []string{}
+	for _, a := range args[min(1, len(args)):] {
+		if w, ok := strings.CutPrefix(a, "--work="); ok {
+			work = w
+		} else if a == "--ro" {
+			ro = true
+		} else {
+			rest = append(rest, a)
+		}
+	}
+	if work != "" && !workModes[work] {
+		fail("unknown --work=" + work + " (use direct, sync or native)")
+	}
+	if work == "native" && ro {
+		fail("--work=native cannot be read-only (the agent works in the router's own folder)")
+	}
 	dir, _ := os.Getwd()
-	if len(args) > 1 {
-		dir = args[1]
+	if len(rest) > 0 {
+		dir = rest[0]
 	}
 	dir, _ = filepath.Abs(dir)
 	list := sharedFolders()
-	save := func(l []string) {
+	save := func(l []sharedFolder) {
 		f := sharedFoldersFile()
 		os.MkdirAll(filepath.Dir(f), 0o700)
-		if err := os.WriteFile(f, []byte(strings.Join(l, "\n")+"\n"), 0o600); err != nil {
+		if err := os.WriteFile(f, []byte(formatSharedFolders(l)), 0o600); err != nil {
 			fail("cannot save " + f + ": " + err.Error())
+		}
+	}
+	describe := func(f sharedFolder) string {
+		var o []string
+		if f.Work != "" {
+			o = append(o, f.Work)
+		}
+		if f.ReadOnly {
+			o = append(o, "read-only")
+		}
+		if len(o) == 0 {
+			return f.Path
+		}
+		return f.Path + "  (" + strings.Join(o, ", ") + ")"
+	}
+	var keep []sharedFolder
+	for _, f := range list {
+		if !strings.EqualFold(f.Path, dir) {
+			keep = append(keep, f)
 		}
 	}
 	switch sub {
@@ -588,21 +684,16 @@ func shareCommand(args []string) {
 		if !shareAllowed(dir) {
 			fail("refusing to share " + dir + " (a drive root or your home folder would expose everything); share a project folder")
 		}
+		e := sharedFolder{Path: dir, Work: work, ReadOnly: ro}
 		for _, f := range list {
-			if strings.EqualFold(f, dir) {
-				fmt.Println("already shared:", dir)
+			if strings.EqualFold(f.Path, dir) && f.Work == work && f.ReadOnly == ro {
+				fmt.Println("already shared:", describe(e))
 				return
 			}
 		}
-		save(append(list, dir))
-		fmt.Println("shared with the router from now on:", dir, "(and its subfolders)")
+		save(append(keep, e))
+		fmt.Println("shared with the router from now on:", describe(e), "(and its subfolders)")
 	case "remove":
-		var keep []string
-		for _, f := range list {
-			if !strings.EqualFold(f, dir) {
-				keep = append(keep, f)
-			}
-		}
 		save(keep)
 		fmt.Println("no longer shared:", dir)
 	case "list":
@@ -610,9 +701,9 @@ func shareCommand(args []string) {
 			fmt.Println("no extra shared folders (folders under your home folder are shared by default)")
 		}
 		for _, f := range list {
-			fmt.Println(f)
+			fmt.Println(describe(f))
 		}
 	default:
-		fail("usage: minigw share [add|remove] [folder] | minigw share list")
+		fail("usage: minigw share add [--work=direct|sync|native] [--ro] [folder] | minigw share remove [folder] | minigw share list")
 	}
 }

@@ -180,3 +180,26 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     #expect(await admin(app.router(), "PATCH", "/run", body: #"{"run":true}"#).status == 400)  // neznano polje
     #expect(await admin(app.router(), "GET", "/run", auth: nil).status == 401)
 }
+
+@Test func sharedFoldersKeepModePerFolder() {
+    let old = SharedFolders.parse("/Volumes/Data/a\n\n  /Volumes/Data/b  \n")  // starejša datoteka: le poti
+    #expect(old == [SharedFolders.Entry(path: "/Volumes/Data/a"), SharedFolders.Entry(path: "/Volumes/Data/b")])
+    let list = [SharedFolders.Entry(path: "/Volumes/Java/eureko-modules", work: "native"),
+                SharedFolders.Entry(path: "/Volumes/Java", work: "sync", readOnly: true),
+                SharedFolders.Entry(path: "/Volumes/Java/my folder")]
+    let text = SharedFolders.format(list)
+    #expect(text == "/Volumes/Java/eureko-modules\t--work=native\n/Volumes/Java\t--work=sync --ro\n/Volumes/Java/my folder\n")
+    #expect(SharedFolders.parse(text) == list)
+    #expect(SharedFolders.parse("/p\t--work=bogus --ro") == [SharedFolders.Entry(path: "/p", readOnly: true)])
+
+    let apps = SharedFolders.lookup(list, cwd: "/Volumes/Java/eureko-modules/apps")  // najbolj natančna mapa
+    #expect(apps?.work == "native")
+    #expect(SharedFolders.lookup(list, cwd: "/Volumes/Java/other")?.work == "sync")
+    #expect(SharedFolders.lookup(list, cwd: "/Volumes/JavaX") == nil)
+    #expect(SharedFolders.mode(flag: nil, saved: apps, readOnly: false) == ("native", false))
+    #expect(SharedFolders.mode(flag: "sync", saved: apps, readOnly: false) == ("sync", false))  // zastavica zmaga
+    #expect(SharedFolders.mode(flag: nil, saved: nil, readOnly: false) == ("direct", false))
+    let java = SharedFolders.lookup(list, cwd: "/Volumes/Java/x")
+    #expect(SharedFolders.mode(flag: nil, saved: java, readOnly: false) == ("sync", true))
+    #expect(SharedFolders.mode(flag: "native", saved: java, readOnly: false) == ("native", false))  // shranjen --ro ne velja za native
+}

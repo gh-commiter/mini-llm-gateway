@@ -317,6 +317,9 @@ builds then work on the router's local disk.
 example `/Volumes/Java/eureko-modules` mounted from the router's `/Volumes/Java`), `minigw --minigw-work=native …`
 (or `MINIGW_WORK=native`) lets agents work directly in the router's folder: no mount back, no copy.
 `minigw run -- mvn -q verify` runs a build there and streams its output and exit code back.
+- **Mode per folder:** `minigw share add --work=native` (or `sync`, `direct`, with `--ro` for read-only) in a folder
+  saves its default mode for it and its subfolders in minigw's share list (never in the project); `minigw share list`
+  shows it. `--minigw-work=` or `MINIGW_WORK` still wins for one run.
 - **Proof, not a path:** minigw sends the share name and the path under it; the router writes a check file with random
   content into its folder, and minigw must read it back through its mount. A folder with the same path elsewhere fails.
 - **Only allowed folders:** the folder must be in an SMB share of the router (System Settings → Sharing) and inside its

@@ -290,9 +290,8 @@ func requireConnection() -> Connection {
 let sharedFoldersFile = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
     .appendingPathComponent("minigw/shared-folders")
 
-func sharedFolders() -> [String] {
-    ((try? String(contentsOf: sharedFoldersFile, encoding: .utf8)) ?? "").split(separator: "\n")
-        .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+func sharedFolders() -> [SharedFolders.Entry] {
+    SharedFolders.parse((try? String(contentsOf: sharedFoldersFile, encoding: .utf8)) ?? "")
 }
 
 /// Projektna mapa kjer koli (tudi /Volumes/Disk/projekt), razen korena diska ali priklopa, domače mape same,
@@ -314,12 +313,22 @@ func autoShare(_ path: String) -> Bool {
 
 func shareCommand(_ a: [String]) -> Never {
     let sub = a.first ?? "list"
-    let dir = URL(fileURLWithPath: a.count > 1 ? a[1] : FileManager.default.currentDirectoryPath).standardizedFileURL.path
+    // add: --work=direct|sync|native in --ro = privzeti način te mape in podmap (zastavica ob zagonu ima prednost)
+    var work: String?, ro = false, rest: [String] = []
+    for x in a.dropFirst() {
+        if x.hasPrefix("--work=") { work = String(x.dropFirst(7)) } else if x == "--ro" { ro = true } else { rest.append(x) }
+    }
+    if let work, !SharedFolders.modes.contains(work) { fail("unknown --work=\(work) (use direct, sync or native)") }
+    if work == "native", ro { fail("--work=native cannot be read-only (the agent works in the router's own folder)") }
+    let dir = URL(fileURLWithPath: rest.first ?? FileManager.default.currentDirectoryPath).standardizedFileURL.path
     var list = sharedFolders()
     func save() {
         try? FileManager.default.createDirectory(at: sharedFoldersFile.deletingLastPathComponent(), withIntermediateDirectories: true)
-        guard (try? (list.joined(separator: "\n") + "\n").write(to: sharedFoldersFile, atomically: true, encoding: .utf8)) != nil
+        guard (try? SharedFolders.format(list).write(to: sharedFoldersFile, atomically: true, encoding: .utf8)) != nil
         else { fail("cannot save \(sharedFoldersFile.path)") }
+    }
+    func describe(_ e: SharedFolders.Entry) -> String {
+        e.path + (e.work.map { "  (\($0)" + (e.readOnly ? ", read-only)" : ")") } ?? (e.readOnly ? "  (read-only)" : ""))
     }
     switch sub {
     case "add":
@@ -328,17 +337,18 @@ func shareCommand(_ a: [String]) -> Never {
         guard dir != "/", dir != NSHomeDirectory() else {
             fail("refusing to share \(dir) (the disk root or your home folder would expose everything); share a project folder")
         }
-        if list.contains(dir) { print("already shared: \(dir)"); exit(0) }
-        list.append(dir); save()
-        print("shared with the router from now on: \(dir) (and its subfolders)")
+        let e = SharedFolders.Entry(path: dir, work: work, readOnly: ro)
+        if list.contains(e) { print("already shared: \(describe(e))"); exit(0) }
+        list.removeAll { $0.path == dir }; list.append(e); save()
+        print("shared with the router from now on: \(describe(e)) (and its subfolders)")
     case "remove":
-        list.removeAll { $0 == dir }; save()
+        list.removeAll { $0.path == dir }; save()
         print("no longer shared: \(dir)")
     case "list":
         if list.isEmpty { print("no extra shared folders (folders under your home folder are shared by default)") }
-        list.forEach { print($0) }
+        list.forEach { print(describe($0)) }
     default:
-        fail("usage: minigw share [add|remove] [folder] | minigw share list")
+        fail("usage: minigw share add [--work=direct|sync|native] [--ro] [folder] | minigw share remove [folder] | minigw share list")
     }
     exit(0)
 }
@@ -348,15 +358,15 @@ func shareCommand(_ a: [String]) -> Never {
 let minigwVersion = "0.5.14"  // bump-version.sh
 var args = Array(CommandLine.arguments.dropFirst())
 // --minigw-ro (ali MINIGW_SHARE=ro): mapa samo za branje; zastavica ne gre naprej v claude.
-let readOnly = args.contains("--minigw-ro") || ProcessInfo.processInfo.environment["MINIGW_SHARE"] == "ro"
+var readOnly = args.contains("--minigw-ro") || ProcessInfo.processInfo.environment["MINIGW_SHARE"] == "ro"
 args.removeAll { $0 == "--minigw-ro" }
 // --minigw-work=sync (ali MINIGW_WORK=sync): agenti delajo v kopiji na routerju namesto v priklopu; privzeto direct.
 // native: mapa je prek SMB mapa routerja → agenti delajo neposredno v njej (glej Native).
-var work = ProcessInfo.processInfo.environment["MINIGW_WORK"] ?? "direct"
-for a in args where a.hasPrefix("--minigw-work=") { work = String(a.dropFirst("--minigw-work=".count)) }
+// Prednost: --minigw-work= / MINIGW_WORK > način mape iz »minigw share add --work=…« > direct.
+var workFlag = ProcessInfo.processInfo.environment["MINIGW_WORK"].flatMap { $0.isEmpty ? nil : $0 }
+for a in args where a.hasPrefix("--minigw-work=") { workFlag = String(a.dropFirst("--minigw-work=".count)) }
 args.removeAll { $0.hasPrefix("--minigw-work=") }
-guard ["direct", "sync", "native"].contains(work) else { fail("unknown --minigw-work=\(work) (use direct, sync or native)") }
-if work == "native", readOnly { fail("--minigw-work=native cannot be read-only (the agent works in the router's own folder)") }
+if let w = workFlag, !SharedFolders.modes.contains(w) { fail("unknown --minigw-work=\(w) (use direct, sync or native)") }
 
 switch args.first {
 case "share":
@@ -428,6 +438,7 @@ case "--minigw-help", "-h", "--help", "-v", "--version":
         minigw connect <host[:port]> [--token T]   save router address and token (Keychain)
         minigw status | models | disconnect
         minigw share add|remove [folder] | list    also share a system or hidden folder with the router
+        minigw share add --work=native|sync|direct [--ro] [folder]   default mode for that folder (flag/env wins)
         minigw router status|devices|gateway|claude|token …   change the Mini Gateway app on this Mac (minigw router help)
         minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)
         minigw --minigw-work=sync [claude args]    agents work in a synced copy on the router (or MINIGW_WORK=sync)
@@ -484,7 +495,11 @@ let shareEnv = ProcessInfo.processInfo.environment["MINIGW_SHARE"]
 let remoteRouter = !["127.0.0.1", "localhost", "::1"].contains(routerHost)
 let wantShare = shareEnv == "1"
     || (shareEnv != "0" && remoteRouter
-        && (autoShare(cwd) || sharedFolders().contains { cwd == $0 || cwd.hasPrefix($0 + "/") }))
+        && (autoShare(cwd) || SharedFolders.lookup(sharedFolders(), cwd: cwd) != nil))
+let mode = SharedFolders.mode(flag: workFlag, saved: SharedFolders.lookup(sharedFolders(), cwd: cwd), readOnly: readOnly)
+let work = mode.work
+readOnly = mode.readOnly
+if work == "native", readOnly { fail("--minigw-work=native cannot be read-only (the agent works in the router's own folder)") }
 
 // x-claude-mini-share: router po ponovnem zagonu počaka, da se mapa znova registrira (namesto napake cwd_unavailable).
 setenv("ANTHROPIC_CUSTOM_HEADERS", "x-claude-mini-session: \(sid)\nx-claude-mini-cwd: \(cwd)" + (wantShare ? "\nx-claude-mini-share: 1" : ""), 1)
