@@ -190,7 +190,7 @@ extension Router {
             let list = await gateways(c)
             return (200, ["running": true, "version": hooks.version, "port": Int(c.port), "address": c.host, "installed": hooks.installed(),
                           "autostart": hooks.installed() ? "sign-in" : "", "agents": AgentCount.running.load(ordering: .relaxed),
-                          "devices": c.devices.count, "pending": 0, "claude": claudeInfo(c.claudeCLI), "gateways": list, "providers": list])
+                          "devices": c.devices.count, "pending": 0, "claude": await claudeInfo(c.claudeCLI), "gateways": list, "providers": list])
 
         // Naprave: Mac sprejme vsako napravo z žetonom in jo doda sam; seznam določa Siri (glej /siri).
         case "GET devices":
@@ -347,10 +347,10 @@ extension Router {
 
         case "GET agents/{}":
             switch arg {
-            case "claude": return (200, claudeInfo(c.claudeCLI))
-            case "codex": return (200, codexInfo(c.codex))
-            case "copilot": return (200, copilotInfo(c.copilot))
-            case "grok": return (200, grokInfo(c.grok))
+            case "claude": return (200, await claudeInfo(c.claudeCLI))
+            case "codex": return (200, await codexInfo(c.codex))
+            case "copilot": return (200, await copilotInfo(c.copilot))
+            case "grok": return (200, await grokInfo(c.grok))
             default: throw AdminError(404, "no agent \(arg)")
             }
         case "GET agents/{}/tools":
@@ -359,8 +359,8 @@ extension Router {
         case "GET agents/{}/models":  // Codex, Grok: modeli računa (kot minigw serve)
             switch arg {
             case "codex":
-                guard let exe = Codex.executable(c.codex.executable) else { return (200, ["models": [Any]()]) }
-                let ms = await Task.detached { Codex.catalog(exe) }.value
+                guard let exe = await Codex.executable(c.codex.executable) else { return (200, ["models": [Any]()]) }
+                let ms = await offPool { Codex.catalog(exe) }
                 return (200, ["models": ms.map { m -> [String: Any] in
                     var o: [String: Any] = ["slug": m.slug, "name": m.name, "enabled": c.codex.isModelEnabled(m.slug)]
                     if !m.description.isEmpty { o["description"] = m.description }
@@ -368,8 +368,8 @@ extension Router {
                     return o
                 }])
             case "grok":
-                guard let exe = Grok.executable(c.grok.executable) else { return (200, ["models": [Any]()]) }
-                let ms = await Task.detached { Grok.catalog(exe) }.value
+                guard let exe = await Grok.executable(c.grok.executable) else { return (200, ["models": [Any]()]) }
+                let ms = await offPool { Grok.catalog(exe) }
                 return (200, ["models": ms.map { ["slug": $0, "name": $0, "enabled": c.grok.enabledModels?.contains($0) ?? true] }])
             default: throw AdminError(404, "no agent \(arg)")
             }
@@ -378,7 +378,7 @@ extension Router {
         case "GET foundry/{}":
             guard arg == "models" else { throw AdminError(404, "Not found: \(method) \(path)") }
             do {
-                let ms = try await Router.foundry.list(Foundry.executable(c.foundry.executable))
+                let ms = try await Router.foundry.list(await Foundry.executable(c.foundry.executable))
                 return (200, ["models": ms.map { ["name": $0.name, "vision": $0.vision, "enabled": c.foundry.isModelEnabled($0.name)] }])
             } catch { throw AdminError(503, (error as? Foundry.RequestError)?.message ?? "\(error)") }
         case "PATCH foundry":
@@ -418,6 +418,7 @@ extension Router {
                 if let folders, let bad = folders.split(separator: ",").map(String.init).first(where: { RouterConfig.overlapsScratch($0, scratch: c.scratchURL) }) {
                     throw AdminError(400, "allowed folder \(bad.trimmingCharacters(in: .whitespaces)) contains or is inside the scratch folder \(c.scratchURL.path) (agents could change the gateway's mirrors and other devices' copies): choose another folder")
                 }
+                let found = await ClaudeCLI.executable(path ?? config.claudeCLI.executable) != nil
                 let n = try await hooks.update { c in
                     if let enabled { c.claudeCLI.enabled = enabled }
                     if let path { c.claudeCLI.executable = path }
@@ -427,11 +428,11 @@ extension Router {
                     if let disabled { c.claudeCLI.disabledTools = disabled }
                     if let mode { c.claudeCLI.permissionMode = mode }
                     if let sources { c.claudeCLI.settingSources = sources }
-                    if c.claudeCLI.enabled, ClaudeCLI.executable(c.claudeCLI.executable) == nil {
+                    if c.claudeCLI.enabled, !found {
                         throw AdminError(400, "claude not found: set path")
                     }
                 }
-                return (200, claudeInfo(n.claudeCLI))
+                return (200, await claudeInfo(n.claudeCLI))
             case "copilot":
                 // Kot codex; models = seznam imen (Copilot nima seznama modelov), commands = ukazi lupine (privolitev).
                 // token: le za pisanje (kot ključi ponudnikov); "" ga izbriše.
@@ -452,7 +453,7 @@ extension Router {
                     if let commands { c.copilot.commands = commands }
                     if let models { c.copilot.models = (models ?? []).joined(separator: ", ") }  // null = le privzeti model
                 }
-                var info = copilotInfo(n.copilot)
+                var info = await copilotInfo(n.copilot)
                 if let token { info["hasToken"] = !token.isEmpty }  // ključ se shrani šele po odgovoru (ponovni zagon)
                 return (200, info)
             case "codex", "grok":
@@ -474,7 +475,7 @@ extension Router {
                         if let models { c.grok.enabledModels = models }
                     }
                 }
-                return (200, arg == "codex" ? codexInfo(n.codex) : grokInfo(n.grok))
+                return (200, arg == "codex" ? await codexInfo(n.codex) : await grokInfo(n.grok))
             default:
                 throw AdminError(404, "no agent \(arg)")
             }
@@ -540,31 +541,31 @@ extension Router {
 
     // MARK: oblike JSON (docs/admin-api.md)
 
-    func claudeInfo(_ c: ClaudeCLIConfig) -> [String: Any] {
-        ["enabled": c.enabled, "path": c.executable, "found": ClaudeCLI.executable(c.executable) != nil, "tools": c.tools,
+    func claudeInfo(_ c: ClaudeCLIConfig) async -> [String: Any] {
+        ["enabled": c.enabled, "path": c.executable, "found": await ClaudeCLI.executable(c.executable) != nil, "tools": c.tools,
          "folders": c.allowedRoots, "allowLocalTools": c.allowLocalTools, "disabledTools": c.disabledTools,
          "permissionMode": c.permissionMode, "settingSources": c.settingSources]
     }
 
-    func codexInfo(_ c: CodexConfig) -> [String: Any] {
-        ["enabled": c.enabled, "path": c.executable, "found": Codex.executable(c.executable) != nil, "write": c.write,
+    func codexInfo(_ c: CodexConfig) async -> [String: Any] {
+        ["enabled": c.enabled, "path": c.executable, "found": await Codex.executable(c.executable) != nil, "write": c.write,
          "network": c.network, "models": c.enabledModels.map { $0 as Any } ?? NSNull()]
     }
 
-    func copilotInfo(_ c: CopilotConfig) -> [String: Any] {
-        ["enabled": c.enabled, "path": c.executable, "found": Copilot.executable(c.executable) != nil, "write": c.write,
+    func copilotInfo(_ c: CopilotConfig) async -> [String: Any] {
+        ["enabled": c.enabled, "path": c.executable, "found": await Copilot.executable(c.executable) != nil, "write": c.write,
          "network": c.network, "commands": c.commands, "models": c.modelList,
          "hasToken": !(secrets.get(Copilot.tokenAccount) ?? "").isEmpty]
     }
 
     func foundryInfo(_ c: FoundryConfig) async -> [String: Any] {
-        let exe = Foundry.executable(c.executable)
+        let exe = await Foundry.executable(c.executable)
         return ["enabled": c.enabled, "path": c.executable, "found": exe != nil, "exe": exe ?? "", "running": await Router.foundry.running,
                 "error": await Router.foundry.lastError, "instructions": c.instructions, "models": c.enabledModels.map { $0 as Any } ?? NSNull()]
     }
 
-    func grokInfo(_ c: GrokConfig) -> [String: Any] {
-        ["enabled": c.enabled, "path": c.executable, "found": Grok.executable(c.executable) != nil, "write": c.write,
+    func grokInfo(_ c: GrokConfig) async -> [String: Any] {
+        ["enabled": c.enabled, "path": c.executable, "found": await Grok.executable(c.executable) != nil, "write": c.write,
          "models": c.enabledModels.map { $0 as Any } ?? NSNull()]
     }
 

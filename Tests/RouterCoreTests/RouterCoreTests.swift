@@ -204,8 +204,14 @@ func makeRouter(session: URLSession = .shared) -> Router {
     #expect(w1.status == 404)
     c.claudeCLI.enabled = true
     let on = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]))
-    let w2 = FakeWriter()
-    await on.handle(request("GET", "/v1/models", headers: ["x-api-key": "tok"]), writer: w2)
+    // Preizkus `claude --version` ima pri zahtevi 2 s (odkrivanje v Claude Code), sicer »še ne«; pod obremenitvijo
+    // (vzporedni testi, druge gradnje) traja dlje, zato kot Claude Code: vprašaj znova.
+    var w2 = FakeWriter()
+    for _ in 0..<15 {
+        w2 = FakeWriter()
+        await on.handle(request("GET", "/v1/models", headers: ["x-api-key": "tok"]), writer: w2)
+        if w2.text.contains("claude-cli-opus") { break }
+    }
     #expect(w2.text.contains("claude-cli-opus") && w2.text.contains("claude-cli-haiku") && !w2.text.contains("claude-chat-"))
     let w3 = FakeWriter()  // agent brez veljavne mape → jasna napaka, brez zagona claude
     await on.handle(request("POST", "/v1/messages", headers: ["x-api-key": "tok", "x-claude-mini-cwd": "/nonexistent"],
@@ -353,9 +359,9 @@ func makeRouter(session: URLSession = .shared) -> Router {
     #expect(Siri.packed(history: long, last: "q", limit: 1000).count <= 1100)
 }
 
-@Test func claudeExecutableResolution() {
-    #expect(ClaudeCLI.executable("/nonexistent/claude") == nil)  // ročna pot nima rezerve
-    #expect(ClaudeCLI.executable("/bin/ls") == "/bin/ls")
+@Test func claudeExecutableResolution() async {
+    #expect(await ClaudeCLI.executable("/nonexistent/claude") == nil)  // ročna pot nima rezerve
+    #expect(await ClaudeCLI.executable("/bin/ls") == "/bin/ls")
 }
 
 @Test func claudeExecutableValidation() {
@@ -366,11 +372,39 @@ func makeRouter(session: URLSession = .shared) -> Router {
 }
 
 @Test func firstOfDoesNotWaitForSlowTask() async {
-    let slow = Task { try? await Task.sleep(for: .seconds(3)); return 1 }
+    // Počasna naloga 60 s, meja 30 s: pod obremenitvijo nadaljevanje testa zamudi, a še vedno ne čaka počasne.
+    let slow = Task { try? await Task.sleep(for: .seconds(60)); return 1 }
+    defer { slow.cancel() }
     let t0 = ContinuousClock.now
     #expect(await firstOf(slow, within: .milliseconds(100)) == nil)
-    #expect(ContinuousClock.now - t0 < .seconds(1))
+    #expect(ContinuousClock.now - t0 < .seconds(30))
     #expect(await firstOf(Task { 7 }, within: .seconds(1)) == 7)
+}
+
+/// Agenti (grok, codex, copilot) tečejo vso sejo: njihovo branje ne sme zasesti bazena Swift concurrency (ena nit na jedro),
+/// sicer router pri več hkratnih agentih kot jeder ne odgovori niti na /health.
+@Test func manyAgentRunsDoNotStallHealth() async throws {
+    let dir = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("pool-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let fake = dir.appendingPathComponent("agent"), gate = dir.appendingPathComponent("go")
+    try Data("#!/bin/sh\nwhile [ ! -e '\(gate.path)' ]; do sleep 0.1; done\n".utf8).write(to: fake)  // teče, dokler test ne reče
+    chmod(fake.path, 0o755)
+    let n = 2 * ProcessInfo.processInfo.activeProcessorCount + 2
+    let runs = (0..<n).map { i in
+        Task { _ = try? await (i.isMultiple(of: 2) ? Grok.run(fake.path, args: [], cwd: dir, prompt: "x", onStep: { _ in })
+                                                   : Codex.run(fake.path, args: [], cwd: dir, prompt: "x", output: dir.appendingPathComponent("o\(i)"))) }
+    }
+    // Agente ustavi nit po 20 s, ne naloga: zasedenega bazena (pred popravkom) ne bi nikoli dočakala.
+    Thread { Thread.sleep(forTimeInterval: 20); FileManager.default.createFile(atPath: gate.path, contents: nil) }.start()
+    let t0 = ContinuousClock.now  // pred čakanjem: tudi to nadaljevanje potrebuje nit bazena
+    try await Task.sleep(for: .milliseconds(500))  // agenti zagnani in v branju
+    let r = Router(config: RouterConfig(), token: "tok", secrets: FakeSecrets(values: [:]))
+    let w = FakeWriter()
+    await r.handle(request("GET", "/health/live"), writer: w)
+    #expect(w.status == 200 && ContinuousClock.now - t0 < .seconds(10))  // pred popravkom: šele po koncu agentov (20 s)
+    FileManager.default.createFile(atPath: gate.path, contents: nil)
+    for t in runs { await t.value }
 }
 
 @Test func configRoundTripsAsReadablePlistAndMigratesJSON() throws {
@@ -494,7 +528,8 @@ func portInUse(_ port: UInt16) -> Bool {
     for _ in 0..<100 where !portInUse(routerPort) { try await Task.sleep(for: .milliseconds(50)) }  // namesto fiksnega čakanja
 
     func get(_ base: String, _ path: String) async -> (Int, String) {
-        var r = URLRequest(url: URL(string: base + path)!, timeoutInterval: 5)
+        // 30 s, ne 5: pod obremenitvijo (vzporedni testi, druge gradnje) router odgovori pozneje; preverja se pot, ne hitrost.
+        var r = URLRequest(url: URL(string: base + path)!, timeoutInterval: 30)
         r.setValue("Bearer tok", forHTTPHeaderField: "authorization")
         guard let (d, resp) = try? await URLSession.shared.data(for: r) else { return (0, "") }
         return ((resp as! HTTPURLResponse).statusCode, String(decoding: d, as: UTF8.self))
@@ -522,6 +557,31 @@ func portInUse(_ port: UInt16) -> Bool {
     defer { bad.stop() }
     #expect(bad.localPort != proxy.stablePort && bad.localPort != 0)  // port zaseden → naključen
     #expect(await get(bad.localURL, "/v1/models").0 == 0)  // napačen ključ: router prekine
+}
+
+/// Drug lokalni program ne more poslušati na vratih routerja (in prevzeti povezav Claude Code), tudi z SO_REUSEADDR in
+/// SO_REUSEPORT, na 127.0.0.1 ali 0.0.0.0: allowLocalEndpointReuse (hiter ponovni zagon) ne odpre deljenja vrat.
+@Test func routerPortCannotBeSharedByAnotherListener() async throws {
+    var c = RouterConfig()
+    let port = freeTCPPort()
+    c.host = "127.0.0.1"; c.port = port
+    let server = RouterServer(router: Router(config: c, token: "tok", secrets: FakeSecrets(values: [:])))
+    try server.start()
+    defer { server.stop() }
+    for _ in 0..<100 where !portInUse(port) { try await Task.sleep(for: .milliseconds(50)) }
+    #expect(portInUse(port))
+    for host in ["127.0.0.1", "0.0.0.0"] {
+        for opts in [[SO_REUSEADDR], [SO_REUSEPORT], [SO_REUSEADDR, SO_REUSEPORT]] {
+            let fd = socket(AF_INET, SOCK_STREAM, 0)
+            defer { close(fd) }
+            var one: Int32 = 1
+            for o in opts { setsockopt(fd, SOL_SOCKET, o, &one, socklen_t(MemoryLayout<Int32>.size)) }
+            var a = sockaddr_in(sin_len: UInt8(MemoryLayout<sockaddr_in>.size), sin_family: sa_family_t(AF_INET), sin_port: port.bigEndian,
+                                sin_addr: in_addr(s_addr: inet_addr(host)), sin_zero: (0, 0, 0, 0, 0, 0, 0, 0))
+            let bound = withUnsafePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+            #expect(bound != 0 && errno == EADDRINUSE, "\(host) \(opts)")
+        }
+    }
 }
 
 @Test func availableToolsFromInstalledClaude() async throws {

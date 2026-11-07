@@ -46,18 +46,20 @@ private func fakeClient(_ hub: ShareHub, key: String, top: URL) -> Task<Void, Ne
             var r = DAVResponse(403)
             if job.method == "WORKTREE-PUSH" {
                 let have = (try? JSONSerialization.jsonObject(with: job.body) as? [String: Any])?["have"] as? [String] ?? []
-                let snap = Worktree.snapshot(top: top.path)!
                 let f = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".bundle")
-                if Worktree.bundle(top: top.path, snapshot: snap, have: have, to: f) == true {
-                    _ = await hub.worktreePut(key: key, part: 0, data: try! Data(contentsOf: f), device: "dev")
+                // git odjemalca zunaj bazena Swift concurrency (kot minigw v svojem procesu): vzporedni testi ne čakajo nanj
+                let (snap, made) = await offPool { () -> (String, Bool) in
+                    let snap = Worktree.snapshot(top: top.path)!
+                    return (snap, Worktree.bundle(top: top.path, snapshot: snap, have: have, to: f) == true)
                 }
+                if made { _ = await hub.worktreePut(key: key, part: 0, data: try! Data(contentsOf: f), device: "dev") }
                 try? FileManager.default.removeItem(at: f)
                 r = DAVResponse(200, [:], try! JSONSerialization.data(withJSONObject: ["snapshot": snap]))
             } else if job.method == "WORKTREE-PULL" {
                 let branch = (try? JSONSerialization.jsonObject(with: job.body) as? [String: Any])?["branch"] as? String ?? ""
                 let f = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".bundle")
                 if let d = await hub.worktreeResult(key: key, device: "dev") { try? d.write(to: f) }
-                r = DAVResponse(Worktree.fetch(top: top.path, bundle: f, branch: branch) == nil ? 200 : 500)
+                r = DAVResponse(await offPool { Worktree.fetch(top: top.path, bundle: f, branch: branch) } == nil ? 200 : 500)
                 try? FileManager.default.removeItem(at: f)
             }
             _ = await hub.reply(key: key, DAVReply(id: job.id, response: r))
@@ -175,7 +177,7 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
         g(dir, "update-ref", "HEAD", c)
     }
     #expect(!g(client, "ls-tree", "-r", "--name-only", branch).contains(".git/"))  // veja ni posodobljena
-    #expect(((try? FileManager.default.contentsOfDirectory(atPath: marks.path)) ?? []).isEmpty)
+    #expect(((try? FileManager.default.contentsOfDirectory(atPath: marks.path)) ?? []).isEmpty, "\((try? FileManager.default.contentsOfDirectory(atPath: marks.path)) ?? [])")
     #expect(try Data(contentsOf: client.appendingPathComponent(".git/config")) == config)
 }
 

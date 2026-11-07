@@ -39,10 +39,11 @@ public enum Copilot {
         return model.hasPrefix(prefix) && model.count > prefix.count ? .some(String(model.dropFirst(prefix.count))) : .none
     }
 
-    public static let detected: String? = ClaudeCLI.locate("copilot")
+    /// Za nastavitve (glavna nit); router: `await executable("")`.
+    public static var detected: String? { Detected.pathNow("copilot") }
 
-    public static func executable(_ configured: String) -> String? {
-        configured.isEmpty ? detected : [(configured as NSString).expandingTildeInPath].first { FileManager.default.isExecutableFile(atPath: $0) }
+    public static func executable(_ configured: String) async -> String? {
+        configured.isEmpty ? await Detected.path("copilot") : [(configured as NSString).expandingTildeInPath].first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
     /// Argumenti. Nikoli --allow-all-tools, --allow-all-paths, --allow-all-urls, --allow-all, --yolo, --trust-folder ali
@@ -174,9 +175,11 @@ public enum Copilot {
             try? input.close()
         }.start()
         return try await withTaskCancellationHandler {
-            try await Task.detached { () async throws -> String in
-                var stderr = Data()
-                let errReader = Thread { stderr = err.readDataToEndOfFile() }
+            // branje dogodkov blokira vso sejo: na svoji niti, ne v bazenu Swift concurrency
+            let (answer, stderr) = await offPool { () -> (String, Data) in
+                final class Box: @unchecked Sendable { var data = Data() }
+                let stderr = Box()
+                let errReader = Thread { stderr.data = err.readDataToEndOfFile() }
                 errReader.start()
                 var buf = Data(), answer = "", skipping = false
                 while case let chunk = out.availableData, !chunk.isEmpty {
@@ -194,15 +197,16 @@ public enum Copilot {
                 }
                 if !skipping, let t = event(buf).text { answer = t }
                 while errReader.isExecuting { usleep(10_000) }
-                let code = await exit.wait()
-                _ = Darwin.kill(-pid, SIGKILL)  // ostanki skupine
-                let text = answer.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard code == 0, !text.isEmpty else {
-                    let tail = String(decoding: stderr.suffix(400), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-                    throw Failure(message: "copilot exited with \(code)" + (tail.isEmpty ? "" : ": \(tail)"))
-                }
-                return text
-            }.value
+                return (answer, stderr.data)
+            }
+            let code = await exit.wait()
+            _ = Darwin.kill(-pid, SIGKILL)  // ostanki skupine
+            let text = answer.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard code == 0, !text.isEmpty else {
+                let tail = String(decoding: stderr.suffix(400), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+                throw Failure(message: "copilot exited with \(code)" + (tail.isEmpty ? "" : ": \(tail)"))
+            }
+            return text
         } onCancel: {
             _ = Darwin.kill(-pid, SIGTERM)
             DispatchQueue.global().asyncAfter(deadline: .now() + 5) { _ = Darwin.kill(-pid, SIGKILL) }
@@ -229,7 +233,7 @@ extension Router {
             return await error(404, "not_found_error", "Unknown model: claude-copilot-\(model) (list it in Mini Gateway → Settings → Copilot CLI)",
                                rid: rid, writer: writer)
         }
-        guard let exe = Copilot.executable(cfg.executable) else {
+        guard let exe = await Copilot.executable(cfg.executable) else {
             return await error(503, "api_error", "Copilot CLI not found (Mini Gateway → Settings → Copilot CLI)", rid: rid, writer: writer)
         }
         let all = ClaudeCLI.turns(body)
@@ -305,7 +309,7 @@ extension Router {
             prompt = last.text
         }
         let prepHome = reqDir.appendingPathComponent("p")  // svoj prazen COPILOT_HOME, ne domača mapa seje (R9)
-        await Task.detached { Copilot.prepare(exe, base: base, home: prepHome, cwd: tmp) }.value
+        await offPool { Copilot.prepare(exe, base: base, home: prepHome, cwd: tmp) }
         let args = Copilot.args(agent: agent, model: model, write: write, commands: commands,
                                 network: cfg.network && (tree == nil || config.worktreeCodexNetwork), session: session)
         let sessions = Self.copilotSessions, client = req.header("x-claude-mini-session") ?? ""

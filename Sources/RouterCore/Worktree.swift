@@ -398,11 +398,11 @@ extension ShareHub {
         }
         let branch = "minigw/\(agent)-\(short)-\(n)", wt = tree.worktrees.appendingPathComponent("\(agent)-\(short)-\(n)", isDirectory: true)
         let base = "refs/minigw/base/\(agent)-\(short)-\(n)", repo = tree.repo
-        let have = await Task.detached { () -> [String]? in
+        let have = await offPool { () -> [String]? in
             guard Worktree.ensureMirror(repo) else { return nil }
             FileManager.default.createFile(atPath: repo.appendingPathComponent("minigw-used").path, contents: nil)  // prune: zadnja raba
             return Worktree.tips(repo)
-        }.value
+        }
         guard let have, !Task.isCancelled else { unlock(tree.repo); return nil }
         let incoming = repo.deletingLastPathComponent().appendingPathComponent(repo.lastPathComponent + ".incoming")
         try? FileManager.default.removeItem(at: incoming)
@@ -415,10 +415,10 @@ extension ShareHub {
         let ok: Bool
         if let snapshot, Worktree.isSHA(snapshot) {
             let file: URL? = FileManager.default.fileExists(atPath: incoming.path) ? incoming : nil
-            ok = await Task.detached {
+            ok = await offPool {
                 Worktree.importBase(repo, bundle: file, snapshot: snapshot, base: base)
                     && Worktree.makeClone(repo, at: wt, branch: branch, snapshot: snapshot)
-            }.value
+            }
         } else { ok = false }
         try? FileManager.default.removeItem(at: incoming)
         if ok, let snapshot {
@@ -455,9 +455,9 @@ extension ShareHub {
         await acquire(tree.repo)
         let out = tree.repo.deletingLastPathComponent().appendingPathComponent(tree.repo.lastPathComponent + ".result")
         let (repo, agent) = (tree.repo, String(k.split(separator: "|")[1]))
-        let tip = await Task.detached {
+        let tip = await offPool {
             Worktree.finalize(repo: repo, wt: slot.wt, branch: slot.branch, base: slot.base, agent: agent, out: out)
-        }.value
+        }
         if let tip, tip != slot.base, FileManager.default.fileExists(atPath: out.path) {
             s.result = out
             let body = (try? JSONSerialization.data(withJSONObject: ["branch": slot.branch, "tip": tip])) ?? Data()

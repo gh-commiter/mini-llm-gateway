@@ -31,10 +31,11 @@ public struct GrokConfig: Codable, Sendable, Equatable {
 public enum Grok {
     static let ids: Set<String> = ["claude-grok"]
     static let prefix = "claude-grok-"
-    public static let detected: String? = ClaudeCLI.locate("grok")
+    /// Za nastavitve (glavna nit); router: `await executable("")`.
+    public static var detected: String? { Detected.pathNow("grok") }
 
-    public static func executable(_ configured: String) -> String? {
-        configured.isEmpty ? detected : [(configured as NSString).expandingTildeInPath].first { FileManager.default.isExecutableFile(atPath: $0) }
+    public static func executable(_ configured: String) async -> String? {
+        configured.isEmpty ? await Detected.path("grok") : [(configured as NSString).expandingTildeInPath].first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
     /// Model za `grok -m` (nil = privzeti); nil, če ime ni Grok.
@@ -102,7 +103,7 @@ public enum Grok {
                     onStep: @escaping @Sendable (String) -> Void) async throws -> (String, String?) {
         let h = Handle()
         return try await withTaskCancellationHandler {
-            try await Task.detached { () throws -> (String, String?) in
+            try await offPool { () throws -> (String, String?) in
                 let p = h.p
                 p.executableURL = URL(fileURLWithPath: exe)
                 p.arguments = args
@@ -143,7 +144,7 @@ public enum Grok {
                     throw Failure(message: failure ?? "grok exited with \(p.terminationStatus)" + (tail.isEmpty ? "" : ": \(tail)"))
                 }
                 return (text, session)
-            }.value
+            }
         } onCancel: { if h.p.isRunning { h.p.terminate() } }
     }
 }
@@ -164,7 +165,7 @@ extension Router {
         if let model, !Self.validModel(model) {
             return await error(400, "invalid_request_error", "Invalid model name", rid: rid, writer: writer)
         }
-        guard let exe = Grok.executable(config.grok.executable) else {
+        guard let exe = await Grok.executable(config.grok.executable) else {
             return await error(503, "api_error", "Grok CLI not found (Mini Gateway → Settings → Grok CLI)", rid: rid, writer: writer)
         }
         let all = ClaudeCLI.turns(body)
