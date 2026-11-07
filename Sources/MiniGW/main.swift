@@ -31,8 +31,9 @@ func deviceName() -> String {
     "\(NSUserName())@\(Host.current().localizedName ?? ProcessInfo.processInfo.hostName)"
 }
 
-/// OS in različica za vrstico čakajoče naprave (glava x-minigw-client; starejši prehodi jo prezrejo).
-let clientInfo = "macOS · minigw \(minigwVersion)"
+/// OS in različica za vrstico čakajoče naprave (glava x-minigw-client; starejši prehodi jo prezrejo). Izračunana:
+/// globalne spremenljivke v main.swift se nastavijo po vrsti, minigwVersion pa je niže (sicer sesutje ob zagonu).
+var clientInfo: String { "macOS · minigw \(minigwVersion)" }
 
 /// Oddaljen prehod: vse (Claude Code, minigw, mapa) gre šifrirano prek lokalnega proxyja; lokalno navaden HTTP.
 var proxies: [NoiseProxy] = []
