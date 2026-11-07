@@ -2,8 +2,8 @@
 
 A macOS menu bar LLM gateway compatible with the [Claude Code](https://claude.com/claude-code) CLI. One endpoint for several models:
 the **Siri AI** app, **Apple Foundation Models** (on-device), the **Claude Code CLI**, **Codex** and **Grok** as agents,
-and any Anthropic-compatible upstream such as **LiteLLM** or **OpenRouter**. The router runs on a Mac; the `minigw`
-client runs on macOS, Windows and Linux. Pick a model with `/model`, or give each Claude Code subagent its own.
+and any Anthropic-compatible upstream such as **LiteLLM** or **OpenRouter**. The router runs on a Mac (or, without Siri and Apple
+models, on Windows or Linux); the `minigw` client runs on macOS, Windows and Linux. Pick a model with `/model`, or give each Claude Code subagent its own.
 
 **Why.** Sometimes you want a second opinion: a review by Codex, a quick check by Grok, an answer from a local model
 or from Siri, without leaving Claude Code. And sometimes Claude has to share the work: Mini Gateway was inspired by
@@ -15,12 +15,12 @@ so Claude stays free for the work that needs it.
 - [1. What it does](#1-what-it-does)
 - [2. Requirements](#2-requirements)
 - [3. Install](#3-install)
-  - [3.1 Router (Mac)](#31-router-mac)
-  - [3.2 Client (minigw)](#32-client-minigw)
-    - [3.2.1 Claude Code plugin](#321-claude-code-plugin)
-    - [3.2.2 Another Mac](#322-another-mac)
-    - [3.2.3 Windows and Linux](#323-windows-and-linux)
-    - [3.2.4 Router on Windows or Linux (minigw serve)](#324-router-on-windows-or-linux-minigw-serve)
+  - [3.1 With the Claude Code plugin](#31-with-the-claude-code-plugin)
+  - [3.2 Other ways to install](#32-other-ways-to-install)
+    - [3.2.1 Router Mac: DMG or Homebrew](#321-router-mac-dmg-or-homebrew)
+    - [3.2.2 Client on another Mac](#322-client-on-another-mac)
+    - [3.2.3 Client on Windows and Linux](#323-client-on-windows-and-linux)
+    - [3.2.4 Router on Windows or Linux without the plugin (minigw serve)](#324-router-on-windows-or-linux-without-the-plugin-minigw-serve)
 - [4. Use](#4-use)
 - [5. Router settings](#5-router-settings)
 - [6. Security notes](#6-security-notes)
@@ -68,41 +68,84 @@ sees it as a regular LLM gateway. Only models that were verified to work are lis
 
 ## 2. Requirements
 
-- Router: macOS 27 on Apple Silicon
+- Router: macOS 27 on Apple Silicon, or Windows or Linux with `minigw serve` (no Siri or Apple models)
 - Client (`minigw`): macOS, Windows or Linux, with Claude Code (`claude`) in your `PATH`
 - Optional on the router Mac, for their providers: Claude Code, the **Siri AI** app, [Codex CLI](https://github.com/openai/codex),
   Grok CLI, a LiteLLM or OpenRouter account
 
 ## 3. Install
 
-Mini Gateway has two parts: the **router** (the menu bar app, on one Mac) and the **client** `minigw` (on every
-computer that uses it: the same Mac, other Macs, Windows, Linux).
+Mini Gateway has two parts: the **router** (on one computer) and the **client** `minigw` (on every computer that
+uses it, the router computer included). The router is the menu bar app on a Mac, or `minigw serve` on Windows or
+Linux (without Siri and Apple models). The default way to install both is the Claude Code plugin.
 
-### 3.1 Router (Mac)
+### 3.1 With the Claude Code plugin
 
-1. Install Claude Code if you don't have it yet, then sign in once by running `claude`.
-   Check whether it is already installed:
+1. Install Claude Code if you don't have it yet (`brew install --cask claude-code`, or
+   `curl -fsSL https://claude.ai/install.sh | bash`) and sign in once by running `claude`.
+2. In Claude Code (2.1.275 or later), add this repository as a plugin marketplace and install the plugin:
 
-   ```sh
-   claude --version
+   ```
+   /plugin marketplace add gh-commiter/mini-llm-gateway
+   /plugin install minigw@mini-gateway
    ```
 
-   Install with Homebrew:
+3. On the router computer:
 
-   ```sh
-   brew install --cask claude-code
+   ```
+   /minigw:serve install
    ```
 
-   Or with the native installer:
+   - **Mac:** installs the Mini Gateway app with Homebrew (it asks first) and turns on Open at Login.
+   - **Windows:** installs `minigw serve` with the tray icon and starts it at sign-in.
+   - **Linux:** installs `minigw serve` as a systemd user unit. It starts at boot when linger can be turned on,
+     otherwise at sign-in. The skill then shows the one `sudo` line that turns linger on.
 
-   ```sh
-   curl -fsSL https://claude.ai/install.sh | bash
+   It also connects the router computer's own `minigw` to the router. `/minigw:serve status` shows the same
+   summary on every system: running, version, autostart, devices, gateways.
+4. On every other computer:
+
+   ```
+   /minigw:connect <router> <token>
    ```
 
-2. Download `Mini-Gateway-<version>.dmg` from [Releases](../../releases) (signed with Developer ID and notarized;
+   `/minigw:serve token` on the router prints the token (on the Mac also **Settings… → General → Copy Token**).
+   A Windows or Linux router refuses a new device until you allow it there: `/minigw:serve devices` shows it, and
+   the skill asks you to compare the ID before it allows the device.
+
+The plugin brings its own `minigw` on macOS, Windows (Git Bash) and Linux. At session start it uses an installed
+one or downloads it from the latest release into its data folder, and checks the SHA-256 (on macOS also the
+Developer ID signature). When the installed router is older than the release, the session start shows one line
+with `/minigw:serve update`. Nothing is updated without you: an update stops the agent requests that run on the
+router. The session itself does not have to run through the router, so it works with your normal Claude login,
+Remote Control and so on.
+
+| Skill | Model | Use |
+|---|---|---|
+| `/minigw:ask [--ro] <model> <question>` | any gateway model | Ask a specific model (`/minigw:models` lists them) |
+| `/minigw:review [--rw] [what]` | `claude-codex-gpt-6-astra` | Independent review of the current changes, a plan or a bug analysis (folder read-only unless `--rw`) |
+| `/minigw:codex [--ro] <task>` | `claude-codex-gpt-6.1-sol` | Hand a self-contained task to Codex in the current folder (`--ro`: read-only) |
+| `/minigw:siri <question>` | `claude-siri-ai` | Questions about the router Mac's personal context (Siri must be allowed for the device) |
+| `/minigw:on-device <text>` | `claude-apple-fm` | Short private answers on-device |
+| `/minigw:serve install\|update\|uninstall\|status` | – | The router on this computer; also `devices`, `gateway`, `claude`, `token`, `settings` |
+| `/minigw:status` | – | Connection and available models |
+| `/minigw:models` | – | Gateway models, grouped by provider |
+| `/minigw:version` | – | Versions of minigw, Claude Code and the plugin |
+| `/minigw:connect <router> <token>` | – | One-time connection to the router |
+| `/minigw:share [folder]` | – | Share a folder that minigw does not share by itself, such as a system folder |
+
+Claude can also pick these skills by itself when they fit the request.
+
+### 3.2 Other ways to install
+
+Optional. Each of these does part of what the plugin does.
+
+#### 3.2.1 Router Mac: DMG or Homebrew
+
+1. Download `Mini-Gateway-<version>.dmg` from [Releases](../../releases) (signed with Developer ID and notarized;
    a `.zip` is there too, checksums in `SHA256SUMS`).
-3. Open the DMG, drag **Mini Gateway** to **Applications** and open it. It lives in the menu bar.
-4. **Settings… → Claude CLI → Install** puts the `minigw` command in your `PATH` and connects it.
+2. Open the DMG, drag **Mini Gateway** to **Applications** and open it. It lives in the menu bar.
+3. **Settings… → Claude CLI → Install** puts the `minigw` command in your `PATH` and connects it.
 
 With Homebrew instead of the DMG (add the tap once):
 
@@ -115,51 +158,16 @@ brew install --cask gh-commiter/mini-gateway/mini-gateway
 Then **Settings… → Claude CLI → Install** for `minigw`. The cask also installs Claude Code (`claude-code`) if it is
 not installed yet.
 
-### 3.2 Client (minigw)
+#### 3.2.2 Client on another Mac
 
-`minigw` runs wherever Claude Code runs. Pick one way to install it.
-
-#### 3.2.1 Claude Code plugin
-
-This repository is also a Claude Code plugin marketplace. The `minigw` plugin lets any Claude Code session use
-Mini Gateway models through the `minigw` client: Claude runs `minigw -p --model <model> "…"` in the current folder
-and uses the answer. The session itself does not have to run through the router, so it works with your normal Claude
-login, Remote Control and so on. The plugin brings its own `minigw` on macOS, Windows (Git Bash)
-and Linux: at session start it uses an installed one or downloads it from the latest release into its data folder and
-checks the SHA-256 (on macOS also the Developer ID signature). A downloaded copy is updated at session start when a
-new release is out. No brew needed. Connect once with
-`/minigw:connect <router-mac> <token>` (the token goes to the Keychain or Windows Credential Manager).
-
-| Skill | Model | Use |
-|---|---|---|
-| `/minigw:ask [--ro] <model> <question>` | any gateway model | Ask a specific model (`/minigw:models` lists them) |
-| `/minigw:review [--rw] [what]` | `claude-codex-gpt-6-astra` | Independent review of the current changes, a plan or a bug analysis (folder read-only unless `--rw`) |
-| `/minigw:codex [--ro] <task>` | `claude-codex-gpt-6.1-sol` | Hand a self-contained task to Codex in the current folder (`--ro`: read-only) |
-| `/minigw:siri <question>` | `claude-siri-ai` | Questions about the router Mac's personal context (Siri must be allowed for the device) |
-| `/minigw:on-device <text>` | `claude-apple-fm` | Short private answers on-device |
-| `/minigw:status` | – | Connection and available models |
-| `/minigw:models` | – | Gateway models, grouped by provider |
-| `/minigw:version` | – | Versions of minigw, Claude Code and the plugin |
-| `/minigw:connect <router> <token>` | – | One-time connection to the router Mac |
-| `/minigw:share [folder]` | – | Share a folder that minigw does not share by itself, such as a system folder |
-
-Claude can also pick these skills by itself when they fit the request. Install (Claude Code 2.1.275 or later):
-
-```
-/plugin install minigw --marketplace gh-commiter/mini-llm-gateway
-```
-
-#### 3.2.2 Another Mac
-
-On a Mac that should use the router running on your Mac, one command installs Claude Code (with Homebrew if
-present, otherwise the native installer) and the signed `minigw` command into your `PATH`:
+One command installs Claude Code (with Homebrew if present, otherwise the native installer) and the signed `minigw`
+command into your `PATH`:
 
 ```sh
 curl -fsSL https://github.com/gh-commiter/mini-llm-gateway/releases/latest/download/install.sh | sh
 ```
 
-To connect in the same step, add the router Mac's name or address. The script then asks for the token
-(**Settings… → General → Copy Token** on the router Mac):
+To connect in the same step, add the router's name or address. The script then asks for the token:
 
 ```sh
 curl -fsSL https://github.com/gh-commiter/mini-llm-gateway/releases/latest/download/install.sh | sh -s -- mini.local
@@ -173,10 +181,10 @@ With Homebrew (tap as above; also installs Claude Code if missing):
 brew install --cask gh-commiter/mini-gateway/minigw
 ```
 
-#### 3.2.3 Windows and Linux
+#### 3.2.3 Client on Windows and Linux
 
-The router runs on a Mac; `minigw` runs wherever Claude Code runs. For Windows and Linux it is a single executable
-without dependencies (`client/`, Go standard library only), in [Releases](../../releases):
+For Windows and Linux `minigw` is a single executable without dependencies (`client/`, Go standard library only),
+in [Releases](../../releases):
 
 | System | File |
 |---|---|
@@ -198,8 +206,7 @@ Invoke-WebRequest https://github.com/gh-commiter/mini-llm-gateway/releases/lates
 Get-FileHash $HOME\minigw.exe -Algorithm SHA256
 ```
 
-Then connect once with the token from **Settings… → General → Copy Token** on the router Mac (quote it, it
-contains `#`):
+Then connect once with the router's token (quote it, it contains `#`):
 
 ```sh
 minigw connect mini.local --token '<token>'
@@ -207,24 +214,26 @@ minigw connect mini.local --token '<token>'
 
 The connection is stored in Windows Credential Manager, on Linux in `~/.config/minigw/connection.json` (mode 0600).
 All clients encrypt with AES-256-GCM; the Mac router also accepts ChaCha20-Poly1305 from older macOS clients.
-With the [Claude Code plugin](#321-claude-code-plugin) you can skip all of this: it downloads and checks `minigw` itself.
 
-#### 3.2.4 Router on Windows or Linux (minigw serve)
+#### 3.2.4 Router on Windows or Linux without the plugin (minigw serve)
 
 `minigw serve` turns a Windows or Linux computer into a small router: `claude -p` on that computer as
-`claude-cli-opus`, `claude-cli-sonnet` and `claude-cli-haiku`, plus gateways; no Siri or Apple models. Agents work in a
-synced copy of the client's folder, so clients run with `MINIGW_WORK=sync` (folder mounts need the Mac router).
-Install Claude Code there (on Windows the native `claude.exe`; `minigw serve` does not run `claude.cmd`).
+`claude-cli-opus`, `claude-cli-sonnet` and `claude-cli-haiku`, Codex and Grok (off by default), plus gateways; no
+Siri or Apple models. Agents work in a synced copy of the client's folder, so clients run with `MINIGW_WORK=sync`
+(folder mounts need the Mac router). Install Claude Code there (on Windows the native `claude.exe`; `minigw serve`
+does not run `claude.cmd`).
 
-The setup is one command after `minigw serve init`: `minigw serve install` copies minigw to a fixed place, adds it to
-PATH, starts the router now and at sign-in, all without admin rights. On Windows it installs to
+`/minigw:serve install` runs these two commands. `minigw serve install` copies minigw to a fixed place, adds it to
+PATH and starts the router now and at sign-in, all without admin rights. On Windows it installs to
 `%LocalAppData%\Programs\Mini Gateway` (with the tray icon; downloaded and checked against the release's
-`SHA256SUMS` if `minigw-tray*.exe` is not next to `minigw.exe`); on Linux to `~/.local/bin` with a systemd user unit.
-Run it again to update; `minigw serve uninstall` removes it and keeps the config and keys.
+`SHA256SUMS` if `minigw-tray*.exe` is not next to `minigw.exe`). On Linux it installs to `~/.local/bin` with a
+systemd user unit, and turns on linger (`loginctl enable-linger`, or `sudo -n` without a password) so the router
+starts at boot; if neither works it prints the `sudo` line. Run it again to update; `minigw serve uninstall` removes
+it and keeps the config and keys.
 
 ```sh
 minigw serve init            # creates the config with a new token and router key, prints the minigw connect line
-minigw serve install         # install, start now and at sign-in
+minigw serve install         # install, start now and at boot or sign-in
 minigw serve                 # or run it in this terminal: port 8765; --port, --folder, --config
 ```
 
@@ -240,8 +249,8 @@ line**, **Start at sign-in**, the log (`minigw-serve.log` in the config folder) 
 it up.
 
 **Settings page.** **Settings…** opens `http://127.0.0.1:<port>/minigw/settings` in the browser with a one-time
-link (60 s): General (port, address, connect line, new token), Devices, Gateways (key, models) and Claude CLI.
-Changes apply at once. On Linux, `minigw router settings` prints such a link; open it on the router computer or
+link (60 s). It has the panes of the Mac's Settings window ([5. Router settings](#5-router-settings)), light or dark
+as the system. Changes apply at once. On Linux, `minigw router settings` prints such a link; open it on the router computer or
 through `ssh -L <port>:127.0.0.1:<port>` with the same port on both ends (the page checks the port).
 
 **Changing the router.** `minigw router status|devices|gateway|claude|token` (also as `minigw serve allow`, `deny`,
@@ -315,8 +324,11 @@ builds then work on the router's local disk.
 
 ## 5. Router settings
 
-Settings of the menu bar app on the router Mac (**Settings…**, laid out like System Settings). Client options (`minigw share`, `--minigw-ro`,
-`MINIGW_SHARE`) are in [4. Use](#4-use).
+Settings of the menu bar app on the router Mac (**Settings…**, laid out like System Settings). On Windows and Linux
+the settings page of `minigw serve` has the same panes, except Siri AI and Apple Foundation Models, plus a
+**Devices** pane (allowed and waiting devices). Open it with **Settings…** in the tray or `/minigw:serve settings`.
+[docs/windows-parity.md](docs/windows-parity.md) lists every control on both. Client options (`minigw share`,
+`--minigw-ro`, `MINIGW_SHARE`) are in [4. Use](#4-use).
 
 - **General** – listen address and port (default `127.0.0.1:8765`; use `0.0.0.0` or a LAN IP for other computers),
   allowed client IPs, unencrypted connections, access token, and About (version, build commit, license).
