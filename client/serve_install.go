@@ -16,6 +16,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -335,6 +336,12 @@ func installWindows(exe, cfgPath string) (string, error) {
 
 // updateMSI: MSI te izdaje (preverjen po podpisanem SHA256SUMS) namesti msiexec; MSI sam zapre in zažene pladenj.
 func updateMSI(dir string) (string, error) {
+	// Različica v mapi MSI proti tej (MSI izdaje ima različico tega minigw): enaka → nič, novejša → ne nazaj.
+	if v := installedVersion(filepath.Join(dir, "minigw.exe")); v == version {
+		return "Mini Gateway " + version + " in " + dir + " is already up to date", nil
+	} else if v != "" && versionLess(version, v) {
+		return "Mini Gateway " + v + " in " + dir + " is newer than this minigw (" + version + "); not changed", nil
+	}
 	asset := "minigw-windows-" + runtime.GOARCH + ".msi"
 	tmp, err := os.MkdirTemp("", "minigw-msi-")
 	if err != nil {
@@ -345,10 +352,42 @@ func updateMSI(dir string) (string, error) {
 	if err := fetchRelease(asset, msi); err != nil {
 		return "", errors.New("Mini Gateway was installed with the MSI (" + dir + "); cannot get the new MSI: " + err.Error())
 	}
-	if err := runCmd("msiexec", "/i", msi, "/passive", "/norestart"); err != nil {
+	if err := runCmd(msiexecPath(), "/i", msi, "/passive", "/norestart"); err != nil { // L5: ne iz PATH
 		return "", err
 	}
 	return "updated with the MSI of v" + version + " in " + dir + "; Mini Gateway is in the notification area", nil
+}
+
+// installedVersion: »minigw 0.5.18« → "0.5.18"; "" brez programa ali z nečim drugim.
+var installedVersion = func(exe string) string {
+	out, err := exec.Command(exe, "--version").Output()
+	if err != nil {
+		return ""
+	}
+	first, _, _ := strings.Cut(string(out), "\n")
+	v, ok := strings.CutPrefix(strings.TrimSpace(first), "minigw ")
+	if !ok || strings.Trim(v, "0123456789.") != "" {
+		return ""
+	}
+	return v
+}
+
+// versionLess: a < b po številkah (0.5.9 < 0.5.10).
+func versionLess(a, b string) bool {
+	pa, pb := strings.Split(a, "."), strings.Split(b, ".")
+	for i := 0; i < max(len(pa), len(pb)); i++ {
+		var x, y int
+		if i < len(pa) {
+			x, _ = strconv.Atoi(pa[i])
+		}
+		if i < len(pb) {
+			y, _ = strconv.Atoi(pb[i])
+		}
+		if x != y {
+			return x < y
+		}
+	}
+	return false
 }
 
 func uninstallWindows(cfgPath string) (string, error) {

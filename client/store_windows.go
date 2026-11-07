@@ -195,6 +195,15 @@ func regRunSet(name, value string) error {
 	return nil
 }
 
+// msiexecPath: msiexec.exe iz sistemske mape (GetSystemDirectoryW), ne iz PATH (L5).
+func msiexecPath() string {
+	buf := make([]uint16, 260)
+	if n, _, _ := kernel32.NewProc("GetSystemDirectoryW").Call(uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf))); n > 0 && int(n) < len(buf) {
+		return filepath.Join(syscall.UTF16ToString(buf[:n]), "msiexec.exe")
+	}
+	return filepath.Join(os.Getenv("SystemRoot"), "System32", "msiexec.exe")
+}
+
 // msiInstallDir: mapa namestitve MSI (HKCU\Software\Mini Gateway\InstallDir, zapiše jo minigw.wxs); "" brez MSI.
 // Ključa ne ustvari (RegOpenKeyExW, ne RegCreateKeyExW).
 func msiInstallDir() string {

@@ -16,6 +16,8 @@ public struct AdminHooks: Sendable {
     public var rotateToken: @Sendable () async -> String  // nova vrstica za odjemalce
     /// Proces odjemalca (vrata odjemalca, vrata routerja) → razlog za zavrnitev ali nil (PeerProcess.refusal).
     public var peerCheck: (@Sendable (UInt16, UInt16) -> String?)?
+    /// L3: Scratch v rabi (agenti, registrirane mape); testi ga zamenjajo.
+    public var scratchInUse: @Sendable () async -> Bool = { await Router.scratchInUse() }
 
     public init(secret: String, connect: String, version: String, installed: @escaping @Sendable () -> Bool,
                 setInstalled: (@Sendable (Bool) throws -> Void)? = nil,
@@ -258,9 +260,7 @@ extension Router {
         case "POST gateways":
             let b = try AdminBody(body, ["name", "baseURL", "key", "insecure"])
             let name = try b.string("name") ?? "", key = try b.string("key") ?? ""
-            guard !name.isEmpty, name.count <= 64, !name.contains("/"), !name.unicodeScalars.contains(where: { $0.value < 0x20 }) else {
-                throw AdminError(400, "provider name: 1-64 characters, no / or control characters")
-            }
+            guard Self.validProviderName(name) else { throw AdminError(400, "provider name: letters, digits, . _ - (up to 32)") }
             let base = try Self.checkGatewayURL(try b.string("baseURL") ?? "", insecure: try b.bool("insecure") ?? false)
             guard !key.isEmpty, key.unicodeScalars.allSatisfy({ (0x21...0x7e).contains($0.value) }) else {
                 throw AdminError(400, "the API key must be printable ASCII without spaces")
@@ -283,22 +283,26 @@ extension Router {
         case "PATCH gateways/{}":  // ime, vklop, URL (ključ ostane pod id), aliasi; kot minigw serve
             guard var p = c.providers.first(where: { $0.name == arg }) else { throw AdminError(404, "no provider \(arg)") }
             let b = try AdminBody(body, ["name", "enabled", "baseURL", "insecure", "aliases"])
-            if let u = try b.string("baseURL") { p.baseURL = try Self.checkGatewayURL(u, insecure: try b.bool("insecure") ?? false) }
+            let newURL = try b.string("baseURL"), insecure = try b.bool("insecure")
+            if newURL != nil || insecure != nil {  // kot Go: tudi sam »insecure« znova preveri URL
+                p.baseURL = try Self.checkGatewayURL(newURL ?? p.baseURL, insecure: insecure ?? false)
+            }
             if let e = try b.bool("enabled") { p.enabled = e }
             if let a = try b.string("aliases") {
                 guard a.utf8.count <= 64 << 10 else { throw AdminError(400, "aliases: too long") }
                 p.aliases = a
             }
             if let n = try b.string("name"), n != arg {
-                guard !n.isEmpty, n.count <= 64, !n.contains("/"), !n.unicodeScalars.contains(where: { $0.value < 0x20 }) else {
-                    throw AdminError(400, "provider name: 1-64 characters, no / or control characters")
+                guard !Self.builtInProviderIDs.contains(p.id), !Self.builtInProviderIDs.contains(n.lowercased()) else {
+                    throw AdminError(400, "LiteLLM and OpenRouter are built in: they keep their names")
                 }
-                guard !c.providers.contains(where: { $0.name == n }) else { throw AdminError(400, "a provider named \(n) already exists") }
+                guard Self.validProviderName(n) else { throw AdminError(400, "provider name: letters, digits, . _ - (up to 32)") }
                 p.name = n
             }
             let gw = p
-            _ = try await hooks.update { c in
+            _ = try await hooks.update { c in  // L4: ime zasedeno? Preveri se na trenutnih nastavitvah, ne na posnetku.
                 guard let i = c.providers.firstIndex(where: { $0.id == gw.id }) else { throw AdminError(404, "no provider \(arg)") }
+                if c.providers.contains(where: { $0.id != gw.id && $0.name == gw.name }) { throw AdminError(400, "a provider named \(gw.name) already exists") }
                 c.providers[i] = gw
             }
             return (200, ["provider": gateway(p, ready: false), "gateway": gateway(p, ready: false)])
@@ -477,24 +481,9 @@ extension Router {
             return (200, general(c, connect: hooks.connect))
         case "PATCH general":
             let b = try AdminBody(body, ["port", "address", "allowedClients", "allowPlainRemote", "startAtSignIn", "scratch"])
-            if let scratch = try b.string("scratch") {  // kot Settings: vsebino premakne v »Mini Gateway Scratch« v izbrani mapi; "" = privzeta
-                var dir: ObjCBool = false
-                let url = scratch.isEmpty ? nil : URL(fileURLWithPath: (scratch as NSString).expandingTildeInPath, isDirectory: true)
-                if let url, !url.path.hasPrefix("/") || !FileManager.default.fileExists(atPath: url.path, isDirectory: &dir) || !dir.boolValue {
-                    throw AdminError(400, "scratch folder: an existing folder (absolute path)")
-                }
-                do { try RouterConfig.moveScratch(from: c.scratchURL, to: url.map(RouterConfig.dedicated) ?? RouterConfig.defaultScratch) }
-                catch { throw AdminError(500, "scratch folder: \(error.localizedDescription)") }
-                let n = try await hooks.update { c in c.scratchFolder = url?.path ?? "" }
-                if b.o.count == 1 { return (200, general(n, connect: hooks.connect)) }
-            }
             let port = try b.int("port"), address = try b.string("address"), clients = try b.string("allowedClients")
-            let plain = try b.bool("allowPlainRemote")
-            if let on = try b.bool("startAtSignIn") {
-                guard let set = hooks.setInstalled else { throw AdminError(400, "startAtSignIn: not available here") }
-                do { try set(on) } catch { throw AdminError(500, "Open at Login: \(error.localizedDescription)") }
-                if b.o.count == 1 { return (200, general(c, connect: hooks.connect)) }  // brez ponovnega zagona routerja
-            }
+            let plain = try b.bool("allowPlainRemote"), scratch = try b.string("scratch")
+            // L2: vse preverjeno pred kakršno koli spremembo (premik Scratch ali Open at Login)
             if let port, !(1...65535).contains(port) { throw AdminError(400, "port must be 1-65535") }
             if let address, !["0.0.0.0", "::", "127.0.0.1"].contains(address) {
                 throw AdminError(400, "address: use 0.0.0.0, :: or 127.0.0.1, so that the admin API stays reachable on 127.0.0.1; limit clients with allowedClients")
@@ -504,7 +493,33 @@ extension Router {
                     throw AdminError(400, "allowedClients: \(ip) is not an IP address")
                 }
             }
+            // Scratch (kot Settings: vsebina gre v »Mini Gateway Scratch« v izbrani mapi; "" = privzeta). M1, L1: pravila
+            // poti, shrani se kanonična pot; L3: ne med sejami.
+            var newScratch: String?
+            if let scratch {
+                if !scratch.isEmpty {
+                    let expanded = (scratch as NSString).expandingTildeInPath
+                    guard expanded.hasPrefix("/") else { throw AdminError(400, "scratch folder: an absolute path") }
+                    let url = URL(fileURLWithPath: expanded, isDirectory: true)
+                    if let why = RouterConfig.scratchProblem(url, allowedRoots: c.claudeCLI.allowedRoots) { throw AdminError(400, "scratch folder: \(why)") }
+                    newScratch = Sync.real(url)?.path ?? url.path
+                } else { newScratch = "" }
+                if await hooks.scratchInUse() {
+                    throw AdminError(409, "scratch folder: minigw sessions or agents are active; move it when no minigw session runs")
+                }
+            }
+            if let on = try b.bool("startAtSignIn") {
+                guard let set = hooks.setInstalled else { throw AdminError(400, "startAtSignIn: not available here") }
+                do { try set(on) } catch { throw AdminError(500, "Open at Login: \(error.localizedDescription)") }
+                if b.o.count == 1 { return (200, general(c, connect: hooks.connect)) }  // brez ponovnega zagona routerja
+            }
+            let moveTo = newScratch
             let n = try await hooks.update { c in
+                if let newScratch = moveTo, newScratch != c.scratchFolder {  // L2: premik v isti spremembi nastavitev (trenutna, ne posnetek)
+                    let to = newScratch.isEmpty ? RouterConfig.defaultScratch : RouterConfig.dedicated(URL(fileURLWithPath: newScratch, isDirectory: true))
+                    do { try RouterConfig.moveScratch(from: c.scratchURL, to: to) } catch { throw AdminError(500, "scratch folder: \(error.localizedDescription)") }
+                    c.scratchFolder = newScratch
+                }
                 if let port { c.port = UInt16(port) }
                 if let address { c.host = address }
                 if let clients { c.allowedClients = clients }
@@ -585,6 +600,18 @@ extension Router {
     }
 
     // MARK: preverjanja (enaka kot v Go minigw serve)
+
+    /// L3: Scratch uporabljajo agenti ali registrirane mape minigw (premik bi jim vzel kopije in klone).
+    public static func scratchInUse() async -> Bool {
+        if AgentCount.running.load(ordering: .relaxed) > 0 { return true }
+        return await shares.hasSessions
+    }
+
+    /// Privzeta ponudnika (LiteLLM, OpenRouter): ime ostane (kot builtinGateway na Go).
+    static let builtInProviderIDs: Set<String> = ["litellm", "openrouter"]
+
+    /// L4: ime ponudnika kot na Go (validGatewayName): gre v imena modelov in poti API.
+    static func validProviderName(_ n: String) -> Bool { n.range(of: "^[A-Za-z0-9._-]{1,32}$", options: .regularExpression) != nil }
 
     static func validDeviceID(_ id: String) -> Bool {
         id.count == 43 && Noise.fromBase64url(id).map { $0.count == 32 && Noise.base64url($0) == id } == true

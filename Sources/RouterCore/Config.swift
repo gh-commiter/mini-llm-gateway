@@ -110,6 +110,30 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         folder.lastPathComponent == dedicatedName ? folder : folder.appendingPathComponent(dedicatedName, isDirectory: true)
     }
     public static let dedicatedName = "Mini Gateway Scratch"
+
+    /// M1, L1: izbrana mapa za Scratch (Settings in API); nil = v redu, sicer razlog. Scratch hrani kopije drugih naprav
+    /// in zrcala, ki jih bere git prehoda: ne sme biti koren diska, domača mapa ali mapa, ki jo vsebuje, začasna mapa
+    /// ali mapa v dovoljeni mapi agentov (ali obratno), in »Mini Gateway Scratch« v njej ne sme biti povezava.
+    public static func scratchProblem(_ folder: URL, allowedRoots: String) -> String? {
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        guard folder.path.hasPrefix("/"), fm.fileExists(atPath: folder.path, isDirectory: &isDir), isDir.boolValue,
+              let real = Sync.real(folder)?.path else { return "it is not an existing folder (absolute path)" }
+        let d = dedicated(folder)
+        if (try? fm.destinationOfSymbolicLink(atPath: d.path)) != nil { return "\(d.path) is a symbolic link" }
+        func inside(_ a: String, _ b: String) -> Bool { a == b || a.hasPrefix(b == "/" ? "/" : b + "/") }
+        let home = Sync.real(URL(fileURLWithPath: NSHomeDirectory()))?.path ?? NSHomeDirectory()
+        if real == "/" { return "it is the disk root" }
+        if inside(home, real) { return "it is your home folder or contains it" }
+        let temps = ["/private/tmp", "/private/var/folders", Sync.real(FileManager.default.temporaryDirectory)?.path ?? ""].filter { !$0.isEmpty }
+        if temps.contains(where: { inside(real, $0) }) { return "it is a temporary folder" }
+        for r in allowedRoots.split(separator: ",") {
+            let p = ClaudeCLI.expand(r.trimmingCharacters(in: .whitespaces))
+            guard !p.isEmpty, let rr = Sync.real(URL(fileURLWithPath: p))?.path else { continue }
+            if inside(real, rr) || inside(rr, real) { return "it is inside or contains the allowed folder \(p) (agents could read other devices' copies)" }
+        }
+        return nil
+    }
     /// Podmape, ki jih uporablja scratch(_:); premik prenese le te.
     public static let scratchSubfolders = ["chat", "sync", "tmp", "attachments", "repos", "worktrees"]
 

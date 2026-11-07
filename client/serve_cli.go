@@ -163,12 +163,61 @@ func (s *server) agentArgs(dir string) []string {
 	if runtime.GOOS != "windows" {
 		settings, _ := json.Marshal(map[string]any{"sandbox": map[string]any{
 			"enabled": true, "failIfUnavailable": hasBash(c.Tools) || c.AllowLocalTools, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
-			"network":    map[string]any{"allowedDomains": []string{"*"}},
-			"filesystem": map[string]any{"denyRead": []string{"~", s.cfgDir}, "allowRead": dirs, "allowWrite": dirs},
+			"network": map[string]any{"allowedDomains": []string{"*"}},
+			// M1: Scratch (kopije drugih naprav, zrcala) tudi zunaj domače mape; mapa seje v njem ostane berljiva (allowRead).
+			"filesystem": map[string]any{"denyRead": append([]string{"~", s.cfgDir}, scratchPaths(c.Scratch)...), "allowRead": dirs, "allowWrite": dirs},
 		}})
 		args = append(args, "--settings", string(settings))
 	}
 	return args
+}
+
+// scratchPaths: Scratch dobesedno in kanonično (za denyRead peskovnika Claude).
+func scratchPaths(scratch string) []string {
+	if scratch == "" {
+		return nil
+	}
+	out := []string{scratch}
+	if r, err := filepath.EvalSymlinks(scratch); err == nil && r != scratch {
+		out = append(out, r)
+	}
+	return out
+}
+
+// scratchProblem (M1): Scratch ni koren diska, domača mapa ali mapa nad njo, začasna mapa ali mapa v dovoljeni mapi
+// agentov (ali obratno): tam bi agenti brali kopije drugih naprav. "" = v redu.
+func scratchProblem(scratch string, allowed []string) string {
+	real := func(p string) string { // kanonično; za pot, ki je še ni, prek najbližje obstoječe nadrejene mape
+		p, rest := filepath.Clean(p), ""
+		for {
+			if r, err := filepath.EvalSymlinks(p); err == nil {
+				return filepath.Join(r, rest)
+			}
+			parent := filepath.Dir(p)
+			if parent == p {
+				return filepath.Join(p, rest)
+			}
+			rest, p = filepath.Join(filepath.Base(p), rest), parent
+		}
+	}
+	sc := real(scratch)
+	if filepath.Dir(sc) == sc {
+		return "it is a disk root"
+	}
+	if home, _ := os.UserHomeDir(); home != "" && under(real(home), sc) {
+		return "it is your home folder or contains it"
+	}
+	for _, t := range []string{os.TempDir(), "/tmp", "/var/tmp", "/private/tmp", "/private/var/folders"} {
+		if t != "" && under(sc, real(t)) {
+			return "it is a temporary folder"
+		}
+	}
+	for _, a := range allowed {
+		if ra := real(a); under(sc, ra) || under(ra, sc) {
+			return "it is inside or contains the allowed folder " + a
+		}
+	}
+	return ""
 }
 
 // promptFile: besedilo za --system-prompt-file / --append-system-prompt-file (0600, ne v argv).
