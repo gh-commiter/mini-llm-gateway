@@ -167,7 +167,8 @@ final class AppState: ObservableObject {
                            self.regenerateToken()
                            return self.connectToken
                        }
-                   })
+                   },
+                   peerCheck: { PeerProcess.refusal(peerPort: $0, routerPort: $1) })
     }
 
     func regenerateToken() {

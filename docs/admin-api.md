@@ -117,6 +117,10 @@ The Mac app keeps its settings in its preferences and Keychain; the Settings win
   Mac may read files anywhere, but not the Keychain. `minigw router` reads it with the user's consent (macOS asks
   once). The app writes `~/Library/Application Support/Mini Gateway/router.json` with the port and the router's
   public key (no secret); `minigw router` uses the key to speak Noise to the app before it reads the secret.
+- **No agents:** the app finds the process behind each admin connection (libproc: the process with that loopback
+  TCP socket; `LOCAL_PEERPID` works only for Unix sockets) and refuses it (`403`) when it is sandboxed or descends
+  from the app, as agents and the commands they run do. A process it cannot identify (another user, already gone)
+  is refused too. So an agent that runs `minigw router` gets nothing, even after "Always Allow" in the Keychain.
 - **Host header:** checked for plain HTTP only. Over Noise (`minigw router`) there is no browser, and the request
   comes through minigw's local proxy, so its Host names the proxy's port.
 - **No offline mode:** without the running app, `minigw router` stops with a message (settings live in the app).

@@ -8,6 +8,7 @@ public struct HTTPRequest: Sendable {
     public var body: Data
     public var peer = ""  // IP odjemalca
     public var device: Noise.Device?  // minigw z dokazom naprave (šifrirana povezava)
+    public var peerPort: UInt16 = 0  // vrata odjemalca (skrbniški API poišče njegov proces)
     public var encrypted = false  // povezava Noise (ne brskalnik): skrbniški API ne preverja glave Host
 
     public func header(_ name: String) -> String? { headers[name.lowercased()] }

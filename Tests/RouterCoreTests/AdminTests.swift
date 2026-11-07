@@ -170,3 +170,89 @@ final class Received: @unchecked Sendable {
     func add(_ x: Data) { lock.withLock { d.append(x) } }
     var data: Data { lock.withLock { d } }
 }
+
+/// Vtičnica, ki posluša na 127.0.0.1 (vrata routerja v testu); accept vrne vrata odjemalca.
+private func listener() -> (fd: Int32, port: UInt16) {
+    let s = socket(AF_INET, SOCK_STREAM, 0)
+    var a = sockaddr_in()
+    a.sin_family = sa_family_t(AF_INET); a.sin_addr.s_addr = inet_addr("127.0.0.1")
+    _ = withUnsafePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(s, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+    listen(s, 4)
+    var l = socklen_t(MemoryLayout<sockaddr_in>.size)
+    _ = withUnsafeMutablePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(s, $0, &l) } }
+    return (s, UInt16(bigEndian: a.sin_port))
+}
+
+private func acceptPeerPort(_ fd: Int32) -> (Int32, UInt16) {
+    var a = sockaddr_in(), l = socklen_t(MemoryLayout<sockaddr_in>.size)
+    let c = withUnsafeMutablePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { accept(fd, $0, &l) } }
+    return (c, UInt16(bigEndian: a.sin_port))
+}
+
+@Suite struct AdminPeerProcess {
+    /// Odjemalec je ta proces: »aplikacija« sama (oz. njen otrok) je zavrnjena, tuja aplikacija ne; neznan proces zavrnjen.
+    @Test func identifiesTheClientProcess() throws {
+        let (l, routerPort) = listener()
+        defer { close(l) }
+        let c = socket(AF_INET, SOCK_STREAM, 0)
+        defer { close(c) }
+        var a = sockaddr_in()
+        a.sin_family = sa_family_t(AF_INET); a.sin_addr.s_addr = inet_addr("127.0.0.1"); a.sin_port = routerPort.bigEndian
+        _ = withUnsafePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(c, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+        let (s, peerPort) = acceptPeerPort(l)
+        defer { close(s) }
+        #expect(PeerProcess.pid(localPort: peerPort, remotePort: routerPort) == getpid())
+        #expect(PeerProcess.refusal(peerPort: peerPort, routerPort: routerPort, appPID: getpid())?.contains("started by Mini Gateway") == true)
+        #expect(PeerProcess.refusal(peerPort: peerPort, routerPort: routerPort, appPID: 999_999) == nil)
+        #expect(PeerProcess.refusal(peerPort: 1, routerPort: routerPort, appPID: 999_999)?.contains("cannot identify") == true)
+    }
+
+    /// Otrok »aplikacije« (kot agent ali minigw, ki ga zažene agent) je zavrnjen.
+    @Test func refusesAChildProcess() throws {
+        let (l, routerPort) = listener()
+        defer { close(l) }
+        let nc = Process()
+        nc.executableURL = URL(fileURLWithPath: "/usr/bin/nc")
+        nc.arguments = ["127.0.0.1", String(routerPort)]
+        nc.standardInput = Pipe()  // ostane odprt, dokler ga test ne konča
+        try nc.run()
+        defer { nc.terminate() }
+        let (s, peerPort) = acceptPeerPort(l)
+        defer { close(s) }
+        #expect(PeerProcess.pid(localPort: peerPort, remotePort: routerPort) == nc.processIdentifier)
+        #expect(PeerProcess.refusal(peerPort: peerPort, routerPort: routerPort, appPID: getpid())?.contains("started by Mini Gateway") == true)
+    }
+
+    /// Proces v sandboxu je zavrnjen, tudi če ni potomec aplikacije (dvojni fork se ne izogne sandboxu).
+    @Test func refusesASandboxedProcess() throws {
+        let (l, routerPort) = listener()
+        defer { close(l) }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
+        p.arguments = ["-p", "(version 1)(allow default)", "/usr/bin/nc", "127.0.0.1", String(routerPort)]
+        p.standardInput = Pipe()
+        try p.run()
+        defer { p.terminate() }
+        let (s, peerPort) = acceptPeerPort(l)
+        defer { close(s) }
+        #expect(PeerProcess.refusal(peerPort: peerPort, routerPort: routerPort, appPID: 999_999)?.contains("sandboxed") == true)
+    }
+
+    @Test func adminAPIRefusesWhatPeerCheckRefuses() async {
+        let app = FakeApp()
+        let hooks = AdminHooks(secret: adminSecret, connect: "", version: "", installed: { false }, update: { f in
+            var c = app.config; try f(&c); return c
+        }, setKey: { _, _ in }, rotateToken: { "" }, peerCheck: { peer, router in peer == 4242 && router == 8765 ? "an agent" : nil })
+        let r = Router(config: RouterConfig(), token: "tok", secrets: FakeSecrets(values: [:]), admin: hooks)
+        var req = request("GET", Router.adminPrefix + "/status", headers: ["Host": "127.0.0.1:8765", "Authorization": "Bearer " + adminSecret])
+        req.peer = "127.0.0.1"
+        req.peerPort = 4242
+        let w = FakeWriter()
+        await r.handle(req, writer: w)
+        #expect(w.status == 403 && w.text.contains("an agent"))
+        req.peerPort = 4243
+        let ok = FakeWriter()
+        await r.handle(req, writer: ok)
+        #expect(ok.status == 200)
+    }
+}

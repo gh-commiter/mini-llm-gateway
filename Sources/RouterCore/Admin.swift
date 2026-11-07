@@ -11,12 +11,15 @@ public struct AdminHooks: Sendable {
     public var update: @Sendable (@escaping @Sendable (inout RouterConfig) throws -> Void) async throws -> RouterConfig
     public var setKey: @Sendable (_ account: String, _ key: String?) -> Void  // nil = izbriši
     public var rotateToken: @Sendable () async -> String  // nova vrstica za odjemalce
+    /// Proces odjemalca (vrata odjemalca, vrata routerja) → razlog za zavrnitev ali nil (PeerProcess.refusal).
+    public var peerCheck: (@Sendable (UInt16, UInt16) -> String?)?
 
     public init(secret: String, connect: String, version: String, installed: @escaping @Sendable () -> Bool,
                 update: @escaping @Sendable (@escaping @Sendable (inout RouterConfig) throws -> Void) async throws -> RouterConfig,
-                setKey: @escaping @Sendable (String, String?) -> Void, rotateToken: @escaping @Sendable () async -> String) {
+                setKey: @escaping @Sendable (String, String?) -> Void, rotateToken: @escaping @Sendable () async -> String,
+                peerCheck: (@Sendable (UInt16, UInt16) -> String?)? = nil) {
         self.secret = secret; self.connect = connect; self.version = version; self.installed = installed
-        self.update = update; self.setKey = setKey; self.rotateToken = rotateToken
+        self.update = update; self.setKey = setKey; self.rotateToken = rotateToken; self.peerCheck = peerCheck
     }
 }
 
@@ -84,6 +87,11 @@ extension Router {
         guard let admin else { return await adminError(404, "Not found: \(req.method) \(req.path)", rid: rid, writer: writer) }
         guard RouterServer.isLoopback(req.peer) else {
             return await adminError(403, "The admin API is only available on the router computer", rid: rid, writer: writer)
+        }
+        // Agent (otrok aplikacije ali proces v sandboxu) ne sme do API, tudi z ukradeno skrivnostjo ali prek minigw.
+        if let check = admin.peerCheck, let why = check(req.peerPort, config.port) {
+            Self.log.error("admin API refused: \(why, privacy: .public)")
+            return await adminError(403, why, rid: rid, writer: writer)
         }
         let p = String(config.port)
         if !req.encrypted, !["127.0.0.1:" + p, "localhost:" + p, "[::1]:" + p].contains((req.header("host") ?? "").lowercased()) {
