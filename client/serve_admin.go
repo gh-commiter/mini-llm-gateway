@@ -778,7 +778,7 @@ func (s *server) agentAPI(method string, k agentKind, body []byte) (int, any) {
 		exe, _ := resolveAgent(k, ac.Executable)
 		o := map[string]any{"enabled": ac.Enabled, "path": ac.Executable, "found": exe != "", "exe": exe, "write": !ac.ReadOnly, "models": ac.Models}
 		if k.name == "codex" {
-			o["network"] = !ac.NoNetwork
+			o["network"] = ac.Network
 		}
 		return o
 	}
@@ -827,7 +827,7 @@ func (s *server) agentAPI(method string, k agentKind, body []byte) (int, any) {
 			ac.ReadOnly = !*b.Write
 		}
 		if b.Network != nil {
-			ac.NoNetwork = !*b.Network
+			ac.Network = *b.Network
 		}
 		if setModels {
 			ac.Models = slices.Clone(models)

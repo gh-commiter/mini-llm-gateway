@@ -127,7 +127,7 @@ Notes:
 | `GET /siri`, `PATCH` | any of `{"enabled", "timeout", "allow": [id], "deny": [id]}` | `{"enabled", "timeout", "devices": [{"id", "name", "siri"}]}` |
 
 `write`: the agent's sandbox may write in the session's folder (else read-only); `network`: commands in Codex's
-sandbox may use the network; `models: null` = all the account's models. `allow`/`deny` switch Siri for known
+sandbox may use the network (default: off on the Go router, on on the Mac); `models: null` = all the account's models. `allow`/`deny` switch Siri for known
 devices (Siri uses this Mac's personal data).
 
 ## Mac app

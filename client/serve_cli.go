@@ -646,10 +646,11 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		s.hub.syncBack(session)
 	}
 	msg := t.resultError
-	if msg == "" && werr != nil && t.text == "" {
-		if msg = strings.TrimSpace(stderr.String()); msg == "" {
-			msg = "claude failed: " + werr.Error()
+	if msg == "" && werr != nil && t.text == "" { // stderr le v dnevnik (I1)
+		if tail := strings.TrimSpace(stderr.String()); tail != "" {
+			s.log.Printf("%s claude stderr: %s", r.rid, tail)
 		}
+		msg = "claude failed (" + werr.Error() + "); details are in the router log, request " + r.rid
 	}
 	if msg != "" {
 		s.log.Printf("%s claude failed: %s", r.rid, msg)

@@ -3,7 +3,8 @@ package main
 // Codex CLI in Grok CLI kot agenta (kot RouterCore/Codex.swift in Grok.swift): claude-codex, claude-codex-<model>,
 // claude-grok, claude-grok-<model>. Privzeto izklopljena; agent dela le v sinhronizirani kopiji mape odjemalca.
 // Peskovnik postavi CLI sam (Codex: workspace-write / read-only, na Linuxu Landlock in seccomp; Grok: workspace /
-// read-only). Na Windows peskovnika teh CLI ne preverjamo: pisanje je tam dovoljeno le z allowUnsandboxedBash.
+// read-only). Oba bereta povsod: Grok dobi pravila --deny za mapo nastavitev; na Windows (brez preverjenega sandboxa)
+// tečeta le z allowUnsandboxedBash. Skrbniški API zavrne procese agentov (peer check).
 
 import (
 	"bufio"
@@ -30,7 +31,7 @@ type agentCLI struct {
 	Executable string   `json:"executable,omitempty"` // prazno = iz PATH
 	Models     []string `json:"models"`               // null = vsi modeli računa (tudi prihodnji); seznam = le ti
 	ReadOnly   bool     `json:"readOnly,omitempty"`   // brez pisanja v mapo seje
-	NoNetwork  bool     `json:"noNetwork,omitempty"`  // Codex: ukazi v sandboxu brez omrežja
+	Network    bool     `json:"network,omitempty"`    // Codex: omrežje za ukaze v sandboxu (privzeto izklopljeno)
 }
 
 func (a agentCLI) modelEnabled(m string) bool { return a.Models == nil || slices.Contains(a.Models, m) }
@@ -174,11 +175,16 @@ func codexArgs(cwd string, extraDirs []string, agent bool, output, model string,
 	if model != "" {
 		a = append(a, "-m", model)
 	}
+	// Sandbox tudi kot -c: »exec resume« nima --sandbox in --add-dir, -c pa sprejme (I5).
+	sandbox := []string{"-c", `sandbox_mode="read-only"`}
 	if agent && write {
-		a = append(a, "--sandbox", "workspace-write", "-c", fmt.Sprintf("sandbox_workspace_write.network_access=%v", network))
+		a = append(a, "--sandbox", "workspace-write")
 		for _, d := range extraDirs {
 			a = append(a, "--add-dir", d)
 		}
+		roots, _ := json.Marshal(append([]string{}, extraDirs...)) // niz JSON je veljaven niz TOML
+		sandbox = []string{"-c", `sandbox_mode="workspace-write"`, "-c", fmt.Sprintf("sandbox_workspace_write.network_access=%v", network),
+			"-c", "sandbox_workspace_write.writable_roots=" + string(roots)}
 	} else {
 		a = append(a, "--sandbox", "read-only")
 	}
@@ -188,19 +194,23 @@ func codexArgs(cwd string, extraDirs []string, agent bool, output, model string,
 	if resume != "" {
 		a = append(a, "resume", resume)
 	}
-	return append(a, "-") // navodila prek stdin
+	return append(append(a, sandbox...), "-") // navodila prek stdin
 }
 
 // grokArgs: kot Grok.args na Macu; jedrni sandbox »workspace« piše le v mapo seje (dodatnih map ne dovoli).
-func grokArgs(cwd, promptFile string, agent bool, model string, write bool, resume string) []string {
+// Mapa nastavitev (žeton, ključ routerja, admin.secret, ključi prehodov) je prepovedana z --deny; Grok jih uporabi tudi
+// za poti v ukazih lupine. Pravilo ima absolutno pot z enim »/« (preverjeno z grok 1.0.77; »//« ne velja).
+func grokArgs(cwd, promptFile, cfgDir string, agent bool, model string, write bool, resume string) []string {
 	a := []string{"--cwd", cwd, "--output-format", "streaming-json", "--prompt-file", promptFile}
 	if model != "" {
 		a = append(a, "-m", model)
 	}
+	cfg := filepath.ToSlash(cfgDir) + "/**"
+	a = append(a, "--deny", "Read("+cfg+")", "--deny", "Edit("+cfg+")", "--deny", "Write("+cfg+")")
 	if agent && write {
 		a = append(a, "--sandbox", "workspace", "--always-approve")
 	} else {
-		a = append(a, "--sandbox", "read-only")
+		a = append(a, "--sandbox", "read-only", "--disable-web-search")
 	}
 	if resume != "" {
 		a = append(a, "-r", resume)
@@ -317,6 +327,10 @@ func (s *server) agentFolder(w http.ResponseWriter, r *req, label string) (dir, 
 func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k agentKind, model string) int {
 	c := s.conf()
 	ac := k.conf(c)
+	if !agentsAllowed(c) {
+		return writeError(w, r.rid, 403, k.bin+" on Windows needs \"Allow commands without a sandbox\" (Claude CLI settings): it can read and change "+
+			"everything this user can, including the router's settings")
+	}
 	if model != "" && !validAgentModel.MatchString(model) {
 		return writeError(w, r.rid, 400, "Invalid model name")
 	}
@@ -331,23 +345,22 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 	last, history := all[len(all)-1], all[:len(all)-1]
 	tools, _ := body["tools"].([]any)
 	agent := len(tools) > 0
-	dir, note, readOnly := c.scratch("chat"), "", false
-	prompt := cliPrompt(history, last)
-	if agent {
-		var st int
-		if dir, note, readOnly, st = s.agentFolder(w, r, k.bin); st != 0 {
-			return st
-		}
-		prompt = note + "\n\n" + prompt
+	// Tudi pogovor brez orodij le v sinhronizirani mapi (M1): CLI ima orodja vedno; brez orodij teče samo za branje.
+	if r.h("x-claude-mini-session") == "" {
+		return writeError(w, r.rid, 400, k.prefix+" needs a synced folder: run minigw with MINIGW_WORK=sync in a project folder")
 	}
+	dir, note, readOnly, st := s.agentFolder(w, r, k.bin)
+	if st != 0 {
+		return st
+	}
+	prompt := note + "\n\n" + cliPrompt(history, last)
 	var extra []string
 	for _, f := range c.AllowedFolders {
 		if f != dir {
 			extra = append(extra, f)
 		}
 	}
-	// Pisanje le z vklopljenim pisanjem, kopijo za pisanje in (na Windows) izrecnim dovoljenjem za ukaze brez sandboxa.
-	write := !ac.ReadOnly && !readOnly && (runtime.GOOS != "windows" || c.AllowUnsandboxedBash)
+	write := !ac.ReadOnly && !readOnly
 	scope := k.name + "|" + r.owner() + "|" + r.h("x-claude-mini-cwd")
 	resume := ""
 	if agent {
@@ -364,14 +377,16 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 	case <-r.Context().Done():
 		return 499
 	}
+	ctx, cancel := context.WithTimeout(r.Context(), agentTimeout) // L5
+	defer cancel()
 	return s.replyWhenDone(w, r, body, func() (string, error) {
 		var text, thread string
 		var err error
 		if k.name == "codex" {
 			out := filepath.Join(c.scratch("tmp"), "codex-"+r.rid+".txt")
 			defer os.Remove(out)
-			args := codexArgs(dir, extra, agent, out, model, write, !ac.NoNetwork, resume)
-			err = s.runAgentProcess(r, exe, args, dir, prompt, func(line []byte) {
+			args := codexArgs(dir, extra, agent, out, model, write, ac.Network, resume)
+			err = s.runAgentProcess(ctx, r, exe, args, dir, prompt, func(line []byte) {
 				if t := codexThread(line); t != "" && thread == "" {
 					thread = t
 				}
@@ -387,9 +402,9 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 				return "", perr
 			}
 			defer os.Remove(pf)
-			args := grokArgs(dir, pf, agent, model, write, resume)
+			args := grokArgs(dir, pf, s.cfgDir, agent, model, write, resume)
 			var answer, failure string
-			err = s.runAgentProcess(r, exe, args, dir, "", func(line []byte) {
+			err = s.runAgentProcess(ctx, r, exe, args, dir, "", func(line []byte) {
 				e, ok := parseGrokEvent(line)
 				switch {
 				case !ok:
@@ -425,9 +440,13 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 	})
 }
 
-// runAgentProcess: proces z navodili na stdin, vsaka vrstica stdout v onLine; prekinitev odjemalca ga ustavi.
-func (s *server) runAgentProcess(r *req, exe string, args []string, dir, stdin string, onLine func([]byte)) error {
-	cmd := exec.CommandContext(r.Context(), exe, args...)
+// agentTimeout: najdaljši tek Codex ali Grok za eno zahtevo.
+var agentTimeout = 30 * time.Minute
+
+// runAgentProcess: proces z navodili na stdin, vsaka vrstica stdout v onLine; prekinitev odjemalca ali rok ga ustavi.
+// Stderr gre le v dnevnik (I1): odjemalec dobi kratko sporočilo.
+func (s *server) runAgentProcess(ctx context.Context, r *req, exe string, args []string, dir, stdin string, onLine func([]byte)) error {
+	cmd := exec.CommandContext(ctx, exe, args...)
 	cmd.Dir = dir
 	for _, e := range os.Environ() { // notranji agent ne kliče nazaj tega routerja
 		if !strings.HasPrefix(e, "ANTHROPIC_") && !strings.HasPrefix(e, "CLAUDE_CODE_") && !strings.HasPrefix(e, "CLAUDECODE=") {
@@ -458,9 +477,12 @@ func (s *server) runAgentProcess(r *req, exe string, args []string, dir, stdin s
 	}
 	if err := cmd.Wait(); err != nil {
 		if tail := strings.TrimSpace(stderr.String()); tail != "" {
-			return fmt.Errorf("%s exited: %v: %s", filepath.Base(exe), err, tail[max(0, len(tail)-400):])
+			s.log.Printf("%s %s stderr: %s", r.rid, filepath.Base(exe), tail[max(0, len(tail)-2000):])
 		}
-		return fmt.Errorf("%s exited: %v", filepath.Base(exe), err)
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("%s stopped after %v", filepath.Base(exe), agentTimeout)
+		}
+		return fmt.Errorf("%s failed (%v); details are in the router log, request %s", filepath.Base(exe), err, r.rid)
 	}
 	return nil
 }
@@ -522,11 +544,16 @@ func (s *server) replyWhenDone(w http.ResponseWriter, r *req, body map[string]an
 	return writeJSON(w, r.rid, 200, t.message())
 }
 
+// agentsAllowed: na Windows Codex in Grok nimata preverjenega sandboxa (berejo in pišejo vse, kar uporabnik):
+// le z izrecnim allowUnsandboxedBash, v vsakem načinu (H1).
+func agentsAllowed(c serveConfig) bool { return runtime.GOOS != "windows" || c.AllowUnsandboxedBash }
+
 // agentModelList: claude-codex in claude-codex-<model> (vklopljeni), enako za Grok; le vklopljen agent z najdenim CLI.
 func (s *server) agentModelList(k agentKind) []map[string]any {
-	ac := k.conf(s.conf())
+	c := s.conf()
+	ac := k.conf(c)
 	exe, _ := resolveAgent(k, ac.Executable)
-	if !ac.Enabled || exe == "" {
+	if !ac.Enabled || exe == "" || !agentsAllowed(c) {
 		return nil
 	}
 	label := map[string]string{"codex": "Codex CLI", "grok": "Grok CLI"}[k.name]
