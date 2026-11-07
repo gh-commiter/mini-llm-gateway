@@ -36,11 +36,11 @@
     <Feature Id="All" Level="1"><ComponentRef Id="Main"/></Feature>
 
     <!-- Pred zamenjavo ali odstranitvijo datotek zapri pladenj: WM_CLOSE (taskkill brez /F, kot closeRunningTray),
-         5 s, nato /F. Stari minigw.exe (0.5.17) tega ukaza še nima, zato cmd in ne minigw. wixl ne pozna
+         5 s, nato /F; orodja z absolutno potjo (L1: cmd sicer najprej išče v trenutni mapi). Stari minigw.exe (0.5.17) tega ukaza še nima, zato cmd in ne minigw. wixl ne pozna
          Directory= pri CustomAction: pot do cmd.exe je v lastnosti (tip 51 + 50). -->
     <CustomAction Id="SetCmd" Property="CMDEXE" Value="[SystemFolder]cmd.exe"/>
     <CustomAction Id="CloseTray" Property="CMDEXE" Return="ignore" Execute="immediate"
-                  ExeCommand="/c &quot;tasklist /FI &quot;IMAGENAME eq minigw-tray.exe&quot; 2&gt;nul | find /I &quot;minigw-tray.exe&quot; &gt;nul &amp;&amp; (taskkill /IM minigw-tray.exe &gt;nul 2&gt;&amp;1 &amp; ping -n 6 127.0.0.1 &gt;nul &amp; taskkill /F /IM minigw-tray.exe &gt;nul 2&gt;&amp;1)&quot;"/>
+                  ExeCommand="/c &quot;[SystemFolder]tasklist.exe /FI &quot;IMAGENAME eq minigw-tray.exe&quot; 2&gt;nul | [SystemFolder]find.exe /I &quot;minigw-tray.exe&quot; &gt;nul &amp;&amp; ([SystemFolder]taskkill.exe /IM minigw-tray.exe &gt;nul 2&gt;&amp;1 &amp; [SystemFolder]PING.EXE -n 6 127.0.0.1 &gt;nul &amp; [SystemFolder]taskkill.exe /F /IM minigw-tray.exe &gt;nul 2&gt;&amp;1)&quot;"/>
     <!-- Po namestitvi zaženi pladenj; ob prvem zagonu sam ustvari serve.json in pokaže, kje je vrstica za povezavo. -->
     <CustomAction Id="StartTray" FileKey="tray" ExeCommand="tray --config &quot;[AppDataFolder]minigw\serve.json&quot;" Return="asyncNoWait" Impersonate="yes"/>
     <InstallExecuteSequence>

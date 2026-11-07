@@ -27,7 +27,8 @@ for arch in amd64 arm64; do
   has Registry 'Software\Microsoft\Windows\CurrentVersion\Run	MiniGatewayRouter	"[INSTALLDIR]minigw-tray.exe" tray --config "[AppDataFolder]minigw\serve.json"'
   has Environment "=-PATH	[~];[INSTALLDIR]"
   has Shortcut "ProgramMenuFolder	Mini Gateway	Main	[INSTALLDIR]minigw-tray.exe	tray"
-  has CustomAction "taskkill /IM minigw-tray.exe"
+  has CustomAction "[SystemFolder]taskkill.exe /IM minigw-tray.exe"
+  t CustomAction | grep '^CloseTray' | grep -qE '(^|[ |(&"])(tasklist|find|taskkill|ping|PING)[ .]' && fail "$arch: CloseTray runs a tool without its path (L1)"
   has CustomAction "StartTray	210	tray	tray --config"
   has InstallExecuteSequence 'StartTray	NOT (REMOVE~="ALL")'
   has LaunchCondition "NOT WIX_DOWNGRADE_DETECTED"
