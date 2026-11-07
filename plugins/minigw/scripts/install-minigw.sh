@@ -64,7 +64,7 @@ else
   fi
 fi
 
-# Nameščen router starejši od izdaje: le namig (posodobitev bi prekinila tekoče zahteve agentov).
+# Nameščen prehod starejši od izdaje: le namig (posodobitev bi prekinila tekoče zahteve agentov).
 ver() { "$1" --version 2>/dev/null | head -1 | sed 's/^minigw //'; }
 older() { [ -n "$1" ] && [ -n "$2" ] && [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" = "$1" ]; }
 old=""; new=$(ver "$EXE")
@@ -80,12 +80,12 @@ esac
 # Le številke in pike: izpis gre Claudu kot kontekst (F6).
 case $new in *[!0-9.]*) new="" ;; esac
 case $old in *[!0-9.]*) old="" ;; esac
-older "$old" "$new" && echo "Mini Gateway router $old is installed, $new is available: /minigw:gw update"
+older "$old" "$new" && echo "Mini Gateway $old is installed, $new is available: /minigw:gw update"
 
 # Claudov Bash najde »minigw« tudi brez poti.
 [ -n "${CLAUDE_ENV_FILE:-}" ] && echo "export PATH=\"\$PATH:$BIN\"" >> "$CLAUDE_ENV_FILE"
 if "$EXE" status >/dev/null 2>&1; then
   echo "minigw plugin: $("$EXE" --version 2>/dev/null | head -1), connected to Mini Gateway."
 else
-  echo "minigw plugin: $("$EXE" --version 2>/dev/null | head -1) installed but not connected; use /minigw:connect <router-mac> <token>."
+  echo "minigw plugin: $("$EXE" --version 2>/dev/null | head -1) installed but not connected; use /minigw:connect <gateway> <token>."
 fi

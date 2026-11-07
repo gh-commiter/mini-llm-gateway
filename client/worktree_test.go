@@ -10,6 +10,9 @@ import (
 
 func gitT(t *testing.T, dir string, args ...string) string {
 	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
 	out, err := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@x"}, args...)...).Output()
 	if err != nil {
 		t.Fatalf("git %v: %v", args, err)

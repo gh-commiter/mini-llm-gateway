@@ -1,10 +1,10 @@
 #!/bin/sh
-# Mini Gateway — client install: Claude Code + the minigw command, for a Mac that uses a router on another Mac.
+# Mini Gateway — client install: Claude Code + the minigw command, for a Mac that uses a gateway on another Mac.
 #
 #   curl -fsSL https://github.com/gh-commiter/mini-llm-gateway/releases/latest/download/install.sh | sh
 #   curl -fsSL …/install.sh | sh -s -- mini.local        # also connect; asks for the token
 #
-# Token: Mini Gateway → Settings → General → Copy Token (on the router Mac).
+# Token: Mini Gateway → Settings → General → Copy Token (on the gateway Mac).
 set -eu
 
 REPO="gh-commiter/mini-llm-gateway"
@@ -53,11 +53,11 @@ install -m 755 "$TMP/out/minigw" "$DIR/minigw"
 say "Installed: $DIR/minigw"
 [ $IN_PATH = 1 ] || say "Add it to your PATH:  echo 'export PATH=\"$DIR:\$PATH\"' >> ~/.zshrc"
 
-# 4. Optional: connect to the router (token read from the terminal, not the command line)
+# 4. Optional: connect to the gateway (token read from the terminal, not the command line)
 if [ $# -ge 1 ]; then
-  printf 'Router token for %s: ' "$1" >/dev/tty
+  printf 'Gateway token for %s: ' "$1" >/dev/tty
   stty -echo </dev/tty; read -r TOKEN </dev/tty; stty echo </dev/tty; printf '\n' >/dev/tty
   "$DIR/minigw" connect "$1" --token "$TOKEN"
 else
-  say "Next: minigw connect <router-mac>[:port] --token <token>"
+  say "Next: minigw connect <gateway>[:port] --token <token>"
 fi

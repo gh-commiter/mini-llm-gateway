@@ -1,6 +1,6 @@
 ---
 name: codex
-description: Hand a self-contained task to OpenAI Codex (GPT-6.1-Sol) through Mini Gateway. Codex runs on the router Mac, but minigw shares the current folder with it, so Codex reads, edits and runs commands in your files here, and reports what it did.
+description: Hand a self-contained task to OpenAI Codex (GPT-6.1-Sol) through Mini Gateway. Codex runs on the gateway Mac, but minigw shares the current folder with it, so Codex reads, edits and runs commands in your files here, and reports what it did.
 argument-hint: "[--ro] <task>"
 allowed-tools: Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw *)
 ---
@@ -17,6 +17,6 @@ PROMPT
 )"
 ```
 
-Always run it; do not assume Codex cannot see the files. If minigw prints that the folder "is not shared with the router", run `"${CLAUDE_PLUGIN_DATA}/bin/minigw" share add` (the user asked for Codex in this folder) and run the task again.
+Always run it; do not assume Codex cannot see the files. If minigw prints that the folder "is not shared with the gateway", run `"${CLAUDE_PLUGIN_DATA}/bin/minigw" share add` (the user asked for Codex in this folder) and run the task again.
 
 Then check the changed files yourself (for example `git diff`) before telling the user it is done.
