@@ -170,14 +170,19 @@ public enum Native {
                         e(home + "/Library/org.swift.swiftpm/repositories/") + "[^/]+/(config|hooks)(/|$)"])
     }
 
-    /// Podmape DARWIN_USER_TEMP_DIR, ki jih Foundation (atomarno pisanje: TemporaryItems) in storitev gradnje SwiftPM/Xcode
-    /// (TemporaryDirectory.XXXX) uporabljata ne glede na TMPDIR; brez njiju swift build in xcodebuild ne uspeta. Mapa sama
-    /// (xcrun_db) in DARWIN_USER_CACHE_DIR ostaneta zaprti. Vzorec za sandbox-exec.
-    static func darwinTempChildren() -> String? {
+    /// Foundation (atomarno pisanje: TemporaryItems/NSIRD_…) in storitev gradnje SwiftPM/Xcode (TemporaryDirectory.XXXX)
+    /// pišeta v DARWIN_USER_TEMP_DIR ne glede na TMPDIR; brez tega swift build in xcodebuild ne uspeta. Pisanje le znotraj
+    /// takih map in le nove take mape (nikoli datoteka ali povezava na tem mestu): vnosov TemporaryItems in obstoječih
+    /// TemporaryDirectory.* ni mogoče preimenovati, izbrisati ali zamenjati. Mapa sama (xcrun_db) in DARWIN_USER_CACHE_DIR
+    /// ostaneta zaprti. ponytail: vsebino sočasne mape drugega procesa zagon lahko spremeni (glej poročilo, issue).
+    static func darwinTempRules() -> String? {
         var b = [CChar](repeating: 0, count: 1024)
         guard confstr(_CS_DARWIN_USER_TEMP_DIR, &b, b.count) > 0,
               let t = Sync.real(URL(fileURLWithPath: String(cString: b)))?.path else { return nil }
-        return "^" + NSRegularExpression.escapedPattern(for: t) + "/(TemporaryItems|TemporaryDirectory\\.[^/]+)(/|$)"
+        let te = NSRegularExpression.escapedPattern(for: t)
+        return "(allow file-write* (regex #\"^\(te)/TemporaryItems/NSIRD_[^/]+/\") (regex #\"^\(te)/TemporaryDirectory\\.[^/]+/\"))\n"
+            + "(allow file-write-create (require-all (vnode-type DIRECTORY)"
+            + " (regex #\"^\(te)/(TemporaryItems/NSIRD_[^/]+|TemporaryDirectory\\.[^/]+)$\")))\n"
     }
 
     /// `runTmp`: TMPDIR in ModuleCache tega zagona (v Scratch, ki je sicer skrit).
@@ -199,8 +204,8 @@ public enum Native {
         let secretFiles = [".netrc", ".git-credentials", ".npmrc", ".pypirc", ".gradle/gradle.properties", ".zsh_history",
                            ".bash_history"].map { home + "/" + $0 }
         return "(version 1)\n(allow default)\n(deny file-write*)\n"
-            + "(allow file-write* (regex #\"^/dev/\")" + writable.map { " (subpath \(q($0)))" }.joined()
-            + (darwinTempChildren().map { " (regex #\"" + $0 + "\")" } ?? "") + ")\n"
+            + "(allow file-write* (regex #\"^/dev/\")" + writable.map { " (subpath \(q($0)))" }.joined() + ")\n"
+            + (darwinTempRules() ?? "")
             + "(deny file-write*" + rules("subpath", [dir + "/.git"] + denies.paths)
             + denies.regexes.map { " (regex #\"" + $0.replacingOccurrences(of: "\"", with: "\\\"") + "\")" }.joined() + ")\n"
             + "(deny file-read*" + rules("subpath", secretDirs) + rules("literal", secretFiles) + ")\n"
@@ -223,7 +228,7 @@ public enum Native {
 
     /// Pisanje, ki ga gradnja potrebuje zunaj mape: Maven, Xcode, SwiftPM, predpomnilniki, začasne mape (kanonične).
     /// Ne DARWIN_USER_TEMP_DIR/DARWIN_USER_CACHE_DIR (/var/folders/…): predpomnilnik xcrun bi izvedel podtaknjen program.
-    /// Gradnja ima svoj TMPDIR in ModuleCache (`runTmp` v sandboxProfile); iz DARWIN_USER_TEMP_DIR le `darwinTempChildren`.
+    /// Gradnja ima svoj TMPDIR in ModuleCache (`runTmp` v sandboxProfile); iz DARWIN_USER_TEMP_DIR le `darwinTempRules`.
     static func buildCaches(home: String = NSHomeDirectory()) -> [String] {
         ["\(home)/.m2", "\(home)/.swiftpm", "\(home)/Library/Developer", "\(home)/Library/Caches",
          "\(home)/Library/org.swift.swiftpm", "/private/tmp"]

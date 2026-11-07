@@ -406,11 +406,6 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
             for d in darwin { #expect(!(d == real || d.hasPrefix(real + "/") || d == w || d.hasPrefix(w + "/")), "\(w) covers \(d)") }
         }
     }
-    // minigw run: iz DARWIN_USER_TEMP_DIR le TemporaryItems in TemporaryDirectory.* (ne xcrun_db, ne mapa sama)
-    let rx = try NSRegularExpression(pattern: try #require(Native.darwinTempChildren()))
-    func matches(_ p: String) -> Bool { rx.firstMatch(in: p, range: NSRange(p.startIndex..., in: p)) != nil }
-    #expect(matches(darwin[0] + "/TemporaryItems/x") && matches(darwin[0] + "/TemporaryDirectory.Ab12/y"))
-    #expect(!matches(darwin[0] + "/xcrun_db") && !matches(darwin[0]) && !matches(darwin[0] + "/TemporaryItemsX"))
     let env = Worktree.harnessEnv(root: root, maven: root)
     #expect(env["TMPDIR"] == root.path + "/.build/tmp/" && env["CLANG_MODULE_CACHE_PATH"] == root.path + "/.build/ModuleCache"
             && env["xcrun_nocache"] == "1")
@@ -456,4 +451,57 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
     #expect(!FileManager.default.fileExists(atPath: marker))
     shim(["xcrun_db": poison.path])  // kontrola: shim podtaknjeni program izvede
     #expect(FileManager.default.fileExists(atPath: marker))
+}
+
+/// M1 (0.5.16): minigw run v DARWIN_USER_TEMP_DIR le ustvari nove mape TemporaryDirectory.* (in NSIRD_*) in piše v njih;
+/// vnosov (TemporaryItems, obstoječe mape) ne more preimenovati, izbrisati ali zamenjati s povezavo, datotek v T ne.
+/// Če bi peskovnik kaj dovolil, test to takoj popravi (vrne TemporaryItems, odstrani svoje).
+@Test func runProfileProtectsDarwinTempEntries() throws {
+    var b = [CChar](repeating: 0, count: 1024)
+    #expect(confstr(_CS_DARWIN_USER_TEMP_DIR, &b, b.count) > 0)
+    let t = try #require(Sync.real(URL(fileURLWithPath: String(cString: b)))).path
+    let dir = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("runprof-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let profile = try #require(Native.sandboxProfile(dir: dir.path, network: true))
+    func sh(_ c: String) -> Int32 {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
+        p.arguments = ["-p", profile, "/bin/sh", "-c", c]
+        p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+        try? p.run(); p.waitUntilExit()
+        return p.terminationStatus
+    }
+    let id = UUID().uuidString, fm = FileManager.default
+    let items = t + "/TemporaryItems", moved = items + "-minigw-test-" + id, mine = t + "/TemporaryDirectory.minigw-test-" + id
+    let link = t + "/TemporaryDirectory.minigw-link-" + id
+    defer {
+        if fm.fileExists(atPath: moved) { rename(moved, items) }
+        for p in [mine, mine + "-2", link, t + "/minigw-test-" + id, items + "/minigw-test-" + id] { try? fm.removeItem(atPath: p) }
+        try? fm.removeItem(at: dir)
+    }
+    let renamed = sh("mv '\(items)' '\(moved)'")
+    if fm.fileExists(atPath: moved) { rename(moved, items) }
+    #expect(renamed != 0 && fm.fileExists(atPath: items))
+    #expect(sh("ln -s /private/tmp '\(link)'") != 0 && (try? fm.destinationOfSymbolicLink(atPath: link)) == nil)
+    #expect(sh("touch '\(t)/minigw-test-\(id)'") != 0)
+    #expect(sh("touch '\(items)/minigw-test-\(id)'") != 0)
+    #expect(sh("echo x >> '\(t)/xcrun_db'") != 0)
+    #expect(sh("mkdir '\(mine)' && echo x > '\(mine)/f'") == 0)  // nova mapa in pisanje v njej: da
+    #expect(sh("mv '\(mine)' '\(mine)-2'") != 0 && sh("rm -rf '\(mine)'") != 0 && fm.fileExists(atPath: mine))  // vnos: ne
+}
+
+/// L3 (0.5.16): objects/info, globlja od omejitve brisanja: finalize ne izbriše do konca in ne vrne veje.
+@Test func worktreeFinalizeGivesUpOnTooDeepInfo() async throws {
+    let (root, client, tree) = try fixture()
+    defer { cleanup(root) }
+    let hub = ShareHub(), session = UUID().uuidString
+    let key = try #require(await hub.register(session: session, cwd: client.path, key: nil, device: "dev", tree: tree))
+    let loop = fakeClient(hub, key: key, top: client)
+    defer { loop.cancel() }
+    _ = try await agentRun(hub, session) { dir in
+        try file(dir, "ok.txt", "ok\n")
+        let deep = (0..<24).map { "d\($0)" }.joined(separator: "/")
+        try file(dir.appendingPathComponent(".git/objects/info"), deep + "/x", "x")
+    }
+    #expect(g(client, "for-each-ref", "refs/heads/minigw").isEmpty)  // brez rezultata
 }

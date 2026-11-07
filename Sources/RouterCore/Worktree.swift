@@ -264,20 +264,19 @@ public enum Worktree {
         guard let realObjects = Sync.real(objectsDir)?.path, case let objFd = open(realObjects, O_RDONLY | O_DIRECTORY | O_NOFOLLOW_ANY),
               objFd >= 0 else { return nil }
         defer { close(objFd) }
+        // Takoj nova info z le alternates zrcala (agent je ustavljen); karkoli ne uspe ali ni tako, kot pričakovano: brez rezultata.
         removeAt(objFd, "info")
-        defer {
-            mkdirat(objFd, "info", 0o755)
-            let infoFd = openat(objFd, "info", O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
-            if infoFd >= 0 {
-                let f = openat(infoFd, "alternates", O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0o644)
-                if f >= 0 {
-                    let line = Data((repo.appendingPathComponent("objects").path + "\n").utf8)
-                    _ = line.withUnsafeBytes { write(f, $0.baseAddress, $0.count) }
-                    close(f)
-                }
-                close(infoFd)
-            }
-        }
+        var st = stat()
+        guard fstatat(objFd, "info", &st, AT_SYMLINK_NOFOLLOW) != 0, errno == ENOENT,
+              mkdirat(objFd, "info", 0o755) == 0, case let infoFd = openat(objFd, "info", O_RDONLY | O_DIRECTORY | O_NOFOLLOW), infoFd >= 0
+        else { return nil }
+        defer { close(infoFd) }
+        let alt = openat(infoFd, "alternates", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o644)
+        guard alt >= 0 else { return nil }
+        let line = Data((repo.appendingPathComponent("objects").path + "\n").utf8)
+        let wrote = line.withUnsafeBytes { write(alt, $0.baseAddress, $0.count) } == line.count
+        close(alt)
+        guard wrote else { return nil }
         // Začasna mapa v Scratch (ob zrcalu), ne v sistemski začasni mapi.
         let tmp = repo.deletingLastPathComponent().appendingPathComponent(".finalize-" + UUID().uuidString, isDirectory: true)
         guard (try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])) != nil
@@ -318,8 +317,10 @@ public enum Worktree {
     }
 
     /// Izbriše `name` v mapi `dir` (deskriptor) brez sledenja povezavam: povezavo kot povezavo, mapo rekurzivno prek openat.
-    static func removeAt(_ dir: Int32, _ name: String) {
+    /// Globina največ `depth` (globlje: ne izbriše, finalize nato zazna, da info še obstaja).
+    static func removeAt(_ dir: Int32, _ name: String, depth: Int = 16) {
         if unlinkat(dir, name, 0) == 0 || errno == ENOENT { return }
+        guard depth > 0 else { return }
         let fd = openat(dir, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
         guard fd >= 0, let d = fdopendir(fd) else { if fd >= 0 { close(fd) }; return }
         var names: [String] = []
@@ -327,7 +328,7 @@ public enum Worktree {
             let n = withUnsafeBytes(of: e.pointee.d_name) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
             if n != ".", n != ".." { names.append(n) }
         }
-        for n in names { removeAt(dirfd(d), n) }
+        for n in names { removeAt(dirfd(d), n, depth: depth - 1) }
         closedir(d)  // zapre tudi fd
         unlinkat(dir, name, AT_REMOVEDIR)
     }

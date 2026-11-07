@@ -51,9 +51,9 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
         let sandbox: [String: Any] = ["sandbox": [
             "enabled": true, "failIfUnavailable": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
             "network": ["allowedDomains": network ? ["*"] : []],
-            // TemporaryItems (atomarno pisanje Foundation); TemporaryDirectory.* storitve gradnje Swift se tu ne da izraziti.
-            "filesystem": ["denyRead": ["~"], "allowRead": dirs + Self.mavenConfig() + Self.temporaryItems(),
-                           "allowWrite": dirs + Self.temporaryItems(),
+            // Nič iz DARWIN_USER_TEMP_DIR (peskovnik Claude Code ne zna »le znotraj mape«): swift build in xcodebuild
+            // agenta lahko ne uspeta (gradnja z minigw run ali v načinu sync); Maven deluje.
+            "filesystem": ["denyRead": ["~"], "allowRead": dirs + Self.mavenConfig(), "allowWrite": dirs,
                            "denyWrite": ["config", "hooks", "info", "commondir"].map { root.path + "/.git/" + $0 }
                                + Native.buildCacheDenies().paths],
         ]]
@@ -65,13 +65,6 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
             + (cwd.path == root.path ? [] : ["--add-dir", root.path])
             + (others.isEmpty ? [] : ["--allowedTools", others.joined(separator: ",")])
             + ["--disallowedTools", (disabledTools + gitEdits).joined(separator: ",")]
-    }
-
-    /// DARWIN_USER_TEMP_DIR/TemporaryItems (ne mapa sama: tam je xcrun_db).
-    static func temporaryItems() -> [String] {
-        var b = [CChar](repeating: 0, count: 1024)
-        guard confstr(_CS_DARWIN_USER_TEMP_DIR, &b, b.count) > 0, let t = Sync.real(URL(fileURLWithPath: String(cString: b))) else { return [] }
-        return [t.appendingPathComponent("TemporaryItems").path]
     }
 
     /// ~/.m2/settings.xml in toolchains.xml (dobesedno in kanonično, če sta povezavi).
@@ -365,7 +358,8 @@ extension Router {
             return "The user's folder \(clientCwd) (on their computer, a git repository) is a clone here at \(shared.path), your working"
                 + " directory, on branch \(branch). Map paths under \(clientCwd) to it. Commit your work on this branch; changes you leave"
                 + " uncommitted are committed for you at the end. The branch goes back to the user's repository; their files are not changed."
-                + " Build output (.build, target, DerivedData) is never committed; build Xcode projects with -derivedDataPath .build/DerivedData."
+                + " Build output (.build, target, DerivedData) is never committed. Maven builds work here; swift build and xcodebuild"
+                + " may fail in this sandbox: then tell the user to build with minigw run."
         }
         return (synced ? "The user's folder \(clientCwd) (on their computer) is synced here as \(shared.path), your working directory: a local copy"
             + (readOnly ? "" : " whose changed source files are copied back to the user when you finish") + ". Map paths under \(clientCwd) to it."
