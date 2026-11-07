@@ -313,6 +313,21 @@ builds then work on the router's local disk.
 - **The router copy is kept between requests,** so the next sync and the next build are incremental.
 - **Agents in the same folder run one after another.**
 
+**Native: the folder is the router's own SMB share.** When the client works in an SMB mount of a router share (for
+example `/Volumes/Java/eureko-modules` mounted from the router's `/Volumes/Java`), `minigw --minigw-work=native …`
+(or `MINIGW_WORK=native`) lets agents work directly in the router's folder: no mount back, no copy.
+`minigw run -- mvn -q verify` runs a build there and streams its output and exit code back.
+- **Proof, not a path:** minigw sends the share name and the path under it; the router writes a check file with random
+  content into its folder, and minigw must read it back through its mount. A folder with the same path elsewhere fails.
+- **Only allowed folders:** the folder must be in an SMB share of the router (System Settings → Sharing) and inside its
+  **Allowed folders**. Agents keep the same sandbox and folder rules.
+- **`minigw run` is off by default:** turn it on per device in **Settings → General → minigw run**, or with the admin
+  API (`PATCH /run`). Only the listed commands run (default `mvn, swift, xcodebuild`), without a shell. A build runs the
+  project's code as your user on the router, so allow only devices you trust.
+- If the folder is not a router share, minigw falls back to the usual mount. On Linux (cifs) and Windows (UNC path or
+  mapped drive) detection is automatic; elsewhere set `MINIGW_NATIVE_MOUNT=<share>=<mount folder>`. The Go router
+  (`minigw serve`) does not support native yet.
+
 ## 5. Router settings
 
 Settings of the menu bar app on the router Mac (**Settings…**, laid out like System Settings). Client options (`minigw share`, `--minigw-ro`,

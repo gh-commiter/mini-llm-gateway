@@ -50,7 +50,16 @@ public struct DeviceConfig: Codable, Sendable, Equatable, Identifiable {
     public var id: String     // base64url javnega ključa naprave
     public var name: String
     public var siri = false
-    public init(id: String, name: String, siri: Bool = false) { self.id = id; self.name = name; self.siri = siri }
+    public var run = false    // minigw run: ukazi na tem Macu v mapi native (izvajanje kode), privzeto izklopljeno
+    public init(id: String, name: String, siri: Bool = false, run: Bool = false) { self.id = id; self.name = name; self.siri = siri; self.run = run }
+
+    public init(from decoder: Decoder) throws {  // starejše nastavitve brez »run«
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        siri = try c.decodeIfPresent(Bool.self, forKey: .siri) ?? false
+        run = try c.decodeIfPresent(Bool.self, forKey: .run) ?? false
+    }
 }
 
 public struct RouterConfig: Codable, Sendable, Equatable {
@@ -72,6 +81,8 @@ public struct RouterConfig: Codable, Sendable, Equatable {
     public var codex = CodexConfig()
     public var grok = GrokConfig()
     public var scratchFolder = ""  // prazno = defaultScratch (Caches); npr. hiter zunanji SSD
+    /// minigw run: dovoljeni ukazi (prvi argument, ločeno z vejico). Ni peskovnik: gradnja izvaja kodo projekta.
+    public var runCommands = "mvn, swift, xcodebuild"
 
     public init() {}
 
@@ -137,6 +148,7 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         codex = try c.decodeIfPresent(CodexConfig.self, forKey: .codex) ?? d.codex
         grok = try c.decodeIfPresent(GrokConfig.self, forKey: .grok) ?? d.grok
         scratchFolder = try c.decodeIfPresent(String.self, forKey: .scratchFolder) ?? d.scratchFolder
+        runCommands = try c.decodeIfPresent(String.self, forKey: .runCommands) ?? d.runCommands
     }
 
     /// Siri ima osebni kontekst tega Maca: lokalno vedno, z drugih Macov le odobrene naprave.
@@ -153,7 +165,7 @@ public struct RouterConfig: Codable, Sendable, Equatable {
             if draft[keyPath: kp] == old[keyPath: kp] { d[keyPath: kp] = new[keyPath: kp] }
         }
         take(\.host); take(\.port); take(\.allowedClients); take(\.allowPlainRemote); take(\.claudeCLI); take(\.appleFM)
-        take(\.siri); take(\.codex); take(\.grok); take(\.scratchFolder)
+        take(\.siri); take(\.codex); take(\.grok); take(\.scratchFolder); take(\.runCommands)
         d.devices = mergeList(draft.devices, old.devices, new.devices)
         d.providers = mergeList(draft.providers, old.providers, new.providers)
         return d

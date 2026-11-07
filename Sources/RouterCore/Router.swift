@@ -212,7 +212,18 @@ public final class Router: Sendable {
             // --minigw-work=sync: kopija v scratch/sync/<naprava>/<mapa>, ohranjena med sejami; druga naprava ali mapa je ne doseže.
             // Oddaljen odjemalec brez dokaza naprave bi si delil kopijo z drugimi → sync zavrnjen.
             let sync = req.header("x-claude-mini-work") == "sync"
-            let owner = req.device?.id ?? (RouterServer.isLoopback(req.peer) ? "local" : nil)
+            let owner = Self.nativeOwner(req)
+            // --minigw-work=native: mapa iz izziva (POST /minigw/native), ki ga je odjemalec rešil skozi svoj priklop.
+            var native: URL?
+            if req.header("x-claude-mini-work") == "native" {
+                guard req.header("x-share-mode") != "ro" else {  // brez priklopa rdonly ni mogoče zagotoviti
+                    return (await error(400, "invalid_request_error", "Native mode cannot be read-only", rid: rid, writer: writer), nil, "share")
+                }
+                guard let owner, let dir = await Self.natives.verify(id: req.header("x-native-id") ?? "", proof: req.header("x-native-proof") ?? "", owner: owner) else {
+                    return (await error(403, "permission_error", "Native mode: the folder check failed", rid: rid, writer: writer), nil, "share")
+                }
+                native = dir
+            }
             if sync, owner == nil {
                 return (await error(400, "invalid_request_error", "Sync needs an encrypted connection with a device key (run minigw connect again)",
                                     rid: rid, writer: writer), nil, "share")
@@ -221,7 +232,7 @@ public final class Router: Sendable {
             let copy = sync ? config.scratch("sync").appendingPathComponent(owner!)  // samo za branje: ločena kopija
                 .appendingPathComponent(Sync.folderID(cwd) + (readOnly ? "-ro" : "")) : nil
             guard let key = await Self.shares.register(session: session, cwd: cwd, key: req.header("x-share-key"),
-                                                       readOnly: readOnly, copy: copy, device: req.device?.id) else {
+                                                       readOnly: readOnly, copy: copy, device: req.device?.id, native: native) else {
                 return (await error(409, "invalid_request_error", "Session already has a folder", rid: rid, writer: writer), nil, "share")
             }
             return (await json(200, ["key": key], rid: rid, writer: writer), nil, "share")
@@ -279,6 +290,10 @@ public final class Router: Sendable {
             }
             try? await writer.write(HTTPResponse.head(status: 200, headers: [("Content-Type", "application/octet-stream")], contentLength: body.count) + body)
             return (200, nil, "share")
+        case ("POST", "/minigw/native"):
+            return (await nativeChallenge(req, rid: rid, writer: writer), nil, "share")
+        case ("POST", "/minigw/run"):
+            return (await runCommand(req, rid: rid, writer: writer), nil, "run")
         case ("DELETE", "/minigw/share"):
             await Self.shares.unregister(key: req.header("x-share-key") ?? "")
             try? await writer.write(HTTPResponse.head(status: 204, headers: [], contentLength: 0))

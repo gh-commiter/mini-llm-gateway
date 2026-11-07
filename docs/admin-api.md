@@ -119,10 +119,12 @@ Notes:
 | `GET /agents/codex`, `PATCH` | any of `{"enabled", "path", "write", "network", "models"}` | `{"enabled", "path", "found", "write", "network", "models": [string] \| null}` |
 | `GET /agents/grok`, `PATCH` | any of `{"enabled", "path", "write", "models"}` | `{"enabled", "path", "found", "write", "models"}` |
 | `GET /siri`, `PATCH` | any of `{"enabled", "timeout", "allow": [id], "deny": [id]}` | `{"enabled", "timeout", "devices": [{"id", "name", "siri"}]}` |
+| `GET /run`, `PATCH` (Mac) | any of `{"commands", "allow": [id], "deny": [id]}` | `{"commands", "devices": [{"id", "name", "run"}]}` |
 
 `write`: the agent's sandbox may write in the session's folder (else read-only); `network`: commands in Codex's
 sandbox may use the network; `models: null` = all the account's models. `allow`/`deny` switch Siri for known
-devices (Siri uses this Mac's personal data).
+devices (Siri uses this Mac's personal data). `run` allows `minigw run` for a device (off by default): it runs the
+listed commands (comma-separated, first argument only) in a native folder on the Mac, so it is code execution there.
 
 ## Mac app
 

@@ -44,8 +44,9 @@ public actor ShareHub {
         var pulling: Run?                                 // sync: izvajanje, katerega spremembe minigw prav zdaj prevzema
         var keptBase: [String: String?] = [:]             // sync: združeno brez potrditve → različica, iz katere je agent začel
         let device: String?                               // naprava, ki je mapo registrirala (dokaz Noise); nil = lokalno
-        init(session: String, cwd: String, readOnly: Bool, copy: URL?, device: String?) {
-            self.session = session; self.cwd = cwd; self.readOnly = readOnly; self.copy = copy; self.device = device
+        let native: URL?                                  // native: mapa tega Maca, ki jo odjemalec vidi prek SMB (dokazano)
+        init(session: String, cwd: String, readOnly: Bool, copy: URL?, device: String?, native: URL? = nil) {
+            self.session = session; self.cwd = cwd; self.readOnly = readOnly; self.copy = copy; self.device = device; self.native = native
         }
     }
 
@@ -77,15 +78,16 @@ public actor ShareHub {
     private func share(key: String, device: String?) -> Share? { share(key: key).flatMap { $0.device == device ? $0 : nil } }
 
     /// nil: seja že ima share drugega lastnika (brez njegovega ključa je ni mogoče prevzeti).
-    /// `copy`: način sync (kopija v scratch/sync), sicer priklop.
-    func register(session: String, cwd: String, key: String?, readOnly: Bool = false, copy: URL? = nil, device: String? = nil) -> String? {
+    /// `copy`: način sync (kopija v scratch/sync), `native`: dokazana mapa tega Maca, sicer priklop.
+    func register(session: String, cwd: String, key: String?, readOnly: Bool = false, copy: URL? = nil, device: String? = nil,
+                  native: URL? = nil) -> String? {
         if let s = bySession[session] {
             guard s.key == key else { return nil }
-            if s.cwd == cwd, s.readOnly == readOnly, s.copy == copy { s.lastSeen = Date(); return s.key }
+            if s.cwd == cwd, s.readOnly == readOnly, s.copy == copy, s.native == native { s.lastSeen = Date(); return s.key }
             bySession[session] = nil
             close(s)
         }
-        let s = Share(session: session, cwd: cwd, readOnly: readOnly, copy: copy, device: device)
+        let s = Share(session: session, cwd: cwd, readOnly: readOnly, copy: copy, device: device, native: native)
         bySession[session] = s
         if reaper == nil {
             reaper = Task { [weak self] in
@@ -201,6 +203,7 @@ public actor ShareHub {
             for _ in 0..<60 where bySession[session] == nil { try? await Task.sleep(for: .milliseconds(500)) }
         }
         guard let s = share(session: session, device: device), cwd == nil || cwd == s.cwd else { return nil }
+        if let native = s.native { return native }  // ista mapa: brez priklopa in kopije
         if let copy = s.copy {  // zaklep le za prenos; agent nato dela v svojem klonu (brez izvajanja, npr. Siri: v kopiji)
             await acquire(copy)
             var dir: URL?

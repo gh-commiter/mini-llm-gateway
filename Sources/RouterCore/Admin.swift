@@ -228,6 +228,24 @@ extension Router {
             }
             return (200, siriInfo(n))
 
+        // minigw run: ukazi na tem Macu (izvajanje kode) le za vklopljene naprave in s seznama ukazov.
+        case "GET run":
+            return (200, runInfo(c))
+        case "PATCH run":
+            let b = try AdminBody(body, ["commands", "allow", "deny"])
+            let commands = try b.string("commands"), allow = try b.strings("allow") ?? [], deny = try b.strings("deny") ?? []
+            if let commands, commands.unicodeScalars.contains(where: { $0.value < 0x20 }) { throw AdminError(400, "commands: no control characters") }
+            let n = try await hooks.update { c in
+                if let commands { c.runCommands = commands }
+                for (ids, v) in [(allow, true), (deny, false)] {
+                    for id in ids {
+                        guard let i = c.devices.firstIndex(where: { $0.id == id }) else { throw AdminError(400, "no device \(id)") }
+                        c.devices[i].run = v
+                    }
+                }
+            }
+            return (200, runInfo(n))
+
         case "GET gateways":
             return (200, ["gateways": await gateways(c)])
         case "POST gateways":
@@ -395,6 +413,10 @@ extension Router {
     func grokInfo(_ c: GrokConfig) -> [String: Any] {
         ["enabled": c.enabled, "path": c.executable, "found": Grok.executable(c.executable) != nil, "write": c.write,
          "models": c.enabledModels.map { $0 as Any } ?? NSNull()]
+    }
+
+    func runInfo(_ c: RouterConfig) -> [String: Any] {
+        ["commands": c.runCommands, "devices": c.devices.map { ["id": $0.id, "name": $0.name, "run": $0.run] }]
     }
 
     func siriInfo(_ c: RouterConfig) -> [String: Any] {

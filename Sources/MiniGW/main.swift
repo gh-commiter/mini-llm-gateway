@@ -110,7 +110,8 @@ func call(_ c: Connection, _ method: String, _ path: String, _ headers: [String:
 /// Mac mini odjemalca ne doseže, zato vse teče po povezavah, ki jih odpre minigw (long poll).
 /// --minigw-work=sync: namesto priklopa router dobi kopijo (Sync); pred agentom jo minigw posodobi, po njem prevzame spremembe.
 final class ShareClient: @unchecked Sendable {
-    let c: Connection, session: String, root: URL, readOnly: Bool, sync: Bool
+    let c: Connection, session: String, root: URL, readOnly: Bool, sync: Bool, native: Bool
+    var refusal = ""  // zakaj router mape ni sprejel (native)
     static let writeMethods: Set<String> = ["PUT", "DELETE", "MKCOL", "MOVE", "COPY", "PROPPATCH", "LOCK"]
     private let lock = NSLock()
     private var current = ""
@@ -120,14 +121,19 @@ final class ShareClient: @unchecked Sendable {
     private var reported: Set<String> = []          // že javljene prevelike datoteke
     private var unpulled = false                    // spremembe agenta, ki niso bile prevzete in potrjene
 
-    init(_ c: Connection, session: String, root: URL, readOnly: Bool, sync: Bool) {
-        self.c = c; self.session = session; self.root = root; self.readOnly = readOnly; self.sync = sync
+    init(_ c: Connection, session: String, root: URL, readOnly: Bool, sync: Bool, native: Bool = false) {
+        self.c = c; self.session = session; self.root = root; self.readOnly = readOnly; self.sync = sync; self.native = native
     }
 
     func register() -> Bool {
-        let (s, d) = call(c, "POST", "/minigw/share",
-                          ["x-claude-mini-session": session, "x-claude-mini-cwd": root.path, "x-share-key": key,
-                           "x-share-mode": readOnly ? "ro" : "rw", "x-claude-mini-work": sync ? "sync" : "direct"], timeout: 10)
+        var h = ["x-claude-mini-session": session, "x-claude-mini-cwd": root.path, "x-share-key": key,
+                 "x-share-mode": readOnly ? "ro" : "rw", "x-claude-mini-work": native ? "native" : sync ? "sync" : "direct"]
+        if native {  // vsaka registracija (tudi po ponovnem zagonu routerja) z novim dokazom
+            let (proof, why) = nativeProof(c, root.path)
+            guard let proof else { refusal = why; return false }
+            h.merge(proof) { $1 }
+        }
+        let (s, d) = call(c, "POST", "/minigw/share", h, timeout: 10)
         guard s == 200, let d, let k = (try? JSONSerialization.jsonObject(with: d) as? [String: Any])?["key"] as? String else { return false }
         lock.withLock { current = k }
         return true
@@ -147,7 +153,7 @@ final class ShareClient: @unchecked Sendable {
             case 200:
                 guard let d, let job = try? JSONDecoder().decode(DAVJob.self, from: d) else { continue }
                 // Router ni zaupanja vreden: Sync.jobAllowed (SYNC-* le v sync, PULL ne pri --minigw-ro, WebDAV le v direct).
-                let r = !Sync.jobAllowed(job.method, sync: sync, readOnly: readOnly, write: Self.writeMethods.contains(job.method))
+                let r = native || !Sync.jobAllowed(job.method, sync: sync, readOnly: readOnly, write: Self.writeMethods.contains(job.method))
                     ? DAVResponse(403)
                     : job.method == "SYNC-PUSH" ? DAVResponse(syncLock.withLock { push(k) } ? 200 : 500)
                     : job.method == "SYNC-PULL" ? DAVResponse(syncLock.withLock { pull(k) } ? 200 : 500)
@@ -217,6 +223,60 @@ final class ShareClient: @unchecked Sendable {
         if !ch.changed.isEmpty || !ch.deleted.isEmpty { note("synced back from the router: \(ch.changed.count) changed, \(ch.deleted.count) deleted") }
         return true
     }
+}
+
+/// native: router zapiše označbo v svojo mapo, minigw jo prebere skozi priklop SMB → glave za dokaz; sicer razlog.
+func nativeProof(_ c: Connection, _ cwd: String) -> (proof: [String: String]?, why: String) {
+    guard let m = Native.detect(cwd: cwd, override: ProcessInfo.processInfo.environment["MINIGW_NATIVE_MOUNT"]) else {
+        return (nil, "\(cwd) is not on an SMB share (set MINIGW_NATIVE_MOUNT=<share>=<mount folder> if it is)")
+    }
+    let body = try? JSONSerialization.data(withJSONObject: ["share": m.share, "path": m.path])
+    let (s, d) = call(c, "POST", "/minigw/native", ["content-type": "application/json"], body, timeout: 10)
+    let o = d.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+    guard s == 200, let id = o?["id"] as? String, let file = o?["file"] as? String, file == ".minigw-native-" + id, Native.validMarker(file) else {
+        let msg = ((o?["error"] as? [String: Any])?["message"] as? String).map(clean)
+        return (nil, s == 404 ? "the router does not support native mode" : msg ?? "the router refused native mode (HTTP \(s))")
+    }
+    for _ in 0..<25 {  // SMB: nova datoteka je lahko vidna z zamikom (predpomnilnik imenika)
+        if let v = Native.readMarker(URL(fileURLWithPath: cwd).appendingPathComponent(file)) {
+            return (["x-native-id": id, "x-native-proof": v], "")
+        }
+        usleep(200_000)
+    }
+    return (nil, "\(cwd) is not the router's folder \(m.share)/\(m.path) (its check file is not visible here)")
+}
+
+/// minigw run: ukaz v mapi na routerju; izhod in izhodna koda kot pri lokalnem zagonu (255 = povezava prekinjena).
+func runRemote(_ c: Connection, _ argv: [String], _ proof: [String: String]) -> Int32 {
+    var r = URLRequest(url: URL(string: c.url + "/minigw/run")!, timeoutInterval: 120)  // router pošlje »p« vsakih 15 s
+    r.httpMethod = "POST"
+    r.httpBody = try? JSONSerialization.data(withJSONObject: ["argv": argv])
+    r.setValue("Bearer \(c.token)", forHTTPHeaderField: "authorization")
+    r.setValue("application/json", forHTTPHeaderField: "content-type")
+    for (k, v) in proof { r.setValue(v, forHTTPHeaderField: k) }
+    final class Box: @unchecked Sendable { var code: Int32 = 255 }
+    let box = Box(), done = DispatchSemaphore(value: 0)
+    Task {
+        defer { done.signal() }
+        do {
+            let (bytes, resp) = try await URLSession.shared.bytes(for: r)
+            guard (resp as? HTTPURLResponse)?.statusCode == 200 else {
+                var d = Data()
+                for try await b in bytes { d.append(b); if d.count > 1 << 16 { break } }
+                let msg = ((try? JSONSerialization.jsonObject(with: d) as? [String: Any])?["error"] as? [String: Any])?["message"] as? String
+                err.write(Data("minigw: \(clean(msg ?? "the router answered HTTP \((resp as? HTTPURLResponse)?.statusCode ?? 0)"))\n".utf8))
+                return
+            }
+            for try await line in bytes.lines {  // izhod ukaza gre nespremenjen (barve gradnje)
+                let v = String(line.dropFirst(2))
+                if line.hasPrefix("o "), let d = Data(base64Encoded: v) { out.write(d) }
+                else if line.hasPrefix("e "), let d = Data(base64Encoded: v) { err.write(d) }
+                else if line.hasPrefix("x "), let n = Int32(v) { box.code = n }
+            }
+        } catch { err.write(Data("minigw: lost the connection to the router: \(error.localizedDescription)\n".utf8)) }
+    }
+    done.wait()
+    return box.code
 }
 
 func requireConnection() -> Connection {
@@ -291,10 +351,12 @@ var args = Array(CommandLine.arguments.dropFirst())
 let readOnly = args.contains("--minigw-ro") || ProcessInfo.processInfo.environment["MINIGW_SHARE"] == "ro"
 args.removeAll { $0 == "--minigw-ro" }
 // --minigw-work=sync (ali MINIGW_WORK=sync): agenti delajo v kopiji na routerju namesto v priklopu; privzeto direct.
+// native: mapa je prek SMB mapa routerja → agenti delajo neposredno v njej (glej Native).
 var work = ProcessInfo.processInfo.environment["MINIGW_WORK"] ?? "direct"
 for a in args where a.hasPrefix("--minigw-work=") { work = String(a.dropFirst("--minigw-work=".count)) }
 args.removeAll { $0.hasPrefix("--minigw-work=") }
-guard ["direct", "sync"].contains(work) else { fail("unknown --minigw-work=\(work) (use direct or sync)") }
+guard ["direct", "sync", "native"].contains(work) else { fail("unknown --minigw-work=\(work) (use direct, sync or native)") }
+if work == "native", readOnly { fail("--minigw-work=native cannot be read-only (the agent works in the router's own folder)") }
 
 switch args.first {
 case "share":
@@ -302,6 +364,14 @@ case "share":
 case "router":
     routerCommand(Array(args.dropFirst()))
     exit(0)
+case "run":
+    var argv = Array(args.dropFirst())
+    if argv.first == "--" { argv.removeFirst() }
+    guard !argv.isEmpty else { fail("usage: minigw run [--] <command> [args …]") }
+    let c = route(requireConnection())
+    let (proof, why) = nativeProof(c, FileManager.default.currentDirectoryPath)
+    guard let proof else { fail("cannot run on the router: \(why)") }
+    exit(runRemote(c, argv, proof))
 case "connect":
     guard args.count >= 2 else { fail("usage: minigw connect <host[:port]> [--token <token>]") }
     let saved = loadConnection()
@@ -361,6 +431,8 @@ case "--minigw-help", "-h", "--help", "-v", "--version":
         minigw router status|devices|gateway|claude|token …   change the Mini Gateway app on this Mac (minigw router help)
         minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)
         minigw --minigw-work=sync [claude args]    agents work in a synced copy on the router (or MINIGW_WORK=sync)
+        minigw --minigw-work=native [claude args]  folder is the router's SMB share: agents work in it there (or MINIGW_WORK=native)
+        minigw run [--] <command> [args …]          run a build in this folder on the router (SMB share, allowed in its Settings)
         minigw [claude options …]                    run Claude Code through the router
         """)
     }
@@ -423,15 +495,25 @@ guard proxy != nil || (wantShare && !sid.isEmpty) else {
     fail("cannot run claude: \(String(cString: strerror(errno))) (is Claude Code installed and in PATH?)", code: 127)
 }
 
-let share = ShareClient(c, session: sid, root: URL(fileURLWithPath: cwd), readOnly: readOnly, sync: work == "sync")
+var share = ShareClient(c, session: sid, root: URL(fileURLWithPath: cwd), readOnly: readOnly, sync: work == "sync", native: work == "native")
 if !wantShare && remoteRouter && shareEnv != "0" {
     err.write(Data("minigw: \(cwd) is not shared with the router, so agent models (Codex, Claude CLI, Grok) cannot see it; to share it run: minigw share add\n".utf8))
 }
+var registered = wantShare && !sid.isEmpty && share.register()
+if wantShare, !sid.isEmpty, !registered, share.native {  // native ni mogoč → kot direct
+    err.write(Data("minigw: native mode not available: \(share.refusal); sharing over the network instead\n".utf8))
+    share = ShareClient(c, session: sid, root: URL(fileURLWithPath: cwd), readOnly: readOnly, sync: false)
+    registered = share.register()
+}
 if !wantShare || sid.isEmpty {
     // le šifrirani proxy
-} else if share.register() {
+} else if registered {
     share.start()
-    err.write(Data("minigw: \(work == "sync" ? "syncing" : "sharing") \(cwd) \(readOnly ? "read-only" : "read-write") with \(routerHost) for agent models (--minigw-ro = read-only, MINIGW_SHARE=0 = off)\n".utf8))
+    if share.native {
+        err.write(Data("minigw: \(cwd) is a folder of \(routerHost) (SMB): agent models work in it there directly (native)\n".utf8))
+    } else {
+        err.write(Data("minigw: \(share.sync ? "syncing" : "sharing") \(cwd) \(readOnly ? "read-only" : "read-write") with \(routerHost) for agent models (--minigw-ro = read-only, MINIGW_SHARE=0 = off)\n".utf8))
+    }
 } else {
     err.write(Data("minigw: router did not accept the folder; Claude CLI models with tools will not see it\n".utf8))
 }

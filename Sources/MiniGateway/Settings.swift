@@ -266,6 +266,21 @@ struct SettingsView: View {
                 TokenRow()
             }
             ScratchSection(draft: $draft)
+            Section {
+                TextField("Allowed commands", text: $draft.runCommands)
+                ForEach($draft.devices) { $d in
+                    Toggle(isOn: $d.run) { Text(verbatim: d.name) }
+                }
+            } header: {
+                Text(verbatim: "minigw run")
+            } footer: {
+                Label {
+                    Text("Macs switched on here may run these commands with minigw run, in a folder they use from this Mac's SMB share (native mode). A build runs the project's code as your user on this Mac: allow only Macs you trust.")
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                }
+                .font(.caption)
+            }
             Section("About") {
                 LabeledContent("Version") { Text(verbatim: "\(MenuView.version) (\(MenuView.build))").textSelection(.enabled) }
                 LabeledContent("License") {
