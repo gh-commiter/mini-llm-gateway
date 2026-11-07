@@ -239,3 +239,18 @@ func TestMountinfoRoot(t *testing.T) { // I3: priklop podmape (bind) in prefixpa
 		t.Errorf("prefixpath: %q", src)
 	}
 }
+
+func TestSafeWriterAcrossChunks(t *testing.T) { // P3
+	var b bytes.Buffer
+	w := &safeWriter{w: &b}
+	w.Write([]byte{'a', 0xc2})
+	w.Write([]byte{0x9b, '2', 'J', 'b'}) // C1 CSI razdeljen na dva kosa
+	w.Write([]byte{0xc4})
+	w.Write([]byte{0x8d}) // »č«, razdeljen drugje, ostane cel
+	if got := b.String(); got != "a2Jbč" {
+		t.Fatalf("%q", got)
+	}
+	if got := terminalSafe([]byte{'a', 0xc2}); string(got) != "a" {
+		t.Fatalf("lone C2: %q", got)
+	}
+}

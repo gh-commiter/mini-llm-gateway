@@ -75,12 +75,25 @@ public enum Native {
                     i += 2
                 }
             } else {
-                if c == 0xC2, i + 1 < b.count, (0x80...0x9F).contains(b[i + 1]) { i += 2; continue }  // C1 v UTF-8 (U+0080–U+009F)
+                if c == 0xC2, i + 1 == b.count { break }  // osamljen na koncu (glej TerminalFilter)
+                if c == 0xC2, (0x80...0x9F).contains(b[i + 1]) { i += 2; continue }  // C1 v UTF-8 (U+0080–U+009F)
                 if c >= 0x20 && c != 0x7F || [0x0A, 0x0D, 0x09, 0x08].contains(c) { out.append(c) }
                 i += 1
             }
         }
         return out
+    }
+
+    /// terminalSafe za tok kosov: končni 0xC2 počaka na naslednji kos, zato C1 (C2 9B …) ne zdrsne čez mejo kosa,
+    /// znak UTF-8, razdeljen drugje (C4 | 8D), pa ostane cel.
+    public struct TerminalFilter {
+        var held = Data()
+        public init() {}
+        public mutating func feed(_ d: Data) -> Data {
+            var all = held + d
+            held = all.last == 0xC2 ? Data([all.removeLast()]) : Data()
+            return Native.terminalSafe(all)
+        }
     }
 
     /// Sheme SMB tega Maca iz `sharing -l`: ime SMB → pot (le deljene, »shared: 1«, in ne samo za branje: agent piše).
@@ -139,21 +152,33 @@ public enum Native {
     /// branje povsod razen skrivnosti uporabnika, omrežje po izbiri naprave. Poti so dobesedne: če katera obstaja in
     /// njena kanonična pot ni ista (povezava), vrne nil (zamenjava mape s povezavo ne razširi pisanja).
     /// Preizkušeno z mvn package, swift build --disable-sandbox in xcodebuild build: nobena prepoved ni bila odveč.
-    static func sandboxProfile(dir: String, home: String = NSHomeDirectory(), network: Bool) -> String? {
+    static func sandboxProfile(dir: String, home: String = NSHomeDirectory(), network: Bool, hidden: [String] = []) -> String? {
         let writable = [dir] + buildCaches(home: home)
         for p in writable where FileManager.default.fileExists(atPath: p) && Sync.real(URL(fileURLWithPath: p))?.path != p { return nil }
         let q = { (p: String) in "\"" + p.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\"" }
-        let rx = { (p: String) in "\"^" + NSRegularExpression.escapedPattern(for: p).replacingOccurrences(of: "\"", with: "\\\"") + "\"" }  // #"…" brez podvajanja \\
-        let secrets = [".ssh", ".aws", ".gnupg", ".config", ".docker", ".kube", "Library/Keychains", "Library/Cookies",
-                       "Library/Application Support"].map { " (subpath \(q(home + "/" + $0)))" }.joined()
+        let rx = { (p: String) in "#\"^" + NSRegularExpression.escapedPattern(for: p).replacingOccurrences(of: "\"", with: "\\\"") }  // brez podvajanja \\
+        // Peskovnik primerja razrešene poti: vsako pravilo za dobesedno in (če obstaja) kanonično pot (~/.swiftpm/configuration → …).
+        func both(_ p: String) -> [String] { Sync.real(URL(fileURLWithPath: p)).map { $0.path == p ? [p] : [p, $0.path] } ?? [p] }
+        func rules(_ kind: String, _ paths: [String]) -> String {
+            var seen = Set<String>()
+            return paths.flatMap(both).filter { seen.insert($0).inserted }.map { " (\(kind) \(q($0)))" }.joined()
+        }
+        let swiftpm = ["\(home)/.swiftpm/configuration", "\(home)/.swiftpm/security",
+                       "\(home)/Library/org.swift.swiftpm/configuration", "\(home)/Library/org.swift.swiftpm/security"]
+        let secretDirs = [".ssh", ".aws", ".gnupg", ".config", ".docker", ".kube", "Library/Keychains", "Library/Cookies",
+                          "Library/Application Support", "Library/Containers", "Library/Group Containers", "Library/Mail",
+                          "Library/Messages"].map { home + "/" + $0 }
+        let secretFiles = [".netrc", ".git-credentials", ".npmrc", ".pypirc", ".gradle/gradle.properties", ".zsh_history",
+                           ".bash_history"].map { home + "/" + $0 }
         return "(version 1)\n(allow default)\n(deny file-write*)\n"
             + "(allow file-write* (regex #\"^/dev/\")" + writable.map { " (subpath \(q($0)))" }.joined() + ")\n"
-            + "(deny file-write* (subpath \(q(dir + "/.git"))) (literal \(q(home + "/.m2/extensions.xml")))"
-            + " (regex #\(rx(home + "/.m2/settings").dropLast())[^/]*\\.xml$\")"
-            + " (subpath \(q(home + "/.swiftpm/configuration")))"
-            + " (regex #\(rx(home + "/Library/org.swift.swiftpm/repositories/").dropLast())[^/]+/(config|hooks)(/|$)\"))\n"
-            + "(deny file-read* (literal \(q(home + "/.netrc")))\(secrets))\n"
-            + (network ? "" : "(deny network-outbound (remote ip))\n")
+            + "(deny file-write*" + rules("subpath", [dir + "/.git"] + swiftpm) + rules("literal", [home + "/.m2/extensions.xml"])
+            + " (regex \(rx(home + "/.m2/settings"))[^/]*\\.xml$\")"
+            + " (regex \(rx(home + "/Library/Caches/org.swift.swiftpm/repositories/"))[^/]+/(config|hooks)(/|$)\")"
+            + " (regex \(rx(home + "/Library/org.swift.swiftpm/repositories/"))[^/]+/(config|hooks)(/|$)\"))\n"
+            + "(deny file-read*" + rules("subpath", secretDirs) + rules("literal", secretFiles) + ")\n"
+            + (hidden.isEmpty ? "" : "(deny file-read* file-write*" + rules("subpath", hidden) + ")\n")
+            + (network ? "" : "(deny network-outbound (remote ip))\n(deny mach-lookup (global-name-regex #\"^com\\.apple\\.nsurlsessiond\"))\n")
     }
 
     /// Pisanje, ki ga gradnja potrebuje zunaj mape: Maven, Xcode, SwiftPM, predpomnilniki, začasne mape (kanonične).
@@ -353,7 +378,9 @@ extension Router {
         // Mapa je lahko po dokazu zamenjana s povezavo (npr. na domačo mapo): znova kanonična in v dovoljenih mapah,
         // profil peskovnika iz dobesedne poti (sandboxProfile zavrne povezave).
         guard Sync.real(dir)?.path == dir.path, ClaudeCLI.resolveCwd(dir.path, roots: config.claudeCLI.allowedRoots)?.path == dir.path,
-              let profile = Native.sandboxProfile(dir: dir.path, network: config.devices.first { $0.id == d.id }?.runNetwork ?? true) else {
+              let profile = Native.sandboxProfile(dir: dir.path, network: config.devices.first { $0.id == d.id }?.runNetwork ?? true,
+                                                  hidden: [config.scratchURL.path, RouterConfig.defaultScratch.path,
+                                                           NSHomeDirectory() + "/Library/Preferences/dev.trojar.minigateway.plist"]) else {
             return await error(403, "permission_error", "minigw run: the folder or a build cache folder (~/.m2, ~/Library/Caches …) is a link or not allowed", rid: rid, writer: writer)
         }
         guard await Self.natives.startRun(d.id) else {

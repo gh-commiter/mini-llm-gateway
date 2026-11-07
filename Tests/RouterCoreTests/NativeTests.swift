@@ -318,7 +318,7 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     let p = try #require(Native.sandboxProfile(dir: "/Volumes/Java/proj", home: home.path, network: true))
     #expect(p.contains(#"(subpath "/Volumes/Java/proj")"#) && p.contains(#"(subpath "/Volumes/Java/proj/.git")"#))
     #expect(!p.contains("Development") && !p.contains("network-outbound"))
-    #expect(p.contains("(deny file-read* (literal \"\(home.path)/.netrc\")") && p.contains("/.ssh\")") && p.contains("Application Support"))
+    #expect(p.contains("(literal \"\(home.path)/.netrc\")") && p.contains("/.ssh\")") && p.contains("Application Support"))
     #expect(Native.sandboxProfile(dir: "/Volumes/Java/proj", home: home.path, network: false)?.contains("(deny network-outbound (remote ip))") == true)
     // povezava namesto predpomnilnika (ali mape) → brez profila
     try FileManager.default.removeItem(at: home.appendingPathComponent(".m2"))
@@ -326,4 +326,50 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     #expect(Native.sandboxProfile(dir: "/Volumes/Java/proj", home: home.path, network: true) == nil)
     let old = try JSONDecoder().decode(DeviceConfig.self, from: Data(#"{"id":"a","name":"Air","run":true}"#.utf8))
     #expect(old.runNetwork)  // privzeto vklopljeno
+}
+
+/// P1, P2, P4: prepovedi veljajo za razrešene poti (povezave kot v pravi ~/.swiftpm), skrite mape in skrivnosti.
+@Test func nativeRunProfileDeniesResolvedPaths() throws {
+    let fm = FileManager.default
+    let home = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("home-" + UUID().uuidString)
+    defer { try? fm.removeItem(at: home) }
+    let lib = home.appendingPathComponent("Library")
+    for d in ["Library/org.swift.swiftpm/configuration", "Library/Caches/org.swift.swiftpm/repositories/r/hooks", ".swiftpm",
+              "Library/Containers/app", "scratch", "proj"] {
+        try fm.createDirectory(at: home.appendingPathComponent(d), withIntermediateDirectories: true)
+    }
+    try fm.createSymbolicLink(at: home.appendingPathComponent(".swiftpm/configuration"),
+                              withDestinationURL: lib.appendingPathComponent("org.swift.swiftpm/configuration"))
+    try Data("token".utf8).write(to: home.appendingPathComponent(".git-credentials"))
+    try Data("s".utf8).write(to: home.appendingPathComponent("Library/Containers/app/data"))
+    try Data("s".utf8).write(to: home.appendingPathComponent("scratch/chat.txt"))
+    let profile = try #require(Native.sandboxProfile(dir: home.appendingPathComponent("proj").path, home: home.path, network: true,
+                                                     hidden: [home.appendingPathComponent("scratch").path]))
+    func sh(_ script: String) throws -> Int32 {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
+        p.arguments = ["-p", profile, "/bin/sh", "-c", script]
+        p.currentDirectoryURL = home.appendingPathComponent("proj")
+        p.standardError = FileHandle.nullDevice
+        try p.run(); p.waitUntilExit()
+        return p.terminationStatus
+    }
+    let h = home.path
+    #expect(try sh("echo x > proj.txt") == 0)  // mapa ostane pisljiva
+    #expect(try sh("echo '{}' > \(h)/.swiftpm/configuration/mirrors.json") != 0)  // P1: prek povezave
+    #expect(!fm.fileExists(atPath: lib.appendingPathComponent("org.swift.swiftpm/configuration/mirrors.json").path))
+    #expect(try sh("echo x > \(h)/Library/Caches/org.swift.swiftpm/repositories/r/hooks/post-checkout") != 0)
+    #expect(try sh("cat \(h)/scratch/chat.txt") != 0 && sh("echo x > \(h)/scratch/new") != 0)  // P2
+    #expect(try sh("cat \(h)/.git-credentials") != 0 && sh("cat \(h)/Library/Containers/app/data") != 0)  // P4
+    #expect(try sh("echo x > \(h)/Library/Caches/ok") == 0)  // predpomnilniki ostanejo pisljivi
+    #expect(Native.sandboxProfile(dir: h + "/proj", home: h, network: false)?.contains(#"(deny mach-lookup (global-name-regex #"^com\.apple\.nsurlsessiond"))"#) == true)  // P5
+}
+
+@Test func nativeTerminalFilterAcrossChunks() {  // P3
+    var f = Native.TerminalFilter()
+    let a = f.feed(Data([0x61, 0xC2])), b = f.feed(Data([0x9B, 0x32, 0x4A, 0x62]))  // C1 CSI razdeljen na dva kosa
+    #expect(a == Data([0x61]) && b == Data([0x32, 0x4A, 0x62]))
+    let c = f.feed(Data([0xC4])), d = f.feed(Data([0x8D]))  // »č«, razdeljen drugje, ostane cel
+    #expect(String(decoding: c + d, as: UTF8.self) == "č")
+    #expect(Native.terminalSafe(Data([0x61, 0xC2])) == Data([0x61]))  // osamljen končni C2
 }

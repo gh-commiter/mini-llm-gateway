@@ -166,7 +166,10 @@ func terminalSafe(b []byte) []byte {
 	out := make([]byte, 0, len(b))
 	for i := 0; i < len(b); {
 		c := b[i]
-		if c == 0xc2 && i+1 < len(b) && b[i+1] >= 0x80 && b[i+1] <= 0x9f { // C1 v UTF-8 (U+0080–U+009F)
+		if c == 0xc2 && i+1 == len(b) { // osamljen na koncu (glej safeWriter)
+			break
+		}
+		if c == 0xc2 && b[i+1] >= 0x80 && b[i+1] <= 0x9f { // C1 v UTF-8 (U+0080–U+009F)
 			i += 2
 			continue
 		}
@@ -254,15 +257,24 @@ func runCommand(args []string) int {
 // ttySafe: terminal dobi le varna zaporedja (terminalSafe); datoteka ali cev izhod nespremenjen.
 func ttySafe(f *os.File) io.Writer {
 	if st, err := f.Stat(); err == nil && st.Mode()&os.ModeCharDevice != 0 {
-		return safeWriter{f}
+		return &safeWriter{w: f}
 	}
 	return f
 }
 
-type safeWriter struct{ w io.Writer }
+// safeWriter: končni 0xC2 počaka na naslednji kos, zato C1 ne zdrsne čez mejo kosa; drugje razdeljen znak UTF-8 ostane cel.
+type safeWriter struct {
+	w    io.Writer
+	held []byte
+}
 
-func (s safeWriter) Write(p []byte) (int, error) {
-	_, err := s.w.Write(terminalSafe(p))
+func (s *safeWriter) Write(p []byte) (int, error) {
+	all := append(s.held, p...)
+	s.held = nil
+	if len(all) > 0 && all[len(all)-1] == 0xc2 {
+		s.held, all = []byte{0xc2}, all[:len(all)-1]
+	}
+	_, err := s.w.Write(terminalSafe(all))
 	return len(p), err
 }
 

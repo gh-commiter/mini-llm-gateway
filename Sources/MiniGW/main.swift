@@ -268,10 +268,11 @@ func runRemote(_ c: Connection, _ argv: [String], _ proof: [String: String]) -> 
                 return
             }
             let (ttyOut, ttyErr) = (isatty(1) == 1, isatty(2) == 1)  // terminal: le barve, brez drugih zaporedij routerja
+            var (fOut, fErr) = (Native.TerminalFilter(), Native.TerminalFilter())
             for try await line in bytes.lines {
                 let v = String(line.dropFirst(2))
-                if line.hasPrefix("o "), let d = Data(base64Encoded: v) { out.write(ttyOut ? Native.terminalSafe(d) : d) }
-                else if line.hasPrefix("e "), let d = Data(base64Encoded: v) { err.write(ttyErr ? Native.terminalSafe(d) : d) }
+                if line.hasPrefix("o "), let d = Data(base64Encoded: v) { out.write(ttyOut ? fOut.feed(d) : d) }
+                else if line.hasPrefix("e "), let d = Data(base64Encoded: v) { err.write(ttyErr ? fErr.feed(d) : d) }
                 else if line.hasPrefix("x "), let n = Int32(v) { box.code = n }
             }
         } catch { err.write(Data("minigw: lost the connection to the router: \(error.localizedDescription)\n".utf8)) }

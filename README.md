@@ -336,9 +336,12 @@ example `/Volumes/Java/eureko-modules` mounted from the router's `/Volumes/Java`
   so allow only devices you trust. A sandbox (`sandbox-exec`) lets it write only to the folder (not its `.git`), `~/.m2`
   (not `settings*.xml`, `extensions.xml`), `~/Library/Developer`, `~/Library/Caches`, SwiftPM's folders (not their
   configuration, repository `config` and `hooks`) and temporary folders, and hides `~/.ssh`, `~/.aws`, `~/.gnupg`,
-  `~/.netrc`, `~/.config`, `~/.docker`, `~/.kube`, the keychains, cookies and `~/Library/Application Support`. The router
-  refuses the run when the folder or one of these folders is a link. Network is on per device (switch it off in
-  Settings or with `"denyNetwork"`). A sandbox inside it is not possible, so the router runs `swift build|test|run|package` with
+  `~/.netrc`, `~/.git-credentials`, `~/.npmrc`, `~/.pypirc`, `~/.gradle/gradle.properties`, shell histories, `~/.config`,
+  `~/.docker`, `~/.kube`, the keychains, cookies, `~/Library/Application Support`, `Containers`, `Group Containers`,
+  `Mail`, `Messages`, Mini Gateway's Scratch folder and preferences (rules cover the resolved paths of links too). The
+  router refuses the run when the folder or one of the writable folders is a link. Network is on per device (switch it
+  off in Settings or with `"denyNetwork"`); off is best effort: it blocks direct connections and `nsurlsessiond`, but
+  another system service could still reach the network for the build. A sandbox inside it is not possible, so the router runs `swift build|test|run|package` with
   `--disable-sandbox` and `xcodebuild` without its package and script sandboxes. Stopping minigw stops the whole
   process group. In a terminal minigw shows only colours from the output, no other escape sequences.
 - If the folder is not a router share, minigw falls back to the usual mount. On Linux (cifs) and Windows (UNC path or
