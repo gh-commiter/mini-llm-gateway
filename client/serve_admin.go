@@ -539,34 +539,41 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			if !validGatewayName.MatchString(*b.Name) {
 				return fail(400, "provider name: letters, digits, . _ - (up to 32)")
 			}
-			if _, taken := findGateway(s.conf(), *b.Name); taken {
-				return fail(400, "a provider named "+*b.Name+" already exists")
-			}
 			g.Name = *b.Name
 		}
-		if g.Name != arg { // ključ gre pod novo ime
-			key, _ := keyGet(s.cfgDir, arg)
-			if key != "" {
-				if _, err := keySet(s.cfgDir, g.Name, key); err != nil {
-					return fail(500, "cannot move the API key: "+err.Error())
-				}
-			}
-		}
+		// L2: zasedeno ime (brez razlike v velikih črkah) se preveri v isti spremembi, pred premikom ključa.
+		errTaken := errors.New("a provider named " + g.Name + " already exists")
+		var old serveGateway
 		if err := s.update(func(c *serveConfig) error {
 			i := slices.IndexFunc(c.Gateways, func(x serveGateway) bool { return x.Name == arg })
 			if i < 0 {
 				return errors.New("no provider " + arg)
 			}
+			if slices.ContainsFunc(c.Gateways, func(x serveGateway) bool { return x.Name != arg && strings.EqualFold(x.Name, g.Name) }) {
+				return errTaken
+			}
+			old = c.Gateways[i]
 			g.Models = slices.Clone(c.Gateways[i].Models)
 			c.Gateways[i] = g
 			return nil
 		}); err != nil {
-			if g.Name != arg {
-				keyDel(s.cfgDir, g.Name)
+			if errors.Is(err, errTaken) {
+				return fail(400, err.Error())
 			}
 			return fail(500, err.Error())
 		}
-		if g.Name != arg {
+		if g.Name != arg { // ključ gre pod novo ime; ob napaki ime nazaj
+			if key, _ := keyGet(s.cfgDir, arg); key != "" {
+				if _, err := keySet(s.cfgDir, g.Name, key); err != nil {
+					s.update(func(c *serveConfig) error {
+						if i := slices.IndexFunc(c.Gateways, func(x serveGateway) bool { return x.Name == g.Name }); i >= 0 {
+							c.Gateways[i] = old
+						}
+						return nil
+					})
+					return fail(500, "cannot move the API key: "+err.Error())
+				}
+			}
 			keyDel(s.cfgDir, arg)
 		}
 		s.gateways.forget(arg)
@@ -837,6 +844,9 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 				if why := scratchProblem(scratch, s.conf().AllowedFolders); why != "" { // M1, kot na Macu
 					return fail(400, "scratch folder: "+why)
 				}
+			}
+			if bad := scratchOverlaps(s.conf().AllowedFolders, scratch); len(bad) > 0 { // L1: tudi privzeta mapa
+				return fail(400, "scratch folder: the allowed folder "+bad[0]+" contains it or is inside it")
 			}
 			if err := protectScratch(scratch); err != nil {
 				return fail(400, "scratch folder "+scratch+": "+err.Error()+" (use a folder of your own)")

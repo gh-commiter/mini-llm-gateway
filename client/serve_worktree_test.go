@@ -270,3 +270,35 @@ func TestWorktreeLimits(t *testing.T) {
 		t.Fatalf("reason: %d %s", st, why)
 	}
 }
+
+// Končni pregled L1: privzeti Scratch in dovoljena mapa okoli njega: PATCH general zavrne; --add-dir je ne dobi.
+// L2: preimenovanje ponudnika v zasedeno ime brez razlike v velikih črkah (Bar → foo, ko obstaja Foo) je 400, ključ ostane.
+func TestScratchOverlapAndProviderRename(t *testing.T) {
+	s, _, base := liveServer(t, nil)
+	host := strings.TrimPrefix(base, "http://")
+	parent, defParent := filepath.Dir(s.conf().Scratch), filepath.Dir(defaultScratch())
+	// mimo checkAgent: starejša nastavitev z mapama okoli testnega in privzetega Scratch
+	s.update(func(c *serveConfig) error { c.AllowedFolders = []string{parent, defParent}; return nil })
+	if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/general", `{"scratch":""}`); st != 400 || !strings.Contains(b, "contains it") {
+		t.Fatalf("default scratch with an allowed folder around it: %d %s", st, b)
+	}
+	if strings.Contains(strings.Join(s.agentArgs(t.TempDir()), " "), "--add-dir "+parent) {
+		t.Fatal("allowed folder around Scratch passed to claude")
+	}
+	s.update(func(c *serveConfig) error {
+		c.Gateways = append(c.Gateways, serveGateway{Name: "Foo", BaseURL: "https://foo.example"}, serveGateway{Name: "Bar", BaseURL: "https://bar.example"})
+		return nil
+	})
+	keySet(s.cfgDir, "Bar", "key-bar")
+	t.Cleanup(func() { keyDel(s.cfgDir, "Bar"); keyDel(s.cfgDir, "foo") })
+	if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/providers/Bar", `{"name":"foo"}`); st != 400 || !strings.Contains(b, "already exists") {
+		t.Fatalf("rename to a taken name: %d %s", st, b)
+	}
+	if k, _ := keyGet(s.cfgDir, "foo"); k != "" {
+		t.Fatal("key moved for a refused rename")
+	}
+	if _, ok := findGateway(s.conf(), "Bar"); !ok {
+		t.Fatal("Bar renamed")
+	}
+	_ = host
+}

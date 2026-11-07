@@ -582,7 +582,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 	prompt := note + "\n\n" + cliPrompt(history, last)
 	var extra []string
 	for _, f := range c.AllowedFolders {
-		if f != dir {
+		if f != dir && len(scratchOverlaps([]string{f}, c.Scratch)) == 0 { // L1: ne mape okoli Scratch (kot na Macu)
 			extra = append(extra, f)
 		}
 	}
