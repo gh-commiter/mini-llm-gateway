@@ -77,7 +77,7 @@ General  {"port": number, "address": string, "connect": string, "restartRequired
 
 | Method and path | Body | Response |
 |---|---|---|
-| `GET /status` | – | `{"running", "version", "port", "address", "installed", "devices": n, "pending": n, "claude": Claude, "gateways": [Gateway], "os", "installDir"?, "tray"}` |
+| `GET /status` | – | `{"running", "version", "port", "address", "installed", "devices": n, "pending": n, "claude": Claude, "gateways": [Gateway], "os", "installDir"?, "tray", "autostart", "agents": n}` |
 | `GET /devices` | – | `{"devices": [Device], "pending": [Device], "allowAnyDevice": bool}` |
 | `POST /devices` | `{"id", "name"}` | `{"device": Device, "added": bool}`; removes it from pending |
 | `DELETE /devices/{id or name}` | – | `{"device": Device}`; a pending device is only removed from pending (`"pending": true`); a name must be unique |
@@ -106,8 +106,11 @@ Notes:
   starts with none enabled. The key is never returned.
 - `status`: `os` is `windows`, `linux` or `darwin` (the settings page uses it for commands without a sandbox),
   `installDir` the folder of `minigw serve install` (only when minigw is installed there), `tray` whether the
-  Windows tray runs. `PATCH /general {"startAtSignIn"}` sets the Windows Run value for the running router; other
-  systems answer `400` (use `minigw serve install`). The Mac app has its own Settings window and leaves these out.
+  Windows tray runs. `autostart` is `"boot"` (Linux with linger: the router starts without anyone signing in),
+  `"sign-in"`, or `""` (it does not start on its own). `agents` counts the claude, codex and grok processes that
+  run right now; an update stops them, so check it first. `PATCH /general {"startAtSignIn"}` sets the Windows Run
+  value for the running router and, on the Mac, Open at Login; Linux answers `400` (use `minigw serve install`).
+  The Mac app leaves `os`, `installDir` and `tray` out.
 - `POST /gateways/{name}/models`: `all` first (true = all, false = none), then `enable`, then `disable`.
 - The Go router's Claude also has `"enabled", "folders"` (comma-separated allowed folders), `"allowLocalTools",
   "disabledTools", "permissionMode", "settingSources"`, as on the Mac; see [windows-parity.md](windows-parity.md).

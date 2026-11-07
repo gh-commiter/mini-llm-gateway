@@ -98,6 +98,7 @@ type apiStatus struct {
 	InstallDir string       `json:"installDir,omitempty"` // minigw serve install
 	Tray       bool         `json:"tray"`                 // pladenj teče (Windows)
 	Agents     int          `json:"agents"`               // tekoči procesi agentov (claude, codex, grok)
+	Autostart  string       `json:"autostart"`            // "boot", "sign-in" ali "" (minigw serve install)
 }
 
 // adminSecret: 32 naključnih bajtov (base64url) v admin.secret (0600) v mapi nastavitev, ki je agentom prepovedana.
@@ -254,7 +255,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		c := s.conf()
 		st := apiStatus{Running: !s.offline, Version: version, Port: c.Port, Address: c.Address, Installed: serviceInstalled(runtime.GOOS),
 			Devices: len(c.Devices), Claude: s.claudeInfo(), Gateways: s.apiGateways(c), OS: runtime.GOOS, Tray: trayRunning(), Build: buildCommit(),
-			Agents: int(s.agentsRunning.Load())}
+			Agents: int(s.agentsRunning.Load()), Autostart: autostart(runtime.GOOS)}
 		if d := installDir(runtime.GOOS); d != "" { // le če je minigw tam res nameščen
 			if _, err := os.Stat(filepath.Join(d, map[bool]string{true: "minigw.exe", false: "minigw"}[runtime.GOOS == "windows"])); err == nil {
 				st.InstallDir = d

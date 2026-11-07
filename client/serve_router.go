@@ -254,7 +254,9 @@ func routerCommand(args []string, in io.Reader) {
 			addr = "all addresses"
 		}
 		say(fmt.Sprintf("version %s, port %d on %s", st.Version, st.Port, addr))
-		say(map[bool]string{true: "starts at sign-in (minigw serve uninstall to stop that)", false: "does not start at sign-in (minigw serve install)"}[st.Installed])
+		say(map[string]string{"boot": "starts at boot (minigw serve uninstall to stop that)", "sign-in": "starts at sign-in (minigw serve uninstall to stop that)",
+			"": "does not start on its own (minigw serve install)"}[st.Autostart])
+		say(fmt.Sprintf("agent requests running: %d", st.Agents))
 		say(installedInfo(runtime.GOOS))
 		say(fmt.Sprintf("devices: %d allowed, %d waiting (minigw router devices)", st.Devices, st.Pending))
 		claude := "not found"

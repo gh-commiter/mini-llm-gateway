@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -122,10 +123,18 @@ func TestServeInstallFiles(t *testing.T) {
 	t.Cleanup(func() {
 		runCmd, runValueSet, runValueGet, runValueDel, userHomeFn, userProgramsDir, trayClose, startDetached, envPathGet, envPathSet = o1, o2, o3, o4, o5, o6, o7, o8, o9, o10
 	})
+	noLinger := false // loginctl in sudo -n zavrneta linger
 	runCmd = func(name string, args ...string) error {
 		calls = append(calls, name+" "+strings.Join(args, " "))
+		if noLinger && slices.Contains(args, "enable-linger") {
+			return errors.New("denied")
+		}
 		return nil
 	}
+	ol := lingerDir
+	lingerDir = filepath.Join(home, "linger")
+	t.Cleanup(func() { lingerDir = ol })
+	t.Setenv("USER", "ana")
 	runValueSet = func(n, v string) error { reg[n] = v; return nil }
 	runValueGet = func(n string) (string, error) { return reg[n], nil }
 	runValueDel = func(n string) { delete(reg, n) }
@@ -152,8 +161,21 @@ func TestServeInstallFiles(t *testing.T) {
 		case "linux":
 			data, _ := os.ReadFile(servicePath(goos))
 			if !strings.Contains(string(data), `ExecStart="`+bin+`" serve --config "`+cfg+`"`) ||
-				strings.Join(calls, ";") != "systemctl --user daemon-reload;systemctl --user enable --now minigw-serve.service" {
-				t.Fatalf("unit: %s calls %v", data, calls)
+				strings.Join(calls, ";") != "systemctl --user daemon-reload;systemctl --user enable --now minigw-serve.service;loginctl enable-linger ana" ||
+				!strings.Contains(msg, "at boot") {
+				t.Fatalf("unit: %s calls %v msg %q", data, calls, msg)
+			}
+			calls, noLinger = nil, true
+			if m, _ := serviceCommand("install", goos, cfg); !strings.HasSuffix(m, "run: sudo loginctl enable-linger ana") || !slices.Contains(calls, "sudo -n loginctl enable-linger ana") || autostart(goos) != "sign-in" {
+				t.Fatalf("no linger: %q %v", m, calls)
+			}
+			os.MkdirAll(lingerDir, 0o755)
+			os.WriteFile(filepath.Join(lingerDir, "ana"), nil, 0o644)
+			if calls = nil; autostart(goos) != "boot" {
+				t.Fatal("autostart with linger")
+			}
+			if m, _ := serviceCommand("install", goos, cfg); slices.Contains(calls, "loginctl enable-linger ana") || !strings.Contains(m, "at boot") {
+				t.Fatalf("linger already on: %q %v", m, calls)
 			}
 			if a, _, _ := fileSHA256(bin); a == "" {
 				t.Fatal("minigw not copied to ~/.local/bin")

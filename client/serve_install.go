@@ -92,6 +92,35 @@ func serviceFile(goos, exe, cfgPath string) string {
 	return ""
 }
 
+// lingerDir: systemd-logind ima tu datoteko za vsakega uporabnika z »linger« (user manager teče od zagona).
+var lingerDir = "/var/lib/systemd/linger"
+
+func lingerOn(u string) bool {
+	_, err := os.Stat(filepath.Join(lingerDir, u))
+	return u != "" && err == nil
+}
+
+func userName() string {
+	if u := os.Getenv("USER"); u != "" {
+		return u
+	}
+	if u, err := user.Current(); err == nil {
+		return u.Username
+	}
+	return ""
+}
+
+// autostart: "boot", "sign-in" ali "" (ni nameščen).
+func autostart(goos string) string {
+	switch {
+	case !serviceInstalled(goos):
+		return ""
+	case goos == "linux" && lingerOn(userName()):
+		return "boot"
+	}
+	return "sign-in"
+}
+
 func serviceInstalled(goos string) bool {
 	if goos == "windows" {
 		v, _ := runValueGet(runValueName)
@@ -387,8 +416,13 @@ func serviceCommand(sub, goos, cfgPath string) (string, error) {
 			if err := runCmd("systemctl", "--user", "enable", "--now", systemdUnit); err != nil {
 				return "", err
 			}
-			return "minigw serve runs now and at sign-in (" + p + "); log: journalctl --user -u " + systemdUnit +
-				"\nTo keep it running after you sign out: loginctl enable-linger " + os.Getenv("USER"), nil
+			// Zagon ob vklopu brez prijave: linger (polkit brez root, sicer sudo brez gesla).
+			log := " (" + p + "); log: journalctl --user -u " + systemdUnit
+			u := userName()
+			if lingerOn(u) || runCmd("loginctl", "enable-linger", u) == nil || runCmd("sudo", "-n", "loginctl", "enable-linger", u) == nil {
+				return "minigw serve runs now and at boot, also without signing in" + log, nil
+			}
+			return "minigw serve runs now and at sign-in" + log + "\nTo start Mini Gateway at boot without logging in, run: sudo loginctl enable-linger " + u, nil
 		}
 		runCmd("launchctl", "bootout", uid, p) // že naložen: znova
 		if err := runCmd("launchctl", "bootstrap", uid, p); err != nil {
