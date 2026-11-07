@@ -216,6 +216,10 @@ func routerCommand(args []string, in io.Reader) {
 	fs.Usage = func() { fmt.Fprintln(os.Stderr, routerHelp) }
 	var pos []string // ukazi in zastavice v poljubnem vrstnem redu
 	for {
+		// ID naprave (base64url) se lahko začne z »-«: ni zastavica.
+		for len(args) > 0 && validDeviceID(args[0]) {
+			pos, args = append(pos, args[0]), args[1:]
+		}
 		fs.Parse(args)
 		if args = fs.Args(); len(args) == 0 {
 			break

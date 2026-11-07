@@ -245,6 +245,13 @@ func TestRouterCLIOnlineAndOffline(t *testing.T) {
 	if c, _ := loadServeConfig(off); len(c.Devices) != 1 {
 		t.Fatalf("offline allow: %+v", c.Devices)
 	}
+	dash := "-" + id[1:] // ID z vodilnim »-« ni zastavica (prej je občasno ustavil test)
+	for !validDeviceID(dash) {
+		dash = "-" + base64url(newDevice("X").key.Public().(ed25519.PublicKey))[1:]
+	}
+	if out := run(off, "devices", "allow", dash); out != "allowed device "+dash+"\n" {
+		t.Fatalf("dash id: %q", out)
+	}
 }
 
 // M1: program na vratih routerja, ki ni ta router, ne dobi skrivnosti ali ključev; minigw router dela brez routerja.

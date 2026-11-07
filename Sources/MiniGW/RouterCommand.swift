@@ -123,7 +123,8 @@ func routerCommand(_ argv: [String]) {
     var i = 0
     while i < argv.count {
         let a = argv[i]
-        if a.hasPrefix("--") {
+        // ID naprave (43 znakov base64url) se lahko začne z »--«: ni zastavica.
+        if a.hasPrefix("--"), !(a.count == 43 && a.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }) {
             let kv = a.dropFirst(2).split(separator: "=", maxSplits: 1).map(String.init)
             if kv.count == 2 { flags[kv[0]] = kv[1] } else if valued.contains(kv[0]), i + 1 < argv.count { flags[kv[0]] = argv[i + 1]; i += 1 } else { flags[kv[0]] = "true" }
         } else {
