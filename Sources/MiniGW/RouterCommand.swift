@@ -17,6 +17,7 @@ minigw router: show or change the Mini Gateway app on this Mac. Changes apply at
   minigw router gateway models <name> [text] [--all] [--enable m1,m2|all] [--disable m1,m2|all]
   minigw router claude [--path FILE] [--tools T1,T2] [--folders DIR1,DIR2] [--allow-local-tools=true|false]
   minigw router token [rotate]                               print the connect line; rotate makes a new token
+  minigw router autostart on|off                             Open at Login (Settings → General)
 """
 
 private struct AdminConnection {
@@ -147,6 +148,7 @@ func routerCommand(_ argv: [String]) {
         say("router: running, changes apply at once")
         say("version \(st["version"] as? String ?? "?"), port \(st["port"] as? Int ?? 0) on \(st["address"] as? String ?? "?")")
         say(st["installed"] as? Bool == true ? "starts at sign-in (Settings → General → Open at Login)" : "does not start at sign-in (Settings → General → Open at Login)")
+        say("agent requests running: \(st["agents"] as? Int ?? 0)")
         say("devices: \(st["devices"] as? Int ?? 0) allowed, \(st["pending"] as? Int ?? 0) waiting (minigw router devices)")
         let c = st["claude"] as? [String: Any] ?? [:]
         say(clean("claude: \(c["found"] as? Bool == true ? "found" : "not found"), tools \(c["tools"] as? String ?? "")"))
@@ -236,6 +238,12 @@ func routerCommand(_ argv: [String]) {
         let c = body.isEmpty ? a.call("GET", "/agents/claude") : a.call("PATCH", "/agents/claude", body)
         let path = (c["path"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "(from PATH)"
         say(clean("path: \(path), found: \(c["found"] as? Bool ?? false)\ntools: \(c["tools"] as? String ?? "")\nallowLocalTools: \(c["allowLocalTools"] as? Bool ?? false)\nfolders: \(c["folders"] as? String ?? "")"))
+
+    case "autostart":
+        need(2, 2)
+        guard ["on", "off"].contains(pos[1]) else { fail(routerHelp) }
+        _ = a.call("PATCH", "/general", ["startAtSignIn": pos[1] == "on"])
+        say(pos[1] == "on" ? "Mini Gateway opens at login" : "Mini Gateway no longer opens at login")
 
     case "token":
         need(1, 2)

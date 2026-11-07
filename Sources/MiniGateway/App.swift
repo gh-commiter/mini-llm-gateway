@@ -152,6 +152,7 @@ final class AppState: ObservableObject {
     private func adminHooks() -> AdminHooks {
         AdminHooks(secret: adminSecret, connect: connectToken, version: MenuView.version,
                    installed: { SMAppService.mainApp.status == .enabled },
+                   setInstalled: { on in if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() } },
                    commit: { [self] f, keys in  // AppState živi ves čas aplikacije
                        try await MainActor.run {
                            var c = self.config

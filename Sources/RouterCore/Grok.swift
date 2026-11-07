@@ -115,6 +115,8 @@ public enum Grok {
                 let stderr = Box()
                 let errReader = Thread { stderr.data = errors.fileHandleForReading.readDataToEndOfFile() }
                 try p.run()
+                AgentCount.running.add(1, ordering: .relaxed)
+                defer { AgentCount.running.subtract(1, ordering: .relaxed) }
                 errReader.start()
                 input.fileHandleForWriting.write(Data(prompt.utf8))
                 try? input.fileHandleForWriting.close()

@@ -9,6 +9,7 @@ public struct AdminHooks: Sendable {
     public var connect: String                     // »Copy Token«: žeton#ključ routerja
     public var version: String
     public var installed: @Sendable () -> Bool     // zagon ob prijavi
+    public var setInstalled: (@Sendable (Bool) throws -> Void)?  // PATCH general {startAtSignIn}: Open at Login
     /// Sprememba nastavitev; ključi (račun → ključ, nil = izbriši) gredo v Keychain šele, ko f uspe, in pred ponovnim
     /// zagonom routerja (ta ob zagonu prebere ključe prehodov).
     public var commit: @Sendable (@escaping @Sendable (inout RouterConfig) throws -> Void, [String: String?]) async throws -> RouterConfig
@@ -17,10 +18,11 @@ public struct AdminHooks: Sendable {
     public var peerCheck: (@Sendable (UInt16, UInt16) -> String?)?
 
     public init(secret: String, connect: String, version: String, installed: @escaping @Sendable () -> Bool,
+                setInstalled: (@Sendable (Bool) throws -> Void)? = nil,
                 commit: @escaping @Sendable (@escaping @Sendable (inout RouterConfig) throws -> Void, [String: String?]) async throws -> RouterConfig,
                 rotateToken: @escaping @Sendable () async -> String, peerCheck: (@Sendable (UInt16, UInt16) -> String?)? = nil) {
         self.secret = secret; self.connect = connect; self.version = version; self.installed = installed
-        self.commit = commit; self.rotateToken = rotateToken; self.peerCheck = peerCheck
+        self.commit = commit; self.rotateToken = rotateToken; self.peerCheck = peerCheck; self.setInstalled = setInstalled
     }
 
     func update(keys: [String: String?] = [:], _ f: @escaping @Sendable (inout RouterConfig) throws -> Void) async throws -> RouterConfig {
@@ -183,6 +185,7 @@ extension Router {
         switch route {
         case "GET status":
             return (200, ["running": true, "version": hooks.version, "port": Int(c.port), "address": c.host, "installed": hooks.installed(),
+                          "autostart": hooks.installed() ? "sign-in" : "", "agents": AgentCount.running.load(ordering: .relaxed),
                           "devices": c.devices.count, "pending": 0, "claude": claudeInfo(c.claudeCLI), "gateways": await gateways(c)])
 
         // Naprave: Mac sprejme vsako napravo z žetonom in jo doda sam; seznam določa Siri (glej /siri).
@@ -351,9 +354,14 @@ extension Router {
         case "GET general":
             return (200, general(c, connect: hooks.connect))
         case "PATCH general":
-            let b = try AdminBody(body, ["port", "address", "allowedClients", "allowPlainRemote"])
+            let b = try AdminBody(body, ["port", "address", "allowedClients", "allowPlainRemote", "startAtSignIn"])
             let port = try b.int("port"), address = try b.string("address"), clients = try b.string("allowedClients")
             let plain = try b.bool("allowPlainRemote")
+            if let on = try b.bool("startAtSignIn") {
+                guard let set = hooks.setInstalled else { throw AdminError(400, "startAtSignIn: not available here") }
+                do { try set(on) } catch { throw AdminError(500, "Open at Login: \(error.localizedDescription)") }
+                if b.o.count == 1 { return (200, general(c, connect: hooks.connect)) }  // brez ponovnega zagona routerja
+            }
             if let port, !(1...65535).contains(port) { throw AdminError(400, "port must be 1-65535") }
             if let address, !["0.0.0.0", "::", "127.0.0.1"].contains(address) {
                 throw AdminError(400, "address: use 0.0.0.0, :: or 127.0.0.1, so that the admin API stays reachable on 127.0.0.1; limit clients with allowedClients")

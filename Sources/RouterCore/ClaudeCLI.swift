@@ -1,5 +1,9 @@
 import CryptoKit
 import Foundation
+import Synchronization
+
+/// Tekoči procesi agentov (claude, codex, grok): `status.agents` (posodobitev jih ne prekine brez opozorila).
+public enum AgentCount { public static let running = Atomic<Int>(0) }
 
 /// Ponudnik `claude -p`: vgrajeni modeli Claude Code (opus/sonnet/haiku/fable), `claude-cli-<m>` (agent) in `claude-chat-<m>` (brez orodij).
 public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
@@ -423,6 +427,8 @@ extension Router {
         } catch {
             return await self.error(500, "api_error", "Cannot start claude: \(error.localizedDescription)", rid: rid, writer: writer)
         }
+        AgentCount.running.add(1, ordering: .relaxed)
+        defer { AgentCount.running.subtract(1, ordering: .relaxed) }
         try? stdin.fileHandleForWriting.write(contentsOf: Data(prompt.utf8))
         try? stdin.fileHandleForWriting.close()
         let errTask = Task { (try? stderr.fileHandleForReading.readToEnd()).flatMap { String(data: $0.suffix(4000), encoding: .utf8) } ?? "" }

@@ -132,6 +132,8 @@ public enum Codex {
                 var stderr = Data()
                 let errReader = Thread { stderr = errors.fileHandleForReading.readDataToEndOfFile() }  // ne blokira pipe
                 try p.run()
+                AgentCount.running.add(1, ordering: .relaxed)
+                defer { AgentCount.running.subtract(1, ordering: .relaxed) }
                 errReader.start()
                 input.fileHandleForWriting.write(Data(prompt.utf8))
                 try? input.fileHandleForWriting.close()
