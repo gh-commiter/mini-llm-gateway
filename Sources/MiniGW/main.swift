@@ -299,6 +299,9 @@ guard ["direct", "sync"].contains(work) else { fail("unknown --minigw-work=\(wor
 switch args.first {
 case "share":
     shareCommand(Array(args.dropFirst()))
+case "router":
+    routerCommand(Array(args.dropFirst()))
+    exit(0)
 case "connect":
     guard args.count >= 2 else { fail("usage: minigw connect <host[:port]> [--token <token>]") }
     let saved = loadConnection()
@@ -355,6 +358,7 @@ case "--minigw-help", "-h", "--help", "-v", "--version":
         minigw connect <host[:port]> [--token T]   save router address and token (Keychain)
         minigw status | models | disconnect
         minigw share add|remove [folder] | list    also share a system or hidden folder with the router
+        minigw router status|devices|gateway|claude|token …   change the Mini Gateway app on this Mac (minigw router help)
         minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)
         minigw --minigw-work=sync [claude args]    agents work in a synced copy on the router (or MINIGW_WORK=sync)
         minigw [claude options …]                    run Claude Code through the router

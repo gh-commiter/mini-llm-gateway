@@ -12,9 +12,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 )
 
 var errNotFound = errors.New("not found")
@@ -111,26 +113,9 @@ func osKeySet(cfgDir, name, key string) (string, error) {
 	return where, writeKeys(cfgDir, m)
 }
 
-// writeKeys: nova datoteka (0600) in preimenovanje: povezava na poti se ne sledi, datoteka ni nikoli širša od 0600.
 func writeKeys(cfgDir string, m map[string]string) error {
 	data, _ := json.MarshalIndent(m, "", "  ")
-	os.MkdirAll(cfgDir, 0o700)
-	f, err := os.CreateTemp(cfgDir, ".gateway-keys-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(f.Name()) // po uspešnem preimenovanju ne obstaja več
-	_, err = f.Write(data)
-	if err == nil {
-		err = f.Sync()
-	}
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
-	if err != nil {
-		return err
-	}
-	return os.Rename(f.Name(), keyFile(cfgDir))
+	return writeFileAtomic(keyFile(cfgDir), data)
 }
 
 func osKeyDel(cfgDir, name string) {
@@ -155,4 +140,25 @@ func readHidden(f *os.File) (string, error) {
 		}()
 	}
 	return bufio.NewReader(f).ReadString('\n')
+}
+
+// Vrednost Run v registru obstaja le na Windows.
+func regRunSet(string, string) error   { return errors.New("the registry exists on Windows only") }
+func regRunGet(string) (string, error) { return "", errNotFound }
+func regRunDel(string)                 {}
+
+func protectDir(string) error { return nil } // drugod: mapa 0700, datoteke 0600
+
+var listenControl func(network, address string, c syscall.RawConn) error // drugod privzeto (brez SO_REUSEPORT)
+
+// knownConfigDir: domača mapa iz baze uporabnikov (os/user), ne iz HOME/XDG_CONFIG_HOME.
+func knownConfigDir() (string, error) {
+	u, err := user.Current()
+	if err != nil || u.HomeDir == "" {
+		return "", errors.New("no home folder")
+	}
+	if runtime.GOOS == "darwin" {
+		return filepath.Join(u.HomeDir, "Library", "Application Support"), nil
+	}
+	return filepath.Join(u.HomeDir, ".config"), nil
 }

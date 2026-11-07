@@ -106,3 +106,146 @@ func readHidden(f *os.File) (string, error) {
 }
 
 const storeName = "Windows Credential Manager"
+
+// Vrednost HKCU\Software\Microsoft\Windows\CurrentVersion\Run: zagon ob prijavi brez skrbniških pravic.
+const runKey = `Software\Microsoft\Windows\CurrentVersion\Run`
+
+var (
+	procRegCreate = advapi32.NewProc("RegCreateKeyExW")
+	procRegSet    = advapi32.NewProc("RegSetValueExW")
+	procRegQuery  = advapi32.NewProc("RegQueryValueExW")
+	procRegDelete = advapi32.NewProc("RegDeleteValueW")
+	procRegClose  = advapi32.NewProc("RegCloseKey")
+)
+
+func runKeyOpen() (uintptr, error) {
+	const hkcu, access = 0x80000001, 0x0002 | 0x0001 // KEY_SET_VALUE | KEY_QUERY_VALUE
+	sub, _ := syscall.UTF16PtrFromString(runKey)
+	var h uintptr
+	if r, _, _ := procRegCreate.Call(hkcu, uintptr(unsafe.Pointer(sub)), 0, 0, 0, access, 0, uintptr(unsafe.Pointer(&h)), 0); r != 0 {
+		return 0, syscall.Errno(r)
+	}
+	return h, nil
+}
+
+func regRunSet(name, value string) error {
+	h, err := runKeyOpen()
+	if err != nil {
+		return err
+	}
+	defer procRegClose.Call(h)
+	n, _ := syscall.UTF16PtrFromString(name)
+	v, _ := syscall.UTF16FromString(value)
+	if r, _, _ := procRegSet.Call(h, uintptr(unsafe.Pointer(n)), 0, 1 /* REG_SZ */, uintptr(unsafe.Pointer(&v[0])), uintptr(len(v)*2)); r != 0 {
+		return syscall.Errno(r)
+	}
+	return nil
+}
+
+func regRunGet(name string) (string, error) {
+	h, err := runKeyOpen()
+	if err != nil {
+		return "", err
+	}
+	defer procRegClose.Call(h)
+	n, _ := syscall.UTF16PtrFromString(name)
+	buf := make([]uint16, 2048)
+	size := uint32(len(buf) * 2)
+	if r, _, _ := procRegQuery.Call(h, uintptr(unsafe.Pointer(n)), 0, 0, uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&size))); r != 0 {
+		return "", syscall.Errno(r)
+	}
+	return syscall.UTF16ToString(buf[:size/2]), nil
+}
+
+func regRunDel(name string) {
+	h, err := runKeyOpen()
+	if err != nil {
+		return
+	}
+	defer procRegClose.Call(h)
+	n, _ := syscall.UTF16PtrFromString(name)
+	procRegDelete.Call(h, uintptr(unsafe.Pointer(n)))
+}
+
+// protectDir: zaščiten DACL samo za lastnika in SYSTEM (mapa nastavitev zunaj %AppData%, kjer ni privzeto zasebna).
+func protectDir(dir string) error {
+	var (
+		pConvert = advapi32.NewProc("ConvertStringSecurityDescriptorToSecurityDescriptorW")
+		pGetDacl = advapi32.NewProc("GetSecurityDescriptorDacl")
+		pSetSec  = advapi32.NewProc("SetNamedSecurityInfoW")
+		pGetSec  = advapi32.NewProc("GetNamedSecurityInfoW")
+		pFree    = syscall.NewLazyDLL("kernel32.dll").NewProc("LocalFree")
+	)
+	// SID trenutnega uporabnika iz žetona procesa (ne OW: lastnika lahko spremeni drug).
+	tok, err := syscall.OpenCurrentProcessToken()
+	if err != nil {
+		return err
+	}
+	defer tok.Close()
+	tu, err := tok.GetTokenUser()
+	if err != nil {
+		return err
+	}
+	me, err := tu.User.Sid.String()
+	if err != nil {
+		return err
+	}
+	name, _ := syscall.UTF16PtrFromString(dir)
+	const seFileObject, ownerInfo, daclInfo, protectedDacl = 1, 0x1, 0x4, 0x80000000
+	var owner *syscall.SID
+	var osd uintptr
+	if r, _, _ := pGetSec.Call(uintptr(unsafe.Pointer(name)), seFileObject, ownerInfo, uintptr(unsafe.Pointer(&owner)), 0, 0, 0,
+		uintptr(unsafe.Pointer(&osd))); r != 0 {
+		return syscall.Errno(r)
+	}
+	ownerSID, _ := owner.String()
+	pFree.Call(osd)
+	if ownerSID != me {
+		return errForeignOwner
+	}
+	var sd uintptr
+	sddl, _ := syscall.UTF16PtrFromString("D:P(A;OICI;FA;;;" + me + ")(A;OICI;FA;;;SY)")
+	if r, _, err := pConvert.Call(uintptr(unsafe.Pointer(sddl)), 1 /* SDDL_REVISION_1 */, uintptr(unsafe.Pointer(&sd)), 0); r == 0 {
+		return err
+	}
+	defer pFree.Call(sd)
+	var present, defaulted int32
+	var dacl uintptr
+	if r, _, err := pGetDacl.Call(sd, uintptr(unsafe.Pointer(&present)), uintptr(unsafe.Pointer(&dacl)), uintptr(unsafe.Pointer(&defaulted))); r == 0 {
+		return err
+	}
+	if r, _, _ := pSetSec.Call(uintptr(unsafe.Pointer(name)), seFileObject, daclInfo|protectedDacl, 0, 0, dacl, 0); r != 0 {
+		return syscall.Errno(r)
+	}
+	return nil
+}
+
+// listenControl: SO_EXCLUSIVEADDRUSE (= ^SO_REUSEADDR): drug proces ne more poslušati na istih vratih.
+func listenControl(_, _ string, c syscall.RawConn) error {
+	var serr error
+	if err := c.Control(func(fd uintptr) {
+		serr = syscall.SetsockoptInt(syscall.Handle(fd), syscall.SOL_SOCKET, ^syscall.SO_REUSEADDR, 1)
+	}); err != nil {
+		return err
+	}
+	return serr
+}
+
+// knownConfigDir: RoamingAppData iz SHGetKnownFolderPath, ne iz %APPDATA% (ta je spremenljivka okolja).
+func knownConfigDir() (string, error) {
+	folderRoamingAppData := syscall.GUID{Data1: 0x3EB685DB, Data2: 0x65F9, Data3: 0x4CF6, Data4: [8]byte{0xA0, 0x3A, 0xE3, 0xEF, 0x65, 0x72, 0x9F, 0x3D}}
+	var p *uint16
+	r, _, _ := syscall.NewLazyDLL("shell32.dll").NewProc("SHGetKnownFolderPath").Call(uintptr(unsafe.Pointer(&folderRoamingAppData)), 0, 0, uintptr(unsafe.Pointer(&p)))
+	if r != 0 || p == nil {
+		return "", syscall.Errno(r)
+	}
+	defer syscall.NewLazyDLL("ole32.dll").NewProc("CoTaskMemFree").Call(uintptr(unsafe.Pointer(p)))
+	return syscall.UTF16ToString(unsafe.Slice(p, 32768)[:wcslen(p)]), nil
+}
+
+func wcslen(p *uint16) int {
+	n := 0
+	for s := unsafe.Slice(p, 32768); n < len(s) && s[n] != 0; n++ {
+	}
+	return n
+}

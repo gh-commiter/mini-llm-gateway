@@ -144,6 +144,32 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         RouterServer.isLoopback(peer) || devices.contains { $0.id == device?.id && $0.siri }
     }
 
+    /// Tristranska združitev za okno Settings ob spremembi od drugod (skrbniški API, nova naprava): kar uporabnik v
+    /// osnutku ni spremenil (enako kot old), prevzame iz new; pri napravah in prehodih tudi dodane, odstranjene in
+    /// drugje spremenjene elemente. Tako samodejna uveljavitev osnutka ne povozi sprememb skrbniškega API.
+    public static func merge(draft: RouterConfig, old: RouterConfig, new: RouterConfig) -> RouterConfig {
+        var d = draft
+        func take<T: Equatable>(_ kp: WritableKeyPath<RouterConfig, T>) {
+            if draft[keyPath: kp] == old[keyPath: kp] { d[keyPath: kp] = new[keyPath: kp] }
+        }
+        take(\.host); take(\.port); take(\.allowedClients); take(\.allowPlainRemote); take(\.claudeCLI); take(\.appleFM)
+        take(\.siri); take(\.codex); take(\.grok); take(\.scratchFolder)
+        d.devices = mergeList(draft.devices, old.devices, new.devices)
+        d.providers = mergeList(draft.providers, old.providers, new.providers)
+        return d
+    }
+
+    static func mergeList<T: Equatable & Identifiable>(_ d: [T], _ o: [T], _ n: [T]) -> [T] {
+        if d == o { return n }
+        func find(_ a: [T], _ id: T.ID) -> T? { a.first { $0.id == id } }
+        var out = d.filter { x in !(find(o, x.id) != nil && find(n, x.id) == nil) }  // drugje odstranjeni
+        for i in out.indices {  // drugje spremenjeni, v osnutku ne
+            if let ox = find(o, out[i].id), ox == out[i], let nx = find(n, out[i].id) { out[i] = nx }
+        }
+        out += n.filter { x in find(o, x.id) == nil && find(out, x.id) == nil }  // drugje dodani
+        return out
+    }
+
     public var allowedClientList: Set<String> {
         Set(allowedClients.split(whereSeparator: { $0 == "," || $0.isWhitespace }).map(String.init))
     }
@@ -178,16 +204,34 @@ public protocol SecretStore: Sendable {
 
 public struct Keychain: SecretStore {
     public let service: String
-    public init(service: String = "dev.trojar.minigateway") { self.service = service }
+    /// Le prijavni keychain (vnos »admin«): keychain, ki je na seznamu iskanja pred njim, vnosa ne more zasenčiti.
+    public let loginOnly: Bool
+    public init(service: String = "dev.trojar.minigateway", loginOnly: Bool = false) { self.service = service; self.loginOnly = loginOnly }
 
-    private func query(_ account: String) -> [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword,
-         kSecAttrService as String: service,
-         kSecAttrAccount as String: account]
+    /// Prijavni keychain po poti iz baze uporabnikov (getpwuid, ne HOME/CFFIXED_USER_HOME). Za aplikacijo Developer ID
+    /// brez profila je to preprostejše kot keychain za zaščito podatkov (ta zahteva pravice dostopne skupine).
+    static func loginKeychain() -> SecKeychain? {
+        guard let pw = getpwuid(getuid()), let dir = pw.pointee.pw_dir else { return nil }
+        let path = String(cString: dir) + "/Library/Keychains/login.keychain-db"
+        guard FileManager.default.fileExists(atPath: path) else { return nil }
+        var kc: SecKeychain?
+        return SecKeychainOpen(path, &kc) == errSecSuccess ? kc : nil
+    }
+
+    /// nil = vnos je le v prijavnem keychainu, a tega ni (brez zamenjave z drugim keychainom).
+    private func query(_ account: String, adding: Bool = false) -> [String: Any]? {
+        var q: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                                kSecAttrService as String: service,
+                                kSecAttrAccount as String: account]
+        if loginOnly {
+            guard let kc = Self.loginKeychain() else { return nil }
+            if adding { q[kSecUseKeychain as String] = kc } else { q[kSecMatchSearchList as String] = [kc] }
+        }
+        return q
     }
 
     public func get(_ account: String) -> String? {
-        var q = query(account)
+        guard var q = query(account) else { return nil }
         q[kSecReturnData as String] = true
         q[kSecMatchLimit as String] = kSecMatchLimitOne
         var out: CFTypeRef?
@@ -198,7 +242,7 @@ public struct Keychain: SecretStore {
 
     /// Vrednost in status (errSecItemNotFound = vnosa ni; druga napaka = keychain zaklenjen ali brez dovoljenja).
     public func lookup(_ account: String) -> (value: String?, status: OSStatus) {
-        var q = query(account)
+        guard var q = query(account) else { return (nil, errSecNoSuchKeychain) }
         q[kSecReturnData as String] = true
         q[kSecMatchLimit as String] = kSecMatchLimitOne
         var out: CFTypeRef?
@@ -209,12 +253,15 @@ public struct Keychain: SecretStore {
     /// Privzeti ključi, dokler uporabnik ne vpiše svojega (niso skrivnost; LiteLLM LITELLM_MASTER_KEY iz claude-local).
     public static let defaultKeys = ["litellm": "sk-local-1234"]
 
-    public func delete(_ account: String) { SecItemDelete(query(account) as CFDictionary) }
+    public func delete(_ account: String) {
+        if let q = query(account) { SecItemDelete(q as CFDictionary) }
+    }
 
     public func set(_ account: String, _ value: String) {
         let data = Data(value.utf8)
-        if SecItemUpdate(query(account) as CFDictionary, [kSecValueData as String: data] as CFDictionary) == errSecItemNotFound {
-            var add = query(account)
+        guard let q = query(account) else { return }
+        if SecItemUpdate(q as CFDictionary, [kSecValueData as String: data] as CFDictionary) == errSecItemNotFound,
+           var add = query(account, adding: true) {
             add[kSecValueData as String] = data
             SecItemAdd(add as CFDictionary, nil)
         }

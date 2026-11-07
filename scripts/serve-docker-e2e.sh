@@ -86,12 +86,18 @@ mg=$T/minigw
 # Plain HTTP from another computer (Docker NAT) is refused.
 [[ $(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:$PORT/v1/models -H "authorization: Bearer ${TOKEN%%#*}") == 426 ]] || fail "plain HTTP not refused"
 
-# Unknown device: refused; allowed with the command from the router log.
+# Unknown device: refused, listed as waiting, allowed live with the command from the router log (admin API, no restart).
 $mg connect $IP:$PORT --token "$TOKEN" 2>/dev/null && fail "unknown device accepted"
 ALLOW=$(docker logs $NAME 2>&1 | sed -n 's/.*to allow it run: \(minigw serve allow [^ ]*\).*/\1/p' | head -1)
 [[ -n $ALLOW ]] || fail "no allow hint in the log"
-dock ${=ALLOW#minigw } --config /cfg/serve.json
-start
+mgr() { docker exec -i $NAME /opt/mgw/minigw "$@" --config /cfg/serve.json }
+mgr router status | grep -q "router: running" || fail "router status"
+mgr router devices | grep -q "^waiting: ${ALLOW##* }" || fail "device not waiting"
+mgr ${=ALLOW#minigw }
+# The admin API answers only on the router computer: from here (Docker NAT) it is refused even with the secret
+# (426 for plain HTTP; over an encrypted connection the API itself answers 403, see TestAdminAPIAuth).
+[[ $(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:$PORT/minigw/admin/v1/status \
+  -H "authorization: Bearer $(<$T/cfg/admin.secret)" -H "host: 127.0.0.1:$PORT") == 426 ]] || fail "admin API reachable from outside"
 $mg connect $IP:$PORT --token "$TOKEN" | grep -q "(encrypted)" || fail "connect"
 $mg models | grep -q claude-cli-haiku || fail "models"
 
@@ -115,19 +121,21 @@ docker exec $NAME sh -c 'cat /root/.cache/minigw/scratch/sync/*/*/src/note.txt' 
 docker logs $NAME 2>&1 | grep -q 'step: "Write agent.txt"' || fail "agent step not logged"
 
 # Gateway: http only with --insecure; the key from stdin goes to a 0600 file (no secret-tool here), never serve.json.
-print sk-e2e-gateway-key | docker exec -i $NAME /opt/mgw/minigw serve gateway add fake http://127.0.0.1:9000 --config /cfg/serve.json 2>/dev/null \
-  && fail "http gateway without --insecure accepted"
-print sk-e2e-gateway-key | docker exec -i $NAME /opt/mgw/minigw serve gateway add fake http://127.0.0.1:9000 --insecure --config /cfg/serve.json \
-  | grep -q "2 models, all enabled" || fail "gateway add"
-docker exec $NAME /opt/mgw/minigw serve gateway models fake --disable other --config /cfg/serve.json | grep -q '^\[ \] other' || fail "gateway models"
+# Settings page: the router gives a one-time link; from outside the container it is refused (login and CSRF: Go tests).
+LINK=$(mgr router settings | tail -1 | tr -d ' ')
+[[ $LINK == http://127.0.0.1:8765/minigw/settings\#t=* ]] || fail "settings link: $LINK"  # žeton v fragmentu
+[[ $(curl -s -o /dev/null -w "%{http_code}" "${LINK/127.0.0.1:8765/127.0.0.1:$PORT}") == 426 ]] || fail "settings link reachable from outside"
+# Added and changed live through the admin API: no restart.
+print sk-e2e-gateway-key | mgr serve gateway add fake http://127.0.0.1:9000 2>/dev/null && fail "http gateway without --insecure accepted"
+print sk-e2e-gateway-key | mgr serve gateway add fake http://127.0.0.1:9000 --insecure | grep -q "2 models, 2 enabled" || fail "gateway add"
+mgr router gateway models fake --disable other | grep -q '^\[ \] other' || fail "gateway models"
 grep -q sk-e2e $T/cfg/serve.json && fail "API key in serve.json"
 [[ $(stat -f %Lp $T/cfg/gateway-keys.json) == 600 ]] || fail "key file mode"
-start
 $mg models | grep -q claude-echo || fail "gateway model not listed"
 $mg models | grep -q claude-other && fail "disabled gateway model listed"
 out=$(MINIGW_WORK=sync $mg -p --model claude-echo "ping" 2>&1) || fail "minigw -p gateway: $out"
 print -r -- "$out" | grep -q "pong from fake gateway" || fail "gateway answer: $out"
 docker logs $NAME 2>&1 | grep -q 'model="claude-echo" status=200' || fail "gateway request not logged"
-docker logs $NAME 2>&1 | grep -q 'WARNING: gateway fake: no Secret Service' || fail "no key file warning"
+docker logs $NAME 2>&1 | grep -q 'gateway fake: API key: WARNING: no Secret Service' || fail "no key file warning"
 docker logs $NAME 2>&1 | grep -q sk-e2e && fail "API key in the log"
 print "serve e2e ok"

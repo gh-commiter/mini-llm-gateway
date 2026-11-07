@@ -4,6 +4,7 @@ import ApplicationServices
 import os
 import RouterCore
 import Security
+import ServiceManagement
 import SwiftUI
 
 // Izvorni jezik vmesnika je angleščina; prevodi so v Resources/Localizable.xcstrings.
@@ -97,10 +98,11 @@ final class AppState: ObservableObject {
         return t
     }
 
+    /// 32 naključnih bajtov (CryptoKit; brez neprevrjenega rezultata SecRandomCopyBytes).
+    static func random32() -> Data { SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) } }
+
     static func newToken() -> String {
-        var bytes = [UInt8](repeating: 0, count: 32)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-        return "sk-siri-" + bytes.map { String(format: "%02x", $0) }.joined()
+        "sk-siri-" + random32().map { String(format: "%02x", $0) }.joined()
     }
 
     /// Stalni ključ routerja za šifrirane povezave (Noise); ustvari ga aplikacija ob prvem zagonu.
@@ -121,6 +123,54 @@ final class AppState: ObservableObject {
 
     /// Kar kopira »Copy Token«: žeton in javni ključ routerja (minigw z drugega Maca z njim preveri router).
     var connectToken: String { token + (routerKey.map { "#" + Noise.base64url($0.publicKey.rawRepresentation) } ?? "") }
+
+    /// Skrivnost skrbniškega API (docs/admin-api.md) v Keychainu aplikacije, ne v datoteki: agenti Codex in Grok
+    /// berejo datoteke povsod, Keychaina ne. Po žici gre le dokaz MGW-Admin, nikoli ona.
+    lazy var adminSecret: String = {
+        if let o = adminItem.lookup("admin").value.flatMap({ try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }),
+           let s = o["secret"] as? String, s.count >= 43 { return s }
+        if let v = keychain.lookup("admin-secret").value, v.count >= 43 { return v }  // razvojna različica 3c
+        return Noise.base64url(Self.random32())
+    }()
+
+    /// Vnos »admin« le v prijavnem keychainu (glej Keychain.loginOnly).
+    let adminItem = Keychain(loginOnly: true)
+
+    /// Vnos »admin« v Keychainu aplikacije: skrivnost, vrata in javni ključ routerja. minigw router iz njega izve, s kom
+    /// govori (ne iz datoteke ali spremenljivk okolja, ki bi jih lahko podtaknil drug proces). Zapis le ob spremembi.
+    private func writeAdminItem() {
+        guard let k = routerKey, let d = try? JSONSerialization.data(withJSONObject: [
+            "secret": adminSecret, "port": Int(config.port), "key": Noise.base64url(k.publicKey.rawRepresentation),
+        ], options: [.sortedKeys]) else { return }
+        let s = String(decoding: d, as: UTF8.self)
+        if adminItem.lookup("admin").value != s { adminItem.set("admin", s) }
+        if keychain.lookup("admin-secret").status == errSecSuccess { keychain.delete("admin-secret") }
+        try? FileManager.default.removeItem(at: Self.logsFile.deletingLastPathComponent().appendingPathComponent("router.json"))
+    }
+
+    /// Skrbniški API spreminja iste nastavitve kot okno Settings (apply: shrani in znova zažene router).
+    private func adminHooks() -> AdminHooks {
+        AdminHooks(secret: adminSecret, connect: connectToken, version: MenuView.version,
+                   installed: { SMAppService.mainApp.status == .enabled },
+                   commit: { [self] f, keys in  // AppState živi ves čas aplikacije
+                       try await MainActor.run {
+                           var c = self.config
+                           try f(&c)
+                           for (account, key) in keys {  // ključi le po uspešni spremembi, pred ponovnim zagonom
+                               if let key { self.keychain.set(account, key) } else { self.keychain.delete(account) }
+                           }
+                           self.apply(c)
+                           return c
+                       }
+                   },
+                   rotateToken: { [self] in
+                       await MainActor.run {
+                           self.regenerateToken()
+                           return self.connectToken
+                       }
+                   },
+                   peerCheck: { PeerProcess.refusal(peerPort: $0, routerPort: $1) })
+    }
 
     func regenerateToken() {
         keychain.set("inbound-token", Self.newToken())
@@ -144,7 +194,8 @@ final class AppState: ObservableObject {
                 case .finished(let id): self.inflight.removeAll { $0.id == id }
                 }
             }
-        })
+        }, admin: adminHooks())
+        writeAdminItem()
         let s = RouterServer(router: router, key: routerKey)
         s.onState = { [weak self] state in
             Task { @MainActor in self?.show(state) }

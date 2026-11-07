@@ -161,6 +161,8 @@ public final class RouterServer: @unchecked Sendable {
             Task { await self.router.reject(status: status, message: message, writer: w) }
         case .request(var req):
             req.peer = peer
+            req.noiseHash = session?.hash
+            if case let .hostPort(_, p) = conn.endpoint { req.peerPort = p.rawValue }
             if case .done(let d) = device { req.device = d }
             let allowed = router.config.allowedClientList
             if Self.isLoopback(peer), !allowed.isEmpty, !allowed.contains(peer), !req.path.hasPrefix("/dav/") {

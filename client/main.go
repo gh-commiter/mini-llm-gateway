@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const version = "0.5.14" // bump-version.sh
@@ -40,7 +41,7 @@ func say(s string) { fmt.Println(s) }
 // clean: besedilo routerja brez kontrolnih znakov (razen \n), da ne krmili terminala.
 func clean(s string) string {
 	return strings.Map(func(r rune) rune {
-		if r != '\n' && (r < 0x20 || r >= 0x7f && r <= 0x9f) {
+		if r != '\n' && (r < 0x20 || r >= 0x7f && r <= 0x9f || unicode.Is(unicode.Cf, r)) { // tudi bidi, ničelna širina
 			return -1
 		}
 		return r
@@ -153,6 +154,10 @@ func getJSON(c connection, path string) (int, map[string]any) {
 
 func main() {
 	args := os.Args[1:]
+	if isTrayExe(os.Args[0]) { // minigw-tray.exe: router z ikono v območju za obvestila
+		trayCommand(args)
+		return
+	}
 	first := ""
 	if len(args) > 0 {
 		first = args[0]
@@ -160,6 +165,12 @@ func main() {
 	switch first {
 	case "serve":
 		serveCommand(args[1:])
+		return
+	case "router":
+		routerCommand(args[1:], os.Stdin)
+		return
+	case "tray":
+		trayCommand(args[1:])
 		return
 	case "share":
 		shareCommand(args[1:])
@@ -305,6 +316,7 @@ func main() {
 				"minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)\n" +
 				"minigw --minigw-work=sync [claude args]    agents work in a synced copy on the router (or MINIGW_WORK=sync)\n" +
 				"minigw serve [init|allow <id>] [--port N] [--folder DIR] [--config FILE]   run a router here (Windows, Linux)\n" +
+				"minigw router status|devices|gateway|claude|token …                    change the router here, live\n" +
 				"minigw [claude options …]                    run Claude Code through the router")
 		}
 		if first == "--minigw-help" {

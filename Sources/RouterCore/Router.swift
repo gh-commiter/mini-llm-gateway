@@ -38,6 +38,7 @@ public final class Router: Sendable {
     let onLog: @Sendable (RequestLog) -> Void
     let onDevice: @Sendable (Noise.Device) -> Void  // aplikacija doda novo napravo v nastavitve, beleži »zadnjič«
     let onActivity: @Sendable (Activity) -> Void
+    let admin: AdminHooks?  // skrbniški API (aplikacija); nil = ni ga
     let catalog: Catalog
     let probes = Probes()
     static let log = Logger(subsystem: "dev.trojar.minigateway", category: "router")
@@ -46,8 +47,10 @@ public final class Router: Sendable {
                 session: URLSession = Router.defaultSession,
                 onLog: @escaping @Sendable (RequestLog) -> Void = { _ in },
                 onDevice: @escaping @Sendable (Noise.Device) -> Void = { _ in },
-                onActivity: @escaping @Sendable (Activity) -> Void = { _ in }) {
+                onActivity: @escaping @Sendable (Activity) -> Void = { _ in },
+                admin: AdminHooks? = nil) {
         self.config = config
+        self.admin = admin
         self.onDevice = onDevice
         self.onActivity = onActivity
         self.token = token
@@ -131,6 +134,9 @@ public final class Router: Sendable {
             return (r.status, nil, "share")
         }
 
+        if req.path == Self.adminPrefix || req.path.hasPrefix(Self.adminPrefix + "/") {  // lastna skrivnost, ne žeton
+            return (await adminHTTP(req, rid: rid, writer: writer), nil, "admin")
+        }
         guard authorized(req) else {
             return (await error(401, "authentication_error", "Invalid or missing token", rid: rid, writer: writer), nil, nil)
         }

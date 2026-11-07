@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -205,22 +206,23 @@ func TestServeGatewayCLIKeepsKeyOutOfConfig(t *testing.T) {
 	keys := fakeKeys(t)
 	up := fakeUpstream(t, nil, nil, nil)
 	cfg := filepath.Join(t.TempDir(), "serve.json")
-	saveServeConfig(cfg, serveConfig{Token: "tok", Key: "k"})
+	saveServeConfig(cfg, serveConfig{Token: "tok", Key: "k", Port: freePort(t)}) // router ne teče: serve.json
+	run := func(args ...string) string {
+		return stdout(t, func() { routerCommand(append(args, "--config", cfg), strings.NewReader(gwKey+"\n")) })
+	}
 
-	gatewayCommand(cfg, []string{"add", "gw", up.URL}, true, "", "", false, strings.NewReader(gwKey+"\n"))
+	run("gateway", "add", "gw", up.URL, "--insecure")
 	// Izpis: pri spremembi le spremenjeni modeli, sicer vklopljeni in število skritih; besedilo ali --all pokaže vse.
-	out := stdout(t, func() { gatewayCommand(cfg, []string{"models", "gw"}, false, "", "other-z,claude-off-w", false, nil) })
-	if out != "[ ] off-w  (/model claude-off-w)\n[ ] other-z  (/model claude-other-z)\n2 enabled (restart minigw serve)\n" {
+	if out := run("gateway", "models", "gw", "--disable", "other-z,claude-off-w"); out != "[ ] off-w  (/model claude-off-w)\n[ ] other-z  (/model claude-other-z)\n2 of 4 enabled\n" {
 		t.Fatalf("--disable output: %q", out)
 	}
-	if out = stdout(t, func() { gatewayCommand(cfg, []string{"models", "gw"}, false, "", "", false, nil) }); !strings.Contains(out, "[x] gpt-y") ||
-		strings.Contains(out, "other-z") || !strings.Contains(out, "2 disabled models not shown") {
+	if out := run("gateway", "models", "gw"); !strings.Contains(out, "[x] gpt-y") || strings.Contains(out, "other-z") || !strings.Contains(out, "2 disabled models not shown") {
 		t.Fatalf("models output: %q", out)
 	}
-	if out = stdout(t, func() { gatewayCommand(cfg, []string{"models", "gw", "OFF"}, false, "", "", false, nil) }); out != "[ ] off-w  (/model claude-off-w)\n" {
+	if out := run("gateway", "models", "gw", "OFF"); out != "[ ] off-w  (/model claude-off-w)\n" {
 		t.Fatalf("filter output: %q", out)
 	}
-	if out = stdout(t, func() { gatewayCommand(cfg, []string{"models", "gw"}, false, "", "", true, nil) }); strings.Count(out, "\n") != 4 {
+	if out := run("gateway", "models", "gw", "--all"); strings.Count(out, "\n") != 4 {
 		t.Fatalf("--all output: %q", out)
 	}
 	data, _ := os.ReadFile(cfg)
@@ -232,7 +234,7 @@ func TestServeGatewayCLIKeepsKeyOutOfConfig(t *testing.T) {
 		strings.Join(c.Gateways[0].Models, ",") != "anthropic/claude-x,gpt-y" {
 		t.Fatalf("config: %+v", c.Gateways)
 	}
-	gatewayCommand(cfg, []string{"remove", "gw"}, false, "", "", false, nil)
+	run("gateway", "remove", "gw")
 	if c, _ = loadServeConfig(cfg); len(c.Gateways) != 0 || keys["gw"] != "" {
 		t.Fatalf("remove: %+v %v", c.Gateways, keys)
 	}
@@ -382,4 +384,14 @@ func stdout(t *testing.T, f func()) string {
 	w.Close()
 	b, _ := io.ReadAll(r)
 	return string(b)
+}
+
+// freePort: vrata, na katerih nič ne posluša (minigw router tedaj dela brez routerja).
+func freePort(t *testing.T) int {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	return ln.Addr().(*net.TCPAddr).Port
 }
