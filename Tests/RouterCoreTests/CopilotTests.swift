@@ -19,7 +19,8 @@ private func rules(_ a: [String]) -> (allow: [String], deny: [String]) {
     let ro = Copilot.args(prompt: "hi", extraDirs: [], agent: true, model: nil, write: false, commands: false, network: false, session: "s1")
     #expect(!ro.contains { forbidden.contains($0) })
     #expect(rules(ro).allow == ["read"] && Set(rules(ro).deny) == ["memory", "write", "shell", "url"])
-    for f in ["--disallow-temp-dir", "--disable-builtin-mcps", "--no-ask-user", "--no-auto-update"] { #expect(ro.contains(f)) }
+    for f in ["--disallow-temp-dir", "--disable-builtin-mcps", "--no-ask-user", "--no-auto-update", "--disable-client-telemetry",
+              "--secret-env-vars=COPILOT_GITHUB_TOKEN,GH_TOKEN,GITHUB_TOKEN"] { #expect(ro.contains(f)) }
     #expect(ro[ro.firstIndex(of: "--session-id")! + 1] == "s1" && ro[ro.firstIndex(of: "-p")! + 1] == "hi" && !ro.contains("--model"))
 
     let w = Copilot.args(prompt: "x", extraDirs: ["/wt"], agent: true, model: "gpt-5.2", write: true, commands: false, network: true, session: "s")
@@ -28,6 +29,8 @@ private func rules(_ a: [String]) -> (allow: [String], deny: [String]) {
 
     let c = Copilot.args(prompt: "x", extraDirs: [], agent: true, model: nil, write: true, commands: true, network: false, session: "s")
     #expect(rules(c).allow.contains("shell") && rules(c).deny.contains("shell(gh:*)") && rules(c).deny.contains("shell(security:*)"))
+    let cro = Copilot.args(prompt: "x", extraDirs: [], agent: true, model: nil, write: false, commands: true, network: false, session: "s")
+    #expect(rules(cro).allow == ["read"] && rules(cro).deny.contains("shell"))  // ukazi brez pisanja (ali --ro): ne
 
     let chat = Copilot.args(prompt: "x", extraDirs: [], agent: false, model: nil, write: true, commands: true, network: true, session: "s")
     #expect(rules(chat).allow.isEmpty && Set(rules(chat).deny) == ["memory", "read", "write", "shell", "url"])  // brez orodij: nič
@@ -145,9 +148,18 @@ private func fakeCopilot(_ dir: URL) throws -> URL {
     echo in > inside.txt
     echo home > "$COPILOT_HOME/state.txt"
     echo out > "\(outside.path)"
+    [ "$COPILOT_GITHUB_TOKEN" = gho_Test123 ] && echo yes > "$COPILOT_HOME/token.txt"
     echo '{"type":"assistant.message","data":{"content":"done","toolRequests":[]}}'
     """.utf8).write(to: exe)
     chmod(exe.path, 0o755)
+    // Žeton prijave GitHub CLI pošlje router (v peskovniku ga copilot ne najde sam); lažni gh, nikoli pravi.
+    let gh = bin.appendingPathComponent("gh")
+    try Data("#!/bin/sh\n[ \"$*\" = 'auth token --hostname github.com' ] && echo gho_Test123\n".utf8).write(to: gh)
+    chmod(gh.path, 0o755)
+    let realGh = Copilot.gh
+    Copilot.gh = gh.path
+    defer { Copilot.gh = realGh }
+    #expect(Copilot.ghToken(["PATH": "/bin"]) == "gho_Test123" && Copilot.ghToken(["GH_TOKEN": "x"]) == nil)
     var c = RouterConfig()
     c.copilot.enabled = true; c.copilot.executable = exe.path; c.copilot.write = true; c.copilot.commands = true
     c.claudeCLI.allowedRoots = proj.path
@@ -162,4 +174,7 @@ private func fakeCopilot(_ dir: URL) throws -> URL {
     #expect(FileManager.default.fileExists(atPath: proj.appendingPathComponent("inside.txt").path))
     #expect(FileManager.default.fileExists(atPath: c.scratch("copilot").appendingPathComponent("state.txt").path))
     #expect(!FileManager.default.fileExists(atPath: outside.path))  // domača mapa: ne
+    if Copilot.tokenVars.allSatisfy({ (ProcessInfo.processInfo.environment[$0] ?? "").isEmpty }) {  // sicer gre žeton iz okolja
+        #expect(FileManager.default.fileExists(atPath: c.scratch("copilot").appendingPathComponent("token.txt").path))
+    }
 }

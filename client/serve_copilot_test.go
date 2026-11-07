@@ -33,7 +33,8 @@ func TestCopilotArgs(t *testing.T) {
 	if !slices.Equal(allow, []string{"read"}) || !slices.Equal(deny, []string{"memory", "write", "shell", "url"}) {
 		t.Fatalf("read-only: allow %q deny %q", allow, deny)
 	}
-	for _, f := range []string{"--disallow-temp-dir", "--disable-builtin-mcps", "--no-ask-user", "--no-auto-update"} {
+	for _, f := range []string{"--disallow-temp-dir", "--disable-builtin-mcps", "--no-ask-user", "--no-auto-update",
+		"--disable-client-telemetry", "--secret-env-vars=COPILOT_GITHUB_TOKEN,GH_TOKEN,GITHUB_TOKEN"} {
 		if !slices.Contains(ro, f) {
 			t.Errorf("missing %s", f)
 		}
@@ -45,6 +46,10 @@ func TestCopilotArgs(t *testing.T) {
 	allow, deny = copilotRules(w)
 	if !slices.Equal(allow, []string{"read", "write", "shell", "url"}) || !slices.Contains(deny, "shell(gh:*)") || !slices.Contains(deny, "shell(security:*)") {
 		t.Fatalf("write+commands: allow %q deny %q", allow, deny)
+	}
+	if allow, deny := copilotRules(copilotArgs("x", nil, true, "", false, true, false, "s")); !slices.Equal(allow, []string{"read"}) ||
+		!slices.Contains(deny, "shell") {
+		t.Fatalf("commands without write (or --ro): allow %q deny %q", allow, deny)
 	}
 	if w[slices.Index(w, "--model")+1] != "gpt-5.2" || w[slices.Index(w, "--add-dir")+1] != "/wt" {
 		t.Fatalf("model/add-dir: %q", w)
@@ -74,6 +79,37 @@ func TestCopilotArgs(t *testing.T) {
 	}
 }
 
+// Žeton GitHub CLI za copilot pod bwrap: lažni gh, nikoli pravi; žeton iz okolja ima prednost, neveljaven izhod ne velja.
+func TestCopilotToken(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script")
+	}
+	for _, v := range copilotTokenVars {
+		t.Setenv(v, "")
+	}
+	gh := filepath.Join(t.TempDir(), "gh")
+	out := "gho_Test123"
+	write := func() {
+		os.WriteFile(gh, []byte("#!/bin/sh\n[ \"$*\" = 'auth token --hostname github.com' ] && echo '"+out+"'\n"), 0o755)
+	}
+	write()
+	old := copilotGH
+	copilotGH = func() string { return gh }
+	defer func() { copilotGH = old }()
+	if got := copilotToken(t.Context()); got != "gho_Test123" {
+		t.Fatalf("token %q", got)
+	}
+	out = "gho_x; rm -rf"
+	write()
+	if got := copilotToken(t.Context()); got != "" {
+		t.Fatalf("invalid output accepted: %q", got)
+	}
+	t.Setenv("GH_TOKEN", "x")
+	if got := copilotToken(t.Context()); got != "" {
+		t.Fatalf("env token present, got %q", got)
+	}
+}
+
 func TestCopilotThroughRouter(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake CLIs are shell scripts")
@@ -82,11 +118,19 @@ func TestCopilotThroughRouter(t *testing.T) {
 	argsFile := filepath.Join(bin, "args")
 	copilot := filepath.Join(bin, "copilot")
 	os.WriteFile(copilot, []byte(`#!/bin/sh
-printf '%s\n' "$@" "home=$COPILOT_HOME" > "`+argsFile+`"
+printf '%s\n' "$@" "home=$COPILOT_HOME" "token=${COPILOT_GITHUB_TOKEN:+set}" > "`+argsFile+`"
 echo '{"type":"session.start","data":{"sessionId":"x"}}'
 echo '{"type":"assistant.message","data":{"content":"first"}}'
 echo '{"type":"assistant.message","data":{"content":"copilot says hi"}}'
 `), 0o755)
+	for _, v := range copilotTokenVars {
+		t.Setenv(v, "")
+	}
+	gh := filepath.Join(bin, "gh") // Linux: žeton pošlje router (lažni gh)
+	os.WriteFile(gh, []byte("#!/bin/sh\necho gho_Test123\n"), 0o755)
+	old := copilotGH
+	copilotGH = func() string { return gh }
+	defer func() { copilotGH = old }()
 	s, _, base := liveServer(t, func(c *serveConfig) {
 		c.AllowUnsandboxedBash = true // Linux brez bwrap (Docker)
 		t.Setenv("COPILOT_HOME", t.TempDir())
@@ -122,8 +166,11 @@ echo '{"type":"assistant.message","data":{"content":"copilot says hi"}}'
 	allow, deny := copilotRules(a)
 	if !slices.Equal(allow, []string{"read"}) || !slices.Contains(deny, "write") || !slices.Contains(deny, "shell") ||
 		slices.ContainsFunc(a, func(x string) bool { return slices.Contains(copilotForbidden, x) }) ||
-		!strings.HasPrefix(a[len(a)-1], "home="+s.conf().Scratch+"/state/") {
+		!strings.HasPrefix(a[len(a)-2], "home="+s.conf().Scratch+"/state/") {
 		t.Fatalf("copilot args: %q", a)
+	}
+	if want := map[bool]string{true: "token=set", false: "token="}[runtime.GOOS == "linux"]; a[len(a)-1] != want {
+		t.Fatalf("token handoff: %q, want %q", a[len(a)-1], want)
 	}
 	if st, _ := ask("claude-copilot-unknown"); st != 404 {
 		t.Fatalf("unlisted model: %d", st)

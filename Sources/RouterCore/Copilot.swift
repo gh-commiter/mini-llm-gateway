@@ -56,13 +56,13 @@ public enum Copilot {
                      network: Bool, session: String) -> [String] {
         var a = ["-p", prompt.count > maxPrompt ? String(prompt.suffix(maxPrompt)) : prompt, "--output-format", "json",
                  "--no-ask-user", "--disable-builtin-mcps", "--disallow-temp-dir", "--no-auto-update", "--no-color",
-                 "--session-id", session]
+                 "--disable-client-telemetry", "--secret-env-vars=" + tokenVars.joined(separator: ","), "--session-id", session]
         if let model { a += ["--model", model] }
         for d in extraDirs { a += ["--add-dir", d] }
         var allow: [String] = [], deny = ["memory"]
         if agent { allow.append("read") } else { deny.append("read") }
         if agent && write { allow.append("write") } else { deny.append("write") }
-        if agent && commands {
+        if agent && write && commands {  // ukazi pišejo mimo pravila write: le s pisanjem
             allow.append("shell")
             deny += ["shell(gh:*)", "shell(security:*)"]  // prijava GitHub in Keychain (najboljši trud: peskovnik je meja)
         } else {
@@ -70,6 +70,32 @@ public enum Copilot {
         }
         if agent && network { allow.append("url") } else { deny.append("url") }
         return a + allow.flatMap { ["--allow-tool", $0] } + deny.flatMap { ["--deny-tool", $0] }
+    }
+
+    /// Žetoni, ki jih copilot sprejme iz okolja; ukazom lupine jih skrije (--secret-env-vars).
+    static let tokenVars = ["COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"]
+    static var gh: String? = ClaudeCLI.locate("gh")  // var: testi podtaknejo lažni gh
+
+    /// Žeton GitHub CLI (`gh auth token`, zunaj peskovnika) za copilot v sandbox-exec: tam ne vidi ~/.config/gh in
+    /// Keychaina (preverjeno s copilot 1.0.107: »No authentication information found«). nil, če ima router žeton že v
+    /// okolju (ta gre copilotu naprej), ali brez gh oz. prijave.
+    static func ghToken(_ env: [String: String]) -> String? {
+        guard tokenVars.allSatisfy({ (env[$0] ?? "").isEmpty }), let gh else { return nil }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: gh)
+        p.arguments = ["auth", "token", "--hostname", "github.com"]
+        p.environment = env.merging(["GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1", "xcrun_nocache": "1"]) { $1 }
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = FileHandle.nullDevice
+        p.standardInput = FileHandle.nullDevice
+        guard (try? p.run()) != nil else { return nil }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        let t = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        let ok = p.terminationStatus == 0 && (1...255).contains(t.count)
+            && t.unicodeScalars.allSatisfy { $0.isASCII && (CharacterSet.alphanumerics.contains($0) || $0 == "_") }
+        return ok ? t : nil
     }
 
     /// Okolje: brez spremenljivk, ki bi notranji CLI usmerile v ta router, brez SSH agenta in nikoli COPILOT_ALLOW_ALL
@@ -197,7 +223,7 @@ extension Router {
         }
         // Svoj COPILOT_HOME (seje, dnevniki) v Scratch; prijava ostane uporabnikova (Keychain ali gh).
         let home = config.scratch("copilot")
-        let write = cfg.write && !readOnly, commands = agent && cfg.commands
+        let write = cfg.write && !readOnly, commands = agent && cfg.commands && write  // peskovnik piše v mapo: ukazi le s pisanjem (tudi ne pri --ro)
         // Ukazi lupine: ves copilot v peskovniku kot minigw run (pisanje le v mapo, domača mapa in Scratch skrita),
         // COPILOT_HOME in začasna mapa zahteve dovoljeni posebej.
         let privateTmp = URL(fileURLWithPath: "/private/tmp/minigw-copilot-\(rid)", isDirectory: true)
@@ -212,9 +238,19 @@ extension Router {
             }
             sandbox = p
         }
-        let extraEnv = tree.map { Worktree.harnessEnv(root: $0.root, maven: $0.maven) }
+        var extraEnv = tree.map { Worktree.harnessEnv(root: $0.root, maven: $0.maven) }
             ?? ["TMPDIR": privateTmp.path + "/", "CLANG_MODULE_CACHE_PATH": privateTmp.appendingPathComponent("ModuleCache").path]
-        let env = Copilot.environment(ProcessInfo.processInfo.environment, home: home, extra: extraEnv)
+        let base = ProcessInfo.processInfo.environment
+        if commands, Copilot.tokenVars.allSatisfy({ (base[$0] ?? "").isEmpty }) {
+            // V peskovniku copilot prijave ne najde sam: žeton pošlje router (ukazom ga copilot skrije).
+            guard let t = Copilot.ghToken(base) else {
+                return await error(503, "api_error",
+                                   "Copilot with commands runs in a sandbox that hides your GitHub sign-in; sign in with the GitHub CLI (gh auth login)",
+                                   rid: rid, writer: writer)
+            }
+            extraEnv["COPILOT_GITHUB_TOKEN"] = t
+        }
+        let env = Copilot.environment(base, home: home, extra: extraEnv)
         // Nadaljevanje seje Copilot (--session-id): ključ je dosedanji pogovor v tej mapi.
         let scope = Self.agentScope("copilot", req, cwd: cwd)
         let existing = agent ? await Self.copilotSessions.get(ClaudeCLI.key(all.dropLast(), scope: scope)) : nil

@@ -482,7 +482,7 @@ struct SettingsView: View {
             Button("Allow Commands", role: .destructive) { draft.copilot.commands = true }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Copilot then runs commands as you on this Mac, in a sandbox that writes only to the session's folder and hides your home folder. Commands can still use the network and may use your GitHub sign-in. Allow only if you trust the devices that use Copilot.")
+            Text("Copilot then runs commands as you on this Mac, in a sandbox that writes only to the session's folder and hides your keys, sign-ins and app data; commands can still read your other files and use the network. Copilot signs in with your GitHub CLI token, which commands do not see. Allow only if you trust the devices that use Copilot.")
         }
     }
 

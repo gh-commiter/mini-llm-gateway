@@ -149,8 +149,9 @@ sandbox may use the network (default: off); `models: null` = all the account's m
 devices (Siri uses this Mac's personal data). `run` allows `minigw run` for a device (off by default): it runs the
 listed commands (comma-separated, first argument only) in a native folder on the Mac, so it is code execution there.
 Copilot: `write` lets it edit files in the session's folder (default: off, read-only), `network` allows its web tool,
-`commands` its shell (an explicit opt-in: on the Mac Copilot then runs in the `minigw run` sandbox; on Linux under bwrap;
-Windows needs "Allow commands without a sandbox"). `models` lists model names (Copilot has no model list; empty = only
+`commands` its shell (an explicit opt-in that needs `write`: on the Mac Copilot then runs in the `minigw run` sandbox; on Linux under bwrap;
+Windows needs "Allow commands without a sandbox"). Where the sandbox hides the GitHub sign-in (Mac with commands, Linux), the
+gateway passes the GitHub CLI token (`gh auth token`) as `COPILOT_GITHUB_TOKEN`; Copilot keeps it from its commands. `models` lists model names (Copilot has no model list; empty = only
 `claude-copilot`, Copilot's default); a name that is not a valid model name is a `400`.
 
 ## Mac app

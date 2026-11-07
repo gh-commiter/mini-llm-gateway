@@ -251,7 +251,8 @@ func copilotArgs(prompt string, extraDirs []string, agent bool, model string, wr
 		prompt = string(r[len(r)-copilotMaxPrompt:])
 	}
 	a := []string{"-p", prompt, "--output-format", "json", "--no-ask-user", "--disable-builtin-mcps", "--disallow-temp-dir",
-		"--no-auto-update", "--no-color", "--session-id", session}
+		"--no-auto-update", "--no-color", "--disable-client-telemetry",
+		"--secret-env-vars=" + strings.Join(copilotTokenVars, ","), "--session-id", session}
 	if model != "" {
 		a = append(a, "--model", model)
 	}
@@ -268,6 +269,7 @@ func copilotArgs(prompt string, extraDirs []string, agent bool, model string, wr
 	}
 	pick(agent, "read")
 	pick(agent && write, "write")
+	commands = commands && write // ukazi pišejo mimo pravila write (tudi ne pri --ro): le s pisanjem
 	pick(agent && commands, "shell")
 	if agent && commands {
 		deny = append(deny, "shell(gh:*)", "shell(security:*)")
@@ -280,6 +282,40 @@ func copilotArgs(prompt string, extraDirs []string, agent bool, model string, wr
 		a = append(a, "--deny-tool", t)
 	}
 	return a
+}
+
+// copilotTokenVars: žetoni, ki jih copilot sprejme iz okolja; ukazom lupine jih skrije (--secret-env-vars).
+var copilotTokenVars = []string{"COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"}
+
+// copilotGH: GitHub CLI (var: testi podtaknejo lažnega).
+var copilotGH = func() string { p, _ := exec.LookPath("gh"); return p }
+
+// copilotToken: žeton GitHub CLI (»gh auth token«, zunaj bwrap) za copilot pod bwrap, ki skrije ~/.config/gh, shrambo
+// ključev in D-Bus (na Macu pod sandbox-exec copilot 1.0.107: »No authentication information found«). "", če ima router
+// žeton že v okolju (ta gre copilotu naprej), ali brez gh oz. prijave.
+func copilotToken(ctx context.Context) string {
+	for _, v := range copilotTokenVars {
+		if os.Getenv(v) != "" {
+			return ""
+		}
+	}
+	gh := copilotGH()
+	if gh == "" {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, gh, "auth", "token", "--hostname", "github.com")
+	cmd.Env = append(os.Environ(), "GH_PROMPT_DISABLED=1", "GH_NO_UPDATE_NOTIFIER=1")
+	out, err := cmd.Output()
+	t := strings.TrimSpace(string(out))
+	bad := strings.IndexFunc(t, func(r rune) bool {
+		return r != '_' && (r < '0' || r > '9') && (r < 'a' || r > 'z') && (r < 'A' || r > 'Z')
+	})
+	if err != nil || t == "" || len(t) > 255 || bad >= 0 {
+		return ""
+	}
+	return t
 }
 
 // copilotEvent: dogodek »--output-format json« (JSONL): odgovor (assistant.message z vsebino) ali korak (tool.*start).
@@ -493,6 +529,11 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			}
 			home, _ := os.UserHomeDir()
 			m.ro = []string{filepath.Join(home, ".cache", "copilot")} // razširjen paket (Linux, pod bwrap)
+			if runtime.GOOS == "linux" {
+				if t := copilotToken(ctx); t != "" {
+					m.env = []string{"COPILOT_GITHUB_TOKEN=" + t}
+				}
+			}
 			args := copilotArgs(prompt, extra, agent, model, write, ac.Commands, ac.Network, resume)
 			var answer string
 			err = s.runAgentProcess(ctx, r, exe, args, m, dir, "", func(line []byte) {
@@ -658,7 +699,7 @@ func (s *server) runAgentProcess(ctx context.Context, r *req, exe string, args [
 	name, args := agentWrap(exe, args, m) // Linux: domača mapa in mapa nastavitev skriti (bwrap), če je na voljo
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
-	cmd.Env = agentEnv(os.Environ())
+	cmd.Env = append(agentEnv(os.Environ()), m.env...)
 	if m.state != "" {
 		cmd.Env = append(cmd.Env, m.envVar+"="+m.state)
 	}
