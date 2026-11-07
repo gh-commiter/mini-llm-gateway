@@ -383,7 +383,11 @@ func TestSyncPutWritesWithoutTheHubLock(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	o := syncPutWrite
 	t.Cleanup(func() { syncPutWrite = o })
-	syncPutWrite = func(full string, d []byte, m int64, x, k bool) error { close(entered); <-release; return o(full, d, m, x, k) }
+	syncPutWrite = func(full string, d []byte, m int64, x, k bool) error {
+		close(entered)
+		<-release
+		return o(full, d, m, x, k)
+	}
 	done := make(chan int)
 	go func() { done <- h.syncPut(key, "a.txt", data, "dev") }()
 	<-entered
@@ -397,5 +401,32 @@ func TestSyncPutWritesWithoutTheHubLock(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(filepath.Join(copyDir, "a.txt")); string(b) != "hello" {
 		t.Fatalf("copy: %q", b)
+	}
+}
+
+// #1, #9: kopije, neuporabljene 14 dni, se izbrišejo (ne dejavne, ne runs); manifest nad mejo je zavrnjen.
+func TestSyncCopiesExpireAndQuota(t *testing.T) {
+	root := t.TempDir()
+	old := time.Now().Add(-15 * 24 * time.Hour)
+	for _, p := range []string{"dev/old", "dev/fresh", "dev/active", "runs/clone"} {
+		os.MkdirAll(filepath.Join(root, p), 0o700)
+	}
+	for _, p := range []string{"dev/old", "dev/active", "runs/clone"} {
+		os.Chtimes(filepath.Join(root, p), old, old)
+	}
+	touchUsed(filepath.Join(root, "dev", "fresh"))
+	os.WriteFile(filepath.Join(root, "dev", "old.used"), nil, 0o600)
+	os.Chtimes(filepath.Join(root, "dev", "old.used"), old, old)
+	removeOldCopies(root, map[string]bool{filepath.Join(root, "dev", "active"): true}, time.Now())
+	if _, err := os.Stat(filepath.Join(root, "dev", "old")); err == nil {
+		t.Fatal("old copy kept")
+	}
+	for _, p := range []string{"dev/fresh", "dev/active", "runs/clone"} {
+		if _, err := os.Stat(filepath.Join(root, p)); err != nil {
+			t.Fatalf("%s removed", p)
+		}
+	}
+	if syncOverQuota([]syncEntry{{Path: "a", Size: 10}}) != "" || !strings.Contains(syncOverQuota([]syncEntry{{Path: "b", Size: maxSyncBytes + 1}}), "too large") {
+		t.Fatal("quota")
 	}
 }

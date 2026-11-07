@@ -325,6 +325,10 @@ builds then work on the gateway's local disk.
   as `<name>.minigw-conflict`.
 - **Read-only:** with `--minigw-ro` nothing comes back.
 - **The gateway copy is kept between requests,** so the next sync and the next build are incremental.
+  A copy that no session used for 14 days is deleted. A folder with more than 100 000 files or 8 GB is refused
+  (add build output and large data to `.gitignore`). Copies of all devices are in the gateway's Scratch folder: agents
+  that can read every file of the gateway's user (Codex and Grok on the Mac, any agent on Windows) can read them
+  too. Keep Scratch on APFS (or NTFS, ext4): exFAT ignores the folder's private permissions.
 - **Agents in the same folder run one after another.**
 
 **Worktree: a git repository, results as branches.** `minigw --minigw-work=worktree …` (or `MINIGW_WORK=worktree`) sends

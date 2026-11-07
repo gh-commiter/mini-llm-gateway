@@ -473,7 +473,12 @@ func (s *shareClient) syncPush(k string) bool {
 		Kept []string `json:"kept"`
 	}
 	if st != 200 || json.Unmarshal(data, &r) != nil || r.Need == nil {
-		s.note(fmt.Sprintf("sync to the gateway failed (HTTP %d)", st))
+		var e struct{ Error struct{ Message string } }
+		if json.Unmarshal(data, &e); e.Error.Message != "" {
+			s.note("sync to the gateway failed: " + e.Error.Message)
+		} else {
+			s.note(fmt.Sprintf("sync to the gateway failed (HTTP %d)", st))
+		}
 		return false
 	}
 	// Neuspešen prenos in »kept« (router je obdržal agentovo različico): stanje poti ostane staro, da prevzem zazna spor.

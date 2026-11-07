@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -35,6 +36,77 @@ type shareHub struct {
 	busy      map[string]chan struct{} // ena zahteva agenta naenkrat na kopijo
 	refused   map[string]bool          // seje, ki so želele način direct
 	reaper    sync.Once
+	expired   time.Time // zadnje čiščenje starih kopij (#1, #9)
+}
+
+// #1, #9: meje kopije (manifest odjemalca) in življenjska doba neuporabljenih kopij.
+const (
+	maxSyncFiles = 100_000
+	maxSyncBytes = int64(8) << 30
+	copyLifetime = 14 * 24 * time.Hour
+)
+
+// syncOverQuota: "" = v mejah, sicer sporočilo za odjemalca.
+func syncOverQuota(files []syncEntry) string {
+	var bytes int64
+	for _, f := range files {
+		bytes += max(0, f.Size)
+	}
+	if len(files) <= maxSyncFiles && bytes <= maxSyncBytes {
+		return ""
+	}
+	return fmt.Sprintf("The folder is too large to sync (%d files, %d MB; the limit is %d files and %d GB): "+
+		"add build output and large data to .gitignore, or use a smaller folder", len(files), bytes>>20, maxSyncFiles, maxSyncBytes>>30)
+}
+
+// touchUsed: oznaka rabe <kopija>.used ob kopiji (v kopiji bi se sinhronizirala nazaj).
+func touchUsed(copyDir string) {
+	m := copyDir + ".used"
+	if f, err := os.Create(m); err == nil {
+		f.Close()
+	}
+}
+
+// expireCopies: največ enkrat na dan izbriše kopije (sync/<naprava>/<mapa>), ki jih 14 dni ni uporabila nobena seja.
+func (h *shareHub) expireCopies(root string, now time.Time) {
+	h.mu.Lock()
+	if now.Sub(h.expired) < 24*time.Hour {
+		h.mu.Unlock()
+		return
+	}
+	h.expired = now
+	active := map[string]bool{}
+	for _, s := range h.bySession {
+		active[filepath.Clean(s.copy)] = true
+	}
+	h.mu.Unlock()
+	removeOldCopies(root, active, now)
+}
+
+func removeOldCopies(root string, active map[string]bool, now time.Time) {
+	owners, _ := os.ReadDir(root)
+	for _, o := range owners {
+		if !o.IsDir() || o.Name() == "runs" {
+			continue
+		}
+		copies, _ := os.ReadDir(filepath.Join(root, o.Name()))
+		for _, c := range copies {
+			p := filepath.Join(root, o.Name(), c.Name())
+			if !c.IsDir() || active[filepath.Clean(p)] { // c.IsDir: povezava ni mapa
+				continue
+			}
+			used := now
+			if st, err := os.Stat(p + ".used"); err == nil {
+				used = st.ModTime()
+			} else if st, err := os.Lstat(p); err == nil {
+				used = st.ModTime()
+			}
+			if now.Sub(used) > copyLifetime {
+				os.RemoveAll(p)
+				os.Remove(p + ".used")
+			}
+		}
+	}
 }
 
 func newShareHub() *shareHub {
@@ -305,6 +377,7 @@ func (h *shareHub) syncManifest(key string, files []syncEntry, execKnown bool, o
 	}
 	s.lastSeen = time.Now()
 	s.execKnown = execKnown
+	touchUsed(s.copy)
 	prev := s.state
 	h.mu.Unlock()
 

@@ -1407,3 +1407,21 @@ final class FakeMinigw: @unchecked Sendable {
     let (files, skipped) = Sync.scan(root)
     #expect(!files.keys.contains { $0.contains("private-name") } && !skipped.contains { $0.contains("private-name") })
 }
+
+/// #1, #9: kopije, neuporabljene 14 dni, se izbrišejo (ne dejavne, ne runs); manifest nad mejo je zavrnjen.
+@Test func syncCopiesExpireAndQuota() throws {
+    let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("p1-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let fm = FileManager.default, old = Date().addingTimeInterval(-15 * 86400)
+    for p in ["dev/old", "dev/fresh", "dev/active", "runs/clone"] { try fm.createDirectory(at: root.appendingPathComponent(p), withIntermediateDirectories: true) }
+    for p in ["dev/old", "dev/active", "runs/clone"] { try fm.setAttributes([.modificationDate: old], ofItemAtPath: root.appendingPathComponent(p).path) }
+    ShareHub.touchUsed(root.appendingPathComponent("dev/fresh"))
+    fm.createFile(atPath: root.appendingPathComponent("dev/old.used").path, contents: nil)
+    try fm.setAttributes([.modificationDate: old], ofItemAtPath: root.appendingPathComponent("dev/old.used").path)
+    ShareHub.removeOld(root, active: [root.appendingPathComponent("dev/active").standardizedFileURL.path], now: Date())
+    #expect(!fm.fileExists(atPath: root.appendingPathComponent("dev/old").path) && !fm.fileExists(atPath: root.appendingPathComponent("dev/old.used").path))
+    for p in ["dev/fresh", "dev/active", "runs/clone"] { #expect(fm.fileExists(atPath: root.appendingPathComponent(p).path), "\(p)") }
+
+    #expect(Sync.overQuota([Sync.Entry(path: "a", size: 10, mtime: 0, sha256: "x")]) == nil)
+    #expect(Sync.overQuota([Sync.Entry(path: "big", size: Sync.maxBytes + 1, mtime: 0, sha256: "x")])?.contains("too large") == true)
+}

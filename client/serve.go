@@ -1038,6 +1038,10 @@ func (s *server) route(w http.ResponseWriter, r *req) (int, string) {
 		if json.Unmarshal(r.body, &files) != nil {
 			return writeError(w, r.rid, 400, "Bad manifest"), ""
 		}
+		if why := syncOverQuota(files); why != "" { // #1, #9: odjemalec ne napolni diska
+			return writeError(w, r.rid, 413, why), ""
+		}
+		s.hub.expireCopies(s.conf().scratch("sync"), time.Now())
 		need, kept, ok := s.hub.syncManifest(key, files, r.h("x-sync-exec") != "none", dev)
 		if !ok {
 			return writeError(w, r.rid, 404, "No such share"), ""

@@ -85,6 +85,41 @@ public actor ShareHub {
     @TaskLocal public static var agent: String?
     private var runs: [String: Run] = [:]
     static let maxRunsPerCopy = 4
+
+    /// #1, #9: kopije (scratch/sync/<naprava>/<mapa>), ki jih 14 dni ni uporabila nobena seja, se izbrišejo; oznaka
+    /// rabe je datoteka <kopija>.used ob kopiji (v kopiji bi se sinhronizirala nazaj). Največ enkrat na dan.
+    static let copyLifetime: TimeInterval = 14 * 86400
+    private var lastExpire = Date.distantPast
+
+    static func touchUsed(_ copy: URL) {
+        let marker = copy.appendingPathExtension("used")
+        if !FileManager.default.createFile(atPath: marker.path, contents: nil) { return }
+    }
+
+    func expireCopies(_ root: URL, now: Date = Date(), force: Bool = false) async {
+        guard force || now.timeIntervalSince(lastExpire) > 86400 else { return }
+        lastExpire = now
+        let active = Set(bySession.values.compactMap { $0.copy?.standardizedFileURL.path })
+        await Task.detached { Self.removeOld(root, active: active, now: now) }.value
+    }
+
+    static func removeOld(_ root: URL, active: Set<String>, now: Date) {
+        let fm = FileManager.default
+        for owner in (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [] where owner.lastPathComponent != "runs" {
+            for copy in (try? fm.contentsOfDirectory(at: owner, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey])) ?? [] {
+                guard copy.pathExtension != "used", (try? copy.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true,
+                      (try? copy.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true,
+                      !active.contains(copy.standardizedFileURL.path) else { continue }
+                let marker = copy.appendingPathExtension("used")
+                let used = ((try? fm.attributesOfItem(atPath: marker.path))?[.modificationDate] as? Date)
+                    ?? ((try? fm.attributesOfItem(atPath: copy.path))?[.modificationDate] as? Date) ?? now
+                if now.timeIntervalSince(used) > copyLifetime {
+                    try? fm.removeItem(at: copy)
+                    try? fm.removeItem(at: marker)
+                }
+            }
+        }
+    }
     var slots: [String: Slot] = [:]      // worktree: »<seja>|<agent>|<n>« → klon
     var runSlot: [String: String] = [:]  // worktree: izvajanje → mesto
 
@@ -433,6 +468,7 @@ public actor ShareHub {
     func syncManifest(key: String, _ files: [Sync.Entry], execKnown: Bool = true, device: String? = nil) async -> (need: [String], kept: [String])? {
         guard let s = share(key: key, device: device), let copy = s.copy else { return nil }
         s.lastSeen = Date()
+        Self.touchUsed(copy)
         s.execKnown = execKnown
         try? FileManager.default.createDirectory(at: copy, withIntermediateDirectories: true)
         let prev = s.state ?? [:]

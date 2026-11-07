@@ -291,6 +291,10 @@ public final class Router: Sendable {
             guard let files = try? JSONDecoder().decode([Sync.Entry].self, from: req.body) else {
                 return (await error(400, "invalid_request_error", "Bad manifest", rid: rid, writer: writer), nil, "share")
             }
+            if let why = Sync.overQuota(files) {  // #1, #9: odjemalec ne napolni diska routerja
+                return (await error(413, "invalid_request_error", why, rid: rid, writer: writer), nil, "share")
+            }
+            await Self.shares.expireCopies(config.scratch("sync"))  // #1, #9: največ enkrat na dan
             guard let r = await Self.shares.syncManifest(key: req.header("x-share-key") ?? "", files,
                                                          execKnown: req.header("x-sync-exec") != "none", device: req.device?.id) else {  // Windows
                 return (await error(404, "not_found_error", "No such share", rid: rid, writer: writer), nil, "share")

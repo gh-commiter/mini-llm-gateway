@@ -131,6 +131,15 @@ public enum Sync {
         return (files, skipped)
     }
 
+    /// #1, #9: največ datotek in bajtov na kopijo (manifest odjemalca); nil = v mejah, sicer sporočilo.
+    static let maxFiles = 100_000, maxBytes: Int64 = 8 << 30
+    static func overQuota(_ files: [Entry]) -> String? {
+        let bytes = files.reduce(Int64(0)) { $0 + max(0, $1.size) }
+        guard files.count > maxFiles || bytes > maxBytes else { return nil }
+        return "The folder is too large to sync (\(files.count) files, \(bytes >> 20) MB; the limit is \(maxFiles) files and \(maxBytes >> 30) GB): "
+            + "add build output and large data to .gitignore, or use a smaller folder"
+    }
+
     /// #23: imena v mapi kopije ali klona, odprte z O_NOFOLLOW_ANY: mapa, ki jo ostanek agenta po razvrstitvi zamenja s
     /// povezavo (npr. na domačo mapo), se ne odpre, zato se ne izpiše drevo zunaj korena.
     static func list(_ dir: URL) -> [String]? {

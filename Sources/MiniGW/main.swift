@@ -231,7 +231,10 @@ final class ShareClient: @unchecked Sendable {
         guard let body = try? JSONEncoder().encode(Array(files.values)) else { return false }
         let (s, d) = call(c, "POST", "/minigw/sync/manifest", ["x-share-key": k, "content-type": "application/json"], body, timeout: 300)
         let reply = s == 200 ? d.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } : nil
-        guard let need = reply?["need"] as? [String] else { note("sync to the gateway failed (HTTP \(s))"); return false }
+        guard let need = reply?["need"] as? [String] else {
+            let msg = d.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }.flatMap { ($0["error"] as? [String: Any])?["message"] as? String }
+            note(msg.map { "sync to the gateway failed: \($0)" } ?? "sync to the gateway failed (HTTP \(s))"); return false
+        }
         // Neuspešen prenos in »kept« (router je obdržal agentovo različico): stanje poti ostane staro, da prevzem zazna spor.
         var next = files
         for p in reply?["kept"] as? [String] ?? [] {
