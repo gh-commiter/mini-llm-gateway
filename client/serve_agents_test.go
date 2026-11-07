@@ -103,7 +103,7 @@ func TestCodexAndGrokThroughRouter(t *testing.T) {
 	codex := filepath.Join(bin, "codex")
 	os.WriteFile(codex, []byte(`#!/bin/sh
 if [ "$1" = debug ]; then echo '{"models":[{"slug":"gpt-x","display_name":"GPT X","context_window":128000}]}'; exit 0; fi
-printf '%s\n' "$@" > "`+argsFile+`"
+printf '%s\n' "$@" "home=$CODEX_HOME" > "`+argsFile+`"
 out=""; prev=""
 for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done
 cat > /dev/null
@@ -120,6 +120,8 @@ echo '{"type":"end","sessionId":"s9"}'
 `), 0o755)
 	s, _, base := liveServer(t, func(c *serveConfig) {
 		c.AllowUnsandboxedBash = true // Linux brez bwrap (Docker): sicer Codex in Grok ne tečeta
+		t.Setenv("CODEX_HOME", t.TempDir())
+		t.Setenv("GROK_HOME", t.TempDir())
 		c.Codex = agentCLI{Enabled: true, Executable: codex}
 		c.Grok = agentCLI{Enabled: true, Executable: grok, Models: []string{}}
 	})
@@ -151,7 +153,8 @@ echo '{"type":"end","sessionId":"s9"}'
 		return st, string(data)
 	}
 	args := func() string { b, _ := os.ReadFile(argsFile); return string(b) }
-	if st, b := chat("claude-codex-gpt-x", false, false); st != 200 || !strings.Contains(b, "codex says hi") || !strings.Contains(args(), "read-only") {
+	if st, b := chat("claude-codex-gpt-x", false, false); st != 200 || !strings.Contains(b, "codex says hi") || !strings.Contains(args(), "read-only") ||
+		!strings.Contains(args(), "home="+s.conf().Scratch+"/state/") {
 		t.Fatalf("codex chat: %d %s %q", st, b, args())
 	}
 	if st, b := chat("claude-codex", false, true); st != 200 || !strings.Contains(args(), "workspace-write") || !strings.Contains(args(), "network_access=false") {
@@ -205,5 +208,37 @@ func TestGatewayDoesNotShadowAgents(t *testing.T) {
 	}
 	if shadowsCLI("claude-codexy") || shadowsCLI("qwen") {
 		t.Error("too broad")
+	}
+}
+
+// N3: vsaka naprava ima svoje stanje CLI; prijava je povezava na pravo datoteko in se po zamenjavi vrne vanjo.
+func TestAgentStatePerDevice(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no per-device state on Windows")
+	}
+	real, scratch := t.TempDir(), t.TempDir()
+	t.Setenv("CODEX_HOME", real)
+	os.WriteFile(real+"/auth.json", []byte("OLD"), 0o600)
+	a, files, err := agentState(scratch, codexKind, "deviceA")
+	b, _, _ := agentState(scratch, codexKind, "deviceB")
+	if err != nil || a == b || !strings.HasPrefix(a, scratch+"/state/") || len(files) != 1 || files[0] != real+"/auth.json" {
+		t.Fatalf("state: %s %s %v %v", a, b, files, err)
+	}
+	if l, _ := os.Readlink(a + "/auth.json"); l != real+"/auth.json" {
+		t.Fatalf("link: %q", l)
+	}
+	os.Remove(a + "/auth.json") // CLI je zapisal novo datoteko namesto povezave
+	os.WriteFile(a+"/auth.json", []byte("NEW"), 0o600)
+	restoreAuth(a, codexKind)
+	if got, _ := os.ReadFile(real + "/auth.json"); string(got) != "NEW" {
+		t.Fatalf("not restored: %q", got)
+	}
+	if l, _ := os.Readlink(a + "/auth.json"); l != real+"/auth.json" {
+		t.Fatal("link not back")
+	}
+	env := strings.Join(agentEnv([]string{"SSH_AUTH_SOCK=/s", "GPG_AGENT_INFO=x", "GNOME_KEYRING_CONTROL=y", "DBUS_SESSION_BUS_ADDRESS=z",
+		"CODEX_HOME=/h", "ANTHROPIC_API_KEY=k", "PATH=/bin"}), " ")
+	if env != "PATH=/bin" {
+		t.Fatalf("env: %s", env)
 	}
 }

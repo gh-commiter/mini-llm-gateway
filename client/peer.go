@@ -10,6 +10,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"net"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -20,8 +22,26 @@ const agentReaperCmd = "__minigw-agent"
 // agentMounts: kaj Codex ali Grok pod bwrap še vidita (Linux): mapa nastavitev je vedno skrita.
 type agentMounts struct {
 	cfgDir string
-	state  string   // ~/.codex ali ~/.grok (prijava, seje): branje in pisanje
+	state  string   // stanje CLI te naprave (<scratch>/state/<naprava>/codex): branje in pisanje
+	envVar string   // CODEX_HOME ali GROK_HOME (kaže na state)
+	files  []string // prave datoteke prijave (~/.codex/auth.json …), na katere kaže stanje: branje in pisanje
 	rw     []string // kopija mape, začasna mapa zahteve, dovoljene mape
+}
+
+// packageRoot: mapa, ki jo CLI pod domačo mapo potrebuje: različica nvm (~/.nvm/versions/node/<v>), sicer najbližja
+// mapa s package.json nad programom (paket npm), sicer mapa programa.
+func packageRoot(home, exe string) string {
+	if rel, err := filepath.Rel(home, exe); err == nil {
+		if p := strings.Split(filepath.ToSlash(rel), "/"); len(p) > 4 && p[0] == ".nvm" && p[1] == "versions" && p[2] == "node" {
+			return filepath.Join(home, ".nvm", "versions", "node", p[3])
+		}
+	}
+	for d := filepath.Dir(exe); d != home && strings.HasPrefix(d, home+string(filepath.Separator)); d = filepath.Dir(d) {
+		if _, err := os.Stat(filepath.Join(d, "package.json")); err == nil {
+			return d
+		}
+	}
+	return filepath.Dir(exe)
 }
 
 // bwrapArgs: vse kot je (/), nato prazna domača mapa in mapa nastavitev, potrebne mape nazaj, skrite vtičnice.
@@ -30,7 +50,7 @@ func bwrapArgs(home, cfgDir string, ro, rw, hideFiles, hideDirs []string) []stri
 	for _, d := range ro {
 		a = append(a, "--ro-bind", d, d)
 	}
-	for _, d := range rw {
+	for _, d := range rw { // mape ali posamezne datoteke (prijava CLI)
 		a = append(a, "--bind", d, d)
 	}
 	a = append(a, "--tmpfs", cfgDir)

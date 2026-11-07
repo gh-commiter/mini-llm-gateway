@@ -178,6 +178,12 @@ func TestBwrapArgs(t *testing.T) {
 // H1.5: na Linuxu z bwrap Codex in Grok ne vidita mape nastavitev.
 func TestAgentWrapHidesConfig(t *testing.T) {
 	home, _ := os.UserHomeDir()
+	// N1: v PATH je točna mapa ~/.mgwtest/bin; ostalo v ~/.mgwtest in ~/.mgwtest/bin/.ssh ostane skrito.
+	os.MkdirAll(home+"/.mgwtest/bin/.ssh", 0o700)
+	defer os.RemoveAll(home + "/.mgwtest")
+	os.WriteFile(home+"/.mgwtest/bin/tool", []byte("TOOL"), 0o600)
+	os.WriteFile(home+"/.mgwtest/other", []byte("OTHER"), 0o600)
+	t.Setenv("PATH", os.Getenv("PATH")+":"+home+"/.mgwtest/bin")
 	cfg, _ := os.MkdirTemp(home, "cfg") // pod domačo, kot privzeta mapa nastavitev
 	defer os.RemoveAll(cfg)
 	os.WriteFile(cfg+"/serve.json", []byte("SECRET"), 0o600)
@@ -185,13 +191,32 @@ func TestAgentWrapHidesConfig(t *testing.T) {
 	defer os.Remove(home + "/.minigw-test-private")
 	copyDir := t.TempDir()
 	os.WriteFile(copyDir+"/src.txt", []byte("COPY"), 0o600)
-	name, args := agentWrap("/bin/sh", []string{"-c", "cat " + cfg + "/serve.json " + home + "/.minigw-test-private " + copyDir + "/src.txt; echo end"},
+	name, args := agentWrap("/bin/sh", []string{"-c", "cat " + cfg + "/serve.json " + home + "/.minigw-test-private " + copyDir + "/src.txt " +
+		home + "/.mgwtest/bin/tool " + home + "/.mgwtest/other; ls -A " + home + "/.mgwtest/bin/.ssh; echo end"},
 		agentMounts{cfgDir: cfg, rw: []string{copyDir}})
 	if name == "/bin/sh" {
 		t.Skip("no usable bwrap (Linux with user namespaces)")
 	}
 	out, _ := exec.Command(name, args...).CombinedOutput()
-	if strings.Contains(string(out), "SECRET") || strings.Contains(string(out), "PRIVATE") || !strings.Contains(string(out), "COPY") || !strings.Contains(string(out), "end") {
+	if strings.Contains(string(out), "SECRET") || strings.Contains(string(out), "PRIVATE") || !strings.Contains(string(out), "COPY") || !strings.Contains(string(out), "end") ||
+		!strings.Contains(string(out), "TOOL") || strings.Contains(string(out), "OTHER") {
 		t.Fatalf("home or config visible under bwrap: %q", out)
+	}
+}
+
+// N1: paket CLI pod domačo mapo: različica nvm, sicer mapa s package.json, sicer mapa programa.
+func TestPackageRoot(t *testing.T) {
+	home := t.TempDir()
+	if r := packageRoot(home, home+"/.nvm/versions/node/v22.1.0/lib/node_modules/@openai/codex/bin/codex.js"); r != home+"/.nvm/versions/node/v22.1.0" {
+		t.Fatalf("nvm: %s", r)
+	}
+	pkg := home + "/.npm-global/lib/node_modules/@openai/codex"
+	os.MkdirAll(pkg+"/bin", 0o755)
+	os.WriteFile(pkg+"/package.json", []byte("{}"), 0o644)
+	if r := packageRoot(home, pkg+"/bin/codex.js"); r != pkg {
+		t.Fatalf("npm: %s", r)
+	}
+	if r := packageRoot(home, home+"/.grok/bin/grok"); r != home+"/.grok/bin" {
+		t.Fatalf("plain: %s", r)
 	}
 }

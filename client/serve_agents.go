@@ -10,6 +10,8 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -387,11 +389,13 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			return "", err
 		}
 		defer os.RemoveAll(tmp)
-		home, _ := os.UserHomeDir()
-		m := agentMounts{cfgDir: s.cfgDir, state: filepath.Join(home, "."+k.bin), rw: append([]string{dir, tmp}, extra...)}
-		if v := os.Getenv("CODEX_HOME"); k.name == "codex" && v != "" {
-			m.state = v
+		// N3: vsaka naprava ima svoje stanje CLI (seje, zgodovina); prijava je povezava na pravo datoteko.
+		state, files, err := agentState(c.Scratch, k, r.owner())
+		if err != nil {
+			return "", err
 		}
+		defer restoreAuth(state, k)
+		m := agentMounts{cfgDir: s.cfgDir, state: state, envVar: strings.ToUpper(k.bin) + "_HOME", files: files, rw: append([]string{dir, tmp}, extra...)}
 		if k.name == "codex" {
 			out := filepath.Join(tmp, "codex.txt")
 			args := codexArgs(dir, extra, agent, out, model, write, ac.Network, resume)
@@ -448,6 +452,87 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 	})
 }
 
+// agentEnv: okolje za Codex in Grok: brez spremenljivk, ki bi notranji CLI usmerile nazaj v ta router, in brez
+// vtičnic agentov ključev in seje D-Bus (N2: SSH, GPG, GNOME Keyring, Secret Service); CODEX_HOME in GROK_HOME
+// nastavi runAgentProcess.
+func agentEnv(env []string) []string {
+	var out []string
+	for _, e := range env {
+		name, _, _ := strings.Cut(e, "=")
+		if strings.HasPrefix(name, "ANTHROPIC_") || strings.HasPrefix(name, "CLAUDE_CODE_") || slices.Contains([]string{"CLAUDECODE",
+			"DBUS_SESSION_BUS_ADDRESS", "SSH_AUTH_SOCK", "GPG_AGENT_INFO", "GNOME_KEYRING_CONTROL", "CODEX_HOME", "GROK_HOME"}, name) {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// agentAuthFiles: datoteke v pravi mapi CLI, na katere kaže stanje naprave (prijava, nastavitve, zaklep osvežitve).
+func agentAuthFiles(k agentKind) (real string, names []string) {
+	home, _ := os.UserHomeDir()
+	if k.name == "codex" {
+		if real = os.Getenv("CODEX_HOME"); real == "" {
+			real = filepath.Join(home, ".codex")
+		}
+		return real, []string{"auth.json", "config.toml"}
+	}
+	if real = os.Getenv("GROK_HOME"); real == "" {
+		real = filepath.Join(home, ".grok")
+	}
+	return real, []string{"auth.json", "auth.json.lock", "config.toml"}
+}
+
+// agentState: <scratch>/state/<naprava>/<cli> s povezavami na prave datoteke prijave (Codex piše auth.json na
+// mestu, skozi povezavo: preverjeno s codex 0.167). Vrne mapo in prave datoteke za bwrap.
+func agentState(scratch string, k agentKind, owner string) (string, []string, error) {
+	if runtime.GOOS == "windows" { // povezave tam zahtevajo pravice; agenti tam tako ali tako tečejo le z izrecnim dovoljenjem
+		return "", nil, nil
+	}
+	sum := sha256.Sum256([]byte(owner))
+	dir := filepath.Join(scratch, "state", hex.EncodeToString(sum[:8]), k.name)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", nil, err
+	}
+	real, names := agentAuthFiles(k)
+	var files []string
+	for _, n := range names {
+		src, dst := filepath.Join(real, n), filepath.Join(dir, n)
+		if _, err := os.Stat(src); err != nil {
+			continue
+		}
+		if l, err := os.Readlink(dst); err != nil || l != src {
+			if fi, err := os.Lstat(dst); err == nil && fi.Mode().IsRegular() {
+				continue // CLI jo je zamenjal: restoreAuth jo prenese nazaj
+			}
+			os.Remove(dst)
+			if err := os.Symlink(src, dst); err != nil {
+				return "", nil, err
+			}
+		}
+		files = append(files, src)
+	}
+	return dir, files, nil
+}
+
+// restoreAuth: če je CLI auth.json zamenjal (zapis z rename namesto skozi povezavo), je ta novejša: v pravo mapo in
+// spet povezava, da prava prijava ne zastari (osvežitveni žetoni se lahko zamenjajo).
+func restoreAuth(dir string, k agentKind) {
+	if dir == "" {
+		return
+	}
+	real, _ := agentAuthFiles(k)
+	dst, src := filepath.Join(dir, "auth.json"), filepath.Join(real, "auth.json")
+	if fi, err := os.Lstat(dst); err != nil || !fi.Mode().IsRegular() {
+		return
+	}
+	if b, err := os.ReadFile(dst); err == nil && writeFileAtomic(src, b) == nil {
+		os.Chmod(src, 0o600)
+		os.Remove(dst)
+		os.Symlink(src, dst)
+	}
+}
+
 // agentTimeout: najdaljši tek Codex ali Grok za eno zahtevo.
 var agentTimeout = 30 * time.Minute
 
@@ -457,11 +542,9 @@ func (s *server) runAgentProcess(ctx context.Context, r *req, exe string, args [
 	name, args := agentWrap(exe, args, m) // Linux: domača mapa in mapa nastavitev skriti (bwrap), če je na voljo
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
-	for _, e := range os.Environ() { // notranji agent ne kliče nazaj tega routerja; brez seje D-Bus (Secret Service)
-		if !strings.HasPrefix(e, "ANTHROPIC_") && !strings.HasPrefix(e, "CLAUDE_CODE_") && !strings.HasPrefix(e, "CLAUDECODE=") &&
-			(runtime.GOOS != "linux" || !strings.HasPrefix(e, "DBUS_SESSION_BUS_ADDRESS=")) {
-			cmd.Env = append(cmd.Env, e)
-		}
+	cmd.Env = agentEnv(os.Environ())
+	if m.state != "" {
+		cmd.Env = append(cmd.Env, m.envVar+"="+m.state)
 	}
 	cmd.Stdin = strings.NewReader(stdin)
 	stderr := &tailBuffer{}

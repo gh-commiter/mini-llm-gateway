@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -32,14 +31,15 @@ func startAgent(cmd *exec.Cmd) error {
 	return cmd.Start()
 }
 
-// agentReaperMain: pomočnik (glej startAgent): args = program in argumenti agenta.
+// agentReaperMain: pomočnik (glej startAgent): args = program in argumenti agenta. Žetev in pobijanje sta v isti
+// zanki (N5): otrok, ki ga ubijemo, še ni požet, zato njegov PID ne more pripadati drugemu procesu.
 func agentReaperMain(args []string) {
 	if len(args) == 0 {
 		os.Exit(2)
 	}
 	syscall.RawSyscall(syscall.SYS_PRCTL, 36 /* PR_SET_CHILD_SUBREAPER */, 1, 0)
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT)
+	sigs := make(chan os.Signal, 8)
+	signal.Notify(sigs, syscall.SIGCHLD, syscall.SIGTERM, syscall.SIGINT) // pred zagonom: noben SIGCHLD ne uide
 	exe, err := exec.LookPath(args[0])
 	var pid int
 	if err == nil {
@@ -50,35 +50,34 @@ func agentReaperMain(args []string) {
 		fmt.Fprintln(os.Stderr, "minigw: cannot start "+args[0]+": "+err.Error())
 		os.Exit(127)
 	}
-	var stop atomic.Bool
-	go func() {
-		<-sigs
-		stop.Store(true)
-		syscall.Kill(-pid, syscall.SIGKILL)
-		killChildren()
-	}()
-	code := 0
+	code, mainDone, stop := 0, false, false
 	for {
-		var ws syscall.WaitStatus
-		p, err := syscall.Wait4(-1, &ws, 0, nil)
-		if err == syscall.EINTR {
-			continue
-		}
-		if err != nil { // ECHILD: nobenega potomca več
-			break
-		}
-		if p == pid {
-			stop.Store(true)
-			if code = ws.ExitStatus(); ws.Signaled() {
-				code = 128 + int(ws.Signal())
+		for { // požanji vse končane (WNOHANG); ECHILD = nobenega potomca več
+			var ws syscall.WaitStatus
+			p, err := syscall.Wait4(-1, &ws, syscall.WNOHANG, nil)
+			if err == syscall.ECHILD {
+				os.Exit(code)
 			}
-			syscall.Kill(-pid, syscall.SIGKILL)
+			if err != nil || p <= 0 {
+				break
+			}
+			if p == pid {
+				mainDone = true
+				if code = ws.ExitStatus(); ws.Signaled() {
+					code = 128 + int(ws.Signal())
+				}
+			}
 		}
-		if stop.Load() {
-			killChildren() // osiroteli so zdaj otroci pomočnika (prevesijo se ob izhodu starša, pred žetvijo)
+		if stop && !mainDone {
+			syscall.Kill(-pid, syscall.SIGKILL) // skupina agenta; vodja še ni požet
+		}
+		if stop || mainDone {
+			killChildren() // osiroteli so otroci pomočnika (prevesijo se ob izhodu starša, pred žetvijo)
+		}
+		if sig := <-sigs; sig != syscall.SIGCHLD {
+			stop = true
 		}
 	}
-	os.Exit(code)
 }
 
 // killChildren: SIGKILL vsem otrokom tega procesa (iz /proc/*/stat).
@@ -117,9 +116,10 @@ func bwrapReady(cfgDir string) string {
 // agentSandboxed: Codex in Grok sta zaprta pred skrivnostmi routerja le pod bwrap; sicer le z izrecnim dovoljenjem.
 func agentSandboxed(cfgDir string) bool { return bwrapReady(cfgDir) != "" }
 
-// agentWrap: Codex ali Grok pod bwrap (R3): domača mapa in mapa nastavitev sta prazna, nazaj pridejo le mape s
-// programi (samo za branje), mapa CLI (~/.codex, ~/.grok: prijava, seje), kopija mape in dovoljene mape. Skrita sta
-// tudi D-Bus seje (Secret Service s ključi prehodov) in /tmp/dbus-*. Poti brez simbolnih povezav (R5).
+// agentWrap: Codex ali Grok pod bwrap (R3, N1, N2): domača mapa in mapa nastavitev sta prazni; nazaj pridejo le
+// točne mape s programi iz PATH in paket CLI (samo za branje), stanje CLI te naprave in njene datoteke prijave,
+// kopija mape, začasna mapa zahteve in dovoljene mape. Skriti so XDG_RUNTIME_DIR (D-Bus, keyring, agent gpg),
+// /tmp/dbus-*, /tmp/ssh-* in občutljive mape, če bi bile znotraj vezane mape. Poti brez simbolnih povezav (R5).
 func agentWrap(exe string, args []string, m agentMounts) (string, []string) {
 	bw := bwrapReady(m.cfgDir)
 	if bw == "" {
@@ -133,43 +133,56 @@ func agentWrap(exe string, args []string, m agentMounts) (string, []string) {
 	}
 	home, _ := os.UserHomeDir()
 	home = real(home)
-	var ro []string
-	top := func(p string) { // mapa s programom pod domačo: njena mapa prve ravni (npr. ~/.nvm, ~/.local)
-		if rel, err := filepath.Rel(home, real(p)); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
-			if d := filepath.Join(home, strings.Split(rel, string(filepath.Separator))[0]); !slices.Contains(ro, d) {
-				ro = append(ro, d)
-			}
+	inside := func(p, d string) bool { return p == d || strings.HasPrefix(p, d+string(filepath.Separator)) }
+	exists := func(p string) bool { _, err := os.Stat(p); return err == nil }
+	var ro, rw []string
+	add := func(list *[]string, p string) {
+		if !slices.Contains(*list, p) {
+			*list = append(*list, p)
 		}
 	}
-	top(exe)
 	for _, d := range filepath.SplitList(os.Getenv("PATH")) {
-		if _, err := os.Stat(d); err == nil {
-			top(d)
+		if r := real(d); inside(r, home) && r != home && exists(r) {
+			add(&ro, r)
 		}
 	}
-	var rw []string
+	if r := real(exe); inside(r, home) {
+		add(&ro, packageRoot(home, r))
+	}
 	if m.state != "" {
 		os.MkdirAll(m.state, 0o700)
-		rw = append(rw, real(m.state))
+		add(&rw, real(m.state))
 	}
-	for _, d := range m.rw {
-		if _, err := os.Stat(d); err == nil {
-			rw = append(rw, real(d))
+	for _, p := range append(slices.Clone(m.files), m.rw...) {
+		if exists(p) {
+			add(&rw, real(p))
 		}
 	}
 	ro = slices.DeleteFunc(ro, func(d string) bool { return slices.Contains(rw, d) })
 	var hideFiles, hideDirs []string
-	if rt := os.Getenv("XDG_RUNTIME_DIR"); rt != "" {
-		if _, err := os.Stat(rt + "/bus"); err == nil {
-			hideFiles = append(hideFiles, real(rt+"/bus"))
+	hide := func(p string) {
+		if fi, err := os.Lstat(p); err == nil && fi.IsDir() {
+			hideDirs = append(hideDirs, p)
+		} else if err == nil && fi.Mode()&os.ModeSymlink == 0 {
+			hideFiles = append(hideFiles, p)
 		}
 	}
-	bus, _ := filepath.Glob("/tmp/dbus-*")
-	for _, b := range bus {
-		if fi, err := os.Lstat(b); err == nil && fi.IsDir() {
-			hideDirs = append(hideDirs, b)
-		} else if err == nil && fi.Mode()&os.ModeSymlink == 0 {
-			hideFiles = append(hideFiles, b)
+	for _, p := range []string{".ssh", ".gnupg", ".aws", ".netrc", ".config", ".cargo/credentials", ".cargo/credentials.toml", ".local/share/keyrings"} {
+		p = filepath.Join(home, p)
+		for _, d := range append(slices.Clone(ro), rw...) {
+			if inside(p, d) && p != d {
+				hide(p)
+				break
+			}
+		}
+	}
+	if rt := os.Getenv("XDG_RUNTIME_DIR"); rt != "" && exists(rt) {
+		hideDirs = append(hideDirs, real(rt))
+	}
+	for _, pat := range []string{"/tmp/dbus-*", "/tmp/ssh-*"} {
+		found, _ := filepath.Glob(pat)
+		for _, p := range found {
+			hide(p)
 		}
 	}
 	return bw, append(append(bwrapArgs(home, real(m.cfgDir), ro, rw, hideFiles, hideDirs), "--", exe), args...)
