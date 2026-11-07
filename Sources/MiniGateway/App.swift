@@ -83,6 +83,7 @@ final class AppState: ObservableObject {
         config.save()  // starejši JSON blob v preferences → berljiva struktura
         ShareHub.cleanupStale()
         NativeHub.cleanupStale(config.scratch("tmp").appendingPathComponent("native-markers"))  // označbe native po sesutju
+        Worktree.prune(scratch: config.scratchURL)  // worktree: zrcala, ki jih 30 dni ni uporabil noben agent
         // Kloni prejšnjega zagona: le imena klonov (<lastnik>-<16 hex>[-ro].<n>), nikoli cela mapa.
         let runs = config.scratch("sync").appendingPathComponent("runs")
         for n in (try? FileManager.default.contentsOfDirectory(atPath: runs.path)) ?? []

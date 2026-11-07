@@ -124,6 +124,8 @@ public actor ShareHub {
     func isReadOnly(session: String) -> Bool { bySession[session]?.readOnly ?? false }
 
     /// Seja dela v sinhronizirani kopiji (ne v priklopu).
+    func bySessionTree(_ session: String) -> Tree? { bySession[session]?.tree }
+
     func isSync(session: String) -> Bool { bySession[session].map { $0.copy != nil || $0.tree != nil } ?? false }
 
     func unregister(key: String) {
@@ -373,7 +375,7 @@ public actor ShareHub {
 
     /// Konec izvajanja (tudi ob napaki ali prekinitvi): združi, če prevzema ni bilo, in odstrani klon.
     func finish(run id: String) async {
-        if let k = runSlot.removeValue(forKey: id) { slots[k]?.busy = false }  // worktree: mesto spet prosto
+        releaseSlot(run: id)  // worktree: mesto spet prosto
         guard let r = runs[id] else { return }
         if !r.merged, !r.share.readOnly { await acquire(r.copy); await merge(r); unlock(r.copy) }
         await Task.detached { try? FileManager.default.removeItem(at: r.clone) }.value

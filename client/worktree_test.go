@@ -124,11 +124,11 @@ func TestWorkCandidatesAndReadOnly(t *testing.T) {
 		want         string
 	}{
 		{"auto", true, true, true, "direct"},
-		{"auto", false, true, true, "native,worktree,sync,direct"},
-		{"auto", false, false, true, "worktree,sync,direct"},
+		{"auto", false, true, true, "native,worktree,sync"},
+		{"auto", false, false, true, "worktree,sync"},
 		{"auto", false, false, false, "sync,direct"},
 		{"worktree", false, false, false, "direct"},
-		{"worktree", false, false, true, "worktree,direct"},
+		{"worktree", false, false, true, "worktree,sync"},
 		{"sync", false, false, true, "sync"},
 	}
 	for _, c := range cases {
@@ -141,5 +141,47 @@ func TestWorkCandidatesAndReadOnly(t *testing.T) {
 	}
 	if w, _ := workMode("auto", &sharedFolder{Path: "/p", Work: "sync"}, false); w != "auto" {
 		t.Errorf("flag wins: %s", w)
+	}
+}
+
+// M4: le git bundle; L5: veja, na katero je uporabnik commital, ostane njegova (brez sile).
+func TestWorktreeFetchChecksBundleAndKeepsUserCommits(t *testing.T) {
+	root := t.TempDir()
+	client, other := filepath.Join(root, "client"), filepath.Join(root, "other")
+	os.MkdirAll(client, 0o755)
+	gitT(t, client, "init", "-q", "-b", "main")
+	writeT(t, filepath.Join(client, "a.txt"), "a\n")
+	gitT(t, client, "add", "-A")
+	gitT(t, client, "commit", "-qm", "a")
+	gitT(t, root, "clone", "-q", client, other) // »router«: veje agenta in bundli
+	branch := "minigw/claude-0123abcd-0"
+	notBundle := filepath.Join(root, "x.bundle")
+	writeT(t, notBundle, "not a bundle\n")
+	if why := gitFetchBranch(client, notBundle, branch); why != "the router did not send a git bundle" {
+		t.Fatalf("not a bundle: %q", why)
+	}
+	if gitFetchBranch(client, filepath.Join(client, ".git"), branch) == "" {
+		t.Fatal("a repository path was fetched as a bundle")
+	}
+
+	base := gitT(t, other, "rev-parse", "HEAD")
+	agent := func(msg string) string { // vrh agenta na base, kot bundle veje
+		c := gitT(t, other, "commit-tree", gitT(t, other, "rev-parse", "HEAD^{tree}"), "-p", base, "-m", msg)
+		gitT(t, other, "update-ref", "refs/heads/"+branch, c)
+		b := filepath.Join(root, msg+".bundle")
+		gitT(t, other, "bundle", "create", b, "refs/heads/"+branch, "^"+base)
+		return b
+	}
+	b1 := agent("one")
+	if why := gitFetchBranch(client, b1, branch); why != "" {
+		t.Fatal(why)
+	}
+	mine := gitT(t, client, "commit-tree", gitT(t, client, "rev-parse", branch+"^{tree}"), "-p", branch, "-m", "mine")
+	gitT(t, client, "update-ref", "refs/heads/"+branch, mine)
+	if why := gitFetchBranch(client, agent("two"), branch); !strings.Contains(why, "kept yours") {
+		t.Fatalf("non-fast-forward: %q", why)
+	}
+	if gitT(t, client, "rev-parse", branch) != mine {
+		t.Fatal("the user's commit was overwritten")
 	}
 }

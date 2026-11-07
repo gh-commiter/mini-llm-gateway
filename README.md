@@ -325,19 +325,27 @@ builds then work on the router's local disk.
 **Worktree: a git repository, results as branches.** `minigw --minigw-work=worktree …` (or `MINIGW_WORK=worktree`) sends
 the repository to a mirror in the router's Scratch folder (git bundles over the encrypted connection, only missing objects)
 and gives each agent its own clone on a branch `minigw/<agent>-<session>-<n>`; parallel agents get separate branches.
-- **Your exact state:** the agent starts from `HEAD` plus your uncommitted and new (not ignored) files, saved as a commit
-  "minigw: your uncommitted changes" with a temporary index; your index, branches and files are not changed.
+- **Your exact state:** the agent starts from `HEAD` plus your uncommitted changes and your untracked files that are not
+  ignored: **those files are sent to the router** too, saved as a commit "minigw: your uncommitted changes" with a
+  temporary index. Your index, branches and files are not changed.
 - **Results come back as branches only:** after each request the router commits what the agent left uncommitted and minigw
-  fetches the branch into your repository (`git log minigw/…`, then merge it yourself). It is never checked out; the fetch
-  checks objects (fsck) and runs no hooks, submodules or filters, and `.git/config` is not changed. The router never runs
-  git with the agent's own `.git` (config, hooks).
-- **Sandboxed agents:** Claude CLI agents get Bash, always in Claude Code's sandbox; Codex and Grok use their own sandboxes
-  with the clone as the writable folder. They write only to the clone and the build caches (`~/.m2`, SwiftPM,
-  `~/Library/Developer`, temporary folders), not to your home folder; network for builds is on (Settings → General →
-  Worktree mode). The Scratch folder must not be a temporary or build cache folder.
+  fetches the branch into your repository (`git log minigw/…`). It is never checked out; the fetch takes only a git bundle,
+  checks objects (fsck), runs no hooks, submodules or filters, and does not change `.git/config`. If you committed on that
+  branch yourself, your commits stay and the agent's version is not fetched. The router never runs git with the agent's own
+  `.git` (config, hooks) and reads the clone only from a sandbox.
+- **Review the branch before you check it out or build it:** it is the agent's work. Look at `.gitattributes` (filter
+  and diff drivers you have configured would run on checkout) and `.gitmodules` (submodule URLs) first.
+- **Sandboxed agents:** Claude CLI agents get Bash, always in Claude Code's sandbox; Codex uses its own sandbox with the
+  clone as the writable folder (not when Codex may not write: then worktree mode is refused). Grok is not supported in
+  worktree mode yet (use sync). They write only to the clone, their own Maven repository (`MAVEN_OPTS`), DerivedData and
+  temporary folders, never to your `~/.m2` settings, plugins or SwiftPM configuration; Claude cannot read your home
+  folder. Network for builds: on for Claude (its sandbox hides your files), off for Codex (it can read all your files);
+  Settings → General → Worktree mode. The Scratch folder must not be a temporary or build cache folder; mirrors unused for
+  30 days are removed.
 - **`--minigw-work=auto`:** read-only (`--minigw-ro`) → direct; a folder on the router's SMB share → native; a git
-  repository → worktree; otherwise sync. Each falls back to the next when the router does not accept it (the Go router
-  `minigw serve` supports sync only). A saved per-folder mode (`minigw share add --work=…`) and the flag still win.
+  repository → worktree, then sync (never direct read-write: `.git` is not protected there); otherwise sync, then direct.
+  The Go router (`minigw serve`) supports sync only. A saved per-folder mode (`minigw share add --work=…`) and the flag
+  still win.
 
 **Native: the folder is the router's own SMB share.** When the client works in an SMB mount of a router share (for
 example `/Volumes/Java/projects` mounted from the router's `/Volumes/Java`), `minigw --minigw-work=native …`

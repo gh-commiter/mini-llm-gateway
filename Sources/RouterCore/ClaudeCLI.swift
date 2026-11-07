@@ -44,13 +44,16 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
 
     /// --minigw-work=worktree: vsa orodja (tudi Bash) vedno v peskovniku Claude Code (brez stikala za izklop):
     /// pisanje le v klon in predpomnilnike gradnje (Worktree.writable), branje domače mape le tam, omrežje po nastavitvi.
-    func worktreeArgs(root: URL, cwd: URL, allTools: [String], network: Bool) -> [String] {
-        let dirs = Worktree.writable(root: root)
+    /// denyWrite: .git klona (config, hooks, info, commondir) in nastavitve gradnje lastnika (Native.buildCacheDenies).
+    /// Branje ~/.m2 (settings.xml, toolchains.xml) za Maven; pisanje le v svoj lokalni repozitorij (MAVEN_OPTS).
+    func worktreeArgs(root: URL, maven: URL, cwd: URL, allTools: [String], network: Bool) -> [String] {
+        let dirs = Worktree.writable(root: root, maven: maven)
         let sandbox: [String: Any] = ["sandbox": [
             "enabled": true, "failIfUnavailable": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
             "network": ["allowedDomains": network ? ["*"] : []],
-            "filesystem": ["denyRead": ["~"], "allowRead": dirs, "allowWrite": dirs,
-                           "denyWrite": ["config", "hooks", "info"].map { root.path + "/.git/" + $0 }],  // tudi obvezna zaščita CC
+            "filesystem": ["denyRead": ["~"], "allowRead": dirs + [NSHomeDirectory() + "/.m2"], "allowWrite": dirs,
+                           "denyWrite": ["config", "hooks", "info", "commondir"].map { root.path + "/.git/" + $0 }
+                               + Native.buildCacheDenies().paths],
         ]]
         let settings = String(decoding: try! JSONSerialization.data(withJSONObject: sandbox, options: [.sortedKeys]), as: UTF8.self)
         let others = allTools.filter { !Self.pathTools.contains($0) && !disabledTools.contains($0) }
@@ -412,7 +415,7 @@ extension Router {
                 prompt = ClaudeCLI.prompt(history: history, last: last)
             }
             let allTools = cfg.allowLocalTools || tree != nil ? await Self.toolList.get(cfg.executable) : []
-            args += (tree.map { cfg.worktreeArgs(root: $0.root, cwd: dir, allTools: allTools, network: config.worktreeNetwork) }
+            args += (tree.map { cfg.worktreeArgs(root: $0.root, maven: $0.maven, cwd: dir, allTools: allTools, network: config.worktreeNetwork) }
                      ?? cfg.agentArgs(cwd: dir, allTools: allTools))
                 + ["--setting-sources", shared == nil ? cfg.settingSources : ""]  // hooki iz mape odjemalca ne tečejo tukaj
         } else {
@@ -444,7 +447,9 @@ extension Router {
             env[k] = nil  // sicer bi notranji claude klical nazaj ta router
         }
         env["PATH"] = (env["PATH"].map { $0 + ":" } ?? "") + "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-        if agent, await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "") != nil { env.merge(Worktree.harnessEnv) { $1 } }
+        if agent, let t = await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "") {
+            env.merge(Worktree.harnessEnv(root: t.root, maven: t.maven)) { $1 }
+        }
         p.environment = env
         let stdin = Pipe(), stdout = Pipe(), stderr = Pipe()
         p.standardInput = stdin

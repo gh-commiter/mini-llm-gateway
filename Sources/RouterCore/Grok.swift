@@ -98,7 +98,7 @@ public enum Grok {
 
     /// Zažene grok in vrne končni odgovor (besedilo po zadnjem klicu orodja); prekinitev odjemalca ustavi grok.
     /// Vrne končni odgovor in ID Grokove seje (za nadaljevanje z -r).
-    static func run(_ exe: String, args: [String], cwd: URL, prompt: String, env extra: [String: String] = [:],
+    static func run(_ exe: String, args: [String], cwd: URL, prompt: String,
                     onStep: @escaping @Sendable (String) -> Void) async throws -> (String, String?) {
         let h = Handle()
         return try await withTaskCancellationHandler {
@@ -108,7 +108,6 @@ public enum Grok {
                 p.arguments = args
                 p.currentDirectoryURL = cwd
                 p.environment = ProcessInfo.processInfo.environment.filter { $0.key != "SSH_AUTH_SOCK" }  // brez agenta ključev SSH
-                    .merging(extra) { $1 }
                 let input = Pipe(), events = Pipe(), errors = Pipe()
                 p.standardInput = input
                 p.standardOutput = events
@@ -157,6 +156,11 @@ extension Router {
     }
 
     func runGrok(_ req: HTTPRequest, body: [String: Any], model: String?, rid: String, writer: ResponseWriter) async -> Int {
+        // Grok nima zaščite .git v peskovniku, njegov program pa poganja git zunaj njega (in ~/.grok je pisljiv).
+        if (body["tools"] as? [Any])?.isEmpty == false, await Self.shares.isWorktree(session: req.header("x-claude-mini-session") ?? "") {
+            return await error(400, "invalid_request_error", "Grok is not supported in worktree mode yet; use sync (MINIGW_WORK=sync)",
+                               rid: rid, writer: writer)
+        }
         if let model, !Self.validModel(model) {
             return await error(400, "invalid_request_error", "Invalid model name", rid: rid, writer: writer)
         }
@@ -171,7 +175,6 @@ extension Router {
         var cwd = config.scratch("chat")
         var extra: [String] = []
         var readOnly = false
-        var tree: (root: URL, branch: String)?
         var prompt = ClaudeCLI.prompt(history: all.dropLast(), last: last)
         if agent {
             let clientCwd = req.header("x-claude-mini-cwd")
@@ -189,17 +192,14 @@ extension Router {
             cwd = dir
             extra = config.claudeCLI.allowedRoots.split(separator: ",").map { ClaudeCLI.expand($0.trimmingCharacters(in: .whitespaces)) }
                 .filter { $0 != "/" && !$0.isEmpty && $0 != dir.path && FileManager.default.fileExists(atPath: $0) }
-            // worktree: pisljiv le klon (koren, ne dovoljene mape)
-            tree = await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "")
-            if let tree { cwd = tree.root; extra = [] }  // sandbox Grok piše le v --cwd: koren klona
             if let shared, let clientCwd {
                 readOnly = await Self.shares.isReadOnly(session: req.header("x-claude-mini-session") ?? "")
-                prompt = Self.mountNote(clientCwd, shared, readOnly: readOnly, synced: synced, branch: tree?.branch) + "\n\n" + prompt
+                prompt = Self.mountNote(clientCwd, shared, readOnly: readOnly, synced: synced) + "\n\n" + prompt
             }
         } else {
             try? FileManager.default.createDirectory(at: cwd, withIntermediateDirectories: true)
         }
-        var args = Grok.args(cwd: cwd, extraDirs: extra, agent: agent, model: model, write: tree != nil || config.grok.write && !readOnly)
+        var args = Grok.args(cwd: cwd, extraDirs: extra, agent: agent, model: model, write: config.grok.write && !readOnly)
         // Nadaljevanje Grokove seje (prebrane datoteke, rezultati ukazov): ključ je dosedanji pogovor v tej mapi.
         let scope = Self.agentScope("grok", req, cwd: cwd)
         if agent, let existing = await Self.grokSessions.get(ClaudeCLI.key(all.dropLast(), scope: scope)) {
@@ -208,7 +208,7 @@ extension Router {
         }
         let sessions = Self.grokSessions, client = req.header("x-claude-mini-session") ?? ""
         return await replyWhenDone(body: body, model: "claude-grok", rid: rid, writer: writer) {
-            let (text, session) = try await Grok.run(exe, args: args, cwd: cwd, prompt: prompt, env: tree == nil ? [:] : Worktree.harnessEnv) { [onActivity] s in onActivity(.step(id: rid, text: s)) }
+            let (text, session) = try await Grok.run(exe, args: args, cwd: cwd, prompt: prompt) { [onActivity] s in onActivity(.step(id: rid, text: s)) }
             if agent { await Self.shares.syncBack(session: client) }  // sync: spremembe agenta k odjemalcu pred odgovorom
             if agent, let session {
                 await sessions.set(ClaudeCLI.key(all + [ClaudeCLI.Turn(role: "assistant", text: text)], scope: scope), session)

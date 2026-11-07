@@ -45,14 +45,12 @@ func gitSnapshot(top string) string {
 	if err != nil || !shaRe.MatchString(head) {
 		return ""
 	}
-	f, err := os.CreateTemp("", "minigw-index-")
+	dir, err := os.MkdirTemp("", "minigw-") // 0700
 	if err != nil {
 		return ""
 	}
-	f.Close()
-	os.Remove(f.Name()) // git ga ustvari sam
-	defer os.Remove(f.Name())
-	env := []string{"GIT_INDEX_FILE=" + f.Name()}
+	defer os.RemoveAll(dir)
+	env := []string{"GIT_INDEX_FILE=" + filepath.Join(dir, "index")}
 	if _, err := gitUser(top, env, "read-tree", "HEAD"); err != nil {
 		return ""
 	}
@@ -102,10 +100,27 @@ func gitBundle(top, snapshot string, have []string, file string) (made bool, err
 	return true, nil
 }
 
-// gitFetchBranch: le objekti in refs/heads/<veja> (fsck), .git/config nespremenjen. "" = uspeh.
+// isBundle: datoteka je git bundle (v2 ali v3), ne npr. pot do repozitorija.
+func isBundle(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	b := make([]byte, 32)
+	n, _ := io.ReadFull(f, b)
+	line, _, _ := strings.Cut(string(b[:n]), "\n")
+	return line == "# v2 git bundle" || line == "# v3 git bundle"
+}
+
+// gitFetchBranch: le objekti in refs/heads/<veja> (fsck), .git/config nespremenjen. Brez sile: če ima veja tukaj commite,
+// ki jih agentova nima, ostane uporabnikova. "" = uspeh.
 func gitFetchBranch(top, bundle, branch string) string {
 	if !branchRe.MatchString(branch) {
 		return "invalid branch name from the router"
+	}
+	if !isBundle(bundle) {
+		return "the router did not send a git bundle"
 	}
 	if cur, _ := gitUser(top, nil, "symbolic-ref", "-q", "HEAD"); cur == "refs/heads/"+branch {
 		return branch + " is checked out here; not updated"
@@ -114,9 +129,22 @@ func gitFetchBranch(top, bundle, branch string) string {
 		"-c", "fetch.recurseSubmodules=false", "-c", "submodule.recurse=false", "-c", "fetch.writeCommitGraph=false",
 		"-c", "maintenance.auto=false", "-c", "gc.auto=0",
 		"fetch", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--quiet",
-		bundle, "+refs/heads/"+branch+":refs/heads/"+branch)
-	if err != nil {
-		return "git fetch of " + branch + " failed"
+		bundle, "+refs/heads/"+branch+":refs/minigw/incoming")
+	defer gitUser(top, nil, "update-ref", "-d", "refs/minigw/incoming")
+	nw, _ := gitUser(top, nil, "rev-parse", "-q", "--verify", "refs/minigw/incoming^{commit}")
+	if err != nil || !shaRe.MatchString(nw) {
+		return "git fetch of " + branch + " failed (the router's branch was rejected)"
+	}
+	old, _ := gitUser(top, nil, "rev-parse", "-q", "--verify", "refs/heads/"+branch)
+	args := []string{"update-ref", "refs/heads/" + branch, nw}
+	if shaRe.MatchString(old) {
+		if _, e := gitUser(top, nil, "merge-base", "--is-ancestor", old, nw); e != nil {
+			return branch + " has commits here that the agent's version does not have; kept yours, the agent's work was not fetched"
+		}
+		args = append(args, old)
+	}
+	if _, e := gitUser(top, nil, args...); e != nil {
+		return "cannot update " + branch
 	}
 	return ""
 }
@@ -130,14 +158,12 @@ func (s *shareClient) wtPush(k string, job davJob) davResponse {
 		s.note("worktree: cannot take a snapshot (no commit yet?)")
 		return dav(500, nil, nil)
 	}
-	f, err := os.CreateTemp("", "minigw-*.bundle")
+	dir, err := os.MkdirTemp("", "minigw-") // 0700
 	if err != nil {
 		return dav(500, nil, nil)
 	}
-	name := f.Name()
-	f.Close()
-	os.Remove(name)
-	defer os.Remove(name)
+	defer os.RemoveAll(dir)
+	name := filepath.Join(dir, "push.bundle")
 	made, err := gitBundle(s.top, snap, req.Have, name)
 	if err != nil {
 		s.note("worktree: git bundle failed")
@@ -179,17 +205,16 @@ func (s *shareClient) wtPull(k string, job davJob) davResponse {
 		s.note(fmt.Sprintf("worktree: cannot get %s from the router (HTTP %d)", req.Branch, st))
 		return dav(500, nil, nil)
 	}
-	f, err := os.CreateTemp("", "minigw-*.bundle")
+	dir, err := os.MkdirTemp("", "minigw-") // 0700
 	if err != nil {
 		return dav(500, nil, nil)
 	}
-	defer os.Remove(f.Name())
-	_, err = f.Write(data)
-	f.Close()
-	if err != nil {
+	defer os.RemoveAll(dir)
+	name := filepath.Join(dir, "result.bundle")
+	if err := os.WriteFile(name, data, 0o600); err != nil {
 		return dav(500, nil, nil)
 	}
-	if why := gitFetchBranch(s.top, f.Name(), req.Branch); why != "" {
+	if why := gitFetchBranch(s.top, name, req.Branch); why != "" {
 		s.note("worktree: " + why)
 		return dav(500, nil, nil)
 	}
@@ -197,7 +222,8 @@ func (s *shareClient) wtPull(k string, job davJob) davResponse {
 	return dav(200, nil, nil)
 }
 
-// workCandidates: načini po vrsti (kot SharedFolders.candidates): auto → native (shema SMB) → worktree (git) → sync.
+// workCandidates: načini po vrsti (kot SharedFolders.candidates): auto → native (shema SMB) → worktree (git) → sync;
+// repozitorij git nikoli v direct za pisanje.
 func workCandidates(work string, readOnly, smb, git bool) []string {
 	switch {
 	case work == "auto" && readOnly:
@@ -207,14 +233,14 @@ func workCandidates(work string, readOnly, smb, git bool) []string {
 		if smb {
 			out = append(out, "native")
 		}
-		if git {
-			out = append(out, "worktree")
+		if git { // repozitorij git nikoli v direct za pisanje (.git tam ni zaščiten)
+			return append(out, "worktree", "sync")
 		}
 		return append(out, "sync", "direct")
 	case work == "native":
 		return []string{"native", "direct"}
 	case work == "worktree" && git:
-		return []string{"worktree", "direct"}
+		return []string{"worktree", "sync"}
 	case work == "worktree":
 		return []string{"direct"}
 	}

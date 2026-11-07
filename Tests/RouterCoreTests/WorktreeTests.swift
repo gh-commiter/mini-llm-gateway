@@ -24,7 +24,18 @@ private func fixture() throws -> (root: URL, client: URL, tree: ShareHub.Tree) {
     g(client, "add", "a.txt"); g(client, "commit", "-qm", "first")
     try file(client, "a.txt", "one\nuncommitted\n")
     try file(client, "new.txt", "untracked\n")
-    return (root, client, ShareHub.Tree(repo: root.appendingPathComponent("repos/dev/x.git"), worktrees: root.appendingPathComponent("worktrees/dev/x"), sub: ""))
+    // Router kot s privzetim Scratch (~/Library/Caches/…): v domači mapi, ki jo peskovnik finalize sicer zavrne.
+    let scratch = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Caches/minigw-test-" + UUID().uuidString)
+    try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("scratch"), withDestinationURL: scratch)  // pospravi defer
+    return (root, client, ShareHub.Tree(repo: scratch.appendingPathComponent("repos/dev/x.git"), worktrees: scratch.appendingPathComponent("worktrees/dev/x"), sub: ""))
+}
+
+/// Odstrani fixture in Scratch v ~/Library/Caches (povezava root/scratch).
+private func cleanup(_ root: URL) {
+    if let s = try? FileManager.default.destinationOfSymbolicLink(atPath: root.appendingPathComponent("scratch").path) {
+        try? FileManager.default.removeItem(atPath: s)
+    }
+    try? FileManager.default.removeItem(at: root)
 }
 
 /// minigw za teste: obdela WORKTREE-PUSH in WORKTREE-PULL kot ShareClient (MiniGW/main.swift) prek ShareHub.
@@ -69,7 +80,7 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
 
 @Test func worktreeRoundTripParallelBranchesAndUserFilesUntouched() async throws {
     let (root, client, tree) = try fixture()
-    defer { try? FileManager.default.removeItem(at: root) }
+    defer { cleanup(root) }
     let status = g(client, "status", "--porcelain"), head = g(client, "rev-parse", "HEAD")
     let index = try Data(contentsOf: client.appendingPathComponent(".git/index"))
     let config = try Data(contentsOf: client.appendingPathComponent(".git/config"))
@@ -112,7 +123,7 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
 
 @Test func worktreeMaliciousAgentCannotRunAnythingOnTheClientOrRouter() async throws {
     let (root, client, tree) = try fixture()
-    defer { try? FileManager.default.removeItem(at: root) }
+    defer { cleanup(root) }
     let marks = root.appendingPathComponent("marks")
     try FileManager.default.createDirectory(at: marks, withIntermediateDirectories: true)
     // Uporabnik ima filter, ki bi ga .gitattributes v veji lahko sprožil, in svoje hooke (prevzem jih ne sme zagnati).
@@ -140,7 +151,14 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
         try file(dir, ".git/hooks/post-commit", "#!/bin/sh\ntouch \(marks.path)/router-hook\n")
         chmod(dir.appendingPathComponent(".git/hooks/post-commit").path, 0o755)
         try file(dir, "leftover.txt", "x\n")  // router ga shrani z »git add« pod nastavitvami zrcala
+        // L2: lažni alternates in commit-graph v objects/info klona
+        try file(dir, ".git/objects/info/alternates", "/etc\n\(marks.path)/objects\n")
+        try file(dir, ".git/objects/info/commit-graph", "garbage")
     }
+    let wt0 = tree.worktrees.appendingPathComponent("claude-\(String(Sync.folderID(session).prefix(8)))-0")
+    #expect((try? String(contentsOf: wt0.appendingPathComponent(".git/objects/info/alternates"), encoding: .utf8))
+            == tree.repo.appendingPathComponent("objects").path + "\n")
+    #expect(!FileManager.default.fileExists(atPath: wt0.appendingPathComponent(".git/objects/info/commit-graph").path))
     let short = String(Sync.folderID(session).prefix(8)), branch = "minigw/claude-\(short)-0"
     #expect(g(client, "show", "\(branch):.gitattributes") == "* filter=evil")  // vsebina pride, izvede se nič
     #expect(g(client, "show", "\(branch):leftover.txt") == "x")
@@ -163,23 +181,36 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
 
 @Test func worktreeAgentSandboxAndModes() throws {
     let root = URL(fileURLWithPath: "/Users/u/Library/Caches/dev.trojar.minigateway/Scratch/worktrees/dev/x/claude-1")
-    let a = ClaudeCLIConfig().worktreeArgs(root: root, cwd: root.appendingPathComponent("sub"), allTools: ["Bash", "WebFetch"], network: false)
+    let maven = root.deletingLastPathComponent().appendingPathComponent(".maven")
+    let a = ClaudeCLIConfig().worktreeArgs(root: root, maven: maven, cwd: root.appendingPathComponent("sub"), allTools: ["Bash", "WebFetch"], network: false)
     let settings = try #require(a.firstIndex(of: "--settings").map { a[$0 + 1] })
     let sb = try #require((try JSONSerialization.jsonObject(with: Data(settings.utf8)) as? [String: Any])?["sandbox"] as? [String: Any])
     let fs = try #require(sb["filesystem"] as? [String: [String]])
     #expect(fs["denyRead"] == ["~"] && fs["allowWrite"]?.first == root.path && sb["allowUnsandboxedCommands"] as? Bool == false)
     #expect(!(fs["allowWrite"] ?? []).contains { $0.hasSuffix("/Library/Caches") || $0.hasSuffix("/Development") })  // ne scratch, ne dovoljene mape
+    // H1: ne lastnikovi predpomnilniki gradnje (Maven, SwiftPM), nastavitve gradnje zavrnjene tudi kanonično
+    #expect(!(fs["allowWrite"] ?? []).contains { $0.hasSuffix("/.m2") || $0.contains("swiftpm") } && fs["allowWrite"]?.contains(maven.path) == true)
+    #expect(Set(Native.buildCacheDenies().paths).isSubset(of: Set(fs["denyWrite"] ?? [])) && fs["denyWrite"]?.contains(root.path + "/.git/commondir") == true)
+    if let real = Sync.real(URL(fileURLWithPath: NSHomeDirectory() + "/.swiftpm/configuration")), real.path != NSHomeDirectory() + "/.swiftpm/configuration" {
+        #expect(fs["denyWrite"]?.contains(real.path) == true)  // povezava ~/.swiftpm/configuration → ~/Library/org.swift.swiftpm/…
+    }
+    let env = Worktree.harnessEnv(root: root, maven: maven)
+    #expect(env["GIT_DIR"] == root.path + "/.git" && env["GIT_WORK_TREE"] == root.path && env["GIT_COMMON_DIR"] == root.path + "/.git"
+            && env["MAVEN_OPTS"] == "-Dmaven.repo.local=" + maven.path)
     #expect((sb["network"] as? [String: [String]])?["allowedDomains"] == [])
     #expect(a.contains("--add-dir") && a.contains("default") && a.contains("acceptEdits"))
-    #expect(fs["denyWrite"] == ["config", "hooks", "info"].map { root.path + "/.git/" + $0 })
+    #expect(Array((fs["denyWrite"] ?? []).prefix(4)) == ["config", "hooks", "info", "commondir"].map { root.path + "/.git/" + $0 })
     #expect(a[a.firstIndex(of: "--disallowedTools")! + 1].contains("Edit(/" + root.path + "/**/.git/**)"))
     #expect(Worktree.scratchIsSafe(URL(fileURLWithPath: NSHomeDirectory() + "/Library/Caches/dev.trojar.minigateway/Scratch")))
-    #expect(!Worktree.scratchIsSafe(URL(fileURLWithPath: "/private/tmp/scratch")) && !Worktree.scratchIsSafe(URL(fileURLWithPath: NSHomeDirectory() + "/.m2/s")))
+    #expect(!Worktree.scratchIsSafe(URL(fileURLWithPath: "/private/tmp/scratch"))
+            && !Worktree.scratchIsSafe(URL(fileURLWithPath: NSHomeDirectory() + "/Library/Developer/Xcode/DerivedData/s")))
     #expect(Worktree.validBranch("minigw/claude-0123abcd-2") && !Worktree.validBranch("main") && !Worktree.validBranch("minigw/x/../../main"))
 
     #expect(SharedFolders.candidates(work: "auto", readOnly: true, smb: true, git: true) == ["direct"])
-    #expect(SharedFolders.candidates(work: "auto", readOnly: false, smb: true, git: true) == ["native", "worktree", "sync", "direct"])
-    #expect(SharedFolders.candidates(work: "auto", readOnly: false, smb: false, git: true) == ["worktree", "sync", "direct"])
+    // M2: repozitorij git nikoli v direct za pisanje
+    #expect(SharedFolders.candidates(work: "auto", readOnly: false, smb: true, git: true) == ["native", "worktree", "sync"])
+    #expect(SharedFolders.candidates(work: "auto", readOnly: false, smb: false, git: true) == ["worktree", "sync"])
+    #expect(SharedFolders.candidates(work: "worktree", readOnly: false, smb: false, git: true) == ["worktree", "sync"])
     #expect(SharedFolders.candidates(work: "auto", readOnly: false, smb: false, git: false) == ["sync", "direct"])
     #expect(SharedFolders.candidates(work: "worktree", readOnly: false, smb: false, git: false) == ["direct"])
     #expect(SharedFolders.mode(flag: nil, saved: SharedFolders.Entry(path: "/p", work: "worktree"), readOnly: true) == ("direct", true))
@@ -190,7 +221,7 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
 /// grok zunaj peskovnika orodij), z okoljem harnessEnv ne zažene ničesar; brez njega (kontrola) bi.
 @Test func worktreeHarnessGitIgnoresTheClonesConfig() throws {
     let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("harness-" + UUID().uuidString)
-    defer { try? FileManager.default.removeItem(at: root) }
+    defer { cleanup(root) }
     let repo = root.appendingPathComponent("wt"), marks = root.appendingPathComponent("marks")
     try FileManager.default.createDirectory(at: marks, withIntermediateDirectories: true)
     try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
@@ -206,9 +237,50 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
             Worktree.run(args, cwd: repo.path, env: env, safe: false)
         }
     }
-    agentGit(Worktree.harnessEnv)
+    agentGit(Worktree.harnessEnv(root: repo, maven: root.appendingPathComponent("m2")))
     #expect(((try? FileManager.default.contentsOfDirectory(atPath: marks.path)) ?? []).isEmpty)
     try file(repo, "a.txt", "again\n")
     agentGit([:])  // kontrola: brez okolja se vse troje zažene
     #expect(Set((try? FileManager.default.contentsOfDirectory(atPath: marks.path)) ?? []) == ["fsmonitor", "clean", "hook"])
+}
+
+/// M4: bundle se preveri (glava) pri odjemalcu in na routerju; L5: veja, na katero je uporabnik commital, ostane njegova.
+@Test func worktreeBundleHeaderAndNoForcedUpdate() async throws {
+    let (root, client, tree) = try fixture()
+    defer { cleanup(root) }
+    let notBundle = root.appendingPathComponent("x.bundle")
+    try Data("not a bundle\n".utf8).write(to: notBundle)
+    #expect(Worktree.fetch(top: client.path, bundle: notBundle, branch: "minigw/claude-0123abcd-0") == "the router did not send a git bundle")
+    #expect(Worktree.fetch(top: client.path, bundle: client.appendingPathComponent(".git"), branch: "minigw/claude-0123abcd-0") != nil)
+    #expect(Worktree.ensureMirror(tree.repo) && !Worktree.importBase(tree.repo, bundle: notBundle, snapshot: String(repeating: "a", count: 40), base: "refs/minigw/base/x"))
+
+    let hub = ShareHub(), session = UUID().uuidString
+    let key = try #require(await hub.register(session: session, cwd: client.path, key: nil, device: "dev", tree: tree))
+    let loop = fakeClient(hub, key: key, top: client)
+    defer { loop.cancel() }
+    _ = try await agentRun(hub, session) { dir in try file(dir, "one.txt", "1\n") }
+    let branch = "minigw/claude-\(String(Sync.folderID(session).prefix(8)))-0"
+    // uporabnik doda svoj commit na vejo agenta (brez checkouta)
+    let mine = g(client, "commit-tree", g(client, "rev-parse", "\(branch)^{tree}"), "-p", branch, "-m", "mine")
+    g(client, "update-ref", "refs/heads/" + branch, mine)
+    _ = try await agentRun(hub, session) { dir in try file(dir, "two.txt", "2\n") }
+    #expect(g(client, "rev-parse", branch) == mine)  // ni prepisana
+}
+
+/// H2: Grok v načinu worktree ni podprt (400, preden se karkoli priklopi); M3: Codex brez pisanja tudi ne.
+@Test func worktreeRefusesGrokAndReadOnlyCodex() async throws {
+    var c = RouterConfig()
+    c.grok.enabled = true; c.codex.enabled = true; c.codex.write = false
+    let r = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]))
+    let session = UUID().uuidString
+    _ = await Router.shares.register(session: session, cwd: "/p", key: nil, device: nil,
+                                     tree: ShareHub.Tree(repo: URL(fileURLWithPath: "/nonexistent/x.git"), worktrees: URL(fileURLWithPath: "/nonexistent/w"), sub: ""))
+    for model in ["claude-grok", "claude-codex"] {
+        var q = request("POST", "/v1/messages", headers: ["Authorization": "Bearer tok", "x-claude-mini-session": session, "x-claude-mini-cwd": "/p"],
+                        body: #"{"model":"\#(model)","max_tokens":5,"tools":[{"name":"x","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":"hi"}]}"#)
+        q.peer = "127.0.0.1"
+        let w = FakeWriter()
+        await r.handle(q, writer: w)
+        #expect(w.status == 400 && w.text.contains(model == "claude-grok" ? "Grok is not supported in worktree mode" : "Codex may not write"), "\(model): \(w.text)")
+    }
 }
