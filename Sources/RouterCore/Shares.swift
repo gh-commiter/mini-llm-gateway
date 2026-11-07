@@ -163,6 +163,9 @@ public actor ShareHub {
     /// Seja dela v sinhronizirani kopiji (ne v priklopu).
     func bySessionTree(_ session: String) -> Tree? { bySession[session]?.tree }
 
+    /// L3: registrirane mape (sync, worktree, priklop): premik Scratch bi jim vzel kopije.
+    public var hasSessions: Bool { !bySession.isEmpty }
+
     func isSync(session: String) -> Bool { bySession[session].map { $0.copy != nil || $0.tree != nil } ?? false }
 
     func unregister(key: String) {
