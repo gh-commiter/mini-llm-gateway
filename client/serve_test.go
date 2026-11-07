@@ -349,7 +349,7 @@ func TestServeAllowDenyDevices(t *testing.T) {
 		t.Fatalf("refused %q", id)
 	}
 	cfg := filepath.Join(t.TempDir(), "serve.json")
-	saveServeConfig(cfg, serveConfig{Token: "tok", Key: "k"})
+	saveServeConfig(cfg, serveConfig{Token: "tok", Key: "k", Port: freePort(t)})
 	other := base64url(newDevice("PC").key.Public().(ed25519.PublicKey))
 	serveCommand([]string{"allow", id, "Mac", "Book", "--config", cfg})
 	serveCommand([]string{"allow", other, "PC", "--config", cfg})

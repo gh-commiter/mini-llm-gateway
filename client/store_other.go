@@ -156,3 +156,8 @@ func readHidden(f *os.File) (string, error) {
 	}
 	return bufio.NewReader(f).ReadString('\n')
 }
+
+// Vrednost Run v registru obstaja le na Windows.
+func regRunSet(string, string) error   { return errors.New("the registry exists on Windows only") }
+func regRunGet(string) (string, error) { return "", errNotFound }
+func regRunDel(string)                 {}

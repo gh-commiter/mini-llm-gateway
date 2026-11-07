@@ -161,6 +161,9 @@ func main() {
 	case "serve":
 		serveCommand(args[1:])
 		return
+	case "router":
+		routerCommand(args[1:], os.Stdin)
+		return
 	case "share":
 		shareCommand(args[1:])
 		return
@@ -305,6 +308,7 @@ func main() {
 				"minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)\n" +
 				"minigw --minigw-work=sync [claude args]    agents work in a synced copy on the router (or MINIGW_WORK=sync)\n" +
 				"minigw serve [init|allow <id>] [--port N] [--folder DIR] [--config FILE]   run a router here (Windows, Linux)\n" +
+				"minigw router status|devices|gateway|claude|token …                    change the router here, live\n" +
 				"minigw [claude options …]                    run Claude Code through the router")
 		}
 		if first == "--minigw-help" {

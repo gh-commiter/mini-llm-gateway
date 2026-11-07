@@ -15,7 +15,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -253,7 +252,7 @@ func (s *server) gatewayRoute(model string, wait bool) (serveGateway, gwModel, b
 		if w {
 			s.loadGateways()
 		}
-		for _, g := range s.cfg.Gateways {
+		for _, g := range s.conf().Gateways {
 			for _, m := range s.gatewayModels(g, false) {
 				if g.enabled(m.id) && !shadowsCLI(m.id) && (m.id == model || publishedID(m.id) == model) {
 					return g, m, true
@@ -267,7 +266,7 @@ func (s *server) gatewayRoute(model string, wait bool) (serveGateway, gwModel, b
 // loadGateways: počaka na prehode, ki se nalagajo prvič, vse hkrati (skupaj največ 2 s).
 func (s *server) loadGateways() {
 	var wg sync.WaitGroup
-	for _, g := range s.cfg.Gateways {
+	for _, g := range s.conf().Gateways {
 		wg.Go(func() { s.gatewayModels(g, true) })
 	}
 	wg.Wait()
@@ -283,7 +282,7 @@ func (s *server) gatewayModelList() []map[string]any {
 	var data []map[string]any
 	seen := map[string]bool{}
 	s.loadGateways()
-	for _, g := range s.cfg.Gateways {
+	for _, g := range s.conf().Gateways {
 		for _, m := range s.gatewayModels(g, false) {
 			id := publishedID(m.id)
 			if !g.enabled(m.id) || seen[id] || shadowsCLI(m.id) { // prvi prehod z imenom zmaga
@@ -395,200 +394,6 @@ func upstreamError(w http.ResponseWriter, rid, name string, resp *http.Response)
 		msg, status = fmt.Sprintf("HTTP %d: %s", status, msg), 502
 	}
 	return writeError(w, rid, status, name+": "+msg)
-}
-
-// --- minigw serve gateway … ---
-
-const gatewayHelp = `minigw serve gateway add <name> <baseURL> [--insecure]   add or update; the API key is read from stdin
-minigw serve gateway remove <name>
-minigw serve gateway list
-minigw serve gateway models <name> [text] [--all]   enabled models; with text or --all also the disabled ones
-minigw serve gateway models <name> [--enable m1,m2|all] [--disable m1,m2|all]`
-
-func gatewayCommand(cfgPath string, args []string, insecure bool, enable, disable string, all bool, in io.Reader) {
-	if len(args) == 0 {
-		fail(gatewayHelp)
-	}
-	c, err := loadServeConfig(cfgPath)
-	if err != nil {
-		fail("cannot read " + cfgPath + " (run minigw serve init first): " + err.Error())
-	}
-	cfgDir, _ := filepath.Abs(filepath.Dir(cfgPath))
-	find := func(name string) int {
-		return slices.IndexFunc(c.Gateways, func(g serveGateway) bool { return g.Name == name })
-	}
-	need := func(n int) {
-		if len(args) != n+1 {
-			fail(gatewayHelp)
-		}
-	}
-	switch args[0] {
-	case "add":
-		need(2)
-		name := args[1]
-		if !validGatewayName.MatchString(name) {
-			fail("gateway name: letters, digits, . _ - (up to 32)")
-		}
-		base, err := checkGatewayURL(args[2], insecure)
-		if err != nil {
-			fail(err.Error())
-		}
-		key, err := readKey(in, name)
-		if err != nil {
-			fail(err.Error())
-		}
-		g := serveGateway{Name: name, BaseURL: base, Insecure: insecure}
-		i := find(name)
-		if i >= 0 {
-			g.Models = c.Gateways[i].Models
-		}
-		models, err := discoverGateway(g, key)
-		if err != nil {
-			fail("gateway not added: " + err.Error())
-		}
-		if i < 0 && len(models) > 20 { // OpenRouter: več sto modelov, izbereš sam (kot na Macu)
-			g.Models = []string{}
-		}
-		where, err := keySet(cfgDir, name, key)
-		if err != nil {
-			fail("cannot store the API key: " + err.Error())
-		}
-		if i >= 0 {
-			c.Gateways[i] = g
-		} else {
-			c.Gateways = append(c.Gateways, g)
-		}
-		saveServeConfig(cfgPath, c)
-		say(fmt.Sprintf("gateway %s: %d models, %s enabled; API key stored in %s", name, len(models), enabledCount(g, models), where))
-		if g.Models != nil && len(g.Models) == 0 {
-			say("enable models with: minigw serve gateway models " + name + " --enable <id>,<id>")
-		}
-		say("restart minigw serve")
-	case "remove":
-		need(1)
-		i := find(args[1])
-		if i < 0 {
-			fail("no gateway " + args[1])
-		}
-		c.Gateways = slices.Delete(c.Gateways, i, i+1)
-		saveServeConfig(cfgPath, c)
-		keyDel(cfgDir, args[1])
-		say("removed gateway " + args[1] + " and its API key (restart minigw serve)")
-	case "list":
-		need(0)
-		for _, g := range c.Gateways {
-			n := "all"
-			if g.Models != nil {
-				n = fmt.Sprint(len(g.Models))
-			}
-			say(fmt.Sprintf("%s  %s  models enabled: %s", g.Name, g.BaseURL, n))
-		}
-	case "models":
-		filter := ""
-		if len(args) == 3 { // models <ime> <besedilo>: vsi modeli, ki ga vsebujejo
-			filter, args = strings.ToLower(args[2]), args[:2]
-		}
-		need(1)
-		i := find(args[1])
-		if i < 0 {
-			fail("no gateway " + args[1])
-		}
-		g := &c.Gateways[i]
-		key, _ := keyGet(cfgDir, g.Name)
-		models, err := discoverGateway(*g, key)
-		if err != nil {
-			fail(err.Error())
-		}
-		upstream := func(list string) []string {
-			var out []string
-			for _, v := range strings.Split(list, ",") {
-				if v = strings.TrimSpace(v); v == "" {
-					continue
-				}
-				j := slices.IndexFunc(models, func(m gwModel) bool { return m.id == v || publishedID(m.id) == v })
-				if j < 0 {
-					fail("gateway " + g.Name + " has no model " + v)
-				}
-				out = append(out, models[j].id)
-			}
-			return out
-		}
-		changed := enable != "" || disable != ""
-		before := map[string]bool{}
-		for _, m := range models {
-			before[m.id] = g.enabled(m.id)
-		}
-		switch {
-		case enable == "all":
-			g.Models = nil
-		case enable != "":
-			for _, id := range upstream(enable) {
-				if !g.enabled(id) {
-					g.Models = append(g.Models, id)
-				}
-			}
-		}
-		switch {
-		case disable == "all":
-			g.Models = []string{}
-		case disable != "":
-			off := upstream(disable)
-			var keep []string
-			for _, m := range models {
-				if g.enabled(m.id) && !slices.Contains(off, m.id) {
-					keep = append(keep, m.id)
-				}
-			}
-			g.Models = append([]string{}, keep...)
-		}
-		hidden := 0 // OpenRouter: več sto modelov; brez izbire le vklopljeni
-		for _, m := range models {
-			show := g.enabled(m.id) || all
-			switch {
-			case changed:
-				show = before[m.id] != g.enabled(m.id)
-			case filter != "":
-				show = strings.Contains(strings.ToLower(publishedID(m.id)), filter)
-			}
-			if !show {
-				if !changed && filter == "" {
-					hidden++
-				}
-				continue
-			}
-			mark := "[ ]"
-			if g.enabled(m.id) {
-				mark = "[x]"
-			}
-			w := ""
-			if m.window > 0 {
-				w = fmt.Sprintf("  %dK", m.window/1000)
-			}
-			say(clean(fmt.Sprintf("%s %s  (/model %s)%s", mark, m.id, publishedID(m.id), w)))
-		}
-		if hidden > 0 {
-			say(fmt.Sprintf("%d disabled models not shown: add --all, or a text to search (minigw serve gateway models %s haiku)", hidden, g.Name))
-		}
-		if changed {
-			saveServeConfig(cfgPath, c)
-			say(fmt.Sprintf("%s enabled (restart minigw serve)", enabledCount(*g, models)))
-		}
-	default:
-		fail(gatewayHelp)
-	}
-}
-
-func enabledCount(g serveGateway, models []gwModel) string {
-	if g.Models == nil {
-		return "all"
-	}
-	n := 0
-	for _, m := range models {
-		if g.enabled(m.id) {
-			n++
-		}
-	}
-	return fmt.Sprint(n)
 }
 
 // readKey: ključ s stdin (cev) ali s terminala brez odmeva; nikoli iz argv. Le natisljivi ASCII (gre v glavo HTTP).

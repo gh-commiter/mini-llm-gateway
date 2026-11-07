@@ -106,3 +106,63 @@ func readHidden(f *os.File) (string, error) {
 }
 
 const storeName = "Windows Credential Manager"
+
+// Vrednost HKCU\Software\Microsoft\Windows\CurrentVersion\Run: zagon ob prijavi brez skrbniških pravic.
+const runKey = `Software\Microsoft\Windows\CurrentVersion\Run`
+
+var (
+	procRegCreate = advapi32.NewProc("RegCreateKeyExW")
+	procRegSet    = advapi32.NewProc("RegSetValueExW")
+	procRegQuery  = advapi32.NewProc("RegQueryValueExW")
+	procRegDelete = advapi32.NewProc("RegDeleteValueW")
+	procRegClose  = advapi32.NewProc("RegCloseKey")
+)
+
+func runKeyOpen() (uintptr, error) {
+	const hkcu, access = 0x80000001, 0x0002 | 0x0001 // KEY_SET_VALUE | KEY_QUERY_VALUE
+	sub, _ := syscall.UTF16PtrFromString(runKey)
+	var h uintptr
+	if r, _, _ := procRegCreate.Call(hkcu, uintptr(unsafe.Pointer(sub)), 0, 0, 0, access, 0, uintptr(unsafe.Pointer(&h)), 0); r != 0 {
+		return 0, syscall.Errno(r)
+	}
+	return h, nil
+}
+
+func regRunSet(name, value string) error {
+	h, err := runKeyOpen()
+	if err != nil {
+		return err
+	}
+	defer procRegClose.Call(h)
+	n, _ := syscall.UTF16PtrFromString(name)
+	v, _ := syscall.UTF16FromString(value)
+	if r, _, _ := procRegSet.Call(h, uintptr(unsafe.Pointer(n)), 0, 1 /* REG_SZ */, uintptr(unsafe.Pointer(&v[0])), uintptr(len(v)*2)); r != 0 {
+		return syscall.Errno(r)
+	}
+	return nil
+}
+
+func regRunGet(name string) (string, error) {
+	h, err := runKeyOpen()
+	if err != nil {
+		return "", err
+	}
+	defer procRegClose.Call(h)
+	n, _ := syscall.UTF16PtrFromString(name)
+	buf := make([]uint16, 2048)
+	size := uint32(len(buf) * 2)
+	if r, _, _ := procRegQuery.Call(h, uintptr(unsafe.Pointer(n)), 0, 0, uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&size))); r != 0 {
+		return "", syscall.Errno(r)
+	}
+	return syscall.UTF16ToString(buf[:size/2]), nil
+}
+
+func regRunDel(name string) {
+	h, err := runKeyOpen()
+	if err != nil {
+		return
+	}
+	defer procRegClose.Call(h)
+	n, _ := syscall.UTF16PtrFromString(name)
+	procRegDelete.Call(h, uintptr(unsafe.Pointer(n)))
+}

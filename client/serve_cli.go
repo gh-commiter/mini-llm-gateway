@@ -113,8 +113,9 @@ func ruleAbs(p string) string {
 // agentArgs: orodja agenta le v delovni mapi; mapa nastavitev (žeton, ključ routerja) prepovedana. Razen na Windows še
 // sandbox Claude Code (kot ClaudeCLI.agentArgs): Bash ne bere domače mape in piše le v kopijo; z Bash je obvezen.
 func (s *server) agentArgs(dir string) []string {
+	c := s.conf()
 	var tools, allowed []string
-	for _, t := range strings.Split(s.cfg.Tools, ",") {
+	for _, t := range strings.Split(c.Tools, ",") {
 		switch t = strings.TrimSpace(t); {
 		case t == "":
 			continue
@@ -127,10 +128,10 @@ func (s *server) agentArgs(dir string) []string {
 	}
 	cfg := ruleAbs(s.cfgDir) + "/**"
 	args := []string{"--tools", strings.Join(tools, ","), "--allowedTools", strings.Join(allowed, ","),
-		"--disallowedTools", "Read(" + cfg + "),Edit(" + cfg + "),Write(" + cfg + ")", "--permission-mode", s.cfg.PermissionMode}
+		"--disallowedTools", "Read(" + cfg + "),Edit(" + cfg + "),Write(" + cfg + ")", "--permission-mode", c.PermissionMode}
 	if runtime.GOOS != "windows" {
 		settings, _ := json.Marshal(map[string]any{"sandbox": map[string]any{
-			"enabled": true, "failIfUnavailable": hasBash(s.cfg.Tools), "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
+			"enabled": true, "failIfUnavailable": hasBash(c.Tools), "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
 			"network":    map[string]any{"allowedDomains": []string{"*"}},
 			"filesystem": map[string]any{"denyRead": []string{"~", s.cfgDir}, "allowRead": []string{dir}, "allowWrite": []string{dir}},
 		}})
@@ -141,7 +142,7 @@ func (s *server) agentArgs(dir string) []string {
 
 // promptFile: besedilo za --system-prompt-file / --append-system-prompt-file (0600, ne v argv).
 func (s *server) promptFile(text string) (string, error) {
-	f, err := os.CreateTemp(s.cfg.scratch("prompts"), "p-*.txt")
+	f, err := os.CreateTemp(s.conf().scratch("prompts"), "p-*.txt")
 	if err != nil {
 		return "", err
 	}
@@ -178,7 +179,7 @@ func (t *tailBuffer) String() string {
 
 func (s *server) modelList() map[string]any {
 	data := append([]map[string]any{}, s.gatewayModelList()...)
-	if len(s.claude) > 0 {
+	if len(s.claudeExe()) > 0 {
 		for _, m := range cliFamilies[:3] {
 			data = append(data, map[string]any{"type": "model", "id": cliAgentPrefix + m,
 				"display_name": strings.ToUpper(m[:1]) + m[1:] + " · Claude CLI",
@@ -447,7 +448,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	var dir, extra string // extra: --append-system-prompt-file ali --system-prompt-file
 	extraFlag := "--append-system-prompt-file"
 	if !chat {
-		clientCwd := r.h("x-claude-mini-cwd")
+		clientCwd, folder := r.h("x-claude-mini-cwd"), s.conf().Folder
 		share := s.hub.waitShare(r.Context(), session, r.owner(), r.h("x-claude-mini-share") == "1")
 		switch {
 		case share != nil:
@@ -463,13 +464,13 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			extra = note
 		case s.hub.isRefused(session): // odjemalec je poslal mapo brez sync
 			return writeError(w, r.rid, 400, refusedDirect)
-		case s.cfg.Folder == "" && r.h("x-claude-mini-share") == "1": // mapa je bila napovedana, a ni prišla
+		case folder == "" && r.h("x-claude-mini-share") == "1": // mapa je bila napovedana, a ni prišla
 			return writeError(w, r.rid, 400, "The folder "+clientCwd+" did not reach this router: see the minigw message when it started")
-		case s.cfg.Folder == "": // odjemalec mape ni delil (npr. /tmp, ki se ne deli samodejno)
+		case folder == "": // odjemalec mape ni delil (npr. /tmp, ki se ne deli samodejno)
 			return writeError(w, r.rid, 400, "The folder "+clientCwd+" is not shared with the router, so Claude CLI agents cannot work in it: "+
 				"in that folder run minigw share add (or MINIGW_SHARE=1 for one run), then start minigw again")
 		default:
-			dir = s.cfg.Folder
+			dir = folder
 			extra = "Your working directory is " + dir + " on the router, not the user's folder " + clientCwd + "."
 		}
 		scope = session + "|" + dir
@@ -483,7 +484,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		}
 		args = append(args, s.agentArgs(dir)...)
 	} else {
-		dir = s.cfg.scratch("chat")
+		dir = s.conf().scratch("chat")
 		prompt = cliPrompt(history, last)
 		args = append(args, "--tools", "", "--no-session-persistence")
 		extra, extraFlag = systemText(body["system"]), "--system-prompt-file"
@@ -497,7 +498,8 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		args = append(args, extraFlag, f)
 	}
 
-	if len(s.claude) == 0 {
+	exe := s.claudeExe()
+	if len(exe) == 0 {
 		return writeError(w, r.rid, 503, "claude not found on the router (install Claude Code or set \"claude\" in the config)")
 	}
 	select { // največ 6 procesov claude hkrati
@@ -506,7 +508,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	case <-r.Context().Done():
 		return 499
 	}
-	cmd := exec.CommandContext(r.Context(), s.claude[0], append(s.claude[1:], args...)...)
+	cmd := exec.CommandContext(r.Context(), exe[0], append(exe[1:], args...)...)
 	cmd.Dir = dir
 	for _, e := range os.Environ() { // sicer bi notranji claude klical nazaj ta router
 		if !strings.HasPrefix(e, "ANTHROPIC_") && !strings.HasPrefix(e, "CLAUDE_CODE_") && !strings.HasPrefix(e, "CLAUDECODE=") {

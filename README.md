@@ -219,34 +219,41 @@ Install Claude Code there (on Windows the native `claude.exe`; `minigw serve` do
 ```sh
 minigw serve init            # creates the config with a new token and router key, prints the minigw connect line
 minigw serve                 # port 8765; --port, --folder, --config
+minigw serve install         # start it at sign-in (Windows: HKCU Run; Linux: systemd user unit), no admin rights
 ```
 
 On each client run the printed `minigw connect` line. The first connect from a new device is refused and the router
 log shows `minigw serve allow <id> "<name>"`. Anyone with the token can try to connect, so compare the ID with the
-device you just connected before you allow it, then restart `minigw serve`. `minigw serve devices` lists the allowed
-devices and `minigw serve deny <id or name>` removes one.
+device you just connected before you allow it. `minigw router devices` lists the allowed devices and the ones
+waiting, `minigw router devices deny <id or name>` removes one.
+
+**Changing the router.** `minigw router status|devices|gateway|claude|token` (also as `minigw serve allow`, `deny`,
+`devices`, `gateway`) changes the running router at once, through its admin API; when it does not run, it changes
+`serve.json`. Port and address need a restart. `minigw router token rotate` makes a new token and prints the new
+connect line for the clients. The admin API ([docs/admin-api.md](docs/admin-api.md)) answers only on this computer,
+with the secret in `admin.secret` in the config folder.
 
 The config (`%AppData%\minigw\serve.json`, `~/.config/minigw/serve.json`, mode 0600) holds the token, the router key,
 the allowed devices and the agent's `tools` (default `Read,Grep,Glob,Edit,Write,MultiEdit`, limited to the copy).
 `Bash` runs in Claude Code's sandbox on Linux (needs `bubblewrap` and `socat`); on Windows there is no sandbox, so it
 also needs `"allowUnsandboxedBash": true`; agents can then run any command as you and read the gateway API keys in
-Credential Manager. Connections from the router computer itself (loopback) skip the device
+Credential Manager and the admin secret. Connections from the router computer itself (loopback) skip the device
 check and encryption: do not forward the port to loopback (`ssh -L`, `netsh interface portproxy`, a reverse proxy).
 
 **Gateways.** Any Anthropic-compatible upstream (OpenRouter, LiteLLM) works as on the Mac, with the same model names.
 
 ```sh
-minigw serve gateway add openrouter https://openrouter.ai/api   # asks for the API key (or reads it from stdin)
-minigw serve gateway models openrouter --enable anthropic/claude-sonnet-4.5,openai/gpt-5
-minigw serve gateway models openrouter haiku                    # enabled models; a text or --all also shows the others
-minigw serve gateway list                                       # also: gateway remove <name>
+minigw router gateway add openrouter https://openrouter.ai/api  # asks for the API key (or reads it from stdin)
+minigw router gateway models openrouter --enable anthropic/claude-sonnet-4.5,openai/gpt-5
+minigw router gateway models openrouter haiku                   # enabled models; a text or --all also shows the others
+minigw router gateway list                                      # also: gateway remove <name>
 ```
 
 The router lists the enabled models with the claude-cli ones and passes requests through unchanged, streaming
 included. A gateway with more than 20 models starts with none enabled. The URL must be `https`; `http` works only
 to localhost or a private IP, with `--insecure`. The API key is never in `serve.json`: it is in Credential Manager
 on Windows, in the Secret Service (`secret-tool`) on Linux, or in `gateway-keys.json` (mode 0600) next to
-`serve.json` if there is no Secret Service. Restart `minigw serve` after a change.
+`serve.json` if there is no Secret Service.
 
 ## 4. Use
 
