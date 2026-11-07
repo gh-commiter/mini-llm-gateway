@@ -127,12 +127,13 @@ func (s *server) adminHTTP(w http.ResponseWriter, r *req) int {
 		if s.admin == "" || subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(auth, "Bearer ")), []byte(s.admin)) != 1 {
 			return writeError(w, r.rid, 401, "Invalid or missing admin secret (admin.secret in the config folder)")
 		}
-	} else { // stran z nastavitvami: piškotek seje in X-CSRF pri vsaki spremembi
+	} else { // stran z nastavitvami: piškotek seje in X-CSRF pri vsaki zahtevi, tudi branju (piškotek na 127.0.0.1
+		// dobi tudi drug lokalni strežnik na drugih vratih; vrednost CSRF je le v strani)
 		sess, ok := s.settings.session(r)
 		if !ok {
 			return writeError(w, r.rid, 401, "Invalid or missing admin secret (admin.secret in the config folder)")
 		}
-		if r.Method != "GET" && subtle.ConstantTimeCompare([]byte(r.h("x-csrf")), []byte(sess.csrf)) != 1 {
+		if subtle.ConstantTimeCompare([]byte(r.h("x-csrf")), []byte(sess.csrf)) != 1 {
 			return writeError(w, r.rid, 403, "Missing or wrong X-CSRF header: reload the settings page")
 		}
 	}

@@ -95,8 +95,14 @@ func TestSettingsLoginAndCSRF(t *testing.T) {
 		resp.Body.Close()
 		return resp.StatusCode
 	}
-	if st := call("GET", "/status", "", ""); st != 200 {
-		t.Fatalf("GET with cookie: %d", st)
+	// Piškotek brez CSRF ne bere ničesar (drug strežnik na 127.0.0.1 dobi piškotek, ne vrednosti iz strani).
+	for _, path := range []string{"/status", "/general", "/devices", "/gateways"} {
+		if st := call("GET", path, "", ""); st != 403 {
+			t.Fatalf("GET %s with cookie only: %d", path, st)
+		}
+	}
+	if st := call("GET", "/general", string(csrf[1]), ""); st != 200 {
+		t.Fatalf("GET with cookie and CSRF: %d", st)
 	}
 	if st := call("PATCH", "/agents/claude", "", `{"tools":"Read"}`); st != 403 {
 		t.Fatalf("PATCH without CSRF: %d", st)

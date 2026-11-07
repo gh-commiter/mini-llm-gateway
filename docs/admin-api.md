@@ -17,8 +17,9 @@ except where a response says `"restartRequired": true`.
   client token is not the admin secret.
 - **Settings page session** (instead of the secret): `GET /minigw/settings/login?t=<one-time token>` (valid 60 s,
   once) sets the cookie `minigw_settings` (HttpOnly, SameSite=Strict, Path=/minigw/) and redirects to
-  `/minigw/settings`. A request with that cookie may use the API; every method other than GET also needs the header
-  `X-CSRF` with the session's value, which the page has embedded. Missing cookie: `401`; missing or wrong `X-CSRF`:
+  `/minigw/settings`. A request with that cookie may use the API only with the header `X-CSRF` set to the session's value,
+  which the page has embedded; this holds for every method, GET too, because browsers send a 127.0.0.1 cookie to
+  every port. Missing cookie: `401`; missing or wrong `X-CSRF`:
   `403`. `POST /settings/login` (below) or the tray gives the one-time link.
 - Loopback skips the device check and encryption for normal API calls; the admin API still needs the secret.
 - **Clients authenticate the router before they send the secret.** Something else may listen on the port (the
