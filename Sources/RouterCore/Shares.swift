@@ -262,7 +262,7 @@ public actor ShareHub {
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             // kanonični poti: clone ne sledi povezavam nikjer v poti
             guard let src = Sync.real(copy), let to = Sync.real(dir)?.appendingPathComponent(clone.lastPathComponent),
-                  Self.clone(src, to: to) else { return nil }
+                  Self.clone(src, to: to, trustedSource: true) else { return nil }
             return readOnly ? [:] : Sync.scan(clone, previous: base).files
         }.value
         guard let start else { return nil }
@@ -270,14 +270,27 @@ public actor ShareHub {
         return clone
     }
 
-    /// Nikoli ne sledi povezavi (agent jo lahko podtakne po preverjanju poti): ob ELOOP ni kopije. Brez CLONE_NOFOLLOW,
-    /// ki bi povezavo prepisal kot povezavo; CLONE_NOFOLLOW_ANY zavrne tudi zadnji del poti. Brez APFS kopira le
-    /// navadno datoteko ali mapo (povezave v njej ostanejo povezave).
-    static func clone(_ src: URL, to dst: URL) -> Bool {
+    /// Nikoli ne sledi povezavi (agent jo lahko podtakne po preverjanju poti); poti morata biti kanonični. Brez
+    /// CLONE_NOFOLLOW, ki bi povezavo prepisal kot povezavo; CLONE_NOFOLLOW_ANY zavrne tudi zadnji del poti.
+    /// Če klon ne uspe (ni APFS): `trustedSource` (kopija ob začetku izvajanja) copyItem, sicer le navadna datoteka.
+    static func clone(_ src: URL, to dst: URL, trustedSource: Bool = false) -> Bool {
         if clonefile(src.path, dst.path, UInt32(CLONE_NOFOLLOW_ANY)) == 0 { return true }
+        return trustedSource ? (try? FileManager.default.copyItem(at: src, to: dst)) != nil : copyRegular(src, to: dst)
+    }
+
+    /// Navadna datoteka iz fd v fd (način in čas ostaneta); povezava nikjer v nobeni poti.
+    static func copyRegular(_ src: URL, to dst: URL) -> Bool {
         var st = stat()
-        guard errno != ELOOP, lstat(src.path, &st) == 0, st.st_mode & S_IFMT == S_IFREG || st.st_mode & S_IFMT == S_IFDIR else { return false }
-        return (try? FileManager.default.copyItem(at: src, to: dst)) != nil
+        guard let f = Sync.openRegular(src, flags: O_NOFOLLOW_ANY), fstat(f.fileDescriptor, &st) == 0 else { return false }
+        let fd = Darwin.open(dst.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW_ANY, st.st_mode & 0o777)
+        guard fd >= 0 else { return false }
+        let out = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        do {
+            while let d = try f.read(upToCount: 1 << 20), !d.isEmpty { try out.write(contentsOf: d) }
+            var t = [st.st_atimespec, st.st_mtimespec]
+            guard fchmod(fd, st.st_mode & 0o777) == 0, futimens(fd, &t) == 0 else { throw CocoaError(.fileWriteUnknown) }
+            return true
+        } catch { unlink(dst.path); return false }
     }
 
     /// Spremembe agenta v klonu nazaj v kopijo (pod zaklepom), da je naslednji prenos spet le razlika.
@@ -429,7 +442,7 @@ public actor ShareHub {
         guard let s = share(key: key, device: device), let copy = s.pulling?.clone ?? s.copy, !s.readOnly, (s.pending[path] ?? nil) != nil,
               Sync.resolve(path, root: copy) != nil, let root = Sync.real(copy) else { return nil }
         s.lastSeen = Date()
-        return Sync.read(root.appendingPathComponent(path), max: Int(Sync.maxFile), any: true)  // agent ne podtakne povezave
+        return Sync.read(root.appendingPathComponent(path), max: Int(Sync.maxFile), flags: O_NOFOLLOW_ANY)  // agent ne podtakne povezave
     }
 
     /// Ob zagonu aplikacije: priklopi prejšnjega zagona kažejo na skrivnosti, ki jih router ne pozna več → odklopi.

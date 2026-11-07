@@ -53,9 +53,11 @@ public enum Sync {
             }
         }
 
-        public init(root: URL) {
-            // Le navadna datoteka do 1 MB (ne povezava, FIFO ali naprava); sicer kot brez .gitignore.
-            self.init(gitignore: Sync.read(root.appendingPathComponent(".gitignore"), max: 1 << 20).map { String(decoding: $0, as: UTF8.self) } ?? "")
+        /// Le navadna datoteka do 1 MB (ne FIFO ali naprava); sicer kot brez .gitignore. `follow`: mapa uporabnika,
+        /// .gitignore je lahko povezava (dotfiles); router (kopija, klon) povezavi ne sledi.
+        public init(root: URL, follow: Bool) {
+            self.init(gitignore: Sync.read(root.appendingPathComponent(".gitignore"), max: 1 << 20, flags: follow ? 0 : O_NOFOLLOW)
+                .map { String(decoding: $0, as: UTF8.self) } ?? "")
         }
 
         public func ignored(_ rel: String, isDir: Bool) -> Bool {
@@ -102,8 +104,10 @@ public enum Sync {
     }
 
     /// Datoteke pod `root` brez prezrtih in simbolnih povezav. Zgoščuje le, kar ima drugo velikost ali čas kot v `previous`.
-    public static func scan(_ root: URL, previous: [String: Entry] = [:]) -> (files: [String: Entry], skipped: [String]) {
-        let ignore = Ignore(root: root)
+    /// `trusted`: mapa uporabnika (odjemalec); sicer kopija ali klon routerja, kjer ne sledi povezavam nikjer v poti.
+    public static func scan(_ root: URL, previous: [String: Entry] = [:], trusted: Bool = false) -> (files: [String: Entry], skipped: [String]) {
+        let root = trusted ? root : real(root) ?? root
+        let ignore = Ignore(root: root, follow: trusted)
         var files: [String: Entry] = [:], skipped: [String] = []
         func walk(_ dir: URL, _ rel: String) {
             for name in ((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []).sorted() {
@@ -116,7 +120,7 @@ public enum Sync {
                 case .typeRegular?:
                     guard !ignore.ignored(r, isDir: false) else { continue }
                     if (a[.size] as? NSNumber)?.int64Value ?? 0 > maxFile { skipped.append(r); continue }
-                    if let e = entry(url, path: r, previous: previous[r]) { files[r] = e }
+                    if let e = entry(url, path: r, previous: previous[r], flags: trusted ? O_NOFOLLOW : O_NOFOLLOW_ANY) { files[r] = e }
                 default:
                     continue
                 }
@@ -127,22 +131,23 @@ public enum Sync {
     }
 
     /// Ena datoteka; nil, če ne obstaja ali ni navadna datoteka.
-    static func entry(_ url: URL, path: String, previous: Entry?) -> Entry? {
+    static func entry(_ url: URL, path: String, previous: Entry?, flags: Int32 = O_NOFOLLOW) -> Entry? {
         guard let a = try? FileManager.default.attributesOfItem(atPath: url.path), a[.type] as? FileAttributeType == .typeRegular
         else { return nil }
         let size = (a[.size] as? NSNumber)?.int64Value ?? 0
         let mtime = Int64((((a[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0) * 1000).rounded())
         let exec = ((a[.posixPermissions] as? NSNumber)?.intValue ?? 0) & 0o100 != 0
         if var p = previous, p.size == size, p.mtime == mtime { p.path = path; p.exec = exec; return p }
-        guard let f = openRegular(url) else { return nil }
+        guard let f = openRegular(url, flags: flags) else { return nil }
         var h = SHA256()
         while let d = try? f.read(upToCount: 1 << 20), !d.isEmpty { h.update(data: d) }
         return Entry(path: path, size: size, mtime: mtime, sha256: hex(h.finalize()), exec: exec)
     }
 
-    /// Navadna datoteka, odprta brez sledenja povezavi (`any`: nikjer v poti, pot mora biti kanonična) in brez čakanja na FIFO.
-    static func openRegular(_ url: URL, any: Bool = false) -> FileHandle? {
-        let fd = Darwin.open(url.path, O_RDONLY | O_NONBLOCK | (any ? O_NOFOLLOW_ANY : O_NOFOLLOW))
+    /// Navadna datoteka, odprta brez čakanja na FIFO; `flags`: O_NOFOLLOW (zadnji del), O_NOFOLLOW_ANY (nikjer v poti,
+    /// pot mora biti kanonična) ali 0 (sledi).
+    static func openRegular(_ url: URL, flags: Int32 = O_NOFOLLOW) -> FileHandle? {
+        let fd = Darwin.open(url.path, O_RDONLY | O_NONBLOCK | flags)
         guard fd >= 0 else { return nil }
         let f = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
         var st = stat()
@@ -157,8 +162,8 @@ public enum Sync {
     }
 
     /// Vsebina navadne datoteke (glej openRegular); nil, če je večja od `max`.
-    static func read(_ url: URL, max: Int, any: Bool = false) -> Data? {
-        guard let f = openRegular(url, any: any), let d = try? f.read(upToCount: max + 1) ?? Data(), d.count <= max else { return nil }
+    static func read(_ url: URL, max: Int, flags: Int32 = O_NOFOLLOW) -> Data? {
+        guard let f = openRegular(url, flags: flags), let d = try? f.read(upToCount: max + 1) ?? Data(), d.count <= max else { return nil }
         return d
     }
 
@@ -220,7 +225,7 @@ public enum Sync {
     /// `state` = manifest ob prenosu. Vrne sporočila za stderr in obdelane poti (potrditev routerju).
     public static func apply(_ ch: Changes, root: URL, state: inout [String: Entry],
                              fetch: (String) -> Data?) -> (notes: [String], done: [String]) {
-        let ignore = Ignore(root: root)
+        let ignore = Ignore(root: root, follow: true)  // odjemalec: mapa uporabnika
         var notes: [String] = [], done: [String] = []
         let before = state, base = { (p: String) in ch.base.map { $0[p] } ?? before[p]?.sha256 }
         for p in ch.deleted {  // pred spremembami: datoteka »a« → mapa »a/…«

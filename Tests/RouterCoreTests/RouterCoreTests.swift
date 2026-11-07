@@ -1260,10 +1260,16 @@ final class FakeMinigw: @unchecked Sendable {
     for src in [clone.appendingPathComponent("a.txt"), clone.appendingPathComponent("dir/secret")] {
         let dst = base.appendingPathComponent("copy-" + UUID().uuidString)
         #expect(!ShareHub.clone(src, to: dst) && !fm.fileExists(atPath: dst.path), "\(src.path)")
-        #expect(Sync.read(src, max: 1 << 20, any: true) == nil, "\(src.path)")
+        #expect(Sync.read(src, max: 1 << 20, flags: O_NOFOLLOW_ANY) == nil, "\(src.path)")
+        #expect(!ShareHub.copyRegular(src, to: dst) && !fm.fileExists(atPath: dst.path), "\(src.path)")  // brez APFS
     }
     try Data("ok".utf8).write(to: clone.appendingPathComponent("b.txt"))
-    #expect(Sync.read(clone.appendingPathComponent("b.txt"), max: 1 << 20, any: true) == Data("ok".utf8))
+    #expect(Sync.read(clone.appendingPathComponent("b.txt"), max: 1 << 20, flags: O_NOFOLLOW_ANY) == Data("ok".utf8))
+    try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: clone.appendingPathComponent("b.txt").path)
+    let copied = base.appendingPathComponent("b-copy")
+    #expect(ShareHub.copyRegular(clone.appendingPathComponent("b.txt"), to: copied))
+    #expect(Sync.read(copied, max: 1 << 20) == Data("ok".utf8))
+    #expect((try fm.attributesOfItem(atPath: copied.path))[.posixPermissions] as? Int == 0o755)
 }
 
 /// .gitignore kot povezava ven iz korena ali FIFO: prezrta, brez čakanja.
@@ -1275,13 +1281,18 @@ final class FakeMinigw: @unchecked Sendable {
     try fm.createDirectory(at: root, withIntermediateDirectories: true)
     try Data("*.txt\n".utf8).write(to: base.appendingPathComponent("outside"))
     try fm.createSymbolicLink(at: root.appendingPathComponent(".gitignore"), withDestinationURL: base.appendingPathComponent("outside"))
-    #expect(!Sync.Ignore(root: root).ignored("a.txt", isDir: false))
+    #expect(!Sync.Ignore(root: root, follow: false).ignored("a.txt", isDir: false))
+    // Odjemalec: povezan .gitignore (dotfiles) velja; .env ne gre na router.
+    try Data(".env\n".utf8).write(to: base.appendingPathComponent("outside"))
+    try Data("x".utf8).write(to: root.appendingPathComponent(".env"))
+    #expect(Sync.scan(root, trusted: true).files[".env"] == nil && Sync.scan(root).files[".env"] != nil)
     try fm.removeItem(at: root.appendingPathComponent(".gitignore"))
     #expect(mkfifo(root.appendingPathComponent(".gitignore").path, 0o600) == 0)
-    #expect(!Sync.Ignore(root: root).ignored("a.txt", isDir: false))
+    #expect(!Sync.Ignore(root: root, follow: true).ignored("a.txt", isDir: false))
+    #expect(!Sync.Ignore(root: root, follow: false).ignored("a.txt", isDir: false))
     try fm.removeItem(at: root.appendingPathComponent(".gitignore"))
     try Data("*.txt\n".utf8).write(to: root.appendingPathComponent(".gitignore"))
-    #expect(Sync.Ignore(root: root).ignored("a.txt", isDir: false))
+    #expect(Sync.Ignore(root: root, follow: false).ignored("a.txt", isDir: false))
 }
 
 /// Dva agenta v sporu s kopijo: oba ostaneta (f.txt.minigw-agent, f.txt.minigw-agent-2).

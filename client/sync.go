@@ -131,21 +131,26 @@ func ignoredPath(rules []ignoreRule, rel string) bool {
 	return false
 }
 
-// loadIgnore: le navadna datoteka do 1 MB (ne povezava ven iz root, FIFO ali naprava); sicer kot brez .gitignore.
-func loadIgnore(root string) []ignoreRule {
-	gi, _ := readRegular(root, ".gitignore", 1<<20)
+// loadIgnore: le navadna datoteka do 1 MB (ne FIFO ali naprava); sicer kot brez .gitignore. trusted: mapa uporabnika,
+// .gitignore je lahko povezava (dotfiles); router (kopija) ne sledi povezavi ven iz root.
+func loadIgnore(root string, trusted bool) []ignoreRule {
+	gi, _ := readRegular(root, ".gitignore", 1<<20, trusted)
 	return parseIgnore(strings.ReplaceAll(string(gi), "\r", ""))
 }
 
-// readRegular: navadna datoteka rel pod root do max bajtov. os.Root ne sledi povezavi ven iz root (tudi ne prek
-// podtaknjene starševske mape), O_NONBLOCK ne čaka na FIFO.
-func readRegular(root, rel string, max int64) ([]byte, bool) {
-	r, err := os.OpenRoot(root)
-	if err != nil {
-		return nil, false
+// readRegular: navadna datoteka rel pod root do max bajtov. Brez follow os.Root ne sledi povezavi ven iz root (tudi ne
+// prek podtaknjene starševske mape); O_NONBLOCK ne čaka na FIFO.
+func readRegular(root, rel string, max int64, follow bool) ([]byte, bool) {
+	var f *os.File
+	var err error
+	if follow {
+		f, err = os.OpenFile(filepath.Join(root, filepath.FromSlash(rel)), os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	} else if r, rerr := os.OpenRoot(root); rerr != nil {
+		err = rerr
+	} else {
+		defer r.Close()
+		f, err = r.OpenFile(filepath.FromSlash(rel), os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	}
-	defer r.Close()
-	f, err := r.OpenFile(filepath.FromSlash(rel), os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, false
 	}
@@ -158,11 +163,12 @@ func readRegular(root, rel string, max int64) ([]byte, bool) {
 }
 
 // syncScan: datoteke pod root brez prezrtih in simbolnih povezav; zgoščuje le, kar ima drugo velikost ali čas kot v prev.
-func syncScan(root string, prev map[string]syncEntry) (map[string]syncEntry, []string) {
+// trusted: mapa uporabnika (odjemalec); sicer kopija routerja.
+func syncScan(root string, prev map[string]syncEntry, trusted bool) (map[string]syncEntry, []string) {
 	if r, err := filepath.EvalSymlinks(root); err == nil {
 		root = r
 	}
-	rules := loadIgnore(root)
+	rules := loadIgnore(root, trusted)
 	files, skipped := map[string]syncEntry{}, []string{}
 	filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
 		if err != nil || p == root {
@@ -297,7 +303,7 @@ func withExec(mode os.FileMode, exec bool) os.FileMode {
 // Poti, prezrte pri odjemalcu, preskoči.
 // state = manifest ob prenosu. Vrne sporočila za stderr in obdelane poti (potrditev routerju).
 func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch func(string) []byte) (notes, done []string) {
-	rules := loadIgnore(root)
+	rules := loadIgnore(root, true) // odjemalec
 	before := map[string]string{}
 	for p, e := range state {
 		before[p] = e.SHA256
@@ -403,7 +409,7 @@ func (s *shareClient) note(msg string) { fmt.Fprintln(os.Stderr, "minigw: "+clea
 
 // syncPush: pred agentom manifest k routerju, nato datoteke, ki jih potrebuje.
 func (s *shareClient) syncPush(k string) bool {
-	files, skipped := syncScan(s.root, s.synced)
+	files, skipped := syncScan(s.root, s.synced, true)
 	for _, p := range skipped {
 		if !s.reported[p] {
 			s.reported[p] = true

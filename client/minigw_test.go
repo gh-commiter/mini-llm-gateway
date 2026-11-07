@@ -132,13 +132,13 @@ func TestSyncScanAndPaths(t *testing.T) {
 	os.WriteFile(filepath.Join(root, ".gitignore"), []byte("*.log\r\n"), 0o644)
 	os.WriteFile(filepath.Join(base, "secret"), []byte("no"), 0o644)
 	os.Symlink(base, filepath.Join(root, "link"))
-	files, skipped := syncScan(root, nil)
+	files, skipped := syncScan(root, nil, true)
 	if len(files) != 2 || files["src/a.swift"].SHA256 != sha256Hex([]byte("src/a.swift")) || files[".gitignore"].Path == "" || len(skipped) != 0 {
 		t.Fatalf("scan: %v %v", files, skipped)
 	}
 	fake := files["src/a.swift"]
 	fake.SHA256 = "cached" // brez ponovnega zgoščevanja, ko sta velikost in čas enaka
-	if again, _ := syncScan(root, map[string]syncEntry{"src/a.swift": fake}); again["src/a.swift"].SHA256 != "cached" {
+	if again, _ := syncScan(root, map[string]syncEntry{"src/a.swift": fake}, true); again["src/a.swift"].SHA256 != "cached" {
 		t.Fatal("rehashed an unchanged file")
 	}
 	for _, p := range []string{"src/a.swift", "src/new/b.txt"} {
@@ -169,7 +169,7 @@ func TestSyncApplyConflicts(t *testing.T) {
 	for _, p := range []string{"a.txt", "b.txt", "c.txt", "d.txt"} {
 		put(p, "v1 "+p)
 	}
-	state, _ := syncScan(root, nil)
+	state, _ := syncScan(root, nil, true)
 	put("c.txt", "user c") // uporabnik med agentom
 	put("d.txt", "user d")
 	blobs := map[string][]byte{"a.txt": []byte("agent a"), "c.txt": []byte("agent c"), "new/n.txt": []byte("agent n")}
@@ -209,7 +209,7 @@ func TestSyncApplyParallelRunsUseBase(t *testing.T) {
 	for _, p := range []string{"a.txt", "b.txt", "c.txt", "d.txt"} {
 		os.WriteFile(filepath.Join(root, p), []byte("v1"), 0o644)
 	}
-	state, _ := syncScan(root, nil)
+	state, _ := syncScan(root, nil, true)
 	v1 := sha256Hex([]byte("v1"))
 	run := func(files map[string]string, deleted ...string) syncChanges {
 		ch := syncChanges{Deleted: deleted, Base: map[string]string{}}
@@ -248,7 +248,7 @@ func TestSyncApplyParallelRunsUseBase(t *testing.T) {
 func TestSyncApplyFileToFolder(t *testing.T) {
 	root := t.TempDir()
 	os.WriteFile(filepath.Join(root, "a"), []byte("file"), 0o644)
-	state, _ := syncScan(root, nil)
+	state, _ := syncScan(root, nil, true)
 	b := []byte("new")
 	ch := syncChanges{Deleted: []string{"a"}, Changed: []syncEntry{{Path: "a/b", Size: 3, Mtime: 1, SHA256: sha256Hex(b)}},
 		Base: map[string]string{"a": sha256Hex([]byte("file"))}}
@@ -272,7 +272,7 @@ func TestSyncApplyFileToFolder(t *testing.T) {
 func TestSyncApplySkipsIgnoredAndKeepsMode(t *testing.T) {
 	root := t.TempDir()
 	os.WriteFile(filepath.Join(root, "run.sh"), []byte("old"), 0o755)
-	state, _ := syncScan(root, nil)
+	state, _ := syncScan(root, nil, true)
 	if !state["run.sh"].Exec {
 		t.Fatal("exec flag missing")
 	}
@@ -344,7 +344,7 @@ func TestSyncKeptIsNotTreatedAsSynced(t *testing.T) {
 	}
 	put("x.txt", "v1")
 	put("y.txt", "v1")
-	synced, _ := syncScan(root, nil) // stanje po zadnjem uspešnem prenosu
+	synced, _ := syncScan(root, nil, true) // stanje po zadnjem uspešnem prenosu
 	put("x.txt", "user edit")
 	os.Remove(filepath.Join(root, "y.txt"))
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -375,7 +375,7 @@ func TestSyncKeptIsNotTreatedAsSynced(t *testing.T) {
 func TestSyncApplyExecOnlyAndInvalidPath(t *testing.T) {
 	root := t.TempDir()
 	os.WriteFile(filepath.Join(root, "run.sh"), []byte("x"), 0o644)
-	state, _ := syncScan(root, nil)
+	state, _ := syncScan(root, nil, true)
 	e := state["run.sh"]
 	e.Exec = true
 	_, done := syncApply(syncChanges{Changed: []syncEntry{e, {Path: "../bad", SHA256: "z"}}, Deleted: []string{"../gone"}}, root, state,
@@ -394,7 +394,7 @@ func TestSyncApplyRespectsUserExecBit(t *testing.T) {
 	a, b := filepath.Join(root, "a.sh"), filepath.Join(root, "b.sh")
 	os.WriteFile(a, []byte("v1"), 0o644)
 	os.WriteFile(b, []byte("v1"), 0o644)
-	state, _ := syncScan(root, nil)
+	state, _ := syncScan(root, nil, true)
 	mode := func(p string) os.FileMode { st, _ := os.Stat(p); return st.Mode().Perm() }
 	os.Chmod(b, 0o755) // uporabnik po prenosu
 	e := state["b.sh"]
@@ -460,7 +460,7 @@ func TestSyncNeverTouchesGitOrCommandSettings(t *testing.T) {
 	os.MkdirAll(filepath.Join(root, ".GIT"), 0o755)
 	os.WriteFile(filepath.Join(root, ".GIT", "config"), []byte("x"), 0o644)
 	os.WriteFile(filepath.Join(root, "a.txt"), []byte("y"), 0o644)
-	state, _ := syncScan(root, nil)
+	state, _ := syncScan(root, nil, true)
 	if len(state) != 1 {
 		t.Fatalf(".GIT synced: %v", state)
 	}
@@ -526,16 +526,25 @@ func TestSyncIgnoreSkipsLinkedOrSpecialGitignore(t *testing.T) {
 	os.Mkdir(root, 0o755)
 	os.WriteFile(filepath.Join(base, "outside"), []byte("*.txt\n"), 0o644)
 	gi := filepath.Join(root, ".gitignore")
-	if os.Symlink(filepath.Join(base, "outside"), gi) == nil && ignored(loadIgnore(root), "a.txt", false) {
+	if os.Symlink(filepath.Join(base, "outside"), gi) == nil && ignored(loadIgnore(root, false), "a.txt", false) {
 		t.Fatal(".gitignore followed a link out of the root")
 	}
 	os.Remove(gi)
-	if exec.Command("mkfifo", gi).Run() == nil && ignored(loadIgnore(root), "a.txt", false) { // brez mkfifo (Windows): preskoči
+	if exec.Command("mkfifo", gi).Run() == nil && ignored(loadIgnore(root, false), "a.txt", false) { // brez mkfifo (Windows): preskoči
 		t.Fatal("FIFO .gitignore was read")
 	}
 	os.Remove(gi)
 	os.WriteFile(gi, []byte("*.txt\n"), 0o644)
-	if !ignored(loadIgnore(root), "a.txt", false) {
+	if !ignored(loadIgnore(root, false), "a.txt", false) {
 		t.Fatal("regular .gitignore not read")
+	}
+	// Odjemalec: povezan .gitignore (dotfiles) velja; .env ne gre na router.
+	os.Remove(gi)
+	os.WriteFile(filepath.Join(base, "outside"), []byte(".env\n"), 0o644)
+	os.WriteFile(filepath.Join(root, ".env"), []byte("x"), 0o644)
+	if os.Symlink(filepath.Join(base, "outside"), gi) == nil {
+		if files, _ := syncScan(root, nil, true); files[".env"].SHA256 != "" {
+			t.Fatal("client scan ignored a linked .gitignore")
+		}
 	}
 }

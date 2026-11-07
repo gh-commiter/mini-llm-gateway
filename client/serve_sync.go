@@ -309,7 +309,7 @@ func (h *shareHub) syncManifest(key string, files []syncEntry, execKnown bool, o
 	h.mu.Unlock()
 
 	os.MkdirAll(s.copy, 0o700)
-	current, _ := syncScan(s.copy, prev) // zunaj zaklepa: velika mapa traja
+	current, _ := syncScan(s.copy, prev, false) // zunaj zaklepa: velika mapa traja
 	// Prvi prenos te registracije: stanje ni znano → kopija velja za usklajeno. Pri --minigw-ro je kopija zavrženo delo.
 	base := prev
 	if s.readOnly || base == nil {
@@ -403,7 +403,7 @@ func (h *shareHub) syncChanges(key, owner string) (syncChanges, bool) {
 	prev := s.state
 	h.mu.Unlock()
 
-	current, skipped := syncScan(s.copy, prev)
+	current, skipped := syncScan(s.copy, prev, false)
 	ch := syncDiff(prev, current, s.copy)
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -461,5 +461,5 @@ func (h *shareHub) syncGet(key, path, owner string) ([]byte, bool) {
 	if _, ok := syncResolve(path, s.copy); !ok {
 		return nil, false
 	}
-	return readRegular(s.copy, path, maxSyncFile) // agent ne podtakne povezave ven iz kopije
+	return readRegular(s.copy, path, maxSyncFile, false) // agent ne podtakne povezave ven iz kopije
 }

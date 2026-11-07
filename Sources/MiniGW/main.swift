@@ -172,7 +172,7 @@ final class ShareClient: @unchecked Sendable {
 
     /// Pred agentom: manifest k routerju, nato datoteke, ki jih potrebuje.
     private func push(_ k: String) -> Bool {
-        let (files, skipped) = Sync.scan(root, previous: synced)
+        let (files, skipped) = Sync.scan(root, previous: synced, trusted: true)
         for p in skipped where reported.insert(p).inserted { note("not synced (larger than 64 MB): \(p)") }
         guard let body = try? JSONEncoder().encode(Array(files.values)) else { return false }
         let (s, d) = call(c, "POST", "/minigw/sync/manifest", ["x-share-key": k, "content-type": "application/json"], body, timeout: 300)
