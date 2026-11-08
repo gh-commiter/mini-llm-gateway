@@ -371,4 +371,37 @@ public struct Keychain: SecretStore {
             SecItemAdd(add as CFDictionary, nil)
         }
     }
+
+    /// Oznaka vnosa z ACL iz setShared (kSecAttrGeneric, ni skrivnost).
+    static let sharedMark = Data("minigw".utf8)
+
+    /// Vnos, ki ga bere tudi drug naš program (»admin« bere minigw). Privzeti ACL SecItemAdd zaupa le programu, ki je
+    /// vnos ustvaril, zato je macOS ob branju iz minigw vprašal za dovoljenje. SecTrustedApplicationCreateFromPath zapiše
+    /// zahtevo podpisa programa (designated requirement: identifikator in Team ID), ne poti ali cdhash: posodobitev z
+    /// istim podpisom bere brez vprašanja, drugi programi ne. Obstoječi vnos izbriše in doda znova (SecItemUpdate ACL
+    /// ohrani); brez katerega od programov (razvojna gradnja brez Helpers) ostane privzeti ACL.
+    public func setShared(_ account: String, _ value: String, trusting paths: [String]) {
+        var apps: [SecTrustedApplication] = []
+        for p in [nil] + paths.map(Optional.some) {  // nil = ta program
+            var a: SecTrustedApplication?
+            if SecTrustedApplicationCreateFromPath(p, &a) == errSecSuccess, let a { apps.append(a) }
+        }
+        var access: SecAccess?
+        guard apps.count == paths.count + 1, SecAccessCreate(service as CFString, apps as CFArray, &access) == errSecSuccess,
+              let access, var add = query(account, adding: true) else { return set(account, value) }
+        if let q = query(account), case let st = SecItemDelete(q as CFDictionary), st != errSecSuccess, st != errSecItemNotFound {
+            Router.log.error("keychain: cannot delete \(account, privacy: .public) before rewriting its access (\(st))")
+        }
+        add[kSecValueData as String] = Data(value.utf8)
+        add[kSecAttrAccess as String] = access
+        add[kSecAttrGeneric as String] = Self.sharedMark
+        if SecItemAdd(add as CFDictionary, nil) != errSecSuccess { set(account, value) }
+    }
+
+    /// Ali ima vnos ACL iz setShared (le atributi: brez vprašanja).
+    public func isShared(_ account: String) -> Bool {
+        guard var q = query(account) else { return false }
+        q[kSecAttrGeneric as String] = Self.sharedMark
+        return SecItemCopyMatching(q as CFDictionary, nil) == errSecSuccess
+    }
 }

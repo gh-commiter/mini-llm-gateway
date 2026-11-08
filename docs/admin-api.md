@@ -233,7 +233,10 @@ The Mac app keeps its settings in its preferences and Keychain; the Settings win
 - **Admin secret and the gateway's identity:** one item in the app's Keychain (account `admin`: JSON with
   `secret`, `port` and the gateway's public `key`), not a file: Codex and Grok agents on the Mac may read files
   anywhere, but not the Keychain, and a file or environment variable (`CFFIXED_USER_HOME`) could be faked by another
-  process. `minigw gw` reads the item with the user's consent (macOS asks once), refuses to run with
+  process. The item trusts the app and minigw signed by the app's team (identifier `dev.trojar.minigateway.cli`,
+  same as "Always Allow", but it lasts through updates), so any program of this user can run `minigw gw …` without a
+  prompt; agents of the app are still refused (see below). minigw never lets macOS ask: without access it stops with
+  an error. `minigw gw` refuses to run with
   `CFFIXED_USER_HOME` set, speaks Noise directly to `127.0.0.1:<port>` with that key (no local proxy) and sends only
   the `MGW-Admin` proof; the secret never leaves the Keychain.
 - **No agents (defence in depth, after the proof):** the app finds the process behind each admin connection (libproc:

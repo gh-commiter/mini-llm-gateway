@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import RouterCore
 
 /// Ukaz `minigw`: podpisan pomožni program v Contents/Helpers. Install v PATH naredi
@@ -7,6 +8,14 @@ enum CLITool {
     static let name = "minigw"
 
     static var helper: URL { Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/\(name)") }
+
+    /// Pomožni minigw je podpisan z našim Team ID (ne ad-hoc ali razvojna gradnja): le takemu vnos »admin« zaupa.
+    static var helperSignedByUs: Bool {
+        var code: SecStaticCode?, req: SecRequirement?
+        return SecStaticCodeCreateWithPath(helper as CFURL, [], &code) == errSecSuccess && SecRequirementCreateWithString(
+            "anchor apple generic and certificate leaf[subject.OU] = \"Y2M489RDV8\" and identifier \"dev.trojar.minigateway.cli\"" as CFString,
+            [], &req) == errSecSuccess && SecStaticCodeCheckValidity(code!, [], req) == errSecSuccess
+    }
 
     /// Povezava v PATH na ukaz v aplikaciji, nato `minigw connect <url> --token <t>`.
     static func install(in dir: String, url: String, token: String) throws -> String {

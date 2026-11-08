@@ -6,6 +6,8 @@ import RouterCore
 import Security
 
 let service = "dev.trojar.minigateway.cli"
+// Keychain brez dialogov: vnos, ki minigw ne zaupa (drug podpis), vrne errSecInteractionNotAllowed in jasno napako.
+SecKeychainSetUserInteractionAllowed(false)
 let out = FileHandle.standardOutput, err = FileHandle.standardError
 func say(_ s: String) { out.write(Data((s + "\n").utf8)) }
 /// Besedilo routerja brez kontrolnih znakov (razen \n), da ne krmili terminala.
@@ -74,21 +76,37 @@ func keychainQuery(_ name: String = Profiles.defaultName) -> [String: Any] {
      kSecAttrAccount as String: name == Profiles.defaultName ? "router" : "router:" + name]
 }
 
-func loadProfile(_ name: String) -> Connection? {
+/// skip: profil, ki ga ukaz le našteje, izpusti z vrstico na stderr; sicer (profil v rabi) napaka.
+func loadProfile(_ name: String, skip: Bool = false) -> Connection? {
     var q = keychainQuery(name)
     q[kSecReturnData as String] = true
     q[kSecMatchLimit as String] = kSecMatchLimitOne
     var item: CFTypeRef?
-    guard SecItemCopyMatching(q as CFDictionary, &item) == errSecSuccess, let d = item as? Data else { return nil }
-    return try? JSONDecoder().decode(Connection.self, from: d)
+    let st = SecItemCopyMatching(q as CFDictionary, &item)
+    let again = "run minigw disconnect --name \(name), then minigw connect again"
+    if st == errSecInteractionNotAllowed || st == errSecAuthFailed {
+        if skip { err.write(Data("minigw: profile \(name) left out: macOS would ask before minigw reads it from the Keychain\n".utf8)); return nil }
+        fail("macOS would ask before minigw reads profile \(name) (the Keychain is locked, or the profile was saved by a minigw with another signature): unlock the Keychain, or \(again)")
+    }
+    if st == errSecItemNotFound { return nil }
+    // profil v rabi, ki ga ni mogoče prebrati: napaka, ne tiho naslednji profil
+    guard st == errSecSuccess, let d = item as? Data, let c = try? JSONDecoder().decode(Connection.self, from: d) else {
+        if skip { err.write(Data("minigw: profile \(name) left out: it cannot be read from the Keychain (OSStatus \(st))\n".utf8)); return nil }
+        fail("cannot read profile \(name) from the Keychain (OSStatus \(st)): \(again)")
+    }
+    return c
 }
 
 func saveProfile(_ name: String, _ c: Connection) {
     let data = try! JSONEncoder().encode(c)
-    if SecItemUpdate(keychainQuery(name) as CFDictionary, [kSecValueData as String: data] as CFDictionary) == errSecItemNotFound {
+    var st = SecItemUpdate(keychainQuery(name) as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+    if st == errSecItemNotFound {
         var add = keychainQuery(name)
         add[kSecValueData as String] = data
-        guard SecItemAdd(add as CFDictionary, nil) == errSecSuccess else { fail("cannot save to Keychain") }
+        st = SecItemAdd(add as CFDictionary, nil)
+    }
+    guard st == errSecSuccess else {
+        fail("cannot save profile \(name) to the Keychain (OSStatus \(st)): unlock the login keychain and run minigw connect again")
     }
 }
 
@@ -136,7 +154,8 @@ func agentConn() -> Connection? {
 }
 
 /// Shranjeni profili, privzeti prvi; z --minigw-profile le ta. V agentu prehoda le njegova povezava.
-func loadProfiles() -> [Profile] {
+/// listing (status, models): neberljiv profil izpusti; sicer je privzeti (ali izbrani) v rabi in mora biti berljiv.
+func loadProfiles(listing: Bool = false) -> [Profile] {
     if let c = agentConn() { return [Profile(name: "agent", conn: c)] }
     var names = profileNames()
     var def = defaultName(names)
@@ -144,10 +163,12 @@ func loadProfiles() -> [Profile] {
         guard names.contains(f) else { fail("no profile \(f) (minigw profiles lists them)") }
         def = f; names = [f]
     }
-    return ([def] + names.filter { $0 != def }).compactMap { n in loadProfile(n).map { Profile(name: n, conn: $0) } }
+    return ([def] + names.filter { $0 != def }).enumerated().compactMap { i, n in
+        loadProfile(n, skip: i > 0 || listing && profileFlag == nil).map { Profile(name: n, conn: $0) }
+    }
 }
 
-func anyDevice() -> String? { profileNames().lazy.compactMap { loadProfile($0)?.device }.first }
+func anyDevice() -> String? { profileNames().lazy.compactMap { loadProfile($0, skip: true)?.device }.first }
 
 /// »192.168.1.20«, »192.168.1.20:8765«, »mini.local«, »http://…« → osnovni URL.
 func normalize(_ s: String) -> String {
@@ -613,9 +634,12 @@ case "connect":
     exit(0)
 
 case "disconnect":
-    var name = requireProfile().name
+    let names = profileNames()  // le atributi: SecItemDelete ne potrebuje branja profila
+    if names.isEmpty { _ = requireProfile() }
+    if let f = profileFlag, !names.contains(f) { fail("no profile \(f) (minigw profiles lists them)") }
+    var name = profileFlag ?? defaultName(names)
     if let i = args.firstIndex(of: "--name"), i + 1 < args.count { name = args[i + 1] }
-    guard Profiles.valid(name), loadProfile(name) != nil else { fail("no profile \(name)") }
+    guard Profiles.valid(name), names.contains(name) else { fail("no profile \(name)") }
     SecItemDelete(keychainQuery(name) as CFDictionary)
     say(profileNames().isEmpty && name == Profiles.defaultName ? "Disconnected" : "Disconnected profile \(name)")
     exit(0)
@@ -626,7 +650,7 @@ case "profiles":
     case [], ["list"]:
         guard !names.isEmpty else { fail("no profiles; run: minigw connect <host[:port]> --name <name> --token -") }
         let def = defaultName(names)
-        for n in names { say((n == def ? "* " : "  ") + n + "  " + (loadProfile(n)?.url ?? "?")) }
+        for n in names { say((n == def ? "* " : "  ") + n + "  " + (loadProfile(n, skip: true)?.url ?? "?")) }
     case let a where a.count == 2 && a[0] == "default":
         guard names.contains(a[1]) else { fail("no profile \(a[1])") }
         try? FileManager.default.createDirectory(at: defaultProfileFile.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -637,7 +661,7 @@ case "profiles":
     exit(0)
 
 case "status":
-    let ps = loadProfiles()
+    let ps = loadProfiles(listing: true)
     if ps.isEmpty { _ = requireProfile() }
     var ok = true
     for (i, p) in ps.enumerated() {
@@ -650,7 +674,7 @@ case "status":
     exit(ok ? 0 : 1)
 
 case "models":
-    let ps = loadProfiles()
+    let ps = loadProfiles(listing: true)
     if ps.isEmpty { _ = requireProfile() }
     var data: [[String: Any]]
     if ps.count == 1 {

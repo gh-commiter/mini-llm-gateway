@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- macOS: `minigw gw` no longer asks "minigw wants to use your confidential information stored in "dev.trojar.minigateway"". The app's `admin` Keychain item now also trusts minigw by its signature (identifier `dev.trojar.minigateway.cli`, team Y2M489RDV8), not by path, so updates with the same signature (brew, `/minigw:gw update`, the plugin's copy, the app's own minigw) read it without asking, and other programs still cannot. On its first start the app writes the existing item again with this access (only when its minigw is signed by that team). minigw never lets the Keychain ask: until the app has done this it stops with "Mini Gateway has not given minigw access to its admin key yet: quit and open the Mini Gateway app once, then run the command again; if you are signed in over SSH or the login keychain is locked, unlock it first (security unlock-keychain)", and a profile it cannot read without asking is left out of `status`, `models` and `profiles` ("minigw: profile <name> left out: …"), and is an error only when that profile is the one in use.
+
 - Plugin 0.5.17: minigw is set up also when a session continues after compaction (SessionStart `compact`); before, the skills could not find it until a new session. The `minigw` cask also links its minigw into the plugin's folder, so the skills work at once, also in a session that was already running.
 - Homebrew: the `minigw` cask also adds the Claude Code plugin (in `~/.claude/settings.json`; Claude Code installs it in the background on its next start), and `brew uninstall` removes it again; `brew upgrade` keeps it and a `false` you set.
 
