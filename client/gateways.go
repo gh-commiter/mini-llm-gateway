@@ -173,7 +173,7 @@ func (m *gatewayMux) models(w http.ResponseWriter) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			lists[i] = fetchModels(t.conn)
+			lists[i], _ = fetchModels(t.conn)
 		}()
 	}
 	wg.Wait()
@@ -190,18 +190,21 @@ func (m *gatewayMux) models(w http.ResponseWriter) {
 	json.NewEncoder(w).Encode(out)
 }
 
-func fetchModels(c connection) []map[string]any {
+// fetchModels: modeli enega prehoda ali razlog, zakaj jih ni (nil seznam); prazen seznam ni napaka.
+func fetchModels(c connection) ([]map[string]any, string) {
 	st, data := call(c, "GET", "/v1/models", nil, nil, 10*time.Second)
 	var l struct {
 		Data []map[string]any `json:"data"`
 	}
+	var body map[string]any
+	json.Unmarshal(data, &body)
 	if st != 200 || json.Unmarshal(data, &l) != nil {
-		return nil
+		return nil, failureReason(st, body)
 	}
 	if l.Data == nil {
 		l.Data = []map[string]any{}
 	}
-	return l.Data
+	return l.Data, ""
 }
 
 // mergeModels: vsak model s pripono @profil; privzeti (prvi) še brez pripone. nil = noben prehod ni odgovoril.

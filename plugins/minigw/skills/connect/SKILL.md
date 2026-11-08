@@ -23,10 +23,10 @@ MINIGW_TOKEN
 - Default (its models also without a suffix): `"${CLAUDE_PLUGIN_DATA}/bin/minigw" profiles default <profile>`.
 - Remove one: `"${CLAUDE_PLUGIN_DATA}/bin/minigw" disconnect --name <profile>`; without `--name` it removes the default.
 
-Then run `"${CLAUDE_PLUGIN_DATA}/bin/minigw" status` and report the result. minigw stores the token in the system credential store: the macOS Keychain, Windows Credential Manager, or on Linux `~/.config/minigw/connection.json` and `connections/<profile>.json` (mode 0600). Do not repeat the token back to the user.
+Then run `"${CLAUDE_PLUGIN_DATA}/bin/minigw" status` and report the result: it exits 0 only when the gateway is reachable, the token is accepted and this device is approved; its `Status:` line gives the reason otherwise (`token rejected` → ask the user to copy the token again and connect again). minigw stores the token in the system credential store: the macOS Keychain, Windows Credential Manager, or on Linux `~/.config/minigw/connection.json` and `connections/<profile>.json` (mode 0600). Do not repeat the token back to the user.
 
 If minigw says the gateway **refused this device** (403), the token is right but this device is not allowed yet. Run
-`"${CLAUDE_PLUGIN_DATA}/bin/minigw" status` and tell the user the device ID it prints. They approve the device on the
+`"${CLAUDE_PLUGIN_DATA}/bin/minigw" status` and tell the user the device ID on its `Device:` line (it says `waiting for approval` until the gateway allows it; `Status: device not approved`). They approve the device on the
 gateway: on the Mac in Settings… → Devices or in the menu bar (Waiting for approval), on Windows in the tray or the
 settings page, or with `/minigw:gw devices allow <id>` there. Ask them to compare the ID before they allow it, then run
 the connect line above again.
