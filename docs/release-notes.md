@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Native mode on a git repository works on branches (new default):** each agent run gets its own clone on the gateway
+  and a branch `minigw/<agent>-<session>-<n>` from your current state (also uncommitted changes); the branch then appears
+  in your repository (fast-forward only, no hooks, fsck), while your files, index and checked-out branch stay as they
+  are. So parallel agents never edit the same files. **Changed behaviour:** to let agents change the folder itself as
+  before, use `--minigw-work=native-direct` (or `minigw share add --work=native-direct`). In folders that are not a git
+  repository, with `native-direct` and in direct mode, only one writing agent at a time works in a folder; the others
+  wait up to 10 minutes. Grok and Codex or Copilot without writing are refused on native git repositories, as in
+  worktree mode.
 - `minigw serve` no longer has a default folder for agents (`folder` in serve.json, the settings field and
   `minigw gw claude --folder`): as on the Mac, an agent request without a shared, synced or worktree folder is refused.
   A stored `folder` becomes an allowed folder; `minigw serve --folder X` (and `serve init`) still works, adds X to the

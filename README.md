@@ -427,9 +427,19 @@ and gives each agent its own clone on a branch `minigw/<agent>-<session>-<n>`; p
 
 **Native: the folder is the gateway's own SMB share.** When the client works in an SMB mount of a gateway share (for
 example `/Volumes/Java/projects` mounted from the gateway's `/Volumes/Java`), `minigw --minigw-work=native …`
-(or `MINIGW_WORK=native`) lets agents work directly in the gateway's folder: no mount back, no copy.
+(or `MINIGW_WORK=native`) lets agents work in the gateway's folder: no mount back, no copy.
+- **Git repository (default):** each agent run works in its own clone on the gateway, on a branch
+  `minigw/<agent>-<session>-<n>` that starts from your current state (also uncommitted changes), so parallel agents never
+  edit the same files. The branch then appears in your repository (fetched fast-forward only, no hooks, fsck); your
+  files, index and checked-out branch do not change. The same guardrails as worktree mode (no hooks, filters, fsmonitor,
+  global or system config of the repository), and no transfer: it is the gateway's own disk. Grok and Codex or Copilot
+  without writing are refused there, as in worktree mode.
+- **In the folder itself:** `--minigw-work=native-direct` (or `MINIGW_WORK=native-direct`, `minigw share add
+  --work=native-direct`), and folders that are not a git repository: agents change the files directly, one writing agent
+  at a time per folder (others wait up to 10 minutes, then get a clear error; agents that only read do not wait). The
+  same lock applies to direct mode.
 `minigw run -- mvn -q verify` runs a build there and streams its output and exit code back.
-- **Mode per folder:** `minigw share add --work=native` (or `sync`, `direct`, with `--ro` for read-only) in a folder
+- **Mode per folder:** `minigw share add --work=native` (or `native-direct`, `sync`, `direct`, with `--ro` for read-only) in a folder
   saves its default mode for it and its subfolders in minigw's share list (never in the project); `minigw share list`
   shows it. `--minigw-work=` or `MINIGW_WORK` still wins for one run. `minigw run` uses the default profile, or
   `--minigw-profile P`.
