@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 public struct DAVResponse: Codable, Sendable {
     public var status: Int
@@ -17,6 +18,18 @@ public enum WebDAV {
     /// Največji kos datoteke v enem odgovoru (router sprejme odgovor do 64 MB, base64 doda tretjino).
     public static let maxServe = 32 << 20
 
+    private static let refusedSeen = Mutex<Set<String>>([])
+
+    /// Ena vrstica na stderr na zavrnjeno pot (brez ponovitev): agent vidi le »Operation not permitted«, tako da je
+    /// razvidno, da je zavrnila ta zaščita in ne peskovnik agenta. Le relativna pot v deljeni mapi.
+    static func refuse(_ rel: [String]) -> DAVResponse {
+        let p = rel.joined(separator: "/")
+        if refusedSeen.withLock({ $0.insert(p).inserted }) {
+            FileHandle.standardError.write(Data("minigw: refused agent write to \(p) (protected path)\n".utf8))
+        }
+        return DAVResponse(403)
+    }
+
     public static func handle(method: String, path: String, headers: [String: String], body: Data,
                               root: URL, prefix: String) -> DAVResponse {
         let root = root.resolvingSymlinksInPath().standardizedFileURL
@@ -29,7 +42,7 @@ public enum WebDAV {
         // prek povezave; branje ostane.
         func protected(_ u: URL, _ r: [String]) -> Bool { Sync.isProtected(r.joined(separator: "/")) || Sync.protectedCanonical(u, root: root) }
         if ["PUT", "MKCOL", "DELETE", "MOVE", "PROPPATCH"].contains(method) || (method == "LOCK" && !exists), protected(url, rel) {
-            return DAVResponse(403)
+            return refuse(rel)
         }
 
         switch method {
@@ -90,7 +103,8 @@ public enum WebDAV {
         case "DELETE":
             if junk { return DAVResponse(204) }
             guard exists else { return DAVResponse(404) }
-            guard !rel.isEmpty, !treeProtected(url, rel) else { return DAVResponse(403) }
+            guard !rel.isEmpty else { return DAVResponse(403) }
+            guard !treeProtected(url, rel) else { return refuse(rel) }
             do { try fm.removeItem(at: url) } catch { return DAVResponse(403) }
             return DAVResponse(204)
 
@@ -103,8 +117,10 @@ public enum WebDAV {
             // Tudi vsebina mape: nič zaščitenega na cilju (stage/settings.json → .claude), nič zaščitenega ne izgine
             // (MOVE .claude stran, prepis obstoječe .claude).
             var st = stat()
-            if protected(dest, destRel) || treeProtected(url, destRel) || (method == "MOVE" && treeProtected(url, rel))
-                || (lstat(dest.path, &st) == 0 && treeProtected(dest, destRel)) { return DAVResponse(403) }
+            if protected(dest, destRel) || treeProtected(url, destRel) || (lstat(dest.path, &st) == 0 && treeProtected(dest, destRel)) {
+                return refuse(destRel)
+            }
+            if method == "MOVE", treeProtected(url, rel) { return refuse(rel) }
             if isJunk(dest) { return DAVResponse(201) }
             guard parentExists(dest) else { return DAVResponse(409) }
             // Mapa v svojo podmapo in vir v cilju (MOVE /a/b → /a bi z brisanjem cilja izbrisal vir): nikoli

@@ -131,6 +131,18 @@ struct SettingsView: View {
         pane = target
     }
 
+    private struct PendingApply: Equatable { let draft: RouterConfig; let claudeOK: Bool }
+
+    /// Uveljavi osnutek (skupaj z morebitnimi spremembami od drugod); neveljaven vklopljen claude ga zadrži.
+    private func applyDraft() {
+        guard loaded, draft != state.config, !(draft.claudeCLI.enabled && !claudeStatus.ok) else { return }
+        // Tik pred uveljavitvijo še enkrat združi: sprememba skrbniškega API v istem koraku glavne niti ostane.
+        let merged = RouterConfig.merge(draft: draft, old: base, new: state.config)
+        state.apply(merged)
+        base = merged
+        draft = merged
+    }
+
     var body: some View {
         NavigationSplitView {
             List(selection: $pane) {
@@ -194,8 +206,13 @@ struct SettingsView: View {
         }
         .frame(minWidth: 760, idealWidth: 820, minHeight: 520, idealHeight: 640)
         .onAppear {
-            if !loaded { draft = state.config; base = state.config; loaded = true }
+            if !loaded { draft = state.config; base = state.config; loaded = true; return }
+            // Okno je bilo skrito, ko se je nastavitev spremenila drugje: prikaz mora spet ustrezati dejanski nastavitvi.
+            draft = RouterConfig.merge(draft: draft, old: base, new: state.config)
+            base = state.config
         }
+        // Zaprtje okna v 0,8 s po spremembi ne sme izgubiti osnutka (task bi se preklical, prikaz pa bi kazal neuveljavljeno).
+        .onDisappear { applyDraft() }
         // Spremembe od drugod (minigw router, nova naprava): tristranska združitev z osnutkom (tudi odstranitve), da
         // samodejna uveljavitev osnutka ne povozi sprememb skrbniškega API in ne zavrže tipkanja.
         .onChange(of: state.config) { old, new in
@@ -204,15 +221,12 @@ struct SettingsView: View {
             base = new
         }
         // Samodejna uveljavitev: 0,8 s po zadnji spremembi.
-        .task(id: draft) {
+        // claudeStatus.ok v id: osnutek, ki je čakal na veljaven claude, se uveljavi, ko preverjanje uspe.
+        .task(id: PendingApply(draft: draft, claudeOK: claudeStatus.ok)) {
             guard loaded, draft != state.config else { return }
             try? await Task.sleep(for: .milliseconds(800))
-            guard !Task.isCancelled, !(draft.claudeCLI.enabled && !claudeStatus.ok) else { return }
-            // Tik pred uveljavitvijo še enkrat združi: sprememba skrbniškega API v istem koraku glavne niti ostane.
-            let merged = RouterConfig.merge(draft: draft, old: base, new: state.config)
-            state.apply(merged)
-            base = merged
-            draft = merged
+            guard !Task.isCancelled else { return }
+            applyDraft()
         }
         .task(id: keys) {
             guard keys.values.contains(where: { !$0.isEmpty }) else { return }
