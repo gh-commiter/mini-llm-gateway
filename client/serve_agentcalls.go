@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -132,7 +133,11 @@ func (s *server) startRun(r *req, kind, dir string, readOnly, shared bool, wt, m
 			return context.WithValue(ctx, connKey{}, &serveConn{Conn: c, br: bufio.NewReader(c), peer: peer, device: run.device})
 		}}
 	go run.srv.Serve(ln)
-	return run, []string{"MINIGW_AGENT_URL=" + run.url, "MINIGW_AGENT_AUTH_FILE=" + run.authFile}
+	env := []string{"MINIGW_AGENT_URL=" + run.url, "MINIGW_AGENT_AUTH_FILE=" + run.authFile}
+	if runtime.GOOS == "windows" { // askNote: »minigw« je ta minigw.exe
+		env = append(env, "PATH="+filepath.Dir(minigwExe())+";"+os.Getenv("PATH"))
+	}
+	return run, env
 }
 
 // stop: konec izvajanja: vrata zaprta, žeton neveljaven in izbrisan (tudi tekoče vgnezdene zahteve se končajo).
@@ -202,13 +207,24 @@ func minigwExe() string {
 	if r, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = r
 	}
+	if isTrayExe(exe) { // pladenj nima konzole in z -p ne bi bil minigw: minigw.exe ob njem
+		exe = filepath.Join(filepath.Dir(exe), "minigw.exe")
+	}
 	return exe
 }
 
-// askNote: navodilo agentu z vrati izvajanja.
+// askNote: navodilo agentu z vrati izvajanja. Windows: »minigw« iz PATH izvajanja (startRun), da se ukaz ujema s
+// pravilom Bash(minigw -p:*) (brez peskovnika Claude Code tam Bash sicer potrebuje odobritev, ki je v -p ni).
 func askNote(exe string) string {
-	return "You may ask another model of this gateway: `\"" + exe + "\" -p --model <id> \"…\"`; `\"" + exe + "\" models` lists them."
+	cmd := "\"" + exe + "\""
+	if runtime.GOOS == "windows" {
+		cmd = "minigw"
+	}
+	return "You may ask another model of this gateway: `" + cmd + " -p --model <id> \"…\"`; `" + cmd + " models` lists them."
 }
+
+// askRules: pravili, ki agentu Claude na Windows dovolita le ukaz iz askNote.
+const askRules = "Bash(minigw -p:*),Bash(minigw models:*)"
 
 // sandboxAllowRead: sandbox Claude Code (--settings) sme brati še te poti.
 func sandboxAllowRead(args []string, paths ...string) []string {

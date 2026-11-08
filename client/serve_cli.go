@@ -680,6 +680,9 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			exe := minigwExe()
 			extra += "\n\n" + askNote(exe)
 			args = sandboxAllowRead(args, exe, run.authFile) // M3: le ta datoteka iz Scratch
+			if i := slices.Index(args, "--allowedTools"); runtime.GOOS == "windows" && i >= 0 {
+				args[i+1] += "," + askRules
+			}
 		}
 	} else {
 		dir = s.conf().scratch("chat")
