@@ -21,7 +21,7 @@
   Scratch folder errors say that it must not contain the config folder (named).
 - Sessions: a device on 127.0.0.1 that was never approved shows as this computer, not "(device removed)"; an allowed
   device has connection history also over 127.0.0.1; a request with an invalid session ID counts in a `t-…` session;
-  streamed Claude CLI answers count input tokens. `minigw status` lists the providers of a `minigw serve` gateway. No
+  streamed Claude CLI answers count input tokens. `minigw status` lists the providers of a `minigw serve` gateway; `/health/ready` names the providers only to this computer or a caller with the token (Mac too). No
   empty `.maven` folder stays after the last worktree clone. The Claude CLI pane shows changes from `gw claude`.
 - `minigw` started inside Claude Code or Claude Desktop no longer gets 401 from the gateway: the inner `claude` no
   longer inherits the parent's `ANTHROPIC_*`, `CLAUDECODE` and `CLAUDE_CODE_*` variables (session, OAuth, base URL;

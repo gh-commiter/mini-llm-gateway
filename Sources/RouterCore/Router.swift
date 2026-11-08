@@ -141,6 +141,9 @@ public final class Router: Sendable {
         case ("GET", "/health/live"):
             return (await json(200, ["status": "ok"], rid: rid, writer: writer), nil, nil)
         case ("GET", "/health/ready"):
+            guard RouterServer.isLoopback(req.peer) || authorized(req) else {  // L2: ponudniki le temu računalniku ali z žetonom
+                return (await json(200, ["status": "ok"], rid: rid, writer: writer), nil, nil)
+            }
             var providers: [String: Bool] = [:]
             for (id, ok) in await catalog.status() { providers[id] = ok }
             if config.siri.enabled { providers["siri-ai"] = SiriAX.trusted(prompt: false) && SiriAX.isRunning() }

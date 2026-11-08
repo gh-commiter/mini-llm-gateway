@@ -969,6 +969,9 @@ func (s *server) handle(w http.ResponseWriter, r *req) (int, string) {
 	case "GET /health/live":
 		return writeJSON(w, r.rid, 200, map[string]string{"status": "ok"}), ""
 	case "GET /health/ready":
+		if !r.conn.loopback() && !s.authorized(r) { // L2: imena ponudnikov le temu računalniku ali z žetonom
+			return writeJSON(w, r.rid, 200, map[string]any{"status": "ok"}), ""
+		}
 		providers := map[string]bool{"claude-cli": len(s.claudeExe()) > 0}
 		for _, g := range s.conf().Gateways { // vklopljeni ponudniki: modeli naloženi (kot catalog.status na Macu)
 			if !g.Disabled {
