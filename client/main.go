@@ -1026,17 +1026,21 @@ func shareCommand(args []string) {
 // takeRole: --minigw-role <ime> ali --minigw-role=<ime> (zadnji velja) iz argumentov, sicer env; ok=false za neveljavno ime
 // (enako kot GatewayHistory.takeRole na Macu).
 func takeRole(args []string, env string) (role string, rest []string, ok bool) {
-	role = env
+	role, ok = env, true
 	for i := 0; i < len(args); i++ {
 		switch {
-		case args[i] == "--minigw-role" && i+1 < len(args):
-			role = args[i+1]
-			i++
+		case args[i] == "--minigw-role":
+			if i+1 < len(args) {
+				role = args[i+1]
+				i++
+			} else {
+				ok = false // brez vrednosti
+			}
 		case strings.HasPrefix(args[i], "--minigw-role="):
 			role = strings.TrimPrefix(args[i], "--minigw-role=")
 		default:
 			rest = append(rest, args[i])
 		}
 	}
-	return role, rest, role == "" || validRole(role)
+	return role, rest, ok && (role == "" || validRole(role))
 }

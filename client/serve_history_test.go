@@ -111,10 +111,15 @@ func TestFolderRoleAndRestrictions(t *testing.T) {
 		g.record(sessionUse{session: "s", folder: `C:\Proj\`, os: "Windows", model: "claude-codex", role: role, status: 200, tools: "write", readOnly: true}, time.Now())
 	}
 	s := g.sessions("", `c:/proj`) // Windows: brez razlike v velikih črkah
-	if len(s) != 1 || s[0].Folder != "C:/Proj" || s[0].Role != "dev" || findUse(s[0], "claude-codex", "dev").Requests != 2 ||
+	if len(s) != 1 || s[0].Folder != "C:/Proj" || s[0].Role != "" || findUse(s[0], "claude-codex", "dev").Requests != 2 ||
 		findUse(s[0], "claude-codex", "security").Requests != 1 || findUse(s[0], "claude-codex", "").Requests != 1 ||
 		!findUse(s[0], "claude-codex", "dev").ReadOnly || findUse(s[0], "claude-codex", "dev").Tools != "write" {
 		t.Fatalf("%+v", s)
+	}
+	for h, want := range map[string]string{"dev": "dev", strings.Repeat("a", 33): "", "a b": ""} {
+		if got := reqRole(&req{Request: &http.Request{Header: http.Header{"X-Claude-Mini-Role": {h}}}}); got != want {
+			t.Errorf("reqRole(%q) = %q, want %q", h, got, want)
+		}
 	}
 	g.record(sessionUse{session: "l", folder: "/home/U", os: "Linux", model: "m"}, time.Now())
 	if len(g.sessions("", "/home/u")) != 0 || len(g.sessions("", "/home/U")) != 1 {
@@ -153,7 +158,7 @@ func TestTakeRole(t *testing.T) {
 		{[]string{"-p", "--minigw-role=security"}, "dev", "security", "-p", true},
 		{[]string{"-p"}, "dev", "dev", "-p", true},
 		{[]string{"--minigw-role", "a b"}, "", "a b", "", false},
-		{[]string{"-p", "--minigw-role"}, "", "", "-p --minigw-role", true}, // brez vrednosti: gre naprej v claude
+		{[]string{"-p", "--minigw-role"}, "", "", "-p", false}, // brez vrednosti: napaka
 	} {
 		role, rest, ok := takeRole(c.args, c.env)
 		if role != c.role || strings.Join(rest, " ") != c.rest || ok != c.ok {
