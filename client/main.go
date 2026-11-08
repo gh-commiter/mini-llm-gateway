@@ -214,6 +214,7 @@ func getJSON(c connection, path string) (int, map[string]any) {
 }
 
 func main() {
+	refreshPath() // Windows: uporabnikov PATH tudi, ko pladenj zažene MSI
 	args := os.Args[1:]
 	if isTrayExe(os.Args[0]) { // minigw-tray.exe: router z ikono v območju za obvestila
 		trayCommand(args)

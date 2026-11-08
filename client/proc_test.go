@@ -33,3 +33,10 @@ func TestProcessStartsGoThroughProcGo(t *testing.T) {
 		})
 	}
 }
+
+func TestMergePath(t *testing.T) {
+	got := mergePath(";", `C:\Windows;C:\Tools\`, `C:\Users\u\.local\bin;c:\windows\`, `C:\tools;D:\x`, `C:\Users\u\.local\bin`)
+	if want := `C:\Windows;C:\Tools\;C:\Users\u\.local\bin;D:\x`; got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
