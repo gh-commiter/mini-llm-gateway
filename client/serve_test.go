@@ -240,6 +240,15 @@ func TestServeRefusesDirectMode(t *testing.T) {
 	if sc.register() || !strings.Contains(sc.refusal, "--minigw-work=sync and worktree") {
 		t.Fatalf("direct mode accepted: %q", sc.refusal)
 	}
+	// Način ni izbran: odjemalec po zavrnitvi direct sam izbere sync (mapa ni repozitorij git); izrecni direct ne.
+	if sc, ok := registerShare(c, "sid4", t.TempDir(), false, "", []string{"direct"}, true, true); !ok || !sc.sync {
+		t.Fatalf("implicit mode not switched to sync: %v %q", ok, sc.refusal)
+	} else {
+		sc.unregister()
+	}
+	if _, ok := registerShare(c, "sid5", t.TempDir(), false, "", []string{"direct"}, true, false); ok {
+		t.Fatal("explicit direct accepted")
+	}
 	body := `{"model":"claude-cli-haiku","tools":[{"name":"x"}],"messages":[{"role":"user","content":"go"}]}`
 	st, data := call(c, "POST", "/v1/messages", map[string]string{"x-claude-mini-session": "sid2", "x-claude-mini-share": "1"}, []byte(body), 5*time.Second)
 	if st != 400 || !strings.Contains(string(data), "sync and worktree") {
