@@ -1013,7 +1013,7 @@ func writeStatus(w http.ResponseWriter, status int, ctype string, body []byte) i
 	return status
 }
 
-// localApps: »Allow this user's apps without a token« (privzeto vklopljeno).
+// localApps: »Allow this user's apps without a token« (privzeto izklopljeno).
 func (c serveConfig) localApps() bool { return c.AllowLocalApps != nil && *c.AllowLocalApps }
 
 // localPeer: odjemalec na loopbacku je proces tega uporabnika in ni agent prehoda (peer_*.go); testi ga zamenjajo.
