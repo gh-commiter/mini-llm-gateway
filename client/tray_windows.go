@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 	"syscall"
 	"unsafe"
 )
@@ -41,6 +42,11 @@ var (
 	pCreateIconFromRes   = user32.NewProc("CreateIconFromResourceEx")
 	pGetSystemMetrics    = user32.NewProc("GetSystemMetrics")
 	pMessageBox          = user32.NewProc("MessageBoxW")
+	pEnumWindows         = user32.NewProc("EnumWindows")
+	pGetWindowText       = user32.NewProc("GetWindowTextW")
+	pIsWindowVisible     = user32.NewProc("IsWindowVisible")
+	pIsIconic            = user32.NewProc("IsIconic")
+	pShowWindow          = user32.NewProc("ShowWindow")
 	pSetTimer            = user32.NewProc("SetTimer")
 	pOpenClipboard       = user32.NewProc("OpenClipboard")
 	pEmptyClipboard      = user32.NewProc("EmptyClipboard")
@@ -138,6 +144,83 @@ func shellOpen(target, params string) {
 		p = uintptr(unsafe.Pointer(u16(params)))
 	}
 	pShellExecute.Call(0, uintptr(unsafe.Pointer(u16("open"))), uintptr(unsafe.Pointer(u16(target))), p, 0, 1 /* SW_SHOWNORMAL */)
+}
+
+// regValue: privzeta vrednost (name "") ali imenovana vrednost niza; "" če je ni.
+func regValue(root syscall.Handle, path, name string) string {
+	var k syscall.Handle
+	if syscall.RegOpenKeyEx(root, u16(path), 0, syscall.KEY_READ, &k) != nil {
+		return ""
+	}
+	defer syscall.RegCloseKey(k)
+	var typ, n uint32
+	var np *uint16
+	if name != "" {
+		np = u16(name)
+	}
+	if syscall.RegQueryValueEx(k, np, nil, &typ, nil, &n) != nil || n < 2 {
+		return ""
+	}
+	buf := make([]uint16, n/2+1)
+	n = uint32(len(buf) * 2)
+	if syscall.RegQueryValueEx(k, np, nil, &typ, (*byte)(unsafe.Pointer(&buf[0])), &n) != nil {
+		return ""
+	}
+	return syscall.UTF16ToString(buf)
+}
+
+// findWindowByTitle: prvo vidno okno najvišje ravni z naslovom točno title (okno --app ima le naslov strani).
+// Povratni klic je eden za proces (syscall.NewCallback jih ima omejeno število); kliče se le z niti pladnja.
+var (
+	findTitle string
+	findFound syscall.Handle
+	findCB    = syscall.NewCallback(func(h, _ uintptr) uintptr {
+		if v, _, _ := pIsWindowVisible.Call(h); v == 0 {
+			return 1
+		}
+		buf := make([]uint16, 256)
+		n, _, _ := pGetWindowText.Call(h, uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
+		if syscall.UTF16ToString(buf[:n]) == findTitle { // točno ujemanje: zavihek s tujo stranjo ima pripono brskalnika
+			findFound = syscall.Handle(h)
+			return 0
+		}
+		return 1
+	})
+)
+
+func findWindowByTitle(prefix string) syscall.Handle {
+	findTitle, findFound = prefix, 0
+	pEnumWindows.Call(findCB, 0)
+	return findFound
+}
+
+// openSettings: obstoječe okno nastavitev pride naprej; sicer lastno okno brskalnika (--app), nazadnje navadno odpiranje.
+// URL nosi enkratni prijavni žeton, zato ni v dnevniku.
+// Okno s potekle seje (30 min mirovanja, nov žeton) se zapre in odpre novo s svežo prijavo.
+// ponytail: alive() gleda katerokoli sejo, ne seje tega okna; dovolj, ker je okno nastavitev eno.
+func openSettings(s *server) {
+	if h := findWindowByTitle("Mini Gateway Settings"); h != 0 {
+		if s.settings.alive() {
+			if v, _, _ := pIsIconic.Call(uintptr(h)); v != 0 {
+				pShowWindow.Call(uintptr(h), 9 /* SW_RESTORE */)
+			}
+			pSetForegroundWindow.Call(uintptr(h))
+			return
+		}
+		pPostMessage.Call(uintptr(h), 0x0010 /* WM_CLOSE */, 0, 0)
+	}
+	url := s.settingsLoginURL()
+	exe := ""
+	if prog := regValue(syscall.HKEY_CURRENT_USER, `Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice`, "ProgId"); prog != "" {
+		exe = shellCommandExe(regValue(syscall.HKEY_CLASSES_ROOT, prog+`\shell\open\command`, ""))
+	}
+	if !supportsAppFlag(exe) {
+		exe = strings.Trim(regValue(syscall.HKEY_LOCAL_MACHINE, `SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe`, ""), `" `)
+	}
+	if supportsAppFlag(exe) && command(exe, "--app="+url).Start() == nil {
+		return
+	}
+	shellOpen(url, "")
 }
 
 func trayRun(cfgPath string, quiet bool) {
@@ -340,7 +423,7 @@ func (t *tray) do(action string, st apiStatus) {
 	switch action {
 	case "":
 	case "settings":
-		shellOpen(t.s.settingsLoginURL(), "")
+		openSettings(t.s)
 	case "copy":
 		if err := setClipboard(t.hwnd, connectToken(t.s.conf())); err != nil {
 			messageBox(err.Error())

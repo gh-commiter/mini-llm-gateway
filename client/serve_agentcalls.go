@@ -232,7 +232,11 @@ func askNote(exe string, onPath bool) string {
 	if onPath {
 		cmd = "minigw"
 	}
-	return "You may ask another model of this gateway: `" + cmd + " -p --model <id> \"…\"`; `" + cmd + " models` lists them."
+	n := "You may ask another model of this gateway: `" + cmd + " -p --model <id> \"…\"`; `" + cmd + " models` lists them."
+	if !onPath && strings.HasSuffix(strings.ToLower(exe), ".exe") { // PowerShell zažene pot v narekovajih le z &
+		n += " In PowerShell put `& ` before the quoted path."
+	}
+	return n
 }
 
 // askRules: pravila, ki agentu Claude na Windows dovolijo le ukaz iz askNote (le z askOnPath); Claude Code na Windows

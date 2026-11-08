@@ -104,6 +104,14 @@ func (st *settingsState) logout(id string) {
 	delete(st.sessions, id)
 }
 
+// alive: ali je še kakšna seja nastavitev (pladenj tedaj le prinese obstoječe okno naprej).
+func (st *settingsState) alive() bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	st.purge(time.Now())
+	return len(st.sessions) > 0
+}
+
 // clear: ob novem žetonu routerja se končajo vse seje.
 func (st *settingsState) clear() {
 	st.mu.Lock()

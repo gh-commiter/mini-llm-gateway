@@ -287,7 +287,7 @@ func TestAskOnPathOnlyOutsideAgentFolders(t *testing.T) {
 			t.Fatalf("%s contains the minigw folder but is not seen", f)
 		}
 	}
-	if n := askNote(`C:\x\minigw.exe`, false); !strings.Contains(n, `"C:\x\minigw.exe" -p`) {
+	if n := askNote(`C:\x\minigw.exe`, false); !strings.Contains(n, `"C:\x\minigw.exe" -p`) || !strings.Contains(n, "`& `") {
 		t.Fatalf("absolute path note: %s", n)
 	}
 	if n := askNote(`C:\x\minigw.exe`, true); !strings.Contains(n, "`minigw -p") {
