@@ -1,5 +1,9 @@
 # Release notes
 
+## Unreleased
+
+- Homebrew: the `minigw` cask also adds the Claude Code plugin (in `~/.claude/settings.json`; Claude Code installs it in the background on its next start), and `brew uninstall` removes it again; `brew upgrade` keeps it and a `false` you set.
+
 ## 0.5.18
 
 - Sharing and sync send the whole folder, hidden files included (README and `minigw share add` help now say so): keep

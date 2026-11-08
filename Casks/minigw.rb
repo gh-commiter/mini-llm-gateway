@@ -18,7 +18,69 @@ cask "minigw" do
 
   binary "minigw"
 
+  # Vtičnik za Claude Code: uradna ključa uporabniških nastavitev (extraKnownMarketplaces, enabledPlugins); Claude Code
+  # ob naslednjem zagonu sam doda marketplace in namesti vtičnik, brez ukaza claude. Uporabnikov »false« ostane.
+  # Pisanje skozi povezavo (dotfiles) in z isto pravico datoteke (lahko ima ključe v env; nova 0600).
+  settings = File.expand_path("~/.claude/settings.json")
+  marketplace = { "source" => { "source" => "github", "repo" => "gh-commiter/mini-llm-gateway" } }
+  save = lambda do |data|
+    real = File.exist?(settings) ? File.realpath(settings) : settings
+    mode = File.exist?(real) ? File.stat(real).mode & 0o7777 : 0o600
+    FileUtils.mkdir_p(File.dirname(real))
+    File.open("#{real}.minigw-tmp", File::WRONLY | File::CREAT | File::TRUNC, mode) { |f| f.write(JSON.pretty_generate(data) + "\n") }
+    File.chmod(mode, "#{real}.minigw-tmp")
+    File.rename("#{real}.minigw-tmp", real)
+  end
+
+  postflight do
+    require "json"
+    begin
+      s = File.exist?(settings) ? JSON.parse(File.read(settings)) : {}
+      if s.is_a?(Hash)
+        (s["extraKnownMarketplaces"] ||= {})["mini-gateway"] ||= marketplace
+        enabled = (s["enabledPlugins"] ||= {})
+        enabled["minigw@mini-gateway"] = true unless enabled.key?("minigw@mini-gateway")
+        save.call(s)
+      end
+    rescue JSON::ParserError, SystemCallError => e
+      opoo "Claude Code plugin not added (#{settings}: #{e.message}); add it in Claude Code: /plugin install minigw@mini-gateway"
+    end
+  end
+
+  # Teče tudi ob brew upgrade/reinstall (nato postflight): odstrani le, kar je dodal cask (true, isti vir), uporabnikov
+  # »false« ostane. Le ob pravi odstranitvi še »claude plugin marketplace remove« (datoteke vtičnika), ne ob nadgradnji,
+  # da vtičnik ne izgine med tekočo sejo.
+  uninstall_postflight do
+    require "json"
+    upgrading = defined?(Homebrew.running_command) && %w[install upgrade reinstall].include?(Homebrew.running_command)
+    claude = ["~/.local/bin", "/opt/homebrew/bin", "/usr/local/bin"].map { |d| File.join(File.expand_path(d), "claude") }
+                                                                    .find { |f| File.executable?(f) }
+    if claude && !upgrading
+      system_command claude, args: ["plugin", "marketplace", "remove", "mini-gateway", "--scope", "user"], must_succeed: false
+    end
+    begin
+      s = JSON.parse(File.read(settings))
+      if s.is_a?(Hash)
+        changed = false
+        if s.dig("enabledPlugins", "minigw@mini-gateway") == true
+          s["enabledPlugins"].delete("minigw@mini-gateway")
+          changed = true
+        end
+        if s.dig("extraKnownMarketplaces", "mini-gateway") == marketplace
+          s["extraKnownMarketplaces"].delete("mini-gateway")
+          changed = true
+        end
+        save.call(s) if changed
+      end
+    rescue JSON::ParserError, SystemCallError
+      nil
+    end
+  end
+
   caveats <<~EOS
+    The Claude Code plugin (minigw@mini-gateway) is added to ~/.claude/settings.json; Claude Code installs it in the
+    background the next time you start claude (or run /reload-plugins). To skip it, set "minigw@mini-gateway": false under enabledPlugins there (it stays, also on
+    upgrade). brew uninstall removes the plugin again (brew upgrade keeps it).
     Connect to the router Mac (token: Mini Gateway → Settings… → General → Copy Token):
       minigw connect <router-mac>[:port] --token <token>
   EOS
