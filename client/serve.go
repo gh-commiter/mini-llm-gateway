@@ -354,8 +354,17 @@ func (s *server) announce(ln net.Listener) {
 	if r := s.claudeInfo().Off; r != "" {
 		off = " (Claude CLI and Codex off: " + r + ")"
 	}
-	s.log.Printf("minigw %s serving on %s (MGW2), claude=%q folders=%q%s scratch=%q devices=%d providers=%d", version, ln.Addr(),
-		strings.Join(s.claudeExe(), " "), strings.Join(c.AllowedFolders, ","), off, c.Scratch, len(c.Devices), len(c.Gateways))
+	agents := ""
+	for _, k := range []agentKind{codexKind, grokKind, copilotKind} {
+		if p, _ := resolveAgent(k, k.conf(c).Executable); p != "" {
+			agents += fmt.Sprintf(" %s=%q", k.name, p)
+		}
+	}
+	if envSource != "" {
+		agents += fmt.Sprintf(" env=%q", envSource)
+	}
+	s.log.Printf("minigw %s serving on %s (MGW2), claude=%q%s folders=%q%s scratch=%q devices=%d providers=%d", version, ln.Addr(),
+		strings.Join(s.claudeExe(), " "), agents, strings.Join(c.AllowedFolders, ","), off, c.Scratch, len(c.Devices), len(c.Gateways))
 	for _, g := range c.Gateways {
 		if key, where := keyGet(s.cfgDir, g.Name); key == "" && !g.Disabled { // izklopljen (npr. vgrajen brez ključa): brez opozorila
 			s.log.Printf("WARNING: provider %s has no API key: run minigw gw provider add %s %s", g.Name, g.Name, g.BaseURL)

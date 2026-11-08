@@ -7,3 +7,5 @@ import "os/exec"
 func hideConsole(*exec.Cmd) {}
 
 func refreshPath(bool) {}
+
+var envSource string
