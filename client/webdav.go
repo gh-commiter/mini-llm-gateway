@@ -7,8 +7,10 @@ package main
 import (
 	"fmt"
 	"io"
+	"io/fs"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -182,7 +184,7 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 		if !exists {
 			return dav(404, nil, nil)
 		}
-		if len(rel) == 0 {
+		if len(rel) == 0 || treeProtected(p, rel) {
 			return dav(403, nil, nil)
 		}
 		if err := os.RemoveAll(p); err != nil {
@@ -209,7 +211,11 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 		if !ok || len(destRel) == 0 {
 			return dav(403, nil, nil)
 		}
-		if protected(dest, destRel) {
+		// Tudi vsebina mape: nič zaščitenega na cilju (stage/settings.json → .claude), nič zaščitenega ne izgine
+		// (MOVE .claude stran, prepis obstoječe .claude).
+		_, lerr := os.Lstat(dest)
+		if protected(dest, destRel) || treeProtected(p, destRel) || (method == "MOVE" && treeProtected(p, rel)) ||
+			(lerr == nil && treeProtected(dest, destRel)) {
 			return dav(403, nil, nil)
 		}
 		if isJunk(dest) {
@@ -352,6 +358,20 @@ func hasPathPrefix(p, root string) bool {
 		return strings.HasPrefix(strings.ToLower(p), strings.ToLower(root))
 	}
 	return strings.HasPrefix(p, root)
+}
+
+// treeProtected: ali je katera koli pot v drevesu dir (z imenom base) zaščitena; povezavam ne sledi, nečitljivo = zaščiteno.
+func treeProtected(dir string, base []string) bool {
+	found := false
+	filepath.WalkDir(dir, func(p string, _ fs.DirEntry, err error) error {
+		sub, _ := filepath.Rel(dir, p)
+		if err != nil || protectedPath(path.Join(strings.Join(base, "/"), filepath.ToSlash(sub))) {
+			found = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return found
 }
 
 func isJunk(p string) bool {

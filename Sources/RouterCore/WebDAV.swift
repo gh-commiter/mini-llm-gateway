@@ -90,7 +90,7 @@ public enum WebDAV {
         case "DELETE":
             if junk { return DAVResponse(204) }
             guard exists else { return DAVResponse(404) }
-            guard !rel.isEmpty else { return DAVResponse(403) }
+            guard !rel.isEmpty, !treeProtected(url, rel) else { return DAVResponse(403) }
             do { try fm.removeItem(at: url) } catch { return DAVResponse(403) }
             return DAVResponse(204)
 
@@ -100,7 +100,11 @@ public enum WebDAV {
                   let (dest, destRel) = resolve(URL(string: raw)?.path(percentEncoded: true) ?? raw, prefix: prefix, root: root),
                   !destRel.isEmpty
             else { return DAVResponse(403) }
-            if protected(dest, destRel) { return DAVResponse(403) }
+            // Tudi vsebina mape: nič zaščitenega na cilju (stage/settings.json → .claude), nič zaščitenega ne izgine
+            // (MOVE .claude stran, prepis obstoječe .claude).
+            var st = stat()
+            if protected(dest, destRel) || treeProtected(url, destRel) || (method == "MOVE" && treeProtected(url, rel))
+                || (lstat(dest.path, &st) == 0 && treeProtected(dest, destRel)) { return DAVResponse(403) }
             if isJunk(dest) { return DAVResponse(201) }
             guard parentExists(dest) else { return DAVResponse(409) }
             // Mapa v svojo podmapo: nikoli (kanonični poti, da povezava ne skrije zanke; macOS: velikost črk ni pomembna).
@@ -171,6 +175,16 @@ public enum WebDAV {
     static func sameFile(_ a: URL, _ b: URL) -> Bool {
         var x = stat(), y = stat()
         return lstat(a.path, &x) == 0 && lstat(b.path, &y) == 0 && x.st_dev == y.st_dev && x.st_ino == y.st_ino
+    }
+
+    /// Ali je katera koli pot v drevesu `dir` (z imenom `base`) zaščitena.
+    /// ponytail: enumerator(atPath:) tiho preskoči nečitljive podmape; ob potrebi enumerator z errorHandler.
+    static func treeProtected(_ dir: URL, _ base: [String]) -> Bool {
+        let b = base.joined(separator: "/")
+        if Sync.isProtected(b) { return true }
+        guard let e = FileManager.default.enumerator(atPath: dir.path) else { return false }
+        for case let sub as String in e where Sync.isProtected(b.isEmpty ? sub : b + "/" + sub) { return true }
+        return false
     }
 
     static func isJunk(_ url: URL) -> Bool {

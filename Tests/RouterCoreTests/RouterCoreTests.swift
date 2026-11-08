@@ -1623,3 +1623,24 @@ final class FakeMinigw: @unchecked Sendable {
     #expect(dav("COPY", ".git/HEAD", "head.txt") == 201)
     #expect(dav("PUT", "b.txt") == 201)
 }
+
+// #2: vsebina premaknjene/kopirane/izbrisane mape ne sme ustvariti ali odstraniti zaščitene datoteke.
+@Test func davRefusesProtectedTreeBypass() throws {
+    let fm = FileManager.default
+    let root = fm.temporaryDirectory.appendingPathComponent("dav-\(UUID().uuidString)")
+    for d in ["stage", "x", ".claude", "old"] { try fm.createDirectory(at: root.appendingPathComponent(d), withIntermediateDirectories: true) }
+    defer { try? fm.removeItem(at: root) }
+    for f in ["stage/settings.json", "x/tasks.json", ".claude/settings.json"] { try Data("{}".utf8).write(to: root.appendingPathComponent(f)) }
+    func dav(_ m: String, _ p: String, _ d: String? = nil) -> Int {
+        WebDAV.handle(method: m, path: "/dav/s/" + p, headers: d.map { ["destination": "http://x/dav/s/" + $0] } ?? [:],
+                      body: Data(), root: root, prefix: "/dav/s").status
+    }
+    for (m, p, d) in [("MOVE", "stage", ".claude"), ("MOVE", "stage", ".Claude"), ("COPY", "x", ".vscode"), ("DELETE", ".claude", nil),
+                      ("MOVE", ".claude", "y"), ("MOVE", "old", ".claude"), ("COPY", "old", ".claude")] as [(String, String, String?)] {
+        #expect(dav(m, p, d) == 403, "\(m) \(p)")
+    }
+    #expect(fm.fileExists(atPath: root.appendingPathComponent(".claude/settings.json").path))
+    #expect(!fm.fileExists(atPath: root.appendingPathComponent(".vscode").path))
+    #expect(dav("COPY", ".claude", "c2") == 201)
+    #expect(dav("MOVE", "stage", "s2") == 201)
+}

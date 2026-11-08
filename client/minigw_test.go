@@ -769,3 +769,41 @@ func TestDavPutKeepsMode(t *testing.T) {
 		t.Fatalf("mode %v", fi.Mode().Perm())
 	}
 }
+
+// #2: vsebina premaknjene/kopirane/izbrisane mape ne sme ustvariti ali odstraniti zaščitene datoteke.
+func TestDavRefusesProtectedTreeBypass(t *testing.T) {
+	root := t.TempDir()
+	for _, d := range []string{"stage", "x", ".claude", "old"} {
+		os.MkdirAll(filepath.Join(root, d), 0o755)
+	}
+	os.WriteFile(filepath.Join(root, "stage", "settings.json"), []byte("{}"), 0o644)
+	os.WriteFile(filepath.Join(root, "x", "tasks.json"), []byte("{}"), 0o644)
+	os.WriteFile(filepath.Join(root, ".claude", "settings.json"), []byte("{}"), 0o644)
+	h := func(m, p, d string) int {
+		hd := map[string]string{}
+		if d != "" {
+			hd["destination"] = "http://x/dav/s/" + d
+		}
+		return davHandle(m, "/dav/s/"+p, hd, nil, root, "/dav/s").Status
+	}
+	for _, c := range [][3]string{
+		{"MOVE", "stage", ".claude"}, {"MOVE", "stage", ".Claude"}, {"COPY", "x", ".vscode"}, {"DELETE", ".claude", ""},
+		{"MOVE", ".claude", "y"}, {"MOVE", "old", ".claude"}, {"COPY", "old", ".claude"},
+	} {
+		if s := h(c[0], c[1], c[2]); s != 403 {
+			t.Fatalf("%s %s %s: %d", c[0], c[1], c[2], s)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, ".claude", "settings.json")); err != nil {
+		t.Fatal(".claude/settings.json removed")
+	}
+	if _, err := os.Stat(filepath.Join(root, ".vscode")); err == nil {
+		t.Fatal(".vscode planted")
+	}
+	if s := h("COPY", ".claude", "c2"); s != 201 {
+		t.Fatalf("COPY .claude out: %d", s)
+	}
+	if s := h("MOVE", "stage", "s2"); s != 201 {
+		t.Fatalf("MOVE stage: %d", s)
+	}
+}

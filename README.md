@@ -373,8 +373,10 @@ credentials out of project folders you use with a gateway, or list them in `.git
 The list is per computer: with several profiles every gateway gets the folder on its first agent request.
 **Protected paths:** as in sync mode, the mount refuses every write (403) to `.git` (in any letter case, also `git~1`),
 `.claude/settings*.json`, `.vscode/tasks.json` and `.envrc`, also through a link in the folder; reading them still
-works. So agents cannot `git commit` or change the folder's Claude Code settings in direct mode: use worktree mode
-(`--minigw-work=worktree`) for commits.
+works. Direct is the default with a Mac gateway on another computer, so by default agents cannot `git commit` or change
+the folder's Claude Code settings there: use worktree mode (`--minigw-work=worktree`) for commits. Moving, copying or
+deleting a folder is refused too when it would create or remove one of these files. A gateway on the same Mac shares
+no folder (agents work in the folder itself), so this protection does not apply there.
 **Read-only:** `minigw --minigw-ro …` (or `MINIGW_SHARE=ro`, for example in the `env` of Claude Code's settings for the
 plugin) shares the folder read-only: minigw refuses every write, the gateway mounts it read-only and runs Codex and
 Grok in their read-only sandbox. Agents read files up to 32 MB in one piece (larger ones only in ranges).
