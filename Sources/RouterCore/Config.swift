@@ -107,6 +107,8 @@ public struct RouterConfig: Codable, Sendable, Equatable {
     /// Kot minigw serve: neznana naprava z žetonom je dovoljena le, dokler je seznam prazen in je to vklopljeno; sicer čaka
     /// na odobritev (Settings → Devices, minigw gw devices allow). Starejše nastavitve: glej init(from:).
     public var allowAnyDevice = false
+    /// Modeli brez žetona za aplikacije tega uporabnika na tem Macu (Router.localApp); privzeto vklopljeno.
+    public var allowLocalApps = true
     public var codex = CodexConfig()
     public var copilot = CopilotConfig()
     public var grok = GrokConfig()
@@ -216,6 +218,7 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         // Nastavitve pred odobritvijo naprav (vsaka naprava je bila sprejeta in dodana): naštete ostanejo dovoljene, pri
         // praznem seznamu ostane dovoljena vsaka (brez dela za uporabnika).
         allowAnyDevice = try c.decodeIfPresent(Bool.self, forKey: .allowAnyDevice) ?? devices.isEmpty
+        allowLocalApps = try c.decodeIfPresent(Bool.self, forKey: .allowLocalApps) ?? true
         codex = try c.decodeIfPresent(CodexConfig.self, forKey: .codex) ?? d.codex
         copilot = try c.decodeIfPresent(CopilotConfig.self, forKey: .copilot) ?? d.copilot
         grok = try c.decodeIfPresent(GrokConfig.self, forKey: .grok) ?? d.grok
@@ -244,7 +247,7 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         func take<T: Equatable>(_ kp: WritableKeyPath<RouterConfig, T>) {
             if draft[keyPath: kp] == old[keyPath: kp] { d[keyPath: kp] = new[keyPath: kp] }
         }
-        take(\.host); take(\.port); take(\.allowedClients); take(\.allowPlainRemote); take(\.allowAnyDevice); take(\.claudeCLI); take(\.appleFM)
+        take(\.host); take(\.port); take(\.allowedClients); take(\.allowPlainRemote); take(\.allowAnyDevice); take(\.allowLocalApps); take(\.claudeCLI); take(\.appleFM)
         take(\.siri); take(\.codex); take(\.copilot); take(\.grok); take(\.foundry); take(\.scratchFolder); take(\.runCommands); take(\.worktreeNetwork); take(\.worktreeCodexNetwork)
         d.devices = mergeList(draft.devices, old.devices, new.devices)
         d.providers = mergeList(draft.providers, old.providers, new.providers)

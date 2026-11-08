@@ -140,7 +140,7 @@ public final class Router: Sendable {
         if req.path == Self.adminPrefix || req.path.hasPrefix(Self.adminPrefix + "/") {  // lastna skrivnost, ne žeton
             return (await adminHTTP(req, rid: rid, writer: writer), nil, "admin")
         }
-        guard authorized(req) else {
+        guard authorized(req) || localApp(req) else {
             return (await error(401, "authentication_error", "Invalid or missing token", rid: rid, writer: writer), nil, nil)
         }
         // Z drugega računalnika le dovoljena naprava (kot minigw serve); neznana čaka na odobritev. Brez ključa naprave
@@ -408,6 +408,25 @@ public final class Router: Sendable {
         let status = await ShareHub.$run.withValue(id) { await ShareHub.$agent.withValue(agent) { await run() } }
         await Self.shares.finish(run: id)
         return status
+    }
+
+    /// Proces odjemalca na loopbacku je tega uporabnika in ni agent (PeerProcess.sameUserApp); testi ga zamenjajo.
+    nonisolated(unsafe) static var localPeer: @Sendable (_ peerPort: UInt16, _ routerPort: UInt16) -> Bool = {
+        PeerProcess.sameUserApp(peerPort: $0, routerPort: $1)
+    }
+
+    /// Zahteva za modele brez žetona od aplikacije tega uporabnika na tem Macu (kot localApp v minigw serve). Brskalnik je
+    /// ne more poslati: anthropic-version ali x-api-key zahteva CORS preflight (router ne pošlje glav CORS), Host je
+    /// loopback (ne DNS rebinding), brez Origin. Drugi uporabniki, drugi računalniki in agenti: žeton.
+    func localApp(_ req: HTTPRequest) -> Bool {
+        guard config.allowLocalApps, ["GET /v1/models", "POST /v1/messages", "POST /v1/messages/count_tokens"].contains(req.method + " " + req.path),
+              RouterServer.isLoopback(req.peer), req.header("origin") == nil,
+              req.header("anthropic-version") != nil || req.header("x-api-key") != nil else { return false }
+        var host = req.header("host") ?? ""
+        if host.hasPrefix("["), let end = host.firstIndex(of: "]") { host = String(host[host.index(after: host.startIndex)..<end]) }
+        else if let colon = host.lastIndex(of: ":"), host.firstIndex(of: ":") == colon { host = String(host[..<colon]) }
+        guard host == "localhost" || RouterServer.isLoopback(host) else { return false }
+        return Self.localPeer(req.peerPort, config.port)
     }
 
     func authorized(_ req: HTTPRequest) -> Bool {

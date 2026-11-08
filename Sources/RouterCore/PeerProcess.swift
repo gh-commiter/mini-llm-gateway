@@ -24,6 +24,15 @@ public enum PeerProcess {
         return "cannot check the parent processes of the client"
     }
 
+    /// Aplikacija tega uporabnika (Router.localApp): natanko en proces tega uid in ni agent aplikacije (refusal: ne v
+    /// sandboxu, ne potomec aplikacije, veriga staršev preverljiva).
+    public static func sameUserApp(peerPort: UInt16, routerPort: UInt16) -> Bool {
+        guard refusal(peerPort: peerPort, routerPort: routerPort) == nil, let pid = pid(localPort: peerPort, remotePort: routerPort) else { return false }
+        var bsd = proc_bsdinfo()
+        let n = Int32(MemoryLayout<proc_bsdinfo>.size)
+        return proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &bsd, n) == n && bsd.pbi_uid == getuid()
+    }
+
     /// Pot izvršljive datoteke procesa (jedro, ni mogoče ponarediti).
     static func path(_ pid: pid_t) -> String? {
         var buf = [CChar](repeating: 0, count: 4096)
