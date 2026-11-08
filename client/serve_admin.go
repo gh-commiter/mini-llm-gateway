@@ -73,7 +73,7 @@ type apiClaude struct {
 	DisabledTools        []string `json:"disabledTools"`
 	PermissionMode       string   `json:"permissionMode"`
 	SettingSources       string   `json:"settingSources"`
-	Off                  string   `json:"off,omitempty"` // zakaj sta Claude CLI in Codex izklopljena ob zagonu (offReason)
+	Off                  string   `json:"off,omitempty"`     // zakaj sta Claude CLI in Codex izklopljena ob zagonu (offReason)
 	LeftOut              []string `json:"leftOut,omitempty"` // mape iz serve.json, izpuščene ob zagonu (offFolders)
 }
 

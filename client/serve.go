@@ -403,8 +403,8 @@ type server struct {
 	offReason  string
 	offFolders []string // dovoljene mape iz serve.json, izpuščene ob zagonu (stran jih pokaže, da jih uporabnik odstrani)
 	settings   settingsState
-	pick      atomic.Pointer[pickFunc] // izbirno okno pladnja (Windows); nil = ni GUI
-	picking   atomic.Bool              // eno okno naenkrat
+	pick       atomic.Pointer[pickFunc] // izbirno okno pladnja (Windows); nil = ni GUI
+	picking    atomic.Bool              // eno okno naenkrat
 	// agentsRunning: tekoči procesi agentov (claude, codex, grok), za status in posodobitev brez prekinitve
 	agentsRunning atomic.Int32
 	foundry       foundryState // Foundry Local: vrata, modeli
