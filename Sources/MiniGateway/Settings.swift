@@ -399,7 +399,7 @@ struct SettingsView: View {
                     } label: {
                         TextField("Name", text: Binding(get: { allowNames[p.id] ?? p.name }, set: { allowNames[p.id] = $0 }))
                             .labelsHidden()
-                        Text(verbatim: p.id).font(.caption.monospaced()).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                        Text(verbatim: p.id).font(.caption2.monospaced()).lineLimit(2).textSelection(.enabled)  // celoten ID (43 znakov) za primerjavo
                         Text(verbatim: ([p.address, p.time.formatted(date: .abbreviated, time: .shortened)] + (p.client.isEmpty ? [] : [p.client]))
                             .joined(separator: " · "))
                         if state.nameTaken(p) {

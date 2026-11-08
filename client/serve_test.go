@@ -319,7 +319,20 @@ func TestServeRejectsBadModelsBodiesAndForeignOwners(t *testing.T) {
 		}
 	}
 	// --minigw-ro: brez orodij za pisanje, sandbox ne piše v mapo (na Windows brez sandboxa tudi brez Bash).
-	ro := strings.Join(s.agentArgs("/copy", true), " ")
+	s.cfg.Tools = defaultTools + ",Monitor,EnterWorktree"
+	roArgs := s.agentArgs("/copy", true)
+	s.cfg.Tools = defaultTools
+	if i := slices.Index(roArgs, "--tools"); i < 0 || roArgs[i+1] != "Read,Grep,Glob" {
+		t.Fatalf("read-only tools not from the allowlist: %v", roArgs)
+	}
+	ro := strings.Join(roArgs, " ")
+	s.cfg.AllowLocalTools = true
+	local := s.agentArgs("/copy", true)
+	s.cfg.AllowLocalTools = false
+	if i := slices.Index(local, "--tools"); i < 0 || strings.Contains(local[i+1], "Monitor") || strings.Contains(local[i+1], "Edit") ||
+		!strings.Contains(strings.Join(local, " "), "EnterWorktree,ExitWorktree,Monitor") {
+		t.Fatalf("read-only local tools: %v", local)
+	}
 	if strings.Contains(ro, "Edit(./**)") || strings.Contains(ro, "Write(./**)") || !strings.Contains(ro, "Read(./**)") ||
 		runtime.GOOS != "windows" && (!strings.Contains(ro, `"allowWrite":[]`) || !strings.Contains(ro, `"/copy"]}`)) {
 		t.Fatalf("read-only agent args: %s", ro)

@@ -127,7 +127,7 @@ public final class Router: Sendable {
             if let branch { u.branch = branch }
         }
         u.readOnly = u.readOnly || req.header("x-claude-mini-ro") == "1"  // tudi brez deljenja; vgnezdeni klic: AgentRun
-        u.tools = GatewayHistory.restrictions(model, config, readOnly: u.readOnly)  // veljavne omejitve (brez pisanja pri --minigw-ro)
+        u.tools = GatewayHistory.restrictions(model, config, readOnly: u.readOnly, tree: u.mode == "worktree" || u.mode == "native")  // veljavne omejitve (brez pisanja pri --minigw-ro)
         history.record(u)
     }
 

@@ -246,7 +246,7 @@ func workCandidates(work string, readOnly, smb, git bool) []string {
 		if smb {
 			out = append(out, "native")
 		}
-		if git { // repozitorij git nikoli v direct za pisanje (.git tam ni zaščiten)
+		if git { // repozitorij git nikoli v direct za pisanje (agenti tam ne morejo commitati, .git samo za branje)
 			return append(out, "worktree", "sync")
 		}
 		return append(out, "sync", "direct")

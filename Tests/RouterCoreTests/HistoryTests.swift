@@ -97,6 +97,8 @@ func useOf(_ s: GatewayHistory.Session, _ model: String, role: String = "") -> G
     for (r, ok) in ["dev": true, "sec.review-1_x": true, "": false, "a b": false, "x\nx-evil: 1": false, String(repeating: "a", count: 33): false, "dév": false] {
         #expect(GatewayHistory.validRole(r) == ok, "\(r)")
     }
+    #expect(GatewayHistory.role(request("POST", "/v1/messages", headers: ["x-claude-mini-role": String(repeating: "a", count: 33)])) == ""
+            && GatewayHistory.role(request("POST", "/v1/messages", headers: ["x-claude-mini-role": "dev"])) == "dev")
     let g = GatewayHistory()
     for role in ["security", "dev", "dev", ""] {
         var u = GatewayHistory.Use()
@@ -104,11 +106,11 @@ func useOf(_ s: GatewayHistory.Session, _ model: String, role: String = "") -> G
         g.record(u)
     }
     let s = try #require(g.sessions(folder: "c:/proj").first)  // Windows: brez razlike v velikih črkah
-    #expect(g.sessions(folder: "c:/proj").count == 1 && s.folder == "C:/Proj" && s.role == "dev")
+    #expect(g.sessions(folder: "c:/proj").count == 1 && s.folder == "C:/Proj" && s.role == "")
     #expect(useOf(s, "claude-codex", role: "dev")?.requests == 2 && useOf(s, "claude-codex", role: "security")?.requests == 1
             && useOf(s, "claude-codex")?.requests == 1 && useOf(s, "claude-codex", role: "dev")?.readOnly == true && useOf(s, "claude-codex", role: "dev")?.tools == "write")
     let json = GatewayHistory.json(s)
-    #expect(json["role"] as? String == "dev" && (json["models"] as? [[String: Any]])?.first?["model"] as? String == "claude-codex")
+    #expect(json["role"] == nil && (json["models"] as? [[String: Any]])?.first?["model"] as? String == "claude-codex")
     var l = GatewayHistory.Use()
     l.session = "l"; l.folder = "/home/U"; l.os = "Linux"; l.model = "m"
     g.record(l)
@@ -132,6 +134,11 @@ func useOf(_ s: GatewayHistory.Session, _ model: String, role: String = "") -> G
     c.claudeCLI.allowLocalTools = true
     #expect(GatewayHistory.restrictions("claude-cli", c) == "local")
     #expect(GatewayHistory.restrictions("claude-cli", c, readOnly: true) == "local,read-only")
+    c.codex.network = true  // omrežje Codex le s pisanjem; v worktree le z worktreeCodexNetwork
+    #expect(GatewayHistory.restrictions("claude-codex", c) == "write,network" && GatewayHistory.restrictions("claude-codex", c, readOnly: true) == "")
+    #expect(GatewayHistory.restrictions("claude-codex", c, tree: true) == "write")
+    c.worktreeCodexNetwork = true
+    #expect(GatewayHistory.restrictions("claude-codex", c, tree: true) == "write,network")
 }
 
 /// Ugnezdeni klic (agent-calls): v seji klicatelja pod isto napravo, z »via« = veriga izvajanja in vlogo klicatelja
@@ -172,7 +179,7 @@ func useOf(_ s: GatewayHistory.Session, _ model: String, role: String = "") -> G
         (["-p", "--minigw-role=security"], "dev", "security", "-p", true),
         (["-p"], "dev", "dev", "-p", true),
         (["--minigw-role", "a b"], nil, "a b", "", false),
-        (["-p", "--minigw-role"], nil, "", "-p --minigw-role", true),  // brez vrednosti: gre naprej v claude
+        (["-p", "--minigw-role"], nil, "", "-p", false),  // brez vrednosti: napaka
     ]
     for (args, env, role, rest, ok) in cases {
         let r = GatewayHistory.takeRole(args, env: env)

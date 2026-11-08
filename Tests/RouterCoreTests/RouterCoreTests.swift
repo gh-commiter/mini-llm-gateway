@@ -124,7 +124,15 @@ func makeRouter(session: URLSession = .shared) -> Router {
     #expect(cli.agentArgs(cwd: cwd, allTools: []) == ["--tools", "Read,Grep,Glob", "--allowedTools", "Read,Grep,Glob", "--permission-mode", "dontAsk"])
     cli.tools = "Read,Edit,Bash(git:*),Write,Grep"  // --minigw-ro: brez orodij za pisanje; Bash tu nima sandboxa
     #expect(cli.agentArgs(cwd: cwd, allTools: [], readOnly: true) == ["--tools", "Read,Grep", "--allowedTools", "Read,Grep", "--permission-mode", "dontAsk"])
+    cli.tools = "Read,Monitor,EnterWorktree,WebFetch"  // seznam dovoljenih: orodja, ki niso na njem, odpadejo
+    #expect(cli.agentArgs(cwd: cwd, allTools: [], readOnly: true).prefix(2) == ["--tools", "Read,WebFetch"])
     cli.tools = "Read,Grep,Glob"
+    var local = cli
+    local.allowLocalTools = true
+    let ro = local.agentArgs(cwd: cwd, allTools: ["Bash", "Edit", "EnterWorktree", "ExitWorktree", "Monitor", "Read", "Task", "WebFetch"], readOnly: true)
+    func value(_ flag: String) -> String { ro.firstIndex(of: flag).map { ro[$0 + 1] } ?? "" }
+    #expect(value("--tools") == "Read,Grep,Glob,LS,WebSearch,WebFetch,Bash" && value("--allowedTools") == "WebFetch")
+    #expect(["EnterWorktree", "ExitWorktree", "Monitor", "Edit"].allSatisfy { value("--disallowedTools").split(separator: ",").contains(Substring($0)) })
     cli.allowLocalTools = true
     cli.allowedRoots = "/tmp"
     cli.disabledTools = ["WebSearch"]
@@ -640,6 +648,7 @@ final class SeenDevices: @unchecked Sendable {
     #expect(Codex.threadId(Data(#"{"type":"turn.started"}"#.utf8)) == nil)
     #expect(Codex.match("claude-codex-") == nil && Codex.match("claude-opus-5-5") == nil)
     #expect(Codex.args(cwd: cwd, extraDirs: ["/tmp/x"], agent: true, output: out, write: false).contains("read-only"))
+    #expect(Codex.args(cwd: cwd, extraDirs: [], agent: true, output: out, write: false, resume: "t1").contains(#"sandbox_mode="read-only""#))
     #expect(Codex.args(cwd: cwd, extraDirs: [], agent: true, output: out, network: false).contains("sandbox_workspace_write.network_access=false"))
     var cx = CodexConfig()
     #expect(cx.isModelEnabled("a"))
@@ -1581,4 +1590,94 @@ final class FakeMinigw: @unchecked Sendable {
         await router.handle(r, writer: w)
         #expect(w.status == 200 && w.text.contains(#""providers""#) == want, "\(peer) \(token): \(w.text)")
     }
+}
+
+// #10: »a.txt« → »A.txt« (APFS: ista datoteka) ne sme izbrisati vira; COPY nase in mapa v podmapo = 403.
+@Test func davMoveSameFileKeepsContent() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("dav-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: root.appendingPathComponent("d/sub"), withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Data("keep".utf8).write(to: root.appendingPathComponent("a.txt"))
+    func dav(_ m: String, _ s: String, _ d: String) -> Int {
+        WebDAV.handle(method: m, path: "/dav/s/" + s, headers: ["destination": "http://x/dav/s/" + d], body: Data(), root: root, prefix: "/dav/s").status
+    }
+    #expect(dav("COPY", "a.txt", "a.txt") == 403)
+    #expect(dav("MOVE", "a.txt", "A.txt") == 201)
+    #expect(String(decoding: try Data(contentsOf: root.appendingPathComponent("A.txt")), as: UTF8.self) == "keep")
+    let names = try FileManager.default.contentsOfDirectory(atPath: root.path)
+    #expect(names.contains("A.txt") && !names.contains("a.txt") && !names.contains { $0.hasPrefix(".minigw") })
+    #expect(dav("MOVE", "A.txt", "A.txt") == 201)
+    #expect(String(decoding: try Data(contentsOf: root.appendingPathComponent("A.txt")), as: UTF8.self) == "keep")
+    #expect(dav("MOVE", "d", "d/sub/d") == 403 && dav("COPY", "d", "D/sub/d") == 403)
+}
+
+// #2: direktni WebDAV ne piše v zaščitene poti (kot sync), tudi prek povezave; branje ostane.
+@Test func davRefusesProtectedWrites() throws {
+    let fm = FileManager.default
+    let root = fm.temporaryDirectory.appendingPathComponent("dav-\(UUID().uuidString)")
+    try fm.createDirectory(at: root.appendingPathComponent(".git/hooks"), withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: root) }
+    try Data("ref".utf8).write(to: root.appendingPathComponent(".git/HEAD"))
+    try Data("x".utf8).write(to: root.appendingPathComponent("a.txt"))
+    try fm.createSymbolicLink(at: root.appendingPathComponent("hooks"), withDestinationURL: root.appendingPathComponent(".git/hooks"))
+    func dav(_ m: String, _ p: String, _ d: String? = nil) -> Int {
+        WebDAV.handle(method: m, path: "/dav/s/" + p, headers: d.map { ["destination": "http://x/dav/s/" + $0] } ?? [:],
+                      body: Data("y".utf8), root: root, prefix: "/dav/s").status
+    }
+    for (m, p, d) in [("PUT", ".git/config", nil), ("PUT", ".GIT/config", nil), ("PUT", "git~1/config", nil), ("PUT", ".envrc", nil),
+                      ("PUT", ".claude/settings.local.json", nil), ("PUT", ".vscode/tasks.json", nil), ("MKCOL", ".git/x", nil),
+                      ("DELETE", ".git/HEAD", nil), ("DELETE", ".git", nil), ("LOCK", ".git/new", nil), ("PROPPATCH", ".git/HEAD", nil),
+                      ("PUT", "hooks/pre-commit", nil), ("MOVE", "a.txt", ".git/hooks/pre-commit"), ("COPY", "a.txt", ".envrc"),
+                      ("MOVE", ".git", "g")] as [(String, String, String?)] {
+        #expect(dav(m, p, d) == 403, "\(m) \(p)")
+    }
+    #expect(dav("GET", ".git/HEAD") == 200)
+    #expect(dav("COPY", ".git/HEAD", "head.txt") == 201)
+    #expect(dav("PUT", "b.txt") == 201)
+}
+
+// #2: vsebina premaknjene/kopirane/izbrisane mape ne sme ustvariti ali odstraniti zaščitene datoteke.
+@Test func davRefusesProtectedTreeBypass() throws {
+    let fm = FileManager.default
+    let root = fm.temporaryDirectory.appendingPathComponent("dav-\(UUID().uuidString)")
+    for d in ["stage", "x", ".claude", "old"] { try fm.createDirectory(at: root.appendingPathComponent(d), withIntermediateDirectories: true) }
+    defer { try? fm.removeItem(at: root) }
+    for f in ["stage/settings.json", "x/tasks.json", ".claude/settings.json"] { try Data("{}".utf8).write(to: root.appendingPathComponent(f)) }
+    func dav(_ m: String, _ p: String, _ d: String? = nil) -> Int {
+        WebDAV.handle(method: m, path: "/dav/s/" + p, headers: d.map { ["destination": "http://x/dav/s/" + $0] } ?? [:],
+                      body: Data(), root: root, prefix: "/dav/s").status
+    }
+    for (m, p, d) in [("MOVE", "stage", ".claude"), ("MOVE", "stage", ".Claude"), ("COPY", "x", ".vscode"), ("DELETE", ".claude", nil),
+                      ("MOVE", ".claude", "y"), ("MOVE", "old", ".claude"), ("COPY", "old", ".claude")] as [(String, String, String?)] {
+        #expect(dav(m, p, d) == 403, "\(m) \(p)")
+    }
+    #expect(fm.fileExists(atPath: root.appendingPathComponent(".claude/settings.json").path))
+    #expect(!fm.fileExists(atPath: root.appendingPathComponent(".vscode").path))
+    #expect(dav("COPY", ".claude", "c2") == 201)
+    #expect(dav("MOVE", "stage", "s2") == 201)
+}
+
+// M1/M2/L3: ugnezden .git ne izgine prek starša; vir v cilju = 403; trda povezava ne pusti začasnega imena.
+@Test func davNestedGitAncestorAndHardLink() throws {
+    let fm = FileManager.default
+    let root = fm.temporaryDirectory.appendingPathComponent("dav-\(UUID().uuidString)")
+    for d in ["repoA/sub/.git", "other", "a/b"] { try fm.createDirectory(at: root.appendingPathComponent(d), withIntermediateDirectories: true) }
+    defer { try? fm.removeItem(at: root) }
+    try Data("ref".utf8).write(to: root.appendingPathComponent("repoA/sub/.git/HEAD"))
+    try Data("keep".utf8).write(to: root.appendingPathComponent("a/b/f"))
+    func dav(_ m: String, _ p: String, _ d: String? = nil) -> Int {
+        WebDAV.handle(method: m, path: "/dav/s/" + p, headers: d.map { ["destination": "http://x/dav/s/" + $0] } ?? [:],
+                      body: Data(), root: root, prefix: "/dav/s").status
+    }
+    for (m, p, d) in [("DELETE", "repoA", nil), ("MOVE", "other", "repoA"), ("COPY", "other", "repoA"), ("MOVE", "repoA", "x"),
+                      ("MOVE", "a/b", "a"), ("COPY", "a/b", "a"), ("MOVE", "a/b", "A")] as [(String, String, String?)] {
+        #expect(dav(m, p, d) == 403, "\(m) \(p)")
+    }
+    #expect(fm.fileExists(atPath: root.appendingPathComponent("repoA/sub/.git/HEAD").path))
+    #expect(String(decoding: try Data(contentsOf: root.appendingPathComponent("a/b/f")), as: UTF8.self) == "keep")
+    try Data("hl".utf8).write(to: root.appendingPathComponent("h1"))
+    try fm.linkItem(at: root.appendingPathComponent("h1"), to: root.appendingPathComponent("h2"))
+    #expect(dav("MOVE", "h1", "h2") == 201)
+    #expect(try !fm.contentsOfDirectory(atPath: root.path).contains { $0.hasPrefix(".minigw") })
+    #expect(String(decoding: try Data(contentsOf: root.appendingPathComponent("h2")), as: UTF8.self) == "hl")
 }

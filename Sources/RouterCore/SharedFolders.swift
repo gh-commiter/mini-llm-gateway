@@ -51,7 +51,7 @@ public enum SharedFolders {
 
     /// Načini, ki jih minigw poskusi po vrsti (naslednji, če router prejšnjega ne sprejme).
     /// auto: samo za branje → direct; mapa na shemi SMB routerja → native; repozitorij git → worktree; sicer sync.
-    /// Repozitorij git nikoli v direct za pisanje (.git tam ni zaščiten): worktree pade na sync. Izrecen native pade na direct.
+    /// Repozitorij git nikoli v direct za pisanje (agenti tam ne morejo commitati, .git samo za branje): worktree pade na sync. Izrecen native pade na direct.
     public static func candidates(work: String, readOnly: Bool, smb: Bool, git: Bool) -> [String] {
         switch work {
         case "auto" where readOnly: return ["direct"]

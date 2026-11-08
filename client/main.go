@@ -41,6 +41,9 @@ func (c connection) isLocal() bool {
 	return h == "127.0.0.1" || h == "localhost" || h == "::1"
 }
 
+// oneLine: besedilo prehoda v eni vrstici: brez znaka za novo vrstico, da ne ponaredi vrstice »Device:« ali »Status:«.
+func oneLine(s string) string { return strings.ReplaceAll(clean(s), "\n", " ") }
+
 func say(s string) { fmt.Println(s) }
 
 // clean: besedilo routerja brez kontrolnih znakov (razen \n), da ne krmili terminala.
@@ -160,11 +163,47 @@ func routeErr(p profile) (connection, error) {
 	return c, nil
 }
 
-// profileStatus: naslov, dosegljivost, ponudniki in število modelov enega profila; true = dosegljiv.
+// failureReason: razlog, zakaj odgovor routerja ni 200 (status, telo napake): 401 = žeton, 403 = naprava še ni dovoljena
+// (sporočilo prehoda z navodili ostane), 0 = ni povezave. Isto besedilo v odjemalcu Swift.
+func failureReason(st int, body map[string]any) string {
+	e, _ := body["error"].(map[string]any)
+	msg, _ := e["message"].(string)
+	msg = oneLine(msg)
+	switch st {
+	case 0:
+		return "gateway not reachable"
+	case 401:
+		return "token rejected: copy the token again (Mini Gateway → Settings → General → Copy Token) and run minigw connect …"
+	case 403:
+		if msg == "" {
+			return "device not approved"
+		}
+		return "device not approved: " + msg
+	}
+	if msg != "" {
+		msg = ": " + msg
+	}
+	return fmt.Sprintf("gateway answered HTTP %d%s", st, msg)
+}
+
+// deviceID: ID te naprave, kot ga prehod pokaže za odobritev: javni ključ Ed25519 (base64url, 43 znakov).
+func deviceID(c connection) string {
+	if c.Device == nil {
+		return ""
+	}
+	if seed, err := fromBase64url(*c.Device); err == nil && len(seed) == ed25519.SeedSize {
+		return base64url(ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey))
+	}
+	return ""
+}
+
+// profileStatus: naslov, dosegljivost, ponudniki, število modelov, ID naprave in razlog enega profila; true = povezan
+// (prehod dosegljiv, žeton sprejet, naprava odobrena).
 func profileStatus(p profile) bool {
 	c, err := routeErr(p)
 	if err != nil {
-		say("Gateway:   " + p.conn.URL + " (" + err.Error() + ")")
+		say("Gateway:   " + p.conn.URL + " (" + oneLine(err.Error()) + ")")
+		say("Status:    " + oneLine(err.Error()))
 		return false
 	}
 	st, ready := getJSON(c, "/health/ready")
@@ -190,7 +229,7 @@ func profileStatus(p profile) bool {
 			if v, _ := pr[k].(bool); v {
 				mark = "✓"
 			}
-			out = append(out, k+" "+mark)
+			out = append(out, oneLine(k)+" "+mark)
 		}
 		say("Providers: " + strings.Join(out, ", "))
 	}
@@ -201,9 +240,29 @@ func profileStatus(p profile) bool {
 		count = fmt.Sprint(len(d))
 	} else if ms == 401 {
 		count = "token rejected"
+	} else if ms == 403 {
+		count = "device not approved"
 	}
 	say("Models:    " + count)
-	return st == 200
+	if id := deviceID(c); id != "" && p.conn.Key != nil {
+		state := "approval unknown"
+		if ms == 200 {
+			state = "approved"
+		} else if ms == 403 {
+			state = "waiting for approval"
+		}
+		say("Device:    " + id + " (" + state + ")")
+	}
+	bad, body := ms, models
+	if ms == 200 {
+		bad, body = st, ready
+	}
+	if bad == 200 {
+		say("Status:    connected")
+		return true
+	}
+	say("Status:    " + failureReason(bad, body))
+	return false
 }
 
 func getJSON(c connection, path string) (int, map[string]any) {
@@ -318,6 +377,9 @@ func main() {
 			fail("missing --token (copy it from Mini Gateway → Settings → General → Copy Token)")
 		}
 		parts := strings.SplitN(token, "#", 2)
+		if parts[0] == "" || len(parts) > 1 && parts[1] == "" { // #11: »#«, »#kljuc« ali »zeton#« ni žeton
+			fail("the token is empty or incomplete: copy it again (Mini Gateway → Settings → General → Copy Token)")
+		}
 		c := connection{URL: normalize(args[1]), Token: parts[0]}
 		if len(parts) > 1 {
 			c.Key = &parts[1]
@@ -411,10 +473,7 @@ func main() {
 			st, models := getJSON(route(ps[0]), "/v1/models")
 			raw, _ := models["data"].([]any)
 			if st != 200 || raw == nil {
-				if st == 401 {
-					fail("token rejected")
-				}
-				fail(fmt.Sprintf("cannot list models (HTTP %d)", st))
+				fail(failureReason(st, models))
 			}
 			for _, m := range raw {
 				mm, _ := m.(map[string]any)
@@ -424,15 +483,18 @@ func main() {
 			lists, names := make([][]map[string]any, len(ps)), make([]string, len(ps))
 			for i, p := range ps {
 				names[i] = p.name
-				if c, err := routeErr(p); err == nil {
-					lists[i] = fetchModels(c)
+				why := ""
+				if c, err := routeErr(p); err != nil {
+					why = err.Error()
+				} else {
+					lists[i], why = fetchModels(c)
 				}
 				if lists[i] == nil {
-					fmt.Fprintln(os.Stderr, "minigw: gateway "+p.name+" ("+p.conn.URL+") is not reachable; its models are left out")
+					fmt.Fprintln(os.Stderr, "minigw: gateway "+p.name+" ("+p.conn.URL+"): "+why+"; its models are left out")
 				}
 			}
 			if data = mergeModels(lists, names); data == nil {
-				fail("no gateway is reachable (minigw status)")
+				fail("no gateway can list models (minigw status)")
 			}
 		}
 		width := 0
@@ -1029,17 +1091,21 @@ func shareCommand(args []string) {
 // takeRole: --minigw-role <ime> ali --minigw-role=<ime> (zadnji velja) iz argumentov, sicer env; ok=false za neveljavno ime
 // (enako kot GatewayHistory.takeRole na Macu).
 func takeRole(args []string, env string) (role string, rest []string, ok bool) {
-	role = env
+	role, ok = env, true
 	for i := 0; i < len(args); i++ {
 		switch {
-		case args[i] == "--minigw-role" && i+1 < len(args):
-			role = args[i+1]
-			i++
+		case args[i] == "--minigw-role":
+			if i+1 < len(args) {
+				role = args[i+1]
+				i++
+			} else {
+				ok = false // brez vrednosti
+			}
 		case strings.HasPrefix(args[i], "--minigw-role="):
 			role = strings.TrimPrefix(args[i], "--minigw-role=")
 		default:
 			rest = append(rest, args[i])
 		}
 	}
-	return role, rest, role == "" || validRole(role)
+	return role, rest, ok && (role == "" || validRole(role))
 }

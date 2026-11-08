@@ -371,10 +371,16 @@ those anyway, run `minigw share add` in it (`minigw share list`, `minigw share r
 Inside a shared folder everything is shared, hidden folders and files included (`.claude/`, `.env`, `.secret/`): keep
 credentials out of project folders you use with a gateway, or list them in `.gitignore` for sync and worktree mode.
 The list is per computer: with several profiles every gateway gets the folder on its first agent request.
+**Protected paths:** as in sync mode, the mount refuses every write (403) to `.git` (in any letter case, also `git~1`),
+`.claude/settings*.json`, `.vscode/tasks.json` and `.envrc`, also through a link in the folder; reading them still
+works. Direct is the default with a Mac gateway on another computer, so by default agents cannot `git commit` or change
+the folder's Claude Code settings there: use worktree mode (`--minigw-work=worktree`) for commits. Moving, copying or
+deleting a folder is refused too when it would create or remove one of these files. A gateway on the same Mac shares
+no folder (agents work in the folder itself), so this protection does not apply there.
 **Read-only:** `minigw --minigw-ro …` (or `MINIGW_SHARE=ro`, for example in the `env` of Claude Code's settings for the
 plugin) shares the folder read-only: minigw refuses every write, the gateway mounts it read-only and runs Codex and
-Grok in their read-only sandbox, Copilot without its write tool and Claude CLI without its edit tools (its commands run in
-a sandbox that cannot write to the folder). This also holds when the gateway runs on the same computer and nothing is shared. Agents read files up to 32 MB in one piece (larger ones only in ranges).
+Grok in their read-only sandbox, Copilot without its write tool and Claude CLI only with its reading tools (Read, Grep, Glob, web search and fetch;
+commands only in a sandbox that cannot write to the folder). This also holds when the gateway runs on the same computer and nothing is shared. Agents read files up to 32 MB in one piece (larger ones only in ranges).
 **Role:** `minigw --minigw-role NAME …` (or `MINIGW_ROLE`) tells the gateway the caller's role (1-32 letters, digits,
 `. _ -`), for example `security` in a Claude Code subagent's environment. The gateway only records it in the session
 history for now. A role is a guard against mistakes, not a security boundary: anything in the same session can
@@ -433,7 +439,7 @@ and gives each agent its own clone on a branch `minigw/<agent>-<session>-<n>`; p
   Settings → General → Worktree mode. The Scratch folder must not be a temporary or build cache folder; mirrors unused for
   30 days are removed.
 - **`--minigw-work=auto`:** read-only (`--minigw-ro`) → direct; a folder on the gateway's SMB share → native; a git
-  repository → worktree, then sync (never direct read-write: `.git` is not protected there); otherwise sync, then direct.
+  repository → worktree, then sync (never direct read-write: agents cannot commit there, `.git` is read-only); otherwise sync, then direct.
   A saved per-folder mode (`minigw share add --work=…`) and the flag still win.
 - **On `minigw serve` (Windows, Linux)** worktree works the same way: the gateway's own `git` from PATH (no system or global
   config, hooks, fsmonitor or submodules), one clone per session and agent, so one branch `minigw/<agent>-<session>-0`.
@@ -470,7 +476,7 @@ example `/Volumes/Java/projects` mounted from the gateway's `/Volumes/Java`), `m
 - **Only allowed folders:** the folder must be in a writable SMB share of the gateway (System Settings → Sharing) and
   inside its **Allowed folders**; the gateway checks it again on every request. Agents keep the same sandbox and folder
   rules.
-- **Like `direct`:** the agent can change every file in the folder, also `.git`, `.claude/settings*.json` and
+- **Unlike `direct`:** the agent can change every file in the folder, also `.git`, `.claude/settings*.json` and
   `.vscode/tasks.json`. Use `sync` for a folder where those must stay protected. Native cannot be read-only:
   `--minigw-ro` (or a saved `--ro`) uses the read-only mount instead.
 - **`minigw run` is off by default:** turn it on per device in **Settings → General → minigw run**, or with the admin

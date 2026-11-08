@@ -12,8 +12,12 @@ let out = FileHandle.standardOutput, err = FileHandle.standardError
 func say(_ s: String) { out.write(Data((s + "\n").utf8)) }
 /// Besedilo routerja brez kontrolnih znakov (razen \n), da ne krmili terminala.
 func clean(_ s: String) -> String {
-    String(String.UnicodeScalarView(s.unicodeScalars.filter { $0 == "\n" || !($0.value < 0x20 || (0x7f...0x9f).contains($0.value)) }))
+    String(String.UnicodeScalarView(s.unicodeScalars.filter {
+        $0 == "\n" || !($0.value < 0x20 || (0x7f...0x9f).contains($0.value) || $0.properties.generalCategory == .format)  // tudi bidi, ničelna širina
+    }))
 }
+/// Besedilo prehoda v eni vrstici: brez znaka za novo vrstico, da ne ponaredi vrstice »Device:« ali »Status:«.
+func oneLine(_ s: String) -> String { clean(s).replacingOccurrences(of: "\n", with: " ") }
 func fail(_ s: String, code: Int32 = 1) -> Never { err.write(Data(("minigw: " + s + "\n").utf8)); exit(code) }
 
 // MARK: shranjena povezava (Keychain ukaza; ne vsebuje je nobena datoteka)
@@ -466,26 +470,52 @@ func requireProfile() -> Profile {
     return p
 }
 
-/// Naslov, dosegljivost, ponudniki in število modelov enega profila; true = dosegljiv.
+/// Razlog, zakaj odgovor routerja ni 200 (status, telo napake): 401 = žeton, 403 = naprava še ni dovoljena
+/// (sporočilo prehoda z navodili ostane), 0 = ni povezave. Isto besedilo v odjemalcu Go.
+func failureReason(_ s: Int, _ body: [String: Any]?) -> String {
+    let msg = ((body?["error"] as? [String: Any])?["message"] as? String).map(oneLine) ?? ""
+    switch s {
+    case 0: return "gateway not reachable"
+    case 401: return "token rejected: copy the token again (Mini Gateway → Settings → General → Copy Token) and run minigw connect …"
+    case 403: return "device not approved" + (msg.isEmpty ? "" : ": " + msg)
+    default: return "gateway answered HTTP \(s)" + (msg.isEmpty ? "" : ": " + msg)
+    }
+}
+
+/// ID te naprave, kot ga prehod pokaže za odobritev: javni ključ Ed25519 (base64url, 43 znakov).
+func deviceID(_ c: Connection) -> String? {
+    c.device.flatMap(Noise.fromBase64url).flatMap { try? Curve25519.Signing.PrivateKey(rawRepresentation: $0) }
+        .map { Noise.base64url($0.publicKey.rawRepresentation) }
+}
+
+/// Naslov, dosegljivost, ponudniki, število modelov, ID naprave in razlog enega profila; true = povezan
+/// (prehod dosegljiv, žeton sprejet, naprava odobrena).
 func profileStatus(_ p: Profile) -> Bool {
     let c: Connection
     switch routeResult(p) {
     case .success(let r): c = r
-    case .failure(let e): say("Gateway:   \(p.conn.url) (\(e.message))"); return false
+    case .failure(let e):
+        say("Gateway:   \(p.conn.url) (\(oneLine(e.message)))")
+        say("Status:    \(oneLine(e.message))")
+        return false
     }
     let (s, ready) = get(c, "/health/ready")
     say("Gateway:   \(p.conn.url) (\(s == 200 ? "reachable" : s == 0 ? "unreachable" : "HTTP \(s)")\(p.conn.isLocal && p.conn.key == nil ? "" : ", encrypted"))")
     if let pr = ready?["providers"] as? [String: Bool] {
-        say("Providers: " + pr.keys.sorted().map { "\($0) \(pr[$0]! ? "✓" : "✗")" }.joined(separator: ", "))
+        say("Providers: " + pr.keys.sorted().map { "\(oneLine($0)) \(pr[$0]! ? "✓" : "✗")" }.joined(separator: ", "))
     }
     let (ms, models) = get(c, "/v1/models")
-    say("Models:    " + (ms == 200 ? "\((models?["data"] as? [Any])?.count ?? 0)" : ms == 401 ? "token rejected" : "–"))
-    return s == 200
+    say("Models:    " + (ms == 200 ? "\((models?["data"] as? [Any])?.count ?? 0)" : ms == 401 ? "token rejected" : ms == 403 ? "device not approved" : "–"))
+    if p.conn.key != nil, let id = deviceID(c) { say("Device:    \(id) (\(ms == 200 ? "approved" : ms == 403 ? "waiting for approval" : "approval unknown"))") }
+    let bad = ms != 200 ? ms : s
+    say("Status:    " + (bad == 200 ? "connected" : failureReason(bad, bad == ms ? models : ready)))
+    return bad == 200
 }
 
-func fetchModels(_ c: Connection) -> [[String: Any]]? {
+/// Modeli enega prehoda ali razlog, zakaj jih ni.
+func fetchModels(_ c: Connection) -> ([[String: Any]]?, String) {
     let (s, m) = get(c, "/v1/models")
-    return s == 200 ? (m?["data"] as? [[String: Any]] ?? []) : nil
+    return s == 200 ? (m?["data"] as? [[String: Any]] ?? [], "") : (nil, failureReason(s, m))
 }
 
 // MARK: deljene mape
@@ -615,7 +645,10 @@ case "connect":
     if let i = args.firstIndex(of: "--token"), i + 1 < args.count { token = args[i + 1] }
     if token == "-" { token = readKey("gateway token") }  // F3: s stdin ali brez odmeva, ne v argv
     guard !token.isEmpty else { fail("missing --token (copy it from Mini Gateway → Settings → General → Copy Token)") }
-    let parts = token.split(separator: "#", maxSplits: 1).map(String.init)
+    let parts = token.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
+    guard parts[0].count > 0, parts.count == 1 || parts[1].count > 0 else {  // #11: »#«, »#kljuc« ali »zeton#« ni žeton
+        fail("the token is empty or incomplete: copy it again (Mini Gateway → Settings → General → Copy Token)")
+    }
     let c = Connection(url: normalize(args[1]), token: parts[0], key: parts.count > 1 ? parts[1] : nil,
                        device: anyDevice() ?? Noise.base64url(Curve25519.Signing.PrivateKey().rawRepresentation))  // en ključ za vse profile
     let asProfile = name != Profiles.defaultName || names.contains { $0 != Profiles.defaultName } ? " as profile \(name)" : ""
@@ -679,15 +712,19 @@ case "models":
     var data: [[String: Any]]
     if ps.count == 1 {
         let (s, models) = get(route(ps[0]), "/v1/models")
-        guard s == 200, let d = models?["data"] as? [[String: Any]] else { fail(s == 401 ? "token rejected" : "cannot list models (HTTP \(s))") }
+        guard s == 200, let d = models?["data"] as? [[String: Any]] else { fail(failureReason(s, models)) }
         data = d
     } else {
         let lists = ps.map { p -> [[String: Any]]? in
-            let l = (try? routeResult(p).get()).flatMap(fetchModels)
-            if l == nil { err.write(Data("minigw: gateway \(p.name) (\(p.conn.url)) is not reachable; its models are left out\n".utf8)) }
+            var l: [[String: Any]]?, why = ""
+            switch routeResult(p) {
+            case .success(let c): (l, why) = fetchModels(c)
+            case .failure(let e): why = e.message
+            }
+            if l == nil { err.write(Data("minigw: gateway \(p.name) (\(p.conn.url)): \(why); its models are left out\n".utf8)) }
             return l
         }
-        guard let m = Profiles.merge(lists, names: ps.map(\.name)) else { fail("no gateway is reachable (minigw status)") }
+        guard let m = Profiles.merge(lists, names: ps.map(\.name)) else { fail("no gateway can list models (minigw status)") }
         data = m
     }
     let width = data.compactMap { ($0["id"] as? String)?.count }.max() ?? 0

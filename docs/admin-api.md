@@ -84,22 +84,25 @@ Session  {"id": string, "device"?: string, "deviceName"?: string, "deviceRemoved
          recorded), or "t-…" for requests without one (per device, a new record after 10 minutes of silence). device absent = this computer without a device
          key. folder: the client's cwd without `.`, `..` and a trailing separator, Windows paths (`C:\…`, `\\server\…`)
          with `/`, case kept; it is the key for later per-project settings. os: the client's OS from its client info
-         (macOS, Windows, Linux); the folder filter ignores case for macOS and Windows clients. role: the latest caller
-         role (`--minigw-role`, header `x-claude-mini-role`; cleaned, at most 32 of `A-Z a-z 0-9 . _ -`, else ignored).
+         (macOS, Windows, Linux); the folder filter ignores case for macOS and Windows clients. role: the role of the
+         latest request, empty clears it (`--minigw-role`, header `x-claude-mini-role`; 1-32 of `A-Z a-z 0-9 . _ -`,
+         any other value is ignored).
          mode: `chat` (no shared folder), `direct` (Mac: the folder mounted over WebDAV), `sync` (a copy on the
          gateway), `native` (Mac: a git repository on the gateway's SMB share; branch: the agent's branch there), `native-direct` (Mac: agents work in the gateway's folder itself: `--minigw-work=native-direct`, or a folder without git), `worktree` (a clone; branch: the agent's
          branch of that request), `refused` (minigw serve: the client asked for direct, which it does not offer). duration in seconds.
          The last 200 sessions are kept, at most 50 per device (a device's oldest go first); before saving, the oldest
-         go until the file is under 4 MB. Folder ≤ 1 KiB, branch ≤ 255 B, role ≤ 32 B (UTF-8, control, C1 and bidi
+         go until the file is under 4 MB. Folder ≤ 1 KiB, branch ≤ 255 B (UTF-8, control, C1 and bidi
          characters removed). Never prompt or answer text.
 Use      {"model": string, "role"?: string, "via"?: string, "readOnly"?: true, "tools"?: string, "requests": number,
           "errors": number, "refused": number, "seconds": number, "inputTokens": number, "outputTokens": number}
          One entry per model, role and via (sorted by them; at most 32, then "other"). model ≤ 64 B; a request for
          an unknown or refused model (404) counts as "unknown". via: the agent or chain that
          called it (agent calls, e.g. `claude` or `claude→codex`, taken from the gateway's run, never from a header;
-         the nested request also keeps the caller's session, device and role); absent = the client. readOnly and tools: the latest effective restrictions: the
-         session folder is read-only; Claude CLI's tools or "local" (Allow local tools), Codex, Grok and Copilot's
-         switches `write`, `network`, `commands` (empty = read only). errors: 5xx and aborted; refused: 4xx; seconds:
+         the nested request also keeps the caller's session, device and role); absent = the client. readOnly and tools: the latest effective restrictions: readOnly = a read-only share
+         or `--minigw-ro` (header `x-claude-mini-ro`, also without a share; a nested request keeps its caller's); Claude CLI's
+         tools (read-only: only Read, Grep, Glob, LS, WebSearch, WebFetch of them) or "local" (Allow local tools; read-only:
+         "local,read-only"), Codex, Grok and Copilot's switches `write`, `network`, `commands` as they applied (empty = read
+         only; read-only drops `write` and `commands`; Codex `network` only with `write`). errors: 5xx and aborted; refused: 4xx; seconds:
          total request time (for agents their run time); tokens from the response's usage.
 Model    {"id": string, "model": string, "window"?: number, "enabled": bool}
          id: the ID at the provider; model: the name for /model (the id, or "claude-" + id when the id contains

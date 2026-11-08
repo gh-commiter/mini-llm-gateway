@@ -191,7 +191,7 @@ public final class GatewayHistory: @unchecked Sendable {
             if !u.deviceName.isEmpty { s.deviceName = u.deviceName }
             if s.folder.isEmpty { s.folder = Self.clip(Self.folder(Self.clip(u.folder, 1 << 16)), 1024) }
             if !u.os.isEmpty { s.os = Self.clip(u.os, 16) }
-            if !u.role.isEmpty { s.role = u.role }
+            s.role = u.role  // zadnja vloga = vloga zadnje zahteve, tudi prazna
             if u.mode != "chat", !u.mode.isEmpty { s.mode = u.mode }
             s.readOnly = s.readOnly || u.readOnly
             if !u.branch.isEmpty { s.branch = Self.clip(u.branch, 255) }
@@ -267,7 +267,8 @@ public final class GatewayHistory: @unchecked Sendable {
     /// Veljavne omejitve agenta za zgodovino (kot agentRestrictions v minigw serve): Claude CLI orodja ali »local«;
     /// Codex, Grok, Copilot stikala write, network, commands ("" = le branje); drugi modeli "".
     /// `readOnly` (--minigw-ro): brez pisanja (Claude CLI brez orodij za pisanje oz. »local,read-only«; ukazi Copilot le s pisanjem).
-    public static func restrictions(_ model: String, _ c: RouterConfig, readOnly: Bool = false) -> String {
+    /// Codex: omrežje le s pisanjem (sandbox read-only ga nima), v worktree (`tree`, tudi native) le z worktreeCodexNetwork.
+    public static func restrictions(_ model: String, _ c: RouterConfig, readOnly: Bool = false, tree: Bool = false) -> String {
         func agent(_ prefix: String) -> Bool { model == prefix || model.hasPrefix(prefix + "-") }
         func on(_ pairs: [(Bool, String)]) -> String { pairs.filter(\.0).map(\.1).joined(separator: ",") }
         let w = !readOnly
@@ -275,7 +276,10 @@ public final class GatewayHistory: @unchecked Sendable {
             if c.claudeCLI.allowLocalTools { return readOnly ? "local,read-only" : "local" }
             return readOnly ? ClaudeCLIConfig.readOnlyTools(c.claudeCLI.tools) : c.claudeCLI.tools
         }
-        if agent("claude-codex") { return on([(c.codex.write && w, "write"), (c.codex.network, "network")]) }
+        if agent("claude-codex") {
+            let write = c.codex.write && w
+            return on([(write, "write"), (write && c.codex.network && (!tree || c.worktreeCodexNetwork), "network")])
+        }
         if agent("claude-grok") { return on([(c.grok.write && w, "write")]) }
         if agent("claude-copilot") { return on([(c.copilot.write && w, "write"), (c.copilot.network, "network"), (c.copilot.commands && w, "commands")]) }
         return ""
@@ -355,20 +359,20 @@ extension Router {
 }
 
 extension GatewayHistory {
-    /// Vloga iz glave x-claude-mini-role, očiščena in obrezana; neveljavna = "". Pri vgnezdenem klicu jo glava nosi iz
+    /// Vloga iz glave x-claude-mini-role, preverjena (brez obrezovanja); neveljavna ali predolga = "". Pri vgnezdenem klicu jo glava nosi iz
     /// izvajanja (AgentRun.serve), zato je vprašani agent ne more spremeniti.
     static func role(_ req: HTTPRequest) -> String {
-        let r = clip(req.header("x-claude-mini-role") ?? "", 32)
+        let r = req.header("x-claude-mini-role") ?? ""
         return validRole(r) ? r : ""
     }
 
     /// --minigw-role <ime> ali --minigw-role=<ime> (zadnji velja) iz argumentov, sicer env; ok=false za neveljavno ime
     /// (enako kot takeRole v minigw za Windows in Linux).
     public static func takeRole(_ args: [String], env: String?) -> (role: String, rest: [String], ok: Bool) {
-        var role = env ?? "", rest: [String] = [], i = 0
+        var role = env ?? "", rest: [String] = [], i = 0, missing = false
         while i < args.count {
-            if args[i] == "--minigw-role", i + 1 < args.count {
-                role = args[i + 1]; i += 1
+            if args[i] == "--minigw-role" {
+                if i + 1 < args.count { role = args[i + 1]; i += 1 } else { missing = true }
             } else if args[i].hasPrefix("--minigw-role=") {
                 role = String(args[i].dropFirst("--minigw-role=".count))
             } else {
@@ -376,6 +380,6 @@ extension GatewayHistory {
             }
             i += 1
         }
-        return (role, rest, role.isEmpty || validRole(role))
+        return (role, rest, !missing && (role.isEmpty || validRole(role)))
     }
 }

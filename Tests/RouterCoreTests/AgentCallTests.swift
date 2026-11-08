@@ -219,8 +219,8 @@ private func get(_ run: AgentRun, _ path: String, token: String?) async -> Int {
         return (try read("claude-args.txt"), try read("codex-args.txt"))
     }
     let rw = try await run(readOnly: false)
-    #expect(rw.codex.contains("workspace-write") && !rw.claude.contains("Edit,MultiEdit"))  // brez glave: pisanje (kontrola)
+    #expect(rw.codex.contains("workspace-write") && !rw.claude.contains("EnterWorktree"))  // brez glave: pisanje (kontrola)
     let ro = try await run(readOnly: true)
     #expect(ro.codex.contains("--sandbox\nread-only") && !ro.codex.contains("workspace-write") && !ro.codex.contains("--add-dir"))
-    #expect(ro.claude.contains("--disallowedTools\nEdit,MultiEdit,NotebookEdit,Write") && ro.claude.contains(#""allowWrite":[]"#))
+    #expect(ro.claude.contains("--disallowedTools\nEdit,Write,MultiEdit,NotebookEdit,EnterWorktree,ExitWorktree,Monitor") && ro.claude.contains(#""allowWrite":[]"#))
 }

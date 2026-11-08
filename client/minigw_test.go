@@ -676,3 +676,179 @@ func TestModelProfileSelectsTheGateway(t *testing.T) {
 		t.Fatalf("got %q %v", profileFlag, a)
 	}
 }
+
+// #10: »a.txt« → »A.txt« (APFS/NTFS: isti datoteki) ne sme izbrisati vira; COPY nase in mapa v podmapo = 403.
+func TestDavMoveSameFileKeepsContent(t *testing.T) {
+	root := t.TempDir()
+	os.WriteFile(filepath.Join(root, "a.txt"), []byte("keep"), 0o644)
+	os.MkdirAll(filepath.Join(root, "d", "sub"), 0o755)
+	do := func(m, src, dst string) int {
+		return davHandle(m, "/dav/s/"+src, map[string]string{"destination": "http://x/dav/s/" + dst}, nil, root, "/dav/s").Status
+	}
+	if s := do("COPY", "a.txt", "a.txt"); s != 403 {
+		t.Fatalf("COPY onto itself: %d", s)
+	}
+	if s := do("MOVE", "a.txt", "A.txt"); s != 201 {
+		t.Fatalf("case-only MOVE: %d", s)
+	}
+	if b, err := os.ReadFile(filepath.Join(root, "A.txt")); err != nil || string(b) != "keep" {
+		t.Fatalf("content lost: %q %v", b, err)
+	}
+	entries, _ := os.ReadDir(root)
+	for _, e := range entries {
+		if e.Name() == "a.txt" || strings.HasPrefix(e.Name(), ".minigw") {
+			t.Fatalf("left behind: %s", e.Name())
+		}
+	}
+	if s := do("MOVE", "A.txt", "A.txt"); s != 201 {
+		t.Fatalf("MOVE onto itself: %d", s)
+	}
+	if b, _ := os.ReadFile(filepath.Join(root, "A.txt")); string(b) != "keep" {
+		t.Fatal("MOVE onto itself lost content")
+	}
+	for _, m := range []string{"MOVE", "COPY"} {
+		if s := do(m, "d", "d/sub/d"); s != 403 {
+			t.Fatalf("%s into own child: %d", m, s)
+		}
+	}
+}
+
+// #2: direktni WebDAV ne piše v zaščitene poti (kot sync), tudi prek povezave; branje ostane.
+func TestDavRefusesProtectedWrites(t *testing.T) {
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, ".git", "hooks"), 0o755)
+	os.WriteFile(filepath.Join(root, ".git", "HEAD"), []byte("ref"), 0o644)
+	os.WriteFile(filepath.Join(root, "a.txt"), []byte("x"), 0o644)
+	linked := os.Symlink(filepath.Join(root, ".git", "hooks"), filepath.Join(root, "hooks")) == nil
+	h := func(m, p, dst string) int {
+		hd := map[string]string{}
+		if dst != "" {
+			hd["destination"] = "http://x/dav/s/" + dst
+		}
+		return davHandle(m, "/dav/s/"+p, hd, []byte("y"), root, "/dav/s").Status
+	}
+	for _, c := range [][3]string{
+		{"PUT", ".git/config", ""}, {"PUT", ".GIT/config", ""}, {"PUT", "git~1/config", ""}, {"PUT", ".envrc", ""},
+		{"PUT", ".claude/settings.local.json", ""}, {"PUT", ".vscode/tasks.json", ""}, {"MKCOL", ".git/x", ""},
+		{"DELETE", ".git/HEAD", ""}, {"DELETE", ".git", ""}, {"LOCK", ".git/new", ""}, {"PROPPATCH", ".git/HEAD", ""},
+		{"MOVE", "a.txt", ".git/hooks/pre-commit"}, {"COPY", "a.txt", ".envrc"}, {"MOVE", ".git", "g"},
+	} {
+		if s := h(c[0], c[1], c[2]); s != 403 {
+			t.Fatalf("%s %s %s: %d", c[0], c[1], c[2], s)
+		}
+	}
+	if linked {
+		if s := h("PUT", "hooks/pre-commit", ""); s != 403 {
+			t.Fatalf("PUT through link: %d", s)
+		}
+	}
+	if s := h("GET", ".git/HEAD", ""); s != 200 {
+		t.Fatalf("GET .git/HEAD: %d", s)
+	}
+	if s := h("COPY", ".git/HEAD", "head.txt"); s != 201 {
+		t.Fatalf("COPY out of .git: %d", s)
+	}
+	if s := h("PUT", "b.txt", ""); s != 201 {
+		t.Fatalf("PUT b.txt: %d", s)
+	}
+}
+
+// #9: PUT obdrži pravice obstoječe datoteke.
+func TestDavPutKeepsMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no unix modes")
+	}
+	root := t.TempDir()
+	p := filepath.Join(root, "build.sh")
+	os.WriteFile(p, []byte("old"), 0o755)
+	os.Chmod(p, 0o755)
+	if r := davHandle("PUT", "/dav/s/build.sh", nil, []byte("new"), root, "/dav/s"); r.Status != 204 {
+		t.Fatalf("PUT: %d", r.Status)
+	}
+	if fi, _ := os.Stat(p); fi.Mode().Perm() != 0o755 {
+		t.Fatalf("mode %v", fi.Mode().Perm())
+	}
+}
+
+// #2: vsebina premaknjene/kopirane/izbrisane mape ne sme ustvariti ali odstraniti zaščitene datoteke.
+func TestDavRefusesProtectedTreeBypass(t *testing.T) {
+	root := t.TempDir()
+	for _, d := range []string{"stage", "x", ".claude", "old"} {
+		os.MkdirAll(filepath.Join(root, d), 0o755)
+	}
+	os.WriteFile(filepath.Join(root, "stage", "settings.json"), []byte("{}"), 0o644)
+	os.WriteFile(filepath.Join(root, "x", "tasks.json"), []byte("{}"), 0o644)
+	os.WriteFile(filepath.Join(root, ".claude", "settings.json"), []byte("{}"), 0o644)
+	h := func(m, p, d string) int {
+		hd := map[string]string{}
+		if d != "" {
+			hd["destination"] = "http://x/dav/s/" + d
+		}
+		return davHandle(m, "/dav/s/"+p, hd, nil, root, "/dav/s").Status
+	}
+	for _, c := range [][3]string{
+		{"MOVE", "stage", ".claude"}, {"MOVE", "stage", ".Claude"}, {"COPY", "x", ".vscode"}, {"DELETE", ".claude", ""},
+		{"MOVE", ".claude", "y"}, {"MOVE", "old", ".claude"}, {"COPY", "old", ".claude"},
+	} {
+		if s := h(c[0], c[1], c[2]); s != 403 {
+			t.Fatalf("%s %s %s: %d", c[0], c[1], c[2], s)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, ".claude", "settings.json")); err != nil {
+		t.Fatal(".claude/settings.json removed")
+	}
+	if _, err := os.Stat(filepath.Join(root, ".vscode")); err == nil {
+		t.Fatal(".vscode planted")
+	}
+	if s := h("COPY", ".claude", "c2"); s != 201 {
+		t.Fatalf("COPY .claude out: %d", s)
+	}
+	if s := h("MOVE", "stage", "s2"); s != 201 {
+		t.Fatalf("MOVE stage: %d", s)
+	}
+}
+
+// M1/M2/L3: ugnezden .git ne izgine prek starša; vir v cilju = 403; trda povezava ne pusti začasnega imena.
+func TestDavNestedGitAncestorAndHardLink(t *testing.T) {
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, "repoA", "sub", ".git"), 0o755)
+	os.WriteFile(filepath.Join(root, "repoA", "sub", ".git", "HEAD"), []byte("ref"), 0o644)
+	os.MkdirAll(filepath.Join(root, "other"), 0o755)
+	os.MkdirAll(filepath.Join(root, "a", "b"), 0o755)
+	os.WriteFile(filepath.Join(root, "a", "b", "f"), []byte("keep"), 0o644)
+	h := func(m, p, d string) int {
+		hd := map[string]string{}
+		if d != "" {
+			hd["destination"] = "http://x/dav/s/" + d
+		}
+		return davHandle(m, "/dav/s/"+p, hd, nil, root, "/dav/s").Status
+	}
+	for _, c := range [][3]string{{"DELETE", "repoA", ""}, {"MOVE", "other", "repoA"}, {"COPY", "other", "repoA"},
+		{"MOVE", "repoA", "x"}, {"MOVE", "a/b", "a"}, {"COPY", "a/b", "a"}, {"MOVE", "a/b", "A"}} {
+		if s := h(c[0], c[1], c[2]); s != 403 {
+			t.Fatalf("%s %s %s: %d", c[0], c[1], c[2], s)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "repoA", "sub", ".git", "HEAD")); err != nil {
+		t.Fatal("nested .git removed")
+	}
+	if b, _ := os.ReadFile(filepath.Join(root, "a", "b", "f")); string(b) != "keep" {
+		t.Fatal("source inside destination lost")
+	}
+	os.WriteFile(filepath.Join(root, "h1"), []byte("hl"), 0o644)
+	if os.Link(filepath.Join(root, "h1"), filepath.Join(root, "h2")) != nil {
+		return
+	}
+	if s := h("MOVE", "h1", "h2"); s != 201 {
+		t.Fatalf("hard link MOVE: %d", s)
+	}
+	entries, _ := os.ReadDir(root)
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".minigw") {
+			t.Fatalf("left behind: %s", e.Name())
+		}
+	}
+	if b, _ := os.ReadFile(filepath.Join(root, "h2")); string(b) != "hl" {
+		t.Fatal("hard link content lost")
+	}
+}

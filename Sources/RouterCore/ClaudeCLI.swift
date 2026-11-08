@@ -22,13 +22,15 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
     /// Orodja z dostopom do datotek: dovoljena le v mapi seje in dovoljenih mapah (preverja Claude Code oz. sandbox).
     static let pathTools: Set<String> = ["Read", "Edit", "Write", "MultiEdit", "NotebookEdit", "Glob", "Grep", "LS", "Bash"]
 
-    /// Orodja, ki pišejo (--minigw-ro jih odvzame); Bash brez sandboxa tudi.
-    static let writeTools: Set<String> = ["Edit", "Write", "MultiEdit", "NotebookEdit"]
+    /// --minigw-ro: le ta orodja (seznam dovoljenih, da so nova orodja, ki pišejo, izključena); Bash le v sandboxu brez pisanja.
+    static let readOnlyAllowed = ["Read", "Grep", "Glob", "LS", "WebSearch", "WebFetch"]
+    /// Orodja, ki pišejo ali poganjajo ukaze mimo sandboxa Bash (EnterWorktree: git worktree add s hooki): pri --minigw-ro še izrecno prepovedana.
+    static let writeTools = ["Edit", "Write", "MultiEdit", "NotebookEdit", "EnterWorktree", "ExitWorktree", "Monitor"]
 
-    /// Seznam orodij brez orodij za pisanje in Bash (brez »Allow local tools« ni sandboxa); tudi oblike »Bash(git:*)«.
+    /// Seznam orodij le iz readOnlyAllowed (brez »Allow local tools« ni sandboxa, zato brez Bash); tudi oblike »WebFetch(domain:…)«.
     static func readOnlyTools(_ tools: String) -> String {
         tools.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { t in let name = String(t.prefix { $0 != "(" }); return !writeTools.contains(name) && name != "Bash" }
+            .filter { t in readOnlyAllowed.contains(String(t.prefix { $0 != "(" })) }
             .joined(separator: ",")
     }
 
@@ -56,9 +58,11 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
                                + (readOnly ? dirs : dirs.flatMap { d in ["config", "hooks", "info"].map { d + "/.git/" + $0 } })],  // native v mapi sami (H1)
         ]]
         let settings = String(decoding: try! JSONSerialization.data(withJSONObject: sandbox, options: [.sortedKeys]), as: UTF8.self)
-        let others = allTools.filter { !Self.pathTools.contains($0) && !disabledTools.contains($0) }
-        let denied = disabledTools + (readOnly ? Self.writeTools.sorted().filter { !disabledTools.contains($0) } : [])
-        return ["--tools", "default", "--permission-mode", "acceptEdits", "--settings", settings]
+        // --minigw-ro: --tools le iz seznama dovoljenih (in Bash v sandboxu brez pisanja), drugih orodij agent nima.
+        let roTools = (Self.readOnlyAllowed + ["Bash"]).filter { !disabledTools.contains($0) }
+        let others = allTools.filter { !Self.pathTools.contains($0) && !disabledTools.contains($0) && (!readOnly || roTools.contains($0)) }
+        let denied = disabledTools + (readOnly ? Self.writeTools.filter { !disabledTools.contains($0) } : [])
+        return ["--tools", readOnly ? roTools.joined(separator: ",") : "default", "--permission-mode", "acceptEdits", "--settings", settings]
             + dirs.dropFirst().flatMap { ["--add-dir", $0] }
             + (others.isEmpty ? [] : ["--allowedTools", others.joined(separator: ",")])
             + (denied.isEmpty ? [] : ["--disallowedTools", denied.joined(separator: ",")])
@@ -393,6 +397,8 @@ extension Router {
 
     /// --minigw-ro: registrirana mapa le za branje ali glava x-claude-mini-ro (minigw brez deljenja, npr. prehod na istem Macu;
     /// pri vgnezdenem klicu jo nastavi AgentRun iz klicatelja).
+    static let readOnlyWorktree = "Worktree mode cannot be read-only (--minigw-ro): use direct or sync"  // L2: kot v Go
+
     static func isReadOnly(_ req: HTTPRequest) async -> Bool {
         if req.header("x-claude-mini-ro") == "1" { return true }
         return await shares.isReadOnly(session: req.header("x-claude-mini-session") ?? "")
@@ -451,6 +457,7 @@ extension Router {
             let synced = await Self.shares.isSync(session: req.header("x-claude-mini-session") ?? "")
             let tree = await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "")
             let readOnly = await Self.isReadOnly(req)
+            if readOnly, tree != nil { return await error(400, "invalid_request_error", Self.readOnlyWorktree, rid: rid, writer: writer) }
             if let shared, let clientCwd {
                 args += ["--append-system-prompt", Self.mountNote(clientCwd, shared, readOnly: readOnly, synced: synced, branch: tree?.branch)]
             }
