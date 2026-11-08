@@ -21,10 +21,17 @@ func TestAgentRunListener(t *testing.T) {
 	parent.Header.Set("X-Claude-Mini-Session", "sid1")
 	parent.Header.Set("X-Claude-Mini-Cwd", "/client/dir")
 	r := &req{Request: parent, conn: &serveConn{device: dev, peer: "10.0.0.9"}}
-	run, env := s.startRun(r, "claude", "/copy", false, true, "", "", "")
+	run, env := s.startRun(r, "claude", "/copy", false, true, "", "", "", "")
 	run.started(os.Getpid()) // M2: ta proces je »agent« izvajanja
-	if run == nil || len(env) != 2 || !strings.HasPrefix(env[0], "MINIGW_AGENT_URL=http://127.0.0.1:") || env[1] != "MINIGW_AGENT_AUTH="+run.token {
+	if run == nil || len(env) != 2 || !strings.HasPrefix(env[0], "MINIGW_AGENT_URL=http://127.0.0.1:") || env[1] != "MINIGW_AGENT_AUTH_FILE="+run.authFile {
 		t.Fatalf("env: %v", env)
+	}
+	// M3: žeton le v datoteki 0600 (ne v okolju), po koncu izvajanja izbrisan
+	if b, err := os.ReadFile(run.authFile); err != nil || string(b) != run.token || strings.Contains(strings.Join(env, " "), run.token) {
+		t.Fatalf("auth file: %q %v", b, err)
+	}
+	if fi, _ := os.Stat(run.authFile); runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
+		t.Fatalf("auth file mode %v", fi.Mode())
 	}
 	get := func(path, tok string) int {
 		q, _ := http.NewRequest("GET", run.url+path, nil)
@@ -86,9 +93,12 @@ func TestAgentRunListener(t *testing.T) {
 	if st := get("/v1/models", run.token); st != -1 {
 		t.Fatalf("listener open after the run: %d", st)
 	}
+	if _, err := os.Stat(run.ownDir); err == nil {
+		t.Fatal("auth file left after the run")
+	}
 
 	// Stikalo izklopljeno: ni vrat ne okolja.
-	if run, env := s.startRun(r, "codex", "/copy", false, true, "", "", ""); run != nil || env != nil {
+	if run, env := s.startRun(r, "codex", "/copy", false, true, "", "", "", ""); run != nil || env != nil {
 		t.Fatal("codex without askOthers got a run listener")
 	}
 }
@@ -135,7 +145,7 @@ func TestAgentAsksAgentInSameFolder(t *testing.T) {
 	}
 	tmp := t.TempDir()
 	ask := func(model string) string { // POST na vrata izvajanja, status v datoteko
-		return `curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $MINIGW_AGENT_AUTH" -H 'content-type: application/json' ` +
+		return `curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $(cat "$MINIGW_AGENT_AUTH_FILE")" -H 'content-type: application/json' ` +
 			`-d '{"model":"` + model + `","max_tokens":10,"tools":[{"name":"x"}],"messages":[{"role":"user","content":"hi"}]}' "$MINIGW_AGENT_URL/v1/messages"`
 	}
 	claude := filepath.Join(tmp, "claude")
@@ -203,11 +213,13 @@ echo "codex answer" > "$out"
 // minigw v agentu: le povezava iz okolja, brez profilov.
 func TestAgentModeConnection(t *testing.T) {
 	t.Setenv("MINIGW_AGENT_URL", "http://127.0.0.1:1")
-	t.Setenv("MINIGW_AGENT_AUTH", "")
+	t.Setenv("MINIGW_AGENT_AUTH_FILE", filepath.Join(t.TempDir(), "missing"))
 	if agentConn() != nil {
 		t.Fatal("agent mode without a token")
 	}
-	t.Setenv("MINIGW_AGENT_AUTH", "rt")
+	f := filepath.Join(t.TempDir(), "auth")
+	os.WriteFile(f, []byte("rt\n"), 0o600)
+	t.Setenv("MINIGW_AGENT_AUTH_FILE", f)
 	for _, bad := range []string{"http://evil.example:1", "https://127.0.0.1:1", "http://127.0.0.1", "http://u@127.0.0.1:1", "http://localhost:1"} {
 		t.Setenv("MINIGW_AGENT_URL", bad)
 		if agentConn() != nil {
@@ -234,6 +246,14 @@ func TestAgentAskBodyAndProxy(t *testing.T) {
 	q, _ := http.NewRequest("GET", "http://127.0.0.1:1/v1/models", nil)
 	if u, err := agentProxy(q); err != nil || u == nil || u.Host != "127.0.0.1:9" {
 		t.Fatalf("proxy for loopback: %v %v", u, err)
+	}
+	t.Setenv("HTTP_PROXY", "http://proxy.corp.example:3128") // I5: nikoli posrednik zunaj tega računalnika
+	if u, _ := agentProxy(q); u != nil {
+		t.Fatalf("non-loopback proxy used: %v", u)
+	}
+	t.Setenv("HTTP_PROXY", "http://localhost:9")
+	if u, _ := agentProxy(q); u == nil {
+		t.Fatal("loopback proxy (localhost) not used")
 	}
 	t.Setenv("HTTP_PROXY", "")
 	if u, _ := agentProxy(q); u != nil {

@@ -150,7 +150,7 @@ Notes:
 - `PATCH /agents/claude`: the gateway checks the path, that the folder exists and is not near the config folder,
   and that Bash on Windows has `allowUnsandboxedBash`.
 - `askOthers` (every agent, off by default): the agent may ask another model of the same gateway with minigw, through a
-  loopback port and token valid only for that run (`MINIGW_AGENT_URL`, `MINIGW_AGENT_AUTH`). Claude uses it only with
+  loopback port and token valid only for that run (`MINIGW_AGENT_URL`; the token is in a 0600 file of the run, `MINIGW_AGENT_AUTH_FILE`, never in the environment). Claude uses it only with
   `allowLocalTools` (it needs Bash to run minigw); the value is kept either way. Codex needs `network`. The run token
   works only for processes of that agent run (its process tree, also Claude Code's sandbox proxy in it), for at most 2
   requests at a time per run and 6 nested runs on the gateway (`429` otherwise); a nested agent works only in a folder the

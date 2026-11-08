@@ -2,7 +2,7 @@ package main
 
 // Agent vpraša drug model istega prehoda (docs/plans/plan-agent-calls.md). Za vsako izvajanje agenta s stikalom
 // »May ask other models« prehod odpre svoja vrata na 127.0.0.1 in žeton, veljavna le med izvajanjem
-// (MINIGW_AGENT_URL, MINIGW_AGENT_AUTH). Zahteve tam dobijo napravo, sejo in mapo klicatelja; veriga agentov je le v
+// (MINIGW_AGENT_URL, žeton v datoteki MINIGW_AGENT_AUTH_FILE). Zahteve tam dobijo napravo, sejo in mapo klicatelja; veriga agentov je le v
 // kontekstu (ne v glavi), globina največ 2 in brez ponovitve vrste agenta.
 
 import (
@@ -32,6 +32,7 @@ type agentRun struct {
 	wt, maven, objects string // worktree: klon, Maven in objekti zrcala klicatelja ("" = ni worktree)
 	shared             bool   // mapa je prišla od odjemalca (sync, worktree); ne privzeta mapa prehoda (L1)
 	token, url         string
+	authFile, ownDir   string // M3: žeton v datoteki 0600 v začasni mapi izvajanja (ne v okolju); ownDir: mapa, ki jo izbriše stop
 	srv                *http.Server
 	slots              chan struct{} // M1: največ maxNested hkratnih vprašanj tega izvajanja
 	root               atomic.Int64  // M2: PID procesa agenta (0 = še ne teče); odjemalec mora biti v njegovem drevesu
@@ -87,19 +88,38 @@ func chainRefusal(r *req, kind string) string {
 	return ""
 }
 
-// startRun: vrata in žeton za izvajanje, če ima agent stikalo; nil, ko ga nima. Okolje gre agentu.
-func (s *server) startRun(r *req, kind, dir string, readOnly, shared bool, wt, maven, objects string) (*agentRun, []string) {
+// startRun: vrata in žeton za izvajanje, če ima agent stikalo; nil, ko ga nima. Okolje gre agentu. `secretDir`: začasna
+// mapa izvajanja, ki jo agent vidi (sandbox), za datoteko z žetonom; "" = nova v Scratch/tmp.
+func (s *server) startRun(r *req, kind, dir string, readOnly, shared bool, wt, maven, objects, secretDir string) (*agentRun, []string) {
 	if !s.conf().askOthers(kind) {
+		return nil, nil
+	}
+	ownDir := ""
+	if secretDir == "" {
+		d, err := os.MkdirTemp(s.conf().scratch("tmp"), "run-*")
+		if err != nil {
+			s.log.Printf("%s agent calls: %v", r.rid, err)
+			return nil, nil
+		}
+		secretDir, ownDir = d, d
+	}
+	token := randomToken()
+	authFile := filepath.Join(secretDir, "minigw-agent-auth")
+	if err := os.WriteFile(authFile, []byte(token), 0o600); err != nil {
+		s.log.Printf("%s agent calls: %v", r.rid, err)
+		os.RemoveAll(ownDir)
 		return nil, nil
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		s.log.Printf("%s agent calls: %v", r.rid, err)
+		os.Remove(authFile)
+		os.RemoveAll(ownDir)
 		return nil, nil
 	}
 	run := &agentRun{kind: kind, device: r.conn.device, session: r.h("x-claude-mini-session"), cwd: r.h("x-claude-mini-cwd"),
-		dir: dir, readOnly: readOnly, shared: shared, wt: wt, maven: maven, objects: objects, token: randomToken(), url: "http://" + ln.Addr().String(),
-		slots: make(chan struct{}, maxNested)}
+		dir: dir, readOnly: readOnly, shared: shared, wt: wt, maven: maven, objects: objects, token: token, url: "http://" + ln.Addr().String(),
+		authFile: authFile, ownDir: ownDir, slots: make(chan struct{}, maxNested)}
 	if p := runOf(r); p != nil {
 		run.chain = append(slices.Clone(p.chain), kind)
 	} else {
@@ -111,13 +131,17 @@ func (s *server) startRun(r *req, kind, dir string, readOnly, shared bool, wt, m
 			return context.WithValue(ctx, connKey{}, &serveConn{Conn: c, br: bufio.NewReader(c), peer: peer, device: run.device})
 		}}
 	go run.srv.Serve(ln)
-	return run, []string{"MINIGW_AGENT_URL=" + run.url, "MINIGW_AGENT_AUTH=" + run.token}
+	return run, []string{"MINIGW_AGENT_URL=" + run.url, "MINIGW_AGENT_AUTH_FILE=" + run.authFile}
 }
 
-// stop: konec izvajanja: vrata zaprta, žeton neveljaven (tudi tekoče vgnezdene zahteve se končajo).
+// stop: konec izvajanja: vrata zaprta, žeton neveljaven in izbrisan (tudi tekoče vgnezdene zahteve se končajo).
 func (run *agentRun) stop() {
 	if run != nil {
 		run.srv.Close()
+		os.Remove(run.authFile)
+		if run.ownDir != "" {
+			os.RemoveAll(run.ownDir)
+		}
 	}
 }
 

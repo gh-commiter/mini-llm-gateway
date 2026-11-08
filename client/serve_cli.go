@@ -677,12 +677,12 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		}
 		ro := (share != nil && share.readOnly) || (parent != nil && parent.readOnly)
 		shared := share != nil || (parent != nil && parent.shared)
-		run, runEnv = s.startRun(r, "claude", dir, ro, shared, wt, maven, objects) // »May ask other models«
+		run, runEnv = s.startRun(r, "claude", dir, ro, shared, wt, maven, objects, "") // »May ask other models«
 		defer run.stop()
 		if run != nil {
 			exe := minigwExe()
 			extra += "\n\n" + askNote(exe)
-			args = sandboxAllowRead(args, exe)
+			args = sandboxAllowRead(args, exe, run.authFile) // M3: le ta datoteka iz Scratch
 		}
 	} else {
 		dir = s.conf().scratch("chat")

@@ -306,7 +306,7 @@ extension Router {
         }
         let extraEnv = tree.map { Worktree.harnessEnv(root: $0.root, maven: $0.maven) }
             ?? ["TMPDIR": tmp.path + "/", "CLANG_MODULE_CACHE_PATH": tmp.appendingPathComponent("ModuleCache").path]
-        let run = agent ? await startAgentRun(req, kind: "copilot", dir: sharedDir) : nil  // peskovnik: zaprta le vrata prehoda
+        let run = agent ? await startAgentRun(req, kind: "copilot", dir: sharedDir, secretDir: reqDir) : nil  // peskovnik: zaprta le vrata prehoda; žeton v mapi zahteve
         defer { run?.stop() }
         let env = Copilot.environment(base, home: home, token: token, extra: extraEnv.merging(run?.env ?? [:]) { $1 })
         // Nadaljevanje seje Copilot (--session-id): ključ je dosedanji pogovor v tej mapi; stanje seje iz Scratch.

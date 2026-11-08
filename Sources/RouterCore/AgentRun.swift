@@ -4,7 +4,7 @@ import os
 
 /// Agent vpraša drug model istega prehoda (kot minigw serve, serve_agentcalls.go). Za vsako izvajanje agenta s stikalom
 /// »May ask other models« prehod odpre svoja vrata na 127.0.0.1 in žeton, veljavna le med izvajanjem
-/// (MINIGW_AGENT_URL, MINIGW_AGENT_AUTH). Zahteve tam dobijo napravo, naslov, sejo in mapo klicatelja; veriga agentov je
+/// (MINIGW_AGENT_URL, žeton v datoteki MINIGW_AGENT_AUTH_FILE). Zahteve tam dobijo napravo, naslov, sejo in mapo klicatelja; veriga agentov je
 /// le v prehodu (ne v glavi), globina največ 2 in brez ponovitve vrste agenta.
 final class AgentRun: @unchecked Sendable {
     let kind: String, chain: [String]
@@ -12,6 +12,10 @@ final class AgentRun: @unchecked Sendable {
     let dir: URL?        // mapa izvajanja iz ShareHub (kopija, klon, mapa); nil = mapa na tem Macu (resolveCwd)
     let runID: String?   // ShareHub.run klicatelja: vprašani agent dela v istem klonu oz. mestu worktree
     let token: String
+    /// M3: žeton v datoteki 0600 v začasni mapi izvajanja, ne v okolju (KERN_PROCARGS2 ga drugim procesom istega uporabnika
+    /// pokaže tudi v peskovniku); `ownDir`: mapa, ki jo izbriše stop.
+    private(set) var authFile = URL(fileURLWithPath: "/dev/null")
+    private var ownDir: URL?
     private let listener: NWListener
     private let queue = DispatchQueue(label: "dev.trojar.minigateway.agentrun")
     private var conns: [ObjectIdentifier: NWConnection] = [:]  // le na `queue`
@@ -27,7 +31,7 @@ final class AgentRun: @unchecked Sendable {
     static let chainHeader = "x-minigw-agent-chain"
     static let allowed: Set<String> = ["GET /v1/models", "POST /v1/messages", "POST /v1/messages/count_tokens"]
 
-    var env: [String: String] { ["MINIGW_AGENT_URL": "http://127.0.0.1:\(port)", "MINIGW_AGENT_AUTH": token] }
+    var env: [String: String] { ["MINIGW_AGENT_URL": "http://127.0.0.1:\(port)", "MINIGW_AGENT_AUTH_FILE": authFile.path] }
 
     private init(kind: String, chain: [String], req: HTTPRequest, dir: URL?, listener: NWListener, token: String) {
         self.kind = kind; self.chain = chain; self.dir = dir; self.listener = listener; self.token = token
@@ -69,7 +73,8 @@ final class AgentRun: @unchecked Sendable {
     }
 
     /// Vrata in žeton za izvajanje agenta `kind` (pred zagonom procesa); nil, ko jih ni mogoče odpreti.
-    static func start(router: Router, req: HTTPRequest, kind: String, dir: URL?) async -> AgentRun? {
+    /// `secretDir`: začasna mapa izvajanja, ki jo vidi le ta agent (Copilot: mapa zahteve); nil = nova v `scratchTmp`.
+    static func start(router: Router, req: HTTPRequest, kind: String, dir: URL?, secretDir: URL?, scratchTmp: URL) async -> AgentRun? {
         let params = NWParameters.tcp
         params.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
         var b = [UInt8](repeating: 0, count: 32)
@@ -78,6 +83,16 @@ final class AgentRun: @unchecked Sendable {
             .replacingOccurrences(of: "=", with: "")
         guard let l = try? NWListener(using: params) else { return nil }
         let run = AgentRun(kind: kind, chain: (current?.chain ?? []) + [kind], req: req, dir: dir, listener: l, token: token)
+        var folder = secretDir
+        if folder == nil {
+            let d = scratchTmp.appendingPathComponent("run-" + UUID().uuidString, isDirectory: true)
+            guard (try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])) != nil
+            else { l.cancel(); return nil }
+            folder = d; run.ownDir = d
+        }
+        run.authFile = folder!.appendingPathComponent("minigw-agent-auth")
+        guard FileManager.default.createFile(atPath: run.authFile.path, contents: Data(token.utf8), attributes: [.posixPermissions: 0o600])
+        else { run.stop(); return nil }
         l.newConnectionHandler = { [weak run] c in run?.accept(c, router: router) ?? c.cancel() }
         let ready = await withCheckedContinuation { (k: CheckedContinuation<Bool, Never>) in
             let once = OSAllocatedUnfairLock(initialState: false)
@@ -87,7 +102,7 @@ final class AgentRun: @unchecked Sendable {
             }
             l.start(queue: run.queue)
         }
-        guard ready, let port = l.port?.rawValue else { l.cancel(); return nil }
+        guard ready, let port = l.port?.rawValue else { run.stop(); return nil }
         run.port = port
         return run
     }
@@ -99,6 +114,8 @@ final class AgentRun: @unchecked Sendable {
             for c in conns.values { c.cancel() }
             conns = [:]
         }
+        try? FileManager.default.removeItem(at: authFile)
+        if let ownDir { try? FileManager.default.removeItem(at: ownDir) }
     }
 
     private func accept(_ c: NWConnection, router: Router) {
@@ -206,9 +223,9 @@ extension Router {
     }
 
     /// Vrata izvajanja, če ima agent `kind` stikalo »May ask other models«; okolje gre agentu, `stop()` ob koncu.
-    func startAgentRun(_ req: HTTPRequest, kind: String, dir: URL?) async -> AgentRun? {
+    func startAgentRun(_ req: HTTPRequest, kind: String, dir: URL?, secretDir: URL? = nil) async -> AgentRun? {
         guard askOthers(kind) else { return nil }
-        let run = await AgentRun.start(router: self, req: req, kind: kind, dir: dir)
+        let run = await AgentRun.start(router: self, req: req, kind: kind, dir: dir, secretDir: secretDir, scratchTmp: config.scratch("tmp"))
         if run == nil { Self.log.error("agent calls: cannot open a loopback port for \(kind, privacy: .public)") }
         return run
     }

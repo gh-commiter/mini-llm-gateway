@@ -6,7 +6,7 @@
   Copilot (Settings, the settings page, `PATCH /agents/{name} {"askOthers": true}`, `minigw gw claude --ask-others=true`),
   an agent on the gateway can ask another model of that gateway itself, for example a remote `claude-cli-opus` asking
   an OpenRouter model or `claude-codex-…`: its instructions name the gateway's `minigw -p --model <id> "…"`, which sends
-  the question straight to a loopback port and token for that run only (`MINIGW_AGENT_URL`, `MINIGW_AGENT_AUTH`), with
+  the question straight to a loopback port and token for that run only (`MINIGW_AGENT_URL`, the token in a file of that run: `MINIGW_AGENT_AUTH_FILE`), with
   the rights of your device, also from inside Claude Code's sandbox (through its proxy). The asked agent works in the
   same folder (sync copy, worktree branch or native folder) and the caller waits. One level deep, never the same kind of
   agent, at most 2 questions at a time per agent; the run token works only for that agent's own processes. Claude CLI

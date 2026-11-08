@@ -1,7 +1,7 @@
 import Foundation
 import RouterCore
 
-// minigw v agentu prehoda (MINIGW_AGENT_URL, MINIGW_AGENT_AUTH; AgentRun.swift): -p pošlje vprašanje naravnost na vrata
+// minigw v agentu prehoda (MINIGW_AGENT_URL, MINIGW_AGENT_AUTH_FILE; AgentRun.swift): -p pošlje vprašanje naravnost na vrata
 // izvajanja in izpiše odgovor, brez vgnezdenega Claude Code. Kot agentask.go.
 
 /// HTTP/1.0 na vrata izvajanja: neposredno ali prek posrednika sandboxa Claude Code (HTTP_PROXY), ki je tam edina pot do
@@ -10,7 +10,9 @@ func agentHTTP(_ c: Connection, _ method: String, _ path: String, body: Data? = 
                onHead: (Int) -> Void = { _ in }, onData: (Data) -> Void) -> Bool {
     guard let target = URLComponents(string: c.url + path), let th = target.host, let tp = target.port else { return false }
     let env = ProcessInfo.processInfo.environment
-    let proxy = (env["HTTP_PROXY"] ?? env["http_proxy"]).flatMap { $0.isEmpty ? nil : URLComponents(string: $0) }
+    // I5: le posrednik na tem računalniku (sandbox Claude Code), nikoli drug (podjetniški, podtaknjen v .envrc)
+    let proxy = (env["HTTP_PROXY"] ?? env["http_proxy"]).flatMap { URLComponents(string: $0) }
+        .flatMap { $0.scheme == "http" && ["127.0.0.1", "localhost", "::1"].contains($0.host ?? "") ? $0 : nil }
     let host = proxy?.host ?? th, port = proxy?.port ?? tp
     var hints = addrinfo()
     hints.ai_socktype = SOCK_STREAM

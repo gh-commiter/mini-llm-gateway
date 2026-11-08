@@ -661,7 +661,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 		if p := runOf(r); p != nil { // klon klicatelja
 			wt, maven, objects, inTree = p.wt, p.maven, p.objects, p.wt != ""
 		}
-		run, runEnv := s.startRun(r, k.name, dir, readOnly, true, wt, maven, objects) // »May ask other models«; mapa je deljena (agentFolder)
+		run, runEnv := s.startRun(r, k.name, dir, readOnly, true, wt, maven, objects, tmp) // »May ask other models«; mapa je deljena (agentFolder); žeton v tmp zahteve
 		defer run.stop()
 		withTree := func(m agentMounts) agentMounts { // worktree: Maven agentov, objekti zrcala (branje), .git klona le za branje
 			m.env, m.started = append(m.env, runEnv...), run.started
@@ -803,7 +803,7 @@ func agentEnv(env []string) []string {
 	for _, e := range env {
 		name, _, _ := strings.Cut(e, "=")
 		if strings.HasPrefix(name, "ANTHROPIC_") || strings.HasPrefix(name, "CLAUDE_CODE_") || slices.Contains([]string{"CLAUDECODE",
-			"DBUS_SESSION_BUS_ADDRESS", "SSH_AUTH_SOCK", "GPG_AGENT_INFO", "GNOME_KEYRING_CONTROL", "CODEX_HOME", "GROK_HOME", "MINIGW_AGENT_URL", "MINIGW_AGENT_AUTH",
+			"DBUS_SESSION_BUS_ADDRESS", "SSH_AUTH_SOCK", "GPG_AGENT_INFO", "GNOME_KEYRING_CONTROL", "CODEX_HOME", "GROK_HOME", "MINIGW_AGENT_URL", "MINIGW_AGENT_AUTH_FILE",
 			"GH_TOKEN", "GITHUB_TOKEN"}, name) || strings.HasPrefix(name, "COPILOT_") {
 			continue
 		}

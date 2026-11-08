@@ -81,7 +81,7 @@ run() { (cd $C && E2E=$T PATH=$H/bin:$PATH MINIGW_WORK=sync gw -p go) 2> $T/err 
 
 # a: claude → codex v isti mapi; codex → claude zavrnjen; connect v agentu zavrnjen
 run
-[[ $(<$T/claude-env) == $'MINIGW_AGENT_AUTH\nMINIGW_AGENT_URL' ]] || fail "a: claude env: $(<$T/claude-env)"
+[[ $(<$T/claude-env) == $'MINIGW_AGENT_AUTH_FILE\nMINIGW_AGENT_URL' ]] || fail "a: claude env: $(<$T/claude-env)"
 [[ $(<$T/asked.rc) == 0 && $(<$T/asked.out) == "codex answer" ]] || fail "a: claude → codex: rc $(<$T/asked.rc) $(<$T/asked.out) $(<$T/asked.err)"
 [[ $(<$C/codex.txt) == codex ]] || fail "a: codex.txt did not come back to the client (codex worked in $(<$T/codex-dir))"
 [[ $(<$T/loop.rc) != 0 ]] && grep -q "an agent asked by another agent cannot ask further models (claude → codex)" $T/loop.err \
@@ -126,6 +126,15 @@ for asker in $askers; do
   grep -q "an agent asked by another agent cannot ask further models" $T/loop.err || fail "c ($asker): loop via proxy: $(<$T/loop.err)"
   [[ $(grep -c /v1/messages $T/proxied) == 2 ]] || fail "c ($asker): requests did not go through the proxy: $(cat $T/proxied 2>/dev/null)"
   print "c ok (${asker:t}, proxy)"
+done
+
+# d (I5): posrednik zunaj tega računalnika se prezre (vprašanje gre naravnost na vrata izvajanja)
+for asker in $askers; do
+  stop; start $asker http://192.0.2.1:9
+  rm -f $T/asked.* $C/codex.txt
+  run
+  [[ $(<$T/asked.out) == "codex answer" ]] || fail "d (${asker:t}): non-loopback proxy was used: $(<$T/asked.err)"
+  print "d ok (${asker:t}, non-loopback proxy ignored)"
 done
 
 # b: stikalo izklopljeno → agent nima MINIGW_AGENT_*

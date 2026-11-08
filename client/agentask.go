@@ -1,6 +1,6 @@
 package main
 
-// minigw v agentu prehoda (MINIGW_AGENT_URL, MINIGW_AGENT_AUTH; serve_agentcalls.go): -p pošlje vprašanje naravnost na
+// minigw v agentu prehoda (MINIGW_AGENT_URL, MINIGW_AGENT_AUTH_FILE; serve_agentcalls.go): -p pošlje vprašanje naravnost na
 // vrata izvajanja in izpiše odgovor, brez vgnezdenega Claude Code.
 
 import (
@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -16,11 +17,19 @@ import (
 )
 
 // agentProxy: v sandboxu Claude Code je loopback dosegljiv le prek njegovega posrednika (HTTP_PROXY), ki ga Go za
-// loopback sicer preskoči (NO_PROXY ga tudi našteje); brez posrednika neposredno.
+// loopback sicer preskoči (NO_PROXY ga tudi našteje); brez posrednika neposredno. I5: le posrednik na loopbacku (posrednik
+// sandboxa), nikoli drug (podjetniški, podtaknjen v .envrc): vprašanja ne gredo z računalnika.
 func agentProxy(*http.Request) (*url.URL, error) {
 	for _, k := range []string{"HTTP_PROXY", "http_proxy"} {
 		if v := os.Getenv(k); v != "" {
-			return url.Parse(v)
+			u, err := url.Parse(v)
+			if err != nil || u.Scheme != "http" {
+				return nil, nil
+			}
+			if h := u.Hostname(); h == "localhost" || (net.ParseIP(h) != nil && net.ParseIP(h).IsLoopback()) {
+				return u, nil
+			}
+			return nil, nil
 		}
 	}
 	return nil, nil

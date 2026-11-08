@@ -21,12 +21,16 @@ private func get(_ run: AgentRun, _ path: String, token: String?) async -> Int {
     caller.device = Noise.Device(id: "dev1", name: "phone")
     let run = try #require(await router.startAgentRun(caller, kind: "claude", dir: nil))
     run.started(getpid())  // M2: ta proces je »agent« izvajanja
-    #expect(run.env["MINIGW_AGENT_URL"] == "http://127.0.0.1:\(run.port)" && run.env["MINIGW_AGENT_AUTH"] == run.token)
+    #expect(run.env["MINIGW_AGENT_URL"] == "http://127.0.0.1:\(run.port)" && run.env["MINIGW_AGENT_AUTH_FILE"] == run.authFile.path)
+    // M3: žeton le v datoteki 0600, ne v okolju; po koncu izvajanja izbrisan (preverjeno spodaj po stop)
+    #expect(FileManager.default.contents(atPath: run.authFile.path) == Data(run.token.utf8) && !run.env.values.contains(run.token))
+    #expect((try? FileManager.default.attributesOfItem(atPath: run.authFile.path)[.posixPermissions] as? Int) == 0o600)
     #expect(await get(run, "/v1/models", token: nil) == 401)
     #expect(await get(run, "/v1/models", token: "tok") == 401)  // žeton prehoda tu ne velja
     for p in ["/admin/v1/settings", "/minigw/share/next", "/health/live"] { #expect(await get(run, p, token: run.token) == 404) }
     #expect(await get(run, "/v1/models", token: run.token) == 403)  // neznana oddaljena naprava: kot izvirna zahteva
     run.stop()
+    #expect(!FileManager.default.fileExists(atPath: run.authFile.path))
     #expect(await get(run, "/v1/models", token: run.token) == -1)
 
     // Loopback klicatelj: modeli; stikalo izklopljeno: ni vrat.
@@ -81,7 +85,7 @@ private func get(_ run: AgentRun, _ path: String, token: String?) async -> Int {
     defer { try? FileManager.default.removeItem(at: base) }
     for d in [client, bin] { try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true) }
     func ask(_ model: String) -> String {
-        #"curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $MINIGW_AGENT_AUTH" -H 'content-type: application/json' "#
+        #"curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $(cat "$MINIGW_AGENT_AUTH_FILE")" -H 'content-type: application/json' "#
             + #"-d '{"model":"\#(model)","max_tokens":10,"tools":[{"name":"x"}],"messages":[{"role":"user","content":"hi"}]}' "$MINIGW_AGENT_URL/v1/messages""#
     }
     func script(_ name: String, _ body: String) throws -> String {

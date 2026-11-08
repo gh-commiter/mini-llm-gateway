@@ -35,6 +35,18 @@ One pass with the combined build, before the release. Each item: what to do, wha
   Expected: the answer quotes Codex; the gateway log shows a second request to `claude-codex`.
 - Codex asking Claude back (or any third level) is refused: "cannot ask further models" / "cannot ask its own kind".
 - With the switch off, the agent's instructions do not mention minigw and `MINIGW_AGENT_URL` is not set.
+- Opus asks a provider: `minigw -p --model claude-cli-opus "ask <an OpenRouter model from minigw models> to say hi, using the minigw command in your instructions"`.
+  Expected: its answer; the gateway log has the nested request with `via=claude` and the provider model.
+- Codex as the caller (Codex: May ask other models and Allow network access for commands on): `minigw -p --model claude-codex "ask claude-cli-haiku what 2+2 is …"`.
+  Expected: the answer; the log shows `via=codex` for the claude-cli request.
+- Limit: an agent that starts 3 questions to other models at once gets HTTP 429 ("already has 2 requests to other models running") for the third.
+
+## Agent asks another model (gateway on Linux)
+- `scripts/agent-calls-linux-claude-sandbox.sh` (Docker): Claude Code's own Linux sandbox (bwrap, socat proxy) runs
+  `minigw -p` and reaches the run port through its proxy, with the token read from the run's file; without allowRead the
+  file stays hidden. A real Claude login is not needed (fake Anthropic API).
+- On a Linux gateway with a real Claude login: the same three checks as for Windows above, with Allow local tools on (no
+  "Allow commands without a sandbox" needed: Bash runs in Claude Code's sandbox, Codex/Copilot/Grok under bwrap).
 
 ## Devices (gateway on Windows)
 - Connect a new client: it waits in the tray menu (Waiting for approval) and on the settings page (Devices), with a tray
