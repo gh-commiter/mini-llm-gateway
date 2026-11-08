@@ -642,3 +642,14 @@ func TestAdminAllowAnyDeviceOnlyWithoutDevices(t *testing.T) {
 		t.Fatal("allowAnyDevice false refused")
 	}
 }
+
+// Scratch na korenu diska ali domači mapi: razlog kot na Macu, ne »mapa nastavitev« (poročilo Windows #13).
+func TestAdminScratchReasonBeforeConfigFolder(t *testing.T) {
+	s, _, base := liveServer(t, nil)
+	home, _ := os.UserHomeDir()
+	for dir, want := range map[string]string{string(filepath.Separator): "disk root", home: "home folder"} {
+		if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/general", `{"scratch":"`+strings.ReplaceAll(dir, `\`, `\\`)+`"}`); st != 400 || !strings.Contains(b, want) {
+			t.Fatalf("%s: %d %s", dir, st, b)
+		}
+	}
+}

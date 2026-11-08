@@ -856,13 +856,13 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			if !filepath.IsAbs(scratch) {
 				return fail(400, "scratch folder: an absolute path")
 			}
-			if under(scratch, s.cfgDir) || under(s.cfgDir, scratch) { // npr. C:\ ali domača mapa vsebuje mapo nastavitev
-				return fail(400, "scratch folder: must not contain or be inside the config folder "+s.cfgDir)
-			}
-			if *b.Scratch != "" {
-				if why := scratchProblem(scratch, s.conf().AllowedFolders); why != "" { // M1, kot na Macu
+			if *b.Scratch != "" { // najprej razlog kot na Macu (koren diska, domača mapa …), nato mapa nastavitev
+				if why := scratchProblem(scratch, s.conf().AllowedFolders); why != "" { // M1
 					return fail(400, "scratch folder: "+why)
 				}
+			}
+			if under(scratch, s.cfgDir) || under(s.cfgDir, scratch) {
+				return fail(400, "scratch folder: must not contain or be inside the config folder "+s.cfgDir)
 			}
 			if bad := scratchOverlaps(s.conf().AllowedFolders, scratch); len(bad) > 0 { // L1: tudi privzeta mapa
 				return fail(400, "scratch folder: the allowed folder "+bad[0]+" contains it or is inside it")
