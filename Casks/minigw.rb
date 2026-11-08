@@ -22,6 +22,7 @@ cask "minigw" do
   # ob naslednjem zagonu sam doda marketplace in namesti vtičnik, brez ukaza claude. Uporabnikov »false« ostane.
   # Pisanje skozi povezavo (dotfiles) in z isto pravico datoteke (lahko ima ključe v env; nova 0600).
   settings = File.expand_path("~/.claude/settings.json")
+  plugin_bin = File.expand_path("~/.claude/plugins/data/minigw-mini-gateway/bin/minigw")
   marketplace = { "source" => { "source" => "github", "repo" => "gh-commiter/mini-llm-gateway" } }
   save = lambda do |data|
     real = File.exist?(settings) ? File.realpath(settings) : settings
@@ -42,6 +43,10 @@ cask "minigw" do
         enabled["minigw@mini-gateway"] = true unless enabled.key?("minigw@mini-gateway")
         save.call(s)
       end
+      # Skilli vtičnika kličejo minigw v njegovi mapi: povezava na ta minigw takoj, ne šele ob naslednji seji (hook
+      # vtičnika naredi isto: nameščen in podpisan minigw ima prednost pred preneseno kopijo).
+      FileUtils.mkdir_p(File.dirname(plugin_bin))
+      FileUtils.ln_sf("#{HOMEBREW_PREFIX}/bin/minigw", plugin_bin)
     rescue JSON::ParserError, SystemCallError => e
       opoo "Claude Code plugin not added (#{settings}: #{e.message}); add it in Claude Code: /plugin install minigw@mini-gateway"
     end
@@ -57,6 +62,9 @@ cask "minigw" do
                                                                     .find { |f| File.executable?(f) }
     if claude && !upgrading
       system_command claude, args: ["plugin", "marketplace", "remove", "mini-gateway", "--scope", "user"], must_succeed: false
+    end
+    if !upgrading && File.symlink?(plugin_bin) && File.readlink(plugin_bin) == "#{HOMEBREW_PREFIX}/bin/minigw"
+      FileUtils.rm_f(plugin_bin)
     end
     begin
       s = JSON.parse(File.read(settings))
