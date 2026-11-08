@@ -1171,6 +1171,7 @@ var apiErrorPrefix = regexp.MustCompile(`^API error \(status \d+[^)]*\):\s*`)
 
 // agentMessage: besedilo napake CLI brez ovoja: JSON {"message":…}, {"error":{"message":…}} ali {"error":"…"} (tudi za
 // predpono, npr. »Internal error: {…}«, in ovoj v ovoju) ter brez »API error (status 402 …):«; sicer vrstica, kot je.
+// Brez kontrolnih in oblikovnih znakov (clean): JSON \u001b bi sicer postal pravi ESC v terminalu odjemalca (L4).
 func agentMessage(raw string) string {
 	msg := strings.TrimSpace(raw)
 	for range 3 {
@@ -1193,7 +1194,7 @@ func agentMessage(raw string) string {
 		}
 		msg = strings.TrimSpace(m)
 	}
-	return apiErrorPrefix.ReplaceAllString(msg, "")
+	return apiErrorPrefix.ReplaceAllString(clean(msg), "")
 }
 
 // classifyAgentError: napaka agenta za odjemalca: omejitev porabe, kvote ali kreditov je 429 rate_limit_error (Claude

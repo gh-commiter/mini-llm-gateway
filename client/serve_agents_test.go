@@ -305,6 +305,10 @@ func TestAgentMessageExtraction(t *testing.T) {
 	if _, m := classifyAgentError("Internal error: {not json"); m != "Internal error: {not json" {
 		t.Fatalf("fallback: %q", m)
 	}
+	// L4: ubežni znaki JSON ne postanejo pravi kontrolni znaki
+	if m := agentMessage(`{"error":{"message":"a\u001b]52;c;eA==\u0007b\r\u0085\u202ec\u009b\u007f"}}`); m != "a]52;c;eA==bc" {
+		t.Fatalf("control chars: %q", m)
+	}
 }
 
 // Napaka pred glavo (tudi pri pretoku) je pravi 429 z x-should-retry: false (Claude Code ne ponovi); po glavi dogodek SSE,

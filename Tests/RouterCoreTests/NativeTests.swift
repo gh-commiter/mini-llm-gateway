@@ -494,3 +494,55 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     try fm.createDirectory(at: def, withIntermediateDirectories: true)
     #expect(ClaudeCLI.resolveCwd(def.path, roots: NSHomeDirectory()) == nil)  // privzeti Scratch vedno
 }
+
+/// L1, L2: samodejno deljenje v začasni mapi: podmapa da, koren, skrita, tuja, neobstoječa in zgornje ravni Claude Code ne;
+/// začasna mapa /, domača ali nad njo ničesar ne odpre (kot TestAutoShare v Go).
+@Test func autoShareTempRules() throws {
+    let fm = FileManager.default, home = NSHomeDirectory()
+    let tmp = fm.temporaryDirectory.appendingPathComponent("as-" + UUID().uuidString).path
+    defer { try? fm.removeItem(atPath: tmp) }
+    func mk(_ p: String) -> String { let d = tmp + "/" + p; try? fm.createDirectory(atPath: d, withIntermediateDirectories: true); return d }
+    let c = "claude-\(getuid())"
+    let x = "/tmp/as-" + UUID().uuidString
+    try fm.createDirectory(atPath: x, withIntermediateDirectories: false)
+    defer { try? fm.removeItem(atPath: x) }
+    for p in [mk("proj"), mk("proj/src"), mk("\(c)/p/s/scratchpad"), mk("\(c)/p/s/scratchpad/x"), x, "/private" + x,
+              home + "/Development/x", "/Volumes/Java/importers/app"] {
+        #expect(SharedFolders.autoShare(p, temp: tmp), "\(p)")
+    }
+    for p in [tmp, mk(".hidden/x"), tmp + "/missing/x", mk(c), mk("\(c)/p"), mk("\(c)/p/s"), "/tmp", "/private/tmp", "/tmp/.X11-unix",
+              "/", home, home + "/.ssh", home + "/Library/Mail", "/Volumes/Java", "/usr/local/src"] {
+        #expect(!SharedFolders.autoShare(p, temp: tmp), "\(p)")
+    }
+    if let other = try? fm.contentsOfDirectory(atPath: "/private/tmp").first(where: { n in
+        let a = try? fm.attributesOfItem(atPath: "/private/tmp/" + n)
+        return !n.hasPrefix(".") && a?[.type] as? FileAttributeType == .typeDirectory && (a?[.ownerAccountID] as? NSNumber)?.uint32Value != getuid()
+    }) {
+        #expect(!SharedFolders.autoShare("/tmp/\(other)/x", temp: tmp))  // mapa drugega uporabnika
+    }
+    for bad in ["/", home, (home as NSString).deletingLastPathComponent] {
+        for p in [home + "/.ssh", home + "/Library/x", (home as NSString).deletingLastPathComponent + "/other/x"] {
+            #expect(!SharedFolders.autoShare(p, temp: bad), "\(bad) \(p)")
+        }
+    }
+    #expect(SharedFolders.implicitWork(asked: nil, work: "direct") && SharedFolders.implicitWork(asked: "auto", work: "direct")
+        && SharedFolders.implicitWork(asked: "worktree", work: "direct") && !SharedFolders.implicitWork(asked: "direct", work: "direct"))
+}
+
+/// M1: vrstica o zavrnitvi enkrat na pot, kontrolni znaki nikoli surovi, največ RefusalLog.max poti.
+@Test func webdavRefusalLine() {
+    var l = WebDAV.RefusalLog()
+    for p in [".git/\u{1b}]52;c;eA==\u{7}", ".git/a\nminigw: fake", ".git/\rb", ".git/\u{202e}txt.exe"] {
+        let line = l.line(p) ?? ""
+        #expect(line.hasPrefix("minigw: refused") && !line.dropLast().unicodeScalars.contains { ["\u{1b}", "\n", "\r", "\u{7}", "\u{202e}"].contains($0) }, "\(line)")
+        #expect(l.line(p) == nil)
+    }
+    for i in l.paths.count..<WebDAV.RefusalLog.max { #expect(l.line(".git/\(i)") != nil) }
+    #expect(l.line(".git/more")?.contains("not shown") == true)
+    #expect(l.line(".git/more2") == nil && l.paths.count == WebDAV.RefusalLog.max)
+}
+
+/// L4: ubežni znaki JSON v napaki agenta ne postanejo pravi kontrolni znaki.
+@Test func agentMessageControlChars() {
+    #expect(AgentError.message(#"{"error":{"message":"a\u001b]52;c;eA==\u0007b\r\u0085‮c\u009b\u007f"}}"#) == "a]52;c;eA==bc")
+}

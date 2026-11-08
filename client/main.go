@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -821,17 +822,33 @@ var mountTop = map[string]bool{"volumes": true, "mnt": true, "media": true}
 
 // autoShare: projektna mapa kjer koli (tudi D:\Projekti, /Volumes/Disk/projekt), razen korena diska ali priklopa,
 // domače mape same, sistemskih map, domačih map drugih ter skritih map in AppData/Library v domači. Podmapa začasne
-// mape (/tmp/projekt, %TEMP%\projekt, mktemp -d) je projektna mapa (privzeti auto jo kopira), začasna mapa sama ne.
+// mape (/tmp/projekt, %TEMP%\projekt, mktemp -d) je projektna mapa (privzeti auto jo kopira), začasna mapa sama ne,
+// tudi ne skrita (/tmp/.X11-unix), tuja (prva raven pod začasno mapo drugega uporabnika) ali zgornji ravni začasne mape
+// Claude Code (claude-<uid>, claude-<uid>/<projekt>, …/<seja>; globlje da) (L2).
 func autoShare(cwd string) bool {
 	cwd = filepath.Clean(cwd)
 	home, _ := os.UserHomeDir()
 	if filepath.Dir(cwd) == cwd || (home != "" && strings.EqualFold(cwd, filepath.Clean(home))) {
 		return false
 	}
-	for _, t := range []string{os.TempDir(), "/tmp", "/private/tmp", "/var/tmp", "/private/var/tmp"} {
-		if rel, err := filepath.Rel(filepath.Clean(t), cwd); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
-			return true
+	temps := []string{os.TempDir(), "/tmp", "/private/tmp", "/var/tmp", "/private/var/tmp"}
+	if runtime.GOOS == "darwin" {
+		temps = append(temps, "/private"+os.TempDir()) // $TMPDIR je /var/folders/…, cwd pa pogosto /private/var/folders/… (F8)
+	}
+	for _, t := range temps {
+		t = filepath.Clean(t)
+		if filepath.Dir(t) == t || (home != "" && under(home, t)) { // TMPDIR=/, C:\, domača mapa ali nad njo (L1)
+			continue
 		}
+		rel, err := filepath.Rel(t, cwd)
+		if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+			continue
+		}
+		parts := strings.Split(filepath.ToSlash(rel), "/")
+		if strings.HasPrefix(parts[0], ".") || !ownedByMe(filepath.Join(t, parts[0])) {
+			return false
+		}
+		return runtime.GOOS == "windows" || parts[0] != "claude-"+strconv.Itoa(os.Getuid()) || len(parts) > 3
 	}
 	if home != "" {
 		if rel, err := filepath.Rel(home, cwd); err == nil && !strings.HasPrefix(rel, "..") {

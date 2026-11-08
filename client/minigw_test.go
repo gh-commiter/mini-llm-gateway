@@ -69,14 +69,45 @@ func TestShareCommandAndWanted(t *testing.T) {
 
 func TestAutoShare(t *testing.T) {
 	home, _ := os.UserHomeDir()
-	// podmapa začasne mape (tudi %TEMP% v AppData) da, začasna mapa sama ne (0.5.19: privzeti auto jo kopira)
-	yes := []string{filepath.Join(home, "Development", "x"), "/Volumes/Java/importers/app", "/srv/projects/app",
-		filepath.Join(os.TempDir(), "proj")}
+	tmp := t.TempDir()
+	for _, k := range []string{"TMPDIR", "TMP", "TEMP"} {
+		t.Setenv(k, tmp)
+	}
+	mk := func(p ...string) string {
+		d := filepath.Join(append([]string{tmp}, p...)...)
+		os.MkdirAll(d, 0o755)
+		return d
+	}
+	// podmapa začasne mape (tudi %TEMP% v AppData) da, začasna mapa sama ne (0.5.19: privzeti auto jo kopira), skrita ne,
+	// neobstoječa (lastnik neznan) ne
+	yes := []string{filepath.Join(home, "Development", "x"), "/Volumes/Java/importers/app", "/srv/projects/app", mk("proj"), mk("proj", "src")}
 	no := []string{"/", home, filepath.Join(home, ".ssh"), filepath.Join(home, "Library", "Mail"), "/Volumes/Java",
-		"/usr/local/src", "/System/Library", "/Users/other/Documents", "/Applications/X.app", os.TempDir()}
+		"/usr/local/src", "/System/Library", "/Users/other/Documents", "/Applications/X.app", tmp, mk(".hidden", "x"),
+		filepath.Join(tmp, "missing", "x")}
 	if runtime.GOOS != "windows" {
-		yes = append(yes, "/tmp/x", "/private/tmp/claude-501/x")
-		no = append(no, "/tmp", "/private/tmp", "/private/tmp/../etc")
+		x, err := os.MkdirTemp("/tmp", "autoshare")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.RemoveAll(x) })
+		yes = append(yes, x)
+		no = append(no, "/tmp", "/private/tmp", "/private/tmp/../etc", "/tmp/.X11-unix")
+		if runtime.GOOS == "darwin" {
+			yes = append(yes, "/private"+x) // F8: tudi /private/tmp/… in /private/var/folders/…
+		}
+		// L2: Claude Code: claude-<uid> in prvi dve ravni ne, globlje da
+		c := "claude-" + strconv.Itoa(os.Getuid())
+		yes = append(yes, mk(c, "p", "s", "scratchpad"), mk(c, "p", "s", "scratchpad", "x"))
+		no = append(no, mk(c), mk(c, "p"), mk(c, "p", "s"))
+		// L2: mapa drugega uporabnika pod /tmp ne
+		if es, err := os.ReadDir("/private/tmp"); err == nil {
+			for _, e := range es {
+				if d := filepath.Join("/tmp", e.Name()); e.IsDir() && !strings.HasPrefix(e.Name(), ".") && !ownedByMe(d) {
+					no = append(no, filepath.Join(d, "x"))
+					break
+				}
+			}
+		}
 	}
 	for _, p := range yes {
 		if !autoShare(p) {
@@ -86,6 +117,17 @@ func TestAutoShare(t *testing.T) {
 	for _, p := range no {
 		if autoShare(p) {
 			t.Errorf("%s should not be shared", p)
+		}
+	}
+	// L1: TMPDIR=/, domača mapa ali nad njo ne odpre ničesar
+	for _, bad := range []string{"/", home, filepath.Dir(home)} {
+		for _, k := range []string{"TMPDIR", "TMP", "TEMP"} {
+			t.Setenv(k, bad)
+		}
+		for _, p := range []string{filepath.Join(home, ".ssh"), filepath.Join(home, "Library", "x"), filepath.Join(filepath.Dir(home), "other", "x")} {
+			if autoShare(p) {
+				t.Errorf("TMPDIR=%s: %s should not be shared", bad, p)
+			}
 		}
 	}
 }
@@ -756,6 +798,31 @@ func TestDavRefusesProtectedWrites(t *testing.T) {
 	}
 	if s := h("PUT", "b.txt", ""); s != 201 {
 		t.Fatalf("PUT b.txt: %d", s)
+	}
+}
+
+// M1: vrstica o zavrnitvi enkrat na pot, kontrolni znaki iz imena nikoli surovi, največ maxRefusedShown poti.
+func TestDavRefusalLine(t *testing.T) {
+	var l refusalLog
+	for _, p := range []string{".git/\x1b]52;c;eA==\x07", ".git/a\nminigw: fake", ".git/\rb", ".git/\u202etxt.exe"} {
+		line := l.line(p)
+		if line == "" || strings.ContainsAny(strings.TrimSuffix(line, "\n"), "\x1b\n\r\x07\u202e") {
+			t.Fatalf("%q -> %q", p, line)
+		}
+		if again := l.line(p); again != "" {
+			t.Fatalf("printed twice: %q", again)
+		}
+	}
+	for i := len(l.paths); i < maxRefusedShown; i++ {
+		if l.line(".git/"+strconv.Itoa(i)) == "" {
+			t.Fatal("below the cap")
+		}
+	}
+	if line := l.line(".git/more"); !strings.Contains(line, "not shown") {
+		t.Fatalf("over the cap: %q", line)
+	}
+	if l.line(".git/more2") != "" || len(l.paths) != maxRefusedShown {
+		t.Fatal("cap not held")
 	}
 }
 

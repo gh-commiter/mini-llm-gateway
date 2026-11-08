@@ -543,26 +543,6 @@ func sharedFolders() -> [SharedFolders.Entry] {
     SharedFolders.parse((try? String(contentsOf: sharedFoldersFile, encoding: .utf8)) ?? "")
 }
 
-/// Projektna mapa kjer koli (tudi /Volumes/Disk/projekt), razen korena diska ali priklopa, domače mape same,
-/// sistemskih map, domačih map drugih ter skritih map in ~/Library. Podmapa začasne mape (/tmp/projekt, mktemp -d) je
-/// projektna mapa (privzeti auto jo kopira: worktree ali sync), začasna mapa sama ne.
-func autoShare(_ path: String) -> Bool {
-    let home = NSHomeDirectory()
-    let p = URL(fileURLWithPath: path).standardizedFileURL.path
-    guard p != "/", p != home else { return false }
-    let temps = [URL(fileURLWithPath: NSTemporaryDirectory()).standardizedFileURL.path, "/tmp", "/var/tmp"]
-    if temps.flatMap({ [$0, "/private" + $0] }).contains(where: { p.hasPrefix($0 + "/") }) { return true }
-    if p.hasPrefix(home + "/") {
-        let top = String(p.dropFirst(home.count + 1).split(separator: "/").first ?? "")
-        return !top.hasPrefix(".") && top != "Library"
-    }
-    let parts = p.split(separator: "/").map { $0.lowercased() }
-    let system: Set<String> = ["system", "library", "usr", "bin", "sbin", "etc", "private", "var", "dev", "opt", "applications",
-                               "users", "home", "root", "proc", "sys", "boot", "tmp", "run", "snap", "nix", "cores"]
-    guard let top = parts.first, !top.hasPrefix("."), !system.contains(top) else { return false }
-    return !["volumes", "mnt", "media"].contains(top) || parts.count >= 3
-}
-
 func shareCommand(_ a: [String]) -> Never {
     let sub = a.first ?? "list"
     // add: --work=direct|sync|native|native-direct|worktree|auto in --ro = privzeti način te mape in podmap (zastavica ob zagonu ima prednost)
@@ -831,7 +811,7 @@ let shareEnv = ProcessInfo.processInfo.environment["MINIGW_SHARE"]
 let remoteRouter = !["127.0.0.1", "localhost", "::1"].contains(routerHost)
 let wantShare = shareEnv == "1"
     || (shareEnv != "0" && remoteRouter
-        && (autoShare(cwd) || SharedFolders.lookup(sharedFolders(), cwd: cwd) != nil))
+        && (SharedFolders.autoShare(cwd) || SharedFolders.lookup(sharedFolders(), cwd: cwd) != nil))
 let mode = SharedFolders.mode(flag: workFlag, saved: SharedFolders.lookup(sharedFolders(), cwd: cwd), readOnly: readOnly)
 if let asked = workFlag ?? SharedFolders.lookup(sharedFolders(), cwd: cwd)?.work, asked.hasPrefix("native") || asked == "worktree", mode.work != asked {
     err.write(Data("minigw: \(asked) mode cannot be read-only; sharing read-only over the network instead\n".utf8))
@@ -840,7 +820,7 @@ let work = mode.work
 readOnly = mode.readOnly
 // direct ni izbran izrecno (privzeto, auto ali samo za branje namesto worktree/native): prehod brez priklopa → sync
 let askedWork = workFlag ?? SharedFolders.lookup(sharedFolders(), cwd: cwd)?.work
-let implicitWork = askedWork == nil || askedWork == "auto" || askedWork != work
+let implicitWork = SharedFolders.implicitWork(asked: askedWork, work: work)
 
 // x-claude-mini-share: router po ponovnem zagonu počaka, da se mapa znova registrira (namesto napake cwd_unavailable).
 setenv("ANTHROPIC_CUSTOM_HEADERS", "x-claude-mini-session: \(sid)\nx-claude-mini-cwd: \(cwd)" + (wantShare ? "\nx-claude-mini-share: 1" : "")
@@ -926,7 +906,7 @@ if profiles.count > 1 {
         }
         targets.append(ProfileMux.Target(name: p.name, url: rc.url, token: rc.token))
         let remote = !p.conn.isLocal
-        let want = shareEnv == "1" || (shareEnv != "0" && remote && (autoShare(cwd) || SharedFolders.lookup(sharedFolders(), cwd: cwd) != nil))
+        let want = shareEnv == "1" || (shareEnv != "0" && remote && (SharedFolders.autoShare(cwd) || SharedFolders.lookup(sharedFolders(), cwd: cwd) != nil))
         guard want, !sid.isEmpty else { continue }
         let name = p.name
         hooks[name] = {

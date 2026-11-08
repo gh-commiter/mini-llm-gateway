@@ -40,14 +40,47 @@ func dav(status int, headers map[string]string, body []byte) davResponse {
 // maxServe: največji kos datoteke v enem odgovoru (router sprejme odgovor do 64 MB, base64 doda tretjino).
 const maxServe = 32 << 20
 
-var davRefused sync.Map
+// refusalLog: zavrnjene poti, ki smo jih že izpisali. Največ maxRefusedShown različnih (in toliko si jih zapomnimo):
+// agent z milijoni imen ne zasiplje terminala in ne veča pomnilnika (M1, kot WebDAV.RefusalLog na Macu).
+type refusalLog struct {
+	paths map[string]bool
+	more  bool
+}
+
+const maxRefusedShown = 50
+
+// line: vrstica za stderr ali "" (že izpisano ali čez mejo). Pot v narekovajih z ubežnimi znaki (%q), da ime iz
+// agenta ne krmili terminala (M1).
+func (l *refusalLog) line(p string) string {
+	switch {
+	case l.paths[p]:
+		return ""
+	case len(l.paths) < maxRefusedShown:
+		if l.paths == nil {
+			l.paths = map[string]bool{}
+		}
+		l.paths[p] = true
+		return fmt.Sprintf("minigw: refused agent write to %q (protected path)\n", p)
+	case !l.more:
+		l.more = true
+		return "minigw: further refused agent writes not shown\n"
+	}
+	return ""
+}
+
+var (
+	davRefusedMu sync.Mutex
+	davRefused   refusalLog
+)
 
 // davRefuse: ena vrstica na stderr na zavrnjeno pot (brez ponovitev), da je razvidno, da je zavrnila ta zaščita in ne
 // peskovnik agenta. Le relativna pot v deljeni mapi.
 func davRefuse(rel []string) davResponse {
-	p := strings.Join(rel, "/")
-	if _, seen := davRefused.LoadOrStore(p, true); !seen {
-		fmt.Fprintf(os.Stderr, "minigw: refused agent write to %s (protected path)\n", p)
+	davRefusedMu.Lock()
+	line := davRefused.line(strings.Join(rel, "/"))
+	davRefusedMu.Unlock()
+	if line != "" {
+		fmt.Fprint(os.Stderr, line)
 	}
 	return dav(403, nil, nil)
 }

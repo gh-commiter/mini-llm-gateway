@@ -18,15 +18,33 @@ public enum WebDAV {
     /// Največji kos datoteke v enem odgovoru (router sprejme odgovor do 64 MB, base64 doda tretjino).
     public static let maxServe = 32 << 20
 
-    private static let refusedSeen = Mutex<Set<String>>([])
+    /// Zavrnjene poti, ki smo jih že izpisali. Največ `max` različnih (in toliko si jih zapomnimo): agent z milijoni
+    /// imen ne zasiplje terminala in ne veča pomnilnika (M1).
+    struct RefusalLog {
+        static let max = 50
+        var paths: Set<String> = []
+        var more = false
+
+        /// Vrstica za stderr ali nil (že izpisano ali čez mejo). Pot v narekovajih z ubežnimi znaki (kot %q v Go),
+        /// da ime iz agenta ne krmili terminala (M1).
+        mutating func line(_ p: String) -> String? {
+            if paths.contains(p) { return nil }
+            if paths.count < Self.max {
+                paths.insert(p)
+                return "minigw: refused agent write to \(Noise.quoted(p)) (protected path)\n"
+            }
+            if more { return nil }
+            more = true
+            return "minigw: further refused agent writes not shown\n"
+        }
+    }
+    private static let refused = Mutex(RefusalLog())
 
     /// Ena vrstica na stderr na zavrnjeno pot (brez ponovitev): agent vidi le »Operation not permitted«, tako da je
     /// razvidno, da je zavrnila ta zaščita in ne peskovnik agenta. Le relativna pot v deljeni mapi.
     static func refuse(_ rel: [String]) -> DAVResponse {
         let p = rel.joined(separator: "/")
-        if refusedSeen.withLock({ $0.insert(p).inserted }) {
-            FileHandle.standardError.write(Data("minigw: refused agent write to \(p) (protected path)\n".utf8))
-        }
+        if let line = refused.withLock({ $0.line(p) }) { FileHandle.standardError.write(Data(line.utf8)) }
         return DAVResponse(403)
     }
 

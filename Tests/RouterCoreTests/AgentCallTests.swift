@@ -194,11 +194,9 @@ private func get(_ run: AgentRun, _ path: String, token: String?) async -> Int {
         #expect(st == 429 && w.status == 429 && w.text.contains("x-should-retry: false") && w.text.contains(#""You have run out of credits.""#))
     }
     #expect(AgentError.recent(AgentError.key(req, model: "claude-grok")) == nil)  // HTTP 429 je končen
-    let saved = Router.agentHeadDelay
-    Router.agentHeadDelay = .milliseconds(50)
-    defer { Router.agentHeadDelay = saved }
     let w = FakeWriter()
-    _ = await router.replyWhenDone(body: ["model": "claude-grok", "stream": true], model: "claude-grok", rid: "req_2", writer: w, req: req) {
+    _ = await router.replyWhenDone(body: ["model": "claude-grok", "stream": true], model: "claude-grok", rid: "req_2", writer: w, req: req,
+                                   headDelay: .milliseconds(50)) {
         try await Task.sleep(for: .milliseconds(300))
         throw limit
     }

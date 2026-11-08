@@ -287,12 +287,13 @@ extension Router {
 
     /// Pri pretoku glava 200 šele po tem času (nato ping vsakih 10 s). Napaka prej (omejitev agenta) je pravi status HTTP
     /// z x-should-retry: false; po glavi je le dogodek SSE »error«, na katerega Claude Code ponovi zahtevo brez pretoka.
-    nonisolated(unsafe) static var agentHeadDelay: Duration = .seconds(30)  // testi: krajši
+    static let agentHeadDelay: Duration = .seconds(30)
 
     /// Ponudnik brez pretoka (Siri, Codex, Grok, Copilot): pri pretoku glava, message_start in ping šele po agentHeadDelay,
     /// nato cel odgovor. `req`: omejitev, sporočena v toku, se zapomni za ponovitev brez pretoka (AgentError.note).
+    /// `headDelay`: testi krajši, kot parameter (ne globalno), da vzporedni testi ne vplivajo drug na drugega (F10).
     func replyWhenDone(body: [String: Any], model: String, rid: String, writer: ResponseWriter, req: HTTPRequest? = nil,
-                       work: () async throws -> (String, [(String, String)])) async -> Int {
+                       headDelay: Duration = Router.agentHeadDelay, work: () async throws -> (String, [(String, String)])) async -> Int {
         let stream = body["stream"] as? Bool == true
         var t = StreamTranslator(model: body["model"] as? String ?? model)
         let head = HTTPResponse.head(status: 200, headers: [
@@ -301,7 +302,7 @@ extension Router {
         final class Sent: @unchecked Sendable { var head = false }  // piše le pinger; prebere se po njegovem koncu
         let sent = Sent()
         let pinger: Task<Void, Never>? = stream ? Task {
-            try? await Task.sleep(for: Self.agentHeadDelay)
+            try? await Task.sleep(for: headDelay)
             guard !Task.isCancelled else { return }
             sent.head = true
             try? await writer.write(head)
@@ -359,6 +360,7 @@ enum AgentError {
 
     /// Besedilo napake CLI brez ovoja: JSON {"message":…}, {"error":{"message":…}} ali {"error":"…"} (tudi za predpono, npr.
     /// »Internal error: {…}«, in ovoj v ovoju) ter brez »API error (status 402 …):«; sicer vrstica, kot je.
+    /// Brez kontrolnih in oblikovnih znakov (razen \n, kot clean v minigw): JSON \u001b bi sicer postal pravi ESC (L4).
     static func message(_ raw: String) -> String {
         var msg = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         for _ in 0..<3 {
@@ -369,6 +371,7 @@ enum AgentError {
             if trimmed.isEmpty { break }
             msg = trimmed
         }
+        msg.unicodeScalars.removeAll { $0 != "\n" && ($0.value < 0x20 || (0x7f...0x9f).contains($0.value) || $0.properties.generalCategory == .format) }
         return msg.replacingOccurrences(of: #"^API error \(status \d+[^)]*\):\s*"#, with: "", options: .regularExpression)
     }
 

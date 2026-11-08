@@ -26,7 +26,7 @@ mkdir -p "$BIN"
 
 
 ver() { "$1" --version 2>/dev/null | head -1 | sed 's/^minigw //'; }
-MIN=0.5.18  # najnižji minigw za ta vtičnik (profili: --name, @<profil>, --minigw-profile)
+MIN=0.5.19  # najnižji minigw za ta vtičnik (profili, samo za branje z lokalnim prehodom, obseg veje le agenta)
 older() { [ -n "$1" ] && [ -n "$2" ] && [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" = "$1" ]; }
 
 # verify_sums <sums> <sig>: najprej ssh-keygen; sicer že nameščen minigw, a le 0.5.17 ali novejši (pozna verify-sums)
@@ -129,7 +129,7 @@ fi
 # Prestar minigw (zadnja izdaja ali nameščen ga še ne more zamenjati): skilli s profili tega ne smejo uporabiti.
 cur=$(ver "$EXE")
 case $cur in *[!0-9.]*) cur="" ;; esac
-older "$cur" "$MIN" && echo "minigw plugin: minigw $cur is older than $MIN, which this plugin needs for profiles (--name, @<profile>): run /minigw:gw update."
+older "$cur" "$MIN" && echo "minigw plugin: minigw $cur is older than $MIN, which this plugin needs (profiles, read-only enforcement with a local gateway, the agent-only branch range): run /minigw:gw update."
 
 # L4 (0.5.17): posodobitev zavrnjena (podpis), obstoječa ostane: povej, zakaj.
 [ -n "$unsigned" ] && [ -z "$inst" ] && [ -x "$EXE" ] && echo "minigw plugin: not updated: $unsigned; the installed minigw stays."
@@ -155,7 +155,7 @@ line="export PATH=\"\$PATH:$BIN\""  # ena vrstica, tudi ob resume/clear/compact
 [ -n "${CLAUDE_ENV_FILE:-}" ] && { grep -qxF "$line" "$CLAUDE_ENV_FILE" 2>/dev/null || echo "$line" >> "$CLAUDE_ENV_FILE"; }
 # Povezava: izhod »minigw status« (izhodna koda in vrstici Status/Device privzetega profila); v kontekst le fiksni nizi in
 # ID naprave (43 znakov base64url), nikoli prosto besedilo prehoda (F6). Skupaj z omejitvami zgoraj v 60 s kljuke.
-ver_line=$("$EXE" --version 2>/dev/null | head -1)
+ver_line="minigw $(ver "$EXE" | sed -n 's/^\([0-9][0-9.]*\)$/\1/p')"  # le številke in pike (L3)
 if sout=$("$EXE" status 2>&1); then
   echo "minigw plugin: $ver_line, connected to Mini Gateway."
 else

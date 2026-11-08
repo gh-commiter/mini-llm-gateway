@@ -7,7 +7,7 @@
 #   4. napačen imenski prostor, obstoječi ostane → zavrnjen, z razlogom (L4)
 #   5. #25: podpisana starejša izdaja (VERSION 0.5.16) čez novejši nameščeni → zavrnjena, z razlogom
 #   6. ista z MINIGW_ALLOW_DOWNGRADE=1 → nameščena
-#   7. N1: podpisana izdaja brez VERSION (= 0.5.17) čez nameščeni 0.5.18 → zavrnjena
+#   7. N1: podpisana izdaja brez VERSION (= 0.5.17) čez nameščeni 0.5.19 → zavrnjena
 #   9. Linux: nameščen ~/.local/bin/minigw, ki ni starejši od izdaje → kopija v vtičnik (brez prenosa); starejši → prenos
 #   8. izhod »minigw status« → connected / token rejected / device not approved (ID) / not connected; brez claude: namig (#6)
 emulate -L zsh; set -eu
@@ -73,16 +73,16 @@ out=$(MINIGW_ALLOW_DOWNGRADE=1 run /tmp/d5 older testkey); echo "$out"
 [ "$(/tmp/d5/bin/minigw --version | head -1)" = "minigw 0.5.16" ] || fail "6: MINIGW_ALLOW_DOWNGRADE=1 did not install"
 echo "ok 6: downgrade with MINIGW_ALLOW_DOWNGRADE=1"
 
-mkdir -p /tmp/d7/bin; printf "#!/bin/sh\necho minigw 0.5.18\n" > /tmp/d7/bin/minigw; chmod +x /tmp/d7/bin/minigw
+mkdir -p /tmp/d7/bin; printf "#!/bin/sh\necho minigw 0.5.19\n" > /tmp/d7/bin/minigw; chmod +x /tmp/d7/bin/minigw
 out=$(run /tmp/d7 good testkey); echo "$out"
-[ "$(/tmp/d7/bin/minigw --version | head -1)" = "minigw 0.5.18" ] || fail "7: a signed release without VERSION replaced 0.5.18"
-echo "$out" | grep -q "not updated: the latest release (0.5.17) is older than the installed minigw 0.5.18" || fail "7: no reason printed"
+[ "$(/tmp/d7/bin/minigw --version | head -1)" = "minigw 0.5.19" ] || fail "7: a signed release without VERSION replaced 0.5.19"
+echo "$out" | grep -q "not updated: the latest release (0.5.17) is older than the installed minigw 0.5.19" || fail "7: no reason printed"
 echo "ok 7: signed release without VERSION counts as 0.5.17 (N1)"
 
 # 8: kljuka prebere izhod »minigw status« (lažni minigw); v kontekst le fiksni nizi in ID naprave
 mkdir -p /tmp/d8/bin; cat > /tmp/d8/bin/minigw <<EOS
 #!/bin/sh
-[ "\$1" = --version ] && { echo minigw 0.5.18; exit 0; }
+[ "\$1" = --version ] && { echo minigw 0.5.19; exit 0; }
 cat /tmp/status.out; exit \$(cat /tmp/status.rc)
 EOS
 chmod +x /tmp/d8/bin/minigw
