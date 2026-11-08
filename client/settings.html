@@ -137,6 +137,7 @@ const S = {
   scratchHint: ["Temporary files of agents: synced copies, conversations, attachments. A new folder applies to new sessions; existing copies stay where they are.",
     "Začasne datoteke agentov: sinhronizirane kopije, pogovori, priponke. Nova mapa velja za nove seje; obstoječe kopije ostanejo, kjer so."],
   installedYes: ["minigw serve install", "minigw serve install"], enabled: ["Enabled", "Vklopljeno"],
+  claudeOff: ["Claude CLI and Codex are off: %s", "Claude CLI in Codex sta izklopljena: %s"],
   detectedAt: ["Detected: %s · %s", "Najdeno: %s · %s"], allowedFolders: ["Allowed folders", "Dovoljene mape"], addFolder: ["Add Folder", "Dodaj mapo"],
   choose: ["Choose…", "Izberi…"], browse: ["Browse…", "Prebrskaj…"],
   allowedFoldersHint: ["Agents work only in the session's folder and these folders. Type a full path and press +.",
@@ -754,7 +755,8 @@ const pages = {
     }
     return [
       card(...ICON.claude, t("claude"), t("claudeDesc")),
-      group(row(t("enabled"), toggle(c.enabled, v => save(n0, () => patch({enabled: v}))))), n0,
+      group(row(t("enabled"), toggle(c.enabled, v => save(n0, async () => { await patch({enabled: v}); show("claude"); }))),
+        c.off ? row(el("div", {class: "label warn", textContent: t("claudeOff", c.off)})) : null), n0,
       group(row(labelSub(t("path")), path, button(t("find"), () => save(n1, async () => { path.value = ""; showStatus(await patch({path: ""})); })),
         browse(path, n1, async v => showStatus(await patch({path: v}))))),
       el("div", {class: "note"}, status), n1,

@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // isTrayExe: minigw-tray.exe (ali minigw-tray-windows-amd64.exe) se zažene kot pladenj.
@@ -205,36 +206,40 @@ func (l *rotatingLog) Write(p []byte) (int, error) {
 	return n, err
 }
 
-// startTrayRouter: nastavitve (ob prvem zagonu nove), router z dnevnikom v datoteki in poslušanje.
-func startTrayRouter(cfgPath string) (*server, net.Listener, string, bool, error) {
+// startTrayRouter: nastavitve (ob prvem zagonu nove), router z dnevnikom v datoteki in poslušanje. Napaka gre tudi v
+// dnevnik (npr. neveljaven serve.json: pladenj nima konzole).
+func startTrayRouter(cfgPath string) (s *server, ln net.Listener, logPath string, fresh bool, err error) {
 	c, err := loadServeConfig(cfgPath)
-	fresh := errors.Is(err, os.ErrNotExist)
+	fresh = errors.Is(err, os.ErrNotExist)
 	if fresh {
 		c = newServeConfig()
 		if err = writeServeConfig(cfgPath, c); err == nil {
 			c, err = loadServeConfig(cfgPath)
 		}
 	}
-	if err != nil {
-		return nil, nil, "", false, err
-	}
-	logPath := filepath.Join(filepath.Dir(cfgPath), "minigw-serve.log")
-	if c.Log != "" {
+	logPath = filepath.Join(filepath.Dir(cfgPath), "minigw-serve.log")
+	if err == nil && c.Log != "" {
 		logPath = c.Log
 	}
-	rl, err := openRotatingLog(logPath)
+	rl, lerr := openRotatingLog(logPath)
+	if lerr != nil {
+		return nil, nil, "", false, errors.Join(err, lerr)
+	}
+	logOut = rl
+	defer func() {
+		if err != nil {
+			fmt.Fprintf(rl, "%s cannot start: %v\n", time.Now().Format("2006/01/02 15:04:05"), err)
+		}
+	}()
 	if err != nil {
-		return nil, nil, "", false, err
+		return nil, nil, logPath, false, err
 	}
 	c.Log = "" // newServer naj ne odpre še enkrat
-	s, err := newServer(c, cfgPath)
-	if err != nil {
-		return nil, nil, "", false, err
+	if s, err = newServer(c, cfgPath); err != nil {
+		return nil, nil, logPath, false, err
 	}
-	s.log.SetOutput(rl)
-	ln, err := listenRouter(c)
-	if err != nil {
-		return nil, nil, "", false, fmt.Errorf("port %d: %v (is minigw serve already running?)", c.Port, err)
+	if ln, err = listenRouter(c); err != nil {
+		return nil, nil, logPath, false, fmt.Errorf("port %d: %v (is minigw serve already running?)", c.Port, err)
 	}
 	s.announce(ln)
 	return s, ln, logPath, fresh, nil

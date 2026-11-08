@@ -236,6 +236,9 @@ func TestAllowedFolderAroundScratch(t *testing.T) {
 	if got := s.conf(); !got.ClaudeDisabled || got.Codex.Enabled || len(got.AllowedFolders) != 0 {
 		t.Fatalf("startup with an allowed folder around Scratch: %+v", got)
 	}
+	if off := s.claudeInfo().Off; !strings.Contains(off, parent) { // razlog v gw status, gw claude in na strani
+		t.Fatalf("no reason: %q", off)
+	}
 	inside := filepath.Join(scratch, "repos")
 	os.MkdirAll(inside, 0o700)
 	for _, f := range []string{parent, inside} {

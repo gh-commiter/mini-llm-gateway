@@ -147,8 +147,10 @@ func (a *adminClient) http(method, path string, body []byte, timeout time.Durati
 // openAdmin: tekoči router (admin.secret in odgovor na status) ali brez routerja (serve.json).
 func openAdmin(cfgPath string) *adminClient {
 	c, err := loadServeConfig(cfgPath)
-	if err != nil {
+	if errors.Is(err, os.ErrNotExist) {
 		fail("cannot read " + cfgPath + " (run minigw serve init first): " + err.Error())
+	} else if err != nil { // neveljaven JSON: router se s to datoteko ne zažene
+		fail("the gateway cannot start with these settings, fix them: " + err.Error())
 	}
 	a := &adminClient{}
 	cfgDir, _ := filepath.Abs(filepath.Dir(cfgPath))
@@ -276,6 +278,9 @@ func routerCommand(args []string, in io.Reader) {
 			claude = "found"
 		}
 		say(clean(fmt.Sprintf("claude: %s, tools %s", claude, st.Claude.Tools)))
+		if st.Claude.Off != "" {
+			say(clean("Claude CLI and Codex are off: " + st.Claude.Off))
+		}
 		for _, g := range st.Gateways {
 			n := "all"
 			if g.Models != nil {
@@ -515,6 +520,9 @@ func routerCommand(args []string, in io.Reader) {
 		}
 		say(clean(fmt.Sprintf("path: %s, found: %v\ntools: %s\nallowLocalTools: %v\naskOthers: %v\nfolders: %s\nallowUnsandboxedBash: %v",
 			path, c.Found, c.Tools, c.AllowLocalTools, c.AskOthers, c.Folders, c.AllowUnsandboxedBash)))
+		if c.Off != "" {
+			say(clean("Claude CLI and Codex are off: " + c.Off))
+		}
 
 	case "autostart": // kot na Macu; Linux: API pove, naj se uporabi minigw serve install
 		need(2, 2)

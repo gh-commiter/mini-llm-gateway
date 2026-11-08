@@ -73,6 +73,7 @@ type apiClaude struct {
 	DisabledTools        []string `json:"disabledTools"`
 	PermissionMode       string   `json:"permissionMode"`
 	SettingSources       string   `json:"settingSources"`
+	Off                  string   `json:"off,omitempty"` // zakaj sta Claude CLI in Codex izklopljena ob zagonu (offReason)
 }
 
 type apiGeneral struct {
@@ -1112,6 +1113,9 @@ func (s *server) claudeInfo() apiClaude {
 		DisabledTools: append([]string{}, c.DisabledTools...), PermissionMode: c.PermissionMode, SettingSources: c.SettingSources}
 	if len(exe) > 0 {
 		info.Exe, info.ClaudeVersion = exe[len(exe)-1], claudeVersion(exe)
+	}
+	if c.ClaudeDisabled {
+		info.Off = s.offReason
 	}
 	return info
 }
