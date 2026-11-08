@@ -170,22 +170,28 @@ func regValue(root syscall.Handle, path, name string) string {
 }
 
 // findWindowByTitle: prvo vidno okno najvišje ravni, katerega naslov se začne s prefix (zavihek brskalnika ima pripono).
-func findWindowByTitle(prefix string) syscall.Handle {
-	var found syscall.Handle
-	cb := syscall.NewCallback(func(h, _ uintptr) uintptr {
+// Povratni klic je eden za proces (syscall.NewCallback jih ima omejeno število); kliče se le z niti pladnja.
+var (
+	findPrefix string
+	findFound  syscall.Handle
+	findCB     = syscall.NewCallback(func(h, _ uintptr) uintptr {
 		if v, _, _ := pIsWindowVisible.Call(h); v == 0 {
 			return 1
 		}
 		buf := make([]uint16, 256)
 		n, _, _ := pGetWindowText.Call(h, uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
-		if strings.HasPrefix(syscall.UTF16ToString(buf[:n]), prefix) {
-			found = syscall.Handle(h)
+		if strings.HasPrefix(syscall.UTF16ToString(buf[:n]), findPrefix) {
+			findFound = syscall.Handle(h)
 			return 0
 		}
 		return 1
 	})
-	pEnumWindows.Call(cb, 0)
-	return found
+)
+
+func findWindowByTitle(prefix string) syscall.Handle {
+	findPrefix, findFound = prefix, 0
+	pEnumWindows.Call(findCB, 0)
+	return findFound
 }
 
 // openSettings: obstoječe okno nastavitev pride naprej; sicer lastno okno brskalnika (--app), nazadnje navadno odpiranje.
