@@ -26,4 +26,8 @@ Copilot on the gateway needs its own GitHub token (`minigw gw copilot token` on 
 settings allow writing, and runs commands only with "Allow commands": if it says it cannot edit or run something, tell the user
 which switch in Mini Gateway → Settings → Copilot CLI it needs. If
 minigw prints that the folder "is not shared with the gateway", run `"${CLAUDE_PLUGIN_DATA}/bin/minigw" share add` and run
-the task again. Check any changed files yourself (for example `git diff`) before telling the user it is done.
+the task again.
+
+If minigw printed `agent work is on branch minigw/…` (worktree mode, the default in a git repository), the changes are on that branch, not in the files yet, and you integrate them: review `git log HEAD..<branch>` and `git diff HEAD...<branch>` (look at changes to `.gitattributes` and `.gitmodules` first: filter drivers run on checkout, submodule URLs), then bring the changes into the working tree with your own tools under the user's normal permissions (`git merge --ff-only <branch>`, `git cherry-pick`, `git diff HEAD...<branch> | git apply`, or Edit). Never check the branch out blindly. In sync and direct mode the changes are already in the folder.
+
+Check any changed files yourself (for example `git diff`) before telling the user it is done.

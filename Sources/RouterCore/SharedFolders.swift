@@ -41,11 +41,11 @@ public enum SharedFolders {
             .max { $0.path.count < $1.path.count }
     }
 
-    /// Način za en zagon: --minigw-work= / MINIGW_WORK > shranjen za mapo > direct. Shranjen --ro velja vedno; native
+    /// Način za en zagon: --minigw-work= / MINIGW_WORK > shranjen za mapo > auto. Shranjen --ro velja vedno; native
     /// samo za branje ni mogoč → direct samo za branje (tudi lažen router, ki native zavrne, ne odpre pisanja).
     /// Worktree samo za branje prav tako ne (agent vrne vejo) → direct samo za branje; auto se razreši v `candidates`.
     public static func mode(flag: String?, saved: Entry?, readOnly: Bool) -> (work: String, readOnly: Bool) {
-        let ro = readOnly || saved?.readOnly == true, work = flag ?? saved?.work ?? "direct"
+        let ro = readOnly || saved?.readOnly == true, work = flag ?? saved?.work ?? "auto"
         return (["native", "native-direct", "worktree"].contains(work) && ro ? "direct" : work, ro)
     }
 

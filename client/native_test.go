@@ -173,7 +173,7 @@ func TestSharedFolderModes(t *testing.T) {
 	}{
 		{"", apps, "native", false},
 		{"sync", apps, "sync", false}, // zastavica zmaga
-		{"", nil, "direct", false},
+		{"", nil, "auto", false},
 		{"", java, "sync", true},
 		{"native", java, "direct", true}, // M1: shranjen --ro ostane; native samo za branje → direct samo za branje
 		{"native", nil, "direct", true},

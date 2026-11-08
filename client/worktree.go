@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -36,6 +37,13 @@ func gitToplevel(cwd string) string {
 		return ""
 	}
 	return filepath.FromSlash(top)
+}
+
+// repoRoot: top je ta mapa (worktree le v korenu repozitorija: nadrejeni, npr. dotfiles v domači mapi ali monorepo,
+// bi poslal tudi datoteke zunaj nje; M1).
+func repoRoot(top, cwd string) bool {
+	rt, rc := realPath(top), realPath(cwd)
+	return top != "" && (rt == rc || runtime.GOOS == "windows" && strings.EqualFold(rt, rc))
 }
 
 // gitHasCommit: repozitorij ima HEAD (brez njega ni posnetka za worktree).
@@ -231,7 +239,10 @@ func (s *shareClient) wtPull(k string, job davJob) davResponse {
 		s.note("worktree: " + why)
 		return dav(500, nil, nil)
 	}
-	s.note("the agent's work is on branch " + req.Branch + " (git log " + req.Branch + "; merge it when you are ready)")
+	if !s.reported["branch:"+req.Branch] { // enkrat na zagon (pod syncMu)
+		s.reported["branch:"+req.Branch] = true
+		s.note("agent work is on branch " + req.Branch + ": review with git diff HEAD..." + req.Branch + ", then merge or apply")
+	}
 	return dav(200, nil, nil)
 }
 

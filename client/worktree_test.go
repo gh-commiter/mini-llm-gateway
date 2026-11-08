@@ -149,6 +149,27 @@ func TestWorkCandidatesAndReadOnly(t *testing.T) {
 	if w, _ := workMode("auto", &sharedFolder{Path: "/p", Work: "sync"}, false); w != "auto" {
 		t.Errorf("flag wins: %s", w)
 	}
+	// Brez izbranega načina auto (kot z Windows/Linux); izrecni direct in shranjen način ostaneta.
+	if w, ro := workMode("", nil, false); w != "auto" || ro {
+		t.Errorf("default: %s %v", w, ro)
+	}
+	if w, _ := workMode("direct", nil, false); w != "direct" {
+		t.Errorf("explicit direct: %s", w)
+	}
+	if w, _ := workMode("", &sharedFolder{Path: "/p", Work: "direct"}, false); w != "direct" {
+		t.Errorf("saved direct: %s", w)
+	}
+	if w, ro := workMode("", &sharedFolder{Path: "/p", ReadOnly: true}, false); w != "auto" || !ro ||
+		workCandidates(w, ro, false, true)[0] != "direct" {
+		t.Errorf("saved --ro: %s %v", w, ro)
+	}
+	// M1: privzeti auto le v korenu repozitorija.
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "sub")
+	os.Mkdir(sub, 0o755)
+	if !repoRoot(dir, dir) || repoRoot(dir, sub) || repoRoot("", dir) {
+		t.Error("repoRoot")
+	}
 }
 
 // M4: le git bundle; L5: veja, na katero je uporabnik commital, ostane njegova (brez sile).

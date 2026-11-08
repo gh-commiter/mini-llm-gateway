@@ -346,7 +346,9 @@ final class ShareClient: @unchecked Sendable {
         defer { try? FileManager.default.removeItem(at: file) }
         guard (try? d.write(to: file)) != nil else { return DAVResponse(500) }
         if let why = Worktree.fetch(top: top, bundle: file, branch: branch) { note("worktree: " + why); return DAVResponse(500) }
-        note("the agent's work is on branch \(branch) (git log \(branch); merge it when you are ready)")
+        if reported.insert("branch:" + branch).inserted {  // enkrat na zagon (pod syncLock)
+            note("agent work is on branch \(branch): review with git diff HEAD...\(branch), then merge or apply")
+        }
         return DAVResponse(200)
     }
 
@@ -600,9 +602,9 @@ let roleArg = GatewayHistory.takeRole(args, env: ProcessInfo.processInfo.environ
 let role = roleArg.role
 args = roleArg.rest
 if !roleArg.ok { fail("--minigw-role: 1-32 letters, digits, . _ or -") }
-// --minigw-work=sync (ali MINIGW_WORK=sync): agenti delajo v kopiji na routerju namesto v priklopu; privzeto direct.
+// --minigw-work=sync (ali MINIGW_WORK=sync): agenti delajo v kopiji na routerju namesto v priklopu; privzeto auto.
 // native: mapa je prek SMB mapa routerja → agenti delajo neposredno v njej (glej Native).
-// Prednost: --minigw-work= / MINIGW_WORK > način mape iz »minigw share add --work=…« > direct.
+// Prednost: --minigw-work= / MINIGW_WORK > način mape iz »minigw share add --work=…« > auto.
 var workFlag = ProcessInfo.processInfo.environment["MINIGW_WORK"].flatMap { $0.isEmpty ? nil : $0 }
 for a in args where a.hasPrefix("--minigw-work=") { workFlag = String(a.dropFirst("--minigw-work=".count)) }
 args.removeAll { $0.hasPrefix("--minigw-work=") }
@@ -836,7 +838,14 @@ if !wantShare && remoteRouter && shareEnv != "0" {
     err.write(Data("minigw: \(cwd) is not shared with the gateway, so agent models (Codex, Claude CLI, Grok) cannot see it; to share it run: minigw share add\n".utf8))
 }
 // Načini po vrsti (auto: native → worktree → sync); naslednji, če router prejšnjega ne sprejme.
-let top = ["auto", "worktree"].contains(work) ? Worktree.toplevel(cwd) : nil
+/// M1: worktree le, če je koren repozitorija ta mapa; nadrejeni (dotfiles v domači mapi, monorepo) bi poslal tudi
+/// datoteke zunaj nje.
+func repoRoot(_ t: String?, _ cwd: String) -> Bool {
+    let real = { URL(fileURLWithPath: $0).resolvingSymlinksInPath().standardizedFileURL.path }
+    return t.map { real($0) == real(cwd) } == true
+}
+// Privzeti auto: worktree le v korenu repozitorija.
+let top = ["auto", "worktree"].contains(work) ? Worktree.toplevel(cwd).flatMap { implicitWork && !repoRoot($0, cwd) ? nil : $0 } : nil
 let smb = work == "auto" && Native.detect(cwd: cwd, override: ProcessInfo.processInfo.environment["MINIGW_NATIVE_MOUNT"]) != nil
 var tries = SharedFolders.candidates(work: work, readOnly: readOnly, smb: smb, git: top != nil)
 // Brez commita ni posnetka: enkrat preveri, nato sync (#10).
@@ -858,7 +867,7 @@ if !wantShare || sid.isEmpty {
     } else if share.native {
         err.write(Data("minigw: \(cwd) is a folder of \(routerHost) (SMB): agent models work in it there directly\(share.locked ? ", one writing agent at a time" : "") (native)\n".utf8))
     } else if share.worktree {
-        err.write(Data("minigw: agent models work in a clone of this git repository on \(routerHost); their work comes back as branches minigw/… (worktree)\n".utf8))
+        err.write(Data("minigw: agent models work in a clone of this git repository on \(routerHost); their work comes back as branch minigw/… (git diff HEAD...<branch>; worktree)\n".utf8))
     } else {
         err.write(Data("minigw: \(share.sync ? "syncing" : "sharing") \(cwd) \(readOnly ? "read-only" : "read-write") with \(routerHost) for agent models (--minigw-ro = read-only, MINIGW_SHARE=0 = off)\n".utf8))
     }
@@ -878,10 +887,7 @@ if !wantShare || sid.isEmpty {
     }
     guard implicit, sc.refusal.hasPrefix("this gateway supports --minigw-work=") else { return (sc, false) }
     let t = Worktree.toplevel(cwd)
-    // M1: worktree le, če je koren repozitorija ta mapa; nadrejeni (dotfiles v domači mapi, monorepo) bi poslal tudi
-    // datoteke zunaj nje.
-    let real = { URL(fileURLWithPath: $0).resolvingSymlinksInPath().standardizedFileURL.path }
-    let auto = !readOnly && t.map { real($0) == real(cwd) && Worktree.hasCommit(top: $0) } == true ? ["worktree", "sync"] : ["sync"]
+    let auto = !readOnly && repoRoot(t, cwd) && t.map { Worktree.hasCommit(top: $0) } == true ? ["worktree", "sync"] : ["sync"]
     if !quiet { err.write(Data("minigw: the gateway has no folder mount; using \(auto[0]) mode (--minigw-work= to choose)\n".utf8)) }
     return registerShare(c, tries: auto, quiet: quiet, top: t, implicit: false)
 }
