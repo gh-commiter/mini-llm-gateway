@@ -80,6 +80,9 @@ func trayStartup(on bool, cfgPath string) error {
 		return err
 	}
 	cfgPath, _ = filepath.Abs(cfgPath)
+	if trayBeside(exe) == "" { // brez pladnja ne minigw.exe ob prijavi (okno konzole); kot installWindows
+		return errors.New("minigw-tray.exe is not next to " + filepath.Base(exe) + ": put minigw-tray.exe next to minigw.exe and run minigw serve install again")
+	}
 	v, err := serviceFile("windows", exe, cfgPath)
 	if err != nil {
 		return err

@@ -69,11 +69,10 @@ func serviceText(goos, exe, cfgPath string) string {
 	case "linux":
 		return "[Unit]\nDescription=Mini Gateway (minigw serve)\nAfter=network-online.target\n\n[Service]\nExecStart=" +
 			systemdQuote(exe) + " serve --config " + systemdQuote(cfgPath) + "\nRestart=on-failure\n\n[Install]\nWantedBy=default.target\n"
-	case "windows": // pladenj, če je ob exe; poti na Windows ne vsebujejo »"«
+	case "windows": // le pladenj (minigw.exe ob prijavi bi odprl okno konzole); "" = ga ni ob exe. Poti brez »"«.
 		if tray := trayBeside(exe); tray != "" {
 			return `"` + tray + `" tray --config "` + cfgPath + `"`
 		}
-		return `"` + exe + `" serve --config "` + cfgPath + `"`
 	}
 	return ""
 }
