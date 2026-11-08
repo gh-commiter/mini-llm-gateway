@@ -149,6 +149,33 @@ func TestWorkCandidatesAndReadOnly(t *testing.T) {
 	if w, _ := workMode("auto", &sharedFolder{Path: "/p", Work: "sync"}, false); w != "auto" {
 		t.Errorf("flag wins: %s", w)
 	}
+	// Brez izbranega načina auto (kot z Windows/Linux); izrecni direct in shranjen način ostaneta.
+	if w, ro := workMode("", nil, false); w != "auto" || ro {
+		t.Errorf("default: %s %v", w, ro)
+	}
+	if w, _ := workMode("direct", nil, false); w != "direct" {
+		t.Errorf("explicit direct: %s", w)
+	}
+	if w, _ := workMode("", &sharedFolder{Path: "/p", Work: "direct"}, false); w != "direct" {
+		t.Errorf("saved direct: %s", w)
+	}
+	if w, ro := workMode("", &sharedFolder{Path: "/p", ReadOnly: true}, false); w != "auto" || !ro ||
+		workCandidates(w, ro, false, true)[0] != "direct" {
+		t.Errorf("saved --ro: %s %v", w, ro)
+	}
+	// M1: auto (privzeti ali izrecni) le v korenu repozitorija; izrecni worktree tudi v nadrejenem.
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "sub")
+	os.Mkdir(sub, 0o755)
+	if !repoRoot(dir, dir) || repoRoot(dir, sub) || repoRoot("", dir) {
+		t.Error("repoRoot")
+	}
+	if out, err := exec.Command("git", "init", "-q", dir).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	if workTop("auto", dir) == "" || workTop("auto", sub) != "" || workTop("worktree", sub) == "" || workTop("sync", dir) != "" {
+		t.Errorf("workTop: %q %q %q", workTop("auto", dir), workTop("auto", sub), workTop("worktree", sub))
+	}
 }
 
 // M4: le git bundle; L5: veja, na katero je uporabnik commital, ostane njegova (brez sile).
@@ -234,5 +261,71 @@ func TestSnapshotSkipsIgnoredFilesAndNeedsACommit(t *testing.T) {
 	}
 	if got := gitT(t, repo, "ls-tree", "-r", "--name-only", snap); got != ".gitignore\nnew.txt" {
 		t.Fatalf("snapshot has %q", got)
+	}
+}
+
+// M1 (auto-default): vrstica o veji kaže le delo agenta — od posnetka (neshranjene spremembe in nesledene datoteke
+// uporabnika), ne od HEAD; pozneje poslan posnetek, ki ni prednik veje, se ne uporabi.
+func TestBranchLineShowsAgentOnlyRange(t *testing.T) {
+	top := t.TempDir()
+	gitT(t, top, "init", "-q", "-b", "main")
+	writeT(t, filepath.Join(top, "a.txt"), "a\n")
+	gitT(t, top, "add", "-A")
+	gitT(t, top, "commit", "-qm", "a")
+	writeT(t, filepath.Join(top, "a.txt"), "mine\n")     // neshranjena sprememba
+	writeT(t, filepath.Join(top, "secret.key"), "key\n") // nesledena datoteka
+	snap := gitSnapshot(top)
+	if snap == "" || snap == gitT(t, top, "rev-parse", "HEAD") {
+		t.Fatalf("snapshot %q", snap)
+	}
+	branch := "minigw/codex-0123abcd-0"
+	blob := gitT(t, top, "hash-object", "-w", "--stdin") // prazen agent.txt na drevesu posnetka
+	ls := gitT(t, top, "ls-tree", snap) + "\n100644 blob " + blob + "\tagent.txt\n"
+	mk := exec.Command("git", "-C", top, "mktree")
+	mk.Stdin = strings.NewReader(ls)
+	out, err := mk.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tip := gitT(t, top, "commit-tree", strings.TrimSpace(string(out)), "-p", snap, "-m", "agent")
+	gitT(t, top, "update-ref", "refs/heads/"+branch, tip)
+	writeT(t, filepath.Join(top, "a.txt"), "later\n")
+	later := gitSnapshot(top) // druga zahteva, drug agent: ni prednik te veje
+
+	base := agentBase(top, branch, []string{snap, later})
+	if base != snap {
+		t.Fatalf("base %s, want snapshot %s", base, snap)
+	}
+	if d := gitT(t, top, "diff", "--name-only", base+".."+branch); d != "agent.txt" {
+		t.Fatalf("agent-only range has %q", d)
+	}
+	line := branchLine(branch, base)
+	if !strings.Contains(line, "git diff "+snap+".."+branch) || !strings.Contains(line, "git cherry-pick "+snap+".."+branch) ||
+		strings.Contains(line, "HEAD") {
+		t.Fatal(line)
+	}
+	if agentBase(top, branch, []string{later}) != "HEAD" {
+		t.Fatal("unrelated snapshot used as base")
+	}
+}
+
+// R1: veja iz sporočila prehoda (native) le, če obstaja in je začetek njen prednik.
+func TestDeliveredBranchChecksAncestry(t *testing.T) {
+	top := t.TempDir()
+	gitT(t, top, "init", "-q", "-b", "main")
+	writeT(t, filepath.Join(top, "a.txt"), "a\n")
+	gitT(t, top, "add", "-A")
+	gitT(t, top, "commit", "-qm", "a")
+	base := gitT(t, top, "rev-parse", "HEAD")
+	branch := "minigw/claude-0123abcd-1"
+	tip := gitT(t, top, "commit-tree", gitT(t, top, "rev-parse", "HEAD^{tree}"), "-p", base, "-m", "agent")
+	other := gitT(t, top, "commit-tree", gitT(t, top, "rev-parse", "HEAD^{tree}"), "-m", "unrelated")
+	if deliveredBranch(top, branch, base) {
+		t.Fatal("missing branch accepted")
+	}
+	gitT(t, top, "update-ref", "refs/heads/"+branch, tip)
+	if !deliveredBranch(top, branch, base) || deliveredBranch(top, branch, other) || deliveredBranch(top, "main", base) ||
+		deliveredBranch(top, branch, "HEAD") {
+		t.Fatal("deliveredBranch")
 	}
 }

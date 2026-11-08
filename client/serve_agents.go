@@ -593,13 +593,10 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 	if why := chainRefusal(r, k.name); why != "" { // vprašani agent: globina in brez ponovitve vrste
 		return writeError(w, r.rid, 403, why)
 	}
-	if s.hub.isWorktree(r.h("x-claude-mini-session")) && (k.name == "grok" || !ac.canWrite(k)) { // besedila kot na Macu
-		msg := "Grok is not supported in worktree mode yet; use sync (MINIGW_WORK=sync)"
-		if k.name != "grok" {
-			pane := map[string]string{"codex": "Codex", "copilot": "Copilot CLI"}[k.name]
-			msg = strings.ToUpper(k.name[:1]) + k.name[1:] + " may not write (settings page → " + pane + "), so worktree mode is not possible; use sync"
-		}
-		return writeError(w, r.rid, 400, msg)
+	// worktree: Grok s pisanjem zavrne (besedilo kot na Macu); agent brez pisanja le bere v klonu (veje ne vrne).
+	treeRun := s.hub.isWorktree(r.h("x-claude-mini-session"))
+	if treeRun && k.name == "grok" && ac.canWrite(k) {
+		return writeError(w, r.rid, 400, "Grok is not supported in worktree mode yet; rerun with minigw --minigw-work=sync …")
 	}
 	dir, note, readOnly, st := s.agentFolder(w, r, k.bin, k.name)
 	if st != 0 {
@@ -607,8 +604,13 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 	}
 	// --minigw-ro tudi brez mape le za branje
 	readOnly = readOnly || r.h("x-claude-mini-ro") == "1"
-	if readOnly && s.hub.isWorktree(r.h("x-claude-mini-session")) { // L2: kot na Macu
+	if readOnly && treeRun && runOf(r) == nil { // L2: kot na Macu (zahteva samo za branje; odjemalca je ne pošiljata)
 		return writeError(w, r.rid, 400, readOnlyWorktree)
+	}
+	if treeRun && !ac.canWrite(k) { // agent brez pisanja: le branje v klonu, veje ne vrne
+		name := map[string]string{"codex": "Codex", "copilot": "Copilot", "grok": "Grok"}[k.name]
+		s.hub.note(r.h("x-claude-mini-session"), name+" may not write, so it only reads in the clone; no branch comes back")
+		note, readOnly = worktreeReadOnlyNote(r.h("x-claude-mini-cwd"), dir), true
 	}
 	if c.askOthers(k.name) { // vrata izvajanja (startRun spodaj)
 		// Absolutna pot: PATH izvajanja ne doseže ukazov v sandboxu Codex na Windows (»elevated« = drug uporabnik);

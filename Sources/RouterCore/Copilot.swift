@@ -229,7 +229,8 @@ extension Router {
     func runCopilot(_ req: HTTPRequest, body: [String: Any], model: String?, rid: String, writer: ResponseWriter) async -> Int {
         let cfg = config.copilot
         let agent = (body["tools"] as? [Any])?.isEmpty == false
-        if !cfg.write, agent, await Self.shares.isWorktree(session: req.header("x-claude-mini-session") ?? "") {
+        if !cfg.write, agent, await Self.shares.isWorktree(session: req.header("x-claude-mini-session") ?? ""),
+           await Self.shares.readOnlyInTree(session: req.header("x-claude-mini-session") ?? "", agent: "Copilot") {  // worktree: le branje
             let why = await Self.shares.worktreeRefusal(session: req.header("x-claude-mini-session") ?? "",
                                                         worktree: "Copilot may not write (Mini Gateway → Settings → Copilot CLI), so worktree mode is not possible; use sync",
                                                         native: "Copilot may not write (Mini Gateway → Settings → Copilot CLI), so it cannot work")
@@ -290,9 +291,10 @@ extension Router {
             cwd = tree?.root ?? dir  // M3: koren klona namesto --add-dir; sporočilo spodaj pove mapo seje
             if shared != nil || tree != nil { visible = cwd }  // R3: le pot iz ShareHub sme biti v (skritem) Scratch
             readOnly = await Self.isReadOnly(req)
-            if readOnly, tree != nil { return await error(400, "invalid_request_error", Self.readOnlyWorktree, rid: rid, writer: writer) }
+            if readOnly, tree != nil, AgentRun.current == nil { return await error(400, "invalid_request_error", Self.readOnlyWorktree, rid: rid, writer: writer) }
             if let shared, let clientCwd {
-                prompt = Self.mountNote(clientCwd, shared, readOnly: readOnly, synced: synced, branch: tree?.branch) + "\n\n" + prompt
+                prompt = Self.mountNote(clientCwd, shared, readOnly: readOnly || (tree != nil && !cfg.write), synced: synced,
+                                        branch: tree?.branch) + "\n\n" + prompt
             }
         }
         let write = cfg.write && !readOnly, commands = agent && cfg.commands && write  // peskovnik piše v mapo: ukazi le s pisanjem (tudi ne pri --ro)
@@ -311,7 +313,7 @@ extension Router {
         }
         let extraEnv = tree.map { Worktree.harnessEnv(root: $0.root, maven: $0.maven) }
             ?? ["TMPDIR": tmp.path + "/", "CLANG_MODULE_CACHE_PATH": tmp.appendingPathComponent("ModuleCache").path]
-        let run = agent ? await startAgentRun(req, kind: "copilot", dir: sharedDir, secretDir: reqDir) : nil  // peskovnik: zaprta le vrata prehoda; žeton v mapi zahteve
+        let run = agent ? await startAgentRun(req, kind: "copilot", dir: sharedDir, secretDir: reqDir, readOnly: tree != nil && !cfg.write) : nil  // peskovnik: zaprta le vrata prehoda; žeton v mapi zahteve
         defer { run?.stop() }
         let env = Copilot.environment(base, home: home, token: token, extra: extraEnv.merging(run?.env ?? [:]) { $1 })
         // Nadaljevanje seje Copilot (--session-id): ključ je dosedanji pogovor v tej mapi; stanje seje iz Scratch.

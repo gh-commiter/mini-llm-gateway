@@ -541,8 +541,8 @@ func main() {
 	// Claude Code prek routerja.
 	// --minigw-ro (ali MINIGW_SHARE=ro): mapa samo za branje; zastavica ne gre naprej v claude.
 	readOnly := os.Getenv("MINIGW_SHARE") == "ro"
-	// --minigw-work=sync (ali MINIGW_WORK=sync): agenti delajo v kopiji na routerju namesto v priklopu; privzeto direct.
-	// Prednost: --minigw-work= / MINIGW_WORK > način mape iz »minigw share add --work=…« > direct.
+	// --minigw-work=sync (ali MINIGW_WORK=sync): agenti delajo v kopiji na routerju namesto v priklopu; privzeto auto.
+	// Prednost: --minigw-work= / MINIGW_WORK > način mape iz »minigw share add --work=…« > auto.
 	work := os.Getenv("MINIGW_WORK")
 	// --minigw-role <ime> (ali MINIGW_ROLE): vloga klicatelja za zgodovino sej (kasneje omejitve); varovalo, ne meja.
 	role, args, ok := takeRole(args, os.Getenv("MINIGW_ROLE"))
@@ -638,10 +638,7 @@ func main() {
 	env = append(env, "ANTHROPIC_CUSTOM_HEADERS="+headers)
 
 	// Načini po vrsti (auto: native → worktree → sync); naslednji, če router prejšnjega ne sprejme.
-	top := ""
-	if work == "auto" || work == "worktree" {
-		top = gitToplevel(cwd)
-	}
+	top := workTop(work, cwd)
 	_, _, smb := nativeDetect(cwd)
 	tries := workCandidates(work, readOnly, work == "auto" && smb, top != "")
 	noCommit := top != "" && slices.Contains(tries, "worktree") && !gitHasCommit(top)
@@ -660,7 +657,7 @@ func main() {
 		share, ok = registerShare(c, sid, cwd, readOnly, top, tries, false, asked == "")
 		if ok && share.worktree {
 			share.start(4)
-			fmt.Fprintf(os.Stderr, "minigw: agent models work in a clone of this git repository on %s; their work comes back as branches minigw/… (worktree)\n", routerHost)
+			fmt.Fprintf(os.Stderr, "minigw: agent models work in a clone of this git repository on %s; their work comes back as branch minigw/… (minigw prints the range to review; your uncommitted and untracked, not ignored files are sent too; worktree)\n", routerHost)
 		} else if ok && share.native && share.branches {
 			share.start(4)
 			fmt.Fprintf(os.Stderr, "minigw: %s is a folder of %s (SMB): agent models work there in clones of this git repository, each on its own branch minigw/… (native; --minigw-work=native-direct = in the folder itself)\n", cwd, routerHost)
@@ -790,10 +787,7 @@ func registerShare(c connection, sid, cwd string, readOnly bool, top string, tri
 		return sc, false
 	}
 	t, auto := gitToplevel(cwd), []string{"sync"}
-	// M1: worktree le, če je koren repozitorija ta mapa; nadrejeni (dotfiles v domači mapi, monorepo) bi poslal tudi
-	// datoteke zunaj nje.
-	rt, rc := realPath(t), realPath(cwd)
-	if !readOnly && t != "" && (rt == rc || runtime.GOOS == "windows" && strings.EqualFold(rt, rc)) && gitHasCommit(t) {
+	if !readOnly && repoRoot(t, cwd) && gitHasCommit(t) {
 		auto = []string{"worktree", "sync"}
 	}
 	if !quiet {
@@ -964,7 +958,7 @@ func lookupSharedFolder(list []sharedFolder, cwd string) *sharedFolder {
 	return best
 }
 
-// workMode: --minigw-work= / MINIGW_WORK > način mape iz »minigw share add --work=…« > direct. Shranjen --ro velja vedno;
+// workMode: --minigw-work= / MINIGW_WORK > način mape iz »minigw share add --work=…« > auto. Shranjen --ro velja vedno;
 // native samo za branje ni mogoč → direct samo za branje (tudi lažen router, ki native zavrne, ne odpre pisanja).
 func workMode(flag string, saved *sharedFolder, readOnly bool) (string, bool) {
 	work := flag
@@ -972,7 +966,7 @@ func workMode(flag string, saved *sharedFolder, readOnly bool) (string, bool) {
 		work = saved.Work
 	}
 	if work == "" {
-		work = "direct"
+		work = "auto"
 	}
 	ro := readOnly || (saved != nil && saved.ReadOnly)
 	if (work == "native" || work == "native-direct" || work == "worktree") && ro { // worktree vrne vejo: samo za branje → direct

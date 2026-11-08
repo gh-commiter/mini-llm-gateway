@@ -406,6 +406,11 @@ extension Router {
 
     /// Navodilo agentu za priklopljeno mapo odjemalca (macOS, Windows ali Linux).
     static func mountNote(_ clientCwd: String, _ shared: URL, readOnly: Bool, synced: Bool = false, branch: String? = nil) -> String {
+        if let branch, readOnly {  // worktree, agent brez pisanja
+            return "The user's folder \(clientCwd) (on their computer, a git repository) is a clone here at \(shared.path), your working"
+                + " directory, read-only for you: do not try to create, change or delete files in it. Map paths under \(clientCwd) to it."
+                + " Nothing goes back to the user, so give your answer in your reply."
+        }
         if let branch {
             return "The user's folder \(clientCwd) (on their computer, a git repository) is a clone here at \(shared.path), your working"
                 + " directory, on branch \(branch). Map paths under \(clientCwd) to it. Commit your work on this branch; changes you leave"
@@ -457,7 +462,7 @@ extension Router {
             let synced = await Self.shares.isSync(session: req.header("x-claude-mini-session") ?? "")
             let tree = await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "")
             let readOnly = await Self.isReadOnly(req)
-            if readOnly, tree != nil { return await error(400, "invalid_request_error", Self.readOnlyWorktree, rid: rid, writer: writer) }
+            if readOnly, tree != nil { return await error(400, "invalid_request_error", Self.readOnlyWorktree, rid: rid, writer: writer) }  // R4: tudi vprašani (kot Go)
             if let shared, let clientCwd {
                 args += ["--append-system-prompt", Self.mountNote(clientCwd, shared, readOnly: readOnly, synced: synced, branch: tree?.branch)]
             }

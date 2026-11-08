@@ -389,9 +389,15 @@ public actor ShareHub {
     func inPlace(session: String) -> Bool { bySession[session].map { $0.tree == nil && $0.copy == nil } ?? false }
 
     /// Sporočilo za uporabnika prek minigw (WORKTREE-NOTE: izpiše ga na stderr); starejši minigw ga zavrne, ostane v dnevniku.
-    func note(_ s: Share, _ message: String) async {
-        let body = (try? JSONSerialization.data(withJSONObject: ["message": message])) ?? Data()
+    /// `extra`: npr. branch, base dostavljene veje (minigw ju preveri in izpiše vrstico o veji).
+    func note(_ s: Share, _ message: String, extra: [String: String] = [:]) async {
+        let body = (try? JSONSerialization.data(withJSONObject: extra.merging(["message": message]) { $1 })) ?? Data()
         _ = await send(s, DAVJob(id: UUID().uuidString, method: "WORKTREE-NOTE", path: "", prefix: "", headers: [:], body: body), timeout: 10)
+    }
+
+    /// Sporočilo uporabniku te seje (WORKTREE-NOTE), npr. agent brez pisanja v načinu worktree.
+    func note(session: String, _ message: String) async {
+        if let s = bySession[session] { await note(s, message) }
     }
 
     /// Razlog zadnjega neuspelega mount te seje (enkrat).

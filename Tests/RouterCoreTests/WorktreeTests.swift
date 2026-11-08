@@ -268,10 +268,11 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
     #expect(g(client, "rev-parse", branch) == mine)  // ni prepisana
 }
 
-/// H2: Grok v načinu worktree ni podprt (400, preden se karkoli priklopi); M3: Codex brez pisanja tudi ne.
+/// H2: Grok s pisanjem v načinu worktree ni podprt (400 z navodilom za sync, preden se karkoli priklopi);
+/// F2: Codex brez pisanja ni zavrnjen (v klonu le bere).
 @Test func worktreeRefusesGrokAndReadOnlyCodex() async throws {
     var c = RouterConfig()
-    c.grok.enabled = true; c.codex.enabled = true; c.codex.write = false
+    c.grok.enabled = true; c.grok.write = true; c.codex.enabled = true; c.codex.write = false
     let r = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]))
     let session = UUID().uuidString
     _ = await Router.shares.register(session: session, cwd: "/p", key: nil, device: nil,
@@ -282,7 +283,11 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
         q.peer = "127.0.0.1"
         let w = FakeWriter()
         await r.handle(q, writer: w)
-        #expect(w.status == 400 && w.text.contains(model == "claude-grok" ? "Grok is not supported in worktree mode" : "Codex may not write"), "\(model): \(w.text)")
+        if model == "claude-grok" {
+            #expect(w.status == 400 && w.text.contains("rerun with minigw --minigw-work=sync"), "\(model): \(w.text)")
+        } else {
+            #expect(!w.text.contains("may not write"), "\(model): \(w.text)")
+        }
     }
 }
 
@@ -770,4 +775,67 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     let snap = try #require(Worktree.snapshot(top: root.path))
     #expect(Worktree.hasCommit(top: root.path))
     #expect(g(root, "ls-tree", "-r", "--name-only", snap) == ".gitignore\nnew.txt")
+}
+
+/// Auto (privzeti ali izrecni) le v korenu repozitorija (kot Go repoRoot/workTop); vrstica o veji le z delom agenta
+/// od posnetka (neshranjene in nesledene datoteke uporabnika niso v obsegu), kot Go TestBranchLineShowsAgentOnlyRange.
+@Test func autoRepoRootAndAgentOnlyBranchRange() throws {
+    let (root, client, _) = try fixture()
+    defer { cleanup(root) }
+    let sub = client.appendingPathComponent("sub")
+    try FileManager.default.createDirectory(at: sub, withIntermediateDirectories: true)
+    #expect(SharedFolders.repoRoot(client.path, client.path) && !SharedFolders.repoRoot(client.path, sub.path) && !SharedFolders.repoRoot(nil, client.path))
+
+    let snap = try #require(Worktree.snapshot(top: client.path))  // a.txt neshranjen, new.txt nesleden
+    #expect(snap != g(client, "rev-parse", "HEAD"))
+    let branch = "minigw/codex-0123abcd-0"
+    let blob = Worktree.run(["hash-object", "-w", "--stdin"], cwd: client.path, safe: false, input: Data("agent\n".utf8)).out
+    let tree = Worktree.run(["mktree"], cwd: client.path, safe: false,
+                            input: Data((g(client, "ls-tree", snap) + "\n100644 blob \(blob)\tagent.txt\n").utf8)).out
+    let tip = g(client, "commit-tree", tree, "-p", snap, "-m", "agent")
+    g(client, "update-ref", "refs/heads/" + branch, tip)
+    try file(client, "a.txt", "later\n")
+    let later = try #require(Worktree.snapshot(top: client.path))
+
+    let base = Worktree.agentBase(top: client.path, branch: branch, sent: [snap, later])
+    #expect(base == snap)
+    #expect(g(client, "diff", "--name-only", "\(base)..\(branch)") == "agent.txt")
+    let line = Worktree.branchLine(branch: branch, base: base)
+    #expect(line.contains("git diff \(snap)..\(branch)") && line.contains("git cherry-pick \(snap)..\(branch)") && !line.contains("HEAD"))
+    #expect(Worktree.agentBase(top: client.path, branch: branch, sent: [later]) == "HEAD")
+    // R1: veja iz sporočila prehoda (native) le, če obstaja in je začetek njen prednik
+    #expect(Worktree.delivered(root: client.path, branch: branch, base: snap))
+    #expect(!Worktree.delivered(root: client.path, branch: branch, base: later) && !Worktree.delivered(root: client.path, branch: "minigw/codex-0123abcd-9", base: snap)
+            && !Worktree.delivered(root: client.path, branch: "main", base: snap))
+}
+
+/// R4: agent, ki v klonu le bere (izvajanje za branje), vpraša Claude CLI: ta v načinu worktree zavrne (400), ne piše v klon.
+@Test func readOnlyRunAskingClaudeInWorktreeIsRefused() async throws {
+    let (root, client, tree) = try fixture()
+    defer { cleanup(root) }
+    var c = RouterConfig()
+    c.claudeCLI.enabled = true; c.claudeCLI.askOthers = true; c.claudeCLI.allowLocalTools = true; c.codex.askOthers = true
+    let router = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]))
+    let hub = Router.shares, session = UUID().uuidString
+    let key = try #require(await hub.register(session: session, cwd: client.path, key: nil, device: "dev", tree: tree))
+    let loop = fakeClient(hub, key: key, top: client)
+    defer { loop.cancel() }
+    let caller = request("POST", "/v1/messages", headers: ["x-claude-mini-session": session, "x-claude-mini-cwd": client.path])
+    let id = UUID().uuidString
+    let run = try #require(await ShareHub.$run.withValue(id) {
+        await ShareHub.$agent.withValue("codex") { () -> AgentRun? in
+            guard await hub.mount(session: session, cwd: nil, base: "http://127.0.0.1:1", device: "dev") != nil else { return nil }
+            return await router.startAgentRun(caller, kind: "codex", dir: nil, readOnly: true)
+        }
+    })
+    defer { run.stop(); Task { await hub.finish(run: id) } }
+    run.started(getpid())
+    var r = URLRequest(url: URL(string: "http://127.0.0.1:\(run.port)/v1/messages")!)
+    r.httpMethod = "POST"
+    r.setValue("Bearer " + run.token, forHTTPHeaderField: "Authorization")
+    r.setValue("application/json", forHTTPHeaderField: "content-type")
+    r.httpBody = Data(#"{"model":"claude-cli-haiku","max_tokens":5,"tools":[{"name":"x","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":"hi"}]}"#.utf8)
+    let (data, resp) = try await URLSession(configuration: .ephemeral).data(for: r)
+    #expect((resp as? HTTPURLResponse)?.statusCode == 400 && String(decoding: data, as: UTF8.self).contains("Worktree mode cannot be read-only"),
+            "\(String(decoding: data, as: UTF8.self))")
 }

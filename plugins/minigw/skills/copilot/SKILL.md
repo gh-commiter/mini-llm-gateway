@@ -26,4 +26,10 @@ Copilot on the gateway needs its own GitHub token (`minigw gw copilot token` on 
 settings allow writing, and runs commands only with "Allow commands": if it says it cannot edit or run something, tell the user
 which switch in Mini Gateway → Settings → Copilot CLI it needs. If
 minigw prints that the folder "is not shared with the gateway", run `"${CLAUDE_PLUGIN_DATA}/bin/minigw" share add` and run
-the task again. Check any changed files yourself (for example `git diff`) before telling the user it is done.
+the task again.
+
+If minigw printed `agent work is on branch <branch>: review with git diff <base>..<branch> …` (worktree mode, the default in a git repository, and native mode in a git repository), the changes are on that branch, not in the files yet, and you integrate them. Use exactly the range minigw printed (`<base>` is the user's state when the agent started, not `HEAD`), and only a branch name matching `^minigw/[a-z]+-[0-9a-f]{8}-[0-9]+$`. Review `git log <base>..<branch>` and `git diff <base>..<branch>` (look at changes to `.gitattributes` and `.gitmodules` first: filter drivers run on checkout, submodule URLs), then apply the changes into the working tree with your own tools under the user's normal permissions: `git diff --binary <base>..<branch> | git apply` in the repository root, `git cherry-pick -n <base>..<branch>`, or Edit, so the user's own uncommitted changes stay uncommitted. Never merge, fast-forward or check out the branch itself: it contains a snapshot commit with the user's uncommitted changes and untracked files (possibly keys), which would then be committed. In sync and direct mode the changes are already in the folder.
+
+If the gateway refuses with "… use sync" or "rerun with minigw --minigw-work=sync …", tell the user and ask before running the same command again with `--minigw-work=sync` right after `minigw`: sync writes the agent's changes straight into the folder, without a branch to review.
+
+Check any changed files yourself (for example `git diff`) before telling the user it is done.

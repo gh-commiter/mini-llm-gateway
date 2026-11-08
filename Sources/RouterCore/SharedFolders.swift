@@ -41,11 +41,11 @@ public enum SharedFolders {
             .max { $0.path.count < $1.path.count }
     }
 
-    /// Način za en zagon: --minigw-work= / MINIGW_WORK > shranjen za mapo > direct. Shranjen --ro velja vedno; native
+    /// Način za en zagon: --minigw-work= / MINIGW_WORK > shranjen za mapo > auto. Shranjen --ro velja vedno; native
     /// samo za branje ni mogoč → direct samo za branje (tudi lažen router, ki native zavrne, ne odpre pisanja).
     /// Worktree samo za branje prav tako ne (agent vrne vejo) → direct samo za branje; auto se razreši v `candidates`.
     public static func mode(flag: String?, saved: Entry?, readOnly: Bool) -> (work: String, readOnly: Bool) {
-        let ro = readOnly || saved?.readOnly == true, work = flag ?? saved?.work ?? "direct"
+        let ro = readOnly || saved?.readOnly == true, work = flag ?? saved?.work ?? "auto"
         return (["native", "native-direct", "worktree"].contains(work) && ro ? "direct" : work, ro)
     }
 
@@ -60,6 +60,13 @@ public enum SharedFolders {
         case "worktree": return git ? ["worktree", "sync"] : ["direct"]
         default: return [work]
         }
+    }
+
+    /// M1: worktree pri auto le, če je koren repozitorija ta mapa; nadrejeni (dotfiles v domači mapi, monorepo) bi poslal
+    /// tudi datoteke zunaj nje.
+    public static func repoRoot(_ top: String?, _ cwd: String) -> Bool {
+        let real = { URL(fileURLWithPath: $0).resolvingSymlinksInPath().standardizedFileURL.path }
+        return top.map { real($0) == real(cwd) } == true
     }
 
     /// Pot za seznam: ena vrstica, tabulator loči možnosti.

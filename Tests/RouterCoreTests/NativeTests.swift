@@ -227,7 +227,9 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     #expect(SharedFolders.lookup(list, cwd: "/Volumes/JavaX") == nil)
     #expect(SharedFolders.mode(flag: nil, saved: apps, readOnly: false) == ("native", false))
     #expect(SharedFolders.mode(flag: "sync", saved: apps, readOnly: false) == ("sync", false))  // zastavica zmaga
-    #expect(SharedFolders.mode(flag: nil, saved: nil, readOnly: false) == ("direct", false))
+    #expect(SharedFolders.mode(flag: nil, saved: nil, readOnly: false) == ("auto", false))  // privzeto auto
+    #expect(SharedFolders.mode(flag: "direct", saved: nil, readOnly: false) == ("direct", false))
+    #expect(SharedFolders.mode(flag: nil, saved: SharedFolders.Entry(path: "/p", work: "direct"), readOnly: false) == ("direct", false))
     let java = SharedFolders.lookup(list, cwd: "/Volumes/Java/x")
     #expect(SharedFolders.mode(flag: nil, saved: java, readOnly: false) == ("sync", true))
     // M1: shranjen --ro ostane tudi z native (→ direct samo za branje), ne glede na odgovor routerja

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -36,6 +37,25 @@ func gitToplevel(cwd string) string {
 		return ""
 	}
 	return filepath.FromSlash(top)
+}
+
+// repoRoot: top je ta mapa (worktree le v korenu repozitorija: nadrejeni, npr. dotfiles v domači mapi ali monorepo,
+// bi poslal tudi datoteke zunaj nje; M1).
+func repoRoot(top, cwd string) bool {
+	rt, rc := realPath(top), realPath(cwd)
+	return top != "" && (rt == rc || runtime.GOOS == "windows" && strings.EqualFold(rt, rc))
+}
+
+// workTop: repozitorij za worktree; auto le v korenu repozitorija (podmapa → sync), izrecni worktree tudi nadrejeni.
+func workTop(work, cwd string) string {
+	if work != "auto" && work != "worktree" {
+		return ""
+	}
+	top := gitToplevel(cwd)
+	if work == "auto" && !repoRoot(top, cwd) {
+		return ""
+	}
+	return top
 }
 
 // gitHasCommit: repozitorij ima HEAD (brez njega ni posnetka za worktree).
@@ -196,6 +216,9 @@ func (s *shareClient) wtPush(k string, job davJob) davResponse {
 			}
 		}
 	}
+	if s.snaps = append(s.snaps, snap); len(s.snaps) > 64 {
+		s.snaps = s.snaps[1:]
+	}
 	body, _ := json.Marshal(map[string]string{"snapshot": snap})
 	return dav(200, nil, body)
 }
@@ -231,8 +254,51 @@ func (s *shareClient) wtPull(k string, job davJob) davResponse {
 		s.note("worktree: " + why)
 		return dav(500, nil, nil)
 	}
-	s.note("the agent's work is on branch " + req.Branch + " (git log " + req.Branch + "; merge it when you are ready)")
+	s.branchNote(req.Branch, agentBase(s.top, req.Branch, s.snaps))
 	return dav(200, nil, nil)
+}
+
+// agentBase: začetek dela agenta — zadnji poslani posnetek, ki je prednik veje (HEAD z neshranjenimi spremembami in
+// nesledenimi datotekami uporabnika; ti niso delo agenta). Brez njega HEAD. Prehodu ne verjame: le posnetki tega odjemalca.
+func agentBase(top, branch string, sent []string) string {
+	for i := len(sent) - 1; i >= 0; i-- {
+		if _, err := gitUser(top, nil, "merge-base", "--is-ancestor", sent[i], "refs/heads/"+branch); err == nil {
+			return sent[i]
+		}
+	}
+	return "HEAD"
+}
+
+// deliveredBranch (R1): veja in začetek iz sporočila prehoda (native) le, če sta veljavna, veja obstaja v repozitoriju
+// uporabnika in je začetek njen prednik.
+func deliveredBranch(root, branch, base string) bool {
+	if !branchRe.MatchString(branch) || !shaRe.MatchString(base) {
+		return false
+	}
+	top := gitToplevel(root)
+	if top == "" {
+		return false
+	}
+	if _, err := gitUser(top, nil, "rev-parse", "--verify", "-q", "refs/heads/"+branch+"^{commit}"); err != nil {
+		return false
+	}
+	_, err := gitUser(top, nil, "merge-base", "--is-ancestor", base, "refs/heads/"+branch)
+	return err == nil
+}
+
+// branchLine: vrstica o dostavljeni veji (enaka v odjemalcu Swift): le delo agenta, brez posnetka uporabnika.
+func branchLine(branch, base string) string {
+	r := base + ".." + branch
+	return "agent work is on branch " + branch + ": review with git diff " + r + " (" + base + " = your state when the agent started), " +
+		"then bring it in with git cherry-pick " + r + " or git diff --binary " + r + " | git apply"
+}
+
+// branchNote: vrstica o veji enkrat na vejo in začetek v zagonu (pod syncMu).
+func (s *shareClient) branchNote(branch, base string) {
+	if k := "branch:" + branch + "@" + base; !s.reported[k] {
+		s.reported[k] = true
+		s.note(branchLine(branch, base))
+	}
 }
 
 // workCandidates: načini po vrsti (kot SharedFolders.candidates): auto → native (shema SMB) → worktree (git) → sync;

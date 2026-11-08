@@ -354,16 +354,18 @@ minigw disconnect --name win
   gateway's models; one that cannot be reached is left out, and `minigw status` shows it.
 - The folder is shared with another gateway only when that gateway gets its first request for an agent model
   (`claude-cli-*`, `claude-codex*`, `claude-grok*`, `claude-copilot*`), in the same work mode
-  (`--minigw-work`). With a Windows or Linux gateway and no mode chosen, the client picks worktree or sync; an explicit
-  `direct` is refused there.
+  (`--minigw-work`). With no mode chosen it is auto with every gateway; an explicit `direct` is refused by a Windows or
+  Linux gateway.
 - Each profile keeps its own address, token and gateway key: Keychain on the Mac, Credential Manager on Windows, on Linux
   `~/.config/minigw/connections/<profile>.json` (mode 0600). The device key is
   one per client, so every gateway recognises the same device.
 
 **Another Mac and Claude CLI models with tools.** `opus`, `sonnet`, `haiku` and `fable` run `claude -p` as an agent on
 the gateway Mac. When `minigw` talks to a gateway on another Mac, it shares the current folder with it for the length
-of the session: the gateway mounts it (built-in WebDAV, through the connection `minigw` opens, so the gateway Mac does
-not need to reach the client) and the agent works on your files. Nothing to install on either side. Any project
+of the session, everything through the connection `minigw` opens (the gateway Mac does not need to reach the client).
+The default work mode is `auto` ([below](#auto-mode)): the root of a git repository goes to a clone and the agent's work
+comes back as a branch (worktree), other folders are synced (sync); in direct mode (`--minigw-work=direct`) the gateway
+mounts the folder (built-in WebDAV) and the agent works on your files. Nothing to install on either side. Any project
 folder is shared, also outside your home folder (for example `D:\Projects\app` on Windows or `/Volumes/Disk/app`),
 but never a drive or volume root, the home folder itself, system folders (`C:\Windows`, `Program Files`, `/usr`,
 `/System` …), other users' home folders, `~/Library`, `AppData` or hidden folders such as `~/.ssh`. To share one of
@@ -373,8 +375,9 @@ credentials out of project folders you use with a gateway, or list them in `.git
 The list is per computer: with several profiles every gateway gets the folder on its first agent request.
 **Protected paths:** as in sync mode, the mount refuses every write (403) to `.git` (in any letter case, also `git~1`),
 `.claude/settings*.json`, `.vscode/tasks.json` and `.envrc`, also through a link in the folder; reading them still
-works. Direct is the default with a Mac gateway on another computer, so by default agents cannot `git commit` or change
-the folder's Claude Code settings there: use worktree mode (`--minigw-work=worktree`) for commits. Moving, copying or
+works. In direct mode (`--minigw-work=direct`, or `minigw share add --work=direct`) agents therefore cannot
+`git commit` or change the folder's Claude Code settings: the default auto mode uses worktree for a git repository, so
+commits work there. Moving, copying or
 deleting a folder is refused too when it would create or remove one of these files. A gateway on the same Mac shares
 no folder (agents work in the folder itself), so this protection does not apply there.
 **Read-only:** `minigw --minigw-ro …` (or `MINIGW_SHARE=ro`, for example in the `env` of Claude Code's settings for the
@@ -426,11 +429,16 @@ and gives each agent its own clone on a branch `minigw/<agent>-<session>-<n>`; p
   checks objects (fsck), runs no hooks, submodules or filters, and does not change `.git/config`. If you committed on that
   branch yourself, your commits stay and the agent's version is not fetched. The gateway never runs git with the agent's own
   `.git` (config, hooks) and reads the clone only from a sandbox.
-- **Review the branch before you check it out or build it:** it is the agent's work. Look at `.gitattributes` (filter
-  and diff drivers you have configured would run on checkout) and `.gitmodules` (submodule URLs) first.
+- **Review only the agent's part:** minigw prints `agent work is on branch <branch>: review with git diff <base>..<branch>
+  (<base> = your state when the agent started), then bring it in with git cherry-pick <base>..<branch> or git diff
+  --binary <base>..<branch> | git apply` once per branch and starting state in a run (also for native mode in a git repository).
+  `<base>` is the snapshot commit with your uncommitted changes and untracked files: do not merge, fast-forward or check
+  out the branch itself, or those files (keys too) end up committed. Look at `.gitattributes` (filter and diff drivers
+  you have configured would run on checkout) and `.gitmodules` (submodule URLs) first.
 - **Sandboxed agents:** Claude CLI agents get Bash, always in Claude Code's sandbox; Codex uses its own sandbox with the
-  clone as the writable folder (not when Codex may not write: then worktree mode is refused). Grok is not supported in
-  worktree mode yet (use sync). They write only to the clone, their own Maven repository (`MAVEN_OPTS`), DerivedData and
+  clone as the writable folder. Agents that may not write (Codex, Copilot or Grok with writing off) only read in the clone
+  and bring back no branch (minigw says so); Grok with writing on is not supported in worktree mode yet and is refused
+  ("rerun with minigw --minigw-work=sync …"). They write only to the clone, their own Maven repository (`MAVEN_OPTS`), DerivedData and
   temporary folders, never to your `~/.m2` settings, plugins or SwiftPM configuration; Claude cannot read your home
   folder (from `~/.m2` only `settings.xml` and `toolchains.xml`). Agents have their own temporary folder and module
   cache in the clone, never the shared ones of this Mac. Maven builds work; `swift build` and `xcodebuild` by an agent
@@ -438,9 +446,14 @@ and gives each agent its own clone on a branch `minigw/<agent>-<session>-<n>`; p
   `minigw run` or in sync mode. Network for builds: on for Claude (its sandbox hides your files), off for Codex (it can read all your files);
   Settings → General → Worktree mode. The Scratch folder must not be a temporary or build cache folder; mirrors unused for
   30 days are removed.
-- **`--minigw-work=auto`:** read-only (`--minigw-ro`) → direct; a folder on the gateway's SMB share → native; a git
-  repository → worktree, then sync (never direct read-write: agents cannot commit there, `.git` is read-only); otherwise sync, then direct.
-  A saved per-folder mode (`minigw share add --work=…`) and the flag still win.
+- <a id="auto-mode"></a>**`--minigw-work=auto` (the default with every gateway on another computer):** read-only
+  (`--minigw-ro`) → direct; a folder on the gateway's SMB share → native; a git repository → worktree, then sync (never
+  direct read-write: agents cannot commit there, `.git` is read-only); otherwise sync, then direct. Worktree
+  only when the folder is the root of the repository and it has a commit (a subfolder of a repository is synced, so files
+  outside it are never sent; only an explicit `--minigw-work=worktree` uses the parent repository). A saved per-folder mode (`minigw share add --work=…`), `MINIGW_WORK` and the flag
+  still win; `minigw share add --work=direct` keeps the old Mac default for a folder, or `MINIGW_WORK=direct` for every
+  folder (for example in the `env` of Claude Code's settings). A gateway on the same Mac shares no folder. In worktree
+  mode nothing is merged for you: minigw prints the branch and the range to review (above).
 - **On `minigw serve` (Windows, Linux)** worktree works the same way: the gateway's own `git` from PATH (no system or global
   config, hooks, fsmonitor or submodules), one clone per session and agent, so one branch `minigw/<agent>-<session>-0`.
   Agent requests run one at a time per device and repository: also two sessions of the same device in the same

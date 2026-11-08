@@ -153,7 +153,7 @@ private func field(_ text: String, _ name: String) -> String {
     q.peer = "127.0.0.1"
     let w = FakeWriter()
     await r.handle(q, writer: w)
-    #expect(w.status == 400 && w.text.contains("Copilot may not write"))
+    #expect(!w.text.contains("Copilot may not write"))  // F2: brez pisanja v klonu le bere (ni 400)
 
     let app = FakeApp()
     #expect(await admin(app.router(), "GET", "/agents/copilot").text.contains(#""commands":false"#))

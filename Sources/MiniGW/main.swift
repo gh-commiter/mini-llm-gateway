@@ -238,6 +238,7 @@ final class ShareClient: @unchecked Sendable {
     private var synced: [String: Sync.Entry] = [:]  // manifest ob zadnjem prenosu (zgoščevanje, spori)
     private var sent: [String: Set<String>] = [:]   // pot → različice, ki jih je router dobil od tega odjemalca (#20)
     private var reported: Set<String> = []          // že javljene prevelike datoteke
+    private var snaps: [String] = []                // worktree: posnetki, poslani prehodu (začetek dela agenta)
     private var unpulled = false                    // spremembe agenta, ki niso bile prevzete in potrjene
 
     init(_ c: Connection, session: String, root: URL, readOnly: Bool, kind: String, top: String? = nil) {
@@ -282,8 +283,9 @@ final class ShareClient: @unchecked Sendable {
                 // Router ni zaupanja vreden: Sync.jobAllowed (SYNC-* le v sync, PULL ne pri --minigw-ro, WebDAV le v direct).
                 // worktree: le WORKTREE-PUSH (posnetek k routerju) in WORKTREE-PULL (veja agenta kot ref).
                 let r = worktree ? (job.method == "WORKTREE-PUSH" ? syncLock.withLock { wtPush(k, job) }
-                                    : job.method == "WORKTREE-PULL" ? syncLock.withLock { wtPull(k, job) } : DAVResponse(403))
-                    : native && job.method == "WORKTREE-NOTE" ? noteJob(job)  // native z git: veja ni bila dostavljena
+                                    : job.method == "WORKTREE-PULL" ? syncLock.withLock { wtPull(k, job) }
+                                    : job.method == "WORKTREE-NOTE" ? syncLock.withLock { noteJob(job) } : DAVResponse(403))
+                    : native && job.method == "WORKTREE-NOTE" ? syncLock.withLock { noteJob(job) }  // native z git: veja (ne)dostavljena
                     : native || job.method.hasPrefix("WORKTREE-")
                         || !Sync.jobAllowed(job.method, sync: sync, readOnly: readOnly, write: Self.writeMethods.contains(job.method))
                     ? DAVResponse(403)
@@ -308,9 +310,20 @@ final class ShareClient: @unchecked Sendable {
 
     private func note(_ s: String) { err.write(Data(("minigw: " + clean(s) + "\n").utf8)) }
 
+    /// Sporočilo prehoda v eni vrstici; native z git: dostavljena veja (preverjeno ime in SHA) kot vrstica o veji.
     private func noteJob(_ job: DAVJob) -> DAVResponse {
-        note(((try? JSONSerialization.jsonObject(with: job.body)) as? [String: Any])?["message"] as? String ?? "")
+        let n = (try? JSONSerialization.jsonObject(with: job.body)) as? [String: Any]
+        if native, let b = n?["branch"] as? String, let base = n?["base"] as? String, Worktree.delivered(root: root.path, branch: b, base: base) {
+            branchNote(b, base)
+        } else {
+            err.write(Data(("minigw: " + oneLine(n?["message"] as? String ?? "") + "\n").utf8))
+        }
         return DAVResponse(200)
+    }
+
+    /// Vrstica o veji enkrat na vejo in začetek v zagonu (pod syncLock).
+    private func branchNote(_ branch: String, _ base: String) {
+        if reported.insert("branch:\(branch)@\(base)").inserted { note(Worktree.branchLine(branch: branch, base: base)) }
     }
 
     /// worktree: posnetek stanja (brez spremembe indeksa ali vej) in bundle manjkajočih objektov po delih do 32 MB.
@@ -330,6 +343,8 @@ final class ShareClient: @unchecked Sendable {
                 part += 1
             }
         }
+        snaps.append(snap)
+        if snaps.count > 64 { snaps.removeFirst() }
         return DAVResponse(200, [:], (try? JSONSerialization.data(withJSONObject: ["snapshot": snap])) ?? Data())
     }
 
@@ -346,7 +361,7 @@ final class ShareClient: @unchecked Sendable {
         defer { try? FileManager.default.removeItem(at: file) }
         guard (try? d.write(to: file)) != nil else { return DAVResponse(500) }
         if let why = Worktree.fetch(top: top, bundle: file, branch: branch) { note("worktree: " + why); return DAVResponse(500) }
-        note("the agent's work is on branch \(branch) (git log \(branch); merge it when you are ready)")
+        branchNote(branch, Worktree.agentBase(top: top, branch: branch, sent: snaps))
         return DAVResponse(200)
     }
 
@@ -600,9 +615,9 @@ let roleArg = GatewayHistory.takeRole(args, env: ProcessInfo.processInfo.environ
 let role = roleArg.role
 args = roleArg.rest
 if !roleArg.ok { fail("--minigw-role: 1-32 letters, digits, . _ or -") }
-// --minigw-work=sync (ali MINIGW_WORK=sync): agenti delajo v kopiji na routerju namesto v priklopu; privzeto direct.
+// --minigw-work=sync (ali MINIGW_WORK=sync): agenti delajo v kopiji na routerju namesto v priklopu; privzeto auto.
 // native: mapa je prek SMB mapa routerja → agenti delajo neposredno v njej (glej Native).
-// Prednost: --minigw-work= / MINIGW_WORK > način mape iz »minigw share add --work=…« > direct.
+// Prednost: --minigw-work= / MINIGW_WORK > način mape iz »minigw share add --work=…« > auto.
 var workFlag = ProcessInfo.processInfo.environment["MINIGW_WORK"].flatMap { $0.isEmpty ? nil : $0 }
 for a in args where a.hasPrefix("--minigw-work=") { workFlag = String(a.dropFirst("--minigw-work=".count)) }
 args.removeAll { $0.hasPrefix("--minigw-work=") }
@@ -837,7 +852,8 @@ if !wantShare && remoteRouter && shareEnv != "0" {
     err.write(Data("minigw: \(cwd) is not shared with the gateway, so agent models (Codex, Claude CLI, Grok) cannot see it; to share it run: minigw share add\n".utf8))
 }
 // Načini po vrsti (auto: native → worktree → sync); naslednji, če router prejšnjega ne sprejme.
-let top = ["auto", "worktree"].contains(work) ? Worktree.toplevel(cwd) : nil
+// auto: worktree le v korenu repozitorija; izrecni worktree tudi v nadrejenem.
+let top = ["auto", "worktree"].contains(work) ? Worktree.toplevel(cwd).flatMap { work == "auto" && !SharedFolders.repoRoot($0, cwd) ? nil : $0 } : nil
 let smb = work == "auto" && Native.detect(cwd: cwd, override: ProcessInfo.processInfo.environment["MINIGW_NATIVE_MOUNT"]) != nil
 var tries = SharedFolders.candidates(work: work, readOnly: readOnly, smb: smb, git: top != nil)
 // Brez commita ni posnetka: enkrat preveri, nato sync (#10).
@@ -859,7 +875,7 @@ if !wantShare || sid.isEmpty {
     } else if share.native {
         err.write(Data("minigw: \(cwd) is a folder of \(routerHost) (SMB): agent models work in it there directly\(share.locked ? ", one writing agent at a time" : "") (native)\n".utf8))
     } else if share.worktree {
-        err.write(Data("minigw: agent models work in a clone of this git repository on \(routerHost); their work comes back as branches minigw/… (worktree)\n".utf8))
+        err.write(Data("minigw: agent models work in a clone of this git repository on \(routerHost); their work comes back as branch minigw/… (minigw prints the range to review; your uncommitted and untracked, not ignored files are sent too; worktree)\n".utf8))
     } else {
         err.write(Data("minigw: \(share.sync ? "syncing" : "sharing") \(cwd) \(readOnly ? "read-only" : "read-write") with \(routerHost) for agent models (--minigw-ro = read-only, MINIGW_SHARE=0 = off)\n".utf8))
     }
@@ -879,10 +895,7 @@ if !wantShare || sid.isEmpty {
     }
     guard implicit, sc.refusal.hasPrefix("this gateway supports --minigw-work=") else { return (sc, false) }
     let t = Worktree.toplevel(cwd)
-    // M1: worktree le, če je koren repozitorija ta mapa; nadrejeni (dotfiles v domači mapi, monorepo) bi poslal tudi
-    // datoteke zunaj nje.
-    let real = { URL(fileURLWithPath: $0).resolvingSymlinksInPath().standardizedFileURL.path }
-    let auto = !readOnly && t.map { real($0) == real(cwd) && Worktree.hasCommit(top: $0) } == true ? ["worktree", "sync"] : ["sync"]
+    let auto = !readOnly && SharedFolders.repoRoot(t, cwd) && t.map { Worktree.hasCommit(top: $0) } == true ? ["worktree", "sync"] : ["sync"]
     if !quiet { err.write(Data("minigw: the gateway has no folder mount; using \(auto[0]) mode (--minigw-work= to choose)\n".utf8)) }
     return registerShare(c, tries: auto, quiet: quiet, top: t, implicit: false)
 }
