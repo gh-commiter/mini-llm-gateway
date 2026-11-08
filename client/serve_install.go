@@ -318,13 +318,14 @@ func installWindows(exe, cfgPath string) (string, error) {
 	if err := installFile(exe, filepath.Join(dir, "minigw.exe")); err != nil {
 		return "", err
 	}
-	tray, note := filepath.Join(dir, "minigw-tray.exe"), ""
+	tray := filepath.Join(dir, "minigw-tray.exe")
 	if src := trayBeside(exe); src != "" {
 		if err := installFile(src, tray); err != nil {
 			return "", err
 		}
 	} else if err := downloadVerified("minigw-tray-windows-"+runtime.GOARCH+".exe", tray); err != nil {
-		tray, note = "", "\nNo tray icon: minigw-tray.exe was not next to minigw.exe and the download failed ("+err.Error()+"); minigw serve starts at sign-in instead."
+		// minigw.exe ob prijavi bi imel ves čas odprto okno konzole: brez pladnja ni namestitve
+		return "", errors.New("minigw-tray.exe was not next to minigw.exe and the download failed (" + err.Error() + "): put minigw-tray.exe next to minigw.exe and run minigw serve install again")
 	}
 	path, err := envPathGet()
 	if err != nil { // L1: ob napaki ne prepiši uporabnikovega PATH
@@ -335,21 +336,13 @@ func installWindows(exe, cfgPath string) (string, error) {
 			return "", err
 		}
 	}
-	run := `"` + filepath.Join(dir, "minigw.exe") + `" serve --config "` + cfgPath + `"`
-	if tray != "" {
-		run = `"` + tray + `" tray --config "` + cfgPath + `"`
-	}
-	if err := runValueSet(runValueName, run); err != nil {
+	if err := runValueSet(runValueName, `"`+tray+`" tray --config "`+cfgPath+`"`); err != nil {
 		return "", err
 	}
-	what := "minigw serve runs at sign-in"
-	if tray != "" {
-		if err := startDetached(tray, "tray", "--config", cfgPath); err != nil {
-			return "", err
-		}
-		what = "Mini Gateway is in the notification area"
+	if err := startDetached(tray, "tray", "--config", cfgPath); err != nil {
+		return "", err
 	}
-	return "installed to " + dir + "; " + what + "; open a new terminal for minigw on PATH" + note, nil
+	return "installed to " + dir + "; Mini Gateway is in the notification area; open a new terminal for minigw on PATH", nil
 }
 
 // updateMSI: MSI te izdaje (preverjen po podpisanem SHA256SUMS) namesti msiexec; MSI sam zapre in zažene pladenj.
