@@ -266,13 +266,18 @@ public final class GatewayHistory: @unchecked Sendable {
 
     /// Veljavne omejitve agenta za zgodovino (kot agentRestrictions v minigw serve): Claude CLI orodja ali »local«;
     /// Codex, Grok, Copilot stikala write, network, commands ("" = le branje); drugi modeli "".
-    public static func restrictions(_ model: String, _ c: RouterConfig) -> String {
+    /// `readOnly` (--minigw-ro): brez pisanja (Claude CLI brez orodij za pisanje oz. »local,read-only«; ukazi Copilot le s pisanjem).
+    public static func restrictions(_ model: String, _ c: RouterConfig, readOnly: Bool = false) -> String {
         func agent(_ prefix: String) -> Bool { model == prefix || model.hasPrefix(prefix + "-") }
         func on(_ pairs: [(Bool, String)]) -> String { pairs.filter(\.0).map(\.1).joined(separator: ",") }
-        if agent("claude-cli") { return c.claudeCLI.allowLocalTools ? "local" : c.claudeCLI.tools }
-        if agent("claude-codex") { return on([(c.codex.write, "write"), (c.codex.network, "network")]) }
-        if agent("claude-grok") { return on([(c.grok.write, "write")]) }
-        if agent("claude-copilot") { return on([(c.copilot.write, "write"), (c.copilot.network, "network"), (c.copilot.commands, "commands")]) }
+        let w = !readOnly
+        if agent("claude-cli") {
+            if c.claudeCLI.allowLocalTools { return readOnly ? "local,read-only" : "local" }
+            return readOnly ? ClaudeCLIConfig.readOnlyTools(c.claudeCLI.tools) : c.claudeCLI.tools
+        }
+        if agent("claude-codex") { return on([(c.codex.write && w, "write"), (c.codex.network, "network")]) }
+        if agent("claude-grok") { return on([(c.grok.write && w, "write")]) }
+        if agent("claude-copilot") { return on([(c.copilot.write && w, "write"), (c.copilot.network, "network"), (c.copilot.commands && w, "commands")]) }
         return ""
     }
 

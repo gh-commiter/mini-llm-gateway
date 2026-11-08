@@ -235,8 +235,8 @@ extension Router {
                 try? FileManager.default.createDirectory(at: tree.maven, withIntermediateDirectories: true)
                 extra = (tree.root.path == dir.path ? [] : [tree.root.path]) + [tree.maven.path]
             }
+            readOnly = await Self.isReadOnly(req)
             if let shared, let clientCwd {
-                readOnly = await Self.shares.isReadOnly(session: req.header("x-claude-mini-session") ?? "")
                 prompt = Self.mountNote(clientCwd, shared, readOnly: readOnly, synced: synced, branch: tree?.branch) + "\n\n" + prompt
             }
         } else {

@@ -605,6 +605,8 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 	if st != 0 {
 		return st
 	}
+	// --minigw-ro tudi brez mape le za branje
+	readOnly = readOnly || r.h("x-claude-mini-ro") == "1"
 	if c.askOthers(k.name) { // vrata izvajanja (startRun spodaj)
 		// Absolutna pot: PATH izvajanja ne doseže ukazov v sandboxu Codex na Windows (»elevated« = drug uporabnik);
 		// »minigw« iz PATH (askOnPath) je le za pravila Claude Code (askRules).

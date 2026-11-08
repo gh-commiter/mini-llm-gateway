@@ -22,12 +22,26 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
     /// Orodja z dostopom do datotek: dovoljena le v mapi seje in dovoljenih mapah (preverja Claude Code oz. sandbox).
     static let pathTools: Set<String> = ["Read", "Edit", "Write", "MultiEdit", "NotebookEdit", "Glob", "Grep", "LS", "Bash"]
 
+    /// Orodja, ki pišejo (--minigw-ro jih odvzame); Bash brez sandboxa tudi.
+    static let writeTools: Set<String> = ["Edit", "Write", "MultiEdit", "NotebookEdit"]
+
+    /// Seznam orodij brez orodij za pisanje in Bash (brez »Allow local tools« ni sandboxa); tudi oblike »Bash(git:*)«.
+    static func readOnlyTools(_ tools: String) -> String {
+        tools.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { t in let name = String(t.prefix { $0 != "(" }); return !writeTools.contains(name) && name != "Bash" }
+            .joined(separator: ",")
+    }
+
     /// Orodja in dovoljenja agenta (claude -p ne more vprašati: kar ni dovoljeno, je zavrnjeno).
     /// Z »Allow local tools« ima agent vsa orodja, a datoteke le v `cwd` in dovoljenih mapah:
     /// Read/Edit/Write zunaj teh map niso dovoljeni, Bash teče v sandboxu Claude Code (brez branja domače mape,
     /// pisanje le v teh mapah, omrežje dovoljeno), izhoda iz sandboxa ni.
-    func agentArgs(cwd: URL, allTools: [String], scratch: URL? = nil) -> [String] {
-        guard allowLocalTools else { return ["--tools", tools, "--allowedTools", tools, "--permission-mode", permissionMode] }
+    /// `readOnly` (--minigw-ro): brez orodij za pisanje; Bash le v sandboxu brez pisanja v te mape (brez sandboxa ga ni).
+    func agentArgs(cwd: URL, allTools: [String], scratch: URL? = nil, readOnly: Bool = false) -> [String] {
+        guard allowLocalTools else {
+            let t = readOnly ? Self.readOnlyTools(tools) : tools
+            return ["--tools", t, "--allowedTools", t, "--permission-mode", permissionMode]
+        }
         let dirs = [cwd.path] + allowedRoots.split(separator: ",").map { ClaudeCLI.expand($0.trimmingCharacters(in: .whitespaces)) }
             .filter { $0 != "/" && !$0.isEmpty && $0 != cwd.path && FileManager.default.fileExists(atPath: $0) }
             .filter { r in scratch.map { !RouterConfig.overlapsScratch(r, scratch: $0) } ?? true }  // H1: starejše nastavitve
@@ -36,16 +50,18 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
             "enabled": true, "failIfUnavailable": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
             "network": ["allowedDomains": ["*"]],
             // #26 (N2): paket Copilot nikoli za pisanje (naloži ga priprava paketa), tudi če je v dovoljeni mapi.
-            "filesystem": ["denyRead": ["~"] + Self.scratchPaths(scratch), "allowRead": dirs, "allowWrite": dirs,
+            // --minigw-ro: pisanje v te mape prepovedano (denyWrite velja tudi za delovno mapo, ki jo Claude Code dovoli sam).
+            "filesystem": ["denyRead": ["~"] + Self.scratchPaths(scratch), "allowRead": dirs, "allowWrite": readOnly ? [] : dirs,
                            "denyWrite": Self.scratchPaths(RouterConfig.copilotCache)
-                               + dirs.flatMap { d in ["config", "hooks", "info"].map { d + "/.git/" + $0 } }],  // native v mapi sami (H1)
+                               + (readOnly ? dirs : dirs.flatMap { d in ["config", "hooks", "info"].map { d + "/.git/" + $0 } })],  // native v mapi sami (H1)
         ]]
         let settings = String(decoding: try! JSONSerialization.data(withJSONObject: sandbox, options: [.sortedKeys]), as: UTF8.self)
         let others = allTools.filter { !Self.pathTools.contains($0) && !disabledTools.contains($0) }
+        let denied = disabledTools + (readOnly ? Self.writeTools.sorted().filter { !disabledTools.contains($0) } : [])
         return ["--tools", "default", "--permission-mode", "acceptEdits", "--settings", settings]
             + dirs.dropFirst().flatMap { ["--add-dir", $0] }
             + (others.isEmpty ? [] : ["--allowedTools", others.joined(separator: ",")])
-            + (disabledTools.isEmpty ? [] : ["--disallowedTools", disabledTools.joined(separator: ",")])
+            + (denied.isEmpty ? [] : ["--disallowedTools", denied.joined(separator: ",")])
     }
 
     /// --minigw-work=worktree: vsa orodja (tudi Bash) vedno v peskovniku Claude Code (brez stikala za izklop):
@@ -375,6 +391,13 @@ extension Router {
     static let grokSessions = SessionRegistry()
     static let codexSessions = SessionRegistry()
 
+    /// --minigw-ro: registrirana mapa le za branje ali glava x-claude-mini-ro (minigw brez deljenja, npr. prehod na istem Macu;
+    /// pri vgnezdenem klicu jo nastavi AgentRun iz klicatelja).
+    static func isReadOnly(_ req: HTTPRequest) async -> Bool {
+        if req.header("x-claude-mini-ro") == "1" { return true }
+        return await shares.isReadOnly(session: req.header("x-claude-mini-session") ?? "")
+    }
+
     /// Navodilo agentu za priklopljeno mapo odjemalca (macOS, Windows ali Linux).
     static func mountNote(_ clientCwd: String, _ shared: URL, readOnly: Bool, synced: Bool = false, branch: String? = nil) -> String {
         if let branch {
@@ -427,8 +450,8 @@ extension Router {
                                                  roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL, writes: true)
             let synced = await Self.shares.isSync(session: req.header("x-claude-mini-session") ?? "")
             let tree = await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "")
+            let readOnly = await Self.isReadOnly(req)
             if let shared, let clientCwd {
-                let readOnly = await Self.shares.isReadOnly(session: req.header("x-claude-mini-session") ?? "")
                 args += ["--append-system-prompt", Self.mountNote(clientCwd, shared, readOnly: readOnly, synced: synced, branch: tree?.branch)]
             }
             guard let dir = shared ?? (synced ? nil : ClaudeCLI.resolveCwd(clientCwd, roots: cfg.allowedRoots, scratch: config.scratchURL)) else {
@@ -457,7 +480,7 @@ extension Router {
             let allTools = cfg.allowLocalTools || tree != nil ? await Self.toolList.get(cfg.executable) : []
             args += (tree.map { cfg.worktreeArgs(root: $0.root, maven: $0.maven, cwd: dir, allTools: allTools, network: config.worktreeNetwork,
                                                  scratch: config.scratchURL, read: $0.read) }
-                     ?? cfg.agentArgs(cwd: dir, allTools: allTools, scratch: config.scratchURL))
+                     ?? cfg.agentArgs(cwd: dir, allTools: allTools, scratch: config.scratchURL, readOnly: readOnly))
                 + ["--setting-sources", shared == nil ? cfg.settingSources : ""]  // hooki iz mape odjemalca ne tečejo tukaj
         } else {
             cwd = config.scratch("chat")

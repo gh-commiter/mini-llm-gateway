@@ -312,11 +312,17 @@ func TestServeRejectsBadModelsBodiesAndForeignOwners(t *testing.T) {
 	}
 
 	// Orodja agenta le v delovni mapi; mapa nastavitev prepovedana.
-	args := strings.Join(s.agentArgs("/copy"), " ")
+	args := strings.Join(s.agentArgs("/copy", false), " ")
 	for _, want := range []string{"Read(./**)", "Edit(./**)", "Write(./**)", "Grep(./**)", "Read(/" + filepath.ToSlash(s.cfgDir) + "/**)"} {
 		if !strings.Contains(args, want) {
 			t.Fatalf("agent args lack %s: %s", want, args)
 		}
+	}
+	// --minigw-ro: brez orodij za pisanje, sandbox ne piše v mapo (na Windows brez sandboxa tudi brez Bash).
+	ro := strings.Join(s.agentArgs("/copy", true), " ")
+	if strings.Contains(ro, "Edit(./**)") || strings.Contains(ro, "Write(./**)") || !strings.Contains(ro, "Read(./**)") ||
+		runtime.GOOS != "windows" && (!strings.Contains(ro, `"allowWrite":[]`) || !strings.Contains(ro, `"/copy"]}`)) {
+		t.Fatalf("read-only agent args: %s", ro)
 	}
 	if ruleAbs(`C:\Users\me`) != "//c/Users/me" && runtime.GOOS == "windows" {
 		t.Fatal(ruleAbs(`C:\Users\me`))

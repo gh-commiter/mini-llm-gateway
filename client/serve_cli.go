@@ -112,7 +112,8 @@ func ruleAbs(p string) string {
 
 // agentArgs: orodja agenta le v delovni mapi; mapa nastavitev (žeton, ključ routerja) prepovedana. Razen na Windows še
 // sandbox Claude Code (kot ClaudeCLI.agentArgs): Bash ne bere domače mape in piše le v kopijo; z Bash je obvezen.
-func (s *server) agentArgs(dir string) []string {
+// readOnly (--minigw-ro): brez orodij za pisanje, sandbox ne piše v mape; na Windows (brez sandboxa) tudi brez Bash in PowerShell.
+func (s *server) agentArgs(dir string, readOnly bool) []string {
 	c := s.conf()
 	dirs := []string{dir} // delovna mapa in dovoljene mape (kot allowedRoots na Macu)
 	for _, f := range c.AllowedFolders {
@@ -129,11 +130,14 @@ func (s *server) agentArgs(dir string) []string {
 	}
 	cfg := ruleAbs(s.cfgDir) + "/**"
 	deny := []string{"Read(" + cfg + ")", "Edit(" + cfg + ")", "Write(" + cfg + ")"}
+	if readOnly {
+		deny = append(deny, roDenied()...)
+	}
 	var args []string
 	if c.AllowLocalTools { // vsa orodja Claude Code razen izjem; datoteke le v mapah, Bash v sandboxu (kot na Macu)
 		var allowed []string
 		for t := range pathTools {
-			if !slices.Contains(c.DisabledTools, t) {
+			if !slices.Contains(c.DisabledTools, t) && !(readOnly && slices.Contains(roDenied(), t)) {
 				allowed = append(allowed, scope(t)...)
 			}
 		}
@@ -144,7 +148,7 @@ func (s *server) agentArgs(dir string) []string {
 		var tools, allowed []string
 		for _, t := range strings.Split(c.Tools, ",") {
 			switch t = strings.TrimSpace(t); {
-			case t == "":
+			case t == "", readOnly && slices.Contains(roDenied(), strings.SplitN(t, "(", 2)[0]):
 				continue
 			case pathTools[t]:
 				allowed = append(allowed, scope(t)...)
@@ -165,12 +169,31 @@ func (s *server) agentArgs(dir string) []string {
 			"network": map[string]any{"allowedDomains": []string{"*"}},
 			// M1: Scratch (kopije drugih naprav, zrcala) tudi zunaj domače mape; mapa seje v njem ostane berljiva (allowRead).
 			// #26 (N2): paket Copilot nikoli za pisanje (naloži ga priprava paketa), tudi če je v dovoljeni mapi.
-			"filesystem": map[string]any{"denyRead": append([]string{"~", s.cfgDir}, scratchPaths(c.Scratch)...), "allowRead": dirs, "allowWrite": dirs,
-				"denyWrite": scratchPaths(copilotCacheDir())},
+			// --minigw-ro: pisanje v te mape prepovedano (denyWrite velja tudi za delovno mapo, ki jo Claude Code dovoli sam).
+			"filesystem": map[string]any{"denyRead": append([]string{"~", s.cfgDir}, scratchPaths(c.Scratch)...), "allowRead": dirs, "allowWrite": onlyIf(!readOnly, dirs),
+				"denyWrite": append(scratchPaths(copilotCacheDir()), onlyIf(readOnly, dirs)...)},
 		}})
 		args = append(args, "--settings", string(settings))
 	}
 	return args
+}
+
+// roDenied: orodja, ki jih --minigw-ro odvzame Claude CLI (kot ClaudeCLIConfig.writeTools na Macu); Bash in PowerShell
+// le na Windows, kjer ni sandboxa (drugje ju sandbox brez pisanja v mape omeji).
+func roDenied() []string {
+	t := []string{"Edit", "MultiEdit", "NotebookEdit", "Write"}
+	if runtime.GOOS == "windows" {
+		t = append(t, "Bash", "PowerShell")
+	}
+	return t
+}
+
+// onlyIf: dirs, ko je ok, sicer prazen seznam (JSON [] namesto null).
+func onlyIf(ok bool, dirs []string) []string {
+	if ok {
+		return dirs
+	}
+	return []string{}
 }
 
 // scratchPaths: Scratch dobesedno in kanonično (za denyRead peskovnika Claude).
@@ -662,7 +685,8 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			args = append(args, "--session-id", sessionID)
 			prompt = cliPrompt(history, last)
 		}
-		args = append(args, s.agentArgs(dir)...)
+		ro := (share != nil && share.readOnly) || (parent != nil && parent.readOnly) || r.h("x-claude-mini-ro") == "1"
+		args = append(args, s.agentArgs(dir, ro)...)
 		ok := false
 		if wt, _, maven, objects, ok = s.hub.worktreeOf(session, "claude"); parent != nil {
 			wt, maven, objects, ok = parent.wt, parent.maven, parent.objects, parent.wt != ""
@@ -671,7 +695,6 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			args = worktreeClaudeArgs(args, wt, maven, objects)
 			worktreeEnv = worktreeHarnessEnv(wt, maven)
 		}
-		ro := (share != nil && share.readOnly) || (parent != nil && parent.readOnly)
 		shared := share != nil || (parent != nil && parent.shared)
 		run, runEnv = s.startRun(r, "claude", dir, ro, shared, wt, maven, objects, "") // »May ask other models«
 		defer run.stop()

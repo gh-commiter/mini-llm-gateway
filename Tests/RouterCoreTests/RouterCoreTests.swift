@@ -122,6 +122,9 @@ func makeRouter(session: URLSession = .shared) -> Router {
     var cli = ClaudeCLIConfig()
     let cwd = URL(fileURLWithPath: "/tmp/session")
     #expect(cli.agentArgs(cwd: cwd, allTools: []) == ["--tools", "Read,Grep,Glob", "--allowedTools", "Read,Grep,Glob", "--permission-mode", "dontAsk"])
+    cli.tools = "Read,Edit,Bash(git:*),Write,Grep"  // --minigw-ro: brez orodij za pisanje; Bash tu nima sandboxa
+    #expect(cli.agentArgs(cwd: cwd, allTools: [], readOnly: true) == ["--tools", "Read,Grep", "--allowedTools", "Read,Grep", "--permission-mode", "dontAsk"])
+    cli.tools = "Read,Grep,Glob"
     cli.allowLocalTools = true
     cli.allowedRoots = "/tmp"
     cli.disabledTools = ["WebSearch"]

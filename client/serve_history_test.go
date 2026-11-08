@@ -130,12 +130,18 @@ func TestFolderRoleAndRestrictions(t *testing.T) {
 	c.Copilot.Network = true
 	for model, want := range map[string]string{"claude-cli": "Read,Grep", "claude-cli-opus": "Read,Grep", "claude-codex": "write", "claude-codex-gpt-5": "write",
 		"claude-grok": "write", "claude-copilot": "network", "claude-sonnet": ""} {
-		if got := c.agentRestrictions(model); got != want {
+		if got := c.agentRestrictions(model, false); got != want {
 			t.Errorf("agentRestrictions(%s) = %q, want %q", model, got, want)
 		}
 	}
+	c.Tools, c.Copilot.Write, c.Copilot.Commands = "Read,Edit,Grep", true, true
+	for model, want := range map[string]string{"claude-cli": "Read,Grep", "claude-codex": "", "claude-grok": "", "claude-copilot": "network"} { // --minigw-ro
+		if got := c.agentRestrictions(model, true); got != want {
+			t.Errorf("agentRestrictions(%s, ro) = %q, want %q", model, got, want)
+		}
+	}
 	c.AllowLocalTools = true
-	if c.agentRestrictions("claude-cli") != "local" {
+	if c.agentRestrictions("claude-cli", false) != "local" || c.agentRestrictions("claude-cli", true) != "local,read-only" {
 		t.Error("local tools")
 	}
 }
@@ -174,7 +180,7 @@ func TestNestedCallLandsInCallersSession(t *testing.T) {
 	parent.Header.Set("X-Claude-Mini-Session", "sid1")
 	parent.Header.Set("X-Claude-Mini-Cwd", "/client/dir")
 	parent.Header.Set("X-Claude-Mini-Role", "dev")
-	run, _ := s.startRun(&req{Request: parent, conn: &serveConn{device: &dev, peer: "10.0.0.9"}}, "claude", "/copy", false, true, "", "", "", "")
+	run, _ := s.startRun(&req{Request: parent, conn: &serveConn{device: &dev, peer: "10.0.0.9"}}, "claude", "/copy", true, true, "", "", "", "")
 	if run == nil {
 		t.Fatal("no run")
 	}
@@ -184,6 +190,7 @@ func TestNestedCallLandsInCallersSession(t *testing.T) {
 	q.Header.Set("Authorization", "Bearer "+run.token)
 	q.Header.Set("X-Claude-Mini-Session", "forged")
 	q.Header.Set("X-Claude-Mini-Role", "security")
+	q.Header.Set("X-Claude-Mini-Ro", "0") // ne odstrani --minigw-ro klicatelja (spodaj)
 	q.Header.Set("X-Minigw-Agent-Chain", "codex")
 	resp, err := http.DefaultClient.Do(q)
 	if err != nil {
@@ -192,7 +199,7 @@ func TestNestedCallLandsInCallersSession(t *testing.T) {
 	resp.Body.Close()
 	l := s.state.sessions(dev.ID, "")
 	if len(l) != 1 || l[0].ID != "sid1" || l[0].Role != "dev" || l[0].Folder != "/client/dir" || len(l[0].Models) != 1 ||
-		l[0].Models[0].Via != "claude" || l[0].Models[0].Role != "dev" || l[0].Models[0].Model != "unknown" {
+		l[0].Models[0].Via != "claude" || l[0].Models[0].Role != "dev" || l[0].Models[0].Model != "unknown" || !l[0].Models[0].ReadOnly {
 		t.Fatalf("status %d, sessions %+v", resp.StatusCode, l)
 	}
 }

@@ -373,7 +373,8 @@ credentials out of project folders you use with a gateway, or list them in `.git
 The list is per computer: with several profiles every gateway gets the folder on its first agent request.
 **Read-only:** `minigw --minigw-ro …` (or `MINIGW_SHARE=ro`, for example in the `env` of Claude Code's settings for the
 plugin) shares the folder read-only: minigw refuses every write, the gateway mounts it read-only and runs Codex and
-Grok in their read-only sandbox. Agents read files up to 32 MB in one piece (larger ones only in ranges).
+Grok in their read-only sandbox, Copilot without its write tool and Claude CLI without its edit tools (its commands run in
+a sandbox that cannot write to the folder). This also holds when the gateway runs on the same computer and nothing is shared. Agents read files up to 32 MB in one piece (larger ones only in ranges).
 **Role:** `minigw --minigw-role NAME …` (or `MINIGW_ROLE`) tells the gateway the caller's role (1-32 letters, digits,
 `. _ -`), for example `security` in a Claude Code subagent's environment. The gateway only records it in the session
 history for now. A role is a guard against mistakes, not a security boundary: anything in the same session can
