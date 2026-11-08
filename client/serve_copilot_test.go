@@ -259,3 +259,37 @@ func TestCopySession(t *testing.T) {
 		t.Fatal("followed a linked session folder")
 	}
 }
+
+// #26: dovoljena mapa, ki vsebuje paket Copilot ali je v njem, je zavrnjena (kot Scratch).
+func TestCopilotCacheFoldersRefused(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	if runtime.GOOS == "windows" {
+		t.Setenv("LocalAppData", filepath.Join(home, "AppData", "Local"))
+	}
+	cache := copilotCacheDir()
+	os.MkdirAll(filepath.Join(cache, "pkg"), 0o700)
+	other := filepath.Join(home, "projects")
+	os.MkdirAll(other, 0o700)
+	if len(copilotCacheOverlaps([]string{filepath.Dir(cache)})) != 1 || len(copilotCacheOverlaps([]string{filepath.Join(cache, "pkg")})) != 1 ||
+		len(copilotCacheOverlaps([]string{other})) != 0 {
+		t.Fatal("overlaps")
+	}
+	cfgDir := filepath.Join(home, "cfg")
+	os.MkdirAll(cfgDir, 0o700)
+	c := serveConfig{AllowedFolders: []string{filepath.Dir(cache)}, Scratch: filepath.Join(home, "scratch")}
+	if _, err := checkAgent(&c, cfgDir); err == nil || !strings.Contains(err.Error(), "Copilot's package cache") {
+		t.Fatalf("checkAgent: %v", err)
+	}
+	// N2: tudi privzeta mapa (Folder) ne v paketu Copilot ali Scratch
+	c = serveConfig{Folder: filepath.Join(cache, "pkg"), Scratch: filepath.Join(home, "scratch")}
+	if _, err := checkAgent(&c, cfgDir); err == nil || !strings.HasPrefix(err.Error(), "folder ") || !strings.Contains(err.Error(), "Copilot's package cache") {
+		t.Fatalf("checkAgent folder: %v", err)
+	}
+	os.MkdirAll(filepath.Join(home, "scratch", "x"), 0o700)
+	c = serveConfig{Folder: filepath.Join(home, "scratch", "x"), Scratch: filepath.Join(home, "scratch")}
+	if _, err := checkAgent(&c, cfgDir); err == nil || !strings.Contains(err.Error(), "scratch folder") {
+		t.Fatalf("checkAgent scratch folder: %v", err)
+	}
+}

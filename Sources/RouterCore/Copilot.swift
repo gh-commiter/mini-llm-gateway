@@ -85,7 +85,9 @@ public enum Copilot {
     final class Prepared: @unchecked Sendable { let lock = NSLock(); var keys = Set<String>() }
     static let prepared = Prepared()
 
-    static func prepare(_ exe: String, base: [String: String], home: URL, cwd: URL) {
+    /// #26: v peskovniku `sandbox` (brez omrežja, pisanje le v paket in začasno mapo): podtaknjena koda v paketu ne doseže
+    /// nastavitev, ključev ali omrežja.
+    static func prepare(_ exe: String, base: [String: String], home: URL, cwd: URL, sandbox: String) {
         let real = Sync.real(URL(fileURLWithPath: exe))?.path ?? exe
         let a = try? FileManager.default.attributesOfItem(atPath: real)
         let key = "\(real)|\(a?[.size] ?? 0)|\((a?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)"
@@ -94,8 +96,8 @@ public enum Copilot {
         var env = environment(base, home: home, token: "")
         env["COPILOT_GITHUB_TOKEN"] = nil
         let p = Process()
-        p.executableURL = URL(fileURLWithPath: exe)
-        p.arguments = ["--version"]
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
+        p.arguments = ["-p", sandbox, exe, "--version"]
         p.currentDirectoryURL = cwd
         p.environment = env
         p.standardInput = FileHandle.nullDevice
@@ -309,7 +311,13 @@ extension Router {
             prompt = last.text
         }
         let prepHome = reqDir.appendingPathComponent("p")  // svoj prazen COPILOT_HOME, ne domača mapa seje (R9)
-        await offPool { Copilot.prepare(exe, base: base, home: prepHome, cwd: tmp) }
+        let cache = RouterConfig.copilotCache.path.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        if let box = Native.sandboxProfile(dir: tmp.path, network: false, hidden: [config.scratchURL.path, RouterConfig.defaultScratch.path],
+                                           routerPort: Int(config.port), runTmp: reqDir.path, writable: []) {
+            // Paket sme razširiti (zadnje pravilo velja: tudi čez prepoved v buildCacheDenies), drugje nič.
+            let prep = box + "(allow file-read* file-read-data file-write* (subpath \"\(cache)\"))\n"
+            await offPool { Copilot.prepare(exe, base: base, home: prepHome, cwd: tmp, sandbox: prep) }
+        }
         let args = Copilot.args(agent: agent, model: model, write: write, commands: commands,
                                 network: cfg.network && (tree == nil || config.worktreeCodexNetwork), session: session)
         let sessions = Self.copilotSessions, client = req.header("x-claude-mini-session") ?? ""

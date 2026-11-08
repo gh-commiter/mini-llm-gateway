@@ -800,7 +800,7 @@ struct SettingsView: View {
         panel.prompt = String(localized: "Add")
         guard panel.runModal() == .OK else { return }
         let all = panel.urls.map { ($0.path as NSString).abbreviatingWithTildeInPath }.filter { !roots.contains($0) }
-        let added = all.filter { !RouterConfig.overlapsScratch($0, scratch: draft.scratchURL) }  // H1
+        let added = all.filter { !RouterConfig.overlapsScratch($0, scratch: draft.scratchURL) && !RouterConfig.overlapsCopilotCache($0) }  // H1, #26
         if added.count < all.count {
             let a = NSAlert()
             a.messageText = String(localized: "A folder that contains the scratch folder, or is inside it, cannot be an allowed folder.")

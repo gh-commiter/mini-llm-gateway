@@ -3,6 +3,7 @@
 #
 #   curl -fsSL https://github.com/gh-commiter/mini-llm-gateway/releases/latest/download/install.sh | sh
 #   curl -fsSL …/install.sh | sh -s -- mini.local        # also connect; asks for the token
+#   … | sh -s -- --allow-downgrade [gateway]             # install a release older than the installed minigw
 #
 # Token: Mini Gateway → Settings → General → Copy Token (on the gateway Mac).
 set -eu
@@ -10,6 +11,9 @@ set -eu
 REPO="gh-commiter/mini-llm-gateway"
 TEAM_ID="Y2M489RDV8"                      # Developer ID that signs minigw
 BASE="${MINIGW_BASE:-https://github.com/$REPO/releases/latest/download}"   # MINIGW_BASE: test/mirror
+
+ALLOW_DOWNGRADE=0
+[ "${1:-}" = --allow-downgrade ] && { ALLOW_DOWNGRADE=1; shift; }
 
 say() { printf '%s\n' "$*"; }
 die() { printf 'install: %s\n' "$*" >&2; exit 1; }
@@ -43,6 +47,15 @@ printf '%s\n' 'minigw-release namespaces="minigw-release" ssh-ed25519 AAAAC3NzaC
 ssh-keygen -Y verify -f "$TMP/signers" -I minigw-release -n minigw-release -s "$TMP/SHA256SUMS.sig" < "$TMP/SHA256SUMS" >/dev/null 2>&1 \
   || die "SHA256SUMS is not signed by Mini Gateway"
 (cd "$TMP" && grep ' minigw.zip$' SHA256SUMS | shasum -a 256 -c - >/dev/null) || die "checksum mismatch"
+# #25: not back to an older signed release. Its version is the signed "VERSION <v>" line; a signed release without it
+# is 0.5.17 or older (the line exists since 0.5.18; the URL is no help: GitHub redirects to its CDN).
+REL=$(sed -n 's/^VERSION \([0-9][0-9.]*\)$/\1/p' "$TMP/SHA256SUMS" | head -1)
+[ -n "$REL" ] || REL=0.5.17
+HAVE=$(minigw --version 2>/dev/null | head -1 | sed -n 's/^minigw \([0-9][0-9.]*\)$/\1/p' || true)
+if [ -n "$REL" ] && [ -n "$HAVE" ] && [ "$REL" != "$HAVE" ] && [ "$(printf '%s\n%s\n' "$REL" "$HAVE" | sort -V | head -1)" = "$REL" ] \
+   && [ $ALLOW_DOWNGRADE = 0 ]; then
+  die "this release ($REL) is older than the installed minigw $HAVE; to go back anyway: … | sh -s -- --allow-downgrade"
+fi
 ditto -x -k "$TMP/minigw.zip" "$TMP/out"
 codesign --verify --strict "$TMP/out/minigw" || die "invalid signature"
 codesign -dv "$TMP/out/minigw" 2>&1 | grep -q "TeamIdentifier=$TEAM_ID" || die "unexpected signer"

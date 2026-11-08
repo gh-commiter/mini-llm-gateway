@@ -58,6 +58,17 @@ st=$(mktemp -d) && if curl -fsSL --max-time 20 -o "$st/s" "$base/SHA256SUMS" 2>/
   esac
 fi
 rm -rf "$st"
+# #25: brez vračanja na starejšo podpisano izdajo. Različica izdaje: podpisana vrstica »VERSION <v>« v SHA256SUMS;
+# podpisana izdaja brez nje je 0.5.17 ali starejša (vrstica je od 0.5.18; oznaka v naslovu ni zanesljiva: GitHub
+# preusmeri na CDN). Starejša od nameščenega minigw: ni posodobitve, razen z --allow-downgrade ali MINIGW_ALLOW_DOWNGRADE=1.
+if [ -n "$sums" ] && [ -x "$EXE" ] && [ ! -L "$EXE" ]; then
+  rel=$(printf '%s\n' "$sums" | sed -n 's/^VERSION \([0-9][0-9.]*\)$/\1/p' | head -1)
+  [ -n "$rel" ] || rel=0.5.17
+  have=$(ver "$EXE"); case $have in *[!0-9.]*) have="" ;; esac
+  if older "$rel" "$have" && [ "${1:-}" != --allow-downgrade ] && [ "${MINIGW_ALLOW_DOWNGRADE:-}" != 1 ]; then
+    sums="" unsigned="the latest release ($rel) is older than the installed minigw $have (run with MINIGW_ALLOW_DOWNGRADE=1 to go back)"
+  fi
+fi
 want() { printf '%s\n' "$sums" | grep " $1\$" | cut -d' ' -f1; }
 stamp="$BIN/.asset.sha256"  # vsota prenesenega paketa (na macOS je to minigw.zip, ne izvršljiva datoteka)
 

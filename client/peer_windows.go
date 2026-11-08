@@ -203,6 +203,43 @@ func listenerIsOurs(port int) bool {
 	return len(pids) > 0
 }
 
+// listenerExes (L3): programi procesov, ki poslušajo na vratih (QueryFullProcessImageNameW).
+func listenerExes(port int) ([]string, bool) {
+	var exes []string
+	q := syscall.NewLazyDLL("kernel32.dll").NewProc("QueryFullProcessImageNameW")
+	for _, v6 := range []bool{false, true} {
+		af := uintptr(2)
+		if v6 {
+			af = 23
+		}
+		size := uint32(64 << 10)
+		for range 5 {
+			buf := make([]byte, size)
+			r, _, _ := pGetTCPTable.Call(uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&size)), 0, af, 5, 0)
+			if r == 122 {
+				size += 4 << 10
+				continue
+			}
+			if r == 0 {
+				for _, pid := range tcpListenPIDs(buf, v6, port) {
+					h, err := syscall.OpenProcess(0x1000 /* PROCESS_QUERY_LIMITED_INFORMATION */, false, pid)
+					if err != nil {
+						continue
+					}
+					name := make([]uint16, 1024)
+					n := uint32(len(name))
+					if ok, _, _ := q.Call(uintptr(h), 0, uintptr(unsafe.Pointer(&name[0])), uintptr(unsafe.Pointer(&n))); ok != 0 {
+						exes = append(exes, syscall.UTF16ToString(name[:n]))
+					}
+					syscall.CloseHandle(h)
+				}
+			}
+			break
+		}
+	}
+	return exes, true
+}
+
 // processSID: uporabniški SID procesa (žeton, TokenUser).
 func processSID(pid uint32) (string, error) {
 	h, err := syscall.OpenProcess(0x1000 /* PROCESS_QUERY_LIMITED_INFORMATION */, false, pid)

@@ -8,6 +8,12 @@
   `anthropic-version` or `x-api-key`, a loopback `Host` and no `Origin`, so web pages cannot use it. Other users, other
   computers, the admin API and device approval are unchanged. Switch: General → **Allow this user's apps without a
   token** (`allowLocalApps`). On `minigw serve` for Windows and Linux; on the Mac in the app.
+- Updates never go back to an older signed release: SHA256SUMS carries a signed `VERSION` line, and the plugin's
+  minigw update, `install.sh` and `minigw serve install` refuse a release older than the installed minigw
+  (`--allow-downgrade`, or `MINIGW_ALLOW_DOWNGRADE=1` for the plugin, to go back on purpose).
+- Allowed folders that contain Copilot's package cache are refused like the Scratch folder, and the package is
+  unpacked (`copilot --version`) in a sandbox without network (Mac `sandbox-exec`, Linux bwrap).
+- Foundry Local is used only when the process on its port runs from the Foundry installation.
 - **Several gateways at once (profiles, #17):** `minigw connect <host> --name <profile>` keeps every gateway, for
   example the Mac mini and a Windows gateway side by side. Models of other profiles are `<model>@<profile>`; the
   default profile's also appear without a suffix. An unreachable gateway is left out of the list, and `minigw status`

@@ -213,7 +213,11 @@ func agentWrap(exe string, args []string, m agentMounts) (string, []string) {
 			}
 		}
 	}
-	return bw, append(append(bwrapArgs(home, real(m.cfgDir), hidden, ro, rw, rehide, pins, protect, hideFiles, hideDirs), "--", exe), args...)
+	a := bwrapArgs(home, real(m.cfgDir), hidden, ro, rw, rehide, pins, protect, hideFiles, hideDirs)
+	if m.noNet {
+		a = append([]string{"--unshare-net"}, a...)
+	}
+	return bw, append(append(a, "--", exe), args...)
 }
 
 // listenerIsOurs (F2): vrata poslušajo le procesi tega uporabnika (uid iz /proc/net/tcp{,6}); nič najdenega = ne.
@@ -242,6 +246,25 @@ func sameUserPeer(ours, peer *net.TCPAddr) bool {
 		}
 	}
 	return false
+}
+
+// listenerExes (L3): programi procesov, ki poslušajo na vratih (inode iz /proc/net/tcp → /proc/<pid>/exe).
+func listenerExes(port int) ([]string, bool) {
+	var exes []string
+	for _, f := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		for _, ino := range procListenInodes(b, port) {
+			for _, pid := range socketPIDs("socket:[" + ino + "]") {
+				if e, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid)); err == nil {
+					exes = append(exes, e)
+				}
+			}
+		}
+	}
+	return exes, true
 }
 
 func peerCheck(ours, peer *net.TCPAddr) error {
