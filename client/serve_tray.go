@@ -20,9 +20,10 @@ import (
 	"time"
 )
 
-// isTrayExe: minigw-tray.exe (ali minigw-tray-windows-amd64.exe) se zažene kot pladenj.
+// isTrayExe: minigw-tray.exe (ali minigw-tray-windows-<arch>.exe) se zažene kot pladenj; le natančni imeni (L1).
 func isTrayExe(arg0 string) bool {
-	return strings.HasPrefix(strings.ToLower(filepath.Base(arg0)), "minigw-tray")
+	n := filepath.Base(arg0)
+	return strings.EqualFold(n, "minigw-tray.exe") || strings.EqualFold(n, "minigw-tray-windows-"+runtime.GOARCH+".exe")
 }
 
 // trayBeside: pladenj ob exe (za serve install), le z natančnim imenom; exe sam, če je že pladenj.

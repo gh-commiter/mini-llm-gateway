@@ -384,9 +384,18 @@ func trayMutexExists() bool {
 func closeRunningTray() error { return closeTray(50) }
 
 // quitRunningTray: minigw-tray.exe quit (MSI pred odstranitvijo, brez konzole): WM_CLOSE, 5 s, nato konec
-// vseh drugih procesov pladnja tega uporabnika (kot prej taskkill /F /IM minigw-tray.exe).
+// drugih procesov z natančnim imenom minigw-tray.exe v tej seji Windows (L1: ne drugih programov ali uporabnikov).
 func quitRunningTray() {
 	if closeTray(25) == nil {
+		return
+	}
+	sessionOf := func(pid uint32) (uint32, bool) {
+		var s uint32
+		r, _, _ := kernel32dl.NewProc("ProcessIdToSessionId").Call(uintptr(pid), uintptr(unsafe.Pointer(&s)))
+		return s, r != 0
+	}
+	own, ok := sessionOf(uint32(os.Getpid()))
+	if !ok {
 		return
 	}
 	snap, err := syscall.CreateToolhelp32Snapshot(syscall.TH32CS_SNAPPROCESS, 0)
@@ -396,7 +405,10 @@ func quitRunningTray() {
 	defer syscall.CloseHandle(snap)
 	e := syscall.ProcessEntry32{Size: uint32(unsafe.Sizeof(syscall.ProcessEntry32{}))}
 	for err := syscall.Process32First(snap, &e); err == nil; err = syscall.Process32Next(snap, &e) {
-		if int(e.ProcessID) == os.Getpid() || !isTrayExe(syscall.UTF16ToString(e.ExeFile[:])) {
+		if int(e.ProcessID) == os.Getpid() || !strings.EqualFold(syscall.UTF16ToString(e.ExeFile[:]), "minigw-tray.exe") {
+			continue
+		}
+		if s, ok := sessionOf(e.ProcessID); !ok || s != own {
 			continue
 		}
 		if h, err := syscall.OpenProcess(syscall.PROCESS_TERMINATE, false, e.ProcessID); err == nil {

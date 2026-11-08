@@ -234,7 +234,7 @@ func TestTrayDeviceActionsAndInstallValue(t *testing.T) {
 	}
 	tray := filepath.Join(dir, "minigw-tray-windows-"+runtime.GOARCH+".exe")
 	os.WriteFile(tray, nil, 0o755)
-	if trayBeside(exe) != tray || !isTrayExe(tray) || isTrayExe(exe) {
+	if trayBeside(exe) != tray || !isTrayExe(tray) || isTrayExe(exe) || isTrayExe("minigw-tray-evil.exe") || !isTrayExe("MINIGW-TRAY.EXE") {
 		t.Fatalf("trayBeside: %q", trayBeside(exe))
 	}
 	if _, err := serviceFile("windows", exe, `C:\cfg\"x`); err == nil { // I3
