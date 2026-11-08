@@ -6,4 +6,4 @@ import "os/exec"
 
 func hideConsole(*exec.Cmd) {}
 
-func refreshPath() {}
+func refreshPath(bool) {}
