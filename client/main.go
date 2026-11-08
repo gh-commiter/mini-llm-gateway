@@ -725,7 +725,10 @@ func registerShare(c connection, sid, cwd string, readOnly bool, top string, tri
 		return sc, false
 	}
 	t, auto := gitToplevel(cwd), []string{"sync"}
-	if !readOnly && t != "" && gitHasCommit(t) {
+	// M1: worktree le, če je koren repozitorija ta mapa; nadrejeni (dotfiles v domači mapi, monorepo) bi poslal tudi
+	// datoteke zunaj nje.
+	rt, rc := realPath(t), realPath(cwd)
+	if !readOnly && t != "" && (rt == rc || runtime.GOOS == "windows" && strings.EqualFold(rt, rc)) && gitHasCommit(t) {
 		auto = []string{"worktree", "sync"}
 	}
 	if !quiet {

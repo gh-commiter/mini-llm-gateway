@@ -249,6 +249,22 @@ func TestServeRefusesDirectMode(t *testing.T) {
 	if _, ok := registerShare(c, "sid5", t.TempDir(), false, "", []string{"direct"}, true, false); ok {
 		t.Fatal("explicit direct accepted")
 	}
+	// M1: repozitorij v nadrejeni mapi (dotfiles v domači mapi, monorepo) → sync, ne worktree; koren sam → worktree.
+	repo := realPath(t.TempDir()) // macOS: /var → /private/var, kot ga vrne git
+	writeT(t, filepath.Join(repo, "sub", "a.txt"), "a\n")
+	gitT(t, repo, "init", "-q", "-b", "main")
+	gitT(t, repo, "add", "-A")
+	gitT(t, repo, "commit", "-qm", "first")
+	for i, c2 := range []struct {
+		dir      string
+		worktree bool
+	}{{filepath.Join(repo, "sub"), false}, {repo, true}} {
+		sc, ok := registerShare(c, fmt.Sprintf("sid6-%d", i), c2.dir, false, "", []string{"direct"}, true, true)
+		if !ok || sc.worktree != c2.worktree || sc.sync == c2.worktree {
+			t.Fatalf("%s: ok=%v worktree=%v sync=%v %q", c2.dir, ok, sc.worktree, sc.sync, sc.refusal)
+		}
+		sc.unregister()
+	}
 	body := `{"model":"claude-cli-haiku","tools":[{"name":"x"}],"messages":[{"role":"user","content":"go"}]}`
 	st, data := call(c, "POST", "/v1/messages", map[string]string{"x-claude-mini-session": "sid2", "x-claude-mini-share": "1"}, []byte(body), 5*time.Second)
 	if st != 400 || !strings.Contains(string(data), "sync and worktree") {

@@ -817,7 +817,10 @@ if !wantShare || sid.isEmpty {
     }
     guard implicit, sc.refusal.hasPrefix("this gateway supports --minigw-work=") else { return (sc, false) }
     let t = Worktree.toplevel(cwd)
-    let auto = !readOnly && t.map { Worktree.hasCommit(top: $0) } == true ? ["worktree", "sync"] : ["sync"]
+    // M1: worktree le, če je koren repozitorija ta mapa; nadrejeni (dotfiles v domači mapi, monorepo) bi poslal tudi
+    // datoteke zunaj nje.
+    let real = { URL(fileURLWithPath: $0).resolvingSymlinksInPath().standardizedFileURL.path }
+    let auto = !readOnly && t.map { real($0) == real(cwd) && Worktree.hasCommit(top: $0) } == true ? ["worktree", "sync"] : ["sync"]
     if !quiet { err.write(Data("minigw: the gateway has no folder mount; using \(auto[0]) mode (--minigw-work= to choose)\n".utf8)) }
     return registerShare(c, tries: auto, quiet: quiet, top: t, implicit: false)
 }
