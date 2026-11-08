@@ -1579,3 +1579,47 @@ final class FakeMinigw: @unchecked Sendable {
         #expect(w.status == 200 && w.text.contains(#""providers""#) == want, "\(peer) \(token): \(w.text)")
     }
 }
+
+// #10: »a.txt« → »A.txt« (APFS: ista datoteka) ne sme izbrisati vira; COPY nase in mapa v podmapo = 403.
+@Test func davMoveSameFileKeepsContent() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("dav-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: root.appendingPathComponent("d/sub"), withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Data("keep".utf8).write(to: root.appendingPathComponent("a.txt"))
+    func dav(_ m: String, _ s: String, _ d: String) -> Int {
+        WebDAV.handle(method: m, path: "/dav/s/" + s, headers: ["destination": "http://x/dav/s/" + d], body: Data(), root: root, prefix: "/dav/s").status
+    }
+    #expect(dav("COPY", "a.txt", "a.txt") == 403)
+    #expect(dav("MOVE", "a.txt", "A.txt") == 201)
+    #expect(String(decoding: try Data(contentsOf: root.appendingPathComponent("A.txt")), as: UTF8.self) == "keep")
+    let names = try FileManager.default.contentsOfDirectory(atPath: root.path)
+    #expect(names.contains("A.txt") && !names.contains("a.txt") && !names.contains { $0.hasPrefix(".minigw") })
+    #expect(dav("MOVE", "A.txt", "A.txt") == 201)
+    #expect(String(decoding: try Data(contentsOf: root.appendingPathComponent("A.txt")), as: UTF8.self) == "keep")
+    #expect(dav("MOVE", "d", "d/sub/d") == 403 && dav("COPY", "d", "D/sub/d") == 403)
+}
+
+// #2: direktni WebDAV ne piše v zaščitene poti (kot sync), tudi prek povezave; branje ostane.
+@Test func davRefusesProtectedWrites() throws {
+    let fm = FileManager.default
+    let root = fm.temporaryDirectory.appendingPathComponent("dav-\(UUID().uuidString)")
+    try fm.createDirectory(at: root.appendingPathComponent(".git/hooks"), withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: root) }
+    try Data("ref".utf8).write(to: root.appendingPathComponent(".git/HEAD"))
+    try Data("x".utf8).write(to: root.appendingPathComponent("a.txt"))
+    try fm.createSymbolicLink(at: root.appendingPathComponent("hooks"), withDestinationURL: root.appendingPathComponent(".git/hooks"))
+    func dav(_ m: String, _ p: String, _ d: String? = nil) -> Int {
+        WebDAV.handle(method: m, path: "/dav/s/" + p, headers: d.map { ["destination": "http://x/dav/s/" + $0] } ?? [:],
+                      body: Data("y".utf8), root: root, prefix: "/dav/s").status
+    }
+    for (m, p, d) in [("PUT", ".git/config", nil), ("PUT", ".GIT/config", nil), ("PUT", "git~1/config", nil), ("PUT", ".envrc", nil),
+                      ("PUT", ".claude/settings.local.json", nil), ("PUT", ".vscode/tasks.json", nil), ("MKCOL", ".git/x", nil),
+                      ("DELETE", ".git/HEAD", nil), ("DELETE", ".git", nil), ("LOCK", ".git/new", nil), ("PROPPATCH", ".git/HEAD", nil),
+                      ("PUT", "hooks/pre-commit", nil), ("MOVE", "a.txt", ".git/hooks/pre-commit"), ("COPY", "a.txt", ".envrc"),
+                      ("MOVE", ".git", "g")] as [(String, String, String?)] {
+        #expect(dav(m, p, d) == 403, "\(m) \(p)")
+    }
+    #expect(dav("GET", ".git/HEAD") == 200)
+    #expect(dav("COPY", ".git/HEAD", "head.txt") == 201)
+    #expect(dav("PUT", "b.txt") == 201)
+}

@@ -25,6 +25,12 @@ public enum WebDAV {
         let junk = isJunk(url)  // ._* (xattri) in .DS_Store ne pišemo v mapo odjemalca
         var isDir: ObjCBool = false
         let exists = !junk && fm.fileExists(atPath: url.path, isDirectory: &isDir)
+        // Zaščitene poti (kot sync): pisanje v .git, .claude/settings*.json, .vscode/tasks.json, .envrc nikoli, tudi
+        // prek povezave; branje ostane.
+        func protected(_ u: URL, _ r: [String]) -> Bool { Sync.isProtected(r.joined(separator: "/")) || Sync.protectedCanonical(u, root: root) }
+        if ["PUT", "MKCOL", "DELETE", "MOVE", "PROPPATCH"].contains(method) || (method == "LOCK" && !exists), protected(url, rel) {
+            return DAVResponse(403)
+        }
 
         switch method {
         case "OPTIONS":
@@ -94,8 +100,22 @@ public enum WebDAV {
                   let (dest, destRel) = resolve(URL(string: raw)?.path(percentEncoded: true) ?? raw, prefix: prefix, root: root),
                   !destRel.isEmpty
             else { return DAVResponse(403) }
+            if protected(dest, destRel) { return DAVResponse(403) }
             if isJunk(dest) { return DAVResponse(201) }
             guard parentExists(dest) else { return DAVResponse(409) }
+            // Mapa v svojo podmapo: nikoli (kanonični poti, da povezava ne skrije zanke; macOS: velikost črk ni pomembna).
+            let src = url.resolvingSymlinksInPath().path.lowercased() + "/"
+            let dst = dest.deletingLastPathComponent().resolvingSymlinksInPath().appendingPathComponent(dest.lastPathComponent).path.lowercased()
+            if (dst + "/").hasPrefix(src), dst + "/" != src { return DAVResponse(403) }
+            // Ista datoteka (»a.txt« → »A.txt« na APFS, trda povezava): cilja ne brišemo, ker je to vir.
+            // MOVE preimenuje prek začasnega imena (tudi datotečni sistemi, ki sami ne preimenujejo le velikosti črk).
+            if sameFile(url, dest) {
+                if method == "COPY" { return DAVResponse(403) }
+                let tmp = url.deletingLastPathComponent().appendingPathComponent(".minigw-mv-" + UUID().uuidString).path
+                guard rename(url.path, tmp) == 0 else { return DAVResponse(403) }
+                guard rename(tmp, dest.path) == 0 else { _ = rename(tmp, url.path); return DAVResponse(403) }
+                return DAVResponse(201)
+            }
             let replaced = fm.fileExists(atPath: dest.path)
             if replaced {
                 if headers["overwrite"]?.uppercased() == "F" { return DAVResponse(412) }
@@ -145,6 +165,12 @@ public enum WebDAV {
         let real = existing.resolvingSymlinksInPath().standardizedFileURL.path
         guard real == root.path || real.hasPrefix(root.path + "/") else { return nil }
         return (url, comps)
+    }
+
+    /// Ista datoteka (naprava + inode, brez sledenja zadnji povezavi).
+    static func sameFile(_ a: URL, _ b: URL) -> Bool {
+        var x = stat(), y = stat()
+        return lstat(a.path, &x) == 0 && lstat(b.path, &y) == 0 && x.st_dev == y.st_dev && x.st_ino == y.st_ino
     }
 
     static func isJunk(_ url: URL) -> Bool {

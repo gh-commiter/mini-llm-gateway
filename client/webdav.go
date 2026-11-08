@@ -51,6 +51,21 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 	info, statErr := os.Stat(p)
 	exists := !junk && statErr == nil
 	isDir := exists && info.IsDir()
+	// Zaščitene poti (kot sync): pisanje v .git, .claude/settings*.json, .vscode/tasks.json, .envrc nikoli, tudi
+	// prek povezave; branje ostane.
+	protected := func(full string, rel []string) bool {
+		return protectedPath(strings.Join(rel, "/")) || protectedCanonical(full, root)
+	}
+	switch method {
+	case "PUT", "MKCOL", "DELETE", "MOVE", "PROPPATCH":
+		if protected(p, rel) {
+			return dav(403, nil, nil)
+		}
+	case "LOCK":
+		if !exists && protected(p, rel) {
+			return dav(403, nil, nil)
+		}
+	}
 
 	switch method {
 	case "OPTIONS":
@@ -194,11 +209,38 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 		if !ok || len(destRel) == 0 {
 			return dav(403, nil, nil)
 		}
+		if protected(dest, destRel) {
+			return dav(403, nil, nil)
+		}
 		if isJunk(dest) {
 			return dav(201, nil, nil)
 		}
 		if !parentExists(dest) {
 			return dav(409, nil, nil)
+		}
+		// Mapa v svojo podmapo: nikoli (kanonični poti, da povezava ne skrije zanke).
+		rp, err1 := filepath.EvalSymlinks(p)
+		rd, err2 := filepath.EvalSymlinks(filepath.Dir(dest))
+		if err1 != nil || err2 != nil || hasPathPrefix(filepath.Join(rd, filepath.Base(dest)), rp) {
+			return dav(403, nil, nil)
+		}
+		// Ista datoteka (»a.txt« → »A.txt« na APFS/NTFS, trda povezava): cilja ne brišemo, ker je to vir.
+		// MOVE preimenuje prek začasnega imena (tudi datotečni sistemi, ki sami ne preimenujejo le velikosti črk).
+		if si, err := os.Lstat(p); err == nil {
+			if di, err := os.Lstat(dest); err == nil && os.SameFile(si, di) {
+				if method == "COPY" {
+					return dav(403, nil, nil)
+				}
+				tmp := filepath.Join(filepath.Dir(p), ".minigw-mv-"+newUUID())
+				if err := os.Rename(p, tmp); err != nil {
+					return dav(403, nil, nil)
+				}
+				if err := os.Rename(tmp, dest); err != nil {
+					os.Rename(tmp, p)
+					return dav(403, nil, nil)
+				}
+				return dav(201, nil, nil)
+			}
 		}
 		_, derr := os.Stat(dest)
 		replaced := derr == nil
@@ -331,6 +373,10 @@ func writeAtomic(p string, data []byte) error {
 		tmp.Close()
 		os.Remove(tmp.Name())
 		return err
+	}
+	// #9: obstoječa datoteka obdrži pravice (0755 build.sh ostane izvršljiv); nova ostane 0600 kot doslej.
+	if fi, err := os.Stat(p); err == nil {
+		tmp.Chmod(fi.Mode().Perm())
 	}
 	tmp.Close()
 	if err := os.Rename(tmp.Name(), p); err != nil {
