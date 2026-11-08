@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **No console windows on Windows:** the tray and every program it starts (claude, git, agents …) run without a console
+  window; GUI windows such as the installer's progress stay visible. The MSI closes the tray with
+  `minigw-tray.exe quit` instead of `taskkill` in a cmd window. Updating from 0.5.18 or older still shows one cmd window
+  once (the old package's uninstall step). `minigw serve install` on Windows now fails if `minigw-tray.exe` is not next
+  to `minigw.exe` and cannot be downloaded, and Start at sign-in (`gw autostart on`, the tray menu, Settings) needs
+  `minigw-tray.exe`: there is no fallback to `minigw.exe` at sign-in, which opened a console window. `minigw tray quit`
+  stops only `minigw-tray.exe` of this user's Windows session.
 - **Windows test report fixes (gateway):** the tray started by the MSI now finds `claude`, `codex`, `git` … (PATH also
   from the registry and `%USERPROFILE%\.local\bin`). Agent calls on Windows use `minigw.exe` (not the tray) as
   `minigw -p …`, pre-approved as `Bash(minigw -p:*)`; other Bash commands of an agent still need approval there (no
