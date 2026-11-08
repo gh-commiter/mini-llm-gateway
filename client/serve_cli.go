@@ -799,7 +799,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		s.log.Printf("%s claude failed: %s", r.rid, msg)
 		status, clean := classifyAgentError(msg)
 		if !stream {
-			return writeError(w, r.rid, status, "claude: "+clean)
+			return writeAgentError(w, r.rid, status, "claude: "+clean)
 		}
 		if t.text == "" {
 			send(sse("error", map[string]any{"type": "error", "error": map[string]string{"type": errType(status), "message": "claude: " + clean}}))

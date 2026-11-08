@@ -556,7 +556,7 @@ extension Router {
         if let msg = t.resultError ?? (status != 0 && t.text.isEmpty ? (errText.isEmpty ? "claude exited with \(status)" : errText) : nil) {
             Self.log.error("\(rid, privacy: .public) claude failed: \(msg, privacy: .public)")
             let (code, type, text) = AgentError.classify(msg)
-            if !stream { return await error(code, type, "claude: \(text)", rid: rid, writer: writer) }
+            if !stream { return await error(code, type, "claude: \(text)", rid: rid, extra: code == 429 ? [("x-should-retry", "false")] : [], writer: writer) }
             if t.text.isEmpty {
                 try? await writer.write(StreamTranslator.sse("error", ["type": "error", "error": ["type": type, "message": "claude: \(text)"]]))
                 return code

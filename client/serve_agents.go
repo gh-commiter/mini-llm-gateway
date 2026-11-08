@@ -23,9 +23,9 @@ import (
 	"runtime"
 	"slices"
 	"strings"
-	"unicode/utf8"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // agentCLI: nastavitve Codex ali Grok (JSON v API kot na Macu: enabled, path, write, network, models).
@@ -1025,7 +1025,7 @@ func (s *server) replyWhenDone(w http.ResponseWriter, r *req, body map[string]an
 			send(sse("error", map[string]any{"type": "error", "error": map[string]string{"type": errType(status), "message": msg}}))
 			return status
 		}
-		return writeError(w, r.rid, status, msg)
+		return writeAgentError(w, r.rid, status, msg)
 	}
 	t.usage = map[string]any{"output_tokens": float64(len(text) / 4)}
 	delta := t.emit(text)
@@ -1129,4 +1129,13 @@ func classifyAgentError(raw string) (int, string) {
 		return 429, msg
 	}
 	return 502, msg
+}
+
+// writeAgentError: napaka agenta; 429 zaradi omejitve agenta ima x-should-retry: false (Claude Code ga ponavlja
+// drugače), prehodni 429 (zasedeno) ga nima.
+func writeAgentError(w http.ResponseWriter, rid string, status int, msg string) int {
+	if status == 429 {
+		w.Header().Set("x-should-retry", "false")
+	}
+	return writeError(w, rid, status, msg)
 }

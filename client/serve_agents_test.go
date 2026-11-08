@@ -2,11 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -268,8 +268,13 @@ func TestAgentLimitKeywordsAndCleaning(t *testing.T) {
 		t.Fatalf("%q", m)
 	}
 	w := httptest.NewRecorder()
-	writeError(w, "req_1", 429, "x")
+	writeAgentError(w, "req_1", 429, "x")
 	if w.Header().Get("x-should-retry") != "false" {
-		t.Fatal("429 needs x-should-retry: false")
+		t.Fatal("agent limit needs x-should-retry: false")
+	}
+	b := httptest.NewRecorder()
+	writeError(b, "req_2", 429, "Too many provider requests at once")
+	if b.Header().Get("x-should-retry") != "" {
+		t.Fatal("busy 429 must stay retryable")
 	}
 }

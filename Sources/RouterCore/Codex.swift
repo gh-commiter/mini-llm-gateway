@@ -323,7 +323,7 @@ extension Router {
                 try? await writer.write(StreamTranslator.sse("error", ["type": "error", "error": ["type": type, "message": message]]))
                 return status
             }
-            return await self.error(status, type, message, rid: rid, writer: writer)
+            return await self.error(status, type, message, rid: rid, extra: status == 429 && !(error is SiriError) ? [("x-should-retry", "false")] : [], writer: writer)
         }
     }
 }

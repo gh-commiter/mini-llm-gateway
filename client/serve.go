@@ -1047,9 +1047,6 @@ func writeJSON(w http.ResponseWriter, rid string, status int, obj any) int {
 	data, _ := json.Marshal(obj)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("request-id", rid)
-	if status == 429 {
-		w.Header().Set("x-should-retry", "false") // Claude Code ponavlja 429, če glave ni
-	}
 	w.WriteHeader(status)
 	w.Write(data)
 	return status

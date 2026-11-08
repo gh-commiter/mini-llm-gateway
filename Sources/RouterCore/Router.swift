@@ -633,16 +633,16 @@ public final class Router: Sendable {
         }
     }
 
-    func json(_ status: Int, _ obj: Any, rid: String, writer: ResponseWriter) async -> Int {
+    func json(_ status: Int, _ obj: Any, rid: String, extra: [(String, String)] = [], writer: ResponseWriter) async -> Int {
         let body = (try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys, .withoutEscapingSlashes])) ?? Data("{}".utf8)
         try? await writer.write(HTTPResponse.head(status: status, headers: [
             ("Content-Type", "application/json"), ("request-id", rid),
-        ] + (status == 429 ? [("x-should-retry", "false")] : []), contentLength: body.count) + body)
+        ] + extra, contentLength: body.count) + body)
         return status
     }
 
-    func error(_ status: Int, _ type: String, _ message: String, rid: String, writer: ResponseWriter) async -> Int {
-        await json(status, ["type": "error", "error": ["type": type, "message": message]], rid: rid, writer: writer)
+    func error(_ status: Int, _ type: String, _ message: String, rid: String, extra: [(String, String)] = [], writer: ResponseWriter) async -> Int {
+        await json(status, ["type": "error", "error": ["type": type, "message": message]], rid: rid, extra: extra, writer: writer)
     }
 
     static func errorType(_ status: Int) -> String {
