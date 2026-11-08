@@ -228,9 +228,7 @@ const S = {
   path: ["Executable (empty = auto-detect)", "Program (prazno = samodejno)"], find: ["Find", "Poišči"],
   detected: ["%s · %s", "%s · %s"], notFound: ["claude not found: install Claude Code (on Windows the native claude.exe) or set the path.",
     "claude ni najden: namesti Claude Code (na Windows izvorni claude.exe) ali vpiši pot."],
-  tools: ["Tools", "Orodja"], commands: ["Commands", "Ukazi"], folder: ["Folder for agents without sync (empty = none)", "Mapa za agente brez sinhronizacije (prazno = brez)"],
-  folderHint: ["Agents normally work in a synced copy of the client's folder; this is only for clients without sync.",
-    "Agenti običajno delajo v sinhronizirani kopiji mape odjemalca; to je le za odjemalce brez sinhronizacije."],
+  tools: ["Tools", "Orodja"], commands: ["Commands", "Ukazi"],
   unsandboxed: ["Allow commands without a sandbox", "Dovoli ukaze brez sandboxa"],
   unsandboxedWarn: ["Windows has no sandbox for commands: agents can then run anything as you and read the provider keys and the admin secret.",
     "Windows nima sandboxa za ukaze: agenti lahko tedaj zaženejo karkoli kot ti in preberejo ključe ponudnikov in skrivnost API."],
@@ -651,7 +649,7 @@ const pages = {
   async claude() {
     const [c, st] = await Promise.all([api("GET", "/agents/claude"), api("GET", "/status")]);
     const win = st.os === "windows";
-    const n0 = note(), n1 = note(), n2 = note(), n3 = note(t("folderHint")), n4 = note(t("cliHint"));
+    const n0 = note(), n1 = note(), n2 = note(), n4 = note(t("cliHint"));
     const patch = body => api("PATCH", "/agents/claude", body);
     const on = new Set((c.tools || "").split(",").filter(Boolean));
     const path = el("input", {type: "text", value: c.path, placeholder: c.exe || (win ? "C:\\Users\\you\\.local\\bin\\claude.exe" : "/usr/local/bin/claude")});
@@ -667,8 +665,6 @@ const pages = {
     }), disabled));
     const bulk = v => save(n2, async () => { for (const [n] of TOOLS) v ? on.add(n) : on.delete(n); await sendTools(); show("claude"); });
     const cmdLocked = win && !c.allowUnsandboxedBash;
-    const folder = el("input", {type: "text", class: "left wide", value: c.folder, placeholder: win ? "C:\\Users\\you\\Projects" : "/home/you/projects"});
-    autosave(folder, n3, v => patch({folder: v}));
     const sources = el("input", {type: "text", value: c.settingSources, placeholder: t("none")});
     autosave(sources, n2, v => patch({settingSources: v}));
     const mode = el("select", {}, ...["dontAsk", "acceptEdits", "auto", "plan"].map(m => el("option", {value: m, textContent: m, selected: c.permissionMode === m})));
@@ -716,7 +712,6 @@ const pages = {
         row(labelSub(t("settingSources"), t("settingSourcesHelp")), sources)),
       n2,
       ...toolsPart,
-      section(t("folder")), group(row(folder)), n3,
       section(t("cliTool")),
       group(row(labelSub("minigw", st.installDir ? t("installedAt", st.installDir) : t("notInstalled")),
         buttons(el("a", {class: "btn", href: "https://github.com/gh-commiter/mini-llm-gateway/releases/latest", target: "_blank", rel: "noopener noreferrer",

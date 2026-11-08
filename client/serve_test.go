@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -337,6 +338,23 @@ func TestServeRealClaudeStaysInCopy(t *testing.T) {
 	}
 }
 
+// Starejši »folder« (privzeta mapa agentov) postane dovoljena mapa in se ne zapiše več.
+func TestServeOldFolderMigrates(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "serve.json")
+	os.WriteFile(p, []byte(`{"port":8765,"folder":"/srv/old","allowedFolders":["/srv/a"]}`), 0o600)
+	c, err := loadServeConfig(p)
+	if err != nil || !slices.Equal(c.AllowedFolders, []string{"/srv/a", "/srv/old"}) {
+		t.Fatalf("%v %v", c.AllowedFolders, err)
+	}
+	saveServeConfig(p, c)
+	if b, _ := os.ReadFile(p); strings.Contains(string(b), `"folder"`) {
+		t.Fatalf("folder written back: %s", b)
+	}
+	if c, _ = loadServeConfig(p); len(c.AllowedFolders) != 2 {
+		t.Fatalf("migrated twice: %v", c.AllowedFolders)
+	}
+}
+
 func TestServeFolderNotNearConfig(t *testing.T) {
 	k, _ := ecdh.X25519().GenerateKey(rand.Reader)
 	base := t.TempDir()
@@ -344,8 +362,9 @@ func TestServeFolderNotNearConfig(t *testing.T) {
 	for _, d := range []string{"cfg/x", "work"} {
 		os.MkdirAll(filepath.Join(base, d), 0o700)
 	}
+	scratch := filepath.Join(t.TempDir(), "scratch") // ne v base: dovoljena mapa okoli Scratch se ob zagonu le izpusti
 	for folder, bad := range map[string]bool{base: true, filepath.Join(base, "cfg"): true, filepath.Join(base, "cfg", "x"): true, filepath.Join(base, "work"): false} {
-		_, err := newServer(serveConfig{Token: "tok", Key: base64url(k.Bytes()), Claude: "/bin/sh", Scratch: filepath.Join(base, "scratch"), Folder: folder}, cfgPath)
+		_, err := newServer(serveConfig{Token: "tok", Key: base64url(k.Bytes()), Claude: "/bin/sh", Scratch: scratch, AllowedFolders: []string{folder}}, cfgPath)
 		if (err != nil) != bad {
 			t.Fatalf("folder %s: %v", folder, err)
 		}

@@ -32,7 +32,7 @@ runs; otherwise they go to serve.json.
   minigw gw provider remove <name> | list
   minigw gw provider models <name> [text] [--all] [--enable m1,m2|all] [--disable m1,m2|all]
   minigw gw claude [--path FILE] [--tools T1,T2] [--folders DIR1,DIR2] [--allow-local-tools=true|false]
-                  [--folder DIR] [--allow-unsandboxed-bash=true|false]   (the last two: minigw serve only)
+                  [--allow-unsandboxed-bash=true|false]   (minigw serve only)
   minigw gw autostart on|off                            Windows: start the tray at sign-in (Linux: minigw serve install)
   minigw gw token [rotate]                              print the connect line; rotate makes a new token
   minigw gw copilot token [remove]                      Copilot's token for commands (fine-grained, only Copilot
@@ -216,7 +216,6 @@ func routerCommand(args []string, in io.Reader) {
 	devName := fs.String("name", "", "devices allow/rename: the device's name (a label; the ID identifies it)")
 	path := fs.String("path", "", "claude: path to claude (empty = PATH)")
 	tools := fs.String("tools", "", "claude: the agent's tools")
-	folder := fs.String("folder", "", "claude: folder for agents that do not sync (empty = none)")
 	bash := fs.String("allow-unsandboxed-bash", "", "claude: true or false")
 	folders := fs.String("folders", "", "claude: allowed folders, comma-separated (as on the Mac)")
 	localTools := fs.String("allow-local-tools", "", "claude: true or false")
@@ -419,20 +418,13 @@ func routerCommand(args []string, in io.Reader) {
 	case "claude":
 		need(1, 1)
 		var c apiClaude
-		if set["path"] || set["tools"] || set["folder"] || set["allow-unsandboxed-bash"] || set["folders"] || set["allow-local-tools"] {
+		if set["path"] || set["tools"] || set["allow-unsandboxed-bash"] || set["folders"] || set["allow-local-tools"] {
 			body := map[string]any{}
 			if set["path"] {
 				body["path"] = *path
 			}
 			if set["tools"] {
 				body["tools"] = *tools
-			}
-			if set["folder"] {
-				abs := *folder
-				if abs != "" {
-					abs, _ = filepath.Abs(abs)
-				}
-				body["folder"] = abs
 			}
 			if set["allow-unsandboxed-bash"] {
 				b, err := strconv.ParseBool(*bash)
@@ -459,8 +451,8 @@ func routerCommand(args []string, in io.Reader) {
 		if path == "" {
 			path = "(from PATH)"
 		}
-		say(clean(fmt.Sprintf("path: %s, found: %v\ntools: %s\nallowLocalTools: %v\nfolders: %s\nallowUnsandboxedBash: %v\nfolder: %s",
-			path, c.Found, c.Tools, c.AllowLocalTools, c.Folders, c.AllowUnsandboxedBash, c.Folder)))
+		say(clean(fmt.Sprintf("path: %s, found: %v\ntools: %s\nallowLocalTools: %v\nfolders: %s\nallowUnsandboxedBash: %v",
+			path, c.Found, c.Tools, c.AllowLocalTools, c.Folders, c.AllowUnsandboxedBash)))
 
 	case "autostart": // kot na Macu; Linux: API pove, naj se uporabi minigw serve install
 		need(2, 2)

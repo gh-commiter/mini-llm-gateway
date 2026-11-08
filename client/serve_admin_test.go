@@ -356,12 +356,12 @@ func TestAdminReviewFixes(t *testing.T) {
 		t.Fatal("0.0.0.0 refused")
 	}
 	// L6: relativna mapa prek API; povezava v mapo nastavitev.
-	if st, _ := admin("PATCH", adminPrefix+"/agents/claude", `{"folder":"rel/dir"}`); st != 400 {
+	if st, _ := admin("PATCH", adminPrefix+"/agents/claude", `{"folders":"rel/dir"}`); st != 400 {
 		t.Fatal("relative folder accepted")
 	}
 	link := filepath.Join(t.TempDir(), "link")
 	os.Symlink(filepath.Dir(cfg), link)
-	if st, b := admin("PATCH", adminPrefix+"/agents/claude", `{"folder":"`+link+`"}`); st != 400 || !strings.Contains(b, "config folder") {
+	if st, b := admin("PATCH", adminPrefix+"/agents/claude", `{"folders":"`+link+`"}`); st != 400 || !strings.Contains(b, "config folder") {
 		t.Fatalf("symlink to the config folder: %d %s", st, b)
 	}
 

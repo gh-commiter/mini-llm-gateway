@@ -65,7 +65,6 @@ type apiClaude struct {
 	Found                bool     `json:"found"`
 	Tools                string   `json:"tools"`
 	AllowUnsandboxedBash bool     `json:"allowUnsandboxedBash"`
-	Folder               string   `json:"folder"`
 	Exe                  string   `json:"exe,omitempty"`     // najdena pot (tudi pri samodejnem iskanju)
 	ClaudeVersion        string   `json:"version,omitempty"` // claude --version
 	Enabled              bool     `json:"enabled"`
@@ -714,7 +713,6 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			Path                 *string   `json:"path"`
 			Tools                *string   `json:"tools"`
 			AllowUnsandboxedBash *bool     `json:"allowUnsandboxedBash"`
-			Folder               *string   `json:"folder"`
 			Enabled              *bool     `json:"enabled"`
 			Folders              *string   `json:"folders"`
 			AllowLocalTools      *bool     `json:"allowLocalTools"`
@@ -728,14 +726,6 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		if b.Tools != nil {
 			if *b.Tools = strings.ReplaceAll(*b.Tools, " ", ""); !validTools.MatchString(*b.Tools) {
 				return fail(400, "tools: comma-separated tool names, e.g. "+defaultTools)
-			}
-		}
-		if b.Folder != nil && *b.Folder != "" {
-			if !filepath.IsAbs(*b.Folder) {
-				return fail(400, "folder must be an absolute path")
-			}
-			if st, err := os.Stat(*b.Folder); err != nil || !st.IsDir() {
-				return fail(400, "not a folder: "+*b.Folder)
 			}
 		}
 		var folders []string
@@ -756,9 +746,6 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			}
 			if b.AllowUnsandboxedBash != nil {
 				c.AllowUnsandboxedBash = *b.AllowUnsandboxedBash
-			}
-			if b.Folder != nil {
-				c.Folder = *b.Folder
 			}
 			if b.Enabled != nil {
 				c.ClaudeDisabled = !*b.Enabled
@@ -1089,7 +1076,7 @@ func claudeTools(exe []string) []string {
 
 func (s *server) claudeInfo() apiClaude {
 	c, exe := s.conf(), s.claudeExe()
-	info := apiClaude{Path: c.Claude, Found: len(exe) > 0, Tools: c.Tools, AllowUnsandboxedBash: c.AllowUnsandboxedBash, Folder: c.Folder,
+	info := apiClaude{Path: c.Claude, Found: len(exe) > 0, Tools: c.Tools, AllowUnsandboxedBash: c.AllowUnsandboxedBash,
 		Enabled: !c.ClaudeDisabled, Folders: strings.Join(c.AllowedFolders, ","), AllowLocalTools: c.AllowLocalTools,
 		DisabledTools: append([]string{}, c.DisabledTools...), PermissionMode: c.PermissionMode, SettingSources: c.SettingSources}
 	if len(exe) > 0 {

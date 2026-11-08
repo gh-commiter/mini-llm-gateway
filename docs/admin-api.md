@@ -81,9 +81,9 @@ Model    {"id": string, "model": string, "window"?: number, "enabled": bool}
 Provider  {"name": string, "baseURL": string, "insecure": bool, "models": [string] | null, "hasKey": bool, "ready": bool,
           "enabled": bool, "aliases": string}
          models: enabled provider IDs; null = all discovered, now and later. ready: model list loaded.
-Claude   {"path": string, "found": bool, "tools": string, "allowUnsandboxedBash": bool, "folder": string,
+Claude   {"path": string, "found": bool, "tools": string, "allowUnsandboxedBash": bool,
           "exe"?: string, "version"?: string}
-         path: "" = from PATH; tools: comma-separated tool names; folder: "" = only synced copies; exe: the
+         path: "" = from PATH; tools: comma-separated tool names; exe: the
          claude that was found; version: its `claude --version` (both only when found; Go gateway only).
 General  {"port": number, "address": string, "connect": string, "restartRequired"?: true, "allowedClients": string,
           "allowPlainRemote": bool, "allowAnyDevice": bool, "allowLocalApps": bool, "scratch": string}
@@ -107,7 +107,7 @@ General  {"port": number, "address": string, "connect": string, "restartRequired
 | `POST /providers/{name}/models` | `{"all"?: bool, "enable"?: [id or model], "disable"?: [id or model]}` | `{"models": [Model], "changed": [Model]}` |
 | `GET /agents/claude` | – | Claude |
 | `GET /agents/claude/tools` | – | `{"tools": [string]}`: the tools of this Claude Code (for the exclude table with local tools) |
-| `PATCH /agents/claude` | any of `{"path", "tools", "allowUnsandboxedBash", "folder"}` | Claude |
+| `PATCH /agents/claude` | any of `{"path", "tools", "allowUnsandboxedBash"}` | Claude |
 | `GET /general` | – | General |
 | `PATCH /general` | any of `{"port", "address", "startAtSignIn", "allowedClients", "allowPlainRemote", "allowAnyDevice", "allowLocalApps", "scratch"}` | General; `"restartRequired": true` for port or address |
 | `POST /general/token` | – | General with the new token in `connect`; the old token stops working at once |
@@ -216,7 +216,7 @@ The Mac app keeps its settings in its preferences and Keychain; the Settings win
 - **agents/claude:** `{"enabled", "path", "found", "tools", "folders", "allowLocalTools", "disabledTools",
   "permissionMode", "settingSources"}`; `PATCH` takes the last two with the same rules as Go. `GET /agents/claude/tools`
   and `GET /agents/{codex,grok}/models` answer as on Go.
-  `folders` is the comma-separated list of allowed folders. There is no `folder` or `allowUnsandboxedBash`: with
+  `folders` is the comma-separated list of allowed folders. There is no `allowUnsandboxedBash`: with
   `allowLocalTools`, Bash runs in Claude Code's sandbox.
 - **general:** also `allowedClients` (IP addresses, comma-separated; empty = all), `allowPlainRemote` and `allowAnyDevice`. `address`
   may be `0.0.0.0`, `::` or `127.0.0.1`. A port or address change restarts the listener, so there is no
