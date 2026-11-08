@@ -41,6 +41,9 @@ func (c connection) isLocal() bool {
 	return h == "127.0.0.1" || h == "localhost" || h == "::1"
 }
 
+// oneLine: besedilo prehoda v eni vrstici: brez znaka za novo vrstico, da ne ponaredi vrstice »Device:« ali »Status:«.
+func oneLine(s string) string { return strings.ReplaceAll(clean(s), "\n", " ") }
+
 func say(s string) { fmt.Println(s) }
 
 // clean: besedilo routerja brez kontrolnih znakov (razen \n), da ne krmili terminala.
@@ -165,7 +168,7 @@ func routeErr(p profile) (connection, error) {
 func failureReason(st int, body map[string]any) string {
 	e, _ := body["error"].(map[string]any)
 	msg, _ := e["message"].(string)
-	msg = clean(msg)
+	msg = oneLine(msg)
 	switch st {
 	case 0:
 		return "gateway not reachable"
@@ -199,7 +202,8 @@ func deviceID(c connection) string {
 func profileStatus(p profile) bool {
 	c, err := routeErr(p)
 	if err != nil {
-		say("Gateway:   " + p.conn.URL + " (" + err.Error() + ")")
+		say("Gateway:   " + p.conn.URL + " (" + oneLine(err.Error()) + ")")
+		say("Status:    " + oneLine(err.Error()))
 		return false
 	}
 	st, ready := getJSON(c, "/health/ready")
@@ -225,7 +229,7 @@ func profileStatus(p profile) bool {
 			if v, _ := pr[k].(bool); v {
 				mark = "✓"
 			}
-			out = append(out, k+" "+mark)
+			out = append(out, oneLine(k)+" "+mark)
 		}
 		say("Providers: " + strings.Join(out, ", "))
 	}
@@ -482,21 +486,10 @@ func main() {
 				why := ""
 				if c, err := routeErr(p); err != nil {
 					why = err.Error()
-				} else if st, m := getJSON(c, "/v1/models"); st != 200 {
-					why = failureReason(st, m)
 				} else {
-					lists[i] = []map[string]any{}
-					raw, _ := m["data"].([]any)
-					for _, x := range raw {
-						if mm, ok := x.(map[string]any); ok {
-							lists[i] = append(lists[i], mm)
-						}
-					}
+					lists[i], why = fetchModels(c)
 				}
 				if lists[i] == nil {
-					if why == "" {
-						why = "cannot list models"
-					}
 					fmt.Fprintln(os.Stderr, "minigw: gateway "+p.name+" ("+p.conn.URL+"): "+why+"; its models are left out")
 				}
 			}

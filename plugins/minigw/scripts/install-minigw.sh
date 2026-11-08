@@ -142,13 +142,25 @@ ver_line=$("$EXE" --version 2>/dev/null | head -1)
 if sout=$("$EXE" status 2>&1); then
   echo "minigw plugin: $ver_line, connected to Mini Gateway."
 else
-  case $(printf '%s\n' "$sout" | sed -n 's/^Status: *//p' | head -1) in
+  blk=$(printf '%s\n' "$sout" | sed '/^$/q')  # blok privzetega profila (prvi; profili so ločeni s prazno vrstico)
+  case $(printf '%s\n' "$blk" | sed -n 's/^Status:    //p' | tail -1) in
     "token rejected"*) echo "minigw plugin: $ver_line: the gateway token was rejected; run /minigw:connect <gateway> with a fresh token (Mini Gateway > Settings > General > Copy Token)." ;;
     "device not approved"*)
-      id=$(printf '%s\n' "$sout" | sed -n 's/^Device: *\([A-Za-z0-9_-]\{43\}\) .*/\1/p' | head -1)
-      echo "minigw plugin: $ver_line: device not approved${id:+ (ID $id)}; approve it on the gateway (Settings > Devices), then run /minigw:connect again." ;;
+      id=$(printf '%s\n' "$blk" | sed -n 's/^Device:    \([A-Za-z0-9_-]\{43\}\) (.*/\1/p' | tail -1)
+      if [ -n "$id" ]; then
+        echo "minigw plugin: $ver_line: device not approved (ID $id); approve it on the gateway (Settings > Devices), then run /minigw:connect again."
+      else
+        echo "minigw plugin: $ver_line installed but not connected; use /minigw:connect <gateway> <token>."
+      fi ;;
     *) echo "minigw plugin: $ver_line installed but not connected; use /minigw:connect <gateway> <token>." ;;
   esac
 fi
 # #6: agentni skilli zaženejo »claude« prek minigw; razširitev VS Code z vgrajenim CLI ni dovolj.
-command -v claude >/dev/null 2>&1 || echo "minigw plugin: the agent skills need the standalone claude command on PATH (the VS Code extension's bundled CLI is not enough): install it with: curl -fsSL https://claude.ai/install.sh | bash"
+if ! command -v claude >/dev/null 2>&1; then
+  case $os in
+    windows) inst='irm https://claude.ai/install.ps1 | iex (in PowerShell)' ;;
+    darwin) inst='curl -fsSL https://claude.ai/install.sh | bash (or brew install --cask claude-code)' ;;
+    *) inst='curl -fsSL https://claude.ai/install.sh | bash' ;;
+  esac
+  echo "minigw plugin: the agent skills need the standalone claude command on PATH (the VS Code extension's bundled CLI is not enough): install it with: $inst"
+fi

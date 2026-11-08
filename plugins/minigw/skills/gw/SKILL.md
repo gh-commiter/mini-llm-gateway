@@ -69,7 +69,7 @@ For other computers, `/minigw:gw token` shows the connect line to run there (or 
 
 ## status
 
-`"$M" gw status`. Summarize: running, version, autostart (at boot / at sign-in / no), running agent requests, devices (allowed, waiting), providers (models, ready). Then `"$M" status`: list each profile (reachable or not) and say which one is this computer (`127.0.0.1`). If it is not installed, suggest `/minigw:gw install`.
+`"$M" gw status`. Summarize: running, version, autostart (at boot / at sign-in / no), running agent requests, devices (allowed, waiting), providers (models, ready). Then `"$M" status`: list each profile (reachable / token rejected / waiting for approval, from its `Status:` line) and say which one is this computer (`127.0.0.1`). If it is not installed, suggest `/minigw:gw install`.
 
 ## Managing the gateway
 

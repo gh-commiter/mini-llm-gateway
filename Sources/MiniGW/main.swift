@@ -12,8 +12,12 @@ let out = FileHandle.standardOutput, err = FileHandle.standardError
 func say(_ s: String) { out.write(Data((s + "\n").utf8)) }
 /// Besedilo routerja brez kontrolnih znakov (razen \n), da ne krmili terminala.
 func clean(_ s: String) -> String {
-    String(String.UnicodeScalarView(s.unicodeScalars.filter { $0 == "\n" || !($0.value < 0x20 || (0x7f...0x9f).contains($0.value)) }))
+    String(String.UnicodeScalarView(s.unicodeScalars.filter {
+        $0 == "\n" || !($0.value < 0x20 || (0x7f...0x9f).contains($0.value) || $0.properties.generalCategory == .format)  // tudi bidi, ničelna širina
+    }))
 }
+/// Besedilo prehoda v eni vrstici: brez znaka za novo vrstico, da ne ponaredi vrstice »Device:« ali »Status:«.
+func oneLine(_ s: String) -> String { clean(s).replacingOccurrences(of: "\n", with: " ") }
 func fail(_ s: String, code: Int32 = 1) -> Never { err.write(Data(("minigw: " + s + "\n").utf8)); exit(code) }
 
 // MARK: shranjena povezava (Keychain ukaza; ne vsebuje je nobena datoteka)
@@ -469,7 +473,7 @@ func requireProfile() -> Profile {
 /// Razlog, zakaj odgovor routerja ni 200 (status, telo napake): 401 = žeton, 403 = naprava še ni dovoljena
 /// (sporočilo prehoda z navodili ostane), 0 = ni povezave. Isto besedilo v odjemalcu Go.
 func failureReason(_ s: Int, _ body: [String: Any]?) -> String {
-    let msg = ((body?["error"] as? [String: Any])?["message"] as? String).map(clean) ?? ""
+    let msg = ((body?["error"] as? [String: Any])?["message"] as? String).map(oneLine) ?? ""
     switch s {
     case 0: return "gateway not reachable"
     case 401: return "token rejected: copy the token again (Mini Gateway → Settings → General → Copy Token) and run minigw connect …"
@@ -490,12 +494,15 @@ func profileStatus(_ p: Profile) -> Bool {
     let c: Connection
     switch routeResult(p) {
     case .success(let r): c = r
-    case .failure(let e): say("Gateway:   \(p.conn.url) (\(e.message))"); return false
+    case .failure(let e):
+        say("Gateway:   \(p.conn.url) (\(oneLine(e.message)))")
+        say("Status:    \(oneLine(e.message))")
+        return false
     }
     let (s, ready) = get(c, "/health/ready")
     say("Gateway:   \(p.conn.url) (\(s == 200 ? "reachable" : s == 0 ? "unreachable" : "HTTP \(s)")\(p.conn.isLocal && p.conn.key == nil ? "" : ", encrypted"))")
     if let pr = ready?["providers"] as? [String: Bool] {
-        say("Providers: " + pr.keys.sorted().map { "\($0) \(pr[$0]! ? "✓" : "✗")" }.joined(separator: ", "))
+        say("Providers: " + pr.keys.sorted().map { "\(oneLine($0)) \(pr[$0]! ? "✓" : "✗")" }.joined(separator: ", "))
     }
     let (ms, models) = get(c, "/v1/models")
     say("Models:    " + (ms == 200 ? "\((models?["data"] as? [Any])?.count ?? 0)" : ms == 401 ? "token rejected" : ms == 403 ? "device not approved" : "–"))

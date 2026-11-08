@@ -95,6 +95,8 @@ echo "$out" | grep -q "gateway token was rejected" && ! echo "$out" | grep -q EV
 st "Device:    $ID (waiting for approval)
 Status:    device not approved: EVIL text" 1
 echo "$out" | grep -q "device not approved (ID $ID)" && ! echo "$out" | grep -q EVIL || fail "8: device not approved"
+st "Status:    device not approved: x" 1
+echo "$out" | grep -q "installed but not connected" && ! echo "$out" | grep -q "(ID" || fail "8: device not approved without a Device line"
 st "Status:    gateway not reachable" 1
 echo "$out" | grep -q "installed but not connected" || fail "8: not connected"
 ! echo "$out" | grep -q "standalone claude command" || fail "8: claude hint with claude present"

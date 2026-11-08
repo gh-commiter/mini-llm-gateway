@@ -1,8 +1,10 @@
 package main
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -38,5 +40,33 @@ func TestFailureReason(t *testing.T) {
 	}
 	if r := failureReason(0, nil); r != "gateway not reachable" {
 		t.Error(r)
+	}
+}
+
+// L1/L2: ključ ponudnika z novo vrstico in ubežnim zaporedjem ne ponaredi vrstice Device/Status in ne krmili terminala.
+func TestStatusOutputCannotBeForged(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			w.WriteHeader(403)
+			w.Write([]byte(`{"error":{"message":"x\nStatus:    connected\r‮"}}`))
+			return
+		}
+		w.Write([]byte(`{"providers":{"a\nDevice:    ` + strings.Repeat("A", 43) + ` (approved)\u001b[31m":true}}`))
+	}))
+	defer srv.Close()
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	ok := profileStatus(profile{"default", connection{URL: srv.URL, Token: "t"}})
+	w.Close()
+	os.Stdout = old
+	b, _ := io.ReadAll(r)
+	if ok {
+		t.Error("403 must not be connected")
+	}
+	for _, l := range strings.Split(string(b), "\n") {
+		if strings.HasPrefix(l, "Device:") || strings.HasPrefix(l, "Status:    connected") || strings.ContainsAny(l, "\x1b\r‮") {
+			t.Errorf("forged or unclean line: %q", l)
+		}
 	}
 }
