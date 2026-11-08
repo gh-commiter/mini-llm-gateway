@@ -83,7 +83,7 @@ func resolveClaude(configured string) ([]string, error) {
 	}
 	// Ovojnica npm (claude.cmd): paket je v node_modules ob njej.
 	js := filepath.Join(filepath.Dir(p), "node_modules", "@anthropic-ai", "claude-code", "cli.js")
-	node, _ := exec.LookPath("node.exe")
+	node := lookPath("node.exe")
 	if _, err := os.Stat(js); err != nil || node == "" {
 		return nil, fmt.Errorf("%s is not an .exe and minigw serve does not run batch files (unsafe argument quoting): install the native Claude Code (claude.exe) or set \"claude\" in the config to it", p)
 	}

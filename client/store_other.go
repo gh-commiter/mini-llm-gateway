@@ -106,7 +106,7 @@ func secretTool() string {
 	if runtime.GOOS != "linux" {
 		return ""
 	}
-	tool, _ := exec.LookPath("secret-tool")
+	tool := lookPath("secret-tool")
 	return tool
 }
 

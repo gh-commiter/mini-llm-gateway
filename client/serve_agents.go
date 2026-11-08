@@ -283,7 +283,7 @@ func copilotArgs(agent bool, model string, write, commands, network bool, sessio
 var copilotTokenVars = []string{"COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"}
 
 // copilotGH: GitHub CLI (var: testi podtaknejo lažnega).
-var copilotGH = func() string { p, _ := exec.LookPath("gh"); return p }
+var copilotGH = func() string { return lookPath("gh") }
 
 // copilotKey: ime žetona za ukaze (fine-grained PAT le z »Copilot Requests«) v shrambi ključev; »:« ime ponudnika ne more imeti.
 const copilotKey = "agent:copilot"
