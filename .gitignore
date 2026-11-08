@@ -25,3 +25,4 @@ xcuserdata/
 
 # Lokalna gradnja odjemalca (go build v client/)
 /client/minigw
+/client/*.exe
