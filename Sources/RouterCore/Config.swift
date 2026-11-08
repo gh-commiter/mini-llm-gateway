@@ -145,6 +145,15 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         return inside(s, r) || inside(r, s)
     }
 
+    /// Paket Copilot CLI (koda, ki jo copilot --version naloži in razširi).
+    public static var copilotCache: URL {
+        (Sync.real(URL(fileURLWithPath: NSHomeDirectory())) ?? URL(fileURLWithPath: NSHomeDirectory())).appendingPathComponent("Library/Caches/copilot")
+    }
+
+    /// #26 (L1): dovoljena mapa vsebuje paket Copilot ali je v njem: agent s pisanjem bi podtaknil kodo, ki jo naloži
+    /// priprava paketa (copilot --version). Kot overlapsScratch.
+    public static func overlapsCopilotCache(_ root: String) -> Bool { overlapsScratch(root, scratch: copilotCache) }
+
     /// M1, L1: izbrana mapa za Scratch (Settings in API); nil = v redu, sicer razlog. Scratch hrani kopije drugih naprav
     /// in zrcala, ki jih bere git prehoda: ne sme biti koren diska, domača mapa ali mapa, ki jo vsebuje, začasna mapa
     /// ali mapa v dovoljeni mapi agentov (ali obratno), in »Mini Gateway Scratch« v njej ne sme biti povezava.

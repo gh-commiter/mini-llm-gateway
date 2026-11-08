@@ -108,7 +108,8 @@ if [[ $MODE == --release ]]; then
   scripts/build-msi.sh $VERSION $OUT
   GO_BINS+=(minigw-windows-amd64.msi minigw-windows-arm64.msi)
 
-  (cd $OUT && shasum -a 256 "${ZIP:t}" "${DMG:t}" minigw.zip install.sh $GO_BINS | tee SHA256SUMS)
+  # #25: podpisana različica (prva vrstica) za spodnjo mejo pri namestitvah: brez vračanja na starejšo izdajo.
+  (cd $OUT && { print "VERSION $VERSION"; shasum -a 256 "${ZIP:t}" "${DMG:t}" minigw.zip install.sh $GO_BINS; } | tee SHA256SUMS)
   rm -f $OUT/SHA256SUMS.sig
   ssh-keygen -Y sign -q -f "$SIGNING_KEY" -n minigw-release $OUT/SHA256SUMS || { print -u2 "Signing SHA256SUMS failed"; exit 1 }
   print -r -- "$(grep -v '^#' client/release_sig.go | grep -o 'ssh-ed25519 [A-Za-z0-9+/=]*' | head -1)" \

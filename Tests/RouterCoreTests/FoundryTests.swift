@@ -65,7 +65,7 @@ final class FoundryStub: URLProtocol, @unchecked Sendable {
         let oldSession = Foundry.session, oldCommand = FoundryHub.command, oldOurs = FoundryHub.listenerIsOurs
         Foundry.session = URLSession(configuration: c)
         FoundryHub.command = { _, args, _ in args == ["server", "status"] ? "running on http://127.0.0.1:5273/openai/status" : "" }
-        FoundryHub.listenerIsOurs = { _ in true }  // stub: na 5273 nihče ne posluša
+        FoundryHub.listenerIsOurs = { _, _ in true }  // stub: na 5273 nihče ne posluša
         defer { Foundry.session = oldSession; FoundryHub.command = oldCommand; FoundryHub.listenerIsOurs = oldOurs }
         await Router.foundry.forget()
         FoundryStub.requests = []
@@ -89,6 +89,11 @@ final class FoundryStub: URLProtocol, @unchecked Sendable {
         #expect(FoundryStub.requests.count == 2 && FoundryStub.requests.first?["model"] as? String == "phi-4-mini-generic-cpu" && FoundryStub.requests.first?["tools"] == nil)
         let unknown = await call("POST", "/v1/messages", #"{"model":"claude-foundry-nope","messages":[{"role":"user","content":"hi"}]}"#)
         #expect(unknown.contains("404"))
+        // N5: poslušalca preveri vsaka zahteva, tudi ko je naslov v predpomnilniku
+        FoundryHub.listenerIsOurs = { _, _ in false }
+        let taken = await call("POST", "/v1/messages", #"{"model":"claude-foundry-phi-4-mini-generic-cpu","max_tokens":5,"messages":[{"role":"user","content":"hi"}]}"#)
+        #expect(taken.contains("port belongs to another user") && FoundryStub.requests.count == 2, "\(taken)")
+        await Router.foundry.forget()
     }
 
     /// F1, F2, F5, F7.
@@ -104,6 +109,23 @@ final class FoundryStub: URLProtocol, @unchecked Sendable {
         _ = withUnsafeMutablePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &len) } }
         let port = UInt16(bigEndian: a.sin_port)
         #expect(PeerProcess.listenerIsOurs(port: port))
+        // L3: tudi program poslušalca (ta testni proces) mora biti v mapi namestitve.
+        var buf = [CChar](repeating: 0, count: 4096)
+        _ = proc_pidpath(getpid(), &buf, UInt32(buf.count))
+        let me = try #require(Sync.real(URL(fileURLWithPath: String(cString: buf))))
+        #expect(PeerProcess.listenerIsOurs(port: port, installDir: me.deletingLastPathComponent().path))
+        #expect(!PeerProcess.listenerIsOurs(port: port, installDir: "/opt/homebrew/Cellar/foundrylocal"))
+        #expect(FoundryHub.installDir("/opt/x/Cellar/foundrylocal/1.0/bin/foundry").hasSuffix("/foundrylocal/1.0"))
+        // N4: navaden bin ostane bin; povezava v paket z lastno mapo gre nad njegov bin
+        let t = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("n4-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: t) }
+        for d in ["usr/bin", "pkg/2.0/bin"] {
+            try FileManager.default.createDirectory(at: t.appendingPathComponent(d), withIntermediateDirectories: true)
+            FileManager.default.createFile(atPath: t.appendingPathComponent(d + "/foundry").path, contents: nil)
+        }
+        try FileManager.default.createSymbolicLink(at: t.appendingPathComponent("foundry"), withDestinationURL: t.appendingPathComponent("pkg/2.0/bin/foundry"))
+        #expect(FoundryHub.installDir(t.appendingPathComponent("usr/bin/foundry").path) == t.appendingPathComponent("usr/bin").path)
+        #expect(FoundryHub.installDir(t.appendingPathComponent("foundry").path) == t.appendingPathComponent("pkg/2.0").path)
         #expect(!PeerProcess.listenerIsOurs(port: freeTCPPort()))
         // F5, F7
         #expect(Foundry.count(42) == 42 && Foundry.count(-1) == nil && Foundry.count(2_000_000_000) == nil && Foundry.count("7") == nil)
