@@ -290,8 +290,9 @@ extension Router {
             sharedDir = shared
             cwd = tree?.root ?? dir  // M3: koren klona namesto --add-dir; sporočilo spodaj pove mapo seje
             if shared != nil || tree != nil { visible = cwd }  // R3: le pot iz ShareHub sme biti v (skritem) Scratch
+            readOnly = await Self.isReadOnly(req)
+            if readOnly, tree != nil { return await error(400, "invalid_request_error", Self.readOnlyWorktree, rid: rid, writer: writer) }
             if let shared, let clientCwd {
-                readOnly = await Self.shares.isReadOnly(session: req.header("x-claude-mini-session") ?? "")
                 prompt = Self.mountNote(clientCwd, shared, readOnly: readOnly || (tree != nil && !cfg.write), synced: synced,
                                         branch: tree?.branch) + "\n\n" + prompt
             }

@@ -168,3 +168,59 @@ private func get(_ run: AgentRun, _ path: String, token: String?) async -> Int {
     }
     #expect(AgentError.clean("failed C:/x/y ./rel file:///etc/passwd https://a.b/c request req_abc123") == "failed https://a.b/c request req_abc123")
 }
+
+/// --minigw-ro brez deljenja (prehod na istem Macu): glava x-claude-mini-ro da Claude CLI brez orodij za pisanje in
+/// sandbox brez pisanja; codex, ki ga vpraša, dela le za branje, tudi ko vprašani agent pošlje »x-claude-mini-ro: 0«.
+@Test func readOnlyHeaderWithoutShare() async throws {
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent("ro-" + UUID().uuidString)
+    let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("ro-scratch-" + UUID().uuidString)
+    let client = base.appendingPathComponent("client"), bin = base.appendingPathComponent("bin")
+    defer { for d in [base, scratch] { try? FileManager.default.removeItem(at: d) } }
+    for d in [client, bin] { try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true) }
+    func script(_ name: String, _ body: String) throws -> String {
+        let u = bin.appendingPathComponent(name)
+        try Data(("#!/bin/sh\n" + body).utf8).write(to: u)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: u.path)
+        return u.path
+    }
+    var c = RouterConfig()
+    c.scratchFolder = scratch.path
+    c.claudeCLI.allowedRoots = base.path
+    c.claudeCLI.enabled = true; c.claudeCLI.askOthers = true; c.claudeCLI.allowLocalTools = true
+    c.claudeCLI.executable = try script("claude", """
+        [ "$1" = --version ] && { echo '2.1.0 (Claude Code)'; exit 0; }
+        cat > /dev/null
+        printf '%s\\n' "$@" > claude-args.txt
+        curl -s -o /dev/null -H "Authorization: Bearer $(cat "$MINIGW_AGENT_AUTH_FILE")" -H 'content-type: application/json' -H 'x-claude-mini-ro: 0' \\
+          -d '{"model":"claude-codex","max_tokens":10,"tools":[{"name":"x"}],"messages":[{"role":"user","content":"hi"}]}' "$MINIGW_AGENT_URL/v1/messages"
+        echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"done"}}}'
+        echo '{"type":"result","subtype":"success","usage":{"output_tokens":3}}'
+
+        """)
+    c.codex.enabled = true
+    c.codex.executable = try script("codex", """
+        out=""; prev=""
+        for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done
+        cat > /dev/null
+        printf '%s\\n' "$@" > codex-args.txt
+        echo "codex answer" > "$out"
+
+        """)
+    let router = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]))
+    func run(readOnly: Bool) async throws -> (claude: String, codex: String) {
+        var h = ["Authorization": "Bearer tok", "x-claude-mini-session": UUID().uuidString, "x-claude-mini-cwd": client.path]
+        if readOnly { h["x-claude-mini-ro"] = "1" }
+        let w = FakeWriter()
+        await router.handle(request("POST", "/v1/messages", headers: h,
+                                    body: #"{"model":"claude-cli-haiku","tools":[{"name":"x"}],"messages":[{"role":"user","content":"go"}]}"#), writer: w)
+        #expect(w.status == 200, "\(w.text)")
+        func read(_ n: String) throws -> String { try String(contentsOf: client.appendingPathComponent(n), encoding: .utf8) }
+        defer { for n in ["claude-args.txt", "codex-args.txt"] { try? FileManager.default.removeItem(at: client.appendingPathComponent(n)) } }
+        return (try read("claude-args.txt"), try read("codex-args.txt"))
+    }
+    let rw = try await run(readOnly: false)
+    #expect(rw.codex.contains("workspace-write") && !rw.claude.contains("EnterWorktree"))  // brez glave: pisanje (kontrola)
+    let ro = try await run(readOnly: true)
+    #expect(ro.codex.contains("--sandbox\nread-only") && !ro.codex.contains("workspace-write") && !ro.codex.contains("--add-dir"))
+    #expect(ro.claude.contains("--disallowedTools\nEdit,Write,MultiEdit,NotebookEdit,EnterWorktree,ExitWorktree,Monitor") && ro.claude.contains(#""allowWrite":[]"#))
+}

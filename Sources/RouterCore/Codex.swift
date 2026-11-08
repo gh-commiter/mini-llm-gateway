@@ -84,7 +84,7 @@ public enum Codex {
                   "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true"]
             for d in extraDirs { a += ["--add-dir", d] }
         } else {
-            a += ["--sandbox", "read-only"]
+            a += ["--sandbox", "read-only", "-c", #"sandbox_mode="read-only""#]  // tudi kot -c: velja tudi za »exec resume« (kot v Go, I5)
         }
         if !agent { a.append("--ephemeral") }  // naslovi, povzetki: brez zapisa seje
         if let resume { a += ["resume", resume] }
@@ -236,8 +236,9 @@ extension Router {
                 try? FileManager.default.createDirectory(at: tree.maven, withIntermediateDirectories: true)
                 extra = (tree.root.path == dir.path ? [] : [tree.root.path]) + [tree.maven.path]
             }
+            readOnly = await Self.isReadOnly(req)
+            if readOnly, tree != nil { return await error(400, "invalid_request_error", Self.readOnlyWorktree, rid: rid, writer: writer) }
             if let shared, let clientCwd {
-                readOnly = await Self.shares.isReadOnly(session: req.header("x-claude-mini-session") ?? "")
                 prompt = Self.mountNote(clientCwd, shared, readOnly: readOnly || (tree != nil && !config.codex.write), synced: synced,
                                         branch: tree?.branch) + "\n\n" + prompt
             }

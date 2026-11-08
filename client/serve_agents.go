@@ -602,7 +602,12 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 	if st != 0 {
 		return st
 	}
-	if treeRun && !ac.canWrite(k) {
+	// --minigw-ro tudi brez mape le za branje
+	readOnly = readOnly || r.h("x-claude-mini-ro") == "1"
+	if readOnly && treeRun && runOf(r) == nil { // L2: kot na Macu (zahteva samo za branje; odjemalca je ne pošiljata)
+		return writeError(w, r.rid, 400, readOnlyWorktree)
+	}
+	if treeRun && !ac.canWrite(k) { // agent brez pisanja: le branje v klonu, veje ne vrne
 		name := map[string]string{"codex": "Codex", "copilot": "Copilot", "grok": "Grok"}[k.name]
 		s.hub.note(r.h("x-claude-mini-session"), name+" may not write, so it only reads in the clone; no branch comes back")
 		note, readOnly = worktreeReadOnlyNote(r.h("x-claude-mini-cwd"), dir), true

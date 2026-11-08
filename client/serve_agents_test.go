@@ -161,6 +161,11 @@ echo '{"type":"end","sessionId":"s9"}'
 	if st, b := chat("claude-codex", false, true); st != 200 || !strings.Contains(args(), "workspace-write") || !strings.Contains(args(), "network_access=false") {
 		t.Fatalf("codex agent: %d %s %q", st, b, args())
 	}
+	h["x-claude-mini-ro"] = "1" // --minigw-ro brez mape le za branje: Codex le bere
+	if st, b := chat("claude-codex", false, true); st != 200 || !strings.Contains(args(), "read-only") || strings.Contains(args(), "workspace-write") {
+		t.Fatalf("codex read-only header: %d %s %q", st, b, args())
+	}
+	delete(h, "x-claude-mini-ro")
 	if st, b := chat("claude-grok", true, true); st != 200 || !strings.Contains(b, `"text":"grok says hi"`) || !strings.Contains(b, "message_stop") ||
 		!strings.Contains(args(), "Read("+filepath.ToSlash(s.cfgDir)+"/**)") {
 		t.Fatalf("grok stream: %d %s %q", st, b, args())

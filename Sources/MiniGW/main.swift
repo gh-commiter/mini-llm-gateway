@@ -839,7 +839,8 @@ let implicitWork = workFlag == nil && SharedFolders.lookup(sharedFolders(), cwd:
 
 // x-claude-mini-share: router po ponovnem zagonu počaka, da se mapa znova registrira (namesto napake cwd_unavailable).
 setenv("ANTHROPIC_CUSTOM_HEADERS", "x-claude-mini-session: \(sid)\nx-claude-mini-cwd: \(cwd)" + (wantShare ? "\nx-claude-mini-share: 1" : "")
-       + (role.isEmpty ? "" : "\nx-claude-mini-role: \(role)"), 1)
+       + (role.isEmpty ? "" : "\nx-claude-mini-role: \(role)")
+       + (readOnly ? "\nx-claude-mini-ro: 1" : ""), 1)  // --minigw-ro velja tudi brez deljenja (prehod na tem Macu)
 
 // Brez proxyja in brez mape: minigw ni več potreben → exec.
 guard !proxies.isEmpty || (wantShare && !sid.isEmpty) || profiles.count > 1 else {

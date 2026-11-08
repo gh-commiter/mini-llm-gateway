@@ -304,7 +304,7 @@ func TestScratchOverlapAndProviderRename(t *testing.T) {
 	if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/general", `{"scratch":""}`); st != 400 || !strings.Contains(b, "contains it") {
 		t.Fatalf("default scratch with an allowed folder around it: %d %s", st, b)
 	}
-	if strings.Contains(strings.Join(s.agentArgs(t.TempDir()), " "), "--add-dir "+parent) {
+	if strings.Contains(strings.Join(s.agentArgs(t.TempDir(), false), " "), "--add-dir "+parent) {
 		t.Fatal("allowed folder around Scratch passed to claude")
 	}
 	s.update(func(c *serveConfig) error {

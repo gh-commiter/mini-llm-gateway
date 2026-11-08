@@ -210,8 +210,9 @@ extension Router {
             sharedDir = shared
             extra = config.claudeCLI.allowedRoots.split(separator: ",").map { ClaudeCLI.expand($0.trimmingCharacters(in: .whitespaces)) }
                 .filter { $0 != "/" && !$0.isEmpty && $0 != dir.path && FileManager.default.fileExists(atPath: $0) }
+            readOnly = await Self.isReadOnly(req)
+            if readOnly, inTree { return await error(400, "invalid_request_error", Self.readOnlyWorktree, rid: rid, writer: writer) }  // kot Codex
             if let shared, let clientCwd {
-                readOnly = await Self.shares.isReadOnly(session: req.header("x-claude-mini-session") ?? "")
                 prompt = Self.mountNote(clientCwd, shared, readOnly: readOnly || inTree, synced: synced) + "\n\n" + prompt
             }
         } else {

@@ -194,6 +194,10 @@ func (s *server) runHandler(run *agentRun) http.Handler {
 		if run.role != "" {
 			hr.Header.Set("X-Claude-Mini-Role", run.role)
 		}
+		hr.Header.Del("X-Claude-Mini-Ro") // --minigw-ro iz izvajanja, ne od vprašanega agenta
+		if run.readOnly {
+			hr.Header.Set("X-Claude-Mini-Ro", "1")
+		}
 		s.ServeHTTP(w, hr.WithContext(context.WithValue(hr.Context(), agentRunKey{}, run)))
 	})
 }

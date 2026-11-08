@@ -98,9 +98,11 @@ Use      {"model": string, "role"?: string, "via"?: string, "readOnly"?: true, "
          One entry per model, role and via (sorted by them; at most 32, then "other"). model ≤ 64 B; a request for
          an unknown or refused model (404) counts as "unknown". via: the agent or chain that
          called it (agent calls, e.g. `claude` or `claude→codex`, taken from the gateway's run, never from a header;
-         the nested request also keeps the caller's session, device and role); absent = the client. readOnly and tools: the latest effective restrictions: the
-         session folder is read-only; Claude CLI's tools or "local" (Allow local tools), Codex, Grok and Copilot's
-         switches `write`, `network`, `commands` (empty = read only). errors: 5xx and aborted; refused: 4xx; seconds:
+         the nested request also keeps the caller's session, device and role); absent = the client. readOnly and tools: the latest effective restrictions: readOnly = a read-only share
+         or `--minigw-ro` (header `x-claude-mini-ro`, also without a share; a nested request keeps its caller's); Claude CLI's
+         tools (read-only: only Read, Grep, Glob, LS, WebSearch, WebFetch of them) or "local" (Allow local tools; read-only:
+         "local,read-only"), Codex, Grok and Copilot's switches `write`, `network`, `commands` as they applied (empty = read
+         only; read-only drops `write` and `commands`; Codex `network` only with `write`). errors: 5xx and aborted; refused: 4xx; seconds:
          total request time (for agents their run time); tokens from the response's usage.
 Model    {"id": string, "model": string, "window"?: number, "enabled": bool}
          id: the ID at the provider; model: the name for /model (the id, or "claude-" + id when the id contains

@@ -632,6 +632,9 @@ func main() {
 	if role != "" {
 		headers += "\nx-claude-mini-role: " + role
 	}
+	if readOnly { // --minigw-ro velja tudi brez deljenja (prehod na tem računalniku)
+		headers += "\nx-claude-mini-ro: 1"
+	}
 	env = append(env, "ANTHROPIC_CUSTOM_HEADERS="+headers)
 
 	// Načini po vrsti (auto: native → worktree → sync); naslednji, če router prejšnjega ne sprejme.
