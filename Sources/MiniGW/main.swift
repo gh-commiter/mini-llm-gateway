@@ -83,20 +83,30 @@ func loadProfile(_ name: String, skip: Bool = false) -> Connection? {
     q[kSecMatchLimit as String] = kSecMatchLimitOne
     var item: CFTypeRef?
     let st = SecItemCopyMatching(q as CFDictionary, &item)
+    let again = "run minigw disconnect --name \(name), then minigw connect again"
     if st == errSecInteractionNotAllowed || st == errSecAuthFailed {
         if skip { err.write(Data("minigw: profile \(name) left out: macOS would ask before minigw reads it from the Keychain\n".utf8)); return nil }
-        fail("macOS would ask before minigw reads profile \(name) (the Keychain is locked, or the profile was saved by a minigw with another signature): unlock the Keychain, or delete the item \(service) in Keychain Access and run minigw connect again")
+        fail("macOS would ask before minigw reads profile \(name) (the Keychain is locked, or the profile was saved by a minigw with another signature): unlock the Keychain, or \(again)")
     }
-    guard st == errSecSuccess, let d = item as? Data else { return nil }
-    return try? JSONDecoder().decode(Connection.self, from: d)
+    if st == errSecItemNotFound { return nil }
+    // profil v rabi, ki ga ni mogoče prebrati: napaka, ne tiho naslednji profil
+    guard st == errSecSuccess, let d = item as? Data, let c = try? JSONDecoder().decode(Connection.self, from: d) else {
+        if skip { err.write(Data("minigw: profile \(name) left out: it cannot be read from the Keychain (OSStatus \(st))\n".utf8)); return nil }
+        fail("cannot read profile \(name) from the Keychain (OSStatus \(st)): \(again)")
+    }
+    return c
 }
 
 func saveProfile(_ name: String, _ c: Connection) {
     let data = try! JSONEncoder().encode(c)
-    if SecItemUpdate(keychainQuery(name) as CFDictionary, [kSecValueData as String: data] as CFDictionary) == errSecItemNotFound {
+    var st = SecItemUpdate(keychainQuery(name) as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+    if st == errSecItemNotFound {
         var add = keychainQuery(name)
         add[kSecValueData as String] = data
-        guard SecItemAdd(add as CFDictionary, nil) == errSecSuccess else { fail("cannot save to Keychain") }
+        st = SecItemAdd(add as CFDictionary, nil)
+    }
+    guard st == errSecSuccess else {
+        fail("cannot save profile \(name) to the Keychain (OSStatus \(st)): unlock the login keychain and run minigw connect again")
     }
 }
 
@@ -624,10 +634,12 @@ case "connect":
     exit(0)
 
 case "disconnect":
-    if profileNames().isEmpty { _ = requireProfile() }
-    var name = profileFlag ?? defaultName(profileNames())  // ne bere privzetega profila, ko gre za drugega
+    let names = profileNames()  // le atributi: SecItemDelete ne potrebuje branja profila
+    if names.isEmpty { _ = requireProfile() }
+    if let f = profileFlag, !names.contains(f) { fail("no profile \(f) (minigw profiles lists them)") }
+    var name = profileFlag ?? defaultName(names)
     if let i = args.firstIndex(of: "--name"), i + 1 < args.count { name = args[i + 1] }
-    guard Profiles.valid(name), loadProfile(name) != nil else { fail("no profile \(name)") }
+    guard Profiles.valid(name), names.contains(name) else { fail("no profile \(name)") }
     SecItemDelete(keychainQuery(name) as CFDictionary)
     say(profileNames().isEmpty && name == Profiles.defaultName ? "Disconnected" : "Disconnected profile \(name)")
     exit(0)
