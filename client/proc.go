@@ -39,3 +39,12 @@ func mergePath(sep string, lists ...string) string {
 	}
 	return strings.Join(out, sep)
 }
+
+// lookPath: program na PATH ali ""; tudi ob exec.ErrDot (najden v trenutni mapi ali prek relativne poti) "".
+func lookPath(name string) string {
+	p, err := exec.LookPath(name)
+	if err != nil {
+		return ""
+	}
+	return p
+}

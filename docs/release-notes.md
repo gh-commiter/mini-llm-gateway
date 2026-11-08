@@ -3,6 +3,9 @@
 ## Unreleased
 
 - Docs: sharing and sync send the whole folder, hidden files included; keep credentials out or list them in `.gitignore`.
+- Windows: the tray started by the installer now gets the user's full environment (as from Explorer), so CLIs whose PATH entry uses `%LOCALAPPDATA%` (Codex) are found without restarting the tray.
+- Docs: on Windows Codex can ask other models only with its unelevated sandbox.
+- Agents no longer get client variables in other letter case (`Anthropic_Base_Url` on Windows), and programs found through the current folder are ignored.
 - Codex, Grok and Copilot agents are told the full path of `minigw` for asking other models (Codex's Windows sandbox runs commands without the gateway's PATH, so `minigw` was not found).
 - Windows tray: Settings opens in its own app window (Edge, Chrome, Brave or Vivaldi; otherwise the default browser), and clicking "Settings…" again brings it to the front instead of opening a new tab. A window whose session expired is replaced by a signed-in one.
 - Windows and Linux gateway (`minigw serve`): `minigw` without `--minigw-work` (and no `MINIGW_WORK` or saved mode) no

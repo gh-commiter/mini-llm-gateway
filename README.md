@@ -522,6 +522,9 @@ lists every control on both. Client options (`minigw share`, `--minigw-work`, `-
 - **May ask other models** (each agent, off by default) – the agent may ask another model of this gateway with the
   gateway's `minigw -p --model <id> "…"`, for example Opus asking an OpenRouter model or Codex, in the same folder and
   with your device's rights (one level deep, never its own kind). Claude CLI needs **Allow local tools**, Codex network.
+  On Windows Codex can ask only with the unelevated sandbox (`[windows]` `sandbox = "unelevated"` in
+  `~/.codex/config.toml`; it still limits writes, do not turn the sandbox off for this): the `elevated` sandbox runs
+  commands as another Windows user, who cannot read the run's token, so the call is refused.
 
 <table>
 <tr><td><img src="docs/images/general.png" width="400" alt="Settings: General"></td>

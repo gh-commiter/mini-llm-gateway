@@ -18,7 +18,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -89,10 +88,10 @@ func resolveAgent(k agentKind, configured string) (string, error) {
 	p := configured
 	if p == "" {
 		if runtime.GOOS == "windows" {
-			p, _ = exec.LookPath(k.bin + ".exe")
+			p = lookPath(k.bin + ".exe")
 		}
 		if p == "" {
-			if p, _ = exec.LookPath(k.bin); p == "" {
+			if p = lookPath(k.bin); p == "" {
 				return "", nil
 			}
 		}
@@ -283,7 +282,7 @@ func copilotArgs(agent bool, model string, write, commands, network bool, sessio
 var copilotTokenVars = []string{"COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"}
 
 // copilotGH: GitHub CLI (var: testi podtaknejo lažnega).
-var copilotGH = func() string { p, _ := exec.LookPath("gh"); return p }
+var copilotGH = func() string { return lookPath("gh") }
 
 // copilotKey: ime žetona za ukaze (fine-grained PAT le z »Copilot Requests«) v shrambi ključev; »:« ime ponudnika ne more imeti.
 const copilotKey = "agent:copilot"
@@ -804,6 +803,7 @@ func agentEnv(env []string) []string {
 	var out []string
 	for _, e := range env {
 		name, _, _ := strings.Cut(e, "=")
+		name = strings.ToUpper(name) // Windows: imena spremenljivk brez razlike med velikimi in malimi črkami
 		if strings.HasPrefix(name, "ANTHROPIC_") || strings.HasPrefix(name, "CLAUDE_CODE_") || slices.Contains([]string{"CLAUDECODE",
 			"DBUS_SESSION_BUS_ADDRESS", "SSH_AUTH_SOCK", "GPG_AGENT_INFO", "GNOME_KEYRING_CONTROL", "CODEX_HOME", "GROK_HOME", "MINIGW_AGENT_URL", "MINIGW_AGENT_AUTH_FILE",
 			"GH_TOKEN", "GITHUB_TOKEN"}, name) || strings.HasPrefix(name, "COPILOT_") {

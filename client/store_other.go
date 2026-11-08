@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/user"
 	"path/filepath"
 	"runtime"
@@ -106,7 +105,7 @@ func secretTool() string {
 	if runtime.GOOS != "linux" {
 		return ""
 	}
-	tool, _ := exec.LookPath("secret-tool")
+	tool := lookPath("secret-tool")
 	return tool
 }
 
