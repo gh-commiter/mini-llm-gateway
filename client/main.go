@@ -457,7 +457,7 @@ func main() {
 			"minigw status | models | disconnect [--name P]   all profiles; models of other profiles end in @P\n" +
 			"minigw profiles [default P]                list profiles, or pick the default (its models also without @P)\n" +
 			"minigw --minigw-profile P …                 use only profile P for this command\n" +
-			"minigw share add|remove [folder] | list    also share a system or hidden folder with the gateway\n" +
+			"minigw share add|remove [folder] | list    share a system or hidden folder itself (contents are always shared)\n" +
 			"minigw share add --work=native|native-direct|sync|direct [--ro] [folder]   default mode for that folder (flag/env wins)\n" +
 			"minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)\n" +
 			"minigw --minigw-role NAME [claude args]    the caller's role for the gateway's session history (or MINIGW_ROLE)\n" +

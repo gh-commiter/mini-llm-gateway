@@ -680,7 +680,7 @@ case "--minigw-help", "-h", "--help", "-v", "--version":
         minigw status | models | disconnect [--name P]   all profiles; models of other profiles end in @P
         minigw profiles [default P]                list profiles, or pick the default (its models also without @P)
         minigw --minigw-profile P …                 use only profile P for this command
-        minigw share add|remove [folder] | list    also share a system or hidden folder with the gateway
+        minigw share add|remove [folder] | list    share a system or hidden folder itself (contents are always shared)
         minigw share add --work=native|native-direct|sync|direct [--ro] [folder]   default mode for that folder (flag/env wins)
         minigw gw status|devices|provider|claude|token …    change the Mini Gateway app on this Mac (minigw gw help)
         minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)

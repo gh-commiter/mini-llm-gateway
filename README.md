@@ -361,6 +361,8 @@ folder is shared, also outside your home folder (for example `D:\Projects\app` o
 but never a drive or volume root, the home folder itself, system folders (`C:\Windows`, `Program Files`, `/usr`,
 `/System` …), other users' home folders, `~/Library`, `AppData` or hidden folders such as `~/.ssh`. To share one of
 those anyway, run `minigw share add` in it (`minigw share list`, `minigw share remove`); a root is always refused.
+Inside a shared folder everything is shared, hidden folders and files included (`.claude/`, `.env`, `.secret/`): keep
+credentials out of project folders you use with a gateway, or list them in `.gitignore` for sync and worktree mode.
 The list is per computer: with several profiles every gateway gets the folder on its first agent request.
 **Read-only:** `minigw --minigw-ro …` (or `MINIGW_SHARE=ro`, for example in the `env` of Claude Code's settings for the
 plugin) shares the folder read-only: minigw refuses every write, the gateway mounts it read-only and runs Codex and
@@ -376,7 +378,8 @@ The folder's own Claude Code settings and hooks are not loaded on the gateway Ma
 **Sync instead of a mount (for builds).** `minigw --minigw-work=sync …` (or `MINIGW_WORK=sync`) copies the folder to the
 gateway's Scratch folder before each agent request and copies the files the agent changed back after it. Agents and
 builds then work on the gateway's local disk.
-- **Sent to the gateway:** only changed files, compared by size, time and SHA-256.
+- **Sent to the gateway:** every file of the folder, hidden ones included, except the list below; after the first
+  request only changed files, compared by size, time and SHA-256.
 - **Never sent, never copied back:**
   - files matched by `.gitignore` or the built-in list (`.git`, `target/`, `.build/`, `node_modules/`, `build/`,
     `dist/`, `DerivedData/` …);
