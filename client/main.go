@@ -214,7 +214,7 @@ func getJSON(c connection, path string) (int, map[string]any) {
 }
 
 func main() {
-	refreshPath(isTrayExe(os.Args[0])) // Windows: uporabnikovo okolje tudi, ko pladenj zažene MSI
+	refreshPath() // Windows: trenutni uporabnikov PATH, tudi v lupini, odprti pred namestitvijo CLI
 	args := os.Args[1:]
 	if isTrayExe(os.Args[0]) { // minigw-tray.exe: router z ikono v območju za obvestila
 		trayCommand(args)

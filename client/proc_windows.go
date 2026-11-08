@@ -1,11 +1,9 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"unsafe"
 )
@@ -22,63 +20,14 @@ func hideConsole(cmd *exec.Cmd) {
 	cmd.SysProcAttr.CreationFlags |= createNoWindow
 }
 
-// refreshPath: okolje uporabnika, kot ga dobi Raziskovalec (CreateEnvironmentBlock: sistemske in uporabnikove spremenljivke
-// iz registra, razširjene s pravim profilom), in ~\.local\bin na PATH. Pladenj, ki ga zažene MSI, podeduje okolje
-// namestitvenega programa: brez uporabnikovega PATH (claude="") in z napačnim %LOCALAPPDATA%, zato mapa iz uporabnikovega
-// PATH kot »%LOCALAPPDATA%\Programs\…\codex.exe« ni bila najdena. Velja za LookPath in za vse otroke.
-// tray=false (ukazna vrstica): le manjkajoče mape na konec PATH; spremenljivke, ki jih je nastavila lupina, ostanejo.
-func refreshPath(tray bool) {
-	var tok syscall.Token
-	err := syscall.OpenProcessToken(syscall.Handle(^uintptr(0)) /* trenutni proces */, syscall.TOKEN_QUERY|syscall.TOKEN_DUPLICATE, &tok)
-	var env []string
-	if err == nil {
-		env, err = userEnv(tok)
-		tok.Close()
-	}
-	envSource = "user"
-	if err != nil { // rezerva: Path iz registra (sistemski in uporabnikov), razširjen z okoljem tega procesa
-		envSource = "registry (" + err.Error() + ")"
-		env = []string{"PATH=" + regString(0x80000002, `SYSTEM\CurrentControlSet\Control\Session Manager\Environment`) + ";" + regString(0x80000001, `Environment`)}
-	}
-	for _, kv := range env {
-		k, v, ok := strings.Cut(kv, "=")
-		switch {
-		case !ok || k == "":
-		case strings.EqualFold(k, "PATH") && tray:
-			os.Setenv("PATH", mergePath(";", v, os.Getenv("PATH")))
-		case strings.EqualFold(k, "PATH"):
-			os.Setenv("PATH", mergePath(";", os.Getenv("PATH"), v))
-		case tray:
-			os.Setenv(k, v)
-		}
-	}
+// refreshPath: dosedanjemu PATH doda manjkajoče mape iz registra (sistemski in uporabnikov, razširjen) in ~\.local\bin. Pladenj,
+// ki ga zažene MSI, podeduje okolje namestitvenega programa brez uporabnikovega PATH: claude, codex, git … niso bili
+// najdeni (claude=""). Velja za LookPath in za vse otroke.
+func refreshPath() {
+	sys := regString(0x80000002, `SYSTEM\CurrentControlSet\Control\Session Manager\Environment`) // HKLM
+	usr := regString(0x80000001, `Environment`)                                                  // HKCU
 	home, _ := os.UserHomeDir()
-	os.Setenv("PATH", mergePath(";", os.Getenv("PATH"), filepath.Join(home, ".local", "bin")))
-}
-
-// envSource: od kod je okolje (vrstica zagona v dnevniku): »user« ali »registry (napaka)«.
-var envSource string
-
-// userEnv: CreateEnvironmentBlock za žeton (brez podedovanja okolja tega procesa); nil ob napaki.
-func userEnv(tok syscall.Token) ([]string, error) {
-	userenv := syscall.NewLazyDLL("userenv.dll")
-	var block *uint16
-	if r, _, e := userenv.NewProc("CreateEnvironmentBlock").Call(uintptr(unsafe.Pointer(&block)), uintptr(tok), 0); r == 0 || block == nil {
-		return nil, fmt.Errorf("CreateEnvironmentBlock: %v", e)
-	}
-	defer userenv.NewProc("DestroyEnvironmentBlock").Call(uintptr(unsafe.Pointer(block)))
-	var out []string
-	for p := unsafe.Pointer(block); ; {
-		n := 0
-		for *(*uint16)(unsafe.Add(p, n*2)) != 0 {
-			n++
-		}
-		if n == 0 {
-			return out, nil
-		}
-		out = append(out, syscall.UTF16ToString(unsafe.Slice((*uint16)(p), n)))
-		p = unsafe.Add(p, (n+1)*2)
-	}
+	os.Setenv("PATH", mergePath(";", os.Getenv("PATH"), sys, usr, filepath.Join(home, ".local", "bin")))
 }
 
 // regString: vrednost Path ključa, razširjena (%USERPROFILE% …); "" ob napaki.

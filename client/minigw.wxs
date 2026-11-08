@@ -43,7 +43,8 @@
          odstranitev njegovega paketa. -->
     <CustomAction Id="CloseTray" FileKey="tray" ExeCommand="quit" Return="ignore" Execute="immediate"/>
     <!-- Po namestitvi zaženi pladenj; ob prvem zagonu sam ustvari serve.json in pokaže, kje je vrstica za povezavo.
-         Zastavica quiet-if-running: ista različica znova (pladenj ostane, CloseTray se ne zažene) brez sporočila »already running«. -->
+         Zastavica quiet-if-running: ista različica znova (pladenj ostane, CloseTray se ne zažene) brez sporočila »already running«;
+         sicer se pladenj znova zažene prek Raziskovalca (okolje msiexec nima uporabnikovega trenutnega PATH). -->
     <CustomAction Id="StartTray" FileKey="tray" ExeCommand="tray --quiet-if-running --config &quot;[AppDataFolder]minigw\serve.json&quot;" Return="asyncNoWait" Impersonate="yes"/>
     <InstallExecuteSequence>
       <Custom Action="CloseTray" After="CostFinalize">REMOVE~="ALL"</Custom>

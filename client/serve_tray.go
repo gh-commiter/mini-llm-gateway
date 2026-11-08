@@ -49,8 +49,9 @@ func trayCommand(args []string) {
 	}
 	fs := flag.NewFlagSet("minigw tray", flag.ExitOnError)
 	cfgPath := fs.String("config", defaultServeConfigPath(), "config file")
-	// MSI (StartTray): če pladenj že teče (ista različica znova), konec brez sporočila; ročni zagon ga pokaže.
-	quiet := fs.Bool("quiet-if-running", false, "exit silently if the tray is already running")
+	// MSI (StartTray): če pladenj že teče (ista različica znova), konec brez sporočila; ročni zagon ga pokaže. Sicer ga
+	// znova zažene Raziskovalec (trayRun): okolje msiexec nima uporabnikovega trenutnega PATH.
+	quiet := fs.Bool("quiet-if-running", false, "installer start: exit silently if running, else restart via Explorer")
 	fs.Parse(args)
 	trayRun(*cfgPath, *quiet)
 }
