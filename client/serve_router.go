@@ -343,6 +343,10 @@ func routerCommand(args []string, in io.Reader) {
 				say("no connections recorded")
 			}
 		case pos[1] == "deny" && len(pos) == 3:
+			delete(set, "config")
+			if len(set) > 0 { // --name ipd.: brisanje ni namen (preimenuj: rename)
+				fail("minigw gw devices deny takes no options (to rename a device: minigw gw devices rename <id> --name N)")
+			}
 			var r struct {
 				Device  apiDevice
 				Pending bool

@@ -195,6 +195,8 @@ func routerCommand(_ argv: [String]) {
             for x in h { say("\(x["time"] as? String ?? "")  \(q(x["address"] as? String ?? ""))  \(q(x["client"] as? String ?? ""))") }
             if h.isEmpty { say("no connections recorded") }
         } else if pos[1] == "deny", pos.count == 3 {
+            // --name ipd.: brisanje ni namen (preimenuj: rename)
+            guard flags.isEmpty else { fail("minigw gw devices deny takes no options (to rename a device: minigw gw devices rename <id> --name N)") }
             let r = a.call("DELETE", "/devices/" + esc(pos[2]))
             let d = r["device"] as? [String: Any] ?? [:]
             say("\(r["pending"] as? Bool == true ? "rejected waiting" : "removed") device \(d["id"] as? String ?? "") \(q(d["name"] as? String ?? ""))")
