@@ -2,9 +2,10 @@
 
 ## Unreleased
 
-- `minigw serve` no longer has a default folder for agents (`folder` in serve.json, `--folder`, the settings field and
+- `minigw serve` no longer has a default folder for agents (`folder` in serve.json, the settings field and
   `minigw gw claude --folder`): as on the Mac, an agent request without a shared, synced or worktree folder is refused.
-  A stored `folder` becomes an allowed folder.
+  A stored `folder` becomes an allowed folder; `minigw serve --folder X` (and `serve init`) still works, adds X to the
+  allowed folders and says it is deprecated.
 - **This user's apps without a token (off by default):** programs of the gateway's own user on the same computer can use
   the models and agents (`/v1/messages`, `/v1/models`) without the token, for example an app pointed at `http://127.0.0.1:8765`.
   The gateway checks the process behind the connection (same user, not one of its agents); the request needs

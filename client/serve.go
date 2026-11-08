@@ -243,6 +243,7 @@ func serveCommand(args []string) {
 	fs := flag.NewFlagSet("minigw serve", flag.ExitOnError)
 	cfgPath := fs.String("config", defaultServeConfigPath(), "config file")
 	port := fs.Int("port", 0, "port (default 8765)")
+	folder := fs.String("folder", "", "deprecated: adds an allowed folder (use minigw gw claude --folders)")
 	fs.BoolVar(&allowDowngrade, "allow-downgrade", false, "install: replace a newer installed minigw (#25)")
 	fs.Usage = func() { fmt.Fprintln(os.Stderr, serveHelp) }
 	fs.Parse(args)
@@ -258,6 +259,7 @@ func serveCommand(args []string) {
 		if *port != 0 {
 			c.Port = *port
 		}
+		deprecatedFolder(&c, *folder)
 		abs, _ := filepath.Abs(filepath.Dir(*cfgPath)) // zasebna mapa pred prvim zapisom žetona in ključa
 		os.MkdirAll(abs, 0o700)
 		if err := protectConfigDir(abs); errors.Is(err, errForeignOwner) {
@@ -298,6 +300,7 @@ func serveCommand(args []string) {
 	if *port != 0 {
 		c.Port = *port
 	}
+	deprecatedFolder(&c, *folder)
 	s, err := newServer(c, *cfgPath)
 	if err != nil {
 		fail(err.Error())
@@ -471,6 +474,18 @@ func defaultScratch() string {
 		return ""
 	}
 	return filepath.Join(dir, "minigw", "scratch")
+}
+
+// deprecatedFolder: zastareli --folder (minigw serve, serve init) doda dovoljeno mapo; skripte delujejo naprej.
+func deprecatedFolder(c *serveConfig, f string) {
+	if f == "" {
+		return
+	}
+	abs, _ := filepath.Abs(f)
+	if !slices.Contains(c.AllowedFolders, abs) {
+		c.AllowedFolders = append(c.AllowedFolders, abs)
+	}
+	say("--folder is deprecated: " + abs + " is now an allowed folder (use --folders)")
 }
 
 // checkAgent: mapa ne sme biti blizu mape nastavitev, claude mora obstajati, Bash na Windows le z dovoljenjem.

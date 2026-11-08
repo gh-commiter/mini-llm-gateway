@@ -353,6 +353,13 @@ func TestServeOldFolderMigrates(t *testing.T) {
 	if c, _ = loadServeConfig(p); len(c.AllowedFolders) != 2 {
 		t.Fatalf("migrated twice: %v", c.AllowedFolders)
 	}
+	// zastareli --folder: doda dovoljeno mapo (enkrat)
+	dir := t.TempDir()
+	deprecatedFolder(&c, dir)
+	deprecatedFolder(&c, dir)
+	if len(c.AllowedFolders) != 3 || c.AllowedFolders[2] != dir {
+		t.Fatalf("--folder: %v", c.AllowedFolders)
+	}
 }
 
 func TestServeFolderNotNearConfig(t *testing.T) {
