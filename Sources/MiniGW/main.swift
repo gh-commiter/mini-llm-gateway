@@ -706,10 +706,18 @@ default:
 
 // MARK: Claude Code prek routerja
 
+if agentConn() == nil {  // --model …@profil: ves zagon s tem prehodom, kot --minigw-profile (#8)
+    let mp = Profiles.modelProfile(args, names: profileNames())
+    if let p = mp.profile {
+        if let f = profileFlag, f != p { fail("--model \(mp.model) and --minigw-profile \(f) name different gateways") }
+        profileFlag = p; args = mp.args
+    }
+}
 let profiles = loadProfiles()
 if profiles.isEmpty { _ = requireProfile() }
 let saved = profiles[0].conn  // privzeti profil: mapa, glave in modeli brez pripone kot prej
 let c = route(profiles[0])
+for k in ProcessInfo.processInfo.environment.keys where Profiles.parentClaudeVar(k) { unsetenv(k) }  // #7
 setenv("ANTHROPIC_BASE_URL", c.url, 1)
 setenv("ANTHROPIC_AUTH_TOKEN", c.token, 1)
 setenv("ANTHROPIC_API_KEY", "", 1)

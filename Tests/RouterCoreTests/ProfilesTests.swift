@@ -20,6 +20,25 @@ import Testing
             && !Profiles.isAgentModel("claude-siri-ai") && !Profiles.isAgentModel("claude-chat-haiku"))
 }
 
+/// #8: --model …@profil izbere profil za ves zagon (enako kot TestModelProfileSelectsTheGateway).
+@Test func modelSuffixSelectsTheProfile() {
+    let names = ["default", "local"]
+    let a = Profiles.modelProfile(["-p", "--model", "claude-cli-opus@local", "hi"], names: names)
+    #expect(a.profile == "local" && a.args == ["-p", "--model", "claude-cli-opus", "hi"] && a.model == "claude-cli-opus@local")
+    let b = Profiles.modelProfile(["--model=claude-opus-4@20250514"], names: names)
+    #expect(b.profile == nil && b.args == ["--model=claude-opus-4@20250514"])
+    #expect(Profiles.modelProfile(["--model=gpt@default"], names: names).args == ["--model=gpt"])
+}
+
+/// #7: claude pod minigw ne podeduje seje in prijave starševskega Claude Code (enako kot TestClaudeChildEnvDropsParentSession).
+@Test func parentClaudeSessionIsNotInherited() {
+    for k in ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_SSE_PORT", "CLAUDE_CODE_SESSION_ID",
+              "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_MODEL", "anthropic_base_url"] {
+        #expect(Profiles.parentClaudeVar(k), "\(k)")
+    }
+    for k in ["CLAUDE_CODE_GIT_BASH_PATH", "CLAUDE_CONFIG_DIR", "MINIGW_SHARE", "PATH", "HOME"] { #expect(!Profiles.parentClaudeVar(k), "\(k)") }
+}
+
 @Test func profileModelsMerge() {
     let a: [[String: Any]] = [["id": "b", "display_name": "B"], ["id": "a"]], w: [[String: Any]] = [["id": "a", "display_name": "A"]]
     let ids = Profiles.merge([a, w], names: ["mini", "win"])?.map { "\($0["id"]!)|\($0["display_name"] as? String ?? "")" }

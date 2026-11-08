@@ -509,6 +509,9 @@ func main() {
 	if (strings.HasPrefix(asked, "native") || asked == "worktree") && work != asked {
 		fmt.Fprintln(os.Stderr, "minigw: "+asked+" mode cannot be read-only; sharing read-only over the network instead")
 	}
+	if agentConn() == nil {
+		args = modelProfile(args, profileNames())
+	}
 	ps := loadProfiles()
 	if len(ps) == 0 {
 		requireProfile()
@@ -667,6 +670,34 @@ func main() {
 	os.Exit(code)
 }
 
+// modelProfile: --model <model>@<profil> izbere profil za ves zagon (mapa, sync, worktree, native), kot --minigw-profile;
+// model gre naprej brez pripone. Sicer bi mapo dobil privzeti prehod, model pa drug (#8).
+func modelProfile(args, names []string) []string {
+	for i, a := range args {
+		v, eq := strings.CutPrefix(a, "--model=")
+		if !eq {
+			if a != "--model" || i+1 >= len(args) {
+				continue
+			}
+			v = args[i+1]
+		}
+		at := strings.LastIndex(v, "@")
+		if at <= 0 || !slices.Contains(names, v[at+1:]) {
+			continue
+		}
+		if profileFlag != "" && profileFlag != v[at+1:] {
+			fail("--model " + v + " and --minigw-profile " + profileFlag + " name different gateways")
+		}
+		profileFlag = v[at+1:]
+		if eq {
+			args[i] = "--model=" + v[:at]
+		} else {
+			args[i+1] = v[:at]
+		}
+	}
+	return args
+}
+
 // registerShare: načini po vrsti (auto: native → worktree → sync); naslednji, če prehod prejšnjega ne sprejme.
 func registerShare(c connection, sid, cwd string, readOnly bool, top string, tries []string, quiet bool) (*shareClient, bool) {
 	sc := &shareClient{c: c, session: sid, root: cwd, readOnly: readOnly, synced: map[string]syncEntry{}, reported: map[string]bool{}}
@@ -737,7 +768,7 @@ func runClaude(args []string, env []string) int {
 	signal.Ignore(os.Interrupt)
 	cmd := consoleCommand("claude", args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	cmd.Env = append(os.Environ(), env...)
+	cmd.Env = claudeEnv(os.Environ(), env)
 	if err := cmd.Run(); err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
 			return ee.ExitCode()
@@ -746,6 +777,21 @@ func runClaude(args []string, env []string) int {
 		return 127
 	}
 	return 0
+}
+
+// claudeEnv: okolje za claude brez podedovanih ANTHROPIC_*, CLAUDECODE in CLAUDE_CODE_* (seja in prijava starševskega
+// Claude Code ali Claude Desktop, npr. CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_BASE_URL: sicer 401 na prehodu), nato naše.
+// CLAUDE_CODE_GIT_BASH_PATH ostane (nastavitev uporabnika na Windows, ne prijava).
+func claudeEnv(base, own []string) []string {
+	var out []string
+	for _, e := range base {
+		k, _, _ := strings.Cut(strings.ToUpper(e), "=") // Windows: imena brez razlike v velikosti črk
+		if (strings.HasPrefix(k, "ANTHROPIC_") || k == "CLAUDECODE" || strings.HasPrefix(k, "CLAUDE_CODE_")) && k != "CLAUDE_CODE_GIT_BASH_PATH" {
+			continue
+		}
+		out = append(out, e)
+	}
+	return append(out, own...)
 }
 
 func newUUID() string {
