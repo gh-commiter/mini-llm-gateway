@@ -126,7 +126,7 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
         // agents: števec je globalen (vzporedni testi agentov), zato le število (I1).
         #expect(st.contains(#""autostart":"sign-in""#) && st.range(of: #""agents":\d+"#, options: .regularExpression) != nil && st.contains(#""installed":true"#))
         let t = await admin(app.router(), "POST", "/general/token", host: "127.0.0.1:9999")
-        #expect(t.status == 200 && t.text.contains("newtok#KEY"))
+        #expect(t.status == 200 && t.text.contains("--token 'newtok#KEY'"))
     }
 
     @Test func gatewaysWithDiscoveryAndKeys() async throws {

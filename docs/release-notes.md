@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Windows tray and the settings page: **Copy Token** copies only the token (`token#key`), as on the Mac; the tray item was
+  "Copy connect line". `gw token` still prints the whole `minigw connect …` line.
 - **No console windows on Windows:** the tray and every program it starts (claude, git, agents …) run without a console
   window; GUI windows such as the installer's progress stay visible. The MSI closes the tray with
   `minigw-tray.exe quit` instead of `taskkill` in a cmd window. Updating from 0.5.18 or older still shows one cmd window

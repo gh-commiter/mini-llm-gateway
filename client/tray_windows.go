@@ -167,7 +167,7 @@ func trayRun(cfgPath string) {
 	s.pick.Store(&pf) // stran z nastavitvami: Izberi… in Prebrskaj…
 	if fresh {
 		t.balloon(t.tr("Mini Gateway is ready", "Mini Gateway je pripravljen"),
-			t.tr("Copy the connect line from this icon's menu and run it on each client.", "V meniju te ikone kopiraj vrstico za povezavo in jo zaženi na vsakem odjemalcu."))
+			t.tr("Copy the token from this icon's menu; on each client run /minigw:connect <this computer> <token>.", "V meniju te ikone kopiraj žeton; na vsakem odjemalcu zaženi /minigw:connect <ta računalnik> <žeton>."))
 	}
 	var m winMsg
 	for {
@@ -340,7 +340,7 @@ func (t *tray) do(action string, st apiStatus) {
 	case "settings":
 		shellOpen(t.s.settingsLoginURL(), "")
 	case "copy":
-		if err := setClipboard(t.hwnd, connectLine(t.s.conf())); err != nil {
+		if err := setClipboard(t.hwnd, connectToken(t.s.conf())); err != nil {
 			messageBox(err.Error())
 		}
 	case "startup": // le vrednost Run za ta pladenj (celotna namestitev bi zaprla ta pladenj in čakala nase)
