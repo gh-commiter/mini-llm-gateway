@@ -34,7 +34,9 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
         let sandbox: [String: Any] = ["sandbox": [
             "enabled": true, "failIfUnavailable": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
             "network": ["allowedDomains": ["*"]],
-            "filesystem": ["denyRead": ["~"] + Self.scratchPaths(scratch), "allowRead": dirs, "allowWrite": dirs],
+            // #26 (N2): paket Copilot nikoli za pisanje (naloži ga priprava paketa), tudi če je v dovoljeni mapi.
+            "filesystem": ["denyRead": ["~"] + Self.scratchPaths(scratch), "allowRead": dirs, "allowWrite": dirs,
+                           "denyWrite": Self.scratchPaths(RouterConfig.copilotCache)],
         ]]
         let settings = String(decoding: try! JSONSerialization.data(withJSONObject: sandbox, options: [.sortedKeys]), as: UTF8.self)
         let others = allTools.filter { !Self.pathTools.contains($0) && !disabledTools.contains($0) }
@@ -57,7 +59,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
             // agenta lahko ne uspeta (gradnja z minigw run ali v načinu sync); Maven deluje.
             "filesystem": ["denyRead": ["~"] + Self.scratchPaths(scratch), "allowRead": dirs + Self.mavenConfig(), "allowWrite": dirs,
                            "denyWrite": ["config", "hooks", "info", "commondir"].map { root.path + "/.git/" + $0 }
-                               + Native.buildCacheDenies().paths],
+                               + Native.buildCacheDenies().paths + Self.scratchPaths(RouterConfig.copilotCache)],
         ]]
         let settings = String(decoding: try! JSONSerialization.data(withJSONObject: sandbox, options: [.sortedKeys]), as: UTF8.self)
         let others = allTools.filter { !Self.pathTools.contains($0) && !disabledTools.contains($0) }
@@ -244,7 +246,7 @@ public enum ClaudeCLI {
     }
 
     /// Delovna mapa mora obstajati in biti pod dovoljenimi korenskimi mapami, nikoli v Scratch (privzeti ali `scratch`:
-    /// tam so kopije drugih naprav in stanje agentov, ki ga peskovniki skrijejo; R3).
+    /// tam so kopije drugih naprav in stanje agentov, ki ga peskovniki skrijejo; R3) in se ne prekriva s paketom Copilot.
     /// Kanonični poti (realpath, tudi »/private«), da povezava nikjer v poti ne pelje ven.
     static func resolveCwd(_ raw: String?, roots: String, scratch: URL? = nil) -> URL? {
         guard let raw, !raw.isEmpty, let path = Sync.real(URL(fileURLWithPath: expand(raw)))?.path else { return nil }
@@ -255,6 +257,7 @@ public enum ClaudeCLI {
         guard allowed.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) else { return nil }
         let hidden = ([RouterConfig.defaultScratch] + [scratch].compactMap { $0 }).map { (Sync.real($0) ?? $0.standardizedFileURL).path }
         guard !hidden.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) else { return nil }
+        guard !RouterConfig.overlapsCopilotCache(path) else { return nil }  // #26 (N2): ne paket Copilot ali mapa z njim
         return URL(fileURLWithPath: path, isDirectory: true)
     }
 }

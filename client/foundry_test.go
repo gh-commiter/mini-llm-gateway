@@ -168,6 +168,16 @@ func TestFoundryThroughGateway(t *testing.T) {
 	if st, _ := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/foundry", `{"models":["-rf"]}`); st != 400 {
 		t.Fatal("bad model name accepted")
 	}
+	// N5: poslušalca preveri vsaka zahteva: z drugo mapo namestitve naslov iz predpomnilnika ne velja več.
+	if runtime.GOOS == "linux" || runtime.GOOS == "windows" {
+		other := filepath.Join(t.TempDir(), "foundry.exe")
+		os.WriteFile(other, []byte("x"), 0o755)
+		s.update(func(c *serveConfig) error { c.Foundry.Executable = other; return nil })
+		if st, b := adminReq(t, base, host, "tok", "POST", "/v1/messages", `{"model":"claude-foundry-qwen-vl-generic-gpu","max_tokens":5,"messages":[{"role":"user","content":"hi"}]}`); st == 200 ||
+			!strings.Contains(b, "another user's process") {
+			t.Fatalf("cached endpoint not re-checked: %d %s", st, b)
+		}
+	}
 }
 
 // Rok: počasen strežnik ne zadrži zahteve dlje od foundryTimeout.
@@ -239,6 +249,21 @@ func TestFoundryReviewFixes(t *testing.T) {
 	}
 	if d := foundryInstallDir("/opt/x/Cellar/foundrylocal/1.0/bin/foundry"); !strings.HasSuffix(d, filepath.FromSlash("/foundrylocal/1.0")) {
 		t.Fatalf("install dir: %s", d)
+	}
+	// N4: navaden bin ostane bin; povezava v paket z lastno mapo gre nad njegov bin
+	tmp := realPath(t.TempDir())
+	os.MkdirAll(filepath.Join(tmp, "usr", "bin"), 0o700)
+	os.MkdirAll(filepath.Join(tmp, "pkg", "2.0", "bin"), 0o700)
+	os.WriteFile(filepath.Join(tmp, "usr", "bin", "foundry"), nil, 0o700)
+	os.WriteFile(filepath.Join(tmp, "pkg", "2.0", "bin", "foundry"), nil, 0o700)
+	if d := foundryInstallDir(filepath.Join(tmp, "usr", "bin", "foundry")); d != filepath.Join(tmp, "usr", "bin") {
+		t.Fatalf("plain bin: %s", d)
+	}
+	if runtime.GOOS != "windows" {
+		os.Symlink(filepath.Join(tmp, "pkg", "2.0", "bin", "foundry"), filepath.Join(tmp, "foundry"))
+		if d := foundryInstallDir(filepath.Join(tmp, "foundry")); d != filepath.Join(tmp, "pkg", "2.0") {
+			t.Fatalf("linked package: %s", d)
+		}
 	}
 	for _, v := range []any{-1.0, 2e9, "7", nil} {
 		if _, ok := foundryCount(v); ok {

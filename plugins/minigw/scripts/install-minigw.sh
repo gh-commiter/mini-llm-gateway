@@ -49,8 +49,8 @@ verify_sums() {
 
 # Kontrolne vsote zadnje izdaje: po njih se prenesena kopija posodobi (brez omrežja ostane obstoječa). Le podpisane
 # (#8): sicer ni posodobitve (obstoječa ostane) in ne prve namestitve.
-sums="" unsigned="" url=""
-st=$(mktemp -d) && if url=$(curl -fsSL --max-time 20 -w '%{url_effective}' -o "$st/s" "$base/SHA256SUMS" 2>/dev/null) && curl -fsSL --max-time 20 -o "$st/sig" "$base/SHA256SUMS.sig" 2>/dev/null; then
+sums="" unsigned=""
+st=$(mktemp -d) && if curl -fsSL --max-time 20 -o "$st/s" "$base/SHA256SUMS" 2>/dev/null && curl -fsSL --max-time 20 -o "$st/sig" "$base/SHA256SUMS.sig" 2>/dev/null; then
   verify_sums "$st/s" "$st/sig"; case $? in
     0) sums=$(cat "$st/s") ;;
     2) unsigned="cannot check the release signature: install OpenSSH (ssh-keygen)" ;;
@@ -58,12 +58,12 @@ st=$(mktemp -d) && if url=$(curl -fsSL --max-time 20 -w '%{url_effective}' -o "$
   esac
 fi
 rm -rf "$st"
-# #25: brez vračanja na starejšo podpisano izdajo. Različica izdaje: podpisana vrstica »VERSION <v>« v SHA256SUMS,
-# pri starejših izdajah brez nje oznaka iz končnega naslova (…/download/v<v>/SHA256SUMS). Starejša od nameščenega
-# minigw: ni posodobitve (obstoječi ostane), razen z --allow-downgrade ali MINIGW_ALLOW_DOWNGRADE=1.
+# #25: brez vračanja na starejšo podpisano izdajo. Različica izdaje: podpisana vrstica »VERSION <v>« v SHA256SUMS;
+# podpisana izdaja brez nje je 0.5.17 ali starejša (vrstica je od 0.5.18; oznaka v naslovu ni zanesljiva: GitHub
+# preusmeri na CDN). Starejša od nameščenega minigw: ni posodobitve, razen z --allow-downgrade ali MINIGW_ALLOW_DOWNGRADE=1.
 if [ -n "$sums" ] && [ -x "$EXE" ] && [ ! -L "$EXE" ]; then
   rel=$(printf '%s\n' "$sums" | sed -n 's/^VERSION \([0-9][0-9.]*\)$/\1/p' | head -1)
-  [ -n "$rel" ] || rel=$(printf '%s\n' "$url" | sed -n 's#.*/download/v\([0-9][0-9.]*\)/SHA256SUMS$#\1#p')
+  [ -n "$rel" ] || rel=0.5.17
   have=$(ver "$EXE"); case $have in *[!0-9.]*) have="" ;; esac
   if older "$rel" "$have" && [ "${1:-}" != --allow-downgrade ] && [ "${MINIGW_ALLOW_DOWNGRADE:-}" != 1 ]; then
     sums="" unsigned="the latest release ($rel) is older than the installed minigw $have (run with MINIGW_ALLOW_DOWNGRADE=1 to go back)"

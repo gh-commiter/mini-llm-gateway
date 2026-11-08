@@ -179,16 +179,25 @@ public actor FoundryHub {
     private var retryAt = Date.distantPast  // F6: po neuspehu 30 s brez novega iskanja ali zagona
     nonisolated(unsafe) static var listenerIsOurs: @Sendable (UInt16, String) -> Bool = { PeerProcess.listenerIsOurs(port: $0, installDir: $1) }  // testi
 
-    /// Mapa namestitve Foundry Local: mapa programa ali, če je to »bin«, njena nadrejena (npr. Homebrew Cellar/<različica>).
+    /// Mapa namestitve Foundry Local: mapa programa. Nadrejena od »bin« le za paket z lastno mapo (N4): povezava programa
+    /// je vodila v drugo mapo (npr. Homebrew Cellar/<različica>/bin) ali ima nadrejena ali njena nadrejena »foundry« v imenu
+    /// (foundry/bin, foundrylocal/<različica>/bin); sicer (/usr/local/bin) ne.
     /// ponytail: strežnik mora biti pod njo; drugačna postavitev paketa bi ga zavrnila (»another user's process«).
     static func installDir(_ exe: String) -> String {
-        let real = Sync.real(URL(fileURLWithPath: exe)) ?? URL(fileURLWithPath: exe)
-        let dir = real.deletingLastPathComponent()
-        return (dir.lastPathComponent.lowercased() == "bin" ? dir.deletingLastPathComponent() : dir).path
+        let given = URL(fileURLWithPath: exe).standardizedFileURL
+        let dir = (Sync.real(given) ?? given).deletingLastPathComponent()
+        let parent = dir.deletingLastPathComponent(), names = (parent.lastPathComponent + "/" + parent.deletingLastPathComponent().lastPathComponent).lowercased()
+        let linked = dir.path != (Sync.real(given.deletingLastPathComponent()) ?? given.deletingLastPathComponent()).path
+        let up = dir.lastPathComponent.lowercased() == "bin" && (linked || names.contains("foundry"))
+        return (up ? dir.deletingLastPathComponent() : dir).path
     }
 
     func endpoint(_ exe: String?) async throws -> URL {
-        if let base, Date().timeIntervalSince(checked) < 60 { return base }
+        if let base, Date().timeIntervalSince(checked) < 60 {
+            // N5: poslušalca preveri vsaka zahteva (port lahko medtem prevzame drug proces), ne le nov iskanje
+            if let exe, let p = base.port, Self.listenerIsOurs(UInt16(p), Self.installDir(exe)) { return base }
+            self.base = nil
+        }
         if Date() < retryAt { throw Foundry.RequestError(message: lastError) }
         func fail(_ m: String) -> Foundry.RequestError { base = nil; lastError = m; retryAt = Date().addingTimeInterval(30); return Foundry.RequestError(message: m) }
         guard let exe else { throw fail(Foundry.install) }

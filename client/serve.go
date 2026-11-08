@@ -501,12 +501,22 @@ func checkAgent(c *serveConfig, cfgDir string) ([]string, error) {
 		}
 		c.AllowedFolders[i] = real
 	}
-	if bad := scratchOverlaps(c.AllowedFolders, c.Scratch); len(bad) > 0 { // H1: PATCH, minigw gw claude --folders, serve.json
-		return nil, errors.New("allowed folder " + bad[0] + " contains or is inside the scratch folder " + c.Scratch +
+	folders := c.AllowedFolders // N2: tudi privzeta mapa (Folder)
+	if c.Folder != "" {
+		folders = append([]string{c.Folder}, folders...)
+	}
+	kind := func(f string) string {
+		if f == c.Folder {
+			return "folder "
+		}
+		return "allowed folder "
+	}
+	if bad := scratchOverlaps(folders, c.Scratch); len(bad) > 0 { // H1: PATCH, minigw gw claude --folders, serve.json
+		return nil, errors.New(kind(bad[0]) + bad[0] + " contains or is inside the scratch folder " + c.Scratch +
 			" (agents could change the gateway's mirrors and other devices' copies): choose another folder")
 	}
-	if bad := copilotCacheOverlaps(c.AllowedFolders); len(bad) > 0 { // #26
-		return nil, errors.New("allowed folder " + bad[0] + " contains or is inside Copilot's package cache " + copilotCacheDir() +
+	if bad := copilotCacheOverlaps(folders); len(bad) > 0 { // #26
+		return nil, errors.New(kind(bad[0]) + bad[0] + " contains or is inside Copilot's package cache " + copilotCacheDir() +
 			" (agents could plant code the gateway runs): choose another folder")
 	}
 	if c.AllowLocalTools && runtime.GOOS == "windows" && !c.AllowUnsandboxedBash {

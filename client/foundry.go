@@ -172,8 +172,20 @@ func (s *server) foundryEndpoint(ctx context.Context) (string, error) {
 		}
 		return "", nil, false
 	}
+	// N5: poslušalca preveri vsaka zahteva (port lahko medtem prevzame drug proces), ne le novo iskanje.
+	ours := func(base string, exe string) bool {
+		p, _ := strconv.Atoi(base[strings.LastIndexByte(base, ':')+1:])
+		return listenerIsOurs(p) && listenerInDir(p, foundryInstallDir(exe))
+	}
 	if b, err, ok := cached(); ok {
-		return b, err
+		if err != nil || ours(b, resolveFoundry(s.conf().Foundry.Executable)) {
+			return b, err
+		}
+		st.mu.Lock()
+		if st.base == b {
+			st.base = ""
+		}
+		st.mu.Unlock()
 	}
 	st.discover.Lock()
 	defer st.discover.Unlock()
@@ -201,7 +213,7 @@ func (s *server) foundryEndpoint(ctx context.Context) (string, error) {
 				if !foundryCheck(ctx, base) {
 					continue
 				}
-				if !listenerIsOurs(p) || !listenerInDir(p, foundryInstallDir(exe)) { // F2, L3: drug uporabnik ali program zunaj namestitve
+				if !ours(base, exe) { // F2, L3: drug uporabnik ali program zunaj namestitve
 					foreign = true
 					continue
 				}

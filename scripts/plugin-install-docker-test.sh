@@ -7,6 +7,7 @@
 #   4. napačen imenski prostor, obstoječi ostane → zavrnjen, z razlogom (L4)
 #   5. #25: podpisana starejša izdaja (VERSION 0.5.16) čez novejši nameščeni → zavrnjena, z razlogom
 #   6. ista z MINIGW_ALLOW_DOWNGRADE=1 → nameščena
+#   7. N1: podpisana izdaja brez VERSION (= 0.5.17) čez nameščeni 0.5.18 → zavrnjena
 emulate -L zsh; set -eu
 cd ${0:A:h}/..
 T=$(mktemp -d); trap 'rm -rf $T' EXIT
@@ -69,5 +70,11 @@ echo "ok 5: older signed release refused (#25)"
 out=$(MINIGW_ALLOW_DOWNGRADE=1 run /tmp/d5 older testkey); echo "$out"
 [ "$(/tmp/d5/bin/minigw --version | head -1)" = "minigw 0.5.16" ] || fail "6: MINIGW_ALLOW_DOWNGRADE=1 did not install"
 echo "ok 6: downgrade with MINIGW_ALLOW_DOWNGRADE=1"
+
+mkdir -p /tmp/d7/bin; printf "#!/bin/sh\necho minigw 0.5.18\n" > /tmp/d7/bin/minigw; chmod +x /tmp/d7/bin/minigw
+out=$(run /tmp/d7 good testkey); echo "$out"
+[ "$(/tmp/d7/bin/minigw --version | head -1)" = "minigw 0.5.18" ] || fail "7: a signed release without VERSION replaced 0.5.18"
+echo "$out" | grep -q "not updated: the latest release (0.5.17) is older than the installed minigw 0.5.18" || fail "7: no reason printed"
+echo "ok 7: signed release without VERSION counts as 0.5.17 (N1)"
 ' || fail "docker cases"
 print "plugin install test ok"

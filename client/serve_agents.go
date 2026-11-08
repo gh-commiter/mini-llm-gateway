@@ -383,9 +383,9 @@ func copilotCacheOverlaps(allowed []string) []string {
 	return scratchOverlaps(allowed, copilotCacheDir())
 }
 
-// copilotPrepare: pod bwrap brez omrežja (#26): podtaknjena koda v paketu ne vidi nastavitev, ključev in omrežja;
-// pisanje le v paket in začasni COPILOT_HOME.
-func copilotPrepare(ctx context.Context, exe, home, cwd, cfgDir string) {
+// copilotPrepare: pod bwrap brez omrežja (#26): podtaknjena koda v paketu ne vidi nastavitev, ključev, Scratch in
+// omrežja; pisanje v paket, začasni COPILOT_HOME in začasno mapo zahteve (cwd).
+func copilotPrepare(ctx context.Context, exe, home, cwd, cfgDir, scratch string) {
 	if runtime.GOOS != "linux" {
 		return // Windows: brez peskovnika
 	}
@@ -408,7 +408,7 @@ func copilotPrepare(ctx context.Context, exe, home, cwd, cfgDir string) {
 	defer cancel()
 	os.MkdirAll(copilotCacheDir(), 0o700)
 	os.MkdirAll(home, 0o700)
-	name, args := agentWrap(exe, []string{"--version"}, agentMounts{cfgDir: cfgDir, rw: []string{copilotCacheDir(), home, cwd}, noNet: true})
+	name, args := agentWrap(exe, []string{"--version"}, agentMounts{cfgDir: cfgDir, rw: []string{copilotCacheDir(), home, cwd}, hide: scratch, noNet: true})
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = cwd
 	cmd.Env = append(agentEnv(os.Environ()), "COPILOT_HOME="+home, "COPILOT_AUTO_UPDATE=false")
@@ -690,7 +690,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 					prompt = note + "\n\n" + cliPrompt(history, last) // stanja seje ni: ves pogovor
 				}
 			}
-			copilotPrepare(ctx, exe, filepath.Join(tmp, "prep"), tmp, s.cfgDir)
+			copilotPrepare(ctx, exe, filepath.Join(tmp, "prep"), tmp, s.cfgDir, c.Scratch)
 			args := copilotArgs(agent, model, write, ac.Commands, ac.Network, resume)
 			var answer string
 			err = s.runAgentProcess(ctx, r, exe, args, withTree(m), dir, prompt, func(line []byte) {

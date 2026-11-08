@@ -49,6 +49,14 @@ One pass with the combined build, before the release. Each item: what to do, wha
   Without the switch: refused.
 - `http://example.com` or `http://gateway` (a name without a dot): refused even with the switch.
 
+## Foundry Local
+- `winget install Microsoft.FoundryLocal`, then Settings page → Foundry Local → Enabled, and send a message to a
+  `claude-foundry-<model>`: is Foundry accepted? The gateway uses the port only when the listening program is this user's
+  and inside Foundry's install folder (the folder of `foundry.exe`, or above its `bin` for a versioned package).
+  winget installs an MSIX: `foundry.exe` is an alias in `%LOCALAPPDATA%\Microsoft\WindowsApps`, the server may run from
+  `C:\Program Files\WindowsApps\…`. If the error is "Foundry Local's port belongs to another user's process: not used",
+  note both paths (`where foundry`, Task Manager → Details → the listener's "Open file location").
+
 ## minigw gw CLI on Windows
 - `minigw gw claude --folders C:\Projects --allow-local-tools=true`: folders and local tools show on the page.
   (Local tools also need "Allow commands without a sandbox" on Windows: refused otherwise.)

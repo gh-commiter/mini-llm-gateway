@@ -216,11 +216,15 @@ func listenerInDir(port int, dir string) bool {
 	return len(exes) > 0
 }
 
-// foundryInstallDir: mapa programa foundry ali, če je to »bin«, njena nadrejena (npr. Homebrew Cellar/<različica>).
+// foundryInstallDir: mapa programa foundry. Nadrejena od »bin« le za paket z lastno mapo (N4): povezava programa je
+// vodila v drugo mapo (npr. Homebrew Cellar/<različica>/bin) ali ima nadrejena ali njena nadrejena »foundry« v imenu
+// (foundry/bin, foundrylocal/<različica>/bin); sicer (/usr/local/bin) ne, da ne bi vsega v /usr/local štel za Foundry.
 // ponytail: strežnik mora biti pod njo; drugačna postavitev paketa bi ga zavrnila.
 func foundryInstallDir(exe string) string {
+	abs, _ := filepath.Abs(exe)
 	d := filepath.Dir(realPath(exe))
-	if strings.EqualFold(filepath.Base(d), "bin") {
+	up := strings.ToLower(filepath.Base(filepath.Dir(d)) + "/" + filepath.Base(filepath.Dir(filepath.Dir(d))))
+	if strings.EqualFold(filepath.Base(d), "bin") && (d != realPath(filepath.Dir(abs)) || strings.Contains(up, "foundry")) {
 		d = filepath.Dir(d)
 	}
 	return d

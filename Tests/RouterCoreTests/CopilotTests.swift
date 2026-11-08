@@ -225,7 +225,7 @@ private func field(_ text: String, _ name: String) -> String {
     q.peer = "127.0.0.1"
     let w = FakeWriter()
     await r.handle(q, writer: w)
-    #expect(w.status == 403 && w.text.contains("package cache"))
+    #expect(w.status == 400, "\(w.text)")  // N2: resolveCwd jo zavrne že pred pravilom R9 (to ostane za mape ShareHub)
 }
 
 /// #26: copilot --version (priprava paketa) v peskovniku brez omrežja: piše le v svojo začasno mapo (in paket), ne drugam;
@@ -257,4 +257,14 @@ private func field(_ text: String, _ name: String) -> String {
     let app = FakeApp(c)
     let w = await admin(app.router(), "PATCH", "/agents/claude", body: #"{"folders":"~/Library/Caches"}"#)
     #expect(w.status == 400 && w.text.contains("Copilot's package cache"))
+    // N2: delovna mapa ne v paketu ali okoli njega; Claude ga ne sme pisati (denyWrite), tudi v načinu worktree
+    #expect(ClaudeCLI.resolveCwd("~/Library/Caches", roots: "~") == nil && ClaudeCLI.resolveCwd(root.path, roots: root.path) != nil)
+    var cli = ClaudeCLIConfig()
+    cli.allowLocalTools = true
+    let cache = RouterConfig.copilotCache.path.replacingOccurrences(of: "/", with: "\\/")
+    for args in [cli.agentArgs(cwd: root, allTools: []),
+                 cli.worktreeArgs(root: root, maven: root, cwd: root, allTools: [], network: false)] {
+        let s = args[args.firstIndex(of: "--settings")! + 1]
+        #expect(s.contains(#""denyWrite":["#) && s.contains(cache), "\(s)")
+    }
 }

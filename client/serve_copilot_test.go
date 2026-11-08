@@ -282,4 +282,14 @@ func TestCopilotCacheFoldersRefused(t *testing.T) {
 	if _, err := checkAgent(&c, cfgDir); err == nil || !strings.Contains(err.Error(), "Copilot's package cache") {
 		t.Fatalf("checkAgent: %v", err)
 	}
+	// N2: tudi privzeta mapa (Folder) ne v paketu Copilot ali Scratch
+	c = serveConfig{Folder: filepath.Join(cache, "pkg"), Scratch: filepath.Join(home, "scratch")}
+	if _, err := checkAgent(&c, cfgDir); err == nil || !strings.HasPrefix(err.Error(), "folder ") || !strings.Contains(err.Error(), "Copilot's package cache") {
+		t.Fatalf("checkAgent folder: %v", err)
+	}
+	os.MkdirAll(filepath.Join(home, "scratch", "x"), 0o700)
+	c = serveConfig{Folder: filepath.Join(home, "scratch", "x"), Scratch: filepath.Join(home, "scratch")}
+	if _, err := checkAgent(&c, cfgDir); err == nil || !strings.Contains(err.Error(), "scratch folder") {
+		t.Fatalf("checkAgent scratch folder: %v", err)
+	}
 }

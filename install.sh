@@ -40,17 +40,17 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 say "Downloading minigw…"
 curl -fsSL -o "$TMP/minigw.zip" "$BASE/minigw.zip"
-URL=$(curl -fsSL -w '%{url_effective}' -o "$TMP/SHA256SUMS" "$BASE/SHA256SUMS")
+curl -fsSL -o "$TMP/SHA256SUMS" "$BASE/SHA256SUMS"
 curl -fsSL -o "$TMP/SHA256SUMS.sig" "$BASE/SHA256SUMS.sig" || die "no SHA256SUMS.sig in the release"
 # SHA256SUMS je podpisan s ključem Mini Gateway (ključ pripet tu); ssh-keygen je del macOS.
 printf '%s\n' 'minigw-release namespaces="minigw-release" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINt++OHn+HHmR9mmA2UI+B0osuilO2GP0ddEzNp0GTrH' > "$TMP/signers"
 ssh-keygen -Y verify -f "$TMP/signers" -I minigw-release -n minigw-release -s "$TMP/SHA256SUMS.sig" < "$TMP/SHA256SUMS" >/dev/null 2>&1 \
   || die "SHA256SUMS is not signed by Mini Gateway"
 (cd "$TMP" && grep ' minigw.zip$' SHA256SUMS | shasum -a 256 -c - >/dev/null) || die "checksum mismatch"
-# #25: not back to an older signed release. Its version: the signed "VERSION <v>" line, for older releases the tag in
-# the final URL (…/download/v<v>/SHA256SUMS).
+# #25: not back to an older signed release. Its version is the signed "VERSION <v>" line; a signed release without it
+# is 0.5.17 or older (the line exists since 0.5.18; the URL is no help: GitHub redirects to its CDN).
 REL=$(sed -n 's/^VERSION \([0-9][0-9.]*\)$/\1/p' "$TMP/SHA256SUMS" | head -1)
-[ -n "$REL" ] || REL=$(printf '%s\n' "$URL" | sed -n 's#.*/download/v\([0-9][0-9.]*\)/SHA256SUMS$#\1#p')
+[ -n "$REL" ] || REL=0.5.17
 HAVE=$(minigw --version 2>/dev/null | head -1 | sed -n 's/^minigw \([0-9][0-9.]*\)$/\1/p' || true)
 if [ -n "$REL" ] && [ -n "$HAVE" ] && [ "$REL" != "$HAVE" ] && [ "$(printf '%s\n%s\n' "$REL" "$HAVE" | sort -V | head -1)" = "$REL" ] \
    && [ $ALLOW_DOWNGRADE = 0 ]; then
