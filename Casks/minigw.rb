@@ -79,8 +79,8 @@ cask "minigw" do
 
   caveats <<~EOS
     The Claude Code plugin (minigw@mini-gateway) is added to ~/.claude/settings.json; Claude Code installs it in the
-    background the next time you start claude (or run /reload-plugins). To skip it, set "minigw@mini-gateway": false under enabledPlugins there (it stays, also on
-    upgrade). brew uninstall removes the plugin again (brew upgrade keeps it).
+    background the next time you start claude (or run /reload-plugins). To skip it, set "minigw@mini-gateway": false
+    under enabledPlugins there (it stays, also on upgrade). brew uninstall removes the plugin again.
     Connect to the router Mac (token: Mini Gateway → Settings… → General → Copy Token):
       minigw connect <router-mac>[:port] --token <token>
   EOS
