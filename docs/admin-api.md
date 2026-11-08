@@ -108,9 +108,12 @@ Provider  {"name": string, "baseURL": string, "insecure": bool, "models": [strin
           "enabled": bool, "aliases": string}
          models: enabled provider IDs; null = all discovered, now and later. ready: model list loaded.
 Claude   {"path": string, "found": bool, "tools": string, "allowUnsandboxedBash": bool,
-          "exe"?: string, "version"?: string}
+          "exe"?: string, "version"?: string, "off"?: string}
          path: "" = from PATH; tools: comma-separated tool names; exe: the
          claude that was found; version: its `claude --version` (both only when found; Go gateway only).
+         off: why Claude CLI and Codex were turned off at startup (an allowed folder contains or is inside the scratch
+         folder or Copilot's package cache), while Claude CLI is still off; cleared when Claude CLI or Codex is turned
+         on again (Go gateway only: the Mac ignores such folders and keeps Claude CLI on).
 General  {"port": number, "address": string, "connect": string, "restartRequired"?: true, "allowedClients": string,
           "allowPlainRemote": bool, "allowAnyDevice": bool, "allowLocalApps": bool, "scratch": string}
          address: "" = all addresses; connect: the "minigw connect …" line for clients (contains the token).
