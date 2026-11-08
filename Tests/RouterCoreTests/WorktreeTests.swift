@@ -590,6 +590,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     for id in [a, b] { await ShareHub.$run.withValue(id) { await hub.syncBack(session: session) }; await hub.finish(run: id) }
     #expect(try FileManager.default.contentsOfDirectory(atPath: marks.path).isEmpty)  // H1: ob posnetku in dostavi ni teklo nič
     let short = String(Sync.folderID("dev|" + session).prefix(8))  // L3: naprava in seja
+    #expect(await hub.sessionMode(session, device: "dev") == ("native", false, "minigw/claude-\(short)-0"))  // zgodovina seje
     #expect(g(client, "show", "minigw/claude-\(short)-0:sub/agentA.txt") == "A")
     #expect(g(client, "show", "minigw/claude-\(short)-1:sub/agentB.txt") == "B")
     #expect(g(client, "show", "minigw/claude-\(short)-1:a.txt") == "one\nuncommitted")
@@ -658,6 +659,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     }
     #expect(await mount("w1", writes: true) == dir)
     #expect(await mount("w2", writes: true) == nil)
+    #expect(await hub.sessionMode(session, device: "dev") == ("native", false, ""))  // v mapi sami: brez veje
     #expect(await ShareHub.$run.withValue("w2") { await hub.takeRefusal() }?.contains("Another agent is still changing /Volumes/share/x") == true)
     #expect(await mount("r1", writes: false) == dir)  // bralec ne čaka
     #expect(await mount("w1", writes: true) == dir)   // isto izvajanje znova
