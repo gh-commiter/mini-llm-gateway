@@ -108,12 +108,13 @@ Provider  {"name": string, "baseURL": string, "insecure": bool, "models": [strin
           "enabled": bool, "aliases": string}
          models: enabled provider IDs; null = all discovered, now and later. ready: model list loaded.
 Claude   {"path": string, "found": bool, "tools": string, "allowUnsandboxedBash": bool,
-          "exe"?: string, "version"?: string, "off"?: string}
+          "exe"?: string, "version"?: string, "off"?: string, "leftOut"?: [string]}
          path: "" = from PATH; tools: comma-separated tool names; exe: the
          claude that was found; version: its `claude --version` (both only when found; Go gateway only).
          off: why Claude CLI and Codex were turned off at startup (an allowed folder contains or is inside the scratch
          folder or Copilot's package cache), while Claude CLI is still off; cleared when Claude CLI or Codex is turned
-         on again (Go gateway only: the Mac ignores such folders and keeps Claude CLI on).
+         on again (Go gateway only: the Mac ignores such folders and keeps Claude CLI on). leftOut: those folders, still
+         in serve.json (Go gateway only); cleared when the allowed folders are saved.
 General  {"port": number, "address": string, "connect": string, "restartRequired"?: true, "allowedClients": string,
           "allowPlainRemote": bool, "allowAnyDevice": bool, "allowLocalApps": bool, "scratch": string}
          address: "" = all addresses; connect: the "minigw connect …" line for clients (contains the token).
@@ -184,7 +185,8 @@ Notes:
 - The Go gateway's Claude also has `"enabled", "folders"` (comma-separated allowed folders), `"allowLocalTools",
   "disabledTools", "permissionMode", "settingSources", "askOthers"`, as on the Mac; see [windows-parity.md](windows-parity.md).
 - `PATCH /agents/claude`: the gateway checks the path, that the folder exists and is not near the config folder,
-  and that Bash on Windows has `allowUnsandboxedBash`.
+  and that Bash on Windows has `allowUnsandboxedBash`. While `leftOut` is not empty, every PATCH without `"folders"`
+  returns 400 "first save the allowed folders without …" (Go gateway only).
 - `askOthers` (every agent, off by default): the agent may ask another model of the same gateway with minigw, through a
   loopback port and token valid only for that run (`MINIGW_AGENT_URL`; the token is in a 0600 file of the run, `MINIGW_AGENT_AUTH_FILE`, never in the environment). Claude uses it only with
   `allowLocalTools` (it needs Bash to run minigw); the value is kept either way. Codex needs `network`. The run token
