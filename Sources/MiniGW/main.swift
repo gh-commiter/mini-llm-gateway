@@ -674,7 +674,7 @@ case "models":
     exit(0)
 
 case "--minigw-help", "-h", "--help", "-v", "--version":
-    if args.first == "-v" || args.first == "--version" { say("minigw \(minigwVersion)") } else {
+    if args.first == "-v" || args.first == "--version" { say("minigw \(minigwVersion)"); exit(0) } else {  // le minigw (gw status)
         say("""
         minigw connect <host[:port]> [--name P] [--token T|-]  save a gateway as profile P (Keychain; - = stdin)
         minigw status | models | disconnect [--name P]   all profiles; models of other profiles end in @P
@@ -706,10 +706,18 @@ default:
 
 // MARK: Claude Code prek routerja
 
+if agentConn() == nil {  // --model …@profil: ves zagon s tem prehodom, kot --minigw-profile (#8)
+    let mp = Profiles.modelProfile(args, names: profileNames())
+    if let p = mp.profile {
+        if let f = profileFlag, f != p { fail("--model \(mp.model) and --minigw-profile \(f) name different gateways") }
+        profileFlag = p; args = mp.args
+    }
+}
 let profiles = loadProfiles()
 if profiles.isEmpty { _ = requireProfile() }
 let saved = profiles[0].conn  // privzeti profil: mapa, glave in modeli brez pripone kot prej
 let c = route(profiles[0])
+for k in ProcessInfo.processInfo.environment.keys where Profiles.parentClaudeVar(k) { unsetenv(k) }  // #7
 setenv("ANTHROPIC_BASE_URL", c.url, 1)
 setenv("ANTHROPIC_AUTH_TOKEN", c.token, 1)
 setenv("ANTHROPIC_API_KEY", "", 1)
@@ -768,11 +776,15 @@ if !wantShare && remoteRouter && shareEnv != "0" {
 // Načini po vrsti (auto: native → worktree → sync); naslednji, če router prejšnjega ne sprejme.
 let top = ["auto", "worktree"].contains(work) ? Worktree.toplevel(cwd) : nil
 let smb = work == "auto" && Native.detect(cwd: cwd, override: ProcessInfo.processInfo.environment["MINIGW_NATIVE_MOUNT"]) != nil
+var tries = SharedFolders.candidates(work: work, readOnly: readOnly, smb: smb, git: top != nil)
+// Brez commita ni posnetka: enkrat preveri, nato sync (#10).
+let noCommit = top.map { tries.contains("worktree") && !Worktree.hasCommit(top: $0) } ?? false
+if noCommit { tries.removeAll { $0 == "worktree" } }
 var share = ShareClient(c, session: sid, root: URL(fileURLWithPath: cwd), readOnly: readOnly, kind: "direct")
 var registered = false
 if wantShare, !sid.isEmpty {
-    let tries = SharedFolders.candidates(work: work, readOnly: readOnly, smb: smb, git: top != nil)
     if work == "worktree", top == nil { err.write(Data("minigw: \(cwd) is not in a git repository; worktree mode is not possible\n".utf8)) }
+    if noCommit { err.write(Data("minigw: the git repository \(top ?? "") has no commit yet, so worktree mode is not possible; using \(tries[0])\n".utf8)) }
     (share, registered) = registerShare(c, tries: tries, quiet: false)
 }
 if !wantShare || sid.isEmpty {
@@ -815,7 +827,7 @@ var mux: ProfileMux?
 if profiles.count > 1 {
     var targets = [ProfileMux.Target(name: profiles[0].name, url: c.url, token: c.token)]
     var hooks: [String: @Sendable () -> Bool] = [:]
-    let tries = SharedFolders.candidates(work: work, readOnly: readOnly, smb: smb, git: top != nil)
+    let tries = tries
     for p in profiles.dropFirst() {
         let rc: Connection
         switch routeResult(p) {

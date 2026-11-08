@@ -38,6 +38,12 @@ func gitToplevel(cwd string) string {
 	return filepath.FromSlash(top)
 }
 
+// gitHasCommit: repozitorij ima HEAD (brez njega ni posnetka za worktree).
+func gitHasCommit(top string) bool {
+	head, err := gitUser(top, nil, "rev-parse", "--verify", "-q", "HEAD^{commit}")
+	return err == nil && shaRe.MatchString(head)
+}
+
 // gitSnapshot: HEAD ali commit z neshranjenimi spremembami (začasni indeks: indeks, veje in mapa uporabnika ostanejo).
 func gitSnapshot(top string) string {
 	head, err := gitUser(top, nil, "rev-parse", "--verify", "-q", "HEAD^{commit}")

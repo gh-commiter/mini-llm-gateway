@@ -755,3 +755,19 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     let r = Worktree.run(["-c", "alias.hang=!sleep 30", "hang"], timeout: 1)
     #expect(r.status != 0 && ContinuousClock.now - start < .seconds(10))
 }
+
+/// #16: posnetek vzame nove datoteke, ne pa prezrtih (.gitignore, .git/info/exclude); #10: brez commita ga ni.
+@Test func worktreeSnapshotSkipsIgnoredFilesAndNeedsACommit() throws {
+    let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("wt-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    g(root, "init", "-q", "-b", "main")
+    #expect(!Worktree.hasCommit(top: root.path) && Worktree.snapshot(top: root.path) == nil)
+    try file(root, ".gitignore", "build/\n")
+    g(root, "add", ".gitignore"); g(root, "commit", "-qm", "first")
+    try file(root, ".git/info/exclude", ".omc/\n")
+    for f in ["new.txt", "build/out.o", ".omc/state.json"] { try file(root, f, "x\n") }
+    let snap = try #require(Worktree.snapshot(top: root.path))
+    #expect(Worktree.hasCommit(top: root.path))
+    #expect(g(root, "ls-tree", "-r", "--name-only", snap) == ".gitignore\nnew.txt")
+}

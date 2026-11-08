@@ -449,27 +449,27 @@ func main() {
 		return
 
 	case "--minigw-help", "-h", "--help", "-v", "--version":
-		if first == "-v" || first == "--version" {
+		if first == "-v" || first == "--version" { // le minigw: različico claude da claude --version (gw status jo bere)
 			say("minigw " + version)
-		} else {
-			say("minigw connect <host[:port]> [--name P] [--token T|-]  save a gateway as profile P (" + storeName + "; - = stdin)\n" +
-				"minigw status | models | disconnect [--name P]   all profiles; models of other profiles end in @P\n" +
-				"minigw profiles [default P]                list profiles, or pick the default (its models also without @P)\n" +
-				"minigw --minigw-profile P …                 use only profile P for this command\n" +
-				"minigw share add|remove [folder] | list    also share a system or hidden folder with the gateway\n" +
-				"minigw share add --work=native|native-direct|sync|direct [--ro] [folder]   default mode for that folder (flag/env wins)\n" +
-				"minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)\n" +
-				"minigw --minigw-role NAME [claude args]    the caller's role for the gateway's session history (or MINIGW_ROLE)\n" +
-				"minigw --minigw-work=sync [claude args]    agents work in a synced copy on the gateway (or MINIGW_WORK=sync)\n" +
-				"minigw --minigw-work=native [claude args]  folder is the gateway's SMB share: agents work there; git repository: each on its own branch minigw/… (or MINIGW_WORK=native)\n" +
-				"minigw --minigw-work=native-direct [claude args]  as native, but agents change the folder itself, one writing agent at a time\n" +
-				"minigw --minigw-work=worktree [claude args]  git repository: agents work in a clone on the gateway, results come back as branches minigw/…\n" +
-				"minigw --minigw-work=auto [claude args]    gateway share → native, git repository → worktree, otherwise sync (--minigw-ro → direct)\n" +
-				"minigw run [--] <command> [args …]          run a build in this folder on the gateway (SMB share, allowed in its Settings)\n" +
-				"minigw serve [init|allow <id>] [--port N] [--config FILE]   run a gateway here (Windows, Linux)\n" +
-				"minigw gw status|devices|provider|claude|token …  change the gateway here, live (minigw gw help)\n" +
-				"minigw [claude options …]                    run Claude Code through the gateway")
+			return
 		}
+		say("minigw connect <host[:port]> [--name P] [--token T|-]  save a gateway as profile P (" + storeName + "; - = stdin)\n" +
+			"minigw status | models | disconnect [--name P]   all profiles; models of other profiles end in @P\n" +
+			"minigw profiles [default P]                list profiles, or pick the default (its models also without @P)\n" +
+			"minigw --minigw-profile P …                 use only profile P for this command\n" +
+			"minigw share add|remove [folder] | list    also share a system or hidden folder with the gateway\n" +
+			"minigw share add --work=native|native-direct|sync|direct [--ro] [folder]   default mode for that folder (flag/env wins)\n" +
+			"minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)\n" +
+			"minigw --minigw-role NAME [claude args]    the caller's role for the gateway's session history (or MINIGW_ROLE)\n" +
+			"minigw --minigw-work=sync [claude args]    agents work in a synced copy on the gateway (or MINIGW_WORK=sync)\n" +
+			"minigw --minigw-work=native [claude args]  folder is the gateway's SMB share: agents work there; git repository: each on its own branch minigw/… (or MINIGW_WORK=native)\n" +
+			"minigw --minigw-work=native-direct [claude args]  as native, but agents change the folder itself, one writing agent at a time\n" +
+			"minigw --minigw-work=worktree [claude args]  git repository: agents work in a clone on the gateway, results come back as branches minigw/…\n" +
+			"minigw --minigw-work=auto [claude args]    gateway share → native, git repository → worktree, otherwise sync (--minigw-ro → direct)\n" +
+			"minigw run [--] <command> [args …]          run a build in this folder on the gateway (SMB share, allowed in its Settings)\n" +
+			"minigw serve [init|allow <id>] [--port N] [--config FILE]   run a gateway here (Windows, Linux)\n" +
+			"minigw gw status|devices|provider|claude|token …  change the gateway here, live (minigw gw help)\n" +
+			"minigw [claude options …]                    run Claude Code through the gateway")
 		if first == "--minigw-help" {
 			return
 		}
@@ -509,6 +509,9 @@ func main() {
 	work, readOnly = workMode(work, lookupSharedFolder(sharedFolders(), cwd), readOnly)
 	if (strings.HasPrefix(asked, "native") || asked == "worktree") && work != asked {
 		fmt.Fprintln(os.Stderr, "minigw: "+asked+" mode cannot be read-only; sharing read-only over the network instead")
+	}
+	if agentConn() == nil {
+		args = modelProfile(args, profileNames())
 	}
 	ps := loadProfiles()
 	if len(ps) == 0 {
@@ -575,11 +578,18 @@ func main() {
 		top = gitToplevel(cwd)
 	}
 	_, _, smb := nativeDetect(cwd)
+	tries := workCandidates(work, readOnly, work == "auto" && smb, top != "")
+	noCommit := top != "" && slices.Contains(tries, "worktree") && !gitHasCommit(top)
+	if noCommit { // brez commita ni posnetka: enkrat preveri, nato sync (#10)
+		tries = slices.DeleteFunc(tries, func(w string) bool { return w == "worktree" })
+	}
 	share := &shareClient{c: c, session: sid, root: cwd, readOnly: readOnly, synced: map[string]syncEntry{}, reported: map[string]bool{}}
 	if wantShare && sid != "" {
-		tries := workCandidates(work, readOnly, work == "auto" && smb, top != "")
 		if work == "worktree" && top == "" {
 			fmt.Fprintln(os.Stderr, "minigw: "+cwd+" is not in a git repository; worktree mode is not possible")
+		}
+		if noCommit {
+			fmt.Fprintln(os.Stderr, "minigw: the git repository "+top+" has no commit yet, so worktree mode is not possible; using "+tries[0])
 		}
 		var ok bool
 		share, ok = registerShare(c, sid, cwd, readOnly, top, tries, false)
@@ -614,7 +624,7 @@ func main() {
 			}
 			fmt.Fprintln(os.Stderr, "minigw: "+why+"; Claude CLI models with tools will not see it")
 		}
-	} else if !saved.isLocal() && os.Getenv("MINIGW_SHARE") != "0" {
+	} else if !(saved.isLocal() && runtime.GOOS == "darwin") && os.Getenv("MINIGW_SHARE") != "0" {
 		why := "" // samodejno se ne delijo sistemske, skrite in domača mapa
 		if os.Getenv("MINIGW_SHARE") == "" {
 			why = " (not shared automatically)"
@@ -635,7 +645,7 @@ func main() {
 			t := &muxTarget{name: p.name, conn: rc}
 			if sid != "" && shareWanted(cwd, p.conn.isLocal()) {
 				t.share = func() bool {
-					sc, ok := registerShare(rc, sid, cwd, readOnly, top, workCandidates(work, readOnly, work == "auto" && smb, top != ""), true)
+					sc, ok := registerShare(rc, sid, cwd, readOnly, top, tries, true)
 					if !ok {
 						fmt.Fprintln(os.Stderr, "minigw: gateway "+p.name+" did not accept the folder: "+clean(sc.refusal))
 						return false
@@ -668,6 +678,34 @@ func main() {
 	os.Exit(code)
 }
 
+// modelProfile: --model <model>@<profil> izbere profil za ves zagon (mapa, sync, worktree, native), kot --minigw-profile;
+// model gre naprej brez pripone. Sicer bi mapo dobil privzeti prehod, model pa drug (#8).
+func modelProfile(args, names []string) []string {
+	for i, a := range args {
+		v, eq := strings.CutPrefix(a, "--model=")
+		if !eq {
+			if a != "--model" || i+1 >= len(args) {
+				continue
+			}
+			v = args[i+1]
+		}
+		at := strings.LastIndex(v, "@")
+		if at <= 0 || !slices.Contains(names, v[at+1:]) {
+			continue
+		}
+		if profileFlag != "" && profileFlag != v[at+1:] {
+			fail("--model " + v + " and --minigw-profile " + profileFlag + " name different gateways")
+		}
+		profileFlag = v[at+1:]
+		if eq {
+			args[i] = "--model=" + v[:at]
+		} else {
+			args[i+1] = v[:at]
+		}
+	}
+	return args
+}
+
 // registerShare: načini po vrsti (auto: native → worktree → sync); naslednji, če prehod prejšnjega ne sprejme.
 func registerShare(c connection, sid, cwd string, readOnly bool, top string, tries []string, quiet bool) (*shareClient, bool) {
 	sc := &shareClient{c: c, session: sid, root: cwd, readOnly: readOnly, synced: map[string]syncEntry{}, reported: map[string]bool{}}
@@ -684,8 +722,9 @@ func registerShare(c connection, sid, cwd string, readOnly bool, top string, tri
 	return sc, false
 }
 
-// shareWanted: mapo deli le z oddaljenim routerjem in le pod domačo mapo (nikoli cele domače mape,
-// skritih map ali sistemskih podatkov); MINIGW_SHARE=0/1 preglasi.
+// shareWanted: projektno mapo (autoShare ali minigw share add) deli samodejno; nikoli cele domače mape, skritih map ali
+// sistemskih podatkov; MINIGW_SHARE=0/1 preglasi. Prehod na tem Macu (aplikacija) dela v mapi sami, zato tam ne;
+// minigw serve na tem računalniku (Windows, Linux) pa mapo potrebuje kot oddaljen (#9).
 func shareWanted(cwd string, local bool) bool {
 	switch os.Getenv("MINIGW_SHARE") {
 	case "1":
@@ -693,7 +732,7 @@ func shareWanted(cwd string, local bool) bool {
 	case "0":
 		return false
 	}
-	if local {
+	if local && runtime.GOOS == "darwin" {
 		return false
 	}
 	return lookupSharedFolder(sharedFolders(), cwd) != nil || autoShare(cwd)
@@ -738,7 +777,7 @@ func runClaude(args []string, env []string) int {
 	signal.Ignore(os.Interrupt)
 	cmd := consoleCommand("claude", args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	cmd.Env = append(os.Environ(), env...)
+	cmd.Env = claudeEnv(os.Environ(), env)
 	if err := cmd.Run(); err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
 			return ee.ExitCode()
@@ -747,6 +786,21 @@ func runClaude(args []string, env []string) int {
 		return 127
 	}
 	return 0
+}
+
+// claudeEnv: okolje za claude brez podedovanih ANTHROPIC_*, CLAUDECODE in CLAUDE_CODE_* (seja in prijava starševskega
+// Claude Code ali Claude Desktop, npr. CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_BASE_URL: sicer 401 na prehodu), nato naše.
+// CLAUDE_CODE_GIT_BASH_PATH ostane (nastavitev uporabnika na Windows, ne prijava).
+func claudeEnv(base, own []string) []string {
+	var out []string
+	for _, e := range base {
+		k, _, _ := strings.Cut(strings.ToUpper(e), "=") // Windows: imena brez razlike v velikosti črk
+		if (strings.HasPrefix(k, "ANTHROPIC_") || k == "CLAUDECODE" || strings.HasPrefix(k, "CLAUDE_CODE_")) && k != "CLAUDE_CODE_GIT_BASH_PATH" {
+			continue
+		}
+		out = append(out, e)
+	}
+	return append(out, own...)
 }
 
 func newUUID() string {
