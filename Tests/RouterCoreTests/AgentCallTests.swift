@@ -169,6 +169,47 @@ private func get(_ run: AgentRun, _ path: String, token: String?) async -> Int {
     #expect(AgentError.clean("failed C:/x/y ./rel file:///etc/passwd https://a.b/c request req_abc123") == "failed https://a.b/c request req_abc123")
 }
 
+/// Napaka CLI za odjemalca: le besedilo (brez »Internal error:«, ovoja JSON in »API error (status 402 …):«), kot v Go.
+@Test func agentMessageExtraction() {
+    let line = Data(#"{"type":"error","message":"Internal error: {\n  \"message\": \"API error (status 402 Payment Required): personal-team-blocked:spending-limit: You have run out of credits or need a Grok subscription. Add credits at https://grok.com/?_s=usage or upgrade at https://grok.com/supergrok.\",\n  \"http_status\": 402\n}","cwd":"/Users/x/w"}"#.utf8)
+    guard case .error(let raw)? = Grok.event(line) else { Issue.record("no error event"); return }
+    let (status, _, msg) = AgentError.classify(raw)
+    #expect(status == 429)
+    #expect(msg == "You have run out of credits or need a Grok subscription. Add credits at https://grok.com/?_s=usage or upgrade at https://grok.com/supergrok.")
+    let codex = Codex.failure(Data(#"{"type":"error","message":"{\"error\":{\"type\":\"usage_limit_reached\",\"message\":\"You've hit your usage limit.\"}}"}"#.utf8)) ?? ""
+    #expect(AgentError.classify(codex) == (429, "rate_limit_error", "You've hit your usage limit."))
+    #expect(AgentError.message(#"{"error":"quota exceeded"}"#) == "quota exceeded")
+    #expect(AgentError.message("Internal error: {not json") == "Internal error: {not json")
+}
+
+/// Napaka pred glavo (tudi pri pretoku) je pravi 429 z x-should-retry: false (Claude Code ne ponovi); po glavi dogodek SSE,
+/// ponovitev brez pretoka dobi isti 429 brez novega zagona CLI.
+@Test func replyWhenDoneRetryHeaders() async throws {
+    let router = Router(config: RouterConfig(), token: "tok", secrets: FakeSecrets(values: [:]))
+    let req = request("POST", "/v1/messages", headers: ["x-claude-mini-session": "retry-\(UUID().uuidString)"])
+    let limit = Grok.Failure(message: #"Internal error: {"message":"API error (status 402 Payment Required): You have run out of credits."}"#)
+    for stream in [true, false] {
+        let w = FakeWriter()
+        let st = await router.replyWhenDone(body: ["model": "claude-grok", "stream": stream], model: "claude-grok", rid: "req_1", writer: w, req: req) { throw limit }
+        #expect(st == 429 && w.status == 429 && w.text.contains("x-should-retry: false") && w.text.contains(#""You have run out of credits.""#))
+    }
+    #expect(AgentError.recent(AgentError.key(req, model: "claude-grok")) == nil)  // HTTP 429 je končen
+    let w = FakeWriter()
+    _ = await router.replyWhenDone(body: ["model": "claude-grok", "stream": true], model: "claude-grok", rid: "req_2", writer: w, req: req,
+                                   headDelay: .milliseconds(50)) {
+        try await Task.sleep(for: .milliseconds(300))
+        throw limit
+    }
+    #expect(w.status == 200 && w.text.contains("x-should-retry: false") && w.text.contains("event: error") && w.text.contains("rate_limit_error"))
+    #expect(AgentError.recent(AgentError.key(req, model: "claude-grok")) == "You have run out of credits.")
+    #expect(AgentError.recent(AgentError.key(req, model: "claude-grok")) == nil)  // enkrat
+    let fallback = FakeWriter()
+    AgentError.note(AgentError.key(req, model: "claude-grok"), "You have run out of credits.")
+    await router.handle(request("POST", "/v1/messages", headers: ["Authorization": "Bearer tok", "x-claude-mini-session": req.header("x-claude-mini-session")!],
+                                    body: #"{"model":"claude-grok","messages":[{"role":"user","content":"hi"}]}"#), writer: fallback)
+    #expect(fallback.status == 429 && fallback.text.contains("x-should-retry: false") && fallback.text.contains("run out of credits"))
+}
+
 /// --minigw-ro brez deljenja (prehod na istem Macu): glava x-claude-mini-ro da Claude CLI brez orodij za pisanje in
 /// sandbox brez pisanja; codex, ki ga vpraša, dela le za branje, tudi ko vprašani agent pošlje »x-claude-mini-ro: 0«.
 @Test func readOnlyHeaderWithoutShare() async throws {

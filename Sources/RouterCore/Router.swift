@@ -243,6 +243,10 @@ public final class Router: Sendable {
                 return (await error(400, "invalid_request_error", "Body must be JSON with a model field", rid: rid, writer: writer), nil, nil)
             }
             guard let r = await catalog.route(model) else {
+                // ponovitev brez pretoka po omejitvi agenta, sporočeni v toku (AgentError.note): isti 429 brez novega zagona CLI
+                if req.path == "/v1/messages", body["stream"] as? Bool != true, let msg = AgentError.recent(AgentError.key(req, model: model)) {
+                    return (await error(429, "rate_limit_error", msg, rid: rid, extra: [("x-should-retry", "false")], writer: writer), model, nil)
+                }
                 if config.siri.enabled, Siri.ids.contains(model) {
                     guard config.siriAllowed(peer: req.peer, device: req.device) else {
                         let who = req.device.map { "device “\($0.name)”" } ?? "this client (update minigw to 0.4.4 or newer)"
@@ -349,16 +353,14 @@ public final class Router: Sendable {
                 native = nil
             }
             if worktree {
-                let top = req.header("x-worktree-top") ?? ""
                 guard Worktree.scratchIsSafe(config.scratchURL) else {
                     return (await error(400, "invalid_request_error", "Worktree mode: the Scratch folder must not be in a temporary or build cache folder",
                                         rid: rid, writer: writer), nil, "share")
                 }
-                guard !readOnly, !top.isEmpty, cwd == top || cwd.hasPrefix(top.hasSuffix("/") ? top : top + "/") else {
+                guard !readOnly, let (top, sub) = Worktree.clientTree(top: req.header("x-worktree-top") ?? "", cwd: cwd) else {
                     return (await error(400, "invalid_request_error", "Worktree mode needs a writable git repository that contains the folder",
                                         rid: rid, writer: writer), nil, "share")
                 }
-                let sub = String(cwd.dropFirst(top.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
                 guard sub.isEmpty || !sub.split(separator: "/", omittingEmptySubsequences: false)
                     .contains(where: { $0.isEmpty || $0 == "." || $0 == ".." || $0.contains("\0") || Sync.isGitPath(String($0)) }) else {
                     return (await error(400, "invalid_request_error", "Bad folder path", rid: rid, writer: writer), nil, "share")

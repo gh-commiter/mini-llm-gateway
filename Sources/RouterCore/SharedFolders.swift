@@ -35,6 +35,38 @@ public enum SharedFolders {
         }.joined(separator: "\n") + "\n"
     }
 
+    /// Projektna mapa kjer koli (tudi /Volumes/Disk/projekt), razen korena diska ali priklopa, domače mape same,
+    /// sistemskih map, domačih map drugih ter skritih map in ~/Library (kot autoShare v minigw Go). Podmapa začasne mape
+    /// (/tmp/projekt, mktemp -d) je projektna mapa (privzeti auto jo kopira: worktree ali sync), začasna mapa sama ne,
+    /// tudi ne skrita (/tmp/.X11-unix), tuja (prva raven pod začasno mapo drugega uporabnika) ali zgornji ravni začasne
+    /// mape Claude Code (claude-<uid>, claude-<uid>/<projekt>, …/<seja>; globlje da) (L1, L2).
+    public static func autoShare(_ path: String, home: String = NSHomeDirectory(), temp: String = NSTemporaryDirectory()) -> Bool {
+        let p = URL(fileURLWithPath: path).standardizedFileURL.path
+        guard p != "/", p != home else { return false }
+        let temps = [URL(fileURLWithPath: temp).standardizedFileURL.path, "/tmp", "/var/tmp"].flatMap { [$0, "/private" + $0] }
+        for t in temps where t != "/" && t != "/private/" && !(home + "/").hasPrefix(t + "/") && p.hasPrefix(t + "/") {
+            let parts = p.dropFirst(t.count + 1).split(separator: "/").map(String.init)
+            guard let first = parts.first, !first.hasPrefix(".") else { return false }
+            let a = try? FileManager.default.attributesOfItem(atPath: t + "/" + first)  // lstat: ne povezava
+            guard a?[.type] as? FileAttributeType == .typeDirectory, (a?[.ownerAccountID] as? NSNumber)?.uint32Value == getuid() else { return false }
+            return first != "claude-\(getuid())" || parts.count > 3
+        }
+        if p.hasPrefix(home + "/") {
+            let top = String(p.dropFirst(home.count + 1).split(separator: "/").first ?? "")
+            return !top.hasPrefix(".") && top != "Library"
+        }
+        let parts = p.split(separator: "/").map { $0.lowercased() }
+        let system: Set<String> = ["system", "library", "usr", "bin", "sbin", "etc", "private", "var", "dev", "opt", "applications",
+                                   "users", "home", "root", "proc", "sys", "boot", "tmp", "run", "snap", "nix", "cores"]
+        guard let top = parts.first, !top.hasPrefix("."), !system.contains(top) else { return false }
+        return !["volumes", "mnt", "media"].contains(top) || parts.count >= 3
+    }
+
+    /// direct ni izbran izrecno (privzeto, auto ali samo za branje namesto worktree/native): prehod brez priklopa → sync.
+    public static func implicitWork(asked: String?, work: String) -> Bool {
+        asked == nil || asked == "auto" || asked != work
+    }
+
     /// Najbolj natančna mapa s seznama, v kateri je cwd.
     public static func lookup(_ entries: [Entry], cwd: String) -> Entry? {
         entries.filter { cwd == $0.path || cwd.hasPrefix($0.path.hasSuffix("/") ? $0.path : $0.path + "/") }

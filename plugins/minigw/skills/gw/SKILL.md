@@ -57,7 +57,7 @@ For other computers, `/minigw:gw token` shows the connect line to run there (or 
 ## update
 
 1. Run `"$M" gw status`. If `agent requests running` is more than 0, tell the user that the update stops them, and ask whether to go on or wait.
-2. Windows and Linux: `"$M" serve install`. The plugin's minigw is the latest release: it replaces the installed copy and restarts the gateway (Windows also the tray). If `gw status` says "installed with the MSI", the same command downloads the release's MSI (checked against the signed `SHA256SUMS`) and runs it.
+2. Windows and Linux: the plugin's minigw is the latest release or the installed minigw, whichever is newer (`"$M" --version`). If `gw status` already shows that version, the gateway is up to date: skip `serve install` and say so. Otherwise `"$M" serve install` replaces the installed copy and restarts the gateway (Windows also the tray). If `gw status` says "installed with the MSI", the same command downloads the release's MSI (checked against the signed `SHA256SUMS`) and runs it.
 3. macOS: if `brew list --cask gh-commiter/mini-gateway/mini-gateway` succeeds, run `brew upgrade --cask gh-commiter/mini-gateway/mini-gateway`. Otherwise point to the DMG. The running app keeps the old version until it restarts. Ask the user, then run `osascript -e 'quit app "Mini Gateway"'` and `open -a "Mini Gateway"`.
 4. `"$M" gw status` and report the new version.
 

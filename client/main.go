@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -234,16 +235,10 @@ func profileStatus(p profile) bool {
 		say("Providers: " + strings.Join(out, ", "))
 	}
 	ms, models := getJSON(c, "/v1/models")
-	count := "–"
-	if ms == 200 {
+	if ms == 200 && st == 200 { // sicer razlog le v vrstici Status
 		d, _ := models["data"].([]any)
-		count = fmt.Sprint(len(d))
-	} else if ms == 401 {
-		count = "token rejected"
-	} else if ms == 403 {
-		count = "device not approved"
+		say("Models:    " + fmt.Sprint(len(d)))
 	}
-	say("Models:    " + count)
 	if id := deviceID(c); id != "" && p.conn.Key != nil {
 		state := "approval unknown"
 		if ms == 200 {
@@ -572,6 +567,7 @@ func main() {
 	if (strings.HasPrefix(asked, "native") || asked == "worktree") && work != asked {
 		fmt.Fprintln(os.Stderr, "minigw: "+asked+" mode cannot be read-only; sharing read-only over the network instead")
 	}
+	implicit := workImplicit(asked, work)
 	if agentConn() == nil {
 		args = modelProfile(args, profileNames())
 	}
@@ -654,7 +650,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "minigw: the git repository "+top+" has no commit yet, so worktree mode is not possible; using "+tries[0])
 		}
 		var ok bool
-		share, ok = registerShare(c, sid, cwd, readOnly, top, tries, false, asked == "")
+		share, ok = registerShare(c, sid, cwd, readOnly, top, tries, false, implicit)
 		if ok && share.worktree {
 			share.start(4)
 			fmt.Fprintf(os.Stderr, "minigw: agent models work in a clone of this git repository on %s; their work comes back as branch minigw/… (minigw prints the range to review; your uncommitted and untracked, not ignored files are sent too; worktree)\n", routerHost)
@@ -707,7 +703,7 @@ func main() {
 			t := &muxTarget{name: p.name, conn: rc}
 			if sid != "" && shareWanted(cwd, p.conn.isLocal()) {
 				t.share = func() bool {
-					sc, ok := registerShare(rc, sid, cwd, readOnly, top, tries, true, asked == "")
+					sc, ok := registerShare(rc, sid, cwd, readOnly, top, tries, true, implicit)
 					if !ok {
 						fmt.Fprintln(os.Stderr, "minigw: gateway "+p.name+" did not accept the folder: "+clean(sc.refusal))
 						return false
@@ -769,7 +765,7 @@ func modelProfile(args, names []string) []string {
 }
 
 // registerShare: načini po vrsti (auto: native → worktree → sync); naslednji, če prehod prejšnjega ne sprejme.
-// implicit: način ni izbran (zastavica, MINIGW_WORK, share add); prehod brez priklopa mape (minigw serve na Windows,
+// implicit: direct ni izbran izrecno (ni načina, auto ali samo za branje namesto worktree/native); prehod brez priklopa mape (minigw serve na Windows,
 // Linux) direct zavrne → kot auto: worktree v repozitoriju git s commitom, sicer sync. Izrecni direct ostane napaka.
 func registerShare(c connection, sid, cwd string, readOnly bool, top string, tries []string, quiet, implicit bool) (*shareClient, bool) {
 	sc := &shareClient{c: c, session: sid, root: cwd, readOnly: readOnly, synced: map[string]syncEntry{}, reported: map[string]bool{}}
@@ -825,12 +821,34 @@ var systemTop = map[string]bool{
 var mountTop = map[string]bool{"volumes": true, "mnt": true, "media": true}
 
 // autoShare: projektna mapa kjer koli (tudi D:\Projekti, /Volumes/Disk/projekt), razen korena diska ali priklopa,
-// domače mape same, sistemskih map, domačih map drugih ter skritih map in AppData/Library v domači.
+// domače mape same, sistemskih map, domačih map drugih ter skritih map in AppData/Library v domači. Podmapa začasne
+// mape (/tmp/projekt, %TEMP%\projekt, mktemp -d) je projektna mapa (privzeti auto jo kopira), začasna mapa sama ne,
+// tudi ne skrita (/tmp/.X11-unix), tuja (prva raven pod začasno mapo drugega uporabnika) ali zgornji ravni začasne mape
+// Claude Code (claude-<uid>, claude-<uid>/<projekt>, …/<seja>; globlje da) (L2).
 func autoShare(cwd string) bool {
 	cwd = filepath.Clean(cwd)
 	home, _ := os.UserHomeDir()
 	if filepath.Dir(cwd) == cwd || (home != "" && strings.EqualFold(cwd, filepath.Clean(home))) {
 		return false
+	}
+	temps := []string{os.TempDir(), "/tmp", "/private/tmp", "/var/tmp", "/private/var/tmp"}
+	if runtime.GOOS == "darwin" {
+		temps = append(temps, "/private"+os.TempDir()) // $TMPDIR je /var/folders/…, cwd pa pogosto /private/var/folders/… (F8)
+	}
+	for _, t := range temps {
+		t = filepath.Clean(t)
+		if filepath.Dir(t) == t || (home != "" && under(home, t)) { // TMPDIR=/, C:\, domača mapa ali nad njo (L1)
+			continue
+		}
+		rel, err := filepath.Rel(t, cwd)
+		if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+			continue
+		}
+		parts := strings.Split(filepath.ToSlash(rel), "/")
+		if strings.HasPrefix(parts[0], ".") || !ownedByMe(filepath.Join(t, parts[0])) {
+			return false
+		}
+		return runtime.GOOS == "windows" || parts[0] != "claude-"+strconv.Itoa(os.Getuid()) || len(parts) > 3
 	}
 	if home != "" {
 		if rel, err := filepath.Rel(home, cwd); err == nil && !strings.HasPrefix(rel, "..") {
@@ -973,6 +991,12 @@ func workMode(flag string, saved *sharedFolder, readOnly bool) (string, bool) {
 		work = "direct"
 	}
 	return work, ro
+}
+
+// workImplicit: direct ni izbran izrecno (ni načina, auto ali samo za branje namesto worktree/native); prehod brez
+// priklopa mape ga zavrne → registerShare izbere kot auto (samo za branje: sync).
+func workImplicit(asked, work string) bool {
+	return asked == "" || asked == "auto" || work != asked
 }
 
 // validSharePath: ena vrstica seznama; tabulator loči možnosti.

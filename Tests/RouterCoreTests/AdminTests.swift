@@ -334,6 +334,15 @@ private func acceptPeerPort(_ fd: Int32) -> (Int32, UInt16) {
     #expect(RouterConfig.merge(draft: old, old: old, new: new) == new)  // brez neshranjenih sprememb: vse iz new
 }
 
+@Test func settingsMergeKeepsAgentWriteInSync() {
+    // Okno, odprto s starim osnutkom, mora po spremembi drugje (skrbniški API) kazati in uveljaviti novo vrednost.
+    let old = RouterConfig()
+    var new = old
+    new.codex.write = false; new.grok.write = false; new.copilot.write = true
+    let m = RouterConfig.merge(draft: old, old: old, new: new)
+    #expect(!m.codex.write && !m.grok.write && m.copilot.write)
+}
+
 /// Revizija pariteta, vrstica 6, in varnostni pregled parity-cli (M1, L1-L4): končne točke minigw serve tudi v aplikaciji.
 @Test func adminParityWithServe() async throws {
     let fm = FileManager.default

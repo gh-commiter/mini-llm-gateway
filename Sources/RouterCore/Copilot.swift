@@ -336,7 +336,7 @@ extension Router {
         let args = Copilot.args(agent: agent, model: model, write: write, commands: commands,
                                 network: cfg.network && (tree == nil || config.worktreeCodexNetwork), session: session)
         let sessions = Self.copilotSessions, client = req.header("x-claude-mini-session") ?? ""
-        return await replyWhenDone(body: body, model: "claude-copilot", rid: rid, writer: writer) {
+        return await replyWhenDone(body: body, model: "claude-copilot", rid: rid, writer: writer, req: req) {
             let text = try await Copilot.run(exe, args: args, prompt: prompt, cwd: cwd, env: env, sandbox: sandbox, started: { run?.started($0) }) { [onActivity] s in
                 onActivity(.step(id: rid, text: s))
             }

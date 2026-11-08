@@ -780,6 +780,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 					answer = "" // odgovor je besedilo po zadnjem orodju
 				case e.err != "":
 					failure = e.err
+					cancel() // napaka konča tek: ne čakaj, da grok konča sam
 				case e.session != "":
 					thread = e.session
 				default:
@@ -984,8 +985,13 @@ func (s *server) runAgentProcess(ctx context.Context, r *req, exe string, args [
 	return nil
 }
 
-// replyWhenDone: ponudnik brez pretoka (Codex, Grok): pri pretoku glave in message_start takoj, med čakanjem ping
-// vsakih 10 s, nato cel odgovor (kot Router.replyWhenDone).
+// agentHeadDelay: pri pretoku glava 200 šele po tem času (nato ping vsakih 10 s). Napaka prej (omejitev agenta) je pravi
+// status HTTP z x-should-retry: false; po glavi je le dogodek SSE »error«, na katerega Claude Code ponovi zahtevo brez
+// pretoka. Testi: krajši.
+var agentHeadDelay = 30 * time.Second
+
+// replyWhenDone: ponudnik brez pretoka (Codex, Grok): pri pretoku glava, message_start in ping šele po agentHeadDelay,
+// nato cel odgovor (kot Router.replyWhenDone).
 func (s *server) replyWhenDone(w http.ResponseWriter, r *req, body map[string]any, work func() (string, error)) int {
 	model, _ := body["model"].(string)
 	idb := make([]byte, 16)
@@ -993,53 +999,64 @@ func (s *server) replyWhenDone(w http.ResponseWriter, r *req, body map[string]an
 	t := &translator{model: model, id: fmt.Sprintf("msg_%x", idb)}
 	stream := body["stream"] == true
 	var mu sync.Mutex
+	headSent := false
 	send := func(b []byte) {
 		mu.Lock()
 		defer mu.Unlock()
+		if !headSent {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("x-should-retry", "false")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("request-id", r.rid)
+			w.WriteHeader(200)
+			w.Write(t.start())
+			headSent = true
+		}
 		w.Write(b)
 		http.NewResponseController(w).Flush()
 	}
-	done := make(chan struct{})
+	done, stopped := make(chan struct{}), make(chan struct{})
 	if stream {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("x-should-retry", "false")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("request-id", r.rid)
-		w.WriteHeader(200)
-		send(t.start())
 		go func() {
-			tick := time.NewTicker(10 * time.Second)
-			defer tick.Stop()
+			defer close(stopped)
+			wait := agentHeadDelay
 			for {
 				select {
-				case <-tick.C:
+				case <-time.After(wait):
 					send(sse("ping", map[string]string{"type": "ping"}))
+					wait = 10 * time.Second
 				case <-done:
 					return
 				}
 			}
 		}()
+	} else {
+		close(stopped)
 	}
 	text, err := work()
 	close(done)
+	<-stopped
 	if r.Context().Err() != nil {
 		return 499
 	}
 	if err != nil {
 		s.log.Printf("%s %s failed: %v", r.rid, model, err)
 		status, msg := classifyAgentError(err.Error())
-		if stream {
+		if _, early := w.(*earlyWriter); stream && (headSent || early) { // napaka bo dogodek SSE
+			s.noteLimit(r, model, status, msg)
+		}
+		if headSent {
 			send(sse("error", map[string]any{"type": "error", "error": map[string]string{"type": errType(status), "message": msg}}))
 			return status
 		}
 		return writeAgentError(w, r.rid, status, msg)
 	}
 	t.usage = map[string]any{"output_tokens": float64(len(text) / 4)}
-	delta := t.emit(text)
 	if stream {
-		send(append(delta, t.finish()...))
+		send(append(t.emit(text), t.finish()...))
 		return 200
 	}
+	t.emit(text)
 	return writeJSON(w, r.rid, 200, t.message())
 }
 
@@ -1116,12 +1133,76 @@ func agentLimit(msg string) bool {
 	return false
 }
 
+// noteLimit: omejitev agenta, sporočena kot dogodek SSE (glava 200 je bila že poslana): Claude Code na tako napako takoj
+// ponovi zahtevo brez pretoka; recentLimit ji 60 s odgovori z istim 429 brez novega zagona CLI.
+func (s *server) noteLimit(r *req, model string, status int, msg string) {
+	if status != 429 {
+		return
+	}
+	now := time.Now()
+	s.limits.Range(func(k, v any) bool { // stari vnosi
+		if now.Sub(v.(limitHit).at) > time.Minute {
+			s.limits.Delete(k)
+		}
+		return true
+	})
+	s.limits.Store(limitKey(r, model), limitHit{msg, now})
+}
+
+// recentLimit: nedavna omejitev za ta model, napravo in sejo (enkrat; le zahteva brez pretoka).
+func (s *server) recentLimit(r *req, model string) (string, bool) {
+	v, ok := s.limits.LoadAndDelete(limitKey(r, model))
+	if !ok || time.Since(v.(limitHit).at) > time.Minute {
+		return "", false
+	}
+	return v.(limitHit).msg, true
+}
+
+type limitHit struct {
+	msg string
+	at  time.Time
+}
+
+func limitKey(r *req, model string) string {
+	return model + "|" + r.owner() + "|" + r.h("x-claude-mini-session")
+}
+
+var apiErrorPrefix = regexp.MustCompile(`^API error \(status \d+[^)]*\):\s*`)
+
+// agentMessage: besedilo napake CLI brez ovoja: JSON {"message":…}, {"error":{"message":…}} ali {"error":"…"} (tudi za
+// predpono, npr. »Internal error: {…}«, in ovoj v ovoju) ter brez »API error (status 402 …):«; sicer vrstica, kot je.
+// Brez kontrolnih in oblikovnih znakov (clean): JSON \u001b bi sicer postal pravi ESC v terminalu odjemalca (L4).
+func agentMessage(raw string) string {
+	msg := strings.TrimSpace(raw)
+	for range 3 {
+		i, j := strings.Index(msg, "{"), strings.LastIndex(msg, "}")
+		if i < 0 || j < i {
+			break
+		}
+		var o map[string]any
+		if json.Unmarshal([]byte(msg[i:j+1]), &o) != nil {
+			break
+		}
+		m, _ := o["message"].(string)
+		if e, ok := o["error"].(map[string]any); ok && m == "" {
+			m, _ = e["message"].(string)
+		} else if e, ok := o["error"].(string); ok && m == "" {
+			m = e
+		}
+		if strings.TrimSpace(m) == "" {
+			break
+		}
+		msg = strings.TrimSpace(m)
+	}
+	return apiErrorPrefix.ReplaceAllString(clean(msg), "")
+}
+
 // classifyAgentError: napaka agenta za odjemalca: omejitev porabe, kvote ali kreditov je 429 rate_limit_error (Claude
 // Code jo sporoči, ne ponavlja kot začasno 502), sicer 502; sporočilo brez poti in žetonov (besed s / ali \, razen
 // http(s) naslovov; ID zahteve req_… ostane), krajše od 300 znakov.
 func classifyAgentError(raw string) (int, string) {
 	var words []string
-	for _, w := range strings.Fields(raw) {
+	for _, w := range strings.Fields(agentMessage(raw)) {
 		url := strings.HasPrefix(w, "http://") || strings.HasPrefix(w, "https://")
 		if !strings.HasPrefix(w, "req_") && !url && (strings.ContainsAny(w, `/\`) || strings.HasPrefix(w, "~") || utf8.RuneCountInString(w) >= 32) {
 			continue
@@ -1132,7 +1213,7 @@ func classifyAgentError(raw string) (int, string) {
 	if r := []rune(msg); len(r) > 300 {
 		msg = string(r[:300])
 	}
-	if agentLimit(msg) {
+	if agentLimit(raw) { // tudi ovoj (»Payment Required«)
 		return 429, msg
 	}
 	return 502, msg

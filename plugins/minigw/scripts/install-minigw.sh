@@ -26,7 +26,7 @@ mkdir -p "$BIN"
 
 
 ver() { "$1" --version 2>/dev/null | head -1 | sed 's/^minigw //'; }
-MIN=0.5.18  # najnižji minigw za ta vtičnik (profili: --name, @<profil>, --minigw-profile)
+MIN=0.5.19  # najnižji minigw za ta vtičnik (profili, samo za branje z lokalnim prehodom, obseg veje le agenta)
 older() { [ -n "$1" ] && [ -n "$2" ] && [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" = "$1" ]; }
 
 # verify_sums <sums> <sig>: najprej ssh-keygen; sicer že nameščen minigw, a le 0.5.17 ali novejši (pozna verify-sums)
@@ -61,9 +61,22 @@ rm -rf "$st"
 # #25: brez vračanja na starejšo podpisano izdajo. Različica izdaje: podpisana vrstica »VERSION <v>« v SHA256SUMS;
 # podpisana izdaja brez nje je 0.5.17 ali starejša (vrstica je od 0.5.18; oznaka v naslovu ni zanesljiva: GitHub
 # preusmeri na CDN). Starejša od nameščenega minigw: ni posodobitve, razen z --allow-downgrade ali MINIGW_ALLOW_DOWNGRADE=1.
-if [ -n "$sums" ] && [ -x "$EXE" ] && [ ! -L "$EXE" ]; then
+rel=""
+if [ -n "$sums" ]; then
   rel=$(printf '%s\n' "$sums" | sed -n 's/^VERSION \([0-9][0-9.]*\)$/\1/p' | head -1)
   [ -n "$rel" ] || rel=0.5.17
+fi
+# Windows/Linux: nameščen minigw (MSI: %LOCALAPPDATA%\Programs\Mini Gateway, install.sh: ~/.local/bin) ima prednost,
+# če ni starejši od izdaje (brez podpisane izdaje: od kopije vtičnika), kot brew/aplikacija na macOS: ena različica povsod.
+inst="" iv=""
+case $os in
+  windows) [ -n "${LOCALAPPDATA:-}" ] && command -v cygpath >/dev/null 2>&1 && inst="$(cygpath -u "$LOCALAPPDATA")/Programs/Mini Gateway/minigw.exe" ;;
+  linux) inst="$HOME/.local/bin/minigw" ;;
+esac
+[ -n "$inst" ] && [ -x "$inst" ] && iv=$(ver "$inst")
+case $iv in *[!0-9.]*) iv="" ;; esac
+if [ -n "$iv" ] && ! older "$iv" "$MIN" && ! older "$iv" "${rel:-$(ver "$EXE")}"; then :; else inst=""; fi
+if [ -z "$inst" ] && [ -n "$sums" ] && [ -x "$EXE" ] && [ ! -L "$EXE" ]; then
   have=$(ver "$EXE"); case $have in *[!0-9.]*) have="" ;; esac
   if older "$rel" "$have" && [ "${1:-}" != --allow-downgrade ] && [ "${MINIGW_ALLOW_DOWNGRADE:-}" != 1 ]; then
     sums="" unsigned="the latest release ($rel) is older than the installed minigw $have (run with MINIGW_ALLOW_DOWNGRADE=1 to go back)"
@@ -103,7 +116,11 @@ if [ "$os" = darwin ]; then
   fi
 else
   # Windows/Linux: ena izvršljiva datoteka (Go, brez odvisnosti); kontrolna vsota iz SHA256SUMS iste izdaje.
-  if [ ! -x "$EXE" ] || { [ -n "$(want "$asset")" ] && [ "$(sha "$EXE")" != "$(want "$asset")" ]; }; then
+  # Nameščen minigw: kopija (Git Bash namesto povezave naredi kopijo), le ob drugi vsebini.
+  if [ -n "$inst" ]; then
+    [ -x "$EXE" ] && [ "$(sha "$inst")" = "$(sha "$EXE")" ] || { cp "$inst" "$EXE.new" && chmod +x "$EXE.new" && mv -f "$EXE.new" "$EXE"; } ||
+      { rm -f "$EXE.new"; echo "minigw plugin: could not copy $inst to $EXE; the plugin's minigw stays."; }
+  elif [ ! -x "$EXE" ] || { [ -n "$(want "$asset")" ] && [ "$(sha "$EXE")" != "$(want "$asset")" ]; }; then
     fetch "$asset" || [ -x "$EXE" ] || {
       echo "minigw plugin: could not download or verify $asset from github.com/$REPO${unsigned:+ ($unsigned)}; gateway skills are unavailable."; exit 0; }
   fi
@@ -112,10 +129,10 @@ fi
 # Prestar minigw (zadnja izdaja ali nameščen ga še ne more zamenjati): skilli s profili tega ne smejo uporabiti.
 cur=$(ver "$EXE")
 case $cur in *[!0-9.]*) cur="" ;; esac
-older "$cur" "$MIN" && echo "minigw plugin: minigw $cur is older than $MIN, which this plugin needs for profiles (--name, @<profile>): run /minigw:gw update."
+older "$cur" "$MIN" && echo "minigw plugin: minigw $cur is older than $MIN, which this plugin needs (profiles, read-only enforcement with a local gateway, the agent-only branch range): run /minigw:gw update."
 
 # L4 (0.5.17): posodobitev zavrnjena (podpis), obstoječa ostane: povej, zakaj.
-[ -n "$unsigned" ] && [ -x "$EXE" ] && echo "minigw plugin: not updated: $unsigned; the installed minigw stays."
+[ -n "$unsigned" ] && [ -z "$inst" ] && [ -x "$EXE" ] && echo "minigw plugin: not updated: $unsigned; the installed minigw stays."
 
 # Nameščen prehod starejši od izdaje: le namig (posodobitev bi prekinila tekoče zahteve agentov).
 old=""; new=$(ver "$EXE")
@@ -138,7 +155,7 @@ line="export PATH=\"\$PATH:$BIN\""  # ena vrstica, tudi ob resume/clear/compact
 [ -n "${CLAUDE_ENV_FILE:-}" ] && { grep -qxF "$line" "$CLAUDE_ENV_FILE" 2>/dev/null || echo "$line" >> "$CLAUDE_ENV_FILE"; }
 # Povezava: izhod »minigw status« (izhodna koda in vrstici Status/Device privzetega profila); v kontekst le fiksni nizi in
 # ID naprave (43 znakov base64url), nikoli prosto besedilo prehoda (F6). Skupaj z omejitvami zgoraj v 60 s kljuke.
-ver_line=$("$EXE" --version 2>/dev/null | head -1)
+ver_line="minigw $(ver "$EXE" | sed -n 's/^\([0-9][0-9.]*\)$/\1/p')"  # le številke in pike (L3)
 if sout=$("$EXE" status 2>&1); then
   echo "minigw plugin: $ver_line, connected to Mini Gateway."
 else

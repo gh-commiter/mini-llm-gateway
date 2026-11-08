@@ -520,7 +520,7 @@ func profileStatus(_ p: Profile) -> Bool {
         say("Providers: " + pr.keys.sorted().map { "\(oneLine($0)) \(pr[$0]! ? "✓" : "✗")" }.joined(separator: ", "))
     }
     let (ms, models) = get(c, "/v1/models")
-    say("Models:    " + (ms == 200 ? "\((models?["data"] as? [Any])?.count ?? 0)" : ms == 401 ? "token rejected" : ms == 403 ? "device not approved" : "–"))
+    if ms == 200 && s == 200 { say("Models:    \((models?["data"] as? [Any])?.count ?? 0)") }  // sicer razlog le v vrstici Status
     if p.conn.key != nil, let id = deviceID(c) { say("Device:    \(id) (\(ms == 200 ? "approved" : ms == 403 ? "waiting for approval" : "approval unknown"))") }
     let bad = ms != 200 ? ms : s
     say("Status:    " + (bad == 200 ? "connected" : failureReason(bad, bad == ms ? models : ready)))
@@ -541,23 +541,6 @@ let sharedFoldersFile = FileManager.default.urls(for: .applicationSupportDirecto
 
 func sharedFolders() -> [SharedFolders.Entry] {
     SharedFolders.parse((try? String(contentsOf: sharedFoldersFile, encoding: .utf8)) ?? "")
-}
-
-/// Projektna mapa kjer koli (tudi /Volumes/Disk/projekt), razen korena diska ali priklopa, domače mape same,
-/// sistemskih map, domačih map drugih ter skritih map in ~/Library.
-func autoShare(_ path: String) -> Bool {
-    let home = NSHomeDirectory()
-    let p = URL(fileURLWithPath: path).standardizedFileURL.path
-    guard p != "/", p != home else { return false }
-    if p.hasPrefix(home + "/") {
-        let top = String(p.dropFirst(home.count + 1).split(separator: "/").first ?? "")
-        return !top.hasPrefix(".") && top != "Library"
-    }
-    let parts = p.split(separator: "/").map { $0.lowercased() }
-    let system: Set<String> = ["system", "library", "usr", "bin", "sbin", "etc", "private", "var", "dev", "opt", "applications",
-                               "users", "home", "root", "proc", "sys", "boot", "tmp", "run", "snap", "nix", "cores"]
-    guard let top = parts.first, !top.hasPrefix("."), !system.contains(top) else { return false }
-    return !["volumes", "mnt", "media"].contains(top) || parts.count >= 3
 }
 
 func shareCommand(_ a: [String]) -> Never {
@@ -828,14 +811,16 @@ let shareEnv = ProcessInfo.processInfo.environment["MINIGW_SHARE"]
 let remoteRouter = !["127.0.0.1", "localhost", "::1"].contains(routerHost)
 let wantShare = shareEnv == "1"
     || (shareEnv != "0" && remoteRouter
-        && (autoShare(cwd) || SharedFolders.lookup(sharedFolders(), cwd: cwd) != nil))
+        && (SharedFolders.autoShare(cwd) || SharedFolders.lookup(sharedFolders(), cwd: cwd) != nil))
 let mode = SharedFolders.mode(flag: workFlag, saved: SharedFolders.lookup(sharedFolders(), cwd: cwd), readOnly: readOnly)
 if let asked = workFlag ?? SharedFolders.lookup(sharedFolders(), cwd: cwd)?.work, asked.hasPrefix("native") || asked == "worktree", mode.work != asked {
     err.write(Data("minigw: \(asked) mode cannot be read-only; sharing read-only over the network instead\n".utf8))
 }
 let work = mode.work
 readOnly = mode.readOnly
-let implicitWork = workFlag == nil && SharedFolders.lookup(sharedFolders(), cwd: cwd)?.work == nil
+// direct ni izbran izrecno (privzeto, auto ali samo za branje namesto worktree/native): prehod brez priklopa → sync
+let askedWork = workFlag ?? SharedFolders.lookup(sharedFolders(), cwd: cwd)?.work
+let implicitWork = SharedFolders.implicitWork(asked: askedWork, work: work)
 
 // x-claude-mini-share: router po ponovnem zagonu počaka, da se mapa znova registrira (namesto napake cwd_unavailable).
 setenv("ANTHROPIC_CUSTOM_HEADERS", "x-claude-mini-session: \(sid)\nx-claude-mini-cwd: \(cwd)" + (wantShare ? "\nx-claude-mini-share: 1" : "")
@@ -884,7 +869,7 @@ if !wantShare || sid.isEmpty {
 }
 
 /// Načini po vrsti (auto: native → worktree → sync); naslednji, če prehod prejšnjega ne sprejme.
-/// Način ni izbran (zastavica, MINIGW_WORK, share add): prehod brez priklopa mape (minigw serve na Windows, Linux) direct
+/// direct ni izbran izrecno (ni načina, auto ali samo za branje namesto worktree/native): prehod brez priklopa mape (minigw serve na Windows, Linux) direct
 /// zavrne → kot auto: worktree v repozitoriju git s commitom, sicer sync. Izrecni direct ostane napaka.
 @Sendable func registerShare(_ c: Connection, tries: [String], quiet: Bool, top: String? = top, implicit: Bool = implicitWork) -> (ShareClient, Bool) {
     var sc = ShareClient(c, session: sid, root: URL(fileURLWithPath: cwd), readOnly: readOnly, kind: "direct")
@@ -921,7 +906,7 @@ if profiles.count > 1 {
         }
         targets.append(ProfileMux.Target(name: p.name, url: rc.url, token: rc.token))
         let remote = !p.conn.isLocal
-        let want = shareEnv == "1" || (shareEnv != "0" && remote && (autoShare(cwd) || SharedFolders.lookup(sharedFolders(), cwd: cwd) != nil))
+        let want = shareEnv == "1" || (shareEnv != "0" && remote && (SharedFolders.autoShare(cwd) || SharedFolders.lookup(sharedFolders(), cwd: cwd) != nil))
         guard want, !sid.isEmpty else { continue }
         let name = p.name
         hooks[name] = {

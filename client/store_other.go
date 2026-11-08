@@ -224,3 +224,13 @@ func startProcessDetached(string, ...string) error { return errors.New("Windows 
 func moveFileOnReboot(string) error                { return errors.New("Windows only") }
 func regEnvPathGet() (string, error)               { return "", errors.New("Windows only") }
 func regEnvPathSet(string) error                   { return errors.New("Windows only") }
+
+// ownedByMe (L2): mapa (ne povezava) je last tega uporabnika; prva raven pod začasno mapo, ki jo smemo deliti samodejno.
+func ownedByMe(dir string) bool {
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return false
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	return ok && fi.IsDir() && int(st.Uid) == os.Getuid()
+}

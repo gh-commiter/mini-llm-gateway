@@ -368,7 +368,10 @@ comes back as a branch (worktree), other folders are synced (sync); in direct mo
 mounts the folder (built-in WebDAV) and the agent works on your files. Nothing to install on either side. Any project
 folder is shared, also outside your home folder (for example `D:\Projects\app` on Windows or `/Volumes/Disk/app`),
 but never a drive or volume root, the home folder itself, system folders (`C:\Windows`, `Program Files`, `/usr`,
-`/System` …), other users' home folders, `~/Library`, `AppData` or hidden folders such as `~/.ssh`. To share one of
+`/System` …), other users' home folders, `~/Library`, `AppData` or hidden folders such as `~/.ssh`. A folder inside a
+temporary folder (`/tmp/project`, `mktemp -d`, `%TEMP%\project`) is shared, but not the temporary folder itself, hidden
+folders in it, other users' folders there, or Claude Code's top temporary levels (`claude-<uid>`, its project and session
+folders; the session's `scratchpad` is shared). To share one of
 those anyway, run `minigw share add` in it (`minigw share list`, `minigw share remove`); a root is always refused.
 Inside a shared folder everything is shared, hidden folders and files included (`.claude/`, `.env`, `.secret/`): keep
 credentials out of project folders you use with a gateway, or list them in `.gitignore` for sync and worktree mode.

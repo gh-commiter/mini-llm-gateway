@@ -495,3 +495,6 @@ func regEnvPathSet(value string) error {
 		uintptr(unsafe.Pointer(env)), 0x0002 /* SMTO_ABORTIFHUNG */, 5000, uintptr(unsafe.Pointer(&res)))
 	return nil
 }
+
+// ownedByMe (L2): %TEMP% je na Windows v profilu uporabnika, zato brez preverjanja lastnika.
+func ownedByMe(string) bool { return true }
