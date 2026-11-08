@@ -505,8 +505,8 @@ const pages = {
     };
     let shown = false;
     const token = () => (g.connect.match(/--token '([^']*)'/) || [])[1] || ""; // kot na Macu: le žeton, ne cela vrstica
-    const line = value("•".repeat(28), true);
-    const showBtn = button(t("show"), () => { shown = !shown; line.textContent = shown ? token() : "•".repeat(28); showBtn.textContent = t(shown ? "hide" : "show"); });
+    const line = value("•".repeat(24), true);
+    const showBtn = button(t("show"), () => { shown = !shown; line.textContent = shown ? token().split("#")[0] : "•".repeat(24); showBtn.textContent = t(shown ? "hide" : "show"); });
     const scratch = el("input", {type: "text", class: "left wide", value: g.scratch});
     autosave(scratch, n4, v => api("PATCH", "/general", {scratch: v}));
     return [
@@ -522,7 +522,7 @@ const pages = {
         button(t("newToken"), async () => {
           if (!confirm(t("rotateAsk"))) return;
           const r = await save(n3, () => api("POST", "/general/token"), () => t("rotated"));
-          if (r) { g.connect = r.connect; if (shown) line.textContent = token(); }
+          if (r) { g.connect = r.connect; if (shown) line.textContent = token().split("#")[0]; }
         })))),
       n3,
       group(row(labelSub(t("localApps"), t("localAppsHelp")), toggle(g.allowLocalApps, v => save(n5, () => api("PATCH", "/general", {allowLocalApps: v}))))),

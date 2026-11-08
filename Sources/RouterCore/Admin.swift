@@ -589,9 +589,7 @@ extension Router {
             return (200, general(n, connect: hooks.connect))  // aplikacija znova zažene router: brez restartRequired
         case "POST general/{}":
             guard arg == "token" else { throw AdminError(404, "Not found: \(method) \(path)") }
-            var g = general(c, connect: "")
-            g["connect"] = await hooks.rotateToken()
-            return (200, g)
+            return (200, general(c, connect: await hooks.rotateToken()))  // cela vrstica minigw connect, kot v Go
         default:
             throw AdminError(404, "Not found: \(method) \(path)")
         }
