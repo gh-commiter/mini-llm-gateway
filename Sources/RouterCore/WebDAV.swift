@@ -25,6 +25,12 @@ public enum WebDAV {
         let junk = isJunk(url)  // ._* (xattri) in .DS_Store ne pišemo v mapo odjemalca
         var isDir: ObjCBool = false
         let exists = !junk && fm.fileExists(atPath: url.path, isDirectory: &isDir)
+        // Zaščitene poti (kot sync): pisanje v .git, .claude/settings*.json, .vscode/tasks.json, .envrc nikoli, tudi
+        // prek povezave; branje ostane.
+        func protected(_ u: URL, _ r: [String]) -> Bool { Sync.isProtected(r.joined(separator: "/")) || Sync.protectedCanonical(u, root: root) }
+        if ["PUT", "MKCOL", "DELETE", "MOVE", "PROPPATCH"].contains(method) || (method == "LOCK" && !exists), protected(url, rel) {
+            return DAVResponse(403)
+        }
 
         switch method {
         case "OPTIONS":
@@ -84,7 +90,7 @@ public enum WebDAV {
         case "DELETE":
             if junk { return DAVResponse(204) }
             guard exists else { return DAVResponse(404) }
-            guard !rel.isEmpty else { return DAVResponse(403) }
+            guard !rel.isEmpty, !treeProtected(url, rel) else { return DAVResponse(403) }
             do { try fm.removeItem(at: url) } catch { return DAVResponse(403) }
             return DAVResponse(204)
 
@@ -94,8 +100,28 @@ public enum WebDAV {
                   let (dest, destRel) = resolve(URL(string: raw)?.path(percentEncoded: true) ?? raw, prefix: prefix, root: root),
                   !destRel.isEmpty
             else { return DAVResponse(403) }
+            // Tudi vsebina mape: nič zaščitenega na cilju (stage/settings.json → .claude), nič zaščitenega ne izgine
+            // (MOVE .claude stran, prepis obstoječe .claude).
+            var st = stat()
+            if protected(dest, destRel) || treeProtected(url, destRel) || (method == "MOVE" && treeProtected(url, rel))
+                || (lstat(dest.path, &st) == 0 && treeProtected(dest, destRel)) { return DAVResponse(403) }
             if isJunk(dest) { return DAVResponse(201) }
             guard parentExists(dest) else { return DAVResponse(409) }
+            // Mapa v svojo podmapo in vir v cilju (MOVE /a/b → /a bi z brisanjem cilja izbrisal vir): nikoli
+            // (kanonični poti, da povezava ne skrije zanke; macOS: velikost črk ni pomembna).
+            let src = url.resolvingSymlinksInPath().path.lowercased() + "/"
+            let dst = dest.deletingLastPathComponent().resolvingSymlinksInPath().appendingPathComponent(dest.lastPathComponent).path.lowercased() + "/"
+            if dst != src, dst.hasPrefix(src) || src.hasPrefix(dst) { return DAVResponse(403) }
+            // Ista datoteka (»a.txt« → »A.txt« na APFS, trda povezava): cilja ne brišemo, ker je to vir.
+            // MOVE preimenuje prek začasnega imena (tudi datotečni sistemi, ki sami ne preimenujejo le velikosti črk).
+            if sameFile(url, dest) {
+                if method == "COPY" { return DAVResponse(403) }
+                let tmp = url.deletingLastPathComponent().appendingPathComponent(".minigw-mv-" + UUID().uuidString).path
+                guard rename(url.path, tmp) == 0 else { return DAVResponse(403) }
+                guard rename(tmp, dest.path) == 0 else { _ = rename(tmp, url.path); return DAVResponse(403) }
+                _ = unlink(tmp)  // trda povezava: rename je bil brez učinka, tmp je le še ena povezava cilja
+                return DAVResponse(201)
+            }
             let replaced = fm.fileExists(atPath: dest.path)
             if replaced {
                 if headers["overwrite"]?.uppercased() == "F" { return DAVResponse(412) }
@@ -145,6 +171,22 @@ public enum WebDAV {
         let real = existing.resolvingSymlinksInPath().standardizedFileURL.path
         guard real == root.path || real.hasPrefix(root.path + "/") else { return nil }
         return (url, comps)
+    }
+
+    /// Ista datoteka (naprava + inode, brez sledenja zadnji povezavi).
+    static func sameFile(_ a: URL, _ b: URL) -> Bool {
+        var x = stat(), y = stat()
+        return lstat(a.path, &x) == 0 && lstat(b.path, &y) == 0 && x.st_dev == y.st_dev && x.st_ino == y.st_ino
+    }
+
+    /// Ali je katera koli pot v drevesu `dir` (z imenom `base`) zaščitena.
+    /// ponytail: enumerator(atPath:) tiho preskoči nečitljive podmape; ob potrebi enumerator z errorHandler.
+    static func treeProtected(_ dir: URL, _ base: [String]) -> Bool {
+        let b = base.joined(separator: "/")
+        if Sync.isProtected(b) { return true }
+        guard let e = FileManager.default.enumerator(atPath: dir.path) else { return false }
+        for case let sub as String in e where Sync.isProtected(b.isEmpty ? sub : b + "/" + sub) { return true }
+        return false
     }
 
     static func isJunk(_ url: URL) -> Bool {
