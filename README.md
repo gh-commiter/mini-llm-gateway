@@ -124,6 +124,8 @@ with `/minigw:gw update`. Nothing is updated without you: an update stops the ag
 gateway. The session itself does not have to run through the gateway, so it works with your normal Claude login,
 Remote Control and so on.
 
+<img src="docs/images/claude-code-plugin.png" width="600" alt="Claude Code: /minigw:status shows the gateway and its models, then /minigw:review asks Codex for a review">
+
 | Skill | Model | Use |
 |---|---|---|
 | `/minigw:ask [--ro] <model> <question>` | any gateway model | Ask a specific model (`/minigw:models` lists them) |
