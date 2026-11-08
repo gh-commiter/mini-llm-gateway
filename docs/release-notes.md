@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **Windows test report fixes (gateway):** the tray started by the MSI now finds `claude`, `codex`, `git` … (PATH also
+  from the registry and `%USERPROFILE%\.local\bin`). Agent calls on Windows use `minigw.exe` (not the tray) as
+  `minigw -p …`, pre-approved as `Bash(minigw -p:*)`; other Bash commands of an agent still need approval there (no
+  sandbox). An invalid `serve.json` is written to the log and shown in a message box in front; `gw status` says the
+  settings must be fixed. When an allowed folder contains the scratch folder, the reason why Claude CLI and Codex are off
+  is in the log, `gw status`, `gw claude` and the Claude CLI pane; the tray log now also has the startup warnings.
+- `minigw gw devices deny <id>` refuses options such as `--name` (it used to remove the device). **Allow any device with
+  the token** can be turned on only while no device is allowed (page, Mac Settings, admin API 400).
+- `gw status` on Windows says `minigw gw autostart off`; `gw autostart` without an argument shows the state (both CLIs).
+  Scratch folder errors say that it must not contain the config folder (named).
+- Sessions: a device on 127.0.0.1 that was never approved shows as this computer, not "(device removed)"; an allowed
+  device has connection history also over 127.0.0.1; a request with an invalid session ID counts in a `t-…` session;
+  streamed Claude CLI answers count input tokens. `minigw status` lists the providers of a `minigw serve` gateway. No
+  empty `.maven` folder stays after the last worktree clone. The Claude CLI pane shows changes from `gw claude`.
+
 - **Codex on a Mac gateway shared by several devices:** Codex's own sandbox can read every file of the gateway's user,
   so Codex agents are not isolated between devices for reads (other devices' synced copies and worktree clones in
   Scratch, and an agent run's token file there). Allow Codex only for devices you trust with that.
