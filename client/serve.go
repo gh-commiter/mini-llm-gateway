@@ -439,7 +439,7 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	var offReason string
 	if bad := append(scratchOverlaps(c.AllowedFolders, c.Scratch), copilotCacheOverlaps(c.AllowedFolders)...); len(bad) > 0 {
 		offReason = "the allowed folder(s) " + strings.Join(bad, ", ") + " contain or are inside the scratch folder " + c.Scratch +
-			" or Copilot's package cache " + copilotCacheDir() + ": they are left out; turn Claude CLI and Codex on again to save the folders without them"
+			" or Copilot's package cache " + copilotCacheDir() + ": they are left out; save the allowed folders without them (settings page → Claude CLI → Allowed folders, or minigw gw claude --folders …), then turn Claude CLI and Codex on"
 		c.AllowedFolders = slices.DeleteFunc(slices.Clone(c.AllowedFolders), func(f string) bool { return slices.Contains(bad, f) })
 		c.ClaudeDisabled, c.Codex.Enabled = true, false
 	}

@@ -792,7 +792,12 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			e, err := checkAgent(c, s.cfgDir)
 			exe = e
 			return err
-		}, func() { s.claude = exe })
+		}, func() {
+			s.claude = exe
+			if b.Enabled != nil && *b.Enabled { // ponovni vklop uspel: razlog izklopa ob zagonu ne velja več
+				s.offReason = ""
+			}
+		})
 		if err != nil {
 			return fail(400, err.Error())
 		}
@@ -1032,6 +1037,10 @@ func (s *server) agentAPI(method string, k agentKind, body []byte) (int, any) {
 			c.Grok = ac
 		}
 		return nil
+	}, func() {
+		if b.Enabled != nil && *b.Enabled && k.name == "codex" { // kot Claude CLI: vklop uspel, razlog ne velja več
+			s.offReason = ""
+		}
 	})
 	if err != nil {
 		return 500, errorBody(500, err.Error())
@@ -1118,7 +1127,9 @@ func (s *server) claudeInfo() apiClaude {
 		info.Exe, info.ClaudeVersion = exe[len(exe)-1], claudeVersion(exe)
 	}
 	if c.ClaudeDisabled {
+		s.mu.RLock()
 		info.Off = s.offReason
+		s.mu.RUnlock()
 	}
 	return info
 }

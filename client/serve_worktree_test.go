@@ -229,7 +229,9 @@ func TestAllowedFolderAroundScratch(t *testing.T) {
 	k, _ := ecdh.X25519().GenerateKey(rand.Reader)
 	c := serveConfig{Token: "tok", Key: base64url(k.Bytes()), Tools: defaultTools, PermissionMode: "dontAsk", Scratch: scratch,
 		AllowedFolders: []string{parent}, Codex: agentCLI{Enabled: true}}
-	s, err := newServer(c, filepath.Join(t.TempDir(), "serve.json"))
+	cfg := filepath.Join(t.TempDir(), "serve.json")
+	writeServeConfig(cfg, c) // PATCH spodaj piše v datoteko
+	s, err := newServer(c, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,6 +240,19 @@ func TestAllowedFolderAroundScratch(t *testing.T) {
 	}
 	if off := s.claudeInfo().Off; !strings.Contains(off, parent) { // razlog v gw status, gw claude in na strani
 		t.Fatalf("no reason: %q", off)
+	}
+	// Le vklop ne gre (serve.json ima še mapo okoli Scratch); mape brez nje in vklop razlog počistita, kasnejši ročni
+	// izklop ga nima.
+	if st, _ := s.adminDo("PATCH", "/agents/claude", []byte(`{"enabled":true}`)); st != 400 || s.claudeInfo().Off == "" {
+		t.Fatalf("enabled without saving the folders: %d", st)
+	}
+	for _, body := range []string{`{"folders":"","enabled":true}`, `{"enabled":false}`} {
+		if st, b := s.adminDo("PATCH", "/agents/claude", []byte(body)); st != 200 {
+			t.Fatalf("%s: %d %v", body, st, b)
+		}
+	}
+	if off := s.claudeInfo().Off; off != "" {
+		t.Fatalf("stale reason: %q", off)
 	}
 	inside := filepath.Join(scratch, "repos")
 	os.MkdirAll(inside, 0o700)
