@@ -548,8 +548,8 @@ func TestDeviceRulesLikeMac(t *testing.T) {
 func TestAllowedDeviceClientInfo(t *testing.T) {
 	id := base64url(newDevice("PC").key.Public().(ed25519.PublicKey))
 	s, _, base := liveServer(t, func(c *serveConfig) { c.Devices = []serveDevice{{ID: id, Name: "PC"}} })
-	s.deviceSeen(serveDevice{ID: id, Name: "PC"}, "Windows, minigw 0.5.18")
-	s.deviceSeen(serveDevice{ID: id, Name: "PC"}, "")
+	s.deviceSeen(serveDevice{ID: id, Name: "PC"}, "192.0.2.7", "Windows, minigw 0.5.18")
+	s.deviceSeen(serveDevice{ID: id, Name: "PC"}, "192.0.2.7", "")
 	if st, b := adminNoise(t, s, base, s.admin, "GET", adminPrefix+"/devices", ""); st != 200 || !strings.Contains(b, `"client":"Windows, minigw 0.5.18"`) || !strings.Contains(b, `"lastSeen":"`) {
 		t.Fatalf("devices: %d %s", st, b)
 	}

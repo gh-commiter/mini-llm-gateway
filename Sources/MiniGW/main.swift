@@ -544,6 +544,11 @@ var args = Array(CommandLine.arguments.dropFirst())
 // --minigw-ro (ali MINIGW_SHARE=ro): mapa samo za branje; zastavica ne gre naprej v claude.
 var readOnly = args.contains("--minigw-ro") || ProcessInfo.processInfo.environment["MINIGW_SHARE"] == "ro"
 args.removeAll { $0 == "--minigw-ro" }
+// --minigw-role <ime> (ali MINIGW_ROLE): vloga klicatelja za zgodovino sej (kasneje omejitve); varovalo, ne meja.
+let roleArg = GatewayHistory.takeRole(args, env: ProcessInfo.processInfo.environment["MINIGW_ROLE"])
+let role = roleArg.role
+args = roleArg.rest
+if !roleArg.ok { fail("--minigw-role: 1-32 letters, digits, . _ or -") }
 // --minigw-work=sync (ali MINIGW_WORK=sync): agenti delajo v kopiji na routerju namesto v priklopu; privzeto direct.
 // native: mapa je prek SMB mapa routerja → agenti delajo neposredno v njej (glej Native).
 // Prednost: --minigw-work= / MINIGW_WORK > način mape iz »minigw share add --work=…« > direct.
@@ -679,6 +684,7 @@ case "--minigw-help", "-h", "--help", "-v", "--version":
         minigw share add --work=native|native-direct|sync|direct [--ro] [folder]   default mode for that folder (flag/env wins)
         minigw gw status|devices|provider|claude|token …    change the Mini Gateway app on this Mac (minigw gw help)
         minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)
+        minigw --minigw-role NAME [claude args]    the caller's role for the gateway's session history (or MINIGW_ROLE)
         minigw --minigw-work=sync [claude args]    agents work in a synced copy on the gateway (or MINIGW_WORK=sync)
         minigw --minigw-work=native [claude args]  folder is the gateway's SMB share: agents work there; git repository: each on its own branch minigw/… (or MINIGW_WORK=native)
         minigw --minigw-work=native-direct [claude args]  as native, but agents change the folder itself, one writing agent at a time
@@ -747,7 +753,8 @@ let work = mode.work
 readOnly = mode.readOnly
 
 // x-claude-mini-share: router po ponovnem zagonu počaka, da se mapa znova registrira (namesto napake cwd_unavailable).
-setenv("ANTHROPIC_CUSTOM_HEADERS", "x-claude-mini-session: \(sid)\nx-claude-mini-cwd: \(cwd)" + (wantShare ? "\nx-claude-mini-share: 1" : ""), 1)
+setenv("ANTHROPIC_CUSTOM_HEADERS", "x-claude-mini-session: \(sid)\nx-claude-mini-cwd: \(cwd)" + (wantShare ? "\nx-claude-mini-share: 1" : "")
+       + (role.isEmpty ? "" : "\nx-claude-mini-role: \(role)"), 1)
 
 // Brez proxyja in brez mape: minigw ni več potreben → exec.
 guard !proxies.isEmpty || (wantShare && !sid.isEmpty) || profiles.count > 1 else {

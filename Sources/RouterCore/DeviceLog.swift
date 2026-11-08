@@ -1,7 +1,7 @@
 import Foundation
 
-/// Naprave, ki čakajo na odobritev (največ 20, kot minigw serve), in zadnji stik dovoljenih. Le v pomnilniku aplikacije:
-/// preživi ponovni zagon routerja (sprememba nastavitev), ne aplikacije. `onChange`: aplikacija osveži meni in Settings.
+/// Naprave, ki čakajo na odobritev (največ 20, kot minigw serve). Le v pomnilniku aplikacije: preživi ponovni zagon
+/// routerja (sprememba nastavitev), ne aplikacije. Zadnji stik in priklopi dovoljenih: Router.history (trajno). `onChange`: aplikacija osveži meni in Settings.
 /// L1: poln seznam obdrži najstarejše čakajoče (novi ključi jih ne izrinejo); onChange največ enkrat na sekundo.
 public final class DeviceLog: @unchecked Sendable {
     public struct Pending: Sendable, Equatable, Identifiable {
@@ -12,8 +12,6 @@ public final class DeviceLog: @unchecked Sendable {
     public static let limit = 20
     private let lock = NSLock()
     private var waiting: [Pending] = []
-    private var seenAt: [String: Date] = [:]
-    private var clients: [String: String] = [:]  // OS in različica dovoljene naprave (zadnja neprazna glava)
     private var change: (@Sendable () -> Void)?
     private var lastNotify = Date.distantPast, notifyQueued = false
 
@@ -25,17 +23,6 @@ public final class DeviceLog: @unchecked Sendable {
     }
 
     public var pending: [Pending] { lock.withLock { waiting } }
-
-    public func lastSeen(_ id: String) -> Date? { lock.withLock { seenAt[id] } }
-
-    public func seen(_ id: String, client: String = "") {
-        lock.withLock {
-            seenAt[id] = Date()
-            if !client.isEmpty { clients[id] = client }
-        }
-    }
-
-    public func client(_ id: String) -> String? { lock.withLock { clients[id] } }
 
     public func addPending(id: String, name: String, address: String, client: String = "") {
         let changed: Bool = lock.withLock {

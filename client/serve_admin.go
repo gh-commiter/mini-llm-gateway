@@ -218,20 +218,14 @@ func offlineServer(cfgPath string) (*server, error) {
 	}
 	cfgDir, _ := filepath.Abs(filepath.Dir(cfgPath))
 	exe, _ := resolveClaude(c.Claude)
-	return &server{cfg: c, cfgPath: cfgPath, cfgDir: cfgDir, claude: exe, offline: true, log: log.New(io.Discard, "", 0)}, nil
+	return &server{cfg: c, cfgPath: cfgPath, cfgDir: cfgDir, claude: exe, offline: true, log: log.New(io.Discard, "", 0),
+		state: loadState(filepath.Join(cfgDir, "state.json"))}, nil
 }
 
-// deviceSeen: zadnji stik dovoljene naprave; ime, če ga naprava (dodana le z ID-jem ali s starejšim minigw) še nima.
-type deviceStamp struct {
-	time   time.Time
-	client string // OS in različica (zadnja neprazna glava X-Minigw-Client)
-}
-
-func (s *server) deviceSeen(d serveDevice, client string) {
-	if old, ok := s.seen.Load(d.ID); ok && client == "" {
-		client = old.(deviceStamp).client
-	}
-	s.seen.Store(d.ID, deviceStamp{time.Now(), client})
+// deviceSeen: zadnji stik in priklopi dovoljene naprave (state.json); ime, če ga naprava (dodana le z ID-jem ali s
+// starejšim minigw) še nima.
+func (s *server) deviceSeen(d serveDevice, addr, client string) {
+	s.state.seen(d.ID, addr, client, time.Now())
 	if d.Name == "" {
 		return
 	}
@@ -344,14 +338,39 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		s.mu.RUnlock()
 		return 200, st
 
+	case "GET devices/{}/history": // priklopi dovoljene naprave, najnovejši prvi
+		i := slices.IndexFunc(s.conf().Devices, func(d serveDevice) bool { return d.ID == arg })
+		if i < 0 {
+			return fail(404, "no allowed device with the ID "+arg+" (minigw gw devices lists the IDs)")
+		}
+		st, _ := s.state.device(arg)
+		h := slices.Clone(st.History)
+		slices.Reverse(h)
+		if h == nil {
+			h = []deviceConn{}
+		}
+		return 200, map[string]any{"id": arg, "name": s.conf().Devices[i].Name, "history": h}
+	case "GET sessions":
+		return 200, map[string]any{"sessions": s.state.sessions(u.Query().Get("device"), u.Query().Get("folder"))}
+	case "GET sessions/{}":
+		for _, x := range s.state.sessions("", "") {
+			if x.ID == arg {
+				return 200, x
+			}
+		}
+		return fail(404, "no session "+arg+" (minigw gw sessions lists them)")
+	case "DELETE sessions":
+		s.state.clearSessions()
+		s.state.save()
+		return 200, map[string]any{"cleared": true}
 	case "GET devices":
 		c := s.conf()
 		out := map[string]any{"devices": []apiDevice{}, "allowAnyDevice": c.AllowAnyDevice}
 		var list []apiDevice
 		for _, d := range c.Devices {
 			x := apiDevice{ID: d.ID, Name: d.Name}
-			if v, ok := s.seen.Load(d.ID); ok {
-				x.LastSeen, x.Client = v.(deviceStamp).time.UTC().Format(time.RFC3339), v.(deviceStamp).client
+			if v, ok := s.state.device(d.ID); ok {
+				x.LastSeen, x.Client = v.LastSeen.UTC().Format(time.RFC3339), v.Client
 			}
 			list = append(list, x)
 		}

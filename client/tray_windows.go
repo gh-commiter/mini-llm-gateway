@@ -267,6 +267,7 @@ func trayProc(hwnd, m, wp, lp uintptr) uintptr {
 		return 0
 	case m == 0x0010: // WM_CLOSE: minigw serve install (posodobitev) ali uninstall zapre pladenj
 		pShellNotifyIcon.Call(nimDelete, uintptr(unsafe.Pointer(t.data(0))))
+		t.s.state.save()
 		os.Exit(0)
 	case uint32(m) == t.recreated && t.recreated != 0:
 		t.addIcon()
@@ -346,6 +347,7 @@ func (t *tray) do(action string, st apiStatus) {
 		shellOpen("notepad.exe", `"`+t.logPath+`"`) // dnevnik vedno kot besedilo, ne s privzetim programom za .log
 	case "quit":
 		pShellNotifyIcon.Call(nimDelete, uintptr(unsafe.Pointer(t.data(0))))
+		t.s.state.save()
 		os.Exit(0)
 	default:
 		if err := t.s.trayDevice(action, t.pending); err != nil {

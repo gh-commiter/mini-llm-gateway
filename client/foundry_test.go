@@ -138,6 +138,11 @@ func TestFoundryThroughGateway(t *testing.T) {
 		!strings.Contains(b, `"output_tokens":2`) || !strings.Contains(b, "message_stop") {
 		t.Fatalf("stream: %d %s", st, b)
 	}
+	// Zgodovina seje: zahteva brez ID-ja seje (časovno okno), žetoni iz odgovora, tudi pri pretoku.
+	if l := s.state.sessions("", ""); len(l) != 1 || len(l[0].Models) != 1 || l[0].Models[0].Model != "claude-foundry-phi-4-mini-generic-cpu" ||
+		l[0].Models[0].Requests != 2 || l[0].Models[0].InputTokens < 7 || l[0].Models[0].OutputTokens < 5 || l[0].Mode != "chat" || l[0].Models[0].Tools != "" {
+		t.Fatalf("session: %+v", l)
+	}
 	mu.Lock()
 	if len(*got) != 2 || (*got)[0]["model"] != "phi-4-mini-generic-cpu" || (*got)[0]["tools"] != nil || !strings.Contains(mustJSON((*got)[0]["messages"]), "be brief") {
 		t.Fatalf("upstream requests: %v", *got)

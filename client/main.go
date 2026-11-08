@@ -458,6 +458,7 @@ func main() {
 				"minigw share add|remove [folder] | list    also share a system or hidden folder with the gateway\n" +
 				"minigw share add --work=native|native-direct|sync|direct [--ro] [folder]   default mode for that folder (flag/env wins)\n" +
 				"minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)\n" +
+				"minigw --minigw-role NAME [claude args]    the caller's role for the gateway's session history (or MINIGW_ROLE)\n" +
 				"minigw --minigw-work=sync [claude args]    agents work in a synced copy on the gateway (or MINIGW_WORK=sync)\n" +
 				"minigw --minigw-work=native [claude args]  folder is the gateway's SMB share: agents work there; git repository: each on its own branch minigw/… (or MINIGW_WORK=native)\n" +
 				"minigw --minigw-work=native-direct [claude args]  as native, but agents change the folder itself, one writing agent at a time\n" +
@@ -480,6 +481,11 @@ func main() {
 	// --minigw-work=sync (ali MINIGW_WORK=sync): agenti delajo v kopiji na routerju namesto v priklopu; privzeto direct.
 	// Prednost: --minigw-work= / MINIGW_WORK > način mape iz »minigw share add --work=…« > direct.
 	work := os.Getenv("MINIGW_WORK")
+	// --minigw-role <ime> (ali MINIGW_ROLE): vloga klicatelja za zgodovino sej (kasneje omejitve); varovalo, ne meja.
+	role, args, ok := takeRole(args, os.Getenv("MINIGW_ROLE"))
+	if !ok {
+		fail("--minigw-role: 1-32 letters, digits, . _ or -")
+	}
 	for i := 0; i < len(args); i++ {
 		if args[i] == "--minigw-ro" || strings.HasPrefix(args[i], "--minigw-work=") {
 			if args[i] == "--minigw-ro" {
@@ -556,6 +562,9 @@ func main() {
 	headers := "x-claude-mini-session: " + sid + "\nx-claude-mini-cwd: " + cwd
 	if wantShare {
 		headers += "\nx-claude-mini-share: 1" // router po ponovnem zagonu počaka na ponovno registracijo mape
+	}
+	if role != "" {
+		headers += "\nx-claude-mini-role: " + role
 	}
 	env = append(env, "ANTHROPIC_CUSTOM_HEADERS="+headers)
 
@@ -942,4 +951,22 @@ func shareCommand(args []string) {
 	default:
 		fail("usage: minigw share add [--work=direct|sync|native|native-direct|worktree|auto] [--ro] [folder] | minigw share remove [folder] | minigw share list")
 	}
+}
+
+// takeRole: --minigw-role <ime> ali --minigw-role=<ime> (zadnji velja) iz argumentov, sicer env; ok=false za neveljavno ime
+// (enako kot GatewayHistory.takeRole na Macu).
+func takeRole(args []string, env string) (role string, rest []string, ok bool) {
+	role = env
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "--minigw-role" && i+1 < len(args):
+			role = args[i+1]
+			i++
+		case strings.HasPrefix(args[i], "--minigw-role="):
+			role = strings.TrimPrefix(args[i], "--minigw-role=")
+		default:
+			rest = append(rest, args[i])
+		}
+	}
+	return role, rest, role == "" || validRole(role)
 }

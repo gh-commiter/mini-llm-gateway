@@ -28,6 +28,8 @@ runs; otherwise they go to serve.json.
 
   minigw gw status
   minigw gw devices [allow <device id> [--name N] | rename <device id> --name N | deny <device id>]
+  minigw gw devices history <device id>                 the device's last connections
+  minigw gw sessions [--device ID] [--folder DIR] | <session id> | clear
   minigw gw provider add <name> <baseURL> [--insecure]   the API key is read from stdin or asked for
   minigw gw provider remove <name> | list
   minigw gw provider models <name> [text] [--all] [--enable m1,m2|all] [--disable m1,m2|all]
@@ -214,6 +216,8 @@ func routerCommand(args []string, in io.Reader) {
 	enable := fs.String("enable", "", "provider models: enable these models (comma-separated, or all)")
 	disable := fs.String("disable", "", "provider models: disable these models (comma-separated, or all)")
 	all := fs.Bool("all", false, "provider models: also list the disabled models")
+	device := fs.String("device", "", "sessions: only this device")
+	folder := fs.String("folder", "", "sessions: only this folder and its subfolders")
 	devName := fs.String("name", "", "devices allow/rename: the device's name (a label; the ID identifies it)")
 	path := fs.String("path", "", "claude: path to claude (empty = PATH)")
 	tools := fs.String("tools", "", "claude: the agent's tools")
@@ -325,6 +329,19 @@ func routerCommand(args []string, in io.Reader) {
 			var r struct{ Device apiDevice }
 			a.do("PATCH", "/devices/"+esc(pos[2]), map[string]string{"name": *devName}, &r)
 			say(fmt.Sprintf("renamed device %s to %q", r.Device.ID, r.Device.Name))
+		case pos[1] == "history" && len(pos) == 3:
+			var r struct {
+				ID, Name string
+				History  []deviceConn
+			}
+			a.do("GET", "/devices/"+esc(pos[2])+"/history", nil, &r)
+			say(fmt.Sprintf("%s  %q", r.ID, r.Name))
+			for _, h := range r.History {
+				say(fmt.Sprintf("%s  %q  %q", h.Time.UTC().Format(time.RFC3339), h.Address, h.Client))
+			}
+			if len(r.History) == 0 {
+				say("no connections recorded")
+			}
 		case pos[1] == "deny" && len(pos) == 3:
 			var r struct {
 				Device  apiDevice
@@ -332,6 +349,38 @@ func routerCommand(args []string, in io.Reader) {
 			}
 			a.do("DELETE", "/devices/"+esc(pos[2]), nil, &r)
 			say(fmt.Sprintf("%s device %s %q", map[bool]string{true: "rejected waiting", false: "removed"}[r.Pending], r.Device.ID, r.Device.Name))
+		default:
+			fail(routerHelp)
+		}
+
+	case "sessions":
+		switch {
+		case len(pos) == 1:
+			var r struct{ Sessions []apiSession }
+			a.do("GET", "/sessions?device="+url.QueryEscape(*device)+"&folder="+url.QueryEscape(*folder), nil, &r)
+			for _, x := range r.Sessions {
+				say(sessionLine(x))
+			}
+			if len(r.Sessions) == 0 {
+				say("no sessions recorded")
+			}
+		case len(pos) == 2 && pos[1] == "clear":
+			a.do("DELETE", "/sessions", nil, nil)
+			say("session history cleared")
+		case len(pos) == 2:
+			var x apiSession
+			a.do("GET", "/sessions/"+esc(pos[1]), nil, &x)
+			say(sessionLine(x))
+			say(fmt.Sprintf("start %s, last %s, duration %.0fs", x.Start.UTC().Format(time.RFC3339), x.Last.UTC().Format(time.RFC3339), x.Duration))
+			if x.Branch != "" {
+				say("branch " + strconv.Quote(x.Branch))
+			}
+			if x.Role != "" {
+				say("role " + x.Role)
+			}
+			for _, m := range x.Models {
+				say(useLine(m))
+			}
 		default:
 			fail(routerHelp)
 		}

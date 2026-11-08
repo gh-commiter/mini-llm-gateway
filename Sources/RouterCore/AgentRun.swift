@@ -9,6 +9,7 @@ import os
 final class AgentRun: @unchecked Sendable {
     let kind: String, chain: [String]
     let peer: String, device: Noise.Device?, session: String, cwd: String
+    let role: String  // vloga klicatelja (--minigw-role); vprašani agent je ne more spremeniti
     let dir: URL?        // mapa izvajanja iz ShareHub (kopija, klon, mapa); nil = mapa na tem Macu (resolveCwd)
     let runID: String?   // ShareHub.run klicatelja: vprašani agent dela v istem klonu oz. mestu worktree
     let token: String
@@ -37,6 +38,7 @@ final class AgentRun: @unchecked Sendable {
         self.kind = kind; self.chain = chain; self.dir = dir; self.listener = listener; self.token = token
         peer = req.peer; device = req.device
         session = req.header("x-claude-mini-session") ?? ""; cwd = req.header("x-claude-mini-cwd") ?? ""
+        role = GatewayHistory.role(req)
         runID = ShareHub.run
     }
 
@@ -186,6 +188,7 @@ final class AgentRun: @unchecked Sendable {
         r.headers["authorization"] = "Bearer " + router.token
         r.headers["x-claude-mini-session"] = session
         r.headers["x-claude-mini-cwd"] = cwd
+        r.headers["x-claude-mini-role"] = role.isEmpty ? nil : role  // vloga iz izvajanja, ne od vprašanega agenta
         r.peer = peer
         r.device = device
         await Self.$current.withValue(self) { await router.handle(r, writer: writer) }
