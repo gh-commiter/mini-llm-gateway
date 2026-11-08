@@ -254,7 +254,7 @@ it and keeps the config and keys.
 ```sh
 minigw serve init            # creates the config with a new token and gateway key, prints the minigw connect line
 minigw serve install         # install, start now and at boot or sign-in
-minigw serve                 # or run it in this terminal: port 8765; --port, --folder, --config
+minigw serve                 # or run it in this terminal: port 8765; --port, --config
 ```
 
 On each client run the printed `minigw connect` line. The first connect from a new device is refused and the gateway

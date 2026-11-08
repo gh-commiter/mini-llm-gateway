@@ -2,8 +2,8 @@ package main
 
 import (
 	"net"
-	"os"
 	"net/http"
+	"os"
 	"runtime"
 	"testing"
 )

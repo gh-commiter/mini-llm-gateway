@@ -452,7 +452,7 @@ func main() {
 				"minigw --minigw-work=worktree [claude args]  git repository: agents work in a clone on the gateway, results come back as branches minigw/…\n" +
 				"minigw --minigw-work=auto [claude args]    gateway share → native, git repository → worktree, otherwise sync (--minigw-ro → direct)\n" +
 				"minigw run [--] <command> [args …]          run a build in this folder on the gateway (SMB share, allowed in its Settings)\n" +
-				"minigw serve [init|allow <id>] [--port N] [--folder DIR] [--config FILE]   run a gateway here (Windows, Linux)\n" +
+				"minigw serve [init|allow <id>] [--port N] [--config FILE]   run a gateway here (Windows, Linux)\n" +
 				"minigw gw status|devices|provider|claude|token …  change the gateway here, live (minigw gw help)\n" +
 				"minigw [claude options …]                    run Claude Code through the gateway")
 		}

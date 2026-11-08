@@ -43,7 +43,6 @@ type serveConfig struct {
 	Key            string        `json:"key"` // zasebni ključ routerja (X25519, base64url); javni del gre v žeton
 	Port           int           `json:"port"`
 	Address        string        `json:"address,omitempty"` // naslov za poslušanje; prazno = vsi
-	Folder         string        `json:"folder,omitempty"`  // dovoljena mapa za agente brez sinhronizacije
 	Scratch        string        `json:"scratch,omitempty"` // kopije map in pogovori; prazno = mapa predpomnilnika
 	Log            string        `json:"log,omitempty"`     // prazno = stderr
 	Claude         string        `json:"claude,omitempty"`  // pot do claude; prazno = PATH
@@ -71,9 +70,9 @@ type serveConfig struct {
 
 const serveHelp = `minigw serve: Mini Gateway, the LLM gateway, on this computer (Windows, Linux) for minigw clients.
 
-  minigw serve init [--port N] [--folder DIR] [--config FILE]   create the config, print the minigw connect line
+  minigw serve init [--port N] [--config FILE]   create the config, print the minigw connect line
   minigw serve install | uninstall [--config FILE]              start the gateway at sign-in (per user, no admin)
-  minigw serve [--port N] [--folder DIR] [--config FILE]        run the gateway
+  minigw serve [--port N] [--config FILE]        run the gateway
   minigw gw status|devices|provider|claude|token …              show or change the gateway, live if it runs
   minigw serve allow|deny|devices|provider|status …             the same as minigw gw devices allow|deny, …
 
@@ -113,6 +112,13 @@ func loadServeConfig(path string) (serveConfig, error) {
 	}
 	if err := json.Unmarshal(data, &c); err != nil {
 		return c, fmt.Errorf("%s: %v", path, err)
+	}
+	// Starejši »folder« (mapa za agente brez sinhronizacije) postane dovoljena mapa; privzete mape ni več (kot na Macu).
+	var old struct {
+		Folder string `json:"folder"`
+	}
+	if json.Unmarshal(data, &old) == nil && old.Folder != "" && !slices.Contains(c.AllowedFolders, old.Folder) {
+		c.AllowedFolders = append(c.AllowedFolders, old.Folder)
 	}
 	if c.Port == 0 {
 		c.Port = 8765
@@ -237,7 +243,7 @@ func serveCommand(args []string) {
 	fs := flag.NewFlagSet("minigw serve", flag.ExitOnError)
 	cfgPath := fs.String("config", defaultServeConfigPath(), "config file")
 	port := fs.Int("port", 0, "port (default 8765)")
-	folder := fs.String("folder", "", "folder for agents that do not sync (--minigw-work=sync is preferred)")
+	folder := fs.String("folder", "", "deprecated: adds an allowed folder (use minigw gw claude --folders)")
 	fs.BoolVar(&allowDowngrade, "allow-downgrade", false, "install: replace a newer installed minigw (#25)")
 	fs.Usage = func() { fmt.Fprintln(os.Stderr, serveHelp) }
 	fs.Parse(args)
@@ -253,10 +259,7 @@ func serveCommand(args []string) {
 		if *port != 0 {
 			c.Port = *port
 		}
-		if *folder != "" {
-			abs, _ := filepath.Abs(*folder)
-			c.Folder = abs
-		}
+		deprecatedFolder(&c, *folder)
 		abs, _ := filepath.Abs(filepath.Dir(*cfgPath)) // zasebna mapa pred prvim zapisom žetona in ključa
 		os.MkdirAll(abs, 0o700)
 		if err := protectConfigDir(abs); errors.Is(err, errForeignOwner) {
@@ -297,16 +300,7 @@ func serveCommand(args []string) {
 	if *port != 0 {
 		c.Port = *port
 	}
-	if *folder != "" {
-		c.Folder = *folder
-	}
-	if c.Folder != "" {
-		abs, _ := filepath.Abs(c.Folder)
-		if st, err := os.Stat(abs); err != nil || !st.IsDir() {
-			fail("not a folder: " + c.Folder)
-		}
-		c.Folder = abs
-	}
+	deprecatedFolder(&c, *folder)
 	s, err := newServer(c, *cfgPath)
 	if err != nil {
 		fail(err.Error())
@@ -337,8 +331,8 @@ func newServeConfig() serveConfig {
 // announce: vrstica zagona, opozorila o ključih prehodov in odkrivanje modelov v ozadju.
 func (s *server) announce(ln net.Listener) {
 	c := s.conf()
-	s.log.Printf("minigw %s serving on %s (MGW2), claude=%q folder=%q scratch=%q devices=%d providers=%d", version, ln.Addr(),
-		strings.Join(s.claudeExe(), " "), c.Folder, c.Scratch, len(c.Devices), len(c.Gateways))
+	s.log.Printf("minigw %s serving on %s (MGW2), claude=%q folders=%q scratch=%q devices=%d providers=%d", version, ln.Addr(),
+		strings.Join(s.claudeExe(), " "), strings.Join(c.AllowedFolders, ","), c.Scratch, len(c.Devices), len(c.Gateways))
 	for _, g := range c.Gateways {
 		if key, where := keyGet(s.cfgDir, g.Name); key == "" && !g.Disabled { // izklopljen (npr. vgrajen brez ključa): brez opozorila
 			s.log.Printf("WARNING: provider %s has no API key: run minigw gw provider add %s %s", g.Name, g.Name, g.BaseURL)
@@ -482,16 +476,21 @@ func defaultScratch() string {
 	return filepath.Join(dir, "minigw", "scratch")
 }
 
+// deprecatedFolder: zastareli --folder (minigw serve, serve init) doda dovoljeno mapo; skripte delujejo naprej.
+func deprecatedFolder(c *serveConfig, f string) {
+	if f == "" {
+		return
+	}
+	abs, _ := filepath.Abs(f)
+	if !slices.Contains(c.AllowedFolders, abs) {
+		c.AllowedFolders = append(c.AllowedFolders, abs)
+	}
+	say("--folder is deprecated: " + abs + " is now an allowed folder (use --folders)")
+}
+
 // checkAgent: mapa ne sme biti blizu mape nastavitev, claude mora obstajati, Bash na Windows le z dovoljenjem.
 // Za zagon in za spremembe prek skrbniškega API.
 func checkAgent(c *serveConfig, cfgDir string) ([]string, error) {
-	if c.Folder != "" {
-		real, err := checkFolder(c.Folder, cfgDir)
-		if err != nil {
-			return nil, err
-		}
-		c.Folder = real
-	}
 	for i, f := range c.AllowedFolders {
 		if f == "" || !filepath.IsAbs(f) {
 			return nil, errors.New("allowed folder must be an absolute path: " + f)
@@ -502,22 +501,12 @@ func checkAgent(c *serveConfig, cfgDir string) ([]string, error) {
 		}
 		c.AllowedFolders[i] = real
 	}
-	folders := c.AllowedFolders // N2: tudi privzeta mapa (Folder)
-	if c.Folder != "" {
-		folders = append([]string{c.Folder}, folders...)
-	}
-	kind := func(f string) string {
-		if f == c.Folder {
-			return "folder "
-		}
-		return "allowed folder "
-	}
-	if bad := scratchOverlaps(folders, c.Scratch); len(bad) > 0 { // H1: PATCH, minigw gw claude --folders, serve.json
-		return nil, errors.New(kind(bad[0]) + bad[0] + " contains or is inside the scratch folder " + c.Scratch +
+	if bad := scratchOverlaps(c.AllowedFolders, c.Scratch); len(bad) > 0 { // H1: PATCH, minigw gw claude --folders, serve.json
+		return nil, errors.New("allowed folder " + bad[0] + " contains or is inside the scratch folder " + c.Scratch +
 			" (agents could change the gateway's mirrors and other devices' copies): choose another folder")
 	}
-	if bad := copilotCacheOverlaps(folders); len(bad) > 0 { // #26
-		return nil, errors.New(kind(bad[0]) + bad[0] + " contains or is inside Copilot's package cache " + copilotCacheDir() +
+	if bad := copilotCacheOverlaps(c.AllowedFolders); len(bad) > 0 { // #26
+		return nil, errors.New("allowed folder " + bad[0] + " contains or is inside Copilot's package cache " + copilotCacheDir() +
 			" (agents could plant code the gateway runs): choose another folder")
 	}
 	if c.AllowLocalTools && runtime.GOOS == "windows" && !c.AllowUnsandboxedBash {

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `minigw serve` no longer has a default folder for agents (`folder` in serve.json, the settings field and
+  `minigw gw claude --folder`): as on the Mac, an agent request without a shared, synced or worktree folder is refused.
+  A stored `folder` becomes an allowed folder; `minigw serve --folder X` (and `serve init`) still works, adds X to the
+  allowed folders and says it is deprecated.
 - **This user's apps without a token (off by default):** programs of the gateway's own user on the same computer can use
   the models and agents (`/v1/messages`, `/v1/models`) without the token, for example an app pointed at `http://127.0.0.1:8765`.
   The gateway checks the process behind the connection (same user, not one of its agents); the request needs
@@ -51,7 +55,7 @@
   `minigw serve` too (off until a key is set; they can be turned off, not removed or renamed), and on the Mac they can
   no longer be removed through `minigw gw provider remove`.
 - `minigw gw claude --folders … --allow-local-tools=true|false` and `minigw gw autostart on|off` now work on Windows and
-  Linux too (the same flags as on the Mac); `--folder` and `--allow-unsandboxed-bash` stay as `minigw serve` extras.
+  Linux too (the same flags as on the Mac); `--allow-unsandboxed-bash` stays a `minigw serve` extra.
 - The Mac's admin API has what `minigw serve` has: `PATCH /providers/{name}` (rename, on/off, URL, aliases),
   `GET /agents/claude/tools`, `GET /agents/{codex,grok}/models`, permission mode and setting sources for Claude CLI, and
   the scratch folder (moved like in Settings).
