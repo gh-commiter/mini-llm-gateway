@@ -84,6 +84,7 @@ type apiGeneral struct {
 	AllowedClients   string `json:"allowedClients"`
 	AllowPlainRemote bool   `json:"allowPlainRemote"`
 	AllowAnyDevice   bool   `json:"allowAnyDevice"`
+	AllowLocalApps   bool   `json:"allowLocalApps"`
 	Scratch          string `json:"scratch"`
 }
 
@@ -814,6 +815,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			AllowedClients   *string `json:"allowedClients"`
 			AllowPlainRemote *bool   `json:"allowPlainRemote"`
 			AllowAnyDevice   *bool   `json:"allowAnyDevice"`
+			AllowLocalApps   *bool   `json:"allowLocalApps"`
 			Scratch          *string `json:"scratch"`
 		}
 		if err := decodeStrict(body, &b); err != nil {
@@ -876,6 +878,9 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			}
 			if b.AllowAnyDevice != nil {
 				c.AllowAnyDevice = *b.AllowAnyDevice
+			}
+			if b.AllowLocalApps != nil {
+				c.AllowLocalApps = b.AllowLocalApps
 			}
 			if b.Scratch != nil {
 				c.Scratch = scratch
@@ -1023,7 +1028,7 @@ func findGateway(c serveConfig, name string) (serveGateway, bool) {
 func (s *server) apiGeneral(restart bool) apiGeneral {
 	c := s.conf()
 	return apiGeneral{Port: c.Port, Address: c.Address, Connect: connectLine(c), RestartRequired: restart, AllowedClients: c.AllowedClients,
-		AllowPlainRemote: c.AllowPlainRemote, AllowAnyDevice: c.AllowAnyDevice, Scratch: c.Scratch}
+		AllowPlainRemote: c.AllowPlainRemote, AllowAnyDevice: c.AllowAnyDevice, AllowLocalApps: c.localApps(), Scratch: c.Scratch}
 }
 
 // buildCommit: commit gradnje (go build iz gita), kot »Version 0.5.14 (d62bf92)« na Macu.

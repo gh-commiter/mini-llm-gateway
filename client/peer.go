@@ -123,8 +123,8 @@ func procAddr(s string) (net.IP, int, bool) {
 	return net.IP(b), int(port), true
 }
 
-// procSocketInode: inode vtičnice odjemalca (njen lokalni naslov je naš oddaljeni in obratno); "" = ni najdena.
-func procSocketInode(table []byte, peer, ours *net.TCPAddr) string {
+// procSocketInode: inode in uid vtičnice odjemalca (njen lokalni naslov je naš oddaljeni in obratno); "" = ni najdena.
+func procSocketInode(table []byte, peer, ours *net.TCPAddr) (string, int) {
 	for _, line := range strings.Split(string(table), "\n") {
 		f := strings.Fields(line)
 		if len(f) < 10 {
@@ -133,10 +133,14 @@ func procSocketInode(table []byte, peer, ours *net.TCPAddr) string {
 		lip, lport, ok1 := procAddr(f[1])
 		rip, rport, ok2 := procAddr(f[2])
 		if ok1 && ok2 && lport == peer.Port && rport == ours.Port && lip.Equal(peer.IP) && rip.Equal(ours.IP) {
-			return f[9]
+			uid, err := strconv.Atoi(f[7])
+			if err != nil {
+				uid = -1
+			}
+			return f[9], uid
 		}
 	}
-	return ""
+	return "", -1
 }
 
 // tcpTablePID: PID iz tabele GetExtendedTcpTable (TCP_TABLE_OWNER_PID_ALL) za povezavo odjemalca; 0 = ni najdena.
