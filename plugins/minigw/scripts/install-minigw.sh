@@ -134,7 +134,8 @@ case $old in *[!0-9.]*) old="" ;; esac
 older "$old" "$new" && echo "Mini Gateway $old is installed, $new is available: /minigw:gw update"
 
 # Claudov Bash najde »minigw« tudi brez poti.
-[ -n "${CLAUDE_ENV_FILE:-}" ] && echo "export PATH=\"\$PATH:$BIN\"" >> "$CLAUDE_ENV_FILE"
+line="export PATH=\"\$PATH:$BIN\""  # ena vrstica, tudi ob resume/clear/compact
+[ -n "${CLAUDE_ENV_FILE:-}" ] && { grep -qxF "$line" "$CLAUDE_ENV_FILE" 2>/dev/null || echo "$line" >> "$CLAUDE_ENV_FILE"; }
 if "$EXE" status >/dev/null 2>&1; then
   echo "minigw plugin: $("$EXE" --version 2>/dev/null | head -1), connected to Mini Gateway."
 else
