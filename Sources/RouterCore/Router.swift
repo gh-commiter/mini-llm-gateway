@@ -334,7 +334,8 @@ public final class Router: Sendable {
                                                        readOnly: readOnly, copy: copy, device: req.device?.id, native: native, tree: tree) else {
                 return (await error(409, "invalid_request_error", "Session already has a folder", rid: rid, writer: writer), nil, "share")
             }
-            let reply: [String: Any] = tree?.local != nil ? ["key": key, "branches": true] : ["key": key]  // starejši odjemalci: le key
+            // starejši odjemalci: le key; branches = veje v repozitoriju, lock = en pisoči agent naenkrat (native v mapi sami)
+            let reply: [String: Any] = tree?.local != nil ? ["key": key, "branches": true] : native != nil ? ["key": key, "lock": true] : ["key": key]
             return (await json(200, reply, rid: rid, writer: writer), nil, "share")
         case ("GET", "/minigw/share/next"):
             switch await Self.shares.poll(key: req.header("x-share-key") ?? "") {
@@ -430,7 +431,9 @@ public final class Router: Sendable {
     /// (Claude Code bi po 10 minutah brez bajtov poskusil znova). Drugače isti writer.
     func early(_ req: HTTPRequest, _ body: [String: Any], _ rid: String, _ writer: ResponseWriter) async -> ResponseWriter {
         guard body["stream"] as? Bool == true, (body["tools"] as? [Any])?.isEmpty == false,
-              let sid = req.header("x-claude-mini-session"), await Self.shares.isSync(session: sid) else { return writer }
+              let sid = req.header("x-claude-mini-session") else { return writer }
+        let sync = await Self.shares.isSync(session: sid), inPlace = await Self.shares.inPlace(session: sid)
+        guard sync || inPlace else { return writer }  // sync: prenos; v mapi sami: čakanje na zaklep pisanja
         let w = EarlyStreamWriter(writer)
         await w.begin(rid: rid)
         return w

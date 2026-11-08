@@ -227,9 +227,10 @@ extension Router {
         let cfg = config.copilot
         let agent = (body["tools"] as? [Any])?.isEmpty == false
         if !cfg.write, agent, await Self.shares.isWorktree(session: req.header("x-claude-mini-session") ?? "") {
-            return await error(400, "invalid_request_error",
-                               "Copilot may not write (Mini Gateway → Settings → Copilot CLI), so worktree mode is not possible; use sync",
-                               rid: rid, writer: writer)
+            let why = await Self.shares.worktreeRefusal(session: req.header("x-claude-mini-session") ?? "",
+                                                        worktree: "Copilot may not write (Mini Gateway → Settings → Copilot CLI), so worktree mode is not possible; use sync",
+                                                        native: "Copilot may not write (Mini Gateway → Settings → Copilot CLI), so it cannot work")
+            return await error(400, "invalid_request_error", why, rid: rid, writer: writer)
         }
         if let model, !cfg.modelList.contains(model) {  // L1: le našteti modeli
             return await error(404, "not_found_error", "Unknown model: claude-copilot-\(model) (list it in Mini Gateway → Settings → Copilot CLI)",
@@ -271,7 +272,7 @@ extension Router {
                                                  roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL, writes: cfg.write)
             let synced = await Self.shares.isSync(session: req.header("x-claude-mini-session") ?? "")
             guard let dir = shared ?? (synced ? nil : ClaudeCLI.resolveCwd(clientCwd, roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL)) else {
-                if let why = await Self.shares.takeRefusal(session: req.header("x-claude-mini-session") ?? "") {  // zaklep pisanja
+                if let why = await Self.shares.takeRefusal() {  // zaklep pisanja
                     return await error(409, "invalid_request_error", why, rid: rid, writer: writer)
                 }
                 if synced, Task.isCancelled { return 499 }

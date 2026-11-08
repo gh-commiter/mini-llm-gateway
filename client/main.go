@@ -570,7 +570,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "minigw: %s is a folder of %s (SMB): agent models work there in clones of this git repository, each on its own branch minigw/… (native; --minigw-work=native-direct = in the folder itself)\n", cwd, routerHost)
 		} else if ok && share.native {
 			share.start(4)
-			fmt.Fprintf(os.Stderr, "minigw: %s is a folder of %s (SMB): agent models work in it there directly, one writing agent at a time (native)\n", cwd, routerHost)
+			lock := ""
+			if share.lock {
+				lock = ", one writing agent at a time"
+			}
+			fmt.Fprintf(os.Stderr, "minigw: %s is a folder of %s (SMB): agent models work in it there directly%s (native)\n", cwd, routerHost, lock)
 		} else if ok {
 			share.start(4)
 			mode := "read-write"

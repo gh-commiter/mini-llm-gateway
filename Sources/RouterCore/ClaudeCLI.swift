@@ -36,7 +36,8 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
             "network": ["allowedDomains": ["*"]],
             // #26 (N2): paket Copilot nikoli za pisanje (naloži ga priprava paketa), tudi če je v dovoljeni mapi.
             "filesystem": ["denyRead": ["~"] + Self.scratchPaths(scratch), "allowRead": dirs, "allowWrite": dirs,
-                           "denyWrite": Self.scratchPaths(RouterConfig.copilotCache)],
+                           "denyWrite": Self.scratchPaths(RouterConfig.copilotCache)
+                               + dirs.flatMap { d in ["config", "hooks", "info"].map { d + "/.git/" + $0 } }],  // native v mapi sami (H1)
         ]]
         let settings = String(decoding: try! JSONSerialization.data(withJSONObject: sandbox, options: [.sortedKeys]), as: UTF8.self)
         let others = allTools.filter { !Self.pathTools.contains($0) && !disabledTools.contains($0) }
@@ -427,7 +428,7 @@ extension Router {
                 args += ["--append-system-prompt", Self.mountNote(clientCwd, shared, readOnly: readOnly, synced: synced, branch: tree?.branch)]
             }
             guard let dir = shared ?? (synced ? nil : ClaudeCLI.resolveCwd(clientCwd, roots: cfg.allowedRoots, scratch: config.scratchURL)) else {
-                if let why = await Self.shares.takeRefusal(session: req.header("x-claude-mini-session") ?? "") {  // zaklep pisanja
+                if let why = await Self.shares.takeRefusal() {  // zaklep pisanja
                     return await error(409, "invalid_request_error", why, rid: rid, writer: writer)
                 }
                 if synced, Task.isCancelled { return 499 }  // Claude Code je prekinil med čakanjem na prenos

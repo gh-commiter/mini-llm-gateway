@@ -182,6 +182,7 @@ final class ShareClient: @unchecked Sendable {
     var sync: Bool { kind == "sync" }
     var native: Bool { kind == "native" || kind == "native-direct" }
     var branches = false  // native v repozitoriju git: agenti na svojih vejah (odgovor prehoda)
+    var locked = false    // native v mapi sami: en pisoči agent naenkrat (starejši prehod tega ne pošlje)
     var worktree: Bool { kind == "worktree" }
     var refusal = ""  // zakaj router mape ni sprejel
     static let writeMethods: Set<String> = ["PUT", "DELETE", "MKCOL", "MOVE", "COPY", "PROPPATCH", "LOCK"]
@@ -216,6 +217,7 @@ final class ShareClient: @unchecked Sendable {
         }
         lock.withLock { current = k }
         branches = o?["branches"] as? Bool == true
+        locked = o?["lock"] as? Bool == true
         return true
     }
 
@@ -236,6 +238,7 @@ final class ShareClient: @unchecked Sendable {
                 // worktree: le WORKTREE-PUSH (posnetek k routerju) in WORKTREE-PULL (veja agenta kot ref).
                 let r = worktree ? (job.method == "WORKTREE-PUSH" ? syncLock.withLock { wtPush(k, job) }
                                     : job.method == "WORKTREE-PULL" ? syncLock.withLock { wtPull(k, job) } : DAVResponse(403))
+                    : native && job.method == "WORKTREE-NOTE" ? noteJob(job)  // native z git: veja ni bila dostavljena
                     : native || job.method.hasPrefix("WORKTREE-")
                         || !Sync.jobAllowed(job.method, sync: sync, readOnly: readOnly, write: Self.writeMethods.contains(job.method))
                     ? DAVResponse(403)
@@ -259,6 +262,11 @@ final class ShareClient: @unchecked Sendable {
     }
 
     private func note(_ s: String) { err.write(Data(("minigw: " + clean(s) + "\n").utf8)) }
+
+    private func noteJob(_ job: DAVJob) -> DAVResponse {
+        note(((try? JSONSerialization.jsonObject(with: job.body)) as? [String: Any])?["message"] as? String ?? "")
+        return DAVResponse(200)
+    }
 
     /// worktree: posnetek stanja (brez spremembe indeksa ali vej) in bundle manjkajočih objektov po delih do 32 MB.
     private func wtPush(_ k: String, _ job: DAVJob) -> DAVResponse {
@@ -707,8 +715,8 @@ let wantShare = shareEnv == "1"
     || (shareEnv != "0" && remoteRouter
         && (autoShare(cwd) || SharedFolders.lookup(sharedFolders(), cwd: cwd) != nil))
 let mode = SharedFolders.mode(flag: workFlag, saved: SharedFolders.lookup(sharedFolders(), cwd: cwd), readOnly: readOnly)
-if let asked = workFlag ?? SharedFolders.lookup(sharedFolders(), cwd: cwd)?.work, asked.hasPrefix("native"), mode.work != asked {
-    err.write(Data("minigw: native mode cannot be read-only; sharing read-only over the network instead\n".utf8))
+if let asked = workFlag ?? SharedFolders.lookup(sharedFolders(), cwd: cwd)?.work, asked.hasPrefix("native") || asked == "worktree", mode.work != asked {
+    err.write(Data("minigw: \(asked) mode cannot be read-only; sharing read-only over the network instead\n".utf8))
 }
 let work = mode.work
 readOnly = mode.readOnly
@@ -742,7 +750,7 @@ if !wantShare || sid.isEmpty {
     if share.native && share.branches {
         err.write(Data("minigw: \(cwd) is a folder of \(routerHost) (SMB): agent models work there in clones of this git repository, each on its own branch minigw/… (native; --minigw-work=native-direct = in the folder itself)\n".utf8))
     } else if share.native {
-        err.write(Data("minigw: \(cwd) is a folder of \(routerHost) (SMB): agent models work in it there directly, one writing agent at a time (native)\n".utf8))
+        err.write(Data("minigw: \(cwd) is a folder of \(routerHost) (SMB): agent models work in it there directly\(share.locked ? ", one writing agent at a time" : "") (native)\n".utf8))
     } else if share.worktree {
         err.write(Data("minigw: agent models work in a clone of this git repository on \(routerHost); their work comes back as branches minigw/… (worktree)\n".utf8))
     } else {

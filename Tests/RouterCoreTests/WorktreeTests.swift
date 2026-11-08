@@ -561,6 +561,14 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     try file(client, "a.txt", "one\nuncommitted\n")
     let status = g(client, "status", "--porcelain"), head = g(client, "rev-parse", "HEAD")
     let index = try Data(contentsOf: client.appendingPathComponent(".git/index"))
+    // H1: nastavitve repozitorija, ki bi ob dostavi zagnale ukaz (fsmonitor, alternateRefsCommand z alternates)
+    let marks = root.appendingPathComponent("marks")
+    try FileManager.default.createDirectory(at: marks, withIntermediateDirectories: true)
+    g(client, "config", "core.fsmonitor", "touch \(marks.path)/fsmonitor; false")
+    g(client, "config", "core.alternateRefsCommand", "touch \(marks.path)/alternate; true")
+    let other = root.appendingPathComponent("other.git")
+    g(root, "init", "-q", "--bare", other.path)
+    try file(client, ".git/objects/info/alternates", other.appendingPathComponent("objects").path + "\n")
     let config = try Data(contentsOf: client.appendingPathComponent(".git/config"))
     let dir = client.appendingPathComponent("sub")
     let (top, sub) = try #require(Router.nativeBranches(dir, inPlace: false, roots: root.path, scratch: mirror.repo))
@@ -580,14 +588,39 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     try file(dirA, "agentA.txt", "A\n")
     try file(dirB, "agentB.txt", "B\n")
     for id in [a, b] { await ShareHub.$run.withValue(id) { await hub.syncBack(session: session) }; await hub.finish(run: id) }
-    let short = String(Sync.folderID(session).prefix(8))
+    #expect(try FileManager.default.contentsOfDirectory(atPath: marks.path).isEmpty)  // H1: ob posnetku in dostavi ni teklo nič
+    let short = String(Sync.folderID("dev|" + session).prefix(8))  // L3: naprava in seja
     #expect(g(client, "show", "minigw/claude-\(short)-0:sub/agentA.txt") == "A")
     #expect(g(client, "show", "minigw/claude-\(short)-1:sub/agentB.txt") == "B")
     #expect(g(client, "show", "minigw/claude-\(short)-1:a.txt") == "one\nuncommitted")
-    #expect(g(client, "status", "--porcelain") == status && g(client, "rev-parse", "HEAD") == head)
+    #expect(g(client, "-c", "core.fsmonitor=false", "status", "--porcelain") == status && g(client, "rev-parse", "HEAD") == head)
     #expect(try Data(contentsOf: client.appendingPathComponent(".git/index")) == index)
     #expect(try Data(contentsOf: client.appendingPathComponent(".git/config")) == config)
     #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("agentA.txt").path))
+
+    // Siri (brez izvajanja): prava mapa le za branje
+    #expect(await hub.mount(session: session, cwd: nil, base: "", device: "dev", roots: root.path) == dir)
+
+    // M1: zamenjan .git/objects (povezava) → brez novega izvajanja in brez branja objektov uporabnika
+    let objects = client.appendingPathComponent(".git/objects")
+    try FileManager.default.moveItem(at: objects, to: client.appendingPathComponent(".git/objects.real"))
+    try FileManager.default.createSymbolicLink(at: objects, withDestinationURL: client.appendingPathComponent(".git/objects.real"))
+    #expect(!tree.localObjectsIntact)
+    #expect(await mount(UUID().uuidString) == nil)
+}
+
+/// M2: posnetek native upošteva globalne izključitve uporabnika (core.excludesFile).
+@Test func nativeSnapshotHonoursGlobalExcludes() throws {
+    let (root, client, mirror) = try fixture()
+    defer { cleanup(root) }
+    let ignore = root.appendingPathComponent("global-ignore"), cfg = root.appendingPathComponent("gitconfig")
+    try Data(".env\n".utf8).write(to: ignore)
+    try Data("[core]\n\texcludesFile = \(ignore.path)\n".utf8).write(to: cfg)
+    #expect(Worktree.globalExcludes(env: ["GIT_CONFIG_GLOBAL": cfg.path])?.path == ignore.path)
+    try file(client, ".env", "SECRET=1\n")
+    let snap = try #require(Worktree.localSnapshot(repo: mirror.repo, top: client, base: "refs/minigw/base/t", excludes: ignore))
+    #expect(Worktree.run(["--git-dir", mirror.repo.path, "cat-file", "-e", snap + ":.env"]).status != 0)
+    #expect(Worktree.run(["--git-dir", mirror.repo.path, "cat-file", "-e", snap + ":new.txt"]).status == 0)
 }
 
 /// Odločitev native: git → veje; native-direct, brez git, .git kot datoteka ali zunaj dovoljenih map → v mapi sami.
@@ -625,12 +658,24 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     }
     #expect(await mount("w1", writes: true) == dir)
     #expect(await mount("w2", writes: true) == nil)
-    #expect(await hub.takeRefusal(session: session)?.contains("Another agent is still changing /Volumes/share/x") == true)
+    #expect(await ShareHub.$run.withValue("w2") { await hub.takeRefusal() }?.contains("Another agent is still changing /Volumes/share/x") == true)
     #expect(await mount("r1", writes: false) == dir)  // bralec ne čaka
     #expect(await mount("w1", writes: true) == dir)   // isto izvajanje znova
     await hub.finish(run: "w1")
     #expect(await mount("w2", writes: true) == dir)
     await hub.finish(run: "w2")
+    #expect(await hub.takeRefusal() == nil)
+
+    // Mapa in podmapa se prekrivata (tudi minigw run z lastnim ključem izvajanja); druga mapa ne; DAV druge naprave ne.
+    let a = ShareHub.writerKey(scope: "", path: "/x/a"), ab = ShareHub.writerKey(scope: "", path: "/x/a/b")
+    #expect(ShareHub.overlaps(a, ab) && ShareHub.overlaps(ab, a) && !ShareHub.overlaps(a, ShareHub.writerKey(scope: "", path: "/x/ab")))
+    #expect(!ShareHub.overlaps(ShareHub.writerKey(scope: "dav:d1", path: "/x"), ShareHub.writerKey(scope: "dav:d2", path: "/x")))
+    #expect(await hub.waitWriter(a, folder: "/x/a", writes: true, run: "run-1"))
+    #expect(await hub.waitWriter(ab, folder: "/x/a/b", writes: true, run: "run-2") == false)
+    #expect(await ShareHub.$run.withValue("run-2") { await hub.takeRefusal() }?.contains("/x/a/b") == true)
+    await hub.releaseWriter(run: "run-1")
+    #expect(await hub.waitWriter(ab, folder: "/x/a/b", writes: true, run: "run-2"))
+    await hub.releaseWriter(run: "run-2")
 }
 
 /// Posnetek native ne zažene ničesar iz repozitorija uporabnika (filter, fsmonitor, hooki): git dela z nastavitvami zrcala.

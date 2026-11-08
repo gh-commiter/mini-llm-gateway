@@ -159,8 +159,10 @@ extension Router {
     func runGrok(_ req: HTTPRequest, body: [String: Any], model: String?, rid: String, writer: ResponseWriter) async -> Int {
         // Grok nima zaščite .git v peskovniku, njegov program pa poganja git zunaj njega (in ~/.grok je pisljiv).
         if (body["tools"] as? [Any])?.isEmpty == false, await Self.shares.isWorktree(session: req.header("x-claude-mini-session") ?? "") {
-            return await error(400, "invalid_request_error", "Grok is not supported in worktree mode yet; use sync (MINIGW_WORK=sync)",
-                               rid: rid, writer: writer)
+            let why = await Self.shares.worktreeRefusal(session: req.header("x-claude-mini-session") ?? "",
+                                                        worktree: "Grok is not supported in worktree mode yet; use sync (MINIGW_WORK=sync)",
+                                                        native: "Grok is not supported yet")
+            return await error(400, "invalid_request_error", why, rid: rid, writer: writer)
         }
         if let model, !Self.validModel(model) {
             return await error(400, "invalid_request_error", "Invalid model name", rid: rid, writer: writer)
@@ -184,7 +186,7 @@ extension Router {
                                                  roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL, writes: config.grok.write)
             let synced = await Self.shares.isSync(session: req.header("x-claude-mini-session") ?? "")
             guard let dir = shared ?? (synced ? nil : ClaudeCLI.resolveCwd(clientCwd, roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL)) else {
-                if let why = await Self.shares.takeRefusal(session: req.header("x-claude-mini-session") ?? "") {  // zaklep pisanja
+                if let why = await Self.shares.takeRefusal() {  // zaklep pisanja
                     return await error(409, "invalid_request_error", why, rid: rid, writer: writer)
                 }
                 if synced, Task.isCancelled { return 499 }  // Claude Code je prekinil med čakanjem na prenos
