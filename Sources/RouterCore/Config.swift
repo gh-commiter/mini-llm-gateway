@@ -107,8 +107,9 @@ public struct RouterConfig: Codable, Sendable, Equatable {
     /// Kot minigw serve: neznana naprava z žetonom je dovoljena le, dokler je seznam prazen in je to vklopljeno; sicer čaka
     /// na odobritev (Settings → Devices, minigw gw devices allow). Starejše nastavitve: glej init(from:).
     public var allowAnyDevice = false
-    /// Modeli brez žetona za aplikacije tega uporabnika na tem Macu (Router.localApp); privzeto vklopljeno.
-    public var allowLocalApps = true
+    /// Modeli brez žetona za aplikacije tega uporabnika na tem Macu (Router.localApp); privzeto izklopljeno (H1: vsebniki
+    /// in tuneli tega uporabnika štejejo kot njegove aplikacije).
+    public var allowLocalApps = false
     public var codex = CodexConfig()
     public var copilot = CopilotConfig()
     public var grok = GrokConfig()
@@ -227,7 +228,7 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         // Nastavitve pred odobritvijo naprav (vsaka naprava je bila sprejeta in dodana): naštete ostanejo dovoljene, pri
         // praznem seznamu ostane dovoljena vsaka (brez dela za uporabnika).
         allowAnyDevice = try c.decodeIfPresent(Bool.self, forKey: .allowAnyDevice) ?? devices.isEmpty
-        allowLocalApps = try c.decodeIfPresent(Bool.self, forKey: .allowLocalApps) ?? true
+        allowLocalApps = try c.decodeIfPresent(Bool.self, forKey: .allowLocalApps) ?? false
         codex = try c.decodeIfPresent(CodexConfig.self, forKey: .codex) ?? d.codex
         copilot = try c.decodeIfPresent(CopilotConfig.self, forKey: .copilot) ?? d.copilot
         grok = try c.decodeIfPresent(GrokConfig.self, forKey: .grok) ?? d.grok

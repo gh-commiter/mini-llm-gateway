@@ -425,7 +425,10 @@ public final class Router: Sendable {
         var host = req.header("host") ?? ""
         if host.hasPrefix("["), let end = host.firstIndex(of: "]") { host = String(host[host.index(after: host.startIndex)..<end]) }
         else if let colon = host.lastIndex(of: ":"), host.firstIndex(of: ":") == colon { host = String(host[..<colon]) }
-        guard host == "localhost" || RouterServer.isLoopback(host) else { return false }
+        // M1: le pravi naslov IP (inet_pton), ne ime »127.evil.example« (DNS rebinding)
+        var a4 = in_addr(), a6 = in6_addr()
+        let ip = inet_pton(AF_INET, host, &a4) == 1 || inet_pton(AF_INET6, host, &a6) == 1
+        guard host == "localhost" || (ip && RouterServer.isLoopback(host)) else { return false }
         return Self.localPeer(req.peerPort, config.port)
     }
 

@@ -25,10 +25,14 @@ import Testing
     #expect(await status(headers: [:]) == 401)                                       // brez glave Anthropic (brskalnik)
     #expect(await status(headers: ["anthropic-version": "1", "origin": "http://127.0.0.1"]) == 401)
     #expect(await status(host: "evil.example:8765") == 401)                          // DNS rebinding
+    #expect(await status(host: "127.evil.example:8765") == 401)                      // M1
+    #expect(await status(host: "localhost.:8765") == 401)
+    #expect(await status(host: "127.0.0.1") == 200)
     #expect(await status(port: 5000) == 401)                                         // drug uporabnik ali agent
     #expect(await status(peer: "10.0.0.9") == 401)                                   // drug računalnik
     #expect(await status("POST", "/minigw/share") == 401)                            // le modeli
     #expect(await status(localApps: false) == 401)                                   // stikalo izklopljeno
-    #expect(RouterConfig().allowLocalApps)
-    #expect(((try? JSONDecoder().decode(RouterConfig.self, from: Data("{}".utf8)))?.allowLocalApps) == true)
+    #expect(!RouterConfig().allowLocalApps)                                          // H1: privzeto izklopljeno
+    #expect(((try? JSONDecoder().decode(RouterConfig.self, from: Data("{}".utf8)))?.allowLocalApps) == false)
+    #expect(((try? JSONDecoder().decode(RouterConfig.self, from: Data(#"{"allowLocalApps":true}"#.utf8)))?.allowLocalApps) == true)
 }

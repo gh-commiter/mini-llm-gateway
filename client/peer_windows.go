@@ -139,7 +139,26 @@ func sameUserPeer(ours, peer *net.TCPAddr) bool {
 	}
 	self, err1 := processSID(uint32(os.Getpid()))
 	sid, err2 := processSID(pid)
-	return err1 == nil && err2 == nil && sid == self && peerCheck(ours, peer) == nil
+	return err1 == nil && err2 == nil && sid == self && !confinedApp(int(pid)) && peerCheck(ours, peer) == nil
+}
+
+// confinedApp (L1): proces v AppContainer (TokenIsAppContainer), kot App Sandbox na Macu; napaka šteje kot da (fail closed).
+func confinedApp(pid int) bool {
+	h, err := syscall.OpenProcess(0x1000 /* PROCESS_QUERY_LIMITED_INFORMATION */, false, uint32(pid))
+	if err != nil {
+		return true
+	}
+	defer syscall.CloseHandle(h)
+	var tok syscall.Token
+	if syscall.OpenProcessToken(h, syscall.TOKEN_QUERY, &tok) != nil {
+		return true
+	}
+	defer tok.Close()
+	var v, n uint32
+	if syscall.GetTokenInformation(tok, 29 /* TokenIsAppContainer */, (*byte)(unsafe.Pointer(&v)), 4, &n) != nil {
+		return true
+	}
+	return v != 0
 }
 
 // tcpOwnerPID: PID procesa z odjemalčevo stranjo povezave (GetExtendedTcpTable, TCP_TABLE_OWNER_PID_ALL).

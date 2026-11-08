@@ -50,7 +50,8 @@ One pass with the combined build, before the release. Each item: what to do, wha
 - `http://example.com` or `http://gateway` (a name without a dot): refused even with the switch.
 
 ## This user's apps without a token (gateway on Windows)
-- The switch "Allow this user's apps without a token" is under General on the settings page (on by default).
+- The switch "Allow this user's apps without a token" is under General on the settings page, off by default: the
+  first curl below gives 401. Turn it on, then:
 - `curl.exe -s -o NUL -w "%{http_code}" -H "anthropic-version: 2023-06-01" http://127.0.0.1:8765/v1/models`: 200.
 - The same with `-H "Origin: http://example.com"` added: 401.
 - The same without the `anthropic-version` header: 401.

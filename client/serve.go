@@ -51,7 +51,7 @@ type serveConfig struct {
 	PermissionMode string        `json:"permissionMode"`
 	Devices        []serveDevice `json:"devices"`
 	AllowAnyDevice bool          `json:"allowAnyDevice,omitempty"` // le pri praznem seznamu: vsaka naprava z žetonom
-	AllowLocalApps *bool         `json:"allowLocalApps,omitempty"` // modeli brez žetona za aplikacije tega uporabnika (nil = da)
+	AllowLocalApps *bool         `json:"allowLocalApps,omitempty"` // modeli brez žetona za aplikacije tega uporabnika (nil = ne; H1)
 	// Bash v tools na Windows teče brez sandboxa (dostop do vsega, kar sme uporabnik): le z izrecnim dovoljenjem.
 	AllowUnsandboxedBash bool           `json:"allowUnsandboxedBash,omitempty"`
 	Gateways             []serveGateway `json:"gateways,omitempty"` // ključi v shrambi sistema, ne tu (serve_gateway.go)
@@ -1014,7 +1014,7 @@ func writeStatus(w http.ResponseWriter, status int, ctype string, body []byte) i
 }
 
 // localApps: »Allow this user's apps without a token« (privzeto vklopljeno).
-func (c serveConfig) localApps() bool { return c.AllowLocalApps == nil || *c.AllowLocalApps }
+func (c serveConfig) localApps() bool { return c.AllowLocalApps != nil && *c.AllowLocalApps }
 
 // localPeer: odjemalec na loopbacku je proces tega uporabnika in ni agent prehoda (peer_*.go); testi ga zamenjajo.
 var localPeer = sameUserPeer
