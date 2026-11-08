@@ -606,7 +606,9 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 		return st
 	}
 	if c.askOthers(k.name) { // vrata izvajanja (startRun spodaj)
-		note += "\n\n" + askNote(minigwExe(), c.askOnPath(dir))
+		// Absolutna pot: PATH izvajanja ne doseže ukazov v sandboxu Codex na Windows (»elevated« = drug uporabnik);
+		// »minigw« iz PATH (askOnPath) je le za pravila Claude Code (askRules).
+		note += "\n\n" + askNote(minigwExe(), false)
 	}
 	prompt := note + "\n\n" + cliPrompt(history, last)
 	var extra []string
