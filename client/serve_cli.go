@@ -567,6 +567,11 @@ func (s *server) messages(w http.ResponseWriter, r *req) (int, string) {
 	if model == "" {
 		return writeError(w, r.rid, 400, "Body must be JSON with a model field"), ""
 	}
+	if body["stream"] != true && !strings.HasSuffix(r.URL.Path, "/count_tokens") { // ponovitev po omejitvi v toku (noteLimit)
+		if msg, ok := s.recentLimit(r, model); ok {
+			return writeAgentError(w, r.rid, 429, msg), model
+		}
+	}
 	_, _, isCLI := cliMatch(model)                     // model claude-cli ne čaka na odkrivanje prehodov
 	if g, m, ok := s.gatewayRoute(model, !isCLI); ok { // prehodi pred claude-cli (kot Router.swift); ID-ji z »/« (OpenRouter)
 		return s.passthrough(w, r, g, m), model
@@ -846,6 +851,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			return writeAgentError(w, r.rid, status, "claude: "+clean)
 		}
 		if t.text == "" {
+			s.noteLimit(r, model, status, "claude: "+clean)
 			send(sse("error", map[string]any{"type": "error", "error": map[string]string{"type": errType(status), "message": "claude: " + clean}}))
 			return status
 		}

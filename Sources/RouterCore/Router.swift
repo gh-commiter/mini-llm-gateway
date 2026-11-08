@@ -243,6 +243,10 @@ public final class Router: Sendable {
                 return (await error(400, "invalid_request_error", "Body must be JSON with a model field", rid: rid, writer: writer), nil, nil)
             }
             guard let r = await catalog.route(model) else {
+                // ponovitev brez pretoka po omejitvi agenta, sporočeni v toku (AgentError.note): isti 429 brez novega zagona CLI
+                if req.path == "/v1/messages", body["stream"] as? Bool != true, let msg = AgentError.recent(AgentError.key(req, model: model)) {
+                    return (await error(429, "rate_limit_error", msg, rid: rid, extra: [("x-should-retry", "false")], writer: writer), model, nil)
+                }
                 if config.siri.enabled, Siri.ids.contains(model) {
                     guard config.siriAllowed(peer: req.peer, device: req.device) else {
                         let who = req.device.map { "device “\($0.name)”" } ?? "this client (update minigw to 0.4.4 or newer)"

@@ -415,6 +415,7 @@ type server struct {
 	procs         chan struct{} // največ hkratnih procesov claude
 	gwSlots       chan struct{} // največ hkratnih zahtev k prehodom
 	gateways      gwCatalog
+	limits        sync.Map // limitKey → limitHit: omejitev agenta za ponovitev brez pretoka (noteLimit)
 }
 
 func newServer(c serveConfig, cfgPath string) (*server, error) {

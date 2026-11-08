@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// Ponudnik `codex exec` (OpenAI Codex CLI): agent v mapi seje, kot `claude -p`.
 public struct CodexConfig: Codable, Sendable, Equatable {
@@ -265,7 +266,7 @@ extension Router {
                               write: config.codex.write && !readOnly, network: config.codex.network && (tree == nil || config.worktreeCodexNetwork),
                               resume: existing)
         let sessions = Self.codexSessions, session = req.header("x-claude-mini-session") ?? ""
-        return await replyWhenDone(body: body, model: "claude-codex", rid: rid, writer: writer) {
+        return await replyWhenDone(body: body, model: "claude-codex", rid: rid, writer: writer, req: req) {
             let (text, thread) = try await Codex.run(exe, args: args, cwd: cwd, prompt: prompt, output: output,
                                                          env: codexEnv, started: { run?.started($0) }) { [onActivity] s in
                 onActivity(.step(id: rid, text: s))
@@ -284,31 +285,40 @@ extension Router {
         !m.isEmpty && !m.hasPrefix("-") && m.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || "._:/-".contains($0)) }
     }
 
-    /// Ponudnik brez pretoka (Siri, Codex): pri pretoku glave in message_start takoj, med čakanjem ping, nato cel odgovor.
-    func replyWhenDone(body: [String: Any], model: String, rid: String, writer: ResponseWriter,
+    /// Pri pretoku glava 200 šele po tem času (nato ping vsakih 10 s). Napaka prej (omejitev agenta) je pravi status HTTP
+    /// z x-should-retry: false; po glavi je le dogodek SSE »error«, na katerega Claude Code ponovi zahtevo brez pretoka.
+    nonisolated(unsafe) static var agentHeadDelay: Duration = .seconds(30)  // testi: krajši
+
+    /// Ponudnik brez pretoka (Siri, Codex, Grok, Copilot): pri pretoku glava, message_start in ping šele po agentHeadDelay,
+    /// nato cel odgovor. `req`: omejitev, sporočena v toku, se zapomni za ponovitev brez pretoka (AgentError.note).
+    func replyWhenDone(body: [String: Any], model: String, rid: String, writer: ResponseWriter, req: HTTPRequest? = nil,
                        work: () async throws -> (String, [(String, String)])) async -> Int {
         let stream = body["stream"] as? Bool == true
         var t = StreamTranslator(model: body["model"] as? String ?? model)
-        var pinger: Task<Void, Never>?
-        do {
-            if stream {
-                try await writer.write(HTTPResponse.head(status: 200, headers: [
-                    ("Content-Type", "text/event-stream"), ("Cache-Control", "no-cache"), ("request-id", rid), ("x-should-retry", "false"),
-                ]) + t.start().reduce(Data(), +))
-                pinger = Task {
-                    while !Task.isCancelled {
-                        try? await Task.sleep(for: .seconds(10))
-                        if Task.isCancelled { break }
-                        try? await writer.write(StreamTranslator.sse("ping", ["type": "ping"]))
-                    }
-                }
+        let head = HTTPResponse.head(status: 200, headers: [
+            ("Content-Type", "text/event-stream"), ("Cache-Control", "no-cache"), ("request-id", rid), ("x-should-retry", "false"),
+        ]) + t.start().reduce(Data(), +)
+        final class Sent: @unchecked Sendable { var head = false }  // piše le pinger; prebere se po njegovem koncu
+        let sent = Sent()
+        let pinger: Task<Void, Never>? = stream ? Task {
+            try? await Task.sleep(for: Self.agentHeadDelay)
+            guard !Task.isCancelled else { return }
+            sent.head = true
+            try? await writer.write(head)
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(10))
+                if Task.isCancelled { break }
+                try? await writer.write(StreamTranslator.sse("ping", ["type": "ping"]))
             }
+        } : nil
+        do {
             let (text, extra) = try await work()
             pinger?.cancel()
+            await pinger?.value
             let delta = t.emit(text)
             t.usage = ["output_tokens": text.utf8.count / 4]
             if stream {
-                try await writer.write(delta + t.finish().reduce(Data(), +))
+                try await writer.write((sent.head ? Data() : head) + delta + t.finish().reduce(Data(), +))
                 return 200
             }
             let data = (try? JSONSerialization.data(withJSONObject: t.message(), options: [.withoutEscapingSlashes])) ?? Data()
@@ -317,16 +327,21 @@ extension Router {
             return 200
         } catch {
             pinger?.cancel()
+            await pinger?.value
             let (status, type, message) = (error as? SiriError)?.status
                 ?? (error as? Codex.Failure).map { AgentError.classify($0.message) }
                 ?? (error as? Grok.Failure).map { AgentError.classify($0.message) }
                 ?? (error as? Copilot.Failure).map { AgentError.classify($0.message) } ?? (500, "api_error", "\(error)")
             Self.log.error("\(rid, privacy: .public) \(model, privacy: .public) failed: \(message, privacy: .public)")
-            if stream {
+            let agentLimit = status == 429 && !(error is SiriError)
+            if let req, agentLimit, stream, sent.head || writer is EarlyStreamWriter {  // napaka bo dogodek SSE
+                AgentError.note(AgentError.key(req, model: t.model), message)
+            }
+            if sent.head {
                 try? await writer.write(StreamTranslator.sse("error", ["type": "error", "error": ["type": type, "message": message]]))
                 return status
             }
-            return await self.error(status, type, message, rid: rid, extra: status == 429 && !(error is SiriError) ? [("x-should-retry", "false")] : [], writer: writer)
+            return await self.error(status, type, message, rid: rid, extra: agentLimit ? [("x-should-retry", "false")] : [], writer: writer)
         }
     }
 }
@@ -338,8 +353,42 @@ enum AgentError {
                          "hit your", "reached your", "out of usage", "spend limit"]
 
     static func classify(_ raw: String) -> (Int, String, String) {
-        let msg = clean(raw), status = limits.contains { msg.lowercased().contains($0) } ? 429 : 502
-        return (status, Router.errorType(status), msg)
+        let low = raw.lowercased(), status = limits.contains { low.contains($0) } ? 429 : 502  // tudi ovoj (»Payment Required«)
+        return (status, Router.errorType(status), clean(message(raw)))
+    }
+
+    /// Besedilo napake CLI brez ovoja: JSON {"message":…}, {"error":{"message":…}} ali {"error":"…"} (tudi za predpono, npr.
+    /// »Internal error: {…}«, in ovoj v ovoju) ter brez »API error (status 402 …):«; sicer vrstica, kot je.
+    static func message(_ raw: String) -> String {
+        var msg = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        for _ in 0..<3 {
+            guard let i = msg.firstIndex(of: "{"), let j = msg.lastIndex(of: "}"), i < j,
+                  let o = try? JSONSerialization.jsonObject(with: Data(msg[i...j].utf8)) as? [String: Any] else { break }
+            let m = o["message"] as? String ?? (o["error"] as? [String: Any])?["message"] as? String ?? o["error"] as? String ?? ""
+            let trimmed = m.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty { break }
+            msg = trimmed
+        }
+        return msg.replacingOccurrences(of: #"^API error \(status \d+[^)]*\):\s*"#, with: "", options: .regularExpression)
+    }
+
+    /// Omejitev, sporočena kot dogodek SSE (glava 200 je bila že poslana): Claude Code na tako napako takoj ponovi zahtevo
+    /// brez pretoka; `recent` ji 60 s odgovori z istim 429 brez novega zagona CLI (enkrat).
+    static let memo = Mutex<[String: (String, Date)]>([:])
+
+    static func key(_ req: HTTPRequest, model: String) -> String {
+        [model, req.device?.id ?? "local", req.header("x-claude-mini-session") ?? ""].joined(separator: "|")
+    }
+
+    static func note(_ key: String, _ msg: String) {
+        memo.withLock { m in
+            m = m.filter { $0.value.1.timeIntervalSinceNow > -60 }
+            m[key] = (msg, Date())
+        }
+    }
+
+    static func recent(_ key: String) -> String? {
+        memo.withLock { m in m.removeValue(forKey: key).flatMap { $0.1.timeIntervalSinceNow > -60 ? $0.0 : nil } }
     }
 
     /// Brez besed s `/` ali `\` (poti), razen http(s) naslovov, in brez dolgih žetonov; ID zahteve (`req_…`) ostane.

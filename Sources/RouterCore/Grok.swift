@@ -133,7 +133,7 @@ public enum Grok {
                         switch event(buf[buf.startIndex..<nl]) {
                         case .step(let s)?: onStep(s); answer = ""  // odgovor je besedilo po zadnjem orodju
                         case .text(let t)?: answer += t
-                        case .error(let m)?: failure = m
+                        case .error(let m)?: failure = m; p.terminate()  // napaka konča tek: ne čakaj, da grok konča sam
                         case .end(let id)?: session = id
                         default: break
                         }
@@ -230,7 +230,7 @@ extension Router {
         let run = agent ? await startAgentRun(req, kind: "grok", dir: sharedDir, readOnly: inTree) : nil
         defer { run?.stop() }
         let env = run?.env ?? [:]
-        return await replyWhenDone(body: body, model: "claude-grok", rid: rid, writer: writer) {
+        return await replyWhenDone(body: body, model: "claude-grok", rid: rid, writer: writer, req: req) {
             let (text, session) = try await Grok.run(exe, args: args, cwd: cwd, prompt: prompt, env: env, started: { run?.started($0) }) { [onActivity] s in onActivity(.step(id: rid, text: s)) }
             run?.stop()  // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb
             if agent { await Self.shares.syncBack(session: client) }  // sync: spremembe agenta k odjemalcu pred odgovorom
