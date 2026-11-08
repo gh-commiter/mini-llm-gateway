@@ -20,36 +20,50 @@ cask "minigw" do
 
   # Vtičnik za Claude Code: uradna ključa uporabniških nastavitev (extraKnownMarketplaces, enabledPlugins); Claude Code
   # ob naslednjem zagonu sam doda marketplace in namesti vtičnik, brez ukaza claude. Uporabnikov »false« ostane.
+  # Pisanje skozi povezavo (dotfiles) in z isto pravico datoteke (lahko ima ključe v env; nova 0600).
   settings = File.expand_path("~/.claude/settings.json")
+  marketplace = { "source" => { "source" => "github", "repo" => "gh-commiter/mini-llm-gateway" } }
+  save = lambda do |data|
+    real = File.exist?(settings) ? File.realpath(settings) : settings
+    mode = File.exist?(real) ? File.stat(real).mode & 0o7777 : 0o600
+    FileUtils.mkdir_p(File.dirname(real))
+    File.open("#{real}.minigw-tmp", File::WRONLY | File::CREAT | File::TRUNC, mode) { |f| f.write(JSON.pretty_generate(data) + "\n") }
+    File.chmod(mode, "#{real}.minigw-tmp")
+    File.rename("#{real}.minigw-tmp", real)
+  end
+
   postflight do
     require "json"
     begin
       s = File.exist?(settings) ? JSON.parse(File.read(settings)) : {}
       if s.is_a?(Hash)
-        (s["extraKnownMarketplaces"] ||= {})["mini-gateway"] ||= { "source" => { "source" => "github", "repo" => "gh-commiter/mini-llm-gateway" } }
+        (s["extraKnownMarketplaces"] ||= {})["mini-gateway"] ||= marketplace
         enabled = (s["enabledPlugins"] ||= {})
         enabled["minigw@mini-gateway"] = true unless enabled.key?("minigw@mini-gateway")
-        FileUtils.mkdir_p(File.dirname(settings))
-        File.write("#{settings}.minigw-tmp", JSON.pretty_generate(s) + "\n")
-        File.rename("#{settings}.minigw-tmp", settings)
+        save.call(s)
       end
     rescue JSON::ParserError, SystemCallError => e
       opoo "Claude Code plugin not added (#{settings}: #{e.message}); add it in Claude Code: /plugin install minigw@mini-gateway"
     end
   end
 
+  # Teče tudi ob brew upgrade/reinstall (nato postflight): odstrani le, kar je dodal cask (true, isti vir), uporabnikov
+  # »false« ostane; brez »claude plugin marketplace remove«, da nadgradnja ne odstrani vtičnika med tekočo sejo.
   uninstall_postflight do
     require "json"
-    claude = ["~/.local/bin", "/opt/homebrew/bin", "/usr/local/bin"].map { |d| File.join(File.expand_path(d), "claude") }
-                                                                    .find { |f| File.executable?(f) }
-    system_command claude, args: ["plugin", "marketplace", "remove", "mini-gateway"], must_succeed: false if claude
     begin
       s = JSON.parse(File.read(settings))
-      if s.is_a?(Hash) && (s.dig("extraKnownMarketplaces", "mini-gateway") || s.dig("enabledPlugins", "minigw@mini-gateway") != nil)
-        s["extraKnownMarketplaces"]&.delete("mini-gateway")
-        s["enabledPlugins"]&.delete("minigw@mini-gateway")
-        File.write("#{settings}.minigw-tmp", JSON.pretty_generate(s) + "\n")
-        File.rename("#{settings}.minigw-tmp", settings)
+      if s.is_a?(Hash)
+        changed = false
+        if s.dig("enabledPlugins", "minigw@mini-gateway") == true
+          s["enabledPlugins"].delete("minigw@mini-gateway")
+          changed = true
+        end
+        if s.dig("extraKnownMarketplaces", "mini-gateway") == marketplace
+          s["extraKnownMarketplaces"].delete("mini-gateway")
+          changed = true
+        end
+        save.call(s) if changed
       end
     rescue JSON::ParserError, SystemCallError
       nil
@@ -57,8 +71,9 @@ cask "minigw" do
   end
 
   caveats <<~EOS
-    The Claude Code plugin (minigw@mini-gateway) is added to ~/.claude/settings.json; Claude Code installs it the next
-    time you start claude. To skip it, set "minigw@mini-gateway": false under enabledPlugins there.
+    The Claude Code plugin (minigw@mini-gateway) is added to ~/.claude/settings.json; Claude Code installs it in the
+    background the next time you start claude (or run /reload-plugins). To skip it, set "minigw@mini-gateway": false under enabledPlugins there (it stays, also on
+    upgrade). brew uninstall turns the plugin off again; /plugin uninstall minigw@mini-gateway removes its files.
     Connect to the router Mac (token: Mini Gateway → Settings… → General → Copy Token):
       minigw connect <router-mac>[:port] --token <token>
   EOS

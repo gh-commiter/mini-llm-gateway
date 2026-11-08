@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Homebrew: the `minigw` cask also adds the Claude Code plugin (in `~/.claude/settings.json`; Claude Code installs it on its next start), and `brew uninstall` removes it again.
+- Homebrew: the `minigw` cask also adds the Claude Code plugin (in `~/.claude/settings.json`; Claude Code installs it on its next start), and `brew uninstall` turns it off again.
 
 ## 0.5.18
 
