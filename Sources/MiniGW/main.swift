@@ -6,6 +6,8 @@ import RouterCore
 import Security
 
 let service = "dev.trojar.minigateway.cli"
+// Keychain brez dialogov: vnos, ki minigw ne zaupa (drug podpis), vrne errSecInteractionNotAllowed in jasno napako.
+SecKeychainSetUserInteractionAllowed(false)
 let out = FileHandle.standardOutput, err = FileHandle.standardError
 func say(_ s: String) { out.write(Data((s + "\n").utf8)) }
 /// Besedilo routerja brez kontrolnih znakov (razen \n), da ne krmili terminala.
@@ -79,7 +81,11 @@ func loadProfile(_ name: String) -> Connection? {
     q[kSecReturnData as String] = true
     q[kSecMatchLimit as String] = kSecMatchLimitOne
     var item: CFTypeRef?
-    guard SecItemCopyMatching(q as CFDictionary, &item) == errSecSuccess, let d = item as? Data else { return nil }
+    let st = SecItemCopyMatching(q as CFDictionary, &item)
+    if st == errSecInteractionNotAllowed || st == errSecAuthFailed {
+        fail("macOS would ask before minigw reads profile \(name) (the Keychain is locked, or the profile was saved by a minigw with another signature): unlock the Keychain, or delete the item \(service) in Keychain Access and run minigw connect again")
+    }
+    guard st == errSecSuccess, let d = item as? Data else { return nil }
     return try? JSONDecoder().decode(Connection.self, from: d)
 }
 

@@ -389,7 +389,9 @@ public struct Keychain: SecretStore {
         var access: SecAccess?
         guard apps.count == paths.count + 1, SecAccessCreate(service as CFString, apps as CFArray, &access) == errSecSuccess,
               let access, var add = query(account, adding: true) else { return set(account, value) }
-        delete(account)
+        if let q = query(account), case let st = SecItemDelete(q as CFDictionary), st != errSecSuccess, st != errSecItemNotFound {
+            Router.log.error("keychain: cannot delete \(account, privacy: .public) before rewriting its access (\(st))")
+        }
         add[kSecValueData as String] = Data(value.utf8)
         add[kSecAttrAccess as String] = access
         add[kSecAttrGeneric as String] = Self.sharedMark

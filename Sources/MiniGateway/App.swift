@@ -162,9 +162,8 @@ final class AppState: ObservableObject {
         ], options: [.sortedKeys]) else { return }
         let s = String(decoding: d, as: UTF8.self)
         // ACL zaupa tudi minigw (po podpisu, glej Keychain.setShared); star vnos (le aplikacija) zapiše znova enkrat.
-        let minigw = CLITool.helper.path
-        if FileManager.default.fileExists(atPath: minigw) && !adminItem.isShared("admin") {
-            adminItem.setShared("admin", s, trusting: [minigw])
+        if CLITool.helperSignedByUs && !adminItem.isShared("admin") {
+            adminItem.setShared("admin", s, trusting: [CLITool.helper.path])
         } else if adminItem.lookup("admin").value != s { adminItem.set("admin", s) }
         if keychain.lookup("admin-secret").status == errSecSuccess { keychain.delete("admin-secret") }
         try? FileManager.default.removeItem(at: Self.logsFile.deletingLastPathComponent().appendingPathComponent("router.json"))

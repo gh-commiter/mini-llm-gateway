@@ -76,7 +76,8 @@ private func keychainHint(_ st: OSStatus) -> String {
     switch st {
     case errSecNoSuchKeychain: return "run minigw gw as the user who runs Mini Gateway, not as \(me) (\(me) has no login keychain)"
     case errSecItemNotFound: return "start Mini Gateway 0.5.15 or newer once, so it can create the admin item"
-    case errSecAuthFailed, errSecUserCanceled, errSecInteractionNotAllowed: return "allow minigw when macOS asks (Keychain)"
+    case errSecAuthFailed, errSecUserCanceled, errSecInteractionNotAllowed:  // brez dialoga (main.swift)
+        return "Mini Gateway has not given minigw access to its admin key yet: quit and open the Mini Gateway app once, then run the command again"
     default: return "cannot read Mini Gateway's admin item from the Keychain (OSStatus \(st))"
     }
 }
