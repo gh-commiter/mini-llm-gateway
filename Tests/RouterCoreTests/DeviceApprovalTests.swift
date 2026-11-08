@@ -50,8 +50,9 @@ private func newID() -> String { Noise.base64url(Curve25519.Signing.PrivateKey()
     #expect(rejected.status == 200 && rejected.text.contains(#""pending":true"#))
     #expect(!Router.deviceLog.pending.contains { $0.id == other } && !app.config.devices.contains { $0.id == other })
 
-    // allowAnyDevice velja le pri praznem seznamu.
-    #expect(await admin(app.router(), "PATCH", "/general", body: #"{"allowAnyDevice":true}"#).status == 200 && app.config.allowAnyDevice)
+    // allowAnyDevice velja le pri praznem seznamu; API ga pri dovoljenih napravah zavrne (starejše nastavitve ga imajo).
+    #expect(await admin(app.router(), "PATCH", "/general", body: #"{"allowAnyDevice":true}"#).status == 400)
+    app.config.allowAnyDevice = true
     #expect(await ask(other, "Spy").status == 403)
     Router.deviceLog.removePending(other)
     app.config.devices = []

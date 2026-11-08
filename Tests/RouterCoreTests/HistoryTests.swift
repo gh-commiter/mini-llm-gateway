@@ -136,7 +136,8 @@ func useOf(_ s: GatewayHistory.Session, _ model: String, role: String = "") -> G
     var c = RouterConfig()
     c.claudeCLI.askOthers = true; c.claudeCLI.allowLocalTools = true
     c.devices = [DeviceConfig(id: id, name: "PC")]
-    let router = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]))
+    let history = GatewayHistory()  // svoja zgodovina: vzporedni testi ne vplivajo na skupno Router.history
+    let router = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]), history: history)
     var caller = request("POST", "/v1/messages", headers: ["x-claude-mini-session": sid, "x-claude-mini-cwd": "/client/dir", "x-claude-mini-role": "dev"])
     caller.peer = "10.0.0.9"
     caller.device = Noise.Device(id: id, name: "PC")
@@ -148,11 +149,14 @@ func useOf(_ s: GatewayHistory.Session, _ model: String, role: String = "") -> G
     r.httpBody = Data(#"{"model":"claude-nope","max_tokens":5,"messages":[{"role":"user","content":"hi"}]}"#.utf8)
     for (k, v) in ["Authorization": "Bearer " + run.token, "x-claude-mini-session": "forged", "x-claude-mini-role": "security",
                    "x-minigw-agent-chain": "codex"] { r.setValue(v, forHTTPHeaderField: k) }
-    _ = try? await URLSession(configuration: .ephemeral).data(for: r)
-    let s = try #require(Router.history.sessions(device: id).first { $0.id == sid })
+    let (body, resp) = try await URLSession(configuration: .ephemeral).data(for: r)
+    // Zapis seje sledi odgovoru (odjemalec ima celoten odgovor že pred njim): počakaj nanj največ 5 s.
+    for _ in 0..<100 where history.sessions(device: id).isEmpty { try await Task.sleep(for: .milliseconds(50)) }
+    let s = try #require(history.sessions(device: id).first { $0.id == sid },
+                         "\((resp as? HTTPURLResponse)?.statusCode ?? 0) \(String(decoding: body, as: UTF8.self))")
     #expect(s.role == "dev" && s.folder == "/client/dir" && s.models.count == 1)
     #expect(s.models.first?.via == "claude" && s.models.first?.role == "dev" && s.models.first?.model == "unknown")
-    #expect(Router.history.sessions().allSatisfy { $0.id != "forged" })
+    #expect(history.sessions().count == 1)  // ne »forged«
 }
 
 /// --minigw-role: oblike, prednost pred MINIGW_ROLE, neveljavno ime; enaki primeri kot TestTakeRole v Go.
@@ -221,7 +225,8 @@ func useOf(_ s: GatewayHistory.Session, _ model: String, role: String = "") -> G
     let listed = String(repeating: "L", count: 43), other = String(repeating: "O", count: 43)
     var c = RouterConfig()
     c.devices = [DeviceConfig(id: listed, name: "PC")]
-    let router = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]))
+    let history = GatewayHistory()
+    let router = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]), history: history)
     var sids: [String: String] = [:]
     for id in [listed, other] {
         let sid = "loop-" + UUID().uuidString
@@ -231,11 +236,11 @@ func useOf(_ s: GatewayHistory.Session, _ model: String, role: String = "") -> G
         r.device = Noise.Device(id: id, name: "x")
         await router.recordSession(r, model: "m", status: 200, took: 0, usage: (0, 0))
     }
-    let all = Router.history.sessions()
+    let all = history.sessions()
     #expect(all.first { $0.id == sids[listed] }?.device == listed && all.first { $0.id == sids[other] }?.device == "")
     var r = request("POST", "/v1/messages", headers: ["authorization": "Bearer tok"])
     r.peer = "127.0.0.1"
     r.device = Noise.Device(id: listed, name: "PC")
     await router.handle(r, writer: FakeWriter())
-    #expect(!Router.history.history(listed).isEmpty)
+    #expect(!history.history(listed).isEmpty)
 }

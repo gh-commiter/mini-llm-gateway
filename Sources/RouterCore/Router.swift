@@ -41,6 +41,8 @@ public final class Router: Sendable {
     let admin: AdminHooks?  // skrbniški API (aplikacija); nil = ni ga
     let catalog: Catalog
     let probes = Probes()
+    /// Zgodovina naprav in sej: Router.history (aplikacija); testi dajo svojo, da jih vzporedni testi ne motijo.
+    let history: GatewayHistory
     static let log = Logger(subsystem: "dev.trojar.minigateway", category: "router")
 
     public init(config: RouterConfig, token: String, secrets: SecretStore,
@@ -48,8 +50,9 @@ public final class Router: Sendable {
                 onLog: @escaping @Sendable (RequestLog) -> Void = { _ in },
                 onDevice: @escaping @Sendable (Noise.Device) -> Void = { _ in },
                 onActivity: @escaping @Sendable (Activity) -> Void = { _ in },
-                admin: AdminHooks? = nil) {
+                admin: AdminHooks? = nil, history: GatewayHistory = Router.history) {
         self.config = config
+        self.history = history
         self.admin = admin
         self.onDevice = onDevice
         self.onActivity = onActivity
@@ -92,11 +95,10 @@ public final class Router: Sendable {
         let usage = tracked ? UsageWriter(writer) : nil
         let branch = RunBranch()  // veja izvajanja te zahteve (syncRun), za zgodovino seje
         let (status, model, provider) = await Self.$runBranch.withValue(branch) { await route(req, rid: rid, writer: usage ?? writer) }
-        // Zapis pred koncem odgovora: odjemalec, ki ga dobi, že vidi sejo (kot v Go; sicer test ali gw sessions tekmuje z zapisom).
+        writer.close()
         if let usage, let model {  // le zahteva, ki je prišla do modela (overjena, dovoljena naprava)
             await recordSession(req, model: model, status: status, took: Date().timeIntervalSince(start), usage: usage.usage, branch: branch.branch)
         }
-        writer.close()
         let ms = Int(Date().timeIntervalSince(start) * 1000)
         let via = AgentRun.current.map { " via=" + $0.via } ?? ""  // L3: vprašal ga je agent tega prehoda
         Self.log.info("\(rid, privacy: .public)\(via, privacy: .public) \(req.method, privacy: .public) \(req.path.hasPrefix("/dav/") ? "/dav/…" : req.path, privacy: .public) model=\(model ?? "-", privacy: .public) provider=\(provider ?? "-", privacy: .public) status=\(status) \(ms)ms bytes=\(req.body.count)")
@@ -125,7 +127,7 @@ public final class Router: Sendable {
             (u.mode, u.readOnly, u.branch) = await Self.shares.sessionMode(u.session, device: req.device?.id)
             if let branch { u.branch = branch }
         }
-        Self.history.record(u)
+        history.record(u)
     }
 
     /// Za napake, ki nastanejo že pri branju zahteve.
@@ -193,9 +195,9 @@ public final class Router: Sendable {
                 Self.log.info("\(rid, privacy: .public) refused unknown device \(d.name, privacy: .public) \(d.id, privacy: .public)")
                 return (await error(403, "permission_error", Self.refusal(d), rid: rid, writer: writer), nil, nil)
             }
-            Self.history.seen(d.id, address: req.peer, client: Noise.cleanName(req.header("x-minigw-client") ?? ""))
+            history.seen(d.id, address: req.peer, client: Noise.cleanName(req.header("x-minigw-client") ?? ""))
         } else if let d = req.device, config.devices.contains(where: { $0.id == d.id }) {  // dovoljena naprava tudi prek loopbacka
-            Self.history.seen(d.id, address: req.peer, client: Noise.cleanName(req.header("x-minigw-client") ?? ""))
+            history.seen(d.id, address: req.peer, client: Noise.cleanName(req.header("x-minigw-client") ?? ""))
         }
         return await routeAllowed(req, rid: rid, writer: writer)
     }
