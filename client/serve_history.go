@@ -244,9 +244,7 @@ func (g *gwState) record(u sessionUse, now time.Time) {
 	if u.os != "" {
 		r.OS = clip(u.os, 16)
 	}
-	if u.role != "" {
-		r.Role = u.role
-	}
+	r.Role = u.role // zadnja vloga = vloga zadnje zahteve, tudi prazna
 	if u.mode != "" && u.mode != "chat" {
 		r.Mode = u.mode
 	}
@@ -550,10 +548,10 @@ func useLine(m *modelUse) string {
 		m.Seconds, m.InputTokens, m.OutputTokens)
 }
 
-// reqRole: vloga iz glave x-claude-mini-role, očiščena in obrezana; neveljavna = "". Pri vgnezdenem klicu jo glava nosi
+// reqRole: vloga iz glave x-claude-mini-role, preverjena (brez obrezovanja); neveljavna ali predolga = "". Pri vgnezdenem klicu jo glava nosi
 // iz izvajanja (runHandler), zato je vprašani agent ne more spremeniti.
 func reqRole(r *req) string {
-	if role := clip(r.h("x-claude-mini-role"), 32); validRole(role) {
+	if role := r.h("x-claude-mini-role"); validRole(role) {
 		return role
 	}
 	return ""

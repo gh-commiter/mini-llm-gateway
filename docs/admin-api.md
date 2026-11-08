@@ -84,13 +84,14 @@ Session  {"id": string, "device"?: string, "deviceName"?: string, "deviceRemoved
          recorded), or "t-…" for requests without one (per device, a new record after 10 minutes of silence). device absent = this computer without a device
          key. folder: the client's cwd without `.`, `..` and a trailing separator, Windows paths (`C:\…`, `\\server\…`)
          with `/`, case kept; it is the key for later per-project settings. os: the client's OS from its client info
-         (macOS, Windows, Linux); the folder filter ignores case for macOS and Windows clients. role: the latest caller
-         role (`--minigw-role`, header `x-claude-mini-role`; cleaned, at most 32 of `A-Z a-z 0-9 . _ -`, else ignored).
+         (macOS, Windows, Linux); the folder filter ignores case for macOS and Windows clients. role: the role of the
+         latest request, empty clears it (`--minigw-role`, header `x-claude-mini-role`; 1-32 of `A-Z a-z 0-9 . _ -`,
+         any other value is ignored).
          mode: `chat` (no shared folder), `direct` (Mac: the folder mounted over WebDAV), `sync` (a copy on the
          gateway), `native` (Mac: a git repository on the gateway's SMB share; branch: the agent's branch there), `native-direct` (Mac: agents work in the gateway's folder itself: `--minigw-work=native-direct`, or a folder without git), `worktree` (a clone; branch: the agent's
          branch of that request), `refused` (minigw serve: the client asked for direct, which it does not offer). duration in seconds.
          The last 200 sessions are kept, at most 50 per device (a device's oldest go first); before saving, the oldest
-         go until the file is under 4 MB. Folder ≤ 1 KiB, branch ≤ 255 B, role ≤ 32 B (UTF-8, control, C1 and bidi
+         go until the file is under 4 MB. Folder ≤ 1 KiB, branch ≤ 255 B (UTF-8, control, C1 and bidi
          characters removed). Never prompt or answer text.
 Use      {"model": string, "role"?: string, "via"?: string, "readOnly"?: true, "tools"?: string, "requests": number,
           "errors": number, "refused": number, "seconds": number, "inputTokens": number, "outputTokens": number}

@@ -191,7 +191,7 @@ public final class GatewayHistory: @unchecked Sendable {
             if !u.deviceName.isEmpty { s.deviceName = u.deviceName }
             if s.folder.isEmpty { s.folder = Self.clip(Self.folder(Self.clip(u.folder, 1 << 16)), 1024) }
             if !u.os.isEmpty { s.os = Self.clip(u.os, 16) }
-            if !u.role.isEmpty { s.role = u.role }
+            s.role = u.role  // zadnja vloga = vloga zadnje zahteve, tudi prazna
             if u.mode != "chat", !u.mode.isEmpty { s.mode = u.mode }
             s.readOnly = s.readOnly || u.readOnly
             if !u.branch.isEmpty { s.branch = Self.clip(u.branch, 255) }
@@ -350,20 +350,20 @@ extension Router {
 }
 
 extension GatewayHistory {
-    /// Vloga iz glave x-claude-mini-role, očiščena in obrezana; neveljavna = "". Pri vgnezdenem klicu jo glava nosi iz
+    /// Vloga iz glave x-claude-mini-role, preverjena (brez obrezovanja); neveljavna ali predolga = "". Pri vgnezdenem klicu jo glava nosi iz
     /// izvajanja (AgentRun.serve), zato je vprašani agent ne more spremeniti.
     static func role(_ req: HTTPRequest) -> String {
-        let r = clip(req.header("x-claude-mini-role") ?? "", 32)
+        let r = req.header("x-claude-mini-role") ?? ""
         return validRole(r) ? r : ""
     }
 
     /// --minigw-role <ime> ali --minigw-role=<ime> (zadnji velja) iz argumentov, sicer env; ok=false za neveljavno ime
     /// (enako kot takeRole v minigw za Windows in Linux).
     public static func takeRole(_ args: [String], env: String?) -> (role: String, rest: [String], ok: Bool) {
-        var role = env ?? "", rest: [String] = [], i = 0
+        var role = env ?? "", rest: [String] = [], i = 0, missing = false
         while i < args.count {
-            if args[i] == "--minigw-role", i + 1 < args.count {
-                role = args[i + 1]; i += 1
+            if args[i] == "--minigw-role" {
+                if i + 1 < args.count { role = args[i + 1]; i += 1 } else { missing = true }
             } else if args[i].hasPrefix("--minigw-role=") {
                 role = String(args[i].dropFirst("--minigw-role=".count))
             } else {
@@ -371,6 +371,6 @@ extension GatewayHistory {
             }
             i += 1
         }
-        return (role, rest, role.isEmpty || validRole(role))
+        return (role, rest, !missing && (role.isEmpty || validRole(role)))
     }
 }
