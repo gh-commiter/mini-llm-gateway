@@ -702,6 +702,7 @@ const pages = {
 
   async claude() {
     const [c, st] = await Promise.all([api("GET", "/agents/claude"), api("GET", "/status")]);
+    shownClaude = JSON.stringify(c);
     const win = st.os === "windows";
     const n0 = note(), n1 = note(), n2 = note(), n4 = note(t("cliHint"));
     const patch = body => api("PATCH", "/agents/claude", body);
@@ -777,7 +778,7 @@ const pages = {
   },
 };
 
-let current = "general", currentArg = "", gateways = [];
+let current = "general", currentArg = "", gateways = [], shownClaude = "";
 const openHistory = new Set(); // naprave z odprto zgodovino (ostane ob osvežitvi vsakih 5 s)
 let openSession = "";
 // Ikone stranske vrstice (kot na Macu: barvna ploščica z znakom).
@@ -826,7 +827,12 @@ async function show(page, arg) {
     document.getElementById("page").replaceChildren(...(await pages[page](arg)));
   } catch (e) { toast(e.message); }
 }
-setInterval(() => { if (current === "devices" && document.visibilityState === "visible" && !document.activeElement.matches("input")) show("devices"); }, 5000);
+// Devices in Claude CLI: spremembe od drugod (minigw gw …, tray) se pokažejo; Claude CLI le ob spremembi (ohrani izbiro mape).
+setInterval(() => {
+  if (document.visibilityState !== "visible" || document.activeElement.matches("input")) return;
+  if (current === "devices") show("devices");
+  if (current === "claude") api("GET", "/agents/claude").then(c => { if (current === "claude" && JSON.stringify(c) !== shownClaude) show("claude"); }, () => {});
+}, 5000);
 signIn().then(() => show(Object.hasOwn(pages, START[0]) ? START[0] : "general", START[1]), e => toast(e.message));
 </script>
 </body>
