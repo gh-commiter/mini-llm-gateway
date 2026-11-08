@@ -14,6 +14,7 @@ Every control of the Mac app's Settings window (Sources/MiniGateway/Settings.swi
 | Devices · Allowed clients (IP; empty = all) | same | `general.allowedClients` | Connections from other IPs are closed; this computer is always allowed. |
 | Devices · Allow unencrypted connections from other Macs | Devices · Allow unencrypted connections from other computers | `general.allowPlainRemote` | Such clients have no device key: they also need "Allow any device" (Devices). |
 | General · Token: Show, Copy Token, New Token | same | `GET general.connect`, `POST general/token` | A new token also ends settings page sessions. |
+| General · Allow this user's apps without a token | same | `general.allowLocalApps` | On by default. Model requests from this user's own programs on this computer (not the gateway's agents, not web pages: an Anthropic header, loopback Host, no Origin). Mac: libproc; Linux: `/proc/net/tcp` uid; Windows: process SID. |
 | General · Scratch folder: Choose…, Default, Show in Finder | Scratch folder: path field, Choose… (Windows tray), Default | `general.scratch` | With the Windows tray Choose… opens the folder dialog; on Linux and without the tray the path is typed. No Show in Explorer. A new folder applies to new sessions, existing copies are not moved. |
 | General · About: Version (build), License | same | `status.version`, `status.build` | |
 | Provider · Enabled (off without a key) | same | `PATCH providers/{name} {enabled}` | |

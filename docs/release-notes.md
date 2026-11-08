@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **This user's apps without a token (on by default):** programs of the gateway's own user on the same computer can use
+  the models (`/v1/messages`, `/v1/models`) without the token, for example an app pointed at `http://127.0.0.1:8765`.
+  The gateway checks the process behind the connection (same user, not one of its agents); the request needs
+  `anthropic-version` or `x-api-key`, a loopback `Host` and no `Origin`, so web pages cannot use it. Other users, other
+  computers, the admin API and device approval are unchanged. Switch: General → **Allow this user's apps without a
+  token** (`allowLocalApps`). On `minigw serve` for Windows and Linux; on the Mac in the app.
 - **Several gateways at once (profiles, #17):** `minigw connect <host> --name <profile>` keeps every gateway, for
   example the Mac mini and a Windows gateway side by side. Models of other profiles are `<model>@<profile>`; the
   default profile's also appear without a suffix. An unreachable gateway is left out of the list, and `minigw status`

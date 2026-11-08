@@ -84,6 +84,7 @@ Everything else goes to `"$M" gw …`. It changes the running gateway at once (o
 - `claude [--path FILE] [--tools T1,T2] [--folders DIR1,DIR2] [--allow-local-tools=true|false]` on every system; Windows and Linux also `[--folder DIR] [--allow-unsandboxed-bash=true|false]`. Windows has no sandbox for commands: before `--allow-unsandboxed-bash=true`, tell the user that agents can then run any command as them.
 - `copilot token [remove]`: Copilot's own GitHub token (fine-grained, only "Copilot Requests"). Never pass it yourself: ask the user to run `! "<path of $M>" gw copilot token`; minigw asks for it without showing it.
 - `autostart on|off`: Mac Open at Login; Windows the tray at sign-in. Linux: use `serve install` / `serve uninstall`.
+- Model requests from this user's own apps on the gateway's computer need no token while General → "Allow this user's apps without a token" is on (default); it is a settings switch (`allowLocalApps`), not a `gw` command.
 - `token`: prints the connect line for other computers (the user asked for it, so show it). `token rotate`: ask first. Every client must connect again with the new line.
 - `settings` (Windows and Linux): prints a one-time link to the settings page, valid for 60 seconds. Tell the user to open it now. On the Mac, the settings are the app's Settings window (menu bar icon → Settings…).
 

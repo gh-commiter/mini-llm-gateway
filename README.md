@@ -474,8 +474,8 @@ mount (direct mode), native mode, `minigw run`, and the build network switches o
 lists every control on both. Client options (`minigw share`, `--minigw-work`, `--minigw-ro`) are in [4. Use](#4-use).
 
 - **General** – listen address and port (default `127.0.0.1:8765`; `0.0.0.0` for other computers), access token,
-  scratch folder (agents' temporary files; another folder moves them, for example to a fast SSD; **Choose…** with the
-  Windows tray), and About.
+  **Allow this user's apps without a token** (on by default), scratch folder (agents' temporary files; another folder
+  moves them, for example to a fast SSD; **Choose…** with the Windows tray), and About.
   Mac only: **Worktree mode** (network for builds, network for Codex builds) and **minigw run** (which Macs may run
   builds in a folder of this Mac's SMB share, each with or without network).
 - **Devices** (both) – **Allow any device with the token** (only while no device is allowed), allowed client IPs,
@@ -518,6 +518,12 @@ item (the admin secret); `minigw` talks to the app only after the app proves its
   unencrypted clients) is accepted only while no device is allowed and **Allow any device with the token** is on.
   **Reject** is not a block list: a rejected device can ask again with the token. To lock someone out, remove their
   device and rotate the token (**New Token**). A device's name is only a label: compare the ID.
+- **This user's apps without a token.** With **Allow this user's apps without a token** (General, on by default),
+  programs of the gateway's own user on the same computer use the models without the token, for example an app set to
+  `http://127.0.0.1:8765`. The gateway checks the process behind the connection (its user, and that it is not one of
+  the gateway's agents). The request must carry `anthropic-version` or `x-api-key`, a loopback `Host` and no `Origin`,
+  so a web page cannot send it. Other users of the computer, other computers and the admin API still need their
+  token or secret. Turn it off if you do not trust every program you run.
 - **Providers over http.** A provider's API key goes over `http` only to localhost, a private or loopback IP or a
   `.local` name, and only with **Allow http** on. Such names and addresses are no proof that the provider is on your
   own network (a VPN, another Wi-Fi or a spoofed mDNS answer can serve them), so prefer `https`.
