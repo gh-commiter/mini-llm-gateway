@@ -22,6 +22,9 @@ func startAgent(cmd *exec.Cmd) error { return cmd.Start() }
 
 func peerCheck(ours, peer *net.TCPAddr) error { return nil }
 
+// peerInTree: na macOS to preveri aplikacija (PeerProcess); minigw serve tu je za razvoj, brez preverjanja.
+func peerInTree(ours, peer *net.TCPAddr, root int) bool { return true }
+
 // sameUserPeer: na macOS to preveri aplikacija (PeerProcess); minigw serve tu brez preverjanja → vedno z žetonom.
 func sameUserPeer(ours, peer *net.TCPAddr) bool { return false }
 

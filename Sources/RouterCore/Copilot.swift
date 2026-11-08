@@ -159,9 +159,10 @@ public enum Copilot {
     /// agenta. Po koncu glavnega procesa (in 2 s) SIGKILL skupini in vsakemu procesu s pisalnim koncem cevi (kot minigw run);
     /// ob prekinitvi SIGTERM, po 5 s SIGKILL.
     static func run(_ exe: String, args: [String], prompt: String, cwd: URL, env: [String: String], sandbox: String,
-                    onStep: @escaping @Sendable (String) -> Void) async throws -> String {
+                    started: @escaping @Sendable (pid_t) -> Void = { _ in }, onStep: @escaping @Sendable (String) -> Void) async throws -> String {
         guard let (pid, out, err, input) = Native.spawnGroup("/usr/bin/sandbox-exec", ["-p", sandbox, exe] + args, dir: cwd, env: env, input: true),
               let input else { throw Failure(message: "cannot start copilot") }
+        started(pid)
         AgentCount.running.add(1, ordering: .relaxed)
         defer { AgentCount.running.subtract(1, ordering: .relaxed) }
         let exit = ExitWaiter()
@@ -329,9 +330,10 @@ extension Router {
                                 network: cfg.network && (tree == nil || config.worktreeCodexNetwork), session: session)
         let sessions = Self.copilotSessions, client = req.header("x-claude-mini-session") ?? ""
         return await replyWhenDone(body: body, model: "claude-copilot", rid: rid, writer: writer) {
-            let text = try await Copilot.run(exe, args: args, prompt: prompt, cwd: cwd, env: env, sandbox: sandbox) { [onActivity] s in
+            let text = try await Copilot.run(exe, args: args, prompt: prompt, cwd: cwd, env: env, sandbox: sandbox, started: { run?.started($0) }) { [onActivity] s in
                 onActivity(.step(id: rid, text: s))
             }
+            run?.stop()  // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb
             if agent { await Self.shares.syncBack(session: client) }  // sync: spremembe agenta k odjemalcu pred odgovorom
             if agent {
                 let fm = FileManager.default, next = store.appendingPathComponent(session + ".new-" + rid)

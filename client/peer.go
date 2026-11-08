@@ -34,6 +34,8 @@ type agentMounts struct {
 	protect []string
 	// pins: mape, ki morajo biti same točke priklopa (L1: .git klona, da ga ni mogoče preimenovati in zamenjati).
 	pins []string
+	// started: PID procesa agenta po zagonu (vrata izvajanja sprejmejo le njegovo drevo procesov).
+	started func(pid int)
 }
 
 // packageRoot: mapa, ki jo CLI pod domačo mapo potrebuje: različica nvm (~/.nvm/versions/node/<v>), sicer najbližja

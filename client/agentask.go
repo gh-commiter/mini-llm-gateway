@@ -1,6 +1,6 @@
 package main
 
-// minigw v agentu prehoda (MINIGW_AGENT_URL, MINIGW_AGENT_TOKEN; serve_agentcalls.go): -p pošlje vprašanje naravnost na
+// minigw v agentu prehoda (MINIGW_AGENT_URL, MINIGW_AGENT_AUTH; serve_agentcalls.go): -p pošlje vprašanje naravnost na
 // vrata izvajanja in izpiše odgovor, brez vgnezdenega Claude Code.
 
 import (

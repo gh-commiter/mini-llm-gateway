@@ -612,6 +612,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	prompt, session, scope, sessionID := last.text, r.h("x-claude-mini-session"), "", ""
 	var dir, extra string // extra: --append-system-prompt-file ali --system-prompt-file
 	var worktreeEnv, runEnv []string
+	var run *agentRun // »May ask other models« (serve_agentcalls.go)
 	var wt, maven, objects string
 	parent := runOf(r) // vprašal ga je drug agent tega prehoda (serve_agentcalls.go)
 	extraFlag := "--append-system-prompt-file"
@@ -674,9 +675,9 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			args = worktreeClaudeArgs(args, wt, maven, objects)
 			worktreeEnv = worktreeHarnessEnv(wt, maven)
 		}
-		var run *agentRun
 		ro := (share != nil && share.readOnly) || (parent != nil && parent.readOnly)
-		run, runEnv = s.startRun(r, "claude", dir, ro, wt, maven, objects) // »May ask other models«
+		shared := share != nil || (parent != nil && parent.shared)
+		run, runEnv = s.startRun(r, "claude", dir, ro, shared, wt, maven, objects) // »May ask other models«
 		defer run.stop()
 		if run != nil {
 			exe := minigwExe()
@@ -702,14 +703,10 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	if len(exe) == 0 {
 		return writeError(w, r.rid, 503, "claude not found on the gateway (install Claude Code or set \"claude\" in the config)")
 	}
-	if parent == nil { // vprašani agent ne čaka na mesto, ki ga drži klicatelj (globina največ 2)
-		select { // največ 6 procesov claude hkrati
-		case s.procs <- struct{}{}:
-			defer func() { <-s.procs }()
-		case <-r.Context().Done():
-			return 499
-		}
+	if st := s.procSlot(w, r); st != 0 {
+		return st
 	}
+	defer func() { <-s.procs }()
 	cmd := exec.CommandContext(r.Context(), exe[0], append(exe[1:], args...)...)
 	cmd.Dir = dir
 	cmd.Env = append(append(agentEnv(os.Environ()), worktreeEnv...), runEnv...) // brez ANTHROPIC_* (klic nazaj v router), žetonov GitHub/Copilot in agentov ključev (M1)
@@ -723,6 +720,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	if err != nil {
 		return writeError(w, r.rid, 500, "Cannot start claude: "+err.Error())
 	}
+	run.started(cmd.Process.Pid)
 	s.agentsRunning.Add(1)
 	defer s.agentsRunning.Add(-1)
 
@@ -779,6 +777,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		}
 	}
 	werr := cmd.Wait()
+	run.stop() // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb
 	if r.Context().Err() != nil {
 		return 499 // Claude Code je prekinil
 	}

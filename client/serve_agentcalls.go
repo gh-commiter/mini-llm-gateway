@@ -2,7 +2,7 @@ package main
 
 // Agent vpraša drug model istega prehoda (docs/plans/plan-agent-calls.md). Za vsako izvajanje agenta s stikalom
 // »May ask other models« prehod odpre svoja vrata na 127.0.0.1 in žeton, veljavna le med izvajanjem
-// (MINIGW_AGENT_URL, MINIGW_AGENT_TOKEN). Zahteve tam dobijo napravo, sejo in mapo klicatelja; veriga agentov je le v
+// (MINIGW_AGENT_URL, MINIGW_AGENT_AUTH). Zahteve tam dobijo napravo, sejo in mapo klicatelja; veriga agentov je le v
 // kontekstu (ne v glavi), globina največ 2 in brez ponovitve vrste agenta.
 
 import (
@@ -10,12 +10,14 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -28,9 +30,25 @@ type agentRun struct {
 	dir                string // mapa izvajanja: kopija sync, klon worktree ali mapa seje
 	readOnly           bool   // mapa le za branje (--minigw-ro): tudi za vprašanega agenta
 	wt, maven, objects string // worktree: klon, Maven in objekti zrcala klicatelja ("" = ni worktree)
+	shared             bool   // mapa je prišla od odjemalca (sync, worktree); ne privzeta mapa prehoda (L1)
 	token, url         string
 	srv                *http.Server
+	slots              chan struct{} // M1: največ maxNested hkratnih vprašanj tega izvajanja
+	root               atomic.Int64  // M2: PID procesa agenta (0 = še ne teče); odjemalec mora biti v njegovem drevesu
 }
+
+// maxNested (M1): hkratna vprašanja drugim modelom na izvajanje; vsa vgnezdena izvajanja štejejo tudi v s.procs.
+const maxNested = 2
+
+// started: proces agenta teče (M2: žeton velja le za njegovo drevo procesov).
+func (run *agentRun) started(pid int) {
+	if run != nil {
+		run.root.Store(int64(pid))
+	}
+}
+
+// via: veriga za dnevnik (L3), npr. »claude→codex«.
+func (run *agentRun) via() string { return strings.Join(run.chain, "→") }
 
 type agentRunKey struct{}
 
@@ -70,7 +88,7 @@ func chainRefusal(r *req, kind string) string {
 }
 
 // startRun: vrata in žeton za izvajanje, če ima agent stikalo; nil, ko ga nima. Okolje gre agentu.
-func (s *server) startRun(r *req, kind, dir string, readOnly bool, wt, maven, objects string) (*agentRun, []string) {
+func (s *server) startRun(r *req, kind, dir string, readOnly, shared bool, wt, maven, objects string) (*agentRun, []string) {
 	if !s.conf().askOthers(kind) {
 		return nil, nil
 	}
@@ -80,7 +98,8 @@ func (s *server) startRun(r *req, kind, dir string, readOnly bool, wt, maven, ob
 		return nil, nil
 	}
 	run := &agentRun{kind: kind, device: r.conn.device, session: r.h("x-claude-mini-session"), cwd: r.h("x-claude-mini-cwd"),
-		dir: dir, readOnly: readOnly, wt: wt, maven: maven, objects: objects, token: randomToken(), url: "http://" + ln.Addr().String()}
+		dir: dir, readOnly: readOnly, shared: shared, wt: wt, maven: maven, objects: objects, token: randomToken(), url: "http://" + ln.Addr().String(),
+		slots: make(chan struct{}, maxNested)}
 	if p := runOf(r); p != nil {
 		run.chain = append(slices.Clone(p.chain), kind)
 	} else {
@@ -92,7 +111,7 @@ func (s *server) startRun(r *req, kind, dir string, readOnly bool, wt, maven, ob
 			return context.WithValue(ctx, connKey{}, &serveConn{Conn: c, br: bufio.NewReader(c), peer: peer, device: run.device})
 		}}
 	go run.srv.Serve(ln)
-	return run, []string{"MINIGW_AGENT_URL=" + run.url, "MINIGW_AGENT_TOKEN=" + run.token}
+	return run, []string{"MINIGW_AGENT_URL=" + run.url, "MINIGW_AGENT_AUTH=" + run.token}
 }
 
 // stop: konec izvajanja: vrata zaprta, žeton neveljaven (tudi tekoče vgnezdene zahteve se končajo).
@@ -117,6 +136,21 @@ func (s *server) runHandler(run *agentRun) http.Handler {
 		}
 		if !runAllowed[hr.Method+" "+hr.URL.Path] {
 			writeError(w, "", 404, "Not available to agents: "+hr.Method+" "+hr.URL.Path)
+			return
+		}
+		// M2: žeton velja le za procese tega izvajanja (agent, njegovi ukazi, posrednik sandboxa Claude Code v njem).
+		c, _ := hr.Context().Value(connKey{}).(*serveConn)
+		ours, ok1 := c.LocalAddr().(*net.TCPAddr)
+		peer, ok2 := c.RemoteAddr().(*net.TCPAddr)
+		if root := int(run.root.Load()); root == 0 || !ok1 || !ok2 || !peerInTree(ours, peer, root) {
+			writeError(w, "", 403, "Not a process of this agent run")
+			return
+		}
+		select { // M1
+		case run.slots <- struct{}{}:
+			defer func() { <-run.slots }()
+		default:
+			writeError(w, "", 429, fmt.Sprintf("This agent already has %d requests to other models running", maxNested))
 			return
 		}
 		// Identiteta klicatelja: žeton prehoda (za overitev), seja in mapa izvirne zahteve; brez mape za deljenje.

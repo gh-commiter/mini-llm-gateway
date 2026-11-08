@@ -121,11 +121,13 @@ func defaultName(_ names: [String]) -> String {
 /// --minigw-profile <ime>: cel ukaz le s tem prehodom.
 var profileFlag: String?
 
-/// minigw teče v agentu prehoda (MINIGW_AGENT_URL in MINIGW_AGENT_TOKEN): le ta povezava, brez profilov, proxyja,
+/// minigw teče v agentu prehoda (MINIGW_AGENT_URL in MINIGW_AGENT_AUTH): le ta povezava, brez profilov, proxyja,
 /// šifriranja in deljenja mape (prehod sam doda napravo, sejo in mapo klicatelja).
 func agentConn() -> Connection? {
     let e = ProcessInfo.processInfo.environment
-    guard let u = e["MINIGW_AGENT_URL"], !u.isEmpty, let t = e["MINIGW_AGENT_TOKEN"], !t.isEmpty else { return nil }
+    guard let u = e["MINIGW_AGENT_URL"], let t = e["MINIGW_AGENT_AUTH"], !t.isEmpty, let c = URLComponents(string: u),
+          c.scheme == "http", c.host == "127.0.0.1", c.port != nil, c.user == nil, c.path.isEmpty || c.path == "/", c.query == nil
+    else { return nil }  // I3: le vrata izvajanja na tem računalniku
     return Connection(url: u, token: t)
 }
 

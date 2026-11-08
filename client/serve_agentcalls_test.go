@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -20,8 +21,9 @@ func TestAgentRunListener(t *testing.T) {
 	parent.Header.Set("X-Claude-Mini-Session", "sid1")
 	parent.Header.Set("X-Claude-Mini-Cwd", "/client/dir")
 	r := &req{Request: parent, conn: &serveConn{device: dev, peer: "10.0.0.9"}}
-	run, env := s.startRun(r, "claude", "/copy", false, "", "", "")
-	if run == nil || len(env) != 2 || !strings.HasPrefix(env[0], "MINIGW_AGENT_URL=http://127.0.0.1:") || env[1] != "MINIGW_AGENT_TOKEN="+run.token {
+	run, env := s.startRun(r, "claude", "/copy", false, true, "", "", "")
+	run.started(os.Getpid()) // M2: ta proces je »agent« izvajanja
+	if run == nil || len(env) != 2 || !strings.HasPrefix(env[0], "MINIGW_AGENT_URL=http://127.0.0.1:") || env[1] != "MINIGW_AGENT_AUTH="+run.token {
 		t.Fatalf("env: %v", env)
 	}
 	get := func(path, tok string) int {
@@ -56,13 +58,37 @@ func TestAgentRunListener(t *testing.T) {
 	if st := get("/v1/models", run.token); st != 200 {
 		t.Fatalf("models: %d", st)
 	}
+	for range maxNested { // M1: vsa mesta zasedena → 429
+		run.slots <- struct{}{}
+	}
+	if st := get("/v1/models", run.token); st != 429 {
+		t.Fatalf("over the nested limit: %d", st)
+	}
+	for range maxNested {
+		<-run.slots
+	}
+	if runtime.GOOS == "linux" || runtime.GOOS == "windows" { // M2: proces zunaj drevesa izvajanja
+		sleep := exec.Command("sleep", "30")
+		if runtime.GOOS == "windows" {
+			sleep = exec.Command("ping", "-n", "30", "127.0.0.1")
+		}
+		if err := sleep.Start(); err != nil {
+			t.Fatal(err)
+		}
+		defer sleep.Process.Kill()
+		run.started(sleep.Process.Pid)
+		if st := get("/v1/models", run.token); st != 403 {
+			t.Fatalf("token from outside the run's processes: %d", st)
+		}
+		run.started(os.Getpid())
+	}
 	run.stop()
 	if st := get("/v1/models", run.token); st != -1 {
 		t.Fatalf("listener open after the run: %d", st)
 	}
 
 	// Stikalo izklopljeno: ni vrat ne okolja.
-	if run, env := s.startRun(r, "codex", "/copy", false, "", "", ""); run != nil || env != nil {
+	if run, env := s.startRun(r, "codex", "/copy", false, true, "", "", ""); run != nil || env != nil {
 		t.Fatal("codex without askOthers got a run listener")
 	}
 }
@@ -109,7 +135,7 @@ func TestAgentAsksAgentInSameFolder(t *testing.T) {
 	}
 	tmp := t.TempDir()
 	ask := func(model string) string { // POST na vrata izvajanja, status v datoteko
-		return `curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $MINIGW_AGENT_TOKEN" -H 'content-type: application/json' ` +
+		return `curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $MINIGW_AGENT_AUTH" -H 'content-type: application/json' ` +
 			`-d '{"model":"` + model + `","max_tokens":10,"tools":[{"name":"x"}],"messages":[{"role":"user","content":"hi"}]}' "$MINIGW_AGENT_URL/v1/messages"`
 	}
 	claude := filepath.Join(tmp, "claude")
@@ -177,11 +203,18 @@ echo "codex answer" > "$out"
 // minigw v agentu: le povezava iz okolja, brez profilov.
 func TestAgentModeConnection(t *testing.T) {
 	t.Setenv("MINIGW_AGENT_URL", "http://127.0.0.1:1")
-	t.Setenv("MINIGW_AGENT_TOKEN", "")
+	t.Setenv("MINIGW_AGENT_AUTH", "")
 	if agentConn() != nil {
 		t.Fatal("agent mode without a token")
 	}
-	t.Setenv("MINIGW_AGENT_TOKEN", "rt")
+	t.Setenv("MINIGW_AGENT_AUTH", "rt")
+	for _, bad := range []string{"http://evil.example:1", "https://127.0.0.1:1", "http://127.0.0.1", "http://u@127.0.0.1:1", "http://localhost:1"} {
+		t.Setenv("MINIGW_AGENT_URL", bad)
+		if agentConn() != nil {
+			t.Fatalf("agent mode with %s", bad)
+		}
+	}
+	t.Setenv("MINIGW_AGENT_URL", "http://127.0.0.1:1")
 	ps := loadProfiles()
 	if len(ps) != 1 || ps[0].conn.URL != "http://127.0.0.1:1" || ps[0].conn.Token != "rt" || !ps[0].conn.isLocal() {
 		t.Fatalf("profiles in agent mode: %+v", ps)
@@ -205,5 +238,16 @@ func TestAgentAskBodyAndProxy(t *testing.T) {
 	t.Setenv("HTTP_PROXY", "")
 	if u, _ := agentProxy(q); u != nil {
 		t.Fatalf("proxy without HTTP_PROXY: %v", u)
+	}
+}
+
+// L1: vprašani agent ne dela v privzeti mapi prehoda, ki je klicatelj ni dobil od odjemalca.
+func TestNestedAgentNeedsSharedFolder(t *testing.T) {
+	s, _ := testServer(t, nil)
+	hr := httptest.NewRequest("POST", "/v1/messages", nil)
+	hr = hr.WithContext(context.WithValue(hr.Context(), agentRunKey{}, &agentRun{chain: []string{"claude"}, dir: "/gw/folder"}))
+	w := httptest.NewRecorder()
+	if _, _, _, st := s.agentFolder(w, &req{Request: hr}, "Codex", "codex"); st != 400 || !strings.Contains(w.Body.String(), "not shared") {
+		t.Fatalf("nested agent in the gateway's folder: %d %s", st, w.Body.String())
 	}
 }

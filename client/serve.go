@@ -922,6 +922,9 @@ func (s *server) ServeHTTP(w http.ResponseWriter, hr *http.Request) {
 	if d := r.conn.device; d != nil {
 		who += " " + strconv.Quote(d.Name)
 	}
+	if p := runOf(r); p != nil { // L3: vprašal ga je agent tega prehoda
+		who += " via=" + p.via()
+	}
 	if model == "" {
 		model = "-"
 	}

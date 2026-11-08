@@ -20,7 +20,8 @@ private func get(_ run: AgentRun, _ path: String, token: String?) async -> Int {
     caller.peer = "10.0.0.9"
     caller.device = Noise.Device(id: "dev1", name: "phone")
     let run = try #require(await router.startAgentRun(caller, kind: "claude", dir: nil))
-    #expect(run.env["MINIGW_AGENT_URL"] == "http://127.0.0.1:\(run.port)" && run.env["MINIGW_AGENT_TOKEN"] == run.token)
+    run.started(getpid())  // M2: ta proces je »agent« izvajanja
+    #expect(run.env["MINIGW_AGENT_URL"] == "http://127.0.0.1:\(run.port)" && run.env["MINIGW_AGENT_AUTH"] == run.token)
     #expect(await get(run, "/v1/models", token: nil) == 401)
     #expect(await get(run, "/v1/models", token: "tok") == 401)  // žeton prehoda tu ne velja
     for p in ["/admin/v1/settings", "/minigw/share/next", "/health/live"] { #expect(await get(run, p, token: run.token) == 404) }
@@ -31,7 +32,19 @@ private func get(_ run: AgentRun, _ path: String, token: String?) async -> Int {
     // Loopback klicatelj: modeli; stikalo izklopljeno: ni vrat.
     let local = try #require(await router.startAgentRun(request("POST", "/v1/messages"), kind: "claude", dir: nil))
     defer { local.stop() }
+    #expect(await get(local, "/v1/models", token: local.token) == 403)  // M2: proces agenta še ne teče
+    local.started(getpid())
     #expect(await get(local, "/v1/models", token: local.token) == 200)
+    local.running.withLock { $0 = AgentRun.maxNested }  // M1: vsa mesta izvajanja zasedena
+    #expect(await get(local, "/v1/models", token: local.token) == 429)
+    local.running.withLock { $0 = 0 }
+    let other = Process()  // M2: proces zunaj drevesa izvajanja
+    other.executableURL = URL(fileURLWithPath: "/bin/sleep")
+    other.arguments = ["30"]
+    try other.run()
+    defer { other.terminate() }
+    local.started(other.processIdentifier)
+    #expect(await get(local, "/v1/models", token: local.token) == 403)
     #expect(await router.startAgentRun(caller, kind: "codex", dir: nil) == nil)
 }
 
@@ -68,7 +81,7 @@ private func get(_ run: AgentRun, _ path: String, token: String?) async -> Int {
     defer { try? FileManager.default.removeItem(at: base) }
     for d in [client, bin] { try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true) }
     func ask(_ model: String) -> String {
-        #"curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $MINIGW_AGENT_TOKEN" -H 'content-type: application/json' "#
+        #"curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $MINIGW_AGENT_AUTH" -H 'content-type: application/json' "#
             + #"-d '{"model":"\#(model)","max_tokens":10,"tools":[{"name":"x"}],"messages":[{"role":"user","content":"hi"}]}' "$MINIGW_AGENT_URL/v1/messages""#
     }
     func script(_ name: String, _ body: String) throws -> String {

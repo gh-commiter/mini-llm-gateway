@@ -102,7 +102,7 @@ public enum Grok {
     /// Zažene grok in vrne končni odgovor (besedilo po zadnjem klicu orodja); prekinitev odjemalca ustavi grok.
     /// Vrne končni odgovor in ID Grokove seje (za nadaljevanje z -r).
     static func run(_ exe: String, args: [String], cwd: URL, prompt: String, env extra: [String: String] = [:],
-                    onStep: @escaping @Sendable (String) -> Void) async throws -> (String, String?) {
+                    started: @escaping @Sendable (pid_t) -> Void = { _ in }, onStep: @escaping @Sendable (String) -> Void) async throws -> (String, String?) {
         let h = Handle()
         return try await withTaskCancellationHandler {
             try await offPool { () throws -> (String, String?) in
@@ -120,6 +120,7 @@ public enum Grok {
                 let stderr = Box()
                 let errReader = Thread { stderr.data = errors.fileHandleForReading.readDataToEndOfFile() }
                 try p.run()
+                started(p.processIdentifier)
                 AgentCount.running.add(1, ordering: .relaxed)
                 defer { AgentCount.running.subtract(1, ordering: .relaxed) }
                 errReader.start()
@@ -218,7 +219,8 @@ extension Router {
         defer { run?.stop() }
         let env = run?.env ?? [:]
         return await replyWhenDone(body: body, model: "claude-grok", rid: rid, writer: writer) {
-            let (text, session) = try await Grok.run(exe, args: args, cwd: cwd, prompt: prompt, env: env) { [onActivity] s in onActivity(.step(id: rid, text: s)) }
+            let (text, session) = try await Grok.run(exe, args: args, cwd: cwd, prompt: prompt, env: env, started: { run?.started($0) }) { [onActivity] s in onActivity(.step(id: rid, text: s)) }
+            run?.stop()  // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb
             if agent { await Self.shares.syncBack(session: client) }  // sync: spremembe agenta k odjemalcu pred odgovorom
             if agent, let session {
                 await sessions.set(ClaudeCLI.key(all + [ClaudeCLI.Turn(role: "assistant", text: text)], scope: scope), session)

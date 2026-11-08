@@ -488,7 +488,7 @@ extension Router {
         }
         let run = agent ? await startAgentRun(req, kind: "claude", dir: sharedDir) : nil
         defer { run?.stop() }
-        for k in ["MINIGW_AGENT_URL", "MINIGW_AGENT_TOKEN"] { env[k] = run?.env[k] }
+        for k in ["MINIGW_AGENT_URL", "MINIGW_AGENT_AUTH"] { env[k] = run?.env[k] }
         p.environment = env
         let stdin = Pipe(), stdout = Pipe(), stderr = Pipe()
         p.standardInput = stdin
@@ -499,6 +499,7 @@ extension Router {
 
         do {
             try p.run()
+            run?.started(p.processIdentifier)
         } catch {
             return await self.error(500, "api_error", "Cannot start claude: \(error.localizedDescription)", rid: rid, writer: writer)
         }
@@ -540,6 +541,7 @@ extension Router {
             return headSent ? 200 : 499
         }
         let status = await exit.wait()
+        run?.stop()  // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb
         // sync: spremembe agenta k odjemalcu pred koncem odgovora (Claude Code jih nato že vidi); med tem še ping
         if agent { await Self.shares.syncBack(session: req.header("x-claude-mini-session") ?? "") }
         pinger?.cancel()

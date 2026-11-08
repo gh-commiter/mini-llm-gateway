@@ -161,6 +161,33 @@ func confinedApp(pid int) bool {
 	return v != 0
 }
 
+// peerInTree (M2): proces odjemalca je root ali njegov potomec (starši iz posnetka procesov).
+func peerInTree(ours, peer *net.TCPAddr, root int) bool {
+	pid, err := tcpOwnerPID(ours, peer)
+	if err != nil {
+		return false
+	}
+	snap, err := syscall.CreateToolhelp32Snapshot(syscall.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return false
+	}
+	defer syscall.CloseHandle(snap)
+	parent := map[uint32]uint32{}
+	e := syscall.ProcessEntry32{Size: uint32(unsafe.Sizeof(syscall.ProcessEntry32{}))}
+	for err = syscall.Process32First(snap, &e); err == nil; err = syscall.Process32Next(snap, &e) {
+		parent[e.ProcessID] = e.ParentProcessID
+	}
+	for q, n := pid, 0; n < 4096; q, n = parent[q], n+1 {
+		if q == uint32(root) {
+			return true
+		}
+		if q == 0 || parent[q] == q {
+			return false
+		}
+	}
+	return false
+}
+
 // tcpOwnerPID: PID procesa z odjemalčevo stranjo povezave (GetExtendedTcpTable, TCP_TABLE_OWNER_PID_ALL).
 func tcpOwnerPID(ours, peer *net.TCPAddr) (uint32, error) {
 	for _, v6 := range []bool{false, true} {

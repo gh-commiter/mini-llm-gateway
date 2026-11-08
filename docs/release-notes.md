@@ -6,11 +6,12 @@
   Copilot (Settings, the settings page, `PATCH /agents/{name} {"askOthers": true}`, `minigw gw claude --ask-others=true`),
   an agent on the gateway can ask another model of that gateway itself, for example a remote `claude-cli-opus` asking
   an OpenRouter model or `claude-codex-…`: its instructions name the gateway's `minigw -p --model <id> "…"`, which sends
-  the question straight to a loopback port and token for that run only (`MINIGW_AGENT_URL`, `MINIGW_AGENT_TOKEN`), with
+  the question straight to a loopback port and token for that run only (`MINIGW_AGENT_URL`, `MINIGW_AGENT_AUTH`), with
   the rights of your device, also from inside Claude Code's sandbox (through its proxy). The asked agent works in the
   same folder (sync copy, worktree branch or native folder) and the caller waits. One level deep, never the same kind of
-  agent. Claude CLI needs **Allow local tools** (Bash) for it, Codex "Allow network access for commands". Calls to
-  another gateway come later.
+  agent, at most 2 questions at a time per agent; the run token works only for that agent's own processes. Claude CLI
+  needs **Allow local tools** (Bash) for it, Codex "Allow network access for commands". Calls to another gateway come
+  later.
 - **This user's apps without a token (off by default):** programs of the gateway's own user on the same computer can use
   the models and agents (`/v1/messages`, `/v1/models`) without the token, for example an app pointed at `http://127.0.0.1:8765`.
   The gateway checks the process behind the connection (same user, not one of its agents); the request needs

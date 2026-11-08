@@ -92,7 +92,8 @@ public final class Router: Sendable {
         let (status, model, provider) = await route(req, rid: rid, writer: writer)
         writer.close()
         let ms = Int(Date().timeIntervalSince(start) * 1000)
-        Self.log.info("\(rid, privacy: .public) \(req.method, privacy: .public) \(req.path.hasPrefix("/dav/") ? "/dav/…" : req.path, privacy: .public) model=\(model ?? "-", privacy: .public) provider=\(provider ?? "-", privacy: .public) status=\(status) \(ms)ms bytes=\(req.body.count)")
+        let via = AgentRun.current.map { " via=" + $0.via } ?? ""  // L3: vprašal ga je agent tega prehoda
+        Self.log.info("\(rid, privacy: .public)\(via, privacy: .public) \(req.method, privacy: .public) \(req.path.hasPrefix("/dav/") ? "/dav/…" : req.path, privacy: .public) model=\(model ?? "-", privacy: .public) provider=\(provider ?? "-", privacy: .public) status=\(status) \(ms)ms bytes=\(req.body.count)")
         if provider != "share" { onLog(RequestLog(time: start, method: req.method, path: req.path, model: model, provider: provider, status: status, ms: ms)) }  // brez prometa map v »Activity«
     }
 

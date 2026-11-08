@@ -81,7 +81,7 @@ run() { (cd $C && E2E=$T PATH=$H/bin:$PATH MINIGW_WORK=sync gw -p go) 2> $T/err 
 
 # a: claude → codex v isti mapi; codex → claude zavrnjen; connect v agentu zavrnjen
 run
-[[ $(<$T/claude-env) == $'MINIGW_AGENT_TOKEN\nMINIGW_AGENT_URL' ]] || fail "a: claude env: $(<$T/claude-env)"
+[[ $(<$T/claude-env) == $'MINIGW_AGENT_AUTH\nMINIGW_AGENT_URL' ]] || fail "a: claude env: $(<$T/claude-env)"
 [[ $(<$T/asked.rc) == 0 && $(<$T/asked.out) == "codex answer" ]] || fail "a: claude → codex: rc $(<$T/asked.rc) $(<$T/asked.out) $(<$T/asked.err)"
 [[ $(<$C/codex.txt) == codex ]] || fail "a: codex.txt did not come back to the client (codex worked in $(<$T/codex-dir))"
 [[ $(<$T/loop.rc) != 0 ]] && grep -q "an agent asked by another agent cannot ask further models (claude → codex)" $T/loop.err \

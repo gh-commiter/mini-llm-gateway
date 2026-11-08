@@ -121,6 +121,7 @@ public enum Codex {
     }
 
     static func run(_ exe: String, args: [String], cwd: URL, prompt: String, output: URL, env extra: [String: String] = [:],
+                    started: @escaping @Sendable (pid_t) -> Void = { _ in },
                     onStep: @escaping @Sendable (String) -> Void = { _ in }) async throws -> (String, String?) {
         let h = Handle()
         return try await withTaskCancellationHandler {
@@ -139,6 +140,7 @@ public enum Codex {
                 var stderr = Data()
                 let errReader = Thread { stderr = errors.fileHandleForReading.readDataToEndOfFile() }  // ne blokira pipe
                 try p.run()
+                started(p.processIdentifier)
                 AgentCount.running.add(1, ordering: .relaxed)
                 defer { AgentCount.running.subtract(1, ordering: .relaxed) }
                 errReader.start()
@@ -246,9 +248,10 @@ extension Router {
         let sessions = Self.codexSessions, session = req.header("x-claude-mini-session") ?? ""
         return await replyWhenDone(body: body, model: "claude-codex", rid: rid, writer: writer) {
             let (text, thread) = try await Codex.run(exe, args: args, cwd: cwd, prompt: prompt, output: output,
-                                                         env: codexEnv) { [onActivity] s in
+                                                         env: codexEnv, started: { run?.started($0) }) { [onActivity] s in
                 onActivity(.step(id: rid, text: s))
             }
+            run?.stop()  // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb
             if agent { await Self.shares.syncBack(session: session) }  // sync: spremembe agenta k odjemalcu pred odgovorom
             if agent, let thread {
                 await sessions.set(ClaudeCLI.key(all + [ClaudeCLI.Turn(role: "assistant", text: text)], scope: scope), thread)

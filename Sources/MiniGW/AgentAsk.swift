@@ -1,7 +1,7 @@
 import Foundation
 import RouterCore
 
-// minigw v agentu prehoda (MINIGW_AGENT_URL, MINIGW_AGENT_TOKEN; AgentRun.swift): -p pošlje vprašanje naravnost na vrata
+// minigw v agentu prehoda (MINIGW_AGENT_URL, MINIGW_AGENT_AUTH; AgentRun.swift): -p pošlje vprašanje naravnost na vrata
 // izvajanja in izpiše odgovor, brez vgnezdenega Claude Code. Kot agentask.go.
 
 /// HTTP/1.0 na vrata izvajanja: neposredno ali prek posrednika sandboxa Claude Code (HTTP_PROXY), ki je tam edina pot do

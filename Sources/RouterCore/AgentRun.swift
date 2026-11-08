@@ -4,7 +4,7 @@ import os
 
 /// Agent vpraša drug model istega prehoda (kot minigw serve, serve_agentcalls.go). Za vsako izvajanje agenta s stikalom
 /// »May ask other models« prehod odpre svoja vrata na 127.0.0.1 in žeton, veljavna le med izvajanjem
-/// (MINIGW_AGENT_URL, MINIGW_AGENT_TOKEN). Zahteve tam dobijo napravo, naslov, sejo in mapo klicatelja; veriga agentov je
+/// (MINIGW_AGENT_URL, MINIGW_AGENT_AUTH). Zahteve tam dobijo napravo, naslov, sejo in mapo klicatelja; veriga agentov je
 /// le v prehodu (ne v glavi), globina največ 2 in brez ponovitve vrste agenta.
 final class AgentRun: @unchecked Sendable {
     let kind: String, chain: [String]
@@ -16,23 +16,47 @@ final class AgentRun: @unchecked Sendable {
     private let queue = DispatchQueue(label: "dev.trojar.minigateway.agentrun")
     private var conns: [ObjectIdentifier: NWConnection] = [:]  // le na `queue`
     private(set) var port: UInt16 = 0
+    private let rootPID = OSAllocatedUnfairLock<pid_t>(initialState: 0)  // M2: proces agenta (0 = še ne teče)
+    let running = OSAllocatedUnfairLock(initialState: 0)                  // M1: hkratna vprašanja tega izvajanja
+    /// M1: hkratna vprašanja na izvajanje in vsa vgnezdena izvajanja skupaj (kot maxNested in s.procs v minigw serve).
+    static let maxNested = 2, maxAllNested = 6
+    private static let allRunning = OSAllocatedUnfairLock(initialState: 0)
 
     /// Izvajanje, iz katerega pride zahteva (vrata agenta), ali nil.
     @TaskLocal static var current: AgentRun?
     static let chainHeader = "x-minigw-agent-chain"
     static let allowed: Set<String> = ["GET /v1/models", "POST /v1/messages", "POST /v1/messages/count_tokens"]
 
-    var env: [String: String] { ["MINIGW_AGENT_URL": "http://127.0.0.1:\(port)", "MINIGW_AGENT_TOKEN": token] }
+    var env: [String: String] { ["MINIGW_AGENT_URL": "http://127.0.0.1:\(port)", "MINIGW_AGENT_AUTH": token] }
 
-    private init(kind: String, chain: [String], req: HTTPRequest, dir: URL?, listener: NWListener) {
-        self.kind = kind; self.chain = chain; self.dir = dir; self.listener = listener
+    private init(kind: String, chain: [String], req: HTTPRequest, dir: URL?, listener: NWListener, token: String) {
+        self.kind = kind; self.chain = chain; self.dir = dir; self.listener = listener; self.token = token
         peer = req.peer; device = req.device
         session = req.header("x-claude-mini-session") ?? ""; cwd = req.header("x-claude-mini-cwd") ?? ""
         runID = ShareHub.run
-        var b = [UInt8](repeating: 0, count: 32)
-        _ = SecRandomCopyBytes(kSecRandomDefault, b.count, &b)
-        token = Data(b).base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
+    }
+
+    /// Proces agenta teče (M2: žeton velja le za njegovo drevo procesov).
+    func started(_ pid: pid_t) { rootPID.withLock { $0 = pid } }
+
+    /// Veriga za dnevnik (L3), npr. »claude→codex«.
+    var via: String { chain.joined(separator: "→") }
+
+    /// M2: vsi procesi z odjemalčevo vtičnico so agent tega izvajanja ali njegovi potomci (tudi posrednik sandboxa
+    /// Claude Code, ki teče v procesu claude).
+    func ownsPeer(peerPort: UInt16) -> Bool {
+        let root = rootPID.withLock { $0 }
+        let pids = Set(PeerProcess.pids(localPort: peerPort, remotePort: port))
+        guard root > 0, !pids.isEmpty else { return false }
+        return pids.allSatisfy { pid in
+            var p = pid
+            for _ in 0..<4096 {
+                if p == root { return true }
+                guard p > 1, let pp = PeerProcess.parent(p), pp != p else { return false }
+                p = pp
+            }
+            return false
+        }
     }
 
     /// Zahteva iz izvajanja za agenta vrste `kind`: nil = dovoljeno, sicer razlog (403). Besedilo kot v Go.
@@ -48,8 +72,12 @@ final class AgentRun: @unchecked Sendable {
     static func start(router: Router, req: HTTPRequest, kind: String, dir: URL?) async -> AgentRun? {
         let params = NWParameters.tcp
         params.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
+        var b = [UInt8](repeating: 0, count: 32)
+        guard SecRandomCopyBytes(kSecRandomDefault, b.count, &b) == errSecSuccess else { return nil }  // L2
+        let token = Data(b).base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
         guard let l = try? NWListener(using: params) else { return nil }
-        let run = AgentRun(kind: kind, chain: (current?.chain ?? []) + [kind], req: req, dir: dir, listener: l)
+        let run = AgentRun(kind: kind, chain: (current?.chain ?? []) + [kind], req: req, dir: dir, listener: l, token: token)
         l.newConnectionHandler = { [weak run] c in run?.accept(c, router: router) ?? c.cancel() }
         let ready = await withCheckedContinuation { (k: CheckedContinuation<Bool, Never>) in
             let once = OSAllocatedUnfairLock(initialState: false)
@@ -96,7 +124,8 @@ final class AgentRun: @unchecked Sendable {
                 if done || error != nil { c.cancel() } else { self.read(c, buf, router: router) }
             case .error(let status, let message):
                 Task { await router.reject(status: status, message: message, writer: w) }
-            case .request(let req):
+            case .request(var req):
+                if case let .hostPort(_, p) = c.endpoint { req.peerPort = p.rawValue }
                 let task = Task { await self.serve(req, router: router, writer: w) }
                 c.stateUpdateHandler = { [weak self] s in
                     switch s {
@@ -120,6 +149,21 @@ final class AgentRun: @unchecked Sendable {
         guard Self.allowed.contains(req.method + " " + req.path) else {
             return await router.reject(status: 404, message: "Not available to agents: \(req.method) \(req.path)", writer: writer)
         }
+        guard await offPool({ self.ownsPeer(peerPort: req.peerPort) }) else {  // M2
+            return await router.reject(status: 403, message: "Not a process of this agent run", writer: writer)
+        }
+        // M1: največ maxNested na izvajanje in maxAllNested vseh vgnezdenih hkrati; sicer 429 (čakanje bi lahko zaklenilo).
+        let ok = running.withLock { n in
+            Self.allRunning.withLock { all in
+                guard n < Self.maxNested, all < Self.maxAllNested else { return false }
+                n += 1; all += 1
+                return true
+            }
+        }
+        guard ok else {
+            return await router.reject(status: 429, message: "This agent already has \(Self.maxNested) requests to other models running, or the gateway is busy", writer: writer)
+        }
+        defer { running.withLock { $0 -= 1 }; Self.allRunning.withLock { $0 -= 1 } }
         var r = req
         for k in ["x-api-key", Self.chainHeader, "x-claude-mini-share"] { r.headers[k] = nil }
         r.headers["authorization"] = "Bearer " + router.token

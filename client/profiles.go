@@ -5,6 +5,7 @@ package main
 
 import (
 	"encoding/json"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -72,11 +73,13 @@ func saveProfile(name string, c connection) {
 	}
 }
 
-// agentConn: minigw teče v agentu prehoda (MINIGW_AGENT_URL in MINIGW_AGENT_TOKEN): le ta povezava, brez profilov,
+// agentConn: minigw teče v agentu prehoda (MINIGW_AGENT_URL in MINIGW_AGENT_AUTH): le ta povezava, brez profilov,
 // proxyja, šifriranja in deljenja mape (prehod sam doda napravo, sejo in mapo klicatelja).
 func agentConn() *connection {
-	u, t := os.Getenv("MINIGW_AGENT_URL"), os.Getenv("MINIGW_AGENT_TOKEN")
-	if u == "" || t == "" {
+	u, t := os.Getenv("MINIGW_AGENT_URL"), os.Getenv("MINIGW_AGENT_AUTH")
+	p, err := url.Parse(u)
+	if t == "" || err != nil || p.Scheme != "http" || p.Hostname() != "127.0.0.1" || p.Port() == "" || p.User != nil ||
+		(p.Path != "" && p.Path != "/") || p.RawQuery != "" { // I3: le vrata izvajanja na tem računalniku
 		return nil
 	}
 	return &connection{URL: u, Token: t}
