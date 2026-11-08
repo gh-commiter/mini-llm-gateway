@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Windows tray: Settings now opens in its own browser window (no tabs) and a second click on "Settings…" brings that window to the front instead of opening a new tab.
+- Windows tray: Settings opens in its own app window (Edge, Chrome, Brave or Vivaldi; otherwise the default browser), and clicking "Settings…" again brings it to the front instead of opening a new tab. A window whose session expired is replaced by a signed-in one.
 - Windows and Linux gateway (`minigw serve`): `minigw` without `--minigw-work` (and no `MINIGW_WORK` or saved mode) no
   longer fails with 400 "this gateway supports --minigw-work=sync and worktree": when the gateway refuses direct, the
   client picks worktree (the folder is the root of a git repository with a commit) or sync, as `auto` does. An explicit `direct` is still an error.

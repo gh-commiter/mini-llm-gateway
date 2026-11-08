@@ -196,20 +196,26 @@ func findWindowByTitle(prefix string) syscall.Handle {
 
 // openSettings: obstoječe okno nastavitev pride naprej; sicer lastno okno brskalnika (--app), nazadnje navadno odpiranje.
 // URL nosi enkratni prijavni žeton, zato ni v dnevniku.
-func openSettings(url string) {
+// Okno s potekle seje (30 min mirovanja, nov žeton) se zapre in odpre novo s svežo prijavo.
+// ponytail: alive() gleda katerokoli sejo, ne seje tega okna; dovolj, ker je okno nastavitev eno.
+func openSettings(s *server) {
 	if h := findWindowByTitle("Mini Gateway Settings"); h != 0 {
-		if v, _, _ := pIsIconic.Call(uintptr(h)); v != 0 {
-			pShowWindow.Call(uintptr(h), 9 /* SW_RESTORE */)
+		if s.settings.alive() {
+			if v, _, _ := pIsIconic.Call(uintptr(h)); v != 0 {
+				pShowWindow.Call(uintptr(h), 9 /* SW_RESTORE */)
+			}
+			pSetForegroundWindow.Call(uintptr(h))
+			return
 		}
-		pSetForegroundWindow.Call(uintptr(h))
-		return
+		pPostMessage.Call(uintptr(h), 0x0010 /* WM_CLOSE */, 0, 0)
 	}
+	url := s.settingsLoginURL()
 	exe := ""
 	if prog := regValue(syscall.HKEY_CURRENT_USER, `Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice`, "ProgId"); prog != "" {
 		exe = shellCommandExe(regValue(syscall.HKEY_CLASSES_ROOT, prog+`\shell\open\command`, ""))
 	}
 	if !supportsAppFlag(exe) {
-		exe = regValue(syscall.HKEY_LOCAL_MACHINE, `SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe`, "")
+		exe = strings.Trim(regValue(syscall.HKEY_LOCAL_MACHINE, `SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe`, ""), `" `)
 	}
 	if supportsAppFlag(exe) && command(exe, "--app="+url).Start() == nil {
 		return
@@ -417,7 +423,7 @@ func (t *tray) do(action string, st apiStatus) {
 	switch action {
 	case "":
 	case "settings":
-		openSettings(t.s.settingsLoginURL())
+		openSettings(t.s)
 	case "copy":
 		if err := setClipboard(t.hwnd, connectToken(t.s.conf())); err != nil {
 			messageBox(err.Error())
