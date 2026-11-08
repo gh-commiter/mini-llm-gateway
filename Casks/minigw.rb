@@ -52,7 +52,7 @@ cask "minigw" do
   # da vtičnik ne izgine med tekočo sejo.
   uninstall_postflight do
     require "json"
-    upgrading = defined?(Homebrew.running_command) && %w[upgrade reinstall].include?(Homebrew.running_command)
+    upgrading = defined?(Homebrew.running_command) && %w[install upgrade reinstall].include?(Homebrew.running_command)
     claude = ["~/.local/bin", "/opt/homebrew/bin", "/usr/local/bin"].map { |d| File.join(File.expand_path(d), "claude") }
                                                                     .find { |f| File.executable?(f) }
     if claude && !upgrading
