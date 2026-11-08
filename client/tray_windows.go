@@ -172,15 +172,15 @@ func regValue(root syscall.Handle, path, name string) string {
 // findWindowByTitle: prvo vidno okno najvišje ravni z naslovom točno title (okno --app ima le naslov strani).
 // Povratni klic je eden za proces (syscall.NewCallback jih ima omejeno število); kliče se le z niti pladnja.
 var (
-	findPrefix string
-	findFound  syscall.Handle
-	findCB     = syscall.NewCallback(func(h, _ uintptr) uintptr {
+	findTitle string
+	findFound syscall.Handle
+	findCB    = syscall.NewCallback(func(h, _ uintptr) uintptr {
 		if v, _, _ := pIsWindowVisible.Call(h); v == 0 {
 			return 1
 		}
 		buf := make([]uint16, 256)
 		n, _, _ := pGetWindowText.Call(h, uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
-		if syscall.UTF16ToString(buf[:n]) == findPrefix { // točno ujemanje: zavihek s tujo stranjo ima pripono brskalnika
+		if syscall.UTF16ToString(buf[:n]) == findTitle { // točno ujemanje: zavihek s tujo stranjo ima pripono brskalnika
 			findFound = syscall.Handle(h)
 			return 0
 		}
@@ -189,7 +189,7 @@ var (
 )
 
 func findWindowByTitle(prefix string) syscall.Handle {
-	findPrefix, findFound = prefix, 0
+	findTitle, findFound = prefix, 0
 	pEnumWindows.Call(findCB, 0)
 	return findFound
 }
