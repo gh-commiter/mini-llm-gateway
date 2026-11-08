@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- `minigw` started inside Claude Code or Claude Desktop no longer gets 401 from the gateway: the inner `claude` no
+  longer inherits the parent's `ANTHROPIC_*`, `CLAUDECODE` and `CLAUDE_CODE_*` variables (session, OAuth, base URL;
+  `CLAUDE_CODE_GIT_BASH_PATH` stays). Both clients.
+- `minigw --model <model>@<profile>` uses that profile for the whole run (folder share, sync, worktree, native), as
+  `--minigw-profile <profile>` does; before, the folder went to the default gateway. Both clients.
+- Windows and Linux: a gateway on the same computer (`minigw serve`, e.g. profile `local` on 127.0.0.1) gets the project
+  folder shared automatically, as a remote one does (before only with `MINIGW_SHARE=1`). On a Mac the app on the same
+  Mac still works in the folder itself.
+- `--minigw-work=auto` or `worktree` in a git repository without a commit (also a folder inside one) uses sync at once,
+  with one line why, instead of failing on every agent request with "cannot take a snapshot". Both clients.
+- `minigw --version` prints only minigw's version (Claude Code's: `claude --version`); `minigw gw status` shows it on one
+  line again.
+- Windows MSI: the user PATH gets Mini Gateway once (without a trailing `\`, the form `minigw serve install` uses), and
+  reinstalling the same version replaces the earlier install instead of adding a second one.
 - **Codex on a Mac gateway shared by several devices:** Codex's own sandbox can read every file of the gateway's user,
   so Codex agents are not isolated between devices for reads (other devices' synced copies and worktree clones in
   Scratch, and an agent run's token file there). Allow Codex only for devices you trust with that.
