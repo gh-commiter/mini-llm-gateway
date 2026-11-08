@@ -169,7 +169,7 @@ func regValue(root syscall.Handle, path, name string) string {
 	return syscall.UTF16ToString(buf)
 }
 
-// findWindowByTitle: prvo vidno okno najvišje ravni, katerega naslov se začne s prefix (zavihek brskalnika ima pripono).
+// findWindowByTitle: prvo vidno okno najvišje ravni z naslovom točno title (okno --app ima le naslov strani).
 // Povratni klic je eden za proces (syscall.NewCallback jih ima omejeno število); kliče se le z niti pladnja.
 var (
 	findPrefix string
@@ -180,7 +180,7 @@ var (
 		}
 		buf := make([]uint16, 256)
 		n, _, _ := pGetWindowText.Call(h, uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
-		if strings.HasPrefix(syscall.UTF16ToString(buf[:n]), findPrefix) {
+		if syscall.UTF16ToString(buf[:n]) == findPrefix { // točno ujemanje: zavihek s tujo stranjo ima pripono brskalnika
 			findFound = syscall.Handle(h)
 			return 0
 		}
