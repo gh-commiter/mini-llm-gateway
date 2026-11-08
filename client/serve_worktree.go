@@ -553,9 +553,19 @@ func (h *shareHub) worktreeResult(key, owner string) ([]byte, int, string) {
 // dropClones: ob koncu seje kloni gredo (veje ostanejo v zrcalu in pri odjemalcu). Pod h.mu.
 func dropClones(t *shareTree) {
 	for _, sl := range t.slots {
-		go os.RemoveAll(sl.wt)
+		go removeClone(sl.wt)
 	}
 	t.slots = map[string]*wtSlot{}
+}
+
+// removeClone: klon, nato še prazen .maven in mapa klonov, ko v njej ni drugega klona (sicer ostane prazna mapa;
+// .maven z vsebino je predpomnilnik Maven in ostane do odstranitve zrcala).
+func removeClone(wt string) {
+	os.RemoveAll(wt)
+	dir := filepath.Dir(wt)
+	if es, _ := os.ReadDir(dir); len(es) == 1 && es[0].Name() == ".maven" && os.Remove(filepath.Join(dir, ".maven")) == nil {
+		os.Remove(dir)
+	}
 }
 
 // pruneMirrors: zrcala (scratch/repos/<naprava>/<repo>.git), ki jih 30 dni ni uporabil noben agent, in njihovi kloni.

@@ -305,3 +305,20 @@ func TestScratchOverlapAndProviderRename(t *testing.T) {
 	}
 	_ = host
 }
+
+// Poročilo Windows #17: po zadnjem klonu ne ostane prazna mapa .maven; z vsebino (predpomnilnik) ali ob drugem klonu ostane.
+func TestRemoveCloneDropsEmptyMaven(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "id")
+	a, b, maven := filepath.Join(dir, "a"), filepath.Join(dir, "b"), filepath.Join(dir, ".maven")
+	for _, d := range []string{a, b, maven} {
+		os.MkdirAll(d, 0o700)
+	}
+	removeClone(a)
+	if _, err := os.Stat(maven); err != nil {
+		t.Fatal(".maven removed while another clone is there")
+	}
+	removeClone(b)
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("empty clones folder stays: %v", err)
+	}
+}

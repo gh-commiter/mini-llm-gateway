@@ -643,7 +643,17 @@ extension ShareHub {
         if bySessionTree(String(k.split(separator: "|")[0])) == nil {
             slots[k] = nil
             let wt = slot.wt
-            Task.detached { try? FileManager.default.removeItem(at: wt) }
+            Task.detached { Self.removeClone(wt) }
+        }
+    }
+
+    /// Klon, nato še prazen .maven in mapa klonov, ko v njej ni drugega klona (kot removeClone v Go); .maven z vsebino
+    /// je predpomnilnik Maven in ostane do odstranitve zrcala.
+    nonisolated static func removeClone(_ wt: URL) {
+        try? FileManager.default.removeItem(at: wt)
+        let dir = wt.deletingLastPathComponent()
+        if (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) == [".maven"], rmdir(dir.appendingPathComponent(".maven").path) == 0 {
+            rmdir(dir.path)
         }
     }
 
@@ -652,7 +662,7 @@ extension ShareHub {
         for (k, slot) in slots where k.hasPrefix(session + "|") && !slot.busy {
             slots[k] = nil
             let wt = slot.wt
-            Task.detached { try? FileManager.default.removeItem(at: wt) }
+            Task.detached { Self.removeClone(wt) }
         }
     }
 }
