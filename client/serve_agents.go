@@ -89,10 +89,10 @@ func resolveAgent(k agentKind, configured string) (string, error) {
 	p := configured
 	if p == "" {
 		if runtime.GOOS == "windows" {
-			p, _ = exec.LookPath(k.bin + ".exe")
+			p = lookPath(k.bin + ".exe")
 		}
 		if p == "" {
-			if p, _ = exec.LookPath(k.bin); p == "" {
+			if p = lookPath(k.bin); p == "" {
 				return "", nil
 			}
 		}
@@ -804,6 +804,7 @@ func agentEnv(env []string) []string {
 	var out []string
 	for _, e := range env {
 		name, _, _ := strings.Cut(e, "=")
+		name = strings.ToUpper(name) // Windows: imena spremenljivk brez razlike med velikimi in malimi črkami
 		if strings.HasPrefix(name, "ANTHROPIC_") || strings.HasPrefix(name, "CLAUDE_CODE_") || slices.Contains([]string{"CLAUDECODE",
 			"DBUS_SESSION_BUS_ADDRESS", "SSH_AUTH_SOCK", "GPG_AGENT_INFO", "GNOME_KEYRING_CONTROL", "CODEX_HOME", "GROK_HOME", "MINIGW_AGENT_URL", "MINIGW_AGENT_AUTH_FILE",
 			"GH_TOKEN", "GITHUB_TOKEN"}, name) || strings.HasPrefix(name, "COPILOT_") {

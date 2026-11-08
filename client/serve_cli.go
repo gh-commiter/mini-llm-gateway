@@ -67,10 +67,10 @@ func resolveClaude(configured string) ([]string, error) {
 	p := configured
 	if p == "" {
 		if runtime.GOOS == "windows" {
-			p, _ = exec.LookPath("claude.exe")
+			p = lookPath("claude.exe")
 		}
 		if p == "" {
-			if p, _ = exec.LookPath("claude"); p == "" {
+			if p = lookPath("claude"); p == "" {
 				return nil, nil
 			}
 		}
