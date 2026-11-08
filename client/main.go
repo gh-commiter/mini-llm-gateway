@@ -108,9 +108,10 @@ func deviceName() string {
 	return u + "@" + h
 }
 
-// clientInfo: »Windows · minigw 0.5.18« za čakajočo napravo na prehodu.
+// clientInfo: »Windows, minigw 0.5.18« za čakajočo napravo na prehodu. Le ASCII: druge znake v glavi prehod na Macu
+// (UTF-8) zavrne.
 func clientInfo() string {
-	return map[string]string{"windows": "Windows", "darwin": "macOS", "linux": "Linux"}[runtime.GOOS] + " · minigw " + version
+	return map[string]string{"windows": "Windows", "darwin": "macOS", "linux": "Linux"}[runtime.GOOS] + ", minigw " + version
 }
 
 var proxy *noiseProxy
