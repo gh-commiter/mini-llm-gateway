@@ -343,11 +343,12 @@ struct StreamTranslator {
     }
 
     func finish() -> [Data] {
-        let out = (usage["output_tokens"] as? Int) ?? 0
+        // input_tokens šele iz rezultata CLI (message_start ima 0): tudi v message_delta, kot API, za zgodovino sej
+        let out = (usage["output_tokens"] as? Int) ?? 0, input = (usage["input_tokens"] as? Int) ?? 0
         return [Self.sse("content_block_stop", ["type": "content_block_stop", "index": 0]),
                 Self.sse("message_delta", ["type": "message_delta",
                                            "delta": ["stop_reason": stop, "stop_sequence": NSNull()] as [String: Any],
-                                           "usage": ["output_tokens": out]]),
+                                           "usage": ["input_tokens": input, "output_tokens": out]]),
                 Self.sse("message_stop", ["type": "message_stop"])]
     }
 

@@ -498,7 +498,7 @@ func (t *translator) tokens(k string) int { f, _ := t.usage[k].(float64); return
 func (t *translator) finish() []byte {
 	return append(append(sse("content_block_stop", map[string]any{"type": "content_block_stop", "index": 0}),
 		sse("message_delta", map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": t.stopReason(), "stop_sequence": nil},
-			"usage": map[string]int{"output_tokens": t.tokens("output_tokens")}})...),
+			"usage": map[string]int{"input_tokens": t.tokens("input_tokens"), "output_tokens": t.tokens("output_tokens")}})...), // vhod šele iz rezultata CLI (kot API; zgodovina sej)
 		sse("message_stop", map[string]string{"type": "message_stop"})...)
 }
 
