@@ -520,7 +520,7 @@ func profileStatus(_ p: Profile) -> Bool {
         say("Providers: " + pr.keys.sorted().map { "\(oneLine($0)) \(pr[$0]! ? "✓" : "✗")" }.joined(separator: ", "))
     }
     let (ms, models) = get(c, "/v1/models")
-    say("Models:    " + (ms == 200 ? "\((models?["data"] as? [Any])?.count ?? 0)" : ms == 401 ? "token rejected" : ms == 403 ? "device not approved" : "–"))
+    if ms == 200 && s == 200 { say("Models:    \((models?["data"] as? [Any])?.count ?? 0)") }  // sicer razlog le v vrstici Status
     if p.conn.key != nil, let id = deviceID(c) { say("Device:    \(id) (\(ms == 200 ? "approved" : ms == 403 ? "waiting for approval" : "approval unknown"))") }
     let bad = ms != 200 ? ms : s
     say("Status:    " + (bad == 200 ? "connected" : failureReason(bad, bad == ms ? models : ready)))
@@ -544,11 +544,14 @@ func sharedFolders() -> [SharedFolders.Entry] {
 }
 
 /// Projektna mapa kjer koli (tudi /Volumes/Disk/projekt), razen korena diska ali priklopa, domače mape same,
-/// sistemskih map, domačih map drugih ter skritih map in ~/Library.
+/// sistemskih map, domačih map drugih ter skritih map in ~/Library. Podmapa začasne mape (/tmp/projekt, mktemp -d) je
+/// projektna mapa (privzeti auto jo kopira: worktree ali sync), začasna mapa sama ne.
 func autoShare(_ path: String) -> Bool {
     let home = NSHomeDirectory()
     let p = URL(fileURLWithPath: path).standardizedFileURL.path
     guard p != "/", p != home else { return false }
+    let temps = [URL(fileURLWithPath: NSTemporaryDirectory()).standardizedFileURL.path, "/tmp", "/var/tmp"]
+    if temps.flatMap({ [$0, "/private" + $0] }).contains(where: { p.hasPrefix($0 + "/") }) { return true }
     if p.hasPrefix(home + "/") {
         let top = String(p.dropFirst(home.count + 1).split(separator: "/").first ?? "")
         return !top.hasPrefix(".") && top != "Library"
@@ -835,7 +838,9 @@ if let asked = workFlag ?? SharedFolders.lookup(sharedFolders(), cwd: cwd)?.work
 }
 let work = mode.work
 readOnly = mode.readOnly
-let implicitWork = workFlag == nil && SharedFolders.lookup(sharedFolders(), cwd: cwd)?.work == nil
+// direct ni izbran izrecno (privzeto, auto ali samo za branje namesto worktree/native): prehod brez priklopa → sync
+let askedWork = workFlag ?? SharedFolders.lookup(sharedFolders(), cwd: cwd)?.work
+let implicitWork = askedWork == nil || askedWork == "auto" || askedWork != work
 
 // x-claude-mini-share: router po ponovnem zagonu počaka, da se mapa znova registrira (namesto napake cwd_unavailable).
 setenv("ANTHROPIC_CUSTOM_HEADERS", "x-claude-mini-session: \(sid)\nx-claude-mini-cwd: \(cwd)" + (wantShare ? "\nx-claude-mini-share: 1" : "")
@@ -884,7 +889,7 @@ if !wantShare || sid.isEmpty {
 }
 
 /// Načini po vrsti (auto: native → worktree → sync); naslednji, če prehod prejšnjega ne sprejme.
-/// Način ni izbran (zastavica, MINIGW_WORK, share add): prehod brez priklopa mape (minigw serve na Windows, Linux) direct
+/// direct ni izbran izrecno (ni načina, auto ali samo za branje namesto worktree/native): prehod brez priklopa mape (minigw serve na Windows, Linux) direct
 /// zavrne → kot auto: worktree v repozitoriju git s commitom, sicer sync. Izrecni direct ostane napaka.
 @Sendable func registerShare(_ c: Connection, tries: [String], quiet: Bool, top: String? = top, implicit: Bool = implicitWork) -> (ShareClient, Bool) {
     var sc = ShareClient(c, session: sid, root: URL(fileURLWithPath: cwd), readOnly: readOnly, kind: "direct")

@@ -111,6 +111,10 @@ func TestWorktreeTreePaths(t *testing.T) {
 	if err != nil || tr.sub != "a/b" || !strings.HasSuffix(filepath.ToSlash(tr.repo), "/s/repos/dev/"+sha256Hex([]byte("C:/proj"))[:16]+".git") {
 		t.Fatalf("windows paths: %+v %v", tr, err)
 	}
+	// odjemalec Go pošlje top z »/« (filepath.ToSlash), cwd z »\«: isto zrcalo
+	if tr2, err := worktreeTree("/s", "dev", "C:/proj", `C:\proj\a\b`); err != nil || tr2.repo != tr.repo || tr2.sub != "a/b" {
+		t.Fatalf("mixed windows paths: %+v %v", tr2, err)
+	}
 	for _, c := range [][2]string{{"/p", "/other"}, {"/p", "/p/../x"}, {"/p", "/p/.git/hooks"}, {"", "/p"}, {"/p", "/p2"}} {
 		if _, err := worktreeTree("/s", "dev", c[0], c[1]); err == nil {
 			t.Fatalf("accepted %v", c)

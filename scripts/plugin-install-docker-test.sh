@@ -8,6 +8,7 @@
 #   5. #25: podpisana starejša izdaja (VERSION 0.5.16) čez novejši nameščeni → zavrnjena, z razlogom
 #   6. ista z MINIGW_ALLOW_DOWNGRADE=1 → nameščena
 #   7. N1: podpisana izdaja brez VERSION (= 0.5.17) čez nameščeni 0.5.18 → zavrnjena
+#   9. Linux: nameščen ~/.local/bin/minigw, ki ni starejši od izdaje → kopija v vtičnik (brez prenosa); starejši → prenos
 #   8. izhod »minigw status« → connected / token rejected / device not approved (ID) / not connected; brez claude: namig (#6)
 emulate -L zsh; set -eu
 cd ${0:A:h}/..
@@ -103,5 +104,16 @@ echo "$out" | grep -q "installed but not connected" || fail "8: not connected"
 rm /tmp/home/bin/claude; out=$(PATH=/tmp/home/bin:/usr/bin:/bin run /tmp/d8 nonexistent real); echo "$out"
 echo "$out" | grep -q "standalone claude command on PATH" || fail "8: no claude hint"
 echo "ok 8: hook reports status reasons and a missing claude"
+
+mkdir -p /tmp/home/.local/bin; cp /t/rel/good/minigw-linux-arm64 /tmp/home/.local/bin/minigw
+mkdir -p /tmp/d9/bin; cp /t/minigw-old /tmp/d9/bin/minigw
+out=$(run /tmp/d9 older testkey); echo "$out"
+cmp -s /tmp/home/.local/bin/minigw /tmp/d9/bin/minigw || fail "9: installed minigw not copied over the plugin copy"
+! echo "$out" | grep -q "not updated" || fail "9: downgrade note although the installed minigw is used"
+cp /t/minigw-old /tmp/home/.local/bin/minigw; cp /t/minigw-old /tmp/d9/bin/minigw
+out=$(run /tmp/d9 good testkey); echo "$out"
+cmp -s /t/rel/good/minigw-linux-arm64 /tmp/d9/bin/minigw || fail "9: older installed minigw copied instead of the release"
+rm -rf /tmp/home/.local
+echo "ok 9: installed minigw preferred when not older than the release"
 ' || fail "docker cases"
 print "plugin install test ok"

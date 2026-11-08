@@ -249,6 +249,14 @@ func TestServeRefusesDirectMode(t *testing.T) {
 	if _, ok := registerShare(c, "sid5", t.TempDir(), false, "", []string{"direct"}, true, false); ok {
 		t.Fatal("explicit direct accepted")
 	}
+	// --minigw-ro --minigw-work=worktree: workMode da direct, prehod ga zavrne → sync samo za branje (ne 400)
+	if w, ro := workMode("worktree", nil, true); !workImplicit("worktree", w) || workImplicit("direct", "direct") {
+		t.Fatal("read-only worktree must fall back like auto, explicit direct must not")
+	} else if sc, ok := registerShare(c, "sid7", t.TempDir(), ro, "", workCandidates(w, ro, false, false), true, true); !ok || !sc.sync || !sc.readOnly {
+		t.Fatalf("read-only worktree not switched to a read-only sync: %v %q", ok, sc.refusal)
+	} else {
+		sc.unregister()
+	}
 	// M1: repozitorij v nadrejeni mapi (dotfiles v domači mapi, monorepo) → sync, ne worktree; koren sam → worktree.
 	repo := realPath(t.TempDir()) // macOS: /var → /private/var, kot ga vrne git
 	writeT(t, filepath.Join(repo, "sub", "a.txt"), "a\n")

@@ -69,9 +69,15 @@ func TestShareCommandAndWanted(t *testing.T) {
 
 func TestAutoShare(t *testing.T) {
 	home, _ := os.UserHomeDir()
-	yes := []string{filepath.Join(home, "Development", "x"), "/Volumes/Java/importers/app", "/srv/projects/app"}
+	// podmapa začasne mape (tudi %TEMP% v AppData) da, začasna mapa sama ne (0.5.19: privzeti auto jo kopira)
+	yes := []string{filepath.Join(home, "Development", "x"), "/Volumes/Java/importers/app", "/srv/projects/app",
+		filepath.Join(os.TempDir(), "proj")}
 	no := []string{"/", home, filepath.Join(home, ".ssh"), filepath.Join(home, "Library", "Mail"), "/Volumes/Java",
-		"/usr/local/src", "/System/Library", "/Users/other/Documents", "/Applications/X.app", "/tmp/x"}
+		"/usr/local/src", "/System/Library", "/Users/other/Documents", "/Applications/X.app", os.TempDir()}
+	if runtime.GOOS != "windows" {
+		yes = append(yes, "/tmp/x", "/private/tmp/claude-501/x")
+		no = append(no, "/tmp", "/private/tmp", "/private/tmp/../etc")
+	}
 	for _, p := range yes {
 		if !autoShare(p) {
 			t.Errorf("%s should be shared", p)

@@ -61,9 +61,22 @@ rm -rf "$st"
 # #25: brez vračanja na starejšo podpisano izdajo. Različica izdaje: podpisana vrstica »VERSION <v>« v SHA256SUMS;
 # podpisana izdaja brez nje je 0.5.17 ali starejša (vrstica je od 0.5.18; oznaka v naslovu ni zanesljiva: GitHub
 # preusmeri na CDN). Starejša od nameščenega minigw: ni posodobitve, razen z --allow-downgrade ali MINIGW_ALLOW_DOWNGRADE=1.
-if [ -n "$sums" ] && [ -x "$EXE" ] && [ ! -L "$EXE" ]; then
+rel=""
+if [ -n "$sums" ]; then
   rel=$(printf '%s\n' "$sums" | sed -n 's/^VERSION \([0-9][0-9.]*\)$/\1/p' | head -1)
   [ -n "$rel" ] || rel=0.5.17
+fi
+# Windows/Linux: nameščen minigw (MSI: %LOCALAPPDATA%\Programs\Mini Gateway, install.sh: ~/.local/bin) ima prednost,
+# če ni starejši od izdaje (brez podpisane izdaje: od kopije vtičnika), kot brew/aplikacija na macOS: ena različica povsod.
+inst="" iv=""
+case $os in
+  windows) [ -n "${LOCALAPPDATA:-}" ] && command -v cygpath >/dev/null 2>&1 && inst="$(cygpath -u "$LOCALAPPDATA")/Programs/Mini Gateway/minigw.exe" ;;
+  linux) inst="$HOME/.local/bin/minigw" ;;
+esac
+[ -n "$inst" ] && [ -x "$inst" ] && iv=$(ver "$inst")
+case $iv in *[!0-9.]*) iv="" ;; esac
+if [ -n "$iv" ] && ! older "$iv" "$MIN" && ! older "$iv" "${rel:-$(ver "$EXE")}"; then :; else inst=""; fi
+if [ -z "$inst" ] && [ -n "$sums" ] && [ -x "$EXE" ] && [ ! -L "$EXE" ]; then
   have=$(ver "$EXE"); case $have in *[!0-9.]*) have="" ;; esac
   if older "$rel" "$have" && [ "${1:-}" != --allow-downgrade ] && [ "${MINIGW_ALLOW_DOWNGRADE:-}" != 1 ]; then
     sums="" unsigned="the latest release ($rel) is older than the installed minigw $have (run with MINIGW_ALLOW_DOWNGRADE=1 to go back)"
@@ -103,7 +116,11 @@ if [ "$os" = darwin ]; then
   fi
 else
   # Windows/Linux: ena izvršljiva datoteka (Go, brez odvisnosti); kontrolna vsota iz SHA256SUMS iste izdaje.
-  if [ ! -x "$EXE" ] || { [ -n "$(want "$asset")" ] && [ "$(sha "$EXE")" != "$(want "$asset")" ]; }; then
+  # Nameščen minigw: kopija (Git Bash namesto povezave naredi kopijo), le ob drugi vsebini.
+  if [ -n "$inst" ]; then
+    [ -x "$EXE" ] && [ "$(sha "$inst")" = "$(sha "$EXE")" ] || { cp "$inst" "$EXE.new" && chmod +x "$EXE.new" && mv -f "$EXE.new" "$EXE"; } ||
+      { rm -f "$EXE.new"; echo "minigw plugin: could not copy $inst to $EXE; the plugin's minigw stays."; }
+  elif [ ! -x "$EXE" ] || { [ -n "$(want "$asset")" ] && [ "$(sha "$EXE")" != "$(want "$asset")" ]; }; then
     fetch "$asset" || [ -x "$EXE" ] || {
       echo "minigw plugin: could not download or verify $asset from github.com/$REPO${unsigned:+ ($unsigned)}; gateway skills are unavailable."; exit 0; }
   fi
@@ -115,7 +132,7 @@ case $cur in *[!0-9.]*) cur="" ;; esac
 older "$cur" "$MIN" && echo "minigw plugin: minigw $cur is older than $MIN, which this plugin needs for profiles (--name, @<profile>): run /minigw:gw update."
 
 # L4 (0.5.17): posodobitev zavrnjena (podpis), obstoječa ostane: povej, zakaj.
-[ -n "$unsigned" ] && [ -x "$EXE" ] && echo "minigw plugin: not updated: $unsigned; the installed minigw stays."
+[ -n "$unsigned" ] && [ -z "$inst" ] && [ -x "$EXE" ] && echo "minigw plugin: not updated: $unsigned; the installed minigw stays."
 
 # Nameščen prehod starejši od izdaje: le namig (posodobitev bi prekinila tekoče zahteve agentov).
 old=""; new=$(ver "$EXE")

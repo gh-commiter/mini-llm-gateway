@@ -839,3 +839,12 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     #expect((resp as? HTTPURLResponse)?.statusCode == 400 && String(decoding: data, as: UTF8.self).contains("Worktree mode cannot be read-only"),
             "\(String(decoding: data, as: UTF8.self))")
 }
+
+/// Odjemalec Go na Windows pošlje x-worktree-top z »/« (git), cwd z »\« (0.5.19: Mac prehod je worktree zavrnil).
+@Test func worktreeClientPathsFromWindows() {
+    #expect(Worktree.clientTree(top: "C:/Users/u/repo", cwd: #"C:\Users\u\repo"#)! == ("C:/Users/u/repo", ""))
+    #expect(Worktree.clientTree(top: "C:/Users/u/repo", cwd: #"C:\Users\u\repo\a\b"#)! == ("C:/Users/u/repo", "a/b"))
+    #expect(Worktree.clientTree(top: "/Users/u/repo/", cwd: "/Users/u/repo/src")! == ("/Users/u/repo", "src"))
+    #expect(Worktree.clientTree(top: "C:/Users/u/repo", cwd: #"C:\Users\u\repo2"#) == nil)
+    #expect(Worktree.clientTree(top: "", cwd: "/x") == nil && Worktree.clientTree(top: "/", cwd: "/x") == nil)
+}

@@ -99,6 +99,16 @@ public enum Worktree {
     /// Ime veje agenta (router ni zaupanja vreden: minigw zapiše le take refe).
     public static func validBranch(_ b: String) -> Bool { b.range(of: #"^minigw/[a-z]+-[0-9a-f]{8}-[0-9]+$"#, options: .regularExpression) != nil }
 
+    /// Repozitorij in podmapa iz poti odjemalca (x-worktree-top, x-claude-mini-cwd); odjemalec Go na Windows pošlje
+    /// »C:/repo« in »C:\repo«: »\« → »/« kot worktreeTree v minigw serve. nil = cwd ni v repozitoriju.
+    static func clientTree(top: String, cwd: String) -> (top: String, sub: String)? {
+        var top = top.replacingOccurrences(of: "\\", with: "/")
+        let cwd = cwd.replacingOccurrences(of: "\\", with: "/")
+        while top.hasSuffix("/") { top.removeLast() }
+        guard !top.isEmpty, cwd == top || cwd.hasPrefix(top + "/") else { return nil }
+        return (top, String(cwd.dropFirst(top.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/")))
+    }
+
     // MARK: odjemalec (minigw)
 
     /// Koren repozitorija za cwd (git uporabnika, njegove nastavitve); nil zunaj repozitorija.

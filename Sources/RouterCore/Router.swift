@@ -349,16 +349,14 @@ public final class Router: Sendable {
                 native = nil
             }
             if worktree {
-                let top = req.header("x-worktree-top") ?? ""
                 guard Worktree.scratchIsSafe(config.scratchURL) else {
                     return (await error(400, "invalid_request_error", "Worktree mode: the Scratch folder must not be in a temporary or build cache folder",
                                         rid: rid, writer: writer), nil, "share")
                 }
-                guard !readOnly, !top.isEmpty, cwd == top || cwd.hasPrefix(top.hasSuffix("/") ? top : top + "/") else {
+                guard !readOnly, let (top, sub) = Worktree.clientTree(top: req.header("x-worktree-top") ?? "", cwd: cwd) else {
                     return (await error(400, "invalid_request_error", "Worktree mode needs a writable git repository that contains the folder",
                                         rid: rid, writer: writer), nil, "share")
                 }
-                let sub = String(cwd.dropFirst(top.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
                 guard sub.isEmpty || !sub.split(separator: "/", omittingEmptySubsequences: false)
                     .contains(where: { $0.isEmpty || $0 == "." || $0 == ".." || $0.contains("\0") || Sync.isGitPath(String($0)) }) else {
                     return (await error(400, "invalid_request_error", "Bad folder path", rid: rid, writer: writer), nil, "share")

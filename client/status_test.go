@@ -65,7 +65,7 @@ func TestStatusOutputCannotBeForged(t *testing.T) {
 		t.Error("403 must not be connected")
 	}
 	for _, l := range strings.Split(string(b), "\n") {
-		if strings.HasPrefix(l, "Device:") || strings.HasPrefix(l, "Status:    connected") || strings.ContainsAny(l, "\x1b\r‮") {
+		if strings.HasPrefix(l, "Device:") || strings.HasPrefix(l, "Models:") || strings.HasPrefix(l, "Status:    connected") || strings.ContainsAny(l, "\x1b\r‮") {
 			t.Errorf("forged or unclean line: %q", l)
 		}
 	}
