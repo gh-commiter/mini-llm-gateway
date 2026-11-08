@@ -23,11 +23,12 @@ struct SettingsView: View {
     @State private var cliTools: [String] = []
     @State private var selectedRoot: String?
     @State private var removingDevice: DeviceConfig?
+    @State private var clearingSessions = false
     @State private var allowNames: [String: String] = [:]  // ime čakajoče naprave, preden jo dovoliš
 
     static func lastSeen(_ id: String) -> String {
-        Router.deviceLog.lastSeen(id).map { String(localized: "Last seen \($0.formatted(date: .abbreviated, time: .shortened))") }
-            ?? String(localized: "Not seen since the gateway started")
+        Router.history.lastSeen(id).map { String(localized: "Last seen \($0.formatted(date: .abbreviated, time: .shortened))") }
+            ?? String(localized: "Never connected")
     }
     @State private var codexModels: [Codex.Model] = []
     @State private var askCopilotCommands = false
@@ -37,7 +38,7 @@ struct SettingsView: View {
     @State private var foundryFound: String?  // samodejno najdena pot (iskanje v .task, ne ob vsakem izrisu)
 
     enum Pane: Hashable {
-        case general, provider(String), siri, appleFM, foundry, claudeCLI, codex, copilot, grok, devices
+        case general, provider(String), siri, appleFM, foundry, claudeCLI, codex, copilot, grok, devices, sessions
     }
 
     private struct Item: Identifiable {
@@ -73,7 +74,9 @@ struct SettingsView: View {
                Item(pane: .grok, title: "Grok CLI", symbol: "sparkle", color: .indigo,
                     about: String(localized: "xAI Grok CLI as an agent model in the session's folder.")),
                Item(pane: .devices, title: String(localized: "Devices"), symbol: "laptopcomputer.and.iphone", color: .blue,
-                    about: String(localized: "Computers that may use this gateway. Compare a waiting device's ID with the one on the client before you allow it."))]
+                    about: String(localized: "Computers that may use this gateway. Compare a waiting device's ID with the one on the client before you allow it.")),
+               Item(pane: .sessions, title: String(localized: "Sessions"), symbol: "clock.arrow.circlepath", color: .green,
+                    about: String(localized: "Recent client sessions: folder, work mode and use per model. Prompts and answers are never stored."))]
     }
 
     @State private var removing = false
@@ -263,6 +266,7 @@ struct SettingsView: View {
         case .grok: grok
         case .foundry: foundry
         case .devices: devices
+        case .sessions: sessions
         }
     }
 
@@ -418,7 +422,15 @@ struct SettingsView: View {
                         } label: {
                             DeviceNameField(name: $d.name)
                             Text(verbatim: d.id).font(.caption.monospaced()).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
-                            Text(([Self.lastSeen(d.id)] + [Router.deviceLog.client(d.id)].compactMap { $0 }).joined(separator: " · "))
+                            Text(([Self.lastSeen(d.id)] + [Router.history.client(d.id)].compactMap { $0 }).joined(separator: " · "))
+                        }
+                        DisclosureGroup("History") {  // priklopi naprave (kot razširjena vrstica na strani nastavitev)
+                            let h = Router.history.history(d.id)
+                            ForEach(Array(h.enumerated()), id: \.offset) { _, c in
+                                Text(verbatim: ([c.time.formatted(date: .abbreviated, time: .shortened), c.address] + (c.client.isEmpty ? [] : [c.client]))
+                                    .joined(separator: " · ")).foregroundStyle(.secondary)
+                            }
+                            if h.isEmpty { Text("No connections recorded.").foregroundStyle(.secondary) }
                         }
                     }
                 }
@@ -440,6 +452,63 @@ struct SettingsView: View {
         } message: {
             Text("It can no longer use this gateway until you allow it again.")
         }
+    }
+
+    /// Seje, enako kot podokno Sessions na strani nastavitev minigw serve: seznam (čas, naprava, mapa, način, modeli),
+    /// razkritje pokaže števce po modelih.
+    private var sessions: some View {
+        Form {
+            header
+            Section {
+                TimelineView(.periodic(from: .now, by: 15)) { _ in
+                    let list = Router.history.sessions()
+                    ForEach(list) { s in
+                        DisclosureGroup {
+                            Text(String(localized: "Started \(s.start.formatted(date: .abbreviated, time: .shortened)) · \(Int((s.last.timeIntervalSince(s.start) / 60).rounded())) min")
+                                 + (s.branch.isEmpty ? "" : " · " + String(localized: "Branch \(s.branch)"))
+                                 + (s.role.isEmpty ? "" : " · " + String(localized: "Role \(s.role)")))
+                                .foregroundStyle(.secondary)
+                            ForEach(Array(s.models.enumerated()), id: \.offset) { _, u in
+                                LabeledContent {
+                                    Text("\(u.requests) requests · \(u.errors) errors · \(u.refused) refused · \(Int(u.seconds.rounded())) s · tokens \(u.inputTokens) in, \(u.outputTokens) out")
+                                } label: {
+                                    Text(verbatim: u.model)
+                                    let sub = [u.role.isEmpty ? nil : String(localized: "Role \(u.role)"), u.via.isEmpty ? nil : String(localized: "via \(u.via)"),
+                                               u.readOnly ? String(localized: "read-only") : nil, u.tools.isEmpty ? nil : String(localized: "tools \(u.tools)")]
+                                        .compactMap { $0 }.joined(separator: " · ")
+                                    if !sub.isEmpty { Text(verbatim: sub) }
+                                }
+                            }
+                        } label: {
+                            Text(verbatim: s.last.formatted(date: .abbreviated, time: .shortened) + " · " + Self.who(s))
+                            Text(verbatim: ([s.folder, s.mode + (s.readOnly ? ", " + String(localized: "read-only") : ""),
+                                            Set(s.models.map(\.model)).sorted().joined(separator: ", ")].filter { !$0.isEmpty }).joined(separator: " · "))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    if list.isEmpty { Text("No sessions recorded.").foregroundStyle(.secondary) }
+                }
+            } header: {
+                HStack {
+                    Text("Sessions")
+                    Spacer()
+                    Button("Clear History") { clearingSessions = true }
+                }
+            } footer: {
+                Text("The last 200 sessions and the last 20 connections of each allowed device are kept on this computer.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .alert(Text("Clear the session history?"), isPresented: $clearingSessions) {
+            Button("Clear History", role: .destructive) { Router.history.clearSessions() }
+            Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    static func who(_ s: GatewayHistory.Session) -> String {
+        guard !s.device.isEmpty else { return String(localized: "This computer") }
+        let name = s.deviceName.isEmpty ? s.device : s.deviceName
+        return s.deviceRemoved ? String(localized: "\(name) (removed)") : name
     }
 
     private var appleFM: some View {

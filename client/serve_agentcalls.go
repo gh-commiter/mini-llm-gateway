@@ -27,6 +27,7 @@ type agentRun struct {
 	chain              []string // vrste agentov od zahteve odjemalca do tega izvajanja (vključno s tem)
 	device             *serveDevice
 	session, cwd       string // seja in mapa odjemalca (glave izvirne zahteve)
+	role               string // vloga klicatelja (--minigw-role); vprašani agent je ne more spremeniti
 	dir                string // mapa izvajanja: kopija sync, klon worktree ali mapa seje
 	readOnly           bool   // mapa le za branje (--minigw-ro): tudi za vprašanega agenta
 	wt, maven, objects string // worktree: klon, Maven in objekti zrcala klicatelja ("" = ni worktree)
@@ -117,7 +118,7 @@ func (s *server) startRun(r *req, kind, dir string, readOnly, shared bool, wt, m
 		os.RemoveAll(ownDir)
 		return nil, nil
 	}
-	run := &agentRun{kind: kind, device: r.conn.device, session: r.h("x-claude-mini-session"), cwd: r.h("x-claude-mini-cwd"),
+	run := &agentRun{kind: kind, device: r.conn.device, session: r.h("x-claude-mini-session"), cwd: r.h("x-claude-mini-cwd"), role: reqRole(r),
 		dir: dir, readOnly: readOnly, shared: shared, wt: wt, maven: maven, objects: objects, token: token, url: "http://" + ln.Addr().String(),
 		authFile: authFile, ownDir: ownDir, slots: make(chan struct{}, maxNested)}
 	if p := runOf(r); p != nil {
@@ -184,6 +185,10 @@ func (s *server) runHandler(run *agentRun) http.Handler {
 		hr.Header.Del("X-Claude-Mini-Share")
 		hr.Header.Set("X-Claude-Mini-Session", run.session)
 		hr.Header.Set("X-Claude-Mini-Cwd", run.cwd)
+		hr.Header.Del("X-Claude-Mini-Role") // vloga iz izvajanja, ne od vprašanega agenta
+		if run.role != "" {
+			hr.Header.Set("X-Claude-Mini-Role", run.role)
+		}
 		s.ServeHTTP(w, hr.WithContext(context.WithValue(hr.Context(), agentRunKey{}, run)))
 	})
 }

@@ -89,12 +89,35 @@ public final class Router: Sendable {
             onActivity(.started(id: rid, time: start, model: model))
         }
         defer { if tracked { onActivity(.finished(id: rid)) } }
-        let (status, model, provider) = await route(req, rid: rid, writer: writer)
+        let usage = tracked ? UsageWriter(writer) : nil
+        let (status, model, provider) = await route(req, rid: rid, writer: usage ?? writer)
         writer.close()
+        if let usage, let model {  // le zahteva, ki je prišla do modela (overjena, dovoljena naprava)
+            await recordSession(req, model: model, status: status, took: Date().timeIntervalSince(start), usage: usage.usage)
+        }
         let ms = Int(Date().timeIntervalSince(start) * 1000)
         let via = AgentRun.current.map { " via=" + $0.via } ?? ""  // L3: vprašal ga je agent tega prehoda
         Self.log.info("\(rid, privacy: .public)\(via, privacy: .public) \(req.method, privacy: .public) \(req.path.hasPrefix("/dav/") ? "/dav/…" : req.path, privacy: .public) model=\(model ?? "-", privacy: .public) provider=\(provider ?? "-", privacy: .public) status=\(status) \(ms)ms bytes=\(req.body.count)")
         if provider != "share" { onLog(RequestLog(time: start, method: req.method, path: req.path, model: model, provider: provider, status: status, ms: ms)) }  // brez prometa map v »Activity«
+    }
+
+    /// Zahteva za model v zgodovino seje (naprava, mapa in način iz glav in delitve; brez besedila), kot v minigw serve.
+    func recordSession(_ req: HTTPRequest, model: String, status: Int, took: TimeInterval, usage: (input: Int, output: Int)) async {
+        var u = GatewayHistory.Use()
+        u.session = req.header("x-claude-mini-session") ?? ""
+        u.folder = req.header("x-claude-mini-cwd") ?? ""
+        u.role = GatewayHistory.role(req)
+        u.via = AgentRun.current?.via ?? ""  // vgnezdeni klic: veriga iz izvajanja (nikoli iz glave), v seji klicatelja
+        u.os = String(Noise.cleanName(req.header("x-minigw-client") ?? "").split(separator: ",").first ?? "")  // »macOS, minigw 0.5.18«
+        u.tools = GatewayHistory.restrictions(model, config)
+        u.model = status == 404 ? "unknown" : model  // M1: neznan ali zavrnjen model: stalno ime, ne niz odjemalca
+        u.status = status; u.took = took; u.input = usage.input; u.output = usage.output
+        if let d = req.device {
+            u.device = d.id
+            u.deviceName = config.devices.first { $0.id == d.id }?.name ?? d.name
+        }
+        if !u.session.isEmpty { (u.mode, u.readOnly, u.branch) = await Self.shares.sessionMode(u.session, device: req.device?.id) }
+        Self.history.record(u)
     }
 
     /// Za napake, ki nastanejo že pri branju zahteve.
@@ -162,7 +185,7 @@ public final class Router: Sendable {
                 Self.log.info("\(rid, privacy: .public) refused unknown device \(d.name, privacy: .public) \(d.id, privacy: .public)")
                 return (await error(403, "permission_error", Self.refusal(d), rid: rid, writer: writer), nil, nil)
             }
-            Self.deviceLog.seen(d.id, client: Noise.cleanName(req.header("x-minigw-client") ?? ""))
+            Self.history.seen(d.id, address: req.peer, client: Noise.cleanName(req.header("x-minigw-client") ?? ""))
         }
         return await routeAllowed(req, rid: rid, writer: writer)
     }

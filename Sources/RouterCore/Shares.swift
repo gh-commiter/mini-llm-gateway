@@ -157,6 +157,16 @@ public actor ShareHub {
         return s.key
     }
 
+    /// Način seje za zgodovino: chat (brez mape), direct (priklop WebDAV), sync, native ali worktree (z vejo agenta).
+    /// M2: le mapa iste naprave (druga naprava z istim ID-jem seje ne opiše te seje).
+    func sessionMode(_ session: String, device: String?) -> (mode: String, readOnly: Bool, branch: String) {
+        guard let s = share(session: session, device: device) else { return ("chat", false, "") }
+        if s.tree != nil {
+            return ("worktree", s.readOnly, slots.filter { $0.key.hasPrefix(session + "|") }.min { $0.key < $1.key }?.value.branch ?? "")
+        }
+        return (s.native != nil ? "native" : s.copy != nil ? "sync" : "direct", s.readOnly, "")
+    }
+
     /// Mapa seje je deljena samo za branje.
     func isReadOnly(session: String) -> Bool { bySession[session]?.readOnly ?? false }
 

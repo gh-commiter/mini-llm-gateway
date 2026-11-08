@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Device history and sessions (Mac and `minigw serve`):** last seen and the client's OS and version now survive
+  restarts, and each allowed device keeps its last 20 connections (Devices → History, `minigw gw devices history <id>`,
+  `GET /devices/{id}/history`). A new **Sessions** pane lists the last 200 client sessions with device, folder, work mode
+  and per-model requests, errors, refusals, time and tokens (`minigw gw sessions`, `GET /sessions`); **Clear History**
+  clears them. It stores folder paths, branch names and client addresses, never text; the history is a 0600 file on
+  the gateway's computer.
+- `minigw --minigw-role NAME` (or `MINIGW_ROLE`) sends the caller's role to the gateway, which records it in the
+  session history (both clients), with counts per model and role and the agent's restrictions (read-only, tools). It is a guard against mistakes, not a security boundary.
+  A model asked by an agent (agent calls) counts in the caller's session, with the calling chain (`via`) and the
+  caller's role; the asked agent cannot change either. Plugin 0.5.13.
 - `minigw serve` no longer has a default folder for agents (`folder` in serve.json, the settings field and
   `minigw gw claude --folder`): as on the Mac, an agent request without a shared, synced or worktree folder is refused.
   A stored `folder` becomes an allowed folder; `minigw serve --folder X` (and `serve init`) still works, adds X to the

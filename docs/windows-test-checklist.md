@@ -57,6 +57,11 @@ One pass with the combined build, before the release. Each item: what to do, wha
   page at once. `minigw gw devices deny <id>` removes it (a name is not accepted).
 - A waiting device with the same name as an allowed one shows ⚠ (same name).
 - Allowed devices show last seen and OS/version; Copy ID copies the ID.
+- Restart the gateway (tray Quit, start again): last seen and OS/version stay. History (▸) lists connections with
+  time, address and OS/version; a new one appears only after 10 minutes without requests.
+- Sessions pane (after Devices): after a `claude --model claude-sonnet …` run in a synced folder, the session shows the
+  folder, `sync` and the model; ▸ shows requests and tokens. `minigw gw sessions` and `minigw gw sessions <id>` print
+  the same. `MINIGW_ROLE=security minigw …`: the session shows "Roles security". Clear History empties the list. Remove a device: its sessions say "(removed)", its history is gone.
 - "Allow any device with the token" can be turned on only while the allowed list is empty; with a device allowed it is off.
 - A client without a device key (an old minigw, or plain HTTP from another computer) is refused unless the list is empty
   and "Allow any device" is on.

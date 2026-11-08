@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -30,6 +31,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -368,7 +370,7 @@ type server struct {
 	cfgDir   string      // mapa nastavitev (žeton, ključ routerja): agentu prepovedana
 	claude   []string    // claude.exe ali node + cli.js; prazno = ni nameščen
 	pending  []apiDevice // nedavno zavrnjene naprave (največ 20)
-	seen     sync.Map    // ID naprave → deviceStamp: zadnja zahteva, OS in različica (le v pomnilniku, kot na Macu)
+	state    *gwState    // zadnji stik in priklopi naprav, seje (state.json; serve_history.go)
 	admin    string      // skrivnost skrbniškega API (admin.secret)
 	offline  bool        // minigw router brez tekočega routerja: le serve.json
 	settings settingsState
@@ -446,7 +448,8 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	}
 	s := &server{cfg: c, cfgPath: cfgPath, cfgDir: cfgDir, claude: exe, admin: secret, key: k, log: log.New(out, "", log.LstdFlags), hub: newShareHub(),
 		sessions: sessionRegistry{m: map[string]string{}}, procs: make(chan struct{}, 6),
-		gwSlots: make(chan struct{}, 16)}
+		gwSlots: make(chan struct{}, 16), state: loadState(filepath.Join(cfgDir, "state.json"))}
+	s.state.prune(c.Devices)
 	switch {
 	case runtime.GOOS == "windows" && len(unsandboxedTools(c.Tools)) > 0:
 		s.log.Printf("WARNING: %s allowed without a sandbox: agents can run any command as this user and read the provider API keys in Credential Manager and the admin secret",
@@ -636,6 +639,9 @@ func (s *server) update(f func(*serveConfig) error, commit ...func()) error {
 		return err
 	}
 	s.cfg = live
+	if s.state != nil {
+		s.state.prune(live.Devices) // odstranjena naprava: brez zgodovine priklopov, seje označene
+	}
 	for _, c := range commit { // pod s.mu, šele ko sta oba prehoda uspela
 		c()
 	}
@@ -652,6 +658,14 @@ func (s *server) serve(ln net.Listener) error {
 	srv.SetKeepAlivesEnabled(false) // ena zahteva na povezavo, kot router na macOS
 	l := &serveListener{Listener: ln, conns: make(chan net.Conn), done: make(chan struct{})}
 	go s.acceptLoop(l)
+	go s.state.saveEvery(time.Minute)
+	go func() { // konec (systemd, Ctrl+C): zgodovina na disk
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, syscall.SIGTERM, os.Interrupt)
+		<-sig
+		s.state.save()
+		os.Exit(0)
+	}()
 	return srv.Serve(l)
 }
 
@@ -903,7 +917,15 @@ func (s *server) ServeHTTP(w http.ResponseWriter, hr *http.Request) {
 	b := make([]byte, 16)
 	rand.Read(b)
 	r := &req{Request: hr, conn: hr.Context().Value(connKey{}).(*serveConn), rid: fmt.Sprintf("req_%x", b)}
+	var uw *usageWriter
+	if hr.Method == "POST" && hr.URL.Path == "/v1/messages" {
+		uw = &usageWriter{ResponseWriter: w}
+		w = uw
+	}
 	status, model := s.handle(w, r)
+	if uw != nil && model != "" { // le zahteva, ki je prišla do modela (overjena, dovoljena naprava)
+		s.recordSession(r, model, status, time.Since(start), uw.in, uw.out)
+	}
 	if hr.URL.Path == "/minigw/share/next" && status == 204 {
 		return // long poll vsakih 25 s: brez vrstice
 	}
@@ -954,7 +976,7 @@ func (s *server) handle(w http.ResponseWriter, r *req) (int, string) {
 		return writeError(w, r.rid, 403, "This gateway needs a device key: update minigw and run minigw connect again"), ""
 	}
 	if d := r.conn.device; d != nil && !r.conn.loopback() {
-		s.deviceSeen(*d, cleanDeviceName(r.Header.Get("X-Minigw-Client")))
+		s.deviceSeen(*d, r.conn.peer, cleanDeviceName(r.Header.Get("X-Minigw-Client")))
 	}
 	limit := int64(1 << 20)
 	if bigBodies[r.Method+" "+r.URL.Path] {

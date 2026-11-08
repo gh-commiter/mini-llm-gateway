@@ -262,6 +262,9 @@ log shows `minigw gw devices allow <id>`. Anyone with the token can try to conne
 device you just connected before you allow it. `minigw gw devices` lists the allowed devices and the ones
 waiting, `minigw gw devices allow <id> [--name N]` allows one, `rename <id> --name N` renames it, and
 `minigw gw devices deny <id>` removes or rejects one. The name is only a label; the ID identifies the device.
+`minigw gw devices history <id>` shows the device's last 20 connections (time, address, OS and minigw version), and
+`minigw gw sessions [--device ID] [--folder DIR]` the recent sessions (`minigw gw sessions <id>` for one, `clear` to
+clear them).
 
 **Windows tray.** `minigw-tray-windows-amd64.exe` (or `-arm64.exe`) is the same gateway with an icon in the
 notification area instead of a console window. On first start it creates the config. Its menu shows the status,
@@ -361,6 +364,10 @@ The list is per computer: with several profiles every gateway gets the folder on
 **Read-only:** `minigw --minigw-ro …` (or `MINIGW_SHARE=ro`, for example in the `env` of Claude Code's settings for the
 plugin) shares the folder read-only: minigw refuses every write, the gateway mounts it read-only and runs Codex and
 Grok in their read-only sandbox. Agents read files up to 32 MB in one piece (larger ones only in ranges).
+**Role:** `minigw --minigw-role NAME …` (or `MINIGW_ROLE`) tells the gateway the caller's role (1-32 letters, digits,
+`. _ -`), for example `security` in a Claude Code subagent's environment. The gateway only records it in the session
+history for now. A role is a guard against mistakes, not a security boundary: anything in the same session can
+claim another role.
 The gateway caches folder listings (PROPFIND) for 10 seconds, like davfs2's `dir_refresh`; writes through the mount clear
 the cache at once, changes made on the client outside the mount show up within 10 seconds.
 The folder's own Claude Code settings and hooks are not loaded on the gateway Mac. Set `MINIGW_SHARE=0` to turn it off.
@@ -481,7 +488,11 @@ lists every control on both. Client options (`minigw share`, `--minigw-work`, `-
 - **Devices** (both) – **Allow any device with the token** (only while no device is allowed), allowed client IPs,
   unencrypted connections from other computers; devices **waiting for approval** with name (editable), ID, address,
   time, OS and minigw version, **Allow** / **Reject**; **allowed devices** with name (rename), ID, last seen,
-  **Copy ID** / **Remove**. The Mac also shows waiting devices in the menu bar with a notification.
+  **History** (the last 20 connections), **Copy ID** / **Remove**. The Mac also shows waiting devices in the menu bar
+  with a notification.
+- **Sessions** (both) – the last 200 client sessions: time, device, folder, work mode and models; open one for its
+  requests, errors, refusals, time and tokens per model. **Clear History** clears them. It stores folder paths, branch
+  names and client addresses, never text; the history stays on the gateway's computer.
 - **Providers** (LiteLLM, OpenRouter or any other Anthropic-compatible one) – name, base URL, API key, and a switch
   per discovered model. **+ / −** under the sidebar adds or removes providers.
 - **Siri AI** (Mac) – off by default; turning it on asks for Accessibility permission. Privacy note and the devices

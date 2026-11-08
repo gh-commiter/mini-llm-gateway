@@ -76,6 +76,8 @@ button.btn.icon { min-width: 28px; padding: 3px 8px; }
 select { font: inherit; padding: 3px 8px; border: 1px solid var(--inputline); border-radius: 6px; background: var(--input); color: var(--text); }
 a.link { color: var(--accent); text-decoration: none; }
 a.btn { text-decoration: none; text-align: center; display: inline-block; }
+.row.sub-row { min-height: 28px; padding: 4px 12px 4px 28px; }
+.row.clickable { cursor: pointer; }
 .row.selected { background: color-mix(in srgb, var(--accent) 20%, transparent); }
 .row.plusminus { min-height: 30px; gap: 2px; }
 .row.plusminus button { border: 0; background: none; color: var(--text); font-size: 16px; width: 24px; cursor: pointer; }
@@ -213,7 +215,18 @@ const S = {
     "Le dokler je seznam dovoljenih naprav prazen. Sicer vsaka nova naprava čaka na odobritev."],
   waiting: ["Waiting for approval", "Čakajo na odobritev"], allowed: ["Allowed devices", "Dovoljene naprave"], none: ["None", "Nobena"],
   noWaiting: ["No device is waiting.", "Nobena naprava ne čaka."], allow: ["Allow", "Dovoli"], deny: ["Reject", "Zavrni"], remove: ["Remove", "Odstrani"],
-  copyId: ["Copy ID", "Kopiraj ID"], sameName: ["Same name as an allowed device: compare the ID.", "Isto ime kot dovoljena naprava: primerjaj ID."], lastSeen: ["Last seen %s", "Nazadnje %s"], notSeen: ["Not seen since the gateway started", "Ni se povezala od zagona prehoda"],
+  copyId: ["Copy ID", "Kopiraj ID"], sameName: ["Same name as an allowed device: compare the ID.", "Isto ime kot dovoljena naprava: primerjaj ID."], lastSeen: ["Last seen %s", "Nazadnje %s"], notSeen: ["Never connected", "Še ni bila povezana"],
+  history: ["History", "Zgodovina"], noHistory: ["No connections recorded.", "Ni zabeleženih povezav."],
+  sessions: ["Sessions", "Seje"],
+  sessionsDesc: ["Recent client sessions: folder, work mode and use per model. Prompts and answers are never stored.",
+    "Nedavne seje odjemalcev: mapa, način dela in uporaba po modelih. Pozivi in odgovori se nikoli ne shranijo."],
+  noSessions: ["No sessions recorded.", "Ni zabeleženih sej."], clearHistory: ["Clear History", "Počisti zgodovino"],
+  clearAsk: ["Clear the session history?", "Počistim zgodovino sej?"], thisComputer: ["This computer", "Ta računalnik"],
+  deviceRemoved: ["%s (removed)", "%s (odstranjena)"], readOnly: ["read-only", "samo za branje"],
+  sessionTime: ["Started %s · %s min", "Začetek %s · %s min"], branch: ["Branch %s", "Veja %s"], role: ["Role %s", "Vloga %s"], via: ["via %s", "prek %s"], tools: ["tools %s", "orodja %s"],
+  modelUse: ["%s requests · %s errors · %s refused · %s s · tokens %s in, %s out", "zahtev %s · napak %s · zavrnjenih %s · %s s · žetonov %s vhod, %s izhod"],
+  sessionsFooter: ["The last 200 sessions and the last 20 connections of each allowed device are kept on this computer.",
+    "Na tem računalniku ostane zadnjih 200 sej in zadnjih 20 povezav vsake dovoljene naprave."],
   devicesFooter: ["A removed device has to be allowed again when it connects.", "Odstranjeno napravo moraš ob naslednji povezavi znova dovoliti."],
   removeAsk: ["Remove %s?", "Odstranim %s?"], addGateway: ["Add Provider", "Dodaj ponudnika"], search: ["Search", "Iskanje"],
   otherGateway: ["Other Anthropic-compatible provider", "Drug Anthropic-združljiv ponudnik"], gateway: ["Provider", "Ponudnik"], keySaved: ["API key (saved; enter to replace)", "Ključ API (shranjen; vpiši za zamenjavo)"],
@@ -537,6 +550,9 @@ const pages = {
   // dovoljene (ime, ID, zadnji stik; Copy ID, Remove).
   async devices() {
     const [d, g] = await Promise.all([api("GET", "/devices"), api("GET", "/general")]);
+    // Zgodovina povezav odprtih naprav (razširjena vrstica, kot razkritje na Macu)
+    const histories = await Promise.all(d.devices.map(x => openHistory.has(x.id)
+      ? api("GET", "/devices/" + encodeURIComponent(x.id) + "/history").then(r => r.history, () => []) : null));
     const n = note(), n2 = note(t("auto"));
     const act = (method, path, body) => save(n, async () => { await api(method, path, body); show("devices"); });
     const when = x => new Date(x).toLocaleString();
@@ -568,11 +584,41 @@ const pages = {
       n2,
       section(t("waiting")), waiting,
       section(t("allowed")),
-      group(d.devices.length ? d.devices.map(x => row(id(x, nameField(x.name, v => api("PATCH", "/devices/" + encodeURIComponent(x.id), {name: v})),
-        [x.lastSeen ? t("lastSeen", when(x.lastSeen)) : t("notSeen"), x.client].filter(Boolean).join(" · ")), buttons(copyId(x),
-        button(t("remove"), () => { if (confirm(t("removeAsk", x.name || x.id))) act("DELETE", "/devices/" + encodeURIComponent(x.id)); }))))
+      group(d.devices.length ? d.devices.flatMap((x, i) => [row(id(x, nameField(x.name, v => api("PATCH", "/devices/" + encodeURIComponent(x.id), {name: v})),
+        [x.lastSeen ? t("lastSeen", when(x.lastSeen)) : t("notSeen"), x.client].filter(Boolean).join(" · ")), buttons(
+        button((openHistory.has(x.id) ? "▾ " : "▸ ") + t("history"), () => { openHistory.has(x.id) ? openHistory.delete(x.id) : openHistory.add(x.id); show("devices"); }),
+        copyId(x),
+        button(t("remove"), () => { if (confirm(t("removeAsk", x.name || x.id))) act("DELETE", "/devices/" + encodeURIComponent(x.id)); }))),
+        ...(histories[i] ? (histories[i].length ? histories[i].map(h => el("div", {class: "row sub-row"},
+          el("span", {class: "label sub", textContent: [when(h.time), h.address, h.client].filter(Boolean).join(" · ")})))
+          : [el("div", {class: "row sub-row"}, el("span", {class: "label sub", textContent: t("noHistory")}))]) : [])])
         : row(el("span", {class: "label sub", textContent: t("none")}))),
       el("p", {class: "note", textContent: t("devicesFooter")}), n,
+    ];
+  },
+
+  // sessions: enako kot podokno Sessions na Macu: seznam (čas, naprava, mapa, način, modeli), klik razširi števce po modelih.
+  async sessions() {
+    const {sessions} = await api("GET", "/sessions");
+    const n = note();
+    const when = x => new Date(x).toLocaleString();
+    const who = x => x.device ? (x.deviceRemoved ? t("deviceRemoved", x.deviceName || x.device) : x.deviceName || x.device) : t("thisComputer");
+    const detail = x => [
+      el("div", {class: "row sub-row"}, el("span", {class: "label sub", textContent: t("sessionTime", when(x.start), Math.round(x.duration / 60))
+        + (x.branch ? " · " + t("branch", x.branch) : "") + (x.role ? " · " + t("role", x.role) : "")})),
+      ...(x.models || []).map(u => el("div", {class: "row sub-row"},
+        labelSub(u.model, [u.role && t("role", u.role), u.via && t("via", u.via), u.readOnly && t("readOnly"), u.tools && t("tools", u.tools)].filter(Boolean).join(" · ")),
+        el("span", {class: "value sub", textContent: t("modelUse", u.requests, u.errors, u.refused, Math.round(u.seconds), u.inputTokens, u.outputTokens)})))];
+    return [
+      card(...ICON.sessions, t("sessions"), t("sessionsDesc")),
+      section(t("sessions"), ...(sessions.length ? [button(t("clearHistory"), () => { if (confirm(t("clearAsk"))) save(n, async () => { await api("DELETE", "/sessions"); show("sessions"); }); })] : [])),
+      group(sessions.length ? sessions.flatMap(x => [
+        el("div", {class: "row clickable", onclick: () => { openSession = openSession === x.id ? "" : x.id; show("sessions"); }},
+          labelSub((openSession === x.id ? "▾ " : "▸ ") + when(x.last) + " · " + who(x),
+            [x.folder, x.mode + (x.readOnly ? ", " + t("readOnly") : ""), [...new Set((x.models || []).map(u => u.model))].sort().join(", ")].filter(Boolean).join(" · "))),
+        ...(openSession === x.id ? detail(x) : [])])
+        : row(el("span", {class: "label sub", textContent: t("noSessions")}))),
+      el("p", {class: "note", textContent: t("sessionsFooter")}), n,
     ];
   },
 
@@ -730,8 +776,10 @@ const pages = {
 };
 
 let current = "general", currentArg = "", gateways = [];
+const openHistory = new Set(); // naprave z odprto zgodovino (ostane ob osvežitvi vsakih 5 s)
+let openSession = "";
 // Ikone stranske vrstice (kot na Macu: barvna ploščica z znakom).
-const ICON = {general: ["#8e8e93", "⚙"], devices: ["#007aff", devicesGlyph], claude: ["#b8743c", ">_"], codex: ["#30b0c7", "</>"], grok: ["#5856d6", "✦"], copilot: ["#6e7781", "◎"], foundry: ["#0f6cbd", "◈"]};
+const ICON = {general: ["#8e8e93", "⚙"], devices: ["#007aff", devicesGlyph], sessions: ["#34c759", "◷"], claude: ["#b8743c", ">_"], codex: ["#30b0c7", "</>"], grok: ["#5856d6", "✦"], copilot: ["#6e7781", "◎"], foundry: ["#0f6cbd", "◈"]};
 const gwIcon = g => /openrouter\.ai/.test(g.baseURL) ? ["#af52de", "◈"] : ["#007aff", "▤"];
 let search = "";
 const PRESETS = {litellm: ["LiteLLM", "http://localhost:4000", true], openrouter: ["OpenRouter", "https://openrouter.ai/api", false], other: [null, "https://", false]};
@@ -750,6 +798,7 @@ async function nav() {
     ["copilot", "Copilot CLI", ICON.copilot],
     ...(pages.grok ? [["grok", "Grok CLI", ICON.grok]] : []),
     ["devices", t("devices"), ICON.devices],
+    ["sessions", t("sessions"), ICON.sessions],
   ].filter(x => !search || x[1].toLowerCase().includes(search.toLowerCase()));
   const find = el("input", {type: "text", class: "left search", placeholder: t("search"), value: search});
   find.addEventListener("input", () => { search = find.value; nav().then(() => { const f = document.querySelector("nav .search"); f.focus(); f.setSelectionRange(search.length, search.length); }); });

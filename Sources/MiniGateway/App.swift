@@ -93,6 +93,7 @@ final class AppState: ObservableObject {
 
     init() {
         config.save()  // starejši JSON blob v preferences → berljiva struktura
+        Router.history.load(GatewayHistory.defaultFile)  // zadnji stik, priklopi naprav in seje (state.json)
         Router.deviceLog.onChange = { [weak self] in
             Task { @MainActor in self?.pendingChanged(Router.deviceLog.pending) }
         }
@@ -196,6 +197,7 @@ final class AppState: ObservableObject {
     }
 
     func start() {
+        Router.history.prune(allowed: Set(config.devices.map(\.id)))  // odstranjena naprava: brez priklopov, seje označene
         let router = Router(config: config, token: token, secrets: keychain, onLog: { [weak self] entry in
             Task { @MainActor in
                 guard let self else { return }
@@ -483,7 +485,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Quit Apple event (odjava, Dock, osascript) = pravi izhod; Cmd+Q iz menija nima Apple eventa.
         let event = NSAppleEventManager.shared().currentAppleEvent
         let systemQuit = event?.eventClass == AEEventClass(kCoreEventClass) && event?.eventID == AEEventID(kAEQuitApplication)
-        if Self.quitRequested || systemQuit || !appWindows().contains(where: \.isVisible) { return .terminateNow }
+        if Self.quitRequested || systemQuit || !appWindows().contains(where: \.isVisible) {
+            Router.history.save()
+            return .terminateNow
+        }
         appWindows().forEach { $0.close() }
         NSApp.setActivationPolicy(.accessory)
         return .terminateCancel

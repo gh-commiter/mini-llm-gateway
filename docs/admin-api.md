@@ -73,8 +73,34 @@ the user.
 Device   {"id": string, "name": string, "address"?: string, "client"?: string, "time"?: string, "lastSeen"?: string}
          id: base64url of the device's 32-byte Ed25519 public key (43 characters), as the refusal message shows it.
          address, client (OS and minigw version, from newer clients) and time (RFC 3339, UTC) only for pending
-         devices; lastSeen only for allowed devices that made a request since the gateway started. name is a label
+         devices; lastSeen only for allowed devices (kept across restarts). name is a label
          (control and format characters removed, at most 64 characters); only the ID identifies a device.
+Connection {"time": string, "address": string, "client"?: string}
+         A connection is the first request of an allowed device after 10 minutes of silence; the last 20 are kept.
+Session  {"id": string, "device"?: string, "deviceName"?: string, "deviceRemoved"?: true, "start": string,
+          "last": string, "duration": number, "folder"?: string, "os"?: string, "role"?: string, "mode": string,
+          "readOnly"?: true, "branch"?: string, "models": [Use]}
+         id: the client's session ID (x-claude-mini-session; an ID over 128 bytes or with control characters is not
+         recorded), or "t-…" for requests without one (per device, a new record after 10 minutes of silence). device absent = this computer without a device
+         key. folder: the client's cwd without `.`, `..` and a trailing separator, Windows paths (`C:\…`, `\\server\…`)
+         with `/`, case kept; it is the key for later per-project settings. os: the client's OS from its client info
+         (macOS, Windows, Linux); the folder filter ignores case for macOS and Windows clients. role: the latest caller
+         role (`--minigw-role`, header `x-claude-mini-role`; cleaned, at most 32 of `A-Z a-z 0-9 . _ -`, else ignored).
+         mode: `chat` (no shared folder), `direct` (Mac: the folder mounted over WebDAV), `sync` (a copy on the
+         gateway), `native` (Mac: the folder on the gateway's SMB share), `worktree` (a clone; branch: the agent's
+         branch), `refused` (minigw serve: the client asked for direct, which it does not offer). duration in seconds.
+         The last 200 sessions are kept, at most 50 per device (a device's oldest go first); before saving, the oldest
+         go until the file is under 4 MB. Folder ≤ 1 KiB, branch ≤ 255 B, role ≤ 32 B (UTF-8, control, C1 and bidi
+         characters removed). Never prompt or answer text.
+Use      {"model": string, "role"?: string, "via"?: string, "readOnly"?: true, "tools"?: string, "requests": number,
+          "errors": number, "refused": number, "seconds": number, "inputTokens": number, "outputTokens": number}
+         One entry per model, role and via (sorted by them; at most 32, then "other"). model ≤ 64 B; a request for
+         an unknown or refused model (404) counts as "unknown". via: the agent or chain that
+         called it (agent calls, e.g. `claude` or `claude→codex`, taken from the gateway's run, never from a header;
+         the nested request also keeps the caller's session, device and role); absent = the client. readOnly and tools: the latest effective restrictions: the
+         session folder is read-only; Claude CLI's tools or "local" (Allow local tools), Codex, Grok and Copilot's
+         switches `write`, `network`, `commands` (empty = read only). errors: 5xx and aborted; refused: 4xx; seconds:
+         total request time (for agents their run time); tokens from the response's usage.
 Model    {"id": string, "model": string, "window"?: number, "enabled": bool}
          id: the ID at the provider; model: the name for /model (the id, or "claude-" + id when the id contains
          neither "claude" nor "anthropic"); window: context window in tokens, if known.
@@ -98,7 +124,11 @@ General  {"port": number, "address": string, "connect": string, "restartRequired
 | `GET /devices` | – | `{"devices": [Device], "pending": [Device], "allowAnyDevice": bool}` |
 | `POST /devices` | `{"id", "name"}` | `{"device": Device, "added": bool}`; removes it from pending; without a name, the pending device's name |
 | `PATCH /devices/{id}` | `{"name"}` | `{"device": Device}`; renames an allowed device |
-| `DELETE /devices/{id}` | – | `{"device": Device}`; by ID only; a pending device is only removed from pending (`"pending": true`), which is not a block list |
+| `DELETE /devices/{id}` | – | `{"device": Device}`; by ID only; a pending device is only removed from pending (`"pending": true`), which is not a block list. Removing an allowed device deletes its connection history; its sessions stay, with `"deviceRemoved": true` |
+| `GET /devices/{id}/history` | – | `{"id", "name", "history": [Connection]}`, newest first; 404 for a device that is not allowed |
+| `GET /sessions` | query `device`, `folder` (that folder and its subfolders) | `{"sessions": [Session]}`, newest first |
+| `GET /sessions/{id}` | – | Session |
+| `DELETE /sessions` | – | `{"cleared": true}`; clears the session history (connection histories stay) |
 | `GET /providers` | – | `{"providers": [Provider]}` |
 | `POST /providers` | `{"name", "baseURL", "key", "insecure"}` | `{"provider": Provider, "keyStore": string, "models": [Model]}` |
 | `PATCH /providers/{name}` | any of `{"name", "enabled", "baseURL", "insecure", "aliases"}` | `{"provider": Provider}`; a new name moves the key; the key stays for a new URL |
@@ -126,6 +156,9 @@ Notes:
   Linux Flatpak (`/.flatpak-info` in the process's root, or an unreadable root) and snap (`snap.*` cgroup), on Windows
   AppContainer (`TokenIsAppContainer`). Docker and other containers, VMs and tunnels (`ssh -R`, ngrok…) running as you also count as this user's apps: with the switch on they can use agents in your allowed folders without a token. Browser extensions with permission for localhost can remove `Origin` and add headers, so they can use it too.
   `minigw serve` on macOS (development only) never skips the token.
+- Last seen, connections and sessions are kept on the gateway's computer in a 0600 file next to the settings
+  (`state.json` beside `serve.json`; on the Mac in Application Support/Mini Gateway), written at most once a minute and
+  when the gateway stops. A larger file than 4 MB is not read.
 - `POST /devices` takes only a valid device ID. `pending` lists the last 20 devices that were refused since the
   gateway started (in memory), newest last.
 - `POST /providers` adds or replaces a provider. Name: letters, digits, `. _ -`, up to 32. `baseURL` without `/v1`;

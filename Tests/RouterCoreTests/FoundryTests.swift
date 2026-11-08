@@ -87,12 +87,21 @@ final class FoundryStub: URLProtocol, @unchecked Sendable {
         let s = await call("POST", "/v1/messages", #"{"model":"claude-foundry-phi-4-mini-generic-cpu","stream":true,"messages":[{"role":"user","content":"hi"}]}"#)
         #expect(s.contains("Hel") && s.contains("lo") && s.contains("message_stop") && s.contains("end_turn"))
         #expect(FoundryStub.requests.count == 2 && FoundryStub.requests.first?["model"] as? String == "phi-4-mini-generic-cpu" && FoundryStub.requests.first?["tools"] == nil)
+        // Zgodovina seje: žetoni iz odgovora (Foundry vrne usage), brez besedila.
+        let sid = "foundry-" + UUID().uuidString
+        let w = FakeWriter()
+        await router.handle(request("POST", "/v1/messages", headers: ["Authorization": "Bearer tok", "x-claude-mini-session": sid],
+                                    body: #"{"model":"claude-foundry-phi-4-mini-generic-cpu","max_tokens":5,"messages":[{"role":"user","content":"secret words"}]}"#), writer: w)
+        let rec = Router.history.sessions().first { $0.id == sid }
+        let fu = rec?.models.first { $0.model == "claude-foundry-phi-4-mini-generic-cpu" }
+        #expect(fu?.inputTokens == 7 && fu?.outputTokens == 3 && fu?.tools == "" && rec?.mode == "chat")
+        #expect(!String(decoding: (try? JSONEncoder().encode(rec)) ?? Data(), as: UTF8.self).contains("secret words"))
         let unknown = await call("POST", "/v1/messages", #"{"model":"claude-foundry-nope","messages":[{"role":"user","content":"hi"}]}"#)
         #expect(unknown.contains("404"))
         // N5: poslušalca preveri vsaka zahteva, tudi ko je naslov v predpomnilniku
         FoundryHub.listenerIsOurs = { _, _ in false }
         let taken = await call("POST", "/v1/messages", #"{"model":"claude-foundry-phi-4-mini-generic-cpu","max_tokens":5,"messages":[{"role":"user","content":"hi"}]}"#)
-        #expect(taken.contains("port belongs to another user") && FoundryStub.requests.count == 2, "\(taken)")
+        #expect(taken.contains("port belongs to another user") && FoundryStub.requests.count == 3, "\(taken)")
         await Router.foundry.forget()
     }
 

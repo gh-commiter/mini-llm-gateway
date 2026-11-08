@@ -12,6 +12,8 @@ minigw gw: show or change the Mini Gateway app on this Mac. Changes apply at onc
 
   minigw gw status
   minigw gw devices [allow <device id> [--name N] | rename <device id> --name N | deny <device id>]
+  minigw gw devices history <device id>                 the device's last connections
+  minigw gw sessions [--device ID] [--folder DIR] | <session id> | clear
   minigw gw provider add <name> <baseURL> [--insecure]   the API key is read from stdin or asked for
   minigw gw provider remove <name> | list
   minigw gw provider models <name> [text] [--all] [--enable m1,m2|all] [--disable m1,m2|all]
@@ -124,7 +126,7 @@ private func esc(_ s: String) -> String { s.addingPercentEncoding(withAllowedCha
 func routerCommand(_ argv: [String]) {
     // Ukazi in zastavice v poljubnem vrstnem redu (»--x v« ali »--x=v«).
     var pos: [String] = [], flags: [String: String] = [:]
-    let valued: Set<String> = ["name", "enable", "disable", "path", "tools", "folders", "allow-local-tools", "ask-others", "folder", "allow-unsandboxed-bash", "config"]
+    let valued: Set<String> = ["name", "enable", "disable", "path", "tools", "folders", "allow-local-tools", "ask-others", "folder", "allow-unsandboxed-bash", "config", "device"]
     var i = 0
     while i < argv.count {
         let a = argv[i]
@@ -139,7 +141,7 @@ func routerCommand(_ argv: [String]) {
     }
     if pos.isEmpty || pos[0] == "help" || flags["help"] != nil { say(routerHelp); exit(0) }
     if flags["config"] != nil { fail("the Mac router keeps its settings in the Mini Gateway app (no --config)") }
-    if flags["folder"] != nil || flags["allow-unsandboxed-bash"] != nil {
+    if pos.first == "claude" && flags["folder"] != nil || flags["allow-unsandboxed-bash"] != nil {
         fail("on the Mac use --folders (allowed folders) and --allow-local-tools (Bash runs in Claude Code's sandbox)")
     }
     func need(_ min: Int, _ max: Int) { if pos.count < min || pos.count > max { fail(routerHelp) } }
@@ -186,10 +188,36 @@ func routerCommand(_ argv: [String]) {
             let r = a.call("PATCH", "/devices/" + esc(pos[2]), ["name": name])
             let d = r["device"] as? [String: Any] ?? [:]
             say("renamed device \(d["id"] as? String ?? "") to \(q(d["name"] as? String ?? ""))")
+        } else if pos[1] == "history", pos.count == 3 {
+            let r = a.call("GET", "/devices/" + esc(pos[2]) + "/history")
+            say("\(r["id"] as? String ?? "")  \(q(r["name"] as? String ?? ""))")
+            let h = r["history"] as? [[String: Any]] ?? []
+            for x in h { say("\(x["time"] as? String ?? "")  \(q(x["address"] as? String ?? ""))  \(q(x["client"] as? String ?? ""))") }
+            if h.isEmpty { say("no connections recorded") }
         } else if pos[1] == "deny", pos.count == 3 {
             let r = a.call("DELETE", "/devices/" + esc(pos[2]))
             let d = r["device"] as? [String: Any] ?? [:]
             say("\(r["pending"] as? Bool == true ? "rejected waiting" : "removed") device \(d["id"] as? String ?? "") \(q(d["name"] as? String ?? ""))")
+        } else {
+            fail(routerHelp)
+        }
+
+    case "sessions":
+        if pos.count == 1 {
+            let query = "?device=" + esc(flags["device"] ?? "") + "&folder=" + esc(flags["folder"] ?? "")
+            let list = a.call("GET", "/sessions" + query)["sessions"] as? [[String: Any]] ?? []
+            list.forEach { say(sessionLine($0)) }
+            if list.isEmpty { say("no sessions recorded") }
+        } else if pos.count == 2, pos[1] == "clear" {
+            _ = a.call("DELETE", "/sessions")
+            say("session history cleared")
+        } else if pos.count == 2 {
+            let x = a.call("GET", "/sessions/" + esc(pos[1]))
+            say(sessionLine(x))
+            say("start \(x["start"] as? String ?? ""), last \(x["last"] as? String ?? ""), duration \(String(format: "%.0f", x["duration"] as? Double ?? 0))s")
+            if let b = x["branch"] as? String, !b.isEmpty { say("branch " + Noise.quoted(b)) }
+            if let r = x["role"] as? String, !r.isEmpty { say("role " + r) }
+            for m in x["models"] as? [[String: Any]] ?? [] { say(useLine(m)) }
         } else {
             fail(routerHelp)
         }
@@ -292,4 +320,28 @@ func routerCommand(_ argv: [String]) {
     default:
         fail("unknown command minigw gw \(pos[0])\n\n" + routerHelp)
     }
+}
+
+/// Vrstica seje za minigw gw sessions (enako kot sessionLine v Go).
+func sessionLine(_ x: [String: Any]) -> String {
+    var name = x["device"] == nil ? "this computer" : x["deviceName"] as? String ?? ""
+    if x["deviceRemoved"] as? Bool == true { name += " (device removed)" }
+    let mode = (x["mode"] as? String ?? "") + (x["readOnly"] as? Bool == true ? ", read-only" : "")
+    var models: [String] = []  // L4: imena v narekovajih, v vrstnem redu vnosov (kot v Go)
+    for m in x["models"] as? [[String: Any]] ?? [] {
+        let q = Noise.quoted(m["model"] as? String ?? "")
+        if !models.contains(q) { models.append(q) }
+    }
+    return "\(x["last"] as? String ?? "")  \(Noise.quoted(x["id"] as? String ?? ""))  \(Noise.quoted(name))  \(mode)  \(Noise.quoted(x["folder"] as? String ?? ""))  \(models.sorted().joined(separator: ", "))"
+}
+
+/// Vrstica modela seje za minigw gw sessions <id> (enako kot useLine v Go).
+func useLine(_ m: [String: Any]) -> String {
+    var label = Noise.quoted(m["model"] as? String ?? "")
+    if let r = m["role"] as? String, !r.isEmpty { label += " role " + r }
+    if let v = m["via"] as? String, !v.isEmpty { label += " via " + Noise.quoted(v) }
+    if m["readOnly"] as? Bool == true { label += " read-only" }
+    if let t = m["tools"] as? String, !t.isEmpty { label += " tools " + t }
+    let i = { (k: String) in m[k] as? Int ?? 0 }
+    return "\(label): \(i("requests")) requests, \(i("errors")) errors, \(i("refused")) refused, \(String(format: "%.0f", m["seconds"] as? Double ?? 0))s, \(i("inputTokens")) input and \(i("outputTokens")) output tokens"
 }

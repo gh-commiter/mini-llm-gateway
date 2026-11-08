@@ -197,14 +197,37 @@ extension Router {
             let iso = ISO8601DateFormatter()
             let list: [[String: Any]] = c.devices.map { d in
                 var o: [String: Any] = ["id": d.id, "name": d.name, "siri": d.siri]
-                if let t = Router.deviceLog.lastSeen(d.id) { o["lastSeen"] = iso.string(from: t) }
-                if let cl = Router.deviceLog.client(d.id) { o["client"] = cl }
+                if let t = Router.history.lastSeen(d.id) { o["lastSeen"] = iso.string(from: t) }
+                if let cl = Router.history.client(d.id) { o["client"] = cl }
                 return o
             }
             let pending: [[String: Any]] = Router.deviceLog.pending.map {
                 ["id": $0.id, "name": $0.name, "address": $0.address, "client": $0.client, "time": iso.string(from: $0.time)]
             }
             return (200, ["devices": list, "pending": pending, "allowAnyDevice": c.allowAnyDevice])
+        case "GET devices/{}/history":  // priklopi dovoljene naprave, najnovejši prvi
+            guard let d = c.devices.first(where: { $0.id == arg }) else {
+                throw AdminError(404, "no allowed device with the ID \(arg) (minigw gw devices lists the IDs)")
+            }
+            let iso = ISO8601DateFormatter()
+            let h: [[String: Any]] = Router.history.history(arg).map {
+                var o: [String: Any] = ["time": iso.string(from: $0.time), "address": $0.address]
+                if !$0.client.isEmpty { o["client"] = $0.client }
+                return o
+            }
+            return (200, ["id": arg, "name": d.name, "history": h])
+        case "GET sessions":
+            let q = URLComponents(string: "?" + (query ?? ""))?.queryItems ?? []
+            let v = { (n: String) in q.first { $0.name == n }?.value ?? "" }
+            return (200, ["sessions": Router.history.sessions(device: v("device"), folder: v("folder")).map(GatewayHistory.json)])
+        case "GET sessions/{}":
+            guard let s = Router.history.sessions().first(where: { $0.id == arg }) else {
+                throw AdminError(404, "no session \(arg) (minigw gw sessions lists them)")
+            }
+            return (200, GatewayHistory.json(s))
+        case "DELETE sessions":
+            Router.history.clearSessions()
+            return (200, ["cleared": true])
         case "POST devices":
             let b = try AdminBody(body, ["id", "name"])
             let id = try b.string("id") ?? "", given = try b.string("name") ?? ""
