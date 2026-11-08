@@ -2,9 +2,9 @@ package main
 
 import (
 	"os"
-	"strings"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"unsafe"
 )
