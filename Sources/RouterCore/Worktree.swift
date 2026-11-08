@@ -140,6 +140,19 @@ public enum Worktree {
         return r.status == 0 ? true : FileManager.default.fileExists(atPath: file.path) ? nil : false  // »empty bundle«
     }
 
+    /// Začetek dela agenta: zadnji poslani posnetek, ki je prednik veje (HEAD z neshranjenimi spremembami in nesledenimi
+    /// datotekami uporabnika; ti niso delo agenta), sicer HEAD. Prehodu ne verjame: le posnetki tega odjemalca (kot Go agentBase).
+    public static func agentBase(top: String, branch: String, sent: [String]) -> String {
+        sent.reversed().first { run(["merge-base", "--is-ancestor", $0, "refs/heads/" + branch], cwd: top, safe: false, hooks: false).status == 0 } ?? "HEAD"
+    }
+
+    /// Vrstica o dostavljeni veji (enaka v odjemalcu Go): le delo agenta, brez posnetka uporabnika.
+    public static func branchLine(branch: String, base: String) -> String {
+        let r = base + ".." + branch
+        return "agent work is on branch \(branch): review with git diff \(r) (\(base) = your state when the agent started), "
+            + "then bring it in with git cherry-pick \(r) or git diff \(r) | git apply"
+    }
+
     /// Prevzem veje agenta iz bundla routerja: le objekti in ref `refs/heads/<veja>` (fsck), brez hookov, podmodulov,
     /// FETCH_HEAD in checkouta; .git/config ostane nespremenjen. nil = uspeh, sicer razlog.
     /// Brez sile: če veja tukaj ni prednik agentove (uporabnik je nanjo commital), ostane uporabnikova.
@@ -580,6 +593,15 @@ extension ShareHub {
     /// Seja dela v načinu worktree (pred mount: Grok in Codex brez pisanja ga zavrneta).
     func isWorktree(session: String) -> Bool { bySessionTree(session) != nil }
 
+    /// Worktree brez native: agent brez pisanja sme v klonu le brati (veje ne vrne); native z git ga zavrne.
+    /// true = zavrni (native z git), false = bere v klonu (sporočilo uporabniku prek minigw).
+    func readOnlyInTree(session: String, agent: String) async -> Bool {
+        if bySessionTree(session)?.local != nil { return true }
+        let msg = "\(agent) may not write, so it only reads in the clone; no branch comes back"
+        Task { await self.note(session: session, msg) }  // ne čaka na odgovor minigw
+        return false
+    }
+
     /// Zavrnitev agenta, ki v načinu worktree ne more delati: besedilo za worktree ali native z git (tam native-direct).
     func worktreeRefusal(session: String, worktree: String, native: String) -> String {
         bySessionTree(session)?.local != nil ? native + " on this native git repository: agents work on branches here; use --minigw-work=native-direct"
@@ -608,6 +630,8 @@ extension ShareHub {
                     ? Worktree.localFetch(top: local, bundle: out, branch: branch) : "cannot bundle \(branch)" }) {
                 Router.log.error("native worktree: \(why, privacy: .public)")
                 await note(s, why)
+            } else {  // minigw izpiše vrstico o veji z obsegom od posnetka (le delo agenta)
+                await note(s, Worktree.branchLine(branch: branch, base: slot.base), extra: ["branch": branch, "base": slot.base])
             }
         } else if let tip, tip != slot.base, FileManager.default.fileExists(atPath: out.path) {
             s.result = out

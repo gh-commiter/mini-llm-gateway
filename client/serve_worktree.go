@@ -322,6 +322,13 @@ func worktreeNote(clientCwd, dir, branch string) string {
 		" Build output (.build, target, DerivedData) is never committed."
 }
 
+// worktreeReadOnlyNote: agent brez pisanja v klonu (kot ClaudeCLI.mountNote z branch in readOnly na Macu).
+func worktreeReadOnlyNote(clientCwd, dir string) string {
+	return "The user's folder " + clientCwd + " (on their computer, a git repository) is a clone here at " + dir + ", your working" +
+		" directory, read-only for you: do not try to create, change or delete files in it. Map paths under " + clientCwd + " to it." +
+		" Nothing goes back to the user, so give your answer in your reply."
+}
+
 // worktreeClaudeArgs: v peskovniku Claude Code (ne Windows) še pisanje v Maven agentov in branje objektov zrcala; .git
 // klona (config, hooks, info, commondir) ni pisljiv, Edit/Write vanj ne (nastavitve in hooke bere git samega claude).
 func worktreeClaudeArgs(args []string, wt, maven, objects string) []string {
@@ -616,6 +623,17 @@ func worktreeTree(scratch, owner, top, cwd string) (*shareTree, error) {
 	id := sha256Hex([]byte(top))[:16]
 	return &shareTree{repo: filepath.Join(scratch, "repos", owner, id+".git"), worktrees: filepath.Join(scratch, "worktrees", owner, id),
 		sub: sub, slots: map[string]*wtSlot{}}, nil
+}
+
+// note: sporočilo uporabniku seje prek minigw (WORKTREE-NOTE na stderr); starejši minigw ga zavrne.
+func (h *shareHub) note(session, msg string) {
+	h.mu.Lock()
+	s := h.bySession[session]
+	h.mu.Unlock()
+	if s != nil {
+		body, _ := json.Marshal(map[string]string{"message": msg})
+		go h.sendJob(s, "WORKTREE-NOTE", body, 10*time.Second)
+	}
 }
 
 // isWorktree: seja dela v načinu worktree (pred mount: Grok in agenti brez pisanja ga zavrnejo).

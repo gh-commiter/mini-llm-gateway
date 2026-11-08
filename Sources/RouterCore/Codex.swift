@@ -183,9 +183,10 @@ public enum Codex {
 
 extension Router {
     func runCodex(_ req: HTTPRequest, body: [String: Any], model: String?, rid: String, writer: ResponseWriter) async -> Int {
-        // worktree: agent mora pisati (klon); lastnikova nastavitev »brez pisanja« velja, zato zavrni.
+        // worktree brez pisanja: le branje v klonu (brez veje); native z git zavrne (tam native-direct).
         if !config.codex.write, (body["tools"] as? [Any])?.isEmpty == false,
-           await Self.shares.isWorktree(session: req.header("x-claude-mini-session") ?? "") {
+           await Self.shares.isWorktree(session: req.header("x-claude-mini-session") ?? ""),
+           await Self.shares.readOnlyInTree(session: req.header("x-claude-mini-session") ?? "", agent: "Codex") {
             let why = await Self.shares.worktreeRefusal(session: req.header("x-claude-mini-session") ?? "",
                                                          worktree: "Codex may not write (Mini Gateway → Settings → Codex), so worktree mode is not possible; use sync",
                                                          native: "Codex may not write (Mini Gateway → Settings → Codex), so it cannot work")
@@ -237,7 +238,8 @@ extension Router {
             }
             if let shared, let clientCwd {
                 readOnly = await Self.shares.isReadOnly(session: req.header("x-claude-mini-session") ?? "")
-                prompt = Self.mountNote(clientCwd, shared, readOnly: readOnly, synced: synced, branch: tree?.branch) + "\n\n" + prompt
+                prompt = Self.mountNote(clientCwd, shared, readOnly: readOnly || (tree != nil && !config.codex.write), synced: synced,
+                                        branch: tree?.branch) + "\n\n" + prompt
             }
         } else {
             try? FileManager.default.createDirectory(at: cwd, withIntermediateDirectories: true)

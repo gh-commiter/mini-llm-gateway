@@ -428,11 +428,16 @@ and gives each agent its own clone on a branch `minigw/<agent>-<session>-<n>`; p
   checks objects (fsck), runs no hooks, submodules or filters, and does not change `.git/config`. If you committed on that
   branch yourself, your commits stay and the agent's version is not fetched. The gateway never runs git with the agent's own
   `.git` (config, hooks) and reads the clone only from a sandbox.
-- **Review the branch before you check it out or build it:** it is the agent's work. Look at `.gitattributes` (filter
-  and diff drivers you have configured would run on checkout) and `.gitmodules` (submodule URLs) first.
+- **Review only the agent's part:** minigw prints `agent work is on branch <branch>: review with git diff <base>..<branch>
+  (<base> = your state when the agent started), then bring it in with git cherry-pick <base>..<branch> or git diff
+  <base>..<branch> | git apply` once per branch and starting state in a run (also for native mode in a git repository).
+  `<base>` is the snapshot commit with your uncommitted changes and untracked files: do not merge, fast-forward or check
+  out the branch itself, or those files (keys too) end up committed. Look at `.gitattributes` (filter and diff drivers
+  you have configured would run on checkout) and `.gitmodules` (submodule URLs) first.
 - **Sandboxed agents:** Claude CLI agents get Bash, always in Claude Code's sandbox; Codex uses its own sandbox with the
-  clone as the writable folder (not when Codex may not write: then worktree mode is refused). Grok is not supported in
-  worktree mode yet (use sync). They write only to the clone, their own Maven repository (`MAVEN_OPTS`), DerivedData and
+  clone as the writable folder. Agents that may not write (Codex, Copilot or Grok with writing off) only read in the clone
+  and bring back no branch (minigw says so); Grok with writing on is not supported in worktree mode yet and is refused
+  ("rerun with minigw --minigw-work=sync …"). They write only to the clone, their own Maven repository (`MAVEN_OPTS`), DerivedData and
   temporary folders, never to your `~/.m2` settings, plugins or SwiftPM configuration; Claude cannot read your home
   folder (from `~/.m2` only `settings.xml` and `toolchains.xml`). Agents have their own temporary folder and module
   cache in the clone, never the shared ones of this Mac. Maven builds work; `swift build` and `xcodebuild` by an agent
@@ -445,9 +450,9 @@ and gives each agent its own clone on a branch `minigw/<agent>-<session>-<n>`; p
   direct read-write: agents cannot commit there, `.git` is read-only); otherwise sync, then direct. Worktree
   only when the folder is the root of the repository and it has a commit (a subfolder of a repository is synced, so files
   outside it are never sent; only an explicit `--minigw-work=worktree` uses the parent repository). A saved per-folder mode (`minigw share add --work=…`), `MINIGW_WORK` and the flag
-  still win; `minigw share add --work=direct` keeps the old Mac default. A gateway on the same Mac shares no folder.
-  In worktree mode minigw prints `agent work is on branch minigw/…: review with git diff HEAD...minigw/…, then merge or
-  apply` once per branch and run; nothing is merged for you.
+  still win; `minigw share add --work=direct` keeps the old Mac default for a folder, or `MINIGW_WORK=direct` for every
+  folder (for example in the `env` of Claude Code's settings). A gateway on the same Mac shares no folder. In worktree
+  mode nothing is merged for you: minigw prints the branch and the range to review (above).
 - **On `minigw serve` (Windows, Linux)** worktree works the same way: the gateway's own `git` from PATH (no system or global
   config, hooks, fsmonitor or submodules), one clone per session and agent, so one branch `minigw/<agent>-<session>-0`.
   Agent requests run one at a time per device and repository: also two sessions of the same device in the same

@@ -35,14 +35,15 @@ type shareClient struct {
 	c        connection
 	session  string
 	root     string
-	readOnly bool   // pisanje zavrne minigw sam (router mapo priklopi tudi rdonly)
-	sync     bool   // --minigw-work=sync: router dobi kopijo namesto priklopa (sync.go)
-	native   bool   // --minigw-work=native: router dela v svoji mapi (native.go); posla routerja ni
-	inPlace  bool   // native-direct: agenti v mapi sami (tudi v repozitoriju git), ne na svojih vejah
-	branches bool   // native v repozitoriju git: agenti na svojih vejah minigw/… (odgovor prehoda)
-	lock     bool   // native v mapi sami: en pisoči agent naenkrat (odgovor prehoda; starejši prehod ga ne pošlje)
-	worktree bool   // --minigw-work=worktree: posnetek kot bundle, veja agenta nazaj kot ref (worktree.go)
-	top      string // worktree: koren repozitorija git
+	readOnly bool     // pisanje zavrne minigw sam (router mapo priklopi tudi rdonly)
+	sync     bool     // --minigw-work=sync: router dobi kopijo namesto priklopa (sync.go)
+	native   bool     // --minigw-work=native: router dela v svoji mapi (native.go); posla routerja ni
+	inPlace  bool     // native-direct: agenti v mapi sami (tudi v repozitoriju git), ne na svojih vejah
+	branches bool     // native v repozitoriju git: agenti na svojih vejah minigw/… (odgovor prehoda)
+	lock     bool     // native v mapi sami: en pisoči agent naenkrat (odgovor prehoda; starejši prehod ga ne pošlje)
+	worktree bool     // --minigw-work=worktree: posnetek kot bundle, veja agenta nazaj kot ref (worktree.go)
+	top      string   // worktree: koren repozitorija git
+	snaps    []string // worktree: posnetki, poslani prehodu (začetek dela agenta za vrstico o veji)
 	mu       sync.Mutex
 	key      string
 	syncMu   sync.Mutex
@@ -163,10 +164,16 @@ func (s *shareClient) handle(job davJob, k string) davResponse {
 		s.syncMu.Lock()
 		defer s.syncMu.Unlock()
 		return s.wtPush(k, job)
-	case s.native && job.Method == "WORKTREE-NOTE": // native z git: prehod sporoči, da veje ni dostavil (kot napaka WORKTREE-PULL)
-		var n struct{ Message string }
+	case (s.native || s.worktree) && job.Method == "WORKTREE-NOTE": // sporočilo prehoda (native: dostavljena ali nedostavljena veja)
+		var n struct{ Message, Branch, Base string }
 		json.Unmarshal(job.Body, &n)
-		fmt.Fprintln(os.Stderr, "minigw: "+clean(n.Message))
+		s.syncMu.Lock()
+		defer s.syncMu.Unlock()
+		if branchRe.MatchString(n.Branch) && shaRe.MatchString(n.Base) { // native z git: veja v repozitoriju uporabnika
+			s.branchNote(n.Branch, n.Base)
+		} else {
+			fmt.Fprintln(os.Stderr, "minigw: "+oneLine(n.Message))
+		}
 		return dav(200, nil, nil)
 	case s.worktree && job.Method == "WORKTREE-PULL":
 		s.syncMu.Lock()

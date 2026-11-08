@@ -229,7 +229,8 @@ extension Router {
     func runCopilot(_ req: HTTPRequest, body: [String: Any], model: String?, rid: String, writer: ResponseWriter) async -> Int {
         let cfg = config.copilot
         let agent = (body["tools"] as? [Any])?.isEmpty == false
-        if !cfg.write, agent, await Self.shares.isWorktree(session: req.header("x-claude-mini-session") ?? "") {
+        if !cfg.write, agent, await Self.shares.isWorktree(session: req.header("x-claude-mini-session") ?? ""),
+           await Self.shares.readOnlyInTree(session: req.header("x-claude-mini-session") ?? "", agent: "Copilot") {  // worktree: le branje
             let why = await Self.shares.worktreeRefusal(session: req.header("x-claude-mini-session") ?? "",
                                                         worktree: "Copilot may not write (Mini Gateway → Settings → Copilot CLI), so worktree mode is not possible; use sync",
                                                         native: "Copilot may not write (Mini Gateway → Settings → Copilot CLI), so it cannot work")
@@ -291,7 +292,8 @@ extension Router {
             if shared != nil || tree != nil { visible = cwd }  // R3: le pot iz ShareHub sme biti v (skritem) Scratch
             if let shared, let clientCwd {
                 readOnly = await Self.shares.isReadOnly(session: req.header("x-claude-mini-session") ?? "")
-                prompt = Self.mountNote(clientCwd, shared, readOnly: readOnly, synced: synced, branch: tree?.branch) + "\n\n" + prompt
+                prompt = Self.mountNote(clientCwd, shared, readOnly: readOnly || (tree != nil && !cfg.write), synced: synced,
+                                        branch: tree?.branch) + "\n\n" + prompt
             }
         }
         let write = cfg.write && !readOnly, commands = agent && cfg.commands && write  // peskovnik piše v mapo: ukazi le s pisanjem (tudi ne pri --ro)

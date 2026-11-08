@@ -62,6 +62,13 @@ public enum SharedFolders {
         }
     }
 
+    /// M1: worktree pri auto le, če je koren repozitorija ta mapa; nadrejeni (dotfiles v domači mapi, monorepo) bi poslal
+    /// tudi datoteke zunaj nje.
+    public static func repoRoot(_ top: String?, _ cwd: String) -> Bool {
+        let real = { URL(fileURLWithPath: $0).resolvingSymlinksInPath().standardizedFileURL.path }
+        return top.map { real($0) == real(cwd) } == true
+    }
+
     /// Pot za seznam: ena vrstica, tabulator loči možnosti.
     public static func validPath(_ p: String) -> Bool { !p.contains { $0 == "\t" || $0 == "\n" || $0 == "\r" } }
 }

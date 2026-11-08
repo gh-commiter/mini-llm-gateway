@@ -268,10 +268,11 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
     #expect(g(client, "rev-parse", branch) == mine)  // ni prepisana
 }
 
-/// H2: Grok v načinu worktree ni podprt (400, preden se karkoli priklopi); M3: Codex brez pisanja tudi ne.
+/// H2: Grok s pisanjem v načinu worktree ni podprt (400 z navodilom za sync, preden se karkoli priklopi);
+/// F2: Codex brez pisanja ni zavrnjen (v klonu le bere).
 @Test func worktreeRefusesGrokAndReadOnlyCodex() async throws {
     var c = RouterConfig()
-    c.grok.enabled = true; c.codex.enabled = true; c.codex.write = false
+    c.grok.enabled = true; c.grok.write = true; c.codex.enabled = true; c.codex.write = false
     let r = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]))
     let session = UUID().uuidString
     _ = await Router.shares.register(session: session, cwd: "/p", key: nil, device: nil,
@@ -282,7 +283,11 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
         q.peer = "127.0.0.1"
         let w = FakeWriter()
         await r.handle(q, writer: w)
-        #expect(w.status == 400 && w.text.contains(model == "claude-grok" ? "Grok is not supported in worktree mode" : "Codex may not write"), "\(model): \(w.text)")
+        if model == "claude-grok" {
+            #expect(w.status == 400 && w.text.contains("rerun with minigw --minigw-work=sync"), "\(model): \(w.text)")
+        } else {
+            #expect(!w.text.contains("may not write"), "\(model): \(w.text)")
+        }
     }
 }
 
@@ -770,4 +775,32 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     let snap = try #require(Worktree.snapshot(top: root.path))
     #expect(Worktree.hasCommit(top: root.path))
     #expect(g(root, "ls-tree", "-r", "--name-only", snap) == ".gitignore\nnew.txt")
+}
+
+/// Auto (privzeti ali izrecni) le v korenu repozitorija (kot Go repoRoot/workTop); vrstica o veji le z delom agenta
+/// od posnetka (neshranjene in nesledene datoteke uporabnika niso v obsegu), kot Go TestBranchLineShowsAgentOnlyRange.
+@Test func autoRepoRootAndAgentOnlyBranchRange() throws {
+    let (root, client, _) = try fixture()
+    defer { cleanup(root) }
+    let sub = client.appendingPathComponent("sub")
+    try FileManager.default.createDirectory(at: sub, withIntermediateDirectories: true)
+    #expect(SharedFolders.repoRoot(client.path, client.path) && !SharedFolders.repoRoot(client.path, sub.path) && !SharedFolders.repoRoot(nil, client.path))
+
+    let snap = try #require(Worktree.snapshot(top: client.path))  // a.txt neshranjen, new.txt nesleden
+    #expect(snap != g(client, "rev-parse", "HEAD"))
+    let branch = "minigw/codex-0123abcd-0"
+    let blob = Worktree.run(["hash-object", "-w", "--stdin"], cwd: client.path, safe: false, input: Data("agent\n".utf8)).out
+    let tree = Worktree.run(["mktree"], cwd: client.path, safe: false,
+                            input: Data((g(client, "ls-tree", snap) + "\n100644 blob \(blob)\tagent.txt\n").utf8)).out
+    let tip = g(client, "commit-tree", tree, "-p", snap, "-m", "agent")
+    g(client, "update-ref", "refs/heads/" + branch, tip)
+    try file(client, "a.txt", "later\n")
+    let later = try #require(Worktree.snapshot(top: client.path))
+
+    let base = Worktree.agentBase(top: client.path, branch: branch, sent: [snap, later])
+    #expect(base == snap)
+    #expect(g(client, "diff", "--name-only", "\(base)..\(branch)") == "agent.txt")
+    let line = Worktree.branchLine(branch: branch, base: base)
+    #expect(line.contains("git diff \(snap)..\(branch)") && line.contains("git cherry-pick \(snap)..\(branch)") && !line.contains("HEAD"))
+    #expect(Worktree.agentBase(top: client.path, branch: branch, sent: [later]) == "HEAD")
 }

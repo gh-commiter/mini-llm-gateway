@@ -654,7 +654,7 @@ func main() {
 		share, ok = registerShare(c, sid, cwd, readOnly, top, tries, false, asked == "")
 		if ok && share.worktree {
 			share.start(4)
-			fmt.Fprintf(os.Stderr, "minigw: agent models work in a clone of this git repository on %s; their work comes back as branch minigw/… (git diff HEAD...<branch>; worktree)\n", routerHost)
+			fmt.Fprintf(os.Stderr, "minigw: agent models work in a clone of this git repository on %s; their work comes back as branch minigw/… (minigw prints the range to review; your uncommitted and untracked, not ignored files are sent too; worktree)\n", routerHost)
 		} else if ok && share.native && share.branches {
 			share.start(4)
 			fmt.Fprintf(os.Stderr, "minigw: %s is a folder of %s (SMB): agent models work there in clones of this git repository, each on its own branch minigw/… (native; --minigw-work=native-direct = in the folder itself)\n", cwd, routerHost)

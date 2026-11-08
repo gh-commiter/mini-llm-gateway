@@ -216,6 +216,9 @@ func (s *shareClient) wtPush(k string, job davJob) davResponse {
 			}
 		}
 	}
+	if s.snaps = append(s.snaps, snap); len(s.snaps) > 64 {
+		s.snaps = s.snaps[1:]
+	}
 	body, _ := json.Marshal(map[string]string{"snapshot": snap})
 	return dav(200, nil, body)
 }
@@ -251,11 +254,34 @@ func (s *shareClient) wtPull(k string, job davJob) davResponse {
 		s.note("worktree: " + why)
 		return dav(500, nil, nil)
 	}
-	if !s.reported["branch:"+req.Branch] { // enkrat na zagon (pod syncMu)
-		s.reported["branch:"+req.Branch] = true
-		s.note("agent work is on branch " + req.Branch + ": review with git diff HEAD..." + req.Branch + ", then merge or apply")
-	}
+	s.branchNote(req.Branch, agentBase(s.top, req.Branch, s.snaps))
 	return dav(200, nil, nil)
+}
+
+// agentBase: začetek dela agenta — zadnji poslani posnetek, ki je prednik veje (HEAD z neshranjenimi spremembami in
+// nesledenimi datotekami uporabnika; ti niso delo agenta). Brez njega HEAD. Prehodu ne verjame: le posnetki tega odjemalca.
+func agentBase(top, branch string, sent []string) string {
+	for i := len(sent) - 1; i >= 0; i-- {
+		if _, err := gitUser(top, nil, "merge-base", "--is-ancestor", sent[i], "refs/heads/"+branch); err == nil {
+			return sent[i]
+		}
+	}
+	return "HEAD"
+}
+
+// branchLine: vrstica o dostavljeni veji (enaka v odjemalcu Swift): le delo agenta, brez posnetka uporabnika.
+func branchLine(branch, base string) string {
+	r := base + ".." + branch
+	return "agent work is on branch " + branch + ": review with git diff " + r + " (" + base + " = your state when the agent started), " +
+		"then bring it in with git cherry-pick " + r + " or git diff " + r + " | git apply"
+}
+
+// branchNote: vrstica o veji enkrat na vejo in začetek v zagonu (pod syncMu).
+func (s *shareClient) branchNote(branch, base string) {
+	if k := "branch:" + branch + "@" + base; !s.reported[k] {
+		s.reported[k] = true
+		s.note(branchLine(branch, base))
+	}
 }
 
 // workCandidates: načini po vrsti (kot SharedFolders.candidates): auto → native (shema SMB) → worktree (git) → sync;

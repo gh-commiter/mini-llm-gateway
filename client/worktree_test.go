@@ -263,3 +263,48 @@ func TestSnapshotSkipsIgnoredFilesAndNeedsACommit(t *testing.T) {
 		t.Fatalf("snapshot has %q", got)
 	}
 }
+
+// M1 (auto-default): vrstica o veji kaže le delo agenta — od posnetka (neshranjene spremembe in nesledene datoteke
+// uporabnika), ne od HEAD; pozneje poslan posnetek, ki ni prednik veje, se ne uporabi.
+func TestBranchLineShowsAgentOnlyRange(t *testing.T) {
+	top := t.TempDir()
+	gitT(t, top, "init", "-q", "-b", "main")
+	writeT(t, filepath.Join(top, "a.txt"), "a\n")
+	gitT(t, top, "add", "-A")
+	gitT(t, top, "commit", "-qm", "a")
+	writeT(t, filepath.Join(top, "a.txt"), "mine\n")     // neshranjena sprememba
+	writeT(t, filepath.Join(top, "secret.key"), "key\n") // nesledena datoteka
+	snap := gitSnapshot(top)
+	if snap == "" || snap == gitT(t, top, "rev-parse", "HEAD") {
+		t.Fatalf("snapshot %q", snap)
+	}
+	branch := "minigw/codex-0123abcd-0"
+	blob := gitT(t, top, "hash-object", "-w", "--stdin") // prazen agent.txt na drevesu posnetka
+	ls := gitT(t, top, "ls-tree", snap) + "\n100644 blob " + blob + "\tagent.txt\n"
+	mk := exec.Command("git", "-C", top, "mktree")
+	mk.Stdin = strings.NewReader(ls)
+	out, err := mk.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tip := gitT(t, top, "commit-tree", strings.TrimSpace(string(out)), "-p", snap, "-m", "agent")
+	gitT(t, top, "update-ref", "refs/heads/"+branch, tip)
+	writeT(t, filepath.Join(top, "a.txt"), "later\n")
+	later := gitSnapshot(top) // druga zahteva, drug agent: ni prednik te veje
+
+	base := agentBase(top, branch, []string{snap, later})
+	if base != snap {
+		t.Fatalf("base %s, want snapshot %s", base, snap)
+	}
+	if d := gitT(t, top, "diff", "--name-only", base+".."+branch); d != "agent.txt" {
+		t.Fatalf("agent-only range has %q", d)
+	}
+	line := branchLine(branch, base)
+	if !strings.Contains(line, "git diff "+snap+".."+branch) || !strings.Contains(line, "git cherry-pick "+snap+".."+branch) ||
+		strings.Contains(line, "HEAD") {
+		t.Fatal(line)
+	}
+	if agentBase(top, branch, []string{later}) != "HEAD" {
+		t.Fatal("unrelated snapshot used as base")
+	}
+}

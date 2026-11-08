@@ -161,10 +161,16 @@ extension Router {
     }
 
     func runGrok(_ req: HTTPRequest, body: [String: Any], model: String?, rid: String, writer: ResponseWriter) async -> Int {
-        // Grok nima zaščite .git v peskovniku, njegov program pa poganja git zunaj njega (in ~/.grok je pisljiv).
-        if (body["tools"] as? [Any])?.isEmpty == false, await Self.shares.isWorktree(session: req.header("x-claude-mini-session") ?? "") {
+        // Grok nima zaščite .git v peskovniku, njegov program pa poganja git zunaj njega (in ~/.grok je pisljiv): s pisanjem
+        // zavrni; brez pisanja v worktree le bere v klonu (veje ne vrne).
+        let sid = req.header("x-claude-mini-session") ?? ""
+        var inTree = false
+        if (body["tools"] as? [Any])?.isEmpty == false { inTree = await Self.shares.isWorktree(session: sid) }
+        var refuse = inTree && config.grok.write
+        if inTree, !refuse { refuse = await Self.shares.readOnlyInTree(session: sid, agent: "Grok") }
+        if refuse {
             let why = await Self.shares.worktreeRefusal(session: req.header("x-claude-mini-session") ?? "",
-                                                        worktree: "Grok is not supported in worktree mode yet; use sync (MINIGW_WORK=sync)",
+                                                        worktree: "Grok is not supported in worktree mode yet; rerun with minigw --minigw-work=sync …",
                                                         native: "Grok is not supported yet")
             return await error(400, "invalid_request_error", why, rid: rid, writer: writer)
         }
@@ -206,7 +212,7 @@ extension Router {
                 .filter { $0 != "/" && !$0.isEmpty && $0 != dir.path && FileManager.default.fileExists(atPath: $0) }
             if let shared, let clientCwd {
                 readOnly = await Self.shares.isReadOnly(session: req.header("x-claude-mini-session") ?? "")
-                prompt = Self.mountNote(clientCwd, shared, readOnly: readOnly, synced: synced) + "\n\n" + prompt
+                prompt = Self.mountNote(clientCwd, shared, readOnly: readOnly || inTree, synced: synced) + "\n\n" + prompt
             }
         } else {
             try? FileManager.default.createDirectory(at: cwd, withIntermediateDirectories: true)
