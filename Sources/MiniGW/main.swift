@@ -121,8 +121,23 @@ func defaultName(_ names: [String]) -> String {
 /// --minigw-profile <ime>: cel ukaz le s tem prehodom.
 var profileFlag: String?
 
-/// Shranjeni profili, privzeti prvi; z --minigw-profile le ta.
+/// minigw teče v agentu prehoda (MINIGW_AGENT_URL, žeton v datoteki MINIGW_AGENT_AUTH_FILE): le ta povezava, brez profilov,
+/// proxyja, šifriranja in deljenja mape (prehod sam doda napravo, sejo in mapo klicatelja).
+func agentConn() -> Connection? {
+    let e = ProcessInfo.processInfo.environment
+    // M3: žeton ni v okolju (drugi procesi istega uporabnika ga tam lahko preberejo)
+    guard let u = e["MINIGW_AGENT_URL"], let f = e["MINIGW_AGENT_AUTH_FILE"], !f.isEmpty,
+          let raw = FileManager.default.contents(atPath: f), raw.count <= 256,
+          case let t = String(decoding: raw, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty,
+          let c = URLComponents(string: u),
+          c.scheme == "http", c.host == "127.0.0.1", c.port != nil, c.user == nil, c.path.isEmpty || c.path == "/", c.query == nil
+    else { return nil }  // I3: le vrata izvajanja na tem računalniku
+    return Connection(url: u, token: t)
+}
+
+/// Shranjeni profili, privzeti prvi; z --minigw-profile le ta. V agentu prehoda le njegova povezava.
 func loadProfiles() -> [Profile] {
+    if let c = agentConn() { return [Profile(name: "agent", conn: c)] }
     var names = profileNames()
     var def = defaultName(names)
     if let f = profileFlag {
@@ -156,6 +171,11 @@ let maxReply = 80 << 20
 /// Poljubna zahteva; telo odgovora kot Data (0 = ni povezave). Telo gre najprej v začasno datoteko, ne v pomnilnik.
 func call(_ c: Connection, _ method: String, _ path: String, _ headers: [String: String] = [:], _ body: Data? = nil,
           timeout: TimeInterval) -> (Int, Data?) {
+    if agentConn() != nil {  // v agentu prehoda: vrata izvajanja, po potrebi prek posrednika sandboxa
+        var status = 0, data = Data()
+        _ = agentHTTP(c, method, path, body: body, onHead: { status = $0 }) { if data.count < maxReply { data.append($0) } }
+        return (status, status == 0 ? nil : data)
+    }
     var r = URLRequest(url: URL(string: c.url + path)!, timeoutInterval: timeout)
     r.httpMethod = method
     r.httpBody = body
@@ -527,6 +547,11 @@ while let i = args.firstIndex(where: { $0 == "--minigw-profile" || $0.hasPrefix(
         profileFlag = args[i + 1]; args.removeSubrange(i...i + 1)
     } else { profileFlag = String(args[i].dropFirst("--minigw-profile=".count)); args.remove(at: i) }
 }
+
+if agentConn() != nil, let first = args.first, ["connect", "disconnect", "profiles"].contains(first) {
+    fail("minigw runs inside an agent of the gateway (MINIGW_AGENT_URL): \(first) is not available here")
+}
+if let c = agentConn(), args.first?.hasPrefix("-") == true, args.contains("-p") || args.contains("--print") { agentAsk(c, args) }
 
 switch args.first {
 case "share":

@@ -70,6 +70,7 @@ type apiClaude struct {
 	Enabled              bool     `json:"enabled"`
 	Folders              string   `json:"folders"` // dovoljene mape, ločene z vejico (kot na Macu)
 	AllowLocalTools      bool     `json:"allowLocalTools"`
+	AskOthers            bool     `json:"askOthers"`
 	DisabledTools        []string `json:"disabledTools"`
 	PermissionMode       string   `json:"permissionMode"`
 	SettingSources       string   `json:"settingSources"`
@@ -716,6 +717,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			Enabled              *bool     `json:"enabled"`
 			Folders              *string   `json:"folders"`
 			AllowLocalTools      *bool     `json:"allowLocalTools"`
+			AskOthers            *bool     `json:"askOthers"`
 			DisabledTools        *[]string `json:"disabledTools"`
 			PermissionMode       *string   `json:"permissionMode"`
 			SettingSources       *string   `json:"settingSources"`
@@ -755,6 +757,9 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			}
 			if b.AllowLocalTools != nil {
 				c.AllowLocalTools = *b.AllowLocalTools
+			}
+			if b.AskOthers != nil {
+				c.ClaudeAskOthers = *b.AskOthers
 			}
 			if b.DisabledTools != nil {
 				c.DisabledTools = slices.Clone(*b.DisabledTools)
@@ -906,7 +911,8 @@ func (s *server) agentAPI(method string, k agentKind, body []byte) (int, any) {
 	info := func() map[string]any {
 		ac := k.conf(s.conf())
 		exe, _ := resolveAgent(k, ac.Executable)
-		o := map[string]any{"enabled": ac.Enabled, "path": ac.Executable, "found": exe != "", "exe": exe, "write": ac.canWrite(k), "models": ac.Models}
+		o := map[string]any{"enabled": ac.Enabled, "path": ac.Executable, "found": exe != "", "exe": exe, "write": ac.canWrite(k), "models": ac.Models,
+			"askOthers": ac.AskOthers}
 		if k.name != "grok" {
 			o["network"] = ac.Network
 		}
@@ -924,13 +930,14 @@ func (s *server) agentAPI(method string, k agentKind, body []byte) (int, any) {
 		return 200, info()
 	}
 	var b struct {
-		Enabled  *bool           `json:"enabled"`
-		Path     *string         `json:"path"`
-		Write    *bool           `json:"write"`
-		Network  *bool           `json:"network"`
-		Commands *bool           `json:"commands"` // Copilot: ukazi lupine (izrecno dovoljenje)
-		Token    *string         `json:"token"`    // Copilot: žeton za ukaze (le za pisanje; "" ga izbriše)
-		Models   json.RawMessage `json:"models"`   // null = vsi; seznam = le ti; brez polja = brez spremembe
+		Enabled   *bool           `json:"enabled"`
+		Path      *string         `json:"path"`
+		Write     *bool           `json:"write"`
+		Network   *bool           `json:"network"`
+		Commands  *bool           `json:"commands"`  // Copilot: ukazi lupine (izrecno dovoljenje)
+		AskOthers *bool           `json:"askOthers"` // sme vprašati druge modele tega prehoda
+		Token     *string         `json:"token"`     // Copilot: žeton za ukaze (le za pisanje; "" ga izbriše)
+		Models    json.RawMessage `json:"models"`    // null = vsi; seznam = le ti; brez polja = brez spremembe
 	}
 	if err := decodeStrict(body, &b); err != nil {
 		return 400, errorBody(400, err.Error())
@@ -981,6 +988,9 @@ func (s *server) agentAPI(method string, k agentKind, body []byte) (int, any) {
 		}
 		if b.Commands != nil {
 			ac.Commands = *b.Commands
+		}
+		if b.AskOthers != nil {
+			ac.AskOthers = *b.AskOthers
 		}
 		if b.Network != nil {
 			ac.Network = *b.Network
@@ -1077,7 +1087,7 @@ func claudeTools(exe []string) []string {
 func (s *server) claudeInfo() apiClaude {
 	c, exe := s.conf(), s.claudeExe()
 	info := apiClaude{Path: c.Claude, Found: len(exe) > 0, Tools: c.Tools, AllowUnsandboxedBash: c.AllowUnsandboxedBash,
-		Enabled: !c.ClaudeDisabled, Folders: strings.Join(c.AllowedFolders, ","), AllowLocalTools: c.AllowLocalTools,
+		Enabled: !c.ClaudeDisabled, Folders: strings.Join(c.AllowedFolders, ","), AllowLocalTools: c.AllowLocalTools, AskOthers: c.ClaudeAskOthers,
 		DisabledTools: append([]string{}, c.DisabledTools...), PermissionMode: c.PermissionMode, SettingSources: c.SettingSources}
 	if len(exe) > 0 {
 		info.Exe, info.ClaudeVersion = exe[len(exe)-1], claudeVersion(exe)

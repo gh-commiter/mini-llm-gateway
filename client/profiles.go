@@ -5,6 +5,7 @@ package main
 
 import (
 	"encoding/json"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -72,8 +73,28 @@ func saveProfile(name string, c connection) {
 	}
 }
 
-// loadProfiles: shranjeni profili, privzeti prvi; z --minigw-profile le ta.
+// agentConn: minigw teče v agentu prehoda (MINIGW_AGENT_URL, žeton v datoteki MINIGW_AGENT_AUTH_FILE): le ta povezava,
+// brez profilov, proxyja, šifriranja in deljenja mape (prehod sam doda napravo, sejo in mapo klicatelja).
+func agentConn() *connection {
+	u, f := os.Getenv("MINIGW_AGENT_URL"), os.Getenv("MINIGW_AGENT_AUTH_FILE")
+	if u == "" || f == "" {
+		return nil
+	}
+	b, _ := os.ReadFile(f) // M3: žeton ni v okolju (drugi procesi istega uporabnika ga tam lahko preberejo)
+	t := strings.TrimSpace(string(b))
+	p, err := url.Parse(u)
+	if t == "" || len(t) > 256 || err != nil || p.Scheme != "http" || p.Hostname() != "127.0.0.1" || p.Port() == "" || p.User != nil ||
+		(p.Path != "" && p.Path != "/") || p.RawQuery != "" { // I3: le vrata izvajanja na tem računalniku
+		return nil
+	}
+	return &connection{URL: u, Token: t}
+}
+
+// loadProfiles: shranjeni profili, privzeti prvi; z --minigw-profile le ta. V agentu prehoda le njegova povezava.
 func loadProfiles() []profile {
+	if c := agentConn(); c != nil {
+		return []profile{{"agent", *c}}
+	}
 	names := profileNames()
 	def := defaultName(names)
 	if profileFlag != "" {

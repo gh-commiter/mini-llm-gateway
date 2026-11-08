@@ -7,6 +7,7 @@ public struct GrokConfig: Codable, Sendable, Equatable {
     public var executable = ""            // prazno = samodejno iskanje
     public var enabledModels: [String]?   // nil = vsi modeli računa; seznam = le ti
     public var write = true               // sandbox workspace (sicer read-only)
+    public var askOthers = false          // »May ask other models«: agent vpraša drug model prehoda (AgentRun)
     public init() {}
 
     public init(from decoder: Decoder) throws {
@@ -16,6 +17,7 @@ public struct GrokConfig: Codable, Sendable, Equatable {
         executable = try c.decodeIfPresent(String.self, forKey: .executable) ?? d.executable
         enabledModels = try c.decodeIfPresent([String].self, forKey: .enabledModels)
         write = try c.decodeIfPresent(Bool.self, forKey: .write) ?? d.write
+        askOthers = try c.decodeIfPresent(Bool.self, forKey: .askOthers) ?? d.askOthers
     }
 
     public func isModelEnabled(_ m: String) -> Bool { enabledModels?.contains(m) ?? true }
@@ -99,8 +101,8 @@ public enum Grok {
 
     /// Zažene grok in vrne končni odgovor (besedilo po zadnjem klicu orodja); prekinitev odjemalca ustavi grok.
     /// Vrne končni odgovor in ID Grokove seje (za nadaljevanje z -r).
-    static func run(_ exe: String, args: [String], cwd: URL, prompt: String,
-                    onStep: @escaping @Sendable (String) -> Void) async throws -> (String, String?) {
+    static func run(_ exe: String, args: [String], cwd: URL, prompt: String, env extra: [String: String] = [:],
+                    started: @escaping @Sendable (pid_t) -> Void = { _ in }, onStep: @escaping @Sendable (String) -> Void) async throws -> (String, String?) {
         let h = Handle()
         return try await withTaskCancellationHandler {
             try await offPool { () throws -> (String, String?) in
@@ -109,6 +111,7 @@ public enum Grok {
                 p.arguments = args
                 p.currentDirectoryURL = cwd
                 p.environment = ProcessInfo.processInfo.environment.filter { $0.key != "SSH_AUTH_SOCK" }  // brez agenta ključev SSH
+                    .merging(extra) { $1 }
                 let input = Pipe(), events = Pipe(), errors = Pipe()
                 p.standardInput = input
                 p.standardOutput = events
@@ -117,6 +120,7 @@ public enum Grok {
                 let stderr = Box()
                 let errReader = Thread { stderr.data = errors.fileHandleForReading.readDataToEndOfFile() }
                 try p.run()
+                started(p.processIdentifier)
                 AgentCount.running.add(1, ordering: .relaxed)
                 defer { AgentCount.running.subtract(1, ordering: .relaxed) }
                 errReader.start()
@@ -177,6 +181,7 @@ extension Router {
         var extra: [String] = []
         var readOnly = false
         var prompt = ClaudeCLI.prompt(history: all.dropLast(), last: last)
+        var sharedDir: URL?
         if agent {
             let clientCwd = req.header("x-claude-mini-cwd")
             let shared = await Self.shares.mount(session: req.header("x-claude-mini-session") ?? "", cwd: clientCwd, base: localBase,
@@ -191,6 +196,7 @@ extension Router {
                                    rid: rid, writer: writer)
             }
             cwd = dir
+            sharedDir = shared
             extra = config.claudeCLI.allowedRoots.split(separator: ",").map { ClaudeCLI.expand($0.trimmingCharacters(in: .whitespaces)) }
                 .filter { $0 != "/" && !$0.isEmpty && $0 != dir.path && FileManager.default.fileExists(atPath: $0) }
             if let shared, let clientCwd {
@@ -207,9 +213,14 @@ extension Router {
             args += ["-r", existing]
             prompt = last.text
         }
+        if agent, let note = agentNote("grok") { prompt = note + "\n\n" + prompt }
         let sessions = Self.grokSessions, client = req.header("x-claude-mini-session") ?? ""
+        let run = agent ? await startAgentRun(req, kind: "grok", dir: sharedDir) : nil
+        defer { run?.stop() }
+        let env = run?.env ?? [:]
         return await replyWhenDone(body: body, model: "claude-grok", rid: rid, writer: writer) {
-            let (text, session) = try await Grok.run(exe, args: args, cwd: cwd, prompt: prompt) { [onActivity] s in onActivity(.step(id: rid, text: s)) }
+            let (text, session) = try await Grok.run(exe, args: args, cwd: cwd, prompt: prompt, env: env, started: { run?.started($0) }) { [onActivity] s in onActivity(.step(id: rid, text: s)) }
+            run?.stop()  // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb
             if agent { await Self.shares.syncBack(session: client) }  // sync: spremembe agenta k odjemalcu pred odgovorom
             if agent, let session {
                 await sessions.set(ClaudeCLI.key(all + [ClaudeCLI.Turn(role: "assistant", text: text)], scope: scope), session)
