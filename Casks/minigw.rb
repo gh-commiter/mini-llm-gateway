@@ -48,9 +48,16 @@ cask "minigw" do
   end
 
   # Teče tudi ob brew upgrade/reinstall (nato postflight): odstrani le, kar je dodal cask (true, isti vir), uporabnikov
-  # »false« ostane; brez »claude plugin marketplace remove«, da nadgradnja ne odstrani vtičnika med tekočo sejo.
+  # »false« ostane. Le ob pravi odstranitvi še »claude plugin marketplace remove« (datoteke vtičnika), ne ob nadgradnji,
+  # da vtičnik ne izgine med tekočo sejo.
   uninstall_postflight do
     require "json"
+    upgrading = defined?(Homebrew.running_command) && %w[upgrade reinstall].include?(Homebrew.running_command)
+    claude = ["~/.local/bin", "/opt/homebrew/bin", "/usr/local/bin"].map { |d| File.join(File.expand_path(d), "claude") }
+                                                                    .find { |f| File.executable?(f) }
+    if claude && !upgrading
+      system_command claude, args: ["plugin", "marketplace", "remove", "mini-gateway", "--scope", "user"], must_succeed: false
+    end
     begin
       s = JSON.parse(File.read(settings))
       if s.is_a?(Hash)
@@ -73,7 +80,7 @@ cask "minigw" do
   caveats <<~EOS
     The Claude Code plugin (minigw@mini-gateway) is added to ~/.claude/settings.json; Claude Code installs it in the
     background the next time you start claude (or run /reload-plugins). To skip it, set "minigw@mini-gateway": false under enabledPlugins there (it stays, also on
-    upgrade). brew uninstall turns the plugin off again; /plugin uninstall minigw@mini-gateway removes its files.
+    upgrade). brew uninstall removes the plugin again (brew upgrade keeps it).
     Connect to the router Mac (token: Mini Gateway → Settings… → General → Copy Token):
       minigw connect <router-mac>[:port] --token <token>
   EOS

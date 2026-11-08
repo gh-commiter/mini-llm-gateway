@@ -187,8 +187,8 @@ brew install --cask gh-commiter/mini-gateway/minigw
 
 The cask also adds the Claude Code plugin (`minigw@mini-gateway`) to `~/.claude/settings.json`
 (`extraKnownMarketplaces`, `enabledPlugins`); Claude Code installs it in the background the next time you start `claude` (or run `/reload-plugins`). A
-`"minigw@mini-gateway": false` you set there stays, also on upgrade. `brew uninstall` turns the plugin off again
-(`/plugin uninstall minigw@mini-gateway` removes its files).
+`"minigw@mini-gateway": false` you set there stays, also on upgrade. `brew uninstall` removes the plugin and its
+marketplace again (`brew upgrade` keeps them).
 
 #### 3.2.3 Client on Windows and Linux
 
