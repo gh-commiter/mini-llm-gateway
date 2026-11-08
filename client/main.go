@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -238,8 +239,15 @@ func main() {
 	if len(args) > 0 {
 		first = args[0]
 	}
-	if agentConn() != nil && (first == "connect" || first == "disconnect" || first == "profiles") {
-		fail("minigw runs inside an agent of the gateway (MINIGW_AGENT_URL): " + first + " is not available here")
+	if c := agentConn(); c != nil {
+		if first == "connect" || first == "disconnect" || first == "profiles" {
+			fail("minigw runs inside an agent of the gateway (MINIGW_AGENT_URL): " + first + " is not available here")
+		}
+		http.DefaultTransport.(*http.Transport).Proxy = agentProxy
+		if strings.HasPrefix(first, "-") && (slices.Contains(args, "-p") || slices.Contains(args, "--print")) {
+			agentAsk(c, args)
+			return
+		}
 	}
 	switch first {
 	case "verify-sums": // #8 (skrit): podpis SHA256SUMS za install-minigw.sh; izhod 0 = podpisano s pripetim ključem

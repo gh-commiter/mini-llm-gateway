@@ -597,6 +597,9 @@ func (s *server) messages(w http.ResponseWriter, r *req) (int, string) {
 }
 
 func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliModel string, chat bool) int {
+	if why := chainRefusal(r, "claude"); why != "" { // vprašani agent: globina in brez ponovitve vrste (tudi pogovor)
+		return writeError(w, r.rid, 403, why)
+	}
 	all := turns(body)
 	if len(all) == 0 || all[len(all)-1].role != "user" {
 		return writeError(w, r.rid, 400, "Last message must be from the user")
@@ -618,9 +621,6 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		}
 		switch {
 		case parent != nil: // mapa klicatelja, brez novega prenosa
-			if why := chainRefusal(r, "claude"); why != "" {
-				return writeError(w, r.rid, 403, why)
-			}
 			dir, extra = parent.dir, nestedNote(parent)
 		case share != nil && share.tree != nil:
 			if worktreeNeedsUnsandboxed && !s.conf().AllowUnsandboxedBash { // L3: kot Codex in Copilot na Windows
@@ -676,6 +676,11 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		ro := (share != nil && share.readOnly) || (parent != nil && parent.readOnly)
 		run, runEnv = s.startRun(r, "claude", dir, ro, wt, maven, objects) // »May ask other models«
 		defer run.stop()
+		if run != nil {
+			exe := minigwExe()
+			extra += "\n\n" + askNote(exe)
+			args = sandboxAllowRead(args, exe)
+		}
 	} else {
 		dir = s.conf().scratch("chat")
 		prompt = cliPrompt(history, last)

@@ -314,6 +314,7 @@ extension Router {
         if let existing, Copilot.copySession(store.appendingPathComponent(existing), to: home.appendingPathComponent("session-state/" + existing)) {
             prompt = last.text
         }
+        if agent, let note = agentNote("copilot") { prompt = note + "\n\n" + prompt }
         let prepHome = reqDir.appendingPathComponent("p")  // svoj prazen COPILOT_HOME, ne domača mapa seje (R9)
         await offPool { Copilot.prepare(exe, base: base, home: prepHome, cwd: tmp) }
         let args = Copilot.args(agent: agent, model: model, write: write, commands: commands,

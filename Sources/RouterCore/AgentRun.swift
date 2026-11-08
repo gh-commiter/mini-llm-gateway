@@ -132,16 +132,38 @@ final class AgentRun: @unchecked Sendable {
 }
 
 extension Router {
-    /// Vrata izvajanja, če ima agent `kind` stikalo »May ask other models«; okolje gre agentu, `stop()` ob koncu.
-    func startAgentRun(_ req: HTTPRequest, kind: String, dir: URL?) async -> AgentRun? {
-        let on = switch kind {
-        case "claude": config.claudeCLI.askOthers
+    /// Stikalo »May ask other models« agenta `kind` (Claude CLI le z »Allow local tools«: brez Bash ne more klicati minigw).
+    func askOthers(_ kind: String) -> Bool {
+        switch kind {
+        case "claude": config.claudeCLI.askOthers && config.claudeCLI.allowLocalTools
         case "codex": config.codex.askOthers
         case "grok": config.grok.askOthers
         case "copilot": config.copilot.askOthers
         default: false
         }
-        guard on else { return nil }
+    }
+
+    /// minigw te aplikacije (Contents/Helpers): agent z njim vpraša druge modele.
+    static var minigwExe: String { Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/minigw").path }
+
+    /// Navodilo agentu `kind`: vprašal ga je drug agent (mapa klicatelja) in/ali sme vprašati druge modele. Kot v Go.
+    func agentNote(_ kind: String) -> String? {
+        var notes: [String] = []
+        if let p = AgentRun.current {
+            let dir = p.dir?.path ?? p.cwd
+            notes.append("Another agent on this gateway (\(p.chain.joined(separator: " → "))) asks you this. You work in its folder \(dir), "
+                + "which is the user's folder \(p.cwd) on this gateway: map paths under \(p.cwd) to it. Answer the question; change files only if asked.")
+        }
+        if askOthers(kind) {
+            let exe = Self.minigwExe
+            notes.append("You may ask another model of this gateway: `\"\(exe)\" -p --model <id> \"…\"`; `\"\(exe)\" models` lists them.")
+        }
+        return notes.isEmpty ? nil : notes.joined(separator: "\n\n")
+    }
+
+    /// Vrata izvajanja, če ima agent `kind` stikalo »May ask other models«; okolje gre agentu, `stop()` ob koncu.
+    func startAgentRun(_ req: HTTPRequest, kind: String, dir: URL?) async -> AgentRun? {
+        guard askOthers(kind) else { return nil }
         let run = await AgentRun.start(router: self, req: req, kind: kind, dir: dir)
         if run == nil { Self.log.error("agent calls: cannot open a loopback port for \(kind, privacy: .public)") }
         return run

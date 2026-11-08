@@ -14,7 +14,7 @@ private func get(_ run: AgentRun, _ path: String, token: String?) async -> Int {
 /// Vrata izvajanja: le žeton izvajanja in tri poti; zahteva dobi napravo in naslov klicatelja; po stop() zaprta.
 @Test func agentRunListener() async throws {
     var c = RouterConfig()
-    c.claudeCLI.askOthers = true
+    c.claudeCLI.askOthers = true; c.claudeCLI.allowLocalTools = true
     let router = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]))
     var caller = request("POST", "/v1/messages", headers: ["x-claude-mini-session": "s1", "x-claude-mini-cwd": "/client"])
     caller.peer = "10.0.0.9"
@@ -37,7 +37,7 @@ private func get(_ run: AgentRun, _ path: String, token: String?) async -> Int {
 
 @Test func agentRunChain() async throws {
     var c = RouterConfig()
-    c.claudeCLI.askOthers = true; c.codex.askOthers = true
+    c.claudeCLI.askOthers = true; c.claudeCLI.allowLocalTools = true; c.codex.askOthers = true
     let router = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]))
     #expect(AgentRun.refusal("claude") == nil)
     let r1 = try #require(await router.startAgentRun(request("POST", "/v1/messages"), kind: "claude", dir: nil))
@@ -79,10 +79,11 @@ private func get(_ run: AgentRun, _ path: String, token: String?) async -> Int {
     }
     var c = RouterConfig()
     c.scratchFolder = base.appendingPathComponent("scratch").path
-    c.claudeCLI.enabled = true; c.claudeCLI.askOthers = true
+    c.claudeCLI.enabled = true; c.claudeCLI.askOthers = true; c.claudeCLI.allowLocalTools = true
     c.claudeCLI.executable = try script("claude", """
         [ "$1" = --version ] && { echo '2.1.0 (Claude Code)'; exit 0; }
         cat > /dev/null
+        prev=""; for a in "$@"; do [ "$prev" = --append-system-prompt ] && printf '%s' "$a" > note.txt; [ "$prev" = --settings ] && printf '%s' "$a" > settings.txt; prev="$a"; done
         echo "$(\(ask("claude-codex")))" > asked.txt
         echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"done"}}}'
         echo '{"type":"result","subtype":"success","usage":{"output_tokens":3}}'
@@ -92,7 +93,7 @@ private func get(_ run: AgentRun, _ path: String, token: String?) async -> Int {
     c.codex.executable = try script("codex", """
         out=""; prev=""
         for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done
-        cat > /dev/null
+        cat > prompt.txt
         echo codex > codex.txt
         echo "$(\(ask("claude-cli-haiku")))" > loop.txt
         echo "codex answer" > "$out"
@@ -118,6 +119,20 @@ private func get(_ run: AgentRun, _ path: String, token: String?) async -> Int {
     #expect(read("asked.txt") == "200")
     #expect(read("codex.txt") == "codex")  // codex je pisal v klon klicatelja, prevzem ob koncu claude
     #expect(read("loop.txt") == "403")
+    let exe = Router.minigwExe
+    #expect(read("note.txt")?.contains("You may ask another model of this gateway: `\"\(exe)\" -p --model") == true)
+    #expect(read("settings.txt")?.contains(exe.replacingOccurrences(of: "/", with: "\\/")) == true || read("settings.txt")?.contains(exe) == true)
+    #expect(read("prompt.txt")?.contains("Another agent on this gateway (claude) asks you this") == true)
+    #expect(read("prompt.txt")?.contains("You may ask another model") == true)
     let unreg = FakeWriter()
     await router.handle(request("DELETE", "/minigw/share", headers: ["Authorization": "Bearer tok", "x-share-key": key]), writer: unreg)
+}
+
+/// Claude CLI: stikalo velja le z »Allow local tools« (brez Bash ne more klicati minigw).
+@Test func agentAskOthersNeedsLocalTools() async {
+    var c = RouterConfig()
+    c.claudeCLI.askOthers = true
+    let router = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]))
+    #expect(!router.askOthers("claude") && router.agentNote("claude") == nil)
+    #expect(await router.startAgentRun(request("POST", "/v1/messages"), kind: "claude", dir: nil) == nil)
 }

@@ -212,6 +212,7 @@ extension Router {
             args += ["-r", existing]
             prompt = last.text
         }
+        if agent, let note = agentNote("grok") { prompt = note + "\n\n" + prompt }
         let sessions = Self.grokSessions, client = req.header("x-claude-mini-session") ?? ""
         let run = agent ? await startAgentRun(req, kind: "grok", dir: sharedDir) : nil
         defer { run?.stop() }

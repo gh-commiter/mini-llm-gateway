@@ -1,7 +1,7 @@
 #!/bin/zsh
 # E2E: agent vpraša drug model istega prehoda (minigw serve, Go) na tem Macu ali Linuxu. Lokalni serve na prostih vratih,
-# odjemalec Go z lastnim HOME, šifrirano prek »localhost.«, način sync. »claude« prehoda je lažen agent, ki z minigw
-# (MINIGW_AGENT_URL, prazen HOME: brez profilov) vpraša claude-codex; lažen »codex« zapiše codex.txt v isto mapo in
+# odjemalec Go z lastnim HOME, šifrirano prek »localhost.«, način sync. »claude« prehoda je lažen agent, ki z minigw -p
+# (MINIGW_AGENT_URL, prazen HOME: brez profilov in brez Claude Code) vpraša claude-codex; lažen »codex« zapiše codex.txt v isto mapo in
 # vpraša claude-cli (zanka).
 # Preveri: codex dela v mapi klicatelja in datoteka pride k odjemalcu; zanka je zavrnjena (403); minigw v agentu zavrne
 # connect; s stikalom izklopljenim agent spremenljivk MINIGW_AGENT_* nima.
@@ -14,22 +14,11 @@ fail() { print -u2 "FAIL: $*"; exit 1 }
 (cd client && go build -o $T/minigw .)
 M=$T/minigw; H=$T/home; CFG=$T/serve/serve.json
 PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1])')
-mkdir -p $H/bin $T/gwbin $T/agentbin $T/empty
+mkdir -p $H/bin $T/gwbin $T/empty
 gw() { HOME=$H "$M" "$@" }
 
-# claude Claude Code, ki ga minigw zažene v agentu prehoda: ena zahteva z orodji na ANTHROPIC_BASE_URL (vrata izvajanja).
-cat > $T/agentbin/claude <<EOF
-#!/bin/zsh
-model=""; prev=""
-for a in "\$@"; do [[ \$prev == --model ]] && model=\$a; prev=\$a; done
-print -r -- "\$ANTHROPIC_BASE_URL" > $T/nested-url
-code=\$(curl -s -o $T/nested-\$model.resp -w '%{http_code}' \$ANTHROPIC_BASE_URL/v1/messages -H "Authorization: Bearer \$ANTHROPIC_AUTH_TOKEN" \
-  -H 'content-type: application/json' -d '{"model":"'\$model'","max_tokens":50,"tools":[{"name":"x","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":"hi"}]}')
-print \$code
-[[ \$code == 200 ]]
-EOF
 # Prehod: claude vpraša codex; codex piše v mapo in vpraša claude (zanka).
-ask() { print -r -- "HOME=$T/empty PATH=$T/agentbin:\$PATH $M -p --model $1 go > $T/$2.out 2> $T/$2.err; echo \$? > $T/$2.rc" }
+ask() { print -r -- "HTTP_PROXY=\${E2E_PROXY:-} HOME=$T/empty PATH=/usr/bin:/bin \${E2E_ASKER:-$M} -p --model $1 go > $T/$2.out 2> $T/$2.err; echo \$? > $T/$2.rc" }
 cat > $T/gwbin/claude <<EOF
 #!/bin/sh
 [ "\$1" = "--version" ] && { echo "2.1.99 (Claude Code)"; exit 0; }
@@ -54,7 +43,7 @@ $(ask claude-cli-haiku loop)
 echo '{"type":"thread.started","thread_id":"t1"}'
 echo "codex answer" > "\$out"
 EOF
-chmod +x $T/agentbin/claude $T/gwbin/claude $T/gwbin/codex
+chmod +x $T/gwbin/claude $T/gwbin/codex
 "$M" serve init --config $CFG --port $PORT > $T/init.txt
 TOKEN=$(grep -o "\-\-token '[^']*'" $T/init.txt | cut -d"'" -f2)
 conf() {  # serve.json: Scratch, lažna agenta, stikali »May ask other models« ($1 claude, $2 codex)
@@ -62,14 +51,14 @@ conf() {  # serve.json: Scratch, lažna agenta, stikali »May ask other models«
 import json, sys, platform
 p, scratch, bin, claude, codex = sys.argv[1:]
 c = json.load(open(p))
-c.update(scratch=scratch, claude=bin + "/claude", claudeAskOthers=claude == "1", tools="Read,Edit,Write,Bash")
+c.update(scratch=scratch, claude=bin + "/claude", claudeAskOthers=claude == "1", allowLocalTools=True)
 c["allowUnsandboxedBash"] = platform.system() != "Linux"  # Codex brez bwrap le z izrecnim dovoljenjem
 c["codex"] = {"enabled": True, "executable": bin + "/codex", "models": None, "askOthers": codex == "1"}
 json.dump(c, open(p, "w"))
 PY
 }
-start() {
-  "$M" serve --config $CFG > $T/serve.log 2>&1 &
+start() {  # $1, $2: E2E_ASKER (minigw v agentu), E2E_PROXY (posrednik kot v sandboxu Claude Code)
+  E2E_ASKER=${1:-} E2E_PROXY=${2:-} "$M" serve --config $CFG > $T/serve.log 2>&1 &
   SPID=$!
   for i in {1..50}; do curl -s -o /dev/null http://127.0.0.1:$PORT/health/live && break; sleep 0.2; done
   kill -0 $SPID 2>/dev/null || fail "serve did not start: $(<$T/serve.log)"
@@ -93,13 +82,51 @@ run() { (cd $C && E2E=$T PATH=$H/bin:$PATH MINIGW_WORK=sync gw -p go) 2> $T/err 
 # a: claude → codex v isti mapi; codex → claude zavrnjen; connect v agentu zavrnjen
 run
 [[ $(<$T/claude-env) == $'MINIGW_AGENT_TOKEN\nMINIGW_AGENT_URL' ]] || fail "a: claude env: $(<$T/claude-env)"
-[[ $(<$T/asked.rc) == 0 && $(<$T/asked.out) == 200 ]] || fail "a: claude → codex: rc $(<$T/asked.rc) $(<$T/asked.out) $(<$T/asked.err) $(cat $T/nested-claude-codex.resp 2>/dev/null)"
-[[ $(<$T/nested-url) == http://127.0.0.1:* && $(<$T/nested-url) != *:$PORT ]] || fail "a: not the run's port: $(<$T/nested-url)"
+[[ $(<$T/asked.rc) == 0 && $(<$T/asked.out) == "codex answer" ]] || fail "a: claude → codex: rc $(<$T/asked.rc) $(<$T/asked.out) $(<$T/asked.err)"
 [[ $(<$C/codex.txt) == codex ]] || fail "a: codex.txt did not come back to the client (codex worked in $(<$T/codex-dir))"
-[[ $(<$T/loop.rc) != 0 && $(<$T/loop.out) == 403 ]] || fail "a: loop not refused: rc $(<$T/loop.rc) $(<$T/loop.out)"
-grep -q "cannot ask further models (claude → codex)" $T/nested-claude-cli-haiku.resp || fail "a: loop reason: $(<$T/nested-claude-cli-haiku.resp)"
+[[ $(<$T/loop.rc) != 0 ]] && grep -q "an agent asked by another agent cannot ask further models (claude → codex)" $T/loop.err \
+  || fail "a: loop not refused: rc $(<$T/loop.rc) $(<$T/loop.err)"
 [[ $(<$T/connect.rc) != 0 ]] && grep -q "inside an agent of the gateway" $T/connect.err || fail "a: connect in an agent: $(<$T/connect.err)"
 print "a ok (codex in $(<$T/codex-dir))"
+
+# c: prek posrednika s prijavo (kot sandbox Claude Code: loopback le prek HTTP_PROXY); Go in na macOS še Swift minigw
+cat > $T/proxy.py <<'PY'
+import base64, http.client, sys, urllib.parse
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+class H(BaseHTTPRequestHandler):
+    def do(self):
+        if self.headers.get("Proxy-Authorization") != "Basic " + base64.b64encode(b"u:p@").decode():
+            self.send_response(407); self.end_headers(); return
+        u = urllib.parse.urlsplit(self.path)
+        body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        h = {k: v for k, v in self.headers.items() if not k.lower().startswith("proxy-") and k.lower() != "connection"}
+        c = http.client.HTTPConnection(u.hostname, u.port, timeout=120)
+        c.request(self.command, u.path, body, h)
+        r = c.getresponse()
+        self.send_response(r.status)
+        for k, v in r.getheaders():
+            if k.lower() not in ("transfer-encoding", "connection", "content-length"): self.send_header(k, v)
+        self.end_headers()
+        while chunk := r.read1(4096): self.wfile.write(chunk); self.wfile.flush()
+        open(sys.argv[2], "a").write(u.path + "\n")
+    do_GET = do_POST = do
+    def log_message(self, *a): pass
+ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
+PY
+PPORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1])')
+python3 $T/proxy.py $PPORT $T/proxied & PPID2=$!
+trap '[[ -n $SPID ]] && kill $SPID 2>/dev/null; kill $PPID2 2>/dev/null; [[ -n ${KEEP:-} ]] && print -u2 "kept $T" || rm -rf $T' EXIT
+sleep 0.5
+askers=($M); [[ $(uname) == Darwin ]] && { swift build --product MiniGW > /dev/null 2>&1 && askers+=(${$(swift build --show-bin-path)}/MiniGW) || fail "swift build MiniGW" }
+for asker in $askers; do
+  stop; start $asker http://u:p%40@127.0.0.1:$PPORT
+  rm -f $T/asked.* $T/loop.* $T/proxied $C/codex.txt
+  run
+  [[ $(<$T/asked.out) == "codex answer" ]] || fail "c ($asker): claude → codex via proxy: $(<$T/asked.out) $(<$T/asked.err)"
+  grep -q "an agent asked by another agent cannot ask further models" $T/loop.err || fail "c ($asker): loop via proxy: $(<$T/loop.err)"
+  [[ $(grep -c /v1/messages $T/proxied) == 2 ]] || fail "c ($asker): requests did not go through the proxy: $(cat $T/proxied 2>/dev/null)"
+  print "c ok (${asker:t}, proxy)"
+done
 
 # b: stikalo izklopljeno → agent nima MINIGW_AGENT_*
 stop; conf 0 0; start

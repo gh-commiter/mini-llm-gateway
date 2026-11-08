@@ -586,6 +586,9 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 	if st != 0 {
 		return st
 	}
+	if c.askOthers(k.name) { // vrata izvajanja (startRun spodaj)
+		note += "\n\n" + askNote(minigwExe())
+	}
 	prompt := note + "\n\n" + cliPrompt(history, last)
 	var extra []string
 	for _, f := range c.AllowedFolders {
@@ -647,6 +650,9 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 		defer run.stop()
 		withTree := func(m agentMounts) agentMounts { // worktree: Maven agentov, objekti zrcala (branje), .git klona le za branje
 			m.env = append(m.env, runEnv...)
+			if runEnv != nil {
+				m.ro = append(m.ro, minigwExe())
+			}
 			if inTree {
 				m.rw, m.ro = append(m.rw, maven), append(m.ro, objects)
 				m.pins = []string{filepath.Join(wt, ".git")} // L1: .git klona je točka priklopa (mv/rm: EBUSY)

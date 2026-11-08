@@ -705,7 +705,8 @@ struct SettingsView: View {
                 }
                 TextField("Setting sources", text: $draft.claudeCLI.settingSources)
                 Toggle("May ask other models", isOn: $draft.claudeCLI.askOthers)
-                    .help(String(localized: "The agent may ask another model of this gateway (for example Codex) with minigw, in the same folder and with the same device's rights; one level deep, never its own kind. Codex needs “Allow network access for commands” for it."))
+                    .disabled(!draft.claudeCLI.allowLocalTools)
+                    .help(String(localized: "The agent may ask another model of this gateway (for example Codex) with minigw, in the same folder and with the same device's rights; one level deep, never its own kind. Needs “Allow local tools” (Bash)."))
             }
             if draft.claudeCLI.allowLocalTools {
                 Section {

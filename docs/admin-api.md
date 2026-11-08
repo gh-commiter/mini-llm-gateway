@@ -141,7 +141,8 @@ Notes:
 - `PATCH /agents/claude`: the gateway checks the path, that the folder exists and is not near the config folder,
   and that Bash on Windows has `allowUnsandboxedBash`.
 - `askOthers` (every agent, off by default): the agent may ask another model of the same gateway with minigw, through a
-  loopback port and token valid only for that run (`MINIGW_AGENT_URL`, `MINIGW_AGENT_TOKEN`).
+  loopback port and token valid only for that run (`MINIGW_AGENT_URL`, `MINIGW_AGENT_TOKEN`). Claude uses it only with
+  `allowLocalTools` (it needs Bash to run minigw); the value is kept either way. Codex needs `network`.
 - Agents other than Claude get their own `agents/{name}` resource when a gateway has them (the Mac: `codex`,
   `grok`); a gateway answers `404` for agents it does not have, and for `siri`.
 

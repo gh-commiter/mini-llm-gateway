@@ -14,7 +14,7 @@ import (
 
 // Vrata izvajanja: le žeton izvajanja in tri poti; zahteva dobi napravo, sejo in mapo klicatelja.
 func TestAgentRunListener(t *testing.T) {
-	s, _ := testServer(t, func(c *serveConfig) { c.ClaudeAskOthers = true })
+	s, _ := testServer(t, func(c *serveConfig) { c.ClaudeAskOthers, c.AllowLocalTools = true, true })
 	dev := &serveDevice{Name: "phone"}
 	parent := httptest.NewRequest("POST", "/v1/messages", nil)
 	parent.Header.Set("X-Claude-Mini-Session", "sid1")
@@ -115,6 +115,7 @@ func TestAgentAsksAgentInSameFolder(t *testing.T) {
 	claude := filepath.Join(tmp, "claude")
 	writeT(t, claude, `#!/bin/sh
 cat > /dev/null
+prev=""; for a in "$@"; do [ "$prev" = --append-system-prompt-file ] && cp "$a" note.txt; [ "$prev" = --settings ] && printf '%s' "$a" > settings.txt; prev="$a"; done
 echo "$(`+ask("claude-codex")+`)" > asked.txt
 echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"done"}}}'
 echo '{"type":"result","subtype":"success","usage":{"output_tokens":3}}'
@@ -124,7 +125,7 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":3}}'
 if [ "$1" = debug ]; then echo '{"models":[]}'; exit 0; fi
 out=""; prev=""
 for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done
-cat > /dev/null
+cat > prompt.txt
 echo codex > codex.txt
 echo "$(`+ask("claude-cli-haiku")+`)" > loop.txt
 echo '{"type":"thread.started","thread_id":"t1"}'
@@ -133,7 +134,7 @@ echo "codex answer" > "$out"
 	os.Chmod(claude, 0o755)
 	os.Chmod(codex, 0o755)
 	s, _ := testServer(t, func(c *serveConfig) {
-		c.Claude, c.ClaudeAskOthers = claude, true
+		c.Claude, c.ClaudeAskOthers, c.AllowLocalTools = claude, true, true
 		c.AllowUnsandboxedBash = runtime.GOOS != "linux" || bwrapReady(t.TempDir()) == ""
 		t.Setenv("CODEX_HOME", t.TempDir())
 		c.Codex = agentCLI{Enabled: true, Executable: codex, AskOthers: true}
@@ -158,6 +159,16 @@ echo "codex answer" > "$out"
 	if read("codex.txt") != "codex" {
 		t.Fatal("codex did not write into the caller's folder (or it was not synced back)")
 	}
+	exe := minigwExe()
+	if n := read("note.txt"); !strings.Contains(n, "You may ask another model of this gateway: `\""+exe+"\" -p --model") {
+		t.Fatalf("claude's note: %q", n)
+	}
+	if st := read("settings.txt"); !strings.Contains(st, `"allowRead":[`) || !strings.Contains(st, exe) {
+		t.Fatalf("minigw not readable in claude's sandbox: %s", st)
+	}
+	if p := read("prompt.txt"); !strings.Contains(p, "Another agent on this gateway (claude) asks you this") || !strings.Contains(p, "You may ask another model") {
+		t.Fatalf("codex's prompt: %q", p)
+	}
 	if got := read("loop.txt"); got != "403" {
 		t.Fatalf("codex → claude loop: %q", got)
 	}
@@ -174,5 +185,25 @@ func TestAgentModeConnection(t *testing.T) {
 	ps := loadProfiles()
 	if len(ps) != 1 || ps[0].conn.URL != "http://127.0.0.1:1" || ps[0].conn.Token != "rt" || !ps[0].conn.isLocal() {
 		t.Fatalf("profiles in agent mode: %+v", ps)
+	}
+}
+
+// minigw -p in agentu: orodje le za modele agentov; posrednik iz okolja tudi za loopback.
+func TestAgentAskBodyAndProxy(t *testing.T) {
+	if b := string(agentBody("claude-codex", "q")); !strings.Contains(b, `"tools"`) || !strings.Contains(b, `"stream":true`) {
+		t.Fatalf("agent model body: %s", b)
+	}
+	if b := string(agentBody("or-qwen", "q")); strings.Contains(b, `"tools"`) {
+		t.Fatalf("provider model body has tools: %s", b)
+	}
+	t.Setenv("HTTP_PROXY", "http://u:p@127.0.0.1:9")
+	t.Setenv("NO_PROXY", "127.0.0.1,localhost")
+	q, _ := http.NewRequest("GET", "http://127.0.0.1:1/v1/models", nil)
+	if u, err := agentProxy(q); err != nil || u == nil || u.Host != "127.0.0.1:9" {
+		t.Fatalf("proxy for loopback: %v %v", u, err)
+	}
+	t.Setenv("HTTP_PROXY", "")
+	if u, _ := agentProxy(q); u != nil {
+		t.Fatalf("proxy without HTTP_PROXY: %v", u)
 	}
 }

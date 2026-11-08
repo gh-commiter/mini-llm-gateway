@@ -165,6 +165,11 @@ let maxReply = 80 << 20
 /// Poljubna zahteva; telo odgovora kot Data (0 = ni povezave). Telo gre najprej v začasno datoteko, ne v pomnilnik.
 func call(_ c: Connection, _ method: String, _ path: String, _ headers: [String: String] = [:], _ body: Data? = nil,
           timeout: TimeInterval) -> (Int, Data?) {
+    if agentConn() != nil {  // v agentu prehoda: vrata izvajanja, po potrebi prek posrednika sandboxa
+        var status = 0, data = Data()
+        _ = agentHTTP(c, method, path, body: body, onHead: { status = $0 }) { if data.count < maxReply { data.append($0) } }
+        return (status, status == 0 ? nil : data)
+    }
     var r = URLRequest(url: URL(string: c.url + path)!, timeoutInterval: timeout)
     r.httpMethod = method
     r.httpBody = body
@@ -540,6 +545,7 @@ while let i = args.firstIndex(where: { $0 == "--minigw-profile" || $0.hasPrefix(
 if agentConn() != nil, let first = args.first, ["connect", "disconnect", "profiles"].contains(first) {
     fail("minigw runs inside an agent of the gateway (MINIGW_AGENT_URL): \(first) is not available here")
 }
+if let c = agentConn(), args.first?.hasPrefix("-") == true, args.contains("-p") || args.contains("--print") { agentAsk(c, args) }
 
 switch args.first {
 case "share":

@@ -465,6 +465,7 @@ extension Router {
             try await writer.write(chunks.reduce(Data(), +))
         }
 
+        if agent, let note = agentNote("claude") { args = Self.withNote(args, note, read: Self.minigwExe) }
         guard let exe = await ClaudeCLI.executable(cfg.executable) else {
             return await error(503, "api_error", cfg.executable.isEmpty ? "claude not found; set its path in Mini Gateway settings"
                                                                          : "claude not found at \(cfg.executable)", rid: rid, writer: writer)
@@ -557,6 +558,20 @@ extension Router {
             return 200
         }
         return await json(200, t.message(), rid: rid, writer: writer)
+    }
+
+    /// Navodilo agentu k --append-system-prompt (ali novo) in pot, ki jo sandbox Claude Code sme brati (minigw).
+    static func withNote(_ args: [String], _ note: String, read: String) -> [String] {
+        var a = args
+        if let i = a.firstIndex(of: "--append-system-prompt"), i + 1 < a.count { a[i + 1] += "\n\n" + note } else { a += ["--append-system-prompt", note] }
+        if let i = a.firstIndex(of: "--settings"), i + 1 < a.count,
+           var st = (try? JSONSerialization.jsonObject(with: Data(a[i + 1].utf8))) as? [String: Any],
+           var sb = st["sandbox"] as? [String: Any], var fs = sb["filesystem"] as? [String: Any] {
+            fs["allowRead"] = (fs["allowRead"] as? [String] ?? []) + [read]
+            sb["filesystem"] = fs; st["sandbox"] = sb
+            a[i + 1] = String(decoding: try! JSONSerialization.data(withJSONObject: st, options: [.sortedKeys]), as: UTF8.self)
+        }
+        return a
     }
 
     static func systemText(_ system: Any?) -> String? {

@@ -28,6 +28,7 @@ Every control of the Mac app's Settings window (Sources/MiniGateway/Settings.swi
 | Claude CLI · Allowed folders (+/−) | same | `agents/claude.folders` | Absolute paths, not near the config folder; also `--add-dir` and the sandbox. |
 | Claude CLI · Allow local tools, tool table (exclude) | same | `.allowLocalTools`, `.disabledTools`, `GET agents/claude/tools` | On Windows it needs "Allow commands without a sandbox" (no sandbox for Bash). |
 | Claude CLI · Tools (text), Permission mode | Tools (switches), Permission mode | `.tools`, `.permissionMode` | Only without local tools, as on the Mac. |
+| Claude CLI · May ask other models | same | `agents/{claude,codex,grok,copilot}.askOthers`, `gw claude --ask-others` | Off by default, on every agent pane. Claude needs Allow local tools (the switch is disabled without it), Codex Allow network. A loopback port and token per run; the asked agent works in the caller's folder; one level deep, never its own kind. |
 | Claude CLI · Setting sources | same | `.settingSources` | Default empty on both; the old Mac default `project,local` migrates to empty (hooks from an agent's folder would run outside the sandbox). |
 | Claude CLI · Command-line tool: Install, Download… | Command-line tool: status, Download… | `status.installDir` | Installed with `minigw serve install`. |
 | Codex CLI · Enabled, Executable | same | `agents/codex.enabled`, `.path`, `.found` | Off by default. Models `claude-codex` (default model) and `claude-codex-<slug>`. Windows: the native `codex.exe` (also the one inside the npm package). |

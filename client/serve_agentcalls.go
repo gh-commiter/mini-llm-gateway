@@ -9,8 +9,11 @@ import (
 	"bufio"
 	"context"
 	"crypto/subtle"
+	"encoding/json"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -37,11 +40,11 @@ func runOf(r *req) *agentRun { p, _ := r.Context().Value(agentRunKey{}).(*agentR
 // agentChainHeader: zunanja zahteva z verigo je zavrnjena (veriga ni nikoli v glavi).
 const agentChainHeader = "X-Minigw-Agent-Chain"
 
-// askOthers: stikalo »May ask other models« za vrsto agenta.
+// askOthers: stikalo »May ask other models« za vrsto agenta (Claude CLI le z »Allow local tools«: brez Bash ne more klicati minigw).
 func (c serveConfig) askOthers(kind string) bool {
 	switch kind {
 	case "claude":
-		return c.ClaudeAskOthers
+		return c.ClaudeAskOthers && c.AllowLocalTools
 	case "codex":
 		return c.Codex.AskOthers
 	case "grok":
@@ -125,6 +128,41 @@ func (s *server) runHandler(run *agentRun) http.Handler {
 		hr.Header.Set("X-Claude-Mini-Cwd", run.cwd)
 		s.ServeHTTP(w, hr.WithContext(context.WithValue(hr.Context(), agentRunKey{}, run)))
 	})
+}
+
+// minigwExe: ta program (z razrešenimi povezavami): agent z njim vpraša druge modele, sandbox ga mora videti.
+func minigwExe() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return "minigw"
+	}
+	if r, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = r
+	}
+	return exe
+}
+
+// askNote: navodilo agentu z vrati izvajanja.
+func askNote(exe string) string {
+	return "You may ask another model of this gateway: `\"" + exe + "\" -p --model <id> \"…\"`; `\"" + exe + "\" models` lists them."
+}
+
+// sandboxAllowRead: sandbox Claude Code (--settings) sme brati še te poti.
+func sandboxAllowRead(args []string, paths ...string) []string {
+	for i := 0; i+1 < len(args); i++ {
+		var st map[string]any
+		if args[i] != "--settings" || json.Unmarshal([]byte(args[i+1]), &st) != nil {
+			continue
+		}
+		if sb, _ := st["sandbox"].(map[string]any); sb != nil {
+			if fs, _ := sb["filesystem"].(map[string]any); fs != nil {
+				fs["allowRead"] = append(toStrings(fs["allowRead"]), paths...)
+			}
+		}
+		b, _ := json.Marshal(st)
+		args[i+1] = string(b)
+	}
+	return args
 }
 
 // nestedNote: navodilo vprašanemu agentu (mapa klicatelja).

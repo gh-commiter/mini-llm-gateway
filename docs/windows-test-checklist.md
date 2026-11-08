@@ -28,6 +28,14 @@ One pass with the combined build, before the release. Each item: what to do, wha
 - Gateway without git on PATH: register refused with "git is not installed on the gateway".
 - After the session: the clone in `<scratch>\worktrees\<device>\…` is removed; the mirror in `<scratch>\repos` stays.
 
+## Agent asks another model (gateway on Windows)
+- Settings page → Claude CLI: Allow local tools and Allow commands without a sandbox on; then May ask other models on
+  (disabled while local tools are off). `minigw gw claude` shows `askOthers: true`.
+- From a client: `minigw --minigw-work=sync -p --model claude-cli-opus "ask claude-codex what 2+2 is, using the minigw command in your instructions"`.
+  Expected: the answer quotes Codex; the gateway log shows a second request to `claude-codex`.
+- Codex asking Claude back (or any third level) is refused: "cannot ask further models" / "cannot ask its own kind".
+- With the switch off, the agent's instructions do not mention minigw and `MINIGW_AGENT_URL` is not set.
+
 ## Devices (gateway on Windows)
 - Connect a new client: it waits in the tray menu (Waiting for approval) and on the settings page (Devices), with a tray
   notice. The row shows `<user>@<computer>`, ID, address, time, OS and minigw version.

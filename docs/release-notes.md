@@ -3,11 +3,14 @@
 ## Unreleased
 
 - **An agent may ask another model (off by default):** with **May ask other models** on for Claude CLI, Codex, Grok or
-  Copilot (Settings, the settings page, `PATCH /agents/{name} {"askOthers": true}`), an agent on the gateway can run
-  `minigw -p --model claude-codex-… "…"` (or `/minigw:codex`) itself. It gets a loopback port and a token for that run
-  only (`MINIGW_AGENT_URL`, `MINIGW_AGENT_TOKEN`) with the rights of your device; the asked agent works in the same
-  folder (sync copy, worktree branch or native folder) and the caller waits. One level deep, never the same kind of
-  agent. Codex needs "Allow network access for commands" for it. Calls to another gateway come later.
+  Copilot (Settings, the settings page, `PATCH /agents/{name} {"askOthers": true}`, `minigw gw claude --ask-others=true`),
+  an agent on the gateway can ask another model of that gateway itself, for example a remote `claude-cli-opus` asking
+  an OpenRouter model or `claude-codex-…`: its instructions name the gateway's `minigw -p --model <id> "…"`, which sends
+  the question straight to a loopback port and token for that run only (`MINIGW_AGENT_URL`, `MINIGW_AGENT_TOKEN`), with
+  the rights of your device, also from inside Claude Code's sandbox (through its proxy). The asked agent works in the
+  same folder (sync copy, worktree branch or native folder) and the caller waits. One level deep, never the same kind of
+  agent. Claude CLI needs **Allow local tools** (Bash) for it, Codex "Allow network access for commands". Calls to
+  another gateway come later.
 - **Several gateways at once (profiles, #17):** `minigw connect <host> --name <profile>` keeps every gateway, for
   example the Mac mini and a Windows gateway side by side. Models of other profiles are `<model>@<profile>`; the
   default profile's also appear without a suffix. An unreachable gateway is left out of the list, and `minigw status`
