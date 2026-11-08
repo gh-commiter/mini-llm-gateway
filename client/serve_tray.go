@@ -38,6 +38,10 @@ func trayBeside(exe string) string {
 }
 
 func trayCommand(args []string) {
+	if len(args) > 0 && args[0] == "quit" { // MSI: zapre tekoči pladenj, sam brez okna (-H=windowsgui)
+		quitRunningTray()
+		return
+	}
 	if len(args) > 0 && (args[0] == "tray" || args[0] == "serve") { // Run: "minigw-tray.exe" tray --config …
 		args = args[1:]
 	}

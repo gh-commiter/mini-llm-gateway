@@ -381,7 +381,32 @@ func trayMutexExists() bool {
 }
 
 // closeRunningTray: WM_CLOSE oknu pladnja, nato do 10 s čakanja, da mutex izgine.
-func closeRunningTray() error {
+func closeRunningTray() error { return closeTray(50) }
+
+// quitRunningTray: minigw-tray.exe quit (MSI pred odstranitvijo, brez konzole): WM_CLOSE, 5 s, nato konec
+// vseh drugih procesov pladnja tega uporabnika (kot prej taskkill /F /IM minigw-tray.exe).
+func quitRunningTray() {
+	if closeTray(25) == nil {
+		return
+	}
+	snap, err := syscall.CreateToolhelp32Snapshot(syscall.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return
+	}
+	defer syscall.CloseHandle(snap)
+	e := syscall.ProcessEntry32{Size: uint32(unsafe.Sizeof(syscall.ProcessEntry32{}))}
+	for err := syscall.Process32First(snap, &e); err == nil; err = syscall.Process32Next(snap, &e) {
+		if int(e.ProcessID) == os.Getpid() || !isTrayExe(syscall.UTF16ToString(e.ExeFile[:])) {
+			continue
+		}
+		if h, err := syscall.OpenProcess(syscall.PROCESS_TERMINATE, false, e.ProcessID); err == nil {
+			syscall.TerminateProcess(h, 1)
+			syscall.CloseHandle(h)
+		}
+	}
+}
+
+func closeTray(waits int) error {
 	if !trayMutexExists() {
 		return nil
 	}
@@ -389,7 +414,7 @@ func closeRunningTray() error {
 	if h, _, _ := user32dll.NewProc("FindWindowW").Call(uintptr(unsafe.Pointer(class)), 0); h != 0 {
 		user32dll.NewProc("PostMessageW").Call(h, 0x0010 /* WM_CLOSE */, 0, 0)
 	}
-	for range 50 {
+	for range waits {
 		if !trayMutexExists() {
 			return nil
 		}
