@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -38,6 +39,18 @@ func dav(status int, headers map[string]string, body []byte) davResponse {
 
 // maxServe: največji kos datoteke v enem odgovoru (router sprejme odgovor do 64 MB, base64 doda tretjino).
 const maxServe = 32 << 20
+
+var davRefused sync.Map
+
+// davRefuse: ena vrstica na stderr na zavrnjeno pot (brez ponovitev), da je razvidno, da je zavrnila ta zaščita in ne
+// peskovnik agenta. Le relativna pot v deljeni mapi.
+func davRefuse(rel []string) davResponse {
+	p := strings.Join(rel, "/")
+	if _, seen := davRefused.LoadOrStore(p, true); !seen {
+		fmt.Fprintf(os.Stderr, "minigw: refused agent write to %s (protected path)\n", p)
+	}
+	return dav(403, nil, nil)
+}
 
 func davHandle(method, path string, headers map[string]string, body []byte, root, prefix string) davResponse {
 	r, err := filepath.EvalSymlinks(root)
@@ -61,11 +74,11 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 	switch method {
 	case "PUT", "MKCOL", "DELETE", "MOVE", "PROPPATCH":
 		if protected(p, rel) {
-			return dav(403, nil, nil)
+			return davRefuse(rel)
 		}
 	case "LOCK":
 		if !exists && protected(p, rel) {
-			return dav(403, nil, nil)
+			return davRefuse(rel)
 		}
 	}
 
@@ -184,8 +197,11 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 		if !exists {
 			return dav(404, nil, nil)
 		}
-		if len(rel) == 0 || treeProtected(p, rel) {
+		if len(rel) == 0 {
 			return dav(403, nil, nil)
+		}
+		if treeProtected(p, rel) {
+			return davRefuse(rel)
 		}
 		if err := os.RemoveAll(p); err != nil {
 			return dav(403, nil, nil)
@@ -214,9 +230,11 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 		// Tudi vsebina mape: nič zaščitenega na cilju (stage/settings.json → .claude), nič zaščitenega ne izgine
 		// (MOVE .claude stran, prepis obstoječe .claude).
 		_, lerr := os.Lstat(dest)
-		if protected(dest, destRel) || treeProtected(p, destRel) || (method == "MOVE" && treeProtected(p, rel)) ||
-			(lerr == nil && treeProtected(dest, destRel)) {
-			return dav(403, nil, nil)
+		if protected(dest, destRel) || treeProtected(p, destRel) || (lerr == nil && treeProtected(dest, destRel)) {
+			return davRefuse(destRel)
+		}
+		if method == "MOVE" && treeProtected(p, rel) {
+			return davRefuse(rel)
 		}
 		if isJunk(dest) {
 			return dav(201, nil, nil)
