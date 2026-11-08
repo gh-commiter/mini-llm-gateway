@@ -853,8 +853,11 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			if scratch = *b.Scratch; scratch == "" {
 				scratch = defaultScratch()
 			}
-			if !filepath.IsAbs(scratch) || under(scratch, s.cfgDir) || under(s.cfgDir, scratch) {
-				return fail(400, "scratch folder: an absolute path outside the config folder")
+			if !filepath.IsAbs(scratch) {
+				return fail(400, "scratch folder: an absolute path")
+			}
+			if under(scratch, s.cfgDir) || under(s.cfgDir, scratch) { // npr. C:\ ali domača mapa vsebuje mapo nastavitev
+				return fail(400, "scratch folder: must not contain or be inside the config folder "+s.cfgDir)
 			}
 			if *b.Scratch != "" {
 				if why := scratchProblem(scratch, s.conf().AllowedFolders); why != "" { // M1, kot na Macu

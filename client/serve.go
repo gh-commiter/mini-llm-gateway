@@ -409,7 +409,7 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 		}
 	}
 	if c.Scratch, err = filepath.Abs(c.Scratch); err != nil || under(c.Scratch, cfgDir) {
-		return nil, errors.New("scratch must not be inside the config folder " + cfgDir)
+		return nil, errors.New("scratch folder: must not be inside the config folder " + cfgDir)
 	}
 	if err := protectScratch(c.Scratch); err != nil {
 		return nil, fmt.Errorf("scratch folder %s: %v: use a folder of your own", c.Scratch, err)
