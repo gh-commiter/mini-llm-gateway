@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Plugin 0.5.17: minigw is set up also when a session continues after compaction (SessionStart `compact`); before, the skills could not find it until a new session.
 - Homebrew: the `minigw` cask also adds the Claude Code plugin (in `~/.claude/settings.json`; Claude Code installs it in the background on its next start), and `brew uninstall` removes it again; `brew upgrade` keeps it and a `false` you set.
 
 ## 0.5.18
