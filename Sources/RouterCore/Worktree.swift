@@ -107,6 +107,12 @@ public enum Worktree {
         return r.status == 0 && !r.out.isEmpty ? r.out : nil
     }
 
+    /// Repozitorij ima HEAD (brez njega ni posnetka za worktree; auto in worktree tedaj na sync).
+    public static func hasCommit(top: String) -> Bool {
+        let h = run(["rev-parse", "--verify", "-q", "HEAD^{commit}"], cwd: top, safe: false, hooks: false)
+        return h.status == 0 && isSHA(h.out)
+    }
+
     /// Posnetek stanja: HEAD ali commit z neshranjenimi spremembami (sledene in nove, neprezrte), narejen z začasnim
     /// indeksom: indeks, veje in delovna mapa uporabnika ostanejo nespremenjeni. nil = brez HEAD (prazen repozitorij).
     public static func snapshot(top: String) -> String? {

@@ -616,7 +616,7 @@ func main() {
 			}
 			fmt.Fprintln(os.Stderr, "minigw: "+why+"; Claude CLI models with tools will not see it")
 		}
-	} else if !saved.isLocal() && os.Getenv("MINIGW_SHARE") != "0" {
+	} else if !(saved.isLocal() && runtime.GOOS == "darwin") && os.Getenv("MINIGW_SHARE") != "0" {
 		why := "" // samodejno se ne delijo sistemske, skrite in domača mapa
 		if os.Getenv("MINIGW_SHARE") == "" {
 			why = " (not shared automatically)"
@@ -714,8 +714,9 @@ func registerShare(c connection, sid, cwd string, readOnly bool, top string, tri
 	return sc, false
 }
 
-// shareWanted: mapo deli le z oddaljenim routerjem in le pod domačo mapo (nikoli cele domače mape,
-// skritih map ali sistemskih podatkov); MINIGW_SHARE=0/1 preglasi.
+// shareWanted: projektno mapo (autoShare ali minigw share add) deli samodejno; nikoli cele domače mape, skritih map ali
+// sistemskih podatkov; MINIGW_SHARE=0/1 preglasi. Prehod na tem Macu (aplikacija) dela v mapi sami, zato tam ne;
+// minigw serve na tem računalniku (Windows, Linux) pa mapo potrebuje kot oddaljen (#9).
 func shareWanted(cwd string, local bool) bool {
 	switch os.Getenv("MINIGW_SHARE") {
 	case "1":
