@@ -593,6 +593,7 @@ extension Router {
             let (code, type, text) = AgentError.classify(msg)
             if !stream { return await error(code, type, "claude: \(text)", rid: rid, extra: code == 429 ? [("x-should-retry", "false")] : [], writer: writer) }
             if t.text.isEmpty {
+                if code == 429 { AgentError.note(AgentError.key(req, model: t.model), "claude: \(text)") }  // ponovitev brez pretoka
                 try? await writer.write(StreamTranslator.sse("error", ["type": "error", "error": ["type": type, "message": "claude: \(text)"]]))
                 return code
             }

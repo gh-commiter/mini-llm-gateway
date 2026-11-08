@@ -2,6 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
+	"log"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -281,6 +284,70 @@ func TestAgentLimitKeywordsAndCleaning(t *testing.T) {
 	writeError(b, "req_2", 429, "Too many provider requests at once")
 	if b.Header().Get("x-should-retry") != "" {
 		t.Fatal("busy 429 must stay retryable")
+	}
+}
+
+// Napaka CLI za odjemalca: le besedilo (brez »Internal error:«, ovoja JSON in »API error (status 402 …):«), kot na Macu.
+func TestAgentMessageExtraction(t *testing.T) {
+	line := `{"type":"error","message":"Internal error: {\n  \"message\": \"API error (status 402 Payment Required): personal-team-blocked:spending-limit: You have run out of credits or need a Grok subscription. Add credits at https://grok.com/?_s=usage or upgrade at https://grok.com/supergrok.\",\n  \"http_status\": 402\n}","cwd":"/Users/x/w"}`
+	e, _ := parseGrokEvent([]byte(line))
+	st, m := classifyAgentError(e.err)
+	if want := "You have run out of credits or need a Grok subscription. Add credits at https://grok.com/?_s=usage or upgrade at https://grok.com/supergrok."; st != 429 || m != want {
+		t.Fatalf("grok: %d %q", st, m)
+	}
+	codex := codexFailure([]byte(`{"type":"error","message":"{\"error\":{\"type\":\"usage_limit_reached\",\"message\":\"You've hit your usage limit.\"}}"}`))
+	if st, m := classifyAgentError(codex); st != 429 || m != "You've hit your usage limit." {
+		t.Fatalf("codex: %d %q", st, m)
+	}
+	if _, m := classifyAgentError(`{"error":"quota exceeded"}`); m != "quota exceeded" {
+		t.Fatalf("error string: %q", m)
+	}
+	if _, m := classifyAgentError("Internal error: {not json"); m != "Internal error: {not json" {
+		t.Fatalf("fallback: %q", m)
+	}
+}
+
+// Napaka pred glavo (tudi pri pretoku) je pravi 429 z x-should-retry: false (Claude Code ne ponovi); po glavi dogodek SSE,
+// ponovitev brez pretoka dobi isti 429 brez novega zagona CLI.
+func TestReplyWhenDoneRetryHeaders(t *testing.T) {
+	defer func(d time.Duration) { agentHeadDelay = d }(agentHeadDelay)
+	agentHeadDelay = 50 * time.Millisecond
+	s := &server{log: log.New(io.Discard, "", 0)}
+	newReq := func() *req {
+		hr := httptest.NewRequest("POST", "/v1/messages", nil)
+		hr.Header.Set("x-claude-mini-session", "s1")
+		return &req{Request: hr, rid: "req_1", conn: &serveConn{peer: "127.0.0.1"}}
+	}
+	limit := func() (string, error) {
+		return "", errors.New(`Internal error: {"message":"API error (status 402 Payment Required): You have run out of credits."}`)
+	}
+	for _, stream := range []bool{true, false} {
+		w := httptest.NewRecorder()
+		st := s.replyWhenDone(w, newReq(), map[string]any{"model": "claude-grok", "stream": stream}, limit)
+		if st != 429 || w.Code != 429 || w.Header().Get("x-should-retry") != "false" || !strings.Contains(w.Body.String(), `"You have run out of credits."`) {
+			t.Fatalf("stream=%v: %d %d %q %s", stream, st, w.Code, w.Header().Get("x-should-retry"), w.Body.String())
+		}
+	}
+	if _, ok := s.recentLimit(newReq(), "claude-grok"); ok {
+		t.Fatal("an HTTP 429 is final: nothing to remember")
+	}
+	w := httptest.NewRecorder()
+	slow := func() (string, error) { time.Sleep(150 * time.Millisecond); return limit() }
+	s.replyWhenDone(w, newReq(), map[string]any{"model": "claude-grok", "stream": true}, slow)
+	if w.Code != 200 || w.Header().Get("x-should-retry") != "false" || !strings.Contains(w.Body.String(), "event: error") ||
+		!strings.Contains(w.Body.String(), "rate_limit_error") {
+		t.Fatalf("late error: %d %s", w.Code, w.Body.String())
+	}
+	if m, ok := s.recentLimit(newReq(), "claude-grok"); !ok || m != "You have run out of credits." {
+		t.Fatalf("fallback after a stream error: %q %v", m, ok)
+	}
+	if _, ok := s.recentLimit(newReq(), "claude-grok"); ok {
+		t.Fatal("remembered once only")
+	}
+	w = httptest.NewRecorder()
+	if st := s.replyWhenDone(w, newReq(), map[string]any{"model": "claude-grok", "stream": true}, func() (string, error) { return "hi", nil }); st != 200 ||
+		!strings.Contains(w.Body.String(), "message_start") || !strings.Contains(w.Body.String(), "hi") {
+		t.Fatalf("answer: %d %s", st, w.Body.String())
 	}
 }
 
