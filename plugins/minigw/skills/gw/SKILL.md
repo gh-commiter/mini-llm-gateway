@@ -1,7 +1,7 @@
 ---
 name: gw
 description: Install, update, check or remove Mini Gateway on this computer (Windows and Linux run minigw serve, macOS runs the Mini Gateway app), and manage it (devices, providers, Claude CLI, token, settings page). Use for /minigw:gw install|update|uninstall|status and when the user wants to change the gateway on this computer.
-argument-hint: install | update | uninstall | status | devices [allow <id> [--name N] | rename <id> --name N | deny <id>] | provider add|remove|list|models | claude … | copilot token [remove] | autostart on|off | token [rotate] | settings | modes
+argument-hint: install | update | uninstall | status | devices [allow <id> [--name N] | rename <id> --name N | deny <id>] | provider add|remove|list|models | claude … | copilot token [remove] | autostart [on|off] | token [rotate] | settings | modes
 allowed-tools: Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw *)
 ---
 
@@ -83,7 +83,7 @@ Everything else goes to `"$M" gw …`. It changes the running gateway at once (o
 - `provider list`, `provider remove <name>`, `provider models <name> [text] [--all] [--enable m1,m2|all] [--disable m1,m2|all]`.
 - `claude [--path FILE] [--tools T1,T2] [--folders DIR1,DIR2] [--allow-local-tools=true|false] [--ask-others=true|false]` on every system (`--ask-others`: Claude may ask other models of this gateway; needs local tools); Windows and Linux also `[--allow-unsandboxed-bash=true|false]`. Windows has no sandbox for commands: before `--allow-unsandboxed-bash=true`, tell the user that agents can then run any command as them.
 - `copilot token [remove]`: Copilot's own GitHub token (fine-grained, only "Copilot Requests"). Never pass it yourself: ask the user to run `! "<path of $M>" gw copilot token`; minigw asks for it without showing it.
-- `autostart on|off`: Mac Open at Login; Windows the tray at sign-in. Linux: use `serve install` / `serve uninstall`.
+- `autostart [on|off]`: Mac Open at Login; Windows the tray at sign-in; without an argument it shows the current state. Linux: use `serve install` / `serve uninstall`.
 - `devices history <id>` lists a device's last connections; `sessions [--device ID] [--folder DIR]`, `sessions <id>` and `sessions clear` show or clear the session history (no prompt text is stored). A client run with `minigw --minigw-role NAME …` (or `MINIGW_ROLE=NAME`) is recorded under that role; it is a label for the history, not a security boundary.
 - Model requests from this user's own apps on the gateway's computer need no token while General → "Allow this user's apps without a token" is on (off by default: containers and tunnels running as the user would also count); it is a settings switch (`allowLocalApps`), not a `gw` command. minigw itself still sends the token from its local profile.
 - `token`: prints the connect line for other computers (the user asked for it, so show it). `token rotate`: ask first. Every client must connect again with the new line.

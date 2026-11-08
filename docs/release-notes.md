@@ -17,7 +17,7 @@
   is in the log, `gw status`, `gw claude` and the Claude CLI pane; the tray log now also has the startup warnings.
 - `minigw gw devices deny <id>` refuses options such as `--name` (it used to remove the device). **Allow any device with
   the token** can be turned on only while no device is allowed (page, Mac Settings, admin API 400).
-- `gw status` on Windows says `minigw gw autostart off`; `gw autostart` without an argument shows the state (both CLIs).
+- `gw status` on Windows says `minigw gw autostart off`; `gw autostart` without an argument shows the state (both CLIs; plugin 0.5.15).
   Scratch folder errors say that it must not contain the config folder (named).
 - Sessions: a device on 127.0.0.1 that was never approved shows as this computer, not "(device removed)"; an allowed
   device has connection history also over 127.0.0.1; a request with an invalid session ID counts in a `t-…` session;
