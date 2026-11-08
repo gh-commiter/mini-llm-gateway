@@ -43,12 +43,17 @@ cask "minigw" do
         enabled["minigw@mini-gateway"] = true unless enabled.key?("minigw@mini-gateway")
         save.call(s)
       end
-      # Skilli vtičnika kličejo minigw v njegovi mapi: povezava na ta minigw takoj, ne šele ob naslednji seji (hook
-      # vtičnika naredi isto: nameščen in podpisan minigw ima prednost pred preneseno kopijo).
-      FileUtils.mkdir_p(File.dirname(plugin_bin))
-      FileUtils.ln_sf("#{HOMEBREW_PREFIX}/bin/minigw", plugin_bin)
     rescue JSON::ParserError, SystemCallError => e
       opoo "Claude Code plugin not added (#{settings}: #{e.message}); add it in Claude Code: /plugin install minigw@mini-gateway"
+    end
+    # Skilli vtičnika kličejo minigw v njegovi mapi: povezava na ta minigw takoj, ne šele ob naslednji seji (hook
+    # vtičnika naredi isto: nameščen in podpisan minigw ima prednost pred preneseno kopijo).
+    begin
+      FileUtils.mkdir_p(File.dirname(plugin_bin))
+      FileUtils.rm_f(plugin_bin)
+      File.symlink("#{HOMEBREW_PREFIX}/bin/minigw", plugin_bin)
+    rescue SystemCallError => e
+      opoo "minigw not linked for the Claude Code plugin (#{e.message}); a new Claude Code session sets it up"
     end
   end
 
