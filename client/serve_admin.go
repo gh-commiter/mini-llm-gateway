@@ -74,6 +74,7 @@ type apiClaude struct {
 	PermissionMode       string   `json:"permissionMode"`
 	SettingSources       string   `json:"settingSources"`
 	Off                  string   `json:"off,omitempty"` // zakaj sta Claude CLI in Codex izklopljena ob zagonu (offReason)
+	LeftOut              []string `json:"leftOut,omitempty"` // mape iz serve.json, izpuščene ob zagonu (offFolders)
 }
 
 type apiGeneral struct {
@@ -749,6 +750,12 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 				return fail(400, "tools: comma-separated tool names, e.g. "+defaultTools)
 			}
 		}
+		s.mu.RLock()
+		left := s.offFolders
+		s.mu.RUnlock()
+		if b.Enabled != nil && *b.Enabled && b.Folders == nil && len(left) > 0 { // sicer »serve.json differs« (mapa je še v datoteki)
+			return fail(400, "first save the allowed folders without "+strings.Join(left, ", ")+" (settings page → Claude CLI → Allowed folders, or minigw gw claude --folders …)")
+		}
 		var folders []string
 		if b.Folders != nil {
 			for _, f := range strings.Split(*b.Folders, ",") {
@@ -796,6 +803,9 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			s.claude = exe
 			if b.Enabled != nil && *b.Enabled { // ponovni vklop uspel: razlog izklopa ob zagonu ne velja več
 				s.offReason = ""
+			}
+			if b.Folders != nil { // shranjen seznam je brez izpuščenih map (tudi v serve.json)
+				s.offFolders = nil
 			}
 		})
 		if err != nil {
@@ -1128,7 +1138,7 @@ func (s *server) claudeInfo() apiClaude {
 	}
 	if c.ClaudeDisabled {
 		s.mu.RLock()
-		info.Off = s.offReason
+		info.Off, info.LeftOut = s.offReason, s.offFolders
 		s.mu.RUnlock()
 	}
 	return info

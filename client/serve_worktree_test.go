@@ -3,10 +3,12 @@ package main
 import (
 	"crypto/ecdh"
 	"crypto/rand"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -238,15 +240,15 @@ func TestAllowedFolderAroundScratch(t *testing.T) {
 	if got := s.conf(); !got.ClaudeDisabled || got.Codex.Enabled || len(got.AllowedFolders) != 0 {
 		t.Fatalf("startup with an allowed folder around Scratch: %+v", got)
 	}
-	if off := s.claudeInfo().Off; !strings.Contains(off, parent) { // razlog v gw status, gw claude in na strani
-		t.Fatalf("no reason: %q", off)
+	if info := s.claudeInfo(); !strings.Contains(info.Off, parent) || !slices.Equal(info.LeftOut, []string{parent}) { // gw status, gw claude, stran
+		t.Fatalf("no reason or left-out folder: %+v", info)
 	}
-	// Le vklop ne gre (serve.json ima še mapo okoli Scratch); mape brez nje in vklop razlog počistita, kasnejši ročni
-	// izklop ga nima.
-	if st, _ := s.adminDo("PATCH", "/agents/claude", []byte(`{"enabled":true}`)); st != 400 || s.claudeInfo().Off == "" {
-		t.Fatalf("enabled without saving the folders: %d", st)
+	// Le vklop ne gre (serve.json ima še mapo okoli Scratch); stran shrani mape brez nje, nato stikalo vklopi brez
+	// ponovnega zagona; vklop razlog počisti, kasnejši ročni izklop ga nima.
+	if st, b := s.adminDo("PATCH", "/agents/claude", []byte(`{"enabled":true}`)); st != 400 || s.claudeInfo().Off == "" || !strings.Contains(fmt.Sprint(b), "first save") {
+		t.Fatalf("enabled without saving the folders: %d %v", st, b)
 	}
-	for _, body := range []string{`{"folders":"","enabled":true}`, `{"enabled":false}`} {
+	for _, body := range []string{`{"folders":""}`, `{"enabled":true}`, `{"enabled":false}`} {
 		if st, b := s.adminDo("PATCH", "/agents/claude", []byte(body)); st != 200 {
 			t.Fatalf("%s: %d %v", body, st, b)
 		}
