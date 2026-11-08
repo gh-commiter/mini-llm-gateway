@@ -13,7 +13,7 @@
   stops only `minigw-tray.exe` of this user's Windows session.
 - **Windows test report fixes (gateway):** the tray started by the MSI now finds `claude`, `codex`, `git` … (PATH also
   from the registry and `%USERPROFILE%\.local\bin`). Agent calls on Windows use `minigw.exe` (not the tray) as
-  `minigw -p …`, pre-approved as `Bash(minigw -p:*)`; other Bash commands of an agent still need approval there (no
+  `minigw -p …`, pre-approved for Bash and PowerShell (`Bash(minigw -p:*)`, `PowerShell(minigw -p *)`); other Bash commands of an agent still need approval there (no
   sandbox). An invalid `serve.json` is written to the log and shown in a message box in front; `gw status` says the
   settings must be fixed. When an allowed folder contains the scratch folder, the reason why Claude CLI and Codex are off
   is in the log, `gw status`, `gw claude` and the Claude CLI pane; the tray log now also has the startup warnings.

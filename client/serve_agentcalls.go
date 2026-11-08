@@ -235,8 +235,9 @@ func askNote(exe string, onPath bool) string {
 	return "You may ask another model of this gateway: `" + cmd + " -p --model <id> \"…\"`; `" + cmd + " models` lists them."
 }
 
-// askRules: pravili, ki agentu Claude na Windows dovolita le ukaz iz askNote (le z askOnPath).
-const askRules = "Bash(minigw -p:*),Bash(minigw models:*)"
+// askRules: pravila, ki agentu Claude na Windows dovolijo le ukaz iz askNote (le z askOnPath); Claude Code na Windows
+// ukaze praviloma poganja z orodjem PowerShell, ki ima svoja pravila (Bash(...) zanj ne velja).
+const askRules = "Bash(minigw -p:*),Bash(minigw models:*),PowerShell(minigw -p *),PowerShell(minigw models *)"
 
 // sandboxAllowRead: sandbox Claude Code (--settings) sme brati še te poti.
 func sandboxAllowRead(args []string, paths ...string) []string {
