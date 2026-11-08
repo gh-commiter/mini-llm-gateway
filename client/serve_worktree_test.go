@@ -245,8 +245,10 @@ func TestAllowedFolderAroundScratch(t *testing.T) {
 	}
 	// Le vklop ne gre (serve.json ima še mapo okoli Scratch); stran shrani mape brez nje, nato stikalo vklopi brez
 	// ponovnega zagona; vklop razlog počisti, kasnejši ročni izklop ga nima.
-	if st, b := s.adminDo("PATCH", "/agents/claude", []byte(`{"enabled":true}`)); st != 400 || s.claudeInfo().Off == "" || !strings.Contains(fmt.Sprint(b), "first save") {
-		t.Fatalf("enabled without saving the folders: %d %v", st, b)
+	for _, body := range []string{`{"enabled":true}`, `{"permissionMode":"acceptEdits"}`, `{"path":""}`} { // vse razen map
+		if st, b := s.adminDo("PATCH", "/agents/claude", []byte(body)); st != 400 || s.claudeInfo().Off == "" || !strings.Contains(fmt.Sprint(b), "first save") {
+			t.Fatalf("%s without saving the folders: %d %v", body, st, b)
+		}
 	}
 	for _, body := range []string{`{"folders":""}`, `{"enabled":true}`, `{"enabled":false}`} {
 		if st, b := s.adminDo("PATCH", "/agents/claude", []byte(body)); st != 200 {

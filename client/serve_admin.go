@@ -753,7 +753,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		s.mu.RLock()
 		left := s.offFolders
 		s.mu.RUnlock()
-		if b.Enabled != nil && *b.Enabled && b.Folders == nil && len(left) > 0 { // sicer »serve.json differs« (mapa je še v datoteki)
+		if b.Folders == nil && len(left) > 0 { // vsaka sprememba brez map: sicer »serve.json differs« (mapa je še v datoteki)
 			return fail(400, "first save the allowed folders without "+strings.Join(left, ", ")+" (settings page → Claude CLI → Allowed folders, or minigw gw claude --folders …)")
 		}
 		var folders []string
