@@ -713,6 +713,8 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     let p = try #require(Native.sandboxProfile(dir: base.appendingPathComponent("proj").path, home: base.path, network: true, hidden: [link.path]))
     let hide = try #require(p.split(separator: "\n").first { $0.hasPrefix("(deny file-read-data file-write*") })
     #expect(hide.contains("\"\(link.path)\"") && hide.contains("\"\(real.path)\""))
+    // L4: ugnezdeni .git: nastavitve in hooki, pa tudi .git sam (preimenovanje, zamenjava z datoteko gitdir)
+    #expect(p.contains(#"(regex #"/\.git/(config|config\.worktree|hooks|info)(/|$)")"#) && p.contains(#"(regex #"/\.git$")"#))
 }
 
 /// Agent-calls na native-direct: vprašani agent dela v mapi klicatelja v njegovem izvajanju in ne čaka na zaklep, ki ga
@@ -745,4 +747,11 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     }
     #expect(nested == dir && ContinuousClock.now - start < .milliseconds(500))
     await hub.finish(run: parent)
+}
+
+/// L2: git, ki visi (tudi njegov pomožni proces), konča po časovni omejitvi.
+@Test func gatewayGitTimeoutKillsTheProcessGroup() throws {
+    let start = ContinuousClock.now
+    let r = Worktree.run(["-c", "alias.hang=!sleep 30", "hang"], timeout: 1)
+    #expect(r.status != 0 && ContinuousClock.now - start < .seconds(10))
 }

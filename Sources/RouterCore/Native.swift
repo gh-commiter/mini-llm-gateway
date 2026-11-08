@@ -218,7 +218,8 @@ public enum Native {
             + (visible.map { "(allow file-read* file-read-data" + rules("subpath", [$0]) + ")\n" } ?? "")
             + (visible.flatMap { writable.contains($0) ? "(allow file-write*" + rules("subpath", [$0]) + ")\n" : nil } ?? "")
             + "(deny file-write*" + rules("subpath", [dir + "/.git"] + denies.paths)
-            + " (regex #\"/\\.git/(config|hooks|info)(/|$)\")"  // tudi ugnezdeni repozitoriji (nastavitve in hooki zunanjega git)
+            // tudi ugnezdeni repozitoriji (nastavitve in hooki zunanjega git); ».git« sam ne (preimenovanje, zamenjava z datoteko gitdir)
+            + " (regex #\"/\\.git/(config|config\\.worktree|hooks|info)(/|$)\") (regex #\"/\\.git$\")"
             + denies.regexes.map { " (regex #\"" + $0.replacingOccurrences(of: "\"", with: "\\\"") + "\")" }.joined() + ")\n"
             + "(deny file-read*" + rules("subpath", secretDirs) + rules("literal", secretFiles) + ")\n"
             // Nastavitve aplikacije: datoteka in domena cfprefsd skupaj (le ena od obeh branja ne prepreči).

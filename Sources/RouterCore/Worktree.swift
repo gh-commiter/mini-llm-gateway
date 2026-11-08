@@ -61,7 +61,9 @@ public enum Worktree {
         posix_spawn_file_actions_adddup2(&fa, o[1], 1)
         posix_spawn_file_actions_addopen(&fa, 2, "/dev/null", O_WRONLY, 0)
         if let cwd { posix_spawn_file_actions_addchdir_np(&fa, cwd) }
-        posix_spawnattr_setflags(&at, Int16(POSIX_SPAWN_CLOEXEC_DEFAULT))
+        // Svoja skupina procesov: časovna omejitev ubije tudi pomožne procese git (ti držijo izhod odprt).
+        posix_spawnattr_setflags(&at, Int16(POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETPGROUP))
+        posix_spawnattr_setpgroup(&at, 0)
         let argv = ([exe] + (sandbox.map { ["-p", $0, git] } ?? []) + gitArgs).map { strdup($0) } + [nil]
         let envp = env.map { strdup("\($0.key)=\($0.value)") } + [nil]
         defer { argv.forEach { free($0) }; envp.forEach { free($0) } }
@@ -69,15 +71,16 @@ public enum Worktree {
         let rc = posix_spawn(&pid, exe, &fa, &at, argv, envp)
         close(o[1]); close(i[0])
         guard rc == 0 else { close(o[0]); close(i[1]); return (-1, "") }
+        // L2: časovnik pred pisanjem vhoda in branjem izhoda (oba čakata na git)
+        let done = OSAllocatedUnfairLock(initialState: false)
+        if let timeout {
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { [pid] in done.withLock { if !$0 { _ = kill(-pid, SIGKILL) } } }
+        }
         let w = FileHandle(fileDescriptor: i[1], closeOnDealloc: true)
         if let input { try? w.write(contentsOf: input) }
         try? w.close()
         let data = FileHandle(fileDescriptor: o[0], closeOnDealloc: true).readDataToEndOfFile()
         var st: Int32 = 0
-        let done = OSAllocatedUnfairLock(initialState: false)
-        if let timeout {
-            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { [pid] in done.withLock { if !$0 { _ = kill(pid, SIGKILL) } } }
-        }
         while waitpid(pid, &st, 0) == -1 && errno == EINTR {}
         done.withLock { $0 = true }
         let status = st & 0x7f == 0 ? (st >> 8) & 0xff : 128 + (st & 0x7f)
