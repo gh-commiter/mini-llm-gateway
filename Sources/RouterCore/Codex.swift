@@ -174,9 +174,10 @@ extension Router {
         // worktree: agent mora pisati (klon); lastnikova nastavitev »brez pisanja« velja, zato zavrni.
         if !config.codex.write, (body["tools"] as? [Any])?.isEmpty == false,
            await Self.shares.isWorktree(session: req.header("x-claude-mini-session") ?? "") {
-            return await error(400, "invalid_request_error",
-                               "Codex may not write (Mini Gateway → Settings → Codex), so worktree mode is not possible; use sync",
-                               rid: rid, writer: writer)
+            let why = await Self.shares.worktreeRefusal(session: req.header("x-claude-mini-session") ?? "",
+                                                         worktree: "Codex may not write (Mini Gateway → Settings → Codex), so worktree mode is not possible; use sync",
+                                                         native: "Codex may not write (Mini Gateway → Settings → Codex), so it cannot work")
+            return await error(400, "invalid_request_error", why, rid: rid, writer: writer)
         }
         if let model, !Self.validModel(model) {
             return await error(400, "invalid_request_error", "Invalid model name", rid: rid, writer: writer)
@@ -192,16 +193,19 @@ extension Router {
         var cwd = config.scratch("chat")
         var extra: [String] = []
         var readOnly = false
-        var tree: (root: URL, branch: String, maven: URL)?
+        var tree: (root: URL, branch: String, maven: URL, read: [URL])?
         var prompt = ClaudeCLI.prompt(history: all.dropLast(), last: last)
         var sharedDir: URL?
         if agent {
             let clientCwd = req.header("x-claude-mini-cwd")
             let shared = await Self.shares.mount(session: req.header("x-claude-mini-session") ?? "", cwd: clientCwd, base: localBase,
                                                  wait: req.header("x-claude-mini-share") == "1", device: req.device?.id,
-                                                 roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL)
+                                                 roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL, writes: config.codex.write)
             let synced = await Self.shares.isSync(session: req.header("x-claude-mini-session") ?? "")
             guard let dir = shared ?? (synced ? nil : ClaudeCLI.resolveCwd(clientCwd, roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL)) else {
+                if let why = await Self.shares.takeRefusal() {  // zaklep pisanja
+                    return await error(409, "invalid_request_error", why, rid: rid, writer: writer)
+                }
                 if synced, Task.isCancelled { return 499 }  // Claude Code je prekinil med čakanjem na prenos
                 if synced { return await error(502, "api_error", "Syncing \(clientCwd ?? "the folder") to the gateway failed (see minigw output)", rid: rid, writer: writer) }
                 return await error(400, "invalid_request_error",

@@ -312,10 +312,29 @@ func TestSessionModeOwner(t *testing.T) {
 	if _, ok := h.register("s", "/p", "k", true, filepath.Join(t.TempDir(), "c"), "A"); !ok {
 		t.Fatal("register")
 	}
-	if m, ro, _ := h.sessionMode("s", "A"); m != "sync" || !ro {
+	if m, ro, _ := h.sessionMode("s", "A", ""); m != "sync" || !ro {
 		t.Fatalf("owner: %s %v", m, ro)
 	}
-	if m, _, _ := h.sessionMode("s", "B"); m != "chat" {
+	if m, _, _ := h.sessionMode("s", "B", ""); m != "chat" {
 		t.Fatalf("other device: %s", m)
+	}
+}
+
+// Veja zahteve je veja njenega agenta (ne prve v seji); vprašani agent šteje k prvemu agentu verige.
+func TestSessionModeBranchPerAgent(t *testing.T) {
+	h := newShareHub()
+	if _, ok := h.register("w", "/p", "k2", false, "", "A"); !ok {
+		t.Fatal("register")
+	}
+	h.mu.Lock()
+	h.bySession["w"].tree = &shareTree{slots: map[string]*wtSlot{"claude": {branch: "minigw/claude-x-0"}, "codex": {branch: "minigw/codex-x-0"}}}
+	h.mu.Unlock()
+	for agent, want := range map[string]string{"codex": "minigw/codex-x-0", "claude": "minigw/claude-x-0", "": "minigw/claude-x-0"} {
+		if m, _, b := h.sessionMode("w", "A", agent); m != "worktree" || b != want {
+			t.Errorf("%q: %s %s", agent, m, b)
+		}
+	}
+	if agentOfModel("claude-codex-gpt-6.1-sol") != "codex" || agentOfModel("claude-cli-opus") != "claude" || agentOfModel("or-qwen") != "" {
+		t.Error("agentOfModel")
 	}
 }

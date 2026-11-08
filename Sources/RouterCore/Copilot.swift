@@ -230,9 +230,10 @@ extension Router {
         let cfg = config.copilot
         let agent = (body["tools"] as? [Any])?.isEmpty == false
         if !cfg.write, agent, await Self.shares.isWorktree(session: req.header("x-claude-mini-session") ?? "") {
-            return await error(400, "invalid_request_error",
-                               "Copilot may not write (Mini Gateway → Settings → Copilot CLI), so worktree mode is not possible; use sync",
-                               rid: rid, writer: writer)
+            let why = await Self.shares.worktreeRefusal(session: req.header("x-claude-mini-session") ?? "",
+                                                        worktree: "Copilot may not write (Mini Gateway → Settings → Copilot CLI), so worktree mode is not possible; use sync",
+                                                        native: "Copilot may not write (Mini Gateway → Settings → Copilot CLI), so it cannot work")
+            return await error(400, "invalid_request_error", why, rid: rid, writer: writer)
         }
         if let model, !cfg.modelList.contains(model) {  // L1: le našteti modeli
             return await error(404, "not_found_error", "Unknown model: claude-copilot-\(model) (list it in Mini Gateway → Settings → Copilot CLI)",
@@ -265,16 +266,19 @@ extension Router {
         }
         var cwd = tmp, visible: URL?
         var readOnly = false
-        var tree: (root: URL, branch: String, maven: URL)?
+        var tree: (root: URL, branch: String, maven: URL, read: [URL])?
         var prompt = ClaudeCLI.prompt(history: all.dropLast(), last: last)
         var sharedDir: URL?
         if agent {
             let clientCwd = req.header("x-claude-mini-cwd")
             let shared = await Self.shares.mount(session: req.header("x-claude-mini-session") ?? "", cwd: clientCwd, base: localBase,
                                                  wait: req.header("x-claude-mini-share") == "1", device: req.device?.id,
-                                                 roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL)
+                                                 roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL, writes: cfg.write)
             let synced = await Self.shares.isSync(session: req.header("x-claude-mini-session") ?? "")
             guard let dir = shared ?? (synced ? nil : ClaudeCLI.resolveCwd(clientCwd, roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL)) else {
+                if let why = await Self.shares.takeRefusal() {  // zaklep pisanja
+                    return await error(409, "invalid_request_error", why, rid: rid, writer: writer)
+                }
                 if synced, Task.isCancelled { return 499 }
                 if synced { return await error(502, "api_error", "Syncing \(clientCwd ?? "the folder") to the gateway failed (see minigw output)", rid: rid, writer: writer) }
                 return await error(400, "invalid_request_error",

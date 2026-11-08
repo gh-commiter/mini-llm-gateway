@@ -218,6 +218,8 @@ public enum Native {
             + (visible.map { "(allow file-read* file-read-data" + rules("subpath", [$0]) + ")\n" } ?? "")
             + (visible.flatMap { writable.contains($0) ? "(allow file-write*" + rules("subpath", [$0]) + ")\n" : nil } ?? "")
             + "(deny file-write*" + rules("subpath", [dir + "/.git"] + denies.paths)
+            // tudi ugnezdeni repozitoriji (nastavitve in hooki zunanjega git); ».git« sam ne (preimenovanje, zamenjava z datoteko gitdir)
+            + " (regex #\"/\\.git/(config|config\\.worktree|hooks|info)(/|$)\") (regex #\"/\\.git$\")"
             + denies.regexes.map { " (regex #\"" + $0.replacingOccurrences(of: "\"", with: "\\\"") + "\")" }.joined() + ")\n"
             + "(deny file-read*" + rules("subpath", secretDirs) + rules("literal", secretFiles) + ")\n"
             // Nastavitve aplikacije: datoteka in domena cfprefsd skupaj (le ena od obeh branja ne prepreči).
@@ -472,6 +474,13 @@ extension Router {
             return await error(429, "rate_limit_error", "minigw run: this device already runs \(NativeHub.runsPerDevice) commands", rid: rid, writer: writer)
         }
         defer { Task { await Self.natives.endRun(d.id) } }
+        // Zaklep pisanja mape (kot agenti v mapi sami): gradnja ne teče hkrati s pisočim agentom v isti mapi.
+        let lock = "run-" + rid
+        guard await Self.shares.waitWriter(ShareHub.writerKey(scope: "", path: dir.path), folder: dir.path, writes: true, run: lock) else {
+            return await error(409, "invalid_request_error", "minigw run: another agent or build is still changing \(dir.path); try again when it has finished",
+                               rid: rid, writer: writer)
+        }
+        defer { Task { await Self.shares.releaseWriter(run: lock) } }
         var env = ProcessInfo.processInfo.environment
         for k in env.keys where k.hasPrefix("ANTHROPIC_") || k.hasPrefix("CLAUDE_CODE_") || k == "CLAUDECODE" || k == "SSH_AUTH_SOCK" { env[k] = nil }
         env["PATH"] = (env["PATH"].map { $0 + ":" } ?? "") + "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"

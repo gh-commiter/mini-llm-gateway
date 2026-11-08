@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **Codex on a Mac gateway shared by several devices:** Codex's own sandbox can read every file of the gateway's user,
+  so Codex agents are not isolated between devices for reads (other devices' synced copies and worktree clones in
+  Scratch, and an agent run's token file there). Allow Codex only for devices you trust with that.
+- **Native mode on a git repository works on branches (new default):** each agent run gets its own clone on the gateway
+  and a branch `minigw/<agent>-<session>-<n>` from your current state (also uncommitted changes); the branch then appears
+  in your repository (fast-forward only, no hooks, fsck), while your files, index and checked-out branch stay as they
+  are. So parallel agents never edit the same files. **Changed behaviour:** to let agents change the folder itself as
+  before, use `--minigw-work=native-direct` (or `minigw share add --work=native-direct`). In folders that are not a git
+  repository, with `native-direct` and in direct mode, only one writing agent at a time works in a folder (also a folder
+  inside it); the others wait up to 5 minutes, and `minigw run` takes the same lock for its build. Grok and Codex or
+  Copilot without writing are refused on native git repositories ("use --minigw-work=native-direct"). Older minigw
+  clients also get branches on a native git repository; update minigw to use `native-direct`. If a branch cannot be
+  delivered (for example you committed to it, or it is checked out), minigw shows why. The delivery runs git with the
+  gateway's settings only, in a sandbox, so nothing from the repository's own config runs.
 - **Device history and sessions (Mac and `minigw serve`):** last seen and the client's OS and version now survive
   restarts, and each allowed device keeps its last 20 connections (Devices → History, `minigw gw devices history <id>`,
   `GET /devices/{id}/history`). A new **Sessions** pane lists the last 200 client sessions with device, folder, work mode

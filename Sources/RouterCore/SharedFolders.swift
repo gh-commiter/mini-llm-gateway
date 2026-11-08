@@ -11,7 +11,8 @@ public enum SharedFolders {
         public init(path: String, work: String? = nil, readOnly: Bool = false) { self.path = path; self.work = work; self.readOnly = readOnly }
     }
 
-    public static let modes = ["direct", "sync", "native", "worktree", "auto"]
+    /// native-direct: kot native, a agenti delajo v mapi sami (tudi v repozitoriju git, en pisoči agent naenkrat).
+    public static let modes = ["direct", "sync", "native", "native-direct", "worktree", "auto"]
 
     public static func parse(_ text: String) -> [Entry] {
         text.split(whereSeparator: \.isNewline).compactMap { line in
@@ -45,7 +46,7 @@ public enum SharedFolders {
     /// Worktree samo za branje prav tako ne (agent vrne vejo) → direct samo za branje; auto se razreši v `candidates`.
     public static func mode(flag: String?, saved: Entry?, readOnly: Bool) -> (work: String, readOnly: Bool) {
         let ro = readOnly || saved?.readOnly == true, work = flag ?? saved?.work ?? "direct"
-        return (["native", "worktree"].contains(work) && ro ? "direct" : work, ro)
+        return (["native", "native-direct", "worktree"].contains(work) && ro ? "direct" : work, ro)
     }
 
     /// Načini, ki jih minigw poskusi po vrsti (naslednji, če router prejšnjega ne sprejme).
@@ -55,7 +56,7 @@ public enum SharedFolders {
         switch work {
         case "auto" where readOnly: return ["direct"]
         case "auto": return (smb ? ["native"] : []) + (git ? ["worktree", "sync"] : ["sync", "direct"])
-        case "native": return ["native", "direct"]
+        case "native", "native-direct": return [work, "direct"]
         case "worktree": return git ? ["worktree", "sync"] : ["direct"]
         default: return [work]
         }

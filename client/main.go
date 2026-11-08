@@ -456,11 +456,12 @@ func main() {
 				"minigw profiles [default P]                list profiles, or pick the default (its models also without @P)\n" +
 				"minigw --minigw-profile P …                 use only profile P for this command\n" +
 				"minigw share add|remove [folder] | list    also share a system or hidden folder with the gateway\n" +
-				"minigw share add --work=native|sync|direct [--ro] [folder]   default mode for that folder (flag/env wins)\n" +
+				"minigw share add --work=native|native-direct|sync|direct [--ro] [folder]   default mode for that folder (flag/env wins)\n" +
 				"minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)\n" +
 				"minigw --minigw-role NAME [claude args]    the caller's role for the gateway's session history (or MINIGW_ROLE)\n" +
 				"minigw --minigw-work=sync [claude args]    agents work in a synced copy on the gateway (or MINIGW_WORK=sync)\n" +
-				"minigw --minigw-work=native [claude args]  folder is the gateway's SMB share: agents work in it there (or MINIGW_WORK=native)\n" +
+				"minigw --minigw-work=native [claude args]  folder is the gateway's SMB share: agents work there; git repository: each on its own branch minigw/… (or MINIGW_WORK=native)\n" +
+				"minigw --minigw-work=native-direct [claude args]  as native, but agents change the folder itself, one writing agent at a time\n" +
 				"minigw --minigw-work=worktree [claude args]  git repository: agents work in a clone on the gateway, results come back as branches minigw/…\n" +
 				"minigw --minigw-work=auto [claude args]    gateway share → native, git repository → worktree, otherwise sync (--minigw-ro → direct)\n" +
 				"minigw run [--] <command> [args …]          run a build in this folder on the gateway (SMB share, allowed in its Settings)\n" +
@@ -497,7 +498,7 @@ func main() {
 		}
 	}
 	if work != "" && !workModes[work] { // native: mapa je prek SMB mapa routerja (native.go)
-		fail("unknown --minigw-work=" + work + " (use direct, sync, native, worktree or auto)")
+		fail("unknown --minigw-work=" + work + " (use direct, sync, native, native-direct, worktree or auto)")
 	}
 	cwd, _ := os.Getwd()
 	asked := work
@@ -505,7 +506,7 @@ func main() {
 		asked = f.Work
 	}
 	work, readOnly = workMode(work, lookupSharedFolder(sharedFolders(), cwd), readOnly)
-	if (asked == "native" || asked == "worktree") && work != asked {
+	if (strings.HasPrefix(asked, "native") || asked == "worktree") && work != asked {
 		fmt.Fprintln(os.Stderr, "minigw: "+asked+" mode cannot be read-only; sharing read-only over the network instead")
 	}
 	ps := loadProfiles()
@@ -584,9 +585,16 @@ func main() {
 		if ok && share.worktree {
 			share.start(4)
 			fmt.Fprintf(os.Stderr, "minigw: agent models work in a clone of this git repository on %s; their work comes back as branches minigw/… (worktree)\n", routerHost)
+		} else if ok && share.native && share.branches {
+			share.start(4)
+			fmt.Fprintf(os.Stderr, "minigw: %s is a folder of %s (SMB): agent models work there in clones of this git repository, each on its own branch minigw/… (native; --minigw-work=native-direct = in the folder itself)\n", cwd, routerHost)
 		} else if ok && share.native {
 			share.start(4)
-			fmt.Fprintf(os.Stderr, "minigw: %s is a folder of %s (SMB): agent models work in it there directly (native)\n", cwd, routerHost)
+			lock := ""
+			if share.lock {
+				lock = ", one writing agent at a time"
+			}
+			fmt.Fprintf(os.Stderr, "minigw: %s is a folder of %s (SMB): agent models work in it there directly%s (native)\n", cwd, routerHost, lock)
 		} else if ok {
 			share.start(4)
 			mode := "read-write"
@@ -663,7 +671,7 @@ func main() {
 func registerShare(c connection, sid, cwd string, readOnly bool, top string, tries []string, quiet bool) (*shareClient, bool) {
 	sc := &shareClient{c: c, session: sid, root: cwd, readOnly: readOnly, synced: map[string]syncEntry{}, reported: map[string]bool{}}
 	for i, w := range tries {
-		sc = &shareClient{c: c, session: sid, root: cwd, readOnly: readOnly, sync: w == "sync", native: w == "native",
+		sc = &shareClient{c: c, session: sid, root: cwd, readOnly: readOnly, sync: w == "sync", native: strings.HasPrefix(w, "native"), inPlace: w == "native-direct",
 			worktree: w == "worktree", top: top, synced: map[string]syncEntry{}, reported: map[string]bool{}}
 		if sc.register() {
 			return sc, true
@@ -765,7 +773,7 @@ type sharedFolder struct {
 	ReadOnly bool
 }
 
-var workModes = map[string]bool{"direct": true, "sync": true, "native": true, "worktree": true, "auto": true}
+var workModes = map[string]bool{"direct": true, "sync": true, "native": true, "native-direct": true, "worktree": true, "auto": true}
 
 func sharedFolders() []sharedFolder {
 	data, _ := os.ReadFile(sharedFoldersFile())
@@ -832,7 +840,7 @@ func workMode(flag string, saved *sharedFolder, readOnly bool) (string, bool) {
 		work = "direct"
 	}
 	ro := readOnly || (saved != nil && saved.ReadOnly)
-	if (work == "native" || work == "worktree") && ro { // worktree vrne vejo: samo za branje → direct
+	if (work == "native" || work == "native-direct" || work == "worktree") && ro { // worktree vrne vejo: samo za branje → direct
 		work = "direct"
 	}
 	return work, ro
@@ -861,7 +869,7 @@ func shareCommand(args []string) {
 	if len(args) > 0 {
 		sub = args[0]
 	}
-	// add: --work=direct|sync|native in --ro = privzeti način te mape in podmap (zastavica ob zagonu ima prednost)
+	// add: --work=direct|sync|native|native-direct|worktree|auto in --ro = privzeti način te mape in podmap (zastavica ob zagonu ima prednost)
 	work, ro, rest := "", false, []string{}
 	for _, a := range args[min(1, len(args)):] {
 		if w, ok := strings.CutPrefix(a, "--work="); ok {
@@ -873,10 +881,10 @@ func shareCommand(args []string) {
 		}
 	}
 	if work != "" && !workModes[work] {
-		fail("unknown --work=" + work + " (use direct, sync, native, worktree or auto)")
+		fail("unknown --work=" + work + " (use direct, sync, native, native-direct, worktree or auto)")
 	}
-	if work == "native" && ro {
-		fail("--work=native cannot be read-only (the agent works in the gateway's own folder)")
+	if strings.HasPrefix(work, "native") && ro {
+		fail("--work=" + work + " cannot be read-only (the agent works in the gateway's own folder)")
 	}
 	dir, _ := os.Getwd()
 	if len(rest) > 0 {
@@ -941,7 +949,7 @@ func shareCommand(args []string) {
 			fmt.Println(describe(f))
 		}
 	default:
-		fail("usage: minigw share add [--work=direct|sync|native] [--ro] [folder] | minigw share remove [folder] | minigw share list")
+		fail("usage: minigw share add [--work=direct|sync|native|native-direct|worktree|auto] [--ro] [folder] | minigw share remove [folder] | minigw share list")
 	}
 }
 

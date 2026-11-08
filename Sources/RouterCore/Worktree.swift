@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// --minigw-work=worktree (docs/plans/plan-remote-worktrees.md): agent dela na routerju v klonu git na svoji veji
 /// `minigw/<agent>-<seja>-<n>`; rezultat pride k odjemalcu kot veja, nikoli v delovno mapo uporabnika.
@@ -33,8 +34,9 @@ public enum Worktree {
     @discardableResult
     /// `hooks: false` (odjemalec): hooki uporabnika ne tečejo ob začasnem refu refs/minigw/push in posnetku.
     /// `sandbox`: profil sandbox-exec (finalize: branje le v klonu, zrcalu in začasni mapi).
+    /// `timeout`: git, ki teče dlje, dobi SIGKILL (L2: ogromen repozitorij, zastal disk).
     static func run(_ args: [String], cwd: String? = nil, env extra: [String: String] = [:], safe: Bool = true, hooks: Bool = true,
-                    input: Data? = nil, sandbox: String? = nil) -> (status: Int32, out: String) {
+                    input: Data? = nil, sandbox: String? = nil, timeout: TimeInterval? = nil) -> (status: Int32, out: String) {
         let guardrails = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "submodule.recurse=false",
                           "-c", "protocol.allow=never", "-c", "protocol.file.allow=always", "-c", "maintenance.auto=false", "-c", "gc.auto=0",
                           "-c", "core.commitGraph=false", "-c", "core.multiPackIndex=false"]
@@ -59,7 +61,9 @@ public enum Worktree {
         posix_spawn_file_actions_adddup2(&fa, o[1], 1)
         posix_spawn_file_actions_addopen(&fa, 2, "/dev/null", O_WRONLY, 0)
         if let cwd { posix_spawn_file_actions_addchdir_np(&fa, cwd) }
-        posix_spawnattr_setflags(&at, Int16(POSIX_SPAWN_CLOEXEC_DEFAULT))
+        // Svoja skupina procesov: časovna omejitev ubije tudi pomožne procese git (ti držijo izhod odprt).
+        posix_spawnattr_setflags(&at, Int16(POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETPGROUP))
+        posix_spawnattr_setpgroup(&at, 0)
         let argv = ([exe] + (sandbox.map { ["-p", $0, git] } ?? []) + gitArgs).map { strdup($0) } + [nil]
         let envp = env.map { strdup("\($0.key)=\($0.value)") } + [nil]
         defer { argv.forEach { free($0) }; envp.forEach { free($0) } }
@@ -67,12 +71,18 @@ public enum Worktree {
         let rc = posix_spawn(&pid, exe, &fa, &at, argv, envp)
         close(o[1]); close(i[0])
         guard rc == 0 else { close(o[0]); close(i[1]); return (-1, "") }
+        // L2: časovnik pred pisanjem vhoda in branjem izhoda (oba čakata na git)
+        let done = OSAllocatedUnfairLock(initialState: false)
+        if let timeout {
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { [pid] in done.withLock { if !$0 { _ = kill(-pid, SIGKILL) } } }
+        }
         let w = FileHandle(fileDescriptor: i[1], closeOnDealloc: true)
         if let input { try? w.write(contentsOf: input) }
         try? w.close()
         let data = FileHandle(fileDescriptor: o[0], closeOnDealloc: true).readDataToEndOfFile()
         var st: Int32 = 0
         while waitpid(pid, &st, 0) == -1 && errno == EINTR {}
+        done.withLock { $0 = true }
         let status = st & 0x7f == 0 ? (st >> 8) & 0xff : 128 + (st & 0x7f)
         return (status, String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
     }
@@ -231,6 +241,86 @@ public enum Worktree {
             && run(["-C", wt.path, "checkout", "-q", "-b", branch, snapshot]).status == 0
     }
 
+    /// Native z git (repozitorij na tem Macu): posnetek mape uporabnika v zrcalu kot `base`, brez git v njegovem
+    /// repozitoriju. Objekti prek alternates zrcala (le branje), HEAD iz datotek; neshranjene spremembe z začasnim indeksom
+    /// zrcala in njegovimi nastavitvami (brez filtrov, hookov, fsmonitor), v peskovniku (branje le mapa, zrcalo, začasna
+    /// mapa), izključitve še iz .git/info/exclude uporabnika. Mapa, indeks, HEAD in veje uporabnika ostanejo nespremenjeni.
+    /// ponytail: datoteke LFS gredo v posnetek kot vsebina (zrcalo nima filtra lfs).
+    static func localSnapshot(repo: URL, top: URL, base: String, excludes: URL? = globalExcludes()) -> String? {
+        guard let realTop = Sync.real(top), realTop.path == top.path, case let dotGit = top.appendingPathComponent(".git"),
+              Sync.real(dotGit)?.path == top.path + "/.git", let objects = Sync.real(dotGit.appendingPathComponent("objects")),
+              objects.path == top.path + "/.git/objects", let headSHA = head(dotGit), ensureMirror(repo) else { return nil }
+        let info = repo.appendingPathComponent("objects/info")
+        try? FileManager.default.createDirectory(at: info, withIntermediateDirectories: true)
+        guard (try? Data((objects.path + "\n").utf8).write(to: info.appendingPathComponent("alternates"))) != nil else { return nil }
+        FileManager.default.createFile(atPath: repo.appendingPathComponent("minigw-used").path, contents: nil)  // prune: zadnja raba
+        let tmp = repo.deletingLastPathComponent().appendingPathComponent(".snapshot-" + UUID().uuidString, isDirectory: true)
+        guard (try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])) != nil,
+              let box = finalizeProfile(wt: top, repo: repo, tmp: tmp, out: tmp.appendingPathComponent("unused")) else { return nil }
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let g = ["--git-dir", repo.path], e = ["GIT_INDEX_FILE": tmp.appendingPathComponent("index").path, "GIT_WORK_TREE": top.path]
+        // M2: izključitve repozitorija (.git/info/exclude) in globalne uporabnika (core.excludesFile, ~/.config/git/ignore)
+        let exclude = tmp.appendingPathComponent("exclude")
+        let sources = [dotGit.appendingPathComponent("info/exclude"), excludes].compactMap { $0 }
+        try? sources.compactMap { Sync.read($0, max: 1 << 20) }.reduce(Data()) { $0 + $1 + Data("\n".utf8) }.write(to: exclude)
+        func git(_ a: [String], cwd: String? = nil) -> (status: Int32, out: String) {
+            run(g + a, cwd: cwd ?? tmp.path, env: e, sandbox: box, timeout: 600)  // L2
+        }
+        guard git(["read-tree", headSHA]).status == 0, git(["-c", "core.excludesFile=" + exclude.path, "add", "-A"], cwd: top.path).status == 0,
+              case let t = git(["write-tree"]), isSHA(t.out) else { return nil }
+        var snap = headSHA
+        if git(["rev-parse", headSHA + "^{tree}"]).out != t.out {
+            let c = git(["-c", "user.name=minigw", "-c", "user.email=minigw@localhost", "commit-tree", t.out, "-p", headSHA,
+                         "-m", "minigw: your uncommitted changes"])
+            guard isSHA(c.out) else { return nil }
+            snap = c.out
+        }
+        return git(["update-ref", base, snap]).status == 0 ? snap : nil
+    }
+
+    /// Native z git: bundle veje za repozitorij uporabnika. Posnetek (z njegovimi neshranjenimi spremembami) je le v zrcalu,
+    /// zato je pogoj trenutni HEAD uporabnika (ta ga ima), ne posnetek.
+    static func localBundle(repo: URL, top: URL, branch: String, out: URL) -> Bool {
+        try? FileManager.default.removeItem(at: out)
+        let have = head(top.appendingPathComponent(".git")).map { ["^" + $0] } ?? []
+        return run(["--git-dir", repo.path, "bundle", "create", out.path, "refs/heads/" + branch] + have, timeout: 600).status == 0 && isBundle(out)
+    }
+
+    /// Native z git: veja iz bundla naravnost v repozitorij uporabnika v enem koraku (H1). git le s pravili prehoda (brez
+    /// sistemske in globalne nastavitve; fsmonitor, alternateRefsCommand, hooki izklopljeni z ukazno vrstico), v peskovniku:
+    /// izvajanje le git in njegovih pomožnih programov, pisanje le v .git. Brez »+«: le naprej, izvlečena veja zavrnjena.
+    /// Pred tem znova: .git je prava mapa (ne povezava ali datoteka gitdir), brez commondir. nil = uspeh, sicer razlog.
+    static func localFetch(top: URL, bundle: URL, branch: String) -> String? {
+        let dotGit = top.appendingPathComponent(".git")
+        var isDir: ObjCBool = false
+        guard validBranch(branch), Sync.real(top)?.path == top.path, Sync.real(dotGit)?.path == dotGit.path,
+              FileManager.default.fileExists(atPath: dotGit.path, isDirectory: &isDir), isDir.boolValue,
+              !FileManager.default.fileExists(atPath: dotGit.appendingPathComponent("commondir").path),
+              Sync.real(dotGit.appendingPathComponent("objects"))?.path == dotGit.path + "/objects" else {
+            return "\(top.path): the repository changed (its .git is no longer a plain folder); \(branch) was not delivered"
+        }
+        let exec = run(["--exec-path"]).out
+        guard !exec.isEmpty else { return "git has no exec path" }
+        let q = { (p: String) in "\"" + p.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\"" }
+        let box = "(version 1)\n(allow default)\n(deny process-exec*)\n"
+            + "(allow process-exec* (literal \(q(git))) (literal \(q(Sync.real(URL(fileURLWithPath: git))?.path ?? git))) (subpath \(q(exec))))\n"
+            + "(deny file-write*)\n(allow file-write* (regex #\"^/dev/\") (subpath \(q(dotGit.path))))\n"
+        let r = run(["-c", "core.alternateRefsCommand=", "-c", "core.alternateRefsPrefixes=", "-c", "fetch.fsckObjects=true",
+                     "-c", "transfer.fsckObjects=true", "-c", "fetch.recurseSubmodules=false", "-c", "fetch.writeCommitGraph=false",
+                     "fetch", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--quiet",
+                     bundle.path, "refs/heads/\(branch):refs/heads/\(branch)"], cwd: top.path, safe: true, sandbox: box, timeout: 300)
+        return r.status == 0 ? nil
+            : "\(branch) was not updated in \(top.path) (it has commits the agent's version does not have, or it is checked out)"
+    }
+
+    /// Globalni seznam izključitev uporabnika (core.excludesFile ali ~/.config/git/ignore); nil, ko ga ni.
+    static func globalExcludes(home: String = NSHomeDirectory(), env: [String: String] = [:]) -> URL? {
+        let set = run(["config", "--global", "--path", "--get", "core.excludesFile"], env: env, safe: false, hooks: false, timeout: 10).out
+        let xdg = (ProcessInfo.processInfo.environment.merging(env) { $1 }["XDG_CONFIG_HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? home + "/.config") + "/git/ignore"
+        let p = URL(fileURLWithPath: set.isEmpty ? xdg : (set as NSString).expandingTildeInPath)
+        return FileManager.default.fileExists(atPath: p.path) ? p : nil
+    }
+
     /// HEAD agentovega klona brez git v njem: »ref: refs/heads/…« → loose ref ali packed-refs; sicer odcepljen sha.
     static func head(_ gitDir: URL) -> String? {
         func read(_ p: String) -> String? {
@@ -253,7 +343,8 @@ public enum Worktree {
     /// Pred tem: procesi agenta v klonu so ustavljeni (killProcesses), objects/info klona (alternates, commit-graph) izbrisan
     /// in po tem znova le alternates zrcala; git teče v sandbox-exec (branje le v klonu, zrcalu in svoji začasni mapi),
     /// zato zamenjava datoteke s povezavo med »git add« ne prebere ničesar drugega.
-    static func finalize(repo: URL, wt: URL, branch: String, base: String, agent: String, out: URL) -> String? {
+    /// `read`: še berljivo v peskovniku (native: objekti repozitorija uporabnika, na katere kaže alternates zrcala).
+    static func finalize(repo: URL, wt: URL, branch: String, base: String, agent: String, out: URL, read: [URL] = []) -> String? {
         killProcesses(in: wt)
         // .git in objects klona morata biti pravi mapi (ne povezavi ven): sicer brisanje in pisanje spodaj zadeneta tujo mapo.
         let dotGit = wt.appendingPathComponent(".git"), objectsDir = dotGit.appendingPathComponent("objects")
@@ -282,7 +373,7 @@ public enum Worktree {
         guard (try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])) != nil
         else { return nil }
         defer { try? FileManager.default.removeItem(at: tmp) }
-        guard let box = finalizeProfile(wt: wt, repo: repo, tmp: tmp, out: out) else { return nil }
+        guard let box = finalizeProfile(wt: wt, repo: repo, tmp: tmp, out: out, read: read) else { return nil }
         let objects = wt.appendingPathComponent(".git/objects").path
         let env = ["GIT_ALTERNATE_OBJECT_DIRECTORIES": objects]
         func run(_ a: [String], cwd: String? = nil, env: [String: String]) -> (status: Int32, out: String) {
@@ -341,17 +432,19 @@ public enum Worktree {
     }
 
     /// Branje le v klonu, zrcalu in začasni mapi (ne v domači mapi); pisanje le v zrcalo, začasno mapo in `out`.
-    static func finalizeProfile(wt: URL, repo: URL, tmp: URL, out: URL) -> String? {
+    static func finalizeProfile(wt: URL, repo: URL, tmp: URL, out: URL, read: [URL] = []) -> String? {
         guard let w = Sync.real(wt)?.path, let r = Sync.real(repo)?.path, let t = Sync.real(tmp)?.path,
               let o = Sync.real(out.deletingLastPathComponent())?.appendingPathComponent(out.lastPathComponent).path
         else { return nil }
+        let extra = read.compactMap { Sync.real($0)?.path }
         let q = { (p: String) in "\"" + p.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\"" }
         // Vsebina (file-read-data) privzeto nikjer, le sistem, git (Xcode) in ta klon, zrcalo, začasna mapa: ne domača mapa,
         // ne zrcala drugih naprav v Scratch. Metapodatki ostanejo (git razreši poti prek nadrejenih map).
         return "(version 1)\n(allow default)\n(deny file-read-data (subpath \"/\"))\n"
             + "(allow file-read-data (literal \"/\") (subpath \"/bin\") (subpath \"/usr\") (subpath \"/System\") (subpath \"/Library\")"
             + " (subpath \"/private/var/db\") (subpath \"/dev\") (regex #\"^/Applications/Xcode[^/]*\\.app(/|$)\")"
-            + " (subpath \(q(w))) (subpath \(q(r))) (subpath \(q(t))) (literal \(q(o))) (literal \(q(o + ".lock"))))\n"
+            + " (subpath \(q(w))) (subpath \(q(r))) (subpath \(q(t))) (literal \(q(o))) (literal \(q(o + ".lock")))"
+            + extra.map { " (subpath \(q($0)))" }.joined() + ")\n"
             + "(deny file-write*)\n(allow file-write* (regex #\"^/dev/\") (subpath \(q(r))) (subpath \(q(t)))"
             + " (literal \(q(o))) (literal \(q(o + ".lock"))))\n"  // bundle create piše <out>.lock in ga preimenuje
     }
@@ -392,9 +485,17 @@ public enum Worktree {
 extension ShareHub {
     /// Klon izvajanja (le v izvajanju agenta; Siri ga nima): najnižje prosto mesto seje in agenta. Zaporedne zahteve
     /// nadaljujejo v istem klonu in na isti veji; vzporedne dobijo svoje (dve veji). Nov klon začne iz posnetka odjemalca.
-    func worktreeMount(_ s: Share, _ tree: Tree) async -> URL? {
+    func worktreeMount(_ s: Share, _ tree: Tree, roots: String? = nil, scratch: URL? = nil) async -> URL? {
+        // Native z git brez izvajanja (Siri, priloge): prava mapa le za branje
+        if Self.run == nil, let local = tree.local {
+            guard Sync.real(local)?.path == local.path, let roots, ClaudeCLI.resolveCwd(local.path, roots: roots, scratch: scratch) != nil else { return nil }
+            return Self.dir(local, tree.sub)
+        }
         guard let id = Self.run, !s.readOnly else { return nil }
-        let agent = Self.agent ?? "agent", short = String(Sync.folderID(s.session).prefix(8))
+        // M1: objekti uporabnika so še prava mapa (ne povezava, npr. na domačo mapo), preden jih agent sme brati
+        guard tree.localObjectsIntact else { return nil }
+        // L3: pri native ime veje iz naprave in seje (repozitorij si delijo naprave; seja je od odjemalca)
+        let agent = Self.agent ?? "agent", short = String(Sync.folderID((tree.local == nil ? "" : (s.device ?? "") + "|") + s.session).prefix(8))
         await acquire(tree.repo)
         var n = 0
         while slots["\(s.session)|\(agent)|\(n)"]?.busy == true { n += 1 }
@@ -411,6 +512,13 @@ extension ShareHub {
             return Worktree.tips(repo)
         }
         guard let have, !Task.isCancelled else { unlock(tree.repo); return nil }
+        if let local = tree.local {  // native z git: posnetek tu (mapa še vedno ista in v dovoljenih mapah), brez prenosa
+            guard Sync.real(local)?.path == local.path, let roots, ClaudeCLI.resolveCwd(local.path, roots: roots, scratch: scratch) != nil
+            else { unlock(tree.repo); return nil }
+            let snapshot = await offPool { Worktree.localSnapshot(repo: repo, top: local, base: base) }
+            let ok = await offPool { snapshot.map { Worktree.makeClone(repo, at: wt, branch: branch, snapshot: $0) } ?? false }
+            return finishMount(ok ? snapshot : nil, k: k, id: id, wt: wt, branch: branch, tree: tree)
+        }
         let incoming = repo.deletingLastPathComponent().appendingPathComponent(repo.lastPathComponent + ".incoming")
         try? FileManager.default.removeItem(at: incoming)
         s.pushing = incoming
@@ -428,7 +536,12 @@ extension ShareHub {
             }
         } else { ok = false }
         try? FileManager.default.removeItem(at: incoming)
-        if ok, let snapshot {
+        return finishMount(ok ? snapshot : nil, k: k, id: id, wt: wt, branch: branch, tree: tree)
+    }
+
+    /// Mesto izvajanja po novem klonu (`snapshot` nil = ni uspelo); sprosti zaklep zrcala.
+    private func finishMount(_ snapshot: String?, k: String, id: String, wt: URL, branch: String, tree: Tree) -> URL? {
+        if let snapshot {
             slots[k] = Slot(wt: wt, branch: branch, base: snapshot); runSlot[id] = k
             for d in [".build/tmp", ".build/ModuleCache"] {  // TMPDIR in ModuleCache agenta (harnessEnv)
                 try? FileManager.default.createDirectory(at: wt.appendingPathComponent(d), withIntermediateDirectories: true,
@@ -437,7 +550,7 @@ extension ShareHub {
             try? FileManager.default.createDirectory(at: tree.worktrees.appendingPathComponent(".maven"), withIntermediateDirectories: true)
         }
         unlock(tree.repo)
-        return ok ? Self.dir(wt, tree.sub) : nil
+        return snapshot == nil ? nil : Self.dir(wt, tree.sub)
     }
 
     static func dir(_ wt: URL, _ sub: String) -> URL {
@@ -447,14 +560,25 @@ extension ShareHub {
 
     /// Klon in veja tega izvajanja (za navodilo agentu in peskovnik).
     /// `maven`: lokalni repozitorij Maven agentov tega repozitorija (ne lastnikov ~/.m2/repository).
-    func worktree(session: String) -> (root: URL, branch: String, maven: URL)? {
+    /// `read`: objekti, ki jih git v klonu bere prek alternates (zrcalo, pri native še repozitorij uporabnika).
+    func worktree(session: String) -> (root: URL, branch: String, maven: URL, read: [URL])? {
         guard let id = Self.run, let k = runSlot[id], k.hasPrefix(session + "|"), let slot = slots[k],
               let tree = bySessionTree(session) else { return nil }
-        return (slot.wt, slot.branch, tree.worktrees.appendingPathComponent(".maven", isDirectory: true))
+        let read = [tree.repo.appendingPathComponent("objects")] + (tree.localObjectsIntact ? tree.local.map { [$0.appendingPathComponent(".git/objects")] } ?? [] : [])
+        return (slot.wt, slot.branch, tree.worktrees.appendingPathComponent(".maven", isDirectory: true), read)
     }
+
+    /// Veja mesta izvajanja `id` (zgodovina seje: veja te zahteve, ne prve v seji).
+    func runBranch(_ id: String) -> String? { runSlot[id].flatMap { slots[$0]?.branch } }
 
     /// Seja dela v načinu worktree (pred mount: Grok in Codex brez pisanja ga zavrneta).
     func isWorktree(session: String) -> Bool { bySessionTree(session) != nil }
+
+    /// Zavrnitev agenta, ki v načinu worktree ne more delati: besedilo za worktree ali native z git (tam native-direct).
+    func worktreeRefusal(session: String, worktree: String, native: String) -> String {
+        bySessionTree(session)?.local != nil ? native + " on this native git repository: agents work on branches here; use --minigw-work=native-direct"
+            : worktree
+    }
 
     /// Po agentu: veja v zrcalu (z neshranjenimi spremembami) in prevzem pri odjemalcu (WORKTREE-PULL).
     func worktreeBack(_ s: Share, _ tree: Tree) async {
@@ -462,10 +586,24 @@ extension ShareHub {
         await acquire(tree.repo)
         let out = tree.repo.deletingLastPathComponent().appendingPathComponent(tree.repo.lastPathComponent + ".result")
         let (repo, agent) = (tree.repo, String(k.split(separator: "|")[1]))
-        let tip = await offPool {
-            Worktree.finalize(repo: repo, wt: slot.wt, branch: slot.branch, base: slot.base, agent: agent, out: out)
+        if tree.local != nil, !tree.localObjectsIntact {  // M1
+            await note(s, "\(tree.local!.path): the repository's .git/objects was replaced; \(slot.branch) was not delivered")
+            unlock(tree.repo); return
         }
-        if let tip, tip != slot.base, FileManager.default.fileExists(atPath: out.path) {
+        let read = tree.local.map { [$0.appendingPathComponent(".git/objects")] } ?? []
+        let tip = await offPool {
+            Worktree.finalize(repo: repo, wt: slot.wt, branch: slot.branch, base: slot.base, agent: agent, out: out, read: read)
+        }
+        if let local = tree.local, let tip, tip != slot.base, FileManager.default.fileExists(atPath: out.path) {
+            // native z git: veja naravnost v repozitorij uporabnika (le naprej, brez hookov, fsck, v peskovniku); mapa, indeks,
+            // HEAD ostanejo. Neuspeh dobi uporabnik (kot pri WORKTREE-PULL) in dnevnik.
+            let branch = slot.branch
+            if let why = await offPool({ Worktree.localBundle(repo: repo, top: local, branch: branch, out: out)
+                    ? Worktree.localFetch(top: local, bundle: out, branch: branch) : "cannot bundle \(branch)" }) {
+                Router.log.error("native worktree: \(why, privacy: .public)")
+                await note(s, why)
+            }
+        } else if let tip, tip != slot.base, FileManager.default.fileExists(atPath: out.path) {
             s.result = out
             let body = (try? JSONSerialization.data(withJSONObject: ["branch": slot.branch, "tip": tip])) ?? Data()
             _ = await send(s, DAVJob(id: UUID().uuidString, method: "WORKTREE-PULL", path: "", prefix: "", headers: [:], body: body), timeout: 300)

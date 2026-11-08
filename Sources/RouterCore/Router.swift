@@ -90,10 +90,11 @@ public final class Router: Sendable {
         }
         defer { if tracked { onActivity(.finished(id: rid)) } }
         let usage = tracked ? UsageWriter(writer) : nil
-        let (status, model, provider) = await route(req, rid: rid, writer: usage ?? writer)
+        let branch = RunBranch()  // veja izvajanja te zahteve (syncRun), za zgodovino seje
+        let (status, model, provider) = await Self.$runBranch.withValue(branch) { await route(req, rid: rid, writer: usage ?? writer) }
         writer.close()
         if let usage, let model {  // le zahteva, ki je prišla do modela (overjena, dovoljena naprava)
-            await recordSession(req, model: model, status: status, took: Date().timeIntervalSince(start), usage: usage.usage)
+            await recordSession(req, model: model, status: status, took: Date().timeIntervalSince(start), usage: usage.usage, branch: branch.branch)
         }
         let ms = Int(Date().timeIntervalSince(start) * 1000)
         let via = AgentRun.current.map { " via=" + $0.via } ?? ""  // L3: vprašal ga je agent tega prehoda
@@ -102,7 +103,9 @@ public final class Router: Sendable {
     }
 
     /// Zahteva za model v zgodovino seje (naprava, mapa in način iz glav in delitve; brez besedila), kot v minigw serve.
-    func recordSession(_ req: HTTPRequest, model: String, status: Int, took: TimeInterval, usage: (input: Int, output: Int)) async {
+    /// `branch`: veja izvajanja te zahteve (worktree, native z git); nil = vzame jo iz seje.
+    func recordSession(_ req: HTTPRequest, model: String, status: Int, took: TimeInterval, usage: (input: Int, output: Int),
+                       branch: String? = nil) async {
         var u = GatewayHistory.Use()
         u.session = req.header("x-claude-mini-session") ?? ""
         u.folder = req.header("x-claude-mini-cwd") ?? ""
@@ -116,7 +119,10 @@ public final class Router: Sendable {
             u.device = d.id
             u.deviceName = config.devices.first { $0.id == d.id }?.name ?? d.name
         }
-        if !u.session.isEmpty { (u.mode, u.readOnly, u.branch) = await Self.shares.sessionMode(u.session, device: req.device?.id) }
+        if !u.session.isEmpty {
+            (u.mode, u.readOnly, u.branch) = await Self.shares.sessionMode(u.session, device: req.device?.id)
+            if let branch { u.branch = branch }
+        }
         Self.history.record(u)
     }
 
@@ -190,6 +196,26 @@ public final class Router: Sendable {
         return await routeAllowed(req, rid: rid, writer: writer)
     }
 
+    /// Native: v repozitoriju git (privzeto) agenti delajo vsak na svoji veji v klonu → (koren, podmapa); nil = v mapi sami
+    /// (ni git, .git je datoteka, koren zunaj dovoljenih map, ali odjemalec želi native-direct), z zaklepom pisanja.
+    /// ponytail: odločitev le tu; pozneje nastavitev prehoda za projekt.
+    static func nativeBranches(_ dir: URL, inPlace: Bool, roots: String, scratch: URL) -> (top: URL, sub: String)? {
+        guard !inPlace else { return nil }
+        var d = dir
+        while true {
+            var isDir: ObjCBool = false
+            let g = d.appendingPathComponent(".git")
+            if FileManager.default.fileExists(atPath: g.path, isDirectory: &isDir) {
+                guard isDir.boolValue, Sync.real(g)?.path == d.path + "/.git",
+                      ClaudeCLI.resolveCwd(d.path, roots: roots, scratch: scratch) != nil else { return nil }
+                return (d, String(dir.path.dropFirst(d.path.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/")))
+            }
+            let up = d.deletingLastPathComponent()
+            guard up.path != d.path else { return nil }
+            d = up
+        }
+    }
+
     /// Ena besedilo zavrnitve v Go in Swift.
     static func refusal(_ d: Noise.Device) -> String {
         "Device \(Noise.quoted(d.name)) is not allowed on this gateway: allow it in Settings → Devices (compare the ID \(d.id)), or run minigw gw devices allow \(d.id)"
@@ -241,7 +267,7 @@ public final class Router: Sendable {
                     if req.path.hasSuffix("/count_tokens") {
                         return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "copilot")
                     }
-                    return (await syncRun(agent: "copilot", rid: rid, writer: writer) { await runCopilot(req, body: body, model: copilotModel, rid: rid, writer: writer) }, model, "copilot")
+                    return (await syncRun(agent: "copilot", rid: rid, writer: writer) { await runCopilot(req, body: body, model: copilotModel, rid: rid, writer: await early(req, body, rid, writer)) }, model, "copilot")
                 }
                 if config.appleFM.enabled, AppleFM.ids.contains(model) {
                     if req.path.hasSuffix("/count_tokens") {
@@ -300,6 +326,18 @@ public final class Router: Sendable {
             }
             let readOnly = req.header("x-share-mode") == "ro"
             var tree: ShareHub.Tree?
+            // native z git (privzeto): agenti na svojih vejah v klonih, repozitorij uporabnika le dobi veje (Worktree.localSnapshot)
+            if let dir = native, let owner, let (top, sub) = Self.nativeBranches(dir, inPlace: req.header("x-native-inplace") == "1",
+                                                                              roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL) {
+                guard Worktree.scratchIsSafe(config.scratchURL) else {
+                    return (await error(400, "invalid_request_error", "Native mode on a git repository: the Scratch folder must not be in a temporary or build cache folder (or use native-direct)",
+                                        rid: rid, writer: writer), nil, "share")
+                }
+                let id = Sync.folderID(top.path)
+                tree = ShareHub.Tree(repo: config.scratch("repos").appendingPathComponent(owner).appendingPathComponent(id + ".git"),
+                                     worktrees: config.scratch("worktrees").appendingPathComponent(owner).appendingPathComponent(id), sub: sub, local: top)
+                native = nil
+            }
             if worktree {
                 let top = req.header("x-worktree-top") ?? ""
                 guard Worktree.scratchIsSafe(config.scratchURL) else {
@@ -329,7 +367,9 @@ public final class Router: Sendable {
                                                        readOnly: readOnly, copy: copy, device: req.device?.id, native: native, tree: tree) else {
                 return (await error(409, "invalid_request_error", "Session already has a folder", rid: rid, writer: writer), nil, "share")
             }
-            return (await json(200, ["key": key], rid: rid, writer: writer), nil, "share")
+            // starejši odjemalci: le key; branches = veje v repozitoriju, lock = en pisoči agent naenkrat (native v mapi sami)
+            let reply: [String: Any] = tree?.local != nil ? ["key": key, "branches": true] : native != nil ? ["key": key, "lock": true] : ["key": key]
+            return (await json(200, reply, rid: rid, writer: writer), nil, "share")
         case ("GET", "/minigw/share/next"):
             switch await Self.shares.poll(key: req.header("x-share-key") ?? "") {
             case .none:
@@ -424,7 +464,9 @@ public final class Router: Sendable {
     /// (Claude Code bi po 10 minutah brez bajtov poskusil znova). Drugače isti writer.
     func early(_ req: HTTPRequest, _ body: [String: Any], _ rid: String, _ writer: ResponseWriter) async -> ResponseWriter {
         guard body["stream"] as? Bool == true, (body["tools"] as? [Any])?.isEmpty == false,
-              let sid = req.header("x-claude-mini-session"), await Self.shares.isSync(session: sid) else { return writer }
+              let sid = req.header("x-claude-mini-session") else { return writer }
+        let sync = await Self.shares.isSync(session: sid), inPlace = await Self.shares.inPlace(session: sid)
+        guard sync || inPlace else { return writer }  // sync: prenos; v mapi sami: čakanje na zaklep pisanja
         let w = EarlyStreamWriter(writer)
         await w.begin(rid: rid)
         return w
@@ -434,13 +476,20 @@ public final class Router: Sendable {
     func syncRun(agent: String, rid: String, writer: ResponseWriter, _ run: () async -> Int) async -> Int {
         if let p = AgentRun.current {
             if let why = AgentRun.refusal(agent) { return await error(403, "permission_error", why, rid: rid, writer: writer) }
-            return await ShareHub.$run.withValue(p.runID) { await ShareHub.$agent.withValue(agent) { await run() } }
+            let status = await ShareHub.$run.withValue(p.runID) { await ShareHub.$agent.withValue(agent) { await run() } }
+            if let id = p.runID { Self.runBranch?.branch = await Self.shares.runBranch(id) }  // veja klicatelja
+            return status
         }
         let id = UUID().uuidString
         let status = await ShareHub.$run.withValue(id) { await ShareHub.$agent.withValue(agent) { await run() } }
+        Self.runBranch?.branch = await Self.shares.runBranch(id)  // pred finish: mesto izvajanja se tam sprosti
         await Self.shares.finish(run: id)
         return status
     }
+
+    /// Veja izvajanja zahteve (handle → syncRun → recordSession); vgnezdeni klic dobi vejo klicatelja.
+    final class RunBranch: @unchecked Sendable { var branch: String? }
+    @TaskLocal static var runBranch: RunBranch?
 
     /// Proces odjemalca na loopbacku je tega uporabnika in ni agent (PeerProcess.sameUserApp); testi ga zamenjajo.
     nonisolated(unsafe) static var localPeer: @Sendable (_ peerPort: UInt16, _ routerPort: UInt16) -> Bool = {

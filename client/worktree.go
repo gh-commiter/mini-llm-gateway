@@ -245,8 +245,8 @@ func workCandidates(work string, readOnly, smb, git bool) []string {
 			return append(out, "worktree", "sync")
 		}
 		return append(out, "sync", "direct")
-	case work == "native":
-		return []string{"native", "direct"}
+	case work == "native" || work == "native-direct":
+		return []string{work, "direct"}
 	case work == "worktree" && git:
 		return []string{"worktree", "sync"}
 	case work == "worktree":
