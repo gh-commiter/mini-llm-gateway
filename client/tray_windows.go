@@ -55,6 +55,7 @@ var (
 	pShellNotifyIcon     = shell32.NewProc("Shell_NotifyIconW")
 	pShellExecute        = shell32.NewProc("ShellExecuteW")
 	pCreateMutex         = kernel32.NewProc("CreateMutexW")
+	pGetWindowsDirectory = kernel32.NewProc("GetWindowsDirectoryW")
 	pGetModuleHandle     = kernel32.NewProc("GetModuleHandleW")
 	pGlobalAlloc         = kernel32.NewProc("GlobalAlloc")
 	pGlobalLock          = kernel32.NewProc("GlobalLock")
@@ -225,11 +226,31 @@ func openSettings(s *server) {
 
 func trayRun(cfgPath string, quiet bool) {
 	runtime.LockOSThread() // okno in zanka sporočil na eni niti
-	if _, _, err := pCreateMutex.Call(0, 0, uintptr(unsafe.Pointer(u16(trayMutexName)))); err == syscall.Errno(183) {
+	mutex, _, err := pCreateMutex.Call(0, 0, uintptr(unsafe.Pointer(u16(trayMutexName))))
+	if err == syscall.Errno(183) {
 		if !quiet {
 			messageBox("Mini Gateway is already running: see its icon in the notification area.")
 		}
 		return
+	}
+	// MSI (StartTray, edini z --quiet-if-running): pladenj, ki ga zažene msiexec, ima okolje namestitvenega programa
+	// (Codex na PATH ni bil najden; okolje msiexec je zastarelo). Zato ga zažene Raziskovalec,
+	// kot ob kliku v meniju Start: privzete nastavitve (= pot, ki jo poda MSI), ta proces konča.
+	// Explorer z absolutno potjo iz GetWindowsDirectoryW (ne iz %WINDIR% ali iskanja po imenu: podtaknjen explorer.exe).
+	if exe, err := os.Executable(); quiet && err == nil {
+		buf := make([]uint16, 260)
+		if n, _, _ := pGetWindowsDirectory.Call(uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf))); n > 0 && int(n) < len(buf) {
+			syscall.CloseHandle(syscall.Handle(mutex)) // novi pladenj mora dobiti mutex
+			explorer := syscall.UTF16ToString(buf[:n]) + `\explorer.exe`
+			if r, _, _ := pShellExecute.Call(0, uintptr(unsafe.Pointer(u16("open"))), uintptr(unsafe.Pointer(u16(explorer))),
+				uintptr(unsafe.Pointer(u16(`"`+exe+`"`))), 0, 1 /* SW_SHOWNORMAL */); r > 32 {
+				return
+			}
+			// zagon ni uspel (npr. brez lupine): ta pladenj teče naprej, če ga medtem ni zagnal kdo drug
+			if _, _, err := pCreateMutex.Call(0, 0, uintptr(unsafe.Pointer(u16(trayMutexName)))); err == syscall.Errno(183) {
+				return
+			}
+		}
 	}
 	s, ln, logPath, fresh, err := startTrayRouter(cfgPath)
 	if err != nil {
