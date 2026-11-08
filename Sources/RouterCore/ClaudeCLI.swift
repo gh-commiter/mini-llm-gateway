@@ -462,7 +462,7 @@ extension Router {
             let synced = await Self.shares.isSync(session: req.header("x-claude-mini-session") ?? "")
             let tree = await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "")
             let readOnly = await Self.isReadOnly(req)
-            if readOnly, tree != nil, AgentRun.current == nil { return await error(400, "invalid_request_error", Self.readOnlyWorktree, rid: rid, writer: writer) }
+            if readOnly, tree != nil { return await error(400, "invalid_request_error", Self.readOnlyWorktree, rid: rid, writer: writer) }  // R4: tudi vprašani (kot Go)
             if let shared, let clientCwd {
                 args += ["--append-system-prompt", Self.mountNote(clientCwd, shared, readOnly: readOnly, synced: synced, branch: tree?.branch)]
             }

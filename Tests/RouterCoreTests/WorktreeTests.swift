@@ -808,3 +808,34 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     #expect(!Worktree.delivered(root: client.path, branch: branch, base: later) && !Worktree.delivered(root: client.path, branch: "minigw/codex-0123abcd-9", base: snap)
             && !Worktree.delivered(root: client.path, branch: "main", base: snap))
 }
+
+/// R4: agent, ki v klonu le bere (izvajanje za branje), vpraša Claude CLI: ta v načinu worktree zavrne (400), ne piše v klon.
+@Test func readOnlyRunAskingClaudeInWorktreeIsRefused() async throws {
+    let (root, client, tree) = try fixture()
+    defer { cleanup(root) }
+    var c = RouterConfig()
+    c.claudeCLI.enabled = true; c.claudeCLI.askOthers = true; c.claudeCLI.allowLocalTools = true; c.codex.askOthers = true
+    let router = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]))
+    let hub = Router.shares, session = UUID().uuidString
+    let key = try #require(await hub.register(session: session, cwd: client.path, key: nil, device: "dev", tree: tree))
+    let loop = fakeClient(hub, key: key, top: client)
+    defer { loop.cancel() }
+    let caller = request("POST", "/v1/messages", headers: ["x-claude-mini-session": session, "x-claude-mini-cwd": client.path])
+    let id = UUID().uuidString
+    let run = try #require(await ShareHub.$run.withValue(id) {
+        await ShareHub.$agent.withValue("codex") { () -> AgentRun? in
+            guard await hub.mount(session: session, cwd: nil, base: "http://127.0.0.1:1", device: "dev") != nil else { return nil }
+            return await router.startAgentRun(caller, kind: "codex", dir: nil, readOnly: true)
+        }
+    })
+    defer { run.stop(); Task { await hub.finish(run: id) } }
+    run.started(getpid())
+    var r = URLRequest(url: URL(string: "http://127.0.0.1:\(run.port)/v1/messages")!)
+    r.httpMethod = "POST"
+    r.setValue("Bearer " + run.token, forHTTPHeaderField: "Authorization")
+    r.setValue("application/json", forHTTPHeaderField: "content-type")
+    r.httpBody = Data(#"{"model":"claude-cli-haiku","max_tokens":5,"tools":[{"name":"x","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":"hi"}]}"#.utf8)
+    let (data, resp) = try await URLSession(configuration: .ephemeral).data(for: r)
+    #expect((resp as? HTTPURLResponse)?.statusCode == 400 && String(decoding: data, as: UTF8.self).contains("Worktree mode cannot be read-only"),
+            "\(String(decoding: data, as: UTF8.self))")
+}
