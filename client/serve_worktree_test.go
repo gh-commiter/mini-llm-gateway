@@ -229,12 +229,30 @@ func TestAllowedFolderAroundScratch(t *testing.T) {
 	k, _ := ecdh.X25519().GenerateKey(rand.Reader)
 	c := serveConfig{Token: "tok", Key: base64url(k.Bytes()), Tools: defaultTools, PermissionMode: "dontAsk", Scratch: scratch,
 		AllowedFolders: []string{parent}, Codex: agentCLI{Enabled: true}}
-	s, err := newServer(c, filepath.Join(t.TempDir(), "serve.json"))
+	cfg := filepath.Join(t.TempDir(), "serve.json")
+	writeServeConfig(cfg, c) // PATCH spodaj piše v datoteko
+	s, err := newServer(c, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := s.conf(); !got.ClaudeDisabled || got.Codex.Enabled || len(got.AllowedFolders) != 0 {
 		t.Fatalf("startup with an allowed folder around Scratch: %+v", got)
+	}
+	if off := s.claudeInfo().Off; !strings.Contains(off, parent) { // razlog v gw status, gw claude in na strani
+		t.Fatalf("no reason: %q", off)
+	}
+	// Le vklop ne gre (serve.json ima še mapo okoli Scratch); mape brez nje in vklop razlog počistita, kasnejši ročni
+	// izklop ga nima.
+	if st, _ := s.adminDo("PATCH", "/agents/claude", []byte(`{"enabled":true}`)); st != 400 || s.claudeInfo().Off == "" {
+		t.Fatalf("enabled without saving the folders: %d", st)
+	}
+	for _, body := range []string{`{"folders":"","enabled":true}`, `{"enabled":false}`} {
+		if st, b := s.adminDo("PATCH", "/agents/claude", []byte(body)); st != 200 {
+			t.Fatalf("%s: %d %v", body, st, b)
+		}
+	}
+	if off := s.claudeInfo().Off; off != "" {
+		t.Fatalf("stale reason: %q", off)
 	}
 	inside := filepath.Join(scratch, "repos")
 	os.MkdirAll(inside, 0o700)
@@ -301,4 +319,21 @@ func TestScratchOverlapAndProviderRename(t *testing.T) {
 		t.Fatal("Bar renamed")
 	}
 	_ = host
+}
+
+// Poročilo Windows #17: po zadnjem klonu ne ostane prazna mapa .maven; z vsebino (predpomnilnik) ali ob drugem klonu ostane.
+func TestRemoveCloneDropsEmptyMaven(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "id")
+	a, b, maven := filepath.Join(dir, "a"), filepath.Join(dir, "b"), filepath.Join(dir, ".maven")
+	for _, d := range []string{a, b, maven} {
+		os.MkdirAll(d, 0o700)
+	}
+	removeClone(a)
+	if _, err := os.Stat(maven); err != nil {
+		t.Fatal(".maven removed while another clone is there")
+	}
+	removeClone(b)
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("empty clones folder stays: %v", err)
+	}
 }

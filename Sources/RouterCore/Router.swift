@@ -41,6 +41,8 @@ public final class Router: Sendable {
     let admin: AdminHooks?  // skrbniški API (aplikacija); nil = ni ga
     let catalog: Catalog
     let probes = Probes()
+    /// Zgodovina naprav in sej: Router.history (aplikacija); testi dajo svojo, da jih vzporedni testi ne motijo.
+    let history: GatewayHistory
     static let log = Logger(subsystem: "dev.trojar.minigateway", category: "router")
 
     public init(config: RouterConfig, token: String, secrets: SecretStore,
@@ -48,8 +50,9 @@ public final class Router: Sendable {
                 onLog: @escaping @Sendable (RequestLog) -> Void = { _ in },
                 onDevice: @escaping @Sendable (Noise.Device) -> Void = { _ in },
                 onActivity: @escaping @Sendable (Activity) -> Void = { _ in },
-                admin: AdminHooks? = nil) {
+                admin: AdminHooks? = nil, history: GatewayHistory = Router.history) {
         self.config = config
+        self.history = history
         self.admin = admin
         self.onDevice = onDevice
         self.onActivity = onActivity
@@ -115,7 +118,8 @@ public final class Router: Sendable {
         u.tools = GatewayHistory.restrictions(model, config)
         u.model = status == 404 ? "unknown" : model  // M1: neznan ali zavrnjen model: stalno ime, ne niz odjemalca
         u.status = status; u.took = took; u.input = usage.input; u.output = usage.output
-        if let d = req.device {
+        // Naprava, ki ni na seznamu, na loopbacku je ta računalnik (sprejet brez odobritve), ne »odstranjena naprava«.
+        if let d = req.device, !RouterServer.isLoopback(req.peer) || config.devices.contains(where: { $0.id == d.id }) {
             u.device = d.id
             u.deviceName = config.devices.first { $0.id == d.id }?.name ?? d.name
         }
@@ -123,7 +127,7 @@ public final class Router: Sendable {
             (u.mode, u.readOnly, u.branch) = await Self.shares.sessionMode(u.session, device: req.device?.id)
             if let branch { u.branch = branch }
         }
-        Self.history.record(u)
+        history.record(u)
     }
 
     /// Za napake, ki nastanejo že pri branju zahteve.
@@ -137,6 +141,9 @@ public final class Router: Sendable {
         case ("GET", "/health/live"):
             return (await json(200, ["status": "ok"], rid: rid, writer: writer), nil, nil)
         case ("GET", "/health/ready"):
+            guard RouterServer.isLoopback(req.peer) || authorized(req) else {  // L2: ponudniki le temu računalniku ali z žetonom
+                return (await json(200, ["status": "ok"], rid: rid, writer: writer), nil, nil)
+            }
             var providers: [String: Bool] = [:]
             for (id, ok) in await catalog.status() { providers[id] = ok }
             if config.siri.enabled { providers["siri-ai"] = SiriAX.trusted(prompt: false) && SiriAX.isRunning() }
@@ -191,7 +198,9 @@ public final class Router: Sendable {
                 Self.log.info("\(rid, privacy: .public) refused unknown device \(d.name, privacy: .public) \(d.id, privacy: .public)")
                 return (await error(403, "permission_error", Self.refusal(d), rid: rid, writer: writer), nil, nil)
             }
-            Self.history.seen(d.id, address: req.peer, client: Noise.cleanName(req.header("x-minigw-client") ?? ""))
+            history.seen(d.id, address: req.peer, client: Noise.cleanName(req.header("x-minigw-client") ?? ""))
+        } else if let d = req.device, config.devices.contains(where: { $0.id == d.id }) {  // dovoljena naprava tudi prek loopbacka
+            history.seen(d.id, address: req.peer, client: Noise.cleanName(req.header("x-minigw-client") ?? ""))
         }
         return await routeAllowed(req, rid: rid, writer: writer)
     }

@@ -230,6 +230,11 @@ func (c serveConfig) deviceAllowed(d *serveDevice, loopback bool) bool {
 	return false
 }
 
+// listed: naprava je na seznamu dovoljenih.
+func (c serveConfig) listed(id string) bool {
+	return slices.ContainsFunc(c.Devices, func(x serveDevice) bool { return x.ID == id })
+}
+
 func serveCommand(args []string) {
 	sub := ""
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
@@ -297,8 +302,10 @@ func serveCommand(args []string) {
 	}
 
 	c, err := loadServeConfig(*cfgPath)
-	if err != nil {
+	if errors.Is(err, os.ErrNotExist) {
 		fail("cannot read " + *cfgPath + ": run minigw serve init first (" + err.Error() + ")")
+	} else if err != nil {
+		fail("the gateway cannot start with these settings, fix them: " + err.Error())
 	}
 	if *port != 0 {
 		c.Port = *port
@@ -334,8 +341,12 @@ func newServeConfig() serveConfig {
 // announce: vrstica zagona, opozorila o ključih prehodov in odkrivanje modelov v ozadju.
 func (s *server) announce(ln net.Listener) {
 	c := s.conf()
-	s.log.Printf("minigw %s serving on %s (MGW2), claude=%q folders=%q scratch=%q devices=%d providers=%d", version, ln.Addr(),
-		strings.Join(s.claudeExe(), " "), strings.Join(c.AllowedFolders, ","), c.Scratch, len(c.Devices), len(c.Gateways))
+	off := ""
+	if r := s.claudeInfo().Off; r != "" {
+		off = " (Claude CLI and Codex off: " + r + ")"
+	}
+	s.log.Printf("minigw %s serving on %s (MGW2), claude=%q folders=%q%s scratch=%q devices=%d providers=%d", version, ln.Addr(),
+		strings.Join(s.claudeExe(), " "), strings.Join(c.AllowedFolders, ","), off, c.Scratch, len(c.Devices), len(c.Gateways))
 	for _, g := range c.Gateways {
 		if key, where := keyGet(s.cfgDir, g.Name); key == "" && !g.Disabled { // izklopljen (npr. vgrajen brez ključa): brez opozorila
 			s.log.Printf("WARNING: provider %s has no API key: run minigw gw provider add %s %s", g.Name, g.Name, g.BaseURL)
@@ -364,18 +375,20 @@ func localIP() string {
 }
 
 type server struct {
-	mu       sync.RWMutex // cfg, claude, pending: spremembe prek skrbniškega API med delovanjem
-	cfg      serveConfig
-	cfgPath  string
-	cfgDir   string      // mapa nastavitev (žeton, ključ routerja): agentu prepovedana
-	claude   []string    // claude.exe ali node + cli.js; prazno = ni nameščen
-	pending  []apiDevice // nedavno zavrnjene naprave (največ 20)
-	state    *gwState    // zadnji stik in priklopi naprav, seje (state.json; serve_history.go)
-	admin    string      // skrivnost skrbniškega API (admin.secret)
-	offline  bool        // minigw router brez tekočega routerja: le serve.json
-	settings settingsState
-	pick     atomic.Pointer[pickFunc] // izbirno okno pladnja (Windows); nil = ni GUI
-	picking  atomic.Bool              // eno okno naenkrat
+	mu      sync.RWMutex // cfg, claude, pending: spremembe prek skrbniškega API med delovanjem
+	cfg     serveConfig
+	cfgPath string
+	cfgDir  string      // mapa nastavitev (žeton, ključ routerja): agentu prepovedana
+	claude  []string    // claude.exe ali node + cli.js; prazno = ni nameščen
+	pending []apiDevice // nedavno zavrnjene naprave (največ 20)
+	state   *gwState    // zadnji stik in priklopi naprav, seje (state.json; serve_history.go)
+	admin   string      // skrivnost skrbniškega API (admin.secret)
+	offline bool        // minigw router brez tekočega routerja: le serve.json
+	// offReason: zakaj sta Claude CLI in Codex ob zagonu izklopljena (H1: dovoljena mapa s Scratch); dnevnik, status, stran.
+	offReason string
+	settings  settingsState
+	pick      atomic.Pointer[pickFunc] // izbirno okno pladnja (Windows); nil = ni GUI
+	picking   atomic.Bool              // eno okno naenkrat
 	// agentsRunning: tekoči procesi agentov (claude, codex, grok), za status in posodobitev brez prekinitve
 	agentsRunning atomic.Int32
 	foundry       foundryState // Foundry Local: vrata, modeli
@@ -401,7 +414,7 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 		}
 	}
 	if c.Scratch, err = filepath.Abs(c.Scratch); err != nil || under(c.Scratch, cfgDir) {
-		return nil, errors.New("scratch must not be inside the config folder " + cfgDir)
+		return nil, errors.New("scratch folder: must not be inside the config folder " + cfgDir)
 	}
 	if err := protectScratch(c.Scratch); err != nil {
 		return nil, fmt.Errorf("scratch folder %s: %v: use a folder of your own", c.Scratch, err)
@@ -423,10 +436,10 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	}
 	// H1: dovoljena mapa, ki vsebuje Scratch (ali je v njem), bi agentom pokazala zrcala in kopije drugih naprav:
 	// ob zagonu (ročno urejen serve.json) take mape ne veljajo, Claude CLI in Codex sta izklopljena, opozorilo v dnevniku.
-	var overlapWarn string
+	var offReason string
 	if bad := append(scratchOverlaps(c.AllowedFolders, c.Scratch), copilotCacheOverlaps(c.AllowedFolders)...); len(bad) > 0 {
-		overlapWarn = "WARNING: allowed folder(s) " + strings.Join(bad, ", ") + " contain or are inside the scratch folder " + c.Scratch +
-			" or Copilot's package cache " + copilotCacheDir() + ": Claude CLI and Codex are off until you remove them (settings page → Claude CLI → Allowed folders)"
+		offReason = "the allowed folder(s) " + strings.Join(bad, ", ") + " contain or are inside the scratch folder " + c.Scratch +
+			" or Copilot's package cache " + copilotCacheDir() + ": they are left out; save the allowed folders without them (settings page → Claude CLI → Allowed folders, or minigw gw claude --folders …), then turn Claude CLI and Codex on"
 		c.AllowedFolders = slices.DeleteFunc(slices.Clone(c.AllowedFolders), func(f string) bool { return slices.Contains(bad, f) })
 		c.ClaudeDisabled, c.Codex.Enabled = true, false
 	}
@@ -438,7 +451,7 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := io.Writer(os.Stderr)
+	out := logOut
 	if c.Log != "" {
 		f, err := os.OpenFile(c.Log, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 		if err != nil {
@@ -459,8 +472,8 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 		s.log.Printf("WARNING: Bash is allowed; it runs only in Claude Code's sandbox (on Linux it needs bubblewrap and socat)")
 	}
 	s.hub.logf = s.log.Printf
-	if overlapWarn != "" {
-		s.log.Print(overlapWarn)
+	if s.offReason = offReason; offReason != "" {
+		s.log.Print("WARNING: Claude CLI and Codex are off: " + offReason)
 	}
 	if protectErr != nil {
 		s.log.Printf("WARNING: cannot make %s private to this user (%v): other users of this computer may read the token, the gateway key and the admin secret; use the default config folder", cfgDir, protectErr)
@@ -470,6 +483,10 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	}
 	return s, nil
 }
+
+// logOut: dnevnik routerja brez »log« v nastavitvah; pladenj ga nastavi na svojo datoteko pred newServer, da gredo
+// tja tudi opozorila ob zagonu (konzole nima).
+var logOut io.Writer = os.Stderr
 
 // defaultScratch: kopije map in pogovori v mapi predpomnilnika uporabnika.
 func defaultScratch() string {
@@ -952,7 +969,16 @@ func (s *server) handle(w http.ResponseWriter, r *req) (int, string) {
 	case "GET /health/live":
 		return writeJSON(w, r.rid, 200, map[string]string{"status": "ok"}), ""
 	case "GET /health/ready":
-		return writeJSON(w, r.rid, 200, map[string]any{"status": "ok", "providers": map[string]bool{"claude-cli": len(s.claudeExe()) > 0}}), ""
+		if !r.conn.loopback() && !s.authorized(r) { // L2: imena ponudnikov le temu računalniku ali z žetonom
+			return writeJSON(w, r.rid, 200, map[string]any{"status": "ok"}), ""
+		}
+		providers := map[string]bool{"claude-cli": len(s.claudeExe()) > 0}
+		for _, g := range s.conf().Gateways { // vklopljeni ponudniki: modeli naloženi (kot catalog.status na Macu)
+			if !g.Disabled {
+				providers[g.Name] = s.gateways.ready(g.Name)
+			}
+		}
+		return writeJSON(w, r.rid, 200, map[string]any{"status": "ok", "providers": providers}), ""
 	}
 	if r.URL.Path == adminPrefix || strings.HasPrefix(r.URL.Path, adminPrefix+"/") {
 		return s.adminHTTP(w, r), ""
@@ -975,7 +1001,8 @@ func (s *server) handle(w http.ResponseWriter, r *req) (int, string) {
 		}
 		return writeError(w, r.rid, 403, "This gateway needs a device key: update minigw and run minigw connect again"), ""
 	}
-	if d := r.conn.device; d != nil && !r.conn.loopback() {
+	// Zgodovina dovoljene naprave tudi prek loopbacka (profil 127.0.0.1); neznana na loopbacku nima zgodovine.
+	if d := r.conn.device; d != nil && (!r.conn.loopback() || s.conf().listed(d.ID)) {
 		s.deviceSeen(*d, r.conn.peer, cleanDeviceName(r.Header.Get("X-Minigw-Client")))
 	}
 	limit := int64(1 << 20)

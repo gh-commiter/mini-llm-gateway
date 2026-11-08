@@ -1567,3 +1567,15 @@ final class FakeMinigw: @unchecked Sendable {
     #expect(Router.mentionRoot(shared: copy, synced: true) { local } == copy)
     #expect(Router.mentionRoot(shared: nil, synced: false) { local } == local)
 }
+
+/// Varnost L2: /health/ready našteje ponudnike le temu Macu ali klicatelju z žetonom (kot TestHealthReadyProvidersOnlyLocalOrAuthorized v Go).
+@Test func healthReadyProvidersOnlyLocalOrAuthorized() async {
+    let router = Router(config: RouterConfig(), token: "tok", secrets: FakeSecrets(values: [:]))
+    for (peer, token, want) in [("192.0.2.9", "", false), ("192.0.2.9", "tok", true), ("127.0.0.1", "", true)] {
+        var r = request("GET", "/health/ready", headers: token.isEmpty ? [:] : ["authorization": "Bearer " + token])
+        r.peer = peer
+        let w = FakeWriter()
+        await router.handle(r, writer: w)
+        #expect(w.status == 200 && w.text.contains(#""providers""#) == want, "\(peer) \(token): \(w.text)")
+    }
+}

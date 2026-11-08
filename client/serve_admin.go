@@ -18,7 +18,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -74,6 +73,7 @@ type apiClaude struct {
 	DisabledTools        []string `json:"disabledTools"`
 	PermissionMode       string   `json:"permissionMode"`
 	SettingSources       string   `json:"settingSources"`
+	Off                  string   `json:"off,omitempty"` // zakaj sta Claude CLI in Codex izklopljena ob zagonu (offReason)
 }
 
 type apiGeneral struct {
@@ -792,7 +792,12 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			e, err := checkAgent(c, s.cfgDir)
 			exe = e
 			return err
-		}, func() { s.claude = exe })
+		}, func() {
+			s.claude = exe
+			if b.Enabled != nil && *b.Enabled { // ponovni vklop uspel: razlog izklopa ob zagonu ne velja več
+				s.offReason = ""
+			}
+		})
 		if err != nil {
 			return fail(400, err.Error())
 		}
@@ -845,18 +850,24 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 				}
 			}
 		}
+		if b.AllowAnyDevice != nil && *b.AllowAnyDevice && len(s.conf().Devices) > 0 {
+			return fail(400, "allowAnyDevice: only while no device is allowed (remove the allowed devices first)")
+		}
 		scratch := ""
 		if b.Scratch != nil { // prazno = privzeta mapa; velja za nove seje (obstoječe kopije ostanejo, kjer so)
 			if scratch = *b.Scratch; scratch == "" {
 				scratch = defaultScratch()
 			}
-			if !filepath.IsAbs(scratch) || under(scratch, s.cfgDir) || under(s.cfgDir, scratch) {
-				return fail(400, "scratch folder: an absolute path outside the config folder")
+			if !filepath.IsAbs(scratch) {
+				return fail(400, "scratch folder: an absolute path")
 			}
-			if *b.Scratch != "" {
-				if why := scratchProblem(scratch, s.conf().AllowedFolders); why != "" { // M1, kot na Macu
+			if *b.Scratch != "" { // najprej razlog kot na Macu (koren diska, domača mapa …), nato mapa nastavitev
+				if why := scratchProblem(scratch, s.conf().AllowedFolders); why != "" { // M1
 					return fail(400, "scratch folder: "+why)
 				}
+			}
+			if under(scratch, s.cfgDir) || under(s.cfgDir, scratch) {
+				return fail(400, "scratch folder: must not contain or be inside the config folder "+s.cfgDir)
 			}
 			if bad := scratchOverlaps(s.conf().AllowedFolders, scratch); len(bad) > 0 { // L1: tudi privzeta mapa
 				return fail(400, "scratch folder: the allowed folder "+bad[0]+" contains it or is inside it")
@@ -1026,6 +1037,10 @@ func (s *server) agentAPI(method string, k agentKind, body []byte) (int, any) {
 			c.Grok = ac
 		}
 		return nil
+	}, func() {
+		if b.Enabled != nil && *b.Enabled && k.name == "codex" { // kot Claude CLI: vklop uspel, razlog ne velja več
+			s.offReason = ""
+		}
 	})
 	if err != nil {
 		return 500, errorBody(500, err.Error())
@@ -1082,7 +1097,7 @@ func claudeTools(exe []string) []string {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, exe[0], append(exe[1:], "-p", "x", "--model", "haiku", "--output-format", "stream-json", "--verbose",
+	cmd := commandContext(ctx, exe[0], append(exe[1:], "-p", "x", "--model", "haiku", "--output-format", "stream-json", "--verbose",
 		"--tools", "default", "--setting-sources", "", "--strict-mcp-config", "--no-session-persistence")...)
 	cmd.Dir = os.TempDir()
 	out, err := cmd.StdoutPipe()
@@ -1111,6 +1126,11 @@ func (s *server) claudeInfo() apiClaude {
 	if len(exe) > 0 {
 		info.Exe, info.ClaudeVersion = exe[len(exe)-1], claudeVersion(exe)
 	}
+	if c.ClaudeDisabled {
+		s.mu.RLock()
+		info.Off = s.offReason
+		s.mu.RUnlock()
+	}
 	return info
 }
 
@@ -1124,7 +1144,7 @@ func claudeVersion(exe []string) string {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	out, _ := exec.CommandContext(ctx, exe[0], append(exe[1:], "--version")...).Output()
+	out, _ := commandContext(ctx, exe[0], append(exe[1:], "--version")...).Output()
 	v := strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0])
 	claudeVersions.Store(key, v)
 	return v

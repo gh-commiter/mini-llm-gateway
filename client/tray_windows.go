@@ -129,7 +129,7 @@ var theTray *tray // okenska procedura je ena za proces
 func u16(s string) *uint16 { p, _ := syscall.UTF16PtrFromString(s); return p }
 
 func messageBox(text string) {
-	pMessageBox.Call(0, uintptr(unsafe.Pointer(u16(text))), uintptr(unsafe.Pointer(u16("Mini Gateway"))), 0x10 /* MB_ICONERROR */)
+	pMessageBox.Call(0, uintptr(unsafe.Pointer(u16(text))), uintptr(unsafe.Pointer(u16("Mini Gateway"))), 0x10|0x10000|0x40000 /* MB_ICONERROR|MB_SETFOREGROUND|MB_TOPMOST: pred drugimi okni, tudi ob zagonu iz MSI */)
 }
 
 func shellOpen(target, params string) {
@@ -148,7 +148,11 @@ func trayRun(cfgPath string) {
 	}
 	s, ln, logPath, fresh, err := startTrayRouter(cfgPath)
 	if err != nil {
-		messageBox("Mini Gateway cannot start: " + err.Error())
+		msg := "Mini Gateway cannot start: " + err.Error()
+		if logPath != "" {
+			msg += "\n\nAlso in the log " + logPath + ". Fix the problem (or delete " + cfgPath + " for new settings) and start Mini Gateway again."
+		}
+		messageBox(msg)
 		os.Exit(1)
 	}
 	go func() { s.log.Printf("gateway stopped: %v", s.serve(ln)) }()

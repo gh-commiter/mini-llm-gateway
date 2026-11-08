@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -56,8 +58,9 @@ func TestShareCommandAndWanted(t *testing.T) {
 	if !shareWanted(sub, false) || !shareWanted(proj, false) {
 		t.Fatal("added folder or its subfolder not shared")
 	}
-	if shareWanted(sub, true) {
-		t.Fatal("shared with a local router")
+	// Aplikacija na tem Macu dela v mapi sami; minigw serve na tem računalniku (Windows, Linux) jo potrebuje deljeno (#9).
+	if shareWanted(sub, true) != (runtime.GOOS != "darwin") {
+		t.Fatal("local gateway: shared on macOS, or not shared on Windows/Linux")
 	}
 	if shareAllowed(filepath.VolumeName(proj)+string(filepath.Separator)) || shareAllowed(cfg) {
 		t.Fatal("drive root or home folder allowed")
@@ -618,5 +621,58 @@ func TestSyncWriteReadOnlyFile(t *testing.T) {
 	st, _ := os.Stat(full)
 	if string(b) != "new" || st.Mode().Perm()&0o200 != 0 {
 		t.Fatalf("read-only file: %q %v", b, st.Mode())
+	}
+}
+
+// #7: claude ne podeduje seje in prijave starševskega Claude Code (401 na prehodu); naše vrednosti in drugo ostane.
+func TestClaudeChildEnvDropsParentSession(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake claude is a shell script")
+	}
+	bin, out := t.TempDir(), filepath.Join(t.TempDir(), "env")
+	os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\nenv > "+out+"\n"), 0o755)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	for k, v := range map[string]string{"CLAUDECODE": "1", "CLAUDE_CODE_ENTRYPOINT": "claude-desktop", "CLAUDE_CODE_OAUTH_TOKEN": "x",
+		"CLAUDE_CODE_SSE_PORT": "1", "ANTHROPIC_BASE_URL": "http://parent", "ANTHROPIC_MODEL": "m", "ANTHROPIC_API_KEY": "k",
+		"CLAUDE_CODE_GIT_BASH_PATH": "/bash", "MINIGW_KEEP": "1"} {
+		t.Setenv(k, v)
+	}
+	if runClaude(nil, []string{"ANTHROPIC_BASE_URL=http://gw", "ANTHROPIC_AUTH_TOKEN=t", "ANTHROPIC_API_KEY=",
+		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"}) != 0 {
+		t.Fatal("fake claude failed")
+	}
+	b, _ := os.ReadFile(out)
+	got := strings.Split(strings.TrimSpace(string(b)), "\n")
+	for _, bad := range []string{"CLAUDECODE=", "CLAUDE_CODE_ENTRYPOINT=", "CLAUDE_CODE_OAUTH_TOKEN=", "CLAUDE_CODE_SSE_PORT=",
+		"ANTHROPIC_MODEL=", "ANTHROPIC_BASE_URL=http://parent", "ANTHROPIC_API_KEY=k"} {
+		if slices.ContainsFunc(got, func(l string) bool { return strings.HasPrefix(l, bad) }) {
+			t.Errorf("child env has %s", bad)
+		}
+	}
+	for _, want := range []string{"ANTHROPIC_BASE_URL=http://gw", "ANTHROPIC_AUTH_TOKEN=t", "ANTHROPIC_API_KEY=",
+		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1", "CLAUDE_CODE_GIT_BASH_PATH=/bash", "MINIGW_KEEP=1"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("child env lacks %s", want)
+		}
+	}
+}
+
+// #8: --model …@profil izbere profil za ves zagon, model gre naprej brez pripone.
+func TestModelProfileSelectsTheGateway(t *testing.T) {
+	defer func() { profileFlag = "" }()
+	names := []string{"default", "local"}
+	profileFlag = ""
+	a := modelProfile([]string{"-p", "--model", "claude-cli-opus@local", "hi"}, names)
+	if profileFlag != "local" || a[2] != "claude-cli-opus" {
+		t.Fatalf("got %q %v", profileFlag, a)
+	}
+	profileFlag = ""
+	a = modelProfile([]string{"--model=claude-opus-4@20250514"}, names) // @ brez profila: model ostane cel
+	if profileFlag != "" || a[0] != "--model=claude-opus-4@20250514" {
+		t.Fatalf("got %q %v", profileFlag, a)
+	}
+	a = modelProfile([]string{"--model=gpt@default"}, names)
+	if profileFlag != "default" || a[0] != "--model=gpt" {
+		t.Fatalf("got %q %v", profileFlag, a)
 	}
 }

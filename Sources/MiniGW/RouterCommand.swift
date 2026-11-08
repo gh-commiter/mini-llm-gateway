@@ -22,7 +22,7 @@ minigw gw: show or change the Mini Gateway app on this Mac. Changes apply at onc
   minigw gw token [rotate]                              print the connect line; rotate makes a new token
   minigw gw copilot token [remove]                      Copilot's token for commands (fine-grained, only Copilot
                                                         Requests), read from stdin or asked for
-  minigw gw autostart on|off                            Open at Login (Settings → General)
+  minigw gw autostart [on|off]                          Open at Login (Settings → General); no argument: show it
 """
 
 private struct AdminConnection {
@@ -123,6 +123,11 @@ private func enabledCount(_ models: [[String: Any]]) -> Int { models.filter { $0
 
 private func esc(_ s: String) -> String { s.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-._~"))) ?? s }
 
+/// Open at Login za gw status in gw autostart (kot autostartLine v Go).
+private func autostartLine(_ st: [String: Any]) -> String {
+    st["installed"] as? Bool == true ? "starts at sign-in (Settings → General → Open at Login)" : "does not start at sign-in (Settings → General → Open at Login)"
+}
+
 func routerCommand(_ argv: [String]) {
     // Ukazi in zastavice v poljubnem vrstnem redu (»--x v« ali »--x=v«).
     var pos: [String] = [], flags: [String: String] = [:]
@@ -153,7 +158,7 @@ func routerCommand(_ argv: [String]) {
         let st = a.call("GET", "/status")
         say("gateway: running, changes apply at once")
         say("version \(st["version"] as? String ?? "?"), port \(st["port"] as? Int ?? 0) on \(st["address"] as? String ?? "?")")
-        say(st["installed"] as? Bool == true ? "starts at sign-in (Settings → General → Open at Login)" : "does not start at sign-in (Settings → General → Open at Login)")
+        say(autostartLine(st))
         say("agent requests running: \(st["agents"] as? Int ?? 0)")
         say("devices: \(st["devices"] as? Int ?? 0) allowed, \(st["pending"] as? Int ?? 0) waiting (minigw gw devices)")
         let c = st["claude"] as? [String: Any] ?? [:]
@@ -195,6 +200,8 @@ func routerCommand(_ argv: [String]) {
             for x in h { say("\(x["time"] as? String ?? "")  \(q(x["address"] as? String ?? ""))  \(q(x["client"] as? String ?? ""))") }
             if h.isEmpty { say("no connections recorded") }
         } else if pos[1] == "deny", pos.count == 3 {
+            // --name ipd.: brisanje ni namen (preimenuj: rename)
+            guard flags.isEmpty else { fail("minigw gw devices deny takes no options (to rename a device: minigw gw devices rename <id> --name N)") }
             let r = a.call("DELETE", "/devices/" + esc(pos[2]))
             let d = r["device"] as? [String: Any] ?? [:]
             say("\(r["pending"] as? Bool == true ? "rejected waiting" : "removed") device \(d["id"] as? String ?? "") \(q(d["name"] as? String ?? ""))")
@@ -290,7 +297,8 @@ func routerCommand(_ argv: [String]) {
         say(clean("path: \(path), found: \(c["found"] as? Bool ?? false)\ntools: \(c["tools"] as? String ?? "")\nallowLocalTools: \(c["allowLocalTools"] as? Bool ?? false)\naskOthers: \(c["askOthers"] as? Bool ?? false)\nfolders: \(c["folders"] as? String ?? "")"))
 
     case "autostart":
-        need(2, 2)
+        need(1, 2)
+        if pos.count == 1 { say(autostartLine(a.call("GET", "/status"))); return }  // brez on/off: trenutno stanje
         guard ["on", "off"].contains(pos[1]) else { fail(routerHelp) }
         _ = a.call("PATCH", "/general", ["startAtSignIn": pos[1] == "on"])
         say(pos[1] == "on" ? "Mini Gateway opens at login" : "Mini Gateway no longer opens at login")

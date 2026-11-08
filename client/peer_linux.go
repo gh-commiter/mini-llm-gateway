@@ -106,7 +106,7 @@ func bwrapReady(cfgDir string) string {
 		t, err2 := exec.LookPath("true")
 		home, _ := os.UserHomeDir()
 		if err == nil && err2 == nil && home != "" &&
-			exec.Command(p, append(bwrapArgs(home, cfgDir, nil, nil, nil, "", nil, nil, nil, nil), "--", t)...).Run() == nil {
+			command(p, append(bwrapArgs(home, cfgDir, nil, nil, nil, "", nil, nil, nil, nil), "--", t)...).Run() == nil {
 			bwrapPath = p
 		}
 	})

@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+- **No console windows on Windows:** the tray and every program it starts (claude, git, agents …) run without a console
+  window; GUI windows such as the installer's progress stay visible. The MSI closes the tray with
+  `minigw-tray.exe quit` instead of `taskkill` in a cmd window. Updating from 0.5.18 or older still shows one cmd window
+  once (the old package's uninstall step). `minigw serve install` on Windows now fails if `minigw-tray.exe` is not next
+  to `minigw.exe` and cannot be downloaded, and Start at sign-in (`gw autostart on`, the tray menu, Settings) needs
+  `minigw-tray.exe`: there is no fallback to `minigw.exe` at sign-in, which opened a console window. `minigw tray quit`
+  stops only `minigw-tray.exe` of this user's Windows session.
+- **Windows test report fixes (gateway):** the tray started by the MSI now finds `claude`, `codex`, `git` … (PATH also
+  from the registry and `%USERPROFILE%\.local\bin`). Agent calls on Windows use `minigw.exe` (not the tray) as
+  `minigw -p …`, pre-approved as `Bash(minigw -p:*)`; other Bash commands of an agent still need approval there (no
+  sandbox). An invalid `serve.json` is written to the log and shown in a message box in front; `gw status` says the
+  settings must be fixed. When an allowed folder contains the scratch folder, the reason why Claude CLI and Codex are off
+  is in the log, `gw status`, `gw claude` and the Claude CLI pane; the tray log now also has the startup warnings.
+- `minigw gw devices deny <id>` refuses options such as `--name` (it used to remove the device). **Allow any device with
+  the token** can be turned on only while no device is allowed (page, Mac Settings, admin API 400).
+- `gw status` on Windows says `minigw gw autostart off`; `gw autostart` without an argument shows the state (both CLIs; plugin 0.5.15).
+  Scratch folder errors say that it must not contain the config folder (named).
+- Sessions: a device on 127.0.0.1 that was never approved shows as this computer, not "(device removed)"; an allowed
+  device has connection history also over 127.0.0.1; a request with an invalid session ID counts in a `t-…` session;
+  streamed Claude CLI answers count input tokens. `minigw status` lists the providers of a `minigw serve` gateway; `/health/ready` names the providers only to this computer or a caller with the token (Mac too). No
+  empty `.maven` folder stays after the last worktree clone. The Claude CLI pane shows changes from `gw claude`.
+- `minigw` started inside Claude Code or Claude Desktop no longer gets 401 from the gateway: the inner `claude` no
+  longer inherits the parent's `ANTHROPIC_*`, `CLAUDECODE` and `CLAUDE_CODE_*` variables (session, OAuth, base URL;
+  `CLAUDE_CODE_GIT_BASH_PATH` stays). Both clients.
+- `minigw --model <model>@<profile>` uses that profile for the whole run (folder share, sync, worktree, native), as
+  `--minigw-profile <profile>` does; before, the folder went to the default gateway. Both clients.
+- Windows and Linux: a gateway on the same computer (`minigw serve`, e.g. profile `local` on 127.0.0.1) gets the project
+  folder shared automatically, as a remote one does (before only with `MINIGW_SHARE=1`). On a Mac the app on the same
+  Mac still works in the folder itself.
+- `--minigw-work=auto` or `worktree` in a git repository without a commit (also a folder inside one) uses sync at once,
+  with one line why, instead of failing on every agent request with "cannot take a snapshot". Both clients.
+- `minigw --version` prints only minigw's version (Claude Code's: `claude --version`); `minigw gw status` shows it on one
+  line again.
+- Windows MSI: the user PATH gets Mini Gateway once (without a trailing `\`, the form `minigw serve install` uses), and
+  reinstalling the same version replaces the earlier install instead of adding a second one.
 - **Codex on a Mac gateway shared by several devices:** Codex's own sandbox can read every file of the gateway's user,
   so Codex agents are not isolated between devices for reads (other devices' synced copies and worktree clones in
   Scratch, and an agent run's token file there). Allow Codex only for devices you trust with that.

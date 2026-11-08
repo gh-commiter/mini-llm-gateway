@@ -30,6 +30,30 @@ public enum Profiles {
         return names.contains(p) ? (String(model[..<at]), p) : (model, nil)
     }
 
+    /// --model <model>@<profil>: profil izbere prehod za ves zagon (mapa, sync, worktree, native), kot --minigw-profile;
+    /// model gre naprej brez pripone (#8). profile nil = noben --model ne konča s profilom.
+    public static func modelProfile(_ args: [String], names: [String]) -> (args: [String], profile: String?, model: String) {
+        var out = args, profile: String?, model = ""
+        for (i, a) in args.enumerated() {
+            let eq = a.hasPrefix("--model=")
+            guard eq || (a == "--model" && i + 1 < args.count) else { continue }
+            let v = eq ? String(a.dropFirst(8)) : args[i + 1]
+            let (bare, p) = split(v, names: names)
+            guard let p else { continue }
+            profile = p; model = v
+            if eq { out[i] = "--model=" + bare } else { out[i + 1] = bare }
+        }
+        return (out, profile, model)
+    }
+
+    /// Podedovano okolje, ki ga claude pod minigw ne dobi: ANTHROPIC_*, CLAUDECODE in CLAUDE_CODE_* (seja in prijava
+    /// starševskega Claude Code ali Claude Desktop, npr. CLAUDE_CODE_OAUTH_TOKEN: sicer 401 na prehodu). minigw nato
+    /// nastavi svoje; CLAUDE_CODE_GIT_BASH_PATH (nastavitev uporabnika) ostane (#7).
+    public static func parentClaudeVar(_ key: String) -> Bool {
+        let k = key.uppercased()
+        return (k.hasPrefix("ANTHROPIC_") || k == "CLAUDECODE" || k.hasPrefix("CLAUDE_CODE_")) && k != "CLAUDE_CODE_GIT_BASH_PATH"
+    }
+
     /// Telo zahteve z modelom brez pripone, ime profila in model brez pripone; sicer telo, kot je, in nil.
     public static func routeBody(_ body: Data, names: [String]) -> (body: Data, profile: String?, model: String) {
         guard var o = try? JSONSerialization.jsonObject(with: body) as? [String: Any], let model = o["model"] as? String else { return (body, nil, "") }

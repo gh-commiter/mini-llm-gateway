@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -19,7 +18,7 @@ import (
 
 // gitUser: git uporabnika (njegove nastavitve), brez njegovih hookov ob začasnem refu in posnetku.
 func gitUser(dir string, env []string, args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"-c", "core.hooksPath=" + os.DevNull}, args...)...)
+	cmd := command("git", append([]string{"-c", "core.hooksPath=" + os.DevNull}, args...)...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), append([]string{"GIT_TERMINAL_PROMPT=0"}, env...)...)
 	var out bytes.Buffer
@@ -37,6 +36,12 @@ func gitToplevel(cwd string) string {
 		return ""
 	}
 	return filepath.FromSlash(top)
+}
+
+// gitHasCommit: repozitorij ima HEAD (brez njega ni posnetka za worktree).
+func gitHasCommit(top string) bool {
+	head, err := gitUser(top, nil, "rev-parse", "--verify", "-q", "HEAD^{commit}")
+	return err == nil && shaRe.MatchString(head)
 }
 
 // gitSnapshot: HEAD ali commit z neshranjenimi spremembami (začasni indeks: indeks, veje in mapa uporabnika ostanejo).

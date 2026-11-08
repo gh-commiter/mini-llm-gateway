@@ -323,7 +323,16 @@ func TestTrayStartupOnlyRunValue(t *testing.T) {
 	runValueDel = func(n string) { delete(reg, n) }
 	trayClose = func() error { t.Fatal("the tray menu must not close the tray"); return nil }
 	cfg := filepath.Join(t.TempDir(), "serve.json")
-	if err := trayStartup(true, cfg); err != nil || !strings.Contains(reg[runValueName], cfg) {
+	if err := trayStartup(true, cfg); err == nil || len(reg) != 0 { // brez pladnja ob exe ne minigw.exe ob prijavi
+		t.Fatalf("no tray: %v %q", err, reg)
+	}
+	exe, _ := os.Executable()
+	tray := filepath.Join(filepath.Dir(exe), "minigw-tray.exe")
+	if err := os.WriteFile(tray, nil, 0o755); err != nil {
+		t.Skip("cannot put a tray next to the test binary:", err)
+	}
+	t.Cleanup(func() { os.Remove(tray) })
+	if err := trayStartup(true, cfg); err != nil || !strings.Contains(reg[runValueName], cfg) || !strings.Contains(reg[runValueName], tray) {
 		t.Fatalf("on: %v %q", err, reg)
 	}
 	if trayStartup(false, cfg); reg[runValueName] != "" {

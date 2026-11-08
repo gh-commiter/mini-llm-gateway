@@ -197,8 +197,8 @@ extension Router {
             let iso = ISO8601DateFormatter()
             let list: [[String: Any]] = c.devices.map { d in
                 var o: [String: Any] = ["id": d.id, "name": d.name, "siri": d.siri]
-                if let t = Router.history.lastSeen(d.id) { o["lastSeen"] = iso.string(from: t) }
-                if let cl = Router.history.client(d.id) { o["client"] = cl }
+                if let t = history.lastSeen(d.id) { o["lastSeen"] = iso.string(from: t) }
+                if let cl = history.client(d.id) { o["client"] = cl }
                 return o
             }
             let pending: [[String: Any]] = Router.deviceLog.pending.map {
@@ -210,7 +210,7 @@ extension Router {
                 throw AdminError(404, "no allowed device with the ID \(arg) (minigw gw devices lists the IDs)")
             }
             let iso = ISO8601DateFormatter()
-            let h: [[String: Any]] = Router.history.history(arg).map {
+            let h: [[String: Any]] = history.history(arg).map {
                 var o: [String: Any] = ["time": iso.string(from: $0.time), "address": $0.address]
                 if !$0.client.isEmpty { o["client"] = $0.client }
                 return o
@@ -219,14 +219,14 @@ extension Router {
         case "GET sessions":
             let q = URLComponents(string: "?" + (query ?? ""))?.queryItems ?? []
             let v = { (n: String) in q.first { $0.name == n }?.value ?? "" }
-            return (200, ["sessions": Router.history.sessions(device: v("device"), folder: v("folder")).map(GatewayHistory.json)])
+            return (200, ["sessions": history.sessions(device: v("device"), folder: v("folder")).map(GatewayHistory.json)])
         case "GET sessions/{}":
-            guard let s = Router.history.sessions().first(where: { $0.id == arg }) else {
+            guard let s = history.sessions().first(where: { $0.id == arg }) else {
                 throw AdminError(404, "no session \(arg) (minigw gw sessions lists them)")
             }
             return (200, GatewayHistory.json(s))
         case "DELETE sessions":
-            Router.history.clearSessions()
+            history.clearSessions()
             return (200, ["cleared": true])
         case "POST devices":
             let b = try AdminBody(body, ["id", "name"])
@@ -551,6 +551,7 @@ extension Router {
                     throw AdminError(400, "allowedClients: \(ip) is not an IP address")
                 }
             }
+            if any == true, !c.devices.isEmpty { throw AdminError(400, "allowAnyDevice: only while no device is allowed (remove the allowed devices first)") }
             // Scratch (kot Settings: vsebina gre v »Mini Gateway Scratch« v izbrani mapi; "" = privzeta). M1, L1: pravila
             // poti, shrani se kanonična pot; L3: ne med sejami.
             var newScratch: String?

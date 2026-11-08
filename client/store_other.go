@@ -112,7 +112,7 @@ func secretTool() string {
 
 func osKeyGet(cfgDir, name string) (string, string) {
 	if tool := secretTool(); tool != "" {
-		if out, _ := exec.Command(tool, "lookup", "service", "minigw", "gateway", name).Output(); len(out) > 0 {
+		if out, _ := command(tool, "lookup", "service", "minigw", "gateway", name).Output(); len(out) > 0 {
 			return strings.TrimSpace(string(out)), "the Secret Service"
 		}
 	}
@@ -123,7 +123,7 @@ func osKeyGet(cfgDir, name string) (string, string) {
 // osKeySet: ključ nikoli v argv (secret-tool ga bere s stdin).
 func osKeySet(cfgDir, name, key string) (string, error) {
 	if tool := secretTool(); tool != "" {
-		cmd := exec.Command(tool, "store", "--label=minigw gateway "+name, "service", "minigw", "gateway", name)
+		cmd := command(tool, "store", "--label=minigw gateway "+name, "service", "minigw", "gateway", name)
 		cmd.Stdin = strings.NewReader(key)
 		if cmd.Run() == nil {
 			m, _ := fileKeys(cfgDir) // starejša kopija v datoteki ne sme ostati
@@ -153,7 +153,7 @@ func writeKeys(cfgDir string, m map[string]string) error {
 
 func osKeyDel(cfgDir, name string) {
 	if tool := secretTool(); tool != "" {
-		exec.Command(tool, "clear", "service", "minigw", "gateway", name).Run()
+		command(tool, "clear", "service", "minigw", "gateway", name).Run()
 	}
 	if m, err := fileKeys(cfgDir); err == nil && m[name] != "" {
 		delete(m, name)
@@ -163,11 +163,11 @@ func osKeyDel(cfgDir, name string) {
 
 // readHidden: vrstica s terminala brez odmeva (stty).
 func readHidden(f *os.File) (string, error) {
-	off := exec.Command("stty", "-echo")
+	off := command("stty", "-echo")
 	off.Stdin = f
 	if off.Run() == nil {
 		defer func() {
-			on := exec.Command("stty", "echo")
+			on := command("stty", "echo")
 			on.Stdin = f
 			on.Run()
 		}()
@@ -220,6 +220,7 @@ func knownConfigDir() (string, error) {
 func knownUserProgramsDir() string                 { return "" }
 func trayMutexExists() bool                        { return false }
 func closeRunningTray() error                      { return nil }
+func quitRunningTray()                             { trayRun("") } // minigw tray quit: isto sporočilo kot minigw tray
 func startProcessDetached(string, ...string) error { return errors.New("Windows only") }
 func moveFileOnReboot(string) error                { return errors.New("Windows only") }
 func regEnvPathGet() (string, error)               { return "", errors.New("Windows only") }

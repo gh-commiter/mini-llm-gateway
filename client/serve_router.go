@@ -36,7 +36,7 @@ runs; otherwise they go to serve.json.
   minigw gw claude [--path FILE] [--tools T1,T2] [--folders DIR1,DIR2] [--allow-local-tools=true|false]
                   [--ask-others=true|false]   (may ask other models of this gateway; needs --allow-local-tools)
                   [--allow-unsandboxed-bash=true|false]   (minigw serve only)
-  minigw gw autostart on|off                            Windows: start the tray at sign-in (Linux: minigw serve install)
+  minigw gw autostart [on|off]                          Windows: start the tray at sign-in (Linux: minigw serve install); no argument: show it
   minigw gw token [rotate]                              print the connect line; rotate makes a new token
   minigw gw copilot token [remove]                      Copilot's token for commands (fine-grained, only Copilot
                                                         Requests), read from stdin or asked for
@@ -147,8 +147,10 @@ func (a *adminClient) http(method, path string, body []byte, timeout time.Durati
 // openAdmin: tekoči router (admin.secret in odgovor na status) ali brez routerja (serve.json).
 func openAdmin(cfgPath string) *adminClient {
 	c, err := loadServeConfig(cfgPath)
-	if err != nil {
+	if errors.Is(err, os.ErrNotExist) {
 		fail("cannot read " + cfgPath + " (run minigw serve init first): " + err.Error())
+	} else if err != nil { // neveljaven JSON: router se s to datoteko ne zažene
+		fail("the gateway cannot start with these settings, fix them: " + err.Error())
 	}
 	a := &adminClient{}
 	cfgDir, _ := filepath.Abs(filepath.Dir(cfgPath))
@@ -209,6 +211,17 @@ func (a *adminClient) do(method, path string, body, out any) {
 
 func must(b []byte, _ error) []byte { return b }
 
+// autostartLine: zagon ob prijavi za gw status in gw autostart. Windows: vrednost Run, tudi pri namestitvi MSI, kjer
+// minigw serve uninstall zavrne.
+func autostartLine(autostart string) string {
+	stop, start := "minigw serve uninstall", "minigw serve install"
+	if runtime.GOOS == "windows" {
+		stop, start = "minigw gw autostart off", "minigw gw autostart on"
+	}
+	return map[string]string{"boot": "starts at boot (" + stop + " to stop that)", "sign-in": "starts at sign-in (" + stop + " to stop that)",
+		"": "does not start on its own (" + start + ")"}[autostart]
+}
+
 func routerCommand(args []string, in io.Reader) {
 	fs := flag.NewFlagSet("minigw gw", flag.ExitOnError)
 	cfgPath := fs.String("config", defaultServeConfigPath(), "config file")
@@ -266,8 +279,7 @@ func routerCommand(args []string, in io.Reader) {
 			addr = "all addresses"
 		}
 		say(fmt.Sprintf("version %s, port %d on %s", st.Version, st.Port, addr))
-		say(map[string]string{"boot": "starts at boot (minigw serve uninstall to stop that)", "sign-in": "starts at sign-in (minigw serve uninstall to stop that)",
-			"": "does not start on its own (minigw serve install)"}[st.Autostart])
+		say(autostartLine(st.Autostart))
 		say(fmt.Sprintf("agent requests running: %d", st.Agents))
 		say(installedInfo(runtime.GOOS))
 		say(fmt.Sprintf("devices: %d allowed, %d waiting (minigw gw devices)", st.Devices, st.Pending))
@@ -276,6 +288,9 @@ func routerCommand(args []string, in io.Reader) {
 			claude = "found"
 		}
 		say(clean(fmt.Sprintf("claude: %s, tools %s", claude, st.Claude.Tools)))
+		if st.Claude.Off != "" {
+			say(clean("Claude CLI and Codex are off: " + st.Claude.Off))
+		}
 		for _, g := range st.Gateways {
 			n := "all"
 			if g.Models != nil {
@@ -343,6 +358,10 @@ func routerCommand(args []string, in io.Reader) {
 				say("no connections recorded")
 			}
 		case pos[1] == "deny" && len(pos) == 3:
+			delete(set, "config")
+			if len(set) > 0 { // --name ipd.: brisanje ni namen (preimenuj: rename)
+				fail("minigw gw devices deny takes no options (to rename a device: minigw gw devices rename <id> --name N)")
+			}
 			var r struct {
 				Device  apiDevice
 				Pending bool
@@ -511,9 +530,18 @@ func routerCommand(args []string, in io.Reader) {
 		}
 		say(clean(fmt.Sprintf("path: %s, found: %v\ntools: %s\nallowLocalTools: %v\naskOthers: %v\nfolders: %s\nallowUnsandboxedBash: %v",
 			path, c.Found, c.Tools, c.AllowLocalTools, c.AskOthers, c.Folders, c.AllowUnsandboxedBash)))
+		if c.Off != "" {
+			say(clean("Claude CLI and Codex are off: " + c.Off))
+		}
 
 	case "autostart": // kot na Macu; Linux: API pove, naj se uporabi minigw serve install
-		need(2, 2)
+		need(1, 2)
+		if len(pos) == 1 { // brez on/off: trenutno stanje
+			var st apiStatus
+			a.do("GET", "/status", nil, &st)
+			say(autostartLine(st.Autostart))
+			return
+		}
 		if pos[1] != "on" && pos[1] != "off" {
 			fail(routerHelp)
 		}

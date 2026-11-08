@@ -98,6 +98,8 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
         let w = await admin(app.router(), "POST", "/devices", body: #"{"id":"\#(id)","name":"PC"}"#)
         #expect(w.status == 200 && w.text.contains(#""added":true"#))
         #expect(app.config.devices.map(\.id) == [id])  // Settings opazuje te nastavitve
+        // allowAnyDevice le pri praznem seznamu (poročilo Windows #4)
+        #expect(await admin(app.router(), "PATCH", "/general", body: #"{"allowAnyDevice":true}"#).status == 400)
         #expect(await admin(app.router(), "GET", "/devices").text.contains(id))  // nov router (po apply) jo vidi
         #expect(await admin(app.router(), "PATCH", "/siri", body: #"{"enabled":true,"allow":["\#(id)"]}"#).status == 200)
         #expect(app.config.siri.enabled && app.config.devices[0].siri)

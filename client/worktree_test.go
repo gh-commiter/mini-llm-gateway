@@ -207,3 +207,32 @@ func TestWorktreeFetchChecksBundleAndKeepsUserCommits(t *testing.T) {
 		t.Fatal("a branch checked out in a linked worktree was moved")
 	}
 }
+
+// #16: posnetek vzame nove datoteke, ne pa prezrtih (.gitignore, .git/info/exclude, globalni core.excludesFile).
+// #10: repozitorij brez commita nima posnetka (auto in worktree tedaj takoj na sync).
+func TestSnapshotSkipsIgnoredFilesAndNeedsACommit(t *testing.T) {
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	os.MkdirAll(repo, 0o755)
+	writeT(t, filepath.Join(root, "global-ignore"), ".omc/\n")
+	writeT(t, filepath.Join(root, "gitconfig"), "[core]\n\texcludesFile = "+filepath.ToSlash(filepath.Join(root, "global-ignore"))+"\n")
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(root, "gitconfig"))
+	gitT(t, repo, "init", "-q", "-b", "main")
+	if gitHasCommit(repo) || gitSnapshot(repo) != "" {
+		t.Fatal("snapshot without a commit")
+	}
+	writeT(t, filepath.Join(repo, ".gitignore"), "build/\n")
+	gitT(t, repo, "add", ".gitignore")
+	gitT(t, repo, "commit", "-qm", "first")
+	writeT(t, filepath.Join(repo, ".git/info/exclude"), "secret.txt\n")
+	for _, f := range []string{"new.txt", "build/out.o", ".omc/state.json", "secret.txt"} {
+		writeT(t, filepath.Join(repo, f), "x\n")
+	}
+	snap := gitSnapshot(repo)
+	if !gitHasCommit(repo) || !shaRe.MatchString(snap) {
+		t.Fatalf("snapshot %q", snap)
+	}
+	if got := gitT(t, repo, "ls-tree", "-r", "--name-only", snap); got != ".gitignore\nnew.txt" {
+		t.Fatalf("snapshot has %q", got)
+	}
+}

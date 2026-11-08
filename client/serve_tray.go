@@ -17,11 +17,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
-// isTrayExe: minigw-tray.exe (ali minigw-tray-windows-amd64.exe) se zažene kot pladenj.
+// isTrayExe: minigw-tray.exe (ali minigw-tray-windows-<arch>.exe) se zažene kot pladenj; le natančni imeni (L1).
 func isTrayExe(arg0 string) bool {
-	return strings.HasPrefix(strings.ToLower(filepath.Base(arg0)), "minigw-tray")
+	n := filepath.Base(arg0)
+	return strings.EqualFold(n, "minigw-tray.exe") || strings.EqualFold(n, "minigw-tray-windows-"+runtime.GOARCH+".exe")
 }
 
 // trayBeside: pladenj ob exe (za serve install), le z natančnim imenom; exe sam, če je že pladenj.
@@ -38,6 +40,10 @@ func trayBeside(exe string) string {
 }
 
 func trayCommand(args []string) {
+	if len(args) > 0 && args[0] == "quit" { // MSI: zapre tekoči pladenj, sam brez okna (-H=windowsgui)
+		quitRunningTray()
+		return
+	}
 	if len(args) > 0 && (args[0] == "tray" || args[0] == "serve") { // Run: "minigw-tray.exe" tray --config …
 		args = args[1:]
 	}
@@ -74,6 +80,9 @@ func trayStartup(on bool, cfgPath string) error {
 		return err
 	}
 	cfgPath, _ = filepath.Abs(cfgPath)
+	if trayBeside(exe) == "" { // brez pladnja ne minigw.exe ob prijavi (okno konzole); kot installWindows
+		return errors.New("minigw-tray.exe is not next to " + filepath.Base(exe) + ": put minigw-tray.exe next to minigw.exe and run minigw serve install again")
+	}
 	v, err := serviceFile("windows", exe, cfgPath)
 	if err != nil {
 		return err
@@ -201,36 +210,40 @@ func (l *rotatingLog) Write(p []byte) (int, error) {
 	return n, err
 }
 
-// startTrayRouter: nastavitve (ob prvem zagonu nove), router z dnevnikom v datoteki in poslušanje.
-func startTrayRouter(cfgPath string) (*server, net.Listener, string, bool, error) {
+// startTrayRouter: nastavitve (ob prvem zagonu nove), router z dnevnikom v datoteki in poslušanje. Napaka gre tudi v
+// dnevnik (npr. neveljaven serve.json: pladenj nima konzole).
+func startTrayRouter(cfgPath string) (s *server, ln net.Listener, logPath string, fresh bool, err error) {
 	c, err := loadServeConfig(cfgPath)
-	fresh := errors.Is(err, os.ErrNotExist)
+	fresh = errors.Is(err, os.ErrNotExist)
 	if fresh {
 		c = newServeConfig()
 		if err = writeServeConfig(cfgPath, c); err == nil {
 			c, err = loadServeConfig(cfgPath)
 		}
 	}
-	if err != nil {
-		return nil, nil, "", false, err
-	}
-	logPath := filepath.Join(filepath.Dir(cfgPath), "minigw-serve.log")
-	if c.Log != "" {
+	logPath = filepath.Join(filepath.Dir(cfgPath), "minigw-serve.log")
+	if err == nil && c.Log != "" {
 		logPath = c.Log
 	}
-	rl, err := openRotatingLog(logPath)
+	rl, lerr := openRotatingLog(logPath)
+	if lerr != nil {
+		return nil, nil, "", false, errors.Join(err, lerr)
+	}
+	logOut = rl
+	defer func() {
+		if err != nil {
+			fmt.Fprintf(rl, "%s cannot start: %v\n", time.Now().Format("2006/01/02 15:04:05"), err)
+		}
+	}()
 	if err != nil {
-		return nil, nil, "", false, err
+		return nil, nil, logPath, false, err
 	}
 	c.Log = "" // newServer naj ne odpre še enkrat
-	s, err := newServer(c, cfgPath)
-	if err != nil {
-		return nil, nil, "", false, err
+	if s, err = newServer(c, cfgPath); err != nil {
+		return nil, nil, logPath, false, err
 	}
-	s.log.SetOutput(rl)
-	ln, err := listenRouter(c)
-	if err != nil {
-		return nil, nil, "", false, fmt.Errorf("port %d: %v (is minigw serve already running?)", c.Port, err)
+	if ln, err = listenRouter(c); err != nil {
+		return nil, nil, logPath, false, fmt.Errorf("port %d: %v (is minigw serve already running?)", c.Port, err)
 	}
 	s.announce(ln)
 	return s, ln, logPath, fresh, nil

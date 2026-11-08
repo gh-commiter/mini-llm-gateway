@@ -379,10 +379,12 @@ struct SettingsView: View {
         Form {
             header
             Section {
-                Toggle(isOn: $draft.allowAnyDevice) {
+                // Le pri praznem seznamu (kot na strani nastavitev in v skrbniškem API)
+                Toggle(isOn: Binding(get: { draft.allowAnyDevice && draft.devices.isEmpty }, set: { draft.allowAnyDevice = $0 })) {
                     Text("Allow any device with the token")
                     Text("Only while the list of allowed devices is empty. Otherwise each new device waits for approval.")
                 }
+                .disabled(!draft.devices.isEmpty)
                 TextField("Allowed clients (IP; empty = all)", text: $draft.allowedClients, prompt: Text(verbatim: "192.168.1.20, 192.168.1.21"))
                 Toggle("Allow unencrypted connections from other Macs", isOn: $draft.allowPlainRemote)
                     .help(String(localized: "minigw 0.4 and newer always encrypts. Turn on only for other clients on a trusted network."))

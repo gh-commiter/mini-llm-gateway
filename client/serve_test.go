@@ -562,3 +562,22 @@ func TestClientInfoIsASCII(t *testing.T) {
 		t.Fatalf("clientInfo: %q", s)
 	}
 }
+
+// Varnost L2: /health/ready našteje ponudnike le temu računalniku ali klicatelju z žetonom.
+func TestHealthReadyProvidersOnlyLocalOrAuthorized(t *testing.T) {
+	s, _ := testServer(t, nil)
+	for _, c := range []struct {
+		peer, token string
+		want        bool
+	}{{"192.0.2.9", "", false}, {"192.0.2.9", s.conf().Token, true}, {"127.0.0.1", "", true}} {
+		hr := httptest.NewRequest("GET", "/health/ready", nil)
+		if c.token != "" {
+			hr.Header.Set("Authorization", "Bearer "+c.token)
+		}
+		w := httptest.NewRecorder()
+		s.handle(w, &req{Request: hr, conn: &serveConn{peer: c.peer}})
+		if got := strings.Contains(w.Body.String(), `"providers"`); got != c.want || w.Code != 200 {
+			t.Fatalf("%+v: %d %s", c, w.Code, w.Body)
+		}
+	}
+}

@@ -177,8 +177,8 @@ public final class GatewayHistory: @unchecked Sendable {
     }
 
     public func record(_ u: Use, now: Date = Date()) {
-        let now = Self.second(now), sid = u.session
-        guard Self.validSession(sid) else { return }
+        // M2: neveljaven ID se ne bi ujemal s svojim zapisom; L5: zahteva vseeno šteje, v seji »t-…«
+        let now = Self.second(now), sid = Self.validSession(u.session) ? u.session : ""
         lock.withLock {
             let i = state.sessions.lastIndex {
                 $0.device == u.device && (sid.isEmpty

@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"os/user"
 	"path/filepath"
 	"runtime"
@@ -30,7 +29,7 @@ const (
 // Zunanji ukazi in register: testi jih zamenjajo.
 var (
 	runCmd = func(name string, args ...string) error {
-		out, err := exec.Command(name, args...).CombinedOutput()
+		out, err := command(name, args...).CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("%s %s: %v %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 		}
@@ -70,11 +69,10 @@ func serviceText(goos, exe, cfgPath string) string {
 	case "linux":
 		return "[Unit]\nDescription=Mini Gateway (minigw serve)\nAfter=network-online.target\n\n[Service]\nExecStart=" +
 			systemdQuote(exe) + " serve --config " + systemdQuote(cfgPath) + "\nRestart=on-failure\n\n[Install]\nWantedBy=default.target\n"
-	case "windows": // pladenj, če je ob exe; poti na Windows ne vsebujejo »"«
+	case "windows": // le pladenj (minigw.exe ob prijavi bi odprl okno konzole); "" = ga ni ob exe. Poti brez »"«.
 		if tray := trayBeside(exe); tray != "" {
 			return `"` + tray + `" tray --config "` + cfgPath + `"`
 		}
-		return `"` + exe + `" serve --config "` + cfgPath + `"`
 	}
 	return ""
 }
@@ -319,13 +317,14 @@ func installWindows(exe, cfgPath string) (string, error) {
 	if err := installFile(exe, filepath.Join(dir, "minigw.exe")); err != nil {
 		return "", err
 	}
-	tray, note := filepath.Join(dir, "minigw-tray.exe"), ""
+	tray := filepath.Join(dir, "minigw-tray.exe")
 	if src := trayBeside(exe); src != "" {
 		if err := installFile(src, tray); err != nil {
 			return "", err
 		}
 	} else if err := downloadVerified("minigw-tray-windows-"+runtime.GOARCH+".exe", tray); err != nil {
-		tray, note = "", "\nNo tray icon: minigw-tray.exe was not next to minigw.exe and the download failed ("+err.Error()+"); minigw serve starts at sign-in instead."
+		// minigw.exe ob prijavi bi imel ves čas odprto okno konzole: brez pladnja ni namestitve
+		return "", errors.New("minigw-tray.exe was not next to minigw.exe and the download failed (" + err.Error() + "): put minigw-tray.exe next to minigw.exe and run minigw serve install again")
 	}
 	path, err := envPathGet()
 	if err != nil { // L1: ob napaki ne prepiši uporabnikovega PATH
@@ -336,21 +335,13 @@ func installWindows(exe, cfgPath string) (string, error) {
 			return "", err
 		}
 	}
-	run := `"` + filepath.Join(dir, "minigw.exe") + `" serve --config "` + cfgPath + `"`
-	if tray != "" {
-		run = `"` + tray + `" tray --config "` + cfgPath + `"`
-	}
-	if err := runValueSet(runValueName, run); err != nil {
+	if err := runValueSet(runValueName, `"`+tray+`" tray --config "`+cfgPath+`"`); err != nil {
 		return "", err
 	}
-	what := "minigw serve runs at sign-in"
-	if tray != "" {
-		if err := startDetached(tray, "tray", "--config", cfgPath); err != nil {
-			return "", err
-		}
-		what = "Mini Gateway is in the notification area"
+	if err := startDetached(tray, "tray", "--config", cfgPath); err != nil {
+		return "", err
 	}
-	return "installed to " + dir + "; " + what + "; open a new terminal for minigw on PATH" + note, nil
+	return "installed to " + dir + "; Mini Gateway is in the notification area; open a new terminal for minigw on PATH", nil
 }
 
 // updateMSI: MSI te izdaje (preverjen po podpisanem SHA256SUMS) namesti msiexec; MSI sam zapre in zažene pladenj.
@@ -379,7 +370,7 @@ func updateMSI(dir string) (string, error) {
 
 // installedVersion: »minigw 0.5.18« → "0.5.18"; "" brez programa ali z nečim drugim.
 var installedVersion = func(exe string) string {
-	out, err := exec.Command(exe, "--version").Output()
+	out, err := command(exe, "--version").Output()
 	if err != nil {
 		return ""
 	}
@@ -468,11 +459,12 @@ func errFromStat(p string) error { _, err := os.Stat(p); return err }
 func installedInfo(goos string) string {
 	dir := installDir(goos)
 	exe := filepath.Join(dir, map[bool]string{true: "minigw.exe", false: "minigw"}[goos == "windows"])
-	out, err := exec.Command(exe, "--version").Output()
+	out, err := command(exe, "--version").Output()
 	if dir == "" || err != nil {
 		return "not installed in " + dir + " (minigw serve install)"
 	}
-	s := "installed in " + dir + ": " + strings.TrimSpace(string(out))
+	first, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n") // minigw do 0.5.18 je dodal še različico claude
+	s := "installed in " + dir + ": " + strings.TrimSpace(first)
 	if goos == "windows" {
 		s += map[bool]string{true: ", tray running", false: ", tray not running"}[trayRunning()]
 		if msiDir() != "" {

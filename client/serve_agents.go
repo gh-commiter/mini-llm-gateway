@@ -137,7 +137,7 @@ func agentCatalog(k agentKind, exe string) []agentModel {
 	if k.name == "codex" {
 		args = []string{"debug", "models"}
 	}
-	cmd := exec.CommandContext(ctx, exe, args...)
+	cmd := commandContext(ctx, exe, args...)
 	cmd.Dir = os.TempDir()
 	out, _ := cmd.Output()
 	models := parseCodexCatalog(out)
@@ -308,7 +308,7 @@ func copilotToken(ctx context.Context) string {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, gh, "auth", "token", "--hostname", "github.com")
+	cmd := commandContext(ctx, gh, "auth", "token", "--hostname", "github.com")
 	cmd.Env = append(os.Environ(), "GH_PROMPT_DISABLED=1", "GH_NO_UPDATE_NOTIFIER=1")
 	out, err := cmd.Output()
 	t := strings.TrimSpace(string(out))
@@ -410,7 +410,7 @@ func copilotPrepare(ctx context.Context, exe, home, cwd, cfgDir, scratch string)
 	os.MkdirAll(copilotCacheDir(), 0o700)
 	os.MkdirAll(home, 0o700)
 	name, args := agentWrap(exe, []string{"--version"}, agentMounts{cfgDir: cfgDir, rw: []string{copilotCacheDir(), home, cwd}, hide: scratch, noNet: true})
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := commandContext(ctx, name, args...)
 	cmd.Dir = cwd
 	cmd.Env = append(agentEnv(os.Environ()), "COPILOT_HOME="+home, "COPILOT_AUTO_UPDATE=false")
 	if cmd.Run() == nil {
@@ -606,7 +606,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 		return st
 	}
 	if c.askOthers(k.name) { // vrata izvajanja (startRun spodaj)
-		note += "\n\n" + askNote(minigwExe())
+		note += "\n\n" + askNote(minigwExe(), c.askOnPath(dir))
 	}
 	prompt := note + "\n\n" + cliPrompt(history, last)
 	var extra []string
@@ -909,7 +909,7 @@ func (s *server) procSlot(w http.ResponseWriter, r *req) int {
 
 func (s *server) runAgentProcess(ctx context.Context, r *req, exe string, args []string, m agentMounts, dir, stdin string, onLine func([]byte)) error {
 	name, args := agentWrap(exe, args, m) // Linux: domača mapa in mapa nastavitev skriti (bwrap), če je na voljo
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := commandContext(ctx, name, args...)
 	cmd.Dir = dir
 	cmd.Env = append(agentEnv(os.Environ()), m.env...)
 	if m.state != "" {
