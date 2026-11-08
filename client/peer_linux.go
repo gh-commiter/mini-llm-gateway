@@ -232,11 +232,23 @@ func listenerIsOurs(port int) bool {
 	return len(uids) > 0
 }
 
+// sameUserPeer: vtičnica odjemalca je tega uporabnika (uid iz /proc/net/tcp{,6}) in odjemalec ni agent prehoda.
+func sameUserPeer(ours, peer *net.TCPAddr) bool {
+	for _, f := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
+		if b, err := os.ReadFile(f); err == nil {
+			if inode, uid := procSocketInode(b, peer, ours); inode != "" {
+				return uid == os.Getuid() && peerCheck(ours, peer) == nil
+			}
+		}
+	}
+	return false
+}
+
 func peerCheck(ours, peer *net.TCPAddr) error {
 	inode := ""
 	for _, f := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
 		if b, err := os.ReadFile(f); err == nil {
-			if inode = procSocketInode(b, peer, ours); inode != "" {
+			if inode, _ = procSocketInode(b, peer, ours); inode != "" {
 				break
 			}
 		}

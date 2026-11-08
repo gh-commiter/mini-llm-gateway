@@ -22,6 +22,9 @@ func startAgent(cmd *exec.Cmd) error { return cmd.Start() }
 
 func peerCheck(ours, peer *net.TCPAddr) error { return nil }
 
+// sameUserPeer: na macOS to preveri aplikacija (PeerProcess); minigw serve tu brez preverjanja → vedno z žetonom.
+func sameUserPeer(ours, peer *net.TCPAddr) bool { return false }
+
 // listenerIsOurs: na macOS je Foundry Local stvar aplikacije (Foundry.swift preveri uid); minigw serve tu je za razvoj.
 func listenerIsOurs(port int) bool { return true }
 

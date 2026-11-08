@@ -131,6 +131,17 @@ func peerCheck(ours, peer *net.TCPAddr) error {
 	return nil
 }
 
+// sameUserPeer: proces odjemalca ima isti uporabniški SID kot prehod in ni agent prehoda.
+func sameUserPeer(ours, peer *net.TCPAddr) bool {
+	pid, err := tcpOwnerPID(ours, peer)
+	if err != nil {
+		return false
+	}
+	self, err1 := processSID(uint32(os.Getpid()))
+	sid, err2 := processSID(pid)
+	return err1 == nil && err2 == nil && sid == self && peerCheck(ours, peer) == nil
+}
+
 // tcpOwnerPID: PID procesa z odjemalčevo stranjo povezave (GetExtendedTcpTable, TCP_TABLE_OWNER_PID_ALL).
 func tcpOwnerPID(ours, peer *net.TCPAddr) (uint32, error) {
 	for _, v6 := range []bool{false, true} {

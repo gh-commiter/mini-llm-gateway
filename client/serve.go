@@ -51,6 +51,7 @@ type serveConfig struct {
 	PermissionMode string        `json:"permissionMode"`
 	Devices        []serveDevice `json:"devices"`
 	AllowAnyDevice bool          `json:"allowAnyDevice,omitempty"` // le pri praznem seznamu: vsaka naprava z žetonom
+	AllowLocalApps *bool         `json:"allowLocalApps,omitempty"` // modeli brez žetona za aplikacije tega uporabnika (nil = da)
 	// Bash v tools na Windows teče brez sandboxa (dostop do vsega, kar sme uporabnik): le z izrecnim dovoljenjem.
 	AllowUnsandboxedBash bool           `json:"allowUnsandboxedBash,omitempty"`
 	Gateways             []serveGateway `json:"gateways,omitempty"` // ključi v shrambi sistema, ne tu (serve_gateway.go)
@@ -930,7 +931,7 @@ func (s *server) handle(w http.ResponseWriter, r *req) (int, string) {
 		r.URL.Path == "/minigw/settings/pick" {
 		return s.settingsHTTP(w, r), ""
 	}
-	if !s.authorized(r) {
+	if !s.authorized(r) && !s.localApp(r) {
 		return writeError(w, r.rid, 401, "Invalid or missing token"), ""
 	}
 	if !s.conf().deviceAllowed(r.conn.device, r.conn.loopback()) {
@@ -995,6 +996,35 @@ func writeStatus(w http.ResponseWriter, status int, ctype string, body []byte) i
 	w.WriteHeader(status)
 	w.Write(body)
 	return status
+}
+
+// localApps: »Allow this user's apps without a token« (privzeto vklopljeno).
+func (c serveConfig) localApps() bool { return c.AllowLocalApps == nil || *c.AllowLocalApps }
+
+// localPeer: odjemalec na loopbacku je proces tega uporabnika in ni agent prehoda (peer_*.go); testi ga zamenjajo.
+var localPeer = sameUserPeer
+
+// localApp: zahteva za modele brez žetona od aplikacije tega uporabnika na tem računalniku. Brskalnik je ne more poslati:
+// glava anthropic-version ali x-api-key zahteva CORS preflight (prehod ne pošlje glav CORS), Host je loopback (ne DNS
+// rebinding), brez Origin (stran z istim izvorom, npr. nastavitve). Drugi uporabniki in oddaljeni odjemalci: žeton.
+func (s *server) localApp(r *req) bool {
+	switch r.Method + " " + r.URL.Path {
+	case "GET /v1/models", "POST /v1/messages", "POST /v1/messages/count_tokens":
+	default:
+		return false
+	}
+	host := r.Host
+	if h, _, err := net.SplitHostPort(r.Host); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	if !s.conf().localApps() || !r.conn.loopback() || r.h("origin") != "" || (r.h("anthropic-version") == "" && r.h("x-api-key") == "") ||
+		(host != "localhost" && !(net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback())) {
+		return false
+	}
+	ours, ok1 := r.conn.LocalAddr().(*net.TCPAddr)
+	peer, ok2 := r.conn.RemoteAddr().(*net.TCPAddr)
+	return ok1 && ok2 && localPeer(ours, peer)
 }
 
 func (s *server) authorized(r *req) bool {
