@@ -239,8 +239,8 @@ All clients encrypt with AES-256-GCM; the Mac gateway also accepts ChaCha20-Poly
 `minigw serve` turns a Windows or Linux computer into a small gateway: `claude -p` on that computer as
 `claude-cli-opus`, `claude-cli-sonnet` and `claude-cli-haiku`, Codex and Grok (off by default), plus providers; no
 Siri or Apple models. Agents work in a synced copy of the client's folder or, for a git repository, in a clone on a
-branch (worktree mode), so clients run with `MINIGW_WORK=sync`, `worktree` or `auto` (folder mounts, native mode and
-`minigw run` need the Mac gateway). Install Claude Code there (on Windows the native `claude.exe`; `minigw serve`
+branch (worktree mode). With no work mode chosen the client picks worktree (git repository with a commit) or sync by
+itself; an explicit `--minigw-work=direct` is refused (folder mounts, native mode and `minigw run` need the Mac gateway). Install Claude Code there (on Windows the native `claude.exe`; `minigw serve`
 does not run `claude.cmd`).
 
 `/minigw:gw install` runs these two commands. `minigw serve install` copies minigw to a fixed place, adds it to
@@ -347,7 +347,8 @@ minigw disconnect --name win
   gateway's models; one that cannot be reached is left out, and `minigw status` shows it.
 - The folder is shared with another gateway only when that gateway gets its first request for an agent model
   (`claude-cli-*`, `claude-codex*`, `claude-grok*`, `claude-copilot*`), in the same work mode
-  (`--minigw-work`). A Windows or Linux gateway needs `--minigw-work=sync`, `worktree` or `auto`.
+  (`--minigw-work`). With a Windows or Linux gateway and no mode chosen, the client picks worktree or sync; an explicit
+  `direct` is refused there.
 - Each profile keeps its own address, token and gateway key: Keychain on the Mac, Credential Manager on Windows, on Linux
   `~/.config/minigw/connections/<profile>.json` (mode 0600). The device key is
   one per client, so every gateway recognises the same device.
