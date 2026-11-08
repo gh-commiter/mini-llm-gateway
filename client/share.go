@@ -169,7 +169,7 @@ func (s *shareClient) handle(job davJob, k string) davResponse {
 		json.Unmarshal(job.Body, &n)
 		s.syncMu.Lock()
 		defer s.syncMu.Unlock()
-		if branchRe.MatchString(n.Branch) && shaRe.MatchString(n.Base) { // native z git: veja v repozitoriju uporabnika
+		if s.native && deliveredBranch(s.root, n.Branch, n.Base) { // native z git (worktree: odločajo lastni posnetki)
 			s.branchNote(n.Branch, n.Base)
 		} else {
 			fmt.Fprintln(os.Stderr, "minigw: "+oneLine(n.Message))

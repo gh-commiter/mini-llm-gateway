@@ -313,7 +313,7 @@ final class ShareClient: @unchecked Sendable {
     /// Sporočilo prehoda v eni vrstici; native z git: dostavljena veja (preverjeno ime in SHA) kot vrstica o veji.
     private func noteJob(_ job: DAVJob) -> DAVResponse {
         let n = (try? JSONSerialization.jsonObject(with: job.body)) as? [String: Any]
-        if let b = n?["branch"] as? String, let base = n?["base"] as? String, Worktree.validBranch(b), Worktree.isSHA(base) {
+        if native, let b = n?["branch"] as? String, let base = n?["base"] as? String, Worktree.delivered(root: root.path, branch: b, base: base) {
             branchNote(b, base)
         } else {
             err.write(Data(("minigw: " + oneLine(n?["message"] as? String ?? "") + "\n").utf8))

@@ -308,3 +308,24 @@ func TestBranchLineShowsAgentOnlyRange(t *testing.T) {
 		t.Fatal("unrelated snapshot used as base")
 	}
 }
+
+// R1: veja iz sporočila prehoda (native) le, če obstaja in je začetek njen prednik.
+func TestDeliveredBranchChecksAncestry(t *testing.T) {
+	top := t.TempDir()
+	gitT(t, top, "init", "-q", "-b", "main")
+	writeT(t, filepath.Join(top, "a.txt"), "a\n")
+	gitT(t, top, "add", "-A")
+	gitT(t, top, "commit", "-qm", "a")
+	base := gitT(t, top, "rev-parse", "HEAD")
+	branch := "minigw/claude-0123abcd-1"
+	tip := gitT(t, top, "commit-tree", gitT(t, top, "rev-parse", "HEAD^{tree}"), "-p", base, "-m", "agent")
+	other := gitT(t, top, "commit-tree", gitT(t, top, "rev-parse", "HEAD^{tree}"), "-m", "unrelated")
+	if deliveredBranch(top, branch, base) {
+		t.Fatal("missing branch accepted")
+	}
+	gitT(t, top, "update-ref", "refs/heads/"+branch, tip)
+	if !deliveredBranch(top, branch, base) || deliveredBranch(top, branch, other) || deliveredBranch(top, "main", base) ||
+		deliveredBranch(top, branch, "HEAD") {
+		t.Fatal("deliveredBranch")
+	}
+}

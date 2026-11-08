@@ -146,11 +146,19 @@ public enum Worktree {
         sent.reversed().first { run(["merge-base", "--is-ancestor", $0, "refs/heads/" + branch], cwd: top, safe: false, hooks: false).status == 0 } ?? "HEAD"
     }
 
+    /// R1: veja in začetek iz sporočila prehoda (native) le, če sta veljavna, veja obstaja v repozitoriju uporabnika in je
+    /// začetek njen prednik (kot Go deliveredBranch).
+    public static func delivered(root: String, branch: String, base: String) -> Bool {
+        guard validBranch(branch), isSHA(base), let top = toplevel(root),
+              run(["rev-parse", "--verify", "-q", "refs/heads/\(branch)^{commit}"], cwd: top, safe: false, hooks: false).status == 0 else { return false }
+        return run(["merge-base", "--is-ancestor", base, "refs/heads/" + branch], cwd: top, safe: false, hooks: false).status == 0
+    }
+
     /// Vrstica o dostavljeni veji (enaka v odjemalcu Go): le delo agenta, brez posnetka uporabnika.
     public static func branchLine(branch: String, base: String) -> String {
         let r = base + ".." + branch
         return "agent work is on branch \(branch): review with git diff \(r) (\(base) = your state when the agent started), "
-            + "then bring it in with git cherry-pick \(r) or git diff \(r) | git apply"
+            + "then bring it in with git cherry-pick \(r) or git diff --binary \(r) | git apply"
     }
 
     /// Prevzem veje agenta iz bundla routerja: le objekti in ref `refs/heads/<veja>` (fsck), brez hookov, podmodulov,

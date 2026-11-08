@@ -430,7 +430,7 @@ and gives each agent its own clone on a branch `minigw/<agent>-<session>-<n>`; p
   `.git` (config, hooks) and reads the clone only from a sandbox.
 - **Review only the agent's part:** minigw prints `agent work is on branch <branch>: review with git diff <base>..<branch>
   (<base> = your state when the agent started), then bring it in with git cherry-pick <base>..<branch> or git diff
-  <base>..<branch> | git apply` once per branch and starting state in a run (also for native mode in a git repository).
+  --binary <base>..<branch> | git apply` once per branch and starting state in a run (also for native mode in a git repository).
   `<base>` is the snapshot commit with your uncommitted changes and untracked files: do not merge, fast-forward or check
   out the branch itself, or those files (keys too) end up committed. Look at `.gitattributes` (filter and diff drivers
   you have configured would run on checkout) and `.gitmodules` (submodule URLs) first.

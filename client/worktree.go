@@ -269,11 +269,28 @@ func agentBase(top, branch string, sent []string) string {
 	return "HEAD"
 }
 
+// deliveredBranch (R1): veja in začetek iz sporočila prehoda (native) le, če sta veljavna, veja obstaja v repozitoriju
+// uporabnika in je začetek njen prednik.
+func deliveredBranch(root, branch, base string) bool {
+	if !branchRe.MatchString(branch) || !shaRe.MatchString(base) {
+		return false
+	}
+	top := gitToplevel(root)
+	if top == "" {
+		return false
+	}
+	if _, err := gitUser(top, nil, "rev-parse", "--verify", "-q", "refs/heads/"+branch+"^{commit}"); err != nil {
+		return false
+	}
+	_, err := gitUser(top, nil, "merge-base", "--is-ancestor", base, "refs/heads/"+branch)
+	return err == nil
+}
+
 // branchLine: vrstica o dostavljeni veji (enaka v odjemalcu Swift): le delo agenta, brez posnetka uporabnika.
 func branchLine(branch, base string) string {
 	r := base + ".." + branch
 	return "agent work is on branch " + branch + ": review with git diff " + r + " (" + base + " = your state when the agent started), " +
-		"then bring it in with git cherry-pick " + r + " or git diff " + r + " | git apply"
+		"then bring it in with git cherry-pick " + r + " or git diff --binary " + r + " | git apply"
 }
 
 // branchNote: vrstica o veji enkrat na vejo in začetek v zagonu (pod syncMu).

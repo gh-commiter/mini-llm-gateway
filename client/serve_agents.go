@@ -602,7 +602,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 	if st != 0 {
 		return st
 	}
-	if treeRun && !ac.canWrite(k) && runOf(r) == nil {
+	if treeRun && !ac.canWrite(k) {
 		name := map[string]string{"codex": "Codex", "copilot": "Copilot", "grok": "Grok"}[k.name]
 		s.hub.note(r.h("x-claude-mini-session"), name+" may not write, so it only reads in the clone; no branch comes back")
 		note, readOnly = worktreeReadOnlyNote(r.h("x-claude-mini-cwd"), dir), true

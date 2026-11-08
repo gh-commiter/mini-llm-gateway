@@ -278,3 +278,47 @@ func TestAgentLimitKeywordsAndCleaning(t *testing.T) {
 		t.Fatal("busy 429 must stay retryable")
 	}
 }
+
+// F2: Codex brez pisanja v načinu worktree ni zavrnjen (ni 400): v klonu le bere, navodilo pravi samo za branje, veje ni.
+func TestServeWorktreeReadOnlyAgent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake codex is a shell script")
+	}
+	root := t.TempDir()
+	client := filepath.Join(root, "client")
+	os.MkdirAll(client, 0o755)
+	gitT(t, client, "init", "-q", "-b", "main")
+	writeT(t, filepath.Join(client, "a.txt"), "a\n")
+	gitT(t, client, "add", "-A")
+	gitT(t, client, "commit", "-qm", "first")
+	codex := filepath.Join(root, "codex")
+	writeT(t, codex, `#!/bin/sh
+if [ "$1" = debug ]; then echo '{"models":[]}'; exit 0; fi
+out=""; prev=""
+for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done
+p=$(cat)
+echo '{"type":"thread.started","thread_id":"t1"}'
+case "$p" in *"read-only for you"*) echo ro-note > "$out";; *) echo no-note > "$out";; esac
+`)
+	os.Chmod(codex, 0o755)
+	s, _ := testServer(t, func(c *serveConfig) {
+		c.AllowUnsandboxedBash = runtime.GOOS != "linux" || bwrapReady(t.TempDir()) == ""
+		t.Setenv("CODEX_HOME", t.TempDir())
+		c.Codex = agentCLI{Enabled: true, Executable: codex, ReadOnly: true}
+	})
+	c := startLoopback(t, s)
+	sc := &shareClient{c: c, session: "sidr", root: client, worktree: true, top: filepath.ToSlash(client), synced: map[string]syncEntry{}, reported: map[string]bool{}}
+	if !sc.register() {
+		t.Fatal("register failed: " + sc.refusal)
+	}
+	sc.start(2)
+	defer sc.unregister()
+	h := map[string]string{"x-claude-mini-session": "sidr", "x-claude-mini-cwd": client, "content-type": "application/json"}
+	body := `{"model":"claude-codex","tools":[{"name":"x"}],"messages":[{"role":"user","content":"look"}]}`
+	if st, data := call(c, "POST", "/v1/messages", h, []byte(body), 60*time.Second); st != 200 || !strings.Contains(string(data), "ro-note") {
+		t.Fatalf("read-only codex in worktree: %d %s", st, data)
+	}
+	if _, err := gitUser(client, nil, "rev-parse", "--verify", "-q", "refs/heads/minigw/codex-"+sha256Hex([]byte("sidr"))[:8]+"-0"); err == nil {
+		t.Fatal("a read-only agent brought back a branch")
+	}
+}

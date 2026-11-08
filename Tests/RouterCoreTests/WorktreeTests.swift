@@ -803,4 +803,8 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     let line = Worktree.branchLine(branch: branch, base: base)
     #expect(line.contains("git diff \(snap)..\(branch)") && line.contains("git cherry-pick \(snap)..\(branch)") && !line.contains("HEAD"))
     #expect(Worktree.agentBase(top: client.path, branch: branch, sent: [later]) == "HEAD")
+    // R1: veja iz sporočila prehoda (native) le, če obstaja in je začetek njen prednik
+    #expect(Worktree.delivered(root: client.path, branch: branch, base: snap))
+    #expect(!Worktree.delivered(root: client.path, branch: branch, base: later) && !Worktree.delivered(root: client.path, branch: "minigw/codex-0123abcd-9", base: snap)
+            && !Worktree.delivered(root: client.path, branch: "main", base: snap))
 }
