@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased
+## 0.5.18
 
 - Sharing and sync send the whole folder, hidden files included (README and `minigw share add` help now say so): keep
   credentials out or list them in `.gitignore`.

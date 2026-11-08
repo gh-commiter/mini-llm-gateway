@@ -539,7 +539,7 @@ func shareCommand(_ a: [String]) -> Never {
 
 // MARK: ukazi
 
-let minigwVersion = "0.5.17"  // bump-version.sh
+let minigwVersion = "0.5.18"  // bump-version.sh
 var args = Array(CommandLine.arguments.dropFirst())
 // --minigw-ro (ali MINIGW_SHARE=ro): mapa samo za branje; zastavica ne gre naprej v claude.
 var readOnly = args.contains("--minigw-ro") || ProcessInfo.processInfo.environment["MINIGW_SHARE"] == "ro"
