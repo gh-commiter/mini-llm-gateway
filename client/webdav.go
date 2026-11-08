@@ -224,10 +224,12 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 		if !parentExists(dest) {
 			return dav(409, nil, nil)
 		}
-		// Mapa v svojo podmapo: nikoli (kanonični poti, da povezava ne skrije zanke).
+		// Mapa v svojo podmapo in vir v cilju (MOVE /a/b → /a bi z brisanjem cilja izbrisal vir): nikoli
+		// (kanonični poti, da povezava ne skrije zanke).
 		rp, err1 := filepath.EvalSymlinks(p)
 		rd, err2 := filepath.EvalSymlinks(filepath.Dir(dest))
-		if err1 != nil || err2 != nil || hasPathPrefix(filepath.Join(rd, filepath.Base(dest)), rp) {
+		rdest := filepath.Join(rd, filepath.Base(dest))
+		if err1 != nil || err2 != nil || hasPathPrefix(rdest, rp) || hasPathPrefix(rp, rdest) {
 			return dav(403, nil, nil)
 		}
 		// Ista datoteka (»a.txt« → »A.txt« na APFS/NTFS, trda povezava): cilja ne brišemo, ker je to vir.
@@ -245,6 +247,7 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 					os.Rename(tmp, p)
 					return dav(403, nil, nil)
 				}
+				os.Remove(tmp) // trda povezava: rename je bil brez učinka, tmp je le še ena povezava cilja
 				return dav(201, nil, nil)
 			}
 		}

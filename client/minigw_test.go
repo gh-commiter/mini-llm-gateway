@@ -807,3 +807,48 @@ func TestDavRefusesProtectedTreeBypass(t *testing.T) {
 		t.Fatalf("MOVE stage: %d", s)
 	}
 }
+
+// M1/M2/L3: ugnezden .git ne izgine prek starša; vir v cilju = 403; trda povezava ne pusti začasnega imena.
+func TestDavNestedGitAncestorAndHardLink(t *testing.T) {
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, "repoA", "sub", ".git"), 0o755)
+	os.WriteFile(filepath.Join(root, "repoA", "sub", ".git", "HEAD"), []byte("ref"), 0o644)
+	os.MkdirAll(filepath.Join(root, "other"), 0o755)
+	os.MkdirAll(filepath.Join(root, "a", "b"), 0o755)
+	os.WriteFile(filepath.Join(root, "a", "b", "f"), []byte("keep"), 0o644)
+	h := func(m, p, d string) int {
+		hd := map[string]string{}
+		if d != "" {
+			hd["destination"] = "http://x/dav/s/" + d
+		}
+		return davHandle(m, "/dav/s/"+p, hd, nil, root, "/dav/s").Status
+	}
+	for _, c := range [][3]string{{"DELETE", "repoA", ""}, {"MOVE", "other", "repoA"}, {"COPY", "other", "repoA"},
+		{"MOVE", "repoA", "x"}, {"MOVE", "a/b", "a"}, {"COPY", "a/b", "a"}, {"MOVE", "a/b", "A"}} {
+		if s := h(c[0], c[1], c[2]); s != 403 {
+			t.Fatalf("%s %s %s: %d", c[0], c[1], c[2], s)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "repoA", "sub", ".git", "HEAD")); err != nil {
+		t.Fatal("nested .git removed")
+	}
+	if b, _ := os.ReadFile(filepath.Join(root, "a", "b", "f")); string(b) != "keep" {
+		t.Fatal("source inside destination lost")
+	}
+	os.WriteFile(filepath.Join(root, "h1"), []byte("hl"), 0o644)
+	if os.Link(filepath.Join(root, "h1"), filepath.Join(root, "h2")) != nil {
+		return
+	}
+	if s := h("MOVE", "h1", "h2"); s != 201 {
+		t.Fatalf("hard link MOVE: %d", s)
+	}
+	entries, _ := os.ReadDir(root)
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".minigw") {
+			t.Fatalf("left behind: %s", e.Name())
+		}
+	}
+	if b, _ := os.ReadFile(filepath.Join(root, "h2")); string(b) != "hl" {
+		t.Fatal("hard link content lost")
+	}
+}

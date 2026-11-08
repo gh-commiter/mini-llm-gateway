@@ -1644,3 +1644,28 @@ final class FakeMinigw: @unchecked Sendable {
     #expect(dav("COPY", ".claude", "c2") == 201)
     #expect(dav("MOVE", "stage", "s2") == 201)
 }
+
+// M1/M2/L3: ugnezden .git ne izgine prek starša; vir v cilju = 403; trda povezava ne pusti začasnega imena.
+@Test func davNestedGitAncestorAndHardLink() throws {
+    let fm = FileManager.default
+    let root = fm.temporaryDirectory.appendingPathComponent("dav-\(UUID().uuidString)")
+    for d in ["repoA/sub/.git", "other", "a/b"] { try fm.createDirectory(at: root.appendingPathComponent(d), withIntermediateDirectories: true) }
+    defer { try? fm.removeItem(at: root) }
+    try Data("ref".utf8).write(to: root.appendingPathComponent("repoA/sub/.git/HEAD"))
+    try Data("keep".utf8).write(to: root.appendingPathComponent("a/b/f"))
+    func dav(_ m: String, _ p: String, _ d: String? = nil) -> Int {
+        WebDAV.handle(method: m, path: "/dav/s/" + p, headers: d.map { ["destination": "http://x/dav/s/" + $0] } ?? [:],
+                      body: Data(), root: root, prefix: "/dav/s").status
+    }
+    for (m, p, d) in [("DELETE", "repoA", nil), ("MOVE", "other", "repoA"), ("COPY", "other", "repoA"), ("MOVE", "repoA", "x"),
+                      ("MOVE", "a/b", "a"), ("COPY", "a/b", "a"), ("MOVE", "a/b", "A")] as [(String, String, String?)] {
+        #expect(dav(m, p, d) == 403, "\(m) \(p)")
+    }
+    #expect(fm.fileExists(atPath: root.appendingPathComponent("repoA/sub/.git/HEAD").path))
+    #expect(String(decoding: try Data(contentsOf: root.appendingPathComponent("a/b/f")), as: UTF8.self) == "keep")
+    try Data("hl".utf8).write(to: root.appendingPathComponent("h1"))
+    try fm.linkItem(at: root.appendingPathComponent("h1"), to: root.appendingPathComponent("h2"))
+    #expect(dav("MOVE", "h1", "h2") == 201)
+    #expect(try !fm.contentsOfDirectory(atPath: root.path).contains { $0.hasPrefix(".minigw") })
+    #expect(String(decoding: try Data(contentsOf: root.appendingPathComponent("h2")), as: UTF8.self) == "hl")
+}

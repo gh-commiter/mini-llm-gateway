@@ -107,10 +107,11 @@ public enum WebDAV {
                 || (lstat(dest.path, &st) == 0 && treeProtected(dest, destRel)) { return DAVResponse(403) }
             if isJunk(dest) { return DAVResponse(201) }
             guard parentExists(dest) else { return DAVResponse(409) }
-            // Mapa v svojo podmapo: nikoli (kanonični poti, da povezava ne skrije zanke; macOS: velikost črk ni pomembna).
+            // Mapa v svojo podmapo in vir v cilju (MOVE /a/b → /a bi z brisanjem cilja izbrisal vir): nikoli
+            // (kanonični poti, da povezava ne skrije zanke; macOS: velikost črk ni pomembna).
             let src = url.resolvingSymlinksInPath().path.lowercased() + "/"
-            let dst = dest.deletingLastPathComponent().resolvingSymlinksInPath().appendingPathComponent(dest.lastPathComponent).path.lowercased()
-            if (dst + "/").hasPrefix(src), dst + "/" != src { return DAVResponse(403) }
+            let dst = dest.deletingLastPathComponent().resolvingSymlinksInPath().appendingPathComponent(dest.lastPathComponent).path.lowercased() + "/"
+            if dst != src, dst.hasPrefix(src) || src.hasPrefix(dst) { return DAVResponse(403) }
             // Ista datoteka (»a.txt« → »A.txt« na APFS, trda povezava): cilja ne brišemo, ker je to vir.
             // MOVE preimenuje prek začasnega imena (tudi datotečni sistemi, ki sami ne preimenujejo le velikosti črk).
             if sameFile(url, dest) {
@@ -118,6 +119,7 @@ public enum WebDAV {
                 let tmp = url.deletingLastPathComponent().appendingPathComponent(".minigw-mv-" + UUID().uuidString).path
                 guard rename(url.path, tmp) == 0 else { return DAVResponse(403) }
                 guard rename(tmp, dest.path) == 0 else { _ = rename(tmp, url.path); return DAVResponse(403) }
+                _ = unlink(tmp)  // trda povezava: rename je bil brez učinka, tmp je le še ena povezava cilja
                 return DAVResponse(201)
             }
             let replaced = fm.fileExists(atPath: dest.path)
