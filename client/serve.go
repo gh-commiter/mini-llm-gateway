@@ -969,7 +969,13 @@ func (s *server) handle(w http.ResponseWriter, r *req) (int, string) {
 	case "GET /health/live":
 		return writeJSON(w, r.rid, 200, map[string]string{"status": "ok"}), ""
 	case "GET /health/ready":
-		return writeJSON(w, r.rid, 200, map[string]any{"status": "ok", "providers": map[string]bool{"claude-cli": len(s.claudeExe()) > 0}}), ""
+		providers := map[string]bool{"claude-cli": len(s.claudeExe()) > 0}
+		for _, g := range s.conf().Gateways { // vklopljeni ponudniki: modeli naloženi (kot catalog.status na Macu)
+			if !g.Disabled {
+				providers[g.Name] = s.gateways.ready(g.Name)
+			}
+		}
+		return writeJSON(w, r.rid, 200, map[string]any{"status": "ok", "providers": providers}), ""
 	}
 	if r.URL.Path == adminPrefix || strings.HasPrefix(r.URL.Path, adminPrefix+"/") {
 		return s.adminHTTP(w, r), ""
