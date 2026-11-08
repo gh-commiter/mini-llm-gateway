@@ -120,11 +120,11 @@ func TestFolderRoleAndRestrictions(t *testing.T) {
 	if len(g.sessions("", "/home/u")) != 0 || len(g.sessions("", "/home/U")) != 1 {
 		t.Fatal("Linux folders are case-sensitive")
 	}
-	// M2: ID nad 128 bajtov ali s kontrolnimi znaki: brez zapisa
+	// M2: ID nad 128 bajtov ali s kontrolnimi znaki ni zapisan; L5: zahteva vseeno šteje, v seji »t-…«
 	g.record(sessionUse{session: strings.Repeat("x", 129), model: "m"}, time.Now())
 	g.record(sessionUse{session: "a\x1b[31m", model: "m"}, time.Now())
-	if l := g.sessions("", ""); len(l) != 2 {
-		t.Fatalf("bad session IDs recorded: %d", len(l))
+	if l := g.sessions("", ""); len(l) != 3 || !strings.HasPrefix(l[0].ID, "t-") || l[0].Models[0].Requests != 2 {
+		t.Fatalf("bad session IDs: %+v", l)
 	}
 	c := serveConfig{Tools: "Read,Grep"}
 	c.Copilot.Network = true
@@ -336,5 +336,25 @@ func TestSessionModeBranchPerAgent(t *testing.T) {
 	}
 	if agentOfModel("claude-codex-gpt-6.1-sol") != "codex" || agentOfModel("claude-cli-opus") != "claude" || agentOfModel("or-qwen") != "" {
 		t.Error("agentOfModel")
+	}
+}
+
+// Poročilo Windows #14, #15: naprava na loopbacku (profil 127.0.0.1) brez odobritve je »ta računalnik«; dovoljena
+// naprava ima zgodovino priklopov tudi prek loopbacka.
+func TestLoopbackDeviceSessionsAndHistory(t *testing.T) {
+	listed := serveDevice{ID: base64url(newDevice("PC").key.Public().(ed25519.PublicKey)), Name: "PC"}
+	other := serveDevice{ID: base64url(newDevice("Here").key.Public().(ed25519.PublicKey)), Name: "Here"}
+	s, _ := testServer(t, func(c *serveConfig) { c.Devices = []serveDevice{listed} })
+	for _, d := range []serveDevice{listed, other} {
+		hr := httptest.NewRequest("POST", "/v1/messages", nil)
+		hr.Header.Set("X-Claude-Mini-Session", "s-"+d.Name)
+		s.recordSession(&req{Request: hr, conn: &serveConn{device: &d, peer: "127.0.0.1"}}, "m", 200, 0, 0, 0)
+	}
+	if l := s.state.sessions("", ""); len(l) != 2 || l[0].Device != "" || l[1].Device != listed.ID {
+		t.Fatalf("sessions: %+v", l)
+	}
+	s.state.prune(s.conf().Devices)
+	if l := s.state.sessions("", ""); l[0].DeviceRemoved || l[1].DeviceRemoved {
+		t.Fatalf("removed: %+v", l)
 	}
 }

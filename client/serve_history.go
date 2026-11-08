@@ -199,8 +199,8 @@ func (g *gwState) record(u sessionUse, now time.Time) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	now = now.UTC().Truncate(time.Second)
-	if len(u.session) > 128 || cleanText(u.session) != u.session { // M2: tak ID se ne bi ujemal s svojim zapisom
-		return
+	if len(u.session) > 128 || cleanText(u.session) != u.session { // M2: tak ID se ne bi ujemal s svojim zapisom; L5: zahteva
+		u.session = "" // vseeno šteje, v seji »t-…« (sicer bi jo odjemalec tako skril)
 	}
 	var r *sessionRecord
 	for i := len(g.Sessions) - 1; i >= 0 && r == nil; i-- {
@@ -427,7 +427,9 @@ func (s *server) recordSession(r *req, model string, status int, took time.Durat
 		u.via = p.via()
 		agent = p.chain[0] // vprašani agent dela v klonu (in na veji) prvega agenta verige
 	}
-	if d := r.conn.device; d != nil { // ime iz seznama dovoljenih (oznaka na prehodu), sicer iz rokovanja
+	// Ime iz seznama dovoljenih (oznaka na prehodu), sicer iz rokovanja. Naprava, ki ni na seznamu, na loopbacku je ta
+	// računalnik (sprejet brez odobritve), ne »odstranjena naprava«.
+	if d := r.conn.device; d != nil && (!r.conn.loopback() || s.conf().listed(d.ID)) {
 		u.device, u.deviceName = d.ID, d.Name
 		if i := slices.IndexFunc(s.conf().Devices, func(x serveDevice) bool { return x.ID == d.ID }); i >= 0 && s.conf().Devices[i].Name != "" {
 			u.deviceName = s.conf().Devices[i].Name

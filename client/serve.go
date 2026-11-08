@@ -212,6 +212,11 @@ func (c serveConfig) clientAllowed(ip string) bool {
 }
 
 // deviceAllowed: naprava s seznama; neznana le pri praznem seznamu z allowAnyDevice. Loopback (ta računalnik) vedno.
+// listed: naprava je na seznamu dovoljenih.
+func (c serveConfig) listed(id string) bool {
+	return slices.ContainsFunc(c.Devices, func(x serveDevice) bool { return x.ID == id })
+}
+
 func (c serveConfig) deviceAllowed(d *serveDevice, loopback bool) bool {
 	if loopback {
 		return true
@@ -987,7 +992,8 @@ func (s *server) handle(w http.ResponseWriter, r *req) (int, string) {
 		}
 		return writeError(w, r.rid, 403, "This gateway needs a device key: update minigw and run minigw connect again"), ""
 	}
-	if d := r.conn.device; d != nil && !r.conn.loopback() {
+	// Zgodovina dovoljene naprave tudi prek loopbacka (profil 127.0.0.1); neznana na loopbacku nima zgodovine.
+	if d := r.conn.device; d != nil && (!r.conn.loopback() || s.conf().listed(d.ID)) {
 		s.deviceSeen(*d, r.conn.peer, cleanDeviceName(r.Header.Get("X-Minigw-Client")))
 	}
 	limit := int64(1 << 20)

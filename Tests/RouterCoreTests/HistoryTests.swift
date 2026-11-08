@@ -113,12 +113,12 @@ func useOf(_ s: GatewayHistory.Session, _ model: String, role: String = "") -> G
     l.session = "l"; l.folder = "/home/U"; l.os = "Linux"; l.model = "m"
     g.record(l)
     #expect(g.sessions(folder: "/home/u").isEmpty && g.sessions(folder: "/home/U").count == 1)  // Linux: z velikimi črkami
-    for bad in [String(repeating: "x", count: 129), "a\u{1b}[31m"] {  // M2: brez zapisa
+    for bad in [String(repeating: "x", count: 129), "a\u{1b}[31m"] {  // M2: ID ni zapisan; L5: zahteva šteje v seji »t-…«
         var b = GatewayHistory.Use()
         b.session = bad; b.model = "m"
         g.record(b)
     }
-    #expect(g.sessions().count == 2)
+    #expect(g.sessions().count == 3 && g.sessions().contains { $0.id.hasPrefix("t-") && $0.models.first?.requests == 2 })
     var c = RouterConfig()
     c.claudeCLI.tools = "Read,Grep"; c.codex.write = true; c.codex.network = false; c.grok.write = true; c.copilot.network = true
     for (model, want) in ["claude-cli": "Read,Grep", "claude-cli-opus": "Read,Grep", "claude-codex": "write", "claude-codex-gpt-5": "write",
@@ -213,4 +213,29 @@ func useOf(_ s: GatewayHistory.Session, _ model: String, role: String = "") -> G
     let g3 = GatewayHistory()
     g3.load(file)
     #expect(g3.sessions().isEmpty)
+}
+
+/// Poročilo Windows #14, #15: naprava na loopbacku brez odobritve je »ta računalnik«; dovoljena ima priklope tudi prek
+/// loopbacka. Enako kot TestLoopbackDeviceSessionsAndHistory v Go.
+@Test func loopbackDeviceSessionsAndHistory() async throws {
+    let listed = String(repeating: "L", count: 43), other = String(repeating: "O", count: 43)
+    var c = RouterConfig()
+    c.devices = [DeviceConfig(id: listed, name: "PC")]
+    let router = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]))
+    var sids: [String: String] = [:]
+    for id in [listed, other] {
+        let sid = "loop-" + UUID().uuidString
+        sids[id] = sid
+        var r = request("POST", "/v1/messages", headers: ["x-claude-mini-session": sid])
+        r.peer = "127.0.0.1"
+        r.device = Noise.Device(id: id, name: "x")
+        await router.recordSession(r, model: "m", status: 200, took: 0, usage: (0, 0))
+    }
+    let all = Router.history.sessions()
+    #expect(all.first { $0.id == sids[listed] }?.device == listed && all.first { $0.id == sids[other] }?.device == "")
+    var r = request("POST", "/v1/messages", headers: ["authorization": "Bearer tok"])
+    r.peer = "127.0.0.1"
+    r.device = Noise.Device(id: listed, name: "PC")
+    await router.handle(r, writer: FakeWriter())
+    #expect(!Router.history.history(listed).isEmpty)
 }

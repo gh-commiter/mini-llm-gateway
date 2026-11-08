@@ -92,10 +92,11 @@ public final class Router: Sendable {
         let usage = tracked ? UsageWriter(writer) : nil
         let branch = RunBranch()  // veja izvajanja te zahteve (syncRun), za zgodovino seje
         let (status, model, provider) = await Self.$runBranch.withValue(branch) { await route(req, rid: rid, writer: usage ?? writer) }
-        writer.close()
+        // Zapis pred koncem odgovora: odjemalec, ki ga dobi, že vidi sejo (kot v Go; sicer test ali gw sessions tekmuje z zapisom).
         if let usage, let model {  // le zahteva, ki je prišla do modela (overjena, dovoljena naprava)
             await recordSession(req, model: model, status: status, took: Date().timeIntervalSince(start), usage: usage.usage, branch: branch.branch)
         }
+        writer.close()
         let ms = Int(Date().timeIntervalSince(start) * 1000)
         let via = AgentRun.current.map { " via=" + $0.via } ?? ""  // L3: vprašal ga je agent tega prehoda
         Self.log.info("\(rid, privacy: .public)\(via, privacy: .public) \(req.method, privacy: .public) \(req.path.hasPrefix("/dav/") ? "/dav/…" : req.path, privacy: .public) model=\(model ?? "-", privacy: .public) provider=\(provider ?? "-", privacy: .public) status=\(status) \(ms)ms bytes=\(req.body.count)")
@@ -115,7 +116,8 @@ public final class Router: Sendable {
         u.tools = GatewayHistory.restrictions(model, config)
         u.model = status == 404 ? "unknown" : model  // M1: neznan ali zavrnjen model: stalno ime, ne niz odjemalca
         u.status = status; u.took = took; u.input = usage.input; u.output = usage.output
-        if let d = req.device {
+        // Naprava, ki ni na seznamu, na loopbacku je ta računalnik (sprejet brez odobritve), ne »odstranjena naprava«.
+        if let d = req.device, !RouterServer.isLoopback(req.peer) || config.devices.contains(where: { $0.id == d.id }) {
             u.device = d.id
             u.deviceName = config.devices.first { $0.id == d.id }?.name ?? d.name
         }
@@ -191,6 +193,8 @@ public final class Router: Sendable {
                 Self.log.info("\(rid, privacy: .public) refused unknown device \(d.name, privacy: .public) \(d.id, privacy: .public)")
                 return (await error(403, "permission_error", Self.refusal(d), rid: rid, writer: writer), nil, nil)
             }
+            Self.history.seen(d.id, address: req.peer, client: Noise.cleanName(req.header("x-minigw-client") ?? ""))
+        } else if let d = req.device, config.devices.contains(where: { $0.id == d.id }) {  // dovoljena naprava tudi prek loopbacka
             Self.history.seen(d.id, address: req.peer, client: Noise.cleanName(req.header("x-minigw-client") ?? ""))
         }
         return await routeAllowed(req, rid: rid, writer: writer)
