@@ -448,27 +448,27 @@ func main() {
 		return
 
 	case "--minigw-help", "-h", "--help", "-v", "--version":
-		if first == "-v" || first == "--version" {
+		if first == "-v" || first == "--version" { // le minigw: različico claude da claude --version (gw status jo bere)
 			say("minigw " + version)
-		} else {
-			say("minigw connect <host[:port]> [--name P] [--token T|-]  save a gateway as profile P (" + storeName + "; - = stdin)\n" +
-				"minigw status | models | disconnect [--name P]   all profiles; models of other profiles end in @P\n" +
-				"minigw profiles [default P]                list profiles, or pick the default (its models also without @P)\n" +
-				"minigw --minigw-profile P …                 use only profile P for this command\n" +
-				"minigw share add|remove [folder] | list    also share a system or hidden folder with the gateway\n" +
-				"minigw share add --work=native|native-direct|sync|direct [--ro] [folder]   default mode for that folder (flag/env wins)\n" +
-				"minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)\n" +
-				"minigw --minigw-role NAME [claude args]    the caller's role for the gateway's session history (or MINIGW_ROLE)\n" +
-				"minigw --minigw-work=sync [claude args]    agents work in a synced copy on the gateway (or MINIGW_WORK=sync)\n" +
-				"minigw --minigw-work=native [claude args]  folder is the gateway's SMB share: agents work there; git repository: each on its own branch minigw/… (or MINIGW_WORK=native)\n" +
-				"minigw --minigw-work=native-direct [claude args]  as native, but agents change the folder itself, one writing agent at a time\n" +
-				"minigw --minigw-work=worktree [claude args]  git repository: agents work in a clone on the gateway, results come back as branches minigw/…\n" +
-				"minigw --minigw-work=auto [claude args]    gateway share → native, git repository → worktree, otherwise sync (--minigw-ro → direct)\n" +
-				"minigw run [--] <command> [args …]          run a build in this folder on the gateway (SMB share, allowed in its Settings)\n" +
-				"minigw serve [init|allow <id>] [--port N] [--config FILE]   run a gateway here (Windows, Linux)\n" +
-				"minigw gw status|devices|provider|claude|token …  change the gateway here, live (minigw gw help)\n" +
-				"minigw [claude options …]                    run Claude Code through the gateway")
+			return
 		}
+		say("minigw connect <host[:port]> [--name P] [--token T|-]  save a gateway as profile P (" + storeName + "; - = stdin)\n" +
+			"minigw status | models | disconnect [--name P]   all profiles; models of other profiles end in @P\n" +
+			"minigw profiles [default P]                list profiles, or pick the default (its models also without @P)\n" +
+			"minigw --minigw-profile P …                 use only profile P for this command\n" +
+			"minigw share add|remove [folder] | list    also share a system or hidden folder with the gateway\n" +
+			"minigw share add --work=native|native-direct|sync|direct [--ro] [folder]   default mode for that folder (flag/env wins)\n" +
+			"minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)\n" +
+			"minigw --minigw-role NAME [claude args]    the caller's role for the gateway's session history (or MINIGW_ROLE)\n" +
+			"minigw --minigw-work=sync [claude args]    agents work in a synced copy on the gateway (or MINIGW_WORK=sync)\n" +
+			"minigw --minigw-work=native [claude args]  folder is the gateway's SMB share: agents work there; git repository: each on its own branch minigw/… (or MINIGW_WORK=native)\n" +
+			"minigw --minigw-work=native-direct [claude args]  as native, but agents change the folder itself, one writing agent at a time\n" +
+			"minigw --minigw-work=worktree [claude args]  git repository: agents work in a clone on the gateway, results come back as branches minigw/…\n" +
+			"minigw --minigw-work=auto [claude args]    gateway share → native, git repository → worktree, otherwise sync (--minigw-ro → direct)\n" +
+			"minigw run [--] <command> [args …]          run a build in this folder on the gateway (SMB share, allowed in its Settings)\n" +
+			"minigw serve [init|allow <id>] [--port N] [--config FILE]   run a gateway here (Windows, Linux)\n" +
+			"minigw gw status|devices|provider|claude|token …  change the gateway here, live (minigw gw help)\n" +
+			"minigw [claude options …]                    run Claude Code through the gateway")
 		if first == "--minigw-help" {
 			return
 		}
@@ -577,11 +577,18 @@ func main() {
 		top = gitToplevel(cwd)
 	}
 	_, _, smb := nativeDetect(cwd)
+	tries := workCandidates(work, readOnly, work == "auto" && smb, top != "")
+	noCommit := top != "" && slices.Contains(tries, "worktree") && !gitHasCommit(top)
+	if noCommit { // brez commita ni posnetka: enkrat preveri, nato sync (#10)
+		tries = slices.DeleteFunc(tries, func(w string) bool { return w == "worktree" })
+	}
 	share := &shareClient{c: c, session: sid, root: cwd, readOnly: readOnly, synced: map[string]syncEntry{}, reported: map[string]bool{}}
 	if wantShare && sid != "" {
-		tries := workCandidates(work, readOnly, work == "auto" && smb, top != "")
 		if work == "worktree" && top == "" {
 			fmt.Fprintln(os.Stderr, "minigw: "+cwd+" is not in a git repository; worktree mode is not possible")
+		}
+		if noCommit {
+			fmt.Fprintln(os.Stderr, "minigw: the git repository "+top+" has no commit yet, so worktree mode is not possible; using "+tries[0])
 		}
 		var ok bool
 		share, ok = registerShare(c, sid, cwd, readOnly, top, tries, false)
@@ -637,7 +644,7 @@ func main() {
 			t := &muxTarget{name: p.name, conn: rc}
 			if sid != "" && shareWanted(cwd, p.conn.isLocal()) {
 				t.share = func() bool {
-					sc, ok := registerShare(rc, sid, cwd, readOnly, top, workCandidates(work, readOnly, work == "auto" && smb, top != ""), true)
+					sc, ok := registerShare(rc, sid, cwd, readOnly, top, tries, true)
 					if !ok {
 						fmt.Fprintln(os.Stderr, "minigw: gateway "+p.name+" did not accept the folder: "+clean(sc.refusal))
 						return false
@@ -724,7 +731,7 @@ func shareWanted(cwd string, local bool) bool {
 	case "0":
 		return false
 	}
-	if local {
+	if local && runtime.GOOS == "darwin" {
 		return false
 	}
 	return lookupSharedFolder(sharedFolders(), cwd) != nil || autoShare(cwd)

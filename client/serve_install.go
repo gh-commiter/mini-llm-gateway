@@ -464,7 +464,8 @@ func installedInfo(goos string) string {
 	if dir == "" || err != nil {
 		return "not installed in " + dir + " (minigw serve install)"
 	}
-	s := "installed in " + dir + ": " + strings.TrimSpace(string(out))
+	first, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n") // minigw do 0.5.18 je dodal še različico claude
+	s := "installed in " + dir + ": " + strings.TrimSpace(first)
 	if goos == "windows" {
 		s += map[bool]string{true: ", tray running", false: ", tray not running"}[trayRunning()]
 		if msiDir() != "" {
