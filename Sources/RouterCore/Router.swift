@@ -90,10 +90,11 @@ public final class Router: Sendable {
         }
         defer { if tracked { onActivity(.finished(id: rid)) } }
         let usage = tracked ? UsageWriter(writer) : nil
-        let (status, model, provider) = await route(req, rid: rid, writer: usage ?? writer)
+        let branch = RunBranch()  // veja izvajanja te zahteve (syncRun), za zgodovino seje
+        let (status, model, provider) = await Self.$runBranch.withValue(branch) { await route(req, rid: rid, writer: usage ?? writer) }
         writer.close()
         if let usage, let model {  // le zahteva, ki je prišla do modela (overjena, dovoljena naprava)
-            await recordSession(req, model: model, status: status, took: Date().timeIntervalSince(start), usage: usage.usage)
+            await recordSession(req, model: model, status: status, took: Date().timeIntervalSince(start), usage: usage.usage, branch: branch.branch)
         }
         let ms = Int(Date().timeIntervalSince(start) * 1000)
         let via = AgentRun.current.map { " via=" + $0.via } ?? ""  // L3: vprašal ga je agent tega prehoda
@@ -102,7 +103,9 @@ public final class Router: Sendable {
     }
 
     /// Zahteva za model v zgodovino seje (naprava, mapa in način iz glav in delitve; brez besedila), kot v minigw serve.
-    func recordSession(_ req: HTTPRequest, model: String, status: Int, took: TimeInterval, usage: (input: Int, output: Int)) async {
+    /// `branch`: veja izvajanja te zahteve (worktree, native z git); nil = vzame jo iz seje.
+    func recordSession(_ req: HTTPRequest, model: String, status: Int, took: TimeInterval, usage: (input: Int, output: Int),
+                       branch: String? = nil) async {
         var u = GatewayHistory.Use()
         u.session = req.header("x-claude-mini-session") ?? ""
         u.folder = req.header("x-claude-mini-cwd") ?? ""
@@ -116,7 +119,10 @@ public final class Router: Sendable {
             u.device = d.id
             u.deviceName = config.devices.first { $0.id == d.id }?.name ?? d.name
         }
-        if !u.session.isEmpty { (u.mode, u.readOnly, u.branch) = await Self.shares.sessionMode(u.session, device: req.device?.id) }
+        if !u.session.isEmpty {
+            (u.mode, u.readOnly, u.branch) = await Self.shares.sessionMode(u.session, device: req.device?.id)
+            if let branch { u.branch = branch }
+        }
         Self.history.record(u)
     }
 
@@ -261,7 +267,7 @@ public final class Router: Sendable {
                     if req.path.hasSuffix("/count_tokens") {
                         return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "copilot")
                     }
-                    return (await syncRun(agent: "copilot", rid: rid, writer: writer) { await runCopilot(req, body: body, model: copilotModel, rid: rid, writer: writer) }, model, "copilot")
+                    return (await syncRun(agent: "copilot", rid: rid, writer: writer) { await runCopilot(req, body: body, model: copilotModel, rid: rid, writer: await early(req, body, rid, writer)) }, model, "copilot")
                 }
                 if config.appleFM.enabled, AppleFM.ids.contains(model) {
                     if req.path.hasSuffix("/count_tokens") {
@@ -470,13 +476,20 @@ public final class Router: Sendable {
     func syncRun(agent: String, rid: String, writer: ResponseWriter, _ run: () async -> Int) async -> Int {
         if let p = AgentRun.current {
             if let why = AgentRun.refusal(agent) { return await error(403, "permission_error", why, rid: rid, writer: writer) }
-            return await ShareHub.$run.withValue(p.runID) { await ShareHub.$agent.withValue(agent) { await run() } }
+            let status = await ShareHub.$run.withValue(p.runID) { await ShareHub.$agent.withValue(agent) { await run() } }
+            if let id = p.runID { Self.runBranch?.branch = await Self.shares.runBranch(id) }  // veja klicatelja
+            return status
         }
         let id = UUID().uuidString
         let status = await ShareHub.$run.withValue(id) { await ShareHub.$agent.withValue(agent) { await run() } }
+        Self.runBranch?.branch = await Self.shares.runBranch(id)  // pred finish: mesto izvajanja se tam sprosti
         await Self.shares.finish(run: id)
         return status
     }
+
+    /// Veja izvajanja zahteve (handle → syncRun → recordSession); vgnezdeni klic dobi vejo klicatelja.
+    final class RunBranch: @unchecked Sendable { var branch: String? }
+    @TaskLocal static var runBranch: RunBranch?
 
     /// Proces odjemalca na loopbacku je tega uporabnika in ni agent (PeerProcess.sameUserApp); testi ga zamenjajo.
     nonisolated(unsafe) static var localPeer: @Sendable (_ peerPort: UInt16, _ routerPort: UInt16) -> Bool = {

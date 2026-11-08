@@ -340,7 +340,8 @@ func cleanText(s string) string {
 }
 
 // sessionMode: način seje iz mape, ki jo je odjemalec delil (chat = brez mape; direct = zavrnjen neposredni dostop).
-func (h *shareHub) sessionMode(session, owner string) (mode string, readOnly bool, branch string) {
+// `agent`: agent te zahteve (worktree: njegova veja); "" ali brez mesta = prva veja seje.
+func (h *shareHub) sessionMode(session, owner, agent string) (mode string, readOnly bool, branch string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	s := h.bySession[session]
@@ -358,12 +359,24 @@ func (h *shareHub) sessionMode(session, owner string) (mode string, readOnly boo
 			agents = append(agents, a)
 		}
 		sort.Strings(agents)
-		if len(agents) > 0 {
+		if sl, ok := s.tree.slots[agent]; ok {
+			branch = sl.branch
+		} else if len(agents) > 0 {
 			branch = s.tree.slots[agents[0]].branch
 		}
 		return "worktree", s.readOnly, branch
 	}
 	return "sync", s.readOnly, ""
+}
+
+// agentOfModel: agent modela (ime mesta worktree), "" za druge modele.
+func agentOfModel(m string) string {
+	for p, a := range map[string]string{"claude-cli-": "claude", "claude-chat-": "claude", "claude-codex": "codex", "claude-grok": "grok", "claude-copilot": "copilot"} {
+		if strings.HasPrefix(m, p) {
+			return a
+		}
+	}
+	return ""
 }
 
 // usageWriter: šteje žetone iz odgovora (Anthropic JSON ali SSE: največji input_tokens in output_tokens); zadnjih 64
@@ -409,8 +422,10 @@ func (s *server) recordSession(r *req, model string, status int, took time.Durat
 	}
 	u := sessionUse{session: session, folder: r.h("x-claude-mini-cwd"), model: model, status: status, took: took, in: in, out: out}
 	u.role = reqRole(r)
+	agent := agentOfModel(model)
 	if p := runOf(r); p != nil { // vgnezdeni klic: veriga iz izvajanja (nikoli iz glave), v seji klicatelja
 		u.via = p.via()
+		agent = p.chain[0] // vprašani agent dela v klonu (in na veji) prvega agenta verige
 	}
 	if d := r.conn.device; d != nil { // ime iz seznama dovoljenih (oznaka na prehodu), sicer iz rokovanja
 		u.device, u.deviceName = d.ID, d.Name
@@ -422,7 +437,7 @@ func (s *server) recordSession(r *req, model string, status int, took time.Durat
 		u.os, _, _ = strings.Cut(client, ",") // »Windows, minigw 0.5.18«
 	}
 	if session != "" {
-		u.mode, u.readOnly, u.branch = s.hub.sessionMode(session, r.owner())
+		u.mode, u.readOnly, u.branch = s.hub.sessionMode(session, r.owner(), agent)
 	}
 	u.tools = s.conf().agentRestrictions(model)
 	s.state.record(u, time.Now())

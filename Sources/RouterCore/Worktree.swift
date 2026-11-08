@@ -565,6 +565,9 @@ extension ShareHub {
         return (slot.wt, slot.branch, tree.worktrees.appendingPathComponent(".maven", isDirectory: true), read)
     }
 
+    /// Veja mesta izvajanja `id` (zgodovina seje: veja te zahteve, ne prve v seji).
+    func runBranch(_ id: String) -> String? { runSlot[id].flatMap { slots[$0]?.branch } }
+
     /// Seja dela v načinu worktree (pred mount: Grok in Codex brez pisanja ga zavrneta).
     func isWorktree(session: String) -> Bool { bySessionTree(session) != nil }
 
