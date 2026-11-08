@@ -237,7 +237,7 @@ extension Router {
                 extra = (tree.root.path == dir.path ? [] : [tree.root.path]) + [tree.maven.path]
             }
             readOnly = await Self.isReadOnly(req)
-            if readOnly, tree != nil { return await error(400, "invalid_request_error", Self.readOnlyWorktree, rid: rid, writer: writer) }
+            if readOnly, tree != nil, AgentRun.current == nil { return await error(400, "invalid_request_error", Self.readOnlyWorktree, rid: rid, writer: writer) }
             if let shared, let clientCwd {
                 prompt = Self.mountNote(clientCwd, shared, readOnly: readOnly || (tree != nil && !config.codex.write), synced: synced,
                                         branch: tree?.branch) + "\n\n" + prompt
@@ -251,7 +251,7 @@ extension Router {
         let privateTmp = URL(fileURLWithPath: "/private/tmp/minigw-codex-\(rid)", isDirectory: true)
         try? FileManager.default.createDirectory(at: privateTmp, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         defer { try? FileManager.default.removeItem(at: privateTmp) }
-        let run = agent ? await startAgentRun(req, kind: "codex", dir: sharedDir) : nil
+        let run = agent ? await startAgentRun(req, kind: "codex", dir: sharedDir, readOnly: tree != nil && !config.codex.write) : nil
         defer { run?.stop() }
         let codexEnv = (tree.map { Worktree.harnessEnv(root: $0.root, maven: $0.maven) }
             ?? ["TMPDIR": privateTmp.path + "/", "CLANG_MODULE_CACHE_PATH": privateTmp.appendingPathComponent("ModuleCache").path, "xcrun_nocache": "1"])

@@ -224,3 +224,17 @@ private func get(_ run: AgentRun, _ path: String, token: String?) async -> Int {
     #expect(ro.codex.contains("--sandbox\nread-only") && !ro.codex.contains("workspace-write") && !ro.codex.contains("--add-dir"))
     #expect(ro.claude.contains("--disallowedTools\nEdit,Write,MultiEdit,NotebookEdit,EnterWorktree,ExitWorktree,Monitor") && ro.claude.contains(#""allowWrite":[]"#))
 }
+
+/// Agent, ki v klonu le bere (worktree, pisanje izklopljeno): izvajanje nosi --minigw-ro, vprašani agenti dobijo glavo
+/// x-claude-mini-ro (kot Go startRun); brez tega velja zahteva.
+@Test func readOnlyAgentRunIsReadOnlyForAskedAgents() async throws {
+    var c = RouterConfig()
+    c.claudeCLI.askOthers = true; c.claudeCLI.allowLocalTools = true; c.codex.askOthers = true
+    let router = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]))
+    let caller = request("POST", "/v1/messages", headers: ["x-claude-mini-session": UUID().uuidString, "x-claude-mini-cwd": "/client"])
+    let ro = try #require(await router.startAgentRun(caller, kind: "codex", dir: nil, readOnly: true))
+    defer { ro.stop() }
+    let rw = try #require(await router.startAgentRun(caller, kind: "codex", dir: nil))
+    defer { rw.stop() }
+    #expect(ro.readOnly && !rw.readOnly)
+}

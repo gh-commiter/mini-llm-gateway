@@ -291,7 +291,7 @@ extension Router {
             cwd = tree?.root ?? dir  // M3: koren klona namesto --add-dir; sporočilo spodaj pove mapo seje
             if shared != nil || tree != nil { visible = cwd }  // R3: le pot iz ShareHub sme biti v (skritem) Scratch
             readOnly = await Self.isReadOnly(req)
-            if readOnly, tree != nil { return await error(400, "invalid_request_error", Self.readOnlyWorktree, rid: rid, writer: writer) }
+            if readOnly, tree != nil, AgentRun.current == nil { return await error(400, "invalid_request_error", Self.readOnlyWorktree, rid: rid, writer: writer) }
             if let shared, let clientCwd {
                 prompt = Self.mountNote(clientCwd, shared, readOnly: readOnly || (tree != nil && !cfg.write), synced: synced,
                                         branch: tree?.branch) + "\n\n" + prompt
@@ -313,7 +313,7 @@ extension Router {
         }
         let extraEnv = tree.map { Worktree.harnessEnv(root: $0.root, maven: $0.maven) }
             ?? ["TMPDIR": tmp.path + "/", "CLANG_MODULE_CACHE_PATH": tmp.appendingPathComponent("ModuleCache").path]
-        let run = agent ? await startAgentRun(req, kind: "copilot", dir: sharedDir, secretDir: reqDir) : nil  // peskovnik: zaprta le vrata prehoda; žeton v mapi zahteve
+        let run = agent ? await startAgentRun(req, kind: "copilot", dir: sharedDir, secretDir: reqDir, readOnly: tree != nil && !cfg.write) : nil  // peskovnik: zaprta le vrata prehoda; žeton v mapi zahteve
         defer { run?.stop() }
         let env = Copilot.environment(base, home: home, token: token, extra: extraEnv.merging(run?.env ?? [:]) { $1 })
         // Nadaljevanje seje Copilot (--session-id): ključ je dosedanji pogovor v tej mapi; stanje seje iz Scratch.

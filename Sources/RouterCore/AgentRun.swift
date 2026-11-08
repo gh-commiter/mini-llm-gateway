@@ -77,14 +77,15 @@ final class AgentRun: @unchecked Sendable {
 
     /// Vrata in žeton za izvajanje agenta `kind` (pred zagonom procesa); nil, ko jih ni mogoče odpreti.
     /// `secretDir`: začasna mapa izvajanja, ki jo vidi le ta agent (Copilot: mapa zahteve); nil = nova v `scratchTmp`.
-    static func start(router: Router, req: HTTPRequest, kind: String, dir: URL?, secretDir: URL?, scratchTmp: URL) async -> AgentRun? {
+    /// `readOnly`: agent sam teče le za branje (worktree, pisanje izklopljeno): tudi vprašani agenti (kot Go startRun).
+    static func start(router: Router, req: HTTPRequest, kind: String, dir: URL?, secretDir: URL?, scratchTmp: URL, readOnly own: Bool = false) async -> AgentRun? {
         let params = NWParameters.tcp
         params.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
         var b = [UInt8](repeating: 0, count: 32)
         guard SecRandomCopyBytes(kSecRandomDefault, b.count, &b) == errSecSuccess else { return nil }  // L2
         let token = Data(b).base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "=", with: "")
-        let readOnly = await Router.isReadOnly(req)
+        let readOnly = own ? true : await Router.isReadOnly(req)
         guard let l = try? NWListener(using: params) else { return nil }
         let run = AgentRun(kind: kind, chain: (current?.chain ?? []) + [kind], req: req, dir: dir, readOnly: readOnly, listener: l, token: token)
         var folder = secretDir
@@ -229,9 +230,9 @@ extension Router {
     }
 
     /// Vrata izvajanja, če ima agent `kind` stikalo »May ask other models«; okolje gre agentu, `stop()` ob koncu.
-    func startAgentRun(_ req: HTTPRequest, kind: String, dir: URL?, secretDir: URL? = nil) async -> AgentRun? {
+    func startAgentRun(_ req: HTTPRequest, kind: String, dir: URL?, secretDir: URL? = nil, readOnly: Bool = false) async -> AgentRun? {
         guard askOthers(kind) else { return nil }
-        let run = await AgentRun.start(router: self, req: req, kind: kind, dir: dir, secretDir: secretDir, scratchTmp: config.scratch("tmp"))
+        let run = await AgentRun.start(router: self, req: req, kind: kind, dir: dir, secretDir: secretDir, scratchTmp: config.scratch("tmp"), readOnly: readOnly)
         if run == nil { Self.log.error("agent calls: cannot open a loopback port for \(kind, privacy: .public)") }
         return run
     }
