@@ -744,6 +744,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	stopPing := make(chan struct{})
 	if stream {
 		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("x-should-retry", "false")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("request-id", r.rid)
 		w.WriteHeader(200)
@@ -796,12 +797,13 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	}
 	if msg != "" {
 		s.log.Printf("%s claude failed: %s", r.rid, msg)
+		status, clean := classifyAgentError(msg)
 		if !stream {
-			return writeError(w, r.rid, 502, "claude: "+msg)
+			return writeError(w, r.rid, status, "claude: "+clean)
 		}
 		if t.text == "" {
-			send(sse("error", map[string]any{"type": "error", "error": map[string]string{"type": "api_error", "message": "claude: " + msg}}))
-			return 502
+			send(sse("error", map[string]any{"type": "error", "error": map[string]string{"type": errType(status), "message": "claude: " + clean}}))
+			return status
 		}
 	}
 	if !chat {

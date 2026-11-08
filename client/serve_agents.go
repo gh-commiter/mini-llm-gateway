@@ -23,6 +23,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"unicode/utf8"
 	"sync"
 	"time"
 )
@@ -739,7 +740,11 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 		} else if k.name == "codex" {
 			out := filepath.Join(tmp, "codex.txt")
 			args := codexArgs(dir, extra, agent, out, model, write, ac.Network, resume)
+			var failure string
 			err = s.runAgentProcess(ctx, r, exe, args, withTree(m), dir, prompt, func(line []byte) {
+				if f := codexFailure(line); f != "" {
+					failure = f
+				}
 				if t := codexThread(line); t != "" && thread == "" {
 					thread = t
 				}
@@ -749,6 +754,9 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			})
 			b, _ := os.ReadFile(out)
 			text = strings.TrimSpace(string(b))
+			if failure != "" && (err != nil || text == "") {
+				return "", errors.New(failure)
+			}
 		} else {
 			pf := filepath.Join(tmp, "prompt.txt")
 			if err := os.WriteFile(pf, []byte(prompt), 0o600); err != nil {
@@ -954,8 +962,12 @@ func (s *server) runAgentProcess(ctx context.Context, r *req, exe string, args [
 		}
 	}
 	if err := cmd.Wait(); err != nil {
-		if tail := strings.TrimSpace(stderr.String()); tail != "" {
+		tail := strings.TrimSpace(stderr.String())
+		if tail != "" {
 			s.log.Printf("%s %s stderr: %s", r.rid, filepath.Base(exe), tail[max(0, len(tail)-2000):])
+		}
+		if agentLimit(tail) { // stderr sam ostane v dnevniku, odjemalec dobi le stalno besedilo
+			return fmt.Errorf("%s: usage or rate limit reached; details are in the gateway log, request %s", filepath.Base(exe), r.rid)
 		}
 		if ctx.Err() == context.DeadlineExceeded {
 			return fmt.Errorf("%s stopped after %v", filepath.Base(exe), agentTimeout)
@@ -983,6 +995,7 @@ func (s *server) replyWhenDone(w http.ResponseWriter, r *req, body map[string]an
 	done := make(chan struct{})
 	if stream {
 		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("x-should-retry", "false")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("request-id", r.rid)
 		w.WriteHeader(200)
@@ -1007,11 +1020,12 @@ func (s *server) replyWhenDone(w http.ResponseWriter, r *req, body map[string]an
 	}
 	if err != nil {
 		s.log.Printf("%s %s failed: %v", r.rid, model, err)
+		status, msg := classifyAgentError(err.Error())
 		if stream {
-			send(sse("error", map[string]any{"type": "error", "error": map[string]string{"type": "api_error", "message": err.Error()}}))
-			return 502
+			send(sse("error", map[string]any{"type": "error", "error": map[string]string{"type": errType(status), "message": msg}}))
+			return status
 		}
-		return writeError(w, r.rid, 502, err.Error())
+		return writeError(w, r.rid, status, msg)
 	}
 	t.usage = map[string]any{"output_tokens": float64(len(text) / 4)}
 	delta := t.emit(text)
@@ -1059,4 +1073,60 @@ func (s *server) agentModelList(k agentKind) []map[string]any {
 			"description": run + " · " + m.Slug + win + " · tools in your synced folder", "created_at": "2026-01-01T00:00:00Z"})
 	}
 	return out
+}
+
+// codexFailure: sporočilo iz {"type":"error","message":…} ali {"type":"turn.failed","error":{"message":…}}.
+func codexFailure(line []byte) string {
+	var e struct {
+		Type    string `json:"type"`
+		Message string `json:"message"`
+		Error   struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(line, &e) != nil {
+		return ""
+	}
+	switch e.Type {
+	case "error":
+		return e.Message
+	case "turn.failed":
+		return e.Error.Message
+	}
+	return ""
+}
+
+var agentLimits = []string{"usage limit", "rate limit", "quota", "too many requests", "payment required", "spending-limit", "out of credits",
+	"hit your", "reached your", "out of usage", "spend limit"}
+
+func agentLimit(msg string) bool {
+	low := strings.ToLower(msg)
+	for _, k := range agentLimits {
+		if strings.Contains(low, k) {
+			return true
+		}
+	}
+	return false
+}
+
+// classifyAgentError: napaka agenta za odjemalca: omejitev porabe, kvote ali kreditov je 429 rate_limit_error (Claude
+// Code jo sporoči, ne ponavlja kot začasno 502), sicer 502; sporočilo brez poti in žetonov (besed s / ali \, razen
+// http(s) naslovov; ID zahteve req_… ostane), krajše od 300 znakov.
+func classifyAgentError(raw string) (int, string) {
+	var words []string
+	for _, w := range strings.Fields(raw) {
+		url := strings.HasPrefix(w, "http://") || strings.HasPrefix(w, "https://")
+		if !strings.HasPrefix(w, "req_") && !url && (strings.ContainsAny(w, `/\`) || strings.HasPrefix(w, "~") || utf8.RuneCountInString(w) >= 32) {
+			continue
+		}
+		words = append(words, w)
+	}
+	msg := strings.Join(words, " ")
+	if r := []rune(msg); len(r) > 300 {
+		msg = string(r[:300])
+	}
+	if agentLimit(msg) {
+		return 429, msg
+	}
+	return 502, msg
 }

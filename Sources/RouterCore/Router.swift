@@ -637,7 +637,7 @@ public final class Router: Sendable {
         let body = (try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys, .withoutEscapingSlashes])) ?? Data("{}".utf8)
         try? await writer.write(HTTPResponse.head(status: status, headers: [
             ("Content-Type", "application/json"), ("request-id", rid),
-        ], contentLength: body.count) + body)
+        ] + (status == 429 ? [("x-should-retry", "false")] : []), contentLength: body.count) + body)
         return status
     }
 

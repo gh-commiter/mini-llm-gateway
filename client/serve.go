@@ -1047,6 +1047,9 @@ func writeJSON(w http.ResponseWriter, rid string, status int, obj any) int {
 	data, _ := json.Marshal(obj)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("request-id", rid)
+	if status == 429 {
+		w.Header().Set("x-should-retry", "false") // Claude Code ponavlja 429, če glave ni
+	}
 	w.WriteHeader(status)
 	w.Write(data)
 	return status
@@ -1057,6 +1060,10 @@ func writeError(w http.ResponseWriter, rid string, status int, msg string) int {
 }
 
 func errorBody(status int, msg string) map[string]any {
+	return map[string]any{"type": "error", "error": map[string]string{"type": errType(status), "message": msg}}
+}
+
+func errType(status int) string {
 	t := map[int]string{401: "authentication_error", 403: "permission_error", 404: "not_found_error", 413: "request_too_large",
 		429: "rate_limit_error", 529: "overloaded_error"}[status]
 	if t == "" {
@@ -1065,7 +1072,7 @@ func errorBody(status int, msg string) map[string]any {
 			t = "api_error"
 		}
 	}
-	return map[string]any{"type": "error", "error": map[string]string{"type": t, "message": msg}}
+	return t
 }
 
 func writeStatus(w http.ResponseWriter, status int, ctype string, body []byte) int {
