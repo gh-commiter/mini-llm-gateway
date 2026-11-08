@@ -436,8 +436,9 @@ example `/Volumes/Java/projects` mounted from the gateway's `/Volumes/Java`), `m
   without writing are refused there, as in worktree mode.
 - **In the folder itself:** `--minigw-work=native-direct` (or `MINIGW_WORK=native-direct`, `minigw share add
   --work=native-direct`), and folders that are not a git repository: agents change the files directly, one writing agent
-  at a time per folder (others wait up to 10 minutes, then get a clear error; agents that only read do not wait). The
-  same lock applies to direct mode.
+  at a time per folder or folder inside it (others wait up to 5 minutes, then get a clear error; agents that only read
+  do not wait). The same lock applies to direct mode and to `minigw run`. Older minigw clients also get branches on a
+  native git repository; update minigw to use `native-direct`.
 `minigw run -- mvn -q verify` runs a build there and streams its output and exit code back.
 - **Mode per folder:** `minigw share add --work=native` (or `native-direct`, `sync`, `direct`, with `--ro` for read-only) in a folder
   saves its default mode for it and its subfolders in minigw's share list (never in the project); `minigw share list`

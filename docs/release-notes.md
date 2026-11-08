@@ -7,9 +7,12 @@
   in your repository (fast-forward only, no hooks, fsck), while your files, index and checked-out branch stay as they
   are. So parallel agents never edit the same files. **Changed behaviour:** to let agents change the folder itself as
   before, use `--minigw-work=native-direct` (or `minigw share add --work=native-direct`). In folders that are not a git
-  repository, with `native-direct` and in direct mode, only one writing agent at a time works in a folder; the others
-  wait up to 10 minutes. Grok and Codex or Copilot without writing are refused on native git repositories, as in
-  worktree mode.
+  repository, with `native-direct` and in direct mode, only one writing agent at a time works in a folder (also a folder
+  inside it); the others wait up to 5 minutes, and `minigw run` takes the same lock for its build. Grok and Codex or
+  Copilot without writing are refused on native git repositories ("use --minigw-work=native-direct"). Older minigw
+  clients also get branches on a native git repository; update minigw to use `native-direct`. If a branch cannot be
+  delivered (for example you committed to it, or it is checked out), minigw shows why. The delivery runs git with the
+  gateway's settings only, in a sandbox, so nothing from the repository's own config runs.
 - `minigw serve` no longer has a default folder for agents (`folder` in serve.json, the settings field and
   `minigw gw claude --folder`): as on the Mac, an agent request without a shared, synced or worktree folder is refused.
   A stored `folder` becomes an allowed folder; `minigw serve --folder X` (and `serve init`) still works, adds X to the

@@ -10,6 +10,7 @@ Profiles (`--name`, `profiles`, `--minigw-profile`, `<model>@<profile>`) need mi
 Project folders are shared automatically, on any drive. System and hidden folders are shared once the user adds them; the setting is permanent.
 
 - No argument or a folder: `"${CLAUDE_PLUGIN_DATA}/bin/minigw" share add [folder]`
+- With a mode: `share add --work=native|native-direct|sync|worktree|direct|auto [--ro] [folder]`. `native` (the folder is the gateway Mac's SMB share): in a git repository each agent works on its own branch `minigw/…`; `native-direct`: agents change the folder itself, one writing agent at a time.
 - `list`: `"${CLAUDE_PLUGIN_DATA}/bin/minigw" share list`
 - `remove [folder]`: `"${CLAUDE_PLUGIN_DATA}/bin/minigw" share remove [folder]`
 
