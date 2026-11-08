@@ -704,7 +704,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		return st
 	}
 	defer func() { <-s.procs }()
-	cmd := exec.CommandContext(r.Context(), exe[0], append(exe[1:], args...)...)
+	cmd := commandContext(r.Context(), exe[0], append(exe[1:], args...)...)
 	cmd.Dir = dir
 	cmd.Env = append(append(agentEnv(os.Environ()), worktreeEnv...), runEnv...) // brez ANTHROPIC_* (klic nazaj v router), žetonov GitHub/Copilot in agentov ključev (M1)
 	cmd.Stdin = strings.NewReader(prompt)

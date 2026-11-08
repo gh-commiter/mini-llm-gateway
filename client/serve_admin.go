@@ -18,7 +18,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -1082,7 +1081,7 @@ func claudeTools(exe []string) []string {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, exe[0], append(exe[1:], "-p", "x", "--model", "haiku", "--output-format", "stream-json", "--verbose",
+	cmd := commandContext(ctx, exe[0], append(exe[1:], "-p", "x", "--model", "haiku", "--output-format", "stream-json", "--verbose",
 		"--tools", "default", "--setting-sources", "", "--strict-mcp-config", "--no-session-persistence")...)
 	cmd.Dir = os.TempDir()
 	out, err := cmd.StdoutPipe()
@@ -1124,7 +1123,7 @@ func claudeVersion(exe []string) string {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	out, _ := exec.CommandContext(ctx, exe[0], append(exe[1:], "--version")...).Output()
+	out, _ := commandContext(ctx, exe[0], append(exe[1:], "--version")...).Output()
 	v := strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0])
 	claudeVersions.Store(key, v)
 	return v

@@ -80,7 +80,7 @@ var foundryClient = &http.Client{
 // runFoundryCLI (F1): »start« brez cevi (strežnik v ozadju bi jih držal odprte); pri drugih ukazih WaitDelay zapre
 // cevi, ki jih drži otrok, 5 s po koncu ukaza. Izpis največ 64 KB.
 func runFoundryCLI(ctx context.Context, exe string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, exe, args...)
+	cmd := commandContext(ctx, exe, args...)
 	cmd.WaitDelay = 5 * time.Second
 	if len(args) > 1 && args[1] == "start" {
 		return "", cmd.Run() // Stdout, Stderr nil: /dev/null

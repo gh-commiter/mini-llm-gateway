@@ -9,7 +9,6 @@ import (
 	"bufio"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -400,8 +399,8 @@ func closeRunningTray() error {
 }
 
 func startProcessDetached(exe string, args ...string) error {
-	cmd := exec.Command(exe, args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x00000008 | 0x00000200} // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+	cmd := command(exe, args...)
+	cmd.SysProcAttr.CreationFlags |= 0x00000008 | 0x00000200 // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
 	if err := cmd.Start(); err != nil {
 		return err
 	}

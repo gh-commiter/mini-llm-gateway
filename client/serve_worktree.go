@@ -95,7 +95,7 @@ func gitRun(repo, cwd string, env []string, args ...string) (string, error) {
 		"-c", "core.commitGraph=false", "-c", "core.multiPackIndex=false"}
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout) // L5
 	defer cancel()
-	cmd := exec.CommandContext(ctx, exe, append(guard, args...)...)
+	cmd := commandContext(ctx, exe, append(guard, args...)...)
 	cmd.WaitDelay = 5 * time.Second
 	cmd.Dir = cwd
 	for _, e := range os.Environ() {

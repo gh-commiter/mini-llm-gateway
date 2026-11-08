@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"os/user"
 	"path/filepath"
 	"runtime"
@@ -30,7 +29,7 @@ const (
 // Zunanji ukazi in register: testi jih zamenjajo.
 var (
 	runCmd = func(name string, args ...string) error {
-		out, err := exec.Command(name, args...).CombinedOutput()
+		out, err := command(name, args...).CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("%s %s: %v %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 		}
@@ -379,7 +378,7 @@ func updateMSI(dir string) (string, error) {
 
 // installedVersion: »minigw 0.5.18« → "0.5.18"; "" brez programa ali z nečim drugim.
 var installedVersion = func(exe string) string {
-	out, err := exec.Command(exe, "--version").Output()
+	out, err := command(exe, "--version").Output()
 	if err != nil {
 		return ""
 	}
@@ -468,7 +467,7 @@ func errFromStat(p string) error { _, err := os.Stat(p); return err }
 func installedInfo(goos string) string {
 	dir := installDir(goos)
 	exe := filepath.Join(dir, map[bool]string{true: "minigw.exe", false: "minigw"}[goos == "windows"])
-	out, err := exec.Command(exe, "--version").Output()
+	out, err := command(exe, "--version").Output()
 	if dir == "" || err != nil {
 		return "not installed in " + dir + " (minigw serve install)"
 	}

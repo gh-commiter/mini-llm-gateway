@@ -5,7 +5,6 @@ package main
 import (
 	"context"
 	"os"
-	"os/exec"
 	"runtime"
 	"strings"
 	"time"
@@ -17,11 +16,11 @@ func computerName() string {
 	defer cancel()
 	switch runtime.GOOS {
 	case "darwin":
-		if out, err := exec.CommandContext(ctx, "scutil", "--get", "ComputerName").Output(); err == nil {
+		if out, err := commandContext(ctx, "scutil", "--get", "ComputerName").Output(); err == nil {
 			return strings.TrimSpace(string(out))
 		}
 	case "linux":
-		if out, err := exec.CommandContext(ctx, "hostnamectl", "--pretty").Output(); err == nil && strings.TrimSpace(string(out)) != "" {
+		if out, err := commandContext(ctx, "hostnamectl", "--pretty").Output(); err == nil && strings.TrimSpace(string(out)) != "" {
 			return strings.TrimSpace(string(out))
 		}
 		if b, err := os.ReadFile("/etc/hostname"); err == nil {

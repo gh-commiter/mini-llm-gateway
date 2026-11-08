@@ -735,7 +735,7 @@ func autoShare(cwd string) bool {
 // runClaude: claude kot podproces (minigw ostane za proxy in mapo); Ctrl+C dobi claude.
 func runClaude(args []string, env []string) int {
 	signal.Ignore(os.Interrupt)
-	cmd := exec.Command("claude", args...)
+	cmd := consoleCommand("claude", args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	cmd.Env = append(os.Environ(), env...)
 	if err := cmd.Run(); err != nil {
