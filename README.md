@@ -276,7 +276,7 @@ it up.
 the [latest release](https://github.com/gh-commiter/mini-llm-gateway/releases/latest) and open it. It installs for
 this user only, without admin rights, the same as `minigw serve install`: `minigw.exe` and `minigw-tray.exe` in
 `%LocalAppData%\Programs\Mini Gateway`, minigw on your PATH, a Start menu entry, and the tray at sign-in. It then
-starts the tray, which creates the config on first start; copy the connect line from its menu. Running a newer MSI
+starts the tray, which creates the config on first start; copy the token from its menu (**Copy Token**, as on the Mac). Running a newer MSI
 updates it. Remove it in Settings → Apps (not with `minigw serve uninstall`); the config and keys stay. The MSI is
 not code-signed yet, so SmartScreen warns: **More info → Run anyway**. Check it first against the signed
 `SHA256SUMS`, as in [3.2.3](#323-client-on-windows-and-linux). The ARM64 package needs Windows 11.

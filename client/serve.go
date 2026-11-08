@@ -174,11 +174,20 @@ func writeFileAtomic(path string, data []byte) error {
 
 // connectLine: vrstica za odjemalce (žeton#javni ključ routerja).
 func connectLine(c serveConfig) string {
+	t := connectToken(c)
+	if t == "" {
+		return ""
+	}
+	return fmt.Sprintf("minigw connect %s:%d --token '%s'", localIP(), c.Port, t)
+}
+
+// connectToken: žeton#javni ključ, kar kopira Copy Token (kot na Macu).
+func connectToken(c serveConfig) string {
 	k, err := c.privateKey()
 	if err != nil {
 		return ""
 	}
-	return fmt.Sprintf("minigw connect %s:%d --token '%s#%s'", localIP(), c.Port, c.Token, base64url(k.PublicKey().Bytes()))
+	return c.Token + "#" + base64url(k.PublicKey().Bytes())
 }
 
 func (c serveConfig) privateKey() (*ecdh.PrivateKey, error) {

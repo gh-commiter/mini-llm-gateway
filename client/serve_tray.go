@@ -124,7 +124,7 @@ func trayMenu(st apiStatus, pending []apiDevice, sl bool) []trayItem {
 	return append(items,
 		trayItem{Sep: true},
 		trayItem{Text: tr("Settings…", "Nastavitve …"), Action: "settings"},
-		trayItem{Text: tr("Copy connect line", "Kopiraj vrstico za povezavo"), Action: "copy"},
+		trayItem{Text: tr("Copy Token", "Kopiraj žeton"), Action: "copy"},
 		trayItem{Sep: true},
 		trayItem{Text: tr("Start at sign-in", "Zaženi ob prijavi"), Action: "startup", Checked: st.Installed},
 		trayItem{Text: tr("Open log", "Odpri dnevnik"), Action: "log"},
