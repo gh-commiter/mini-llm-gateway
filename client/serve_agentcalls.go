@@ -134,7 +134,7 @@ func (s *server) startRun(r *req, kind, dir string, readOnly, shared bool, wt, m
 		}}
 	go run.srv.Serve(ln)
 	env := []string{"MINIGW_AGENT_URL=" + run.url, "MINIGW_AGENT_AUTH_FILE=" + run.authFile}
-	if runtime.GOOS == "windows" { // askNote: »minigw« je ta minigw.exe
+	if s.conf().askOnPath(dir) { // askNote: »minigw« je ta minigw.exe
 		env = append(env, "PATH="+filepath.Dir(minigwExe())+";"+os.Getenv("PATH"))
 	}
 	return run, env
@@ -213,17 +213,29 @@ func minigwExe() string {
 	return exe
 }
 
-// askNote: navodilo agentu z vrati izvajanja. Windows: »minigw« iz PATH izvajanja (startRun), da se ukaz ujema s
-// pravilom Bash(minigw -p:*) (brez peskovnika Claude Code tam Bash sicer potrebuje odobritev, ki je v -p ni).
-func askNote(exe string) string {
+// askOnPath: Windows, mapa minigw.exe gre na začetek PATH izvajanja in ukaz »minigw« je vnaprej dovoljen (askRules), da
+// se navodilo ujema s pravilom (brez peskovnika Claude Code tam Bash sicer potrebuje odobritev, ki je v -p ni). Ne, če
+// je mapa v dovoljeni mapi, mapi seje ali Scratch (L1): agent bi tja podtaknil »minigw« ali git.exe, ki bi tekla brez
+// odobritve; takrat navodilo z absolutno potjo in brez pravila.
+func (c serveConfig) askOnPath(dir string) bool {
+	return runtime.GOOS == "windows" && !agentWritable(filepath.Dir(minigwExe()), append(slices.Clone(c.AllowedFolders), dir, c.Scratch))
+}
+
+// agentWritable: mapa d je v eni od map (kanonično), ki jih agent lahko spreminja.
+func agentWritable(d string, folders []string) bool {
+	return slices.ContainsFunc(folders, func(f string) bool { return f != "" && under(realPath(d), realPath(f)) })
+}
+
+// askNote: navodilo agentu z vrati izvajanja; onPath (askOnPath): »minigw« iz PATH izvajanja, sicer absolutna pot.
+func askNote(exe string, onPath bool) string {
 	cmd := "\"" + exe + "\""
-	if runtime.GOOS == "windows" {
+	if onPath {
 		cmd = "minigw"
 	}
 	return "You may ask another model of this gateway: `" + cmd + " -p --model <id> \"…\"`; `" + cmd + " models` lists them."
 }
 
-// askRules: pravili, ki agentu Claude na Windows dovolita le ukaz iz askNote.
+// askRules: pravili, ki agentu Claude na Windows dovolita le ukaz iz askNote (le z askOnPath).
 const askRules = "Bash(minigw -p:*),Bash(minigw models:*)"
 
 // sandboxAllowRead: sandbox Claude Code (--settings) sme brati še te poti.

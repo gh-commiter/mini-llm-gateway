@@ -271,3 +271,29 @@ func TestNestedAgentNeedsSharedFolder(t *testing.T) {
 		t.Fatalf("nested agent in the gateway's folder: %d %s", st, w.Body.String())
 	}
 }
+
+// Varnost L1: »minigw« iz PATH in vnaprej dovoljeno pravilo le, ko agent ne more pisati v mapo minigw.exe.
+func TestAskOnPathOnlyOutsideAgentFolders(t *testing.T) {
+	root := t.TempDir()
+	bin, allowed, scratch := filepath.Join(root, "bin"), filepath.Join(root, "work"), filepath.Join(root, "scratch")
+	for _, d := range []string{bin, allowed, scratch} {
+		os.MkdirAll(d, 0o700)
+	}
+	if agentWritable(bin, []string{allowed, "", scratch}) {
+		t.Fatal("a separate folder counts as agent-writable")
+	}
+	for _, f := range []string{root, bin} { // dovoljena mapa, mapa seje ali Scratch, ki vsebuje mapo minigw.exe
+		if !agentWritable(bin, []string{allowed, f}) {
+			t.Fatalf("%s contains the minigw folder but is not seen", f)
+		}
+	}
+	if n := askNote(`C:\x\minigw.exe`, false); !strings.Contains(n, `"C:\x\minigw.exe" -p`) {
+		t.Fatalf("absolute path note: %s", n)
+	}
+	if n := askNote(`C:\x\minigw.exe`, true); !strings.Contains(n, "`minigw -p") {
+		t.Fatalf("PATH note: %s", n)
+	}
+	if runtime.GOOS != "windows" && (serveConfig{}).askOnPath(bin) {
+		t.Fatal("askOnPath outside Windows")
+	}
+}

@@ -678,9 +678,10 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		defer run.stop()
 		if run != nil {
 			exe := minigwExe()
-			extra += "\n\n" + askNote(exe)
+			onPath := s.conf().askOnPath(dir)
+			extra += "\n\n" + askNote(exe, onPath)
 			args = sandboxAllowRead(args, exe, run.authFile) // M3: le ta datoteka iz Scratch
-			if i := slices.Index(args, "--allowedTools"); runtime.GOOS == "windows" && i >= 0 {
+			if i := slices.Index(args, "--allowedTools"); onPath && i >= 0 {
 				args[i+1] += "," + askRules
 			}
 		}

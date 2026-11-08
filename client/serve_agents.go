@@ -606,7 +606,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 		return st
 	}
 	if c.askOthers(k.name) { // vrata izvajanja (startRun spodaj)
-		note += "\n\n" + askNote(minigwExe())
+		note += "\n\n" + askNote(minigwExe(), c.askOnPath(dir))
 	}
 	prompt := note + "\n\n" + cliPrompt(history, last)
 	var extra []string
