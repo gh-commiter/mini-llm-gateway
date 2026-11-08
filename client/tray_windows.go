@@ -225,11 +225,22 @@ func openSettings(s *server) {
 
 func trayRun(cfgPath string, quiet bool) {
 	runtime.LockOSThread() // okno in zanka sporočil na eni niti
-	if _, _, err := pCreateMutex.Call(0, 0, uintptr(unsafe.Pointer(u16(trayMutexName)))); err == syscall.Errno(183) {
+	mutex, _, err := pCreateMutex.Call(0, 0, uintptr(unsafe.Pointer(u16(trayMutexName))))
+	if err == syscall.Errno(183) {
 		if !quiet {
 			messageBox("Mini Gateway is already running: see its icon in the notification area.")
 		}
 		return
+	}
+	// MSI (StartTray, edini z --quiet-if-running): pladenj, ki ga zažene msiexec, ima okolje namestitvenega programa
+	// (Codex na PATH ni bil najden, okolje uporabnika iz CreateEnvironmentBlock ni pomagalo). Zato ga zažene Raziskovalec,
+	// kot ob kliku v meniju Start: privzete nastavitve (= pot, ki jo poda MSI), ta proces konča.
+	if quiet {
+		if exe, err := os.Executable(); err == nil {
+			syscall.CloseHandle(syscall.Handle(mutex)) // novi pladenj mora dobiti mutex
+			shellOpen("explorer.exe", `"`+exe+`"`)
+			return
+		}
 	}
 	s, ln, logPath, fresh, err := startTrayRouter(cfgPath)
 	if err != nil {
