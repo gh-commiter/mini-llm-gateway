@@ -592,7 +592,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "minigw: the git repository "+top+" has no commit yet, so worktree mode is not possible; using "+tries[0])
 		}
 		var ok bool
-		share, ok = registerShare(c, sid, cwd, readOnly, top, tries, false)
+		share, ok = registerShare(c, sid, cwd, readOnly, top, tries, false, asked == "")
 		if ok && share.worktree {
 			share.start(4)
 			fmt.Fprintf(os.Stderr, "minigw: agent models work in a clone of this git repository on %s; their work comes back as branches minigw/… (worktree)\n", routerHost)
@@ -645,7 +645,7 @@ func main() {
 			t := &muxTarget{name: p.name, conn: rc}
 			if sid != "" && shareWanted(cwd, p.conn.isLocal()) {
 				t.share = func() bool {
-					sc, ok := registerShare(rc, sid, cwd, readOnly, top, tries, true)
+					sc, ok := registerShare(rc, sid, cwd, readOnly, top, tries, true, asked == "")
 					if !ok {
 						fmt.Fprintln(os.Stderr, "minigw: gateway "+p.name+" did not accept the folder: "+clean(sc.refusal))
 						return false
@@ -707,7 +707,9 @@ func modelProfile(args, names []string) []string {
 }
 
 // registerShare: načini po vrsti (auto: native → worktree → sync); naslednji, če prehod prejšnjega ne sprejme.
-func registerShare(c connection, sid, cwd string, readOnly bool, top string, tries []string, quiet bool) (*shareClient, bool) {
+// implicit: način ni izbran (zastavica, MINIGW_WORK, share add); prehod brez priklopa mape (minigw serve na Windows,
+// Linux) direct zavrne → kot auto: worktree v repozitoriju git s commitom, sicer sync. Izrecni direct ostane napaka.
+func registerShare(c connection, sid, cwd string, readOnly bool, top string, tries []string, quiet, implicit bool) (*shareClient, bool) {
 	sc := &shareClient{c: c, session: sid, root: cwd, readOnly: readOnly, synced: map[string]syncEntry{}, reported: map[string]bool{}}
 	for i, w := range tries {
 		sc = &shareClient{c: c, session: sid, root: cwd, readOnly: readOnly, sync: w == "sync", native: strings.HasPrefix(w, "native"), inPlace: w == "native-direct",
@@ -719,7 +721,20 @@ func registerShare(c connection, sid, cwd string, readOnly bool, top string, tri
 			fmt.Fprintln(os.Stderr, "minigw: "+w+" mode not available: "+clean(sc.refusal)+"; trying "+tries[i+1])
 		}
 	}
-	return sc, false
+	if !implicit || !strings.HasPrefix(sc.refusal, "this gateway supports --minigw-work=") {
+		return sc, false
+	}
+	t, auto := gitToplevel(cwd), []string{"sync"}
+	// M1: worktree le, če je koren repozitorija ta mapa; nadrejeni (dotfiles v domači mapi, monorepo) bi poslal tudi
+	// datoteke zunaj nje.
+	rt, rc := realPath(t), realPath(cwd)
+	if !readOnly && t != "" && (rt == rc || runtime.GOOS == "windows" && strings.EqualFold(rt, rc)) && gitHasCommit(t) {
+		auto = []string{"worktree", "sync"}
+	}
+	if !quiet {
+		fmt.Fprintln(os.Stderr, "minigw: the gateway has no folder mount; using "+auto[0]+" mode (--minigw-work= to choose)")
+	}
+	return registerShare(c, sid, cwd, readOnly, t, auto, quiet, false)
 }
 
 // shareWanted: projektno mapo (autoShare ali minigw share add) deli samodejno; nikoli cele domače mape, skritih map ali

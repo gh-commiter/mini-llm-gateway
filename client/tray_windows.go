@@ -140,10 +140,12 @@ func shellOpen(target, params string) {
 	pShellExecute.Call(0, uintptr(unsafe.Pointer(u16("open"))), uintptr(unsafe.Pointer(u16(target))), p, 0, 1 /* SW_SHOWNORMAL */)
 }
 
-func trayRun(cfgPath string) {
+func trayRun(cfgPath string, quiet bool) {
 	runtime.LockOSThread() // okno in zanka sporočil na eni niti
 	if _, _, err := pCreateMutex.Call(0, 0, uintptr(unsafe.Pointer(u16(trayMutexName)))); err == syscall.Errno(183) {
-		messageBox("Mini Gateway is already running: see its icon in the notification area.")
+		if !quiet {
+			messageBox("Mini Gateway is already running: see its icon in the notification area.")
+		}
 		return
 	}
 	s, ln, logPath, fresh, err := startTrayRouter(cfgPath)

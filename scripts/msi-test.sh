@@ -33,7 +33,7 @@ for arch in amd64 arm64; do
   has CustomAction "CloseTray	82	tray	quit"
   has InstallExecuteSequence 'CloseTray	REMOVE~="ALL"'
   t CustomAction | grep -qiE 'cmd\.exe|tasklist|taskkill|powershell|PING' && fail "$arch: a custom action runs a console tool (window flashes)"
-  has CustomAction "StartTray	210	tray	tray --config"
+  has CustomAction "StartTray	210	tray	tray --quiet-if-running --config"
   has InstallExecuteSequence 'StartTray	NOT (REMOVE~="ALL")'
   has LaunchCondition "NOT WIX_DOWNGRADE_DETECTED"
   # Odstranitev ne briše nastavitev: nobena vrstica RemoveFile ali RemoveRegistry ne kaže na minigw v AppData.

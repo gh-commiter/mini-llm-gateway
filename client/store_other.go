@@ -220,7 +220,7 @@ func knownConfigDir() (string, error) {
 func knownUserProgramsDir() string                 { return "" }
 func trayMutexExists() bool                        { return false }
 func closeRunningTray() error                      { return nil }
-func quitRunningTray()                             { trayRun("") } // minigw tray quit: isto sporočilo kot minigw tray
+func quitRunningTray()                             { trayRun("", false) } // minigw tray quit: isto sporočilo kot minigw tray
 func startProcessDetached(string, ...string) error { return errors.New("Windows only") }
 func moveFileOnReboot(string) error                { return errors.New("Windows only") }
 func regEnvPathGet() (string, error)               { return "", errors.New("Windows only") }

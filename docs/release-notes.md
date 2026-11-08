@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Windows and Linux gateway (`minigw serve`): `minigw` without `--minigw-work` (and no `MINIGW_WORK` or saved mode) no
+  longer fails with 400 "this gateway supports --minigw-work=sync and worktree": when the gateway refuses direct, the
+  client picks worktree (the folder is the root of a git repository with a commit) or sync, as `auto` does. An explicit `direct` is still an error.
+  Both clients (plugin 0.5.16).
+- Settings page, Claude CLI pane: an allowed folder that the gateway left out at start (it contains or is inside the
+  scratch folder) is listed, marked, and can be removed; after saving the folders the switch turns Claude CLI on without
+  restarting the gateway. Turning it on before that gives a clear error and the switch goes back off. The reason names
+  each folder once.
+- Windows MSI: reinstalling the same version no longer shows "Mini Gateway is already running" (the installer starts the
+  tray with `--quiet-if-running`; a tray started by hand still shows the message).
 - Windows tray and the settings page: **Copy Token** copies only the token (`token#key`), as on the Mac; the tray item was
   "Copy connect line". `gw token` still prints the whole `minigw connect …` line.
 - **No console windows on Windows:** the tray and every program it starts (claude, git, agents …) run without a console

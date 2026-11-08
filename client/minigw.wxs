@@ -42,8 +42,9 @@
          Ob namestitvi ne: tam bi bil v mapi lahko še stari pladenj (0.5.17), ki ukaza quit ne pozna; njega zapre
          odstranitev njegovega paketa. -->
     <CustomAction Id="CloseTray" FileKey="tray" ExeCommand="quit" Return="ignore" Execute="immediate"/>
-    <!-- Po namestitvi zaženi pladenj; ob prvem zagonu sam ustvari serve.json in pokaže, kje je vrstica za povezavo. -->
-    <CustomAction Id="StartTray" FileKey="tray" ExeCommand="tray --config &quot;[AppDataFolder]minigw\serve.json&quot;" Return="asyncNoWait" Impersonate="yes"/>
+    <!-- Po namestitvi zaženi pladenj; ob prvem zagonu sam ustvari serve.json in pokaže, kje je vrstica za povezavo.
+         Zastavica quiet-if-running: ista različica znova (pladenj ostane, CloseTray se ne zažene) brez sporočila »already running«. -->
+    <CustomAction Id="StartTray" FileKey="tray" ExeCommand="tray --quiet-if-running --config &quot;[AppDataFolder]minigw\serve.json&quot;" Return="asyncNoWait" Impersonate="yes"/>
     <InstallExecuteSequence>
       <Custom Action="CloseTray" After="CostFinalize">REMOVE~="ALL"</Custom>
       <Custom Action="StartTray" After="InstallFinalize">NOT (REMOVE~="ALL")</Custom>

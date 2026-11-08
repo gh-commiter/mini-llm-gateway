@@ -49,8 +49,10 @@ func trayCommand(args []string) {
 	}
 	fs := flag.NewFlagSet("minigw tray", flag.ExitOnError)
 	cfgPath := fs.String("config", defaultServeConfigPath(), "config file")
+	// MSI (StartTray): če pladenj že teče (ista različica znova), konec brez sporočila; ročni zagon ga pokaže.
+	quiet := fs.Bool("quiet-if-running", false, "exit silently if the tray is already running")
 	fs.Parse(args)
-	trayRun(*cfgPath)
+	trayRun(*cfgPath, *quiet)
 }
 
 type trayItem struct {

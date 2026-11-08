@@ -394,8 +394,9 @@ type server struct {
 	admin   string      // skrivnost skrbniškega API (admin.secret)
 	offline bool        // minigw router brez tekočega routerja: le serve.json
 	// offReason: zakaj sta Claude CLI in Codex ob zagonu izklopljena (H1: dovoljena mapa s Scratch); dnevnik, status, stran.
-	offReason string
-	settings  settingsState
+	offReason  string
+	offFolders []string // dovoljene mape iz serve.json, izpuščene ob zagonu (stran jih pokaže, da jih uporabnik odstrani)
+	settings   settingsState
 	pick      atomic.Pointer[pickFunc] // izbirno okno pladnja (Windows); nil = ni GUI
 	picking   atomic.Bool              // eno okno naenkrat
 	// agentsRunning: tekoči procesi agentov (claude, codex, grok), za status in posodobitev brez prekinitve
@@ -446,7 +447,9 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	// H1: dovoljena mapa, ki vsebuje Scratch (ali je v njem), bi agentom pokazala zrcala in kopije drugih naprav:
 	// ob zagonu (ročno urejen serve.json) take mape ne veljajo, Claude CLI in Codex sta izklopljena, opozorilo v dnevniku.
 	var offReason string
-	if bad := append(scratchOverlaps(c.AllowedFolders, c.Scratch), copilotCacheOverlaps(c.AllowedFolders)...); len(bad) > 0 {
+	bad := append(scratchOverlaps(c.AllowedFolders, c.Scratch), copilotCacheOverlaps(c.AllowedFolders)...)
+	slices.Sort(bad)
+	if bad = slices.Compact(bad); len(bad) > 0 { // mapa je lahko v obeh
 		offReason = "the allowed folder(s) " + strings.Join(bad, ", ") + " contain or are inside the scratch folder " + c.Scratch +
 			" or Copilot's package cache " + copilotCacheDir() + ": they are left out; save the allowed folders without them (settings page → Claude CLI → Allowed folders, or minigw gw claude --folders …), then turn Claude CLI and Codex on"
 		c.AllowedFolders = slices.DeleteFunc(slices.Clone(c.AllowedFolders), func(f string) bool { return slices.Contains(bad, f) })
@@ -482,6 +485,7 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	}
 	s.hub.logf = s.log.Printf
 	if s.offReason = offReason; offReason != "" {
+		s.offFolders = bad
 		s.log.Print("WARNING: Claude CLI and Codex are off: " + offReason)
 	}
 	if protectErr != nil {

@@ -759,6 +759,7 @@ if let asked = workFlag ?? SharedFolders.lookup(sharedFolders(), cwd: cwd)?.work
 }
 let work = mode.work
 readOnly = mode.readOnly
+let implicitWork = workFlag == nil && SharedFolders.lookup(sharedFolders(), cwd: cwd)?.work == nil
 
 // x-claude-mini-share: router po ponovnem zagonu počaka, da se mapa znova registrira (namesto napake cwd_unavailable).
 setenv("ANTHROPIC_CUSTOM_HEADERS", "x-claude-mini-session: \(sid)\nx-claude-mini-cwd: \(cwd)" + (wantShare ? "\nx-claude-mini-share: 1" : "")
@@ -805,14 +806,23 @@ if !wantShare || sid.isEmpty {
 }
 
 /// Načini po vrsti (auto: native → worktree → sync); naslednji, če prehod prejšnjega ne sprejme.
-@Sendable func registerShare(_ c: Connection, tries: [String], quiet: Bool) -> (ShareClient, Bool) {
+/// Način ni izbran (zastavica, MINIGW_WORK, share add): prehod brez priklopa mape (minigw serve na Windows, Linux) direct
+/// zavrne → kot auto: worktree v repozitoriju git s commitom, sicer sync. Izrecni direct ostane napaka.
+@Sendable func registerShare(_ c: Connection, tries: [String], quiet: Bool, top: String? = top, implicit: Bool = implicitWork) -> (ShareClient, Bool) {
     var sc = ShareClient(c, session: sid, root: URL(fileURLWithPath: cwd), readOnly: readOnly, kind: "direct")
     for (i, w) in tries.enumerated() {
         sc = ShareClient(c, session: sid, root: URL(fileURLWithPath: cwd), readOnly: readOnly, kind: w, top: top)
         if sc.register() { return (sc, true) }
         if i + 1 < tries.count, !quiet { err.write(Data("minigw: \(w) mode not available: \(sc.refusal); trying \(tries[i + 1])\n".utf8)) }
     }
-    return (sc, false)
+    guard implicit, sc.refusal.hasPrefix("this gateway supports --minigw-work=") else { return (sc, false) }
+    let t = Worktree.toplevel(cwd)
+    // M1: worktree le, če je koren repozitorija ta mapa; nadrejeni (dotfiles v domači mapi, monorepo) bi poslal tudi
+    // datoteke zunaj nje.
+    let real = { URL(fileURLWithPath: $0).resolvingSymlinksInPath().standardizedFileURL.path }
+    let auto = !readOnly && t.map { real($0) == real(cwd) && Worktree.hasCommit(top: $0) } == true ? ["worktree", "sync"] : ["sync"]
+    if !quiet { err.write(Data("minigw: the gateway has no folder mount; using \(auto[0]) mode (--minigw-work= to choose)\n".utf8)) }
+    return registerShare(c, tries: auto, quiet: quiet, top: t, implicit: false)
 }
 
 // Več profilov: lokalni usmerjevalnik pred Claude Code; mapa pri drugem prehodu ob prvi zahtevi zanj (#17).
