@@ -11,6 +11,7 @@ public struct CopilotConfig: Codable, Sendable, Equatable {
     public var write = false       // urejanje datotek v mapi seje (sicer le branje)
     public var commands = false    // ukazi lupine (sandbox-exec; z dovoljenjem: agent lahko uporabi prijavo GitHub)
     public var network = false     // spletna orodja (url); omrežja ukazov lupine ne omeji (copilot ga potrebuje sam)
+    public var askOthers = false          // »May ask other models«: agent vpraša drug model prehoda (AgentRun)
     public init() {}
 
     public var modelList: [String] {
@@ -26,6 +27,7 @@ public struct CopilotConfig: Codable, Sendable, Equatable {
         write = try c.decodeIfPresent(Bool.self, forKey: .write) ?? d.write
         commands = try c.decodeIfPresent(Bool.self, forKey: .commands) ?? d.commands
         network = try c.decodeIfPresent(Bool.self, forKey: .network) ?? d.network
+        askOthers = try c.decodeIfPresent(Bool.self, forKey: .askOthers) ?? d.askOthers
     }
 }
 
@@ -157,9 +159,10 @@ public enum Copilot {
     /// agenta. Po koncu glavnega procesa (in 2 s) SIGKILL skupini in vsakemu procesu s pisalnim koncem cevi (kot minigw run);
     /// ob prekinitvi SIGTERM, po 5 s SIGKILL.
     static func run(_ exe: String, args: [String], prompt: String, cwd: URL, env: [String: String], sandbox: String,
-                    onStep: @escaping @Sendable (String) -> Void) async throws -> String {
+                    started: @escaping @Sendable (pid_t) -> Void = { _ in }, onStep: @escaping @Sendable (String) -> Void) async throws -> String {
         guard let (pid, out, err, input) = Native.spawnGroup("/usr/bin/sandbox-exec", ["-p", sandbox, exe] + args, dir: cwd, env: env, input: true),
               let input else { throw Failure(message: "cannot start copilot") }
+        started(pid)
         AgentCount.running.add(1, ordering: .relaxed)
         defer { AgentCount.running.subtract(1, ordering: .relaxed) }
         let exit = ExitWaiter()
@@ -265,6 +268,7 @@ extension Router {
         var readOnly = false
         var tree: (root: URL, branch: String, maven: URL, read: [URL])?
         var prompt = ClaudeCLI.prompt(history: all.dropLast(), last: last)
+        var sharedDir: URL?
         if agent {
             let clientCwd = req.header("x-claude-mini-cwd")
             let shared = await Self.shares.mount(session: req.header("x-claude-mini-session") ?? "", cwd: clientCwd, base: localBase,
@@ -282,6 +286,7 @@ extension Router {
                                    rid: rid, writer: writer)
             }
             tree = await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "")
+            sharedDir = shared
             cwd = tree?.root ?? dir  // M3: koren klona namesto --add-dir; sporočilo spodaj pove mapo seje
             if shared != nil || tree != nil { visible = cwd }  // R3: le pot iz ShareHub sme biti v (skritem) Scratch
             if let shared, let clientCwd {
@@ -305,7 +310,9 @@ extension Router {
         }
         let extraEnv = tree.map { Worktree.harnessEnv(root: $0.root, maven: $0.maven) }
             ?? ["TMPDIR": tmp.path + "/", "CLANG_MODULE_CACHE_PATH": tmp.appendingPathComponent("ModuleCache").path]
-        let env = Copilot.environment(base, home: home, token: token, extra: extraEnv)
+        let run = agent ? await startAgentRun(req, kind: "copilot", dir: sharedDir, secretDir: reqDir) : nil  // peskovnik: zaprta le vrata prehoda; žeton v mapi zahteve
+        defer { run?.stop() }
+        let env = Copilot.environment(base, home: home, token: token, extra: extraEnv.merging(run?.env ?? [:]) { $1 })
         // Nadaljevanje seje Copilot (--session-id): ključ je dosedanji pogovor v tej mapi; stanje seje iz Scratch.
         let store = config.scratch("copilot").appendingPathComponent("sessions")
         let scope = Self.agentScope("copilot", req, cwd: cwd)
@@ -314,6 +321,7 @@ extension Router {
         if let existing, Copilot.copySession(store.appendingPathComponent(existing), to: home.appendingPathComponent("session-state/" + existing)) {
             prompt = last.text
         }
+        if agent, let note = agentNote("copilot") { prompt = note + "\n\n" + prompt }
         let prepHome = reqDir.appendingPathComponent("p")  // svoj prazen COPILOT_HOME, ne domača mapa seje (R9)
         let cache = RouterConfig.copilotCache.path.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
         if let box = Native.sandboxProfile(dir: tmp.path, network: false, hidden: [config.scratchURL.path, RouterConfig.defaultScratch.path],
@@ -326,9 +334,10 @@ extension Router {
                                 network: cfg.network && (tree == nil || config.worktreeCodexNetwork), session: session)
         let sessions = Self.copilotSessions, client = req.header("x-claude-mini-session") ?? ""
         return await replyWhenDone(body: body, model: "claude-copilot", rid: rid, writer: writer) {
-            let text = try await Copilot.run(exe, args: args, prompt: prompt, cwd: cwd, env: env, sandbox: sandbox) { [onActivity] s in
+            let text = try await Copilot.run(exe, args: args, prompt: prompt, cwd: cwd, env: env, sandbox: sandbox, started: { run?.started($0) }) { [onActivity] s in
                 onActivity(.step(id: rid, text: s))
             }
+            run?.stop()  // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb
             if agent { await Self.shares.syncBack(session: client) }  // sync: spremembe agenta k odjemalcu pred odgovorom
             if agent {
                 let fm = FileManager.default, next = store.appendingPathComponent(session + ".new-" + rid)

@@ -327,6 +327,32 @@ func peerCheck(ours, peer *net.TCPAddr) error {
 	return nil
 }
 
+// peerInTree (M2): vsi procesi z odjemalčevo vtičnico so root ali njegovi potomci (bwrap: v imenskem prostoru gostitelja).
+func peerInTree(ours, peer *net.TCPAddr, root int) bool {
+	for _, f := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		inode, _ := procSocketInode(b, peer, ours)
+		if inode == "" {
+			continue
+		}
+		pids := socketPIDs("socket:[" + inode + "]")
+		for _, p := range pids {
+			q, n := p, 0
+			for q != root && q > 1 && n < 4096 {
+				q, n = procPPID(q), n+1
+			}
+			if q != root {
+				return false
+			}
+		}
+		return len(pids) > 0
+	}
+	return false
+}
+
 // socketPIDs: procesi z odprto vtičnico (opisnik »socket:[inode]«); berljivi so le lastni procesi.
 func socketPIDs(target string) []int {
 	var out []int

@@ -546,7 +546,7 @@ func (s *server) messages(w http.ResponseWriter, r *req) (int, string) {
 			defer ew.done()
 			w = ew
 		}
-		if tools, _ := body["tools"].([]any); len(tools) > 0 { // sync: ena zahteva agenta naenkrat na kopijo
+		if tools, _ := body["tools"].([]any); len(tools) > 0 && runOf(r) == nil { // sync: ena zahteva agenta naenkrat na kopijo (vprašani agent: mapa je že klicateljeva)
 			copyDir, err := s.hub.lock(r.Context(), r.h("x-claude-mini-session"), r.owner(), r.h("x-claude-mini-share") == "1")
 			if err != nil {
 				return 499, model
@@ -586,7 +586,7 @@ func (s *server) messages(w http.ResponseWriter, r *req) (int, string) {
 			w = ew
 		}
 	}
-	if len(tools) > 0 { // sync: ena zahteva agenta naenkrat na kopijo
+	if len(tools) > 0 && runOf(r) == nil { // sync: ena zahteva agenta naenkrat na kopijo (vprašani agent: mapa je že klicateljeva)
 		copyDir, err := s.hub.lock(r.Context(), r.h("x-claude-mini-session"), r.owner(), r.h("x-claude-mini-share") == "1")
 		if err != nil {
 			return 499, model // Claude Code je med čakanjem prekinil
@@ -599,6 +599,9 @@ func (s *server) messages(w http.ResponseWriter, r *req) (int, string) {
 }
 
 func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliModel string, chat bool) int {
+	if why := chainRefusal(r, "claude"); why != "" { // vprašani agent: globina in brez ponovitve vrste (tudi pogovor)
+		return writeError(w, r.rid, 403, why)
+	}
 	all := turns(body)
 	if len(all) == 0 || all[len(all)-1].role != "user" {
 		return writeError(w, r.rid, 400, "Last message must be from the user")
@@ -608,12 +611,20 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		"--model", cliModel, "--strict-mcp-config", "--setting-sources", s.conf().SettingSources} // privzeto prazno: hooki iz mape odjemalca ne tečejo
 	prompt, session, scope, sessionID := last.text, r.h("x-claude-mini-session"), "", ""
 	var dir, extra string // extra: --append-system-prompt-file ali --system-prompt-file
-	var worktreeEnv []string
+	var worktreeEnv, runEnv []string
+	var run *agentRun // »May ask other models« (serve_agentcalls.go)
+	var wt, maven, objects string
+	parent := runOf(r) // vprašal ga je drug agent tega prehoda (serve_agentcalls.go)
 	extraFlag := "--append-system-prompt-file"
 	if !chat {
 		clientCwd := r.h("x-claude-mini-cwd")
-		share := s.hub.waitShare(r.Context(), session, r.owner(), r.h("x-claude-mini-share") == "1")
+		var share *serveShare
+		if parent == nil {
+			share = s.hub.waitShare(r.Context(), session, r.owner(), r.h("x-claude-mini-share") == "1")
+		}
 		switch {
+		case parent != nil: // mapa klicatelja, brez novega prenosa
+			dir, extra = parent.dir, nestedNote(parent)
 		case share != nil && share.tree != nil:
 			if worktreeNeedsUnsandboxed && !s.conf().AllowUnsandboxedBash { // L3: kot Codex in Copilot na Windows
 				return writeError(w, r.rid, 400, "Claude CLI in worktree mode on Windows needs \"Allow commands without a sandbox\" "+
@@ -653,9 +664,22 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			prompt = cliPrompt(history, last)
 		}
 		args = append(args, s.agentArgs(dir)...)
-		if wt, _, maven, objects, ok := s.hub.worktreeOf(session, "claude"); ok {
+		ok := false
+		if wt, _, maven, objects, ok = s.hub.worktreeOf(session, "claude"); parent != nil {
+			wt, maven, objects, ok = parent.wt, parent.maven, parent.objects, parent.wt != ""
+		}
+		if ok {
 			args = worktreeClaudeArgs(args, wt, maven, objects)
 			worktreeEnv = worktreeHarnessEnv(wt, maven)
+		}
+		ro := (share != nil && share.readOnly) || (parent != nil && parent.readOnly)
+		shared := share != nil || (parent != nil && parent.shared)
+		run, runEnv = s.startRun(r, "claude", dir, ro, shared, wt, maven, objects, "") // »May ask other models«
+		defer run.stop()
+		if run != nil {
+			exe := minigwExe()
+			extra += "\n\n" + askNote(exe)
+			args = sandboxAllowRead(args, exe, run.authFile) // M3: le ta datoteka iz Scratch
 		}
 	} else {
 		dir = s.conf().scratch("chat")
@@ -676,15 +700,13 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	if len(exe) == 0 {
 		return writeError(w, r.rid, 503, "claude not found on the gateway (install Claude Code or set \"claude\" in the config)")
 	}
-	select { // največ 6 procesov claude hkrati
-	case s.procs <- struct{}{}:
-		defer func() { <-s.procs }()
-	case <-r.Context().Done():
-		return 499
+	if st := s.procSlot(w, r); st != 0 {
+		return st
 	}
+	defer func() { <-s.procs }()
 	cmd := exec.CommandContext(r.Context(), exe[0], append(exe[1:], args...)...)
 	cmd.Dir = dir
-	cmd.Env = append(agentEnv(os.Environ()), worktreeEnv...) // brez ANTHROPIC_* (klic nazaj v router), žetonov GitHub/Copilot in agentov ključev (M1)
+	cmd.Env = append(append(agentEnv(os.Environ()), worktreeEnv...), runEnv...) // brez ANTHROPIC_* (klic nazaj v router), žetonov GitHub/Copilot in agentov ključev (M1)
 	cmd.Stdin = strings.NewReader(prompt)
 	stderr := &tailBuffer{}
 	cmd.Stderr = stderr
@@ -695,6 +717,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	if err != nil {
 		return writeError(w, r.rid, 500, "Cannot start claude: "+err.Error())
 	}
+	run.started(cmd.Process.Pid)
 	s.agentsRunning.Add(1)
 	defer s.agentsRunning.Add(-1)
 
@@ -751,12 +774,15 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		}
 	}
 	werr := cmd.Wait()
+	run.stop() // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb
 	if r.Context().Err() != nil {
 		return 499 // Claude Code je prekinil
 	}
 	// sync: spremembe agenta k odjemalcu pred koncem odgovora (Claude Code jih nato že vidi); med tem še ping
 	if !chat {
-		s.hub.syncBack(session, "claude")
+		if parent == nil { // vprašani agent: spremembe prenese klicatelj na koncu
+			s.hub.syncBack(session, "claude")
+		}
 	}
 	msg := t.resultError
 	if msg == "" && werr != nil && t.text == "" { // stderr le v dnevnik (I1)

@@ -15,6 +15,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
     public var allowLocalTools = false               // vsa orodja Claude Code na tem Macu brez vprašanj; preglasi tools/permissionMode
     public var disabledTools: [String] = []          // izjeme pri allowLocalTools (tabela v nastavitvah)
     public var settingSources = ""                   // M2: brez nastavitev map (hooki iz dovoljene mape bi tekli zunaj sandboxa), kot Go
+    public var askOthers = false          // »May ask other models«: agent vpraša drug model prehoda (AgentRun)
 
     public init() {}
 
@@ -100,6 +101,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
         allowLocalTools = try c.decodeIfPresent(Bool.self, forKey: .allowLocalTools) ?? d.allowLocalTools
         disabledTools = try c.decodeIfPresent([String].self, forKey: .disabledTools) ?? d.disabledTools
         settingSources = try c.decodeIfPresent(String.self, forKey: .settingSources) ?? d.settingSources
+        askOthers = try c.decodeIfPresent(Bool.self, forKey: .askOthers) ?? d.askOthers
         if settingSources == "project,local" { settingSources = "" }  // M2: stara privzeta vrednost → nova; izrecna druga ostane
     }
 }
@@ -414,6 +416,7 @@ extension Router {
         var prompt = last.text
         var sessionID: String?
         var registryKey: String?
+        var sharedDir: URL?
 
         if agent {
             // Mapa odjemalca (minigw na drugem Macu) ima prednost pred enako potjo na tem Macu.
@@ -438,6 +441,7 @@ extension Router {
                                    rid: rid, writer: writer)
             }
             cwd = dir
+            sharedDir = shared
             let scope = (req.header("x-claude-mini-session") ?? "") + "|" + dir.path
             registryKey = scope
             if let existing = await Self.sessions.get(ClaudeCLI.key(history, scope: scope)) {
@@ -470,6 +474,9 @@ extension Router {
             try await writer.write(chunks.reduce(Data(), +))
         }
 
+        let run = agent ? await startAgentRun(req, kind: "claude", dir: sharedDir) : nil
+        defer { run?.stop() }
+        if agent, let note = agentNote("claude") { args = Self.withNote(args, note, read: [Self.minigwExe] + (run.map { [$0.authFile.path] } ?? [])) }
         guard let exe = await ClaudeCLI.executable(cfg.executable) else {
             return await error(503, "api_error", cfg.executable.isEmpty ? "claude not found; set its path in Mini Gateway settings"
                                                                          : "claude not found at \(cfg.executable)", rid: rid, writer: writer)
@@ -486,6 +493,7 @@ extension Router {
         if agent, let t = await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "") {
             env.merge(Worktree.harnessEnv(root: t.root, maven: t.maven)) { $1 }
         }
+        for k in ["MINIGW_AGENT_URL", "MINIGW_AGENT_AUTH_FILE"] { env[k] = run?.env[k] }
         p.environment = env
         let stdin = Pipe(), stdout = Pipe(), stderr = Pipe()
         p.standardInput = stdin
@@ -496,6 +504,7 @@ extension Router {
 
         do {
             try p.run()
+            run?.started(p.processIdentifier)
         } catch {
             return await self.error(500, "api_error", "Cannot start claude: \(error.localizedDescription)", rid: rid, writer: writer)
         }
@@ -537,6 +546,7 @@ extension Router {
             return headSent ? 200 : 499
         }
         let status = await exit.wait()
+        run?.stop()  // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb
         // sync: spremembe agenta k odjemalcu pred koncem odgovora (Claude Code jih nato že vidi); med tem še ping
         if agent { await Self.shares.syncBack(session: req.header("x-claude-mini-session") ?? "") }
         pinger?.cancel()
@@ -559,6 +569,20 @@ extension Router {
             return 200
         }
         return await json(200, t.message(), rid: rid, writer: writer)
+    }
+
+    /// Navodilo agentu k --append-system-prompt (ali novo) in pot, ki jo sandbox Claude Code sme brati (minigw).
+    static func withNote(_ args: [String], _ note: String, read: [String]) -> [String] {
+        var a = args
+        if let i = a.firstIndex(of: "--append-system-prompt"), i + 1 < a.count { a[i + 1] += "\n\n" + note } else { a += ["--append-system-prompt", note] }
+        if let i = a.firstIndex(of: "--settings"), i + 1 < a.count,
+           var st = (try? JSONSerialization.jsonObject(with: Data(a[i + 1].utf8))) as? [String: Any],
+           var sb = st["sandbox"] as? [String: Any], var fs = sb["filesystem"] as? [String: Any] {
+            fs["allowRead"] = (fs["allowRead"] as? [String] ?? []) + read
+            sb["filesystem"] = fs; st["sandbox"] = sb
+            a[i + 1] = String(decoding: try! JSONSerialization.data(withJSONObject: st, options: [.sortedKeys]), as: UTF8.self)
+        }
+        return a
     }
 
     static func systemText(_ system: Any?) -> String? {

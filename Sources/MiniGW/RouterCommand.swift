@@ -16,6 +16,7 @@ minigw gw: show or change the Mini Gateway app on this Mac. Changes apply at onc
   minigw gw provider remove <name> | list
   minigw gw provider models <name> [text] [--all] [--enable m1,m2|all] [--disable m1,m2|all]
   minigw gw claude [--path FILE] [--tools T1,T2] [--folders DIR1,DIR2] [--allow-local-tools=true|false]
+                  [--ask-others=true|false]   (may ask other models of this gateway; needs --allow-local-tools)
   minigw gw token [rotate]                              print the connect line; rotate makes a new token
   minigw gw copilot token [remove]                      Copilot's token for commands (fine-grained, only Copilot
                                                         Requests), read from stdin or asked for
@@ -123,7 +124,7 @@ private func esc(_ s: String) -> String { s.addingPercentEncoding(withAllowedCha
 func routerCommand(_ argv: [String]) {
     // Ukazi in zastavice v poljubnem vrstnem redu (»--x v« ali »--x=v«).
     var pos: [String] = [], flags: [String: String] = [:]
-    let valued: Set<String> = ["name", "enable", "disable", "path", "tools", "folders", "allow-local-tools", "folder", "allow-unsandboxed-bash", "config"]
+    let valued: Set<String> = ["name", "enable", "disable", "path", "tools", "folders", "allow-local-tools", "ask-others", "folder", "allow-unsandboxed-bash", "config"]
     var i = 0
     while i < argv.count {
         let a = argv[i]
@@ -252,9 +253,13 @@ func routerCommand(_ argv: [String]) {
             guard v == "true" || v == "false" else { fail("--allow-local-tools: true or false") }
             body["allowLocalTools"] = v == "true"
         }
+        if let v = flags["ask-others"] {
+            guard v == "true" || v == "false" else { fail("--ask-others: true or false") }
+            body["askOthers"] = v == "true"
+        }
         let c = body.isEmpty ? a.call("GET", "/agents/claude") : a.call("PATCH", "/agents/claude", body)
         let path = (c["path"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "(from PATH)"
-        say(clean("path: \(path), found: \(c["found"] as? Bool ?? false)\ntools: \(c["tools"] as? String ?? "")\nallowLocalTools: \(c["allowLocalTools"] as? Bool ?? false)\nfolders: \(c["folders"] as? String ?? "")"))
+        say(clean("path: \(path), found: \(c["found"] as? Bool ?? false)\ntools: \(c["tools"] as? String ?? "")\nallowLocalTools: \(c["allowLocalTools"] as? Bool ?? false)\naskOthers: \(c["askOthers"] as? Bool ?? false)\nfolders: \(c["folders"] as? String ?? "")"))
 
     case "autostart":
         need(2, 2)

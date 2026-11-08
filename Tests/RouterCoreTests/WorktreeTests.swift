@@ -697,3 +697,47 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     #expect(show == "one\nuncommitted")
     #expect(Worktree.run(["--git-dir", mirror.repo.path, "cat-file", "-e", snap + ":secret.txt"]).status != 0)  // .git/info/exclude
 }
+
+/// I8: skrit Scratch za povezavo je skrit pod dobesedno in kanonično potjo (profil Native in Copilot).
+@Test func nativeProfileHidesScratchBehindASymlink() throws {
+    let base = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("i8-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: base) }
+    let real = base.appendingPathComponent("real-scratch"), link = base.appendingPathComponent("scratch-link")
+    try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
+    try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+    let p = try #require(Native.sandboxProfile(dir: base.appendingPathComponent("proj").path, home: base.path, network: true, hidden: [link.path]))
+    let hide = try #require(p.split(separator: "\n").first { $0.hasPrefix("(deny file-read-data file-write*") })
+    #expect(hide.contains("\"\(link.path)\"") && hide.contains("\"\(real.path)\""))
+}
+
+/// Agent-calls na native-direct: vprašani agent dela v mapi klicatelja v njegovem izvajanju in ne čaka na zaklep, ki ga
+/// drži klicatelj (sicer bi čakal nase).
+@Test func nestedAgentOnNativeDirectDoesNotWait() async throws {
+    let dir = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("nested-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let hub = ShareHub(), session = UUID().uuidString
+    _ = try #require(await hub.register(session: session, cwd: "/Volumes/share/x", key: nil, device: "dev", native: dir))
+    let parent = "parent-run"
+    let first = await ShareHub.$run.withValue(parent) {
+        await hub.mount(session: session, cwd: nil, base: "", device: "dev", roots: dir.deletingLastPathComponent().path, writes: true)
+    }
+    #expect(first == dir)  // klicatelj drži zaklep
+    var c = RouterConfig()
+    c.claudeCLI.askOthers = true; c.claudeCLI.allowLocalTools = true
+    let router = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]))
+    let caller = request("POST", "/v1/messages", headers: ["x-claude-mini-session": session, "x-claude-mini-cwd": "/Volumes/share/x"])
+    let run = try #require(await ShareHub.$run.withValue(parent) { await router.startAgentRun(caller, kind: "claude", dir: dir) })
+    defer { run.stop() }
+    let old = ShareHub.writerWait
+    ShareHub.writerWait = .seconds(1)
+    defer { ShareHub.writerWait = old }
+    let start = ContinuousClock.now
+    let nested = await AgentRun.$current.withValue(run) {
+        await ShareHub.$run.withValue(parent) {  // syncRun: vprašani agent v izvajanju klicatelja
+            await hub.mount(session: session, cwd: nil, base: "", device: "dev", roots: dir.deletingLastPathComponent().path, writes: true)
+        }
+    }
+    #expect(nested == dir && ContinuousClock.now - start < .milliseconds(500))
+    await hub.finish(run: parent)
+}

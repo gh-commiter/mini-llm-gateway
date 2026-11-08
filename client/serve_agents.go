@@ -37,6 +37,7 @@ type agentCLI struct {
 	Network    bool     `json:"network,omitempty"`    // Codex: omrežje za ukaze v sandboxu; Copilot: spletna orodja (url)
 	Write      bool     `json:"write,omitempty"`      // Copilot: pisanje (privzeto le branje)
 	Commands   bool     `json:"commands,omitempty"`   // Copilot: ukazi lupine (izrecno dovoljenje)
+	AskOthers  bool     `json:"askOthers,omitempty"`  // agent sme vprašati druge modele tega prehoda (serve_agentcalls.go)
 }
 
 func (a agentCLI) modelEnabled(m string) bool { return a.Models == nil || slices.Contains(a.Models, m) }
@@ -528,6 +529,12 @@ func parseGrokEvent(line []byte) (grokEvent, bool) {
 
 // agentFolder: sinhronizirana kopija mape odjemalca za agenta (le sync); st != 0 = odgovor že poslan.
 func (s *server) agentFolder(w http.ResponseWriter, r *req, label, agent string) (dir, note string, readOnly bool, st int) {
+	if p := runOf(r); p != nil && p.shared { // vprašal ga je drug agent: njegova mapa, brez novega prenosa
+		return p.dir, nestedNote(p), p.readOnly, 0
+	} else if p != nil { // L1: privzeta mapa prehoda ni deljena; tudi neposredno bi bila zavrnjena
+		return "", "", false, writeError(w, r.rid, 400, "The folder "+r.h("x-claude-mini-cwd")+" is not shared with the gateway, so "+label+
+			" agents cannot work in it (the asking agent works in the gateway's own folder)")
+	}
 	session, clientCwd := r.h("x-claude-mini-session"), r.h("x-claude-mini-cwd")
 	share := s.hub.waitShare(r.Context(), session, r.owner(), r.h("x-claude-mini-share") == "1")
 	switch {
@@ -583,6 +590,9 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 	if r.h("x-claude-mini-session") == "" {
 		return writeError(w, r.rid, 400, k.prefix+" needs a synced folder: run minigw with MINIGW_WORK=sync in a project folder")
 	}
+	if why := chainRefusal(r, k.name); why != "" { // vprašani agent: globina in brez ponovitve vrste
+		return writeError(w, r.rid, 403, why)
+	}
 	if s.hub.isWorktree(r.h("x-claude-mini-session")) && (k.name == "grok" || !ac.canWrite(k)) { // besedila kot na Macu
 		msg := "Grok is not supported in worktree mode yet; use sync (MINIGW_WORK=sync)"
 		if k.name != "grok" {
@@ -594,6 +604,9 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 	dir, note, readOnly, st := s.agentFolder(w, r, k.bin, k.name)
 	if st != 0 {
 		return st
+	}
+	if c.askOthers(k.name) { // vrata izvajanja (startRun spodaj)
+		note += "\n\n" + askNote(minigwExe())
 	}
 	prompt := note + "\n\n" + cliPrompt(history, last)
 	var extra []string
@@ -622,12 +635,10 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			}
 		}
 	}
-	select { // skupaj s claude največ 6 procesov hkrati
-	case s.procs <- struct{}{}:
-		defer func() { <-s.procs }()
-	case <-r.Context().Done():
-		return 499
+	if st := s.procSlot(w, r); st != 0 {
+		return st
 	}
+	defer func() { <-s.procs }()
 	ctx, cancel := context.WithTimeout(r.Context(), agentTimeout) // L5
 	defer cancel()
 	return s.replyWhenDone(w, r, body, func() (string, error) {
@@ -647,7 +658,16 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 		m := agentMounts{cfgDir: s.cfgDir, state: state, envVar: strings.ToUpper(k.bin) + "_HOME", files: files, rw: append([]string{dir, tmp}, extra...),
 			hide: c.Scratch}
 		wt, _, maven, objects, inTree := s.hub.worktreeOf(r.h("x-claude-mini-session"), k.name)
+		if p := runOf(r); p != nil { // klon klicatelja
+			wt, maven, objects, inTree = p.wt, p.maven, p.objects, p.wt != ""
+		}
+		run, runEnv := s.startRun(r, k.name, dir, readOnly, true, wt, maven, objects, tmp) // »May ask other models«; mapa je deljena (agentFolder); žeton v tmp zahteve
+		defer run.stop()
 		withTree := func(m agentMounts) agentMounts { // worktree: Maven agentov, objekti zrcala (branje), .git klona le za branje
+			m.env, m.started = append(m.env, runEnv...), run.started
+			if runEnv != nil {
+				m.ro = append(m.ro, minigwExe())
+			}
 			if inTree {
 				m.rw, m.ro = append(m.rw, maven), append(m.ro, objects)
 				m.pins = []string{filepath.Join(wt, ".git")} // L1: .git klona je točka priklopa (mv/rm: EBUSY)
@@ -762,7 +782,10 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			return "", err
 		}
 		if agent {
-			s.hub.syncBack(r.h("x-claude-mini-session"), k.name) // spremembe agenta k odjemalcu pred odgovorom
+			run.stop()           // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb
+			if runOf(r) == nil { // vprašani agent: spremembe prenese klicatelj na koncu
+				s.hub.syncBack(r.h("x-claude-mini-session"), k.name) // spremembe agenta k odjemalcu pred odgovorom
+			}
 			if thread != "" {
 				s.sessions.set(transcriptKey(append(slices.Clone(all), turn{"assistant", text}), scope), thread)
 			}
@@ -780,7 +803,7 @@ func agentEnv(env []string) []string {
 	for _, e := range env {
 		name, _, _ := strings.Cut(e, "=")
 		if strings.HasPrefix(name, "ANTHROPIC_") || strings.HasPrefix(name, "CLAUDE_CODE_") || slices.Contains([]string{"CLAUDECODE",
-			"DBUS_SESSION_BUS_ADDRESS", "SSH_AUTH_SOCK", "GPG_AGENT_INFO", "GNOME_KEYRING_CONTROL", "CODEX_HOME", "GROK_HOME",
+			"DBUS_SESSION_BUS_ADDRESS", "SSH_AUTH_SOCK", "GPG_AGENT_INFO", "GNOME_KEYRING_CONTROL", "CODEX_HOME", "GROK_HOME", "MINIGW_AGENT_URL", "MINIGW_AGENT_AUTH_FILE",
 			"GH_TOKEN", "GITHUB_TOKEN"}, name) || strings.HasPrefix(name, "COPILOT_") {
 			continue
 		}
@@ -865,6 +888,25 @@ var agentTimeout = 30 * time.Minute
 // maxAgentLine: največja vrstica izhoda agenta (JSONL).
 const maxAgentLine = 1 << 20
 
+// procSlot: mesto med največ 6 procesi agentov (s.procs; sprosti ga klicatelj). Vprašani agent (M1) ne čaka: mesto
+// drži njegov klicatelj, čakanje bi lahko zaklenilo vse, zato 429, ko jih ni.
+func (s *server) procSlot(w http.ResponseWriter, r *req) int {
+	if runOf(r) != nil {
+		select {
+		case s.procs <- struct{}{}:
+			return 0
+		default:
+			return writeError(w, r.rid, 429, "The gateway already runs its maximum of agents; ask again later")
+		}
+	}
+	select {
+	case s.procs <- struct{}{}:
+		return 0
+	case <-r.Context().Done():
+		return 499
+	}
+}
+
 func (s *server) runAgentProcess(ctx context.Context, r *req, exe string, args []string, m agentMounts, dir, stdin string, onLine func([]byte)) error {
 	name, args := agentWrap(exe, args, m) // Linux: domača mapa in mapa nastavitev skriti (bwrap), če je na voljo
 	cmd := exec.CommandContext(ctx, name, args...)
@@ -882,6 +924,9 @@ func (s *server) runAgentProcess(ctx context.Context, r *req, exe string, args [
 	}
 	if err != nil {
 		return err
+	}
+	if m.started != nil {
+		m.started(cmd.Process.Pid)
 	}
 	s.agentsRunning.Add(1)
 	defer s.agentsRunning.Add(-1)

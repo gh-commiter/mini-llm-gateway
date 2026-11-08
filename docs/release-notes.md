@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Codex on a Mac gateway shared by several devices:** Codex's own sandbox can read every file of the gateway's user,
+  so Codex agents are not isolated between devices for reads (other devices' synced copies and worktree clones in
+  Scratch, and an agent run's token file there). Allow Codex only for devices you trust with that.
 - **Native mode on a git repository works on branches (new default):** each agent run gets its own clone on the gateway
   and a branch `minigw/<agent>-<session>-<n>` from your current state (also uncommitted changes); the branch then appears
   in your repository (fast-forward only, no hooks, fsck), while your files, index and checked-out branch stay as they
@@ -17,6 +20,16 @@
   `minigw gw claude --folder`): as on the Mac, an agent request without a shared, synced or worktree folder is refused.
   A stored `folder` becomes an allowed folder; `minigw serve --folder X` (and `serve init`) still works, adds X to the
   allowed folders and says it is deprecated.
+- **An agent may ask another model (off by default):** with **May ask other models** on for Claude CLI, Codex, Grok or
+  Copilot (Settings, the settings page, `PATCH /agents/{name} {"askOthers": true}`, `minigw gw claude --ask-others=true`),
+  an agent on the gateway can ask another model of that gateway itself, for example a remote `claude-cli-opus` asking
+  an OpenRouter model or `claude-codex-…`: its instructions name the gateway's `minigw -p --model <id> "…"`, which sends
+  the question straight to a loopback port and token for that run only (`MINIGW_AGENT_URL`, the token in a file of that run: `MINIGW_AGENT_AUTH_FILE`), with
+  the rights of your device, also from inside Claude Code's sandbox (through its proxy). The asked agent works in the
+  same folder (sync copy, worktree branch or native folder) and the caller waits. One level deep, never the same kind of
+  agent, at most 2 questions at a time per agent; the run token works only for that agent's own processes. Claude CLI
+  needs **Allow local tools** (Bash) for it, Codex "Allow network access for commands". Calls to another gateway come
+  later.
 - **This user's apps without a token (off by default):** programs of the gateway's own user on the same computer can use
   the models and agents (`/v1/messages`, `/v1/models`) without the token, for example an app pointed at `http://127.0.0.1:8765`.
   The gateway checks the process behind the connection (same user, not one of its agents); the request needs

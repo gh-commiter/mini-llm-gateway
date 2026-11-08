@@ -161,6 +161,54 @@ func confinedApp(pid int) bool {
 	return v != 0
 }
 
+// peerInTree (M2): proces odjemalca je root ali njegov potomec (starši iz posnetka procesov).
+func peerInTree(ours, peer *net.TCPAddr, root int) bool {
+	pid, err := tcpOwnerPID(ours, peer)
+	if err != nil {
+		return false
+	}
+	snap, err := syscall.CreateToolhelp32Snapshot(syscall.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return false
+	}
+	defer syscall.CloseHandle(snap)
+	parent := map[uint32]uint32{}
+	e := syscall.ProcessEntry32{Size: uint32(unsafe.Sizeof(syscall.ProcessEntry32{}))}
+	for err = syscall.Process32First(snap, &e); err == nil; err = syscall.Process32Next(snap, &e) {
+		parent[e.ProcessID] = e.ParentProcessID
+	}
+	for q, n := pid, 0; n < 4096; q, n = parent[q], n+1 {
+		if q == uint32(root) {
+			return true
+		}
+		// L4: PID starša je lahko ponovno uporabljen (sirota mrtvega starša): starš mora biti ustvarjen pred otrokom.
+		p := parent[q]
+		if q == 0 || p == q || !createdBefore(p, q) {
+			return false
+		}
+	}
+	return false
+}
+
+// createdBefore: proces a je bil ustvarjen pred procesom b (GetProcessTimes); ne da se preveriti = ne.
+func createdBefore(a, b uint32) bool {
+	created := func(pid uint32) (int64, bool) {
+		h, err := syscall.OpenProcess(0x1000 /* PROCESS_QUERY_LIMITED_INFORMATION */, false, pid)
+		if err != nil {
+			return 0, false
+		}
+		defer syscall.CloseHandle(h)
+		var c, e, k, u syscall.Filetime
+		if syscall.GetProcessTimes(h, &c, &e, &k, &u) != nil {
+			return 0, false
+		}
+		return c.Nanoseconds(), true
+	}
+	ta, ok1 := created(a)
+	tb, ok2 := created(b)
+	return ok1 && ok2 && ta < tb
+}
+
 // tcpOwnerPID: PID procesa z odjemalčevo stranjo povezave (GetExtendedTcpTable, TCP_TABLE_OWNER_PID_ALL).
 func tcpOwnerPID(ours, peer *net.TCPAddr) (uint32, error) {
 	for _, v6 := range []bool{false, true} {

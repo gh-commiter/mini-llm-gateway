@@ -92,7 +92,8 @@ public final class Router: Sendable {
         let (status, model, provider) = await route(req, rid: rid, writer: writer)
         writer.close()
         let ms = Int(Date().timeIntervalSince(start) * 1000)
-        Self.log.info("\(rid, privacy: .public) \(req.method, privacy: .public) \(req.path.hasPrefix("/dav/") ? "/dav/…" : req.path, privacy: .public) model=\(model ?? "-", privacy: .public) provider=\(provider ?? "-", privacy: .public) status=\(status) \(ms)ms bytes=\(req.body.count)")
+        let via = AgentRun.current.map { " via=" + $0.via } ?? ""  // L3: vprašal ga je agent tega prehoda
+        Self.log.info("\(rid, privacy: .public)\(via, privacy: .public) \(req.method, privacy: .public) \(req.path.hasPrefix("/dav/") ? "/dav/…" : req.path, privacy: .public) model=\(model ?? "-", privacy: .public) provider=\(provider ?? "-", privacy: .public) status=\(status) \(ms)ms bytes=\(req.body.count)")
         if provider != "share" { onLog(RequestLog(time: start, method: req.method, path: req.path, model: model, provider: provider, status: status, ms: ms)) }  // brez prometa map v »Activity«
     }
 
@@ -139,6 +140,9 @@ public final class Router: Sendable {
 
         if req.path == Self.adminPrefix || req.path.hasPrefix(Self.adminPrefix + "/") {  // lastna skrivnost, ne žeton
             return (await adminHTTP(req, rid: rid, writer: writer), nil, "admin")
+        }
+        if req.header(AgentRun.chainHeader) != nil, AgentRun.current == nil {  // veriga agentov je le v prehodu; od zunaj je ponarejena
+            return (await error(400, "invalid_request_error", "The X-Minigw-Agent-Chain header is not accepted", rid: rid, writer: writer), nil, nil)
         }
         guard authorized(req) || localApp(req) else {
             return (await error(401, "authentication_error", "Invalid or missing token", rid: rid, writer: writer), nil, nil)
@@ -216,13 +220,13 @@ public final class Router: Sendable {
                     if req.path.hasSuffix("/count_tokens") {
                         return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "grok")
                     }
-                    return (await syncRun(agent: "grok") { await runGrok(req, body: body, model: grokModel, rid: rid, writer: await early(req, body, rid, writer)) }, model, "grok")
+                    return (await syncRun(agent: "grok", rid: rid, writer: writer) { await runGrok(req, body: body, model: grokModel, rid: rid, writer: await early(req, body, rid, writer)) }, model, "grok")
                 }
                 if config.codex.enabled, let codexModel = Codex.match(model), codexModel.map(config.codex.isModelEnabled) ?? true {
                     if req.path.hasSuffix("/count_tokens") {
                         return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "codex")
                     }
-                    return (await syncRun(agent: "codex") { await runCodex(req, body: body, model: codexModel, rid: rid, writer: await early(req, body, rid, writer)) }, model, "codex")
+                    return (await syncRun(agent: "codex", rid: rid, writer: writer) { await runCodex(req, body: body, model: codexModel, rid: rid, writer: await early(req, body, rid, writer)) }, model, "codex")
                 }
                 if config.foundry.enabled, model.hasPrefix(Foundry.prefix), Foundry.validModel(String(model.dropFirst(Foundry.prefix.count))) {
                     if req.path.hasSuffix("/count_tokens") {
@@ -234,7 +238,7 @@ public final class Router: Sendable {
                     if req.path.hasSuffix("/count_tokens") {
                         return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "copilot")
                     }
-                    return (await syncRun(agent: "copilot") { await runCopilot(req, body: body, model: copilotModel, rid: rid, writer: writer) }, model, "copilot")
+                    return (await syncRun(agent: "copilot", rid: rid, writer: writer) { await runCopilot(req, body: body, model: copilotModel, rid: rid, writer: writer) }, model, "copilot")
                 }
                 if config.appleFM.enabled, AppleFM.ids.contains(model) {
                     if req.path.hasSuffix("/count_tokens") {
@@ -246,7 +250,7 @@ public final class Router: Sendable {
                     if req.path.hasSuffix("/count_tokens") {
                         return (await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer), model, "claude-cli")
                     }
-                    return (await syncRun(agent: "claude") { await runCLI(req, body: body, cliModel: m.cliModel, chatOnly: m.chatOnly, rid: rid, writer: await early(req, body, rid, writer)) },
+                    return (await syncRun(agent: "claude", rid: rid, writer: writer) { await runCLI(req, body: body, cliModel: m.cliModel, chatOnly: m.chatOnly, rid: rid, writer: await early(req, body, rid, writer)) },
                             model, "claude-cli")
                 }
                 return (await error(404, "not_found_error", "Unknown model: \(model)", rid: rid, writer: writer), model, nil)
@@ -439,7 +443,12 @@ public final class Router: Sendable {
         return w
     }
 
-    func syncRun(agent: String, _ run: () async -> Int) async -> Int {
+    /// Vgnezdena zahteva (AgentRun): pravila verige, nato v izvajanju klicatelja (ista mapa, isti klon; konča ga klicatelj).
+    func syncRun(agent: String, rid: String, writer: ResponseWriter, _ run: () async -> Int) async -> Int {
+        if let p = AgentRun.current {
+            if let why = AgentRun.refusal(agent) { return await error(403, "permission_error", why, rid: rid, writer: writer) }
+            return await ShareHub.$run.withValue(p.runID) { await ShareHub.$agent.withValue(agent) { await run() } }
+        }
         let id = UUID().uuidString
         let status = await ShareHub.$run.withValue(id) { await ShareHub.$agent.withValue(agent) { await run() } }
         await Self.shares.finish(run: id)

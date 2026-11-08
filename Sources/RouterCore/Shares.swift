@@ -293,6 +293,7 @@ public actor ShareHub {
             for _ in 0..<60 where bySession[session] == nil { try? await Task.sleep(for: .milliseconds(500)) }
         }
         guard let s = share(session: session, device: device), cwd == nil || cwd == s.cwd else { return nil }
+        if let p = AgentRun.current, p.session == session, let dir = p.dir { return dir }  // vprašani agent: mapa klicatelja
         if let tree = s.tree { return await worktreeMount(s, tree, roots: roots, scratch: scratch) }
         if let native = s.native {  // ista mapa: brez priklopa in kopije; še vedno ista kanonična pot in v dovoljenih mapah
             guard Sync.real(native)?.path == native.path, let roots, ClaudeCLI.resolveCwd(native.path, roots: roots, scratch: scratch) != nil else { return nil }
@@ -510,6 +511,7 @@ public actor ShareHub {
     /// Po agentu: minigw prevzame spremembe klona izvajanja (ne pri --minigw-ro), nato gredo v kopijo.
     /// Konča se pred odgovorom, da jih Claude Code že vidi.
     func syncBack(session: String) async {
+        guard AgentRun.current == nil else { return }  // vprašani agent: prevzem ob koncu izvajanja klicatelja
         if let s = bySession[session], let tree = s.tree { await worktreeBack(s, tree); return }
         guard let s = bySession[session], let copy = s.copy, !s.readOnly else { return }
         let r = Self.run.flatMap { runs[$0] }.flatMap { $0.share === s ? $0 : nil }
