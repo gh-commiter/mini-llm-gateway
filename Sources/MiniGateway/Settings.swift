@@ -284,7 +284,7 @@ struct SettingsView: View {
             Section {
                 Toggle("Allow this user's apps without a token", isOn: $draft.allowLocalApps)
             } footer: {
-                Text("Programs of this user on this computer may use the models without the token (they still send an Anthropic header, so web pages cannot). Other users, other computers and the gateway's own agents need the token.").font(.caption).foregroundStyle(.secondary)
+                Text("Programs of this user on this computer may use the models without the token (they still send an Anthropic header, so web pages cannot). Other users, other computers, the gateway's own agents, apps in a web view and, on the Mac, sandboxed apps (also commands in Claude Code's sandbox) need the token.").font(.caption).foregroundStyle(.secondary)
             }
             ScratchSection(draft: $draft)
             Section {

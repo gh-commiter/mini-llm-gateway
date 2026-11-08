@@ -7,7 +7,8 @@
   The gateway checks the process behind the connection (same user, not one of its agents); the request needs
   `anthropic-version` or `x-api-key`, a loopback `Host` and no `Origin`, so web pages cannot use it. Other users, other
   computers, the admin API and device approval are unchanged. Switch: General → **Allow this user's apps without a
-  token** (`allowLocalApps`). On `minigw serve` for Windows and Linux; on the Mac in the app.
+  token** (`allowLocalApps`). On `minigw serve` for Windows and Linux; on the Mac in the app. On the Mac, sandboxed apps
+  (also commands in Claude Code's sandboxed Bash) and, everywhere, apps in a web view still need the token.
 - Updates never go back to an older signed release: SHA256SUMS carries a signed `VERSION` line, and the plugin's
   minigw update, `install.sh` and `minigw serve install` refuse a release older than the installed minigw
   (`--allow-downgrade`, or `MINIGW_ALLOW_DOWNGRADE=1` for the plugin, to go back on purpose).

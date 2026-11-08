@@ -524,6 +524,12 @@ item (the admin secret); `minigw` talks to the app only after the app proves its
   the gateway's agents). The request must carry `anthropic-version` or `x-api-key`, a loopback `Host` and no `Origin`,
   so a web page cannot send it. Other users of the computer, other computers and the admin API still need their
   token or secret. Turn it off if you do not trust every program you run.
+  - Apps that call from a web view (Electron, WKWebView, WebView2) send `Origin` and need the token.
+  - On the Mac, sandboxed apps of this user need the token too, including commands run by Claude Code's sandboxed
+    Bash (the gateway cannot tell them from its own agents).
+  - `minigw` itself keeps sending the token from its local profile.
+  - Example: `ANTHROPIC_BASE_URL=http://127.0.0.1:8765 ANTHROPIC_AUTH_TOKEN=local claude` (any value works; Claude
+    Code needs one to start).
 - **Providers over http.** A provider's API key goes over `http` only to localhost, a private or loopback IP or a
   `.local` name, and only with **Allow http** on. Such names and addresses are no proof that the provider is on your
   own network (a VPN, another Wi-Fi or a spoofed mDNS answer can serve them), so prefer `https`.

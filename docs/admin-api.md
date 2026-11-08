@@ -121,6 +121,8 @@ Notes:
   client is a process of the gateway's own user on this computer (loopback; macOS libproc, Linux `/proc/net/tcp`,
   Windows the TCP table and the process SID), not one of the gateway's agents, sends `anthropic-version` or `x-api-key`,
   has a loopback `Host` and no `Origin`. Everything else still needs the token (401); device rules are unchanged.
+  Apps calling from a web view send `Origin` and need the token. On the Mac, sandboxed processes of this user
+  (including commands in Claude Code's sandboxed Bash) need the token, as the gateway's agents do.
   `minigw serve` on macOS (development only) never skips the token.
 - `POST /devices` takes only a valid device ID. `pending` lists the last 20 devices that were refused since the
   gateway started (in memory), newest last.
