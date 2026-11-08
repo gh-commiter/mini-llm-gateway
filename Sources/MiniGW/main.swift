@@ -177,10 +177,11 @@ func call(_ c: Connection, _ method: String, _ path: String, _ headers: [String:
 /// Mac mini odjemalca ne doseže, zato vse teče po povezavah, ki jih odpre minigw (long poll).
 /// --minigw-work=sync: namesto priklopa router dobi kopijo (Sync); pred agentom jo minigw posodobi, po njem prevzame spremembe.
 final class ShareClient: @unchecked Sendable {
-    let c: Connection, session: String, root: URL, readOnly: Bool, kind: String  // direct, sync, native, worktree
+    let c: Connection, session: String, root: URL, readOnly: Bool, kind: String  // direct, sync, native, native-direct, worktree
     let top: String?  // worktree: koren repozitorija git
     var sync: Bool { kind == "sync" }
-    var native: Bool { kind == "native" }
+    var native: Bool { kind == "native" || kind == "native-direct" }
+    var branches = false  // native v repozitoriju git: agenti na svojih vejah (odgovor prehoda)
     var worktree: Bool { kind == "worktree" }
     var refusal = ""  // zakaj router mape ni sprejel
     static let writeMethods: Set<String> = ["PUT", "DELETE", "MKCOL", "MOVE", "COPY", "PROPPATCH", "LOCK"]
@@ -199,7 +200,8 @@ final class ShareClient: @unchecked Sendable {
 
     func register() -> Bool {
         var h = ["x-claude-mini-session": session, "x-claude-mini-cwd": root.path, "x-share-key": key,
-                 "x-share-mode": readOnly ? "ro" : "rw", "x-claude-mini-work": kind]
+                 "x-share-mode": readOnly ? "ro" : "rw", "x-claude-mini-work": native ? "native" : kind]
+        if kind == "native-direct" { h["x-native-inplace"] = "1" }  // agenti v mapi sami (starejši prehod to že dela)
         if worktree { h["x-worktree-top"] = top ?? "" }
         if native {  // vsaka registracija (tudi po ponovnem zagonu routerja) z novim dokazom
             let (proof, why) = nativeProof(c, root.path)
@@ -213,6 +215,7 @@ final class ShareClient: @unchecked Sendable {
             return false
         }
         lock.withLock { current = k }
+        branches = o?["branches"] as? Bool == true
         return true
     }
 
@@ -465,13 +468,13 @@ func autoShare(_ path: String) -> Bool {
 
 func shareCommand(_ a: [String]) -> Never {
     let sub = a.first ?? "list"
-    // add: --work=direct|sync|native in --ro = privzeti način te mape in podmap (zastavica ob zagonu ima prednost)
+    // add: --work=direct|sync|native|native-direct|worktree|auto in --ro = privzeti način te mape in podmap (zastavica ob zagonu ima prednost)
     var work: String?, ro = false, rest: [String] = []
     for x in a.dropFirst() {
         if x.hasPrefix("--work=") { work = String(x.dropFirst(7)) } else if x == "--ro" { ro = true } else { rest.append(x) }
     }
-    if let work, !SharedFolders.modes.contains(work) { fail("unknown --work=\(work) (use direct, sync, native, worktree or auto)") }
-    if work == "native", ro { fail("--work=native cannot be read-only (the agent works in the gateway's own folder)") }
+    if let work, !SharedFolders.modes.contains(work) { fail("unknown --work=\(work) (use direct, sync, native, native-direct, worktree or auto)") }
+    if let work, work.hasPrefix("native"), ro { fail("--work=\(work) cannot be read-only (the agent works in the gateway's own folder)") }
     let dir = URL(fileURLWithPath: rest.first ?? FileManager.default.currentDirectoryPath).standardizedFileURL.path
     guard SharedFolders.validPath(dir) else { fail("folder names with tabs or line breaks cannot be shared") }
     var list = sharedFolders()
@@ -501,7 +504,7 @@ func shareCommand(_ a: [String]) -> Never {
         if list.isEmpty { print("no extra shared folders (folders under your home folder are shared by default)") }
         list.forEach { print(describe($0)) }
     default:
-        fail("usage: minigw share add [--work=direct|sync|native] [--ro] [folder] | minigw share remove [folder] | minigw share list")
+        fail("usage: minigw share add [--work=direct|sync|native|native-direct|worktree|auto] [--ro] [folder] | minigw share remove [folder] | minigw share list")
     }
     exit(0)
 }
@@ -519,7 +522,7 @@ args.removeAll { $0 == "--minigw-ro" }
 var workFlag = ProcessInfo.processInfo.environment["MINIGW_WORK"].flatMap { $0.isEmpty ? nil : $0 }
 for a in args where a.hasPrefix("--minigw-work=") { workFlag = String(a.dropFirst("--minigw-work=".count)) }
 args.removeAll { $0.hasPrefix("--minigw-work=") }
-if let w = workFlag, !SharedFolders.modes.contains(w) { fail("unknown --minigw-work=\(w) (use direct, sync, native, worktree or auto)") }
+if let w = workFlag, !SharedFolders.modes.contains(w) { fail("unknown --minigw-work=\(w) (use direct, sync, native, native-direct, worktree or auto)") }
 // --minigw-profile <ime> (ali =ime): cel ukaz le s tem prehodom (#17).
 while let i = args.firstIndex(where: { $0 == "--minigw-profile" || $0.hasPrefix("--minigw-profile=") }) {
     if args[i] == "--minigw-profile" {
@@ -640,11 +643,12 @@ case "--minigw-help", "-h", "--help", "-v", "--version":
         minigw profiles [default P]                list profiles, or pick the default (its models also without @P)
         minigw --minigw-profile P …                 use only profile P for this command
         minigw share add|remove [folder] | list    also share a system or hidden folder with the gateway
-        minigw share add --work=native|sync|direct [--ro] [folder]   default mode for that folder (flag/env wins)
+        minigw share add --work=native|native-direct|sync|direct [--ro] [folder]   default mode for that folder (flag/env wins)
         minigw gw status|devices|provider|claude|token …    change the Mini Gateway app on this Mac (minigw gw help)
         minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)
         minigw --minigw-work=sync [claude args]    agents work in a synced copy on the gateway (or MINIGW_WORK=sync)
-        minigw --minigw-work=native [claude args]  folder is the gateway's SMB share: agents work in it there (or MINIGW_WORK=native)
+        minigw --minigw-work=native [claude args]  folder is the gateway's SMB share: agents work there; git repository: each on its own branch minigw/… (or MINIGW_WORK=native)
+        minigw --minigw-work=native-direct [claude args]  as native, but agents change the folder itself, one writing agent at a time
         minigw --minigw-work=worktree [claude args]  git repository: agents work in a clone on the gateway, results come back as branches minigw/…
         minigw --minigw-work=auto [claude args]    gateway share → native, git repository → worktree, otherwise sync (--minigw-ro → direct)
         minigw run [--] <command> [args …]          run a build in this folder on the gateway (SMB share, allowed in its Settings)
@@ -703,7 +707,7 @@ let wantShare = shareEnv == "1"
     || (shareEnv != "0" && remoteRouter
         && (autoShare(cwd) || SharedFolders.lookup(sharedFolders(), cwd: cwd) != nil))
 let mode = SharedFolders.mode(flag: workFlag, saved: SharedFolders.lookup(sharedFolders(), cwd: cwd), readOnly: readOnly)
-if (workFlag ?? SharedFolders.lookup(sharedFolders(), cwd: cwd)?.work) == "native", mode.work != "native" {
+if let asked = workFlag ?? SharedFolders.lookup(sharedFolders(), cwd: cwd)?.work, asked.hasPrefix("native"), mode.work != asked {
     err.write(Data("minigw: native mode cannot be read-only; sharing read-only over the network instead\n".utf8))
 }
 let work = mode.work
@@ -735,8 +739,10 @@ if !wantShare || sid.isEmpty {
     // le šifrirani proxy
 } else if registered {
     share.start()
-    if share.native {
-        err.write(Data("minigw: \(cwd) is a folder of \(routerHost) (SMB): agent models work in it there directly (native)\n".utf8))
+    if share.native && share.branches {
+        err.write(Data("minigw: \(cwd) is a folder of \(routerHost) (SMB): agent models work there in clones of this git repository, each on its own branch minigw/… (native; --minigw-work=native-direct = in the folder itself)\n".utf8))
+    } else if share.native {
+        err.write(Data("minigw: \(cwd) is a folder of \(routerHost) (SMB): agent models work in it there directly, one writing agent at a time (native)\n".utf8))
     } else if share.worktree {
         err.write(Data("minigw: agent models work in a clone of this git repository on \(routerHost); their work comes back as branches minigw/… (worktree)\n".utf8))
     } else {

@@ -551,3 +551,104 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     let branches = g(client, "for-each-ref", "--format=%(refname:short)", "refs/heads/minigw").split(separator: "\n").map(String.init)
     #expect(branches.contains { g(client, "show", "\($0):after.txt") == "after" }, "\(branches)")
 }
+
+/// Native z git (privzeto): agenti v klonih na svojih vejah iz posnetka mape na tem Macu (brez minigw, brez bundla); veje
+/// pridejo naravnost v repozitorij uporabnika, njegove datoteke, indeks, HEAD in nastavitve ostanejo nespremenjeni.
+@Test func nativeGitParallelBranchesInTheRealRepository() async throws {
+    let (root, client, mirror) = try fixture()
+    defer { cleanup(root) }
+    try file(client, "sub/s.txt", "s\n"); g(client, "add", "sub/s.txt"); g(client, "commit", "-qm", "sub")
+    try file(client, "a.txt", "one\nuncommitted\n")
+    let status = g(client, "status", "--porcelain"), head = g(client, "rev-parse", "HEAD")
+    let index = try Data(contentsOf: client.appendingPathComponent(".git/index"))
+    let config = try Data(contentsOf: client.appendingPathComponent(".git/config"))
+    let dir = client.appendingPathComponent("sub")
+    let (top, sub) = try #require(Router.nativeBranches(dir, inPlace: false, roots: root.path, scratch: mirror.repo))
+    #expect(top.path == client.path && sub == "sub")
+    let tree = ShareHub.Tree(repo: mirror.repo, worktrees: mirror.worktrees, sub: sub, local: top)
+    let hub = ShareHub(), session = UUID().uuidString
+    _ = try #require(await hub.register(session: session, cwd: "/Volumes/share/client/sub", key: nil, device: "dev", tree: tree))
+    func mount(_ id: String) async -> URL? {
+        await ShareHub.$run.withValue(id) { await ShareHub.$agent.withValue("claude") {
+            await hub.mount(session: session, cwd: nil, base: "", device: "dev", roots: root.path, writes: true) } }
+    }
+    let (a, b) = (UUID().uuidString, UUID().uuidString)
+    let (dirA, dirB) = try await (#require(mount(a)), #require(mount(b)))
+    #expect(dirA != dirB && dirA.lastPathComponent == "sub")
+    #expect(try String(contentsOf: dirA.deletingLastPathComponent().appendingPathComponent("a.txt"), encoding: .utf8) == "one\nuncommitted\n")
+    #expect(FileManager.default.fileExists(atPath: dirB.deletingLastPathComponent().appendingPathComponent("new.txt").path))
+    try file(dirA, "agentA.txt", "A\n")
+    try file(dirB, "agentB.txt", "B\n")
+    for id in [a, b] { await ShareHub.$run.withValue(id) { await hub.syncBack(session: session) }; await hub.finish(run: id) }
+    let short = String(Sync.folderID(session).prefix(8))
+    #expect(g(client, "show", "minigw/claude-\(short)-0:sub/agentA.txt") == "A")
+    #expect(g(client, "show", "minigw/claude-\(short)-1:sub/agentB.txt") == "B")
+    #expect(g(client, "show", "minigw/claude-\(short)-1:a.txt") == "one\nuncommitted")
+    #expect(g(client, "status", "--porcelain") == status && g(client, "rev-parse", "HEAD") == head)
+    #expect(try Data(contentsOf: client.appendingPathComponent(".git/index")) == index)
+    #expect(try Data(contentsOf: client.appendingPathComponent(".git/config")) == config)
+    #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("agentA.txt").path))
+}
+
+/// Odločitev native: git → veje; native-direct, brez git, .git kot datoteka ali zunaj dovoljenih map → v mapi sami.
+@Test func nativeBranchesDecisionAndOptOut() throws {
+    let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("nb-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let repo = root.appendingPathComponent("repo"), plain = root.appendingPathComponent("plain"), linked = root.appendingPathComponent("linked")
+    for d in [repo.appendingPathComponent(".git"), repo.appendingPathComponent("a/b"), plain, linked] {
+        try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+    }
+    try Data("gitdir: /elsewhere\n".utf8).write(to: linked.appendingPathComponent(".git"))
+    let scratch = root.appendingPathComponent("scratch")
+    #expect(Router.nativeBranches(repo.appendingPathComponent("a/b"), inPlace: false, roots: root.path, scratch: scratch)?.sub == "a/b")
+    #expect(Router.nativeBranches(repo, inPlace: true, roots: root.path, scratch: scratch) == nil)
+    #expect(Router.nativeBranches(plain, inPlace: false, roots: root.path, scratch: scratch) == nil)
+    #expect(Router.nativeBranches(linked, inPlace: false, roots: root.path, scratch: scratch) == nil)
+    #expect(Router.nativeBranches(repo, inPlace: false, roots: plain.path, scratch: scratch) == nil)
+    #expect(SharedFolders.candidates(work: "native-direct", readOnly: false, smb: true, git: true) == ["native-direct", "direct"])
+    #expect(SharedFolders.mode(flag: "native-direct", saved: nil, readOnly: true).work == "direct")
+}
+
+/// Mapa brez veje (native brez git, native-direct, direct): en pisoči agent naenkrat; bralci ne čakajo; po koncu prvega
+/// lahko naslednji.
+@Test func inPlaceWriterLock() async throws {
+    let dir = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("lock-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let hub = ShareHub(), session = UUID().uuidString
+    _ = try #require(await hub.register(session: session, cwd: "/Volumes/share/x", key: nil, device: "dev", native: dir))
+    let old = ShareHub.writerWait
+    ShareHub.writerWait = .seconds(1)
+    defer { ShareHub.writerWait = old }
+    func mount(_ id: String, writes: Bool) async -> URL? {
+        await ShareHub.$run.withValue(id) { await hub.mount(session: session, cwd: nil, base: "", device: "dev", roots: dir.deletingLastPathComponent().path, writes: writes) }
+    }
+    #expect(await mount("w1", writes: true) == dir)
+    #expect(await mount("w2", writes: true) == nil)
+    #expect(await hub.takeRefusal(session: session)?.contains("Another agent is still changing /Volumes/share/x") == true)
+    #expect(await mount("r1", writes: false) == dir)  // bralec ne čaka
+    #expect(await mount("w1", writes: true) == dir)   // isto izvajanje znova
+    await hub.finish(run: "w1")
+    #expect(await mount("w2", writes: true) == dir)
+    await hub.finish(run: "w2")
+}
+
+/// Posnetek native ne zažene ničesar iz repozitorija uporabnika (filter, fsmonitor, hooki): git dela z nastavitvami zrcala.
+@Test func nativeSnapshotRunsNothingFromTheUsersRepository() throws {
+    let (root, client, mirror) = try fixture()
+    defer { cleanup(root) }
+    let marks = root.appendingPathComponent("marks")
+    try FileManager.default.createDirectory(at: marks, withIntermediateDirectories: true)
+    g(client, "config", "filter.evil.clean", "touch \(marks.path)/clean; cat")
+    g(client, "config", "core.fsmonitor", "touch \(marks.path)/fsmonitor")
+    try file(client, ".gitattributes", "* filter=evil\n")
+    try file(client, ".git/hooks/post-commit", "#!/bin/sh\ntouch \(marks.path)/hook\n")
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: client.appendingPathComponent(".git/hooks/post-commit").path)
+    try file(client, ".git/info/exclude", "secret.txt\n")
+    try file(client, "secret.txt", "local only\n")
+    let snap = try #require(Worktree.localSnapshot(repo: mirror.repo, top: client, base: "refs/minigw/base/t"))
+    #expect(try FileManager.default.contentsOfDirectory(atPath: marks.path).isEmpty)
+    let show = Worktree.run(["--git-dir", mirror.repo.path, "show", snap + ":a.txt"]).out
+    #expect(show == "one\nuncommitted")
+    #expect(Worktree.run(["--git-dir", mirror.repo.path, "cat-file", "-e", snap + ":secret.txt"]).status != 0)  // .git/info/exclude
+}

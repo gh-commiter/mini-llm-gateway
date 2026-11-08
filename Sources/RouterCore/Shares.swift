@@ -58,6 +58,7 @@ public actor ShareHub {
     /// worktree: golo zrcalo repozitorija odjemalca, mapa klonov in pot cwd v repozitoriju (»« = koren).
     struct Tree: Equatable, Sendable {
         let repo: URL, worktrees: URL, sub: String
+        var local: URL? = nil  // native z git: repozitorij na tem Macu (posnetek in prevzem veje tu, brez prenosa)
     }
 
     /// worktree: klon agenta na svoji veji; zaporedne zahteve iste seje in agenta nadaljujejo v njem (busy = v izvajanju).
@@ -279,15 +280,17 @@ public actor ShareHub {
     /// Mapa seje na tem Macu (priklopi ob prvi uporabi); nil, če seja nima mape odjemalca.
     /// `wait`: odjemalec deli mapo (minigw), a je po ponovnem zagonu routerja še ni znova registriral → počakaj do 30 s.
     /// `roots`: dovoljene mape (native: mapa se preveri ob vsakem krogu).
+    /// `writes`: agent sme pisati (native brez veje in direct: en pisoči agent naenkrat v mapi, waitWriter).
     func mount(session: String, cwd: String?, base: String, wait: Bool = false, device: String? = nil, roots: String? = nil,
-               scratch: URL? = nil) async -> URL? {
+               scratch: URL? = nil, writes: Bool = false) async -> URL? {
         if wait, !session.isEmpty {
             for _ in 0..<60 where bySession[session] == nil { try? await Task.sleep(for: .milliseconds(500)) }
         }
         guard let s = share(session: session, device: device), cwd == nil || cwd == s.cwd else { return nil }
-        if let tree = s.tree { return await worktreeMount(s, tree) }
+        if let tree = s.tree { return await worktreeMount(s, tree, roots: roots, scratch: scratch) }
         if let native = s.native {  // ista mapa: brez priklopa in kopije; še vedno ista kanonična pot in v dovoljenih mapah
             guard Sync.real(native)?.path == native.path, let roots, ClaudeCLI.resolveCwd(native.path, roots: roots, scratch: scratch) != nil else { return nil }
+            guard await waitWriter(native.path, folder: s.cwd, session: session, writes: writes) else { return nil }
             return native
         }
         if let copy = s.copy {  // zaklep le za prenos; agent nato dela v svojem klonu (brez izvajanja, npr. Siri: v kopiji)
@@ -299,6 +302,7 @@ public actor ShareHub {
             unlock(copy)
             return dir
         }
+        guard await waitWriter("dav:\(s.device ?? "")|\(s.cwd)", folder: s.cwd, session: session, writes: writes && !s.readOnly) else { return nil }
         if let mp = s.mountPoint, Self.isMounted(mp) { return mp }
         if let t = s.mounting { return await t.value }
         s.davPID = nil  // nov priklop: nov webdavfs_agent
@@ -324,6 +328,32 @@ public actor ShareHub {
         if bySession[session] === s { s.mountPoint = result } else if let result { Task.detached { Self.unmount(result) } }
         return result
     }
+
+    // MARK: zaklep pisanja (native brez veje, direct: agent piše v pravo mapo)
+
+    private var writers: [String: String] = [:]   // mapa → izvajanje, ki v njej piše
+    private var refusals: [String: String] = [:]  // seja → zakaj mount ni uspel (sporočilo za odjemalca)
+    static var writerWait: Duration = .seconds(600)
+
+    /// En pisoči agent naenkrat v isti pravi mapi; drugi čakajo (največ writerWait). Bralci (`writes` false) in zahteve
+    /// brez izvajanja (Siri) ne čakajo. false = ni dočakal (razlog v refusals).
+    func waitWriter(_ key: String, folder: String, session: String, writes: Bool) async -> Bool {
+        guard writes, let id = Self.run else { return true }
+        let end = ContinuousClock.now + Self.writerWait
+        while let w = writers[key], w != id {
+            guard ContinuousClock.now < end, !Task.isCancelled else {
+                refusals[session] = "Another agent is still changing \(folder) (one writing agent at a time in a folder that is not a git "
+                    + "repository, or with native-direct); try again when it has finished. In a git repository agents work on their own branches."
+                return false
+            }
+            try? await Task.sleep(for: .seconds(1))
+        }
+        writers[key] = id
+        return true
+    }
+
+    /// Razlog zadnjega neuspelega mount te seje (enkrat).
+    func takeRefusal(session: String) -> String? { refusals.removeValue(forKey: session) }
 
     // MARK: sync (kopija namesto priklopa; glej Sync)
 
@@ -440,6 +470,7 @@ public actor ShareHub {
     /// Konec izvajanja (tudi ob napaki ali prekinitvi): združi, če prevzema ni bilo, in odstrani klon.
     func finish(run id: String) async {
         releaseSlot(run: id)  // worktree: mesto spet prosto
+        writers = writers.filter { $0.value != id }
         guard let r = runs[id] else { return }
         if !r.merged, !r.share.readOnly { await acquire(r.copy); await merge(r); unlock(r.copy) }
         await offPool { try? FileManager.default.removeItem(at: r.clone) }

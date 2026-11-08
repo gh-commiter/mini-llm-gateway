@@ -36,6 +36,8 @@ type shareClient struct {
 	readOnly bool   // pisanje zavrne minigw sam (router mapo priklopi tudi rdonly)
 	sync     bool   // --minigw-work=sync: router dobi kopijo namesto priklopa (sync.go)
 	native   bool   // --minigw-work=native: router dela v svoji mapi (native.go); posla routerja ni
+	inPlace  bool   // native-direct: agenti v mapi sami (tudi v repozitoriju git), ne na svojih vejah
+	branches bool   // native v repozitoriju git: agenti na svojih vejah minigw/… (odgovor prehoda)
 	worktree bool   // --minigw-work=worktree: posnetek kot bundle, veja agenta nazaj kot ref (worktree.go)
 	top      string // worktree: koren repozitorija git
 	mu       sync.Mutex
@@ -82,11 +84,15 @@ func (s *shareClient) register() bool {
 			h[k] = v
 		}
 		h["x-claude-mini-work"] = "native"
+		if s.inPlace {
+			h["x-native-inplace"] = "1" // starejši prehod to že dela
+		}
 	}
 	st, data := call(s.c, "POST", "/minigw/share", h, nil, 10*time.Second)
 	var r struct {
-		Key   string `json:"key"`
-		Error struct {
+		Key      string `json:"key"`
+		Branches bool   `json:"branches"`
+		Error    struct {
 			Message string `json:"message"`
 		} `json:"error"`
 	}
@@ -98,7 +104,7 @@ func (s *shareClient) register() bool {
 		return false
 	}
 	s.mu.Lock()
-	s.key = r.Key
+	s.key, s.branches = r.Key, r.Branches
 	s.mu.Unlock()
 	return true
 }

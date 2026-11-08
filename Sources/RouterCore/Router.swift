@@ -163,6 +163,26 @@ public final class Router: Sendable {
         return await routeAllowed(req, rid: rid, writer: writer)
     }
 
+    /// Native: v repozitoriju git (privzeto) agenti delajo vsak na svoji veji v klonu → (koren, podmapa); nil = v mapi sami
+    /// (ni git, .git je datoteka, koren zunaj dovoljenih map, ali odjemalec želi native-direct), z zaklepom pisanja.
+    /// ponytail: odločitev le tu; pozneje nastavitev prehoda za projekt.
+    static func nativeBranches(_ dir: URL, inPlace: Bool, roots: String, scratch: URL) -> (top: URL, sub: String)? {
+        guard !inPlace else { return nil }
+        var d = dir
+        while true {
+            var isDir: ObjCBool = false
+            let g = d.appendingPathComponent(".git")
+            if FileManager.default.fileExists(atPath: g.path, isDirectory: &isDir) {
+                guard isDir.boolValue, Sync.real(g)?.path == d.path + "/.git",
+                      ClaudeCLI.resolveCwd(d.path, roots: roots, scratch: scratch) != nil else { return nil }
+                return (d, String(dir.path.dropFirst(d.path.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/")))
+            }
+            let up = d.deletingLastPathComponent()
+            guard up.path != d.path else { return nil }
+            d = up
+        }
+    }
+
     /// Ena besedilo zavrnitve v Go in Swift.
     static func refusal(_ d: Noise.Device) -> String {
         "Device \(Noise.quoted(d.name)) is not allowed on this gateway: allow it in Settings → Devices (compare the ID \(d.id)), or run minigw gw devices allow \(d.id)"
@@ -273,6 +293,18 @@ public final class Router: Sendable {
             }
             let readOnly = req.header("x-share-mode") == "ro"
             var tree: ShareHub.Tree?
+            // native z git (privzeto): agenti na svojih vejah v klonih, repozitorij uporabnika le dobi veje (Worktree.localSnapshot)
+            if let dir = native, let owner, let (top, sub) = Self.nativeBranches(dir, inPlace: req.header("x-native-inplace") == "1",
+                                                                              roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL) {
+                guard Worktree.scratchIsSafe(config.scratchURL) else {
+                    return (await error(400, "invalid_request_error", "Native mode on a git repository: the Scratch folder must not be in a temporary or build cache folder (or use native-direct)",
+                                        rid: rid, writer: writer), nil, "share")
+                }
+                let id = Sync.folderID(top.path)
+                tree = ShareHub.Tree(repo: config.scratch("repos").appendingPathComponent(owner).appendingPathComponent(id + ".git"),
+                                     worktrees: config.scratch("worktrees").appendingPathComponent(owner).appendingPathComponent(id), sub: sub, local: top)
+                native = nil
+            }
             if worktree {
                 let top = req.header("x-worktree-top") ?? ""
                 guard Worktree.scratchIsSafe(config.scratchURL) else {
@@ -302,7 +334,8 @@ public final class Router: Sendable {
                                                        readOnly: readOnly, copy: copy, device: req.device?.id, native: native, tree: tree) else {
                 return (await error(409, "invalid_request_error", "Session already has a folder", rid: rid, writer: writer), nil, "share")
             }
-            return (await json(200, ["key": key], rid: rid, writer: writer), nil, "share")
+            let reply: [String: Any] = tree?.local != nil ? ["key": key, "branches": true] : ["key": key]  // starejši odjemalci: le key
+            return (await json(200, reply, rid: rid, writer: writer), nil, "share")
         case ("GET", "/minigw/share/next"):
             switch await Self.shares.poll(key: req.header("x-share-key") ?? "") {
             case .none:

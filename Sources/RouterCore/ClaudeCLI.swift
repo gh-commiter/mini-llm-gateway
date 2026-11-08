@@ -50,14 +50,15 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
     /// pisanje le v klon in predpomnilnike gradnje (Worktree.writable), branje domače mape le tam, omrežje po nastavitvi.
     /// denyWrite: .git klona (config, hooks, info, commondir) in nastavitve gradnje lastnika (Native.buildCacheDenies).
     /// Iz ~/.m2 le branje settings.xml in toolchains.xml (Maven); pisanje le v svoj lokalni repozitorij (MAVEN_OPTS).
-    func worktreeArgs(root: URL, maven: URL, cwd: URL, allTools: [String], network: Bool, scratch: URL? = nil) -> [String] {
+    /// `read`: objekti, ki jih git v klonu bere prek alternates (zrcalo v Scratch, pri native repozitorij uporabnika).
+    func worktreeArgs(root: URL, maven: URL, cwd: URL, allTools: [String], network: Bool, scratch: URL? = nil, read: [URL] = []) -> [String] {
         let dirs = Worktree.writable(root: root, maven: maven)
         let sandbox: [String: Any] = ["sandbox": [
             "enabled": true, "failIfUnavailable": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
             "network": ["allowedDomains": network ? ["*"] : []],
             // Nič iz DARWIN_USER_TEMP_DIR (peskovnik Claude Code ne zna »le znotraj mape«): swift build in xcodebuild
             // agenta lahko ne uspeta (gradnja z minigw run ali v načinu sync); Maven deluje.
-            "filesystem": ["denyRead": ["~"] + Self.scratchPaths(scratch), "allowRead": dirs + Self.mavenConfig(), "allowWrite": dirs,
+            "filesystem": ["denyRead": ["~"] + Self.scratchPaths(scratch), "allowRead": dirs + Self.mavenConfig() + read.map(\.path), "allowWrite": dirs,
                            "denyWrite": ["config", "hooks", "info", "commondir"].map { root.path + "/.git/" + $0 }
                                + Native.buildCacheDenies().paths + Self.scratchPaths(RouterConfig.copilotCache)],
         ]]
@@ -418,7 +419,7 @@ extension Router {
             let clientCwd = req.header("x-claude-mini-cwd")
             let shared = await Self.shares.mount(session: req.header("x-claude-mini-session") ?? "", cwd: clientCwd, base: localBase,
                                                  wait: req.header("x-claude-mini-share") == "1", device: req.device?.id,
-                                                 roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL)
+                                                 roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL, writes: true)
             let synced = await Self.shares.isSync(session: req.header("x-claude-mini-session") ?? "")
             let tree = await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "")
             if let shared, let clientCwd {
@@ -426,6 +427,9 @@ extension Router {
                 args += ["--append-system-prompt", Self.mountNote(clientCwd, shared, readOnly: readOnly, synced: synced, branch: tree?.branch)]
             }
             guard let dir = shared ?? (synced ? nil : ClaudeCLI.resolveCwd(clientCwd, roots: cfg.allowedRoots, scratch: config.scratchURL)) else {
+                if let why = await Self.shares.takeRefusal(session: req.header("x-claude-mini-session") ?? "") {  // zaklep pisanja
+                    return await error(409, "invalid_request_error", why, rid: rid, writer: writer)
+                }
                 if synced, Task.isCancelled { return 499 }  // Claude Code je prekinil med čakanjem na prenos
                 if synced { return await error(502, "api_error", "Syncing \(clientCwd ?? "the folder") to the gateway failed (see minigw output)", rid: rid, writer: writer) }
                 return await error(400, "invalid_request_error",
@@ -446,7 +450,7 @@ extension Router {
             }
             let allTools = cfg.allowLocalTools || tree != nil ? await Self.toolList.get(cfg.executable) : []
             args += (tree.map { cfg.worktreeArgs(root: $0.root, maven: $0.maven, cwd: dir, allTools: allTools, network: config.worktreeNetwork,
-                                                 scratch: config.scratchURL) }
+                                                 scratch: config.scratchURL, read: $0.read) }
                      ?? cfg.agentArgs(cwd: dir, allTools: allTools, scratch: config.scratchURL))
                 + ["--setting-sources", shared == nil ? cfg.settingSources : ""]  // hooki iz mape odjemalca ne tečejo tukaj
         } else {

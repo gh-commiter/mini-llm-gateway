@@ -133,6 +133,7 @@ func TestWorkCandidatesAndReadOnly(t *testing.T) {
 		{"worktree", false, false, false, "direct"},
 		{"worktree", false, false, true, "worktree,sync"},
 		{"sync", false, false, true, "sync"},
+		{"native-direct", false, true, true, "native-direct,direct"},
 	}
 	for _, c := range cases {
 		if got := strings.Join(workCandidates(c.work, c.ro, c.smb, c.git), ","); got != c.want {
@@ -141,6 +142,9 @@ func TestWorkCandidatesAndReadOnly(t *testing.T) {
 	}
 	if w, ro := workMode("", &sharedFolder{Path: "/p", Work: "worktree"}, true); w != "direct" || !ro {
 		t.Errorf("worktree read-only: %s %v", w, ro)
+	}
+	if w, ro := workMode("native-direct", nil, true); w != "direct" || !ro {
+		t.Errorf("native-direct read-only: %s %v", w, ro)
 	}
 	if w, _ := workMode("auto", &sharedFolder{Path: "/p", Work: "sync"}, false); w != "auto" {
 		t.Errorf("flag wins: %s", w)
