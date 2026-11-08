@@ -212,11 +212,6 @@ func (c serveConfig) clientAllowed(ip string) bool {
 }
 
 // deviceAllowed: naprava s seznama; neznana le pri praznem seznamu z allowAnyDevice. Loopback (ta računalnik) vedno.
-// listed: naprava je na seznamu dovoljenih.
-func (c serveConfig) listed(id string) bool {
-	return slices.ContainsFunc(c.Devices, func(x serveDevice) bool { return x.ID == id })
-}
-
 func (c serveConfig) deviceAllowed(d *serveDevice, loopback bool) bool {
 	if loopback {
 		return true
@@ -233,6 +228,11 @@ func (c serveConfig) deviceAllowed(d *serveDevice, loopback bool) bool {
 		}
 	}
 	return false
+}
+
+// listed: naprava je na seznamu dovoljenih.
+func (c serveConfig) listed(id string) bool {
+	return slices.ContainsFunc(c.Devices, func(x serveDevice) bool { return x.ID == id })
 }
 
 func serveCommand(args []string) {
