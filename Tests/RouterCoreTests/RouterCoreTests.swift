@@ -122,6 +122,17 @@ func makeRouter(session: URLSession = .shared) -> Router {
     var cli = ClaudeCLIConfig()
     let cwd = URL(fileURLWithPath: "/tmp/session")
     #expect(cli.agentArgs(cwd: cwd, allTools: []) == ["--tools", "Read,Grep,Glob", "--allowedTools", "Read,Grep,Glob", "--permission-mode", "dontAsk"])
+    cli.tools = "Read,Edit,Bash(git:*),Write,Grep"  // --minigw-ro: brez orodij za pisanje; Bash tu nima sandboxa
+    #expect(cli.agentArgs(cwd: cwd, allTools: [], readOnly: true) == ["--tools", "Read,Grep", "--allowedTools", "Read,Grep", "--permission-mode", "dontAsk"])
+    cli.tools = "Read,Monitor,EnterWorktree,WebFetch"  // seznam dovoljenih: orodja, ki niso na njem, odpadejo
+    #expect(cli.agentArgs(cwd: cwd, allTools: [], readOnly: true).prefix(2) == ["--tools", "Read,WebFetch"])
+    cli.tools = "Read,Grep,Glob"
+    var local = cli
+    local.allowLocalTools = true
+    let ro = local.agentArgs(cwd: cwd, allTools: ["Bash", "Edit", "EnterWorktree", "ExitWorktree", "Monitor", "Read", "Task", "WebFetch"], readOnly: true)
+    func value(_ flag: String) -> String { ro.firstIndex(of: flag).map { ro[$0 + 1] } ?? "" }
+    #expect(value("--tools") == "Read,Grep,Glob,LS,WebSearch,WebFetch,Bash" && value("--allowedTools") == "WebFetch")
+    #expect(["EnterWorktree", "ExitWorktree", "Monitor", "Edit"].allSatisfy { value("--disallowedTools").split(separator: ",").contains(Substring($0)) })
     cli.allowLocalTools = true
     cli.allowedRoots = "/tmp"
     cli.disabledTools = ["WebSearch"]
@@ -637,6 +648,7 @@ final class SeenDevices: @unchecked Sendable {
     #expect(Codex.threadId(Data(#"{"type":"turn.started"}"#.utf8)) == nil)
     #expect(Codex.match("claude-codex-") == nil && Codex.match("claude-opus-5-5") == nil)
     #expect(Codex.args(cwd: cwd, extraDirs: ["/tmp/x"], agent: true, output: out, write: false).contains("read-only"))
+    #expect(Codex.args(cwd: cwd, extraDirs: [], agent: true, output: out, write: false, resume: "t1").contains(#"sandbox_mode="read-only""#))
     #expect(Codex.args(cwd: cwd, extraDirs: [], agent: true, output: out, network: false).contains("sandbox_workspace_write.network_access=false"))
     var cx = CodexConfig()
     #expect(cx.isModelEnabled("a"))

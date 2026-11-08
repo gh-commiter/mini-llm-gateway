@@ -127,8 +127,18 @@ func useOf(_ s: GatewayHistory.Session, _ model: String, role: String = "") -> G
                           "claude-grok": "write", "claude-copilot": "network", "claude-sonnet": ""] {
         #expect(GatewayHistory.restrictions(model, c) == want, "\(model)")
     }
+    c.copilot.write = true; c.copilot.commands = true; c.claudeCLI.tools = "Read,Edit,Grep"
+    for (model, want) in ["claude-cli": "Read,Grep", "claude-codex": "", "claude-grok": "", "claude-copilot": "network"] {  // --minigw-ro
+        #expect(GatewayHistory.restrictions(model, c, readOnly: true) == want, "\(model)")
+    }
     c.claudeCLI.allowLocalTools = true
     #expect(GatewayHistory.restrictions("claude-cli", c) == "local")
+    #expect(GatewayHistory.restrictions("claude-cli", c, readOnly: true) == "local,read-only")
+    c.codex.network = true  // omrežje Codex le s pisanjem; v worktree le z worktreeCodexNetwork
+    #expect(GatewayHistory.restrictions("claude-codex", c) == "write,network" && GatewayHistory.restrictions("claude-codex", c, readOnly: true) == "")
+    #expect(GatewayHistory.restrictions("claude-codex", c, tree: true) == "write")
+    c.worktreeCodexNetwork = true
+    #expect(GatewayHistory.restrictions("claude-codex", c, tree: true) == "write,network")
 }
 
 /// Ugnezdeni klic (agent-calls): v seji klicatelja pod isto napravo, z »via« = veriga izvajanja in vlogo klicatelja

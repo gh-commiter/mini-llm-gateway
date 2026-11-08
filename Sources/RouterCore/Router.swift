@@ -115,7 +115,6 @@ public final class Router: Sendable {
         u.role = GatewayHistory.role(req)
         u.via = AgentRun.current?.via ?? ""  // vgnezdeni klic: veriga iz izvajanja (nikoli iz glave), v seji klicatelja
         u.os = String(Noise.cleanName(req.header("x-minigw-client") ?? "").split(separator: ",").first ?? "")  // »macOS, minigw 0.5.18«
-        u.tools = GatewayHistory.restrictions(model, config)
         u.model = status == 404 ? "unknown" : model  // M1: neznan ali zavrnjen model: stalno ime, ne niz odjemalca
         u.status = status; u.took = took; u.input = usage.input; u.output = usage.output
         // Naprava, ki ni na seznamu, na loopbacku je ta računalnik (sprejet brez odobritve), ne »odstranjena naprava«.
@@ -127,6 +126,8 @@ public final class Router: Sendable {
             (u.mode, u.readOnly, u.branch) = await Self.shares.sessionMode(u.session, device: req.device?.id)
             if let branch { u.branch = branch }
         }
+        u.readOnly = u.readOnly || req.header("x-claude-mini-ro") == "1"  // tudi brez deljenja; vgnezdeni klic: AgentRun
+        u.tools = GatewayHistory.restrictions(model, config, readOnly: u.readOnly, tree: u.mode == "worktree" || u.mode == "native")  // veljavne omejitve (brez pisanja pri --minigw-ro)
         history.record(u)
     }
 

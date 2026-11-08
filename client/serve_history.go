@@ -439,7 +439,8 @@ func (s *server) recordSession(r *req, model string, status int, took time.Durat
 	if session != "" {
 		u.mode, u.readOnly, u.branch = s.hub.sessionMode(session, r.owner(), agent)
 	}
-	u.tools = s.conf().agentRestrictions(model)
+	u.readOnly = u.readOnly || r.h("x-claude-mini-ro") == "1" // tudi brez deljenja; vgnezdeni klic: glava iz izvajanja
+	u.tools = s.conf().agentRestrictions(model, u.readOnly)   // veljavne omejitve (brez pisanja pri --minigw-ro)
 	s.state.record(u, time.Now())
 }
 
@@ -499,7 +500,8 @@ func inFolder(p, f, os string) bool {
 
 // agentRestrictions: veljavne omejitve agenta za zgodovino: Claude CLI orodja ali »local«; Codex, Grok, Copilot
 // stikala write, network, commands ("" = le branje); drugi modeli "" (enako kot GatewayHistory.restrictions na Macu).
-func (c serveConfig) agentRestrictions(model string) string {
+// readOnly (--minigw-ro): brez pisanja (Claude CLI brez orodij za pisanje oz. »local,read-only«; ukazi Copilot le s pisanjem).
+func (c serveConfig) agentRestrictions(model string, readOnly bool) string {
 	var on []string
 	add := func(ok bool, name string) {
 		if ok {
@@ -508,19 +510,31 @@ func (c serveConfig) agentRestrictions(model string) string {
 	}
 	switch {
 	case model == strings.TrimSuffix(cliAgentPrefix, "-") || strings.HasPrefix(model, cliAgentPrefix):
-		if c.AllowLocalTools {
+		switch {
+		case c.AllowLocalTools && readOnly:
+			return "local,read-only"
+		case c.AllowLocalTools:
 			return "local"
+		case readOnly:
+			var t []string
+			for _, x := range strings.Split(c.Tools, ",") {
+				if x = strings.TrimSpace(x); x != "" && roAllowed(strings.SplitN(x, "(", 2)[0]) {
+					t = append(t, x)
+				}
+			}
+			return strings.Join(t, ",")
 		}
 		return c.Tools
 	case isKind(codexKind, model):
-		add(c.Codex.canWrite(codexKind), "write")
-		add(c.Codex.Network, "network")
+		write := c.Codex.canWrite(codexKind) && !readOnly
+		add(write, "write")
+		add(write && c.Codex.Network, "network") // sandbox read-only nima omrežja
 	case isKind(grokKind, model):
-		add(c.Grok.canWrite(grokKind), "write")
+		add(c.Grok.canWrite(grokKind) && !readOnly, "write")
 	case isKind(copilotKind, model):
-		add(c.Copilot.canWrite(copilotKind), "write")
+		add(c.Copilot.canWrite(copilotKind) && !readOnly, "write")
 		add(c.Copilot.Network, "network")
-		add(c.Copilot.Commands, "commands")
+		add(c.Copilot.Commands && !readOnly, "commands")
 	default:
 		return ""
 	}
