@@ -20,9 +20,9 @@ func hideConsole(cmd *exec.Cmd) {
 	cmd.SysProcAttr.CreationFlags |= createNoWindow
 }
 
-// refreshPath: dosedanjemu PATH doda manjkajoče mape iz registra (sistemski in uporabnikov, razširjen) in ~\.local\bin. Pladenj,
-// ki ga zažene MSI, podeduje okolje namestitvenega programa brez uporabnikovega PATH: claude, codex, git … niso bili
-// najdeni (claude=""). Velja za LookPath in za vse otroke.
+// refreshPath: dosedanjemu PATH doda manjkajoče mape iz registra (sistemski in uporabnikov, razširjen) in ~\.local\bin.
+// Pladenj po namestitvi zažene Raziskovalec (trayRun); tu le manjkajoče mape za pladenj ali ukazno vrstico iz lupine,
+// odprte pred namestitvijo CLI. Velja za LookPath in za vse otroke.
 func refreshPath() {
 	sys := regString(0x80000002, `SYSTEM\CurrentControlSet\Control\Session Manager\Environment`) // HKLM
 	usr := regString(0x80000001, `Environment`)                                                  // HKCU

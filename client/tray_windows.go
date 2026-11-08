@@ -234,7 +234,7 @@ func trayRun(cfgPath string, quiet bool) {
 		return
 	}
 	// MSI (StartTray, edini z --quiet-if-running): pladenj, ki ga zažene msiexec, ima okolje namestitvenega programa
-	// (Codex na PATH ni bil najden, okolje uporabnika iz CreateEnvironmentBlock ni pomagalo). Zato ga zažene Raziskovalec,
+	// (Codex na PATH ni bil najden; okolje msiexec je zastarelo). Zato ga zažene Raziskovalec,
 	// kot ob kliku v meniju Start: privzete nastavitve (= pot, ki jo poda MSI), ta proces konča.
 	// Explorer z absolutno potjo iz GetWindowsDirectoryW (ne iz %WINDIR% ali iskanja po imenu: podtaknjen explorer.exe).
 	if exe, err := os.Executable(); quiet && err == nil {
