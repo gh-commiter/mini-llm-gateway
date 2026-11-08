@@ -11,6 +11,20 @@
   same folder (sync copy, worktree branch or native folder) and the caller waits. One level deep, never the same kind of
   agent. Claude CLI needs **Allow local tools** (Bash) for it, Codex "Allow network access for commands". Calls to
   another gateway come later.
+- **This user's apps without a token (off by default):** programs of the gateway's own user on the same computer can use
+  the models and agents (`/v1/messages`, `/v1/models`) without the token, for example an app pointed at `http://127.0.0.1:8765`.
+  The gateway checks the process behind the connection (same user, not one of its agents); the request needs
+  `anthropic-version` or `x-api-key`, a loopback `Host` and no `Origin`, so web pages cannot use it. Other users, other
+  computers, the admin API and device approval are unchanged. Switch: General → **Allow this user's apps without a
+  token** (`allowLocalApps`). On `minigw serve` for Windows and Linux; on the Mac in the app. Sandboxed apps (Mac App
+  Sandbox and Seatbelt, also commands in Claude Code's sandboxed Bash; Linux Flatpak and snap; Windows AppContainer)
+  and apps in a web view still need the token. Docker and other containers, VMs and tunnels (`ssh -R`, ngrok…) running as you also count as this user's apps: with the switch on they can use agents in your allowed folders without a token.
+- Updates never go back to an older signed release: SHA256SUMS carries a signed `VERSION` line, and the plugin's
+  minigw update, `install.sh` and `minigw serve install` refuse a release older than the installed minigw
+  (`--allow-downgrade`, or `MINIGW_ALLOW_DOWNGRADE=1` for the plugin, to go back on purpose).
+- Allowed folders that contain Copilot's package cache are refused like the Scratch folder, and the package is
+  unpacked (`copilot --version`) in a sandbox without network (Mac `sandbox-exec`, Linux bwrap).
+- Foundry Local is used only when the process on its port runs from the Foundry installation.
 - **Several gateways at once (profiles, #17):** `minigw connect <host> --name <profile>` keeps every gateway, for
   example the Mac mini and a Windows gateway side by side. Models of other profiles are `<model>@<profile>`; the
   default profile's also appear without a suffix. An unreachable gateway is left out of the list, and `minigw status`

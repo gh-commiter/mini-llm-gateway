@@ -210,7 +210,7 @@ extension Router {
             sharedDir = shared
             extra = config.claudeCLI.allowedRoots.split(separator: ",").map { ClaudeCLI.expand($0.trimmingCharacters(in: .whitespaces)) }
                 .filter { $0 != "/" && !$0.isEmpty && $0 != dir.path && FileManager.default.fileExists(atPath: $0) }
-                .filter { !RouterConfig.overlapsScratch($0, scratch: config.scratchURL) }  // H1: ne zrcal in kopij drugih naprav
+                .filter { !RouterConfig.overlapsScratch($0, scratch: config.scratchURL) && !RouterConfig.overlapsCopilotCache($0) }  // H1, #26
             // worktree: pisljiv le klon (koren, ne dovoljene mape)
             tree = await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "")
             if let tree {

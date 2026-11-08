@@ -51,6 +51,7 @@ type serveConfig struct {
 	PermissionMode string        `json:"permissionMode"`
 	Devices        []serveDevice `json:"devices"`
 	AllowAnyDevice bool          `json:"allowAnyDevice,omitempty"` // le pri praznem seznamu: vsaka naprava z žetonom
+	AllowLocalApps *bool         `json:"allowLocalApps,omitempty"` // modeli brez žetona za aplikacije tega uporabnika (nil = ne; H1)
 	// Bash v tools na Windows teče brez sandboxa (dostop do vsega, kar sme uporabnik): le z izrecnim dovoljenjem.
 	AllowUnsandboxedBash bool           `json:"allowUnsandboxedBash,omitempty"`
 	Gateways             []serveGateway `json:"gateways,omitempty"` // ključi v shrambi sistema, ne tu (serve_gateway.go)
@@ -238,6 +239,7 @@ func serveCommand(args []string) {
 	cfgPath := fs.String("config", defaultServeConfigPath(), "config file")
 	port := fs.Int("port", 0, "port (default 8765)")
 	folder := fs.String("folder", "", "folder for agents that do not sync (--minigw-work=sync is preferred)")
+	fs.BoolVar(&allowDowngrade, "allow-downgrade", false, "install: replace a newer installed minigw (#25)")
 	fs.Usage = func() { fmt.Fprintln(os.Stderr, serveHelp) }
 	fs.Parse(args)
 
@@ -426,9 +428,9 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	// H1: dovoljena mapa, ki vsebuje Scratch (ali je v njem), bi agentom pokazala zrcala in kopije drugih naprav:
 	// ob zagonu (ročno urejen serve.json) take mape ne veljajo, Claude CLI in Codex sta izklopljena, opozorilo v dnevniku.
 	var overlapWarn string
-	if bad := scratchOverlaps(c.AllowedFolders, c.Scratch); len(bad) > 0 {
+	if bad := append(scratchOverlaps(c.AllowedFolders, c.Scratch), copilotCacheOverlaps(c.AllowedFolders)...); len(bad) > 0 {
 		overlapWarn = "WARNING: allowed folder(s) " + strings.Join(bad, ", ") + " contain or are inside the scratch folder " + c.Scratch +
-			": Claude CLI and Codex are off until you remove them (settings page → Claude CLI → Allowed folders)"
+			" or Copilot's package cache " + copilotCacheDir() + ": Claude CLI and Codex are off until you remove them (settings page → Claude CLI → Allowed folders)"
 		c.AllowedFolders = slices.DeleteFunc(slices.Clone(c.AllowedFolders), func(f string) bool { return slices.Contains(bad, f) })
 		c.ClaudeDisabled, c.Codex.Enabled = true, false
 	}
@@ -501,9 +503,23 @@ func checkAgent(c *serveConfig, cfgDir string) ([]string, error) {
 		}
 		c.AllowedFolders[i] = real
 	}
-	if bad := scratchOverlaps(c.AllowedFolders, c.Scratch); len(bad) > 0 { // H1: PATCH, minigw gw claude --folders, serve.json
-		return nil, errors.New("allowed folder " + bad[0] + " contains or is inside the scratch folder " + c.Scratch +
+	folders := c.AllowedFolders // N2: tudi privzeta mapa (Folder)
+	if c.Folder != "" {
+		folders = append([]string{c.Folder}, folders...)
+	}
+	kind := func(f string) string {
+		if f == c.Folder {
+			return "folder "
+		}
+		return "allowed folder "
+	}
+	if bad := scratchOverlaps(folders, c.Scratch); len(bad) > 0 { // H1: PATCH, minigw gw claude --folders, serve.json
+		return nil, errors.New(kind(bad[0]) + bad[0] + " contains or is inside the scratch folder " + c.Scratch +
 			" (agents could change the gateway's mirrors and other devices' copies): choose another folder")
+	}
+	if bad := copilotCacheOverlaps(folders); len(bad) > 0 { // #26
+		return nil, errors.New(kind(bad[0]) + bad[0] + " contains or is inside Copilot's package cache " + copilotCacheDir() +
+			" (agents could plant code the gateway runs): choose another folder")
 	}
 	if c.AllowLocalTools && runtime.GOOS == "windows" && !c.AllowUnsandboxedBash {
 		return nil, errors.New("local tools include commands (Bash, PowerShell), which have no sandbox on Windows: also set \"allowUnsandboxedBash\": true, or turn local tools off")
@@ -934,7 +950,7 @@ func (s *server) handle(w http.ResponseWriter, r *req) (int, string) {
 	if r.h(agentChainHeader) != "" && runOf(r) == nil { // veriga agentov je le v prehodu; od zunaj je ponarejena
 		return writeError(w, r.rid, 400, "The "+agentChainHeader+" header is not accepted"), ""
 	}
-	if !s.authorized(r) {
+	if !s.authorized(r) && !s.localApp(r) {
 		return writeError(w, r.rid, 401, "Invalid or missing token"), ""
 	}
 	if !s.conf().deviceAllowed(r.conn.device, r.conn.loopback()) {
@@ -999,6 +1015,35 @@ func writeStatus(w http.ResponseWriter, status int, ctype string, body []byte) i
 	w.WriteHeader(status)
 	w.Write(body)
 	return status
+}
+
+// localApps: »Allow this user's apps without a token« (privzeto izklopljeno).
+func (c serveConfig) localApps() bool { return c.AllowLocalApps != nil && *c.AllowLocalApps }
+
+// localPeer: odjemalec na loopbacku je proces tega uporabnika in ni agent prehoda (peer_*.go); testi ga zamenjajo.
+var localPeer = sameUserPeer
+
+// localApp: zahteva za modele brez žetona od aplikacije tega uporabnika na tem računalniku. Brskalnik je ne more poslati:
+// glava anthropic-version ali x-api-key zahteva CORS preflight (prehod ne pošlje glav CORS), Host je loopback (ne DNS
+// rebinding), brez Origin (stran z istim izvorom, npr. nastavitve). Drugi uporabniki in oddaljeni odjemalci: žeton.
+func (s *server) localApp(r *req) bool {
+	switch r.Method + " " + r.URL.Path {
+	case "GET /v1/models", "POST /v1/messages", "POST /v1/messages/count_tokens":
+	default:
+		return false
+	}
+	host := r.Host
+	if h, _, err := net.SplitHostPort(r.Host); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	if !s.conf().localApps() || !r.conn.loopback() || r.h("origin") != "" || (r.h("anthropic-version") == "" && r.h("x-api-key") == "") ||
+		(host != "localhost" && !(net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback())) {
+		return false
+	}
+	ours, ok1 := r.conn.LocalAddr().(*net.TCPAddr)
+	peer, ok2 := r.conn.RemoteAddr().(*net.TCPAddr)
+	return ok1 && ok2 && localPeer(ours, peer)
 }
 
 func (s *server) authorized(r *req) bool {

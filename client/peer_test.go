@@ -23,14 +23,14 @@ func TestPeerTables(t *testing.T) {
 	tcp := "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n" +
 		"   0: 0100007F:223D 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 111 1\n" +
 		"   1: 0100007F:C350 0100007F:223D 01 00000000:00000000 00:00000000 00000000  1000        0 4242 1\n"
-	if in := procSocketInode([]byte(tcp), peer, ours); in != "4242" {
-		t.Fatalf("tcp inode %q", in)
+	if in, uid := procSocketInode([]byte(tcp), peer, ours); in != "4242" || uid != 1000 {
+		t.Fatalf("tcp inode %q uid %d", in, uid)
 	}
 	tcp6 := "   0: 0000000000000000FFFF00000100007F:C350 0000000000000000FFFF00000100007F:223D 01 0 0 0 1000 0 777 1\n"
-	if in := procSocketInode([]byte(tcp6), peer, ours); in != "777" {
+	if in, _ := procSocketInode([]byte(tcp6), peer, ours); in != "777" {
 		t.Fatalf("tcp6 (v4-mapped) inode %q", in)
 	}
-	if procSocketInode([]byte(tcp), ours, peer) != "" {
+	if in, _ := procSocketInode([]byte(tcp), ours, peer); in != "" {
 		t.Fatal("router side matched as client")
 	}
 

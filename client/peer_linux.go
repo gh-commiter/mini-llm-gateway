@@ -213,7 +213,11 @@ func agentWrap(exe string, args []string, m agentMounts) (string, []string) {
 			}
 		}
 	}
-	return bw, append(append(bwrapArgs(home, real(m.cfgDir), hidden, ro, rw, rehide, pins, protect, hideFiles, hideDirs), "--", exe), args...)
+	a := bwrapArgs(home, real(m.cfgDir), hidden, ro, rw, rehide, pins, protect, hideFiles, hideDirs)
+	if m.noNet {
+		a = append([]string{"--unshare-net"}, a...)
+	}
+	return bw, append(append(a, "--", exe), args...)
 }
 
 // listenerIsOurs (F2): vrata poslušajo le procesi tega uporabnika (uid iz /proc/net/tcp{,6}); nič najdenega = ne.
@@ -232,11 +236,63 @@ func listenerIsOurs(port int) bool {
 	return len(uids) > 0
 }
 
+// sameUserPeer: vtičnica odjemalca je tega uporabnika (uid iz /proc/net/tcp{,6}) in odjemalec ni agent prehoda.
+func sameUserPeer(ours, peer *net.TCPAddr) bool {
+	for _, f := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
+		if b, err := os.ReadFile(f); err == nil {
+			if inode, uid := procSocketInode(b, peer, ours); inode != "" {
+				if uid != os.Getuid() || peerCheck(ours, peer) != nil {
+					return false
+				}
+				for _, p := range socketPIDs("socket:[" + inode + "]") {
+					if p != os.Getpid() && confinedApp(p) {
+						return false
+					}
+				}
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// confinedApp (L1): Flatpak (/.flatpak-info v korenu procesa) ali snap (cgroup snap.*), kot App Sandbox na Macu.
+// Neberljiv koren procesa šteje kot omejen (fail closed).
+func confinedApp(pid int) bool {
+	root := "/proc/" + strconv.Itoa(pid) + "/root/"
+	if _, err := os.Stat(root); err != nil {
+		return true
+	}
+	if _, err := os.Stat(root + ".flatpak-info"); err == nil {
+		return true
+	}
+	return strings.Contains(procCgroup(pid), "/snap.")
+}
+
+// listenerExes (L3): programi procesov, ki poslušajo na vratih (inode iz /proc/net/tcp → /proc/<pid>/exe).
+func listenerExes(port int) ([]string, bool) {
+	var exes []string
+	for _, f := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		for _, ino := range procListenInodes(b, port) {
+			for _, pid := range socketPIDs("socket:[" + ino + "]") {
+				if e, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid)); err == nil {
+					exes = append(exes, e)
+				}
+			}
+		}
+	}
+	return exes, true
+}
+
 func peerCheck(ours, peer *net.TCPAddr) error {
 	inode := ""
 	for _, f := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
 		if b, err := os.ReadFile(f); err == nil {
-			if inode = procSocketInode(b, peer, ours); inode != "" {
+			if inode, _ = procSocketInode(b, peer, ours); inode != "" {
 				break
 			}
 		}

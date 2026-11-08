@@ -250,6 +250,27 @@ func releaseGet(name string, limit int64) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(resp.Body, limit))
 }
 
+// sumsWant: vsota sredstva iz SHA256SUMS te izdaje; podpisana vrstica »VERSION <v>« (#25) mora biti ta različica.
+func sumsWant(sums []byte, asset string) (string, error) {
+	want := ""
+	for _, line := range strings.Split(string(sums), "\n") {
+		f := strings.Fields(line)
+		if len(f) == 2 && f[0] == "VERSION" {
+			if f[1] != version {
+				return "", errors.New("SHA256SUMS of v" + version + " says VERSION " + f[1])
+			}
+			continue
+		}
+		if len(f) == 2 && strings.TrimPrefix(f[1], "*") == asset {
+			want = strings.ToLower(f[0])
+		}
+	}
+	if want == "" {
+		return "", errors.New(asset + " is not in SHA256SUMS of v" + version)
+	}
+	return want, nil
+}
+
 // downloadVerified: sredstvo te izdaje, preverjeno po SHA256SUMS iste izdaje.
 func downloadVerified(asset, dst string) error {
 	sums, err := releaseGet("SHA256SUMS", 64<<10)
@@ -263,14 +284,9 @@ func downloadVerified(asset, dst string) error {
 	if err := verifyReleaseSums(sums, sig); err != nil { // #8: vsote podpisane s pripetim ključem
 		return errors.New("SHA256SUMS of v" + version + " is not signed by Mini Gateway: " + err.Error())
 	}
-	want := ""
-	for _, line := range strings.Split(string(sums), "\n") {
-		if f := strings.Fields(line); len(f) == 2 && strings.TrimPrefix(f[1], "*") == asset {
-			want = strings.ToLower(f[0])
-		}
-	}
-	if want == "" {
-		return errors.New(asset + " is not in SHA256SUMS of v" + version)
+	want, err := sumsWant(sums, asset)
+	if err != nil {
+		return err
 	}
 	data, err := releaseGet(asset, 128<<20)
 	if err != nil {
@@ -288,11 +304,14 @@ func installWindows(exe, cfgPath string) (string, error) {
 		return "", errors.New(filepath.Dir(cfgPath) + " " + err.Error() + ": use a config folder of your own")
 	}
 	if d := msiDir(); d != "" { // MSI ima datoteke in vnose: posodobi ga novi MSI, ne kopija čez njegove datoteke
-		return updateMSI(d)
+		return updateMSI(d) // ta že ne gre nazaj na starejšo različico (#25)
 	}
 	dir := installDir("windows")
 	if dir == "" {
 		return "", errors.New("cannot find the user programs folder (LocalAppData\\Programs)")
+	}
+	if err := refuseDowngrade(filepath.Join(dir, "minigw.exe")); err != nil {
+		return "", err
 	}
 	if err := trayClose(); err != nil {
 		return "", err
@@ -370,6 +389,27 @@ var installedVersion = func(exe string) string {
 		return ""
 	}
 	return v
+}
+
+// allowDowngrade: minigw serve install --allow-downgrade (#25).
+var allowDowngrade bool
+
+// refuseDowngrade (#25): ta minigw ne zamenja novejšega nameščenega (vračanje na starejšo izdajo), razen z --allow-downgrade.
+func refuseDowngrade(target string) error {
+	if allowDowngrade {
+		return nil
+	}
+	if self, err := os.Executable(); err == nil {
+		if a, err1 := os.Stat(self); err1 == nil {
+			if b, err2 := os.Stat(target); err2 == nil && os.SameFile(a, b) {
+				return nil
+			}
+		}
+	}
+	if have := installedVersion(target); have != "" && versionLess(version, have) {
+		return errors.New("the installed minigw " + have + " (" + target + ") is newer than this one (" + version + "): run the newer one, or add --allow-downgrade")
+	}
+	return nil
 }
 
 // versionLess: a < b po številkah (0.5.9 < 0.5.10).
@@ -466,6 +506,9 @@ func serviceCommand(sub, goos, cfgPath string) (string, error) {
 		return uninstallWindows(cfgPath)
 	case "linux install":
 		target := filepath.Join(installDir(goos), "minigw")
+		if err := refuseDowngrade(target); err != nil {
+			return "", err
+		}
 		if err := installFile(exe, target); err != nil {
 			return "", err
 		}

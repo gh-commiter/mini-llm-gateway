@@ -281,6 +281,11 @@ struct SettingsView: View {
             Section("Token") {
                 TokenRow()
             }
+            Section {
+                Toggle("Allow this user's apps without a token", isOn: $draft.allowLocalApps)
+            } footer: {
+                Text("Programs of this user on this computer may use the models and agents without the token (they still send an Anthropic header, so web pages cannot). Other users, other computers, the gateway's own agents, apps in a web view and sandboxed apps (on the Mac also commands in Claude Code's sandbox) need the token. Docker and other containers, VMs and tunnels (ssh -R, ngrok…) running as you also count as this user's apps; with this on they can use agents in your allowed folders without a token.").font(.caption).foregroundStyle(.secondary)
+            }
             ScratchSection(draft: $draft)
             Section {
                 Toggle("Network for builds", isOn: $draft.worktreeNetwork)
@@ -804,7 +809,7 @@ struct SettingsView: View {
         panel.prompt = String(localized: "Add")
         guard panel.runModal() == .OK else { return }
         let all = panel.urls.map { ($0.path as NSString).abbreviatingWithTildeInPath }.filter { !roots.contains($0) }
-        let added = all.filter { !RouterConfig.overlapsScratch($0, scratch: draft.scratchURL) }  // H1
+        let added = all.filter { !RouterConfig.overlapsScratch($0, scratch: draft.scratchURL) && !RouterConfig.overlapsCopilotCache($0) }  // H1, #26
         if added.count < all.count {
             let a = NSAlert()
             a.messageText = String(localized: "A folder that contains the scratch folder, or is inside it, cannot be an allowed folder.")

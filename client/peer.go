@@ -28,6 +28,7 @@ type agentMounts struct {
 	rw     []string // kopija mape, začasna mapa zahteve, dovoljene mape
 	ro     []string // dodatno le za branje (Copilot: razširjen paket v ~/.cache/copilot)
 	hide   string   // mapa, skrita tudi zunaj domače mape (Scratch: kopije drugih naprav, stanje agentov; I3)
+	noNet  bool     // brez omrežja (--unshare-net; priprava paketa Copilot, #26)
 	env    []string // dodatne spremenljivke (Copilot: žeton prijave pod bwrap)
 	// protect: le za branje znotraj pisljive mape (worktree: .git/config, hooks, info klona), vezano za rw.
 	protect []string
@@ -122,8 +123,8 @@ func procAddr(s string) (net.IP, int, bool) {
 	return net.IP(b), int(port), true
 }
 
-// procSocketInode: inode vtičnice odjemalca (njen lokalni naslov je naš oddaljeni in obratno); "" = ni najdena.
-func procSocketInode(table []byte, peer, ours *net.TCPAddr) string {
+// procSocketInode: inode in uid vtičnice odjemalca (njen lokalni naslov je naš oddaljeni in obratno); "" = ni najdena.
+func procSocketInode(table []byte, peer, ours *net.TCPAddr) (string, int) {
 	for _, line := range strings.Split(string(table), "\n") {
 		f := strings.Fields(line)
 		if len(f) < 10 {
@@ -132,10 +133,14 @@ func procSocketInode(table []byte, peer, ours *net.TCPAddr) string {
 		lip, lport, ok1 := procAddr(f[1])
 		rip, rport, ok2 := procAddr(f[2])
 		if ok1 && ok2 && lport == peer.Port && rport == ours.Port && lip.Equal(peer.IP) && rip.Equal(ours.IP) {
-			return f[9]
+			uid, err := strconv.Atoi(f[7])
+			if err != nil {
+				uid = -1
+			}
+			return f[9], uid
 		}
 	}
-	return ""
+	return "", -1
 }
 
 // tcpTablePID: PID iz tabele GetExtendedTcpTable (TCP_TABLE_OWNER_PID_ALL) za povezavo odjemalca; 0 = ni najdena.
@@ -182,6 +187,51 @@ func procListenUIDs(table []byte, port int) []int {
 		}
 	}
 	return out
+}
+
+// procListenInodes (L3): inode vtičnic, ki poslušajo na vratih (stolpec 9 v /proc/net/tcp{,6}).
+func procListenInodes(table []byte, port int) []string {
+	var out []string
+	for _, line := range strings.Split(string(table), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 10 || f[3] != "0A" {
+			continue
+		}
+		if _, p, ok := procAddr(f[1]); ok && p == port {
+			out = append(out, f[9])
+		}
+	}
+	return out
+}
+
+// listenerInDir (L3): vsak program, ki posluša na vratih, je pod mapo namestitve dir (kanonično). Kjer programov ni
+// mogoče našteti (macOS: minigw serve le za razvoj; Foundry na Macu preveri aplikacija), velja.
+func listenerInDir(port int, dir string) bool {
+	exes, ok := listenerExes(port)
+	if !ok {
+		return true
+	}
+	root := realPath(dir)
+	for _, e := range exes {
+		if !under(realPath(e), root) {
+			return false
+		}
+	}
+	return len(exes) > 0
+}
+
+// foundryInstallDir: mapa programa foundry. Nadrejena od »bin« le za paket z lastno mapo (N4): povezava programa je
+// vodila v drugo mapo (npr. Homebrew Cellar/<različica>/bin) ali ima nadrejena ali njena nadrejena »foundry« v imenu
+// (foundry/bin, foundrylocal/<različica>/bin); sicer (/usr/local/bin) ne, da ne bi vsega v /usr/local štel za Foundry.
+// ponytail: strežnik mora biti pod njo; drugačna postavitev paketa bi ga zavrnila.
+func foundryInstallDir(exe string) string {
+	abs, _ := filepath.Abs(exe)
+	d := filepath.Dir(realPath(exe))
+	up := strings.ToLower(filepath.Base(filepath.Dir(d)) + "/" + filepath.Base(filepath.Dir(filepath.Dir(d))))
+	if strings.EqualFold(filepath.Base(d), "bin") && (d != realPath(filepath.Dir(abs)) || strings.Contains(up, "foundry")) {
+		d = filepath.Dir(d)
+	}
+	return d
 }
 
 // tcpListenPIDs (F2): PID-ji iz tabele GetExtendedTcpTable, ki poslušajo na vratih (stanje 2 = LISTEN).

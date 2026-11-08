@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -167,6 +168,16 @@ func TestFoundryThroughGateway(t *testing.T) {
 	if st, _ := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/foundry", `{"models":["-rf"]}`); st != 400 {
 		t.Fatal("bad model name accepted")
 	}
+	// N5: poslušalca preveri vsaka zahteva: z drugo mapo namestitve naslov iz predpomnilnika ne velja več.
+	if runtime.GOOS == "linux" || runtime.GOOS == "windows" {
+		other := filepath.Join(t.TempDir(), "foundry.exe")
+		os.WriteFile(other, []byte("x"), 0o755)
+		s.update(func(c *serveConfig) error { c.Foundry.Executable = other; return nil })
+		if st, b := adminReq(t, base, host, "tok", "POST", "/v1/messages", `{"model":"claude-foundry-qwen-vl-generic-gpu","max_tokens":5,"messages":[{"role":"user","content":"hi"}]}`); st == 200 ||
+			!strings.Contains(b, "another user's process") {
+			t.Fatalf("cached endpoint not re-checked: %d %s", st, b)
+		}
+	}
 }
 
 // Rok: počasen strežnik ne zadrži zahteve dlje od foundryTimeout.
@@ -223,6 +234,36 @@ func TestFoundryReviewFixes(t *testing.T) {
 	free.Close()
 	if (runtime.GOOS == "linux" || runtime.GOOS == "windows") && listenerIsOurs(port) {
 		t.Fatal("a port nobody listens on counts as ours")
+	}
+	// L3: tudi program poslušalca mora biti v mapi namestitve Foundry (tu: ta testni program).
+	if ino := procListenInodes([]byte(tcp), 5269); len(ino) != 1 || ino[0] != "111" {
+		t.Fatalf("listen inodes: %v", ino)
+	}
+	self, _ := os.Executable()
+	own := ln.Addr().(*net.TCPAddr).Port
+	if !listenerInDir(own, filepath.Dir(self)) {
+		t.Fatal("own listener not inside its own folder")
+	}
+	if (runtime.GOOS == "linux" || runtime.GOOS == "windows") && listenerInDir(own, filepath.Join(t.TempDir(), "foundry")) {
+		t.Fatal("a listener outside the Foundry folder accepted")
+	}
+	if d := foundryInstallDir("/opt/x/Cellar/foundrylocal/1.0/bin/foundry"); !strings.HasSuffix(d, filepath.FromSlash("/foundrylocal/1.0")) {
+		t.Fatalf("install dir: %s", d)
+	}
+	// N4: navaden bin ostane bin; povezava v paket z lastno mapo gre nad njegov bin
+	tmp := realPath(t.TempDir())
+	os.MkdirAll(filepath.Join(tmp, "usr", "bin"), 0o700)
+	os.MkdirAll(filepath.Join(tmp, "pkg", "2.0", "bin"), 0o700)
+	os.WriteFile(filepath.Join(tmp, "usr", "bin", "foundry"), nil, 0o700)
+	os.WriteFile(filepath.Join(tmp, "pkg", "2.0", "bin", "foundry"), nil, 0o700)
+	if d := foundryInstallDir(filepath.Join(tmp, "usr", "bin", "foundry")); d != filepath.Join(tmp, "usr", "bin") {
+		t.Fatalf("plain bin: %s", d)
+	}
+	if runtime.GOOS != "windows" {
+		os.Symlink(filepath.Join(tmp, "pkg", "2.0", "bin", "foundry"), filepath.Join(tmp, "foundry"))
+		if d := foundryInstallDir(filepath.Join(tmp, "foundry")); d != filepath.Join(tmp, "pkg", "2.0") {
+			t.Fatalf("linked package: %s", d)
+		}
 	}
 	for _, v := range []any{-1.0, 2e9, "7", nil} {
 		if _, ok := foundryCount(v); ok {

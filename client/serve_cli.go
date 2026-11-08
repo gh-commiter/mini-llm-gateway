@@ -117,7 +117,7 @@ func (s *server) agentArgs(dir string) []string {
 	c := s.conf()
 	dirs := []string{dir} // delovna mapa in dovoljene mape (kot allowedRoots na Macu)
 	for _, f := range c.AllowedFolders {
-		if f != dir && len(scratchOverlaps([]string{f}, c.Scratch)) == 0 { // L1: ne mape okoli Scratch (kot na Macu)
+		if f != dir && len(scratchOverlaps([]string{f}, c.Scratch)) == 0 && len(copilotCacheOverlaps([]string{f})) == 0 { // L1, #26
 			dirs = append(dirs, f)
 		}
 	}
@@ -165,7 +165,9 @@ func (s *server) agentArgs(dir string) []string {
 			"enabled": true, "failIfUnavailable": hasBash(c.Tools) || c.AllowLocalTools, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
 			"network": map[string]any{"allowedDomains": []string{"*"}},
 			// M1: Scratch (kopije drugih naprav, zrcala) tudi zunaj domače mape; mapa seje v njem ostane berljiva (allowRead).
-			"filesystem": map[string]any{"denyRead": append([]string{"~", s.cfgDir}, scratchPaths(c.Scratch)...), "allowRead": dirs, "allowWrite": dirs},
+			// #26 (N2): paket Copilot nikoli za pisanje (naloži ga priprava paketa), tudi če je v dovoljeni mapi.
+			"filesystem": map[string]any{"denyRead": append([]string{"~", s.cfgDir}, scratchPaths(c.Scratch)...), "allowRead": dirs, "allowWrite": dirs,
+				"denyWrite": scratchPaths(copilotCacheDir())},
 		}})
 		args = append(args, "--settings", string(settings))
 	}

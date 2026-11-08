@@ -442,6 +442,9 @@ extension Router {
                 if let folders, let bad = folders.split(separator: ",").map(String.init).first(where: { RouterConfig.overlapsScratch($0, scratch: c.scratchURL) }) {
                     throw AdminError(400, "allowed folder \(bad.trimmingCharacters(in: .whitespaces)) contains or is inside the scratch folder \(c.scratchURL.path) (agents could change the gateway's mirrors and other devices' copies): choose another folder")
                 }
+                if let folders, let bad = folders.split(separator: ",").map(String.init).first(where: { RouterConfig.overlapsCopilotCache($0) }) {
+                    throw AdminError(400, "allowed folder \(bad.trimmingCharacters(in: .whitespaces)) contains or is inside Copilot's package cache \(RouterConfig.copilotCache.path) (agents could plant code the gateway runs): choose another folder")
+                }
                 let found = await ClaudeCLI.executable(path ?? config.claudeCLI.executable) != nil
                 let n = try await hooks.update { c in
                     if let enabled { c.claudeCLI.enabled = enabled }
@@ -511,9 +514,10 @@ extension Router {
         case "GET general":
             return (200, general(c, connect: hooks.connect))
         case "PATCH general":
-            let b = try AdminBody(body, ["port", "address", "allowedClients", "allowPlainRemote", "allowAnyDevice", "startAtSignIn", "scratch"])
+            let b = try AdminBody(body, ["port", "address", "allowedClients", "allowPlainRemote", "allowAnyDevice", "allowLocalApps", "startAtSignIn", "scratch"])
             let port = try b.int("port"), address = try b.string("address"), clients = try b.string("allowedClients")
             let plain = try b.bool("allowPlainRemote"), any = try b.bool("allowAnyDevice"), scratch = try b.string("scratch")
+            let localApps = try b.bool("allowLocalApps")
             // L2: vse preverjeno pred kakršno koli spremembo (premik Scratch ali Open at Login)
             if let port, !(1...65535).contains(port) { throw AdminError(400, "port must be 1-65535") }
             if let address, !["0.0.0.0", "::", "127.0.0.1"].contains(address) {
@@ -556,6 +560,7 @@ extension Router {
                 if let clients { c.allowedClients = clients }
                 if let plain { c.allowPlainRemote = plain }
                 if let any { c.allowAnyDevice = any }
+                if let localApps { c.allowLocalApps = localApps }
             }
             return (200, general(n, connect: hooks.connect))  // aplikacija znova zažene router: brez restartRequired
         case "POST general/{}":
@@ -609,7 +614,7 @@ extension Router {
 
     func general(_ c: RouterConfig, connect: String) -> [String: Any] {
         ["port": Int(c.port), "address": c.host, "allowedClients": c.allowedClients, "allowPlainRemote": c.allowPlainRemote,
-         "scratch": c.scratchURL.path, "allowAnyDevice": c.allowAnyDevice,
+         "scratch": c.scratchURL.path, "allowAnyDevice": c.allowAnyDevice, "allowLocalApps": c.allowLocalApps,
          "connect": "minigw connect \(c.host == "0.0.0.0" || c.host == "::" ? Self.localIP() : c.host):\(c.port) --token '\(connect)'"]
     }
 

@@ -86,7 +86,7 @@ Claude   {"path": string, "found": bool, "tools": string, "allowUnsandboxedBash"
          path: "" = from PATH; tools: comma-separated tool names; folder: "" = only synced copies; exe: the
          claude that was found; version: its `claude --version` (both only when found; Go gateway only).
 General  {"port": number, "address": string, "connect": string, "restartRequired"?: true, "allowedClients": string,
-          "allowPlainRemote": bool, "allowAnyDevice": bool, "scratch": string}
+          "allowPlainRemote": bool, "allowAnyDevice": bool, "allowLocalApps": bool, "scratch": string}
          address: "" = all addresses; connect: the "minigw connect …" line for clients (contains the token).
 ```
 
@@ -109,7 +109,7 @@ General  {"port": number, "address": string, "connect": string, "restartRequired
 | `GET /agents/claude/tools` | – | `{"tools": [string]}`: the tools of this Claude Code (for the exclude table with local tools) |
 | `PATCH /agents/claude` | any of `{"path", "tools", "allowUnsandboxedBash", "folder"}` | Claude |
 | `GET /general` | – | General |
-| `PATCH /general` | any of `{"port", "address", "startAtSignIn", "allowedClients", "allowPlainRemote", "allowAnyDevice", "scratch"}` | General; `"restartRequired": true` for port or address |
+| `PATCH /general` | any of `{"port", "address", "startAtSignIn", "allowedClients", "allowPlainRemote", "allowAnyDevice", "allowLocalApps", "scratch"}` | General; `"restartRequired": true` for port or address |
 | `POST /general/token` | – | General with the new token in `connect`; the old token stops working at once |
 | `POST /settings/login` | – | `{"url"}`: a one-time link to the settings page (`…/minigw/settings#t=…`, 60 s); `503` when the gateway does not run |
 
@@ -117,6 +117,15 @@ Notes:
 
 - A remote client without a device key (minigw before 0.4.4, unencrypted clients) is allowed only while the device list
   is empty and `allowAnyDevice` is on; otherwise 403 "This gateway needs a device key". The same on the Mac and Go.
+- `allowLocalApps` (default off): `GET /v1/models` and `POST /v1/messages` (and `count_tokens`) need no token when the
+  client is a process of the gateway's own user on this computer (loopback; macOS libproc, Linux `/proc/net/tcp`,
+  Windows the TCP table and the process SID), not one of the gateway's agents, sends `anthropic-version` or `x-api-key`,
+  has a loopback `Host` and no `Origin`. Everything else still needs the token (401); device rules are unchanged.
+  Apps calling from a web view send `Origin` and need the token. Sandboxed processes of this user need the token, as
+  the gateway's agents do: on the Mac App Sandbox and Seatbelt (including commands in Claude Code's sandboxed Bash), on
+  Linux Flatpak (`/.flatpak-info` in the process's root, or an unreadable root) and snap (`snap.*` cgroup), on Windows
+  AppContainer (`TokenIsAppContainer`). Docker and other containers, VMs and tunnels (`ssh -R`, ngrok…) running as you also count as this user's apps: with the switch on they can use agents in your allowed folders without a token. Browser extensions with permission for localhost can remove `Origin` and add headers, so they can use it too.
+  `minigw serve` on macOS (development only) never skips the token.
 - `POST /devices` takes only a valid device ID. `pending` lists the last 20 devices that were refused since the
   gateway started (in memory), newest last.
 - `POST /providers` adds or replaces a provider. Name: letters, digits, `. _ -`, up to 32. `baseURL` without `/v1`;

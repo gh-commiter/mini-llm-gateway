@@ -1,3 +1,4 @@
+import Foundation
 import Darwin
 
 /// Kdo je na drugi strani lokalne povezave TCP (skrbniški API). Agenti (Codex, Grok, Claude Code) tečejo kot otroci
@@ -22,6 +23,15 @@ public enum PeerProcess {
             p = pp
         }
         return "cannot check the parent processes of the client"
+    }
+
+    /// Aplikacija tega uporabnika (Router.localApp): natanko en proces tega uid in ni agent aplikacije (refusal: ne v
+    /// sandboxu, ne potomec aplikacije, veriga staršev preverljiva).
+    public static func sameUserApp(peerPort: UInt16, routerPort: UInt16) -> Bool {
+        guard refusal(peerPort: peerPort, routerPort: routerPort) == nil, let pid = pid(localPort: peerPort, remotePort: routerPort) else { return false }
+        var bsd = proc_bsdinfo()
+        let n = Int32(MemoryLayout<proc_bsdinfo>.size)
+        return proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &bsd, n) == n && bsd.pbi_uid == getuid()
     }
 
     /// Pot izvršljive datoteke procesa (jedro, ni mogoče ponarediti).
@@ -55,7 +65,9 @@ public enum PeerProcess {
 
     /// Foundry Local (F2): vsi procesi, ki poslušajo na tem portu TCP, so tega uporabnika (procesov drugih uporabnikov
     /// libproc ne pokaže, zato tak port ostane brez najdenega poslušalca in velja za tujega).
-    public static func listenerIsOurs(port: UInt16) -> Bool {
+    /// `installDir` (L3): poslušalec mora biti tudi program iz te mape (proc_pidpath, kanonično), ne le istega uporabnika:
+    /// agent istega uporabnika bi lahko poslušal na vratih Foundry.
+    public static func listenerIsOurs(port: UInt16, installDir: String? = nil) -> Bool {
         let n = proc_listallpids(nil, 0)
         guard n > 0 else { return false }
         var pids = [pid_t](repeating: 0, count: Int(n) + 64)
@@ -75,6 +87,12 @@ public enum PeerProcess {
                 var bsd = proc_bsdinfo()
                 guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &bsd, Int32(MemoryLayout<proc_bsdinfo>.size)) == Int32(MemoryLayout<proc_bsdinfo>.size),
                       bsd.pbi_uid == getuid() else { return false }
+                if let installDir {
+                    var buf = [CChar](repeating: 0, count: Int(MAXPATHLEN) * 4)
+                    guard proc_pidpath(pid, &buf, UInt32(buf.count)) > 0,
+                          let real = Sync.real(URL(fileURLWithPath: String(cString: buf)))?.path,
+                          real.hasPrefix(installDir.hasSuffix("/") ? installDir : installDir + "/") else { return false }
+                }
                 found = true
             }
         }

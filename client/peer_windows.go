@@ -131,6 +131,36 @@ func peerCheck(ours, peer *net.TCPAddr) error {
 	return nil
 }
 
+// sameUserPeer: proces odjemalca ima isti uporabniški SID kot prehod in ni agent prehoda.
+func sameUserPeer(ours, peer *net.TCPAddr) bool {
+	pid, err := tcpOwnerPID(ours, peer)
+	if err != nil {
+		return false
+	}
+	self, err1 := processSID(uint32(os.Getpid()))
+	sid, err2 := processSID(pid)
+	return err1 == nil && err2 == nil && sid == self && !confinedApp(int(pid)) && peerCheck(ours, peer) == nil
+}
+
+// confinedApp (L1): proces v AppContainer (TokenIsAppContainer), kot App Sandbox na Macu; napaka šteje kot da (fail closed).
+func confinedApp(pid int) bool {
+	h, err := syscall.OpenProcess(0x1000 /* PROCESS_QUERY_LIMITED_INFORMATION */, false, uint32(pid))
+	if err != nil {
+		return true
+	}
+	defer syscall.CloseHandle(h)
+	var tok syscall.Token
+	if syscall.OpenProcessToken(h, syscall.TOKEN_QUERY, &tok) != nil {
+		return true
+	}
+	defer tok.Close()
+	var v, n uint32
+	if syscall.GetTokenInformation(tok, 29 /* TokenIsAppContainer */, (*byte)(unsafe.Pointer(&v)), 4, &n) != nil {
+		return true
+	}
+	return v != 0
+}
+
 // tcpOwnerPID: PID procesa z odjemalčevo stranjo povezave (GetExtendedTcpTable, TCP_TABLE_OWNER_PID_ALL).
 func tcpOwnerPID(ours, peer *net.TCPAddr) (uint32, error) {
 	for _, v6 := range []bool{false, true} {
@@ -190,6 +220,43 @@ func listenerIsOurs(port int) bool {
 		}
 	}
 	return len(pids) > 0
+}
+
+// listenerExes (L3): programi procesov, ki poslušajo na vratih (QueryFullProcessImageNameW).
+func listenerExes(port int) ([]string, bool) {
+	var exes []string
+	q := syscall.NewLazyDLL("kernel32.dll").NewProc("QueryFullProcessImageNameW")
+	for _, v6 := range []bool{false, true} {
+		af := uintptr(2)
+		if v6 {
+			af = 23
+		}
+		size := uint32(64 << 10)
+		for range 5 {
+			buf := make([]byte, size)
+			r, _, _ := pGetTCPTable.Call(uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&size)), 0, af, 5, 0)
+			if r == 122 {
+				size += 4 << 10
+				continue
+			}
+			if r == 0 {
+				for _, pid := range tcpListenPIDs(buf, v6, port) {
+					h, err := syscall.OpenProcess(0x1000 /* PROCESS_QUERY_LIMITED_INFORMATION */, false, pid)
+					if err != nil {
+						continue
+					}
+					name := make([]uint16, 1024)
+					n := uint32(len(name))
+					if ok, _, _ := q.Call(uintptr(h), 0, uintptr(unsafe.Pointer(&name[0])), uintptr(unsafe.Pointer(&n))); ok != 0 {
+						exes = append(exes, syscall.UTF16ToString(name[:n]))
+					}
+					syscall.CloseHandle(h)
+				}
+			}
+			break
+		}
+	}
+	return exes, true
 }
 
 // processSID: uporabniški SID procesa (žeton, TokenUser).
