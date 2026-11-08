@@ -4,7 +4,7 @@
 
 - Windows and Linux gateway (`minigw serve`): `minigw` without `--minigw-work` (and no `MINIGW_WORK` or saved mode) no
   longer fails with 400 "this gateway supports --minigw-work=sync and worktree": when the gateway refuses direct, the
-  client picks worktree (git repository with a commit) or sync, as `auto` does. An explicit `direct` is still an error.
+  client picks worktree (the folder is the root of a git repository with a commit) or sync, as `auto` does. An explicit `direct` is still an error.
   Both clients (plugin 0.5.16).
 - Settings page, Claude CLI pane: an allowed folder that the gateway left out at start (it contains or is inside the
   scratch folder) is listed, marked, and can be removed; after saving the folders the switch turns Claude CLI on without

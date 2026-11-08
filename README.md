@@ -239,7 +239,7 @@ All clients encrypt with AES-256-GCM; the Mac gateway also accepts ChaCha20-Poly
 `minigw serve` turns a Windows or Linux computer into a small gateway: `claude -p` on that computer as
 `claude-cli-opus`, `claude-cli-sonnet` and `claude-cli-haiku`, Codex and Grok (off by default), plus providers; no
 Siri or Apple models. Agents work in a synced copy of the client's folder or, for a git repository, in a clone on a
-branch (worktree mode). With no work mode chosen the client picks worktree (git repository with a commit) or sync by
+branch (worktree mode). With no work mode chosen the client picks worktree (the folder is the root of a git repository with a commit) or sync by
 itself; an explicit `--minigw-work=direct` is refused (folder mounts, native mode and `minigw run` need the Mac gateway). Install Claude Code there (on Windows the native `claude.exe`; `minigw serve`
 does not run `claude.cmd`).
 
