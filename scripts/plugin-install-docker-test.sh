@@ -8,6 +8,7 @@
 #   5. #25: podpisana starejša izdaja (VERSION 0.5.16) čez novejši nameščeni → zavrnjena, z razlogom
 #   6. ista z MINIGW_ALLOW_DOWNGRADE=1 → nameščena
 #   7. N1: podpisana izdaja brez VERSION (= 0.5.17) čez nameščeni 0.5.18 → zavrnjena
+#   8. izhod »minigw status« → connected / token rejected / device not approved (ID) / not connected; brez claude: namig (#6)
 emulate -L zsh; set -eu
 cd ${0:A:h}/..
 T=$(mktemp -d); trap 'rm -rf $T' EXIT
@@ -76,5 +77,29 @@ out=$(run /tmp/d7 good testkey); echo "$out"
 [ "$(/tmp/d7/bin/minigw --version | head -1)" = "minigw 0.5.18" ] || fail "7: a signed release without VERSION replaced 0.5.18"
 echo "$out" | grep -q "not updated: the latest release (0.5.17) is older than the installed minigw 0.5.18" || fail "7: no reason printed"
 echo "ok 7: signed release without VERSION counts as 0.5.17 (N1)"
+
+# 8: kljuka prebere izhod »minigw status« (lažni minigw); v kontekst le fiksni nizi in ID naprave
+mkdir -p /tmp/d8/bin; cat > /tmp/d8/bin/minigw <<EOS
+#!/bin/sh
+[ "\$1" = --version ] && { echo minigw 0.5.18; exit 0; }
+cat /tmp/status.out; exit \$(cat /tmp/status.rc)
+EOS
+chmod +x /tmp/d8/bin/minigw
+ID=AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-AbCdE
+st() { printf "%s\n" "$1" > /tmp/status.out; echo $2 > /tmp/status.rc; out=$(run /tmp/d8 nonexistent real); echo "$out"; }
+st "Status:    connected" 0
+echo "$out" | grep -q "connected to Mini Gateway" || fail "8: connected"
+st "Gateway: x
+Status:    token rejected: EVIL text" 1
+echo "$out" | grep -q "gateway token was rejected" && ! echo "$out" | grep -q EVIL || fail "8: token rejected"
+st "Device:    $ID (waiting for approval)
+Status:    device not approved: EVIL text" 1
+echo "$out" | grep -q "device not approved (ID $ID)" && ! echo "$out" | grep -q EVIL || fail "8: device not approved"
+st "Status:    gateway not reachable" 1
+echo "$out" | grep -q "installed but not connected" || fail "8: not connected"
+! echo "$out" | grep -q "standalone claude command" || fail "8: claude hint with claude present"
+rm /tmp/home/bin/claude; out=$(PATH=/tmp/home/bin:/usr/bin:/bin run /tmp/d8 nonexistent real); echo "$out"
+echo "$out" | grep -q "standalone claude command on PATH" || fail "8: no claude hint"
+echo "ok 8: hook reports status reasons and a missing claude"
 ' || fail "docker cases"
 print "plugin install test ok"

@@ -50,7 +50,7 @@ verify_sums() {
 # Kontrolne vsote zadnje izdaje: po njih se prenesena kopija posodobi (brez omrežja ostane obstoječa). Le podpisane
 # (#8): sicer ni posodobitve (obstoječa ostane) in ne prve namestitve.
 sums="" unsigned=""
-st=$(mktemp -d) && if curl -fsSL --max-time 20 -o "$st/s" "$base/SHA256SUMS" 2>/dev/null && curl -fsSL --max-time 20 -o "$st/sig" "$base/SHA256SUMS.sig" 2>/dev/null; then
+st=$(mktemp -d) && if curl -fsSL --max-time 8 -o "$st/s" "$base/SHA256SUMS" 2>/dev/null && curl -fsSL --max-time 8 -o "$st/sig" "$base/SHA256SUMS.sig" 2>/dev/null; then
   verify_sums "$st/s" "$st/sig"; case $? in
     0) sums=$(cat "$st/s") ;;
     2) unsigned="cannot check the release signature: install OpenSSH (ssh-keygen)" ;;
@@ -76,7 +76,7 @@ stamp="$BIN/.asset.sha256"  # vsota prenesenega paketa (na macOS je to minigw.zi
 fetch() {
   w=$(want "$1"); [ -n "$w" ] || return 1
   tmp=$(mktemp -d) || return 1
-  if curl -fsSL -o "$tmp/$1" "$base/$1" && [ "$(sha "$tmp/$1")" = "$w" ]; then
+  if curl -fsSL --max-time 25 -o "$tmp/$1" "$base/$1" && [ "$(sha "$tmp/$1")" = "$w" ]; then
     if [ "$os" = darwin ]; then
       ditto -x -k "$tmp/$1" "$tmp/x" && valid "$tmp/x/minigw" && rm -f "$EXE" && mv "$tmp/x/minigw" "$EXE"
     else
@@ -123,7 +123,7 @@ case "$os" in
   darwin) app="/Applications/Mini Gateway.app"
     [ -d "$app" ] && old=$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist" 2>/dev/null)
     # minigw vtičnika je tu lahko kar minigw aplikacije: zadnja izdaja iz preusmeritve releases/latest
-    new=$(curl -fsS -o /dev/null --max-time 10 -w '%{redirect_url}' "https://github.com/$REPO/releases/latest" 2>/dev/null | sed -n 's|.*/tag/v||p') ;;
+    new=$(curl -fsS -o /dev/null --max-time 5 -w '%{redirect_url}' "https://github.com/$REPO/releases/latest" 2>/dev/null | sed -n 's|.*/tag/v||p') ;;
   linux) [ -f "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/minigw-serve.service" ] && old=$(ver "$HOME/.local/bin/minigw") ;;
   windows) [ -n "${LOCALAPPDATA:-}" ] && command -v cygpath >/dev/null 2>&1 &&
     old=$(ver "$(cygpath -u "$LOCALAPPDATA")/Programs/Mini Gateway/minigw.exe") ;;
@@ -136,8 +136,19 @@ older "$old" "$new" && echo "Mini Gateway $old is installed, $new is available: 
 # Claudov Bash najde »minigw« tudi brez poti.
 line="export PATH=\"\$PATH:$BIN\""  # ena vrstica, tudi ob resume/clear/compact
 [ -n "${CLAUDE_ENV_FILE:-}" ] && { grep -qxF "$line" "$CLAUDE_ENV_FILE" 2>/dev/null || echo "$line" >> "$CLAUDE_ENV_FILE"; }
-if "$EXE" status >/dev/null 2>&1; then
-  echo "minigw plugin: $("$EXE" --version 2>/dev/null | head -1), connected to Mini Gateway."
+# Povezava: izhod »minigw status« (izhodna koda in vrstici Status/Device privzetega profila); v kontekst le fiksni nizi in
+# ID naprave (43 znakov base64url), nikoli prosto besedilo prehoda (F6). Skupaj z omejitvami zgoraj v 60 s kljuke.
+ver_line=$("$EXE" --version 2>/dev/null | head -1)
+if sout=$("$EXE" status 2>&1); then
+  echo "minigw plugin: $ver_line, connected to Mini Gateway."
 else
-  echo "minigw plugin: $("$EXE" --version 2>/dev/null | head -1) installed but not connected; use /minigw:connect <gateway> <token>."
+  case $(printf '%s\n' "$sout" | sed -n 's/^Status: *//p' | head -1) in
+    "token rejected"*) echo "minigw plugin: $ver_line: the gateway token was rejected; run /minigw:connect <gateway> with a fresh token (Mini Gateway > Settings > General > Copy Token)." ;;
+    "device not approved"*)
+      id=$(printf '%s\n' "$sout" | sed -n 's/^Device: *\([A-Za-z0-9_-]\{43\}\) .*/\1/p' | head -1)
+      echo "minigw plugin: $ver_line: device not approved${id:+ (ID $id)}; approve it on the gateway (Settings > Devices), then run /minigw:connect again." ;;
+    *) echo "minigw plugin: $ver_line installed but not connected; use /minigw:connect <gateway> <token>." ;;
+  esac
 fi
+# #6: agentni skilli zaženejo »claude« prek minigw; razširitev VS Code z vgrajenim CLI ni dovolj.
+command -v claude >/dev/null 2>&1 || echo "minigw plugin: the agent skills need the standalone claude command on PATH (the VS Code extension's bundled CLI is not enough): install it with: curl -fsSL https://claude.ai/install.sh | bash"
