@@ -844,6 +844,9 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 				}
 			}
 		}
+		if b.AllowAnyDevice != nil && *b.AllowAnyDevice && len(s.conf().Devices) > 0 {
+			return fail(400, "allowAnyDevice: only while no device is allowed (remove the allowed devices first)")
+		}
 		scratch := ""
 		if b.Scratch != nil { // prazno = privzeta mapa; velja za nove seje (obstoječe kopije ostanejo, kjer so)
 			if scratch = *b.Scratch; scratch == "" {

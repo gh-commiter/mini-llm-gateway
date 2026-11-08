@@ -551,6 +551,7 @@ extension Router {
                     throw AdminError(400, "allowedClients: \(ip) is not an IP address")
                 }
             }
+            if any == true, !c.devices.isEmpty { throw AdminError(400, "allowAnyDevice: only while no device is allowed (remove the allowed devices first)") }
             // Scratch (kot Settings: vsebina gre v »Mini Gateway Scratch« v izbrani mapi; "" = privzeta). M1, L1: pravila
             // poti, shrani se kanonična pot; L3: ne med sejami.
             var newScratch: String?

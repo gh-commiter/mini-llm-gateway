@@ -631,3 +631,14 @@ func TestProvidersNamesAndAliases(t *testing.T) {
 		t.Fatal("gateway alias differs")
 	}
 }
+
+// »Allow any device with the token« le pri praznem seznamu dovoljenih naprav (poročilo Windows #4).
+func TestAdminAllowAnyDeviceOnlyWithoutDevices(t *testing.T) {
+	s, _, base := liveServer(t, func(c *serveConfig) { c.Devices = []serveDevice{{ID: "dev1", Name: "a"}} })
+	if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/general", `{"allowAnyDevice":true}`); st != 400 || !strings.Contains(b, "only while no device is allowed") {
+		t.Fatalf("allowAnyDevice with a device: %d %s", st, b)
+	}
+	if st, _ := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/general", `{"allowAnyDevice":false}`); st != 200 {
+		t.Fatal("allowAnyDevice false refused")
+	}
+}

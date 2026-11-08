@@ -578,7 +578,7 @@ const pages = {
       : group(row(el("span", {class: "label sub", textContent: t("noWaiting")})));
     return [
       card(...ICON.devices, t("devices"), t("devicesDesc")),
-      group(row(labelSub(t("anyDevice"), t("anyDeviceHelp")), toggle(g.allowAnyDevice, v => save(n2, () => api("PATCH", "/general", {allowAnyDevice: v})))),
+      group(row(labelSub(t("anyDevice"), t("anyDeviceHelp")), toggle(g.allowAnyDevice && !d.devices.length, v => save(n2, () => api("PATCH", "/general", {allowAnyDevice: v})), d.devices.length > 0)),
         row(t("allowedClients"), clients),
         row(labelSub(t("plainRemote"), t("plainRemoteHelp")), toggle(g.allowPlainRemote, v => save(n2, () => api("PATCH", "/general", {allowPlainRemote: v}))))),
       n2,

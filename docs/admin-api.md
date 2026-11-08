@@ -139,7 +139,7 @@ General  {"port": number, "address": string, "connect": string, "restartRequired
 | `GET /agents/claude/tools` | – | `{"tools": [string]}`: the tools of this Claude Code (for the exclude table with local tools) |
 | `PATCH /agents/claude` | any of `{"path", "tools", "allowUnsandboxedBash"}` | Claude |
 | `GET /general` | – | General |
-| `PATCH /general` | any of `{"port", "address", "startAtSignIn", "allowedClients", "allowPlainRemote", "allowAnyDevice", "allowLocalApps", "scratch"}` | General; `"restartRequired": true` for port or address |
+| `PATCH /general` | any of `{"port", "address", "startAtSignIn", "allowedClients", "allowPlainRemote", "allowAnyDevice", "allowLocalApps", "scratch"}` | General; `"restartRequired": true` for port or address; `allowAnyDevice: true` only while no device is allowed (400) |
 | `POST /general/token` | – | General with the new token in `connect`; the old token stops working at once |
 | `POST /settings/login` | – | `{"url"}`: a one-time link to the settings page (`…/minigw/settings#t=…`, 60 s); `503` when the gateway does not run |
 
