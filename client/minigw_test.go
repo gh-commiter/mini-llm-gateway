@@ -58,8 +58,9 @@ func TestShareCommandAndWanted(t *testing.T) {
 	if !shareWanted(sub, false) || !shareWanted(proj, false) {
 		t.Fatal("added folder or its subfolder not shared")
 	}
-	if shareWanted(sub, true) {
-		t.Fatal("shared with a local router")
+	// Aplikacija na tem Macu dela v mapi sami; minigw serve na tem računalniku (Windows, Linux) jo potrebuje deljeno (#9).
+	if shareWanted(sub, true) != (runtime.GOOS != "darwin") {
+		t.Fatal("local gateway: shared on macOS, or not shared on Windows/Linux")
 	}
 	if shareAllowed(filepath.VolumeName(proj)+string(filepath.Separator)) || shareAllowed(cfg) {
 		t.Fatal("drive root or home folder allowed")
