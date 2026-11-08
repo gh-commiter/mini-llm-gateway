@@ -8,8 +8,8 @@ import (
 
 func TestCommandHidesConsole(t *testing.T) {
 	for _, cmd := range []*exec.Cmd{command("git", "--version"), commandContext(context.Background(), "git")} {
-		if a := cmd.SysProcAttr; a == nil || !a.HideWindow || a.CreationFlags&createNoWindow == 0 {
-			t.Fatalf("SysProcAttr %+v: want HideWindow and CREATE_NO_WINDOW", a)
+		if a := cmd.SysProcAttr; a == nil || a.HideWindow || a.CreationFlags&createNoWindow == 0 {
+			t.Fatalf("SysProcAttr %+v: want CREATE_NO_WINDOW without HideWindow (GUI children stay visible)", a)
 		}
 	}
 	cmd := command("x")
