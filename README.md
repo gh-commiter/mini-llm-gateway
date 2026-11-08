@@ -442,9 +442,9 @@ and gives each agent its own clone on a branch `minigw/<agent>-<session>-<n>`; p
   30 days are removed.
 - <a id="auto-mode"></a>**`--minigw-work=auto` (the default with every gateway on another computer):** read-only
   (`--minigw-ro`) → direct; a folder on the gateway's SMB share → native; a git repository → worktree, then sync (never
-  direct read-write: agents cannot commit there, `.git` is read-only); otherwise sync, then direct. With no mode chosen,
-  worktree only when the folder is the root of the repository and it has a commit (a subfolder of a repository is synced,
-  so files outside it are never sent). A saved per-folder mode (`minigw share add --work=…`), `MINIGW_WORK` and the flag
+  direct read-write: agents cannot commit there, `.git` is read-only); otherwise sync, then direct. Worktree
+  only when the folder is the root of the repository and it has a commit (a subfolder of a repository is synced, so files
+  outside it are never sent; only an explicit `--minigw-work=worktree` uses the parent repository). A saved per-folder mode (`minigw share add --work=…`), `MINIGW_WORK` and the flag
   still win; `minigw share add --work=direct` keeps the old Mac default. A gateway on the same Mac shares no folder.
   In worktree mode minigw prints `agent work is on branch minigw/…: review with git diff HEAD...minigw/…, then merge or
   apply` once per branch and run; nothing is merged for you.

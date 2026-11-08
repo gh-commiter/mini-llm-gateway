@@ -163,12 +163,18 @@ func TestWorkCandidatesAndReadOnly(t *testing.T) {
 		workCandidates(w, ro, false, true)[0] != "direct" {
 		t.Errorf("saved --ro: %s %v", w, ro)
 	}
-	// M1: privzeti auto le v korenu repozitorija.
+	// M1: auto (privzeti ali izrecni) le v korenu repozitorija; izrecni worktree tudi v nadrejenem.
 	dir := t.TempDir()
 	sub := filepath.Join(dir, "sub")
 	os.Mkdir(sub, 0o755)
 	if !repoRoot(dir, dir) || repoRoot(dir, sub) || repoRoot("", dir) {
 		t.Error("repoRoot")
+	}
+	if out, err := exec.Command("git", "init", "-q", dir).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	if workTop("auto", dir) == "" || workTop("auto", sub) != "" || workTop("worktree", sub) == "" || workTop("sync", dir) != "" {
+		t.Errorf("workTop: %q %q %q", workTop("auto", dir), workTop("auto", sub), workTop("worktree", sub))
 	}
 }
 

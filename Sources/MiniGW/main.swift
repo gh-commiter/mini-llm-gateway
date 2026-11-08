@@ -844,8 +844,8 @@ func repoRoot(_ t: String?, _ cwd: String) -> Bool {
     let real = { URL(fileURLWithPath: $0).resolvingSymlinksInPath().standardizedFileURL.path }
     return t.map { real($0) == real(cwd) } == true
 }
-// Privzeti auto: worktree le v korenu repozitorija.
-let top = ["auto", "worktree"].contains(work) ? Worktree.toplevel(cwd).flatMap { implicitWork && !repoRoot($0, cwd) ? nil : $0 } : nil
+// auto: worktree le v korenu repozitorija; izrecni worktree tudi v nadrejenem.
+let top = ["auto", "worktree"].contains(work) ? Worktree.toplevel(cwd).flatMap { work == "auto" && !repoRoot($0, cwd) ? nil : $0 } : nil
 let smb = work == "auto" && Native.detect(cwd: cwd, override: ProcessInfo.processInfo.environment["MINIGW_NATIVE_MOUNT"]) != nil
 var tries = SharedFolders.candidates(work: work, readOnly: readOnly, smb: smb, git: top != nil)
 // Brez commita ni posnetka: enkrat preveri, nato sync (#10).

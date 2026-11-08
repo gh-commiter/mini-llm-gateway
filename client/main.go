@@ -635,13 +635,7 @@ func main() {
 	env = append(env, "ANTHROPIC_CUSTOM_HEADERS="+headers)
 
 	// Načini po vrsti (auto: native → worktree → sync); naslednji, če router prejšnjega ne sprejme.
-	top := ""
-	if work == "auto" || work == "worktree" {
-		top = gitToplevel(cwd)
-		if asked == "" && !repoRoot(top, cwd) { // privzeti auto: worktree le v korenu repozitorija (M1)
-			top = ""
-		}
-	}
+	top := workTop(work, cwd)
 	_, _, smb := nativeDetect(cwd)
 	tries := workCandidates(work, readOnly, work == "auto" && smb, top != "")
 	noCommit := top != "" && slices.Contains(tries, "worktree") && !gitHasCommit(top)

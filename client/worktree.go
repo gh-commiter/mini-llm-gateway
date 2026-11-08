@@ -46,6 +46,18 @@ func repoRoot(top, cwd string) bool {
 	return top != "" && (rt == rc || runtime.GOOS == "windows" && strings.EqualFold(rt, rc))
 }
 
+// workTop: repozitorij za worktree; auto le v korenu repozitorija (podmapa → sync), izrecni worktree tudi nadrejeni.
+func workTop(work, cwd string) string {
+	if work != "auto" && work != "worktree" {
+		return ""
+	}
+	top := gitToplevel(cwd)
+	if work == "auto" && !repoRoot(top, cwd) {
+		return ""
+	}
+	return top
+}
+
 // gitHasCommit: repozitorij ima HEAD (brez njega ni posnetka za worktree).
 func gitHasCommit(top string) bool {
 	head, err := gitUser(top, nil, "rev-parse", "--verify", "-q", "HEAD^{commit}")
