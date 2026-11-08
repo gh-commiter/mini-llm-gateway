@@ -2,40 +2,41 @@
 
 ## Unreleased
 
-- Docs: sharing and sync send the whole folder, hidden files included; keep credentials out or list them in `.gitignore`.
+- Sharing and sync send the whole folder, hidden files included (README and `minigw share add` help now say so): keep
+  credentials out or list them in `.gitignore`.
 - Windows: after installing or updating, the tray is started through Explorer, as from the Start menu, so it finds CLIs installed since sign-in (Codex) without a restart. The tray log's startup line lists the agents found (`codex=`, `grok=`, `copilot=`).
-- Docs: on Windows Codex can ask other models only with its unelevated sandbox.
+- On Windows, Codex can ask other models only with its unelevated sandbox: `[windows]` `sandbox = "unelevated"` in
+  `~/.codex/config.toml` (the elevated sandbox cannot read the run's token file).
 - Agents no longer get client variables in other letter case (`Anthropic_Base_Url` on Windows), and programs found through the current folder are ignored.
 - Codex, Grok and Copilot agents are told the full path of `minigw` for asking other models (Codex's Windows sandbox runs commands without the gateway's PATH, so `minigw` was not found).
 - Windows tray: Settings opens in its own app window (Edge, Chrome, Brave or Vivaldi; otherwise the default browser), and clicking "Settings…" again brings it to the front instead of opening a new tab. A window whose session expired is replaced by a signed-in one.
 - Windows and Linux gateway (`minigw serve`): `minigw` without `--minigw-work` (and no `MINIGW_WORK` or saved mode) no
   longer fails with 400 "this gateway supports --minigw-work=sync and worktree": when the gateway refuses direct, the
   client picks worktree (the folder is the root of a git repository with a commit) or sync, as `auto` does. An explicit `direct` is still an error.
-  Both clients (plugin 0.5.16).
+  Both clients.
 - Settings page, Claude CLI pane: an allowed folder that the gateway left out at start (it contains or is inside the
   scratch folder) is listed, marked, and can be removed; after saving the folders the switch turns Claude CLI on without
   restarting the gateway. Turning it on before that gives a clear error and the switch goes back off. The reason names
   each folder once.
-- Windows MSI: reinstalling the same version no longer shows "Mini Gateway is already running" (the installer starts the
-  tray with `--quiet-if-running`; a tray started by hand still shows the message).
 - Windows tray and the settings page: **Copy Token** copies only the token (`token#key`), as on the Mac; the tray item was
-  "Copy connect line". `gw token` still prints the whole `minigw connect …` line.
+  "Copy connect line". `gw token` still prints the whole `minigw connect …` line;
+  `minigw gw token rotate` prints the whole connect line on the Mac too; Show Token shows the token without `#key`.
 - **No console windows on Windows:** the tray and every program it starts (claude, git, agents …) run without a console
   window; GUI windows such as the installer's progress stay visible. The MSI closes the tray with
-  `minigw-tray.exe quit` instead of `taskkill` in a cmd window. Updating from 0.5.18 or older still shows one cmd window
-  once (the old package's uninstall step). `minigw serve install` on Windows now fails if `minigw-tray.exe` is not next
+  `minigw-tray.exe quit` instead of `taskkill` in a cmd window. `minigw serve install` on Windows now fails if `minigw-tray.exe` is not next
   to `minigw.exe` and cannot be downloaded, and Start at sign-in (`gw autostart on`, the tray menu, Settings) needs
   `minigw-tray.exe`: there is no fallback to `minigw.exe` at sign-in, which opened a console window. `minigw tray quit`
   stops only `minigw-tray.exe` of this user's Windows session.
-- **Windows test report fixes (gateway):** the tray started by the MSI now finds `claude`, `codex`, `git` … (PATH also
+- **Windows gateway fixes:** the tray started by the MSI now finds `claude`, `codex`, `git` … (PATH also
   from the registry and `%USERPROFILE%\.local\bin`). Agent calls on Windows use `minigw.exe` (not the tray) as
-  `minigw -p …`, pre-approved for Bash and PowerShell (`Bash(minigw -p:*)`, `PowerShell(minigw -p *)`); other Bash commands of an agent still need approval there (no
+  `minigw -p …`, pre-approved for Bash and PowerShell (`Bash(minigw -p:*)`, `PowerShell(minigw -p *)`), unless `minigw.exe`'s folder is inside an allowed folder, the session folder or Scratch:
+  then nothing is pre-approved and the full path is used; other Bash commands of an agent still need approval there (no
   sandbox). An invalid `serve.json` is written to the log and shown in a message box in front; `gw status` says the
   settings must be fixed. When an allowed folder contains the scratch folder, the reason why Claude CLI and Codex are off
   is in the log, `gw status`, `gw claude` and the Claude CLI pane; the tray log now also has the startup warnings.
 - `minigw gw devices deny <id>` refuses options such as `--name` (it used to remove the device). **Allow any device with
   the token** can be turned on only while no device is allowed (page, Mac Settings, admin API 400).
-- `gw status` on Windows says `minigw gw autostart off`; `gw autostart` without an argument shows the state (both CLIs; plugin 0.5.15).
+- `gw status` on Windows says `minigw gw autostart off`; `gw autostart` without an argument shows the state (both CLIs).
   Scratch folder errors say that it must not contain the config folder (named).
 - Sessions: a device on 127.0.0.1 that was never approved shows as this computer, not "(device removed)"; an allowed
   device has connection history also over 127.0.0.1; a request with an invalid session ID counts in a `t-…` session;
@@ -53,12 +54,10 @@
   with one line why, instead of failing on every agent request with "cannot take a snapshot". Both clients.
 - `minigw --version` prints only minigw's version (Claude Code's: `claude --version`); `minigw gw status` shows it on one
   line again.
-- Windows MSI: the user PATH gets Mini Gateway once (without a trailing `\`, the form `minigw serve install` uses), and
-  reinstalling the same version replaces the earlier install instead of adding a second one.
 - **Codex on a Mac gateway shared by several devices:** Codex's own sandbox can read every file of the gateway's user,
   so Codex agents are not isolated between devices for reads (other devices' synced copies and worktree clones in
   Scratch, and an agent run's token file there). Allow Codex only for devices you trust with that.
-- **Native mode on a git repository works on branches (new default):** each agent run gets its own clone on the gateway
+- **Native mode (Mac gateway) on a git repository works on branches (new default):** each agent run gets its own clone on the gateway
   and a branch `minigw/<agent>-<session>-<n>` from your current state (also uncommitted changes); the branch then appears
   in your repository (fast-forward only, no hooks, fsck), while your files, index and checked-out branch stay as they
   are. So parallel agents never edit the same files. **Changed behaviour:** to let agents change the folder itself as
@@ -78,7 +77,7 @@
 - `minigw --minigw-role NAME` (or `MINIGW_ROLE`) sends the caller's role to the gateway, which records it in the
   session history (both clients), with counts per model and role and the agent's restrictions (read-only, tools). It is a guard against mistakes, not a security boundary.
   A model asked by an agent (agent calls) counts in the caller's session, with the calling chain (`via`) and the
-  caller's role; the asked agent cannot change either. Plugin 0.5.13.
+  caller's role; the asked agent cannot change either.
 - `minigw serve` no longer has a default folder for agents (`folder` in serve.json, the settings field and
   `minigw gw claude --folder`): as on the Mac, an agent request without a shared, synced or worktree folder is refused.
   A stored `folder` becomes an allowed folder; `minigw serve --folder X` (and `serve init`) still works, adds X to the
@@ -122,7 +121,8 @@
   this user, without admin rights (the same as `minigw serve install`: PATH, Start menu, start at sign-in). Listed in
   the signed `SHA256SUMS`; the MSI itself is not code-signed yet, so SmartScreen warns. On an MSI install,
   `minigw serve install` updates with the release's MSI (nothing happens when it is already up to date or newer), and
-  `minigw serve uninstall` points to Settings → Apps.
+  `minigw serve uninstall` points to Settings → Apps. Reinstalling the same version replaces it quietly; the user PATH
+  gets Mini Gateway once.
 - **File and folder pickers on Windows:** with the tray, the settings page has **Choose…** next to Allowed folders and
   **Browse…** next to a program's path, which open the Windows file dialog. On Linux and without the tray you type the
   path.
@@ -153,7 +153,7 @@
   or a folder above it, a temporary folder, or a folder inside or around an allowed folder of the agents; and an allowed
   folder cannot contain the scratch folder or sit inside it. The Claude agent sandbox never reads Scratch, also on an
   external disk. On the Mac a move waits until no minigw session runs.
-- Plugin 0.5.9 (needs minigw 0.5.18): `/minigw:connect --name` and profiles in every skill, `/minigw:connect` explains how
+- Plugin 0.5.16 (needs minigw 0.5.18): `/minigw:connect --name` and profiles in every skill, `/minigw:connect` explains how
   to approve a refused device, and `/minigw:gw` covers the Copilot token, autostart and the work modes.
 
 ## 0.5.17
