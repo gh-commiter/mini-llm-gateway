@@ -153,3 +153,18 @@ private func get(_ run: AgentRun, _ path: String, token: String?) async -> Int {
     #expect(!router.askOthers("claude") && router.agentNote("claude") == nil)
     #expect(await router.startAgentRun(request("POST", "/v1/messages"), kind: "claude", dir: nil) == nil)
 }
+
+@Test func codexUsageLimitIs429() {
+    let line = Data(#"{"type":"turn.failed","error":{"message":"You’ve hit your usage limit. Try again at 7:52 PM. /Users/x/secret"}}"#.utf8)
+    let (status, type, msg) = AgentError.classify(Codex.failure(line) ?? "")
+    #expect(status == 429 && type == "rate_limit_error" && msg.contains("usage limit") && !msg.contains("/Users"))
+    #expect(Codex.failure(Data(#"{"type":"error","message":"boom"}"#.utf8)) == "boom")
+    #expect(AgentError.classify("codex exited with 1").0 == 502)
+}
+
+@Test func agentLimitKeywordsAndCleaning() {
+    for m in ["You've hit your 5-hour limit · resets 9pm", "You're out of usage credits", "Your org is out of usage", "monthly spend limit", "You've reached your cap"] {
+        #expect(AgentError.classify(m).0 == 429)
+    }
+    #expect(AgentError.clean("failed C:/x/y ./rel file:///etc/passwd https://a.b/c request req_abc123") == "failed https://a.b/c request req_abc123")
+}

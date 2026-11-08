@@ -114,6 +114,16 @@ public enum Codex {
         }
     }
 
+    /// Sporočilo iz `{"type":"error","message":…}` ali `{"type":"turn.failed","error":{"message":…}}`.
+    static func failure(_ line: Data) -> String? {
+        guard let o = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { return nil }
+        switch o["type"] as? String {
+        case "error"?: return o["message"] as? String
+        case "turn.failed"?: return (o["error"] as? [String: Any])?["message"] as? String
+        default: return nil
+        }
+    }
+
     /// ID niti iz `{"type":"thread.started","thread_id":…}`.
     static func threadId(_ line: Data) -> String? {
         guard let o = try? JSONSerialization.jsonObject(with: line) as? [String: Any], o["type"] as? String == "thread.started" else { return nil }
@@ -146,12 +156,13 @@ public enum Codex {
                 errReader.start()
                 input.fileHandleForWriting.write(Data(prompt.utf8))
                 try? input.fileHandleForWriting.close()
-                var buf = Data(), thread: String?
+                var buf = Data(), thread: String?, failed: String?
                 while case let chunk = events.fileHandleForReading.availableData, !chunk.isEmpty {
                     buf.append(chunk)
                     while let nl = buf.firstIndex(of: 10) {
                         let line = buf[buf.startIndex..<nl]
                         if thread == nil { thread = threadId(line) }
+                        if let f = Self.failure(line) { failed = f }
                         if let s = step(line) { onStep(s) }
                         buf = Data(buf[(nl + 1)...])
                     }
@@ -161,6 +172,7 @@ public enum Codex {
                 let text = (try? String(contentsOf: output, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 guard p.terminationStatus == 0, !text.isEmpty else {
                     let tail = String(decoding: stderr.suffix(400), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+                    if let failed { throw Failure(message: failed) }
                     throw Failure(message: "codex exited with \(p.terminationStatus)" + (tail.isEmpty ? "" : ": \(tail)"))
                 }
                 return (text, thread)
@@ -278,7 +290,7 @@ extension Router {
         do {
             if stream {
                 try await writer.write(HTTPResponse.head(status: 200, headers: [
-                    ("Content-Type", "text/event-stream"), ("Cache-Control", "no-cache"), ("request-id", rid),
+                    ("Content-Type", "text/event-stream"), ("Cache-Control", "no-cache"), ("request-id", rid), ("x-should-retry", "false"),
                 ]) + t.start().reduce(Data(), +))
                 pinger = Task {
                     while !Task.isCancelled {
@@ -303,15 +315,36 @@ extension Router {
         } catch {
             pinger?.cancel()
             let (status, type, message) = (error as? SiriError)?.status
-                ?? (error as? Codex.Failure).map { (502, "api_error", $0.message) }
-                ?? (error as? Grok.Failure).map { (502, "api_error", $0.message) }
-                ?? (error as? Copilot.Failure).map { (502, "api_error", $0.message) } ?? (500, "api_error", "\(error)")
+                ?? (error as? Codex.Failure).map { AgentError.classify($0.message) }
+                ?? (error as? Grok.Failure).map { AgentError.classify($0.message) }
+                ?? (error as? Copilot.Failure).map { AgentError.classify($0.message) } ?? (500, "api_error", "\(error)")
             Self.log.error("\(rid, privacy: .public) \(model, privacy: .public) failed: \(message, privacy: .public)")
             if stream {
                 try? await writer.write(StreamTranslator.sse("error", ["type": "error", "error": ["type": type, "message": message]]))
                 return status
             }
-            return await self.error(status, type, message, rid: rid, writer: writer)
+            return await self.error(status, type, message, rid: rid, extra: status == 429 && !(error is SiriError) ? [("x-should-retry", "false")] : [], writer: writer)
         }
+    }
+}
+
+/// Napaka agenta za odjemalca: omejitev porabe, kvote ali kreditov je 429 rate_limit_error (Claude Code je sporoči, ne
+/// ponavlja kot začasno 502), sicer 502 api_error; sporočilo brez poti in žetonov, krajše od 300 znakov.
+enum AgentError {
+    static let limits = ["usage limit", "rate limit", "quota", "too many requests", "payment required", "spending-limit", "out of credits",
+                         "hit your", "reached your", "out of usage", "spend limit"]
+
+    static func classify(_ raw: String) -> (Int, String, String) {
+        let msg = clean(raw), status = limits.contains { msg.lowercased().contains($0) } ? 429 : 502
+        return (status, Router.errorType(status), msg)
+    }
+
+    /// Brez besed s `/` ali `\` (poti), razen http(s) naslovov, in brez dolgih žetonov; ID zahteve (`req_…`) ostane.
+    static func clean(_ raw: String) -> String {
+        let words = raw.split(whereSeparator: \.isWhitespace).filter { w in
+            w.hasPrefix("req_") || w.hasPrefix("http://") || w.hasPrefix("https://")
+                || !(w.contains("/") || w.contains("\\") || w.hasPrefix("~") || w.count >= 32)
+        }
+        return String(words.joined(separator: " ").prefix(300))
     }
 }

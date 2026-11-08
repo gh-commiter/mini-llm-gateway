@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -240,5 +241,40 @@ func TestAgentStatePerDevice(t *testing.T) {
 		"CODEX_HOME=/h", "ANTHROPIC_API_KEY=k", "PATH=/bin"}), " ")
 	if env != "PATH=/bin" {
 		t.Fatalf("env: %s", env)
+	}
+}
+
+func TestCodexUsageLimitIs429(t *testing.T) {
+	msg := codexFailure([]byte(`{"type":"turn.failed","error":{"message":"You’ve hit your usage limit. Try again at 7:52 PM. /Users/x/secret"}}`))
+	if st, m := classifyAgentError(msg); st != 429 || strings.Contains(m, "/Users") || !strings.Contains(m, "usage limit") {
+		t.Fatalf("got %d %q", st, m)
+	}
+	if codexFailure([]byte(`{"type":"error","message":"boom"}`)) != "boom" {
+		t.Fatal("error event")
+	}
+	if st, _ := classifyAgentError("codex exited with 1"); st != 502 {
+		t.Fatal("plain failure must stay 502")
+	}
+}
+
+func TestAgentLimitKeywordsAndCleaning(t *testing.T) {
+	for _, m := range []string{"You've hit your 5-hour limit · resets 9pm", "You're out of usage credits", "Your org is out of usage", "monthly spend limit", "You've reached your cap"} {
+		if st, _ := classifyAgentError(m); st != 429 {
+			t.Fatalf("%q: %d", m, st)
+		}
+	}
+	_, m := classifyAgentError(`failed C:/x/y ./rel file:///etc/passwd https://a.b/c request req_abc123`)
+	if m != "failed https://a.b/c request req_abc123" {
+		t.Fatalf("%q", m)
+	}
+	w := httptest.NewRecorder()
+	writeAgentError(w, "req_1", 429, "x")
+	if w.Header().Get("x-should-retry") != "false" {
+		t.Fatal("agent limit needs x-should-retry: false")
+	}
+	b := httptest.NewRecorder()
+	writeError(b, "req_2", 429, "Too many provider requests at once")
+	if b.Header().Get("x-should-retry") != "" {
+		t.Fatal("busy 429 must stay retryable")
 	}
 }

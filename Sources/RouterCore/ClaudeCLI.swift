@@ -520,7 +520,7 @@ extension Router {
             try await withTaskCancellationHandler {
                 if stream {
                     try await writer.write(HTTPResponse.head(status: 200, headers: [
-                        ("Content-Type", "text/event-stream"), ("Cache-Control", "no-cache"), ("request-id", rid),
+                        ("Content-Type", "text/event-stream"), ("Cache-Control", "no-cache"), ("request-id", rid), ("x-should-retry", "false"),
                     ]))
                     headSent = true
                     try await send(t.start())
@@ -555,10 +555,11 @@ extension Router {
 
         if let msg = t.resultError ?? (status != 0 && t.text.isEmpty ? (errText.isEmpty ? "claude exited with \(status)" : errText) : nil) {
             Self.log.error("\(rid, privacy: .public) claude failed: \(msg, privacy: .public)")
-            if !stream { return await error(502, "api_error", "claude: \(msg)", rid: rid, writer: writer) }
+            let (code, type, text) = AgentError.classify(msg)
+            if !stream { return await error(code, type, "claude: \(text)", rid: rid, extra: code == 429 ? [("x-should-retry", "false")] : [], writer: writer) }
             if t.text.isEmpty {
-                try? await writer.write(StreamTranslator.sse("error", ["type": "error", "error": ["type": "api_error", "message": "claude: \(msg)"]]))
-                return 502
+                try? await writer.write(StreamTranslator.sse("error", ["type": "error", "error": ["type": type, "message": "claude: \(text)"]]))
+                return code
             }
         }
 
