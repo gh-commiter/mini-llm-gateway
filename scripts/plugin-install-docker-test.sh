@@ -8,7 +8,10 @@
 #   5. #25: podpisana starejša izdaja (VERSION 0.5.16) čez novejši nameščeni → zavrnjena, z razlogom
 #   6. ista z MINIGW_ALLOW_DOWNGRADE=1 → nameščena
 #   7. N1: podpisana izdaja brez VERSION (= 0.5.17) čez nameščeni 0.5.19 → zavrnjena
-#   9. Linux: nameščen ~/.local/bin/minigw, ki ni starejši od izdaje → kopija v vtičnik (brez prenosa); starejši → prenos
+#   9. Linux: nameščen ~/.local/bin/minigw, ki ni starejši od MIN → povezava (brez prenosa, tudi ob novejši izdaji);
+#      starejši od MIN → prenos
+#  10. Windows (lažna uname/cygpath, na tem Macu): nameščen minigw.exe → lupini bin/minigw in bin/minigw.cmd kot
+#      »minigw plugin install« (client/plugin.go shimSh/shimCmd), kopija vtičnika gre; brez namestitve lupini gresta
 #   8. izhod »minigw status« → connected / token rejected / device not approved (ID) / not connected; brez claude: namig (#6)
 emulate -L zsh; set -eu
 cd ${0:A:h}/..
@@ -33,6 +36,22 @@ print '#!/bin/sh\necho EVIL' > $T/rel/evil/minigw-linux-arm64
 (cd $T/rel/evil && shasum -a 256 minigw-linux-arm64 > SHA256SUMS && print garbage > SHA256SUMS.sig)
 cp plugins/minigw/scripts/install-minigw.sh $T/real.sh
 sed "s|^SIGNER=.*|SIGNER='minigw-release namespaces=\"minigw-release\" $(cut -d' ' -f1,2 $T/key.pub)'|" $T/real.sh > $T/testkey.sh
+
+# 10: Windows brez Windows: lažna uname (MINGW64) in cygpath (-u: ista pot, -m/-w: C: spredaj); pot z ' in %.
+W="$T/win/O'Brien 100%"; mkdir -p $T/win/fake "$W/Programs/Mini Gateway" $T/win/data/bin $T/win/home
+print '#!/bin/sh\ncase $1 in -s) echo MINGW64_NT-10.0 ;; *) echo x86_64 ;; esac' > $T/win/fake/uname
+print '#!/bin/sh\ncase $1 in -u) printf "%s\\n" "$2" ;; -m) printf "C:%s\\n" "$2" ;; -w) printf "C:%s\\n" "$2" | tr / "\\\\" ;; esac' > $T/win/fake/cygpath
+print '#!/bin/sh\n[ "$1" = --version ] && echo minigw 0.5.19; [ "$1" = status ] && echo "Status:    connected"; exit 0' > "$W/Programs/Mini Gateway/minigw.exe"
+chmod +x $T/win/fake/* "$W/Programs/Mini Gateway/minigw.exe"; print old > $T/win/data/bin/minigw.exe
+winrun() { CLAUDE_PLUGIN_DATA=$T/win/data CLAUDE_ENV_FILE= LOCALAPPDATA=$W MINIGW_RELEASE_BASE=file:///nonexistent HOME=$T/win/home PATH=$T/win/fake:$PATH sh plugins/minigw/scripts/install-minigw.sh }
+out=$(winrun); print -r -- $out
+exe="$W/Programs/Mini Gateway/minigw.exe" sq="'" rep="'\''"
+[[ "$(<$T/win/data/bin/minigw)" == "#!/bin/sh"$'\n'"# Mini Gateway: the installed minigw"$'\n'"exec 'C:${exe//$sq/$rep}' \"\$@\"" ]] || fail "10: sh shim: $(<$T/win/data/bin/minigw)"
+[[ "$(<$T/win/data/bin/minigw.cmd)" == "@\"C:${${exe//\//\\}//\%/%%}\" %*"$'\r' ]] || fail "10: cmd shim: $(<$T/win/data/bin/minigw.cmd)"
+[[ ! -e $T/win/data/bin/minigw.exe && $out == *"connected to Mini Gateway"* ]] || fail "10: plugin copy kept or status not read"
+rm "$exe"; out=$(winrun); print -r -- $out
+[[ ! -e $T/win/data/bin/minigw && ! -e $T/win/data/bin/minigw.cmd ]] || fail "10: shims kept without an installed minigw"
+print "ok 10: Windows shims point at the installed minigw"
 
 docker run --rm -v $T:/t:ro debian:stable-slim sh -c '
 set -u
@@ -107,13 +126,15 @@ echo "ok 8: hook reports status reasons and a missing claude"
 
 mkdir -p /tmp/home/.local/bin; cp /t/rel/good/minigw-linux-arm64 /tmp/home/.local/bin/minigw
 mkdir -p /tmp/d9/bin; cp /t/minigw-old /tmp/d9/bin/minigw
-out=$(run /tmp/d9 older testkey); echo "$out"
-cmp -s /tmp/home/.local/bin/minigw /tmp/d9/bin/minigw || fail "9: installed minigw not copied over the plugin copy"
-! echo "$out" | grep -q "not updated" || fail "9: downgrade note although the installed minigw is used"
-cp /t/minigw-old /tmp/home/.local/bin/minigw; cp /t/minigw-old /tmp/d9/bin/minigw
+for rel in older good; do
+  out=$(run /tmp/d9 $rel testkey); echo "$out"
+  [ "$(readlink /tmp/d9/bin/minigw)" = /tmp/home/.local/bin/minigw ] || fail "9: plugin bin not linked to the installed minigw ($rel)"
+  ! echo "$out" | grep -q "not updated" || fail "9: downgrade note although the installed minigw is used"
+done
+cp /t/minigw-old /tmp/home/.local/bin/minigw
 out=$(run /tmp/d9 good testkey); echo "$out"
-cmp -s /t/rel/good/minigw-linux-arm64 /tmp/d9/bin/minigw || fail "9: older installed minigw copied instead of the release"
+[ ! -L /tmp/d9/bin/minigw ] && cmp -s /t/rel/good/minigw-linux-arm64 /tmp/d9/bin/minigw || fail "9: minigw older than MIN linked instead of the release"
 rm -rf /tmp/home/.local
-echo "ok 9: installed minigw preferred when not older than the release"
+echo "ok 9: installed minigw (not older than MIN) linked, never downloaded"
 ' || fail "docker cases"
 print "plugin install test ok"

@@ -348,6 +348,16 @@ func pluginBinState(goos, self string) string {
 func pluginStatus(goos string) {
 	self := selfPath()
 	say("minigw:     " + version + " (" + self + ")")
+	cv := "not found (the agent skills need the claude command)"
+	if c := findClaudeFn(); c != "" {
+		out, _ := command(c, "--version").Output()
+		if f := strings.Fields(string(out)); len(f) > 0 && strings.Trim(f[0], "0123456789.") == "" {
+			cv = f[0] + " (" + c + ")"
+		} else {
+			cv = "? (" + c + ")"
+		}
+	}
+	say("Claude Code: " + cv)
 	if v, p := pluginVersion(); v != "" {
 		say("Plugin:     " + v + " (" + p + ")")
 	} else {

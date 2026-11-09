@@ -66,8 +66,8 @@ if [ -n "$sums" ]; then
   rel=$(printf '%s\n' "$sums" | sed -n 's/^VERSION \([0-9][0-9.]*\)$/\1/p' | head -1)
   [ -n "$rel" ] || rel=0.5.17
 fi
-# Windows/Linux: nameščen minigw (MSI: %LOCALAPPDATA%\Programs\Mini Gateway, install.sh: ~/.local/bin) ima prednost,
-# če ni starejši od izdaje (brez podpisane izdaje: od kopije vtičnika), kot brew/aplikacija na macOS: ena različica povsod.
+# Windows/Linux: nameščen minigw (MSI: %LOCALAPPDATA%\Programs\Mini Gateway, minigw serve install: ~/.local/bin), ki ni
+# starejši od MIN, je edini minigw (0.5.20), kot brew/aplikacija na macOS: brez prenosa, posodablja ga namestitev.
 inst="" iv=""
 case $os in
   windows) [ -n "${LOCALAPPDATA:-}" ] && command -v cygpath >/dev/null 2>&1 && inst="$(cygpath -u "$LOCALAPPDATA")/Programs/Mini Gateway/minigw.exe" ;;
@@ -75,7 +75,7 @@ case $os in
 esac
 [ -n "$inst" ] && [ -x "$inst" ] && iv=$(ver "$inst")
 case $iv in *[!0-9.]*) iv="" ;; esac
-if [ -n "$iv" ] && ! older "$iv" "$MIN" && ! older "$iv" "${rel:-$(ver "$EXE")}"; then :; else inst=""; fi
+if [ -n "$iv" ] && ! older "$iv" "$MIN"; then :; else inst=""; fi
 if [ -z "$inst" ] && [ -n "$sums" ] && [ -x "$EXE" ] && [ ! -L "$EXE" ]; then
   have=$(ver "$EXE"); case $have in *[!0-9.]*) have="" ;; esac
   if older "$rel" "$have" && [ "${1:-}" != --allow-downgrade ] && [ "${MINIGW_ALLOW_DOWNGRADE:-}" != 1 ]; then
@@ -116,11 +116,20 @@ if [ "$os" = darwin ]; then
   fi
 else
   # Windows/Linux: ena izvršljiva datoteka (Go, brez odvisnosti); kontrolna vsota iz SHA256SUMS iste izdaje.
-  # Nameščen minigw: kopija (Git Bash namesto povezave naredi kopijo), le ob drugi vsebini.
-  if [ -n "$inst" ]; then
-    [ -x "$EXE" ] && [ "$(sha "$inst")" = "$(sha "$EXE")" ] || { cp "$inst" "$EXE.new" && chmod +x "$EXE.new" && mv -f "$EXE.new" "$EXE"; } ||
-      { rm -f "$EXE.new"; echo "minigw plugin: could not copy $inst to $EXE; the plugin's minigw stays."; }
+  # Nameščen minigw: Linux povezava; Windows lupini kot minigw plugin install (Git Bash najde bin/minigw brez pripone,
+  # ne .cmd; minigw.cmd za cmd/PowerShell), kopija vtičnika (minigw.exe) gre.
+  if [ -n "$inst" ] && [ "$os" = linux ]; then
+    [ "$(readlink "$EXE" 2>/dev/null)" = "$inst" ] || { rm -f "$EXE"; ln -s "$inst" "$EXE"; } ||
+      echo "minigw plugin: could not link $EXE to $inst."
+  elif [ -n "$inst" ]; then
+    q=$(cygpath -m "$inst" | sed "s/'/'\\\\''/g") c=$(cygpath -w "$inst" | sed 's/%/%%/g')
+    { printf '%s\n' '#!/bin/sh' '# Mini Gateway: the installed minigw' "exec '$q' \"\$@\"" > "$BIN/minigw.new" &&
+      printf '@"%s" %%*\r\n' "$c" > "$BIN/minigw.cmd" && mv -f "$BIN/minigw.new" "$BIN/minigw"; } ||
+      echo "minigw plugin: could not point $BIN/minigw at $inst."
+    rm -f "$EXE" 2>/dev/null  # prejšnja kopija; v rabi ostane, a bin/minigw ima prednost
+    EXE=$inst
   elif [ ! -x "$EXE" ] || { [ -n "$(want "$asset")" ] && [ "$(sha "$EXE")" != "$(want "$asset")" ]; }; then
+    [ "$os" = windows ] && rm -f "$BIN/minigw" "$BIN/minigw.cmd"  # brez namestitve: lupini na odstranjeni minigw gresta
     fetch "$asset" || [ -x "$EXE" ] || {
       echo "minigw plugin: could not download or verify $asset from github.com/$REPO${unsigned:+ ($unsigned)}; gateway skills are unavailable."; exit 0; }
   fi

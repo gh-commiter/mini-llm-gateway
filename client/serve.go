@@ -998,7 +998,7 @@ func (s *server) handle(w http.ResponseWriter, r *req) (int, string) {
 				providers[g.Name] = s.gateways.ready(g.Name)
 			}
 		}
-		return writeJSON(w, r.rid, 200, map[string]any{"status": "ok", "providers": providers}), ""
+		return writeJSON(w, r.rid, 200, map[string]any{"status": "ok", "providers": providers, "version": version}), ""
 	}
 	if r.URL.Path == adminPrefix || strings.HasPrefix(r.URL.Path, adminPrefix+"/") {
 		return s.adminHTTP(w, r), ""
