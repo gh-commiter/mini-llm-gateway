@@ -116,6 +116,10 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
         #expect(await admin(app.router(), "GET", "/devices").text.contains(id))  // nov router (po apply) jo vidi
         #expect(await admin(app.router(), "PATCH", "/siri", body: #"{"enabled":true,"allow":["\#(id)"]}"#).status == 200)
         #expect(app.config.siri.enabled && app.config.devices[0].siri)
+        #expect(await admin(app.router(), "PATCH", "/appleFM", body: #"{"enabled":false,"instructions":"Be brief."}"#).status == 200)
+        #expect(!app.config.appleFM.enabled && app.config.appleFM.instructions == "Be brief.")
+        #expect(await admin(app.router(), "GET", "/appleFM").text.contains(#""instructions":"Be brief.""#))
+        #expect(await admin(app.router(), "PATCH", "/appleFM", body: #"{"model":"x"}"#).status == 400)
         #expect(await admin(app.router(), "DELETE", "/devices/PC").status == 404)  // le po ID-ju: ime je oznaka
         #expect(await admin(app.router(), "DELETE", "/devices/\(id)").status == 200 && app.config.devices.isEmpty)
 

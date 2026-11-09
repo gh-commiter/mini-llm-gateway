@@ -589,7 +589,7 @@ func sessions(u *ui) ([]row, error) {
 	return rows, nil
 }
 
-// macOnly: what only the Mac app has (Siri AI, minigw run); Apple Foundation Models has no admin API.
+// macOnly: what only the Mac app has (Siri AI, Apple Foundation Models, minigw run).
 func macOnly(u *ui) ([]row, error) {
 	siri, err := u.call("GET", "/siri", nil)
 	if err != nil {
@@ -620,9 +620,16 @@ func macOnly(u *ui) ([]row, error) {
 	if len(objs(siri, "devices")) == 0 {
 		rows = append(rows, inf("  No device is allowed yet.", ""))
 	}
-	rows = append(rows, hdr("Apple Foundation Models"),
-		inf("Set in the app's Settings window (menu bar icon → Settings…).", ""),
-		hdr("minigw run (runs commands on this Mac: code execution)"),
+	rows = append(rows, hdr("Apple Foundation Models"))
+	if fm, err := u.call("GET", "/appleFM", nil); err == nil {
+		pf := func(body map[string]any) (string, error) { return u.save("PATCH", "/appleFM", body) }
+		rows = append(rows,
+			tog("Enabled", yes(fm, "enabled"), func(v bool) (string, error) { return pf(map[string]any{"enabled": v}) }),
+			ed("Instructions", str(fm, "instructions"), func(v string) (string, error) { return pf(map[string]any{"instructions": v}) }))
+	} else { // an app older than 0.5.20
+		rows = append(rows, inf("Set in the app's Settings window (menu bar icon → Settings…).", ""))
+	}
+	rows = append(rows, hdr("minigw run (runs commands on this Mac: code execution)"),
 		ed("Commands (comma-separated)", str(run, "commands"), func(v string) (string, error) { return pr(map[string]any{"commands": v}) }))
 	for _, d := range objs(run, "devices") {
 		id, name := str(d, "id"), clean(str(d, "name"))

@@ -116,9 +116,9 @@ line with the token appears only after **Show the connect line**.
 | Agents | Claude CLI (enabled, path, local tools, tools, permission mode, setting sources, ask others), Codex and Grok CLI (enabled, path, write, network, ask others, models), Copilot CLI (models, write, web, commands, token), Foundry Local | | Allow commands without a sandbox (Windows, Linux without `bwrap`) |
 | Folders | Allowed folders: add, remove; folders left out at startup | | |
 | Sessions | Recent sessions with details, Clear history | | |
-| Mac | – | Siri AI (on, timeout, per device), `minigw run` (commands, per device, network) | |
+| Mac | – | Siri AI (on, timeout, per device), Apple Foundation Models (on, instructions), `minigw run` (commands, per device, network) | |
 
-Not in the terminal: Apple Foundation Models (the app's Settings window), Claude CLI's per-tool switches (the tools
+Not in the terminal: Claude CLI's per-tool switches (the tools
 are a comma-separated field) and copying the token to the clipboard.
 
 ### Settings page

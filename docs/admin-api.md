@@ -207,6 +207,7 @@ Notes:
 | `GET /foundry/models` | – | `{"models": [{"name", "vision", "enabled"}]}`: models downloaded in Foundry Local; `503` when it is not installed or does not answer (Go gateway and the Mac app) |
 | `GET /agents/grok`, `PATCH` | any of `{"enabled", "path", "write", "models", "askOthers"}` | `{"enabled", "path", "found", "write", "models", "askOthers"}` |
 | `GET /agents/copilot`, `PATCH` | any of `{"enabled", "path", "write", "network", "commands", "models", "token", "askOthers"}` | `{"enabled", "path", "found", "write", "network", "commands", "models": [string], "hasToken", "askOthers"}` |
+| `GET /appleFM`, `PATCH` (Mac) | any of `{"enabled", "instructions"}` | `{"enabled", "instructions"}`: Apple Foundation Models (Settings → Apple Foundation Models); instructions up to 8000 characters |
 | `GET /siri`, `PATCH` | any of `{"enabled", "timeout", "allow": [id], "deny": [id]}` | `{"enabled", "timeout", "devices": [{"id", "name", "siri"}]}` |
 | `GET /run`, `PATCH` (Mac) | any of `{"commands", "allow": [id], "deny": [id], "allowNetwork": [id], "denyNetwork": [id]}` | `{"commands", "devices": [{"id", "name", "run", "network"}]}` |
 

@@ -111,7 +111,7 @@ var enter = tea.KeyMsg{Type: tea.KeyEnter}
 func TestPages(t *testing.T) {
 	u, dir := fake(t)
 	want := []string{"Status                                  running on port 8765", "Bob's MacBook", "Models…", "GPT-6.1 Sol", "/home/ana/notes",
-		"Bob's MacBook · worktree", "minigw run"}
+		"Bob's MacBook · worktree", "Instructions                            You are a helpful"}
 	all := model{mac: true}.pages()
 	for i := range all {
 		_, v := screen(t, model{u: u, tab: i, mac: true})

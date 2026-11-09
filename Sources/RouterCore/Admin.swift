@@ -420,6 +420,18 @@ extension Router {
                 return (200, ["models": ms.map { ["slug": $0, "name": $0, "enabled": c.grok.enabledModels?.contains($0) ?? true] }])
             default: throw AdminError(404, "no agent \(arg)")
             }
+        // Apple Foundation Models (pano v Settings): vklop in navodila.
+        case "GET appleFM":
+            return (200, ["enabled": c.appleFM.enabled, "instructions": c.appleFM.instructions])
+        case "PATCH appleFM":
+            let b = try AdminBody(body, ["enabled", "instructions"])
+            let enabled = try b.bool("enabled"), instructions = try b.string("instructions")
+            if let instructions, instructions.count > 8000 { throw AdminError(400, "instructions: up to 8000 characters") }
+            let n = try await hooks.update { c in
+                if let enabled { c.appleFM.enabled = enabled }
+                if let instructions { c.appleFM.instructions = instructions }
+            }
+            return (200, ["enabled": n.appleFM.enabled, "instructions": n.appleFM.instructions])
         case "GET foundry":
             return (200, await foundryInfo(c.foundry))
         case "GET foundry/{}":
