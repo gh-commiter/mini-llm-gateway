@@ -405,7 +405,7 @@ func (s *shareClient) wtPush(k string, job davJob) davResponse {
 		}
 	}
 	for _, p := range nested { // R2: filtri ugnezdenega ne tečejo (N3), zato z njimi ne začne (način ostane)
-		if f, _ := gitUser(filepath.Join(s.top, filepath.FromSlash(p)), nil, "config", "--local", "--get-regexp", `^filter\.`); f != "" {
+		if f, _ := gitUser(filepath.Join(s.top, filepath.FromSlash(p)), nil, "config", "--local", "--includes", "--get-regexp", `^filter\.`); f != "" {
 			return fail("nested-filter:"+p, "worktree: the nested repository "+oneLine(p)+" defines git filters (filter.* in its .git/config), which minigw does not run for nested repositories; use sync")
 		}
 	}

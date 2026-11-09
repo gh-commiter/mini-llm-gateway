@@ -251,7 +251,7 @@ public enum Worktree {
             return fail("nested-name", "worktree: the nested repository \(Profiles.line(p, max: 500)) has a name worktree mode cannot use (\":\", \"\\\", control characters or in .build); use sync")
         }
         // R2 (kot Go): filtri ugnezdenega ne tečejo (N3), zato z njimi ne začne (način ostane)
-        if let p = nested.first(where: { !run(["config", "--local", "--get-regexp", #"^filter\."#], cwd: top + "/" + $0, safe: false, hooks: false).out.isEmpty }) {
+        if let p = nested.first(where: { !run(["config", "--local", "--includes", "--get-regexp", #"^filter\."#], cwd: top + "/" + $0, safe: false, hooks: false).out.isEmpty }) {
             return fail("nested-filter:" + p, "worktree: the nested repository \(Profiles.line(p, max: 500)) defines git filters (filter.* in its .git/config), which minigw does not run for nested repositories; use sync")
         }
         // Neposredni otroci, ki v indeksu starša niso gitlink (nesledeni), ali so brez commita: ne v posnetek starša.
