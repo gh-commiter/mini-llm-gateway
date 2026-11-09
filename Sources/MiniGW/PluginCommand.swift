@@ -199,7 +199,7 @@ func uninstallCommand(_ a: [String]) -> Never {
         switch x {
         case "--purge": purge = true
         case "--yes", "-y": yes = true
-        default: fail("usage: minigw uninstall [--purge] [--yes]   (--purge also removes settings and profiles)")
+        default: fail("usage: minigw uninstall [--purge] [--yes]   (--purge also removes settings, profiles and the device key)")
         }
     }
     refuseRoot("uninstall")
@@ -226,9 +226,13 @@ func uninstallCommand(_ a: [String]) -> Never {
         if !names.isEmpty {
             steps.append((profiles, { names.allSatisfy { [errSecSuccess, errSecItemNotFound].contains(SecItemDelete(keychainQuery($0) as CFDictionary)) } }))
         }
+        if deviceStored() {
+            steps.append(("device key (Keychain)", { [errSecSuccess, errSecItemNotFound].contains(SecItemDelete(deviceQuery() as CFDictionary)) }))
+        }
         if fm.fileExists(atPath: settings) { steps.append(("settings folder \(settings)", { (try? fm.removeItem(atPath: settings)) != nil })) }
     } else {
         if !names.isEmpty { kept.append(profiles) }
+        if deviceStored() { kept.append("device key (Keychain)") }
         if fm.fileExists(atPath: settings) { kept.append("settings folder \(settings)") }
     }
     say("minigw uninstall removes:")

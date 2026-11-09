@@ -166,7 +166,7 @@
         </Control>
         <Control Id="Line" Type="Line" X="20" Y="120" Width="330" Height="0" Hidden="yes" ShowCondition="Installed"/>
         <Control Id="PurgeBox" Type="CheckBox" X="20" Y="132" Width="330" Height="28" Property="PURGE" CheckBoxValue="1" Hidden="yes"
-                 ShowCondition="Installed" Text="When removing: also remove settings and profiles (connections, gateway settings, keys). Otherwise they stay."/>
+                 ShowCondition="Installed" Text="When removing: also remove settings, profiles and the device key (connections, gateway settings, keys). Otherwise they stay."/>
         <Control Id="Remove" Type="PushButton" X="20" Y="166" Width="80" Height="17" Text="Remove" Hidden="yes" ShowCondition="Installed">
           <Publish Event="Remove" Value="ALL" Order="1"/>
           <Publish Event="EndDialog" Value="Return" Order="2"/>

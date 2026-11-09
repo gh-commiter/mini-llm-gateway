@@ -23,8 +23,8 @@ var errNotFound = errors.New("not found")
 
 func storePath() string {
 	dir, err := os.UserConfigDir()
-	if err != nil {
-		dir = os.TempDir()
+	if err != nil { // L2: nikoli v skupno začasno mapo
+		fail("cannot find the settings folder for profiles: " + err.Error())
 	}
 	return filepath.Join(dir, "minigw", "connection.json")
 }
@@ -52,10 +52,29 @@ func storeSave(name string, data []byte) error {
 	if !validProfile(name) {
 		return errors.New("invalid profile name")
 	}
-	if err := os.MkdirAll(filepath.Dir(profilePath(name)), 0o700); err != nil {
+	return writePrivate(profilePath(name), data)
+}
+
+// writePrivate (L2): mapa 0700, datoteka 0600; simbolna povezava na mestu datoteke se ne sledi.
+func writePrivate(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(profilePath(name), data, 0o600)
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return err
+	}
+	if err = f.Chmod(0o600); err == nil {
+		_, err = f.Write(data)
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
 }
 
 func storeDelete(name string) {
@@ -80,6 +99,22 @@ func storeNames() []string {
 }
 
 const storeName = "a private file"
+
+// Ključ naprave (clientDevice): svoja datoteka ob profilih (0600); disconnect je ne odstrani.
+func deviceFile() string { return filepath.Join(filepath.Dir(storePath()), "device-key") }
+
+// deviceLoad: "" brez napake = ključa ni; druga napaka branja je napaka (L1).
+func deviceLoad() (string, error) {
+	b, err := os.ReadFile(deviceFile())
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	return strings.TrimSpace(string(b)), err
+}
+
+func deviceSave(d string) error { return writePrivate(deviceFile(), []byte(d+"\n")) }
+
+func deviceDelete() { os.Remove(deviceFile()) }
 
 // Ključi prehodov (minigw serve gateway). Linux: secret-tool (libsecret), sicer gateway-keys.json (0600) ob serve.json.
 // macOS: vedno ta datoteka, nikoli Keychain (Go minigw serve na Macu je le za razvoj in preizkus; router je aplikacija).

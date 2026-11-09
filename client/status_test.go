@@ -31,14 +31,17 @@ func TestProfileStatusNeedsAuth(t *testing.T) {
 }
 
 func TestFailureReason(t *testing.T) {
-	if r := failureReason(401, nil); !strings.HasPrefix(r, "token rejected: copy the token again") {
+	if r := failureReason(401, nil, "default"); !strings.HasPrefix(r, "token rejected: copy the token again") || !strings.HasSuffix(r, " and run minigw reconnect") {
+		t.Error(r)
+	}
+	if r := failureReason(401, nil, "win"); !strings.HasSuffix(r, " and run minigw reconnect --name win") {
 		t.Error(r)
 	}
 	body := map[string]any{"error": map[string]any{"message": "approve ID abc"}}
-	if r := failureReason(403, body); r != "device not approved: approve ID abc" {
+	if r := failureReason(403, body, "default"); r != "device not approved: approve ID abc" {
 		t.Error(r)
 	}
-	if r := failureReason(0, nil); r != "gateway not reachable" {
+	if r := failureReason(0, nil, "default"); r != "gateway not reachable" {
 		t.Error(r)
 	}
 }

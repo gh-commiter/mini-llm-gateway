@@ -142,3 +142,24 @@ private func send(_ url: String, _ method: String, _ path: String, secret: Strin
     let (st, list) = try await send(m.localURL, "GET", "/v1/models", secret: m.secret)
     #expect(st == 200 && !list.contains("stolen") && list.contains("claude-siri-ai"))
 }
+
+/// minigw reconnect: cela vrstica ali le žeton (shranjeni ključ prehoda ostane); nepopoln žeton zavrnjen (kot Go TestNewToken).
+@Test func reconnectNewToken() {
+    #expect(Profiles.newToken("t", key: "old")! == ("t", "old"))
+    #expect(Profiles.newToken("t#n", key: "old")! == ("t", "n"))
+    #expect(Profiles.newToken("t", key: nil)! == ("t", nil))
+    for l in ["", "#", "#n", "t#"] { #expect(Profiles.newToken(l, key: "old") == nil, "\(l)") }
+}
+
+/// Nova oblika žetona (mgw- + base64url, kot minigw serve): router ne preverja predpone, stari sk-siri-… žeton ostane veljaven.
+@Test func gatewayTokenFormatsAccepted() {
+    let old = "sk-siri-" + String(repeating: "ab", count: 32), new = Router.newToken()
+    #expect(new.hasPrefix("mgw-") && new.count == 4 + 43 && new != Router.newToken())
+    #expect(new.dropFirst(4).allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") })
+    for t in [old, new] {
+        let r = Router(config: RouterConfig(), token: t, secrets: FakeSecrets(values: [:]))
+        #expect(r.authorized(request("GET", "/v1/models", headers: ["authorization": "Bearer " + t])))
+        #expect(r.authorized(request("GET", "/v1/models", headers: ["x-api-key": t])))
+        #expect(!r.authorized(request("GET", "/v1/models", headers: ["authorization": "Bearer " + t + "x"])))
+    }
+}

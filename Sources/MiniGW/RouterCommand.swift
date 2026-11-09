@@ -322,7 +322,7 @@ func routerCommand(_ argv: [String]) {
         if pos.count == 2 {
             guard pos[1] == "rotate" else { fail(routerHelp) }
             g = a.call("POST", "/general/token")
-            say("New token. Each client must run the new line; the old token no longer works:")
+            say("New token. Each client must run the new line, or run minigw reconnect [--name P] with the new token; the old token no longer works:")
         } else {
             g = a.call("GET", "/general")
             say("On each client run:")

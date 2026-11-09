@@ -56,14 +56,14 @@ struct RouteError: Error { let message: String }
 func routeResult(_ p: Profile) -> Result<Connection, RouteError> {
     var c = p.conn
     guard !(c.isLocal && c.key == nil) else { return .success(c) }  // L3: s ključem prehoda tudi lokalno šifrirano
-    if c.device == nil {  // povezava iz minigw 0.4.3 ali starejšega: en ključ naprave za ves odjemalec
-        c.device = anyDevice() ?? Noise.base64url(Curve25519.Signing.PrivateKey().rawRepresentation)
+    if case let d = clientDevice(), c.device != d {  // en ključ naprave za ves odjemalec; kopija v profilu za starejši minigw
+        c.device = d
         saveProfile(p.name, c)
     }
     let device = c.device.flatMap(Noise.fromBase64url).flatMap { try? Curve25519.Signing.PrivateKey(rawRepresentation: $0) }
         .map { (key: $0, name: deviceName()) }
     guard let k = c.key.flatMap(Noise.fromBase64url), let np = NoiseProxy(routerURL: c.url, routerKey: k, device: device, suite: .aesGCM) else {  // MGW2: tudi minigw serve
-        return .failure(RouteError(message: "no gateway key for profile \(p.name): copy the token again (Mini Gateway → Copy Token) and run minigw connect"))
+        return .failure(RouteError(message: "no gateway key for profile \(p.name): copy the token again (Mini Gateway → Copy Token) and run \(reconnectCmd(p.name))"))
     }
     do { try np.start() } catch { return .failure(RouteError(message: "cannot start the local encrypted proxy: \(error)")) }
     proxies.append(np)
@@ -172,7 +172,36 @@ func loadProfiles(listing: Bool = false) -> [Profile] {
     }
 }
 
-func anyDevice() -> String? { profileNames().lazy.compactMap { loadProfile($0, skip: true)?.device }.first }
+/// Ključ naprave: en za ves odjemalec, svoj vnos v Keychain (račun »device«, ista storitev in ista pravila dostopa kot
+/// profili, zato ob nadgradnji brez novega vprašanja). disconnect ga ne odstrani, zato prehod ob novem connect vidi isto
+/// napravo (odobritev, zgodovina); le minigw uninstall --purge. Prvič ga prenese iz profila (starejši minigw ga je hranil
+/// le tam), sicer nov.
+func deviceQuery() -> [String: Any] {
+    [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: "device"]
+}
+
+func clientDevice() -> String {
+    var q = deviceQuery()
+    q[kSecReturnData as String] = true
+    q[kSecMatchLimit as String] = kSecMatchLimitOne
+    var item: CFTypeRef?
+    let st = SecItemCopyMatching(q as CFDictionary, &item)
+    if st == errSecSuccess, let d = item as? Data, case let s = String(decoding: d, as: UTF8.self), !s.isEmpty { return s }
+    guard st == errSecItemNotFound else {
+        fail("cannot read the device key from the Keychain (OSStatus \(st)): unlock the login keychain and try again")
+    }
+    let names = profileNames(), def = defaultName(names)  // L3: privzeti prvi, nato po abecedi (kot Go)
+    let d = ([def] + names.filter { $0 != def }).lazy.compactMap { loadProfile($0, skip: true)?.device }.first { !$0.isEmpty }
+        ?? Noise.base64url(Curve25519.Signing.PrivateKey().rawRepresentation)
+    var add = deviceQuery()
+    add[kSecValueData as String] = Data(d.utf8)
+    let s2 = SecItemAdd(add as CFDictionary, nil)
+    guard s2 == errSecSuccess else { fail("cannot save the device key to the Keychain (OSStatus \(s2)): unlock the login keychain and try again") }
+    return d
+}
+
+/// Ali vnos ključa naprave obstaja (le atributi, brez branja ključa).
+func deviceStored() -> Bool { SecItemCopyMatching(deviceQuery() as CFDictionary, nil) == errSecSuccess }
 
 /// »192.168.1.20«, »192.168.1.20:8765«, »mini.local«, »http://…« → osnovni URL.
 func normalize(_ s: String) -> String {
@@ -494,11 +523,11 @@ func requireProfile() -> Profile {
 
 /// Razlog, zakaj odgovor routerja ni 200 (status, telo napake): 401 = žeton, 403 = naprava še ni dovoljena
 /// (sporočilo prehoda z navodili ostane), 0 = ni povezave. Isto besedilo v odjemalcu Go.
-func failureReason(_ s: Int, _ body: [String: Any]?) -> String {
+func failureReason(_ s: Int, _ body: [String: Any]?, _ name: String) -> String {
     let msg = ((body?["error"] as? [String: Any])?["message"] as? String).map(oneLine) ?? ""
     switch s {
     case 0: return "gateway not reachable"
-    case 401: return "token rejected: copy the token again (Mini Gateway → Settings → General → Copy Token) and run minigw connect …"
+    case 401: return "token rejected: copy the token again (Mini Gateway → Settings → General → Copy Token) and run " + reconnectCmd(name)
     case 403: return "device not approved" + (msg.isEmpty ? "" : ": " + msg)
     default: return "gateway answered HTTP \(s)" + (msg.isEmpty ? "" : ": " + msg)
     }
@@ -530,14 +559,42 @@ func profileStatus(_ p: Profile) -> Bool {
     if ms == 200 && s == 200 { say("Models:    \((models?["data"] as? [Any])?.count ?? 0)") }  // sicer razlog le v vrstici Status
     if p.conn.key != nil, let id = deviceID(c) { say("Device:    \(id) (\(ms == 200 ? "approved" : ms == 403 ? "waiting for approval" : "approval unknown"))") }
     let bad = ms != 200 ? ms : s
-    say("Status:    " + (bad == 200 ? "connected" : failureReason(bad, bad == ms ? models : ready)))
+    say("Status:    " + (bad == 200 ? "connected" : failureReason(bad, bad == ms ? models : ready, p.name)))
     return bad == 200
 }
 
+/// Ukaz za nov žeton tega profila (--name le, če ni »default«; kot Go reconnectCmd).
+func reconnectCmd(_ name: String) -> String {
+    name.isEmpty || name == Profiles.defaultName ? "minigw reconnect" : "minigw reconnect --name \(name)"
+}
+
+/// minigw reconnect: nov žeton za obstoječ profil; naslov, ključ prehoda (če ga vrstica nima) in ključ naprave ostanejo,
+/// zato prehod vidi isto napravo. Nato kot minigw status (izhod 1 = ni povezan).
+func reconnectCommand(_ a: [String]) -> Never {
+    let usage = "usage: minigw reconnect [--name <profile>] [--token <token> | --token -]   (no --token or - reads it from stdin or the terminal)"
+    var name = profileFlag ?? defaultName(profileNames()), token = "", i = 0
+    while i < a.count {
+        guard i + 1 < a.count, ["--name", "--token"].contains(a[i]) else { fail(usage) }
+        if a[i] == "--name" { name = a[i + 1] } else { token = a[i + 1] }
+        i += 2
+    }
+    guard Profiles.valid(name) else { fail("invalid --name \(name) (lowercase letters, digits and -, up to 32)") }
+    guard let saved = loadProfile(name) else { fail("no profile \(name); run: minigw connect <host[:port]> --name \(name) --token -") }
+    if token.isEmpty || token == "-" { token = readKey("new gateway token") }  // F3: s stdin ali brez odmeva, ne v argv
+    guard let n = Profiles.newToken(token, key: saved.key) else {
+        fail("the token is empty or incomplete: copy it again (Mini Gateway → Settings → General → Copy Token)")
+    }
+    var c = saved
+    c.token = n.token; c.key = n.key; c.device = clientDevice()
+    saveProfile(name, c)
+    say("Saved the new token for profile \(name)")
+    exit(profileStatus(Profile(name: name, conn: c)) ? 0 : 1)
+}
+
 /// Modeli enega prehoda ali razlog, zakaj jih ni.
-func fetchModels(_ c: Connection) -> ([[String: Any]]?, String) {
+func fetchModels(_ c: Connection, _ name: String) -> ([[String: Any]]?, String) {
     let (s, m) = get(c, "/v1/models")
-    return s == 200 ? (m?["data"] as? [[String: Any]] ?? [], "") : (nil, failureReason(s, m))
+    return s == 200 ? (m?["data"] as? [[String: Any]] ?? [], "") : (nil, failureReason(s, m, name))
 }
 
 // MARK: deljene mape
@@ -641,7 +698,7 @@ while let i = args.firstIndex(where: { $0 == "--minigw-profile" || $0.hasPrefix(
     } else { profileFlag = String(args[i].dropFirst("--minigw-profile=".count)); args.remove(at: i) }
 }
 
-if agentConn() != nil, let first = args.first, ["connect", "disconnect", "profiles"].contains(first) {
+if agentConn() != nil, let first = args.first, ["connect", "reconnect", "disconnect", "profiles"].contains(first) {
     fail("minigw runs inside an agent of the gateway (MINIGW_AGENT_URL): \(first) is not available here")
 }
 if let c = agentConn(), args.first?.hasPrefix("-") == true, args.contains("-p") || args.contains("--print") { agentAsk(c, args) }
@@ -680,7 +737,7 @@ case "connect":
         fail("the token is empty or incomplete: copy it again (Mini Gateway → Settings → General → Copy Token)")
     }
     let c = Connection(url: normalize(args[1]), token: parts[0], key: parts.count > 1 ? parts[1] : nil,
-                       device: anyDevice() ?? Noise.base64url(Curve25519.Signing.PrivateKey().rawRepresentation))  // en ključ za vse profile
+                       device: clientDevice())  // en ključ za vse profile
     let asProfile = name != Profiles.defaultName || names.contains { $0 != Profiles.defaultName } ? " as profile \(name)" : ""
     let (status, body) = get(route(Profile(name: name, conn: c)), "/v1/models")
     switch status {
@@ -695,6 +752,9 @@ case "connect":
     default: fail("gateway at \(c.url) answered HTTP \(status)")
     }
     exit(0)
+
+case "reconnect":
+    reconnectCommand(Array(args.dropFirst()))
 
 case "disconnect":
     let names = profileNames()  // le atributi: SecItemDelete ne potrebuje branja profila
@@ -742,13 +802,13 @@ case "models":
     var data: [[String: Any]]
     if ps.count == 1 {
         let (s, models) = get(route(ps[0]), "/v1/models")
-        guard s == 200, let d = models?["data"] as? [[String: Any]] else { fail(failureReason(s, models)) }
+        guard s == 200, let d = models?["data"] as? [[String: Any]] else { fail(failureReason(s, models, ps[0].name)) }
         data = d
     } else {
         let lists = ps.map { p -> [[String: Any]]? in
             var l: [[String: Any]]?, why = ""
             switch routeResult(p) {
-            case .success(let c): (l, why) = fetchModels(c)
+            case .success(let c): (l, why) = fetchModels(c, p.name)
             case .failure(let e): why = e.message
             }
             if l == nil { err.write(Data("minigw: gateway \(p.name) (\(p.conn.url)): \(why); its models are left out\n".utf8)) }
@@ -764,14 +824,15 @@ case "--minigw-help", "-h", "--help", "-v", "--version":
     if args.first == "-v" || args.first == "--version" { say("minigw \(minigwVersion)"); exit(0) } else {  // le minigw (gw status)
         say("""
         minigw connect <host[:port]> [--name P] [--token T|-]  save a gateway as profile P (Keychain; - = stdin)
-        minigw status | models | disconnect [--name P]   all profiles; models of other profiles end in @P
+        minigw reconnect [--name P] [--token T|-]  new token for profile P; address, gateway key and device stay
+        minigw status | models | disconnect [--name P]   all profiles; models of other profiles end in @P (the device key stays)
         minigw profiles [default P]                list profiles, or pick the default (its models also without @P)
         minigw --minigw-profile P …                 use only profile P for this command
         minigw share add|remove [folder] | list    share a system or hidden folder itself (contents are always shared)
         minigw share add --work=native|native-direct|worktree|sync|direct|auto [--ro] [folder]   default mode for that folder (flag/env wins)
         minigw gw status|devices|provider|claude|token …    change the Mini Gateway app on this Mac (minigw gw help)
         minigw plugin install|uninstall|status       the Claude Code plugin minigw@mini-gateway, using this minigw
-        minigw uninstall [--purge] [--yes]          remove what minigw added here (--purge: also settings and profiles)
+        minigw uninstall [--purge] [--yes]          remove what minigw added here (--purge: also settings, profiles, device key)
         minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)
         minigw --minigw-role NAME [claude args]    the caller's role for the gateway's session history (or MINIGW_ROLE)
         inside Claude Code minigw passes only -p, --model and other options that do not widen permissions (MINIGW_ALLOW_UNSAFE_FLAGS=1 = all)

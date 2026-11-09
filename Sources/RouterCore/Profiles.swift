@@ -23,6 +23,14 @@ public enum Profiles {
         n.range(of: "^[a-z0-9][a-z0-9-]{0,31}$", options: .regularExpression) != nil
     }
 
+    /// minigw reconnect: vrstica »Copy Token« (<žeton>#<ključ>) ali le žeton; brez ključa ostane shranjeni ključ prehoda.
+    /// nil = prazen ali nepopoln žeton (»#«, »#kljuc«, »zeton#«), kot Go newToken.
+    public static func newToken(_ line: String, key: String?) -> (token: String, key: String?)? {
+        let p = line.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
+        guard !p[0].isEmpty, p.count == 1 || !p[1].isEmpty else { return nil }
+        return (p[0], p.count > 1 ? p[1] : key)
+    }
+
     /// »claude-cli-opus@win« → (claude-cli-opus, win), če je win profil; sicer model ostane cel (claude-opus-4@20250514).
     public static func split(_ model: String, names: [String]) -> (model: String, profile: String?) {
         guard let at = model.lastIndex(of: "@"), at > model.startIndex else { return (model, nil) }

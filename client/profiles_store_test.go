@@ -3,6 +3,8 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -30,7 +32,7 @@ func TestProfilesStoreAndMigration(t *testing.T) {
 	if ps := loadProfiles(); len(ps) != 1 || ps[0].name != "default" || ps[0].conn.Token != "t1" {
 		t.Fatalf("default: %+v", ps)
 	}
-	saveProfile("win", connection{URL: "http://hpx:8765", Token: "t2", Device: anyDevice()})
+	saveProfile("win", connection{URL: "http://hpx:8765", Token: "t2", Device: clientDevice()})
 	os.WriteFile(filepath.Join(filepath.Dir(storePath()), "connections", "Bad Name.json"), []byte("{}"), 0o600)
 	if n := profileNames(); !slices.Equal(n, []string{"default", "win"}) {
 		t.Fatalf("names: %v", n)
@@ -40,6 +42,10 @@ func TestProfilesStoreAndMigration(t *testing.T) {
 	}
 	if c := loadProfile("win"); c == nil || c.Device == nil || *c.Device != "dev" { // en ključ naprave
 		t.Fatalf("win: %+v", c)
+	}
+	// Ključ naprave prenesen v svojo datoteko (0600); ostane, ko ni več nobenega profila (disconnect).
+	if st, err := os.Stat(deviceFile()); err != nil || st.Mode().Perm() != 0o600 || loaded(deviceLoad()) != "dev" {
+		t.Fatalf("device key not migrated: %v", err)
 	}
 	if ps := loadProfiles(); ps[0].name != "default" || ps[1].name != "win" {
 		t.Fatalf("order: %+v", ps)
@@ -89,5 +95,91 @@ func TestTrustedGroup(t *testing.T) {
 	}
 	if trustedGroup("linux", uint32(os.Getgid()), g.Name+":x:"+g.Gid+":mallory\n") {
 		t.Error("linux: user private group with another member trusted")
+	}
+}
+
+// minigw reconnect: nov žeton, naslov in ključ naprave ostaneta; ključ naprave preživi brisanje vseh profilov.
+func TestReconnectAndDeviceKeySurvivesDisconnect(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	old := profileFlag
+	t.Cleanup(func() { profileFlag = old })
+	profileFlag = ""
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer new" {
+			w.WriteHeader(401)
+			return
+		}
+		w.Write([]byte(`{"providers":{},"data":[]}`))
+	}))
+	defer srv.Close()
+	saveProfile(defaultProfile, connection{URL: srv.URL, Token: "old", Device: clientDevice()})
+	dev := *loadProfile(defaultProfile).Device
+	if !reconnectCommand([]string{"--token", "new"}) {
+		t.Fatal("reconnect: not connected")
+	}
+	if c := loadProfile(defaultProfile); c == nil || c.Token != "new" || c.URL != srv.URL || c.Key != nil || *c.Device != dev {
+		t.Fatalf("after reconnect: %+v", c)
+	}
+	storeDelete(defaultProfile)
+	if len(profileNames()) != 0 || *clientDevice() != dev {
+		t.Fatal("device key lost with the last profile")
+	}
+	steps, kept := uninstallSteps("linux", false)
+	if !slices.Contains(kept, "device key ("+storeName+")") {
+		t.Fatalf("kept %v", kept)
+	}
+	if steps, _ = uninstallSteps("linux", true); !slices.ContainsFunc(steps, func(s uninstallStep) bool { return s.what == "device key ("+storeName+")" }) {
+		t.Fatal("purge does not list the device key")
+	}
+}
+
+func TestNewToken(t *testing.T) {
+	k := "oldkey"
+	for line, want := range map[string]string{"t": "t oldkey", "t#n": "t n", "": "!", "#": "!", "#n": "!", "t#": "!"} {
+		tok, key, ok := newToken(line, &k)
+		got := "!"
+		if ok {
+			got = tok + " " + *key
+		}
+		if got != want {
+			t.Errorf("%q: %q, want %q", line, got, want)
+		}
+	}
+}
+
+func loaded(s string, err error) string {
+	if err != nil {
+		panic(err)
+	}
+	return s
+}
+
+// L1, L2: neberljiv ključ naprave je napaka (ne nov ključ); simbolna povezava na mestu datoteke se ne sledi; mapa 0700.
+func TestDeviceKeyStoreSafety(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	os.MkdirAll(deviceFile(), 0o700) // mapa namesto datoteke: branje ne uspe
+	if _, err := deviceLoad(); err == nil {
+		t.Fatal("unreadable device key counted as missing")
+	}
+	os.Remove(deviceFile())
+	os.Chmod(filepath.Dir(deviceFile()), 0o755)
+	target := filepath.Join(home, "elsewhere")
+	os.Symlink(target, deviceFile())
+	if deviceSave("x") == nil {
+		t.Fatal("followed a symlink")
+	}
+	if _, err := os.Stat(target); err == nil {
+		t.Fatal("wrote through the symlink")
+	}
+	os.Remove(deviceFile())
+	if err := deviceSave("k"); err != nil || loaded(deviceLoad()) != "k" {
+		t.Fatalf("save: %v", err)
+	}
+	if st, _ := os.Stat(filepath.Dir(deviceFile())); st.Mode().Perm() != 0o700 {
+		t.Fatalf("folder mode %v", st.Mode())
 	}
 }

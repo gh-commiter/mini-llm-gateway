@@ -98,6 +98,21 @@ func storeNames() []string {
 	return out
 }
 
+// Ključ naprave (clientDevice): svoja poverilnica minigw:device (zunaj filtra minigw:router*); disconnect je ne odstrani.
+const deviceTarget = "minigw:device"
+
+// deviceLoad: "" brez napake = ključa ni; druga napaka branja je napaka (L1).
+func deviceLoad() (string, error) {
+	b, err := credLoad(deviceTarget)
+	if errors.Is(err, errNotFound) {
+		return "", nil
+	}
+	return strings.TrimSpace(string(b)), err
+}
+
+func deviceSave(d string) error { return credSave(deviceTarget, []byte(d)) }
+func deviceDelete()             { credDelete(deviceTarget) }
+
 func credLoad(name string) ([]byte, error) {
 	target, _ := syscall.UTF16PtrFromString(name)
 	var c *credential

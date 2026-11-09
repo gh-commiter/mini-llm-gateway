@@ -496,10 +496,14 @@ func uninstallSteps(goos string, purge bool) (steps []uninstallStep, kept []stri
 			dirs = append(dirs, filepath.Join(d, "minigw"))
 		}
 	}
-	names := profileNames()
+	d, derr := deviceLoad()
+	names, device := profileNames(), d != "" || derr != nil
 	if !purge {
 		if len(names) > 0 {
 			kept = append(kept, "profiles "+strings.Join(names, ", ")+" ("+storeName+")")
+		}
+		if device {
+			kept = append(kept, "device key ("+storeName+")")
 		}
 		for _, d := range dirs {
 			kept = append(kept, "settings folder "+d)
@@ -513,6 +517,9 @@ func uninstallSteps(goos string, purge bool) (steps []uninstallStep, kept []stri
 			}
 			return nil
 		}})
+	}
+	if device {
+		steps = append(steps, uninstallStep{"device key (" + storeName + ")", func() error { deviceDelete(); return nil }})
 	}
 	cfg := defaultServeConfigPath()
 	if c, err := loadServeConfig(cfg); err == nil { // ključi ponudnikov (Credential Manager, secret-tool)
@@ -551,7 +558,7 @@ func uninstallCommand(args []string) {
 		case "--yes", "-y":
 			yes = true
 		default:
-			fail("usage: minigw uninstall [--purge] [--yes]   (--purge also removes settings and profiles)")
+			fail("usage: minigw uninstall [--purge] [--yes]   (--purge also removes settings, profiles and the device key)")
 		}
 	}
 	refuseRoot("uninstall")

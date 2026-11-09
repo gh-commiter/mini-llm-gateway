@@ -22,8 +22,20 @@ MINIGW_TOKEN
 - List: `"${CLAUDE_PLUGIN_DATA}/bin/minigw" profiles` (`*` = default).
 - Default (its models also without a suffix): `"${CLAUDE_PLUGIN_DATA}/bin/minigw" profiles default <profile>`.
 - Remove one: `"${CLAUDE_PLUGIN_DATA}/bin/minigw" disconnect --name <profile>`; without `--name` it removes the default.
+  The device key stays, so connecting again later is the same device for the gateway.
+- The gateway has a **new token** (New Token, `token rejected`) and the profile already exists: use `reconnect` instead
+  of `connect` (needs minigw 0.5.20 or newer). It keeps the address and the device, so the device's approval and
+  history stay. A token without `#<key>` keeps the saved gateway key:
 
-Then run `"${CLAUDE_PLUGIN_DATA}/bin/minigw" status` and report the result: it exits 0 only when the gateway is reachable, the token is accepted and this device is approved; its `Status:` line gives the reason otherwise (`token rejected` → ask the user to copy the token again and connect again). minigw stores the token in the system credential store: the macOS Keychain, Windows Credential Manager, or on Linux `~/.config/minigw/connection.json` and `connections/<profile>.json` (mode 0600). Do not repeat the token back to the user.
+  ```sh
+  "${CLAUDE_PLUGIN_DATA}/bin/minigw" reconnect [--name <profile>] --token - <<'MINIGW_TOKEN'
+  <token>
+  MINIGW_TOKEN
+  ```
+
+  It prints the `minigw status` lines of that profile; report them as below.
+
+Then run `"${CLAUDE_PLUGIN_DATA}/bin/minigw" status` and report the result: it exits 0 only when the gateway is reachable, the token is accepted and this device is approved; its `Status:` line gives the reason otherwise (`token rejected` → ask the user to copy the token again and run `reconnect` above). minigw stores the token in the system credential store: the macOS Keychain, Windows Credential Manager, or on Linux `~/.config/minigw/connection.json` and `connections/<profile>.json` (mode 0600). Do not repeat the token back to the user.
 
 If minigw says the gateway **refused this device** (403), the token is right but this device is not allowed yet. Run
 `"${CLAUDE_PLUGIN_DATA}/bin/minigw" status` and tell the user the device ID on its `Device:` line (it says `waiting for approval` until the gateway allows it; `Status: device not approved`). They approve the device on the

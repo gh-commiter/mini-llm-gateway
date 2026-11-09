@@ -173,7 +173,7 @@ func (m *gatewayMux) models(w http.ResponseWriter) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			lists[i], _ = fetchModels(t.conn)
+			lists[i], _ = fetchModels(t.conn, t.name)
 		}()
 	}
 	wg.Wait()
@@ -191,7 +191,7 @@ func (m *gatewayMux) models(w http.ResponseWriter) {
 }
 
 // fetchModels: modeli enega prehoda ali razlog, zakaj jih ni (nil seznam); prazen seznam ni napaka.
-func fetchModels(c connection) ([]map[string]any, string) {
+func fetchModels(c connection, name string) ([]map[string]any, string) {
 	st, data := call(c, "GET", "/v1/models", nil, nil, 10*time.Second)
 	var l struct {
 		Data []map[string]any `json:"data"`
@@ -199,7 +199,7 @@ func fetchModels(c connection) ([]map[string]any, string) {
 	var body map[string]any
 	json.Unmarshal(data, &body)
 	if st != 200 || json.Unmarshal(data, &l) != nil {
-		return nil, failureReason(st, body)
+		return nil, failureReason(st, body, name)
 	}
 	if l.Data == nil {
 		l.Data = []map[string]any{}
