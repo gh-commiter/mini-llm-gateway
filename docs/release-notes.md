@@ -19,6 +19,7 @@
 
 ### Security
 
+- Release builds also require `install.sh`, `scripts` and `plugins` to be committed (`install.sh` is in the signed `SHA256SUMS`).
 - Mac gateway, direct mode: copying a folder (WebDAV COPY) copies only files and folders, not symbolic links, as `minigw serve` does.
 - Mac gateway: a request body over 1 MB from another computer is read only after the token in its header is valid, and at most 256 connections wait for a full request at a time (as `minigw serve`).
 - Inside Claude Code, `--minigw-work=direct`, `sync` and `native-direct` are refused unless the run is read-only or the folder is saved with that mode (`minigw share add --work=`): these modes change your files without a branch to review, and the skills' model calls do not ask. `MINIGW_WORK=<mode>` in front of the command still works, and Claude Code asks for it. Dropping `--minigw-ro` is still not asked (documented limit). Both clients.
