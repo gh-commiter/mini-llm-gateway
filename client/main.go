@@ -303,7 +303,7 @@ func main() {
 		first = args[0]
 	}
 	if c := agentConn(); c != nil {
-		if first == "connect" || first == "reconnect" || first == "disconnect" || first == "profiles" {
+		if slices.Contains([]string{"connect", "reconnect", "disconnect", "profiles", "plugin", "uninstall"}, first) {
 			fail("minigw runs inside an agent of the gateway (MINIGW_AGENT_URL): " + first + " is not available here")
 		}
 		http.DefaultTransport.(*http.Transport).Proxy = agentProxy

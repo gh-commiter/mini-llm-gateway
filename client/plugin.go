@@ -453,8 +453,9 @@ type uninstallStep struct {
 	do   func() error
 }
 
-// uninstallSteps: kar je minigw dodal na tem računalniku in obstaja; kept = kar ostane brez --purge.
-func uninstallSteps(goos string, purge bool) (steps []uninstallStep, kept []string) {
+// uninstallSteps: kar je minigw dodal na tem računalniku in obstaja; kept = kar ostane brez --purge;
+// busy = mapa scratch ostane, ker pladenj (prehod MSI) teče in jo agenti morda uporabljajo (L2).
+func uninstallSteps(goos string, purge bool) (steps []uninstallStep, kept []string, busy string) {
 	data := pluginDataDir()
 	steps = append(steps, uninstallStep{"Claude Code plugin " + pluginID + " (settings entries, marketplace, " + data + ")", func() error {
 		ok := pluginUninstall(goos, false)
@@ -468,9 +469,12 @@ func uninstallSteps(goos string, purge bool) (steps []uninstallStep, kept []stri
 		}
 		return nil
 	}})
+	trayUp := false // pladenj teče in ga noben korak ne zapre (MSI: CloseTray ga je zaprl že prej)
 	switch goos {
 	case "windows":
+		trayUp = trayRunning()
 		if v, _ := runValueGet(runValueName); v != "" && msiDir() == "" { // MSI: vnos Run je njegov
+			trayUp = false
 			steps = append(steps, uninstallStep{"tray at sign-in (HKCU Run " + runValueName + ")", func() error {
 				trayClose()
 				runValueDel(runValueName)
@@ -488,7 +492,11 @@ func uninstallSteps(goos string, purge bool) (steps []uninstallStep, kept []stri
 	}
 	if cache, err := os.UserCacheDir(); err == nil && errFromStat(filepath.Join(cache, "minigw")) == nil {
 		d := filepath.Join(cache, "minigw")
-		steps = append(steps, uninstallStep{"scratch folder " + d, func() error { return os.RemoveAll(d) }})
+		if trayUp {
+			busy = "scratch folder " + d + " (the Mini Gateway tray is running and its agents may use it: quit the tray, then run minigw uninstall again)"
+		} else {
+			steps = append(steps, uninstallStep{"scratch folder " + d, func() error { return os.RemoveAll(d) }})
+		}
 	}
 	var dirs []string
 	for _, f := range []func() (string, error){os.UserConfigDir, configBase} {
@@ -508,7 +516,7 @@ func uninstallSteps(goos string, purge bool) (steps []uninstallStep, kept []stri
 		for _, d := range dirs {
 			kept = append(kept, "settings folder "+d)
 		}
-		return steps, kept
+		return steps, kept, busy
 	}
 	if len(names) > 0 {
 		steps = append(steps, uninstallStep{"profiles " + strings.Join(names, ", ") + " (" + storeName + ")", func() error {
@@ -534,7 +542,7 @@ func uninstallSteps(goos string, purge bool) (steps []uninstallStep, kept []stri
 	for _, d := range dirs {
 		steps = append(steps, uninstallStep{"settings folder " + d, func() error { return os.RemoveAll(d) }})
 	}
-	return steps, kept
+	return steps, kept, busy
 }
 
 // binaryHint: kako odstraniti sam minigw (namestil ga je MSI, brew ali minigw serve install).
@@ -562,13 +570,16 @@ func uninstallCommand(args []string) {
 		}
 	}
 	refuseRoot("uninstall")
-	steps, kept := uninstallSteps(runtime.GOOS, purge)
+	steps, kept, busy := uninstallSteps(runtime.GOOS, purge)
 	say("minigw uninstall removes:")
 	for _, s := range steps {
 		say("  - " + s.what)
 	}
 	for _, k := range kept {
 		say("Kept (--purge removes it): " + k)
+	}
+	if busy != "" {
+		say("Kept: " + busy)
 	}
 	say("Not removed: " + binaryHint(runtime.GOOS))
 	if !yes {

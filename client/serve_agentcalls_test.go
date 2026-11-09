@@ -242,6 +242,20 @@ func TestAgentModeConnection(t *testing.T) {
 	}
 }
 
+// L1: v agentu ni ukazov, ki spreminjajo povezavo ali namestitev.
+func TestAgentModeRefusesCommands(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "auth")
+	os.WriteFile(f, []byte("rt\n"), 0o600)
+	for _, c := range []string{"connect", "reconnect", "disconnect", "profiles", "plugin", "uninstall"} {
+		cmd := exec.Command(os.Args[0], c, "--no-such-flag") // brez zavrnitve le napaka uporabe, nič se ne spremeni
+		cmd.Env = append(os.Environ(), "MINIGW_TEST_MAIN=1", "MINIGW_AGENT_URL=http://127.0.0.1:1", "MINIGW_AGENT_AUTH_FILE="+f, "HOME="+t.TempDir())
+		out, err := cmd.CombinedOutput()
+		if err == nil || !strings.Contains(string(out), "minigw runs inside an agent of the gateway (MINIGW_AGENT_URL): "+c+" is not available here") {
+			t.Fatalf("%s: %v %s", c, err, out)
+		}
+	}
+}
+
 // minigw -p in agentu: orodje le za modele agentov; posrednik iz okolja tudi za loopback.
 func TestAgentAskBodyAndProxy(t *testing.T) {
 	if m, w, bad := agentAskArgs([]string{"-p", "--model", "m", "--", "- fix x", "--y"}); m != "m" || bad != "" || strings.Join(w, "|") != "- fix x|--y" {

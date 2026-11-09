@@ -66,6 +66,11 @@ func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == agentReaperCmd {
 		agentReaperMain(os.Args[2:])
 	}
+	if os.Getenv("MINIGW_TEST_MAIN") == "1" { // testi poženejo sam ukaz minigw
+		os.Args = append([]string{"minigw"}, os.Args[1:]...)
+		main()
+		os.Exit(0)
+	}
 	os.Exit(m.Run())
 }
 
