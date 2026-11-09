@@ -968,3 +968,33 @@ func TestNestedReposRefuseSymlinks(t *testing.T) {
 		t.Fatal("N5/N6 names accepted")
 	}
 }
+
+// Agent je vse commital sam (nič necommitanega): veja se shrani in gre nazaj (prej je preverba povezanosti ob
+// »bundle unbundle« padla, ker je ref zrcala kazal na commit le v klonu).
+func TestWorktreeFinalizeAllCommitted(t *testing.T) {
+	root := t.TempDir()
+	client, repo, wt := filepath.Join(root, "c"), filepath.Join(root, "repos", "d", "r.git"), filepath.Join(root, "wt")
+	os.MkdirAll(client, 0o755)
+	gitT(t, client, "init", "-q", "-b", "main")
+	writeT(t, filepath.Join(client, "a.txt"), "a\n")
+	gitT(t, client, "add", "a.txt")
+	gitT(t, client, "commit", "-qm", "first")
+	head := gitT(t, client, "rev-parse", "HEAD")
+	b := filepath.Join(root, "push.bundle")
+	gitUser(client, nil, "update-ref", "refs/minigw/push", head)
+	gitUser(client, nil, "bundle", "create", b, "refs/minigw/push")
+	if ensureMirror(repo) != nil || !importBase(repo, b, head, "refs/minigw/base/x") || !makeClone(repo, wt, "minigw/claude-12345678-0", head) {
+		t.Fatal("mirror")
+	}
+	writeT(t, filepath.Join(wt, "b.txt"), "b\n")
+	gitT(t, wt, "add", "b.txt")
+	gitT(t, wt, "-c", "user.name=a", "-c", "user.email=a@x", "commit", "-qm", "agent")
+	agentTip := gitT(t, wt, "rev-parse", "HEAD")
+	if tip := finalize(repo, wt, "minigw/claude-12345678-0", head, "claude", filepath.Join(root, "out.bundle"), nil); tip != agentTip {
+		t.Fatalf("all-committed work not saved: %q", tip)
+	}
+	os.RemoveAll(wt)
+	if got, _ := gitRun(repo, "", nil, "--git-dir", repo, "show", "minigw/claude-12345678-0:b.txt"); got != "b" {
+		t.Fatalf("mirror lacks the agent's objects: %q", got)
+	}
+}
