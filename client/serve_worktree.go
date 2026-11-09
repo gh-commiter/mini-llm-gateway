@@ -891,7 +891,7 @@ func (s *server) nestedBlocker(agent string) string {
 	case finalizeBwrap() == "":
 		return "nested repositories need bwrap on this Linux gateway (install bubblewrap and allow unprivileged user namespaces)" + tail
 	case agent == "claude" && !claudePinOK(s.cfgDir, s.log.Printf):
-		return "nested repositories need nested bwrap for Claude CLI on this Linux gateway (on Ubuntu 24.04 AppArmor's bwrap-userns-restrict blocks it)" + tail
+		return "nested repositories need bwrap inside bwrap for Claude CLI on this Linux gateway; on Ubuntu 24.04 the admin allows it with an AppArmor profile that gives /usr/bin/bwrap userns, or sysctl kernel.apparmor_restrict_unprivileged_userns=0 (docs/usage.md, gateway requirements for nested repositories)" + tail
 	case agent != "claude" && !agentSandboxed(s.cfgDir):
 		return "nested repositories need bwrap for " + agent + " on this Linux gateway" + tail
 	}
