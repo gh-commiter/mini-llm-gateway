@@ -599,7 +599,7 @@ func refuseUnsafeClaudeFlags() {
     guard Profiles.checkClaudeArgs(env) else { return }
     var st = stat()
     if fstat(0, &st) == 0, st.st_mode & S_IFMT != S_IFCHR {  // terminal, /dev/null: ne bere
-        claudeStdin = FileHandle.standardInput.readDataToEndOfFile()
+        claudeStdin = Profiles.readStdin(fd: 0, waitMs: Profiles.promptWords(args).isEmpty ? 0 : 3000) ?? Data()
     }
     if let r = Profiles.unsafePrompt(args, stdin: String(decoding: claudeStdin ?? Data(), as: UTF8.self), env: env) {
         fail("\(r) is not accepted when minigw runs inside Claude Code: paste the text itself into the prompt")

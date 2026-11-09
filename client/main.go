@@ -862,18 +862,13 @@ func promptRefused(p string) string {
 	return ""
 }
 
-// unsafePrompt: razlog za zavrnitev navodila pod Claude Code ("" = dovoljeno): besede, ki niso možnost ali njena
-// vrednost, vse po »--« in stdin.
-func unsafePrompt(args []string, stdin string, env func(string) string) string {
-	if !checkClaudeArgs(env) {
-		return ""
-	}
-	words := []string{stdin}
+// promptWords: besede navodila v argumentih claude: niso možnost ali njena vrednost, in vse po »--«.
+func promptWords(args []string) []string {
+	var words []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if a == "--" {
-			words = append(words, args[i+1:]...)
-			break
+			return append(words, args[i+1:]...)
 		}
 		if !strings.HasPrefix(a, "-") {
 			words = append(words, a)
@@ -881,7 +876,49 @@ func unsafePrompt(args []string, stdin string, env func(string) string) string {
 			i++
 		}
 	}
-	for _, w := range words {
+	return words
+}
+
+// stdinWait: claude -p z navodilom v argumentih čaka na stdin 3 s in nato nadaljuje brez njega; minigw enako, zato
+// odprt stdin, ki se nikoli ne zapre (orodje Bash v Claude Code), ne blokira.
+const stdinWait = 3 * time.Second
+
+// readStdin: brez navodila v argumentih ves stdin; z njim le, če prvi bajti (ali EOF) pridejo v `wait`, sicer nil.
+func readStdin(r io.Reader, wait time.Duration) ([]byte, error) {
+	if wait <= 0 {
+		return io.ReadAll(r)
+	}
+	type chunk struct {
+		b   []byte
+		err error
+	}
+	first := make(chan chunk, 1)
+	go func() {
+		b := make([]byte, 64<<10)
+		n, err := r.Read(b)
+		first <- chunk{b[:n], err}
+	}()
+	select {
+	case c := <-first:
+		if c.err == io.EOF {
+			return c.b, nil
+		} else if c.err != nil {
+			return nil, c.err
+		}
+		rest, err := io.ReadAll(r)
+		return append(c.b, rest...), err
+	case <-time.After(wait):
+		return nil, nil // ponytail: bralna gorutina ostane visela do izhoda; claude dobi prazen stdin
+	}
+}
+
+// unsafePrompt: razlog za zavrnitev navodila pod Claude Code ("" = dovoljeno): besede, ki niso možnost ali njena
+// vrednost, vse po »--« in stdin.
+func unsafePrompt(args []string, stdin string, env func(string) string) string {
+	if !checkClaudeArgs(env) {
+		return ""
+	}
+	for _, w := range append(promptWords(args), stdin) {
 		if r := promptRefused(w); r != "" {
 			return r
 		}
@@ -901,7 +938,11 @@ func refuseUnsafeClaudeFlags(args []string) {
 	}
 	var in []byte
 	if fi, err := os.Stdin.Stat(); err == nil && fi.Mode()&os.ModeCharDevice == 0 { // terminal, /dev/null: ne bere
-		b, err := io.ReadAll(os.Stdin)
+		wait := time.Duration(0)
+		if len(promptWords(args)) > 0 {
+			wait = stdinWait
+		}
+		b, err := readStdin(os.Stdin, wait)
 		if err != nil {
 			fail("cannot read stdin: " + err.Error())
 		}
