@@ -98,7 +98,7 @@ Everything else goes to `"$M" gw …`. It changes the running gateway at once (o
 
 ## modes
 
-How agents get the client's folder (`minigw --minigw-work=<mode> …`, or `MINIGW_WORK`; per folder `minigw share add --work=<mode>`):
+How agents get the client's folder (`minigw --minigw-work=<mode> …`, or `MINIGW_WORK`; per folder `minigw share add --work=<mode>`). Inside Claude Code, `--minigw-work=direct|sync|native-direct` is refused unless the run is read-only or the folder is saved with that mode; use `MINIGW_WORK=<mode>` in front of the command (Claude Code asks the user):
 - `direct`: the gateway Mac mounts the folder (Mac gateway only; `minigw share add --work=direct` for the old default). Agents cannot commit or change `.git`, `.claude/settings*.json`, `.claude/{hooks,commands,agents,skills}`, `.husky`, `.githooks`, `.vscode/tasks.json` or `.envrc` there (read only); use `worktree` for commits.
 - `sync`: a copy on the gateway, changes come back after each request. A Windows or Linux gateway has no direct; an explicit direct is refused.
 - `worktree`: a git repository; the agent works in a clone, its work comes back as branch `minigw/…` (Mac and minigw serve). Agents that may not write (Codex, Copilot, Grok with writing off) only read in the clone and bring back no branch; Grok with writing on is refused (use sync).

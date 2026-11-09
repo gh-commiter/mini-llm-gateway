@@ -551,7 +551,7 @@ func main() {
 	readOnly := os.Getenv("MINIGW_SHARE") == "ro"
 	// --minigw-work=sync (ali MINIGW_WORK=sync): agenti delajo v kopiji na routerju namesto v priklopu; privzeto auto.
 	// Prednost: --minigw-work= / MINIGW_WORK > način mape iz »minigw share add --work=…« > auto.
-	work := os.Getenv("MINIGW_WORK")
+	work, flagWork := os.Getenv("MINIGW_WORK"), ""
 	// --minigw-role <ime> (ali MINIGW_ROLE): vloga klicatelja za zgodovino sej (kasneje omejitve); varovalo, ne meja.
 	role, args, ok := takeRole(args, os.Getenv("MINIGW_ROLE"))
 	if !ok {
@@ -563,6 +563,7 @@ func main() {
 				readOnly = true
 			} else {
 				work = strings.TrimPrefix(args[i], "--minigw-work=")
+				flagWork = work
 			}
 			args = append(args[:i], args[i+1:]...)
 			i--
@@ -573,11 +574,19 @@ func main() {
 		fail("unknown --minigw-work=" + work + " (use direct, sync, native, native-direct, worktree or auto)")
 	}
 	cwd, _ := os.Getwd()
-	asked := work
-	if f := lookupSharedFolder(sharedFolders(), cwd); asked == "" && f != nil {
-		asked = f.Work
+	asked, savedWork := work, ""
+	if f := lookupSharedFolder(sharedFolders(), cwd); f != nil {
+		savedWork = f.Work
+	}
+	if asked == "" {
+		asked = savedWork
 	}
 	work, readOnly = workMode(work, lookupSharedFolder(sharedFolders(), cwd), readOnly)
+	if unsafeWork(flagWork, savedWork, readOnly, os.Getenv) {
+		fail("--minigw-work=" + flagWork + " is not accepted when minigw runs inside Claude Code: the agent would change your files " +
+			"without a branch to review; put MINIGW_WORK=" + flagWork + " in front of the command instead, so Claude Code asks you first " +
+			"(or save it for this folder: minigw share add --work=" + flagWork + ")")
+	}
 	if (strings.HasPrefix(asked, "native") || asked == "worktree") && work != asked {
 		fmt.Fprintln(os.Stderr, "minigw: "+asked+" mode cannot be read-only; sharing the folder read-only instead")
 	}
@@ -791,6 +800,12 @@ func unsafeClaudeFlag(args []string, env func(string) string) string {
 // checkClaudeArgs: minigw teče v Claude Code (CLAUDECODE) in uporabnik ni nastavil MINIGW_ALLOW_UNSAFE_FLAGS=1.
 func checkClaudeArgs(env func(string) string) bool {
 	return env("CLAUDECODE") != "" && env("MINIGW_ALLOW_UNSAFE_FLAGS") != "1"
+}
+
+// unsafeWork (N8): pod Claude Code --minigw-work= z načinom, ki piše v mapo brez veje (direct, sync, native-direct),
+// le samo za branje ali kadar ga mapa že ima shranjenega (share add --work=); MINIGW_WORK v okolju Claude Code vpraša.
+func unsafeWork(flag, saved string, readOnly bool, env func(string) string) bool {
+	return checkClaudeArgs(env) && !readOnly && flag != saved && (flag == "direct" || flag == "sync" || flag == "native-direct")
 }
 
 // atMention: »@« na začetku besede (tudi za ( " ', Unicode presledki, U+FEFF in 。、？！ kot pri claude): claude -p bi

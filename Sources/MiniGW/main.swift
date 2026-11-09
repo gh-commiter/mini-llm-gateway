@@ -622,7 +622,8 @@ if !roleArg.ok { fail("--minigw-role: 1-32 letters, digits, . _ or -") }
 // native: mapa je prek SMB mapa routerja → agenti delajo neposredno v njej (glej Native).
 // Prednost: --minigw-work= / MINIGW_WORK > način mape iz »minigw share add --work=…« > auto.
 var workFlag = ProcessInfo.processInfo.environment["MINIGW_WORK"].flatMap { $0.isEmpty ? nil : $0 }
-for a in args where a.hasPrefix("--minigw-work=") { workFlag = String(a.dropFirst("--minigw-work=".count)) }
+var flagWork: String?  // N8: le iz argumentov (MINIGW_WORK v okolju Claude Code vpraša)
+for a in args where a.hasPrefix("--minigw-work=") { workFlag = String(a.dropFirst("--minigw-work=".count)); flagWork = workFlag }
 args.removeAll { $0.hasPrefix("--minigw-work=") }
 if let w = workFlag, !SharedFolders.modes.contains(w) { fail("unknown --minigw-work=\(w) (use direct, sync, native, native-direct, worktree or auto)") }
 // --minigw-profile <ime> (ali =ime): cel ukaz le s tem prehodom (#17).
@@ -790,6 +791,14 @@ default:
 // MARK: Claude Code prek routerja
 
 refuseUnsafeClaudeFlags()  // H3: pred deljenjem mape in sejo (CLAUDECODE še ni odstranjen)
+if let f = flagWork {
+    let entry = SharedFolders.lookup(sharedFolders(), cwd: FileManager.default.currentDirectoryPath)
+    if Profiles.unsafeWork(f, saved: entry?.work, readOnly: readOnly || entry?.readOnly == true, env: ProcessInfo.processInfo.environment) {
+        fail("--minigw-work=\(f) is not accepted when minigw runs inside Claude Code: the agent would change your files without a branch "
+            + "to review; put MINIGW_WORK=\(f) in front of the command instead, so Claude Code asks you first (or save it for this folder: "
+            + "minigw share add --work=\(f))")
+    }
+}
 
 if agentConn() == nil {  // --model …@profil: ves zagon s tem prehodom, kot --minigw-profile (#8)
     let mp = Profiles.modelProfile(args, names: profileNames())

@@ -1686,6 +1686,20 @@ final class FakeMinigw: @unchecked Sendable {
     #expect(String(decoding: try Data(contentsOf: root.appendingPathComponent("h2")), as: UTF8.self) == "hl")
 }
 
+/// N8: pod Claude Code --minigw-work= brez veje le samo za branje ali kot shranjen način mape (kot Go TestUnsafeWorkInsideClaudeCode).
+@Test func unsafeWorkInsideClaudeCode() {
+    let env = ["CLAUDECODE": "1"]
+    for w in ["direct", "sync", "native-direct"] {
+        #expect(Profiles.unsafeWork(w, saved: nil, readOnly: false, env: env), "\(w)")
+        #expect(Profiles.unsafeWork(w, saved: "worktree", readOnly: false, env: env), "\(w)")
+        #expect(!Profiles.unsafeWork(w, saved: w, readOnly: false, env: env), "\(w)")
+        #expect(!Profiles.unsafeWork(w, saved: nil, readOnly: true, env: env), "\(w)")
+    }
+    for w in [nil, "auto", "worktree", "native"] { #expect(!Profiles.unsafeWork(w, saved: nil, readOnly: false, env: env)) }
+    #expect(!Profiles.unsafeWork("sync", saved: nil, readOnly: false, env: ["CLAUDECODE": "1", "MINIGW_ALLOW_UNSAFE_FLAGS": "1"]))
+    #expect(!Profiles.unsafeWork("sync", saved: nil, readOnly: false, env: [:]))
+}
+
 @Test func unsafeClaudeFlagsInsideClaudeCode() {
     let env = ["CLAUDECODE": "1"]
     for a in [["--dangerously-skip-permissions", "-p", "x"], ["-p", "--permission-mode", "bypassPermissions", "x"],

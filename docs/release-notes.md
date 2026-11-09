@@ -19,6 +19,7 @@
 
 ### Security
 
+- Inside Claude Code, `--minigw-work=direct`, `sync` and `native-direct` are refused unless the run is read-only or the folder is saved with that mode (`minigw share add --work=`): these modes change your files without a branch to review, and the skills' model calls do not ask. `MINIGW_WORK=<mode>` in front of the command still works, and Claude Code asks for it. Dropping `--minigw-ro` is still not asked (documented limit). Both clients.
 - The note about a file that changed during sync starts with `sync:`, so a file name cannot make it look like the branch line; the skills say the branch line comes on stderr after the answer. Both clients.
 - Worktree mode with Claude CLI on Linux `minigw serve` without the `.git` pin (nested bwrap restricted): the gateway now watches the clone's `.git` with inotify instead of only checking it every second, so a replaced `.git` stops the run and the processes in the clone even if it is put back before the next check. If the watch cannot be set up, the run is refused (use sync).
 - Worktree mode with read-only (`--minigw-ro`) is refused before the folder is cloned on the gateway, not after. `minigw serve`.

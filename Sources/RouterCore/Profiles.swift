@@ -84,6 +84,13 @@ public enum Profiles {
         !(env["CLAUDECODE"] ?? "").isEmpty && env["MINIGW_ALLOW_UNSAFE_FLAGS"] != "1"
     }
 
+    /// N8: pod Claude Code --minigw-work= z načinom, ki piše v mapo brez veje (direct, sync, native-direct), le samo za
+    /// branje ali kadar ga mapa že ima shranjenega (share add --work=); MINIGW_WORK v okolju Claude Code vpraša (kot Go unsafeWork).
+    public static func unsafeWork(_ flag: String?, saved: String?, readOnly: Bool, env: [String: String]) -> Bool {
+        guard let flag, checkClaudeArgs(env), !readOnly, flag != saved else { return false }
+        return ["direct", "sync", "native-direct"].contains(flag)
+    }
+
     /// N6, N7: claude -p bere navodilo kot vnos uporabnika: »@pot« (na začetku besede, tudi za ( " ', U+FEFF in 。、？！ kot
     /// pri claude, N6b) priloži katero koli datoteko, »/ukaz« zažene ukaz s poševnico (npr. /config permissionMode=…).
     /// nil = dovoljeno (kot Go promptRefused). Le še varovalka: claude dobi CLAUDE_CODE_DISABLE_FILE_MENTIONS (promptGuard).

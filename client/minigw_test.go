@@ -961,6 +961,32 @@ func TestUnsafeClaudeFlagsInsideClaudeCode(t *testing.T) {
 	}
 }
 
+// N8: pod Claude Code --minigw-work= brez veje (direct, sync, native-direct) le samo za branje ali kot shranjen način mape.
+func TestUnsafeWorkInsideClaudeCode(t *testing.T) {
+	in := map[string]string{"CLAUDECODE": "1"}
+	env := func(k string) string { return in[k] }
+	for _, w := range []string{"direct", "sync", "native-direct"} {
+		if !unsafeWork(w, "", false, env) || !unsafeWork(w, "worktree", false, env) {
+			t.Errorf("%s accepted", w)
+		}
+		if unsafeWork(w, w, false, env) || unsafeWork(w, "", true, env) {
+			t.Errorf("%s refused although saved or read-only", w)
+		}
+	}
+	for _, w := range []string{"", "auto", "worktree", "native"} {
+		if unsafeWork(w, "", false, env) {
+			t.Errorf("%q refused", w)
+		}
+	}
+	in["MINIGW_ALLOW_UNSAFE_FLAGS"] = "1"
+	if unsafeWork("sync", "", false, env) {
+		t.Error("refused with MINIGW_ALLOW_UNSAFE_FLAGS=1")
+	}
+	if unsafeWork("sync", "", false, func(string) string { return "" }) {
+		t.Error("refused outside Claude Code")
+	}
+}
+
 func TestUnsafePromptInsideClaudeCode(t *testing.T) {
 	in := map[string]string{"CLAUDECODE": "1"}
 	env := func(k string) string { return in[k] }
