@@ -95,7 +95,8 @@ func cloneProblem(wt, repo string) string {
 
 // nestedProblem (N9): .git (mapa ali datoteka) pod korenom klona na poti, ki je git klona ne prezre (podmodul,
 // ugnezden repozitorij): spremembe v njem ne pridejo nazaj, veja ne gre odjemalcu, klon se ne uporabi znova. V prezrti
-// poti (build/_deps od CMake FetchContent) je v redu. O prezrtju odloči git (check-ignore z okoljem klona in ovojem).
+// poti (build/_deps od CMake FetchContent) je v redu. O prezrtju odloči git (check-ignore z ovojem in nastavitvami
+// zrcala, kot finalize: .git klona je agentov).
 // Na vrhu se izpusti le točno ».git«.
 func nestedProblem(wt, repo string) string {
 	var nested []string
@@ -119,8 +120,8 @@ func nestedProblem(wt, repo string) string {
 		return ""
 	}
 	ignored := map[string]bool{}
-	if env := worktreeClaudeEnv(wt, "", gitExecDir(repo)); env != nil {
-		out, _ := gitRunInput(repo, wt, env, strings.Join(nested, "\n")+"\n", "check-ignore", "--stdin")
+	if env := gitWrapEnv(repo, gitExecDir(repo)); env != nil {
+		out, _ := gitRunInput(repo, wt, env, strings.Join(nested, "\n")+"\n", "--git-dir", repo, "--work-tree", wt, "check-ignore", "--stdin")
 		for _, l := range strings.Split(out, "\n") {
 			ignored[l] = true
 		}

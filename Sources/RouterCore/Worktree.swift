@@ -278,7 +278,8 @@ public enum Worktree {
 
     /// N9 (kot Go nestedProblem): .git (mapa ali datoteka) pod korenom klona na poti, ki je git klona ne prezre (podmodul,
     /// ugnezden repozitorij): sporočilo, zakaj veja ne gre nazaj; nil = ni ga ali je v prezrti poti (build/_deps od CMake
-    /// FetchContent). O prezrtju odloči git (check-ignore z okoljem klona in ovojem). Na vrhu se izpusti le točno ».git«.
+    /// FetchContent). O prezrtju odloči git (check-ignore z ovojem in nastavitvami zrcala, kot finalize: .git klona je
+    /// agentov). Na vrhu se izpusti le točno ».git«.
     static func nestedProblem(_ wt: URL, repo: URL) -> String? {
         guard let e = FileManager.default.enumerator(at: wt, includingPropertiesForKeys: nil) else { return nil }
         var parts: [String] = [], nested: [String] = []
@@ -291,8 +292,8 @@ public enum Worktree {
         }
         guard !nested.isEmpty else { return nil }
         var ignored = Set<String>()
-        if let env = claudeEnv(root: wt, maven: wt, gitexec: gitexecDir(repo: repo)) {
-            let out = run(["check-ignore", "--stdin"], cwd: wt.path, env: env, input: Data((nested.joined(separator: "\n") + "\n").utf8)).out
+        if let env = wrapEnv(gitDir: repo.path, gitexec: gitexecDir(repo: repo)) {
+            let out = run(["--git-dir", repo.path, "--work-tree", wt.path, "check-ignore", "--stdin"], cwd: wt.path, env: env, input: Data((nested.joined(separator: "\n") + "\n").utf8)).out
             ignored = Set(out.split(separator: "\n").map(String.init))
         }
         return nested.first { !ignored.contains($0) }.map {
@@ -711,8 +712,8 @@ extension ShareHub {
             await note(s, "\(tree.local!.path): the repository's .git/objects was replaced; \(slot.branch) was not delivered")
             unlock(tree.repo); return
         }
-        if let why = await offPool({ Worktree.nestedProblem(slot.wt, repo: repo) }) {  // N9
-            await note(s, why + "; \(slot.branch) was not delivered")
+        if let why = await offPool({ Worktree.nestedProblem(slot.wt, repo: repo) }) {  // N9; sporočilo kot pri Go (WORKTREE-PULL)
+            await note(s, "worktree: cannot get \(slot.branch) from the gateway: " + why)
             unlock(tree.repo); return
         }
         let read = tree.local.map { [$0.appendingPathComponent(".git/objects")] } ?? []
