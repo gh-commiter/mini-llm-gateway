@@ -166,12 +166,16 @@ func (s *shareClient) handle(job davJob, k string) davResponse {
 		defer s.syncMu.Unlock()
 		return s.wtPush(k, job)
 	case (s.native || s.worktree) && job.Method == "WORKTREE-NOTE": // sporočilo prehoda (native: dostavljena ali nedostavljena veja)
-		var n struct{ Message, Branch, Base string }
+		var n struct{ Message, Branch, Base, Nested string }
 		json.Unmarshal(job.Body, &n)
 		s.syncMu.Lock()
 		defer s.syncMu.Unlock()
-		if s.native && deliveredBranch(s.root, n.Branch, n.Base) { // native z git (worktree: odločajo lastni posnetki)
+		top := gitToplevel(s.root)
+		if s.native && n.Nested == "" && deliveredBranch(s.root, n.Branch, n.Base) { // native z git (worktree: odločajo lastni posnetki)
 			s.branchNote(n.Branch, n.Base)
+		} else if s.native && n.Nested != "" && validNestedPath(n.Nested) && top != "" && nestedInside(top, n.Nested) &&
+			deliveredBranch(filepath.Join(top, filepath.FromSlash(n.Nested)), n.Branch, n.Base) { // A: ugnezden v native
+			s.branchNote(n.Branch, n.Base, n.Nested)
 		} else {
 			fmt.Fprintln(os.Stderr, gatewayNote(n.Message))
 		}

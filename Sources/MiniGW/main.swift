@@ -343,8 +343,12 @@ final class ShareClient: @unchecked Sendable {
     /// Sporočilo prehoda v eni vrstici; native z git: dostavljena veja (preverjeno ime in SHA) kot vrstica o veji.
     private func noteJob(_ job: DAVJob) -> DAVResponse {
         let n = (try? JSONSerialization.jsonObject(with: job.body)) as? [String: Any]
-        if native, let b = n?["branch"] as? String, let base = n?["base"] as? String, Worktree.delivered(root: root.path, branch: b, base: base) {
+        let nested = n?["nested"] as? String
+        if native, let b = n?["branch"] as? String, let base = n?["base"] as? String, nested == nil, Worktree.delivered(root: root.path, branch: b, base: base) {
             branchNote(b, base)
+        } else if native, let b = n?["branch"] as? String, let base = n?["base"] as? String, let p = nested, Worktree.validNestedPath(p),
+                  let top = Worktree.toplevel(root.path), Worktree.nestedInside(top: top, p), Worktree.delivered(root: top + "/" + p, branch: b, base: base) {
+            branchNote(b, base, nested: p)  // A: ugnezden repozitorij v native (pot in veja preverjena tu)
         } else {
             err.write(Data((Profiles.gatewayNote(n?["message"] as? String ?? "") + "\n").utf8))
         }

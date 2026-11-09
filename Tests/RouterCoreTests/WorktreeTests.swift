@@ -1216,3 +1216,41 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     try? FileManager.default.removeItem(at: wt)
     #expect(Worktree.run(["--git-dir", tree.repo.path, "show", "minigw/claude-12345678-0:b.txt"]).out == "b")
 }
+
+/// A (0.5.20): native z git obravnava ugnezdene kot worktree: podmodul (gitfile v .git/modules), nesleden s commitom in brez
+/// commita dobijo vsak svojo vejo naravnost v svoj repozitorij; nesledeni niso gitlink v vrhnji veji; prezrt ostane zunaj;
+/// repozitoriji uporabnika (HEAD, indeks) ostanejo.
+@Test func nativeGitNestedRepositories() async throws {
+    let (root, client, mirror) = try fixture()
+    defer { cleanup(root) }
+    let src = root.appendingPathComponent("subsrc")
+    try file(src, "s.txt", "s\n"); g(src, "init", "-q", "-b", "main"); g(src, "add", "-A"); g(src, "commit", "-qm", "sub")
+    try file(client, ".gitignore", "build/\n"); g(client, "add", ".gitignore")
+    g(client, "-c", "protocol.file.allow=always", "submodule", "add", "-q", src.path, "sub"); g(client, "commit", "-qm", "sub")
+    for (p, commit) in [("vendor/lib", true), ("nc", false), ("build/_deps/x", true)] {
+        let d = client.appendingPathComponent(p)
+        try file(d, "f.txt", p + "\n"); g(d, "init", "-q", "-b", "main")
+        if commit { g(d, "add", "-A"); g(d, "commit", "-qm", p) }
+    }
+    let heads = ["", "sub", "vendor/lib"].map { g(client.appendingPathComponent($0), "rev-parse", "HEAD") }
+    let (top, sub) = try #require(Router.nativeBranches(client, inPlace: false, roots: root.path, scratch: mirror.repo))
+    #expect(sub.isEmpty)
+    let tree = ShareHub.Tree(repo: mirror.repo, worktrees: mirror.worktrees, sub: sub, local: top)
+    let hub = ShareHub(), session = UUID().uuidString
+    _ = try #require(await hub.register(session: session, cwd: "/Volumes/share/client", key: nil, device: "dev", tree: tree))
+    let id = UUID().uuidString
+    let dir = try #require(await ShareHub.$run.withValue(id) { await ShareHub.$agent.withValue("claude") {
+        await hub.mount(session: session, cwd: nil, base: "", device: "dev", roots: root.path, writes: true) } })
+    for p in [".", "sub", "vendor/lib", "nc"] { try file(dir.appendingPathComponent(p), "agent.txt", "agent\n") }
+    await ShareHub.$run.withValue(id) { await hub.syncBack(session: session) }
+    await hub.finish(run: id)
+    let br = "minigw/claude-\(String(Sync.folderID("dev|" + session).prefix(8)))-0"
+    for p in ["", "sub", "vendor/lib", "nc"] {
+        #expect(g(client.appendingPathComponent(p), "ls-tree", "-r", "--name-only", br).split(separator: "\n").contains("agent.txt"), "\(p)")
+    }
+    #expect(g(client, "ls-tree", br, "vendor/lib").isEmpty && g(client, "ls-tree", br, "nc").isEmpty)
+    #expect(g(client, "ls-tree", br, "sub").hasPrefix("160000 commit " + g(client.appendingPathComponent("sub"), "rev-parse", br)))
+    #expect(g(client.appendingPathComponent("build/_deps/x"), "branch", "--list", "minigw/*").isEmpty)
+    #expect(["", "sub", "vendor/lib"].map { g(client.appendingPathComponent($0), "rev-parse", "HEAD") } == heads)
+    #expect(!Worktree.hasCommit(top: client.appendingPathComponent("nc").path))
+}
