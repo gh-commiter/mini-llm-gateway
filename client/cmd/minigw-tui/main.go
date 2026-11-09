@@ -16,6 +16,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	_ "dev.trojar/minigw-tui-quiet" // first: no terminal query at start (see the package)
 	tea "github.com/charmbracelet/bubbletea"
 )
 
