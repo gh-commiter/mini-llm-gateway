@@ -153,7 +153,9 @@ private func send(_ url: String, _ method: String, _ path: String, secret: Strin
 
 /// Nova oblika žetona (mgw- + base64url, kot minigw serve): router ne preverja predpone, stari sk-siri-… žeton ostane veljaven.
 @Test func gatewayTokenFormatsAccepted() {
-    let old = "sk-siri-" + String(repeating: "ab", count: 32), new = "mgw-" + Noise.base64url(Data(repeating: 7, count: 32))
+    let old = "sk-siri-" + String(repeating: "ab", count: 32), new = Router.newToken()
+    #expect(new.hasPrefix("mgw-") && new.count == 4 + 43 && new != Router.newToken())
+    #expect(new.dropFirst(4).allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") })
     for t in [old, new] {
         let r = Router(config: RouterConfig(), token: t, secrets: FakeSecrets(values: [:]))
         #expect(r.authorized(request("GET", "/v1/models", headers: ["authorization": "Bearer " + t])))

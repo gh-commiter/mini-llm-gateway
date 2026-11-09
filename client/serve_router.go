@@ -568,7 +568,7 @@ func routerCommand(args []string, in io.Reader) {
 				fail(routerHelp)
 			}
 			a.do("POST", "/general/token", nil, &g)
-			say("New token. Each client must run the new line; the old token no longer works:")
+			say("New token. Each client must run the new line, or run minigw reconnect [--name P] with the new token; the old token no longer works:")
 		} else {
 			a.do("GET", "/general", nil, &g)
 			say("On each client run:")

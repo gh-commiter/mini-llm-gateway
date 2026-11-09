@@ -145,9 +145,7 @@ final class AppState: ObservableObject {
     /// 32 naključnih bajtov (CryptoKit; brez neprevrjenega rezultata SecRandomCopyBytes).
     static func random32() -> Data { SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) } }
 
-    static func newToken() -> String {
-        "mgw-" + Noise.base64url(random32())  // kot Go minigw serve; starejši žetoni sk-siri-… ostanejo veljavni
-    }
+    static func newToken() -> String { Router.newToken() }
 
     /// Stalni ključ routerja za šifrirane povezave (Noise); ustvari ga aplikacija ob prvem zagonu.
     /// Nov ključ le, ko ga v Keychainu res ni; ob drugi napaki (zaklenjen keychain) brez šifriranih povezav,

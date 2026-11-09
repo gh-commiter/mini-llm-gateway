@@ -118,13 +118,26 @@ func loadProfiles() []profile {
 	return out
 }
 
+// reconnectCmd: ukaz za nov žeton tega profila (--name le, če ni »default«).
+func reconnectCmd(name string) string {
+	if name == "" || name == defaultProfile {
+		return "minigw reconnect"
+	}
+	return "minigw reconnect --name " + name
+}
+
 // clientDevice: ključ naprave, en za ves odjemalec, shranjen posebej (deviceLoad): minigw disconnect ga ne odstrani, zato
 // prehod ob novem connect vidi isto napravo (odobritev, zgodovina). Prvič ga prenese iz profila (starejši minigw ga je
 // hranil le tam), sicer nov. Odstrani ga le minigw uninstall --purge.
 func clientDevice() *string {
-	d := deviceLoad()
+	d, err := deviceLoad()
+	if err != nil { // L1: le »ni ga« pomeni nov ključ; druga napaka branja nikoli ne zamenja ključa
+		fail("cannot read the device key from " + storeName + ": " + err.Error())
+	}
 	if d == "" {
-		for _, n := range profileNames() {
+		names := profileNames()
+		def := defaultName(names)
+		for _, n := range append([]string{def}, slices.DeleteFunc(names, func(n string) bool { return n == def })...) { // L3: privzeti prvi
 			if c := loadProfile(n); c != nil && c.Device != nil && *c.Device != "" {
 				d = *c.Device
 				break
@@ -167,7 +180,7 @@ func reconnectCommand(args []string) bool {
 		case args[i] == "--token" && i+1 < len(args):
 			token = args[i+1]
 		default:
-			fail("usage: minigw reconnect [--name <profile>] [--token '<token>' | --token -]   (no --token or - reads it from stdin or the terminal)")
+			fail("usage: minigw reconnect [--name <profile>] [--token <token> | --token -]   (no --token or - reads it from stdin or the terminal)")
 		}
 		i++
 	}

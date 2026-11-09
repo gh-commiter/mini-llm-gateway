@@ -147,11 +147,11 @@ func routeErr(p profile) (connection, error) {
 		return c, nil
 	}
 	if c.Key == nil {
-		return c, fmt.Errorf("no gateway key for profile %s: copy the token again (Mini Gateway → Copy Token) and run minigw connect", p.name)
+		return c, fmt.Errorf("no gateway key for profile %s: copy the token again (Mini Gateway → Copy Token) and run %s", p.name, reconnectCmd(p.name))
 	}
 	key, err := fromBase64url(*c.Key)
 	if err != nil || len(key) != 32 {
-		return c, fmt.Errorf("invalid gateway key for profile %s: copy the token again (Mini Gateway → Copy Token)", p.name)
+		return c, fmt.Errorf("invalid gateway key for profile %s: copy the token again (Mini Gateway → Copy Token) and run %s", p.name, reconnectCmd(p.name))
 	}
 	if d := clientDevice(); c.Device == nil || *c.Device != *d { // en ključ naprave za ves odjemalec; kopija v profilu za starejši minigw
 		c.Device = d
@@ -174,7 +174,7 @@ func routeErr(p profile) (connection, error) {
 
 // failureReason: razlog, zakaj odgovor routerja ni 200 (status, telo napake): 401 = žeton, 403 = naprava še ni dovoljena
 // (sporočilo prehoda z navodili ostane), 0 = ni povezave. Isto besedilo v odjemalcu Swift.
-func failureReason(st int, body map[string]any) string {
+func failureReason(st int, body map[string]any, name string) string {
 	e, _ := body["error"].(map[string]any)
 	msg, _ := e["message"].(string)
 	msg = oneLine(msg)
@@ -182,7 +182,7 @@ func failureReason(st int, body map[string]any) string {
 	case 0:
 		return "gateway not reachable"
 	case 401:
-		return "token rejected: copy the token again (Mini Gateway → Settings → General → Copy Token) and run minigw reconnect"
+		return "token rejected: copy the token again (Mini Gateway → Settings → General → Copy Token) and run " + reconnectCmd(name)
 	case 403:
 		if msg == "" {
 			return "device not approved"
@@ -264,7 +264,7 @@ func profileStatus(p profile) bool {
 		say("Status:    connected")
 		return true
 	}
-	say("Status:    " + failureReason(bad, body))
+	say("Status:    " + failureReason(bad, body, p.name))
 	return false
 }
 
@@ -352,7 +352,7 @@ func main() {
 		os.Exit(runCommand(args[1:]))
 	case "connect":
 		if len(args) < 2 {
-			fail("usage: minigw connect <host[:port]> [--name <profile>] [--token '<token>' | --token -]   (- reads it from stdin)")
+			fail("usage: minigw connect <host[:port]> [--name <profile>] [--token <token> | --token -]   (- reads it from stdin)")
 		}
 		names := profileNames()
 		name := defaultName(names) // brez --name: zamenja privzeti profil (kot prej edino povezavo)
@@ -485,7 +485,7 @@ func main() {
 			st, models := getJSON(route(ps[0]), "/v1/models")
 			raw, _ := models["data"].([]any)
 			if st != 200 || raw == nil {
-				fail(failureReason(st, models))
+				fail(failureReason(st, models, ps[0].name))
 			}
 			for _, m := range raw {
 				mm, _ := m.(map[string]any)
@@ -499,7 +499,7 @@ func main() {
 				if c, err := routeErr(p); err != nil {
 					why = err.Error()
 				} else {
-					lists[i], why = fetchModels(c)
+					lists[i], why = fetchModels(c, p.name)
 				}
 				if lists[i] == nil {
 					fmt.Fprintln(os.Stderr, "minigw: gateway "+p.name+" ("+p.conn.URL+"): "+why+"; its models are left out")

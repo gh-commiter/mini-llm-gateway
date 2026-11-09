@@ -101,12 +101,13 @@ func storeNames() []string {
 // Ključ naprave (clientDevice): svoja poverilnica minigw:device (zunaj filtra minigw:router*); disconnect je ne odstrani.
 const deviceTarget = "minigw:device"
 
-func deviceLoad() string {
+// deviceLoad: "" brez napake = ključa ni; druga napaka branja je napaka (L1).
+func deviceLoad() (string, error) {
 	b, err := credLoad(deviceTarget)
-	if err != nil {
-		return ""
+	if errors.Is(err, errNotFound) {
+		return "", nil
 	}
-	return strings.TrimSpace(string(b))
+	return strings.TrimSpace(string(b)), err
 }
 
 func deviceSave(d string) error { return credSave(deviceTarget, []byte(d)) }

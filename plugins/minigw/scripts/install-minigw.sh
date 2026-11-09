@@ -181,7 +181,7 @@ if sout=$("$EXE" status 2>&1); then
 else
   blk=$(printf '%s\n' "$sout" | sed '/^$/q')  # blok privzetega profila (prvi; profili so ločeni s prazno vrstico)
   case $(printf '%s\n' "$blk" | sed -n 's/^Status:    //p' | tail -1) in
-    "token rejected"*) echo "minigw plugin: $ver_line: the gateway token was rejected; run /minigw:connect <gateway> with a fresh token (Mini Gateway > Settings > General > Copy Token)." ;;
+    "token rejected"*) echo "minigw plugin: $ver_line: the gateway token was rejected; copy a fresh token (Mini Gateway > Settings > General > Copy Token) and run minigw reconnect [--name P]." ;;
     "device not approved"*)
       id=$(printf '%s\n' "$blk" | sed -n 's/^Device:    \([A-Za-z0-9_-]\{43\}\) (.*/\1/p' | tail -1)
       if [ -n "$id" ]; then

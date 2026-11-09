@@ -496,7 +496,8 @@ func uninstallSteps(goos string, purge bool) (steps []uninstallStep, kept []stri
 			dirs = append(dirs, filepath.Join(d, "minigw"))
 		}
 	}
-	names, device := profileNames(), deviceLoad() != ""
+	d, derr := deviceLoad()
+	names, device := profileNames(), d != "" || derr != nil
 	if !purge {
 		if len(names) > 0 {
 			kept = append(kept, "profiles "+strings.Join(names, ", ")+" ("+storeName+")")

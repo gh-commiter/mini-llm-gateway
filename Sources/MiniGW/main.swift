@@ -63,7 +63,7 @@ func routeResult(_ p: Profile) -> Result<Connection, RouteError> {
     let device = c.device.flatMap(Noise.fromBase64url).flatMap { try? Curve25519.Signing.PrivateKey(rawRepresentation: $0) }
         .map { (key: $0, name: deviceName()) }
     guard let k = c.key.flatMap(Noise.fromBase64url), let np = NoiseProxy(routerURL: c.url, routerKey: k, device: device, suite: .aesGCM) else {  // MGW2: tudi minigw serve
-        return .failure(RouteError(message: "no gateway key for profile \(p.name): copy the token again (Mini Gateway → Copy Token) and run minigw connect"))
+        return .failure(RouteError(message: "no gateway key for profile \(p.name): copy the token again (Mini Gateway → Copy Token) and run \(reconnectCmd(p.name))"))
     }
     do { try np.start() } catch { return .failure(RouteError(message: "cannot start the local encrypted proxy: \(error)")) }
     proxies.append(np)
@@ -190,7 +190,8 @@ func clientDevice() -> String {
     guard st == errSecItemNotFound else {
         fail("cannot read the device key from the Keychain (OSStatus \(st)): unlock the login keychain and try again")
     }
-    let d = profileNames().lazy.compactMap { loadProfile($0, skip: true)?.device }.first { !$0.isEmpty }
+    let names = profileNames(), def = defaultName(names)  // L3: privzeti prvi, nato po abecedi (kot Go)
+    let d = ([def] + names.filter { $0 != def }).lazy.compactMap { loadProfile($0, skip: true)?.device }.first { !$0.isEmpty }
         ?? Noise.base64url(Curve25519.Signing.PrivateKey().rawRepresentation)
     var add = deviceQuery()
     add[kSecValueData as String] = Data(d.utf8)
@@ -522,11 +523,11 @@ func requireProfile() -> Profile {
 
 /// Razlog, zakaj odgovor routerja ni 200 (status, telo napake): 401 = žeton, 403 = naprava še ni dovoljena
 /// (sporočilo prehoda z navodili ostane), 0 = ni povezave. Isto besedilo v odjemalcu Go.
-func failureReason(_ s: Int, _ body: [String: Any]?) -> String {
+func failureReason(_ s: Int, _ body: [String: Any]?, _ name: String) -> String {
     let msg = ((body?["error"] as? [String: Any])?["message"] as? String).map(oneLine) ?? ""
     switch s {
     case 0: return "gateway not reachable"
-    case 401: return "token rejected: copy the token again (Mini Gateway → Settings → General → Copy Token) and run minigw reconnect"
+    case 401: return "token rejected: copy the token again (Mini Gateway → Settings → General → Copy Token) and run " + reconnectCmd(name)
     case 403: return "device not approved" + (msg.isEmpty ? "" : ": " + msg)
     default: return "gateway answered HTTP \(s)" + (msg.isEmpty ? "" : ": " + msg)
     }
@@ -558,8 +559,13 @@ func profileStatus(_ p: Profile) -> Bool {
     if ms == 200 && s == 200 { say("Models:    \((models?["data"] as? [Any])?.count ?? 0)") }  // sicer razlog le v vrstici Status
     if p.conn.key != nil, let id = deviceID(c) { say("Device:    \(id) (\(ms == 200 ? "approved" : ms == 403 ? "waiting for approval" : "approval unknown"))") }
     let bad = ms != 200 ? ms : s
-    say("Status:    " + (bad == 200 ? "connected" : failureReason(bad, bad == ms ? models : ready)))
+    say("Status:    " + (bad == 200 ? "connected" : failureReason(bad, bad == ms ? models : ready, p.name)))
     return bad == 200
+}
+
+/// Ukaz za nov žeton tega profila (--name le, če ni »default«; kot Go reconnectCmd).
+func reconnectCmd(_ name: String) -> String {
+    name.isEmpty || name == Profiles.defaultName ? "minigw reconnect" : "minigw reconnect --name \(name)"
 }
 
 /// minigw reconnect: nov žeton za obstoječ profil; naslov, ključ prehoda (če ga vrstica nima) in ključ naprave ostanejo,
@@ -586,9 +592,9 @@ func reconnectCommand(_ a: [String]) -> Never {
 }
 
 /// Modeli enega prehoda ali razlog, zakaj jih ni.
-func fetchModels(_ c: Connection) -> ([[String: Any]]?, String) {
+func fetchModels(_ c: Connection, _ name: String) -> ([[String: Any]]?, String) {
     let (s, m) = get(c, "/v1/models")
-    return s == 200 ? (m?["data"] as? [[String: Any]] ?? [], "") : (nil, failureReason(s, m))
+    return s == 200 ? (m?["data"] as? [[String: Any]] ?? [], "") : (nil, failureReason(s, m, name))
 }
 
 // MARK: deljene mape
@@ -796,13 +802,13 @@ case "models":
     var data: [[String: Any]]
     if ps.count == 1 {
         let (s, models) = get(route(ps[0]), "/v1/models")
-        guard s == 200, let d = models?["data"] as? [[String: Any]] else { fail(failureReason(s, models)) }
+        guard s == 200, let d = models?["data"] as? [[String: Any]] else { fail(failureReason(s, models, ps[0].name)) }
         data = d
     } else {
         let lists = ps.map { p -> [[String: Any]]? in
             var l: [[String: Any]]?, why = ""
             switch routeResult(p) {
-            case .success(let c): (l, why) = fetchModels(c)
+            case .success(let c): (l, why) = fetchModels(c, p.name)
             case .failure(let e): why = e.message
             }
             if l == nil { err.write(Data("minigw: gateway \(p.name) (\(p.conn.url)): \(why); its models are left out\n".utf8)) }

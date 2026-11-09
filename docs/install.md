@@ -175,7 +175,7 @@ for running agent requests. Then it stops every Mini Gateway program still runni
 gateway, in the background. A repair restarts the tray if it was running.
 - **Uninstall:** Settings → Apps → **Uninstall** removes the parts (tray start, PATH entry, Start menu, the plugin
   entries that `minigw plugin install` added; a `false` you set stays) and keeps the settings and profiles for a later
-  install. To remove them too: **Modify** → tick *Also remove settings and profiles* → **Remove**, or
+  install. To remove them too: **Modify** → tick *also remove settings, profiles and the device key* → **Remove**, or
   `msiexec /x <the installed version's MSI> PURGE=1 /passive`, or `minigw uninstall --purge` before **Uninstall**. PURGE runs `minigw uninstall --purge --yes` before the files
   go (profiles and keys in Credential Manager, `%AppData%\minigw`). Not with `minigw serve uninstall`. Uninstalling, or
   unticking Gateway, also removes the sign-in start, even if the tray menu set it; running `minigw` programs from the

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import FoundationModels
 import os
@@ -525,6 +526,12 @@ public final class Router: Sendable {
         let ip = inet_pton(AF_INET, host, &a4) == 1 || inet_pton(AF_INET6, host, &a6) == 1
         guard host == "localhost" || (ip && RouterServer.isLoopback(host)) else { return false }
         return Self.localPeer(req.peerPort, config.port)
+    }
+
+    /// Nov žeton prehoda: »mgw-« + base64url(32 naključnih bajtov), kot Go minigw serve. Predpone nihče ne preverja,
+    /// zato starejši žetoni sk-siri-… ostanejo veljavni.
+    public static func newToken() -> String {
+        "mgw-" + Noise.base64url(SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) })
     }
 
     func authorized(_ req: HTTPRequest) -> Bool {
