@@ -653,6 +653,9 @@ func macOnly(u *ui) ([]row, error) {
 					return pg(map[string]any{"worktreeCodexNetwork": v})
 				}),
 				inf("  Codex can read all files of this Mac's user: its network is off by default.", ""))
+			if !yes(g, "worktreeCodexNetwork") { // vklop le po y/n, kot pri run
+				rows[len(rows)-2].confirm = "Codex can read all files of this Mac's user and could then send them out. Turn on network"
+			}
 		}
 	}
 	return rows, nil
