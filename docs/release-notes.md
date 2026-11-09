@@ -17,6 +17,10 @@
 - `install.sh` now also runs on Linux (x64, ARM64): it downloads `minigw` and `minigw-tui`, checks them against the signed `SHA256SUMS` and installs them in `~/.local/bin`. Parts: `--client`, `--plugin`, `--gateway` (Linux: `minigw serve init` and `minigw serve install`); default client and plugin, also on macOS (`minigw plugin install`). `--uninstall [--purge]` runs `minigw uninstall` and removes the files it installed. It refuses to run as root.
 - Changed: on Windows and Linux, `minigw gw settings` used to print a one-time link to the settings page; that is now `minigw gw settings link` (the tray's **Settings…** is unchanged).
 
+### Security
+
+- Worktree mode with read-only (`--minigw-ro`) is refused before the folder is cloned on the gateway, not after. `minigw serve`.
+
 ## 0.5.19
 
 - Security: minigw inside Claude Code (when `CLAUDECODE` is set) passes on only claude options that do not widen permissions: `-p`/`--print`, `--model`, `--output-format`, `--verbose`, `--max-turns`, `--append-system-prompt`, `--fallback-model` and `--help`. Every other option is refused, for example `--dangerously-skip-permissions`, `--permission-mode`, `--allowedTools`, `--settings`, `--mcp-config`, `--add-dir`, `--plugin-dir`, `--input-format` (`stream-json` control requests can add an MCP server or change the permission mode) and `-c`/`--continue`, `-r`/`--resume`, `--session-id` (they would send another session's transcript to the gateway). Before, a model could run `minigw --dangerously-skip-permissions -p …` through a plugin skill and the nested claude ran every tool call without asking. Everything after `--` is the prompt, so a prompt may start with `-` (the skills pass `-- "<prompt>"`). Both clients.

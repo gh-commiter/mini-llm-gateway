@@ -539,6 +539,9 @@ func (s *server) agentFolder(w http.ResponseWriter, r *req, label, agent string)
 	share := s.hub.waitShare(r.Context(), session, r.owner(), r.h("x-claude-mini-share") == "1")
 	switch {
 	case share != nil && share.tree != nil:
+		if r.h("x-claude-mini-ro") == "1" { // I4: pred WORKTREE-PUSH (deljena mapa worktree ni nikoli samo za branje)
+			return "", "", false, writeError(w, r.rid, 400, readOnlyWorktree)
+		}
 		if dir = s.hub.push(share, agent); dir == "" {
 			return "", "", false, writeError(w, r.rid, 502, "Cloning "+clientCwd+" on the gateway failed (worktree mode; see minigw output)")
 		}

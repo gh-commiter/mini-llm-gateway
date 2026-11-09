@@ -691,6 +691,9 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 				return writeError(w, r.rid, 400, "Claude CLI in worktree mode on Windows needs \"Allow commands without a sandbox\" "+
 					"(settings page → Claude CLI): Claude Code's own git runs there without a sandbox; use sync")
 			}
+			if r.h("x-claude-mini-ro") == "1" { // I4, L2: pred WORKTREE-PUSH
+				return writeError(w, r.rid, 400, readOnlyWorktree)
+			}
 			if dir = s.hub.push(share, "claude"); dir == "" {
 				return writeError(w, r.rid, 502, "Cloning "+clientCwd+" on the gateway failed (worktree mode; see minigw output)")
 			}
