@@ -792,7 +792,9 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	if worktreeEnv != nil { // N3: .git klona je med tekom točka priklopa (kot pins pri Codex), zamenjati ga ni mogoče
 		gits, _ := s.hub.worktreeGits(wt)
 		name, cargs = pinWrap(s.cfgDir, name, cargs, gits, s.log.Printf)
-		unpinned = name == exe[0]
+		if unpinned = name == exe[0]; unpinned && runtime.GOOS == "linux" {
+			s.hub.markUnconfined(wt) // N1: brez imenskega prostora PID agent lahko preživi do finalize
+		}
 	}
 	ctx, kill := context.WithCancel(r.Context())
 	defer kill()

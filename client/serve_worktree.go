@@ -41,6 +41,7 @@ type wtSlot struct {
 	git              os.FileInfo // H2: .git klona ob kloniranju (zamenjan .git = nov config, filtri, atributi)
 	cfg              []byte      // .git/config ob kloniranju
 	nested           []*wtNested // ugnezdeni repozitoriji odjemalca: vsak svoj klon v wt na svoji poti, starš pred otrokom
+	unconfined       bool        // N1 (Linux): agent je tekel brez svojega imenskega prostora PID (lahko je preživel)
 }
 
 // wtNested: klon ugnezdenega repozitorija (podmodul ali nesleden) iz svojega zrcala, na isti veji kot vrhnji.
@@ -225,6 +226,17 @@ func gitRun(repo, cwd string, env []string, args ...string) (string, error) {
 
 // gitRunInput: gitRun z vhodom na stdin.
 func gitRunInput(repo, cwd string, env []string, input string, args ...string) (string, error) {
+	return gitRunBox(nil, repo, cwd, env, input, args...)
+}
+
+// gitBox (N1): git v bwrap z delovnim drevesom ugnezdenega klona iz odprte mape dir, pripete na mount (boxGit).
+type gitBox struct {
+	dir        *os.File
+	mount, tmp string
+}
+
+// gitRunBox: gitRunInput, z box v bwrap (boxGit); brez bwrap napaka (nikoli brez peskovnika po poti).
+func gitRunBox(box *gitBox, repo, cwd string, env []string, input string, args ...string) (string, error) {
 	exe, err := gitExe()
 	if err != nil {
 		return "", errors.New("git not found on the gateway (install git)")
@@ -235,7 +247,17 @@ func gitRunInput(repo, cwd string, env []string, input string, args ...string) (
 		"-c", "core.commitGraph=false", "-c", "core.multiPackIndex=false"}
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout) // L5
 	defer cancel()
-	cmd := commandContext(ctx, exe, append(guard, args...)...)
+	name, argv := exe, append(guard, args...)
+	var files []*os.File
+	if box != nil {
+		ok := false
+		if name, argv, files, ok = boxGit(box.dir, box.mount, repo, box.tmp, exe, append([]string{"-C", cwd}, argv...)); !ok {
+			return "", errors.New("bwrap is not available for the nested repository")
+		}
+		cwd = box.tmp
+	}
+	cmd := commandContext(ctx, name, argv...)
+	cmd.ExtraFiles = files
 	cmd.WaitDelay = 5 * time.Second
 	cmd.Dir = cwd
 	for _, e := range os.Environ() {
@@ -322,7 +344,22 @@ func readSmall(p string) string {
 
 // cloneHead: HEAD agentovega klona brez git v njem (»ref: refs/heads/…« → loose ref ali packed-refs).
 func cloneHead(gitDir string) string {
-	h := readSmall(filepath.Join(gitDir, "HEAD"))
+	return headFrom(func(p string) string { return readSmall(filepath.Join(gitDir, filepath.FromSlash(p))) })
+}
+
+// cloneHeadRoot: cloneHead prek os.Root (N1: brez poti z deli, ki jih agent lahko zamenja).
+func cloneHeadRoot(r *os.Root) string {
+	return headFrom(func(p string) string {
+		if st, err := r.Lstat(filepath.FromSlash(p)); err != nil || !st.Mode().IsRegular() || st.Size() > 4096 {
+			return ""
+		}
+		b, _ := r.ReadFile(filepath.FromSlash(p))
+		return strings.TrimSpace(string(b))
+	})
+}
+
+func headFrom(readSmall func(string) string) string {
+	h := readSmall("HEAD")
 	ref, ok := strings.CutPrefix(h, "ref: ")
 	if !ok {
 		if shaRe.MatchString(h) {
@@ -333,10 +370,10 @@ func cloneHead(gitDir string) string {
 	if !strings.HasPrefix(ref, "refs/") || strings.Contains(ref, "..") || strings.ContainsAny(ref, "\x00\\") {
 		return ""
 	}
-	if v := readSmall(filepath.Join(gitDir, filepath.FromSlash(ref))); shaRe.MatchString(v) {
+	if v := readSmall(ref); shaRe.MatchString(v) {
 		return v
 	}
-	for _, l := range strings.Split(readSmall(filepath.Join(gitDir, "packed-refs")), "\n") {
+	for _, l := range strings.Split(readSmall("packed-refs"), "\n") {
 		if strings.HasSuffix(l, " "+ref) && shaRe.MatchString(l[:min(40, len(l))]) {
 			return l[:40]
 		}
@@ -357,14 +394,21 @@ func realDir(p string) bool {
 // Procesi agenta so ob tem končani (Linux: pomočnik pobije potomce; Windows: agenti tam tečejo brez peskovnika in
 // imajo že vse pravice uporabnika). ponytail: brez sandbox-exec kot na Macu; dodaj bwrap za git add, če agenti
 // na Linuxu kdaj ostanejo živi po koncu zahteve.
-func finalize(repo, wt, branch, base, agent, out string, links map[string]string) string {
-	git, objects := filepath.Join(wt, ".git"), filepath.Join(wt, ".git", "objects")
-	if !realDir(git) {
+// nested (N1, ugnezden klon): mapa klona, odprta prek os.Root iz korena klona prehoda; .git le prek nje, git v bwrap z
+// drevesom, pripetim iz te mape (gitBox); wt se tedaj ne uporablja.
+func finalize(repo, wt, branch, base, agent, out string, links map[string]string, nested *os.Root) string {
+	git := filepath.Join(wt, ".git")
+	var root *os.Root
+	var err error
+	if nested != nil {
+		root, err = nested.OpenRoot(".git")
+	} else if realDir(git) {
+		// L2: objects/info klona (alternates, commit-graph) je agentov: zamenja ga le alternates zrcala, vse relativno na
+		// .git (os.Root: povezava ali spoj na objects ali info ne preusmeri brisanja ali pisanja ven).
+		root, err = os.OpenRoot(git)
+	} else {
 		return ""
 	}
-	// L2: objects/info klona (alternates, commit-graph) je agentov: zamenja ga le alternates zrcala, vse relativno na .git
-	// (os.Root: povezava ali spoj na objects ali info ne preusmeri brisanja ali pisanja ven).
-	root, err := os.OpenRoot(git)
 	if err != nil {
 		return ""
 	}
@@ -384,16 +428,33 @@ func finalize(repo, wt, branch, base, agent, out string, links map[string]string
 		return ""
 	}
 	defer os.RemoveAll(tmp)
+	var box *gitBox
+	if nested != nil {
+		d, err := nested.Open(".")
+		if err != nil {
+			return ""
+		}
+		defer d.Close()
+		wt = filepath.Join(tmp, "wt") // točka priklopa v bwrap
+		if os.Mkdir(wt, 0o700) != nil {
+			return ""
+		}
+		box = &gitBox{dir: d, mount: wt, tmp: tmp}
+		if duringFinalize != nil {
+			duringFinalize()
+		}
+	}
+	objects := filepath.Join(wt, ".git", "objects")
 	wrap := gitWrapEnv([]string{repo}, gitExecDir(repo)) // N9: tudi git prehoda v klonu ne vstopi v ugnezden repozitorij
 	if wrap == nil {
 		return ""
 	}
 	env := append([]string{"GIT_ALTERNATE_OBJECT_DIRECTORIES=" + objects}, wrap...)
 	g := func(e []string, cwd string, a ...string) (string, error) {
-		return gitRun(repo, cwd, append(append([]string{}, env...), e...), append([]string{"--git-dir", repo}, a...)...)
+		return gitRunBox(box, repo, cwd, append(append([]string{}, env...), e...), "", append([]string{"--git-dir", repo}, a...)...)
 	}
 	ancestor := func(a, b string) bool { _, err := g(nil, tmp, "merge-base", "--is-ancestor", a, b); return err == nil }
-	tip := cloneHead(git)
+	tip := cloneHeadRoot(root)
 	if tip == "" || !ancestor(base, tip) { // vrh mora biti potomec posnetka (agent ne podtakne tuje zgodovine)
 		tip = base
 	}
@@ -440,22 +501,44 @@ func finalize(repo, wt, branch, base, agent, out string, links map[string]string
 	}
 	restore := func() { // ref zrcala nazaj: sicer bi kazal na objekte, ki jih ni (le v klonu)
 		if shaRe.MatchString(prev) {
-			g(nil, tmp, "update-ref", "refs/heads/"+branch, prev)
+			gitRun(repo, tmp, nil, "--git-dir", repo, "update-ref", "refs/heads/"+branch, prev)
 		} else {
-			g(nil, tmp, "update-ref", "-d", "refs/heads/"+branch)
+			gitRun(repo, tmp, nil, "--git-dir", repo, "update-ref", "-d", "refs/heads/"+branch)
 		}
 	}
-	_, err = g(nil, tmp, "bundle", "create", out, "refs/heads/"+branch, "^"+base)
-	if err == nil && isBundle(out) {
-		// Objekti tudi v zrcalo (klon izgine), brez objektov klona: fsck zavrne npr. drevo z ».git«. Ref pred tem nazaj:
-		// ko je agent vse commital sam, kaže na commit le v klonu (preverba povezanosti bi padla), potem znova na vrh.
-		// »bundle unbundle« ne pozna fsck: fetch iz bundla ga izvede (fetch.fsckObjects), v začasni ref.
+	// Bundle in preverba v začasni mapi (v bwrap je pisljiva le ta in zrcalo), nato v out.
+	b := filepath.Join(tmp, "result.bundle")
+	_, err = g(nil, tmp, "bundle", "create", b, "refs/heads/"+branch, "^"+base)
+	if err == nil && isBundle(b) {
+		// I1: fsck vseh objektov base..tip (tudi tistih, ki jih je git add že zapisal v zrcalo; fetch bi jih preskočil):
+		// pack-objects base..tip in index-pack --fsck-objects v prazen repozitorij (zavrne npr. drevo z ».git«).
+		// Paket v mapo zrcala (git ga sestavi v objects/pack zrcala; preimenovanje čez mejo priklopa v bwrap ne gre).
+		var pack string
+		pdir := filepath.Join(repo, "minigw-fsck")
+		os.RemoveAll(pdir)
+		defer os.RemoveAll(pdir)
+		if os.Mkdir(pdir, 0o700) != nil {
+			err = errors.New("fsck folder")
+		} else if pack, err = gitRunBox(box, repo, tmp, env, tip+"\n^"+base+"\n", "--git-dir", repo, "pack-objects", "--revs", "-q",
+			filepath.Join(pdir, "p")); err == nil && shaRe.MatchString(pack) {
+			fsck := filepath.Join(tmp, "fsck.git")
+			if _, err = gitRun(repo, tmp, nil, "init", "-q", "--bare", fsck); err == nil {
+				_, err = gitRun(repo, tmp, nil, "--git-dir", fsck, "index-pack", "--fsck-objects", filepath.Join(pdir, "p-"+pack+".pack"))
+			}
+		} else if err == nil {
+			err = errors.New("pack-objects")
+		}
+	}
+	if err == nil && isBundle(b) {
+		// Objekti tudi v zrcalo (klon izgine), brez objektov klona. Ref pred tem nazaj: ko je agent vse commital sam,
+		// kaže na commit le v klonu (preverba povezanosti bi padla), potem znova na vrh.
 		restore()
-		_, err = gitRun(repo, tmp, nil, "--git-dir", repo, "-c", "transfer.fsckObjects=true", "-c", "fetch.fsckObjects=true",
-			"fetch", "-q", "--no-tags", "--no-write-fetch-head", out, "+refs/heads/"+branch+":refs/minigw/fsck")
-		gitRun(repo, tmp, nil, "--git-dir", repo, "update-ref", "-d", "refs/minigw/fsck")
+		_, err = gitRun(repo, tmp, nil, "--git-dir", repo, "bundle", "unbundle", b)
 		if err == nil {
 			_, err = gitRun(repo, tmp, nil, "--git-dir", repo, "update-ref", "refs/heads/"+branch, tip)
+		}
+		if err == nil {
+			err = os.Rename(b, out)
 		}
 	}
 	if err != nil || !isBundle(out) {
@@ -785,22 +868,47 @@ func (h *shareHub) worktreeMount(s *serveShare, agent string) string {
 	return worktreeDir(wt, t.sub)
 }
 
-// beforeNestedFinalize: le za teste (N1: zamenjava poti med preverbo in git).
-var beforeNestedFinalize func(n *wtNested)
+// beforeNestedFinalize, duringFinalize, afterNestedFinalize: le za teste (N1: zamenjava poti pred, med in po git).
+var beforeNestedFinalize, afterNestedFinalize func(n *wtNested)
+var duringFinalize func()
 
-// finalizeNested (N1): finalize ugnezdenega klona po poti iz zaupanja vrednega korena (klon prehoda), ne iz razrešitve
-// agentove poti; pred in po git preverba poti (same prave mape) in .git. Zamenjava med tekom (povezava ven, ki git
-// prebere drugo mapo) zavrže rezultat in ref zrcala gre nazaj. Vrne vrh ali razlog.
+// finalizeNested (N1): finalize ugnezdenega klona. Mapa klona se odpre prek os.Root iz pravega korena klona prehoda (brez
+// poti z deli, ki jih agent lahko zamenja; povezava ven je zavrnjena) in je res ta klon (.git isti inode). Na Linux git
+// bere drevo le iz te odprte mape (bwrap, --ro-bind-fd), zato poznejša zamenjava poti s povezavo ne preusmeri ničesar;
+// brez bwrap ali če je agent tekel brez lastnega imenskega prostora PID (unconfined) ugnezdeni ne gre nazaj. Drugje
+// (Windows: agenti brez peskovnika; macOS serve za razvoj) pričakovana pot. Po git še preverba poti; ob neujemanju
+// rezultat in ref zrcala nazaj. Vrne vrh ali razlog.
 func finalizeNested(slot *wtSlot, n *wtNested, agent, out string, links map[string]string) (string, string) {
 	moved := "the nested repository " + n.path + " was moved or replaced in the agent's clone"
-	if !nestedIntact(slot.wt, n) {
+	if runtime.GOOS == "linux" && (finalizeBwrap() == "" || slot.unconfined) {
+		return "", "the nested repository " + n.path + " does not come back on this gateway: that needs bwrap with its own PID namespace for the agent; use sync"
+	}
+	rr, err := os.OpenRoot(realPath(slot.wt))
+	if err != nil {
+		return "", moved
+	}
+	defer rr.Close()
+	nr, err := rr.OpenRoot(filepath.FromSlash(n.path))
+	if err != nil {
+		return "", moved
+	}
+	defer nr.Close()
+	if st, err := nr.Lstat(".git"); err != nil || n.git == nil || !os.SameFile(st, n.git) || !nestedIntact(slot.wt, n) {
 		return "", moved
 	}
 	prev, _ := gitRun(n.repo, "", nil, "--git-dir", n.repo, "rev-parse", "-q", "--verify", "refs/heads/"+slot.branch+"^{commit}")
 	if beforeNestedFinalize != nil {
 		beforeNestedFinalize(n)
 	}
-	tip := finalize(n.repo, filepath.Join(realPath(slot.wt), filepath.FromSlash(n.path)), slot.branch, n.base, agent, out, links)
+	var tip string
+	if runtime.GOOS == "linux" {
+		tip = finalize(n.repo, "", slot.branch, n.base, agent, out, links, nr)
+	} else {
+		tip = finalize(n.repo, filepath.Join(realPath(slot.wt), filepath.FromSlash(n.path)), slot.branch, n.base, agent, out, links, nil)
+	}
+	if afterNestedFinalize != nil {
+		afterNestedFinalize(n)
+	}
 	if !nestedIntact(slot.wt, n) {
 		if shaRe.MatchString(prev) {
 			gitRun(n.repo, "", nil, "--git-dir", n.repo, "update-ref", "refs/heads/"+slot.branch, prev)
@@ -924,6 +1032,21 @@ func (h *shareHub) worktreeGits(wt string) (gits, objects []string) {
 	return []string{filepath.Join(wt, ".git")}, nil
 }
 
+// markUnconfined (N1, Linux): agent v klonu wt je tekel brez svojega imenskega prostora PID; ugnezdeni ne gredo nazaj.
+func (h *shareHub) markUnconfined(wt string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, s := range h.bySession {
+		if s.tree != nil {
+			for _, sl := range s.tree.slots {
+				if sl.wt == wt {
+					sl.unconfined = true
+				}
+			}
+		}
+	}
+}
+
 // worktreeIntact (H2): klon wt (tudi klicateljev pri vgnezdenem agentu) ima še svoj .git (wtSlot.gitIntact).
 func (h *shareHub) worktreeIntact(wt string) bool {
 	h.mu.Lock()
@@ -993,7 +1116,7 @@ func (h *shareHub) worktreeBack(s *serveShare, agent string) {
 		}
 	}
 	if why == "" {
-		if tip = finalize(t.repo, slot.wt, slot.branch, slot.base, agent, out, links[""]); tip == slot.base && len(nested) == 0 {
+		if tip = finalize(t.repo, slot.wt, slot.branch, slot.base, agent, out, links[""], nil); tip == slot.base && len(nested) == 0 {
 			return // agent ni spremenil ničesar
 		} else if tip == "" {
 			why = "the gateway could not save the agent's work as a branch (see the gateway log)"
@@ -1031,6 +1154,7 @@ func (h *shareHub) worktreePut(key string, part, nested int, data []byte, owner 
 	if file == "" || part < 0 || nested < 0 || nested > maxNestedRepos {
 		return 409
 	}
+	base := file // I2: vrednost, prebrana pod h.mu
 	file = incomingFile(file, nested)
 	flags := os.O_WRONLY | os.O_APPEND
 	if part == 0 {
@@ -1043,7 +1167,7 @@ func (h *shareHub) worktreePut(key string, part, nested int, data []byte, owner 
 	defer f.Close()
 	total := int64(0) // N4: vsi bundli enega WORKTREE-PUSH skupaj največ maxIncoming
 	for i := 0; i <= maxNestedRepos; i++ {
-		if st, err := os.Stat(incomingFile(s.tree.pushing, i)); err == nil {
+		if st, err := os.Stat(incomingFile(base, i)); err == nil {
 			total += st.Size()
 		}
 	}

@@ -680,6 +680,9 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 		if len(objs) == 0 {
 			objs = []string{objects}
 		}
+		if inTree && runtime.GOOS == "linux" && !agentSandboxed(s.cfgDir) {
+			s.hub.markUnconfined(wt) // N1: brez bwrap (svoj imenski prostor PID) agent lahko preživi do finalize
+		}
 		if inTree {
 			if treeEnv = worktreeClaudeEnv(wt, maven, gw, gits); treeEnv == nil {
 				return "", errors.New("cannot prepare git for the agent's clone (git --exec-path); use sync")

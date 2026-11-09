@@ -243,7 +243,9 @@ func gitZ(top, stdin string, args ...string) []string {
 // gitSnapshot: HEAD ali commit z neshranjenimi spremembami (začasni indeks: indeks, veje in mapa uporabnika ostanejo).
 // skip: poti, ki ne gredo v posnetek (ugnezdeni repozitoriji brez commita). root: repozitorij brez commita (ugnezden)
 // dobi commit brez starša iz kopije svojega indeksa in delovne mape.
-func gitSnapshot(top string, root bool, skip ...string) string {
+// noAttr (N3, ugnezdeni): brez atributov (GIT_ATTR_SOURCE = prazno drevo, core.attributesFile prazen), zato git add ne
+// požene filtra clean, ki bi ga določila .gitattributes ugnezdenega repozitorija.
+func gitSnapshot(top string, root, noAttr bool, skip ...string) string {
 	head, err := gitUser(top, nil, "rev-parse", "--verify", "-q", "HEAD^{commit}")
 	if (err != nil || !shaRe.MatchString(head)) && !root {
 		return ""
@@ -254,6 +256,10 @@ func gitSnapshot(top string, root bool, skip ...string) string {
 	}
 	defer os.RemoveAll(dir)
 	env := []string{"GIT_INDEX_FILE=" + filepath.Join(dir, "index")}
+	if noAttr {
+		env = append(env, "GIT_ATTR_SOURCE=4b825dc642cb6eb9a060e54bf8d69288fbee4904", "GIT_CONFIG_COUNT=1",
+			"GIT_CONFIG_KEY_0=core.attributesFile", "GIT_CONFIG_VALUE_0="+os.DevNull)
+	}
 	if root {
 		head = ""
 		if idx, _ := gitUser(top, nil, "rev-parse", "--git-path", "index"); idx != "" {
@@ -410,7 +416,7 @@ func (s *shareClient) wtPush(k string, job davJob) davResponse {
 		}
 		return out
 	}
-	snap := gitSnapshot(s.top, false, skip("")...)
+	snap := gitSnapshot(s.top, false, false, skip("")...)
 	if snap == "" {
 		return fail("snapshot", "worktree: cannot take a snapshot of "+s.top+" (git add or write-tree failed)")
 	}
@@ -424,7 +430,7 @@ func (s *shareClient) wtPush(k string, job davJob) davResponse {
 	reply := []nestedSnap{}
 	for i, p := range nested {
 		dir := filepath.Join(s.top, filepath.FromSlash(p))
-		sn := gitSnapshot(dir, !gitHasCommit(dir), skip(p)...)
+		sn := gitSnapshot(dir, !gitHasCommit(dir), true, skip(p)...)
 		if sn == "" {
 			return fail("snapshot:"+p, "worktree: cannot take a snapshot of the nested repository "+oneLine(p)+" (git add or write-tree failed)")
 		}

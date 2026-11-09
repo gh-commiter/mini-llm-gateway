@@ -136,7 +136,7 @@ func pinWrap(cfgDir, exe string, args, pins []string, logf func(string, ...any))
 	if !nestedBwrap && time.Since(nestedAt) >= nestedRetry {
 		t, err := exec.LookPath("true")
 		d := os.TempDir()
-		if nestedBwrap = err == nil && command(bw, "--dev-bind", "/", "/", "--die-with-parent", "--bind", d, d, "--",
+		if nestedBwrap = err == nil && command(bw, "--dev-bind", "/", "/", "--die-with-parent", "--unshare-pid", "--proc", "/proc", "--bind", d, d, "--",
 			bw, "--dev-bind", "/", "/", "--", t).Run() == nil; !nestedBwrap {
 			nestedAt = time.Now()
 			logf("claude: nested bwrap does not work here (user namespaces restricted?), so the .git pin of worktree clones is off; the clone is checked during each run instead")
@@ -147,7 +147,8 @@ func pinWrap(cfgDir, exe string, args, pins []string, logf func(string, ...any))
 	if !ok {
 		return exe, args
 	}
-	a := []string{"--dev-bind", "/", "/", "--die-with-parent"}
+	// N1: svoj imenski prostor PID: ko claude konča, jedro ustavi vse njegove potomce (tudi setsid), nič ne preživi do finalize
+	a := []string{"--dev-bind", "/", "/", "--die-with-parent", "--unshare-pid", "--proc", "/proc"}
 	for _, p := range pins {
 		if r, err := filepath.EvalSymlinks(p); err == nil {
 			a = append(a, "--bind", r, r)

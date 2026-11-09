@@ -200,7 +200,7 @@ func TestWorktreeFinalizeRejectedKeepsMirror(t *testing.T) {
 	top := cmd("040000 tree "+e+"\t.git\n", "mktree")
 	c := cmd("", "-c", "user.name=a", "-c", "user.email=a@x", "commit-tree", top, "-p", head, "-m", "dot git")
 	cmd("", "update-ref", "HEAD", c)
-	if tip := finalize(repo, wt, "minigw/claude-12345678-0", head, "claude", filepath.Join(root, "out.bundle"), nil); tip != "" {
+	if tip := finalize(repo, wt, "minigw/claude-12345678-0", head, "claude", filepath.Join(root, "out.bundle"), nil, nil); tip != "" {
 		t.Fatalf("finalize accepted a .git tree: %s", tip)
 	}
 	os.RemoveAll(wt)
@@ -592,7 +592,7 @@ func TestWorktreeNestedRepoIgnoredDelivered(t *testing.T) {
 	if why := cloneProblem(wt, repo, nil); why != "" {
 		t.Fatalf("ignored nested repository refused: %s", why)
 	}
-	tip := finalize(repo, wt, "minigw/claude-12345678-0", head, "claude", filepath.Join(root, "out.bundle"), nil)
+	tip := finalize(repo, wt, "minigw/claude-12345678-0", head, "claude", filepath.Join(root, "out.bundle"), nil, nil)
 	if tip == "" || tip == head {
 		t.Fatalf("not delivered: %q", tip)
 	}
@@ -991,7 +991,7 @@ func TestWorktreeFinalizeAllCommitted(t *testing.T) {
 	gitT(t, wt, "add", "b.txt")
 	gitT(t, wt, "-c", "user.name=a", "-c", "user.email=a@x", "commit", "-qm", "agent")
 	agentTip := gitT(t, wt, "rev-parse", "HEAD")
-	if tip := finalize(repo, wt, "minigw/claude-12345678-0", head, "claude", filepath.Join(root, "out.bundle"), nil); tip != agentTip {
+	if tip := finalize(repo, wt, "minigw/claude-12345678-0", head, "claude", filepath.Join(root, "out.bundle"), nil, nil); tip != agentTip {
 		t.Fatalf("all-committed work not saved: %q", tip)
 	}
 	os.RemoveAll(wt)
@@ -1032,5 +1032,57 @@ func TestKillInsideFindsEscapedAgent(t *testing.T) {
 	}
 	if other.Process.Signal(syscall.Signal(0)) != nil {
 		t.Fatal("unrelated process was killed")
+	}
+}
+
+// N1 (recenzija 2, Linux): agent, ki bi preživel, med git finalize zamenja lib s povezavo na tuj repozitorij in jo pred
+// preverbo vrne. git bere le odprto mapo klona (bwrap, --ro-bind-fd): veja ima delo agenta, ne tuje skrivnosti, tuj
+// objects/info ostane.
+func TestWorktreeNestedSwapAndRestore(t *testing.T) {
+	if runtime.GOOS != "linux" || finalizeBwrap() == "" {
+		t.Skip("Linux with bwrap")
+	}
+	root := t.TempDir()
+	client, wt, repo := filepath.Join(root, "c"), filepath.Join(root, "wt"), filepath.Join(root, "repos", "d", "r.git")
+	outside := filepath.Join(root, "outside")
+	for _, d := range []string{filepath.Join(client, "lib"), outside} {
+		os.MkdirAll(d, 0o755)
+		gitT(t, d, "init", "-q", "-b", "main")
+		writeT(t, filepath.Join(d, "f.txt"), "x\n")
+		gitT(t, d, "add", "f.txt")
+		gitT(t, d, "commit", "-qm", "x")
+	}
+	writeT(t, filepath.Join(outside, "secret.txt"), "gateway secret\n")
+	writeT(t, filepath.Join(outside, ".git", "objects", "info", "marker"), "keep\n")
+	n := &wtNested{path: "lib", repo: nestedMirror(repo, "lib")}
+	n.base = gitT(t, filepath.Join(client, "lib"), "rev-parse", "HEAD")
+	b := filepath.Join(root, "push.bundle")
+	gitUser(filepath.Join(client, "lib"), nil, "update-ref", "refs/minigw/push", n.base)
+	gitUser(filepath.Join(client, "lib"), nil, "bundle", "create", b, "refs/minigw/push")
+	if ensureMirror(n.repo) != nil || !importBase(n.repo, b, n.base, "refs/minigw/base/x") || !makeClone(n.repo, n.dir(wt), "minigw/claude-12345678-0", n.base) {
+		t.Fatal("mirror or clone")
+	}
+	n.git, _ = os.Lstat(filepath.Join(wt, "lib", ".git"))
+	sl := &wtSlot{wt: wt, branch: "minigw/claude-12345678-0", nested: []*wtNested{n}}
+	writeT(t, filepath.Join(wt, "lib", "agent.txt"), "agent\n")
+	duringFinalize = func() {
+		os.Rename(filepath.Join(wt, "lib"), filepath.Join(wt, "lib.real"))
+		os.Symlink(outside, filepath.Join(wt, "lib"))
+	}
+	afterNestedFinalize = func(*wtNested) {
+		os.Remove(filepath.Join(wt, "lib"))
+		os.Rename(filepath.Join(wt, "lib.real"), filepath.Join(wt, "lib"))
+	}
+	defer func() { duringFinalize, afterNestedFinalize = nil, nil }()
+	tip, why := finalizeNested(sl, n, "claude", filepath.Join(root, "out.bundle"), nil)
+	if tip == "" {
+		t.Fatalf("not delivered: %s", why)
+	}
+	files, _ := gitRun(n.repo, "", nil, "--git-dir", n.repo, "ls-tree", "-r", "--name-only", tip)
+	if strings.Contains(files, "secret.txt") || !strings.Contains(files, "agent.txt") {
+		t.Fatalf("branch content after swap: %s", files)
+	}
+	if b, err := os.ReadFile(filepath.Join(outside, ".git", "objects", "info", "marker")); err != nil || string(b) != "keep\n" {
+		t.Fatal("outside objects/info changed")
 	}
 }
