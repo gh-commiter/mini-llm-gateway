@@ -1,5 +1,11 @@
 # Release notes
 
+## Unreleased
+
+- New: `minigw gw settings` shows the gateway settings in the terminal, also over SSH and inside tmux, on the Mac app and on `minigw serve`: General, Devices, Providers, Agents, Folders, Sessions, and on the Mac a page for Siri AI and `minigw run`. Keyboard first, mouse optional, no colors. It is a new helper, `minigw-tui` (Go, Bubble Tea), shipped in the app (`Contents/Helpers`, signed), `minigw.zip` and the `minigw` cask, the MSI, the release (`minigw-tui-<system>-<arch>`), and installed by `install.sh` and `minigw serve install` (Windows and Linux; uninstall removes it). It never reads the config, the key store or the admin secret: every read and change runs `minigw gw api` of the same minigw, so the admin API's rules apply; typed keys and tokens go on stdin and are never shown. The Mac's `minigw` starts it only with a valid Mini Gateway signature. `minigw` itself still uses only the Go standard library.
+- New: `minigw gw api GET|POST|PATCH|DELETE <path>` (both clients): one admin API request, JSON body on stdin, JSON answer on stdout. It is for `minigw-tui`; the plugin's skills use the named `gw` commands.
+- Changed: on Windows and Linux, `minigw gw settings` used to print a one-time link to the settings page; that is now `minigw gw settings link` (the tray's **Settings…** is unchanged).
+
 ## 0.5.19
 
 - Security: minigw inside Claude Code (when `CLAUDECODE` is set) passes on only claude options that do not widen permissions: `-p`/`--print`, `--model`, `--output-format`, `--verbose`, `--max-turns`, `--append-system-prompt`, `--fallback-model` and `--help`. Every other option is refused, for example `--dangerously-skip-permissions`, `--permission-mode`, `--allowedTools`, `--settings`, `--mcp-config`, `--add-dir`, `--plugin-dir`, `--input-format` (`stream-json` control requests can add an MCP server or change the permission mode) and `-c`/`--continue`, `-r`/`--resume`, `--session-id` (they would send another session's transcript to the gateway). Before, a model could run `minigw --dangerously-skip-permissions -p …` through a plugin skill and the nested claude ran every tool call without asking. Everything after `--` is the prompt, so a prompt may start with `-` (the skills pass `-- "<prompt>"`). Both clients.

@@ -101,11 +101,25 @@ The Mac app's **Settings…** window and the `minigw serve` settings page have t
 ### Settings in the terminal
 
 `minigw gw settings` shows the settings in the terminal, on any gateway (the Mac app and `minigw serve`), also over
-SSH and inside tmux: the pages General, Devices, Providers, Agents and Folders, keyboard only (←/→ page, ↑/↓ move,
-Enter change, q quit), no colors. It is the helper `minigw-tui` next to `minigw` (on the Mac in the app's
-`Contents/Helpers`). It reads and changes everything through `minigw gw api` of the same `minigw`, so the same rules
-apply: only on the gateway computer, as the user who runs the gateway. API keys and the Copilot token you type go to
-`minigw` on stdin and are never shown; the connect line with the token appears only after **Show the connect line**.
+SSH and inside tmux. Keyboard first (←/→ or 1-7 page, ↑/↓ move, Enter change, Esc back, q quit); a click on a page
+name or a row works too. No colors, English only, at least 80 columns. It is the helper `minigw-tui` next to `minigw`
+(on the Mac in the app's `Contents/Helpers`; `minigw` checks its signature first). It reads and changes everything
+through `minigw gw api` of the same `minigw`, so the same rules apply: only on the gateway computer, as the user who
+runs the gateway. API keys and the Copilot token you type go to `minigw` on stdin and are never shown; the connect
+line with the token appears only after **Show the connect line**.
+
+| Page | Both gateways | Mac app only | `minigw serve` only |
+|---|---|---|---|
+| General | Status, version, address, port, token (show, new), this user's apps, scratch folder | Open at Login | Windows: Start at sign-in; Linux: how it starts |
+| Devices | Allow any device, allowed client addresses, unencrypted clients, waiting devices (allow with a name, reject), allowed devices (rename, history, remove) | | |
+| Providers | Enabled, name, base URL, Allow http, aliases, API key, models (search, a switch each, all, none), add, remove | | |
+| Agents | Claude CLI (enabled, path, local tools, tools, permission mode, setting sources, ask others), Codex and Grok CLI (enabled, path, write, network, ask others, models), Copilot CLI (models, write, web, commands, token), Foundry Local | | Allow commands without a sandbox (Windows, Linux without `bwrap`) |
+| Folders | Allowed folders: add, remove; folders left out at startup | | |
+| Sessions | Recent sessions with details, Clear history | | |
+| Mac | – | Siri AI (on, timeout, per device), `minigw run` (commands, per device, network) | |
+
+Not in the terminal: Apple Foundation Models (the app's Settings window), Claude CLI's per-tool switches (the tools
+are a comma-separated field) and copying the token to the clipboard.
 
 ### Settings page
 

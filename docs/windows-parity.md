@@ -7,6 +7,8 @@ Every control of the Mac app's Settings window (Sources/MiniGateway/Settings.swi
 
 | Mac pane · control | Windows/Linux | API field | Note |
 |---|---|---|---|
+| – (terminal) `minigw gw settings` | same | all of the above through `minigw gw api` | The terminal UI `minigw-tui` on both: General, Devices, Providers, Agents, Folders, Sessions, and on the Mac a Mac page (Siri AI, `minigw run`). Not in it: Apple FM, per-tool switches of Claude CLI. |
+| – | `minigw gw settings link` (Go only) | `POST settings/login` | One-time link (60 s) to the settings page; the Mac has its Settings window instead. |
 | Sidebar: search, items with icons, + (LiteLLM, OpenRouter, other) / − | same | – | Same order: General, providers, (Siri AI, Apple FM: Mac only), Foundry Local, Claude CLI, Codex CLI, Copilot CLI, Grok CLI, Devices, Sessions. |
 | Built-in providers LiteLLM and OpenRouter | same | `GET providers` | Always listed, off until a key is set, can be turned off but not removed or renamed (`DELETE` 400). Defaults: LiteLLM `http://localhost:4000` with Allow http, OpenRouter `https://openrouter.ai/api` with no model enabled. A provider named litellm or openrouter is the built-in one. |
 | General · Open at Login | General · Start at sign-in | `PATCH general {startAtSignIn}` | Windows: Run value for the tray. Linux: `minigw serve install`. |

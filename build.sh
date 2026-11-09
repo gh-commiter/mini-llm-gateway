@@ -97,8 +97,8 @@ if [[ $MODE == --release ]]; then
   xcrun notarytool submit "$CLI_ZIP" --keychain-profile "${NOTARY_PROFILE:-minigateway-notary}" --wait
   cp install.sh "$OUT/install.sh"
 
-  # Odjemalec za Windows in Linux (client/, Go, le standardna knjižnica): ena izvršljiva datoteka na sistem; minigw-tui
-  # (Bubble Tea) posebej.
+  # Odjemalec za Windows in Linux (client/, Go): minigw le s standardno knjižnico, ena izvršljiva datoteka na sistem;
+  # minigw-tui (Bubble Tea) posebej.
   GO_BINS=()
   for t in windows/amd64 windows/arm64 linux/amd64 linux/arm64; do
     os=${t%/*}; arch=${t#*/}; name=minigw-$os-$arch; [[ $os == windows ]] && name+=.exe || true
