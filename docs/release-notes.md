@@ -1,5 +1,12 @@
 # Release notes
 
+## Unreleased
+
+- One command on every OS for the Claude Code plugin, compatible with the Claude Code CLI: `minigw plugin install`, `minigw plugin uninstall` and `minigw plugin status`. `install` adds `minigw@mini-gateway` to `~/.claude/settings.json` with the rules the Homebrew cask used (a `false` you set stays, a file that is not valid JSON is never overwritten, the file mode stays) and points the plugin's `bin/minigw` at this minigw (on Windows `minigw` and `minigw.cmd` shims, since Git Bash does not find a `.cmd` by itself). `status` shows the minigw, Claude Code, plugin and gateway versions and which minigw the plugin uses; `/minigw:version` runs it. The gateway returns its version to clients with a token. Both clients.
+- `minigw uninstall [--purge] [--yes]` lists and then removes what minigw added on this computer: the plugin entries and data folder, the sign-in start of `minigw serve` (systemd user unit, Run value without the MSI, an old LaunchAgent) and scratch folders. Settings and profiles stay unless you add `--purge` (macOS Keychain items only through minigw's own Keychain calls). It prints how to remove minigw itself (Homebrew, MSI, `rm`). Both clients.
+- The plugin uses the installed minigw (Homebrew/app, MSI, `~/.local/bin`) whenever it is not older than the plugin needs, as a link (Windows: shim) instead of a copy, and downloads only when no minigw is installed: one minigw, updated by its installer.
+- The Homebrew `minigw` cask calls `minigw plugin install` / `minigw plugin uninstall` instead of its own Ruby.
+
 ## 0.5.19
 
 - Security: minigw inside Claude Code (when `CLAUDECODE` is set) passes on only claude options that do not widen permissions: `-p`/`--print`, `--model`, `--output-format`, `--verbose`, `--max-turns`, `--append-system-prompt`, `--fallback-model` and `--help`. Every other option is refused, for example `--dangerously-skip-permissions`, `--permission-mode`, `--allowedTools`, `--settings`, `--mcp-config`, `--add-dir`, `--plugin-dir`, `--input-format` (`stream-json` control requests can add an MCP server or change the permission mode) and `-c`/`--continue`, `-r`/`--resume`, `--session-id` (they would send another session's transcript to the gateway). Before, a model could run `minigw --dangerously-skip-permissions -p …` through a plugin skill and the nested claude ran every tool call without asking. Everything after `--` is the prompt, so a prompt may start with `-` (the skills pass `-- "<prompt>"`). Both clients.
