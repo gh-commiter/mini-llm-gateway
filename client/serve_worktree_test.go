@@ -659,6 +659,9 @@ func testNestedRoundTrip(t *testing.T, blockNested string) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake claude is a shell script")
 	}
+	if !gitAttrSource() {
+		t.Skip("git before 2.40: the client refuses nested repositories (TestNestedSnapshotRunsNoCleanFilter)")
+	}
 	if runtime.GOOS == "linux" && blockNested == "" && finalizeBwrap() == "" {
 		t.Skip("Linux without bwrap: nested repositories are refused (TestNestedBlockerMatchesSandbox)")
 	}

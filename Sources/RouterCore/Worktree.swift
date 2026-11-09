@@ -254,6 +254,9 @@ public enum Worktree {
         if let p = nested.first(where: { !run(["config", "--local", "--includes", "--get-regexp", #"^filter\."#], cwd: top + "/" + $0, safe: false, hooks: false).out.isEmpty }) {
             return fail("nested-filter:" + p, "worktree: the nested repository \(Profiles.line(p, max: 500)) defines git filters (filter.* in its .git/config), which minigw does not run for nested repositories; use sync")
         }
+        if !nested.isEmpty, !attrSource { // N3 (kot Go): brez --attr-source bi tekli filtri ugnezdenih
+            return fail("nested-git", "worktree: nested git repositories need git 2.40 or later; update git or use sync")
+        }
         // Neposredni otroci, ki v indeksu starša niso gitlink (nesledeni), ali so brez commita: ne v posnetek starša.
         func skip(_ rel: String) -> [String] {
             let dir = rel.isEmpty ? top : top + "/" + rel, links = gitlinks(dir)
@@ -278,7 +281,9 @@ public enum Worktree {
     /// skip: poti, ki ne gredo v posnetek (ugnezdeni repozitoriji brez commita).
     /// root: repozitorij brez commita (ugnezden) dobi commit brez starša iz kopije svojega indeksa in delovne mape.
     /// noAttr (N3, ugnezdeni, kot Go): brez atributov, zato git add ne požene filtra clean iz .gitattributes.
+    /// Git pred 2.40 (GIT_ATTR_SOURCE tiho prezre): nil.
     public static func snapshot(top: String, root: Bool = false, noAttr: Bool = false, skip: [String] = []) -> String? {
+        if noAttr, !attrSource { return nil }
         let h = run(["rev-parse", "--verify", "-q", "HEAD^{commit}"], cwd: top, safe: false, hooks: false)
         guard root || h.status == 0 && isSHA(h.out) else { return nil }
         let idx = FileManager.default.temporaryDirectory.appendingPathComponent("minigw-index-" + UUID().uuidString).path
@@ -340,6 +345,35 @@ public enum Worktree {
             + "then bring it in with \(g)cherry-pick \(r) or \(g)diff --binary \(r) | \(g)apply"
     }
 
+    /// Git pozna GIT_ATTR_SOURCE (2.40+, Apple git v Xcode CLT je lahko starejši); starejši --attr-source zavrne.
+    static let attrSource = run(["--attr-source=4b825dc642cb6eb9a060e54bf8d69288fbee4904", "version"], safe: false, hooks: false).status == 0
+
+    /// fetch iz bundla pred git 2.46 ne preveri objektov (fetch.fsckObjects prezre). Zato novi objekti refs/minigw/incoming
+    /// (brez dosegljivih iz drugih refov): pack-objects in index-pack --fsck-objects v prazen repozitorij (kot finalize),
+    /// objekti uporabnika kot alternates (drevo agenta sme kazati na obstoječ blob). Kot Go fsckIncoming.
+    static func fsckIncoming(top: String) -> Bool {
+        let refs = run(["for-each-ref", "--format=%(objectname) %(refname)"], cwd: top, safe: false, hooks: false)
+        guard refs.status == 0 else { return false }
+        let not = refs.out.split(separator: "\n").compactMap { l -> String? in
+            let f = l.split(separator: " ", maxSplits: 1).map(String.init)
+            return f.count == 2 && isSHA(f[0]) && f[1] != "refs/minigw/incoming" ? f[0] + "\n" : nil
+        }.joined()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("minigw-fsck-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        guard (try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])) != nil
+        else { return false }
+        let pack = run(["pack-objects", "--revs", "-q", dir.appendingPathComponent("p").path], cwd: top, safe: false, hooks: false,
+                       input: Data("refs/minigw/incoming\n--not\n\(not)".utf8)).out
+        let fsck = dir.appendingPathComponent("fsck.git").path
+        let o = run(["rev-parse", "--git-path", "objects"], cwd: top, safe: false, hooks: false)
+        guard o.status == 0, !o.out.isEmpty else { return false }
+        var objs = o.out
+        if !objs.hasPrefix("/") { objs = top + "/" + objs }
+        guard isSHA(pack), run(["init", "-q", "--bare", fsck], cwd: dir.path).status == 0,
+              FileManager.default.createFile(atPath: fsck + "/objects/info/alternates", contents: Data((objs + "\n").utf8)) else { return false }
+        return run(["--git-dir", fsck, "index-pack", "--fsck-objects", dir.appendingPathComponent("p-\(pack).pack").path], cwd: dir.path).status == 0
+    }
+
     /// Pot ugnezdenega repozitorija, ki gre v vrstico o veji (enaka v skillsih in odjemalcu Go).
     static let safePath = #"^[A-Za-z0-9_][A-Za-z0-9._+-]*(/[A-Za-z0-9_][A-Za-z0-9._+-]*)*$"#
 
@@ -359,7 +393,7 @@ public enum Worktree {
                      bundle.path, "+refs/heads/\(branch):refs/minigw/incoming"], cwd: top, safe: false, hooks: false)
         defer { run(["update-ref", "-d", "refs/minigw/incoming"], cwd: top, safe: false, hooks: false) }
         let new = run(["rev-parse", "-q", "--verify", "refs/minigw/incoming^{commit}"], cwd: top, safe: false, hooks: false).out
-        guard r.status == 0, isSHA(new) else { return "git fetch of \(branch) failed (the gateway's branch was rejected)" }
+        guard r.status == 0, isSHA(new), fsckIncoming(top: top) else { return "git fetch of \(branch) failed (the gateway's branch was rejected)" }
         // Premik veje z git fetch brez sile: git sam zavrne nehitro posodobitev in vejo, izvlečeno v kateri koli delovni mapi.
         let u = run(["-c", "fetch.recurseSubmodules=false", "-c", "submodule.recurse=false", "-c", "maintenance.auto=false", "-c", "gc.auto=0",
                      "fetch", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--quiet",

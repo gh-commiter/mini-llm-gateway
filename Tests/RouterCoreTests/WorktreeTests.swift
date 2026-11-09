@@ -1306,7 +1306,8 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     try file(dir, "a.txt", "a\n"); g(dir, "init", "-q", "-b", "main"); g(dir, "add", "a.txt"); g(dir, "commit", "-qm", "a")
     g(dir, "config", "filter.evil.clean", "touch \(marker); cat")
     try file(dir, ".gitattributes", "* filter=evil\n"); try file(dir, "a.txt", "b\n")
-    #expect(Worktree.snapshot(top: dir.path, noAttr: true) != nil && !FileManager.default.fileExists(atPath: marker))
+    // git pred 2.40: brez posnetka (filter ne teče)
+    #expect((Worktree.snapshot(top: dir.path, noAttr: true) != nil) == Worktree.attrSource && !FileManager.default.fileExists(atPath: marker))
     _ = Worktree.snapshot(top: dir.path)
     #expect(FileManager.default.fileExists(atPath: marker), "the test does not reproduce the filter")
 }

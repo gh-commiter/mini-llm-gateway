@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -244,8 +245,11 @@ func gitZ(top, stdin string, args ...string) []string {
 // skip: poti, ki ne gredo v posnetek (ugnezdeni repozitoriji brez commita). root: repozitorij brez commita (ugnezden)
 // dobi commit brez starša iz kopije svojega indeksa in delovne mape.
 // noAttr (N3, ugnezdeni): brez atributov (GIT_ATTR_SOURCE = prazno drevo, core.attributesFile prazen), zato git add ne
-// požene filtra clean, ki bi ga določila .gitattributes ugnezdenega repozitorija.
+// požene filtra clean, ki bi ga določila .gitattributes ugnezdenega repozitorija. Git pred 2.40: brez posnetka.
 func gitSnapshot(top string, root, noAttr bool, skip ...string) string {
+	if noAttr && !gitAttrSource() {
+		return ""
+	}
 	head, err := gitUser(top, nil, "rev-parse", "--verify", "-q", "HEAD^{commit}")
 	if (err != nil || !shaRe.MatchString(head)) && !root {
 		return ""
@@ -297,6 +301,12 @@ func gitSnapshot(top string, root, noAttr bool, skip ...string) string {
 	}
 	return c
 }
+
+// gitAttrSource: git pozna GIT_ATTR_SOURCE (2.40+); starejši ga tiho prezre, --attr-source pa zavrne.
+var gitAttrSource = sync.OnceValue(func() bool {
+	_, err := gitUser("", nil, "--attr-source=4b825dc642cb6eb9a060e54bf8d69288fbee4904", "version")
+	return err == nil
+})
 
 // gitBundle: bundle posnetka brez objektov, ki jih router ima. made=false: ni česa poslati.
 func gitBundle(top, snapshot string, have []string, file string) (made bool, err error) {
@@ -358,7 +368,7 @@ func gitFetchBranch(top, bundle, branch string) string {
 		bundle, "+refs/heads/"+branch+":refs/minigw/incoming")
 	defer gitUser(top, nil, "update-ref", "-d", "refs/minigw/incoming")
 	nw, _ := gitUser(top, nil, "rev-parse", "-q", "--verify", "refs/minigw/incoming^{commit}")
-	if err != nil || !shaRe.MatchString(nw) {
+	if err != nil || !shaRe.MatchString(nw) || !fsckIncoming(top) {
 		return "git fetch of " + branch + " failed (the gateway's branch was rejected)"
 	}
 	// Premik veje z git fetch brez sile: git sam zavrne nehitro posodobitev in vejo, izvlečeno v kateri koli delovni mapi.
@@ -374,6 +384,53 @@ func gitFetchBranch(top, bundle, branch string) string {
 		}
 	}
 	return "cannot update " + branch + " (is it checked out in a worktree?)"
+}
+
+// fsckIncoming: fetch iz bundla pred git 2.46 ne preveri objektov (fetch.fsckObjects prezre). Zato novi objekti
+// refs/minigw/incoming (brez dosegljivih iz drugih refov): pack-objects in index-pack --fsck-objects v prazen
+// repozitorij (kot finalize prehoda); zavrne npr. drevo z ».git«.
+func fsckIncoming(top string) bool {
+	refs, err := gitUser(top, nil, "for-each-ref", "--format=%(objectname) %(refname)")
+	if err != nil {
+		return false
+	}
+	in := "refs/minigw/incoming\n--not\n"
+	for _, l := range strings.Split(refs, "\n") {
+		if sha, ref, _ := strings.Cut(l, " "); shaRe.MatchString(sha) && ref != "refs/minigw/incoming" {
+			in += sha + "\n"
+		}
+	}
+	dir, err := os.MkdirTemp("", "minigw-") // 0700
+	if err != nil {
+		return false
+	}
+	defer os.RemoveAll(dir)
+	cmd := command("git", "-c", "core.hooksPath="+os.DevNull, "pack-objects", "--revs", "-q", filepath.Join(dir, "p"))
+	cmd.Dir = top
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd.Stdin = strings.NewReader(in)
+	out, err := cmd.Output()
+	pack := strings.TrimSpace(string(out))
+	if err != nil || !shaRe.MatchString(pack) {
+		return false
+	}
+	fsck := filepath.Join(dir, "fsck.git")
+	if _, err := gitUser(dir, nil, "init", "-q", "--bare", fsck); err != nil {
+		return false
+	}
+	// Objekti uporabnika kot alternates: drevo agenta sme kazati na obstoječ blob (npr. .gitattributes), fsck ga prebere.
+	objs, err := gitUser(top, nil, "rev-parse", "--git-path", "objects")
+	if err != nil || objs == "" {
+		return false
+	}
+	if !filepath.IsAbs(objs) {
+		objs = filepath.Join(top, objs)
+	}
+	if os.WriteFile(filepath.Join(fsck, "objects", "info", "alternates"), []byte(filepath.ToSlash(objs)+"\n"), 0o600) != nil {
+		return false
+	}
+	_, err = gitUser(dir, nil, "--git-dir", fsck, "index-pack", "--fsck-objects", filepath.Join(dir, "p-"+pack+".pack"))
+	return err == nil
 }
 
 // wtPush: WORKTREE-PUSH — posnetek, bundle po delih do 32 MB, odgovor {"snapshot", "nested": [{"path", "snapshot"}]}.
@@ -408,6 +465,9 @@ func (s *shareClient) wtPush(k string, job davJob) davResponse {
 		if f, _ := gitUser(filepath.Join(s.top, filepath.FromSlash(p)), nil, "config", "--local", "--includes", "--get-regexp", `^filter\.`); f != "" {
 			return fail("nested-filter:"+p, "worktree: the nested repository "+oneLine(p)+" defines git filters (filter.* in its .git/config), which minigw does not run for nested repositories; use sync")
 		}
+	}
+	if len(nested) > 0 && !gitAttrSource() { // N3: brez --attr-source bi tekli filtri ugnezdenih
+		return fail("nested-git", "worktree: nested git repositories need git 2.40 or later; update git or use sync")
 	}
 	// skip: neposredni otroci, ki v indeksu starša niso gitlink (nesledeni, s commitom ali brez), ali so brez commita:
 	// v posnetek starša ne gredo (imajo svojega); gitlink podmodula ostane.

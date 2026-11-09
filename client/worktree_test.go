@@ -414,6 +414,15 @@ func TestNestedSnapshotRunsNoCleanFilter(t *testing.T) {
 	gitT(t, dir, "config", "filter.evil.clean", "touch "+marker+"; cat")
 	writeT(t, filepath.Join(dir, ".gitattributes"), "* filter=evil\n")
 	writeT(t, filepath.Join(dir, "a.txt"), "b\n")
+	if !gitAttrSource() { // git pred 2.40: brez posnetka, filter ne teče
+		if gitSnapshot(dir, false, true) != "" {
+			t.Fatal("snapshot without --attr-source")
+		}
+		if _, err := os.Stat(marker); err == nil {
+			t.Fatal("clean filter ran for a nested snapshot")
+		}
+		return
+	}
 	if !shaRe.MatchString(gitSnapshot(dir, false, true)) {
 		t.Fatal("no snapshot")
 	}

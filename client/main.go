@@ -1084,7 +1084,10 @@ func autoShare(cwd string) bool {
 			continue
 		}
 		rel, err := filepath.Rel(t, cwd)
-		if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		if rel == "." {
+			return false // cwd je sama začasna mapa (npr. TMPDIR v /tmp)
+		}
+		if err != nil || strings.HasPrefix(rel, "..") {
 			continue
 		}
 		parts := strings.Split(filepath.ToSlash(rel), "/")
