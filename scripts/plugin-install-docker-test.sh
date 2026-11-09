@@ -59,15 +59,15 @@ sed "s|^SIGNER=.*|SIGNER='minigw-release namespaces=\"minigw-release\" $(cut -d'
 W="$T/win/O'Brien 100%"; mkdir -p $T/win/fake "$W/Programs/Mini Gateway" $T/win/data/bin $T/win/home
 print '#!/bin/sh\ncase $1 in -s) echo MINGW64_NT-10.0 ;; *) echo x86_64 ;; esac' > $T/win/fake/uname
 print '#!/bin/sh\ncase $1 in -u) printf "%s\\n" "$2" ;; -m) printf "C:%s\\n" "$2" ;; -w) printf "C:%s\\n" "$2" | tr / "\\\\" ;; esac' > $T/win/fake/cygpath
-print '#!/bin/sh\n[ "$1" = --version ] && echo minigw 0.5.19; [ "$1" = status ] && echo "Status:    connected"; exit 0' > "$W/Programs/Mini Gateway/minigw.exe"
+print '#!/bin/sh\n[ "$1" = --version ] && echo minigw 0.5.20; [ "$1" = status ] && echo "Status:    connected"; exit 0' > "$W/Programs/Mini Gateway/minigw.exe"
 chmod +x $T/win/fake/* "$W/Programs/Mini Gateway/minigw.exe"; print old > $T/win/data/bin/minigw.exe
 winrun() { CLAUDE_PLUGIN_DATA=$T/win/data CLAUDE_ENV_FILE= LOCALAPPDATA=$W APPDATA=$T/win/roaming MINIGW_RELEASE_BASE=file://$T/rel/${1:-nonexistent} HOME=$T/win/home PATH=$T/win/fake:$PATH sh $T/testkey.sh }
 out=$(winrun newer); print -r -- $out
-[[ $out == *"minigw 0.5.19 is installed, 0.5.99 is available: run the installer https://github.com/gh-commiter/mini-llm-gateway/releases/latest/download/minigw-windows-amd64.msi (check it first: docs/install.md, Check a download)"* && $out != *"/minigw:gw update"* ]] ||
+[[ $out == *"minigw 0.5.20 is installed, 0.5.99 is available: run the installer https://github.com/gh-commiter/mini-llm-gateway/releases/latest/download/minigw-windows-amd64.msi (check it first: docs/install.md, Check a download)"* && $out != *"/minigw:gw update"* ]] ||
   fail "10: no MSI update hint for a client-only install"
 mkdir -p $T/win/roaming/minigw; print '{}' > $T/win/roaming/minigw/serve.json
 out=$(winrun newer); print -r -- $out
-[[ $out == *"Mini Gateway 0.5.19 is installed, 0.5.99 is available: /minigw:gw update"* ]] || fail "10: no update hint (M1)"
+[[ $out == *"Mini Gateway 0.5.20 is installed, 0.5.99 is available: /minigw:gw update"* ]] || fail "10: no update hint (M1)"
 exe="$W/Programs/Mini Gateway/minigw.exe" sq="'" rep="'\''"
 [[ "$(<$T/win/data/bin/minigw)" == "#!/bin/sh"$'\n'"# Mini Gateway: the installed minigw"$'\n'"exec 'C:${exe//$sq/$rep}' \"\$@\"" ]] || fail "10: sh shim: $(<$T/win/data/bin/minigw)"
 [[ "$(<$T/win/data/bin/minigw.cmd)" == "@setlocal DisableDelayedExpansion"$'\r\n'"@\"%LOCALAPPDATA%\\Programs\\Mini Gateway\\minigw.exe\" %*"$'\r' ]] || fail "10: cmd shim: $(<$T/win/data/bin/minigw.cmd)"
@@ -160,13 +160,13 @@ out=$(run /tmp/d9 good testkey); echo "$out"
 rm -rf /tmp/home/.local
 echo "ok 9: installed minigw (not older than MIN) linked, never downloaded"
 
-mkdir -p /tmp/home/.local/bin /tmp/d11/bin; printf "#!/bin/sh\necho minigw 0.5.19\n" > /tmp/home/.local/bin/minigw; chmod +x /tmp/home/.local/bin/minigw
+mkdir -p /tmp/home/.local/bin /tmp/d11/bin; printf "#!/bin/sh\necho minigw 0.5.20\n" > /tmp/home/.local/bin/minigw; chmod +x /tmp/home/.local/bin/minigw
 out=$(run /tmp/d11 newer testkey); echo "$out"
 [ "$(readlink /tmp/d11/bin/minigw)" = /tmp/home/.local/bin/minigw ] || fail "11: not linked to the installed minigw"
-echo "$out" | grep -q "minigw 0.5.19 is installed, 0.5.99 is available: run curl -fsSL https://github.com/gh-commiter/mini-llm-gateway/releases/latest/download/install.sh | sh (or replace /tmp/home/.local/bin/minigw with minigw-linux-arm64 from the latest release" || fail "11: no client-only update hint (M1)"
+echo "$out" | grep -q "minigw 0.5.20 is installed, 0.5.99 is available: run curl -fsSL https://github.com/gh-commiter/mini-llm-gateway/releases/latest/download/install.sh | sh (or replace /tmp/home/.local/bin/minigw with minigw-linux-arm64 from the latest release" || fail "11: no client-only update hint (M1)"
 mkdir -p /tmp/home/.config/systemd/user; : > /tmp/home/.config/systemd/user/minigw-serve.service
 out=$(run /tmp/d11 newer testkey); echo "$out"
-echo "$out" | grep -q "Mini Gateway 0.5.19 is installed, 0.5.99 is available: /minigw:gw update" || fail "11: no gateway update hint"
+echo "$out" | grep -q "Mini Gateway 0.5.20 is installed, 0.5.99 is available: /minigw:gw update" || fail "11: no gateway update hint"
 rm -rf /tmp/home/.config/systemd
 rm -rf /tmp/home/.local
 echo "ok 11: newer signed release than the installed minigw: hint, no download"
