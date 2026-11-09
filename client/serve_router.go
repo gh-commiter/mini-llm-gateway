@@ -16,8 +16,10 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -40,7 +42,10 @@ runs; otherwise they go to serve.json.
   minigw gw token [rotate]                              print the connect line; rotate makes a new token
   minigw gw copilot token [remove]                      Copilot's token for commands (fine-grained, only Copilot
                                                         Requests), read from stdin or asked for
-  minigw gw settings                                    a one-time link (60 s) to the settings page
+  minigw gw settings                                    the settings in this terminal (minigw-tui; also over SSH)
+  minigw gw settings link                               a one-time link (60 s) to the settings page
+  minigw gw api GET|POST|PATCH|DELETE <path>            one admin API request (docs/admin-api.md): the JSON body
+                                                        on stdin, the JSON answer on stdout (used by minigw-tui)
 
 All take --config FILE (default: the minigw serve config).`
 
@@ -256,6 +261,13 @@ func routerCommand(args []string, in io.Reader) {
 	if len(pos) == 0 || pos[0] == "help" {
 		say(routerHelp)
 		return
+	}
+	if len(pos) == 1 && pos[0] == "settings" { // terminal UI: kliče nazaj ta minigw (gw api), skrivnosti ne vidi
+		var extra []string
+		if set["config"] {
+			extra = []string{"--config", *cfgPath}
+		}
+		settingsTUI(extra)
 	}
 	a := openAdmin(*cfgPath)
 	need := func(min, max int) {
@@ -581,14 +593,68 @@ func routerCommand(args []string, in io.Reader) {
 		} else {
 			say("Copilot's token stored in the key store")
 		}
+	case "api": // minigw-tui: ena zahteva skrbniškega API; telo JSON s stdin (ključi nikoli v argv), odgovor JSON na stdout
+		need(3, 3)
+		if !apiRequestOK(pos[1], pos[2]) {
+			fail(routerHelp)
+		}
+		var body any
+		if pos[1] == "POST" || pos[1] == "PATCH" {
+			data, err := io.ReadAll(io.LimitReader(in, 1<<20))
+			if err != nil || (len(bytes.TrimSpace(data)) > 0 && !json.Valid(data)) {
+				fail("minigw gw api: the body on stdin is not JSON")
+			}
+			if len(bytes.TrimSpace(data)) > 0 {
+				body = json.RawMessage(data)
+			}
+		}
+		var out json.RawMessage
+		a.do(pos[1], pos[2], body, &out)
+		os.Stdout.Write(append(out, '\n'))
 	case "settings":
-		need(1, 1)
+		if len(pos) != 2 || pos[1] != "link" {
+			fail(routerHelp)
+		}
 		var r struct{ URL string }
 		a.do("POST", "/settings/login", nil, &r)
 		say("Open within 60 seconds (once), in a browser on this computer:\n  " + r.URL)
 	default:
 		fail("unknown command minigw gw " + pos[0] + "\n\n" + routerHelp)
 	}
+}
+
+// apiRequestOK: gw api le z metodo API in potjo pod skrbniškim API (brez »..«, presledkov, kontrolnih znakov in »#«).
+func apiRequestOK(method, path string) bool {
+	return slices.Contains([]string{"GET", "POST", "PATCH", "DELETE"}, method) && strings.HasPrefix(path, "/") &&
+		!strings.Contains(path, "..") && !strings.ContainsFunc(path, func(r rune) bool { return r <= 0x20 || r == 0x7f || r == '#' })
+}
+
+// settingsTUI: minigw-tui ob tem minigw (izdaja, MSI, install.sh) z istim terminalom; izhodna koda ostane.
+func settingsTUI(extra []string) {
+	self, err := os.Executable()
+	if err == nil {
+		self, err = filepath.EvalSymlinks(self)
+	}
+	if err != nil {
+		fail("cannot find this minigw: " + err.Error())
+	}
+	tui := filepath.Join(filepath.Dir(self), "minigw-tui")
+	if runtime.GOOS == "windows" {
+		tui += ".exe"
+	}
+	if _, err := os.Stat(tui); err != nil {
+		fail("the settings terminal UI is not installed (" + tui + "): it comes with Mini Gateway 0.5.20 or newer (https://github.com/gh-commiter/mini-llm-gateway/releases/latest); or open the settings page with: minigw gw settings link")
+	}
+	cmd := consoleCommand(tui, append([]string{"--minigw", self}, extra...)...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	err = cmd.Run()
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		os.Exit(ee.ExitCode())
+	} else if err != nil {
+		fail("cannot start " + tui + ": " + err.Error())
+	}
+	os.Exit(0)
 }
 
 func modelLine(m apiModel) string {

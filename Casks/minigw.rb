@@ -17,6 +17,7 @@ cask "minigw" do
   depends_on cask: "claude-code" unless claude_installed
 
   binary "minigw"
+  binary "minigw-tui"
 
   # Vtičnik za Claude Code: minigw plugin install (client/plugin.go, Sources/MiniGW/PluginCommand.swift) doda
   # marketplace in enabledPlugins v ~/.claude/settings.json (uporabnikov »false« ostane, neveljaven JSON ostane) in

@@ -1,0 +1,7 @@
+{"sessions": [{"id": "5f1c2a90-7d1e-4a51-9a43-2b8f0c1d7e11", "device": "Qm9iJ3MgTWFjQm9vayBkZXZpY2Uga2V5IDMyIGJ5dGVz", "deviceName": "Bob's MacBook",
+  "start": "2026-11-09T07:40:02Z", "last": "2026-11-09T08:12:40Z", "duration": 1958, "folder": "/Users/bob/src/app", "os": "macOS",
+  "role": "reviewer", "mode": "worktree", "branch": "minigw/claude-1a2b", "models": [
+  {"model": "claude-codex", "requests": 4, "errors": 0, "refused": 0, "seconds": 312, "inputTokens": 48211, "outputTokens": 5120, "tools": "write,commands"},
+  {"model": "claude-anthropic/claude-haiku-4.5", "via": "codex", "requests": 2, "errors": 0, "refused": 0, "seconds": 9, "inputTokens": 3100, "outputTokens": 410}]},
+ {"id": "t-3", "start": "2026-11-08T16:00:00Z", "last": "2026-11-08T16:05:00Z", "duration": 300, "mode": "chat", "models": [
+  {"model": "claude-siri", "requests": 1, "errors": 0, "refused": 0, "seconds": 7, "inputTokens": 20, "outputTokens": 80}]}]}

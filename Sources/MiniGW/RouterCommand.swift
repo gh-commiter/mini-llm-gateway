@@ -23,6 +23,9 @@ minigw gw: show or change the Mini Gateway app on this Mac. Changes apply at onc
   minigw gw copilot token [remove]                      Copilot's token for commands (fine-grained, only Copilot
                                                         Requests), read from stdin or asked for
   minigw gw autostart [on|off]                          Open at Login (Settings → General); no argument: show it
+  minigw gw settings                                    the settings in this terminal (minigw-tui; also over SSH)
+  minigw gw api GET|POST|PATCH|DELETE <path>            one admin API request (docs/admin-api.md): the JSON body
+                                                        on stdin, the JSON answer on stdout (used by minigw-tui)
 """
 
 private struct AdminConnection {
@@ -58,12 +61,17 @@ private struct AdminConnection {
 
     /// Napaka API konča ukaz z njenim sporočilom.
     func call(_ method: String, _ path: String, _ body: [String: Any]? = nil) -> [String: Any] {
-        let data = body.flatMap { try? JSONSerialization.data(withJSONObject: $0) }
+        let d = send(method, path, body.flatMap { try? JSONSerialization.data(withJSONObject: $0) })
+        return (try? JSONSerialization.jsonObject(with: d) as? [String: Any]) ?? [:]
+    }
+
+    /// Odgovor API kot bajti (gw api); napaka konča ukaz.
+    func send(_ method: String, _ path: String, _ data: Data?) -> Data {
         let (status, d) = raw(method, Router.adminPrefix + path, data, proof: true)
         let o = d.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
         guard status != 0 else { fail("lost the connection to Mini Gateway") }
         guard status < 300 else { fail(clean(((o["error"] as? [String: Any])?["message"] as? String) ?? "HTTP \(status)")) }
-        return o
+        return d ?? Data()
     }
 }
 
@@ -324,11 +332,52 @@ func routerCommand(_ argv: [String]) {
         _ = a.call("PATCH", "/agents/copilot", ["token": token])
         say(token.isEmpty ? "removed Copilot's token" : "Copilot's token stored in the Keychain")
 
-    case "settings":
-        fail("on the Mac use the app's Settings window (menu bar icon → Settings…)")
+    case "api":  // minigw-tui: ena zahteva API; telo JSON s stdin (ključi nikoli v argv), odgovor JSON na stdout
+        need(3, 3)
+        guard AdminClient.apiRequestOK(pos[1], pos[2]) else { fail(routerHelp) }
+        var body: Data?
+        if pos[1] == "POST" || pos[1] == "PATCH" {
+            do { body = try AdminClient.apiBody(FileHandle.standardInput.readData(ofLength: 1 << 20)) } catch { fail("minigw gw api: the body on stdin is not JSON") }
+        }
+        out.write(a.send(pos[1], pos[2], body) + Data("\n".utf8))
+
+    case "settings":  // terminal UI (Go, minigw-tui): kliče nazaj ta minigw (gw api), skrivnosti ne vidi
+        need(1, 1)
+        let me = Bundle.main.executableURL?.resolvingSymlinksInPath().path ?? CommandLine.arguments[0]
+        let dirs = [(me as NSString).deletingLastPathComponent, "/Applications/Mini Gateway.app/Contents/Helpers",
+                    NSHomeDirectory() + "/Applications/Mini Gateway.app/Contents/Helpers"]
+        guard let tui = dirs.map({ $0 + "/minigw-tui" }).first(where: FileManager.default.isExecutableFile) else {
+            fail("the settings terminal UI (minigw-tui) is not installed: it comes with Mini Gateway 0.5.20 or newer (in Mini Gateway.app/Contents/Helpers); or use the app's Settings window (menu bar icon → Settings…)")
+        }
+        // Le podpisan pomočnik (ista ekipa, lasten identifikator): drug program na tem mestu ne dobi terminala in minigw.
+        if let why = helperSignatureProblem(tui) { fail("not starting \(tui): \(why)") }
+        let argv = [tui, "--minigw", me].map { strdup($0) } + [nil]
+        execv(tui, argv)
+        fail("cannot start \(tui): \(String(cString: strerror(errno)))")
     default:
         fail("unknown command minigw gw \(pos[0])\n\n" + routerHelp)
     }
+}
+
+/// Podpis minigw-tui: ekipa Y2M489RDV8 in identifikator dev.trojar.minigateway.tui (nil = v redu). Ta minigw brez
+/// podpisa ekipe (razvojna gradnja iz swift build) preverjanje preskoči, z opozorilom.
+func helperSignatureProblem(_ path: String) -> String? {
+    let team = "anchor apple generic and certificate leaf[subject.OU] = \"Y2M489RDV8\""
+    func valid(_ code: SecStaticCode, _ req: String) -> OSStatus {
+        var r: SecRequirement?
+        guard SecRequirementCreateWithString(req as CFString, [], &r) == errSecSuccess else { return errSecParam }
+        return SecStaticCodeCheckValidity(code, [], r)
+    }
+    var me: SecCode?, meStatic: SecStaticCode?
+    if SecCodeCopySelf([], &me) != errSecSuccess || me.map({ SecCodeCopyStaticCode($0, [], &meStatic) }) != errSecSuccess
+        || meStatic.map({ valid($0, team) }) != errSecSuccess {
+        err.write(Data("minigw: warning: this minigw is a development build (not signed by Mini Gateway): \(path) is started without a signature check\n".utf8))
+        return nil
+    }
+    var code: SecStaticCode?
+    guard SecStaticCodeCreateWithPath(URL(fileURLWithPath: path) as CFURL, [], &code) == errSecSuccess, let code else { return "cannot read its signature" }
+    let st = valid(code, team + " and identifier \"dev.trojar.minigateway.tui\"")
+    return st == errSecSuccess ? nil : "it is not signed by Mini Gateway (team Y2M489RDV8, identifier dev.trojar.minigateway.tui; OSStatus \(st))"
 }
 
 /// Vrstica seje za minigw gw sessions (enako kot sessionLine v Go).

@@ -1,0 +1,2 @@
+{"providers": [{"name": "OpenRouter", "baseURL": "https://openrouter.ai/api", "insecure": false, "models": ["anthropic/claude-haiku-4.5"], "hasKey": true, "ready": true, "enabled": true, "aliases": ""},
+ {"name": "lab", "baseURL": "http://10.0.0.5:4000", "insecure": true, "models": null, "hasKey": false, "ready": false, "enabled": false, "aliases": ""}]}

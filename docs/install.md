@@ -85,6 +85,7 @@ the plugin and its marketplace again; `brew upgrade` keeps them.
 |---|---|
 | Windows x64 / ARM64 | `minigw-windows-amd64.exe` / `minigw-windows-arm64.exe` |
 | Linux x64 / ARM64 | `minigw-linux-amd64` / `minigw-linux-arm64` (static, any distribution) |
+| Settings in the terminal (optional, for a gateway) | `minigw-tui-<system>-<arch>` (`.exe` on Windows), next to `minigw` as `minigw-tui` |
 
 [Check the download](#check-a-download), rename it to `minigw` (`minigw.exe` on Windows) and put it in your `PATH`.
 Claude Code (`claude`) must be in your `PATH` too.
@@ -101,6 +102,9 @@ echo 'minigw-release namespaces="minigw-release" ssh-ed25519 AAAAC3NzaC1lZDI1NTE
 ssh-keygen -Y verify -f signers -I minigw-release -n minigw-release -s SHA256SUMS.sig < SHA256SUMS
 grep ' minigw-linux-amd64$' SHA256SUMS | sha256sum -c -
 mv minigw-linux-amd64 minigw && chmod +x minigw && sudo mv minigw /usr/local/bin/
+# For a gateway, also minigw gw settings (the same steps, then next to minigw):
+curl -fsSLO $R/minigw-tui-linux-amd64 && grep ' minigw-tui-linux-amd64$' SHA256SUMS | sha256sum -c -
+mv minigw-tui-linux-amd64 minigw-tui && chmod +x minigw-tui && sudo mv minigw-tui /usr/local/bin/
 ```
 
 On Windows (PowerShell; `ssh-keygen` comes with Windows 10 and later). `cmd /c` passes `SHA256SUMS` unchanged, which a
@@ -132,8 +136,8 @@ No admin rights needed. Details, the tray and the settings page: [gateway.md →
 Instead of the two commands, download `minigw-windows-amd64.msi` (or `-arm64.msi`) from the
 [latest release](https://github.com/gh-commiter/mini-llm-gateway/releases/latest) and open it.
 
-- It installs for this user only, without admin rights, the same as `minigw serve install`: `minigw.exe` and
-  `minigw-tray.exe` in `%LocalAppData%\Programs\Mini Gateway`, minigw on your PATH, a Start menu entry, and the tray
+- It installs for this user only, without admin rights, the same as `minigw serve install`: `minigw.exe`,
+  `minigw-tray.exe` and `minigw-tui.exe` (`minigw gw settings`) in `%LocalAppData%\Programs\Mini Gateway`, minigw on your PATH, a Start menu entry, and the tray
   at sign-in.
 - It then starts the tray, which creates the config on first start. Copy the token from its menu (**Copy Token**).
 - Running a newer MSI updates it. Remove it in Settings → Apps (not with `minigw serve uninstall`); the config and keys
@@ -190,5 +194,6 @@ xcrun notarytool store-credentials minigateway-notary --key AuthKey_XXXX.p8 --ke
 ```
 
 Set `SIGN_IDENTITY` or `NOTARY_PROFILE` to override the defaults. The app icon is drawn by
-`swift scripts/make-icon.swift`. The Windows and Linux client is in `client/` (Go standard library only):
-`cd client && go build`.
+`swift scripts/make-icon.swift`. The Windows and Linux client is in `client/`; `minigw` uses only the
+Go standard library: `cd client && go build`. The terminal settings helper uses Bubble Tea:
+`cd client && go build ./cmd/minigw-tui`.

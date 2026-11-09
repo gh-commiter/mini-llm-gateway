@@ -8,6 +8,10 @@
 - `minigw plugin install` does not link a minigw that is, or lies in a folder that is, writable by other users or not owned by you or root. `minigw plugin` and `minigw uninstall` refuse to run as root. Both clients.
 - When a signed release is newer than the installed minigw, the session start says so also for a minigw linked by the plugin; a Linux client without `minigw serve` gets the replace-the-file hint instead of `/minigw:gw update`.
 - The Homebrew `minigw` cask calls `minigw plugin install` / `minigw plugin uninstall` instead of its own Ruby.
+- New: `minigw gw settings` shows the gateway settings in the terminal, also over SSH and inside tmux, on the Mac app and on `minigw serve`: General, Devices, Providers, Agents, Folders, Sessions, and on the Mac a page for Siri AI, Apple Foundation Models and `minigw run`, so the Mac is fully manageable over SSH. Keyboard first, mouse optional, no colors. It is a new helper, `minigw-tui` (Go, Bubble Tea), shipped in the app (`Contents/Helpers`, signed), `minigw.zip` and the `minigw` cask, the MSI, the release (`minigw-tui-<system>-<arch>`), and installed by `install.sh` and `minigw serve install` (Windows and Linux; uninstall removes it). It never reads the config, the key store or the admin secret: every read and change runs `minigw gw api` of the same minigw, so the admin API's rules apply; typed keys and tokens go on stdin and are never shown. The Mac's `minigw` starts it only with a valid Mini Gateway signature. `minigw` itself still uses only the Go standard library.
+- New: `minigw gw api GET|POST|PATCH|DELETE <path>` (both clients): one admin API request, JSON body on stdin, JSON answer on stdout. It is for `minigw-tui`; the plugin's skills use the named `gw` commands.
+- New: Mac admin API `GET/PATCH /appleFM` (`enabled`, `instructions`), as in Settings → Apple Foundation Models.
+- Changed: on Windows and Linux, `minigw gw settings` used to print a one-time link to the settings page; that is now `minigw gw settings link` (the tray's **Settings…** is unchanged).
 
 ## 0.5.19
 

@@ -6,6 +6,7 @@ import (
 	"crypto/ecdh"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -270,6 +271,32 @@ func TestRouterCLIOnlineAndOffline(t *testing.T) {
 	if out := run(cfg, "token"); !strings.Contains(out, "minigw connect") {
 		t.Fatalf("token: %q", out)
 	}
+	// gw api (minigw-tui): telo s stdin, odgovor JSON kot v API
+	api := func(cfg, body string, args ...string) map[string]any {
+		var m map[string]any
+		out := stdout(t, func() {
+			routerCommand(append(append([]string{"api"}, args...), "--config", cfg), strings.NewReader(body))
+		})
+		if err := json.Unmarshal([]byte(out), &m); err != nil {
+			t.Fatalf("api %v: %q", args, out)
+		}
+		return m
+	}
+	if m := api(cfg, `{"allowLocalApps": true}`, "PATCH", "/general"); m["allowLocalApps"] != true || s.conf().AllowLocalApps == nil || !*s.conf().AllowLocalApps {
+		t.Fatalf("api PATCH: %v", m)
+	}
+	if m := api(cfg, "", "GET", "/devices"); len(m["devices"].([]any)) != 1 {
+		t.Fatalf("api GET: %v", m)
+	}
+	for _, x := range [][2]string{{"PUT", "/general"}, {"GET", "status"}, {"GET", "/x/../general"}, {"GET", "/st atus"},
+		{"GET", "/status#x"}, {"GET", "/status\n"}, {"GET", "/status\x7f"}} {
+		if apiRequestOK(x[0], x[1]) {
+			t.Fatalf("api accepts %q", x)
+		}
+	}
+	if !apiRequestOK("GET", "/providers/lab/models?filter=qwen") {
+		t.Fatal("api refuses a query")
+	}
 
 	off := filepath.Join(t.TempDir(), "serve.json")
 	saveServeConfig(off, serveConfig{Token: "tok", Key: s.cfg.Key, Port: freePort(t)})
@@ -279,6 +306,9 @@ func TestRouterCLIOnlineAndOffline(t *testing.T) {
 	run(off, "devices", "allow", id)
 	if c, _ := loadServeConfig(off); len(c.Devices) != 1 {
 		t.Fatalf("offline allow: %+v", c.Devices)
+	}
+	if m := api(off, "", "GET", "/status"); m["running"] != false {
+		t.Fatalf("offline api: %v", m)
 	}
 	dash := "-" + id[1:]                     // ID z vodilnim »-« ni zastavica (prej je občasno ustavil test)
 	for !validDeviceID(dash) || dash == id { // id se lahko že sam začne z »-« (1 od 64): to bi bila ista naprava

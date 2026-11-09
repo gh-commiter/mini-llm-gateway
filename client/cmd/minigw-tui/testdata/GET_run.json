@@ -1,0 +1,1 @@
+{"commands": "make,swift,xcodebuild", "devices": [{"id": "Qm9iJ3MgTWFjQm9vayBkZXZpY2Uga2V5IDMyIGJ5dGVz", "name": "Bob's MacBook", "run": false, "network": false}, {"id": "TGludXggbGFwdG9wIGRldmljZSBrZXkgMzIgYnl0ZXMx", "name": "thinkpad", "run": true, "network": false}]}

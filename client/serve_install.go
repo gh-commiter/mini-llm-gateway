@@ -326,6 +326,7 @@ func installWindows(exe, cfgPath string) (string, error) {
 		// minigw.exe ob prijavi bi imel ves čas odprto okno konzole: brez pladnja ni namestitve
 		return "", errors.New("minigw-tray.exe was not next to minigw.exe and the download failed (" + err.Error() + "): put minigw-tray.exe next to minigw.exe and run minigw serve install again")
 	}
+	note := installTUI(exe, dir, "windows")
 	path, err := envPathGet()
 	if err != nil { // L1: ob napaki ne prepiši uporabnikovega PATH
 		return "", fmt.Errorf("cannot read the user PATH: %v", err)
@@ -341,7 +342,28 @@ func installWindows(exe, cfgPath string) (string, error) {
 	if err := startDetached(tray, "tray", "--config", cfgPath); err != nil {
 		return "", err
 	}
-	return "installed to " + dir + "; Mini Gateway is in the notification area; open a new terminal for minigw on PATH", nil
+	return "installed to " + dir + "; Mini Gateway is in the notification area; open a new terminal for minigw on PATH" + note, nil
+}
+
+// installTUI: minigw-tui (minigw gw settings) ob nameščeni minigw, ob tem minigw ali iz izdaje; brez njega namestitev
+// uspe, le opomba.
+func installTUI(exe, dir, goos string) string {
+	if goos != "linux" && goos != "windows" { // macOS: v aplikaciji (Helpers), ni sredstva izdaje
+		return ""
+	}
+	name, asset := "minigw-tui", "minigw-tui-"+goos+"-"+runtime.GOARCH
+	if goos == "windows" {
+		name, asset = name+".exe", asset+".exe"
+	}
+	dst := filepath.Join(dir, name)
+	src := filepath.Join(filepath.Dir(exe), name)
+	if errFromStat(src) == nil && (src == dst || installFile(src, dst) == nil) {
+		return ""
+	}
+	if err := fetchRelease(asset, dst); err != nil {
+		return "\nThe settings terminal UI (minigw gw settings) is not installed: " + err.Error()
+	}
+	return ""
 }
 
 // updateMSI: MSI te izdaje (preverjen po podpisanem SHA256SUMS) namesti msiexec; MSI sam zapre in zažene pladenj.
@@ -434,7 +456,7 @@ func uninstallWindows(cfgPath string) (string, error) {
 		}
 	}
 	var later []string
-	for _, f := range []string{"minigw.exe", "minigw-tray.exe", ""} {
+	for _, f := range []string{"minigw.exe", "minigw-tray.exe", "minigw-tui.exe", ""} {
 		p := filepath.Join(dir, f)
 		if dir == "" || os.Remove(p) == nil || errors.Is(errFromStat(p), os.ErrNotExist) {
 			continue
@@ -504,6 +526,7 @@ func serviceCommand(sub, goos, cfgPath string) (string, error) {
 		if err := installFile(exe, target); err != nil {
 			return "", err
 		}
+		note := installTUI(exe, filepath.Dir(target), goos)
 		exe = target
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			return "", err
@@ -528,13 +551,14 @@ func serviceCommand(sub, goos, cfgPath string) (string, error) {
 		log := " (" + p + "); log: journalctl --user -u " + systemdUnit
 		u := userName()
 		if lingerOn(u) || runCmd("loginctl", "enable-linger", u) == nil || runCmd("sudo", "-n", "loginctl", "enable-linger", u) == nil {
-			return "minigw serve runs now and at boot, also without signing in" + log, nil
+			return "minigw serve runs now and at boot, also without signing in" + log + note, nil
 		}
-		return "minigw serve runs now and at sign-in" + log + "\nTo start Mini Gateway at boot without logging in, run: sudo loginctl enable-linger " + u, nil
+		return "minigw serve runs now and at sign-in" + log + note + "\nTo start Mini Gateway at boot without logging in, run: sudo loginctl enable-linger " + u, nil
 	case "linux uninstall":
 		runCmd("systemctl", "--user", "disable", "--now", systemdUnit)
 		os.Remove(p)
 		runCmd("systemctl", "--user", "daemon-reload")
+		os.Remove(filepath.Join(installDir(goos), "minigw-tui")) // namestitev ga je dodala; minigw ostane (na PATH)
 		return "minigw serve stopped and no longer starts at sign-in (the config is kept)", nil
 	case "darwin uninstall":
 		runCmd("launchctl", "bootout", uid, p)

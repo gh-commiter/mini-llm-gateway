@@ -57,6 +57,9 @@ done
 mkdir -p "$APP/Contents/Helpers"
 cp "$DERIVED/Build/Products/Release/MiniGW" "$APP/Contents/Helpers/minigw"
 codesign --force --options runtime --timestamp --identifier dev.trojar.minigateway.cli --sign "$IDENTITY" "$APP/Contents/Helpers/minigw"
+# Nastavitve v terminalu (minigw gw settings): Go, kliče nazaj minigw (gw api); sam ne bere Keychaina, zato lasten identifikator.
+(cd client && CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o "../$APP/Contents/Helpers/minigw-tui" ./cmd/minigw-tui)
+codesign --force --options runtime --timestamp --identifier dev.trojar.minigateway.tui --sign "$IDENTITY" "$APP/Contents/Helpers/minigw-tui"
 codesign --force --options runtime --timestamp --sign "$IDENTITY" "$APP"
 codesign --verify --strict "$APP"
 
@@ -87,16 +90,23 @@ if [[ $MODE == --release ]]; then
   # Odjemalec (drug Mac): samo ukaz minigw + install.sh; imeni brez različice za releases/latest/download/…
   CLI_ZIP="$OUT/minigw.zip"
   rm -f "$CLI_ZIP"
-  ditto -c -k "$APP/Contents/Helpers/minigw" "$CLI_ZIP"
+  CLI_STAGE=$(mktemp -d)
+  cp "$APP/Contents/Helpers/minigw" "$APP/Contents/Helpers/minigw-tui" $CLI_STAGE/
+  ditto -c -k $CLI_STAGE "$CLI_ZIP"
+  rm -rf $CLI_STAGE
   xcrun notarytool submit "$CLI_ZIP" --keychain-profile "${NOTARY_PROFILE:-minigateway-notary}" --wait
   cp install.sh "$OUT/install.sh"
 
-  # Odjemalec za Windows in Linux (client/, Go, le standardna knjižnica): ena izvršljiva datoteka na sistem.
+  # Odjemalec za Windows in Linux (client/, Go): minigw le s standardno knjižnico, ena izvršljiva datoteka na sistem;
+  # minigw-tui (Bubble Tea) posebej.
   GO_BINS=()
   for t in windows/amd64 windows/arm64 linux/amd64 linux/arm64; do
     os=${t%/*}; arch=${t#*/}; name=minigw-$os-$arch; [[ $os == windows ]] && name+=.exe || true
     (cd client && CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath -ldflags "-s -w" -o "../$OUT/$name" .)
     GO_BINS+=$name
+    tui=${name/minigw-/minigw-tui-}  # minigw gw settings (serve install ga prenese, MSI ga vsebuje)
+    (cd client && CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath -ldflags "-s -w" -o "../$OUT/$tui" ./cmd/minigw-tui)
+    GO_BINS+=$tui
   done
   # Pladenj za Windows: isti program brez konzole (minigw-tray*.exe zažene router z ikono v območju za obvestila).
   for arch in amd64 arm64; do

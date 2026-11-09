@@ -1,0 +1,3 @@
+{"devices": [{"id": "Qm9iJ3MgTWFjQm9vayBkZXZpY2Uga2V5IDMyIGJ5dGVz", "name": "Bob's MacBook", "lastSeen": "2026-11-08T17:02:11Z"}],
+ "pending": [{"id": "TGludXggbGFwdG9wIGRldmljZSBrZXkgMzIgYnl0ZXMx", "name": "thinkpad", "address": "192.168.1.40", "client": "Linux, minigw 0.5.20", "time": "2026-11-09T08:15:00Z"}],
+ "allowAnyDevice": false}

@@ -1,7 +1,7 @@
 # Mini Gateway admin API (v1)
 
 One API to configure a gateway on its own computer. The Go gateway (`minigw serve`) and the Mac app implement it;
-[Mac differences](#mac-app) are listed at the end. `minigw gw …`, the Windows tray and the settings page use it. Changes apply at once,
+[Mac differences](#mac-app) are listed at the end. `minigw gw …` (and `minigw gw settings` in a terminal, through `minigw gw api METHOD PATH`, body on stdin), the Windows tray and the settings page use it. Changes apply at once,
 except where a response says `"restartRequired": true`.
 
 ## Access
@@ -207,6 +207,7 @@ Notes:
 | `GET /foundry/models` | – | `{"models": [{"name", "vision", "enabled"}]}`: models downloaded in Foundry Local; `503` when it is not installed or does not answer (Go gateway and the Mac app) |
 | `GET /agents/grok`, `PATCH` | any of `{"enabled", "path", "write", "models", "askOthers"}` | `{"enabled", "path", "found", "write", "models", "askOthers"}` |
 | `GET /agents/copilot`, `PATCH` | any of `{"enabled", "path", "write", "network", "commands", "models", "token", "askOthers"}` | `{"enabled", "path", "found", "write", "network", "commands", "models": [string], "hasToken", "askOthers"}` |
+| `GET /appleFM`, `PATCH` (Mac) | any of `{"enabled", "instructions"}` | `{"enabled", "instructions"}`: Apple Foundation Models (Settings → Apple Foundation Models); instructions up to 8000 characters |
 | `GET /siri`, `PATCH` | any of `{"enabled", "timeout", "allow": [id], "deny": [id]}` | `{"enabled", "timeout", "devices": [{"id", "name", "siri"}]}` |
 | `GET /run`, `PATCH` (Mac) | any of `{"commands", "allow": [id], "deny": [id], "allowNetwork": [id], "denyNetwork": [id]}` | `{"commands", "devices": [{"id", "name", "run", "network"}]}` |
 
@@ -268,7 +269,8 @@ The Mac app keeps its settings in its preferences and Keychain; the Settings win
   and `GET /agents/{codex,grok}/models` answer as on Go.
   `folders` is the comma-separated list of allowed folders. There is no `allowUnsandboxedBash`: with
   `allowLocalTools`, Bash runs in Claude Code's sandbox.
-- **general:** also `allowedClients` (IP addresses, comma-separated; empty = all), `allowPlainRemote` and `allowAnyDevice`. `address`
+- **general:** also `worktreeNetwork` and `worktreeCodexNetwork` (Settings → General → Worktree mode: Network for builds,
+  Network for Codex builds; `GET` and `PATCH`), and `allowedClients` (IP addresses, comma-separated; empty = all), `allowPlainRemote` and `allowAnyDevice`. `address`
   may be `0.0.0.0`, `::` or `127.0.0.1`. A port or address change restarts the listener, so there is no
   `restartRequired`. `scratch` is an existing folder: as in Settings, the scratch content moves into a
   `Mini Gateway Scratch` folder inside it (`""` = the default folder); `GET` returns the folder in use.
