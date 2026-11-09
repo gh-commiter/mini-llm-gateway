@@ -329,7 +329,14 @@ final class ShareClient: @unchecked Sendable {
     /// worktree: posnetek stanja (brez spremembe indeksa ali vej) in bundle manjkajočih objektov po delih do 32 MB.
     private func wtPush(_ k: String, _ job: DAVJob) -> DAVResponse {
         let have = (try? JSONSerialization.jsonObject(with: job.body) as? [String: Any])?["have"] as? [String] ?? []
-        guard let top, let snap = Worktree.snapshot(top: top) else { note("worktree: cannot take a snapshot (no commit yet?)"); return DAVResponse(500) }
+        let skip = top.map { Worktree.nestedNoCommit(top: $0) } ?? []
+        for p in skip where reported.insert("nocommit:" + p).inserted {
+            note("worktree: nested repository \(p) has no commit yet and is not part of this worktree run")
+        }
+        guard let top, let snap = Worktree.snapshot(top: top, skip: skip) else {
+            if reported.insert("snapshot").inserted { note("worktree: cannot take a snapshot of \(top ?? root.path) (git add or write-tree failed)") }
+            return DAVResponse(500)
+        }
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("minigw-\(UUID().uuidString).bundle")
         defer { try? FileManager.default.removeItem(at: file) }
         guard let made = Worktree.bundle(top: top, snapshot: snap, have: have, to: file) else { note("worktree: git bundle failed"); return DAVResponse(500) }
@@ -599,7 +606,7 @@ func refuseUnsafeClaudeFlags() {
     guard Profiles.checkClaudeArgs(env) else { return }
     var st = stat()
     if fstat(0, &st) == 0, st.st_mode & S_IFMT != S_IFCHR {  // terminal, /dev/null: ne bere
-        claudeStdin = FileHandle.standardInput.readDataToEndOfFile()
+        claudeStdin = Profiles.readStdin(fd: 0, waitMs: Profiles.promptWords(args).isEmpty ? 0 : 3000) ?? Data()
     }
     if let r = Profiles.unsafePrompt(args, stdin: String(decoding: claudeStdin ?? Data(), as: UTF8.self), env: env) {
         fail("\(r) is not accepted when minigw runs inside Claude Code: paste the text itself into the prompt")
@@ -881,8 +888,8 @@ let top = ["auto", "worktree"].contains(work) ? Worktree.toplevel(cwd).flatMap {
 let smb = work == "auto" && Native.detect(cwd: cwd, override: ProcessInfo.processInfo.environment["MINIGW_NATIVE_MOUNT"]) != nil
 var tries = SharedFolders.candidates(work: work, readOnly: readOnly, smb: smb, git: top != nil)
 // Brez commita ni posnetka: enkrat preveri, nato sync (#10).
-let noCommit = top.map { tries.contains("worktree") && !Worktree.hasCommit(top: $0) } ?? false
-if noCommit { tries.removeAll { $0 == "worktree" } }
+let noSnapshot = top.flatMap { tries.contains("worktree") ? Worktree.snapshotBlocker(top: $0) : nil }
+if noSnapshot != nil { tries.removeAll { $0 == "worktree" } }
 tries = Profiles.noDirectFallback(tries, flag: flagWork, saved: SharedFolders.lookup(sharedFolders(), cwd: cwd)?.work, readOnly: readOnly, env: callerEnv)
 if tries.isEmpty {
     fail("--minigw-work=\(flagWork ?? "") is not possible in \(cwd), and inside Claude Code minigw does not fall back to direct "
@@ -892,7 +899,7 @@ var share = ShareClient(c, session: sid, root: URL(fileURLWithPath: cwd), readOn
 var registered = false
 if wantShare, !sid.isEmpty {
     if work == "worktree", top == nil { err.write(Data("minigw: \(cwd) is not in a git repository; worktree mode is not possible\n".utf8)) }
-    if noCommit { err.write(Data("minigw: the git repository \(top ?? "") has no commit yet, so worktree mode is not possible; using \(tries[0])\n".utf8)) }
+    if let noSnapshot { err.write(Data("minigw: \(noSnapshot); using \(tries[0])\n".utf8)) }
     (share, registered) = registerShare(c, tries: tries, quiet: false)
 }
 if !wantShare || sid.isEmpty {
@@ -924,7 +931,9 @@ if !wantShare || sid.isEmpty {
     }
     guard implicit, sc.refusal.hasPrefix("this gateway supports --minigw-work=") else { return (sc, false) }
     let t = Worktree.toplevel(cwd)
-    let auto = !readOnly && SharedFolders.repoRoot(t, cwd) && t.map { Worktree.hasCommit(top: $0) } == true ? ["worktree", "sync"] : ["sync"]
+    let why = !readOnly && SharedFolders.repoRoot(t, cwd) ? t.map { Worktree.snapshotBlocker(top: $0) ?? "" } : nil
+    if let why, !why.isEmpty, !quiet { err.write(Data("minigw: \(why)\n".utf8)) }
+    let auto = why == "" ? ["worktree", "sync"] : ["sync"]
     if !quiet { err.write(Data("minigw: the gateway has no folder mount; using \(auto[0]) mode (--minigw-work= to choose)\n".utf8)) }
     return registerShare(c, tries: auto, quiet: quiet, top: t, implicit: false)
 }

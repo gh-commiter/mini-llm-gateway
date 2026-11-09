@@ -118,6 +118,10 @@ line with the token appears only after **Show the connect line**.
 | Sessions | Recent sessions with details, Clear history | | |
 | Mac | – | Siri AI (on, timeout, per device), Apple Foundation Models (on, instructions), `minigw run` (commands, per device, network) | |
 
+**Over SSH on a Mac:** the login keychain is locked in an SSH session, so `minigw` cannot read the gateway's admin
+key and says so. Run `security unlock-keychain ~/Library/Keychains/login.keychain-db` in the SSH session first (it asks
+for your login password), then retry. `minigw` never runs the `security` command itself.
+
 Not in the terminal: Claude CLI's per-tool switches (the tools
 are a comma-separated field) and copying the token to the clipboard.
 

@@ -287,6 +287,9 @@ func pluginInstall(goos string) bool {
 // pluginUninstall: upgrading (brew upgrade, MSI): marketplace in povezava ostaneta, da vtičnik ne izgine med sejo.
 func pluginUninstall(goos string, upgrading bool) bool {
 	ok := true
+	path := claudeSettingsPath()
+	had, hadOff := false, false // pred »marketplace remove«, ki vnose v settings.json odstrani že sam
+	editSettings(path, func(s map[string]any) (bool, error) { had, hadOff = pluginRemove(s); return false, nil })
 	if c := findClaudeFn(); c != "" && !upgrading {
 		if err := runCmd(c, "plugin", "marketplace", "remove", pluginMarket, "--scope", "user"); err != nil {
 			say("Claude Code: marketplace " + pluginMarket + " not removed (claude plugin marketplace remove failed)")
@@ -297,7 +300,6 @@ func pluginUninstall(goos string, upgrading bool) bool {
 	if !upgrading && pluginUnlink(goos, selfPath()) {
 		say("Plugin's minigw: link removed (" + filepath.Join(pluginDataDir(), "bin", "minigw") + ")")
 	}
-	path := claudeSettingsPath()
 	if _, err := os.Stat(path); err != nil {
 		return ok
 	}
@@ -310,7 +312,7 @@ func pluginUninstall(goos string, upgrading bool) bool {
 		fmt.Fprintln(os.Stderr, "minigw: "+err.Error())
 		return false
 	}
-	say("Claude Code plugin " + pluginID + ": " + map[bool]string{true: "removed from ", false: "nothing to remove in "}[ch] + path + map[bool]string{true: offNote}[off])
+	say("Claude Code plugin " + pluginID + ": " + map[bool]string{true: "removed from ", false: "nothing to remove in "}[ch || had] + path + map[bool]string{true: offNote}[off || hadOff])
 	return ok
 }
 

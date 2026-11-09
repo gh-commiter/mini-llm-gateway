@@ -1761,6 +1761,19 @@ final class FakeMinigw: @unchecked Sendable {
     #expect(Profiles.unsafeClaudeFlag(["--dangerously-skip-permissions"], env: ["CLAUDECODE": "1", "MINIGW_ALLOW_UNSAFE_FLAGS": "1"]) == nil)
 }
 
+// Odprt stdin, ki se nikoli ne zapre (orodje Bash v Claude Code): minigw -p z navodilom ne čaka na EOF.
+@Test func readStdinDoesNotBlockWithPrompt() {
+    let open = Pipe(), start = Date()
+    #expect(Profiles.readStdin(fd: open.fileHandleForReading.fileDescriptor, waitMs: 200) == nil)
+    #expect(Date().timeIntervalSince(start) < 2)
+    let piped = Pipe()
+    piped.fileHandleForWriting.write(Data("piped text".utf8)); try? piped.fileHandleForWriting.close()
+    #expect(Profiles.readStdin(fd: piped.fileHandleForReading.fileDescriptor, waitMs: 3000) == Data("piped text".utf8))
+    #expect(Profiles.promptWords(["-p", "--model", "m", "reply pong"]) == ["reply pong"])
+    #expect(Profiles.promptWords(["-p", "--model", "m"]).isEmpty)
+    _ = open.fileHandleForWriting
+}
+
 @Test func unsafePromptInsideClaudeCode() {
     let env = ["CLAUDECODE": "1"], m = ["-p", "--model", "m"]
     for (a, stdin) in [(m + ["/config permissionMode=auto"], ""), (m + ["--", "  /model x"], ""), (m + ["--", "\n/mcp enable x"], ""),

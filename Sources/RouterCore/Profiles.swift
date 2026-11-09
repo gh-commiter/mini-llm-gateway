@@ -120,14 +120,28 @@ public enum Profiles {
     /// »--« in stdin (kot Go unsafePrompt).
     public static func unsafePrompt(_ args: [String], stdin: String, env: [String: String]) -> String? {
         guard checkClaudeArgs(env) else { return nil }
-        var words = [stdin], i = 0
+        return ([stdin] + promptWords(args)).lazy.compactMap(promptRefused).first
+    }
+
+    /// Besede navodila v argumentih claude: niso možnost ali njena vrednost, in vse po »--« (kot Go promptWords).
+    public static func promptWords(_ args: [String]) -> [String] {
+        var words: [String] = [], i = 0
         while i < args.count {
             let a = args[i]
-            if a == "--" { words += args[(i + 1)...]; break }
+            if a == "--" { return words + args[(i + 1)...] }
             if !a.hasPrefix("-") { words.append(a) } else if claudeSafe[a] == true { i += 1 }
             i += 1
         }
-        return words.lazy.compactMap(promptRefused).first
+        return words
+    }
+
+    /// claude -p z navodilom v argumentih čaka na stdin 3 s in nato nadaljuje brez njega; minigw enako (kot Go readStdin),
+    /// zato odprt stdin, ki se nikoli ne zapre (orodje Bash v Claude Code), ne blokira. waitMs 0 = ves stdin.
+    /// nil = v waitMs ni prišlo nič (claude dobi prazen stdin).
+    public static func readStdin(fd: Int32, waitMs: Int32) -> Data? {
+        var p = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+        if waitMs > 0, poll(&p, 1, waitMs) <= 0 { return nil }
+        return FileHandle(fileDescriptor: fd, closeOnDealloc: false).readDataToEndOfFile()
     }
 
     /// Besedilo prehoda v eni vrstici brez kontrolnih znakov, največ `max` znakov: gre v kontekst Claude (M2, M3).

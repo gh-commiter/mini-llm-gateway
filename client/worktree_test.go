@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -261,6 +262,37 @@ func TestSnapshotSkipsIgnoredFilesAndNeedsACommit(t *testing.T) {
 	}
 	if got := gitT(t, repo, "ls-tree", "-r", "--name-only", snap); got != ".gitignore\nnew.txt" {
 		t.Fatalf("snapshot has %q", got)
+	}
+	// Neprezrt ugnezden repozitorij brez commita: način ostane, posnetek ga izpusti (ime očiščeno); prezrt ali s
+	// commitom (gitlink) ni v seznamu.
+	if n := nestedNoCommit(repo); len(n) != 0 {
+		t.Fatalf("nested without nested repo: %q", n)
+	}
+	gitT(t, filepath.Join(repo, "build"), "init", "-q")
+	if n := nestedNoCommit(repo); len(n) != 0 {
+		t.Fatalf("ignored nested repo: %q", n)
+	}
+	lib := filepath.Join(repo, "vendor", "lib")
+	writeT(t, filepath.Join(lib, "a.txt"), "x\n")
+	gitT(t, lib, "init", "-q")
+	writeT(t, filepath.Join(repo, "vendor", "keep.txt"), "x\n")
+	n := nestedNoCommit(repo)
+	if snap := gitSnapshot(repo, n...); !slices.Equal(n, []string{"vendor/lib"}) || !shaRe.MatchString(snap) ||
+		gitT(t, repo, "ls-tree", "-r", "--name-only", snap) != ".gitignore\nnew.txt\nvendor/keep.txt" {
+		t.Fatalf("nested repo without commit: %q %q", n, snap)
+	}
+	gitT(t, lib, "add", "a.txt")
+	gitT(t, lib, "commit", "-qm", "lib")
+	if n := nestedNoCommit(repo); len(n) != 0 || !shaRe.MatchString(gitSnapshot(repo)) {
+		t.Fatalf("nested repo with a commit: %q", n)
+	}
+	os.RemoveAll(filepath.Join(repo, "vendor"))
+	deep := filepath.Join(repo, "new", "x\ny") // globoko v nesledeni mapi, ime z novo vrstico
+	os.MkdirAll(deep, 0o755)
+	writeT(t, filepath.Join(repo, "new", "f.txt"), "x\n")
+	gitT(t, deep, "init", "-q")
+	if n := nestedNoCommit(repo); !slices.Equal(n, []string{"new/x\ny"}) || !shaRe.MatchString(gitSnapshot(repo, n...)) {
+		t.Fatalf("deep nested repo: %q", n)
 	}
 }
 

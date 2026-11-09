@@ -41,3 +41,26 @@ import Testing
     #expect(!PluginSetup.trailingComma(Data(#"{"a":",}","b":"\",]"}"#.utf8)))
     #expect(PluginSetup.trailingComma(Data("{\"a\":1,\n}".utf8)))
 }
+
+/// L3: Homebrew (drwxrwxr-x uporabnik:admin) je varen; o+w ne, tudi z zaupano skupino (kot Go TestPluginDataSafeAndUnsafeDir).
+@Test func pluginSafePathAcceptsAdminGroupRefusesOthersWrite() throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("safe-\(UUID().uuidString)").path
+    try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    #expect(PluginSetup.trustedGroup(80) && !PluginSetup.trustedGroup(20) && !PluginSetup.trustedGroup(12345))
+    chmod(dir, 0o755)
+    #expect(PluginSetup.safePath(dir))
+    chmod(dir, 0o777)
+    #expect(!PluginSetup.safePath(dir))
+    if chown(dir, uid_t.max, 20) == 0 {  // staff: vsak lokalni uporabnik
+        chmod(dir, 0o775)
+        #expect(!PluginSetup.safePath(dir))
+    }
+    if chown(dir, uid_t.max, 80) == 0 {  // uid -1: lastnik ostane
+        chmod(dir, 0o775)
+        #expect(PluginSetup.safePath(dir))
+        chmod(dir, 0o777)
+        #expect(!PluginSetup.safePath(dir))
+    }
+    #expect(!PluginSetup.safePath("/tmp/.no-such-\(UUID().uuidString)"))
+}

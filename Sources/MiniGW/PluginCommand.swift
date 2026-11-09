@@ -67,11 +67,6 @@ func versionOf(_ exe: String) -> String {
 }
 
 /// L3: mapa ali datoteka ni zapisljiva za skupino in druge ter je last tega uporabnika ali root.
-func safeDir(_ dir: String) -> Bool {
-    var st = stat()
-    return stat(dir, &st) == 0 && st.st_mode & 0o022 == 0 && (st.st_uid == getuid() || st.st_uid == 0)
-}
-
 /// L1: le <claude>/plugins/data/minigw…, absolutna in počiščena pot.
 func pluginDataSafe(_ d: String) -> Bool {
     d.hasPrefix("/") && !d.hasSuffix("/") && !d.contains("//") && !d.contains("/./") && !d.contains("/../")
@@ -88,7 +83,7 @@ func pluginLink(_ self: String) throws -> String? {
     let bin = pluginDataDir + "/bin"
     if sameFile((self as NSString).deletingLastPathComponent, bin) { return nil }
     let dir = (self as NSString).deletingLastPathComponent
-    guard safeDir(dir), safeDir(self) else { throw PluginSetup.Failure(message: "\(self) or its folder is writable by others or not owned by you or root: move minigw to a safe folder") }
+    guard PluginSetup.safePath(dir), PluginSetup.safePath(self) else { throw PluginSetup.Failure(message: "\(self) or its folder is writable by others or not owned by you or root: move minigw to a safe folder") }
     try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
     if (try? FileManager.default.destinationOfSymbolicLink(atPath: pluginLinkPath)) != self {
         unlink(pluginLinkPath)
@@ -125,6 +120,8 @@ func pluginInstall() -> Bool {
 
 /// upgrading (brew upgrade): marketplace in povezava ostaneta, da vtičnik ne izgine med sejo.
 func pluginUninstall(upgrading: Bool) -> Bool {
+    var had = false, hadOff = false  // pred »marketplace remove«, ki vnose v settings.json odstrani že sam
+    try? PluginSetup.edit(claudeSettings) { s in (had, hadOff) = PluginSetup.remove(&s); return false }
     if !upgrading, let c = findClaude() {
         say("Claude Code: marketplace \(PluginSetup.market) " + (runQuiet(c, ["plugin", "marketplace", "remove", PluginSetup.market, "--scope", "user"]) ? "removed" : "not removed (claude plugin marketplace remove failed)"))
     }
@@ -137,7 +134,7 @@ func pluginUninstall(upgrading: Bool) -> Bool {
         warn((error as? PluginSetup.Failure)?.message ?? error.localizedDescription)
         return false
     }
-    say("Claude Code plugin \(PluginSetup.id): " + (changed ? "removed from " : "nothing to remove in ") + claudeSettings + (off ? offNote : ""))
+    say("Claude Code plugin \(PluginSetup.id): " + (changed || had ? "removed from " : "nothing to remove in ") + claudeSettings + (off || hadOff ? offNote : ""))
     return true
 }
 

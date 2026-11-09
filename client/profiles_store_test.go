@@ -4,8 +4,11 @@ package main
 
 import (
 	"os"
+	"os/user"
 	"path/filepath"
+	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -66,5 +69,25 @@ func TestProfilesStoreAndMigration(t *testing.T) {
 		if validProfile(n) {
 			t.Fatalf("valid: %q", n)
 		}
+	}
+}
+
+func TestTrustedGroup(t *testing.T) {
+	if !trustedGroup("darwin", 80, "") || trustedGroup("darwin", 20, "") || trustedGroup("darwin", 12345, "") {
+		t.Error("darwin: only admin trusted (not staff or other groups)")
+	}
+	if trustedGroup("linux", 80, "") && os.Getgid() != 80 {
+		t.Error("linux: a group that is not the user's primary group trusted")
+	}
+	u, err := user.Current()
+	g, gerr := user.LookupGroupId(strconv.Itoa(os.Getgid()))
+	if runtime.GOOS != "linux" || err != nil || gerr != nil || g.Name != u.Username {
+		return // brez zasebne skupine uporabnika
+	}
+	if !trustedGroup("linux", uint32(os.Getgid()), g.Name+":x:"+g.Gid+":\n") {
+		t.Error("linux: user private group not trusted")
+	}
+	if trustedGroup("linux", uint32(os.Getgid()), g.Name+":x:"+g.Gid+":mallory\n") {
+		t.Error("linux: user private group with another member trusted")
 	}
 }

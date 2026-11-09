@@ -775,6 +775,29 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     let snap = try #require(Worktree.snapshot(top: root.path))
     #expect(Worktree.hasCommit(top: root.path))
     #expect(g(root, "ls-tree", "-r", "--name-only", snap) == ".gitignore\nnew.txt")
+    // Neprezrt ugnezden repozitorij brez commita: način ostane, posnetek ga izpusti; prezrt ali s commitom (gitlink) ni
+    // v seznamu (kot Go TestSnapshotSkipsIgnoredFilesAndNeedsACommit).
+    #expect(Worktree.nestedNoCommit(top: root.path).isEmpty)
+    g(root.appendingPathComponent("build"), "init", "-q")
+    #expect(Worktree.nestedNoCommit(top: root.path).isEmpty)
+    let lib = root.appendingPathComponent("vendor/lib")
+    try FileManager.default.createDirectory(at: lib, withIntermediateDirectories: true)
+    try file(lib, "a.txt", "x\n")
+    g(lib, "init", "-q")
+    try file(root, "vendor/keep.txt", "x\n")
+    let n = Worktree.nestedNoCommit(top: root.path)
+    #expect(n == ["vendor/lib"])
+    let s2 = try #require(Worktree.snapshot(top: root.path, skip: n))
+    #expect(g(root, "ls-tree", "-r", "--name-only", s2) == ".gitignore\nnew.txt\nvendor/keep.txt")
+    g(lib, "add", "a.txt"); g(lib, "commit", "-qm", "lib")
+    #expect(Worktree.nestedNoCommit(top: root.path).isEmpty && Worktree.snapshot(top: root.path) != nil)
+    try FileManager.default.removeItem(at: root.appendingPathComponent("vendor"))
+    let deep = root.appendingPathComponent("new/x\ny")  // globoko v nesledeni mapi, ime z novo vrstico
+    try FileManager.default.createDirectory(at: deep, withIntermediateDirectories: true)
+    try file(root, "new/f.txt", "x\n")
+    g(deep, "init", "-q")
+    #expect(Worktree.nestedNoCommit(top: root.path) == ["new/x\ny"])
+    #expect(Worktree.snapshot(top: root.path, skip: ["new/x\ny"]) != nil)
 }
 
 /// Auto (privzeti ali izrecni) le v korenu repozitorija (kot Go repoRoot/workTop); vrstica o veji le z delom agenta

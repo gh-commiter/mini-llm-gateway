@@ -85,7 +85,11 @@ private func keychainHint(_ st: OSStatus) -> String {
     case errSecNoSuchKeychain: return "run minigw gw as the user who runs Mini Gateway, not as \(me) (\(me) has no login keychain)"
     case errSecItemNotFound: return "start Mini Gateway 0.5.15 or newer once, so it can create the admin item"
     case errSecAuthFailed, errSecUserCanceled, errSecInteractionNotAllowed:  // brez dialoga (main.swift)
-        return "Mini Gateway has not given minigw access to its admin key yet: quit and open the Mini Gateway app once, then run the command again; if you are signed in over SSH or the login keychain is locked, unlock it first (security unlock-keychain)"
+        // SSH: prijavni Keychain je v seji SSH zaklenjen; minigw sam nikoli ne kliče ukaza security.
+        if !(ProcessInfo.processInfo.environment["SSH_CONNECTION"] ?? "").isEmpty {
+            return "the login keychain is locked in this SSH session: run security unlock-keychain ~/Library/Keychains/login.keychain-db in the SSH session first, then retry (if it still fails, quit and open the Mini Gateway app once on the Mac)"
+        }
+        return "Mini Gateway has not given minigw access to its admin key yet: quit and open the Mini Gateway app once, then run the command again; if the login keychain is locked, unlock it first"
     default: return "cannot read Mini Gateway's admin item from the Keychain (OSStatus \(st))"
     }
 }

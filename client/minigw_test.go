@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDavResolveStaysInRoot(t *testing.T) {
@@ -1132,5 +1134,24 @@ func TestDavGetRefusesFifo(t *testing.T) { // L3
 	}
 	if r := davHandle("GET", "/dav/s/f", nil, nil, root, "/dav/s"); r.Status != 403 {
 		t.Fatalf("GET fifo: %d", r.Status)
+	}
+}
+
+// Odprt stdin, ki se nikoli ne zapre (orodje Bash v Claude Code): minigw -p z navodilom ne čaka na EOF.
+func TestReadStdinDoesNotBlockWithPrompt(t *testing.T) {
+	r, w := io.Pipe()
+	defer w.Close()
+	start := time.Now()
+	if b, err := readStdin(r, 200*time.Millisecond); err != nil || b != nil || time.Since(start) > 2*time.Second {
+		t.Fatalf("open stdin: %q %v after %v", b, err, time.Since(start))
+	}
+	if b, err := readStdin(strings.NewReader("piped text"), stdinWait); err != nil || string(b) != "piped text" {
+		t.Fatalf("piped stdin: %q %v", b, err)
+	}
+	if b, err := readStdin(strings.NewReader("no prompt"), 0); err != nil || string(b) != "no prompt" {
+		t.Fatalf("stdin without prompt: %q %v", b, err)
+	}
+	if len(promptWords([]string{"-p", "--model", "m", "reply pong"})) != 1 || len(promptWords([]string{"-p", "--model", "m"})) != 0 {
+		t.Fatal("promptWords")
 	}
 }
