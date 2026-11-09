@@ -25,6 +25,10 @@ Every `minigw` command and every plugin skill, with an example. `minigw --minigw
 | `minigw share list` | Show shared folders and their saved modes |
 | `minigw run [--] <command> [args …]` | Run a build in this folder on the gateway Mac (native mode, allowed per device) |
 | `minigw --version` | minigw's version (`claude --version` gives Claude Code's) |
+| `minigw plugin install` | Add the Claude Code plugin `minigw@mini-gateway` to `~/.claude/settings.json` (a `false` you set stays; invalid JSON is not changed) and point the plugin's `bin/minigw` at this minigw |
+| `minigw plugin uninstall [--upgrading]` | Remove only what `plugin install` added, and `claude plugin marketplace remove mini-gateway` (not with `--upgrading`) |
+| `minigw plugin status` | Versions of minigw, Claude Code, the plugin and the default gateway; which minigw the plugin uses |
+| `minigw uninstall [--purge] [--yes]` | List, confirm, then remove what minigw added here (plugin, sign-in start, scratch folders); `--purge` also profiles and settings. minigw itself stays: it prints the command for that ([install.md](install.md#plugin-and-uninstall-one-command-everywhere)) |
 
 Examples:
 
@@ -125,7 +129,7 @@ itself when the request fits. Most skills take `--profile <p>` (or a model with 
 | `/minigw:on-device [--profile P] <text>` | `claude-apple-fm` | Short private answers on-device |
 | `/minigw:models` | – | Gateway models, grouped by provider |
 | `/minigw:status` | – | Connection and available models |
-| `/minigw:version` | – | Versions of minigw, Claude Code and the plugin |
+| `/minigw:version` | – | Versions of minigw, Claude Code, the plugin and the gateway (`minigw plugin status`) |
 | `/minigw:connect [--name P] <gateway[:port]> <token>` | – | Connect this computer to a gateway; `--name` adds another one as a profile |
 | `/minigw:share [folder \| list \| remove [folder]]` | – | Share a folder that minigw does not share by itself |
 | `/minigw:gw install \| update \| uninstall \| status` | – | Install, update, remove or check the gateway on this computer |

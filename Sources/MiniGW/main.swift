@@ -641,6 +641,10 @@ if let c = agentConn(), args.first?.hasPrefix("-") == true, args.contains("-p") 
 switch args.first {
 case "share":
     shareCommand(Array(args.dropFirst()))
+case "plugin":
+    pluginCommand(Array(args.dropFirst()))
+case "uninstall":
+    uninstallCommand(Array(args.dropFirst()))
 case "gw", "router":  // router: starejše ime, skrit alias
     routerCommand(Array(args.dropFirst()))
     exit(0)
@@ -758,6 +762,8 @@ case "--minigw-help", "-h", "--help", "-v", "--version":
         minigw share add|remove [folder] | list    share a system or hidden folder itself (contents are always shared)
         minigw share add --work=native|native-direct|worktree|sync|direct|auto [--ro] [folder]   default mode for that folder (flag/env wins)
         minigw gw status|devices|provider|claude|token …    change the Mini Gateway app on this Mac (minigw gw help)
+        minigw plugin install|uninstall|status       the Claude Code plugin minigw@mini-gateway, using this minigw
+        minigw uninstall [--purge] [--yes]          remove what minigw added here (--purge: also settings and profiles)
         minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)
         minigw --minigw-role NAME [claude args]    the caller's role for the gateway's session history (or MINIGW_ROLE)
         inside Claude Code minigw passes only -p, --model and other options that do not widen permissions (MINIGW_ALLOW_UNSAFE_FLAGS=1 = all)

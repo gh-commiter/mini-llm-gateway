@@ -66,6 +66,8 @@ For other computers, `/minigw:gw token` shows the connect line to run there (or 
 - Windows installed with the MSI (`gw status` says so): `serve uninstall` refuses. Tell the user: Settings → Apps → Installed apps → Mini Gateway → Uninstall. The config stays.
 - Windows and Linux: `"$M" serve uninstall`. It stops the gateway and removes autostart. The config (with devices and providers) stays. On Linux, linger stays on. `loginctl disable-linger` turns it off if the user wants.
 - macOS: `"$M" gw autostart off`. Remove the app only if the user asks: `brew uninstall --cask gh-commiter/mini-gateway/mini-gateway`, or move it to the Trash.
+- Everything minigw added on this computer (plugin entries, sign-in start, scratch folders), only if the user asks: `"$M" uninstall --yes`. It lists what it removes; settings and profiles stay, `--purge` also removes them (ask first). Without a terminal it needs `--yes`. minigw itself stays; it prints the command that removes it.
+- If `"$M" plugin status` shows `Plugin bin: … (another minigw …)`, `"$M" plugin install` points the plugin at the installed minigw again.
 
 ## status
 

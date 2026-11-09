@@ -18,75 +18,22 @@ cask "minigw" do
 
   binary "minigw"
 
-  # Vtičnik za Claude Code: uradna ključa uporabniških nastavitev (extraKnownMarketplaces, enabledPlugins); Claude Code
-  # ob naslednjem zagonu sam doda marketplace in namesti vtičnik, brez ukaza claude. Uporabnikov »false« ostane.
-  # Pisanje skozi povezavo (dotfiles) in z isto pravico datoteke (lahko ima ključe v env; nova 0600).
-  settings = File.expand_path("~/.claude/settings.json")
-  plugin_bin = File.expand_path("~/.claude/plugins/data/minigw-mini-gateway/bin/minigw")
-  marketplace = { "source" => { "source" => "github", "repo" => "gh-commiter/mini-llm-gateway" } }
-  save = lambda do |data|
-    real = File.exist?(settings) ? File.realpath(settings) : settings
-    mode = File.exist?(real) ? File.stat(real).mode & 0o7777 : 0o600
-    FileUtils.mkdir_p(File.dirname(real))
-    File.open("#{real}.minigw-tmp", File::WRONLY | File::CREAT | File::TRUNC, mode) { |f| f.write(JSON.pretty_generate(data) + "\n") }
-    File.chmod(mode, "#{real}.minigw-tmp")
-    File.rename("#{real}.minigw-tmp", real)
-  end
-
+  # Vtičnik za Claude Code: minigw plugin install (client/plugin.go, Sources/MiniGW/PluginCommand.swift) doda
+  # marketplace in enabledPlugins v ~/.claude/settings.json (uporabnikov »false« ostane, neveljaven JSON ostane) in
+  # poveže bin/minigw vtičnika na ta minigw takoj, ne šele ob naslednji seji.
   postflight do
-    require "json"
-    begin
-      s = File.exist?(settings) ? JSON.parse(File.read(settings)) : {}
-      if s.is_a?(Hash)
-        (s["extraKnownMarketplaces"] ||= {})["mini-gateway"] ||= marketplace
-        enabled = (s["enabledPlugins"] ||= {})
-        enabled["minigw@mini-gateway"] = true unless enabled.key?("minigw@mini-gateway")
-        save.call(s)
-      end
-    rescue JSON::ParserError, SystemCallError => e
-      opoo "Claude Code plugin not added (#{settings}: #{e.message}); add it in Claude Code: /plugin install minigw@mini-gateway"
-    end
-    # Skilli vtičnika kličejo minigw v njegovi mapi: povezava na ta minigw takoj, ne šele ob naslednji seji (hook
-    # vtičnika naredi isto: nameščen in podpisan minigw ima prednost pred preneseno kopijo).
-    begin
-      FileUtils.mkdir_p(File.dirname(plugin_bin))
-      FileUtils.rm_f(plugin_bin)
-      File.symlink("#{HOMEBREW_PREFIX}/bin/minigw", plugin_bin)
-    rescue SystemCallError => e
-      opoo "minigw not linked for the Claude Code plugin (#{e.message}); a new Claude Code session sets it up"
-    end
+    system_command "#{HOMEBREW_PREFIX}/bin/minigw", args: ["plugin", "install"], must_succeed: false, print_stdout: true
   end
 
-  # Teče tudi ob brew upgrade/reinstall (nato postflight): odstrani le, kar je dodal cask (true, isti vir), uporabnikov
-  # »false« ostane. Le ob pravi odstranitvi še »claude plugin marketplace remove« (datoteke vtičnika), ne ob nadgradnji,
-  # da vtičnik ne izgine med tekočo sejo.
-  uninstall_postflight do
-    require "json"
+  # Pred odstranitvijo (minigw je še tu), tudi ob brew upgrade/reinstall (nato postflight): minigw plugin uninstall
+  # odstrani le, kar je dodal plugin install. Ob nadgradnji --upgrading: brez »claude plugin marketplace remove« in
+  # povezava ostane, da vtičnik ne izgine med tekočo sejo.
+  uninstall_preflight do
     upgrading = defined?(Homebrew.running_command) && %w[install upgrade reinstall].include?(Homebrew.running_command)
-    claude = ["~/.local/bin", "/opt/homebrew/bin", "/usr/local/bin"].map { |d| File.join(File.expand_path(d), "claude") }
-                                                                    .find { |f| File.executable?(f) }
-    if claude && !upgrading
-      system_command claude, args: ["plugin", "marketplace", "remove", "mini-gateway", "--scope", "user"], must_succeed: false
-    end
-    if !upgrading && File.symlink?(plugin_bin) && File.readlink(plugin_bin) == "#{HOMEBREW_PREFIX}/bin/minigw"
-      FileUtils.rm_f(plugin_bin)
-    end
-    begin
-      s = JSON.parse(File.read(settings))
-      if s.is_a?(Hash)
-        changed = false
-        if s.dig("enabledPlugins", "minigw@mini-gateway") == true
-          s["enabledPlugins"].delete("minigw@mini-gateway")
-          changed = true
-        end
-        if s.dig("extraKnownMarketplaces", "mini-gateway") == marketplace
-          s["extraKnownMarketplaces"].delete("mini-gateway")
-          changed = true
-        end
-        save.call(s) if changed
-      end
-    rescue JSON::ParserError, SystemCallError
-      nil
+    minigw = "#{HOMEBREW_PREFIX}/bin/minigw"
+    if File.executable?(minigw)
+      system_command minigw, args: ["plugin", "uninstall", *(upgrading ? ["--upgrading"] : [])], must_succeed: false,
+                             print_stdout: true
     end
   end
 

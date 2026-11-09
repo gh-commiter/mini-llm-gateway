@@ -148,7 +148,9 @@ public final class Router: Sendable {
             var providers: [String: Bool] = [:]
             for (id, ok) in await catalog.status() { providers[id] = ok }
             if config.siri.enabled { providers["siri-ai"] = SiriAX.trusted(prompt: false) && SiriAX.isRunning() }
-            return (await json(200, ["status": "ok", "providers": providers], rid: rid, writer: writer), nil, nil)
+            var body: [String: Any] = ["status": "ok", "providers": providers]
+            body["version"] = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String  // minigw plugin status
+            return (await json(200, body, rid: rid, writer: writer), nil, nil)
         default:
             break
         }

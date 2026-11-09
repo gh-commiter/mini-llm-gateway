@@ -11,13 +11,16 @@ ways, and what the plugin does for you.
 - [Gateway on Windows or Linux](#gateway-on-windows-or-linux)
 - [Windows installer (MSI)](#windows-installer-msi)
 - [Connect a client](#connect-a-client)
+- [Plugin and uninstall: one command everywhere](#plugin-and-uninstall-one-command-everywhere)
 - [Build from source](#build-from-source)
 
 ## What the plugin does
 
-- **At session start** it uses an installed `minigw` or downloads one from the latest release into its data folder.
-  It checks the signed `SHA256SUMS` and, on macOS, the Developer ID signature. It works on macOS, Windows (Git Bash)
-  and Linux.
+- **At session start** it uses the installed `minigw` (Homebrew or the app on macOS, the MSI on Windows,
+  `~/.local/bin` on Linux) when it is not older than the plugin needs: a link to it (on Windows a small `minigw` /
+  `minigw.cmd` shim), never a second copy. Only when no minigw is installed does it download one from the latest
+  release into its data folder; it checks the signed `SHA256SUMS` and, on macOS, the Developer ID signature. It works
+  on macOS, Windows (Git Bash) and Linux.
 - **Updates:** when the installed gateway is older than the release, the session start shows one line with
   `/minigw:gw update`. Nothing is updated without you, because an update stops the agent requests that run on the
   gateway.
@@ -68,7 +71,7 @@ With Homebrew (tap as above; also installs Claude Code if missing):
 brew install --cask gh-commiter/mini-gateway/minigw
 ```
 
-The `minigw` cask also adds the Claude Code plugin (`minigw@mini-gateway`) to `~/.claude/settings.json`
+The `minigw` cask also runs `minigw plugin install`: it adds the Claude Code plugin (`minigw@mini-gateway`) to `~/.claude/settings.json`
 (`extraKnownMarketplaces`, `enabledPlugins`). Claude Code installs it the next time you start `claude` (or run
 `/reload-plugins`). A `"minigw@mini-gateway": false` you set there stays, also on upgrade. `brew uninstall` removes
 the plugin and its marketplace again; `brew upgrade` keeps them.
@@ -152,6 +155,25 @@ minigw status                            # Status: connected, or why not
 `/minigw:connect <gateway> <token>` does the same in Claude Code. The first connect from a new device is refused
 until the gateway allows it ([gateway.md → Devices](gateway.md#devices)); then connect again. On the gateway computer
 itself, `/minigw:gw install` connects the local `minigw` as profile `local`.
+
+## Plugin and uninstall: one command everywhere
+
+The same commands on macOS, Windows and Linux; the installed minigw is the only minigw.
+
+```sh
+minigw plugin install     # add minigw@mini-gateway to ~/.claude/settings.json, point the plugin at this minigw
+minigw plugin status      # versions of minigw, Claude Code, the plugin and the gateway; which minigw the plugin uses
+minigw plugin uninstall   # remove only what plugin install added ("minigw@mini-gateway": false stays)
+minigw uninstall          # list, then remove what minigw added here: plugin, sign-in start, scratch folders
+minigw uninstall --purge  # also profiles (Keychain, Credential Manager) and the settings folder
+```
+
+`minigw plugin install` refuses a `settings.json` that is not valid JSON and never overwrites it. It does not link a
+minigw that is, or lies in a folder that is, writable by other users or not owned by you or root; move it to a safe
+folder first. `minigw plugin` and `minigw uninstall` refuse to run as root: run them as yourself. `minigw uninstall`
+asks first (`--yes` skips the question; without a terminal it needs `--yes`) and keeps settings and profiles unless
+you add `--purge`. It does not remove minigw itself; it prints how: `brew uninstall --cask minigw`, Settings → Apps for
+the MSI, or `rm ~/.local/bin/minigw`.
 
 ## Build from source
 
