@@ -930,8 +930,12 @@ func TestDavNestedGitAncestorAndHardLink(t *testing.T) {
 		}
 		return davHandle(m, "/dav/s/"+p, hd, nil, root, "/dav/s").Status
 	}
-	for _, c := range [][3]string{{"DELETE", "repoA", ""}, {"MOVE", "other", "repoA"}, {"COPY", "other", "repoA"},
-		{"MOVE", "repoA", "x"}, {"MOVE", "a/b", "a"}, {"COPY", "a/b", "a"}, {"MOVE", "a/b", "A"}} {
+	cases := [][3]string{{"DELETE", "repoA", ""}, {"MOVE", "other", "repoA"}, {"COPY", "other", "repoA"},
+		{"MOVE", "repoA", "x"}, {"MOVE", "a/b", "a"}, {"COPY", "a/b", "a"}}
+	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" { // »A« je »a« le na neobčutljivem datotečnem sistemu
+		cases = append(cases, [3]string{"MOVE", "a/b", "A"})
+	}
+	for _, c := range cases {
 		if s := h(c[0], c[1], c[2]); s != 403 {
 			t.Fatalf("%s %s %s: %d", c[0], c[1], c[2], s)
 		}
