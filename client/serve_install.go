@@ -409,7 +409,7 @@ func updateMSI(dir string) (string, error) {
 		if err := startDetached(msiexecPath(), args...); err != nil {
 			return "", err
 		}
-		return "the MSI of v" + version + " now updates " + dir + " in the background (about a minute; agent requests finish first); minigw gw status then shows the new version", nil
+		return "the MSI of v" + version + " updates " + dir + " in the background (about a minute). Agent requests on this gateway finish first; minigw sessions from " + dir + " are closed. minigw gw status then shows the new version", nil
 	}
 	defer os.RemoveAll(tmp)
 	if err := runCmd(msiexecPath(), args...); err != nil { // L5: ne iz PATH

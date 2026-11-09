@@ -11,12 +11,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -453,5 +455,92 @@ func TestRunValueIn(t *testing.T) {
 	}
 	if runValueIn(`"\minigw-tray.exe"`, "") {
 		t.Error("empty dir")
+	}
+}
+
+// winArgv: razdelitev ukazne vrstice po pravilih CommandLineToArgvW (2n »\« + »"« = n »\« in narekovaj odpre/zapre;
+// 2n+1 »\« + »"« = n »\« in znak »"«; drugi »\« dobesedno).
+func winArgv(cmd string) []string {
+	var out []string
+	var cur strings.Builder
+	in, have := false, false
+	for i := 0; i < len(cmd); i++ {
+		switch c := cmd[i]; {
+		case c == '\\':
+			n := 0
+			for i < len(cmd) && cmd[i] == '\\' {
+				n++
+				i++
+			}
+			if i < len(cmd) && cmd[i] == '"' {
+				cur.WriteString(strings.Repeat(`\`, n/2))
+				if n%2 == 1 {
+					cur.WriteByte('"')
+				} else {
+					in = !in
+				}
+			} else {
+				cur.WriteString(strings.Repeat(`\`, n))
+				i--
+			}
+			have = true
+		case c == '"':
+			in, have = !in, true
+		case (c == ' ' || c == '\t') && !in:
+			if have {
+				out = append(out, cur.String())
+				cur.Reset()
+				have = false
+			}
+		default:
+			cur.WriteByte(c)
+			have = true
+		}
+	}
+	if have {
+		out = append(out, cur.String())
+	}
+	return out
+}
+
+// F1: točen ukaz iz minigw.wxs (Binary stopper, [INSTALLDIR] s končnim »\«) prek razdelitve Windows v trayCommand in
+// stopTargets: StopProcesses ustavi naše programe iz mape, StopTui le minigw-tui.exe.
+func TestMSIStopCommandLine(t *testing.T) {
+	wxs, err := os.ReadFile("minigw.wxs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const dir = `C:\Users\ana\AppData\Local\Programs\Mini Gateway\`
+	ps := []procEntry{
+		{1, 1, dir + `minigw.exe`}, {2, 1, dir + `minigw-tui.exe`}, {3, 1, dir + `minigw-tray.exe`},
+		{4, 1, dir + `other.exe`}, {5, 1, `C:\Program Files\nodejs\node.exe`},
+	}
+	o := msiStop
+	t.Cleanup(func() { msiStop = o })
+	for action, want := range map[string][]uint32{"StopProcesses": {1, 2, 3}, "StopTui": {2}} {
+		m := regexp.MustCompile(`<CustomAction Id="` + action + `"[^>]* ExeCommand="([^"]*)"`).FindSubmatch(wxs)
+		if m == nil {
+			t.Fatalf("%s not in minigw.wxs", action)
+		}
+		cmd := strings.ReplaceAll(html.UnescapeString(string(m[1])), "[INSTALLDIR]", dir)
+		argv := winArgv(`"C:\Users\ana\AppData\Local\Temp\MSI1A2B.tmp" ` + cmd)
+		if len(argv) < 2 || argv[1] != "tray" {
+			t.Fatalf("%s: argv %q", action, argv)
+		}
+		var got []uint32
+		msiStop = func(d string, names []string) { got = stopTargets(ps, d, 99, 1, names) }
+		trayCommand(argv[2:])
+		if !slices.Equal(got, want) {
+			t.Errorf("%s: %q → %v, want %v", action, argv, got, want)
+		}
+	}
+	// Brez dodanega »\« bi »\"« ubežal narekovaj: mapa z narekovajem in imeni v enem argumentu, nič se ne ujema.
+	if argv := winArgv(`x tray msi stop "` + dir + `" minigw-tui.exe`); len(argv) != 5 || stopTargets(ps, argv[4], 99, 1, nil) != nil {
+		t.Fatalf("old form: %q", argv)
+	}
+	for _, root := range []string{"", `C:\`, `"C:\"`, `C:`} {
+		if got := stopTargets(ps, root, 99, 1, nil); got != nil {
+			t.Errorf("%q: %v", root, got)
+		}
 	}
 }

@@ -164,17 +164,22 @@ user only, without admin rights, into `%LocalAppData%\Programs\Mini Gateway`. It
 - Without Claude Code (no `claude` command and no `~/.claude`) the plugin part adds nothing; run
   `minigw plugin install` later. What the installer ran is in `%LOCALAPPDATA%\minigw\minigw-msi.log`.
 - **Add the gateway later** to a client-only install: `minigw serve install` (or `/minigw:gw install`) runs the
-  release's MSI with `ADDLOCAL=Client,Gateway` (the plugin part stays as it is).
+  release's MSI with `ADDLOCAL=Client,Gateway` (the plugin part stays as it is). It reads the installed parts from
+  Windows Installer; run from the MSI folder it updates in the background (about a minute, then `minigw gw status`).
 - **Change parts:** Settings → Apps → Installed apps → Mini Gateway → **Modify**, or open the MSI again: tick or
   untick, then **Change**.
 - **Upgrade:** open (or `/passive`) a newer MSI. No questions, the chosen parts stay, and the tray starts again only if
   it was running (from 0.5.19 it starts once, whatever it did before). Before closing the tray it waits up to 2 minutes
-for running agent requests. `/minigw:gw update` downloads and runs it for you on a gateway.
+for running agent requests. Then it stops every Mini Gateway program still running from the install folder (also
+`minigw` in a Claude Code session), so no reboot is ever needed. `/minigw:gw update` downloads and runs it for you on a
+gateway, in the background. A repair restarts the tray if it was running.
 - **Uninstall:** Settings → Apps → **Uninstall** removes the parts (tray start, PATH entry, Start menu, the plugin
   entries that `minigw plugin install` added; a `false` you set stays) and keeps the settings and profiles for a later
   install. To remove them too: **Modify** → tick *Also remove settings and profiles* → **Remove**, or
   `msiexec /x <the installed version's MSI> PURGE=1 /passive`, or `minigw uninstall --purge` before **Uninstall**. PURGE runs `minigw uninstall --purge --yes` before the files
-  go (profiles and keys in Credential Manager, `%AppData%\minigw`). Not with `minigw serve uninstall`.
+  go (profiles and keys in Credential Manager, `%AppData%\minigw`). Not with `minigw serve uninstall`. Uninstalling, or
+  unticking Gateway, also removes the sign-in start, even if the tray menu set it; running `minigw` programs from the
+  install folder are stopped first (unticking Gateway stops only `minigw gw settings`).
 - The MSI is not code-signed yet, so SmartScreen warns: **More info → Run anyway**. Check it first against the signed
   `SHA256SUMS` ([Check a download](#check-a-download)).
 - The ARM64 package needs Windows 11.

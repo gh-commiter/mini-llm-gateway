@@ -106,8 +106,8 @@ for arch in amd64 arm64; do
   # (Binary prek msiinfo extract: export tabele Binary bi pisal datoteke v trenutno mapo)
   msiinfo extract $m Binary.stopper > $T/stopper; cmp -s $T/stopper $OUT/minigw-tray-windows-$arch.exe || fail "$arch: Binary stopper is not this minigw-tray.exe"
   has CustomAction "CloseTray	66	stopper	tray quit"
-  has CustomAction 'StopProcesses	66	stopper	tray msi stop "[INSTALLDIR]"'
-  has CustomAction 'StopTui	66	stopper	tray msi stop "[INSTALLDIR]" minigw-tui.exe'
+  has CustomAction 'StopProcesses	66	stopper	tray msi stop "[INSTALLDIR]\"'
+  has CustomAction 'StopTui	66	stopper	tray msi stop "[INSTALLDIR]\" minigw-tui.exe'
   # Tudi ob nadgradnji in popravilu (REINSTALL), ne kot stari paket pri nadgradnji
   has InstallExecuteSequence 'CloseTray	(REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE) OR (&Gateway=2 AND !Gateway=3) OR WIX_UPGRADE_DETECTED OR WIX_SAME_VERSION_UPGRADE_DETECTED OR REINSTALL'
   has InstallExecuteSequence 'StopProcesses	(REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE) OR WIX_UPGRADE_DETECTED OR WIX_SAME_VERSION_UPGRADE_DETECTED OR REINSTALL'

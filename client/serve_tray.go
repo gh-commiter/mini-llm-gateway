@@ -43,9 +43,15 @@ func trayBeside(exe string) string {
 
 func trayCommand(args []string) {
 	if len(args) > 0 && args[0] == "quit" { // MSI: zapre tekoči pladenj, sam brez okna (-H=windowsgui)
-		// Nadgradnja/odstranitev ne prekine zahtev agentov: počaka, da končajo, največ 120 s.
+		// Nadgradnja/odstranitev ne prekine zahtev agentov: počaka, da končajo, največ 120 s; nato še 3 s, da odjemalec
+		// (minigw.exe, ki ga MSI potem ustavi: StopProcesses) prejme in izpiše rezultat.
+		waited := false
 		for end := time.Now().Add(120 * time.Second); time.Now().Before(end) && gatewayAgents(defaultServeConfigPath()) > 0; {
 			time.Sleep(2 * time.Second)
+			waited = true
+		}
+		if waited {
+			time.Sleep(3 * time.Second)
 		}
 		quitRunningTray()
 		return
@@ -53,7 +59,7 @@ func trayCommand(args []string) {
 	// MSI (StopProcesses, pred InstallValidate; zažene ga kopija iz tabele Binary, zato mapa kot argument): preostali
 	// procesi iz mape namestitve končajo, preden Windows Installer preveri datoteke v rabi (brez ponovnega zagona).
 	if len(args) > 2 && args[0] == "msi" && args[1] == "stop" {
-		msiStopProcesses(args[2], args[3:])
+		msiStop(args[2], args[3:])
 		return
 	}
 	// MSI (RemoveRun, odložen, po RemoveRegistryValues): vrednost Run, ki kaže na pladenj iz te mape, ob odstranitvi
@@ -126,17 +132,27 @@ type procEntry struct {
 	Image        string
 }
 
+// msiStop: msi stop (testi ga zamenjajo).
+var msiStop = msiStopProcesses
+
 // stopTargets: procesi, ki jih msi stop ustavi: program leži neposredno v mapi dir (ne v podmapi, ne drugje), ista
-// seja Windows kot msi stop, ne on sam; z names le ti programi. Prazna mapa: nič (L1: nikoli tuji procesi).
+// seja Windows kot msi stop, ne on sam, in je naš (minigw.exe, minigw-tray.exe, minigw-tui.exe; z names le ti; L1:
+// INSTALLDIR je javna lastnost). Prazna mapa ali koren pogona (C:\): nič.
 func stopTargets(ps []procEntry, dir string, self, session uint32, names []string) []uint32 {
-	dir = strings.TrimRight(dir, `\/`)
+	dir = strings.TrimRight(strings.Trim(dir, `"`), `\/`)
+	if !strings.ContainsAny(dir, `\/`) {
+		return nil
+	}
+	if len(names) == 0 {
+		names = []string{"minigw.exe", "minigw-tray.exe", "minigw-tui.exe"}
+	}
 	var out []uint32
 	for _, p := range ps {
 		i := strings.LastIndexAny(p.Image, `\/`)
-		if dir == "" || i < 0 || p.PID == self || p.Session != session || !strings.EqualFold(p.Image[:i], dir) {
+		if i < 0 || p.PID == self || p.Session != session || !strings.EqualFold(p.Image[:i], dir) {
 			continue
 		}
-		if len(names) == 0 || slices.ContainsFunc(names, func(n string) bool { return strings.EqualFold(n, p.Image[i+1:]) }) {
+		if slices.ContainsFunc(names, func(n string) bool { return strings.EqualFold(n, p.Image[i+1:]) }) {
 			out = append(out, p.PID)
 		}
 	}

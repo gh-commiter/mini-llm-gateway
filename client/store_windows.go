@@ -452,30 +452,42 @@ func msiStopProcesses(dir string, names []string) {
 	if err != nil {
 		return
 	}
+	// L2: vsak proces le enkrat odprt (poizvedba, konec, čakanje); pot programa iz tega ročaja, ne iz PID (ponovna raba).
 	var ps []procEntry
+	hs := map[uint32]syscall.Handle{}
 	q := kernel32dl.NewProc("QueryFullProcessImageNameW")
 	e := syscall.ProcessEntry32{Size: uint32(unsafe.Sizeof(syscall.ProcessEntry32{}))}
 	for err := syscall.Process32First(snap, &e); err == nil; err = syscall.Process32Next(snap, &e) {
 		s, ok := processSession(e.ProcessID)
-		h, err := syscall.OpenProcess(0x1000 /* PROCESS_QUERY_LIMITED_INFORMATION */, false, e.ProcessID)
-		if !ok || err != nil {
+		if !ok || s != own {
+			continue
+		}
+		h, err := syscall.OpenProcess(0x1000 /* PROCESS_QUERY_LIMITED_INFORMATION */ |syscall.PROCESS_TERMINATE|syscall.SYNCHRONIZE, false, e.ProcessID)
+		if err != nil {
 			continue
 		}
 		buf := make([]uint16, 1024)
 		n := uint32(len(buf))
-		if r, _, _ := q.Call(uintptr(h), 0, uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&n))); r != 0 {
-			ps = append(ps, procEntry{PID: e.ProcessID, Session: s, Image: syscall.UTF16ToString(buf[:n])})
+		if r, _, _ := q.Call(uintptr(h), 0, uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&n))); r == 0 {
+			syscall.CloseHandle(h)
+			continue
 		}
-		syscall.CloseHandle(h)
+		ps = append(ps, procEntry{PID: e.ProcessID, Session: s, Image: syscall.UTF16ToString(buf[:n])})
+		hs[e.ProcessID] = h
 	}
 	syscall.CloseHandle(snap)
-	pids := stopTargets(ps, dir, uint32(os.Getpid()), own, names)
-	if len(pids) == 0 {
-		return
-	}
 	want := map[uint32]bool{}
-	for _, p := range pids {
+	for _, p := range stopTargets(ps, dir, uint32(os.Getpid()), own, names) {
 		want[p] = true
+	}
+	for pid, h := range hs {
+		if !want[pid] {
+			syscall.CloseHandle(h)
+			delete(hs, pid)
+		}
+	}
+	if len(hs) == 0 {
+		return
 	}
 	post := user32dll.NewProc("PostMessageW")
 	owner := user32dll.NewProc("GetWindowThreadProcessId")
@@ -487,12 +499,6 @@ func msiStopProcesses(dir string, names []string) {
 		}
 		return 1
 	}), 0)
-	var hs []syscall.Handle
-	for _, p := range pids {
-		if h, err := syscall.OpenProcess(syscall.PROCESS_TERMINATE|syscall.SYNCHRONIZE, false, p); err == nil {
-			hs = append(hs, h)
-		}
-	}
 	end := time.Now().Add(5 * time.Second)
 	for _, h := range hs {
 		left := max(time.Until(end), 0)
