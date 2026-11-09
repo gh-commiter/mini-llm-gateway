@@ -102,4 +102,16 @@ func TestWatchGitMovesSwapAndRevert(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("swap and revert not seen")
 	}
+	// stop: zaprtje ni premik (vsaka druga napaka branja bi bila)
+	stopped := make(chan struct{}, 1)
+	stop2, ok := watchGitMoves(g, func() { stopped <- struct{}{} })
+	if !ok {
+		t.Fatal("second watch failed")
+	}
+	stop2()
+	select {
+	case <-stopped:
+		t.Fatal("stop counted as a move")
+	case <-time.After(200 * time.Millisecond):
+	}
 }

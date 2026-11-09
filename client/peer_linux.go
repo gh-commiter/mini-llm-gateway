@@ -158,7 +158,7 @@ func pinWrap(cfgDir, exe string, args, pins []string, logf func(string, ...any))
 
 // watchGitMoves (N3c): inotify na mapi .git klona (IN_MOVE_SELF, IN_DELETE_SELF). Dogodek ostane v vrsti jedra, tudi če
 // agent .git takoj vrne nazaj, zato ga zamenjava in vrnitev med dvema preverbama ne skrijeta; moved teče ob prvem
-// dogodku (tudi IN_IGNORED, prepolna vrsta). false: inotify ne deluje.
+// dogodku (tudi IN_IGNORED, prepolna vrsta) in ob vsaki napaki branja razen zaprtja (stop). false: inotify ne deluje.
 func watchGitMoves(gitDir string, moved func()) (stop func(), ok bool) {
 	fd, err := syscall.InotifyInit1(syscall.IN_CLOEXEC | syscall.IN_NONBLOCK)
 	if err != nil {
@@ -170,7 +170,7 @@ func watchGitMoves(gitDir string, moved func()) (stop func(), ok bool) {
 	}
 	f := os.NewFile(uintptr(fd), "inotify") // neblokirajoč: Close prekine Read
 	go func() {
-		if n, _ := f.Read(make([]byte, 4096)); n > 0 {
+		if n, err := f.Read(make([]byte, 4096)); n > 0 || !errors.Is(err, os.ErrClosed) {
 			moved()
 		}
 	}()
