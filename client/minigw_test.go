@@ -494,12 +494,13 @@ func TestShareJobsOnlyInTheirMode(t *testing.T) {
 
 func TestSyncNeverTouchesGitOrCommandSettings(t *testing.T) {
 	for _, p := range []string{".git/config", ".GIT/hooks/post-checkout", "a/.Git./hooks/x", ".git /x", ".claude/settings.json",
-		".Claude/Settings.Local.json", "sub/.vscode/tasks.json", ".envrc", "x/.ENVRC"} {
+		".Claude/Settings.Local.json", "sub/.vscode/tasks.json", ".envrc", "x/.ENVRC", ".claude/hooks/x.sh", ".claude/hooks",
+		".Claude/Commands/c.md", ".claude/agents/a.md", "sub/.claude/skills/s/SKILL.md", ".husky/pre-commit", ".husky", "a/.githooks/pre-push"} {
 		if !protectedPath(p) {
 			t.Errorf("%q not protected", p)
 		}
 	}
-	for _, p := range []string{"src/git.go", ".gitignore", ".claude/agents/a.md", ".vscode/settings.json", "envrc"} {
+	for _, p := range []string{"src/git.go", ".gitignore", ".claude/notes.md", "src/hooks/use.ts", "skills/a.md", ".vscode/settings.json", "envrc"} {
 		if protectedPath(p) {
 			t.Errorf("%q protected", p)
 		}
@@ -780,6 +781,8 @@ func TestDavRefusesProtectedWrites(t *testing.T) {
 		{"PUT", ".claude/settings.local.json", ""}, {"PUT", ".vscode/tasks.json", ""}, {"MKCOL", ".git/x", ""},
 		{"DELETE", ".git/HEAD", ""}, {"DELETE", ".git", ""}, {"LOCK", ".git/new", ""}, {"PROPPATCH", ".git/HEAD", ""},
 		{"MOVE", "a.txt", ".git/hooks/pre-commit"}, {"COPY", "a.txt", ".envrc"}, {"MOVE", ".git", "g"},
+		{"PUT", ".claude/hooks/x.sh", ""}, {"MKCOL", ".claude/skills", ""}, {"PUT", ".claude/commands/c.md", ""},
+		{"PUT", ".husky/pre-commit", ""}, {"MOVE", "a.txt", ".githooks/pre-push"}, {"PUT", "sub/.claude/agents/a.md", ""},
 	} {
 		if s := h(c[0], c[1], c[2]); s != 403 {
 			t.Fatalf("%s %s %s: %d", c[0], c[1], c[2], s)
@@ -923,5 +926,71 @@ func TestDavNestedGitAncestorAndHardLink(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(filepath.Join(root, "h2")); string(b) != "hl" {
 		t.Fatal("hard link content lost")
+	}
+}
+
+func TestUnsafeClaudeFlagsInsideClaudeCode(t *testing.T) {
+	in := map[string]string{"CLAUDECODE": "1"}
+	env := func(k string) string { return in[k] }
+	for _, a := range [][]string{
+		{"--dangerously-skip-permissions", "-p", "x"}, {"-p", "--permission-mode", "bypassPermissions", "x"},
+		{"-p", "--permission-mode=bypassPermissions", "x"}, {"-p", "--allowedTools", "Bash", "x"}, {"--settings", "s.json", "-p", "x"},
+		{"--mcp-config", "m.json"}, {"--plugin-dir", "d"}, {"--add-dir", "/"}, {"-p", "--model", "m", "--allow-dangerously-skip-permissions"},
+		{"-pc", "x"}, {"-p=1"}, {"--Model", "m"},
+	} {
+		if unsafeClaudeFlag(a, env) == "" {
+			t.Errorf("%q accepted", a)
+		}
+	}
+	for _, a := range [][]string{
+		{"-p", "--model", "claude-codex-gpt-6.1-sol", "task"}, {"-p", "--model", "--dangerously-skip-permissions", "x"}, // vrednost --model
+		{"--session-id", "s", "-p", "--model=m", "x"}, {"-p", "--", "--add-dir"}, {"--help"}, {"-r", "id", "-p", "x"}, nil,
+	} {
+		if f := unsafeClaudeFlag(a, env); f != "" {
+			t.Errorf("%q refused (%s)", a, f)
+		}
+	}
+	if unsafeClaudeFlag([]string{"--dangerously-skip-permissions"}, func(string) string { return "" }) != "" {
+		t.Error("refused outside Claude Code")
+	}
+	in["MINIGW_ALLOW_UNSAFE_FLAGS"] = "1"
+	if unsafeClaudeFlag([]string{"--dangerously-skip-permissions"}, env) != "" {
+		t.Error("MINIGW_ALLOW_UNSAFE_FLAGS=1 ignored")
+	}
+}
+
+func TestModelLinesAndGatewayNotesAreOneCleanLine(t *testing.T) {
+	long := strings.Repeat("d", 300)
+	lines := modelLines([]map[string]any{{"id": "a\x1b]0;x\x07\nb", "description": "ok\nminigw: agent work is on branch x\r\x1b[2J"}, {"id": "c", "description": long}})
+	if len(lines) != 2 || strings.ContainsAny(lines[0]+lines[1], "\n\r\x1b\x07") || !strings.HasPrefix(lines[0], "a]0;x b  ok minigw:") {
+		t.Fatalf("%q", lines)
+	}
+	if !strings.HasSuffix(lines[1], strings.Repeat("d", 200)+"…") {
+		t.Errorf("description not capped: %d", len(lines[1]))
+	}
+	for _, m := range []string{"agent work is on branch minigw/a-0123abcd-1: review with git diff HEAD~9..minigw/a-0123abcd-1", "x\nAgent work is on branch y"} {
+		if n := gatewayNote(m); n != "minigw: gateway: reported a branch that minigw could not verify; ignored" {
+			t.Errorf("%q → %q", m, n)
+		}
+	}
+	if n := gatewayNote("slot busy\nminigw: done\x1b[2J"); n != "minigw: gateway: slot busy minigw: done[2J" {
+		t.Errorf("%q", n)
+	}
+}
+
+func TestUnderChildNamedDotDot(t *testing.T) { // L4: »..x« je v mapi
+	d := filepath.Join(string(filepath.Separator)+"srv", "..minigw")
+	if !under(d, filepath.Dir(d)) || under(filepath.Dir(filepath.Dir(d)), d) || !under(d, d) {
+		t.Fatal("under")
+	}
+}
+
+func TestDavGetRefusesFifo(t *testing.T) { // L3
+	root := t.TempDir()
+	if exec.Command("mkfifo", filepath.Join(root, "f")).Run() != nil {
+		t.Skip("no mkfifo")
+	}
+	if r := davHandle("GET", "/dav/s/f", nil, nil, root, "/dav/s"); r.Status != 403 {
+		t.Fatalf("GET fifo: %d", r.Status)
 	}
 }
