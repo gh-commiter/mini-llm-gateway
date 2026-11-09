@@ -561,6 +561,7 @@ public actor ShareHub {
     /// Konec izvajanja (tudi ob napaki ali prekinitvi): združi, če prevzema ni bilo, in odstrani klon.
     func finish(run id: String) async {
         releaseSlot(run: id)  // worktree: mesto spet prosto
+        _ = Worktree.runGroups.withLock { $0.removeValue(forKey: id) }  // N1: skupine agentov tega izvajanja
         releaseWriter(run: id)
         refusals[id] = nil
         guard let r = runs[id] else { return }

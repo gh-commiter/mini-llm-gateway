@@ -55,14 +55,15 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
             // --minigw-ro: pisanje v te mape prepovedano (denyWrite velja tudi za delovno mapo, ki jo Claude Code dovoli sam).
             "filesystem": ["denyRead": ["~"] + Self.scratchPaths(scratch), "allowRead": dirs, "allowWrite": readOnly ? [] : dirs,
                            "denyWrite": Self.scratchPaths(RouterConfig.copilotCache)
-                               + (readOnly ? dirs : dirs.flatMap { d in Self.gitDenies.flatMap { [d + "/.git/" + $0, d + "/**/.git/" + $0] } })],  // native v mapi sami (H1); N3: tudi ugnezdeni (macOS glob)
+                               + (readOnly ? dirs : dirs.flatMap { d in Self.gitDenies.flatMap { [d + "/.git/" + $0, d + "/**/.git/" + $0] } + [d + "/**/.git"] })],  // native v mapi sami (H1); N3: tudi ugnezdeni (macOS glob)
         ]]
         let settings = String(decoding: try! JSONSerialization.data(withJSONObject: sandbox, options: [.sortedKeys]), as: UTF8.self)
         // --minigw-ro: --tools le iz seznama dovoljenih (in Bash v sandboxu brez pisanja), drugih orodij agent nima.
         let roTools = (Self.readOnlyAllowed + ["Bash"]).filter { !disabledTools.contains($0) }
         let others = allTools.filter { !Self.pathTools.contains($0) && !disabledTools.contains($0) && (!readOnly || roTools.contains($0)) }
         // N3: nastavitve, hooki in preusmeritve ugnezdenih .git tudi ne z orodji Edit/Write (kot regex v Native.sandboxProfile)
-        let nestedGit = readOnly ? [] : dirs.flatMap { d in Self.gitDenies.flatMap { g in ["Edit", "Write"].map { "\($0)(/\(d)/**/.git/\(g))" } + ["Edit", "Write"].map { "\($0)(/\(d)/**/.git/\(g)/**)" } } }
+        let nestedGit = readOnly ? [] : dirs.flatMap { d in Self.gitDenies.flatMap { g in ["Edit", "Write"].map { "\($0)(/\(d)/**/.git/\(g))" } + ["Edit", "Write"].map { "\($0)(/\(d)/**/.git/\(g)/**)" } }
+            + ["Edit", "Write"].map { "\($0)(/\(d)/**/.git)" } }  // tudi datoteka gitdir: (podmodul) ali .git sam
         let denied = disabledTools + (readOnly ? Self.writeTools.filter { !disabledTools.contains($0) } : []) + nestedGit
         return ["--tools", readOnly ? roTools.joined(separator: ",") : "default", "--permission-mode", "acceptEdits", "--settings", settings]
             + dirs.dropFirst().flatMap { ["--add-dir", $0] }

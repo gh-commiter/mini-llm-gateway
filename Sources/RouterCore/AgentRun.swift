@@ -44,7 +44,10 @@ final class AgentRun: @unchecked Sendable {
     }
 
     /// Proces agenta teče (M2: žeton velja le za njegovo drevo procesov).
-    func started(_ pid: pid_t) { rootPID.withLock { $0 = pid } }
+    func started(_ pid: pid_t) {
+        rootPID.withLock { $0 = pid }
+        if let runID { Worktree.recordGroup(run: runID, pid: pid) }  // N1: skupina procesov agenta za finalize
+    }
 
     /// Veriga za dnevnik (L3), npr. »claude→codex«.
     var via: String { chain.joined(separator: "→") }

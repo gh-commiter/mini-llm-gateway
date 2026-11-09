@@ -1253,4 +1253,57 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     #expect(g(client.appendingPathComponent("build/_deps/x"), "branch", "--list", "minigw/*").isEmpty)
     #expect(["", "sub", "vendor/lib"].map { g(client.appendingPathComponent($0), "rev-parse", "HEAD") } == heads)
     #expect(!Worktree.hasCommit(top: client.appendingPathComponent("nc").path))
+    // Povezan worktree ugnezdenega (commondir): izvajanje se ne začne (razlog uporabniku z namigom na native-direct).
+    g(client.appendingPathComponent("vendor/lib"), "worktree", "add", "-q", client.appendingPathComponent("linked").path)
+    #expect(Worktree.localGitDir(top: top, "linked") == nil)
+    let id2 = UUID().uuidString, session2 = UUID().uuidString  // nova seja: nov posnetek (stara bi nadaljevala v svojem klonu)
+    _ = try #require(await hub.register(session: session2, cwd: "/Volumes/share/client", key: nil, device: "dev", tree: tree))
+    #expect(await ShareHub.$run.withValue(id2) { await ShareHub.$agent.withValue("claude") {
+        await hub.mount(session: session2, cwd: nil, base: "", device: "dev", roots: root.path, writes: true) } } == nil)
+}
+
+/// N1 (recenzija 2): zamenjava poti ugnezdenega klona s povezavo na tuj repozitorij takoj po preverbi exact in vrnitev
+/// pred končno preverbo: finalize nič ne razreši znova (O_NOFOLLOW_ANY, profil iz pričakovane poti), zato tuja skrivnost
+/// ne pride v vejo in tuj objects/info ostane.
+@Test func worktreeNestedSwapAndRestore() throws {
+    let (root, client, tree) = try fixture()
+    defer { cleanup(root) }
+    let wt = root.appendingPathComponent("wt"), outside = root.appendingPathComponent("outside"), lib = client.appendingPathComponent("lib")
+    for d in [lib, outside] { try file(d, "f.txt", "x\n"); g(d, "init", "-q", "-b", "main"); g(d, "add", "f.txt"); g(d, "commit", "-qm", "x") }
+    try file(outside, "secret.txt", "gateway secret\n")
+    try file(outside, ".git/objects/info/marker", "keep\n")
+    let mirror = Worktree.nestedMirror(tree.repo, "lib"), base = g(lib, "rev-parse", "HEAD"), b = root.appendingPathComponent("push.bundle")
+    g(lib, "update-ref", "refs/minigw/push", base); g(lib, "bundle", "create", b.path, "refs/minigw/push")
+    #expect(Worktree.ensureMirror(mirror) && Worktree.importBase(mirror, bundle: b, snapshot: base, base: "refs/minigw/base/x"))
+    try FileManager.default.createDirectory(at: wt, withIntermediateDirectories: true)
+    #expect(Worktree.makeClone(mirror, at: wt.appendingPathComponent("lib"), branch: "minigw/claude-12345678-0", snapshot: base))
+    let n = ShareHub.Nested(path: "lib", repo: mirror, base: base, wt: wt)
+    let slot = ShareHub.Slot(wt: wt, branch: "minigw/claude-12345678-0", base: base, nested: [n])
+    try file(wt.appendingPathComponent("lib"), "agent.txt", "agent\n")
+    Worktree.duringFinalize = {
+        try? FileManager.default.moveItem(at: wt.appendingPathComponent("lib"), to: wt.appendingPathComponent("lib.real"))
+        try? FileManager.default.createSymbolicLink(at: wt.appendingPathComponent("lib"), withDestinationURL: outside)
+    }
+    Worktree.afterNestedFinalize = { _ in
+        try? FileManager.default.removeItem(at: wt.appendingPathComponent("lib"))
+        try? FileManager.default.moveItem(at: wt.appendingPathComponent("lib.real"), to: wt.appendingPathComponent("lib"))
+    }
+    defer { Worktree.duringFinalize = nil; Worktree.afterNestedFinalize = nil }
+    let (tip, _) = Worktree.finalizeNested(slot, n, agent: "claude", out: root.appendingPathComponent("out.bundle"), links: [:])
+    if let tip { #expect(!Worktree.run(["--git-dir", mirror.path, "ls-tree", "-r", "--name-only", tip]).out.contains("secret.txt")) }
+    #expect((try? String(contentsOf: outside.appendingPathComponent(".git/objects/info/marker"), encoding: .utf8)) == "keep\n")
+    #expect(Worktree.run(["--git-dir", mirror.path, "cat-file", "-e", Worktree.run(["hash-object", "--stdin"], input: Data("gateway secret\n".utf8)).out]).status != 0)
+}
+
+/// N3 (kot Go TestNestedSnapshotRunsNoCleanFilter): posnetek ugnezdenega ne požene filtra clean iz .gitattributes.
+@Test func nestedSnapshotRunsNoCleanFilter() throws {
+    let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("n3-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let dir = root.appendingPathComponent("r"), marker = root.appendingPathComponent("ran").path
+    try file(dir, "a.txt", "a\n"); g(dir, "init", "-q", "-b", "main"); g(dir, "add", "a.txt"); g(dir, "commit", "-qm", "a")
+    g(dir, "config", "filter.evil.clean", "touch \(marker); cat")
+    try file(dir, ".gitattributes", "* filter=evil\n"); try file(dir, "a.txt", "b\n")
+    #expect(Worktree.snapshot(top: dir.path, noAttr: true) != nil && !FileManager.default.fileExists(atPath: marker))
+    _ = Worktree.snapshot(top: dir.path)
+    #expect(FileManager.default.fileExists(atPath: marker), "the test does not reproduce the filter")
 }

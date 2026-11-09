@@ -261,7 +261,7 @@ public enum Worktree {
         var out: [(path: String, snapshot: String)] = []
         for p in nested {
             let dir = top + "/" + p
-            guard let sn = snapshot(top: dir, root: !hasCommit(top: dir), skip: skip(p)) else {
+            guard let sn = snapshot(top: dir, root: !hasCommit(top: dir), noAttr: true, skip: skip(p)) else {
                 return fail("snapshot:" + p, "worktree: cannot take a snapshot of the nested repository \(Profiles.line(p, max: 500)) (git add or write-tree failed)")
             }
             out.append((p, sn))
@@ -273,12 +273,14 @@ public enum Worktree {
     /// indeksom: indeks, veje in delovna mapa uporabnika ostanejo nespremenjeni. nil = brez HEAD (prazen repozitorij).
     /// skip: poti, ki ne gredo v posnetek (ugnezdeni repozitoriji brez commita).
     /// root: repozitorij brez commita (ugnezden) dobi commit brez starša iz kopije svojega indeksa in delovne mape.
-    public static func snapshot(top: String, root: Bool = false, skip: [String] = []) -> String? {
+    /// noAttr (N3, ugnezdeni, kot Go): brez atributov, zato git add ne požene filtra clean iz .gitattributes.
+    public static func snapshot(top: String, root: Bool = false, noAttr: Bool = false, skip: [String] = []) -> String? {
         let h = run(["rev-parse", "--verify", "-q", "HEAD^{commit}"], cwd: top, safe: false, hooks: false)
         guard root || h.status == 0 && isSHA(h.out) else { return nil }
         let idx = FileManager.default.temporaryDirectory.appendingPathComponent("minigw-index-" + UUID().uuidString).path
         defer { unlink(idx) }
-        let env = ["GIT_INDEX_FILE": idx]
+        let env = ["GIT_INDEX_FILE": idx].merging(noAttr ? ["GIT_ATTR_SOURCE": "4b825dc642cb6eb9a060e54bf8d69288fbee4904", "GIT_CONFIG_COUNT": "1",
+                                                     "GIT_CONFIG_KEY_0": "core.attributesFile", "GIT_CONFIG_VALUE_0": "/dev/null"] : [:]) { $1 }
         if root {
             let p = run(["rev-parse", "--git-path", "index"], cwd: top, safe: false, hooks: false).out
             if !p.isEmpty, let d = Sync.read(URL(fileURLWithPath: p.hasPrefix("/") ? p : top + "/" + p), max: 1 << 30) {
@@ -695,14 +697,23 @@ public enum Worktree {
                          links: [String: String] = [:], exact: Bool = false) -> String? {
         killProcesses(in: wt)
         if exact, Sync.real(wt)?.path != wt.path { return nil }
+        if exact { duringFinalize?() }
         // .git in objects klona morata biti pravi mapi (ne povezavi ven): sicer brisanje in pisanje spodaj zadeneta tujo mapo.
+        // exact (N1): pot je že prava; po tej preverbi se nič več ne razreši (O_NOFOLLOW_ANY, profil iz te poti), zato
+        // poznejša povezava naleti na zavrnitev v peskovniku.
         let dotGit = wt.appendingPathComponent(".git"), objectsDir = dotGit.appendingPathComponent("objects")
-        guard Sync.real(dotGit)?.path == (Sync.real(wt)?.path).map({ $0 + "/.git" }),
-              Sync.real(objectsDir)?.path == (Sync.real(wt)?.path).map({ $0 + "/.git/objects" }) else { return nil }
+        let realObjects: String
+        if exact {
+            realObjects = objectsDir.path
+        } else {
+            guard Sync.real(dotGit)?.path == (Sync.real(wt)?.path).map({ $0 + "/.git" }),
+                  Sync.real(objectsDir)?.path == (Sync.real(wt)?.path).map({ $0 + "/.git/objects" }),
+                  let r = Sync.real(objectsDir)?.path else { return nil }
+            realObjects = r
+        }
         // Brisanje in zapis relativno na deskriptor mape objects (O_NOFOLLOW_ANY): zamenjava poti s povezavo med preverjanjem
         // in dejanjem ne preusmeri ničesar.
-        guard let realObjects = Sync.real(objectsDir)?.path, case let objFd = open(realObjects, O_RDONLY | O_DIRECTORY | O_NOFOLLOW_ANY),
-              objFd >= 0 else { return nil }
+        guard case let objFd = open(realObjects, O_RDONLY | O_DIRECTORY | O_NOFOLLOW_ANY), objFd >= 0 else { return nil }
         defer { close(objFd) }
         // Takoj nova info z le alternates zrcala (agent je ustavljen); karkoli ne uspe ali ni tako, kot pričakovano: brez rezultata.
         removeAt(objFd, "info")
@@ -725,11 +736,11 @@ public enum Worktree {
         // N9: tudi git prehoda v klonu ne vstopi v ugnezden repozitorij (ovoj, berljiv v peskovniku; --git-dir spodaj je
         // GIT_DIR otrok, npr. pack-objects)
         guard let wrap = wrapEnv(gitDirs: [repo.path], gitexec: gitexecDir(repo: repo)),
-              let box = finalizeProfile(wt: wt, repo: repo, tmp: tmp, out: out, read: read + [gitexecDir(repo: repo)]) else { return nil }
+              let box = finalizeProfile(wt: wt, repo: repo, tmp: tmp, out: out, read: read + [gitexecDir(repo: repo)], exact: exact) else { return nil }
         let objects = wt.appendingPathComponent(".git/objects").path
         let env = ["GIT_ALTERNATE_OBJECT_DIRECTORIES": objects].merging(wrap) { $1 }
-        func run(_ a: [String], cwd: String? = nil, env: [String: String]) -> (status: Int32, out: String) {
-            Worktree.run(a, cwd: cwd ?? tmp.path, env: env, sandbox: box)  // trenutna mapa routerja je lahko v domači (zavrnjena)
+        func run(_ a: [String], cwd: String? = nil, env: [String: String], input: Data? = nil) -> (status: Int32, out: String) {
+            Worktree.run(a, cwd: cwd ?? tmp.path, env: env, input: input, sandbox: box)  // trenutna mapa routerja je lahko v domači (zavrnjena)
         }
         var tip = head(wt.appendingPathComponent(".git")) ?? base
         // vrh mora biti commit, potomec posnetka (agent ne more podtakniti tuje zgodovine kot »svoje«)
@@ -767,11 +778,16 @@ public enum Worktree {
         // »bundle unbundle« ne pozna fsck: fetch iz bundla (fetch.fsckObjects) v začasni ref, brez objektov klona. Ref veje pred
         // tem nazaj: ko je agent vse commital sam, kaže na commit le v klonu (preverba povezanosti bi padla), potem na vrh.
         func restore() { _ = run(g + (isSHA(prev.out) ? ["update-ref", "refs/heads/" + branch, prev.out] : ["update-ref", "-d", "refs/heads/" + branch]), env: [:]) }
+        // I1 (kot Go): fsck vseh objektov base..tip (pack-objects, index-pack --fsck-objects v praznem repozitoriju; fetch
+        // bi objekte, ki jih je git add že zapisal v zrcalo, preskočil), nato objekti v zrcalo (unbundle) brez objektov klona.
         let created = run(g + ["bundle", "create", out.path, "refs/heads/" + branch, "^" + base], env: env).status == 0 && isBundle(out)
+        let pack = created ? run(g + ["pack-objects", "--revs", "-q", tmp.appendingPathComponent("p").path], env: env,
+                                 input: Data("\(tip)\n^\(base)\n".utf8)).out : ""
+        let fsck = tmp.appendingPathComponent("fsck.git").path
+        let checked = isSHA(pack) && run(["init", "-q", "--bare", fsck], env: [:]).status == 0
+            && run(["--git-dir", fsck, "index-pack", "--fsck-objects", tmp.appendingPathComponent("p-\(pack).pack").path], env: [:]).status == 0
         if created { restore() }
-        let fetched = created && run(g + ["-c", "transfer.fsckObjects=true", "-c", "fetch.fsckObjects=true", "fetch", "-q", "--no-tags",
-                                          "--no-write-fetch-head", out.path, "+refs/heads/\(branch):refs/minigw/fsck"], env: [:]).status == 0
-        _ = run(g + ["update-ref", "-d", "refs/minigw/fsck"], env: [:])
+        let fetched = checked && run(g + ["bundle", "unbundle", out.path], env: [:]).status == 0
         guard fetched, run(g + ["update-ref", "refs/heads/" + branch, tip], env: [:]).status == 0 else {
             restore()
             try? FileManager.default.removeItem(at: out)
@@ -798,8 +814,9 @@ public enum Worktree {
     }
 
     /// Branje le v klonu, zrcalu in začasni mapi (ne v domači mapi); pisanje le v zrcalo, začasno mapo in `out`.
-    static func finalizeProfile(wt: URL, repo: URL, tmp: URL, out: URL, read: [URL] = []) -> String? {
-        guard let w = Sync.real(wt)?.path, let r = Sync.real(repo)?.path, let t = Sync.real(tmp)?.path,
+    /// `exact` (N1): wt je že prava pot; uporabi se, kot je (brez ponovne razrešitve, ki bi sledila podtaknjeni povezavi).
+    static func finalizeProfile(wt: URL, repo: URL, tmp: URL, out: URL, read: [URL] = [], exact: Bool = false) -> String? {
+        guard let w = exact ? wt.path : Sync.real(wt)?.path, let r = Sync.real(repo)?.path, let t = Sync.real(tmp)?.path,
               let o = Sync.real(out.deletingLastPathComponent())?.appendingPathComponent(out.lastPathComponent).path
         else { return nil }
         let extra = read.compactMap { Sync.real($0)?.path }
@@ -834,8 +851,10 @@ public enum Worktree {
         }
     }
 
-    /// Le za teste (N1: zamenjava poti med preverbo in git).
+    /// Le za teste (N1: zamenjava poti pred, med in po git).
     nonisolated(unsafe) static var beforeNestedFinalize: ((ShareHub.Nested) -> Void)?
+    nonisolated(unsafe) static var afterNestedFinalize: ((ShareHub.Nested) -> Void)?
+    nonisolated(unsafe) static var duringFinalize: (() -> Void)?
 
     /// N1 (kot Go finalizeNested): finalize ugnezdenega klona po pričakovani pravi poti (pravi koren klona prehoda + pot),
     /// peskovnik iz nje; pred in po git preverba poti in .git; zamenjava zavrže rezultat in ref zrcala gre nazaj.
@@ -847,12 +866,28 @@ public enum Worktree {
         let prev = run(["--git-dir", n.repo.path, "rev-parse", "-q", "--verify", "refs/heads/\(slot.branch)^{commit}"]).out
         beforeNestedFinalize?(n)
         let tip = finalize(repo: n.repo, wt: expected, branch: slot.branch, base: n.base, agent: agent, out: out, read: read, links: links, exact: true)
+        afterNestedFinalize?(n)
         guard n.intact(slot.wt), Sync.real(n.dir(slot.wt))?.path == expected.path else {
             _ = run(["--git-dir", n.repo.path] + (isSHA(prev) ? ["update-ref", "refs/heads/" + slot.branch, prev] : ["update-ref", "-d", "refs/heads/" + slot.branch]))
             try? FileManager.default.removeItem(at: out)
             return (nil, moved)
         }
         return tip.map { ($0, "") } ?? (nil, "the gateway could not save the agent's work in the nested repository \(n.path) as a branch (see the gateway log)")
+    }
+
+    /// N1: skupine procesov agentov izvajanja (ShareHub.run), zajete ob zagonu (AgentRun.started): Process da vsakemu
+    /// agentu svojo skupino, ki jo podedujejo vsi potomci. Ob finalize jih SIGKILL. ponytail: proces, ki naredi setsid ali
+    /// setpgid, uide (ostane pri tem peskovnik Seatbelt: finalize bere le pričakovano pravo pot ugnezdenega klona).
+    static let runGroups = OSAllocatedUnfairLock<[String: Set<pid_t>]>(initialState: [:])
+
+    static func recordGroup(run: String, pid: pid_t) {
+        let g = getpgid(pid)
+        guard g > 1, g != getpgrp() else { return }  // nikoli lastna skupina prehoda
+        runGroups.withLock { $0[run, default: []].insert(g) }
+    }
+
+    static func killGroups(run: String) {
+        for g in runGroups.withLock({ $0.removeValue(forKey: run) ?? [] }) where g > 1 && g != getpgrp() { _ = Darwin.kill(-g, SIGKILL) }
     }
 
     /// Pot programa, argumenti in okolje procesa (KERN_PROCARGS2; le procesi istega uporabnika), ločeni na NUL.
@@ -924,11 +959,20 @@ extension ShareHub {
             else { unlock(tree.repo); return nil }
             // A: ugnezdeni repozitoriji kot v worktree (vsak svoj posnetek v svojem zrcalu, klon in veja); brez commita commit
             // brez starša; git na prehodu brez nastavitev sistema in uporabnika (safe).
-            let r = await offPool { () -> (String, [Nested])? in
+            // Zaustavitev zaradi ugnezdenega: razlog uporabniku (WORKTREE-NOTE), z namigom na native-direct.
+            let r = await offPool { () -> Result<(String, [Nested]), StopReason> in
                 let nested = Worktree.nestedRepos(top: local.path, safe: true)
-                guard nested.count <= Worktree.maxNested, nested.allSatisfy(Worktree.validNestedPath) else { return nil }
+                let hint = "; use --minigw-work=native-direct"
+                guard nested.count <= Worktree.maxNested else {
+                    return .failure(StopReason("\(local.path) has more than \(Worktree.maxNested) nested git repositories; native mode with branches takes at most \(Worktree.maxNested)" + hint))
+                }
+                if let p = nested.first(where: { !Worktree.validNestedPath($0) }) {
+                    return .failure(StopReason("the nested repository \(Profiles.line(p, max: 500)) has a name native mode cannot use (\":\", \"\\\", control characters or in .build)" + hint))
+                }
                 let dirs = nested.map { Worktree.localGitDir(top: local, $0) }
-                guard !dirs.contains(nil) else { return nil }
+                if let i = dirs.firstIndex(where: { $0 == nil }) {
+                    return .failure(StopReason("the nested repository \(Profiles.line(nested[i], max: 500)) is a linked worktree, has its git folder outside the share or is not a plain repository" + hint))
+                }
                 func skip(_ rel: String) -> [String] {
                     let links = Worktree.gitlinks(rel.isEmpty ? local.path : local.path + "/" + rel, safe: true)
                     return Worktree.nestedChildren(rel, nested).filter { c in
@@ -937,17 +981,22 @@ extension ShareHub {
                     }
                 }
                 guard let snapshot = Worktree.localSnapshot(repo: repo, top: local, base: base, skip: skip("")),
-                      Worktree.makeClone(repo, at: wt, branch: branch, snapshot: snapshot) else { return nil }
+                      Worktree.makeClone(repo, at: wt, branch: branch, snapshot: snapshot) else { return .failure(StopReason(nil)) }
                 var list: [(path: String, repo: URL, base: String)] = []
                 for (i, p) in nested.enumerated() {
                     let mirror = Worktree.nestedMirror(repo, p)
                     guard let snap = Worktree.localSnapshot(repo: mirror, top: local.appendingPathComponent(p, isDirectory: true), base: base,
-                                                            gitDir: dirs[i], skip: skip(p)) else { return nil }
+                                                            gitDir: dirs[i], skip: skip(p)) else {
+                        return .failure(StopReason("cannot take a snapshot of the nested repository \(Profiles.line(p, max: 500))" + hint))
+                    }
                     list.append((p, mirror, snap))
                 }
-                return Worktree.cloneNested(wt: wt, repo: repo, snapshot: snapshot, branch: branch, list).map { (snapshot, $0) }
+                guard let n = Worktree.cloneNested(wt: wt, repo: repo, snapshot: snapshot, branch: branch, list) else { return .failure(StopReason(nil)) }
+                return .success((snapshot, n))
             }
-            return finishMount(r?.0, k: k, id: id, wt: wt, branch: branch, tree: tree, nested: r?.1 ?? [])
+            if case .failure(let why) = r, let m = why.message { Task { await self.note(s, "native: " + m) } }  // ne čaka na minigw
+            let ok = try? r.get()
+            return finishMount(ok?.0, k: k, id: id, wt: wt, branch: branch, tree: tree, nested: ok?.1 ?? [])
         }
         let incoming = repo.deletingLastPathComponent().appendingPathComponent(repo.lastPathComponent + ".incoming")
         let incomings = [incoming] + (1...Worktree.maxNested).map { URL(fileURLWithPath: incoming.path + ".\($0)") }
@@ -984,6 +1033,9 @@ extension ShareHub {
         return finishMount(nested != nil ? snapshot : nil, k: k, id: id, wt: wt, branch: branch, tree: tree, nested: nested ?? [])
     }
 }
+
+/// Razlog, zakaj native z git ne more začeti (nil = brez sporočila uporabniku).
+struct StopReason: Error { let message: String?; init(_ m: String?) { message = m } }
 
 extension Worktree {
     /// Ugnezdeni kloni v wt (starš pred otrokom; H1 cloneTarget) in cilj 1: nesleden (v drevesu starša ni gitlink) v
@@ -1087,6 +1139,7 @@ extension ShareHub {
         }
         let read = tree.local.map { [$0.appendingPathComponent(".git/objects")] } ?? []
         let (nested, top, why) = await offPool { () -> ([(path: String, tip: String, out: URL)], String?, String?) in
+            Worktree.killGroups(run: id)  // N1: skupine procesov agentov tega izvajanja
             Worktree.killProcesses(in: slot.wt)  // ves klon, preden ugnezdeni (finalize ustavi le procese v svoji mapi)
             var links: [String: [String: String]] = ["": [:]], changed: [(path: String, tip: String, out: URL)] = []
             for n in slot.nested { links[n.path] = [:] }
