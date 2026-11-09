@@ -120,6 +120,8 @@ func pluginInstall() -> Bool {
 
 /// upgrading (brew upgrade): marketplace in povezava ostaneta, da vtičnik ne izgine med sejo.
 func pluginUninstall(upgrading: Bool) -> Bool {
+    var had = false, hadOff = false  // pred »marketplace remove«, ki vnose v settings.json odstrani že sam
+    try? PluginSetup.edit(claudeSettings) { s in (had, hadOff) = PluginSetup.remove(&s); return false }
     if !upgrading, let c = findClaude() {
         say("Claude Code: marketplace \(PluginSetup.market) " + (runQuiet(c, ["plugin", "marketplace", "remove", PluginSetup.market, "--scope", "user"]) ? "removed" : "not removed (claude plugin marketplace remove failed)"))
     }
@@ -132,7 +134,7 @@ func pluginUninstall(upgrading: Bool) -> Bool {
         warn((error as? PluginSetup.Failure)?.message ?? error.localizedDescription)
         return false
     }
-    say("Claude Code plugin \(PluginSetup.id): " + (changed ? "removed from " : "nothing to remove in ") + claudeSettings + (off ? offNote : ""))
+    say("Claude Code plugin \(PluginSetup.id): " + (changed || had ? "removed from " : "nothing to remove in ") + claudeSettings + (off || hadOff ? offNote : ""))
     return true
 }
 

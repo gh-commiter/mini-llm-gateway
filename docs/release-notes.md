@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fixed: `minigw plugin uninstall` said "nothing to remove in …settings.json" when `claude plugin marketplace remove` had already removed the entries; it now reports them as removed. Both clients.
 - Fixed: `/minigw:version` showed no plugin version when the plugin was loaded with `claude --plugin-dir`; it now always reads the running plugin's `plugin.json`.
 - Fixed: `minigw plugin install` refused the standard Homebrew layout (`/opt/homebrew/bin` is `drwxrwxr-x you:admin`) and ended with exit 1. A group-writable minigw or folder is now accepted when the group is trusted: on macOS `admin`, `staff` or your primary group, on Linux only your own private group. Writable by all users, or owned by someone other than you or root, is still refused. Both clients.
 - Fixed: inside Claude Code, `minigw -p … "prompt"` read stdin to the end before it started, so every plugin skill hung under Claude Code's Bash tool (its stdin stays open). With a prompt in the arguments minigw now waits for stdin at most 3 s, as `claude -p` does, and then goes on without it; piped text is still read and checked. Both clients.

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -284,5 +285,25 @@ func TestPluginDataSafeAndUnsafeDir(t *testing.T) {
 			t.Fatal("o+w admin folder linked")
 		}
 		os.Chmod(dir, 0o755)
+	}
+}
+
+// »claude plugin marketplace remove« sam odstrani vnose iz settings.json: uninstall vseeno pove, da so odstranjeni.
+func TestPluginUninstallReportsEntriesRemovedByMarketplace(t *testing.T) {
+	home, _ := pluginHome(t)
+	p := filepath.Join(home, ".claude", "settings.json")
+	if !pluginInstall("linux") {
+		t.Fatal("install failed")
+	}
+	runCmd = func(string, ...string) error { return os.WriteFile(p, []byte(`{}`), 0o600) }
+	r, w, _ := os.Pipe()
+	stdout := os.Stdout
+	os.Stdout = w
+	pluginUninstall("linux", false)
+	os.Stdout = stdout
+	w.Close()
+	out, _ := io.ReadAll(r)
+	if !strings.Contains(string(out), "minigw@mini-gateway: removed from "+p) {
+		t.Fatalf("output:\n%s", out)
 	}
 }
