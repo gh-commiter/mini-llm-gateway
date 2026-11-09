@@ -551,9 +551,8 @@ func finalize(repo, wt, branch, base, agent, out string, links map[string]string
 
 // worktreeHarnessEnv: okolje procesov agenta v klonu (kot Worktree.harnessEnv): nastavitve iz okolja preglasijo
 // .git/config klona (fsmonitor, hooki, atributi), GIT_ATTR_SOURCE = prazno drevo izklopi .gitattributes, GIT_DIR in
-// GIT_WORK_TREE: ugnezden .git agenta ne velja; Maven dobi svoj lokalni repozitorij.
-func worktreeHarnessEnv(wt, maven string) []string {
-	tmp := filepath.Join(wt, ".build", "tmp")
+// GIT_WORK_TREE: ugnezden .git agenta ne velja; Maven dobi svoj lokalni repozitorij. tmp: TMPDIR agenta.
+func worktreeHarnessEnv(wt, maven, tmp string) []string {
 	return []string{"GIT_CONFIG_COUNT=5", "GIT_CONFIG_KEY_0=core.fsmonitor", "GIT_CONFIG_VALUE_0=false",
 		"GIT_CONFIG_KEY_1=core.hooksPath", "GIT_CONFIG_VALUE_1=" + os.DevNull, // ne v klonu: tja agent lahko piše
 		"GIT_CONFIG_KEY_2=core.attributesFile", "GIT_CONFIG_VALUE_2=" + os.DevNull,
@@ -615,8 +614,8 @@ func wrapScript(git string) string {
 // worktreeClaudeEnv: okolje procesa Claude CLI v klonu: worktreeHarnessEnv, drugje kot na Windows še ovoj gitExecWrap
 // v mapi gw (N9; na Windows teče Claude v worktree le z »Allow commands without a sandbox«). gits: .git vseh klonov
 // (vrhnji prvi, hub.worktreeGits). nil = ovoja ni.
-func worktreeClaudeEnv(wt, maven, gw string, gits []string) []string {
-	env := worktreeHarnessEnv(wt, maven)
+func worktreeClaudeEnv(wt, maven, tmp, gw string, gits []string) []string {
+	env := worktreeHarnessEnv(wt, maven, tmp)
 	if runtime.GOOS == "windows" {
 		return env
 	}
@@ -678,8 +677,8 @@ func worktreeReadOnlyNote(clientCwd, dir string) string {
 
 // worktreeClaudeArgs: v peskovniku Claude Code (ne Windows) še pisanje v Maven agentov in branje objektov zrcal; .git
 // vseh klonov (gits: config, hooks, info, commondir) ni pisljiv, Edit/Write vanj ne (nastavitve in hooke bere git
-// samega claude). objects: objekti zrcal (vrhnji in ugnezdeni).
-func worktreeClaudeArgs(args []string, wt, maven string, objects, gits []string) []string {
+// samega claude). objects: objekti zrcal (vrhnji in ugnezdeni). tmp: TMPDIR teka (runTempDir).
+func worktreeClaudeArgs(args []string, wt, maven, tmp string, objects, gits []string) []string {
 	for i := 0; i+1 < len(args); i++ {
 		if args[i] != "--settings" {
 			continue
@@ -690,8 +689,8 @@ func worktreeClaudeArgs(args []string, wt, maven string, objects, gits []string)
 		}
 		if sb, _ := st["sandbox"].(map[string]any); sb != nil {
 			if fs, _ := sb["filesystem"].(map[string]any); fs != nil {
-				fs["allowWrite"] = append(toStrings(fs["allowWrite"]), wt, maven) // koren klona (tudi .git za commit), ko je cwd podmapa
-				fs["allowRead"] = append(append(toStrings(fs["allowRead"]), wt, maven), objects...)
+				fs["allowWrite"] = append(toStrings(fs["allowWrite"]), wt, maven, tmp) // koren klona (tudi .git za commit), ko je cwd podmapa
+				fs["allowRead"] = append(append(toStrings(fs["allowRead"]), wt, maven, tmp), objects...)
 				var deny []string
 				for _, g := range gits {
 					for _, d := range []string{"config", "hooks", "info", "commondir"} {
@@ -742,23 +741,23 @@ func toStrings(v any) []string {
 
 // --- shareHub ---
 
-// worktreeMount: klon seje in agenta (nov iz posnetka odjemalca); "" ob napaki. Kliče se pod zaklepom mape (lock).
-func (h *shareHub) worktreeMount(s *serveShare, agent string) string {
+// worktreeMount: klon seje in agenta (nov iz posnetka odjemalca); "" ob napaki; refused: zakaj prehod ne začne (nestedBlocker). Kliče se pod zaklepom mape (lock).
+func (h *shareHub) worktreeMount(s *serveShare, agent string) (dir, refused string) {
 	h.mu.Lock()
 	t, ro := s.tree, s.readOnly
 	slot := t.slots[agent]
 	h.mu.Unlock()
 	if ro {
-		return ""
+		return "", ""
 	}
 	if slot != nil && slot.gitIntact() && nestedProblem(slot.wt, t.repo, slot.nested) == "" { // sicer nov klon (makeClone pobriše starega)
-		return worktreeDir(slot.wt, t.sub)
+		return worktreeDir(slot.wt, t.sub), ""
 	}
 	short := sha256Hex([]byte(s.session))[:8]
 	name := agent + "-" + short + "-0"
 	branch, wt, base := "minigw/"+name, filepath.Join(t.worktrees, name), "refs/minigw/base/"+name
 	if ensureMirror(t.repo) != nil {
-		return ""
+		return "", ""
 	}
 	touchUsed(t.repo) // pruneMirrors: zadnja raba
 	incoming := t.repo + ".incoming"
@@ -796,16 +795,14 @@ func (h *shareHub) worktreeMount(s *serveShare, agent string) string {
 		} `json:"nested"`
 	}
 	if r == nil || r.Status != 200 || json.Unmarshal(r.Body, &reply) != nil || !shaRe.MatchString(reply.Snapshot) || len(reply.Nested) > maxNestedRepos {
-		return ""
+		return "", ""
 	}
 	// N1 (lastnik): kjer agent ne bi tekel v svojem imenskem prostoru PID ali git ob finalize ne v bwrap, se z ugnezdenimi
 	// repozitoriji ne začne (nič se ne izgubi); po teku ostane še zavrnitev v finalizeNested.
 	if len(reply.Nested) > 0 && h.nestedBlocker != nil {
 		if why := h.nestedBlocker(agent); why != "" {
 			h.logf("worktree %s (%s): %s", branch, s.session, why)
-			body, _ := json.Marshal(map[string]string{"message": "worktree: " + why})
-			h.sendJob(s, "WORKTREE-NOTE", body, 10*time.Second) // pred odgovorom 502 (ne v ozadju)
-			return ""
+			return "", why // končna napaka (400) z razlogom, brez opombe: sicer dvakrat
 		}
 	}
 	file := ""
@@ -813,7 +810,7 @@ func (h *shareHub) worktreeMount(s *serveShare, agent string) string {
 		file = incoming
 	}
 	if !importBase(t.repo, file, reply.Snapshot, base) || !makeClone(t.repo, wt, branch, reply.Snapshot) {
-		return ""
+		return "", ""
 	}
 	// Ugnezdeni: vsak v svoje zrcalo (<repo>-<ključ>.git) in klon na svoji poti v klonu (H1: pot je preverjena, vsak
 	// obstoječ del prava mapa, cilj prazen); starš pred otrokom.
@@ -823,12 +820,12 @@ func (h *shareHub) worktreeMount(s *serveShare, agent string) string {
 		in := incomingFile(incoming, i+1)
 		if !validNestedPath(n.Path) || seen[n.Path] || !shaRe.MatchString(n.Snapshot) {
 			h.logf("worktree %s (%s): bad nested repository from the client", branch, s.session)
-			return ""
+			return "", ""
 		}
 		seen[n.Path] = true
 		mirror := nestedMirror(t.repo, n.Path)
 		if ensureMirror(mirror) != nil {
-			return ""
+			return "", ""
 		}
 		touchUsed(mirror)
 		file := ""
@@ -836,7 +833,7 @@ func (h *shareHub) worktreeMount(s *serveShare, agent string) string {
 			file = in
 		}
 		if !importBase(mirror, file, n.Snapshot, base) {
-			return ""
+			return "", ""
 		}
 		nested = append(nested, &wtNested{path: n.Path, repo: mirror, base: n.Snapshot})
 	}
@@ -844,7 +841,7 @@ func (h *shareHub) worktreeMount(s *serveShare, agent string) string {
 	for _, n := range nested {
 		if !cloneTarget(wt, n.path) || !makeClone(n.repo, n.dir(wt), branch, n.base) {
 			h.logf("worktree %s (%s): cannot clone the nested repository %s", branch, s.session, n.path)
-			return ""
+			return "", ""
 		}
 		n.git, _ = os.Lstat(filepath.Join(n.dir(wt), ".git"))
 		n.cfg, _ = os.ReadFile(filepath.Join(n.dir(wt), ".git", "config"))
@@ -857,7 +854,7 @@ func (h *shareHub) worktreeMount(s *serveShare, agent string) string {
 		if l, _ := gitRun(prepo, "", nil, "--git-dir", prepo, "ls-tree", psnap, "--", rel); !strings.HasPrefix(l, "160000 ") {
 			f, err := os.OpenFile(filepath.Join(pdir, ".git", "info", "exclude"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 			if err != nil {
-				return ""
+				return "", ""
 			}
 			f.WriteString("\n/" + excludeEscape(rel) + "\n")
 			f.Close()
@@ -870,12 +867,12 @@ func (h *shareHub) worktreeMount(s *serveShare, agent string) string {
 	sl.git, _ = os.Lstat(filepath.Join(wt, ".git"))
 	sl.cfg, _ = os.ReadFile(filepath.Join(wt, ".git", "config"))
 	if !sl.gitIntact() {
-		return ""
+		return "", ""
 	}
 	h.mu.Lock()
 	t.slots[agent] = sl
 	h.mu.Unlock()
-	return worktreeDir(wt, t.sub)
+	return worktreeDir(wt, t.sub), ""
 }
 
 // nestedBlocker (N1): zakaj agent z ugnezdenimi repozitoriji na tem prehodu ne sme začeti ("" = sme). Linux: git ob
@@ -1327,4 +1324,34 @@ func (h *shareHub) isWorktree(session string) bool {
 	defer h.mu.Unlock()
 	s := h.bySession[session]
 	return s != nil && s.tree != nil
+}
+
+// maxRunTemp: najdaljša pot runTempDir. Claude Code na Linux v TMPDIR odpre vtičnice peskovnika (pot vtičnice največ
+// 108 bajtov; TMPDIR z 80 znaki že odpove), zato ne mapa v klonu.
+const maxRunTemp = 40
+
+// shortTempRoot: mapa prehoda za runTempDir (0700, naključno ime), v začasni mapi sistema ali v /tmp, če je ta
+// predolga; "" = ni je bilo mogoče narediti. Vsi agenti Claude jo imajo v denyRead (agentArgs), tek le svojo podmapo.
+func shortTempRoot() string {
+	base := os.TempDir()
+	if runtime.GOOS != "windows" && len(base) > maxRunTemp-24 {
+		base = "/tmp"
+	}
+	d, err := os.MkdirTemp(base, "mgw-")
+	if err != nil {
+		return ""
+	}
+	if r, err := filepath.EvalSymlinks(d); err == nil { // macOS: /tmp → /private/tmp (pravila peskovnika)
+		d = r
+	}
+	return d
+}
+
+// runTempDir: TMPDIR enega teka Claude CLI v klonu (0700, naključno ime pod tmpRoot); done jo pobriše (RemoveAll ne
+// sledi povezavam).
+func (s *server) runTempDir() (dir string, done func(), err error) {
+	if dir, err = os.MkdirTemp(s.tmpRoot, ""); err != nil {
+		return "", nil, err
+	}
+	return dir, func() { os.RemoveAll(dir) }, nil
 }
