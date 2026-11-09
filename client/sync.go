@@ -548,7 +548,7 @@ func (s *shareClient) syncPush(k string) bool {
 		if st, _ := call(s.c, "PUT", "/minigw/sync/file", map[string]string{"x-share-key": k, "x-sync-path": url.PathEscape(p)}, b, 300*time.Second); st != 204 {
 			keepOld(p)
 			if st == 409 {
-				s.note(p + " changed during sync; it goes with the next request")
+				s.note("sync: " + p + " changed during sync; it goes with the next request") // N4: nikoli pot na začetku vrstice
 			} else {
 				s.note(fmt.Sprintf("cannot sync %s (HTTP %d)", p, st))
 			}

@@ -391,7 +391,7 @@ final class ShareClient: @unchecked Sendable {
             let (st, _) = call(c, "PUT", "/minigw/sync/file", ["x-share-key": k, "x-sync-path": Sync.encode(p)], data, timeout: 300)
             if st != 204 {
                 next[p] = synced[p]
-                note(st == 409 ? "\(p) changed during sync; it goes with the next request" : "cannot sync \(p) (HTTP \(st))")
+                note(st == 409 ? "sync: \(p) changed during sync; it goes with the next request" : "cannot sync \(p) (HTTP \(st))")
             }
         }
         synced = next
