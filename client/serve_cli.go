@@ -115,7 +115,7 @@ func ruleAbs(p string) string {
 // agentArgs: orodja agenta le v delovni mapi; mapa nastavitev (žeton, ključ routerja) prepovedana. Razen na Windows še
 // sandbox Claude Code (kot ClaudeCLI.agentArgs): Bash ne bere domače mape in piše le v kopijo; z Bash je obvezen.
 // readOnly (--minigw-ro): le orodja s seznama dovoljenih (roAllowed), sandbox ne piše v mape; na Windows (brez sandboxa) brez Bash.
-func (s *server) agentArgs(dir string, readOnly bool) []string {
+func (s *server) agentArgs(dir string, readOnly bool, tmpRoot string) []string {
 	c := s.conf()
 	dirs := []string{dir} // delovna mapa in dovoljene mape (kot allowedRoots na Macu)
 	for _, f := range c.AllowedFolders {
@@ -192,7 +192,7 @@ func (s *server) agentArgs(dir string, readOnly bool) []string {
 			// M1: Scratch (kopije drugih naprav, zrcala) tudi zunaj domače mape; mapa seje v njem ostane berljiva (allowRead).
 			// #26 (N2): paket Copilot nikoli za pisanje (naloži ga priprava paketa), tudi če je v dovoljeni mapi.
 			// --minigw-ro: pisanje v te mape prepovedano (denyWrite velja tudi za delovno mapo, ki jo Claude Code dovoli sam).
-			"filesystem": map[string]any{"denyRead": append([]string{"~", s.cfgDir}, scratchPaths(c.Scratch)...), "allowRead": dirs, "allowWrite": onlyIf(!readOnly, dirs),
+			"filesystem": map[string]any{"denyRead": append(append([]string{"~", s.cfgDir}, scratchPaths(c.Scratch)...), onlyIf(tmpRoot != "", []string{tmpRoot})...), "allowRead": dirs, "allowWrite": onlyIf(!readOnly, dirs),
 				"denyWrite": append(append(scratchPaths(copilotCacheDir()), onlyIf(readOnly, dirs)...), gitDeny...)},
 		}})
 		args = append(args, "--settings", string(settings))
@@ -694,14 +694,17 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			if r.h("x-claude-mini-ro") == "1" { // I4, L2: pred WORKTREE-PUSH
 				return writeError(w, r.rid, 400, readOnlyWorktree)
 			}
-			if dir = s.hub.push(share, "claude"); dir == "" {
+			var refused string
+			if dir, refused = s.hub.push(share, "claude"); refused != "" {
+				return writeError(w, r.rid, 400, refused) // N1: končna, Claude Code je ne ponovi
+			} else if dir == "" {
 				return writeError(w, r.rid, 502, "Cloning "+clientCwd+" on the gateway failed (worktree mode; see minigw output)")
 			}
 			wt, branch, _, _, _ := s.hub.worktreeOf(session, "claude")
 			gits, _ := s.hub.worktreeGits(wt)
 			extra = worktreeNote(clientCwd, dir, branch, gits)
 		case share != nil:
-			if dir = s.hub.push(share, "claude"); dir == "" {
+			if dir, _ = s.hub.push(share, "claude"); dir == "" {
 				return writeError(w, r.rid, 502, "Syncing "+clientCwd+" to the gateway failed (see minigw output)")
 			}
 			note := "The user's folder " + clientCwd + " (on their computer) is synced here as " + dir + ", your working directory: a local copy"
@@ -729,7 +732,8 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			prompt = cliPrompt(history, last)
 		}
 		ro := (share != nil && share.readOnly) || (parent != nil && parent.readOnly) || r.h("x-claude-mini-ro") == "1"
-		args = append(args, s.agentArgs(dir, ro)...)
+		tmpRoot := s.tempRoot() // isti koren za denyRead in TMPDIR teka (M1)
+		args = append(args, s.agentArgs(dir, ro, tmpRoot)...)
 		ok := false
 		if wt, _, maven, objects, ok = s.hub.worktreeOf(session, "claude"); parent != nil {
 			wt, maven, objects, ok = parent.wt, parent.maven, parent.objects, parent.wt != ""
@@ -745,9 +749,15 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			if len(objs) == 0 {
 				objs = []string{objects}
 			}
-			args = worktreeClaudeArgs(args, wt, maven, objs, gits)
+			tmp, done, err := runTempDir(tmpRoot) // kratek TMPDIR: vtičnice peskovnika Claude Code (maxRunTemp)
+			if err != nil {
+				s.log.Printf("%s run temp: %v", r.rid, err) // L3: pot le v dnevnik
+				return writeError(w, r.rid, 500, "Cannot create a temporary folder for the agent (see the gateway log)")
+			}
+			defer done()
+			args = worktreeClaudeArgs(args, wt, maven, tmp, objs, gits)
 			gw := s.conf().scratch("gitexec")
-			if worktreeEnv = worktreeClaudeEnv(wt, maven, gw, gits); worktreeEnv == nil {
+			if worktreeEnv = worktreeClaudeEnv(wt, maven, tmp, gw, gits); worktreeEnv == nil {
 				return writeError(w, r.rid, 503, "Cannot prepare git for the agent's clone (git --exec-path): use sync")
 			}
 			args = sandboxAllowRead(args, gw)

@@ -213,8 +213,8 @@ func TestWorktreeFinalizeRejectedKeepsMirror(t *testing.T) {
 func TestWorktreeClaudeArgs(t *testing.T) {
 	args := []string{"--allowedTools", "Read(./**)", "--disallowedTools", "Read(/cfg/**)", "--settings",
 		`{"sandbox":{"filesystem":{"allowRead":["/w/sub"],"allowWrite":["/w/sub"],"denyRead":["~"]}}}`}
-	got := strings.Join(worktreeClaudeArgs(args, "/w", "/m", []string{"/r/objects", "/r-k/objects"}, []string{"/w/.git", "/w/lib/.git"}), " ")
-	for _, want := range []string{`"allowWrite":["/w/sub","/w","/m"]`, `"allowRead":["/w/sub","/w","/m","/r/objects","/r-k/objects"]`, "--add-dir /w",
+	got := strings.Join(worktreeClaudeArgs(args, "/w", "/m", "/t", []string{"/r/objects", "/r-k/objects"}, []string{"/w/.git", "/w/lib/.git"}), " ")
+	for _, want := range []string{`"allowWrite":["/w/sub","/w","/m","/t"]`, `"allowRead":["/w/sub","/w","/m","/t","/r/objects","/r-k/objects"]`, "--add-dir /w",
 		"Edit(//w/**)", `"denyWrite":["/w/.git/config"`, `"/w/lib/.git/config","/w/lib/.git/hooks","/w/lib/.git/info","/w/lib/.git/commondir"]`, "Edit(//w/.git/**)"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %s in\n%s", want, got)
@@ -355,7 +355,7 @@ func TestScratchOverlapAndProviderRename(t *testing.T) {
 	if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/general", `{"scratch":""}`); st != 400 || !strings.Contains(b, "contains it") {
 		t.Fatalf("default scratch with an allowed folder around it: %d %s", st, b)
 	}
-	if strings.Contains(strings.Join(s.agentArgs(t.TempDir(), false), " "), "--add-dir "+parent) {
+	if strings.Contains(strings.Join(s.agentArgs(t.TempDir(), false, ""), " "), "--add-dir "+parent) {
 		t.Fatal("allowed folder around Scratch passed to claude")
 	}
 	s.update(func(c *serveConfig) error {
@@ -459,7 +459,7 @@ func TestWorktreeGitSwapRefused(t *testing.T) {
 	writeT(t, filepath.Join(wt, "a.txt"), "b\n") // ista velikost: git status prebere vsebino (filter clean)
 	// Napad je resničen: git status z okoljem agenta filter izvede.
 	c := exec.Command("git", "--no-optional-locks", "status", "--porcelain")
-	c.Dir, c.Env = wt, append(os.Environ(), worktreeHarnessEnv(wt, filepath.Join(root, "m"))...)
+	c.Dir, c.Env = wt, append(os.Environ(), worktreeHarnessEnv(wt, filepath.Join(root, "m"), t.TempDir())...)
 	c.Run()
 	if _, err := os.Stat(marker); err != nil {
 		t.Fatal("planted filter did not run: the test does not reproduce the attack")
@@ -539,10 +539,10 @@ func TestWorktreeNestedRepoFilterDoesNotRun(t *testing.T) {
 			return err == nil
 		}
 		// Napad je resničen: brez ovoja (le nastavitve) filter teče.
-		if !status(worktreeHarnessEnv(wt, filepath.Join(root, "m"))) {
+		if !status(worktreeHarnessEnv(wt, filepath.Join(root, "m"), t.TempDir())) {
 			t.Fatalf("gitfile=%v: planted filter did not run: the test does not reproduce the attack", gitfile)
 		}
-		env := worktreeClaudeEnv(wt, filepath.Join(root, "m"), filepath.Join(root, "gitexec"), []string{filepath.Join(wt, ".git")})
+		env := worktreeClaudeEnv(wt, filepath.Join(root, "m"), t.TempDir(), filepath.Join(root, "gitexec"), []string{filepath.Join(wt, ".git")})
 		if env == nil {
 			t.Fatal("no git wrapper")
 		}
@@ -551,7 +551,7 @@ func TestWorktreeNestedRepoFilterDoesNotRun(t *testing.T) {
 		}
 		// Tudi ko je ugnezdeni klon registriran (0.5.20): git samega claude vanj vstopi z relativnim GIT_DIR, ki ga ovoj
 		// ne pusti; filter iz njegovega config ne teče.
-		if status(worktreeClaudeEnv(wt, filepath.Join(root, "m"), filepath.Join(root, "gitexec"), []string{filepath.Join(wt, ".git"), gd})) {
+		if status(worktreeClaudeEnv(wt, filepath.Join(root, "m"), t.TempDir(), filepath.Join(root, "gitexec"), []string{filepath.Join(wt, ".git"), gd})) {
 			t.Fatalf("gitfile=%v: the registered nested repository's filter ran", gitfile)
 		}
 		if why := cloneProblem(wt, repo, nil); why != "changes inside the nested repository sub do not come back in worktree mode; use sync" {
@@ -744,8 +744,10 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
 	f.Close()
 	out, _ := os.ReadFile(stderr)
 	if blockNested != "" {
-		if _, err := os.Stat(filepath.Join(root, "started")); err == nil || st == 200 || !strings.Contains(string(out), blockNested) {
-			t.Fatalf("not refused before the agent: %d %s\n%s", st, data, out)
+		// končna napaka (400: Claude Code je ne ponovi), razlog enkrat (v odgovoru, ne še kot opomba minigw)
+		if _, err := os.Stat(filepath.Join(root, "started")); err == nil || st != 400 || !strings.Contains(string(data), blockNested) ||
+			strings.Contains(string(out), blockNested) {
+			t.Fatalf("not refused once with a final error before the agent: %d %s\n%s", st, data, out)
 		}
 		return
 	}
@@ -1142,5 +1144,115 @@ func TestNestedBlockerMatchesSandbox(t *testing.T) {
 			t.Fatalf("linux (bwrap ok %v): %q", ok, why)
 		}
 		t.Logf("bwrap ok %v: %q", ok, why)
+	}
+}
+
+// TMPDIR Claude CLI v klonu: kratek (Claude Code na Linux v njem odpre vtičnice peskovnika, največ 108 bajtov; pri 80
+// znakih že odpove), le za ta tek, 0700, po teku pobrisan brez sledenja povezavam.
+func TestRunTempDir(t *testing.T) {
+	keep := filepath.Join(t.TempDir(), "keep")
+	if runtime.GOOS != "windows" {
+		t.Setenv("TMPDIR", "/tmp/"+strings.Repeat("x", 80)) // dolg TMPDIR prehoda: koren gre v /tmp
+	}
+	s := &server{}
+	root := s.tempRoot()
+	if root == "" {
+		t.Fatal("no temp root")
+	}
+	defer os.RemoveAll(root)
+	dir, done, err := runTempDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, done2, _ := runTempDir(root)
+	defer done2()
+	if len(dir) > maxRunTemp || filepath.Dir(dir) != root || dir == other {
+		t.Fatalf("run temp %q (root %q, other %q)", dir, root, other)
+	}
+	if st, err := os.Stat(dir); err != nil || runtime.GOOS != "windows" && st.Mode().Perm() != 0o700 {
+		t.Fatalf("mode: %v %v", st, err)
+	}
+	os.WriteFile(keep, []byte("x"), 0o600)
+	os.WriteFile(filepath.Join(dir, "f"), []byte("x"), 0o600)
+	os.Symlink(filepath.Dir(keep), filepath.Join(dir, "link"))
+	done()
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatal("run temp not removed")
+	}
+	if _, err := os.Stat(keep); err != nil {
+		t.Fatal("removal followed a symlink")
+	}
+}
+
+// Brez korena prehoda ni TMPDIR teka (ne v skupni začasni mapi sistema).
+func TestRunTempDirNoRoot(t *testing.T) {
+	if dir, _, err := runTempDir(""); err == nil {
+		os.RemoveAll(dir)
+		t.Fatal("run temp without a root")
+	}
+}
+
+// Koren prehoda, ki ga je pobrisal čistilec /tmp, se naredi znova; podtaknjene mape z istim imenom (druga dovoljenja,
+// povezava) prehod ne uporabi.
+func TestTempRootRefreshed(t *testing.T) {
+	s := &server{}
+	r1 := s.tempRoot()
+	os.RemoveAll(r1)
+	r2 := s.tempRoot()
+	defer os.RemoveAll(r2)
+	if st, err := os.Lstat(r2); r2 == "" || r2 == r1 || err != nil || !st.IsDir() {
+		t.Fatalf("root deleted: not recreated: %q → %q (%v)", r1, r2, err)
+	}
+	if runtime.GOOS == "windows" {
+		return
+	}
+	os.RemoveAll(r2)
+	os.Mkdir(r2, 0o755) // podtaknjena: druga dovoljenja
+	defer os.RemoveAll(r2)
+	r3 := s.tempRoot()
+	defer os.RemoveAll(r3)
+	if r3 == r2 || r3 == "" {
+		t.Fatalf("planted 0755 root used: %q", r3)
+	}
+	os.RemoveAll(r3)
+	target := t.TempDir()
+	os.Chmod(target, 0o700)
+	os.Symlink(target, r3) // podtaknjena: povezava
+	defer os.Remove(r3)
+	r4 := s.tempRoot()
+	defer os.RemoveAll(r4)
+	if r4 == r3 || r4 == "" {
+		t.Fatalf("planted symlink root used: %q", r4)
+	}
+}
+
+// Ob zagonu se pobrišejo le stari koreni tega uporabnika (mape 0700 mgw-*), ne povezave, tuja dovoljenja ali novi.
+func TestCleanStaleTempRoots(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("perm bits")
+	}
+	base, outside := t.TempDir(), t.TempDir()
+	old := time.Now().Add(-48 * time.Hour)
+	mk := func(name string, perm os.FileMode, age time.Time) string {
+		p := filepath.Join(base, name)
+		os.Mkdir(p, perm)
+		os.Chmod(p, perm)
+		os.WriteFile(filepath.Join(p, "f"), nil, 0o600)
+		os.Chtimes(p, age, age)
+		return p
+	}
+	stale, open, fresh, other := mk("mgw-1", 0o700, old), mk("mgw-2", 0o755, old), mk("mgw-3", 0o700, time.Now()), mk("x-4", 0o700, old)
+	os.WriteFile(filepath.Join(outside, "keep"), nil, 0o600)
+	link := filepath.Join(base, "mgw-5")
+	os.Symlink(outside, link)
+	os.Chtimes(outside, old, old)
+	cleanStaleTempRoots(base)
+	if _, err := os.Lstat(stale); !os.IsNotExist(err) {
+		t.Fatal("stale root kept")
+	}
+	for _, p := range []string{open, fresh, other, link, filepath.Join(outside, "keep")} {
+		if _, err := os.Lstat(p); err != nil {
+			t.Fatalf("%s removed", p)
+		}
 	}
 }

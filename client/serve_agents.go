@@ -542,14 +542,17 @@ func (s *server) agentFolder(w http.ResponseWriter, r *req, label, agent string)
 		if r.h("x-claude-mini-ro") == "1" { // I4: pred WORKTREE-PUSH (deljena mapa worktree ni nikoli samo za branje)
 			return "", "", false, writeError(w, r.rid, 400, readOnlyWorktree)
 		}
-		if dir = s.hub.push(share, agent); dir == "" {
+		var refused string
+		if dir, refused = s.hub.push(share, agent); refused != "" {
+			return "", "", false, writeError(w, r.rid, 400, refused) // N1: končna, Claude Code je ne ponovi
+		} else if dir == "" {
 			return "", "", false, writeError(w, r.rid, 502, "Cloning "+clientCwd+" on the gateway failed (worktree mode; see minigw output)")
 		}
 		wt, branch, _, _, _ := s.hub.worktreeOf(r.h("x-claude-mini-session"), agent)
 		gits, _ := s.hub.worktreeGits(wt)
 		return dir, worktreeNote(clientCwd, dir, branch, gits), false, 0
 	case share != nil:
-		if dir = s.hub.push(share, agent); dir == "" {
+		if dir, _ = s.hub.push(share, agent); dir == "" {
 			return "", "", false, writeError(w, r.rid, 502, "Syncing "+clientCwd+" to the gateway failed (see minigw output)")
 		}
 		note = "The user's folder " + clientCwd + " (on their computer) is synced here as " + dir + ", your working directory: a local copy"
@@ -684,7 +687,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			s.hub.markUnconfined(wt) // N1: brez bwrap (svoj imenski prostor PID) agent lahko preživi do finalize
 		}
 		if inTree {
-			if treeEnv = worktreeClaudeEnv(wt, maven, gw, gits); treeEnv == nil {
+			if treeEnv = worktreeClaudeEnv(wt, maven, filepath.Join(wt, ".build", "tmp"), gw, gits); treeEnv == nil {
 				return "", errors.New("cannot prepare git for the agent's clone (git --exec-path); use sync")
 			}
 		}

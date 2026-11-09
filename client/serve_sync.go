@@ -354,16 +354,16 @@ func (h *shareHub) unlock(copy string) {
 	<-sem
 }
 
-// push: minigw naj posodobi kopijo (SYNC-PUSH); vrne kopijo ali "". Prvi prenos velike mape traja.
+// push: minigw naj posodobi kopijo (SYNC-PUSH); vrne kopijo ali "" (refused: worktreeMount). Prvi prenos velike mape traja.
 // worktree: klon agenta (nov iz posnetka odjemalca ali od prejšnje zahteve te seje).
-func (h *shareHub) push(s *serveShare, agent string) string {
+func (h *shareHub) push(s *serveShare, agent string) (dir, refused string) {
 	if s.tree != nil {
 		return h.worktreeMount(s, agent)
 	}
 	if r := h.send(s, "SYNC-PUSH", 900*time.Second); r != nil && r.Status == 200 {
-		return s.copy
+		return s.copy, ""
 	}
-	return ""
+	return "", ""
 }
 
 // syncBack: po agentu minigw prevzame spremembe kopije (ne pri --minigw-ro), pred koncem odgovora.

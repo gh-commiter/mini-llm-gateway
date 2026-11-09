@@ -231,7 +231,7 @@ Notes:
   CLI also bwrap inside bwrap, so every agent runs in its own process namespace. On Ubuntu 24.04 AppArmor's
   `bwrap-userns-restrict` profile blocks the inner one; allow it (for example with an AppArmor profile for
   `/usr/bin/bwrap` that grants `userns`, or `sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0`) or use sync.
-  Without that, a request with nested repositories is refused before the agent starts. macOS `minigw serve` (for
+  Without that, a request with nested repositories is refused before the agent starts (a final error: Claude Code does not retry it). macOS `minigw serve` (for
   development) refuses nested repositories; Windows `minigw serve` handles them.
 - The agent may commit inside a nested clone: its note names the clones and the form
   `GIT_DIR=<path>/.git GIT_COMMON_DIR=<path>/.git GIT_WORK_TREE=<path> git …` (plain git in the clone works on the top

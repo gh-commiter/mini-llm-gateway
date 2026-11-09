@@ -418,6 +418,8 @@ type server struct {
 	hub           *shareHub
 	sessions      sessionRegistry
 	procs         chan struct{} // največ hkratnih procesov claude
+	tmpMu         sync.Mutex
+	tmpRoot       string        // tempRoot: koren kratkih map TMPDIR tekov Claude CLI v worktree
 	gwSlots       chan struct{} // največ hkratnih zahtev k prehodom
 	gateways      gwCatalog
 	limits        sync.Map // limitKey → limitHit: omejitev agenta za ponovitev brez pretoka (noteLimit)
@@ -486,6 +488,7 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	s := &server{cfg: c, cfgPath: cfgPath, cfgDir: cfgDir, claude: exe, admin: secret, key: k, log: log.New(out, "", log.LstdFlags), hub: newShareHub(),
 		sessions: sessionRegistry{m: map[string]string{}}, procs: make(chan struct{}, 6),
 		gwSlots: make(chan struct{}, 16), state: loadState(filepath.Join(cfgDir, "state.json"))}
+	cleanStaleTempRoots(tempBase())
 	s.state.prune(c.Devices)
 	switch {
 	case runtime.GOOS == "windows" && len(unsandboxedTools(c.Tools)) > 0:
@@ -707,6 +710,7 @@ func (s *server) serve(ln net.Listener) error {
 		signal.Notify(sig, syscall.SIGTERM, os.Interrupt)
 		<-sig
 		s.state.save()
+		s.dropTempRoot()
 		os.Exit(0)
 	}()
 	return srv.Serve(l)
