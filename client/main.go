@@ -345,6 +345,12 @@ func main() {
 	case "share":
 		shareCommand(args[1:])
 		return
+	case "plugin":
+		pluginCommand(args[1:])
+		return
+	case "uninstall":
+		uninstallCommand(args[1:])
+		return
 	case "run":
 		os.Exit(runCommand(args[1:]))
 	case "connect":
@@ -530,6 +536,8 @@ func main() {
 			"minigw run [--] <command> [args …]          run a build in this folder on the gateway (SMB share, allowed in its Settings)\n" +
 			"minigw serve [init|allow <id>] [--port N] [--config FILE]   run a gateway here (Windows, Linux)\n" +
 			"minigw gw status|devices|provider|claude|token …  change the gateway here, live (minigw gw help)\n" +
+			"minigw plugin install|uninstall|status       the Claude Code plugin minigw@mini-gateway, using this minigw\n" +
+			"minigw uninstall [--purge] [--yes]          remove what minigw added here (--purge: also settings and profiles)\n" +
 			"minigw [claude options …]                    run Claude Code through the gateway")
 		if first == "--minigw-help" {
 			return
