@@ -125,8 +125,9 @@ type tray struct {
 	logPath   string
 	sl        bool
 	hwnd      uintptr
-	icon      uintptr
-	recreated uint32 // TaskbarCreated
+	icon      uintptr    // trenutna ikona
+	icons     [2]uintptr // navadna, z značko (čaka na odobritev)
+	recreated uint32     // TaskbarCreated
 	seen      map[string]bool
 	pending   []apiDevice
 	picks     chan pickReq // izbirno okno (picker_windows.go)
@@ -316,15 +317,16 @@ func (t *tray) create() error {
 	t.hwnd = hwnd
 	r, _, _ := pRegisterWindowMsg.Call(uintptr(unsafe.Pointer(u16("TaskbarCreated"))))
 	t.recreated = uint32(r)
-	t.icon = loadTrayIcon()
+	t.icons = [2]uintptr{loadTrayIcon(false), loadTrayIcon(true)}
+	t.icon = t.icons[0]
 	t.addIcon()
 	pSetTimer.Call(hwnd, 1, 3000, 0) // čakajoče naprave in opis ikone
 	t.poll()
 	return nil
 }
 
-// loadTrayIcon: vnos .ico v velikosti male ikone (PNG v vnosu podpira CreateIconFromResourceEx).
-func loadTrayIcon() uintptr {
+// loadTrayIcon: vnos .ico v velikosti male ikone (PNG v vnosu podpira CreateIconFromResourceEx); badge doda značko.
+func loadTrayIcon(badge bool) uintptr {
 	cx, _, _ := pGetSystemMetrics.Call(49) // SM_CXSMICON
 	n := int(binary.LittleEndian.Uint16(trayIcon[4:]))
 	best, bw := 0, 0 // najmanjša ≥ cx, sicer največja
@@ -339,7 +341,13 @@ func loadTrayIcon() uintptr {
 	}
 	e := trayIcon[6+16*best:]
 	size, off := binary.LittleEndian.Uint32(e[8:]), binary.LittleEndian.Uint32(e[12:])
-	h, _, _ := pCreateIconFromRes.Call(uintptr(unsafe.Pointer(&trayIcon[off])), uintptr(size), 1, 0x00030000, cx, cx, 0)
+	b := trayIcon[off : off+size]
+	if badge {
+		if bb, err := trayBadge(b); err == nil {
+			b = bb
+		}
+	}
+	h, _, _ := pCreateIconFromRes.Call(uintptr(unsafe.Pointer(&b[0])), uintptr(len(b)), 1, 0x00030000, cx, cx, 0)
 	return h
 }
 
@@ -400,7 +408,11 @@ func trayProc(hwnd, m, wp, lp uintptr) uintptr {
 func (t *tray) poll() {
 	st, pending := t.s.trayState()
 	t.pending = pending
-	t.tip("Mini Gateway · " + trayMenu(st, nil, t.sl)[0].Text)
+	if i := t.icons[min(len(pending), 1)]; i != t.icon && i != 0 { // ikona le ob spremembi stanja
+		t.icon = i
+		pShellNotifyIcon.Call(nimModify, uintptr(unsafe.Pointer(t.data(nifIcon))))
+	}
+	t.tip(trayTip(st, len(pending), t.sl))
 	for _, d := range pending {
 		if !t.seen[d.ID] {
 			t.seen[d.ID] = true

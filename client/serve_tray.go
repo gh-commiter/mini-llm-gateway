@@ -10,6 +10,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"net"
 	"net/url"
 	"os"
@@ -227,6 +230,62 @@ func trayStartup(on bool, cfgPath string) error {
 		return err
 	}
 	return runValueSet(runValueName, v)
+}
+
+// trayTip: opis ikone; omeni čakajoče naprave.
+func trayTip(st apiStatus, waiting int, sl bool) string {
+	tip := "Mini Gateway · " + trayMenu(st, nil, sl)[0].Text
+	switch {
+	case waiting == 0:
+	case sl:
+		tip += fmt.Sprintf(" · na odobritev čaka naprav: %d", waiting)
+	default:
+		tip += " · " + plural(waiting, "device", "devices") + " waiting for approval"
+	}
+	return tip
+}
+
+// trayBadge: ikona (PNG) z oranžno piko spodaj desno in prozornim robom okoli nje (kot značka na Macu).
+func trayBadge(b []byte) ([]byte, error) {
+	src, err := png.Decode(bytes.NewReader(b))
+	if err != nil {
+		return nil, err
+	}
+	r := src.Bounds()
+	img := image.NewNRGBA(image.Rect(0, 0, r.Dx(), r.Dy()))
+	w := float64(r.Dx())
+	rad := w * 0.22                      // polmer pike
+	cx, cy := w-rad-w*0.02, w-rad-w*0.02 // središče
+	ring := max(1, w/16)
+	const ss = 4 // glajenje robov: 4×4 vzorcev na piko
+	for y := 0; y < r.Dy(); y++ {
+		for x := 0; x < r.Dx(); x++ {
+			c := color.NRGBAModel.Convert(src.At(r.Min.X+x, r.Min.Y+y)).(color.NRGBA)
+			dot, cut := 0.0, 0.0
+			for i := 0; i < ss*ss; i++ {
+				dx, dy := float64(x)+(float64(i%ss)+0.5)/ss-cx, float64(y)+(float64(i/ss)+0.5)/ss-cy
+				d := dx*dx + dy*dy
+				if d <= rad*rad {
+					dot++
+				} else if d <= (rad+ring)*(rad+ring) {
+					cut++
+				}
+			}
+			dot, cut = dot/(ss*ss), cut/(ss*ss)
+			a := float64(c.A) * (1 - dot - cut)
+			o := color.NRGBA{R: 0xFF, G: 0x95, B: 0x00} // oranžna (systemOrange)
+			if na := a + 255*dot; na > 0 {
+				mix := func(v, ov uint8) uint8 { return uint8((float64(v)*a + float64(ov)*255*dot) / na) }
+				o = color.NRGBA{R: mix(c.R, o.R), G: mix(c.G, o.G), B: mix(c.B, o.B), A: uint8(na + 0.5)}
+			} else {
+				o.A = 0
+			}
+			img.SetNRGBA(x, y, o)
+		}
+	}
+	var out bytes.Buffer
+	err = png.Encode(&out, img)
+	return out.Bytes(), err
 }
 
 // trayMenu: meni pladnja iz stanja routerja (vse prek skrbniškega API).

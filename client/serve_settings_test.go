@@ -1,7 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ed25519"
+	"encoding/binary"
+	"fmt"
+	"image/color"
+	"image/png"
 	"io"
 	"net/http"
 	"os"
@@ -259,5 +264,42 @@ func TestRotatingLog(t *testing.T) {
 	cur, _ := os.Stat(p)
 	if old == nil || old.Size() != 5<<20 || cur.Size() != 1<<20 {
 		t.Fatalf("rotation: %v %v", old, cur)
+	}
+}
+
+func TestTrayTipAndBadge(t *testing.T) {
+	st := apiStatus{Port: 8765, Devices: 1}
+	if s := trayTip(st, 0, false); s != "Mini Gateway · Running on :8765 · 1 device · 0 providers" {
+		t.Fatal(s)
+	}
+	if s := trayTip(st, 2, false); s != "Mini Gateway · Running on :8765 · 1 device · 0 providers · 2 devices waiting for approval" {
+		t.Fatal(s)
+	}
+	if s := trayTip(st, 1, true); !strings.HasSuffix(s, " · na odobritev čaka naprav: 1") {
+		t.Fatal(s)
+	}
+	ico, err := os.ReadFile("tray.ico")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < int(binary.LittleEndian.Uint16(ico[4:])); i++ { // vsak vnos .ico (16, 32, 48)
+		e := ico[6+16*i:]
+		size, off := binary.LittleEndian.Uint32(e[8:]), binary.LittleEndian.Uint32(e[12:])
+		b, err := trayBadge(ico[off : off+size])
+		if err != nil {
+			t.Fatal(err)
+		}
+		img, err := png.Decode(bytes.NewReader(b))
+		if err != nil {
+			t.Fatal(err)
+		}
+		w := img.Bounds().Dx()
+		if c := color.NRGBAModel.Convert(img.At(w*3/4, w*3/4)).(color.NRGBA); c != (color.NRGBA{0xFF, 0x95, 0, 0xFF}) {
+			t.Fatalf("%d: badge center %v", w, c)
+		}
+		if dir := os.Getenv("TRAY_BADGE_PREVIEW"); dir != "" { // ogled: TRAY_BADGE_PREVIEW=<mapa> go test -run TestTrayTipAndBadge
+			os.WriteFile(filepath.Join(dir, fmt.Sprintf("badge%d.png", w)), b, 0o644)
+			os.WriteFile(filepath.Join(dir, fmt.Sprintf("plain%d.png", w)), ico[off:off+size], 0o644)
+		}
 	}
 }
