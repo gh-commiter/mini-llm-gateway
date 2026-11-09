@@ -24,7 +24,7 @@ func sameFile(_ a: String, _ b: String) -> Bool {
 func selfPath() -> String {
     let exe = URL(fileURLWithPath: Bundle.main.executablePath ?? CommandLine.arguments[0]).resolvingSymlinksInPath().path
     let a0 = CommandLine.arguments[0]
-    let dirs = a0.contains("/") ? [FileManager.default.currentDirectoryPath] : (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map(String.init)
+    let dirs = a0.contains("/") ? [FileManager.default.currentDirectoryPath] : pathDirs
     for d in dirs {
         let p = a0.hasPrefix("/") ? a0 : d + "/" + a0  // brez standardizacije: /private/tmp ostane, kot je
         if a0.contains("/") || FileManager.default.isExecutableFile(atPath: p) { return sameFile(p, exe) ? p : exe }
@@ -32,8 +32,11 @@ func selfPath() -> String {
     return exe
 }
 
+/// L4: le absolutne poti iz PATH (».« ali relativna mapa bi našla program v trenutni mapi).
+var pathDirs: [String] { (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map(String.init).filter { $0.hasPrefix("/") } }
+
 func findClaude() -> String? {
-    let dirs = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map(String.init) + [home + "/.local/bin", "/opt/homebrew/bin", "/usr/local/bin"]
+    let dirs = pathDirs + [home + "/.local/bin", "/opt/homebrew/bin", "/usr/local/bin"]
     return dirs.map { $0 + "/claude" }.first { FileManager.default.isExecutableFile(atPath: $0) }
 }
 
@@ -49,12 +52,43 @@ func runQuiet(_ exe: String, _ argv: [String]) -> Bool {
     return p.terminationStatus == 0
 }
 
+/// Prva beseda izhoda »<exe> --version« brez »minigw «, le številke in pike; sicer "".
+func versionOf(_ exe: String) -> String {
+    let p = Process(), pipe = Pipe()
+    p.executableURL = URL(fileURLWithPath: exe)
+    p.arguments = ["--version"]
+    p.standardOutput = pipe
+    p.standardError = FileHandle.nullDevice
+    guard (try? p.run()) != nil else { return "" }
+    let line = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).split(separator: "\n").first ?? ""
+    p.waitUntilExit()
+    let v = line.split(separator: " ").map(String.init).first { $0 != "minigw" } ?? ""
+    return !v.isEmpty && v.allSatisfy { "0123456789.".contains($0) } ? v : ""
+}
+
+/// L3: mapa ni zapisljiva za skupino in druge ter je last tega uporabnika ali root.
+func safeDir(_ dir: String) -> Bool {
+    var st = stat()
+    return stat(dir, &st) == 0 && st.st_mode & 0o022 == 0 && (st.st_uid == getuid() || st.st_uid == 0)
+}
+
+/// L1: le <claude>/plugins/data/minigw…, absolutna in počiščena pot.
+func pluginDataSafe(_ d: String) -> Bool {
+    d.hasPrefix("/") && !d.hasSuffix("/") && !d.contains("//") && !d.contains("/./") && !d.contains("/../")
+        && (d as NSString).deletingLastPathComponent == claudeDir + "/plugins/data" && (d as NSString).lastPathComponent.hasPrefix("minigw")
+}
+
+/// L5: kot root bi minigw pisal v korenove ~/.claude in povezave.
+func refuseRoot(_ cmd: String) { if geteuid() == 0 { fail("run minigw \(cmd) as yourself, not as root") } }
+
 func warn(_ s: String) { err.write(Data(("minigw: " + s + "\n").utf8)) }
 
 /// bin/minigw vtičnika → self; nil = self je že minigw vtičnika (prenesen, brez namestitve).
 func pluginLink(_ self: String) throws -> String? {
     let bin = pluginDataDir + "/bin"
     if sameFile((self as NSString).deletingLastPathComponent, bin) { return nil }
+    let dir = (self as NSString).deletingLastPathComponent
+    guard safeDir(dir) else { throw PluginSetup.Failure(message: "\(dir) is writable by others or not owned by you or root: move minigw to a safe folder") }
     try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
     if (try? FileManager.default.destinationOfSymbolicLink(atPath: pluginLinkPath)) != self {
         unlink(pluginLinkPath)
@@ -83,7 +117,7 @@ func pluginInstall() -> Bool {
     do {
         if let link = try pluginLink(me) { say("Plugin's minigw: \(link) → \(me)") } else { say("Plugin's minigw: this one (\(me))") }
     } catch {
-        warn("the plugin's minigw is not linked (\(error.localizedDescription)); a new Claude Code session sets it up")
+        warn("the plugin's minigw is not linked (\((error as? PluginSetup.Failure)?.message ?? error.localizedDescription)); a new Claude Code session sets it up")
         ok = false
     }
     return ok
@@ -120,19 +154,7 @@ func pluginStatus() {
     let me = selfPath()
     say("minigw:     \(minigwVersion) (\(me))")
     var cv = "not found (the agent skills need the claude command)"
-    if let c = findClaude() {
-        let p = Process(), pipe = Pipe()
-        p.executableURL = URL(fileURLWithPath: c)
-        p.arguments = ["--version"]
-        p.standardOutput = pipe
-        p.standardError = FileHandle.nullDevice
-        var v = ""
-        if (try? p.run()) != nil {
-            v = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).split(separator: " ").first.map(String.init) ?? ""
-            p.waitUntilExit()
-        }
-        cv = (!v.isEmpty && v.allSatisfy { "0123456789.".contains($0) } ? v : "?") + " (\(c))"
-    }
+    if let c = findClaude() { let v = versionOf(c); cv = (v.isEmpty ? "?" : v) + " (\(c))" }
     say("Claude Code: " + cv)
     if let (v, p) = pluginVersion() { say("Plugin:     \(v) (\(p))") } else { say("Plugin:     not installed in Claude Code (minigw plugin install, then start claude)") }
     var state = "not added (minigw plugin install)"
@@ -146,7 +168,8 @@ func pluginStatus() {
     if let t = try? FileManager.default.destinationOfSymbolicLink(atPath: pluginLinkPath) {
         bin = "\(pluginLinkPath) → \(t)" + (t == me || sameFile(pluginLinkPath, me) ? " (this minigw)" : " (another minigw: minigw plugin install)")
     } else if FileManager.default.fileExists(atPath: pluginLinkPath) {
-        bin = pluginLinkPath + (sameFile(pluginLinkPath, me) ? " (this minigw)" : " (a copy)")
+        let v = versionOf(pluginLinkPath)
+        bin = pluginLinkPath + (sameFile(pluginLinkPath, me) ? " (this minigw)" : " (a copy: minigw \(v.isEmpty ? "?" : v))")
     } else { bin = "not set up (minigw plugin install, or a new Claude Code session)" }
     say("Plugin bin: " + bin)
     guard let p = loadProfiles(listing: true).first else { say("Gateway:    not connected (minigw connect)"); return }
@@ -162,6 +185,7 @@ func pluginStatus() {
 }
 
 func pluginCommand(_ a: [String]) -> Never {
+    refuseRoot("plugin")
     switch a {
     case ["install"]: exit(pluginInstall() ? 0 : 1)
     case ["uninstall"], ["uninstall", "--upgrading"]: exit(pluginUninstall(upgrading: a.count == 2) ? 0 : 1)
@@ -181,12 +205,13 @@ func uninstallCommand(_ a: [String]) -> Never {
         default: fail("usage: minigw uninstall [--purge] [--yes]   (--purge also removes settings and profiles)")
         }
     }
+    refuseRoot("uninstall")
     let fm = FileManager.default
     var steps: [(what: String, run: () -> Bool)] = [], kept: [String] = []
     let data = pluginDataDir
     steps.append(("Claude Code plugin \(PluginSetup.id) (settings entries, marketplace, \(data))", {
         let ok = pluginUninstall(upgrading: false)
-        if (data as NSString).lastPathComponent.hasPrefix("minigw") { try? fm.removeItem(atPath: data) }  // CLAUDE_PLUGIN_DATA bi lahko kazal drugam
+        if pluginDataSafe(data) { try? fm.removeItem(atPath: data) }  // L1: CLAUDE_PLUGIN_DATA bi lahko kazal drugam
         return ok && !fm.fileExists(atPath: data)
     }))
     let agent = home + "/Library/LaunchAgents/dev.trojar.minigw-serve.plist"  // starejši minigw serve (Go) na Macu

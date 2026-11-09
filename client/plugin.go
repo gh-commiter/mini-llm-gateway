@@ -148,7 +148,17 @@ func shimSh(exe string) string {
 	return "#!/bin/sh\n# Mini Gateway: the installed minigw\nexec '" + strings.ReplaceAll(strings.ReplaceAll(exe, `\`, "/"), "'", `'\''`) + "' \"$@\"\n"
 }
 
-func shimCmd(exe string) string { return `@"` + strings.ReplaceAll(exe, "%", "%%") + "\" %*\r\n" }
+// shimCmd: brez zakasnjene razširitve (»!« v poti); pot MSI kot %LOCALAPPDATA%\… (kot install-minigw.sh, enako
+// besedilo, da ga uninstall prepozna), sicer ne-ASCII pot kot kratka 8.3 (kodna stran cmd).
+func shimCmd(exe string) string {
+	p := strings.ReplaceAll(exe, "%", "%%")
+	if l := strings.TrimRight(os.Getenv("LOCALAPPDATA"), `\`); l != "" && strings.EqualFold(exe, l+`\Programs\Mini Gateway\minigw.exe`) {
+		p = `%LOCALAPPDATA%\Programs\Mini Gateway\minigw.exe`
+	} else if strings.ContainsFunc(exe, func(r rune) bool { return r > 127 }) {
+		p = strings.ReplaceAll(shortPath(exe), "%", "%%")
+	}
+	return "@setlocal DisableDelayedExpansion\r\n@\"" + p + "\" %*\r\n"
+}
 
 func sameFile(a, b string) bool {
 	x, err1 := os.Stat(a)
@@ -177,6 +187,9 @@ func pluginLink(goos, self string) (string, error) {
 	link := filepath.Join(bin, "minigw")
 	if sameFile(filepath.Dir(self), bin) {
 		return "", nil
+	}
+	if goos != "windows" && !safeDir(filepath.Dir(self)) { // L3: tuj ali vsem zapisljiv folder bi lahko zamenjal minigw
+		return "", errors.New(filepath.Dir(self) + " is writable by others or not owned by you or root: move minigw to a safe folder")
 	}
 	if err := os.MkdirAll(bin, 0o755); err != nil {
 		return "", err
@@ -276,7 +289,7 @@ func pluginUninstall(goos string, upgrading bool) bool {
 	ok := true
 	if c := findClaudeFn(); c != "" && !upgrading {
 		if err := runCmd(c, "plugin", "marketplace", "remove", pluginMarket, "--scope", "user"); err != nil {
-			say("Claude Code: marketplace " + pluginMarket + " not removed (" + shortLine(err.Error(), 200) + ")")
+			say("Claude Code: marketplace " + pluginMarket + " not removed (claude plugin marketplace remove failed)")
 		} else {
 			say("Claude Code: marketplace " + pluginMarket + " removed")
 		}
@@ -397,7 +410,15 @@ func pluginStatus(goos string) {
 	say("Gateway:    " + ps[0].conn.URL + ", version " + v)
 }
 
+// refuseRoot (L5): kot root bi minigw pisal v korenove ~/.claude in povezave, ki jih nato uporablja uporabnik.
+func refuseRoot(cmd string) {
+	if runtime.GOOS != "windows" && os.Geteuid() == 0 {
+		fail("run minigw " + cmd + " as yourself, not as root")
+	}
+}
+
 func pluginCommand(args []string) {
+	refuseRoot("plugin")
 	sub := ""
 	if len(args) > 0 {
 		sub = args[0]
@@ -418,6 +439,12 @@ func pluginCommand(args []string) {
 	}
 }
 
+// pluginDataSafe (L1): le <claude>/plugins/data/minigw…, absolutna in počiščena pot.
+func pluginDataSafe(d string) bool {
+	return filepath.IsAbs(d) && filepath.Clean(d) == d && filepath.Dir(d) == filepath.Join(claudeDir(), "plugins", "data") &&
+		strings.HasPrefix(filepath.Base(d), "minigw")
+}
+
 // uninstallStep: ena stvar, ki jo minigw uninstall odstrani (seznam najprej, nato potrditev).
 type uninstallStep struct {
 	what string
@@ -429,7 +456,7 @@ func uninstallSteps(goos string, purge bool) (steps []uninstallStep, kept []stri
 	data := pluginDataDir()
 	steps = append(steps, uninstallStep{"Claude Code plugin " + pluginID + " (settings entries, marketplace, " + data + ")", func() error {
 		ok := pluginUninstall(goos, false)
-		if strings.HasPrefix(filepath.Base(data), "minigw") { // CLAUDE_PLUGIN_DATA bi lahko kazal drugam
+		if pluginDataSafe(data) { // L1: CLAUDE_PLUGIN_DATA bi lahko kazal drugam
 			if err := os.RemoveAll(data); err != nil {
 				return err
 			}
@@ -508,7 +535,7 @@ func binaryHint(goos string) string {
 	case goos == "windows" && msiDir() != "":
 		return "minigw itself (" + self + "): Settings → Apps → Installed apps → Mini Gateway → Uninstall"
 	case goos == "windows":
-		return "minigw itself (" + self + "): minigw serve uninstall, or delete it"
+		return "minigw itself (" + self + "): delete " + self
 	}
 	return "minigw itself (" + self + "): rm " + self
 }
@@ -525,6 +552,7 @@ func uninstallCommand(args []string) {
 			fail("usage: minigw uninstall [--purge] [--yes]   (--purge also removes settings and profiles)")
 		}
 	}
+	refuseRoot("uninstall")
 	steps, kept := uninstallSteps(runtime.GOOS, purge)
 	say("minigw uninstall removes:")
 	for _, s := range steps {
@@ -548,7 +576,7 @@ func uninstallCommand(args []string) {
 	failed := false
 	for _, s := range steps {
 		if err := s.do(); err != nil {
-			fmt.Fprintln(os.Stderr, "minigw: "+s.what+": "+err.Error())
+			fmt.Fprintln(os.Stderr, "minigw: "+s.what+": not removed")
 			failed = true
 		}
 	}

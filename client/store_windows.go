@@ -498,3 +498,18 @@ func regEnvPathSet(value string) error {
 
 // ownedByMe (L2): %TEMP% je na Windows v profilu uporabnika, zato brez preverjanja lastnika.
 func ownedByMe(string) bool { return true }
+
+// shortPath: kratka pot 8.3 (minigw.cmd: ne-ASCII pot v kodni strani cmd); brez nje dolga.
+func shortPath(p string) string {
+	long, err := syscall.UTF16PtrFromString(p)
+	if err != nil {
+		return p
+	}
+	buf := make([]uint16, 1024)
+	if n, err := syscall.GetShortPathName(long, &buf[0], uint32(len(buf))); err == nil && n > 0 && int(n) < len(buf) {
+		return syscall.UTF16ToString(buf[:n])
+	}
+	return p
+}
+
+func safeDir(string) bool { return true } // Windows: pravice ACL, ne bitov načina

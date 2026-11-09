@@ -225,6 +225,18 @@ func moveFileOnReboot(string) error                { return errors.New("Windows 
 func regEnvPathGet() (string, error)               { return "", errors.New("Windows only") }
 func regEnvPathSet(string) error                   { return errors.New("Windows only") }
 
+func shortPath(p string) string { return p } // le Windows (8.3)
+
+// safeDir (L3): mapa ni zapisljiva za skupino in druge ter je last tega uporabnika ali root.
+func safeDir(dir string) bool {
+	fi, err := os.Stat(dir)
+	if err != nil {
+		return false
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	return ok && fi.Mode().Perm()&0o022 == 0 && (int(st.Uid) == os.Getuid() || st.Uid == 0)
+}
+
 // ownedByMe (L2): mapa (ne povezava) je last tega uporabnika; prva raven pod začasno mapo, ki jo smemo deliti samodejno.
 func ownedByMe(dir string) bool {
 	fi, err := os.Lstat(dir)

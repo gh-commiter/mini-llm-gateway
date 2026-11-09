@@ -125,8 +125,14 @@ func TestPluginShimContent(t *testing.T) {
 	if got, want := shimSh(exe), "#!/bin/sh\n# Mini Gateway: the installed minigw\nexec 'C:/Users/O'\\''Brien/AppData/Local/Programs/Mini Gateway 100%/minigw.exe' \"$@\"\n"; got != want {
 		t.Fatalf("sh shim\n%q\n%q", got, want)
 	}
-	if got, want := shimCmd(exe), "@\"C:\\Users\\O'Brien\\AppData\\Local\\Programs\\Mini Gateway 100%%\\minigw.exe\" %*\r\n"; got != want {
+	t.Setenv("LOCALAPPDATA", `C:\Users\O'Brien\AppData\Local`)
+	if got, want := shimCmd(exe), "@setlocal DisableDelayedExpansion\r\n@\"C:\\Users\\O'Brien\\AppData\\Local\\Programs\\Mini Gateway 100%%\\minigw.exe\" %*\r\n"; got != want {
 		t.Fatalf("cmd shim\n%q\n%q", got, want)
+	}
+	// MSI: kot install-minigw.sh, dobesedno %LOCALAPPDATA%
+	msi := `c:\users\o'brien\appdata\local\Programs\Mini Gateway\minigw.exe`
+	if got, want := shimCmd(msi), "@setlocal DisableDelayedExpansion\r\n@\"%LOCALAPPDATA%\\Programs\\Mini Gateway\\minigw.exe\" %*\r\n"; got != want {
+		t.Fatalf("msi cmd shim\n%q\n%q", got, want)
 	}
 }
 
@@ -229,5 +235,33 @@ func TestUninstallSteps(t *testing.T) {
 	}
 	if len(kept) != 0 || !slices.Contains(what, "profiles default ("+storeName+")") || !slices.Contains(what, "settings folder "+filepath.Join(cfg, "minigw")) {
 		t.Fatalf("purge %v %v", what, kept)
+	}
+}
+
+func TestPluginDataSafeAndUnsafeDir(t *testing.T) {
+	home, _ := pluginHome(t)
+	data := filepath.Join(home, ".claude", "plugins", "data")
+	for d, ok := range map[string]bool{
+		filepath.Join(data, "minigw-mini-gateway"): true, filepath.Join(data, "other"): false, data + "/x/../minigw": false,
+		filepath.Join(home, "minigw"): false, "minigw": false, filepath.Join(data, "minigw", "bin"): false,
+	} {
+		if pluginDataSafe(d) != ok {
+			t.Errorf("pluginDataSafe(%q) != %v", d, ok)
+		}
+	}
+	if runtime.GOOS == "windows" {
+		return
+	}
+	dir := filepath.Join(home, "shared")
+	os.MkdirAll(dir, 0o755)
+	os.Chmod(dir, 0o777)
+	self := filepath.Join(dir, "minigw")
+	os.WriteFile(self, []byte("x"), 0o755)
+	if _, err := pluginLink("linux", self); err == nil || !strings.Contains(err.Error(), "writable by others") {
+		t.Fatalf("world-writable folder linked: %v", err)
+	}
+	os.Chmod(dir, 0o755)
+	if _, err := pluginLink("linux", self); err != nil {
+		t.Fatal(err)
 	}
 }

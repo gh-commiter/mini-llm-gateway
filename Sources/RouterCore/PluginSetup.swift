@@ -8,7 +8,10 @@ public enum PluginSetup {
     public static let market = "mini-gateway"
     public static let marketplace: [String: Any] = ["source": ["source": "github", "repo": "gh-commiter/mini-llm-gateway"]]
 
-    public struct Failure: Error { public let message: String }
+    public struct Failure: Error {
+        public let message: String
+        public init(message: String) { self.message = message }
+    }
 
     /// Le JSON true (ne 1).
     public static func isTrue(_ v: Any?) -> Bool {
@@ -47,12 +50,31 @@ public enum PluginSetup {
         return (changed, off)
     }
 
+    /// JSONSerialization sprejme vejico pred } ali ]; Go (in Claude Code) ne: zavrnemo jo enako.
+    static func trailingComma(_ data: Data) -> Bool {
+        var inString = false, escaped = false, comma = false
+        for b in data {
+            if inString {
+                if escaped { escaped = false } else if b == 0x5c { escaped = true } else if b == 0x22 { inString = false }
+                continue
+            }
+            switch b {
+            case 0x22: inString = true; comma = false
+            case 0x2c: comma = true
+            case 0x7d, 0x5d: if comma { return true }
+            case 0x20, 0x09, 0x0a, 0x0d: break
+            default: comma = false
+            }
+        }
+        return false
+    }
+
     /// edit: settings.json skozi povezavo (dotfiles), atomarno in z isto pravico (lahko ima ključe v env; nova 0600).
     public static func edit(_ path: String, _ f: (inout [String: Any]) throws -> Bool) throws {
         let real = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
         var s: [String: Any] = [:], mode = 0o600
         if let data = FileManager.default.contents(atPath: real) {
-            guard let o = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) else {
+            guard !trailingComma(data), let o = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) else {
                 throw Failure(message: "\(path) is not valid JSON: not changed (fix it, or add the plugin in Claude Code: /plugin install \(id))")
             }
             guard let d = o as? [String: Any] else { throw Failure(message: "\(path) is not a JSON object: not changed") }
