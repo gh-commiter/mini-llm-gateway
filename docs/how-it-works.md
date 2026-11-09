@@ -110,6 +110,11 @@ Details:
   the objects (fsck) and sends one bundle per repository; all bundles of one upload together stay within 4 GB.
   In native mode on the Mac the same happens with the repositories in the share; git on the gateway reads them
   without the system or user git config.
+- How a nested clone is read after the run: on the Mac the path is checked once and then never resolved again (its
+  objects are opened without following links, and git's sandbox may read only that real path), so a folder swapped
+  for a link afterwards is refused. On Linux the clone folder is opened once and bound into a bwrap sandbox for git, so
+  a later swap changes nothing; every agent runs in its own process namespace and cannot outlive its run. A Linux
+  gateway without bwrap, or a run without its own process namespace, does not return nested repositories.
 
 ## Protected paths
 

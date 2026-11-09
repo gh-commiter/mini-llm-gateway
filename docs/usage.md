@@ -224,7 +224,9 @@ commands; review it by hand. A folder or gitlink that is a symbolic link is not 
 Notes:
 
 - The mode never changes because of a folder: more than 32 nested repositories, a name with `:`, `\`, control
-  characters or inside `.build`, or a gateway older than 0.5.20 stop the run with a message ending in "use sync".
+  characters or inside `.build`, or a gateway older than 0.5.20 stop the run with a message ending in "use sync" ("update the gateway" for a gateway
+  older than 0.5.20). On a Linux gateway nested repositories come back only with bwrap (each agent in its own process
+  namespace); otherwise the message says so and ends in "use sync".
 - The agent may commit inside a nested clone: its note names the clones and the form
   `GIT_DIR=<path>/.git GIT_COMMON_DIR=<path>/.git GIT_WORK_TREE=<path> git …` (plain git in the clone works on the top
   repository). Its commits are kept; changes it leaves uncommitted are committed by the gateway.
@@ -344,7 +346,8 @@ minigw run -- mvn -q verify                   # run a build there; output and ex
   [worktree mode](#worktree-mode-results-as-branches). Grok, and Codex or Copilot without writing, are refused.
   Submodules and nested repositories get their own clone and branch as in
   [worktree mode](#worktree-mode-results-as-branches) (a nested repository without a commit too); each branch appears
-  in its own repository.
+  in its own repository. More than 32 nested repositories, an unusable name, a nested linked worktree or a git folder
+  outside the share stop the run with the reason, ending in "use --minigw-work=native-direct".
 - **In the folder itself** (`native-direct`, or a folder that is not a git repository): one writing agent at a time
   per folder. Others wait up to 5 minutes, then get an error. Agents that only read do not wait.
 - **Unlike direct mode,** the agent can change every file, also `.git`, `.claude/settings*.json` and
