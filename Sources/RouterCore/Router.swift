@@ -624,11 +624,12 @@ public final class Router: Sendable {
             let (bytes, resp) = try await session.bytes(for: up)
             guard let http = resp as? HTTPURLResponse else { throw URLError(.badServerResponse) }
             status = http.statusCode
+            // 429 ponudnika (npr. brezplačni model na OpenRouterju) brez ponavljanja, kot omejitev agenta
             try await writer.write(HTTPResponse.head(status: status, headers: [
                 ("Content-Type", http.value(forHTTPHeaderField: "content-type") ?? "application/json"),
                 ("Cache-Control", "no-cache"),
                 ("request-id", rid),
-            ]))
+            ] + (status == 429 ? [("x-should-retry", "false")] : [])))
             headSent = true
             var chunk = Data()
             for try await byte in bytes {

@@ -497,3 +497,50 @@ func TestPublishedIDStartsWithClaude(t *testing.T) {
 		}
 	}
 }
+
+// 429 ponudnika (npr. brezplačni model na OpenRouterju) ima x-should-retry: false in besedilo upstreama; lastni
+// prehodni 429 prehoda (vse reže zasedene) ostane ponovljiv.
+func TestServeGatewayUpstream429NoRetry(t *testing.T) {
+	w := httptest.NewRecorder()
+	resp := &http.Response{StatusCode: 429, Body: io.NopCloser(strings.NewReader(`{"error":{"message":"Rate limit exceeded: free-models-per-min"}}`))}
+	if upstreamError(w, "r1", "OpenRouter", resp) != 429 || w.Header().Get("x-should-retry") != "false" ||
+		!strings.Contains(w.Body.String(), "OpenRouter: Rate limit exceeded: free-models-per-min") || !strings.Contains(w.Body.String(), "rate_limit_error") {
+		t.Fatalf("upstream 429: %d %v %s", w.Code, w.Header(), w.Body)
+	}
+	w = httptest.NewRecorder()
+	if upstreamError(w, "r2", "gw", &http.Response{StatusCode: 500, Body: io.NopCloser(strings.NewReader("boom"))}) != 500 || w.Header().Get("x-should-retry") != "" {
+		t.Fatalf("upstream 500: %v", w.Header())
+	}
+	s, _ := testServer(t, nil)
+	for range cap(s.gwSlots) {
+		s.gwSlots <- struct{}{}
+	}
+	w = httptest.NewRecorder()
+	hr := httptest.NewRequest("POST", "/v1/messages", nil)
+	if s.passthrough(w, &req{Request: hr, rid: "r3", body: []byte(`{}`)}, serveGateway{Name: "gw"}, gwModel{id: "m"}) != 429 || w.Header().Get("x-should-retry") != "" {
+		t.Fatalf("own 429 must stay retryable: %v", w.Header())
+	}
+}
+
+// Ključ, dodan po neuspelem odkrivanju (brez ključa), velja v nekaj sekundah (ne po 45 s): /health/ready znova naloži modele in pokaže ✓.
+func TestServeGatewayReadyAfterKeyAdded(t *testing.T) {
+	keys := fakeKeys(t)
+	up := fakeUpstream(t, nil, nil, nil)
+	s, _ := testServer(t, func(c *serveConfig) { c.Gateways = []serveGateway{{Name: "gw", BaseURL: up.URL, Insecure: true}} })
+	ready := func() bool {
+		w := httptest.NewRecorder()
+		s.handle(w, &req{Request: httptest.NewRequest("GET", "/health/ready", nil), conn: &serveConn{peer: "127.0.0.1"}})
+		var b struct{ Providers map[string]bool }
+		json.Unmarshal(w.Body.Bytes(), &b)
+		return b.Providers["gw"]
+	}
+	if ready() {
+		t.Fatal("ready without a key")
+	}
+	keys["gw"] = gwKey
+	for end := time.Now().Add(5 * time.Second); !ready(); time.Sleep(200 * time.Millisecond) {
+		if time.Now().After(end) {
+			t.Fatal("not ready 5 s after the key was added")
+		}
+	}
+}
