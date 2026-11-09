@@ -207,7 +207,7 @@ extension Router {
         var cwd = config.scratch("chat")
         var extra: [String] = []
         var readOnly = false
-        var tree: (root: URL, branch: String, maven: URL, read: [URL])?
+        var tree: (root: URL, branch: String, maven: URL, read: [URL], gits: [String])?
         var prompt = ClaudeCLI.prompt(history: all.dropLast(), last: last)
         var sharedDir: URL?
         if agent {
@@ -256,7 +256,7 @@ extension Router {
         defer { run?.stop() }
         var treeEnv: [String: String]?  // L-N9a: harness Codex sam poganja git v klonu (ovoj kot pri Claude CLI)
         if let t = tree {
-            guard let e = Worktree.claudeEnv(root: t.root, maven: t.maven, gitexec: config.scratch("gitexec")) else {
+            guard let e = Worktree.claudeEnv(root: t.root, maven: t.maven, gitexec: config.scratch("gitexec"), gits: t.gits) else {
                 return await error(503, "api_error", "Cannot prepare git for the agent's clone (git --exec-path): use sync", rid: rid, writer: writer)
             }
             treeEnv = e

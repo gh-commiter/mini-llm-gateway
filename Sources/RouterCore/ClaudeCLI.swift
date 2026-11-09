@@ -77,7 +77,9 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
     /// denyWrite: .git klona (config, hooks, info, commondir) in nastavitve gradnje lastnika (Native.buildCacheDenies).
     /// Iz ~/.m2 le branje settings.xml in toolchains.xml (Maven); pisanje le v svoj lokalni repozitorij (MAVEN_OPTS).
     /// `read`: objekti, ki jih git v klonu bere prek alternates (zrcalo v Scratch, pri native repozitorij uporabnika).
-    func worktreeArgs(root: URL, maven: URL, cwd: URL, allTools: [String], network: Bool, scratch: URL? = nil, read: [URL] = []) -> [String] {
+    /// `gits`: .git vseh klonov (vrhnji in ugnezdeni); prazno = le vrhnji.
+    func worktreeArgs(root: URL, maven: URL, cwd: URL, allTools: [String], network: Bool, scratch: URL? = nil, read: [URL] = [],
+                      gits: [String] = []) -> [String] {
         let dirs = Worktree.writable(root: root, maven: maven)
         let sandbox: [String: Any] = ["sandbox": [
             "enabled": true, "failIfUnavailable": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
@@ -85,7 +87,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
             // Nič iz DARWIN_USER_TEMP_DIR (peskovnik Claude Code ne zna »le znotraj mape«): swift build in xcodebuild
             // agenta lahko ne uspeta (gradnja z minigw run ali v načinu sync); Maven deluje.
             "filesystem": ["denyRead": ["~"] + Self.scratchPaths(scratch), "allowRead": dirs + Self.mavenConfig() + read.map(\.path), "allowWrite": dirs,
-                           "denyWrite": ["config", "hooks", "info", "commondir"].map { root.path + "/.git/" + $0 }
+                           "denyWrite": (gits.isEmpty ? [root.path + "/.git"] : gits).flatMap { g in ["config", "hooks", "info", "commondir"].map { g + "/" + $0 } }
                                + Native.buildCacheDenies().paths + Self.scratchPaths(RouterConfig.copilotCache)],
         ]]
         let settings = String(decoding: try! JSONSerialization.data(withJSONObject: sandbox, options: [.sortedKeys]), as: UTF8.self)
@@ -419,7 +421,8 @@ extension Router {
             return "The user's folder \(clientCwd) (on their computer, a git repository) is a clone here at \(shared.path), your working"
                 + " directory, on branch \(branch). Map paths under \(clientCwd) to it. Commit your work on this branch; changes you leave"
                 + " uncommitted are committed for you at the end. The branch goes back to the user's repository; their files are not changed."
-                + " Build output (.build, target, DerivedData) is never committed. Do not create git repositories or submodules here outside ignored folders: then nothing comes back (use sync for that). Maven builds work here; swift build and xcodebuild"
+                + " Build output (.build, target, DerivedData) is never committed. Nested repositories and submodules here are their own clones on the same branch; leave your changes in them uncommitted (git here works on the top repository), they come back too."
+                + " Do not create git repositories or submodules here outside ignored folders: then nothing comes back (use sync for that). Maven builds work here; swift build and xcodebuild"
                 + " may fail in this sandbox: then tell the user to build with minigw run."
         }
         return (synced ? "The user's folder \(clientCwd) (on their computer) is synced here as \(shared.path), your working directory: a local copy"
@@ -497,7 +500,7 @@ extension Router {
             }
             let allTools = cfg.allowLocalTools || tree != nil ? await Self.toolList.get(cfg.executable) : []
             args += (tree.map { cfg.worktreeArgs(root: $0.root, maven: $0.maven, cwd: dir, allTools: allTools, network: config.worktreeNetwork,
-                                                 scratch: config.scratchURL, read: $0.read) }
+                                                 scratch: config.scratchURL, read: $0.read, gits: $0.gits) }
                      ?? cfg.agentArgs(cwd: dir, allTools: allTools, scratch: config.scratchURL, readOnly: readOnly))
                 + ["--setting-sources", shared == nil ? cfg.settingSources : ""]  // hooki iz mape odjemalca ne tečejo tukaj
         } else {
@@ -536,7 +539,7 @@ extension Router {
         }
         env["PATH"] = (env["PATH"].map { $0 + ":" } ?? "") + "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
         if agent, let t = await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "") {
-            guard let tenv = Worktree.claudeEnv(root: t.root, maven: t.maven, gitexec: gitexec) else {
+            guard let tenv = Worktree.claudeEnv(root: t.root, maven: t.maven, gitexec: gitexec, gits: t.gits) else {
                 return await error(503, "api_error", "Cannot prepare git for the agent's clone (git --exec-path): use sync", rid: rid, writer: writer)
             }
             env.merge(tenv) { $1 }

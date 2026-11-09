@@ -268,6 +268,7 @@ final class ShareClient: @unchecked Sendable {
     private var sent: [String: Set<String>] = [:]   // pot → različice, ki jih je router dobil od tega odjemalca (#20)
     private var reported: Set<String> = []          // že javljene prevelike datoteke
     private var snaps: [String] = []                // worktree: posnetki, poslani prehodu (začetek dela agenta)
+    private var nestedSnaps: [String: [String]] = [:]  // worktree: ugnezdeni repozitorij (pot) → njegovi poslani posnetki
     private var unpulled = false                    // spremembe agenta, ki niso bile prevzete in potrjene
 
     init(_ c: Connection, session: String, root: URL, readOnly: Bool, kind: String, top: String? = nil) {
@@ -350,55 +351,90 @@ final class ShareClient: @unchecked Sendable {
         return DAVResponse(200)
     }
 
-    /// Vrstica o veji enkrat na vejo in začetek v zagonu (pod syncLock).
-    private func branchNote(_ branch: String, _ base: String) {
-        if reported.insert("branch:\(branch)@\(base)").inserted { note(Worktree.branchLine(branch: branch, base: base)) }
+    /// Vrstica o veji enkrat na vejo, repozitorij in začetek v zagonu (pod syncLock).
+    private func branchNote(_ branch: String, _ base: String, nested: String? = nil) {
+        if reported.insert("branch:\(nested ?? ""):\(branch)@\(base)").inserted {
+            note(Worktree.branchLine(branch: branch, base: base, nested: nested))
+        }
     }
 
-    /// worktree: posnetek stanja (brez spremembe indeksa ali vej) in bundle manjkajočih objektov po delih do 32 MB.
+    /// worktree (kot Go wtPush): posnetki vrhnjega in ugnezdenih repozitorijev (brez spremembe indeksa ali vej) in bundli
+    /// manjkajočih objektov po delih do 32 MB (ugnezdeni z x-nested); starejši prehod brez »nested«: napaka, ne brez njih.
     private func wtPush(_ k: String, _ job: DAVJob) -> DAVResponse {
-        let have = (try? JSONSerialization.jsonObject(with: job.body) as? [String: Any])?["have"] as? [String] ?? []
-        let skip = top.map { Worktree.nestedNoCommit(top: $0) } ?? []
-        for p in skip where reported.insert("nocommit:" + p).inserted {
-            note("worktree: nested repository \(p) has no commit yet and is not part of this worktree run")
-        }
-        guard let top, let snap = Worktree.snapshot(top: top, skip: skip) else {
-            if reported.insert("snapshot").inserted { note("worktree: cannot take a snapshot of \(top ?? root.path) (git add or write-tree failed)") }
+        let req = (try? JSONSerialization.jsonObject(with: job.body) as? [String: Any]) ?? [:]
+        let have = req["have"] as? [String] ?? [], nestedHave = req["nested"] as? [String: Any]
+        guard let top else { return DAVResponse(500) }
+        let r = Worktree.snapshots(top: top, gateway: nestedHave != nil)
+        if let f = r.failure {
+            if reported.insert(f.key).inserted { note(f.message) }
             return DAVResponse(500)
         }
-        let file = FileManager.default.temporaryDirectory.appendingPathComponent("minigw-\(UUID().uuidString).bundle")
-        defer { try? FileManager.default.removeItem(at: file) }
-        guard let made = Worktree.bundle(top: top, snapshot: snap, have: have, to: file) else { note("worktree: git bundle failed"); return DAVResponse(500) }
-        if made, let h = FileHandle(forReadingAtPath: file.path) {
-            defer { try? h.close() }
-            var part = 0
-            while let d = try? h.read(upToCount: 32 << 20), !d.isEmpty {
-                guard call(c, "PUT", "/minigw/worktree/bundle", ["x-share-key": k, "x-part": String(part)], d, timeout: 600).0 == 204 else {
-                    note("worktree: upload to the gateway failed"); return DAVResponse(500)
-                }
-                part += 1
-            }
+        guard upload(k, top, r.snap, have, 0) else { return DAVResponse(500) }
+        for (i, n) in r.nested.enumerated() {
+            guard upload(k, top + "/" + n.path, n.snapshot, nestedHave?[Worktree.nestedKey(n.path)] as? [String] ?? [], i + 1) else { return DAVResponse(500) }
         }
-        snaps.append(snap)
+        snaps.append(r.snap)
         if snaps.count > 64 { snaps.removeFirst() }
-        return DAVResponse(200, [:], (try? JSONSerialization.data(withJSONObject: ["snapshot": snap])) ?? Data())
+        for n in r.nested {
+            nestedSnaps[n.path, default: []].append(n.snapshot)
+            if nestedSnaps[n.path]!.count > 64 { nestedSnaps[n.path]!.removeFirst() }
+        }
+        let nested = r.nested.map { ["path": $0.path, "snapshot": $0.snapshot] }
+        return DAVResponse(200, [:], (try? JSONSerialization.data(withJSONObject: ["snapshot": r.snap, "nested": nested] as [String: Any])) ?? Data())
     }
 
-    /// worktree: veja agenta iz routerja le kot ref (Worktree.fetch: fsck, brez hookov, podmodulov, checkouta).
+    /// Bundle posnetka repozitorija dir brez objektov, ki jih zrcalo ima, po delih do 32 MB (idx > 0: ugnezden).
+    private func upload(_ k: String, _ dir: String, _ snap: String, _ have: [String], _ idx: Int) -> Bool {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("minigw-\(UUID().uuidString).bundle")
+        defer { try? FileManager.default.removeItem(at: file) }
+        guard let made = Worktree.bundle(top: dir, snapshot: snap, have: have, to: file) else { note("worktree: git bundle failed"); return false }
+        guard made, let h = FileHandle(forReadingAtPath: file.path) else { return true }
+        defer { try? h.close() }
+        var part = 0
+        while let d = try? h.read(upToCount: 32 << 20), !d.isEmpty {
+            let headers = ["x-share-key": k, "x-part": String(part)].merging(idx > 0 ? ["x-nested": String(idx)] : [:]) { $1 }
+            guard call(c, "PUT", "/minigw/worktree/bundle", headers, d, timeout: 600).0 == 204 else {
+                note("worktree: upload to the gateway failed"); return false
+            }
+            part += 1
+        }
+        return true
+    }
+
+    /// worktree: veja agenta iz routerja le kot ref (Worktree.fetch: fsck, brez hookov, podmodulov, checkouta); ugnezdeni
+    /// (le poti, ki jih je ta odjemalec poslal) vsak v svoj repozitorij. nestedOnly: vrhnja veja se ni spremenila.
     private func wtPull(_ k: String, _ job: DAVJob) -> DAVResponse {
-        guard let top, let branch = (try? JSONSerialization.jsonObject(with: job.body) as? [String: Any])?["branch"] as? String,
-              Worktree.validBranch(branch) else { return DAVResponse(403) }
-        let (s, d) = call(c, "GET", "/minigw/worktree/result", ["x-share-key": k], timeout: 600)
+        let req = (try? JSONSerialization.jsonObject(with: job.body) as? [String: Any]) ?? [:]
+        guard let top, let branch = req["branch"] as? String, Worktree.validBranch(branch) else { return DAVResponse(403) }
+        var ok = req["nestedOnly"] as? Bool == true || fetchResult(k, top, nil, branch, 0)
+        for (i, n) in ((req["nested"] as? [[String: Any]]) ?? []).enumerated() {
+            guard let p = n["path"] as? String, nestedSnaps[p] != nil else {
+                note("worktree: the gateway named a nested repository minigw did not send; ignored"); ok = false; continue
+            }
+            ok = fetchResult(k, top + "/" + p, p, branch, i + 1) && ok
+        }
+        return DAVResponse(ok ? 200 : 500)
+    }
+
+    /// Rezultat idx (0 = vrhnji) s prehoda kot veja v repozitorij dir (rel: pot ugnezdenega).
+    private func fetchResult(_ k: String, _ dir: String, _ rel: String?, _ branch: String, _ idx: Int) -> Bool {
+        let what = rel.map { "\(branch) of the nested repository \(oneLine($0))" } ?? branch
+        if let rel, Worktree.toplevel(dir).flatMap({ Sync.real(URL(fileURLWithPath: $0))?.path }) != Sync.real(URL(fileURLWithPath: dir))?.path {
+            note("worktree: the nested repository \(oneLine(rel)) is no longer a git repository here; \(branch) was not fetched into it"); return false
+        }
+        let (s, d) = call(c, "GET", "/minigw/worktree/result", ["x-share-key": k].merging(idx > 0 ? ["x-nested": String(idx)] : [:]) { $1 }, timeout: 600)
         guard s == 200, let d else {  // L5: razlog prehoda (prevelik klon ali veja), sicer status
             let why = d.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }.flatMap { ($0["error"] as? [String: Any])?["message"] as? String }
-            note("worktree: cannot get \(branch) from the gateway: \(why.map(oneLine) ?? "HTTP \(s)")"); return DAVResponse(500)
+            note("worktree: cannot get \(what) from the gateway: \(why.map(oneLine) ?? "HTTP \(s)")"); return false
         }
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("minigw-\(UUID().uuidString).bundle")
         defer { try? FileManager.default.removeItem(at: file) }
-        guard (try? d.write(to: file)) != nil else { return DAVResponse(500) }
-        if let why = Worktree.fetch(top: top, bundle: file, branch: branch) { note("worktree: " + why); return DAVResponse(500) }
-        branchNote(branch, Worktree.agentBase(top: top, branch: branch, sent: snaps))
-        return DAVResponse(200)
+        guard (try? d.write(to: file)) != nil else { return false }
+        if let why = Worktree.fetch(top: dir, bundle: file, branch: branch) {
+            note("worktree: " + (rel.map { "nested repository \(oneLine($0)): " } ?? "") + why); return false
+        }
+        branchNote(branch, Worktree.agentBase(top: dir, branch: branch, sent: rel.flatMap { nestedSnaps[$0] } ?? snaps), nested: rel)
+        return true
     }
 
     /// Pred agentom: manifest k routerju, nato datoteke, ki jih potrebuje.
