@@ -1703,6 +1703,23 @@ final class FakeMinigw: @unchecked Sendable {
     #expect(!RouterServer.bodyNeedsToken(Data("POST / HTTP/1.1\r\ncontent-length: 9999999\r\n".utf8), peer: "10.0.0.2", authorized: ok))
 }
 
+/// L1: omejitev povezav brez cele zahteve: 16 z enega naslova, 256 skupaj, lokalne brez omejitve; zaprta sprosti mesto.
+@Test func pendingConnectionLimits() {
+    var p = RouterServer.Pending()
+    let ids = (0..<300).map { _ in NSObject() }
+    func admit(_ i: Int, _ peer: String) -> Bool { p.admit(ObjectIdentifier(ids[i]), peer: peer) }
+    func remove(_ i: Int) -> Bool { p.remove(ObjectIdentifier(ids[i])) }
+    for i in 0..<16 { #expect(admit(i, "10.0.0.2")) }
+    #expect(!admit(16, "10.0.0.2"))
+    #expect(remove(3) && admit(16, "10.0.0.2"))  // zaprta povezava sprosti mesto
+    for i in 17..<57 { #expect(admit(i, "127.0.0.1")) }  // lokalne: brez omejitve, ne štejejo
+    var n = 57
+    for k in 3..<17 { for _ in 0..<16 { #expect(admit(n, "10.0.\(k).1")); n += 1 } }  // 16 + 14·16 = 240 z drugih
+    for k in 0..<16 { #expect(admit(n, "10.1.\(k).1")); n += 1 }  // 256
+    #expect(!admit(n, "10.9.9.9"))
+    #expect(admit(n, "::1"))
+}
+
 /// N8: pod Claude Code --minigw-work= brez veje le samo za branje ali kot shranjen način mape (kot Go TestUnsafeWorkInsideClaudeCode).
 @Test func unsafeWorkInsideClaudeCode() {
     let env = ["CLAUDECODE": "1"]

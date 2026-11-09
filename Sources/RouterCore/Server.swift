@@ -16,7 +16,7 @@ public final class RouterServer: @unchecked Sendable {
     public let router: Router
     private let queue = DispatchQueue(label: "dev.trojar.minigateway.server")
     private var listener: NWListener?
-    private var pending = Set<ObjectIdentifier>()  // povezave brez cele zahteve (le na `queue`)
+    private var pending = Pending()  // povezave brez cele zahteve (le na `queue`)
     public var onState: (@Sendable (ServerState) -> Void)?
 
     let key: Curve25519.KeyAgreement.PrivateKey?  // stalni ključ routerja (Noise); nil = brez šifriranih povezav
@@ -55,13 +55,18 @@ public final class RouterServer: @unchecked Sendable {
         let peer = Self.ip(host)
         // Seznam dovoljenih velja za vse razen lokalnega mount_webdav (/dav, preverjeno po branju zahteve).
         guard allowed.isEmpty || allowed.contains(peer) || Self.isLoopback(peer) else { conn.cancel(); return }
-        guard pending.count < Self.maxPending else { conn.cancel(); return }  // L1: kot minigw serve (256 v rokovanju)
-        conn.start(queue: queue)
         let id = ObjectIdentifier(conn)
-        pending.insert(id)
+        guard pending.admit(id, peer: peer) else { conn.cancel(); return }  // L1: omejitev povezav brez cele zahteve
+        conn.stateUpdateHandler = { [weak self] state in  // vsako zaprtje sprosti mesto (tudi conn.cancel() spodaj)
+            switch state {
+            case .failed, .cancelled: self?.pending.remove(id)
+            default: break
+            }
+        }
+        conn.start(queue: queue)
         // Brez cele zahteve v 120 s (zastalo rokovanje, počasen napadalec) → zapri. Velik PUT prek VPN ima dovolj časa.
         queue.asyncAfter(deadline: .now() + 120) { [weak self] in
-            if self?.pending.remove(id) != nil { conn.cancel() }
+            if self?.pending.remove(id) == true { conn.cancel() }
         }
         sniff(conn, Data(), peer: peer)
     }
@@ -75,7 +80,21 @@ public final class RouterServer: @unchecked Sendable {
         }
     }
 
-    static let maxPending = 256
+    /// L1: povezave brez cele zahteve: z drugih računalnikov največ 256 skupaj in 16 z enega naslova (kot minigw serve
+    /// 256 v rokovanju); lokalne (mount_webdav, aplikacije) brez omejitve. Mesto sprosti cela zahteva ali zaprtje.
+    struct Pending {
+        static let total = 256, perPeer = 16
+        private var peers: [ObjectIdentifier: String] = [:]
+        mutating func admit(_ id: ObjectIdentifier, peer: String) -> Bool {
+            if !RouterServer.isLoopback(peer) {
+                let remote = peers.values.filter { !RouterServer.isLoopback($0) }
+                guard remote.count < Self.total, remote.filter({ $0 == peer }).count < Self.perPeer else { return false }
+            }
+            peers[id] = peer
+            return true
+        }
+        @discardableResult mutating func remove(_ id: ObjectIdentifier) -> Bool { peers.removeValue(forKey: id) != nil }
+    }
 
     /// L1: telo nad 1 MB z drugega računalnika le z veljavnim žetonom v glavi (sicer bi do 64 MB brali pred preverbo).
     static func bodyNeedsToken(_ plain: Data, peer: String, authorized: (HTTPRequest) -> Bool) -> Bool {
