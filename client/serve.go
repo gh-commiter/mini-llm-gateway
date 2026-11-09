@@ -999,6 +999,8 @@ func (s *server) handle(w http.ResponseWriter, r *req) (int, string) {
 			return writeJSON(w, r.rid, 200, map[string]any{"status": "ok"}), ""
 		}
 		providers := map[string]bool{"claude-cli": len(s.claudeExe()) > 0}
+		// kot catalog.status na Macu: nov poskus po napaki (največ 2 s), sicer ostane zastarel ✗
+		s.loadGateways()
 		for _, g := range s.conf().Gateways { // vklopljeni ponudniki: modeli naloženi (kot catalog.status na Macu)
 			if !g.Disabled {
 				providers[g.Name] = s.gateways.ready(g.Name)

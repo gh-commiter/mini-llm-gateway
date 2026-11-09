@@ -228,7 +228,8 @@ func gwFetch(ctx context.Context, g serveGateway, key, path string) (map[string]
 
 // discoverGateway: modeli in okna (kot Discovery.load); LiteLLM ima okna v /model/info.
 func discoverGateway(g serveGateway, key string) ([]gwModel, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// rok za cel prenos (OpenRouter: več sto modelov, ~1 MB); zahteve čakajo največ 2 s (gatewayModels)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	list, err := gwFetch(ctx, g, key, "/v1/models")
 	if err != nil {
@@ -328,7 +329,9 @@ func (s *server) gatewayModels(g serveGateway, wait bool) []gwModel {
 			if err == nil {
 				e.models, e.ok, e.at, e.failed = ms, true, time.Now(), time.Time{}
 			} else {
-				e.failed = time.Now()
+				if key != "" { // brez ključa ni bilo klica: ključ, dodan kasneje, velja takoj (brez 45 s premora)
+					e.failed = time.Now()
+				}
 				s.log.Printf("provider %s: %v", g.Name, err)
 			}
 			e.loading = nil
