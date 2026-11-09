@@ -1086,3 +1086,15 @@ func TestWorktreeNestedSwapAndRestore(t *testing.T) {
 		t.Fatal("outside objects/info changed")
 	}
 }
+
+// N1 (Linux): agent brez svojega imenskega prostora PID (unconfined) — ugnezdeni ne gre nazaj, sporočilo pove zakaj.
+func TestNestedFinalizeFailsClosedUnconfined(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux only")
+	}
+	n := &wtNested{path: "lib", repo: filepath.Join(t.TempDir(), "r-x.git")}
+	sl := &wtSlot{wt: t.TempDir(), branch: "minigw/claude-12345678-0", nested: []*wtNested{n}, unconfined: true}
+	if tip, why := finalizeNested(sl, n, "claude", filepath.Join(t.TempDir(), "o"), nil); tip != "" || !strings.HasSuffix(why, "use sync") {
+		t.Fatalf("%q %q", tip, why)
+	}
+}
