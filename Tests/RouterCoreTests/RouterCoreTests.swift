@@ -1686,6 +1686,17 @@ final class FakeMinigw: @unchecked Sendable {
     #expect(String(decoding: try Data(contentsOf: root.appendingPathComponent("h2")), as: UTF8.self) == "hl")
 }
 
+/// L1: telo nad 1 MB z drugega računalnika šele po žetonu v glavi; lokalno (mount_webdav) in majhna telesa brez tega.
+@Test func bigBodyNeedsTokenFirst() {
+    let head = { (len: Int, auth: String) in Data("POST /v1/messages HTTP/1.1\r\ncontent-length: \(len)\r\n\(auth)\r\n".utf8) + Data(count: 10) }
+    let ok = { (r: HTTPRequest) in r.header("x-api-key") == "t" }
+    #expect(RouterServer.bodyNeedsToken(head(2 << 20, ""), peer: "10.0.0.2", authorized: ok))
+    #expect(!RouterServer.bodyNeedsToken(head(2 << 20, "x-api-key: t\r\n"), peer: "10.0.0.2", authorized: ok))
+    #expect(!RouterServer.bodyNeedsToken(head(1000, ""), peer: "10.0.0.2", authorized: ok))
+    #expect(!RouterServer.bodyNeedsToken(head(2 << 20, ""), peer: "127.0.0.1", authorized: ok))
+    #expect(!RouterServer.bodyNeedsToken(Data("POST / HTTP/1.1\r\ncontent-length: 9999999\r\n".utf8), peer: "10.0.0.2", authorized: ok))
+}
+
 /// N8: pod Claude Code --minigw-work= brez veje le samo za branje ali kot shranjen način mape (kot Go TestUnsafeWorkInsideClaudeCode).
 @Test func unsafeWorkInsideClaudeCode() {
     let env = ["CLAUDECODE": "1"]

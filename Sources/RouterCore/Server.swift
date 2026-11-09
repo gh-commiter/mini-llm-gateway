@@ -55,6 +55,7 @@ public final class RouterServer: @unchecked Sendable {
         let peer = Self.ip(host)
         // Seznam dovoljenih velja za vse razen lokalnega mount_webdav (/dav, preverjeno po branju zahteve).
         guard allowed.isEmpty || allowed.contains(peer) || Self.isLoopback(peer) else { conn.cancel(); return }
+        guard pending.count < Self.maxPending else { conn.cancel(); return }  // L1: kot minigw serve (256 v rokovanju)
         conn.start(queue: queue)
         let id = ObjectIdentifier(conn)
         pending.insert(id)
@@ -72,6 +73,15 @@ public final class RouterServer: @unchecked Sendable {
         case .name(let n, _): n
         @unknown default: "\(host)"
         }
+    }
+
+    static let maxPending = 256
+
+    /// L1: telo nad 1 MB z drugega računalnika le z veljavnim žetonom v glavi (sicer bi do 64 MB brali pred preverbo).
+    static func bodyNeedsToken(_ plain: Data, peer: String, authorized: (HTTPRequest) -> Bool) -> Bool {
+        guard !isLoopback(peer), case .request(let h) = HTTPParser.parse(plain, headOnly: true),
+              (Int(h.header("content-length") ?? "") ?? 0) > 1 << 20 else { return false }
+        return !authorized(h)
     }
 
     static func isLoopback(_ ip: String) -> Bool {
@@ -152,7 +162,10 @@ public final class RouterServer: @unchecked Sendable {
             plain.append(raw); raw = Data()
         }
         let w = ConnectionWriter(conn: conn, cipher: session?.send)
-        let parsed = HTTPParser.parse(plain)
+        var parsed = HTTPParser.parse(plain)
+        if case .needMore = parsed, Self.bodyNeedsToken(plain, peer: peer, authorized: router.authorized) {
+            parsed = .error(401, "Invalid or missing token")
+        }
         if case .needMore = parsed {} else { pending.remove(ObjectIdentifier(conn)) }
         switch parsed {
         case .needMore:
