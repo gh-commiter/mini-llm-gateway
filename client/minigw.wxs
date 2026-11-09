@@ -16,6 +16,9 @@
     <Property Id="ARPPRODUCTICON" Value="tray.ico"/>
     <!-- PURGE=1 (ali potrditveno polje ob odstranitvi): odstrani tudi nastavitve in profile. Privzeto ostanejo. -->
     <Property Id="PURGE" Secure="yes"/>
+    <!-- Posodobitev nikoli ne zahteva ponovnega zagona: StopProcesses ustavi vse naše procese pred InstallValidate, zato
+         ni datotek v rabi. ReallySuppress je le zadnja varovalka (ne rešitev: zadušen zagon bi pustil stari program). -->
+    <Property Id="REBOOT" Value="ReallySuppress"/>
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="LocalAppDataFolder">
         <Directory Id="ProgramsDir" Name="Programs">
@@ -63,12 +66,21 @@
       </Feature>
     </Feature>
 
-    <!-- Pladenj zapri pred InstallValidate (sicer so datoteke v rabi): ob odstranitvi, izklopu dela Gateway in nadgradnji
-         (zažene nameščeni, stari minigw-tray.exe quit: WM_CLOSE, 5 s, nato konec procesa; zapiše, ali je tekel). Kot stari
-         paket pri nadgradnji ne: novi ga je že zaprl (drugi quit bi zapisal »ni tekel«). Program brez konzole: brez okna.
-         ponytail: pladenj 0.5.17 ukaza quit ne pozna (pokaže »already running« ali se zažene); nadgradnja s 0.5.17
-         zato lahko pokaže FilesInUse. -->
-    <CustomAction Id="CloseTray" FileKey="tray" ExeCommand="quit" Return="ignore" Execute="immediate"/>
+    <!-- Pred InstallValidate ustavi vse naše procese, da nobena datoteka ni v rabi (brez FilesInUse, Restart Managerja in
+         ponovnega zagona; okni FilesInUse ostaneta le kot rezerva). Teče kopija tega paketa iz tabele Binary (pladenj,
+         program brez konzole), ne nameščeni stari program, ki novih ukazov ne pozna; zato mapa kot argument. wixl ne zna
+         BinaryKey z ExeCommand: tu FileKey="tray", scripts/build-msi.sh nato v tabeli CustomAction nastavi Binary (tip 66).
+         CloseTray: tray quit počaka na zahteve agentov (največ 120 s, nato še 3 s za odjemalce), zapre pladenj (WM_CLOSE, 5 s, nato konec) in
+         zapiše, ali je tekel (RestartTray). Ob odstranitvi, izklopu dela Gateway, nadgradnji in popravilu (REINSTALL); kot
+         stari paket pri nadgradnji ne (drugi quit bi zapisal »ni tekel«).
+         StopProcesses: nato preostali procesi iz mape namestitve (odjemalci minigw.exe, minigw-tui.exe): WM_CLOSE, 5 s,
+         konec. StopTui: ob izklopu dela Gateway le minigw-tui.exe (minigw.exe ostane, odjemalci tečejo naprej).
+         [INSTALLDIR] se konča z »\«: zato »[INSTALLDIR]\"« (»\\"« = »\« in konec narekovaja; sam »\"« bi narekovaj ubežal in
+         mapa bi pogoltnila še ostale argumente; preizkus TestMSIStopCommandLine). -->
+    <Binary Id="stopper" SourceFile="$(var.Tray)"/>
+    <CustomAction Id="CloseTray" FileKey="tray" ExeCommand="tray quit" Return="ignore" Execute="immediate"/>
+    <CustomAction Id="StopProcesses" FileKey="tray" ExeCommand="tray msi stop &quot;[INSTALLDIR]\&quot;" Return="ignore" Execute="immediate"/>
+    <CustomAction Id="StopTui" FileKey="tray" ExeCommand="tray msi stop &quot;[INSTALLDIR]\&quot; minigw-tui.exe" Return="ignore" Execute="immediate"/>
     <!-- Po namestitvi zaženi pladenj; ob prvem zagonu sam ustvari serve.json in pokaže, kje je vrstica za povezavo.
          Zastavica quiet-if-running: če že teče, brez sporočila »already running«; sicer se pladenj znova zažene prek
          Raziskovalca (okolje msiexec nima uporabnikovega trenutnega PATH). Nadgradnja: if-was-running, le če je
@@ -81,16 +93,24 @@
     <CustomAction Id="PluginUninstall" FileKey="tray" ExeCommand="msi plugin uninstall" Execute="deferred" Impersonate="yes" Return="ignore"/>
     <CustomAction Id="PluginUninstallUpgrading" FileKey="tray" ExeCommand="msi plugin uninstall --upgrading" Execute="deferred" Impersonate="yes" Return="ignore"/>
     <CustomAction Id="Purge" FileKey="tray" ExeCommand="msi uninstall --purge --yes" Execute="deferred" Impersonate="yes" Return="ignore"/>
+    <!-- Vrednost Run ob odstranitvi dela Gateway ali celote izbriše tudi minigw (kot uporabnik, po RemoveRegistryValues):
+         lahko jo je zapisal pladenj (Zaženi ob prijavi) ali minigw gw autostart, in ostala je (poročilo 0.5.20). Le, če
+         kaže na pladenj iz mape namestitve. -->
+    <CustomAction Id="RemoveRun" FileKey="tray" ExeCommand="msi run-off" Execute="deferred" Impersonate="yes" Return="ignore"/>
     <!-- Številke korakov izrecno: wixl z After/Before na druga dejanja po meri razvrsti napačno (tudi RemoveExistingProducts
          na konec). CostFinalize 1000, RemoveFiles 3500, InstallFiles 4000, InstallFinalize 6600. -->
     <InstallExecuteSequence>
-      <Custom Action="CloseTray" Sequence="1001">(REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE) OR (&amp;Gateway=2 AND !Gateway=3) OR WIX_UPGRADE_DETECTED OR WIX_SAME_VERSION_UPGRADE_DETECTED</Custom>
+      <Custom Action="CloseTray" Sequence="1001">(REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE) OR (&amp;Gateway=2 AND !Gateway=3) OR WIX_UPGRADE_DETECTED OR WIX_SAME_VERSION_UPGRADE_DETECTED OR REINSTALL</Custom>
+      <Custom Action="StopProcesses" Sequence="1002">(REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE) OR WIX_UPGRADE_DETECTED OR WIX_SAME_VERSION_UPGRADE_DETECTED OR REINSTALL</Custom>
+      <Custom Action="StopTui" Sequence="1003">&amp;Gateway=2 AND !Gateway=3 AND NOT REMOVE~="ALL"</Custom>
       <Custom Action="PluginUninstall" Sequence="3401">&amp;Plugin=2 AND !Plugin=3 AND NOT UPGRADINGPRODUCTCODE</Custom>
       <Custom Action="PluginUninstallUpgrading" Sequence="3402">&amp;Plugin=2 AND !Plugin=3 AND UPGRADINGPRODUCTCODE</Custom>
       <Custom Action="Purge" Sequence="3403">REMOVE~="ALL" AND PURGE=1 AND NOT UPGRADINGPRODUCTCODE</Custom>
+      <Custom Action="RemoveRun" Sequence="3404">(REMOVE~="ALL" OR (&amp;Gateway=2 AND !Gateway=3)) AND NOT UPGRADINGPRODUCTCODE</Custom>
       <Custom Action="PluginInstall" Sequence="4001">&amp;Plugin=3</Custom>
-      <Custom Action="StartTray" Sequence="6601">&amp;Gateway=3 AND NOT WIX_UPGRADE_DETECTED AND NOT WIX_SAME_VERSION_UPGRADE_DETECTED</Custom>
-      <Custom Action="RestartTray" Sequence="6602">&amp;Gateway=3 AND (WIX_UPGRADE_DETECTED OR WIX_SAME_VERSION_UPGRADE_DETECTED)</Custom>
+      <Custom Action="StartTray" Sequence="6601">&amp;Gateway=3 AND NOT WIX_UPGRADE_DETECTED AND NOT WIX_SAME_VERSION_UPGRADE_DETECTED AND NOT REINSTALL</Custom>
+      <!-- Nadgradnja in popravilo (REINSTALL; CloseTray ga je zaprl): pladenj znova, le če je tekel. -->
+      <Custom Action="RestartTray" Sequence="6602">(&amp;Gateway=3 AND (WIX_UPGRADE_DETECTED OR WIX_SAME_VERSION_UPGRADE_DETECTED)) OR (REINSTALL AND !Gateway=3)</Custom>
     </InstallExecuteSequence>
 
     <!-- Okno (polni vmesnik: dvoklik na MSI, Aplikacije → Spremeni): izbira delov; ko je nameščen, še Remove s

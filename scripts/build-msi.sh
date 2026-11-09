@@ -13,4 +13,7 @@ for arch in amd64 arm64; do
   wixl --ext ui -a x64 -D Version=$V -D Icon=client/tray.ico \
     -D Exe=$D/minigw-windows-$arch.exe -D Tray=$D/minigw-tray-windows-$arch.exe -D Tui=$D/minigw-tui-windows-$arch.exe \
     -o $D/minigw-windows-$arch.msi client/minigw.wxs
+  # Zapiranje pred InstallValidate teče iz kopije pladnja tega paketa (Binary stopper, tip 66 = 2 + ignore 64), ne iz
+  # nameščenega starega: wixl BinaryKey z ExeCommand ne zna, zato tu (client/minigw.wxs, CloseTray).
+  msibuild $D/minigw-windows-$arch.msi -q "UPDATE \`CustomAction\` SET \`Type\` = 66, \`Source\` = 'stopper' WHERE \`Action\` = 'CloseTray' OR \`Action\` = 'StopProcesses' OR \`Action\` = 'StopTui'"
 done

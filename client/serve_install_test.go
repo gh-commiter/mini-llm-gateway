@@ -11,12 +11,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -275,8 +277,8 @@ func TestServeInstallWithMSI(t *testing.T) {
 	var calls, got []string
 	o1, o2, o3, o4, o5, o6 := msiDir, fetchRelease, runCmd, installedVersion, runValueGet, msiPart
 	t.Cleanup(func() { msiDir, fetchRelease, runCmd, installedVersion, runValueGet, msiPart = o1, o2, o3, o4, o5, o6 })
-	runValueGet = func(string) (string, error) { return "tray", nil } // del Gateway (ali MSI 0.5.19) je nameščen
-	msiPart = func(string) bool { return false }
+	runValueGet = func(string) (string, error) { return "tray", nil }
+	msiPart = func(string) bool { return true } // del Gateway (ali MSI 0.5.19 brez delov) je nameščen
 	installedVersion = func(string) string { return "0.0.1" }
 	msiDir = func() string { return `C:\Users\ana\AppData\Local\Programs\Mini Gateway\` }
 	fetchRelease = func(asset, dst string) error {
@@ -303,8 +305,8 @@ func TestServeInstallWithMSI(t *testing.T) {
 			t.Fatalf("%s: %v %q %v %v", v, err, msg, calls, got)
 		}
 	}
-	// MSI le z odjemalcem: serve install doda del Gateway (tudi ob isti različici); Plugin ostane, kot je.
-	runValueGet = func(string) (string, error) { return "", errNotFound }
+	// MSI le z odjemalcem: serve install doda del Gateway (tudi ob isti različici); Plugin ostane, kot je. Stara vrednost
+	// Run (od prej ali od pladnja) ne šteje: stanje dela da Windows Installer (poročilo 0.5.20, 3.7).
 	installedVersion = func(string) string { return version }
 	for plugin, add := range map[bool]string{false: "ADDLOCAL=Client,Gateway", true: "ADDLOCAL=Client,Gateway,Plugin"} {
 		calls, got = nil, nil
@@ -313,6 +315,17 @@ func TestServeInstallWithMSI(t *testing.T) {
 			t.Fatalf("client-only MSI: %v %v", err, calls)
 		}
 	}
+	// minigw.exe iz mape MSI: msiexec v ozadju (MSI ga ustavi pred zamenjavo), ta ne čaka.
+	self, _ := os.Executable()
+	o7, o8 := msiDir, startDetached
+	var bg []string
+	msiDir = func() string { return filepath.Dir(self) + `\` }
+	startDetached = func(exe string, args ...string) error { bg = append(bg, exe+" "+args[0]+" "+args[2]); return nil }
+	calls = nil
+	if msg, err := installWindows(os.Args[0], cfg); err != nil || len(calls) != 0 || !slices.Equal(bg, []string{"msiexec /i /passive"}) || !strings.Contains(msg, "in the background") {
+		t.Fatalf("from the MSI folder: %v %q %v %v", err, msg, calls, bg)
+	}
+	msiDir, startDetached = o7, o8
 	installedVersion = func(string) string { return "99.0.0" }
 	if msg, _ := installWindows(os.Args[0], cfg); !strings.Contains(msg, "Modify → Gateway") {
 		t.Fatalf("newer client-only MSI: %q", msg)
@@ -399,5 +412,135 @@ func TestServeInstallRefusesDowngrade(t *testing.T) {
 	}
 	if w, err := sumsWant([]byte(sum+"  minigw-linux-arm64\n"), "minigw-linux-arm64"); err != nil || w != sum { // starejša izdaja brez VERSION
 		t.Fatalf("old sums: %q %v", w, err)
+	}
+}
+
+// msi stop (MSI StopProcesses): le programi neposredno iz mape namestitve, v isti seji, ne on sam; z imeni le ta.
+func TestMSIStopTargets(t *testing.T) {
+	dir := `C:\Users\ana\AppData\Local\Programs\Mini Gateway\`
+	ps := []procEntry{
+		{1, 1, `C:\Users\ana\AppData\Local\Programs\Mini Gateway\minigw.exe`},
+		{2, 1, `c:\users\ana\appdata\local\programs\mini gateway\MINIGW-TUI.EXE`},
+		{3, 2, `C:\Users\ana\AppData\Local\Programs\Mini Gateway\minigw.exe`},     // druga seja (uporabnik)
+		{4, 1, `C:\Users\ana\AppData\Local\Programs\Mini Gateway Old\minigw.exe`}, // podobna mapa
+		{5, 1, `C:\Users\ana\AppData\Local\Programs\Mini Gateway\sub\minigw.exe`}, // podmapa
+		{6, 1, `C:\Program Files\nodejs\node.exe`},
+		{7, 1, `C:\Users\ana\AppData\Local\Programs\Mini Gateway\minigw-tray.exe`}, // msi stop sam
+		{8, 1, `minigw.exe`},
+	}
+	if got := stopTargets(ps, dir, 7, 1, nil); !slices.Equal(got, []uint32{1, 2}) {
+		t.Fatalf("all: %v", got)
+	}
+	if got := stopTargets(ps, dir, 7, 1, []string{"minigw-tui.exe"}); !slices.Equal(got, []uint32{2}) {
+		t.Fatalf("tui: %v", got)
+	}
+	if got := stopTargets(ps, "", 7, 1, nil); len(got) != 0 {
+		t.Fatalf("empty dir: %v", got)
+	}
+}
+
+// msi run-off (MSI RemoveRun): le vrednost Run, ki zažene pladenj iz mape namestitve.
+func TestRunValueIn(t *testing.T) {
+	dir := `C:\Users\ana\AppData\Local\Programs\Mini Gateway`
+	for v, want := range map[string]bool{
+		`"C:\Users\ana\AppData\Local\Programs\Mini Gateway\minigw-tray.exe" tray --config "C:\x\serve.json"`: true,
+		`"c:\users\ana\appdata\local\programs\mini gateway\MINIGW-TRAY.EXE" tray`:                            true,
+		`"D:\tools\minigw-tray.exe" tray --config "C:\x\serve.json"`:                                         false,
+		`"C:\Users\ana\AppData\Local\Programs\Mini Gateway Old\minigw-tray.exe" tray`:                        false,
+		"": false,
+	} {
+		if runValueIn(v, dir) != want || runValueIn(v, dir+`\`) != want {
+			t.Errorf("%q: want %v", v, want)
+		}
+	}
+	if runValueIn(`"\minigw-tray.exe"`, "") {
+		t.Error("empty dir")
+	}
+}
+
+// winArgv: razdelitev ukazne vrstice po pravilih CommandLineToArgvW (2n »\« + »"« = n »\« in narekovaj odpre/zapre;
+// 2n+1 »\« + »"« = n »\« in znak »"«; drugi »\« dobesedno).
+func winArgv(cmd string) []string {
+	var out []string
+	var cur strings.Builder
+	in, have := false, false
+	for i := 0; i < len(cmd); i++ {
+		switch c := cmd[i]; {
+		case c == '\\':
+			n := 0
+			for i < len(cmd) && cmd[i] == '\\' {
+				n++
+				i++
+			}
+			if i < len(cmd) && cmd[i] == '"' {
+				cur.WriteString(strings.Repeat(`\`, n/2))
+				if n%2 == 1 {
+					cur.WriteByte('"')
+				} else {
+					in = !in
+				}
+			} else {
+				cur.WriteString(strings.Repeat(`\`, n))
+				i--
+			}
+			have = true
+		case c == '"':
+			in, have = !in, true
+		case (c == ' ' || c == '\t') && !in:
+			if have {
+				out = append(out, cur.String())
+				cur.Reset()
+				have = false
+			}
+		default:
+			cur.WriteByte(c)
+			have = true
+		}
+	}
+	if have {
+		out = append(out, cur.String())
+	}
+	return out
+}
+
+// F1: točen ukaz iz minigw.wxs (Binary stopper, [INSTALLDIR] s končnim »\«) prek razdelitve Windows v trayCommand in
+// stopTargets: StopProcesses ustavi naše programe iz mape, StopTui le minigw-tui.exe.
+func TestMSIStopCommandLine(t *testing.T) {
+	wxs, err := os.ReadFile("minigw.wxs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const dir = `C:\Users\ana\AppData\Local\Programs\Mini Gateway\`
+	ps := []procEntry{
+		{1, 1, dir + `minigw.exe`}, {2, 1, dir + `minigw-tui.exe`}, {3, 1, dir + `minigw-tray.exe`},
+		{4, 1, dir + `other.exe`}, {5, 1, `C:\Program Files\nodejs\node.exe`},
+	}
+	o := msiStop
+	t.Cleanup(func() { msiStop = o })
+	for action, want := range map[string][]uint32{"StopProcesses": {1, 2, 3}, "StopTui": {2}} {
+		m := regexp.MustCompile(`<CustomAction Id="` + action + `"[^>]* ExeCommand="([^"]*)"`).FindSubmatch(wxs)
+		if m == nil {
+			t.Fatalf("%s not in minigw.wxs", action)
+		}
+		cmd := strings.ReplaceAll(html.UnescapeString(string(m[1])), "[INSTALLDIR]", dir)
+		argv := winArgv(`"C:\Users\ana\AppData\Local\Temp\MSI1A2B.tmp" ` + cmd)
+		if len(argv) < 2 || argv[1] != "tray" {
+			t.Fatalf("%s: argv %q", action, argv)
+		}
+		var got []uint32
+		msiStop = func(d string, names []string) { got = stopTargets(ps, d, 99, 1, names) }
+		trayCommand(argv[2:])
+		if !slices.Equal(got, want) {
+			t.Errorf("%s: %q → %v, want %v", action, argv, got, want)
+		}
+	}
+	// Brez dodanega »\« bi »\"« ubežal narekovaj: mapa z narekovajem in imeni v enem argumentu, nič se ne ujema.
+	if argv := winArgv(`x tray msi stop "` + dir + `" minigw-tui.exe`); len(argv) != 5 || stopTargets(ps, argv[4], 99, 1, nil) != nil {
+		t.Fatalf("old form: %q", argv)
+	}
+	for _, root := range []string{"", `C:\`, `"C:\"`, `C:`} {
+		if got := stopTargets(ps, root, 99, 1, nil); got != nil {
+			t.Errorf("%q: %v", root, got)
+		}
 	}
 }

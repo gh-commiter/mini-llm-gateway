@@ -43,11 +43,33 @@ func trayBeside(exe string) string {
 
 func trayCommand(args []string) {
 	if len(args) > 0 && args[0] == "quit" { // MSI: zapre tekoči pladenj, sam brez okna (-H=windowsgui)
-		// Nadgradnja/odstranitev ne prekine zahtev agentov: počaka, da končajo, največ 120 s.
+		// Nadgradnja/odstranitev ne prekine zahtev agentov: počaka, da končajo, največ 120 s; nato še 3 s, da odjemalec
+		// (minigw.exe, ki ga MSI potem ustavi: StopProcesses) prejme in izpiše rezultat.
+		waited := false
 		for end := time.Now().Add(120 * time.Second); time.Now().Before(end) && gatewayAgents(defaultServeConfigPath()) > 0; {
 			time.Sleep(2 * time.Second)
+			waited = true
+		}
+		if waited {
+			time.Sleep(3 * time.Second)
 		}
 		quitRunningTray()
+		return
+	}
+	// MSI (StopProcesses, pred InstallValidate; zažene ga kopija iz tabele Binary, zato mapa kot argument): preostali
+	// procesi iz mape namestitve končajo, preden Windows Installer preveri datoteke v rabi (brez ponovnega zagona).
+	if len(args) > 2 && args[0] == "msi" && args[1] == "stop" {
+		msiStop(args[2], args[3:])
+		return
+	}
+	// MSI (RemoveRun, odložen, po RemoveRegistryValues): vrednost Run, ki kaže na pladenj iz te mape, ob odstranitvi
+	// dela Gateway ali celote izgine, tudi če jo je zapisal pladenj (Zaženi ob prijavi) ali minigw gw autostart.
+	if len(args) == 2 && args[0] == "msi" && args[1] == "run-off" {
+		if exe, err := os.Executable(); err == nil {
+			if v, _ := runValueGet(runValueName); runValueIn(v, filepath.Dir(exe)) {
+				runValueDel(runValueName)
+			}
+		}
 		return
 	}
 	// MSI (client/minigw.wxs): minigw.exe plugin …|uninstall … brez okna konzole (msiexec bi ga pokazal), največ 60 s;
@@ -97,6 +119,44 @@ func trayCommand(args []string) {
 		return
 	}
 	trayRun(*cfgPath, *quiet || *wasRunning)
+}
+
+// runValueIn: ukaz Run zažene minigw-tray.exe iz mape dir (Windowsove poti, brez razlike v velikih črkah).
+func runValueIn(v, dir string) bool {
+	return dir != "" && strings.HasPrefix(strings.ToLower(v), strings.ToLower(`"`+strings.TrimRight(dir, `\/`)+`\minigw-tray.exe"`))
+}
+
+// procEntry: proces za msi stop (ID, seja Windows, polna pot programa).
+type procEntry struct {
+	PID, Session uint32
+	Image        string
+}
+
+// msiStop: msi stop (testi ga zamenjajo).
+var msiStop = msiStopProcesses
+
+// stopTargets: procesi, ki jih msi stop ustavi: program leži neposredno v mapi dir (ne v podmapi, ne drugje), ista
+// seja Windows kot msi stop, ne on sam, in je naš (minigw.exe, minigw-tray.exe, minigw-tui.exe; z names le ti; L1:
+// INSTALLDIR je javna lastnost). Prazna mapa ali koren pogona (C:\): nič.
+func stopTargets(ps []procEntry, dir string, self, session uint32, names []string) []uint32 {
+	dir = strings.TrimRight(strings.Trim(dir, `"`), `\/`)
+	if !strings.ContainsAny(dir, `\/`) {
+		return nil
+	}
+	if len(names) == 0 {
+		names = []string{"minigw.exe", "minigw-tray.exe", "minigw-tui.exe"}
+	}
+	var out []uint32
+	for _, p := range ps {
+		i := strings.LastIndexAny(p.Image, `\/`)
+		if i < 0 || p.PID == self || p.Session != session || !strings.EqualFold(p.Image[:i], dir) {
+			continue
+		}
+		if slices.ContainsFunc(names, func(n string) bool { return strings.EqualFold(n, p.Image[i+1:]) }) {
+			out = append(out, p.PID)
+		}
+	}
+	return out
 }
 
 // gatewayAgents: zahteve agentov, ki tečejo v prehodu s to nastavitvijo (skrbniški API /status, kot minigw gw status);

@@ -24,6 +24,8 @@ const (
 	runValueName = "MiniGatewayRouter"
 	systemdUnit  = "minigw-serve.service"
 	launchdLabel = "dev.trojar.minigw-serve"
+	// msiUpgradeCode: UpgradeCode v client/minigw.wxs (msi-test.sh preveri, da sta enaka).
+	msiUpgradeCode = "{5B0B7C3E-6E0B-4C64-9D2C-7E1F4A8B2C10}"
 )
 
 // Zunanji ukazi in register: testi jih zamenjajo.
@@ -369,10 +371,9 @@ func installTUI(exe, dir, goos string) string {
 
 // updateMSI: MSI te izdaje (preverjen po podpisanem SHA256SUMS) namesti msiexec; MSI sam zapre in zažene pladenj.
 func updateMSI(dir string) (string, error) {
-	// MSI le z odjemalcem (0.5.20+): serve install doda del Gateway (ADDLOCAL; Plugin ostane, kot je). MSI 0.5.19 nima
-	// delov, a ima vedno vrednost Run.
-	run, _ := runValueGet(runValueName)
-	gateway := msiPart("Gateway") || run != ""
+	// MSI le z odjemalcem (0.5.20+): serve install doda del Gateway (ADDLOCAL; Plugin ostane, kot je). Stanje dela po
+	// Windows Installerju, ne po vrednosti Run (ta lahko ostane od prej ali jo zapiše pladenj); MSI 0.5.19 delov nima.
+	gateway := msiPart("Gateway")
 	// Različica v mapi MSI proti tej (MSI izdaje ima različico tega minigw): enaka → nič, novejša → ne nazaj.
 	if v := installedVersion(filepath.Join(dir, "minigw.exe")); v == version && gateway {
 		return "Mini Gateway " + version + " in " + dir + " is already up to date", nil
@@ -388,16 +389,29 @@ func updateMSI(dir string) (string, error) {
 		args = append(args, "ADDLOCAL=Client,Gateway"+map[bool]string{true: ",Plugin"}[msiPart("Plugin")])
 	}
 	asset := "minigw-windows-" + runtime.GOARCH + ".msi"
+	old, _ := filepath.Glob(filepath.Join(os.TempDir(), "minigw-msi-*")) // MSI prejšnje posodobitve v ozadju (spodaj)
 	tmp, err := os.MkdirTemp("", "minigw-msi-")
 	if err != nil {
 		return "", err
 	}
-	defer os.RemoveAll(tmp)
+	for _, d := range old {
+		os.RemoveAll(d)
+	}
 	msi := filepath.Join(tmp, asset)
 	if err := fetchRelease(asset, msi); err != nil {
+		os.RemoveAll(tmp)
 		return "", errors.New("Mini Gateway was installed with the MSI (" + dir + "); cannot get the new MSI: " + err.Error())
 	}
 	args[1] = msi
+	// Ta minigw.exe iz mape MSI bi bil med zamenjavo v rabi (MSI ga pred InstallValidate ustavi: StopProcesses):
+	// msiexec teče naprej sam, ta konča takoj; MSI ostane v začasni mapi do naslednje posodobitve.
+	if self, err := os.Executable(); err == nil && strings.EqualFold(filepath.Dir(self), strings.TrimRight(dir, `\/`)) {
+		if err := startDetached(msiexecPath(), args...); err != nil {
+			return "", err
+		}
+		return "the MSI of v" + version + " updates " + dir + " in the background (about a minute). Agent requests on this gateway finish first; minigw sessions from " + dir + " are closed. minigw gw status then shows the new version", nil
+	}
+	defer os.RemoveAll(tmp)
 	if err := runCmd(msiexecPath(), args...); err != nil { // L5: ne iz PATH
 		return "", err
 	}
