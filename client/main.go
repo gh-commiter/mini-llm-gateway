@@ -815,7 +815,7 @@ func unsafeWork(flag, saved string, readOnly bool, env func(string) string) bool
 // noDirectFallback (N8, L-31): pod Claude Code izrecen, neshranjen način (native, worktree) ne pade na direct (agent
 // bi pisal v mapo brez veje), razen samo za branje.
 func noDirectFallback(tries []string, flag, saved string, readOnly bool, env func(string) string) []string {
-	if flag == "" || flag == saved || readOnly || !checkClaudeArgs(env) {
+	if flag == "" || flag == "auto" || flag == saved || readOnly || !checkClaudeArgs(env) {
 		return tries
 	}
 	return slices.DeleteFunc(tries, func(w string) bool { return w == "direct" })

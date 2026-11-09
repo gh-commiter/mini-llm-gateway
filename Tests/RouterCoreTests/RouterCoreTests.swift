@@ -1740,6 +1740,7 @@ final class FakeMinigw: @unchecked Sendable {
         #expect(Profiles.noDirectFallback([w, "direct"], flag: w, saved: nil, readOnly: true, env: env) == [w, "direct"])
     }
     #expect(Profiles.noDirectFallback(["direct"], flag: nil, saved: nil, readOnly: false, env: env) == ["direct"])
+    #expect(Profiles.noDirectFallback(["sync", "direct"], flag: "auto", saved: nil, readOnly: false, env: env) == ["sync", "direct"])
 }
 
 @Test func unsafeClaudeFlagsInsideClaudeCode() {

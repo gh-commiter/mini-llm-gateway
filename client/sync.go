@@ -89,7 +89,7 @@ var shortGit = regexp.MustCompile(`^git~[0-9]+$`)
 
 // shortName (N10): kratko ime 8.3 na Windows (CLAUDE~1, VSCODE~1, HUSKY~1 …) je druga pot do iste mape; tam nobena
 // pot s takim delom ni dovoljena (windowsNames; v testih tudi drugje).
-var shortName = regexp.MustCompile(`~[0-9]`)
+var shortName = regexp.MustCompile(`^[^~.]{1,6}~[0-9]+(\.[^.]{0,3})?$`)
 
 var windowsNames = runtime.GOOS == "windows"
 

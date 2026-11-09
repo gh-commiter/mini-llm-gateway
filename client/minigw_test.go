@@ -593,8 +593,10 @@ func TestProtectedPathShortAndFoldedNames(t *testing.T) {
 	if _, _, ok := davResolve("/dav/s/CLAUDE~1/settings.json", "/dav/s", r); ok {
 		t.Error("8.3 short name accepted by davResolve")
 	}
-	if protectedPath("src/a~b.txt") || protectedPath("src/~x") {
-		t.Error("~ without a digit refused")
+	for _, p := range []string{"src/a~b.txt", "src/~x", "src/foo.~1~", "src/longname~1", "src/a~1.json5", "src/x~1y"} {
+		if protectedPath(p) {
+			t.Errorf("%s is not an 8.3 short name", p)
+		}
 	}
 }
 
@@ -1021,6 +1023,9 @@ func TestUnsafeWorkInsideClaudeCode(t *testing.T) {
 		if got := noDirectFallback([]string{w, "direct"}, w, w, false, env); len(got) != 2 {
 			t.Errorf("saved %s lost its fallback: %v", w, got)
 		}
+	}
+	if got := noDirectFallback([]string{"sync", "direct"}, "auto", "", false, env); len(got) != 2 {
+		t.Errorf("--minigw-work=auto lost direct: %v", got)
 	}
 	if got := noDirectFallback([]string{"direct"}, "", "", false, env); len(got) != 1 {
 		t.Errorf("auto lost direct: %v", got)

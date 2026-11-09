@@ -94,7 +94,7 @@ public enum Profiles {
     /// L-31 (kot Go noDirectFallback): pod Claude Code izrecen, neshranjen način (native, worktree) ne pade na direct
     /// (agent bi pisal v mapo brez veje), razen samo za branje.
     public static func noDirectFallback(_ tries: [String], flag: String?, saved: String?, readOnly: Bool, env: [String: String]) -> [String] {
-        guard let flag, flag != saved, !readOnly, checkClaudeArgs(env) else { return tries }
+        guard let flag, flag != "auto", flag != saved, !readOnly, checkClaudeArgs(env) else { return tries }
         return tries.filter { $0 != "direct" }
     }
 
