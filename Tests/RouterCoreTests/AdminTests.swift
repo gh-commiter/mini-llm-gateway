@@ -120,6 +120,9 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
         #expect(!app.config.appleFM.enabled && app.config.appleFM.instructions == "Be brief.")
         #expect(await admin(app.router(), "GET", "/appleFM").text.contains(#""instructions":"Be brief.""#))
         #expect(await admin(app.router(), "PATCH", "/appleFM", body: #"{"model":"x"}"#).status == 400)
+        let wt = await admin(app.router(), "PATCH", "/general", body: #"{"worktreeNetwork":false,"worktreeCodexNetwork":true}"#)
+        #expect(wt.status == 200 && wt.text.contains(#""worktreeCodexNetwork":true"#))
+        #expect(!app.config.worktreeNetwork && app.config.worktreeCodexNetwork)
         #expect(await admin(app.router(), "DELETE", "/devices/PC").status == 404)  // le po ID-ju: ime je oznaka
         #expect(await admin(app.router(), "DELETE", "/devices/\(id)").status == 200 && app.config.devices.isEmpty)
 

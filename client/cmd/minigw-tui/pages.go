@@ -638,10 +638,22 @@ func macOnly(u *ui) ([]row, error) {
 		}))
 		if !yes(d, "run") {
 			rows[len(rows)-1].confirm = name + " may then run the listed commands on this Mac. Allow"
+			continue // network only for a device that may run commands (as in the app)
 		}
 		rows = append(rows, tog("  "+name+": network in commands", yes(d, "network"), func(v bool) (string, error) {
 			return pr(map[string]any{allow(v, "allowNetwork", "denyNetwork"): []string{id}})
 		}))
+	}
+	if g, err := u.call("GET", "/general", nil); err == nil {
+		if _, ok := g["worktreeNetwork"]; ok { // an app older than 0.5.20 has no such fields
+			pg := func(body map[string]any) (string, error) { return u.save("PATCH", "/general", body) }
+			rows = append(rows, hdr("Worktree mode (builds of agents in their clone)"),
+				tog("Network for builds", yes(g, "worktreeNetwork"), func(v bool) (string, error) { return pg(map[string]any{"worktreeNetwork": v}) }),
+				tog("Network for Codex builds", yes(g, "worktreeCodexNetwork"), func(v bool) (string, error) {
+					return pg(map[string]any{"worktreeCodexNetwork": v})
+				}),
+				inf("  Codex can read all files of this Mac's user: its network is off by default.", ""))
+		}
 	}
 	return rows, nil
 }

@@ -549,10 +549,11 @@ extension Router {
         case "GET general":
             return (200, general(c, connect: hooks.connect))
         case "PATCH general":
-            let b = try AdminBody(body, ["port", "address", "allowedClients", "allowPlainRemote", "allowAnyDevice", "allowLocalApps", "startAtSignIn", "scratch"])
+            let b = try AdminBody(body, ["port", "address", "allowedClients", "allowPlainRemote", "allowAnyDevice", "allowLocalApps", "startAtSignIn", "scratch",
+                                           "worktreeNetwork", "worktreeCodexNetwork"])
             let port = try b.int("port"), address = try b.string("address"), clients = try b.string("allowedClients")
             let plain = try b.bool("allowPlainRemote"), any = try b.bool("allowAnyDevice"), scratch = try b.string("scratch")
-            let localApps = try b.bool("allowLocalApps")
+            let localApps = try b.bool("allowLocalApps"), wtNet = try b.bool("worktreeNetwork"), wtCodexNet = try b.bool("worktreeCodexNetwork")
             // L2: vse preverjeno pred kakršno koli spremembo (premik Scratch ali Open at Login)
             if let port, !(1...65535).contains(port) { throw AdminError(400, "port must be 1-65535") }
             if let address, !["0.0.0.0", "::", "127.0.0.1"].contains(address) {
@@ -597,6 +598,8 @@ extension Router {
                 if let plain { c.allowPlainRemote = plain }
                 if let any { c.allowAnyDevice = any }
                 if let localApps { c.allowLocalApps = localApps }
+                if let wtNet { c.worktreeNetwork = wtNet }  // Settings → General → Worktree mode
+                if let wtCodexNet { c.worktreeCodexNetwork = wtCodexNet }
             }
             return (200, general(n, connect: hooks.connect))  // aplikacija znova zažene router: brez restartRequired
         case "POST general/{}":
@@ -649,6 +652,7 @@ extension Router {
     func general(_ c: RouterConfig, connect: String) -> [String: Any] {
         ["port": Int(c.port), "address": c.host, "allowedClients": c.allowedClients, "allowPlainRemote": c.allowPlainRemote,
          "scratch": c.scratchURL.path, "allowAnyDevice": c.allowAnyDevice, "allowLocalApps": c.allowLocalApps,
+         "worktreeNetwork": c.worktreeNetwork, "worktreeCodexNetwork": c.worktreeCodexNetwork,
          "connect": "minigw connect \(c.host == "0.0.0.0" || c.host == "::" ? Self.localIP() : c.host):\(c.port) --token '\(connect)'"]
     }
 

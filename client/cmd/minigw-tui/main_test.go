@@ -137,6 +137,10 @@ func TestPages(t *testing.T) {
 	if calls := read(t, filepath.Join(dir, "calls.log")); strings.Contains(calls, "SECRET") {
 		t.Fatalf("argv: %s", calls)
 	}
+	_, v = screen(t, model{u: u, tab: 6, mac: true}) // network only for a device that may run commands
+	if strings.Contains(v, "Bob's MacBook: network") || !strings.Contains(v, "thinkpad: network in commands") || !strings.Contains(v, "Network for Codex builds") {
+		t.Fatalf("mac page:\n%s", v)
+	}
 }
 
 // The token appears only after "Show the connect line"; a typed key is masked and goes on stdin.

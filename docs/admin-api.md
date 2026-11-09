@@ -269,7 +269,8 @@ The Mac app keeps its settings in its preferences and Keychain; the Settings win
   and `GET /agents/{codex,grok}/models` answer as on Go.
   `folders` is the comma-separated list of allowed folders. There is no `allowUnsandboxedBash`: with
   `allowLocalTools`, Bash runs in Claude Code's sandbox.
-- **general:** also `allowedClients` (IP addresses, comma-separated; empty = all), `allowPlainRemote` and `allowAnyDevice`. `address`
+- **general:** also `worktreeNetwork` and `worktreeCodexNetwork` (Settings → General → Worktree mode: Network for builds,
+  Network for Codex builds; `GET` and `PATCH`), and `allowedClients` (IP addresses, comma-separated; empty = all), `allowPlainRemote` and `allowAnyDevice`. `address`
   may be `0.0.0.0`, `::` or `127.0.0.1`. A port or address change restarts the listener, so there is no
   `restartRequired`. `scratch` is an existing folder: as in Settings, the scratch content moves into a
   `Mini Gateway Scratch` folder inside it (`""` = the default folder); `GET` returns the folder in use.

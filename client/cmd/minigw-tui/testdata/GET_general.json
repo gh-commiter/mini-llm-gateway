@@ -1,2 +1,1 @@
-{"port": 8765, "address": "", "connect": "minigw connect gw.local:8765 --token 'tok-SECRET-123#key'", "allowedClients": "",
- "allowPlainRemote": false, "allowAnyDevice": false, "allowLocalApps": false, "scratch": "/home/ana/.cache/minigw/scratch"}
+{"port": 8765, "address": "", "connect": "minigw connect gw.local:8765 --token 'tok-SECRET-123#key'", "allowedClients": "", "allowPlainRemote": false, "allowAnyDevice": false, "allowLocalApps": false, "scratch": "/home/ana/.cache/minigw/scratch", "worktreeNetwork": true, "worktreeCodexNetwork": false}
