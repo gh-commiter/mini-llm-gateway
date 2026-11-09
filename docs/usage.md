@@ -235,7 +235,8 @@ Notes:
   development) refuses nested repositories; Windows `minigw serve` handles them.
 - The agent may commit inside a nested clone: its note names the clones and the form
   `GIT_DIR=<path>/.git GIT_COMMON_DIR=<path>/.git GIT_WORK_TREE=<path> git …` (plain git in the clone works on the top
-  repository). Its commits are kept; changes it leaves uncommitted are committed by the gateway.
+  repository). Its commits are kept; changes it leaves uncommitted are committed by the gateway. Codex can commit there;
+  Claude CLI agents on the Mac app gateway cannot run git yet (its sandbox), so the gateway commits their changes.
 - A nested repository in a folder git ignores (for example `build/_deps` from CMake FetchContent) stays out, as before.
   If the agent itself creates a repository in the clone, minigw prints "changes inside the nested repository <path>
   do not come back in worktree mode; use sync" and no branch is delivered for that run.

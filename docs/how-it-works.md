@@ -97,7 +97,8 @@ Details:
   exFAT ignores the folder's private permissions.
 - In worktree mode the gateway never runs git with the agent's own `.git` (config, hooks) and reads the clone only
   from a sandbox. On Linux `minigw serve` pins the clone's `.git` with bwrap (`.git/config`, `hooks` and `info`
-  read-only); otherwise it checks `.git` every second and stops the run on a change.
+  read-only); without the pin Linux watches `.git` with inotify (no watch: the run is refused), and macOS and Windows
+  `minigw serve` check it every second; a change stops the run.
 - Each nested repository or submodule that git does not ignore has its own mirror
   (`repos/<device>/<id>-<key>.git`) and its own clone at its path in the agent's clone. Every clone's `.git` gets the
   same protection as the top one (read-only config, hooks, info and commondir, the bwrap pin and the change check).
