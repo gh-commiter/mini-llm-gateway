@@ -924,6 +924,7 @@ extension ShareHub {
         }
         let read = tree.local.map { [$0.appendingPathComponent(".git/objects")] } ?? []
         let (nested, top, why) = await offPool { () -> ([(path: String, tip: String, out: URL)], String?, String?) in
+            Worktree.killProcesses(in: slot.wt)  // ves klon, preden ugnezdeni (finalize ustavi le procese v svoji mapi)
             var links: [String: [String: String]] = ["": [:]], changed: [(path: String, tip: String, out: URL)] = []
             for n in slot.nested { links[n.path] = [:] }
             for (i, n) in slot.nested.enumerated().reversed() {
