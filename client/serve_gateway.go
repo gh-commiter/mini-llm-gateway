@@ -329,8 +329,9 @@ func (s *server) gatewayModels(g serveGateway, wait bool) []gwModel {
 			if err == nil {
 				e.models, e.ok, e.at, e.failed = ms, true, time.Now(), time.Time{}
 			} else {
-				if key != "" { // brez ključa ni bilo klica: ključ, dodan kasneje, velja takoj (brez 45 s premora)
-					e.failed = time.Now()
+				e.failed = time.Now()
+				if key == "" { // brez ključa ni bilo klica: ključ, dodan kasneje, velja po ≈2 s (ne po 45 s)
+					e.failed = e.failed.Add(-43 * time.Second)
 				}
 				s.log.Printf("provider %s: %v", g.Name, err)
 			}

@@ -522,7 +522,7 @@ func TestServeGatewayUpstream429NoRetry(t *testing.T) {
 	}
 }
 
-// Ključ, dodan po neuspelem odkrivanju (brez ključa), velja takoj: /health/ready znova naloži modele in pokaže ✓.
+// Ključ, dodan po neuspelem odkrivanju (brez ključa), velja v nekaj sekundah (ne po 45 s): /health/ready znova naloži modele in pokaže ✓.
 func TestServeGatewayReadyAfterKeyAdded(t *testing.T) {
 	keys := fakeKeys(t)
 	up := fakeUpstream(t, nil, nil, nil)
@@ -538,7 +538,9 @@ func TestServeGatewayReadyAfterKeyAdded(t *testing.T) {
 		t.Fatal("ready without a key")
 	}
 	keys["gw"] = gwKey
-	if !ready() {
-		t.Fatal("not ready after the key was added")
+	for end := time.Now().Add(5 * time.Second); !ready(); time.Sleep(200 * time.Millisecond) {
+		if time.Now().After(end) {
+			t.Fatal("not ready 5 s after the key was added")
+		}
 	}
 }
