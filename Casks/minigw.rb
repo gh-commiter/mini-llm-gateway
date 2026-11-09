@@ -17,6 +17,7 @@ cask "minigw" do
   depends_on cask: "claude-code" unless claude_installed
 
   binary "minigw"
+  binary "minigw-tui"
 
   # Vtičnik za Claude Code: uradna ključa uporabniških nastavitev (extraKnownMarketplaces, enabledPlugins); Claude Code
   # ob naslednjem zagonu sam doda marketplace in namesti vtičnik, brez ukaza claude. Uporabnikov »false« ostane.

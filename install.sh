@@ -69,6 +69,12 @@ IN_PATH=1
 [ -n "$DIR" ] || { DIR="$HOME/.local/bin"; IN_PATH=0; mkdir -p "$DIR"; }
 install -m 755 "$TMP/out/minigw" "$DIR/minigw"
 say "Installed: $DIR/minigw"
+# minigw gw settings (terminal UI, 0.5.20+): same signer as minigw
+if [ -f "$TMP/out/minigw-tui" ]; then
+  codesign --verify --strict "$TMP/out/minigw-tui" && codesign -dv "$TMP/out/minigw-tui" 2>&1 | grep -q "TeamIdentifier=$TEAM_ID" \
+    || die "invalid signature of minigw-tui"
+  install -m 755 "$TMP/out/minigw-tui" "$DIR/minigw-tui"
+fi
 [ $IN_PATH = 1 ] || say "Add it to your PATH:  echo 'export PATH=\"$DIR:\$PATH\"' >> ~/.zshrc"
 
 # 4. Optional: connect to the gateway (token read from the terminal, not the command line)

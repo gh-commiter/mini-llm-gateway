@@ -24,6 +24,7 @@
         <RegistryValue Root="HKCU" Key="Software\Mini Gateway" Name="InstallDir" Type="string" Value="[INSTALLDIR]" KeyPath="yes"/>
         <File Id="minigw" Name="minigw.exe" Source="$(var.Exe)"/>
         <File Id="tray" Name="minigw-tray.exe" Source="$(var.Tray)"/>
+        <File Id="tui" Name="minigw-tui.exe" Source="$(var.Tui)"/>
         <!-- Kot serviceText("windows", …) v serve_install.go: serve install, status in meni pladnja ga prepoznajo. -->
         <RegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run" Name="MiniGatewayRouter" Type="string"
                        Value="&quot;[INSTALLDIR]minigw-tray.exe&quot; tray --config &quot;[AppDataFolder]minigw\serve.json&quot;"/>

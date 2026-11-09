@@ -211,8 +211,8 @@ func TestServeInstallFiles(t *testing.T) {
 			data, _ := os.ReadFile(servicePath(goos))
 			if !strings.Contains(string(data), `ExecStart="`+bin+`" serve --config "`+cfg+`"`) ||
 				strings.Join(calls, ";") != "systemctl --user daemon-reload;systemctl --user enable minigw-serve.service;systemctl --user restart minigw-serve.service;loginctl enable-linger ana" ||
-				!strings.Contains(msg, "at boot") {
-				t.Fatalf("unit: %s calls %v msg %q", data, calls, msg)
+				!strings.Contains(msg, "at boot") || !strings.Contains(msg, "settings terminal UI (minigw gw settings) is not installed") {
+				t.Fatalf("unit: %s calls %v msg %q", data, calls, msg) // minigw-tui ni ob exe ne v izdaji: namestitev vseeno uspe
 			}
 			calls, noLinger = nil, true
 			if m, _ := serviceCommand("install", goos, cfg); !strings.HasSuffix(m, "run: sudo loginctl enable-linger ana") || !slices.Contains(calls, "sudo -n loginctl enable-linger ana") || autostart(goos) != "sign-in" {
