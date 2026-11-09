@@ -928,3 +928,42 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     await router.handle(r, writer: w)
     #expect(w.status == 200 && w.text.contains("done"), "\(w.text)")
 }
+
+/// N9: agent v klonu naredi ugnezden repozitorij (mapa .git ali datoteka gitdir:) s svojim filtrom, gitlink v indeksu in
+/// .gitmodules z ignore=none; git status samega claude (okolje claudeEnv) filtra ne sme izvesti, nestedGit ga najde.
+@Test func nestedRepoFilterDoesNotRunUnderClaudeEnv() throws {
+    for gitfile in [false, true] {
+        let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("n9-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let wt = root.appendingPathComponent("wt"), sub = wt.appendingPathComponent("sub"), marker = root.appendingPathComponent("ran").path
+        try FileManager.default.createDirectory(at: wt.appendingPathComponent("build"), withIntermediateDirectories: true)
+        g(wt, "init", "-q", "-b", "main"); try file(wt, "a.txt", "a\n"); g(wt, "add", "a.txt"); g(wt, "commit", "-qm", "first")
+        #expect(Worktree.nestedGit(wt) == nil)
+        if gitfile { g(wt, "init", "-q", "--separate-git-dir=" + wt.appendingPathComponent("build/g").path, "sub") } else { g(wt, "init", "-q", "sub") }
+        try file(sub, "f", "hello\n"); g(sub, "add", "f"); g(sub, "commit", "-qm", "s")
+        let sha = g(sub, "rev-parse", "HEAD").trimmingCharacters(in: .whitespacesAndNewlines)
+        let gd = URL(fileURLWithPath: g(sub, "rev-parse", "--absolute-git-dir").trimmingCharacters(in: .whitespacesAndNewlines))
+        let cfg = try FileHandle(forWritingTo: gd.appendingPathComponent("config"))
+        cfg.seekToEndOfFile(); cfg.write(Data("[filter \"x\"]\n\tclean = touch \(marker); cat\n".utf8)); try cfg.close()
+        try file(gd, "info/attributes", "* filter=x\n")
+        try file(sub, "f", "hellO\n")
+        try file(wt, ".gitmodules", "[submodule \"sub\"]\n\tpath = sub\n\turl = ./sub\n\tignore = none\n")
+        g(wt, "add", ".gitmodules"); g(wt, "update-index", "--add", "--cacheinfo", "160000,\(sha),sub")
+        func status(_ extra: [String: String]) -> Bool {
+            try? FileManager.default.removeItem(atPath: marker)
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: Worktree.git)
+            p.arguments = ["--no-optional-locks", "status", "--porcelain"]
+            p.currentDirectoryURL = wt
+            p.environment = ProcessInfo.processInfo.environment.merging(extra) { $1 }
+            p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+            try? p.run(); p.waitUntilExit()
+            return FileManager.default.fileExists(atPath: marker)
+        }
+        let maven = root.appendingPathComponent("m")
+        #expect(status(Worktree.harnessEnv(root: wt, maven: maven)), "gitfile=\(gitfile): the test does not reproduce the attack")
+        let env = try #require(Worktree.claudeEnv(root: wt, maven: maven, gitexec: root.appendingPathComponent("gitexec")))
+        #expect(!status(env), "gitfile=\(gitfile): nested filter ran under the Claude CLI environment")
+        #expect(Worktree.nestedGit(wt) == "sub/.git")
+    }
+}

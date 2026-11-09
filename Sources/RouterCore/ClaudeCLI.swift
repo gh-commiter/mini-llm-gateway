@@ -518,7 +518,10 @@ extension Router {
 
         let run = agent ? await startAgentRun(req, kind: "claude", dir: sharedDir) : nil
         defer { run?.stop() }
-        if agent, let note = agentNote("claude") { args = Self.withNote(args, note, read: [Self.minigwExe] + (run.map { [$0.authFile.path] } ?? [])) }
+        let gitexec = config.scratch("gitexec")  // N9: ovoj git v klonu (Worktree.claudeEnv), berljiv v peskovniku
+        if agent, let note = agentNote("claude") {
+            args = Self.withNote(args, note, read: [Self.minigwExe, gitexec.path] + (run.map { [$0.authFile.path] } ?? []))
+        }
         guard let exe = await ClaudeCLI.executable(cfg.executable) else {
             return await error(503, "api_error", cfg.executable.isEmpty ? "claude not found; set its path in Mini Gateway settings"
                                                                          : "claude not found at \(cfg.executable)", rid: rid, writer: writer)
@@ -533,7 +536,10 @@ extension Router {
         }
         env["PATH"] = (env["PATH"].map { $0 + ":" } ?? "") + "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
         if agent, let t = await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "") {
-            env.merge(Worktree.harnessEnv(root: t.root, maven: t.maven)) { $1 }
+            guard let tenv = Worktree.claudeEnv(root: t.root, maven: t.maven, gitexec: gitexec) else {
+                return await error(503, "api_error", "Cannot prepare git for the agent's clone (git --exec-path): use sync", rid: rid, writer: writer)
+            }
+            env.merge(tenv) { $1 }
         }
         for k in ["MINIGW_AGENT_URL", "MINIGW_AGENT_AUTH_FILE"] { env[k] = run?.env[k] }
         env["CLAUDE_CODE_DISABLE_FILE_MENTIONS"] = "1"
