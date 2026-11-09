@@ -11,6 +11,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
@@ -133,6 +134,9 @@ type tray struct {
 
 var theTray *tray // okenska procedura je ena za proces
 
+// folderPrograms: FOLDERID_Programs (meni Start uporabnika, ProgramMenuFolder v minigw.wxs).
+var folderPrograms = syscall.GUID{Data1: 0xA77F5D77, Data2: 0x2E2B, Data3: 0x44C3, Data4: [8]byte{0xA6, 0xA2, 0xAB, 0xA6, 0x01, 0x05, 0x4A, 0x51}}
+
 func u16(s string) *uint16 { p, _ := syscall.UTF16PtrFromString(s); return p }
 
 func messageBox(text string) {
@@ -235,15 +239,20 @@ func trayRun(cfgPath string, quiet bool) {
 	}
 	// MSI (StartTray, edini z --quiet-if-running): pladenj, ki ga zažene msiexec, ima okolje namestitvenega programa
 	// (Codex na PATH ni bil najden; okolje msiexec je zastarelo). Zato ga zažene Raziskovalec,
-	// kot ob kliku v meniju Start: privzete nastavitve (= pot, ki jo poda MSI), ta proces konča.
+	// kot ob kliku v meniju Start: bližnjica MSI (isti ukaz kot vrednost Run, tray --config …; Raziskovalec programu
+	// argumentov ne poda, bližnjici pa jih), brez nje program sam; ta proces konča.
 	// Explorer z absolutno potjo iz GetWindowsDirectoryW (ne iz %WINDIR% ali iskanja po imenu: podtaknjen explorer.exe).
 	if exe, err := os.Executable(); quiet && err == nil {
 		buf := make([]uint16, 260)
 		if n, _, _ := pGetWindowsDirectory.Call(uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf))); n > 0 && int(n) < len(buf) {
 			syscall.CloseHandle(syscall.Handle(mutex)) // novi pladenj mora dobiti mutex
 			explorer := syscall.UTF16ToString(buf[:n]) + `\explorer.exe`
+			target := exe
+			if p := knownFolder(folderPrograms); p != "" && errFromStat(filepath.Join(p, "Mini Gateway.lnk")) == nil {
+				target = filepath.Join(p, "Mini Gateway.lnk")
+			}
 			if r, _, _ := pShellExecute.Call(0, uintptr(unsafe.Pointer(u16("open"))), uintptr(unsafe.Pointer(u16(explorer))),
-				uintptr(unsafe.Pointer(u16(`"`+exe+`"`))), 0, 1 /* SW_SHOWNORMAL */); r > 32 {
+				uintptr(unsafe.Pointer(u16(`"`+target+`"`))), 0, 1 /* SW_SHOWNORMAL */); r > 32 {
 				return
 			}
 			// zagon ni uspel (npr. brez lupine): ta pladenj teče naprej, če ga medtem ni zagnal kdo drug

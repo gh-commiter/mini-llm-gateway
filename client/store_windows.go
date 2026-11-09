@@ -420,13 +420,17 @@ func closeRunningTray() error { return closeTray(50) }
 // quitRunningTray: minigw-tray.exe quit (MSI pred odstranitvijo, brez konzole): WM_CLOSE, 5 s, nato konec
 // drugih procesov z natančnim imenom minigw-tray.exe v tej seji Windows (L1: ne drugih programov ali uporabnikov).
 func quitRunningTray() {
-	if !trayMutexExists() { // nadgradnja MSI: novi paket ga tedaj ne zažene (tray --if-was-running)
-		if msiPartInstalled("Gateway") { // brez dela Gateway (le odjemalec) ga novi Gateway zažene
-			os.WriteFile(trayStoppedMarker(), nil, 0o600)
+	// Oznaka za tray --if-was-running (nadgradnja, popravilo): pladenj teče, ali dela Gateway še ni (le odjemalec: novi
+	// Gateway ga zažene); sicer je ni.
+	if !trayMutexExists() {
+		if msiPartInstalled("Gateway") {
+			os.Remove(trayRestartMarker())
+		} else {
+			os.WriteFile(trayRestartMarker(), nil, 0o600)
 		}
 		return
 	}
-	os.Remove(trayStoppedMarker())
+	os.WriteFile(trayRestartMarker(), nil, 0o600)
 	if closeTray(25) == nil {
 		return
 	}

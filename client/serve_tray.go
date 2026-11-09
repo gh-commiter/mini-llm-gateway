@@ -112,10 +112,10 @@ func trayCommand(args []string) {
 	// MSI (StartTray): če pladenj že teče (ista različica znova), konec brez sporočila; ročni zagon ga pokaže. Sicer ga
 	// znova zažene Raziskovalec (trayRun): okolje msiexec nima uporabnikovega trenutnega PATH.
 	quiet := fs.Bool("quiet-if-running", false, "installer start: exit silently if running, else restart via Explorer")
-	// MSI-nadgradnja: kot quiet-if-running, a le če je pladenj tekel (quit starega paketa je sicer zapisal oznako).
+	// MSI-nadgradnja: kot quiet-if-running, a le če je quit novega paketa zapisal oznako (pladenj je tekel).
 	wasRunning := fs.Bool("if-was-running", false, "installer upgrade: start only if the tray ran before the upgrade")
 	fs.Parse(args)
-	if *wasRunning && os.Remove(trayStoppedMarker()) == nil {
+	if *wasRunning && !takeRestartMarker(filepath.Dir(defaultServeConfigPath())) {
 		return
 	}
 	trayRun(*cfgPath, *quiet || *wasRunning)
@@ -179,9 +179,17 @@ func gatewayAgents(cfgPath string) int {
 	return st.Agents
 }
 
-// trayStoppedMarker: quit (MSI pred odstranitvijo) ga zapiše, ko pladenj ni tekel; tray --if-was-running ga pobere.
-func trayStoppedMarker() string {
-	return filepath.Join(filepath.Dir(defaultServeConfigPath()), "tray-not-running")
+// trayRestartMarker: quit (MSI CloseTray) ga zapiše, ko naj pladenj po nadgradnji spet teče; tray --if-was-running
+// ga pobere. Pozitivna oznaka: quit starega paketa (med RemoveExistingProducts, ko pladenj že ne teče) je zapisal
+// negativno »tray-not-running« in s tem preprečil ponovni zagon (poročilo 85334c0, 4.1).
+func trayRestartMarker() string {
+	return filepath.Join(filepath.Dir(defaultServeConfigPath()), "tray-restart")
+}
+
+// takeRestartMarker: pobere oznako (true = zaženi) in staro negativno oznako starejših paketov.
+func takeRestartMarker(dir string) bool {
+	os.Remove(filepath.Join(dir, "tray-not-running"))
+	return os.Remove(filepath.Join(dir, "tray-restart")) == nil
 }
 
 type trayItem struct {

@@ -30,7 +30,10 @@ for arch in amd64 arm64; do
   has Environment "=-PATH	[~];[LocalAppDataFolder]Programs\Mini Gateway"
   # Ista različica znova zamenja prejšnjo (769 = MigrateFeatures + VersionMin/MaxInclusive, ne le zaznava)
   has Upgrade "	$V	$V		769		WIX_SAME_VERSION_UPGRADE_DETECTED"
-  has Shortcut "ProgramMenuFolder	Mini Gateway	Gateway	[INSTALLDIR]minigw-tray.exe	tray"
+  # Bližnjica (in predaja zagona pladnja Raziskovalcu prek nje) z istim ukazom kot vrednost Run
+  has Shortcut 'ProgramMenuFolder	Mini Gateway	Gateway	[INSTALLDIR]minigw-tray.exe	tray --config "[AppDataFolder]minigw\serve.json"'
+  [[ "$(t Registry | awk -F'\t' '$4 == "MiniGatewayRouter" { print $5 }')" == "\"[INSTALLDIR]minigw-tray.exe\" $(t Shortcut | awk -F'\t' '$1 == "StartMenu" { print $6 }')" ]] ||
+    fail "$arch: Start-menu shortcut and Run value start the tray differently"
   # Deli: Client (vedno, 16 = ni ga mogoče izklopiti), pod njim Gateway in Plugin (privzeto vklopljena)
   has Feature "Client		minigw client"
   t Feature | grep -q "^Client	.*	1	1		16$" || fail "$arch: Client is not always installed (Absent=disallow)"
@@ -109,7 +112,8 @@ for arch in amd64 arm64; do
   has CustomAction 'StopProcesses	66	stopper	tray msi stop "[INSTALLDIR]\"'
   has CustomAction 'StopTui	66	stopper	tray msi stop "[INSTALLDIR]\" minigw-tui.exe'
   # Tudi ob nadgradnji in popravilu (REINSTALL), ne kot stari paket pri nadgradnji
-  has InstallExecuteSequence 'CloseTray	(REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE) OR (&Gateway=2 AND !Gateway=3) OR WIX_UPGRADE_DETECTED OR WIX_SAME_VERSION_UPGRADE_DETECTED OR REINSTALL'
+  # Stari paket pri nadgradnji (RemoveExistingProducts) ga ne zažene: njegov quit bi pokvaril oznako za RestartTray
+  has InstallExecuteSequence 'CloseTray	NOT UPGRADINGPRODUCTCODE AND (REMOVE~="ALL" OR (&Gateway=2 AND !Gateway=3) OR WIX_UPGRADE_DETECTED OR WIX_SAME_VERSION_UPGRADE_DETECTED OR REINSTALL)'
   has InstallExecuteSequence 'StopProcesses	(REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE) OR WIX_UPGRADE_DETECTED OR WIX_SAME_VERSION_UPGRADE_DETECTED OR REINSTALL'
   has InstallExecuteSequence 'StopTui	&Gateway=2 AND !Gateway=3 AND NOT REMOVE~="ALL"'
   # Nikoli ponovni zagon: ni ScheduleReboot/ForceReboot, REBOOT=ReallySuppress le kot zadnja varovalka, Restart Manager
