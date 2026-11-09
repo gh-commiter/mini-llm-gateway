@@ -106,7 +106,9 @@ REL=$(sed -n 's/^VERSION \([0-9][0-9.]*\)$/\1/p' "$TMP/SHA256SUMS" | head -1)
 [ -n "$REL" ] || REL=0.5.17
 HAVE=$(minigw --version 2>/dev/null | head -1 | sed -n 's/^minigw \([0-9][0-9.]*\)$/\1/p' || true)
 [ -n "$HAVE" ] || HAVE=$("$HOME/.local/bin/minigw" --version 2>/dev/null | head -1 | sed -n 's/^minigw \([0-9][0-9.]*\)$/\1/p' || true)
-if [ -n "$REL" ] && [ -n "$HAVE" ] && [ "$REL" != "$HAVE" ] && [ "$(printf '%s\n%s\n' "$REL" "$HAVE" | sort -V | head -1)" = "$REL" ] \
+# REL < HAVE po številskih poljih (awk; BusyBox nima sort -V)
+if [ -n "$REL" ] && [ -n "$HAVE" ] && awk -v a="$REL" -v b="$HAVE" 'BEGIN { n = split(a, x, "."); m = split(b, y, "."); if (m > n) n = m
+     for (i = 1; i <= n; i++) { if (x[i] + 0 < y[i] + 0) exit 0; if (x[i] + 0 > y[i] + 0) exit 1 }; exit 1 }' \
    && [ $ALLOW_DOWNGRADE = 0 ]; then
   die "this release ($REL) is older than the installed minigw $HAVE; to go back anyway: … | sh -s -- --allow-downgrade"
 fi

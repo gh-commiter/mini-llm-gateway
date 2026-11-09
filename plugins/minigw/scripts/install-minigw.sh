@@ -27,7 +27,9 @@ mkdir -p "$BIN"
 
 ver() { "$1" --version 2>/dev/null | head -1 | sed 's/^minigw //'; }
 MIN=0.5.20  # najnižji minigw za ta vtičnik (profili, samo za branje z lokalnim prehodom, obseg veje le agenta)
-older() { [ -n "$1" ] && [ -n "$2" ] && [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" = "$1" ]; }
+# older a b: a < b po številskih poljih (awk; BusyBox nima sort -V)
+older() { [ -n "$1" ] && [ -n "$2" ] && awk -v a="$1" -v b="$2" 'BEGIN { n = split(a, x, "."); m = split(b, y, "."); if (m > n) n = m
+  for (i = 1; i <= n; i++) { if (x[i] + 0 < y[i] + 0) exit 0; if (x[i] + 0 > y[i] + 0) exit 1 }; exit 1 }'; }
 
 # verify_sums <sums> <sig>: najprej ssh-keygen; sicer že nameščen minigw, a le 0.5.17 ali novejši (pozna verify-sums)
 # in le z natanko pričakovanim izpisom. Starejši minigw neznan ukaz preda claude, ki lahko vrne 0 (H1 0.5.17).
