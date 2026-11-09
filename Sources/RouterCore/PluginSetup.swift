@@ -13,6 +13,17 @@ public enum PluginSetup {
         public init(message: String) { self.message = message }
     }
 
+    /// L3: mapa ali datoteka ni zapisljiva za druge, je last tega uporabnika ali root, za skupino pa le, če ji uporabnik
+    /// zaupa (trustedGroup; Homebrew: /opt/homebrew/bin je drwxrwxr-x uros:admin). Kot Go safeDir.
+    public static func safePath(_ path: String) -> Bool {
+        var st = stat()
+        return stat(path, &st) == 0 && st.st_mode & 0o002 == 0 && (st.st_uid == getuid() || st.st_uid == 0)
+            && (st.st_mode & 0o020 == 0 || trustedGroup(st.st_gid))
+    }
+
+    /// macOS: staff (20), admin (80) ali primarna skupina uporabnika (kot Go trustedGroup).
+    public static func trustedGroup(_ gid: gid_t) -> Bool { gid == 20 || gid == 80 || gid == getgid() }
+
     /// Le JSON true (ne 1).
     public static func isTrue(_ v: Any?) -> Bool {
         guard let n = v as? NSNumber else { return false }

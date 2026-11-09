@@ -67,11 +67,6 @@ func versionOf(_ exe: String) -> String {
 }
 
 /// L3: mapa ali datoteka ni zapisljiva za skupino in druge ter je last tega uporabnika ali root.
-func safeDir(_ dir: String) -> Bool {
-    var st = stat()
-    return stat(dir, &st) == 0 && st.st_mode & 0o022 == 0 && (st.st_uid == getuid() || st.st_uid == 0)
-}
-
 /// L1: le <claude>/plugins/data/minigw…, absolutna in počiščena pot.
 func pluginDataSafe(_ d: String) -> Bool {
     d.hasPrefix("/") && !d.hasSuffix("/") && !d.contains("//") && !d.contains("/./") && !d.contains("/../")
@@ -88,7 +83,7 @@ func pluginLink(_ self: String) throws -> String? {
     let bin = pluginDataDir + "/bin"
     if sameFile((self as NSString).deletingLastPathComponent, bin) { return nil }
     let dir = (self as NSString).deletingLastPathComponent
-    guard safeDir(dir), safeDir(self) else { throw PluginSetup.Failure(message: "\(self) or its folder is writable by others or not owned by you or root: move minigw to a safe folder") }
+    guard PluginSetup.safePath(dir), PluginSetup.safePath(self) else { throw PluginSetup.Failure(message: "\(self) or its folder is writable by others or not owned by you or root: move minigw to a safe folder") }
     try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
     if (try? FileManager.default.destinationOfSymbolicLink(atPath: pluginLinkPath)) != self {
         unlink(pluginLinkPath)

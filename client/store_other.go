@@ -14,6 +14,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 )
@@ -229,14 +230,44 @@ func regEnvPathSet(string) error                   { return errors.New("Windows 
 
 func shortPath(p string) string { return p } // le Windows (8.3)
 
-// safeDir (L3): mapa ali datoteka ni zapisljiva za skupino in druge ter je last tega uporabnika ali root.
+// safeDir (L3): mapa ali datoteka ni zapisljiva za druge, je last tega uporabnika ali root, za skupino pa le, če ji
+// uporabnik zaupa (trustedGroup; Homebrew: /opt/homebrew/bin je drwxrwxr-x uros:admin).
 func safeDir(dir string) bool {
 	fi, err := os.Stat(dir)
 	if err != nil {
 		return false
 	}
 	st, ok := fi.Sys().(*syscall.Stat_t)
-	return ok && fi.Mode().Perm()&0o022 == 0 && (int(st.Uid) == os.Getuid() || st.Uid == 0)
+	perm := fi.Mode().Perm()
+	return ok && perm&0o002 == 0 && (int(st.Uid) == os.Getuid() || st.Uid == 0) &&
+		(perm&0o020 == 0 || trustedGroup(runtime.GOOS, st.Gid, readGroupFile()))
+}
+
+// trustedGroup: macOS staff (20), admin (80) ali primarna skupina uporabnika (kot Swift PluginSetup.trustedGroup);
+// drugod le zasebna skupina uporabnika: primarna, z imenom uporabnika in brez drugih članov v /etc/group.
+func trustedGroup(goos string, gid uint32, etcGroup string) bool {
+	if goos == "darwin" {
+		return gid == 20 || gid == 80 || int(gid) == os.Getgid()
+	}
+	u, err := user.Current()
+	if err != nil || int(gid) != os.Getgid() {
+		return false
+	}
+	g, err := user.LookupGroupId(strconv.Itoa(int(gid)))
+	if err != nil || g.Name != u.Username {
+		return false
+	}
+	for _, l := range strings.Split(etcGroup, "\n") { // ime:geslo:gid:člani
+		if f := strings.Split(l, ":"); len(f) == 4 && f[2] == g.Gid && strings.TrimSpace(f[3]) != "" && strings.TrimSpace(f[3]) != u.Username {
+			return false
+		}
+	}
+	return true
+}
+
+func readGroupFile() string {
+	b, _ := os.ReadFile("/etc/group")
+	return string(b)
 }
 
 // ownedByMe (L2): mapa (ne povezava) je last tega uporabnika; prva raven pod začasno mapo, ki jo smemo deliti samodejno.

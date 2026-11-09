@@ -273,4 +273,16 @@ func TestPluginDataSafeAndUnsafeDir(t *testing.T) {
 	if _, err := pluginLink("linux", self); err != nil {
 		t.Fatal(err)
 	}
+	// Homebrew: mapa drwxrwxr-x uporabnik:admin je varna; o+w ne, tudi z zaupano skupino.
+	if runtime.GOOS == "darwin" && os.Chown(dir, -1, 80) == nil {
+		os.Chmod(dir, 0o775)
+		if _, err := pluginLink("darwin", self); err != nil {
+			t.Fatalf("group-writable admin folder refused: %v", err)
+		}
+		os.Chmod(dir, 0o777)
+		if _, err := pluginLink("darwin", self); err == nil {
+			t.Fatal("o+w admin folder linked")
+		}
+		os.Chmod(dir, 0o755)
+	}
 }
