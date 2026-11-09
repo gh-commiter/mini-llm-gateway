@@ -58,10 +58,9 @@ public struct ProviderConfig: Codable, Identifiable, Sendable, Equatable {
         return Int(t)
     }
 
-    /// ID, ki ga vidi Claude Code: model discovery obdrži le ID-je, ki vsebujejo »claude« ali »anthropic«.
+    /// ID, ki ga vidi Claude Code: v /model so le ID-ji, ki se začnejo s »claude-«.
     public static func publishedID(_ alias: String) -> String {
-        let a = alias.lowercased()
-        return a.contains("claude") || a.contains("anthropic") ? alias : "claude-" + alias
+        alias.lowercased().hasPrefix("claude-") ? alias : "claude-" + alias
     }
 }
 

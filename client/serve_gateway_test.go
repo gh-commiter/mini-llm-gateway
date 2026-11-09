@@ -115,7 +115,7 @@ func TestServeGatewayPassthrough(t *testing.T) {
 	}
 	list, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	for _, want := range []string{`"id":"anthropic/claude-x"`, `gw · anthropic/claude-x · 200K`, `"id":"claude-gpt-y"`, `gw · gpt-y · 8K`} {
+	for _, want := range []string{`"id":"claude-anthropic/claude-x"`, `gw · anthropic/claude-x · 200K`, `"id":"claude-gpt-y"`, `gw · gpt-y · 8K`} {
 		if !strings.Contains(string(list), want) {
 			t.Fatalf("models: missing %s in %s", want, list)
 		}
@@ -487,5 +487,13 @@ func TestBuiltinGateways(t *testing.T) {
 	if st, b := adminNoise(t, s, base, s.admin, "GET", adminPrefix+"/providers", ""); st != 200 ||
 		!strings.Contains(b, `"name":"LiteLLM"`) || !strings.Contains(b, `"name":"OpenRouter"`) {
 		t.Fatalf("list: %d %s", st, b)
+	}
+}
+
+func TestPublishedIDStartsWithClaude(t *testing.T) {
+	for in, want := range map[string]string{"qwen": "claude-qwen", "anthropic/claude-x": "claude-anthropic/claude-x", "Claude-x": "Claude-x", "claude-qwen/qwen3": "claude-qwen/qwen3"} {
+		if got := publishedID(in); got != want {
+			t.Errorf("publishedID(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

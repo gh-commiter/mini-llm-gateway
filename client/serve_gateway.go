@@ -131,9 +131,9 @@ func checkGatewayURL(raw string, insecure bool) (string, error) {
 	return strings.TrimSuffix(strings.TrimSuffix(u.String(), "/"), "/v1"), nil
 }
 
-// publishedID: model discovery v Claude Code obdrži le ID-je s »claude« ali »anthropic« (kot na Macu).
+// publishedID: v /model v Claude Code so le ID-ji, ki se začnejo s »claude-« (kot na Macu).
 func publishedID(upstream string) string {
-	if a := strings.ToLower(upstream); strings.Contains(a, "claude") || strings.Contains(a, "anthropic") {
+	if strings.HasPrefix(strings.ToLower(upstream), "claude-") {
 		return upstream
 	}
 	return "claude-" + upstream

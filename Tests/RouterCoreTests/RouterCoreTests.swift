@@ -90,7 +90,8 @@ func makeRouter(session: URLSession = .shared) -> Router {
     let p = ProviderConfig(id: "x", name: "X", enabled: true, baseURL: "", aliases: " a = b \n\n# c\nd, 128k\n=bad\ne = f, 1M")
     #expect(p.aliasPairs.map { "\($0.alias)>\($0.upstream)>\($0.window ?? 0)" } == ["a>b>0", "d>d>128000", "=bad>=bad>0", "e>f>1000000"])
     #expect(ProviderConfig.publishedID("qwen") == "claude-qwen")
-    #expect(ProviderConfig.publishedID("anthropic/claude-x") == "anthropic/claude-x")
+    #expect(ProviderConfig.publishedID("anthropic/claude-x") == "claude-anthropic/claude-x")
+    #expect(ProviderConfig.publishedID("Claude-x") == "Claude-x")
 }
 
 @Test func healthWithoutTokenOtherwise401() async {
@@ -239,7 +240,7 @@ func makeRouter(session: URLSession = .shared) -> Router {
         cfg.protocolClasses = [StubUpstream.self]
         await makeRouter(session: URLSession(configuration: cfg)).handle(request("GET", "/v1/models", headers: ["x-api-key": "tok"]), writer: w)
         #expect(w.status == 200)
-        #expect(w.text.contains("\"claude-or-qwen\"") && w.text.contains("\"anthropic/claude-sonnet\""))
+        #expect(w.text.contains("\"claude-or-qwen\"") && w.text.contains("\"claude-anthropic/claude-sonnet\""))
         #expect(!w.text.contains("\"or-qwen\"") && !w.text.contains("qwen-local"))
         #expect(w.text.contains("OpenRouter · qwen/qwen3-coder · 1K"))
     }
