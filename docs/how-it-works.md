@@ -102,8 +102,14 @@ Details:
   (`repos/<device>/<id>-<key>.git`) and its own clone at its path in the agent's clone. Every clone's `.git` gets the
   same protection as the top one (read-only config, hooks, info and commondir, the bwrap pin and the change check).
   git started by the agent CLIs runs only with the `.git` of one of these clones as `GIT_DIR`; a repository the agent
-  creates is never entered and stops that run's branch. After the run the gateway commits each clone's changes on
-  its branch (deepest first, so a submodule's parent records its new commit) and sends one bundle per repository.
+  creates is never entered and stops that run's branch. Untracked nested repositories are excluded in the parent
+  clone's `.git/info/exclude` before the agent starts. After the run the gateway stops the agent's leftover processes
+  (also ones that left the clone or the session but carry its `GIT_WORK_TREE`), commits each clone's changes on its
+  branch from the clone's real path (checked before and after, the result is dropped if a folder was swapped for a
+  link; on the Mac git can read only that path), deepest first so a submodule's parent records its new commit, checks
+  the objects (fsck) and sends one bundle per repository; all bundles of one upload together stay within 4 GB.
+  In native mode on the Mac the same happens with the repositories in the share; git on the gateway reads them
+  without the system or user git config.
 
 ## Protected paths
 
