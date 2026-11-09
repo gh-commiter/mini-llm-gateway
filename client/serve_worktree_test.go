@@ -48,7 +48,8 @@ echo "agent $n" > ../agent$n.txt
 git add ../agent$n.txt && git -c user.name=a -c user.email=a@x commit -qm "agent $n"
 echo left > ../left.txt
 echo '* filter=evil' > ../.gitattributes
-printf '[core]\n\tfsmonitor = touch `+marks+`/gw-fsmonitor\n[filter "evil"]\n\tclean = touch `+marks+`/gw-clean; cat\n' >> "$GIT_DIR/config"
+# config le v zadnji zahtevi: spremenjen config (v peskovniku denyWrite) pomeni nov klon (H2), ne nadaljevanja
+[ "$n" = 1 ] && printf '[core]\n\tfsmonitor = touch `+marks+`/gw-fsmonitor\n[filter "evil"]\n\tclean = touch `+marks+`/gw-clean; cat\n' >> "$GIT_DIR/config"
 mkdir -p "$GIT_DIR/hooks"; printf '#!/bin/sh\ntouch `+marks+`/gw-hook\n' > "$GIT_DIR/hooks/post-commit"; chmod +x "$GIT_DIR/hooks/post-commit"
 echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"done"}}}'
 echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
@@ -343,5 +344,94 @@ func TestRemoveCloneDropsEmptyMaven(t *testing.T) {
 	removeClone(b)
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Fatalf("empty clones folder stays: %v", err)
+	}
+}
+
+// H1: povezava kjerkoli v podmapi (a -> domača mapa, cwd a/.ssh; b -> ../outside) ne prestavi agenta iz klona.
+func TestWorktreeDirSymlink(t *testing.T) {
+	root := t.TempDir()
+	wt, home := filepath.Join(root, "wt"), filepath.Join(root, "home")
+	os.MkdirAll(filepath.Join(wt, "x", "y"), 0o755)
+	os.MkdirAll(filepath.Join(home, ".ssh"), 0o700)
+	os.MkdirAll(filepath.Join(root, "outside", "z"), 0o755)
+	if os.Symlink(home, filepath.Join(wt, "a")) != nil || os.Symlink(filepath.Join("..", "outside"), filepath.Join(wt, "b")) != nil {
+		t.Skip("no symlinks")
+	}
+	os.Symlink(filepath.Join(home, ".ssh"), filepath.Join(wt, "x", "s"))
+	for _, sub := range []string{"a", "a/.ssh", "b", "b/z", "x/s", "x/../a/.ssh", "missing"} {
+		if got := worktreeDir(wt, sub); got != wt {
+			t.Fatalf("%s: %s", sub, got)
+		}
+	}
+	if got := worktreeDir(wt, "x/y"); got != filepath.Join(wt, "x", "y") {
+		t.Fatal(got)
+	}
+}
+
+// H2: zamenjan .git klona (nov config s filtrom, info/attributes) ali podtaknjen commondir: klon ni več v redu, zato
+// claude v njem ne začne (git status samega claude bi filter izvedel zunaj peskovnika).
+func TestWorktreeGitSwapRefused(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("filter command is a shell script")
+	}
+	root := t.TempDir()
+	client, repo, wt := filepath.Join(root, "c"), filepath.Join(root, "repos", "d", "r.git"), filepath.Join(root, "wt")
+	os.MkdirAll(client, 0o755)
+	gitT(t, client, "init", "-q", "-b", "main")
+	writeT(t, filepath.Join(client, "a.txt"), "a\n")
+	gitT(t, client, "add", "a.txt")
+	gitT(t, client, "commit", "-qm", "first")
+	head := gitT(t, client, "rev-parse", "HEAD")
+	b := filepath.Join(root, "push.bundle")
+	gitUser(client, nil, "update-ref", "refs/minigw/push", head)
+	gitUser(client, nil, "bundle", "create", b, "refs/minigw/push")
+	if ensureMirror(repo) != nil || !importBase(repo, b, head, "refs/minigw/base/x") || !makeClone(repo, wt, "minigw/claude-12345678-0", head) {
+		t.Fatal("mirror or clone")
+	}
+	sl := &wtSlot{wt: wt}
+	sl.git, _ = os.Lstat(filepath.Join(wt, ".git"))
+	sl.cfg, _ = os.ReadFile(filepath.Join(wt, ".git", "config"))
+	h := newShareHub()
+	h.bySession["s"] = &serveShare{tree: &shareTree{slots: map[string]*wtSlot{"claude": sl}}}
+	if !h.worktreeIntact(wt) || h.worktreeIntact(filepath.Join(root, "other")) {
+		t.Fatal("intact clone refused or unknown clone accepted")
+	}
+	// Agent: mv .git .g, nov .git s filtrom (kopija), filter vsem datotekam.
+	g := filepath.Join(wt, ".git")
+	if err := os.Rename(g, filepath.Join(wt, ".g")); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("cp", "-R", filepath.Join(wt, ".g"), g).CombinedOutput(); err != nil {
+		t.Fatal(string(out))
+	}
+	marker := filepath.Join(root, "ran")
+	f, _ := os.OpenFile(filepath.Join(g, "config"), os.O_APPEND|os.O_WRONLY, 0)
+	f.WriteString("[filter \"x\"]\n\tclean = touch " + marker + "; cat\n")
+	f.Close()
+	os.MkdirAll(filepath.Join(g, "info"), 0o755)
+	writeT(t, filepath.Join(g, "info", "attributes"), "* filter=x\n")
+	writeT(t, filepath.Join(wt, "a.txt"), "b\n") // ista velikost: git status prebere vsebino (filter clean)
+	// Napad je resničen: git status z okoljem agenta filter izvede.
+	c := exec.Command("git", "--no-optional-locks", "status", "--porcelain")
+	c.Dir, c.Env = wt, append(os.Environ(), worktreeHarnessEnv(wt, filepath.Join(root, "m"))...)
+	c.Run()
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatal("planted filter did not run: the test does not reproduce the attack")
+	}
+	if sl.gitIntact() || h.worktreeIntact(wt) {
+		t.Fatal("swapped .git accepted")
+	}
+	// Isti .git, a podtaknjen info/attributes ali commondir.
+	os.RemoveAll(g)
+	os.Rename(filepath.Join(wt, ".g"), g)
+	if !sl.gitIntact() {
+		t.Fatal("restored .git refused")
+	}
+	for _, p := range []string{filepath.Join("info", "attributes"), "commondir"} {
+		writeT(t, filepath.Join(g, p), "x\n")
+		if sl.gitIntact() {
+			t.Fatalf("%s accepted", p)
+		}
+		os.Remove(filepath.Join(g, p))
 	}
 }

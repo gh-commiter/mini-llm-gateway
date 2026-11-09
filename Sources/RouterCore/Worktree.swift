@@ -537,7 +537,7 @@ extension ShareHub {
         var n = 0
         while slots["\(s.session)|\(agent)|\(n)"]?.busy == true { n += 1 }
         let k = "\(s.session)|\(agent)|\(n)"
-        if let slot = slots[k], FileManager.default.fileExists(atPath: slot.wt.appendingPathComponent(".git").path) {
+        if let slot = slots[k], slot.gitIntact {  // sicer nov klon (H2)
             slot.busy = true; runSlot[id] = k; unlock(tree.repo)
             return Self.dir(slot.wt, tree.sub)
         }
@@ -590,9 +590,16 @@ extension ShareHub {
         return snapshot == nil ? nil : Self.dir(wt, tree.sub)
     }
 
+    /// Podmapa `sub` v klonu; vsak del poti prava mapa (H1: povezava kjerkoli v poti, npr. a -> ~ in cwd a/.ssh, bi
+    /// delovno mapo agenta prestavila iz klona), sicer koren klona (tudi podmapa, ki je git ne pozna).
     static func dir(_ wt: URL, _ sub: String) -> URL {
-        let d = sub.isEmpty ? wt : wt.appendingPathComponent(sub, isDirectory: true)
-        return FileManager.default.fileExists(atPath: d.path) ? d : wt  // podmapa, ki je git ne pozna (prazna)
+        var d = wt
+        for c in sub.split(separator: "/") where c != "." {
+            d = d.appendingPathComponent(String(c), isDirectory: true)
+            var st = stat()
+            guard c != "..", lstat(d.path, &st) == 0, st.st_mode & S_IFMT == S_IFDIR else { return wt }
+        }
+        return d
     }
 
     /// Klon in veja tega izvajanja (za navodilo agentu in peskovnik).

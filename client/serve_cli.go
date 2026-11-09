@@ -717,6 +717,9 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		if ok && ro { // L2: kot na Macu
 			return writeError(w, r.rid, 400, readOnlyWorktree)
 		}
+		if ok && !s.hub.worktreeIntact(wt) { // H2: git samega claude (zunaj peskovnika) ne z .git, ki ga je zamenjal agent
+			return writeError(w, r.rid, 400, "The agent's clone was changed (its .git was replaced): start a new conversation")
+		}
 		if ok {
 			args = worktreeClaudeArgs(args, wt, maven, objects)
 			worktreeEnv = worktreeHarnessEnv(wt, maven)

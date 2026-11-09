@@ -719,7 +719,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     let hide = try #require(p.split(separator: "\n").first { $0.hasPrefix("(deny file-read-data file-write*") })
     #expect(hide.contains("\"\(link.path)\"") && hide.contains("\"\(real.path)\""))
     // L4: ugnezdeni .git: nastavitve in hooki, pa tudi .git sam (preimenovanje, zamenjava z datoteko gitdir)
-    #expect(p.contains(#"(regex #"/\.git/(config|config\.worktree|hooks|info)(/|$)")"#) && p.contains(#"(regex #"/\.git$")"#))
+    #expect(p.contains(#"(regex #"/\.git/(config|config\.worktree|hooks|info|commondir|worktrees)(/|$)")"#) && p.contains(#"(regex #"/\.git$")"#))
 }
 
 /// Agent-calls na native-direct: vprašani agent dela v mapi klicatelja v njegovem izvajanju in ne čaka na zaklep, ki ga
@@ -847,4 +847,53 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     #expect(Worktree.clientTree(top: "/Users/u/repo/", cwd: "/Users/u/repo/src")! == ("/Users/u/repo", "src"))
     #expect(Worktree.clientTree(top: "C:/Users/u/repo", cwd: #"C:\Users\u\repo2"#) == nil)
     #expect(Worktree.clientTree(top: "", cwd: "/x") == nil && Worktree.clientTree(top: "/", cwd: "/x") == nil)
+}
+
+/// H1: povezava kjerkoli v podmapi (a -> domača mapa in cwd a/.ssh, b -> ../outside) ne prestavi agenta iz klona.
+@Test func worktreeDirRefusesSymlinks() throws {
+    let fm = FileManager.default
+    let root = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("wtdir-" + UUID().uuidString)
+    defer { try? fm.removeItem(at: root) }
+    let wt = root.appendingPathComponent("wt"), home = root.appendingPathComponent("home")
+    for d in [wt.appendingPathComponent("x/y"), home.appendingPathComponent(".ssh"), root.appendingPathComponent("outside/z")] {
+        try fm.createDirectory(at: d, withIntermediateDirectories: true)
+    }
+    try fm.createSymbolicLink(atPath: wt.appendingPathComponent("a").path, withDestinationPath: home.path)
+    try fm.createSymbolicLink(atPath: wt.appendingPathComponent("b").path, withDestinationPath: "../outside")
+    try fm.createSymbolicLink(atPath: wt.appendingPathComponent("x/s").path, withDestinationPath: home.appendingPathComponent(".ssh").path)
+    for sub in ["a", "a/.ssh", "b", "b/z", "x/s", "x/../a/.ssh", "missing"] {
+        #expect(ShareHub.dir(wt, sub).path == wt.path, "\(sub)")
+    }
+    #expect(ShareHub.dir(wt, "x/y").path == wt.appendingPathComponent("x/y").path)
+}
+
+/// M4: native v mapi sami: tudi preusmeritve gitdir (commondir, worktrees) niso pisljive.
+@Test func agentArgsDenyGitIndirection() throws {
+    var cfg = ClaudeCLIConfig()
+    cfg.allowLocalTools = true
+    let args = cfg.agentArgs(cwd: URL(fileURLWithPath: "/p"), allTools: [])
+    let s = args[try #require(args.firstIndex(of: "--settings")) + 1]
+    for d in ["config", "hooks", "info", "commondir", "worktrees", "config.worktree"] {
+        #expect(s.contains(#""\/p\/.git\/"# + d + "\""), "\(d): \(s)")
+    }
+}
+
+/// H2 (kot Go): zamenjan .git (kopija z novim config) ali podtaknjen info/attributes ali commondir: mesto se ne nadaljuje.
+@Test func slotGitIntact() throws {
+    let fm = FileManager.default
+    let wt = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("wtslot-" + UUID().uuidString)
+    defer { try? fm.removeItem(at: wt) }
+    try fm.createDirectory(at: wt, withIntermediateDirectories: true)
+    g(wt, "init", "-q")
+    let slot = ShareHub.Slot(wt: wt, branch: "b", base: "x"), git = wt.appendingPathComponent(".git")
+    #expect(slot.gitIntact)
+    for p in ["info/attributes", "commondir"] {
+        try file(wt, ".git/" + p, "x\n")
+        #expect(!slot.gitIntact, "\(p)")
+        try fm.removeItem(at: git.appendingPathComponent(p))
+    }
+    #expect(slot.gitIntact)
+    try fm.moveItem(at: git, to: wt.appendingPathComponent(".g"))
+    try fm.copyItem(at: wt.appendingPathComponent(".g"), to: git)
+    #expect(!slot.gitIntact)
 }

@@ -55,7 +55,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
             // --minigw-ro: pisanje v te mape prepovedano (denyWrite velja tudi za delovno mapo, ki jo Claude Code dovoli sam).
             "filesystem": ["denyRead": ["~"] + Self.scratchPaths(scratch), "allowRead": dirs, "allowWrite": readOnly ? [] : dirs,
                            "denyWrite": Self.scratchPaths(RouterConfig.copilotCache)
-                               + (readOnly ? dirs : dirs.flatMap { d in ["config", "hooks", "info"].map { d + "/.git/" + $0 } })],  // native v mapi sami (H1)
+                               + (readOnly ? dirs : dirs.flatMap { d in Self.gitDenies.map { d + "/.git/" + $0 } })],  // native v mapi sami (H1)
         ]]
         let settings = String(decoding: try! JSONSerialization.data(withJSONObject: sandbox, options: [.sortedKeys]), as: UTF8.self)
         // --minigw-ro: --tools le iz seznama dovoljenih (in Bash v sandboxu brez pisanja), drugih orodij agent nima.
@@ -67,6 +67,10 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
             + (others.isEmpty ? [] : ["--allowedTools", others.joined(separator: ",")])
             + (denied.isEmpty ? [] : ["--disallowedTools", denied.joined(separator: ",")])
     }
+
+    /// M4: .git, ki ga bere git lastnika: nastavitve, hooki, atributi in preusmeritve na drug gitdir (commondir,
+    /// povezani worktree-ji z gitdir, commondir in config.worktree).
+    static let gitDenies = ["config", "config.worktree", "hooks", "info", "commondir", "worktrees"]
 
     /// --minigw-work=worktree: vsa orodja (tudi Bash) vedno v peskovniku Claude Code (brez stikala za izklop):
     /// pisanje le v klon in predpomnilnike gradnje (Worktree.writable), branje domače mape le tam, omrežje po nastavitvi.

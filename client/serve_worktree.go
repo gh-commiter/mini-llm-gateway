@@ -33,7 +33,29 @@ type shareTree struct {
 	resultErr            string             // L5: zakaj rezultata ni (odjemalec ga dobi ob WORKTREE-PULL)
 }
 
-type wtSlot struct{ wt, branch, base string }
+type wtSlot struct {
+	wt, branch, base string
+	git              os.FileInfo // H2: .git klona ob kloniranju (zamenjan .git = nov config, filtri, atributi)
+	cfg              []byte      // .git/config ob kloniranju
+}
+
+// gitIntact (H2): .git klona je še ista mapa z istim config, brez info/attributes in commondir. Claude Code poganja git
+// sam, zunaj svojega peskovnika (git status ob zagonu): zamenjan .git (mv .git; nov config s filter.*.clean ali
+// info/attributes) bi izvedel ukaz agenta brez peskovnika. config, hooks, info in commondir so v denyWrite.
+func (sl *wtSlot) gitIntact() bool {
+	g := filepath.Join(sl.wt, ".git")
+	st, err := os.Lstat(g)
+	if err != nil || sl.git == nil || !os.SameFile(st, sl.git) {
+		return false
+	}
+	b, err := os.ReadFile(filepath.Join(g, "config"))
+	for _, p := range []string{filepath.Join("info", "attributes"), "commondir"} {
+		if _, e := os.Lstat(filepath.Join(g, p)); !os.IsNotExist(e) {
+			return false
+		}
+	}
+	return err == nil && bytes.Equal(b, sl.cfg)
+}
 
 // worktreeNeedsUnsandboxed (L3): na Windows Claude v načinu worktree le z »Allow commands without a sandbox«.
 var worktreeNeedsUnsandboxed = runtime.GOOS == "windows"
@@ -401,7 +423,7 @@ func (h *shareHub) worktreeMount(s *serveShare, agent string) string {
 	if ro {
 		return ""
 	}
-	if slot != nil && realDir(filepath.Join(slot.wt, ".git")) {
+	if slot != nil && slot.gitIntact() { // sicer nov klon (makeClone pobriše starega)
 		return worktreeDir(slot.wt, t.sub)
 	}
 	short := sha256Hex([]byte(s.session))[:8]
@@ -438,18 +460,31 @@ func (h *shareHub) worktreeMount(s *serveShare, agent string) string {
 	for _, d := range []string{filepath.Join(wt, ".build", "tmp"), filepath.Join(t.worktrees, ".maven")} {
 		os.MkdirAll(d, 0o700)
 	}
+	sl := &wtSlot{wt: wt, branch: branch, base: reply.Snapshot}
+	sl.git, _ = os.Lstat(filepath.Join(wt, ".git"))
+	sl.cfg, _ = os.ReadFile(filepath.Join(wt, ".git", "config"))
+	if !sl.gitIntact() {
+		return ""
+	}
 	h.mu.Lock()
-	t.slots[agent] = &wtSlot{wt: wt, branch: branch, base: reply.Snapshot}
+	t.slots[agent] = sl
 	h.mu.Unlock()
 	return worktreeDir(wt, t.sub)
 }
 
+// worktreeDir: podmapa sub v klonu; vsak del poti prava mapa (H1: povezava ali spoj kjerkoli v poti bi delovno mapo
+// agenta prestavil iz klona, npr. a -> $HOME in cwd a/.ssh), sicer koren klona.
 func worktreeDir(wt, sub string) string {
-	d := filepath.Join(wt, filepath.FromSlash(sub))
-	if realDir(d) {
-		return d
+	d := wt
+	for _, c := range strings.Split(filepath.ToSlash(sub), "/") {
+		if c == "" || c == "." {
+			continue
+		}
+		if d = filepath.Join(d, c); c == ".." || !realDir(d) {
+			return wt // podmapa, ki je git ne pozna (prazna), ali pot ven
+		}
 	}
-	return wt // podmapa, ki je git ne pozna (prazna)
+	return d
 }
 
 // worktreeOf: klon, veja, Maven in objekti zrcala seje za tega agenta (za okolje in peskovnik agenta).
@@ -462,6 +497,23 @@ func (h *shareHub) worktreeOf(session, agent string) (wt, branch, maven, objects
 	}
 	sl := s.tree.slots[agent]
 	return sl.wt, sl.branch, filepath.Join(s.tree.worktrees, ".maven"), filepath.Join(s.tree.repo, "objects"), true
+}
+
+// worktreeIntact (H2): klon wt (tudi klicateljev pri vgnezdenem agentu) ima še svoj .git (wtSlot.gitIntact).
+func (h *shareHub) worktreeIntact(wt string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, s := range h.bySession {
+		if s.tree == nil {
+			continue
+		}
+		for _, sl := range s.tree.slots {
+			if sl.wt == wt {
+				return sl.gitIntact()
+			}
+		}
+	}
+	return false
 }
 
 // worktreeBack: po agentu veja v zrcalu in prevzem pri odjemalcu (WORKTREE-PULL).
