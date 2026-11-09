@@ -494,12 +494,13 @@ func TestShareJobsOnlyInTheirMode(t *testing.T) {
 
 func TestSyncNeverTouchesGitOrCommandSettings(t *testing.T) {
 	for _, p := range []string{".git/config", ".GIT/hooks/post-checkout", "a/.Git./hooks/x", ".git /x", ".claude/settings.json",
-		".Claude/Settings.Local.json", "sub/.vscode/tasks.json", ".envrc", "x/.ENVRC"} {
+		".Claude/Settings.Local.json", "sub/.vscode/tasks.json", ".envrc", "x/.ENVRC", ".claude/hooks/x.sh", ".claude/hooks",
+		".Claude/Commands/c.md", ".claude/agents/a.md", "sub/.claude/skills/s/SKILL.md", ".husky/pre-commit", ".husky", "a/.githooks/pre-push"} {
 		if !protectedPath(p) {
 			t.Errorf("%q not protected", p)
 		}
 	}
-	for _, p := range []string{"src/git.go", ".gitignore", ".claude/agents/a.md", ".vscode/settings.json", "envrc"} {
+	for _, p := range []string{"src/git.go", ".gitignore", ".claude/notes.md", "src/hooks/use.ts", "skills/a.md", ".vscode/settings.json", "envrc"} {
 		if protectedPath(p) {
 			t.Errorf("%q protected", p)
 		}
@@ -780,6 +781,8 @@ func TestDavRefusesProtectedWrites(t *testing.T) {
 		{"PUT", ".claude/settings.local.json", ""}, {"PUT", ".vscode/tasks.json", ""}, {"MKCOL", ".git/x", ""},
 		{"DELETE", ".git/HEAD", ""}, {"DELETE", ".git", ""}, {"LOCK", ".git/new", ""}, {"PROPPATCH", ".git/HEAD", ""},
 		{"MOVE", "a.txt", ".git/hooks/pre-commit"}, {"COPY", "a.txt", ".envrc"}, {"MOVE", ".git", "g"},
+		{"PUT", ".claude/hooks/x.sh", ""}, {"MKCOL", ".claude/skills", ""}, {"PUT", ".claude/commands/c.md", ""},
+		{"PUT", ".husky/pre-commit", ""}, {"MOVE", "a.txt", ".githooks/pre-push"}, {"PUT", "sub/.claude/agents/a.md", ""},
 	} {
 		if s := h(c[0], c[1], c[2]); s != 403 {
 			t.Fatalf("%s %s %s: %d", c[0], c[1], c[2], s)
@@ -923,5 +926,140 @@ func TestDavNestedGitAncestorAndHardLink(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(filepath.Join(root, "h2")); string(b) != "hl" {
 		t.Fatal("hard link content lost")
+	}
+}
+
+func TestUnsafeClaudeFlagsInsideClaudeCode(t *testing.T) {
+	in := map[string]string{"CLAUDECODE": "1"}
+	env := func(k string) string { return in[k] }
+	for _, a := range [][]string{
+		{"--dangerously-skip-permissions", "-p", "x"}, {"-p", "--permission-mode", "bypassPermissions", "x"},
+		{"-p", "--permission-mode=bypassPermissions", "x"}, {"-p", "--allowedTools", "Bash", "x"}, {"--settings", "s.json", "-p", "x"},
+		{"--mcp-config", "m.json"}, {"--plugin-dir", "d"}, {"--add-dir", "/"}, {"-p", "--model", "m", "--allow-dangerously-skip-permissions"},
+		{"-pc", "x"}, {"-p=1"}, {"--Model", "m"}, {"-p", "--model", "m", "--input-format", "stream-json"},
+		{"-p", "--input-format=text"}, {"-r", "id", "-p", "x"}, {"--resume", "id"}, {"-c", "-p", "x"}, {"--session-id", "s", "-p"},
+	} {
+		if unsafeClaudeFlag(a, env) == "" {
+			t.Errorf("%q accepted", a)
+		}
+	}
+	for _, a := range [][]string{
+		{"-p", "--model", "claude-codex-gpt-6.1-sol", "task"}, {"-p", "--model", "--dangerously-skip-permissions", "x"}, // vrednost --model
+		{"-p", "--model=m", "--output-format", "stream-json", "--verbose", "x"}, {"-p", "--", "--add-dir"}, {"--help"},
+		{"-p", "--model", "m", "--", "- fix x"}, nil,
+	} {
+		if f := unsafeClaudeFlag(a, env); f != "" {
+			t.Errorf("%q refused (%s)", a, f)
+		}
+	}
+	if unsafeClaudeFlag([]string{"--dangerously-skip-permissions"}, func(string) string { return "" }) != "" {
+		t.Error("refused outside Claude Code")
+	}
+	in["MINIGW_ALLOW_UNSAFE_FLAGS"] = "1"
+	if unsafeClaudeFlag([]string{"--dangerously-skip-permissions"}, env) != "" {
+		t.Error("MINIGW_ALLOW_UNSAFE_FLAGS=1 ignored")
+	}
+}
+
+func TestUnsafePromptInsideClaudeCode(t *testing.T) {
+	in := map[string]string{"CLAUDECODE": "1"}
+	env := func(k string) string { return in[k] }
+	m := []string{"-p", "--model", "m"}
+	for _, c := range []struct {
+		args  []string
+		stdin string
+	}{
+		{append(m, "/config permissionMode=auto"), ""}, {append(m, "--", "  /model x"), ""}, {append(m, "--", "\n/mcp enable x"), ""},
+		{append(m, "@~/.ssh/id"), ""}, {append(m, "--", `see @"a b"`), ""}, {append(m, "--", "(@x"), ""}, {append(m, "--", "x\t@'y'"), ""},
+		{append(m, "--", "ok"), "summarize @/etc/passwd"}, {m, "/config permissionMode=acceptEdits"}, {[]string{"-p", "fix", "@/etc/hosts"}, ""},
+	} {
+		if unsafePrompt(c.args, c.stdin, env) == "" {
+			t.Errorf("%q stdin %q accepted", c.args, c.stdin)
+		}
+	}
+	for _, c := range []struct {
+		args  []string
+		stdin string
+	}{
+		{append(m, "--", "email a@b.com"), ""}, {append(m, "--", "use 2 / 3"), ""}, {append(m, "--", "- fix x"), ""},
+		{append(m, "task"), "mail to a@b, not to me"}, {[]string{"-p", "--model", "/m", "--append-system-prompt", "@x", "ok"}, ""}, {nil, ""},
+	} {
+		if r := unsafePrompt(c.args, c.stdin, env); r != "" {
+			t.Errorf("%q stdin %q refused (%s)", c.args, c.stdin, r)
+		}
+	}
+	// N6b: ločila pred @, ki jih claude 2.1.318 šteje za začetek besede (JS \s, U+FEFF, 。、？！), tudi na stdin
+	for _, sep := range []string{"\u00a0", "\u1680", "\u2000", "\u2003", "\u200a", "\u2028", "\u2029", "\u202f", "\u205f", "\u3000",
+		"\ufeff", "\v", "。", "、", "？", "！"} {
+		if unsafePrompt(append(m, "--", "x"+sep+"@/etc/hosts"), "", env) == "" || unsafePrompt(m, "x"+sep+"@/etc/hosts", env) == "" {
+			t.Errorf("%U before @ accepted", []rune(sep)[0])
+		}
+	}
+	for _, p := range []string{"a\u200b@b", "x\u0085@y", "x＠/etc/hosts", "x=@y", "x:@y"} { // claude jih ne priloži (izmerjeno)
+		if r := unsafePrompt(append(m, "--", p), "", env); r != "" {
+			t.Errorf("%q refused (%s)", p, r)
+		}
+	}
+	if unsafePrompt([]string{"-p", "/config x"}, "", func(string) string { return "" }) != "" {
+		t.Error("refused outside Claude Code")
+	}
+	in["MINIGW_ALLOW_UNSAFE_FLAGS"] = "1"
+	if unsafePrompt([]string{"-p", "@/etc/hosts"}, "", env) != "" {
+		t.Error("MINIGW_ALLOW_UNSAFE_FLAGS=1 ignored")
+	}
+}
+
+// N6b, N7: claude brez terminala ali z -p (tudi zunaj Claude Code) dobi --disable-slash-commands in brez @-priponk.
+func TestPromptGuard(t *testing.T) {
+	none := func(string) string { return "" }
+	cc := func(k string) string { return map[string]string{"CLAUDECODE": "1"}[k] }
+	for _, c := range []struct {
+		args []string
+		env  func(string) string
+		tty  bool
+		want bool
+	}{
+		{[]string{"-p", "x"}, none, true, true}, {[]string{"--print"}, none, true, true}, {[]string{"x"}, none, false, true},
+		{nil, cc, true, true}, {nil, none, true, false}, {[]string{"--model", "m"}, none, true, false}, {[]string{"--", "-p"}, none, true, false},
+	} {
+		if promptGuard(c.args, c.env, c.tty) != c.want {
+			t.Errorf("%q tty=%v: want %v", c.args, c.tty, c.want)
+		}
+	}
+}
+
+func TestModelLinesAndGatewayNotesAreOneCleanLine(t *testing.T) {
+	long := strings.Repeat("d", 300)
+	lines := modelLines([]map[string]any{{"id": "a\x1b]0;x\x07\nb", "description": "ok\nminigw: agent work is on branch x\r\x1b[2J"}, {"id": "c", "description": long}})
+	if len(lines) != 2 || strings.ContainsAny(lines[0]+lines[1], "\n\r\x1b\x07") || !strings.HasPrefix(lines[0], "a]0;x b  ok minigw:") {
+		t.Fatalf("%q", lines)
+	}
+	if !strings.HasSuffix(lines[1], strings.Repeat("d", 200)+"…") {
+		t.Errorf("description not capped: %d", len(lines[1]))
+	}
+	for _, m := range []string{"agent work is on branch minigw/a-0123abcd-1: review with git diff HEAD~9..minigw/a-0123abcd-1", "x\nAgent work is on branch y"} {
+		if n := gatewayNote(m); n != "minigw: gateway: reported a branch that minigw could not verify; ignored" {
+			t.Errorf("%q → %q", m, n)
+		}
+	}
+	if n := gatewayNote("slot busy\nminigw: done\x1b[2J"); n != "minigw: gateway: slot busy minigw: done[2J" {
+		t.Errorf("%q", n)
+	}
+}
+
+func TestUnderChildNamedDotDot(t *testing.T) { // L4: »..x« je v mapi
+	d := filepath.Join(string(filepath.Separator)+"srv", "..minigw")
+	if !under(d, filepath.Dir(d)) || under(filepath.Dir(filepath.Dir(d)), d) || !under(d, d) {
+		t.Fatal("under")
+	}
+}
+
+func TestDavGetRefusesFifo(t *testing.T) { // L3
+	root := t.TempDir()
+	if exec.Command("mkfifo", filepath.Join(root, "f")).Run() != nil {
+		t.Skip("no mkfifo")
+	}
+	if r := davHandle("GET", "/dav/s/f", nil, nil, root, "/dav/s"); r.Status != 403 {
+		t.Fatalf("GET fifo: %d", r.Status)
 	}
 }

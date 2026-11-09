@@ -150,6 +150,7 @@ func TestAgentAsksAgentInSameFolder(t *testing.T) {
 	}
 	claude := filepath.Join(tmp, "claude")
 	writeT(t, claude, `#!/bin/sh
+`+cliGuard+`
 cat > /dev/null
 prev=""; for a in "$@"; do [ "$prev" = --append-system-prompt-file ] && cp "$a" note.txt; [ "$prev" = --settings ] && printf '%s' "$a" > settings.txt; prev="$a"; done
 echo "$(`+ask("claude-codex")+`)" > asked.txt
@@ -208,6 +209,14 @@ echo "codex answer" > "$out"
 	if got := read("loop.txt"); got != "403" {
 		t.Fatalf("codex → claude loop: %q", got)
 	}
+	// Codex vpraša Claude (vprašani claude -p, mapa klicatelja): tudi ta s cliGuard (N9)
+	body = `{"model":"claude-codex","tools":[{"name":"x"}],"messages":[{"role":"user","content":"go"}]}`
+	if st, data := call(c, "POST", "/v1/messages", h, []byte(body), 60*time.Second); st != 200 {
+		t.Fatalf("codex: %d %s", st, data)
+	}
+	if got := read("loop.txt"); got != "200" {
+		t.Fatalf("codex → claude: %q", got)
+	}
 }
 
 // minigw v agentu: le povezava iz okolja, brez profilov.
@@ -235,6 +244,12 @@ func TestAgentModeConnection(t *testing.T) {
 
 // minigw -p in agentu: orodje le za modele agentov; posrednik iz okolja tudi za loopback.
 func TestAgentAskBodyAndProxy(t *testing.T) {
+	if m, w, bad := agentAskArgs([]string{"-p", "--model", "m", "--", "- fix x", "--y"}); m != "m" || bad != "" || strings.Join(w, "|") != "- fix x|--y" {
+		t.Fatalf("after --: %q %q %q", m, w, bad)
+	}
+	if _, _, bad := agentAskArgs([]string{"-p", "--model", "m", "--verbose", "q"}); bad != "--verbose" {
+		t.Fatalf("flag accepted: %q", bad)
+	}
 	if b := string(agentBody("claude-codex", "q")); !strings.Contains(b, `"tools"`) || !strings.Contains(b, `"stream":true`) {
 		t.Fatalf("agent model body: %s", b)
 	}

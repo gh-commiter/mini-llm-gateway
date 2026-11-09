@@ -165,6 +165,9 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 		if isDir {
 			return dav(200, map[string]string{"Content-Type": "text/plain"}, nil)
 		}
+		if !info.Mode().IsRegular() { // L3: FIFO ali naprava bi zadržala delavca deljenja
+			return dav(403, nil, nil)
+		}
 		// Bere le zahtevani del (HEAD nič): odgovor gre v enem kosu prek routerja, ki sprejme do 64 MB (base64).
 		size := int(info.Size())
 		h := map[string]string{"Content-Type": "application/octet-stream", "Last-Modified": httpDate(info.ModTime()), "Accept-Ranges": "bytes"}

@@ -258,7 +258,7 @@ final class ShareClient: @unchecked Sendable {
         let (s, d) = call(c, "POST", "/minigw/share", h, timeout: 10)
         let o = d.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
         guard s == 200, let k = o?["key"] as? String else {
-            if refusal.isEmpty { refusal = ((o?["error"] as? [String: Any])?["message"] as? String).map(clean) ?? "HTTP \(s)" }
+            if refusal.isEmpty { refusal = ((o?["error"] as? [String: Any])?["message"] as? String).map(oneLine) ?? "HTTP \(s)" }
             return false
         }
         lock.withLock { current = k }
@@ -308,7 +308,7 @@ final class ShareClient: @unchecked Sendable {
         }
     }
 
-    private func note(_ s: String) { err.write(Data(("minigw: " + clean(s) + "\n").utf8)) }
+    private func note(_ s: String) { err.write(Data(("minigw: " + oneLine(s) + "\n").utf8)) }
 
     /// Sporočilo prehoda v eni vrstici; native z git: dostavljena veja (preverjeno ime in SHA) kot vrstica o veji.
     private func noteJob(_ job: DAVJob) -> DAVResponse {
@@ -316,7 +316,7 @@ final class ShareClient: @unchecked Sendable {
         if native, let b = n?["branch"] as? String, let base = n?["base"] as? String, Worktree.delivered(root: root.path, branch: b, base: base) {
             branchNote(b, base)
         } else {
-            err.write(Data(("minigw: " + oneLine(n?["message"] as? String ?? "") + "\n").utf8))
+            err.write(Data((Profiles.gatewayNote(n?["message"] as? String ?? "") + "\n").utf8))
         }
         return DAVResponse(200)
     }
@@ -355,7 +355,7 @@ final class ShareClient: @unchecked Sendable {
         let (s, d) = call(c, "GET", "/minigw/worktree/result", ["x-share-key": k], timeout: 600)
         guard s == 200, let d else {  // L5: razlog prehoda (prevelik klon ali veja), sicer status
             let why = d.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }.flatMap { ($0["error"] as? [String: Any])?["message"] as? String }
-            note("worktree: cannot get \(branch) from the gateway: \(why.map(clean) ?? "HTTP \(s)")"); return DAVResponse(500)
+            note("worktree: cannot get \(branch) from the gateway: \(why.map(oneLine) ?? "HTTP \(s)")"); return DAVResponse(500)
         }
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("minigw-\(UUID().uuidString).bundle")
         defer { try? FileManager.default.removeItem(at: file) }
@@ -432,7 +432,7 @@ func nativeProof(_ c: Connection, _ cwd: String) -> (proof: [String: String]?, w
     let (s, d) = call(c, "POST", "/minigw/native", ["content-type": "application/json"], body, timeout: 10)
     let o = d.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
     guard s == 200, let id = o?["id"] as? String, let file = o?["file"] as? String, file == ".minigw-native-" + id, Native.validMarker(file) else {
-        let msg = ((o?["error"] as? [String: Any])?["message"] as? String).map(clean)
+        let msg = ((o?["error"] as? [String: Any])?["message"] as? String).map(oneLine)
         return (nil, s == 404 ? "the gateway does not support native mode" : msg ?? "the gateway refused native mode (HTTP \(s))")
     }
     for _ in 0..<25 {  // SMB: nova datoteka je lahko vidna z zamikom (predpomnilnik imenika)
@@ -463,7 +463,7 @@ func runRemote(_ c: Connection, _ argv: [String], _ proof: [String: String]) -> 
                 var d = Data()
                 for try await b in bytes { d.append(b); if d.count > 1 << 16 { break } }
                 let msg = ((try? JSONSerialization.jsonObject(with: d) as? [String: Any])?["error"] as? [String: Any])?["message"] as? String
-                err.write(Data("minigw: \(clean(msg ?? "the router answered HTTP \((resp as? HTTPURLResponse)?.statusCode ?? 0)"))\n".utf8))
+                err.write(Data("minigw: \(oneLine(msg ?? "the router answered HTTP \((resp as? HTTPURLResponse)?.statusCode ?? 0)"))\n".utf8))
                 return
             }
             let (ttyOut, ttyErr) = (isatty(1) == 1, isatty(2) == 1)  // terminal: le barve, brez drugih zaporedij routerja
@@ -586,6 +586,26 @@ func shareCommand(_ a: [String]) -> Never {
     exit(0)
 }
 
+/// stdin za claude: pod Claude Code ga minigw prebere v celoti in preveri (N6, N7), nato claude dobi iste bajte (nil = stdin).
+var claudeStdin: Data?
+
+/// H3: pod Claude Code le možnosti claude, ki ne dajo dovoljenj (Profiles.unsafeClaudeFlag); N6, N7: navodilo brez »@pot«
+/// in »/ukaz« (Profiles.unsafePrompt), tudi na stdin.
+func refuseUnsafeClaudeFlags() {
+    let env = ProcessInfo.processInfo.environment
+    if let f = Profiles.unsafeClaudeFlag(args, env: env) {
+        fail("\(f) is not accepted when minigw runs inside Claude Code: it could give the gateway's model permissions without asking you")
+    }
+    guard Profiles.checkClaudeArgs(env) else { return }
+    var st = stat()
+    if fstat(0, &st) == 0, st.st_mode & S_IFMT != S_IFCHR {  // terminal, /dev/null: ne bere
+        claudeStdin = FileHandle.standardInput.readDataToEndOfFile()
+    }
+    if let r = Profiles.unsafePrompt(args, stdin: String(decoding: claudeStdin ?? Data(), as: UTF8.self), env: env) {
+        fail("\(r) is not accepted when minigw runs inside Claude Code: paste the text itself into the prompt")
+    }
+}
+
 // MARK: ukazi
 
 let minigwVersion = "0.5.19"  // bump-version.sh
@@ -657,7 +677,7 @@ case "connect":
     case 403:  // naprava še ni dovoljena (minigw serve): ključ naprave ostane, da ga prehod lahko doda
         saveProfile(name, c)
         let msg = (body?["error"] as? [String: Any])?["message"] as? String ?? ""
-        fail("gateway at \(c.url) refused this device: \(clean(msg))\nthen run minigw connect again")
+        fail("gateway at \(c.url) refused this device: \(oneLine(msg))\nthen run minigw connect again")
     case 426: fail("gateway at \(c.url) needs an encrypted connection: copy the token again (it includes the gateway key)")
     case 0: fail(c.isLocal ? "cannot reach \(c.url)" : "cannot reach \(c.url), or the gateway key does not match (copy the token again)")
     default: fail("gateway at \(c.url) answered HTTP \(status)")
@@ -725,11 +745,7 @@ case "models":
         guard let m = Profiles.merge(lists, names: ps.map(\.name)) else { fail("no gateway can list models (minigw status)") }
         data = m
     }
-    let width = data.compactMap { ($0["id"] as? String)?.count }.max() ?? 0
-    for m in data {
-        let id = m["id"] as? String ?? "?"
-        say(id.padding(toLength: width, withPad: " ", startingAt: 0) + "  " + (m["description"] as? String ?? ""))
-    }
+    Profiles.modelLines(data).forEach(say)
     exit(0)
 
 case "--minigw-help", "-h", "--help", "-v", "--version":
@@ -744,6 +760,7 @@ case "--minigw-help", "-h", "--help", "-v", "--version":
         minigw gw status|devices|provider|claude|token …    change the Mini Gateway app on this Mac (minigw gw help)
         minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)
         minigw --minigw-role NAME [claude args]    the caller's role for the gateway's session history (or MINIGW_ROLE)
+        inside Claude Code minigw passes only -p, --model and other options that do not widen permissions (MINIGW_ALLOW_UNSAFE_FLAGS=1 = all)
         minigw --minigw-work=sync [claude args]    agents work in a synced copy on the gateway (or MINIGW_WORK=sync)
         minigw --minigw-work=native [claude args]  folder is the gateway's SMB share: agents work there; git repository: each on its own branch minigw/… (or MINIGW_WORK=native)
         minigw --minigw-work=native-direct [claude args]  as native, but agents change the folder itself, one writing agent at a time
@@ -754,6 +771,7 @@ case "--minigw-help", "-h", "--help", "-v", "--version":
         """)
     }
     guard args.first != "--minigw-help" else { exit(0) }
+    refuseUnsafeClaudeFlags()
     // Le podatki o claude: brez routerja, seje in deljenja mape.
     let argv = (["claude"] + args).map { strdup($0) } + [nil]
     execvp("claude", argv)
@@ -764,6 +782,8 @@ default:
 }
 
 // MARK: Claude Code prek routerja
+
+refuseUnsafeClaudeFlags()  // H3: pred deljenjem mape in sejo (CLAUDECODE še ni odstranjen)
 
 if agentConn() == nil {  // --model …@profil: ves zagon s tem prehodom, kot --minigw-profile (#8)
     let mp = Profiles.modelProfile(args, names: profileNames())
@@ -776,7 +796,9 @@ let profiles = loadProfiles()
 if profiles.isEmpty { _ = requireProfile() }
 let saved = profiles[0].conn  // privzeti profil: mapa, glave in modeli brez pripone kot prej
 let c = route(profiles[0])
+let promptGuard = Profiles.promptGuard(args, env: ProcessInfo.processInfo.environment, stdinTerminal: isatty(0) == 1)  // pred #7 (CLAUDECODE)
 for k in ProcessInfo.processInfo.environment.keys where Profiles.parentClaudeVar(k) { unsetenv(k) }  // #7
+if promptGuard { setenv("CLAUDE_CODE_DISABLE_FILE_MENTIONS", "1", 1) }  // N6b
 setenv("ANTHROPIC_BASE_URL", c.url, 1)
 setenv("ANTHROPIC_AUTH_TOKEN", c.token, 1)
 setenv("ANTHROPIC_API_KEY", "", 1)
@@ -803,6 +825,7 @@ if sid.isEmpty {
     if !own { args = ["--session-id", sid] + args }
 }
 
+if promptGuard { args = ["--disable-slash-commands"] + args }  // N7
 let argv = (["claude"] + args).map { strdup($0) } + [nil]
 let cwd = FileManager.default.currentDirectoryPath
 let routerHost = URLComponents(string: saved.url)?.host ?? ""
@@ -827,8 +850,8 @@ setenv("ANTHROPIC_CUSTOM_HEADERS", "x-claude-mini-session: \(sid)\nx-claude-mini
        + (role.isEmpty ? "" : "\nx-claude-mini-role: \(role)")
        + (readOnly ? "\nx-claude-mini-ro: 1" : ""), 1)  // --minigw-ro velja tudi brez deljenja (prehod na tem Macu)
 
-// Brez proxyja in brez mape: minigw ni več potreben → exec.
-guard !proxies.isEmpty || (wantShare && !sid.isEmpty) || profiles.count > 1 else {
+// Brez proxyja in brez mape: minigw ni več potreben → exec (razen s prebranim stdin: tega claude dobi po cevi).
+guard claudeStdin != nil || !proxies.isEmpty || (wantShare && !sid.isEmpty) || profiles.count > 1 else {
     execvp("claude", argv)
     fail("cannot run claude: \(String(cString: strerror(errno))) (is Claude Code installed and in PATH?)", code: 127)
 }
@@ -932,14 +955,29 @@ signal(SIGQUIT, SIG_IGN)
 var attr: posix_spawnattr_t?
 posix_spawnattr_init(&attr)
 var defaults = sigset_t()
-sigemptyset(&defaults); sigaddset(&defaults, SIGINT); sigaddset(&defaults, SIGQUIT)
+sigemptyset(&defaults); sigaddset(&defaults, SIGINT); sigaddset(&defaults, SIGQUIT); sigaddset(&defaults, SIGPIPE)
 posix_spawnattr_setsigdefault(&attr, &defaults)
 posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETSIGDEF))
+var actions: posix_spawn_file_actions_t?
+posix_spawn_file_actions_init(&actions)
+var stdinPipe: [Int32] = [-1, -1]
+if claudeStdin != nil {  // prebrani stdin gre claude po cevi
+    guard pipe(&stdinPipe) == 0 else { fail("cannot pass stdin to claude: \(String(cString: strerror(errno)))") }
+    posix_spawn_file_actions_adddup2(&actions, stdinPipe[0], 0)
+    posix_spawn_file_actions_addclose(&actions, stdinPipe[0])
+    posix_spawn_file_actions_addclose(&actions, stdinPipe[1])
+}
 var pid: pid_t = 0
-let rc = posix_spawnp(&pid, "claude", nil, &attr, argv, environ)
+let rc = posix_spawnp(&pid, "claude", &actions, &attr, argv, environ)
 guard rc == 0 else {
     share.unregister(); extras.unregister()
     fail("cannot run claude: \(String(cString: strerror(rc))) (is Claude Code installed and in PATH?)", code: 127)
+}
+if let data = claudeStdin {
+    close(stdinPipe[0])
+    signal(SIGPIPE, SIG_IGN)  // claude konča, preden prebere vse: EPIPE namesto konca minigw (claude dobi privzetega)
+    let w = FileHandle(fileDescriptor: stdinPipe[1], closeOnDealloc: true)
+    Thread.detachNewThread { try? w.write(contentsOf: data); try? w.close() }
 }
 var status: Int32 = 0
 while waitpid(pid, &status, 0) == -1 && errno == EINTR {}

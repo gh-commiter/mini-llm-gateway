@@ -3,10 +3,12 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -14,6 +16,7 @@ import (
 	"os/signal"
 	"os/user"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"sort"
@@ -44,6 +47,14 @@ func (c connection) isLocal() bool {
 
 // oneLine: besedilo prehoda v eni vrstici: brez znaka za novo vrstico, da ne ponaredi vrstice »Device:« ali »Status:«.
 func oneLine(s string) string { return strings.ReplaceAll(clean(s), "\n", " ") }
+
+// shortLine: oneLine, največ n znakov (besedilo prehoda, ki ga Claude dobi v kontekst: M3).
+func shortLine(s string, n int) string {
+	if r := []rune(oneLine(s)); len(r) > n {
+		return string(r[:n]) + "…"
+	}
+	return oneLine(s)
+}
 
 func say(s string) { fmt.Println(s) }
 
@@ -402,7 +413,7 @@ func main() {
 			saveProfile(name, c)
 			e, _ := m["error"].(map[string]any)
 			msg, _ := e["message"].(string)
-			fail("gateway at " + c.URL + " refused this device: " + clean(msg) + "\nthen run minigw connect again")
+			fail("gateway at " + c.URL + " refused this device: " + oneLine(msg) + "\nthen run minigw connect again")
 		case st == 426:
 			fail("gateway at " + c.URL + " needs an encrypted connection: copy the token again (it includes the gateway key)")
 		case st == 0 && c.isLocal():
@@ -492,16 +503,8 @@ func main() {
 				fail("no gateway can list models (minigw status)")
 			}
 		}
-		width := 0
-		for _, m := range data {
-			if id, _ := m["id"].(string); len(id) > width {
-				width = len(id)
-			}
-		}
-		for _, m := range data {
-			id, _ := m["id"].(string)
-			desc, _ := m["description"].(string)
-			say(fmt.Sprintf("%-*s  %s", width, id, desc))
+		for _, l := range modelLines(data) {
+			say(l)
 		}
 		return
 
@@ -518,6 +521,7 @@ func main() {
 			"minigw share add --work=native|native-direct|worktree|sync|direct|auto [--ro] [folder]   default mode for that folder (flag/env wins)\n" +
 			"minigw --minigw-ro [claude args]           share the current folder read-only (or MINIGW_SHARE=ro)\n" +
 			"minigw --minigw-role NAME [claude args]    the caller's role for the gateway's session history (or MINIGW_ROLE)\n" +
+			"inside Claude Code minigw passes only -p, --model and other options that do not widen permissions (MINIGW_ALLOW_UNSAFE_FLAGS=1 = all)\n" +
 			"minigw --minigw-work=sync [claude args]    agents work in a synced copy on the gateway (or MINIGW_WORK=sync)\n" +
 			"minigw --minigw-work=native [claude args]  folder is the gateway's SMB share: agents work there; git repository: each on its own branch minigw/… (or MINIGW_WORK=native)\n" +
 			"minigw --minigw-work=native-direct [claude args]  as native, but agents change the folder itself, one writing agent at a time\n" +
@@ -530,6 +534,7 @@ func main() {
 		if first == "--minigw-help" {
 			return
 		}
+		refuseUnsafeClaudeFlags(args)
 		os.Exit(runClaude(args, nil)) // le podatki o claude: brez routerja, seje in deljenja mape
 	}
 
@@ -555,6 +560,7 @@ func main() {
 			i--
 		}
 	}
+	refuseUnsafeClaudeFlags(args)       // H3: pred deljenjem mape in sejo
 	if work != "" && !workModes[work] { // native: mapa je prek SMB mapa routerja (native.go)
 		fail("unknown --minigw-work=" + work + " (use direct, sync, native, native-direct, worktree or auto)")
 	}
@@ -632,6 +638,10 @@ func main() {
 		headers += "\nx-claude-mini-ro: 1"
 	}
 	env = append(env, "ANTHROPIC_CUSTOM_HEADERS="+headers)
+	if promptGuard(args, os.Getenv, stdinTerminal()) {
+		args = append([]string{"--disable-slash-commands"}, args...)
+		env = append(env, "CLAUDE_CODE_DISABLE_FILE_MENTIONS=1")
+	}
 
 	// Načini po vrsti (auto: native → worktree → sync); naslednji, če router prejšnjega ne sprejme.
 	top := workTop(work, cwd)
@@ -678,7 +688,7 @@ func main() {
 		} else {
 			why := "gateway did not accept the folder"
 			if share.refusal != "" {
-				why += ": " + clean(share.refusal)
+				why += ": " + oneLine(share.refusal)
 			}
 			fmt.Fprintln(os.Stderr, "minigw: "+why+"; Claude CLI models with tools will not see it")
 		}
@@ -705,7 +715,7 @@ func main() {
 				t.share = func() bool {
 					sc, ok := registerShare(rc, sid, cwd, readOnly, top, tries, true, implicit)
 					if !ok {
-						fmt.Fprintln(os.Stderr, "minigw: gateway "+p.name+" did not accept the folder: "+clean(sc.refusal))
+						fmt.Fprintln(os.Stderr, "minigw: gateway "+p.name+" did not accept the folder: "+oneLine(sc.refusal))
 						return false
 					}
 					sc.start(4)
@@ -734,6 +744,154 @@ func main() {
 	}
 	mu.Unlock()
 	os.Exit(code)
+}
+
+// claudeSafe: možnosti claude, ki jih minigw pod Claude Code preda naprej (H3); true = ima vrednost. Druge (npr.
+// --dangerously-skip-permissions, --permission-mode, --allowedTools, --settings, --mcp-config, --add-dir, --plugin-dir)
+// bi gnezdenemu claude, ki ga vodi prehod, dale dovoljenja brez vprašanja uporabnika. --input-format stream-json sprejme
+// nadzorne zahteve na stdin (mcp_set_servers, apply_flag_settings, set_permission_mode; N1); -c/-r/--session-id
+// bi poslali prepis druge seje uporabnika prehodu. Skilli rabijo le -p in --model.
+var claudeSafe = map[string]bool{"-p": false, "--print": false, "--model": true, "--output-format": true,
+	"--verbose": false, "--max-turns": true, "--append-system-prompt": true, "--fallback-model": true, "-h": false, "--help": false}
+
+// unsafeClaudeFlag: prva možnost claude, ki ni na seznamu claudeSafe ("" = vse dovoljene). Velja, ko minigw teče v
+// Claude Code (CLAUDECODE), razen če je uporabnik nastavil MINIGW_ALLOW_UNSAFE_FLAGS=1. Po »--« so le argumenti.
+func unsafeClaudeFlag(args []string, env func(string) string) string {
+	if !checkClaudeArgs(env) {
+		return ""
+	}
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			return ""
+		}
+		if !strings.HasPrefix(a, "-") {
+			continue
+		}
+		name, _, eq := strings.Cut(a, "=")
+		value, ok := claudeSafe[name]
+		if !ok || (eq && !strings.HasPrefix(name, "--")) {
+			return name
+		}
+		if value && !eq {
+			i++
+		}
+	}
+	return ""
+}
+
+// checkClaudeArgs: minigw teče v Claude Code (CLAUDECODE) in uporabnik ni nastavil MINIGW_ALLOW_UNSAFE_FLAGS=1.
+func checkClaudeArgs(env func(string) string) bool {
+	return env("CLAUDECODE") != "" && env("MINIGW_ALLOW_UNSAFE_FLAGS") != "1"
+}
+
+// atMention: »@« na začetku besede (tudi za ( " ', Unicode presledki, U+FEFF in 。、？！ kot pri claude): claude -p bi
+// to datoteko priložil zahtevi (N6, N6b). Le še varovalka: claude dobi CLAUDE_CODE_DISABLE_FILE_MENTIONS (promptGuard).
+var atMention = regexp.MustCompile(`(^|[\s\v\p{Z}\x{FEFF}\x{3002}\x{3001}\x{FF1F}\x{FF01}("'])@\S`)
+
+// promptGuard (N6b, N7): claude brez terminala na stdin ali z -p bere navodilo kot vnos uporabnika (»@pot« priloži
+// datoteko, »/ukaz« zažene ukaz): tedaj claude dobi --disable-slash-commands in CLAUDE_CODE_DISABLE_FILE_MENTIONS=1.
+// Ostane le pogovor v terminalu, kjer tipka človek.
+func promptGuard(args []string, env func(string) string, stdinTerminal bool) bool {
+	if env("CLAUDECODE") != "" || !stdinTerminal {
+		return true
+	}
+	for _, a := range args {
+		if a == "--" {
+			break
+		}
+		if a == "-p" || a == "--print" {
+			return true
+		}
+	}
+	return false
+}
+
+// stdinTerminal: stdin je naprava, a ne /dev/null (Bash v Claude Code ga da ukazom; claude je tedaj v načinu -p).
+func stdinTerminal() bool {
+	st, err := os.Stdin.Stat()
+	null, nerr := os.Stat(os.DevNull)
+	return isTerminal(os.Stdin) && err == nil && (nerr != nil || !os.SameFile(st, null))
+}
+
+// promptRefused (N6, N7): claude -p bere navodilo kot vnos uporabnika: »@pot« priloži katero koli datoteko, »/ukaz«
+// zažene ukaz s poševnico (npr. /config permissionMode=… v globalnih nastavitvah). "" = dovoljeno.
+func promptRefused(p string) string {
+	if strings.HasPrefix(strings.TrimLeftFunc(p, unicode.IsSpace), "/") {
+		return "a prompt that starts with / (a slash command)"
+	}
+	if atMention.MatchString(p) {
+		return "@ before a file name (claude would attach that file)"
+	}
+	return ""
+}
+
+// unsafePrompt: razlog za zavrnitev navodila pod Claude Code ("" = dovoljeno): besede, ki niso možnost ali njena
+// vrednost, vse po »--« in stdin.
+func unsafePrompt(args []string, stdin string, env func(string) string) string {
+	if !checkClaudeArgs(env) {
+		return ""
+	}
+	words := []string{stdin}
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			words = append(words, args[i+1:]...)
+			break
+		}
+		if !strings.HasPrefix(a, "-") {
+			words = append(words, a)
+		} else if name, _, eq := strings.Cut(a, "="); claudeSafe[name] && !eq {
+			i++
+		}
+	}
+	for _, w := range words {
+		if r := promptRefused(w); r != "" {
+			return r
+		}
+	}
+	return ""
+}
+
+// claudeStdin: stdin za claude; pod Claude Code ga minigw prebere v celoti in preveri (N6, N7), nato preda iste bajte.
+var claudeStdin io.Reader = os.Stdin
+
+func refuseUnsafeClaudeFlags(args []string) {
+	if f := unsafeClaudeFlag(args, os.Getenv); f != "" {
+		fail(f + " is not accepted when minigw runs inside Claude Code: it could give the gateway's model permissions without asking you")
+	}
+	if !checkClaudeArgs(os.Getenv) {
+		return
+	}
+	var in []byte
+	if fi, err := os.Stdin.Stat(); err == nil && fi.Mode()&os.ModeCharDevice == 0 { // terminal, /dev/null: ne bere
+		b, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			fail("cannot read stdin: " + err.Error())
+		}
+		in, claudeStdin = b, bytes.NewReader(b)
+	}
+	if r := unsafePrompt(args, string(in), os.Getenv); r != "" {
+		fail(r + " is not accepted when minigw runs inside Claude Code: paste the text itself into the prompt")
+	}
+}
+
+// modelLines: vrstice »minigw models«; id in opis prehoda v eni vrstici brez kontrolnih znakov in omejene dolžine,
+// ker gre izpis v kontekst Claude (M3).
+func modelLines(data []map[string]any) []string {
+	ids, width := make([]string, len(data)), 0
+	for i, m := range data {
+		id, _ := m["id"].(string)
+		if ids[i] = shortLine(id, 100); len(ids[i]) > width {
+			width = len(ids[i])
+		}
+	}
+	out := make([]string, len(data))
+	for i, m := range data {
+		desc, _ := m["description"].(string)
+		out[i] = fmt.Sprintf("%-*s  %s", width, ids[i], shortLine(desc, 200))
+	}
+	return out
 }
 
 // modelProfile: --model <model>@<profil> izbere profil za ves zagon (mapa, sync, worktree, native), kot --minigw-profile;
@@ -776,7 +934,7 @@ func registerShare(c connection, sid, cwd string, readOnly bool, top string, tri
 			return sc, true
 		}
 		if i+1 < len(tries) && !quiet {
-			fmt.Fprintln(os.Stderr, "minigw: "+w+" mode not available: "+clean(sc.refusal)+"; trying "+tries[i+1])
+			fmt.Fprintln(os.Stderr, "minigw: "+w+" mode not available: "+oneLine(sc.refusal)+"; trying "+tries[i+1])
 		}
 	}
 	if !implicit || !strings.HasPrefix(sc.refusal, "this gateway supports --minigw-work=") {
@@ -868,7 +1026,7 @@ func autoShare(cwd string) bool {
 func runClaude(args []string, env []string) int {
 	signal.Ignore(os.Interrupt)
 	cmd := consoleCommand("claude", args...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = claudeStdin, os.Stdout, os.Stderr
 	cmd.Env = claudeEnv(os.Environ(), env)
 	if err := cmd.Run(); err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
@@ -1005,7 +1163,7 @@ func validSharePath(p string) bool { return !strings.ContainsAny(p, "\t\r\n") }
 // under: path je folder ali v njem (na Windows brez razlike v velikih črkah).
 func under(path, folder string) bool {
 	rel, err := filepath.Rel(folder, path)
-	if err != nil || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
 		return false
 	}
 	return true

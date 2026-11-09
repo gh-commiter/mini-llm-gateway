@@ -2,7 +2,7 @@
 name: connect
 description: Connect this computer to Mini Gateway (one time). Use when minigw reports it is not connected, or the user gives a gateway address and token.
 argument-hint: "[--name <profile>] <gateway[:port]> <token from Mini Gateway → Copy Token>"
-allowed-tools: Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw *)
+allowed-tools: Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw profiles), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw status), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw --version)
 ---
 
 Profiles (`--name`, `profiles`, `--minigw-profile`, `<model>@<profile>`) need minigw 0.5.18 or newer: if the first line of `"${CLAUDE_PLUGIN_DATA}/bin/minigw" --version` is older, tell the user to run `/minigw:gw update` and do not use them (an older minigw passes them to claude).

@@ -67,6 +67,10 @@ func createAgentJob() {
 // startAgent: proces ustvarjen ustavljen, dodan v Job in šele nato pognan (pred tem ne more ustvariti otrok).
 func agentWrap(exe string, args []string, m agentMounts) (string, []string) { return exe, args }
 
+func pinWrap(cfgDir, exe string, args, pins []string, logf func(string, ...any)) (string, []string) {
+	return exe, args
+}
+
 // agentSandboxed: sandbox Codex in Grok na Windows ni preverjen: le z izrecnim dovoljenjem.
 func agentSandboxed(cfgDir string) bool { return false }
 

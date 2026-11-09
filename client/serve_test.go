@@ -151,6 +151,11 @@ func startLoopback(t *testing.T, s *server) connection {
 	return connection{URL: "http://" + ln.Addr().String(), Token: "tok"}
 }
 
+// N9: vsak claude -p prehoda (tudi samo za branje, pogovor, worktree, vprašani agent) brez »@pot« in ukazov s
+// poševnico; ponaredek brez obeh konča brez odgovora.
+const cliGuard = `[ "$CLAUDE_CODE_DISABLE_FILE_MENTIONS" = 1 ] || exit 9
+case " $* " in *" --disable-slash-commands "*) ;; *) exit 9 ;; esac`
+
 func TestServeSyncAgentRoundTrip(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake claude is a shell script")
@@ -165,6 +170,7 @@ func TestServeSyncAgentRoundTrip(t *testing.T) {
 	os.WriteFile(fake, []byte(`#!/bin/sh
 printf '%s\n' "$@" > "`+argsFile+`"
 env > "`+envFile+`"
+`+cliGuard+`
 cat > /dev/null
 cat src.txt > agent.txt
 echo '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Write","input":{"file_path":"agent.txt"}}]}}'
@@ -208,6 +214,20 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":3}}'
 	}
 	if args, _ = os.ReadFile(argsFile); !strings.Contains(string(args), "--resume") {
 		t.Fatalf("not resumed: %q", args)
+	}
+	// N9: pogovor brez orodij in mapa samo za branje: claude -p prav tako s cliGuard
+	if st, data := call(c, "POST", "/v1/messages", h, []byte(`{"model":"claude-cli-haiku","messages":[{"role":"user","content":"title"}]}`), 30*time.Second); st != 200 {
+		t.Fatalf("chat: %d %s", st, data)
+	}
+	ro := &shareClient{c: c, session: "sid9", root: t.TempDir(), sync: true, readOnly: true, synced: map[string]syncEntry{}, reported: map[string]bool{}}
+	if !ro.register() {
+		t.Fatal("read-only register failed: " + ro.refusal)
+	}
+	ro.start(2)
+	defer ro.unregister()
+	hro := map[string]string{"x-claude-mini-session": "sid9", "x-claude-mini-cwd": ro.root, "x-claude-mini-ro": "1", "content-type": "application/json"}
+	if st, data := call(c, "POST", "/v1/messages", hro, []byte(`{"model":"claude-cli-haiku","tools":[{"name":"x"}],"messages":[{"role":"user","content":"go"}]}`), 30*time.Second); st != 200 {
+		t.Fatalf("read-only: %d %s", st, data)
 	}
 
 	// Pobeg iz kopije: PUT zunaj manifesta in pot z »..« → 403; branje → 404.
@@ -324,6 +344,18 @@ func TestServeRejectsBadModelsBodiesAndForeignOwners(t *testing.T) {
 	for _, want := range []string{"Read(./**)", "Edit(./**)", "Write(./**)", "Grep(./**)", "Read(/" + filepath.ToSlash(s.cfgDir) + "/**)"} {
 		if !strings.Contains(args, want) {
 			t.Fatalf("agent args lack %s: %s", want, args)
+		}
+	}
+	// M4: .git metapodatki niso pisljivi (Edit/Write tudi na Windows; sandbox drugje), kot ClaudeCLI.gitDenies.
+	for _, g := range gitDenies {
+		want := []string{"Edit(//copy/.git/" + g + ")", "Write(//copy/.git/" + g + "/**)"}
+		if runtime.GOOS != "windows" {
+			want = append(want, `"/copy/.git/`+g+`"`)
+		}
+		for _, w := range want {
+			if !strings.Contains(args, w) {
+				t.Fatalf("agent args lack %s: %s", w, args)
+			}
 		}
 	}
 	// --minigw-ro: brez orodij za pisanje, sandbox ne piše v mapo (na Windows brez sandboxa tudi brez Bash).

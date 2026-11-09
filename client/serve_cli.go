@@ -7,6 +7,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -20,6 +21,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -130,8 +132,18 @@ func (s *server) agentArgs(dir string, readOnly bool) []string {
 	}
 	cfg := ruleAbs(s.cfgDir) + "/**"
 	deny := []string{"Read(" + cfg + ")", "Edit(" + cfg + ")", "Write(" + cfg + ")"}
+	var gitDeny []string // M4 (kot ClaudeCLI.gitDenies): .git, ki ga bere git lastnika (nastavitve, hooki, preusmeritve)
 	if readOnly {
 		deny = append(deny, roDenied()...)
+	} else {
+		for _, d := range dirs {
+			for _, g := range gitDenies {
+				gitDeny = append(gitDeny, filepath.Join(d, ".git", g))
+				for _, t := range []string{"Edit", "Write"} { // tudi na Windows, kjer sandboxa ni
+					deny = append(deny, t+"("+ruleAbs(d)+"/.git/"+g+")", t+"("+ruleAbs(d)+"/.git/"+g+"/**)")
+				}
+			}
+		}
 	}
 	var args []string
 	if c.AllowLocalTools { // vsa orodja Claude Code razen izjem; datoteke le v mapah, Bash v sandboxu (kot na Macu)
@@ -181,12 +193,14 @@ func (s *server) agentArgs(dir string, readOnly bool) []string {
 			// #26 (N2): paket Copilot nikoli za pisanje (naloži ga priprava paketa), tudi če je v dovoljeni mapi.
 			// --minigw-ro: pisanje v te mape prepovedano (denyWrite velja tudi za delovno mapo, ki jo Claude Code dovoli sam).
 			"filesystem": map[string]any{"denyRead": append([]string{"~", s.cfgDir}, scratchPaths(c.Scratch)...), "allowRead": dirs, "allowWrite": onlyIf(!readOnly, dirs),
-				"denyWrite": append(scratchPaths(copilotCacheDir()), onlyIf(readOnly, dirs)...)},
+				"denyWrite": append(append(scratchPaths(copilotCacheDir()), onlyIf(readOnly, dirs)...), gitDeny...)},
 		}})
 		args = append(args, "--settings", string(settings))
 	}
 	return args
 }
+
+var gitDenies = []string{"config", "config.worktree", "hooks", "info", "commondir", "worktrees"}
 
 const readOnlyWorktree = "Worktree mode cannot be read-only (--minigw-ro): use direct or sync"
 
@@ -652,7 +666,9 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		return writeError(w, r.rid, 400, "Last message must be from the user")
 	}
 	last, history := all[len(all)-1], all[:len(all)-1]
-	args := []string{"-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
+	// N9: besedilo naprave je vnos uporabnika claude -p: brez ukazov s poševnico (/config piše nastavitve lastnika
+	// prehoda) in brez »@pot« (CLAUDE_CODE_DISABLE_FILE_MENTIONS spodaj: priložil bi datoteko prehoda mimo peskovnika)
+	args := []string{"-p", "--disable-slash-commands", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
 		"--model", cliModel, "--strict-mcp-config", "--setting-sources", s.conf().SettingSources} // privzeto prazno: hooki iz mape odjemalca ne tečejo
 	prompt, session, scope, sessionID := last.text, r.h("x-claude-mini-session"), "", ""
 	var dir, extra string // extra: --append-system-prompt-file ali --system-prompt-file
@@ -717,6 +733,9 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		if ok && ro { // L2: kot na Macu
 			return writeError(w, r.rid, 400, readOnlyWorktree)
 		}
+		if ok && !s.hub.worktreeIntact(wt) { // H2: git samega claude (zunaj peskovnika) ne z .git, ki ga je zamenjal agent
+			return writeError(w, r.rid, 400, "The agent's clone was changed (its .git was replaced): start a new conversation")
+		}
 		if ok {
 			args = worktreeClaudeArgs(args, wt, maven, objects)
 			worktreeEnv = worktreeHarnessEnv(wt, maven)
@@ -756,9 +775,17 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		return st
 	}
 	defer func() { <-s.procs }()
-	cmd := commandContext(r.Context(), exe[0], append(exe[1:], args...)...)
+	name, cargs := exe[0], append(exe[1:], args...)
+	unpinned := false       // N3b: brez pin (ni bwrap ali gnezdeni ne deluje) se klon preverja med tekom (watch spodaj)
+	if worktreeEnv != nil { // N3: .git klona je med tekom točka priklopa (kot pins pri Codex), zamenjati ga ni mogoče
+		name, cargs = pinWrap(s.cfgDir, name, cargs, []string{filepath.Join(wt, ".git")}, s.log.Printf)
+		unpinned = name == exe[0]
+	}
+	ctx, kill := context.WithCancel(r.Context())
+	defer kill()
+	cmd := commandContext(ctx, name, cargs...)
 	cmd.Dir = dir
-	cmd.Env = append(append(agentEnv(os.Environ()), worktreeEnv...), runEnv...) // brez ANTHROPIC_* (klic nazaj v router), žetonov GitHub/Copilot in agentov ključev (M1)
+	cmd.Env = append(append(append(agentEnv(os.Environ()), worktreeEnv...), runEnv...), "CLAUDE_CODE_DISABLE_FILE_MENTIONS=1") // brez ANTHROPIC_* (klic nazaj v router), žetonov GitHub/Copilot in agentov ključev (M1)
 	cmd.Stdin = strings.NewReader(prompt)
 	stderr := &tailBuffer{}
 	cmd.Stderr = stderr
@@ -812,9 +839,32 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		}()
 	}
 	defer close(stopPing)
+	// N3b: zamenjan .git klona (mv .git; mkdir .git s filter.*) bi med istim tekom izvedel lastni git Claude Code brez
+	// peskovnika: ob vsakem dogodku in vsako sekundo preverba, ob neujemanju se claude ustavi.
+	var swapped atomic.Bool
+	watch := func() {
+		if unpinned && !swapped.Load() && !s.hub.worktreeIntact(wt) && swapped.CompareAndSwap(false, true) {
+			kill()
+		}
+	}
+	if unpinned {
+		go func() {
+			tick := time.NewTicker(time.Second)
+			defer tick.Stop()
+			for {
+				select {
+				case <-tick.C:
+					watch()
+				case <-stopPing:
+					return
+				}
+			}
+		}()
+	}
 	br := bufio.NewReader(stdout)
 	for {
 		line, err := br.ReadBytes('\n')
+		watch()
 		if len(line) > 0 {
 			before := t.step
 			send(t.feed(line))
@@ -827,7 +877,10 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		}
 	}
 	werr := cmd.Wait()
-	run.stop() // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb
+	run.stop()                                           // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb
+	if worktreeEnv != nil && !s.hub.worktreeIntact(wt) { // N3: naslednji zagon ga zavrne (H2)
+		s.log.Printf("%s claude: the agent's clone changed during the run (its .git was replaced)", r.rid)
+	}
 	if r.Context().Err() != nil {
 		return 499 // Claude Code je prekinil
 	}
@@ -838,6 +891,9 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		}
 	}
 	msg := t.resultError
+	if swapped.Load() {
+		msg = "the agent replaced its clone's .git during the run (worktree mode), so the gateway stopped it"
+	}
 	if msg == "" && werr != nil && t.text == "" { // stderr le v dnevnik (I1)
 		if tail := strings.TrimSpace(stderr.String()); tail != "" {
 			s.log.Printf("%s claude stderr: %s", r.rid, tail)

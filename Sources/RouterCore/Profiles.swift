@@ -54,6 +54,90 @@ public enum Profiles {
         return (k.hasPrefix("ANTHROPIC_") || k == "CLAUDECODE" || k.hasPrefix("CLAUDE_CODE_")) && k != "CLAUDE_CODE_GIT_BASH_PATH"
     }
 
+    /// Možnosti claude, ki jih minigw pod Claude Code preda naprej (H3); true = ima vrednost. Druge (npr.
+    /// --dangerously-skip-permissions, --permission-mode, --allowedTools, --settings, --mcp-config, --add-dir, --plugin-dir)
+    /// bi gnezdenemu claude, ki ga vodi prehod, dale dovoljenja brez vprašanja uporabnika (kot Go claudeSafe). Brez
+    /// --input-format (stream-json: nadzorne zahteve na stdin, N1) in -c/-r/--session-id (prepis druge seje gre prehodu).
+    static let claudeSafe: [String: Bool] = ["-p": false, "--print": false, "--model": true, "--output-format": true,
+        "--verbose": false, "--max-turns": true, "--append-system-prompt": true, "--fallback-model": true, "-h": false, "--help": false]
+
+    /// Prva možnost claude, ki ni na seznamu claudeSafe (nil = vse dovoljene), ko minigw teče v Claude Code (CLAUDECODE),
+    /// razen ob MINIGW_ALLOW_UNSAFE_FLAGS=1 uporabnika. Po »--« so le argumenti (kot Go unsafeClaudeFlag).
+    public static func unsafeClaudeFlag(_ args: [String], env: [String: String]) -> String? {
+        guard checkClaudeArgs(env) else { return nil }
+        var i = 0
+        while i < args.count {
+            let a = args[i]
+            if a == "--" { return nil }
+            if a.hasPrefix("-") {
+                let name = String(a.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)[0]), eq = a.contains("=")
+                guard let value = claudeSafe[name], !(eq && !name.hasPrefix("--")) else { return name }
+                if value && !eq { i += 1 }
+            }
+            i += 1
+        }
+        return nil
+    }
+
+    /// minigw teče v Claude Code (CLAUDECODE) in uporabnik ni nastavil MINIGW_ALLOW_UNSAFE_FLAGS=1 (kot Go checkClaudeArgs).
+    public static func checkClaudeArgs(_ env: [String: String]) -> Bool {
+        !(env["CLAUDECODE"] ?? "").isEmpty && env["MINIGW_ALLOW_UNSAFE_FLAGS"] != "1"
+    }
+
+    /// N6, N7: claude -p bere navodilo kot vnos uporabnika: »@pot« (na začetku besede, tudi za ( " ', U+FEFF in 。、？！ kot
+    /// pri claude, N6b) priloži katero koli datoteko, »/ukaz« zažene ukaz s poševnico (npr. /config permissionMode=…).
+    /// nil = dovoljeno (kot Go promptRefused). Le še varovalka: claude dobi CLAUDE_CODE_DISABLE_FILE_MENTIONS (promptGuard).
+    static func promptRefused(_ p: String) -> String? {
+        if p.drop(while: { $0.isWhitespace }).hasPrefix("/") { return "a prompt that starts with / (a slash command)" }
+        if p.range(of: #"(^|[\s\x{FEFF}\x{3002}\x{3001}\x{FF1F}\x{FF01}("'])@\S"#, options: .regularExpression) != nil {
+            return "@ before a file name (claude would attach that file)"
+        }
+        return nil
+    }
+
+    /// N6b, N7: claude brez terminala na stdin ali z -p bere navodilo kot vnos uporabnika: tedaj dobi --disable-slash-commands
+    /// in CLAUDE_CODE_DISABLE_FILE_MENTIONS=1. Ostane le pogovor v terminalu, kjer tipka človek (kot Go promptGuard).
+    public static func promptGuard(_ args: [String], env: [String: String], stdinTerminal: Bool) -> Bool {
+        if !(env["CLAUDECODE"] ?? "").isEmpty || !stdinTerminal { return true }
+        return args.prefix { $0 != "--" }.contains { $0 == "-p" || $0 == "--print" }
+    }
+
+    /// Razlog za zavrnitev navodila pod Claude Code (nil = dovoljeno): besede, ki niso možnost ali njena vrednost, vse po
+    /// »--« in stdin (kot Go unsafePrompt).
+    public static func unsafePrompt(_ args: [String], stdin: String, env: [String: String]) -> String? {
+        guard checkClaudeArgs(env) else { return nil }
+        var words = [stdin], i = 0
+        while i < args.count {
+            let a = args[i]
+            if a == "--" { words += args[(i + 1)...]; break }
+            if !a.hasPrefix("-") { words.append(a) } else if claudeSafe[a] == true { i += 1 }
+            i += 1
+        }
+        return words.lazy.compactMap(promptRefused).first
+    }
+
+    /// Besedilo prehoda v eni vrstici brez kontrolnih znakov, največ `max` znakov: gre v kontekst Claude (M2, M3).
+    public static func line(_ s: String, max: Int) -> String {
+        let l = String(String.UnicodeScalarView(s.unicodeScalars.compactMap { u -> Unicode.Scalar? in
+            u == "\n" ? " " : (u.value < 0x20 || (0x7f...0x9f).contains(u.value) || u.properties.generalCategory == .format) ? nil : u
+        }))
+        return l.count > max ? l.prefix(max) + "…" : l
+    }
+
+    /// Vrstice »minigw models« (M3): id in opis prehoda v eni vrstici in omejene dolžine (kot Go modelLines).
+    public static func modelLines(_ data: [[String: Any]]) -> [String] {
+        let ids = data.map { line($0["id"] as? String ?? "?", max: 100) }
+        let width = ids.map(\.count).max() ?? 0
+        return zip(ids, data).map { $0.padding(toLength: width, withPad: " ", startingAt: 0) + "  " + line($1["description"] as? String ?? "", max: 200) }
+    }
+
+    /// M2: besedilo prehoda kot »minigw: gateway: …« v eni vrstici; vrstico o veji izpiše le minigw sam iz preverjenih
+    /// podatkov, zato besedilo prehoda nikoli ni videti kot ona (kot Go gatewayNote).
+    public static func gatewayNote(_ msg: String) -> String {
+        let m = line(msg, max: 500)
+        return "minigw: gateway: " + (m.lowercased().contains("agent work is on branch") ? "reported a branch that minigw could not verify; ignored" : m)
+    }
+
     /// Telo zahteve z modelom brez pripone, ime profila in model brez pripone; sicer telo, kot je, in nil.
     public static func routeBody(_ body: Data, names: [String]) -> (body: Data, profile: String?, model: String) {
         guard var o = try? JSONSerialization.jsonObject(with: body) as? [String: Any], let model = o["model"] as? String else { return (body, nil, "") }

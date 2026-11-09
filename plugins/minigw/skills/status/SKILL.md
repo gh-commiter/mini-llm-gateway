@@ -1,7 +1,7 @@
 ---
 name: status
 description: Show the Mini Gateway connection and the models available through it. Use when the user asks whether the gateway works or which gateway models exist.
-allowed-tools: Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw *)
+allowed-tools: Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw status), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw models), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw status --minigw-profile *), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw models --minigw-profile *), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw --version)
 ---
 
 Profiles (`--name`, `profiles`, `--minigw-profile`, `<model>@<profile>`) need minigw 0.5.18 or newer: if the first line of `"${CLAUDE_PLUGIN_DATA}/bin/minigw" --version` is older, tell the user to run `/minigw:gw update` and do not use them (an older minigw passes them to claude).
@@ -15,4 +15,4 @@ Run these commands and summarize the result for the user in a few lines (gateway
 
 If it is not connected, suggest `/minigw:connect <gateway> <token>`. If the file is missing, the plugin could not install it at session start (it needs network access to GitHub once); a new session retries.
 
-One gateway only: add `--minigw-profile <p>` after `minigw`.
+One gateway only: add `--minigw-profile <p>` after `status` or `models` (at the end).

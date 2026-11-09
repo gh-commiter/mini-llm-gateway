@@ -457,6 +457,8 @@ func makeRouter(session: URLSession = .shared) -> Router {
     #expect(dav("GET", "/%2E%2E/secret.txt").status == 403)
     #expect(dav("GET", "/link").status == 403)
     #expect(WebDAV.handle(method: "GET", path: "/x/a", headers: [:], body: Data(), root: root, prefix: "/dav/s").status == 403)
+    #expect(mkfifo(root.appendingPathComponent("fifo").path, 0o600) == 0)
+    #expect(dav("GET", "/fifo").status == 403)  // L3: FIFO ne zadrži delavca
 
     #expect(dav("PUT", "/a%20b.txt", [:], "hello").status == 201)
     #expect(dav("MOVE", "/a%20b.txt", ["destination": "http://127.0.0.1:8765/dav/s/../moved"]).status == 403)
@@ -1259,10 +1261,11 @@ final class FakeMinigw: @unchecked Sendable {
 
 @Test func syncNeverTouchesGitOrCommandSettings() async throws {
     for p in [".git/config", ".GIT/hooks/post-checkout", "a/.Git./hooks/x", ".git /x", ".claude/settings.json", ".Claude/Settings.Local.json",
-              "sub/.vscode/tasks.json", ".envrc", "x/.ENVRC"] {
+              "sub/.vscode/tasks.json", ".envrc", "x/.ENVRC", ".claude/hooks/x.sh", ".claude/hooks", ".Claude/Commands/c.md",
+              ".claude/agents/a.md", "sub/.claude/skills/s/SKILL.md", ".husky/pre-commit", ".husky", "a/.githooks/pre-push"] {
         #expect(Sync.isProtected(p), "\(p)")
     }
-    for p in ["src/git.swift", ".gitignore", ".claude/agents/a.md", ".vscode/settings.json", "envrc"] { #expect(!Sync.isProtected(p), "\(p)") }
+    for p in ["src/git.swift", ".gitignore", ".claude/notes.md", "src/hooks/use.ts", "skills/a.md", ".vscode/settings.json", "envrc"] { #expect(!Sync.isProtected(p), "\(p)") }
     #expect(Sync.Ignore(gitignore: "").ignored("Node_Modules", isDir: true))   // brez razlike v velikih črkah (APFS)
 
     let base = FileManager.default.temporaryDirectory.appendingPathComponent("syncgit-" + UUID().uuidString)
@@ -1681,4 +1684,66 @@ final class FakeMinigw: @unchecked Sendable {
     #expect(dav("MOVE", "h1", "h2") == 201)
     #expect(try !fm.contentsOfDirectory(atPath: root.path).contains { $0.hasPrefix(".minigw") })
     #expect(String(decoding: try Data(contentsOf: root.appendingPathComponent("h2")), as: UTF8.self) == "hl")
+}
+
+@Test func unsafeClaudeFlagsInsideClaudeCode() {
+    let env = ["CLAUDECODE": "1"]
+    for a in [["--dangerously-skip-permissions", "-p", "x"], ["-p", "--permission-mode", "bypassPermissions", "x"],
+              ["-p", "--permission-mode=bypassPermissions", "x"], ["-p", "--allowedTools", "Bash", "x"], ["--settings", "s.json", "-p", "x"],
+              ["--mcp-config", "m.json"], ["--plugin-dir", "d"], ["--add-dir", "/"], ["-p", "--model", "m", "--allow-dangerously-skip-permissions"],
+              ["-pc", "x"], ["-p=1"], ["--Model", "m"], ["-p", "--model", "m", "--input-format", "stream-json"],
+              ["-p", "--input-format=text"], ["-r", "id", "-p", "x"], ["--resume", "id"], ["-c", "-p", "x"], ["--session-id", "s", "-p"]] {
+        #expect(Profiles.unsafeClaudeFlag(a, env: env) != nil, "\(a)")
+    }
+    for a in [["-p", "--model", "claude-codex-gpt-6.1-sol", "task"], ["-p", "--model", "--dangerously-skip-permissions", "x"],
+              ["-p", "--model=m", "--output-format", "stream-json", "--verbose", "x"], ["-p", "--", "--add-dir"], ["--help"],
+              ["-p", "--model", "m", "--", "- fix x"], []] {
+        #expect(Profiles.unsafeClaudeFlag(a, env: env) == nil, "\(a)")
+    }
+    #expect(Profiles.unsafeClaudeFlag(["--dangerously-skip-permissions"], env: [:]) == nil)
+    #expect(Profiles.unsafeClaudeFlag(["--dangerously-skip-permissions"], env: ["CLAUDECODE": "1", "MINIGW_ALLOW_UNSAFE_FLAGS": "1"]) == nil)
+}
+
+@Test func unsafePromptInsideClaudeCode() {
+    let env = ["CLAUDECODE": "1"], m = ["-p", "--model", "m"]
+    for (a, stdin) in [(m + ["/config permissionMode=auto"], ""), (m + ["--", "  /model x"], ""), (m + ["--", "\n/mcp enable x"], ""),
+                       (m + ["@~/.ssh/id"], ""), (m + ["--", #"see @"a b""#], ""), (m + ["--", "(@x"], ""), (m + ["--", "x\t@'y'"], ""),
+                       (m + ["--", "ok"], "summarize @/etc/passwd"), (m, "/config permissionMode=acceptEdits"), (["-p", "fix", "@/etc/hosts"], "")] {
+        #expect(Profiles.unsafePrompt(a, stdin: stdin, env: env) != nil, "\(a) \(stdin)")
+    }
+    for (a, stdin) in [(m + ["--", "email a@b.com"], ""), (m + ["--", "use 2 / 3"], ""), (m + ["--", "- fix x"], ""),
+                       (m + ["task"], "mail to a@b, not to me"), (["-p", "--model", "/m", "--append-system-prompt", "@x", "ok"], ""), ([], "")] {
+        #expect(Profiles.unsafePrompt(a, stdin: stdin, env: env) == nil, "\(a) \(stdin)")
+    }
+    // N6b: ločila pred @, ki jih claude 2.1.318 šteje za začetek besede (JS \s, U+FEFF, 。、？！), tudi na stdin
+    for sep in ["\u{a0}", "\u{1680}", "\u{2000}", "\u{2003}", "\u{200a}", "\u{2028}", "\u{2029}", "\u{202f}", "\u{205f}", "\u{3000}",
+                "\u{feff}", "\u{0b}", "。", "、", "？", "！"] {
+        #expect(Profiles.unsafePrompt(m + ["--", "x\(sep)@/etc/hosts"], stdin: "", env: env) != nil, "\(sep.unicodeScalars.first!.value)")
+        #expect(Profiles.unsafePrompt(m, stdin: "x\(sep)@/etc/hosts", env: env) != nil, "\(sep.unicodeScalars.first!.value)")
+    }
+    for p in ["a\u{200b}@b", "x＠/etc/hosts", "x=@y", "x:@y"] {  // claude jih ne priloži (izmerjeno)
+        #expect(Profiles.unsafePrompt(m + ["--", p], stdin: "", env: env) == nil, "\(p)")
+    }
+    #expect(Profiles.unsafePrompt(["-p", "/config x"], stdin: "", env: [:]) == nil)
+    #expect(Profiles.unsafePrompt(["-p", "@/etc/hosts"], stdin: "", env: ["CLAUDECODE": "1", "MINIGW_ALLOW_UNSAFE_FLAGS": "1"]) == nil)
+}
+
+/// N6b, N7: claude brez terminala ali z -p (tudi zunaj Claude Code) dobi --disable-slash-commands in brez @-priponk.
+@Test func promptGuardOutsideATerminal() {
+    let cc = ["CLAUDECODE": "1"]
+    for (a, env, tty, want) in [(["-p", "x"], [:], true, true), (["--print"], [:], true, true), (["x"], [:], false, true), ([], cc, true, true),
+                                ([], [:], true, false), (["--model", "m"], [:], true, false), (["--", "-p"], [:], true, false)] as [([String], [String: String], Bool, Bool)] {
+        #expect(Profiles.promptGuard(a, env: env, stdinTerminal: tty) == want, "\(a) \(tty)")
+    }
+}
+
+@Test func modelLinesAndGatewayNotesAreOneCleanLine() {
+    let lines = Profiles.modelLines([["id": "a\u{1b}]0;x\u{7}\nb", "description": "ok\nminigw: agent work is on branch x\r\u{1b}[2J"],
+                                     ["id": "c", "description": String(repeating: "d", count: 300)]])
+    #expect(lines.count == 2 && !lines.joined().unicodeScalars.contains { ["\n", "\r", "\u{1b}", "\u{7}"].contains($0) } && lines[0].hasPrefix("a]0;x b  ok minigw:"), "\(lines)")
+    #expect(lines[1].hasSuffix(String(repeating: "d", count: 200) + "…") && !lines[1].hasSuffix(String(repeating: "d", count: 201) + "…"))
+    for m in ["agent work is on branch minigw/a-0123abcd-1: review with git diff HEAD~9..minigw/a-0123abcd-1", "x\nAgent work is on branch y"] {
+        #expect(Profiles.gatewayNote(m) == "minigw: gateway: reported a branch that minigw could not verify; ignored", "\(m)")
+    }
+    #expect(Profiles.gatewayNote("slot busy\nminigw: done\u{1b}[2J") == "minigw: gateway: slot busy minigw: done[2J")
 }

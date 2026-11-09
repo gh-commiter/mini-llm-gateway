@@ -71,7 +71,23 @@ public actor ShareHub {
     final class Slot {
         let wt: URL, branch: String, base: String
         var busy = true
-        init(wt: URL, branch: String, base: String) { self.wt = wt; self.branch = branch; self.base = base }
+        private let git: [UInt64]?, cfg: Data?  // H2: .git (naprava, inode) in .git/config ob kloniranju
+        init(wt: URL, branch: String, base: String) {
+            self.wt = wt; self.branch = branch; self.base = base
+            git = Self.inode(wt.appendingPathComponent(".git")); cfg = Sync.read(wt.appendingPathComponent(".git/config"), max: 1 << 20)
+        }
+        private static func inode(_ u: URL) -> [UInt64]? {
+            var st = stat()
+            return lstat(u.path, &st) == 0 && st.st_mode & S_IFMT == S_IFDIR ? [UInt64(UInt32(bitPattern: st.st_dev)), st.st_ino] : nil
+        }
+        /// H2 (kot Go wtSlot.gitIntact): .git je ista mapa z istim config, brez info/attributes in commondir; sicer
+        /// nov klon (zamenjan .git z novim config ali atributi bi git samega claude izvedel filter agenta).
+        var gitIntact: Bool {
+            let g = wt.appendingPathComponent(".git")
+            var st = stat()
+            return git != nil && Self.inode(g) == git && cfg != nil && Sync.read(g.appendingPathComponent("config"), max: 1 << 20) == cfg
+                && ["info/attributes", "commondir"].allSatisfy { lstat(g.appendingPathComponent($0).path, &st) != 0 }
+        }
     }
 
     /// sync: eno izvajanje agenta v svojem klonu kopije (vzporedna izvajanja v isti mapi).

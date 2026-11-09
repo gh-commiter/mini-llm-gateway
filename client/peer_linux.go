@@ -96,8 +96,12 @@ func killChildren() {
 func hardenRouter() { syscall.RawSyscall(syscall.SYS_PRCTL, 4 /* PR_SET_DUMPABLE */, 0, 0) }
 
 var (
-	bwrapOnce sync.Once
-	bwrapPath string // "" = bwrap ni nameščen ali ne deluje (npr. brez uporabniških imenskih prostorov)
+	bwrapOnce   sync.Once
+	bwrapPath   string // "" = bwrap ni nameščen ali ne deluje (npr. brez uporabniških imenskih prostorov)
+	nestedMu    sync.Mutex
+	nestedAt    time.Time // zadnji neuspeli preizkus (N3b: ponovi se po nestedRetry, uspeh velja do konca procesa)
+	nestedBwrap bool      // bwrap deluje tudi znotraj bwrap (pinWrap)
+	nestedRetry = time.Minute
 )
 
 func bwrapReady(cfgDir string) string {
@@ -115,6 +119,42 @@ func bwrapReady(cfgDir string) string {
 
 // agentSandboxed: Codex in Grok sta zaprta pred skrivnostmi routerja le pod bwrap; sicer le z izrecnim dovoljenjem.
 func agentSandboxed(cfgDir string) bool { return bwrapReady(cfgDir) != "" }
+
+// pinWrap: Claude CLI v worktree pod bwrap le s pins (N3): datotečni sistem je kot zunaj (Claude potrebuje domačo
+// mapo), le .git klona je točka priklopa, zato ga med tekom ni mogoče preimenovati ali zamenjati (EBUSY). Brez bwrap
+// ostane exe, kot je; zamenjavo nato ujame worktreeIntact pred naslednjim zagonom.
+// Lastni sandbox Claude Code (bwrap) nato teče gnezden v imenskem prostoru pinWrap; kjer gnezdeni uporabniški imenski
+// prostori niso dovoljeni (Ubuntu 24.04, AppArmor bwrap-userns-restrict), bi Bash v Claude odpovedal: takrat pinWrap
+// to zapiše in ga izpusti; preizkus ponovi najpogosteje enkrat na minuto (N3b: tudi po prehodni napaki). Brez pin
+// runCLI preverja klon med tekom (worktreeIntact) in claude ob zamenjavi .git ustavi.
+func pinWrap(cfgDir, exe string, args, pins []string, logf func(string, ...any)) (string, []string) {
+	bw := bwrapReady(cfgDir)
+	if bw == "" {
+		return exe, args
+	}
+	nestedMu.Lock()
+	if !nestedBwrap && time.Since(nestedAt) >= nestedRetry {
+		t, err := exec.LookPath("true")
+		d := os.TempDir()
+		if nestedBwrap = err == nil && command(bw, "--dev-bind", "/", "/", "--die-with-parent", "--bind", d, d, "--",
+			bw, "--dev-bind", "/", "/", "--", t).Run() == nil; !nestedBwrap {
+			nestedAt = time.Now()
+			logf("claude: nested bwrap does not work here (user namespaces restricted?), so the .git pin of worktree clones is off; the clone is checked during each run instead")
+		}
+	}
+	ok := nestedBwrap
+	nestedMu.Unlock()
+	if !ok {
+		return exe, args
+	}
+	a := []string{"--dev-bind", "/", "/", "--die-with-parent"}
+	for _, p := range pins {
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			a = append(a, "--bind", r, r)
+		}
+	}
+	return bw, append(append(a, "--", exe), args...)
+}
 
 // agentWrap: Codex ali Grok pod bwrap (R3, N1, N2): domača mapa in mapa nastavitev sta prazni; nazaj pridejo le
 // točne mape s programi iz PATH in paket CLI (samo za branje), stanje CLI te naprave in njene datoteke prijave,
