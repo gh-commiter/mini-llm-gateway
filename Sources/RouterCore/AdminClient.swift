@@ -10,6 +10,19 @@ public struct AdminClient: Sendable {
 
     public init(port: UInt16, routerKey: Data) { self.port = port; self.routerKey = routerKey }
 
+    /// minigw gw api: le metode API in pot pod /minigw/admin/v1 (brez »..«, presledkov, kontrolnih znakov in »#«).
+    public static func apiRequestOK(_ method: String, _ path: String) -> Bool {
+        ["GET", "POST", "PATCH", "DELETE"].contains(method) && path.hasPrefix("/") && !path.contains("..")
+            && !path.unicodeScalars.contains { $0.value <= 0x20 || $0.value == 0x7f || $0 == "#" }
+    }
+
+    /// Telo za gw api (stdin): nil = brez telesa (prazno ali le presledki); napaka, če ni JSON.
+    public static func apiBody(_ d: Data) throws -> Data? {
+        if d.allSatisfy({ [0x20, 0x09, 0x0a, 0x0d].contains($0) }) { return nil }
+        guard (try? JSONSerialization.jsonObject(with: d)) != nil else { throw CocoaError(.propertyListReadCorrupt) }
+        return d
+    }
+
     /// (status, telo); 0 = ni povezave ali rokovanje ni uspelo (na vratih ni ta router).
     public func request(_ method: String, _ path: String, _ body: Data?, authorization: (@Sendable (Data) -> String)? = nil,
                         timeout: Int = 60) -> (Int, Data?) {

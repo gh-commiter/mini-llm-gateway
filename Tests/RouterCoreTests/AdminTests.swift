@@ -74,6 +74,19 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
         #expect(await admin(bare, "GET", "/status").status == 404)
     }
 
+    /// minigw gw api (minigw-tui): metoda, pot pod skrbniškim API in telo JSON s stdin.
+    @Test func gwAPIRequestValidation() throws {
+        #expect(AdminClient.apiRequestOK("GET", "/status"))
+        #expect(AdminClient.apiRequestOK("PATCH", "/providers/lab/models?filter=qwen"))
+        for (m, p) in [("PUT", "/general"), ("GET", "status"), ("GET", "/x/../general"), ("GET", "/st atus"), ("GET", "/status#x"),
+                       ("GET", "/status\n"), ("GET", "/status\u{7f}"), ("get", "/status")] {
+            #expect(!AdminClient.apiRequestOK(m, p), "\(m) \(p)")
+        }
+        #expect(try AdminClient.apiBody(Data(" \n".utf8)) == nil)
+        #expect(try AdminClient.apiBody(Data(#"{"a":1}"#.utf8)) == Data(#"{"a":1}"#.utf8))
+        #expect(throws: (any Error).self) { try AdminClient.apiBody(Data("not json".utf8)) }
+    }
+
     @Test func strictJSON() async {
         let r = FakeApp().router()
         let unknown = await admin(r, "PATCH", "/agents/claude", body: #"{"tools":"Read","bogus":1}"#)

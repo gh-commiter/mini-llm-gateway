@@ -334,14 +334,10 @@ func routerCommand(_ argv: [String]) {
 
     case "api":  // minigw-tui: ena zahteva API; telo JSON s stdin (ključi nikoli v argv), odgovor JSON na stdout
         need(3, 3)
-        guard ["GET", "POST", "PATCH", "DELETE"].contains(pos[1]), pos[2].hasPrefix("/"), !pos[2].contains("..") else { fail(routerHelp) }
+        guard AdminClient.apiRequestOK(pos[1], pos[2]) else { fail(routerHelp) }
         var body: Data?
         if pos[1] == "POST" || pos[1] == "PATCH" {
-            let d = FileHandle.standardInput.readData(ofLength: 1 << 20)
-            if !d.allSatisfy({ [0x20, 0x09, 0x0a, 0x0d].contains($0) }) {
-                guard (try? JSONSerialization.jsonObject(with: d)) != nil else { fail("minigw gw api: the body on stdin is not JSON") }
-                body = d
-            }
+            do { body = try AdminClient.apiBody(FileHandle.standardInput.readData(ofLength: 1 << 20)) } catch { fail("minigw gw api: the body on stdin is not JSON") }
         }
         out.write(a.send(pos[1], pos[2], body) + Data("\n".utf8))
 
@@ -353,12 +349,35 @@ func routerCommand(_ argv: [String]) {
         guard let tui = dirs.map({ $0 + "/minigw-tui" }).first(where: FileManager.default.isExecutableFile) else {
             fail("the settings terminal UI (minigw-tui) is not installed: it comes with Mini Gateway 0.5.20 or newer (in Mini Gateway.app/Contents/Helpers); or use the app's Settings window (menu bar icon → Settings…)")
         }
+        // Le podpisan pomočnik (ista ekipa, lasten identifikator): drug program na tem mestu ne dobi terminala in minigw.
+        if let why = helperSignatureProblem(tui) { fail("not starting \(tui): \(why)") }
         let argv = [tui, "--minigw", me].map { strdup($0) } + [nil]
         execv(tui, argv)
         fail("cannot start \(tui): \(String(cString: strerror(errno)))")
     default:
         fail("unknown command minigw gw \(pos[0])\n\n" + routerHelp)
     }
+}
+
+/// Podpis minigw-tui: ekipa Y2M489RDV8 in identifikator dev.trojar.minigateway.tui (nil = v redu). Ta minigw brez
+/// podpisa ekipe (razvojna gradnja iz swift build) preverjanje preskoči, z opozorilom.
+func helperSignatureProblem(_ path: String) -> String? {
+    let team = "anchor apple generic and certificate leaf[subject.OU] = \"Y2M489RDV8\""
+    func valid(_ code: SecStaticCode, _ req: String) -> OSStatus {
+        var r: SecRequirement?
+        guard SecRequirementCreateWithString(req as CFString, [], &r) == errSecSuccess else { return errSecParam }
+        return SecStaticCodeCheckValidity(code, [], r)
+    }
+    var me: SecCode?, meStatic: SecStaticCode?
+    if SecCodeCopySelf([], &me) != errSecSuccess || me.map({ SecCodeCopyStaticCode($0, [], &meStatic) }) != errSecSuccess
+        || meStatic.map({ valid($0, team) }) != errSecSuccess {
+        err.write(Data("minigw: warning: this minigw is a development build (not signed by Mini Gateway): \(path) is started without a signature check\n".utf8))
+        return nil
+    }
+    var code: SecStaticCode?
+    guard SecStaticCodeCreateWithPath(URL(fileURLWithPath: path) as CFURL, [], &code) == errSecSuccess, let code else { return "cannot read its signature" }
+    let st = valid(code, team + " and identifier \"dev.trojar.minigateway.tui\"")
+    return st == errSecSuccess ? nil : "it is not signed by Mini Gateway (team Y2M489RDV8, identifier dev.trojar.minigateway.tui; OSStatus \(st))"
 }
 
 /// Vrstica seje za minigw gw sessions (enako kot sessionLine v Go).

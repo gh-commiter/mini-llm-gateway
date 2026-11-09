@@ -85,7 +85,7 @@ func screen(t *testing.T, m model) (model, string) {
 	next, _ := m.Update(m.reload("", false)())
 	m = next.(model)
 	if m.loadFailed != nil {
-		t.Fatalf("%s: %v", pages[m.tab].title, m.loadFailed)
+		t.Fatalf("%s: %v", m.pages()[m.tab].title, m.loadFailed)
 	}
 	return m, m.View()
 }
@@ -110,12 +110,14 @@ var enter = tea.KeyMsg{Type: tea.KeyEnter}
 // The pages render from the admin API's answers; go test -v shows them.
 func TestPages(t *testing.T) {
 	u, dir := fake(t)
-	want := []string{"Status                                  running on port 8765", "Bob's MacBook", "Models…", "GPT-6.1 Sol", "/home/ana/notes"}
-	for i := range pages {
-		_, v := screen(t, model{u: u, tab: i})
+	want := []string{"Status                                  running on port 8765", "Bob's MacBook", "Models…", "GPT-6.1 Sol", "/home/ana/notes",
+		"Bob's MacBook · worktree", "minigw run"}
+	all := model{mac: true}.pages()
+	for i := range all {
+		_, v := screen(t, model{u: u, tab: i, mac: true})
 		t.Logf("\n%s", v)
 		if !strings.Contains(v, want[i]) {
-			t.Fatalf("page %s lacks %q", pages[i].title, want[i])
+			t.Fatalf("page %s lacks %q", all[i].title, want[i])
 		}
 		for _, l := range strings.Split(v, "\n") {
 			if len([]rune(l)) > 80 {
@@ -123,7 +125,7 @@ func TestPages(t *testing.T) {
 			}
 		}
 		if strings.Contains(v, "SECRET") {
-			t.Fatalf("token shown on %s", pages[i].title)
+			t.Fatalf("token shown on %s", all[i].title)
 		}
 	}
 	u.models = "OpenRouter"
@@ -191,5 +193,53 @@ func TestConfirm(t *testing.T) {
 	m = press(t, m, enter, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
 	if !strings.Contains(read(t, filepath.Join(dir, "calls.log")), "gw api DELETE /devices/Qm9iJ3MgTWFjQm9vayBkZXZpY2Uga2V5IDMyIGJ5dGVz") {
 		t.Fatalf("calls: %s", read(t, filepath.Join(dir, "calls.log")))
+	}
+}
+
+// Sessions: a click opens one; Clear history asks first. Mouse: a click on a page name opens it.
+func TestSessionsAndMouse(t *testing.T) {
+	u, dir := fake(t)
+	m, _ := screen(t, model{u: u, tab: 5})
+	// the first session row is the line after "Clear history"
+	_, rowOf, top := m.body()
+	line := slices.IndexFunc(rowOf, func(r int) bool { return r >= 0 && strings.HasPrefix(m.rows[r].label, "▸ 2026-11-09") })
+	m = mouse(t, m, 4, 3+line-top)
+	v := m.View()
+	t.Logf("\n%s", v)
+	if !strings.Contains(v, "minigw/claude-1a2b") || !strings.Contains(v, "4 requests, 0 errors") {
+		t.Fatalf("details not shown:\n%s", v)
+	}
+	m = mouse(t, m, 3, 1) // "1 General"
+	if m.tab != 0 || m.loadFailed != nil {
+		t.Fatalf("tab %d %v", m.tab, m.loadFailed)
+	}
+	m, _ = screen(t, model{u: u, tab: 5})
+	m = press(t, m, enter) // Clear history is the first control
+	if !m.asking || strings.Contains(read(t, filepath.Join(dir, "calls.log")), "DELETE") {
+		t.Fatal("clear without asking")
+	}
+	press(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	if !strings.Contains(read(t, filepath.Join(dir, "calls.log")), "gw api DELETE /sessions") {
+		t.Fatal("not cleared")
+	}
+}
+
+func mouse(t *testing.T, m model, x, y int) model {
+	t.Helper()
+	next, cmd := m.Update(tea.MouseMsg{X: x, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	m = next.(model)
+	if cmd != nil {
+		next, _ = m.Update(cmd())
+		m = next.(model)
+	}
+	return m
+}
+
+func TestFailureMessages(t *testing.T) {
+	if s := failure("minigw: unknown command minigw gw api\n\nminigw gw: show …", nil); !strings.Contains(s, "older than 0.5.20") {
+		t.Fatal(s)
+	}
+	if s := failure("minigw: warning\nminigw: bad \x1b[31mred\x1b[0m\n", nil); s != "bad [31mred[0m" {
+		t.Fatalf("%q", s)
 	}
 }

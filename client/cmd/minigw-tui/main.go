@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -32,7 +33,8 @@ type ui struct {
 		name, url string
 		insecure  bool
 	} // "Add a provider"
-	connect bool // the connect line (with the token) is shown
+	connect bool   // the connect line (with the token) is shown
+	session string // session with its details shown
 }
 
 // call: one admin API request through "minigw gw api"; the body goes on stdin, never in argv.
@@ -54,12 +56,15 @@ func (u *ui) call(method, path string, body any) (map[string]any, error) {
 	return m, nil
 }
 
-// failure: minigw's last message ("minigw: …" on stderr) in one line.
+// failure: minigw's last message ("minigw: …" on stderr) in one line, without control characters.
 func failure(stderr string, err error) string {
+	if strings.Contains(stderr, "unknown command minigw gw api") {
+		return "this minigw is older than 0.5.20 (it has no minigw gw api): update minigw"
+	}
 	if i := strings.LastIndex(stderr, "minigw: "); i >= 0 {
 		stderr = stderr[i+len("minigw: "):]
 	}
-	if s := strings.Join(strings.Fields(stderr), " "); s != "" {
+	if s := strings.Join(strings.Fields(clean(strings.ReplaceAll(stderr, "\n", " "))), " "); s != "" {
 		return s
 	}
 	return err.Error()
@@ -116,7 +121,14 @@ type page struct {
 	load  func(u *ui) ([]row, error)
 }
 
-var pages = []page{{"General", general}, {"Devices", devices}, {"Providers", providers}, {"Agents", agents}, {"Folders", folders}}
+// providersTab: the page with the model list of one provider (esc goes back).
+const providersTab = 2
+
+var pages = []page{{"General", general}, {"Devices", devices}, {"Providers", providers}, {"Agents", agents},
+	{"Folders", folders}, {"Sessions", sessions}}
+
+// macPage: only when the gateway is the Mac app (its status has no "os").
+var macPage = page{"Mac", macOnly}
 
 type loaded struct {
 	tab  int // the page it belongs to (an answer for a page left meanwhile is dropped)
@@ -126,11 +138,14 @@ type loaded struct {
 	bad  bool
 }
 
+type isMac bool
+
 type model struct {
 	u          *ui
+	mac        bool
 	tab        int
 	rows       []row
-	cur, top   int
+	cur        int
 	w, h       int
 	note       string
 	bad, busy  bool
@@ -140,19 +155,26 @@ type model struct {
 	loadFailed error
 }
 
+func (m model) pages() []page {
+	if m.mac {
+		return append(slices.Clone(pages), macPage)
+	}
+	return pages
+}
+
 func (m model) reload(note string, bad bool) tea.Cmd {
-	u, tab := m.u, m.tab
+	u, tab, p := m.u, m.tab, m.pages()[m.tab]
 	return func() tea.Msg {
-		rows, err := pages[tab].load(u)
+		rows, err := p.load(u)
 		return loaded{tab, rows, err, note, bad}
 	}
 }
 
 func (m model) run(r row, text string) tea.Cmd {
-	u, tab := m.u, m.tab
+	u, tab, p := m.u, m.tab, m.pages()[m.tab]
 	return func() tea.Msg {
 		note, err := r.act(text)
-		rows, lerr := pages[tab].load(u)
+		rows, lerr := p.load(u)
 		if err != nil {
 			return loaded{tab, rows, lerr, err.Error(), true}
 		}
@@ -160,12 +182,21 @@ func (m model) run(r row, text string) tea.Cmd {
 	}
 }
 
-func (m model) Init() tea.Cmd { return m.reload("", false) }
+func (m model) Init() tea.Cmd {
+	u := m.u
+	return tea.Batch(m.reload("", false), func() tea.Msg {
+		st, err := u.call("GET", "/status", nil)
+		_, hasOS := st["os"]
+		return isMac(err == nil && !hasOS)
+	})
+}
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
+	case isMac:
+		m.mac = bool(msg)
 	case loaded:
 		if msg.tab != m.tab {
 			return m, nil
@@ -180,6 +211,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.KeyMsg:
 		return m.key(msg)
+	case tea.MouseMsg:
+		return m.mouse(msg)
 	}
 	return m, nil
 }
@@ -191,9 +224,34 @@ func (m *model) move(d int) {
 			return
 		}
 	}
-	if d < 0 { // above the first control: show the headers there
-		m.top = 0
+}
+
+// goTo: another page; the connect line and the model list close.
+func (m model) goTo(tab int) (tea.Model, tea.Cmd) {
+	m.tab = tab
+	m.u.connect, m.u.models = false, ""
+	m.rows, m.cur, m.note, m.busy, m.editing, m.asking, m.input = nil, 0, "", true, false, false, nil
+	return m, m.reload("", false)
+}
+
+// activate: Enter or a click on the current row.
+func (m model) activate() (tea.Model, tea.Cmd) {
+	if m.cur >= len(m.rows) || !m.rows[m.cur].selectable() {
+		return m, nil
 	}
+	r := m.rows[m.cur]
+	switch {
+	case r.kind == edit:
+		m.editing, m.input = true, []rune(r.value)
+	case r.kind == secret:
+		m.editing, m.input = true, nil
+	case r.confirm != "":
+		m.asking, m.note, m.bad = true, r.confirm+" (y/n)", false
+	default:
+		m.busy = true
+		return m, m.run(r, "")
+	}
+	return m, nil
 }
 
 func (m model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -229,29 +287,27 @@ func (m model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.note = ""
 		return m, nil
 	}
+	n := len(m.pages())
 	switch s := k.String(); s {
 	case "q":
 		return m, tea.Quit
 	case "esc":
-		if m.tab == 2 && m.u.models != "" {
+		if m.tab == providersTab && m.u.models != "" {
 			m.u.models = ""
 			return m, m.reload("", false)
 		}
 		return m, nil
-	case "tab", "right", "l", "shift+tab", "left", "h", "1", "2", "3", "4", "5":
-		switch s {
-		case "tab", "right", "l":
-			m.tab = (m.tab + 1) % len(pages)
-		case "shift+tab", "left", "h":
-			m.tab = (m.tab + len(pages) - 1) % len(pages)
-		default:
-			m.tab = int(s[0] - '1')
+	case "tab", "right", "l":
+		return m.goTo((m.tab + 1) % n)
+	case "shift+tab", "left", "h":
+		return m.goTo((m.tab + n - 1) % n)
+	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+		if t := int(s[0] - '1'); t < n {
+			return m.goTo(t)
 		}
-		m.u.connect, m.u.models = false, ""
-		m.rows, m.cur, m.top, m.note, m.busy = nil, 0, 0, "", true
-		return m, m.reload("", false)
+		return m, nil
 	}
-	if m.busy { // a change or load runs: only quit and the pages above
+	if m.busy { // a change or load runs: only quit and changing the page
 		return m, nil
 	}
 	switch k.String() {
@@ -271,69 +327,118 @@ func (m model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.busy = true
 		return m, m.reload("", false)
 	case "enter", " ":
-		if m.cur >= len(m.rows) || !m.rows[m.cur].selectable() {
-			return m, nil
+		return m.activate()
+	}
+	return m, nil
+}
+
+// mouse: a click on a page name opens it, a click on a row selects and changes it (as Enter); the wheel moves.
+func (m model) mouse(e tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.editing || m.asking {
+		return m, nil
+	}
+	switch {
+	case e.Button == tea.MouseButtonWheelUp && !m.busy:
+		m.move(-1)
+	case e.Button == tea.MouseButtonWheelDown && !m.busy:
+		m.move(1)
+	case e.Button != tea.MouseButtonLeft || e.Action != tea.MouseActionPress:
+	case e.Y == 1:
+		for i, x := range m.tabStarts() {
+			if e.X >= x && (i+1 == len(m.tabStarts()) || e.X < m.tabStarts()[i+1]) {
+				return m.goTo(i)
+			}
 		}
-		r := m.rows[m.cur]
-		switch {
-		case r.kind == edit:
-			m.editing, m.input = true, []rune(r.value)
-		case r.kind == secret:
-			m.editing, m.input = true, nil
-		case r.confirm != "":
-			m.asking, m.note, m.bad = true, r.confirm+" (y/n)", false
-		default:
-			m.busy = true
-			return m, m.run(r, "")
+	case !m.busy:
+		_, rowOf, top := m.body()
+		if l := top + e.Y - 3; e.Y >= 3 && l < len(rowOf) && e.Y < 3+m.room() && rowOf[l] >= 0 && m.rows[rowOf[l]].selectable() {
+			m.cur = rowOf[l]
+			return m.activate()
 		}
 	}
 	return m, nil
 }
 
-func (m model) View() string {
-	w, h := m.w, m.h
-	if w <= 0 {
-		w, h = 80, 24
+func (m model) size() (int, int) {
+	if m.w <= 0 {
+		return 80, 24
 	}
+	return m.w, m.h
+}
+
+func (m model) room() int { _, h := m.size(); return max(h-6, 3) }
+
+// tabLine and tabStarts: the page names and the column where each starts.
+func (m model) tabLine() string {
+	s := " "
+	for i, p := range m.pages() {
+		if i == m.tab {
+			s += fmt.Sprintf("[%d %s]", i+1, p.title)
+		} else {
+			s += fmt.Sprintf(" %d %s ", i+1, p.title)
+		}
+	}
+	return s
+}
+
+func (m model) tabStarts() []int {
+	var xs []int
+	x := 1
+	for _, p := range m.pages() {
+		xs = append(xs, x)
+		x += utf8.RuneCountInString(fmt.Sprintf(" %d %s ", 1, p.title))
+	}
+	return xs
+}
+
+// body: the page's lines, the row of each line (-1 = none) and the first line shown (the cursor stays visible).
+func (m model) body() (lines []string, rowOf []int, top int) {
+	cursorLine := 0
+	add := func(s string, r int) { lines, rowOf = append(lines, s), append(rowOf, r) }
+	if m.loadFailed != nil {
+		add("  "+m.loadFailed.Error(), -1)
+		add("", -1)
+		add("  r: try again", -1)
+	}
+	for i, r := range m.rows {
+		if r.kind == header && len(lines) > 0 {
+			add("", -1)
+		}
+		if i == m.cur {
+			cursorLine = len(lines)
+		}
+		add(m.render(i, r), i)
+	}
+	if len(m.rows) == 0 && m.loadFailed == nil {
+		add("  Loading…", -1)
+	}
+	if room := m.room(); cursorLine >= room {
+		top = cursorLine - room + 1
+	}
+	if m.cur == firstSelectable(m.rows) { // at the first control: show the headers above it
+		top = 0
+	}
+	return lines, rowOf, top
+}
+
+func firstSelectable(rows []row) int {
+	for i, r := range rows {
+		if r.selectable() {
+			return i
+		}
+	}
+	return -1
+}
+
+func (m model) View() string {
+	w, _ := m.size()
 	var b strings.Builder
 	line := func(s string) { b.WriteString(cut(s, w) + "\n") }
 	line(" Mini Gateway settings")
-	tabs := ""
-	for i, p := range pages {
-		if i == m.tab {
-			tabs += fmt.Sprintf(" [%d %s]", i+1, p.title)
-		} else {
-			tabs += fmt.Sprintf("  %d %s ", i+1, p.title)
-		}
-	}
-	line(tabs)
+	line(m.tabLine())
 	line(strings.Repeat("─", w))
-	body := []string{}
-	cursorLine := 0
-	if m.loadFailed != nil {
-		body = append(body, "  "+m.loadFailed.Error(), "", "  r: try again")
-	}
-	for i, r := range m.rows {
-		if r.kind == header && len(body) > 0 {
-			body = append(body, "")
-		}
-		if i == m.cur {
-			cursorLine = len(body)
-		}
-		body = append(body, m.render(i, r))
-	}
-	if len(m.rows) == 0 && m.loadFailed == nil {
-		body = append(body, "  Loading…")
-	}
-	room := max(h-6, 3)
-	top := m.top
-	if cursorLine < top {
-		top = cursorLine
-	}
-	if cursorLine >= top+room {
-		top = cursorLine - room + 1
-	}
-	for i := top; i < top+room; i++ {
+	body, _, top := m.body()
+	for i := top; i < top+m.room(); i++ {
 		if i < len(body) {
 			line(body[i])
 		} else {
@@ -355,17 +460,16 @@ func (m model) View() string {
 		note = "! " + note
 	}
 	line(" " + note)
-	help := " ←/→ page  ↑/↓ move  enter change  r reload  q quit"
+	help := " ←/→ page  ↑/↓ move  enter change  r reload  q quit  (mouse: click)"
 	switch {
 	case m.editing:
 		help = " enter save  esc cancel  ctrl+u clear"
-	case m.tab == 2 && m.u.models != "":
+	case m.tab == providersTab && m.u.models != "":
 		help = " ↑/↓ move  enter change  esc back  r reload  q quit"
 	}
 	b.WriteString(cut(help, w))
 	return b.String()
 }
-
 func (m model) render(i int, r row) string {
 	mark := "  "
 	if i == m.cur && r.selectable() {
@@ -432,7 +536,7 @@ func main() {
 			}
 		}
 	}
-	if _, err := tea.NewProgram(model{u: u, busy: true}, tea.WithAltScreen()).Run(); err != nil {
+	if _, err := tea.NewProgram(model{u: u, busy: true}, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "minigw-tui:", err)
 		os.Exit(1)
 	}

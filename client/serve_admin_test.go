@@ -288,6 +288,15 @@ func TestRouterCLIOnlineAndOffline(t *testing.T) {
 	if m := api(cfg, "", "GET", "/devices"); len(m["devices"].([]any)) != 1 {
 		t.Fatalf("api GET: %v", m)
 	}
+	for _, x := range [][2]string{{"PUT", "/general"}, {"GET", "status"}, {"GET", "/x/../general"}, {"GET", "/st atus"},
+		{"GET", "/status#x"}, {"GET", "/status\n"}, {"GET", "/status\x7f"}} {
+		if apiRequestOK(x[0], x[1]) {
+			t.Fatalf("api accepts %q", x)
+		}
+	}
+	if !apiRequestOK("GET", "/providers/lab/models?filter=qwen") {
+		t.Fatal("api refuses a query")
+	}
 
 	off := filepath.Join(t.TempDir(), "serve.json")
 	saveServeConfig(off, serveConfig{Token: "tok", Key: s.cfg.Key, Port: freePort(t)})

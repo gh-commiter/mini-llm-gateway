@@ -595,7 +595,7 @@ func routerCommand(args []string, in io.Reader) {
 		}
 	case "api": // minigw-tui: ena zahteva skrbniškega API; telo JSON s stdin (ključi nikoli v argv), odgovor JSON na stdout
 		need(3, 3)
-		if !slices.Contains([]string{"GET", "POST", "PATCH", "DELETE"}, pos[1]) || !strings.HasPrefix(pos[2], "/") || strings.Contains(pos[2], "..") {
+		if !apiRequestOK(pos[1], pos[2]) {
 			fail(routerHelp)
 		}
 		var body any
@@ -621,6 +621,12 @@ func routerCommand(args []string, in io.Reader) {
 	default:
 		fail("unknown command minigw gw " + pos[0] + "\n\n" + routerHelp)
 	}
+}
+
+// apiRequestOK: gw api le z metodo API in potjo pod skrbniškim API (brez »..«, presledkov, kontrolnih znakov in »#«).
+func apiRequestOK(method, path string) bool {
+	return slices.Contains([]string{"GET", "POST", "PATCH", "DELETE"}, method) && strings.HasPrefix(path, "/") &&
+		!strings.Contains(path, "..") && !strings.ContainsFunc(path, func(r rune) bool { return r <= 0x20 || r == 0x7f || r == '#' })
 }
 
 // settingsTUI: minigw-tui ob tem minigw (izdaja, MSI, install.sh) z istim terminalom; izhodna koda ostane.

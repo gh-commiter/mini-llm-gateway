@@ -43,9 +43,11 @@ func strs(m map[string]any, k string) []string {
 }
 
 // csv: "a, b,,c" → [a b c].
-func csv(s string) []string {
+func csv(s string) []string { return csvSep(s, ",") }
+
+func csvSep(s, sep string) []string {
 	out := []string{}
-	for _, x := range strings.Split(s, ",") {
+	for _, x := range strings.Split(s, sep) {
 		if x = strings.TrimSpace(x); x != "" {
 			out = append(out, x)
 		}
@@ -177,7 +179,7 @@ func devices(u *ui) ([]row, error) {
 		hdr("Waiting for approval (compare the ID with the client's minigw status)"))
 	for _, x := range pending {
 		id := str(x, "id")
-		rows = append(rows, inf(clean(str(x, "name")), ""), inf("  ID "+id, ""),
+		rows = append(rows, inf(clean(str(x, "name")), ""), inf("  ID "+clean(id), ""),
 			inf("  "+clean(strings.Join(slices.DeleteFunc([]string{str(x, "address"), str(x, "time"), str(x, "client")}, func(s string) bool { return s == "" }), " · ")), ""),
 			ed("  Allow with the name", clean(str(x, "name")), func(v string) (string, error) {
 				return u.save("POST", "/devices", map[string]any{"id": id, "name": v})
@@ -194,7 +196,7 @@ func devices(u *ui) ([]row, error) {
 		if s := str(x, "lastSeen"); s != "" {
 			seen = "last seen " + s
 		}
-		rows = append(rows, inf(name, ""), inf("  ID "+id, ""),
+		rows = append(rows, inf(name, ""), inf("  ID "+clean(id), ""),
 			inf("  "+clean(strings.Join(slices.DeleteFunc([]string{seen, str(x, "client")}, func(s string) bool { return s == "" }), " · ")), ""),
 			ed("  Name", name, func(v string) (string, error) {
 				return u.save("PATCH", "/devices/"+url.PathEscape(id), map[string]any{"name": v})
@@ -253,6 +255,10 @@ func providers(u *ui) ([]row, error) {
 		rows = append(rows,
 			ed("Base URL", str(p, "baseURL"), func(v string) (string, error) { return patch(map[string]any{"baseURL": v}) }),
 			tog("Allow http (local network only)", yes(p, "insecure"), func(v bool) (string, error) { return patch(map[string]any{"insecure": v}) }),
+			// One per line in the API ("alias = upstream ID, context window"); here separated by ";".
+			ed("Aliases (advanced; a = id, 128k; …)", strings.Join(strings.Split(strings.TrimSpace(str(p, "aliases")), "\n"), "; "), func(v string) (string, error) {
+				return patch(map[string]any{"aliases": strings.Join(csvSep(v, ";"), "\n")})
+			}),
 			sec("API key", key, func(v string) (string, error) {
 				if v == "" {
 					return "", nil
@@ -515,6 +521,121 @@ func folders(u *ui) ([]row, error) {
 		}
 		return send(append(list, v))
 	}))
+	return rows, nil
+}
+
+func sessions(u *ui) ([]row, error) {
+	r, err := u.call("GET", "/sessions", nil)
+	if err != nil {
+		return nil, err
+	}
+	list := objs(r, "sessions")
+	rows := []row{hdr(fmt.Sprintf("Sessions (%d, newest first; never prompt or answer text)", len(list)))}
+	if len(list) > 0 {
+		rows = append(rows, btn("Clear history", "Clear the session history", func() (string, error) {
+			_, err := u.call("DELETE", "/sessions", nil)
+			return "Session history cleared.", err
+		}))
+	} else {
+		rows = append(rows, inf("No sessions recorded.", ""))
+	}
+	for _, x := range list {
+		id := str(x, "id")
+		who := "this computer"
+		if _, ok := x["device"]; ok {
+			who = onOff(str(x, "deviceName") != "", str(x, "deviceName"), "device")
+		}
+		if yes(x, "deviceRemoved") {
+			who += " (removed)"
+		}
+		mode := str(x, "mode") + onOff(yes(x, "readOnly"), ", read-only", "")
+		var models []string
+		for _, m := range objs(x, "models") {
+			if !slices.Contains(models, str(m, "model")) {
+				models = append(models, str(m, "model"))
+			}
+		}
+		open := u.session == id
+		rows = append(rows, btn(clean(onOff(open, "▾ ", "▸ ")+str(x, "last")+" · "+who+" · "+mode), "", func() (string, error) {
+			u.session = onOff(open, "", id)
+			return "", nil
+		}))
+		rows[len(rows)-1].value = clean(strings.Join(models, ", "))
+		if !open {
+			continue
+		}
+		rows = append(rows, inf("    Session", clean(id)), inf("    Folder", clean(str(x, "folder"))),
+			inf("    Started", clean(str(x, "start"))+fmt.Sprintf(" (%d min)", num(x, "duration")/60)))
+		for _, k := range [][2]string{{"os", "OS"}, {"role", "Role"}, {"branch", "Branch"}} {
+			if v := str(x, k[0]); v != "" {
+				rows = append(rows, inf("    "+k[1], clean(v)))
+			}
+		}
+		for _, m := range objs(x, "models") {
+			extra := []string{}
+			for _, k := range []string{"role", "via", "tools"} {
+				if v := str(m, k); v != "" {
+					extra = append(extra, k+" "+v)
+				}
+			}
+			if yes(m, "readOnly") {
+				extra = append(extra, "read-only")
+			}
+			rows = append(rows, inf("    "+clean(str(m, "model")), clean(strings.Join(extra, " · "))),
+				inf(fmt.Sprintf("      %d requests, %d errors, %d refused, %ds, %d in / %d out tokens", num(m, "requests"), num(m, "errors"),
+					num(m, "refused"), num(m, "seconds"), num(m, "inputTokens"), num(m, "outputTokens")), ""))
+		}
+	}
+	return rows, nil
+}
+
+// macOnly: what only the Mac app has (Siri AI, minigw run); Apple Foundation Models has no admin API.
+func macOnly(u *ui) ([]row, error) {
+	siri, err := u.call("GET", "/siri", nil)
+	if err != nil {
+		return nil, err
+	}
+	run, err := u.call("GET", "/run", nil)
+	if err != nil {
+		return nil, err
+	}
+	ps := func(body map[string]any) (string, error) { return u.save("PATCH", "/siri", body) }
+	pr := func(body map[string]any) (string, error) { return u.save("PATCH", "/run", body) }
+	allow := func(on bool, yes, no string) string { return onOff(on, yes, no) }
+	rows := []row{hdr("Siri AI (uses this Mac's personal data)"),
+		tog("Enabled", yes(siri, "enabled"), func(v bool) (string, error) { return ps(map[string]any{"enabled": v}) }),
+		ed("Timeout (seconds, 5-600)", strconv.Itoa(num(siri, "timeout")), func(v string) (string, error) {
+			t, err := strconv.Atoi(v)
+			if err != nil {
+				return "", errors.New("the timeout is a number of seconds (5-600)")
+			}
+			return ps(map[string]any{"timeout": t})
+		})}
+	for _, d := range objs(siri, "devices") {
+		id := str(d, "id")
+		rows = append(rows, tog("  "+clean(str(d, "name")), yes(d, "siri"), func(v bool) (string, error) {
+			return ps(map[string]any{allow(v, "allow", "deny"): []string{id}})
+		}))
+	}
+	if len(objs(siri, "devices")) == 0 {
+		rows = append(rows, inf("  No device is allowed yet.", ""))
+	}
+	rows = append(rows, hdr("Apple Foundation Models"),
+		inf("Set in the app's Settings window (menu bar icon → Settings…).", ""),
+		hdr("minigw run (runs commands on this Mac: code execution)"),
+		ed("Commands (comma-separated)", str(run, "commands"), func(v string) (string, error) { return pr(map[string]any{"commands": v}) }))
+	for _, d := range objs(run, "devices") {
+		id, name := str(d, "id"), clean(str(d, "name"))
+		rows = append(rows, tog("  "+name+": run", yes(d, "run"), func(v bool) (string, error) {
+			return pr(map[string]any{allow(v, "allow", "deny"): []string{id}})
+		}))
+		if !yes(d, "run") {
+			rows[len(rows)-1].confirm = name + " may then run the listed commands on this Mac. Allow"
+		}
+		rows = append(rows, tog("  "+name+": network in commands", yes(d, "network"), func(v bool) (string, error) {
+			return pr(map[string]any{allow(v, "allowNetwork", "denyNetwork"): []string{id}})
+		}))
+	}
 	return rows, nil
 }
 

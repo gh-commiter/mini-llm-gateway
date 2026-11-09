@@ -348,6 +348,9 @@ func installWindows(exe, cfgPath string) (string, error) {
 // installTUI: minigw-tui (minigw gw settings) ob nameščeni minigw, ob tem minigw ali iz izdaje; brez njega namestitev
 // uspe, le opomba.
 func installTUI(exe, dir, goos string) string {
+	if goos != "linux" && goos != "windows" { // macOS: v aplikaciji (Helpers), ni sredstva izdaje
+		return ""
+	}
 	name, asset := "minigw-tui", "minigw-tui-"+goos+"-"+runtime.GOARCH
 	if goos == "windows" {
 		name, asset = name+".exe", asset+".exe"
@@ -555,6 +558,7 @@ func serviceCommand(sub, goos, cfgPath string) (string, error) {
 		runCmd("systemctl", "--user", "disable", "--now", systemdUnit)
 		os.Remove(p)
 		runCmd("systemctl", "--user", "daemon-reload")
+		os.Remove(filepath.Join(installDir(goos), "minigw-tui")) // namestitev ga je dodala; minigw ostane (na PATH)
 		return "minigw serve stopped and no longer starts at sign-in (the config is kept)", nil
 	case "darwin uninstall":
 		runCmd("launchctl", "bootout", uid, p)
