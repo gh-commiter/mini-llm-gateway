@@ -63,10 +63,11 @@
       </Feature>
     </Feature>
 
-    <!-- Pladenj zapri, preden se odstrani (tudi kot stari paket pri nadgradnji) ali izklopi del Gateway:
-         minigw-tray.exe quit (WM_CLOSE, 5 s, nato konec procesa, kot closeRunningTray; zapiše, ali je tekel).
-         Program brez konzole, zato se ne pokaže nobeno okno. Ob namestitvi ne: tam bi bil v mapi lahko še stari
-         pladenj (0.5.17), ki ukaza quit ne pozna; njega zapre odstranitev njegovega paketa. -->
+    <!-- Pladenj zapri pred InstallValidate (sicer so datoteke v rabi): ob odstranitvi, izklopu dela Gateway in nadgradnji
+         (zažene nameščeni, stari minigw-tray.exe quit: WM_CLOSE, 5 s, nato konec procesa; zapiše, ali je tekel). Kot stari
+         paket pri nadgradnji ne: novi ga je že zaprl (drugi quit bi zapisal »ni tekel«). Program brez konzole: brez okna.
+         ponytail: pladenj 0.5.17 ukaza quit ne pozna (pokaže »already running« ali se zažene); nadgradnja s 0.5.17
+         zato lahko pokaže FilesInUse. -->
     <CustomAction Id="CloseTray" FileKey="tray" ExeCommand="quit" Return="ignore" Execute="immediate"/>
     <!-- Po namestitvi zaženi pladenj; ob prvem zagonu sam ustvari serve.json in pokaže, kje je vrstica za povezavo.
          Zastavica quiet-if-running: če že teče, brez sporočila »already running«; sicer se pladenj znova zažene prek
@@ -83,7 +84,7 @@
     <!-- Številke korakov izrecno: wixl z After/Before na druga dejanja po meri razvrsti napačno (tudi RemoveExistingProducts
          na konec). CostFinalize 1000, RemoveFiles 3500, InstallFiles 4000, InstallFinalize 6600. -->
     <InstallExecuteSequence>
-      <Custom Action="CloseTray" Sequence="1001">REMOVE~="ALL" OR (&amp;Gateway=2 AND !Gateway=3)</Custom>
+      <Custom Action="CloseTray" Sequence="1001">(REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE) OR (&amp;Gateway=2 AND !Gateway=3) OR WIX_UPGRADE_DETECTED OR WIX_SAME_VERSION_UPGRADE_DETECTED</Custom>
       <Custom Action="PluginUninstall" Sequence="3401">&amp;Plugin=2 AND !Plugin=3 AND NOT UPGRADINGPRODUCTCODE</Custom>
       <Custom Action="PluginUninstallUpgrading" Sequence="3402">&amp;Plugin=2 AND !Plugin=3 AND UPGRADINGPRODUCTCODE</Custom>
       <Custom Action="Purge" Sequence="3403">REMOVE~="ALL" AND PURGE=1 AND NOT UPGRADINGPRODUCTCODE</Custom>
@@ -108,6 +109,20 @@
   </Product>
   <Fragment>
     <UI Id="MiniUI">
+      <!-- Okna, ki jih Windows Installer pokaže sam (napaka 2803, če jih ni): datoteke v rabi (minigw.exe iz seje
+           Claude Code, minigw-tui), sporočila o napakah (lastnost ErrorDialog) in konec (uspeh, preklic, napaka).
+           Iz razširitve ui za wixl; potrebujejo pisave WixUI_Font_*. -->
+      <TextStyle Id="WixUI_Font_Normal" FaceName="Tahoma" Size="8"/>
+      <TextStyle Id="WixUI_Font_Bigger" FaceName="Tahoma" Size="12"/>
+      <TextStyle Id="WixUI_Font_Title" FaceName="Tahoma" Size="9" Bold="yes"/>
+      <Property Id="DefaultUIFont" Value="WixUI_Font_Normal"/>
+      <DialogRef Id="ErrorDlg"/>
+      <DialogRef Id="FilesInUse"/>
+      <DialogRef Id="MsiRMFilesInUse"/>
+      <DialogRef Id="FatalError"/>
+      <DialogRef Id="UserExit"/>
+      <DialogRef Id="ExitDialog"/>
+      <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999"/>
       <Dialog Id="SetupDlg" Width="370" Height="250" Title="[ProductName] [ProductVersion] Setup">
         <Control Id="Title" Type="Text" X="20" Y="15" Width="330" Height="20" NoPrefix="yes"
                  Text="Mini Gateway for this user. The minigw command (in your PATH) is always installed; choose what else:"/>
