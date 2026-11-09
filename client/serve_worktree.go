@@ -1330,14 +1330,17 @@ func (h *shareHub) isWorktree(session string) bool {
 // 108 bajtov; TMPDIR z 80 znaki že odpove), zato ne mapa v klonu.
 const maxRunTemp = 40
 
-// shortTempRoot: mapa prehoda za runTempDir (0700, naključno ime), v začasni mapi sistema ali v /tmp, če je ta
-// predolga; "" = ni je bilo mogoče narediti. Vsi agenti Claude jo imajo v denyRead (agentArgs), tek le svojo podmapo.
-func shortTempRoot() string {
-	base := os.TempDir()
-	if runtime.GOOS != "windows" && len(base) > maxRunTemp-24 {
-		base = "/tmp"
+// tempBase: začasna mapa sistema za korene runTempDir ali /tmp, če je ta predolga (Windows: vedno svoja).
+func tempBase() string {
+	if base := os.TempDir(); runtime.GOOS == "windows" || len(base) <= maxRunTemp-24 {
+		return base
 	}
-	d, err := os.MkdirTemp(base, "mgw-")
+	return "/tmp"
+}
+
+// shortTempRoot: nov koren prehoda za runTempDir (0700, naključno ime mgw-*); "" = ni bilo mogoče.
+func shortTempRoot() string {
+	d, err := os.MkdirTemp(tempBase(), "mgw-")
 	if err != nil {
 		return ""
 	}
@@ -1347,10 +1350,63 @@ func shortTempRoot() string {
 	return d
 }
 
-// runTempDir: TMPDIR enega teka Claude CLI v klonu (0700, naključno ime pod tmpRoot); done jo pobriše (RemoveAll ne
-// sledi povezavam).
-func (s *server) runTempDir() (dir string, done func(), err error) {
-	if dir, err = os.MkdirTemp(s.tmpRoot, ""); err != nil {
+// ownTempRoot: p je mapa (ne povezava) tega uporabnika z dovoljenji 0700 (Windows: le mapa).
+func ownTempRoot(p string) bool {
+	fi, err := os.Lstat(p)
+	if err != nil || !fi.IsDir() {
+		return false
+	}
+	return runtime.GOOS == "windows" || fi.Mode().Perm() == 0o700 && ownedByMe(p)
+}
+
+// tempRoot (M1): koren prehoda za TMPDIR tekov; vsi agenti Claude ga imajo v denyRead (agentArgs). Čistilec /tmp
+// (macOS po 3 dneh, systemd-tmpfiles po 10) ga lahko pobriše, drug uporabnik pa nato podtakne mapo z istim imenom:
+// zato se pred vsakim tekom preveri in po potrebi naredi nov; ob vsakem teku se dotakne (mtime). "" = ga ni.
+func (s *server) tempRoot() string {
+	s.tmpMu.Lock()
+	defer s.tmpMu.Unlock()
+	if s.tmpRoot == "" || !ownTempRoot(s.tmpRoot) {
+		s.tmpRoot = shortTempRoot()
+	}
+	if s.tmpRoot != "" {
+		now := time.Now()
+		os.Chtimes(s.tmpRoot, now, now)
+	}
+	return s.tmpRoot
+}
+
+// staleTempRoot: koren, ki ga ob zagonu pobrišemo (prehod istega uporabnika ga ni rabil dan; živ prehod si ga naredi znova).
+const staleTempRoot = 24 * time.Hour
+
+// cleanStaleTempRoots (L2): ob zagonu pobriše stare korene mgw-* v base, ki so mape tega uporabnika z 0700 (povezav ne
+// sledi, tujih in novejših ne pobriše).
+func cleanStaleTempRoots(base string) {
+	ents, _ := os.ReadDir(base)
+	for _, e := range ents {
+		p := filepath.Join(base, e.Name())
+		if fi, err := os.Lstat(p); err == nil && strings.HasPrefix(e.Name(), "mgw-") && ownTempRoot(p) && time.Since(fi.ModTime()) > staleTempRoot {
+			os.RemoveAll(p)
+		}
+	}
+}
+
+// dropTempRoot (L2): ob koncu prehoda pobriše koren.
+func (s *server) dropTempRoot() {
+	s.tmpMu.Lock()
+	defer s.tmpMu.Unlock()
+	if s.tmpRoot != "" && ownTempRoot(s.tmpRoot) {
+		os.RemoveAll(s.tmpRoot)
+	}
+	s.tmpRoot = ""
+}
+
+// runTempDir: TMPDIR enega teka Claude CLI v klonu (0700, naključno ime pod root iz tempRoot); done jo pobriše
+// (RemoveAll ne sledi povezavam). Brez korena napaka (L1: ne v skupni začasni mapi).
+func runTempDir(root string) (dir string, done func(), err error) {
+	if root == "" {
+		return "", nil, errors.New("no gateway temporary folder")
+	}
+	if dir, err = os.MkdirTemp(root, ""); err != nil {
 		return "", nil, err
 	}
 	return dir, func() { os.RemoveAll(dir) }, nil

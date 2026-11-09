@@ -355,7 +355,7 @@ func TestScratchOverlapAndProviderRename(t *testing.T) {
 	if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/general", `{"scratch":""}`); st != 400 || !strings.Contains(b, "contains it") {
 		t.Fatalf("default scratch with an allowed folder around it: %d %s", st, b)
 	}
-	if strings.Contains(strings.Join(s.agentArgs(t.TempDir(), false), " "), "--add-dir "+parent) {
+	if strings.Contains(strings.Join(s.agentArgs(t.TempDir(), false, ""), " "), "--add-dir "+parent) {
 		t.Fatal("allowed folder around Scratch passed to claude")
 	}
 	s.update(func(c *serveConfig) error {
@@ -1154,19 +1154,20 @@ func TestRunTempDir(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Setenv("TMPDIR", "/tmp/"+strings.Repeat("x", 80)) // dolg TMPDIR prehoda: koren gre v /tmp
 	}
-	s := &server{tmpRoot: shortTempRoot()}
-	if s.tmpRoot == "" {
+	s := &server{}
+	root := s.tempRoot()
+	if root == "" {
 		t.Fatal("no temp root")
 	}
-	defer os.RemoveAll(s.tmpRoot)
-	dir, done, err := s.runTempDir()
+	defer os.RemoveAll(root)
+	dir, done, err := runTempDir(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	other, done2, _ := s.runTempDir()
+	other, done2, _ := runTempDir(root)
 	defer done2()
-	if len(dir) > maxRunTemp || filepath.Dir(dir) != s.tmpRoot || dir == other {
-		t.Fatalf("run temp %q (root %q, other %q)", dir, s.tmpRoot, other)
+	if len(dir) > maxRunTemp || filepath.Dir(dir) != root || dir == other {
+		t.Fatalf("run temp %q (root %q, other %q)", dir, root, other)
 	}
 	if st, err := os.Stat(dir); err != nil || runtime.GOOS != "windows" && st.Mode().Perm() != 0o700 {
 		t.Fatalf("mode: %v %v", st, err)
@@ -1180,5 +1181,78 @@ func TestRunTempDir(t *testing.T) {
 	}
 	if _, err := os.Stat(keep); err != nil {
 		t.Fatal("removal followed a symlink")
+	}
+}
+
+// Brez korena prehoda ni TMPDIR teka (ne v skupni začasni mapi sistema).
+func TestRunTempDirNoRoot(t *testing.T) {
+	if dir, _, err := runTempDir(""); err == nil {
+		os.RemoveAll(dir)
+		t.Fatal("run temp without a root")
+	}
+}
+
+// Koren prehoda, ki ga je pobrisal čistilec /tmp, se naredi znova; podtaknjene mape z istim imenom (druga dovoljenja,
+// povezava) prehod ne uporabi.
+func TestTempRootRefreshed(t *testing.T) {
+	s := &server{}
+	r1 := s.tempRoot()
+	os.RemoveAll(r1)
+	r2 := s.tempRoot()
+	defer os.RemoveAll(r2)
+	if st, err := os.Lstat(r2); r2 == "" || r2 == r1 || err != nil || !st.IsDir() {
+		t.Fatalf("root deleted: not recreated: %q → %q (%v)", r1, r2, err)
+	}
+	if runtime.GOOS == "windows" {
+		return
+	}
+	os.RemoveAll(r2)
+	os.Mkdir(r2, 0o755) // podtaknjena: druga dovoljenja
+	defer os.RemoveAll(r2)
+	r3 := s.tempRoot()
+	defer os.RemoveAll(r3)
+	if r3 == r2 || r3 == "" {
+		t.Fatalf("planted 0755 root used: %q", r3)
+	}
+	os.RemoveAll(r3)
+	target := t.TempDir()
+	os.Chmod(target, 0o700)
+	os.Symlink(target, r3) // podtaknjena: povezava
+	defer os.Remove(r3)
+	r4 := s.tempRoot()
+	defer os.RemoveAll(r4)
+	if r4 == r3 || r4 == "" {
+		t.Fatalf("planted symlink root used: %q", r4)
+	}
+}
+
+// Ob zagonu se pobrišejo le stari koreni tega uporabnika (mape 0700 mgw-*), ne povezave, tuja dovoljenja ali novi.
+func TestCleanStaleTempRoots(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("perm bits")
+	}
+	base, outside := t.TempDir(), t.TempDir()
+	old := time.Now().Add(-48 * time.Hour)
+	mk := func(name string, perm os.FileMode, age time.Time) string {
+		p := filepath.Join(base, name)
+		os.Mkdir(p, perm)
+		os.Chmod(p, perm)
+		os.WriteFile(filepath.Join(p, "f"), nil, 0o600)
+		os.Chtimes(p, age, age)
+		return p
+	}
+	stale, open, fresh, other := mk("mgw-1", 0o700, old), mk("mgw-2", 0o755, old), mk("mgw-3", 0o700, time.Now()), mk("x-4", 0o700, old)
+	os.WriteFile(filepath.Join(outside, "keep"), nil, 0o600)
+	link := filepath.Join(base, "mgw-5")
+	os.Symlink(outside, link)
+	os.Chtimes(outside, old, old)
+	cleanStaleTempRoots(base)
+	if _, err := os.Lstat(stale); !os.IsNotExist(err) {
+		t.Fatal("stale root kept")
+	}
+	for _, p := range []string{open, fresh, other, link, filepath.Join(outside, "keep")} {
+		if _, err := os.Lstat(p); err != nil {
+			t.Fatalf("%s removed", p)
+		}
 	}
 }
