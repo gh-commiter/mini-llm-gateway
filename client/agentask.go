@@ -47,13 +47,15 @@ func agentBody(model, question string) []byte {
 }
 
 // agentAskArgs: model in besede vprašanja iz »-p --model <id> [--] vprašanje«; po »--« je vse vprašanje (N5).
-// bad = prva nedovoljena možnost.
+// bad = prva nedovoljena možnost. --minigw-ro, --minigw-work=… in --minigw-role izpusti (kot Swift, ki jih odstrani prej).
 func agentAskArgs(args []string) (model string, words []string, bad string) {
 	for i := 0; i < len(args); i++ {
 		switch a := args[i]; {
 		case a == "--":
 			return model, append(words, args[i+1:]...), ""
-		case a == "-p" || a == "--print":
+		case a == "-p" || a == "--print", a == "--minigw-ro", strings.HasPrefix(a, "--minigw-work="), strings.HasPrefix(a, "--minigw-role="):
+		case a == "--minigw-role" && i+1 < len(args):
+			i++
 		case a == "--model" && i+1 < len(args):
 			model, i = args[i+1], i+1
 		case strings.HasPrefix(a, "--model="):

@@ -247,6 +247,9 @@ func TestAgentAskBodyAndProxy(t *testing.T) {
 	if m, w, bad := agentAskArgs([]string{"-p", "--model", "m", "--", "- fix x", "--y"}); m != "m" || bad != "" || strings.Join(w, "|") != "- fix x|--y" {
 		t.Fatalf("after --: %q %q %q", m, w, bad)
 	}
+	if m, w, bad := agentAskArgs([]string{"--minigw-ro", "--minigw-role", "r", "-p", "--model", "m", "--minigw-work=sync", "--minigw-role=x", "q"}); m != "m" || bad != "" || strings.Join(w, "|") != "q" {
+		t.Fatalf("minigw flags: %q %q %q", m, w, bad)
+	}
 	if _, _, bad := agentAskArgs([]string{"-p", "--model", "m", "--verbose", "q"}); bad != "--verbose" {
 		t.Fatalf("flag accepted: %q", bad)
 	}

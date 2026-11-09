@@ -7,7 +7,7 @@ allowed-tools: Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw --minigw-ro -p --model *), 
 
 Profiles (`--name`, `profiles`, `--minigw-profile`, `<model>@<profile>`) need minigw 0.5.18 or newer: if the first line of `"${CLAUDE_PLUGIN_DATA}/bin/minigw" --version` is older, tell the user to run `/minigw:gw update` and do not use them (an older minigw passes them to claude).
 
-1. Collect what to review: the user's argument, or `git diff` and `git diff --staged` in a git repository.
+1. Collect what to review: the user's argument, or `git diff` and `git diff --staged` in a git repository. Read the diff yourself; the reviewer does not get it pasted (see below).
 2. Run the review with Bash (timeout 600000 ms). The folder is shared read-only (`--minigw-ro`): the reviewer cannot change files. Leave out `--minigw-ro` only if the user passed `--rw` (for example so the reviewer may run a build that writes output):
 
 ```sh
@@ -15,12 +15,18 @@ Profiles (`--name`, `profiles`, `--minigw-profile`, `<model>@<profile>`) need mi
 You are an independent reviewer. Do not modify files.
 Goal of the change: <one or two sentences>
 Review the following in the current folder and report concrete problems first (bug, wrong assumption, missing case, security), with file and line, then smaller improvements briefly:
-<file names, git range or plan>
+<git range or "the uncommitted changes (git diff, git diff --staged)", and the changed file names>
+Changes per file (file, line ranges, what each hunk changes):
+<description per file, or the plan>
 PROMPT
 )"
 ```
 
-minigw refuses a prompt (also on stdin) that starts with `/` or has `@` at the start of a word (`@file`, `(@x`, `"@x`): the nested claude would run a slash command or attach that file. A pasted diff has `@@` headers and often `@` attributes, so do not paste it: name the files and the range (for example "the uncommitted changes, `git diff` and `git diff --staged`" or "`git diff <base>..HEAD`"); the reviewer reads them in the shared folder.
+minigw refuses a prompt (also on stdin) that starts with `/` or has `@` at the start of a word (`@file`, `(@x`, `"@x`): the nested claude would run a slash command or attach that file. A pasted diff has `@@` headers and often `@` attributes, so never paste it. Give the reviewer two things instead:
+- the git range or "the uncommitted changes" and the changed file names, so a reviewer that sees `.git` (a Mac gateway in direct mode) can run `git diff` itself;
+- always also a description of the change per file: file name, line ranges and what each hunk changes. Quote changed lines only when they have no `@` at the start of a word and do not start with `/`; rewrite or describe the others.
+
+On a Windows or Linux gateway (read-only sync, no `.git`) the reviewer sees only the current files and this description, so make it complete enough to review from.
 
 `--profile <p>`: use `--model claude-codex-gpt-6-astra@<p>` (that gateway; `minigw profiles` lists them).
 

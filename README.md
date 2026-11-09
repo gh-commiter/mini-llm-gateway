@@ -333,6 +333,13 @@ minigw models                           # list available models (<model>@<profil
 minigw connect 192.168.1.20 --token …   # use a gateway on another Mac (--name P adds it as profile P)
 ```
 
+In a terminal any claude option works. Inside Claude Code (a skill, a subagent or its Bash tool) minigw passes on
+only `-p`/`--print`, `--model`, `--output-format`, `--verbose`, `--max-turns`, `--append-system-prompt`,
+`--fallback-model` and `-h`/`--help`, and refuses any other option; after `--` everything is the prompt. There it also
+refuses a prompt (in the arguments or on stdin) that starts with `/` or has `@` at the start of a word, and with `-p`,
+inside Claude Code or with stdin that is not a terminal the nested claude runs with file mentions and slash commands
+off. `MINIGW_ALLOW_UNSAFE_FLAGS=1` turns the option and prompt checks off for a person who wants them off.
+
 Subagents can use gateway models too, e.g. `model: claude-siri-ai` in `.claude/agents/<name>.md`.
 
 **Several gateways at once (profiles).** One client can use, for example, the Mac mini and a Windows gateway in the
@@ -377,12 +384,12 @@ Inside a shared folder everything is shared, hidden folders and files included (
 credentials out of project folders you use with a gateway, or list them in `.gitignore` for sync and worktree mode.
 The list is per computer: with several profiles every gateway gets the folder on its first agent request.
 **Protected paths:** as in sync mode, the mount refuses every write (403) to `.git` (in any letter case, also `git~1`),
-`.claude/settings*.json`, `.vscode/tasks.json` and `.envrc`, also through a link in the folder; reading them still
-works. In direct mode (`--minigw-work=direct`, or `minigw share add --work=direct`) agents therefore cannot
-`git commit` or change the folder's Claude Code settings: the default auto mode uses worktree for a git repository, so
-commits work there. Moving, copying or
-deleting a folder is refused too when it would create or remove one of these files. A gateway on the same Mac shares
-no folder (agents work in the folder itself), so this protection does not apply there.
+`.claude/settings*.json`, `.claude/hooks`, `.claude/commands`, `.claude/agents` and `.claude/skills` (at any depth),
+`.husky`, `.githooks`, `.vscode/tasks.json` and `.envrc`, also through a link in the folder; reading them still works.
+In direct mode (`--minigw-work=direct`, or `minigw share add --work=direct`) agents therefore cannot `git commit` or
+change the folder's Claude Code settings: the default auto mode uses worktree for a git repository, so commits work
+there. Moving, copying or deleting a folder is refused too when it would create or remove one of these files. A
+gateway on the same Mac shares no folder (agents work in the folder itself), so this protection does not apply there.
 **Read-only:** `minigw --minigw-ro …` (or `MINIGW_SHARE=ro`, for example in the `env` of Claude Code's settings for the
 plugin) shares the folder read-only: minigw refuses every write, the gateway mounts it read-only and runs Codex and
 Grok in their read-only sandbox, Copilot without its write tool and Claude CLI only with its reading tools (Read, Grep, Glob, web search and fetch;
@@ -403,11 +410,12 @@ builds then work on the gateway's local disk.
 - **Never sent, never copied back:**
   - files matched by `.gitignore` or the built-in list (`.git`, `target/`, `.build/`, `node_modules/`, `build/`,
     `dist/`, `DerivedData/` …);
-  - files the agent puts into `.git`, `.claude/settings*.json`, `.vscode/tasks.json` or `.envrc`, also through a link
-    in your folder (for example `hooks → .git/hooks`): the check uses the real path.
+  - files the agent puts into `.git`, `.claude/settings*.json`, `.claude/{hooks,commands,agents,skills}` (at any
+    depth), `.husky`, `.githooks`, `.vscode/tasks.json` or `.envrc`, also through a link in your folder (for example
+    `hooks → .git/hooks`): the check uses the real path.
 - **The list above is defence in depth, not a sandbox for your folder:** an agent that may write can still add code
-  that runs on your computer later, for example in `.husky/`, `.githooks/`, `package.json` scripts, a `Makefile` or
-  `.mcp.json`. Review an agent's changes before you run builds or hooks, or share the folder read-only.
+  that runs on your computer later, for example in `package.json` scripts, a `Makefile` or `.mcp.json`. Review an
+  agent's changes before you run builds or hooks, or share the folder read-only.
 - **Conflicts:** if you changed a file the agent also changed, yours stays and the agent's version is saved next to it
   as `<name>.minigw-conflict`.
 - **Read-only:** with `--minigw-ro` nothing comes back.
