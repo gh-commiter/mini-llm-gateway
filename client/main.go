@@ -681,7 +681,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "minigw: "+cwd+" is not in a git repository; worktree mode is not possible")
 		}
 		if noSnapshot != "" {
-			fmt.Fprintln(os.Stderr, "minigw: "+noSnapshot+", so worktree mode is not possible; using "+tries[0])
+			fmt.Fprintln(os.Stderr, "minigw: "+noSnapshot+"; using "+tries[0])
 		}
 		var ok bool
 		share, ok = registerShare(c, sid, cwd, readOnly, top, tries, false, implicit)
@@ -1021,8 +1021,12 @@ func registerShare(c connection, sid, cwd string, readOnly bool, top string, tri
 		return sc, false
 	}
 	t, auto := gitToplevel(cwd), []string{"sync"}
-	if !readOnly && repoRoot(t, cwd) && gitHasCommit(t) {
-		auto = []string{"worktree", "sync"}
+	if !readOnly && repoRoot(t, cwd) {
+		if why := snapshotBlocker(t); why == "" {
+			auto = []string{"worktree", "sync"}
+		} else if !quiet {
+			fmt.Fprintln(os.Stderr, "minigw: "+why)
+		}
 	}
 	if !quiet {
 		fmt.Fprintln(os.Stderr, "minigw: the gateway has no folder mount; using "+auto[0]+" mode (--minigw-work= to choose)")

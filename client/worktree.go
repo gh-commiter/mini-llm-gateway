@@ -65,18 +65,72 @@ func gitHasCommit(top string) bool {
 }
 
 // snapshotBlocker: zakaj ni posnetka ("" = je): repozitorij brez commita ali neprezrt ugnezden repozitorij brez commita
-// (git init; git add -A ga ne more dodati). git ls-files -o ugnezdeni repozitorij izpiše kot »pot/«.
+// (git init; git add -A ga ne more dodati), zato sync (kot Swift Worktree.snapshotBlocker). Prezrte poti (build/_deps) gredo.
 func snapshotBlocker(top string) string {
 	if !gitHasCommit(top) {
-		return "the git repository " + top + " has no commit yet"
+		return "the git repository " + oneLine(top) + " has no commit yet, so worktree mode is not possible"
 	}
-	out, _ := gitUser(top, nil, "ls-files", "-o", "--exclude-standard", "-z")
-	for _, p := range strings.Split(out, "\x00") {
-		if strings.HasSuffix(p, "/") && !gitHasCommit(filepath.Join(top, filepath.FromSlash(p))) {
-			return "the nested repository " + strings.TrimSuffix(p, "/") + " in " + top + " has no commit (commit in it or add it to .gitignore)"
+	if p := nestedNoCommit(top); p != "" {
+		return "the nested repository " + oneLine(p) + " in " + oneLine(top) + " has no commit (commit in it or add it to .gitignore), so worktree mode is not possible"
+	}
+	return ""
+}
+
+// nestedNoCommit: prvi neprezrt ugnezden repozitorij brez commita v top, relativna pot; "" = ni ga. Nesledene mape git
+// strne (--directory), zato le v njih poiščemo .git po datotečnem sistemu in vprašamo check-ignore.
+func nestedNoCommit(top string) string {
+	var deep []string
+	for _, d := range gitZ(top, "", "ls-files", "-o", "--exclude-standard", "--directory", "--no-empty-directory", "-z") {
+		if !strings.HasSuffix(d, "/") {
+			continue
+		}
+		if _, err := os.Lstat(filepath.Join(top, filepath.FromSlash(d), ".git")); err == nil {
+			if !gitHasCommit(filepath.Join(top, filepath.FromSlash(d))) {
+				return strings.TrimSuffix(d, "/")
+			}
+			continue
+		}
+		filepath.WalkDir(filepath.Join(top, filepath.FromSlash(d)), func(p string, e os.DirEntry, err error) error {
+			if err == nil && e.Name() == ".git" {
+				if rel, err := filepath.Rel(top, filepath.Dir(p)); err == nil {
+					deep = append(deep, filepath.ToSlash(rel)+"/")
+				}
+				if e.IsDir() {
+					return filepath.SkipDir
+				}
+			}
+			return nil
+		})
+	}
+	if len(deep) == 0 {
+		return ""
+	}
+	ignored := map[string]bool{}
+	for _, p := range gitZ(top, strings.Join(deep, "\x00")+"\x00", "check-ignore", "--stdin", "-z") {
+		ignored[p] = true
+	}
+	for _, p := range deep {
+		if !ignored[p] && !gitHasCommit(filepath.Join(top, filepath.FromSlash(p))) {
+			return strings.TrimSuffix(p, "/")
 		}
 	}
 	return ""
+}
+
+// gitZ: git v top (brez hookov) z izhodom -z, razdeljenim na NUL (brez TrimSpace: imena s presledki ostanejo).
+func gitZ(top, stdin string, args ...string) []string {
+	cmd := command("git", append([]string{"-c", "core.hooksPath=" + os.DevNull, "-c", "core.fsmonitor=false"}, args...)...)
+	cmd.Dir = top
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd.Stdin = strings.NewReader(stdin)
+	out, _ := cmd.Output()
+	var r []string
+	for _, f := range strings.Split(string(out), "\x00") {
+		if f != "" {
+			r = append(r, f)
+		}
+	}
+	return r
 }
 
 // gitSnapshot: HEAD ali commit z neshranjenimi spremembami (začasni indeks: indeks, veje in mapa uporabnika ostanejo).

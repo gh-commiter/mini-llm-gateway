@@ -206,13 +206,15 @@ clone when the session ends.
 filters, and does not change `.git/config`. If you committed on that branch yourself, your commits stay and the
 agent's version is not fetched.
 
-**Nested repositories and submodules:** git on the gateway never enters a repository inside the clone. A nested
-repository in a folder git ignores (for example `build/_deps` from CMake FetchContent) is fine. A nested repository
-or submodule at a path git does not ignore stops the result: minigw prints "changes inside the nested repository
-<path> do not come back in worktree mode; use sync", no branch is delivered for that run, and the next request starts
-from a fresh clone. Use sync for work inside submodules. A nested repository that git does not ignore and that has no
-commit yet (`git init` only) cannot be part of the snapshot: minigw says so when it starts ("the nested repository
-<path> in … has no commit") and uses sync instead; commit in it or add it to `.gitignore` to use worktree mode.
+**Nested repositories and submodules:** changes inside nested repositories and submodules do not come back yet;
+per-repository worktrees are coming in 0.5.21. Today the clone has a submodule, or a nested repository with commits,
+only as an empty folder (its commit), so the agent does not see its files; the rest of the branch comes back as usual.
+A nested repository that git does not ignore and that has no commit yet (`git init` only) cannot be part of the
+snapshot: minigw says so when it starts ("the nested repository <path> in … has no commit") and uses sync instead;
+commit in it or add it to `.gitignore` to use worktree mode. A nested repository in a folder git ignores (for example
+`build/_deps` from CMake FetchContent) is fine. git on the gateway never enters a repository inside the clone; if the
+agent itself creates one there, minigw prints "changes inside the nested repository <path> do not come back in
+worktree mode; use sync" and no branch is delivered for that run.
 
 **Agents in worktree mode:**
 

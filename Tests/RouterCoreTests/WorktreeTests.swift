@@ -775,16 +775,24 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     let snap = try #require(Worktree.snapshot(top: root.path))
     #expect(Worktree.hasCommit(top: root.path))
     #expect(g(root, "ls-tree", "-r", "--name-only", snap) == ".gitignore\nnew.txt")
-    // Neprezrt ugnezden repozitorij brez commita: ni posnetka, razlog ga imenuje (ne zunanjega); prezrt ali s commitom gre.
+    // Neprezrt ugnezden repozitorij brez commita: ni posnetka, razlog ga imenuje (ne zunanjega, ime očiščeno); prezrt ali
+    // s commitom gre (gitlink).
     #expect(Worktree.snapshotBlocker(top: root.path) == nil)
     g(root.appendingPathComponent("build"), "init", "-q")
+    #expect(Worktree.snapshotBlocker(top: root.path) == nil)
     let lib = root.appendingPathComponent("vendor/lib")
     try FileManager.default.createDirectory(at: lib, withIntermediateDirectories: true)
     g(lib, "init", "-q")
     #expect(Worktree.snapshot(top: root.path) == nil)
-    #expect(Worktree.snapshotBlocker(top: root.path)?.contains("nested repository vendor/lib ") == true)
+    #expect(Worktree.snapshotBlocker(top: root.path)?.contains("nested repository vendor/lib in ") == true)
     try file(lib, "a.txt", "x\n"); g(lib, "add", "a.txt"); g(lib, "commit", "-qm", "lib")
     #expect(Worktree.snapshotBlocker(top: root.path) == nil && Worktree.snapshot(top: root.path) != nil)
+    try FileManager.default.removeItem(at: root.appendingPathComponent("vendor"))
+    let deep = root.appendingPathComponent("new/x\ny")  // globoko v nesledeni mapi, ime z novo vrstico
+    try FileManager.default.createDirectory(at: deep, withIntermediateDirectories: true)
+    try file(root, "new/f.txt", "x\n")
+    g(deep, "init", "-q")
+    #expect(Worktree.snapshotBlocker(top: root.path)?.contains("nested repository new/x y in ") == true)
 }
 
 /// Auto (privzeti ali izrecni) le v korenu repozitorija (kot Go repoRoot/workTop); vrstica o veji le z delom agenta

@@ -36,7 +36,7 @@ public enum Worktree {
     /// `sandbox`: profil sandbox-exec (finalize: branje le v klonu, zrcalu in začasni mapi).
     /// `timeout`: git, ki teče dlje, dobi SIGKILL (L2: ogromen repozitorij, zastal disk).
     static func run(_ args: [String], cwd: String? = nil, env extra: [String: String] = [:], safe: Bool = true, hooks: Bool = true,
-                    input: Data? = nil, sandbox: String? = nil, timeout: TimeInterval? = nil) -> (status: Int32, out: String) {
+                    input: Data? = nil, sandbox: String? = nil, timeout: TimeInterval? = nil, trim: Bool = true) -> (status: Int32, out: String) {
         let guardrails = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "submodule.recurse=false",
                           "-c", "protocol.allow=never", "-c", "protocol.file.allow=always", "-c", "maintenance.auto=false", "-c", "gc.auto=0",
                           "-c", "core.commitGraph=false", "-c", "core.multiPackIndex=false"]
@@ -84,7 +84,8 @@ public enum Worktree {
         while waitpid(pid, &st, 0) == -1 && errno == EINTR {}
         done.withLock { $0 = true }
         let status = st & 0x7f == 0 ? (st >> 8) & 0xff : 128 + (st & 0x7f)
-        return (status, String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
+        let out = String(decoding: data, as: UTF8.self)
+        return (status, trim ? out.trimmingCharacters(in: .whitespacesAndNewlines) : out)
     }
 
     /// Datoteka je git bundle (v2 ali v3): sicer je git fetch ne dobi (npr. pot do repozitorija namesto bundla).
@@ -124,12 +125,38 @@ public enum Worktree {
     }
 
     /// Zakaj ni posnetka (nil = je): repozitorij brez commita ali neprezrt ugnezden repozitorij brez commita (git init;
-    /// git add -A ga ne more dodati). git ls-files -o ugnezdeni repozitorij izpiše kot »pot/« (kot Go snapshotBlocker).
+    /// git add -A ga ne more dodati), zato sync (kot Go snapshotBlocker). Prezrte poti (build/_deps) gredo.
     public static func snapshotBlocker(top: String) -> String? {
-        guard hasCommit(top: top) else { return "the git repository \(top) has no commit yet" }
-        let out = run(["ls-files", "-o", "--exclude-standard", "-z"], cwd: top, safe: false, hooks: false).out
-        let nested = out.split(separator: "\0").first { $0.hasSuffix("/") && !hasCommit(top: top + "/" + $0) }
-        return nested.map { "the nested repository \($0.dropLast()) in \(top) has no commit (commit in it or add it to .gitignore)" }
+        guard hasCommit(top: top) else { return "the git repository \(Profiles.line(top, max: 500)) has no commit yet, so worktree mode is not possible" }
+        return nestedNoCommit(top: top).map {
+            "the nested repository \(Profiles.line($0, max: 200)) in \(Profiles.line(top, max: 500)) has no commit (commit in it or add it to .gitignore), so worktree mode is not possible"
+        }
+    }
+
+    /// Prvi neprezrt ugnezden repozitorij brez commita v top, relativna pot (kot Go nestedNoCommit). Nesledene mape git
+    /// strne (--directory), zato le v njih poiščemo .git po datotečnem sistemu in vprašamo check-ignore.
+    static func nestedNoCommit(top: String) -> String? {
+        func z(_ args: [String], _ input: Data? = nil) -> [String] {
+            run(["-c", "core.fsmonitor=false"] + args, cwd: top, safe: false, hooks: false, input: input, trim: false).out
+                .split(separator: "\0").map(String.init)
+        }
+        var deep: [String] = []
+        for d in z(["ls-files", "-o", "--exclude-standard", "--directory", "--no-empty-directory", "-z"]) where d.hasSuffix("/") {
+            let dir = URL(fileURLWithPath: top).appendingPathComponent(d)
+            var st = stat()
+            if lstat(dir.appendingPathComponent(".git").path, &st) == 0 {
+                if !hasCommit(top: dir.path) { return String(d.dropLast()) }
+                continue
+            }
+            guard let e = FileManager.default.enumerator(at: dir, includingPropertiesForKeys: nil) else { continue }
+            for case let u as URL in e where u.lastPathComponent == ".git" {
+                deep.append(d + String(u.deletingLastPathComponent().path.dropFirst(dir.path.count + 1)) + "/")
+                e.skipDescendants()
+            }
+        }
+        guard !deep.isEmpty else { return nil }
+        let ignored = Set(z(["check-ignore", "--stdin", "-z"], Data((deep.joined(separator: "\0") + "\0").utf8)))
+        return deep.first { !ignored.contains($0) && !hasCommit(top: top + "/" + $0) }.map { String($0.dropLast()) }
     }
 
     /// Posnetek stanja: HEAD ali commit z neshranjenimi spremembami (sledene in nove, neprezrte), narejen z začasnim

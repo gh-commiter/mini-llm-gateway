@@ -262,21 +262,34 @@ func TestSnapshotSkipsIgnoredFilesAndNeedsACommit(t *testing.T) {
 	if got := gitT(t, repo, "ls-tree", "-r", "--name-only", snap); got != ".gitignore\nnew.txt" {
 		t.Fatalf("snapshot has %q", got)
 	}
-	// Neprezrt ugnezden repozitorij brez commita: ni posnetka, razlog ga imenuje (ne zunanjega); prezrt ali s commitom gre.
+	// Neprezrt ugnezden repozitorij brez commita: ni posnetka, razlog ga imenuje (ne zunanjega, ime očiščeno); prezrt ali
+	// s commitom gre (gitlink).
 	if why := snapshotBlocker(repo); why != "" {
 		t.Fatalf("blocker without nested repo: %q", why)
 	}
 	gitT(t, filepath.Join(repo, "build"), "init", "-q")
-	os.MkdirAll(filepath.Join(repo, "vendor", "lib"), 0o755)
-	gitT(t, filepath.Join(repo, "vendor", "lib"), "init", "-q")
-	if why := snapshotBlocker(repo); gitSnapshot(repo) != "" || !strings.Contains(why, "nested repository vendor/lib ") {
+	if why := snapshotBlocker(repo); why != "" {
+		t.Fatalf("ignored nested repo: %q", why)
+	}
+	lib := filepath.Join(repo, "vendor", "lib")
+	os.MkdirAll(lib, 0o755)
+	gitT(t, lib, "init", "-q")
+	if why := snapshotBlocker(repo); gitSnapshot(repo) != "" || !strings.Contains(why, "nested repository vendor/lib in ") {
 		t.Fatalf("nested repo without commit: %q", why)
 	}
-	writeT(t, filepath.Join(repo, "vendor", "lib", "a.txt"), "x\n")
-	gitT(t, filepath.Join(repo, "vendor", "lib"), "add", "a.txt")
-	gitT(t, filepath.Join(repo, "vendor", "lib"), "commit", "-qm", "lib")
+	writeT(t, filepath.Join(lib, "a.txt"), "x\n")
+	gitT(t, lib, "add", "a.txt")
+	gitT(t, lib, "commit", "-qm", "lib")
 	if why := snapshotBlocker(repo); why != "" || !shaRe.MatchString(gitSnapshot(repo)) {
 		t.Fatalf("nested repo with a commit: %q", why)
+	}
+	os.RemoveAll(filepath.Join(repo, "vendor"))
+	deep := filepath.Join(repo, "new", "x\ny") // globoko v nesledeni mapi, ime z novo vrstico
+	os.MkdirAll(deep, 0o755)
+	writeT(t, filepath.Join(repo, "new", "f.txt"), "x\n")
+	gitT(t, deep, "init", "-q")
+	if why := snapshotBlocker(repo); !strings.Contains(why, "nested repository new/x y in ") {
+		t.Fatalf("deep nested repo: %q", why)
 	}
 }
 

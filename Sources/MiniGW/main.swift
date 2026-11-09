@@ -897,7 +897,7 @@ var share = ShareClient(c, session: sid, root: URL(fileURLWithPath: cwd), readOn
 var registered = false
 if wantShare, !sid.isEmpty {
     if work == "worktree", top == nil { err.write(Data("minigw: \(cwd) is not in a git repository; worktree mode is not possible\n".utf8)) }
-    if let noSnapshot { err.write(Data("minigw: \(noSnapshot), so worktree mode is not possible; using \(tries[0])\n".utf8)) }
+    if let noSnapshot { err.write(Data("minigw: \(noSnapshot); using \(tries[0])\n".utf8)) }
     (share, registered) = registerShare(c, tries: tries, quiet: false)
 }
 if !wantShare || sid.isEmpty {
@@ -929,7 +929,9 @@ if !wantShare || sid.isEmpty {
     }
     guard implicit, sc.refusal.hasPrefix("this gateway supports --minigw-work=") else { return (sc, false) }
     let t = Worktree.toplevel(cwd)
-    let auto = !readOnly && SharedFolders.repoRoot(t, cwd) && t.map { Worktree.hasCommit(top: $0) } == true ? ["worktree", "sync"] : ["sync"]
+    let why = !readOnly && SharedFolders.repoRoot(t, cwd) ? t.map { Worktree.snapshotBlocker(top: $0) ?? "" } : nil
+    if let why, !why.isEmpty, !quiet { err.write(Data("minigw: \(why)\n".utf8)) }
+    let auto = why == "" ? ["worktree", "sync"] : ["sync"]
     if !quiet { err.write(Data("minigw: the gateway has no folder mount; using \(auto[0]) mode (--minigw-work= to choose)\n".utf8)) }
     return registerShare(c, tries: auto, quiet: quiet, top: t, implicit: false)
 }
