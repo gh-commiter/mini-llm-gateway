@@ -64,29 +64,27 @@ func gitHasCommit(top string) bool {
 	return err == nil && shaRe.MatchString(head)
 }
 
-// snapshotBlocker: zakaj ni posnetka ("" = je): repozitorij brez commita ali neprezrt ugnezden repozitorij brez commita
-// (git init; git add -A ga ne more dodati), zato sync (kot Swift Worktree.snapshotBlocker). Prezrte poti (build/_deps) gredo.
+// snapshotBlocker: zakaj ni posnetka ("" = je): repozitorij brez commita (kot Swift Worktree.snapshotBlocker). Mapa v
+// njem načina nikoli ne spremeni: ugnezden repozitorij brez commita gre iz posnetka (nestedNoCommit).
 func snapshotBlocker(top string) string {
 	if !gitHasCommit(top) {
 		return "the git repository " + oneLine(top) + " has no commit yet, so worktree mode is not possible"
 	}
-	if p := nestedNoCommit(top); p != "" {
-		return "the nested repository " + oneLine(p) + " in " + oneLine(top) + " has no commit (commit in it or add it to .gitignore), so worktree mode is not possible"
-	}
 	return ""
 }
 
-// nestedNoCommit: prvi neprezrt ugnezden repozitorij brez commita v top, relativna pot; "" = ni ga. Nesledene mape git
-// strne (--directory), zato le v njih poiščemo .git po datotečnem sistemu in vprašamo check-ignore.
-func nestedNoCommit(top string) string {
-	var deep []string
+// nestedNoCommit: neprezrti ugnezdeni repozitoriji brez commita v top (git init; kot gitlink jih git add -A ne more
+// dodati), relativne poti. Nesledene mape git strne (--directory), zato le v njih poiščemo .git po datotečnem sistemu
+// in vprašamo check-ignore. Prezrte poti (build/_deps) in repozitoriji s commitom (gitlink) niso tu.
+func nestedNoCommit(top string) []string {
+	var deep, out []string
 	for _, d := range gitZ(top, "", "ls-files", "-o", "--exclude-standard", "--directory", "--no-empty-directory", "-z") {
 		if !strings.HasSuffix(d, "/") {
 			continue
 		}
 		if _, err := os.Lstat(filepath.Join(top, filepath.FromSlash(d), ".git")); err == nil {
 			if !gitHasCommit(filepath.Join(top, filepath.FromSlash(d))) {
-				return strings.TrimSuffix(d, "/")
+				out = append(out, strings.TrimSuffix(d, "/"))
 			}
 			continue
 		}
@@ -103,7 +101,7 @@ func nestedNoCommit(top string) string {
 		})
 	}
 	if len(deep) == 0 {
-		return ""
+		return out
 	}
 	ignored := map[string]bool{}
 	for _, p := range gitZ(top, strings.Join(deep, "\x00")+"\x00", "check-ignore", "--stdin", "-z") {
@@ -111,10 +109,10 @@ func nestedNoCommit(top string) string {
 	}
 	for _, p := range deep {
 		if !ignored[p] && !gitHasCommit(filepath.Join(top, filepath.FromSlash(p))) {
-			return strings.TrimSuffix(p, "/")
+			out = append(out, strings.TrimSuffix(p, "/"))
 		}
 	}
-	return ""
+	return out
 }
 
 // gitZ: git v top (brez hookov) z izhodom -z, razdeljenim na NUL (brez TrimSpace: imena s presledki ostanejo).
@@ -134,7 +132,8 @@ func gitZ(top, stdin string, args ...string) []string {
 }
 
 // gitSnapshot: HEAD ali commit z neshranjenimi spremembami (začasni indeks: indeks, veje in mapa uporabnika ostanejo).
-func gitSnapshot(top string) string {
+// skip: poti, ki ne gredo v posnetek (ugnezdeni repozitoriji brez commita).
+func gitSnapshot(top string, skip ...string) string {
 	head, err := gitUser(top, nil, "rev-parse", "--verify", "-q", "HEAD^{commit}")
 	if err != nil || !shaRe.MatchString(head) {
 		return ""
@@ -148,7 +147,11 @@ func gitSnapshot(top string) string {
 	if _, err := gitUser(top, env, "read-tree", "HEAD"); err != nil {
 		return ""
 	}
-	if _, err := gitUser(top, env, "add", "-A"); err != nil {
+	add := []string{"add", "-A", "--", "."}
+	for _, p := range skip {
+		add = append(add, ":(exclude,literal)"+p)
+	}
+	if _, err := gitUser(top, env, add...); err != nil {
 		return ""
 	}
 	tree, err := gitUser(top, env, "write-tree")
@@ -248,15 +251,18 @@ func gitFetchBranch(top, bundle, branch string) string {
 func (s *shareClient) wtPush(k string, job davJob) davResponse {
 	var req struct{ Have []string }
 	json.Unmarshal(job.Body, &req)
-	snap := gitSnapshot(s.top)
-	if snap == "" {
-		why := snapshotBlocker(s.top)
-		if why == "" {
-			why = "git could not record the folder's state"
-		}
-		if k := "snapshot:" + why; !s.reported[k] {
+	skip := nestedNoCommit(s.top)
+	for _, p := range skip {
+		if k := "nocommit:" + p; !s.reported[k] {
 			s.reported[k] = true
-			s.note("worktree: cannot take a snapshot: " + why + "; use sync (MINIGW_WORK=sync)")
+			s.note("worktree: nested repository " + p + " has no commit yet and is not part of this worktree run")
+		}
+	}
+	snap := gitSnapshot(s.top, skip...)
+	if snap == "" {
+		if !s.reported["snapshot"] {
+			s.reported["snapshot"] = true
+			s.note("worktree: cannot take a snapshot of " + s.top + " (git add or write-tree failed)")
 		}
 		return dav(500, nil, nil)
 	}

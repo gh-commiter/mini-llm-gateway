@@ -329,9 +329,12 @@ final class ShareClient: @unchecked Sendable {
     /// worktree: posnetek stanja (brez spremembe indeksa ali vej) in bundle manjkajočih objektov po delih do 32 MB.
     private func wtPush(_ k: String, _ job: DAVJob) -> DAVResponse {
         let have = (try? JSONSerialization.jsonObject(with: job.body) as? [String: Any])?["have"] as? [String] ?? []
-        guard let top, let snap = Worktree.snapshot(top: top) else {
-            let why = top.flatMap { Worktree.snapshotBlocker(top: $0) } ?? "git could not record the folder's state"
-            if reported.insert("snapshot:" + why).inserted { note("worktree: cannot take a snapshot: \(why); use sync (MINIGW_WORK=sync)") }
+        let skip = top.map { Worktree.nestedNoCommit(top: $0) } ?? []
+        for p in skip where reported.insert("nocommit:" + p).inserted {
+            note("worktree: nested repository \(p) has no commit yet and is not part of this worktree run")
+        }
+        guard let top, let snap = Worktree.snapshot(top: top, skip: skip) else {
+            if reported.insert("snapshot").inserted { note("worktree: cannot take a snapshot of \(top ?? root.path) (git add or write-tree failed)") }
             return DAVResponse(500)
         }
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("minigw-\(UUID().uuidString).bundle")
@@ -885,7 +888,6 @@ let top = ["auto", "worktree"].contains(work) ? Worktree.toplevel(cwd).flatMap {
 let smb = work == "auto" && Native.detect(cwd: cwd, override: ProcessInfo.processInfo.environment["MINIGW_NATIVE_MOUNT"]) != nil
 var tries = SharedFolders.candidates(work: work, readOnly: readOnly, smb: smb, git: top != nil)
 // Brez commita ni posnetka: enkrat preveri, nato sync (#10).
-// Tudi neprezrt ugnezden repozitorij brez commita (git add -A ga ne doda).
 let noSnapshot = top.flatMap { tries.contains("worktree") ? Worktree.snapshotBlocker(top: $0) : nil }
 if noSnapshot != nil { tries.removeAll { $0 == "worktree" } }
 tries = Profiles.noDirectFallback(tries, flag: flagWork, saved: SharedFolders.lookup(sharedFolders(), cwd: cwd)?.work, readOnly: readOnly, env: callerEnv)

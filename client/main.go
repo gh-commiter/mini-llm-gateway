@@ -664,7 +664,7 @@ func main() {
 	top := workTop(work, cwd)
 	_, _, smb := nativeDetect(cwd)
 	tries := workCandidates(work, readOnly, work == "auto" && smb, top != "")
-	noSnapshot := "" // brez commita (tudi v neprezrtem ugnezdenem repozitoriju) ni posnetka: enkrat preveri, nato sync (#10)
+	noSnapshot := "" // brez commita ni posnetka: enkrat preveri, nato sync (#10)
 	if top != "" && slices.Contains(tries, "worktree") {
 		noSnapshot = snapshotBlocker(top)
 	}

@@ -124,28 +124,27 @@ public enum Worktree {
         return h.status == 0 && isSHA(h.out)
     }
 
-    /// Zakaj ni posnetka (nil = je): repozitorij brez commita ali neprezrt ugnezden repozitorij brez commita (git init;
-    /// git add -A ga ne more dodati), zato sync (kot Go snapshotBlocker). Prezrte poti (build/_deps) gredo.
+    /// Zakaj ni posnetka (nil = je): repozitorij brez commita (kot Go snapshotBlocker). Mapa v njem načina nikoli ne
+    /// spremeni: ugnezden repozitorij brez commita gre iz posnetka (nestedNoCommit).
     public static func snapshotBlocker(top: String) -> String? {
         guard hasCommit(top: top) else { return "the git repository \(Profiles.line(top, max: 500)) has no commit yet, so worktree mode is not possible" }
-        return nestedNoCommit(top: top).map {
-            "the nested repository \(Profiles.line($0, max: 200)) in \(Profiles.line(top, max: 500)) has no commit (commit in it or add it to .gitignore), so worktree mode is not possible"
-        }
+        return nil
     }
 
-    /// Prvi neprezrt ugnezden repozitorij brez commita v top, relativna pot (kot Go nestedNoCommit). Nesledene mape git
-    /// strne (--directory), zato le v njih poiščemo .git po datotečnem sistemu in vprašamo check-ignore.
-    static func nestedNoCommit(top: String) -> String? {
+    /// Neprezrti ugnezdeni repozitoriji brez commita v top (git init; kot gitlink jih git add -A ne more dodati), relativne
+    /// poti (kot Go nestedNoCommit). Nesledene mape git strne (--directory), zato le v njih poiščemo .git po datotečnem
+    /// sistemu in vprašamo check-ignore. Prezrte poti (build/_deps) in repozitoriji s commitom (gitlink) niso tu.
+    public static func nestedNoCommit(top: String) -> [String] {
         func z(_ args: [String], _ input: Data? = nil) -> [String] {
             run(["-c", "core.fsmonitor=false"] + args, cwd: top, safe: false, hooks: false, input: input, trim: false).out
                 .split(separator: "\0").map(String.init)
         }
-        var deep: [String] = []
+        var deep: [String] = [], out: [String] = []
         for d in z(["ls-files", "-o", "--exclude-standard", "--directory", "--no-empty-directory", "-z"]) where d.hasSuffix("/") {
             let dir = URL(fileURLWithPath: top).appendingPathComponent(d)
             var st = stat()
             if lstat(dir.appendingPathComponent(".git").path, &st) == 0 {
-                if !hasCommit(top: dir.path) { return String(d.dropLast()) }
+                if !hasCommit(top: dir.path) { out.append(String(d.dropLast())) }
                 continue
             }
             guard let e = FileManager.default.enumerator(at: dir, includingPropertiesForKeys: nil) else { continue }
@@ -154,20 +153,21 @@ public enum Worktree {
                 e.skipDescendants()
             }
         }
-        guard !deep.isEmpty else { return nil }
+        guard !deep.isEmpty else { return out }
         let ignored = Set(z(["check-ignore", "--stdin", "-z"], Data((deep.joined(separator: "\0") + "\0").utf8)))
-        return deep.first { !ignored.contains($0) && !hasCommit(top: top + "/" + $0) }.map { String($0.dropLast()) }
+        return out + deep.filter { !ignored.contains($0) && !hasCommit(top: top + "/" + $0) }.map { String($0.dropLast()) }
     }
 
     /// Posnetek stanja: HEAD ali commit z neshranjenimi spremembami (sledene in nove, neprezrte), narejen z začasnim
     /// indeksom: indeks, veje in delovna mapa uporabnika ostanejo nespremenjeni. nil = brez HEAD (prazen repozitorij).
-    public static func snapshot(top: String) -> String? {
+    /// skip: poti, ki ne gredo v posnetek (ugnezdeni repozitoriji brez commita).
+    public static func snapshot(top: String, skip: [String] = []) -> String? {
         guard case let h = run(["rev-parse", "--verify", "-q", "HEAD^{commit}"], cwd: top, safe: false, hooks: false), h.status == 0, isSHA(h.out) else { return nil }
         let idx = FileManager.default.temporaryDirectory.appendingPathComponent("minigw-index-" + UUID().uuidString).path
         defer { unlink(idx) }
         let env = ["GIT_INDEX_FILE": idx]
         guard run(["read-tree", "HEAD"], cwd: top, env: env, safe: false, hooks: false).status == 0,
-              run(["add", "-A"], cwd: top, env: env, safe: false, hooks: false).status == 0,
+              run(["add", "-A", "--", "."] + skip.map { ":(exclude,literal)" + $0 }, cwd: top, env: env, safe: false, hooks: false).status == 0,
               case let t = run(["write-tree"], cwd: top, env: env, safe: false, hooks: false), t.status == 0, isSHA(t.out) else { return nil }
         if run(["rev-parse", "HEAD^{tree}"], cwd: top, safe: false, hooks: false).out == t.out { return h.out }
         let c = run(["-c", "user.name=minigw", "-c", "user.email=minigw@localhost", "commit-tree", t.out, "-p", h.out,
