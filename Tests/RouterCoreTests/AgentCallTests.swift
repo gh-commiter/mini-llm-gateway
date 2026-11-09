@@ -203,8 +203,8 @@ private func get(_ run: AgentRun, _ path: String, token: String?) async -> Int {
     #expect(AgentError.recent(AgentError.key(req, model: "claude-grok")) == nil)  // HTTP 429 je končen
     let w = FakeWriter()
     _ = await router.replyWhenDone(body: ["model": "claude-grok", "stream": true], model: "claude-grok", rid: "req_2", writer: w, req: req,
-                                   headDelay: .milliseconds(50)) {
-        try await Task.sleep(for: .milliseconds(300))
+                                   headDelay: .milliseconds(10)) {
+        try await Task.sleep(for: .milliseconds(1500))  // glava gre ven tudi pod obremenitvijo celotnega testnega teka
         throw limit
     }
     #expect(w.status == 200 && w.text.contains("x-should-retry: false") && w.text.contains("event: error") && w.text.contains("rate_limit_error"))
