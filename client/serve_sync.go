@@ -39,6 +39,8 @@ type shareHub struct {
 	reaper    sync.Once
 	expired   time.Time            // zadnje čiščenje starih kopij (#1, #9)
 	logf      func(string, ...any) // dnevnik prehoda (worktree: zakaj veje ni)
+	// nestedBlocker (N1): zakaj agent s temi ugnezdenimi repozitoriji tu ne sme začeti ("" = sme); nil = vedno sme.
+	nestedBlocker func(agent string) string
 }
 
 // #1, #9: meje kopije (manifest odjemalca) in življenjska doba neuporabljenih kopij.

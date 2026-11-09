@@ -496,6 +496,7 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 		s.log.Printf("WARNING: Bash is allowed; it runs only in Claude Code's sandbox (on Linux it needs bubblewrap and socat)")
 	}
 	s.hub.logf = s.log.Printf
+	s.hub.nestedBlocker = s.nestedBlocker
 	if s.offReason = offReason; offReason != "" {
 		s.offFolders = bad
 		s.log.Print("WARNING: Claude CLI and Codex are off: " + offReason)

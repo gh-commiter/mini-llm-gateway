@@ -647,8 +647,20 @@ func TestGitExecWrapNeedsGitDir(t *testing.T) {
 // prezrt ugnezden repozitorij. Agent ureja v vseh; vsak neprezrt dobi svojo vejo nazaj v svoj repozitorij, vrhnja
 // veja zapiše novi gitlink podmodula; prezrti ostane zunaj; repozitoriji uporabnika (HEAD, indeks, config) ostanejo.
 func TestServeWorktreeNestedRoundTrip(t *testing.T) {
+	testNestedRoundTrip(t, "")
+}
+
+// N1 (lastnik): kjer agent ne bi bil zaprt, se z ugnezdenimi repozitoriji ne začne: agent ne teče, sporočilo pove zakaj.
+func TestServeWorktreeNestedRefusedAtStart(t *testing.T) {
+	testNestedRoundTrip(t, "nested repositories need bwrap on this Linux gateway; use sync")
+}
+
+func testNestedRoundTrip(t *testing.T, blockNested string) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake claude is a shell script")
+	}
+	if runtime.GOOS == "linux" && blockNested == "" && finalizeBwrap() == "" {
+		t.Skip("Linux without bwrap: nested repositories are refused (TestNestedBlockerMatchesSandbox)")
 	}
 	root := t.TempDir()
 	client, src := filepath.Join(root, "client"), filepath.Join(root, "subsrc")
@@ -699,6 +711,7 @@ func TestServeWorktreeNestedRoundTrip(t *testing.T) {
 	writeT(t, fake, `#!/bin/sh
 `+cliGuard+`
 cat > /dev/null
+touch `+root+`/started
 for p in . sub sub/deep vendor/lib nc build/_deps/x; do echo "agent" >> "$p/agent.txt"; done
 grep -q uncommitted vendor/lib/f.txt && echo saw > vendor/lib/seen.txt
 # B: navodilo poimenuje ugnezdene klone; agent commita v podmodulu (ovoj pusti registriran GIT_DIR)
@@ -711,6 +724,7 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
 `)
 	os.Chmod(fake, 0o755)
 	s, _ := testServer(t, func(c *serveConfig) { c.Claude = fake })
+	s.hub.nestedBlocker = func(string) string { return blockNested } // macOS serve (za razvoj) ugnezdene sicer zavrne
 	c := startLoopback(t, s)
 	sc := &shareClient{c: c, session: "sidn", root: client, worktree: true, top: filepath.ToSlash(client), synced: map[string]syncEntry{}, reported: map[string]bool{}}
 	if !sc.register() {
@@ -729,6 +743,12 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
 	os.Stderr = old
 	f.Close()
 	out, _ := os.ReadFile(stderr)
+	if blockNested != "" {
+		if _, err := os.Stat(filepath.Join(root, "started")); err == nil || st == 200 || !strings.Contains(string(out), blockNested) {
+			t.Fatalf("not refused before the agent: %d %s\n%s", st, data, out)
+		}
+		return
+	}
 	if st != 200 || !strings.Contains(string(data), `"done"`) {
 		t.Fatalf("messages: %d %s\n%s", st, data, out)
 	}
@@ -882,6 +902,11 @@ func TestWorktreePushNestedNeedsGateway(t *testing.T) {
 	if r := sc.wtPush("k", davJob{Body: []byte(`{"have":[]}`)}); r.Status != 500 || !sc.reported["nested-old"] {
 		t.Fatalf("old gateway: %d %v", r.Status, sc.reported)
 	}
+	gitT(t, filepath.Join(top, "lib"), "config", "filter.lfs.clean", "cat") // R2: filtri ugnezdenega: ne začne
+	if r := sc.wtPush("k", davJob{Body: []byte(`{"have":[],"nested":{}}`)}); r.Status != 500 || !sc.reported["nested-filter:lib"] {
+		t.Fatalf("nested filter: %d %v", r.Status, sc.reported)
+	}
+	gitT(t, filepath.Join(top, "lib"), "config", "--remove-section", "filter.lfs")
 	for i := range maxNestedRepos {
 		os.MkdirAll(filepath.Join(top, "n", strconv.Itoa(i)), 0o755)
 		gitT(t, filepath.Join(top, "n", strconv.Itoa(i)), "init", "-q")
@@ -897,6 +922,9 @@ func TestWorktreePushNestedNeedsGateway(t *testing.T) {
 // N1: zamenjava poti ugnezdenega klona s povezavo ven po preverbi (agentov proces, ki je preživel) zavrže rezultat:
 // tuja mapa (skrivnost prehoda) ne pride v vejo, ref zrcala ostane prejšnji.
 func TestWorktreeNestedSwapDuringFinalize(t *testing.T) {
+	if runtime.GOOS == "linux" && finalizeBwrap() == "" {
+		t.Skip("Linux without bwrap: nested repositories are refused")
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink")
 	}
@@ -1096,5 +1124,23 @@ func TestNestedFinalizeFailsClosedUnconfined(t *testing.T) {
 	sl := &wtSlot{wt: t.TempDir(), branch: "minigw/claude-12345678-0", nested: []*wtNested{n}, unconfined: true}
 	if tip, why := finalizeNested(sl, n, "claude", filepath.Join(t.TempDir(), "o"), nil); tip != "" || !strings.HasSuffix(why, "use sync") {
 		t.Fatalf("%q %q", tip, why)
+	}
+}
+
+// N1 (lastnik): ugnezdeni le, kjer bo agent zaprt; drugje razlog s »use sync« (preizkus v Docker z bwrap in brez).
+func TestNestedBlockerMatchesSandbox(t *testing.T) {
+	s, _ := testServer(t, nil)
+	why := s.nestedBlocker("claude")
+	switch runtime.GOOS {
+	case "darwin":
+		if !strings.HasSuffix(why, "use sync") {
+			t.Fatalf("macOS serve: %q", why)
+		}
+	case "linux":
+		ok := finalizeBwrap() != "" && claudePinOK(s.cfgDir, t.Logf)
+		if (why == "") != ok || why != "" && !strings.HasSuffix(why, "use sync") {
+			t.Fatalf("linux (bwrap ok %v): %q", ok, why)
+		}
+		t.Logf("bwrap ok %v: %q", ok, why)
 	}
 }

@@ -15,6 +15,9 @@ func pinWrap(cfgDir, exe string, args, pins []string, logf func(string, ...any))
 	return exe, args
 }
 
+// claudePinOK: pin (bwrap) je le na Linux.
+func claudePinOK(cfgDir string, logf func(string, ...any)) bool { return false }
+
 // watchGitMoves (N3c): le Linux (inotify); drugje runCLI preverja klon vsako sekundo (macOS serve je za razvoj, na
 // Windows teče Claude v worktree le z »Allow commands without a sandbox«).
 func watchGitMoves(gitDir string, moved func()) (stop func(), ok bool) { return nil, false }

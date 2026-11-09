@@ -798,6 +798,16 @@ func (h *shareHub) worktreeMount(s *serveShare, agent string) string {
 	if r == nil || r.Status != 200 || json.Unmarshal(r.Body, &reply) != nil || !shaRe.MatchString(reply.Snapshot) || len(reply.Nested) > maxNestedRepos {
 		return ""
 	}
+	// N1 (lastnik): kjer agent ne bi tekel v svojem imenskem prostoru PID ali git ob finalize ne v bwrap, se z ugnezdenimi
+	// repozitoriji ne začne (nič se ne izgubi); po teku ostane še zavrnitev v finalizeNested.
+	if len(reply.Nested) > 0 && h.nestedBlocker != nil {
+		if why := h.nestedBlocker(agent); why != "" {
+			h.logf("worktree %s (%s): %s", branch, s.session, why)
+			body, _ := json.Marshal(map[string]string{"message": "worktree: " + why})
+			h.sendJob(s, "WORKTREE-NOTE", body, 10*time.Second) // pred odgovorom 502 (ne v ozadju)
+			return ""
+		}
+	}
 	file := ""
 	if _, err := os.Stat(incoming); err == nil {
 		file = incoming
@@ -866,6 +876,26 @@ func (h *shareHub) worktreeMount(s *serveShare, agent string) string {
 	t.slots[agent] = sl
 	h.mu.Unlock()
 	return worktreeDir(wt, t.sub)
+}
+
+// nestedBlocker (N1): zakaj agent z ugnezdenimi repozitoriji na tem prehodu ne sme začeti ("" = sme). Linux: git ob
+// finalize v bwrap in agent v svojem imenskem prostoru PID (Claude: pin z gnezdenim bwrap; Codex, Grok, Copilot: bwrap).
+// macOS minigw serve (za razvoj): nikoli. Windows: agenti v načinu worktree že tečejo brez peskovnika.
+func (s *server) nestedBlocker(agent string) string {
+	const tail = "; use sync"
+	switch {
+	case runtime.GOOS == "darwin":
+		return "nested repositories need the Mac app or a Linux gateway with bwrap" + tail
+	case runtime.GOOS != "linux":
+		return ""
+	case finalizeBwrap() == "":
+		return "nested repositories need bwrap on this Linux gateway (install bubblewrap and allow unprivileged user namespaces)" + tail
+	case agent == "claude" && !claudePinOK(s.cfgDir, s.log.Printf):
+		return "nested repositories need nested bwrap for Claude CLI on this Linux gateway (on Ubuntu 24.04 AppArmor's bwrap-userns-restrict blocks it)" + tail
+	case agent != "claude" && !agentSandboxed(s.cfgDir):
+		return "nested repositories need bwrap for " + agent + " on this Linux gateway" + tail
+	}
+	return ""
 }
 
 // beforeNestedFinalize, duringFinalize, afterNestedFinalize: le za teste (N1: zamenjava poti pred, med in po git).

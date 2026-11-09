@@ -71,6 +71,9 @@ func pinWrap(cfgDir, exe string, args, pins []string, logf func(string, ...any))
 	return exe, args
 }
 
+// claudePinOK: pin (bwrap) je le na Linux.
+func claudePinOK(cfgDir string, logf func(string, ...any)) bool { return false }
+
 // agentSandboxed: sandbox Codex in Grok na Windows ni preverjen: le z izrecnim dovoljenjem.
 func agentSandboxed(cfgDir string) bool { return false }
 

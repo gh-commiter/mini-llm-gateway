@@ -223,10 +223,16 @@ top-level range stays clean. A path with characters other than letters, digits a
 commands; review it by hand. A folder or gitlink that is a symbolic link is not a nested repository of the folder.
 Notes:
 
-- The mode never changes because of a folder: more than 32 nested repositories, a name with `:`, `\`, control
-  characters or inside `.build`, or a gateway older than 0.5.20 stop the run with a message ending in "use sync" ("update the gateway" for a gateway
-  older than 0.5.20). On a Linux gateway nested repositories come back only with bwrap (each agent in its own process
-  namespace); otherwise the message says so and ends in "use sync".
+- The mode never changes because of a folder. These stop the run before the agent starts, with a message that ends in
+  "use sync": more than 32 nested repositories, a name with `:`, `\`, control characters or inside `.build`, or a
+  nested repository whose `.git/config` defines git filters (`filter.*`; minigw does not run them for nested
+  repositories). A gateway older than 0.5.20 stops it with "update the gateway".
+- Gateway requirements for nested repositories. Mac app: none. Linux `minigw serve`: bwrap must work, and for Claude
+  CLI also bwrap inside bwrap, so every agent runs in its own process namespace. On Ubuntu 24.04 AppArmor's
+  `bwrap-userns-restrict` profile blocks the inner one; allow it (for example with an AppArmor profile for
+  `/usr/bin/bwrap` that grants `userns`, or `sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0`) or use sync.
+  Without that, a request with nested repositories is refused before the agent starts. macOS `minigw serve` (for
+  development) refuses nested repositories; Windows `minigw serve` handles them.
 - The agent may commit inside a nested clone: its note names the clones and the form
   `GIT_DIR=<path>/.git GIT_COMMON_DIR=<path>/.git GIT_WORK_TREE=<path> git …` (plain git in the clone works on the top
   repository). Its commits are kept; changes it leaves uncommitted are committed by the gateway.

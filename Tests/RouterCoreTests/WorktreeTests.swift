@@ -811,6 +811,9 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     #expect(Worktree.nestedChildren("", ["vendor/lib", "vendor/lib/inner/z", "x"]) == ["vendor/lib", "x"])
     #expect(Worktree.nestedChildren("vendor/lib", ["vendor/lib", "vendor/lib/inner/z", "vendor/libx/y"]) == ["inner/z"])
     #expect(Worktree.snapshots(top: root.path, gateway: false).failure?.key == "nested-old")
+    g(lib, "config", "filter.lfs.clean", "cat")  // R2: filtri ugnezdenega: ne začne
+    #expect(Worktree.snapshots(top: root.path, gateway: true).failure?.key == "nested-filter:vendor/lib")
+    g(lib, "config", "--remove-section", "filter.lfs")
     let all = Worktree.snapshots(top: root.path, gateway: true)
     #expect(all.failure == nil && all.nested.map(\.path) == ["vendor/lib", "vendor/lib/inner/z"])
     try FileManager.default.removeItem(at: root.appendingPathComponent("vendor"))

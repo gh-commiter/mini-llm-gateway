@@ -404,6 +404,11 @@ func (s *shareClient) wtPush(k string, job davJob) davResponse {
 			return fail("nested-name", "worktree: the nested repository "+oneLine(p)+" has a name worktree mode cannot use (\":\", \"\\\", control characters or in .build); use sync")
 		}
 	}
+	for _, p := range nested { // R2: filtri ugnezdenega ne tečejo (N3), zato z njimi ne začne (način ostane)
+		if f, _ := gitUser(filepath.Join(s.top, filepath.FromSlash(p)), nil, "config", "--local", "--get-regexp", `^filter\.`); f != "" {
+			return fail("nested-filter:"+p, "worktree: the nested repository "+oneLine(p)+" defines git filters (filter.* in its .git/config), which minigw does not run for nested repositories; use sync")
+		}
+	}
 	// skip: neposredni otroci, ki v indeksu starša niso gitlink (nesledeni, s commitom ali brez), ali so brez commita:
 	// v posnetek starša ne gredo (imajo svojega); gitlink podmodula ostane.
 	skip := func(rel string) (out []string) {
