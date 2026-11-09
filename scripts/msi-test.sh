@@ -71,9 +71,24 @@ for arch in amd64 arm64; do
   has ControlEvent "SetupDlg	Install	Remove	Plugin	NOT PLUGIN_BOX"
   has ControlEvent "SetupDlg	Remove	Remove	ALL"
   has Dialog "ProgressDlg"
+  # Okna, ki jih Windows Installer pokaže sam (brez njih napaka 2803): datoteke v rabi, napake, konec
+  for d in FilesInUse MsiRMFilesInUse ErrorDlg FatalError UserExit ExitDialog; do t Dialog | grep -q "^$d	" || fail "$arch: no dialog $d (error 2803)"; done
+  has Property "ErrorDialog	ErrorDlg"
+  for e in "FatalError		-3" "UserExit		-2" "ExitDialog		-1"; do has InstallUISequence "$e"; done
+  has ControlEvent "ExitDialog	Finish	EndDialog	Return"
+  # Vsako okno, na katero kaže zaporedje, dogodek ali ErrorDialog, je v tabeli Dialog
+  dialogs=" $(t Dialog | cut -f1 | tr '\n' ' ') "
+  std=" FindRelatedProducts LaunchConditions ValidateProductID CostInitialize FileCost CostFinalize MigrateFeatureStates ExecuteAction AppSearch CCPSearch RMCCPSearch "
+  for d in $(t InstallUISequence | cut -f1) $(t ControlEvent | awk -F'\t' '$3 ~ /^(NewDialog|SpawnDialog|SpawnWaitDialog)$/ { print $4 }') \
+           $(t Property | awk -F'\t' '$1 == "ErrorDialog" { print $2 }'); do
+    [[ $std == *" $d "* ]] && continue
+    t CustomAction | grep -q "^$d	" && continue
+    [[ $dialogs == *" $d "* ]] || fail "$arch: $d is referenced but not in the Dialog table (error 2803)"
+  done
   # Pladenj zapre minigw-tray.exe quit (program brez konzole, tip 18 + 64): nobeno okno cmd med (od)namestitvijo.
   has CustomAction "CloseTray	82	tray	quit"
-  has InstallExecuteSequence 'CloseTray	REMOVE~="ALL" OR (&Gateway=2 AND !Gateway=3)'
+  # Tudi ob nadgradnji (pred InstallValidate, sicer datoteke v rabi), ne kot stari paket pri nadgradnji
+  has InstallExecuteSequence 'CloseTray	(REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE) OR (&Gateway=2 AND !Gateway=3) OR WIX_UPGRADE_DETECTED OR WIX_SAME_VERSION_UPGRADE_DETECTED'
   t CustomAction | grep -qiE 'cmd\.exe|tasklist|taskkill|powershell|PING' && fail "$arch: a custom action runs a console tool (window flashes)"
   has CustomAction "StartTray	210	tray	tray --quiet-if-running --config"
   has InstallExecuteSequence 'StartTray	&Gateway=3 AND NOT WIX_UPGRADE_DETECTED'
