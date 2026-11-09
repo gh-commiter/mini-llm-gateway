@@ -85,6 +85,11 @@ for arch in amd64 arm64; do
     t CustomAction | grep -q "^$d	" && continue
     [[ $dialogs == *" $d "* ]] || fail "$arch: $d is referenced but not in the Dialog table (error 2803)"
   done
+  # Napaka 2834: kjer imajo kontrolniki Control_Next, mora Control_First ležati v eni sami zanki čez vse take kontrolnike.
+  bad=$(awk -F'\t' 'NR==FNR { first[$1]=$8; next } $11 != "" { nx[$1 SUBSEP $2]=$11; n[$1]++ }
+    END { for (d in n) { c=first[d]; k=0; while ((d SUBSEP c) in nx && k < n[d]) { c=nx[d SUBSEP c]; k++; if (c == first[d]) break }
+          if (c != first[d] || k != n[d]) print d } }' <(t Dialog) <(t Control))
+  [[ -z $bad ]] || fail "$arch: tab loop broken or Control_First outside it in: $bad (error 2834)"
   # Pladenj zapre minigw-tray.exe quit (program brez konzole, tip 18 + 64): nobeno okno cmd med (od)namestitvijo.
   has CustomAction "CloseTray	82	tray	quit"
   # Tudi ob nadgradnji (pred InstallValidate, sicer datoteke v rabi), ne kot stari paket pri nadgradnji

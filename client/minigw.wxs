@@ -124,8 +124,6 @@
       <DialogRef Id="ExitDialog"/>
       <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999"/>
       <Dialog Id="SetupDlg" Width="370" Height="250" Title="[ProductName] [ProductVersion] Setup">
-        <Control Id="Title" Type="Text" X="20" Y="15" Width="330" Height="20" NoPrefix="yes"
-                 Text="Mini Gateway for this user. The minigw command (in your PATH) is always installed; choose what else:"/>
         <Control Id="GatewayBox" Type="CheckBox" X="20" Y="45" Width="330" Height="28" Property="GATEWAY_BOX" CheckBoxValue="1"
                  Text="Gateway: run a gateway on this PC (tray icon, starts at sign-in, minigw gw settings)"/>
         <Control Id="PluginBox" Type="CheckBox" X="20" Y="78" Width="330" Height="28" Property="PLUGIN_BOX" CheckBoxValue="1"
@@ -156,6 +154,9 @@
         <Control Id="Cancel" Type="PushButton" X="304" Y="220" Width="56" Height="17" Cancel="yes" Text="Cancel">
           <Publish Event="EndDialog" Value="Exit"/>
         </Control>
+        <!-- Besedilo zadnje: wixl vzame prvi kontrolnik za Control_First; ta mora biti v zanki tabulatorja (napaka 2834). -->
+        <Control Id="Title" Type="Text" X="20" Y="15" Width="330" Height="20" NoPrefix="yes"
+                 Text="Mini Gateway for this user. The minigw command (in your PATH) is always installed; choose what else:"/>
       </Dialog>
       <Dialog Id="ProgressDlg" Width="370" Height="100" Title="[ProductName] Setup" Modeless="yes">
         <Control Id="ActionText" Type="Text" X="20" Y="20" Width="330" Height="15" NoPrefix="yes">
