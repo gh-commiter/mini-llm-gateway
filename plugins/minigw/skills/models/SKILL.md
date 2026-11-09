@@ -1,6 +1,6 @@
 ---
 name: models
-description: List the models available through Mini Gateway (Codex, Grok, Claude CLI agents, Siri AI, Apple Foundation Models, LiteLLM and OpenRouter models). Use when the user asks which gateway models exist or which one to use.
+description: List the models available through Mini Gateway (Codex, Grok, Copilot, Claude CLI agents, Siri AI, Apple Foundation Models, Foundry Local, LiteLLM and OpenRouter models). Use when the user asks which gateway models exist or which one to use.
 allowed-tools: Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw models), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw models --minigw-profile *), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw --version)
 ---
 
