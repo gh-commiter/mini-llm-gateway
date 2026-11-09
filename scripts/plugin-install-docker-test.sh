@@ -12,7 +12,7 @@
 #      starejši od MIN → prenos
 #  10. Windows (lažna uname/cygpath, na tem Macu): nameščen minigw.exe → lupini bin/minigw in bin/minigw.cmd kot
 #      »minigw plugin install« (client/plugin.go shimSh/shimCmd), kopija vtičnika gre; brez namestitve lupini gresta;
-#      M1: novejša podpisana izdaja → namig /minigw:gw update
+#      M1: novejša podpisana izdaja → brez serve.json (MSI le z odjemalcem) namig na MSI, s serve.json /minigw:gw update
 #  11. M1 Linux: nameščen minigw 0.5.19 (≥ MIN), podpisana izdaja 0.5.99 → povezava; brez enote systemd namig za
 #      odjemalca (zamenjaj ~/.local/bin/minigw), z enoto /minigw:gw update
 #   8. izhod »minigw status« → connected / token rejected / device not approved (ID) / not connected; brez claude: namig (#6)
@@ -48,7 +48,11 @@ print '#!/bin/sh\ncase $1 in -s) echo MINGW64_NT-10.0 ;; *) echo x86_64 ;; esac'
 print '#!/bin/sh\ncase $1 in -u) printf "%s\\n" "$2" ;; -m) printf "C:%s\\n" "$2" ;; -w) printf "C:%s\\n" "$2" | tr / "\\\\" ;; esac' > $T/win/fake/cygpath
 print '#!/bin/sh\n[ "$1" = --version ] && echo minigw 0.5.19; [ "$1" = status ] && echo "Status:    connected"; exit 0' > "$W/Programs/Mini Gateway/minigw.exe"
 chmod +x $T/win/fake/* "$W/Programs/Mini Gateway/minigw.exe"; print old > $T/win/data/bin/minigw.exe
-winrun() { CLAUDE_PLUGIN_DATA=$T/win/data CLAUDE_ENV_FILE= LOCALAPPDATA=$W MINIGW_RELEASE_BASE=file://$T/rel/${1:-nonexistent} HOME=$T/win/home PATH=$T/win/fake:$PATH sh $T/testkey.sh }
+winrun() { CLAUDE_PLUGIN_DATA=$T/win/data CLAUDE_ENV_FILE= LOCALAPPDATA=$W APPDATA=$T/win/roaming MINIGW_RELEASE_BASE=file://$T/rel/${1:-nonexistent} HOME=$T/win/home PATH=$T/win/fake:$PATH sh $T/testkey.sh }
+out=$(winrun newer); print -r -- $out
+[[ $out == *"minigw 0.5.19 is installed, 0.5.99 is available: run the installer https://github.com/gh-commiter/mini-llm-gateway/releases/latest/download/minigw-windows-amd64.msi"* && $out != *"/minigw:gw update"* ]] ||
+  fail "10: no MSI update hint for a client-only install"
+mkdir -p $T/win/roaming/minigw; print '{}' > $T/win/roaming/minigw/serve.json
 out=$(winrun newer); print -r -- $out
 [[ $out == *"Mini Gateway 0.5.19 is installed, 0.5.99 is available: /minigw:gw update"* ]] || fail "10: no update hint (M1)"
 exe="$W/Programs/Mini Gateway/minigw.exe" sq="'" rep="'\''"
@@ -57,7 +61,7 @@ exe="$W/Programs/Mini Gateway/minigw.exe" sq="'" rep="'\''"
 [[ ! -e $T/win/data/bin/minigw.exe && $out == *"connected to Mini Gateway"* ]] || fail "10: plugin copy kept or status not read"
 rm "$exe"; out=$(winrun); print -r -- $out
 [[ ! -e $T/win/data/bin/minigw && ! -e $T/win/data/bin/minigw.cmd ]] || fail "10: shims kept without an installed minigw"
-print "ok 10: Windows shims point at the installed minigw"
+print "ok 10: Windows shims point at the installed minigw; client-only MSI gets the MSI hint"
 
 docker run --rm -v $T:/t:ro debian:stable-slim sh -c '
 set -u

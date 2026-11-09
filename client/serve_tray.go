@@ -44,6 +44,13 @@ func trayCommand(args []string) {
 		quitRunningTray()
 		return
 	}
+	// MSI (client/minigw.wxs): minigw.exe plugin …|uninstall … brez okna konzole (msiexec bi ga pokazal); počaka.
+	if len(args) > 1 && args[0] == "msi" && (args[1] == "plugin" || args[1] == "uninstall") {
+		if exe, err := os.Executable(); err == nil {
+			command(filepath.Join(filepath.Dir(exe), "minigw.exe"), args[1:]...).Run()
+		}
+		return
+	}
 	if len(args) > 0 && (args[0] == "tray" || args[0] == "serve") { // Run: "minigw-tray.exe" tray --config …
 		args = args[1:]
 	}
@@ -52,8 +59,18 @@ func trayCommand(args []string) {
 	// MSI (StartTray): če pladenj že teče (ista različica znova), konec brez sporočila; ročni zagon ga pokaže. Sicer ga
 	// znova zažene Raziskovalec (trayRun): okolje msiexec nima uporabnikovega trenutnega PATH.
 	quiet := fs.Bool("quiet-if-running", false, "installer start: exit silently if running, else restart via Explorer")
+	// MSI-nadgradnja: kot quiet-if-running, a le če je pladenj tekel (quit starega paketa je sicer zapisal oznako).
+	wasRunning := fs.Bool("if-was-running", false, "installer upgrade: start only if the tray ran before the upgrade")
 	fs.Parse(args)
-	trayRun(*cfgPath, *quiet)
+	if *wasRunning && os.Remove(trayStoppedMarker()) == nil {
+		return
+	}
+	trayRun(*cfgPath, *quiet || *wasRunning)
+}
+
+// trayStoppedMarker: quit (MSI pred odstranitvijo) ga zapiše, ko pladenj ni tekel; tray --if-was-running ga pobere.
+func trayStoppedMarker() string {
+	return filepath.Join(filepath.Dir(defaultServeConfigPath()), "tray-not-running")
 }
 
 type trayItem struct {

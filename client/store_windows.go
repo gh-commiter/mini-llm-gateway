@@ -386,6 +386,11 @@ func closeRunningTray() error { return closeTray(50) }
 // quitRunningTray: minigw-tray.exe quit (MSI pred odstranitvijo, brez konzole): WM_CLOSE, 5 s, nato konec
 // drugih procesov z natančnim imenom minigw-tray.exe v tej seji Windows (L1: ne drugih programov ali uporabnikov).
 func quitRunningTray() {
+	if !trayMutexExists() { // nadgradnja MSI: novi paket ga tedaj ne zažene (tray --if-was-running)
+		os.WriteFile(trayStoppedMarker(), nil, 0o600)
+		return
+	}
+	os.Remove(trayStoppedMarker())
 	if closeTray(25) == nil {
 		return
 	}

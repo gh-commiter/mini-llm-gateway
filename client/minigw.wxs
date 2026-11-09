@@ -1,16 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Namestitveni paket za Windows (wixl, brew msitools): na uporabnika, brez skrbniških pravic. Naredi isto kot
-     minigw serve install (mapa, PATH, vrednost Run z istim imenom in ukazom, zagon pladnja), a tabele MSI to ob
-     odstranitvi tudi pospravijo. Nastavitve (%AppData%\minigw) in ključi ostanejo. Gradi scripts/build-msi.sh. -->
+<!-- Namestitveni paket za Windows (wixl, brew msitools): na uporabnika, brez skrbniških pravic. Deli (Feature, tudi
+     ADDLOCAL=Client,Gateway,Plugin za /passive): Client (minigw.exe, PATH; vedno), Gateway (vrednost Run z istim imenom
+     in ukazom kot minigw serve install, bližnjica, minigw-tui.exe, zagon pladnja), Plugin (minigw plugin install).
+     Tabele MSI ob odstranitvi pospravijo svoje; nastavitve (%AppData%\minigw) in ključi ostanejo, razen s PURGE=1
+     (minigw uninstall purge). Gradi scripts/build-msi.sh, preverja scripts/msi-test.sh. -->
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
   <Product Id="*" Name="Mini Gateway" Version="$(var.Version)" Manufacturer="Mini Gateway" Language="1033"
            UpgradeCode="5B0B7C3E-6E0B-4C64-9D2C-7E1F4A8B2C10">
     <Package InstallerVersion="500" Compressed="yes" InstallScope="perUser"/>
-    <!-- Ista različica znova: zamenja prejšnjo namestitev (sicer dva vnosa v Aplikacijah in dvakrat v PATH). -->
+    <!-- Ista različica znova: zamenja prejšnjo namestitev (sicer dva vnosa v Aplikacijah in dvakrat v PATH). Izbrani
+         deli ostanejo (MigrateFeatures). -->
     <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A newer Mini Gateway is already installed."/>
     <Media Id="1" Cabinet="minigw.cab" EmbedCab="yes"/>
     <Icon Id="tray.ico" SourceFile="$(var.Icon)"/>
     <Property Id="ARPPRODUCTICON" Value="tray.ico"/>
+    <!-- PURGE=1 (ali potrditveno polje ob odstranitvi): odstrani tudi nastavitve in profile. Privzeto ostanejo. -->
+    <Property Id="PURGE" Secure="yes"/>
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="LocalAppDataFolder">
         <Directory Id="ProgramsDir" Name="Programs">
@@ -23,33 +28,128 @@
       <Component Id="Main" Guid="*">
         <RegistryValue Root="HKCU" Key="Software\Mini Gateway" Name="InstallDir" Type="string" Value="[INSTALLDIR]" KeyPath="yes"/>
         <File Id="minigw" Name="minigw.exe" Source="$(var.Exe)"/>
+        <!-- Pladenj je isti program brez konzole: tudi brez dela Gateway, ker zažene minigw.exe za dejanja namestitve brez
+             okna konzole (minigw-tray.exe msi …), in ga minigw serve install pozneje najde ob minigw.exe. -->
         <File Id="tray" Name="minigw-tray.exe" Source="$(var.Tray)"/>
+        <!-- »-«: ob odstranitvi le naš del uporabniškega PATH. Brez končnega »\« (kot pathWith v serve_install.go), da
+             Windows Installer vnosa, ki ga že ima (tudi od minigw serve install), ne doda še enkrat. -->
+        <Environment Id="Path" Name="-PATH" Value="[LocalAppDataFolder]Programs\Mini Gateway" Part="last" Action="set" System="no" Permanent="no"/>
+        <RemoveFolder Id="RemoveInstallDir" On="uninstall"/>
+      </Component>
+      <Component Id="Gateway" Guid="*">
+        <RegistryValue Root="HKCU" Key="Software\Mini Gateway" Name="Gateway" Type="integer" Value="1" KeyPath="yes"/>
         <File Id="tui" Name="minigw-tui.exe" Source="$(var.Tui)"/>
         <!-- Kot serviceText("windows", …) v serve_install.go: serve install, status in meni pladnja ga prepoznajo. -->
         <RegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run" Name="MiniGatewayRouter" Type="string"
                        Value="&quot;[INSTALLDIR]minigw-tray.exe&quot; tray --config &quot;[AppDataFolder]minigw\serve.json&quot;"/>
-        <!-- »-«: ob odstranitvi le naš del uporabniškega PATH. Brez končnega »\« (kot pathWith v serve_install.go), da
-             Windows Installer vnosa, ki ga že ima (tudi od minigw serve install), ne doda še enkrat. -->
-        <Environment Id="Path" Name="-PATH" Value="[LocalAppDataFolder]Programs\Mini Gateway" Part="last" Action="set" System="no" Permanent="no"/>
         <Shortcut Id="StartMenu" Directory="ProgramMenuFolder" Name="Mini Gateway" Target="[INSTALLDIR]minigw-tray.exe"
                   Arguments="tray" WorkingDirectory="INSTALLDIR" Icon="tray.ico"/>
-        <RemoveFolder Id="RemoveInstallDir" On="uninstall"/>
+      </Component>
+      <!-- Brez datotek: vtičnik zapiše minigw plugin install (spodaj); vnos v registru le označi, da je del nameščen. -->
+      <Component Id="Plugin" Guid="*">
+        <RegistryValue Root="HKCU" Key="Software\Mini Gateway" Name="Plugin" Type="integer" Value="1" KeyPath="yes"/>
       </Component>
     </DirectoryRef>
-    <Feature Id="All" Level="1"><ComponentRef Id="Main"/></Feature>
+    <Feature Id="Client" Title="minigw client" Level="1" Absent="disallow" Display="expand"
+             Description="The minigw command, in your PATH. Always installed.">
+      <ComponentRef Id="Main"/>
+      <Feature Id="Gateway" Title="Gateway" Level="1"
+               Description="Runs a gateway on this PC: tray icon, start at sign-in, minigw gw settings (minigw-tui).">
+        <ComponentRef Id="Gateway"/>
+      </Feature>
+      <Feature Id="Plugin" Title="Claude Code plugin" Level="1"
+               Description="Adds the minigw plugin to Claude Code (compatible with the Claude Code CLI) and points it at this minigw.">
+        <ComponentRef Id="Plugin"/>
+      </Feature>
+    </Feature>
 
-    <!-- Pred odstranitvijo (tudi kot stari paket pri nadgradnji) zapri pladenj: minigw-tray.exe quit (WM_CLOSE, 5 s,
-         nato konec procesa, kot closeRunningTray). Pladenj je program brez konzole, zato se ne pokaže nobeno okno.
-         Ob namestitvi ne: tam bi bil v mapi lahko še stari pladenj (0.5.17), ki ukaza quit ne pozna; njega zapre
-         odstranitev njegovega paketa. -->
+    <!-- Pladenj zapri, preden se odstrani (tudi kot stari paket pri nadgradnji) ali izklopi del Gateway:
+         minigw-tray.exe quit (WM_CLOSE, 5 s, nato konec procesa, kot closeRunningTray; zapiše, ali je tekel).
+         Program brez konzole, zato se ne pokaže nobeno okno. Ob namestitvi ne: tam bi bil v mapi lahko še stari
+         pladenj (0.5.17), ki ukaza quit ne pozna; njega zapre odstranitev njegovega paketa. -->
     <CustomAction Id="CloseTray" FileKey="tray" ExeCommand="quit" Return="ignore" Execute="immediate"/>
     <!-- Po namestitvi zaženi pladenj; ob prvem zagonu sam ustvari serve.json in pokaže, kje je vrstica za povezavo.
-         Zastavica quiet-if-running: ista različica znova (pladenj ostane, CloseTray se ne zažene) brez sporočila »already running«;
-         sicer se pladenj znova zažene prek Raziskovalca (okolje msiexec nima uporabnikovega trenutnega PATH). -->
+         Zastavica quiet-if-running: če že teče, brez sporočila »already running«; sicer se pladenj znova zažene prek
+         Raziskovalca (okolje msiexec nima uporabnikovega trenutnega PATH). Nadgradnja: if-was-running, le če je
+         pladenj tekel pred njo (quit starega paketa je zapisal, da ni). -->
     <CustomAction Id="StartTray" FileKey="tray" ExeCommand="tray --quiet-if-running --config &quot;[AppDataFolder]minigw\serve.json&quot;" Return="asyncNoWait" Impersonate="yes"/>
+    <CustomAction Id="RestartTray" FileKey="tray" ExeCommand="tray --if-was-running --config &quot;[AppDataFolder]minigw\serve.json&quot;" Return="asyncNoWait" Impersonate="yes"/>
+    <!-- Vtičnik: minigw plugin install|uninstall (client/plugin.go) kot uporabnik, ko so datoteke na mestu oz. preden
+         izginejo. Prek minigw-tray.exe msi …: zažene minigw.exe brez okna konzole in počaka. -->
+    <CustomAction Id="PluginInstall" FileKey="tray" ExeCommand="msi plugin install" Execute="deferred" Impersonate="yes" Return="ignore"/>
+    <CustomAction Id="PluginUninstall" FileKey="tray" ExeCommand="msi plugin uninstall" Execute="deferred" Impersonate="yes" Return="ignore"/>
+    <CustomAction Id="PluginUninstallUpgrading" FileKey="tray" ExeCommand="msi plugin uninstall --upgrading" Execute="deferred" Impersonate="yes" Return="ignore"/>
+    <CustomAction Id="Purge" FileKey="tray" ExeCommand="msi uninstall --purge --yes" Execute="deferred" Impersonate="yes" Return="ignore"/>
+    <!-- Številke korakov izrecno: wixl z After/Before na druga dejanja po meri razvrsti napačno (tudi RemoveExistingProducts
+         na konec). CostFinalize 1000, RemoveFiles 3500, InstallFiles 4000, InstallFinalize 6600. -->
     <InstallExecuteSequence>
-      <Custom Action="CloseTray" After="CostFinalize">REMOVE~="ALL"</Custom>
-      <Custom Action="StartTray" After="InstallFinalize">NOT (REMOVE~="ALL")</Custom>
+      <Custom Action="CloseTray" Sequence="1001">REMOVE~="ALL" OR (&amp;Gateway=2 AND !Gateway=3)</Custom>
+      <Custom Action="PluginUninstall" Sequence="3401">&amp;Plugin=2 AND !Plugin=3 AND NOT UPGRADINGPRODUCTCODE</Custom>
+      <Custom Action="PluginUninstallUpgrading" Sequence="3402">&amp;Plugin=2 AND !Plugin=3 AND UPGRADINGPRODUCTCODE</Custom>
+      <Custom Action="Purge" Sequence="3403">REMOVE~="ALL" AND PURGE=1 AND NOT UPGRADINGPRODUCTCODE</Custom>
+      <Custom Action="PluginInstall" Sequence="4001">&amp;Plugin=3</Custom>
+      <Custom Action="StartTray" Sequence="6601">&amp;Gateway=3 AND NOT WIX_UPGRADE_DETECTED AND NOT WIX_SAME_VERSION_UPGRADE_DETECTED</Custom>
+      <Custom Action="RestartTray" Sequence="6602">&amp;Gateway=3 AND (WIX_UPGRADE_DETECTED OR WIX_SAME_VERSION_UPGRADE_DETECTED)</Custom>
     </InstallExecuteSequence>
+
+    <!-- Okno (polni vmesnik: dvoklik na MSI, Aplikacije → Spremeni): izbira delov; ko je nameščen, še Remove s
+         potrditvenim poljem PURGE. Nadgradnja brez vprašanj. /passive in /qn oken ne pokažeta (ADDLOCAL, PURGE=1).
+         Odstrani v Aplikacijah (msiexec /x) je brez oken: nastavitve ostanejo. Eno okno za oboje: wixl ne zna dveh
+         potrditvenih polj z isto lastnostjo (tabela CheckBox). -->
+    <CustomAction Id="GatewayBoxOn" Property="GATEWAY_BOX" Value="1"/>
+    <CustomAction Id="PluginBoxOn" Property="PLUGIN_BOX" Value="1"/>
+    <InstallUISequence>
+      <Custom Action="GatewayBoxOn" Sequence="1001">NOT Installed OR !Gateway=3</Custom>
+      <Custom Action="PluginBoxOn" Sequence="1002">NOT Installed OR !Plugin=3</Custom>
+      <Show Dialog="SetupDlg" Sequence="1003">NOT WIX_UPGRADE_DETECTED AND NOT WIX_SAME_VERSION_UPGRADE_DETECTED AND (NOT Installed OR (NOT RESUME AND NOT Preselected))</Show>
+      <Show Dialog="ProgressDlg" Before="ExecuteAction"/>
+    </InstallUISequence>
+    <UIRef Id="MiniUI"/>
   </Product>
+  <Fragment>
+    <UI Id="MiniUI">
+      <Dialog Id="SetupDlg" Width="370" Height="250" Title="[ProductName] [ProductVersion] Setup">
+        <Control Id="Title" Type="Text" X="20" Y="15" Width="330" Height="20" NoPrefix="yes"
+                 Text="Mini Gateway for this user. The minigw command (in your PATH) is always installed; choose what else:"/>
+        <Control Id="GatewayBox" Type="CheckBox" X="20" Y="45" Width="330" Height="28" Property="GATEWAY_BOX" CheckBoxValue="1"
+                 Text="Gateway: run a gateway on this PC (tray icon, starts at sign-in, minigw gw settings)"/>
+        <Control Id="PluginBox" Type="CheckBox" X="20" Y="78" Width="330" Height="28" Property="PLUGIN_BOX" CheckBoxValue="1"
+                 Text="Claude Code plugin: the minigw skills, compatible with the Claude Code CLI"/>
+        <Control Id="Install" Type="PushButton" X="236" Y="220" Width="56" Height="17" Default="yes" Text="Install"
+                 HideCondition="Installed" ShowCondition="NOT Installed">
+          <Publish Event="AddLocal" Value="Gateway" Condition="GATEWAY_BOX" Order="1"/>
+          <Publish Event="Remove" Value="Gateway" Condition="NOT GATEWAY_BOX" Order="2"/>
+          <Publish Event="AddLocal" Value="Plugin" Condition="PLUGIN_BOX" Order="3"/>
+          <Publish Event="Remove" Value="Plugin" Condition="NOT PLUGIN_BOX" Order="4"/>
+          <Publish Event="EndDialog" Value="Return" Order="5"/>
+        </Control>
+        <Control Id="Change" Type="PushButton" X="236" Y="220" Width="56" Height="17" Text="Change" Hidden="yes"
+                 ShowCondition="Installed" HideCondition="NOT Installed">
+          <Publish Event="AddLocal" Value="Gateway" Condition="GATEWAY_BOX" Order="1"/>
+          <Publish Event="Remove" Value="Gateway" Condition="NOT GATEWAY_BOX" Order="2"/>
+          <Publish Event="AddLocal" Value="Plugin" Condition="PLUGIN_BOX" Order="3"/>
+          <Publish Event="Remove" Value="Plugin" Condition="NOT PLUGIN_BOX" Order="4"/>
+          <Publish Event="EndDialog" Value="Return" Order="5"/>
+        </Control>
+        <Control Id="Line" Type="Line" X="20" Y="120" Width="330" Height="0" Hidden="yes" ShowCondition="Installed"/>
+        <Control Id="PurgeBox" Type="CheckBox" X="20" Y="132" Width="330" Height="28" Property="PURGE" CheckBoxValue="1" Hidden="yes"
+                 ShowCondition="Installed" Text="When removing: also remove settings and profiles (connections, gateway settings, keys). Otherwise they stay."/>
+        <Control Id="Remove" Type="PushButton" X="20" Y="166" Width="80" Height="17" Text="Remove" Hidden="yes" ShowCondition="Installed">
+          <Publish Event="Remove" Value="ALL" Order="1"/>
+          <Publish Event="EndDialog" Value="Return" Order="2"/>
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="220" Width="56" Height="17" Cancel="yes" Text="Cancel">
+          <Publish Event="EndDialog" Value="Exit"/>
+        </Control>
+      </Dialog>
+      <Dialog Id="ProgressDlg" Width="370" Height="100" Title="[ProductName] Setup" Modeless="yes">
+        <Control Id="ActionText" Type="Text" X="20" Y="20" Width="330" Height="15" NoPrefix="yes">
+          <Subscribe Event="ActionText" Attribute="Text"/>
+        </Control>
+        <Control Id="ProgressBar" Type="ProgressBar" X="20" Y="45" Width="330" Height="12" ProgressBlocks="yes" Text="Progress">
+          <Subscribe Event="SetProgress" Attribute="Progress"/>
+        </Control>
+      </Dialog>
+    </UI>
+  </Fragment>
 </Wix>
