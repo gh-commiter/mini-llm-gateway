@@ -365,7 +365,9 @@ public enum Worktree {
         let pack = run(["pack-objects", "--revs", "-q", dir.appendingPathComponent("p").path], cwd: top, safe: false, hooks: false,
                        input: Data("refs/minigw/incoming\n--not\n\(not)".utf8)).out
         let fsck = dir.appendingPathComponent("fsck.git").path
-        var objs = run(["rev-parse", "--git-path", "objects"], cwd: top, safe: false, hooks: false).out
+        let o = run(["rev-parse", "--git-path", "objects"], cwd: top, safe: false, hooks: false)
+        guard o.status == 0, !o.out.isEmpty else { return false }
+        var objs = o.out
         if !objs.hasPrefix("/") { objs = top + "/" + objs }
         guard isSHA(pack), run(["init", "-q", "--bare", fsck], cwd: dir.path).status == 0,
               FileManager.default.createFile(atPath: fsck + "/objects/info/alternates", contents: Data((objs + "\n").utf8)) else { return false }

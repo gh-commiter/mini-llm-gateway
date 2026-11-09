@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fixed: with git older than 2.46 the client did not check (fsck) the agent's branch it fetched from the gateway; both clients now check it on every git version. Nested repositories in worktree mode need git 2.40 or later on your computer; with older git the request is refused ("update git or use sync").
 - Windows: the Gateway tray icon gets an orange badge while at least one device waits for approval, and its tooltip says how many (like the Mac menu bar).
 - Fixed: a provider's rate limit (429, e.g. OpenRouter free models) now reaches Claude Code as final (`x-should-retry: false`), so it shows the message once instead of retrying for minutes; the gateway's own "busy" 429 stays retryable. Mac app and `minigw serve`.
 - Fixed: `minigw status` on a `minigw serve` gateway showed a working provider as ✗: readiness now reloads the provider's models, and loading a large model list may take up to 30 s.

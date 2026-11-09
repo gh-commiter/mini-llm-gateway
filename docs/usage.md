@@ -227,6 +227,8 @@ Notes:
   "use sync": more than 32 nested repositories, a name with `:`, `\`, control characters or inside `.build`, or a
   nested repository whose `.git/config` defines git filters (`filter.*`; minigw does not run them for nested
   repositories). A gateway older than 0.5.20 stops it with "update the gateway".
+- Client requirement for nested repositories: git 2.40 or later (Debian 12, Ubuntu 22.04 and older Xcode Command Line
+  Tools have older git); with older git the request is refused ("update git or use sync").
 - Gateway requirements for nested repositories. Mac app: none. Linux `minigw serve`: bwrap must work, and for Claude
   CLI also bwrap inside bwrap, so every agent runs in its own process namespace. On Ubuntu 24.04 AppArmor's
   `bwrap-userns-restrict` profile blocks the inner one; allow it (for example with an AppArmor profile for
