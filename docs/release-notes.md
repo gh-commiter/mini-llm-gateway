@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Mac: over SSH, `minigw gw` commands that need the admin key now say exactly what to do when the login keychain is locked: run `security unlock-keychain ~/Library/Keychains/login.keychain-db` in the SSH session first, then retry (documented in the gateway guide under Settings in the terminal).
 - Fixed: worktree mode with a nested repository that git does not ignore and that has no commit (`git init` only) printed "cannot take a snapshot (no commit yet?)" on every retry and Claude Code got 502 "Syncing … failed". minigw now checks this when it starts, names the nested repository and uses sync instead; a snapshot that still fails names the reason once. Both clients.
 - Fixed: `minigw plugin uninstall` said "nothing to remove in …settings.json" when `claude plugin marketplace remove` had already removed the entries; it now reports them as removed. Both clients.
 - Fixed: `/minigw:version` showed no plugin version when the plugin was loaded with `claude --plugin-dir`; it now always reads the running plugin's `plugin.json`.
