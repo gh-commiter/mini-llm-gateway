@@ -206,15 +206,39 @@ clone when the session ends.
 filters, and does not change `.git/config`. If you committed on that branch yourself, your commits stay and the
 agent's version is not fetched.
 
-**Nested repositories and submodules:** changes inside nested repositories and submodules do not come back yet;
-per-repository worktrees are coming in 0.5.21. Today the clone has a submodule, or a nested repository with commits,
-only as an empty folder (its commit), so the agent does not see its files; the rest of the branch comes back as usual.
-A nested repository that git does not ignore and that has no commit yet (`git init` only) is left out of the snapshot:
-the mode stays as chosen, and minigw says once "nested repository <path> has no commit yet and is not part of this
-worktree run". A nested repository in a folder git ignores (for example
-`build/_deps` from CMake FetchContent) is fine. git on the gateway never enters a repository inside the clone; if the
-agent itself creates one there, minigw prints "changes inside the nested repository <path> do not come back in
-worktree mode; use sync" and no branch is delivered for that run.
+**Nested repositories and submodules:** in worktree mode (and in native mode on the Mac) every git repository inside
+the repository at a path git does not ignore gets the same treatment as the top level: submodules and untracked nested
+repositories, with or without a commit, at any depth. minigw sends a snapshot of each (one without a commit gets a
+commit without a parent from its index and files), the gateway clones each at its path inside the agent's clone, and
+the agent's changes in it come back as branch `minigw/<agent>-…` in that repository, with one line per repository:
+
+```
+minigw: agent work is on branch minigw/codex-1a2b3c4d-0 in nested repository libs/core: review with git -C libs/core diff <base>..minigw/codex-1a2b3c4d-0 (…), then bring it in with git -C libs/core cherry-pick … or git -C libs/core diff --binary … | git -C libs/core apply
+```
+
+Review and apply each repository on its own, with `git -C <path>`. For a submodule the top-level branch also records
+the submodule's new commit; `git apply` leaves that out, so `git add <path>` after applying inside the submodule. An
+untracked nested repository is never a gitlink in the top-level snapshot or branch, so `git cherry-pick -n` of the
+top-level range stays clean. A path with characters other than letters, digits and `. _ + -` gets a line without
+commands; review it by hand. A folder or gitlink that is a symbolic link is not a nested repository of the folder.
+Notes:
+
+- The mode never changes because of a folder. These stop the run before the agent starts, with a message that ends in
+  "use sync": more than 32 nested repositories, a name with `:`, `\`, control characters or inside `.build`, or a
+  nested repository whose `.git/config` defines git filters (`filter.*`; minigw does not run them for nested
+  repositories). A gateway older than 0.5.20 stops it with "update the gateway".
+- Gateway requirements for nested repositories. Mac app: none. Linux `minigw serve`: bwrap must work, and for Claude
+  CLI also bwrap inside bwrap, so every agent runs in its own process namespace. On Ubuntu 24.04 AppArmor's
+  `bwrap-userns-restrict` profile blocks the inner one; allow it (for example with an AppArmor profile for
+  `/usr/bin/bwrap` that grants `userns`, or `sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0`) or use sync.
+  Without that, a request with nested repositories is refused before the agent starts. macOS `minigw serve` (for
+  development) refuses nested repositories; Windows `minigw serve` handles them.
+- The agent may commit inside a nested clone: its note names the clones and the form
+  `GIT_DIR=<path>/.git GIT_COMMON_DIR=<path>/.git GIT_WORK_TREE=<path> git …` (plain git in the clone works on the top
+  repository). Its commits are kept; changes it leaves uncommitted are committed by the gateway.
+- A nested repository in a folder git ignores (for example `build/_deps` from CMake FetchContent) stays out, as before.
+  If the agent itself creates a repository in the clone, minigw prints "changes inside the nested repository <path>
+  do not come back in worktree mode; use sync" and no branch is delivered for that run.
 
 **Agents in worktree mode:**
 
@@ -326,6 +350,10 @@ minigw run -- mvn -q verify                   # run a build there; output and ex
 - **Git repository:** each agent works in its own clone on branch `minigw/<agent>-<session>-<n>`, which starts from
   your state (uncommitted changes too). The branch appears in your repository; review and bring it in as in
   [worktree mode](#worktree-mode-results-as-branches). Grok, and Codex or Copilot without writing, are refused.
+  Submodules and nested repositories get their own clone and branch as in
+  [worktree mode](#worktree-mode-results-as-branches) (a nested repository without a commit too); each branch appears
+  in its own repository. More than 32 nested repositories, an unusable name, a nested linked worktree or a git folder
+  outside the share stop the run with the reason, ending in "use --minigw-work=native-direct".
 - **In the folder itself** (`native-direct`, or a folder that is not a git repository): one writing agent at a time
   per folder. Others wait up to 5 minutes, then get an error. Agents that only read do not wait.
 - **Unlike direct mode,** the agent can change every file, also `.git`, `.claude/settings*.json` and

@@ -48,7 +48,7 @@ public actor ShareHub {
         let native: URL?                                  // native: mapa tega Maca, ki jo odjemalec vidi prek SMB (dokazano)
         let tree: Tree?                                   // worktree: zrcalo in kloni agentov (glej Worktree)
         var pushing: URL?                                 // worktree: bundle, ki ga minigw prav zdaj nalaga (WORKTREE-PUSH)
-        var result: URL?                                  // worktree: bundle veje, ki ga minigw prav zdaj prevzema (WORKTREE-PULL)
+        var results: [URL] = []                           // worktree: bundli vej, ki jih minigw prav zdaj prevzema (0 = vrhnji, i = i-ti ugnezdeni v WORKTREE-PULL)
         init(session: String, cwd: String, readOnly: Bool, copy: URL?, device: String?, native: URL? = nil, tree: Tree? = nil) {
             self.session = session; self.cwd = cwd; self.readOnly = readOnly; self.copy = copy; self.device = device; self.native = native
             self.tree = tree
@@ -70,23 +70,50 @@ public actor ShareHub {
     /// worktree: klon agenta na svoji veji; zaporedne zahteve iste seje in agenta nadaljujejo v njem (busy = v izvajanju).
     final class Slot {
         let wt: URL, branch: String, base: String
+        let nested: [Nested]  // ugnezdeni repozitoriji odjemalca: vsak svoj klon v wt, starš pred otrokom
         var busy = true
         private let git: [UInt64]?, cfg: Data?  // H2: .git (naprava, inode) in .git/config ob kloniranju
-        init(wt: URL, branch: String, base: String) {
-            self.wt = wt; self.branch = branch; self.base = base
+        init(wt: URL, branch: String, base: String, nested: [Nested] = []) {
+            self.wt = wt; self.branch = branch; self.base = base; self.nested = nested
             git = Self.inode(wt.appendingPathComponent(".git")); cfg = Sync.read(wt.appendingPathComponent(".git/config"), max: 1 << 20)
         }
-        private static func inode(_ u: URL) -> [UInt64]? {
+        static func inode(_ u: URL) -> [UInt64]? {
             var st = stat()
             return lstat(u.path, &st) == 0 && st.st_mode & S_IFMT == S_IFDIR ? [UInt64(UInt32(bitPattern: st.st_dev)), st.st_ino] : nil
         }
-        /// H2 (kot Go wtSlot.gitIntact): .git je ista mapa z istim config, brez info/attributes in commondir; sicer
-        /// nov klon (zamenjan .git z novim config ali atributi bi git samega claude izvedel filter agenta).
+        /// H2 (kot Go wtSlot.gitIntact): .git vsakega klona (vrhnji in ugnezdeni) je ista mapa z istim config, brez
+        /// info/attributes in commondir; sicer nov klon (zamenjan .git z novim config ali atributi bi git samega claude
+        /// izvedel filter agenta).
         var gitIntact: Bool {
-            let g = wt.appendingPathComponent(".git")
+            Self.same(wt.appendingPathComponent(".git"), git, cfg) && nested.allSatisfy { Self.same($0.dir(wt).appendingPathComponent(".git"), $0.git, $0.cfg) }
+        }
+        static func same(_ g: URL, _ git: [UInt64]?, _ cfg: Data?) -> Bool {
             var st = stat()
-            return git != nil && Self.inode(g) == git && cfg != nil && Sync.read(g.appendingPathComponent("config"), max: 1 << 20) == cfg
+            return git != nil && inode(g) == git && cfg != nil && Sync.read(g.appendingPathComponent("config"), max: 1 << 20) == cfg
                 && ["info/attributes", "commondir"].allSatisfy { lstat(g.appendingPathComponent($0).path, &st) != 0 }
+        }
+        /// .git vseh klonov (vrhnji prvi): edini GIT_DIR, ki ga ovoj pusti, in .git, ki jih ščitijo peskovniki.
+        var gitDirs: [String] { [wt.appendingPathComponent(".git").path] + nested.map { $0.dir(wt).appendingPathComponent(".git").path } }
+    }
+
+    /// worktree: klon ugnezdenega repozitorija (podmodul ali nesleden) iz svojega zrcala na isti veji (kot Go wtNested).
+    struct Nested {
+        let path: String, repo: URL, base: String  // pot v klonu (»/«), golo zrcalo, posnetek odjemalca
+        let git: [UInt64]?, cfg: Data?             // H2 kot Slot
+        init(path: String, repo: URL, base: String, wt: URL) {
+            self.path = path; self.repo = repo; self.base = base
+            let g = wt.appendingPathComponent(path, isDirectory: true).appendingPathComponent(".git")
+            git = Slot.inode(g); cfg = Sync.read(g.appendingPathComponent("config"), max: 1 << 20)
+        }
+        func dir(_ wt: URL) -> URL { wt.appendingPathComponent(path, isDirectory: true) }
+        /// H1 (kot Go nestedIntact): pot so same prave mape (ne povezava ven) in .git je še ista mapa.
+        func intact(_ wt: URL) -> Bool {
+            var d = wt, st = stat()
+            for c in path.split(separator: "/") {
+                d = d.appendingPathComponent(String(c), isDirectory: true)
+                guard lstat(d.path, &st) == 0, st.st_mode & S_IFMT == S_IFDIR else { return false }
+            }
+            return git != nil && Slot.inode(d.appendingPathComponent(".git")) == git
         }
     }
 
@@ -534,6 +561,7 @@ public actor ShareHub {
     /// Konec izvajanja (tudi ob napaki ali prekinitvi): združi, če prevzema ni bilo, in odstrani klon.
     func finish(run id: String) async {
         releaseSlot(run: id)  // worktree: mesto spet prosto
+        _ = Worktree.runGroups.withLock { $0.removeValue(forKey: id) }  // N1: skupine agentov tega izvajanja
         releaseWriter(run: id)
         refusals[id] = nil
         guard let r = runs[id] else { return }

@@ -44,7 +44,7 @@ flowchart LR
 4. For an agent model, the gateway first makes sure it has the folder (mount, synced copy or clone), then runs the
    agent CLI there with the switches from its settings.
 5. The answer streams back the same way. In worktree mode `minigw` then fetches the agent's branch into your
-   repository.
+   repository, and each nested repository's branch into that repository.
 
 The gateway on another computer never connects back to the client. Everything goes through the connection that
 `minigw` opens.
@@ -98,6 +98,23 @@ Details:
 - In worktree mode the gateway never runs git with the agent's own `.git` (config, hooks) and reads the clone only
   from a sandbox. On Linux `minigw serve` pins the clone's `.git` with bwrap (`.git/config`, `hooks` and `info`
   read-only); otherwise it checks `.git` every second and stops the run on a change.
+- Each nested repository or submodule that git does not ignore has its own mirror
+  (`repos/<device>/<id>-<key>.git`) and its own clone at its path in the agent's clone. Every clone's `.git` gets the
+  same protection as the top one (read-only config, hooks, info and commondir, the bwrap pin and the change check).
+  git started by the agent CLIs runs only with the `.git` of one of these clones as `GIT_DIR`; a repository the agent
+  creates is never entered and stops that run's branch. Untracked nested repositories are excluded in the parent
+  clone's `.git/info/exclude` before the agent starts. After the run the gateway stops the agent's leftover processes
+  (also ones that left the clone or the session but carry its `GIT_WORK_TREE`), commits each clone's changes on its
+  branch from the clone's real path (checked before and after, the result is dropped if a folder was swapped for a
+  link; on the Mac git can read only that path), deepest first so a submodule's parent records its new commit, checks
+  the objects (fsck) and sends one bundle per repository; all bundles of one upload together stay within 4 GB.
+  In native mode on the Mac the same happens with the repositories in the share; git on the gateway reads them
+  without the system or user git config.
+- How a nested clone is read after the run: on the Mac the path is checked once and then never resolved again (its
+  objects are opened without following links, and git's sandbox may read only that real path), so a folder swapped
+  for a link afterwards is refused. On Linux the clone folder is opened once and bound into a bwrap sandbox for git, so
+  a later swap changes nothing; every agent runs in its own process namespace and cannot outlive its run. A Linux
+  gateway without bwrap, or a run without its own process namespace, does not return nested repositories.
 
 ## Protected paths
 

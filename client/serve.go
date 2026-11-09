@@ -496,6 +496,7 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 		s.log.Printf("WARNING: Bash is allowed; it runs only in Claude Code's sandbox (on Linux it needs bubblewrap and socat)")
 	}
 	s.hub.logf = s.log.Printf
+	s.hub.nestedBlocker = s.nestedBlocker
 	if s.offReason = offReason; offReason != "" {
 		s.offFolders = bad
 		s.log.Print("WARNING: Claude CLI and Codex are off: " + offReason)
@@ -1223,9 +1224,9 @@ func (s *server) route(w http.ResponseWriter, r *req) (int, string) {
 		if err != nil {
 			part = -1
 		}
-		return writeStatus(w, s.hub.worktreePut(key, part, r.body, dev), "", nil), ""
+		return writeStatus(w, s.hub.worktreePut(key, part, parseNested(r.h("x-nested")), r.body, dev), "", nil), ""
 	case "GET /minigw/worktree/result":
-		data, st, why := s.hub.worktreeResult(key, dev)
+		data, st, why := s.hub.worktreeResult(key, dev, parseNested(r.h("x-nested")))
 		if st != 200 {
 			return writeError(w, r.rid, st, why), ""
 		}

@@ -142,7 +142,7 @@ func makeRouter(session: URLSession = .shared) -> Router {
     #expect(a.contains("--add-dir") && a.contains("/tmp"))
     // datotečna orodja niso splošno dovoljena (veljajo le v mapah), ostala da; izjeme ostanejo zavrnjene
     #expect(a[a.firstIndex(of: "--allowedTools")! + 1] == "Task,WebFetch")
-    #expect(a.suffix(2) == ["--disallowedTools", "WebSearch"])
+    #expect(a[a.count - 2] == "--disallowedTools" && a.last!.hasPrefix("WebSearch,") && a.last!.contains("Edit(//tmp/session/**/.git/config)"))  // N3
     let settings = try JSONSerialization.jsonObject(with: Data(a[a.firstIndex(of: "--settings")! + 1].utf8)) as! [String: Any]
     let sb = settings["sandbox"] as! [String: Any], fs = sb["filesystem"] as! [String: [String]]
     #expect(sb["allowUnsandboxedCommands"] as? Bool == false && fs["denyRead"] == ["~"] && fs["allowWrite"] == ["/tmp/session", "/tmp"])

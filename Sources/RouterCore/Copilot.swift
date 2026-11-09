@@ -267,7 +267,7 @@ extension Router {
         }
         var cwd = tmp, visible: URL?
         var readOnly = false
-        var tree: (root: URL, branch: String, maven: URL, read: [URL])?
+        var tree: (root: URL, branch: String, maven: URL, read: [URL], gits: [String])?
         var prompt = ClaudeCLI.prompt(history: all.dropLast(), last: last)
         var sharedDir: URL?
         if agent {
@@ -294,7 +294,7 @@ extension Router {
             if readOnly, tree != nil, AgentRun.current == nil { return await error(400, "invalid_request_error", Self.readOnlyWorktree, rid: rid, writer: writer) }
             if let shared, let clientCwd {
                 prompt = Self.mountNote(clientCwd, shared, readOnly: readOnly || (tree != nil && !cfg.write), synced: synced,
-                                        branch: tree?.branch) + "\n\n" + prompt
+                                        branch: tree?.branch, gits: tree?.gits ?? []) + "\n\n" + prompt
             }
         }
         let write = cfg.write && !readOnly, commands = agent && cfg.commands && write  // peskovnik piše v mapo: ukazi le s pisanjem (tudi ne pri --ro)
@@ -319,7 +319,7 @@ extension Router {
             }.joined() + ")\n")
         var treeEnv: [String: String]?  // L-N9a: harness Copilot sam poganja git v klonu (ovoj kot pri Claude CLI)
         if let t = tree {
-            guard let e = Worktree.claudeEnv(root: t.root, maven: t.maven, gitexec: config.scratch("gitexec")) else {
+            guard let e = Worktree.claudeEnv(root: t.root, maven: t.maven, gitexec: config.scratch("gitexec"), gits: t.gits) else {
                 return await error(503, "api_error", "Cannot prepare git for the agent's clone (git --exec-path): use sync", rid: rid, writer: writer)
             }
             treeEnv = e

@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -51,7 +52,7 @@ func TestWorktreeClientRoundTripAndMaliciousBranch(t *testing.T) {
 	config, _ := os.ReadFile(filepath.Join(client, ".git/config"))
 
 	top := gitToplevel(filepath.Join(client))
-	snap := gitSnapshot(top)
+	snap := gitSnapshot(top, false, false)
 	if !shaRe.MatchString(snap) || snap == head {
 		t.Fatalf("snapshot %q", snap)
 	}
@@ -246,7 +247,7 @@ func TestSnapshotSkipsIgnoredFilesAndNeedsACommit(t *testing.T) {
 	writeT(t, filepath.Join(root, "gitconfig"), "[core]\n\texcludesFile = "+filepath.ToSlash(filepath.Join(root, "global-ignore"))+"\n")
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(root, "gitconfig"))
 	gitT(t, repo, "init", "-q", "-b", "main")
-	if gitHasCommit(repo) || gitSnapshot(repo) != "" {
+	if gitHasCommit(repo) || gitSnapshot(repo, false, false) != "" {
 		t.Fatal("snapshot without a commit")
 	}
 	writeT(t, filepath.Join(repo, ".gitignore"), "build/\n")
@@ -256,43 +257,69 @@ func TestSnapshotSkipsIgnoredFilesAndNeedsACommit(t *testing.T) {
 	for _, f := range []string{"new.txt", "build/out.o", ".omc/state.json", "secret.txt"} {
 		writeT(t, filepath.Join(repo, f), "x\n")
 	}
-	snap := gitSnapshot(repo)
+	snap := gitSnapshot(repo, false, false)
 	if !gitHasCommit(repo) || !shaRe.MatchString(snap) {
 		t.Fatalf("snapshot %q", snap)
 	}
 	if got := gitT(t, repo, "ls-tree", "-r", "--name-only", snap); got != ".gitignore\nnew.txt" {
 		t.Fatalf("snapshot has %q", got)
 	}
-	// Neprezrt ugnezden repozitorij brez commita: način ostane, posnetek ga izpusti (ime očiščeno); prezrt ali s
-	// commitom (gitlink) ni v seznamu.
-	if n := nestedNoCommit(repo); len(n) != 0 {
+	// Ugnezdeni repozitoriji: neprezrti (s commitom ali brez, nesledeni na kateri koli globini, podmoduli z mapo .git)
+	// so v seznamu; prezrt (build/) ne. Brez commita gre iz posnetka starša (kot gitlink ga git add -A ne more dodati).
+	if n := nestedRepos(repo); len(n) != 0 {
 		t.Fatalf("nested without nested repo: %q", n)
 	}
 	gitT(t, filepath.Join(repo, "build"), "init", "-q")
-	if n := nestedNoCommit(repo); len(n) != 0 {
+	if n := nestedRepos(repo); len(n) != 0 {
 		t.Fatalf("ignored nested repo: %q", n)
 	}
 	lib := filepath.Join(repo, "vendor", "lib")
 	writeT(t, filepath.Join(lib, "a.txt"), "x\n")
 	gitT(t, lib, "init", "-q")
 	writeT(t, filepath.Join(repo, "vendor", "keep.txt"), "x\n")
-	n := nestedNoCommit(repo)
-	if snap := gitSnapshot(repo, n...); !slices.Equal(n, []string{"vendor/lib"}) || !shaRe.MatchString(snap) ||
+	n := nestedRepos(repo)
+	if snap := gitSnapshot(repo, false, false, n...); !slices.Equal(n, []string{"vendor/lib"}) || !shaRe.MatchString(snap) ||
 		gitT(t, repo, "ls-tree", "-r", "--name-only", snap) != ".gitignore\nnew.txt\nvendor/keep.txt" {
 		t.Fatalf("nested repo without commit: %q %q", n, snap)
 	}
+	// Brez commita: commit brez starša iz indeksa in delovne mape (tudi nova, še ne dodana datoteka); repozitorij ostane.
+	writeT(t, filepath.Join(lib, "b.txt"), "y\n")
 	gitT(t, lib, "add", "a.txt")
+	rs := gitSnapshot(lib, true, false)
+	if !shaRe.MatchString(rs) || gitT(t, lib, "rev-list", "--parents", "-n1", rs) != rs ||
+		gitT(t, lib, "ls-tree", "-r", "--name-only", rs) != "a.txt\nb.txt" || gitHasCommit(lib) {
+		t.Fatalf("root snapshot %q", rs)
+	}
 	gitT(t, lib, "commit", "-qm", "lib")
-	if n := nestedNoCommit(repo); len(n) != 0 || !shaRe.MatchString(gitSnapshot(repo)) {
-		t.Fatalf("nested repo with a commit: %q", n)
+	deeper := filepath.Join(lib, "inner", "z") // globina 2 v nesledenem
+	writeT(t, filepath.Join(deeper, "z.txt"), "z\n")
+	gitT(t, deeper, "init", "-q")
+	if n := nestedRepos(repo); !slices.Equal(n, []string{"vendor/lib", "vendor/lib/inner/z"}) || !shaRe.MatchString(gitSnapshot(repo, false, false)) {
+		t.Fatalf("nested repo with a commit and depth 2: %q", n)
+	}
+	if c := nestedChildren("", []string{"vendor/lib", "vendor/lib/inner/z", "x"}); !slices.Equal(c, []string{"vendor/lib", "x"}) {
+		t.Fatalf("children of top: %q", c)
+	}
+	if c := nestedChildren("vendor/lib", []string{"vendor/lib", "vendor/lib/inner/z", "vendor/libx/y"}); !slices.Equal(c, []string{"inner/z"}) {
+		t.Fatalf("children of vendor/lib: %q", c)
 	}
 	os.RemoveAll(filepath.Join(repo, "vendor"))
-	deep := filepath.Join(repo, "new", "x\ny") // globoko v nesledeni mapi, ime z novo vrstico
+	deep := filepath.Join(repo, "new", "x\ny") // globoko v nesledeni mapi, ime z novo vrstico: najden, a ga prehod ne vzame
 	os.MkdirAll(deep, 0o755)
 	writeT(t, filepath.Join(repo, "new", "f.txt"), "x\n")
 	gitT(t, deep, "init", "-q")
-	if n := nestedNoCommit(repo); !slices.Equal(n, []string{"new/x\ny"}) || !shaRe.MatchString(gitSnapshot(repo, n...)) {
+	if n := nestedRepos(repo); !slices.Equal(n, []string{"new/x\ny"}) || validNestedPath(n[0]) || !shaRe.MatchString(gitSnapshot(repo, false, false, n...)) {
 		t.Fatalf("deep nested repo: %q", n)
+	}
+	for _, p := range []string{"a", "a/b", "a b/c-d.e", ".vendor/x"} {
+		if !validNestedPath(p) {
+			t.Fatalf("valid path refused: %q", p)
+		}
+	}
+	for _, p := range []string{"", "/a", "a/", "a//b", "../a", "a/../b", "./a", "a/.git", "a/.GIT/b", `a\b`, "c:x", "a\x01"} {
+		if validNestedPath(p) {
+			t.Fatalf("bad path accepted: %q", p)
+		}
 	}
 }
 
@@ -306,7 +333,7 @@ func TestBranchLineShowsAgentOnlyRange(t *testing.T) {
 	gitT(t, top, "commit", "-qm", "a")
 	writeT(t, filepath.Join(top, "a.txt"), "mine\n")     // neshranjena sprememba
 	writeT(t, filepath.Join(top, "secret.key"), "key\n") // nesledena datoteka
-	snap := gitSnapshot(top)
+	snap := gitSnapshot(top, false, false)
 	if snap == "" || snap == gitT(t, top, "rev-parse", "HEAD") {
 		t.Fatalf("snapshot %q", snap)
 	}
@@ -322,7 +349,7 @@ func TestBranchLineShowsAgentOnlyRange(t *testing.T) {
 	tip := gitT(t, top, "commit-tree", strings.TrimSpace(string(out)), "-p", snap, "-m", "agent")
 	gitT(t, top, "update-ref", "refs/heads/"+branch, tip)
 	writeT(t, filepath.Join(top, "a.txt"), "later\n")
-	later := gitSnapshot(top) // druga zahteva, drug agent: ni prednik te veje
+	later := gitSnapshot(top, false, false) // druga zahteva, drug agent: ni prednik te veje
 
 	base := agentBase(top, branch, []string{snap, later})
 	if base != snap {
@@ -338,6 +365,18 @@ func TestBranchLineShowsAgentOnlyRange(t *testing.T) {
 	}
 	if agentBase(top, branch, []string{later}) != "HEAD" {
 		t.Fatal("unrelated snapshot used as base")
+	}
+	// Ugnezden (M2): stroga oblika le za varno pot; drugače vrstica brez ukazov, ki ne začne z »agent work is on branch«.
+	b, base := "minigw/codex-1a2b3c4d-0", strings.Repeat("a", 40)
+	if got := branchLine(b, base, "sub/lib"); got != "agent work is on branch "+b+" in nested repository sub/lib: review with git -C sub/lib diff "+
+		base+".."+b+" ("+base+" = your state in sub/lib when the agent started), then bring it in with git -C sub/lib cherry-pick "+base+".."+b+
+		" or git -C sub/lib diff --binary "+base+".."+b+" | git -C sub/lib apply" {
+		t.Fatalf("nested line: %s", got)
+	}
+	for _, p := range []string{"a b", "-x", ".hidden", "a/$(id)", "a;b"} {
+		if got := branchLine(b, base, p); strings.HasPrefix(got, "agent work is on branch") || strings.Contains(got, p) {
+			t.Fatalf("unsafe path %q: %s", p, got)
+		}
 	}
 }
 
@@ -359,5 +398,30 @@ func TestDeliveredBranchChecksAncestry(t *testing.T) {
 	if !deliveredBranch(top, branch, base) || deliveredBranch(top, branch, other) || deliveredBranch(top, "main", base) ||
 		deliveredBranch(top, branch, "HEAD") {
 		t.Fatal("deliveredBranch")
+	}
+}
+
+// N3: posnetek ugnezdenega repozitorija ne požene filtra clean iz njegove .gitattributes (vrhnji ostane kot prej).
+func TestNestedSnapshotRunsNoCleanFilter(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("filter is a shell command")
+	}
+	dir, marker := t.TempDir(), filepath.Join(t.TempDir(), "ran")
+	gitT(t, dir, "init", "-q", "-b", "main")
+	writeT(t, filepath.Join(dir, "a.txt"), "a\n")
+	gitT(t, dir, "add", "a.txt")
+	gitT(t, dir, "commit", "-qm", "a")
+	gitT(t, dir, "config", "filter.evil.clean", "touch "+marker+"; cat")
+	writeT(t, filepath.Join(dir, ".gitattributes"), "* filter=evil\n")
+	writeT(t, filepath.Join(dir, "a.txt"), "b\n")
+	if !shaRe.MatchString(gitSnapshot(dir, false, true)) {
+		t.Fatal("no snapshot")
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("clean filter ran for a nested snapshot")
+	}
+	gitSnapshot(dir, false, false)
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatal("the test does not reproduce the filter")
 	}
 }

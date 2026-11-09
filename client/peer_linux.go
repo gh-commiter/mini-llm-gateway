@@ -128,15 +128,29 @@ func agentSandboxed(cfgDir string) bool { return bwrapReady(cfgDir) != "" }
 // to zapiše in ga izpusti; preizkus ponovi najpogosteje enkrat na minuto (N3b: tudi po prehodni napaki). Brez pin
 // runCLI preverja klon med tekom (worktreeIntact) in claude ob zamenjavi .git ustavi.
 func pinWrap(cfgDir, exe string, args, pins []string, logf func(string, ...any)) (string, []string) {
+	if !claudePinOK(cfgDir, logf) {
+		return exe, args
+	}
+	a := []string{"--dev-bind", "/", "/", "--die-with-parent", "--unshare-pid", "--proc", "/proc"}
+	for _, p := range pins {
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			a = append(a, "--bind", r, r)
+		}
+	}
+	return bwrapPath, append(append(a, "--", exe), args...)
+}
+
+// claudePinOK: pinWrap deluje (bwrap in gnezdeni bwrap v svojem imenskem prostoru PID); preizkus kot prej.
+func claudePinOK(cfgDir string, logf func(string, ...any)) bool {
 	bw := bwrapReady(cfgDir)
 	if bw == "" {
-		return exe, args
+		return false
 	}
 	nestedMu.Lock()
 	if !nestedBwrap && time.Since(nestedAt) >= nestedRetry {
 		t, err := exec.LookPath("true")
 		d := os.TempDir()
-		if nestedBwrap = err == nil && command(bw, "--dev-bind", "/", "/", "--die-with-parent", "--bind", d, d, "--",
+		if nestedBwrap = err == nil && command(bw, "--dev-bind", "/", "/", "--die-with-parent", "--unshare-pid", "--proc", "/proc", "--bind", d, d, "--",
 			bw, "--dev-bind", "/", "/", "--", t).Run() == nil; !nestedBwrap {
 			nestedAt = time.Now()
 			logf("claude: nested bwrap does not work here (user namespaces restricted?), so the .git pin of worktree clones is off; the clone is checked during each run instead")
@@ -144,16 +158,7 @@ func pinWrap(cfgDir, exe string, args, pins []string, logf func(string, ...any))
 	}
 	ok := nestedBwrap
 	nestedMu.Unlock()
-	if !ok {
-		return exe, args
-	}
-	a := []string{"--dev-bind", "/", "/", "--die-with-parent"}
-	for _, p := range pins {
-		if r, err := filepath.EvalSymlinks(p); err == nil {
-			a = append(a, "--bind", r, r)
-		}
-	}
-	return bw, append(append(a, "--", exe), args...)
+	return ok // N1: s pin ima claude svoj imenski prostor PID; ko konča, jedro ustavi vse potomce (tudi setsid)
 }
 
 // watchGitMoves (N3c): inotify na mapi .git klona (IN_MOVE_SELF, IN_DELETE_SELF). Dogodek ostane v vrsti jedra, tudi če

@@ -545,8 +545,9 @@ func (s *server) agentFolder(w http.ResponseWriter, r *req, label, agent string)
 		if dir = s.hub.push(share, agent); dir == "" {
 			return "", "", false, writeError(w, r.rid, 502, "Cloning "+clientCwd+" on the gateway failed (worktree mode; see minigw output)")
 		}
-		_, branch, _, _, _ := s.hub.worktreeOf(r.h("x-claude-mini-session"), agent)
-		return dir, worktreeNote(clientCwd, dir, branch), false, 0
+		wt, branch, _, _, _ := s.hub.worktreeOf(r.h("x-claude-mini-session"), agent)
+		gits, _ := s.hub.worktreeGits(wt)
+		return dir, worktreeNote(clientCwd, dir, branch, gits), false, 0
 	case share != nil:
 		if dir = s.hub.push(share, agent); dir == "" {
 			return "", "", false, writeError(w, r.rid, 502, "Syncing "+clientCwd+" to the gateway failed (see minigw output)")
@@ -675,8 +676,15 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 		}
 		var treeEnv []string // L-N9a: kot Claude CLI (harness Codex, Grok in Copilot sam poganja git v klonu)
 		gw := c.scratch("gitexec")
+		gits, objs := s.hub.worktreeGits(wt)
+		if len(objs) == 0 {
+			objs = []string{objects}
+		}
+		if inTree && runtime.GOOS == "linux" && !agentSandboxed(s.cfgDir) {
+			s.hub.markUnconfined(wt) // N1: brez bwrap (svoj imenski prostor PID) agent lahko preživi do finalize
+		}
 		if inTree {
-			if treeEnv = worktreeClaudeEnv(wt, maven, gw); treeEnv == nil {
+			if treeEnv = worktreeClaudeEnv(wt, maven, gw, gits); treeEnv == nil {
 				return "", errors.New("cannot prepare git for the agent's clone (git --exec-path); use sync")
 			}
 		}
@@ -688,10 +696,12 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 				m.ro = append(m.ro, minigwExe())
 			}
 			if inTree {
-				m.rw, m.ro = append(m.rw, maven), append(m.ro, objects, gw)
-				m.pins = []string{filepath.Join(wt, ".git")} // L1: .git klona je točka priklopa (mv/rm: EBUSY)
-				for _, d := range []string{"config", "hooks", "info", "commondir"} {
-					m.protect = append(m.protect, filepath.Join(wt, ".git", d))
+				m.rw, m.ro = append(m.rw, maven), append(append(m.ro, objs...), gw)
+				m.pins = gits // L1: .git vsakega klona (vrhnji in ugnezdeni) je točka priklopa (mv/rm: EBUSY)
+				for _, g := range gits {
+					for _, d := range []string{"config", "hooks", "info", "commondir"} {
+						m.protect = append(m.protect, filepath.Join(g, d))
+					}
 				}
 				m.env = append(m.env, treeEnv...)
 			}

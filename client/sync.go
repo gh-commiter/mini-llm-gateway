@@ -78,11 +78,21 @@ var caseFold = runtime.GOOS == "darwin" || runtime.GOOS == "windows"
 // normName: ime, kot ga vidi tak datotečni sistem (Windows odreže končne pike in presledke: ».GIT.« = ».git«).
 // normName: upper→lower preslika ſ, ı, K (Kelvin) v ASCII; »git~1« je kratko 8.3 ime ».git« na Windows.
 func normName(c string) string {
-	n := strings.ToLower(strings.ToUpper(strings.TrimRight(c, ". ")))
+	n := strings.ToLower(strings.ToUpper(strings.TrimRight(strings.Map(func(r rune) rune {
+		if hfsIgnorable(r) { // N5: HFS+ te znake prezre (».g\u200cit« je ».git«)
+			return -1
+		}
+		return r
+	}, c), ". ")))
 	if shortGit.MatchString(n) {
 		return ".git"
 	}
 	return n
+}
+
+// hfsIgnorable (N5): kodne točke, ki jih HFS+ pri primerjavi imen prezre.
+func hfsIgnorable(r rune) bool {
+	return r >= 0x200c && r <= 0x200f || r >= 0x202a && r <= 0x202e || r >= 0x206a && r <= 0x206f || r == 0xfeff
 }
 
 var shortGit = regexp.MustCompile(`^git~[0-9]+$`)
