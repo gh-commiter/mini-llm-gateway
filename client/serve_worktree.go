@@ -1409,5 +1409,9 @@ func runTempDir(root string) (dir string, done func(), err error) {
 	if dir, err = os.MkdirTemp(root, ""); err != nil {
 		return "", nil, err
 	}
+	if !ownTempRoot(root) { // koren se je vmes zamenjal (čistilec + tuja mapa): ne uporabi
+		os.RemoveAll(dir)
+		return "", nil, errors.New("gateway temporary folder changed")
+	}
 	return dir, func() { os.RemoveAll(dir) }, nil
 }
