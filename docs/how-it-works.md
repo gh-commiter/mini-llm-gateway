@@ -44,7 +44,7 @@ flowchart LR
 4. For an agent model, the gateway first makes sure it has the folder (mount, synced copy or clone), then runs the
    agent CLI there with the switches from its settings.
 5. The answer streams back the same way. In worktree mode `minigw` then fetches the agent's branch into your
-   repository.
+   repository, and each nested repository's branch into that repository.
 
 The gateway on another computer never connects back to the client. Everything goes through the connection that
 `minigw` opens.
@@ -98,6 +98,12 @@ Details:
 - In worktree mode the gateway never runs git with the agent's own `.git` (config, hooks) and reads the clone only
   from a sandbox. On Linux `minigw serve` pins the clone's `.git` with bwrap (`.git/config`, `hooks` and `info`
   read-only); otherwise it checks `.git` every second and stops the run on a change.
+- Each nested repository or submodule that git does not ignore has its own mirror
+  (`repos/<device>/<id>-<key>.git`) and its own clone at its path in the agent's clone. Every clone's `.git` gets the
+  same protection as the top one (read-only config, hooks, info and commondir, the bwrap pin and the change check).
+  git started by the agent CLIs runs only with the `.git` of one of these clones as `GIT_DIR`; a repository the agent
+  creates is never entered and stops that run's branch. After the run the gateway commits each clone's changes on
+  its branch (deepest first, so a submodule's parent records its new commit) and sends one bundle per repository.
 
 ## Protected paths
 
