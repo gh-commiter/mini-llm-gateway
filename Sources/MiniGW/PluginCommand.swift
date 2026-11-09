@@ -66,7 +66,7 @@ func versionOf(_ exe: String) -> String {
     return !v.isEmpty && v.allSatisfy { "0123456789.".contains($0) } ? v : ""
 }
 
-/// L3: mapa ni zapisljiva za skupino in druge ter je last tega uporabnika ali root.
+/// L3: mapa ali datoteka ni zapisljiva za skupino in druge ter je last tega uporabnika ali root.
 func safeDir(_ dir: String) -> Bool {
     var st = stat()
     return stat(dir, &st) == 0 && st.st_mode & 0o022 == 0 && (st.st_uid == getuid() || st.st_uid == 0)
@@ -88,7 +88,7 @@ func pluginLink(_ self: String) throws -> String? {
     let bin = pluginDataDir + "/bin"
     if sameFile((self as NSString).deletingLastPathComponent, bin) { return nil }
     let dir = (self as NSString).deletingLastPathComponent
-    guard safeDir(dir) else { throw PluginSetup.Failure(message: "\(dir) is writable by others or not owned by you or root: move minigw to a safe folder") }
+    guard safeDir(dir), safeDir(self) else { throw PluginSetup.Failure(message: "\(self) or its folder is writable by others or not owned by you or root: move minigw to a safe folder") }
     try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
     if (try? FileManager.default.destinationOfSymbolicLink(atPath: pluginLinkPath)) != self {
         unlink(pluginLinkPath)

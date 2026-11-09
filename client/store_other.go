@@ -227,7 +227,7 @@ func regEnvPathSet(string) error                   { return errors.New("Windows 
 
 func shortPath(p string) string { return p } // le Windows (8.3)
 
-// safeDir (L3): mapa ni zapisljiva za skupino in druge ter je last tega uporabnika ali root.
+// safeDir (L3): mapa ali datoteka ni zapisljiva za skupino in druge ter je last tega uporabnika ali root.
 func safeDir(dir string) bool {
 	fi, err := os.Stat(dir)
 	if err != nil {

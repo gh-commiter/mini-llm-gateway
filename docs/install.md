@@ -168,7 +168,9 @@ minigw uninstall          # list, then remove what minigw added here: plugin, si
 minigw uninstall --purge  # also profiles (Keychain, Credential Manager) and the settings folder
 ```
 
-`minigw plugin install` refuses a `settings.json` that is not valid JSON and never overwrites it. `minigw uninstall`
+`minigw plugin install` refuses a `settings.json` that is not valid JSON and never overwrites it. It does not link a
+minigw that is, or lies in a folder that is, writable by other users or not owned by you or root; move it to a safe
+folder first. `minigw plugin` and `minigw uninstall` refuse to run as root: run them as yourself. `minigw uninstall`
 asks first (`--yes` skips the question; without a terminal it needs `--yes`) and keeps settings and profiles unless
 you add `--purge`. It does not remove minigw itself; it prints how: `brew uninstall --cask minigw`, Settings → Apps for
 the MSI, or `rm ~/.local/bin/minigw`.

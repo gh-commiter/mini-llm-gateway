@@ -261,6 +261,11 @@ func TestPluginDataSafeAndUnsafeDir(t *testing.T) {
 		t.Fatalf("world-writable folder linked: %v", err)
 	}
 	os.Chmod(dir, 0o755)
+	os.Chmod(self, 0o777)
+	if _, err := pluginLink("linux", self); err == nil {
+		t.Fatal("world-writable minigw linked")
+	}
+	os.Chmod(self, 0o755)
 	if _, err := pluginLink("linux", self); err != nil {
 		t.Fatal(err)
 	}

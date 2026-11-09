@@ -188,8 +188,8 @@ func pluginLink(goos, self string) (string, error) {
 	if sameFile(filepath.Dir(self), bin) {
 		return "", nil
 	}
-	if goos != "windows" && !safeDir(filepath.Dir(self)) { // L3: tuj ali vsem zapisljiv folder bi lahko zamenjal minigw
-		return "", errors.New(filepath.Dir(self) + " is writable by others or not owned by you or root: move minigw to a safe folder")
+	if goos != "windows" && (!safeDir(filepath.Dir(self)) || !safeDir(self)) { // L3: tuj ali vsem zapisljiv minigw ali mapa
+		return "", errors.New(self + " or its folder is writable by others or not owned by you or root: move minigw to a safe folder")
 	}
 	if err := os.MkdirAll(bin, 0o755); err != nil {
 		return "", err
