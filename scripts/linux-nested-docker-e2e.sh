@@ -5,6 +5,7 @@
 # vejo in vrstico, vrhnja veja top.txt in gitlink sub, cherry-pick čist; agent teče v svojem imenskem prostoru PID.
 # Negativno: user.max_user_namespaces=1 (le VM Dockerja, na koncu nazaj): zunanji bwrap dela, gnezdeni ne → zahteva z
 # ugnezdenimi zavrnjena pred začetkom, repozitorij brez njih dela. AppArmor Ubuntu 24.04 se v Dockerju ne da posnemati.
+# Preveri še, da je zavrnitev končna (enkrat, hitro) in da Bash v peskovniku dela (kratek TMPDIR teka).
 # Svoj HOME na Macu in v vsebniku; uporabnikovih nastavitev, ključev in žetonov se ne dotakne.
 #   linux-nested-docker-e2e.sh   (Docker, omrežje za apt in npm)
 emulate -L zsh; set -eu
@@ -158,11 +159,12 @@ gw
 docker exec $NAME rm -f /tmp/tools.log
 before=$(git -C $C for-each-ref 'refs/heads/minigw/' | wc -l)
 t0=$SECONDS; wt $C && fail "nested repos not refused: $(<$T/err)"; secs=$(( SECONDS - t0 ))
-grep -qF "nested repositories need bwrap inside bwrap for Claude CLI on this Linux gateway" $T/err && grep -q "use sync" $T/err || fail "refusal: $(<$T/err)"
+cat $T/out $T/err | grep -F "nested repositories need bwrap inside bwrap for Claude CLI on this Linux gateway" | grep -q "use sync" || fail "refusal: $(cat $T/out $T/err)"
 docker exec $NAME test -s /tmp/tools.log && fail "agent ran before the refusal"
 [[ $(git -C $C for-each-ref 'refs/heads/minigw/' | wc -l) == $before ]] || fail "branch after refusal"
-print "ok: refused before start ($(grep -o 'nested repositories need bwrap inside bwrap[^;]*' $T/err | head -1); … use sync)"
-print "   note: refusal shown $(grep -c 'nested repositories need' $T/err)x, minigw -p took ${secs}s (502: Claude Code retries)"
+n=$(cat $T/out $T/err | grep -c 'nested repositories need')
+(( n == 1 && secs < 20 )) || fail "refusal shown ${n}x after ${secs}s (want once, final): $(<$T/err)"
+print "ok: refused before start, once, in ${secs}s ($(cat $T/out $T/err | grep -o 'nested repositories need bwrap inside bwrap[^;]*' | head -1); … use sync)"
 # spet vse dovoljeno: claude ostane brez pin (bwrapReady velja do konca procesa), Bash v peskovniku Claude Code pa dela
 docker exec $NAME sh -c "echo $NS0 > /proc/sys/user/max_user_namespaces"; NS0=
 P=$HOME/plain; git init -q -b main $P; print p > $P/p.txt; gc -C $P add -A; gc -C $P commit -qm p
@@ -175,4 +177,8 @@ bashok $P $brp plain
 print "ok: plain repo in worktree mode without nested bwrap ($brp; claude NSpid levels 1)"
 (( ! $#BASH )) || fail "Bash in Claude Code's sandbox failed in the clone: ${(j:; :)BASH}"
 print "ok: Bash in Claude Code's sandbox (nested and plain)"
+# TMPDIR tekov (/tmp/mgw-*/<tek>) po teku pobrisan
+left=$(docker exec $NAME sh -c 'find /tmp/mgw-* -mindepth 1 2>/dev/null' || true)
+[[ -z $left ]] || fail "run temp left: $left"
+print "ok: run temp folders removed"
 print "linux nested docker e2e ok"
