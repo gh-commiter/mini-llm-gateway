@@ -1613,6 +1613,12 @@ final class FakeMinigw: @unchecked Sendable {
     #expect(dav("MOVE", "A.txt", "A.txt") == 201)
     #expect(String(decoding: try Data(contentsOf: root.appendingPathComponent("A.txt")), as: UTF8.self) == "keep")
     #expect(dav("MOVE", "d", "d/sub/d") == 403 && dav("COPY", "d", "D/sub/d") == 403)
+    // L2: COPY mape ne kopira simbolnih povezav (kot Go copyTree)
+    try FileManager.default.createSymbolicLink(atPath: root.appendingPathComponent("d/link").path, withDestinationPath: "/etc")
+    try Data("x".utf8).write(to: root.appendingPathComponent("d/sub/f"))
+    #expect(dav("COPY", "d", "e") == 201)
+    #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("e/sub/f").path))
+    #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: root.appendingPathComponent("e/link").path)) == nil)
 }
 
 // #2: direktni WebDAV ne piše v zaščitene poti (kot sync), tudi prek povezave; branje ostane.
