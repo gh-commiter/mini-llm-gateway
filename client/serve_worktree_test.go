@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -699,6 +700,11 @@ func TestServeWorktreeNestedRoundTrip(t *testing.T) {
 cat > /dev/null
 for p in . sub sub/deep vendor/lib nc build/_deps/x; do echo "agent" >> "$p/agent.txt"; done
 grep -q uncommitted vendor/lib/f.txt && echo saw > vendor/lib/seen.txt
+# B: navodilo poimenuje ugnezdene klone; agent commita v podmodulu (ovoj pusti registriran GIT_DIR)
+while [ $# -gt 0 ]; do [ "$1" = --append-system-prompt-file ] && grep -qE "/claude-[0-9a-f]+-0/sub[,.]" "$2" && grep -q "GIT_DIR=<path>/.git" "$2" && touch note-ok; shift; done
+git add -A && git -c user.name=a -c user.email=a@x commit -qm "agent top" # cilj 1: nesledeni ugnezdeni niso gitlink
+GIT_DIR=$PWD/sub/.git GIT_COMMON_DIR=$PWD/sub/.git GIT_WORK_TREE=$PWD/sub git add agent.txt && \
+  GIT_DIR=$PWD/sub/.git GIT_COMMON_DIR=$PWD/sub/.git GIT_WORK_TREE=$PWD/sub git -c user.name=a -c user.email=a@x commit -qm "agent in sub" || echo commit-failed > commit-failed.txt
 echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"done"}}}'
 echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
 `)
@@ -740,6 +746,12 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
 			t.Fatalf("%q: no branch line:\n%s", p, out)
 		}
 	}
+	if got := gitT(t, filepath.Join(client, "sub"), "log", "--format=%s", branch); !strings.Contains(got, "agent in sub") {
+		t.Fatalf("agent's commit in the nested clone not kept: %s", got)
+	}
+	if files := gitT(t, client, "ls-tree", "-r", "--name-only", branch); !strings.Contains(files, "note-ok") || strings.Contains(files, "commit-failed") {
+		t.Fatalf("agent note or nested commit: %s", files)
+	}
 	if !strings.Contains(gitT(t, filepath.Join(client, "vendor", "lib"), "ls-tree", "-r", "--name-only", branch), "seen.txt") {
 		t.Fatal("agent did not see the nested repository's uncommitted change")
 	}
@@ -750,12 +762,12 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
 		strings.Contains(got, "vendor/lib/") || strings.Contains(got, "sub/") {
 		t.Fatalf("top branch has nested files: %s", got)
 	}
-	// Vrhnja veja: gitlink podmodula kaže na vrh veje v podmodulu (ta vsebuje commit z gitlinkom sub/deep).
+	// Vrhnja veja: gitlink podmodula kaže na vrh veje v podmodulu.
 	subTip := gitT(t, filepath.Join(client, "sub"), "rev-parse", branch)
 	if l := gitT(t, client, "ls-tree", branch, "sub"); !strings.HasPrefix(l, "160000 commit "+subTip) {
 		t.Fatalf("top gitlink %q, sub branch %s", l, subTip)
 	}
-	if l := gitT(t, filepath.Join(client, "sub"), "ls-tree", branch, "deep"); !strings.HasPrefix(l, "160000 commit "+gitT(t, filepath.Join(client, "sub", "deep"), "rev-parse", branch)) {
+	if l := gitT(t, filepath.Join(client, "sub"), "ls-tree", branch, "deep"); l != "" { // nesleden v sub: ni gitlink (cilj 1)
 		t.Fatalf("sub gitlink to deep: %q", l)
 	}
 	if gitT(t, filepath.Join(client, "nc"), "rev-list", "--count", branch) != "2" { // posnetek brez starša + delo agenta
@@ -763,6 +775,19 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
 	}
 	if got := state(); got != before {
 		t.Fatalf("user's repositories changed:\n%s\n%s", before, got)
+	}
+	// Cilj 1: nesleden ugnezden (vendor/lib s commitom, nc) ni gitlink ne v posnetku ne v veji; cherry-pick je čist.
+	for _, p := range []string{"vendor/lib", "nc"} {
+		if l := gitT(t, client, "ls-tree", branch, p); l != "" {
+			t.Fatalf("%s in the top branch: %s", p, l)
+		}
+	}
+	base := regexp.MustCompile(`agent work is on branch \S+: review with git diff ([0-9a-f]{40})\.\.`).FindStringSubmatch(string(out))
+	if base == nil {
+		t.Fatalf("no base:\n%s", out)
+	}
+	if o, err := exec.Command("git", "-C", client, "cherry-pick", "-n", base[1]+".."+branch).CombinedOutput(); err != nil {
+		t.Fatalf("cherry-pick -n: %v %s", err, o)
 	}
 }
 
@@ -865,5 +890,81 @@ func TestWorktreePushNestedNeedsGateway(t *testing.T) {
 	}
 	if r := sc.wtPush("k", davJob{Body: []byte(`{"have":[],"nested":{}}`)}); r.Status != 500 || !sc.reported["nested-max"] {
 		t.Fatalf("too many: %d %v", r.Status, sc.reported)
+	}
+}
+
+// N1: zamenjava poti ugnezdenega klona s povezavo ven po preverbi (agentov proces, ki je preživel) zavrže rezultat:
+// tuja mapa (skrivnost prehoda) ne pride v vejo, ref zrcala ostane prejšnji.
+func TestWorktreeNestedSwapDuringFinalize(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink")
+	}
+	root := t.TempDir()
+	client, wt, repo := filepath.Join(root, "c"), filepath.Join(root, "wt"), filepath.Join(root, "repos", "d", "r.git")
+	outside := filepath.Join(root, "outside")
+	for _, d := range []string{filepath.Join(client, "lib"), outside} {
+		os.MkdirAll(d, 0o755)
+		gitT(t, d, "init", "-q", "-b", "main")
+		writeT(t, filepath.Join(d, "f.txt"), "x\n")
+		gitT(t, d, "add", "f.txt")
+		gitT(t, d, "commit", "-qm", "x")
+	}
+	writeT(t, filepath.Join(outside, "secret.txt"), "gateway secret\n")
+	n := &wtNested{path: "lib", repo: nestedMirror(repo, "lib")}
+	n.base = gitT(t, filepath.Join(client, "lib"), "rev-parse", "HEAD")
+	b := filepath.Join(root, "push.bundle")
+	gitUser(filepath.Join(client, "lib"), nil, "update-ref", "refs/minigw/push", n.base)
+	gitUser(filepath.Join(client, "lib"), nil, "bundle", "create", b, "refs/minigw/push")
+	if ensureMirror(n.repo) != nil || !importBase(n.repo, b, n.base, "refs/minigw/base/x") || !makeClone(n.repo, n.dir(wt), "minigw/claude-12345678-0", n.base) {
+		t.Fatal("mirror or clone")
+	}
+	n.git, _ = os.Lstat(filepath.Join(wt, "lib", ".git"))
+	sl := &wtSlot{wt: wt, branch: "minigw/claude-12345678-0", nested: []*wtNested{n}}
+	writeT(t, filepath.Join(wt, "lib", "agent.txt"), "agent\n")
+	beforeNestedFinalize = func(*wtNested) { // po preverbi: lib → povezava na tujo mapo
+		os.Rename(filepath.Join(wt, "lib"), filepath.Join(wt, "lib.real"))
+		os.Symlink(outside, filepath.Join(wt, "lib"))
+	}
+	defer func() { beforeNestedFinalize = nil }()
+	tip, why := finalizeNested(sl, n, "claude", filepath.Join(root, "out.bundle"), nil)
+	if tip != "" || !strings.Contains(why, "moved or replaced") {
+		t.Fatalf("swap accepted: %q %q", tip, why)
+	}
+	if r, _ := gitRun(n.repo, "", nil, "--git-dir", n.repo, "rev-parse", "-q", "--verify", "refs/heads/minigw/claude-12345678-0"); r != "" {
+		t.Fatalf("mirror ref moved to %s", r)
+	}
+	if _, err := os.Stat(filepath.Join(root, "out.bundle")); err == nil {
+		t.Fatal("bundle kept")
+	}
+}
+
+// N2: povezava na poti gitlinka ali ugnezdenega repozitorija (na repozitorij zunaj mape) ni ugnezden repozitorij te
+// mape: posnetek in prevzem je ne vzameta. N5/N6: imena s HFS+ prezrtimi znaki in pot v .build.
+func TestNestedReposRefuseSymlinks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink")
+	}
+	root := t.TempDir()
+	top, outside := filepath.Join(root, "top"), filepath.Join(root, "outside")
+	for _, d := range []string{top, outside, filepath.Join(top, "real")} {
+		os.MkdirAll(d, 0o755)
+		gitT(t, d, "init", "-q", "-b", "main")
+		writeT(t, filepath.Join(d, "f.txt"), "x\n")
+		gitT(t, d, "add", "f.txt")
+		gitT(t, d, "commit", "-qm", "x")
+	}
+	sha := gitT(t, outside, "rev-parse", "HEAD")
+	os.Symlink(outside, filepath.Join(top, "link"))
+	gitT(t, top, "update-index", "--add", "--cacheinfo", "160000,"+sha+",link") // gitlink na poti povezave
+	os.MkdirAll(filepath.Join(top, "d"), 0o755)
+	os.Symlink(outside, filepath.Join(top, "d", "inner"))
+	if n := nestedRepos(top); !slices.Equal(n, []string{"real"}) {
+		t.Fatalf("nested repos: %q", n)
+	}
+	if nestedInside(top, "link") || nestedInside(top, "d/inner") || !nestedInside(top, "real") {
+		t.Fatal("nestedInside")
+	}
+	if normName(".g\u200cit") != ".git" || validNestedPath("a\u200d/b") || validNestedPath("x\ufeff") || validNestedPath(".build/x") || validNestedPath(".BUILD") {
+		t.Fatal("N5/N6 names accepted")
 	}
 }

@@ -1223,22 +1223,9 @@ func (s *server) route(w http.ResponseWriter, r *req) (int, string) {
 		if err != nil {
 			part = -1
 		}
-		nested := 0
-		if v := r.h("x-nested"); v != "" {
-			if nested, err = strconv.Atoi(v); err != nil {
-				nested = -1
-			}
-		}
-		return writeStatus(w, s.hub.worktreePut(key, part, nested, r.body, dev), "", nil), ""
+		return writeStatus(w, s.hub.worktreePut(key, part, parseNested(r.h("x-nested")), r.body, dev), "", nil), ""
 	case "GET /minigw/worktree/result":
-		nested := 0
-		if v := r.h("x-nested"); v != "" {
-			var err error
-			if nested, err = strconv.Atoi(v); err != nil {
-				nested = -1
-			}
-		}
-		data, st, why := s.hub.worktreeResult(key, dev, nested)
+		data, st, why := s.hub.worktreeResult(key, dev, parseNested(r.h("x-nested")))
 		if st != 200 {
 			return writeError(w, r.rid, st, why), ""
 		}

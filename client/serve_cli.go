@@ -697,8 +697,9 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			if dir = s.hub.push(share, "claude"); dir == "" {
 				return writeError(w, r.rid, 502, "Cloning "+clientCwd+" on the gateway failed (worktree mode; see minigw output)")
 			}
-			_, branch, _, _, _ := s.hub.worktreeOf(session, "claude")
-			extra = worktreeNote(clientCwd, dir, branch)
+			wt, branch, _, _, _ := s.hub.worktreeOf(session, "claude")
+			gits, _ := s.hub.worktreeGits(wt)
+			extra = worktreeNote(clientCwd, dir, branch, gits)
 		case share != nil:
 			if dir = s.hub.push(share, "claude"); dir == "" {
 				return writeError(w, r.rid, 502, "Syncing "+clientCwd+" to the gateway failed (see minigw output)")

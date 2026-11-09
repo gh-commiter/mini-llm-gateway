@@ -545,8 +545,9 @@ func (s *server) agentFolder(w http.ResponseWriter, r *req, label, agent string)
 		if dir = s.hub.push(share, agent); dir == "" {
 			return "", "", false, writeError(w, r.rid, 502, "Cloning "+clientCwd+" on the gateway failed (worktree mode; see minigw output)")
 		}
-		_, branch, _, _, _ := s.hub.worktreeOf(r.h("x-claude-mini-session"), agent)
-		return dir, worktreeNote(clientCwd, dir, branch), false, 0
+		wt, branch, _, _, _ := s.hub.worktreeOf(r.h("x-claude-mini-session"), agent)
+		gits, _ := s.hub.worktreeGits(wt)
+		return dir, worktreeNote(clientCwd, dir, branch, gits), false, 0
 	case share != nil:
 		if dir = s.hub.push(share, agent); dir == "" {
 			return "", "", false, writeError(w, r.rid, 502, "Syncing "+clientCwd+" to the gateway failed (see minigw output)")

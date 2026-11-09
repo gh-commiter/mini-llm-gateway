@@ -438,17 +438,28 @@ func finalize(repo, wt, branch, base, agent, out string, links map[string]string
 	if tip == base {
 		return tip // agent ni spremenil ničesar
 	}
-	_, err = g(nil, tmp, "bundle", "create", out, "refs/heads/"+branch, "^"+base)
-	if err == nil && isBundle(out) {
-		_, err = gitRun(repo, tmp, nil, "--git-dir", repo, "-c", "transfer.fsckObjects=true", "-c", "fetch.fsckObjects=true",
-			"bundle", "unbundle", out) // objekti tudi v zrcalo (klon izgine); fsck zavrne npr. drevo z ».git«
-	}
-	if err != nil || !isBundle(out) { // ref zrcala nazaj: sicer bi kazal na objekte, ki jih ni (le v klonu)
+	restore := func() { // ref zrcala nazaj: sicer bi kazal na objekte, ki jih ni (le v klonu)
 		if shaRe.MatchString(prev) {
 			g(nil, tmp, "update-ref", "refs/heads/"+branch, prev)
 		} else {
 			g(nil, tmp, "update-ref", "-d", "refs/heads/"+branch)
 		}
+	}
+	_, err = g(nil, tmp, "bundle", "create", out, "refs/heads/"+branch, "^"+base)
+	if err == nil && isBundle(out) {
+		// Objekti tudi v zrcalo (klon izgine), brez objektov klona: fsck zavrne npr. drevo z ».git«. Ref pred tem nazaj:
+		// ko je agent vse commital sam, kaže na commit le v klonu (preverba povezanosti bi padla), potem znova na vrh.
+		// »bundle unbundle« ne pozna fsck: fetch iz bundla ga izvede (fetch.fsckObjects), v začasni ref.
+		restore()
+		_, err = gitRun(repo, tmp, nil, "--git-dir", repo, "-c", "transfer.fsckObjects=true", "-c", "fetch.fsckObjects=true",
+			"fetch", "-q", "--no-tags", "--no-write-fetch-head", out, "+refs/heads/"+branch+":refs/minigw/fsck")
+		gitRun(repo, tmp, nil, "--git-dir", repo, "update-ref", "-d", "refs/minigw/fsck")
+		if err == nil {
+			_, err = gitRun(repo, tmp, nil, "--git-dir", repo, "update-ref", "refs/heads/"+branch, tip)
+		}
+	}
+	if err != nil || !isBundle(out) {
+		restore()
 		os.Remove(out)
 		return ""
 	}
@@ -552,12 +563,27 @@ func gitWrapEnv(gitDirs []string, gw string) []string {
 
 // worktreeNote: navodilo agentu v klonu.
 // Besedilo kot ClaudeCLI.mountNote na Macu, brez stavka o minigw run (ta je le na Macu).
-func worktreeNote(clientCwd, dir, branch string) string {
+// gits: .git vseh klonov (hub.worktreeGits; ugnezdeni za prvim) — agent jih dobi poimenovane z ukazom za commit v njih.
+func worktreeNote(clientCwd, dir, branch string, gits []string) string {
 	return "The user's folder " + clientCwd + " (on their computer, a git repository) is a clone here at " + dir + ", your working" +
 		" directory, on branch " + branch + ". Map paths under " + clientCwd + " to it. Commit your work on this branch; changes you leave" +
 		" uncommitted are committed for you at the end. The branch goes back to the user's repository; their files are not changed." +
-		" Build output (.build, target, DerivedData) is never committed. Nested repositories and submodules here are their own clones on the same branch; leave your changes in them uncommitted (git here works on the top repository), they come back too." +
+		" Build output (.build, target, DerivedData) is never committed." + nestedClonesNote(gits) +
 		" Do not create git repositories or submodules here outside ignored folders: then nothing comes back (use sync for that)."
+}
+
+// nestedClonesNote (B): ugnezdeni kloni po imenu in kako commitati v njih (git sam dela v vrhnjem: GIT_DIR je nastavljen).
+func nestedClonesNote(gits []string) string {
+	if len(gits) < 2 {
+		return ""
+	}
+	var dirs []string
+	for _, g := range gits[1:] {
+		dirs = append(dirs, filepath.Dir(g))
+	}
+	return " These nested repositories and submodules are their own clones on the same branch, and their changes come back too: " +
+		strings.Join(dirs, ", ") + ". Plain git here works on the top repository; to commit in a nested one run" +
+		" GIT_DIR=<path>/.git GIT_COMMON_DIR=<path>/.git GIT_WORK_TREE=<path> git … with its path. Changes you leave uncommitted there are committed for you."
 }
 
 // worktreeReadOnlyNote: agent brez pisanja v klonu (kot ClaudeCLI.mountNote z branch in readOnly na Macu).
@@ -653,13 +679,13 @@ func (h *shareHub) worktreeMount(s *serveShare, agent string) string {
 	}
 	touchUsed(t.repo) // pruneMirrors: zadnja raba
 	incoming := t.repo + ".incoming"
-	for i := 0; i <= maxNestedRepos; i++ { // ostanki prekinjenega zagona (ugnezdeni: <incoming>.<i>)
-		if i == 0 {
-			os.Remove(incoming)
-		} else {
-			os.Remove(fmt.Sprintf("%s.%d", incoming, i))
+	clean := func() {
+		for i := 0; i <= maxNestedRepos; i++ { // tudi ostanki prekinjenega zagona (ugnezdeni: <incoming>.<i>)
+			os.Remove(incomingFile(incoming, i))
 		}
 	}
+	clean()
+	defer clean()
 	h.mu.Lock()
 	t.pushing = incoming
 	h.mu.Unlock()
@@ -679,7 +705,6 @@ func (h *shareHub) worktreeMount(s *serveShare, agent string) string {
 	h.mu.Lock()
 	t.pushing = ""
 	h.mu.Unlock()
-	defer os.Remove(incoming)
 	var reply struct {
 		Snapshot string `json:"snapshot"`
 		Nested   []struct {
@@ -702,8 +727,7 @@ func (h *shareHub) worktreeMount(s *serveShare, agent string) string {
 	var nested []*wtNested
 	seen := map[string]bool{}
 	for i, n := range reply.Nested {
-		in := fmt.Sprintf("%s.%d", incoming, i+1)
-		defer os.Remove(in)
+		in := incomingFile(incoming, i+1)
 		if !validNestedPath(n.Path) || seen[n.Path] || !shaRe.MatchString(n.Snapshot) {
 			h.logf("worktree %s (%s): bad nested repository from the client", branch, s.session)
 			return ""
@@ -731,6 +755,20 @@ func (h *shareHub) worktreeMount(s *serveShare, agent string) string {
 		}
 		n.git, _ = os.Lstat(filepath.Join(n.dir(wt), ".git"))
 		n.cfg, _ = os.ReadFile(filepath.Join(n.dir(wt), ".git", "config"))
+		// Cilj 1: nesleden ugnezdeni (v drevesu starša ni gitlink) v info/exclude klona starša, preden agent teče (info je
+		// zanj denyWrite): git add -A agenta v staršu ga ne zapiše kot gitlink.
+		prepo, psnap, pdir, rel := t.repo, reply.Snapshot, wt, n.path
+		if q := nestedParent(nested, n.path); q != nil {
+			prepo, psnap, pdir, rel = q.repo, q.base, q.dir(wt), strings.TrimPrefix(n.path, q.path+"/")
+		}
+		if l, _ := gitRun(prepo, "", nil, "--git-dir", prepo, "ls-tree", psnap, "--", rel); !strings.HasPrefix(l, "160000 ") {
+			f, err := os.OpenFile(filepath.Join(pdir, ".git", "info", "exclude"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+			if err != nil {
+				return ""
+			}
+			f.WriteString("\n/" + excludeEscape(rel) + "\n")
+			f.Close()
+		}
 	}
 	for _, d := range []string{filepath.Join(wt, ".build", "tmp"), filepath.Join(t.worktrees, ".maven")} {
 		os.MkdirAll(d, 0o700)
@@ -745,6 +783,68 @@ func (h *shareHub) worktreeMount(s *serveShare, agent string) string {
 	t.slots[agent] = sl
 	h.mu.Unlock()
 	return worktreeDir(wt, t.sub)
+}
+
+// beforeNestedFinalize: le za teste (N1: zamenjava poti med preverbo in git).
+var beforeNestedFinalize func(n *wtNested)
+
+// finalizeNested (N1): finalize ugnezdenega klona po poti iz zaupanja vrednega korena (klon prehoda), ne iz razrešitve
+// agentove poti; pred in po git preverba poti (same prave mape) in .git. Zamenjava med tekom (povezava ven, ki git
+// prebere drugo mapo) zavrže rezultat in ref zrcala gre nazaj. Vrne vrh ali razlog.
+func finalizeNested(slot *wtSlot, n *wtNested, agent, out string, links map[string]string) (string, string) {
+	moved := "the nested repository " + n.path + " was moved or replaced in the agent's clone"
+	if !nestedIntact(slot.wt, n) {
+		return "", moved
+	}
+	prev, _ := gitRun(n.repo, "", nil, "--git-dir", n.repo, "rev-parse", "-q", "--verify", "refs/heads/"+slot.branch+"^{commit}")
+	if beforeNestedFinalize != nil {
+		beforeNestedFinalize(n)
+	}
+	tip := finalize(n.repo, filepath.Join(realPath(slot.wt), filepath.FromSlash(n.path)), slot.branch, n.base, agent, out, links)
+	if !nestedIntact(slot.wt, n) {
+		if shaRe.MatchString(prev) {
+			gitRun(n.repo, "", nil, "--git-dir", n.repo, "update-ref", "refs/heads/"+slot.branch, prev)
+		} else {
+			gitRun(n.repo, "", nil, "--git-dir", n.repo, "update-ref", "-d", "refs/heads/"+slot.branch)
+		}
+		os.Remove(out)
+		return "", moved
+	}
+	if tip == "" {
+		return "", "the gateway could not save the agent's work in the nested repository " + n.path + " as a branch (see the gateway log)"
+	}
+	return tip, ""
+}
+
+// nestedParent: najbližji ugnezdeni repozitorij, ki vsebuje p (nil = vrhnji).
+func nestedParent(nested []*wtNested, p string) *wtNested {
+	var best *wtNested
+	for _, n := range nested {
+		if strings.HasPrefix(p, n.path+"/") && (best == nil || len(n.path) > len(best.path)) {
+			best = n
+		}
+	}
+	return best
+}
+
+// excludeEscape: pot kot dobesedni vzorec .gitignore (\ pred *, ?, [, \ in presledkom na koncu).
+func excludeEscape(p string) string {
+	var b strings.Builder
+	for i, r := range p {
+		if strings.ContainsRune(`*?[\`, r) || r == ' ' && i == len(p)-1 {
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// incomingFile: bundle i-tega repozitorija med WORKTREE-PUSH (0 = vrhnji).
+func incomingFile(incoming string, i int) string {
+	if i == 0 {
+		return incoming
+	}
+	return incoming + "." + strconv.Itoa(i)
 }
 
 // nestedMirror: golo zrcalo ugnezdenega repozitorija na poti p ob zrcalu repo (scratch/repos/<naprava>/<id>-<ključ>.git;
@@ -866,30 +966,21 @@ func (h *shareHub) worktreeBack(s *serveShare, agent string) {
 		links[n.path] = map[string]string{}
 	}
 	parent := func(p string) (string, string) {
-		best := ""
-		for _, n := range slot.nested {
-			if strings.HasPrefix(p, n.path+"/") && len(n.path) > len(best) {
-				best = n.path
-			}
+		if q := nestedParent(slot.nested, p); q != nil {
+			return q.path, strings.TrimPrefix(p, q.path+"/")
 		}
-		if best == "" {
-			return "", p
-		}
-		return best, strings.TrimPrefix(p, best+"/")
+		return "", p
 	}
 	for i := len(slot.nested) - 1; i >= 0 && why == ""; i-- { // obratno: globlji pred plitvejšimi
 		n := slot.nested[i]
-		if !nestedIntact(slot.wt, n) {
-			why = "the nested repository " + n.path + " was moved or replaced in the agent's clone"
-			break
-		}
 		o := fmt.Sprintf("%s.result.%d", t.repo, i+1)
 		defer os.Remove(o)
-		nt := finalize(n.repo, n.dir(slot.wt), slot.branch, n.base, agent, o, links[n.path])
+		nt := ""
+		if nt, why = finalizeNested(slot, n, agent, o, links[n.path]); why != "" {
+			break
+		}
 		p, rel := parent(n.path)
 		switch {
-		case nt == "":
-			why = "the gateway could not save the agent's work in the nested repository " + n.path + " as a branch (see the gateway log)"
 		case nt == n.base:
 			links[p][rel] = ""
 		default:
@@ -940,9 +1031,7 @@ func (h *shareHub) worktreePut(key string, part, nested int, data []byte, owner 
 	if file == "" || part < 0 || nested < 0 || nested > maxNestedRepos {
 		return 409
 	}
-	if nested > 0 {
-		file += "." + strconv.Itoa(nested)
-	}
+	file = incomingFile(file, nested)
 	flags := os.O_WRONLY | os.O_APPEND
 	if part == 0 {
 		flags |= os.O_CREATE | os.O_TRUNC
@@ -952,7 +1041,13 @@ func (h *shareHub) worktreePut(key string, part, nested int, data []byte, owner 
 		return 409
 	}
 	defer f.Close()
-	if st, _ := f.Stat(); st == nil || st.Size()+int64(len(data)) > maxIncoming {
+	total := int64(0) // N4: vsi bundli enega WORKTREE-PUSH skupaj največ maxIncoming
+	for i := 0; i <= maxNestedRepos; i++ {
+		if st, err := os.Stat(incomingFile(s.tree.pushing, i)); err == nil {
+			total += st.Size()
+		}
+	}
+	if st, _ := f.Stat(); st == nil || total+int64(len(data)) > maxIncoming {
 		os.Remove(file)
 		return 413
 	}
