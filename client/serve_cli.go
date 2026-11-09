@@ -130,8 +130,18 @@ func (s *server) agentArgs(dir string, readOnly bool) []string {
 	}
 	cfg := ruleAbs(s.cfgDir) + "/**"
 	deny := []string{"Read(" + cfg + ")", "Edit(" + cfg + ")", "Write(" + cfg + ")"}
+	var gitDeny []string // M4 (kot ClaudeCLI.gitDenies): .git, ki ga bere git lastnika (nastavitve, hooki, preusmeritve)
 	if readOnly {
 		deny = append(deny, roDenied()...)
+	} else {
+		for _, d := range dirs {
+			for _, g := range gitDenies {
+				gitDeny = append(gitDeny, filepath.Join(d, ".git", g))
+				for _, t := range []string{"Edit", "Write"} { // tudi na Windows, kjer sandboxa ni
+					deny = append(deny, t+"("+ruleAbs(d)+"/.git/"+g+")", t+"("+ruleAbs(d)+"/.git/"+g+"/**)")
+				}
+			}
+		}
 	}
 	var args []string
 	if c.AllowLocalTools { // vsa orodja Claude Code razen izjem; datoteke le v mapah, Bash v sandboxu (kot na Macu)
@@ -181,12 +191,14 @@ func (s *server) agentArgs(dir string, readOnly bool) []string {
 			// #26 (N2): paket Copilot nikoli za pisanje (naloži ga priprava paketa), tudi če je v dovoljeni mapi.
 			// --minigw-ro: pisanje v te mape prepovedano (denyWrite velja tudi za delovno mapo, ki jo Claude Code dovoli sam).
 			"filesystem": map[string]any{"denyRead": append([]string{"~", s.cfgDir}, scratchPaths(c.Scratch)...), "allowRead": dirs, "allowWrite": onlyIf(!readOnly, dirs),
-				"denyWrite": append(scratchPaths(copilotCacheDir()), onlyIf(readOnly, dirs)...)},
+				"denyWrite": append(append(scratchPaths(copilotCacheDir()), onlyIf(readOnly, dirs)...), gitDeny...)},
 		}})
 		args = append(args, "--settings", string(settings))
 	}
 	return args
 }
+
+var gitDenies = []string{"config", "config.worktree", "hooks", "info", "commondir", "worktrees"}
 
 const readOnlyWorktree = "Worktree mode cannot be read-only (--minigw-ro): use direct or sync"
 

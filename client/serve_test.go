@@ -326,6 +326,18 @@ func TestServeRejectsBadModelsBodiesAndForeignOwners(t *testing.T) {
 			t.Fatalf("agent args lack %s: %s", want, args)
 		}
 	}
+	// M4: .git metapodatki niso pisljivi (Edit/Write tudi na Windows; sandbox drugje), kot ClaudeCLI.gitDenies.
+	for _, g := range gitDenies {
+		want := []string{"Edit(//copy/.git/" + g + ")", "Write(//copy/.git/" + g + "/**)"}
+		if runtime.GOOS != "windows" {
+			want = append(want, `"/copy/.git/`+g+`"`)
+		}
+		for _, w := range want {
+			if !strings.Contains(args, w) {
+				t.Fatalf("agent args lack %s: %s", w, args)
+			}
+		}
+	}
 	// --minigw-ro: brez orodij za pisanje, sandbox ne piše v mapo (na Windows brez sandboxa tudi brez Bash).
 	s.cfg.Tools = defaultTools + ",Monitor,EnterWorktree"
 	roArgs := s.agentArgs("/copy", true)
