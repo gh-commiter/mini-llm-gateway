@@ -668,6 +668,10 @@ func main() {
 	if noCommit { // brez commita ni posnetka: enkrat preveri, nato sync (#10)
 		tries = slices.DeleteFunc(tries, func(w string) bool { return w == "worktree" })
 	}
+	if tries = noDirectFallback(tries, flagWork, savedWork, readOnly, os.Getenv); len(tries) == 0 {
+		fail("--minigw-work=" + flagWork + " is not possible in " + cwd + ", and inside Claude Code minigw does not fall back to direct " +
+			"(the agent would change your files without a branch to review); put MINIGW_WORK=direct in front of the command instead")
+	}
 	share := &shareClient{c: c, session: sid, root: cwd, readOnly: readOnly, synced: map[string]syncEntry{}, reported: map[string]bool{}}
 	if wantShare && sid != "" {
 		if work == "worktree" && top == "" {
@@ -806,6 +810,15 @@ func checkClaudeArgs(env func(string) string) bool {
 // le samo za branje ali kadar ga mapa že ima shranjenega (share add --work=); MINIGW_WORK v okolju Claude Code vpraša.
 func unsafeWork(flag, saved string, readOnly bool, env func(string) string) bool {
 	return checkClaudeArgs(env) && !readOnly && flag != saved && (flag == "direct" || flag == "sync" || flag == "native-direct")
+}
+
+// noDirectFallback (N8, L-31): pod Claude Code izrecen, neshranjen način (native, worktree) ne pade na direct (agent
+// bi pisal v mapo brez veje), razen samo za branje.
+func noDirectFallback(tries []string, flag, saved string, readOnly bool, env func(string) string) []string {
+	if flag == "" || flag == saved || readOnly || !checkClaudeArgs(env) {
+		return tries
+	}
+	return slices.DeleteFunc(tries, func(w string) bool { return w == "direct" })
 }
 
 // atMention: »@« na začetku besede (tudi za ( " ', Unicode presledki, U+FEFF in 。、？！ kot pri claude): claude -p bi

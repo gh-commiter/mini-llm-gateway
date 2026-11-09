@@ -1012,6 +1012,19 @@ func TestUnsafeWorkInsideClaudeCode(t *testing.T) {
 	if unsafeWork("sync", "", false, func(string) string { return "" }) {
 		t.Error("refused outside Claude Code")
 	}
+	// L-31: izrecen native ali worktree ne pade na direct (shranjen ali samo za branje da)
+	delete(in, "MINIGW_ALLOW_UNSAFE_FLAGS")
+	for _, w := range []string{"native", "worktree"} {
+		if got := noDirectFallback(workCandidates(w, false, false, false), w, "", false, env); len(got) != 0 && got[len(got)-1] == "direct" {
+			t.Errorf("%s falls back to direct: %v", w, got)
+		}
+		if got := noDirectFallback([]string{w, "direct"}, w, w, false, env); len(got) != 2 {
+			t.Errorf("saved %s lost its fallback: %v", w, got)
+		}
+	}
+	if got := noDirectFallback([]string{"direct"}, "", "", false, env); len(got) != 1 {
+		t.Errorf("auto lost direct: %v", got)
+	}
 }
 
 func TestUnsafePromptInsideClaudeCode(t *testing.T) {

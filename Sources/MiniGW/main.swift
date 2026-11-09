@@ -791,9 +791,10 @@ default:
 // MARK: Claude Code prek routerja
 
 refuseUnsafeClaudeFlags()  // H3: pred deljenjem mape in sejo (CLAUDECODE še ni odstranjen)
+let callerEnv = ProcessInfo.processInfo.environment  // N8, L-31: pred odstranitvijo CLAUDECODE (#7)
 if let f = flagWork {
     let entry = SharedFolders.lookup(sharedFolders(), cwd: FileManager.default.currentDirectoryPath)
-    if Profiles.unsafeWork(f, saved: entry?.work, readOnly: readOnly || entry?.readOnly == true, env: ProcessInfo.processInfo.environment) {
+    if Profiles.unsafeWork(f, saved: entry?.work, readOnly: readOnly || entry?.readOnly == true, env: callerEnv) {
         fail("--minigw-work=\(f) is not accepted when minigw runs inside Claude Code: the agent would change your files without a branch "
             + "to review; put MINIGW_WORK=\(f) in front of the command instead, so Claude Code asks you first (or save it for this folder: "
             + "minigw share add --work=\(f))")
@@ -882,6 +883,11 @@ var tries = SharedFolders.candidates(work: work, readOnly: readOnly, smb: smb, g
 // Brez commita ni posnetka: enkrat preveri, nato sync (#10).
 let noCommit = top.map { tries.contains("worktree") && !Worktree.hasCommit(top: $0) } ?? false
 if noCommit { tries.removeAll { $0 == "worktree" } }
+tries = Profiles.noDirectFallback(tries, flag: flagWork, saved: SharedFolders.lookup(sharedFolders(), cwd: cwd)?.work, readOnly: readOnly, env: callerEnv)
+if tries.isEmpty {
+    fail("--minigw-work=\(flagWork ?? "") is not possible in \(cwd), and inside Claude Code minigw does not fall back to direct "
+        + "(the agent would change your files without a branch to review); put MINIGW_WORK=direct in front of the command instead")
+}
 var share = ShareClient(c, session: sid, root: URL(fileURLWithPath: cwd), readOnly: readOnly, kind: "direct")
 var registered = false
 if wantShare, !sid.isEmpty {

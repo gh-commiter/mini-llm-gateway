@@ -91,6 +91,13 @@ public enum Profiles {
         return ["direct", "sync", "native-direct"].contains(flag)
     }
 
+    /// L-31 (kot Go noDirectFallback): pod Claude Code izrecen, neshranjen način (native, worktree) ne pade na direct
+    /// (agent bi pisal v mapo brez veje), razen samo za branje.
+    public static func noDirectFallback(_ tries: [String], flag: String?, saved: String?, readOnly: Bool, env: [String: String]) -> [String] {
+        guard let flag, flag != saved, !readOnly, checkClaudeArgs(env) else { return tries }
+        return tries.filter { $0 != "direct" }
+    }
+
     /// N6, N7: claude -p bere navodilo kot vnos uporabnika: »@pot« (na začetku besede, tudi za ( " ', U+FEFF in 。、？！ kot
     /// pri claude, N6b) priloži katero koli datoteko, »/ukaz« zažene ukaz s poševnico (npr. /config permissionMode=…).
     /// nil = dovoljeno (kot Go promptRefused). Le še varovalka: claude dobi CLAUDE_CODE_DISABLE_FILE_MENTIONS (promptGuard).

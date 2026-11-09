@@ -1732,6 +1732,14 @@ final class FakeMinigw: @unchecked Sendable {
     for w in [nil, "auto", "worktree", "native"] { #expect(!Profiles.unsafeWork(w, saved: nil, readOnly: false, env: env)) }
     #expect(!Profiles.unsafeWork("sync", saved: nil, readOnly: false, env: ["CLAUDECODE": "1", "MINIGW_ALLOW_UNSAFE_FLAGS": "1"]))
     #expect(!Profiles.unsafeWork("sync", saved: nil, readOnly: false, env: [:]))
+    // L-31: izrecen native ali worktree ne pade na direct (shranjen ali samo za branje da)
+    for w in ["native", "worktree"] {
+        #expect(!Profiles.noDirectFallback(SharedFolders.candidates(work: w, readOnly: false, smb: false, git: false), flag: w, saved: nil,
+                                           readOnly: false, env: env).contains("direct"), "\(w)")
+        #expect(Profiles.noDirectFallback([w, "direct"], flag: w, saved: w, readOnly: false, env: env) == [w, "direct"])
+        #expect(Profiles.noDirectFallback([w, "direct"], flag: w, saved: nil, readOnly: true, env: env) == [w, "direct"])
+    }
+    #expect(Profiles.noDirectFallback(["direct"], flag: nil, saved: nil, readOnly: false, env: env) == ["direct"])
 }
 
 @Test func unsafeClaudeFlagsInsideClaudeCode() {
