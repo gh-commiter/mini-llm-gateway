@@ -205,6 +205,19 @@ func msiexecPath() string {
 
 // msiInstallDir: mapa namestitve MSI (HKCU\Software\Mini Gateway\InstallDir, zapiše jo minigw.wxs); "" brez MSI.
 // Ključa ne ustvari (RegOpenKeyExW, ne RegCreateKeyExW).
+// msiPartInstalled: MSI 0.5.20+ zapiše vrednost <del> (Gateway, Plugin) v HKCU\Software\Mini Gateway, ko je del nameščen.
+func msiPartInstalled(part string) bool {
+	sub, _ := syscall.UTF16PtrFromString(`Software\Mini Gateway`)
+	var h uintptr
+	if r, _, _ := advapi32.NewProc("RegOpenKeyExW").Call(0x80000001, uintptr(unsafe.Pointer(sub)), 0, 0x0001 /* KEY_QUERY_VALUE */, uintptr(unsafe.Pointer(&h))); r != 0 {
+		return false
+	}
+	defer procRegClose.Call(h)
+	n, _ := syscall.UTF16PtrFromString(part)
+	r, _, _ := procRegQuery.Call(h, uintptr(unsafe.Pointer(n)), 0, 0, 0, 0)
+	return r == 0
+}
+
 func msiInstallDir() string {
 	sub, _ := syscall.UTF16PtrFromString(`Software\Mini Gateway`)
 	var h uintptr
@@ -387,7 +400,9 @@ func closeRunningTray() error { return closeTray(50) }
 // drugih procesov z natančnim imenom minigw-tray.exe v tej seji Windows (L1: ne drugih programov ali uporabnikov).
 func quitRunningTray() {
 	if !trayMutexExists() { // nadgradnja MSI: novi paket ga tedaj ne zažene (tray --if-was-running)
-		os.WriteFile(trayStoppedMarker(), nil, 0o600)
+		if run, _ := regRunGet(runValueName); run != "" { // brez dela Gateway (le odjemalec) ga novi Gateway zažene
+			os.WriteFile(trayStoppedMarker(), nil, 0o600)
+		}
 		return
 	}
 	os.Remove(trayStoppedMarker())

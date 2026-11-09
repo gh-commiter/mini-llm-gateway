@@ -30,7 +30,7 @@ Rules:
 "$M" serve install
 ```
 
-- Windows: the gateway runs in the tray (notification area) and starts at sign-in.
+- Windows: the gateway runs in the tray (notification area) and starts at sign-in. If Mini Gateway was installed with the MSI without its Gateway part (client only), `serve install` adds that part (`msiexec … ADDLOCAL=Client,Gateway`, with the release's MSI checked against the signed `SHA256SUMS`). If it says the installed MSI is newer, tell the user: Settings → Apps → Installed apps → Mini Gateway → Modify → tick Gateway → Change.
 - Linux: a systemd user unit. `serve install` also turns on start at boot (linger). If its output ends with `To start Mini Gateway at boot without logging in, run: sudo loginctl enable-linger <user>`, the gateway starts only at sign-in. Tell the user, and offer that they run that line themselves with `!` (sudo asks for their password). Then check with `"$M" gw status`.
 
 **macOS**: the gateway is the Mini Gateway app (not `minigw serve`).
@@ -57,15 +57,19 @@ For other computers, `/minigw:gw token` shows the connect line to run there (or 
 ## update
 
 1. Run `"$M" gw status`. If `agent requests running` is more than 0, tell the user that the update stops them, and ask whether to go on or wait.
-2. Windows and Linux: the plugin's minigw is the latest release or the installed minigw, whichever is newer (`"$M" --version`). If `gw status` already shows that version, the gateway is up to date: skip `serve install` and say so. Otherwise `"$M" serve install` replaces the installed copy and restarts the gateway (Windows also the tray). If `gw status` says "installed with the MSI", the same command downloads the release's MSI (checked against the signed `SHA256SUMS`) and runs it.
+2. Windows and Linux: the plugin's minigw is the latest release or the installed minigw, whichever is newer (`"$M" --version`). If `gw status` already shows that version, the gateway is up to date: skip `serve install` and say so. Otherwise `"$M" serve install` replaces the installed copy and restarts the gateway (Windows also the tray). If `gw status` says "installed with the MSI", the same command downloads the release's MSI (checked against the signed `SHA256SUMS`) and runs it: the chosen parts stay, and the tray starts again only if it was running. A client-only MSI install (no gateway on this computer) has no `gw status`: the user runs the newer MSI themselves (the session start shows its link). Linux without a gateway: the user replaces `~/.local/bin/minigw`, or runs `install.sh` again (docs/install.md).
 3. macOS: if `brew list --cask gh-commiter/mini-gateway/mini-gateway` succeeds, run `brew upgrade --cask gh-commiter/mini-gateway/mini-gateway`. Otherwise point to the DMG. The running app keeps the old version until it restarts. Ask the user, then run `osascript -e 'quit app "Mini Gateway"'` and `open -a "Mini Gateway"`.
 4. `"$M" gw status` and report the new version.
 
 ## uninstall
 
-- Windows installed with the MSI (`gw status` says so): `serve uninstall` refuses. Tell the user: Settings → Apps → Installed apps → Mini Gateway → Uninstall. The config stays.
+- Windows installed with the MSI (`gw status` says so): `serve uninstall` refuses. Tell the user:
+  - only the gateway: Settings → Apps → Installed apps → Mini Gateway → Modify → untick Gateway → Change (the same for the Claude Code plugin);
+  - everything: Settings → Apps → Uninstall. Settings and profiles stay. To remove them too: Modify → tick *Also remove settings and profiles* → Remove, or `msiexec /x <MSI of the installed version> PURGE=1 /passive`;
+  - parts without the window: `msiexec /i <MSI> ADDLOCAL=Client,Gateway,Plugin /passive` (any list; Client is always there).
 - Windows and Linux: `"$M" serve uninstall`. It stops the gateway and removes autostart. The config (with devices and providers) stays. On Linux, linger stays on. `loginctl disable-linger` turns it off if the user wants.
-- macOS: `"$M" gw autostart off`. Remove the app only if the user asks: `brew uninstall --cask gh-commiter/mini-gateway/mini-gateway`, or move it to the Trash.
+- macOS: `"$M" gw autostart off`. Remove the app only if the user asks: `brew uninstall --cask gh-commiter/mini-gateway/mini-gateway`, or move it to the Trash. `brew uninstall --zap --cask …/mini-gateway` also removes its settings, scratch folder and Keychain items (the app asks first); `brew uninstall --zap --cask …/minigw` also runs `minigw uninstall --purge`. Ask before suggesting `--zap`.
+- Linux installed with `install.sh`: `install.sh --uninstall [--purge]` (docs/install.md) runs `minigw uninstall` and removes `~/.local/bin/minigw` and `minigw-tui`.
 - Everything minigw added on this computer (plugin entries, sign-in start, scratch folders), only if the user asks: `"$M" uninstall --yes`. It lists what it removes; settings and profiles stay, `--purge` also removes them (ask first). Without a terminal it needs `--yes`. minigw itself stays; it prints the command that removes it.
 - If `"$M" plugin status` shows `Plugin bin: … (another minigw …)`, `"$M" plugin install` points the plugin at the installed minigw again.
 

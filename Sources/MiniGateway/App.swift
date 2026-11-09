@@ -16,9 +16,27 @@ struct MiniGatewayApp: App {
     @StateObject private var state = AppState()
 
     /// brew uninstall --zap (Casks/mini-gateway.rb): »MiniGateway --zap« izbriše vnose aplikacije v Keychainu (le ona jih
-    /// izbriše brez vprašanja; nikoli CLI security) in zagon ob prijavi, nato konča brez okna.
+    /// izbriše brez vprašanja Keychaina; nikoli CLI security) in zagon ob prijavi, nato konča. Najprej vpraša (privzeto
+    /// Prekliči); izhod 1, če uporabnik prekliče ali še teče drug primerek aplikacije (brew ga prej zapre).
     init() {
         guard CommandLine.arguments.dropFirst().first == "--zap" else { return }
+        let me = ProcessInfo.processInfo.processIdentifier
+        if NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "dev.trojar.minigateway")
+            .contains(where: { $0.processIdentifier != me }) {
+            FileHandle.standardError.write(Data("Mini Gateway is still running: quit it first\n".utf8))
+            exit(1)
+        }
+        NSApplication.shared.setActivationPolicy(.accessory)
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.alertStyle = .critical
+        alert.messageText = String(localized: "Remove Mini Gateway's keys and login item?")
+        alert.informativeText = String(localized: "This deletes the gateway token, the gateway key, the admin secret and the provider keys from your Keychain, and the start at login. Clients then need a new token.")
+        alert.addButton(withTitle: String(localized: "Cancel"))  // prvi gumb: privzet (Return)
+        alert.addButton(withTitle: String(localized: "Remove")).hasDestructiveAction = true
+        alert.buttons[0].keyEquivalent = "\r"
+        alert.buttons[1].keyEquivalent = ""
+        guard alert.runModal() == .alertSecondButtonReturn else { exit(1) }
         try? SMAppService.mainApp.unregister()
         exit(Keychain().deleteAll() ? 0 : 1)
     }

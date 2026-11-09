@@ -4,10 +4,12 @@ package main
 // meni iz stanja (preizkusljiv), dnevnik z menjavo, zagon routerja. Win32 je v tray_windows.go.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"os"
@@ -41,13 +43,36 @@ func trayBeside(exe string) string {
 
 func trayCommand(args []string) {
 	if len(args) > 0 && args[0] == "quit" { // MSI: zapre tekoči pladenj, sam brez okna (-H=windowsgui)
+		// Nadgradnja/odstranitev ne prekine zahtev agentov: počaka, da končajo, največ 120 s.
+		for end := time.Now().Add(120 * time.Second); time.Now().Before(end) && gatewayAgents(defaultServeConfigPath()) > 0; {
+			time.Sleep(2 * time.Second)
+		}
 		quitRunningTray()
 		return
 	}
-	// MSI (client/minigw.wxs): minigw.exe plugin …|uninstall … brez okna konzole (msiexec bi ga pokazal); počaka.
+	// MSI (client/minigw.wxs): minigw.exe plugin …|uninstall … brez okna konzole (msiexec bi ga pokazal), največ 60 s;
+	// izpis v %TEMP%\minigw-msi.log (brez žetonov: le poti in imena profilov).
 	if len(args) > 1 && args[0] == "msi" && (args[1] == "plugin" || args[1] == "uninstall") {
-		if exe, err := os.Executable(); err == nil {
-			command(filepath.Join(filepath.Dir(exe), "minigw.exe"), args[1:]...).Run()
+		exe, err := os.Executable()
+		if err != nil {
+			return
+		}
+		var log io.Writer = io.Discard
+		if f, err := os.OpenFile(filepath.Join(os.TempDir(), "minigw-msi.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
+			defer f.Close()
+			log = f
+		}
+		fmt.Fprintln(log, time.Now().Format(time.RFC3339)+" minigw "+strings.Join(args[1:], " "))
+		if slices.Equal(args[1:], []string{"plugin", "install"}) && findClaudeFn() == "" && errFromStat(claudeDir()) != nil {
+			fmt.Fprintln(log, "Claude Code not found (no claude command, no "+claudeDir()+"): plugin not added; later: minigw plugin install")
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		cmd := commandContext(ctx, filepath.Join(filepath.Dir(exe), "minigw.exe"), args[1:]...)
+		cmd.Stdout, cmd.Stderr = log, log
+		if err := cmd.Run(); err != nil {
+			fmt.Fprintln(log, "minigw: "+err.Error())
 		}
 		return
 	}
@@ -66,6 +91,26 @@ func trayCommand(args []string) {
 		return
 	}
 	trayRun(*cfgPath, *quiet || *wasRunning)
+}
+
+// gatewayAgents: zahteve agentov, ki tečejo v prehodu s to nastavitvijo (skrbniški API /status, kot minigw gw status);
+// -1, ko prehod ne teče ali ni dosegljiv.
+func gatewayAgents(cfgPath string) int {
+	c, err := loadServeConfig(cfgPath)
+	if err != nil {
+		return -1
+	}
+	k, err := c.privateKey()
+	b, err2 := os.ReadFile(filepath.Join(filepath.Dir(cfgPath), "admin.secret"))
+	if err != nil || err2 != nil {
+		return -1
+	}
+	a := &adminClient{base: "http://127.0.0.1:" + strconv.Itoa(c.Port) + adminPrefix, secret: strings.TrimSpace(string(b)), routerKey: k.PublicKey().Bytes()}
+	var st apiStatus
+	if code, resp, err := a.http("GET", "/status", nil, 3*time.Second); err != nil || code != 200 || json.Unmarshal(resp, &st) != nil {
+		return -1
+	}
+	return st.Agents
 }
 
 // trayStoppedMarker: quit (MSI pred odstranitvijo) ga zapiše, ko pladenj ni tekel; tray --if-was-running ga pobere.
