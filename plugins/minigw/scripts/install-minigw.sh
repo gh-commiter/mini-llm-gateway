@@ -158,7 +158,12 @@ esac
 # Le številke in pike: izpis gre Claudu kot kontekst (F6).
 case $new in *[!0-9.]*) new="" ;; esac
 case $old in *[!0-9.]*) old="" ;; esac
-older "$old" "$new" && echo "Mini Gateway $old is installed, $new is available: /minigw:gw update"
+# Linux brez enote minigw serve (le odjemalec): /minigw:gw update ga ne posodobi (serve install potrebuje prehod).
+if [ "$os" = linux ] && [ ! -f "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/minigw-serve.service" ]; then
+  older "$old" "$new" && echo "minigw $old is installed, $new is available: replace $HOME/.local/bin/minigw with $asset from the latest release (check it first: docs/install.md, Check a download)"
+else
+  older "$old" "$new" && echo "Mini Gateway $old is installed, $new is available: /minigw:gw update"
+fi
 
 # Claudov Bash najde »minigw« tudi brez poti.
 line="export PATH=\"\$PATH:$BIN\""  # ena vrstica, tudi ob resume/clear/compact
