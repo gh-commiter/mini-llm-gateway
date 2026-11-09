@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Windows: the Gateway tray icon gets an orange badge while at least one device waits for approval, and its tooltip says how many (like the Mac menu bar).
 - New: `minigw reconnect [--name P] [--token T|-]` gives an existing profile a new token after the gateway made one (New Token, `minigw gw token rotate`). It asks for the token without echo (or reads stdin, or `--token`), keeps the address, the gateway key when the new line has none, and the device key, saves, then prints the profile's `minigw status` lines; exit 1 when it is not connected. An unknown profile points to `minigw connect`. The token is never printed. `token rejected`, a missing gateway key, `minigw gw token rotate`, the plugin's session start and the status and gw skills now point to `minigw reconnect` (with `--name P` for a profile other than `default`). Both clients.
 - The device key is now stored on its own, once per client (macOS: its own Keychain item next to the profiles, same access, so no new Keychain question after the upgrade; Windows: credential `minigw:device`; Linux: `~/.config/minigw/device-key`, 0600), moved there from an existing profile on first use. `minigw disconnect` keeps it, so removing the last profile and connecting again is the same device to the gateway: no new approval, one history. Only `minigw uninstall --purge` removes it. Both clients.
 - Mac app: new gateway tokens (first start, New Token) look like those of `minigw serve`: `mgw-` + 43 base64url characters (32 random bytes). Existing `sk-siri-…` tokens keep working.

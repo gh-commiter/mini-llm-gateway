@@ -206,7 +206,7 @@ func TestTrayMenu(t *testing.T) {
 		t.Fatalf("actions: %v", actions)
 	}
 	m = trayMenu(apiStatus{Port: 1, Devices: 2}, nil, true)
-	if m[0].Text != "Teče na :1 · naprav: 2 · prehodov: 0" || m[1].Sep != true {
+	if m[0].Text != "Teče na :1 · naprav: 2 · ponudnikov: 0" || m[1].Sep != true {
 		t.Fatalf("sl without pending: %+v", m[:2])
 	}
 }
