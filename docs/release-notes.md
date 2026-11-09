@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- New: `minigw reconnect [--name P] [--token T|-]` gives an existing profile a new token after the gateway made one (New Token, `minigw gw token rotate`). It asks for the token without echo (or reads stdin, or `--token`), keeps the address, the gateway key when the new line has none, and the device key, saves, then prints the profile's `minigw status` lines; exit 1 when it is not connected. An unknown profile points to `minigw connect`. The token is never printed. Both clients.
+- The device key is now stored on its own, once per client (macOS: its own Keychain item next to the profiles, same access, so no new Keychain question after the upgrade; Windows: credential `minigw:device`; Linux: `~/.config/minigw/device-key`, 0600), moved there from an existing profile on first use. `minigw disconnect` keeps it, so removing the last profile and connecting again is the same device to the gateway: no new approval, one history. Only `minigw uninstall --purge` removes it. Both clients.
+- Mac app: new gateway tokens (first start, New Token) look like those of `minigw serve`: `mgw-` + 43 base64url characters (32 random bytes). Existing `sk-siri-…` tokens keep working.
+
 - Mac: over SSH, `minigw gw` commands that need the admin key now say exactly what to do when the login keychain is locked: run `security unlock-keychain ~/Library/Keychains/login.keychain-db` in the SSH session first, then retry (documented in the gateway guide under Settings in the terminal).
 - Fixed: worktree mode with a nested repository that git does not ignore and that has no commit (`git init` only) printed "cannot take a snapshot (no commit yet?)" on every retry and Claude Code got 502 "Syncing … failed". The mode stays as chosen: minigw leaves that repository out of the snapshot and says once "nested repository <path> has no commit yet and is not part of this worktree run". Changes inside nested repositories and submodules do not come back yet. Both clients.
 - Fixed: `minigw plugin uninstall` said "nothing to remove in …settings.json" when `claude plugin marketplace remove` had already removed the entries; it now reports them as removed. Both clients.

@@ -81,6 +81,23 @@ func storeNames() []string {
 
 const storeName = "a private file"
 
+// Ključ naprave (clientDevice): svoja datoteka ob profilih (0600); disconnect je ne odstrani.
+func deviceFile() string { return filepath.Join(filepath.Dir(storePath()), "device-key") }
+
+func deviceLoad() string {
+	b, _ := os.ReadFile(deviceFile())
+	return strings.TrimSpace(string(b))
+}
+
+func deviceSave(d string) error {
+	if err := os.MkdirAll(filepath.Dir(deviceFile()), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(deviceFile(), []byte(d+"\n"), 0o600)
+}
+
+func deviceDelete() { os.Remove(deviceFile()) }
+
 // Ključi prehodov (minigw serve gateway). Linux: secret-tool (libsecret), sicer gateway-keys.json (0600) ob serve.json.
 // macOS: vedno ta datoteka, nikoli Keychain (Go minigw serve na Macu je le za razvoj in preizkus; router je aplikacija).
 

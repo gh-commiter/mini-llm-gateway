@@ -146,7 +146,7 @@ final class AppState: ObservableObject {
     static func random32() -> Data { SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) } }
 
     static func newToken() -> String {
-        "sk-siri-" + random32().map { String(format: "%02x", $0) }.joined()
+        "mgw-" + Noise.base64url(random32())  // kot Go minigw serve; starejši žetoni sk-siri-… ostanejo veljavni
     }
 
     /// Stalni ključ routerja za šifrirane povezave (Noise); ustvari ga aplikacija ob prvem zagonu.

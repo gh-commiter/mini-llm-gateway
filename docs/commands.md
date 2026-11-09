@@ -15,7 +15,8 @@ Every `minigw` command and every plugin skill, with an example. `minigw --minigw
 |---|---|
 | `minigw [claude options …]` | Run Claude Code through the gateway |
 | `minigw connect <host[:port]> [--name P] [--token T \| --token -]` | Save a gateway as profile `P` (`-` reads the token from stdin) |
-| `minigw disconnect [--name P]` | Remove a profile (default: the default profile) |
+| `minigw reconnect [--name P] [--token T \| --token -]` | New token for an existing profile (default: the default profile); address, gateway key and device key stay. Without `--token` it asks for the token (no echo) or reads stdin. A token without `#<key>` keeps the saved gateway key. Then prints the `minigw status` lines of that profile; exits 1 when it is not connected |
+| `minigw disconnect [--name P]` | Remove a profile (default: the default profile). The device key stays, so connecting again is the same device to the gateway; `minigw uninstall --purge` removes it |
 | `minigw status` | Each profile: gateway and encryption, providers, number of models, device ID and approval, status. Exits 1 when the default profile is not connected |
 | `minigw models` | Models of all profiles; other profiles' models end in `@P` |
 | `minigw profiles [list]` | List profiles; `*` marks the default |
@@ -28,13 +29,14 @@ Every `minigw` command and every plugin skill, with an example. `minigw --minigw
 | `minigw plugin install` | Add the Claude Code plugin `minigw@mini-gateway` to `~/.claude/settings.json` (a `false` you set stays; invalid JSON is not changed) and point the plugin's `bin/minigw` at this minigw |
 | `minigw plugin uninstall [--upgrading]` | Remove only what `plugin install` added, and `claude plugin marketplace remove mini-gateway` (not with `--upgrading`) |
 | `minigw plugin status` | Versions of minigw, Claude Code, the plugin and the default gateway; which minigw the plugin uses |
-| `minigw uninstall [--purge] [--yes]` | List, confirm, then remove what minigw added here (plugin, sign-in start, scratch folders); `--purge` also profiles and settings. minigw itself stays: it prints the command for that ([install.md](install.md#plugin-and-uninstall-one-command-everywhere)) |
+| `minigw uninstall [--purge] [--yes]` | List, confirm, then remove what minigw added here (plugin, sign-in start, scratch folders); `--purge` also profiles, the device key and settings. minigw itself stays: it prints the command for that ([install.md](install.md#plugin-and-uninstall-one-command-everywhere)) |
 
 Examples:
 
 ```sh
 minigw connect <gateway> --token -                        # paste the token, then Enter
 minigw connect <gateway> --name win --token -            # add a second gateway as profile "win"
+minigw reconnect --name win                              # the gateway "win" has a new token: paste it, then Enter
 minigw -p --model claude-codex "Run the tests and fix the first failure"
 minigw --model claude-cli-opus@win                       # interactive session with a model of profile "win"
 minigw share add --work=sync                             # always sync this folder
@@ -45,7 +47,9 @@ The token contains `#`: quote it when you pass it in the command line (`--token 
 
 Connections are stored in the macOS Keychain, in Windows Credential Manager, or on Linux in
 `~/.config/minigw/connection.json` and `connections/<profile>.json` there (mode 0600). Profile names: lowercase
-letters, digits and `-`, up to 32.
+letters, digits and `-`, up to 32. The device key is stored on its own, once per client: a Keychain item (account
+`device`), the credential `minigw:device`, or `~/.config/minigw/device-key` (mode 0600). minigw moves it there from
+an existing profile on first use.
 
 ## Options and environment variables
 

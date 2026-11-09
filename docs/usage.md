@@ -303,6 +303,10 @@ minigw disconnect --name win
 - Another gateway gets the folder on its first agent request, in the same work mode.
 - Each profile has its own address, token and gateway key. The device key is one per client, so every gateway
   recognises the same device.
+- A gateway got a new token (New Token, `minigw gw token rotate`): run `minigw reconnect [--name <profile>]` and paste
+  it. The address and the device stay, so the device's approval and its session history on the gateway stay too.
+  `minigw disconnect` also keeps the device key: connecting again later is the same device. Only
+  `minigw uninstall --purge` removes it.
 
 The plugin skills take `--profile <p>` or a model with `@<p>`, for example `/minigw:codex --profile win …`.
 

@@ -153,11 +153,8 @@ func routeErr(p profile) (connection, error) {
 	if err != nil || len(key) != 32 {
 		return c, fmt.Errorf("invalid gateway key for profile %s: copy the token again (Mini Gateway → Copy Token)", p.name)
 	}
-	if c.Device == nil { // povezava brez ključa naprave: en ključ za ves odjemalec
-		if c.Device = anyDevice(); c.Device == nil {
-			d := newDeviceKey()
-			c.Device = &d
-		}
+	if d := clientDevice(); c.Device == nil || *c.Device != *d { // en ključ naprave za ves odjemalec; kopija v profilu za starejši minigw
+		c.Device = d
 		saveProfile(p.name, c)
 	}
 	var dev *device
@@ -185,7 +182,7 @@ func failureReason(st int, body map[string]any) string {
 	case 0:
 		return "gateway not reachable"
 	case 401:
-		return "token rejected: copy the token again (Mini Gateway → Settings → General → Copy Token) and run minigw connect …"
+		return "token rejected: copy the token again (Mini Gateway → Settings → General → Copy Token) and run minigw reconnect"
 	case 403:
 		if msg == "" {
 			return "device not approved"
@@ -306,7 +303,7 @@ func main() {
 		first = args[0]
 	}
 	if c := agentConn(); c != nil {
-		if first == "connect" || first == "disconnect" || first == "profiles" {
+		if first == "connect" || first == "reconnect" || first == "disconnect" || first == "profiles" {
 			fail("minigw runs inside an agent of the gateway (MINIGW_AGENT_URL): " + first + " is not available here")
 		}
 		http.DefaultTransport.(*http.Transport).Proxy = agentProxy
@@ -396,10 +393,7 @@ func main() {
 		if len(parts) > 1 {
 			c.Key = &parts[1]
 		}
-		if c.Device = anyDevice(); c.Device == nil { // en ključ naprave za vse profile
-			d := newDeviceKey()
-			c.Device = &d
-		}
+		c.Device = clientDevice() // en ključ naprave za vse profile
 		as := ""
 		if name != defaultProfile || slices.ContainsFunc(names, func(n string) bool { return n != defaultProfile }) {
 			as = " as profile " + name
@@ -428,6 +422,12 @@ func main() {
 			fail("cannot reach " + c.URL + ", or the gateway key does not match (copy the token again)")
 		default:
 			fail(fmt.Sprintf("gateway at %s answered HTTP %d", c.URL, st))
+		}
+		return
+
+	case "reconnect":
+		if !reconnectCommand(args[1:]) {
+			os.Exit(1)
 		}
 		return
 
@@ -520,7 +520,8 @@ func main() {
 			return
 		}
 		say("minigw connect <host[:port]> [--name P] [--token T|-]  save a gateway as profile P (" + storeName + "; - = stdin)\n" +
-			"minigw status | models | disconnect [--name P]   all profiles; models of other profiles end in @P\n" +
+			"minigw reconnect [--name P] [--token T|-]  new token for profile P; address, gateway key and device stay\n" +
+			"minigw status | models | disconnect [--name P]   all profiles; models of other profiles end in @P (the device key stays)\n" +
 			"minigw profiles [default P]                list profiles, or pick the default (its models also without @P)\n" +
 			"minigw --minigw-profile P …                 use only profile P for this command\n" +
 			"minigw share add|remove [folder] | list    share a system or hidden folder itself (contents are always shared)\n" +
@@ -537,7 +538,7 @@ func main() {
 			"minigw serve [init|allow <id>] [--port N] [--config FILE]   run a gateway here (Windows, Linux)\n" +
 			"minigw gw status|devices|provider|claude|token …  change the gateway here, live (minigw gw help)\n" +
 			"minigw plugin install|uninstall|status       the Claude Code plugin minigw@mini-gateway, using this minigw\n" +
-			"minigw uninstall [--purge] [--yes]          remove what minigw added here (--purge: also settings and profiles)\n" +
+			"minigw uninstall [--purge] [--yes]          remove what minigw added here (--purge: also settings, profiles, device key)\n" +
 			"minigw [claude options …]                    run Claude Code through the gateway")
 		if first == "--minigw-help" {
 			return
