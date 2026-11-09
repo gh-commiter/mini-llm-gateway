@@ -1,7 +1,7 @@
 ---
 name: models
 description: List the models available through Mini Gateway (Codex, Grok, Claude CLI agents, Siri AI, Apple Foundation Models, LiteLLM and OpenRouter models). Use when the user asks which gateway models exist or which one to use.
-allowed-tools: Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw *)
+allowed-tools: Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw models), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw --minigw-profile * models), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw --version)
 ---
 
 Profiles (`--name`, `profiles`, `--minigw-profile`, `<model>@<profile>`) need minigw 0.5.18 or newer: if the first line of `"${CLAUDE_PLUGIN_DATA}/bin/minigw" --version` is older, tell the user to run `/minigw:gw update` and do not use them (an older minigw passes them to claude).

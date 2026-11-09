@@ -236,7 +236,7 @@ func (s *shareClient) wtPull(k string, job davJob) davResponse {
 		}
 		why := fmt.Sprintf("HTTP %d", st)
 		if json.Unmarshal(data, &e) == nil && e.Error.Message != "" {
-			why = clean(e.Error.Message)
+			why = oneLine(e.Error.Message)
 		}
 		s.note(fmt.Sprintf("worktree: cannot get %s from the gateway: %s", req.Branch, why))
 		return dav(500, nil, nil)

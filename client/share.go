@@ -172,7 +172,7 @@ func (s *shareClient) handle(job davJob, k string) davResponse {
 		if s.native && deliveredBranch(s.root, n.Branch, n.Base) { // native z git (worktree: odločajo lastni posnetki)
 			s.branchNote(n.Branch, n.Base)
 		} else {
-			fmt.Fprintln(os.Stderr, "minigw: "+oneLine(n.Message))
+			fmt.Fprintln(os.Stderr, gatewayNote(n.Message))
 		}
 		return dav(200, nil, nil)
 	case s.worktree && job.Method == "WORKTREE-PULL":
@@ -195,6 +195,16 @@ func (s *shareClient) handle(job davJob, k string) davResponse {
 		return dav(403, nil, nil)
 	}
 	return davHandle(job.Method, job.Path, job.Headers, job.Body, s.root, job.Prefix)
+}
+
+// gatewayNote (M2): besedilo prehoda kot »minigw: gateway: …« v eni vrstici; vrstico o veji izpiše le minigw sam iz
+// preverjenih podatkov (worktree: lastni posnetki), zato besedilo prehoda nikoli ni videti kot ona.
+func gatewayNote(msg string) string {
+	m := shortLine(msg, 500)
+	if strings.Contains(strings.ToLower(m), "agent work is on branch") {
+		m = "reported a branch that minigw could not verify; ignored"
+	}
+	return "minigw: gateway: " + m
 }
 
 // maxReply: največji odgovor routerja v pomnilniku (datoteka do 64 MB + glave).

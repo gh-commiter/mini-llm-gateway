@@ -87,12 +87,17 @@ func normName(c string) string {
 
 var shortGit = regexp.MustCompile(`^git~[0-9]+$`)
 
-// protectedPath: pot, ki je prevzem nikoli ne zapiše ali izbriše: git (tudi ».GIT«, ».git.«) in nastavitve, ki
-// zaganjajo ukaze (.claude/settings*.json, .vscode/tasks.json, .envrc).
+// claudeRun: mape v .claude, katerih datoteke Claude Code zažene ali jim da dovoljenja (hooki, ukazi, agenti, skilli).
+var claudeRun = map[string]bool{"hooks": true, "commands": true, "agents": true, "skills": true}
+
+// protectedPath: pot, ki je prevzem nikoli ne zapiše ali izbriše: git (tudi ».GIT«, ».git.«), hooki gita (.husky,
+// .githooks), .claude/{hooks,commands,agents,skills} in nastavitve, ki zaganjajo ukaze (.claude/settings*.json,
+// .vscode/tasks.json, .envrc). Isti seznam velja za WebDAV (M1).
 func protectedPath(rel string) bool {
 	comps := strings.Split(rel, "/")
 	for i, c := range comps {
-		if comps[i] = normName(c); comps[i] == ".git" {
+		if comps[i] = normName(c); comps[i] == ".git" || comps[i] == ".husky" || comps[i] == ".githooks" ||
+			(i > 0 && comps[i-1] == ".claude" && claudeRun[comps[i]]) {
 			return true
 		}
 	}
@@ -460,7 +465,7 @@ func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch fu
 	return notes, done
 }
 
-func (s *shareClient) note(msg string) { fmt.Fprintln(os.Stderr, "minigw: "+clean(msg)) }
+func (s *shareClient) note(msg string) { fmt.Fprintln(os.Stderr, "minigw: "+oneLine(msg)) } // M2: ime datoteke z \n ne ponaredi vrstice
 
 // syncPush: pred agentom manifest k routerju, nato datoteke, ki jih potrebuje.
 // caseCollisions (#2): poti, ki se razlikujejo le v velikih črkah (A.txt in a.txt): na routerju z APFS ali NTFS bi

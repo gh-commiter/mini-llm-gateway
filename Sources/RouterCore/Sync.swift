@@ -87,11 +87,16 @@ public enum Sync {
     /// Pot vsebuje ».git« v kateri koli obliki: nikoli v kopiji ali iz nje.
     public static func isGitPath(_ rel: String) -> Bool { rel.split(separator: "/").contains { normName(String($0)) == ".git" } }
 
-    /// Pot, ki je prevzem nikoli ne zapiše ali izbriše: git in nastavitve, ki zaganjajo ukaze
-    /// (.claude/settings*.json, .vscode/tasks.json, .envrc).
+    /// Pot, ki je prevzem nikoli ne zapiše ali izbriše: git, hooki gita (.husky, .githooks), .claude/{hooks,commands,
+    /// agents,skills} in nastavitve, ki zaganjajo ukaze (.claude/settings*.json, .vscode/tasks.json, .envrc).
+    /// Isti seznam velja za WebDAV (M1, kot Go protectedPath).
     public static func isProtected(_ rel: String) -> Bool {
         let c = rel.split(separator: "/").map { normName(String($0)) }
         let last = c.last ?? "", parent = c.count > 1 ? c[c.count - 2] : ""
+        let run: Set<String> = ["hooks", "commands", "agents", "skills"]
+        if c.contains(where: { $0 == ".husky" || $0 == ".githooks" }) || zip(c, c.dropFirst()).contains(where: { $0 == ".claude" && run.contains($1) }) {
+            return true
+        }
         return isGitPath(rel) || last == ".envrc" || (parent == ".vscode" && last == "tasks.json")
             || (parent == ".claude" && last.hasPrefix("settings") && last.hasSuffix(".json"))
     }

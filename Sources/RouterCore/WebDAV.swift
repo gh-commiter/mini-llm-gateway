@@ -90,6 +90,8 @@ public enum WebDAV {
         case "GET", "HEAD":
             guard exists else { return DAVResponse(404) }
             if isDir.boolValue { return DAVResponse(200, ["Content-Type": "text/plain"]) }
+            var st = stat()  // L3: FIFO ali naprava bi zadržala delavca deljenja
+            guard stat(url.path, &st) == 0, st.st_mode & S_IFMT == S_IFREG else { return DAVResponse(403) }
             // Le zahtevani del (HEAD nič): odgovor gre v enem kosu prek routerja (do 64 MB, base64).
             let size = ((try? fm.attributesOfItem(atPath: url.path)[.size]) as? NSNumber)?.intValue ?? 0
             var h = ["Content-Type": "application/octet-stream", "Last-Modified": httpDate(modified(url)), "Accept-Ranges": "bytes"]

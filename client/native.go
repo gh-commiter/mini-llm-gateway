@@ -130,7 +130,7 @@ func nativeProof(c connection, cwd string) (map[string]string, string) {
 		case st == 404:
 			return nil, "the gateway does not support native mode"
 		case r.Error.Message != "":
-			return nil, clean(r.Error.Message)
+			return nil, oneLine(r.Error.Message)
 		}
 		return nil, fmt.Sprintf("the gateway refused native mode (HTTP %d)", st)
 	}
@@ -250,7 +250,7 @@ func runCommand(args []string) int {
 		if r.Error.Message == "" {
 			r.Error.Message = fmt.Sprintf("the gateway answered HTTP %d", resp.StatusCode)
 		}
-		fail(clean(r.Error.Message))
+		fail(oneLine(r.Error.Message))
 	}
 	return runOutput(resp.Body, ttySafe(os.Stdout), ttySafe(os.Stderr))
 }
