@@ -19,7 +19,7 @@
 
 ### Security
 
-- Worktree mode with Claude CLI: Claude Code's own git no longer enters a nested repository or submodule the agent created in its clone (it ran there outside the sandbox). A clone with a nested `.git` is replaced before the next run and its branch is not delivered. Mac and `minigw serve` (not Windows, where Claude in worktree mode already runs without a sandbox).
+- Worktree mode: git run by Claude CLI, Codex, Grok and Copilot and by the gateway itself never enters a nested repository or submodule in the agent's clone (Claude Code's own git ran there outside the sandbox). A nested repository at a path git does not ignore stops that run's branch ("changes inside the nested repository … do not come back in worktree mode; use sync"); one in an ignored folder such as `build/_deps` is fine. Mac and `minigw serve` (not Windows, where agents in worktree mode already run without a sandbox).
 - Windows `minigw` folder share: names ending in a dot or space, reserved device names (`CON`, `NUL`, `COM1` …) and 8.3 short names (`CLAUDE~1`: another path to a protected folder) are refused; sync never copies back a path with such a short name.
 - Release builds also require `install.sh`, `scripts` and `plugins` to be committed (`install.sh` is in the signed `SHA256SUMS`).
 - macOS `minigw`, direct mode: copying a folder in the shared folder (WebDAV COPY) copies only files and folders, not symbolic links, as the Windows and Linux `minigw` do.

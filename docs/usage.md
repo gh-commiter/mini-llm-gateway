@@ -206,6 +206,12 @@ clone when the session ends.
 filters, and does not change `.git/config`. If you committed on that branch yourself, your commits stay and the
 agent's version is not fetched.
 
+**Nested repositories and submodules:** git on the gateway never enters a repository inside the clone. A nested
+repository in a folder git ignores (for example `build/_deps` from CMake FetchContent) is fine. A nested repository
+or submodule at a path git does not ignore stops the result: minigw prints "changes inside the nested repository
+<path> do not come back in worktree mode; use sync", no branch is delivered for that run, and the next request starts
+from a fresh clone. Use sync for work inside submodules.
+
 **Agents in worktree mode:**
 
 - Claude CLI agents get Bash, always in Claude Code's sandbox. Codex uses its own sandbox with the clone as the

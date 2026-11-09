@@ -673,6 +673,13 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 		if p := runOf(r); p != nil { // klon klicatelja
 			wt, maven, objects, inTree = p.wt, p.maven, p.objects, p.wt != ""
 		}
+		var treeEnv []string // L-N9a: kot Claude CLI (harness Codex, Grok in Copilot sam poganja git v klonu)
+		gw := c.scratch("gitexec")
+		if inTree {
+			if treeEnv = worktreeClaudeEnv(wt, maven, gw); treeEnv == nil {
+				return "", errors.New("cannot prepare git for the agent's clone (git --exec-path); use sync")
+			}
+		}
 		run, runEnv := s.startRun(r, k.name, dir, readOnly, true, wt, maven, objects, tmp) // »May ask other models«; mapa je deljena (agentFolder); žeton v tmp zahteve
 		defer run.stop()
 		withTree := func(m agentMounts) agentMounts { // worktree: Maven agentov, objekti zrcala (branje), .git klona le za branje
@@ -681,12 +688,12 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 				m.ro = append(m.ro, minigwExe())
 			}
 			if inTree {
-				m.rw, m.ro = append(m.rw, maven), append(m.ro, objects)
+				m.rw, m.ro = append(m.rw, maven), append(m.ro, objects, gw)
 				m.pins = []string{filepath.Join(wt, ".git")} // L1: .git klona je točka priklopa (mv/rm: EBUSY)
 				for _, d := range []string{"config", "hooks", "info", "commondir"} {
 					m.protect = append(m.protect, filepath.Join(wt, ".git", d))
 				}
-				m.env = append(m.env, worktreeHarnessEnv(wt, maven)...)
+				m.env = append(m.env, treeEnv...)
 			}
 			return m
 		}

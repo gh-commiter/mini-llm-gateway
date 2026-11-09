@@ -325,7 +325,7 @@ func TestWorktreeLimits(t *testing.T) {
 	if _, err := gitRun(filepath.Join(t.TempDir(), "repos", "d", "r.git"), "", nil, "--version"); err == nil {
 		t.Fatal("git ran past its timeout")
 	}
-	if cloneProblem(t.TempDir()) != "" {
+	if d := t.TempDir(); cloneProblem(d, filepath.Join(d, "repos", "d", "r.git")) != "" {
 		t.Fatal("empty clone too large")
 	}
 	h := newShareHub()
@@ -501,7 +501,7 @@ func TestWorktreeNestedRepoFilterDoesNotRun(t *testing.T) {
 		if ensureMirror(repo) != nil || !importBase(repo, b, head, "refs/minigw/base/x") || !makeClone(repo, wt, "minigw/claude-12345678-0", head) {
 			t.Fatal("mirror or clone")
 		}
-		if cloneProblem(wt) != "" {
+		if cloneProblem(wt, repo) != "" {
 			t.Fatal("fresh clone refused")
 		}
 		// Agent (v peskovniku smeta pisati v klon in njegov indeks).
@@ -546,7 +546,7 @@ func TestWorktreeNestedRepoFilterDoesNotRun(t *testing.T) {
 		if status(env) {
 			t.Fatalf("gitfile=%v: the nested repository's filter ran under the Claude CLI environment", gitfile)
 		}
-		if why := cloneProblem(wt); !strings.Contains(why, "nested git repository (sub/.git)") {
+		if why := cloneProblem(wt, repo); why != "changes inside the nested repository sub do not come back in worktree mode; use sync" {
 			t.Fatalf("gitfile=%v: nested repository accepted: %q", gitfile, why)
 		}
 		// Ovoj pusti git klona samega (commit z vzdrževanjem).
@@ -555,5 +555,68 @@ func TestWorktreeNestedRepoFilterDoesNotRun(t *testing.T) {
 		if out, err := c.CombinedOutput(); err != nil {
 			t.Fatalf("commit in the clone: %v %s", err, out)
 		}
+	}
+}
+
+// N9 (odločitev 0.5.20): ugnezden repozitorij v poti, ki jo git prezre (build/_deps od CMake FetchContent), ne ustavi
+// vrnitve veje; v poti, ki je git ne prezre (podmodul, ugnezden repozitorij), veja ne gre nazaj, sporočilo pove zakaj.
+func TestWorktreeNestedRepoIgnoredDelivered(t *testing.T) {
+	root := t.TempDir()
+	client, repo, wt := filepath.Join(root, "c"), filepath.Join(root, "repos", "d", "r.git"), filepath.Join(root, "wt")
+	os.MkdirAll(client, 0o755)
+	gitT(t, client, "init", "-q", "-b", "main")
+	writeT(t, filepath.Join(client, "a.txt"), "a\n")
+	writeT(t, filepath.Join(client, ".gitignore"), "build/\n")
+	gitT(t, client, "add", "-A")
+	gitT(t, client, "commit", "-qm", "first")
+	head := gitT(t, client, "rev-parse", "HEAD")
+	b := filepath.Join(root, "push.bundle")
+	gitUser(client, nil, "update-ref", "refs/minigw/push", head)
+	gitUser(client, nil, "bundle", "create", b, "refs/minigw/push")
+	if ensureMirror(repo) != nil || !importBase(repo, b, head, "refs/minigw/base/x") || !makeClone(repo, wt, "minigw/claude-12345678-0", head) {
+		t.Fatal("mirror or clone")
+	}
+	dep := filepath.Join(wt, "build", "_deps", "foo-src") // FetchContent
+	os.MkdirAll(dep, 0o755)
+	gitT(t, dep, "init", "-q")
+	writeT(t, filepath.Join(dep, "x.c"), "int x;\n")
+	writeT(t, filepath.Join(wt, "a.txt"), "agent\n")
+	if why := cloneProblem(wt, repo); why != "" {
+		t.Fatalf("ignored nested repository refused: %s", why)
+	}
+	tip := finalize(repo, wt, "minigw/claude-12345678-0", head, "claude", filepath.Join(root, "out.bundle"))
+	if tip == "" || tip == head {
+		t.Fatalf("not delivered: %q", tip)
+	}
+	if files := gitT(t, repo, "ls-tree", "-r", "--name-only", tip); strings.Contains(files, "build/") || !strings.Contains(files, "a.txt") {
+		t.Fatalf("branch content: %s", files)
+	}
+	lib := filepath.Join(wt, "vendor", "lib") // nesledeni ugnezdeni repozitorij
+	os.MkdirAll(lib, 0o755)
+	gitT(t, lib, "init", "-q")
+	if why := cloneProblem(wt, repo); why != "changes inside the nested repository vendor/lib do not come back in worktree mode; use sync" {
+		t.Fatalf("non-ignored nested repository: %q", why)
+	}
+}
+
+// N9: ovoj pusti le git s klonovim GIT_DIR; prazen MINIGW_GIT_DIR ne velja (tudi ne ob praznem GIT_DIR).
+func TestGitExecWrapNeedsGitDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no wrapper on Windows")
+	}
+	gw := gitExecWrap(filepath.Join(t.TempDir(), "gitexec"))
+	if gw == "" {
+		t.Fatal("no wrapper")
+	}
+	run := func(gitDir, want string) error {
+		c := exec.Command(filepath.Join(gw, "git"), "--version")
+		c.Env = append(os.Environ(), "GIT_DIR="+gitDir, "MINIGW_GIT_DIR="+want)
+		return c.Run()
+	}
+	if run("", "") == nil || run(".git", "/w/.git") == nil {
+		t.Fatal("wrapper ran git for another GIT_DIR")
+	}
+	if err := run("/w/.git", "/w/.git"); err != nil {
+		t.Fatalf("wrapper refused the clone's git: %v", err)
 	}
 }

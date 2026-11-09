@@ -419,7 +419,7 @@ extension Router {
             return "The user's folder \(clientCwd) (on their computer, a git repository) is a clone here at \(shared.path), your working"
                 + " directory, on branch \(branch). Map paths under \(clientCwd) to it. Commit your work on this branch; changes you leave"
                 + " uncommitted are committed for you at the end. The branch goes back to the user's repository; their files are not changed."
-                + " Build output (.build, target, DerivedData) is never committed. Maven builds work here; swift build and xcodebuild"
+                + " Build output (.build, target, DerivedData) is never committed. Do not create git repositories or submodules here outside ignored folders: then nothing comes back (use sync for that). Maven builds work here; swift build and xcodebuild"
                 + " may fail in this sandbox: then tell the user to build with minigw run."
         }
         return (synced ? "The user's folder \(clientCwd) (on their computer) is synced here as \(shared.path), your working directory: a local copy"

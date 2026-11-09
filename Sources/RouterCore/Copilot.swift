@@ -311,7 +311,14 @@ extension Router {
                                                   runTmp: reqDir.path, writable: agent && write ? [root.path] : [], visible: visible?.path) else {
             return await error(403, "permission_error", "Copilot: the session's folder is a link", rid: rid, writer: writer)
         }
-        let extraEnv = tree.map { Worktree.harnessEnv(root: $0.root, maven: $0.maven) }
+        var treeEnv: [String: String]?  // L-N9a: harness Copilot sam poganja git v klonu (ovoj kot pri Claude CLI)
+        if let t = tree {
+            guard let e = Worktree.claudeEnv(root: t.root, maven: t.maven, gitexec: config.scratch("gitexec")) else {
+                return await error(503, "api_error", "Cannot prepare git for the agent's clone (git --exec-path): use sync", rid: rid, writer: writer)
+            }
+            treeEnv = e
+        }
+        let extraEnv = treeEnv
             ?? ["TMPDIR": tmp.path + "/", "CLANG_MODULE_CACHE_PATH": tmp.appendingPathComponent("ModuleCache").path]
         let run = agent ? await startAgentRun(req, kind: "copilot", dir: sharedDir, secretDir: reqDir, readOnly: tree != nil && !cfg.write) : nil  // peskovnik: zaprta le vrata prehoda; žeton v mapi zahteve
         defer { run?.stop() }
