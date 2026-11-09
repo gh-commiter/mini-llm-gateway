@@ -929,6 +929,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     let s = args[try #require(args.firstIndex(of: "--settings")) + 1]
     for d in ["config", "hooks", "info", "commondir", "worktrees", "config.worktree"] {
         #expect(s.contains(#""\/p\/.git\/"# + d + "\""), "\(d): \(s)")
+        #expect(s.contains(#""\/p\/**\/.git\/"# + d + "\"") && args.contains { $0.contains("Edit(//p/**/.git/\(d))") }, "nested \(d): \(s)")  // N3
     }
 }
 
@@ -1109,6 +1110,9 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     let id = try await agentRun(hub, session) { dir in
         for p in [".", "sub", "sub/deep", "vendor/lib", "nc", "build/_deps/x"] { try file(dir.appendingPathComponent(p), "agent.txt", "agent\n") }
         #expect(try String(contentsOf: dir.appendingPathComponent("vendor/lib/f.txt"), encoding: .utf8).contains("uncommitted"))
+        // Cilj 1: git add -A agenta v vrhnjem ne zapiše nesledenih ugnezdenih (info/exclude klona); B: commit v podmodulu ostane
+        g(dir, "add", "-A"); g(dir, "commit", "-qm", "agent top")
+        g(dir.appendingPathComponent("sub"), "add", "agent.txt"); g(dir.appendingPathComponent("sub"), "commit", "-qm", "agent in sub")
     }
     await hub.finish(run: id)
     for p in ["", "sub", "sub/deep", "vendor/lib", "nc"] {
@@ -1118,9 +1122,15 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     let top = g(client, "ls-tree", "-r", "--name-only", br)
     #expect(!top.contains("build/") && !top.contains("nc/") && !top.contains("vendor/lib/") && !top.contains("sub/"))
     #expect(g(client, "ls-tree", br, "sub").hasPrefix("160000 commit " + g(client.appendingPathComponent("sub"), "rev-parse", br)))
-    #expect(g(client.appendingPathComponent("sub"), "ls-tree", br, "deep").hasPrefix("160000 commit " + g(client.appendingPathComponent("sub/deep"), "rev-parse", br)))
+    #expect(g(client.appendingPathComponent("sub"), "ls-tree", br, "deep").isEmpty)  // nesleden v sub: ni gitlink
+    #expect(g(client, "ls-tree", br, "vendor/lib").isEmpty && g(client, "ls-tree", br, "nc").isEmpty)
+    #expect(g(client.appendingPathComponent("sub"), "log", "--format=%s", br).contains("agent in sub"))
     #expect(g(client.appendingPathComponent("nc"), "rev-list", "--count", br) == "2")
     #expect(["", "sub", "sub/deep", "vendor/lib"].map { g(client.appendingPathComponent($0), "rev-parse", "HEAD") } == heads)
+    let base = g(client, "log", "--format=%H", "--grep", "minigw: your uncommitted changes", "-1", br)
+    g(client, "stash", "-q", "-u")  // cherry-pick -n potrebuje čisto mapo; uporabnikovo delo nazaj potem
+    #expect(Worktree.run(["cherry-pick", "-n", base + ".." + br], cwd: client.path, safe: false).status == 0)
+    g(client, "reset", "-q", "--hard"); g(client, "stash", "pop", "-q")
     // Agent naredi repozitorij v ugnezdenem klonu: veja ne gre nazaj (in klon se ne uporabi znova).
     let id2 = try await agentRun(hub, session) { dir in
         let evil = dir.appendingPathComponent("vendor/lib/x/evil")
@@ -1142,4 +1152,67 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     for p in ["link/x", "link", "full", "f.txt/x"] { #expect(!Worktree.cloneTarget(wt, p), "\(p)") }
     for p in ["new/deep/x", "empty"] { #expect(Worktree.cloneTarget(wt, p), "\(p)") }
     #expect(Worktree.nestedMirror(URL(fileURLWithPath: "/s/repos/d/abc.git"), "lib").path == "/s/repos/d/abc-\(Worktree.nestedKey("lib")).git")
+}
+
+/// N1 (kot Go TestWorktreeNestedSwapDuringFinalize): zamenjava poti ugnezdenega klona s povezavo ven po preverbi zavrže
+/// rezultat; ref zrcala ostane prejšnji, bundla ni.
+@Test func worktreeNestedSwapDuringFinalize() throws {
+    let (root, client, tree) = try fixture()
+    defer { cleanup(root) }
+    let wt = root.appendingPathComponent("wt"), outside = root.appendingPathComponent("outside"), lib = client.appendingPathComponent("lib")
+    for d in [lib, outside] { try file(d, "f.txt", "x\n"); g(d, "init", "-q", "-b", "main"); g(d, "add", "f.txt"); g(d, "commit", "-qm", "x") }
+    try file(outside, "secret.txt", "gateway secret\n")
+    let mirror = Worktree.nestedMirror(tree.repo, "lib"), base = g(lib, "rev-parse", "HEAD"), b = root.appendingPathComponent("push.bundle")
+    g(lib, "update-ref", "refs/minigw/push", base); g(lib, "bundle", "create", b.path, "refs/minigw/push")
+    #expect(Worktree.ensureMirror(mirror) && Worktree.importBase(mirror, bundle: b, snapshot: base, base: "refs/minigw/base/x"))
+    try FileManager.default.createDirectory(at: wt, withIntermediateDirectories: true)
+    #expect(Worktree.makeClone(mirror, at: wt.appendingPathComponent("lib"), branch: "minigw/claude-12345678-0", snapshot: base))
+    let n = ShareHub.Nested(path: "lib", repo: mirror, base: base, wt: wt)
+    let slot = ShareHub.Slot(wt: wt, branch: "minigw/claude-12345678-0", base: base, nested: [n])
+    try file(wt.appendingPathComponent("lib"), "agent.txt", "agent\n")
+    Worktree.beforeNestedFinalize = { _ in
+        try? FileManager.default.moveItem(at: wt.appendingPathComponent("lib"), to: wt.appendingPathComponent("lib.real"))
+        try? FileManager.default.createSymbolicLink(at: wt.appendingPathComponent("lib"), withDestinationURL: outside)
+    }
+    defer { Worktree.beforeNestedFinalize = nil }
+    let out = root.appendingPathComponent("out.bundle")
+    let (tip, why) = Worktree.finalizeNested(slot, n, agent: "claude", out: out, links: [:])
+    #expect(tip == nil && why.contains("moved or replaced"))
+    #expect(Worktree.run(["--git-dir", mirror.path, "rev-parse", "-q", "--verify", "refs/heads/minigw/claude-12345678-0"]).out.isEmpty)
+    #expect(!FileManager.default.fileExists(atPath: out.path))
+}
+
+/// N2/N5/N6 (kot Go TestNestedReposRefuseSymlinks): povezava na poti gitlinka ali ugnezdenega repozitorija ni ugnezden
+/// repozitorij mape; imena s HFS+ prezrtimi znaki in pot v .build ne.
+@Test func nestedReposRefuseSymlinks() throws {
+    let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("n2-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let top = root.appendingPathComponent("top"), outside = root.appendingPathComponent("outside")
+    for d in [top, outside, top.appendingPathComponent("real")] { try file(d, "f.txt", "x\n"); g(d, "init", "-q", "-b", "main"); g(d, "add", "f.txt"); g(d, "commit", "-qm", "x") }
+    let sha = g(outside, "rev-parse", "HEAD")
+    try FileManager.default.createSymbolicLink(at: top.appendingPathComponent("link"), withDestinationURL: outside)
+    g(top, "update-index", "--add", "--cacheinfo", "160000,\(sha),link")
+    try FileManager.default.createDirectory(at: top.appendingPathComponent("d"), withIntermediateDirectories: true)
+    try FileManager.default.createSymbolicLink(at: top.appendingPathComponent("d/inner"), withDestinationURL: outside)
+    #expect(Worktree.nestedRepos(top: top.path) == ["real"])
+    #expect(!Worktree.nestedInside(top: top.path, "link") && !Worktree.nestedInside(top: top.path, "d/inner") && Worktree.nestedInside(top: top.path, "real"))
+    #expect(Sync.normName(".g\u{200C}it") == ".git")
+    for p in ["a\u{200D}/b", "x\u{FEFF}", ".build/x", ".BUILD"] { #expect(!Worktree.validNestedPath(p), "\(p)") }
+}
+
+/// Agent je vse commital sam: veja se shrani in objekti ostanejo v zrcalu (kot Go TestWorktreeFinalizeAllCommitted).
+@Test func worktreeFinalizeAllCommitted() throws {
+    let (root, client, tree) = try fixture()
+    defer { cleanup(root) }
+    let head = g(client, "rev-parse", "HEAD"), b = root.appendingPathComponent("push.bundle"), wt = root.appendingPathComponent("wt")
+    g(client, "update-ref", "refs/minigw/push", head); g(client, "bundle", "create", b.path, "refs/minigw/push")
+    #expect(Worktree.ensureMirror(tree.repo) && Worktree.importBase(tree.repo, bundle: b, snapshot: head, base: "refs/minigw/base/x")
+            && Worktree.makeClone(tree.repo, at: wt, branch: "minigw/claude-12345678-0", snapshot: head))
+    for f in ["a.txt", "new.txt"] { try? FileManager.default.removeItem(at: wt.appendingPathComponent(f)) }
+    g(wt, "checkout", "-q", "--", "."); try file(wt, "b.txt", "b\n"); g(wt, "add", "b.txt"); g(wt, "commit", "-qm", "agent")
+    let agentTip = g(wt, "rev-parse", "HEAD")
+    let tip = Worktree.finalize(repo: tree.repo, wt: wt, branch: "minigw/claude-12345678-0", base: head, agent: "claude", out: root.appendingPathComponent("out.bundle"))
+    #expect(tip == agentTip)
+    try? FileManager.default.removeItem(at: wt)
+    #expect(Worktree.run(["--git-dir", tree.repo.path, "show", "minigw/claude-12345678-0:b.txt"]).out == "b")
 }

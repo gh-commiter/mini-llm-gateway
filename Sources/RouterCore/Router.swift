@@ -446,12 +446,12 @@ public final class Router: Sendable {
         // minigw --minigw-work=worktree: bundle stanja k routerju (po delih), bundle veje agenta nazaj.
         case ("PUT", "/minigw/worktree/bundle"):
             let st = await Self.shares.worktreePut(key: req.header("x-share-key") ?? "", part: Int(req.header("x-part") ?? "") ?? -1,
-                                                   nested: req.header("x-nested").map { Int($0) ?? -1 } ?? 0, data: req.body, device: req.device?.id)
+                                                   nested: Worktree.parseNested(req.header("x-nested")), data: req.body, device: req.device?.id)
             try? await writer.write(HTTPResponse.head(status: st, headers: [], contentLength: 0))
             return (st, nil, "share")
         case ("GET", "/minigw/worktree/result"):
             guard let body = await Self.shares.worktreeResult(key: req.header("x-share-key") ?? "", device: req.device?.id,
-                                                              nested: req.header("x-nested").map { Int($0) ?? -1 } ?? 0) else {
+                                                              nested: Worktree.parseNested(req.header("x-nested"))) else {
                 return (await error(404, "not_found_error", "No result", rid: rid, writer: writer), nil, "share")
             }
             try? await writer.write(HTTPResponse.head(status: 200, headers: [("Content-Type", "application/octet-stream")], contentLength: body.count) + body)

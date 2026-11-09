@@ -76,10 +76,16 @@ public enum Sync {
     }
 
     /// Ime, kot ga vidi datotečni sistem brez razlike v črkah (Windows odreže končne pike in presledke: ».GIT.« = ».git«).
+    /// N5 (kot Go hfsIgnorable): kodne točke, ki jih HFS+ pri primerjavi imen prezre.
+    static func hfsIgnorable(_ u: Unicode.Scalar) -> Bool {
+        (0x200C...0x200F).contains(u.value) || (0x202A...0x202E).contains(u.value) || (0x206A...0x206F).contains(u.value) || u.value == 0xFEFF
+    }
+
     static func normName(_ c: String) -> String {
         // upper→lower preslika ſ, ı, K (Kelvin) v ASCII; »git~1« je kratko 8.3 ime ».git« na Windows.
         // ponytail: ime, ne kanonična pot; ob simlinkanem staršu preveri kanonično pot (issue v Gitei).
-        var n = c.uppercased().lowercased()
+        // N5: znaki, ki jih HFS+ pri primerjavi prezre (».g\u{200C}it« je ».git«)
+        var n = String(String.UnicodeScalarView(c.unicodeScalars.filter { !Sync.hfsIgnorable($0) })).uppercased().lowercased()
         while n.hasSuffix(".") || n.hasSuffix(" ") { n.removeLast() }
         return n.range(of: #"^git~[0-9]+$"#, options: .regularExpression) != nil ? ".git" : n
     }

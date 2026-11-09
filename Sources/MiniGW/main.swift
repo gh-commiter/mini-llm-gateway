@@ -392,7 +392,7 @@ final class ShareClient: @unchecked Sendable {
         defer { try? h.close() }
         var part = 0
         while let d = try? h.read(upToCount: 32 << 20), !d.isEmpty {
-            let headers = ["x-share-key": k, "x-part": String(part)].merging(idx > 0 ? ["x-nested": String(idx)] : [:]) { $1 }
+            let headers = Worktree.nestedHeader(["x-share-key": k, "x-part": String(part)], idx)
             guard call(c, "PUT", "/minigw/worktree/bundle", headers, d, timeout: 600).0 == 204 else {
                 note("worktree: upload to the gateway failed"); return false
             }
@@ -419,10 +419,10 @@ final class ShareClient: @unchecked Sendable {
     /// Rezultat idx (0 = vrhnji) s prehoda kot veja v repozitorij dir (rel: pot ugnezdenega).
     private func fetchResult(_ k: String, _ dir: String, _ rel: String?, _ branch: String, _ idx: Int) -> Bool {
         let what = rel.map { "\(branch) of the nested repository \(oneLine($0))" } ?? branch
-        if let rel, Worktree.toplevel(dir).flatMap({ Sync.real(URL(fileURLWithPath: $0))?.path }) != Sync.real(URL(fileURLWithPath: dir))?.path {
+        if let rel, let top, !Worktree.nestedInside(top: top, rel) {  // N2: povezava v poti ali repozitorij zunaj mape
             note("worktree: the nested repository \(oneLine(rel)) is no longer a git repository here; \(branch) was not fetched into it"); return false
         }
-        let (s, d) = call(c, "GET", "/minigw/worktree/result", ["x-share-key": k].merging(idx > 0 ? ["x-nested": String(idx)] : [:]) { $1 }, timeout: 600)
+        let (s, d) = call(c, "GET", "/minigw/worktree/result", Worktree.nestedHeader(["x-share-key": k], idx), timeout: 600)
         guard s == 200, let d else {  // L5: razlog prehoda (prevelik klon ali veja), sicer status
             let why = d.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }.flatMap { ($0["error"] as? [String: Any])?["message"] as? String }
             note("worktree: cannot get \(what) from the gateway: \(why.map(oneLine) ?? "HTTP \(s)")"); return false

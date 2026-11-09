@@ -55,13 +55,15 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
             // --minigw-ro: pisanje v te mape prepovedano (denyWrite velja tudi za delovno mapo, ki jo Claude Code dovoli sam).
             "filesystem": ["denyRead": ["~"] + Self.scratchPaths(scratch), "allowRead": dirs, "allowWrite": readOnly ? [] : dirs,
                            "denyWrite": Self.scratchPaths(RouterConfig.copilotCache)
-                               + (readOnly ? dirs : dirs.flatMap { d in Self.gitDenies.map { d + "/.git/" + $0 } })],  // native v mapi sami (H1)
+                               + (readOnly ? dirs : dirs.flatMap { d in Self.gitDenies.flatMap { [d + "/.git/" + $0, d + "/**/.git/" + $0] } })],  // native v mapi sami (H1); N3: tudi ugnezdeni (macOS glob)
         ]]
         let settings = String(decoding: try! JSONSerialization.data(withJSONObject: sandbox, options: [.sortedKeys]), as: UTF8.self)
         // --minigw-ro: --tools le iz seznama dovoljenih (in Bash v sandboxu brez pisanja), drugih orodij agent nima.
         let roTools = (Self.readOnlyAllowed + ["Bash"]).filter { !disabledTools.contains($0) }
         let others = allTools.filter { !Self.pathTools.contains($0) && !disabledTools.contains($0) && (!readOnly || roTools.contains($0)) }
-        let denied = disabledTools + (readOnly ? Self.writeTools.filter { !disabledTools.contains($0) } : [])
+        // N3: nastavitve, hooki in preusmeritve ugnezdenih .git tudi ne z orodji Edit/Write (kot regex v Native.sandboxProfile)
+        let nestedGit = readOnly ? [] : dirs.flatMap { d in Self.gitDenies.flatMap { g in ["Edit", "Write"].map { "\($0)(/\(d)/**/.git/\(g))" } + ["Edit", "Write"].map { "\($0)(/\(d)/**/.git/\(g)/**)" } } }
+        let denied = disabledTools + (readOnly ? Self.writeTools.filter { !disabledTools.contains($0) } : []) + nestedGit
         return ["--tools", readOnly ? roTools.joined(separator: ",") : "default", "--permission-mode", "acceptEdits", "--settings", settings]
             + dirs.dropFirst().flatMap { ["--add-dir", $0] }
             + (others.isEmpty ? [] : ["--allowedTools", others.joined(separator: ",")])
@@ -411,7 +413,15 @@ extension Router {
     }
 
     /// Navodilo agentu za priklopljeno mapo odjemalca (macOS, Windows ali Linux).
-    static func mountNote(_ clientCwd: String, _ shared: URL, readOnly: Bool, synced: Bool = false, branch: String? = nil) -> String {
+    /// `gits`: .git vseh klonov (vrhnji prvi; B: ugnezdeni poimenovani z ukazom za commit v njih, kot Go nestedClonesNote).
+    static func nestedClonesNote(_ gits: [String]) -> String {
+        guard gits.count > 1 else { return "" }
+        return " These nested repositories and submodules are their own clones on the same branch, and their changes come back too: "
+            + gits.dropFirst().map { String($0.dropLast(5)) }.joined(separator: ", ") + ". Plain git here works on the top repository; to commit in a nested one run"
+            + " GIT_DIR=<path>/.git GIT_COMMON_DIR=<path>/.git GIT_WORK_TREE=<path> git … with its path. Changes you leave uncommitted there are committed for you."
+    }
+
+    static func mountNote(_ clientCwd: String, _ shared: URL, readOnly: Bool, synced: Bool = false, branch: String? = nil, gits: [String] = []) -> String {
         if let branch, readOnly {  // worktree, agent brez pisanja
             return "The user's folder \(clientCwd) (on their computer, a git repository) is a clone here at \(shared.path), your working"
                 + " directory, read-only for you: do not try to create, change or delete files in it. Map paths under \(clientCwd) to it."
@@ -421,7 +431,7 @@ extension Router {
             return "The user's folder \(clientCwd) (on their computer, a git repository) is a clone here at \(shared.path), your working"
                 + " directory, on branch \(branch). Map paths under \(clientCwd) to it. Commit your work on this branch; changes you leave"
                 + " uncommitted are committed for you at the end. The branch goes back to the user's repository; their files are not changed."
-                + " Build output (.build, target, DerivedData) is never committed. Nested repositories and submodules here are their own clones on the same branch; leave your changes in them uncommitted (git here works on the top repository), they come back too."
+                + " Build output (.build, target, DerivedData) is never committed." + Self.nestedClonesNote(gits)
                 + " Do not create git repositories or submodules here outside ignored folders: then nothing comes back (use sync for that). Maven builds work here; swift build and xcodebuild"
                 + " may fail in this sandbox: then tell the user to build with minigw run."
         }
@@ -473,7 +483,7 @@ extension Router {
             let readOnly = await Self.isReadOnly(req)
             if readOnly, tree != nil { return await error(400, "invalid_request_error", Self.readOnlyWorktree, rid: rid, writer: writer) }  // R4: tudi vprašani (kot Go)
             if let shared, let clientCwd {
-                args += ["--append-system-prompt", Self.mountNote(clientCwd, shared, readOnly: readOnly, synced: synced, branch: tree?.branch)]
+                args += ["--append-system-prompt", Self.mountNote(clientCwd, shared, readOnly: readOnly, synced: synced, branch: tree?.branch, gits: tree?.gits ?? [])]
             }
             guard let dir = shared ?? (synced ? nil : ClaudeCLI.resolveCwd(clientCwd, roots: cfg.allowedRoots, scratch: config.scratchURL)) else {
                 if let why = await Self.shares.takeRefusal() {  // zaklep pisanja

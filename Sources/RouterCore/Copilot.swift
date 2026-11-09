@@ -294,7 +294,7 @@ extension Router {
             if readOnly, tree != nil, AgentRun.current == nil { return await error(400, "invalid_request_error", Self.readOnlyWorktree, rid: rid, writer: writer) }
             if let shared, let clientCwd {
                 prompt = Self.mountNote(clientCwd, shared, readOnly: readOnly || (tree != nil && !cfg.write), synced: synced,
-                                        branch: tree?.branch) + "\n\n" + prompt
+                                        branch: tree?.branch, gits: tree?.gits ?? []) + "\n\n" + prompt
             }
         }
         let write = cfg.write && !readOnly, commands = agent && cfg.commands && write  // peskovnik piše v mapo: ukazi le s pisanjem (tudi ne pri --ro)
