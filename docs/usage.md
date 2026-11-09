@@ -210,7 +210,9 @@ agent's version is not fetched.
 repository in a folder git ignores (for example `build/_deps` from CMake FetchContent) is fine. A nested repository
 or submodule at a path git does not ignore stops the result: minigw prints "changes inside the nested repository
 <path> do not come back in worktree mode; use sync", no branch is delivered for that run, and the next request starts
-from a fresh clone. Use sync for work inside submodules.
+from a fresh clone. Use sync for work inside submodules. A nested repository that git does not ignore and that has no
+commit yet (`git init` only) cannot be part of the snapshot: minigw says so when it starts ("the nested repository
+<path> in … has no commit") and uses sync instead; commit in it or add it to `.gitignore` to use worktree mode.
 
 **Agents in worktree mode:**
 

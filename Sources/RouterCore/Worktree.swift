@@ -123,6 +123,15 @@ public enum Worktree {
         return h.status == 0 && isSHA(h.out)
     }
 
+    /// Zakaj ni posnetka (nil = je): repozitorij brez commita ali neprezrt ugnezden repozitorij brez commita (git init;
+    /// git add -A ga ne more dodati). git ls-files -o ugnezdeni repozitorij izpiše kot »pot/« (kot Go snapshotBlocker).
+    public static func snapshotBlocker(top: String) -> String? {
+        guard hasCommit(top: top) else { return "the git repository \(top) has no commit yet" }
+        let out = run(["ls-files", "-o", "--exclude-standard", "-z"], cwd: top, safe: false, hooks: false).out
+        let nested = out.split(separator: "\0").first { $0.hasSuffix("/") && !hasCommit(top: top + "/" + $0) }
+        return nested.map { "the nested repository \($0.dropLast()) in \(top) has no commit (commit in it or add it to .gitignore)" }
+    }
+
     /// Posnetek stanja: HEAD ali commit z neshranjenimi spremembami (sledene in nove, neprezrte), narejen z začasnim
     /// indeksom: indeks, veje in delovna mapa uporabnika ostanejo nespremenjeni. nil = brez HEAD (prazen repozitorij).
     public static func snapshot(top: String) -> String? {

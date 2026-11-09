@@ -262,6 +262,22 @@ func TestSnapshotSkipsIgnoredFilesAndNeedsACommit(t *testing.T) {
 	if got := gitT(t, repo, "ls-tree", "-r", "--name-only", snap); got != ".gitignore\nnew.txt" {
 		t.Fatalf("snapshot has %q", got)
 	}
+	// Neprezrt ugnezden repozitorij brez commita: ni posnetka, razlog ga imenuje (ne zunanjega); prezrt ali s commitom gre.
+	if why := snapshotBlocker(repo); why != "" {
+		t.Fatalf("blocker without nested repo: %q", why)
+	}
+	gitT(t, filepath.Join(repo, "build"), "init", "-q")
+	os.MkdirAll(filepath.Join(repo, "vendor", "lib"), 0o755)
+	gitT(t, filepath.Join(repo, "vendor", "lib"), "init", "-q")
+	if why := snapshotBlocker(repo); gitSnapshot(repo) != "" || !strings.Contains(why, "nested repository vendor/lib ") {
+		t.Fatalf("nested repo without commit: %q", why)
+	}
+	writeT(t, filepath.Join(repo, "vendor", "lib", "a.txt"), "x\n")
+	gitT(t, filepath.Join(repo, "vendor", "lib"), "add", "a.txt")
+	gitT(t, filepath.Join(repo, "vendor", "lib"), "commit", "-qm", "lib")
+	if why := snapshotBlocker(repo); why != "" || !shaRe.MatchString(gitSnapshot(repo)) {
+		t.Fatalf("nested repo with a commit: %q", why)
+	}
 }
 
 // M1 (auto-default): vrstica o veji kaže le delo agenta — od posnetka (neshranjene spremembe in nesledene datoteke

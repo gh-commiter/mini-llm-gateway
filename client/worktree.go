@@ -64,6 +64,21 @@ func gitHasCommit(top string) bool {
 	return err == nil && shaRe.MatchString(head)
 }
 
+// snapshotBlocker: zakaj ni posnetka ("" = je): repozitorij brez commita ali neprezrt ugnezden repozitorij brez commita
+// (git init; git add -A ga ne more dodati). git ls-files -o ugnezdeni repozitorij izpiše kot »pot/«.
+func snapshotBlocker(top string) string {
+	if !gitHasCommit(top) {
+		return "the git repository " + top + " has no commit yet"
+	}
+	out, _ := gitUser(top, nil, "ls-files", "-o", "--exclude-standard", "-z")
+	for _, p := range strings.Split(out, "\x00") {
+		if strings.HasSuffix(p, "/") && !gitHasCommit(filepath.Join(top, filepath.FromSlash(p))) {
+			return "the nested repository " + strings.TrimSuffix(p, "/") + " in " + top + " has no commit (commit in it or add it to .gitignore)"
+		}
+	}
+	return ""
+}
+
 // gitSnapshot: HEAD ali commit z neshranjenimi spremembami (začasni indeks: indeks, veje in mapa uporabnika ostanejo).
 func gitSnapshot(top string) string {
 	head, err := gitUser(top, nil, "rev-parse", "--verify", "-q", "HEAD^{commit}")
@@ -181,7 +196,14 @@ func (s *shareClient) wtPush(k string, job davJob) davResponse {
 	json.Unmarshal(job.Body, &req)
 	snap := gitSnapshot(s.top)
 	if snap == "" {
-		s.note("worktree: cannot take a snapshot (no commit yet?)")
+		why := snapshotBlocker(s.top)
+		if why == "" {
+			why = "git could not record the folder's state"
+		}
+		if k := "snapshot:" + why; !s.reported[k] {
+			s.reported[k] = true
+			s.note("worktree: cannot take a snapshot: " + why + "; use sync (MINIGW_WORK=sync)")
+		}
 		return dav(500, nil, nil)
 	}
 	dir, err := os.MkdirTemp("", "minigw-") // 0700

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fixed: worktree mode with a nested repository that git does not ignore and that has no commit (`git init` only) printed "cannot take a snapshot (no commit yet?)" on every retry and Claude Code got 502 "Syncing … failed". minigw now checks this when it starts, names the nested repository and uses sync instead; a snapshot that still fails names the reason once. Both clients.
 - Fixed: `minigw plugin uninstall` said "nothing to remove in …settings.json" when `claude plugin marketplace remove` had already removed the entries; it now reports them as removed. Both clients.
 - Fixed: `/minigw:version` showed no plugin version when the plugin was loaded with `claude --plugin-dir`; it now always reads the running plugin's `plugin.json`.
 - Fixed: `minigw plugin install` refused the standard Homebrew layout (`/opt/homebrew/bin` is `drwxrwxr-x you:admin`) and ended with exit 1. A group-writable minigw or folder is now accepted when the group is trusted: on macOS `admin`, `staff` or your primary group, on Linux only your own private group. Writable by all users, or owned by someone other than you or root, is still refused. Both clients.

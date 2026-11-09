@@ -664,8 +664,11 @@ func main() {
 	top := workTop(work, cwd)
 	_, _, smb := nativeDetect(cwd)
 	tries := workCandidates(work, readOnly, work == "auto" && smb, top != "")
-	noCommit := top != "" && slices.Contains(tries, "worktree") && !gitHasCommit(top)
-	if noCommit { // brez commita ni posnetka: enkrat preveri, nato sync (#10)
+	noSnapshot := "" // brez commita (tudi v neprezrtem ugnezdenem repozitoriju) ni posnetka: enkrat preveri, nato sync (#10)
+	if top != "" && slices.Contains(tries, "worktree") {
+		noSnapshot = snapshotBlocker(top)
+	}
+	if noSnapshot != "" {
 		tries = slices.DeleteFunc(tries, func(w string) bool { return w == "worktree" })
 	}
 	if tries = noDirectFallback(tries, flagWork, savedWork, readOnly, os.Getenv); len(tries) == 0 {
@@ -677,8 +680,8 @@ func main() {
 		if work == "worktree" && top == "" {
 			fmt.Fprintln(os.Stderr, "minigw: "+cwd+" is not in a git repository; worktree mode is not possible")
 		}
-		if noCommit {
-			fmt.Fprintln(os.Stderr, "minigw: the git repository "+top+" has no commit yet, so worktree mode is not possible; using "+tries[0])
+		if noSnapshot != "" {
+			fmt.Fprintln(os.Stderr, "minigw: "+noSnapshot+", so worktree mode is not possible; using "+tries[0])
 		}
 		var ok bool
 		share, ok = registerShare(c, sid, cwd, readOnly, top, tries, false, implicit)

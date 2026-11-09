@@ -329,7 +329,11 @@ final class ShareClient: @unchecked Sendable {
     /// worktree: posnetek stanja (brez spremembe indeksa ali vej) in bundle manjkajočih objektov po delih do 32 MB.
     private func wtPush(_ k: String, _ job: DAVJob) -> DAVResponse {
         let have = (try? JSONSerialization.jsonObject(with: job.body) as? [String: Any])?["have"] as? [String] ?? []
-        guard let top, let snap = Worktree.snapshot(top: top) else { note("worktree: cannot take a snapshot (no commit yet?)"); return DAVResponse(500) }
+        guard let top, let snap = Worktree.snapshot(top: top) else {
+            let why = top.flatMap { Worktree.snapshotBlocker(top: $0) } ?? "git could not record the folder's state"
+            if reported.insert("snapshot:" + why).inserted { note("worktree: cannot take a snapshot: \(why); use sync (MINIGW_WORK=sync)") }
+            return DAVResponse(500)
+        }
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("minigw-\(UUID().uuidString).bundle")
         defer { try? FileManager.default.removeItem(at: file) }
         guard let made = Worktree.bundle(top: top, snapshot: snap, have: have, to: file) else { note("worktree: git bundle failed"); return DAVResponse(500) }
@@ -881,8 +885,9 @@ let top = ["auto", "worktree"].contains(work) ? Worktree.toplevel(cwd).flatMap {
 let smb = work == "auto" && Native.detect(cwd: cwd, override: ProcessInfo.processInfo.environment["MINIGW_NATIVE_MOUNT"]) != nil
 var tries = SharedFolders.candidates(work: work, readOnly: readOnly, smb: smb, git: top != nil)
 // Brez commita ni posnetka: enkrat preveri, nato sync (#10).
-let noCommit = top.map { tries.contains("worktree") && !Worktree.hasCommit(top: $0) } ?? false
-if noCommit { tries.removeAll { $0 == "worktree" } }
+// Tudi neprezrt ugnezden repozitorij brez commita (git add -A ga ne doda).
+let noSnapshot = top.flatMap { tries.contains("worktree") ? Worktree.snapshotBlocker(top: $0) : nil }
+if noSnapshot != nil { tries.removeAll { $0 == "worktree" } }
 tries = Profiles.noDirectFallback(tries, flag: flagWork, saved: SharedFolders.lookup(sharedFolders(), cwd: cwd)?.work, readOnly: readOnly, env: callerEnv)
 if tries.isEmpty {
     fail("--minigw-work=\(flagWork ?? "") is not possible in \(cwd), and inside Claude Code minigw does not fall back to direct "
@@ -892,7 +897,7 @@ var share = ShareClient(c, session: sid, root: URL(fileURLWithPath: cwd), readOn
 var registered = false
 if wantShare, !sid.isEmpty {
     if work == "worktree", top == nil { err.write(Data("minigw: \(cwd) is not in a git repository; worktree mode is not possible\n".utf8)) }
-    if noCommit { err.write(Data("minigw: the git repository \(top ?? "") has no commit yet, so worktree mode is not possible; using \(tries[0])\n".utf8)) }
+    if let noSnapshot { err.write(Data("minigw: \(noSnapshot), so worktree mode is not possible; using \(tries[0])\n".utf8)) }
     (share, registered) = registerShare(c, tries: tries, quiet: false)
 }
 if !wantShare || sid.isEmpty {
