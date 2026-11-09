@@ -84,7 +84,9 @@ only on the gateway computer.
 | `minigw gw copilot token [remove]` | Copilot's GitHub token for commands, read from stdin or asked for |
 | `minigw gw autostart [on\|off]` | Mac: Open at Login. Windows: the tray at sign-in. No argument: show it |
 | `minigw gw token [rotate]` | Print the connect line for clients; `rotate` makes a new token |
-| `minigw gw settings` | Print a one-time link (60 s) to the settings page (`minigw serve` only) |
+| `minigw gw settings` | The settings in this terminal, also over SSH: the pages General, Devices, Providers, Agents, Folders (`minigw-tui`) |
+| `minigw gw settings link` | Print a one-time link (60 s) to the settings page (`minigw serve` only) |
+| `minigw gw api GET\|POST\|PATCH\|DELETE <path>` | One [admin API](admin-api.md) request: JSON body on stdin, JSON answer on stdout (`minigw-tui` uses it) |
 
 On Windows and Linux every `minigw gw` command also takes `--config FILE`. `minigw serve allow`, `deny`, `devices`,
 `provider` and `status` are older names for the same commands.

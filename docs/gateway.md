@@ -98,10 +98,19 @@ The Mac app's **Settings…** window and the `minigw serve` settings page have t
 <td><img src="images/codex-cli.png" width="400" alt="Settings: Codex CLI"></td></tr>
 </table>
 
+### Settings in the terminal
+
+`minigw gw settings` shows the settings in the terminal, on any gateway (the Mac app and `minigw serve`), also over
+SSH and inside tmux: the pages General, Devices, Providers, Agents and Folders, keyboard only (←/→ page, ↑/↓ move,
+Enter change, q quit), no colors. It is the helper `minigw-tui` next to `minigw` (on the Mac in the app's
+`Contents/Helpers`). It reads and changes everything through `minigw gw api` of the same `minigw`, so the same rules
+apply: only on the gateway computer, as the user who runs the gateway. API keys and the Copilot token you type go to
+`minigw` on stdin and are never shown; the connect line with the token appears only after **Show the connect line**.
+
 ### Settings page
 
 The `minigw serve` settings page opens from **Settings…** in the Windows tray, or with a link that
-`minigw gw settings` prints. The link is one-time and valid for 60 seconds. Open it on the gateway computer, or
+`minigw gw settings link` prints. The link is one-time and valid for 60 seconds. Open it on the gateway computer, or
 through `ssh -L <port>:127.0.0.1:<port>` with the same port on both ends (the page checks the port). With the
 Windows tray, **Choose…** and **Browse…** open the Windows file dialog; elsewhere you type the path.
 

@@ -253,8 +253,8 @@ const S = {
   unsandboxedWarn: ["Windows has no sandbox for commands: agents can then run anything as you and read the provider keys and the admin secret.",
     "Windows nima sandboxa za ukaze: agenti lahko tedaj zaženejo karkoli kot ti in preberejo ključe ponudnikov in skrivnost API."],
   sandboxNote: ["Bash runs in Claude Code's sandbox (on Linux it needs bubblewrap and socat).", "Bash teče v sandboxu Claude Code (na Linuxu potrebuje bubblewrap in socat)."],
-  signin: ["Not signed in, or the session has expired. Open Settings… from the tray icon again (or run minigw gw settings).",
-    "Ni prijave ali je seja potekla. Znova odpri Nastavitve … v ikoni pladnja (ali zaženi minigw gw settings)."],
+  signin: ["Not signed in, or the session has expired. Open Settings… from the tray icon again (or run minigw gw settings link).",
+    "Ni prijave ali je seja potekla. Znova odpri Nastavitve … v ikoni pladnja (ali zaženi minigw gw settings link)."],
 };
 const t = (k, ...a) => { let s = (S[k] || [k, k])[SL ? 1 : 0]; for (const x of a) s = s.replace("%s", x); return s; };
 const TOOLS = [

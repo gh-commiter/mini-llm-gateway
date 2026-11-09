@@ -1,0 +1,3 @@
+{"enabled": true, "path": "", "found": true, "exe": "/home/ana/.local/bin/claude", "version": "2.1.3 (Claude Code)", "tools": "Read,Grep,Glob",
+ "allowUnsandboxedBash": false, "folders": "/home/ana/src,/home/ana/notes", "allowLocalTools": false, "disabledTools": [],
+ "permissionMode": "dontAsk", "settingSources": "", "askOthers": false, "leftOut": ["/home/ana/.cache/minigw/scratch/x"]}

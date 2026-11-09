@@ -1,7 +1,7 @@
 # Mini Gateway admin API (v1)
 
 One API to configure a gateway on its own computer. The Go gateway (`minigw serve`) and the Mac app implement it;
-[Mac differences](#mac-app) are listed at the end. `minigw gw …`, the Windows tray and the settings page use it. Changes apply at once,
+[Mac differences](#mac-app) are listed at the end. `minigw gw …` (and `minigw gw settings` in a terminal, through `minigw gw api METHOD PATH`, body on stdin), the Windows tray and the settings page use it. Changes apply at once,
 except where a response says `"restartRequired": true`.
 
 ## Access

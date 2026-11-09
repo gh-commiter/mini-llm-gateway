@@ -1,0 +1,3 @@
+{"running": true, "version": "0.5.20", "port": 8765, "address": "", "installed": true, "devices": 1, "pending": 1,
+ "claude": {"found": true}, "providers": [{"name": "OpenRouter"}, {"name": "lab"}], "os": "linux",
+ "installDir": "/home/ana/.local/bin", "tray": false, "autostart": "sign-in", "agents": 0, "agentsUnsandboxed": false}

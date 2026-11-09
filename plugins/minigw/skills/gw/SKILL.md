@@ -1,7 +1,7 @@
 ---
 name: gw
 description: Install, update, check or remove Mini Gateway on this computer (Windows and Linux run minigw serve, macOS runs the Mini Gateway app), and manage it (devices, providers, Claude CLI, token, settings page). Use for /minigw:gw install|update|uninstall|status and when the user wants to change the gateway on this computer.
-argument-hint: install | update | uninstall | status | devices [allow <id> [--name N] | rename <id> --name N | deny <id>] | provider add|remove|list|models | claude … | copilot token [remove] | autostart [on|off] | token [rotate] | settings | modes
+argument-hint: install | update | uninstall | status | devices [allow <id> [--name N] | rename <id> --name N | deny <id>] | provider add|remove|list|models | claude … | copilot token [remove] | autostart [on|off] | token [rotate] | settings [link] | modes
 allowed-tools: Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw gw status), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw gw devices), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw gw devices history *), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw gw sessions), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw gw provider list), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw gw autostart), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw status), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw profiles), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw --version)
 ---
 
@@ -87,7 +87,7 @@ Everything else goes to `"$M" gw …`. It changes the running gateway at once (o
 - `devices history <id>` lists a device's last connections; `sessions [--device ID] [--folder DIR]`, `sessions <id>` and `sessions clear` show or clear the session history (no prompt text is stored). A client run with `minigw --minigw-role NAME …` (or `MINIGW_ROLE=NAME`) is recorded under that role; it is a label for the history, not a security boundary.
 - Model requests from this user's own apps on the gateway's computer need no token while General → "Allow this user's apps without a token" is on (off by default: containers and tunnels running as the user would also count); it is a settings switch (`allowLocalApps`), not a `gw` command. minigw itself still sends the token from its local profile.
 - `token`: prints the connect line for other computers (the user asked for it, so show it). `token rotate`: ask first. Every client must connect again with the new line.
-- `settings` (Windows and Linux): prints a one-time link to the settings page, valid for 60 seconds. Tell the user to open it now. On the Mac, the settings are the app's Settings window (menu bar icon → Settings…).
+- `settings`: the gateway settings in a terminal UI (the pages of the settings page; works over SSH). It needs a terminal, so do not run it here: tell the user to run `minigw gw settings` in their own terminal on the gateway computer. `settings link` (Windows and Linux): prints a one-time link to the settings page, valid for 60 seconds; run it and tell the user to open it now. On the Mac, the settings are also the app's Settings window (menu bar icon → Settings…).
 
 ## modes
 
