@@ -439,6 +439,24 @@ func TestMSIStopTargets(t *testing.T) {
 	}
 }
 
+// tray --if-was-running: zažene le s pozitivno oznako tray-restart; negativno oznako starejših paketov (njihov quit med
+// RemoveExistingProducts, poročilo 85334c0 4.1) le pospravi.
+func TestTakeRestartMarker(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "tray-not-running"), nil, 0o600)
+	if takeRestartMarker(dir) {
+		t.Fatal("started without tray-restart (old negative marker only)")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "tray-not-running")); err == nil {
+		t.Fatal("old marker left behind")
+	}
+	os.WriteFile(filepath.Join(dir, "tray-not-running"), nil, 0o600)
+	os.WriteFile(filepath.Join(dir, "tray-restart"), nil, 0o600)
+	if !takeRestartMarker(dir) || takeRestartMarker(dir) {
+		t.Fatal("tray-restart must start once, also next to an old negative marker")
+	}
+}
+
 // msi run-off (MSI RemoveRun): le vrednost Run, ki zažene pladenj iz mape namestitve.
 func TestRunValueIn(t *testing.T) {
 	dir := `C:\Users\ana\AppData\Local\Programs\Mini Gateway`

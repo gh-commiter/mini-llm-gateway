@@ -365,8 +365,8 @@ func (s *server) announce(ln net.Listener) {
 			agents += fmt.Sprintf(" %s=%q", k.name, p)
 		}
 	}
-	s.log.Printf("minigw %s serving on %s (MGW2), claude=%q%s folders=%q%s scratch=%q devices=%d providers=%d", version, ln.Addr(),
-		strings.Join(s.claudeExe(), " "), agents, strings.Join(c.AllowedFolders, ","), off, c.Scratch, len(c.Devices), len(c.Gateways))
+	s.log.Printf("minigw %s serving on %s (MGW2), claude=%q%s folders=%q%s scratch=%q devices=%d providers=%d config=%q pid=%d", version, ln.Addr(),
+		strings.Join(s.claudeExe(), " "), agents, strings.Join(c.AllowedFolders, ","), off, c.Scratch, len(c.Devices), len(c.Gateways), s.cfgPath, os.Getpid())
 	for _, g := range c.Gateways {
 		if key, where := keyGet(s.cfgDir, g.Name); key == "" && !g.Disabled { // izklopljen (npr. vgrajen brez ključa): brez opozorila
 			s.log.Printf("WARNING: provider %s has no API key: run minigw gw provider add %s %s", g.Name, g.Name, g.BaseURL)

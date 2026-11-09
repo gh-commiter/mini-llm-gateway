@@ -45,8 +45,9 @@
         <!-- Kot serviceText("windows", …) v serve_install.go: serve install, status in meni pladnja ga prepoznajo. -->
         <RegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run" Name="MiniGatewayRouter" Type="string"
                        Value="&quot;[INSTALLDIR]minigw-tray.exe&quot; tray --config &quot;[AppDataFolder]minigw\serve.json&quot;"/>
+        <!-- Isti ukaz kot vrednost Run; prek nje pladenj, ki ga zažene MSI, preda zagon Raziskovalcu (trayRun). -->
         <Shortcut Id="StartMenu" Directory="ProgramMenuFolder" Name="Mini Gateway" Target="[INSTALLDIR]minigw-tray.exe"
-                  Arguments="tray" WorkingDirectory="INSTALLDIR" Icon="tray.ico"/>
+                  Arguments="tray --config &quot;[AppDataFolder]minigw\serve.json&quot;" WorkingDirectory="INSTALLDIR" Icon="tray.ico"/>
       </Component>
       <!-- Brez datotek: vtičnik zapiše minigw plugin install (spodaj); vnos v registru le označi, da je del nameščen. -->
       <Component Id="Plugin" Guid="*">
@@ -72,7 +73,7 @@
          BinaryKey z ExeCommand: tu FileKey="tray", scripts/build-msi.sh nato v tabeli CustomAction nastavi Binary (tip 66).
          CloseTray: tray quit počaka na zahteve agentov (največ 120 s, nato še 3 s za odjemalce), zapre pladenj (WM_CLOSE, 5 s, nato konec) in
          zapiše, ali je tekel (RestartTray). Ob odstranitvi, izklopu dela Gateway, nadgradnji in popravilu (REINSTALL); kot
-         stari paket pri nadgradnji ne (drugi quit bi zapisal »ni tekel«).
+         stari paket pri nadgradnji (UPGRADINGPRODUCTCODE, med RemoveExistingProducts) ne: pladenj tedaj že ne teče.
          StopProcesses: nato preostali procesi iz mape namestitve (odjemalci minigw.exe, minigw-tui.exe): WM_CLOSE, 5 s,
          konec. StopTui: ob izklopu dela Gateway le minigw-tui.exe (minigw.exe ostane, odjemalci tečejo naprej).
          [INSTALLDIR] se konča z »\«: zato »[INSTALLDIR]\"« (»\\"« = »\« in konec narekovaja; sam »\"« bi narekovaj ubežal in
@@ -84,7 +85,7 @@
     <!-- Po namestitvi zaženi pladenj; ob prvem zagonu sam ustvari serve.json in pokaže, kje je vrstica za povezavo.
          Zastavica quiet-if-running: če že teče, brez sporočila »already running«; sicer se pladenj znova zažene prek
          Raziskovalca (okolje msiexec nima uporabnikovega trenutnega PATH). Nadgradnja: if-was-running, le če je
-         pladenj tekel pred njo (quit starega paketa je zapisal, da ni). -->
+         pladenj tekel pred njo (oznako tray-restart zapiše CloseTray tega paketa). -->
     <CustomAction Id="StartTray" FileKey="tray" ExeCommand="tray --quiet-if-running --config &quot;[AppDataFolder]minigw\serve.json&quot;" Return="asyncNoWait" Impersonate="yes"/>
     <CustomAction Id="RestartTray" FileKey="tray" ExeCommand="tray --if-was-running --config &quot;[AppDataFolder]minigw\serve.json&quot;" Return="asyncNoWait" Impersonate="yes"/>
     <!-- Vtičnik: minigw plugin install|uninstall (client/plugin.go) kot uporabnik, ko so datoteke na mestu oz. preden
@@ -100,7 +101,7 @@
     <!-- Številke korakov izrecno: wixl z After/Before na druga dejanja po meri razvrsti napačno (tudi RemoveExistingProducts
          na konec). CostFinalize 1000, RemoveFiles 3500, InstallFiles 4000, InstallFinalize 6600. -->
     <InstallExecuteSequence>
-      <Custom Action="CloseTray" Sequence="1001">(REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE) OR (&amp;Gateway=2 AND !Gateway=3) OR WIX_UPGRADE_DETECTED OR WIX_SAME_VERSION_UPGRADE_DETECTED OR REINSTALL</Custom>
+      <Custom Action="CloseTray" Sequence="1001">NOT UPGRADINGPRODUCTCODE AND (REMOVE~="ALL" OR (&amp;Gateway=2 AND !Gateway=3) OR WIX_UPGRADE_DETECTED OR WIX_SAME_VERSION_UPGRADE_DETECTED OR REINSTALL)</Custom>
       <Custom Action="StopProcesses" Sequence="1002">(REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE) OR WIX_UPGRADE_DETECTED OR WIX_SAME_VERSION_UPGRADE_DETECTED OR REINSTALL</Custom>
       <Custom Action="StopTui" Sequence="1003">&amp;Gateway=2 AND !Gateway=3 AND NOT REMOVE~="ALL"</Custom>
       <Custom Action="PluginUninstall" Sequence="3401">&amp;Plugin=2 AND !Plugin=3 AND NOT UPGRADINGPRODUCTCODE</Custom>
