@@ -683,3 +683,15 @@ func TestAdminScratchReasonBeforeConfigFolder(t *testing.T) {
 		}
 	}
 }
+
+// tray quit (MSI) čaka na zahteve agentov tekočega prehoda: gatewayAgents prebere /status.
+func TestGatewayAgents(t *testing.T) {
+	s, cfg, _ := liveServer(t, nil)
+	s.agentsRunning.Add(2)
+	if n := gatewayAgents(cfg); n != 2 {
+		t.Fatalf("running gateway: %d", n)
+	}
+	if n := gatewayAgents(filepath.Join(t.TempDir(), "serve.json")); n != -1 {
+		t.Fatalf("no gateway: %d", n)
+	}
+}

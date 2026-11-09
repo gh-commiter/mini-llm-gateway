@@ -268,7 +268,8 @@ func serveCommand(args []string) {
 	switch sub {
 	case "init":
 		c, err := loadServeConfig(*cfgPath)
-		if errors.Is(err, os.ErrNotExist) {
+		created := errors.Is(err, os.ErrNotExist)
+		if created {
 			c = newServeConfig()
 		} else if err != nil {
 			fail(err.Error())
@@ -290,6 +291,10 @@ func serveCommand(args []string) {
 			fail("invalid key in " + *cfgPath)
 		}
 		say("Config: " + *cfgPath)
+		if !created { // žeton le ob prvem init (ponovni install.sh --gateway ga ne izpiše v loge)
+			say("Config kept. The connect line for clients: minigw gw token")
+			return
+		}
 		say("On each client run:")
 		say("  " + connectLine(c))
 		say("Then start the gateway with: minigw serve" + map[bool]string{true: "", false: " --config " + *cfgPath}[*cfgPath == defaultServeConfigPath()])

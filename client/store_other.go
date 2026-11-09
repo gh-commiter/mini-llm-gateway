@@ -179,6 +179,7 @@ func regRunSet(string, string) error   { return errors.New("the registry exists 
 func regRunGet(string) (string, error) { return "", errNotFound }
 func regRunDel(string)                 {}
 func msiInstallDir() string            { return "" }
+func msiPartInstalled(string) bool     { return false }
 func msiexecPath() string              { return "msiexec" }
 
 func protectDir(string) error { return nil } // drugod: mapa 0700, datoteke 0600

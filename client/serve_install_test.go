@@ -273,8 +273,10 @@ func TestServeInstallWithMSI(t *testing.T) {
 	cfg := filepath.Join(t.TempDir(), "serve.json")
 	saveServeConfig(cfg, serveConfig{Token: "tok"})
 	var calls, got []string
-	o1, o2, o3, o4 := msiDir, fetchRelease, runCmd, installedVersion
-	t.Cleanup(func() { msiDir, fetchRelease, runCmd, installedVersion = o1, o2, o3, o4 })
+	o1, o2, o3, o4, o5, o6 := msiDir, fetchRelease, runCmd, installedVersion, runValueGet, msiPart
+	t.Cleanup(func() { msiDir, fetchRelease, runCmd, installedVersion, runValueGet, msiPart = o1, o2, o3, o4, o5, o6 })
+	runValueGet = func(string) (string, error) { return "tray", nil } // del Gateway (ali MSI 0.5.19) je nameščen
+	msiPart = func(string) bool { return false }
 	installedVersion = func(string) string { return "0.0.1" }
 	msiDir = func() string { return `C:\Users\ana\AppData\Local\Programs\Mini Gateway\` }
 	fetchRelease = func(asset, dst string) error {
@@ -301,6 +303,21 @@ func TestServeInstallWithMSI(t *testing.T) {
 			t.Fatalf("%s: %v %q %v %v", v, err, msg, calls, got)
 		}
 	}
+	// MSI le z odjemalcem: serve install doda del Gateway (tudi ob isti različici); Plugin ostane, kot je.
+	runValueGet = func(string) (string, error) { return "", errNotFound }
+	installedVersion = func(string) string { return version }
+	for plugin, add := range map[bool]string{false: "ADDLOCAL=Client,Gateway", true: "ADDLOCAL=Client,Gateway,Plugin"} {
+		calls, got = nil, nil
+		msiPart = func(p string) bool { return p == "Plugin" && plugin }
+		if _, err := installWindows(os.Args[0], cfg); err != nil || !slices.Equal(calls, []string{"msiexec /i /passive /norestart " + add}) {
+			t.Fatalf("client-only MSI: %v %v", err, calls)
+		}
+	}
+	installedVersion = func(string) string { return "99.0.0" }
+	if msg, _ := installWindows(os.Args[0], cfg); !strings.Contains(msg, "Modify → Gateway") {
+		t.Fatalf("newer client-only MSI: %q", msg)
+	}
+	runValueGet = func(string) (string, error) { return "tray", nil }
 	if !versionLess("0.5.9", "0.5.10") || versionLess("0.5.10", "0.5.9") || versionLess("1.0", "1.0") {
 		t.Fatal("versionLess")
 	}

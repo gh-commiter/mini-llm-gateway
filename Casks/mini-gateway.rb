@@ -18,7 +18,21 @@ cask "mini-gateway" do
 
   app "Mini Gateway.app"
 
-  zap trash: "~/Library/Preferences/dev.trojar.minigateway.plist"
+  # brew uninstall --zap: najprej aplikacija sama (MiniGateway --zap) izbriše svoje vnose v Keychainu in zagon ob
+  # prijavi (brez vprašanja, nikoli CLI security), nato datoteke. Nastavitve minigw (odjemalca) briše cask minigw.
+  zap quit:   "dev.trojar.minigateway",
+      script: {
+        executable:   "/bin/sh",
+        args:         ["-c", '[ ! -x "$0" ] || "$0" --zap', "#{appdir}/Mini Gateway.app/Contents/MacOS/MiniGateway"],
+        must_succeed: false,
+      },
+      trash:  [
+        "~/Library/Application Support/Mini Gateway",
+        "~/Library/Caches/dev.trojar.minigateway",
+        "~/Library/HTTPStorages/dev.trojar.minigateway",
+        "~/Library/Preferences/dev.trojar.minigateway.plist",
+        "~/Library/Saved Application State/dev.trojar.minigateway.savedState",
+      ]
 
   caveats <<~EOS
     The minigw command: Mini Gateway → Settings… → Claude CLI → Install (or brew install --cask

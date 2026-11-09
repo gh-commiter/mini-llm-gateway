@@ -130,6 +130,7 @@ var (
 	moveOnReboot    = moveFileOnReboot
 	userHomeFn      = userHome         // testi: začasna mapa namesto prave ~/.local/bin
 	msiDir          = msiInstallDir    // Windows: namestitev z MSI (vrstica 13 revizije)
+	msiPart         = msiPartInstalled // Windows: nameščeni del MSI (Gateway, Plugin)
 	fetchRelease    = downloadVerified // sredstvo izdaje, preverjeno po podpisanem SHA256SUMS
 )
 
@@ -368,11 +369,23 @@ func installTUI(exe, dir, goos string) string {
 
 // updateMSI: MSI te izdaje (preverjen po podpisanem SHA256SUMS) namesti msiexec; MSI sam zapre in zažene pladenj.
 func updateMSI(dir string) (string, error) {
+	// MSI le z odjemalcem (0.5.20+): serve install doda del Gateway (ADDLOCAL; Plugin ostane, kot je). MSI 0.5.19 nima
+	// delov, a ima vedno vrednost Run.
+	run, _ := runValueGet(runValueName)
+	gateway := msiPart("Gateway") || run != ""
 	// Različica v mapi MSI proti tej (MSI izdaje ima različico tega minigw): enaka → nič, novejša → ne nazaj.
-	if v := installedVersion(filepath.Join(dir, "minigw.exe")); v == version {
+	if v := installedVersion(filepath.Join(dir, "minigw.exe")); v == version && gateway {
 		return "Mini Gateway " + version + " in " + dir + " is already up to date", nil
 	} else if v != "" && versionLess(version, v) {
-		return "Mini Gateway " + v + " in " + dir + " is newer than this minigw (" + version + "); not changed", nil
+		msg := "Mini Gateway " + v + " in " + dir + " is newer than this minigw (" + version + "); not changed"
+		if !gateway {
+			msg += "; to add the gateway: Settings → Apps → Installed apps → Mini Gateway → Modify → Gateway"
+		}
+		return msg, nil
+	}
+	args := []string{"/i", "", "/passive", "/norestart"}
+	if !gateway {
+		args = append(args, "ADDLOCAL=Client,Gateway"+map[bool]string{true: ",Plugin"}[msiPart("Plugin")])
 	}
 	asset := "minigw-windows-" + runtime.GOARCH + ".msi"
 	tmp, err := os.MkdirTemp("", "minigw-msi-")
@@ -384,7 +397,8 @@ func updateMSI(dir string) (string, error) {
 	if err := fetchRelease(asset, msi); err != nil {
 		return "", errors.New("Mini Gateway was installed with the MSI (" + dir + "); cannot get the new MSI: " + err.Error())
 	}
-	if err := runCmd(msiexecPath(), "/i", msi, "/passive", "/norestart"); err != nil { // L5: ne iz PATH
+	args[1] = msi
+	if err := runCmd(msiexecPath(), args...); err != nil { // L5: ne iz PATH
 		return "", err
 	}
 	return "updated with the MSI of v" + version + " in " + dir + "; Mini Gateway is in the notification area", nil

@@ -361,6 +361,12 @@ public struct Keychain: SecretStore {
         if let q = query(account) { SecItemDelete(q as CFDictionary) }
     }
 
+    /// Vsi vnosi te storitve (brew zap: MiniGateway --zap). Brez vprašanja le iz programa, ki jih je ustvaril.
+    public func deleteAll() -> Bool {
+        let st = SecItemDelete([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service] as CFDictionary)
+        return st == errSecSuccess || st == errSecItemNotFound
+    }
+
     public func set(_ account: String, _ value: String) {
         let data = Data(value.utf8)
         guard let q = query(account) else { return }

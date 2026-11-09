@@ -159,8 +159,13 @@ esac
 case $new in *[!0-9.]*) new="" ;; esac
 case $old in *[!0-9.]*) old="" ;; esac
 # Linux brez enote minigw serve (le odjemalec): /minigw:gw update ga ne posodobi (serve install potrebuje prehod).
+# Windows brez serve.json (MSI le z odjemalcem): enako, namig na MSI zadnje izdaje (nadgradnja obdrži izbrane dele).
+wcfg=""
+[ "$os" = windows ] && [ -n "${APPDATA:-}" ] && wcfg="$(cygpath -u "$APPDATA")/minigw/serve.json"
 if [ "$os" = linux ] && [ ! -f "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/minigw-serve.service" ]; then
-  older "$old" "$new" && echo "minigw $old is installed, $new is available: replace $HOME/.local/bin/minigw with $asset from the latest release (check it first: docs/install.md, Check a download)"
+  older "$old" "$new" && echo "minigw $old is installed, $new is available: run curl -fsSL https://github.com/$REPO/releases/latest/download/install.sh | sh (or replace $HOME/.local/bin/minigw with $asset from the latest release; check it first: docs/install.md, Check a download)"
+elif [ "$os" = windows ] && [ ! -f "$wcfg" ]; then
+  older "$old" "$new" && echo "minigw $old is installed, $new is available: run the installer https://github.com/$REPO/releases/latest/download/minigw-windows-$arch.msi (check it first: docs/install.md, Check a download)"
 else
   older "$old" "$new" && echo "Mini Gateway $old is installed, $new is available: /minigw:gw update"
 fi
