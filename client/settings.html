@@ -217,7 +217,7 @@ const S = {
     "Le dokler je seznam dovoljenih naprav prazen. Sicer vsaka nova naprava čaka na odobritev."],
   waiting: ["Waiting for approval", "Čakajo na odobritev"], allowed: ["Allowed devices", "Dovoljene naprave"], none: ["None", "Nobena"],
   noWaiting: ["No device is waiting.", "Nobena naprava ne čaka."], allow: ["Allow", "Dovoli"], deny: ["Reject", "Zavrni"], remove: ["Remove", "Odstrani"],
-  copyId: ["Copy ID", "Kopiraj ID"], sameName: ["Same name as an allowed device: compare the ID.", "Isto ime kot dovoljena naprava: primerjaj ID."], lastSeen: ["Last seen %s", "Nazadnje %s"], notSeen: ["Never connected", "Še ni bila povezana"],
+  copyId: ["Copy ID", "Kopiraj ID"], allClients: ["all clients", "vsi odjemalci"], sameName: ["Same name as an allowed device: compare the ID.", "Isto ime kot dovoljena naprava: primerjaj ID."], lastSeen: ["Last seen %s", "Nazadnje %s"], notSeen: ["Never connected", "Še ni bila povezana"],
   history: ["History", "Zgodovina"], noHistory: ["No connections recorded.", "Ni zabeleženih povezav."],
   sessions: ["Sessions", "Seje"],
   sessionsDesc: ["Recent client sessions: folder, work mode and use per model. Prompts and answers are never stored.",
@@ -575,10 +575,10 @@ const pages = {
       return i;
     };
     const id = (x, first, ...subs) => el("div", {class: "label"}, first,
-      el("span", {class: "sub mono ellipsis", textContent: x.id, title: x.id}), ...subs.filter(Boolean).map(sub => el("div", {class: "sub", textContent: sub})));
+      el("span", {class: "sub mono", style: "display:block;overflow-wrap:anywhere", textContent: x.id}), ...subs.filter(Boolean).map(sub => el("div", {class: "sub", textContent: sub})));
     const taken = x => x.name && d.devices.some(a => a.name.toLowerCase() === x.name.toLowerCase());
     const copyId = x => button(t("copyId"), async () => { await navigator.clipboard.writeText(x.id); n.className = "note"; n.textContent = t("copied"); });
-    const clients = el("input", {type: "text", value: g.allowedClients, placeholder: "all clients"});
+    const clients = el("input", {type: "text", value: g.allowedClients, placeholder: t("allClients")});
     autosave(clients, n2, v => api("PATCH", "/general", {allowedClients: v}), r => t(r.restartRequired ? "restart" : "saved"));
     const waiting = d.pending.length
       ? el("div", {class: "group hi"}, ...d.pending.map(x => {

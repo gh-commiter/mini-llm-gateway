@@ -105,8 +105,8 @@ Use      {"model": string, "role"?: string, "via"?: string, "readOnly"?: true, "
          only; read-only drops `write` and `commands`; Codex `network` only with `write`). errors: 5xx and aborted; refused: 4xx; seconds:
          total request time (for agents their run time); tokens from the response's usage.
 Model    {"id": string, "model": string, "window"?: number, "enabled": bool}
-         id: the ID at the provider; model: the name for /model (the id, or "claude-" + id when the id contains
-         neither "claude" nor "anthropic"); window: context window in tokens, if known.
+         id: the ID at the provider; model: the name for /model (the id itself when it starts with "claude-" in any letter case,
+         else "claude-" + id; the original id also works in requests); window: context window in tokens, if known.
 Provider  {"name": string, "baseURL": string, "insecure": bool, "models": [string] | null, "hasKey": bool, "ready": bool,
           "enabled": bool, "aliases": string}
          models: enabled provider IDs; null = all discovered, now and later. ready: model list loaded.
