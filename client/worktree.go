@@ -73,29 +73,62 @@ func snapshotBlocker(top string) string {
 	return ""
 }
 
-// nestedNoCommit: neprezrti ugnezdeni repozitoriji brez commita v top (git init; kot gitlink jih git add -A ne more
-// dodati), relativne poti. Nesledene mape git strne (--directory), zato le v njih poiščemo .git po datotečnem sistemu
-// in vprašamo check-ignore. Prezrte poti (build/_deps) in repozitoriji s commitom (gitlink) niso tu.
-func nestedNoCommit(top string) []string {
-	var deep, out []string
-	for _, d := range gitZ(top, "", "ls-files", "-o", "--exclude-standard", "--directory", "--no-empty-directory", "-z") {
+// maxNestedRepos: največ ugnezdenih repozitorijev v enem zagonu worktree (več: napaka, način ostane).
+const maxNestedRepos = 32
+
+// nestedRepos: neprezrti ugnezdeni repozitoriji v top na kateri koli globini (podmoduli z mapo .git in nesledeni, s
+// commitom ali brez), relativne poti »/«, starš pred otrokom; največ maxNestedRepos+1 (več je napaka). Gitlinki iz indeksa,
+// nesledene mape git strne (--directory), zato le v njih poiščemo .git po datotečnem sistemu in vprašamo check-ignore.
+// Prezrte poti (build/_deps) niso tu.
+func nestedRepos(top string) []string {
+	var out []string
+	var walk func(rel string)
+	walk = func(rel string) {
+		for _, p := range nestedIn(filepath.Join(top, filepath.FromSlash(rel))) {
+			if len(out) > maxNestedRepos {
+				return
+			}
+			if rel != "" {
+				p = rel + "/" + p
+			}
+			out = append(out, p)
+			walk(p)
+		}
+	}
+	walk("")
+	return out
+}
+
+// nestedIn: neposredni ugnezdeni repozitoriji repozitorija dir (relativne poti brez »/« na koncu).
+func nestedIn(dir string) []string {
+	isRepo := func(p string) bool {
+		_, err := os.Lstat(filepath.Join(dir, filepath.FromSlash(p), ".git"))
+		return err == nil
+	}
+	var out, deep []string
+	for _, l := range gitZ(dir, "", "ls-files", "-s", "-z") { // gitlinki (podmoduli), le izvlečeni
+		if m, p, ok := strings.Cut(l, "\t"); ok && strings.HasPrefix(m, "160000 ") && isRepo(p) {
+			out = append(out, p)
+		}
+	}
+	for _, d := range gitZ(dir, "", "ls-files", "-o", "--exclude-standard", "--directory", "--no-empty-directory", "-z") {
 		if !strings.HasSuffix(d, "/") {
 			continue
 		}
-		if _, err := os.Lstat(filepath.Join(top, filepath.FromSlash(d), ".git")); err == nil {
-			if !gitHasCommit(filepath.Join(top, filepath.FromSlash(d))) {
-				out = append(out, strings.TrimSuffix(d, "/"))
-			}
+		if isRepo(d) {
+			out = append(out, strings.TrimSuffix(d, "/"))
 			continue
 		}
-		filepath.WalkDir(filepath.Join(top, filepath.FromSlash(d)), func(p string, e os.DirEntry, err error) error {
-			if err == nil && e.Name() == ".git" {
-				if rel, err := filepath.Rel(top, filepath.Dir(p)); err == nil {
+		root := filepath.Join(dir, filepath.FromSlash(d))
+		filepath.WalkDir(root, func(p string, e os.DirEntry, err error) error {
+			if err != nil || !e.IsDir() || p == root {
+				return nil
+			}
+			if _, err := os.Lstat(filepath.Join(p, ".git")); err == nil {
+				if rel, err := filepath.Rel(dir, p); err == nil {
 					deep = append(deep, filepath.ToSlash(rel)+"/")
 				}
-				if e.IsDir() {
-					return filepath.SkipDir
-				}
+				return filepath.SkipDir // ugnezdene v njem najde njegov nestedIn
 			}
 			return nil
 		})
@@ -104,16 +137,62 @@ func nestedNoCommit(top string) []string {
 		return out
 	}
 	ignored := map[string]bool{}
-	for _, p := range gitZ(top, strings.Join(deep, "\x00")+"\x00", "check-ignore", "--stdin", "-z") {
+	for _, p := range gitZ(dir, strings.Join(deep, "\x00")+"\x00", "check-ignore", "--stdin", "-z") {
 		ignored[p] = true
 	}
 	for _, p := range deep {
-		if !ignored[p] && !gitHasCommit(filepath.Join(top, filepath.FromSlash(p))) {
+		if !ignored[p] {
 			out = append(out, strings.TrimSuffix(p, "/"))
 		}
 	}
 	return out
 }
+
+// nestedChildren: neposredni otroci repozitorija rel ("" = top) med ugnezdenimi, relativno nanj.
+func nestedChildren(rel string, nested []string) []string {
+	var out []string
+	for _, p := range nested {
+		r, ok := p, rel == ""
+		if !ok {
+			r, ok = strings.CutPrefix(p, rel+"/")
+		}
+		if !ok || p == rel {
+			continue
+		}
+		inner := false
+		for _, q := range nested {
+			if q != p && strings.HasPrefix(p, q+"/") && (rel == "" || strings.HasPrefix(q, rel+"/")) {
+				inner = true
+			}
+		}
+		if !inner {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// validNestedPath: relativna pot ugnezdenega repozitorija (odjemalec in prehod; H1): deli niso prazni, ».«, »..« ali
+// .git, brez »\«, »:« in kontrolnih znakov (seznam MINIGW_GIT_DIRS je ločen z novo vrstico).
+func validNestedPath(p string) bool {
+	if p == "" || len(p) > 1024 || strings.ContainsAny(p, "\\:") {
+		return false
+	}
+	for _, r := range p {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	for _, c := range strings.Split(p, "/") {
+		if c == "" || c == "." || c == ".." || isGitPath(c) {
+			return false
+		}
+	}
+	return true
+}
+
+// nestedKey: ključ zrcala ugnezdenega repozitorija (odjemalec in prehod).
+func nestedKey(p string) string { return sha256Hex([]byte(p))[:16] }
 
 // gitZ: git v top (brez hookov) z izhodom -z, razdeljenim na NUL (brez TrimSpace: imena s presledki ostanejo).
 func gitZ(top, stdin string, args ...string) []string {
@@ -132,10 +211,11 @@ func gitZ(top, stdin string, args ...string) []string {
 }
 
 // gitSnapshot: HEAD ali commit z neshranjenimi spremembami (začasni indeks: indeks, veje in mapa uporabnika ostanejo).
-// skip: poti, ki ne gredo v posnetek (ugnezdeni repozitoriji brez commita).
-func gitSnapshot(top string, skip ...string) string {
+// skip: poti, ki ne gredo v posnetek (ugnezdeni repozitoriji brez commita). root: repozitorij brez commita (ugnezden)
+// dobi commit brez starša iz kopije svojega indeksa in delovne mape.
+func gitSnapshot(top string, root bool, skip ...string) string {
 	head, err := gitUser(top, nil, "rev-parse", "--verify", "-q", "HEAD^{commit}")
-	if err != nil || !shaRe.MatchString(head) {
+	if (err != nil || !shaRe.MatchString(head)) && !root {
 		return ""
 	}
 	dir, err := os.MkdirTemp("", "minigw-") // 0700
@@ -144,7 +224,17 @@ func gitSnapshot(top string, skip ...string) string {
 	}
 	defer os.RemoveAll(dir)
 	env := []string{"GIT_INDEX_FILE=" + filepath.Join(dir, "index")}
-	if _, err := gitUser(top, env, "read-tree", "HEAD"); err != nil {
+	if root {
+		head = ""
+		if idx, _ := gitUser(top, nil, "rev-parse", "--git-path", "index"); idx != "" {
+			if !filepath.IsAbs(idx) {
+				idx = filepath.Join(top, idx)
+			}
+			if b, err := os.ReadFile(idx); err == nil && os.WriteFile(filepath.Join(dir, "index"), b, 0o600) != nil {
+				return ""
+			}
+		}
+	} else if _, err := gitUser(top, env, "read-tree", "HEAD"); err != nil {
 		return ""
 	}
 	add := []string{"add", "-A", "--", "."}
@@ -158,11 +248,14 @@ func gitSnapshot(top string, skip ...string) string {
 	if err != nil || !shaRe.MatchString(tree) {
 		return ""
 	}
-	if t, _ := gitUser(top, nil, "rev-parse", "HEAD^{tree}"); t == tree {
+	if t, _ := gitUser(top, nil, "rev-parse", "HEAD^{tree}"); head != "" && t == tree {
 		return head
 	}
-	c, err := gitUser(top, nil, "-c", "user.name=minigw", "-c", "user.email=minigw@localhost", "commit-tree", tree, "-p", head,
-		"-m", "minigw: your uncommitted changes")
+	ct := []string{"-c", "user.name=minigw", "-c", "user.email=minigw@localhost", "commit-tree", tree, "-m", "minigw: your uncommitted changes"}
+	if head != "" {
+		ct = append(ct, "-p", head)
+	}
+	c, err := gitUser(top, nil, ct...)
 	if err != nil || !shaRe.MatchString(c) {
 		return ""
 	}
@@ -247,71 +340,166 @@ func gitFetchBranch(top, bundle, branch string) string {
 	return "cannot update " + branch + " (is it checked out in a worktree?)"
 }
 
-// wtPush: WORKTREE-PUSH — posnetek, bundle po delih do 32 MB, odgovor {"snapshot"}.
+// wtPush: WORKTREE-PUSH — posnetek, bundle po delih do 32 MB, odgovor {"snapshot", "nested": [{"path", "snapshot"}]}.
+// Ugnezdeni repozitoriji (vsak svoj posnetek in bundle, x-nested: i) le s prehodom, ki jih pozna (»nested« v zahtevi);
+// starejši prehod: napaka, ne tiho brez njih. Način se nikoli ne spremeni.
 func (s *shareClient) wtPush(k string, job davJob) davResponse {
-	var req struct{ Have []string }
+	var req struct {
+		Have   []string
+		Nested map[string][]string // ključ zrcala (nestedKey) → vrhovi; nil = prehod ugnezdenih ne pozna
+	}
 	json.Unmarshal(job.Body, &req)
-	skip := nestedNoCommit(s.top)
-	for _, p := range skip {
-		if k := "nocommit:" + p; !s.reported[k] {
-			s.reported[k] = true
-			s.note("worktree: nested repository " + p + " has no commit yet and is not part of this worktree run")
+	nested := nestedRepos(s.top)
+	fail := func(key, msg string) davResponse {
+		if !s.reported[key] {
+			s.reported[key] = true
+			s.note(msg)
+		}
+		return dav(500, nil, nil)
+	}
+	switch {
+	case len(nested) > maxNestedRepos:
+		return fail("nested-max", fmt.Sprintf("worktree: %s has more than %d nested git repositories; worktree mode takes at most %d", oneLine(s.top), maxNestedRepos, maxNestedRepos))
+	case len(nested) > 0 && req.Nested == nil:
+		return fail("nested-old", "worktree: the gateway does not support nested repositories ("+oneLine(nested[0])+"); update the gateway")
+	}
+	for _, p := range nested {
+		if !validNestedPath(p) {
+			return fail("nested-name", "worktree: the nested repository "+oneLine(p)+" has a name worktree mode cannot use (\":\", \"\\\" or control characters)")
 		}
 	}
-	snap := gitSnapshot(s.top, skip...)
+	// skip: neposredni otroci brez commita (kot gitlink jih git add -A ne more dodati; imajo svoj posnetek)
+	skip := func(rel string) (out []string) {
+		for _, c := range nestedChildren(rel, nested) {
+			if !gitHasCommit(filepath.Join(s.top, filepath.FromSlash(rel), filepath.FromSlash(c))) {
+				out = append(out, c)
+			}
+		}
+		return out
+	}
+	snap := gitSnapshot(s.top, false, skip("")...)
 	if snap == "" {
-		if !s.reported["snapshot"] {
-			s.reported["snapshot"] = true
-			s.note("worktree: cannot take a snapshot of " + s.top + " (git add or write-tree failed)")
+		return fail("snapshot", "worktree: cannot take a snapshot of "+s.top+" (git add or write-tree failed)")
+	}
+	if !s.wtUpload(k, s.top, snap, req.Have, 0) {
+		return dav(500, nil, nil)
+	}
+	type nestedSnap struct {
+		Path     string `json:"path"`
+		Snapshot string `json:"snapshot"`
+	}
+	reply := []nestedSnap{}
+	for i, p := range nested {
+		dir := filepath.Join(s.top, filepath.FromSlash(p))
+		sn := gitSnapshot(dir, !gitHasCommit(dir), skip(p)...)
+		if sn == "" {
+			return fail("snapshot:"+p, "worktree: cannot take a snapshot of the nested repository "+oneLine(p)+" (git add or write-tree failed)")
 		}
-		return dav(500, nil, nil)
-	}
-	dir, err := os.MkdirTemp("", "minigw-") // 0700
-	if err != nil {
-		return dav(500, nil, nil)
-	}
-	defer os.RemoveAll(dir)
-	name := filepath.Join(dir, "push.bundle")
-	made, err := gitBundle(s.top, snap, req.Have, name)
-	if err != nil {
-		s.note("worktree: git bundle failed")
-		return dav(500, nil, nil)
-	}
-	if made {
-		b, err := os.Open(name)
-		if err != nil {
+		if !s.wtUpload(k, dir, sn, req.Nested[nestedKey(p)], i+1) {
 			return dav(500, nil, nil)
 		}
-		defer b.Close()
-		buf := make([]byte, 32<<20)
-		for part := 0; ; part++ {
-			n, rerr := io.ReadFull(b, buf)
-			if n > 0 {
-				if st, _ := call(s.c, "PUT", "/minigw/worktree/bundle", map[string]string{"x-share-key": k, "x-part": strconv.Itoa(part)},
-					buf[:n], 10*time.Minute); st != 204 {
-					s.note("worktree: upload to the gateway failed")
-					return dav(500, nil, nil)
-				}
-			}
-			if rerr != nil {
-				break
-			}
-		}
+		reply = append(reply, nestedSnap{p, sn})
 	}
 	if s.snaps = append(s.snaps, snap); len(s.snaps) > 64 {
 		s.snaps = s.snaps[1:]
 	}
-	body, _ := json.Marshal(map[string]string{"snapshot": snap})
+	if s.nested == nil {
+		s.nested = map[string][]string{}
+	}
+	for _, n := range reply {
+		if s.nested[n.Path] = append(s.nested[n.Path], n.Snapshot); len(s.nested[n.Path]) > 64 {
+			s.nested[n.Path] = s.nested[n.Path][1:]
+		}
+	}
+	body, _ := json.Marshal(map[string]any{"snapshot": snap, "nested": reply})
 	return dav(200, nil, body)
 }
 
-// wtPull: WORKTREE-PULL — bundle veje agenta in prevzem kot ref.
+// wtUpload: bundle posnetka repozitorija dir brez objektov, ki jih zrcalo ima, po delih do 32 MB (idx > 0: ugnezden).
+func (s *shareClient) wtUpload(k, dir, snap string, have []string, idx int) bool {
+	tmp, err := os.MkdirTemp("", "minigw-") // 0700
+	if err != nil {
+		return false
+	}
+	defer os.RemoveAll(tmp)
+	name := filepath.Join(tmp, "push.bundle")
+	made, err := gitBundle(dir, snap, have, name)
+	if err != nil {
+		s.note("worktree: git bundle failed")
+		return false
+	}
+	if !made {
+		return true
+	}
+	b, err := os.Open(name)
+	if err != nil {
+		return false
+	}
+	defer b.Close()
+	h := map[string]string{"x-share-key": k}
+	if idx > 0 {
+		h["x-nested"] = strconv.Itoa(idx)
+	}
+	buf := make([]byte, 32<<20)
+	for part := 0; ; part++ {
+		n, rerr := io.ReadFull(b, buf)
+		if n > 0 {
+			h["x-part"] = strconv.Itoa(part)
+			if st, _ := call(s.c, "PUT", "/minigw/worktree/bundle", h, buf[:n], 10*time.Minute); st != 204 {
+				s.note("worktree: upload to the gateway failed")
+				return false
+			}
+		}
+		if rerr != nil {
+			return true
+		}
+	}
+}
+
+// wtPull: WORKTREE-PULL — bundle veje agenta in prevzem kot ref; ugnezdeni (le poti, ki jih je ta odjemalec poslal)
+// vsak v svoj repozitorij na isto ime veje. nestedOnly: veja vrhnjega repozitorija se ni spremenila.
 func (s *shareClient) wtPull(k string, job davJob) davResponse {
-	var req struct{ Branch string }
+	var req struct {
+		Branch     string
+		NestedOnly bool
+		Nested     []struct{ Path string }
+	}
 	if json.Unmarshal(job.Body, &req) != nil || !branchRe.MatchString(req.Branch) {
 		return dav(403, nil, nil)
 	}
-	st, data := call(s.c, "GET", "/minigw/worktree/result", map[string]string{"x-share-key": k}, nil, 10*time.Minute)
+	ok := true
+	if !req.NestedOnly {
+		ok = s.wtFetch(k, s.top, "", req.Branch, 0)
+	}
+	for i, n := range req.Nested {
+		if len(s.nested[n.Path]) == 0 {
+			s.note("worktree: the gateway named a nested repository minigw did not send; ignored")
+			ok = false
+			continue
+		}
+		ok = s.wtFetch(k, filepath.Join(s.top, filepath.FromSlash(n.Path)), n.Path, req.Branch, i+1) && ok
+	}
+	if !ok {
+		return dav(500, nil, nil)
+	}
+	return dav(200, nil, nil)
+}
+
+// wtFetch: rezultat idx (0 = vrhnji) s prehoda kot veja v repozitorij dir (rel: pot ugnezdenega, "" = vrhnji).
+func (s *shareClient) wtFetch(k, dir, rel, branch string, idx int) bool {
+	what := branch
+	if rel != "" {
+		what = branch + " of the nested repository " + oneLine(rel)
+		if top := gitToplevel(dir); top == "" || realPath(top) != realPath(dir) { // sicer bi git našel nadrejeni repozitorij
+			s.note("worktree: the nested repository " + oneLine(rel) + " is no longer a git repository here; " + branch + " was not fetched into it")
+			return false
+		}
+	}
+	h := map[string]string{"x-share-key": k}
+	if idx > 0 {
+		h["x-nested"] = strconv.Itoa(idx)
+	}
+	st, data := call(s.c, "GET", "/minigw/worktree/result", h, nil, 10*time.Minute)
 	if st != 200 {
 		var e struct {
 			Error struct{ Message string } `json:"error"`
@@ -320,24 +508,31 @@ func (s *shareClient) wtPull(k string, job davJob) davResponse {
 		if json.Unmarshal(data, &e) == nil && e.Error.Message != "" {
 			why = oneLine(e.Error.Message)
 		}
-		s.note(fmt.Sprintf("worktree: cannot get %s from the gateway: %s", req.Branch, why))
-		return dav(500, nil, nil)
+		s.note(fmt.Sprintf("worktree: cannot get %s from the gateway: %s", what, why))
+		return false
 	}
-	dir, err := os.MkdirTemp("", "minigw-") // 0700
+	tmp, err := os.MkdirTemp("", "minigw-") // 0700
 	if err != nil {
-		return dav(500, nil, nil)
+		return false
 	}
-	defer os.RemoveAll(dir)
-	name := filepath.Join(dir, "result.bundle")
+	defer os.RemoveAll(tmp)
+	name := filepath.Join(tmp, "result.bundle")
 	if err := os.WriteFile(name, data, 0o600); err != nil {
-		return dav(500, nil, nil)
+		return false
 	}
-	if why := gitFetchBranch(s.top, name, req.Branch); why != "" {
+	if why := gitFetchBranch(dir, name, branch); why != "" {
+		if rel != "" {
+			why = "nested repository " + oneLine(rel) + ": " + why
+		}
 		s.note("worktree: " + why)
-		return dav(500, nil, nil)
+		return false
 	}
-	s.branchNote(req.Branch, agentBase(s.top, req.Branch, s.snaps))
-	return dav(200, nil, nil)
+	if rel == "" {
+		s.branchNote(branch, agentBase(dir, branch, s.snaps))
+	} else {
+		s.branchNote(branch, agentBase(dir, branch, s.nested[rel]), rel)
+	}
+	return true
 }
 
 // agentBase: začetek dela agenta — zadnji poslani posnetek, ki je prednik veje (HEAD z neshranjenimi spremembami in
@@ -369,17 +564,33 @@ func deliveredBranch(root, branch, base string) bool {
 }
 
 // branchLine: vrstica o dostavljeni veji (enaka v odjemalcu Swift): le delo agenta, brez posnetka uporabnika.
-func branchLine(branch, base string) string {
+// nested: pot ugnezdenega repozitorija (M2: stroga oblika »… in nested repository <pot>: review with git -C <pot> …«
+// le za pot iz safePathRe; drugačna dobi vrstico brez ukazov, ki je skillsi ne vzamejo).
+func branchLine(branch, base string, nested ...string) string {
 	r := base + ".." + branch
-	return "agent work is on branch " + branch + ": review with git diff " + r + " (" + base + " = your state when the agent started), " +
-		"then bring it in with git cherry-pick " + r + " or git diff --binary " + r + " | git apply"
+	if len(nested) == 0 {
+		return "agent work is on branch " + branch + ": review with git diff " + r + " (" + base + " = your state when the agent started), " +
+			"then bring it in with git cherry-pick " + r + " or git diff --binary " + r + " | git apply"
+	}
+	p := nested[0]
+	if !safePathRe.MatchString(p) {
+		return "the agent's work in a nested repository (its name has characters minigw does not print in a command) is on branch " +
+			branch + " there, starting at " + base
+	}
+	g := "git -C " + p + " "
+	return "agent work is on branch " + branch + " in nested repository " + p + ": review with " + g + "diff " + r + " (" + base +
+		" = your state in " + p + " when the agent started), then bring it in with " + g + "cherry-pick " + r + " or " + g +
+		"diff --binary " + r + " | " + g + "apply"
 }
 
-// branchNote: vrstica o veji enkrat na vejo in začetek v zagonu (pod syncMu).
-func (s *shareClient) branchNote(branch, base string) {
-	if k := "branch:" + branch + "@" + base; !s.reported[k] {
+// safePathRe: pot ugnezdenega repozitorija, ki gre v vrstico o veji (enaka v skillsih in odjemalcu Swift).
+var safePathRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._+-]*(/[A-Za-z0-9_][A-Za-z0-9._+-]*)*$`)
+
+// branchNote: vrstica o veji enkrat na vejo, repozitorij in začetek v zagonu (pod syncMu).
+func (s *shareClient) branchNote(branch, base string, nested ...string) {
+	if k := "branch:" + strings.Join(nested, "") + ":" + branch + "@" + base; !s.reported[k] {
 		s.reported[k] = true
-		s.note(branchLine(branch, base))
+		s.note(branchLine(branch, base, nested...))
 	}
 }
 

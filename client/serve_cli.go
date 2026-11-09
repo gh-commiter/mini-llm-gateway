@@ -740,9 +740,13 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			return writeError(w, r.rid, 400, "The agent's clone was changed (its .git was replaced): start a new conversation")
 		}
 		if ok {
-			args = worktreeClaudeArgs(args, wt, maven, objects)
+			gits, objs := s.hub.worktreeGits(wt) // ugnezdeni kloni enako kot vrhnji
+			if len(objs) == 0 {
+				objs = []string{objects}
+			}
+			args = worktreeClaudeArgs(args, wt, maven, objs, gits)
 			gw := s.conf().scratch("gitexec")
-			if worktreeEnv = worktreeClaudeEnv(wt, maven, gw); worktreeEnv == nil {
+			if worktreeEnv = worktreeClaudeEnv(wt, maven, gw, gits); worktreeEnv == nil {
 				return writeError(w, r.rid, 503, "Cannot prepare git for the agent's clone (git --exec-path): use sync")
 			}
 			args = sandboxAllowRead(args, gw)
@@ -785,7 +789,8 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	name, cargs := exe[0], append(exe[1:], args...)
 	unpinned := false       // N3b: brez pin (ni bwrap ali gnezdeni ne deluje) se klon preverja med tekom (watch spodaj)
 	if worktreeEnv != nil { // N3: .git klona je med tekom točka priklopa (kot pins pri Codex), zamenjati ga ni mogoče
-		name, cargs = pinWrap(s.cfgDir, name, cargs, []string{filepath.Join(wt, ".git")}, s.log.Printf)
+		gits, _ := s.hub.worktreeGits(wt)
+		name, cargs = pinWrap(s.cfgDir, name, cargs, gits, s.log.Printf)
 		unpinned = name == exe[0]
 	}
 	ctx, kill := context.WithCancel(r.Context())
@@ -793,13 +798,27 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	var swapped atomic.Bool
 	stopMoves := func() {}
 	if unpinned { // N3c: brez pin vsak premik .git (tudi zamenjava, ki jo agent vrne pred naslednjo preverbo) ustavi tek
-		stop, ok := watchGitMoves(filepath.Join(wt, ".git"), func() {
-			if swapped.CompareAndSwap(false, true) {
-				kill()
-				killInside(wt) // tudi git, ki ga je claude že zagnal v klonu
+		var stops []func()
+		ok := true
+		gits, _ := s.hub.worktreeGits(wt)
+		for _, g := range gits { // vsak .git (vrhnji in ugnezdeni)
+			stop, o := watchGitMoves(g, func() {
+				if swapped.CompareAndSwap(false, true) {
+					kill()
+					killInside(wt) // tudi git, ki ga je claude že zagnal v klonu
+				}
+			})
+			if ok = ok && o; o {
+				stops = append(stops, stop)
 			}
-		})
+		}
+		stop := func() {
+			for _, f := range stops {
+				f()
+			}
+		}
 		if !ok && runtime.GOOS == "linux" {
+			stop()
 			return writeError(w, r.rid, 503, "Cannot watch the agent's clone (inotify) and nested bwrap does not work here, "+
 				"so Claude CLI cannot run in worktree mode on this gateway now: use sync")
 		}

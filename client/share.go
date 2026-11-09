@@ -35,15 +35,16 @@ type shareClient struct {
 	c        connection
 	session  string
 	root     string
-	readOnly bool     // pisanje zavrne minigw sam (router mapo priklopi tudi rdonly)
-	sync     bool     // --minigw-work=sync: router dobi kopijo namesto priklopa (sync.go)
-	native   bool     // --minigw-work=native: router dela v svoji mapi (native.go); posla routerja ni
-	inPlace  bool     // native-direct: agenti v mapi sami (tudi v repozitoriju git), ne na svojih vejah
-	branches bool     // native v repozitoriju git: agenti na svojih vejah minigw/… (odgovor prehoda)
-	lock     bool     // native v mapi sami: en pisoči agent naenkrat (odgovor prehoda; starejši prehod ga ne pošlje)
-	worktree bool     // --minigw-work=worktree: posnetek kot bundle, veja agenta nazaj kot ref (worktree.go)
-	top      string   // worktree: koren repozitorija git
-	snaps    []string // worktree: posnetki, poslani prehodu (začetek dela agenta za vrstico o veji)
+	readOnly bool                // pisanje zavrne minigw sam (router mapo priklopi tudi rdonly)
+	sync     bool                // --minigw-work=sync: router dobi kopijo namesto priklopa (sync.go)
+	native   bool                // --minigw-work=native: router dela v svoji mapi (native.go); posla routerja ni
+	inPlace  bool                // native-direct: agenti v mapi sami (tudi v repozitoriju git), ne na svojih vejah
+	branches bool                // native v repozitoriju git: agenti na svojih vejah minigw/… (odgovor prehoda)
+	lock     bool                // native v mapi sami: en pisoči agent naenkrat (odgovor prehoda; starejši prehod ga ne pošlje)
+	worktree bool                // --minigw-work=worktree: posnetek kot bundle, veja agenta nazaj kot ref (worktree.go)
+	top      string              // worktree: koren repozitorija git
+	snaps    []string            // worktree: posnetki, poslani prehodu (začetek dela agenta za vrstico o veji)
+	nested   map[string][]string // worktree: ugnezdeni repozitoriji (pot) → njihovi poslani posnetki
 	mu       sync.Mutex
 	key      string
 	syncMu   sync.Mutex

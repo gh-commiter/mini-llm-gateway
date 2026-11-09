@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -197,7 +198,7 @@ func TestWorktreeFinalizeRejectedKeepsMirror(t *testing.T) {
 	top := cmd("040000 tree "+e+"\t.git\n", "mktree")
 	c := cmd("", "-c", "user.name=a", "-c", "user.email=a@x", "commit-tree", top, "-p", head, "-m", "dot git")
 	cmd("", "update-ref", "HEAD", c)
-	if tip := finalize(repo, wt, "minigw/claude-12345678-0", head, "claude", filepath.Join(root, "out.bundle")); tip != "" {
+	if tip := finalize(repo, wt, "minigw/claude-12345678-0", head, "claude", filepath.Join(root, "out.bundle"), nil); tip != "" {
 		t.Fatalf("finalize accepted a .git tree: %s", tip)
 	}
 	os.RemoveAll(wt)
@@ -210,9 +211,9 @@ func TestWorktreeFinalizeRejectedKeepsMirror(t *testing.T) {
 func TestWorktreeClaudeArgs(t *testing.T) {
 	args := []string{"--allowedTools", "Read(./**)", "--disallowedTools", "Read(/cfg/**)", "--settings",
 		`{"sandbox":{"filesystem":{"allowRead":["/w/sub"],"allowWrite":["/w/sub"],"denyRead":["~"]}}}`}
-	got := strings.Join(worktreeClaudeArgs(args, "/w", "/m", "/r/objects"), " ")
-	for _, want := range []string{`"allowWrite":["/w/sub","/w","/m"]`, `"allowRead":["/w/sub","/w","/m","/r/objects"]`, "--add-dir /w",
-		"Edit(//w/**)", `"denyWrite":["/w/.git/config"`, "Edit(//w/.git/**)"} {
+	got := strings.Join(worktreeClaudeArgs(args, "/w", "/m", []string{"/r/objects", "/r-k/objects"}, []string{"/w/.git", "/w/lib/.git"}), " ")
+	for _, want := range []string{`"allowWrite":["/w/sub","/w","/m"]`, `"allowRead":["/w/sub","/w","/m","/r/objects","/r-k/objects"]`, "--add-dir /w",
+		"Edit(//w/**)", `"denyWrite":["/w/.git/config"`, `"/w/lib/.git/config","/w/lib/.git/hooks","/w/lib/.git/info","/w/lib/.git/commondir"]`, "Edit(//w/.git/**)"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %s in\n%s", want, got)
 		}
@@ -325,18 +326,18 @@ func TestWorktreeLimits(t *testing.T) {
 	if _, err := gitRun(filepath.Join(t.TempDir(), "repos", "d", "r.git"), "", nil, "--version"); err == nil {
 		t.Fatal("git ran past its timeout")
 	}
-	if d := t.TempDir(); cloneProblem(d, filepath.Join(d, "repos", "d", "r.git")) != "" {
+	if d := t.TempDir(); cloneProblem(d, filepath.Join(d, "repos", "d", "r.git"), nil) != "" {
 		t.Fatal("empty clone too large")
 	}
 	h := newShareHub()
 	key, _ := h.registerTree("s", "/p", "", &shareTree{repo: "/r", worktrees: t.TempDir(), slots: map[string]*wtSlot{}}, "dev")
-	if _, st, _ := h.worktreeResult(key, "dev"); st != 404 {
+	if _, st, _ := h.worktreeResult(key, "dev", 0); st != 404 {
 		t.Fatalf("no result: %d", st)
 	}
 	h.mu.Lock()
 	h.bySession["s"].tree.resultErr = "the agent's clone is too large"
 	h.mu.Unlock()
-	if _, st, why := h.worktreeResult(key, "dev"); st != 413 || !strings.Contains(why, "too large") {
+	if _, st, why := h.worktreeResult(key, "dev", 0); st != 413 || !strings.Contains(why, "too large") {
 		t.Fatalf("reason: %d %s", st, why)
 	}
 }
@@ -501,7 +502,7 @@ func TestWorktreeNestedRepoFilterDoesNotRun(t *testing.T) {
 		if ensureMirror(repo) != nil || !importBase(repo, b, head, "refs/minigw/base/x") || !makeClone(repo, wt, "minigw/claude-12345678-0", head) {
 			t.Fatal("mirror or clone")
 		}
-		if cloneProblem(wt, repo) != "" {
+		if cloneProblem(wt, repo, nil) != "" {
 			t.Fatal("fresh clone refused")
 		}
 		// Agent (v peskovniku smeta pisati v klon in njegov indeks).
@@ -539,14 +540,19 @@ func TestWorktreeNestedRepoFilterDoesNotRun(t *testing.T) {
 		if !status(worktreeHarnessEnv(wt, filepath.Join(root, "m"))) {
 			t.Fatalf("gitfile=%v: planted filter did not run: the test does not reproduce the attack", gitfile)
 		}
-		env := worktreeClaudeEnv(wt, filepath.Join(root, "m"), filepath.Join(root, "gitexec"))
+		env := worktreeClaudeEnv(wt, filepath.Join(root, "m"), filepath.Join(root, "gitexec"), []string{filepath.Join(wt, ".git")})
 		if env == nil {
 			t.Fatal("no git wrapper")
 		}
 		if status(env) {
 			t.Fatalf("gitfile=%v: the nested repository's filter ran under the Claude CLI environment", gitfile)
 		}
-		if why := cloneProblem(wt, repo); why != "changes inside the nested repository sub do not come back in worktree mode; use sync" {
+		// Tudi ko je ugnezdeni klon registriran (0.5.20): git samega claude vanj vstopi z relativnim GIT_DIR, ki ga ovoj
+		// ne pusti; filter iz njegovega config ne teče.
+		if status(worktreeClaudeEnv(wt, filepath.Join(root, "m"), filepath.Join(root, "gitexec"), []string{filepath.Join(wt, ".git"), gd})) {
+			t.Fatalf("gitfile=%v: the registered nested repository's filter ran", gitfile)
+		}
+		if why := cloneProblem(wt, repo, nil); why != "changes inside the nested repository sub do not come back in worktree mode; use sync" {
 			t.Fatalf("gitfile=%v: nested repository accepted: %q", gitfile, why)
 		}
 		// Ovoj pusti git klona samega (commit z vzdrževanjem).
@@ -581,10 +587,10 @@ func TestWorktreeNestedRepoIgnoredDelivered(t *testing.T) {
 	gitT(t, dep, "init", "-q")
 	writeT(t, filepath.Join(dep, "x.c"), "int x;\n")
 	writeT(t, filepath.Join(wt, "a.txt"), "agent\n")
-	if why := cloneProblem(wt, repo); why != "" {
+	if why := cloneProblem(wt, repo, nil); why != "" {
 		t.Fatalf("ignored nested repository refused: %s", why)
 	}
-	tip := finalize(repo, wt, "minigw/claude-12345678-0", head, "claude", filepath.Join(root, "out.bundle"))
+	tip := finalize(repo, wt, "minigw/claude-12345678-0", head, "claude", filepath.Join(root, "out.bundle"), nil)
 	if tip == "" || tip == head {
 		t.Fatalf("not delivered: %q", tip)
 	}
@@ -594,12 +600,14 @@ func TestWorktreeNestedRepoIgnoredDelivered(t *testing.T) {
 	lib := filepath.Join(wt, "vendor", "lib") // nesledeni ugnezdeni repozitorij
 	os.MkdirAll(lib, 0o755)
 	gitT(t, lib, "init", "-q")
-	if why := cloneProblem(wt, repo); why != "changes inside the nested repository vendor/lib do not come back in worktree mode; use sync" {
+	if why := cloneProblem(wt, repo, nil); why != "changes inside the nested repository vendor/lib do not come back in worktree mode; use sync" {
 		t.Fatalf("non-ignored nested repository: %q", why)
 	}
 }
 
-// N9: ovoj pusti le git s klonovim GIT_DIR; prazen MINIGW_GIT_DIR ne velja (tudi ne ob praznem GIT_DIR).
+// N9: ovoj pusti le git, katerega GIT_DIR je točno eden od registriranih .git (vrhnji in ugnezdeni kloni); prazen
+// seznam ali prazen GIT_DIR ne velja, relativna ».git« (git v podmodulu), predpona, vnos z glob znaki in repozitorij, ki
+// ga je naredil agent, tudi ne.
 func TestGitExecWrapNeedsGitDir(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("no wrapper on Windows")
@@ -610,13 +618,252 @@ func TestGitExecWrapNeedsGitDir(t *testing.T) {
 	}
 	run := func(gitDir, want string) error {
 		c := exec.Command(filepath.Join(gw, "git"), "--version")
-		c.Env = append(os.Environ(), "GIT_DIR="+gitDir, "MINIGW_GIT_DIR="+want)
+		c.Env = append(os.Environ(), "GIT_DIR="+gitDir, "MINIGW_GIT_DIRS="+want)
 		return c.Run()
 	}
-	if run("", "") == nil || run(".git", "/w/.git") == nil {
-		t.Fatal("wrapper ran git for another GIT_DIR")
+	reg := "/w/.git\n/w/lib/.git\n/w/lib/sub/.git"
+	for _, bad := range [][2]string{{"", ""}, {"", reg}, {".git", "/w/.git"}, {".git", reg}, {"/w/evil/.git", reg}, {"/w/lib", reg},
+		{"/w/lib/.git/", reg}, {"/w/x/.git", "/w/*/.git"}, {"/w/.git", "\n\n"}} {
+		if run(bad[0], bad[1]) == nil {
+			t.Fatalf("wrapper ran git for GIT_DIR %q with %q", bad[0], bad[1])
+		}
 	}
-	if err := run("/w/.git", "/w/.git"); err != nil {
-		t.Fatalf("wrapper refused the clone's git: %v", err)
+	for _, d := range []string{"/w/.git", "/w/lib/.git", "/w/lib/sub/.git"} {
+		if err := run(d, reg); err != nil {
+			t.Fatalf("wrapper refused the registered %s: %v", d, err)
+		}
+	}
+	if env := gitWrapEnv([]string{"/w/.git", "rel/.git"}, gw); env != nil {
+		t.Fatal("relative git dir accepted")
+	}
+	if env := gitWrapEnv([]string{"/w/a\nb/.git"}, gw); env != nil {
+		t.Fatal("git dir with a newline accepted")
+	}
+}
+
+// 0.5.20 (»worktree povsod«): podmodul (s commiti), nesleden ugnezden repozitorij s commitom in brez, globina 2 in
+// prezrt ugnezden repozitorij. Agent ureja v vseh; vsak neprezrt dobi svojo vejo nazaj v svoj repozitorij, vrhnja
+// veja zapiše novi gitlink podmodula; prezrti ostane zunaj; repozitoriji uporabnika (HEAD, indeks, config) ostanejo.
+func TestServeWorktreeNestedRoundTrip(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake claude is a shell script")
+	}
+	root := t.TempDir()
+	client, src := filepath.Join(root, "client"), filepath.Join(root, "subsrc")
+	for _, d := range []string{client, src} {
+		os.MkdirAll(d, 0o755)
+		gitT(t, d, "init", "-q", "-b", "main")
+	}
+	writeT(t, filepath.Join(src, "s.txt"), "s\n")
+	gitT(t, src, "add", "-A")
+	gitT(t, src, "commit", "-qm", "sub")
+	writeT(t, filepath.Join(client, "a.txt"), "a\n")
+	writeT(t, filepath.Join(client, ".gitignore"), "build/\n")
+	gitT(t, client, "add", "-A")
+	gitT(t, client, "-c", "protocol.file.allow=always", "submodule", "add", "-q", src, "sub")
+	gitT(t, client, "commit", "-qm", "first")
+	repos := map[string]bool{"sub": true, "sub/deep": true, "vendor/lib": true, "nc": false} // pot → s commitom
+	for p, commit := range repos {
+		if p == "sub" {
+			continue
+		}
+		d := filepath.Join(client, p)
+		os.MkdirAll(d, 0o755)
+		gitT(t, d, "init", "-q", "-b", "main")
+		writeT(t, filepath.Join(d, "f.txt"), p+"\n")
+		if commit {
+			gitT(t, d, "add", "-A")
+			gitT(t, d, "commit", "-qm", p)
+		}
+	}
+	writeT(t, filepath.Join(client, "vendor", "lib", "f.txt"), "vendor/lib\nuncommitted\n")
+	dep := filepath.Join(client, "build", "_deps", "x")
+	os.MkdirAll(dep, 0o755)
+	gitT(t, dep, "init", "-q")
+	writeT(t, filepath.Join(dep, "d.txt"), "dep\n")
+	state := func() string {
+		var b strings.Builder
+		for _, p := range []string{"", "sub", "sub/deep", "vendor/lib", "nc"} {
+			d := filepath.Join(client, p)
+			h, _ := gitUser(d, nil, "rev-parse", "-q", "--verify", "HEAD")
+			st, _ := gitUser(d, nil, "status", "--porcelain", "--ignore-submodules=all")
+			fmt.Fprintf(&b, "%s %s %s\n", p, h, st)
+		}
+		return b.String()
+	}
+	before := state()
+
+	fake := filepath.Join(root, "claude")
+	writeT(t, fake, `#!/bin/sh
+`+cliGuard+`
+cat > /dev/null
+for p in . sub sub/deep vendor/lib nc build/_deps/x; do echo "agent" >> "$p/agent.txt"; done
+grep -q uncommitted vendor/lib/f.txt && echo saw > vendor/lib/seen.txt
+echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"done"}}}'
+echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
+`)
+	os.Chmod(fake, 0o755)
+	s, _ := testServer(t, func(c *serveConfig) { c.Claude = fake })
+	c := startLoopback(t, s)
+	sc := &shareClient{c: c, session: "sidn", root: client, worktree: true, top: filepath.ToSlash(client), synced: map[string]syncEntry{}, reported: map[string]bool{}}
+	if !sc.register() {
+		t.Fatal("register failed: " + sc.refusal)
+	}
+	sc.start(2)
+	defer sc.unregister()
+
+	stderr := filepath.Join(root, "stderr")
+	f, _ := os.Create(stderr)
+	old := os.Stderr
+	os.Stderr = f
+	body := `{"model":"claude-cli-haiku","tools":[{"name":"x"}],"messages":[{"role":"user","content":"go"}]}`
+	h := map[string]string{"x-claude-mini-session": "sidn", "x-claude-mini-cwd": client, "content-type": "application/json"}
+	st, data := call(c, "POST", "/v1/messages", h, []byte(body), 60*time.Second)
+	os.Stderr = old
+	f.Close()
+	out, _ := os.ReadFile(stderr)
+	if st != 200 || !strings.Contains(string(data), `"done"`) {
+		t.Fatalf("messages: %d %s\n%s", st, data, out)
+	}
+	branch := "minigw/claude-" + sha256Hex([]byte("sidn"))[:8] + "-0"
+	for _, p := range []string{"", "sub", "sub/deep", "vendor/lib", "nc"} {
+		d := filepath.Join(client, p)
+		files, err := gitUser(d, nil, "ls-tree", "-r", "--name-only", branch)
+		if err != nil || !strings.Contains("\n"+files+"\n", "\nagent.txt\n") {
+			t.Fatalf("%q: branch %s: %v\n%s\n%s", p, branch, err, files, out)
+		}
+		line := "agent work is on branch " + branch + " in nested repository " + p + ": review with git -C " + p + " diff "
+		if p == "" {
+			line = "agent work is on branch " + branch + ": review with git diff "
+		}
+		if !strings.Contains(string(out), "minigw: "+line) {
+			t.Fatalf("%q: no branch line:\n%s", p, out)
+		}
+	}
+	if !strings.Contains(gitT(t, filepath.Join(client, "vendor", "lib"), "ls-tree", "-r", "--name-only", branch), "seen.txt") {
+		t.Fatal("agent did not see the nested repository's uncommitted change")
+	}
+	if strings.Contains(string(out), "build/_deps") || gitT(t, dep, "branch", "--list", "minigw/*") != "" {
+		t.Fatalf("ignored nested repository delivered:\n%s", out)
+	}
+	if got := gitT(t, client, "ls-tree", "-r", "--name-only", branch); strings.Contains(got, "build/") || strings.Contains(got, "nc/") ||
+		strings.Contains(got, "vendor/lib/") || strings.Contains(got, "sub/") {
+		t.Fatalf("top branch has nested files: %s", got)
+	}
+	// Vrhnja veja: gitlink podmodula kaže na vrh veje v podmodulu (ta vsebuje commit z gitlinkom sub/deep).
+	subTip := gitT(t, filepath.Join(client, "sub"), "rev-parse", branch)
+	if l := gitT(t, client, "ls-tree", branch, "sub"); !strings.HasPrefix(l, "160000 commit "+subTip) {
+		t.Fatalf("top gitlink %q, sub branch %s", l, subTip)
+	}
+	if l := gitT(t, filepath.Join(client, "sub"), "ls-tree", branch, "deep"); !strings.HasPrefix(l, "160000 commit "+gitT(t, filepath.Join(client, "sub", "deep"), "rev-parse", branch)) {
+		t.Fatalf("sub gitlink to deep: %q", l)
+	}
+	if gitT(t, filepath.Join(client, "nc"), "rev-list", "--count", branch) != "2" { // posnetek brez starša + delo agenta
+		t.Fatal("nested repository without a commit: unexpected history")
+	}
+	if got := state(); got != before {
+		t.Fatalf("user's repositories changed:\n%s\n%s", before, got)
+	}
+}
+
+// 0.5.20: nestedProblem sprejme točno registrirane ugnezdene klone, repozitorij, ki ga agent naredi v klonu (tudi v
+// ugnezdenem), pa zavrne; cloneTarget (H1) ne klonira skozi povezavo ali v neprazno mapo; nestedIntact zazna zamenjan klon.
+func TestWorktreeNestedClonesRegistered(t *testing.T) {
+	root := t.TempDir()
+	client, wt := filepath.Join(root, "c"), filepath.Join(root, "wt")
+	repo := filepath.Join(root, "repos", "d", "r.git")
+	os.MkdirAll(filepath.Join(client, "lib"), 0o755)
+	for _, d := range []string{client, filepath.Join(client, "lib")} {
+		gitT(t, d, "init", "-q", "-b", "main")
+		writeT(t, filepath.Join(d, "f.txt"), "x\n")
+		gitT(t, d, "add", "f.txt")
+		gitT(t, d, "commit", "-qm", "x")
+	}
+	push := func(dir, mirror string) string {
+		head := gitT(t, dir, "rev-parse", "HEAD")
+		b := filepath.Join(root, "push.bundle")
+		os.Remove(b)
+		gitUser(dir, nil, "update-ref", "refs/minigw/push", head)
+		gitUser(dir, nil, "bundle", "create", b, "refs/minigw/push")
+		if ensureMirror(mirror) != nil || !importBase(mirror, b, head, "refs/minigw/base/x") {
+			t.Fatal("mirror")
+		}
+		return head
+	}
+	head := push(client, repo)
+	n := &wtNested{path: "lib", repo: nestedMirror(repo, "lib")}
+	n.base = push(filepath.Join(client, "lib"), n.repo)
+	if !strings.HasSuffix(n.repo, "r-"+nestedKey("lib")+".git") || filepath.Dir(n.repo) != filepath.Dir(repo) {
+		t.Fatalf("nested mirror %s", n.repo)
+	}
+	if !makeClone(repo, wt, "minigw/claude-12345678-0", head) || !cloneTarget(wt, "lib") || !makeClone(n.repo, n.dir(wt), "minigw/claude-12345678-0", n.base) {
+		t.Fatal("clone")
+	}
+	n.git, _ = os.Lstat(filepath.Join(wt, "lib", ".git"))
+	nested := []*wtNested{n}
+	if why := cloneProblem(wt, repo, nil); !strings.Contains(why, "nested repository lib ") {
+		t.Fatalf("unregistered clone accepted: %q", why)
+	}
+	if why := cloneProblem(wt, repo, nested); why != "" || !nestedIntact(wt, n) {
+		t.Fatalf("registered clone refused: %q", why)
+	}
+	evil := filepath.Join(wt, "lib", "x", "evil")
+	os.MkdirAll(evil, 0o755)
+	gitT(t, evil, "init", "-q")
+	if why := cloneProblem(wt, repo, nested); why != "changes inside the nested repository lib/x/evil do not come back in worktree mode; use sync" {
+		t.Fatalf("agent's repository inside a nested clone: %q", why)
+	}
+	os.RemoveAll(filepath.Join(wt, "lib", "x"))
+	// H1: povezava v poti, neprazen cilj
+	os.Symlink(root, filepath.Join(wt, "link"))
+	os.MkdirAll(filepath.Join(wt, "full"), 0o755)
+	writeT(t, filepath.Join(wt, "full", "f"), "x")
+	for _, p := range []string{"link/x", "link", "full", "f.txt/x"} {
+		if cloneTarget(wt, p) {
+			t.Fatalf("clone target %s accepted", p)
+		}
+	}
+	if !cloneTarget(wt, "new/deep/x") {
+		t.Fatal("new path refused")
+	}
+	os.Rename(filepath.Join(wt, "lib"), filepath.Join(wt, "lib2"))
+	os.Symlink(filepath.Join(wt, "lib2"), filepath.Join(wt, "lib"))
+	if nestedIntact(wt, n) {
+		t.Fatal("nested clone behind a symlink accepted")
+	}
+	sl := &wtSlot{wt: wt, nested: nested}
+	sl.git, _ = os.Lstat(filepath.Join(wt, ".git"))
+	sl.cfg, _ = os.ReadFile(filepath.Join(wt, ".git", "config"))
+	if sl.gitIntact() {
+		t.Fatal("slot intact with a moved nested clone")
+	}
+	if got := sl.gitDirs(); !slices.Equal(got, []string{filepath.Join(wt, ".git"), filepath.Join(wt, "lib", ".git")}) {
+		t.Fatalf("git dirs %q", got)
+	}
+}
+
+// 0.5.20: odjemalec z ugnezdenim repozitorijem in starejšim prehodom (brez »nested« v WORKTREE-PUSH) odpove (način
+// ostane, ugnezdeni ne izginejo tiho); več kot maxNestedRepos: napaka.
+func TestWorktreePushNestedNeedsGateway(t *testing.T) {
+	top := t.TempDir()
+	gitT(t, top, "init", "-q", "-b", "main")
+	writeT(t, filepath.Join(top, "a.txt"), "a\n")
+	gitT(t, top, "add", "-A")
+	gitT(t, top, "commit", "-qm", "a")
+	os.MkdirAll(filepath.Join(top, "lib"), 0o755)
+	gitT(t, filepath.Join(top, "lib"), "init", "-q")
+	sc := &shareClient{top: top, worktree: true, reported: map[string]bool{}}
+	if r := sc.wtPush("k", davJob{Body: []byte(`{"have":[]}`)}); r.Status != 500 || !sc.reported["nested-old"] {
+		t.Fatalf("old gateway: %d %v", r.Status, sc.reported)
+	}
+	for i := range maxNestedRepos {
+		os.MkdirAll(filepath.Join(top, "n", strconv.Itoa(i)), 0o755)
+		gitT(t, filepath.Join(top, "n", strconv.Itoa(i)), "init", "-q")
+	}
+	if n := nestedRepos(top); len(n) != maxNestedRepos+1 {
+		t.Fatalf("found %d", len(n))
+	}
+	if r := sc.wtPush("k", davJob{Body: []byte(`{"have":[],"nested":{}}`)}); r.Status != 500 || !sc.reported["nested-max"] {
+		t.Fatalf("too many: %d %v", r.Status, sc.reported)
 	}
 }
