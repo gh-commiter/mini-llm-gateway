@@ -773,7 +773,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	defer func() { <-s.procs }()
 	name, cargs := exe[0], append(exe[1:], args...)
 	if worktreeEnv != nil { // N3: .git klona je med tekom točka priklopa (kot pins pri Codex), zamenjati ga ni mogoče
-		name, cargs = pinWrap(s.cfgDir, name, cargs, []string{filepath.Join(wt, ".git")})
+		name, cargs = pinWrap(s.cfgDir, name, cargs, []string{filepath.Join(wt, ".git")}, s.log.Printf)
 	}
 	cmd := commandContext(r.Context(), name, cargs...)
 	cmd.Dir = dir

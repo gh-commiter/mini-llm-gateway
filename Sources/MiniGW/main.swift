@@ -586,10 +586,23 @@ func shareCommand(_ a: [String]) -> Never {
     exit(0)
 }
 
-/// H3: pod Claude Code le možnosti claude, ki ne dajo dovoljenj (Profiles.unsafeClaudeFlag).
+/// stdin za claude: pod Claude Code ga minigw prebere v celoti in preveri (N6, N7), nato claude dobi iste bajte (nil = stdin).
+var claudeStdin: Data?
+
+/// H3: pod Claude Code le možnosti claude, ki ne dajo dovoljenj (Profiles.unsafeClaudeFlag); N6, N7: navodilo brez »@pot«
+/// in »/ukaz« (Profiles.unsafePrompt), tudi na stdin.
 func refuseUnsafeClaudeFlags() {
-    if let f = Profiles.unsafeClaudeFlag(args, env: ProcessInfo.processInfo.environment) {
+    let env = ProcessInfo.processInfo.environment
+    if let f = Profiles.unsafeClaudeFlag(args, env: env) {
         fail("\(f) is not accepted when minigw runs inside Claude Code: it could give the gateway's model permissions without asking you")
+    }
+    guard Profiles.checkClaudeArgs(env) else { return }
+    var st = stat()
+    if fstat(0, &st) == 0, st.st_mode & S_IFMT != S_IFCHR {  // terminal, /dev/null: ne bere
+        claudeStdin = FileHandle.standardInput.readDataToEndOfFile()
+    }
+    if let r = Profiles.unsafePrompt(args, stdin: String(decoding: claudeStdin ?? Data(), as: UTF8.self), env: env) {
+        fail("\(r) is not accepted when minigw runs inside Claude Code: paste the text itself into the prompt")
     }
 }
 
@@ -834,8 +847,8 @@ setenv("ANTHROPIC_CUSTOM_HEADERS", "x-claude-mini-session: \(sid)\nx-claude-mini
        + (role.isEmpty ? "" : "\nx-claude-mini-role: \(role)")
        + (readOnly ? "\nx-claude-mini-ro: 1" : ""), 1)  // --minigw-ro velja tudi brez deljenja (prehod na tem Macu)
 
-// Brez proxyja in brez mape: minigw ni več potreben → exec.
-guard !proxies.isEmpty || (wantShare && !sid.isEmpty) || profiles.count > 1 else {
+// Brez proxyja in brez mape: minigw ni več potreben → exec (razen s prebranim stdin: tega claude dobi po cevi).
+guard claudeStdin != nil || !proxies.isEmpty || (wantShare && !sid.isEmpty) || profiles.count > 1 else {
     execvp("claude", argv)
     fail("cannot run claude: \(String(cString: strerror(errno))) (is Claude Code installed and in PATH?)", code: 127)
 }
@@ -939,14 +952,29 @@ signal(SIGQUIT, SIG_IGN)
 var attr: posix_spawnattr_t?
 posix_spawnattr_init(&attr)
 var defaults = sigset_t()
-sigemptyset(&defaults); sigaddset(&defaults, SIGINT); sigaddset(&defaults, SIGQUIT)
+sigemptyset(&defaults); sigaddset(&defaults, SIGINT); sigaddset(&defaults, SIGQUIT); sigaddset(&defaults, SIGPIPE)
 posix_spawnattr_setsigdefault(&attr, &defaults)
 posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETSIGDEF))
+var actions: posix_spawn_file_actions_t?
+posix_spawn_file_actions_init(&actions)
+var stdinPipe: [Int32] = [-1, -1]
+if claudeStdin != nil {  // prebrani stdin gre claude po cevi
+    guard pipe(&stdinPipe) == 0 else { fail("cannot pass stdin to claude: \(String(cString: strerror(errno)))") }
+    posix_spawn_file_actions_adddup2(&actions, stdinPipe[0], 0)
+    posix_spawn_file_actions_addclose(&actions, stdinPipe[0])
+    posix_spawn_file_actions_addclose(&actions, stdinPipe[1])
+}
 var pid: pid_t = 0
-let rc = posix_spawnp(&pid, "claude", nil, &attr, argv, environ)
+let rc = posix_spawnp(&pid, "claude", &actions, &attr, argv, environ)
 guard rc == 0 else {
     share.unregister(); extras.unregister()
     fail("cannot run claude: \(String(cString: strerror(rc))) (is Claude Code installed and in PATH?)", code: 127)
+}
+if let data = claudeStdin {
+    close(stdinPipe[0])
+    signal(SIGPIPE, SIG_IGN)  // claude konča, preden prebere vse: EPIPE namesto konca minigw (claude dobi privzetega)
+    let w = FileHandle(fileDescriptor: stdinPipe[1], closeOnDealloc: true)
+    Thread.detachNewThread { try? w.write(contentsOf: data); try? w.close() }
 }
 var status: Int32 = 0
 while waitpid(pid, &status, 0) == -1 && errno == EINTR {}

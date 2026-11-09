@@ -64,7 +64,7 @@ public enum Profiles {
     /// Prva možnost claude, ki ni na seznamu claudeSafe (nil = vse dovoljene), ko minigw teče v Claude Code (CLAUDECODE),
     /// razen ob MINIGW_ALLOW_UNSAFE_FLAGS=1 uporabnika. Po »--« so le argumenti (kot Go unsafeClaudeFlag).
     public static func unsafeClaudeFlag(_ args: [String], env: [String: String]) -> String? {
-        guard !(env["CLAUDECODE"] ?? "").isEmpty, env["MINIGW_ALLOW_UNSAFE_FLAGS"] != "1" else { return nil }
+        guard checkClaudeArgs(env) else { return nil }
         var i = 0
         while i < args.count {
             let a = args[i]
@@ -77,6 +77,33 @@ public enum Profiles {
             i += 1
         }
         return nil
+    }
+
+    /// minigw teče v Claude Code (CLAUDECODE) in uporabnik ni nastavil MINIGW_ALLOW_UNSAFE_FLAGS=1 (kot Go checkClaudeArgs).
+    public static func checkClaudeArgs(_ env: [String: String]) -> Bool {
+        !(env["CLAUDECODE"] ?? "").isEmpty && env["MINIGW_ALLOW_UNSAFE_FLAGS"] != "1"
+    }
+
+    /// N6, N7: claude -p bere navodilo kot vnos uporabnika: »@pot« (na začetku besede, tudi za ( " ') priloži katero koli
+    /// datoteko, »/ukaz« zažene ukaz s poševnico (npr. /config permissionMode=…). nil = dovoljeno (kot Go promptRefused).
+    static func promptRefused(_ p: String) -> String? {
+        if p.drop(while: { $0.isWhitespace }).hasPrefix("/") { return "a prompt that starts with / (a slash command)" }
+        if p.range(of: #"(^|[\s("'])@\S"#, options: .regularExpression) != nil { return "@ before a file name (claude would attach that file)" }
+        return nil
+    }
+
+    /// Razlog za zavrnitev navodila pod Claude Code (nil = dovoljeno): besede, ki niso možnost ali njena vrednost, vse po
+    /// »--« in stdin (kot Go unsafePrompt).
+    public static func unsafePrompt(_ args: [String], stdin: String, env: [String: String]) -> String? {
+        guard checkClaudeArgs(env) else { return nil }
+        var words = [stdin], i = 0
+        while i < args.count {
+            let a = args[i]
+            if a == "--" { words += args[(i + 1)...]; break }
+            if !a.hasPrefix("-") { words.append(a) } else if claudeSafe[a] == true { i += 1 }
+            i += 1
+        }
+        return words.lazy.compactMap(promptRefused).first
     }
 
     /// Besedilo prehoda v eni vrstici brez kontrolnih znakov, največ `max` znakov: gre v kontekst Claude (M2, M3).

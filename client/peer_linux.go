@@ -96,8 +96,10 @@ func killChildren() {
 func hardenRouter() { syscall.RawSyscall(syscall.SYS_PRCTL, 4 /* PR_SET_DUMPABLE */, 0, 0) }
 
 var (
-	bwrapOnce sync.Once
-	bwrapPath string // "" = bwrap ni nameščen ali ne deluje (npr. brez uporabniških imenskih prostorov)
+	bwrapOnce   sync.Once
+	bwrapPath   string // "" = bwrap ni nameščen ali ne deluje (npr. brez uporabniških imenskih prostorov)
+	nestedOnce  sync.Once
+	nestedBwrap bool // bwrap deluje tudi znotraj bwrap (pinWrap)
 )
 
 func bwrapReady(cfgDir string) string {
@@ -119,9 +121,23 @@ func agentSandboxed(cfgDir string) bool { return bwrapReady(cfgDir) != "" }
 // pinWrap: Claude CLI v worktree pod bwrap le s pins (N3): datotečni sistem je kot zunaj (Claude potrebuje domačo
 // mapo), le .git klona je točka priklopa, zato ga med tekom ni mogoče preimenovati ali zamenjati (EBUSY). Brez bwrap
 // ostane exe, kot je; zamenjavo nato ujame worktreeIntact pred naslednjim zagonom.
-func pinWrap(cfgDir, exe string, args, pins []string) (string, []string) {
+// Lastni sandbox Claude Code (bwrap) nato teče gnezden v imenskem prostoru pinWrap; kjer gnezdeni uporabniški imenski
+// prostori niso dovoljeni (Ubuntu 24.04, AppArmor bwrap-userns-restrict), bi Bash v Claude odpovedal: takrat pinWrap
+// enkrat to zapiše in ga izpusti (preverbi pred zagonom in po njem, gitIntact in worktreeIntact, ostaneta).
+func pinWrap(cfgDir, exe string, args, pins []string, logf func(string, ...any)) (string, []string) {
 	bw := bwrapReady(cfgDir)
 	if bw == "" {
+		return exe, args
+	}
+	nestedOnce.Do(func() {
+		t, err := exec.LookPath("true")
+		d := os.TempDir()
+		if nestedBwrap = err == nil && command(bw, "--dev-bind", "/", "/", "--die-with-parent", "--bind", d, d, "--",
+			bw, "--dev-bind", "/", "/", "--", t).Run() == nil; !nestedBwrap {
+			logf("claude: nested bwrap does not work here (user namespaces restricted?), so the .git pin of worktree clones is off; the checks before and after each run still apply")
+		}
+	})
+	if !nestedBwrap {
 		return exe, args
 	}
 	a := []string{"--dev-bind", "/", "/", "--die-with-parent"}

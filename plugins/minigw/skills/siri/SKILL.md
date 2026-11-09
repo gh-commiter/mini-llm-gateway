@@ -11,6 +11,8 @@ Profiles (`--name`, `profiles`, `--minigw-profile`, `<model>@<profile>`) need mi
 "${CLAUDE_PLUGIN_DATA}/bin/minigw" -p --model claude-siri-ai -- "<question; name any project files it needs, the gateway attaches them>"
 ```
 
+minigw refuses a prompt (also on stdin) that starts with `/` or has `@` at the start of a word (`@file`, `(@x`, `"@x`): the nested claude would run a slash command or attach that file. Name files by their path without `@`, or paste their text; leave out lines that have `@` at the start of a word (`@Test`, `@@` diff headers) and name the file instead.
+
 Show Siri's answer. If it fails with "Siri AI is not allowed for device", tell the user to allow this Mac in Mini Gateway → Settings → Siri AI → Devices.
 
 `--profile <p>`: `--model claude-siri-ai@<p>` (a Mac gateway only).

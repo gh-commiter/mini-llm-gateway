@@ -15,10 +15,12 @@ Profiles (`--name`, `profiles`, `--minigw-profile`, `<model>@<profile>`) need mi
 You are an independent reviewer. Do not modify files.
 Goal of the change: <one or two sentences>
 Review the following in the current folder and report concrete problems first (bug, wrong assumption, missing case, security), with file and line, then smaller improvements briefly:
-<diff, file names or plan>
+<file names, git range or plan>
 PROMPT
 )"
 ```
+
+minigw refuses a prompt (also on stdin) that starts with `/` or has `@` at the start of a word (`@file`, `(@x`, `"@x`): the nested claude would run a slash command or attach that file. A pasted diff has `@@` headers and often `@` attributes, so do not paste it: name the files and the range (for example "the uncommitted changes, `git diff` and `git diff --staged`" or "`git diff <base>..HEAD`"); the reviewer reads them in the shared folder.
 
 `--profile <p>`: use `--model claude-codex-gpt-6-astra@<p>` (that gateway; `minigw profiles` lists them).
 

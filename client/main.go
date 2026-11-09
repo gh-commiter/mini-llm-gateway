@@ -3,10 +3,12 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -14,6 +16,7 @@ import (
 	"os/signal"
 	"os/user"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"sort"
@@ -750,7 +753,7 @@ var claudeSafe = map[string]bool{"-p": false, "--print": false, "--model": true,
 // unsafeClaudeFlag: prva možnost claude, ki ni na seznamu claudeSafe ("" = vse dovoljene). Velja, ko minigw teče v
 // Claude Code (CLAUDECODE), razen če je uporabnik nastavil MINIGW_ALLOW_UNSAFE_FLAGS=1. Po »--« so le argumenti.
 func unsafeClaudeFlag(args []string, env func(string) string) string {
-	if env("CLAUDECODE") == "" || env("MINIGW_ALLOW_UNSAFE_FLAGS") == "1" {
+	if !checkClaudeArgs(env) {
 		return ""
 	}
 	for i := 0; i < len(args); i++ {
@@ -773,9 +776,73 @@ func unsafeClaudeFlag(args []string, env func(string) string) string {
 	return ""
 }
 
+// checkClaudeArgs: minigw teče v Claude Code (CLAUDECODE) in uporabnik ni nastavil MINIGW_ALLOW_UNSAFE_FLAGS=1.
+func checkClaudeArgs(env func(string) string) bool {
+	return env("CLAUDECODE") != "" && env("MINIGW_ALLOW_UNSAFE_FLAGS") != "1"
+}
+
+// atMention: »@« na začetku besede (tudi za ( " '): claude -p bi to datoteko priložil zahtevi (N6).
+var atMention = regexp.MustCompile(`(^|[\s("'])@\S`)
+
+// promptRefused (N6, N7): claude -p bere navodilo kot vnos uporabnika: »@pot« priloži katero koli datoteko, »/ukaz«
+// zažene ukaz s poševnico (npr. /config permissionMode=… v globalnih nastavitvah). "" = dovoljeno.
+func promptRefused(p string) string {
+	if strings.HasPrefix(strings.TrimLeftFunc(p, unicode.IsSpace), "/") {
+		return "a prompt that starts with / (a slash command)"
+	}
+	if atMention.MatchString(p) {
+		return "@ before a file name (claude would attach that file)"
+	}
+	return ""
+}
+
+// unsafePrompt: razlog za zavrnitev navodila pod Claude Code ("" = dovoljeno): besede, ki niso možnost ali njena
+// vrednost, vse po »--« in stdin.
+func unsafePrompt(args []string, stdin string, env func(string) string) string {
+	if !checkClaudeArgs(env) {
+		return ""
+	}
+	words := []string{stdin}
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			words = append(words, args[i+1:]...)
+			break
+		}
+		if !strings.HasPrefix(a, "-") {
+			words = append(words, a)
+		} else if name, _, eq := strings.Cut(a, "="); claudeSafe[name] && !eq {
+			i++
+		}
+	}
+	for _, w := range words {
+		if r := promptRefused(w); r != "" {
+			return r
+		}
+	}
+	return ""
+}
+
+// claudeStdin: stdin za claude; pod Claude Code ga minigw prebere v celoti in preveri (N6, N7), nato preda iste bajte.
+var claudeStdin io.Reader = os.Stdin
+
 func refuseUnsafeClaudeFlags(args []string) {
 	if f := unsafeClaudeFlag(args, os.Getenv); f != "" {
 		fail(f + " is not accepted when minigw runs inside Claude Code: it could give the gateway's model permissions without asking you")
+	}
+	if !checkClaudeArgs(os.Getenv) {
+		return
+	}
+	var in []byte
+	if fi, err := os.Stdin.Stat(); err == nil && fi.Mode()&os.ModeCharDevice == 0 { // terminal, /dev/null: ne bere
+		b, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			fail("cannot read stdin: " + err.Error())
+		}
+		in, claudeStdin = b, bytes.NewReader(b)
+	}
+	if r := unsafePrompt(args, string(in), os.Getenv); r != "" {
+		fail(r + " is not accepted when minigw runs inside Claude Code: paste the text itself into the prompt")
 	}
 }
 
@@ -929,7 +996,7 @@ func autoShare(cwd string) bool {
 func runClaude(args []string, env []string) int {
 	signal.Ignore(os.Interrupt)
 	cmd := consoleCommand("claude", args...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = claudeStdin, os.Stdout, os.Stderr
 	cmd.Env = claudeEnv(os.Environ(), env)
 	if err := cmd.Run(); err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {

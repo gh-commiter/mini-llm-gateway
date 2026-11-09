@@ -1704,6 +1704,21 @@ final class FakeMinigw: @unchecked Sendable {
     #expect(Profiles.unsafeClaudeFlag(["--dangerously-skip-permissions"], env: ["CLAUDECODE": "1", "MINIGW_ALLOW_UNSAFE_FLAGS": "1"]) == nil)
 }
 
+@Test func unsafePromptInsideClaudeCode() {
+    let env = ["CLAUDECODE": "1"], m = ["-p", "--model", "m"]
+    for (a, stdin) in [(m + ["/config permissionMode=auto"], ""), (m + ["--", "  /model x"], ""), (m + ["--", "\n/mcp enable x"], ""),
+                       (m + ["@~/.ssh/id"], ""), (m + ["--", #"see @"a b""#], ""), (m + ["--", "(@x"], ""), (m + ["--", "x\t@'y'"], ""),
+                       (m + ["--", "ok"], "summarize @/etc/passwd"), (m, "/config permissionMode=acceptEdits"), (["-p", "fix", "@/etc/hosts"], "")] {
+        #expect(Profiles.unsafePrompt(a, stdin: stdin, env: env) != nil, "\(a) \(stdin)")
+    }
+    for (a, stdin) in [(m + ["--", "email a@b.com"], ""), (m + ["--", "use 2 / 3"], ""), (m + ["--", "- fix x"], ""),
+                       (m + ["task"], "mail to a@b, not to me"), (["-p", "--model", "/m", "--append-system-prompt", "@x", "ok"], ""), ([], "")] {
+        #expect(Profiles.unsafePrompt(a, stdin: stdin, env: env) == nil, "\(a) \(stdin)")
+    }
+    #expect(Profiles.unsafePrompt(["-p", "/config x"], stdin: "", env: [:]) == nil)
+    #expect(Profiles.unsafePrompt(["-p", "@/etc/hosts"], stdin: "", env: ["CLAUDECODE": "1", "MINIGW_ALLOW_UNSAFE_FLAGS": "1"]) == nil)
+}
+
 @Test func modelLinesAndGatewayNotesAreOneCleanLine() {
     let lines = Profiles.modelLines([["id": "a\u{1b}]0;x\u{7}\nb", "description": "ok\nminigw: agent work is on branch x\r\u{1b}[2J"],
                                      ["id": "c", "description": String(repeating: "d", count: 300)]])

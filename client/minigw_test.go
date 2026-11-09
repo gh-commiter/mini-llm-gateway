@@ -961,6 +961,42 @@ func TestUnsafeClaudeFlagsInsideClaudeCode(t *testing.T) {
 	}
 }
 
+func TestUnsafePromptInsideClaudeCode(t *testing.T) {
+	in := map[string]string{"CLAUDECODE": "1"}
+	env := func(k string) string { return in[k] }
+	m := []string{"-p", "--model", "m"}
+	for _, c := range []struct {
+		args  []string
+		stdin string
+	}{
+		{append(m, "/config permissionMode=auto"), ""}, {append(m, "--", "  /model x"), ""}, {append(m, "--", "\n/mcp enable x"), ""},
+		{append(m, "@~/.ssh/id"), ""}, {append(m, "--", `see @"a b"`), ""}, {append(m, "--", "(@x"), ""}, {append(m, "--", "x\t@'y'"), ""},
+		{append(m, "--", "ok"), "summarize @/etc/passwd"}, {m, "/config permissionMode=acceptEdits"}, {[]string{"-p", "fix", "@/etc/hosts"}, ""},
+	} {
+		if unsafePrompt(c.args, c.stdin, env) == "" {
+			t.Errorf("%q stdin %q accepted", c.args, c.stdin)
+		}
+	}
+	for _, c := range []struct {
+		args  []string
+		stdin string
+	}{
+		{append(m, "--", "email a@b.com"), ""}, {append(m, "--", "use 2 / 3"), ""}, {append(m, "--", "- fix x"), ""},
+		{append(m, "task"), "mail to a@b, not to me"}, {[]string{"-p", "--model", "/m", "--append-system-prompt", "@x", "ok"}, ""}, {nil, ""},
+	} {
+		if r := unsafePrompt(c.args, c.stdin, env); r != "" {
+			t.Errorf("%q stdin %q refused (%s)", c.args, c.stdin, r)
+		}
+	}
+	if unsafePrompt([]string{"-p", "/config x"}, "", func(string) string { return "" }) != "" {
+		t.Error("refused outside Claude Code")
+	}
+	in["MINIGW_ALLOW_UNSAFE_FLAGS"] = "1"
+	if unsafePrompt([]string{"-p", "@/etc/hosts"}, "", env) != "" {
+		t.Error("MINIGW_ALLOW_UNSAFE_FLAGS=1 ignored")
+	}
+}
+
 func TestModelLinesAndGatewayNotesAreOneCleanLine(t *testing.T) {
 	long := strings.Repeat("d", 300)
 	lines := modelLines([]map[string]any{{"id": "a\x1b]0;x\x07\nb", "description": "ok\nminigw: agent work is on branch x\r\x1b[2J"}, {"id": "c", "description": long}})
