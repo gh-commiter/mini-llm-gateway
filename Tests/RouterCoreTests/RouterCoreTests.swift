@@ -1817,3 +1817,28 @@ final class FakeMinigw: @unchecked Sendable {
     }
     #expect(Profiles.gatewayNote("slot busy\nminigw: done\u{1b}[2J") == "minigw: gateway: slot busy minigw: done[2J")
 }
+
+/// Upstream, ki zahtevo zavrne s 429 (omejitev brezplačnega modela).
+final class RateLimitedUpstream: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func stopLoading() {}
+    override func startLoading() {
+        let resp = HTTPURLResponse(url: request.url!, statusCode: 429, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
+        client?.urlProtocol(self, didReceive: resp, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(#"{"error":{"message":"Rate limit exceeded: free-models-per-min"}}"#.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+}
+
+/// 429 ponudnika ima x-should-retry: false (Claude Code ne ponavlja minute dolgo) in besedilo upstreama.
+@Test func passthroughUpstream429IsNotRetried() async {
+    let cfg = URLSessionConfiguration.ephemeral
+    cfg.protocolClasses = [RateLimitedUpstream.self]
+    let route = Route(provider: ProviderConfig(id: "openrouter", name: "OpenRouter", enabled: true, baseURL: "https://up.example/api", aliases: ""),
+                      name: "g", alias: "claude-g", upstream: "g", window: nil)
+    let w = FakeWriter()
+    let st = await makeRouter(session: URLSession(configuration: cfg)).passthrough(
+        request("POST", "/v1/messages"), body: ["model": "claude-g"], route: route, key: "k", rid: "r", writer: w)
+    #expect(st == 429 && w.status == 429 && w.text.contains("x-should-retry: false") && w.text.contains("free-models-per-min"))
+}

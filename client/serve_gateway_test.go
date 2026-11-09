@@ -497,3 +497,27 @@ func TestPublishedIDStartsWithClaude(t *testing.T) {
 		}
 	}
 }
+
+// 429 ponudnika (npr. brezplačni model na OpenRouterju) ima x-should-retry: false in besedilo upstreama; lastni
+// prehodni 429 prehoda (vse reže zasedene) ostane ponovljiv.
+func TestServeGatewayUpstream429NoRetry(t *testing.T) {
+	w := httptest.NewRecorder()
+	resp := &http.Response{StatusCode: 429, Body: io.NopCloser(strings.NewReader(`{"error":{"message":"Rate limit exceeded: free-models-per-min"}}`))}
+	if upstreamError(w, "r1", "OpenRouter", resp) != 429 || w.Header().Get("x-should-retry") != "false" ||
+		!strings.Contains(w.Body.String(), "OpenRouter: Rate limit exceeded: free-models-per-min") || !strings.Contains(w.Body.String(), "rate_limit_error") {
+		t.Fatalf("upstream 429: %d %v %s", w.Code, w.Header(), w.Body)
+	}
+	w = httptest.NewRecorder()
+	if upstreamError(w, "r2", "gw", &http.Response{StatusCode: 500, Body: io.NopCloser(strings.NewReader("boom"))}) != 500 || w.Header().Get("x-should-retry") != "" {
+		t.Fatalf("upstream 500: %v", w.Header())
+	}
+	s, _ := testServer(t, nil)
+	for range cap(s.gwSlots) {
+		s.gwSlots <- struct{}{}
+	}
+	w = httptest.NewRecorder()
+	hr := httptest.NewRequest("POST", "/v1/messages", nil)
+	if s.passthrough(w, &req{Request: hr, rid: "r3", body: []byte(`{}`)}, serveGateway{Name: "gw"}, gwModel{id: "m"}) != 429 || w.Header().Get("x-should-retry") != "" {
+		t.Fatalf("own 429 must stay retryable: %v", w.Header())
+	}
+}

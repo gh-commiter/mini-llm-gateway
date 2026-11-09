@@ -509,7 +509,8 @@ func upstreamError(w http.ResponseWriter, rid, name string, resp *http.Response)
 	case status < 400 || status > 599:
 		msg, status = fmt.Sprintf("HTTP %d: %s", status, msg), 502
 	}
-	return writeError(w, rid, status, name+": "+msg)
+	// 429 upstreama (omejitev ponudnika, npr. brezplačni model) brez ponavljanja, kot omejitev agenta
+	return writeAgentError(w, rid, status, name+": "+msg)
 }
 
 // readKey: ključ s stdin (cev) ali s terminala brez odmeva; nikoli iz argv. Le natisljivi ASCII (gre v glavo HTTP).
