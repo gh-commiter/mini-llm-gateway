@@ -50,6 +50,22 @@ func trayCommand(args []string) {
 		quitRunningTray()
 		return
 	}
+	// MSI (StopProcesses, pred InstallValidate; zažene ga kopija iz tabele Binary, zato mapa kot argument): preostali
+	// procesi iz mape namestitve končajo, preden Windows Installer preveri datoteke v rabi (brez ponovnega zagona).
+	if len(args) > 2 && args[0] == "msi" && args[1] == "stop" {
+		msiStopProcesses(args[2], args[3:])
+		return
+	}
+	// MSI (RemoveRun, odložen, po RemoveRegistryValues): vrednost Run, ki kaže na pladenj iz te mape, ob odstranitvi
+	// dela Gateway ali celote izgine, tudi če jo je zapisal pladenj (Zaženi ob prijavi) ali minigw gw autostart.
+	if len(args) == 2 && args[0] == "msi" && args[1] == "run-off" {
+		if exe, err := os.Executable(); err == nil {
+			if v, _ := runValueGet(runValueName); runValueIn(v, filepath.Dir(exe)) {
+				runValueDel(runValueName)
+			}
+		}
+		return
+	}
 	// MSI (client/minigw.wxs): minigw.exe plugin …|uninstall … brez okna konzole (msiexec bi ga pokazal), največ 60 s;
 	// izpis v %LOCALAPPDATA%\minigw\minigw-msi.log (brez žetonov: le poti in imena profilov).
 	if len(args) > 1 && args[0] == "msi" && (args[1] == "plugin" || args[1] == "uninstall") {
@@ -97,6 +113,34 @@ func trayCommand(args []string) {
 		return
 	}
 	trayRun(*cfgPath, *quiet || *wasRunning)
+}
+
+// runValueIn: ukaz Run zažene minigw-tray.exe iz mape dir (Windowsove poti, brez razlike v velikih črkah).
+func runValueIn(v, dir string) bool {
+	return dir != "" && strings.HasPrefix(strings.ToLower(v), strings.ToLower(`"`+strings.TrimRight(dir, `\/`)+`\minigw-tray.exe"`))
+}
+
+// procEntry: proces za msi stop (ID, seja Windows, polna pot programa).
+type procEntry struct {
+	PID, Session uint32
+	Image        string
+}
+
+// stopTargets: procesi, ki jih msi stop ustavi: program leži neposredno v mapi dir (ne v podmapi, ne drugje), ista
+// seja Windows kot msi stop, ne on sam; z names le ti programi. Prazna mapa: nič (L1: nikoli tuji procesi).
+func stopTargets(ps []procEntry, dir string, self, session uint32, names []string) []uint32 {
+	dir = strings.TrimRight(dir, `\/`)
+	var out []uint32
+	for _, p := range ps {
+		i := strings.LastIndexAny(p.Image, `\/`)
+		if dir == "" || i < 0 || p.PID == self || p.Session != session || !strings.EqualFold(p.Image[:i], dir) {
+			continue
+		}
+		if len(names) == 0 || slices.ContainsFunc(names, func(n string) bool { return strings.EqualFold(n, p.Image[i+1:]) }) {
+			out = append(out, p.PID)
+		}
+	}
+	return out
 }
 
 // gatewayAgents: zahteve agentov, ki tečejo v prehodu s to nastavitvijo (skrbniški API /status, kot minigw gw status);

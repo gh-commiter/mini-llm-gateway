@@ -42,6 +42,15 @@ for arch in amd64 arm64; do
   has File "tray	Main	minigw-tray.exe"
   has Registry "Software\Microsoft\Windows\CurrentVersion\Run	MiniGatewayRouter	"
   t Registry | grep -F 'MiniGatewayRouter' | grep -q '	Gateway$' || fail "$arch: Run value is not in the Gateway feature"
+  # Del Gateway: komponenta s ključem (KeyPath) v registru, ki ga zapiše le ta del; serve install bere stanje dela iz
+  # Windows Installerja (msiPartInstalled, UpgradeCode kot v Go), ne iz vrednosti Run.
+  t Component | awk -F'\t' '$1 == "Gateway" && $6 != ""' | grep -q . || fail "$arch: Gateway component has no KeyPath"
+  uc=$(grep -o 'msiUpgradeCode = "[^"]*"' client/serve_install.go | cut -d'"' -f2)
+  has Property "UpgradeCode	$uc"
+  # Vrednost Run ob odstranitvi dela Gateway ali celote pobriše še minigw (tudi, če jo je zapisal pladenj), po
+  # RemoveRegistryValues, dokler je minigw-tray.exe še tu; ne pri nadgradnji (novi paket jo zapiše znova).
+  has CustomAction "RemoveRun	1106	tray	msi run-off"
+  has InstallExecuteSequence 'RemoveRun	(REMOVE~="ALL" OR (&Gateway=2 AND !Gateway=3)) AND NOT UPGRADINGPRODUCTCODE'
   # Vtičnik in PURGE: minigw.exe prek minigw-tray.exe msi … (brez okna konzole), odloženo kot uporabnik (1106 = 18 +
   # ignore 64 + deferred 1024, brez NoImpersonate 2048)
   has CustomAction "PluginInstall	1106	tray	msi plugin install"
@@ -57,9 +66,11 @@ for arch in amd64 arm64; do
   # vtičnik in PURGE, ko je minigw.exe še tu, plugin install, ko je že
   seq() { t InstallExecuteSequence | awk -F'\t' -v a=$1 '$1 == a { print $3 }' }
   lt() { (( $(seq $1) < $(seq $2) )) || fail "$arch: $1 ($(seq $1)) not before $2 ($(seq $2))" }
-  lt CostFinalize CloseTray; lt CloseTray InstallValidate; lt InstallValidate RemoveExistingProducts
+  lt CostFinalize CloseTray; lt CloseTray StopProcesses; lt StopProcesses InstallValidate; lt CloseTray StopTui; lt StopTui InstallValidate
+  lt InstallValidate RemoveExistingProducts
   lt RemoveExistingProducts InstallInitialize
-  for a in PluginUninstall PluginUninstallUpgrading Purge; do lt InstallInitialize $a; lt $a RemoveFiles; done
+  for a in PluginUninstall PluginUninstallUpgrading Purge RemoveRun; do lt InstallInitialize $a; lt $a RemoveFiles; done
+  lt RemoveRegistryValues RemoveRun
   lt PluginUninstall Purge; lt InstallFiles PluginInstall; lt PluginInstall InstallFinalize
   lt InstallFinalize StartTray; lt InstallFinalize RestartTray
   # Okno: izbira delov ob namestitvi, ob ponovnem zagonu še Remove s PURGE; nadgradnja brez okna
@@ -90,16 +101,28 @@ for arch in amd64 arm64; do
     END { for (d in n) { c=first[d]; k=0; while ((d SUBSEP c) in nx && k < n[d]) { c=nx[d SUBSEP c]; k++; if (c == first[d]) break }
           if (c != first[d] || k != n[d]) print d } }' <(t Dialog) <(t Control))
   [[ -z $bad ]] || fail "$arch: tab loop broken or Control_First outside it in: $bad (error 2834)"
-  # Pladenj zapre minigw-tray.exe quit (program brez konzole, tip 18 + 64): nobeno okno cmd med (od)namestitvijo.
-  has CustomAction "CloseTray	82	tray	quit"
-  # Tudi ob nadgradnji (pred InstallValidate, sicer datoteke v rabi), ne kot stari paket pri nadgradnji
-  has InstallExecuteSequence 'CloseTray	(REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE) OR (&Gateway=2 AND !Gateway=3) OR WIX_UPGRADE_DETECTED OR WIX_SAME_VERSION_UPGRADE_DETECTED'
+  # Pred InstallValidate ustavi pladenj in vse procese iz mape namestitve kopija pladnja tega paketa (Binary stopper,
+  # tip 2 + 64, program brez konzole: nobeno okno cmd), ne nameščeni stari: nobena datoteka v rabi, brez ponovnega zagona.
+  # (Binary prek msiinfo extract: export tabele Binary bi pisal datoteke v trenutno mapo)
+  msiinfo extract $m Binary.stopper > $T/stopper; cmp -s $T/stopper $OUT/minigw-tray-windows-$arch.exe || fail "$arch: Binary stopper is not this minigw-tray.exe"
+  has CustomAction "CloseTray	66	stopper	tray quit"
+  has CustomAction 'StopProcesses	66	stopper	tray msi stop "[INSTALLDIR]"'
+  has CustomAction 'StopTui	66	stopper	tray msi stop "[INSTALLDIR]" minigw-tui.exe'
+  # Tudi ob nadgradnji in popravilu (REINSTALL), ne kot stari paket pri nadgradnji
+  has InstallExecuteSequence 'CloseTray	(REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE) OR (&Gateway=2 AND !Gateway=3) OR WIX_UPGRADE_DETECTED OR WIX_SAME_VERSION_UPGRADE_DETECTED OR REINSTALL'
+  has InstallExecuteSequence 'StopProcesses	(REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE) OR WIX_UPGRADE_DETECTED OR WIX_SAME_VERSION_UPGRADE_DETECTED OR REINSTALL'
+  has InstallExecuteSequence 'StopTui	&Gateway=2 AND !Gateway=3 AND NOT REMOVE~="ALL"'
+  # Nikoli ponovni zagon: ni ScheduleReboot/ForceReboot, REBOOT=ReallySuppress le kot zadnja varovalka, Restart Manager
+  # ni izklopljen (rezerva, z okni FilesInUse/MsiRMFilesInUse).
+  t InstallExecuteSequence | grep -qE '^(ScheduleReboot|ForceReboot)	' && fail "$arch: schedules or forces a reboot"
+  has Property "REBOOT	ReallySuppress"
+  t Property | grep -qE '^MSIRESTARTMANAGERCONTROL	' && fail "$arch: Restart Manager is turned off"
   t CustomAction | grep -qiE 'cmd\.exe|tasklist|taskkill|powershell|PING' && fail "$arch: a custom action runs a console tool (window flashes)"
   has CustomAction "StartTray	210	tray	tray --quiet-if-running --config"
-  has InstallExecuteSequence 'StartTray	&Gateway=3 AND NOT WIX_UPGRADE_DETECTED'
-  # Nadgradnja: pladenj znova le, če je tekel
+  has InstallExecuteSequence 'StartTray	&Gateway=3 AND NOT WIX_UPGRADE_DETECTED AND NOT WIX_SAME_VERSION_UPGRADE_DETECTED AND NOT REINSTALL'
+  # Nadgradnja in popravilo (CloseTray ga je zaprl): pladenj znova le, če je tekel
   has CustomAction "RestartTray	210	tray	tray --if-was-running --config"
-  has InstallExecuteSequence 'RestartTray	&Gateway=3 AND (WIX_UPGRADE_DETECTED OR WIX_SAME_VERSION_UPGRADE_DETECTED)'
+  has InstallExecuteSequence 'RestartTray	(&Gateway=3 AND (WIX_UPGRADE_DETECTED OR WIX_SAME_VERSION_UPGRADE_DETECTED)) OR (REINSTALL AND !Gateway=3)'
   has LaunchCondition "NOT WIX_DOWNGRADE_DETECTED"
   # Odstranitev ne briše nastavitev: nobena vrstica RemoveFile ali RemoveRegistry ne kaže na minigw v AppData.
   t RemoveFile | grep -qi 'AppData' && fail "$arch: removes AppData"

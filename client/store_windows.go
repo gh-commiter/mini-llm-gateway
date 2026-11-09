@@ -203,21 +203,27 @@ func msiexecPath() string {
 	return filepath.Join(os.Getenv("SystemRoot"), "System32", "msiexec.exe")
 }
 
-// msiInstallDir: mapa namestitve MSI (HKCU\Software\Mini Gateway\InstallDir, zapiše jo minigw.wxs); "" brez MSI.
-// Ključa ne ustvari (RegOpenKeyExW, ne RegCreateKeyExW).
-// msiPartInstalled: MSI 0.5.20+ zapiše vrednost <del> (Gateway, Plugin) v HKCU\Software\Mini Gateway, ko je del nameščen.
+// msiPartInstalled: stanje dela (Feature) nameščenega MSI po Windows Installerju (MsiQueryFeatureStateW za izdelek z
+// UpgradeCode iz minigw.wxs), ne po vrednostih v registru (Run ali Gateway lahko ostaneta). MSI 0.5.19 delov ni imel
+// (vse, tudi prehod, je bilo vedno nameščeno): neznan del = nameščen. Brez izdelka MSI: false.
 func msiPartInstalled(part string) bool {
-	sub, _ := syscall.UTF16PtrFromString(`Software\Mini Gateway`)
-	var h uintptr
-	if r, _, _ := advapi32.NewProc("RegOpenKeyExW").Call(0x80000001, uintptr(unsafe.Pointer(sub)), 0, 0x0001 /* KEY_QUERY_VALUE */, uintptr(unsafe.Pointer(&h))); r != 0 {
+	msi := syscall.NewLazyDLL("msi.dll")
+	code, _ := syscall.UTF16PtrFromString(msiUpgradeCode)
+	prod := make([]uint16, 39)
+	if r, _, _ := msi.NewProc("MsiEnumRelatedProductsW").Call(uintptr(unsafe.Pointer(code)), 0, 0, uintptr(unsafe.Pointer(&prod[0]))); r != 0 {
 		return false
 	}
-	defer procRegClose.Call(h)
-	n, _ := syscall.UTF16PtrFromString(part)
-	r, _, _ := procRegQuery.Call(h, uintptr(unsafe.Pointer(n)), 0, 0, 0, 0)
-	return r == 0
+	f, _ := syscall.UTF16PtrFromString(part)
+	st, _, _ := msi.NewProc("MsiQueryFeatureStateW").Call(uintptr(unsafe.Pointer(&prod[0])), uintptr(unsafe.Pointer(f)))
+	switch int32(st) {
+	case 3, 4, 5, -1: // INSTALLSTATE_LOCAL, SOURCE, DEFAULT; UNKNOWN (paket brez tega dela)
+		return true
+	}
+	return false
 }
 
+// msiInstallDir: mapa namestitve MSI (HKCU\Software\Mini Gateway\InstallDir, zapiše jo minigw.wxs); "" brez MSI.
+// Ključa ne ustvari (RegOpenKeyExW, ne RegCreateKeyExW).
 func msiInstallDir() string {
 	sub, _ := syscall.UTF16PtrFromString(`Software\Mini Gateway`)
 	var h uintptr
@@ -400,7 +406,7 @@ func closeRunningTray() error { return closeTray(50) }
 // drugih procesov z natančnim imenom minigw-tray.exe v tej seji Windows (L1: ne drugih programov ali uporabnikov).
 func quitRunningTray() {
 	if !trayMutexExists() { // nadgradnja MSI: novi paket ga tedaj ne zažene (tray --if-was-running)
-		if run, _ := regRunGet(runValueName); run != "" { // brez dela Gateway (le odjemalec) ga novi Gateway zažene
+		if msiPartInstalled("Gateway") { // brez dela Gateway (le odjemalec) ga novi Gateway zažene
 			os.WriteFile(trayStoppedMarker(), nil, 0o600)
 		}
 		return
@@ -409,11 +415,7 @@ func quitRunningTray() {
 	if closeTray(25) == nil {
 		return
 	}
-	sessionOf := func(pid uint32) (uint32, bool) {
-		var s uint32
-		r, _, _ := kernel32dl.NewProc("ProcessIdToSessionId").Call(uintptr(pid), uintptr(unsafe.Pointer(&s)))
-		return s, r != 0
-	}
+	sessionOf := processSession
 	own, ok := sessionOf(uint32(os.Getpid()))
 	if !ok {
 		return
@@ -436,6 +438,76 @@ func quitRunningTray() {
 			syscall.CloseHandle(h)
 		}
 	}
+}
+
+// msiStopProcesses (MSI StopProcesses, pred InstallValidate): ustavi preostale procese iz mape namestitve v tej seji
+// (odjemalci minigw.exe, minigw-tui.exe), da nobena datoteka ni v rabi (brez FilesInUse in ponovnega zagona): WM_CLOSE
+// njihovim oknom, do 5 s, nato TerminateProcess in čakanje na konec. Izbor je stopTargets (serve_tray.go).
+func msiStopProcesses(dir string, names []string) {
+	own, ok := processSession(uint32(os.Getpid()))
+	if !ok {
+		return
+	}
+	snap, err := syscall.CreateToolhelp32Snapshot(syscall.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return
+	}
+	var ps []procEntry
+	q := kernel32dl.NewProc("QueryFullProcessImageNameW")
+	e := syscall.ProcessEntry32{Size: uint32(unsafe.Sizeof(syscall.ProcessEntry32{}))}
+	for err := syscall.Process32First(snap, &e); err == nil; err = syscall.Process32Next(snap, &e) {
+		s, ok := processSession(e.ProcessID)
+		h, err := syscall.OpenProcess(0x1000 /* PROCESS_QUERY_LIMITED_INFORMATION */, false, e.ProcessID)
+		if !ok || err != nil {
+			continue
+		}
+		buf := make([]uint16, 1024)
+		n := uint32(len(buf))
+		if r, _, _ := q.Call(uintptr(h), 0, uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&n))); r != 0 {
+			ps = append(ps, procEntry{PID: e.ProcessID, Session: s, Image: syscall.UTF16ToString(buf[:n])})
+		}
+		syscall.CloseHandle(h)
+	}
+	syscall.CloseHandle(snap)
+	pids := stopTargets(ps, dir, uint32(os.Getpid()), own, names)
+	if len(pids) == 0 {
+		return
+	}
+	want := map[uint32]bool{}
+	for _, p := range pids {
+		want[p] = true
+	}
+	post := user32dll.NewProc("PostMessageW")
+	owner := user32dll.NewProc("GetWindowThreadProcessId")
+	user32dll.NewProc("EnumWindows").Call(syscall.NewCallback(func(hwnd, _ uintptr) uintptr {
+		var pid uint32
+		owner.Call(hwnd, uintptr(unsafe.Pointer(&pid)))
+		if want[pid] {
+			post.Call(hwnd, 0x0010 /* WM_CLOSE */, 0, 0)
+		}
+		return 1
+	}), 0)
+	var hs []syscall.Handle
+	for _, p := range pids {
+		if h, err := syscall.OpenProcess(syscall.PROCESS_TERMINATE|syscall.SYNCHRONIZE, false, p); err == nil {
+			hs = append(hs, h)
+		}
+	}
+	end := time.Now().Add(5 * time.Second)
+	for _, h := range hs {
+		left := max(time.Until(end), 0)
+		if ev, _ := syscall.WaitForSingleObject(h, uint32(left/time.Millisecond)); ev != syscall.WAIT_OBJECT_0 {
+			syscall.TerminateProcess(h, 1)
+			syscall.WaitForSingleObject(h, 5000) // datoteka je prosta šele, ko proces res konča
+		}
+		syscall.CloseHandle(h)
+	}
+}
+
+func processSession(pid uint32) (uint32, bool) {
+	var s uint32
+	r, _, _ := kernel32dl.NewProc("ProcessIdToSessionId").Call(uintptr(pid), uintptr(unsafe.Pointer(&s)))
+	return s, r != 0
 }
 
 func closeTray(waits int) error {
