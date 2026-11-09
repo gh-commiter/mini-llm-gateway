@@ -1,6 +1,6 @@
 ---
 name: share
-description: Share the current folder (or a given one) with Mini Gateway, so agent models (Codex, Claude CLI, Grok) can read and edit it. Only needed when minigw says a folder "is not shared with the gateway" (system folders, hidden folders); project folders are shared automatically.
+description: Share the current folder (or a given one) with Mini Gateway, so agent models (Codex, Claude CLI, Grok, Copilot) can read and edit it. Only needed when minigw says a folder "is not shared with the gateway" (system folders, hidden folders); project folders are shared automatically.
 argument-hint: "[folder | list | remove [folder]]"
 allowed-tools: Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw share list), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw --version)
 ---

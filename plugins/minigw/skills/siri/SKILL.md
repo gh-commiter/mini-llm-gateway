@@ -1,6 +1,6 @@
 ---
 name: siri
-description: Ask Siri AI on the gateway Mac through Mini Gateway. Use for questions about the gateway Mac user's personal context (calendar, notes, documents that Apple Intelligence can use), or a short question about files that are named in it. Siri must be allowed for this Mac in Mini Gateway.
+description: Ask Siri AI on the gateway Mac through Mini Gateway. Use for questions about the gateway Mac user's personal context (calendar, notes, documents that Apple Intelligence can use), or a short question about files that are named in it. Siri must be allowed for this device in Mini Gateway.
 argument-hint: "[--profile <p>] <question>"
 allowed-tools: Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw -p --model *), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw --version)
 ---
