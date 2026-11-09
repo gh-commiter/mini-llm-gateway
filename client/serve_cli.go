@@ -786,6 +786,27 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	}
 	ctx, kill := context.WithCancel(r.Context())
 	defer kill()
+	var swapped atomic.Bool
+	stopMoves := func() {}
+	if unpinned { // N3c: brez pin vsak premik .git (tudi zamenjava, ki jo agent vrne pred naslednjo preverbo) ustavi tek
+		stop, ok := watchGitMoves(filepath.Join(wt, ".git"), func() {
+			if swapped.CompareAndSwap(false, true) {
+				kill()
+				killInside(wt) // tudi git, ki ga je claude že zagnal v klonu
+			}
+		})
+		if !ok && runtime.GOOS == "linux" {
+			return writeError(w, r.rid, 503, "Cannot watch the agent's clone (inotify) and nested bwrap does not work here, "+
+				"so Claude CLI cannot run in worktree mode on this gateway now: use sync")
+		}
+		if ok {
+			stopMoves = stop
+			defer stop()
+		}
+		if !s.hub.worktreeIntact(wt) { // zamenjava med preverbo zgoraj in začetkom nadzora
+			return writeError(w, r.rid, 400, "The agent's clone was changed (its .git was replaced): start a new conversation")
+		}
+	}
 	cmd := commandContext(ctx, name, cargs...)
 	cmd.Dir = dir
 	cmd.Env = append(append(append(agentEnv(os.Environ()), worktreeEnv...), runEnv...), "CLAUDE_CODE_DISABLE_FILE_MENTIONS=1") // brez ANTHROPIC_* (klic nazaj v router), žetonov GitHub/Copilot in agentov ključev (M1)
@@ -843,11 +864,11 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	}
 	defer close(stopPing)
 	// N3b: zamenjan .git klona (mv .git; mkdir .git s filter.*) bi med istim tekom izvedel lastni git Claude Code brez
-	// peskovnika: ob vsakem dogodku in vsako sekundo preverba, ob neujemanju se claude ustavi.
-	var swapped atomic.Bool
+	// peskovnika: ob vsakem dogodku in vsako sekundo preverba, ob neujemanju se claude ustavi (na Linux še inotify zgoraj).
 	watch := func() {
 		if unpinned && !swapped.Load() && !s.hub.worktreeIntact(wt) && swapped.CompareAndSwap(false, true) {
 			kill()
+			killInside(wt)
 		}
 	}
 	if unpinned {
@@ -880,6 +901,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		}
 	}
 	werr := cmd.Wait()
+	stopMoves()                                          // syncBack in konec seje .git klona lahko odstranita
 	run.stop()                                           // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb
 	if worktreeEnv != nil && !s.hub.worktreeIntact(wt) { // N3: naslednji zagon ga zavrne (H2)
 		s.log.Printf("%s claude: the agent's clone changed during the run (its .git was replaced)", r.rid)

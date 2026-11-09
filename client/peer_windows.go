@@ -332,3 +332,7 @@ func processSID(pid uint32) (string, error) {
 
 // bwrapReady: bwrap je le na Linuxu.
 func bwrapReady(string) string { return "" }
+
+// watchGitMoves (N3c): le Linux (inotify); drugje runCLI preverja klon vsako sekundo (macOS serve je za razvoj, na
+// Windows teče Claude v worktree le z »Allow commands without a sandbox«).
+func watchGitMoves(gitDir string, moved func()) (stop func(), ok bool) { return nil, false }

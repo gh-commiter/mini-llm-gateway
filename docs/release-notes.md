@@ -19,6 +19,7 @@
 
 ### Security
 
+- Worktree mode with Claude CLI on Linux `minigw serve` without the `.git` pin (nested bwrap restricted): the gateway now watches the clone's `.git` with inotify instead of only checking it every second, so a replaced `.git` stops the run and the processes in the clone even if it is put back before the next check. If the watch cannot be set up, the run is refused (use sync).
 - Worktree mode with read-only (`--minigw-ro`) is refused before the folder is cloned on the gateway, not after. `minigw serve`.
 
 ## 0.5.19
