@@ -2,7 +2,7 @@
 name: review
 description: Get an independent review of the current changes, a plan or a bug analysis from OpenAI Codex (GPT-6-Astra) through Mini Gateway. Use when the user asks for a second opinion or a review by another model.
 argument-hint: "[--rw] [--profile <p>] [what to review]"
-allowed-tools: Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw --minigw-ro -p --model *), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw -p --model *), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw --version), Bash(git diff*), Bash(git status*)
+allowed-tools: Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw --minigw-ro -p --model *), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw -p --model *), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw --version), Bash(git diff), Bash(git diff --staged), Bash(git status), Bash(git status --short)
 ---
 
 Profiles (`--name`, `profiles`, `--minigw-profile`, `<model>@<profile>`) need minigw 0.5.18 or newer: if the first line of `"${CLAUDE_PLUGIN_DATA}/bin/minigw" --version` is older, tell the user to run `/minigw:gw update` and do not use them (an older minigw passes them to claude).
