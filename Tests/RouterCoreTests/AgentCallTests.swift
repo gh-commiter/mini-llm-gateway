@@ -292,3 +292,25 @@ private func get(_ run: AgentRun, _ path: String, token: String?) async -> Int {
     defer { rw.stop() }
     #expect(ro.readOnly && !rw.readOnly)
 }
+
+/// L1 (kot TestAgentModeRefusesCommands): minigw v agentu zavrne ukaze, ki spreminjajo povezavo ali namestitev.
+@Test func agentModeRefusesCommands() throws {
+    let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    let exe = root.appendingPathComponent(".build/debug/MiniGW").path
+    try #require(FileManager.default.isExecutableFile(atPath: exe), "swift build first")
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("agent-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    try "rt\n".write(to: dir.appendingPathComponent("auth"), atomically: true, encoding: .utf8)
+    for c in ["connect", "reconnect", "disconnect", "profiles", "plugin", "uninstall"] {
+        let p = Process(), out = Pipe()
+        p.executableURL = URL(fileURLWithPath: exe)
+        p.arguments = [c, "--no-such-flag"]  // brez zavrnitve le napaka uporabe, nič se ne spremeni
+        p.environment = ["HOME": dir.path, "MINIGW_AGENT_URL": "http://127.0.0.1:1", "MINIGW_AGENT_AUTH_FILE": dir.appendingPathComponent("auth").path]
+        p.standardOutput = out; p.standardError = out
+        try p.run()
+        let text = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        p.waitUntilExit()
+        #expect(p.terminationStatus != 0 && text.contains("minigw runs inside an agent of the gateway (MINIGW_AGENT_URL): \(c) is not available here"), "\(c): \(text)")
+    }
+}

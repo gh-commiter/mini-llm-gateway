@@ -738,7 +738,7 @@ while let i = args.firstIndex(where: { $0 == "--minigw-profile" || $0.hasPrefix(
     } else { profileFlag = String(args[i].dropFirst("--minigw-profile=".count)); args.remove(at: i) }
 }
 
-if agentConn() != nil, let first = args.first, ["connect", "reconnect", "disconnect", "profiles"].contains(first) {
+if agentConn() != nil, let first = args.first, ["connect", "reconnect", "disconnect", "profiles", "plugin", "uninstall"].contains(first) {
     fail("minigw runs inside an agent of the gateway (MINIGW_AGENT_URL): \(first) is not available here")
 }
 if let c = agentConn(), args.first?.hasPrefix("-") == true, args.contains("-p") || args.contains("--print") { agentAsk(c, args) }
