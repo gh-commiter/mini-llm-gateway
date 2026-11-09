@@ -19,6 +19,7 @@
 
 ### Security
 
+- Windows `minigw` folder share: names ending in a dot or space and reserved device names (`CON`, `NUL`, `COM1` …) are refused.
 - Release builds also require `install.sh`, `scripts` and `plugins` to be committed (`install.sh` is in the signed `SHA256SUMS`).
 - Mac gateway, direct mode: copying a folder (WebDAV COPY) copies only files and folders, not symbolic links, as `minigw serve` does.
 - Mac gateway: a request body over 1 MB from another computer is read only after the token in its header is valid, and at most 256 connections wait for a full request at a time (as `minigw serve`).

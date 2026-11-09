@@ -373,7 +373,7 @@ func davResolve(path, prefix, root string) (string, []string, bool) {
 		}
 		name, err := url.PathUnescape(c)
 		if err != nil || name == "." || name == ".." || strings.ContainsAny(name, "/\x00") ||
-			(runtime.GOOS == "windows" && strings.ContainsAny(name, `\:`)) {
+			(runtime.GOOS == "windows" && (strings.ContainsAny(name, `\:`) || winBadName(name))) {
 			return "", nil, false
 		}
 		comps = append(comps, name)
@@ -399,6 +399,22 @@ func davResolve(path, prefix, root string) (string, []string, bool) {
 		return "", nil, false
 	}
 	return full, comps, true
+}
+
+// winBadName (I1): ime, ki ga Windows ne shrani tako (konča s piko ali presledkom) ali je naprava (CON, NUL, COM1 …,
+// tudi s končnico).
+func winBadName(name string) bool {
+	if strings.HasSuffix(name, ".") || strings.HasSuffix(name, " ") {
+		return true
+	}
+	base, _, _ := strings.Cut(name, ".")
+	b := strings.ToUpper(strings.TrimRight(base, " "))
+	switch b {
+	case "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$":
+		return true
+	}
+	r := []rune(b)
+	return len(r) == 4 && (strings.HasPrefix(b, "COM") || strings.HasPrefix(b, "LPT")) && strings.ContainsRune("0123456789¹²³", r[3])
 }
 
 func samePath(a, b string) bool {

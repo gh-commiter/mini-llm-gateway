@@ -28,6 +28,17 @@ func TestDavResolveStaysInRoot(t *testing.T) {
 			t.Fatalf("%s escaped root", p)
 		}
 	}
+	// I1: Windows ne shrani imena s piko ali presledkom na koncu, naprave (tudi s končnico) niso datoteke
+	for _, n := range []string{"a.", "a ", "CON", "nul.txt", "Com1", "lpt9.log", "COM¹", "aux .x", "CONIN$"} {
+		if !winBadName(n) {
+			t.Errorf("%q accepted", n)
+		}
+	}
+	for _, n := range []string{"a.txt", "console", "com10", "nul1", ".git", "COM", "lptx"} {
+		if winBadName(n) {
+			t.Errorf("%q refused", n)
+		}
+	}
 	if resp := davHandle("DELETE", "/dav/s", nil, nil, root, "/dav/s"); resp.Status != 403 {
 		t.Fatalf("root delete allowed: %d", resp.Status)
 	}
