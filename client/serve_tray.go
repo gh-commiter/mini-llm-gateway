@@ -71,6 +71,9 @@ func trayCommand(args []string) {
 				fmt.Fprintln(&log, "minigw: "+err.Error())
 			}
 		}
+		if slices.Contains(args, "--purge") { // po purge ne ustvarimo mape znova
+			return
+		}
 		if d, err := os.UserCacheDir(); err == nil && os.MkdirAll(filepath.Join(d, "minigw"), 0o700) == nil {
 			if f, err := os.OpenFile(filepath.Join(d, "minigw", "minigw-msi.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
 				f.Write(log.Bytes())
