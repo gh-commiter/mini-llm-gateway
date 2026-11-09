@@ -18,6 +18,8 @@ BASE="${MINIGW_BASE:-https://github.com/$REPO/releases/latest/download}"   # MIN
 say() { printf '%s\n' "$*"; }
 die() { printf 'install: %s\n' "$*" >&2; exit 1; }
 
+# Vse v main: skrajšan prenos (curl … | sh) se ne izvede napol.
+main() {
 ALLOW_DOWNGRADE=0 UNINSTALL=0 PURGE=0 PARTS=""
 while [ $# -gt 0 ]; do
   case $1 in
@@ -144,7 +146,7 @@ if [ $PLUGIN = 1 ]; then
   "$DIR/minigw" plugin install || say "The plugin was not added; later: minigw plugin install"
 fi
 if [ $GATEWAY = 1 ]; then
-  [ -f "$HOME/.config/minigw/serve.json" ] || "$DIR/minigw" serve init
+  "$DIR/minigw" serve init   # keeps an existing config; prints the connect line for clients
   "$DIR/minigw" serve install || die "minigw serve install failed"
 fi
 
@@ -156,3 +158,6 @@ if [ $# -ge 1 ]; then
 else
   say "Next: minigw connect <gateway>[:port] --token <token>"
 fi
+}
+
+main "$@"

@@ -162,7 +162,7 @@ user only, without admin rights, into `%LocalAppData%\Programs\Mini Gateway`. It
 - Without the window: `msiexec /i minigw-windows-amd64.msi /passive` installs all parts; choose them with
   `ADDLOCAL=Client,Plugin` (any list; `Client` is always added).
 - Without Claude Code (no `claude` command and no `~/.claude`) the plugin part adds nothing; run
-  `minigw plugin install` later. What the installer ran is in `%TEMP%\minigw-msi.log`.
+  `minigw plugin install` later. What the installer ran is in `%LOCALAPPDATA%\minigw\minigw-msi.log`.
 - **Add the gateway later** to a client-only install: `minigw serve install` (or `/minigw:gw install`) runs the
   release's MSI with `ADDLOCAL=Client,Gateway` (the plugin part stays as it is).
 - **Change parts:** Settings → Apps → Installed apps → Mini Gateway → **Modify**, or open the MSI again: tick or
@@ -223,6 +223,8 @@ the MSI, or `rm ~/.local/bin/minigw`.
 
 - `brew uninstall --zap --cask minigw` runs `minigw uninstall --purge --yes` while minigw is still there: plugin data,
   profiles (its own Keychain items), `~/Library/Application Support/minigw`, scratch folders.
+- Run `brew uninstall --zap --cask mini-gateway` while logged in at the Mac: the app's confirmation needs the desktop
+  session. Over SSH the dialog cannot show, so the Keychain items stay (the files still go).
 - `brew uninstall --zap --cask mini-gateway` quits the app, lets the app itself delete its Keychain items and its
   login item (`MiniGateway --zap`: it asks you first, Cancel is the default; Keychain asks nothing, because the app
   created them), then moves

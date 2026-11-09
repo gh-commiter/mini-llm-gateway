@@ -4,12 +4,12 @@ package main
 // meni iz stanja (preizkusljiv), dnevnik z menjavo, zagon routerja. Win32 je v tray_windows.go.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"net"
 	"net/url"
 	"os"
@@ -51,28 +51,31 @@ func trayCommand(args []string) {
 		return
 	}
 	// MSI (client/minigw.wxs): minigw.exe plugin …|uninstall … brez okna konzole (msiexec bi ga pokazal), največ 60 s;
-	// izpis v %TEMP%\minigw-msi.log (brez žetonov: le poti in imena profilov).
+	// izpis v %LOCALAPPDATA%\minigw\minigw-msi.log (brez žetonov: le poti in imena profilov).
 	if len(args) > 1 && args[0] == "msi" && (args[1] == "plugin" || args[1] == "uninstall") {
 		exe, err := os.Executable()
 		if err != nil {
 			return
 		}
-		var log io.Writer = io.Discard
-		if f, err := os.OpenFile(filepath.Join(os.TempDir(), "minigw-msi.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
-			defer f.Close()
-			log = f
-		}
-		fmt.Fprintln(log, time.Now().Format(time.RFC3339)+" minigw "+strings.Join(args[1:], " "))
+		// Izpis najprej v pomnilnik: minigw uninstall med tekom briše %LOCALAPPDATA%\minigw (odprta datoteka bi to ustavila).
+		var log bytes.Buffer
+		fmt.Fprintln(&log, time.Now().Format(time.RFC3339)+" minigw "+strings.Join(args[1:], " "))
 		if slices.Equal(args[1:], []string{"plugin", "install"}) && findClaudeFn() == "" && errFromStat(claudeDir()) != nil {
-			fmt.Fprintln(log, "Claude Code not found (no claude command, no "+claudeDir()+"): plugin not added; later: minigw plugin install")
-			return
+			fmt.Fprintln(&log, "Claude Code not found (no claude command, no "+claudeDir()+"): plugin not added; later: minigw plugin install")
+		} else {
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			cmd := commandContext(ctx, filepath.Join(filepath.Dir(exe), "minigw.exe"), args[1:]...)
+			cmd.Stdout, cmd.Stderr = &log, &log
+			if err := cmd.Run(); err != nil {
+				fmt.Fprintln(&log, "minigw: "+err.Error())
+			}
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer cancel()
-		cmd := commandContext(ctx, filepath.Join(filepath.Dir(exe), "minigw.exe"), args[1:]...)
-		cmd.Stdout, cmd.Stderr = log, log
-		if err := cmd.Run(); err != nil {
-			fmt.Fprintln(log, "minigw: "+err.Error())
+		if d, err := os.UserCacheDir(); err == nil && os.MkdirAll(filepath.Join(d, "minigw"), 0o700) == nil {
+			if f, err := os.OpenFile(filepath.Join(d, "minigw", "minigw-msi.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
+				f.Write(log.Bytes())
+				f.Close()
+			}
 		}
 		return
 	}
