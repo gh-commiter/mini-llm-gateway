@@ -580,6 +580,22 @@ func TestProtectedPathShortAndFoldedNames(t *testing.T) {
 	if protectedPath("src/git~x.txt") {
 		t.Error("git~x is not a short name")
 	}
+	// N10: na Windows vsako kratko ime 8.3 (druga pot do .claude, .vscode, .husky, .githooks)
+	windowsNames = true
+	defer func() { windowsNames = runtime.GOOS == "windows" }()
+	for _, p := range []string{"CLAUDE~1/settings.json", "VSCODE~1/tasks.json", "HUSKY~1/pre-commit", "a/GITHOO~1/x", "x~2.txt"} {
+		if !protectedPath(p) {
+			t.Errorf("%s should be protected on Windows", p)
+		}
+	}
+	root := t.TempDir()
+	r, _ := filepath.EvalSymlinks(root)
+	if _, _, ok := davResolve("/dav/s/CLAUDE~1/settings.json", "/dav/s", r); ok {
+		t.Error("8.3 short name accepted by davResolve")
+	}
+	if protectedPath("src/a~b.txt") || protectedPath("src/~x") {
+		t.Error("~ without a digit refused")
+	}
 }
 
 // .gitignore kot povezava ven iz korena ali FIFO: prezrta, brez čakanja.

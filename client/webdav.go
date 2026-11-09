@@ -373,7 +373,7 @@ func davResolve(path, prefix, root string) (string, []string, bool) {
 		}
 		name, err := url.PathUnescape(c)
 		if err != nil || name == "." || name == ".." || strings.ContainsAny(name, "/\x00") ||
-			(runtime.GOOS == "windows" && (strings.ContainsAny(name, `\:`) || winBadName(name))) {
+			(windowsNames && (strings.ContainsAny(name, `\:`) || winBadName(name))) {
 			return "", nil, false
 		}
 		comps = append(comps, name)
@@ -401,10 +401,10 @@ func davResolve(path, prefix, root string) (string, []string, bool) {
 	return full, comps, true
 }
 
-// winBadName (I1): ime, ki ga Windows ne shrani tako (konča s piko ali presledkom) ali je naprava (CON, NUL, COM1 …,
-// tudi s končnico).
+// winBadName (I1, N10): ime, ki ga Windows ne shrani tako (konča s piko ali presledkom), naprava (CON, NUL, COM1 …,
+// tudi s končnico) ali kratko ime 8.3 (CLAUDE~1: druga pot do zaščitene mape).
 func winBadName(name string) bool {
-	if strings.HasSuffix(name, ".") || strings.HasSuffix(name, " ") {
+	if strings.HasSuffix(name, ".") || strings.HasSuffix(name, " ") || shortName.MatchString(name) {
 		return true
 	}
 	base, _, _ := strings.Cut(name, ".")
