@@ -15,6 +15,14 @@ struct MiniGatewayApp: App {
     @NSApplicationDelegateAdaptor private var delegate: AppDelegate
     @StateObject private var state = AppState()
 
+    /// brew uninstall --zap (Casks/mini-gateway.rb): »MiniGateway --zap« izbriše vnose aplikacije v Keychainu (le ona jih
+    /// izbriše brez vprašanja; nikoli CLI security) in zagon ob prijavi, nato konča brez okna.
+    init() {
+        guard CommandLine.arguments.dropFirst().first == "--zap" else { return }
+        try? SMAppService.mainApp.unregister()
+        exit(Keychain().deleteAll() ? 0 : 1)
+    }
+
     var body: some Scene {
         MenuBarExtra {
             MenuView().environmentObject(state)

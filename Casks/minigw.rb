@@ -38,6 +38,14 @@ cask "minigw" do
     end
   end
 
+  # brew uninstall --zap: minigw uninstall --purge --yes (minigw je še tu) odstrani še nastavitve, profile (Keychain,
+  # z minigw-ovimi klici) in mapo vtičnika; brew uninstall brez --zap jih pusti kot doslej.
+  zap script: {
+    executable:   "/bin/sh",
+    args:         ["-c", '[ ! -x "$0" ] || "$0" uninstall --purge --yes', "#{HOMEBREW_PREFIX}/bin/minigw"],
+    must_succeed: false,
+  }
+
   caveats <<~EOS
     The Claude Code plugin (minigw@mini-gateway) is added to ~/.claude/settings.json; Claude Code installs it in the
     background the next time you start claude (or run /reload-plugins). To skip it, set "minigw@mini-gateway": false

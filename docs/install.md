@@ -12,6 +12,7 @@ ways, and what the plugin does for you.
 - [Windows installer (MSI)](#windows-installer-msi)
 - [Connect a client](#connect-a-client)
 - [Plugin and uninstall: one command everywhere](#plugin-and-uninstall-one-command-everywhere)
+- [Upgrade and uninstall per system](#upgrade-and-uninstall-per-system)
 - [Build from source](#build-from-source)
 
 ## What the plugin does
@@ -22,7 +23,7 @@ ways, and what the plugin does for you.
   release into its data folder; it checks the signed `SHA256SUMS` and, on macOS, the Developer ID signature. It works
   on macOS, Windows (Git Bash) and Linux.
 - **Updates:** when the installed gateway is older than the release, the session start shows one line with
-  `/minigw:gw update`. Nothing is updated without you, because an update stops the agent requests that run on the
+  `/minigw:gw update` (without a gateway on this computer: the MSI to run on Windows, the file to replace on Linux). Nothing is updated without you, because an update stops the agent requests that run on the
   gateway.
 - **Your session** does not run through the gateway, so it keeps your normal Claude login, Remote Control and so on.
 - The agent skills need the standalone `claude` command on PATH (the VS Code extension's bundled CLI is not enough).
@@ -87,8 +88,10 @@ the plugin and its marketplace again; `brew upgrade` keeps them.
 | Linux x64 / ARM64 | `minigw-linux-amd64` / `minigw-linux-arm64` (static, any distribution) |
 | Settings in the terminal (optional, for a gateway) | `minigw-tui-<system>-<arch>` (`.exe` on Windows), next to `minigw` as `minigw-tui` |
 
-[Check the download](#check-a-download), rename it to `minigw` (`minigw.exe` on Windows) and put it in your `PATH`.
-Claude Code (`claude`) must be in your `PATH` too.
+On Windows the [MSI](#windows-installer-msi) does this for you. On Linux, [check the download](#check-a-download) and
+put it in `~/.local/bin` as `minigw`: there the plugin finds it and `minigw serve install` updates it. Claude Code
+(`claude`) must be in your `PATH` too. Then add the plugin with `minigw plugin install`. A gateway on Linux:
+`minigw serve init && minigw serve install` ([below](#gateway-on-windows-or-linux)).
 
 ## Check a download
 
@@ -101,10 +104,10 @@ curl -fsSLO $R/minigw-linux-amd64 -O $R/SHA256SUMS -O $R/SHA256SUMS.sig
 echo 'minigw-release namespaces="minigw-release" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINt++OHn+HHmR9mmA2UI+B0osuilO2GP0ddEzNp0GTrH' > signers
 ssh-keygen -Y verify -f signers -I minigw-release -n minigw-release -s SHA256SUMS.sig < SHA256SUMS
 grep ' minigw-linux-amd64$' SHA256SUMS | sha256sum -c -
-mv minigw-linux-amd64 minigw && chmod +x minigw && sudo mv minigw /usr/local/bin/
+mkdir -p ~/.local/bin && install -m 755 minigw-linux-amd64 ~/.local/bin/minigw
 # For a gateway, also minigw gw settings (the same steps, then next to minigw):
 curl -fsSLO $R/minigw-tui-linux-amd64 && grep ' minigw-tui-linux-amd64$' SHA256SUMS | sha256sum -c -
-mv minigw-tui-linux-amd64 minigw-tui && chmod +x minigw-tui && sudo mv minigw-tui /usr/local/bin/
+install -m 755 minigw-tui-linux-amd64 ~/.local/bin/minigw-tui
 ```
 
 On Windows (PowerShell; `ssh-keygen` comes with Windows 10 and later). `cmd /c` passes `SHA256SUMS` unchanged, which a
@@ -133,15 +136,27 @@ No admin rights needed. Details, the tray and the settings page: [gateway.md →
 
 ## Windows installer (MSI)
 
-Instead of the two commands, download `minigw-windows-amd64.msi` (or `-arm64.msi`) from the
-[latest release](https://github.com/gh-commiter/mini-llm-gateway/releases/latest) and open it.
+Download `minigw-windows-amd64.msi` (or `-arm64.msi`) from the
+[latest release](https://github.com/gh-commiter/mini-llm-gateway/releases/latest) and open it. It installs for this
+user only, without admin rights, into `%LocalAppData%\Programs\Mini Gateway`. Its window lets you choose the parts:
 
-- It installs for this user only, without admin rights, the same as `minigw serve install`: `minigw.exe`,
-  `minigw-tray.exe` and `minigw-tui.exe` (`minigw gw settings`) in `%LocalAppData%\Programs\Mini Gateway`, minigw on your PATH, a Start menu entry, and the tray
-  at sign-in.
-- It then starts the tray, which creates the config on first start. Copy the token from its menu (**Copy Token**).
-- Running a newer MSI updates it. Remove it in Settings → Apps (not with `minigw serve uninstall`); the config and keys
-  stay.
+| Part | What it adds | Default |
+|---|---|---|
+| Client (`Client`) | `minigw.exe` on your PATH, and `minigw-tray.exe` (the installer runs minigw through it, without a console window) | always |
+| Gateway (`Gateway`) | the tray at sign-in, a Start menu entry, `minigw-tui.exe` (`minigw gw settings`); it starts the tray, which creates the config on first start: copy the token from its menu (**Copy Token**) | on |
+| Claude Code plugin (`Plugin`) | runs `minigw plugin install`, which adds `minigw@mini-gateway` and points the plugin at this `minigw.exe` | on |
+
+- Without the window: `msiexec /i minigw-windows-amd64.msi /passive` installs all parts; choose them with
+  `ADDLOCAL=Client,Plugin` (any list; `Client` is always added).
+- **Change parts:** Settings → Apps → Installed apps → Mini Gateway → **Modify**, or open the MSI again: tick or
+  untick, then **Change**.
+- **Upgrade:** open (or `/passive`) a newer MSI. No questions, the chosen parts stay, and the tray starts again only if
+  it was running. `/minigw:gw update` downloads and runs it for you on a gateway.
+- **Uninstall:** Settings → Apps → **Uninstall** removes the parts (tray start, PATH entry, Start menu, the plugin
+  entries that `minigw plugin install` added; a `false` you set stays) and keeps the settings and profiles for a later
+  install. To remove them too: **Modify** → tick *Also remove settings and profiles* → **Remove**, or
+  `msiexec /x <the installed version's MSI> PURGE=1 /passive`, or `minigw uninstall --purge` before **Uninstall**. PURGE runs `minigw uninstall --purge --yes` before the files
+  go (profiles and keys in Credential Manager, `%AppData%\minigw`). Not with `minigw serve uninstall`.
 - The MSI is not code-signed yet, so SmartScreen warns: **More info → Run anyway**. Check it first against the signed
   `SHA256SUMS` ([Check a download](#check-a-download)).
 - The ARM64 package needs Windows 11.
@@ -178,6 +193,24 @@ folder first. `minigw plugin` and `minigw uninstall` refuse to run as root: run 
 asks first (`--yes` skips the question; without a terminal it needs `--yes`) and keeps settings and profiles unless
 you add `--purge`. It does not remove minigw itself; it prints how: `brew uninstall --cask minigw`, Settings → Apps for
 the MSI, or `rm ~/.local/bin/minigw`.
+
+## Upgrade and uninstall per system
+
+| | Install | Choose parts | Upgrade | Uninstall (settings stay) | Also settings and profiles |
+|---|---|---|---|---|---|
+| macOS client | `brew install --cask …/minigw` (client + plugin) or `install.sh` | `minigw plugin install`/`uninstall` | `brew upgrade` | `brew uninstall --cask minigw` | `brew uninstall --zap --cask minigw` |
+| macOS gateway | `brew install --cask …/mini-gateway` or the DMG | | `brew upgrade`, or the app | `brew uninstall --cask mini-gateway` | `brew uninstall --zap --cask mini-gateway` |
+| Windows | the [MSI](#windows-installer-msi) | MSI window, **Modify**, or `ADDLOCAL=` | a newer MSI | Settings → Apps → Uninstall | **Modify** → tick → Remove, or `PURGE=1` |
+| Linux | file in `~/.local/bin` ([Check a download](#check-a-download)) | `minigw plugin install`, `minigw serve install` | replace the file, or `/minigw:gw update` with a gateway | `minigw uninstall`, then `rm ~/.local/bin/minigw ~/.local/bin/minigw-tui` | `minigw uninstall --purge` first |
+
+- `brew uninstall --zap --cask minigw` runs `minigw uninstall --purge --yes` while minigw is still there: plugin data,
+  profiles (its own Keychain items), `~/Library/Application Support/minigw`, scratch folders.
+- `brew uninstall --zap --cask mini-gateway` quits the app, lets the app itself delete its Keychain items and its
+  login item (`MiniGateway --zap`; macOS asks nothing, because the app created them), then moves
+  `~/Library/Application Support/Mini Gateway`, `~/Library/Caches/dev.trojar.minigateway` (scratch), its preferences,
+  HTTP storage and saved window state to the Trash.
+- Linux uses no installer of its own: `minigw serve install` puts `minigw` and `minigw-tui` in `~/.local/bin` with a
+  systemd user unit, and `minigw uninstall` removes the unit, the plugin entries and scratch folders.
 
 ## Build from source
 
