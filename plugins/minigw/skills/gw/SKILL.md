@@ -2,7 +2,7 @@
 name: gw
 description: Install, update, check or remove Mini Gateway on this computer (Windows and Linux run minigw serve, macOS runs the Mini Gateway app), and manage it (devices, providers, Claude CLI, token, settings page). Use for /minigw:gw install|update|uninstall|status and when the user wants to change the gateway on this computer.
 argument-hint: install | update | uninstall | status | devices [allow <id> [--name N] | rename <id> --name N | deny <id>] | provider add|remove|list|models | claude … | copilot token [remove] | autostart [on|off] | token [rotate] | settings | modes
-allowed-tools: Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw gw *), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw serve *), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw status), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw profiles), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw connect *), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw --version)
+allowed-tools: Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw gw status), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw gw devices), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw gw devices history *), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw gw sessions), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw gw provider list), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw gw autostart), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw status), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw profiles), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw --version)
 ---
 
 Use the plugin's own minigw and find the system:

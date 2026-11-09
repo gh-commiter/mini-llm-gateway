@@ -11,6 +11,8 @@ import (
 // macOS in drugi: router je aplikacija Mini Gateway (PeerProcess); minigw serve tu je za razvoj, brez preverjanja.
 func agentWrap(exe string, args []string, m agentMounts) (string, []string) { return exe, args }
 
+func pinWrap(cfgDir, exe string, args, pins []string) (string, []string) { return exe, args }
+
 // agentSandboxed: brez preverjenega sandboxa, ki skrije skrivnosti routerja: Codex in Grok le z izrecnim dovoljenjem (F4).
 func agentSandboxed(cfgDir string) bool { return false }
 

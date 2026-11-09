@@ -235,6 +235,12 @@ func TestAgentModeConnection(t *testing.T) {
 
 // minigw -p in agentu: orodje le za modele agentov; posrednik iz okolja tudi za loopback.
 func TestAgentAskBodyAndProxy(t *testing.T) {
+	if m, w, bad := agentAskArgs([]string{"-p", "--model", "m", "--", "- fix x", "--y"}); m != "m" || bad != "" || strings.Join(w, "|") != "- fix x|--y" {
+		t.Fatalf("after --: %q %q %q", m, w, bad)
+	}
+	if _, _, bad := agentAskArgs([]string{"-p", "--model", "m", "--verbose", "q"}); bad != "--verbose" {
+		t.Fatalf("flag accepted: %q", bad)
+	}
 	if b := string(agentBody("claude-codex", "q")); !strings.Contains(b, `"tools"`) || !strings.Contains(b, `"stream":true`) {
 		t.Fatalf("agent model body: %s", b)
 	}

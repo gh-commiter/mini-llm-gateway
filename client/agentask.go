@@ -46,21 +46,32 @@ func agentBody(model, question string) []byte {
 	return b
 }
 
-// agentAsk: minigw -p --model <id> "vprašanje" (ali vprašanje na stdin); besedilo odgovora sproti na stdout.
-func agentAsk(c *connection, args []string) {
-	model, words := "", []string{}
+// agentAskArgs: model in besede vprašanja iz »-p --model <id> [--] vprašanje«; po »--« je vse vprašanje (N5).
+// bad = prva nedovoljena možnost.
+func agentAskArgs(args []string) (model string, words []string, bad string) {
 	for i := 0; i < len(args); i++ {
 		switch a := args[i]; {
+		case a == "--":
+			return model, append(words, args[i+1:]...), ""
 		case a == "-p" || a == "--print":
 		case a == "--model" && i+1 < len(args):
 			model, i = args[i+1], i+1
 		case strings.HasPrefix(a, "--model="):
 			model = strings.TrimPrefix(a, "--model=")
 		case strings.HasPrefix(a, "-"):
-			fail("inside a gateway agent, minigw -p takes only --model <id> and the question, not " + a)
+			return model, words, a
 		default:
 			words = append(words, a)
 		}
+	}
+	return model, words, ""
+}
+
+// agentAsk: minigw -p --model <id> "vprašanje" (ali vprašanje na stdin); besedilo odgovora sproti na stdout.
+func agentAsk(c *connection, args []string) {
+	model, words, bad := agentAskArgs(args)
+	if bad != "" {
+		fail("inside a gateway agent, minigw -p takes only --model <id> and the question, not " + bad)
 	}
 	if model == "" {
 		fail(`usage: minigw -p --model <id> "question"   (minigw models lists the models)`)

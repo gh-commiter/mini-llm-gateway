@@ -741,10 +741,11 @@ func main() {
 
 // claudeSafe: možnosti claude, ki jih minigw pod Claude Code preda naprej (H3); true = ima vrednost. Druge (npr.
 // --dangerously-skip-permissions, --permission-mode, --allowedTools, --settings, --mcp-config, --add-dir, --plugin-dir)
-// bi gnezdenemu claude, ki ga vodi prehod, dale dovoljenja brez vprašanja uporabnika.
-var claudeSafe = map[string]bool{"-p": false, "--print": false, "--model": true, "--output-format": true, "--input-format": true,
-	"--verbose": false, "--max-turns": true, "--append-system-prompt": true, "--fallback-model": true, "--session-id": true,
-	"-c": false, "--continue": false, "-r": false, "--resume": false, "-h": false, "--help": false}
+// bi gnezdenemu claude, ki ga vodi prehod, dale dovoljenja brez vprašanja uporabnika. --input-format stream-json sprejme
+// nadzorne zahteve na stdin (mcp_set_servers, apply_flag_settings, set_permission_mode; N1); -c/-r/--session-id
+// bi poslali prepis druge seje uporabnika prehodu. Skilli rabijo le -p in --model.
+var claudeSafe = map[string]bool{"-p": false, "--print": false, "--model": true, "--output-format": true,
+	"--verbose": false, "--max-turns": true, "--append-system-prompt": true, "--fallback-model": true, "-h": false, "--help": false}
 
 // unsafeClaudeFlag: prva možnost claude, ki ni na seznamu claudeSafe ("" = vse dovoljene). Velja, ko minigw teče v
 // Claude Code (CLAUDECODE), razen če je uporabnik nastavil MINIGW_ALLOW_UNSAFE_FLAGS=1. Po »--« so le argumenti.

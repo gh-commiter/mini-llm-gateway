@@ -936,7 +936,8 @@ func TestUnsafeClaudeFlagsInsideClaudeCode(t *testing.T) {
 		{"--dangerously-skip-permissions", "-p", "x"}, {"-p", "--permission-mode", "bypassPermissions", "x"},
 		{"-p", "--permission-mode=bypassPermissions", "x"}, {"-p", "--allowedTools", "Bash", "x"}, {"--settings", "s.json", "-p", "x"},
 		{"--mcp-config", "m.json"}, {"--plugin-dir", "d"}, {"--add-dir", "/"}, {"-p", "--model", "m", "--allow-dangerously-skip-permissions"},
-		{"-pc", "x"}, {"-p=1"}, {"--Model", "m"},
+		{"-pc", "x"}, {"-p=1"}, {"--Model", "m"}, {"-p", "--model", "m", "--input-format", "stream-json"},
+		{"-p", "--input-format=text"}, {"-r", "id", "-p", "x"}, {"--resume", "id"}, {"-c", "-p", "x"}, {"--session-id", "s", "-p"},
 	} {
 		if unsafeClaudeFlag(a, env) == "" {
 			t.Errorf("%q accepted", a)
@@ -944,7 +945,8 @@ func TestUnsafeClaudeFlagsInsideClaudeCode(t *testing.T) {
 	}
 	for _, a := range [][]string{
 		{"-p", "--model", "claude-codex-gpt-6.1-sol", "task"}, {"-p", "--model", "--dangerously-skip-permissions", "x"}, // vrednost --model
-		{"--session-id", "s", "-p", "--model=m", "x"}, {"-p", "--", "--add-dir"}, {"--help"}, {"-r", "id", "-p", "x"}, nil,
+		{"-p", "--model=m", "--output-format", "stream-json", "--verbose", "x"}, {"-p", "--", "--add-dir"}, {"--help"},
+		{"-p", "--model", "m", "--", "- fix x"}, nil,
 	} {
 		if f := unsafeClaudeFlag(a, env); f != "" {
 			t.Errorf("%q refused (%s)", a, f)

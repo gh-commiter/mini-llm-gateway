@@ -56,10 +56,10 @@ public enum Profiles {
 
     /// Možnosti claude, ki jih minigw pod Claude Code preda naprej (H3); true = ima vrednost. Druge (npr.
     /// --dangerously-skip-permissions, --permission-mode, --allowedTools, --settings, --mcp-config, --add-dir, --plugin-dir)
-    /// bi gnezdenemu claude, ki ga vodi prehod, dale dovoljenja brez vprašanja uporabnika (kot Go claudeSafe).
-    static let claudeSafe: [String: Bool] = ["-p": false, "--print": false, "--model": true, "--output-format": true, "--input-format": true,
-        "--verbose": false, "--max-turns": true, "--append-system-prompt": true, "--fallback-model": true, "--session-id": true,
-        "-c": false, "--continue": false, "-r": false, "--resume": false, "-h": false, "--help": false]
+    /// bi gnezdenemu claude, ki ga vodi prehod, dale dovoljenja brez vprašanja uporabnika (kot Go claudeSafe). Brez
+    /// --input-format (stream-json: nadzorne zahteve na stdin, N1) in -c/-r/--session-id (prepis druge seje gre prehodu).
+    static let claudeSafe: [String: Bool] = ["-p": false, "--print": false, "--model": true, "--output-format": true,
+        "--verbose": false, "--max-turns": true, "--append-system-prompt": true, "--fallback-model": true, "-h": false, "--help": false]
 
     /// Prva možnost claude, ki ni na seznamu claudeSafe (nil = vse dovoljene), ko minigw teče v Claude Code (CLAUDECODE),
     /// razen ob MINIGW_ALLOW_UNSAFE_FLAGS=1 uporabnika. Po »--« so le argumenti (kot Go unsafeClaudeFlag).

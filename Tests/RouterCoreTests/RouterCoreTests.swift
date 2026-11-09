@@ -1691,11 +1691,13 @@ final class FakeMinigw: @unchecked Sendable {
     for a in [["--dangerously-skip-permissions", "-p", "x"], ["-p", "--permission-mode", "bypassPermissions", "x"],
               ["-p", "--permission-mode=bypassPermissions", "x"], ["-p", "--allowedTools", "Bash", "x"], ["--settings", "s.json", "-p", "x"],
               ["--mcp-config", "m.json"], ["--plugin-dir", "d"], ["--add-dir", "/"], ["-p", "--model", "m", "--allow-dangerously-skip-permissions"],
-              ["-pc", "x"], ["-p=1"], ["--Model", "m"]] {
+              ["-pc", "x"], ["-p=1"], ["--Model", "m"], ["-p", "--model", "m", "--input-format", "stream-json"],
+              ["-p", "--input-format=text"], ["-r", "id", "-p", "x"], ["--resume", "id"], ["-c", "-p", "x"], ["--session-id", "s", "-p"]] {
         #expect(Profiles.unsafeClaudeFlag(a, env: env) != nil, "\(a)")
     }
     for a in [["-p", "--model", "claude-codex-gpt-6.1-sol", "task"], ["-p", "--model", "--dangerously-skip-permissions", "x"],
-              ["--session-id", "s", "-p", "--model=m", "x"], ["-p", "--", "--add-dir"], ["--help"], ["-r", "id", "-p", "x"], []] {
+              ["-p", "--model=m", "--output-format", "stream-json", "--verbose", "x"], ["-p", "--", "--add-dir"], ["--help"],
+              ["-p", "--model", "m", "--", "- fix x"], []] {
         #expect(Profiles.unsafeClaudeFlag(a, env: env) == nil, "\(a)")
     }
     #expect(Profiles.unsafeClaudeFlag(["--dangerously-skip-permissions"], env: [:]) == nil)

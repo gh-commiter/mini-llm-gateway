@@ -771,7 +771,11 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		return st
 	}
 	defer func() { <-s.procs }()
-	cmd := commandContext(r.Context(), exe[0], append(exe[1:], args...)...)
+	name, cargs := exe[0], append(exe[1:], args...)
+	if worktreeEnv != nil { // N3: .git klona je med tekom točka priklopa (kot pins pri Codex), zamenjati ga ni mogoče
+		name, cargs = pinWrap(s.cfgDir, name, cargs, []string{filepath.Join(wt, ".git")})
+	}
+	cmd := commandContext(r.Context(), name, cargs...)
 	cmd.Dir = dir
 	cmd.Env = append(append(agentEnv(os.Environ()), worktreeEnv...), runEnv...) // brez ANTHROPIC_* (klic nazaj v router), žetonov GitHub/Copilot in agentov ključev (M1)
 	cmd.Stdin = strings.NewReader(prompt)
@@ -842,7 +846,10 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		}
 	}
 	werr := cmd.Wait()
-	run.stop() // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb
+	run.stop()                                           // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb
+	if worktreeEnv != nil && !s.hub.worktreeIntact(wt) { // N3: naslednji zagon ga zavrne (H2)
+		s.log.Printf("%s claude: the agent's clone changed during the run (its .git was replaced)", r.rid)
+	}
 	if r.Context().Err() != nil {
 		return 499 // Claude Code je prekinil
 	}

@@ -72,6 +72,7 @@ func agentAsk(_ c: Connection, _ args: [String]) -> Never {
     while i < args.count {
         let a = args[i]
         switch true {
+        case a == "--": words += args[(i + 1)...]; i = args.count  // N5: po »--« je vse vprašanje
         case a == "-p" || a == "--print": break
         case a == "--model" && i + 1 < args.count: model = args[i + 1]; i += 1
         case a.hasPrefix("--model="): model = String(a.dropFirst(8))

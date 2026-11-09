@@ -28,3 +28,22 @@ func TestAgentReaperKillsLeftovers(t *testing.T) {
 		t.Fatalf("orphan %d still runs", pid)
 	}
 }
+
+// N3: pod pinWrap .git ni mogoče preimenovati (točka priklopa), drugo v mapi pa ja.
+func TestPinWrapGitCannotBeRenamed(t *testing.T) {
+	if bwrapReady(t.TempDir()) == "" {
+		t.Skip("bwrap not available")
+	}
+	wt := t.TempDir()
+	os.Mkdir(wt+"/.git", 0o755)
+	os.WriteFile(wt+"/f", []byte("x"), 0o644)
+	name, args := pinWrap(t.TempDir(), "/bin/sh", []string{"-c", "mv f g && ! mv .git .g 2>/dev/null"}, []string{wt + "/.git"})
+	cmd := exec.Command(name, args...)
+	cmd.Dir = wt
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if _, err := os.Stat(wt + "/.git"); err != nil {
+		t.Fatal(".git was renamed")
+	}
+}

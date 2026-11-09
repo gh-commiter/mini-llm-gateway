@@ -2,7 +2,7 @@
 name: share
 description: Share the current folder (or a given one) with Mini Gateway, so agent models (Codex, Claude CLI, Grok) can read and edit it. Only needed when minigw says a folder "is not shared with the gateway" (system folders, hidden folders); project folders are shared automatically.
 argument-hint: "[folder | list | remove [folder]]"
-allowed-tools: Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw share *), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw --version)
+allowed-tools: Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw share list), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw --version)
 ---
 
 Profiles (`--name`, `profiles`, `--minigw-profile`, `<model>@<profile>`) need minigw 0.5.18 or newer: if the first line of `"${CLAUDE_PLUGIN_DATA}/bin/minigw" --version` is older, tell the user to run `/minigw:gw update` and do not use them (an older minigw passes them to claude).

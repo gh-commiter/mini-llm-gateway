@@ -116,6 +116,23 @@ func bwrapReady(cfgDir string) string {
 // agentSandboxed: Codex in Grok sta zaprta pred skrivnostmi routerja le pod bwrap; sicer le z izrecnim dovoljenjem.
 func agentSandboxed(cfgDir string) bool { return bwrapReady(cfgDir) != "" }
 
+// pinWrap: Claude CLI v worktree pod bwrap le s pins (N3): datotečni sistem je kot zunaj (Claude potrebuje domačo
+// mapo), le .git klona je točka priklopa, zato ga med tekom ni mogoče preimenovati ali zamenjati (EBUSY). Brez bwrap
+// ostane exe, kot je; zamenjavo nato ujame worktreeIntact pred naslednjim zagonom.
+func pinWrap(cfgDir, exe string, args, pins []string) (string, []string) {
+	bw := bwrapReady(cfgDir)
+	if bw == "" {
+		return exe, args
+	}
+	a := []string{"--dev-bind", "/", "/", "--die-with-parent"}
+	for _, p := range pins {
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			a = append(a, "--bind", r, r)
+		}
+	}
+	return bw, append(append(a, "--", exe), args...)
+}
+
 // agentWrap: Codex ali Grok pod bwrap (R3, N1, N2): domača mapa in mapa nastavitev sta prazni; nazaj pridejo le
 // točne mape s programi iz PATH in paket CLI (samo za branje), stanje CLI te naprave in njene datoteke prijave,
 // kopija mape, začasna mapa zahteve in dovoljene mape. Skriti so XDG_RUNTIME_DIR (D-Bus, keyring, agent gpg),
