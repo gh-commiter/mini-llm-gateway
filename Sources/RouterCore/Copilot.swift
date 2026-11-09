@@ -306,12 +306,25 @@ extension Router {
             return await error(403, "permission_error", "Copilot: the session's folder contains Copilot's package cache (~/Library/Caches/copilot)",
                                rid: rid, writer: writer)
         }
-        guard let sandbox = Native.sandboxProfile(dir: root.path, network: true,
+        guard let profile = Native.sandboxProfile(dir: root.path, network: true,
                                                   hidden: [config.scratchURL.path, RouterConfig.defaultScratch.path], routerPort: Int(config.port),
                                                   runTmp: reqDir.path, writable: agent && write ? [root.path] : [], visible: visible?.path) else {
             return await error(403, "permission_error", "Copilot: the session's folder is a link", rid: rid, writer: writer)
         }
-        let extraEnv = tree.map { Worktree.harnessEnv(root: $0.root, maven: $0.maven) }
+        // L-N9a: ovoj git (Scratch, sicer skrit) berljiv v peskovniku, kot ro pri Go agentWrap
+        let gitexec = config.scratch("gitexec").path
+        let sandbox = profile + (tree == nil ? "" : "(allow file-read* file-read-data"
+            + Set([gitexec, Sync.real(URL(fileURLWithPath: gitexec))?.path ?? gitexec]).map {
+                " (subpath \"" + $0.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\")"
+            }.joined() + ")\n")
+        var treeEnv: [String: String]?  // L-N9a: harness Copilot sam poganja git v klonu (ovoj kot pri Claude CLI)
+        if let t = tree {
+            guard let e = Worktree.claudeEnv(root: t.root, maven: t.maven, gitexec: config.scratch("gitexec")) else {
+                return await error(503, "api_error", "Cannot prepare git for the agent's clone (git --exec-path): use sync", rid: rid, writer: writer)
+            }
+            treeEnv = e
+        }
+        let extraEnv = treeEnv
             ?? ["TMPDIR": tmp.path + "/", "CLANG_MODULE_CACHE_PATH": tmp.appendingPathComponent("ModuleCache").path]
         let run = agent ? await startAgentRun(req, kind: "copilot", dir: sharedDir, secretDir: reqDir, readOnly: tree != nil && !cfg.write) : nil  // peskovnik: zaprta le vrata prehoda; žeton v mapi zahteve
         defer { run?.stop() }

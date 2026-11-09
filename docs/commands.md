@@ -54,7 +54,7 @@ Claude Code's settings.
 
 | Option | Variable | What it does |
 |---|---|---|
-| `--minigw-work=MODE` | `MINIGW_WORK=MODE` | Work mode: `auto`, `worktree`, `sync`, `direct`, `native`, `native-direct` ([usage.md → Work modes](usage.md#work-modes-what-happens-to-your-files)) |
+| `--minigw-work=MODE` | `MINIGW_WORK=MODE` | Work mode: `auto`, `worktree`, `sync`, `direct`, `native`, `native-direct` ([usage.md → Work modes](usage.md#work-modes-what-happens-to-your-files)). Inside Claude Code the flag with `direct`, `sync` or `native-direct` needs read-only or that mode saved for the folder; otherwise put `MINIGW_WORK=` in front |
 | `--minigw-ro` | `MINIGW_SHARE=ro` | Share the folder read-only |
 | – | `MINIGW_SHARE=0` / `1` | Do not share the folder / share it even if it is not shared automatically |
 | `--minigw-role NAME` | `MINIGW_ROLE=NAME` | The caller's role, recorded in the gateway's session history |

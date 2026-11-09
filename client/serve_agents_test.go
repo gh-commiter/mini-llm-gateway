@@ -391,6 +391,14 @@ case "$p" in *"read-only for you"*) echo ro-note > "$out";; *) echo no-note > "$
 	defer sc.unregister()
 	h := map[string]string{"x-claude-mini-session": "sidr", "x-claude-mini-cwd": client, "content-type": "application/json"}
 	body := `{"model":"claude-codex","tools":[{"name":"x"}],"messages":[{"role":"user","content":"look"}]}`
+	h["x-claude-mini-ro"] = "1" // I4: --minigw-ro v worktree: 400 brez WORKTREE-PUSH
+	if st, data := call(c, "POST", "/v1/messages", h, []byte(body), 60*time.Second); st != 400 || !strings.Contains(string(data), "cannot be read-only") {
+		t.Fatalf("--minigw-ro in worktree: %d %s", st, data)
+	}
+	if _, _, _, _, ok := s.hub.worktreeOf("sidr", "codex"); ok {
+		t.Fatal("--minigw-ro in worktree: cloned before the 400")
+	}
+	delete(h, "x-claude-mini-ro")
 	if st, data := call(c, "POST", "/v1/messages", h, []byte(body), 60*time.Second); st != 200 || !strings.Contains(string(data), "ro-note") {
 		t.Fatalf("read-only codex in worktree: %d %s", st, data)
 	}

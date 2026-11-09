@@ -28,7 +28,8 @@ import Testing
     #expect(r == (true, true) && (read()["enabledPlugins"] as? [String: Any])?[PluginSetup.id] as? Bool == false)
 
     // Neveljaven JSON ali ne-objekt: napaka, datoteka ostane (vejica na koncu kot v Go, tudi v gnezdenem seznamu).
-    for bad in [#"{"a":1,}"#, #"{"a":[1, ]}"#, #"{"a":1"#, "[]", "null", "", #"{"a":1} x"#, #"{"enabledPlugins":[]}"#] {
+    for bad in [#"{"a":1,}"#, #"{"a":[1, ]}"#, #"{"a":1"#, "[]", "null", "", #"{"a":1} x"#, #"{"enabledPlugins":[]}"#,
+                #"{"enabledPlugins":1}"#, #"{"extraKnownMarketplaces":"x"}"#, #"{"extraKnownMarketplaces":[1],"enabledPlugins":{}}"#] {  // L7
         try Data(bad.utf8).write(to: URL(fileURLWithPath: p))
         #expect(throws: PluginSetup.Failure.self) { try PluginSetup.edit(p) { s in try PluginSetup.add(&s).changed } }
         #expect(String(decoding: FileManager.default.contents(atPath: p) ?? Data(), as: UTF8.self) == bad)

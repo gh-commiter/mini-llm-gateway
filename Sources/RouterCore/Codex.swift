@@ -254,7 +254,14 @@ extension Router {
         defer { try? FileManager.default.removeItem(at: privateTmp) }
         let run = agent ? await startAgentRun(req, kind: "codex", dir: sharedDir, readOnly: tree != nil && !config.codex.write) : nil
         defer { run?.stop() }
-        let codexEnv = (tree.map { Worktree.harnessEnv(root: $0.root, maven: $0.maven) }
+        var treeEnv: [String: String]?  // L-N9a: harness Codex sam poganja git v klonu (ovoj kot pri Claude CLI)
+        if let t = tree {
+            guard let e = Worktree.claudeEnv(root: t.root, maven: t.maven, gitexec: config.scratch("gitexec")) else {
+                return await error(503, "api_error", "Cannot prepare git for the agent's clone (git --exec-path): use sync", rid: rid, writer: writer)
+            }
+            treeEnv = e
+        }
+        let codexEnv = (treeEnv
             ?? ["TMPDIR": privateTmp.path + "/", "CLANG_MODULE_CACHE_PATH": privateTmp.appendingPathComponent("ModuleCache").path, "xcrun_nocache": "1"])
             .merging(run?.env ?? [:]) { $1 }
         // Nadaljevanje niti Codex (prebrane datoteke, rezultati ukazov): ključ je dosedanji pogovor v tej mapi.

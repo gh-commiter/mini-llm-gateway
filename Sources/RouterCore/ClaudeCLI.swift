@@ -419,7 +419,7 @@ extension Router {
             return "The user's folder \(clientCwd) (on their computer, a git repository) is a clone here at \(shared.path), your working"
                 + " directory, on branch \(branch). Map paths under \(clientCwd) to it. Commit your work on this branch; changes you leave"
                 + " uncommitted are committed for you at the end. The branch goes back to the user's repository; their files are not changed."
-                + " Build output (.build, target, DerivedData) is never committed. Maven builds work here; swift build and xcodebuild"
+                + " Build output (.build, target, DerivedData) is never committed. Do not create git repositories or submodules here outside ignored folders: then nothing comes back (use sync for that). Maven builds work here; swift build and xcodebuild"
                 + " may fail in this sandbox: then tell the user to build with minigw run."
         }
         return (synced ? "The user's folder \(clientCwd) (on their computer) is synced here as \(shared.path), your working directory: a local copy"
@@ -518,7 +518,10 @@ extension Router {
 
         let run = agent ? await startAgentRun(req, kind: "claude", dir: sharedDir) : nil
         defer { run?.stop() }
-        if agent, let note = agentNote("claude") { args = Self.withNote(args, note, read: [Self.minigwExe] + (run.map { [$0.authFile.path] } ?? [])) }
+        let gitexec = config.scratch("gitexec")  // N9: ovoj git v klonu (Worktree.claudeEnv), berljiv v peskovniku
+        if agent, let note = agentNote("claude") {
+            args = Self.withNote(args, note, read: [Self.minigwExe, gitexec.path] + (run.map { [$0.authFile.path] } ?? []))
+        }
         guard let exe = await ClaudeCLI.executable(cfg.executable) else {
             return await error(503, "api_error", cfg.executable.isEmpty ? "claude not found; set its path in Mini Gateway settings"
                                                                          : "claude not found at \(cfg.executable)", rid: rid, writer: writer)
@@ -533,7 +536,10 @@ extension Router {
         }
         env["PATH"] = (env["PATH"].map { $0 + ":" } ?? "") + "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
         if agent, let t = await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "") {
-            env.merge(Worktree.harnessEnv(root: t.root, maven: t.maven)) { $1 }
+            guard let tenv = Worktree.claudeEnv(root: t.root, maven: t.maven, gitexec: gitexec) else {
+                return await error(503, "api_error", "Cannot prepare git for the agent's clone (git --exec-path): use sync", rid: rid, writer: writer)
+            }
+            env.merge(tenv) { $1 }
         }
         for k in ["MINIGW_AGENT_URL", "MINIGW_AGENT_AUTH_FILE"] { env[k] = run?.env[k] }
         env["CLAUDE_CODE_DISABLE_FILE_MENTIONS"] = "1"

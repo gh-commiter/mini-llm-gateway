@@ -164,7 +164,7 @@ public enum WebDAV {
                 try? fm.removeItem(at: dest)
             }
             do {
-                if method == "MOVE" { try fm.moveItem(at: url, to: dest) } else { try fm.copyItem(at: url, to: dest) }
+                if method == "MOVE" { try fm.moveItem(at: url, to: dest) } else { try copyTree(url, dest) }
             } catch { return DAVResponse(403) }
             return DAVResponse(replaced ? 204 : 201)
 
@@ -188,6 +188,20 @@ public enum WebDAV {
 
         default:
             return DAVResponse(405)
+        }
+    }
+
+    /// L2: COPY le navadnih datotek in map; simbolne povezave in drugo izpusti (kot Go copyTree).
+    static func copyTree(_ src: URL, _ dst: URL) throws {
+        let fm = FileManager.default
+        switch try fm.attributesOfItem(atPath: src.path)[.type] as? FileAttributeType {  // lstat: povezave ne sledi
+        case .typeRegular?: try fm.copyItem(at: src, to: dst)
+        case .typeDirectory?:
+            try fm.createDirectory(at: dst, withIntermediateDirectories: false)
+            for name in try fm.contentsOfDirectory(atPath: src.path) {
+                try copyTree(src.appendingPathComponent(name), dst.appendingPathComponent(name))
+            }
+        default: break
         }
     }
 

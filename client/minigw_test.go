@@ -28,6 +28,17 @@ func TestDavResolveStaysInRoot(t *testing.T) {
 			t.Fatalf("%s escaped root", p)
 		}
 	}
+	// I1: Windows ne shrani imena s piko ali presledkom na koncu, naprave (tudi s končnico) niso datoteke
+	for _, n := range []string{"a.", "a ", "CON", "nul.txt", "Com1", "lpt9.log", "COM¹", "aux .x", "CONIN$"} {
+		if !winBadName(n) {
+			t.Errorf("%q accepted", n)
+		}
+	}
+	for _, n := range []string{"a.txt", "console", "com10", "nul1", ".git", "COM", "lptx"} {
+		if winBadName(n) {
+			t.Errorf("%q refused", n)
+		}
+	}
 	if resp := davHandle("DELETE", "/dav/s", nil, nil, root, "/dav/s"); resp.Status != 403 {
 		t.Fatalf("root delete allowed: %d", resp.Status)
 	}
@@ -569,6 +580,24 @@ func TestProtectedPathShortAndFoldedNames(t *testing.T) {
 	if protectedPath("src/git~x.txt") {
 		t.Error("git~x is not a short name")
 	}
+	// N10: na Windows vsako kratko ime 8.3 (druga pot do .claude, .vscode, .husky, .githooks)
+	windowsNames = true
+	defer func() { windowsNames = runtime.GOOS == "windows" }()
+	for _, p := range []string{"CLAUDE~1/settings.json", "VSCODE~1/tasks.json", "HUSKY~1/pre-commit", "a/GITHOO~1/x", "x~2.txt"} {
+		if !protectedPath(p) {
+			t.Errorf("%s should be protected on Windows", p)
+		}
+	}
+	root := t.TempDir()
+	r, _ := filepath.EvalSymlinks(root)
+	if _, _, ok := davResolve("/dav/s/CLAUDE~1/settings.json", "/dav/s", r); ok {
+		t.Error("8.3 short name accepted by davResolve")
+	}
+	for _, p := range []string{"src/a~b.txt", "src/~x", "src/foo.~1~", "src/longname~1", "src/a~1.json5", "src/x~1y"} {
+		if protectedPath(p) {
+			t.Errorf("%s is not an 8.3 short name", p)
+		}
+	}
 }
 
 // .gitignore kot povezava ven iz korena ali FIFO: prezrta, brez čakanja.
@@ -958,6 +987,48 @@ func TestUnsafeClaudeFlagsInsideClaudeCode(t *testing.T) {
 	in["MINIGW_ALLOW_UNSAFE_FLAGS"] = "1"
 	if unsafeClaudeFlag([]string{"--dangerously-skip-permissions"}, env) != "" {
 		t.Error("MINIGW_ALLOW_UNSAFE_FLAGS=1 ignored")
+	}
+}
+
+// N8: pod Claude Code --minigw-work= brez veje (direct, sync, native-direct) le samo za branje ali kot shranjen način mape.
+func TestUnsafeWorkInsideClaudeCode(t *testing.T) {
+	in := map[string]string{"CLAUDECODE": "1"}
+	env := func(k string) string { return in[k] }
+	for _, w := range []string{"direct", "sync", "native-direct"} {
+		if !unsafeWork(w, "", false, env) || !unsafeWork(w, "worktree", false, env) {
+			t.Errorf("%s accepted", w)
+		}
+		if unsafeWork(w, w, false, env) || unsafeWork(w, "", true, env) {
+			t.Errorf("%s refused although saved or read-only", w)
+		}
+	}
+	for _, w := range []string{"", "auto", "worktree", "native"} {
+		if unsafeWork(w, "", false, env) {
+			t.Errorf("%q refused", w)
+		}
+	}
+	in["MINIGW_ALLOW_UNSAFE_FLAGS"] = "1"
+	if unsafeWork("sync", "", false, env) {
+		t.Error("refused with MINIGW_ALLOW_UNSAFE_FLAGS=1")
+	}
+	if unsafeWork("sync", "", false, func(string) string { return "" }) {
+		t.Error("refused outside Claude Code")
+	}
+	// L-31: izrecen native ali worktree ne pade na direct (shranjen ali samo za branje da)
+	delete(in, "MINIGW_ALLOW_UNSAFE_FLAGS")
+	for _, w := range []string{"native", "worktree"} {
+		if got := noDirectFallback(workCandidates(w, false, false, false), w, "", false, env); len(got) != 0 && got[len(got)-1] == "direct" {
+			t.Errorf("%s falls back to direct: %v", w, got)
+		}
+		if got := noDirectFallback([]string{w, "direct"}, w, w, false, env); len(got) != 2 {
+			t.Errorf("saved %s lost its fallback: %v", w, got)
+		}
+	}
+	if got := noDirectFallback([]string{"sync", "direct"}, "auto", "", false, env); len(got) != 2 {
+		t.Errorf("--minigw-work=auto lost direct: %v", got)
+	}
+	if got := noDirectFallback([]string{"direct"}, "", "", false, env); len(got) != 1 {
+		t.Errorf("auto lost direct: %v", got)
 	}
 }
 

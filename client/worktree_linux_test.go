@@ -74,3 +74,44 @@ func TestKillInside(t *testing.T) {
 		t.Fatal("process in another session was killed")
 	}
 }
+
+// N3c: zamenjava .git, ki jo agent takoj vrne, se ne skrije (inotify); premik druge datoteke ne sproži nič.
+func TestWatchGitMovesSwapAndRevert(t *testing.T) {
+	wt := t.TempDir()
+	g := filepath.Join(wt, ".git")
+	os.MkdirAll(g, 0o700)
+	moved := make(chan struct{}, 1)
+	stop, ok := watchGitMoves(g, func() { moved <- struct{}{} })
+	if !ok {
+		t.Fatal("inotify watch failed")
+	}
+	defer stop()
+	os.WriteFile(filepath.Join(g, "index"), []byte("x"), 0o600) // git commit piše v .git
+	os.Rename(filepath.Join(g, "index"), filepath.Join(g, "index2"))
+	select {
+	case <-moved:
+		t.Fatal("a write inside .git counted as a move")
+	case <-time.After(200 * time.Millisecond):
+	}
+	if os.Rename(g, filepath.Join(wt, ".g")) != nil || os.Mkdir(g, 0o700) != nil || os.Remove(g) != nil ||
+		os.Rename(filepath.Join(wt, ".g"), g) != nil {
+		t.Fatal("swap failed")
+	}
+	select {
+	case <-moved:
+	case <-time.After(2 * time.Second):
+		t.Fatal("swap and revert not seen")
+	}
+	// stop: zaprtje ni premik (vsaka druga napaka branja bi bila)
+	stopped := make(chan struct{}, 1)
+	stop2, ok := watchGitMoves(g, func() { stopped <- struct{}{} })
+	if !ok {
+		t.Fatal("second watch failed")
+	}
+	stop2()
+	select {
+	case <-stopped:
+		t.Fatal("stop counted as a move")
+	case <-time.After(200 * time.Millisecond):
+	}
+}

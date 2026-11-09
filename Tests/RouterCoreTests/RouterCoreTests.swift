@@ -1613,6 +1613,12 @@ final class FakeMinigw: @unchecked Sendable {
     #expect(dav("MOVE", "A.txt", "A.txt") == 201)
     #expect(String(decoding: try Data(contentsOf: root.appendingPathComponent("A.txt")), as: UTF8.self) == "keep")
     #expect(dav("MOVE", "d", "d/sub/d") == 403 && dav("COPY", "d", "D/sub/d") == 403)
+    // L2: COPY mape ne kopira simbolnih povezav (kot Go copyTree)
+    try FileManager.default.createSymbolicLink(atPath: root.appendingPathComponent("d/link").path, withDestinationPath: "/etc")
+    try Data("x".utf8).write(to: root.appendingPathComponent("d/sub/f"))
+    #expect(dav("COPY", "d", "e") == 201)
+    #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("e/sub/f").path))
+    #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: root.appendingPathComponent("e/link").path)) == nil)
 }
 
 // #2: direktni WebDAV ne piše v zaščitene poti (kot sync), tudi prek povezave; branje ostane.
@@ -1684,6 +1690,57 @@ final class FakeMinigw: @unchecked Sendable {
     #expect(dav("MOVE", "h1", "h2") == 201)
     #expect(try !fm.contentsOfDirectory(atPath: root.path).contains { $0.hasPrefix(".minigw") })
     #expect(String(decoding: try Data(contentsOf: root.appendingPathComponent("h2")), as: UTF8.self) == "hl")
+}
+
+/// L1: telo nad 1 MB z drugega računalnika šele po žetonu v glavi; lokalno (mount_webdav) in majhna telesa brez tega.
+@Test func bigBodyNeedsTokenFirst() {
+    let head = { (len: Int, auth: String) in Data("POST /v1/messages HTTP/1.1\r\ncontent-length: \(len)\r\n\(auth)\r\n".utf8) + Data(count: 10) }
+    let ok = { (r: HTTPRequest) in r.header("x-api-key") == "t" }
+    #expect(RouterServer.bodyNeedsToken(head(2 << 20, ""), peer: "10.0.0.2", authorized: ok))
+    #expect(!RouterServer.bodyNeedsToken(head(2 << 20, "x-api-key: t\r\n"), peer: "10.0.0.2", authorized: ok))
+    #expect(!RouterServer.bodyNeedsToken(head(1000, ""), peer: "10.0.0.2", authorized: ok))
+    #expect(!RouterServer.bodyNeedsToken(head(2 << 20, ""), peer: "127.0.0.1", authorized: ok))
+    #expect(!RouterServer.bodyNeedsToken(Data("POST / HTTP/1.1\r\ncontent-length: 9999999\r\n".utf8), peer: "10.0.0.2", authorized: ok))
+}
+
+/// L1: omejitev povezav brez cele zahteve: 16 z enega naslova, 256 skupaj, lokalne brez omejitve; zaprta sprosti mesto.
+@Test func pendingConnectionLimits() {
+    var p = RouterServer.Pending()
+    let ids = (0..<300).map { _ in NSObject() }
+    func admit(_ i: Int, _ peer: String) -> Bool { p.admit(ObjectIdentifier(ids[i]), peer: peer) }
+    func remove(_ i: Int) -> Bool { p.remove(ObjectIdentifier(ids[i])) }
+    for i in 0..<16 { #expect(admit(i, "10.0.0.2")) }
+    #expect(!admit(16, "10.0.0.2"))
+    #expect(remove(3) && admit(16, "10.0.0.2"))  // zaprta povezava sprosti mesto
+    for i in 17..<57 { #expect(admit(i, "127.0.0.1")) }  // lokalne: brez omejitve, ne štejejo
+    var n = 57
+    for k in 3..<17 { for _ in 0..<16 { #expect(admit(n, "10.0.\(k).1")); n += 1 } }  // 16 + 14·16 = 240 z drugih
+    for k in 0..<16 { #expect(admit(n, "10.1.\(k).1")); n += 1 }  // 256
+    #expect(!admit(n, "10.9.9.9"))
+    #expect(admit(n, "::1"))
+}
+
+/// N8: pod Claude Code --minigw-work= brez veje le samo za branje ali kot shranjen način mape (kot Go TestUnsafeWorkInsideClaudeCode).
+@Test func unsafeWorkInsideClaudeCode() {
+    let env = ["CLAUDECODE": "1"]
+    for w in ["direct", "sync", "native-direct"] {
+        #expect(Profiles.unsafeWork(w, saved: nil, readOnly: false, env: env), "\(w)")
+        #expect(Profiles.unsafeWork(w, saved: "worktree", readOnly: false, env: env), "\(w)")
+        #expect(!Profiles.unsafeWork(w, saved: w, readOnly: false, env: env), "\(w)")
+        #expect(!Profiles.unsafeWork(w, saved: nil, readOnly: true, env: env), "\(w)")
+    }
+    for w in [nil, "auto", "worktree", "native"] { #expect(!Profiles.unsafeWork(w, saved: nil, readOnly: false, env: env)) }
+    #expect(!Profiles.unsafeWork("sync", saved: nil, readOnly: false, env: ["CLAUDECODE": "1", "MINIGW_ALLOW_UNSAFE_FLAGS": "1"]))
+    #expect(!Profiles.unsafeWork("sync", saved: nil, readOnly: false, env: [:]))
+    // L-31: izrecen native ali worktree ne pade na direct (shranjen ali samo za branje da)
+    for w in ["native", "worktree"] {
+        #expect(!Profiles.noDirectFallback(SharedFolders.candidates(work: w, readOnly: false, smb: false, git: false), flag: w, saved: nil,
+                                           readOnly: false, env: env).contains("direct"), "\(w)")
+        #expect(Profiles.noDirectFallback([w, "direct"], flag: w, saved: w, readOnly: false, env: env) == [w, "direct"])
+        #expect(Profiles.noDirectFallback([w, "direct"], flag: w, saved: nil, readOnly: true, env: env) == [w, "direct"])
+    }
+    #expect(Profiles.noDirectFallback(["direct"], flag: nil, saved: nil, readOnly: false, env: env) == ["direct"])
+    #expect(Profiles.noDirectFallback(["sync", "direct"], flag: "auto", saved: nil, readOnly: false, env: env) == ["sync", "direct"])
 }
 
 @Test func unsafeClaudeFlagsInsideClaudeCode() {

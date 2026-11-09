@@ -229,7 +229,13 @@ extension Router {
         let sessions = Self.grokSessions, client = req.header("x-claude-mini-session") ?? ""
         let run = agent ? await startAgentRun(req, kind: "grok", dir: sharedDir, readOnly: inTree) : nil
         defer { run?.stop() }
-        let env = run?.env ?? [:]
+        var env = run?.env ?? [:]
+        if inTree, let t = await Self.shares.worktree(session: client) {  // L-N9a: Grok bere v klonu; njegov git z ovojem
+            guard let e = Worktree.claudeEnv(root: t.root, maven: t.maven, gitexec: config.scratch("gitexec")) else {
+                return await error(503, "api_error", "Cannot prepare git for the agent's clone (git --exec-path): use sync", rid: rid, writer: writer)
+            }
+            env.merge(e) { $1 }
+        }
         return await replyWhenDone(body: body, model: "claude-grok", rid: rid, writer: writer, req: req) {
             let (text, session) = try await Grok.run(exe, args: args, cwd: cwd, prompt: prompt, env: env, started: { run?.started($0) }) { [onActivity] s in onActivity(.step(id: rid, text: s)) }
             run?.stop()  // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb

@@ -111,34 +111,42 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
 }
 
 // N3b: brez pin .git klona runCLI med tekom preveri klon; zamenjan .git ustavi claude (ne šele naslednji zagon).
+// N3c: na Linux tudi zamenjava, ki jo agent takoj vrne (inotify; preverba vsako sekundo bi jo zgrešila).
 func TestServeWorktreeSwapStopsUnpinnedClaude(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake claude is a shell script")
 	}
-	client := t.TempDir()
-	gitT(t, client, "init", "-q", "-b", "main")
-	writeT(t, filepath.Join(client, "a.txt"), "one\n")
-	gitT(t, client, "add", "-A")
-	gitT(t, client, "commit", "-qm", "first")
-	fake := filepath.Join(t.TempDir(), "claude")
-	writeT(t, fake, "#!/bin/sh\ncat > /dev/null\nmv .git .g && mkdir .git\nexec sleep 20\n")
-	os.Chmod(fake, 0o755)
-	s, _ := testServer(t, func(c *serveConfig) { c.Claude = fake })
-	if name, _ := pinWrap(s.cfgDir, "x", nil, nil, t.Logf); name != "x" {
-		t.Skip("the .git pin is on here (nested bwrap): the swap itself fails")
+	swaps := []string{"mv .git .g && mkdir .git"}
+	if runtime.GOOS == "linux" {
+		swaps = append(swaps, "mv .git .g && mkdir .git && rmdir .git && mv .g .git")
 	}
-	c := startLoopback(t, s)
-	sc := &shareClient{c: c, session: "sid1", root: client, worktree: true, top: filepath.ToSlash(client), synced: map[string]syncEntry{}, reported: map[string]bool{}}
-	if !sc.register() {
-		t.Fatal("register failed: " + sc.refusal)
-	}
-	sc.start(2)
-	defer sc.unregister()
-	h := map[string]string{"x-claude-mini-session": "sid1", "x-claude-mini-cwd": client, "content-type": "application/json"}
-	start := time.Now()
-	st, data := call(c, "POST", "/v1/messages", h, []byte(`{"model":"claude-cli-haiku","tools":[{"name":"x"}],"messages":[{"role":"user","content":"go"}]}`), 30*time.Second)
-	if st != 502 || !strings.Contains(string(data), "replaced its clone's .git during the run") || time.Since(start) > 10*time.Second {
-		t.Fatalf("after %v: %d %s", time.Since(start), st, data)
+	for i, swap := range swaps {
+		client := t.TempDir()
+		gitT(t, client, "init", "-q", "-b", "main")
+		writeT(t, filepath.Join(client, "a.txt"), "one\n")
+		gitT(t, client, "add", "-A")
+		gitT(t, client, "commit", "-qm", "first")
+		fake := filepath.Join(t.TempDir(), "claude")
+		writeT(t, fake, "#!/bin/sh\ncat > /dev/null\n"+swap+"\nexec sleep 20\n")
+		os.Chmod(fake, 0o755)
+		s, _ := testServer(t, func(c *serveConfig) { c.Claude = fake })
+		if name, _ := pinWrap(s.cfgDir, "x", nil, nil, t.Logf); name != "x" {
+			t.Skip("the .git pin is on here (nested bwrap): the swap itself fails")
+		}
+		c := startLoopback(t, s)
+		sid := fmt.Sprintf("sid%d", i)
+		sc := &shareClient{c: c, session: sid, root: client, worktree: true, top: filepath.ToSlash(client), synced: map[string]syncEntry{}, reported: map[string]bool{}}
+		if !sc.register() {
+			t.Fatal("register failed: " + sc.refusal)
+		}
+		sc.start(2)
+		h := map[string]string{"x-claude-mini-session": sid, "x-claude-mini-cwd": client, "content-type": "application/json"}
+		start := time.Now()
+		st, data := call(c, "POST", "/v1/messages", h, []byte(`{"model":"claude-cli-haiku","tools":[{"name":"x"}],"messages":[{"role":"user","content":"go"}]}`), 30*time.Second)
+		sc.unregister()
+		if st != 502 || !strings.Contains(string(data), "replaced its clone's .git during the run") || time.Since(start) > 10*time.Second {
+			t.Fatalf("%s: after %v: %d %s", swap, time.Since(start), st, data)
+		}
 	}
 }
 
@@ -317,7 +325,7 @@ func TestWorktreeLimits(t *testing.T) {
 	if _, err := gitRun(filepath.Join(t.TempDir(), "repos", "d", "r.git"), "", nil, "--version"); err == nil {
 		t.Fatal("git ran past its timeout")
 	}
-	if cloneTooLarge(t.TempDir()) != "" {
+	if d := t.TempDir(); cloneProblem(d, filepath.Join(d, "repos", "d", "r.git")) != "" {
 		t.Fatal("empty clone too large")
 	}
 	h := newShareHub()
@@ -468,5 +476,147 @@ func TestWorktreeGitSwapRefused(t *testing.T) {
 			t.Fatalf("%s accepted", p)
 		}
 		os.Remove(filepath.Join(g, p))
+	}
+}
+
+// N9: agent v klonu naredi ugnezden repozitorij (mapa .git ali datoteka gitdir:) s svojim filtrom, gitlink v indeksu in
+// .gitmodules z ignore=none; git status samega claude (okolje worktreeClaudeEnv) filtra ne sme izvesti, cloneProblem
+// klon zavrne.
+func TestWorktreeNestedRepoFilterDoesNotRun(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows: Claude in worktree needs unsandboxed Bash; filter command is a shell script")
+	}
+	for _, gitfile := range []bool{false, true} {
+		root := t.TempDir()
+		client, repo, wt := filepath.Join(root, "c"), filepath.Join(root, "repos", "d", "r.git"), filepath.Join(root, "wt")
+		os.MkdirAll(client, 0o755)
+		gitT(t, client, "init", "-q", "-b", "main")
+		writeT(t, filepath.Join(client, "a.txt"), "a\n")
+		gitT(t, client, "add", "a.txt")
+		gitT(t, client, "commit", "-qm", "first")
+		head := gitT(t, client, "rev-parse", "HEAD")
+		b := filepath.Join(root, "push.bundle")
+		gitUser(client, nil, "update-ref", "refs/minigw/push", head)
+		gitUser(client, nil, "bundle", "create", b, "refs/minigw/push")
+		if ensureMirror(repo) != nil || !importBase(repo, b, head, "refs/minigw/base/x") || !makeClone(repo, wt, "minigw/claude-12345678-0", head) {
+			t.Fatal("mirror or clone")
+		}
+		if cloneProblem(wt, repo) != "" {
+			t.Fatal("fresh clone refused")
+		}
+		// Agent (v peskovniku smeta pisati v klon in njegov indeks).
+		sub := filepath.Join(wt, "sub")
+		if gitfile {
+			os.MkdirAll(filepath.Join(wt, "build"), 0o755)
+			gitT(t, wt, "init", "-q", "--separate-git-dir="+filepath.Join(wt, "build", "g"), "sub")
+		} else {
+			gitT(t, wt, "init", "-q", "sub")
+		}
+		writeT(t, filepath.Join(sub, "f"), "hello\n")
+		gitT(t, sub, "add", "f")
+		gitT(t, sub, "commit", "-qm", "s")
+		sha := gitT(t, sub, "rev-parse", "HEAD")
+		gd := gitT(t, sub, "rev-parse", "--absolute-git-dir")
+		marker := filepath.Join(root, "ran")
+		f, _ := os.OpenFile(filepath.Join(gd, "config"), os.O_APPEND|os.O_WRONLY, 0)
+		f.WriteString("[filter \"x\"]\n\tclean = touch " + marker + "; cat\n")
+		f.Close()
+		os.MkdirAll(filepath.Join(gd, "info"), 0o755)
+		writeT(t, filepath.Join(gd, "info", "attributes"), "* filter=x\n")
+		writeT(t, filepath.Join(sub, "f"), "hellO\n")
+		writeT(t, filepath.Join(wt, ".gitmodules"), "[submodule \"sub\"]\n\tpath = sub\n\turl = ./sub\n\tignore = none\n")
+		gitT(t, wt, "add", ".gitmodules")
+		gitT(t, wt, "update-index", "--add", "--cacheinfo", "160000,"+sha+",sub")
+		status := func(env []string) bool {
+			os.Remove(marker)
+			c := exec.Command("git", "--no-optional-locks", "status", "--porcelain")
+			c.Dir, c.Env = wt, append(os.Environ(), env...)
+			c.Run()
+			_, err := os.Stat(marker)
+			return err == nil
+		}
+		// Napad je resničen: brez ovoja (le nastavitve) filter teče.
+		if !status(worktreeHarnessEnv(wt, filepath.Join(root, "m"))) {
+			t.Fatalf("gitfile=%v: planted filter did not run: the test does not reproduce the attack", gitfile)
+		}
+		env := worktreeClaudeEnv(wt, filepath.Join(root, "m"), filepath.Join(root, "gitexec"))
+		if env == nil {
+			t.Fatal("no git wrapper")
+		}
+		if status(env) {
+			t.Fatalf("gitfile=%v: the nested repository's filter ran under the Claude CLI environment", gitfile)
+		}
+		if why := cloneProblem(wt, repo); why != "changes inside the nested repository sub do not come back in worktree mode; use sync" {
+			t.Fatalf("gitfile=%v: nested repository accepted: %q", gitfile, why)
+		}
+		// Ovoj pusti git klona samega (commit z vzdrževanjem).
+		c := exec.Command("git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "agent", "--allow-empty")
+		c.Dir, c.Env = wt, append(os.Environ(), env...)
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("commit in the clone: %v %s", err, out)
+		}
+	}
+}
+
+// N9 (odločitev 0.5.20): ugnezden repozitorij v poti, ki jo git prezre (build/_deps od CMake FetchContent), ne ustavi
+// vrnitve veje; v poti, ki je git ne prezre (podmodul, ugnezden repozitorij), veja ne gre nazaj, sporočilo pove zakaj.
+func TestWorktreeNestedRepoIgnoredDelivered(t *testing.T) {
+	root := t.TempDir()
+	client, repo, wt := filepath.Join(root, "c"), filepath.Join(root, "repos", "d", "r.git"), filepath.Join(root, "wt")
+	os.MkdirAll(client, 0o755)
+	gitT(t, client, "init", "-q", "-b", "main")
+	writeT(t, filepath.Join(client, "a.txt"), "a\n")
+	writeT(t, filepath.Join(client, ".gitignore"), "build/\n")
+	gitT(t, client, "add", "-A")
+	gitT(t, client, "commit", "-qm", "first")
+	head := gitT(t, client, "rev-parse", "HEAD")
+	b := filepath.Join(root, "push.bundle")
+	gitUser(client, nil, "update-ref", "refs/minigw/push", head)
+	gitUser(client, nil, "bundle", "create", b, "refs/minigw/push")
+	if ensureMirror(repo) != nil || !importBase(repo, b, head, "refs/minigw/base/x") || !makeClone(repo, wt, "minigw/claude-12345678-0", head) {
+		t.Fatal("mirror or clone")
+	}
+	dep := filepath.Join(wt, "build", "_deps", "foo-src") // FetchContent
+	os.MkdirAll(dep, 0o755)
+	gitT(t, dep, "init", "-q")
+	writeT(t, filepath.Join(dep, "x.c"), "int x;\n")
+	writeT(t, filepath.Join(wt, "a.txt"), "agent\n")
+	if why := cloneProblem(wt, repo); why != "" {
+		t.Fatalf("ignored nested repository refused: %s", why)
+	}
+	tip := finalize(repo, wt, "minigw/claude-12345678-0", head, "claude", filepath.Join(root, "out.bundle"))
+	if tip == "" || tip == head {
+		t.Fatalf("not delivered: %q", tip)
+	}
+	if files := gitT(t, repo, "ls-tree", "-r", "--name-only", tip); strings.Contains(files, "build/") || !strings.Contains(files, "a.txt") {
+		t.Fatalf("branch content: %s", files)
+	}
+	lib := filepath.Join(wt, "vendor", "lib") // nesledeni ugnezdeni repozitorij
+	os.MkdirAll(lib, 0o755)
+	gitT(t, lib, "init", "-q")
+	if why := cloneProblem(wt, repo); why != "changes inside the nested repository vendor/lib do not come back in worktree mode; use sync" {
+		t.Fatalf("non-ignored nested repository: %q", why)
+	}
+}
+
+// N9: ovoj pusti le git s klonovim GIT_DIR; prazen MINIGW_GIT_DIR ne velja (tudi ne ob praznem GIT_DIR).
+func TestGitExecWrapNeedsGitDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no wrapper on Windows")
+	}
+	gw := gitExecWrap(filepath.Join(t.TempDir(), "gitexec"))
+	if gw == "" {
+		t.Fatal("no wrapper")
+	}
+	run := func(gitDir, want string) error {
+		c := exec.Command(filepath.Join(gw, "git"), "--version")
+		c.Env = append(os.Environ(), "GIT_DIR="+gitDir, "MINIGW_GIT_DIR="+want)
+		return c.Run()
+	}
+	if run("", "") == nil || run(".git", "/w/.git") == nil {
+		t.Fatal("wrapper ran git for another GIT_DIR")
+	}
+	if err := run("/w/.git", "/w/.git"); err != nil {
+		t.Fatalf("wrapper refused the clone's git: %v", err)
 	}
 }

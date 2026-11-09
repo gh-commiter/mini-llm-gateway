@@ -224,7 +224,9 @@ public enum Worktree {
     /// GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR: git ne išče repozitorija (ugnezden .git agenta ne velja); MAVEN_OPTS: lokalni
     /// repozitorij Maven agentov namesto lastnikovega ~/.m2/repository.
     public static func harnessEnv(root: URL, maven: URL) -> [String: String] {
-        let pairs = [("core.fsmonitor", "false"), ("core.hooksPath", "/dev/null"), ("core.attributesFile", "/dev/null")]
+        // N9: status in diff ne vstopita v podmodul (submodule.<ime>.ignore iz .gitmodules to preglasi: claudeEnv)
+        let pairs = [("core.fsmonitor", "false"), ("core.hooksPath", "/dev/null"), ("core.attributesFile", "/dev/null"),
+                     ("diff.ignoreSubmodules", "all"), ("submodule.recurse", "false")]
         let git = root.appendingPathComponent(".git").path
         var env = ["GIT_CONFIG_COUNT": String(pairs.count), "GIT_ATTR_SOURCE": "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
                    "GIT_DIR": git, "GIT_WORK_TREE": root.path, "GIT_COMMON_DIR": git,
@@ -233,6 +235,70 @@ public enum Worktree {
                    "CLANG_MODULE_CACHE_PATH": root.appendingPathComponent(".build/ModuleCache").path, "xcrun_nocache": "1"]
         for (i, (k, v)) in pairs.enumerated() { env["GIT_CONFIG_KEY_\(i)"] = k; env["GIT_CONFIG_VALUE_\(i)"] = v }
         return env
+    }
+
+    /// N9 (kot Go worktreeClaudeEnv): okolje claude -p v klonu: harnessEnv in GIT_EXEC_PATH z ovojem `gitexec`. Git zažene
+    /// vgnezden git (stanje podmodula: git status v ugnezdenem repozitoriju z GIT_DIR=.git, kjer so config in atributi
+    /// agentovi) z »git« iz mape exec: ovoj pusti le git s klonovim GIT_DIR (MINIGW_GIT_DIR), drugo zavrne. Ostale datoteke
+    /// so povezave na pravo mapo exec. `gitexec` je v Scratch (agenti tja ne pišejo). nil = ovoja ni.
+    public static func claudeEnv(root: URL, maven: URL, gitexec: URL) -> [String: String]? {
+        guard let wrap = wrapEnv(gitDir: root.appendingPathComponent(".git").path, gitexec: gitexec) else { return nil }
+        return harnessEnv(root: root, maven: maven).merging(wrap) { $1 }
+    }
+
+    /// GIT_EXEC_PATH z ovojem v `gitexec` in MINIGW_GIT_DIR (edini GIT_DIR, ki ga ovoj pusti); nil = ovoja ni (kot Go gitWrapEnv).
+    static func wrapEnv(gitDir: String, gitexec: URL) -> [String: String]? {
+        gitExecWrap(gitexec) ? ["GIT_EXEC_PATH": gitexec.path, "MINIGW_GIT_DIR": gitDir] : nil
+    }
+
+    /// Mapa ovoja v Scratch zrcala `repo` (scratch/repos/<naprava>/<id>.git → scratch/gitexec), kot config.scratch("gitexec").
+    static func gitexecDir(repo: URL) -> URL {
+        repo.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("gitexec", isDirectory: true)
+    }
+
+    private static let wrapLock = NSLock()
+
+    static func gitExecWrap(_ dir: URL) -> Bool {
+        wrapLock.lock(); defer { wrapLock.unlock() }
+        let real = run(["--exec-path"]).out.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard real.hasPrefix("/") else { return false }
+        let fm = FileManager.default, wrapper = dir.appendingPathComponent("git")
+        let script = "#!/bin/sh\n# minigw (N9): git in a nested repository of a worktree clone does not run\n"
+            + #"[ -n "$MINIGW_GIT_DIR" ] && [ "$GIT_DIR" = "$MINIGW_GIT_DIR" ] || { echo "minigw: git in a nested repository is off in worktree mode" >&2; exit 128; }"# + "\n"
+            + "exec '" + (real + "/git").replacingOccurrences(of: "'", with: #"'\''"#) + #"' "$@""# + "\n"
+        if fm.contents(atPath: wrapper.path) == Data(script.utf8) { return true }
+        try? fm.removeItem(at: dir)
+        guard (try? fm.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])) != nil,
+              let names = try? fm.contentsOfDirectory(atPath: real) else { return false }
+        for n in names where n != "git" {
+            guard (try? fm.createSymbolicLink(atPath: dir.appendingPathComponent(n).path, withDestinationPath: real + "/" + n)) != nil else { return false }
+        }
+        return fm.createFile(atPath: wrapper.path, contents: Data(script.utf8), attributes: [.posixPermissions: 0o700])
+    }
+
+    /// N9 (kot Go nestedProblem): .git (mapa ali datoteka) pod korenom klona na poti, ki je git klona ne prezre (podmodul,
+    /// ugnezden repozitorij): sporočilo, zakaj veja ne gre nazaj; nil = ni ga ali je v prezrti poti (build/_deps od CMake
+    /// FetchContent). O prezrtju odloči git (check-ignore z ovojem in nastavitvami zrcala, kot finalize: .git klona je
+    /// agentov). Na vrhu se izpusti le točno ».git«.
+    static func nestedProblem(_ wt: URL, repo: URL) -> String? {
+        guard let e = FileManager.default.enumerator(at: wt, includingPropertiesForKeys: nil) else { return nil }
+        var parts: [String] = [], nested: [String] = []
+        for case let u as URL in e {
+            parts = Array(parts.prefix(e.level - 1)) + [u.lastPathComponent]
+            if e.level == 1, u.lastPathComponent == ".git" { e.skipDescendants(); continue }
+            guard u.lastPathComponent.lowercased() == ".git" else { continue }
+            nested.append(parts.dropLast().joined(separator: "/") + "/")
+            e.skipDescendants()
+        }
+        guard !nested.isEmpty else { return nil }
+        var ignored = Set<String>()
+        if let env = wrapEnv(gitDir: repo.path, gitexec: gitexecDir(repo: repo)) {
+            let out = run(["--git-dir", repo.path, "--work-tree", wt.path, "check-ignore", "--stdin"], cwd: wt.path, env: env, input: Data((nested.joined(separator: "\n") + "\n").utf8)).out
+            ignored = Set(out.split(separator: "\n").map(String.init))
+        }
+        return nested.first { !ignored.contains($0) }.map {
+            "changes inside the nested repository \($0.dropLast()) do not come back in worktree mode; use sync"
+        }
     }
 
     /// Scratch (zrcala) ni v nobeni pisljivi mapi agentov (npr. izbran v /tmp): sicer worktree ni varen.
@@ -410,9 +476,12 @@ public enum Worktree {
         guard (try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])) != nil
         else { return nil }
         defer { try? FileManager.default.removeItem(at: tmp) }
-        guard let box = finalizeProfile(wt: wt, repo: repo, tmp: tmp, out: out, read: read) else { return nil }
+        // N9: tudi git prehoda v klonu ne vstopi v ugnezden repozitorij (ovoj, berljiv v peskovniku; --git-dir spodaj je
+        // GIT_DIR otrok, npr. pack-objects)
+        guard let wrap = wrapEnv(gitDir: repo.path, gitexec: gitexecDir(repo: repo)),
+              let box = finalizeProfile(wt: wt, repo: repo, tmp: tmp, out: out, read: read + [gitexecDir(repo: repo)]) else { return nil }
         let objects = wt.appendingPathComponent(".git/objects").path
-        let env = ["GIT_ALTERNATE_OBJECT_DIRECTORIES": objects]
+        let env = ["GIT_ALTERNATE_OBJECT_DIRECTORIES": objects].merging(wrap) { $1 }
         func run(_ a: [String], cwd: String? = nil, env: [String: String]) -> (status: Int32, out: String) {
             Worktree.run(a, cwd: cwd ?? tmp.path, env: env, sandbox: box)  // trenutna mapa routerja je lahko v domači (zavrnjena)
         }
@@ -537,7 +606,7 @@ extension ShareHub {
         var n = 0
         while slots["\(s.session)|\(agent)|\(n)"]?.busy == true { n += 1 }
         let k = "\(s.session)|\(agent)|\(n)"
-        if let slot = slots[k], slot.gitIntact {  // sicer nov klon (H2)
+        if let slot = slots[k], slot.gitIntact, Worktree.nestedProblem(slot.wt, repo: tree.repo) == nil {  // sicer nov klon (H2, N9)
             slot.busy = true; runSlot[id] = k; unlock(tree.repo)
             return Self.dir(slot.wt, tree.sub)
         }
@@ -641,6 +710,10 @@ extension ShareHub {
         let (repo, agent) = (tree.repo, String(k.split(separator: "|")[1]))
         if tree.local != nil, !tree.localObjectsIntact {  // M1
             await note(s, "\(tree.local!.path): the repository's .git/objects was replaced; \(slot.branch) was not delivered")
+            unlock(tree.repo); return
+        }
+        if let why = await offPool({ Worktree.nestedProblem(slot.wt, repo: repo) }) {  // N9; sporočilo kot pri Go (WORKTREE-PULL)
+            await note(s, "worktree: cannot get \(slot.branch) from the gateway: " + why)
             unlock(tree.repo); return
         }
         let read = tree.local.map { [$0.appendingPathComponent(".git/objects")] } ?? []

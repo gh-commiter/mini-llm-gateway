@@ -86,12 +86,16 @@ func TestPluginSettingsInvalidRefused(t *testing.T) {
 	home, _ := pluginHome(t)
 	p := filepath.Join(home, ".claude", "settings.json")
 	os.MkdirAll(filepath.Dir(p), 0o700)
-	for _, bad := range []string{`{"a":1,}`, `[]`, `null`, ``, `{"a":1} x`, `{"enabledPlugins":[]}`} {
+	// L7: ne-objekt v enabledPlugins ali extraKnownMarketplaces: install zavrne, uninstall nima česa odstraniti
+	nonObject := map[string]bool{`{"enabledPlugins":[]}`: true, `{"enabledPlugins":1}`: true, `{"extraKnownMarketplaces":"x"}`: true,
+		`{"extraKnownMarketplaces":[1],"enabledPlugins":{}}`: true}
+	for _, bad := range []string{`{"a":1,}`, `[]`, `null`, ``, `{"a":1} x`, `{"enabledPlugins":[]}`, `{"enabledPlugins":1}`,
+		`{"extraKnownMarketplaces":"x"}`, `{"extraKnownMarketplaces":[1],"enabledPlugins":{}}`} {
 		os.WriteFile(p, []byte(bad), 0o600)
 		if pluginInstall("linux") {
 			t.Fatalf("%q accepted", bad)
 		}
-		if pluginUninstall("linux", true) && bad != `{"enabledPlugins":[]}` {
+		if pluginUninstall("linux", true) && !nonObject[bad] {
 			t.Fatalf("%q accepted by uninstall", bad)
 		}
 		if b, _ := os.ReadFile(p); string(b) != bad {

@@ -928,3 +928,91 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     await router.handle(r, writer: w)
     #expect(w.status == 200 && w.text.contains("done"), "\(w.text)")
 }
+
+/// N9: agent v klonu naredi ugnezden repozitorij (mapa .git ali datoteka gitdir:) s svojim filtrom, gitlink v indeksu in
+/// .gitmodules z ignore=none; git status samega claude (okolje claudeEnv) filtra ne sme izvesti, nestedGit ga najde.
+@Test func nestedRepoFilterDoesNotRunUnderClaudeEnv() throws {
+    for gitfile in [false, true] {
+        let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("n9-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let wt = root.appendingPathComponent("wt"), sub = wt.appendingPathComponent("sub"), marker = root.appendingPathComponent("ran").path
+        try FileManager.default.createDirectory(at: wt.appendingPathComponent("build"), withIntermediateDirectories: true)
+        g(wt, "init", "-q", "-b", "main"); try file(wt, "a.txt", "a\n"); g(wt, "add", "a.txt"); g(wt, "commit", "-qm", "first")
+        #expect(Worktree.nestedProblem(wt, repo: root.appendingPathComponent("repos/d/r.git")) == nil)
+        if gitfile { g(wt, "init", "-q", "--separate-git-dir=" + wt.appendingPathComponent("build/g").path, "sub") } else { g(wt, "init", "-q", "sub") }
+        try file(sub, "f", "hello\n"); g(sub, "add", "f"); g(sub, "commit", "-qm", "s")
+        let sha = g(sub, "rev-parse", "HEAD").trimmingCharacters(in: .whitespacesAndNewlines)
+        let gd = URL(fileURLWithPath: g(sub, "rev-parse", "--absolute-git-dir").trimmingCharacters(in: .whitespacesAndNewlines))
+        let cfg = try FileHandle(forWritingTo: gd.appendingPathComponent("config"))
+        cfg.seekToEndOfFile(); cfg.write(Data("[filter \"x\"]\n\tclean = touch \(marker); cat\n".utf8)); try cfg.close()
+        try file(gd, "info/attributes", "* filter=x\n")
+        try file(sub, "f", "hellO\n")
+        try file(wt, ".gitmodules", "[submodule \"sub\"]\n\tpath = sub\n\turl = ./sub\n\tignore = none\n")
+        g(wt, "add", ".gitmodules"); g(wt, "update-index", "--add", "--cacheinfo", "160000,\(sha),sub")
+        func status(_ extra: [String: String]) -> Bool {
+            try? FileManager.default.removeItem(atPath: marker)
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: Worktree.git)
+            p.arguments = ["--no-optional-locks", "status", "--porcelain"]
+            p.currentDirectoryURL = wt
+            p.environment = ProcessInfo.processInfo.environment.merging(extra) { $1 }
+            p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+            try? p.run(); p.waitUntilExit()
+            return FileManager.default.fileExists(atPath: marker)
+        }
+        let maven = root.appendingPathComponent("m")
+        #expect(status(Worktree.harnessEnv(root: wt, maven: maven)), "gitfile=\(gitfile): the test does not reproduce the attack")
+        let env = try #require(Worktree.claudeEnv(root: wt, maven: maven, gitexec: root.appendingPathComponent("gitexec")))
+        #expect(!status(env), "gitfile=\(gitfile): nested filter ran under the Claude CLI environment")
+        #expect(Worktree.nestedProblem(wt, repo: root.appendingPathComponent("repos/d/r.git"))
+                == "changes inside the nested repository sub do not come back in worktree mode; use sync")
+    }
+}
+
+/// N9 (odločitev 0.5.20, kot Go TestWorktreeNestedRepoIgnoredDelivered): ugnezden repozitorij v prezrti poti (build/_deps od
+/// CMake FetchContent) ne ustavi veje; v poti, ki je git ne prezre, veja ne gre nazaj (in klon se ne uporabi znova).
+@Test func worktreeNestedRepoIgnoredDeliveredOtherwiseNot() async throws {
+    let (root, client, tree) = try fixture()
+    defer { cleanup(root) }
+    try file(client, ".gitignore", "build/\n"); g(client, "add", ".gitignore"); g(client, "commit", "-qm", "ignore build")
+    let hub = ShareHub(), session = UUID().uuidString
+    let key = try #require(await hub.register(session: session, cwd: client.path, key: nil, device: "dev", tree: tree))
+    let loop = fakeClient(hub, key: key, top: client)
+    defer { loop.cancel() }
+    let br = "minigw/claude-\(String(Sync.folderID(session).prefix(8)))-0"
+    let id = try await agentRun(hub, session) { dir in
+        let dep = dir.appendingPathComponent("build/_deps/foo-src")
+        try FileManager.default.createDirectory(at: dep, withIntermediateDirectories: true)
+        g(dep, "init", "-q"); try file(dep, "x.c", "int x;\n")
+        try file(dir, "agent.txt", "A\n")
+    }
+    await hub.finish(run: id)
+    #expect(g(client, "show", "\(br):agent.txt").trimmingCharacters(in: .whitespacesAndNewlines) == "A")
+    #expect(g(client, "ls-tree", "-r", "--name-only", br).contains("build/") == false)
+    let id2 = try await agentRun(hub, session) { dir in
+        let lib = dir.appendingPathComponent("vendor/lib")
+        try FileManager.default.createDirectory(at: lib, withIntermediateDirectories: true)
+        g(lib, "init", "-q")
+        try file(dir, "agent2.txt", "B\n")
+    }
+    await hub.finish(run: id2)
+    #expect(!g(client, "ls-tree", "-r", "--name-only", br).contains("agent2.txt"))
+}
+
+/// N9: ovoj pusti le git s klonovim GIT_DIR; prazen MINIGW_GIT_DIR ne velja (kot Go TestGitExecWrapNeedsGitDir).
+@Test func gitExecWrapNeedsGitDir() throws {
+    let dir = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("gx-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    #expect(Worktree.gitExecWrap(dir))
+    func run(_ gitDir: String, _ want: String) -> Int32 {
+        let p = Process()
+        p.executableURL = dir.appendingPathComponent("git")
+        p.arguments = ["--version"]
+        p.environment = ProcessInfo.processInfo.environment.merging(["GIT_DIR": gitDir, "MINIGW_GIT_DIR": want]) { $1 }
+        p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+        try? p.run(); p.waitUntilExit()
+        return p.terminationStatus
+    }
+    #expect(run("", "") != 0 && run(".git", "/w/.git") != 0)
+    #expect(run("/w/.git", "/w/.git") == 0)
+}

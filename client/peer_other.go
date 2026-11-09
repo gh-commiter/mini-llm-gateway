@@ -15,6 +15,10 @@ func pinWrap(cfgDir, exe string, args, pins []string, logf func(string, ...any))
 	return exe, args
 }
 
+// watchGitMoves (N3c): le Linux (inotify); drugje runCLI preverja klon vsako sekundo (macOS serve je za razvoj, na
+// Windows teče Claude v worktree le z »Allow commands without a sandbox«).
+func watchGitMoves(gitDir string, moved func()) (stop func(), ok bool) { return nil, false }
+
 // agentSandboxed: brez preverjenega sandboxa, ki skrije skrivnosti routerja: Codex in Grok le z izrecnim dovoljenjem (F4).
 func agentSandboxed(cfgDir string) bool { return false }
 

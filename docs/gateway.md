@@ -177,7 +177,10 @@ minigw serve                 # or run it in this terminal (--port, --config)
 
 - **Claude Code** must be installed there. On Windows `minigw serve` runs the native `claude.exe`, never `claude.cmd`.
 - **Work modes:** agents work in a synced copy or, for a git repository, in a clone on a branch. With no mode chosen
-  the client picks worktree or sync; an explicit `--minigw-work=direct` is refused.
+  the client picks worktree or sync; an explicit `--minigw-work=direct` is refused. With Claude CLI in worktree mode,
+  Linux pins the clone's `.git` with nested `bwrap` so the agent cannot replace it; where nested user namespaces are
+  restricted, Linux watches `.git` and stops the run at once when it is moved. macOS and Windows `minigw serve` have no
+  pin and check `.git` every second and on every Claude event.
 - **Agents' tools:** Claude CLI's default tools are `Read,Grep,Glob,Edit,Write,MultiEdit`, limited to the session
   folder. `Bash` runs in Claude Code's sandbox on Linux (needs `bubblewrap` and `socat`). On Windows there is no
   sandbox, so it also needs **Allow commands without a sandbox** (`minigw gw claude --allow-unsandboxed-bash=true`):

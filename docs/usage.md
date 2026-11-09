@@ -119,6 +119,12 @@ A subfolder of a git repository is synced, so files outside it are never sent. O
 `--minigw-work=worktree` uses the parent repository. An explicit `--minigw-work=direct` is refused by a Windows or
 Linux gateway. `minigw share add --work=direct` keeps direct mode as the default for one folder.
 
+**Inside Claude Code** (the plugin's skills, `CLAUDECODE` set), `--minigw-work=direct`, `sync` and `native-direct` are
+refused, because the skills' model calls run without asking you and these modes change your files without a branch to
+review. They work when the run is read-only, when the folder is saved with that mode (`minigw share add --work=`), or
+with `MINIGW_WORK=<mode>` in front of the command, which Claude Code asks you about. An explicit `native` or `worktree`
+that is not possible in the folder fails instead of falling back to `direct`.
+
 A gateway on the same Mac needs no mode: agents work in the folder itself. A `minigw serve` gateway on the same
 Windows or Linux computer still uses sync or worktree.
 
@@ -200,6 +206,12 @@ clone when the session ends.
 filters, and does not change `.git/config`. If you committed on that branch yourself, your commits stay and the
 agent's version is not fetched.
 
+**Nested repositories and submodules:** git on the gateway never enters a repository inside the clone. A nested
+repository in a folder git ignores (for example `build/_deps` from CMake FetchContent) is fine. A nested repository
+or submodule at a path git does not ignore stops the result: minigw prints "changes inside the nested repository
+<path> do not come back in worktree mode; use sync", no branch is delivered for that run, and the next request starts
+from a fresh clone. Use sync for work inside submodules.
+
 **Agents in worktree mode:**
 
 - Claude CLI agents get Bash, always in Claude Code's sandbox. Codex uses its own sandbox with the clone as the
@@ -228,6 +240,8 @@ minigw --minigw-role security -p --model claude-codex "…"
 read-only, Codex and Grok run in their read-only sandbox, Copilot runs without its write tool, and Claude CLI gets only
 its reading tools (Read, Grep, Glob, web search and fetch; commands only in a sandbox that cannot write to the
 folder). This also holds when the gateway runs on the same computer. `/minigw:ask --ro` and `/minigw:review` use it.
+Leaving `--minigw-ro` out is not prompted: a model call without it inside Claude Code is pre-approved like one with it,
+so the agent may write (in worktree mode only on its branch).
 
 **Role** (`--minigw-role NAME` or `MINIGW_ROLE`, 1–32 letters, digits, `. _ -`): a label the gateway records in its
 session history, for example `security` in a subagent's environment. It is a guard against mistakes, not a security

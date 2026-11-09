@@ -156,6 +156,27 @@ func pinWrap(cfgDir, exe string, args, pins []string, logf func(string, ...any))
 	return bw, append(append(a, "--", exe), args...)
 }
 
+// watchGitMoves (N3c): inotify na mapi .git klona (IN_MOVE_SELF, IN_DELETE_SELF). Dogodek ostane v vrsti jedra, tudi če
+// agent .git takoj vrne nazaj, zato ga zamenjava in vrnitev med dvema preverbama ne skrijeta; moved teče ob prvem
+// dogodku (tudi IN_IGNORED, prepolna vrsta) in ob vsaki napaki branja razen zaprtja (stop). false: inotify ne deluje.
+func watchGitMoves(gitDir string, moved func()) (stop func(), ok bool) {
+	fd, err := syscall.InotifyInit1(syscall.IN_CLOEXEC | syscall.IN_NONBLOCK)
+	if err != nil {
+		return nil, false
+	}
+	if _, err := syscall.InotifyAddWatch(fd, gitDir, syscall.IN_MOVE_SELF|syscall.IN_DELETE_SELF); err != nil {
+		syscall.Close(fd)
+		return nil, false
+	}
+	f := os.NewFile(uintptr(fd), "inotify") // neblokirajoč: Close prekine Read
+	go func() {
+		if n, err := f.Read(make([]byte, 4096)); n > 0 || !errors.Is(err, os.ErrClosed) {
+			moved()
+		}
+	}()
+	return func() { f.Close() }, true
+}
+
 // agentWrap: Codex ali Grok pod bwrap (R3, N1, N2): domača mapa in mapa nastavitev sta prazni; nazaj pridejo le
 // točne mape s programi iz PATH in paket CLI (samo za branje), stanje CLI te naprave in njene datoteke prijave,
 // kopija mape, začasna mapa zahteve in dovoljene mape. Skriti so XDG_RUNTIME_DIR (D-Bus, keyring, agent gpg),

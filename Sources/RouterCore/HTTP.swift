@@ -26,7 +26,8 @@ public enum HTTPParser {
     public static let maxHead = 64 * 1024
     public static let maxBody = 64 * 1024 * 1024
 
-    public static func parse(_ buf: Data) -> ParseResult {
+    /// headOnly: zahteva z glavo in praznim telesom, ko je glava cela (L1: žeton pred velikim telesom).
+    public static func parse(_ buf: Data, headOnly: Bool = false) -> ParseResult {
         guard let sep = buf.range(of: Data("\r\n\r\n".utf8)) else {
             return buf.count > maxHead ? .error(431, "Request header too large") : .needMore
         }
@@ -49,7 +50,7 @@ public enum HTTPParser {
         guard length <= maxBody else { return .error(413, "Request body too large") }
 
         let bodyStart = sep.upperBound
-        guard buf.endIndex - bodyStart >= length else { return .needMore }
+        guard headOnly || buf.endIndex - bodyStart >= length else { return .needMore }
 
         let target = first[1].split(separator: "?", maxSplits: 1)
         return .request(HTTPRequest(
@@ -57,7 +58,7 @@ public enum HTTPParser {
             path: String(target.first ?? ""),
             query: target.count > 1 ? String(target[1]) : nil,
             headers: headers,
-            body: buf.subdata(in: bodyStart..<bodyStart + length)
+            body: headOnly ? Data() : buf.subdata(in: bodyStart..<bodyStart + length)
         ))
     }
 }

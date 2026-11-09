@@ -87,6 +87,12 @@ func normName(c string) string {
 
 var shortGit = regexp.MustCompile(`^git~[0-9]+$`)
 
+// shortName (N10): kratko ime 8.3 na Windows (CLAUDE~1, VSCODE~1, HUSKY~1 …) je druga pot do iste mape; tam nobena
+// pot s takim delom ni dovoljena (windowsNames; v testih tudi drugje).
+var shortName = regexp.MustCompile(`^[^~.]{1,6}~[0-9]+(\.[^.]{0,3})?$`)
+
+var windowsNames = runtime.GOOS == "windows"
+
 // claudeRun: mape v .claude, katerih datoteke Claude Code zažene ali jim da dovoljenja (hooki, ukazi, agenti, skilli).
 var claudeRun = map[string]bool{"hooks": true, "commands": true, "agents": true, "skills": true}
 
@@ -96,7 +102,7 @@ var claudeRun = map[string]bool{"hooks": true, "commands": true, "agents": true,
 func protectedPath(rel string) bool {
 	comps := strings.Split(rel, "/")
 	for i, c := range comps {
-		if comps[i] = normName(c); comps[i] == ".git" || comps[i] == ".husky" || comps[i] == ".githooks" ||
+		if comps[i] = normName(c); comps[i] == ".git" || (windowsNames && shortName.MatchString(c)) || comps[i] == ".husky" || comps[i] == ".githooks" ||
 			(i > 0 && comps[i-1] == ".claude" && claudeRun[comps[i]]) {
 			return true
 		}
@@ -548,7 +554,7 @@ func (s *shareClient) syncPush(k string) bool {
 		if st, _ := call(s.c, "PUT", "/minigw/sync/file", map[string]string{"x-share-key": k, "x-sync-path": url.PathEscape(p)}, b, 300*time.Second); st != 204 {
 			keepOld(p)
 			if st == 409 {
-				s.note(p + " changed during sync; it goes with the next request")
+				s.note("sync: " + p + " changed during sync; it goes with the next request") // N4: nikoli pot na začetku vrstice
 			} else {
 				s.note(fmt.Sprintf("cannot sync %s (HTTP %d)", p, st))
 			}
