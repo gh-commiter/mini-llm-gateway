@@ -122,9 +122,11 @@ else
     [ "$(readlink "$EXE" 2>/dev/null)" = "$inst" ] || { rm -f "$EXE"; ln -s "$inst" "$EXE"; } ||
       echo "minigw plugin: could not link $EXE to $inst."
   elif [ -n "$inst" ]; then
-    q=$(cygpath -m "$inst" | sed "s/'/'\\\\''/g") c=$(cygpath -w "$inst" | sed 's/%/%%/g')
+    # minigw.cmd: brez zakasnjene razširitve, pot MSI kot %LOCALAPPDATA%\… (ASCII; enako kot shimCmd v client/plugin.go)
+    q=$(cygpath -m "$inst" | sed "s/'/'\\\\''/g")
     { printf '%s\n' '#!/bin/sh' '# Mini Gateway: the installed minigw' "exec '$q' \"\$@\"" > "$BIN/minigw.new" &&
-      printf '@"%s" %%*\r\n' "$c" > "$BIN/minigw.cmd" && mv -f "$BIN/minigw.new" "$BIN/minigw"; } ||
+      printf '@setlocal DisableDelayedExpansion\r\n@"%%LOCALAPPDATA%%\\Programs\\Mini Gateway\\minigw.exe" %%*\r\n' > "$BIN/minigw.cmd" &&
+      mv -f "$BIN/minigw.new" "$BIN/minigw"; } ||
       echo "minigw plugin: could not point $BIN/minigw at $inst."
     rm -f "$EXE" 2>/dev/null  # prejšnja kopija; v rabi ostane, a bin/minigw ima prednost
     EXE=$inst
@@ -150,9 +152,8 @@ case "$os" in
     [ -d "$app" ] && old=$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist" 2>/dev/null)
     # minigw vtičnika je tu lahko kar minigw aplikacije: zadnja izdaja iz preusmeritve releases/latest
     new=$(curl -fsS -o /dev/null --max-time 5 -w '%{redirect_url}' "https://github.com/$REPO/releases/latest" 2>/dev/null | sed -n 's|.*/tag/v||p') ;;
-  linux) [ -f "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/minigw-serve.service" ] && old=$(ver "$HOME/.local/bin/minigw") ;;
-  windows) [ -n "${LOCALAPPDATA:-}" ] && command -v cygpath >/dev/null 2>&1 &&
-    old=$(ver "$(cygpath -u "$LOCALAPPDATA")/Programs/Mini Gateway/minigw.exe") ;;
+  # M1: nameščeni minigw (ne $EXE, ki je povezava nanj) proti podpisani izdaji, tudi brez enote systemd
+  *) old=$iv new=${rel:-$new} ;;
 esac
 # Le številke in pike: izpis gre Claudu kot kontekst (F6).
 case $new in *[!0-9.]*) new="" ;; esac
