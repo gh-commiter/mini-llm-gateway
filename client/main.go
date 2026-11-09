@@ -638,6 +638,10 @@ func main() {
 		headers += "\nx-claude-mini-ro: 1"
 	}
 	env = append(env, "ANTHROPIC_CUSTOM_HEADERS="+headers)
+	if promptGuard(args, os.Getenv, stdinTerminal()) {
+		args = append([]string{"--disable-slash-commands"}, args...)
+		env = append(env, "CLAUDE_CODE_DISABLE_FILE_MENTIONS=1")
+	}
 
 	// Načini po vrsti (auto: native → worktree → sync); naslednji, če router prejšnjega ne sprejme.
 	top := workTop(work, cwd)
@@ -781,8 +785,34 @@ func checkClaudeArgs(env func(string) string) bool {
 	return env("CLAUDECODE") != "" && env("MINIGW_ALLOW_UNSAFE_FLAGS") != "1"
 }
 
-// atMention: »@« na začetku besede (tudi za ( " '): claude -p bi to datoteko priložil zahtevi (N6).
-var atMention = regexp.MustCompile(`(^|[\s("'])@\S`)
+// atMention: »@« na začetku besede (tudi za ( " ', Unicode presledki, U+FEFF in 。、？！ kot pri claude): claude -p bi
+// to datoteko priložil zahtevi (N6, N6b). Le še varovalka: claude dobi CLAUDE_CODE_DISABLE_FILE_MENTIONS (promptGuard).
+var atMention = regexp.MustCompile(`(^|[\s\v\p{Z}\x{FEFF}\x{3002}\x{3001}\x{FF1F}\x{FF01}("'])@\S`)
+
+// promptGuard (N6b, N7): claude brez terminala na stdin ali z -p bere navodilo kot vnos uporabnika (»@pot« priloži
+// datoteko, »/ukaz« zažene ukaz): tedaj claude dobi --disable-slash-commands in CLAUDE_CODE_DISABLE_FILE_MENTIONS=1.
+// Ostane le pogovor v terminalu, kjer tipka človek.
+func promptGuard(args []string, env func(string) string, stdinTerminal bool) bool {
+	if env("CLAUDECODE") != "" || !stdinTerminal {
+		return true
+	}
+	for _, a := range args {
+		if a == "--" {
+			break
+		}
+		if a == "-p" || a == "--print" {
+			return true
+		}
+	}
+	return false
+}
+
+// stdinTerminal: stdin je naprava, a ne /dev/null (Bash v Claude Code ga da ukazom; claude je tedaj v načinu -p).
+func stdinTerminal() bool {
+	st, err := os.Stdin.Stat()
+	null, nerr := os.Stat(os.DevNull)
+	return isTerminal(os.Stdin) && err == nil && (nerr != nil || !os.SameFile(st, null))
+}
 
 // promptRefused (N6, N7): claude -p bere navodilo kot vnos uporabnika: »@pot« priloži katero koli datoteko, »/ukaz«
 // zažene ukaz s poševnico (npr. /config permissionMode=… v globalnih nastavitvah). "" = dovoljeno.

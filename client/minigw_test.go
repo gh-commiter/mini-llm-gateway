@@ -988,12 +988,43 @@ func TestUnsafePromptInsideClaudeCode(t *testing.T) {
 			t.Errorf("%q stdin %q refused (%s)", c.args, c.stdin, r)
 		}
 	}
+	// N6b: ločila pred @, ki jih claude 2.1.318 šteje za začetek besede (JS \s, U+FEFF, 。、？！), tudi na stdin
+	for _, sep := range []string{"\u00a0", "\u1680", "\u2000", "\u2003", "\u200a", "\u2028", "\u2029", "\u202f", "\u205f", "\u3000",
+		"\ufeff", "\v", "。", "、", "？", "！"} {
+		if unsafePrompt(append(m, "--", "x"+sep+"@/etc/hosts"), "", env) == "" || unsafePrompt(m, "x"+sep+"@/etc/hosts", env) == "" {
+			t.Errorf("%U before @ accepted", []rune(sep)[0])
+		}
+	}
+	for _, p := range []string{"a\u200b@b", "x\u0085@y", "x＠/etc/hosts", "x=@y", "x:@y"} { // claude jih ne priloži (izmerjeno)
+		if r := unsafePrompt(append(m, "--", p), "", env); r != "" {
+			t.Errorf("%q refused (%s)", p, r)
+		}
+	}
 	if unsafePrompt([]string{"-p", "/config x"}, "", func(string) string { return "" }) != "" {
 		t.Error("refused outside Claude Code")
 	}
 	in["MINIGW_ALLOW_UNSAFE_FLAGS"] = "1"
 	if unsafePrompt([]string{"-p", "@/etc/hosts"}, "", env) != "" {
 		t.Error("MINIGW_ALLOW_UNSAFE_FLAGS=1 ignored")
+	}
+}
+
+// N6b, N7: claude brez terminala ali z -p (tudi zunaj Claude Code) dobi --disable-slash-commands in brez @-priponk.
+func TestPromptGuard(t *testing.T) {
+	none := func(string) string { return "" }
+	cc := func(k string) string { return map[string]string{"CLAUDECODE": "1"}[k] }
+	for _, c := range []struct {
+		args []string
+		env  func(string) string
+		tty  bool
+		want bool
+	}{
+		{[]string{"-p", "x"}, none, true, true}, {[]string{"--print"}, none, true, true}, {[]string{"x"}, none, false, true},
+		{nil, cc, true, true}, {nil, none, true, false}, {[]string{"--model", "m"}, none, true, false}, {[]string{"--", "-p"}, none, true, false},
+	} {
+		if promptGuard(c.args, c.env, c.tty) != c.want {
+			t.Errorf("%q tty=%v: want %v", c.args, c.tty, c.want)
+		}
 	}
 }
 

@@ -1715,8 +1715,26 @@ final class FakeMinigw: @unchecked Sendable {
                        (m + ["task"], "mail to a@b, not to me"), (["-p", "--model", "/m", "--append-system-prompt", "@x", "ok"], ""), ([], "")] {
         #expect(Profiles.unsafePrompt(a, stdin: stdin, env: env) == nil, "\(a) \(stdin)")
     }
+    // N6b: ločila pred @, ki jih claude 2.1.318 šteje za začetek besede (JS \s, U+FEFF, 。、？！), tudi na stdin
+    for sep in ["\u{a0}", "\u{1680}", "\u{2000}", "\u{2003}", "\u{200a}", "\u{2028}", "\u{2029}", "\u{202f}", "\u{205f}", "\u{3000}",
+                "\u{feff}", "\u{0b}", "。", "、", "？", "！"] {
+        #expect(Profiles.unsafePrompt(m + ["--", "x\(sep)@/etc/hosts"], stdin: "", env: env) != nil, "\(sep.unicodeScalars.first!.value)")
+        #expect(Profiles.unsafePrompt(m, stdin: "x\(sep)@/etc/hosts", env: env) != nil, "\(sep.unicodeScalars.first!.value)")
+    }
+    for p in ["a\u{200b}@b", "x＠/etc/hosts", "x=@y", "x:@y"] {  // claude jih ne priloži (izmerjeno)
+        #expect(Profiles.unsafePrompt(m + ["--", p], stdin: "", env: env) == nil, "\(p)")
+    }
     #expect(Profiles.unsafePrompt(["-p", "/config x"], stdin: "", env: [:]) == nil)
     #expect(Profiles.unsafePrompt(["-p", "@/etc/hosts"], stdin: "", env: ["CLAUDECODE": "1", "MINIGW_ALLOW_UNSAFE_FLAGS": "1"]) == nil)
+}
+
+/// N6b, N7: claude brez terminala ali z -p (tudi zunaj Claude Code) dobi --disable-slash-commands in brez @-priponk.
+@Test func promptGuardOutsideATerminal() {
+    let cc = ["CLAUDECODE": "1"]
+    for (a, env, tty, want) in [(["-p", "x"], [:], true, true), (["--print"], [:], true, true), (["x"], [:], false, true), ([], cc, true, true),
+                                ([], [:], true, false), (["--model", "m"], [:], true, false), (["--", "-p"], [:], true, false)] as [([String], [String: String], Bool, Bool)] {
+        #expect(Profiles.promptGuard(a, env: env, stdinTerminal: tty) == want, "\(a) \(tty)")
+    }
 }
 
 @Test func modelLinesAndGatewayNotesAreOneCleanLine() {

@@ -98,8 +98,10 @@ func hardenRouter() { syscall.RawSyscall(syscall.SYS_PRCTL, 4 /* PR_SET_DUMPABLE
 var (
 	bwrapOnce   sync.Once
 	bwrapPath   string // "" = bwrap ni nameščen ali ne deluje (npr. brez uporabniških imenskih prostorov)
-	nestedOnce  sync.Once
-	nestedBwrap bool // bwrap deluje tudi znotraj bwrap (pinWrap)
+	nestedMu    sync.Mutex
+	nestedAt    time.Time // zadnji neuspeli preizkus (N3b: ponovi se po nestedRetry, uspeh velja do konca procesa)
+	nestedBwrap bool      // bwrap deluje tudi znotraj bwrap (pinWrap)
+	nestedRetry = time.Minute
 )
 
 func bwrapReady(cfgDir string) string {
@@ -123,21 +125,26 @@ func agentSandboxed(cfgDir string) bool { return bwrapReady(cfgDir) != "" }
 // ostane exe, kot je; zamenjavo nato ujame worktreeIntact pred naslednjim zagonom.
 // Lastni sandbox Claude Code (bwrap) nato teče gnezden v imenskem prostoru pinWrap; kjer gnezdeni uporabniški imenski
 // prostori niso dovoljeni (Ubuntu 24.04, AppArmor bwrap-userns-restrict), bi Bash v Claude odpovedal: takrat pinWrap
-// enkrat to zapiše in ga izpusti (preverbi pred zagonom in po njem, gitIntact in worktreeIntact, ostaneta).
+// to zapiše in ga izpusti; preizkus ponovi najpogosteje enkrat na minuto (N3b: tudi po prehodni napaki). Brez pin
+// runCLI preverja klon med tekom (worktreeIntact) in claude ob zamenjavi .git ustavi.
 func pinWrap(cfgDir, exe string, args, pins []string, logf func(string, ...any)) (string, []string) {
 	bw := bwrapReady(cfgDir)
 	if bw == "" {
 		return exe, args
 	}
-	nestedOnce.Do(func() {
+	nestedMu.Lock()
+	if !nestedBwrap && time.Since(nestedAt) >= nestedRetry {
 		t, err := exec.LookPath("true")
 		d := os.TempDir()
 		if nestedBwrap = err == nil && command(bw, "--dev-bind", "/", "/", "--die-with-parent", "--bind", d, d, "--",
 			bw, "--dev-bind", "/", "/", "--", t).Run() == nil; !nestedBwrap {
-			logf("claude: nested bwrap does not work here (user namespaces restricted?), so the .git pin of worktree clones is off; the checks before and after each run still apply")
+			nestedAt = time.Now()
+			logf("claude: nested bwrap does not work here (user namespaces restricted?), so the .git pin of worktree clones is off; the clone is checked during each run instead")
 		}
-	})
-	if !nestedBwrap {
+	}
+	ok := nestedBwrap
+	nestedMu.Unlock()
+	if !ok {
 		return exe, args
 	}
 	a := []string{"--dev-bind", "/", "/", "--die-with-parent"}

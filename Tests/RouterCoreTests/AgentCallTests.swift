@@ -99,6 +99,8 @@ private func get(_ run: AgentRun, _ path: String, token: String?) async -> Int {
     c.claudeCLI.enabled = true; c.claudeCLI.askOthers = true; c.claudeCLI.allowLocalTools = true
     c.claudeCLI.executable = try script("claude", """
         [ "$1" = --version ] && { echo '2.1.0 (Claude Code)'; exit 0; }
+        [ "$CLAUDE_CODE_DISABLE_FILE_MENTIONS" = 1 ] || exit 9  # N9
+        case " $* " in *" --disable-slash-commands "*) ;; *) exit 9 ;; esac
         cat > /dev/null
         prev=""; for a in "$@"; do [ "$prev" = --append-system-prompt ] && printf '%s' "$a" > note.txt; [ "$prev" = --settings ] && printf '%s' "$a" > settings.txt; prev="$a"; done
         echo "$(\(ask("claude-codex")))" > asked.txt
@@ -141,6 +143,11 @@ private func get(_ run: AgentRun, _ path: String, token: String?) async -> Int {
     #expect(read("settings.txt")?.contains(exe.replacingOccurrences(of: "/", with: "\\/")) == true || read("settings.txt")?.contains(exe) == true)
     #expect(read("prompt.txt")?.contains("Another agent on this gateway (claude) asks you this") == true)
     #expect(read("prompt.txt")?.contains("You may ask another model") == true)
+    // Codex vpraša Claude (vprašani claude -p v mapi klicatelja): tudi ta z obema stikaloma (N9)
+    let w2 = FakeWriter()
+    await router.handle(request("POST", "/v1/messages", headers: h,
+                                body: #"{"model":"claude-codex","tools":[{"name":"x"}],"messages":[{"role":"user","content":"go"}]}"#), writer: w2)
+    #expect(w2.status == 200 && read("loop.txt") == "200", "\(w2.text)")
     let unreg = FakeWriter()
     await router.handle(request("DELETE", "/minigw/share", headers: ["Authorization": "Bearer tok", "x-share-key": key]), writer: unreg)
 }
@@ -230,6 +237,8 @@ private func get(_ run: AgentRun, _ path: String, token: String?) async -> Int {
     c.claudeCLI.enabled = true; c.claudeCLI.askOthers = true; c.claudeCLI.allowLocalTools = true
     c.claudeCLI.executable = try script("claude", """
         [ "$1" = --version ] && { echo '2.1.0 (Claude Code)'; exit 0; }
+        [ "$CLAUDE_CODE_DISABLE_FILE_MENTIONS" = 1 ] || exit 9  # N9
+        case " $* " in *" --disable-slash-commands "*) ;; *) exit 9 ;; esac
         cat > /dev/null
         printf '%s\\n' "$@" > claude-args.txt
         curl -s -o /dev/null -H "Authorization: Bearer $(cat "$MINIGW_AGENT_AUTH_FILE")" -H 'content-type: application/json' -H 'x-claude-mini-ro: 0' \\
@@ -264,6 +273,10 @@ private func get(_ run: AgentRun, _ path: String, token: String?) async -> Int {
     let ro = try await run(readOnly: true)
     #expect(ro.codex.contains("--sandbox\nread-only") && !ro.codex.contains("workspace-write") && !ro.codex.contains("--add-dir"))
     #expect(ro.claude.contains("--disallowedTools\nEdit,Write,MultiEdit,NotebookEdit,EnterWorktree,ExitWorktree,Monitor") && ro.claude.contains(#""allowWrite":[]"#))
+    let chat = FakeWriter()  // N9: pogovor brez orodij prav tako z obema stikaloma (sicer lažni claude konča brez odgovora)
+    await router.handle(request("POST", "/v1/messages", headers: ["Authorization": "Bearer tok"],
+                                body: #"{"model":"claude-cli-haiku","messages":[{"role":"user","content":"title"}]}"#), writer: chat)
+    #expect(chat.status == 200, "\(chat.text)")
 }
 
 /// Agent, ki v klonu le bere (worktree, pisanje izklopljeno): izvajanje nosi --minigw-ro, vprašani agenti dobijo glavo

@@ -150,6 +150,7 @@ func TestAgentAsksAgentInSameFolder(t *testing.T) {
 	}
 	claude := filepath.Join(tmp, "claude")
 	writeT(t, claude, `#!/bin/sh
+`+cliGuard+`
 cat > /dev/null
 prev=""; for a in "$@"; do [ "$prev" = --append-system-prompt-file ] && cp "$a" note.txt; [ "$prev" = --settings ] && printf '%s' "$a" > settings.txt; prev="$a"; done
 echo "$(`+ask("claude-codex")+`)" > asked.txt
@@ -207,6 +208,14 @@ echo "codex answer" > "$out"
 	}
 	if got := read("loop.txt"); got != "403" {
 		t.Fatalf("codex → claude loop: %q", got)
+	}
+	// Codex vpraša Claude (vprašani claude -p, mapa klicatelja): tudi ta s cliGuard (N9)
+	body = `{"model":"claude-codex","tools":[{"name":"x"}],"messages":[{"role":"user","content":"go"}]}`
+	if st, data := call(c, "POST", "/v1/messages", h, []byte(body), 60*time.Second); st != 200 {
+		t.Fatalf("codex: %d %s", st, data)
+	}
+	if got := read("loop.txt"); got != "200" {
+		t.Fatalf("codex → claude: %q", got)
 	}
 }
 

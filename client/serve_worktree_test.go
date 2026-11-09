@@ -41,6 +41,7 @@ func TestServeWorktreeRoundTrip(t *testing.T) {
 	// Agent: commit, neshranjena datoteka, .gitattributes s filtrom in podtaknjene nastavitve/hooki klona.
 	fake := filepath.Join(root, "claude")
 	writeT(t, fake, `#!/bin/sh
+`+cliGuard+`
 cat > /dev/null
 [ -f ../a.txt ] && grep -q uncommitted ../a.txt && echo saw-uncommitted > ../seen.txt
 n=$(ls ../agent*.txt 2>/dev/null | wc -l | tr -d ' ')
@@ -73,7 +74,9 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
 		if i == 1 {
 			body = `{"model":"claude-cli-haiku","tools":[{"name":"x"}],"messages":[{"role":"user","content":"go"},{"role":"assistant","content":"done"},{"role":"user","content":"again"}]}`
 		}
-		if st, data := call(c, "POST", "/v1/messages", h, []byte(body), 60*time.Second); st != 200 || !strings.Contains(string(data), `"done"`) {
+		// N3b: brez pin (macOS, Linux brez gnezdenega bwrap) spremenjen config ustavi claude med tekom (nov klon velja enako)
+		if st, data := call(c, "POST", "/v1/messages", h, []byte(body), 60*time.Second); (st != 200 || !strings.Contains(string(data), `"done"`)) &&
+			(i == 0 || !strings.Contains(string(data), "replaced its clone's .git during the run")) {
 			t.Fatalf("messages %d: %d %s", i, st, data)
 		}
 	}
@@ -104,6 +107,38 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
 	defer func() { worktreeNeedsUnsandboxed = runtime.GOOS == "windows" }()
 	if st, data := call(c, "POST", "/v1/messages", h, []byte(body), 30*time.Second); st != 400 || !strings.Contains(string(data), "Allow commands without a sandbox") {
 		t.Fatalf("windows rule: %d %s", st, data)
+	}
+}
+
+// N3b: brez pin .git klona runCLI med tekom preveri klon; zamenjan .git ustavi claude (ne šele naslednji zagon).
+func TestServeWorktreeSwapStopsUnpinnedClaude(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake claude is a shell script")
+	}
+	client := t.TempDir()
+	gitT(t, client, "init", "-q", "-b", "main")
+	writeT(t, filepath.Join(client, "a.txt"), "one\n")
+	gitT(t, client, "add", "-A")
+	gitT(t, client, "commit", "-qm", "first")
+	fake := filepath.Join(t.TempDir(), "claude")
+	writeT(t, fake, "#!/bin/sh\ncat > /dev/null\nmv .git .g && mkdir .git\nexec sleep 20\n")
+	os.Chmod(fake, 0o755)
+	s, _ := testServer(t, func(c *serveConfig) { c.Claude = fake })
+	if name, _ := pinWrap(s.cfgDir, "x", nil, nil, t.Logf); name != "x" {
+		t.Skip("the .git pin is on here (nested bwrap): the swap itself fails")
+	}
+	c := startLoopback(t, s)
+	sc := &shareClient{c: c, session: "sid1", root: client, worktree: true, top: filepath.ToSlash(client), synced: map[string]syncEntry{}, reported: map[string]bool{}}
+	if !sc.register() {
+		t.Fatal("register failed: " + sc.refusal)
+	}
+	sc.start(2)
+	defer sc.unregister()
+	h := map[string]string{"x-claude-mini-session": "sid1", "x-claude-mini-cwd": client, "content-type": "application/json"}
+	start := time.Now()
+	st, data := call(c, "POST", "/v1/messages", h, []byte(`{"model":"claude-cli-haiku","tools":[{"name":"x"}],"messages":[{"role":"user","content":"go"}]}`), 30*time.Second)
+	if st != 502 || !strings.Contains(string(data), "replaced its clone's .git during the run") || time.Since(start) > 10*time.Second {
+		t.Fatalf("after %v: %d %s", time.Since(start), st, data)
 	}
 }
 

@@ -449,7 +449,9 @@ extension Router {
         }
         let history = all.dropLast()
 
-        var args = ["-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
+        // N9: besedilo naprave je vnos uporabnika claude -p: brez ukazov s poševnico (/config piše nastavitve lastnika
+        // prehoda) in brez »@pot« (CLAUDE_CODE_DISABLE_FILE_MENTIONS spodaj: priložil bi datoteko prehoda mimo peskovnika)
+        var args = ["-p", "--disable-slash-commands", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
                     "--model", cliModel, "--strict-mcp-config"]
         let cwd: URL
         var prompt = last.text
@@ -534,6 +536,7 @@ extension Router {
             env.merge(Worktree.harnessEnv(root: t.root, maven: t.maven)) { $1 }
         }
         for k in ["MINIGW_AGENT_URL", "MINIGW_AGENT_AUTH_FILE"] { env[k] = run?.env[k] }
+        env["CLAUDE_CODE_DISABLE_FILE_MENTIONS"] = "1"
         p.environment = env
         let stdin = Pipe(), stdout = Pipe(), stderr = Pipe()
         p.standardInput = stdin

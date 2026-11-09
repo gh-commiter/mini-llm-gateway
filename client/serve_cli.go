@@ -7,6 +7,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -20,6 +21,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -664,7 +666,9 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		return writeError(w, r.rid, 400, "Last message must be from the user")
 	}
 	last, history := all[len(all)-1], all[:len(all)-1]
-	args := []string{"-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
+	// N9: besedilo naprave je vnos uporabnika claude -p: brez ukazov s poševnico (/config piše nastavitve lastnika
+	// prehoda) in brez »@pot« (CLAUDE_CODE_DISABLE_FILE_MENTIONS spodaj: priložil bi datoteko prehoda mimo peskovnika)
+	args := []string{"-p", "--disable-slash-commands", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
 		"--model", cliModel, "--strict-mcp-config", "--setting-sources", s.conf().SettingSources} // privzeto prazno: hooki iz mape odjemalca ne tečejo
 	prompt, session, scope, sessionID := last.text, r.h("x-claude-mini-session"), "", ""
 	var dir, extra string // extra: --append-system-prompt-file ali --system-prompt-file
@@ -772,12 +776,16 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	}
 	defer func() { <-s.procs }()
 	name, cargs := exe[0], append(exe[1:], args...)
+	unpinned := false       // N3b: brez pin (ni bwrap ali gnezdeni ne deluje) se klon preverja med tekom (watch spodaj)
 	if worktreeEnv != nil { // N3: .git klona je med tekom točka priklopa (kot pins pri Codex), zamenjati ga ni mogoče
 		name, cargs = pinWrap(s.cfgDir, name, cargs, []string{filepath.Join(wt, ".git")}, s.log.Printf)
+		unpinned = name == exe[0]
 	}
-	cmd := commandContext(r.Context(), name, cargs...)
+	ctx, kill := context.WithCancel(r.Context())
+	defer kill()
+	cmd := commandContext(ctx, name, cargs...)
 	cmd.Dir = dir
-	cmd.Env = append(append(agentEnv(os.Environ()), worktreeEnv...), runEnv...) // brez ANTHROPIC_* (klic nazaj v router), žetonov GitHub/Copilot in agentov ključev (M1)
+	cmd.Env = append(append(append(agentEnv(os.Environ()), worktreeEnv...), runEnv...), "CLAUDE_CODE_DISABLE_FILE_MENTIONS=1") // brez ANTHROPIC_* (klic nazaj v router), žetonov GitHub/Copilot in agentov ključev (M1)
 	cmd.Stdin = strings.NewReader(prompt)
 	stderr := &tailBuffer{}
 	cmd.Stderr = stderr
@@ -831,9 +839,32 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		}()
 	}
 	defer close(stopPing)
+	// N3b: zamenjan .git klona (mv .git; mkdir .git s filter.*) bi med istim tekom izvedel lastni git Claude Code brez
+	// peskovnika: ob vsakem dogodku in vsako sekundo preverba, ob neujemanju se claude ustavi.
+	var swapped atomic.Bool
+	watch := func() {
+		if unpinned && !swapped.Load() && !s.hub.worktreeIntact(wt) && swapped.CompareAndSwap(false, true) {
+			kill()
+		}
+	}
+	if unpinned {
+		go func() {
+			tick := time.NewTicker(time.Second)
+			defer tick.Stop()
+			for {
+				select {
+				case <-tick.C:
+					watch()
+				case <-stopPing:
+					return
+				}
+			}
+		}()
+	}
 	br := bufio.NewReader(stdout)
 	for {
 		line, err := br.ReadBytes('\n')
+		watch()
 		if len(line) > 0 {
 			before := t.step
 			send(t.feed(line))
@@ -860,6 +891,9 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		}
 	}
 	msg := t.resultError
+	if swapped.Load() {
+		msg = "the agent replaced its clone's .git during the run (worktree mode), so the gateway stopped it"
+	}
 	if msg == "" && werr != nil && t.text == "" { // stderr le v dnevnik (I1)
 		if tail := strings.TrimSpace(stderr.String()); tail != "" {
 			s.log.Printf("%s claude stderr: %s", r.rid, tail)

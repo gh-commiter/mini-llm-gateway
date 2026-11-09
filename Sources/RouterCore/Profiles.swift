@@ -84,12 +84,22 @@ public enum Profiles {
         !(env["CLAUDECODE"] ?? "").isEmpty && env["MINIGW_ALLOW_UNSAFE_FLAGS"] != "1"
     }
 
-    /// N6, N7: claude -p bere navodilo kot vnos uporabnika: »@pot« (na začetku besede, tudi za ( " ') priloži katero koli
-    /// datoteko, »/ukaz« zažene ukaz s poševnico (npr. /config permissionMode=…). nil = dovoljeno (kot Go promptRefused).
+    /// N6, N7: claude -p bere navodilo kot vnos uporabnika: »@pot« (na začetku besede, tudi za ( " ', U+FEFF in 。、？！ kot
+    /// pri claude, N6b) priloži katero koli datoteko, »/ukaz« zažene ukaz s poševnico (npr. /config permissionMode=…).
+    /// nil = dovoljeno (kot Go promptRefused). Le še varovalka: claude dobi CLAUDE_CODE_DISABLE_FILE_MENTIONS (promptGuard).
     static func promptRefused(_ p: String) -> String? {
         if p.drop(while: { $0.isWhitespace }).hasPrefix("/") { return "a prompt that starts with / (a slash command)" }
-        if p.range(of: #"(^|[\s("'])@\S"#, options: .regularExpression) != nil { return "@ before a file name (claude would attach that file)" }
+        if p.range(of: #"(^|[\s\x{FEFF}\x{3002}\x{3001}\x{FF1F}\x{FF01}("'])@\S"#, options: .regularExpression) != nil {
+            return "@ before a file name (claude would attach that file)"
+        }
         return nil
+    }
+
+    /// N6b, N7: claude brez terminala na stdin ali z -p bere navodilo kot vnos uporabnika: tedaj dobi --disable-slash-commands
+    /// in CLAUDE_CODE_DISABLE_FILE_MENTIONS=1. Ostane le pogovor v terminalu, kjer tipka človek (kot Go promptGuard).
+    public static func promptGuard(_ args: [String], env: [String: String], stdinTerminal: Bool) -> Bool {
+        if !(env["CLAUDECODE"] ?? "").isEmpty || !stdinTerminal { return true }
+        return args.prefix { $0 != "--" }.contains { $0 == "-p" || $0 == "--print" }
     }
 
     /// Razlog za zavrnitev navodila pod Claude Code (nil = dovoljeno): besede, ki niso možnost ali njena vrednost, vse po

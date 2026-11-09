@@ -897,3 +897,34 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     try fm.copyItem(at: wt.appendingPathComponent(".g"), to: git)
     #expect(!slot.gitIntact)
 }
+
+/// N9: claude -p v klonu (worktree) brez »@pot« in ukazov s poševnico; lažni claude brez obeh konča brez odgovora.
+@Test func worktreeClaudeRunHasNoMentionsNoSlashCommands() async throws {
+    let (root, client, tree) = try fixture()
+    defer { cleanup(root) }
+    let fake = root.appendingPathComponent("claude")
+    try Data("""
+        #!/bin/sh
+        [ "$1" = --version ] && { echo '2.1.0 (Claude Code)'; exit 0; }
+        [ "$CLAUDE_CODE_DISABLE_FILE_MENTIONS" = 1 ] || exit 9
+        case " $* " in *" --disable-slash-commands "*) ;; *) exit 9 ;; esac
+        cat > /dev/null
+        echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"done"}}}'
+        echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
+
+        """.utf8).write(to: fake)
+    chmod(fake.path, 0o755)
+    var c = RouterConfig()
+    c.claudeCLI.enabled = true; c.claudeCLI.executable = fake.path
+    let router = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]))
+    let hub = Router.shares, session = UUID().uuidString
+    let key = try #require(await hub.register(session: session, cwd: client.path, key: nil, device: "dev", tree: tree))
+    let loop = fakeClient(hub, key: key, top: client)
+    defer { loop.cancel() }
+    var r = request("POST", "/v1/messages", headers: ["Authorization": "Bearer tok", "x-claude-mini-session": session, "x-claude-mini-cwd": client.path],
+                    body: #"{"model":"claude-cli-haiku","tools":[{"name":"x"}],"messages":[{"role":"user","content":"go"}]}"#)
+    r.device = Noise.Device(id: "dev", name: "dev")
+    let w = FakeWriter()
+    await router.handle(r, writer: w)
+    #expect(w.status == 200 && w.text.contains("done"), "\(w.text)")
+}

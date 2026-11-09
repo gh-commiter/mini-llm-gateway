@@ -796,7 +796,9 @@ let profiles = loadProfiles()
 if profiles.isEmpty { _ = requireProfile() }
 let saved = profiles[0].conn  // privzeti profil: mapa, glave in modeli brez pripone kot prej
 let c = route(profiles[0])
+let promptGuard = Profiles.promptGuard(args, env: ProcessInfo.processInfo.environment, stdinTerminal: isatty(0) == 1)  // pred #7 (CLAUDECODE)
 for k in ProcessInfo.processInfo.environment.keys where Profiles.parentClaudeVar(k) { unsetenv(k) }  // #7
+if promptGuard { setenv("CLAUDE_CODE_DISABLE_FILE_MENTIONS", "1", 1) }  // N6b
 setenv("ANTHROPIC_BASE_URL", c.url, 1)
 setenv("ANTHROPIC_AUTH_TOKEN", c.token, 1)
 setenv("ANTHROPIC_API_KEY", "", 1)
@@ -823,6 +825,7 @@ if sid.isEmpty {
     if !own { args = ["--session-id", sid] + args }
 }
 
+if promptGuard { args = ["--disable-slash-commands"] + args }  // N7
 let argv = (["claude"] + args).map { strdup($0) } + [nil]
 let cwd = FileManager.default.currentDirectoryPath
 let routerHost = URLComponents(string: saved.url)?.host ?? ""

@@ -52,10 +52,10 @@ func TestPinWrapGitCannotBeRenamed(t *testing.T) {
 	}
 }
 
-// pinWrap: kjer bwrap v bwrap ne deluje (Ubuntu 24.04 AppArmor), Claude teče brez pinWrap in to se zapiše enkrat.
+// pinWrap: kjer bwrap v bwrap ne deluje (Ubuntu 24.04 AppArmor), Claude teče brez pinWrap in to se zapiše enkrat na minuto.
 // Lažni bwrap izvede ukaz za »--«; z nested=false odpove, ko teče znotraj sebe.
 func TestPinWrapOffWithoutNestedBwrap(t *testing.T) {
-	defer func() { bwrapOnce, bwrapPath, nestedOnce, nestedBwrap = sync.Once{}, "", sync.Once{}, false }()
+	defer func() { bwrapOnce, bwrapPath, nestedAt, nestedBwrap = sync.Once{}, "", time.Time{}, false }()
 	for _, nested := range []bool{false, true} {
 		dir := t.TempDir()
 		guard := `[ -n "$FAKE_BWRAP" ] && exit 1` + "\n"
@@ -64,7 +64,7 @@ func TestPinWrapOffWithoutNestedBwrap(t *testing.T) {
 		}
 		os.WriteFile(dir+"/bwrap", []byte("#!/bin/sh\n"+guard+`while [ "$1" != "--" ]; do shift; done; shift; FAKE_BWRAP=1 exec "$@"`+"\n"), 0o755)
 		t.Setenv("PATH", dir+":/usr/bin:/bin")
-		bwrapOnce, bwrapPath, nestedOnce, nestedBwrap = sync.Once{}, "", sync.Once{}, false
+		bwrapOnce, bwrapPath, nestedAt, nestedBwrap = sync.Once{}, "", time.Time{}, false
 		logs := 0
 		for range 2 {
 			name, _ := pinWrap(t.TempDir(), "/bin/claude", []string{"-p"}, []string{dir}, func(string, ...any) { logs++ })
@@ -74,6 +74,13 @@ func TestPinWrapOffWithoutNestedBwrap(t *testing.T) {
 		}
 		if want := map[bool]int{false: 1, true: 0}[nested]; logs != want {
 			t.Fatalf("nested=%v: logged %d times", nested, logs)
+		}
+		if !nested { // N3b: neuspeli preizkus se po minuti ponovi (ne sync.Once za ves proces)
+			nestedAt = nestedAt.Add(-nestedRetry)
+			pinWrap(t.TempDir(), "/bin/claude", []string{"-p"}, []string{dir}, func(string, ...any) { logs++ })
+			if logs != 2 {
+				t.Fatalf("probe not retried after a minute: logged %d times", logs)
+			}
 		}
 	}
 }
