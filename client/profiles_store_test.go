@@ -126,11 +126,11 @@ func TestReconnectAndDeviceKeySurvivesDisconnect(t *testing.T) {
 	if len(profileNames()) != 0 || *clientDevice() != dev {
 		t.Fatal("device key lost with the last profile")
 	}
-	steps, kept := uninstallSteps("linux", false)
+	steps, kept, _ := uninstallSteps("linux", false)
 	if !slices.Contains(kept, "device key ("+storeName+")") {
 		t.Fatalf("kept %v", kept)
 	}
-	if steps, _ = uninstallSteps("linux", true); !slices.ContainsFunc(steps, func(s uninstallStep) bool { return s.what == "device key ("+storeName+")" }) {
+	if steps, _, _ = uninstallSteps("linux", true); !slices.ContainsFunc(steps, func(s uninstallStep) bool { return s.what == "device key ("+storeName+")" }) {
 		t.Fatal("purge does not list the device key")
 	}
 }

@@ -189,6 +189,35 @@ func TestPluginLinkOnlyOurs(t *testing.T) {
 	}
 }
 
+// L2: pladenj prehoda MSI teče → mapa scratch (kloni, .incoming agentov) ostane; zaprt pladenj (MSI CloseTray) ali
+// korak, ki ga zapre (namestitev brez MSI) → mapa gre.
+func TestUninstallKeepsScratchWhileTrayRuns(t *testing.T) {
+	home, _ := pluginHome(t)
+	t.Setenv("LOCALAPPDATA", home)
+	cache, _ := os.UserCacheDir()
+	os.MkdirAll(filepath.Join(cache, "minigw"), 0o700)
+	o1, o2, o3 := trayRunning, msiDir, runValueGet
+	t.Cleanup(func() { trayRunning, msiDir, runValueGet = o1, o2, o3 })
+	scratch := "scratch folder " + filepath.Join(cache, "minigw")
+	for _, c := range []struct {
+		up          bool
+		msi, run    string
+		keep, steps bool
+	}{{true, `C:\MG`, "tray", true, false}, {false, `C:\MG`, "tray", false, true}, {true, "", "tray", false, true}, {true, "", "", true, false}} {
+		trayRunning = func() bool { return c.up }
+		msiDir = func() string { return c.msi }
+		runValueGet = func(string) (string, error) { return c.run, nil }
+		steps, _, busy := uninstallSteps("windows", false)
+		listed := slices.ContainsFunc(steps, func(s uninstallStep) bool { return s.what == scratch })
+		if listed != c.steps || strings.HasPrefix(busy, scratch+" (the Mini Gateway tray is running") != c.keep {
+			t.Fatalf("%+v: listed %v busy %q", c, listed, busy)
+		}
+	}
+	if _, _, busy := uninstallSteps("linux", false); busy != "" { // Linux: korak systemd ustavi serve pred mapo
+		t.Fatalf("linux busy %q", busy)
+	}
+}
+
 func TestUninstallSteps(t *testing.T) {
 	home, calls := pluginHome(t)
 	cfg, _ := os.UserConfigDir()
@@ -200,7 +229,7 @@ func TestUninstallSteps(t *testing.T) {
 	}
 	os.MkdirAll(filepath.Join(home, ".claude", "plugins", "data", "minigw-mini-gateway", "bin"), 0o700)
 
-	steps, kept := uninstallSteps("linux", false)
+	steps, kept, _ := uninstallSteps("linux", false)
 	var what []string
 	for _, s := range steps {
 		what = append(what, s.what)
@@ -233,7 +262,7 @@ func TestUninstallSteps(t *testing.T) {
 		t.Fatalf("calls %v", *calls)
 	}
 	// --purge: na seznamu tudi profili in mapa nastavitev (koraki se tu ne izvedejo: configBase je prava domača mapa).
-	steps, kept = uninstallSteps("linux", true)
+	steps, kept, _ = uninstallSteps("linux", true)
 	what = nil
 	for _, s := range steps {
 		what = append(what, s.what)
