@@ -275,6 +275,14 @@ func TestPluginDataSafeAndUnsafeDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Homebrew: mapa drwxrwxr-x uporabnik:admin je varna; o+w ne, tudi z zaupano skupino.
+	// staff (vsak lokalni uporabnik) ne.
+	if runtime.GOOS == "darwin" && os.Chown(dir, -1, 20) == nil {
+		os.Chmod(dir, 0o775)
+		if _, err := pluginLink("darwin", self); err == nil {
+			t.Fatal("group-writable staff folder linked")
+		}
+		os.Chmod(dir, 0o755)
+	}
 	if runtime.GOOS == "darwin" && os.Chown(dir, -1, 80) == nil {
 		os.Chmod(dir, 0o775)
 		if _, err := pluginLink("darwin", self); err != nil {

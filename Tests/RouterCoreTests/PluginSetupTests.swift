@@ -47,11 +47,15 @@ import Testing
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("safe-\(UUID().uuidString)").path
     try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(atPath: dir) }
-    #expect(PluginSetup.trustedGroup(80) && PluginSetup.trustedGroup(20) && !PluginSetup.trustedGroup(12345))
+    #expect(PluginSetup.trustedGroup(80) && !PluginSetup.trustedGroup(20) && !PluginSetup.trustedGroup(12345))
     chmod(dir, 0o755)
     #expect(PluginSetup.safePath(dir))
     chmod(dir, 0o777)
     #expect(!PluginSetup.safePath(dir))
+    if chown(dir, uid_t.max, 20) == 0 {  // staff: vsak lokalni uporabnik
+        chmod(dir, 0o775)
+        #expect(!PluginSetup.safePath(dir))
+    }
     if chown(dir, uid_t.max, 80) == 0 {  // uid -1: lastnik ostane
         chmod(dir, 0o775)
         #expect(PluginSetup.safePath(dir))

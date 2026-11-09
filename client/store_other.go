@@ -243,11 +243,11 @@ func safeDir(dir string) bool {
 		(perm&0o020 == 0 || trustedGroup(runtime.GOOS, st.Gid, readGroupFile()))
 }
 
-// trustedGroup: macOS staff (20), admin (80) ali primarna skupina uporabnika (kot Swift PluginSetup.trustedGroup);
+// trustedGroup: macOS le admin (80; staff je vsak lokalni uporabnik) (kot Swift PluginSetup.trustedGroup);
 // drugod le zasebna skupina uporabnika: primarna, z imenom uporabnika in brez drugih članov v /etc/group.
 func trustedGroup(goos string, gid uint32, etcGroup string) bool {
 	if goos == "darwin" {
-		return gid == 20 || gid == 80 || int(gid) == os.Getgid()
+		return gid == 80
 	}
 	u, err := user.Current()
 	if err != nil || int(gid) != os.Getgid() {

@@ -73,8 +73,8 @@ func TestProfilesStoreAndMigration(t *testing.T) {
 }
 
 func TestTrustedGroup(t *testing.T) {
-	if !trustedGroup("darwin", 80, "") || !trustedGroup("darwin", 20, "") || trustedGroup("darwin", 12345, "") {
-		t.Error("darwin: admin and staff trusted, other groups not")
+	if !trustedGroup("darwin", 80, "") || trustedGroup("darwin", 20, "") || trustedGroup("darwin", 12345, "") {
+		t.Error("darwin: only admin trusted (not staff or other groups)")
 	}
 	if trustedGroup("linux", 80, "") && os.Getgid() != 80 {
 		t.Error("linux: a group that is not the user's primary group trusted")

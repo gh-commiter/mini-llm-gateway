@@ -212,8 +212,8 @@ minigw uninstall --purge  # also profiles (Keychain, Credential Manager) and the
 
 `minigw plugin install` refuses a `settings.json` that is not valid JSON and never overwrites it. It does not link a
 minigw that is, or lies in a folder that is, not owned by you or root, writable by all users, or writable by a group
-you do not trust; move it to a safe folder first. Trusted groups: on macOS `admin`, `staff` and your primary group
-(Homebrew's `/opt/homebrew/bin` is `drwxrwxr-x you:admin`); on Linux only your own private group (your primary group,
+you do not trust; move it to a safe folder first. Trusted group: on macOS only the `admin` group
+(Homebrew's `/opt/homebrew/bin` is `drwxrwxr-x you:admin`; `staff` is every local user, so it is refused); on Linux only your own private group (your primary group,
 named after you, with no other members). `minigw plugin` and `minigw uninstall` refuse to run as root: run them as yourself. `minigw uninstall`
 asks first (`--yes` skips the question; without a terminal it needs `--yes`) and keeps settings and profiles unless
 you add `--purge`. It does not remove minigw itself; it prints how: `brew uninstall --cask minigw`, Settings → Apps for

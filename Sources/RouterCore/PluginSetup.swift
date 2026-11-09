@@ -21,8 +21,8 @@ public enum PluginSetup {
             && (st.st_mode & 0o020 == 0 || trustedGroup(st.st_gid))
     }
 
-    /// macOS: staff (20), admin (80) ali primarna skupina uporabnika (kot Go trustedGroup).
-    public static func trustedGroup(_ gid: gid_t) -> Bool { gid == 20 || gid == 80 || gid == getgid() }
+    /// macOS: le admin (80); staff (20) je vsak lokalni uporabnik (kot Go trustedGroup).
+    public static func trustedGroup(_ gid: gid_t) -> Bool { gid == 80 }
 
     /// Le JSON true (ne 1).
     public static func isTrue(_ v: Any?) -> Bool {
