@@ -165,7 +165,7 @@ wcfg=""
 if [ "$os" = linux ] && [ ! -f "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/minigw-serve.service" ]; then
   older "$old" "$new" && echo "minigw $old is installed, $new is available: replace $HOME/.local/bin/minigw with $asset from the latest release (check it first: docs/install.md, Check a download)"
 elif [ "$os" = windows ] && [ ! -f "$wcfg" ]; then
-  older "$old" "$new" && echo "minigw $old is installed, $new is available: run the installer https://github.com/$REPO/releases/latest/download/minigw-windows-$arch.msi"
+  older "$old" "$new" && echo "minigw $old is installed, $new is available: run the installer https://github.com/$REPO/releases/latest/download/minigw-windows-$arch.msi (check it first: docs/install.md, Check a download)"
 else
   older "$old" "$new" && echo "Mini Gateway $old is installed, $new is available: /minigw:gw update"
 fi

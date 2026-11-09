@@ -5,7 +5,7 @@ ways, and what the plugin does for you.
 
 - [What the plugin does](#what-the-plugin-does)
 - [Gateway Mac: DMG or Homebrew](#gateway-mac-dmg-or-homebrew)
-- [Client on another Mac](#client-on-another-mac)
+- [Client on another Mac, or Linux](#client-on-another-mac-or-linux)
 - [Client on Windows and Linux](#client-on-windows-and-linux)
 - [Check a download](#check-a-download)
 - [Gateway on Windows or Linux](#gateway-on-windows-or-linux)
@@ -48,10 +48,11 @@ brew install --cask gh-commiter/mini-gateway/mini-gateway
 Then **Settings… → Claude CLI → Install** for `minigw`. The cask also installs Claude Code (`claude-code`) if it is
 missing.
 
-## Client on another Mac
+## Client on another Mac, or Linux
 
-Needs macOS 27 on Apple Silicon. One command installs Claude Code (with Homebrew if present, otherwise the native
-installer) and the signed `minigw` command into your `PATH`:
+macOS 27 on Apple Silicon, or Linux on x64 or ARM64. One command installs Claude Code (with Homebrew if present,
+otherwise the native installer), the signed `minigw` command into your `PATH` (on Linux `~/.local/bin`) and the
+Claude Code plugin (`minigw plugin install`):
 
 ```sh
 curl -fsSL https://github.com/gh-commiter/mini-llm-gateway/releases/latest/download/install.sh | sh
@@ -63,8 +64,19 @@ To connect in the same step, add the gateway's name or address. The script then 
 curl -fsSL https://github.com/gh-commiter/mini-llm-gateway/releases/latest/download/install.sh | sh -s -- <gateway>
 ```
 
-The script checks the download against the signed `SHA256SUMS` and the Developer ID signature, and refuses to go back
-to an older release (`sh -s -- --allow-downgrade` does it anyway).
+The script checks the download against the signed `SHA256SUMS` (on Linux it needs `ssh-keygen`, package
+`openssh-client`) and, on macOS, the Developer ID signature, and refuses to go back to an older release
+(`sh -s -- --allow-downgrade` does it anyway). Run it as yourself, not as root. Options, after `sh -s --`:
+
+| Option | Does |
+|---|---|
+| (none) | client and plugin |
+| `--client` | only `minigw` (and `minigw-tui` on Linux) |
+| `--plugin` | client and plugin (the same as none; combine with `--gateway`) |
+| `--gateway` | Linux: also the gateway, `minigw serve init` (when there is no config yet) and `minigw serve install`. On macOS the gateway is the app, so it refuses |
+| `--uninstall [--purge]` | `minigw uninstall --yes` (`--purge`: also settings and profiles), then removes the `minigw` and `minigw-tui` it installed (not Homebrew's) |
+
+Run the same line again to update the client.
 
 With Homebrew (tap as above; also installs Claude Code if missing):
 
@@ -88,10 +100,11 @@ the plugin and its marketplace again; `brew upgrade` keeps them.
 | Linux x64 / ARM64 | `minigw-linux-amd64` / `minigw-linux-arm64` (static, any distribution) |
 | Settings in the terminal (optional, for a gateway) | `minigw-tui-<system>-<arch>` (`.exe` on Windows), next to `minigw` as `minigw-tui` |
 
-On Windows the [MSI](#windows-installer-msi) does this for you. On Linux, [check the download](#check-a-download) and
-put it in `~/.local/bin` as `minigw`: there the plugin finds it and `minigw serve install` updates it. Claude Code
-(`claude`) must be in your `PATH` too. Then add the plugin with `minigw plugin install`. A gateway on Linux:
-`minigw serve init && minigw serve install` ([below](#gateway-on-windows-or-linux)).
+On Windows the [MSI](#windows-installer-msi) does this for you, on Linux [`install.sh`](#client-on-another-mac-or-linux).
+By hand on Linux: [check the download](#check-a-download) and put it in `~/.local/bin` as `minigw`: there the plugin
+finds it and `minigw serve install` updates it. Claude Code (`claude`) must be in your `PATH` too. Then add the plugin
+with `minigw plugin install`. A gateway on Linux: `install.sh --gateway`, or `minigw serve init && minigw serve install`
+([below](#gateway-on-windows-or-linux)).
 
 ## Check a download
 
@@ -148,10 +161,15 @@ user only, without admin rights, into `%LocalAppData%\Programs\Mini Gateway`. It
 
 - Without the window: `msiexec /i minigw-windows-amd64.msi /passive` installs all parts; choose them with
   `ADDLOCAL=Client,Plugin` (any list; `Client` is always added).
+- Without Claude Code (no `claude` command and no `~/.claude`) the plugin part adds nothing; run
+  `minigw plugin install` later. What the installer ran is in `%TEMP%\minigw-msi.log`.
+- **Add the gateway later** to a client-only install: `minigw serve install` (or `/minigw:gw install`) runs the
+  release's MSI with `ADDLOCAL=Client,Gateway` (the plugin part stays as it is).
 - **Change parts:** Settings → Apps → Installed apps → Mini Gateway → **Modify**, or open the MSI again: tick or
   untick, then **Change**.
 - **Upgrade:** open (or `/passive`) a newer MSI. No questions, the chosen parts stay, and the tray starts again only if
-  it was running. `/minigw:gw update` downloads and runs it for you on a gateway.
+  it was running (from 0.5.19 it starts once, whatever it did before). Before closing the tray it waits up to 2 minutes
+for running agent requests. `/minigw:gw update` downloads and runs it for you on a gateway.
 - **Uninstall:** Settings → Apps → **Uninstall** removes the parts (tray start, PATH entry, Start menu, the plugin
   entries that `minigw plugin install` added; a `false` you set stays) and keeps the settings and profiles for a later
   install. To remove them too: **Modify** → tick *Also remove settings and profiles* → **Remove**, or
@@ -201,16 +219,18 @@ the MSI, or `rm ~/.local/bin/minigw`.
 | macOS client | `brew install --cask …/minigw` (client + plugin) or `install.sh` | `minigw plugin install`/`uninstall` | `brew upgrade` | `brew uninstall --cask minigw` | `brew uninstall --zap --cask minigw` |
 | macOS gateway | `brew install --cask …/mini-gateway` or the DMG | | `brew upgrade`, or the app | `brew uninstall --cask mini-gateway` | `brew uninstall --zap --cask mini-gateway` |
 | Windows | the [MSI](#windows-installer-msi) | MSI window, **Modify**, or `ADDLOCAL=` | a newer MSI | Settings → Apps → Uninstall | **Modify** → tick → Remove, or `PURGE=1` |
-| Linux | file in `~/.local/bin` ([Check a download](#check-a-download)) | `minigw plugin install`, `minigw serve install` | replace the file, or `/minigw:gw update` with a gateway | `minigw uninstall`, then `rm ~/.local/bin/minigw ~/.local/bin/minigw-tui` | `minigw uninstall --purge` first |
+| Linux | `install.sh` (client + plugin) | `--client`, `--plugin`, `--gateway` | `install.sh` again, or `/minigw:gw update` with a gateway | `install.sh --uninstall` | `install.sh --uninstall --purge` |
 
 - `brew uninstall --zap --cask minigw` runs `minigw uninstall --purge --yes` while minigw is still there: plugin data,
   profiles (its own Keychain items), `~/Library/Application Support/minigw`, scratch folders.
 - `brew uninstall --zap --cask mini-gateway` quits the app, lets the app itself delete its Keychain items and its
-  login item (`MiniGateway --zap`; macOS asks nothing, because the app created them), then moves
+  login item (`MiniGateway --zap`: it asks you first, Cancel is the default; Keychain asks nothing, because the app
+  created them), then moves
   `~/Library/Application Support/Mini Gateway`, `~/Library/Caches/dev.trojar.minigateway` (scratch), its preferences,
   HTTP storage and saved window state to the Trash.
-- Linux uses no installer of its own: `minigw serve install` puts `minigw` and `minigw-tui` in `~/.local/bin` with a
-  systemd user unit, and `minigw uninstall` removes the unit, the plugin entries and scratch folders.
+- Linux: `install.sh` puts `minigw` and `minigw-tui` in `~/.local/bin`; with `--gateway`, `minigw serve install` adds
+  the systemd user unit. `install.sh --uninstall` runs `minigw uninstall`, which removes the unit, the plugin entries
+  and scratch folders, then removes the two files.
 
 ## Build from source
 
