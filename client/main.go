@@ -565,7 +565,7 @@ func main() {
 	}
 	work, readOnly = workMode(work, lookupSharedFolder(sharedFolders(), cwd), readOnly)
 	if (strings.HasPrefix(asked, "native") || asked == "worktree") && work != asked {
-		fmt.Fprintln(os.Stderr, "minigw: "+asked+" mode cannot be read-only; sharing read-only over the network instead")
+		fmt.Fprintln(os.Stderr, "minigw: "+asked+" mode cannot be read-only; sharing the folder read-only instead")
 	}
 	implicit := workImplicit(asked, work)
 	if agentConn() == nil {

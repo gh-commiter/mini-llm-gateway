@@ -814,7 +814,7 @@ let wantShare = shareEnv == "1"
         && (SharedFolders.autoShare(cwd) || SharedFolders.lookup(sharedFolders(), cwd: cwd) != nil))
 let mode = SharedFolders.mode(flag: workFlag, saved: SharedFolders.lookup(sharedFolders(), cwd: cwd), readOnly: readOnly)
 if let asked = workFlag ?? SharedFolders.lookup(sharedFolders(), cwd: cwd)?.work, asked.hasPrefix("native") || asked == "worktree", mode.work != asked {
-    err.write(Data("minigw: \(asked) mode cannot be read-only; sharing read-only over the network instead\n".utf8))
+    err.write(Data("minigw: \(asked) mode cannot be read-only; sharing the folder read-only instead\n".utf8))
 }
 let work = mode.work
 readOnly = mode.readOnly

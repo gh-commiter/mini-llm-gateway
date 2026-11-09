@@ -578,7 +578,7 @@ const pages = {
       el("span", {class: "sub mono ellipsis", textContent: x.id, title: x.id}), ...subs.filter(Boolean).map(sub => el("div", {class: "sub", textContent: sub})));
     const taken = x => x.name && d.devices.some(a => a.name.toLowerCase() === x.name.toLowerCase());
     const copyId = x => button(t("copyId"), async () => { await navigator.clipboard.writeText(x.id); n.className = "note"; n.textContent = t("copied"); });
-    const clients = el("input", {type: "text", value: g.allowedClients, placeholder: "192.168.1.20, 192.168.1.21"});
+    const clients = el("input", {type: "text", value: g.allowedClients, placeholder: "all clients"});
     autosave(clients, n2, v => api("PATCH", "/general", {allowedClients: v}), r => t(r.restartRequired ? "restart" : "saved"));
     const waiting = d.pending.length
       ? el("div", {class: "group hi"}, ...d.pending.map(x => {

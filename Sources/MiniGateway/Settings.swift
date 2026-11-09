@@ -399,7 +399,7 @@ struct SettingsView: View {
                     Text("Only while the list of allowed devices is empty. Otherwise each new device waits for approval.")
                 }
                 .disabled(!draft.devices.isEmpty)
-                TextField("Allowed clients (IP; empty = all)", text: $draft.allowedClients, prompt: Text(verbatim: "192.168.1.20, 192.168.1.21"))
+                TextField("Allowed clients (IP; empty = all)", text: $draft.allowedClients, prompt: Text("all clients"))
                 Toggle("Allow unencrypted connections from other Macs", isOn: $draft.allowPlainRemote)
                     .help(String(localized: "minigw 0.4 and newer always encrypts. Turn on only for other clients on a trusted network."))
             }
