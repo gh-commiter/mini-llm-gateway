@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -996,5 +997,40 @@ func TestWorktreeFinalizeAllCommitted(t *testing.T) {
 	os.RemoveAll(wt)
 	if got, _ := gitRun(repo, "", nil, "--git-dir", repo, "show", "minigw/claude-12345678-0:b.txt"); got != "b" {
 		t.Fatalf("mirror lacks the agent's objects: %q", got)
+	}
+}
+
+// N1 (Linux): agentov proces, ki zapusti sejo (setsid) in klon (cd /), killInside pred finalize vseeno ustavi (GIT_WORK_TREE
+// klona v okolju); proces brez tega znaka ostane.
+func TestKillInsideFindsEscapedAgent(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("killInside runs on Linux only")
+	}
+	if _, err := exec.LookPath("setsid"); err != nil {
+		t.Skip("no setsid")
+	}
+	wt := t.TempDir()
+	start := func(env string) *exec.Cmd {
+		c := exec.Command("setsid", "sh", "-c", "cd /; exec sleep 30")
+		c.Env = append(os.Environ(), env)
+		if err := c.Start(); err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	agent, other := start("GIT_WORK_TREE="+wt), start("GIT_WORK_TREE=/elsewhere")
+	defer other.Process.Kill()
+	time.Sleep(200 * time.Millisecond)
+	killInside(wt)
+	done := make(chan error, 1)
+	go func() { done <- agent.Wait() }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		agent.Process.Kill()
+		t.Fatal("escaped agent process survived killInside")
+	}
+	if other.Process.Signal(syscall.Signal(0)) != nil {
+		t.Fatal("unrelated process was killed")
 	}
 }

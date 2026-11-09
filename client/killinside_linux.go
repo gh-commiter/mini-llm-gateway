@@ -30,14 +30,14 @@ func killInside(wt string) {
 			continue
 		}
 		f := strings.Fields(string(stat)[i+1:]) // stanje, ppid, pgrp, seja …
-		if len(f) < 4 || f[3] == e.Name() {
+		if len(f) < 4 {
 			continue
 		}
 		// N1: tudi proces, ki je zapustil sejo (setsid) in klon (cd /): okolje agenta nosi GIT_WORK_TREE tega klona
 		// (worktreeHarnessEnv); environ je berljiv le za procese istega uporabnika.
 		env, _ := os.ReadFile("/proc/" + e.Name() + "/environ")
 		marked := strings.Contains("\x00"+string(env), "\x00GIT_WORK_TREE="+wt+"\x00") || strings.Contains("\x00"+string(env), "\x00GIT_WORK_TREE="+root+"\x00")
-		if f[3] != strconv.Itoa(int(mySid)) && !marked {
+		if !marked && (f[3] != strconv.Itoa(int(mySid)) || f[3] == e.Name()) { // brez znaka le v seji prehoda, ne njen vodja
 			continue
 		}
 		fd, _, errno := syscall.Syscall(434 /* pidfd_open */, uintptr(pid), 0, 0)
