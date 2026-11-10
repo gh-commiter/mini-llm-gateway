@@ -183,3 +183,33 @@ func TestDeviceKeyStoreSafety(t *testing.T) {
 		t.Fatalf("folder mode %v", st.Mode())
 	}
 }
+
+// #49: writePrivate zamenja datoteko (ne piše skozi trdo ali simbolno povezavo na njenem mestu), 0600, v mapi brez ostankov.
+func TestWritePrivateAtomic(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "minigw")
+	os.MkdirAll(dir, 0o700)
+	other := filepath.Join(t.TempDir(), "other")
+	os.WriteFile(other, []byte("OTHER"), 0o644)
+	p := filepath.Join(dir, "connection.json")
+	if err := os.Link(other, p); err != nil {
+		t.Skip(err)
+	}
+	if err := writePrivate(p, []byte("NEW")); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(other); string(b) != "OTHER" {
+		t.Fatalf("written through a hard link: %q", b)
+	}
+	os.Remove(p)
+	os.Symlink(other, p)
+	if err := writePrivate(p, []byte("NEW")); err != nil {
+		t.Fatal(err)
+	}
+	fi, _ := os.Lstat(p)
+	if b, _ := os.ReadFile(other); string(b) != "OTHER" || !fi.Mode().IsRegular() || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("symlink followed or mode %v: %q", fi.Mode(), b)
+	}
+	if es, _ := os.ReadDir(dir); len(es) != 1 {
+		t.Fatalf("leftovers: %v", es)
+	}
+}
