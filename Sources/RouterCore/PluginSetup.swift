@@ -21,6 +21,27 @@ public enum PluginSetup {
             && (st.st_mode & 0o020 == 0 || trustedGroup(st.st_gid))
     }
 
+    /// #48: vse nadrejene mape poti do / (kot je podana in prava pot) po pravilih safePath: kdor lahko zamenja katero koli,
+    /// zamenja minigw. Višje mape (nad neposredno) smejo biti zapisljive le z bitom sticky (/tmp): tam drugi ne
+    /// zamenjajo našega vnosa. Kot Go safePath.
+    public static func safeAncestors(_ path: String) -> Bool {
+        guard let real = realpath(path, nil) else { return false }
+        defer { free(real) }
+        for start in [path, String(cString: real)] {
+            var d = start, strict = true
+            repeat {
+                d = (d as NSString).deletingLastPathComponent
+                var st = stat()
+                guard stat(d, &st) == 0, safePath(d) || !strict && stickyOK(st) else { return false }
+                strict = false
+            } while d != "/" && !d.isEmpty
+        }
+        return true
+    }
+
+    /// Višja mapa, zapisljiva za druge: le s sticky in v lasti root ali tega uporabnika (sicer jo lastnik zamenja).
+    static func stickyOK(_ st: stat) -> Bool { st.st_mode & S_ISVTX != 0 && (st.st_uid == 0 || st.st_uid == getuid()) }
+
     /// macOS: le admin (80); staff (20) je vsak lokalni uporabnik (kot Go trustedGroup).
     public static func trustedGroup(_ gid: gid_t) -> Bool { gid == 80 }
 

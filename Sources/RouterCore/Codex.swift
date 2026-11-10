@@ -97,7 +97,7 @@ public enum Codex {
     final class Handle: @unchecked Sendable { let p = Process() }
 
     /// Zažene codex in vrne zadnje sporočilo agenta; prekinitev odjemalca ustavi codex.
-    /// Korak iz dogodka `codex exec --json` (ukaz ali vmesno sporočilo agenta), za Activity.
+    /// Korak iz dogodka `codex exec --json` (ukaz ali orodje; nikoli besedilo agenta), za Activity.
     static func step(_ line: Data) -> String? {
         guard let obj = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
               let item = obj["item"] as? [String: Any] else { return nil }
@@ -106,8 +106,6 @@ public enum Codex {
             var cmd = item["command"] as? String ?? ""
             if let r = cmd.range(of: "-lc '"), cmd.hasSuffix("'") { cmd = String(cmd[r.upperBound...].dropLast()) }  // /bin/zsh -lc '…'
             return "$ " + cmd.prefix(120)
-        case ("item.completed", "agent_message"?):
-            return (item["text"] as? String).map { String($0.split(separator: "\n").first ?? "").prefix(120) }.map(String.init)
         case ("item.started", let t?) where t != "reasoning":
             return t.replacingOccurrences(of: "_", with: " ")
         default:
@@ -218,7 +216,7 @@ extension Router {
             let synced = await Self.shares.isSync(session: req.header("x-claude-mini-session") ?? "")
             guard let dir = shared ?? (synced ? nil : ClaudeCLI.resolveCwd(clientCwd, roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL)) else {
                 if let why = await Self.shares.takeRefusal() {  // zaklep pisanja
-                    return await error(409, "invalid_request_error", why, rid: rid, writer: writer)
+                    return await error(why.status, "invalid_request_error", why.message, rid: rid, writer: writer)
                 }
                 if synced, Task.isCancelled { return 499 }  // Claude Code je prekinil med čakanjem na prenos
                 if synced { return await error(502, "api_error", "Syncing \(clientCwd ?? "the folder") to the gateway failed (see minigw output)", rid: rid, writer: writer) }

@@ -529,7 +529,7 @@ func TestServeGatewayReadyAfterKeyAdded(t *testing.T) {
 	s, _ := testServer(t, func(c *serveConfig) { c.Gateways = []serveGateway{{Name: "gw", BaseURL: up.URL, Insecure: true}} })
 	ready := func() bool {
 		w := httptest.NewRecorder()
-		s.handle(w, &req{Request: httptest.NewRequest("GET", "/health/ready", nil), conn: &serveConn{peer: "127.0.0.1"}})
+		s.handle(w, &req{Request: httptest.NewRequest("GET", "http://127.0.0.1/health/ready", nil), conn: &serveConn{peer: "127.0.0.1"}})
 		var b struct{ Providers map[string]bool }
 		json.Unmarshal(w.Body.Bytes(), &b)
 		return b.Providers["gw"]
@@ -541,6 +541,40 @@ func TestServeGatewayReadyAfterKeyAdded(t *testing.T) {
 	for end := time.Now().Add(5 * time.Second); !ready(); time.Sleep(200 * time.Millisecond) {
 		if time.Now().After(end) {
 			t.Fatal("not ready 5 s after the key was added")
+		}
+	}
+}
+
+func TestServeGatewayForwardsOnlyBetaQuery(t *testing.T) {
+	keys := fakeKeys(t)
+	keys["gw"] = gwKey
+	queries := make(chan string, 4)
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/messages" {
+			io.WriteString(w, `{"data":[{"id":"m1"}]}`)
+			return
+		}
+		queries <- r.URL.RawQuery
+		io.WriteString(w, `{}`) // brez Content-Type: gateway ga postavi na application/json
+	}))
+	defer up.Close()
+	s, _ := testServer(t, func(c *serveConfig) {
+		c.Gateways = []serveGateway{{Name: "gw", BaseURL: up.URL + "/v1/", Insecure: true, Models: []string{"m1"}}}
+	})
+	conn := startLoopback(t, s)
+	for query, want := range map[string]string{"?beta=true&evil=1": "beta=true", "?evil=1": "", "": "", "?beta=false": ""} {
+		r, _ := http.NewRequest("POST", conn.URL+"/v1/messages"+query, strings.NewReader(`{"model":"m1","messages":[]}`))
+		r.Header.Set("authorization", "Bearer tok")
+		resp, err := http.DefaultClient.Do(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if got := <-queries; got != want {
+			t.Errorf("query %q: upstream got %q, want %q", query, got, want)
+		}
+		if resp.Header.Get("X-Content-Type-Options") != "nosniff" {
+			t.Errorf("nosniff missing")
 		}
 	}
 }

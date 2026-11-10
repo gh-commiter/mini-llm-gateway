@@ -55,7 +55,8 @@ func storeSave(name string, data []byte) error {
 	return writePrivate(profilePath(name), data)
 }
 
-// writePrivate (L2): mapa 0700, datoteka 0600; simbolna povezava na mestu datoteke se ne sledi.
+// writePrivate (L2, #49): mapa 0700, datoteka 0600 atomarno (nova datoteka O_EXCL 0600, fsync, preimenovanje): simbolna
+// povezava na mestu datoteke je napaka, trda se ne sledi, prekinjen zapis ne pusti prirezane datoteke.
 func writePrivate(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -64,17 +65,10 @@ func writePrivate(path string, data []byte) error {
 	if err := os.Chmod(dir, 0o700); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, 0o600)
-	if err != nil {
-		return err
+	if fi, err := os.Lstat(path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return errors.New(path + " is a symbolic link: not written")
 	}
-	if err = f.Chmod(0o600); err == nil {
-		_, err = f.Write(data)
-	}
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
-	return err
+	return writeFileAtomic(path, data)
 }
 
 func storeDelete(name string) {
@@ -276,6 +270,35 @@ func safeDir(dir string) bool {
 	perm := fi.Mode().Perm()
 	return ok && perm&0o002 == 0 && (int(st.Uid) == os.Getuid() || st.Uid == 0) &&
 		(perm&0o020 == 0 || trustedGroup(runtime.GOOS, st.Gid, readGroupFile()))
+}
+
+// safePath (#48): safeDir za p, njegovo mapo in vse mape nad njo do /, za dano in za pravo pot (brez povezav); višje
+// mape smejo biti zapisljive le z bitom sticky in last roota ali uporabnika (/tmp): tam drugi ne preimenujejo ali
+// zamenjajo vnosa, ki je naš.
+func safePath(p string) bool {
+	real, err := filepath.EvalSymlinks(p)
+	return err == nil && safeChain(p) && safeChain(real)
+}
+
+func safeChain(p string) bool {
+	p, err := filepath.Abs(p)
+	if err != nil || !safeDir(p) {
+		return false
+	}
+	for d, strict := filepath.Dir(p), true; ; d, strict = filepath.Dir(d), false {
+		fi, err := os.Stat(d)
+		if err != nil {
+			return false
+		}
+		st, ok := fi.Sys().(*syscall.Stat_t)
+		sticky := !strict && fi.Mode()&os.ModeSticky != 0 && ok && (st.Uid == 0 || int(st.Uid) == os.Getuid())
+		if !safeDir(d) && !sticky {
+			return false
+		}
+		if filepath.Dir(d) == d {
+			return true
+		}
+	}
 }
 
 // trustedGroup: macOS le admin (80; staff je vsak lokalni uporabnik) (kot Swift PluginSetup.trustedGroup);

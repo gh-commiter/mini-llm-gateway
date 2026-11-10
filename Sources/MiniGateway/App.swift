@@ -195,27 +195,31 @@ final class AppState: ObservableObject {
 
     /// Skrbniški API spreminja iste nastavitve kot okno Settings (apply: shrani in znova zažene router).
     private func adminHooks() -> AdminHooks {
-        AdminHooks(secret: adminSecret, connect: connectToken, version: MenuView.version,
-                   installed: { SMAppService.mainApp.status == .enabled },
-                   setInstalled: { on in if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() } },
-                   commit: { [self] f, keys in  // AppState živi ves čas aplikacije
-                       try await MainActor.run {
-                           var c = self.config
-                           try f(&c)
-                           for (account, key) in keys {  // ključi le po uspešni spremembi, pred ponovnim zagonom
-                               if let key { self.keychain.set(account, key) } else { self.keychain.delete(account) }
+        var h = AdminHooks(secret: adminSecret, connect: connectToken, version: MenuView.version,
+                       installed: { SMAppService.mainApp.status == .enabled },
+                       setInstalled: { on in if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() } },
+                       commit: { [self] f, keys in  // AppState živi ves čas aplikacije
+                           try await MainActor.run {
+                               var c = self.config
+                               try f(&c)
+                               for (account, key) in keys {  // ključi le po uspešni spremembi, pred ponovnim zagonom
+                                   if let key { self.keychain.set(account, key) } else { self.keychain.delete(account) }
+                               }
+                               self.apply(c)
+                               return c
                            }
-                           self.apply(c)
-                           return c
-                       }
-                   },
-                   rotateToken: { [self] in
-                       await MainActor.run {
-                           self.regenerateToken()
-                           return self.connectToken
-                       }
-                   },
-                   peerCheck: { PeerProcess.refusal(peerPort: $0, routerPort: $1) })
+                       },
+                       rotateToken: { [self] in
+                           await MainActor.run {
+                               self.regenerateToken()
+                               return self.connectToken
+                           }
+                       },
+                       peerCheck: { PeerProcess.refusal(peerPort: $0, routerPort: $1) })
+        h.activity = { [self] in  // GET /activity (minigw gw settings → Activity)
+            await MainActor.run { (requests: self.logs, inflight: self.inflight.map { ($0.id, $0.time, $0.model, $0.step) }) }
+        }
+        return h
     }
 
     func regenerateToken() {

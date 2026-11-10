@@ -693,9 +693,18 @@ func shareCommand(_ a: [String]) -> Never {
 /// stdin za claude: pod Claude Code ga minigw prebere v celoti in preveri (N6, N7), nato claude dobi iste bajte (nil = stdin).
 var claudeStdin: Data?
 
+/// L1: claude, ki ga minigw preveri (različica) in zažene, je ista datoteka; nil = ni absolutne poti (execvp kot prej,
+/// »@« na stdin pa zavrnjen).
+let claudeExe = Profiles.executable("claude", path: ProcessInfo.processInfo.environment["PATH"] ?? "")
+
+/// Zažene claude (claudeExe ali kot prej po PATH); vrne se le ob napaki.
+func execClaude(_ argv: [UnsafeMutablePointer<CChar>?]) {
+    if let claudeExe { execv(claudeExe, argv) } else { execvp("claude", argv) }
+}
+
 /// H3: pod Claude Code le možnosti claude, ki ne dajo dovoljenj (Profiles.unsafeClaudeFlag); N6, N7: navodilo brez »@pot«
-/// in »/ukaz« (Profiles.unsafePrompt), tudi na stdin.
-func refuseUnsafeClaudeFlags() {
+/// in »/ukaz« (Profiles.unsafePrompt), tudi na stdin. info: le podatki o claude (-v, -h), brez --settings (I1).
+func refuseUnsafeClaudeFlags(info: Bool = false) {
     let env = ProcessInfo.processInfo.environment
     if let f = Profiles.unsafeClaudeFlag(args, env: env) {
         fail("\(f) is not accepted when minigw runs inside Claude Code: it could give the gateway's model permissions without asking you")
@@ -703,10 +712,17 @@ func refuseUnsafeClaudeFlags() {
     guard Profiles.checkClaudeArgs(env) else { return }
     var st = stat()
     if fstat(0, &st) == 0, st.st_mode & S_IFMT != S_IFCHR {  // terminal, /dev/null: ne bere
-        claudeStdin = Profiles.readStdin(fd: 0, waitMs: Profiles.promptWords(args).isEmpty ? 0 : 3000) ?? Data()
+        let wait: Int32 = Profiles.promptWords(args).isEmpty ? 0 : 3000, read = Profiles.readStdin(fd: 0, waitMs: wait)
+        if let n = Profiles.stdinNote(read: read, waitMs: wait, mode: st.st_mode) { FileHandle.standardError.write(Data((n + "\n").utf8)) }
+        claudeStdin = read ?? Data()
     }
-    if let r = Profiles.unsafePrompt(args, stdin: String(decoding: claudeStdin ?? Data(), as: UTF8.self), env: env) {
-        fail("\(r) is not accepted when minigw runs inside Claude Code: paste the text itself into the prompt")
+    let stdin = String(decoding: claudeStdin ?? Data(), as: UTF8.self)
+    // #44: »@« na stdin le, ko ga gnezdeni claude zanesljivo ne bere (varovalo, --settings, različica); preveri le ob »@«
+    let off = Profiles.stdinMentionsOff(stdin, info: info, guard: Profiles.promptGuard(args, env: env, stdinTerminal: isatty(0) == 1)) {
+        claudeExe.flatMap { try? ClaudeCLI.validate($0).get() } ?? ""
+    }
+    if let r = Profiles.unsafePrompt(args, stdin: stdin, env: env, stdinMentionsOff: off) {
+        fail(Profiles.promptRefusal(r))
     }
 }
 
@@ -886,10 +902,10 @@ case "--minigw-help", "-h", "--help", "-v", "--version":
         """)
     }
     guard args.first != "--minigw-help" else { exit(0) }
-    refuseUnsafeClaudeFlags()
+    refuseUnsafeClaudeFlags(info: true)
     // Le podatki o claude: brez routerja, seje in deljenja mape.
     let argv = (["claude"] + args).map { strdup($0) } + [nil]
-    execvp("claude", argv)
+    execClaude(argv)
     fail("cannot run claude: \(String(cString: strerror(errno)))", code: 127)
 
 default:
@@ -921,6 +937,7 @@ if profiles.isEmpty { _ = requireProfile() }
 let saved = profiles[0].conn  // privzeti profil: mapa, glave in modeli brez pripone kot prej
 let c = route(profiles[0])
 let promptGuard = Profiles.promptGuard(args, env: ProcessInfo.processInfo.environment, stdinTerminal: isatty(0) == 1)  // pred #7 (CLAUDECODE)
+let mentionSettings = promptGuard && Profiles.checkClaudeArgs(ProcessInfo.processInfo.environment)  // I17, pred #7
 for k in ProcessInfo.processInfo.environment.keys where Profiles.parentClaudeVar(k) { unsetenv(k) }  // #7
 if promptGuard { setenv("CLAUDE_CODE_DISABLE_FILE_MENTIONS", "1", 1) }  // N6b
 setenv("ANTHROPIC_BASE_URL", c.url, 1)
@@ -950,6 +967,8 @@ if sid.isEmpty {
 }
 
 if promptGuard { args = ["--disable-slash-commands"] + args }  // N7
+// I17: env v --settings premaga env v uporabnikovem settings.json (izmerjeno, 2.1.318)
+if mentionSettings { args = ["--settings", Profiles.mentionSettings] + args }
 let argv = (["claude"] + args).map { strdup($0) } + [nil]
 let cwd = FileManager.default.currentDirectoryPath
 let routerHost = URLComponents(string: saved.url)?.host ?? ""
@@ -976,7 +995,7 @@ setenv("ANTHROPIC_CUSTOM_HEADERS", "x-claude-mini-session: \(sid)\nx-claude-mini
 
 // Brez proxyja in brez mape: minigw ni več potreben → exec (razen s prebranim stdin: tega claude dobi po cevi).
 guard claudeStdin != nil || !proxies.isEmpty || (wantShare && !sid.isEmpty) || profiles.count > 1 else {
-    execvp("claude", argv)
+    execClaude(argv)
     fail("cannot run claude: \(String(cString: strerror(errno))) (is Claude Code installed and in PATH?)", code: 127)
 }
 
@@ -1099,7 +1118,7 @@ if claudeStdin != nil {  // prebrani stdin gre claude po cevi
     posix_spawn_file_actions_addclose(&actions, stdinPipe[1])
 }
 var pid: pid_t = 0
-let rc = posix_spawnp(&pid, "claude", &actions, &attr, argv, environ)
+let rc = claudeExe.map { posix_spawn(&pid, $0, &actions, &attr, argv, environ) } ?? posix_spawnp(&pid, "claude", &actions, &attr, argv, environ)
 guard rc == 0 else {
     share.unregister(); extras.unregister()
     fail("cannot run claude: \(String(cString: strerror(rc))) (is Claude Code installed and in PATH?)", code: 127)

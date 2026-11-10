@@ -92,6 +92,14 @@ with `minigw -p --model <id> "…"`, one level deep and never its own kind.
 plan or a bug analysis. The folder is shared read-only, so the reviewer cannot change files; `--rw` allows writing.
 Claude then shows the findings and says which ones it agrees with.
 
+In a git repository the skill pipes the diff to the reviewer on stdin (`git diff HEAD | minigw --minigw-ro -p …`). A
+Windows or Linux gateway gets a read-only copy of the folder without `.git`, so this is how the reviewer there sees
+the diff. Inside Claude Code, minigw accepts `@` in text on stdin (the `@@` lines of a diff) only with Claude Code
+2.1.318 or newer: minigw then turns off file mentions for the nested claude in a way your `settings.json` cannot undo.
+With an older Claude Code it refuses such stdin, and the skill describes the changes instead. A prompt argument with
+`@` at the start of a word, and a prompt or stdin that starts with `/`, are still refused. If stdin brings nothing
+within 3 s of a run with a prompt argument, minigw goes on without it and says so on stderr.
+
 ## Work modes: what happens to your files
 
 The work mode decides how an agent on another computer gets your folder. Choose it per run with
@@ -229,14 +237,18 @@ Notes:
   repositories). A gateway older than 0.5.20 stops it with "update the gateway".
 - Client requirement for nested repositories: git 2.40 or later (Debian 12, Ubuntu 22.04 and older Xcode Command Line
   Tools have older git); with older git the request is refused ("update git or use sync").
-- Gateway requirements for nested repositories. Mac app: none. Linux `minigw serve`: bwrap must work, and for Claude
+- Gateway requirements for nested repositories. Mac app: git 2.40 or later on the Mac (older Xcode Command Line Tools
+  git is older), also in native mode; otherwise the request is refused before the agent starts with "nested git
+  repositories need git 2.40 or later on the gateway; update git or use sync" (native mode suggests
+  `--minigw-work=native-direct` instead of sync). Linux `minigw serve`: bwrap must work, and for Claude
   CLI also bwrap inside bwrap, so every agent runs in its own process namespace. On Ubuntu 24.04 AppArmor's
   `bwrap-userns-restrict` profile blocks the inner one; allow it (for example with an AppArmor profile for
   `/usr/bin/bwrap` that grants `userns`, or `sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0`) or use sync.
   Without that, a request with nested repositories is refused before the agent starts (a final error: Claude Code does not retry it). macOS `minigw serve` (for
-  development) refuses nested repositories; Windows `minigw serve` handles them. If an agent would run there without
-  its own process namespace in a clone with nested repositories (for example Codex without bwrap, called by Claude
-  CLI), only that request is refused: "nested repositories need bwrap for <agent> on this Linux gateway (its own PID
+  development) refuses nested repositories; Windows `minigw serve` handles them. `minigw serve` also needs git 2.40 or
+  later on the gateway; with older git the request is refused ("nested git repositories need git 2.40 or later on
+  the gateway; update git or use sync"). If an agent would run there without its own process namespace in a clone
+  with nested repositories (for example Codex without bwrap, called by Claude CLI), only that request is refused: "nested repositories need bwrap for <agent> on this Linux gateway (its own PID
   namespace); this request did not run; use sync". The next request in the session works as before.
 - If a nested repository cannot come back (the agent moved or replaced it, its branch is larger than 64 MB, or the
   gateway could not save it), the top-level branch and the other nested repositories still come back, without that

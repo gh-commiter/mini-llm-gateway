@@ -81,6 +81,9 @@ func hardenRouter() {}
 
 func agentReaperMain([]string) { os.Exit(2) }
 
+// initReaper: le Linux (PID 1 v vsebniku).
+func initReaper() {}
+
 func startAgent(cmd *exec.Cmd) error {
 	agentJobOnce.Do(createAgentJob)
 	if agentJobErr != nil {

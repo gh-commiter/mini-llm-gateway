@@ -64,3 +64,43 @@ import Testing
     }
     #expect(!PluginSetup.safePath("/tmp/.no-such-\(UUID().uuidString)"))
 }
+
+/// #48: varna mora biti vsaka nadrejena mapa do /, ne le neposredna (tudi prek povezave).
+@Test func pluginSafeAncestorsChecksEveryParent() throws {
+    let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("anc-\(UUID().uuidString)").path
+    let bin = root + "/a/b/bin", exe = bin + "/minigw", link = root + "/link"
+    try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
+    defer { chmod(root + "/a", 0o755); try? FileManager.default.removeItem(atPath: root) }
+    FileManager.default.createFile(atPath: exe, contents: Data())
+    try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: exe)
+    #expect(PluginSetup.safeAncestors(exe) && PluginSetup.safeAncestors(link))
+    chmod(root + "/a", 0o777)  // dve ravni nad mapo minigw
+    #expect(!PluginSetup.safeAncestors(exe) && !PluginSetup.safeAncestors(link))
+    #expect(!PluginSetup.safeAncestors(root + "/missing"))
+    chmod(root + "/a", 0o1777)  // sticky (kot /tmp): višje mape smejo
+    #expect(PluginSetup.safeAncestors(exe))
+    var st = stat()
+    stat(root + "/a", &st)
+    #expect(PluginSetup.stickyOK(st))
+    st.st_uid = getuid() &+ 4242  // sticky mapa drugega uporabnika: ne (lastnik jo zamenja)
+    #expect(!PluginSetup.stickyOK(st))
+    st.st_uid = 0; st.st_mode &= ~mode_t(S_ISVTX)
+    #expect(!PluginSetup.stickyOK(st))
+    chmod(bin, 0o1777)  // mapa minigw sama: nikoli
+    #expect(!PluginSetup.safeAncestors(exe))
+    chmod(bin, 0o755)
+    // povezava v nevarno mapo: prava pot šteje
+    let bad = root + "/bad", badExe = bad + "/minigw", safeLink = root + "/a/b/bin/via"
+    try FileManager.default.createDirectory(atPath: bad, withIntermediateDirectories: true)
+    FileManager.default.createFile(atPath: badExe, contents: Data())
+    chmod(bad, 0o777)
+    try FileManager.default.createSymbolicLink(atPath: safeLink, withDestinationPath: badExe)
+    #expect(!PluginSetup.safeAncestors(safeLink))
+    chmod(bad, 0o755)
+    // minigw v lastni mapi pod /tmp (sticky)
+    let tmp = "/tmp/minigw-anc-\(UUID().uuidString)"
+    try FileManager.default.createDirectory(atPath: tmp, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o755])
+    defer { try? FileManager.default.removeItem(atPath: tmp) }
+    FileManager.default.createFile(atPath: tmp + "/minigw", contents: Data())
+    #expect(PluginSetup.safeAncestors(tmp + "/minigw"))
+}

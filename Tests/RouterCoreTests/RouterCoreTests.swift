@@ -322,6 +322,14 @@ func makeRouter(session: URLSession = .shared) -> Router {
         #expect(w.text.hasSuffix("event: message_stop\ndata: {}\n\n"))
     }
 
+    @Test func passthroughForwardsOnlyBetaQuery() {
+        #expect(Router.betaQuery("beta=true") == "?beta=true")
+        #expect(Router.betaQuery("evil=1&beta=true") == "?beta=true")
+        #expect(Router.betaQuery("evil=1") == "")
+        #expect(Router.betaQuery("beta=false") == "")
+        #expect(Router.betaQuery(nil) == "")
+    }
+
     @Test func bothAliasAndPublishedIDRouteAndWindowIsEnforced() async throws {
         let cfg = URLSessionConfiguration.ephemeral
         cfg.protocolClasses = [StubUpstream.self]
@@ -687,7 +695,7 @@ final class SeenDevices: @unchecked Sendable {
 
 @Test func agentStepsForActivity() {
     #expect(Codex.step(Data(#"{"type":"item.started","item":{"type":"command_execution","command":"/bin/zsh -lc 'cat a.txt'","status":"in_progress"}}"#.utf8)) == "$ cat a.txt")
-    #expect(Codex.step(Data(#"{"type":"item.completed","item":{"type":"agent_message","text":"Reading docs\nmore"}}"#.utf8)) == "Reading docs")
+    #expect(Codex.step(Data(#"{"type":"item.completed","item":{"type":"agent_message","text":"Reading docs\nmore"}}"#.utf8)) == nil)  // besedilo agenta ne v Activity
     #expect(Codex.step(Data(#"{"type":"turn.started"}"#.utf8)) == nil)
     var t = StreamTranslator(model: "m")
     _ = t.feed(Data(#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"docs/x.md"}}]}}"#.utf8))
@@ -1587,12 +1595,18 @@ final class FakeMinigw: @unchecked Sendable {
 /// Varnost L2: /health/ready našteje ponudnike le temu Macu ali klicatelju z žetonom (kot TestHealthReadyProvidersOnlyLocalOrAuthorized v Go).
 @Test func healthReadyProvidersOnlyLocalOrAuthorized() async {
     let router = Router(config: RouterConfig(), token: "tok", secrets: FakeSecrets(values: [:]))
-    for (peer, token, want) in [("192.0.2.9", "", false), ("192.0.2.9", "tok", true), ("127.0.0.1", "", true)] {
+    // #42: z loopbacka le s Host loopback (DNS rebinding pošlje svoj Host)
+    for (peer, token, host, want) in [("192.0.2.9", "", "127.0.0.1:8080", false), ("192.0.2.9", "tok", "gw.example", true),
+                                      ("127.0.0.1", "", "127.0.0.1:8080", true), ("127.0.0.1", "", "localhost", true),
+                                      ("::1", "", "[::1]:8080", true), ("127.0.0.1", "", "evil.example", false),
+                                      ("127.0.0.1", "", "127.evil.example:8080", false), ("127.0.0.1", "tok", "evil.example", true),
+                                      ("127.0.0.1", "", "LOCALHOST", false), ("127.0.0.1", "", "localhost.", false),
+                                      ("::1", "", "::1", true), ("127.0.0.1", "", "", false)] {  // golo ::1 kot Go loopbackHost
         var r = request("GET", "/health/ready", headers: token.isEmpty ? [:] : ["authorization": "Bearer " + token])
-        r.peer = peer
+        r.peer = peer; r.headers["host"] = host
         let w = FakeWriter()
         await router.handle(r, writer: w)
-        #expect(w.status == 200 && w.text.contains(#""providers""#) == want, "\(peer) \(token): \(w.text)")
+        #expect(w.status == 200 && w.text.contains(#""providers""#) == want, "\(peer) \(token) \(host): \(w.text)")
     }
 }
 
@@ -1798,6 +1812,59 @@ final class FakeMinigw: @unchecked Sendable {
     #expect(Profiles.unsafePrompt(["-p", "@/etc/hosts"], stdin: "", env: ["CLAUDECODE": "1", "MINIGW_ALLOW_UNSAFE_FLAGS": "1"]) == nil)
 }
 
+/// #44: diff na stdin (»@@«) gre naprej le, ko claude »@« zanesljivo ne bere; »/« na stdin in »@« v argumentih ostaneta zavrnjena.
+@Test func unsafePromptStdin() {
+    let env = ["CLAUDECODE": "1"], m = ["-p", "--model", "m", "--", "review"]
+    let diff = "diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+@~/.ssh/id_ed25519\n"
+    #expect(Profiles.unsafePrompt(m, stdin: diff, env: env, stdinMentionsOff: true) == nil)
+    #expect(Profiles.unsafePrompt(m, stdin: diff, env: env).map(Profiles.promptRefusal) == "@ before a file name on stdin (claude would attach that file) is not accepted when minigw runs inside Claude Code; remove the @ before file names on stdin or update Claude Code to 2.1.318 or newer")
+    #expect(Profiles.unsafePrompt(["-p", "--", "@x"], stdin: "", env: env, stdinMentionsOff: true).map(Profiles.promptRefusal) == "@ before a file name (claude would attach that file) is not accepted when minigw runs inside Claude Code: paste the text itself into the prompt")
+    #expect(Profiles.unsafePrompt(["-p", "--", "@x review"], stdin: "", env: env, stdinMentionsOff: true) != nil)
+    #expect(Profiles.unsafePrompt(["-p", "--", "ok"], stdin: " /config x", env: env, stdinMentionsOff: true) != nil)
+    for (v, want) in ["2.1.318 (Claude Code)": true, "2.1.319": true, "2.2.0 (Claude Code)": true, "10.0.0": true,
+                      "2.1.317 (Claude Code)": false, "2.0.999": false, "garbage": false, "": false, "2.1.318-beta": false] {
+        #expect(Profiles.mentionGuardVersion(v) == want, "\(v)")
+    }
+}
+
+/// I1: na poti -v/-h claude nima --settings, zato »@« na stdin nikoli; različico preveri le ob »@«.
+@Test func stdinMentionsOffGate() {
+    let diff = "@@ -1 +1 @@\n"
+    #expect(Profiles.stdinMentionsOff(diff, info: false, guard: true) { "2.1.318 (Claude Code)" })
+    #expect(!Profiles.stdinMentionsOff(diff, info: true, guard: true) { "2.1.318" })
+    #expect(!Profiles.stdinMentionsOff(diff, info: false, guard: false) { "2.1.318" })
+    #expect(!Profiles.stdinMentionsOff(diff, info: false, guard: true) { "2.1.317" })
+    #expect(!Profiles.stdinMentionsOff(diff, info: false, guard: true) { "" })
+    var asked = 0
+    #expect(!Profiles.stdinMentionsOff("no mention", info: false, guard: true) { asked += 1; return "2.1.318" })
+    #expect(asked == 0)
+}
+
+/// L1: claude je prva navadna izvršljiva datoteka v absolutni mapi PATH (vrstni red kot execvp); mape, neizvršljive
+/// datoteke in relativne mape preskoči; nič ustreznega = nil.
+@Test func executableOnAbsolutePath() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("exe-\(UUID().uuidString)").path
+    defer { try? FileManager.default.removeItem(atPath: root) }
+    let fm = FileManager.default
+    for d in ["dir", "plain", "real", "later"] { try fm.createDirectory(atPath: "\(root)/\(d)", withIntermediateDirectories: true) }
+    try fm.createDirectory(atPath: "\(root)/dir/claude", withIntermediateDirectories: true)  // mapa z imenom claude
+    fm.createFile(atPath: "\(root)/plain/claude", contents: Data("x".utf8), attributes: [.posixPermissions: 0o644])
+    fm.createFile(atPath: "\(root)/real/claude", contents: Data("x".utf8), attributes: [.posixPermissions: 0o755])
+    fm.createFile(atPath: "\(root)/later/claude", contents: Data("x".utf8), attributes: [.posixPermissions: 0o755])
+    try fm.createSymbolicLink(atPath: "\(root)/link", withDestinationPath: "\(root)/real/claude")
+    #expect(Profiles.executable("claude", path: "real:\(root)/dir:\(root)/plain::\(root)/real:\(root)/later") == "\(root)/real/claude")
+    #expect(Profiles.executable("link", path: root) == "\(root)/link")  // simbolna povezava na datoteko velja
+    #expect(Profiles.executable("claude", path: "\(root)/dir:\(root)/plain:.:real") == nil)
+}
+
+@Test func stdinNoteForADroppedPipe() {
+    #expect(Profiles.stdinNote(read: nil, waitMs: 3000, mode: S_IFIFO) == "minigw: stdin had no data within 3 s and was not sent")
+    #expect(Profiles.stdinNote(read: nil, waitMs: 3000, mode: S_IFREG) != nil)
+    #expect(Profiles.stdinNote(read: Data(), waitMs: 3000, mode: S_IFIFO) == nil)
+    #expect(Profiles.stdinNote(read: nil, waitMs: 0, mode: S_IFIFO) == nil)
+    #expect(Profiles.stdinNote(read: nil, waitMs: 3000, mode: S_IFSOCK) == nil)
+}
+
 /// N6b, N7: claude brez terminala ali z -p (tudi zunaj Claude Code) dobi --disable-slash-commands in brez @-priponk.
 @Test func promptGuardOutsideATerminal() {
     let cc = ["CLAUDECODE": "1"]
@@ -1841,4 +1908,36 @@ final class RateLimitedUpstream: URLProtocol, @unchecked Sendable {
     let st = await makeRouter(session: URLSession(configuration: cfg)).passthrough(
         request("POST", "/v1/messages"), body: ["model": "claude-g"], route: route, key: "k", rid: "r", writer: w)
     #expect(st == 429 && w.status == 429 && w.text.contains("x-should-retry: false") && w.text.contains("free-models-per-min"))
+}
+
+/// Upstream, ki zavrne ključ s 401 in v telesu vrne surovo besedilo (#43).
+final class UnauthorizedUpstream: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func stopLoading() {}
+    override func startLoading() {
+        let resp = HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "text/html"])!
+        client?.urlProtocol(self, didReceive: resp, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data("<html>secret upstream page</html>".utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+}
+
+/// #43: 401/403 upstreama → 502 brez besedila upstreama; drugače le očiščen error.message, največ 300 bajtov.
+@Test func passthroughUpstreamErrorIsSanitized() async {
+    let cfg = URLSessionConfiguration.ephemeral
+    cfg.protocolClasses = [UnauthorizedUpstream.self]
+    let route = Route(provider: ProviderConfig(id: "openrouter", name: "OpenRouter", enabled: true, baseURL: "https://up.example/api", aliases: ""),
+                      name: "g", alias: "claude-g", upstream: "g", window: nil)
+    let w = FakeWriter()
+    let st = await makeRouter(session: URLSession(configuration: cfg)).passthrough(
+        request("POST", "/v1/messages"), body: ["model": "claude-g"], route: route, key: "k", rid: "r", writer: w)
+    #expect(st == 502 && w.status == 502 && !w.text.contains("secret") && w.text.contains("check the API key (minigw gw provider add OpenRouter)"))
+
+    let long = String(repeating: "é", count: 400)
+    let (s1, m1) = Router.upstreamError(status: 500, name: "P", body: Data(#"{"error":{"message":"a\u001b[31m‮b \#(long)"}}"#.utf8))
+    #expect(s1 == 500 && m1.hasPrefix("P: a[31mb ") && m1.utf8.count <= 300 + 3)
+    let (s2, m2) = Router.upstreamError(status: 302, name: "P", body: Data("moved".utf8))
+    #expect(s2 == 502 && m2 == "P: HTTP 302: moved")
+    #expect(Router.upstreamError(status: 403, name: "P", body: Data()).0 == 502)
 }

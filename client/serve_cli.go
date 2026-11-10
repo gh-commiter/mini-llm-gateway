@@ -186,13 +186,17 @@ func (s *server) agentArgs(dir string, readOnly bool, tmpRoot string) []string {
 		args = append(args, "--add-dir", d)
 	}
 	if runtime.GOOS != "windows" {
+		deny := s.tempRoots() // #56: tudi starejši koreni tega procesa
+		if tmpRoot != "" && !slices.Contains(deny, tmpRoot) {
+			deny = append(deny, tmpRoot)
+		}
 		settings, _ := json.Marshal(map[string]any{"sandbox": map[string]any{
 			"enabled": true, "failIfUnavailable": hasBash(c.Tools) || c.AllowLocalTools, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
 			"network": map[string]any{"allowedDomains": []string{"*"}},
 			// M1: Scratch (kopije drugih naprav, zrcala) tudi zunaj domače mape; mapa seje v njem ostane berljiva (allowRead).
 			// #26 (N2): paket Copilot nikoli za pisanje (naloži ga priprava paketa), tudi če je v dovoljeni mapi.
 			// --minigw-ro: pisanje v te mape prepovedano (denyWrite velja tudi za delovno mapo, ki jo Claude Code dovoli sam).
-			"filesystem": map[string]any{"denyRead": append(append([]string{"~", s.cfgDir}, scratchPaths(c.Scratch)...), onlyIf(tmpRoot != "", []string{tmpRoot})...), "allowRead": dirs, "allowWrite": onlyIf(!readOnly, dirs),
+			"filesystem": map[string]any{"denyRead": append(append([]string{"~", s.cfgDir}, scratchPaths(c.Scratch)...), deny...), "allowRead": dirs, "allowWrite": onlyIf(!readOnly, dirs),
 				"denyWrite": append(append(scratchPaths(copilotCacheDir()), onlyIf(readOnly, dirs)...), gitDeny...)},
 		}})
 		args = append(args, "--settings", string(settings))
@@ -581,6 +585,7 @@ func (s *server) messages(w http.ResponseWriter, r *req) (int, string) {
 	if model == "" {
 		return writeError(w, r.rid, 400, "Body must be JSON with a model field"), ""
 	}
+	defer s.activity.start(r, model)()
 	if body["stream"] != true && !strings.HasSuffix(r.URL.Path, "/count_tokens") { // ponovitev po omejitvi v toku (noteLimit)
 		if msg, ok := s.recentLimit(r, model); ok {
 			return writeAgentError(w, r.rid, 429, msg), model
@@ -932,6 +937,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			send(t.feed(line))
 			if t.step != before {
 				s.log.Printf("%s step: %q", r.rid, t.step)
+				s.activity.step(r.rid, t.step)
 			}
 		}
 		if err != nil {

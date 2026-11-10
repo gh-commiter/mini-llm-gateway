@@ -386,7 +386,7 @@ func copilotCacheOverlaps(allowed []string) []string {
 
 // copilotPrepare: pod bwrap brez omrežja (#26): podtaknjena koda v paketu ne vidi nastavitev, ključev, Scratch in
 // omrežja; pisanje v paket, začasni COPILOT_HOME in začasno mapo zahteve (cwd).
-func copilotPrepare(ctx context.Context, exe, home, cwd, cfgDir, scratch string) {
+func copilotPrepare(ctx context.Context, exe, home, cwd, cfgDir, scratch string, tmps []string) {
 	if runtime.GOOS != "linux" {
 		return // Windows: brez peskovnika
 	}
@@ -409,7 +409,7 @@ func copilotPrepare(ctx context.Context, exe, home, cwd, cfgDir, scratch string)
 	defer cancel()
 	os.MkdirAll(copilotCacheDir(), 0o700)
 	os.MkdirAll(home, 0o700)
-	name, args := agentWrap(exe, []string{"--version"}, agentMounts{cfgDir: cfgDir, rw: []string{copilotCacheDir(), home, cwd}, hide: scratch, noNet: true})
+	name, args := agentWrap(exe, []string{"--version"}, agentMounts{cfgDir: cfgDir, rw: []string{copilotCacheDir(), home, cwd}, hide: scratch, tmps: tmps, noNet: true})
 	cmd := commandContext(ctx, name, args...)
 	cmd.Dir = cwd
 	cmd.Env = append(agentEnv(os.Environ()), "COPILOT_HOME="+home, "COPILOT_AUTO_UPDATE=false")
@@ -688,7 +688,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 		}
 		defer restoreAuth(state, k)
 		m := agentMounts{cfgDir: s.cfgDir, state: state, envVar: strings.ToUpper(k.bin) + "_HOME", files: files, rw: append([]string{dir, tmp}, extra...),
-			hide: c.Scratch}
+			hide: c.Scratch, tmps: s.tempRoots()}
 		wt, _, maven, objects, inTree := s.hub.worktreeOf(r.h("x-claude-mini-session"), k.name)
 		if p := runOf(r); p != nil { // klon klicatelja
 			wt, maven, objects, inTree = p.wt, p.maven, p.objects, p.wt != ""
@@ -755,7 +755,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 					prompt = note + "\n\n" + cliPrompt(history, last) // stanja seje ni: ves pogovor
 				}
 			}
-			copilotPrepare(ctx, exe, filepath.Join(tmp, "prep"), tmp, s.cfgDir, c.Scratch)
+			copilotPrepare(ctx, exe, filepath.Join(tmp, "prep"), tmp, s.cfgDir, c.Scratch, s.tempRoots())
 			args := copilotArgs(agent, model, write, ac.Commands, ac.Network, resume)
 			var answer string
 			err = s.runAgentProcess(ctx, r, exe, args, withTree(m), dir, prompt, func(line []byte) {
@@ -765,6 +765,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 				}
 				if st != "" {
 					s.log.Printf("%s step: %q", r.rid, st)
+					s.activity.step(r.rid, st)
 				}
 			})
 			text, thread = strings.TrimSpace(answer), resume
@@ -793,6 +794,9 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 				}
 				if st := codexStep(line); st != "" {
 					s.log.Printf("%s step: %q", r.rid, st)
+					if !codexMessage(line) { // besedilo agenta le v dnevnik
+						s.activity.step(r.rid, st)
+					}
 				}
 			})
 			b, _ := os.ReadFile(out)
@@ -813,6 +817,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 				case !ok:
 				case e.step != "":
 					s.log.Printf("%s step: %q", r.rid, e.step)
+					s.activity.step(r.rid, e.step)
 					answer = "" // odgovor je besedilo po zadnjem orodju
 				case e.err != "":
 					failure = e.err

@@ -440,6 +440,48 @@ private func acceptPeerPort(_ fd: Int32) -> (Int32, UInt16) {
     #expect(!fm.fileExists(atPath: RouterConfig.dedicated(a).appendingPathComponent("sync/x").path))
 }
 
+/// GET /activity: le zahteve modelom (najnovejša prva, največ 200) in tekoče, ista polja kot minigw serve; starejši
+/// activity.json (brez bytes in naprave) se še prebere.
+@Test func activityEndpoint() async throws {
+    let old = try JSONDecoder().decode([RequestLog].self, from: Data(#"[{"id":"\#(UUID().uuidString)","time":0,"method":"POST","path":"/v1/messages","model":"m","status":200,"ms":5}]"#.utf8))
+    #expect(old.first?.bytes == nil && old.first?.device == nil)
+    var logs = (0..<205).map { RequestLog(time: Date(timeIntervalSince1970: Double($0)), method: "POST", path: "/v1/messages", model: "m\($0)",
+                                          provider: "p", status: 200, ms: $0) }.reversed() as [RequestLog]
+    logs[0].bytes = 42; logs[0].device = "DEV"; logs[0].deviceName = "Bob's Mac"
+    logs.insert(RequestLog(time: Date(), method: "GET", path: "/minigw/admin/v1/status", model: nil, provider: "admin", status: 200, ms: 1), at: 0)
+    let app = FakeApp()
+    var hooks = app.router().admin!
+    hooks.activity = { [logs] in (logs, [(id: "req_1", time: Date(timeIntervalSince1970: 0), model: "claude-codex", step: "Read a.go")]) }
+    let w = await admin(Router(config: app.config, token: "tok", secrets: FakeSecrets(values: [:]), admin: hooks), "GET", "/activity")
+    #expect(w.status == 200)
+    let body = try #require(w.text.range(of: "\r\n\r\n").map { Data(w.text[$0.upperBound...].utf8) })
+    let o = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+    let reqs = try #require(o["requests"] as? [[String: Any]]), runs = try #require(o["inflight"] as? [[String: Any]])
+    #expect(reqs.count == 200 && reqs[0]["model"] as? String == "m204" && reqs[1]["bytes"] as? Int == 0)
+    #expect(Set(reqs[0].keys) == ["time", "method", "path", "model", "status", "ms", "bytes", "device", "deviceName"])
+    #expect(reqs[0]["deviceName"] as? String == "Bob's Mac" && reqs[0]["bytes"] as? Int == 42 && reqs[0]["time"] as? String == "1970-01-01T00:03:24Z")
+    #expect(runs.count == 1 && runs[0]["id"] as? String == "req_1" && runs[0]["step"] as? String == "Read a.go"
+            && runs[0]["time"] as? String == "1970-01-01T00:00:00Z")
+}
+
+/// Activity: neznan model (404) in predolg niz odjemalca sta »unknown« (zgodovina in tekoča zahteva).
+@Test func activityUnknownModel() async {
+    final class Seen: @unchecked Sendable { let lock = NSLock(); var logs: [RequestLog] = []; var started: [String] = [] }
+    let seen = Seen()
+    let r = Router(config: RouterConfig(), token: "tok", secrets: FakeSecrets(values: [:]),
+                   onLog: { e in seen.lock.withLock { seen.logs.append(e) } },
+                   onActivity: { if case .started(_, _, let m) = $0 { seen.lock.withLock { seen.started.append(m) } } })
+    for model in ["nope-SECRET", String(repeating: "m", count: 201)] {
+        let w = FakeWriter()
+        await r.handle(request("POST", "/v1/messages", headers: ["Authorization": "Bearer tok"], body: #"{"model":"\#(model)","messages":[]}"#), writer: w)
+        #expect(w.status == 404)
+    }
+    seen.lock.withLock {
+        #expect(seen.logs.map(\.model) == ["unknown", "unknown"] && seen.started == ["nope-SECRET", "unknown"])
+    }
+    #expect(Router.activityModel("claude-x", status: 200) == "claude-x")
+}
+
 /// M2: stara privzeta settingSources (project,local) postane "", izrecna druga ostane.
 @Test func settingSourcesMigration() throws {
     let old = try JSONDecoder().decode(ClaudeCLIConfig.self, from: Data(#"{"settingSources":"project,local"}"#.utf8))

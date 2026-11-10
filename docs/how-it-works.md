@@ -144,9 +144,11 @@ on only these options and refuses any other:
 `--fallback-model`, `-h`/`--help`
 
 After `--` everything is the prompt. Inside Claude Code minigw also refuses a prompt (in the arguments or on stdin)
-that starts with `/` or has `@` at the start of a word. With `-p`, inside Claude Code, or with stdin that is not a
-terminal, the nested `claude` runs with file mentions and slash commands off. `MINIGW_ALLOW_UNSAFE_FLAGS=1` turns
-these checks off for a person who wants them off.
+that starts with `/`, and a prompt argument that has `@` at the start of a word. Text on stdin may contain `@` (the
+`@@` lines of a diff) only with Claude Code 2.1.318 or newer; with an older Claude Code minigw refuses it. With `-p`,
+inside Claude Code, or with stdin that is not a terminal, the nested `claude` runs with file mentions and slash
+commands off; inside Claude Code minigw also passes `--settings` so that your `settings.json` cannot turn file
+mentions back on. `MINIGW_ALLOW_UNSAFE_FLAGS=1` turns these checks off for a person who wants them off.
 
 The reason: other options (`--dangerously-skip-permissions`, `--allowedTools`, `--add-dir`, `--settings` …) would give
 the nested, gateway-driven `claude` permissions the user never approved.

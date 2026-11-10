@@ -111,7 +111,7 @@ var enter = tea.KeyMsg{Type: tea.KeyEnter}
 func TestPages(t *testing.T) {
 	u, dir := fake(t)
 	want := []string{"Status                                  running on port 8765", "Bob's MacBook", "Models…", "GPT-6.1 Sol", "/home/ana/notes",
-		"Bob's MacBook · worktree", "Instructions                            You are a helpful"}
+		"Bob's MacBook · worktree", "claude-cli-sonnet", "Instructions                            You are a helpful"}
 	all := model{mac: true}.pages()
 	for i := range all {
 		_, v := screen(t, model{u: u, tab: i, mac: true})
@@ -137,7 +137,7 @@ func TestPages(t *testing.T) {
 	if calls := read(t, filepath.Join(dir, "calls.log")); strings.Contains(calls, "SECRET") {
 		t.Fatalf("argv: %s", calls)
 	}
-	_, v = screen(t, model{u: u, tab: 6, mac: true}) // network only for a device that may run commands
+	_, v = screen(t, model{u: u, tab: 7, mac: true}) // network only for a device that may run commands
 	if strings.Contains(v, "Bob's MacBook: network") || !strings.Contains(v, "thinkpad: network in commands") || !strings.Contains(v, "Network for Codex builds") {
 		t.Fatalf("mac page:\n%s", v)
 	}
@@ -225,6 +225,52 @@ func TestSessionsAndMouse(t *testing.T) {
 	press(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
 	if !strings.Contains(read(t, filepath.Join(dir, "calls.log")), "gw api DELETE /sessions") {
 		t.Fatal("not cleared")
+	}
+}
+
+// Activity: running requests at the top, a click shows a request's details, and the page reloads by itself.
+func TestActivity(t *testing.T) {
+	u, dir := fake(t)
+	m, v := screen(t, model{u: u, tab: activityTab})
+	t.Logf("\n%s", v)
+	run, recent := strings.Index(v, "● "), strings.Index(v, "Recent requests (3")
+	if run < 0 || recent < run || !strings.Contains(v, "Read docs/usage.md") || !strings.Contains(v, "12.3 s") || !strings.Contains(v, "this computer") {
+		t.Fatalf("activity:\n%s", v)
+	}
+	_, rowOf, top := m.body()
+	line := slices.IndexFunc(rowOf, func(r int) bool { return r >= 0 && strings.Contains(m.rows[r].label, "claude-gpt-y") })
+	m = mouse(t, m, 4, 3+line-top)
+	if v = m.View(); !strings.Contains(v, "dGhpbmtwYWQ") || !strings.Contains(v, "2048 bytes") {
+		t.Fatalf("details not shown:\n%s", v)
+	}
+	os.Remove(filepath.Join(dir, "calls.log"))
+	next, cmd := m.Update(tick(m.visit))
+	if cmd == nil {
+		t.Fatal("no refresh")
+	}
+	m = next.(model)
+	for _, msg := range cmd().(tea.BatchMsg) {
+		if l, ok := msg().(loaded); ok {
+			next, _ = m.Update(l)
+			m = next.(model)
+		}
+	}
+	if !strings.Contains(read(t, filepath.Join(dir, "calls.log")), "gw api GET /activity") || !strings.Contains(m.View(), "2048 bytes") {
+		t.Fatalf("not reloaded: %q", read(t, filepath.Join(dir, "calls.log")))
+	}
+	if _, cmd = m.Update(tick(m.visit - 1)); cmd != nil { // a tick of an earlier visit stops
+		t.Fatal("old tick reloads")
+	}
+
+	os.Remove(filepath.Join(dir, "GET_activity.json")) // a gateway older than 0.5.21: 404, no more reloads
+	m.u = u
+	next, _ = m.Update(m.reload("", false)())
+	m = next.(model)
+	if v := m.View(); !strings.Contains(v, "Needs gateway 0.5.21 or newer") {
+		t.Fatalf("old gateway:\n%s", v)
+	}
+	if _, cmd = m.Update(tick(m.visit)); cmd != nil {
+		t.Fatal("polls an old gateway")
 	}
 }
 
