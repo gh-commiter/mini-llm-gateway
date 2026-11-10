@@ -633,6 +633,8 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     defer { try? fm.removeItem(atPath: t) }
     try fm.createDirectory(atPath: t + "/TemporaryItems/NSIRD_old_1", withIntermediateDirectories: true)
     try fm.createDirectory(atPath: t + "/TemporaryDirectory.old", withIntermediateDirectories: true)
+    // xcodebuild test: tekač testov ne sme izpisati mape z imenom TemporaryItems (swift test lahko); tam preskoči.
+    guard (try? fm.contentsOfDirectory(atPath: t + "/TemporaryItems")) != nil else { return }
     let before = Native.saveCopies(dirs: [], temp: t), start = Date() - 1
     #expect(before == [t + "/TemporaryItems/NSIRD_old_1", t + "/TemporaryDirectory.old"])
     for d in ["TemporaryItems/NSIRD_new_1", "TemporaryItems/NSIRD_full", "TemporaryDirectory.new", "TemporaryDirectory.keep",
