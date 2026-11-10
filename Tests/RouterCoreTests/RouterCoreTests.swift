@@ -643,6 +643,18 @@ final class SeenDevices: @unchecked Sendable {
     #expect(c.siriAllowed(peer: "10.0.0.5", device: d))
 }
 
+// #59: vsaka nadmapa cwd (tudi /private/… brez simbolne povezave) je za zagon »untrusted« (projektne nastavitve izklopljene).
+@Test func codexProjectsUntrusted() throws {
+    let root = URL(fileURLWithPath: "/tmp/minigw-trust-" + UUID().uuidString), d = root.appendingPathComponent("s")
+    try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    for a in [Codex.args(cwd: d, extraDirs: [], agent: true, output: d, resume: "t1"), Codex.args(cwd: d, extraDirs: [], agent: false, output: d)] {
+        let i = try #require(a.firstIndex { $0.hasPrefix("projects={") })
+        #expect(a[i - 1] == "-c" && i < (a.firstIndex(of: "resume") ?? a.count))
+        for k in ["/", "/tmp", root.path, d.path, "/private" + d.path] { #expect(a[i].contains("\"\(k)\"={trust_level=\"untrusted\"}")) }
+    }
+}
+
 @Test func codexArgsSandboxed() {
     let out = URL(fileURLWithPath: "/tmp/o.txt"), cwd = URL(fileURLWithPath: "/tmp/s")
     let a = Codex.args(cwd: cwd, extraDirs: ["/tmp/x"], agent: true, output: out)

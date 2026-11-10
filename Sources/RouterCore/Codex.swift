@@ -92,8 +92,29 @@ public enum Codex {
             a += ["--sandbox", "read-only", "-c", #"sandbox_mode="read-only""#]  // tudi kot -c: velja tudi za »exec resume« (kot v Go, I5)
         }
         if !agent { a.append("--ephemeral") }  // naslovi, povzetki: brez zapisa seje
+        a += untrustedProjects(cwd)
         if let resume { a += ["resume", resume] }
         return a + ["-"]  // navodila prek stdin (brez omejitve dolžine argumentov)
+    }
+
+    /// #59: projektne nastavitve (.codex/config.toml v mapi seje ali nad njo: notify, mcp_servers, hooki) Codex naloži le
+    /// za zaupanja vredne mape v ~/.codex/config.toml in bi tekle zunaj peskovnika. Vsaka nadmapa cwd (tudi pot brez
+    /// simbolnih povezav, ključ Codex) je za ta zagon »untrusted«: -c se združi nad uporabnikovo tabelo projects in
+    /// natančen ključ mape prevlada (codex 0.167: najprej ključ mape, nato korena projekta in repozitorija).
+    static func untrustedProjects(_ cwd: URL) -> [String] {
+        var keys = Set<String>(), starts = [cwd.path]
+        if let r = realpath(cwd.path, nil) { starts.append(String(cString: r)); free(r) }  // ne resolvingSymlinksInPath: ta odreže /private
+        for start in starts {
+            var d = start
+            while true {
+                keys.insert(d)
+                let up = (d as NSString).deletingLastPathComponent
+                if up == d || up.isEmpty { break }
+                d = up
+            }
+        }
+        func q(_ s: String) -> String { String(decoding: try! JSONSerialization.data(withJSONObject: s, options: [.fragmentsAllowed, .withoutEscapingSlashes]), as: UTF8.self) }
+        return ["-c", "projects={" + keys.sorted().map { q($0) + #"={trust_level="untrusted"}"# }.joined(separator: ",") + "}"]
     }
 
     /// Pisljive mape Codex v klonu (worktree): koren, Maven in (#40, M1) vsak ugnezdeni klon, da sandbox Codex zaščiti

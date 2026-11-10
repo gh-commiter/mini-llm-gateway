@@ -16,6 +16,28 @@ import (
 	"time"
 )
 
+// #59 (kot codexProjectsUntrusted na Macu): vsaka nadmapa cwd, tudi brez simbolnih povezav, je za zagon »untrusted«.
+func TestCodexProjectsUntrusted(t *testing.T) {
+	d := filepath.Join(t.TempDir(), "s")
+	if err := os.Mkdir(d, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	r, _ := filepath.EvalSymlinks(d)
+	a := codexArgs(d, nil, true, "/o", "", true, false, "t1", nil, "", nil)
+	i := slices.IndexFunc(a, func(s string) bool { return strings.HasPrefix(s, "projects={") })
+	if i < 1 || a[i-1] != "-c" || i > slices.Index(a, "resume") {
+		t.Fatalf("codex projects: %v", a)
+	}
+	for _, k := range []string{d, filepath.Dir(d), r, filepath.VolumeName(d) + string(filepath.Separator)} {
+		if runtime.GOOS == "windows" {
+			k = strings.ToLower(k)
+		}
+		if q, _ := json.Marshal(k); !strings.Contains(a[i], string(q)+`={trust_level="untrusted"}`) {
+			t.Fatalf("codex projects %s: %s", k, a[i])
+		}
+	}
+}
+
 // Kot testi Codex.args in Grok.args na Macu.
 func TestCodexAndGrokArgs(t *testing.T) {
 	a := codexArgs("/w", []string{"/tmp/x"}, true, "/o.txt", "", true, true, "", nil, "", nil)
