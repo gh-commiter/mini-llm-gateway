@@ -1244,7 +1244,7 @@ func (h *shareHub) worktreeBack(s *serveShare, agent string) {
 		kept = slot.wt + "-kept-" + now.Format("20060102-150405") + fmt.Sprintf("-%09d", now.Nanosecond()) // L4: brez trka
 		// L3: pot glede na Scratch prehoda; M2: le datoteke, .git preimenovani (keepClone)
 		keep = "; the agent's files are kept on the gateway for 30 days as " + path.Join("worktrees", filepath.Base(filepath.Dir(t.worktrees)),
-			filepath.Base(t.worktrees), filepath.Base(kept)) + " after this session (files only; its .git folders renamed .git.agent — do not run git there)"
+			filepath.Base(t.worktrees), filepath.Base(kept)) + " after this session (files only; its .git folders renamed .git.agent, or nothing is kept if that fails — do not run git there)"
 	}
 	h.mu.Lock()
 	slot.kept = kept
@@ -1351,7 +1351,7 @@ func (h *shareHub) worktreeResult(key, owner string, nested int) ([]byte, int, s
 func dropClones(t *shareTree, logf func(string, ...any)) {
 	for _, sl := range t.slots {
 		if sl.kept != "" {
-			go keepClone(sl.wt, sl.kept, logf) // ne pod h.mu (hoja po klonu); pot ima zgoščeno sejo
+			keepClone(sl.wt, sl.kept, logf) // premik pod h.mu (O(1)), hoja v ozadju
 			continue
 		}
 		go removeClone(sl.wt)
@@ -1362,10 +1362,8 @@ func dropClones(t *shareTree, logf func(string, ...any)) {
 // maxKept (M1): največ ohranjenih klonov v mapi klonov repozitorija (najstarejši gredo).
 const maxKept = 3
 
-// keepClone (L6): klon wt z nedostavljenim delom gre v kept. M2: vsak .git (mapa ali datoteka, katerakoli globina) in
-// HEAD v mapi z obliko golega repozitorija (HEAD, objects, refs) se prej preimenujeta v *.agent: git ju tam ne najde,
-// zato config, kljuke in fsmonitor agenta ne tečejo. Vse prek os.Root klona (povezava ali zamenjana mapa ne preusmeri
-// preimenovanja ven) in os.Root starša za premik; nič se ne briše. Neuspeh premika: klon gre (zapis v dnevnik).
+// keepClone (L6): klon wt z nedostavljenim delom gre v kept: premik takoj (O(1), relativno na odprt starš; nov klon na
+// isti poti ne tekmuje z njim), razorožitev (disarmKept) in pruneKept v ozadju. Neuspeh premika: klon gre (dnevnik).
 func keepClone(wt, kept string, logf func(string, ...any)) {
 	pr, err := os.OpenRoot(filepath.Dir(wt))
 	if err != nil {
@@ -1375,36 +1373,82 @@ func keepClone(wt, kept string, logf func(string, ...any)) {
 	if st, err := pr.Lstat(filepath.Base(wt)); err != nil || !st.IsDir() {
 		return
 	}
-	if root, err := pr.OpenRoot(filepath.Base(wt)); err == nil {
-		disarm := func(p string) {
-			if root.Rename(p, p+".agent") != nil {
-				root.Rename(p, p+".agent-"+strconv.FormatInt(time.Now().UnixNano(), 10)) // *.agent že obstaja (agent)
-			}
-		}
-		isDir := func(p string) bool { st, err := root.Lstat(p); return err == nil && st.IsDir() }
-		fs.WalkDir(root.FS(), ".", func(p string, d fs.DirEntry, err error) error {
-			switch {
-			case err != nil || p == ".":
-			case isGitPath(d.Name()):
-				disarm(p)
-				if d.IsDir() {
-					return fs.SkipDir
-				}
-			case strings.EqualFold(d.Name(), "HEAD") && isDir(path.Join(path.Dir(p), "objects")) && isDir(path.Join(path.Dir(p), "refs")):
-				disarm(p) // goli repozitorij (#4)
-			}
-			return nil
-		})
-		root.Close()
-	}
 	if err := pr.Rename(filepath.Base(wt), filepath.Base(kept)); err != nil {
 		logf("worktree: cannot keep the agent's clone %s: %v; removed", wt, err)
 		removeClone(wt)
 		return
 	}
 	now := time.Now()
-	pr.Chtimes(filepath.Base(kept), now, now) // pravkar preimenovana prava mapa
-	pruneKept(filepath.Dir(kept), time.Time{})
+	pr.Chtimes(filepath.Base(kept), now, now)
+	go func() {
+		if !disarmKept(kept) {
+			logf("worktree: cannot rename the git folders in the kept clone %s; removed", kept)
+		}
+		pruneKept(filepath.Dir(kept), time.Time{})
+	}()
+}
+
+// disarmKept (M2): v ohranjenem klonu vsak .git (mapa ali datoteka, katerakoli globina) in HEAD v mapi z obliko golega
+// repozitorija (HEAD, objects, refs) dobi ime *.agent: git ju tam ne najde (config, kljuke, fsmonitor agenta ne tečejo).
+// Vse prek os.Root (povezava ali zamenjana mapa ne preusmeri ničesar ven); mapa brez pravic (npr. 555) dobi 0700 in
+// poskus znova. Neuspeh ali zamenjan koren: klon gre (false).
+func disarmKept(kept string) bool {
+	pr, err := os.OpenRoot(filepath.Dir(kept))
+	if err != nil {
+		return false
+	}
+	defer pr.Close()
+	name := filepath.Base(kept)
+	st, err := pr.Lstat(name)
+	if err != nil || !st.IsDir() {
+		return false
+	}
+	ok := false
+	if root, err := pr.OpenRoot(name); err == nil {
+		if rst, err := root.Stat("."); err == nil && os.SameFile(st, rst) { // L4: odprt je isti klon
+			ok = disarmRoot(root)
+		}
+		root.Close()
+	}
+	if !ok {
+		pr.RemoveAll(name)
+	}
+	return ok
+}
+
+func disarmRoot(root *os.Root) bool {
+	isDir := func(p string) bool { st, err := root.Lstat(p); return err == nil && st.IsDir() }
+	retry := func(dir string, f func() error) bool { // L2: ob neuspehu mapa 0700 in znova
+		return f() == nil || root.Chmod(dir, 0o700) == nil && f() == nil
+	}
+	disarm := func(dir, p string) bool {
+		return retry(dir, func() error {
+			if root.Rename(p, p+".agent") == nil {
+				return nil
+			}
+			return root.Rename(p, p+".agent-"+strconv.FormatInt(time.Now().UnixNano(), 10)) // *.agent že obstaja (agent)
+		})
+	}
+	for stack := []string{"."}; len(stack) > 0; {
+		dir := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		var es []fs.DirEntry
+		if !retry(dir, func() (err error) { es, err = fs.ReadDir(root.FS(), dir); return }) {
+			return false
+		}
+		for _, e := range es {
+			p := path.Join(dir, e.Name())
+			switch {
+			case isGitPath(e.Name()), strings.EqualFold(e.Name(), "HEAD") && isDir(path.Join(dir, "objects")) && isDir(path.Join(dir, "refs")):
+				if !disarm(dir, p) {
+					return false
+				}
+			case e.IsDir(): // vrsta iz ReadDir: povezava ni mapa
+				stack = append(stack, p)
+			}
+		}
+	}
+	return true
 }
 
 // pruneKept: ohranjeni kloni v mapi klonov dir starejši od cut in vsi razen maxKept najnovejših (Lstat, brez povezav).

@@ -1026,9 +1026,9 @@ extension ShareHub {
             slot.busy = true; runSlot[id] = k; unlock(tree.repo)
             return Self.dir(slot.wt, tree.sub)
         }
-        if let old = slots[k], let kept = old.kept {  // L6 (L1): nedostavljeno delo pred novim klonom v kept (zunaj akterja)
+        if let old = slots[k], let kept = old.kept {  // L6 (L1): nedostavljeno delo pred novim klonom v kept
             old.kept = nil
-            await offPool { Self.keepClone(old.wt, kept) }
+            Self.keepClone(old.wt, kept)
         }
         let branch = "minigw/\(agent)-\(short)-\(n)", wt = tree.worktrees.appendingPathComponent("\(agent)-\(short)-\(n)", isDirectory: true)
         let base = "refs/minigw/base/\(agent)-\(short)-\(n)", repo = tree.repo
@@ -1242,7 +1242,7 @@ extension ShareHub {
         let kept = URL(fileURLWithPath: slot.wt.path + "-kept-" + fmt.string(from: now) + "-" + nanos, isDirectory: true)
         // L3: pot glede na Scratch prehoda; M2: le datoteke, .git preimenovani (keepClone)
         let rel = ["worktrees", tree.worktrees.deletingLastPathComponent().lastPathComponent, tree.worktrees.lastPathComponent, kept.lastPathComponent].joined(separator: "/")
-        let keep = "; the agent's files are kept on the gateway for 30 days as \(rel) after this session (files only; its .git folders renamed .git.agent — do not run git there)"
+        let keep = "; the agent's files are kept on the gateway for 30 days as \(rel) after this session (files only; its .git folders renamed .git.agent, or nothing is kept if that fails — do not run git there)"
         if tree.local != nil, !tree.localObjectsIntact {  // M1
             slot.kept = kept
             await note(s, "\(tree.local!.path): the repository's .git/objects was replaced; \(slot.branch) was not delivered" + keep)
@@ -1378,8 +1378,7 @@ extension ShareHub {
     /// Klon gre; z nedostavljenim delom (L6) ostane kot kept (keepClone; kot Go dropClones).
     static func dropClone(_ slot: Slot) {
         if let kept = slot.kept {
-            let wt = slot.wt
-            Task.detached { keepClone(wt, kept) }  // zunaj akterja (hoja po klonu); pot ima zgoščeno sejo
+            keepClone(slot.wt, kept)  // premik v akterju (O(1)), hoja v ozadju
             return
         }
         let wt = slot.wt
@@ -1389,50 +1388,77 @@ extension ShareHub {
     /// Največ ohranjenih klonov v mapi klonov repozitorija (M1; najstarejši gredo).
     static let maxKept = 3
 
-    /// L6 (kot Go keepClone): klon z nedostavljenim delom gre v kept. M2: vsak .git (mapa ali datoteka, katerakoli globina)
-    /// in HEAD v mapi z obliko golega repozitorija (HEAD, objects, refs) se prej preimenujeta v *.agent: git ju tam ne najde
-    /// (config, kljuke, fsmonitor agenta ne tečejo). Vse prek odprtih map (openat z O_NOFOLLOW, renameat): povezava ali
-    /// zamenjana mapa ne preusmeri ničesar ven; nič se ne briše. Neuspeh premika: klon gre (dnevnik).
+    /// L6 (kot Go keepClone): klon z nedostavljenim delom gre v kept: premik takoj (O(1), renameat relativno na odprt
+    /// starš; nov klon na isti poti ne tekmuje z njim), razorožitev (disarmKept) in pruneKept v ozadju. Neuspeh premika:
+    /// klon gre (dnevnik).
     nonisolated static func keepClone(_ wt: URL, _ kept: URL) {
         let pfd = open(wt.deletingLastPathComponent().path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
         guard pfd >= 0 else { return }
         defer { close(pfd) }
-        let name = wt.lastPathComponent
-        let fd = openat(pfd, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-        guard fd >= 0 else { return }  // povezava ali nič
-        disarmGit(fd)
-        close(fd)
-        guard renameat(pfd, name, pfd, kept.lastPathComponent) == 0 else {
+        var st = stat()
+        guard fstatat(pfd, wt.lastPathComponent, &st, AT_SYMLINK_NOFOLLOW) == 0, st.st_mode & S_IFMT == S_IFDIR else { return }
+        guard renameat(pfd, wt.lastPathComponent, pfd, kept.lastPathComponent) == 0 else {
             Router.log.error("worktree: cannot keep the agent's clone \(wt.path, privacy: .public); removed")
             removeClone(wt); return
         }
         var ts = [timespec(tv_sec: 0, tv_nsec: Int(UTIME_NOW)), timespec(tv_sec: 0, tv_nsec: Int(UTIME_NOW))]
-        _ = utimensat(pfd, kept.lastPathComponent, &ts, AT_SYMLINK_NOFOLLOW)  // pravkar preimenovana prava mapa
-        pruneKept(kept.deletingLastPathComponent(), before: .distantPast)
+        _ = utimensat(pfd, kept.lastPathComponent, &ts, AT_SYMLINK_NOFOLLOW)
+        Task.detached {
+            if !disarmKept(kept) { Router.log.error("worktree: cannot rename the git folders in the kept clone \(kept.path, privacy: .public); removed") }
+            pruneKept(kept.deletingLastPathComponent(), before: .distantPast)
+        }
     }
 
-    /// Preimenuje .git in HEAD golega repozitorija v odprti mapi `dir` in podmapah (brez sledenja povezavam).
-    nonisolated static func disarmGit(_ dir: Int32) {
-        let dup = dup(dir)
-        guard dup >= 0, let d = fdopendir(dup) else { return }
-        var names: [String] = []
-        while let e = readdir(d) {
-            let n = withUnsafeBytes(of: e.pointee.d_name) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
-            if n != "." && n != ".." { names.append(n) }
-        }
-        closedir(d)
-        func isDir(_ n: String) -> Bool { var st = stat(); return fstatat(dir, n, &st, AT_SYMLINK_NOFOLLOW) == 0 && st.st_mode & S_IFMT == S_IFDIR }
-        func disarm(_ n: String) {
-            if renameat(dir, n, dir, n + ".agent") != 0 { _ = renameat(dir, n, dir, n + ".agent-" + UUID().uuidString) }  // *.agent že obstaja
-        }
-        for n in names {
-            if Sync.normName(n) == ".git" || n.uppercased() == "HEAD" && isDir("objects") && isDir("refs") {
-                disarm(n)  // goli repozitorij (#4): brez HEAD ga git ne prepozna
-            } else if isDir(n) {
-                let fd = openat(dir, n, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-                if fd >= 0 { disarmGit(fd); close(fd) }
+    /// M2 (kot Go disarmKept): v ohranjenem klonu vsak .git (mapa ali datoteka, katerakoli globina) in HEAD v mapi z obliko
+    /// golega repozitorija (HEAD, objects, refs) dobi ime *.agent: git ju tam ne najde (config, kljuke, fsmonitor agenta ne
+    /// tečejo). L3: sklad relativnih poti, ena odprta mapa naenkrat (openat z O_NOFOLLOW_ANY iz korena: povezava kjerkoli
+    /// v poti ne preusmeri ničesar ven); mapa brez pravic (npr. 555) dobi 0700 in poskus znova. Neuspeh ali zamenjan
+    /// koren (L4): klon gre (false).
+    nonisolated static func disarmKept(_ kept: URL) -> Bool {
+        let pfd = open(kept.deletingLastPathComponent().path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        guard pfd >= 0 else { return false }
+        defer { close(pfd) }
+        let name = kept.lastPathComponent
+        var ok = false
+        var st = stat(), rst = stat()
+        if fstatat(pfd, name, &st, AT_SYMLINK_NOFOLLOW) == 0, st.st_mode & S_IFMT == S_IFDIR {
+            let root = openat(pfd, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            if root >= 0 {
+                if fstat(root, &rst) == 0, rst.st_dev == st.st_dev, rst.st_ino == st.st_ino { ok = disarmRoot(root) }
+                close(root)
+            } else { return false }  // povezava ali nič: ne briši
+        } else { return false }
+        if !ok { try? FileManager.default.removeItem(at: kept) }
+        return ok
+    }
+
+    nonisolated private static func disarmRoot(_ root: Int32) -> Bool {
+        var stack = ["."]
+        while let rel = stack.popLast() {
+            // L2: mapa brez pravic → 0700 (relativno na koren, brez sledenja povezavam) in znova
+            func openDir() -> Int32 { openat(root, rel, O_RDONLY | O_DIRECTORY | O_NOFOLLOW_ANY | O_CLOEXEC) }
+            var fd = openDir()
+            if fd < 0, fchmodat(root, rel, 0o700, AT_SYMLINK_NOFOLLOW) == 0 { fd = openDir() }
+            guard fd >= 0 else { return false }  // L3: prava mapa, ki je ni mogoče odpreti
+            defer { close(fd) }
+            guard let d = fdopendir(dup(fd)) else { return false }
+            var names: [String] = []
+            while let e = readdir(d) {
+                let n = withUnsafeBytes(of: e.pointee.d_name) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+                if n != "." && n != ".." { names.append(n) }
+            }
+            closedir(d)
+            func isDir(_ n: String) -> Bool { var st = stat(); return fstatat(fd, n, &st, AT_SYMLINK_NOFOLLOW) == 0 && st.st_mode & S_IFMT == S_IFDIR }
+            func rename(_ n: String) -> Bool { renameat(fd, n, fd, n + ".agent") == 0 || renameat(fd, n, fd, n + ".agent-" + UUID().uuidString) == 0 }
+            for n in names {
+                if Sync.normName(n) == ".git" || n.uppercased() == "HEAD" && isDir("objects") && isDir("refs") {
+                    guard rename(n) || fchmod(fd, 0o700) == 0 && rename(n) else { return false }  // L2
+                } else if isDir(n) {
+                    stack.append(rel == "." ? n : rel + "/" + n)
+                }
             }
         }
+        return true
     }
 
     /// Ohranjeni kloni v mapi klonov `dir` starejši od `before` in vsi razen maxKept najnovejših (lstat, brez povezav).
