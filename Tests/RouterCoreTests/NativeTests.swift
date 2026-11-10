@@ -271,14 +271,14 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     let input = "\u{1B}[1;31mred\u{1B}[0m\r\n\u{1B}]0;title\u{07}\u{1B}]52;c;Zm9v\u{1B}\\\u{1B}P1$q\u{1B}\\\u{1B}[6n\u{1B}[2J\u{1B}[?1049h\u{07}ok\t\u{1B}"
     #expect(String(decoding: Native.terminalSafe(Data(input.utf8)), as: UTF8.self) == "\u{1B}[1;31mred\u{1B}[0m\r\nok\t")
     #expect(String(decoding: Native.terminalSafe(Data("a\u{9B}2Jb\u{9D}0;x\u{07}č€".utf8)), as: UTF8.self) == "a2Jb0;xč€")  // N4: C1 v UTF-8
-    #expect(Native.withoutNestedSandbox(["swift", "build", "-c", "release"]) == ["swift", "build", "--build-system", "native", "--disable-sandbox", "-c", "release"])
+    #expect(Native.withoutNestedSandbox(["swift", "build", "-c", "release"]) == ["swift", "build", "--disable-sandbox", "-c", "release"])
     #expect(Native.withoutNestedSandbox(["swift", "--version"]) == ["swift", "--version"])
     #expect(Native.withoutNestedSandbox(["mvn", "-q"]) == ["mvn", "-q"])
     // #24: predpomnilnik SwiftPM v zasebni mapi zagona; lastna --cache-path ostane
-    #expect(Native.withoutNestedSandbox(["swift", "build"], runTmp: "/s") == ["swift", "build", "--build-system", "native", "--disable-sandbox", "--cache-path", "/s/swiftpm-cache"])
+    #expect(Native.withoutNestedSandbox(["swift", "build"], runTmp: "/s") == ["swift", "build", "--disable-sandbox", "--cache-path", "/s/swiftpm-cache"])
     #expect(Native.withoutNestedSandbox(["swift", "package", "resolve"], runTmp: "/s") == ["swift", "package", "--disable-sandbox", "--cache-path", "/s/swiftpm-cache", "resolve"])
-    #expect(Native.withoutNestedSandbox(["swift", "build", "--cache-path=/x"], runTmp: "/s") == ["swift", "build", "--build-system", "native", "--disable-sandbox", "--cache-path=/x"])
-    #expect(Native.withoutNestedSandbox(["swift", "test", "--disable-sandbox"], runTmp: "/s") == ["swift", "test", "--build-system", "native", "--cache-path", "/s/swiftpm-cache", "--disable-sandbox"])
+    #expect(Native.withoutNestedSandbox(["swift", "build", "--cache-path=/x"], runTmp: "/s") == ["swift", "build", "--disable-sandbox", "--cache-path=/x"])
+    #expect(Native.withoutNestedSandbox(["swift", "test", "--disable-sandbox"], runTmp: "/s") == ["swift", "test", "--cache-path", "/s/swiftpm-cache", "--disable-sandbox"])
     #expect(Native.withoutNestedSandbox(["mvn"], runTmp: "/s") == ["mvn"])
     // #72: xcodebuild: rezultat, paketi in predpomnilnik v zasebni mapi zagona; uporabnikove poti ostanejo
     let x = ["xcodebuild", "-IDEPackageSupportDisableManifestSandbox=YES", "ENABLE_USER_SCRIPT_SANDBOXING=NO"]
@@ -289,11 +289,7 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     #expect(Native.withoutNestedSandbox(["xcodebuild"]) == x)
     #expect(Native.withoutNestedSandbox(["xcodebuild"], derivedData: "/s/dd") == x + ["-derivedDataPath", "/s/dd"])
     #expect(Native.withoutNestedSandbox(["xcodebuild", "-derivedDataPath", "/mine"], derivedData: "/s/dd") == ["xcodebuild", "-derivedDataPath", "/mine"] + x.dropFirst())
-    #expect(Native.withoutNestedSandbox(["swift", "build"], derivedData: "/s/dd") == ["swift", "build", "--build-system", "native", "--disable-sandbox"])
-    // #72: swift test/run/build s sistemom gradnje SwiftPM (TMPDIR); lastna izbira ostane, swift package brez nje
-    #expect(Native.withoutNestedSandbox(["swift", "run", "Hello"]) == ["swift", "run", "--build-system", "native", "--disable-sandbox", "Hello"])
-    #expect(Native.withoutNestedSandbox(["swift", "test", "--build-system=swiftbuild"]) == ["swift", "test", "--disable-sandbox", "--build-system=swiftbuild"])
-    #expect(Native.withoutNestedSandbox(["swift", "test", "--build-system", "xcode"]) == ["swift", "test", "--disable-sandbox", "--build-system", "xcode"])
+    #expect(Native.withoutNestedSandbox(["swift", "build"], derivedData: "/s/dd") == ["swift", "build", "--disable-sandbox"])
 }
 
 @Test func nativeRunIsSandboxedAndEndsWithItsGroup() async throws {
@@ -575,7 +571,7 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     defer { try? fm.removeItem(atPath: t) }
     try fm.createDirectory(atPath: t + "/TemporaryItems/NSIRD_old_1", withIntermediateDirectories: true)
     try fm.createDirectory(atPath: t + "/TemporaryDirectory.old", withIntermediateDirectories: true)
-    let before = Native.saveCopies(dirs: [], temp: t)
+    let before = Native.saveCopies(dirs: [], temp: t), start = Date() - 1
     #expect(before == [t + "/TemporaryItems/NSIRD_old_1", t + "/TemporaryDirectory.old"])
     for d in ["TemporaryItems/NSIRD_new_1", "TemporaryItems/NSIRD_full", "TemporaryDirectory.new", "TemporaryDirectory.keep",
               "TemporaryDirectory.data", "NSIRD_notInItems", "TemporaryItems/other"] {
@@ -587,8 +583,9 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     fm.createFile(atPath: t + "/TemporaryDirectory.file", contents: Data())  // datoteka, ne mapa
     try fm.createSymbolicLink(atPath: t + "/TemporaryItems/NSIRD_link", withDestinationPath: t + "/TemporaryItems/other")
     let after = Native.saveCopies(dirs: [], temp: t)
-    #expect(Native.removeSaveCopies(after: after, before: before, settled: 60).isEmpty)  // še ne umirjene
-    let removed = Native.removeSaveCopies(after: after, before: before, settled: 0)
+    #expect(Native.removeSaveCopies(after: after, before: before, since: start, settled: 60).isEmpty)  // še ne umirjene
+    #expect(Native.removeSaveCopies(after: after, before: before, since: Date() + 60, settled: 0).isEmpty)  // rojene pred zagonom
+    let removed = Native.removeSaveCopies(after: after, before: before, since: start, settled: 0)
     #expect(Set(removed) == [t + "/TemporaryItems/NSIRD_new_1", t + "/TemporaryDirectory.new", t + "/TemporaryDirectory.keep"])
     for kept in ["TemporaryItems/NSIRD_old_1", "TemporaryDirectory.old", "TemporaryItems/NSIRD_full/x", "TemporaryDirectory.data/.keep-directory",
                  "TemporaryDirectory.file", "NSIRD_notInItems", "TemporaryItems/other"] {
@@ -596,4 +593,35 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     }
     var st = stat()
     #expect(lstat(t + "/TemporaryItems/NSIRD_link", &st) == 0)
+}
+
+/// #72: z DIRHELPER_USER_DIR_SUFFIX in povezavama (linkRunDirs) sta T in C otroka v mapi zagona. Pade, če libSystem
+/// pripone ne upošteva več. Nikoli brez povezav (libSystem bi ustvaril neizbrisljivo <T>/<suffix>).
+@Test func nativeRunDirSuffixRedirectsTempAndCache() throws {
+    let fm = FileManager.default
+    let rt = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("runsuffix-" + UUID().uuidString)
+    defer { try? fm.removeItem(at: rt) }
+    let real = try #require(Native.makeRunTmp(rt))
+    let suffix = Native.runDirPrefix + "test-" + UUID().uuidString
+    let links = try #require(Native.linkRunDirs(real, suffix: suffix))
+    defer { Native.unlinkRunDirs(links) }
+    // Sondo prevedemo: programi s SIP (/usr/bin/getconf) okolje dirhelper prezrejo, orodja Xcode (swift, swiftc) ne.
+    let probe = rt.appendingPathComponent("probe")
+    try "#include <unistd.h>\n#include <stdio.h>\nint main(int c,char**v){char b[1024];confstr(v[1][0]=='T'?_CS_DARWIN_USER_TEMP_DIR:_CS_DARWIN_USER_CACHE_DIR,b,sizeof b);puts(b);}\n"
+        .write(to: rt.appendingPathComponent("probe.c"), atomically: false, encoding: .utf8)
+    let cc = Process()
+    cc.executableURL = URL(fileURLWithPath: "/usr/bin/cc"); cc.arguments = ["-o", probe.path, rt.appendingPathComponent("probe.c").path]
+    try cc.run(); cc.waitUntilExit()
+    try #require(cc.terminationStatus == 0)
+    let env = Native.runEnv(ProcessInfo.processInfo.environment, runTmp: rt, suffix: suffix)
+    for sub in ["T", "C"] {
+        let p = Process(), out = Pipe()
+        p.executableURL = probe; p.arguments = [sub]; p.environment = env; p.standardOutput = out
+        try p.run(); p.waitUntilExit()
+        let dir = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        #expect(dir.hasSuffix("/" + suffix + "/"), "\(dir)")
+        #expect(Sync.real(URL(fileURLWithPath: dir))?.path == real + "/" + sub)
+    }
+    Native.unlinkRunDirs(links)
+    #expect(links.allSatisfy { var st = stat(); return lstat($0, &st) != 0 })
 }

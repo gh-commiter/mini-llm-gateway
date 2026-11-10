@@ -205,11 +205,35 @@ public enum Native {
         return rules
     }
 
-    /// DARWIN_USER_TEMP_DIR (kanonično), ki ga Foundation uporabi ne glede na TMPDIR.
-    static func darwinTemp() -> String? {
+    /// DARWIN_USER_TEMP_DIR (ali `key`, npr. _CS_DARWIN_USER_CACHE_DIR) gatewaya, kanonično; Foundation ga uporabi ne
+    /// glede na TMPDIR.
+    static func darwinTemp(_ key: Int32 = _CS_DARWIN_USER_TEMP_DIR) -> String? {
         var b = [CChar](repeating: 0, count: 1024)
-        guard confstr(_CS_DARWIN_USER_TEMP_DIR, &b, b.count) > 0 else { return nil }
+        guard confstr(key, &b, b.count) > 0 else { return nil }
         return Sync.real(URL(fileURLWithPath: String(cString: b)))?.path
+    }
+
+    static let runDirPrefix = "dev.trojar.minigateway.run-"
+
+    /// #72: DARWIN_USER_TEMP_DIR in DARWIN_USER_CACHE_DIR zagona sta <T>/<suffix> in <C>/<suffix>
+    /// (DIRHELPER_USER_DIR_SUFFIX v `runEnv`); povezavi na <runTmp>/T in <runTmp>/C ju preusmerita v Scratch (tudi
+    /// Swift Build: mkdtemp(swbuild.tmp.*) za Info.plist testnega svežnja in svežnja virov, FileManager.temporaryDirectory
+    /// TMPDIR prezre). Brez obeh povezav zagona ne sme biti: libSystem bi sam ustvaril <T>/<suffix>, ki ga ni mogoče
+    /// izbrisati (sunlnk). Vrne povezavi ali nil (in ne pusti nobene).
+    static func linkRunDirs(_ realTmp: String, suffix: String) -> [String]? {
+        var made: [String] = []
+        for (key, sub) in [(_CS_DARWIN_USER_TEMP_DIR, "T"), (_CS_DARWIN_USER_CACHE_DIR, "C")] {
+            guard let base = darwinTemp(key), symlink(realTmp + "/" + sub, base + "/" + suffix) == 0 else {
+                unlinkRunDirs(made); return nil
+            }
+            made.append(base + "/" + suffix)
+        }
+        return made
+    }
+
+    /// Odstrani povezave zagona (le povezave, nikoli mapo na tem mestu).
+    static func unlinkRunDirs(_ links: [String]) {
+        for l in links { var st = stat(); if lstat(l, &st) == 0, st.st_mode & S_IFMT == S_IFLNK { unlink(l) } }
     }
 
     /// #72: mape kopij shranjevanja, ki jih `darwinTempRules` dovoli ustvariti: NSIRD_* v TemporaryItems (zagonski disk
@@ -225,15 +249,16 @@ public enum Native {
 
     /// #72: po zagonu (in uboju skupine) odstrani mape kopij shranjevanja, nastale med zagonom (v `after`, ne v `before`):
     /// peskovnik jih lahko le ustvari, ne izbriše, zato bi ostale. Le prave mape tega uporabnika, prazne ali le z
-    /// (prazno) datoteko .keep-directory (swiftc); nikoli obstoječe, nikoli druge datoteke, nikoli povezave.
+    /// (prazno) datoteko .keep-directory (swiftc), rojene od `since`; nikoli obstoječe, nikoli druge datoteke, nikoli povezave.
     /// ponytail: tuja sočasna gradnja lahko ustvari mapo z istim vzorcem; zato le mape, ki se `settled` s niso spremenile
     /// (Foundation mapo napolni takoj ob nastanku, rmdir neprazne ne izbriše). Vrne odstranjene.
     @discardableResult
-    static func removeSaveCopies(after: Set<String>, before: Set<String>, settled: TimeInterval = 2) -> [String] {
+    static func removeSaveCopies(after: Set<String>, before: Set<String>, since: Date, settled: TimeInterval = 2) -> [String] {
         var removed: [String] = []
         for p in after.subtracting(before).sorted() {
             var st = stat()
             guard lstat(p, &st) == 0, st.st_mode & S_IFMT == S_IFDIR, st.st_uid == getuid(),
+                  st.st_birthtimespec.tv_sec >= Int(since.timeIntervalSince1970),  // rojena med zagonom
                   Double(st.st_mtimespec.tv_sec) <= Date().timeIntervalSince1970 - settled,
                   let names = try? FileManager.default.contentsOfDirectory(atPath: p) else { continue }
             if names == [".keep-directory"] {
@@ -348,7 +373,8 @@ public enum Native {
     /// Okolje `minigw run` (#24): vse začasne mape gradnje v `runTmp`, zasebni mapi zagona v Scratch (nikoli $TMPDIR,
     /// /tmp ali domača mapa): TMPDIR, TMP, TEMP, ModuleCache clang in java.io.tmpdir vsakega JVM (JAVA_TOOL_OPTIONS:
     /// Maven, viljuške surefire, Gradle in njegov demon; Java na macOS TMPDIR prezre). Brez skrivnosti agentov in SSH agenta.
-    static func runEnv(_ base: [String: String], runTmp: URL) -> [String: String] {
+    /// `suffix`: DIRHELPER_USER_DIR_SUFFIX (#72, `linkRunDirs`), le skupaj z obema povezavama.
+    static func runEnv(_ base: [String: String], runTmp: URL, suffix: String? = nil) -> [String: String] {
         var env = base
         for k in env.keys where k.hasPrefix("ANTHROPIC_") || k.hasPrefix("CLAUDE_CODE_") || k == "CLAUDECODE" || k == "SSH_AUTH_SOCK" { env[k] = nil }
         env["PATH"] = (env["PATH"].map { $0 + ":" } ?? "") + "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
@@ -359,14 +385,17 @@ public enum Native {
         let jt = runTmp.path.contains(" ") ? "\"" + runTmp.path + "\"" : runTmp.path
         env["JAVA_TOOL_OPTIONS"] = (env["JAVA_TOOL_OPTIONS"].map { $0 + " " } ?? "") + "-Djava.io.tmpdir=" + jt
         env["xcrun_db"] = nil; env["xcrun_nocache"] = "1"
+        env["DIRHELPER_USER_DIR_SUFFIX"] = suffix
         return env
     }
 
-    /// #24: ustvari zasebno mapo zagona (z ModuleCache, 0700); vrne njeno kanonično pot ali nil (gradnja brez nje bi
+    /// #24: ustvari zasebno mapo zagona (z ModuleCache ter T in C za `linkRunDirs`, 0700); vrne njeno kanonično pot ali nil (gradnja brez nje bi
     /// padla šele z »Operation not permitted«).
     static func makeRunTmp(_ runTmp: URL) -> String? {
-        guard (try? FileManager.default.createDirectory(at: runTmp.appendingPathComponent("ModuleCache"), withIntermediateDirectories: true,
-                                                        attributes: [.posixPermissions: 0o700])) != nil else { return nil }
+        for sub in ["ModuleCache", "T", "C"] {
+            guard (try? FileManager.default.createDirectory(at: runTmp.appendingPathComponent(sub), withIntermediateDirectories: true,
+                                                            attributes: [.posixPermissions: 0o700])) != nil else { return nil }
+        }
         return Sync.real(runTmp)?.path
     }
 
@@ -399,14 +428,6 @@ public enum Native {
         case "swift" where a.count > 1 && ["build", "test", "run", "package"].contains(a[1]):
             if let cache, !a.contains(where: { $0 == "--cache-path" || $0.hasPrefix("--cache-path=") }) { a.insert(contentsOf: ["--cache-path", cache], at: 2) }
             if !a.contains("--disable-sandbox") { a.insert("--disable-sandbox", at: 2) }
-            // #72: Swift Build (privzeti) za Info.plist testnega svežnja in svežnja virov naredi mkdtemp(T/swbuild.tmp.*)
-            // v DARWIN_USER_TEMP_DIR (FileManager.temporaryDirectory, TMPDIR prezre) in mapi nastavi xattr; zunaj izjeme
-            // kopij shranjevanja (#24), zato swift test in swift run/build paketa z viri padeta. Sistem gradnje SwiftPM
-            // (native) uporablja TMPDIR (zasebna mapa zagona); izbira uporabnika ostane.
-            // ponytail: native je v SwiftPM 6.x opuščen (opozorilo); ko ga odstranijo, rabi Swift Build možnost za mapo.
-            if a[1] != "package", !a.contains(where: { $0 == "--build-system" || $0.hasPrefix("--build-system=") }) {
-                a.insert(contentsOf: ["--build-system", "native"], at: 2)
-            }
         case "xcodebuild":
             a += ["-IDEPackageSupportDisableManifestSandbox=YES", "ENABLE_USER_SCRIPT_SANDBOXING=NO"]
             // #72: diagnostika nalaganja manifestov (ManifestLoading/*.dia) je v ~/Library/Caches ne glede na
@@ -537,6 +558,13 @@ public actor NativeHub {
     /// imenom; povezava se ne sledi (removeItem odstrani povezavo, ne cilja; tip iz lstat).
     public static func cleanupRunTemps(_ tmp: URL) {
         let fm = FileManager.default
+        // #72: povezave T in C zagonov (linkRunDirs), ki kažejo nikamor; le povezave
+        for base in [Native.darwinTemp(), Native.darwinTemp(_CS_DARWIN_USER_CACHE_DIR)].compactMap({ $0 }) {
+            for n in (try? fm.contentsOfDirectory(atPath: base)) ?? [] where n.hasPrefix(Native.runDirPrefix) {
+                var st = stat()
+                if stat(base + "/" + n, &st) != 0 { Native.unlinkRunDirs([base + "/" + n]) }
+            }
+        }
         for n in (try? fm.contentsOfDirectory(atPath: tmp.path)) ?? []
         where n.range(of: #"^run-req_[0-9a-f]{32}$"#, options: .regularExpression) != nil {
             let p = tmp.appendingPathComponent(n)
@@ -630,12 +658,18 @@ extension Router {
                                rid: rid, writer: writer)
         }
         defer { Task { await Self.shares.releaseWriter(run: lock) } }
-        let env = Native.runEnv(ProcessInfo.processInfo.environment, runTmp: runTmp)
+        // #72: T in C zagona v Scratch (povezavi); brez obeh se ne zažene.
+        let suffix = Native.runDirPrefix + rid.filter { $0 != "/" }
+        guard let links = Native.linkRunDirs(realTmp, suffix: suffix) else {
+            return await error(500, "api_error", "minigw run: cannot link its temporary folders in Scratch", rid: rid, writer: writer)
+        }
+        defer { Native.unlinkRunDirs(links) }
+        let env = Native.runEnv(ProcessInfo.processInfo.environment, runTmp: runTmp, suffix: suffix)
         guard let exe = Native.executable(argv[0], dir: dir, path: env["PATH"]!) else {
             return await error(404, "not_found_error", "minigw run: \(argv[0]) not found on the gateway", rid: rid, writer: writer)
         }
         let args = Array(Native.withoutNestedSandbox(argv, runTmp: realTmp, derivedData: derived).dropFirst())
-        let tempDirs = [dir.path, realTmp, derived], copies = Native.saveCopies(dirs: tempDirs)  // #72: posnetek pred zagonom
+        let tempDirs = [dir.path, realTmp, derived], copies = Native.saveCopies(dirs: tempDirs), runStart = Date()  // #72: posnetek pred zagonom
         guard let (pid, out, err, _) = Native.spawnGroup("/usr/bin/sandbox-exec", ["-p", profile, exe] + args, dir: dir, env: env) else {
             return await self.error(500, "api_error", "minigw run: cannot start \(argv[0])", rid: rid, writer: writer)
         }
@@ -651,8 +685,11 @@ extension Router {
             DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
                 _ = Darwin.kill(-pid, SIGKILL)
                 for h in [out, err] { for w in Native.pipeWriters(of: h.fileDescriptor) { _ = Darwin.kill(w, SIGKILL) } }
-                Native.removeSaveCopies(after: Native.saveCopies(dirs: tempDirs), before: copies)  // #72: po uboju skupine
                 DispatchQueue.global().asyncAfter(deadline: .now() + 1) { closeFrames() }
+                // #72: po uboju skupine in ko so tudi zadnje mape umirjene (`settled`)
+                DispatchQueue.global().asyncAfter(deadline: .now() + 2.5) {
+                    Native.removeSaveCopies(after: Native.saveCopies(dirs: tempDirs), before: copies, since: runStart)
+                }
             }
         }.start()
         @Sendable func stop() {

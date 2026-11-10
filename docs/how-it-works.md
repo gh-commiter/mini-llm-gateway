@@ -261,13 +261,20 @@ user account there.
 - Each run gets its own temporary folder in the gateway's Scratch folder (`tmp/run-<id>`), removed when the run ends:
   `TMPDIR`, `TMP`, `TEMP`, the clang module cache and `java.io.tmpdir` of every Java process (through
   `JAVA_TOOL_OPTIONS`, so Java prints "Picked up JAVA_TOOL_OPTIONS") point there. The shared `/tmp` is not writable.
+- macOS's per-user temporary and cache folders (`/var/folders/…/T` and `…/C`, which Foundation and Swift Build use
+  instead of `TMPDIR`) are moved there too: the run gets `DIRHELPER_USER_DIR_SUFFIX=dev.trojar.minigateway.run-<id>`
+  and the gateway links `…/T/<that name>` and `…/C/<that name>` to `T` and `C` in the run's folder (the links are
+  removed when the run ends, dangling ones at app start). A run never starts without both links. So `swift test`
+  and `swift build`/`run` of packages with resources work, with their products in the usual `.build`.
 - The only writes outside the folder, the build caches above and Scratch are macOS's own save copies in the user
-  temporary folder (`/var/folders/…/T`), because Foundation and the link step of `swift build` ignore `TMPDIR` and no
-  setting moves them: new `TemporaryItems/NSIRD_*` folders (every atomic file save by Foundation, used by
+  temporary folder (`/var/folders/…/T`), because the link step of `swift build` gets an environment without the
+  redirect and Foundation picks the save-copy folder by disk: new `TemporaryItems/NSIRD_*` folders (every atomic file save by Foundation, used by
   `swift build` and `xcodebuild`) and new `TemporaryDirectory.*` folders (the `swift build` link step). With them
   `swift build` and `xcodebuild` work. The build can create such folders and write inside them, but cannot rename,
   delete or replace them or write any other file there. A build could still change the contents of such a folder that
-  another program of yours is using at the same moment.
+  another program of yours is using at the same moment. When the run ends the gateway removes such folders that were
+  created during the run and are empty (or hold only an empty `.keep-directory`); existing folders and other files
+  stay.
 - When the folder is on another disk (for example `/Volumes/Java`), Foundation puts its save copies on that disk, in
   `/Volumes/<disk>/.TemporaryItems/folders.<uid>/TemporaryItems`. The same rule applies there: new `NSIRD_*` folders
   (and that path's folders when missing), nothing else on the disk.
@@ -276,8 +283,6 @@ user account there.
   read-only, so your mirrors and the fingerprint check still apply; SwiftPM warns that it "is not accessible or not
   writable". The warnings "couldn't create cache file '/var/folders/…/T/xcrun_db-…'" are harmless: `xcrun` then
   runs without its cache.
-- Known limitation: `swift test` and `swift run` under `minigw run` do not work yet (#72); empty `NSIRD_*` folders
-  are left in the temporary folder.
 - `xcodebuild` gets `-resultBundlePath`, `-packageCachePath` and `-clonedSourcePackagesDirPath` in the run's
   temporary folder (unless you pass them yourself) and `-IDEDisablePackageManifestCaching=YES`, so Swift packages
   without an `.xcodeproj` build too (Xcode otherwise writes its result bundle to `/var/folders/…/T` and manifest
