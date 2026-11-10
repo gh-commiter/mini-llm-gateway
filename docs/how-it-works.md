@@ -92,6 +92,10 @@ Details:
 - The gateway caches folder listings (PROPFIND) for 10 seconds, like davfs2's `dir_refresh`. Writes through the
   mount clear the cache at once; changes made on the client outside the mount show up within 10 seconds.
 - The folder's own Claude Code settings and hooks are not loaded on the gateway.
+- Neither are its Codex project settings (`.codex/config.toml`: `notify`, `mcp_servers`, hooks and the rest, which
+  would run outside Codex's sandbox): the gateway marks the run's folder and every folder above it as untrusted for
+  that run (`-c projects={"<folder>"={trust_level="untrusted"},…}`), so a project or parent folder trusted in
+  `~/.codex/config.toml` does not load them. Every gateway Codex run, every mode, both gateways.
 - Sync copies of all devices are in the gateway's Scratch folder. Agents that can read every file of the gateway's
   user (Codex and Grok on the Mac, any agent on Windows) can read them too. Keep Scratch on APFS, NTFS or ext4:
   exFAT ignores the folder's private permissions.

@@ -16,6 +16,37 @@ import (
 	"time"
 )
 
+// #59 (kot codexProjectsUntrusted na Macu): vsaka nadmapa cwd, tudi brez simbolnih povezav, je za zagon »untrusted«.
+func TestCodexProjectsUntrusted(t *testing.T) {
+	d := filepath.Join(t.TempDir(), "s")
+	if err := os.Mkdir(d, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	r, _ := filepath.EvalSymlinks(d)
+	a := codexArgs(d, nil, true, "/o", "", true, false, "t1", nil, "", nil)
+	i := slices.IndexFunc(a, func(s string) bool { return strings.HasPrefix(s, "projects={") })
+	if i < 1 || a[i-1] != "-c" || i > slices.Index(a, "resume") {
+		t.Fatalf("codex projects: %v", a)
+	}
+	for _, k := range []string{d, filepath.Dir(d), r, filepath.VolumeName(d) + string(filepath.Separator)} {
+		if runtime.GOOS == "windows" {
+			k = strings.ToLower(k)
+		}
+		if q, _ := json.Marshal(k); !strings.Contains(a[i], string(q)+`={trust_level="untrusted"}`) {
+			t.Fatalf("codex projects %s: %s", k, a[i])
+		}
+	}
+}
+
+// #59: Windows: končna pot (GetFinalPathNameByHandle) brez predpone, kot ključ Codex.
+func TestTrimFinalPrefix(t *testing.T) {
+	for in, want := range map[string]string{`\\?\C:\a\b`: `C:\a\b`, `\\?\UNC\srv\share\x`: `\\srv\share\x`, `C:\a`: `C:\a`} {
+		if got := trimFinalPrefix(in); got != want {
+			t.Fatalf("trimFinalPrefix(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 // Kot testi Codex.args in Grok.args na Macu.
 func TestCodexAndGrokArgs(t *testing.T) {
 	a := codexArgs("/w", []string{"/tmp/x"}, true, "/o.txt", "", true, true, "", nil, "", nil)
@@ -107,7 +138,7 @@ func TestCodexAndGrokThroughRouter(t *testing.T) {
 	argsFile := filepath.Join(bin, "args")
 	codex := filepath.Join(bin, "codex")
 	os.WriteFile(codex, []byte(`#!/bin/sh
-if [ "$1" = debug ]; then echo '{"models":[{"slug":"gpt-x","display_name":"GPT X","context_window":128000}]}'; exit 0; fi
+case "$1 $2" in "-c projects="*) [ "$3 $4" = "debug models" ] && echo '{"models":[{"slug":"gpt-x","display_name":"GPT X","context_window":128000}]}'; exit 0;; esac # #59: -c projects=… pred »debug models«
 printf '%s\n' "$@" "home=$CODEX_HOME" > "`+argsFile+`"
 out=""; prev=""
 for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done
@@ -370,7 +401,7 @@ func TestServeWorktreeReadOnlyAgent(t *testing.T) {
 	gitT(t, client, "commit", "-qm", "first")
 	codex := filepath.Join(root, "codex")
 	writeT(t, codex, `#!/bin/sh
-if [ "$1" = debug ]; then echo '{"models":[]}'; exit 0; fi
+if [ "$3" = debug ]; then echo '{"models":[]}'; exit 0; fi
 out=""; prev=""
 for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done
 p=$(cat)
@@ -481,7 +512,7 @@ func TestWorkCapRun(t *testing.T) {
 	argsFile := filepath.Join(bin, "args")
 	codex := filepath.Join(bin, "codex")
 	os.WriteFile(codex, []byte(`#!/bin/sh
-if [ "$1" = debug ]; then echo '{"models":[]}'; exit 0; fi
+if [ "$3" = debug ]; then echo '{"models":[]}'; exit 0; fi
 printf '%s\n' "$@" > "`+argsFile+`"
 out=""; prev=""
 cwd=""

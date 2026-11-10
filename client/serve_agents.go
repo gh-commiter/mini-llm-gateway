@@ -139,6 +139,9 @@ func agentCatalog(k agentKind, exe string) []agentModel {
 	if k.name == "codex" {
 		args = []string{"debug", "models"}
 	}
+	if k.name == "codex" { // #59: brez projektnih nastavitev (.codex/config.toml) v začasni mapi ali nad njo
+		args = append(codexUntrusted(os.TempDir()), args...)
+	}
 	cmd := commandContext(ctx, exe, args...)
 	cmd.Dir = os.TempDir()
 	out, _ := cmd.Output()
@@ -218,10 +221,57 @@ func codexArgs(cwd string, extraDirs []string, agent bool, output, model string,
 	if !agent {
 		a = append(a, "--ephemeral")
 	}
+	a = append(a, codexUntrusted(cwd)...)
 	if resume != "" {
 		a = append(a, "resume", resume)
 	}
 	return append(append(a, sandbox...), "-") // navodila prek stdin
+}
+
+// codexUntrusted (#59, kot Codex.untrustedProjects na Macu): projektne nastavitve (.codex/config.toml v mapi seje ali
+// nad njo: notify, mcp_servers, hooki) Codex naloži le za zaupanja vredne mape v ~/.codex/config.toml in bi tekle zunaj
+// peskovnika. Vsaka nadmapa cwd (tudi pot brez simbolnih povezav, ključ Codex) je za ta zagon »untrusted«: -c se združi
+// nad uporabnikovo tabelo projects in natančen ključ mape prevlada. Windows: Codex ključe primerja z malimi črkami.
+func codexUntrusted(cwd string) []string {
+	keys := map[string]bool{}
+	starts := []string{filepath.Clean(cwd)}
+	if r, err := filepath.EvalSymlinks(cwd); err == nil {
+		starts = append(starts, r)
+	}
+	if f := codexFinalPath(cwd); f != "" { // Windows: stičišča (codexpath_windows.go)
+		starts = append(starts, f)
+	}
+	for _, d := range starts {
+		for {
+			if runtime.GOOS == "windows" {
+				keys[strings.ToLower(d)] = true
+			} else {
+				keys[d] = true
+			}
+			up := filepath.Dir(d)
+			if up == d {
+				break
+			}
+			d = up
+		}
+	}
+	var b strings.Builder
+	for i, k := range slices.Sorted(maps.Keys(keys)) {
+		q, _ := json.Marshal(k) // niz JSON je veljaven niz TOML
+		if i > 0 {
+			b.WriteString(",")
+		}
+		b.WriteString(string(q) + `={trust_level="untrusted"}`)
+	}
+	return []string{"-c", "projects={" + b.String() + "}"}
+}
+
+// trimFinalPrefix: pot GetFinalPathNameByHandle brez »\\?\« (»\\?\UNC\« → »\\«), kot ključ Codex.
+func trimFinalPrefix(s string) string {
+	if r, ok := strings.CutPrefix(s, `\\?\UNC\`); ok {
+		return `\\` + r
+	}
+	return strings.TrimPrefix(s, `\\?\`)
 }
 
 // codexTreeProfile (#40, kot Codex.treeProfile na Macu): v klonu profil dovoljenj Codex namesto workspace-write, ki

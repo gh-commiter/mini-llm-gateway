@@ -159,7 +159,7 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":3}}'
 `)
 	codex := filepath.Join(tmp, "codex")
 	writeT(t, codex, `#!/bin/sh
-if [ "$1" = debug ]; then echo '{"models":[]}'; exit 0; fi
+if [ "$3" = debug ]; then echo '{"models":[]}'; exit 0; fi
 out=""; prev=""
 for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done
 cat > prompt.txt

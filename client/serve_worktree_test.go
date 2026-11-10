@@ -236,7 +236,7 @@ func TestServeWorktreeCodexSandbox(t *testing.T) {
 	gitT(t, client, "commit", "-qm", "first")
 	codex := filepath.Join(root, "codex")
 	writeT(t, codex, `#!/bin/sh
-if [ "$1" = debug ]; then echo '{"models":[]}'; exit 0; fi
+if [ "$3" = debug ]; then echo '{"models":[]}'; exit 0; fi
 out=""; prev=""
 for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done
 cat > /dev/null
