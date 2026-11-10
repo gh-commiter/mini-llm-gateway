@@ -298,6 +298,14 @@ public enum Native {
         return env
     }
 
+    /// #24: ustvari zasebno mapo zagona (z ModuleCache, 0700); vrne njeno kanonično pot ali nil (gradnja brez nje bi
+    /// padla šele z »Operation not permitted«).
+    static func makeRunTmp(_ runTmp: URL) -> String? {
+        guard (try? FileManager.default.createDirectory(at: runTmp.appendingPathComponent("ModuleCache"), withIntermediateDirectories: true,
+                                                        attributes: [.posixPermissions: 0o700])) != nil else { return nil }
+        return Sync.real(runTmp)?.path
+    }
+
     /// V peskovniku drug peskovnik ni mogoč (sandbox_apply: Operation not permitted), zato SwiftPM in Xcode brez svojega.
     static func withoutNestedSandbox(_ argv: [String]) -> [String] {
         var a = argv
@@ -496,13 +504,14 @@ extension Router {
         // profil peskovnika iz dobesedne poti (sandboxProfile zavrne povezave).
         // Zasebna začasna mapa zagona v Scratch (runEnv; ne /var/folders/…, /tmp ali domača mapa); odstrani se po zagonu.
         let runTmp = config.scratch("tmp").appendingPathComponent("run-" + rid, isDirectory: true)
-        try? FileManager.default.createDirectory(at: runTmp.appendingPathComponent("ModuleCache"), withIntermediateDirectories: true,
-                                                 attributes: [.posixPermissions: 0o700])
         defer { try? FileManager.default.removeItem(at: runTmp) }
+        guard let realTmp = Native.makeRunTmp(runTmp) else {
+            return await error(500, "api_error", "minigw run: cannot create its temporary folder in Scratch", rid: rid, writer: writer)
+        }
         guard Sync.real(dir)?.path == dir.path, ClaudeCLI.resolveCwd(dir.path, roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL)?.path == dir.path,
               let profile = Native.sandboxProfile(dir: dir.path, network: config.devices.first { $0.id == d.id }?.runNetwork ?? true,
                                                   hidden: [config.scratchURL.path, RouterConfig.defaultScratch.path], routerPort: Int(config.port),
-                                                  runTmp: Sync.real(runTmp)?.path) else {
+                                                  runTmp: realTmp) else {
             return await error(403, "permission_error", "minigw run: the folder or a build cache folder (~/.m2, ~/Library/Developer …) is a link or not allowed", rid: rid, writer: writer)
         }
         guard await Self.natives.startRun(d.id) else {

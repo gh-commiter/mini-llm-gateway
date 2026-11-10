@@ -559,6 +559,18 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
     #expect(env["PATH"]?.hasPrefix("/usr/bin:") == true)
 }
 
+/// #24 F1: zasebne mape zagona ni mogoče ustvariti (tmp je datoteka): nil, zagon se takoj konča z jasno napako.
+@Test func makeRunTmpFailsClearly() throws {
+    let fm = FileManager.default
+    let base = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("mk24-" + UUID().uuidString)
+    defer { try? fm.removeItem(at: base) }
+    try fm.createDirectory(at: base, withIntermediateDirectories: true)
+    try Data("x".utf8).write(to: base.appendingPathComponent("file"))
+    #expect(Native.makeRunTmp(base.appendingPathComponent("file/run-req_x")) == nil)
+    let ok = base.appendingPathComponent("tmp/run-req_y")
+    #expect(Native.makeRunTmp(ok) == ok.path && fm.fileExists(atPath: ok.path + "/ModuleCache"))
+}
+
 /// #24 L1: Scratch z narekovajem v poti (JAVA_TOOL_OPTIONS, profil peskovnika) je zavrnjen, tudi kot obstoječa mapa.
 @Test func scratchRefusesQuoteInPath() throws {
     #expect(RouterConfig.scratchProblem(URL(fileURLWithPath: "/Volumes/X/a\"b"), allowedRoots: "") == "its path contains a quotation mark")
