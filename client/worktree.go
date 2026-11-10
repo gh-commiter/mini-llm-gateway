@@ -405,7 +405,17 @@ func fsckIncoming(top string) error {
 			in += sha + "\n"
 		}
 	}
-	dir, err := os.MkdirTemp("", "minigw-") // 0700
+	// Objekti uporabnika kot alternates: drevo agenta sme kazati na obstoječ blob (npr. .gitattributes), fsck ga prebere.
+	objs, err := gitUser(top, nil, "rev-parse", "--git-path", "objects")
+	if err != nil || objs == "" {
+		return errors.New("cannot find the objects folder")
+	}
+	if !filepath.IsAbs(objs) {
+		objs = filepath.Join(top, objs)
+	}
+	// Mapa ob objects (kot fsckBase prehoda): pack-objects sestavi paket v objects/pack in ga preimenuje v dir; začasna
+	// mapa na drugem disku (repozitorij zunaj TMP) da »cross-device link«.
+	dir, err := os.MkdirTemp(filepath.Dir(objs), "minigw-fsck-") // 0700
 	if err != nil {
 		return err
 	}
@@ -439,14 +449,6 @@ func fsckIncoming(top string) error {
 	fsck := filepath.Join(dir, "fsck.git")
 	if _, err := gitUser(dir, nil, "init", "-q", "--bare", fsck); err != nil {
 		return err
-	}
-	// Objekti uporabnika kot alternates: drevo agenta sme kazati na obstoječ blob (npr. .gitattributes), fsck ga prebere.
-	objs, err := gitUser(top, nil, "rev-parse", "--git-path", "objects")
-	if err != nil || objs == "" {
-		return errors.New("cannot find the objects folder")
-	}
-	if !filepath.IsAbs(objs) {
-		objs = filepath.Join(top, objs)
 	}
 	if err := os.WriteFile(filepath.Join(fsck, "objects", "info", "alternates"), []byte(filepath.ToSlash(objs)+"\n"), 0o600); err != nil {
 		return err
