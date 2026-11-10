@@ -508,8 +508,8 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
     #expect(FileManager.default.fileExists(atPath: marker))
 }
 
-/// M1 (0.5.16), #24: minigw run v DARWIN_USER_TEMP_DIR ne piše nič: ne novih map TemporaryDirectory.* in NSIRD_*, vnosov
-/// (TemporaryItems, obstoječe mape) ne more preimenovati, izbrisati ali zamenjati s povezavo, datotek v T ne.
+/// M1 (0.5.16): minigw run v DARWIN_USER_TEMP_DIR le ustvari nove mape TemporaryDirectory.* (in NSIRD_*) in piše v njih;
+/// vnosov (TemporaryItems, obstoječe mape) ne more preimenovati, izbrisati ali zamenjati s povezavo, datotek v T ne.
 /// Če bi peskovnik kaj dovolil, test to takoj popravi (vrne TemporaryItems, odstrani svoje).
 @Test func runProfileProtectsDarwinTempEntries() throws {
     var b = [CChar](repeating: 0, count: 1024)
@@ -541,12 +541,7 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
     #expect(sh("touch '\(t)/minigw-test-\(id)'") != 0)
     #expect(sh("touch '\(items)/minigw-test-\(id)'") != 0)
     #expect(sh("echo x >> '\(t)/xcrun_db'") != 0)
-    #expect(sh("mkdir '\(mine)'") != 0 && !fm.fileExists(atPath: mine))  // #24: tudi nova mapa ne
-    let nsird = items + "/NSIRD_minigw-test_" + id.prefix(6)
-    defer { try? fm.removeItem(atPath: nsird) }
-    #expect(sh("mkdir '\(nsird)'") != 0 && !fm.fileExists(atPath: nsird))
-    try fm.createDirectory(atPath: mine, withIntermediateDirectories: false)  // obstoječa mapa drugega procesa
-    #expect(sh("echo x > '\(mine)/f'") != 0 && !fm.fileExists(atPath: mine + "/f"))  // I4: vsebine ne spremeni
+    #expect(sh("mkdir '\(mine)' && echo x > '\(mine)/f'") == 0)  // nova mapa in pisanje v njej: da
     #expect(sh("mv '\(mine)' '\(mine)-2'") != 0 && sh("rm -rf '\(mine)'") != 0 && fm.fileExists(atPath: mine))  // vnos: ne
 }
 

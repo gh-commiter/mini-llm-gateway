@@ -152,7 +152,7 @@ public enum Native {
     /// Peskovnik za `minigw run`: pisanje le v mapo in predpomnilnike gradnje (ne v .git, nastavitve Maven in SwiftPM),
     /// branje povsod razen skrivnosti uporabnika, omrežje po izbiri naprave. Poti so dobesedne: če katera obstaja in
     /// njena kanonična pot ni ista (povezava), vrne nil (zamenjava mape s povezavo ne razširi pisanja).
-    /// Preizkušeno z mvn package (deluje); swift build in xcodebuild od #24 ne (le Scratch, glej sandboxProfile).
+    /// Preizkušeno z mvn package, swift build --disable-sandbox in xcodebuild build: nobena prepoved ni bila odveč.
     /// Nastavitve gradnje, ki jih izvede naslednja gradnja lastnika (zunaj peskovnika): nikoli pisanje iz peskovnika.
     /// `paths` dobesedno in kanonično (peskovnik primerja razrešene poti; ~/.swiftpm/configuration je povezava),
     /// `regexes` za vzorce (nastavitve Maven, config in hooks repozitorijev SwiftPM).
@@ -170,6 +170,27 @@ public enum Native {
         return (paths, [e(home + "/.m2/settings") + "[^/]*\\.xml$",
                         e(home + "/Library/Caches/org.swift.swiftpm/repositories/") + "[^/]+/(config|hooks)(/|$)",
                         e(home + "/Library/org.swift.swiftpm/repositories/") + "[^/]+/(config|hooks)(/|$)"])
+    }
+
+    /// Edini dovoljenji zunaj Scratch in mape gradnje (#24: preizkušeno z mvn package, swift build in xcodebuild build
+    /// .xcodeproj brez njiju, brez /private/tmp in z zasebnim TMPDIR v Scratch): Foundation na macOS za NSTemporaryDirectory
+    /// in mapo za zamenjavo vnosa bere le confstr(DARWIN_USER_TEMP_DIR), TMPDIR prezre (okolje tega ne preusmeri).
+    /// - TemporaryItems/NSIRD_…: vsako atomarno pisanje Foundation (Data.write(.atomic)) v mapo na zagonskem disku; brez
+    ///   njega swift build (manifest.json v .build) in xcodebuild (DerivedData) ne uspeta.
+    /// - TemporaryDirectory.XXXXXX: korak Ld storitve Swift Build (swift build) dobi okolje brez TMPDIR, zato swiftc za
+    ///   povezovanje ustvari začasno mapo v DARWIN_USER_TEMP_DIR; brez nje swift build ne poveže programa.
+    /// Pisanje le znotraj takih map in le nove take mape (nikoli datoteka ali povezava na tem mestu): vnosov TemporaryItems
+    /// in obstoječih TemporaryDirectory.* ni mogoče preimenovati, izbrisati ali zamenjati. Mapa sama (xcrun_db) in
+    /// DARWIN_USER_CACHE_DIR ostaneta zaprti. ponytail: vsebino sočasne mape drugega procesa zagon lahko spremeni (I4, #24);
+    /// peskovnik ne loči svojih map od tujih, Foundation pa druge poti ne pozna.
+    static func darwinTempRules() -> String? {
+        var b = [CChar](repeating: 0, count: 1024)
+        guard confstr(_CS_DARWIN_USER_TEMP_DIR, &b, b.count) > 0,
+              let t = Sync.real(URL(fileURLWithPath: String(cString: b)))?.path else { return nil }
+        let te = NSRegularExpression.escapedPattern(for: t)
+        return "(allow file-write* (regex #\"^\(te)/TemporaryItems/NSIRD_[^/]+/\") (regex #\"^\(te)/TemporaryDirectory\\.[^/]+/\"))\n"
+            + "(allow file-write-create (require-all (vnode-type DIRECTORY)"
+            + " (regex #\"^\(te)/(TemporaryItems/NSIRD_[^/]+|TemporaryDirectory\\.[^/]+)$\")))\n"
     }
 
     /// `runTmp`: TMPDIR in ModuleCache tega zagona (v Scratch, ki je sicer skrit).
@@ -195,11 +216,7 @@ public enum Native {
                            ".bash_history"].map { home + "/" + $0 }
         return "(version 1)\n(allow default)\n(deny file-write*)\n"
             + "(allow file-write* (regex #\"^/dev/\")" + writable.map { " (subpath \(q($0)))" }.joined() + ")\n"
-            // #24 (odločitev lastnika: vse gradnje le v Scratch): nič v DARWIN_USER_TEMP_DIR (/var/folders/…/T), tudi ne
-            // nove mape TemporaryItems/NSIRD_* in TemporaryDirectory.*. Foundation na macOS mapo za zamenjavo vnosa
-            // (atomarno pisanje) in NSTemporaryDirectory vzame iz confstr, TMPDIR prezre; na drugem disku pa
-            // <disk>/.TemporaryItems/folders.<uid>: oboje zunaj Scratch. Zato swift build in xcodebuild v run ne uspeta
-            // (manifest.json, info.plist DerivedData: »Operation not permitted«), mvn da.
+            + (darwinTempRules() ?? "")
             // Skrite mape (Scratch): ne vsebina, seznam in pisanje; metapodatki (stat) da, sicer mkdir -p in realpath v
             // dovoljeni podmapi ne delujeta. Izrecno vidna mapa seje v njej (sinhronizirana kopija, klon) spet le ta.
             // Dovolitev mora imenovati file-read-data: file-read* ne preglasi ožje prepovedi.
@@ -234,7 +251,7 @@ public enum Native {
     /// Preverjeno: mvn package, swift build (z odvisnostjo; SwiftPM brez svojega predpomnilnika le opozori) in
     /// xcodebuild build projekta .xcodeproj delujejo brez njega.
     /// Ne DARWIN_USER_TEMP_DIR/DARWIN_USER_CACHE_DIR (/var/folders/…): predpomnilnik xcrun bi izvedel podtaknjen program.
-    /// Gradnja ima svoj TMPDIR in ModuleCache (`runTmp` v sandboxProfile); v DARWIN_USER_TEMP_DIR nič (#24).
+    /// Gradnja ima svoj TMPDIR in ModuleCache (`runTmp` v sandboxProfile); iz DARWIN_USER_TEMP_DIR le `darwinTempRules`.
     static func buildCaches(home: String = NSHomeDirectory()) -> [String] {
         ["\(home)/.m2", "\(home)/.swiftpm", "\(home)/Library/Developer",
          "\(home)/Library/org.swift.swiftpm"]
