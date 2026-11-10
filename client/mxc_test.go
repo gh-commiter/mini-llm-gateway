@@ -747,3 +747,80 @@ func TestRedactTextL5(t *testing.T) {
 		t.Errorf("redactText = %q", got)
 	}
 }
+
+// #77: Copilot iz npm (copilot.cmd, kot ga naredi npm): izvorni copilot.exe iz platformnega paketa; škatla dobi le
+// mapo tega paketa, nikoli domače mape, %APPDATA%, mape npm ali vsega node_modules.
+func TestCopilotNpmNative(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	roaming := filepath.Join(home, "AppData", "Roaming")
+	npm := filepath.Join(roaming, "npm")
+	pkg := filepath.Join(npm, "node_modules", "@github", "copilot")
+	plat := filepath.Join(pkg, "node_modules", "@github", "copilot-win32-x64")
+	for _, d := range []string{plat, filepath.Join(pkg, "node_modules", "@github", "copilot-win32-arm64", "copilot.exe")} { // tuja arhitektura: mapa, ne program
+		os.MkdirAll(d, 0o700)
+	}
+	shim := "@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\n\r\n" +
+		"IF EXIST \"%dp0%\\node.exe\" (\r\n  SET \"_prog=%dp0%\\node.exe\"\r\n) ELSE (\r\n  SET \"_prog=node\"\r\n  SET PATHEXT=%PATHEXT:;.JS;=;%\r\n)\r\n\r\n" +
+		"endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & \"%_prog%\"  \"%dp0%\\node_modules\\@github\\copilot\\npm-loader.js\" %*\r\n"
+	os.WriteFile(filepath.Join(npm, "copilot.cmd"), []byte(shim), 0o600)
+	os.WriteFile(filepath.Join(pkg, "package.json"), []byte(`{"bin":{"copilot":"npm-loader.js"}}`), 0o600)
+	os.WriteFile(filepath.Join(pkg, "npm-loader.js"), nil, 0o600)
+	if got := npmNative("copilot", npm, "amd64"); got != "" {
+		t.Fatalf("no copilot.exe yet: %q", got)
+	}
+	if got := npmNative("copilot", npm, "arm64"); got != "" {
+		t.Fatalf("a folder is not the program: %q", got)
+	}
+	exe := filepath.Join(plat, "copilot.exe")
+	os.WriteFile(exe, []byte("MZ"), 0o700)
+	os.WriteFile(filepath.Join(plat, "package.json"), []byte(`{"bin":{"copilot-win32-x64":"copilot.exe"}}`), 0o600)
+	if got := npmNative("copilot", npm, "amd64"); got != exe {
+		t.Fatalf("nested: %q", got)
+	}
+	if got := npmNative("copilot", npm, "arm64"); got != exe { // arm64 minigw: x64 Copilot, ko arm64 ni
+		t.Fatalf("other arch: %q", got)
+	}
+	if got := npmNative("grok", npm, "amd64"); got != "" {
+		t.Fatalf("grok: %q", got)
+	}
+	// prednost ima arhitektura minigw (x64 minigw na ARM64 Windows najde arm64, ko x64 ni)
+	hoisted := filepath.Join(home, "AppData", "Local", "npm")
+	hplat := filepath.Join(hoisted, "node_modules", "@github", "copilot-win32-arm64")
+	os.MkdirAll(hplat, 0o700)
+	hexe := filepath.Join(hplat, "copilot.exe")
+	os.WriteFile(hexe, nil, 0o700)
+	os.WriteFile(filepath.Join(hoisted, "package.json"), []byte("{}"), 0o600) // brez package.json v paketu, višje pa je
+	if got := npmNative("copilot", hoisted, "amd64"); got != hexe {
+		t.Fatalf("hoisted: %q", got)
+	}
+	os.MkdirAll(filepath.Join(hoisted, "node_modules", "@github", "copilot-win32-x64"), 0o700)
+	os.WriteFile(filepath.Join(hoisted, "node_modules", "@github", "copilot-win32-x64", "copilot.exe"), nil, 0o700)
+	if got := npmNative("copilot", hoisted, "arm64"); got != hexe {
+		t.Fatalf("own arch first: %q", got)
+	}
+
+	// L1: le mapa programa, tudi brez package.json (hoisted) nikoli navzgor do @github, node_modules ali npm
+	for exe, dir := range map[string]string{exe: plat, hexe: hplat} {
+		_, args, done, err := mxcWrap("wxc", exe, []string{"-p", "x"}, agentMounts{cfgDir: t.TempDir(), hide: t.TempDir()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := os.ReadFile(args[0])
+		done()
+		var req mxcRequest
+		if err != nil || json.Unmarshal(b, &req) != nil {
+			t.Fatalf("request: %v", err)
+		}
+		ro := req.Filesystem.ReadOnly
+		if !slices.Contains(ro, dir) {
+			t.Fatalf("platform package not granted: %v", ro)
+		}
+		for _, p := range slices.Concat(ro, req.Filesystem.ReadWrite) {
+			if under(home, p) || under(p, home) && !under(p, dir) {
+				t.Errorf("%s: too wide a grant: %s", exe, p)
+			}
+		}
+	}
+}

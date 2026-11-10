@@ -1020,10 +1020,13 @@ func (s *server) patchLogin(kind string, token, apiKey *string) (int, any) {
 func (s *server) agentAPI(method string, k agentKind, body []byte) (int, any) {
 	info := func() map[string]any {
 		ac := k.conf(s.conf())
-		exe, _ := resolveAgent(k, ac.Executable)
+		exe, err := resolveAgent(k, ac.Executable)
 		o := map[string]any{"enabled": ac.Enabled, "path": ac.Executable, "found": exe != "", "exe": exe, "write": ac.canWrite(k), "models": ac.Models,
 			"login":     agentLogin(s.cfgDir, k.name),
 			"askOthers": ac.AskOthers, "work": apiWork(ac.Work), "sandboxed": s.agentsAllowed(serveConfig{}, k.name)} // #68: peskovnik brez stikala
+		if err != nil { // #77: npm-ovoj brez copilot.exe ipd.
+			o["reason"] = err.Error()
+		}
 		if k.name != "grok" {
 			o["network"] = ac.Network
 		}

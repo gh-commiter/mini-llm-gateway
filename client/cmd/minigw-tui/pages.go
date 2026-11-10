@@ -545,6 +545,9 @@ func modelToggles(m map[string]any, key string, enabled []string, patch func(map
 
 func found(a map[string]any) string {
 	if !yes(a, "found") {
+		if r := str(a, "reason"); r != "" { // #77
+			return clean(r)
+		}
 		return "not found"
 	}
 	return clean(strings.TrimSpace(onOff(str(a, "exe") != "", str(a, "exe"), "found") + " " + str(a, "version")))
