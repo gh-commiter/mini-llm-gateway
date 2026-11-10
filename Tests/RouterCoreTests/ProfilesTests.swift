@@ -221,5 +221,8 @@ private func send(_ url: String, _ method: String, _ path: String, secret: Strin
     #expect(Profiles.streamArgs(["-p", "--output-format=json"]) == nil && Profiles.streamArgs(["hi"]) == nil)
     #expect(Profiles.helperModelEnv(["--model", "claude-deepseek/deepseek-v4-flash"], env: [:])
             == ["ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-deepseek/deepseek-v4-flash", "ANTHROPIC_SMALL_FAST_MODEL": "claude-deepseek/deepseek-v4-flash"])
-    #expect(Profiles.helperModelEnv(["--model=claude-cli-fable"], env: [:]).isEmpty && Profiles.helperModelEnv(["--model", "opus"], env: [:]).isEmpty)
+    for m in ["claude-cli-fable", "opus", "claude-haiku-5-5", "claude-codex-gpt-5", "claude-grok", "claude-copilot", "claude-siri-ai", "claude-apple-fm"] {
+        #expect(Profiles.helperModelEnv(["--model=\(m)"], env: [:]).isEmpty, "\(m)")
+    }
+    #expect(run([text(#"a\u001b[2Jb\tc\u009bd"#)]) == ("a[2Jb\tcd\n", "", false))
 }

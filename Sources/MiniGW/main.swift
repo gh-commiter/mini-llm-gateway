@@ -1159,6 +1159,7 @@ var attr: posix_spawnattr_t?
 posix_spawnattr_init(&attr)
 var defaults = sigset_t()
 sigemptyset(&defaults); sigaddset(&defaults, SIGINT); sigaddset(&defaults, SIGQUIT); sigaddset(&defaults, SIGPIPE)
+sigaddset(&defaults, SIGTERM); sigaddset(&defaults, SIGHUP)
 posix_spawnattr_setsigdefault(&attr, &defaults)
 posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETSIGDEF))
 var actions: posix_spawn_file_actions_t?
@@ -1189,29 +1190,51 @@ if let data = claudeStdin {
     let w = FileHandle(fileDescriptor: stdinPipe[1], closeOnDealloc: true)
     Thread.detachNewThread { try? w.write(contentsOf: data); try? w.close() }
 }
-var printer = Profiles.StreamText()
+// #78: kill minigw ne pusti claude brez starša: SIGTERM in SIGHUP gresta claude, minigw počaka nanj in pospravi.
+let forwarded = [SIGTERM, SIGHUP].map { sig in
+    signal(sig, SIG_IGN)
+    let src = DispatchSource.makeSignalSource(signal: sig, queue: .global())
+    src.setEventHandler { kill(pid, sig) }
+    src.resume()
+    return src
+}
+var printer = Profiles.StreamText(), streamBroken = false
+var status: Int32 = 0, exited = false
 if streamed {
     close(outPipe[1])
-    let h = FileHandle(fileDescriptor: outPipe[0], closeOnDealloc: true)
-    var buf = Data()
+    var buf = Data(), chunk = [UInt8](repeating: 0, count: 64 << 10), deadline = Date.distantFuture
     func show(_ line: Data) {
         let (o, e) = printer.line(line)
         if !o.isEmpty { out.write(Data(o.utf8)) }
         if !e.isEmpty { err.write(Data(e.utf8)) }
     }
-    while case let d = h.availableData, !d.isEmpty {
-        buf.append(d)
-        while let i = buf.firstIndex(of: 0x0A) {
-            show(buf[buf.startIndex..<i])
-            buf.removeSubrange(buf.startIndex...i)
+    // vnuk, ki drži stdout, ne zadrži minigw: po koncu claude še največ 2 s branja
+    reading: while !printer.done, Date() < deadline {
+        var p = pollfd(fd: outPipe[0], events: Int16(POLLIN), revents: 0)
+        if poll(&p, 1, 200) > 0 {
+            let n = read(outPipe[0], &chunk, chunk.count)
+            if n == 0 || (n < 0 && errno != EINTR && errno != EAGAIN) { break }
+            if n > 0 { buf.append(contentsOf: chunk[..<n]) }
+            while let i = buf.firstIndex(of: 0x0A) {
+                show(buf[buf.startIndex..<i])
+                buf.removeSubrange(buf.startIndex...i)
+                if printer.done { break reading }
+            }
+            if buf.count > Profiles.StreamText.lineMax {
+                err.write(Data("minigw: cannot read claude's output: line longer than \(Profiles.StreamText.lineMax >> 20) MB\n".utf8))
+                streamBroken = true
+                break
+            }
         }
+        if !exited, waitpid(pid, &status, WNOHANG) == pid { exited = true; deadline = Date() + 2 }
     }
-    show(buf)
+    if !printer.done, !streamBroken { show(buf) }
     if let w = printer.warning { err.write(Data(w.utf8)) }
+    close(outPipe[0])  // claude ob nadaljnjem pisanju dobi EPIPE/SIGPIPE, ne obvisi
 }
-var status: Int32 = 0
-while waitpid(pid, &status, 0) == -1 && errno == EINTR {}
+if !exited { while waitpid(pid, &status, 0) == -1 && errno == EINTR {} }
+forwarded.forEach { $0.cancel() }
 share.unregister()
 extras.unregister()
 let code = status & 0x7f == 0 ? (status >> 8) & 0xff : 128 + (status & 0x7f)
-exit(code == 0 && printer.failed ? 1 : code)
+exit(code == 0 && (printer.failed || streamBroken) ? 1 : code)

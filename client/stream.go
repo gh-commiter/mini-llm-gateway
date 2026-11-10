@@ -3,9 +3,12 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -29,7 +32,7 @@ func streamArgs(args []string) ([]string, bool) {
 }
 
 // helperModelEnv (#78): model ponudnika (ne opus/sonnet/haiku/fable): pomožni klici Claude Code (naslov, povzetki,
-// podagent Explore) gredo k istemu modelu, ne k claude-haiku-…, ki ga prehod morda nima (404). Uporabnikove vrednosti ostanejo.
+// podagent Explore) gredo k istemu modelu; agenti (Codex, Grok, Copilot, Siri AI, Apple FM) in modeli Claude ne, ne k claude-haiku-…, ki ga prehod morda nima (404). Uporabnikove vrednosti ostanejo.
 func helperModelEnv(args []string, getenv func(string) string) []string {
 	model := ""
 	for i, a := range args {
@@ -42,7 +45,8 @@ func helperModelEnv(args []string, getenv func(string) string) []string {
 			model = v
 		}
 	}
-	if _, _, claude := cliMatch(strings.ToLower(model)); model == "" || claude {
+	agent := isAgentModel(model) || slices.Contains([]string{"claude-apple-fm", "apple-fm", "claude-siri-ai", "siri-ai"}, model)
+	if _, _, claude := cliMatch(strings.ToLower(model)); model == "" || claude || agent {
 		return nil
 	}
 	var env []string
@@ -56,20 +60,33 @@ func helperModelEnv(args []string, getenv func(string) string) []string {
 	return env
 }
 
+// streamLineMax: najdaljša vrstica stream-json (enako v Swift Profiles.StreamText.lineMax).
+const streamLineMax = 64 << 20
+
+// printable: besedilo modela brez nadzornih znakov terminala (C0 razen \n in \t, DEL, C1).
+func printable(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 && r != '\n' && r != '\t' || r >= 0x7f && r <= 0x9f {
+			return -1
+		}
+		return r
+	}, s)
+}
+
 // backRef: končno sporočilo se sklicuje na prejšnje besedilo (#78).
 var backRef = regexp.MustCompile(`(?i)\babove\b|\bsee (the )?previous\b|zgoraj`)
 
 // streamText (#78): dogodki claude --output-format stream-json → vsak blok besedila modela na out (prazna vrstica med
-// njimi), uporaba orodja kot kratka vrstica na errOut; končni result ni izpisan dvakrat. failed = result z napako.
+// njimi), uporaba orodja kot kratka vrstica na errOut; končni result ni izpisan dvakrat in konča branje. failed = result z napako.
 func streamText(in io.Reader, out, errOut io.Writer) (failed bool) {
 	sc := bufio.NewScanner(in)
-	sc.Buffer(make([]byte, 64<<10), 64<<20)
+	sc.Buffer(make([]byte, 64<<10), streamLineMax)
 	n, last := 0, ""
 	emit := func(t string) {
 		if n > 0 {
 			fmt.Fprintln(out)
 		}
-		fmt.Fprintln(out, strings.TrimRight(t, "\n"))
+		fmt.Fprintln(out, printable(strings.TrimRight(t, "\n")))
 		n, last = n+1, t
 	}
 	for sc.Scan() {
@@ -90,17 +107,24 @@ func streamText(in io.Reader, out, errOut io.Writer) (failed bool) {
 				if c.Type == "text" && strings.TrimSpace(c.Text) != "" {
 					emit(c.Text)
 				} else if c.Type == "tool_use" {
-					fmt.Fprintln(errOut, "minigw: · "+c.Name)
+					fmt.Fprintln(errOut, "minigw: · "+printable(c.Name))
 				}
 			}
 		case "result":
 			if ev.IsError {
 				failed = true
-				fmt.Fprintln(errOut, ev.Result)
+				fmt.Fprintln(errOut, printable(ev.Result))
 			} else if n == 0 && strings.TrimSpace(ev.Result) != "" {
 				emit(ev.Result)
 			}
 		}
+		if ev.Type == "result" { // zadnji dogodek claude -p
+			break
+		}
+	}
+	if err := sc.Err(); err != nil && !errors.Is(err, os.ErrClosed) {
+		fmt.Fprintln(errOut, "minigw: cannot read claude's output: "+err.Error())
+		failed = true
 	}
 	if n == 1 && backRef.MatchString(last) {
 		fmt.Fprintln(errOut, "minigw: warning: the answer refers to earlier text that the model did not send; it may be incomplete")

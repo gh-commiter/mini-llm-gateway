@@ -161,14 +161,16 @@ public enum Profiles {
     }
 
     /// #78 (kot Go helperModelEnv): model ponudnika (ne opus/sonnet/haiku/fable): pomožni klici Claude Code gredo k istemu
-    /// modelu, ne k claude-haiku-…, ki ga prehod morda nima (404). Uporabnikove vrednosti ostanejo.
+    /// modelu, ne k claude-haiku-…, ki ga prehod morda nima (404); agenti (Codex, Grok, Copilot, Siri AI, Apple FM) in
+    /// modeli Claude ne. Uporabnikove vrednosti ostanejo.
     public static func helperModelEnv(_ args: [String], env: [String: String]) -> [String: String] {
         var model = ""
         let opts = Array(args.prefix { $0 != "--" })
         for (i, a) in opts.enumerated() {
             if a == "--model", i + 1 < opts.count { model = opts[i + 1] } else if a.hasPrefix("--model=") { model = String(a.dropFirst(8)) }
         }
-        guard !model.isEmpty, ClaudeCLI.match(model.lowercased()) == nil else { return [:] }
+        guard !model.isEmpty, ClaudeCLI.match(model.lowercased()) == nil, !isAgentModel(model), !Siri.ids.contains(model),
+              !AppleFM.ids.contains(model) else { return [:] }
         return Dictionary(uniqueKeysWithValues: ["ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_SMALL_FAST_MODEL"].map { k in
             (k, env[k].flatMap { $0.isEmpty ? nil : $0 } ?? model)
         })
@@ -177,9 +179,20 @@ public enum Profiles {
     /// #78 (kot Go streamText): dogodki claude --output-format stream-json → vsak blok besedila modela za stdout (prazna
     /// vrstica med njimi), uporaba orodja kot kratka vrstica za stderr; končni result ni izpisan dvakrat.
     public struct StreamText {
+        /// Najdaljša vrstica stream-json (enako kot Go streamLineMax).
+        public static let lineMax = 64 << 20
         var n = 0, last = ""
         public private(set) var failed = false
+        /// Dogodek result: zadnji dogodek claude -p, branje se konča.
+        public private(set) var done = false
         public init() {}
+
+        /// Besedilo brez nadzornih znakov terminala (C0 razen \n in \t, DEL, C1; kot Go printable).
+        public static func printable(_ s: String) -> String {
+            String(String.UnicodeScalarView(s.unicodeScalars.filter { c in
+                c == "\n" || c == "\t" || !(c.value < 0x20 || (0x7f...0x9f).contains(c.value))
+            }))
+        }
 
         /// Ena vrstica JSON → besedilo za stdout in stderr.
         public mutating func line(_ data: Data) -> (out: String, err: String) {
@@ -192,14 +205,15 @@ public enum Profiles {
                     if c["type"] as? String == "text", let t = c["text"] as? String, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         texts.append(t)
                     } else if c["type"] as? String == "tool_use" {
-                        err += "minigw: · \(c["name"] as? String ?? "")\n"
+                        err += "minigw: · \(Self.printable(c["name"] as? String ?? ""))\n"
                     }
                 }
             case "result":
+                done = true
                 let r = ev["result"] as? String ?? ""
                 if ev["is_error"] as? Bool == true {
                     failed = true
-                    err += r + "\n"
+                    err += Self.printable(r) + "\n"
                 } else if n == 0, !r.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     texts.append(r)
                 }
@@ -208,7 +222,7 @@ public enum Profiles {
             for t in texts {
                 var t2 = t
                 while t2.hasSuffix("\n") { t2.removeLast() }
-                out += (n > 0 ? "\n" : "") + t2 + "\n"
+                out += (n > 0 ? "\n" : "") + Self.printable(t2) + "\n"
                 n += 1; last = t
             }
             return (out, err)

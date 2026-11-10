@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestStreamText(t *testing.T) {
@@ -27,6 +28,7 @@ func TestStreamText(t *testing.T) {
 			"", "API Error: 500\n", true},
 		{"back-reference", ev(text("Kot zgoraj, vse je v redu."), `{"type":"result","is_error":false,"result":"x"}`),
 			"Kot zgoraj, vse je v redu.\n", "minigw: warning: the answer refers to earlier text that the model did not send; it may be incomplete\n", false},
+		{"control characters", ev(text(`a\u001b[2Jb\tc\u009bd`)), "a[2Jb\tcd\n", "", false},
 		{"result only", ev(`not json`, `{"type":"result","is_error":false,"result":"Done"}`), "Done\n", "", false},
 	} {
 		var out, errOut strings.Builder
@@ -53,7 +55,7 @@ func TestHelperModelEnv(t *testing.T) {
 		"ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-deepseek/deepseek-v4-flash", "ANTHROPIC_SMALL_FAST_MODEL=claude-deepseek/deepseek-v4-flash"}) {
 		t.Errorf("provider model: %v", e)
 	}
-	for _, m := range []string{"opus", "claude-sonnet-5", "claude-cli-fable", "claude-haiku-5-5"} {
+	for _, m := range []string{"opus", "claude-sonnet-5", "claude-cli-fable", "claude-haiku-5-5", "claude-codex-gpt-5", "claude-grok", "claude-copilot", "claude-siri-ai", "claude-apple-fm"} {
 		if e := helperModelEnv([]string{"--model=" + m}, none); e != nil {
 			t.Errorf("%s: %v", m, e)
 		}
@@ -69,9 +71,15 @@ func TestRunClaudeStream(t *testing.T) {
 		t.Skip("fake claude is a shell script")
 	}
 	bin := t.TempDir()
-	os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\necho '{\"type\":\"result\",\"is_error\":true,\"result\":\"boom\"}'\n"), 0o755)
+	// vnuk drži stdout odprt: minigw konča največ 2 s po claude
+	os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\n(sleep 20 2>/dev/null &)\necho '{\"type\":\"result\",\"is_error\":true,\"result\":\"boom\"}'\n"), 0o755)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	if code := runClaude([]string{"-p", "x"}, nil, true); code != 1 {
-		t.Fatalf("exit %d", code)
+	start := time.Now()
+	if code := runClaude([]string{"-p", "x"}, nil, true); code != 1 || time.Since(start) > 10*time.Second {
+		t.Fatalf("exit %d after %v", code, time.Since(start))
+	}
+	os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\n(sleep 20 2>/dev/null &)\nexit 3\n"), 0o755) // brez result: 2 s
+	if code := runClaude([]string{"-p", "x"}, nil, true); code != 3 || time.Since(start) > 10*time.Second {
+		t.Fatalf("no result: exit %d after %v", code, time.Since(start))
 	}
 }

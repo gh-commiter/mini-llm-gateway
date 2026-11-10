@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unicode"
 )
@@ -1247,17 +1248,39 @@ func runClaude(args []string, env []string, stream bool) int {
 		cmd.Stdout = pw // os.Pipe, ne StdoutPipe: Windows ob napaki Joba claude zažene znova z istim cmd.Stdout
 	}
 	err := startClient(cmd) // Windows: Job, ki z minigw ubije vse drevo claude
-	failed := false
 	if stream {
 		pw.Close()
-		if err == nil {
-			failed = streamText(pr, os.Stdout, os.Stderr)
-			io.Copy(io.Discard, pr) // claude ne dobi SIGPIPE, če tok ni bil prebran do konca
-		}
-		pr.Close()
+	}
+	done := make(chan bool, 1)
+	if err != nil {
+		done <- false // claude se ni zagnal: toka ni
 	}
 	if err == nil {
+		if runtime.GOOS != "windows" { // #78: kill minigw ne pusti claude brez starša (Windows: Job)
+			sig := make(chan os.Signal, 1)
+			signal.Notify(sig, syscall.SIGTERM, syscall.SIGHUP)
+			defer signal.Stop(sig)
+			go func() {
+				for s := range sig {
+					cmd.Process.Signal(s)
+				}
+			}()
+		}
+		if stream {
+			go func() {
+				done <- streamText(pr, os.Stdout, os.Stderr)
+				io.Copy(io.Discard, pr) // claude ne dobi SIGPIPE, če tok ni bil prebran do konca
+			}()
+		}
 		err = cmd.Wait()
+	}
+	failed := false
+	if stream {
+		select { // vnuk, ki drži stdout, ne zadrži minigw (#78)
+		case failed = <-done:
+		case <-time.After(2 * time.Second): // ne čaka na branje (Windows: Close ne prekine ReadFile); izhod da claude
+		}
+		pr.Close()
 	}
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
