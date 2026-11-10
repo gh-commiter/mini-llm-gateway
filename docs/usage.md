@@ -346,9 +346,10 @@ Notes:
   builds"). `minigw serve`: settings page → General → Worktree mode → **Network for builds** (Claude CLI; Codex follows
   its own "Allow network access for commands"), `minigw gw settings` → General, or `PATCH general {"worktreeNetwork":
   false}`. With it off Claude's commands have no network (Linux and macOS `minigw serve`: Claude Code's sandbox; Windows:
-  the Windows sandbox, where Claude Code still reaches its own API through the gateway) and a `git clone` of a remote
-  URL is refused and names the setting; on the Mac Copilot follows "Network for Codex builds" (and its "Allow web
-  access") for that, although its commands always have network.
+  the Windows sandbox, where Claude Code still reaches `api.anthropic.com` through the gateway, and its web fetch and
+  web search fail) and a `git clone` of a remote URL is refused and names the setting; on a Windows gateway without
+  the Windows sandbox the switch has no effect. On the Mac Copilot follows "Network for Codex builds" (and its "Allow
+  web access") for that, although its commands always have network.
 - On `minigw serve`, agent requests run one at a time per device and repository, also across that device's
   sessions. The gateway uses its own `git` from PATH, without system or global config, hooks, fsmonitor or
   submodules.
@@ -507,32 +508,51 @@ conversation it continues its own session (`-r`).
 
 **Copilot** runs in a sandbox (on the Mac a `sandbox-exec` profile, on Linux bwrap, on Windows the Windows sandbox) with
 a fresh Copilot home for each request, deleted afterwards. On a Windows gateway without the Windows sandbox, Copilot
-and Grok run only with **Allow commands without a sandbox**; Codex there needs its own elevated sandbox or that switch. `claude-copilot` uses Copilot's default model (`auto`); list other models by
-name in its settings.
+and Grok run only with **Allow commands without a sandbox**; Codex there needs its own elevated sandbox or that switch.
+`claude-copilot` uses Copilot's default model (`auto`); list other models by name in its settings.
 - It only reads the folder unless **Allow writing** is on.
 - Commands need **Allow commands** together with **Allow writing**, and a dedicated GitHub token: a fine-grained
   personal access token with only the Copilot Requests permission (`minigw gw copilot token`). Commands can use that
   token to make Copilot requests on your account. `gh` and `security` stay denied.
 - The Mac app needs that token for every request. `minigw serve` on Linux may also use the GitHub CLI's sign-in
   (`gh auth login`), and on Windows the user's own `copilot login` (only without the Windows sandbox).
+- Within a conversation Copilot continues its own session (`--session-id`).
+
+**Logins (`minigw serve`).** Agents use your subscription logins, never API keys, and nothing is copied back from an
+agent run. Each agent has a **Login** row (settings page, also the Gateway tray's Settings window; `minigw gw
+settings`; `minigw gw <agent> login`) that shows only the state (set, not set, logged in) and a one-line hint, never
+the value: Claude CLI its `claude setup-token` token (`minigw gw claude token [remove]`, needed in the Windows
+sandbox), Codex its ChatGPT login (`codex login`), Grok its `grok login`, Copilot its token for commands. **Use an API
+key instead** (Claude CLI, Codex, Grok; `minigw gw claude|codex|grok apikey [remove]`) stores a key in the key store
+and passes it only then; it is billed through the provider's API, not your subscription. API keys in the gateway's own
+environment (`ANTHROPIC_*`, `OPENAI_API_KEY`, `CODEX_API_KEY`, `XAI_API_KEY`, `GROK_CODE_XAI_API_KEY`,
+`GEMINI_API_KEY`, `GOOGLE_API_KEY`) never reach an agent. The Mac app has no Login row: Claude uses your Keychain login.
 
 ### Windows gateway sandbox
 
 `minigw serve` on Windows (MSI, part Gateway) runs Claude CLI, Copilot and Grok in the Windows sandbox, Microsoft MXC
-(`mxc\wxc-exec.exe` in the install folder, no admin rights). It needs Windows 11 build 26100.9278 or 26200.9278 or
-later; asking other models and Claude without network for builds need build .9550 or later (the KB5124010 update).
-Settings page → General → About shows "Agent sandbox: Windows sandbox (MXC 1.0.1)", or "not available (reason)"; then
-agents run only with **Allow commands without a sandbox**, as in 0.5.22. With the sandbox that switch is not needed and
-cannot be changed. Keep the Scratch folder on a fixed NTFS drive (for example `D:\minigw-scratch` for builds on D:).
+(`mxc\wxc-exec.exe` in the install folder, no admin rights). It needs Windows 11 build 26100.9550 or 26200.9550 or
+later (the KB5124010 update). Settings page → General → About shows "Agent sandbox: Windows sandbox (MXC 1.0.1)",
+or "not available (reason)"; then agents run only with **Allow commands without a sandbox**, as in 0.5.22. With the
+sandbox that switch is not needed and cannot be changed. Keep the Scratch folder on a fixed NTFS drive (for example
+`D:\minigw-scratch` for builds on D:).
 - The agents write only to the session's folder (when allowed), `$MINIGW_DEPS`, caches and temporary files under
   Scratch; they cannot read your home folder, other devices' copies or the gateway's settings
   ([How it works](how-it-works.md#how-the-folder-reaches-the-agent), Windows sandbox).
-- Each device has its own Claude and Grok settings and sessions under `Scratch\state`; your sign-in is copied there
-  before each run and a refreshed sign-in comes back.
+- Folders on `PATH` inside your home folder (for example `~\.local\bin`) are readable by agents; the settings page
+  warns about them. Keep no secrets there.
+- **Claude CLI** needs the long-lived token from `claude setup-token` (your Claude subscription, valid one year):
+  run `claude setup-token`, then `minigw gw claude token` (or settings page → Claude CLI → Login, or
+  `minigw gw settings`). It is kept in Credential Manager; `~\.claude` is never copied into the sandbox. Without it a
+  Claude request is refused with "Claude CLI in the Windows sandbox needs a long-lived sign-in token: run claude
+  setup-token, then minigw gw claude token". Each run starts with a fresh Claude config and home; only the
+  conversation's transcript is kept between turns, so `--resume` works.
+- **Grok** has no long-lived token: its `~\.grok\auth.json` and `config.toml` are copied into its own home for the
+  device before each run, never back. After Grok refreshes its login you may need `grok login` again.
 - Claude runs commands with PowerShell (Git Bash cannot run in the sandbox); `Bash` in the tools list means PowerShell.
 - **Codex** does not run in the Windows sandbox. Set up Codex's own elevated sandbox once, as administrator:
-  `codex sandbox setup --elevated`; the gateway then runs Codex without **Allow commands without a sandbox**.
-- Within a conversation Copilot continues its own session (`--session-id`).
+  `codex sandbox setup --elevated`; the gateway then runs Codex without **Allow commands without a sandbox**. Codex
+  uses your real `~\.codex` and its ChatGPT login, which refreshes itself.
 
 **Siri AI** is driven through Accessibility, in the background. It keeps one Siri thread per Claude Code
 conversation and has no tools.
