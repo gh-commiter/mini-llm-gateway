@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased
+## 0.5.21
 
 - Fixed (#40): in worktree mode, `git -C <nested> …` from Claude CLI could commit into the top repository (the agent's environment carried the top clone's `GIT_DIR`, `GIT_WORK_TREE` and `GIT_COMMON_DIR`; with `GIT_DIR` of the nested clone set by hand git then also said "could not parse HEAD"), and Codex could not commit at all, not even in the top repository (its sandbox made every `.git` read-only: "blocked by sandbox permissions on .git/index.lock"). Now agents other than Codex get no `GIT_DIR`: the `git` on their PATH picks the clone per call, and git outside it finds the clone it runs in. Codex runs with its own permission profile in a clone: every clone's `.git` is writable except `config`, `config.worktree`, `hooks`, `info`, `commondir` and `worktrees`; its commands get the `git` wrapper and no top `GIT_DIR`, while Codex itself keeps the top clone. Mac app and Linux/macOS `minigw serve`.
 - New: remote administration of the Mac app is `ssh` to the gateway Mac and `minigw gw …` there. When the login keychain is locked in that SSH session, `minigw gw` in a terminal now asks for the Mac password (without echo) and unlocks it with macOS (`SecKeychainUnlock`, never the `security` command), then reads the admin key again; a wrong password ends with "wrong password: the keychain stays locked". The keychain stays unlocked for the SSH session as macOS keeps it. Without a terminal (scripts, Claude Code skills) nothing is asked and the message is as before. macOS only (the Go client has no Keychain admin path).
