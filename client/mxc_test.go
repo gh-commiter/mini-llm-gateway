@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -233,15 +234,15 @@ func TestMXCProbe(t *testing.T) {
 	wxc, _ := useFakeWxc(t)
 	t.Setenv("MINIGW_TEST_MAIN", "1")
 	scratch, cfg := t.TempDir(), t.TempDir()
-	if why := mxcProbe(wxc, wxc, scratch, cfg); why != "" {
+	if why, _ := mxcProbe(wxc, wxc, scratch, cfg); why != "" {
 		t.Fatalf("probe: %s", why)
 	}
 	os.WriteFile(filepath.Join(cfg, "admin.secret"), []byte("x"), 0o600) // brez peskovnika berljiva: preizkus to vidi
-	if why := mxcProbe(wxc, wxc, scratch, cfg); why != "the gateway's config was readable inside the sandbox" {
+	if why, _ := mxcProbe(wxc, wxc, scratch, cfg); why != "the gateway's config was readable inside the sandbox" {
 		t.Fatalf("probe deny: %q", why)
 	}
 	wxcHashes[runtime.GOARCH] = strings.Repeat("0", 64)
-	if why := mxcProbe(wxc, wxc, scratch, cfg); !strings.Contains(why, "wxc-exec.exe changed") {
+	if why, _ := mxcProbe(wxc, wxc, scratch, cfg); !strings.Contains(why, "wxc-exec.exe changed") {
 		t.Fatalf("probe hash: %q", why)
 	}
 }
@@ -603,5 +604,66 @@ func TestLoginStatesTranslated(t *testing.T) {
 		if !strings.Contains(block, `"`+s+`":`) {
 			t.Errorf("%q", s)
 		}
+	}
+}
+
+// jsonPaths: poti ključev JSON z vrstami (vrednosti ne), urejeno.
+func jsonPaths(v any, prefix string, out *[]string) {
+	switch x := v.(type) {
+	case map[string]any:
+		for k, e := range x {
+			jsonPaths(e, prefix+"."+k, out)
+		}
+	case []any:
+		*out = append(*out, prefix+":array")
+	default:
+		*out = append(*out, fmt.Sprintf("%s:%T", prefix, x))
+	}
+}
+
+// Oblika zahteve preizkusa je ista kot testdata/mxc-probe-request.json, ki ga pogodba 1.0.1 sprejme (mxc-exec-mac
+// --dry-run iz iste izdaje; brez allowedProxyPeer: »Request error«, kot na HPX360).
+func TestMXCProbeRequestShape(t *testing.T) {
+	gold, err := os.ReadFile(filepath.Join("testdata", "mxc-probe-request.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := mxcRequestFor(mxcSpec{argv: []string{"minigw.exe", mxcProbeCmd, "/d/p", "/c/cfg/admin.secret", "127.0.0.1:5000"}, cwd: "/d/p",
+		env: []string{"SYSTEMROOT=C:\\Windows"}, rw: []string{"/d/p"}, ro: []string{"/c/p"}, deny: []string{"/c/cfg"}, egressDeny: true, proxy: "127.0.0.1:5000"})
+	b, _ := json.Marshal(r)
+	var got, want any
+	json.Unmarshal(b, &got)
+	json.Unmarshal(gold, &want)
+	var gp, wp []string
+	jsonPaths(got, "", &gp)
+	jsonPaths(want, "", &wp)
+	slices.Sort(gp)
+	slices.Sort(wp)
+	if !slices.Equal(gp, wp) {
+		t.Fatalf("request shape\n got %v\nwant %v", gp, wp)
+	}
+	if r.ProcessContainer.Network == nil || r.ProcessContainer.Network.AllowedProxyPeer != "127.0.0.1:5000" || r.Network.Ingress.Default != "allow" {
+		t.Fatalf("proxy rules: %+v %+v", r.ProcessContainer, r.Network)
+	}
+	if rr := mxcRequestFor(mxcSpec{argv: []string{"x"}, proxy: "127.0.0.1:5000"}); rr.RuntimeConfig != nil || rr.ProcessContainer.Network != nil {
+		t.Fatal("proxy without egress deny")
+	}
+	if got := redactEnv([]string{"CLAUDE_CODE_OAUTH_TOKEN=s", "XAI_API_KEY=k", "PATH=/bin"}); !slices.Equal(got, []string{"CLAUDE_CODE_OAUTH_TOKEN=REDACTED", "XAI_API_KEY=REDACTED", "PATH=/bin"}) {
+		t.Fatalf("redact: %v", got)
+	}
+}
+
+// MINIGW_MXC_DEBUG=1: po teku ostane kopija zahteve brez skrivnosti.
+func TestMXCDebugCopy(t *testing.T) {
+	t.Setenv("MINIGW_MXC_DEBUG", "1")
+	scratch := t.TempDir()
+	_, args, done, err := mxcWrap("wxc", "/bin/sh", nil, agentMounts{cfgDir: t.TempDir(), hide: scratch, cmdEnv: []string{"CLAUDE_CODE_OAUTH_TOKEN=sk-ant-secret"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done()
+	b, err := os.ReadFile(strings.TrimSuffix(args[0], ".json") + ".debug.json")
+	if err != nil || strings.Contains(string(b), "sk-ant-secret") || !strings.Contains(string(b), "CLAUDE_CODE_OAUTH_TOKEN=REDACTED") {
+		t.Fatalf("debug copy: %v %s", err, b)
 	}
 }

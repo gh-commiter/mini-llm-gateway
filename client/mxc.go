@@ -106,6 +106,14 @@ type mxcPC struct {
 	Filesystem struct {
 		Enumerate []string `json:"enumeratePaths"`
 	} `json:"filesystem"`
+	Network *mxcPCNet `json:"network,omitempty"`
+}
+
+// mxcPCNet: networkProxy v processcontainer zahteva allowedProxyPeer ali ingress.hostLoopback=allow (ta bi odprl vse
+// lokalne storitve); preverjeno z mxc-exec-mac --dry-run iz iste izdaje (»a ProcessContainer proxy without
+// allowedProxyPeer requires network.ingress.hostLoopback='allow'«).
+type mxcPCNet struct {
+	AllowedProxyPeer string `json:"allowedProxyPeer"`
 }
 
 type mxcNet struct {
@@ -159,8 +167,9 @@ func mxcRequestFor(sp mxcSpec) mxcRequest {
 	}
 	if sp.proxy != "" { // W9: loopback do vrat izvajanja (vprašanja drugim modelom); posrednik le brez omrežja
 		r.Network.Ingress = &mxcDefault{"allow"}
-		if sp.egressDeny {
+		if sp.egressDeny { // networkProxy zahteva egress deny, ingress allow in allowedProxyPeer (pravila 1.0.1)
 			r.RuntimeConfig = &mxcRuntime{NetworkProxy: "http://" + sp.proxy}
+			r.ProcessContainer.Network = &mxcPCNet{AllowedProxyPeer: sp.proxy}
 		}
 	}
 	return r
@@ -381,6 +390,13 @@ func mxcWrap(wxc, exe string, args []string, m agentMounts) (string, []string, f
 		err = errors.Join(err, f.Close())
 		name := f.Name()
 		dones = append(dones, func() { os.Remove(name) })
+		if os.Getenv("MINIGW_MXC_DEBUG") == "1" { // ostane kopija brez skrivnosti za »wxc-exec --debug <datoteka>«
+			dbg := req
+			dbg.Process.Env = redactEnv(req.Process.Env)
+			if db, e := json.MarshalIndent(dbg, "", " "); e == nil {
+				os.WriteFile(strings.TrimSuffix(name, ".json")+".debug.json", db, 0o600)
+			}
+		}
 	}
 	if err != nil {
 		done()
@@ -414,6 +430,29 @@ func boxWrap(exe string, args []string, m agentMounts) (string, []string, func()
 	return name, a, func() { done(); f.Close() }, nil // ročaj do konca teka (po cmd.Start)
 }
 
+// redactEnv: vrednosti spremenljivk z imenom, ki vsebuje TOKEN, KEY, SECRET, PASSWORD ali AUTH, zamenjane.
+func redactEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		k, _, _ := strings.Cut(kv, "=")
+		u := strings.ToUpper(k)
+		if strings.Contains(u, "TOKEN") || strings.Contains(u, "KEY") || strings.Contains(u, "SECRET") || strings.Contains(u, "PASSWORD") || strings.Contains(u, "AUTH") {
+			kv = k + "=REDACTED"
+		}
+		out = append(out, kv)
+	}
+	return out
+}
+
+// tailText: zadnjih n bajtov besedila v eni vrstici (za dnevnik).
+func tailText(s string, n int) string {
+	s = strings.TrimSpace(s)
+	if len(s) > n {
+		s = "…" + s[len(s)-n:]
+	}
+	return strings.Join(strings.Fields(s), " ")
+}
+
 // --- preizkus ob zagonu (minigw.exe __mxc-probe v škatli) ---
 
 const mxcProbeCmd = "__mxc-probe"
@@ -423,6 +462,7 @@ const mxcProbeCmd = "__mxc-probe"
 // args: mapa za pisanje, prepovedana datoteka, naslov poslušalca.
 func mxcProbeMain(args []string) {
 	if len(args) != 3 {
+		fmt.Fprintln(os.Stderr, "minigw "+mxcProbeCmd+": needs 3 arguments: <writable folder> <file that must be unreadable> <127.0.0.1:port>, and one line on stdin")
 		os.Exit(2)
 	}
 	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
@@ -472,22 +512,23 @@ func mxcProbeVerdict(out string, code int, nonce string, loopback bool) string {
 	return ""
 }
 
-// mxcProbe: preizkus škatle z wxc (preverjen) in minigw (programom za __mxc-probe). "" = deluje, sicer razlog.
-func mxcProbe(wxc, minigw, scratch, cfgDir string) string {
+// mxcProbe: preizkus škatle z wxc (preverjen) in minigw (programom za __mxc-probe). "" = deluje, sicer razlog;
+// detail: izhod wxc-exec (stdout, stderr, skrajšano) za dnevnik.
+func mxcProbe(wxc, minigw, scratch, cfgDir string) (why, detail string) {
 	f, err := wxcVerify(wxc)
 	if err != nil {
-		return err.Error()
+		return err.Error(), ""
 	}
 	defer f.Close()
 	os.MkdirAll(filepath.Join(scratch, "tmp"), 0o700)
 	dir, err := os.MkdirTemp(filepath.Join(scratch, "tmp"), "probe-*")
 	if err != nil {
-		return err.Error()
+		return err.Error(), ""
 	}
 	defer os.RemoveAll(dir)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return err.Error()
+		return err.Error(), ""
 	}
 	defer ln.Close()
 	reached := make(chan bool, 1)
@@ -511,7 +552,7 @@ func mxcProbe(wxc, minigw, scratch, cfgDir string) string {
 		noNet: true, proxy: ln.Addr().String()}
 	name, args, done, err := mxcWrap(wxc, minigw, []string{mxcProbeCmd, dir, filepath.Join(cfgDir, "admin.secret"), ln.Addr().String()}, m)
 	if err != nil {
-		return err.Error()
+		return err.Error(), ""
 	}
 	defer done()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -527,19 +568,22 @@ func mxcProbe(wxc, minigw, scratch, cfgDir string) string {
 	if e, ok := err.(*exec.ExitError); ok {
 		code = e.ExitCode()
 	} else if err != nil {
-		return "cannot run wxc-exec.exe: " + err.Error()
+		return "cannot run wxc-exec.exe: " + err.Error(), ""
 	}
 	ok := false
 	select {
 	case ok = <-reached:
 	case <-time.After(2 * time.Second):
 	}
-	why := mxcProbeVerdict(out.String(), code, nonce, ok)
+	why = mxcProbeVerdict(out.String(), code, nonce, ok)
 	if why != "" && strings.TrimSpace(stderr.String()) != "" {
 		first, _, _ := strings.Cut(strings.TrimSpace(stderr.String()), "\n")
 		why += ": " + strings.TrimSpace(first)
 	}
-	return why
+	if why != "" {
+		detail = "wxc-exec exit " + fmt.Sprint(code) + "; stdout: " + tailText(out.String(), 600) + "; stderr: " + tailText(stderr.String(), 1500)
+	}
+	return why, detail
 }
 
 // --- prijave in stanje agentov v škatli (Windows: povezave zahtevajo pravice, trde ne prečkajo nosilcev C: → D:) ---

@@ -575,3 +575,13 @@ included. Models and context windows are discovered from the upstream; you enabl
 provider model as `claude-<id>`, unless the ID already starts with `claude-`. For example OpenRouter's
 `openai/gpt-5` is `claude-openai/gpt-5`, while a LiteLLM model named `claude-sonnet-4.5` stays as it is. Use the ID
 that `minigw models` prints.
+
+
+**Troubleshooting the Windows sandbox.** When the startup probe fails, the gateway log has the reason and a second line
+"Windows sandbox probe: wxc-exec exit …; stdout: …; stderr: …". Start the gateway with `MINIGW_MXC_DEBUG=1` to keep
+each sandbox request, without secrets (variables with TOKEN, KEY, SECRET, PASSWORD or AUTH in the name read
+`REDACTED`), as `Scratch\tmp\mxc\mxc-<n>.debug.json`, a folder only your user can open; replay it with
+`"%LOCALAPPDATA%\Programs\Mini Gateway\mxc\wxc-exec.exe" --debug <file>`. The probe itself is
+`minigw.exe __mxc-probe <writable folder> <file that must be unreadable> 127.0.0.1:<port>` with one line on stdin; it
+prints `nonce:<line>`, `write:ok`, `deny:ok`, `loopback:ok` and `final:<path>` and exits 7 (wrong arguments: a
+message on stderr and exit 2).
