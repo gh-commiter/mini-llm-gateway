@@ -462,6 +462,27 @@ public enum Worktree {
                 "npm_config_cache": cache + "/npm", "PIP_CACHE_DIR": cache + "/pip", "CARGO_HOME": deps + "/cargo", "GRADLE_USER_HOME": deps + "/gradle"]
     }
 
+    /// #67: kratka pot za CLAUDE_CODE_TMPDIR klona: Claude Code ukazom v peskovniku da svojo začasno mapo le, če je pot z
+    /// /claude-<uid> največ 44 bajtov (vtičnice AF_UNIX), sicer mapo v /tmp. Povezava /private/tmp/mgw-<uid>/<ime> →
+    /// $MINIGW_DEPS/tmp: podatki ostanejo pod Scratch, v /tmp je le povezava (preverjeno s Claude Code 2.1.318: TMPDIR ukazov
+    /// je pot povezave, datoteke pristanejo v cilju; peskovnik potrebuje le cilj). Ime iz poti klona (removeClone ga najde).
+    static func tmpLink(_ root: URL, base: String = "/private/tmp") -> String { base + "/mgw-\(getuid())/" + Sync.folderID(root.path).prefix(8) }
+
+    /// Povezava tmpLink nastane naenkrat (rename čez staro) v zasebni mapi /private/tmp/mgw-<uid> (0700, naša, ne
+    /// povezava; /tmp pišejo vsi). nil = ni mogoče (tuja ali spremenjena mapa, predolga pot): tedaj dolga pot pod Scratch.
+    static func makeTmpLink(_ root: URL, base: String = "/private/tmp") -> String? {
+        let link = tmpLink(root, base: base), dir = (link as NSString).deletingLastPathComponent
+        guard (link + "/claude-\(getuid())").utf8.count <= 44 else { return nil }
+        if mkdir(dir, 0o700) != 0, errno != EEXIST { return nil }
+        var st = stat()
+        guard lstat(dir, &st) == 0, st.st_mode & S_IFMT == S_IFDIR, st.st_uid == getuid(), st.st_mode & 0o777 == 0o700 else { return nil }
+        let target = deps(root).appendingPathComponent("tmp").path, tmp = link + ".new-" + UUID().uuidString.prefix(8)
+        try? FileManager.default.createDirectory(atPath: target, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        guard symlink(target, tmp) == 0 else { return nil }
+        guard rename(tmp, link) == 0 else { unlink(tmp); return nil }
+        return link
+    }
+
     /// #67: oznake peskovnika; okolje harnessa (zunaj peskovnika) jih nima, sicer bi ovoj git v $MINIGW_DEPS pustil navaden git.
     static let sandboxMarkers = ["SANDBOX_RUNTIME", "MINIGW_SANDBOXED", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED", "MINIGW_DEPS", "MINIGW_NETWORK_OFF"]
 
@@ -1504,6 +1525,7 @@ extension ShareHub {
     nonisolated static func removeClone(_ wt: URL) {
         try? FileManager.default.removeItem(at: wt)
         try? FileManager.default.removeItem(at: Worktree.deps(wt))
+        unlink(Worktree.tmpLink(wt))
         let dir = wt.deletingLastPathComponent()
         let es = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
         guard es.allSatisfy({ $0 == ".maven" || $0 == ".cache" }) else { return }
@@ -1549,6 +1571,7 @@ extension ShareHub {
         _ = utimensat(pfd, kept.lastPathComponent, &ts, AT_SYMLINK_NOFOLLOW)
         // #67: odvisnosti niso delo agenta in ne ostanejo; premik takoj (nov klon na isti poti dobi svoje), brisanje v ozadju
         _ = renameat(pfd, Worktree.deps(wt).lastPathComponent, pfd, Worktree.deps(kept).lastPathComponent)
+        unlink(Worktree.tmpLink(wt))
         Task.detached {
             try? FileManager.default.removeItem(at: Worktree.deps(kept))
             if !disarmKept(kept) { Router.log.error("worktree: cannot rename the git folders in the kept clone \(kept.path, privacy: .public); removed") }

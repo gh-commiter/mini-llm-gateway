@@ -566,6 +566,7 @@ extension Router {
                 return await error(503, "api_error", "Cannot prepare git for the agent's clone (git --exec-path): use sync", rid: rid, writer: writer)
             }
             env.merge(tenv) { $1 }
+            if let link = Worktree.makeTmpLink(t.root) { env["CLAUDE_CODE_TMPDIR"] = link }  // #67: kratka pot, podatki pod Scratch
             if !config.worktreeNetwork { env["MINIGW_NETWORK_OFF"] = "Settings → General → Worktree mode → Network for builds" }  // #67: ovoj git
         }
         for k in ["MINIGW_AGENT_URL", "MINIGW_AGENT_AUTH_FILE"] { env[k] = run?.env[k] }

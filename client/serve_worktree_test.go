@@ -355,7 +355,7 @@ func TestScratchOverlapAndProviderRename(t *testing.T) {
 	if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/general", `{"scratch":""}`); st != 400 || !strings.Contains(b, "contains it") {
 		t.Fatalf("default scratch with an allowed folder around it: %d %s", st, b)
 	}
-	if strings.Contains(strings.Join(s.agentArgs(t.TempDir(), false, ""), " "), "--add-dir "+parent) {
+	if strings.Contains(strings.Join(s.agentArgs(t.TempDir(), false), " "), "--add-dir "+parent) {
 		t.Fatal("allowed folder around Scratch passed to claude")
 	}
 	s.update(func(c *serveConfig) error {
@@ -1286,25 +1286,18 @@ func TestCleanStaleTempRoots(t *testing.T) {
 	}
 }
 
-// #56: denyRead teka Claude ima vse korene, ki jih je proces naredil (ne le zadnjega).
-func TestAgentArgsDenyAllTempRoots(t *testing.T) {
+// #67 (prej #56): koreni tempRoot niso v denyRead (v njih so le povezave runTempLink; skrit koren bi v peskovniku skril
+// povezavo TMPDIR teka); podatki tekov so v $MINIGW_DEPS/tmp pod Scratch, ki je v denyRead.
+func TestAgentArgsTempRootsVisibleScratchHidden(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("no sandbox settings")
 	}
 	s, _ := testServer(t, nil)
-	r1 := s.tempRoot()
-	defer os.RemoveAll(r1)
-	os.Chmod(r1, 0o755) // npr. agent spremeni dovoljenja: nov koren, stari ostane
-	r2 := s.tempRoot()
-	defer os.RemoveAll(r2)
-	if r1 == r2 {
-		t.Fatal("root not replaced")
-	}
-	args := strings.Join(s.agentArgs(t.TempDir(), false, r2), " ")
-	for _, r := range []string{r1, r2} {
-		if !strings.Contains(args, strconv.Quote(r)) {
-			t.Fatalf("%s not in denyRead: %s", r, args)
-		}
+	r := s.tempRoot()
+	defer os.RemoveAll(r)
+	args := strings.Join(s.agentArgs(t.TempDir(), false), " ")
+	if strings.Contains(args, strconv.Quote(r)) || !strings.Contains(args, strconv.Quote(s.conf().Scratch)) {
+		t.Fatalf("denyRead: %s", args)
 	}
 }
 
@@ -2273,5 +2266,44 @@ func TestDepsLifetime(t *testing.T) {
 	removeClone(filepath.Join(dir, "c"))
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Fatal("empty clone folder with empty .maven and .cache not removed")
+	}
+}
+
+// #67: TMPDIR teka Claude je kratka povezava v korenu prehoda na $MINIGW_DEPS/tmp (podatki pod Scratch); done odstrani le
+// povezavo; koren, ki ni naš (ne 0700), je ne dobi.
+func TestRunTempLink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no link on Windows")
+	}
+	root := shortTempRoot()
+	if root == "" {
+		t.Fatal("no temp root")
+	}
+	defer os.RemoveAll(root)
+	target := filepath.Join(t.TempDir(), "c.deps", "tmp")
+	link, done, err := runTempLink(root, target)
+	if err != nil || len(link)+len("/claude-")+len(strconv.Itoa(os.Getuid())) > 44 {
+		t.Fatalf("link %q: %v", link, err)
+	}
+	if dst, _ := os.Readlink(link); dst != target {
+		t.Fatalf("link points to %q", dst)
+	}
+	writeT(t, filepath.Join(link, "probe"), "x")
+	if _, err := os.Stat(filepath.Join(target, "probe")); err != nil {
+		t.Fatal("write did not land in the deps folder")
+	}
+	done()
+	if _, err := os.Lstat(link); err == nil {
+		t.Fatal("link left after the run")
+	}
+	if _, err := os.Stat(filepath.Join(target, "probe")); err != nil {
+		t.Fatal("done removed the target")
+	}
+	os.Chmod(root, 0o755)
+	if _, _, err := runTempLink(root, target); err == nil {
+		t.Fatal("link in a root that is not private")
+	}
+	if es, _ := os.ReadDir(root); len(es) != 0 {
+		t.Fatalf("left in the root: %v", es)
 	}
 }

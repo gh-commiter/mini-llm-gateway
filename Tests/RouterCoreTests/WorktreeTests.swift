@@ -2072,3 +2072,28 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
     for _ in 0..<100 where FileManager.default.fileExists(atPath: Worktree.deps(kept).path) { try await Task.sleep(for: .milliseconds(50)) }
     #expect(!FileManager.default.fileExists(atPath: Worktree.deps(kept).path) && FileManager.default.fileExists(atPath: kept.path + "/f"))
 }
+
+/// #67: kratka povezava za CLAUDE_CODE_TMPDIR (≤ 44 bajtov s /claude-<uid>) kaže v $MINIGW_DEPS/tmp, zapis gre pod Scratch;
+/// tuja ali odprta mapa mgw-<uid> (ne 0700) je ne dobi; removeClone jo odstrani.
+@Test func tmpLinkShortIntoScratch() throws {
+    let fm = FileManager.default, base = "/tmp/t" + UUID().uuidString.prefix(4)
+    defer { try? fm.removeItem(atPath: base) }
+    let root = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("tl-" + UUID().uuidString + "/worktrees/d/i/claude-12345678-0")
+    defer { try? fm.removeItem(at: root.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()) }
+    try fm.createDirectory(at: root, withIntermediateDirectories: true)
+    try fm.createDirectory(atPath: base, withIntermediateDirectories: true)
+    let link = try #require(Worktree.makeTmpLink(root, base: base))
+    #expect((link + "/claude-\(getuid())").utf8.count <= 44)
+    #expect(try fm.destinationOfSymbolicLink(atPath: link) == Worktree.deps(root).path + "/tmp")
+    try Data("x".utf8).write(to: URL(fileURLWithPath: link + "/probe"))
+    #expect(fm.fileExists(atPath: Worktree.deps(root).path + "/tmp/probe"))
+    #expect(Worktree.makeTmpLink(root, base: base) == link)  // znova: zamenjava naenkrat
+    chmod(base + "/mgw-\(getuid())", 0o755)
+    #expect(Worktree.makeTmpLink(root, base: base) == nil)
+    chmod(base + "/mgw-\(getuid())", 0o700)
+    let real = try #require(Worktree.makeTmpLink(root))  // privzeta /private/tmp/mgw-<uid>
+    var st = stat()
+    #expect(lstat(real, &st) == 0)
+    ShareHub.removeClone(root)
+    #expect(lstat(real, &st) != 0)
+}

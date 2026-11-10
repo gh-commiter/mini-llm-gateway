@@ -183,8 +183,9 @@ Everything agent builds write is under the Scratch folder, never in the system's
 the clone, `$MINIGW_DEPS` (also Claude Code's temporary folder, `CLAUDE_CODE_TMPDIR`), one Maven repository per project
 and shared caches per project for Go (`GOMODCACHE`, `GOCACHE`), npm and pip. Cargo (`CARGO_HOME`) and Gradle
 (`GRADLE_USER_HOME`) get their own folder per conversation in `$MINIGW_DEPS`, because their folders hold settings and
-scripts that builds run. One exception: Claude Code gives commands in its sandbox a short temporary folder under `/tmp`
-when the Scratch path is too long for its sockets.
+scripts that builds run. Claude Code needs a short temporary path (its sockets), so on the Mac and Linux it gets a
+link `/tmp/mgw-…/<name>` that points into `$MINIGW_DEPS/tmp`: the files stay under Scratch, and only the link is in
+`/tmp`, in a private folder of the gateway user. The link goes with the clone (Mac) or the run (`minigw serve`).
 
 **1. Start.** minigw sends the repository to a mirror on the gateway (git bundles over the encrypted connection,
 only missing objects). The agent starts from your exact state: `HEAD` plus your uncommitted changes and your

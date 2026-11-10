@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math/rand/v2"
 	"os"
 	"os/exec"
 	"path"
@@ -1859,7 +1860,7 @@ func ownTempRoot(p string) bool {
 	return runtime.GOOS == "windows" || fi.Mode().Perm() == 0o700 && ownedByMe(p)
 }
 
-// tempRoot (M1): koren prehoda za TMPDIR tekov; vsi agenti Claude ga imajo v denyRead (agentArgs). Čistilec /tmp
+// tempRoot (M1): koren prehoda za TMPDIR tekov (#67: povezave runTempLink, na Windows mape runTempDir). Čistilec /tmp
 // (macOS po 3 dneh, systemd-tmpfiles po 10) ga lahko pobriše, drug uporabnik pa nato podtakne mapo z istim imenom:
 // zato se pred vsakim tekom preveri in po potrebi naredi nov; ob vsakem teku se dotakne (mtime). "" = ga ni.
 func (s *server) tempRoot() string {
@@ -1929,4 +1930,29 @@ func runTempDir(root string) (dir string, done func(), err error) {
 		return "", nil, errors.New("gateway temporary folder changed")
 	}
 	return dir, func() { os.RemoveAll(dir) }, nil
+}
+
+// runTempLink (#67): TMPDIR in CLAUDE_CODE_TMPDIR teka Claude CLI v klonu (Linux, macOS): kratka pot pod korenom tempRoot
+// (Claude Code: pot + /claude-<uid> največ 44 bajtov, vtičnice AF_UNIX), ki je povezava na target (<klon>.deps/tmp pod
+// Scratch): podatki so pod Scratch, v /tmp le povezava. Ime naključno, povezava nastane naenkrat (Symlink ne prepiše
+// obstoječega imena) v korenu, ki je naš (ownTempRoot); done jo odstrani.
+func runTempLink(root, target string) (link string, done func(), err error) {
+	if root == "" || runtime.GOOS == "windows" {
+		return "", nil, errors.New("no gateway temporary folder")
+	}
+	os.MkdirAll(target, 0o700)
+	for range 16 {
+		link = filepath.Join(root, fmt.Sprintf("%04x", rand.IntN(0x10000)))
+		if err = os.Symlink(target, link); !os.IsExist(err) {
+			break
+		}
+	}
+	if err != nil {
+		return "", nil, err
+	}
+	if !ownTempRoot(root) { // koren se je vmes zamenjal: ne uporabi
+		os.Remove(link)
+		return "", nil, errors.New("gateway temporary folder changed")
+	}
+	return link, func() { os.Remove(link) }, nil
 }
