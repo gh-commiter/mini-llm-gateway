@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased
+## 0.5.20
 
 - Fixed: on Linux `minigw serve`, Bash never worked for Claude CLI in worktree mode (Claude Code's sandbox could not create its sockets under the long temporary folder in the clone); each run now gets a short private temporary folder (also on macOS and Windows `minigw serve`).
 - Fixed: a request with nested repositories that a Linux or macOS `minigw serve` gateway refuses now fails at once with the message shown once; Claude Code no longer retries it for minutes.
