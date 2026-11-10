@@ -454,6 +454,14 @@ func makeClone(repo, wt, branch, snapshot string) error {
 	if _, err := gitRun(repo, "", nil, "-C", wt, "checkout", "-q", "-b", branch, snapshot); err != nil {
 		return fmt.Errorf("git checkout of the snapshot: %w", err)
 	}
+	// .build (TMPDIR agenta, worktreeHarnessEnv) v git status agenta ni nesledena mapa; info je zanj denyWrite
+	os.MkdirAll(filepath.Join(wt, ".git", "info"), 0o755)
+	f, err := os.OpenFile(filepath.Join(wt, ".git", "info", "exclude"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return fmt.Errorf("info/exclude of the clone: %w", err)
+	}
+	f.WriteString("\n/.build/\n")
+	f.Close()
 	if runtime.GOOS == "linux" {
 		// #40: peskovnik Claude Code na Linuxu na manjkajočo pot iz denyWrite priklopi /dev/null (branje: EACCES) in git
 		// commondir vedno bere, zato je vsak git v Bash padel; ».« = ta .git (gitSame ga sprejme), ostane le za branje
@@ -683,9 +691,9 @@ func finalize(repo, wt, branch, base, agent, out string, links map[string]string
 // GIT_WORK_TREE: ugnezden .git agenta ne velja; Maven dobi svoj lokalni repozitorij. tmp: TMPDIR agenta.
 // #40: brez lastnikovih nastavitev git (identiteta, podpis, poverilnice, insteadOf); avtor commitov je agent (agent: codex …).
 func worktreeHarnessEnv(wt, maven, tmp, agent string) []string {
-	n, long := "9", []string{}
-	if gitLongPaths { // le Windows (par 9; Worktree.harnessEnv na Macu ga nima, vrstni red parov 0–8 enak)
-		n, long = "10", []string{"GIT_CONFIG_KEY_9=core.longpaths", "GIT_CONFIG_VALUE_9=true"}
+	n, long := "10", []string{}
+	if gitLongPaths { // le Windows (par 10; Worktree.harnessEnv na Macu ga nima, vrstni red parov 0–9 enak)
+		n, long = "11", []string{"GIT_CONFIG_KEY_10=core.longpaths", "GIT_CONFIG_VALUE_10=true"}
 	}
 	return append([]string{"GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_NOSYSTEM=1",
 		"GIT_CONFIG_COUNT=" + n, "GIT_CONFIG_KEY_0=core.fsmonitor", "GIT_CONFIG_VALUE_0=false",
@@ -696,6 +704,7 @@ func worktreeHarnessEnv(wt, maven, tmp, agent string) []string {
 		"GIT_CONFIG_KEY_5=core.excludesFile", "GIT_CONFIG_VALUE_5=" + os.DevNull, // ne ~/.config/git/ignore (peskovnik: EPERM)
 		"GIT_CONFIG_KEY_6=user.name", "GIT_CONFIG_VALUE_6=" + agentAuthor(agent), "GIT_CONFIG_KEY_7=user.email", "GIT_CONFIG_VALUE_7=" + agent + "@minigw.invalid",
 		"GIT_CONFIG_KEY_8=safe.bareRepository", "GIT_CONFIG_VALUE_8=explicit", // #61: golega repozitorija ne najde sam (le z GIT_DIR)
+		"GIT_CONFIG_KEY_9=init.templateDir", "GIT_CONFIG_VALUE_9=", // git init/clone agenta ne kopira predlog (vzorčni hooki: .git/hooks je denyWrite)
 		"GIT_ATTR_SOURCE=4b825dc642cb6eb9a060e54bf8d69288fbee4904",
 		"GIT_DIR=" + filepath.Join(wt, ".git"), "GIT_WORK_TREE=" + wt, "GIT_COMMON_DIR=" + filepath.Join(wt, ".git"),
 		"MAVEN_OPTS=-Dmaven.repo.local=" + maven + " -Djava.io.tmpdir=" + tmp, "TMPDIR=" + tmp, "TMP=" + tmp, "TEMP=" + tmp}, long...)

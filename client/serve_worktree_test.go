@@ -1767,12 +1767,13 @@ func TestWorktreeHarnessEnvGitConfig(t *testing.T) {
 		env[k] = v
 	}
 	want := []string{"core.fsmonitor=false", "core.hooksPath=" + os.DevNull, "core.attributesFile=" + os.DevNull, "diff.ignoreSubmodules=all",
-		"submodule.recurse=false", "core.excludesFile=" + os.DevNull, "user.name=Codex (Mini Gateway)", "user.email=codex@minigw.invalid", "safe.bareRepository=explicit"}
+		"submodule.recurse=false", "core.excludesFile=" + os.DevNull, "user.name=Codex (Mini Gateway)", "user.email=codex@minigw.invalid", "safe.bareRepository=explicit",
+		"init.templateDir="}
 	var got []string
 	for i := range want {
 		got = append(got, env["GIT_CONFIG_KEY_"+strconv.Itoa(i)]+"="+env["GIT_CONFIG_VALUE_"+strconv.Itoa(i)])
 	}
-	if env["GIT_CONFIG_GLOBAL"] != os.DevNull || env["GIT_CONFIG_NOSYSTEM"] != "1" || env["GIT_CONFIG_COUNT"] != map[bool]string{false: "9", true: "10"}[gitLongPaths] || !slices.Equal(got, want) {
+	if env["GIT_CONFIG_GLOBAL"] != os.DevNull || env["GIT_CONFIG_NOSYSTEM"] != "1" || env["GIT_CONFIG_COUNT"] != map[bool]string{false: "10", true: "11"}[gitLongPaths] || !slices.Equal(got, want) {
 		t.Fatalf("git config env: %v", env)
 	}
 	if runtime.GOOS == "windows" {
@@ -1799,6 +1800,51 @@ func TestWorktreeHarnessEnvGitConfig(t *testing.T) {
 	}
 	if b, err := os.ReadFile(filepath.Join(gw, "bin", "git")); err != nil || !strings.Contains(string(b), "MINIGW_GIT_DIRS") {
 		t.Fatalf("no PATH wrapper: %v", err)
+	}
+}
+
+// A3: git init agenta (okolje worktreeHarnessEnv) ne kopira predlog (vzorčni hooki; v peskovniku je .git/hooks denyWrite);
+// .build klona (TMPDIR agenta) ni v git status agenta (makeClone: info/exclude).
+func TestAgentGitInitNoTemplatesBuildExcluded(t *testing.T) {
+	root := t.TempDir()
+	client, repo, wt := filepath.Join(root, "c"), filepath.Join(root, "repos", "d", "r.git"), filepath.Join(root, "wt")
+	os.MkdirAll(client, 0o755)
+	gitT(t, client, "init", "-q", "-b", "main")
+	writeT(t, filepath.Join(client, "a.txt"), "a\n")
+	gitT(t, client, "add", "a.txt")
+	gitT(t, client, "commit", "-qm", "first")
+	head := gitT(t, client, "rev-parse", "HEAD")
+	b := filepath.Join(root, "push.bundle")
+	gitUser(client, nil, "update-ref", "refs/minigw/push", head)
+	gitUser(client, nil, "bundle", "create", b, "refs/minigw/push")
+	if ensureMirror(repo) != nil || importBase(repo, b, head, "refs/minigw/base/x") != nil || makeClone(repo, wt, "minigw/claude-12345678-0", head) != nil {
+		t.Fatal("mirror or clone")
+	}
+	os.MkdirAll(filepath.Join(wt, ".build", "tmp"), 0o700)
+	writeT(t, filepath.Join(wt, ".build", "tmp", "x"), "x\n")
+	if st := gitT(t, wt, "status", "--porcelain"); st != "" {
+		t.Fatalf("clone status: %q", st)
+	}
+	c := exec.Command("git", "init", "-q", filepath.Join("build", "_deps", "foo"))
+	c.Dir = wt
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "GIT_") {
+			c.Env = append(c.Env, kv)
+		}
+	}
+	for _, kv := range worktreeHarnessEnv(wt, filepath.Join(root, "m"), filepath.Join(root, "t"), "claude") {
+		if k, _, _ := strings.Cut(kv, "="); k != "GIT_DIR" && k != "GIT_WORK_TREE" && k != "GIT_COMMON_DIR" {
+			c.Env = append(c.Env, kv)
+		}
+	}
+	if out, err := c.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(wt, "build", "_deps", "foo", ".git", "HEAD")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(wt, "build", "_deps", "foo", ".git", "hooks")); !os.IsNotExist(err) {
+		t.Fatalf("templates copied: %v", err)
 	}
 }
 
@@ -1960,8 +2006,8 @@ func TestWorktreeGitLongPaths(t *testing.T) {
 			k, v, _ := strings.Cut(kv, "=")
 			env[k] = v
 		}
-		pair := env["GIT_CONFIG_COUNT"] == "10" && env["GIT_CONFIG_KEY_9"] == "core.longpaths" && env["GIT_CONFIG_VALUE_9"] == "true"
-		if (got == "true") != on || pair != on || !on && env["GIT_CONFIG_COUNT"] != "9" {
+		pair := env["GIT_CONFIG_COUNT"] == "11" && env["GIT_CONFIG_KEY_10"] == "core.longpaths" && env["GIT_CONFIG_VALUE_10"] == "true"
+		if (got == "true") != on || pair != on || !on && env["GIT_CONFIG_COUNT"] != "10" {
 			t.Fatalf("longpaths %v: git %q env %v", on, got, env)
 		}
 	}

@@ -464,7 +464,8 @@ public enum Worktree {
         let pairs = [("core.fsmonitor", "false"), ("core.hooksPath", "/dev/null"), ("core.attributesFile", "/dev/null"),
                      ("diff.ignoreSubmodules", "all"), ("submodule.recurse", "false"), ("core.excludesFile", "/dev/null"),
                      ("user.name", author(agent)), ("user.email", agent + "@minigw.invalid"),
-                     ("safe.bareRepository", "explicit")]  // #61: golega repozitorija ne najde sam (le z GIT_DIR/--git-dir)
+                     ("safe.bareRepository", "explicit"),  // #61: golega repozitorija ne najde sam (le z GIT_DIR/--git-dir)
+                     ("init.templateDir", "")]  // git init/clone agenta ne kopira predlog (vzorčni hooki: .git/hooks je denyWrite)
         let git = root.appendingPathComponent(".git").path
         var env = ["GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",
                    "GIT_CONFIG_COUNT": String(pairs.count), "GIT_ATTR_SOURCE": "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
@@ -697,7 +698,12 @@ public enum Worktree {
         let c = run(["clone", "-q", "--shared", "--no-checkout", repo.path, wt.path], stderr: true)
         guard c.status == 0 else { return logFail(repo, "git clone of the mirror", c.out) }
         let o = run(["-C", wt.path, "checkout", "-q", "-b", branch, snapshot], stderr: true)
-        return o.status == 0 || logFail(repo, "git checkout of the snapshot", o.out)
+        guard o.status == 0 else { return logFail(repo, "git checkout of the snapshot", o.out) }
+        // .build (TMPDIR in ModuleCache agenta, harnessEnv) v git status agenta ni nesledena mapa; info je zanj denyWrite
+        try? FileManager.default.createDirectory(at: wt.appendingPathComponent(".git/info"), withIntermediateDirectories: true)
+        let ex = wt.appendingPathComponent(".git/info/exclude").path
+        let old = FileManager.default.contents(atPath: ex) ?? Data()
+        return FileManager.default.createFile(atPath: ex, contents: old + Data("\n/.build/\n".utf8)) || logFail(repo, "info/exclude of the clone", "")
     }
 
     /// Native z git (repozitorij na tem Macu): posnetek mape uporabnika v zrcalu kot `base`, brez git v njegovem

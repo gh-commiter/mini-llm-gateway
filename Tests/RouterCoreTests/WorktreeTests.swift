@@ -308,6 +308,32 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
     }
 }
 
+/// A3 (kot Go TestAgentGitInitNoTemplatesBuildExcluded): .build klona (TMPDIR agenta) ni v git status agenta (info/exclude
+/// klona); git init agenta (harnessEnv) ne kopira predlog (vzorčni hooki; v peskovniku je .git/hooks denyWrite).
+@Test func worktreeAgentGitInitNoTemplatesBuildExcluded() async throws {
+    let (root, client, tree) = try fixture()
+    defer { cleanup(root) }
+    let hub = ShareHub(), session = UUID().uuidString
+    let key = try #require(await hub.register(session: session, cwd: client.path, key: nil, device: "dev", tree: tree))
+    let loop = fakeClient(hub, key: key, top: client)
+    defer { loop.cancel() }
+    _ = try await agentRun(hub, session) { dir in
+        try file(dir, ".build/tmp/x", "x\n")
+        #expect(g(dir, "status", "--porcelain").isEmpty)
+        let env = Worktree.harnessEnv(root: dir, maven: root.appendingPathComponent("m"), agent: "claude")
+            .filter { !["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR"].contains($0.key) }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: Worktree.git)
+        p.arguments = ["init", "-q", "build/_deps/foo"]
+        p.currentDirectoryURL = dir
+        p.environment = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("GIT_") }.merging(env) { $1 }
+        try p.run(); p.waitUntilExit()
+        #expect(p.terminationStatus == 0 && FileManager.default.fileExists(atPath: dir.path + "/build/_deps/foo/.git/HEAD"))
+        #expect(!FileManager.default.fileExists(atPath: dir.path + "/build/_deps/foo/.git/hooks"), "templates copied")
+        try FileManager.default.removeItem(at: dir.appendingPathComponent("build"))
+    }
+}
+
 /// N1: agent zamenja .git/objects klona s povezavo ven: finalize ne briše in ne piše tam (in ne vrne veje).
 /// Izhod gradnje (.build, target) nikoli v vejo (info/exclude zrcala).
 @Test func worktreeFinalizeRefusesSymlinkedObjectsAndSkipsBuildOutput() async throws {
@@ -1619,9 +1645,10 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
 @Test func harnessEnvOwnGitConfig() throws {
     let env = Worktree.harnessEnv(root: URL(fileURLWithPath: "/w"), maven: URL(fileURLWithPath: "/m"), agent: "codex")
     let want = ["core.fsmonitor=false", "core.hooksPath=/dev/null", "core.attributesFile=/dev/null", "diff.ignoreSubmodules=all",
-                "submodule.recurse=false", "core.excludesFile=/dev/null", "user.name=Codex (Mini Gateway)", "user.email=codex@minigw.invalid", "safe.bareRepository=explicit"]
+                "submodule.recurse=false", "core.excludesFile=/dev/null", "user.name=Codex (Mini Gateway)", "user.email=codex@minigw.invalid", "safe.bareRepository=explicit",
+                "init.templateDir="]
     #expect((0..<want.count).map { env["GIT_CONFIG_KEY_\($0)"]! + "=" + env["GIT_CONFIG_VALUE_\($0)"]! } == want)
-    #expect(env["GIT_CONFIG_GLOBAL"] == "/dev/null" && env["GIT_CONFIG_NOSYSTEM"] == "1" && env["GIT_CONFIG_COUNT"] == "9")
+    #expect(env["GIT_CONFIG_GLOBAL"] == "/dev/null" && env["GIT_CONFIG_NOSYSTEM"] == "1" && env["GIT_CONFIG_COUNT"] == "10")
     let gx = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("gx-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: gx) }
     let c = try #require(Worktree.claudeEnv(root: URL(fileURLWithPath: "/w"), maven: URL(fileURLWithPath: "/m"), gitexec: gx, agent: "claude", path: ":/usr/bin::.:bin:./x:/bin:"))
