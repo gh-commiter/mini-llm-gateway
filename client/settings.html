@@ -465,7 +465,7 @@ async function agentPane(kind) {
   const n1 = note(), n2 = note(), n3 = note(t(codex ? "codexFooter" : "grokFooter"));
   const patch = body => api("PATCH", "/agents/" + kind, body);
   const path = el("input", {type: "text", value: a.path, placeholder: a.exe || kind});
-  const status = el("span", {class: "sub"}, el("span", {class: "dot" + (a.found ? " ok" : "")}), a.found ? t("detectedAt", a.exe, "").replace(/ · $/, "") : t(kind + "NotFound"));
+  const status = el("span", {class: "sub"}, el("span", {class: "dot" + (a.found ? " ok" : "")}), a.found ? t("detectedAt", a.exe, "").replace(/ · $/, "") : (a.reason || t(kind + "NotFound")));
   autosave(path, n1, async v => { await patch({path: v}); show(kind); });
   const models = m.models;
   const all = models.map(x => x.slug);
@@ -509,7 +509,7 @@ async function copilotPane() {
   const n1 = note(), n2 = note(), n3 = note(t("copilotFooter"));
   const patch = body => api("PATCH", "/agents/copilot", body);
   const path = el("input", {type: "text", value: a.path, placeholder: a.exe || "copilot"});
-  const status = el("span", {class: "sub"}, el("span", {class: "dot" + (a.found ? " ok" : "")}), a.found ? t("detectedAt", a.exe, "").replace(/ · $/, "") : t("copilotNotFound"));
+  const status = el("span", {class: "sub"}, el("span", {class: "dot" + (a.found ? " ok" : "")}), a.found ? t("detectedAt", a.exe, "").replace(/ · $/, "") : (a.reason || t("copilotNotFound")));
   autosave(path, n1, async v => { await patch({path: v}); show("copilot"); });
   const models = el("input", {type: "text", value: (a.models || []).join(", "), placeholder: "gpt-5.2, claude-sonnet-4.5"});
   autosave(models, n1, v => patch({models: v.split(",").map(x => x.trim()).filter(Boolean)}));

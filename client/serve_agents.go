@@ -116,11 +116,16 @@ func resolveAgent(k agentKind, configured string) (string, error) {
 // le zažene copilot.exe iz platformnega paketa (@github/copilot-win32-<arch>, pri -g vgnezden v paketu), zato teče
 // ta neposredno, brez node in ovoja; škatla dobi le mapo platformnega paketa (packageRoot), nikoli %APPDATA% ali npm.
 func npmNative(name, dir, goarch string) string {
-	arch := map[string]string{"amd64": "x64", "arm64": "arm64"}[goarch]
-	pats := map[string][]string{
-		"codex":   {"@openai/codex/vendor/*/codex/codex.exe"},
-		"copilot": {"@github/copilot/node_modules/@github/copilot-win32-" + arch + "/copilot.exe", "@github/copilot-win32-" + arch + "/copilot.exe"},
-	}[name]
+	pats := map[string][]string{"codex": {"@openai/codex/vendor/*/codex/codex.exe"}}[name]
+	if name == "copilot" { // najprej arhitektura minigw, nato druga (x64 minigw na ARM64 Windows, Copilot arm64)
+		archs := []string{"x64", "arm64"}
+		if goarch == "arm64" {
+			slices.Reverse(archs)
+		}
+		for _, a := range archs {
+			pats = append(pats, "@github/copilot/node_modules/@github/copilot-win32-"+a+"/copilot.exe", "@github/copilot-win32-"+a+"/copilot.exe")
+		}
+	}
 	for _, pat := range pats {
 		m, _ := filepath.Glob(filepath.Join(dir, "node_modules", filepath.FromSlash(pat)))
 		for _, f := range m {

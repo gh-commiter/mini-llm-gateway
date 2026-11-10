@@ -779,34 +779,48 @@ func TestCopilotNpmNative(t *testing.T) {
 	if got := npmNative("copilot", npm, "amd64"); got != exe {
 		t.Fatalf("nested: %q", got)
 	}
+	if got := npmNative("copilot", npm, "arm64"); got != exe { // arm64 minigw: x64 Copilot, ko arm64 ni
+		t.Fatalf("other arch: %q", got)
+	}
 	if got := npmNative("grok", npm, "amd64"); got != "" {
 		t.Fatalf("grok: %q", got)
 	}
-	hoisted := filepath.Join(t.TempDir(), "npm")
-	os.MkdirAll(filepath.Join(hoisted, "node_modules", "@github", "copilot-win32-x64"), 0o700)
-	os.WriteFile(filepath.Join(hoisted, "node_modules", "@github", "copilot-win32-x64", "copilot.exe"), nil, 0o700)
-	if got := npmNative("copilot", hoisted, "amd64"); got != filepath.Join(hoisted, "node_modules", "@github", "copilot-win32-x64", "copilot.exe") {
+	// prednost ima arhitektura minigw (x64 minigw na ARM64 Windows najde arm64, ko x64 ni)
+	hoisted := filepath.Join(home, "AppData", "Local", "npm")
+	hplat := filepath.Join(hoisted, "node_modules", "@github", "copilot-win32-arm64")
+	os.MkdirAll(hplat, 0o700)
+	hexe := filepath.Join(hplat, "copilot.exe")
+	os.WriteFile(hexe, nil, 0o700)
+	os.WriteFile(filepath.Join(hoisted, "package.json"), []byte("{}"), 0o600) // brez package.json v paketu, višje pa je
+	if got := npmNative("copilot", hoisted, "amd64"); got != hexe {
 		t.Fatalf("hoisted: %q", got)
 	}
+	os.MkdirAll(filepath.Join(hoisted, "node_modules", "@github", "copilot-win32-x64"), 0o700)
+	os.WriteFile(filepath.Join(hoisted, "node_modules", "@github", "copilot-win32-x64", "copilot.exe"), nil, 0o700)
+	if got := npmNative("copilot", hoisted, "arm64"); got != hexe {
+		t.Fatalf("own arch first: %q", got)
+	}
 
-	scratch := t.TempDir()
-	_, args, done, err := mxcWrap("wxc", exe, []string{"-p", "x"}, agentMounts{cfgDir: t.TempDir(), hide: scratch})
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, err := os.ReadFile(args[0])
-	done()
-	var req mxcRequest
-	if err != nil || json.Unmarshal(b, &req) != nil {
-		t.Fatalf("request: %v", err)
-	}
-	ro := req.Filesystem.ReadOnly
-	if !slices.Contains(ro, plat) {
-		t.Fatalf("platform package not granted: %v", ro)
-	}
-	for _, p := range slices.Concat(ro, req.Filesystem.ReadWrite) {
-		if under(home, p) || slices.Contains([]string{roaming, npm, filepath.Join(npm, "node_modules"), pkg}, p) {
-			t.Errorf("too wide a grant: %s", p)
+	// L1: le mapa programa, tudi brez package.json (hoisted) nikoli navzgor do @github, node_modules ali npm
+	for exe, dir := range map[string]string{exe: plat, hexe: hplat} {
+		_, args, done, err := mxcWrap("wxc", exe, []string{"-p", "x"}, agentMounts{cfgDir: t.TempDir(), hide: t.TempDir()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := os.ReadFile(args[0])
+		done()
+		var req mxcRequest
+		if err != nil || json.Unmarshal(b, &req) != nil {
+			t.Fatalf("request: %v", err)
+		}
+		ro := req.Filesystem.ReadOnly
+		if !slices.Contains(ro, dir) {
+			t.Fatalf("platform package not granted: %v", ro)
+		}
+		for _, p := range slices.Concat(ro, req.Filesystem.ReadWrite) {
+			if under(home, p) || under(p, home) && !under(p, dir) {
+				t.Errorf("%s: too wide a grant: %s", exe, p)
+			}
 		}
 	}
 }

@@ -412,7 +412,8 @@ func mxcWrap(wxc, exe string, args []string, m agentMounts) (string, []string, f
 		}
 	}
 	ro = append(ro, filepath.Dir(minigwExe()), filepath.Dir(exe))
-	if userHome != "" && under(exe, userHome) {
+	// L1 (#77): izvorni program iz paketa npm (npmNative) le svojo mapo, brez iskanja package.json navzgor
+	if userHome != "" && under(exe, userHome) && !strings.Contains(strings.ToLower(filepath.ToSlash(exe)), "/node_modules/") {
 		ro = append(ro, packageRoot(userHome, exe))
 	}
 	env := slices.Clone(m.cmdEnv)
