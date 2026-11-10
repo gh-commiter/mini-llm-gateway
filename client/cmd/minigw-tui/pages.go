@@ -174,6 +174,26 @@ func general(u *ui) ([]row, error) {
 				return "Taken over: " + str(r, "scratch") + ".", nil
 			}))
 	}
+	others, _ := g["scratchOthers"].([]any) // N4: sosednje mape drugih prehodov v osnovi
+	for _, o := range others {
+		m, _ := o.(map[string]any)
+		name := str(m, "name")
+		if str(m, "state") == "in-use" {
+			rows = append(rows, inf("  "+clean(name)+": used by another gateway (running)", ""))
+			continue
+		}
+		rows = append(rows, inf("  "+clean(name)+": stale owner (another gateway's folder, not running)", ""),
+			btn("Take over "+clean(name), "Take over "+clean(name)+"? It becomes this gateway's Scratch folder; the current one is deleted without conversations, else kept aside", func() (string, error) {
+				r, err := u.call("POST", "/general/scratch/take", map[string]any{"name": name})
+				if err != nil {
+					return "", err
+				}
+				if w := str(r, "warning"); w != "" {
+					return "Taken over: " + str(r, "scratch") + "; " + w, nil
+				}
+				return "Taken over: " + str(r, "scratch") + ".", nil
+			}))
+	}
 	if sug := str(g, "scratchSuggest"); sug != "" {
 		rows = append(rows, inf("  It is inside your home folder (agents in the Windows sandbox can list the names there); move it to "+sug+".", ""))
 	}

@@ -86,7 +86,7 @@ func TestTakeScratch(t *testing.T) {
 	}
 	t.Run("no folder", func(t *testing.T) {
 		old, want := setup(t, "")
-		dst, aside, err := takeScratch(old, "gw-new", now)
+		dst, aside, err := takeScratch(old, "", "gw-new", now)
 		if err != nil || dst != want || aside != "" {
 			t.Fatal(dst, aside, err)
 		}
@@ -94,7 +94,7 @@ func TestTakeScratch(t *testing.T) {
 	})
 	t.Run("own folder without conversations", func(t *testing.T) {
 		old, want := setup(t, "tmp/x")
-		dst, aside, err := takeScratch(old, "gw-new", now)
+		dst, aside, err := takeScratch(old, "", "gw-new", now)
 		if err != nil || dst != want || aside != "" {
 			t.Fatal(dst, aside, err)
 		}
@@ -105,7 +105,7 @@ func TestTakeScratch(t *testing.T) {
 	})
 	t.Run("own folder with conversations", func(t *testing.T) {
 		old, want := setup(t, "state/s.json")
-		dst, aside, err := takeScratch(old, "gw-new", now)
+		dst, aside, err := takeScratch(old, "", "gw-new", now)
 		if err != nil || dst != want || aside != want+".old-2026-11-10" {
 			t.Fatal(dst, aside, err)
 		}
@@ -124,7 +124,7 @@ func TestTakeScratch(t *testing.T) {
 		old, _ := setup(t, "")
 		lockScratch(old) // drug prehod teče
 		defer lockScratch(t.TempDir())
-		if _, _, err := takeScratch(old, "gw-new", now); err == nil || !strings.Contains(err.Error(), "running") {
+		if _, _, err := takeScratch(old, "", "gw-new", now); err == nil || !strings.Contains(err.Error(), "running") {
 			t.Fatalf("taken while held: %v", err)
 		}
 		if scratchOwner(old) != "gw-old" {
@@ -169,5 +169,55 @@ func TestScratchForeignRefusesRequests(t *testing.T) {
 	get := "GET /v1/models HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer tok\r\n\r\n"
 	if r := pipeRequest(t, s, k.PublicKey().Bytes(), mac, get); !strings.HasPrefix(r, "HTTP/1.1 503") || !strings.Contains(r, "Scratch folder") {
 		t.Fatalf("foreign scratch: %q", r)
+	}
+}
+
+// Glavni primer (po ponovni namestitvi): stara mapa je SOSEDNJA v osnovi; prevzem po imenu, trenutna mapa ob strani.
+func TestScratchSiblingTakeOver(t *testing.T) {
+	s, cfg, _ := liveServer(t, nil)
+	cur := s.conf().Scratch
+	base := filepath.Dir(cur)
+	writeOwner(t, filepath.Join(base, "ana"), "gw-gone") // stara instanca, ne teče
+	os.WriteFile(filepath.Join(base, "ana", "keep"), []byte("old"), 0o600)
+	writeOwner(t, filepath.Join(base, "gw-x.old-2026-01-01"), "gw-y") // ob strani: ne šteje
+	os.MkdirAll(filepath.Join(cur, "state"), 0o700)
+	os.WriteFile(filepath.Join(cur, "state", "s.json"), []byte("new"), 0o600) // pogovor v trenutni mapi
+	if o := s.apiGeneral(false).ScratchOthers; len(o) != 1 || o[0] != (scratchSibling{"ana", scratchStale}) {
+		t.Fatalf("others: %v", o)
+	}
+	for _, bad := range []string{`{"name":"../ana"}`, `{"name":"nope"}`, `{"name":"gw-x.old-2026-01-01"}`, `{"name":"` + filepath.Base(cur) + `"}`} {
+		if st, _ := s.adminDo("POST", "/general/scratch/take", []byte(bad)); st != 400 {
+			t.Fatalf("%s: %d", bad, st)
+		}
+	}
+	if s.scratchOther.Load() {
+		t.Fatal("own folder foreign")
+	}
+	st, obj := s.adminDo("POST", "/general/scratch/take", []byte(`{"name":"ana"}`))
+	g, _ := obj.(apiGeneral)
+	want := filepath.Join(base, s.conf().Instance)
+	if st != 200 || g.Scratch != want || scratchOwner(want) != s.conf().Instance || g.Warning == "" {
+		t.Fatalf("take: %d %v", st, obj)
+	}
+	if b, _ := os.ReadFile(filepath.Join(want, "keep")); string(b) != "old" {
+		t.Fatal("not renamed")
+	}
+	if _, err := os.Stat(filepath.Join(want, "state")); !os.IsNotExist(err) {
+		t.Fatal("merged")
+	}
+	if c, _ := loadServeConfig(cfg); c.Scratch != want {
+		t.Fatalf("serve.json %q", c.Scratch)
+	}
+}
+
+// Poizvedbi orodij in modelov ne pišeta v mapo drugega prehoda.
+func TestScratchForeignProbesRefused(t *testing.T) {
+	s, _, _ := liveServer(t, nil)
+	s.scratchOther.Store(true)
+	defer s.scratchOther.Store(false)
+	for _, p := range []string{"/agents/claude/tools", "/agents/codex/models"} {
+		if st, _ := s.adminDo("GET", p, nil); st != 503 {
+			t.Fatalf("%s: %d", p, st)
+		}
 	}
 }

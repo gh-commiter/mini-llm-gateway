@@ -142,6 +142,9 @@ const S = {
   scratchStale: ["Stale owner: another gateway's folder, and that gateway is not running. Agents are off: take the folder over or choose another one (Move…).",
     "Zastarel lastnik: mapa drugega prehoda, ki ne teče. Agenti so izklopljeni: prevzemi mapo ali izberi drugo (Premakni …)."],
   takeOver: ["Take over", "Prevzemi"], taken: ["Taken over: %s", "Prevzeto: %s"],
+  otherInUse: ["%s: used by another gateway", "%s: uporablja jo drug prehod"], otherStale: ["%s: stale owner", "%s: zastarel lastnik"],
+  othersHint: ["Folders of other gateways next to this gateway's Scratch folder. Take over renames a stale one to this gateway's folder; this gateway's current folder is deleted when it holds no conversations, else kept aside.",
+    "Mape drugih prehodov ob mapi Scratch tega prehoda. Prevzemi preimenuje zastarelo v mapo tega prehoda; trenutna mapa tega prehoda se izbriše, če nima pogovorov, sicer ostane ob strani."],
   moving: ["Moving… (a copy to another disk can take a while)", "Premikam … (kopija na drug disk lahko traja)"],
   moved: ["Moved to %s", "Premaknjeno v %s"],
   scratchSuggest: ["The Scratch folder is inside your home folder. Move it to %s (Move…).", "Mapa Scratch je v domači mapi. Premakni jo v %s (Premakni …)."],
@@ -602,6 +605,14 @@ const pages = {
     });
     take.hidden = !g.scratchState;
     take.disabled = g.scratchState === "in-use";
+    const others = (g.scratchOthers || []).map(o => {  // N4: sosednje mape drugih prehodov v osnovi
+      const b = button(t("takeOver"), async () => {
+        const r = await save(n4, () => api("POST", "/general/scratch/take", {name: o.name}), r => r.warning || t("taken", r.scratch));
+        if (r) { scratch.value = r.scratch; owner.textContent = ""; take.hidden = true; b.closest(".row").remove(); }
+      });
+      b.disabled = o.state === "in-use";
+      return row(t(o.state === "in-use" ? "otherInUse" : "otherStale", o.name), buttons(b));
+    });
     const sb = st.agentSandbox, n6 = note(t(win && !(sb && sb.kind === "mxc") ? "worktreeNetworkNoBox" : "worktreeNetworkHelp"));
     return [
       card(...ICON.general, t("general"), t("generalDesc")),
@@ -634,7 +645,7 @@ const pages = {
           const r = await save(n4, () => { n4.textContent = t("moving"); return api("POST", "/general/scratch/move", {to: to.trim()}); }, r => r.warning || t("moved", r.scratch));
           if (r) { scratch.value = r.scratch; g.scratchSuggest = r.scratchSuggest; ns.textContent = r.scratchSuggest ? t("scratchSuggest", r.scratchSuggest) : ""; owner.textContent = ""; take.hidden = true; }
         }), take)),
-      owner, ns, n4,
+      owner, ns, others.length ? group(...others) : null, others.length ? note(t("othersHint")) : null, n4,
       section(t("worktreeMode")),
       group(row(t("worktreeNetwork"), toggle(g.worktreeNetwork, v => save(n6, () => api("PATCH", "/general", {worktreeNetwork: v}))))),
       n6,
