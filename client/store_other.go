@@ -273,7 +273,8 @@ func safeDir(dir string) bool {
 }
 
 // safePath (#48): safeDir za p, njegovo mapo in vse mape nad njo do /, za dano in za pravo pot (brez povezav); višje
-// mape smejo biti zapisljive le z bitom sticky (/tmp): tam drugi ne preimenujejo ali zamenjajo vnosa, ki je naš.
+// mape smejo biti zapisljive le z bitom sticky in last roota ali uporabnika (/tmp): tam drugi ne preimenujejo ali
+// zamenjajo vnosa, ki je naš.
 func safePath(p string) bool {
 	real, err := filepath.EvalSymlinks(p)
 	return err == nil && safeChain(p) && safeChain(real)
@@ -285,7 +286,13 @@ func safeChain(p string) bool {
 		return false
 	}
 	for d, strict := filepath.Dir(p), true; ; d, strict = filepath.Dir(d), false {
-		if fi, err := os.Stat(d); err != nil || !safeDir(d) && (strict || fi.Mode()&os.ModeSticky == 0) {
+		fi, err := os.Stat(d)
+		if err != nil {
+			return false
+		}
+		st, ok := fi.Sys().(*syscall.Stat_t)
+		sticky := !strict && fi.Mode()&os.ModeSticky != 0 && ok && (st.Uid == 0 || int(st.Uid) == os.Getuid())
+		if !safeDir(d) && !sticky {
 			return false
 		}
 		if filepath.Dir(d) == d {

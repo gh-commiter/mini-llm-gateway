@@ -410,3 +410,23 @@ func TestSafePathAncestors(t *testing.T) {
 		t.Fatal("sticky parent of the file accepted")
 	}
 }
+
+// #48 (M2): višja mapa s sticky velja le, če je last roota ali uporabnika (ne tuja mapa 1777); kot root (Docker).
+func TestSafePathForeignSticky(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Getuid() != 0 {
+		t.Skip("needs root to chown")
+	}
+	top := filepath.Join(t.TempDir(), "top")
+	dir := filepath.Join(top, "a", "bin")
+	os.MkdirAll(dir, 0o755)
+	self := filepath.Join(dir, "minigw")
+	os.WriteFile(self, []byte("x"), 0o755)
+	os.Chmod(top, 0o777|os.ModeSticky)
+	if !safePath(self) {
+		t.Fatal("root's sticky folder refused")
+	}
+	os.Chown(top, 1234, 1234)
+	if safePath(self) {
+		t.Fatal("foreign sticky folder accepted")
+	}
+}
