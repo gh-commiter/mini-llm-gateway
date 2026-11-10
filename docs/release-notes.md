@@ -1,5 +1,9 @@
 # Release notes
 
+## Unreleased
+
+- Security (L1′, Windows): the shared `<drive>\minigw-scratch` parent gets a protected access list in which other users may only add their own folder (no delete, rename or permission changes; existing parents of yours are switched to it), and a parent that is a link or gives other users more is refused. Each gateway's folder in it must be a real folder of its own user (no junction), keeps its owner-only access list and is held open while the gateway runs, so nobody can rename or replace it. When it is refused, set your own Scratch (`"scratch"` in serve.json).
+
 ## 0.5.23
 
 - Security (#68): `PATCH /general` and `POST /general/token` on `minigw serve` no longer return the connect line with the gateway token; only `GET /general` has it (`minigw gw token rotate` and the settings page read it from there).

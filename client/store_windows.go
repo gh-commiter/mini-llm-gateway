@@ -12,9 +12,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
 
 const credTarget = "minigw:router"
@@ -283,39 +286,175 @@ func regRunDel(name string) {
 
 // protectDir: zaščiten DACL samo za lastnika in SYSTEM (mapa nastavitev zunaj %AppData%, kjer ni privzeto zasebna).
 // protectScratch (L2): kot mapa nastavitev (DACL le za uporabnika; tuj lastnik = zavrnitev).
-// L1, L1′: privzeta nadrejena mapa <pogon>\minigw-scratch mora biti prava mapa (ne povezava) tega uporabnika,
-// Administrators ali SYSTEM, preden v njej karkoli ustvarimo (na deljenem računalniku bi jo sicer drug račun lahko
-// preimenoval ali zamenjal skupaj z našo mapo v njej); naša dobi zaščiten DACL (sicer podeduje ACL pogona, kjer
-// Authenticated Users smejo spreminjati). <u> mora biti prava mapa tega uporabnika (ne junction drugega računa).
+// L1, L1′: skupna nadrejena mapa <pogon>\minigw-scratch (tudi pod imenom 8.3) je prava mapa; naša dobi DACL
+// scratchParentSDDL (drugi uporabniki smejo v njej le ustvariti svojo mapo), tuja ali širša je zavrnjena
+// (scratchParentOK). Mapa v njej (katerokoli ime) mora biti prava mapa tega uporabnika; preverjena in zaščitena prek
+// ročaja brez FILE_SHARE_DELETE, ki ostane odprt, dokler prehod teče (nihče, tudi lastnik nadrejene mape, je ne
+// preimenuje in na njeno mesto podtakne junction). Ostanek: lastnik nadrejene mape lahko spremeni njen DACL.
 func protectScratch(dir string) error {
-	if p := filepath.Dir(dir); strings.EqualFold(filepath.Base(p), "minigw-scratch") {
-		if err := os.MkdirAll(p, 0o700); err != nil {
+	p := filepath.Dir(dir)
+	if !strings.EqualFold(filepath.Base(longPath(p)), "minigw-scratch") {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return err
 		}
-		fi, err := os.Lstat(p)
-		if err != nil {
-			return err
-		}
-		owner, me, err := ownerAndMe(p)
-		if err != nil {
-			return err
-		}
-		if !scratchParentOK(fi.Mode(), owner, me) {
-			return fmt.Errorf("%s %w", p, errForeignOwner)
-		}
-		if owner == me {
-			if err := protectDir(p); err != nil {
-				return fmt.Errorf("%s: %v", p, err)
-			}
-		}
+		return protectDir(dir)
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := os.MkdirAll(p, 0o700); err != nil {
 		return err
 	}
-	if !ownedByMe(dir) {
-		return fmt.Errorf("%s %w", dir, errForeignOwner)
+	mine := false
+	ph, err := openDir(p, func(mode os.FileMode, owner, me string, dacl []scratchACE) error {
+		mine = owner == me
+		return scratchParentOK(mode, owner, me, dacl)
+	})
+	if err != nil {
+		return fmt.Errorf("%s %w", p, err)
 	}
-	return protectDir(dir)
+	defer windows.CloseHandle(ph)
+	if mine { // tudi selitev mape 0.5.23 (podedovan ACL pogona)
+		if err := protectHandle(ph, scratchParentSDDL); err != nil {
+			return fmt.Errorf("%s: %v", p, err)
+		}
+	}
+	if err := os.Mkdir(dir, 0o700); err != nil && !os.IsExist(err) {
+		return err
+	}
+	h, err := openDir(dir, func(mode os.FileMode, owner, me string, _ []scratchACE) error { return scratchDirOK(mode, owner, me) })
+	if err != nil {
+		return fmt.Errorf("%s %w (another account uses this folder name)", dir, err)
+	}
+	if err := protectDir(dir); err != nil { // po imenu (zaščita se razširi na vsebino); ročaj drži prav to mapo
+		windows.CloseHandle(h)
+		return err
+	}
+	scratchHold.Lock()
+	if scratchHold.h != 0 {
+		windows.CloseHandle(scratchHold.h)
+	}
+	scratchHold.h = h
+	scratchHold.Unlock()
+	return nil
+}
+
+// scratchParentSDDL: lastnik (ta uporabnik), SYSTEM in Administrators vse; Authenticated Users le prehod, seznam in
+// nova podmapa v tej mapi; CREATOR OWNER vse na podmapah (vsaka mapa prehoda ima še svoj zaščiten DACL).
+const scratchParentSDDL = "D:P(A;;FA;;;%s)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;;0x1200ad;;;AU)(A;OICIIO;FA;;;CO)"
+
+// scratchHold: ročaj trenutne mape Scratch v minigw-scratch (brez FILE_SHARE_DELETE), odprt, dokler prehod teče.
+var scratchHold struct {
+	sync.Mutex
+	h windows.Handle
+}
+
+// releaseScratch: zapre ročaj (premik Scratch: preimenovanje in brisanje rabita deljenje brisanja).
+func releaseScratch() {
+	scratchHold.Lock()
+	defer scratchHold.Unlock()
+	if scratchHold.h != 0 {
+		windows.CloseHandle(scratchHold.h)
+		scratchHold.h = 0
+	}
+}
+
+// openDir: ročaj mape p (brez sledenja povezavi, brez FILE_SHARE_DELETE, z WRITE_DAC, če ga dobimo) in odločitev ok iz
+// atributov, lastnika in DACL tega ročaja. Brez dostopa: errForeignOwner (mapa drugega uporabnika).
+func openDir(p string, ok func(mode os.FileMode, owner, me string, dacl []scratchACE) error) (windows.Handle, error) {
+	u, err := windows.UTF16PtrFromString(p)
+	if err != nil {
+		return 0, err
+	}
+	open := func(access uint32) (windows.Handle, error) {
+		return windows.CreateFile(u, access, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_EXISTING,
+			windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+	}
+	h, err := open(windows.READ_CONTROL | windows.WRITE_DAC)
+	if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+		h, err = open(windows.READ_CONTROL)
+	}
+	if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+		return 0, errForeignOwner
+	} else if err != nil {
+		return 0, err
+	}
+	if err := handleVerdict(h, ok); err != nil {
+		windows.CloseHandle(h)
+		return 0, err
+	}
+	return h, nil
+}
+
+func handleVerdict(h windows.Handle, ok func(mode os.FileMode, owner, me string, dacl []scratchACE) error) error {
+	var info windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(h, &info); err != nil {
+		return err
+	}
+	var mode os.FileMode
+	if info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0 {
+		mode = os.ModeDir
+	}
+	if info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		mode |= os.ModeIrregular
+	}
+	tu, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		return err
+	}
+	sd, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		return err
+	}
+	owner, _, err := sd.Owner()
+	if err != nil {
+		return err
+	}
+	var aces []scratchACE
+	dacl, _, err := sd.DACL()
+	if err != nil || dacl == nil { // brez DACL: vsi smejo vse
+		aces = []scratchACE{{0, 0, 0x10000000, "S-1-1-0"}}
+	} else {
+		for i := uint32(0); i < uint32(dacl.AceCount); i++ {
+			var a *windows.ACCESS_ALLOWED_ACE
+			if err := windows.GetAce(dacl, i, &a); err != nil {
+				return err
+			}
+			sid := ""
+			if a.Header.AceType == 0 || a.Header.AceType == 1 { // dovoli, zavrni: SID takoj za masko
+				sid = (*windows.SID)(unsafe.Pointer(&a.SidStart)).String()
+			}
+			aces = append(aces, scratchACE{a.Header.AceType, a.Header.AceFlags, uint32(a.Mask), sid})
+		}
+	}
+	return ok(mode, owner.String(), tu.User.Sid.String(), aces)
+}
+
+// protectHandle: zaščiten DACL iz sddl (%s = ta uporabnik) na odprtem ročaju.
+func protectHandle(h windows.Handle, sddl string) error {
+	tu, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		return err
+	}
+	sd, err := windows.SecurityDescriptorFromString(fmt.Sprintf(sddl, tu.User.Sid.String()))
+	if err != nil {
+		return err
+	}
+	dacl, _, err := sd.DACL()
+	if err != nil {
+		return err
+	}
+	return windows.SetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, dacl, nil)
+}
+
+// longPath: dolga oblika obstoječe poti (ime 8.3, npr. MINIGW~1, bi sicer obšlo primerjavo imena); sicer p.
+func longPath(p string) string {
+	u, err := windows.UTF16PtrFromString(p)
+	if err != nil {
+		return p
+	}
+	buf := make([]uint16, 1024)
+	if n, err := windows.GetLongPathName(u, &buf[0], uint32(len(buf))); err == nil && n > 0 && int(n) < len(buf) {
+		return windows.UTF16ToString(buf[:n])
+	}
+	return p
 }
 
 func protectDir(dir string) error {

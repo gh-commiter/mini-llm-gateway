@@ -489,7 +489,10 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	if c.Scratch, err = filepath.Abs(c.Scratch); err != nil || under(c.Scratch, cfgDir) {
 		return nil, errors.New("scratch folder: must not be inside the config folder " + cfgDir)
 	}
-	if err := protectScratch(c.Scratch); err != nil {
+	if err := protectScratch(c.Scratch); errors.Is(err, errForeignOwner) || errors.Is(err, errUnprotected) { // L1′
+		return nil, fmt.Errorf("scratch folder %s: %v: set \"scratch\" in %s to a folder of your own (another user on this PC uses %s)",
+			c.Scratch, err, cfgPath, filepath.Dir(c.Scratch))
+	} else if err != nil {
 		return nil, fmt.Errorf("scratch folder %s: %v: use a folder of your own", c.Scratch, err)
 	}
 	for i, g := range c.Gateways { // ročno urejen serve.json: ista pravila kot gateway add
@@ -688,11 +691,49 @@ func unsandboxedTools(tools string) []string {
 
 var errForeignOwner = errors.New("is owned by another user")
 
-// scratchParentOK (L1′): nadrejena mapa minigw-scratch je prava mapa (ne junction, symlink ali druga točka ponovne
-// razčlenitve), katere lastnik je ta uporabnik, Administrators ali SYSTEM (tuj lastnik bi jo lahko preimenoval).
-func scratchParentOK(mode os.FileMode, owner, me string) bool {
-	return mode.IsDir() && mode&(os.ModeSymlink|os.ModeIrregular) == 0 &&
-		(owner == me || owner == "S-1-5-32-544" || owner == "S-1-5-18")
+var errUnprotected = errors.New("is not protected from other users: ask an administrator to protect it")
+
+// scratchACE: vnos DACL (vrsta, zastavice, maska, SID) za scratchParentOK.
+type scratchACE struct {
+	typ, flags byte
+	mask       uint32
+	sid        string
+}
+
+// scratchParentOK (L1′): skupna nadrejena mapa <pogon>\minigw-scratch (v njej mapa vsakega prehoda) je prava mapa (ne
+// junction, symlink ali druga točka ponovne razčlenitve); kdor ni lastnik, Administrators, SYSTEM ali ta uporabnik,
+// sme v njej le prehod, seznam in novo podmapo (ne brisati, preimenovati, spreminjati pravic, pisati datotek).
+// Naša mapa dobi tak DACL tako ali tako (scratchParentSDDL).
+func scratchParentOK(mode os.FileMode, owner, me string, dacl []scratchACE) error {
+	if !mode.IsDir() || mode&(os.ModeSymlink|os.ModeIrregular) != 0 {
+		return errForeignOwner
+	}
+	if owner == me {
+		return nil
+	}
+	// FILE_LIST_DIRECTORY, ADD_SUBDIRECTORY, READ_EA, TRAVERSE, READ_ATTRIBUTES, READ_CONTROL, SYNCHRONIZE,
+	// GENERIC_EXECUTE, GENERIC_READ
+	const allowed = 0x1 | 0x4 | 0x8 | 0x20 | 0x80 | 0x20000 | 0x100000 | 0x20000000 | 0x80000000
+	for _, a := range dacl {
+		trusted := a.sid == owner || a.sid == me || a.sid == "S-1-5-32-544" || a.sid == "S-1-5-18" ||
+			a.sid == "S-1-3-0" || a.sid == "S-1-3-4" // CREATOR OWNER, OWNER RIGHTS
+		switch {
+		case a.flags&0x8 != 0 || trusted: // INHERIT_ONLY_ACE: ne velja za to mapo
+		case a.typ == 5 || a.typ == 9 || a.typ == 11: // druge vrste dovolitev: ne razčlenimo
+			return errUnprotected
+		case a.typ == 0 && a.mask&^allowed != 0:
+			return errUnprotected
+		}
+	}
+	return nil
+}
+
+// scratchDirOK (L1′): mapa prehoda v minigw-scratch (katerokoli ime) je prava mapa tega uporabnika.
+func scratchDirOK(mode os.FileMode, owner, me string) error {
+	if !mode.IsDir() || mode&(os.ModeSymlink|os.ModeIrregular) != 0 || owner != me {
+		return errForeignOwner
+	}
+	return nil
 }
 
 // protectConfigDir: na Windows mapa nastavitev zunaj %AppData% dobi DACL samo za lastnika (v %AppData% je že

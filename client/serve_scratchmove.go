@@ -86,12 +86,14 @@ func (s *server) moveScratchAPI(body []byte) (int, any) {
 		return 200, g
 	}
 	s.log.Printf("moving the scratch folder %s to %s", old, to)
+	defer func() { protectScratch(s.conf().Scratch) }() // L1′ (Windows): ročaj spet na veljavni mapi, tudi po napaki
 	renamed, err := moveScratchDir(old, to)
 	if err != nil {
 		s.log.Printf("scratch folder not moved: %v", err)
 		return fail(500, "scratch folder not moved (it stays "+old+"): "+err.Error())
 	}
 	if err := s.update(func(c *serveConfig) error { c.Scratch = to; return nil }); err != nil {
+		releaseScratch()
 		if renamed {
 			err = errors.Join(err, os.Rename(to, old))
 		} else {
@@ -131,9 +133,11 @@ func moveScratchDir(old, dst string) (renamed bool, err error) {
 		os.Remove(dst)
 		return false, err
 	}
-	os.Remove(dst) // prazna (zgoraj): Rename na Windows ne gre v obstoječo mapo
+	releaseScratch() // L1′: ročaj brez deljenja brisanja bi preprečil odstranitev in preimenovanje
+	os.Remove(dst)   // prazna (zgoraj): Rename na Windows ne gre v obstoječo mapo
 	if os.Rename(old, dst) == nil {
 		if err := protectTarget(dst); err != nil {
+			releaseScratch()
 			return false, errors.Join(err, os.Rename(dst, old))
 		}
 		return true, nil
@@ -143,6 +147,7 @@ func moveScratchDir(old, dst string) (renamed bool, err error) {
 		return false, err
 	}
 	if err := scratchCopy(old, dst); err != nil {
+		releaseScratch()
 		return false, errors.Join(err, os.RemoveAll(dst))
 	}
 	return false, nil
