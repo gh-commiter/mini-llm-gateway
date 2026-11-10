@@ -87,7 +87,7 @@ func (k agentKind) match(model string) (string, bool) {
 var validAgentModel = regexp.MustCompile(`^[A-Za-z0-9._:/][A-Za-z0-9._:/-]{0,127}$`)
 
 // resolveAgent: nastavljena pot ali iz PATH; na Windows le .exe (paketni ovoj npm bi tekel prek cmd.exe), ali
-// izvorni codex.exe v paketu npm ob njem.
+// izvorni program v paketu npm ob ovoju (npmNative: codex.exe, copilot.exe).
 func resolveAgent(k agentKind, configured string) (string, error) {
 	p := configured
 	if p == "" {
@@ -105,11 +105,31 @@ func resolveAgent(k agentKind, configured string) (string, error) {
 	if runtime.GOOS != "windows" || strings.EqualFold(filepath.Ext(p), ".exe") {
 		return p, nil
 	}
-	m, _ := filepath.Glob(filepath.Join(filepath.Dir(p), "node_modules", "@openai", "codex", "vendor", "*", "codex", "codex.exe"))
-	if k.name == "codex" && len(m) > 0 {
-		return m[0], nil
+	if exe := npmNative(k.name, filepath.Dir(p), runtime.GOARCH); exe != "" {
+		return exe, nil
 	}
-	return "", fmt.Errorf("%s is not an .exe and minigw serve does not run batch files: install the native %s.exe or set its path", p, k.bin)
+	hint := map[string]string{"codex": " (npm install -g @openai/codex)", "copilot": " (npm install -g @github/copilot installs its copilot.exe; reinstall if it is missing)"}[k.name]
+	return "", fmt.Errorf("%s is not an .exe and minigw serve does not run batch files: install the native %s.exe%s or set its path", p, k.bin, hint)
+}
+
+// npmNative (#77): izvorni program v paketu npm ob ovoju (copilot.cmd/.ps1 v dir). Copilot: npm-loader.js prek node
+// le zažene copilot.exe iz platformnega paketa (@github/copilot-win32-<arch>, pri -g vgnezden v paketu), zato teče
+// ta neposredno, brez node in ovoja; škatla dobi le mapo platformnega paketa (packageRoot), nikoli %APPDATA% ali npm.
+func npmNative(name, dir, goarch string) string {
+	arch := map[string]string{"amd64": "x64", "arm64": "arm64"}[goarch]
+	pats := map[string][]string{
+		"codex":   {"@openai/codex/vendor/*/codex/codex.exe"},
+		"copilot": {"@github/copilot/node_modules/@github/copilot-win32-" + arch + "/copilot.exe", "@github/copilot-win32-" + arch + "/copilot.exe"},
+	}[name]
+	for _, pat := range pats {
+		m, _ := filepath.Glob(filepath.Join(dir, "node_modules", filepath.FromSlash(pat)))
+		for _, f := range m {
+			if st, err := os.Lstat(f); err == nil && st.Mode().IsRegular() {
+				return f
+			}
+		}
+	}
+	return ""
 }
 
 // agentModel: model računa za seznam in tabelo v nastavitvah.
