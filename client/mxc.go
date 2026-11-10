@@ -367,7 +367,15 @@ func mxcWrap(wxc, exe string, args []string, m agentMounts) (string, []string, f
 		done()
 		return "", nil, nil, err
 	}
-	f, err := os.CreateTemp(tmpRoot, "mxc-*.json")
+	// N1: zahteva ima žetone (CLAUDE_CODE_OAUTH_TOKEN, izbran ključ API): mapa le za lastnika (Windows: zaščiten DACL,
+	// Scratch na D: sicer podeduje Authenticated Users), zunaj vseh dovoljenj škatle
+	reqDir := filepath.Join(tmpRoot, "mxc")
+	os.MkdirAll(reqDir, 0o700)
+	if err := protectDir(reqDir); err != nil {
+		done()
+		return "", nil, nil, fmt.Errorf("cannot make the sandbox request folder private: %v", err)
+	}
+	f, err := os.CreateTemp(reqDir, "mxc-*.json")
 	if err == nil {
 		_, err = f.Write(b)
 		err = errors.Join(err, f.Close())
@@ -379,6 +387,15 @@ func mxcWrap(wxc, exe string, args []string, m agentMounts) (string, []string, f
 		return "", nil, nil, err
 	}
 	return wxc, []string{f.Name()}, done, nil
+}
+
+// buildTooOld: »26100.x« ali »26200.x« z UBR pod 9550, ali starejša gradnja; neznano = ne (odloči preizkus).
+func buildTooOld(b string) bool {
+	var major, ubr int
+	if n, _ := fmt.Sscanf(b, "%d.%d", &major, &ubr); n != 2 {
+		return false
+	}
+	return major < 26100 || (major == 26100 || major == 26200) && ubr < 9550
 }
 
 // boxWrap: agentWrap s škatlo (Windows; drugje le testi z lažnim wxc-exec): wxc-exec.exe se pred vsako rabo preveri.
@@ -567,8 +584,10 @@ func authCopyIn(real, dst string) error {
 	return copyRegular(real, dst, 1<<20)
 }
 
-// copyRegularTree: navadne datoteke iz src v dst (mape naredi, povezav ne sledi in jih izpusti); src, ki ga ni, je prazen.
+// copyRegularTree: navadne datoteke iz src v dst (mape naredi, povezav ne sledi in jih izpusti), skupaj največ
+// maxCopied bajtov (preostale izpusti); src, ki ga ni, je prazen.
 func copyRegularTree(src, dst string) {
+	total := int64(0)
 	filepath.WalkDir(src, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -578,7 +597,10 @@ func copyRegularTree(src, dst string) {
 		case d.IsDir():
 			os.MkdirAll(filepath.Join(dst, rel), 0o700)
 		case d.Type().IsRegular():
-			copyRegular(p, filepath.Join(dst, rel), maxCopied)
+			if fi, err := d.Info(); err == nil && total+fi.Size() <= maxCopied {
+				total += fi.Size()
+				copyRegular(p, filepath.Join(dst, rel), maxCopied)
+			}
 		}
 		return nil
 	})

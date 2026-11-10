@@ -93,7 +93,7 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":3}}'
 		!slices.ContainsFunc(req.Filesystem.ReadWrite, func(p string) bool { return strings.HasPrefix(filepath.Base(p), "s-") || strings.Contains(p, "sync") }) {
 		t.Fatalf("request: %s", b)
 	}
-	if left, _ := filepath.Glob(filepath.Join(scratch, "tmp", "mxc-*.json")); len(left) > 0 {
+	if left, _ := filepath.Glob(filepath.Join(scratch, "tmp", "mxc", "mxc-*.json")); len(left) > 0 {
 		t.Fatalf("request files left: %v", left)
 	}
 }

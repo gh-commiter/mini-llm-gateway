@@ -766,9 +766,8 @@ func networkOffEnv(agent string, network bool) []string {
 const claudeNetworkSetting = "Settings → General → Worktree mode → Network for builds"
 
 // claudeAPIHosts (#68): gostitelji, ki jih Claude Code v škatli MXC brez omrežja gradenj doseže prek posrednika vrat
-// izvajanja (API, prijava in osvežitev žetona). ponytail: seznam iz dokumentacije; zavrnjeni gostitelji so v dnevniku
-// (»refused CONNECT«), dodaj jih ob pravi napaki na HPX360.
-var claudeAPIHosts = []string{"api.anthropic.com", "console.anthropic.com", "platform.claude.com", "claude.ai", "statsig.anthropic.com"}
+// izvajanja: le API (žeton setup-token se ne osvežuje). Zavrnjeni gostitelji so v dnevniku (»refused CONNECT«).
+var claudeAPIHosts = []string{"api.anthropic.com"}
 
 // depsEnv (#67, kot Worktree.depsEnv na Macu): vse za gradnje agenta pod Scratch, nikoli v $TMPDIR, /tmp ali domači mapi.
 // Skupno za projekt (mapa klonov/.cache, kot .maven; sprejeto: pogovor lahko podtakne vsebino drugemu pogovoru istega

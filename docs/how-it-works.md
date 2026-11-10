@@ -129,7 +129,7 @@ Details:
 - **Windows sandbox (minigw serve, #68).** On Windows the gateway starts Claude CLI, Copilot and Grok as a whole (the
   CLI and every command it runs) in a Microsoft MXC process container (`wxc-exec.exe` from MXC 1.0.1 in the install
   folder's `mxc` subfolder; low integrity and an AppContainer, no admin rights). It needs Windows 11 build
-  26100.9550 / 26200.9550 or later (KB5124010). At start the gateway checks `wxc-exec.exe` against the SHA-256 built
+  26100.9550 / 26200.9550 or later (KB5124010 or any later cumulative update). At start the gateway checks `wxc-exec.exe` against the SHA-256 built
   into minigw (again before every run; the `mxc` folder may hold only `wxc-exec.exe` and `LICENSE.txt`, and during a
   run the gateway keeps `wxc-exec.exe` open so it cannot be changed or deleted) and runs a probe in the container
   (prompt on stdin and exit code, writing a granted folder, the config folder's `admin.secret` unreadable, a connection
@@ -148,6 +148,10 @@ Details:
   - denied: the gateway's config folder. Everything else (your home folder, other devices' copies, the rest of Scratch,
     the registry outside the container) is not readable. The container can list the names of the folders above the
     granted ones (not their files).
+  - The request for each run (it holds the Claude token or an API key you chose) is written to `Scratch\tmp\mxc`, a
+    folder only your user can open (protected access list, also on a D: drive), outside every grant, and deleted after
+    the run; leftovers are deleted when the gateway starts. Inherited environment variables ending in `_API_KEY` never
+    reach an agent. Grok's home in the box keeps only `auth.json`, `config.toml` and its sessions between runs.
   - Logins: agents use subscription logins, never API keys unless you set one, and nothing is ever copied back from
     the container. Claude gets the long-lived token from `claude setup-token` (your Claude subscription, valid one
     year), stored in Credential Manager and passed as `CLAUDE_CODE_OAUTH_TOKEN`; `~\.claude` is never copied in.

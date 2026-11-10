@@ -47,7 +47,16 @@ func windowsBuild() string {
 // git agenta v klonu (#70 velja le brez škatle).
 func sandboxInit(scratch, cfgDir string, logf func(string, ...any)) {
 	cleanGitWraps(filepath.Join(scratch, "gitexec"))
-	why := mxcProbe(wxcExe(), minigwExe(), scratch, cfgDir)
+	old, _ := filepath.Glob(filepath.Join(scratch, "tmp", "mxc", "mxc-*.json")) // N1: zahteve prejšnjega procesa (žetoni)
+	for _, p := range old {
+		os.Remove(p)
+	}
+	why := ""
+	if b := windowsBuild(); buildTooOld(b) { // pred preizkusom: jasen razlog
+		why = "needs Windows 11 build 26100.9550 / 26200.9550 or later (KB5124010 or any later cumulative update); this computer has " + b
+	} else {
+		why = mxcProbe(wxcExe(), minigwExe(), scratch, cfgDir)
+	}
 	mxcState.mu.Lock()
 	mxcState.ready, mxcState.reason = why == "", why
 	mxcState.mu.Unlock()

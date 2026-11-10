@@ -316,11 +316,20 @@ const workRow = (a, patch, n, disabled) => {
   return row(labelSub(t("work"), t("workHelp")), s);
 };
 const row = (label, ...right) => el("div", {class: "row"}, typeof label === "string" ? el("span", {class: "label", textContent: label}) : label, ...right);
+// LOGIN_STATES: stanja vrstice Login iz agentlogin.go (točno besedilo) → slovensko.
+const LOGIN_STATES = {
+  "set": "nastavljen", "not set": "ni nastavljen",
+  "logged in (ChatGPT)": "prijavljen (ChatGPT)", "logged in (API key)": "prijavljen (ključ API)",
+  "not logged in (codex login)": "ni prijave (codex login)", "unknown (auth.json unreadable)": "neznano (auth.json ni berljiv)",
+  "logged in (may need to log in again in Grok after it refreshes)": "prijavljen (po osvežitvi v Grok se bo morda treba znova prijaviti)",
+  "not logged in (grok login)": "ni prijave (grok login)",
+  "API key (billed through the provider's API)": "ključ API (obračun prek API ponudnika)",
+};
 // loginGroup (#68): vrstica Login (stanje, nikoli vrednost; namig), žeton (Claude, Copilot) in izbira ključa API
 // (Claude, Codex, Grok), enako za vse agente.
 function loginGroup(kind, lg, patch, n) {
   lg = lg || {};
-  const state = lg.state === "set" ? t("loginSet") : lg.state === "not set" ? t("loginNotSet") : (lg.state || "");
+  const state = LOGIN_STATES[lg.state] ? (SL ? LOGIN_STATES[lg.state] : lg.state) : (lg.state || "");  // API ostane angleški
   const secret = (field, ph) => {
     const i = el("input", {type: "password", autocomplete: "off", placeholder: ph});
     i.addEventListener("change", () => { const v = i.value.trim(); if (v) save(n, () => patch({[field]: v}).then(r => { i.value = ""; show(kind); return r; })); });

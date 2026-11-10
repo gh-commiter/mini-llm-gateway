@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -567,6 +568,40 @@ func TestAgentLoginAPI(t *testing.T) {
 	for _, k := range []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "XAI_API_KEY", "CODEX_API_KEY"} {
 		if slices.ContainsFunc(agentEnv([]string{k + "=inherited"}), func(kv string) bool { return strings.HasPrefix(kv, k) }) {
 			t.Fatalf("%s inherited", k)
+		}
+	}
+}
+
+// Gradnja pred preizkusom (UBR) in podedovani ključi *_API_KEY.
+func TestBuildTooOldAndKeyStrip(t *testing.T) {
+	for b, want := range map[string]bool{"26200.9711": false, "26200.9549": true, "26100.9550": false, "22631.5000": true, "28000.100": false, "": false, "x": false} {
+		if buildTooOld(b) != want {
+			t.Errorf("%q", b)
+		}
+	}
+	if got := agentEnv([]string{"SOME_VENDOR_API_KEY=x", "Mistral_Api_Key=y", "PATH=/bin"}); !slices.Equal(got, []string{"PATH=/bin"}) {
+		t.Fatalf("env: %v", got)
+	}
+}
+
+// Vsako stanje vrstice Login (agentlogin.go) ima slovenski prevod na strani z nastavitvami (LOGIN_STATES).
+func TestLoginStatesTranslated(t *testing.T) {
+	src, _ := os.ReadFile("agentlogin.go")
+	page, _ := os.ReadFile("settings.html")
+	i := strings.Index(string(page), "const LOGIN_STATES = {")
+	block := string(page)[i : i+strings.Index(string(page)[i:], "};")]
+	found := regexp.MustCompile(`(?:return|o\["state"\] =) "((?:logged in|not logged in|unknown|API key \()[^"]*)"`).FindAllStringSubmatch(string(src), -1)
+	if len(found) < 7 {
+		t.Fatalf("state strings: %v", found)
+	}
+	for _, m := range found {
+		if !strings.Contains(block, `"`+m[1]+`":`) {
+			t.Errorf("no Slovenian text for %q", m[1])
+		}
+	}
+	for _, s := range []string{"set", "not set"} {
+		if !strings.Contains(block, `"`+s+`":`) {
+			t.Errorf("%q", s)
 		}
 	}
 }

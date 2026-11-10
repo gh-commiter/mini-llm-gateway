@@ -1111,7 +1111,10 @@ func agentEnv(env []string) []string {
 	var out []string
 	for _, e := range env {
 		name, _, _ := strings.Cut(e, "=")
-		name = strings.ToUpper(name) // Windows: imena spremenljivk brez razlike med velikimi in malimi črkami
+		name = strings.ToUpper(name)             // Windows: imena spremenljivk brez razlike med velikimi in malimi črkami
+		if strings.HasSuffix(name, "_API_KEY") { // #68: noben podedovan ključ API (le izrecno nastavljen, agentKeyEnv)
+			continue
+		}
 		if strings.HasPrefix(name, "ANTHROPIC_") || strings.HasPrefix(name, "CLAUDE_CODE_") || slices.Contains([]string{"CLAUDECODE",
 			"DBUS_SESSION_BUS_ADDRESS", "SSH_AUTH_SOCK", "GPG_AGENT_INFO", "GNOME_KEYRING_CONTROL", "CODEX_HOME", "GROK_HOME", "MINIGW_AGENT_URL", "MINIGW_AGENT_AUTH_FILE",
 			"GH_TOKEN", "GITHUB_TOKEN", "SANDBOX_RUNTIME", "MINIGW_SANDBOXED", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED", // #67: oznake peskovnika
@@ -1156,6 +1159,14 @@ func agentState(scratch string, k agentKind, owner string) (string, []string, er
 	}
 	real, names := agentAuthFiles(k)
 	if runtime.GOOS == "windows" { // #68: povezave zahtevajo pravice, trde ne prečkajo nosilcev: le kopija noter, nikoli nazaj
+		// pred vsakim tekom vse drugo iz stanja ven (nastavitve, vtičniki, zaupane mape, ki jih je pustil prejšnji tek);
+		// ostanejo le prijava, nastavitve in seje (-r nadaljuje sejo)
+		ents, _ := os.ReadDir(dir)
+		for _, e := range ents {
+			if n := e.Name(); !slices.Contains(names, n) && n != "sessions" {
+				os.RemoveAll(filepath.Join(dir, n))
+			}
+		}
 		for _, n := range names {
 			if strings.HasSuffix(n, ".lock") {
 				continue

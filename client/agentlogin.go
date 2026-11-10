@@ -3,7 +3,7 @@ package main
 // Prijave agentov (#68, odločitev lastnika): vrstica »Login« za vsakega agenta na vseh površinah nastavitev (stran z
 // nastavitvami in okno pladnja, minigw-tui, skrbniški API, minigw gw <agent> token [remove]). Ključi so v shrambi
 // ključev (Credential Manager, keyring), nikoli v serve.json ali odgovoru API; prikazano je le stanje.
-// Le prijave naročnine, nikoli ključi API (obračun API). Claude: dolgoživ žeton »claude setup-token«
+// Privzeto prijave naročnine; ključ API le izrecno (obračun API). Claude: dolgoživ žeton »claude setup-token«
 // (CLAUDE_CODE_OAUTH_TOKEN; v škatli MXC obvezen, prijava iz ~\.claude se v škatlo ne kopira). Copilot: žeton za ukaze.
 // Codex: teče zunaj škatle s pravo ~/.codex (osveževanje dela samo): le stanje prijave ChatGPT. Grok nima dolgoživega
 // žetona (grok login, ni »setup-token«): v škatlo gre kopija ~\.grok\auth.json, nikoli nazaj; po osvežitvi je morda
