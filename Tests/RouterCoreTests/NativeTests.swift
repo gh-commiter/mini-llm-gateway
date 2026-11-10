@@ -643,4 +643,26 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
         #expect(Native.resolve(share: "ana", path: p, shares: shares, roots: home, home: home) == nil)
     }
     #expect(Native.resolve(share: "ana", path: "private", shares: shares, roots: home, home: home)?.path == f.outside.path)
+    // Kanonična pot šteje, za vsako shemo: povezava v dovoljeni mapi (~/Google Drive → ~/Library/CloudStorage) in shema nad domačo mapo.
+    let cloud = f.share.appendingPathComponent("Library/CloudStorage")
+    try FileManager.default.createDirectory(at: cloud, withIntermediateDirectories: true)
+    try FileManager.default.createSymbolicLink(at: f.project.appendingPathComponent("gd"), withDestinationURL: cloud)
+    try FileManager.default.createSymbolicLink(at: f.project.appendingPathComponent("ssh"), withDestinationURL: f.share.appendingPathComponent(".ssh"))
+    for p in ["projects/gd", "projects/ssh"] {
+        #expect(Native.resolve(share: "ana", path: p, shares: shares, roots: home, home: home) == nil)
+    }
+    let users = ["Users": f.root.path]
+    try FileManager.default.createDirectory(at: f.share.appendingPathComponent("Library/LaunchAgents"), withIntermediateDirectories: true)
+    for p in ["Java/Library/LaunchAgents", "Java/.ssh", "Java"] {
+        #expect(Native.resolve(share: "Users", path: p, shares: users, roots: f.root.path, home: home) == nil)
+    }
+    #expect(Native.resolve(share: "Users", path: "Java/projects", shares: users, roots: f.root.path, home: home)?.path == f.project.path)
+    #expect(!Native.homeSecret(f.project.path, home: home) && Native.homeSecret(cloud.path, home: home))
+    #expect(!Native.homeSecret("/", home: "/"))
+}
+
+@Test func nativeSmbdEnabled() {
+    #expect(Native.smbdEnabled("disabled services = {\n\t\t\"com.apple.smbd\" => enabled\n}"))
+    #expect(!Native.smbdEnabled("\t\t\"com.apple.smbd\" => disabled\n"))
+    #expect(!Native.smbdEnabled(nil) && !Native.smbdEnabled(""))
 }

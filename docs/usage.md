@@ -468,9 +468,9 @@ minigw run -- mvn -q verify                   # run a build there; output and ex
   its allowed folders. minigw proves it is the same folder: the gateway writes a check file with random content and
   minigw must read it back through its mount. Shares listed in File Sharing work, and the automatic home-folder
   share of the gateway Mac's user (named after that user, for example `uros` = `/Users/uros`) unless it is turned off
-  (`VirtualHomeShares` false in `com.apple.smb.server`). In the home share only allowed folders below the home work,
-  never the home folder itself, a hidden folder (`~/.ssh` …) or `~/Library`, also when the whole home is allowed. The
-  gateway shares nothing itself.
+  (`VirtualHomeShares` false in `com.apple.smb.server`, or SMB sharing off). In any share only allowed folders work,
+  never the home folder itself, a hidden folder in it (`~/.ssh` …) or `~/Library`, also through a link and when the
+  whole home is allowed (the same for `minigw run`). The gateway shares nothing itself.
 - **Detection:** automatic on macOS, Linux (cifs) and Windows (UNC path or mapped drive). Elsewhere set
   `MINIGW_NATIVE_MOUNT=<share>=<mount folder>`. If the folder is not a gateway share, minigw falls back to the usual
   mount.

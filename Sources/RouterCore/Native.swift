@@ -125,8 +125,40 @@ public enum Native {
         guard (try? p.run()) != nil else { return [:] }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()
-        let prefs = NSDictionary(contentsOfFile: "/Library/Preferences/SystemConfiguration/com.apple.smb.server.plist")
-        return withHomeShare(smbShares(String(decoding: data, as: UTF8.self)), virtualHomes: prefs?["VirtualHomeShares"] as? Bool)
+        let shares = smbShares(String(decoding: data, as: UTF8.self))
+        // Napaka branja (ni nastavitev ali strežnik SMB ni vklopljen) = brez sheme domače mape.
+        guard let prefs = NSDictionary(contentsOfFile: "/Library/Preferences/SystemConfiguration/com.apple.smb.server.plist"),
+              smbdEnabled(run(["/bin/launchctl", "print-disabled", "system"])) else { return shares }
+        return withHomeShare(shares, virtualHomes: prefs["VirtualHomeShares"] as? Bool)
+    }
+
+    /// Izpis `launchctl print-disabled system`: strežnik SMB vklopljen (File Sharing → SMB).
+    public static func smbdEnabled(_ listing: String?) -> Bool {
+        listing?.split(whereSeparator: \.isNewline).contains {
+            let l = $0.trimmingCharacters(in: .whitespaces)
+            return l == "\"com.apple.smbd\" => enabled" || l == "\"com.apple.smbd\" => false"
+        } ?? false
+    }
+
+    private static func run(_ argv: [String]) -> String? {
+        let p = Process(), pipe = Pipe()
+        p.executableURL = URL(fileURLWithPath: argv[0])
+        p.arguments = Array(argv.dropFirst())
+        p.standardOutput = pipe
+        p.standardError = FileHandle.nullDevice
+        guard (try? p.run()) != nil else { return nil }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return p.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : nil
+    }
+
+    /// Kanonična mapa je domača mapa sama, skrita mapa v njej (~/.ssh …) ali ~/Library (obeski, žetoni): nikoli native
+    /// ali `minigw run`, za vsako shemo in tudi prek povezave (npr. ~/Google Drive → ~/Library/CloudStorage).
+    public static func homeSecret(_ dir: String, home: String = NSHomeDirectory()) -> Bool {
+        guard let h = Sync.real(URL(fileURLWithPath: home))?.path, h != "/" else { return false }
+        if dir == h { return true }
+        guard dir.hasPrefix(h + "/"), let first = dir.dropFirst(h.count + 1).split(separator: "/").first else { return false }
+        return first.hasPrefix(".") || first.caseInsensitiveCompare("Library") == .orderedSame
     }
 
     /// #74: samodejna shema domače mape (ime = uporabnik, ki se prijavi; `sharing -l` je ne izpiše) le za uporabnika
@@ -141,8 +173,7 @@ public enum Native {
 
     /// Shema + relativna pot → mapa tega Maca; nil, če sheme ni, pot pobegne iz nje (»..«, povezava) ali mapa ni v
     /// dovoljenih mapah (`roots`, Settings → Allowed folders). Shema brez razlike v velikih črkah (SMB).
-    /// Shema domače mape (#74 ali izrecna): ne domača mapa sama, ne skrite mape (~/.ssh …) in ne ~/Library (obeski,
-    /// žetoni), tudi ko je domača mapa v dovoljenih mapah.
+    /// Nikoli homeSecret (domača mapa sama, ~/.ssh …, ~/Library), tudi ko je domača mapa v dovoljenih mapah.
     public static func resolve(share: String, path rel: String, shares: [String: String], roots: String, scratch: URL? = nil,
                                home: String = NSHomeDirectory()) -> URL? {
         guard let base = shares.first(where: { $0.key.caseInsensitiveCompare(share) == .orderedSame })?.value,
@@ -150,10 +181,8 @@ public enum Native {
         let comps = rel.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
         guard rel.isEmpty || !comps.contains(where: { $0.isEmpty || $0 == "." || $0 == ".." || $0.contains("\\") || $0.contains("\0") })
         else { return nil }
-        if root.path == Sync.real(URL(fileURLWithPath: home))?.path,
-           rel.isEmpty || comps[0].hasPrefix(".") || comps[0].caseInsensitiveCompare("Library") == .orderedSame { return nil }
         guard let dir = Sync.real(rel.isEmpty ? root : root.appendingPathComponent(rel)),
-              dir.path == root.path || dir.path.hasPrefix(root.path + "/"),
+              dir.path == root.path || dir.path.hasPrefix(root.path + "/"), !homeSecret(dir.path, home: home),
               ClaudeCLI.resolveCwd(dir.path, roots: roots, scratch: scratch) != nil else { return nil }
         return dir  // kanonična: označba se piše z O_NOFOLLOW_ANY
     }
@@ -657,7 +686,8 @@ extension Router {
         guard let derived = Native.makeDerivedData(config.scratch("deriveddata"), dir: dir.path) else {
             return await error(500, "api_error", "minigw run: cannot create its DerivedData folder in Scratch", rid: rid, writer: writer)
         }
-        guard Sync.real(dir)?.path == dir.path, ClaudeCLI.resolveCwd(dir.path, roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL)?.path == dir.path,
+        guard Sync.real(dir)?.path == dir.path, !Native.homeSecret(dir.path),
+              ClaudeCLI.resolveCwd(dir.path, roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL)?.path == dir.path,
               let profile = Native.sandboxProfile(dir: dir.path, network: config.devices.first { $0.id == d.id }?.runNetwork ?? true,
                                                   hidden: [config.scratchURL.path, RouterConfig.defaultScratch.path], routerPort: Int(config.port),
                                                   runTmp: realTmp, derivedData: derived) else {
