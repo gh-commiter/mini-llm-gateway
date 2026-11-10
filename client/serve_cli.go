@@ -762,7 +762,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			defer done()
 			args = worktreeClaudeArgs(args, wt, maven, tmp, objs, gits)
 			gw := s.conf().scratch("gitexec")
-			if worktreeEnv = worktreeClaudeEnv(wt, maven, tmp, gw, gits); worktreeEnv == nil {
+			if worktreeEnv = worktreeClaudeEnv(wt, maven, tmp, gw, gits, "claude"); worktreeEnv == nil {
 				return writeError(w, r.rid, 503, "Cannot prepare git for the agent's clone (git --exec-path): use sync")
 			}
 			args = sandboxAllowRead(args, gw)

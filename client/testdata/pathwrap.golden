@@ -1,0 +1,11 @@
+#!/bin/sh
+# minigw: git works in the registered clone (MINIGW_GIT_DIRS) that holds the folder or the -C <path>
+real='/REAL/git'; d=$(pwd -P) || exec "$real" "$@"
+i=1; while [ $i -le $# ]; do eval "a=\${$i}"; case $a in
+  -C) i=$((i+1)); eval "p=\${$i}"; case $p in /*) ;; *) p=$d/$p;; esac; d=$(cd "$p" 2>/dev/null && pwd -P) || exec "$real" "$@";;
+  -c) i=$((i+1));; -*) ;; *) break;; esac; i=$((i+1)); done
+b=; g=; set -f; IFS='
+'
+for e in $MINIGW_GIT_DIRS; do w=$(cd "${e%/.git}" 2>/dev/null && pwd -P) || continue; case $d/ in "$w"/*) [ ${#w} -gt ${#b} ] && b=$w g=$e;; esac; done
+[ -n "$g" ] && export GIT_DIR="$g" GIT_COMMON_DIR="$g" GIT_WORK_TREE="${g%/.git}"
+exec "$real" "$@"

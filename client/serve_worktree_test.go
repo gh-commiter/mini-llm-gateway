@@ -459,7 +459,7 @@ func TestWorktreeGitSwapRefused(t *testing.T) {
 	writeT(t, filepath.Join(wt, "a.txt"), "b\n") // ista velikost: git status prebere vsebino (filter clean)
 	// Napad je resničen: git status z okoljem agenta filter izvede.
 	c := exec.Command("git", "--no-optional-locks", "status", "--porcelain")
-	c.Dir, c.Env = wt, append(os.Environ(), worktreeHarnessEnv(wt, filepath.Join(root, "m"), t.TempDir())...)
+	c.Dir, c.Env = wt, append(os.Environ(), worktreeHarnessEnv(wt, filepath.Join(root, "m"), t.TempDir(), "claude")...)
 	c.Run()
 	if _, err := os.Stat(marker); err != nil {
 		t.Fatal("planted filter did not run: the test does not reproduce the attack")
@@ -539,10 +539,10 @@ func TestWorktreeNestedRepoFilterDoesNotRun(t *testing.T) {
 			return err == nil
 		}
 		// Napad je resničen: brez ovoja (le nastavitve) filter teče.
-		if !status(worktreeHarnessEnv(wt, filepath.Join(root, "m"), t.TempDir())) {
+		if !status(worktreeHarnessEnv(wt, filepath.Join(root, "m"), t.TempDir(), "claude")) {
 			t.Fatalf("gitfile=%v: planted filter did not run: the test does not reproduce the attack", gitfile)
 		}
-		env := worktreeClaudeEnv(wt, filepath.Join(root, "m"), t.TempDir(), filepath.Join(root, "gitexec"), []string{filepath.Join(wt, ".git")})
+		env := worktreeClaudeEnv(wt, filepath.Join(root, "m"), t.TempDir(), filepath.Join(root, "gitexec"), []string{filepath.Join(wt, ".git")}, "claude")
 		if env == nil {
 			t.Fatal("no git wrapper")
 		}
@@ -551,7 +551,7 @@ func TestWorktreeNestedRepoFilterDoesNotRun(t *testing.T) {
 		}
 		// Tudi ko je ugnezdeni klon registriran (0.5.20): git samega claude vanj vstopi z relativnim GIT_DIR, ki ga ovoj
 		// ne pusti; filter iz njegovega config ne teče.
-		if status(worktreeClaudeEnv(wt, filepath.Join(root, "m"), t.TempDir(), filepath.Join(root, "gitexec"), []string{filepath.Join(wt, ".git"), gd})) {
+		if status(worktreeClaudeEnv(wt, filepath.Join(root, "m"), t.TempDir(), filepath.Join(root, "gitexec"), []string{filepath.Join(wt, ".git"), gd}, "claude")) {
 			t.Fatalf("gitfile=%v: the registered nested repository's filter ran", gitfile)
 		}
 		if why := cloneProblem(wt, repo, nil); why != "changes inside the nested repository sub do not come back in worktree mode; use sync" {
@@ -718,11 +718,11 @@ cat > /dev/null
 touch `+root+`/started
 for p in . sub sub/deep vendor/lib nc build/_deps/x; do echo "agent" >> "$p/agent.txt"; done
 grep -q uncommitted vendor/lib/f.txt && echo saw > vendor/lib/seen.txt
-# B: navodilo poimenuje ugnezdene klone; agent commita v podmodulu (ovoj pusti registriran GIT_DIR)
-while [ $# -gt 0 ]; do [ "$1" = --append-system-prompt-file ] && grep -qE "/claude-[0-9a-f]+-0/sub[,.]" "$2" && grep -q "GIT_DIR=<path>/.git" "$2" && touch note-ok; shift; done
-git add -A && git -c user.name=a -c user.email=a@x commit -qm "agent top" # cilj 1: nesledeni ugnezdeni niso gitlink
-GIT_DIR=$PWD/sub/.git GIT_COMMON_DIR=$PWD/sub/.git GIT_WORK_TREE=$PWD/sub git add agent.txt && \
-  GIT_DIR=$PWD/sub/.git GIT_COMMON_DIR=$PWD/sub/.git GIT_WORK_TREE=$PWD/sub git -c user.name=a -c user.email=a@x commit -qm "agent in sub" || echo commit-failed > commit-failed.txt
+# B: navodilo poimenuje ugnezdene klone; agent commita v podmodulu (#40: git -C in cd prek pathWrapScript, avtor agent)
+while [ $# -gt 0 ]; do [ "$1" = --append-system-prompt-file ] && grep -qE "/claude-[0-9a-f]+-0/sub[,.]" "$2" && grep -q "git -C <path>" "$2" && touch note-ok; shift; done
+git add -A && git commit -qm "agent top" # cilj 1: nesledeni ugnezdeni niso gitlink
+git -C sub add agent.txt && git -C sub commit -qm "agent in sub" || echo commit-failed > commit-failed.txt
+(cd sub/deep && git add agent.txt && git commit -qm "agent in deep") || echo commit-failed > commit-failed.txt
 echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"done"}}}'
 echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
 `)
@@ -773,8 +773,11 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
 			t.Fatalf("%q: no branch line:\n%s", p, out)
 		}
 	}
-	if got := gitT(t, filepath.Join(client, "sub"), "log", "--format=%s", branch); !strings.Contains(got, "agent in sub") {
+	if got := gitT(t, filepath.Join(client, "sub"), "log", "-1", "--format=%an <%ae> %s", branch); got != "Claude (Mini Gateway) <claude@minigw.invalid> agent in sub" {
 		t.Fatalf("agent's commit in the nested clone not kept: %s", got)
+	}
+	if got := gitT(t, filepath.Join(client, "sub", "deep"), "log", "-1", "--format=%an %s", branch); got != "Claude (Mini Gateway) agent in deep" {
+		t.Fatalf("agent's commit after cd in the nested clone: %s", got)
 	}
 	if files := gitT(t, client, "ls-tree", "-r", "--name-only", branch); !strings.Contains(files, "note-ok") || strings.Contains(files, "commit-failed") {
 		t.Fatalf("agent note or nested commit: %s", files)
@@ -1680,5 +1683,92 @@ func TestKeepCloneDisarmsGit(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(root, "c-1-kept-1")); err == nil {
 		t.Fatal("linked clone kept")
+	}
+}
+
+// #40: »git« na PATH agenta dela v registriranem klonu, ki vsebuje mapo ali -C <pot> (najdaljši), drugače ostane okolje
+// (vrhnji klon); ugnezden .git, ki ga minigw ni registriral, ne velja; predpona /x/a ni /x/ab. Besedilo je enako kot na
+// Macu (testdata/pathwrap.golden, Worktree.pathWrapScript).
+func TestPathWrapScript(t *testing.T) {
+	golden, err := os.ReadFile(filepath.Join("testdata", "pathwrap.golden"))
+	if err != nil || string(golden) != pathWrapScript("/REAL/git") {
+		t.Fatalf("pathWrapScript differs from testdata/pathwrap.golden (%v)", err)
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("no PATH wrapper on Windows")
+	}
+	root := filepath.Join(t.TempDir(), "a b'c")
+	real := filepath.Join(root, "real", "git")
+	writeT(t, real, "#!/bin/sh\necho \"$GIT_DIR|$GIT_WORK_TREE|$GIT_COMMON_DIR|$*\"\n")
+	os.Chmod(real, 0o755)
+	wrap := filepath.Join(root, "bin", "git")
+	writeT(t, wrap, pathWrapScript(real))
+	os.Chmod(wrap, 0o755)
+	top, lib, ab := filepath.Join(root, "w"), filepath.Join(root, "w", "lib"), filepath.Join(root, "x", "ab")
+	for _, d := range []string{top, lib, filepath.Join(lib, "inner"), filepath.Join(root, "x", "a"), ab} {
+		os.MkdirAll(filepath.Join(d, ".git"), 0o755)
+	}
+	os.MkdirAll(filepath.Join(lib, "src"), 0o755)
+	reg := strings.Join([]string{top + "/.git", lib + "/.git", root + "/x/a/.git"}, "\n")
+	harness := top + "/.git|" + top + "|" + top + "/.git"
+	in := func(p string) string { return p + "/.git|" + p + "|" + p + "/.git" }
+	for _, c := range []struct {
+		cwd  string
+		args []string
+		want string
+	}{
+		{top, []string{"status"}, in(top)},
+		{filepath.Join(lib, "src"), []string{"status"}, in(lib)},
+		{top, []string{"-C", "lib", "commit", "-m", "x"}, in(lib)},
+		{top, []string{"-c", "a=b", "--no-pager", "-C", "lib", "status"}, in(lib)},
+		{top, []string{"-C", "lib", "-C", "src", "status"}, in(lib)},
+		{top, []string{"-C", lib + "/..", "status"}, in(top)},
+		{top, []string{"status", "-C", "lib"}, in(top)}, // -C le pred ukazom
+		{filepath.Join(lib, "inner"), []string{"status"}, in(lib)},
+		{ab, []string{"status"}, harness},
+		{root, []string{"status"}, harness},
+		{top, []string{"-C", "missing", "status"}, harness},
+	} {
+		cmd := exec.Command(wrap, c.args...)
+		cmd.Dir, cmd.Env = c.cwd, append(os.Environ(), "GIT_DIR="+top+"/.git", "GIT_WORK_TREE="+top, "GIT_COMMON_DIR="+top+"/.git", "MINIGW_GIT_DIRS="+reg)
+		out, err := cmd.Output()
+		if got := strings.TrimSpace(string(out)); err != nil || got != c.want+"|"+strings.Join(c.args, " ") {
+			t.Errorf("%s: git %v: %v %q, want %q", c.cwd, c.args, err, got, c.want)
+		}
+	}
+}
+
+// #40: okolje agenta brez lastnikovih nastavitev git (globalne, sistemske, izključitve), avtor commitov je agent;
+// vrstni red parov je enak kot v Worktree.harnessEnv na Macu.
+func TestWorktreeHarnessEnvGitConfig(t *testing.T) {
+	env := map[string]string{}
+	for _, kv := range worktreeHarnessEnv("/w", "/m", "/t", "codex") {
+		k, v, _ := strings.Cut(kv, "=")
+		env[k] = v
+	}
+	want := []string{"core.fsmonitor=false", "core.hooksPath=" + os.DevNull, "core.attributesFile=" + os.DevNull, "diff.ignoreSubmodules=all",
+		"submodule.recurse=false", "core.excludesFile=" + os.DevNull, "user.name=Codex (Mini Gateway)", "user.email=codex@minigw.invalid"}
+	var got []string
+	for i := range want {
+		got = append(got, env["GIT_CONFIG_KEY_"+strconv.Itoa(i)]+"="+env["GIT_CONFIG_VALUE_"+strconv.Itoa(i)])
+	}
+	if env["GIT_CONFIG_GLOBAL"] != os.DevNull || env["GIT_CONFIG_NOSYSTEM"] != "1" || env["GIT_CONFIG_COUNT"] != "8" || !slices.Equal(got, want) {
+		t.Fatalf("git config env: %v", env)
+	}
+	if runtime.GOOS == "windows" {
+		return
+	}
+	gw := filepath.Join(t.TempDir(), "gitexec")
+	path := ""
+	for _, kv := range worktreeClaudeEnv("/w", "/m", "/t", gw, []string{"/w/.git"}, "claude") {
+		if p, ok := strings.CutPrefix(kv, "PATH="); ok {
+			path = p
+		}
+	}
+	if !strings.HasPrefix(path, filepath.Join(gw, "bin")+":") {
+		t.Fatalf("PATH without the git wrapper first: %q", path)
+	}
+	if b, err := os.ReadFile(filepath.Join(gw, "bin", "git")); err != nil || !strings.Contains(string(b), "MINIGW_GIT_DIRS") {
+		t.Fatalf("no PATH wrapper: %v", err)
 	}
 }

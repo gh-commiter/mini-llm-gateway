@@ -700,7 +700,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			objs = []string{objects}
 		}
 		if inTree {
-			if treeEnv = worktreeClaudeEnv(wt, maven, filepath.Join(wt, ".build", "tmp"), gw, gits); treeEnv == nil {
+			if treeEnv = worktreeClaudeEnv(wt, maven, filepath.Join(wt, ".build", "tmp"), gw, gits, k.name); treeEnv == nil {
 				return "", errors.New("cannot prepare git for the agent's clone (git --exec-path); use sync")
 			}
 		}
