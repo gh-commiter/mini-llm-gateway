@@ -21,6 +21,21 @@ public enum PluginSetup {
             && (st.st_mode & 0o020 == 0 || trustedGroup(st.st_gid))
     }
 
+    /// #48: vse nadrejene mape poti do / (kot je podana in prava pot) po pravilih safePath: kdor lahko zamenja katero koli,
+    /// zamenja minigw. Kot Go safeDir za vsako nadrejeno.
+    public static func safeAncestors(_ path: String) -> Bool {
+        guard let real = realpath(path, nil) else { return false }
+        defer { free(real) }
+        for start in [path, String(cString: real)] {
+            var d = start
+            repeat {
+                d = (d as NSString).deletingLastPathComponent
+                guard safePath(d) else { return false }
+            } while d != "/" && !d.isEmpty
+        }
+        return true
+    }
+
     /// macOS: le admin (80); staff (20) je vsak lokalni uporabnik (kot Go trustedGroup).
     public static func trustedGroup(_ gid: gid_t) -> Bool { gid == 80 }
 

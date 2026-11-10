@@ -64,3 +64,17 @@ import Testing
     }
     #expect(!PluginSetup.safePath("/tmp/.no-such-\(UUID().uuidString)"))
 }
+
+/// #48: varna mora biti vsaka nadrejena mapa do /, ne le neposredna (tudi prek povezave).
+@Test func pluginSafeAncestorsChecksEveryParent() throws {
+    let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("anc-\(UUID().uuidString)").path
+    let bin = root + "/a/b/bin", exe = bin + "/minigw", link = root + "/link"
+    try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
+    defer { chmod(root + "/a", 0o755); try? FileManager.default.removeItem(atPath: root) }
+    FileManager.default.createFile(atPath: exe, contents: Data())
+    try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: exe)
+    #expect(PluginSetup.safeAncestors(exe) && PluginSetup.safeAncestors(link))
+    chmod(root + "/a", 0o777)  // dve ravni nad mapo minigw
+    #expect(!PluginSetup.safeAncestors(exe) && !PluginSetup.safeAncestors(link))
+    #expect(!PluginSetup.safeAncestors("/tmp/x") && !PluginSetup.safeAncestors(root + "/missing"))
+}
