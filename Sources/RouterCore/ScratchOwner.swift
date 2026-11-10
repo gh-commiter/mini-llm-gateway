@@ -19,8 +19,25 @@ public enum ScratchOwner {
         "gw-" + (0..<6).map { _ in String(format: "%02x", UInt8.random(in: 0...255)) }.joined()
     }
 
+    /// "" = ni datoteke lastnika. Neberljiva, ne navadna datoteka ali povezava: unknown (tuja, zaprto). O_NONBLOCK:
+    /// podtaknjena cev ne ustavi GET /general in Settings.
     public static func owner(_ dir: URL) -> String {
-        ((try? String(contentsOf: dir.appendingPathComponent(ownerFile), encoding: .utf8)) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let fd = open(dir.appendingPathComponent(ownerFile).path, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
+        if fd < 0 { return errno == ENOENT ? "" : unknown }
+        defer { close(fd) }
+        var st = stat()
+        guard fstat(fd, &st) == 0, st.st_mode & S_IFMT == S_IFREG else { return unknown }
+        var buf = [UInt8](repeating: 0, count: 256)
+        let n = read(fd, &buf, buf.count)
+        guard n >= 0 else { return unknown }
+        return String(decoding: buf[0..<n], as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    static let unknown = "?"
+
+    /// Prava mapa (ne povezava) tega uporabnika.
+    static func mine(_ dir: URL) -> Bool {
+        var st = stat()
+        return lstat(dir.path, &st) == 0 && st.st_mode & S_IFMT == S_IFDIR && st.st_uid == getuid()
     }
 
     /// "" = mapa te instance (ali še brez lastnika), sicer inUse (drug prehod teče) ali stale.
@@ -32,9 +49,11 @@ public enum ScratchOwner {
 
     /// Zaklep mape drži drug proces (aplikacija ali minigw serve, ki teče).
     static func locked(_ dir: URL) -> Bool {
-        let fd = open(dir.appendingPathComponent(lockFile).path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
-        guard fd >= 0 else { return false }
+        let fd = open(dir.appendingPathComponent(lockFile).path, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
+        guard fd >= 0 else { return errno != ENOENT }  // zaprto: ni mogoče preveriti
         defer { close(fd) }
+        var st = stat()
+        guard fstat(fd, &st) == 0, st.st_mode & S_IFMT == S_IFREG else { return true }
         if flock(fd, LOCK_EX | LOCK_NB) == 0 { flock(fd, LOCK_UN); return false }
         return true
     }
@@ -44,7 +63,9 @@ public enum ScratchOwner {
     @discardableResult public static func claim(_ dir: URL, id: String) -> String {
         held.withLock { if $0 >= 0 { close($0); $0 = -1 } }  // flock velja za odprto datoteko: tudi naša bi zaklep zavrnila
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        let fd = open(dir.appendingPathComponent(ownerFile).path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        // prva raba (tudi obstoječa mapa pred 0.5.24): le prava mapa tega uporabnika, ki je ne drži drug proces
+        let fresh = owner(dir).isEmpty && mine(dir) && !locked(dir)
+        let fd = fresh ? open(dir.appendingPathComponent(ownerFile).path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600) : -1
         if fd >= 0 {
             let line = Array((id + "\n").utf8)
             let ok = write(fd, line, line.count) == line.count
@@ -52,13 +73,20 @@ public enum ScratchOwner {
             if !ok { unlink(dir.appendingPathComponent(ownerFile).path) }
         }
         var st = state(dir, id: id)
+        if st.isEmpty, owner(dir) != id, (try? FileManager.default.attributesOfItem(atPath: dir.path)) != nil {
+            st = locked(dir) ? inUse : stale  // brez lastnika in ni naša ali jo drži drug proces
+        }
         if st.isEmpty, owner(dir) == id {
-            let lfd = open(dir.appendingPathComponent(lockFile).path, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0o600)
-            if lfd >= 0, flock(lfd, LOCK_EX | LOCK_NB) == 0 {
+            let lfd = open(dir.appendingPathComponent(lockFile).path, O_RDWR | O_CREAT | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC, 0o600)
+            var fs = stat()
+            if lfd >= 0, fstat(lfd, &fs) == 0, fs.st_mode & S_IFMT == S_IFREG, flock(lfd, LOCK_EX | LOCK_NB) == 0 {
                 held.withLock { $0 = lfd }
-            } else if lfd >= 0 {
-                close(lfd)
-                st = inUse
+            } else {
+                let e = errno
+                if lfd >= 0 { close(lfd) }
+                if e == EWOULDBLOCK { st = inUse } else {  // npr. omrežni disk brez flock: brez zaklepa, opozorilo
+                    log.warning("scratch folder \(dir.path, privacy: .public): no lock (\(String(cString: strerror(e)), privacy: .public)): a Scratch base shared by more than one computer is not supported")
+                }
             }
         }
         let foreign = !st.isEmpty
@@ -93,6 +121,7 @@ public enum ScratchOwner {
     @discardableResult public static func takeOver(_ old: URL, current: URL? = nil, id: String, now: Date = Date()) throws -> (folder: URL, aside: URL?) {
         guard !id.isEmpty else { throw error("this gateway has no instance ID yet") }
         guard !locked(old) else { throw error("the folder is used by another gateway that is running: stop it first") }
+        guard mine(old) else { throw error("the folder is not a real folder of this user") }
         let fm = FileManager.default
         let dst = old.deletingLastPathComponent().appendingPathComponent(id, isDirectory: true)
         var aside: URL?, moved: [(URL, URL)] = []
@@ -115,9 +144,12 @@ public enum ScratchOwner {
             } catch { throw undo(error) }
         }
         if old.lastPathComponent != id {
-            do { try fm.moveItem(at: old, to: dst) } catch { throw undo(error) }
+            do { try fm.moveItem(at: old, to: dst); moved.append((old, dst)) } catch { throw undo(error) }
         }
-        try Data((id + "\n").utf8).write(to: dst.appendingPathComponent(ownerFile), options: .atomic)
+        do {  // zaščita (0700) in lastnik; napaka: vse nazaj
+            guard chmod(dst.path, 0o700) == 0, mine(dst) else { throw error("\(dst.path): cannot make it private to this user") }
+            try Data((id + "\n").utf8).write(to: dst.appendingPathComponent(ownerFile), options: .atomic)
+        } catch { throw undo(error) }
         log.notice("scratch folder \(old.path, privacy: .public) taken over from another gateway: now \(dst.path, privacy: .public)\(aside.map { "; this gateway's previous folder is kept as " + $0.path } ?? "", privacy: .public)")
         return (dst, aside)
     }
@@ -128,10 +160,39 @@ public enum ScratchOwner {
         let fm = FileManager.default, base = current.deletingLastPathComponent()
         return ((try? fm.contentsOfDirectory(atPath: base.path)) ?? []).sorted().compactMap { n in
             let p = base.appendingPathComponent(n, isDirectory: true)
-            guard n != current.lastPathComponent, !n.contains(".old-"),
-                  (try? fm.attributesOfItem(atPath: p.path)[.type] as? FileAttributeType) == .typeDirectory else { return nil }
+            guard n != current.lastPathComponent, !n.contains(".old-"), mine(p), !owner(p).isEmpty else { return nil }
             let st = state(p, id: id)
             return st.isEmpty ? nil : (n, st)
+        }
+    }
+
+    public struct TakeError: Error { public let status: Int; public let message: String }
+
+    /// Take over (skrbniški API in Settings, znotraj iste zaporedne spremembe nastavitev): name = sosednja mapa v osnovi,
+    /// nil = mapa, ki jo imenuje nastavitev. Vrne mapo ob strani (nil = ni je).
+    public static func take(_ c: inout RouterConfig, name: String?) throws -> URL? {
+        let cur = c.scratchURL
+        var old = cur, st = ""
+        if let name, !name.isEmpty {  // le neposredna podmapa osnove, prava mapa druge instance
+            guard !name.contains("/"), !name.contains(":"), name != ".", name != ".." else {
+                throw TakeError(status: 400, message: "name: a folder name in the Scratch base, without path separators")
+            }
+            guard !c.instanceID.isEmpty, let s = siblings(cur, id: c.instanceID).first(where: { $0.name == name }) else {
+                throw TakeError(status: 400, message: "name: \(name) is not another gateway's Scratch folder in \(cur.deletingLastPathComponent().path)")
+            }
+            old = cur.deletingLastPathComponent().appendingPathComponent(name, isDirectory: true)
+            st = s.state
+        } else {
+            st = c.instanceID.isEmpty ? "" : state(cur, id: c.instanceID)
+        }
+        if st.isEmpty { throw TakeError(status: 409, message: "the Scratch folder \(old.path) is this gateway's own: nothing to take over") }
+        if st == inUse { throw TakeError(status: 409, message: "the Scratch folder \(old.path) is used by another gateway that is running: stop it first, or choose another folder") }
+        do {
+            let r = try takeOver(old, current: old == cur ? nil : cur, id: c.instanceID)
+            c.scratchName = c.instanceID
+            return r.aside
+        } catch {
+            throw TakeError(status: 500, message: "scratch folder not taken over (it stays \(old.path)): \(error.localizedDescription)")
         }
     }
 

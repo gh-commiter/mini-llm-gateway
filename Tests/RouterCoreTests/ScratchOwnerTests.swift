@@ -120,3 +120,19 @@ private func put(_ dir: URL, _ rel: String, _ text: String = "x") throws {
     #expect(!fm.fileExists(atPath: base.appendingPathComponent("gw-old").path) && !fm.fileExists(atPath: me.appendingPathComponent("chat").path))
     #expect(app.config.scratchURL.path == me.path)
 }
+
+/// Zaprto: cev namesto datoteke lastnika ne blokira in šteje kot tuj lastnik; povezava se ne prevzame.
+@Test func scratchOwnerFailClosed() throws {
+    let fm = FileManager.default
+    let base = try tempBase()
+    defer { try? fm.removeItem(at: base) }
+    let d = base.appendingPathComponent("fifo")
+    try fm.createDirectory(at: d, withIntermediateDirectories: true)
+    #expect(mkfifo(d.appendingPathComponent(ScratchOwner.ownerFile).path, 0o600) == 0)
+    #expect(ScratchOwner.state(d, id: "gw-me") == ScratchOwner.stale)
+    let real = base.appendingPathComponent("real"), link = base.appendingPathComponent("link")
+    try put(real, ScratchOwner.ownerFile, "gw-gone\n")
+    try fm.createSymbolicLink(at: link, withDestinationURL: real)
+    #expect(throws: (any Error).self) { try ScratchOwner.takeOver(link, id: "gw-me") }
+    #expect(ScratchOwner.siblings(base.appendingPathComponent("gw-me"), id: "gw-me").map(\.name) == ["fifo", "real"])
+}

@@ -339,6 +339,23 @@ final class AppState: ObservableObject {
 
     func reject(_ p: DeviceLog.Pending) { Router.deviceLog.removePending(p.id) }
 
+    /// N4: Take over iz Settings po isti poti kot skrbniški API (sprememba nastavitev na glavni niti, nato ponovni zagon
+    /// routerja), zapisano tudi v Activity. Vrne napako ali nil.
+    func takeScratch(_ name: String?) async -> String? {
+        if await Router.scratchInUse() {
+            return String(localized: "minigw sessions or agents are active. Take over the scratch folder when no minigw session runs.")
+        }
+        let start = Date()
+        var c = config
+        var status = 200, failure: String?
+        do { _ = try ScratchOwner.take(&c, name: name); apply(c) } catch let e as ScratchOwner.TakeError {
+            (status, failure) = (e.status, e.message)
+        } catch { (status, failure) = (500, error.localizedDescription) }
+        logs = Array(([RequestLog(time: start, method: "POST", path: "/general/scratch/take", model: nil, provider: "settings",
+                                  status: status, ms: Int(Date().timeIntervalSince(start) * 1000))] + logs).prefix(500))
+        return failure
+    }
+
     func apply(_ c: RouterConfig) {
         config = c
         c.save()

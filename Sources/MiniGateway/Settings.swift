@@ -1247,6 +1247,7 @@ struct ProviderPane: View {
 
 /// Mapa za začasne datoteke agentov; premik prenese vsebino (npr. na hiter zunanji SSD).
 struct ScratchSection: View {
+    @EnvironmentObject var state: AppState
     @Binding var draft: RouterConfig
     @State private var moving = false
     @State private var failure: String?
@@ -1353,20 +1354,12 @@ struct ScratchSection: View {
     /// N4, odločitev 2: prevzem mape prehoda, ki ga ni več (preimenovanje, nikoli združevanje; ScratchOwner.takeOver).
     /// name = sosednja mapa v osnovi (po ponovni namestitvi); nil = mapa, ki jo imenuje nastavitev.
     private func take(_ name: String?) {
-        let cur = draft.scratchURL, id = draft.instanceID
-        let old = name.map { cur.deletingLastPathComponent().appendingPathComponent($0, isDirectory: true) } ?? cur
         moving = true
-        Task.detached {
-            if await Router.scratchInUse() {
-                await MainActor.run { moving = false; failure = String(localized: "minigw sessions or agents are active. Take over the scratch folder when no minigw session runs.") }
-                return
-            }
-            let error: String? = { do { try ScratchOwner.takeOver(old, current: name == nil ? nil : cur, id: id); return nil } catch { return error.localizedDescription } }()
-            await MainActor.run {
-                moving = false
-                if let error { failure = error } else { draft.scratchName = id }
-                refresh()
-            }
+        Task {  // ista zaporedna pot kot skrbniški API (AppState.takeScratch → ScratchOwner.take na glavni niti)
+            let error = await state.takeScratch(name)
+            moving = false
+            failure = error
+            refresh()
         }
     }
 }

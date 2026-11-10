@@ -430,8 +430,10 @@ extension Router {
             }
         case "GET agents/{}/tools":
             guard arg == "claude" else { throw AdminError(404, "no agent \(arg)") }
+            try Self.scratchGuard(c)
             return (200, ["tools": await Self.toolList.get(c.claudeCLI.executable)])
         case "GET agents/{}/models":  // Codex, Grok: modeli računa (kot minigw serve)
+            try Self.scratchGuard(c)
             switch arg {
             case "codex":
                 guard let exe = await Codex.executable(c.codex.executable) else { return (200, ["models": [Any]()]) }
@@ -639,39 +641,17 @@ extension Router {
                 if let wtCodexNet { c.worktreeCodexNetwork = wtCodexNet }
             }
             return (200, general(n, connect: hooks.connect))  // aplikacija znova zažene router: brez restartRequired
-        case "POST general/{}/take":  // N4: Take over (Settings → General → Scratch folder)
+        case "POST general/{}/take":  // N4: Take over (Settings → General → Scratch folder; ScratchOwner.take)
             guard arg == "scratch" else { throw AdminError(404, "Not found: \(method) \(path)") }
             let name = body.isEmpty ? nil : try AdminBody(body, ["name"]).string("name")  // sosednja mapa v osnovi
-            var old = c.scratchURL
-            let sibling = name.flatMap { $0.isEmpty ? nil : $0 }
-            if let name = sibling {  // le neposredna podmapa osnove, prava mapa druge instance
-                guard !name.contains("/"), !name.contains(":"), name != ".", name != ".." else {
-                    throw AdminError(400, "name: a folder name in the Scratch base, without path separators")
-                }
-                guard !c.instanceID.isEmpty, ScratchOwner.siblings(c.scratchURL, id: c.instanceID).contains(where: { $0.name == name }) else {
-                    throw AdminError(400, "name: \(name) is not another gateway's Scratch folder in \(c.scratchURL.deletingLastPathComponent().path)")
-                }
-                old = c.scratchURL.deletingLastPathComponent().appendingPathComponent(name, isDirectory: true)
-            }
             if await hooks.scratchInUse() {
                 throw AdminError(409, "scratch folder: minigw sessions or agents are active; take it over when no minigw session runs")
             }
-            switch ScratchOwner.state(old, id: c.instanceID) {
-            case "": throw AdminError(409, "the Scratch folder \(old.path) is this gateway's own: nothing to take over")
-            case ScratchOwner.inUse: throw AdminError(409, "the Scratch folder \(old.path) is used by another gateway that is running: stop it first, or choose another folder")
-            default: break
-            }
             let aside = OSAllocatedUnfairLock<String?>(initialState: nil)
             let n = try await hooks.update { c in
-                let from = sibling.map { c.scratchURL.deletingLastPathComponent().appendingPathComponent($0, isDirectory: true) } ?? c.scratchURL
-                do {
-                    aside.withLock { $0 = nil }
-                    let r = try ScratchOwner.takeOver(from, current: from == c.scratchURL ? nil : c.scratchURL, id: c.instanceID)
-                    aside.withLock { $0 = r.aside?.path }
-                } catch {
-                    throw AdminError(500, "scratch folder not taken over (it stays \(from.path)): \(error.localizedDescription)")
+                do { let a = try ScratchOwner.take(&c, name: name); aside.withLock { $0 = a?.path } } catch let e as ScratchOwner.TakeError {
+                    throw AdminError(e.status, e.message)
                 }
-                c.scratchName = c.instanceID
             }
             var g = general(n, connect: hooks.connect)
             g["connect"] = nil
@@ -735,6 +715,13 @@ extension Router {
     func siriInfo(_ c: RouterConfig) -> [String: Any] {
         ["enabled": c.siri.enabled, "timeout": c.siri.timeout,
          "devices": c.devices.map { ["id": $0.id, "name": $0.name, "siri": $0.siri] }]
+    }
+
+    /// N4: v mapi drugega prehoda nič (kot minigw serve: tudi poizvedbe orodij in modelov).
+    static func scratchGuard(_ c: RouterConfig) throws {
+        guard ScratchOwner.blocked.withLock({ $0 }) else { return }
+        let st = ScratchOwner.state(c.scratchURL, id: c.instanceID)
+        throw AdminError(503, ScratchOwner.message(c.scratchURL, st.isEmpty ? ScratchOwner.stale : st))
     }
 
     func general(_ c: RouterConfig, connect: String) -> [String: Any] {
