@@ -590,9 +590,16 @@ func sessions(u *ui) ([]row, error) {
 	return rows, nil
 }
 
-// activity: requests running now at the top, then the recent ones (GET /activity); metadata only.
+// errOldGateway: the gateway has no GET /activity (404); the page then stops reloading itself.
+var errOldGateway = errors.New("Needs gateway 0.5.21 or newer (Mini Gateway app or minigw serve)")
+
+// activity: requests running now at the top, then the recent ones (GET /activity); metadata and the agent's current
+// step (tool or command), never prompt or answer text.
 func activity(u *ui) ([]row, error) {
 	r, err := u.call("GET", "/activity", nil)
+	if err != nil && strings.HasPrefix(strings.ToLower(err.Error()), "not found: ") {
+		return nil, errOldGateway
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -623,7 +630,7 @@ func activity(u *ui) ([]row, error) {
 		}
 	}
 	reqs := objs(r, "requests")
-	rows = append(rows, hdr(fmt.Sprintf("Recent requests (%d, newest first; never prompt or answer text)", len(reqs))))
+	rows = append(rows, hdr(fmt.Sprintf("Recent requests (%d, newest first; no prompt or answer text)", len(reqs))))
 	if len(reqs) == 0 {
 		rows = append(rows, inf("No requests yet.", ""))
 	}

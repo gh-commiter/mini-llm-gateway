@@ -212,7 +212,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case isMac:
 		m.mac = bool(msg)
 	case tick:
-		if int(msg) != m.visit || m.tab != activityTab {
+		if int(msg) != m.visit || m.tab != activityTab || errors.Is(m.loadFailed, errOldGateway) {
 			return m, nil
 		}
 		if m.busy || m.asking {

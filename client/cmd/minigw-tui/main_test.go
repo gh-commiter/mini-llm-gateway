@@ -261,6 +261,17 @@ func TestActivity(t *testing.T) {
 	if _, cmd = m.Update(tick(m.visit - 1)); cmd != nil { // a tick of an earlier visit stops
 		t.Fatal("old tick reloads")
 	}
+
+	os.Remove(filepath.Join(dir, "GET_activity.json")) // a gateway older than 0.5.21: 404, no more reloads
+	m.u = u
+	next, _ = m.Update(m.reload("", false)())
+	m = next.(model)
+	if v := m.View(); !strings.Contains(v, "Needs gateway 0.5.21 or newer") {
+		t.Fatalf("old gateway:\n%s", v)
+	}
+	if _, cmd = m.Update(tick(m.visit)); cmd != nil {
+		t.Fatal("polls an old gateway")
+	}
 }
 
 func mouse(t *testing.T, m model, x, y int) model {
