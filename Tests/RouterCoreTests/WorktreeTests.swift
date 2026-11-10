@@ -1,4 +1,5 @@
 import Foundation
+import os
 import Testing
 @testable import RouterCore
 
@@ -39,7 +40,7 @@ private func cleanup(_ root: URL) {
 }
 
 /// minigw za teste: obdela WORKTREE-PUSH in WORKTREE-PULL kot ShareClient (MiniGW/main.swift) prek ShareHub.
-private func fakeClient(_ hub: ShareHub, key: String, top: URL) -> Task<Void, Never> {
+private func fakeClient(_ hub: ShareHub, key: String, top: URL, notes: OSAllocatedUnfairLock<[String]>? = nil) -> Task<Void, Never> {
     Task {
         while !Task.isCancelled {
             guard case .some(.some(let job)) = await hub.poll(key: key, wait: 0.2) else { continue }
@@ -73,6 +74,10 @@ private func fakeClient(_ hub: ShareHub, key: String, top: URL) -> Task<Void, Ne
                     try? FileManager.default.removeItem(at: f)
                 }
                 r = DAVResponse(ok ? 200 : 500)
+            } else if job.method == "WORKTREE-NOTE", let notes {
+                let m = (try? JSONSerialization.jsonObject(with: job.body) as? [String: Any])?["message"] as? String ?? ""
+                notes.withLock { $0.append(m) }
+                r = DAVResponse(200)
             }
             _ = await hub.reply(key: key, DAVReply(id: job.id, response: r))
         }
@@ -1314,6 +1319,128 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     #expect(FileManager.default.fileExists(atPath: marker), "the test does not reproduce the filter")
 }
 
+/// keepClone teče zunaj akterja: počakaj nanj (največ 5 s).
+private func waitKept(_ kept: String) async {
+    for _ in 0..<100 where !FileManager.default.fileExists(atPath: kept) { try? await Task.sleep(nanoseconds: 50_000_000) }
+}
+
+/// Absolutna pot ohranjenega klona iz sporočila (L3: pot glede na Scratch prehoda).
+private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
+    guard let r = line.range(of: #"as worktrees/\S+-kept-\d{8}-\d{6}-\d{9} after this session \(files only; its \.git folders renamed \.git\.agent — do not run git there\)$"#, options: .regularExpression) else { return nil }
+    let rel = line[r].dropFirst(3).prefix { $0 != " " }
+    return tree.worktrees.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent(String(rel)).path
+}
+
+/// L6 (kot Go TestWorktreeNestedSkippedTopDelivered): zavrnjen ugnezdeni (premaknjen, večji od 64 MB) ne ustavi vrhnjega:
+/// vrhnja veja pride (brez vsebine zavrnjenega), ena vrstica pove, kateri in zakaj, klon z delom po koncu seje ostane.
+@Test(arguments: ["moved", "big"]) func worktreeNestedSkippedTopDelivered(_ kind: String) async throws {
+    let (root, client, tree) = try fixture()
+    defer { cleanup(root) }
+    for p in ["lib", "other"] {
+        let d = client.appendingPathComponent(p)
+        try file(d, "f.txt", "f\n"); g(d, "init", "-q", "-b", "main"); g(d, "add", "f.txt"); g(d, "commit", "-qm", "first")
+    }
+    let hub = ShareHub(), session = UUID().uuidString, notes = OSAllocatedUnfairLock<[String]>(initialState: [])
+    let key = try #require(await hub.register(session: session, cwd: client.path, key: nil, device: "dev", tree: tree))
+    let loop = fakeClient(hub, key: key, top: client, notes: notes)
+    defer { loop.cancel() }
+    let br = "minigw/claude-\(String(Sync.folderID(session).prefix(8)))-0"
+    var wt: URL?
+    let id = try await agentRun(hub, session) { dir in
+        wt = dir
+        for p in [".", "lib", "other"] { try file(dir.appendingPathComponent(p), "agent.txt", "agent\n") }
+        if kind == "moved" {
+            try FileManager.default.removeItem(at: dir.appendingPathComponent("lib/.git"))
+        } else {
+            try FileHandle(forReadingAtPath: "/dev/urandom")!.readData(ofLength: 70_000_000).write(to: dir.appendingPathComponent("lib/big.bin"))
+        }
+    }
+    await hub.finish(run: id)
+    let why = kind == "moved" ? "the nested repository lib was moved or replaced in the agent's clone"
+        : "the agent's branch in the nested repository lib is larger than 64 MB; it stays on the gateway's mirror (\(br))"
+    #expect(g(client, "show", br + ":agent.txt") == "agent")
+    let top = g(client, "ls-tree", "-r", "--name-only", br)
+    #expect(!top.contains("lib/") && !top.contains("other/"))
+    #expect(g(client.appendingPathComponent("lib"), "branch", "--list", br).isEmpty)
+    #expect(g(client.appendingPathComponent("other"), "show", br + ":agent.txt") == "agent")
+    let line = try #require(notes.withLock { $0 }.first { $0.hasPrefix("worktree: " + why + "; the agent's files are kept on the gateway for 30 days as worktrees/") })
+    let kept = try #require(keptPath(line, tree))
+    if kind == "moved" {  // L1: naslednja zahteva naredi nov klon na isti poti; nedostavljeno delo prej v kept
+        let id2 = try await agentRun(hub, session) { _ in }
+        await hub.finish(run: id2)
+        #expect((try? String(contentsOfFile: kept + "/lib/agent.txt", encoding: .utf8)) == "agent\n")
+    }
+    // M2: config agenta s fsmonitor v .git klona ob ohranitvi ne sme več teči
+    let marker = root.appendingPathComponent("fsmonitor-ran")
+    for d in ["", "/other"] where FileManager.default.fileExists(atPath: wt!.path + d + "/.git") {
+        g(URL(fileURLWithPath: wt!.path + d), "config", "core.fsmonitor", "touch \(marker.path); false")
+    }
+    await hub.unregister(key: key)  // konec seje: klon z nedostavljenim delom ostane (keepClone zunaj akterja)
+    await waitKept(kept)
+    #expect((try? String(contentsOfFile: kept + "/lib/agent.txt", encoding: .utf8)) == "agent\n")
+    for d in ["", "/lib", "/other"] {
+        var st = stat()
+        #expect(lstat(kept + d + "/.git", &st) != 0, "\(d)")
+        #expect(Worktree.run(["status"], cwd: kept + d, env: ["GIT_CEILING_DIRECTORIES": URL(fileURLWithPath: kept).deletingLastPathComponent().path], safe: false).status != 0, "\(d)")
+    }
+    #expect(FileManager.default.fileExists(atPath: kept + "/.git.agent") && !FileManager.default.fileExists(atPath: marker.path))
+    // Zrcalo po 30 dneh gre, ohranjeni klon (mlajši od 30 dni) ne; po svojih 30 dneh gre tudi on.
+    let scratch = tree.repo.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(40 * 86400)], ofItemAtPath: kept)  // prune premakne mejo (days), ne ure
+    Worktree.prune(scratch: scratch, days: -31)
+    #expect(FileManager.default.fileExists(atPath: kept) && !FileManager.default.fileExists(atPath: tree.repo.path))
+    Worktree.prune(scratch: scratch, days: -51)
+    #expect(!FileManager.default.fileExists(atPath: kept))
+}
+
+/// L6 (M1, native): zamenjan .git/objects uporabnika ustavi dostavo; sporočilo pove, da klon z delom ostane, ob koncu
+/// seje gre v kept.
+@Test func nativeObjectsReplacedKeepsClone() async throws {
+    let (root, client, mirror) = try fixture()
+    defer { cleanup(root) }
+    let (top, sub) = try #require(Router.nativeBranches(client, inPlace: false, roots: root.path, scratch: mirror.repo))
+    let tree = ShareHub.Tree(repo: mirror.repo, worktrees: mirror.worktrees, sub: sub, local: top)
+    let hub = ShareHub(), session = UUID().uuidString, notes = OSAllocatedUnfairLock<[String]>(initialState: [])
+    let key = try #require(await hub.register(session: session, cwd: "/Volumes/share/client", key: nil, device: "dev", tree: tree))
+    let loop = fakeClient(hub, key: key, top: client, notes: notes)
+    defer { loop.cancel() }
+    let id = UUID().uuidString
+    let wt = try #require(await ShareHub.$run.withValue(id) { await ShareHub.$agent.withValue("claude") {
+        await hub.mount(session: session, cwd: nil, base: "", device: "dev", roots: root.path, writes: true) } })
+    try file(wt, "agent.txt", "agent\n")
+    let objects = client.appendingPathComponent(".git/objects")
+    try FileManager.default.moveItem(at: objects, to: client.appendingPathComponent(".git/objects.real"))
+    try FileManager.default.createSymbolicLink(at: objects, withDestinationURL: client.appendingPathComponent(".git/objects.real"))
+    await ShareHub.$run.withValue(id) { await hub.syncBack(session: session) }
+    await hub.finish(run: id)
+    let line = try #require(notes.withLock { $0 }.first { $0.contains(".git/objects was replaced") })
+    let kept = try #require(keptPath(line, tree))
+    await hub.unregister(key: key)
+    await waitKept(kept)
+    #expect((try? String(contentsOfFile: kept + "/agent.txt", encoding: .utf8)) == "agent\n")
+    #expect(!FileManager.default.fileExists(atPath: wt.path))
+}
+
+/// M1, L2 (kot Go TestPruneKept): največ maxKept ohranjenih (najstarejši gredo), starejši od meje gredo; povezava se ne sledi.
+@Test func pruneKeptCapsAndSkipsLinks() throws {
+    let base = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("pk-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: base) }
+    let dir = base.appendingPathComponent("d"), outside = base.appendingPathComponent("o/x-kept-1")
+    try file(outside, "f", "x"); try file(dir.appendingPathComponent("c-0"), "f", "x")
+    try FileManager.default.createSymbolicLink(at: dir.appendingPathComponent("link-kept-0"), withDestinationURL: outside)
+    let now = Date()
+    for i in 1...5 {
+        let d = dir.appendingPathComponent("c-kept-\(i)")
+        try file(d, "f", "x")
+        try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(Double(i) * 3600)], ofItemAtPath: d.path)
+    }
+    ShareHub.pruneKept(dir, before: .distantPast)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path).sorted() == ["c-0", "c-kept-3", "c-kept-4", "c-kept-5", "link-kept-0"])
+    ShareHub.pruneKept(dir, before: now.addingTimeInterval(4 * 3600))
+    #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("c-kept-3").path))
+    #expect(FileManager.default.fileExists(atPath: outside.appendingPathComponent("f").path))
+}
+
 /// #57, #58: tanek bundle (evil..c2, c2 ponovno uporabi drevo z ».git«, ki ga je fetch brez fsck pustil v objektih) fetch
 /// sprejme tudi na novem gitu; fsck ga zavrne pri odjemalcu (lastno sporočilo), ob uvozu v zrcalo prehoda in pri native.
 @Test func thinBundleFailsTheObjectCheck() throws {
@@ -1392,4 +1519,29 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
             (await hub.mount(session: s2, cwd: nil, base: "", device: "dev", roots: root.path, writes: true), await hub.takeRefusal()) } }
     }
     #expect(d2 == nil && w2?.status == 400 && w2?.message.hasSuffix("update git or use --minigw-work=native-direct") == true, "\(String(describing: w2))")
+}
+
+/// M2, #4, #1 (kot Go TestKeepCloneDisarmsGit): keepClone preimenuje vsak .git in HEAD golega repozitorija v klonu, nikoli
+/// prek povezave ven; klon, ki je povezava, ostane, kot je.
+@Test func keepCloneDisarmsGit() throws {
+    let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("kc-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let wt = root.appendingPathComponent("c-0"), outside = root.appendingPathComponent("outside"), kept = root.appendingPathComponent("c-0-kept-1")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    g(root, "init", "-q", wt.path); g(root, "init", "-q", "--bare", wt.appendingPathComponent("bare").path)
+    g(root, "init", "-q", outside.path); g(root, "init", "-q", "--bare", outside.appendingPathComponent("b").path)
+    try file(wt.appendingPathComponent("sub"), ".git", "gitdir: ../x\n"); try file(wt, "f.txt", "agent\n")
+    try FileManager.default.createSymbolicLink(at: wt.appendingPathComponent("link"), withDestinationURL: outside)
+    try FileManager.default.createSymbolicLink(at: wt.appendingPathComponent("blink"), withDestinationURL: outside.appendingPathComponent("b"))
+    ShareHub.keepClone(wt, kept)
+    func exists(_ p: String) -> Bool { var st = stat(); return lstat(p, &st) == 0 }
+    for p in [".git.agent", "sub/.git.agent", "bare/HEAD.agent", "f.txt"] { #expect(exists(kept.path + "/" + p), "\(p)") }
+    for p in [".git", "sub/.git", "bare/HEAD"] { #expect(!exists(kept.path + "/" + p), "\(p)") }
+    for d in ["", "/bare", "/sub"] {
+        #expect(Worktree.run(["rev-parse", "--git-dir"], cwd: kept.path + d, env: ["GIT_CEILING_DIRECTORIES": root.path], safe: false).status != 0, "\(d)")
+    }
+    #expect(exists(outside.path + "/.git") && exists(outside.path + "/b/HEAD"))
+    try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("c-1"), withDestinationURL: outside)
+    ShareHub.keepClone(root.appendingPathComponent("c-1"), root.appendingPathComponent("c-1-kept-1"))
+    #expect(exists(outside.path + "/.git") && !exists(root.path + "/c-1-kept-1"))
 }

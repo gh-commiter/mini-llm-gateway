@@ -1345,3 +1345,340 @@ func TestImportBaseFsck(t *testing.T) {
 		t.Fatal("good bundle refused")
 	}
 }
+
+// L6: zavrnjen ugnezdeni (premaknjen, večji od 64 MB, unconfined) ne ustavi vrhnjega: vrhnja veja pride (brez vsebine
+// zavrnjenega), ena vrstica pove, kateri in zakaj, klon z delom po koncu seje ostane (kept).
+func TestWorktreeNestedSkippedTopDelivered(t *testing.T) {
+	for _, c := range []struct{ name, agent, why string }{
+		// Linux s pin: .git je točka priklopa (ostane prazna mapa), zato »could not save« namesto »moved«.
+		{"moved", `rm -rf lib/.git`, `(?:the nested repository lib was moved or replaced in the agent's clone|the gateway could not save the agent's work in the nested repository lib as a branch)`},
+		{"big", `head -c 70000000 /dev/urandom > lib/big.bin`, `the agent's branch in the nested repository lib is larger than 64 MB`},
+		{"unconfined", `:`, `the nested repository lib does not come back on this gateway`},
+		{"toolarge", `mkdir many && (cd many && seq 1 100001 | xargs touch)`, ``}, // M1: prevelik klon se ne ohrani
+	} {
+		t.Run(c.name, func(t *testing.T) { testNestedSkipped(t, c.agent, c.why, c.name) })
+	}
+}
+
+func testNestedSkipped(t *testing.T, agent, why, kind string) {
+	unconfined := kind == "unconfined"
+	if runtime.GOOS == "windows" {
+		t.Skip("fake claude is a shell script")
+	}
+	if !gitAttrSource() {
+		t.Skip("git before 2.40: the client refuses nested repositories")
+	}
+	if runtime.GOOS == "linux" && finalizeBwrap() == "" {
+		t.Skip("Linux without bwrap: nested repositories are refused")
+	}
+	root := t.TempDir()
+	client := filepath.Join(root, "client")
+	for _, d := range []string{client, filepath.Join(client, "lib"), filepath.Join(client, "other")} {
+		os.MkdirAll(d, 0o755)
+		gitT(t, d, "init", "-q", "-b", "main")
+		writeT(t, filepath.Join(d, "f.txt"), "f\n")
+		gitT(t, d, "add", "f.txt")
+		gitT(t, d, "commit", "-qm", "first")
+	}
+	fake := filepath.Join(root, "claude")
+	writeT(t, fake, `#!/bin/sh
+`+cliGuard+`
+cat > /dev/null
+for p in . lib other; do echo "agent" >> "$p/agent.txt"; done
+[ -f `+root+`/second ] && { `+agent+`; }
+echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"done"}}}'
+echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
+`)
+	os.Chmod(fake, 0o755)
+	s, _ := testServer(t, func(c *serveConfig) { c.Claude = fake })
+	s.hub.nestedBlocker = func(string) string { return "" }
+	c := startLoopback(t, s)
+	sc := &shareClient{c: c, session: "sidk", root: client, worktree: true, top: filepath.ToSlash(client), synced: map[string]syncEntry{}, reported: map[string]bool{}}
+	if !sc.register() {
+		t.Fatal("register failed: " + sc.refusal)
+	}
+	sc.start(2)
+	defer sc.unregister()
+	run := func(ok bool) string {
+		stderr := filepath.Join(root, "stderr")
+		f, _ := os.Create(stderr)
+		old := os.Stderr
+		os.Stderr = f
+		body := `{"model":"claude-cli-haiku","tools":[{"name":"x"}],"messages":[{"role":"user","content":"go"}]}`
+		h := map[string]string{"x-claude-mini-session": "sidk", "x-claude-mini-cwd": client, "content-type": "application/json"}
+		st, data := call(c, "POST", "/v1/messages", h, []byte(body), 120*time.Second)
+		os.Stderr = old
+		f.Close()
+		out, _ := os.ReadFile(stderr)
+		if ok && st != 200 {
+			t.Fatalf("messages: %d %s\n%s", st, data, out)
+		}
+		return string(out)
+	}
+	branch := "minigw/claude-" + sha256Hex([]byte("sidk"))[:8] + "-0"
+	run(true) // prvi tek: vse pride, klon ostane za naslednjo zahtevo
+	if !strings.Contains(gitT(t, filepath.Join(client, "lib"), "branch", "--list", branch), branch) {
+		t.Fatal("first run: lib branch not delivered")
+	}
+	writeT(t, filepath.Join(root, "second"), "")
+	s.hub.mu.Lock()
+	var slot *wtSlot
+	var tree *shareTree
+	for _, sh := range s.hub.bySession {
+		if sh.tree != nil {
+			tree, slot = sh.tree, sh.tree.slots["claude"]
+		}
+	}
+	if slot != nil {
+		slot.unconfined = unconfined // obramba v globino: oznaka na klonu z ugnezdenimi (markUnconfined jo zavrne že ob zagonu)
+	}
+	s.hub.mu.Unlock()
+	if slot == nil {
+		t.Fatal("no slot")
+	}
+	libTip := gitT(t, filepath.Join(client, "lib"), "rev-parse", branch)
+	topTip := gitT(t, client, "rev-parse", branch)
+	out := run(false) // moved: nadzor teka agenta ustavi (zamenjan .git), delo vrhnjega vseeno pride
+	if kind == "toolarge" {
+		if !strings.Contains(out, "the agent's clone is too large to return") || strings.Contains(out, "kept on the gateway") {
+			t.Fatalf("too large clone:\n%s", out)
+		}
+		sc.unregister()
+		if k, _ := filepath.Glob(filepath.Join(tree.worktrees, "*-kept-*")); len(k) != 0 {
+			t.Fatalf("too large clone kept: %v", k)
+		}
+		return
+	}
+	line := regexp.MustCompile(`(?m)^minigw: gateway: worktree: ` + why + `.*; the agent's files are kept on the gateway for 30 days as (worktrees/\S+-kept-\d{8}-\d{6}-\d{9}) after this session \(files only; its \.git folders renamed \.git\.agent — do not run git there\)$`).FindStringSubmatch(out)
+	if line == nil {
+		t.Fatalf("no skip line:\n%s", out)
+	}
+	scratch := filepath.Dir(filepath.Dir(filepath.Dir(tree.worktrees)))
+	line[1] = filepath.Join(scratch, filepath.FromSlash(line[1])) // L3: pot v sporočilu je glede na Scratch
+	if got := gitT(t, client, "rev-parse", branch); got == topTip || !strings.Contains(gitT(t, client, "show", branch+":agent.txt"), "agent\nagent") {
+		t.Fatalf("top level not delivered:\n%s", out)
+	}
+	if files := gitT(t, client, "ls-tree", "-r", "--name-only", branch); strings.Contains(files, "lib/") || strings.Contains(files, "other/") {
+		t.Fatalf("top branch has nested files: %s", files)
+	}
+	if got := gitT(t, filepath.Join(client, "lib"), "rev-parse", branch); got != libTip {
+		t.Fatal("refused nested repository delivered")
+	}
+	if !unconfined && !strings.Contains(gitT(t, filepath.Join(client, "other"), "show", branch+":agent.txt"), "agent\nagent") {
+		t.Fatalf("other nested repository not delivered:\n%s", out)
+	}
+	if unconfined { // naslednji čist tek dostavi zavrnjeno delo; šele tedaj kept ni več
+		s.hub.mu.Lock()
+		kept := slot.kept
+		slot.unconfined = false
+		s.hub.mu.Unlock()
+		os.Remove(filepath.Join(root, "second"))
+		if filepath.Join(filepath.Dir(slot.wt), filepath.Base(line[1])) != kept {
+			t.Fatalf("kept %q, line %q", kept, line[1])
+		}
+		run(true)
+		if got := gitT(t, filepath.Join(client, "lib"), "show", branch+":agent.txt"); got != "agent\nagent\nagent" {
+			t.Fatalf("refused work not delivered by the next run: %q", got)
+		}
+		s.hub.mu.Lock()
+		kept = slot.kept
+		s.hub.mu.Unlock()
+		sc.unregister()
+		if _, err := os.Stat(line[1]); kept != "" || err == nil {
+			t.Fatalf("clone kept after everything was delivered: %q", kept)
+		}
+		return
+	}
+	if kind == "moved" { // L1: naslednja zahteva naredi nov klon na isti poti; nedostavljeno delo prej v kept
+		run(false)
+		if b, err := os.ReadFile(filepath.Join(line[1], "lib", "agent.txt")); err != nil || string(b) != "agent\nagent\n" {
+			t.Fatalf("kept clone before the new clone %s: %v %q", line[1], err, b)
+		}
+	}
+	// M2: config agenta s fsmonitor v .git klona (vrhnji in ugnezdeni) ob ohranitvi ne sme več teči
+	marker := filepath.Join(root, "fsmonitor-ran")
+	for _, d := range []string{slot.wt, filepath.Join(slot.wt, "lib")} {
+		if _, err := os.Stat(filepath.Join(d, ".git")); err == nil {
+			gitT(t, d, "config", "core.fsmonitor", "touch "+marker+"; false")
+		}
+	}
+	sc.unregister() // konec seje: klon z nedostavljenim delom ostane (keepClone v gorutini)
+	for i := 0; i < 100; i++ {
+		if _, err := os.Stat(slot.wt); err != nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	for _, d := range []string{line[1], filepath.Join(line[1], "lib"), filepath.Join(line[1], "other")} {
+		if _, err := os.Lstat(filepath.Join(d, ".git")); err == nil {
+			t.Fatalf("%s/.git kept", d)
+		}
+		c := exec.Command("git", "-C", d, "status")
+		c.Env = append(os.Environ(), "GIT_CEILING_DIRECTORIES="+filepath.Dir(line[1]))
+		if out, err := c.CombinedOutput(); err == nil {
+			t.Fatalf("git finds a repository in the kept clone %s: %s", d, out)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(line[1], ".git.agent")); err != nil {
+		t.Fatal("no .git.agent in the kept clone")
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the agent's fsmonitor ran")
+	}
+	if b, err := os.ReadFile(filepath.Join(line[1], "lib", "agent.txt")); err != nil || string(b) != "agent\nagent\n" {
+		t.Fatalf("kept clone %s: %v %q", line[1], err, b)
+	}
+	if _, err := os.Stat(slot.wt); err == nil {
+		t.Fatal("clone left at its working path")
+	}
+	// Zrcalo po 30 dneh gre, ohranjeni klon (mlajši od 30 dni) ne; po svojih 30 dneh gre tudi on.
+	later := time.Now().Add(20 * 24 * time.Hour)
+	os.Chtimes(line[1], later, later)
+	pruneMirrors(scratch, time.Now().Add(31*24*time.Hour))
+	if _, err := os.Stat(line[1]); err != nil {
+		t.Fatal("kept clone removed with its mirror before its 30 days")
+	}
+	if _, err := os.Stat(tree.repo); err == nil {
+		t.Fatal("mirror not pruned")
+	}
+	pruneMirrors(scratch, time.Now().Add(51*24*time.Hour))
+	if _, err := os.Stat(line[1]); err == nil {
+		t.Fatal("kept clone not pruned after 30 days")
+	}
+}
+
+// L6 (N1): agent brez svojega imenskega prostora PID v klonu z ugnezdenimi ne teče (le ta zahteva); brez ugnezdenih oznaka.
+func TestMarkUnconfinedRefusesNested(t *testing.T) {
+	h := &shareHub{bySession: map[string]*serveShare{}}
+	a, b := &wtSlot{wt: "/w/a", nested: []*wtNested{{path: "lib"}}}, &wtSlot{wt: "/w/b"}
+	h.bySession["s"] = &serveShare{tree: &shareTree{slots: map[string]*wtSlot{"claude": a, "codex": b}}}
+	if why := h.markUnconfined("/w/a", "codex"); !strings.Contains(why, "this request did not run; use sync") || a.unconfined {
+		t.Fatalf("%q %v", why, a.unconfined)
+	}
+	if why := h.markUnconfined("/w/b", "codex"); why != "" || !b.unconfined {
+		t.Fatalf("%q %v", why, b.unconfined)
+	}
+}
+
+// L6: Codex (in Grok, Copilot) brez svojega imenskega prostora PID v klonu z ugnezdenimi: končna zavrnitev 400 pred
+// zagonom, besedilo kot pri Claude CLI (sicer 502 prek classifyAgentError in Claude Code ponavlja).
+func TestCodexUnconfinedNestedRefused(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake codex is a shell script")
+	}
+	if !gitAttrSource() {
+		t.Skip("git before 2.40: the client refuses nested repositories")
+	}
+	root := t.TempDir()
+	client := filepath.Join(root, "client")
+	for _, d := range []string{client, filepath.Join(client, "lib")} {
+		os.MkdirAll(d, 0o755)
+		gitT(t, d, "init", "-q", "-b", "main")
+		writeT(t, filepath.Join(d, "f.txt"), "f\n")
+		gitT(t, d, "add", "f.txt")
+		gitT(t, d, "commit", "-qm", "first")
+	}
+	codex := filepath.Join(root, "codex")
+	writeT(t, codex, "#!/bin/sh\ntouch "+root+"/started\nexit 1\n")
+	os.Chmod(codex, 0o755)
+	old := agentUnconfined
+	agentUnconfined = func(string) bool { return true }
+	defer func() { agentUnconfined = old }()
+	s, _ := testServer(t, func(c *serveConfig) {
+		c.AllowUnsandboxedBash = true
+		t.Setenv("CODEX_HOME", t.TempDir())
+		c.Codex = agentCLI{Enabled: true, Executable: codex}
+	})
+	s.hub.nestedBlocker = func(string) string { return "" }
+	c := startLoopback(t, s)
+	sc := &shareClient{c: c, session: "sidu", root: client, worktree: true, top: filepath.ToSlash(client), synced: map[string]syncEntry{}, reported: map[string]bool{}}
+	if !sc.register() {
+		t.Fatal("register failed: " + sc.refusal)
+	}
+	sc.start(2)
+	defer sc.unregister()
+	h := map[string]string{"x-claude-mini-session": "sidu", "x-claude-mini-cwd": client, "content-type": "application/json"}
+	body := `{"model":"claude-codex","tools":[{"name":"x"}],"messages":[{"role":"user","content":"go"}]}`
+	st, data := call(c, "POST", "/v1/messages", h, []byte(body), 60*time.Second)
+	want := "nested repositories need bwrap for codex on this Linux gateway (its own PID namespace); this request did not run; use sync"
+	if _, err := os.Stat(filepath.Join(root, "started")); err == nil || st != 400 || !strings.Contains(string(data), want) {
+		t.Fatalf("not refused before the agent: %d %s", st, data)
+	}
+}
+
+// M1, L2: največ maxKept ohranjenih klonov (najstarejši gredo), starejši od meje gredo; povezava se ne sledi.
+func TestPruneKept(t *testing.T) {
+	dir, outside := t.TempDir(), t.TempDir()
+	writeT(t, filepath.Join(outside, "x-kept-1", "f"), "x")
+	os.Symlink(filepath.Join(outside, "x-kept-1"), filepath.Join(dir, "link-kept-0"))
+	now := time.Now()
+	for i := 1; i <= 5; i++ {
+		d := filepath.Join(dir, fmt.Sprintf("c-kept-%d", i))
+		writeT(t, filepath.Join(d, "f"), "x")
+		ts := now.Add(time.Duration(i) * time.Hour)
+		os.Chtimes(d, ts, ts)
+	}
+	writeT(t, filepath.Join(dir, "c-0", "f"), "x") // klon, ki ni ohranjen
+	pruneKept(dir, time.Time{})
+	var left []string
+	es, _ := os.ReadDir(dir)
+	for _, e := range es {
+		left = append(left, e.Name())
+	}
+	if strings.Join(left, ",") != "c-0,c-kept-3,c-kept-4,c-kept-5,link-kept-0" {
+		t.Fatalf("left %v", left)
+	}
+	pruneKept(dir, now.Add(4*time.Hour))
+	if _, err := os.Stat(filepath.Join(dir, "c-kept-3")); err == nil {
+		t.Fatal("older than the cut kept")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "x-kept-1", "f")); err != nil {
+		t.Fatal("link followed")
+	}
+}
+
+// M2, #4, #1: keepClone preimenuje vsak .git in HEAD golega repozitorija v klonu, nikoli prek povezave ven; klon, ki je
+// povezava, ostane, kot je.
+func TestKeepCloneDisarmsGit(t *testing.T) {
+	root := t.TempDir()
+	wt, outside, kept := filepath.Join(root, "c-0"), filepath.Join(root, "outside"), filepath.Join(root, "c-0-kept-1")
+	gitT(t, root, "init", "-q", wt)
+	gitT(t, root, "init", "-q", "--bare", filepath.Join(wt, "bare"))
+	gitT(t, root, "init", "-q", outside)
+	gitT(t, root, "init", "-q", "--bare", filepath.Join(outside, "b"))
+	writeT(t, filepath.Join(wt, "sub", ".git"), "gitdir: ../x\n")
+	writeT(t, filepath.Join(wt, "f.txt"), "agent\n")
+	os.Symlink(outside, filepath.Join(wt, "link"))
+	os.Symlink(filepath.Join(outside, "b"), filepath.Join(wt, "blink"))
+	keepClone(wt, kept, t.Logf)
+	for _, p := range []string{".git.agent", "sub/.git.agent", "bare/HEAD.agent", "f.txt"} {
+		if _, err := os.Lstat(filepath.Join(kept, p)); err != nil {
+			t.Fatalf("%s: %v", p, err)
+		}
+	}
+	for _, p := range []string{".git", "sub/.git", "bare/HEAD"} {
+		if _, err := os.Lstat(filepath.Join(kept, p)); err == nil {
+			t.Fatalf("%s left", p)
+		}
+	}
+	for _, d := range []string{kept, filepath.Join(kept, "bare"), filepath.Join(kept, "sub")} {
+		c := exec.Command("git", "-C", d, "rev-parse", "--git-dir")
+		c.Env = append(os.Environ(), "GIT_CEILING_DIRECTORIES="+root)
+		if out, err := c.CombinedOutput(); err == nil {
+			t.Fatalf("git finds a repository in %s: %s", d, out)
+		}
+	}
+	for _, p := range []string{".git", "b/HEAD"} {
+		if _, err := os.Stat(filepath.Join(outside, p)); err != nil {
+			t.Fatalf("outside %s touched: %v", p, err)
+		}
+	}
+	os.Symlink(outside, filepath.Join(root, "c-1")) // klon je povezava: nič
+	keepClone(filepath.Join(root, "c-1"), filepath.Join(root, "c-1-kept-1"), t.Logf)
+	if _, err := os.Stat(filepath.Join(outside, ".git")); err != nil {
+		t.Fatal("outside .git touched through a linked clone")
+	}
+	if _, err := os.Lstat(filepath.Join(root, "c-1-kept-1")); err == nil {
+		t.Fatal("linked clone kept")
+	}
+}

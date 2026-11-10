@@ -17,8 +17,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -42,6 +44,7 @@ type wtSlot struct {
 	cfg              []byte      // .git/config ob kloniranju
 	nested           []*wtNested // ugnezdeni repozitoriji odjemalca: vsak svoj klon v wt na svoji poti, starš pred otrokom
 	unconfined       bool        // N1 (Linux): agent je tekel brez svojega imenskega prostora PID (lahko je preživel)
+	kept             string      // L6: v klonu je delo, ki ni prišlo do odjemalca: ob koncu seje gre klon sem (30 dni)
 }
 
 // wtNested: klon ugnezdenega repozitorija (podmodul ali nesleden) iz svojega zrcala, na isti veji kot vrhnji.
@@ -115,6 +118,11 @@ func cloneProblem(wt, repo string, nested []*wtNested) string {
 	if why := nestedProblem(wt, repo, nested); why != "" {
 		return why
 	}
+	return cloneTooLarge(wt)
+}
+
+// cloneTooLarge (L5): klon presega meje kopije sync; "" = v redu.
+func cloneTooLarge(wt string) string {
 	files, bytes := 0, int64(0)
 	filepath.WalkDir(wt, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -808,6 +816,15 @@ func (h *shareHub) worktreeMount(s *serveShare, agent string) (dir, refused stri
 	if slot != nil && slot.gitIntact() && nestedProblem(slot.wt, t.repo, slot.nested) == "" { // sicer nov klon (makeClone pobriše starega)
 		return worktreeDir(slot.wt, t.sub), ""
 	}
+	if slot != nil { // L6 (L1): nedostavljeno delo starega klona najprej v kept, nato nov klon na isti poti
+		h.mu.Lock()
+		kept := slot.kept
+		slot.kept = "" // dropClones ga ne ohrani še enkrat
+		h.mu.Unlock()
+		if kept != "" {
+			keepClone(slot.wt, kept, h.logf)
+		}
+	}
 	short := sha256Hex([]byte(s.session))[:8]
 	name := agent + "-" + short + "-0"
 	branch, wt, base := "minigw/"+name, filepath.Join(t.worktrees, name), "refs/minigw/base/"+name
@@ -969,7 +986,7 @@ var duringFinalize func()
 // rezultat in ref zrcala nazaj. Vrne vrh ali razlog.
 func finalizeNested(slot *wtSlot, n *wtNested, agent, out string, links map[string]string) (string, string) {
 	moved := "the nested repository " + n.path + " was moved or replaced in the agent's clone"
-	if runtime.GOOS == "linux" && (finalizeBwrap() == "" || slot.unconfined) {
+	if slot.unconfined || runtime.GOOS == "linux" && finalizeBwrap() == "" {
 		return "", "the nested repository " + n.path + " does not come back on this gateway: that needs bwrap with its own PID namespace for the agent; use sync"
 	}
 	rr, err := os.OpenRoot(realPath(slot.wt))
@@ -1121,19 +1138,24 @@ func (h *shareHub) worktreeGits(wt string) (gits, objects []string) {
 	return []string{filepath.Join(wt, ".git")}, nil
 }
 
-// markUnconfined (N1, Linux): agent v klonu wt je tekel brez svojega imenskega prostora PID; ugnezdeni ne gredo nazaj.
-func (h *shareHub) markUnconfined(wt string) {
+// markUnconfined (N1, Linux): agent v klonu wt bi tekel brez svojega imenskega prostora PID (lahko preživi do finalize).
+// Klon z ugnezdenimi: vrne razlog, ta zahteva ne teče (L6: oznaka bi sicer zaprla ugnezdene do konca seje). Sicer oznaka.
+func (h *shareHub) markUnconfined(wt, agent string) string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for _, s := range h.bySession {
 		if s.tree != nil {
 			for _, sl := range s.tree.slots {
+				if sl.wt == wt && len(sl.nested) > 0 {
+					return "nested repositories need bwrap for " + agent + " on this Linux gateway (its own PID namespace); this request did not run; use sync"
+				}
 				if sl.wt == wt {
 					sl.unconfined = true
 				}
 			}
 		}
 	}
+	return ""
 }
 
 // worktreeIntact (H2): klon wt (tudi klicateljev pri vgnezdenem agentu) ima še svoj .git (wtSlot.gitIntact).
@@ -1166,7 +1188,11 @@ func (h *shareHub) worktreeBack(s *serveShare, agent string) {
 	killInside(slot.wt)
 	out := t.repo + ".result"
 	defer os.Remove(out)
-	why, tip := cloneProblem(slot.wt, t.repo, slot.nested), ""
+	why, tip, big := nestedProblem(slot.wt, t.repo, slot.nested), "", false
+	if why == "" {
+		why = cloneTooLarge(slot.wt)
+		big = why != "" // M1: prevelik klon se ne ohrani (disk)
+	}
 	type changed struct {
 		Path string `json:"path"`
 		Tip  string `json:"tip"`
@@ -1183,39 +1209,58 @@ func (h *shareHub) worktreeBack(s *serveShare, agent string) {
 		}
 		return "", p
 	}
+	// L6: zavrnjeni ugnezdeni (razlog); vrhnji in ostali gredo vseeno, pot zavrnjenega izpuščena.
+	var skipped []string
 	for i := len(slot.nested) - 1; i >= 0 && why == ""; i-- { // obratno: globlji pred plitvejšimi
 		n := slot.nested[i]
 		o := fmt.Sprintf("%s.result.%d", t.repo, i+1)
 		defer os.Remove(o)
-		nt := ""
-		if nt, why = finalizeNested(slot, n, agent, o, links[n.path]); why != "" {
-			break
+		nt, skip := finalizeNested(slot, n, agent, o, links[n.path])
+		if st, err := os.Stat(o); skip == "" && nt != n.base && (err != nil || st.Size() > maxSyncFile) {
+			skip = "the agent's branch in the nested repository " + n.path + " is larger than 64 MB; it stays on the gateway's mirror (" + slot.branch + ")"
 		}
 		p, rel := parent(n.path)
+		links[p][rel] = "" // starš: pot izpuščena, gitlink nespremenjen
 		switch {
-		case nt == n.base:
-			links[p][rel] = ""
-		default:
+		case skip != "":
+			skipped = append(skipped, skip)
+		case nt != n.base:
 			links[p][rel] = nt
-			if st, err := os.Stat(o); err != nil || st.Size() > maxSyncFile {
-				why = "the agent's branch in the nested repository " + n.path + " is larger than 64 MB; it stays on the gateway's mirror (" + slot.branch + ")"
-			}
 			nested = append(nested, changed{n.path, nt})
 			results = append(results, o)
 		}
 	}
 	if why == "" {
-		if tip = finalize(t.repo, slot.wt, slot.branch, slot.base, agent, out, links[""], nil); tip == slot.base && len(nested) == 0 {
-			return // agent ni spremenil ničesar
-		} else if tip == "" {
+		if tip = finalize(t.repo, slot.wt, slot.branch, slot.base, agent, out, links[""], nil); tip == "" {
 			why = "the gateway could not save the agent's work as a branch (see the gateway log)"
 		} else if st, err := os.Stat(out); tip != slot.base && (err != nil || st.Size() > maxSyncFile) {
 			why = "the agent's branch is larger than 64 MB; it stays on the gateway's mirror (" + slot.branch + ")"
 		}
 	}
+	// L6: kar ni prišlo do odjemalca, ostane v klonu; ob koncu seje ga dropClones prestavi v kept (pruneMirrors: 30 dni).
+	kept, keep := "", ""
+	if why != "" && !big || len(skipped) > 0 {
+		now := time.Now()
+		kept = slot.wt + "-kept-" + now.Format("20060102-150405") + fmt.Sprintf("-%09d", now.Nanosecond()) // L4: brez trka
+		// L3: pot glede na Scratch prehoda; M2: le datoteke, .git preimenovani (keepClone)
+		keep = "; the agent's files are kept on the gateway for 30 days as " + path.Join("worktrees", filepath.Base(filepath.Dir(t.worktrees)),
+			filepath.Base(t.worktrees), filepath.Base(kept)) + " after this session (files only; its .git folders renamed .git.agent — do not run git there)"
+	}
+	h.mu.Lock()
+	slot.kept = kept
+	h.mu.Unlock()
+	for _, m := range skipped {
+		h.logf("worktree %s (%s): %s", slot.branch, s.session, m)
+		body, _ := json.Marshal(map[string]string{"message": "worktree: " + m + keep})
+		h.sendJob(s, "WORKTREE-NOTE", body, 10*time.Second)
+	}
+	if why == "" && tip == slot.base && len(nested) == 0 {
+		return // agent ni spremenil ničesar (ali le v zavrnjenih ugnezdenih)
+	}
 	msg := map[string]any{"branch": slot.branch, "tip": tip}
 	if why != "" {
 		h.logf("worktree %s (%s): %s", slot.branch, s.session, why)
+		why += keep
 		results, msg["tip"] = []string{""}, ""
 	} else {
 		msg["nestedOnly"], msg["nested"] = tip == slot.base, nested
@@ -1301,12 +1346,82 @@ func (h *shareHub) worktreeResult(key, owner string, nested int) ([]byte, int, s
 	return b, 200, ""
 }
 
-// dropClones: ob koncu seje kloni gredo (veje ostanejo v zrcalu in pri odjemalcu). Pod h.mu.
-func dropClones(t *shareTree) {
+// dropClones: ob koncu seje kloni gredo (veje ostanejo v zrcalu in pri odjemalcu); klon z nedostavljenim delom (L6)
+// ostane kot kept (keepClone). Pod h.mu.
+func dropClones(t *shareTree, logf func(string, ...any)) {
 	for _, sl := range t.slots {
+		if sl.kept != "" {
+			go keepClone(sl.wt, sl.kept, logf) // ne pod h.mu (hoja po klonu); pot ima zgoščeno sejo
+			continue
+		}
 		go removeClone(sl.wt)
 	}
 	t.slots = map[string]*wtSlot{}
+}
+
+// maxKept (M1): največ ohranjenih klonov v mapi klonov repozitorija (najstarejši gredo).
+const maxKept = 3
+
+// keepClone (L6): klon wt z nedostavljenim delom gre v kept. M2: vsak .git (mapa ali datoteka, katerakoli globina) in
+// HEAD v mapi z obliko golega repozitorija (HEAD, objects, refs) se prej preimenujeta v *.agent: git ju tam ne najde,
+// zato config, kljuke in fsmonitor agenta ne tečejo. Vse prek os.Root klona (povezava ali zamenjana mapa ne preusmeri
+// preimenovanja ven) in os.Root starša za premik; nič se ne briše. Neuspeh premika: klon gre (zapis v dnevnik).
+func keepClone(wt, kept string, logf func(string, ...any)) {
+	pr, err := os.OpenRoot(filepath.Dir(wt))
+	if err != nil {
+		return
+	}
+	defer pr.Close()
+	if st, err := pr.Lstat(filepath.Base(wt)); err != nil || !st.IsDir() {
+		return
+	}
+	if root, err := pr.OpenRoot(filepath.Base(wt)); err == nil {
+		disarm := func(p string) {
+			if root.Rename(p, p+".agent") != nil {
+				root.Rename(p, p+".agent-"+strconv.FormatInt(time.Now().UnixNano(), 10)) // *.agent že obstaja (agent)
+			}
+		}
+		isDir := func(p string) bool { st, err := root.Lstat(p); return err == nil && st.IsDir() }
+		fs.WalkDir(root.FS(), ".", func(p string, d fs.DirEntry, err error) error {
+			switch {
+			case err != nil || p == ".":
+			case isGitPath(d.Name()):
+				disarm(p)
+				if d.IsDir() {
+					return fs.SkipDir
+				}
+			case strings.EqualFold(d.Name(), "HEAD") && isDir(path.Join(path.Dir(p), "objects")) && isDir(path.Join(path.Dir(p), "refs")):
+				disarm(p) // goli repozitorij (#4)
+			}
+			return nil
+		})
+		root.Close()
+	}
+	if err := pr.Rename(filepath.Base(wt), filepath.Base(kept)); err != nil {
+		logf("worktree: cannot keep the agent's clone %s: %v; removed", wt, err)
+		removeClone(wt)
+		return
+	}
+	now := time.Now()
+	pr.Chtimes(filepath.Base(kept), now, now) // pravkar preimenovana prava mapa
+	pruneKept(filepath.Dir(kept), time.Time{})
+}
+
+// pruneKept: ohranjeni kloni v mapi klonov dir starejši od cut in vsi razen maxKept najnovejših (Lstat, brez povezav).
+func pruneKept(dir string, cut time.Time) {
+	es, _ := os.ReadDir(dir)
+	var kept []os.FileInfo
+	for _, e := range es {
+		if st, err := e.Info(); err == nil && st.IsDir() && strings.Contains(e.Name(), "-kept-") {
+			kept = append(kept, st)
+		}
+	}
+	slices.SortFunc(kept, func(a, b os.FileInfo) int { return b.ModTime().Compare(a.ModTime()) })
+	for i, st := range kept {
+		if i >= maxKept || st.ModTime().Before(cut) {
+			os.RemoveAll(filepath.Join(dir, st.Name()))
+		}
+	}
 }
 
 // removeClone: klon, nato še prazen .maven in mapa klonov, ko v njej ni drugega klona (sicer ostane prazna mapa;
@@ -1321,6 +1436,19 @@ func removeClone(wt string) {
 
 // pruneMirrors: zrcala (scratch/repos/<naprava>/<repo>.git), ki jih 30 dni ni uporabil noben agent, in njihovi kloni.
 func pruneMirrors(scratch string, now time.Time) {
+	wroot := filepath.Join(scratch, "worktrees") // L6: ohranjeni kloni; L2: ReadDir da vrsto brez sledenja povezavam
+	wo, _ := os.ReadDir(wroot)
+	for _, o := range wo {
+		if !o.IsDir() {
+			continue
+		}
+		ids, _ := os.ReadDir(filepath.Join(wroot, o.Name()))
+		for _, id := range ids {
+			if id.IsDir() {
+				pruneKept(filepath.Join(wroot, o.Name(), id.Name()), now.Add(-30*24*time.Hour))
+			}
+		}
+	}
 	repos := filepath.Join(scratch, "repos")
 	owners, _ := os.ReadDir(repos)
 	for _, o := range owners {
@@ -1343,7 +1471,17 @@ func pruneMirrors(scratch string, now time.Time) {
 			if now.Sub(used) > 30*24*time.Hour {
 				os.RemoveAll(repo)
 				os.Remove(repo + ".used")
-				os.RemoveAll(filepath.Join(scratch, "worktrees", o.Name(), name))
+				wts := filepath.Join(scratch, "worktrees", o.Name(), name)
+				var es []os.DirEntry
+				if realDir(filepath.Dir(wts)) && realDir(wts) { // L2
+					es, _ = os.ReadDir(wts)
+				}
+				for _, e := range es {
+					if !strings.Contains(e.Name(), "-kept-") { // L6: ohranjeni kloni imajo svojih 30 dni (spodaj)
+						os.RemoveAll(filepath.Join(wts, e.Name()))
+					}
+				}
+				os.Remove(wts)
 			}
 		}
 	}

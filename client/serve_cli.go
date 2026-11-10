@@ -808,7 +808,9 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		gits, _ := s.hub.worktreeGits(wt)
 		name, cargs = pinWrap(s.cfgDir, name, cargs, gits, s.log.Printf)
 		if unpinned = name == exe[0]; unpinned && runtime.GOOS == "linux" {
-			s.hub.markUnconfined(wt) // N1: brez imenskega prostora PID agent lahko preživi do finalize
+			if why := s.hub.markUnconfined(wt, "Claude CLI"); why != "" { // N1: brez imenskega prostora PID agent lahko preživi do finalize
+				return writeError(w, r.rid, 400, why)
+			}
 		}
 	}
 	ctx, kill := context.WithCancel(r.Context())

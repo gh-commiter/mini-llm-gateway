@@ -247,7 +247,20 @@ Notes:
   Without that, a request with nested repositories is refused before the agent starts (a final error: Claude Code does not retry it). macOS `minigw serve` (for
   development) refuses nested repositories; Windows `minigw serve` handles them. `minigw serve` also needs git 2.40 or
   later on the gateway; with older git the request is refused ("nested git repositories need git 2.40 or later on
-  the gateway; update git or use sync").
+  the gateway; update git or use sync"). If an agent would run there without its own process namespace in a clone
+  with nested repositories (for example Codex without bwrap, called by Claude CLI), only that request is refused: "nested repositories need bwrap for <agent> on this Linux gateway (its own PID
+  namespace); this request did not run; use sync". The next request in the session works as before.
+- If a nested repository cannot come back (the agent moved or replaced it, its branch is larger than 64 MB, or the
+  gateway could not save it), the top-level branch and the other nested repositories still come back, without that
+  repository's files. minigw prints one line per such repository with the reason:
+  `minigw: gateway: worktree: <reason>; the agent's files are kept on the gateway for 30 days as
+  worktrees/<device>/<id>/<clone>-kept-<time> after this session (files only; its .git folders renamed .git.agent —
+  do not run git there)`. The path is inside the gateway's Scratch folder. A later request in the same session that
+  delivers the work ends that. When the session ends (or the next request needs a new clone), the gateway keeps the
+  agent's files there with every `.git` renamed `.git.agent` (and the `HEAD` of any folder shaped like a bare
+  repository renamed `HEAD.agent`), so no git command picks up the agent's git settings or
+  hooks; copy the files you need. At most 3 such folders are kept per repository (the oldest goes first), each for
+  30 days. The same applies when no branch could be delivered at all, except for a clone refused as too large.
 - The agent may commit inside a nested clone: its note names the clones and the form
   `GIT_DIR=<path>/.git GIT_COMMON_DIR=<path>/.git GIT_WORK_TREE=<path> git …` (plain git in the clone works on the top
   repository). Its commits are kept; changes it leaves uncommitted are committed by the gateway. Codex can commit there;
