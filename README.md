@@ -64,6 +64,10 @@ it, the gateway computer included. The Claude Code plugin installs both.
    /plugin install minigw@mini-gateway
    ```
 
+   Then turn on **Enable auto-update** for `mini-gateway` under `/plugin` → **Marketplaces**, so new plugin versions
+   arrive by themselves (`minigw plugin install` and the installers set it for you). To update by hand:
+   `claude plugin marketplace update mini-gateway`, then `claude plugin update minigw@mini-gateway`.
+
 3. On the gateway computer:
 
    ```

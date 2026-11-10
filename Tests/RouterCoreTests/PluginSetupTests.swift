@@ -13,7 +13,7 @@ import Testing
 
     // Nova datoteka: 0600, vklopljen; odstranitev počisti oboje.
     var r: (changed: Bool, off: Bool) = (false, false)
-    try PluginSetup.edit(p) { s in r = try PluginSetup.add(&s); return r.changed }
+    try PluginSetup.edit(p) { s in let a = try PluginSetup.add(&s); r = (a.changed, a.off); return r.changed }
     #expect(r == (true, false) && mode() == 0o600 && PluginSetup.isTrue((read()["enabledPlugins"] as? [String: Any])?[PluginSetup.id]))
     try PluginSetup.edit(p) { s in r = PluginSetup.remove(&s); return r.changed }
     #expect(r == (true, false) && (read()["enabledPlugins"] as? [String: Any])?.isEmpty == true && (read()["extraKnownMarketplaces"] as? [String: Any])?.isEmpty == true)
@@ -21,7 +21,7 @@ import Testing
     // Uporabnikov false ostane, pravica 0640 ostane.
     try Data(#"{"model":"opus","enabledPlugins":{"minigw@mini-gateway":false}}"#.utf8).write(to: URL(fileURLWithPath: p))
     chmod(p, 0o640)
-    try PluginSetup.edit(p) { s in r = try PluginSetup.add(&s); return r.changed }
+    try PluginSetup.edit(p) { s in let a = try PluginSetup.add(&s); r = (a.changed, a.off); return r.changed }
     #expect(r == (true, true) && mode() == 0o640 && read()["model"] as? String == "opus")
     #expect((read()["enabledPlugins"] as? [String: Any])?[PluginSetup.id] as? Bool == false)
     try PluginSetup.edit(p) { s in r = PluginSetup.remove(&s); return r.changed }
@@ -33,6 +33,35 @@ import Testing
         try Data(bad.utf8).write(to: URL(fileURLWithPath: p))
         #expect(throws: PluginSetup.Failure.self) { try PluginSetup.edit(p) { s in try PluginSetup.add(&s).changed } }
         #expect(String(decoding: FileManager.default.contents(atPath: p) ?? Data(), as: UTF8.self) == bad)
+    }
+}
+
+/// #63: autoUpdate na našem vnosu; stari vnos (do 0.5.21) nadgradimo, uporabnikovega ne; oba sta naša za odstranitev
+/// (kot Go TestPluginMarketplaceAutoUpdate).
+@Test func pluginMarketplaceAutoUpdate() throws {
+    let own: [String: Any] = ["source": ["source": "github", "repo": "gh-commiter/mini-llm-gateway"], "autoUpdate": false]
+    func settings(_ m: [String: Any]?) -> [String: Any] {
+        var s: [String: Any] = ["enabledPlugins": [PluginSetup.id: true]]
+        if let m { s["extraKnownMarketplaces"] = [PluginSetup.market: m] }
+        return s
+    }
+    func market(_ s: [String: Any]) -> NSDictionary? { (s["extraKnownMarketplaces"] as? [String: Any])?[PluginSetup.market] as? NSDictionary }
+
+    var s: [String: Any] = [:]  // nova
+    var r = try PluginSetup.add(&s)
+    #expect(r == (true, false, false) && market(s)?["autoUpdate"] as? Bool == true)
+    s = settings(PluginSetup.oldMarketplace)  // nadgradnja starega
+    r = try PluginSetup.add(&s)
+    #expect(r == (false, true, false) && market(s)?.isEqual(to: PluginSetup.marketplace) == true)
+    r = try PluginSetup.add(&s)  // drugič nič
+    #expect(r == (false, false, false))
+    s = settings(own)  // uporabnikov false ostane
+    r = try PluginSetup.add(&s)
+    #expect(r == (false, false, false) && market(s)?.isEqual(to: own) == true)
+    #expect(PluginSetup.remove(&s).changed && market(s) != nil)
+    for m in [PluginSetup.oldMarketplace, PluginSetup.marketplace] {  // odstranitev obeh naših
+        s = settings(m)
+        #expect(PluginSetup.remove(&s).changed && market(s) == nil && (s["enabledPlugins"] as? [String: Any])?.isEmpty == true)
     }
 }
 

@@ -98,11 +98,12 @@ func pluginUnlink(_ self: String) -> Bool {
 }
 
 func pluginInstall() -> Bool {
-    var ok = true, changed = false, off = false
+    var ok = true, changed = false, updated = false, off = false
     do {
-        try PluginSetup.edit(claudeSettings) { s in (changed, off) = try PluginSetup.add(&s); return changed }
+        try PluginSetup.edit(claudeSettings) { s in (changed, updated, off) = try PluginSetup.add(&s); return changed || updated }
         say("Claude Code plugin \(PluginSetup.id): " + (changed ? "added to \(claudeSettings)" + (off ? offNote : "; Claude Code installs it the next time claude starts (or /reload-plugins)")
-                                                       : "already in \(claudeSettings)" + (off ? offNote : "")))
+                                                       : "already in \(claudeSettings)"
+                                                           + (updated ? "; marketplace \(PluginSetup.market) now updates automatically (autoUpdate)" : "") + (off ? offNote : "")))
     } catch {
         warn((error as? PluginSetup.Failure)?.message ?? error.localizedDescription)
         ok = false
@@ -152,7 +153,15 @@ func pluginStatus() {
     var cv = "not found (the agent skills need the claude command)"
     if let c = findClaude() { let v = versionOf(c); cv = (v.isEmpty ? "?" : v) + " (\(c))" }
     say("Claude Code: " + cv)
-    if let (v, p) = pluginVersion() { say("Plugin:     \(v) (\(p))") } else { say("Plugin:     not installed in Claude Code (minigw plugin install, then start claude)") }
+    if let (v, p) = pluginVersion() {
+        say("Plugin:     \(v) (\(p))")
+        // #63: starejši vtičnik (marketplace brez autoUpdate ali še ne osvežen)
+        if [v, minigwVersion].allSatisfy({ !$0.isEmpty && $0.allSatisfy { "0123456789.".contains($0) } }), v.compare(minigwVersion, options: .numeric) == .orderedAscending {
+            say("            older than minigw \(minigwVersion); update it, then restart claude:")
+            say("              claude plugin marketplace update \(PluginSetup.market)")
+            say("              claude plugin update \(PluginSetup.id)")
+        }
+    } else { say("Plugin:     not installed in Claude Code (minigw plugin install, then start claude)") }
     var state = "not added (minigw plugin install)"
     if let data = FileManager.default.contents(atPath: claudeSettings) {
         if let s = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {

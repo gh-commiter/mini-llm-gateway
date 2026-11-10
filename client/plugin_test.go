@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"slices"
 	"strings"
@@ -428,5 +429,44 @@ func TestSafePathForeignSticky(t *testing.T) {
 	os.Chown(top, 1234, 1234)
 	if safePath(self) {
 		t.Fatal("foreign sticky folder accepted")
+	}
+}
+
+// #63: autoUpdate na našem vnosu; stari vnos (do 0.5.21) nadgradimo, uporabnikovega ne; oba sta naša za odstranitev.
+func TestPluginMarketplaceAutoUpdate(t *testing.T) {
+	const old = `{"source":{"source":"github","repo":"gh-commiter/mini-llm-gateway"}}`
+	const own = `{"source":{"source":"github","repo":"gh-commiter/mini-llm-gateway"},"autoUpdate":false}`
+	settings := func(market string) map[string]any {
+		j := `{"enabledPlugins":{"minigw@mini-gateway":true}}`
+		if market != "" {
+			j = `{"enabledPlugins":{"minigw@mini-gateway":true},"extraKnownMarketplaces":{"mini-gateway":` + market + `}}`
+		}
+		return jsonValue(j).(map[string]any)
+	}
+	market := func(s map[string]any) any { return s["extraKnownMarketplaces"].(map[string]any)["mini-gateway"] }
+
+	s := map[string]any{} // nova
+	if a, u, off, err := pluginAdd(s); !a || u || off || err != nil || market(s).(map[string]any)["autoUpdate"] != true {
+		t.Fatalf("fresh: %v %v %v %v %v", a, u, off, err, s)
+	}
+	s = settings(old) // nadgradnja starega
+	if a, u, _, _ := pluginAdd(s); a || !u || !reflect.DeepEqual(market(s), pluginMarketplace()) {
+		t.Fatalf("old: %v %v %v", a, u, s)
+	}
+	if a, u, _, _ := pluginAdd(s); a || u { // drugič nič
+		t.Fatalf("again: %v %v", a, u)
+	}
+	s = settings(own) // uporabnikov false ostane
+	if a, u, _, _ := pluginAdd(s); a || u || !reflect.DeepEqual(market(s), jsonValue(own)) {
+		t.Fatalf("own: %v %v %v", a, u, s)
+	}
+	if ch, _ := pluginRemove(s); !ch || market(s) == nil {
+		t.Fatalf("own removed: %v", s)
+	}
+	for _, m := range []string{old, pluginMarketJSON} { // odstranitev obeh naših
+		s = settings(m)
+		if ch, _ := pluginRemove(s); !ch || len(s["extraKnownMarketplaces"].(map[string]any)) != 0 || len(s["enabledPlugins"].(map[string]any)) != 0 {
+			t.Fatalf("remove %s: %v", m, s)
+		}
 	}
 }
