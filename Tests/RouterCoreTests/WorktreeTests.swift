@@ -1619,9 +1619,9 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
 @Test func harnessEnvOwnGitConfig() throws {
     let env = Worktree.harnessEnv(root: URL(fileURLWithPath: "/w"), maven: URL(fileURLWithPath: "/m"), agent: "codex")
     let want = ["core.fsmonitor=false", "core.hooksPath=/dev/null", "core.attributesFile=/dev/null", "diff.ignoreSubmodules=all",
-                "submodule.recurse=false", "core.excludesFile=/dev/null", "user.name=Codex (Mini Gateway)", "user.email=codex@minigw.invalid"]
+                "submodule.recurse=false", "core.excludesFile=/dev/null", "user.name=Codex (Mini Gateway)", "user.email=codex@minigw.invalid", "safe.bareRepository=explicit"]
     #expect((0..<want.count).map { env["GIT_CONFIG_KEY_\($0)"]! + "=" + env["GIT_CONFIG_VALUE_\($0)"]! } == want)
-    #expect(env["GIT_CONFIG_GLOBAL"] == "/dev/null" && env["GIT_CONFIG_NOSYSTEM"] == "1" && env["GIT_CONFIG_COUNT"] == "8")
+    #expect(env["GIT_CONFIG_GLOBAL"] == "/dev/null" && env["GIT_CONFIG_NOSYSTEM"] == "1" && env["GIT_CONFIG_COUNT"] == "9")
     let gx = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("gx-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: gx) }
     let c = try #require(Worktree.claudeEnv(root: URL(fileURLWithPath: "/w"), maven: URL(fileURLWithPath: "/m"), gitexec: gx, agent: "claude", path: ":/usr/bin::.:bin:./x:/bin:"))
@@ -1772,4 +1772,50 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
     try FileManager.default.removeItem(at: wt.appendingPathComponent("app"))
     try FileManager.default.createSymbolicLink(at: wt.appendingPathComponent("app"), withDestinationURL: out)
     #expect(Worktree.foreignGit(wt, cwd: wt.appendingPathComponent("app/x"), nested: [lib])?.contains("a link at app") == true)
+}
+
+/// #61 M1: git harnessa (po absolutni poti, okolje claudeEnv brez GIT_DIR) v mapi z golim repozitorijem agenta ga ne uporabi
+/// (safe.bareRepository=explicit); brez tega para ga (test ponovi napad).
+@Test func harnessGitRefusesPlantedBareRepo() throws {
+    let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("bare-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let wt = root.appendingPathComponent("wt")
+    try FileManager.default.createDirectory(at: wt, withIntermediateDirectories: true)
+    g(wt, "init", "-q", "-b", "main"); g(wt, "init", "-q", "--bare", "app")
+    let env = try #require(Worktree.claudeEnv(root: wt, maven: root.appendingPathComponent("m"), gitexec: root.appendingPathComponent("gitexec"), agent: "claude"))
+    func gitDir(_ env: [String: String]) -> Int32 {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: Worktree.git)
+        p.arguments = ["rev-parse", "--git-dir"]
+        p.currentDirectoryURL = wt.appendingPathComponent("app")
+        p.environment = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("GIT_") }.merging(env) { $1 }
+        p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+        try? p.run(); p.waitUntilExit()
+        return p.terminationStatus
+    }
+    #expect(env["GIT_CONFIG_KEY_8"] == "safe.bareRepository" && env["GIT_DIR"] == nil)
+    #expect(gitDir(env.merging(["GIT_CONFIG_COUNT": "8"]) { $1 }) == 0, "the test does not reproduce the bare repository")
+    #expect(gitDir(env) != 0, "harness git used the planted bare repository")
+}
+
+/// #61 (kot Go TestServeWorktreePlantedGitOnCwdPath): seja v prezrti podmapi app; agent v 1. krogu naredi app/.git,
+/// 2. krog v istem klonu je zavrnjen z natančnim sporočilom.
+@Test func worktreePlantedGitOnCwdPathRefusedNextTurn() async throws {
+    let (root, client, base) = try fixture()
+    defer { cleanup(root) }
+    try file(client, ".gitignore", "app/\n"); g(client, "add", ".gitignore"); g(client, "commit", "-qm", "ignore app")
+    try file(client, "app/x.txt", "x\n")
+    let tree = ShareHub.Tree(repo: base.repo, worktrees: base.worktrees, sub: "app")
+    let hub = ShareHub(), session = UUID().uuidString
+    let key = try #require(await hub.register(session: session, cwd: client.path, key: nil, device: "dev", tree: tree))
+    let loop = fakeClient(hub, key: key, top: client)
+    defer { loop.cancel() }
+    let id = try await agentRun(hub, session) { dir in try file(dir, "app/.git", "gitdir: /nowhere\n") }
+    await hub.finish(run: id)
+    let why = await ShareHub.$run.withValue(UUID().uuidString) {
+        await ShareHub.$agent.withValue("claude") { () -> String? in
+            await hub.mount(session: session, cwd: nil, base: "http://127.0.0.1:1", device: "dev") == nil ? await hub.takeRefusal()?.message : nil
+        }
+    }
+    #expect(why == "The agent's clone was changed (a .git appeared at app/.git): start a new conversation")
 }

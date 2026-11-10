@@ -1767,12 +1767,12 @@ func TestWorktreeHarnessEnvGitConfig(t *testing.T) {
 		env[k] = v
 	}
 	want := []string{"core.fsmonitor=false", "core.hooksPath=" + os.DevNull, "core.attributesFile=" + os.DevNull, "diff.ignoreSubmodules=all",
-		"submodule.recurse=false", "core.excludesFile=" + os.DevNull, "user.name=Codex (Mini Gateway)", "user.email=codex@minigw.invalid"}
+		"submodule.recurse=false", "core.excludesFile=" + os.DevNull, "user.name=Codex (Mini Gateway)", "user.email=codex@minigw.invalid", "safe.bareRepository=explicit"}
 	var got []string
 	for i := range want {
 		got = append(got, env["GIT_CONFIG_KEY_"+strconv.Itoa(i)]+"="+env["GIT_CONFIG_VALUE_"+strconv.Itoa(i)])
 	}
-	if env["GIT_CONFIG_GLOBAL"] != os.DevNull || env["GIT_CONFIG_NOSYSTEM"] != "1" || env["GIT_CONFIG_COUNT"] != map[bool]string{false: "8", true: "9"}[gitLongPaths] || !slices.Equal(got, want) {
+	if env["GIT_CONFIG_GLOBAL"] != os.DevNull || env["GIT_CONFIG_NOSYSTEM"] != "1" || env["GIT_CONFIG_COUNT"] != map[bool]string{false: "9", true: "10"}[gitLongPaths] || !slices.Equal(got, want) {
 		t.Fatalf("git config env: %v", env)
 	}
 	if runtime.GOOS == "windows" {
@@ -1960,8 +1960,8 @@ func TestWorktreeGitLongPaths(t *testing.T) {
 			k, v, _ := strings.Cut(kv, "=")
 			env[k] = v
 		}
-		pair := env["GIT_CONFIG_COUNT"] == "9" && env["GIT_CONFIG_KEY_8"] == "core.longpaths" && env["GIT_CONFIG_VALUE_8"] == "true"
-		if (got == "true") != on || pair != on || !on && env["GIT_CONFIG_COUNT"] != "8" {
+		pair := env["GIT_CONFIG_COUNT"] == "10" && env["GIT_CONFIG_KEY_9"] == "core.longpaths" && env["GIT_CONFIG_VALUE_9"] == "true"
+		if (got == "true") != on || pair != on || !on && env["GIT_CONFIG_COUNT"] != "9" {
 			t.Fatalf("longpaths %v: git %q env %v", on, got, env)
 		}
 	}
@@ -2028,5 +2028,82 @@ func TestForeignGit(t *testing.T) {
 	}
 	if why := foreignGit(wt, filepath.Join(wt, "app", "x"), gits); !strings.Contains(why, "a link at app") {
 		t.Fatalf("link not refused: %q", why)
+	}
+}
+
+// #61 M1: git harnessa (po absolutni poti, okolje worktreeClaudeEnv brez GIT_DIR) v mapi z golim repozitorijem agenta ga ne
+// uporabi (safe.bareRepository=explicit); brez tega para ga (test ponovi napad).
+func TestHarnessGitRefusesPlantedBareRepo(t *testing.T) {
+	git, err := gitExe()
+	if err != nil || runtime.GOOS == "windows" { // na Windows ima harness GIT_DIR klona
+		t.Skip("git missing or Windows")
+	}
+	root := t.TempDir()
+	wt := filepath.Join(root, "wt")
+	os.MkdirAll(wt, 0o700)
+	gitT(t, wt, "init", "-q", "-b", "main")
+	gitT(t, wt, "init", "-q", "--bare", "app")
+	env := worktreeClaudeEnv(wt, filepath.Join(root, "m"), t.TempDir(), filepath.Join(root, "gitexec"), []string{filepath.Join(wt, ".git")}, "claude")
+	if env == nil {
+		t.Fatal("no env")
+	}
+	gitDir := func(count string) error {
+		c := exec.Command(git, "rev-parse", "--git-dir")
+		c.Dir = filepath.Join(wt, "app")
+		for _, kv := range os.Environ() {
+			if !strings.HasPrefix(kv, "GIT_") {
+				c.Env = append(c.Env, kv)
+			}
+		}
+		c.Env = append(append(c.Env, env...), "GIT_CONFIG_COUNT="+count)
+		return c.Run()
+	}
+	if err := gitDir("8"); err != nil {
+		t.Fatalf("the test does not reproduce the bare repository: %v", err)
+	}
+	if gitDir("9") == nil {
+		t.Fatal("harness git used the planted bare repository")
+	}
+}
+
+// #61: seja v prezrti podmapi app; agent v 1. krogu naredi app/.git, 2. krog v istem klonu je zavrnjen z natančnim
+// sporočilom (kot Swift worktreePlantedGitOnCwdPathRefusedNextTurn).
+func TestServeWorktreePlantedGitOnCwdPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake claude is a shell script")
+	}
+	client := t.TempDir()
+	gitT(t, client, "init", "-q", "-b", "main")
+	writeT(t, filepath.Join(client, ".gitignore"), "app/\n")
+	writeT(t, filepath.Join(client, "app", "x.txt"), "x\n")
+	gitT(t, client, "add", "-A")
+	gitT(t, client, "commit", "-qm", "first")
+	fake := filepath.Join(t.TempDir(), "claude")
+	writeT(t, fake, `#!/bin/sh
+`+cliGuard+`
+cat > /dev/null
+mkdir -p app && echo 'gitdir: /nowhere' > app/.git
+echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"done"}}}'
+echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
+`)
+	os.Chmod(fake, 0o755)
+	s, _ := testServer(t, func(c *serveConfig) { c.Claude = fake })
+	c := startLoopback(t, s)
+	cwd := filepath.Join(client, "app")
+	sc := &shareClient{c: c, session: "sid61", root: cwd, worktree: true, top: filepath.ToSlash(client), synced: map[string]syncEntry{}, reported: map[string]bool{}}
+	if !sc.register() {
+		t.Fatal("register failed: " + sc.refusal)
+	}
+	sc.start(2)
+	defer sc.unregister()
+	h := map[string]string{"x-claude-mini-session": "sid61", "x-claude-mini-cwd": cwd, "content-type": "application/json"}
+	body := `{"model":"claude-cli-haiku","tools":[{"name":"x"}],"messages":[{"role":"user","content":"go"}]}`
+	if st, data := call(c, "POST", "/v1/messages", h, []byte(body), 60*time.Second); st != 200 || !strings.Contains(string(data), `"done"`) {
+		t.Fatalf("turn 1: %d %s", st, data)
+	}
+	body = `{"model":"claude-cli-haiku","tools":[{"name":"x"}],"messages":[{"role":"user","content":"go"},{"role":"assistant","content":"done"},{"role":"user","content":"again"}]}`
+	if st, data := call(c, "POST", "/v1/messages", h, []byte(body), 60*time.Second); st != 400 ||
+		!strings.Contains(string(data), "The agent's clone was changed (a .git appeared at app/.git): start a new conversation") {
+		t.Fatalf("turn 2: %d %s", st, data)
 	}
 }

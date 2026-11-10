@@ -463,7 +463,8 @@ public enum Worktree {
         // N9: status in diff ne vstopita v podmodul (submodule.<ime>.ignore iz .gitmodules to preglasi: claudeEnv)
         let pairs = [("core.fsmonitor", "false"), ("core.hooksPath", "/dev/null"), ("core.attributesFile", "/dev/null"),
                      ("diff.ignoreSubmodules", "all"), ("submodule.recurse", "false"), ("core.excludesFile", "/dev/null"),
-                     ("user.name", author(agent)), ("user.email", agent + "@minigw.invalid")]
+                     ("user.name", author(agent)), ("user.email", agent + "@minigw.invalid"),
+                     ("safe.bareRepository", "explicit")]  // #61: golega repozitorija ne najde sam (le z GIT_DIR/--git-dir)
         let git = root.appendingPathComponent(".git").path
         var env = ["GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",
                    "GIT_CONFIG_COUNT": String(pairs.count), "GIT_ATTR_SOURCE": "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
@@ -603,7 +604,7 @@ public enum Worktree {
             guard lstat(root + "/" + rel, &st) == 0 else { return nil }  // ni mape: harness ne začne v njej
             if st.st_mode & S_IFMT == S_IFLNK { return "The agent's clone was changed (a link at \(Profiles.line(rel, max: 500))): start a new conversation" }
             if !own.contains(rel), lstat(root + "/" + rel + "/.git", &st) == 0 {
-                return "The agent's clone was changed (a .git appeared at \(Profiles.line(rel + "/.git", max: 500))): start a new conversation"
+                return "The agent's clone was changed (a .git appeared at \(Profiles.line(rel, max: 500))/.git): start a new conversation"
             }
         }
         return nil

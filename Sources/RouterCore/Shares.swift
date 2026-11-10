@@ -351,8 +351,11 @@ public actor ShareHub {
         }
         guard let s = share(session: session, device: device), cwd == nil || cwd == s.cwd else { return nil }
         if let p = AgentRun.current, p.session == session, let dir = p.dir {  // vprašani agent: mapa klicatelja
-            // #61: harness vprašanega agenta začne v klonu klicatelja, kjer agent klicatelja še dela
-            if let id = p.runID, let k = runSlot[id], let slot = slots[k], let why = Worktree.foreignGit(slot.wt, cwd: dir, nested: slot.nested) {
+            // #61: harness vprašanega agenta začne v klonu klicatelja, kjer agent klicatelja še dela (H2 in .git na poti)
+            if let id = p.runID, let k = runSlot[id], let slot = slots[k],
+               let why = !slot.gitIntact || !slot.nested.allSatisfy({ $0.intact(slot.wt) })
+                   ? "The agent's clone was changed (its .git was replaced): start a new conversation"
+                   : Worktree.foreignGit(slot.wt, cwd: dir, nested: slot.nested) {
                 refusals[id] = (400, why)
                 return nil
             }
