@@ -898,7 +898,9 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		scratch := ""
 		if b.Scratch != nil { // prazno = privzeta mapa; velja za nove seje (obstoječe kopije ostanejo, kjer so)
 			if scratch = *b.Scratch; scratch == "" {
-				scratch = defaultScratch()
+				if scratch = newScratchDefault(); scratch == "" { // Windows: zunaj domače mape (#68)
+					scratch = defaultScratch()
+				}
 			}
 			if !filepath.IsAbs(scratch) {
 				return fail(400, "scratch folder: an absolute path")

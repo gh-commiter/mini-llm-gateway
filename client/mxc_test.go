@@ -206,6 +206,14 @@ func TestMXCWrapRun(t *testing.T) {
 				tmp = v
 			}
 		}
+		var req0 mxcRequest
+		rb0, _ := os.ReadFile(log)
+		json.Unmarshal(rb0, &req0)
+		for _, k := range []string{"USERPROFILE", "HOME", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP", "PSModuleAnalysisCachePath"} { // HPX360: nikoli v cwd
+			if v := envGet(req0.Process.Env, k); !filepath.IsAbs(v) || !under(v, scratch) || under(v, work) {
+				t.Fatalf("%s=%q not under Scratch", k, v)
+			}
+		}
 		if !strings.Contains(got, "in=hello\n") || !under(tmp, scratch) || !strings.Contains(got, "home="+filepath.Join(tmp, "home")+"\n") ||
 			!strings.Contains(got, "box=1\n") || strings.Contains(got, "proxy=http") {
 			t.Fatalf("output: %s", got)
@@ -619,5 +627,48 @@ func TestGeneralNoTokenEcho(t *testing.T) {
 	}
 	if _, b := adminNoise(t, s, base, s.admin, "GET", adminPrefix+"/general", ""); !strings.Contains(b, "connect") {
 		t.Fatalf("GET: %s", b)
+	}
+}
+
+// Privzeti Scratch nove namestitve na Windows (#68): prvi fiksni ne-sistemski pogon, sicer sistemski; drugod "".
+func TestPickScratch(t *testing.T) {
+	for _, tc := range []struct {
+		drives []string
+		system string
+		want   string
+	}{
+		{[]string{"C:", "D:", "E:"}, "C:", `D:\minigw-scratch\ana`},
+		{[]string{"C:"}, "C:", `C:\minigw-scratch\ana`},
+		{[]string{"C:", "D:"}, "D:", `C:\minigw-scratch\ana`},
+		{nil, "", `C:\minigw-scratch\ana`},
+		{nil, `C:\`, `C:\minigw-scratch\ana`},
+	} {
+		if got := pickScratch(tc.drives, tc.system, "ana"); got != tc.want {
+			t.Errorf("%v %q: %q", tc.drives, tc.system, got)
+		}
+	}
+	if runtime.GOOS != "windows" && newScratchDefault() != "" {
+		t.Fatal("Linux/macOS default changed")
+	}
+}
+
+// Codex »elevated« (#68): nedokončana nastavitev → zavrnitev z ukazom (brez UAC iz teka); ne odklene Codex.
+func TestCodexSandboxProblem(t *testing.T) {
+	ch := t.TempDir()
+	t.Setenv("CODEX_HOME", ch)
+	if codexSandboxProblem() != "" {
+		t.Fatal("no config")
+	}
+	os.WriteFile(filepath.Join(ch, "config.toml"), []byte("[windows]\nsandbox = \"elevated\"\n"), 0o600)
+	if w := codexSandboxProblem(); !strings.Contains(w, "codex sandbox setup --elevated") {
+		t.Fatalf("not provisioned: %q", w)
+	}
+	os.MkdirAll(filepath.Join(ch, ".sandbox-secrets"), 0o700)
+	if codexSandboxProblem() != "" || !codexElevated() {
+		t.Fatal("provisioned")
+	}
+	s := &server{cfgDir: t.TempDir()}
+	if runtime.GOOS == "windows" && s.agentsAllowed(serveConfig{}, "codex") {
+		t.Fatal("elevated sandbox unlocked Codex")
 	}
 }

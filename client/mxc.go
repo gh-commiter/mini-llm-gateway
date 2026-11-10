@@ -414,7 +414,11 @@ func mxcWrap(wxc, exe string, args []string, m agentMounts) (string, []string, f
 		}
 	}
 	for k, v := range map[string]string{"USERPROFILE": home, "HOME": home, "APPDATA": roaming, "LOCALAPPDATA": local,
-		"TEMP": temp, "TMP": temp, "TMPDIR": temp, "PATH": strings.Join(path, string(os.PathListSeparator)), "MINIGW_SANDBOXED": "1"} {
+		"TEMP": temp, "TMP": temp, "TMPDIR": temp, "PATH": strings.Join(path, string(os.PathListSeparator)), "MINIGW_SANDBOXED": "1",
+		// HPX360: PowerShell (.NET GetFolderPath) v škatli ne najde LocalAppData in je pisal Microsoft\Windows\PowerShell\
+		// ModuleAnalysisCache v delovno mapo (projekt): pot predpomnilnika izrecno pod Scratch
+		"PSModuleAnalysisCachePath":   filepath.Join(local, "Microsoft", "Windows", "PowerShell", "ModuleAnalysisCache"),
+		"POWERSHELL_TELEMETRY_OPTOUT": "1", "POWERSHELL_UPDATECHECK": "Off"} {
 		env = envSet(env, k, v)
 	}
 	slices.Sort(env)
@@ -466,6 +470,25 @@ func buildTooOld(b string) bool {
 		return false
 	}
 	return major < 26100 || (major == 26100 || major == 26200) && ubr < 9278
+}
+
+// boxNote (#68): opomba odjemalcu (enkrat na sejo in vrsto), ali agent teče v peskovniku Windows ali brez njega.
+func (s *server) boxNote(r *req, kind string) {
+	if runtime.GOOS != "windows" && !windowsBox() {
+		return
+	}
+	session := r.h("x-claude-mini-session")
+	if session == "" || !s.hub.firstCapNote(session, "box:"+kind) {
+		return
+	}
+	switch {
+	case kind == "codex":
+		s.hub.note(session, agentNames[kind]+" runs outside the Windows sandbox (with \"Allow commands without a sandbox\")")
+	case windowsBox():
+		s.hub.note(session, agentNames[kind]+" runs in the Windows sandbox")
+	default:
+		s.hub.note(session, agentNames[kind]+" runs without a sandbox on this gateway (\"Allow commands without a sandbox\")")
+	}
 }
 
 // mxcResolve: naslovi gostitelja za pravila egress (testi: lažni).

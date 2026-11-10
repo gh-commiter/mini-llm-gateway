@@ -509,7 +509,7 @@ conversation it continues its own session (`-r`).
 
 **Copilot** runs in a sandbox (on the Mac a `sandbox-exec` profile, on Linux bwrap, on Windows the Windows sandbox) with
 a fresh Copilot home for each request, deleted afterwards. On a Windows gateway without the Windows sandbox, Copilot
-and Grok run only with **Allow commands without a sandbox**; Codex there needs its own elevated sandbox or that switch.
+and Grok run only with **Allow commands without a sandbox**; Codex on Windows always needs that switch.
 `claude-copilot` uses Copilot's default model (`auto`); list other models by name in its settings.
 - It only reads the folder unless **Allow writing** is on.
 - Commands need **Allow commands** together with **Allow writing**, and a dedicated GitHub token: a fine-grained
@@ -535,8 +535,12 @@ environment (`ANTHROPIC_*`, `OPENAI_API_KEY`, `CODEX_API_KEY`, `XAI_API_KEY`, `G
 (`mxc\wxc-exec.exe` in the install folder, no admin rights). It needs Windows 11 build 26100.9278 / 26200.9278 or
 later (the Windows process container). Settings page → General → About shows "Agent sandbox: Windows sandbox (MXC
 1.0.1)", or "not available (reason)"; then agents run only with **Allow commands without a sandbox**, as in 0.5.22.
-With the sandbox that switch is not needed and cannot be changed. Keep the Scratch folder on a fixed NTFS drive (for
-example `D:\minigw-scratch` for builds on D:).
+With the sandbox that switch is not needed for Claude CLI, Copilot and Grok (Codex still needs it, see below).
+New installs (`minigw serve init`, the tray's first start) and the settings page's Scratch **Default** button put the
+Scratch folder at `minigw-scratch\<Windows user name>` on the first fixed drive that is not the system drive, else on
+the system drive (for example `D:\minigw-scratch\ana`), with an access list only your user can open. Existing installs
+keep their Scratch folder (the gateway warns when it is inside your home folder); move it with the settings page's
+Scratch field. Keep Scratch on a fixed NTFS drive.
 - The agents write only to the session's folder (when allowed), `$MINIGW_DEPS`, caches and temporary files under
   Scratch; they cannot read your home folder, other devices' copies or the gateway's settings
   ([How it works](how-it-works.md#how-the-folder-reaches-the-agent), Windows sandbox).
@@ -562,9 +566,12 @@ example `D:\minigw-scratch` for builds on D:).
 - **Grok** has no long-lived token: its `~\.grok\auth.json` and `config.toml` are copied into its own home for the
   device before each run, never back. After Grok refreshes its login you may need `grok login` again.
 - Claude runs commands with PowerShell (Git Bash cannot run in the sandbox); `Bash` in the tools list means PowerShell.
-- **Codex** does not run in the Windows sandbox. Set up Codex's own elevated sandbox once, as administrator:
-  `codex sandbox setup --elevated`; the gateway then runs Codex without **Allow commands without a sandbox**. Codex
-  uses your real `~\.codex` and its ChatGPT login, which refreshes itself.
+- **Codex** does not run in the Windows sandbox and runs only with **Allow commands without a sandbox**, also when
+  its own elevated sandbox is set up: a Codex command in that sandbox can read the gateway's settings (`admin.secret`,
+  `serve.json`). When it is set up (`codex sandbox setup --elevated` once, as administrator) each run still uses it
+  as extra protection (`~\.ssh`, writes in your profile). If `~\.codex\config.toml` asks for `elevated` but it is
+  not set up, the run is refused: "Codex's elevated Windows sandbox is not set up on the gateway: run codex sandbox setup --elevated once at the gateway PC (as administrator)". Codex uses your real `~\.codex` and its ChatGPT login, which refreshes
+  itself.
 
 **Siri AI** is driven through Accessibility, in the background. It keeps one Siri thread per Claude Code
 conversation and has no tools.

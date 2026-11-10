@@ -4,6 +4,9 @@ package main
 
 import "os"
 
+// fixedDrives: le Windows.
+func fixedDrives() ([]string, string) { return nil, "" }
+
 // windowsBox: škatla MXC (#68) je le na Windows; spremenljivka za teste (pot škatle z lažnim wxc-exec na Macu).
 var windowsBox = func() bool { return false }
 

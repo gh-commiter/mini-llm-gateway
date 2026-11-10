@@ -273,7 +273,7 @@ const S = {
   pathHomeWarn: ["In the Windows sandbox, folders on PATH inside your home folder (for example ~\\.local\\bin) are readable by agents; keep no secrets there.",
     "V peskovniku Windows agenti lahko berejo mape s PATH v domači mapi (npr. ~\\.local\\bin); tam ne hrani skrivnosti."],
   worktreeNetworkNoBox: ["No effect on this computer: there is no Windows sandbox, so agents' network is not limited.", "Na tem računalniku nima učinka: peskovnika Windows ni, zato omrežje agentov ni omejeno."],
-  unsandboxedNotNeeded: ["Not needed: agents run in the Windows sandbox.", "Ni potrebno: agenti tečejo v peskovniku Windows."],
+  unsandboxedNotNeeded: ["Not needed for Claude CLI, Copilot and Grok: they run in the Windows sandbox. Codex still needs it.", "Ni potrebno za Claude CLI, Copilot in Grok: tečejo v peskovniku Windows. Codex ga še vedno potrebuje."],
   sandboxNoteWin: ["Commands run in the Windows sandbox (MXC) with Claude Code's PowerShell tool (Bash in Tools means PowerShell): they write only to the session's folder and the gateway's folders for this conversation, and cannot read your home folder or the gateway's settings.",
     "Ukazi tečejo v peskovniku Windows (MXC) z orodjem PowerShell Claude Code (Bash med orodji pomeni PowerShell): pišejo le v mapo seje in mape prehoda za ta pogovor, domače mape in nastavitev prehoda ne morejo brati."],
   localToolsBox: ["Every Claude Code tool, including commands: they run in the Windows sandbox (MXC).", "Vsa orodja Claude Code, tudi ukazi: tečejo v peskovniku Windows (MXC)."],
@@ -284,8 +284,8 @@ const S = {
   worktreeMode: ["Worktree mode", "Način worktree"], worktreeNetwork: ["Network for builds", "Omrežje za gradnje"],
   worktreeNetworkHelp: ["Claude CLI in worktree mode (minigw --minigw-work=worktree) works in a git clone under the Scratch folder. With this on its builds may download (Maven, npm, git clone); off, its commands have no network and a remote git clone is refused (on Windows Claude Code itself still reaches its API through the gateway, and its web fetch and web search fail too).",
     "Claude CLI v načinu worktree (minigw --minigw-work=worktree) dela v klonu git pod mapo Scratch. Ko je vklopljeno, smejo njegove gradnje prenašati (Maven, npm, git clone); izklopljeno: ukazi nimajo omrežja, oddaljen git clone je zavrnjen (na Windows Claude Code svoj API še vedno doseže prek prehoda, spletno branje in iskanje pa tudi ne delata)."],
-  codexLockedWin: ["On Windows Codex runs in its own sandbox: set it up once with “codex sandbox setup --elevated” (as administrator). Otherwise it needs “Allow commands without a sandbox” under Claude CLI: the agent can read and change everything this user can, including gateway settings.",
-    "Na Windows Codex teče v svojem peskovniku: enkrat ga nastavi z »codex sandbox setup --elevated« (kot skrbnik). Sicer potrebuje »Dovoli ukaze brez sandboxa« pod Claude CLI: agent lahko bere in spreminja vse, kar ta uporabnik, tudi nastavitve prehoda."],
+  codexLockedWin: ["On Windows Codex needs “Allow commands without a sandbox” under Claude CLI: it cannot run in the Windows sandbox, and its own elevated sandbox can still read the gateway's settings. With the switch it can read and change everything this user can, including gateway settings.",
+    "Na Windows Codex potrebuje »Dovoli ukaze brez sandboxa« pod Claude CLI: v peskovniku Windows ne teče, njegov peskovnik elevated pa še vedno bere nastavitve prehoda. S stikalom lahko bere in spreminja vse, kar ta uporabnik, tudi nastavitve prehoda."],
   signin: ["Not signed in, or the session has expired. Open Settings… from the tray icon again (or run minigw gw settings link).",
     "Ni prijave ali je seja potekla. Znova odpri Nastavitve … v ikoni pladnja (ali zaženi minigw gw settings link)."],
 };
@@ -845,7 +845,7 @@ const pages = {
             const body = {allowUnsandboxedBash: v};
             if (!v) { for (const [n] of COMMANDS) on.delete(n); body.tools = [...on].join(","); }
             await patch(body); show("claude");
-          }), box)) : null,
+          }))) : null,
           win && !box ? row(el("div", {class: "label warn", textContent: t("unsandboxedWarn")}))
             : row(el("div", {class: "label sub", textContent: t(box ? "sandboxNoteWin" : "sandboxNote")})),
           COMMANDS.filter(x => win || x[0] !== "PowerShell").map(x => toolRow(x, cmdLocked))),

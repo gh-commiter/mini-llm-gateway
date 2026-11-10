@@ -752,6 +752,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		ro := (share != nil && share.readOnly) || (parent != nil && parent.readOnly) || r.h("x-claude-mini-ro") == "1" || cap != ""
 		// #46a: zgodovina zapiše, kar je veljalo
 		r.applied = &appliedLimits{readOnly: ro, cap: cap}
+		s.boxNote(r, "claude") // #68
 		args = append(args, s.agentArgs(dir, ro)...)
 		if ro { // #68: mapa in dovoljene mape v škatli
 			boxRO = append(boxRO, dir)
