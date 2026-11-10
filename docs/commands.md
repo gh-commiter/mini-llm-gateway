@@ -27,7 +27,7 @@ Every `minigw` command and every plugin skill, with an example. `minigw --minigw
 | `minigw run [--] <command> [args …]` | Run a build in this folder on the gateway Mac (native mode, allowed per device) |
 | `minigw --version` | minigw's version (`claude --version` gives Claude Code's) |
 | `minigw plugin install` | Add the Claude Code plugin `minigw@mini-gateway` to `~/.claude/settings.json` with its marketplace on the `release` branch and `"autoUpdate": true` (an entry from minigw 0.5.21 or older is updated; a `false` you set stays; invalid JSON is not changed) and point the plugin's `bin/minigw` at this minigw |
-| `minigw plugin uninstall [--upgrading]` | Remove only what `plugin install` added, and `claude plugin marketplace remove mini-gateway` (not with `--upgrading`) |
+| `minigw plugin uninstall [--upgrading]` | Remove only what `plugin install` added, and `claude plugin marketplace remove mini-gateway` only for the entry minigw added (yours stays; not with `--upgrading`) |
 | `minigw plugin status` | Versions of minigw, Claude Code, the plugin and the default gateway; which minigw the plugin uses. A plugin older than minigw: it prints `claude plugin marketplace update mini-gateway` and `claude plugin update minigw@mini-gateway` |
 | `minigw uninstall [--purge] [--yes]` | List, confirm, then remove what minigw added here (plugin, sign-in start, scratch folders); `--purge` also profiles, the device key and settings. minigw itself stays: it prints the command for that ([install.md](install.md#plugin-and-uninstall-one-command-everywhere)) |
 

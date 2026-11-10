@@ -16,6 +16,12 @@
     <Property Id="ARPPRODUCTICON" Value="tray.ico"/>
     <!-- PURGE=1 (ali potrditveno polje ob odstranitvi): odstrani tudi nastavitve in profile. Privzeto ostanejo. -->
     <Property Id="PURGE" Secure="yes"/>
+    <!-- Ali je stara namestitev imela del Plugin (vrednost, ki jo zapiše komponenta Plugin; tudi 0.5.21): AppSearch teče
+         pred RemoveExistingProducts. Brez nje bi PluginUninstallUpgrade ob vsaki nadgradnji brez dela Plugin (npr.
+         /minigw:gw update z ADDLOCAL=Client,Gateway) odstranil vtičnik, ki ga je uporabnik dodal sam. -->
+    <Property Id="PLUGIN_WAS" Secure="yes">
+      <RegistrySearch Id="PluginWas" Root="HKCU" Key="Software\Mini Gateway" Name="Plugin" Type="raw"/>
+    </Property>
     <!-- Posodobitev nikoli ne zahteva ponovnega zagona: StopProcesses ustavi vse naše procese pred InstallValidate, zato
          ni datotek v rabi. ReallySuppress je le zadnja varovalka (ne rešitev: zadušen zagon bi pustil stari program). -->
     <Property Id="REBOOT" Value="ReallySuppress"/>
@@ -111,7 +117,7 @@
       <Custom Action="PluginInstall" Sequence="4001">&amp;Plugin=3</Custom>
       <!-- Nadgradnja, pri kateri uporabnik izklopi del Plugin: ne stari paket (UPGRADINGPRODUCTCODE) ne PluginInstall ne
            odstranita vnosa, zato ga odstrani novi paket po InstallFiles (minigw.exe je že nov). -->
-      <Custom Action="PluginUninstallUpgrade" Sequence="4002">WIX_UPGRADE_DETECTED AND NOT &amp;Plugin=3 AND NOT !Plugin=3</Custom>
+      <Custom Action="PluginUninstallUpgrade" Sequence="4002">(WIX_UPGRADE_DETECTED OR WIX_SAME_VERSION_UPGRADE_DETECTED) AND PLUGIN_WAS AND NOT &amp;Plugin=3</Custom>
       <Custom Action="StartTray" Sequence="6601">&amp;Gateway=3 AND NOT WIX_UPGRADE_DETECTED AND NOT WIX_SAME_VERSION_UPGRADE_DETECTED AND NOT REINSTALL</Custom>
       <!-- Nadgradnja in popravilo (REINSTALL; CloseTray ga je zaprl): pladenj znova, le če je tekel. -->
       <Custom Action="RestartTray" Sequence="6602">(&amp;Gateway=3 AND (WIX_UPGRADE_DETECTED OR WIX_SAME_VERSION_UPGRADE_DETECTED)) OR (REINSTALL AND !Gateway=3)</Custom>
