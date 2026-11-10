@@ -183,7 +183,7 @@ func TestWorktreeFinalizeRejectedKeepsMirror(t *testing.T) {
 	b := filepath.Join(root, "push.bundle")
 	gitUser(client, nil, "update-ref", "refs/minigw/push", head)
 	gitUser(client, nil, "bundle", "create", b, "refs/minigw/push")
-	if ensureMirror(repo) != nil || !importBase(repo, b, head, "refs/minigw/base/x") || !makeClone(repo, wt, "minigw/claude-12345678-0", head) {
+	if ensureMirror(repo) != nil || importBase(repo, b, head, "refs/minigw/base/x") != nil || !makeClone(repo, wt, "minigw/claude-12345678-0", head) {
 		t.Fatal("mirror or clone")
 	}
 	blob := gitT(t, wt, "hash-object", "-w", "--stdin")
@@ -431,7 +431,7 @@ func TestWorktreeGitSwapRefused(t *testing.T) {
 	b := filepath.Join(root, "push.bundle")
 	gitUser(client, nil, "update-ref", "refs/minigw/push", head)
 	gitUser(client, nil, "bundle", "create", b, "refs/minigw/push")
-	if ensureMirror(repo) != nil || !importBase(repo, b, head, "refs/minigw/base/x") || !makeClone(repo, wt, "minigw/claude-12345678-0", head) {
+	if ensureMirror(repo) != nil || importBase(repo, b, head, "refs/minigw/base/x") != nil || !makeClone(repo, wt, "minigw/claude-12345678-0", head) {
 		t.Fatal("mirror or clone")
 	}
 	sl := &wtSlot{wt: wt}
@@ -501,7 +501,7 @@ func TestWorktreeNestedRepoFilterDoesNotRun(t *testing.T) {
 		b := filepath.Join(root, "push.bundle")
 		gitUser(client, nil, "update-ref", "refs/minigw/push", head)
 		gitUser(client, nil, "bundle", "create", b, "refs/minigw/push")
-		if ensureMirror(repo) != nil || !importBase(repo, b, head, "refs/minigw/base/x") || !makeClone(repo, wt, "minigw/claude-12345678-0", head) {
+		if ensureMirror(repo) != nil || importBase(repo, b, head, "refs/minigw/base/x") != nil || !makeClone(repo, wt, "minigw/claude-12345678-0", head) {
 			t.Fatal("mirror or clone")
 		}
 		if cloneProblem(wt, repo, nil) != "" {
@@ -581,7 +581,7 @@ func TestWorktreeNestedRepoIgnoredDelivered(t *testing.T) {
 	b := filepath.Join(root, "push.bundle")
 	gitUser(client, nil, "update-ref", "refs/minigw/push", head)
 	gitUser(client, nil, "bundle", "create", b, "refs/minigw/push")
-	if ensureMirror(repo) != nil || !importBase(repo, b, head, "refs/minigw/base/x") || !makeClone(repo, wt, "minigw/claude-12345678-0", head) {
+	if ensureMirror(repo) != nil || importBase(repo, b, head, "refs/minigw/base/x") != nil || !makeClone(repo, wt, "minigw/claude-12345678-0", head) {
 		t.Fatal("mirror or clone")
 	}
 	dep := filepath.Join(wt, "build", "_deps", "foo-src") // FetchContent
@@ -836,7 +836,7 @@ func TestWorktreeNestedClonesRegistered(t *testing.T) {
 		os.Remove(b)
 		gitUser(dir, nil, "update-ref", "refs/minigw/push", head)
 		gitUser(dir, nil, "bundle", "create", b, "refs/minigw/push")
-		if ensureMirror(mirror) != nil || !importBase(mirror, b, head, "refs/minigw/base/x") {
+		if ensureMirror(mirror) != nil || importBase(mirror, b, head, "refs/minigw/base/x") != nil {
 			t.Fatal("mirror")
 		}
 		return head
@@ -949,7 +949,7 @@ func TestWorktreeNestedSwapDuringFinalize(t *testing.T) {
 	b := filepath.Join(root, "push.bundle")
 	gitUser(filepath.Join(client, "lib"), nil, "update-ref", "refs/minigw/push", n.base)
 	gitUser(filepath.Join(client, "lib"), nil, "bundle", "create", b, "refs/minigw/push")
-	if ensureMirror(n.repo) != nil || !importBase(n.repo, b, n.base, "refs/minigw/base/x") || !makeClone(n.repo, n.dir(wt), "minigw/claude-12345678-0", n.base) {
+	if ensureMirror(n.repo) != nil || importBase(n.repo, b, n.base, "refs/minigw/base/x") != nil || !makeClone(n.repo, n.dir(wt), "minigw/claude-12345678-0", n.base) {
 		t.Fatal("mirror or clone")
 	}
 	n.git, _ = os.Lstat(filepath.Join(wt, "lib", ".git"))
@@ -1017,7 +1017,7 @@ func TestWorktreeFinalizeAllCommitted(t *testing.T) {
 	b := filepath.Join(root, "push.bundle")
 	gitUser(client, nil, "update-ref", "refs/minigw/push", head)
 	gitUser(client, nil, "bundle", "create", b, "refs/minigw/push")
-	if ensureMirror(repo) != nil || !importBase(repo, b, head, "refs/minigw/base/x") || !makeClone(repo, wt, "minigw/claude-12345678-0", head) {
+	if ensureMirror(repo) != nil || importBase(repo, b, head, "refs/minigw/base/x") != nil || !makeClone(repo, wt, "minigw/claude-12345678-0", head) {
 		t.Fatal("mirror")
 	}
 	writeT(t, filepath.Join(wt, "b.txt"), "b\n")
@@ -1092,7 +1092,7 @@ func TestWorktreeNestedSwapAndRestore(t *testing.T) {
 	b := filepath.Join(root, "push.bundle")
 	gitUser(filepath.Join(client, "lib"), nil, "update-ref", "refs/minigw/push", n.base)
 	gitUser(filepath.Join(client, "lib"), nil, "bundle", "create", b, "refs/minigw/push")
-	if ensureMirror(n.repo) != nil || !importBase(n.repo, b, n.base, "refs/minigw/base/x") || !makeClone(n.repo, n.dir(wt), "minigw/claude-12345678-0", n.base) {
+	if ensureMirror(n.repo) != nil || importBase(n.repo, b, n.base, "refs/minigw/base/x") != nil || !makeClone(n.repo, n.dir(wt), "minigw/claude-12345678-0", n.base) {
 		t.Fatal("mirror or clone")
 	}
 	n.git, _ = os.Lstat(filepath.Join(wt, "lib", ".git"))
@@ -1294,7 +1294,7 @@ func TestAgentArgsDenyAllTempRoots(t *testing.T) {
 }
 
 // #54: bundle odjemalca z drevesom ».git« zrcalo zavrne tudi na git pred 2.46 (fetch iz bundla tam ne preveri objektov);
-// ref base ne ostane. Isti posnetek pod drugim base (brez novih objektov) gre.
+// ref base ne ostane, tudi ne pozneje brez bundla. Isti posnetek pod drugim base (brez novih objektov) gre.
 func TestImportBaseFsck(t *testing.T) {
 	root := t.TempDir()
 	client, repo := filepath.Join(root, "c"), filepath.Join(root, "repos", "d", "r.git")
@@ -1324,14 +1324,23 @@ func TestImportBaseFsck(t *testing.T) {
 	if ensureMirror(repo) != nil {
 		t.Fatal("mirror")
 	}
-	if importBase(repo, bundle("evil.bundle", evil), evil, "refs/minigw/base/e") {
+	if err := importBase(repo, bundle("evil.bundle", evil), evil, "refs/minigw/base/e"); err == nil {
 		t.Fatal("a tree with .git was imported")
+	} else {
+		t.Log(err)
 	}
 	if got, _ := gitRun(repo, "", nil, "--git-dir", repo, "rev-parse", "-q", "--verify", "refs/minigw/base/e"); got != "" {
 		t.Fatalf("rejected base kept: %s", got)
 	}
+	// posnetek brez bundla, ki kaže na objekte zavrnjenega bundla (stari git jih pusti v zrcalu)
+	if importBase(repo, "", evil, "refs/minigw/base/e2") == nil {
+		t.Fatal("a rejected snapshot was accepted without a bundle")
+	}
+	if got, _ := gitRun(repo, "", nil, "--git-dir", repo, "rev-parse", "-q", "--verify", "refs/minigw/base/e2"); got != "" {
+		t.Fatalf("rejected base kept: %s", got)
+	}
 	b := bundle("good.bundle", head)
-	if !importBase(repo, b, head, "refs/minigw/base/x") || !importBase(repo, b, head, "refs/minigw/base/y") {
+	if importBase(repo, b, head, "refs/minigw/base/x") != nil || importBase(repo, b, head, "refs/minigw/base/y") != nil {
 		t.Fatal("good bundle refused")
 	}
 }

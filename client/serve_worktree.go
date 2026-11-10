@@ -266,9 +266,12 @@ func gitRunBox(box *gitBox, repo, cwd string, env []string, input string, args .
 		}
 	}
 	cmd.Env = append(append(cmd.Env, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+cfg, "GIT_TERMINAL_PROMPT=0"), env...)
-	var out bytes.Buffer
-	cmd.Stdout, cmd.Stdin = &out, strings.NewReader(input)
+	var out, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr, cmd.Stdin = &out, &stderr, strings.NewReader(input)
 	err = cmd.Run()
+	if line, _, _ := strings.Cut(strings.TrimSpace(stderr.String()), "\n"); err != nil && line != "" {
+		err = fmt.Errorf("%w: %s", err, clean(line)) // #54: razlog gita (prva vrstica) v logu
+	}
 	return strings.TrimSpace(out.String()), err
 }
 
@@ -306,31 +309,39 @@ func mirrorTips(repo string) []string {
 }
 
 // importBase: bundle odjemalca (ref refs/minigw/push) kot base zrcala; brez bundla mora posnetek že biti v zrcalu.
-func importBase(repo, bundle, snapshot, base string) bool {
+// nil = v redu, sicer razlog (v log prehoda).
+func importBase(repo, bundle, snapshot, base string) error {
 	if bundle != "" {
 		if !isBundle(bundle) {
-			return false
+			return errors.New("the client did not send a git bundle")
 		}
-		_, err := gitRun(repo, "", nil, "--git-dir", repo, "-c", "transfer.fsckObjects=true", "-c", "fetch.fsckObjects=true",
-			"fetch", "-q", "--no-tags", bundle, "+refs/minigw/push:"+base)
-		if err != nil || !fsckBase(repo, base) {
+		if _, err := gitRun(repo, "", nil, "--git-dir", repo, "-c", "transfer.fsckObjects=true", "-c", "fetch.fsckObjects=true",
+			"fetch", "-q", "--no-tags", bundle, "+refs/minigw/push:"+base); err != nil {
 			gitRun(repo, "", nil, "--git-dir", repo, "update-ref", "-d", base)
-			return false
+			return fmt.Errorf("git fetch of the client's bundle: %w", err)
 		}
 	} else if _, err := gitRun(repo, "", nil, "--git-dir", repo, "update-ref", base, snapshot); err != nil {
-		return false
+		return fmt.Errorf("the snapshot is not in the mirror: %w", err)
 	}
-	got, _ := gitRun(repo, "", nil, "--git-dir", repo, "rev-parse", base)
-	return got == snapshot
+	// fsck tudi brez bundla: objekti prej zavrnjenega bundla ostanejo v zrcalu brez refa.
+	if err := fsckBase(repo, base); err != nil {
+		gitRun(repo, "", nil, "--git-dir", repo, "update-ref", "-d", base)
+		return fmt.Errorf("the client's snapshot failed the object check (fsck): %w", err)
+	}
+	if got, _ := gitRun(repo, "", nil, "--git-dir", repo, "rev-parse", base); got != snapshot {
+		return errors.New("the bundle does not hold the snapshot")
+	}
+	return nil
 }
 
 // fsckBase (#54): fetch iz bundla pred git 2.46 ne preveri objektov (fetch.fsckObjects prezre), novejši pa ne objektov,
 // ki so v zrcalu že brez refa. Zato vsi objekti base, nedosegljivi iz drugih refov: pack-objects in index-pack
-// --fsck-objects v prazen repozitorij z objekti zrcala kot alternates (kot finalize in fsckIncoming odjemalca).
-func fsckBase(repo, base string) bool {
+// --fsck-objects v prazen repozitorij z objekti zrcala kot alternates (kot finalize in fsckIncoming odjemalca). Vsak
+// git z mejo gitTimeout (10 min, kot fsckTimeout odjemalca); napaka nosi prvo vrstico gita.
+func fsckBase(repo, base string) error {
 	refs, err := gitRun(repo, "", nil, "--git-dir", repo, "for-each-ref", "--format=%(objectname) %(refname)")
 	if err != nil {
-		return false
+		return errors.New("cannot list refs")
 	}
 	in := base + "\n--not\n"
 	for _, l := range strings.Split(refs, "\n") {
@@ -340,23 +351,29 @@ func fsckBase(repo, base string) bool {
 	}
 	dir, err := os.MkdirTemp(repo, "minigw-fsck-") // 0700, v zrcalu (ne v skupni začasni mapi)
 	if err != nil {
-		return false
+		return err
 	}
 	defer os.RemoveAll(dir)
 	pack, err := gitRunInput(repo, dir, nil, in, "--git-dir", repo, "pack-objects", "--revs", "-q", filepath.Join(dir, "p"))
-	if err != nil || !shaRe.MatchString(pack) {
-		return false
+	if err != nil {
+		return err
+	}
+	if !shaRe.MatchString(pack) {
+		return errors.New("pack-objects gave no pack")
 	}
 	fsck := filepath.Join(dir, "fsck.git")
 	if _, err := gitRun(repo, dir, nil, "init", "-q", "--bare", fsck); err != nil {
-		return false
+		return err
 	}
 	objs, err := filepath.Abs(filepath.Join(repo, "objects"))
-	if err != nil || os.WriteFile(filepath.Join(fsck, "objects", "info", "alternates"), []byte(filepath.ToSlash(objs)+"\n"), 0o600) != nil {
-		return false
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(fsck, "objects", "info", "alternates"), []byte(filepath.ToSlash(objs)+"\n"), 0o600); err != nil {
+		return err
 	}
 	_, err = gitRun(repo, dir, nil, "--git-dir", fsck, "index-pack", "--fsck-objects", filepath.Join(dir, "p-"+pack+".pack"))
-	return err == nil
+	return err
 }
 
 // makeClone: klon za agenta na veji iz posnetka (objekti zrcala le za branje, novi v klonu).
@@ -846,7 +863,11 @@ func (h *shareHub) worktreeMount(s *serveShare, agent string) (dir, refused stri
 	if _, err := os.Stat(incoming); err == nil {
 		file = incoming
 	}
-	if !importBase(t.repo, file, reply.Snapshot, base) || !makeClone(t.repo, wt, branch, reply.Snapshot) {
+	if err := importBase(t.repo, file, reply.Snapshot, base); err != nil {
+		h.logf("worktree %s (%s): %v", branch, s.session, err)
+		return "", ""
+	}
+	if !makeClone(t.repo, wt, branch, reply.Snapshot) {
 		return "", ""
 	}
 	// Ugnezdeni: vsak v svoje zrcalo (<repo>-<ključ>.git) in klon na svoji poti v klonu (H1: pot je preverjena, vsak
@@ -869,7 +890,8 @@ func (h *shareHub) worktreeMount(s *serveShare, agent string) (dir, refused stri
 		if _, err := os.Stat(in); err == nil {
 			file = in
 		}
-		if !importBase(mirror, file, n.Snapshot, base) {
+		if err := importBase(mirror, file, n.Snapshot, base); err != nil {
+			h.logf("worktree %s (%s): nested repository %s: %v", branch, s.session, n.Path, err)
 			return "", ""
 		}
 		nested = append(nested, &wtNested{path: n.Path, repo: mirror, base: n.Snapshot})
