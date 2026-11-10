@@ -562,3 +562,66 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
 @Test func agentMessageControlChars() {
     #expect(AgentError.message(#"{"error":{"message":"a\u001b]52;c;eA==\u0007b\r\u0085‮c\u009b\u007f"}}"#) == "a]52;c;eA==bc")
 }
+
+/// #72: po zagonu le nove prazne mape NSIRD_* (TemporaryItems) in TemporaryDirectory.* (le z .keep-directory);
+/// nikoli obstoječe, druge datoteke, povezave ali mape z vsebino.
+@Test func nativeRemovesOnlyNewSaveCopies() throws {
+    let fm = FileManager.default
+    let t = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("savecopies-" + UUID().uuidString).path
+    defer { try? fm.removeItem(atPath: t) }
+    try fm.createDirectory(atPath: t + "/TemporaryItems/NSIRD_old_1", withIntermediateDirectories: true)
+    try fm.createDirectory(atPath: t + "/TemporaryDirectory.old", withIntermediateDirectories: true)
+    let before = Native.saveCopies(dirs: [], temp: t), start = Date() - 1
+    #expect(before == [t + "/TemporaryItems/NSIRD_old_1", t + "/TemporaryDirectory.old"])
+    for d in ["TemporaryItems/NSIRD_new_1", "TemporaryItems/NSIRD_full", "TemporaryDirectory.new", "TemporaryDirectory.keep",
+              "TemporaryDirectory.data", "NSIRD_notInItems", "TemporaryItems/other"] {
+        try fm.createDirectory(atPath: t + "/" + d, withIntermediateDirectories: true)
+    }
+    fm.createFile(atPath: t + "/TemporaryItems/NSIRD_full/x", contents: Data("x".utf8))
+    fm.createFile(atPath: t + "/TemporaryDirectory.keep/.keep-directory", contents: Data())
+    fm.createFile(atPath: t + "/TemporaryDirectory.data/.keep-directory", contents: Data("x".utf8))
+    fm.createFile(atPath: t + "/TemporaryDirectory.file", contents: Data())  // datoteka, ne mapa
+    try fm.createSymbolicLink(atPath: t + "/TemporaryItems/NSIRD_link", withDestinationPath: t + "/TemporaryItems/other")
+    let after = Native.saveCopies(dirs: [], temp: t)
+    #expect(Native.removeSaveCopies(after: after, before: before, since: start, settled: 60).isEmpty)  // še ne umirjene
+    #expect(Native.removeSaveCopies(after: after, before: before, since: Date() + 60, settled: 0).isEmpty)  // rojene pred zagonom
+    let removed = Native.removeSaveCopies(after: after, before: before, since: start, settled: 0)
+    #expect(Set(removed) == [t + "/TemporaryItems/NSIRD_new_1", t + "/TemporaryDirectory.new", t + "/TemporaryDirectory.keep"])
+    for kept in ["TemporaryItems/NSIRD_old_1", "TemporaryDirectory.old", "TemporaryItems/NSIRD_full/x", "TemporaryDirectory.data/.keep-directory",
+                 "TemporaryDirectory.file", "NSIRD_notInItems", "TemporaryItems/other"] {
+        #expect(fm.fileExists(atPath: t + "/" + kept), "\(kept)")
+    }
+    var st = stat()
+    #expect(lstat(t + "/TemporaryItems/NSIRD_link", &st) == 0)
+}
+
+/// #72: z DIRHELPER_USER_DIR_SUFFIX in povezavama (linkRunDirs) sta T in C otroka v mapi zagona. Pade, če libSystem
+/// pripone ne upošteva več. Nikoli brez povezav (libSystem bi ustvaril neizbrisljivo <T>/<suffix>).
+@Test func nativeRunDirSuffixRedirectsTempAndCache() throws {
+    let fm = FileManager.default
+    let rt = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("runsuffix-" + UUID().uuidString)
+    defer { try? fm.removeItem(at: rt) }
+    let real = try #require(Native.makeRunTmp(rt))
+    let suffix = Native.runDirPrefix + "test-" + UUID().uuidString
+    let links = try #require(Native.linkRunDirs(real, suffix: suffix))
+    defer { Native.unlinkRunDirs(links) }
+    // Sondo prevedemo: programi s SIP (/usr/bin/getconf) okolje dirhelper prezrejo, orodja Xcode (swift, swiftc) ne.
+    let probe = rt.appendingPathComponent("probe")
+    try "#include <unistd.h>\n#include <stdio.h>\nint main(int c,char**v){char b[1024];confstr(v[1][0]=='T'?_CS_DARWIN_USER_TEMP_DIR:_CS_DARWIN_USER_CACHE_DIR,b,sizeof b);puts(b);}\n"
+        .write(to: rt.appendingPathComponent("probe.c"), atomically: false, encoding: .utf8)
+    let cc = Process()
+    cc.executableURL = URL(fileURLWithPath: "/usr/bin/cc"); cc.arguments = ["-o", probe.path, rt.appendingPathComponent("probe.c").path]
+    try cc.run(); cc.waitUntilExit()
+    try #require(cc.terminationStatus == 0)
+    let env = Native.runEnv(ProcessInfo.processInfo.environment, runTmp: rt, suffix: suffix)
+    for sub in ["T", "C"] {
+        let p = Process(), out = Pipe()
+        p.executableURL = probe; p.arguments = [sub]; p.environment = env; p.standardOutput = out
+        try p.run(); p.waitUntilExit()
+        let dir = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        #expect(dir.hasSuffix("/" + suffix + "/"), "\(dir)")
+        #expect(Sync.real(URL(fileURLWithPath: dir))?.path == real + "/" + sub)
+    }
+    Native.unlinkRunDirs(links)
+    #expect(links.allSatisfy { var st = stat(); return lstat($0, &st) != 0 })
+}
