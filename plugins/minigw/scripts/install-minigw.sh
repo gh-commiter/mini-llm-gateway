@@ -75,6 +75,22 @@ case $os in
   windows) [ -n "${LOCALAPPDATA:-}" ] && command -v cygpath >/dev/null 2>&1 && inst="$(cygpath -u "$LOCALAPPDATA")/Programs/Mini Gateway/minigw.exe" ;;
   linux) inst="$HOME/.local/bin/minigw" ;;
 esac
+# #48: Linux ~/.local/bin/minigw (in njegova mapa) le, če je last uporabnika in ni zapisljiv za skupino ali druge (pred
+# zagonom); mape nad njo do / last uporabnika ali roota, zapisljive za skupino ali druge le s sticky (/tmp), kot safePath.
+mine() { [ ! -L "$1" ] && m=$(stat -c '%u %a' "$1" 2>/dev/null) && [ "${m%% *}" = "$(id -u)" ] && [ $((0${m#* } & 022)) -eq 0 ]; }
+above() {
+  d=$1
+  case $d in /*) ;; *) return 1 ;; esac
+  while [ "$d" != / ]; do
+    d=${d%/*}; d=${d:-/}
+    m=$(stat -L -c '%u %a' "$d" 2>/dev/null) || return 1
+    [ "${m%% *}" = 0 ] || [ "${m%% *}" = "$(id -u)" ] || return 1
+    [ $((0${m#* } & 022)) -eq 0 ] || [ $((0${m#* } & 01000)) -ne 0 ] || return 1
+  done
+}
+if [ "$os" = linux ] && [ -e "$inst" ] && ! { mine "$inst" && mine "${inst%/*}" && above "${inst%/*}"; }; then
+  echo "minigw plugin: not using $inst: it or a folder above it is not yours or is writable by others."; inst=""
+fi
 [ -n "$inst" ] && [ -x "$inst" ] && iv=$(ver "$inst")
 case $iv in *[!0-9.]*) iv="" ;; esac
 if [ -n "$iv" ] && ! older "$iv" "$MIN"; then :; else inst=""; fi

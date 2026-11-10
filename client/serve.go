@@ -169,7 +169,14 @@ func writeFileAtomic(path string, data []byte) error {
 	if err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), path)
+	if err := os.Rename(f.Name(), path); err != nil {
+		return err
+	}
+	if d, err := os.Open(filepath.Dir(path)); err == nil { // L5: preimenovanje trajno (po najboljših močeh)
+		d.Sync()
+		d.Close()
+	}
+	return nil
 }
 
 // connectLine: vrstica za odjemalce (žeton#javni ključ routerja).
@@ -315,6 +322,7 @@ func serveCommand(args []string) {
 		fail("unknown command minigw serve " + sub + "\n\n" + serveHelp)
 	}
 
+	initReaper() // #52: kot PID 1 (vsebnik brez --init) prehod teče v otroku, ta proces le žanje
 	c, err := loadServeConfig(*cfgPath)
 	if errors.Is(err, os.ErrNotExist) {
 		fail("cannot read " + *cfgPath + ": run minigw serve init first (" + err.Error() + ")")
@@ -420,6 +428,7 @@ type server struct {
 	procs         chan struct{} // največ hkratnih procesov claude
 	tmpMu         sync.Mutex
 	tmpRoot       string        // tempRoot: koren kratkih map TMPDIR tekov Claude CLI v worktree
+	tmpRoots      []string      // #56: vsi koreni, ki jih je ta proces naredil (denyRead in skriti pod bwrap)
 	gwSlots       chan struct{} // največ hkratnih zahtev k prehodom
 	gateways      gwCatalog
 	limits        sync.Map    // limitKey → limitHit: omejitev agenta za ponovitev brez pretoka (noteLimit)
@@ -1004,7 +1013,7 @@ func (s *server) handle(w http.ResponseWriter, r *req) (int, string) {
 	case "GET /health/live":
 		return writeJSON(w, r.rid, 200, map[string]string{"status": "ok"}), ""
 	case "GET /health/ready":
-		if !r.conn.loopback() && !s.authorized(r) { // L2: imena ponudnikov le temu računalniku ali z žetonom
+		if !s.authorized(r) && !(r.conn.loopback() && loopbackHost(r)) { // L2, #42: le temu računalniku (ne DNS rebinding) ali z žetonom
 			return writeJSON(w, r.rid, 200, map[string]any{"status": "ok"}), ""
 		}
 		providers := map[string]bool{"claude-cli": len(s.claudeExe()) > 0}
@@ -1114,18 +1123,24 @@ func (s *server) localApp(r *req) bool {
 	default:
 		return false
 	}
-	host := r.Host
-	if h, _, err := net.SplitHostPort(r.Host); err == nil {
-		host = h
-	}
-	host = strings.Trim(host, "[]")
 	if !s.conf().localApps() || !r.conn.loopback() || r.h("origin") != "" || (r.h("anthropic-version") == "" && r.h("x-api-key") == "") ||
-		(host != "localhost" && !(net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback())) {
+		!loopbackHost(r) {
 		return false
 	}
 	ours, ok1 := r.conn.LocalAddr().(*net.TCPAddr)
 	peer, ok2 := r.conn.RemoteAddr().(*net.TCPAddr)
 	return ok1 && ok2 && localPeer(ours, peer)
+}
+
+// loopbackHost: glava Host je localhost ali loopback IP (zahteva ni prišla prek DNS rebindinga).
+func loopbackHost(r *req) bool {
+	host := r.Host
+	if h, _, err := net.SplitHostPort(r.Host); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	ip := net.ParseIP(host)
+	return host == "localhost" || (ip != nil && ip.IsLoopback())
 }
 
 func (s *server) authorized(r *req) bool {

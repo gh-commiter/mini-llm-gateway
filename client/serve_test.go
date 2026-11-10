@@ -650,14 +650,18 @@ func TestClientInfoIsASCII(t *testing.T) {
 	}
 }
 
-// Varnost L2: /health/ready našteje ponudnike le temu računalniku ali klicatelju z žetonom.
+// Varnost L2: /health/ready našteje ponudnike le temu računalniku ali klicatelju z žetonom; #42: lokalno le z loopback Host
+// (stran prek DNS rebindinga pošlje svoje ime).
 func TestHealthReadyProvidersOnlyLocalOrAuthorized(t *testing.T) {
 	s, _ := testServer(t, nil)
 	for _, c := range []struct {
-		peer, token string
-		want        bool
-	}{{"192.0.2.9", "", false}, {"192.0.2.9", s.conf().Token, true}, {"127.0.0.1", "", true}} {
+		peer, host, token string
+		want              bool
+	}{{"192.0.2.9", "gw.example", "", false}, {"192.0.2.9", "gw.example", s.conf().Token, true}, {"127.0.0.1", "127.0.0.1:4100", "", true},
+		{"127.0.0.1", "localhost:4100", "", true}, {"::1", "[::1]:4100", "", true}, {"127.0.0.1", "evil.example:4100", "", false},
+		{"127.0.0.1", "evil.example", s.conf().Token, true}} {
 		hr := httptest.NewRequest("GET", "/health/ready", nil)
+		hr.Host = c.host
 		if c.token != "" {
 			hr.Header.Set("Authorization", "Bearer "+c.token)
 		}

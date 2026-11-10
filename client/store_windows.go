@@ -629,4 +629,5 @@ func shortPath(p string) string {
 	return p
 }
 
-func safeDir(string) bool { return true } // Windows: pravice ACL, ne bitov načina
+func safeDir(string) bool  { return true } // Windows: pravice ACL, ne bitov načina
+func safePath(string) bool { return true }

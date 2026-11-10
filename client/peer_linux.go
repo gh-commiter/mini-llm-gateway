@@ -80,6 +80,47 @@ func agentReaperMain(args []string) {
 	}
 }
 
+// initReaper (#52): PID 1 (vsebnik brez docker run --init) dobi vse osirotele procese (npr. ostanke bwrap --unshare-pid);
+// nepožeti zombiji obdržijo svoje imenske prostore. Wait4(-1) v routerju bi kradel stanja procesov os/exec, zato PID 1
+// zažene isti ukaz kot otroka (prehod), sam pa le žanje vse, posreduje signale in konča z izhodom otroka (kot tini).
+func initReaper() {
+	if os.Getpid() != 1 {
+		return
+	}
+	hardenRouter() // ima vse okolje (žetoni): /proc/1/environ ni berljiv agentom; otrok (exec) se zaščiti sam
+	sigs := make(chan os.Signal, 8)
+	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT) // le ta dva posreduje
+	signal.Ignore(syscall.SIGHUP, syscall.SIGQUIT)       // kot prej: PID 1 jih ne konča
+	// vedno sam sebe; brez /proc ForkExec ne uspe (agenti /proc tako ali tako rabijo)
+	pid, err := syscall.ForkExec("/proc/self/exe", os.Args, &syscall.ProcAttr{Env: os.Environ(), Files: []uintptr{0, 1, 2}})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "minigw: cannot start the gateway under PID 1: "+err.Error())
+		os.Exit(1)
+	}
+	go func() {
+		for s := range sigs {
+			syscall.Kill(pid, s.(syscall.Signal))
+		}
+	}()
+	for {
+		var ws syscall.WaitStatus
+		p, err := syscall.Wait4(-1, &ws, 0, nil)
+		if err == syscall.EINTR {
+			continue
+		}
+		if err != nil {
+			os.Exit(1)
+		}
+		if p == pid {
+			code := ws.ExitStatus()
+			if ws.Signaled() {
+				code = 128 + int(ws.Signal())
+			}
+			os.Exit(code)
+		}
+	}
+}
+
 // killChildren: SIGKILL vsem otrokom tega procesa (iz /proc/*/stat).
 func killChildren() {
 	self := os.Getpid()
@@ -249,6 +290,11 @@ func agentWrap(exe string, args []string, m agentMounts) (string, []string) {
 	}
 	if rt := os.Getenv("XDG_RUNTIME_DIR"); rt != "" && exists(rt) {
 		hideDirs = append(hideDirs, real(rt))
+	}
+	for _, p := range m.tmps { // #53
+		if exists(p) {
+			hideDirs = append(hideDirs, real(p))
+		}
 	}
 	for _, pat := range []string{"/tmp/dbus-*", "/tmp/ssh-*"} {
 		found, _ := filepath.Glob(pat)

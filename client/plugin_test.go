@@ -344,3 +344,89 @@ func TestPluginUninstallReportsEntriesRemovedByMarketplace(t *testing.T) {
 		t.Fatalf("output:\n%s", out)
 	}
 }
+
+// #51: minigw-tui se zažene le iz varne mape in ni zapisljiv za druge.
+func TestSettingsTUIPathRefusesUnsafe(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("ACL")
+	}
+	dir := filepath.Join(t.TempDir(), "bin")
+	os.MkdirAll(dir, 0o755)
+	self, tui := filepath.Join(dir, "minigw"), filepath.Join(dir, "minigw-tui")
+	if _, err := settingsTUIPath("linux", self); err == nil || !strings.Contains(err.Error(), "not installed") {
+		t.Fatalf("missing tui: %v", err)
+	}
+	os.WriteFile(tui, []byte("x"), 0o755)
+	if p, err := settingsTUIPath("linux", self); err != nil || p != tui {
+		t.Fatalf("safe tui: %q %v", p, err)
+	}
+	os.Chmod(tui, 0o757)
+	if _, err := settingsTUIPath("linux", self); err == nil {
+		t.Fatal("world-writable minigw-tui started")
+	}
+	os.Chmod(tui, 0o755)
+	os.Chmod(dir, 0o777)
+	defer os.Chmod(dir, 0o755)
+	if _, err := settingsTUIPath("linux", self); err == nil {
+		t.Fatal("minigw-tui in a world-writable folder started")
+	}
+}
+
+// #48: povezava vtičnika in minigw-tui le, če nobena mapa nad minigw ni zapisljiva za druge (višje: razen sticky).
+func TestSafePathAncestors(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("ACL")
+	}
+	top := filepath.Join(t.TempDir(), "top")
+	dir := filepath.Join(top, "a", "bin")
+	os.MkdirAll(dir, 0o755)
+	self := filepath.Join(dir, "minigw")
+	os.WriteFile(self, []byte("x"), 0o755)
+	os.WriteFile(filepath.Join(dir, "minigw-tui"), []byte("x"), 0o755)
+	if !safePath(self) {
+		t.Fatal("safe path refused")
+	}
+	os.Chmod(top, 0o777)
+	defer os.Chmod(top, 0o755)
+	if _, err := pluginLink("linux", self); err == nil {
+		t.Fatal("linked under a world-writable ancestor")
+	}
+	if _, err := settingsTUIPath("linux", self); err == nil {
+		t.Fatal("minigw-tui under a world-writable ancestor")
+	}
+	// povezava iz varne mape na minigw pod mapo, ki je vsem zapisljiva
+	link := filepath.Join(t.TempDir(), "minigw")
+	os.Symlink(self, link)
+	if safePath(link) {
+		t.Fatal("symlink into an unsafe folder accepted")
+	}
+	os.Chmod(top, 0o777|os.ModeSticky) // sticky (kot /tmp): višje mape smejo
+	if !safePath(self) {
+		t.Fatal("sticky ancestor refused")
+	}
+	os.Chmod(filepath.Join(top, "a"), 0o777|os.ModeSticky) // mapa minigw sama: nikoli
+	defer os.Chmod(filepath.Join(top, "a"), 0o755)
+	if safePath(filepath.Join(top, "a", "bin")) {
+		t.Fatal("sticky parent of the file accepted")
+	}
+}
+
+// #48 (M2): višja mapa s sticky velja le, če je last roota ali uporabnika (ne tuja mapa 1777); kot root (Docker).
+func TestSafePathForeignSticky(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Getuid() != 0 {
+		t.Skip("needs root to chown")
+	}
+	top := filepath.Join(t.TempDir(), "top")
+	dir := filepath.Join(top, "a", "bin")
+	os.MkdirAll(dir, 0o755)
+	self := filepath.Join(dir, "minigw")
+	os.WriteFile(self, []byte("x"), 0o755)
+	os.Chmod(top, 0o777|os.ModeSticky)
+	if !safePath(self) {
+		t.Fatal("root's sticky folder refused")
+	}
+	os.Chown(top, 1234, 1234)
+	if safePath(self) {
+		t.Fatal("foreign sticky folder accepted")
+	}
+}

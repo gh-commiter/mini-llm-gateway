@@ -28,6 +28,7 @@ type agentMounts struct {
 	rw     []string // kopija mape, začasna mapa zahteve, dovoljene mape
 	ro     []string // dodatno le za branje (Copilot: razširjen paket v ~/.cache/copilot)
 	hide   string   // mapa, skrita tudi zunaj domače mape (Scratch: kopije drugih naprav, stanje agentov; I3)
+	tmps   []string // #53: koreni TMPDIR tekov Claude CLI (tempRoots): skriti
 	noNet  bool     // brez omrežja (--unshare-net; priprava paketa Copilot, #26)
 	env    []string // dodatne spremenljivke (Copilot: žeton prijave pod bwrap)
 	// protect: le za branje znotraj pisljive mape (worktree: .git/config, hooks, info klona), vezano za rw.

@@ -194,6 +194,8 @@ minigw serve                 # or run it in this terminal (--port, --config)
   and Copilot run under `bwrap`.
 - **Allowed folders** may not contain the Scratch folder or sit inside it: such a folder is refused, and ignored at
   start.
+- **In a container** `minigw serve` may run as PID 1: it then starts the gateway as its child and only reaps orphaned
+  processes (left by `bwrap --unshare-pid`) and forwards signals. `docker run --init` works too.
 
 **Install on Windows.** `minigw serve install` installs to `%LocalAppData%\Programs\Mini Gateway` with the tray icon,
 adds it to PATH and starts the tray at sign-in, without admin rights. The tray executable is downloaded and checked

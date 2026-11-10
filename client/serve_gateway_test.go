@@ -529,7 +529,7 @@ func TestServeGatewayReadyAfterKeyAdded(t *testing.T) {
 	s, _ := testServer(t, func(c *serveConfig) { c.Gateways = []serveGateway{{Name: "gw", BaseURL: up.URL, Insecure: true}} })
 	ready := func() bool {
 		w := httptest.NewRecorder()
-		s.handle(w, &req{Request: httptest.NewRequest("GET", "/health/ready", nil), conn: &serveConn{peer: "127.0.0.1"}})
+		s.handle(w, &req{Request: httptest.NewRequest("GET", "http://127.0.0.1/health/ready", nil), conn: &serveConn{peer: "127.0.0.1"}})
 		var b struct{ Providers map[string]bool }
 		json.Unmarshal(w.Body.Bytes(), &b)
 		return b.Providers["gw"]
