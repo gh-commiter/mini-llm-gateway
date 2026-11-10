@@ -286,42 +286,46 @@ func regRunDel(name string) {
 
 // protectDir: zaščiten DACL samo za lastnika in SYSTEM (mapa nastavitev zunaj %AppData%, kjer ni privzeto zasebna).
 // protectScratch (L2): kot mapa nastavitev (DACL le za uporabnika; tuj lastnik = zavrnitev).
-// L1, L1′: skupna nadrejena mapa <pogon>\minigw-scratch (tudi pod imenom 8.3) je prava mapa; naša dobi DACL
-// scratchParentSDDL (drugi uporabniki smejo v njej le ustvariti svojo mapo), tuja ali širša je zavrnjena
-// (scratchParentOK). Mapa v njej (katerokoli ime) mora biti prava mapa tega uporabnika; preverjena in zaščitena prek
-// ročaja brez FILE_SHARE_DELETE, ki ostane odprt, dokler prehod teče (nihče, tudi lastnik nadrejene mape, je ne
-// preimenuje in na njeno mesto podtakne junction). Ostanek: lastnik nadrejene mape lahko spremeni njen DACL.
+// L1, L1′: skupna nadrejena mapa <pogon>\minigw-scratch (tudi pod imenom 8.3) je prava mapa; naša (ali taka, na
+// kateri imamo WRITE_DAC, npr. iz povišanega zagona) dobi DACL scratchParentSDDL (drugi uporabniki smejo v njej le
+// ustvariti svojo mapo), tuja širša je zavrnjena (scratchParentOK). Vsaka mapa Scratch (v minigw-scratch katerokoli
+// ime) mora biti prava mapa tega uporabnika; preverjena in zaščitena prek ročaja brez FILE_SHARE_DELETE, ki ostane
+// odprt, dokler prehod teče (nihče, tudi lastnik nadrejene mape, je ne preimenuje in na njeno mesto podtakne
+// junction). Ostanek: lastnik nadrejene mape lahko spremeni njen DACL.
 func protectScratch(dir string) error {
-	p := filepath.Dir(dir)
-	if !strings.EqualFold(filepath.Base(longPath(p)), "minigw-scratch") {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
+	if p := filepath.Dir(dir); strings.EqualFold(filepath.Base(longPath(p)), "minigw-scratch") {
+		if err := os.MkdirAll(p, 0o700); err != nil {
 			return err
 		}
-		return protectDir(dir)
-	}
-	if err := os.MkdirAll(p, 0o700); err != nil {
-		return err
-	}
-	mine := false
-	ph, err := openDir(p, func(mode os.FileMode, owner, me string, dacl []scratchACE) error {
-		mine = owner == me
-		return scratchParentOK(mode, owner, me, dacl)
-	})
-	if err != nil {
-		return fmt.Errorf("%s %w", p, err)
-	}
-	defer windows.CloseHandle(ph)
-	if mine { // tudi selitev mape 0.5.23 (podedovan ACL pogona)
-		if err := protectHandle(ph, scratchParentSDDL); err != nil {
-			return fmt.Errorf("%s: %v", p, err)
+		var mine bool
+		var verdict error
+		ph, err := openDir(p, func(mode os.FileMode, owner, me string, dacl []scratchACE) error {
+			if mine, verdict = owner == me, scratchParentOK(mode, owner, me, dacl); errors.Is(verdict, errUnprotected) {
+				return nil // popravimo spodaj, če imamo WRITE_DAC
+			}
+			return verdict
+		})
+		if err != nil {
+			return fmt.Errorf("%s %w", p, err)
+		}
+		defer windows.CloseHandle(ph)
+		if mine || verdict != nil { // tudi selitev mape 0.5.23 (podedovan ACL pogona)
+			if err := protectHandle(ph, scratchParentSDDL); verdict != nil && err != nil {
+				return fmt.Errorf("%s %w", p, verdict)
+			} else if err != nil {
+				return fmt.Errorf("%s: %v", p, err)
+			}
 		}
 	}
-	if err := os.Mkdir(dir, 0o700); err != nil && !os.IsExist(err) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	h, err := openDir(dir, func(mode os.FileMode, owner, me string, _ []scratchACE) error { return scratchDirOK(mode, owner, me) })
 	if err != nil {
-		return fmt.Errorf("%s %w (another account uses this folder name)", dir, err)
+		if errors.Is(err, errForeignOwner) { // ni dostopa: mapa drugega uporabnika
+			err = errScratchTaken
+		}
+		return fmt.Errorf("%s %w", dir, err)
 	}
 	if err := protectDir(dir); err != nil { // po imenu (zaščita se razširi na vsebino); ročaj drži prav to mapo
 		windows.CloseHandle(h)
@@ -340,7 +344,7 @@ func protectScratch(dir string) error {
 // nova podmapa v tej mapi; CREATOR OWNER vse na podmapah (vsaka mapa prehoda ima še svoj zaščiten DACL).
 const scratchParentSDDL = "D:P(A;;FA;;;%s)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;;0x1200ad;;;AU)(A;OICIIO;FA;;;CO)"
 
-// scratchHold: ročaj trenutne mape Scratch v minigw-scratch (brez FILE_SHARE_DELETE), odprt, dokler prehod teče.
+// scratchHold: ročaj trenutne mape Scratch (brez FILE_SHARE_DELETE), odprt, dokler prehod teče.
 var scratchHold struct {
 	sync.Mutex
 	h windows.Handle

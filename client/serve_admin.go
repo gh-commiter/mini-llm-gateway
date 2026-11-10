@@ -904,6 +904,9 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 					scratch = defaultScratch()
 				}
 			}
+			if filepath.IsAbs(scratch) { // L1′: kot premik (C:\minigw-scratch.\x)
+				scratch, _ = filepath.Abs(scratch)
+			}
 			if why := s.scratchCheck(scratch, *b.Scratch != ""); why != "" {
 				return fail(400, why)
 			}

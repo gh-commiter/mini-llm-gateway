@@ -666,9 +666,9 @@ func TestScratchParentOK(t *testing.T) {
 		{os.ModeDir, other, ours, nil},
 		{os.ModeDir, ba, ours, nil},
 		{os.ModeDir, sy, ours, nil},
-		{os.ModeDir | os.ModeIrregular, me, nil, errForeignOwner}, // junction
-		{os.ModeDir | os.ModeSymlink, ba, ours, errForeignOwner},
-		{0, other, ours, errForeignOwner},                                                         // datoteka
+		{os.ModeDir | os.ModeIrregular, me, nil, errScratchLink}, // junction
+		{os.ModeDir | os.ModeSymlink, ba, ours, errScratchLink},
+		{0, other, ours, errScratchLink},                                                          // datoteka
 		{os.ModeDir, ba, append(ours, scratchACE{0, 0x10, 0x1301bf, au}), errUnprotected},         // podedovan AU Modify
 		{os.ModeDir, other, append(ours, scratchACE{0, 0, 0x40, "S-1-5-32-545"}), errUnprotected}, // BU DELETE_CHILD
 		{os.ModeDir, sy, append(ours, scratchACE{0, 0, 0x40000, "S-1-5-21-9"}), errUnprotected},   // WRITE_DAC
@@ -688,9 +688,9 @@ func TestScratchParentOK(t *testing.T) {
 		want  error
 	}{
 		{os.ModeDir, me, nil},
-		{os.ModeDir, other, errForeignOwner}, // ime že ima drug račun
-		{os.ModeDir | os.ModeIrregular, me, errForeignOwner},
-		{0, me, errForeignOwner},
+		{os.ModeDir, other, errScratchTaken}, // ime že ima drug račun
+		{os.ModeDir | os.ModeIrregular, me, errScratchLink},
+		{0, me, errScratchLink},
 	} {
 		if got := scratchDirOK(tc.mode, tc.owner, me); got != tc.want {
 			t.Errorf("dir %d: %v", i, got)

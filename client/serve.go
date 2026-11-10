@@ -489,9 +489,11 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	if c.Scratch, err = filepath.Abs(c.Scratch); err != nil || under(c.Scratch, cfgDir) {
 		return nil, errors.New("scratch folder: must not be inside the config folder " + cfgDir)
 	}
-	if err := protectScratch(c.Scratch); errors.Is(err, errForeignOwner) || errors.Is(err, errUnprotected) { // L1′
+	if err := protectScratch(c.Scratch); errors.Is(err, errScratchTaken) { // L1′
 		return nil, fmt.Errorf("scratch folder %s: %v: set \"scratch\" in %s to a folder of your own (another user on this PC uses %s)",
-			c.Scratch, err, cfgPath, filepath.Dir(c.Scratch))
+			c.Scratch, err, cfgPath, c.Scratch)
+	} else if errors.Is(err, errForeignOwner) || errors.Is(err, errUnprotected) || errors.Is(err, errScratchLink) {
+		return nil, fmt.Errorf("scratch folder %s: %v: set \"scratch\" in %s to a folder of your own", c.Scratch, err, cfgPath)
 	} else if err != nil {
 		return nil, fmt.Errorf("scratch folder %s: %v: use a folder of your own", c.Scratch, err)
 	}
@@ -693,6 +695,12 @@ var errForeignOwner = errors.New("is owned by another user")
 
 var errUnprotected = errors.New("is not protected from other users: ask an administrator to protect it")
 
+// errScratchTaken: mapa Scratch sama je drugega uporabnika (ne nadrejena mapa); errScratchLink: povezava, ne prava mapa.
+var (
+	errScratchTaken = fmt.Errorf("%w", errForeignOwner)
+	errScratchLink  = errors.New("is a link (junction or symlink), not a real folder")
+)
+
 // scratchACE: vnos DACL (vrsta, zastavice, maska, SID) za scratchParentOK.
 type scratchACE struct {
 	typ, flags byte
@@ -706,7 +714,7 @@ type scratchACE struct {
 // Naša mapa dobi tak DACL tako ali tako (scratchParentSDDL).
 func scratchParentOK(mode os.FileMode, owner, me string, dacl []scratchACE) error {
 	if !mode.IsDir() || mode&(os.ModeSymlink|os.ModeIrregular) != 0 {
-		return errForeignOwner
+		return errScratchLink
 	}
 	if owner == me {
 		return nil
@@ -730,8 +738,11 @@ func scratchParentOK(mode os.FileMode, owner, me string, dacl []scratchACE) erro
 
 // scratchDirOK (L1′): mapa prehoda v minigw-scratch (katerokoli ime) je prava mapa tega uporabnika.
 func scratchDirOK(mode os.FileMode, owner, me string) error {
-	if !mode.IsDir() || mode&(os.ModeSymlink|os.ModeIrregular) != 0 || owner != me {
-		return errForeignOwner
+	if !mode.IsDir() || mode&(os.ModeSymlink|os.ModeIrregular) != 0 {
+		return errScratchLink
+	}
+	if owner != me {
+		return errScratchTaken
 	}
 	return nil
 }

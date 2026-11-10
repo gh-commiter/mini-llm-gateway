@@ -68,7 +68,9 @@ func (s *server) moveScratchAPI(body []byte) (int, any) {
 			to = defaultScratch()
 		}
 	}
-	to = filepath.Clean(to)
+	if filepath.IsAbs(to) { // L1′: Abs (Windows: GetFullPathName) tudi odreže pike in presledke na koncu imen
+		to, _ = filepath.Abs(to)
+	}
 	if why := s.scratchCheck(to, b.To != ""); why != "" {
 		return fail(400, why)
 	}
@@ -86,7 +88,11 @@ func (s *server) moveScratchAPI(body []byte) (int, any) {
 		return 200, g
 	}
 	s.log.Printf("moving the scratch folder %s to %s", old, to)
-	defer func() { protectScratch(s.conf().Scratch) }() // L1′ (Windows): ročaj spet na veljavni mapi, tudi po napaki
+	defer func() { // L1′ (Windows): ročaj spet na veljavni mapi, tudi po napaki
+		if err := protectScratch(s.conf().Scratch); err != nil {
+			s.log.Printf("WARNING: scratch folder %s: %v", s.conf().Scratch, err)
+		}
+	}()
 	renamed, err := moveScratchDir(old, to)
 	if err != nil {
 		s.log.Printf("scratch folder not moved: %v", err)
