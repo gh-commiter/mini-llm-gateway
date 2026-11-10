@@ -1254,7 +1254,7 @@ func (h *shareHub) worktreeIntact(wt string) bool {
 		}
 		for _, sl := range s.tree.slots {
 			if sl.wt == wt {
-				return sl.gitIntact()
+				return sl.gitIntact() && sl.nestedIntact()
 			}
 		}
 	}

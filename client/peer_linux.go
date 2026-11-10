@@ -212,7 +212,7 @@ func watchGitMoves(dirs []string, moved func()) (stop func(), ok bool) {
 		return nil, false
 	}
 	for _, d := range dirs {
-		if _, err := syscall.InotifyAddWatch(fd, d, syscall.IN_MOVE_SELF|syscall.IN_DELETE_SELF); err != nil {
+		if _, err := syscall.InotifyAddWatch(fd, d, syscall.IN_MOVE_SELF|syscall.IN_DELETE_SELF|syscall.IN_DONT_FOLLOW); err != nil {
 			syscall.Close(fd)
 			return nil, false
 		}
