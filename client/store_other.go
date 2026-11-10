@@ -269,6 +269,23 @@ func safeDir(dir string) bool {
 		(perm&0o020 == 0 || trustedGroup(runtime.GOOS, st.Gid, readGroupFile()))
 }
 
+// safePath (#48): safeDir za p, njegovo mapo in vse mape nad njo do /; višje mape smejo biti zapisljive le z bitom
+// sticky (/tmp): tam drugi ne preimenujejo ali zamenjajo vnosa, ki je naš.
+func safePath(p string) bool {
+	p, err := filepath.Abs(p)
+	if err != nil || !safeDir(p) {
+		return false
+	}
+	for d, strict := filepath.Dir(p), true; ; d, strict = filepath.Dir(d), false {
+		if fi, err := os.Stat(d); err != nil || !safeDir(d) && (strict || fi.Mode()&os.ModeSticky == 0) {
+			return false
+		}
+		if filepath.Dir(d) == d {
+			return true
+		}
+	}
+}
+
 // trustedGroup: macOS le admin (80; staff je vsak lokalni uporabnik) (kot Swift PluginSetup.trustedGroup);
 // drugod le zasebna skupina uporabnika: primarna, z imenom uporabnika in brez drugih članov v /etc/group.
 func trustedGroup(goos string, gid uint32, etcGroup string) bool {

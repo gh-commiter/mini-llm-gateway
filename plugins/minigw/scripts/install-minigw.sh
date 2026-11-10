@@ -75,6 +75,11 @@ case $os in
   windows) [ -n "${LOCALAPPDATA:-}" ] && command -v cygpath >/dev/null 2>&1 && inst="$(cygpath -u "$LOCALAPPDATA")/Programs/Mini Gateway/minigw.exe" ;;
   linux) inst="$HOME/.local/bin/minigw" ;;
 esac
+# #48: Linux ~/.local/bin/minigw (in njegova mapa) le, če je last uporabnika in ni zapisljiv za skupino ali druge (pred zagonom).
+mine() { [ ! -L "$1" ] && m=$(stat -c '%u %a' "$1" 2>/dev/null) && [ "${m%% *}" = "$(id -u)" ] && [ $((0${m#* } & 022)) -eq 0 ]; }
+if [ "$os" = linux ] && [ -e "$inst" ] && ! { mine "$inst" && mine "${inst%/*}"; }; then
+  echo "minigw plugin: not using $inst: it or its folder is not yours or is writable by others."; inst=""
+fi
 [ -n "$inst" ] && [ -x "$inst" ] && iv=$(ver "$inst")
 case $iv in *[!0-9.]*) iv="" ;; esac
 if [ -n "$iv" ] && ! older "$iv" "$MIN"; then :; else inst=""; fi

@@ -171,6 +171,17 @@ rm -rf /tmp/home/.config/systemd
 rm -rf /tmp/home/.local
 echo "ok 11: newer signed release than the installed minigw: hint, no download"
 
+# 13 (#48): ~/.local/bin/minigw, ki ni last uporabnika ali je (z mapo) zapisljiv za skupino ali druge, se ne zažene in ne poveže
+for bad in file-gw dir-ow owner; do
+  mkdir -p /tmp/home/.local/bin /tmp/d13/bin; printf "#!/bin/sh\ntouch /tmp/ran13; echo minigw 0.5.20\n" > /tmp/home/.local/bin/minigw
+  chmod 755 /tmp/home/.local/bin/minigw; rm -f /tmp/ran13 /tmp/d13/bin/minigw
+  case $bad in file-gw) chmod 775 /tmp/home/.local/bin/minigw ;; dir-ow) chmod 757 /tmp/home/.local/bin ;; owner) chown 1234 /tmp/home/.local/bin/minigw ;; esac
+  out=$(run /tmp/d13 nonexistent testkey); echo "$out"
+  [ ! -e /tmp/ran13 ] && [ ! -L /tmp/d13/bin/minigw ] && echo "$out" | grep -q "not using /tmp/home/.local/bin/minigw" || fail "13: unsafe installed minigw used ($bad)"
+  rm -rf /tmp/home/.local
+done
+echo "ok 13: unsafe ~/.local/bin/minigw refused (#48)"
+
 for u in a b c d; do useradd -m u$u; done
 inst() { u=u$1; shift; setpriv --reuid=$u --regid=$u --clear-groups env -i HOME=/home/$u PATH=/t/fakebin:/usr/bin:/bin MINIGW_BASE=file:///t/rel/${REL:-inst} sh /t/install-test.sh "$@"; }
 out=$(inst a 2>&1); echo "$out"

@@ -654,7 +654,7 @@ func settingsTUI(extra []string) {
 	os.Exit(0)
 }
 
-// settingsTUIPath (#51): minigw-tui ob minigw; na Linuxu in macOS le v varni mapi in last uporabnika ali roota (kot povezava vtičnika).
+// settingsTUIPath (#51): minigw-tui ob minigw; na Linuxu in macOS le v varnih mapah do / in last uporabnika ali roota (kot povezava vtičnika).
 func settingsTUIPath(goos, self string) (string, error) {
 	tui := filepath.Join(filepath.Dir(self), "minigw-tui")
 	if goos == "windows" {
@@ -664,8 +664,8 @@ func settingsTUIPath(goos, self string) (string, error) {
 		return "", errors.New("the settings terminal UI is not installed (" + tui + "): it comes with Mini Gateway 0.5.20 or newer (https://github.com/gh-commiter/mini-llm-gateway/releases/latest); or open the settings page with: minigw gw settings link")
 	}
 	if goos != "windows" {
-		if real, err := filepath.EvalSymlinks(tui); err != nil || !safeDir(filepath.Dir(tui)) || !safeDir(filepath.Dir(real)) || !safeDir(real) {
-			return "", errors.New(tui + " or its folder is writable by others or not owned by you or root: not starting it; reinstall Mini Gateway in a safe folder")
+		if real, err := filepath.EvalSymlinks(tui); err != nil || !safePath(tui) || !safePath(real) {
+			return "", errors.New(tui + " or a folder above it is writable by others or not owned by you or root: not starting it; reinstall Mini Gateway in a safe folder")
 		}
 	}
 	return tui, nil
