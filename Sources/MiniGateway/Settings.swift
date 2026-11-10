@@ -312,7 +312,7 @@ struct SettingsView: View {
             } header: {
                 Text("Worktree mode")
             } footer: {
-                Text("Agents in worktree mode (minigw --minigw-work=worktree) work in a git clone on this Mac: Claude CLI with Bash in Claude Code's sandbox, Codex in its own sandbox (Grok is not supported yet). They write only to the clone, their own Maven repository and temporary folders. These switches let their builds download (Maven, SwiftPM); Codex can read all your files, so its network is off by default.").font(.caption).foregroundStyle(.secondary)
+                Text("Agents in worktree mode (minigw --minigw-work=worktree) work in a git clone on this Mac: Claude CLI with Bash in Claude Code's sandbox, Codex in its own sandbox (Grok is not supported yet). They write only to the clone and, under the Scratch folder, to its dependencies folder (repositories they create, CMake, SwiftPM), the project's Maven repository and build caches. These switches let their builds download (Maven, SwiftPM, git clone); Codex can read all your files, so its network is off by default.").font(.caption).foregroundStyle(.secondary)
             }
             Section {
                 TextField("Allowed commands", text: $draft.runCommands)

@@ -236,6 +236,7 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
     #expect((sb["network"] as? [String: [String]])?["allowedDomains"] == [])
     #expect(a.contains("--add-dir") && a.contains("default") && a.contains("acceptEdits"))
     #expect(Array((fs["denyWrite"] ?? []).prefix(4)) == ["config", "hooks", "info", "commondir"].map { root.path + "/.git/" + $0 })
+    #expect((fs["denyWrite"] ?? []).contains("/private/tmp/mgw-\(getuid())"))  // #67 M2
     #expect(a[a.firstIndex(of: "--disallowedTools")! + 1].contains("Edit(/" + root.path + "/**/.git/**)"))
     #expect(Worktree.scratchIsSafe(URL(fileURLWithPath: NSHomeDirectory() + "/Library/Caches/dev.trojar.minigateway/Scratch")))
     #expect(!Worktree.scratchIsSafe(URL(fileURLWithPath: "/private/tmp/scratch")))
@@ -466,6 +467,11 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
             && env["xcrun_nocache"] == "1")
     let codex = Codex.args(cwd: root, extraDirs: [], agent: true, output: root, write: true)
     #expect(codex.contains("sandbox_workspace_write.exclude_tmpdir_env_var=true"))
+    // #67: $MINIGW_DEPS in skupni predpomnilniki pisljivi (Claude, Codex); ukazi Codex z oznako peskovnika, harness ne
+    #expect(claudeWrite.contains(root.path + ".deps") && claudeWrite.contains("/Volumes/X/Scratch/worktrees/dev/x/.cache"))
+    #expect(Codex.treeDirs(root: root, cwd: root, maven: root).contains(root.path + ".deps"))
+    let prof = Codex.treeProfile(writable: [root.path], gits: [root.path + "/.git"], network: false, path: "/usr/bin")
+    #expect(prof.contains(#"shell_environment_policy.set.MINIGW_SANDBOXED="1""#))
 }
 
 /// H1: git routerja ne gre skozi shim xcrun: podtaknjen predpomnilnik (env xcrun_db) nima učinka. Kontrola: shim
@@ -1737,9 +1743,11 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
 @Test func harnessEnvOwnGitConfig() throws {
     let env = Worktree.harnessEnv(root: URL(fileURLWithPath: "/w"), maven: URL(fileURLWithPath: "/m"), agent: "codex")
     let want = ["core.fsmonitor=false", "core.hooksPath=/dev/null", "core.attributesFile=/dev/null", "diff.ignoreSubmodules=all",
-                "submodule.recurse=false", "core.excludesFile=/dev/null", "user.name=Codex (Mini Gateway)", "user.email=codex@minigw.invalid", "safe.bareRepository=explicit"]
+                "submodule.recurse=false", "core.excludesFile=/dev/null", "user.name=Codex (Mini Gateway)", "user.email=codex@minigw.invalid", "safe.bareRepository=explicit",
+                "init.templateDir="]  // #67
     #expect((0..<want.count).map { env["GIT_CONFIG_KEY_\($0)"]! + "=" + env["GIT_CONFIG_VALUE_\($0)"]! } == want)
-    #expect(env["GIT_CONFIG_GLOBAL"] == "/dev/null" && env["GIT_CONFIG_NOSYSTEM"] == "1" && env["GIT_CONFIG_COUNT"] == "9")
+    #expect(env["GIT_CONFIG_GLOBAL"] == "/dev/null" && env["GIT_CONFIG_NOSYSTEM"] == "1" && env["GIT_CONFIG_COUNT"] == "10")
+    #expect(env["MINIGW_DEPS"] == "/w.deps" && env["CLAUDE_CODE_TMPDIR"] == "/w.deps/tmp" && env["GOMODCACHE"] == "/.cache/go-mod")  // #67
     let gx = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("gx-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: gx) }
     let c = try #require(Worktree.claudeEnv(root: URL(fileURLWithPath: "/w"), maven: URL(fileURLWithPath: "/m"), gitexec: gx, agent: "claude", path: ":/usr/bin::.:bin:./x:/bin:"))
@@ -2068,4 +2076,147 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
     await hub.finish(run: rb)
     #expect(g(client, "show", "minigw/codex-\(short)-0:three.txt") == "3" && g(client, "show", "minigw/codex-\(short)-0:one.txt") == "1")
     #expect(Worktree.convLoad(client.path).0.convs["o1"]?.branch == "minigw/codex-\(short)-0" && b1 != "minigw/codex-\(short)-0")
+}
+
+/// #67 (kot Go TestPathWrapDeps): git init/clone agenta le v $MINIGW_DEPS in le z oznako peskovnika (SANDBOX_RUNTIME ali
+/// MINIGW_SANDBOXED); drugje zavrnitev z namigom, klon nespremenjen; brez oznake (harness) v $MINIGW_DEPS git klona.
+@Test func pathWrapDepsRealGit() throws {
+    let fm = FileManager.default
+    let root = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("pd-" + UUID().uuidString)
+    defer { try? fm.removeItem(at: root) }
+    let wt = root.appendingPathComponent("worktrees/d/id/claude-12345678-0"), src = root.appendingPathComponent("src")
+    for d in [wt, src] {
+        try fm.createDirectory(at: d, withIntermediateDirectories: true)
+        g(d, "init", "-q", "-b", "main"); g(d, "commit", "-q", "--allow-empty", "-m", "c")
+    }
+    let deps = Worktree.deps(wt), head = g(wt, "rev-parse", "HEAD")
+    try fm.createDirectory(at: deps, withIntermediateDirectories: true)
+    let env = try #require(Worktree.claudeEnv(root: wt, maven: root.appendingPathComponent("m"), gitexec: root.appendingPathComponent("gitexec"), agent: "claude"))
+    #expect(env["MINIGW_DEPS"] == deps.path)
+    func run(_ cwd: URL, _ extra: [String: String], _ args: String...) throws -> (String, Int32) {
+        let p = Process(), out = Pipe()
+        p.executableURL = root.appendingPathComponent("gitexec/bin/git"); p.arguments = args; p.currentDirectoryURL = cwd
+        p.standardOutput = out; p.standardError = out
+        p.environment = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("GIT_") && !Worktree.sandboxMarkers.contains($0.key) }
+            .merging(env) { $1 }.merging(extra) { $1 }
+        try p.run(); p.waitUntilExit()
+        return (String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines), p.terminationStatus)
+    }
+    let hint = "minigw: create repositories only under $MINIGW_DEPS (\(deps.path))"
+    for mark in ["SANDBOX_RUNTIME", "MINIGW_SANDBOXED"] {
+        try? fm.removeItem(at: deps); try fm.createDirectory(at: deps, withIntermediateDirectories: true)
+        let sb = [mark: "1"]
+        #expect(try run(wt, sb, "init", "-q", deps.path + "/x").1 == 0, "\(mark)")
+        #expect(!fm.fileExists(atPath: deps.path + "/x/.git/hooks"), "templates copied")
+        #expect(try run(deps, sb, "clone", "-q", src.path, "y").1 == 0, "\(mark)")
+        let y = deps.appendingPathComponent("y")
+        try file(y, "f", "f\n")
+        #expect(try run(y, sb, "add", "f").1 == 0 && run(y, sb, "commit", "-qm", "f").1 == 0)
+        #expect(try run(y, sb, "rev-parse", "--absolute-git-dir").0 == y.path + "/.git")
+        for args in [["init", "-q", "build/_deps/foo"], ["clone", "-q", src.path, "build/_deps/bar"], ["init", "-q", root.path + "/z"]] {
+            let (out, code) = args.count == 3 ? try run(wt, sb, args[0], args[1], args[2]) : try run(wt, sb, args[0], args[1], args[2], args[3])
+            #expect(code == 128 && out.hasPrefix(hint), "\(mark) \(args): \(out)")
+        }
+        let (out, code) = try run(deps, sb.merging(["MINIGW_NETWORK_OFF": "Network for builds"]) { $1 }, "clone", "-q", "https://example.invalid/a.git")
+        #expect(code == 128 && out.contains("(Network for builds)"), "\(out)")
+    }
+    #expect(try run(deps.appendingPathComponent("y"), [:], "rev-parse", "--absolute-git-dir").0 == wt.path + "/.git")  // harness: pravilo klona
+    #expect(try run(deps, [:], "init", "-q", "h").1 == 128)
+    #expect(try run(deps, ["SANDBOX_RUNTIME": "1", "MINIGW_DEPS": ""], "init", "-q", "h").0 == "minigw: this run cannot write (read-only)")
+    #expect(g(wt, "rev-parse", "HEAD") == head && g(wt, "status", "--porcelain").isEmpty && !fm.fileExists(atPath: wt.path + "/build"))
+}
+
+/// #67: $MINIGW_DEPS nastane s klonom in ostane med zagoni pogovora (veja ga ne vsebuje), gre s klonom ob koncu seje;
+/// ohranjen klon (kept) ga nima.
+@Test func worktreeDepsLifetime() async throws {
+    let (root, client, tree) = try fixture()
+    defer { cleanup(root) }
+    let hub = ShareHub(), session = UUID().uuidString
+    let key = try #require(await hub.register(session: session, cwd: client.path, key: nil, device: "dev", tree: tree))
+    let loop = fakeClient(hub, key: key, top: client)
+    defer { loop.cancel() }
+    var deps: URL?
+    let first = try await agentRun(hub, session) { dir in
+        deps = Worktree.deps(dir)
+        #expect(FileManager.default.fileExists(atPath: deps!.path + "/tmp") && FileManager.default.fileExists(atPath: Worktree.cache(dir).path))
+        try file(deps!, "x/a.txt", "dep\n")
+        try file(dir, "one.txt", "1\n")
+    }
+    await hub.finish(run: first)
+    let second = try await agentRun(hub, session) { dir in
+        #expect(Worktree.deps(dir) == deps && FileManager.default.fileExists(atPath: deps!.path + "/x/a.txt"), "\(dir.path) \(deps!.path) \((try? FileManager.default.contentsOfDirectory(atPath: deps!.path)) ?? [])")
+    }
+    let branch = "minigw/claude-\(String(Sync.folderID(session).prefix(8)))-0"
+    #expect(g(client, "ls-tree", "-r", "--name-only", branch) == "a.txt\nnew.txt\none.txt")  // brez $MINIGW_DEPS
+    await hub.finish(run: second)
+    await hub.unregister(key: key)
+    for _ in 0..<100 where FileManager.default.fileExists(atPath: deps!.path) { try await Task.sleep(for: .milliseconds(50)) }
+    #expect(!FileManager.default.fileExists(atPath: deps!.path))
+    // kept: premik klona, odvisnosti ne ostanejo
+    let wt = root.appendingPathComponent("k/c"), kept = root.appendingPathComponent("k/c-kept-1")
+    try file(wt, "f", "f\n"); try file(Worktree.deps(wt), "x", "x\n")
+    ShareHub.keepClone(wt, kept)
+    #expect(!FileManager.default.fileExists(atPath: Worktree.deps(wt).path))
+    for _ in 0..<100 where FileManager.default.fileExists(atPath: Worktree.deps(kept).path) { try await Task.sleep(for: .milliseconds(50)) }
+    #expect(!FileManager.default.fileExists(atPath: Worktree.deps(kept).path) && FileManager.default.fileExists(atPath: kept.path + "/f"))
+}
+
+/// #67: kratka povezava za CLAUDE_CODE_TMPDIR (≤ 44 bajtov s /claude-<uid>) kaže v $MINIGW_DEPS/tmp, zapis gre pod Scratch;
+/// tuja ali odprta mapa mgw-<uid> (ne 0700) je ne dobi; removeClone jo odstrani.
+@Test func tmpLinkShortIntoScratch() throws {
+    let fm = FileManager.default, base = "/tmp/t" + UUID().uuidString.prefix(4)
+    defer { try? fm.removeItem(atPath: base) }
+    let root = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("tl-" + UUID().uuidString + "/worktrees/d/i/claude-12345678-0")
+    defer { try? fm.removeItem(at: root.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()) }
+    try fm.createDirectory(at: root, withIntermediateDirectories: true)
+    try fm.createDirectory(atPath: base, withIntermediateDirectories: true)
+    let link = try #require(Worktree.makeTmpLink(root, base: base))
+    #expect((link + "/claude-\(getuid())").utf8.count <= 44)
+    #expect(try fm.destinationOfSymbolicLink(atPath: link) == Worktree.deps(root).path + "/tmp")
+    try Data("x".utf8).write(to: URL(fileURLWithPath: link + "/probe"))
+    #expect(fm.fileExists(atPath: Worktree.deps(root).path + "/tmp/probe"))
+    #expect(Worktree.makeTmpLink(root, base: base) == link)  // znova: zamenjava naenkrat
+    chmod(base + "/mgw-\(getuid())", 0o755)
+    #expect(Worktree.makeTmpLink(root, base: base) == nil)
+    chmod(base + "/mgw-\(getuid())", 0o700)
+    let real = try #require(Worktree.makeTmpLink(root))  // privzeta /private/tmp/mgw-<uid>
+    var st = stat()
+    #expect(lstat(real, &st) == 0)
+    ShareHub.removeClone(root)
+    #expect(lstat(real, &st) != 0)
+}
+
+/// #67 H1 (kot Go TestGrantDirsReplacesPlantedLinks): povezava ali datoteka namesto mape za pisanje se odstrani in naredi
+/// znova (0700), cilj ostane nedotaknjen; v profilu Copilot le dobesedne poti in prepoved zamenjave.
+@Test func grantDirsReplacesPlantedLinks() throws {
+    let fm = FileManager.default
+    let root = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("gd-" + UUID().uuidString)
+    defer { try? fm.removeItem(at: root) }
+    let wt = root.appendingPathComponent("clones/c"), home = root.appendingPathComponent("home")
+    try fm.createDirectory(at: wt, withIntermediateDirectories: true)
+    try file(home, "secret", "s")
+    try fm.createSymbolicLink(at: Worktree.deps(wt), withDestinationURL: home)
+    try fm.createSymbolicLink(at: Worktree.cache(wt), withDestinationURL: home)
+    try file(root, "clones/.maven", "x")
+    let dirs = try #require(Worktree.grantDirs(root: wt))
+    for d in dirs {
+        var st = stat()
+        #expect(lstat(d, &st) == 0 && st.st_mode & S_IFMT == S_IFDIR && st.st_mode & 0o777 == 0o700, "\(d)")
+    }
+    #expect(try String(contentsOf: home.appendingPathComponent("secret"), encoding: .utf8) == "s")
+}
+
+/// #67: navodilo z oznako peskovnika in brez; imena nastavitev omrežja po agentu (Mac).
+@Test func depsNoteAndNetworkOff() {
+    #expect(Router.depsNote("/d").contains("$MINIGW_DEPS (/d), kept for this conversation; git init and git clone work only there."))
+    #expect(Router.depsNote("/d", sandboxed: false).contains("git init and git clone are not available on this gateway (no sandbox)."))
+    var c = RouterConfig()
+    c.worktreeNetwork = false; c.worktreeCodexNetwork = false; c.codex.network = true; c.copilot.network = true
+    #expect(Worktree.networkOff("claude", c) == "Settings → General → Worktree mode → Network for builds")
+    #expect(Worktree.networkOff("codex", c) == "Settings → General → Worktree mode → Network for Codex builds")
+    #expect(Worktree.networkOff("copilot", c) == "Settings → General → Worktree mode → Network for Codex builds")
+    c.codex.network = false
+    #expect(Worktree.networkOff("codex", c) == "Settings → Codex → Allow network access for commands")  // kot Go
+    c.worktreeNetwork = true; c.worktreeCodexNetwork = true; c.codex.network = true
+    #expect(Worktree.networkOff("claude", c) == nil && Worktree.networkOff("codex", c) == nil && Worktree.networkOff("copilot", c) == nil)
 }

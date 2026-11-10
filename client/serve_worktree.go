@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math/rand/v2"
 	"os"
 	"os/exec"
 	"path"
@@ -690,13 +691,16 @@ func finalize(repo, wt, branch, base, agent, out string, links map[string]string
 // .git/config klona (fsmonitor, hooki, atributi), GIT_ATTR_SOURCE = prazno drevo izklopi .gitattributes, GIT_DIR in
 // GIT_WORK_TREE: ugnezden .git agenta ne velja; Maven dobi svoj lokalni repozitorij. tmp: TMPDIR agenta.
 // #40: brez lastnikovih nastavitev git (identiteta, podpis, poverilnice, insteadOf); avtor commitov je agent (agent: codex …).
+// #67: MINIGW_DEPS (depsDir), Claude Code TMPDIR in predpomnilniki orodij pod Scratch (depsEnv).
 func worktreeHarnessEnv(wt, maven, tmp, agent string) []string {
-	n, long := "9", []string{}
-	if gitLongPaths { // le Windows (par 9; Worktree.harnessEnv na Macu ga nima, vrstni red parov 0–8 enak)
-		n, long = "10", []string{"GIT_CONFIG_KEY_9=core.longpaths", "GIT_CONFIG_VALUE_9=true"}
+	// par 9: git init/clone agenta (le v $MINIGW_DEPS) ne kopira predlog (vzorčni hooki); Windows: core.longpaths (tam
+	// agenti repozitorijev ne delajo, prazna vrednost okolja pa tam ni preverjena)
+	pair9 := []string{"GIT_CONFIG_KEY_9=init.templateDir", "GIT_CONFIG_VALUE_9="}
+	if gitLongPaths { // le Windows (Worktree.harnessEnv na Macu ga nima, vrstni red parov 0–8 enak)
+		pair9 = []string{"GIT_CONFIG_KEY_9=core.longpaths", "GIT_CONFIG_VALUE_9=true"}
 	}
-	return append([]string{"GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_NOSYSTEM=1",
-		"GIT_CONFIG_COUNT=" + n, "GIT_CONFIG_KEY_0=core.fsmonitor", "GIT_CONFIG_VALUE_0=false",
+	return append(append([]string{"GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_NOSYSTEM=1",
+		"GIT_CONFIG_COUNT=10", "GIT_CONFIG_KEY_0=core.fsmonitor", "GIT_CONFIG_VALUE_0=false",
 		"GIT_CONFIG_KEY_1=core.hooksPath", "GIT_CONFIG_VALUE_1=" + os.DevNull, // ne v klonu: tja agent lahko piše
 		"GIT_CONFIG_KEY_2=core.attributesFile", "GIT_CONFIG_VALUE_2=" + os.DevNull,
 		// N9: status in diff ne vstopita v podmodul (submodule.<ime>.ignore iz .gitmodules to preglasi: gitExecWrap)
@@ -706,7 +710,65 @@ func worktreeHarnessEnv(wt, maven, tmp, agent string) []string {
 		"GIT_CONFIG_KEY_8=safe.bareRepository", "GIT_CONFIG_VALUE_8=explicit", // #61: golega repozitorija ne najde sam (le z GIT_DIR)
 		"GIT_ATTR_SOURCE=4b825dc642cb6eb9a060e54bf8d69288fbee4904",
 		"GIT_DIR=" + filepath.Join(wt, ".git"), "GIT_WORK_TREE=" + wt, "GIT_COMMON_DIR=" + filepath.Join(wt, ".git"),
-		"MAVEN_OPTS=-Dmaven.repo.local=" + maven + " -Djava.io.tmpdir=" + tmp, "TMPDIR=" + tmp, "TMP=" + tmp, "TEMP=" + tmp}, long...)
+		"MAVEN_OPTS=-Dmaven.repo.local=" + maven + " -Djava.io.tmpdir=" + tmp, "TMPDIR=" + tmp, "TMP=" + tmp, "TEMP=" + tmp,
+		"TMPPREFIX=" + filepath.Join(tmp, "zsh")}, pair9...), depsEnv(wt)...) // #67: TMPPREFIX: here-doc zsh ne v /tmp
+}
+
+// depsDir (#67): mapa odvisnosti pogovora ($MINIGW_DEPS) poleg klona (ista mapa klonov pod Scratch, isti nosilec);
+// tja agent naredi repozitorije (git init/clone, FetchContent, SwiftPM). Gre s klonom (removeClone), ni ohranjena (kept).
+func depsDir(wt string) string { return wt + ".deps" }
+
+// grantDirs (#67 H1, kot Worktree.grantDirs na Macu): mape pod Scratch, ki jih agent dobi za pisanje poleg klona (.maven,
+// .cache, $MINIGW_DEPS in njegov tmp), preverjene ob vsakem začetku teka, preden nastane peskovnik: agent bi lahko mapo
+// zamenjal s povezavo (rm -rf "$MINIGW_DEPS"; ln -s ~ "$MINIGW_DEPS") in naslednji peskovnik (bwrap --bind, pravila po
+// razrešeni poti) bi mu dal pisanje v cilj. Vsak vnos mora biti prava mapa (lstat, brez sledenja) tega uporabnika; drugo
+// se odstrani (unlink, nikoli sledenje) in naredi znova 0700. fixed: popravljeni vnosi (za dnevnik); napaka = teka ni.
+func grantDirs(wt string) (dirs, fixed []string, err error) {
+	clones, deps := filepath.Dir(wt), depsDir(wt)
+	if !ownedByMe(clones) {
+		return nil, nil, errors.New("the clones folder is not a folder of this user: " + clones)
+	}
+	dirs = []string{filepath.Join(clones, ".maven"), filepath.Join(clones, ".cache"), deps, filepath.Join(deps, "tmp")}
+	for _, d := range dirs {
+		if ownedByMe(d) {
+			continue
+		}
+		if st, lerr := os.Lstat(d); lerr == nil {
+			if st.IsDir() { // prava mapa drugega uporabnika: ne brišemo tuje
+				return nil, nil, errors.New("not a folder of this user: " + d)
+			}
+			if err = os.Remove(d); err != nil { // povezava ali datoteka: odstrani vnos, cilja ne
+				return nil, nil, err
+			}
+		}
+		if err = os.Mkdir(d, 0o700); err != nil || !ownedByMe(d) {
+			return nil, nil, fmt.Errorf("cannot make %s: %v", d, err)
+		}
+		fixed = append(fixed, d)
+	}
+	return dirs, fixed, nil
+}
+
+// networkOffEnv (#67, kot Worktree.networkOff na Macu): MINIGW_NETWORK_OFF z imenom nastavitve, ko agent v klonu nima
+// omrežja za gradnje (ovoj zavrne oddaljen git clone). minigw serve ima stikalo le za Codex; Claude in Copilot ga nimata.
+func networkOffEnv(agent string, network bool) []string {
+	if agent == "codex" && !network {
+		return []string{"MINIGW_NETWORK_OFF=Settings → Codex → Allow network access for commands"}
+	}
+	return nil
+}
+
+// depsEnv (#67, kot Worktree.depsEnv na Macu): vse za gradnje agenta pod Scratch, nikoli v $TMPDIR, /tmp ali domači mapi.
+// Skupno za projekt (mapa klonov/.cache, kot .maven; sprejeto: pogovor lahko podtakne vsebino drugemu pogovoru istega
+// projekta): GOMODCACHE, npm, pip — vsebina po zgoščenih vrednostih, hkratna raba z zaklepi. Za pogovor ($MINIGW_DEPS):
+// GOCACHE (#67 M3: izhodi prevajanja se ob rabi ne preverjajo), Cargo in Gradle (domači mapi z nastavitvami in skriptami
+// gradnje, config.toml, init.d). CLAUDE_CODE_TMPDIR: začasne datoteke Claude Code.
+func depsEnv(wt string) []string {
+	deps, cache := depsDir(wt), filepath.Join(filepath.Dir(wt), ".cache")
+	return []string{"MINIGW_DEPS=" + deps, "CLAUDE_CODE_TMPDIR=" + filepath.Join(deps, "tmp"),
+		"GOMODCACHE=" + filepath.Join(cache, "go-mod"), "GOCACHE=" + filepath.Join(deps, "go-build"),
+		"npm_config_cache=" + filepath.Join(cache, "npm"), "PIP_CACHE_DIR=" + filepath.Join(cache, "pip"),
+		"CARGO_HOME=" + filepath.Join(deps, "cargo"), "GRADLE_USER_HOME=" + filepath.Join(deps, "gradle")}
 }
 
 // gitLongPaths: Windows, git prehoda in agentov s core.longpaths=true. Klon je v …\scratch\worktrees\<naprava>\<id>\<ime>
@@ -772,17 +834,45 @@ func wrapScript(git string) string {
 
 // pathWrapScript (#40): »git« na PATH agenta (bin v gitExecWrap, enak kot Worktree.pathWrapScript na Macu): git dela v
 // registriranem klonu (MINIGW_GIT_DIRS), ki vsebuje trenutno mapo ali pot -C; drugače v vrhnjem (prvi vnos).
+// #67: init in clone le pod $MINIGW_DEPS in le v peskovniku (SANDBOX_RUNTIME od Claude Code, MINIGW_SANDBOXED od
+// prehoda); tam in za druge ukaze v $MINIGW_DEPS iz peskovnika navaden git (brez GIT_DIR klona in brez ovoja exec).
+// Klicatelj zunaj peskovnika (harness) ima za druge ukaze nespremenjeno pravilo.
 func pathWrapScript(git string) string {
-	return "#!/bin/sh\n# minigw: git works in the registered clone (MINIGW_GIT_DIRS) that holds the folder or the -C <path>\n" +
+	return "#!/bin/sh\n# minigw: git works in the registered clone (MINIGW_GIT_DIRS) that holds the folder or the -C <path>; new repositories only under $MINIGW_DEPS\n" +
 		"real='" + strings.ReplaceAll(git, "'", `'\''`) + `'; d=$(pwd -P) || exec "$real" "$@"` + "\n" +
 		`i=1; while [ $i -le $# ]; do eval "a=\${$i}"; case $a in` + "\n" +
 		`  -C) i=$((i+1)); eval "p=\${$i}"; case $p in /*) ;; *) p=$d/$p;; esac; q=$(cd "$p" 2>/dev/null && pwd -P) && d=$q || break;;` + "\n" +
-		`  -c) i=$((i+1));; -*) ;; *) break;; esac; i=$((i+1)); done` + "\n" +
+		`  -c|--git-dir|--work-tree|--namespace|--config-env) i=$((i+1));; -*) ;; *) break;; esac; i=$((i+1)); done` + "\n" +
+		pathWrapDeps +
 		"b=; g=; set -f; IFS='\n'\n" +
 		`for e in $MINIGW_GIT_DIRS; do w=$(cd "${e%/.git}" 2>/dev/null && pwd -P) || continue; case $d/ in "$w"/*) [ ${#w} -gt ${#b} ] && b=$w g=$e;; esac; done` + "\n" +
 		`[ -n "$g" ] || g=${MINIGW_GIT_DIRS%%'` + "\n" + `'*}; [ -n "$g" ] && export GIT_DIR="$g" GIT_COMMON_DIR="$g" GIT_WORK_TREE="${g%/.git}"` + "\n" +
 		`exec "$real" "$@"` + "\n"
 }
+
+// pathWrapDeps (#67): del pathWrapScript za $MINIGW_DEPS (podukaz c, peskovnik s, mapa D; cilj init/clone fizično, brez »..«
+// v še neobstoječem delu). MINIGW_NETWORK_OFF: ime nastavitve, ko je omrežje gradenj agenta izklopljeno.
+const pathWrapDeps = `c=; [ $i -le $# ] && eval "c=\${$i}"
+s=; { [ "$SANDBOX_RUNTIME" = 1 ] || [ "$MINIGW_SANDBOXED" = 1 ]; } && s=1
+D=; [ -n "$MINIGW_DEPS" ] && D=$(cd "$MINIGW_DEPS" 2>/dev/null && pwd -P)
+plain() { unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_ATTR_SOURCE GIT_EXEC_PATH; exec "$real" "$@"; }
+no() { echo "minigw: $1" >&2; exit 128; }
+case $c in init|clone)
+  [ -n "$MINIGW_DEPS" ] || no "this run cannot write (read-only)"
+  u=; t=; x=; while [ $i -lt $# ]; do i=$((i+1)); eval "a=\${$i}"; case $a in
+    --separate-git-dir*) x=1;; -[bcjou]|--revision|--template|--initial-branch|--object-format|--ref-format|--origin|--branch|--upload-pack|--reference|--reference-if-able|--depth|--shallow-since|--shallow-exclude|--config|--server-option|--jobs|--filter|--bundle-uri) i=$((i+1));;
+    -*) ;; *) if [ -n "$u" ]; then t=${t:-$a}; else u=$a; fi;; esac; done
+  if [ $c = init ]; then t=${u:-.}; elif [ -z "$t" ]; then t=${u%/}; t=${t%/.git}; t=${t##*[/:]}; t=${t%.git}; fi
+  case $t in /*) ;; *) t=$d/$t;; esac; case /$t/ in */../*) x=1;; esac
+  p=$t; while [ ! -d "$p" ]; do p=${p%/*}; p=${p:-/}; done; r=$(cd "$p" && pwd -P)/
+  [ -z "$x" ] && [ -n "$D" ] && case $r in "$D"/*) ;; *) false;; esac ||
+    no "create repositories only under \$MINIGW_DEPS ($MINIGW_DEPS), e.g. cmake -DFETCHCONTENT_BASE_DIR=\"\$MINIGW_DEPS/cmake\", swift build --scratch-path \"\$MINIGW_DEPS/swiftpm\""
+  [ -n "$s" ] || no "git init and git clone need the agent sandbox, which this run does not have"
+  [ $c = init ] || [ -z "$MINIGW_NETWORK_OFF" ] || case $u in file://*|/*|.*) ;; *://*|[!/]*:*) no "network for this agent's builds is off ($MINIGW_NETWORK_OFF)";; esac
+  plain "$@";;
+esac
+[ -n "$s" ] && [ -n "$D" ] && case $d/ in "$D"/*) plain "$@";; esac
+`
 
 // pinPaths (#40 M2): .git vseh klonov in vsaka mapa na poti od wt do ugnezdenega klona (pin: preimenovanje EBUSY, da
 // agent ne podtakne nove <pot>/.git, v kateri bi git harnessa ali ovoj pathWrapScript delal); predniki pred potomci.
@@ -876,7 +966,8 @@ func gitWrapEnv(gitDirs []string, gw string) []string {
 // worktreeNote: navodilo agentu v klonu.
 // Besedilo kot ClaudeCLI.mountNote na Macu, brez stavka o minigw run (ta je le na Macu).
 // gits: .git vseh klonov (hub.worktreeGits; ugnezdeni za prvim) — agent jih dobi poimenovane z ukazom za commit v njih.
-func worktreeNote(clientCwd, dir, branch string, gits []string) string {
+// sandboxed (#67): agent ima peskovnik z oznako za ovoj git (depsNote).
+func worktreeNote(clientCwd, dir, branch string, gits []string, sandboxed bool) string {
 	commit := " Commit your work on this branch; changes you leave uncommitted are committed for you at the end."
 	if worktreeNeedsUnsandboxed { // #70: na Windows brez sandboxa git agenta ni vnaprej dovoljen (git -c, alias … = poljuben ukaz); commit na koncu
 		commit = " Do not run git add or git commit: the gateway commits your changes on this branch when you finish."
@@ -884,8 +975,21 @@ func worktreeNote(clientCwd, dir, branch string, gits []string) string {
 	return "The user's folder " + clientCwd + " (on their computer, a git repository) is a clone here at " + dir + ", your working" +
 		" directory, on branch " + branch + ". Map paths under " + clientCwd + " to it." + commit +
 		" The branch goes back to the user's repository; their files are not changed." +
-		" Build output (.build, target, DerivedData) is never committed." + nestedClonesNote(gits) +
-		" Do not create git repositories or submodules here outside ignored folders: then nothing comes back (use sync for that)."
+		" Build output (.build, target, DerivedData) is never committed." + nestedClonesNote(gits) + depsNote(depsDir(filepath.Dir(gits[0])), sandboxed && runtime.GOOS != "windows")
+}
+
+// depsNote (#67, kot ClaudeCLI.depsNote na Macu): kam gredo odvisnosti in repozitoriji agenta. Windows: brez peskovnika
+// agenta (#68) git init/clone tam ni (ovoja PATH ni, GIT_DIR klona bi ga znova inicializiral).
+// sandboxed: ukazi agenta nosijo oznako peskovnika (sicer ovoj git init/clone zavrne, npr. Copilot brez bwrap).
+func depsNote(deps string, sandboxed bool) string {
+	git := "git init and git clone work only there"
+	if !sandboxed {
+		git = "git init and git clone are not available on this gateway (no sandbox)"
+	}
+	return " Dependencies and repositories you create go to $MINIGW_DEPS (" + deps + "), kept for this conversation; " + git + "." +
+		` CMake: -DFETCHCONTENT_BASE_DIR="$MINIGW_DEPS/cmake". SwiftPM: swift build --scratch-path "$MINIGW_DEPS/swiftpm".` +
+		` Xcode: -clonedSourcePackagesDirPath "$MINIGW_DEPS/spm" -derivedDataPath "$MINIGW_DEPS/DerivedData".` +
+		" Maven, Go, npm, pip, Cargo and Gradle caches are already set."
 }
 
 // nestedClonesNote (B): ugnezdeni kloni po imenu in kako commitati v njih (git sam dela v vrhnjem: GIT_DIR je nastavljen).
@@ -913,10 +1017,12 @@ func worktreeReadOnlyNote(clientCwd, dir string) string {
 		" Nothing goes back to the user, so give your answer in your reply."
 }
 
-// worktreeClaudeArgs: v peskovniku Claude Code (ne Windows) še pisanje v Maven agentov in branje objektov zrcal; .git
-// vseh klonov (gits: config, hooks, info, commondir) ni pisljiv, Edit/Write vanj ne (nastavitve in hooke bere git
-// samega claude). objects: objekti zrcal (vrhnji in ugnezdeni). tmp: TMPDIR teka (runTempDir).
-func worktreeClaudeArgs(args []string, wt, maven, tmp string, objects, gits []string) []string {
+// worktreeClaudeArgs: v peskovniku Claude Code (ne Windows) še pisanje v mape grants (#67: grantDirs: .maven, .cache,
+// $MINIGW_DEPS in njegov tmp, cilj povezave TMPDIR) in branje objektov zrcal; .git vseh klonov (gits: config, hooks,
+// info, commondir) ni pisljiv, Edit/Write vanj ne (nastavitve in hooke bere git samega claude). objects: objekti zrcal
+// (vrhnji in ugnezdeni). tmpRoot (#67 M2): koren povezav TMPDIR (runTempLink) ni pisljiv, povezava teka ni v pravilih
+// (peskovnik dobi cilj).
+func worktreeClaudeArgs(args []string, wt string, grants []string, tmpRoot string, objects, gits []string) []string {
 	for i := 0; i+1 < len(args); i++ {
 		if args[i] != "--settings" {
 			continue
@@ -927,13 +1033,17 @@ func worktreeClaudeArgs(args []string, wt, maven, tmp string, objects, gits []st
 		}
 		if sb, _ := st["sandbox"].(map[string]any); sb != nil {
 			if fs, _ := sb["filesystem"].(map[string]any); fs != nil {
-				fs["allowWrite"] = append(toStrings(fs["allowWrite"]), wt, maven, tmp) // koren klona (tudi .git za commit), ko je cwd podmapa
-				fs["allowRead"] = append(append(toStrings(fs["allowRead"]), wt, maven, tmp), objects...)
+				rw := append([]string{wt}, grants...) // koren klona (tudi .git za commit), ko je cwd podmapa
+				fs["allowWrite"] = append(toStrings(fs["allowWrite"]), rw...)
+				fs["allowRead"] = append(append(toStrings(fs["allowRead"]), rw...), objects...)
 				var deny []string
 				for _, g := range gits {
 					for _, d := range []string{"config", "hooks", "info", "commondir"} {
 						deny = append(deny, filepath.Join(g, d))
 					}
+				}
+				if tmpRoot != "" {
+					deny = append(deny, tmpRoot)
 				}
 				fs["denyWrite"] = deny
 			}
@@ -1120,7 +1230,8 @@ func (h *shareHub) worktreeMount(s *serveShare, agent string) (dir, refused stri
 			f.Close()
 		}
 	}
-	for _, d := range []string{filepath.Join(wt, ".build", "tmp"), filepath.Join(t.worktrees, ".maven")} {
+	// #67: $MINIGW_DEPS s TMPDIR Claude Code in skupni predpomnilniki projekta (depsEnv)
+	for _, d := range []string{filepath.Join(wt, ".build", "tmp"), filepath.Join(t.worktrees, ".maven"), filepath.Join(depsDir(wt), "tmp"), filepath.Join(t.worktrees, ".cache")} {
 		os.MkdirAll(d, 0o700)
 	}
 	sl := &wtSlot{wt: wt, branch: branch, base: reply.Snapshot, nested: nested}
@@ -1563,7 +1674,10 @@ func keepClone(wt, kept string, logf func(string, ...any)) {
 	}
 	now := time.Now()
 	pr.Chtimes(filepath.Base(kept), now, now)
+	// #67: odvisnosti niso delo agenta in ne ostanejo; premik takoj (nov klon na isti poti dobi svoje), brisanje v ozadju
+	pr.Rename(filepath.Base(depsDir(wt)), filepath.Base(depsDir(kept)))
 	go func() {
+		os.RemoveAll(depsDir(kept))
 		if !disarmKept(kept) {
 			logf("worktree: cannot rename the git folders in the kept clone %s; removed", kept)
 		}
@@ -1651,14 +1765,22 @@ func pruneKept(dir string, cut time.Time) {
 	}
 }
 
-// removeClone: klon, nato še prazen .maven in mapa klonov, ko v njej ni drugega klona (sicer ostane prazna mapa;
-// .maven z vsebino je predpomnilnik Maven in ostane do odstranitve zrcala).
+// removeClone: klon in njegove odvisnosti (#67), nato še prazna .maven in .cache ter mapa klonov, ko v njej ni drugega
+// klona (sicer ostane prazna mapa; .maven in .cache z vsebino sta predpomnilnika in ostaneta do odstranitve zrcala).
 func removeClone(wt string) {
 	os.RemoveAll(wt)
+	os.RemoveAll(depsDir(wt))
 	dir := filepath.Dir(wt)
-	if es, _ := os.ReadDir(dir); len(es) == 1 && es[0].Name() == ".maven" && os.Remove(filepath.Join(dir, ".maven")) == nil {
-		os.Remove(dir)
+	es, _ := os.ReadDir(dir)
+	for _, e := range es {
+		if e.Name() != ".maven" && e.Name() != ".cache" {
+			return
+		}
 	}
+	for _, e := range es {
+		os.Remove(filepath.Join(dir, e.Name()))
+	}
+	os.Remove(dir)
 }
 
 // pruneMirrors: zrcala (scratch/repos/<naprava>/<repo>.git), ki jih 30 dni ni uporabil noben agent, in njihovi kloni.
@@ -1786,7 +1908,7 @@ func ownTempRoot(p string) bool {
 	return runtime.GOOS == "windows" || fi.Mode().Perm() == 0o700 && ownedByMe(p)
 }
 
-// tempRoot (M1): koren prehoda za TMPDIR tekov; vsi agenti Claude ga imajo v denyRead (agentArgs). Čistilec /tmp
+// tempRoot (M1): koren prehoda za TMPDIR tekov (#67: povezave runTempLink, na Windows mape runTempDir). Čistilec /tmp
 // (macOS po 3 dneh, systemd-tmpfiles po 10) ga lahko pobriše, drug uporabnik pa nato podtakne mapo z istim imenom:
 // zato se pred vsakim tekom preveri in po potrebi naredi nov; ob vsakem teku se dotakne (mtime). "" = ga ni.
 func (s *server) tempRoot() string {
@@ -1856,4 +1978,29 @@ func runTempDir(root string) (dir string, done func(), err error) {
 		return "", nil, errors.New("gateway temporary folder changed")
 	}
 	return dir, func() { os.RemoveAll(dir) }, nil
+}
+
+// runTempLink (#67): TMPDIR in CLAUDE_CODE_TMPDIR teka Claude CLI v klonu (Linux, macOS): kratka pot pod korenom tempRoot
+// (Claude Code: pot + /claude-<uid> največ 44 bajtov, vtičnice AF_UNIX), ki je povezava na target (<klon>.deps/tmp pod
+// Scratch): podatki so pod Scratch, v /tmp le povezava. Ime naključno, povezava nastane naenkrat (Symlink ne prepiše
+// obstoječega imena) v korenu, ki je naš (ownTempRoot); done jo odstrani.
+func runTempLink(root, target string) (link string, done func(), err error) {
+	if root == "" || runtime.GOOS == "windows" {
+		return "", nil, errors.New("no gateway temporary folder")
+	}
+	os.MkdirAll(target, 0o700)
+	for range 16 {
+		link = filepath.Join(root, fmt.Sprintf("%04x", rand.IntN(0x10000)))
+		if err = os.Symlink(target, link); !os.IsExist(err) {
+			break
+		}
+	}
+	if err != nil {
+		return "", nil, err
+	}
+	if !ownTempRoot(root) { // koren se je vmes zamenjal: ne uporabi
+		os.Remove(link)
+		return "", nil, errors.New("gateway temporary folder changed")
+	}
+	return link, func() { os.Remove(link) }, nil
 }

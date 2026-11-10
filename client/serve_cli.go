@@ -115,7 +115,7 @@ func ruleAbs(p string) string {
 // agentArgs: orodja agenta le v delovni mapi; mapa nastavitev (žeton, ključ routerja) prepovedana. Razen na Windows še
 // sandbox Claude Code (kot ClaudeCLI.agentArgs): Bash ne bere domače mape in piše le v kopijo; z Bash je obvezen.
 // readOnly (--minigw-ro): le orodja s seznama dovoljenih (roAllowed), sandbox ne piše v mape; na Windows (brez sandboxa) brez Bash.
-func (s *server) agentArgs(dir string, readOnly bool, tmpRoot string) []string {
+func (s *server) agentArgs(dir string, readOnly bool) []string {
 	c := s.conf()
 	dirs := []string{dir} // delovna mapa in dovoljene mape (kot allowedRoots na Macu)
 	for _, f := range c.AllowedFolders {
@@ -186,17 +186,15 @@ func (s *server) agentArgs(dir string, readOnly bool, tmpRoot string) []string {
 		args = append(args, "--add-dir", d)
 	}
 	if runtime.GOOS != "windows" {
-		deny := s.tempRoots() // #56: tudi starejši koreni tega procesa
-		if tmpRoot != "" && !slices.Contains(deny, tmpRoot) {
-			deny = append(deny, tmpRoot)
-		}
+		// #67: koreni tempRoot ne v denyRead: v njih so le povezave runTempLink v $MINIGW_DEPS/tmp pod Scratch (ta je v
+		// denyRead razen lastnega klona), skrit koren pa bi v peskovniku skril tudi povezavo teka (TMPDIR ukazov)
 		settings, _ := json.Marshal(map[string]any{"sandbox": map[string]any{
 			"enabled": true, "failIfUnavailable": hasBash(c.Tools) || c.AllowLocalTools, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
 			"network": map[string]any{"allowedDomains": []string{"*"}},
 			// M1: Scratch (kopije drugih naprav, zrcala) tudi zunaj domače mape; mapa seje v njem ostane berljiva (allowRead).
 			// #26 (N2): paket Copilot nikoli za pisanje (naloži ga priprava paketa), tudi če je v dovoljeni mapi.
 			// --minigw-ro: pisanje v te mape prepovedano (denyWrite velja tudi za delovno mapo, ki jo Claude Code dovoli sam).
-			"filesystem": map[string]any{"denyRead": append(append([]string{"~", s.cfgDir}, scratchPaths(c.Scratch)...), deny...), "allowRead": dirs, "allowWrite": onlyIf(!readOnly, dirs),
+			"filesystem": map[string]any{"denyRead": append([]string{"~", s.cfgDir}, scratchPaths(c.Scratch)...), "allowRead": dirs, "allowWrite": onlyIf(!readOnly, dirs),
 				"denyWrite": append(append(scratchPaths(copilotCacheDir()), onlyIf(readOnly, dirs)...), gitDeny...)},
 		}})
 		args = append(args, "--settings", string(settings))
@@ -676,9 +674,9 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	args := []string{"-p", "--disable-slash-commands", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
 		"--model", cliModel, "--strict-mcp-config", "--setting-sources", s.conf().SettingSources} // privzeto prazno: hooki iz mape odjemalca ne tečejo
 	prompt, session, scope, sessionID := last.text, r.h("x-claude-mini-session"), "", ""
-	var dir, extra string // extra: --append-system-prompt-file ali --system-prompt-file
-	var worktreeEnv, runEnv []string
-	var run *agentRun // »May ask other models« (serve_agentcalls.go)
+	var dir, extra string                    // extra: --append-system-prompt-file ali --system-prompt-file
+	var worktreeEnv, runEnv, grants []string // grants: #67 H1 (grantDirs)
+	var run *agentRun                        // »May ask other models« (serve_agentcalls.go)
 	var wt, maven, objects string
 	parent := runOf(r) // vprašal ga je drug agent tega prehoda (serve_agentcalls.go)
 	extraFlag := "--append-system-prompt-file"
@@ -707,7 +705,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			}
 			wt, branch, _, _, _ := s.hub.worktreeOf(session, "claude")
 			gits, _ := s.hub.worktreeGits(wt)
-			extra = worktreeNote(clientCwd, dir, branch, gits)
+			extra = worktreeNote(clientCwd, dir, branch, gits, true) // peskovnik Claude Code: SANDBOX_RUNTIME (Windows: depsNote)
 		case share != nil:
 			if dir, _ = s.hub.push(share, "claude"); dir == "" {
 				return writeError(w, r.rid, 502, "Syncing "+clientCwd+" to the gateway failed (see minigw output)")
@@ -737,8 +735,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		ro := (share != nil && share.readOnly) || (parent != nil && parent.readOnly) || r.h("x-claude-mini-ro") == "1" || cap != ""
 		// #46a: zgodovina zapiše, kar je veljalo
 		r.applied = &appliedLimits{readOnly: ro, cap: cap}
-		tmpRoot := s.tempRoot() // isti koren za denyRead in TMPDIR teka (M1)
-		args = append(args, s.agentArgs(dir, ro, tmpRoot)...)
+		args = append(args, s.agentArgs(dir, ro)...)
 		ok := false
 		if wt, _, maven, objects, ok = s.hub.worktreeOf(session, "claude"); parent != nil {
 			wt, maven, objects, ok = parent.wt, parent.maven, parent.objects, parent.wt != ""
@@ -757,13 +754,28 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			if len(objs) == 0 {
 				objs = []string{objects}
 			}
-			tmp, done, err := runTempDir(tmpRoot) // kratek TMPDIR: vtičnice peskovnika Claude Code (maxRunTemp)
-			if err != nil {
-				s.log.Printf("%s run temp: %v", r.rid, err) // L3: pot le v dnevnik
-				return writeError(w, r.rid, 500, "Cannot create a temporary folder for the agent (see the gateway log)")
+			// #67 H1: mape za pisanje pod Scratch preverjene, preden nastane peskovnik
+			var fixed []string
+			var err error
+			if grants, fixed, err = grantDirs(wt); err != nil {
+				s.log.Printf("%s worktree folders: %v", r.rid, err) // L3: pot le v dnevnik
+				return writeError(w, r.rid, 503, "The agent's folders on the gateway are not safe to use (see the gateway log): start a new conversation")
+			}
+			for _, f := range fixed {
+				s.log.Printf("%s worktree: %s was not a folder of the gateway; made again", r.rid, f)
+			}
+			// kratek TMPDIR: vtičnice peskovnika Claude Code (maxRunTemp); #67: povezava, podatki pod Scratch ($MINIGW_DEPS/tmp);
+			// Windows (brez peskovnika): kar $MINIGW_DEPS/tmp
+			tmpRoot, tmp, done := "", filepath.Join(depsDir(wt), "tmp"), func() {}
+			if runtime.GOOS != "windows" {
+				tmpRoot = s.tempRoot()
+				if tmp, done, err = runTempLink(tmpRoot, tmp); err != nil {
+					s.log.Printf("%s run temp: %v", r.rid, err) // L3: pot le v dnevnik
+					return writeError(w, r.rid, 500, "Cannot create a temporary folder for the agent (see the gateway log)")
+				}
 			}
 			defer done()
-			args = worktreeClaudeArgs(args, wt, maven, tmp, objs, gits)
+			args = worktreeClaudeArgs(args, wt, grants, tmpRoot, objs, gits)
 			gw := s.conf().scratch("gitexec")
 			if tooDeep(wt, gits) {
 				return writeError(w, r.rid, 400, tooManyPins)
@@ -771,6 +783,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			if worktreeEnv = worktreeClaudeEnv(wt, maven, tmp, gw, gits, "claude"); worktreeEnv == nil {
 				return writeError(w, r.rid, 503, "Cannot prepare git for the agent's clone (git --exec-path): use sync")
 			}
+			worktreeEnv = append(worktreeEnv, "CLAUDE_CODE_TMPDIR="+tmp) // #67: kratka povezava (zadnja vrednost velja)
 			args = sandboxAllowRead(args, gw)
 		}
 		shared := share != nil || (parent != nil && parent.shared)
@@ -814,7 +827,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	unpinned := false       // N3b: brez pin (ni bwrap ali gnezdeni ne deluje) se klon preverja med tekom (watch spodaj)
 	if worktreeEnv != nil { // N3: .git klona je med tekom točka priklopa (kot pins pri Codex), zamenjati ga ni mogoče
 		gits, _ := s.hub.worktreeGits(wt)
-		name, cargs = pinWrap(s.cfgDir, name, cargs, pinPaths(wt, gits), s.log.Printf) // M2: tudi mape do ugnezdenih klonov
+		name, cargs = pinWrap(s.cfgDir, name, cargs, append(pinPaths(wt, gits), grants...), s.log.Printf) // M2: tudi mape do ugnezdenih klonov; #67 H1: mape pod Scratch (zamenjava: EBUSY)
 		if unpinned = name == exe[0]; unpinned && runtime.GOOS == "linux" {
 			if why := s.hub.markUnconfined(wt, "Claude CLI"); why != "" { // N1: brez imenskega prostora PID agent lahko preživi do finalize
 				return writeError(w, r.rid, 400, why)

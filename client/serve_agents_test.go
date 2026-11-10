@@ -584,9 +584,16 @@ func TestCodexTreeProfile(t *testing.T) {
 	a := strings.Join(codexArgs(wt, []string{"/m"}, true, "/o", "", true, false, "", gits, "/gw/bin:/usr/bin", []string{"/cfg"}), " ")
 	for _, want := range []string{`default_permissions="minigw"`, `"` + gits[1] + `"="write"`, `"` + gits[1] + `/config"="read"`, `"` + gits[0] + `/hooks"="read"`,
 		`"/m"="write"`, `permissions.minigw.network.enabled=false`, `shell_environment_policy.exclude=["GIT_DIR","GIT_WORK_TREE","GIT_COMMON_DIR"]`,
-		`shell_environment_policy.set.PATH="/gw/bin:/usr/bin"`, `"/cfg"="none"`, `shell_environment_policy.set.GIT_CEILING_DIRECTORIES="` + filepath.Dir(wt) + `"`} {
+		`shell_environment_policy.set.PATH="/gw/bin:/usr/bin"`, `"/cfg"="none"`, `shell_environment_policy.set.GIT_CEILING_DIRECTORIES="` + filepath.Dir(wt) + `"`,
+		`shell_environment_policy.set.MINIGW_SANDBOXED="1"`} { // #67
 		if !strings.Contains(a, want) {
 			t.Fatalf("missing %s in %s", want, a)
+		}
+	}
+	// #67: oznake peskovnika in MINIGW_DEPS ne pridejo v okolje harnessa iz okolja prehoda
+	for _, kv := range agentEnv([]string{"SANDBOX_RUNTIME=1", "MINIGW_SANDBOXED=1", "CODEX_SANDBOX=seatbelt", "MINIGW_DEPS=/x", "MINIGW_NETWORK_OFF=x", "KEEP=1"}) {
+		if kv != "KEEP=1" {
+			t.Fatalf("harness env keeps %s", kv)
 		}
 	}
 	if strings.Contains(a, "--sandbox") || strings.Contains(a, "workspace-write") {
@@ -607,12 +614,22 @@ func TestCodexTreeProfile(t *testing.T) {
 			sb = append(sb, p[i], p[i+1])
 		}
 	}
-	script := `git -C lib commit -q --allow-empty -m sub && git commit -q --allow-empty -m top && echo COMMITS; ` +
+	deps := depsDir(wt) // #67: v $MINIGW_DEPS sme narediti repozitorij (tudi .git/config in hooks)
+	os.MkdirAll(deps, 0o700)
+	p = codexTreeProfile([]string{wt, deps}, gits, nil, false, "/usr/bin:/bin")
+	sb = nil
+	for i := 0; i+1 < len(p); i += 2 {
+		if !strings.HasPrefix(p[i+1], "shell_environment_policy") {
+			sb = append(sb, p[i], p[i+1])
+		}
+	}
+	script := `git init -q "` + deps + `/x" && echo x > "` + deps + `/x/.git/hooks/h" && echo DEPS-OK; ` +
+		`git -C lib commit -q --allow-empty -m sub && git commit -q --allow-empty -m top && echo COMMITS; ` +
 		`for f in .git/config lib/.git/config lib/.git/hooks/x lib/.git/info/attributes lib/.git/commondir; do (echo x >> $f) 2>/dev/null && echo WROTE-$f; done; echo end`
 	c := exec.Command(exe, append(append([]string{"sandbox"}, sb...), "-P", "minigw", "--", "sh", "-c", script)...)
 	c.Dir, c.Env = wt, append(os.Environ(), "GIT_CONFIG_COUNT=2", "GIT_CONFIG_KEY_0=user.name", "GIT_CONFIG_VALUE_0=c", "GIT_CONFIG_KEY_1=user.email", "GIT_CONFIG_VALUE_1=c@x")
 	out, _ := c.CombinedOutput()
-	if s := string(out); !strings.Contains(s, "COMMITS") || strings.Contains(s, "WROTE-") || !strings.Contains(s, "end") {
+	if s := string(out); !strings.Contains(s, "COMMITS") || !strings.Contains(s, "DEPS-OK") || strings.Contains(s, "WROTE-") || !strings.Contains(s, "end") {
 		t.Fatalf("codex sandbox: %s", s)
 	}
 }

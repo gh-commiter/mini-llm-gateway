@@ -280,7 +280,7 @@ func trimFinalPrefix(s string) string {
 // GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR (harness: /dev/null), iskanje repozitorija ne nad klonom (L1). deny: mape
 // brez dostopa (L3: mapa nastavitev prehoda, kot --deny pri Grok).
 func codexTreeProfile(writable, gits, deny []string, network bool, path string) []string {
-	fs := map[string]string{"/": "read", "/private/tmp": "write", "/tmp": "write"}
+	fs := map[string]string{"/": "read"} // #67: nič v /tmp (vse pod Scratch; TMPDIR ukazov je .build/tmp klona)
 	for _, d := range deny {
 		fs[d] = "none"
 	}
@@ -307,7 +307,8 @@ func codexTreeProfile(writable, gits, deny []string, network bool, path string) 
 	return []string{"-c", `default_permissions="minigw"`, "-c", "permissions.minigw.filesystem={" + b.String() + "}",
 		"-c", fmt.Sprintf("permissions.minigw.network.enabled=%v", network),
 		"-c", `shell_environment_policy.exclude=["GIT_DIR","GIT_WORK_TREE","GIT_COMMON_DIR"]`, "-c", "shell_environment_policy.set.PATH=" + string(p),
-		"-c", "shell_environment_policy.set.GIT_CEILING_DIRECTORIES=" + string(c)}
+		"-c", "shell_environment_policy.set.GIT_CEILING_DIRECTORIES=" + string(c),
+		"-c", `shell_environment_policy.set.MINIGW_SANDBOXED="1"`} // #67: le ukazi (v peskovniku), ne harness
 }
 
 // grokArgs: kot Grok.args na Macu; jedrni sandbox »workspace« piše le v mapo seje (dodatnih map ne dovoli).
@@ -643,7 +644,9 @@ func (s *server) agentFolder(w http.ResponseWriter, r *req, label, agent string)
 		}
 		wt, branch, _, _, _ := s.hub.worktreeOf(r.h("x-claude-mini-session"), agent)
 		gits, _ := s.hub.worktreeGits(wt)
-		return dir, worktreeNote(clientCwd, dir, branch, gits), false, 0
+		// #67: Copilot ima oznako peskovnika le pod bwrap (Linux); Codex prek profila, Grok v klonu le bere
+		sandboxed := agent != "copilot" || runtime.GOOS == "linux" && !agentUnconfined(s.cfgDir)
+		return dir, worktreeNote(clientCwd, dir, branch, gits, sandboxed), false, 0
 	case share != nil:
 		if dir, _ = s.hub.push(share, agent); dir == "" {
 			return "", "", false, writeError(w, r.rid, 502, "Syncing "+clientCwd+" to the gateway failed (see minigw output)")
@@ -896,9 +899,23 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 		if len(objs) == 0 {
 			objs = []string{objects}
 		}
+		var deps []string // #67: $MINIGW_DEPS in skupni predpomnilniki, le s pisanjem (sicer agent nima MINIGW_DEPS)
 		if inTree {
 			if treeEnv = worktreeClaudeEnv(wt, maven, filepath.Join(wt, ".build", "tmp"), gw, gits, k.name); treeEnv == nil {
 				return "", errors.New("cannot prepare git for the agent's clone (git --exec-path); use sync")
+			}
+			if write { // #67 H1: mape za pisanje pod Scratch preverjene, preden nastane peskovnik
+				var fixed []string
+				if deps, fixed, err = grantDirs(wt); err != nil {
+					s.log.Printf("%s worktree folders: %v", r.rid, err)
+					return "", errors.New("the agent's folders on the gateway are not safe to use (see the gateway log): start a new conversation")
+				}
+				for _, f := range fixed {
+					s.log.Printf("%s worktree: %s was not a folder of the gateway; made again", r.rid, f)
+				}
+				treeEnv = append(treeEnv, networkOffEnv(k.name, ac.Network)...)
+			} else {
+				treeEnv = slices.DeleteFunc(treeEnv, func(kv string) bool { return strings.HasPrefix(kv, "MINIGW_DEPS=") })
 			}
 		}
 		run, runEnv := s.startRun(r, k.name, dir, readOnly, true, wt, maven, objects, tmp) // »May ask other models«; mapa je deljena (agentFolder); žeton v tmp zahteve
@@ -909,8 +926,8 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 				m.ro = append(m.ro, minigwExe())
 			}
 			if inTree {
-				m.rw, m.ro = append(m.rw, maven), append(append(m.ro, objs...), gw)
-				m.pins = pinPaths(wt, gits) // L1, M2: .git vsakega klona in mape do ugnezdenih so točke priklopa (mv/rm: EBUSY)
+				m.rw, m.ro = append(append(m.rw, maven), deps...), append(append(m.ro, objs...), gw)
+				m.pins = append(pinPaths(wt, gits), deps...) // L1, M2: .git vsakega klona in mape do ugnezdenih so točke priklopa (mv/rm: EBUSY); #67 H1: tudi mape pod Scratch
 				for _, g := range gits {
 					for _, d := range []string{"config", "hooks", "info", "commondir"} {
 						m.protect = append(m.protect, filepath.Join(g, d))
@@ -940,6 +957,9 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			}
 			if token != "" {
 				m.env = []string{"COPILOT_GITHUB_TOKEN=" + token}
+			}
+			if deps != nil && runtime.GOOS == "linux" && !agentUnconfined(s.cfgDir) { // #67: ves Copilot je v bwrap (ovoj git: init/clone v $MINIGW_DEPS)
+				m.env = append(m.env, "MINIGW_SANDBOXED=1")
 			}
 			// C2: svež COPILOT_HOME vsake zahteve (hooki, nastavitve, zaupane mape prejšnjega zagona ne obstajajo); med
 			// zahtevami ostane le stanje seje (brez povezav) v stanju naprave, ki ga bwrap ne vidi. Windows: pravi ~/.copilot (I1).
@@ -985,7 +1005,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			if inTree && runtime.GOOS != "windows" {
 				cgits, cpath, cdeny = gits, agentPath(gw), []string{s.cfgDir}
 			}
-			args := codexArgs(dir, extra, agent, out, model, write, ac.Network, resume, cgits, cpath, cdeny)
+			args := codexArgs(dir, append(extra, deps...), agent, out, model, write, ac.Network, resume, cgits, cpath, cdeny)
 			var failure string
 			err = s.runAgentProcess(ctx, r, exe, args, withTree(m), dir, prompt, func(line []byte) {
 				if f := codexFailure(line); f != "" {
@@ -1066,7 +1086,8 @@ func agentEnv(env []string) []string {
 		name = strings.ToUpper(name) // Windows: imena spremenljivk brez razlike med velikimi in malimi črkami
 		if strings.HasPrefix(name, "ANTHROPIC_") || strings.HasPrefix(name, "CLAUDE_CODE_") || slices.Contains([]string{"CLAUDECODE",
 			"DBUS_SESSION_BUS_ADDRESS", "SSH_AUTH_SOCK", "GPG_AGENT_INFO", "GNOME_KEYRING_CONTROL", "CODEX_HOME", "GROK_HOME", "MINIGW_AGENT_URL", "MINIGW_AGENT_AUTH_FILE",
-			"GH_TOKEN", "GITHUB_TOKEN"}, name) || strings.HasPrefix(name, "COPILOT_") {
+			"GH_TOKEN", "GITHUB_TOKEN", "SANDBOX_RUNTIME", "MINIGW_SANDBOXED", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED", // #67: oznake peskovnika
+			"MINIGW_DEPS", "MINIGW_NETWORK_OFF"}, name) || strings.HasPrefix(name, "COPILOT_") {
 			continue
 		}
 		out = append(out, e)

@@ -115,6 +115,13 @@ Details:
   the objects (fsck) and sends one bundle per repository; all bundles of one upload together stay within 4 GB.
   In native mode on the Mac the same happens with the repositories in the share; git on the gateway reads them
   without the system or user git config.
+- Repositories an agent creates (`git init`, `git clone`, CMake FetchContent, SwiftPM) go only to the conversation's
+  dependencies folder `$MINIGW_DEPS`, next to the clone under Scratch (`<clone>.deps`). The `git` on the agent's PATH
+  allows `init` and `clone` only there and only for a command in the agent's sandbox (Claude Code marks its sandboxed
+  Bash with `SANDBOX_RUNTIME=1`, the gateway marks Codex commands and the sandboxed Copilot with `MINIGW_SANDBOXED=1`);
+  there it runs plain git without the clone's `GIT_DIR`. Everywhere else, and for the agent CLIs themselves (outside
+  the sandbox, without the markers), git keeps working only in the registered clones. The folder lives as long as the
+  clone, is never delivered and is not kept with a kept clone.
 - How a nested clone is read after the run: on the Mac the path is checked once and then never resolved again (its
   objects are opened without following links, and git's sandbox may read only that real path), so a folder swapped
   for a link afterwards is refused. On Linux the clone folder is opened once and bound into a bwrap sandbox for git, so
@@ -201,6 +208,7 @@ user account there.
 | Synced folders per device | 32 |
 | Unused sync copy | deleted after 14 days |
 | Unused worktree mirror and its clones | removed after 30 days |
+| Agent dependencies folder (`$MINIGW_DEPS`) | removed with its clone (end of session) |
 | Folder listing cache (direct mode) | 10 seconds |
 | Wait for another writing agent (native-direct, direct, `minigw run`) | 5 minutes |
 | `minigw run` at once | 2 per device |

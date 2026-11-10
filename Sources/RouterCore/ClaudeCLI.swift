@@ -92,6 +92,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
             // agenta lahko ne uspeta (gradnja z minigw run ali v načinu sync); Maven deluje.
             "filesystem": ["denyRead": ["~"] + Self.scratchPaths(scratch), "allowRead": dirs + Self.mavenConfig() + read.map(\.path), "allowWrite": dirs,
                            "denyWrite": (gits.isEmpty ? [root.path + "/.git"] : gits).flatMap { g in ["config", "hooks", "info", "commondir"].map { g + "/" + $0 } }
+                               + [(Worktree.tmpLink(root) as NSString).deletingLastPathComponent]  // #67 M2: koren povezav TMPDIR
                                + Native.buildCacheDenies().paths + Self.scratchPaths(RouterConfig.copilotCache)],
         ]]
         let settings = String(decoding: try! JSONSerialization.data(withJSONObject: sandbox, options: [.sortedKeys]), as: UTF8.self)
@@ -435,14 +436,23 @@ extension Router {
                 + " directory, on branch \(branch). Map paths under \(clientCwd) to it. Commit your work on this branch; changes you leave"
                 + " uncommitted are committed for you at the end. The branch goes back to the user's repository; their files are not changed."
                 + " Build output (.build, target, DerivedData) is never committed." + Self.nestedClonesNote(gits)
-                + " Do not create git repositories or submodules here outside ignored folders: then nothing comes back (use sync for that). Maven builds work here; swift build and xcodebuild"
-                + " may fail in this sandbox: then tell the user to build with minigw run."
+                + Self.depsNote(Worktree.deps(gits.first.map { URL(fileURLWithPath: $0).deletingLastPathComponent() } ?? shared).path)
+                + " Maven builds work here; swift build and xcodebuild may fail in this sandbox: then tell the user to build with minigw run."
         }
         return (synced ? "The user's folder \(clientCwd) (on their computer) is synced here as \(shared.path), your working directory: a local copy"
             + (readOnly ? "" : " whose changed source files are copied back to the user when you finish") + ". Map paths under \(clientCwd) to it."
             : "The user's folder \(clientCwd) (on their computer) is mounted here as \(shared.path), your working directory. Map paths under \(clientCwd) to it.")
             + (readOnly ? " The folder is shared read-only: do not try to create, change or delete files in it."
                 + " Open SQLite databases with the URI file:<path>?mode=ro&immutable=1 (no journal or lock files)." : "")
+    }
+    /// #67 (kot Go depsNote): kam gredo odvisnosti in repozitoriji agenta. `sandboxed`: ukazi agenta nosijo oznako peskovnika
+    /// (na Macu vsi pišoči agenti: Claude, Codex, Copilot).
+    static func depsNote(_ deps: String, sandboxed: Bool = true) -> String {
+        " Dependencies and repositories you create go to $MINIGW_DEPS (\(deps)), kept for this conversation; "
+            + (sandboxed ? "git init and git clone work only there." : "git init and git clone are not available on this gateway (no sandbox).")
+            + #" CMake: -DFETCHCONTENT_BASE_DIR="$MINIGW_DEPS/cmake". SwiftPM: swift build --scratch-path "$MINIGW_DEPS/swiftpm"."#
+            + #" Xcode: -clonedSourcePackagesDirPath "$MINIGW_DEPS/spm" -derivedDataPath "$MINIGW_DEPS/DerivedData"."#
+            + " Maven, Go, npm, pip, Cargo and Gradle caches are already set."
     }
     static let toolList = ToolList()
 
@@ -488,6 +498,9 @@ extension Router {
             readOnly = await Self.isReadOnly(req) || cap != nil
             Self.runBranch?.readOnly = readOnly  // #46a
             if readOnly, tree != nil { return await error(400, "invalid_request_error", Self.readOnlyWorktree, rid: rid, writer: writer) }  // R4: tudi vprašani (kot Go)
+            if let t = tree, Worktree.grantDirs(root: t.root) == nil {  // #67 H1: pred peskovnikom
+                return await error(503, "api_error", Worktree.unsafeFolders, rid: rid, writer: writer)
+            }
             if let shared, let clientCwd {
                 args += ["--append-system-prompt", Self.mountNote(clientCwd, shared, readOnly: readOnly, synced: synced, branch: tree?.branch, gits: tree?.gits ?? [])]
             }
@@ -551,8 +564,8 @@ extension Router {
         p.arguments = args
         p.currentDirectoryURL = cwd
         var env = ProcessInfo.processInfo.environment
-        for k in env.keys where k.hasPrefix("ANTHROPIC_") || k.hasPrefix("CLAUDE_CODE_") || k == "CLAUDECODE" {
-            env[k] = nil  // sicer bi notranji claude klical nazaj ta router
+        for k in env.keys where k.hasPrefix("ANTHROPIC_") || k.hasPrefix("CLAUDE_CODE_") || k == "CLAUDECODE" || Worktree.sandboxMarkers.contains(k) {
+            env[k] = nil  // sicer bi notranji claude klical nazaj ta router; #67: harness ni v peskovniku
         }
         env["PATH"] = (env["PATH"].map { $0 + ":" } ?? "") + "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
         if agent, let t = await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "") {
@@ -560,6 +573,12 @@ extension Router {
                 return await error(503, "api_error", "Cannot prepare git for the agent's clone (git --exec-path): use sync", rid: rid, writer: writer)
             }
             env.merge(tenv) { $1 }
+            guard let link = Worktree.makeTmpLink(t.root) else {  // #67: kratka pot, podatki pod Scratch; brez nje ne v /tmp
+                return await error(503, "api_error", "Cannot prepare Claude Code's temporary folder link in /private/tmp/mgw-\(getuid()) (it must be a private folder of the gateway user): start a new conversation",
+                                   rid: rid, writer: writer)
+            }
+            env["CLAUDE_CODE_TMPDIR"] = link
+            env["MINIGW_NETWORK_OFF"] = Worktree.networkOff("claude", config)  // #67: ovoj git
         }
         for k in ["MINIGW_AGENT_URL", "MINIGW_AGENT_AUTH_FILE"] { env[k] = run?.env[k] }
         env["CLAUDE_CODE_DISABLE_FILE_MENTIONS"] = "1"

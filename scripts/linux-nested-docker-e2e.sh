@@ -58,6 +58,13 @@ function levels() {
   return n;
 }
 const bash = {name: "Bash", input: {command: "echo bash-ok > bash.txt", description: "bash"}};
+// #67: kot CMake FetchContent z git: clone v build/_deps zavrnjen z namigom, v $MINIGW_DEPS dela (v peskovniku Claude Code)
+const sh = (command) => ({name: "Bash", input: {command, description: "deps"}});
+const deps = [sh('git clone -q /srv/depsrc build/_deps/foo-src > deps.txt 2>&1; echo "build:$?" >> deps.txt'),
+  sh('git clone -q /srv/depsrc "$MINIGW_DEPS/cmake/foo-src" >> deps.txt 2>&1; echo "deps:$?" >> deps.txt'),
+  sh('git -C "$MINIGW_DEPS/cmake/foo-src" log -1 --format=%s >> deps.txt 2>&1'),
+  // kratek TMPDIR (povezava v /tmp/mgw-*), datoteke pod Scratch v $MINIGW_DEPS/tmp
+  sh('echo "tmp:$TMPDIR" >> deps.txt'), sh('touch "$TMPDIR/probe67"'), sh('ls "$MINIGW_DEPS/tmp/claude-1000" >> deps.txt')];
 http.createServer((req, res) => { let b = ""; req.on("data", c => b += c); req.on("end", () => {
   if (!req.url.startsWith("/v1/messages")) { res.writeHead(200, {"content-type": "application/json"}); return res.end("{}"); }
   if (req.url.includes("count_tokens")) { res.writeHead(200, {"content-type": "application/json"}); return res.end('{"input_tokens":1}'); }
@@ -68,7 +75,7 @@ http.createServer((req, res) => { let b = ""; req.on("data", c => b += c); req.o
   const wd = (JSON.stringify(j.system).match(/clone here at ([^\\\s",]+)/) || [])[1];
   const f = p => wd + "/" + p;
   const top = {name: "Write", input: {file_path: f("top.txt"), content: "top\n"}};
-  const steps = fs.readFileSync("/opt/t/scenario", "utf8").trim() === "plain" ? [top, bash] : [
+  const steps = fs.readFileSync("/opt/t/scenario", "utf8").trim() === "plain" ? [top, bash, ...deps] : [
     {name: "Read", input: {file_path: f("sub/README")}},
     {name: "Edit", input: {file_path: f("sub/README"), old_string: "sub readme", new_string: "sub readme\nagent edit sub"}},
     {name: "Bash", input: {command: "git -C sub add -A && git -C sub commit -m x", description: "commit in sub"}}, // #40
@@ -171,6 +178,9 @@ n=$(cat $T/out $T/err | grep -c 'nested repositories need')
 print "ok: refused before start, once, in ${secs}s ($(cat $T/out $T/err | grep -o 'nested repositories need bwrap inside bwrap[^;]*' | head -1); … use sync)"
 # spet vse dovoljeno: claude ostane brez pin (bwrapReady velja do konca procesa), Bash v peskovniku Claude Code pa dela
 docker exec $NAME sh -c "echo $NS0 > /proc/sys/user/max_user_namespaces"; NS0=
+# #67: izvor odvisnosti v vsebniku (berljiv v peskovniku, ne v domači mapi)
+docker exec $NAME sh -c 'mkdir -p /srv/depsrc && chown node /srv/depsrc'
+dx $NAME sh -c 'cd /srv/depsrc && git init -q -b main && git -c user.name=t -c user.email=t@x commit -q --allow-empty -m deps-commit'
 P=$HOME/plain; git init -q -b main $P; print p > $P/p.txt; gc -C $P add -A; gc -C $P commit -qm p
 print plain > $T/opt/scenario
 wt $P || fail "plain repo: $(<$T/err)"
@@ -178,6 +188,12 @@ brp=$(sed -n 's/.*agent work is on branch \([^ ]*\): review with git diff.*/\1/p
 [[ -n $brp && $(git -C $P show ${brp}:top.txt) == top ]] || fail "plain branch: $(<$T/err)"
 [[ $(nspid) == 1 ]] || fail "plain run: NSpid levels '$(nspid)', expected 1 (no pin)"
 bashok $P $brp plain
+dt=$(git -C $P show ${brp}:deps.txt 2>/dev/null || true)
+[[ $dt == *"create repositories only under \$MINIGW_DEPS"* && $dt == *build:128* && $dt == *deps:0* && $dt == *deps-commit* &&
+   $dt == *"tmp:/tmp/mgw-"* && $dt == *probe67* ]] ||
+  fail "#67 dependencies folder: $dt"
+[[ -z $(git -C $P ls-tree -r --name-only $brp build) ]] || fail "#67 build/_deps on the branch"
+print "ok: #67 git clone refused in the clone (build/_deps), works in \$MINIGW_DEPS; Bash TMPDIR $(print -r -- $dt | sed -n 's/^tmp://p') is a link into \$MINIGW_DEPS/tmp"
 print "ok: plain repo in worktree mode without nested bwrap ($brp; claude NSpid levels 1)"
 (( ! $#BASH )) || fail "Bash in Claude Code's sandbox failed in the clone: ${(j:; :)BASH}"
 print "ok: Bash in Claude Code's sandbox (nested and plain)"

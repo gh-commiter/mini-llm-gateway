@@ -213,9 +213,10 @@ func TestWorktreeFinalizeRejectedKeepsMirror(t *testing.T) {
 func TestWorktreeClaudeArgs(t *testing.T) {
 	args := []string{"--allowedTools", "Read(./**)", "--disallowedTools", "Read(/cfg/**)", "--settings",
 		`{"sandbox":{"filesystem":{"allowRead":["/w/sub"],"allowWrite":["/w/sub"],"denyRead":["~"]}}}`}
-	got := strings.Join(worktreeClaudeArgs(args, "/w", "/m", "/t", []string{"/r/objects", "/r-k/objects"}, []string{"/w/.git", "/w/lib/.git"}), " ")
-	for _, want := range []string{`"allowWrite":["/w/sub","/w","/m","/t"]`, `"allowRead":["/w/sub","/w","/m","/t","/r/objects","/r-k/objects"]`, "--add-dir /w",
-		"Edit(//w/**)", `"denyWrite":["/w/.git/config"`, `"/w/lib/.git/config","/w/lib/.git/hooks","/w/lib/.git/info","/w/lib/.git/commondir"]`, "Edit(//w/.git/**)"} {
+	got := strings.Join(worktreeClaudeArgs(args, "/w", []string{"/m", "/w.deps"}, "/tmp/mgw-1", []string{"/r/objects", "/r-k/objects"}, []string{"/w/.git", "/w/lib/.git"}), " ")
+	for _, want := range []string{`"allowWrite":["/w/sub","/w","/m","/w.deps"]`, `"allowRead":["/w/sub","/w","/m","/w.deps","/r/objects","/r-k/objects"]`, "--add-dir /w",
+		`"/w/lib/.git/commondir","/tmp/mgw-1"]`, // #67 M2: koren povezav TMPDIR ni pisljiv
+		"Edit(//w/**)", `"denyWrite":["/w/.git/config"`, `"/w/lib/.git/config","/w/lib/.git/hooks","/w/lib/.git/info","/w/lib/.git/commondir"`, "Edit(//w/.git/**)"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %s in\n%s", want, got)
 		}
@@ -224,17 +225,17 @@ func TestWorktreeClaudeArgs(t *testing.T) {
 	worktreeNeedsUnsandboxed = true
 	defer func() { worktreeNeedsUnsandboxed = runtime.GOOS == "windows" }()
 	args = []string{"--allowedTools", "Read(./**)", "--disallowedTools", "Read(/cfg/**)"}
-	got = strings.Join(worktreeClaudeArgs(args, "/w", "/m", "/t", nil, nil), " ")
+	got = strings.Join(worktreeClaudeArgs(args, "/w", []string{"/m"}, "", nil, nil), " ")
 	if strings.Contains(got, "Bash(") || strings.Contains(got, "PowerShell(") || !strings.Contains(got, "Edit(//w/.git/**)") {
 		t.Fatalf("Windows: git or shell rule in\n%s", got)
 	}
-	n := worktreeNote("/c", "/w", "minigw/claude-1", []string{"/w/.git", "/w/lib/.git"})
+	n := worktreeNote("/c", "/w", "minigw/claude-1", []string{"/w/.git", "/w/lib/.git"}, true)
 	if !strings.Contains(n, "Do not run git add or git commit: the gateway commits your changes on this branch when you finish.") ||
 		strings.Contains(n, "Commit your work") || strings.Contains(n, "GIT_DIR") || !strings.Contains(n, "/w/lib") {
 		t.Fatalf("Windows note: %s", n)
 	}
 	worktreeNeedsUnsandboxed = false
-	if n := worktreeNote("/c", "/w", "b", []string{"/w/.git", "/w/lib/.git"}); !strings.Contains(n, "Commit your work on this branch") || !strings.Contains(n, "git -C <path>") {
+	if n := worktreeNote("/c", "/w", "b", []string{"/w/.git", "/w/lib/.git"}, true); !strings.Contains(n, "Commit your work on this branch") || !strings.Contains(n, "git -C <path>") {
 		t.Fatalf("sandboxed note: %s", n)
 	}
 }
@@ -372,7 +373,7 @@ func TestScratchOverlapAndProviderRename(t *testing.T) {
 	if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/general", `{"scratch":""}`); st != 400 || !strings.Contains(b, "contains it") {
 		t.Fatalf("default scratch with an allowed folder around it: %d %s", st, b)
 	}
-	if strings.Contains(strings.Join(s.agentArgs(t.TempDir(), false, ""), " "), "--add-dir "+parent) {
+	if strings.Contains(strings.Join(s.agentArgs(t.TempDir(), false), " "), "--add-dir "+parent) {
 		t.Fatal("allowed folder around Scratch passed to claude")
 	}
 	s.update(func(c *serveConfig) error {
@@ -1303,25 +1304,18 @@ func TestCleanStaleTempRoots(t *testing.T) {
 	}
 }
 
-// #56: denyRead teka Claude ima vse korene, ki jih je proces naredil (ne le zadnjega).
-func TestAgentArgsDenyAllTempRoots(t *testing.T) {
+// #67 (prej #56): koreni tempRoot niso v denyRead (v njih so le povezave runTempLink; skrit koren bi v peskovniku skril
+// povezavo TMPDIR teka); podatki tekov so v $MINIGW_DEPS/tmp pod Scratch, ki je v denyRead.
+func TestAgentArgsTempRootsVisibleScratchHidden(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("no sandbox settings")
 	}
 	s, _ := testServer(t, nil)
-	r1 := s.tempRoot()
-	defer os.RemoveAll(r1)
-	os.Chmod(r1, 0o755) // npr. agent spremeni dovoljenja: nov koren, stari ostane
-	r2 := s.tempRoot()
-	defer os.RemoveAll(r2)
-	if r1 == r2 {
-		t.Fatal("root not replaced")
-	}
-	args := strings.Join(s.agentArgs(t.TempDir(), false, r2), " ")
-	for _, r := range []string{r1, r2} {
-		if !strings.Contains(args, strconv.Quote(r)) {
-			t.Fatalf("%s not in denyRead: %s", r, args)
-		}
+	r := s.tempRoot()
+	defer os.RemoveAll(r)
+	args := strings.Join(s.agentArgs(t.TempDir(), false), " ")
+	if strings.Contains(args, strconv.Quote(r)) || !strings.Contains(args, strconv.Quote(s.conf().Scratch)) {
+		t.Fatalf("denyRead: %s", args)
 	}
 }
 
@@ -1784,12 +1778,14 @@ func TestWorktreeHarnessEnvGitConfig(t *testing.T) {
 		env[k] = v
 	}
 	want := []string{"core.fsmonitor=false", "core.hooksPath=" + os.DevNull, "core.attributesFile=" + os.DevNull, "diff.ignoreSubmodules=all",
-		"submodule.recurse=false", "core.excludesFile=" + os.DevNull, "user.name=Codex (Mini Gateway)", "user.email=codex@minigw.invalid", "safe.bareRepository=explicit"}
+		"submodule.recurse=false", "core.excludesFile=" + os.DevNull, "user.name=Codex (Mini Gateway)", "user.email=codex@minigw.invalid", "safe.bareRepository=explicit",
+		map[bool]string{false: "init.templateDir=", true: "core.longpaths=true"}[gitLongPaths]} // #67
 	var got []string
 	for i := range want {
 		got = append(got, env["GIT_CONFIG_KEY_"+strconv.Itoa(i)]+"="+env["GIT_CONFIG_VALUE_"+strconv.Itoa(i)])
 	}
-	if env["GIT_CONFIG_GLOBAL"] != os.DevNull || env["GIT_CONFIG_NOSYSTEM"] != "1" || env["GIT_CONFIG_COUNT"] != map[bool]string{false: "9", true: "10"}[gitLongPaths] || !slices.Equal(got, want) {
+	if env["GIT_CONFIG_GLOBAL"] != os.DevNull || env["GIT_CONFIG_NOSYSTEM"] != "1" || env["GIT_CONFIG_COUNT"] != "10" || !slices.Equal(got, want) ||
+		env["MINIGW_DEPS"] != "/w.deps" || env["CLAUDE_CODE_TMPDIR"] != filepath.Join("/w.deps", "tmp") || env["GOMODCACHE"] != filepath.Join("/.cache", "go-mod") { // #67
 		t.Fatalf("git config env: %v", env)
 	}
 	if runtime.GOOS == "windows" {
@@ -2000,7 +1996,7 @@ func TestWorktreeGitLongPaths(t *testing.T) {
 			env[k] = v
 		}
 		pair := env["GIT_CONFIG_COUNT"] == "10" && env["GIT_CONFIG_KEY_9"] == "core.longpaths" && env["GIT_CONFIG_VALUE_9"] == "true"
-		if (got == "true") != on || pair != on || !on && env["GIT_CONFIG_COUNT"] != "9" {
+		if (got == "true") != on || pair != on || !on && env["GIT_CONFIG_KEY_9"] != "init.templateDir" { // #67: drugje par 9 init.templateDir
 			t.Fatalf("longpaths %v: git %q env %v", on, got, env)
 		}
 	}
@@ -2144,5 +2140,236 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
 	if st, data := call(c, "POST", "/v1/messages", h, []byte(body), 60*time.Second); st != 400 ||
 		!strings.Contains(string(data), "The agent's clone was changed (a .git appeared at app/.git): start a new conversation") {
 		t.Fatalf("turn 2: %d %s", st, data)
+	}
+}
+
+// #67: git init/clone agenta le v $MINIGW_DEPS in le v peskovniku (oznaka SANDBOX_RUNTIME od Claude Code ali MINIGW_SANDBOXED
+// od prehoda): tam navaden git (tudi submodule update prek ovoja exec), drugje zavrnitev z namigom in klon nespremenjen;
+// brez oznake (harness) v $MINIGW_DEPS ostane pravilo klona; MINIGW_NETWORK_OFF zavrne oddaljen clone, lokalnega ne.
+func TestPathWrapDeps(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no PATH wrapper on Windows")
+	}
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	wt := filepath.Join(root, "worktrees", "d", "id", "claude-12345678-0")
+	deps := depsDir(wt)
+	gitT(t, root, "init", "-q", "-b", "main", wt)
+	gitT(t, wt, "commit", "-q", "--allow-empty", "-m", "c")
+	head := gitT(t, wt, "rev-parse", "HEAD")
+	sub, src := filepath.Join(root, "sub"), filepath.Join(root, "src")
+	for _, d := range []string{sub, src} {
+		gitT(t, root, "init", "-q", "-b", "main", d)
+		gitT(t, d, "commit", "-q", "--allow-empty", "-m", d)
+	}
+	gitT(t, src, "-c", "protocol.file.allow=always", "submodule", "add", "-q", sub, "s")
+	gitT(t, src, "commit", "-q", "-m", "s")
+	os.MkdirAll(filepath.Join(deps, "tmp"), 0o700)
+	gw := filepath.Join(root, "gitexec")
+	env := worktreeClaudeEnv(wt, filepath.Join(root, "m"), filepath.Join(root, "t"), gw, []string{filepath.Join(wt, ".git")}, "claude")
+	if env == nil || !slices.Contains(env, "MINIGW_DEPS="+deps) || !slices.Contains(env, "GIT_CONFIG_KEY_9=init.templateDir") {
+		t.Fatalf("env: %v", env)
+	}
+	run := func(dir string, extra []string, args ...string) (string, int) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		for _, kv := range agentEnv(os.Environ()) {
+			if !strings.HasPrefix(kv, "GIT_") && !strings.HasPrefix(kv, "PATH=") {
+				cmd.Env = append(cmd.Env, kv)
+			}
+		}
+		cmd.Env = append(append(cmd.Env, env...), extra...)
+		for _, kv := range env {
+			if p, ok := strings.CutPrefix(kv, "PATH="); ok {
+				cmd.Path = filepath.Join(strings.Split(p, ":")[0], "git") // git z PATH agenta (ovoj)
+			}
+		}
+		out, err := cmd.CombinedOutput()
+		code := 0
+		if e, ok := err.(*exec.ExitError); ok {
+			code = e.ExitCode()
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSpace(string(out)), code
+	}
+	hint := "minigw: create repositories only under $MINIGW_DEPS (" + deps + ")"
+	for _, mark := range []string{"SANDBOX_RUNTIME=1", "MINIGW_SANDBOXED=1"} {
+		sb := []string{mark, "GIT_CONFIG_PARAMETERS='protocol.file.allow'='always'"}
+		os.RemoveAll(deps)
+		os.MkdirAll(deps, 0o700)
+		// 1: init in clone v $MINIGW_DEPS, commit in podmodul v klonu agenta; brez predlog (vzorčni hooki)
+		if out, c := run(wt, sb, "init", "-q", filepath.Join(deps, "x")); c != 0 {
+			t.Fatalf("%s init in deps: %d %s", mark, c, out)
+		}
+		if _, err := os.Stat(filepath.Join(deps, "x", ".git", "hooks")); err == nil {
+			t.Fatalf("%s: templates copied", mark)
+		}
+		if out, c := run(deps, sb, "clone", "-q", "--config", "advice.detachedHead=false", src, "y"); c != 0 {
+			t.Fatalf("%s clone in deps: %d %s", mark, c, out)
+		}
+		y := filepath.Join(deps, "y")
+		writeT(t, filepath.Join(y, "f"), "f\n")
+		if out, c := run(y, sb, "add", "f"); c != 0 {
+			t.Fatalf("%s add: %s", mark, out)
+		}
+		if out, c := run(y, sb, "commit", "-qm", "f"); c != 0 {
+			t.Fatalf("%s commit: %s", mark, out)
+		}
+		if out, c := run(y, sb, "submodule", "update", "-q", "--init"); c != 0 {
+			t.Fatalf("%s submodule update: %d %s", mark, c, out)
+		}
+		if out, _ := run(y, sb, "rev-parse", "--absolute-git-dir"); out != filepath.Join(y, ".git") {
+			t.Fatalf("%s rev-parse in deps: %s", mark, out)
+		}
+		// 2: init/clone v klonu in zunaj: zavrnitev z namigom
+		for _, a := range [][]string{{"init", "-q", "build/_deps/foo"}, {"clone", "-q", src, "build/_deps/bar"}, {"init", "-q", filepath.Join(root, "z")},
+			{"init", "-q", filepath.Join(deps, "n", "..", "..", "esc")}, {"clone", "-q", "--separate-git-dir", filepath.Join(wt, "g"), src, filepath.Join(deps, "s")}} {
+			if out, c := run(wt, sb, a...); c != 128 || !strings.HasPrefix(out, hint) {
+				t.Fatalf("%s git %v: %d %q", mark, a, c, out)
+			}
+		}
+		// 4: brez omrežja oddaljen clone ne, lokalen da
+		if out, c := run(deps, append(sb, "MINIGW_NETWORK_OFF=Network for builds"), "clone", "-q", "https://example.invalid/a.git"); c != 128 || !strings.Contains(out, "(Network for builds)") {
+			t.Fatalf("%s remote clone without network: %d %q", mark, c, out)
+		}
+		if out, c := run(deps, append(sb, "MINIGW_NETWORK_OFF=Network for builds"), "clone", "-q", src, "w"); c != 0 {
+			t.Fatalf("%s local clone without network: %s", mark, out)
+		}
+	}
+	// 3: brez oznake (harness): v $MINIGW_DEPS git klona, init/clone zavrnjena; read-only (brez MINIGW_DEPS) svoje sporočilo
+	if out, _ := run(filepath.Join(deps, "y"), nil, "rev-parse", "--absolute-git-dir"); out != filepath.Join(wt, ".git") {
+		t.Fatalf("harness in deps: %s", out)
+	}
+	if out, c := run(deps, nil, "init", "-q", "h"); c != 128 || !strings.Contains(out, "need the agent sandbox") {
+		t.Fatalf("harness init in deps: %d %q", c, out)
+	}
+	if out, c := run(deps, []string{"SANDBOX_RUNTIME=1", "MINIGW_DEPS="}, "init", "-q", "h"); c != 128 || out != "minigw: this run cannot write (read-only)" {
+		t.Fatalf("read-only init: %d %q", c, out)
+	}
+	if gitT(t, wt, "rev-parse", "HEAD") != head || gitT(t, wt, "status", "--porcelain") != "" {
+		t.Fatal("clone changed")
+	}
+	if _, err := os.Stat(filepath.Join(wt, "build")); err == nil {
+		t.Fatal("repository made in the clone")
+	}
+}
+
+// #67: $MINIGW_DEPS gre s klonom (removeClone), pri ohranjenem klonu (kept) ne ostane; prazna .maven in .cache ne
+// zadržita mape klonov, polna ostaneta.
+func TestDepsLifetime(t *testing.T) {
+	dir := t.TempDir()
+	a, b := filepath.Join(dir, "a"), filepath.Join(dir, "b")
+	for _, d := range []string{a, depsDir(a) + "/tmp", b, depsDir(b) + "/x", filepath.Join(dir, ".maven"), filepath.Join(dir, ".cache")} {
+		os.MkdirAll(d, 0o700)
+	}
+	keepClone(b, b+"-kept-1", t.Logf)
+	if _, err := os.Stat(depsDir(b)); err == nil {
+		t.Fatal("deps kept with the clone")
+	}
+	waitFor(t, func() bool { _, err := os.Stat(depsDir(b + "-kept-1")); return os.IsNotExist(err) })
+	removeClone(a)
+	if _, err := os.Stat(depsDir(a)); err == nil {
+		t.Fatal("deps not removed with the clone")
+	}
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatal("clone folder removed while a kept clone is there")
+	}
+	os.RemoveAll(b + "-kept-1")
+	writeT(t, filepath.Join(dir, ".cache", "go-mod", "x"), "x")
+	removeClone(filepath.Join(dir, "c"))
+	if _, err := os.Stat(filepath.Join(dir, ".cache", "go-mod", "x")); err != nil {
+		t.Fatal("cache with content removed")
+	}
+	os.RemoveAll(filepath.Join(dir, ".cache", "go-mod"))
+	removeClone(filepath.Join(dir, "c"))
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatal("empty clone folder with empty .maven and .cache not removed")
+	}
+}
+
+// #67: TMPDIR teka Claude je kratka povezava v korenu prehoda na $MINIGW_DEPS/tmp (podatki pod Scratch); done odstrani le
+// povezavo; koren, ki ni naš (ne 0700), je ne dobi.
+func TestRunTempLink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no link on Windows")
+	}
+	root := shortTempRoot()
+	if root == "" {
+		t.Fatal("no temp root")
+	}
+	defer os.RemoveAll(root)
+	target := filepath.Join(t.TempDir(), "c.deps", "tmp")
+	link, done, err := runTempLink(root, target)
+	if err != nil || len(link)+len("/claude-")+len(strconv.Itoa(os.Getuid())) > 44 {
+		t.Fatalf("link %q: %v", link, err)
+	}
+	if dst, _ := os.Readlink(link); dst != target {
+		t.Fatalf("link points to %q", dst)
+	}
+	writeT(t, filepath.Join(link, "probe"), "x")
+	if _, err := os.Stat(filepath.Join(target, "probe")); err != nil {
+		t.Fatal("write did not land in the deps folder")
+	}
+	done()
+	if _, err := os.Lstat(link); err == nil {
+		t.Fatal("link left after the run")
+	}
+	if _, err := os.Stat(filepath.Join(target, "probe")); err != nil {
+		t.Fatal("done removed the target")
+	}
+	os.Chmod(root, 0o755)
+	if _, _, err := runTempLink(root, target); err == nil {
+		t.Fatal("link in a root that is not private")
+	}
+	if es, _ := os.ReadDir(root); len(es) != 0 {
+		t.Fatalf("left in the root: %v", es)
+	}
+}
+
+// #67 H1: agent zamenja mapo za pisanje s povezavo (ali datoteko); ob naslednjem teku je vnos spet prava mapa 0700,
+// cilj povezave ostane nedotaknjen in ni med mapami za peskovnik.
+func TestGrantDirsReplacesPlantedLinks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no sandbox on Windows")
+	}
+	root := t.TempDir()
+	wt, home := filepath.Join(root, "clones", "c"), filepath.Join(root, "home")
+	os.MkdirAll(wt, 0o700)
+	writeT(t, filepath.Join(home, "secret"), "s")
+	os.Symlink(home, depsDir(wt))                                   // rm -rf "$MINIGW_DEPS"; ln -s ~ "$MINIGW_DEPS"
+	os.Symlink(home, filepath.Join(root, "clones", ".cache"))       // skupni predpomnilnik
+	writeT(t, filepath.Join(root, "clones", ".maven"), "not a dir") // datoteka namesto mape
+	dirs, fixed, err := grantDirs(wt)
+	if err != nil || len(fixed) != 4 || len(dirs) != 4 {
+		t.Fatalf("grantDirs: %v %v %v", dirs, fixed, err)
+	}
+	for _, d := range dirs {
+		if st, err := os.Lstat(d); err != nil || !st.IsDir() || st.Mode().Perm() != 0o700 {
+			t.Fatalf("%s: %v %v", d, st, err)
+		}
+	}
+	if b, err := os.ReadFile(filepath.Join(home, "secret")); err != nil || string(b) != "s" {
+		t.Fatal("link target touched")
+	}
+	if _, fixed, err := grantDirs(wt); err != nil || len(fixed) != 0 {
+		t.Fatalf("second run: %v %v", fixed, err)
+	}
+}
+
+// #67: navodilo o $MINIGW_DEPS z oznako peskovnika in brez (Windows, Copilot brez bwrap); ime nastavitve omrežja.
+func TestDepsNoteAndNetworkOff(t *testing.T) {
+	on, off := depsNote("/d", true), depsNote("/d", false)
+	if !strings.Contains(on, "$MINIGW_DEPS (/d)") || !strings.Contains(on, "git init and git clone work only there.") ||
+		!strings.Contains(off, "git init and git clone are not available on this gateway (no sandbox).") || strings.Contains(off, "work only there") {
+		t.Fatalf("notes:\n%s\n%s", on, off)
+	}
+	if n := worktreeNote("/c", "/w", "b", []string{"/w/.git"}, true); strings.Contains(n, "work only there") != (runtime.GOOS != "windows") {
+		t.Fatalf("note on %s: %s", runtime.GOOS, n)
+	}
+	if got := networkOffEnv("codex", false); !slices.Equal(got, []string{"MINIGW_NETWORK_OFF=Settings → Codex → Allow network access for commands"}) {
+		t.Fatalf("codex: %v", got)
+	}
+	if networkOffEnv("codex", true) != nil || networkOffEnv("copilot", false) != nil || networkOffEnv("claude", false) != nil {
+		t.Fatal("network off without a switch")
 	}
 }

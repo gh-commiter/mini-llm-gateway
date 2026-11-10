@@ -218,7 +218,7 @@ func TestAdminAPILiveApply(t *testing.T) {
 	if st, b := admin("PATCH", adminPrefix+"/agents/claude", `{"tools":"Read, Grep"}`); st != 200 || !strings.Contains(b, `"tools":"Read,Grep"`) {
 		t.Fatalf("tools: %d %s", st, b)
 	}
-	if args := s.agentArgs(t.TempDir(), false, ""); !slices.Contains(args, "Read,Grep") {
+	if args := s.agentArgs(t.TempDir(), false); !slices.Contains(args, "Read,Grep") {
 		t.Fatalf("tools not live: %v", args)
 	}
 	if st, _ := admin("PATCH", adminPrefix+"/agents/claude", `{"tools":"Read;rm -rf"}`); st != 400 {
@@ -566,7 +566,7 @@ func TestParityGeneralAndClaude(t *testing.T) {
 	if st != 200 || !strings.Contains(b, `"allowLocalTools":true`) || !strings.Contains(b, `"folders":"`) {
 		t.Fatalf("claude: %d %s", st, b)
 	}
-	args := strings.Join(s.agentArgs("/copy", false, ""), " ")
+	args := strings.Join(s.agentArgs("/copy", false), " ")
 	realWork, _ := filepath.EvalSymlinks(work)
 	for _, want := range []string{"--tools default", "--permission-mode acceptEdits", "WebSearch", "--add-dir " + realWork, "Read(" + ruleAbs(realWork) + "/**)", `"allowWrite":["/copy","` + realWork + `"]`} {
 		if !strings.Contains(args, want) {

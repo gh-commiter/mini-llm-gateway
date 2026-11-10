@@ -1,9 +1,29 @@
 #!/bin/sh
-# minigw: git works in the registered clone (MINIGW_GIT_DIRS) that holds the folder or the -C <path>
+# minigw: git works in the registered clone (MINIGW_GIT_DIRS) that holds the folder or the -C <path>; new repositories only under $MINIGW_DEPS
 real='/REAL/git'; d=$(pwd -P) || exec "$real" "$@"
 i=1; while [ $i -le $# ]; do eval "a=\${$i}"; case $a in
   -C) i=$((i+1)); eval "p=\${$i}"; case $p in /*) ;; *) p=$d/$p;; esac; q=$(cd "$p" 2>/dev/null && pwd -P) && d=$q || break;;
-  -c) i=$((i+1));; -*) ;; *) break;; esac; i=$((i+1)); done
+  -c|--git-dir|--work-tree|--namespace|--config-env) i=$((i+1));; -*) ;; *) break;; esac; i=$((i+1)); done
+c=; [ $i -le $# ] && eval "c=\${$i}"
+s=; { [ "$SANDBOX_RUNTIME" = 1 ] || [ "$MINIGW_SANDBOXED" = 1 ]; } && s=1
+D=; [ -n "$MINIGW_DEPS" ] && D=$(cd "$MINIGW_DEPS" 2>/dev/null && pwd -P)
+plain() { unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_ATTR_SOURCE GIT_EXEC_PATH; exec "$real" "$@"; }
+no() { echo "minigw: $1" >&2; exit 128; }
+case $c in init|clone)
+  [ -n "$MINIGW_DEPS" ] || no "this run cannot write (read-only)"
+  u=; t=; x=; while [ $i -lt $# ]; do i=$((i+1)); eval "a=\${$i}"; case $a in
+    --separate-git-dir*) x=1;; -[bcjou]|--revision|--template|--initial-branch|--object-format|--ref-format|--origin|--branch|--upload-pack|--reference|--reference-if-able|--depth|--shallow-since|--shallow-exclude|--config|--server-option|--jobs|--filter|--bundle-uri) i=$((i+1));;
+    -*) ;; *) if [ -n "$u" ]; then t=${t:-$a}; else u=$a; fi;; esac; done
+  if [ $c = init ]; then t=${u:-.}; elif [ -z "$t" ]; then t=${u%/}; t=${t%/.git}; t=${t##*[/:]}; t=${t%.git}; fi
+  case $t in /*) ;; *) t=$d/$t;; esac; case /$t/ in */../*) x=1;; esac
+  p=$t; while [ ! -d "$p" ]; do p=${p%/*}; p=${p:-/}; done; r=$(cd "$p" && pwd -P)/
+  [ -z "$x" ] && [ -n "$D" ] && case $r in "$D"/*) ;; *) false;; esac ||
+    no "create repositories only under \$MINIGW_DEPS ($MINIGW_DEPS), e.g. cmake -DFETCHCONTENT_BASE_DIR=\"\$MINIGW_DEPS/cmake\", swift build --scratch-path \"\$MINIGW_DEPS/swiftpm\""
+  [ -n "$s" ] || no "git init and git clone need the agent sandbox, which this run does not have"
+  [ $c = init ] || [ -z "$MINIGW_NETWORK_OFF" ] || case $u in file://*|/*|.*) ;; *://*|[!/]*:*) no "network for this agent's builds is off ($MINIGW_NETWORK_OFF)";; esac
+  plain "$@";;
+esac
+[ -n "$s" ] && [ -n "$D" ] && case $d/ in "$D"/*) plain "$@";; esac
 b=; g=; set -f; IFS='
 '
 for e in $MINIGW_GIT_DIRS; do w=$(cd "${e%/.git}" 2>/dev/null && pwd -P) || continue; case $d/ in "$w"/*) [ ${#w} -gt ${#b} ] && b=$w g=$e;; esac; done

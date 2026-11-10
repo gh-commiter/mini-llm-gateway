@@ -168,9 +168,29 @@ commits.
 `minigw --minigw-work=worktree …` is the default for the root of a git repository. The agent works in its own clone
 on the gateway; you get its work as a branch and decide what to keep.
 
-An agent cannot create its own git repositories inside the clone (`git init`, `git clone`, CMake FetchContent with git
-sources): build those dependencies in sync mode, or fetch them before the run (a shared dependencies folder comes in
-0.5.23).
+**Dependencies folder.** Each conversation's clone has a dependencies folder next to it under the gateway's Scratch
+folder; agents see it as `$MINIGW_DEPS`. Repositories an agent creates (`git init`, `git clone`, CMake FetchContent
+with git sources, SwiftPM checkouts) go only there, and the same rule holds for every agent: anywhere else, also inside
+the clone, git refuses with a hint to use `$MINIGW_DEPS` (for example
+`cmake -DFETCHCONTENT_BASE_DIR="$MINIGW_DEPS/cmake"`, `swift build --scratch-path "$MINIGW_DEPS/swiftpm"`, Xcode
+`-clonedSourcePackagesDirPath "$MINIGW_DEPS/spm" -derivedDataPath "$MINIGW_DEPS/DerivedData"`). The folder is kept
+for the whole conversation and removed with the clone; it never comes back to you and is not kept with a kept clone.
+Only an agent that may write gets it; `git clone` of a remote URL needs the agent's network for builds (the refusal
+names the setting). On a Windows gateway agents have no sandbox yet, so there `git init` and `git clone` are not
+available; the folder still holds downloads and caches.
+
+Everything agent builds write is under the Scratch folder, never in the system's temporary folder or your home folder:
+the clone, `$MINIGW_DEPS` (also Claude Code's temporary folder, `CLAUDE_CODE_TMPDIR`), one Maven repository per project
+and shared download caches per project for Go modules (`GOMODCACHE`), npm and pip. Like the Maven repository, those
+are shared by the project's conversations, so one conversation's agent could change what another one downloads; this
+is accepted for reuse. The Go build cache (`GOCACHE`), Cargo (`CARGO_HOME`) and Gradle (`GRADLE_USER_HOME`) get their
+own folder per conversation in `$MINIGW_DEPS`, because builds use their content without checking it (compiled
+output, settings and scripts). Claude Code needs a short temporary path (its sockets), so on the Mac and Linux it
+gets a link `/tmp/mgw-…/<name>` that points into `$MINIGW_DEPS/tmp`: the files stay under Scratch, and only the link
+is in `/tmp`, in a private folder of the gateway user that agents cannot write. The link goes with the clone (Mac) or
+the run (`minigw serve`); if the gateway cannot make it, the run is refused. On Windows the temporary folder is
+`$MINIGW_DEPS/tmp` itself. Before every run the gateway checks that these folders are still real folders of its user
+(an agent could replace one with a link to another place) and makes them again if not.
 
 **1. Start.** minigw sends the repository to a mirror on the gateway (git bundles over the encrypted connection,
 only missing objects). The agent starts from your exact state: `HEAD` plus your uncommitted changes and your
@@ -303,9 +323,10 @@ Notes:
   `url.*.insteadOf`, global ignore file). Agent commits are authored as the agent, for example
   `Claude (Mini Gateway) <claude@minigw.invalid>`, `Codex (Mini Gateway) <codex@minigw.invalid>`, Grok or Copilot
   likewise; you see that author in `git log <base>..<branch>` of the delivered branch.
-- A nested repository in a folder git ignores (for example `build/_deps` from CMake FetchContent) stays out, as before.
-  If the agent itself creates a repository in the clone, minigw prints "changes inside the nested repository <path>
-  do not come back in worktree mode; use sync" and no branch is delivered for that run.
+- A nested repository in a folder git ignores (for example `build/_deps` from a tarball download) stays out, as before.
+  `git init` and `git clone` in the clone are refused (use `$MINIGW_DEPS`); if a repository appears in the clone
+  anyway, minigw prints "changes inside the nested repository <path> do not come back in worktree mode; use sync" and
+  no branch is delivered for that run.
 
 **Agents in worktree mode:**
 
@@ -313,12 +334,16 @@ Notes:
   writable folder.
 - Agents that may not write (Codex, Copilot or Grok with writing off) only read in the clone and bring back no branch.
 - Grok with writing on is refused in worktree mode: "rerun with minigw --minigw-work=sync …".
-- On the Mac, agents write only to the clone, their own Maven repository, DerivedData and temporary folders, never to
-  your `~/.m2` settings, plugins or SwiftPM configuration. Claude cannot read your home folder (from `~/.m2` only
-  `settings.xml` and `toolchains.xml`). Maven
-  builds work; `swift build` and `xcodebuild` may fail there. Build Swift and Xcode projects in sync mode or with
+- Agents write only under the Scratch folder: the clone, `$MINIGW_DEPS` (repositories they create, CMake, SwiftPM,
+  DerivedData, Cargo, Gradle, the Go build cache, temporary files), the project's Maven repository and the shared
+  download caches (Go modules, npm, pip). Not `/tmp`, never your `~/.m2` settings, plugins or SwiftPM configuration.
+  Claude cannot read your home folder (from `~/.m2` only `settings.xml` and `toolchains.xml`). Maven builds work;
+  on the Mac `swift build` and `xcodebuild` fail in the agents' sandbox (they need macOS's per-user temporary folder
+  and a nested sandbox). Build Swift and Xcode projects in sync mode or with
   [`minigw run`](#native-mode-and-builds-on-the-gateway-mac).
-- Network for builds (Mac): on for Claude, off for Codex. Change it in Settings → General → Worktree mode.
+- Network for builds (Mac): on for Claude, off for Codex. Change it in Settings → General → Worktree mode. With it off
+  a `git clone` of a remote URL is refused and names the setting; Copilot follows "Network for Codex builds" (and its
+  "Allow web access") for that, although its commands always have network.
 - On `minigw serve`, agent requests run one at a time per device and repository, also across that device's
   sessions. The gateway uses its own `git` from PATH, without system or global config, hooks, fsmonitor or
   submodules.
