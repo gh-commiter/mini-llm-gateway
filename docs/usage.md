@@ -539,8 +539,15 @@ With the sandbox that switch is not needed for Claude CLI, Copilot and Grok (Cod
 New installs (`minigw serve init`, the tray's first start) and the settings page's Scratch **Default** button put the
 Scratch folder at `minigw-scratch\<Windows user name>` on the first fixed drive that is not the system drive, else on
 the system drive (for example `D:\minigw-scratch\ana`), with an access list only your user can open. Existing installs
-keep their Scratch folder (the gateway warns when it is inside your home folder); move it with the settings page's
-Scratch field. Keep Scratch on a fixed NTFS drive.
+keep their Scratch folder; when it is inside your home folder (for example the old default
+`%LOCALAPPDATA%\minigw\scratch`) the gateway warns and proposes the new location. Move it with
+`minigw gw scratch move [DIR]` (no DIR: the proposed folder), the settings page's Scratch **Move…** button or
+`minigw gw settings` → General → Move everything to. The move takes everything along (mirrors, clones, `$MINIGW_DEPS`,
+caches, agent state) and works only while no minigw session or agent runs; new requests wait (503) until it is done. On
+the same drive the folder is renamed; on another drive the target first gets the owner-only access list, every file is
+copied (links are copied as links, not followed) and checked (size and SHA-256), then `serve.json` is switched and only
+then the old folder is removed. On any error the old Scratch stays in use and the error is shown. Keep Scratch on a
+fixed NTFS drive. The same move works on Linux.
 - The agents write only to the session's folder (when allowed), `$MINIGW_DEPS`, caches and temporary files under
   Scratch; they cannot read your home folder, other devices' copies or the gateway's settings
   ([How it works](how-it-works.md#how-the-folder-reaches-the-agent), Windows sandbox).

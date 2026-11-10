@@ -89,7 +89,9 @@ type apiGeneral struct {
 	AllowAnyDevice   bool   `json:"allowAnyDevice"`
 	AllowLocalApps   bool   `json:"allowLocalApps"`
 	Scratch          string `json:"scratch"`
-	WorktreeNetwork  bool   `json:"worktreeNetwork"` // #68: »Network for builds« (Claude CLI v načinu worktree), kot na Macu
+	WorktreeNetwork  bool   `json:"worktreeNetwork"`          // #68: »Network for builds« (Claude CLI v načinu worktree), kot na Macu
+	ScratchSuggest   string `json:"scratchSuggest,omitempty"` // Scratch ni izbran (v domači mapi, Windows): predlagana mapa za premik
+	Warning          string `json:"warning,omitempty"`        // le odgovor premika: stara mapa ni odstranjena
 }
 
 type apiStatus struct {
@@ -902,19 +904,8 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 					scratch = defaultScratch()
 				}
 			}
-			if !filepath.IsAbs(scratch) {
-				return fail(400, "scratch folder: an absolute path")
-			}
-			if *b.Scratch != "" { // najprej razlog kot na Macu (koren diska, domača mapa …), nato mapa nastavitev
-				if why := scratchProblem(scratch, s.conf().AllowedFolders); why != "" { // M1
-					return fail(400, "scratch folder: "+why)
-				}
-			}
-			if under(scratch, s.cfgDir) || under(s.cfgDir, scratch) {
-				return fail(400, "scratch folder: must not contain or be inside the config folder "+s.cfgDir)
-			}
-			if bad := scratchOverlaps(s.conf().AllowedFolders, scratch); len(bad) > 0 { // L1: tudi privzeta mapa
-				return fail(400, "scratch folder: the allowed folder "+bad[0]+" contains it or is inside it")
+			if why := s.scratchCheck(scratch, *b.Scratch != ""); why != "" {
+				return fail(400, why)
 			}
 			if err := protectScratch(scratch); err != nil {
 				return fail(400, "scratch folder "+scratch+": "+err.Error()+" (use a folder of your own)")
@@ -969,6 +960,11 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			return fail(503, "minigw serve is not running")
 		}
 		return 200, map[string]string{"url": s.settingsLoginURL()}
+	case "POST general/{}/move":
+		if arg != "scratch" {
+			return fail(404, "Not found: "+method+" "+uri)
+		}
+		return s.moveScratchAPI(body)
 	case "POST general/{}":
 		if arg != "token" {
 			return fail(404, "Not found: "+method+" "+uri)
@@ -1143,7 +1139,7 @@ func (s *server) apiGeneral(restart bool) apiGeneral {
 	c := s.conf()
 	return apiGeneral{Port: c.Port, Address: c.Address, Connect: connectLine(c), RestartRequired: restart, AllowedClients: c.AllowedClients,
 		AllowPlainRemote: c.AllowPlainRemote, AllowAnyDevice: c.AllowAnyDevice, AllowLocalApps: c.localApps(), Scratch: c.Scratch,
-		WorktreeNetwork: c.worktreeNet()}
+		WorktreeNetwork: c.worktreeNet(), ScratchSuggest: scratchSuggest(c.Scratch)}
 }
 
 // buildCommit: commit gradnje (go build iz gita), kot »Version 0.5.14 (d62bf92)« na Macu.

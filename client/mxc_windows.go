@@ -82,6 +82,15 @@ func sandboxInit(scratch, cfgDir string, logf func(string, ...any)) {
 	}
 }
 
+// sandboxRewarn: po premiku Scratch opozorilo škatle za novo mapo (prazno, ko je zunaj domače mape).
+func sandboxRewarn(scratch string) {
+	mxcState.mu.Lock()
+	defer mxcState.mu.Unlock()
+	if mxcState.ready {
+		mxcState.warning = scratchHomeWarning(scratch)
+	}
+}
+
 // agentSandboxInfo: {"kind":"mxc","version":"1.0.1"} ali {"kind":"","reason":"…"} (status, stran z nastavitvami, TUI).
 func agentSandboxInfo() map[string]string {
 	mxcState.mu.Lock()

@@ -13,6 +13,9 @@ var windowsBox = func() bool { return false }
 // sandboxInit: le Windows (preizkus MXC ob zagonu minigw serve).
 func sandboxInit(scratch, cfgDir string, logf func(string, ...any)) {}
 
+// sandboxRewarn: le Windows (opozorilo škatle po premiku Scratch).
+func sandboxRewarn(string) {}
+
 // agentSandboxInfo: vrsta peskovnika agentov za status (Windows: mxc); drugje prazno.
 func agentSandboxInfo() map[string]string { return nil }
 

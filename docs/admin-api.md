@@ -179,6 +179,7 @@ General  {"port": number, "address": string, "connect": string, "restartRequired
 | `GET /general` | – | General |
 | `PATCH /general` | any of `{"port", "address", "startAtSignIn", "allowedClients", "allowPlainRemote", "allowAnyDevice", "allowLocalApps", "scratch", "worktreeNetwork"}` | General; `"restartRequired": true` for port or address; `allowAnyDevice: true` only while no device is allowed (400) |
 | `POST /general/token` | – | General with the new token in `connect`; the old token stops working at once |
+| `POST /general/scratch/move` | `{"to": "D:\\minigw-scratch\\ana"}` (empty: the proposed default) | Go gateway (0.5.23): moves the whole Scratch folder and switches `scratch`; General (without `connect`), plus `warning` when the old folder could not be removed. 409 while minigw sessions or agents are active, 400 for a folder the Scratch rules refuse or that is not empty, 500 when the move failed (the old Scratch stays). Client requests during the move get 503 |
 | `POST /settings/login` | – | `{"url"}`: a one-time link to the settings page (`…/minigw/settings#t=…`, 60 s); `503` when the gateway does not run |
 
 Notes:
@@ -213,7 +214,7 @@ Notes:
   `"sign-in"`, or `""` (it does not start on its own). `agents` counts the claude, codex and grok processes that
   run right now; an update stops them, so check it first. `agentsUnsandboxed` (Go gateway): Codex and Grok have no sandbox here that hides the gateway's secrets
   (Windows without the Windows sandbox, Linux without a working `bwrap`), so they run only with `allowUnsandboxedBash`.
-  `connect` (the line with the gateway token) is only in `GET /general`; `PATCH /general` and `POST /general/token` leave it out (Go gateway). `agentSandbox` (Go gateway on Windows, #68): `{"kind": "mxc", "version": "1.0.1"}` when agents run in the Windows
+  `scratchSuggest` (Go gateway on Windows, 0.5.23): the proposed Scratch folder when the current one is inside the home folder, else absent. `connect` (the line with the gateway token) is only in `GET /general`; `PATCH /general` and `POST /general/token` leave it out (Go gateway). `agentSandbox` (Go gateway on Windows, #68): `{"kind": "mxc", "version": "1.0.1"}` when agents run in the Windows
   sandbox (plus `warning` when Scratch is inside the home folder), else `{"kind": "", "reason": "…"}`. When the sandbox cannot reach 127.0.0.1 it also has
   `"askOthers": "agents in the sandbox cannot reach 127.0.0.1, so May ask other models does not work"`.
   `GET /agents/{codex,grok,copilot}` also has `sandboxed`: the agent has a sandbox without `allowUnsandboxedBash`

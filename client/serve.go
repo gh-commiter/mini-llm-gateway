@@ -458,6 +458,7 @@ type server struct {
 	picking    atomic.Bool              // eno okno naenkrat
 	// agentsRunning: tekoči procesi agentov (claude, codex, grok), za status in posodobitev brez prekinitve
 	agentsRunning atomic.Int32
+	scratchGate   sync.RWMutex // zahteve odjemalcev bralno, premik Scratch pisalno (serve_scratchmove.go)
 	foundry       foundryState // Foundry Local: vrata, modeli
 	key           *ecdh.PrivateKey
 	log           *log.Logger
@@ -1205,6 +1206,10 @@ func (s *server) route(w http.ResponseWriter, r *req) (int, string) {
 	path := r.URL.Path
 	dev := r.owner()
 	key := r.h("x-share-key")
+	if !s.scratchGate.TryRLock() { // premik Scratch: nove seje in zahteve počakajo
+		return writeError(w, r.rid, 503, scratchMovingMsg), ""
+	}
+	defer s.scratchGate.RUnlock()
 	switch r.Method + " " + path {
 	case "GET /v1/models":
 		return writeJSON(w, r.rid, 200, s.modelList()), ""

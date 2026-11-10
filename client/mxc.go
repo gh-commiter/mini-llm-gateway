@@ -320,7 +320,7 @@ func scratchHomeWarning(scratch string) string {
 		return ""
 	}
 	return "the Scratch folder " + scratch + " is inside your home folder, so agents in the sandbox can list the names " +
-		"in your home folder (not read the files); move Scratch outside your home, for example D:\\minigw-scratch (Settings → General → Scratch folder)"
+		"in your home folder (not read the files); move Scratch outside your home: " + scratchMoveHint(newScratchDefault())
 }
 
 // toolRoot: za mapo PATH »…\bin« njen starš (koren orodja: Maven boot, lib, conf; JDK), razen če je koren diska ali
