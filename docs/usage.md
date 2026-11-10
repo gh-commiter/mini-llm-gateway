@@ -310,7 +310,7 @@ so the agent may write (in worktree mode only on its branch).
 **The gateway's cap per agent:** the gateway's owner can set, per agent, the highest mode in which it may change your
 folder (Settings → the agent → **Changes in the client's folder**; admin API `work`). In a mode above it the agent
 still runs, but only reads the folder, and minigw prints for example `minigw: gateway: Mini Gateway lets Codex change
-files only in worktree mode, so it only read the folder (run minigw --minigw-work=worktree)`. Run again with that
+files only in worktree mode, so it only read the folder (in a git repository, run minigw --minigw-work=worktree)`. Run again with that
 mode to let it change files.
 
 **Role** (`--minigw-role NAME` or `MINIGW_ROLE`, 1–32 letters, digits, `. _ -`): a label the gateway records in its

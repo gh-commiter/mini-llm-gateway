@@ -654,7 +654,11 @@ func (s *server) capped(r *req, kind string) string {
 		return cap
 	}
 	modes := map[string]string{"sync": "sync or worktree mode", "worktree": "worktree mode"}[cap]
-	s.hub.note(session, "Mini Gateway lets "+agentNames[kind]+" change files only in "+modes+", so it only read the folder (run minigw --minigw-work="+cap+")")
+	hint := "run minigw --minigw-work=" + cap
+	if cap == "worktree" { // worktree mode needs a git repository
+		hint = "in a git repository, " + hint
+	}
+	s.hub.note(session, "Mini Gateway lets "+agentNames[kind]+" change files only in "+modes+", so it only read the folder ("+hint+")")
 	return cap
 }
 

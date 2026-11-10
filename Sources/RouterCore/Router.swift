@@ -557,7 +557,7 @@ public final class Router: Sendable {
         guard let level = Self.modeLevels[await Self.shares.sessionMode(session, device: req.device?.id).mode],
               level < Self.workLevels[cap] ?? 0 else { return nil }
         let modes = cap == "sync" ? "sync or worktree mode" : "worktree mode"
-        let msg = "Mini Gateway lets \(Self.agentNames[kind] ?? kind) change files only in \(modes), so it only read the folder (run minigw --minigw-work=\(cap))"
+        let msg = "Mini Gateway lets \(Self.agentNames[kind] ?? kind) change files only in \(modes), so it only read the folder (\(cap == "worktree" ? "in a git repository, " : "")run minigw --minigw-work=\(cap))"
         Self.runBranch?.cap = cap
         if await Self.shares.firstCapNote(session: session, kind: kind) {  // L4: enkrat na sejo in agenta
             Task { await Self.shares.note(session: session, msg) }  // ne čaka na odgovor minigw

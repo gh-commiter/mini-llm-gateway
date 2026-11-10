@@ -216,7 +216,7 @@ Notes:
   a branch: worktree, native with git); any other value is 400 "work: direct, sync or worktree". When the session's
   mode is above the cap, the agent runs read-only (a capped sync run copies nothing back to the client) and the
   client gets, once per session and agent, the note "Mini Gateway lets <Agent> change files
-  only in worktree mode, so it only read the folder (run minigw --minigw-work=worktree)" (the gateway checks the
+  only in worktree mode, so it only read the folder (in a git repository, run minigw --minigw-work=worktree)" (the gateway checks the
   session it registered, never a header; a nested call is capped by the asked agent's kind in the caller's session).
   `chat` (no shared folder) is not capped. `minigw serve` has only sync and worktree, so there `sync` acts as `direct`.
   The config stores direct as empty (`claudeWork`, `codex.work`, … in serve.json; `work` in the Mac config).
