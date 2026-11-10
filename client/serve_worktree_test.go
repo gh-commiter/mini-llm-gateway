@@ -1142,7 +1142,7 @@ func TestNestedBlockerMatchesSandbox(t *testing.T) {
 			t.Fatalf("macOS serve: %q", why)
 		}
 	case "linux":
-		ok := finalizeBwrap() != "" && claudePinOK(s.cfgDir, t.Logf)
+		ok := gitAttrSource() && finalizeBwrap() != "" && claudePinOK(s.cfgDir, t.Logf) // #55: git 2.40+
 		if (why == "") != ok || why != "" && !strings.HasSuffix(why, "use sync") {
 			t.Fatalf("linux (bwrap ok %v): %q", ok, why)
 		}
