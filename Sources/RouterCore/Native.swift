@@ -188,9 +188,7 @@ public enum Native {
     ///   tam, in nove (manjkajoče) mape na poti do njih, nič drugega na disku.
     /// `dirs`: mapa gradnje in mape v Scratch (zagon, DerivedData), ki so lahko vsaka na svojem disku.
     static func darwinTempRules(dirs: [String] = []) -> String? {
-        var b = [CChar](repeating: 0, count: 1024)
-        guard confstr(_CS_DARWIN_USER_TEMP_DIR, &b, b.count) > 0,
-              let t = Sync.real(URL(fileURLWithPath: String(cString: b)))?.path else { return nil }
+        guard let t = darwinTemp() else { return nil }
         let te = NSRegularExpression.escapedPattern(for: t)
         var rules = "(allow file-write* (regex #\"^\(te)/TemporaryItems/NSIRD_[^/]+/\") (regex #\"^\(te)/TemporaryDirectory\\.[^/]+/\"))\n"
             + "(allow file-write-create (require-all (vnode-type DIRECTORY)"
@@ -205,6 +203,47 @@ public enum Native {
                 + parents.map { " (literal \(q($0)))" }.joined() + ")))\n"
         }
         return rules
+    }
+
+    /// DARWIN_USER_TEMP_DIR (kanonično), ki ga Foundation uporabi ne glede na TMPDIR.
+    static func darwinTemp() -> String? {
+        var b = [CChar](repeating: 0, count: 1024)
+        guard confstr(_CS_DARWIN_USER_TEMP_DIR, &b, b.count) > 0 else { return nil }
+        return Sync.real(URL(fileURLWithPath: String(cString: b)))?.path
+    }
+
+    /// #72: mape kopij shranjevanja, ki jih `darwinTempRules` dovoli ustvariti: NSIRD_* v TemporaryItems (zagonski disk
+    /// in diski map `dirs`) in TemporaryDirectory.* v T. Posnetek pred zagonom in po njem (`removeSaveCopies`).
+    static func saveCopies(dirs: [String], temp: String? = darwinTemp()) -> Set<String> {
+        guard let t = temp else { return [] }
+        func list(_ p: String, _ prefix: String) -> [String] {
+            ((try? FileManager.default.contentsOfDirectory(atPath: p)) ?? []).filter { $0.hasPrefix(prefix) }.map { p + "/" + $0 }
+        }
+        let items = [t + "/TemporaryItems"] + dirs.compactMap { volumeTempItems($0, temp: t) }
+        return Set(items.flatMap { list($0, "NSIRD_") } + list(t, "TemporaryDirectory."))
+    }
+
+    /// #72: po zagonu (in uboju skupine) odstrani mape kopij shranjevanja, nastale med zagonom (v `after`, ne v `before`):
+    /// peskovnik jih lahko le ustvari, ne izbriše, zato bi ostale. Le prave mape tega uporabnika, prazne ali le z
+    /// (prazno) datoteko .keep-directory (swiftc); nikoli obstoječe, nikoli druge datoteke, nikoli povezave.
+    /// ponytail: tuja sočasna gradnja lahko ustvari mapo z istim vzorcem; zato le mape, ki se `settled` s niso spremenile
+    /// (Foundation mapo napolni takoj ob nastanku, rmdir neprazne ne izbriše). Vrne odstranjene.
+    @discardableResult
+    static func removeSaveCopies(after: Set<String>, before: Set<String>, settled: TimeInterval = 2) -> [String] {
+        var removed: [String] = []
+        for p in after.subtracting(before).sorted() {
+            var st = stat()
+            guard lstat(p, &st) == 0, st.st_mode & S_IFMT == S_IFDIR, st.st_uid == getuid(),
+                  Double(st.st_mtimespec.tv_sec) <= Date().timeIntervalSince1970 - settled,
+                  let names = try? FileManager.default.contentsOfDirectory(atPath: p) else { continue }
+            if names == [".keep-directory"] {
+                var k = stat()
+                guard lstat(p + "/.keep-directory", &k) == 0, k.st_mode & S_IFMT == S_IFREG, k.st_size == 0 else { continue }
+                unlink(p + "/.keep-directory")
+            } else if !names.isEmpty { continue }
+            if rmdir(p) == 0 { removed.append(p) }
+        }
+        return removed
     }
 
     /// <disk>/.TemporaryItems/folders.<uid>/TemporaryItems diska mape `dir` (kanonično), če ni disk začasne mape `temp`
@@ -360,6 +399,14 @@ public enum Native {
         case "swift" where a.count > 1 && ["build", "test", "run", "package"].contains(a[1]):
             if let cache, !a.contains(where: { $0 == "--cache-path" || $0.hasPrefix("--cache-path=") }) { a.insert(contentsOf: ["--cache-path", cache], at: 2) }
             if !a.contains("--disable-sandbox") { a.insert("--disable-sandbox", at: 2) }
+            // #72: Swift Build (privzeti) za Info.plist testnega svežnja in svežnja virov naredi mkdtemp(T/swbuild.tmp.*)
+            // v DARWIN_USER_TEMP_DIR (FileManager.temporaryDirectory, TMPDIR prezre) in mapi nastavi xattr; zunaj izjeme
+            // kopij shranjevanja (#24), zato swift test in swift run/build paketa z viri padeta. Sistem gradnje SwiftPM
+            // (native) uporablja TMPDIR (zasebna mapa zagona); izbira uporabnika ostane.
+            // ponytail: native je v SwiftPM 6.x opuščen (opozorilo); ko ga odstranijo, rabi Swift Build možnost za mapo.
+            if a[1] != "package", !a.contains(where: { $0 == "--build-system" || $0.hasPrefix("--build-system=") }) {
+                a.insert(contentsOf: ["--build-system", "native"], at: 2)
+            }
         case "xcodebuild":
             a += ["-IDEPackageSupportDisableManifestSandbox=YES", "ENABLE_USER_SCRIPT_SANDBOXING=NO"]
             // #72: diagnostika nalaganja manifestov (ManifestLoading/*.dia) je v ~/Library/Caches ne glede na
@@ -588,6 +635,7 @@ extension Router {
             return await error(404, "not_found_error", "minigw run: \(argv[0]) not found on the gateway", rid: rid, writer: writer)
         }
         let args = Array(Native.withoutNestedSandbox(argv, runTmp: realTmp, derivedData: derived).dropFirst())
+        let tempDirs = [dir.path, realTmp, derived], copies = Native.saveCopies(dirs: tempDirs)  // #72: posnetek pred zagonom
         guard let (pid, out, err, _) = Native.spawnGroup("/usr/bin/sandbox-exec", ["-p", profile, exe] + args, dir: dir, env: env) else {
             return await self.error(500, "api_error", "minigw run: cannot start \(argv[0])", rid: rid, writer: writer)
         }
@@ -603,6 +651,7 @@ extension Router {
             DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
                 _ = Darwin.kill(-pid, SIGKILL)
                 for h in [out, err] { for w in Native.pipeWriters(of: h.fileDescriptor) { _ = Darwin.kill(w, SIGKILL) } }
+                Native.removeSaveCopies(after: Native.saveCopies(dirs: tempDirs), before: copies)  // #72: po uboju skupine
                 DispatchQueue.global().asyncAfter(deadline: .now() + 1) { closeFrames() }
             }
         }.start()

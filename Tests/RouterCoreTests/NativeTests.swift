@@ -271,14 +271,14 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     let input = "\u{1B}[1;31mred\u{1B}[0m\r\n\u{1B}]0;title\u{07}\u{1B}]52;c;Zm9v\u{1B}\\\u{1B}P1$q\u{1B}\\\u{1B}[6n\u{1B}[2J\u{1B}[?1049h\u{07}ok\t\u{1B}"
     #expect(String(decoding: Native.terminalSafe(Data(input.utf8)), as: UTF8.self) == "\u{1B}[1;31mred\u{1B}[0m\r\nok\t")
     #expect(String(decoding: Native.terminalSafe(Data("a\u{9B}2Jb\u{9D}0;x\u{07}č€".utf8)), as: UTF8.self) == "a2Jb0;xč€")  // N4: C1 v UTF-8
-    #expect(Native.withoutNestedSandbox(["swift", "build", "-c", "release"]) == ["swift", "build", "--disable-sandbox", "-c", "release"])
+    #expect(Native.withoutNestedSandbox(["swift", "build", "-c", "release"]) == ["swift", "build", "--build-system", "native", "--disable-sandbox", "-c", "release"])
     #expect(Native.withoutNestedSandbox(["swift", "--version"]) == ["swift", "--version"])
     #expect(Native.withoutNestedSandbox(["mvn", "-q"]) == ["mvn", "-q"])
     // #24: predpomnilnik SwiftPM v zasebni mapi zagona; lastna --cache-path ostane
-    #expect(Native.withoutNestedSandbox(["swift", "build"], runTmp: "/s") == ["swift", "build", "--disable-sandbox", "--cache-path", "/s/swiftpm-cache"])
+    #expect(Native.withoutNestedSandbox(["swift", "build"], runTmp: "/s") == ["swift", "build", "--build-system", "native", "--disable-sandbox", "--cache-path", "/s/swiftpm-cache"])
     #expect(Native.withoutNestedSandbox(["swift", "package", "resolve"], runTmp: "/s") == ["swift", "package", "--disable-sandbox", "--cache-path", "/s/swiftpm-cache", "resolve"])
-    #expect(Native.withoutNestedSandbox(["swift", "build", "--cache-path=/x"], runTmp: "/s") == ["swift", "build", "--disable-sandbox", "--cache-path=/x"])
-    #expect(Native.withoutNestedSandbox(["swift", "test", "--disable-sandbox"], runTmp: "/s") == ["swift", "test", "--cache-path", "/s/swiftpm-cache", "--disable-sandbox"])
+    #expect(Native.withoutNestedSandbox(["swift", "build", "--cache-path=/x"], runTmp: "/s") == ["swift", "build", "--build-system", "native", "--disable-sandbox", "--cache-path=/x"])
+    #expect(Native.withoutNestedSandbox(["swift", "test", "--disable-sandbox"], runTmp: "/s") == ["swift", "test", "--build-system", "native", "--cache-path", "/s/swiftpm-cache", "--disable-sandbox"])
     #expect(Native.withoutNestedSandbox(["mvn"], runTmp: "/s") == ["mvn"])
     // #72: xcodebuild: rezultat, paketi in predpomnilnik v zasebni mapi zagona; uporabnikove poti ostanejo
     let x = ["xcodebuild", "-IDEPackageSupportDisableManifestSandbox=YES", "ENABLE_USER_SCRIPT_SANDBOXING=NO"]
@@ -289,7 +289,11 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     #expect(Native.withoutNestedSandbox(["xcodebuild"]) == x)
     #expect(Native.withoutNestedSandbox(["xcodebuild"], derivedData: "/s/dd") == x + ["-derivedDataPath", "/s/dd"])
     #expect(Native.withoutNestedSandbox(["xcodebuild", "-derivedDataPath", "/mine"], derivedData: "/s/dd") == ["xcodebuild", "-derivedDataPath", "/mine"] + x.dropFirst())
-    #expect(Native.withoutNestedSandbox(["swift", "build"], derivedData: "/s/dd") == ["swift", "build", "--disable-sandbox"])
+    #expect(Native.withoutNestedSandbox(["swift", "build"], derivedData: "/s/dd") == ["swift", "build", "--build-system", "native", "--disable-sandbox"])
+    // #72: swift test/run/build s sistemom gradnje SwiftPM (TMPDIR); lastna izbira ostane, swift package brez nje
+    #expect(Native.withoutNestedSandbox(["swift", "run", "Hello"]) == ["swift", "run", "--build-system", "native", "--disable-sandbox", "Hello"])
+    #expect(Native.withoutNestedSandbox(["swift", "test", "--build-system=swiftbuild"]) == ["swift", "test", "--disable-sandbox", "--build-system=swiftbuild"])
+    #expect(Native.withoutNestedSandbox(["swift", "test", "--build-system", "xcode"]) == ["swift", "test", "--disable-sandbox", "--build-system", "xcode"])
 }
 
 @Test func nativeRunIsSandboxedAndEndsWithItsGroup() async throws {
@@ -561,4 +565,35 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
 /// L4: ubežni znaki JSON v napaki agenta ne postanejo pravi kontrolni znaki.
 @Test func agentMessageControlChars() {
     #expect(AgentError.message(#"{"error":{"message":"a\u001b]52;c;eA==\u0007b\r\u0085‮c\u009b\u007f"}}"#) == "a]52;c;eA==bc")
+}
+
+/// #72: po zagonu le nove prazne mape NSIRD_* (TemporaryItems) in TemporaryDirectory.* (le z .keep-directory);
+/// nikoli obstoječe, druge datoteke, povezave ali mape z vsebino.
+@Test func nativeRemovesOnlyNewSaveCopies() throws {
+    let fm = FileManager.default
+    let t = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("savecopies-" + UUID().uuidString).path
+    defer { try? fm.removeItem(atPath: t) }
+    try fm.createDirectory(atPath: t + "/TemporaryItems/NSIRD_old_1", withIntermediateDirectories: true)
+    try fm.createDirectory(atPath: t + "/TemporaryDirectory.old", withIntermediateDirectories: true)
+    let before = Native.saveCopies(dirs: [], temp: t)
+    #expect(before == [t + "/TemporaryItems/NSIRD_old_1", t + "/TemporaryDirectory.old"])
+    for d in ["TemporaryItems/NSIRD_new_1", "TemporaryItems/NSIRD_full", "TemporaryDirectory.new", "TemporaryDirectory.keep",
+              "TemporaryDirectory.data", "NSIRD_notInItems", "TemporaryItems/other"] {
+        try fm.createDirectory(atPath: t + "/" + d, withIntermediateDirectories: true)
+    }
+    fm.createFile(atPath: t + "/TemporaryItems/NSIRD_full/x", contents: Data("x".utf8))
+    fm.createFile(atPath: t + "/TemporaryDirectory.keep/.keep-directory", contents: Data())
+    fm.createFile(atPath: t + "/TemporaryDirectory.data/.keep-directory", contents: Data("x".utf8))
+    fm.createFile(atPath: t + "/TemporaryDirectory.file", contents: Data())  // datoteka, ne mapa
+    try fm.createSymbolicLink(atPath: t + "/TemporaryItems/NSIRD_link", withDestinationPath: t + "/TemporaryItems/other")
+    let after = Native.saveCopies(dirs: [], temp: t)
+    #expect(Native.removeSaveCopies(after: after, before: before, settled: 60).isEmpty)  // še ne umirjene
+    let removed = Native.removeSaveCopies(after: after, before: before, settled: 0)
+    #expect(Set(removed) == [t + "/TemporaryItems/NSIRD_new_1", t + "/TemporaryDirectory.new", t + "/TemporaryDirectory.keep"])
+    for kept in ["TemporaryItems/NSIRD_old_1", "TemporaryDirectory.old", "TemporaryItems/NSIRD_full/x", "TemporaryDirectory.data/.keep-directory",
+                 "TemporaryDirectory.file", "NSIRD_notInItems", "TemporaryItems/other"] {
+        #expect(fm.fileExists(atPath: t + "/" + kept), "\(kept)")
+    }
+    var st = stat()
+    #expect(lstat(t + "/TemporaryItems/NSIRD_link", &st) == 0)
 }
