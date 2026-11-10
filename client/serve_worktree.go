@@ -269,6 +269,9 @@ func gitRunBox(box *gitBox, repo, cwd string, env []string, input string, args .
 	guard := []string{"-c", "core.hooksPath=" + hooks, "-c", "core.fsmonitor=false", "-c", "submodule.recurse=false",
 		"-c", "protocol.allow=never", "-c", "protocol.file.allow=always", "-c", "maintenance.auto=false", "-c", "gc.auto=0",
 		"-c", "core.commitGraph=false", "-c", "core.multiPackIndex=false"}
+	if gitLongPaths {
+		guard = append(guard, "-c", "core.longpaths=true")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout) // L5
 	defer cancel()
 	name, argv := exe, append(guard, args...)
@@ -642,8 +645,12 @@ func finalize(repo, wt, branch, base, agent, out string, links map[string]string
 // GIT_WORK_TREE: ugnezden .git agenta ne velja; Maven dobi svoj lokalni repozitorij. tmp: TMPDIR agenta.
 // #40: brez lastnikovih nastavitev git (identiteta, podpis, poverilnice, insteadOf); avtor commitov je agent (agent: codex …).
 func worktreeHarnessEnv(wt, maven, tmp, agent string) []string {
-	return []string{"GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_NOSYSTEM=1",
-		"GIT_CONFIG_COUNT=8", "GIT_CONFIG_KEY_0=core.fsmonitor", "GIT_CONFIG_VALUE_0=false",
+	n, long := "8", []string{}
+	if gitLongPaths { // le Windows (par 8; Worktree.harnessEnv na Macu ga nima, vrstni red parov 0–7 enak)
+		n, long = "9", []string{"GIT_CONFIG_KEY_8=core.longpaths", "GIT_CONFIG_VALUE_8=true"}
+	}
+	return append([]string{"GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_NOSYSTEM=1",
+		"GIT_CONFIG_COUNT=" + n, "GIT_CONFIG_KEY_0=core.fsmonitor", "GIT_CONFIG_VALUE_0=false",
 		"GIT_CONFIG_KEY_1=core.hooksPath", "GIT_CONFIG_VALUE_1=" + os.DevNull, // ne v klonu: tja agent lahko piše
 		"GIT_CONFIG_KEY_2=core.attributesFile", "GIT_CONFIG_VALUE_2=" + os.DevNull,
 		// N9: status in diff ne vstopita v podmodul (submodule.<ime>.ignore iz .gitmodules to preglasi: gitExecWrap)
@@ -652,8 +659,13 @@ func worktreeHarnessEnv(wt, maven, tmp, agent string) []string {
 		"GIT_CONFIG_KEY_6=user.name", "GIT_CONFIG_VALUE_6=" + agentAuthor(agent), "GIT_CONFIG_KEY_7=user.email", "GIT_CONFIG_VALUE_7=" + agent + "@minigw.invalid",
 		"GIT_ATTR_SOURCE=4b825dc642cb6eb9a060e54bf8d69288fbee4904",
 		"GIT_DIR=" + filepath.Join(wt, ".git"), "GIT_WORK_TREE=" + wt, "GIT_COMMON_DIR=" + filepath.Join(wt, ".git"),
-		"MAVEN_OPTS=-Dmaven.repo.local=" + maven + " -Djava.io.tmpdir=" + tmp, "TMPDIR=" + tmp, "TMP=" + tmp, "TEMP=" + tmp}
+		"MAVEN_OPTS=-Dmaven.repo.local=" + maven + " -Djava.io.tmpdir=" + tmp, "TMPDIR=" + tmp, "TMP=" + tmp, "TEMP=" + tmp}, long...)
 }
+
+// gitLongPaths: Windows, git prehoda in agentov s core.longpaths=true. Klon je v …\scratch\worktrees\<naprava>\<id>\<ime>
+// (~132 znakov), poti posnetka odjemalca so lahko daljše; brez tega checkout pade pri MAX_PATH (»Filename too long«), ker
+// GIT_CONFIG_NOSYSTEM izpusti sistemske nastavitve Git for Windows. Go sam dolge poti zna (os: \\?\ od Go 1.8).
+var gitLongPaths = runtime.GOOS == "windows"
 
 // agentAuthor: ime avtorja commitov agenta (kot Worktree.author na Macu).
 func agentAuthor(agent string) string {

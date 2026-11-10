@@ -1772,7 +1772,7 @@ func TestWorktreeHarnessEnvGitConfig(t *testing.T) {
 	for i := range want {
 		got = append(got, env["GIT_CONFIG_KEY_"+strconv.Itoa(i)]+"="+env["GIT_CONFIG_VALUE_"+strconv.Itoa(i)])
 	}
-	if env["GIT_CONFIG_GLOBAL"] != os.DevNull || env["GIT_CONFIG_NOSYSTEM"] != "1" || env["GIT_CONFIG_COUNT"] != "8" || !slices.Equal(got, want) {
+	if env["GIT_CONFIG_GLOBAL"] != os.DevNull || env["GIT_CONFIG_NOSYSTEM"] != "1" || env["GIT_CONFIG_COUNT"] != map[bool]string{false: "8", true: "9"}[gitLongPaths] || !slices.Equal(got, want) {
 		t.Fatalf("git config env: %v", env)
 	}
 	if runtime.GOOS == "windows" {
@@ -1936,5 +1936,52 @@ func TestWorktreeMountLogsEveryFailure(t *testing.T) {
 				t.Fatalf("checkout error: %v", err)
 			}
 		}
+	}
+}
+
+// Poročilo Windows 73eeb13 (Air → HPX360): klon ~132 znakov + pot posnetka 141 = 274 > MAX_PATH, checkout »Filename too
+// long«. Na Windows git prehoda (gitRun) in okolje agenta nosita core.longpaths=true; drugje ne.
+func TestWorktreeGitLongPaths(t *testing.T) {
+	old := gitLongPaths
+	t.Cleanup(func() { gitLongPaths = old })
+	for _, on := range []bool{false, true} {
+		gitLongPaths = on
+		got, _ := gitRun(filepath.Join(t.TempDir(), "r.git"), "", nil, "config", "core.longpaths")
+		env := map[string]string{}
+		for _, kv := range worktreeHarnessEnv("/w", "/m", "/t", "claude") {
+			k, v, _ := strings.Cut(kv, "=")
+			env[k] = v
+		}
+		pair := env["GIT_CONFIG_COUNT"] == "9" && env["GIT_CONFIG_KEY_8"] == "core.longpaths" && env["GIT_CONFIG_VALUE_8"] == "true"
+		if (got == "true") != on || pair != on || !on && env["GIT_CONFIG_COUNT"] != "8" {
+			t.Fatalf("longpaths %v: git %q env %v", on, got, env)
+		}
+	}
+	if runtime.GOOS != "windows" {
+		t.Skip("MAX_PATH checkout only on Windows")
+	}
+	gitLongPaths = true
+	root := t.TempDir()
+	client := filepath.Join(root, "c")
+	deep := filepath.Join(client, strings.Repeat("d", 100), strings.Repeat("e", 100), strings.Repeat("f", 60)+".txt")
+	os.MkdirAll(filepath.Dir(deep), 0o755)
+	gitT(t, client, "init", "-q", "-b", "main")
+	gitT(t, client, "config", "core.longpaths", "true")
+	writeT(t, deep, "x\n")
+	gitT(t, client, "add", "-A")
+	gitT(t, client, "commit", "-qm", "deep")
+	head := gitT(t, client, "rev-parse", "HEAD")
+	b := filepath.Join(root, "push.bundle")
+	gitT(t, client, "update-ref", "refs/minigw/push", head)
+	gitT(t, client, "bundle", "create", "-q", b, "refs/minigw/push")
+	repo, wt := filepath.Join(root, "repos", "d", "r.git"), filepath.Join(root, "worktrees", strings.Repeat("o", 43), strings.Repeat("1", 16), "claude-12345678-0")
+	if ensureMirror(repo) != nil || importBase(repo, b, head, "refs/minigw/base/x") != nil {
+		t.Fatal("mirror")
+	}
+	if err := makeClone(repo, wt, "minigw/claude-12345678-0", head); err != nil {
+		t.Fatalf("long path clone: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(wt, strings.TrimPrefix(deep, client))); err != nil {
+		t.Fatal(err)
 	}
 }
