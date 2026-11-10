@@ -643,3 +643,24 @@ func TestPickScratch(t *testing.T) {
 		t.Fatal("Linux/macOS default changed")
 	}
 }
+
+// Codex »elevated« (#68): nedokončana nastavitev → zavrnitev z ukazom (brez UAC iz teka); ne odklene Codex.
+func TestCodexSandboxProblem(t *testing.T) {
+	ch := t.TempDir()
+	t.Setenv("CODEX_HOME", ch)
+	if codexSandboxProblem() != "" {
+		t.Fatal("no config")
+	}
+	os.WriteFile(filepath.Join(ch, "config.toml"), []byte("[windows]\nsandbox = \"elevated\"\n"), 0o600)
+	if w := codexSandboxProblem(); !strings.Contains(w, "codex sandbox setup --elevated") {
+		t.Fatalf("not provisioned: %q", w)
+	}
+	os.MkdirAll(filepath.Join(ch, ".sandbox-secrets"), 0o700)
+	if codexSandboxProblem() != "" || !codexElevated() {
+		t.Fatal("provisioned")
+	}
+	s := &server{cfgDir: t.TempDir()}
+	if runtime.GOOS == "windows" && s.agentsAllowed(serveConfig{}, "codex") {
+		t.Fatal("elevated sandbox unlocked Codex")
+	}
+}

@@ -762,8 +762,8 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 	ac := k.conf(c)
 	if !s.agentsAllowed(c, k.name) {
 		hint := ""
-		if k.name == "codex" && runtime.GOOS == "windows" { // #68: Codex na Windows ne teče v škatli MXC
-			hint = "; or set up Codex's own Windows sandbox once (codex sandbox setup --elevated, as administrator)"
+		if k.name == "codex" && runtime.GOOS == "windows" { // #68: tudi s peskovnikom »elevated« (bere nastavitve prehoda)
+			hint = "; Codex's own Windows sandbox can read the gateway's settings, so it does not replace this switch"
 		}
 		return writeError(w, r.rid, 403, k.bin+" needs \"Allow commands without a sandbox\" (Claude CLI settings) on this gateway (Windows, "+
 			"or Linux without bwrap): it can read and change everything this user can, including the gateway's settings"+hint)
@@ -1031,8 +1031,13 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 				cgits, cpath, cdeny = gits, agentPath(gw), []string{s.cfgDir}
 			}
 			args := codexArgs(dir, append(extra, deps...), agent, out, model, write, ac.Network, resume, cgits, cpath, cdeny)
-			if runtime.GOOS == "windows" && codexElevated() { // #68: Codex' peskovnik »elevated« izrecno za vsak zagon
-				args = append([]string{args[0], "-c", `windows.sandbox="elevated"`}, args[1:]...)
+			if runtime.GOOS == "windows" { // #68: nikoli namestitev z UAC iz teka prehoda
+				if why := codexSandboxProblem(); why != "" {
+					return "", errors.New(why)
+				}
+				if codexElevated() { // dodatna zaščita (~/.ssh, profil), ne odklene Codex
+					args = append([]string{args[0], "-c", `windows.sandbox="elevated"`}, args[1:]...)
+				}
 			}
 			var failure string
 			err = s.runAgentProcess(ctx, r, exe, args, withTree(m), dir, prompt, func(line []byte) {
@@ -1388,10 +1393,11 @@ func (s *server) replyWhenDone(w http.ResponseWriter, r *req, body map[string]an
 
 // agentsAllowed: brez sandboxa, ki skrije skrivnosti routerja (Windows; Linux brez delujočega bwrap), Codex in Grok
 // bereta in pišeta vse, kar uporabnik: le z izrecnim allowUnsandboxedBash, v vsakem načinu (H1, R3).
-// #68: Codex na Windows ne teče v škatli MXC (canonicalize CODEX_HOME tam pade): le s svojim peskovnikom »elevated«.
+// #68: Codex na Windows ne teče v škatli MXC (canonicalize CODEX_HOME tam pade). Njegov peskovnik »elevated« bere
+// večino profila, tudi %APPDATA%\minigw (admin.secret, serve.json; HPX360), zato Codex tam le z izrecnim dovoljenjem.
 func (s *server) agentsAllowed(c serveConfig, kind string) bool {
 	if kind == "codex" && runtime.GOOS == "windows" {
-		return codexElevated() || c.AllowUnsandboxedBash
+		return c.AllowUnsandboxedBash
 	}
 	return agentSandboxed(s.cfgDir) || c.AllowUnsandboxedBash
 }
@@ -1407,6 +1413,17 @@ func codexElevated() bool {
 	}
 	st, err := os.Stat(filepath.Join(real, ".sandbox-secrets"))
 	return err == nil && st.IsDir()
+}
+
+// codexSandboxProblem (#68): config.toml zahteva »elevated«, peskovnik pa ni nastavljen (ni .sandbox-secrets): Codex bi
+// iz teka prehoda sprožil UAC (nihče ga ne potrdi: »error 1223«). "" = v redu.
+func codexSandboxProblem() string {
+	real, _ := agentAuthFiles(codexKind)
+	b, err := os.ReadFile(filepath.Join(real, "config.toml"))
+	if err != nil || !tomlElevated(string(b)) || codexElevated() {
+		return ""
+	}
+	return "Codex's elevated Windows sandbox is not set up on the gateway: run codex sandbox setup --elevated once at the gateway PC (as administrator)"
 }
 
 // tomlElevated: [windows] sandbox = "elevated" ali windows.sandbox = "elevated" (preprosto branje TOML, brez tabel v vrstici).

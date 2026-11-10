@@ -425,7 +425,7 @@ func agents(u *ui) ([]row, error) {
 		rows = append(rows, hdr(k.title))
 		if sb, ok := a["sandboxed"].(bool); ok && !sb && !yes(c, "allowUnsandboxedBash") || !ok && bare { // #68: per agent
 			if k.kind == "codex" && str(st, "os") == "windows" {
-				rows = append(rows, inf("  No sandbox here: run codex sandbox setup --elevated once (as administrator), or turn on Allow commands without a sandbox (Claude CLI).", ""))
+				rows = append(rows, inf("  No sandbox here: Codex needs Allow commands without a sandbox (Claude CLI); its own elevated sandbox can read the gateway's settings.", ""))
 			} else {
 				rows = append(rows, inf("  No sandbox here: turn on Allow commands without a sandbox (Claude CLI) first.", ""))
 			}
