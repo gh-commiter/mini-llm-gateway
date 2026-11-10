@@ -350,7 +350,17 @@ public actor ShareHub {
             for _ in 0..<60 where bySession[session] == nil { try? await Task.sleep(for: .milliseconds(500)) }
         }
         guard let s = share(session: session, device: device), cwd == nil || cwd == s.cwd else { return nil }
-        if let p = AgentRun.current, p.session == session, let dir = p.dir { return dir }  // vprašani agent: mapa klicatelja
+        if let p = AgentRun.current, p.session == session, let dir = p.dir {  // vprašani agent: mapa klicatelja
+            // #61: harness vprašanega agenta začne v klonu klicatelja, kjer agent klicatelja še dela (H2 in .git na poti)
+            if let id = p.runID, let k = runSlot[id], let slot = slots[k],
+               let why = !slot.gitIntact || !slot.nested.allSatisfy({ $0.intact(slot.wt) })
+                   ? "The agent's clone was changed (its .git was replaced): start a new conversation"
+                   : Worktree.foreignGit(slot.wt, cwd: dir, nested: slot.nested) {
+                refusals[id] = (400, why)
+                return nil
+            }
+            return dir
+        }
         if let tree = s.tree { return await worktreeMount(s, tree, roots: roots, scratch: scratch) }
         if let native = s.native {  // ista mapa: brez priklopa in kopije; še vedno ista kanonična pot in v dovoljenih mapah
             guard Sync.real(native)?.path == native.path, let roots, ClaudeCLI.resolveCwd(native.path, roots: roots, scratch: scratch) != nil else { return nil }

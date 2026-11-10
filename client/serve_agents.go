@@ -836,8 +836,17 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 		if p := runOf(r); p != nil { // klon klicatelja
 			wt = p.wt
 		}
-		if gits, _ := s.hub.worktreeGits(wt); wt != "" && tooDeep(wt, gits) {
-			return writeError(w, r.rid, 400, tooManyPins)
+		if wt != "" {
+			if !s.hub.worktreeIntact(wt) { // H2 (kot runCLI): git harnessa ne z .git, ki ga je zamenjal agent (tudi klicatelja)
+				return writeError(w, r.rid, 400, "The agent's clone was changed (its .git was replaced): start a new conversation")
+			}
+			gits, _ := s.hub.worktreeGits(wt)
+			if tooDeep(wt, gits) {
+				return writeError(w, r.rid, 400, tooManyPins)
+			}
+			if why := foreignGit(wt, dir, gits); why != "" { // #61: pred vsakim zagonom harnessa (tudi v klonu klicatelja)
+				return writeError(w, r.rid, 400, why)
+			}
 		}
 	}
 	// N1: brez bwrap (svoj imenski prostor PID) agent lahko preživi do finalize; klon z ugnezdenimi: končna zavrnitev (400)

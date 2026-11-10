@@ -463,7 +463,8 @@ public enum Worktree {
         // N9: status in diff ne vstopita v podmodul (submodule.<ime>.ignore iz .gitmodules to preglasi: claudeEnv)
         let pairs = [("core.fsmonitor", "false"), ("core.hooksPath", "/dev/null"), ("core.attributesFile", "/dev/null"),
                      ("diff.ignoreSubmodules", "all"), ("submodule.recurse", "false"), ("core.excludesFile", "/dev/null"),
-                     ("user.name", author(agent)), ("user.email", agent + "@minigw.invalid")]
+                     ("user.name", author(agent)), ("user.email", agent + "@minigw.invalid"),
+                     ("safe.bareRepository", "explicit")]  // #61: golega repozitorija ne najde sam (le z GIT_DIR/--git-dir)
         let git = root.appendingPathComponent(".git").path
         var env = ["GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",
                    "GIT_CONFIG_COUNT": String(pairs.count), "GIT_ATTR_SOURCE": "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
@@ -586,6 +587,26 @@ public enum Worktree {
         }
         if let why = check(wt, repo, "") { return why }
         for n in nested { if let why = check(n.dir(wt), n.repo, n.path + "/") { return why } }
+        return nil
+    }
+
+    /// #61: git harnessa agenta (zunaj peskovnika) poišče repozitorij od svoje začetne mape `cwd` navzgor: v `cwd` in vsaki
+    /// mapi nad njo do korena klona (brez korena) ne sme biti .git (mapa, datoteka ali povezava), ki ni .git registriranega
+    /// ugnezdenega klona, niti povezave namesto mape (ji ne sledi). Drugje v klonu (npr. build/_deps od CMake FetchContent) sme.
+    /// nil = v redu (tudi cwd zunaj klona), sicer sporočilo zavrnitve (400).
+    static func foreignGit(_ wt: URL, cwd: URL, nested: [ShareHub.Nested] = []) -> String? {
+        let own = Set(nested.map(\.path)), root = wt.standardizedFileURL.path, dir = cwd.standardizedFileURL.path
+        guard dir.hasPrefix(root + "/") else { return nil }
+        var rel = ""
+        for c in dir.dropFirst(root.count + 1).split(separator: "/") {
+            rel += (rel.isEmpty ? "" : "/") + c
+            var st = stat()
+            guard lstat(root + "/" + rel, &st) == 0 else { return nil }  // ni mape: harness ne začne v njej
+            if st.st_mode & S_IFMT == S_IFLNK { return "The agent's clone was changed (a link at \(Profiles.line(rel, max: 500))): start a new conversation" }
+            if !own.contains(rel), lstat(root + "/" + rel + "/.git", &st) == 0 {
+                return "The agent's clone was changed (a .git appeared at \(Profiles.line(rel, max: 500))/.git): start a new conversation"
+            }
+        }
         return nil
     }
 
@@ -1077,6 +1098,10 @@ extension ShareHub {
         while slots["\(s.session)|\(agent)|\(n)"]?.busy == true { n += 1 }
         let k = "\(s.session)|\(agent)|\(n)"
         if let slot = slots[k], slot.gitIntact, slot.nested.allSatisfy({ $0.intact(slot.wt) }), Worktree.nestedProblem(slot.wt, repo: tree.repo, nested: slot.nested) == nil {  // sicer nov klon (H2, N9; #40: ugnezdeni na svoji poti)
+            if let why = Worktree.foreignGit(slot.wt, cwd: Self.dir(slot.wt, tree.sub), nested: slot.nested) {  // #61: .git na poti harnessa: zavrnitev, ne nov klon
+                refusals[id] = (400, why); unlock(tree.repo)
+                return nil
+            }
             slot.busy = true; runSlot[id] = k; unlock(tree.repo)
             return Self.dir(slot.wt, tree.sub)
         }

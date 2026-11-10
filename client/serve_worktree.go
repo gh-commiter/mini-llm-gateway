@@ -223,6 +223,39 @@ func nestedProblem(wt, repo string, nested []*wtNested) string {
 	return ""
 }
 
+// foreignGit (#61): git harnessa agenta (zunaj peskovnika) poišče repozitorij od svoje začetne mape dir navzgor: v dir in
+// vsaki mapi nad njo do korena klona wt (brez korena) ne sme biti .git (mapa, datoteka ali povezava), ki ni med gits (.git
+// registriranih ugnezdenih, worktreeGits), niti povezave namesto mape (ji ne sledi). Drugje v klonu (npr. build/_deps od
+// CMake FetchContent) sme. "" = v redu (tudi dir zunaj klona), sicer sporočilo zavrnitve (400).
+func foreignGit(wt, dir string, gits []string) string {
+	own := map[string]bool{}
+	for _, g := range gits {
+		own[filepath.Clean(g)] = true
+	}
+	rel, err := filepath.Rel(wt, dir)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return ""
+	}
+	d := wt
+	for _, c := range strings.Split(rel, string(filepath.Separator)) {
+		d = filepath.Join(d, c)
+		fi, err := os.Lstat(d)
+		if err != nil {
+			return "" // ni mape: harness ne začne v njej
+		}
+		r := shortLine(filepath.ToSlash(strings.TrimPrefix(d, wt+string(filepath.Separator))), 500)
+		if fi.Mode()&os.ModeSymlink != 0 || fi.Mode()&os.ModeIrregular != 0 {
+			return "The agent's clone was changed (a link at " + r + "): start a new conversation"
+		}
+		if g := filepath.Join(d, ".git"); !own[g] {
+			if _, err := os.Lstat(g); err == nil {
+				return "The agent's clone was changed (a .git appeared at " + r + "/.git): start a new conversation"
+			}
+		}
+	}
+	return ""
+}
+
 // gitExecDir: mapa ovoja gitExecWrap v Scratch zrcala repo (scratch/repos/<naprava>/<id>.git → scratch/gitexec).
 func gitExecDir(repo string) string {
 	return filepath.Join(filepath.Dir(filepath.Dir(filepath.Dir(repo))), "gitexec")
@@ -650,9 +683,9 @@ func finalize(repo, wt, branch, base, agent, out string, links map[string]string
 // GIT_WORK_TREE: ugnezden .git agenta ne velja; Maven dobi svoj lokalni repozitorij. tmp: TMPDIR agenta.
 // #40: brez lastnikovih nastavitev git (identiteta, podpis, poverilnice, insteadOf); avtor commitov je agent (agent: codex …).
 func worktreeHarnessEnv(wt, maven, tmp, agent string) []string {
-	n, long := "8", []string{}
-	if gitLongPaths { // le Windows (par 8; Worktree.harnessEnv na Macu ga nima, vrstni red parov 0–7 enak)
-		n, long = "9", []string{"GIT_CONFIG_KEY_8=core.longpaths", "GIT_CONFIG_VALUE_8=true"}
+	n, long := "9", []string{}
+	if gitLongPaths { // le Windows (par 9; Worktree.harnessEnv na Macu ga nima, vrstni red parov 0–8 enak)
+		n, long = "10", []string{"GIT_CONFIG_KEY_9=core.longpaths", "GIT_CONFIG_VALUE_9=true"}
 	}
 	return append([]string{"GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_NOSYSTEM=1",
 		"GIT_CONFIG_COUNT=" + n, "GIT_CONFIG_KEY_0=core.fsmonitor", "GIT_CONFIG_VALUE_0=false",
@@ -662,6 +695,7 @@ func worktreeHarnessEnv(wt, maven, tmp, agent string) []string {
 		"GIT_CONFIG_KEY_3=diff.ignoreSubmodules", "GIT_CONFIG_VALUE_3=all", "GIT_CONFIG_KEY_4=submodule.recurse", "GIT_CONFIG_VALUE_4=false",
 		"GIT_CONFIG_KEY_5=core.excludesFile", "GIT_CONFIG_VALUE_5=" + os.DevNull, // ne ~/.config/git/ignore (peskovnik: EPERM)
 		"GIT_CONFIG_KEY_6=user.name", "GIT_CONFIG_VALUE_6=" + agentAuthor(agent), "GIT_CONFIG_KEY_7=user.email", "GIT_CONFIG_VALUE_7=" + agent + "@minigw.invalid",
+		"GIT_CONFIG_KEY_8=safe.bareRepository", "GIT_CONFIG_VALUE_8=explicit", // #61: golega repozitorija ne najde sam (le z GIT_DIR)
 		"GIT_ATTR_SOURCE=4b825dc642cb6eb9a060e54bf8d69288fbee4904",
 		"GIT_DIR=" + filepath.Join(wt, ".git"), "GIT_WORK_TREE=" + wt, "GIT_COMMON_DIR=" + filepath.Join(wt, ".git"),
 		"MAVEN_OPTS=-Dmaven.repo.local=" + maven + " -Djava.io.tmpdir=" + tmp, "TMPDIR=" + tmp, "TMP=" + tmp, "TEMP=" + tmp}, long...)
