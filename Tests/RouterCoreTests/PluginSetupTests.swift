@@ -79,6 +79,13 @@ import Testing
     #expect(!PluginSetup.safeAncestors(root + "/missing"))
     chmod(root + "/a", 0o1777)  // sticky (kot /tmp): višje mape smejo
     #expect(PluginSetup.safeAncestors(exe))
+    var st = stat()
+    stat(root + "/a", &st)
+    #expect(PluginSetup.stickyOK(st))
+    st.st_uid = getuid() &+ 4242  // sticky mapa drugega uporabnika: ne (lastnik jo zamenja)
+    #expect(!PluginSetup.stickyOK(st))
+    st.st_uid = 0; st.st_mode &= ~mode_t(S_ISVTX)
+    #expect(!PluginSetup.stickyOK(st))
     chmod(bin, 0o1777)  // mapa minigw sama: nikoli
     #expect(!PluginSetup.safeAncestors(exe))
     chmod(bin, 0o755)

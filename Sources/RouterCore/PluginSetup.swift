@@ -32,12 +32,15 @@ public enum PluginSetup {
             repeat {
                 d = (d as NSString).deletingLastPathComponent
                 var st = stat()
-                guard stat(d, &st) == 0, safePath(d) || !strict && st.st_mode & S_ISVTX != 0 else { return false }
+                guard stat(d, &st) == 0, safePath(d) || !strict && stickyOK(st) else { return false }
                 strict = false
             } while d != "/" && !d.isEmpty
         }
         return true
     }
+
+    /// Višja mapa, zapisljiva za druge: le s sticky in v lasti root ali tega uporabnika (sicer jo lastnik zamenja).
+    static func stickyOK(_ st: stat) -> Bool { st.st_mode & S_ISVTX != 0 && (st.st_uid == 0 || st.st_uid == getuid()) }
 
     /// macOS: le admin (80); staff (20) je vsak lokalni uporabnik (kot Go trustedGroup).
     public static func trustedGroup(_ gid: gid_t) -> Bool { gid == 80 }
