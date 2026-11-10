@@ -233,8 +233,11 @@ func TestAdminAPILiveApply(t *testing.T) {
 		t.Fatalf("port: %d %s", st, b)
 	}
 	st, b := admin("POST", adminPrefix+"/general/token", "")
-	if st != 200 || !strings.Contains(b, "minigw connect") || strings.Contains(b, "'tok#") {
+	if st != 200 || strings.Contains(b, "connect") { // #68: novo vrstico (žeton) da le GET general
 		t.Fatalf("token: %d %s", st, b)
+	}
+	if _, b := admin("GET", adminPrefix+"/general", ""); !strings.Contains(b, "minigw connect") || strings.Contains(b, "'tok#") {
+		t.Fatalf("token GET: %s", b)
 	}
 	if st, _ := adminReq(t, base, host, "tok", "GET", "/v1/models", ""); st != 401 {
 		t.Fatalf("old token still works: %d", st)

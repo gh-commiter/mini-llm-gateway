@@ -113,6 +113,9 @@ func general(u *ui) ([]row, error) {
 			v = "Windows sandbox (MXC " + str(sb, "version") + ")"
 		}
 		rows = append(rows, inf("Agent sandbox", v))
+		if w := str(sb, "warning"); w != "" {
+			rows = append(rows, inf("  "+clean(w), ""))
+		}
 	}
 	switch os := str(st, "os"); os {
 	case "linux", "darwin": // darwin: minigw serve for development

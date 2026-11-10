@@ -610,7 +610,8 @@ func routerCommand(args []string, in io.Reader) {
 			if pos[1] != "rotate" {
 				fail(routerHelp)
 			}
-			a.do("POST", "/general/token", nil, &g)
+			a.do("POST", "/general/token", nil, nil)
+			a.do("GET", "/general", nil, &g) // POST žetona ne vrne
 			say("New token. Each client must run the new line, or run minigw reconnect [--name P] with the new token; the old token no longer works:")
 		} else {
 			a.do("GET", "/general", nil, &g)

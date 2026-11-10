@@ -277,6 +277,8 @@ const S = {
   sandboxNoteWin: ["Commands run in the Windows sandbox (MXC) with Claude Code's PowerShell tool (Bash in Tools means PowerShell): they write only to the session's folder and the gateway's folders for this conversation, and cannot read your home folder or the gateway's settings.",
     "Ukazi tečejo v peskovniku Windows (MXC) z orodjem PowerShell Claude Code (Bash med orodji pomeni PowerShell): pišejo le v mapo seje in mape prehoda za ta pogovor, domače mape in nastavitev prehoda ne morejo brati."],
   localToolsBox: ["Every Claude Code tool, including commands: they run in the Windows sandbox (MXC).", "Vsa orodja Claude Code, tudi ukazi: tečejo v peskovniku Windows (MXC)."],
+  scratchHomeWarn: ["The Scratch folder is inside your home folder, so agents in the Windows sandbox can list the names in your home folder (not read the files). Move Scratch outside your home, for example D:\\minigw-scratch.",
+    "Mapa Scratch je v domači mapi, zato agenti v peskovniku Windows vidijo imena v domači mapi (ne vsebine datotek). Mapo Scratch premakni iz domače mape, npr. D:\\minigw-scratch."],
   agentSandbox: ["Agent sandbox", "Peskovnik agentov"], sandboxMXC: ["Windows sandbox (MXC %s)", "Peskovnik Windows (MXC %s)"],
   sandboxNone: ["not available (%s)", "ni na voljo (%s)"],
   worktreeMode: ["Worktree mode", "Način worktree"], worktreeNetwork: ["Network for builds", "Omrežje za gradnje"],
@@ -594,7 +596,7 @@ const pages = {
         button(t("newToken"), async () => {
           if (!confirm(t("rotateAsk"))) return;
           const r = await save(n3, () => api("POST", "/general/token"), () => t("rotated"));
-          if (r) { g.connect = r.connect; if (shown) line.textContent = token().split("#")[0]; }
+          if (r) { g.connect = (await api("GET", "/general")).connect; if (shown) line.textContent = token().split("#")[0]; }
         })))),
       n3,
       group(row(labelSub(t("localApps"), t("localAppsHelp")), toggle(g.allowLocalApps, v => save(n5, () => api("PATCH", "/general", {allowLocalApps: v}))))),
@@ -620,6 +622,7 @@ const pages = {
       section(t("about")),
       group(row(t("version"), value(st.version + (st.build ? " (" + st.build + ")" : ""))),
         sb ? row(t("agentSandbox"), value(sb.kind === "mxc" ? t("sandboxMXC", sb.version) : t("sandboxNone", sb.reason))) : null,
+        sb && sb.warning ? row(el("div", {class: "label warn", textContent: t("scratchHomeWarn")})) : null,
         row(t("license"), el("a", {href: "https://github.com/gh-commiter/mini-llm-gateway/blob/main/LICENSE", target: "_blank", rel: "noopener noreferrer",
           textContent: "MIT License", class: "link"}))),
     ];
