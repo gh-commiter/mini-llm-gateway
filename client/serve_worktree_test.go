@@ -2359,6 +2359,9 @@ func TestGrantDirsReplacesPlantedLinks(t *testing.T) {
 // #67: navodilo o $MINIGW_DEPS z oznako peskovnika in brez (Windows, Copilot brez bwrap); ime nastavitve omrežja.
 func TestDepsNoteAndNetworkOff(t *testing.T) {
 	on, off := depsNote("/d", true), depsNote("/d", false)
+	if !strings.Contains(on, `-DFETCHCONTENT_BASE_DIR="/d/cmake"`) || strings.Contains(on, `"$MINIGW_DEPS/`) { // Air: dobesedne poti
+		t.Fatalf("recipes: %s", on)
+	}
 	if !strings.Contains(on, "$MINIGW_DEPS (/d)") || !strings.Contains(on, "git init and git clone work only there.") ||
 		!strings.Contains(off, "git init and git clone are not available on this gateway (no sandbox).") || strings.Contains(off, "work only there") {
 		t.Fatalf("notes:\n%s\n%s", on, off)

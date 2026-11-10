@@ -18,7 +18,7 @@ case $c in init|clone)
   case $t in /*) ;; *) t=$d/$t;; esac; case /$t/ in */../*) x=1;; esac
   p=$t; while [ ! -d "$p" ]; do p=${p%/*}; p=${p:-/}; done; r=$(cd "$p" && pwd -P)/
   [ -z "$x" ] && [ -n "$D" ] && case $r in "$D"/*) ;; *) false;; esac ||
-    no "create repositories only under \$MINIGW_DEPS ($MINIGW_DEPS), e.g. cmake -DFETCHCONTENT_BASE_DIR=\"\$MINIGW_DEPS/cmake\", swift build --scratch-path \"\$MINIGW_DEPS/swiftpm\""
+    no "create repositories only under \$MINIGW_DEPS ($MINIGW_DEPS), e.g. cmake -DFETCHCONTENT_BASE_DIR=\"$MINIGW_DEPS/cmake\", swift build --scratch-path \"$MINIGW_DEPS/swiftpm\""
   [ -n "$s" ] || no "git init and git clone need the agent sandbox, which this run does not have"
   [ $c = init ] || [ -z "$MINIGW_NETWORK_OFF" ] || case $u in file://*|/*|.*) ;; *://*|[!/]*:*) no "network for this agent's builds is off ($MINIGW_NETWORK_OFF)";; esac
   plain "$@";;
