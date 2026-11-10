@@ -1345,6 +1345,11 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     // #57 prehod: uvoz bundla odjemalca v zrcalo
     #expect(!Worktree.importBase(mirror, bundle: push, snapshot: c2, base: "refs/minigw/base/x"))
     #expect(g(mirror, "rev-parse", "-q", "--verify", "refs/minigw/base/x").isEmpty)
+    // ostanek zavrnjenega bundla prek zahteve le s posnetkom (brez bundla): prav tako zavrnjen
+    #expect(!Worktree.importBase(mirror, bundle: nil, snapshot: evil, base: "refs/minigw/base/y"))
+    #expect(g(mirror, "rev-parse", "-q", "--verify", "refs/minigw/base/y").isEmpty)
+    let head = g(mirror, "rev-parse", "HEAD")  // dosegljiv posnetek: prazen paket, sprejet
+    #expect(Worktree.importBase(mirror, bundle: nil, snapshot: head, base: "refs/minigw/base/z"))
     // #57 native: veja zrcala (tu src) v repozitorij uporabnika
     let out = root.appendingPathComponent("out.bundle")
     let local = try #require(Worktree.localBundle(repo: src.appendingPathComponent(".git"), top: client, branch: branch, out: out))

@@ -371,8 +371,8 @@ public enum Worktree {
 
     /// Objekti `revs` (vhod pack-objects --revs): pack-objects in index-pack --fsck-objects v prazen repozitorij (kot
     /// finalize), objekti repozitorija kot alternates (drevo sme kazati na obstoječ blob). Zavrne npr. drevo z ».git«.
-    /// #58: z mejo 10 min (velik repozitorij, zastal disk). nil = v redu, sicer razlog (prva vrstica gita).
-    static func fsckPack(top: String, revs: String, safe: Bool = false) -> String? {
+    /// #58: skupna meja `until` (privzeto 10 min) za oba koraka (velik repozitorij, zastal disk). nil = v redu, sicer razlog.
+    static func fsckPack(top: String, revs: String, safe: Bool = false, until: Date = Date() + 600) -> String? {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("minigw-fsck-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: dir) }
         guard (try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])) != nil
@@ -381,7 +381,7 @@ public enum Worktree {
             r.out.split(separator: "\n").first.map { Profiles.line(String($0), max: 300) } ?? "git exited with \(r.status)"
         }
         let p = run(["pack-objects", "--revs", "-q", dir.appendingPathComponent("p").path], cwd: top, safe: safe, hooks: false,
-                    input: Data(revs.utf8), timeout: 600, stderr: true)
+                    input: Data(revs.utf8), timeout: max(1, until.timeIntervalSinceNow), stderr: true)
         guard p.status == 0 else { return why(p) }
         let pack = String(p.out.split(separator: "\n").last ?? "")  // pred njim morda opozorila gita
         guard isSHA(pack) else { return "pack-objects gave no pack" }
@@ -395,7 +395,7 @@ public enum Worktree {
             return "cannot create the check repository"
         }
         let r = run(["--git-dir", fsck, "index-pack", "--fsck-objects", dir.appendingPathComponent("p-\(pack).pack").path], cwd: dir.path,
-                    timeout: 600, stderr: true)
+                    timeout: max(1, until.timeIntervalSinceNow), stderr: true)
         return r.status == 0 ? nil : why(r)
     }
 
@@ -575,13 +575,14 @@ public enum Worktree {
         if let bundle {
             guard isBundle(bundle), run(["--git-dir", repo.path, "-c", "transfer.fsckObjects=true", "-c", "fetch.fsckObjects=true",
                                          "fetch", "-q", "--no-tags", bundle.path, "+refs/minigw/push:\(base)"]).status == 0 else { return false }
-            // #57: fetch iz bundla pred git 2.46 ne preveri objektov
-            if fsckIncoming(top: repo.path, ref: base, safe: true) != nil {
-                run(["--git-dir", repo.path, "update-ref", "-d", base])
-                return false
-            }
         } else {
             guard run(["--git-dir", repo.path, "update-ref", base, snapshot]).status == 0 else { return false }
+        }
+        // #57: fetch iz bundla pred git 2.46 ne preveri objektov; brez bundla sme posnetek kazati na ostanek zavrnjenega
+        // bundla v zrcalu. Dosegljivo iz drugih refov: prazen paket.
+        if fsckIncoming(top: repo.path, ref: base, safe: true) != nil {
+            run(["--git-dir", repo.path, "update-ref", "-d", base])
+            return false
         }
         return run(["--git-dir", repo.path, "rev-parse", base]).out == snapshot
     }
@@ -672,12 +673,12 @@ public enum Worktree {
     /// #57: objekte bundla pred tem preveri fsckPack (fetch iz bundla pred git 2.46 jih ne). nil = v redu, sicer razlog.
     static func localBundle(repo: URL, top: URL, branch: String, out: URL, gitDir: URL? = nil) -> String? {
         try? FileManager.default.removeItem(at: out)
-        let user = head(gitDir ?? top.appendingPathComponent(".git"))
-        if let why = fsckPack(top: repo.path, revs: "refs/heads/\(branch)\n" + (user.map { "--not\n\($0)\n" } ?? ""), safe: true) {
+        let user = head(gitDir ?? top.appendingPathComponent(".git")), until = Date() + 600  // skupna meja za fsck in bundle
+        if let why = fsckPack(top: repo.path, revs: "refs/heads/\(branch)\n" + (user.map { "--not\n\($0)\n" } ?? ""), safe: true, until: until) {
             return "\(branch) failed the object check (fsck): " + why
         }
         let have = user.map { ["^" + $0] } ?? []
-        return run(["--git-dir", repo.path, "bundle", "create", out.path, "refs/heads/" + branch] + have, timeout: 600).status == 0 && isBundle(out)
+        return run(["--git-dir", repo.path, "bundle", "create", out.path, "refs/heads/" + branch] + have, timeout: max(1, until.timeIntervalSinceNow)).status == 0 && isBundle(out)
             ? nil : "cannot bundle \(branch)"
     }
 
