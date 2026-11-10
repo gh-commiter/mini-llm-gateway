@@ -817,6 +817,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 	}
 	// #46a: zgodovina zapiše, kar je veljalo
 	r.applied = &appliedLimits{readOnly: readOnly, cap: cap}
+	s.boxNote(r, k.name)     // #68
 	if c.askOthers(k.name) { // vrata izvajanja (startRun spodaj)
 		// Absolutna pot: PATH izvajanja ne doseže ukazov v sandboxu Codex na Windows (»elevated« = drug uporabnik);
 		// »minigw« iz PATH (askOnPath) je le za pravila Claude Code (askRules).

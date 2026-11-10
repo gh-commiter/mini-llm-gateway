@@ -273,7 +273,7 @@ const S = {
   pathHomeWarn: ["In the Windows sandbox, folders on PATH inside your home folder (for example ~\\.local\\bin) are readable by agents; keep no secrets there.",
     "V peskovniku Windows agenti lahko berejo mape s PATH v domači mapi (npr. ~\\.local\\bin); tam ne hrani skrivnosti."],
   worktreeNetworkNoBox: ["No effect on this computer: there is no Windows sandbox, so agents' network is not limited.", "Na tem računalniku nima učinka: peskovnika Windows ni, zato omrežje agentov ni omejeno."],
-  unsandboxedNotNeeded: ["Not needed: agents run in the Windows sandbox.", "Ni potrebno: agenti tečejo v peskovniku Windows."],
+  unsandboxedNotNeeded: ["Not needed for Claude CLI, Copilot and Grok: they run in the Windows sandbox. Codex still needs it.", "Ni potrebno za Claude CLI, Copilot in Grok: tečejo v peskovniku Windows. Codex ga še vedno potrebuje."],
   sandboxNoteWin: ["Commands run in the Windows sandbox (MXC) with Claude Code's PowerShell tool (Bash in Tools means PowerShell): they write only to the session's folder and the gateway's folders for this conversation, and cannot read your home folder or the gateway's settings.",
     "Ukazi tečejo v peskovniku Windows (MXC) z orodjem PowerShell Claude Code (Bash med orodji pomeni PowerShell): pišejo le v mapo seje in mape prehoda za ta pogovor, domače mape in nastavitev prehoda ne morejo brati."],
   localToolsBox: ["Every Claude Code tool, including commands: they run in the Windows sandbox (MXC).", "Vsa orodja Claude Code, tudi ukazi: tečejo v peskovniku Windows (MXC)."],
@@ -845,7 +845,7 @@ const pages = {
             const body = {allowUnsandboxedBash: v};
             if (!v) { for (const [n] of COMMANDS) on.delete(n); body.tools = [...on].join(","); }
             await patch(body); show("claude");
-          }), box)) : null,
+          }))) : null,
           win && !box ? row(el("div", {class: "label warn", textContent: t("unsandboxedWarn")}))
             : row(el("div", {class: "label sub", textContent: t(box ? "sandboxNoteWin" : "sandboxNote")})),
           COMMANDS.filter(x => win || x[0] !== "PowerShell").map(x => toolRow(x, cmdLocked))),

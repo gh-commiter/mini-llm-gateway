@@ -206,6 +206,14 @@ func TestMXCWrapRun(t *testing.T) {
 				tmp = v
 			}
 		}
+		var req0 mxcRequest
+		rb0, _ := os.ReadFile(log)
+		json.Unmarshal(rb0, &req0)
+		for _, k := range []string{"USERPROFILE", "HOME", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP", "PSModuleAnalysisCachePath"} { // HPX360: nikoli v cwd
+			if v := envGet(req0.Process.Env, k); !filepath.IsAbs(v) || !under(v, scratch) || under(v, work) {
+				t.Fatalf("%s=%q not under Scratch", k, v)
+			}
+		}
 		if !strings.Contains(got, "in=hello\n") || !under(tmp, scratch) || !strings.Contains(got, "home="+filepath.Join(tmp, "home")+"\n") ||
 			!strings.Contains(got, "box=1\n") || strings.Contains(got, "proxy=http") {
 			t.Fatalf("output: %s", got)
