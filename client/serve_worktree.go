@@ -101,6 +101,16 @@ func selfCommondir(p string) bool {
 	return err == nil && string(b) == ".\n"
 }
 
+// nestedIntact (#40): vsak ugnezdeni klon je še na svoji poti (nestedIntact); pogoj za ponovno uporabo klona.
+func (sl *wtSlot) nestedIntact() bool {
+	for _, n := range sl.nested {
+		if !nestedIntact(sl.wt, n) {
+			return false
+		}
+	}
+	return true
+}
+
 // nestedIntact (H1): pot ugnezdenega klona so same prave mape (ne povezava ven) in njegov .git je še ista mapa.
 func nestedIntact(wt string, n *wtNested) bool {
 	d := wt
@@ -889,7 +899,7 @@ func (h *shareHub) worktreeMount(s *serveShare, agent string) (dir, refused stri
 	if ro {
 		return "", ""
 	}
-	if slot != nil && slot.gitIntact() && nestedProblem(slot.wt, t.repo, slot.nested) == "" { // sicer nov klon (makeClone pobriše starega)
+	if slot != nil && slot.gitIntact() && slot.nestedIntact() && nestedProblem(slot.wt, t.repo, slot.nested) == "" { // sicer nov klon (makeClone pobriše starega)
 		return worktreeDir(slot.wt, t.sub), ""
 	}
 	if slot != nil { // L6 (L1): nedostavljeno delo starega klona najprej v kept, nato nov klon na isti poti

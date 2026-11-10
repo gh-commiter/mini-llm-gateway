@@ -1050,7 +1050,7 @@ extension ShareHub {
         var n = 0
         while slots["\(s.session)|\(agent)|\(n)"]?.busy == true { n += 1 }
         let k = "\(s.session)|\(agent)|\(n)"
-        if let slot = slots[k], slot.gitIntact, Worktree.nestedProblem(slot.wt, repo: tree.repo, nested: slot.nested) == nil {  // sicer nov klon (H2, N9)
+        if let slot = slots[k], slot.gitIntact, slot.nested.allSatisfy({ $0.intact(slot.wt) }), Worktree.nestedProblem(slot.wt, repo: tree.repo, nested: slot.nested) == nil {  // sicer nov klon (H2, N9; #40: ugnezdeni na svoji poti)
             slot.busy = true; runSlot[id] = k; unlock(tree.repo)
             return Self.dir(slot.wt, tree.sub)
         }

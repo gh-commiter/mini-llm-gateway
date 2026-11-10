@@ -1863,3 +1863,29 @@ func TestTooDeep(t *testing.T) {
 		t.Fatal("514 pins accepted")
 	}
 }
+
+// #40: ugnezdeni klon, katerega pot je zamenjana s povezavo na isti .git, prestane gitIntact, nestedIntact pa ne:
+// klon se ne uporabi znova.
+func TestSlotNestedIntact(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks")
+	}
+	wt := t.TempDir()
+	os.MkdirAll(filepath.Join(wt, ".git"), 0o700)
+	os.MkdirAll(filepath.Join(wt, "a", "lib", ".git"), 0o700)
+	writeT(t, filepath.Join(wt, ".git", "config"), "c")
+	writeT(t, filepath.Join(wt, "a", "lib", ".git", "config"), "n")
+	n := &wtNested{path: "a/lib", cfg: []byte("n")}
+	n.git, _ = os.Lstat(filepath.Join(wt, "a", "lib", ".git"))
+	sl := &wtSlot{wt: wt, cfg: []byte("c"), nested: []*wtNested{n}}
+	sl.git, _ = os.Lstat(filepath.Join(wt, ".git"))
+	if !sl.gitIntact() || !sl.nestedIntact() {
+		t.Fatal("fresh slot refused")
+	}
+	if os.Rename(filepath.Join(wt, "a"), filepath.Join(wt, "b")) != nil || os.Symlink("b", filepath.Join(wt, "a")) != nil {
+		t.Fatal("swap")
+	}
+	if !sl.gitIntact() || sl.nestedIntact() {
+		t.Fatalf("linked path: gitIntact %v, nestedIntact %v", sl.gitIntact(), sl.nestedIntact())
+	}
+}
