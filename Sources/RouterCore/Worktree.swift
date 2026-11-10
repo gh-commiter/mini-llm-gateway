@@ -940,17 +940,6 @@ public enum Worktree {
     /// Ob zagonu aplikacije: zrcala, ki jih 30 dni ni uporabil noben agent, in njihovi kloni.
     public static func prune(scratch: URL, days: Double = 30) {
         let fm = FileManager.default, repos = scratch.appendingPathComponent("repos"), cut = Date().addingTimeInterval(-days * 86400)
-        for owner in (try? fm.contentsOfDirectory(atPath: repos.path)) ?? [] {
-            for name in (try? fm.contentsOfDirectory(atPath: repos.appendingPathComponent(owner).path)) ?? [] where name.hasSuffix(".git") {
-                let repo = repos.appendingPathComponent(owner).appendingPathComponent(name)
-                let used = (try? fm.attributesOfItem(atPath: repo.appendingPathComponent("minigw-used").path))?[.modificationDate] as? Date
-                    ?? (try? fm.attributesOfItem(atPath: repo.path))?[.modificationDate] as? Date ?? .distantPast
-                guard used < cut else { continue }
-                try? fm.removeItem(at: repo)
-                try? fm.removeItem(at: scratch.appendingPathComponent("worktrees").appendingPathComponent(owner)
-                    .appendingPathComponent(String(name.dropLast(4))))
-            }
-        }
         let wts = scratch.appendingPathComponent("worktrees")  // L6: ohranjeni kloni (<klon>-kept-<čas>)
         for owner in (try? fm.contentsOfDirectory(atPath: wts.path)) ?? [] {
             for id in (try? fm.contentsOfDirectory(atPath: wts.appendingPathComponent(owner).path)) ?? [] {
@@ -959,6 +948,20 @@ public enum Worktree {
                     let u = dir.appendingPathComponent(k)
                     if ((try? fm.attributesOfItem(atPath: u.path))?[.modificationDate] as? Date ?? .distantFuture) < cut { try? fm.removeItem(at: u) }
                 }
+            }
+        }
+        for owner in (try? fm.contentsOfDirectory(atPath: repos.path)) ?? [] {
+            for name in (try? fm.contentsOfDirectory(atPath: repos.appendingPathComponent(owner).path)) ?? [] where name.hasSuffix(".git") {
+                let repo = repos.appendingPathComponent(owner).appendingPathComponent(name)
+                let used = (try? fm.attributesOfItem(atPath: repo.appendingPathComponent("minigw-used").path))?[.modificationDate] as? Date
+                    ?? (try? fm.attributesOfItem(atPath: repo.path))?[.modificationDate] as? Date ?? .distantPast
+                guard used < cut else { continue }
+                try? fm.removeItem(at: repo)
+                let clones = scratch.appendingPathComponent("worktrees").appendingPathComponent(owner).appendingPathComponent(String(name.dropLast(4)))
+                for e in (try? fm.contentsOfDirectory(atPath: clones.path)) ?? [] where !e.contains("-kept-") {  // L6: ohranjeni imajo svojih 30 dni
+                    try? fm.removeItem(at: clones.appendingPathComponent(e))
+                }
+                rmdir(clones.path)
             }
         }
     }
@@ -1177,15 +1180,16 @@ extension ShareHub {
         await acquire(tree.repo)
         let out = tree.repo.deletingLastPathComponent().appendingPathComponent(tree.repo.lastPathComponent + ".result")
         let (repo, agent) = (tree.repo, String(k.split(separator: "|")[1]))
-        if tree.local != nil, !tree.localObjectsIntact {  // M1
-            await note(s, "\(tree.local!.path): the repository's .git/objects was replaced; \(slot.branch) was not delivered")
-            unlock(tree.repo); return
-        }
         // L6: kar ni prišlo do odjemalca, ostane v klonu; ob koncu seje gre klon v kept (prune: 30 dni).
         let fmt = DateFormatter()
         fmt.locale = Locale(identifier: "en_US_POSIX"); fmt.dateFormat = "yyyyMMdd-HHmmss"
         let kept = URL(fileURLWithPath: slot.wt.path + "-kept-" + fmt.string(from: Date()), isDirectory: true)
         let keep = "; the agent's clone with this work stays on the gateway for 30 days (\(kept.path) after this session)"
+        if tree.local != nil, !tree.localObjectsIntact {  // M1
+            slot.kept = kept
+            await note(s, "\(tree.local!.path): the repository's .git/objects was replaced; \(slot.branch) was not delivered" + keep)
+            unlock(tree.repo); return
+        }
         if let why = await offPool({ Worktree.nestedProblem(slot.wt, repo: repo, nested: slot.nested) }) {  // N9; sporočilo kot pri Go (WORKTREE-PULL)
             slot.kept = kept
             await note(s, "worktree: cannot get \(slot.branch) from the gateway: " + why + keep)
@@ -1241,7 +1245,8 @@ extension ShareHub {
                         ? Worktree.localFetch(top: dir, bundle: o, branch: branch, gitDir: gd) : "cannot bundle \(branch)"
                 }) {
                     Router.log.error("native worktree: \(why, privacy: .public)")
-                    await note(s, why)
+                    slot.kept = kept
+                    await note(s, why + keep)
                 } else {  // minigw izpiše vrstico o veji z obsegom od posnetka (le delo agenta)
                     await note(s, Worktree.branchLine(branch: branch, base: base, nested: p.isEmpty ? nil : p),
                                extra: ["branch": branch, "base": base].merging(p.isEmpty ? [:] : ["nested": p]) { $1 })

@@ -1289,6 +1289,12 @@ func removeClone(wt string) {
 
 // pruneMirrors: zrcala (scratch/repos/<naprava>/<repo>.git), ki jih 30 dni ni uporabil noben agent, in njihovi kloni.
 func pruneMirrors(scratch string, now time.Time) {
+	kept, _ := filepath.Glob(filepath.Join(scratch, "worktrees", "*", "*", "*-kept-*")) // L6: ohranjeni kloni
+	for _, k := range kept {
+		if st, err := os.Lstat(k); err == nil && now.Sub(st.ModTime()) > 30*24*time.Hour {
+			os.RemoveAll(k)
+		}
+	}
 	repos := filepath.Join(scratch, "repos")
 	owners, _ := os.ReadDir(repos)
 	for _, o := range owners {
@@ -1311,14 +1317,15 @@ func pruneMirrors(scratch string, now time.Time) {
 			if now.Sub(used) > 30*24*time.Hour {
 				os.RemoveAll(repo)
 				os.Remove(repo + ".used")
-				os.RemoveAll(filepath.Join(scratch, "worktrees", o.Name(), name))
+				wts := filepath.Join(scratch, "worktrees", o.Name(), name)
+				es, _ := os.ReadDir(wts)
+				for _, e := range es {
+					if !strings.Contains(e.Name(), "-kept-") { // L6: ohranjeni kloni imajo svojih 30 dni (spodaj)
+						os.RemoveAll(filepath.Join(wts, e.Name()))
+					}
+				}
+				os.Remove(wts)
 			}
-		}
-	}
-	kept, _ := filepath.Glob(filepath.Join(scratch, "worktrees", "*", "*", "*-kept-*")) // L6: ohranjeni kloni
-	for _, k := range kept {
-		if st, err := os.Lstat(k); err == nil && now.Sub(st.ModTime()) > 30*24*time.Hour {
-			os.RemoveAll(k)
 		}
 	}
 }

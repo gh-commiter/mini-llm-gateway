@@ -1,5 +1,9 @@
 # Release notes
 
+## Unreleased
+
+- Fixed (#50): in worktree mode, a nested repository that could not come back (moved or replaced by the agent, branch larger than 64 MB, or not saved) dropped the agent's top-level work for that run, and on Linux `minigw serve` an agent without its own process namespace blocked nested repositories for the rest of the session. Now the top-level branch and the other nested repositories still come back (without the refused repository's files), minigw prints one line per refused repository with the reason, and a clone with work that did not come back is kept on the gateway for 30 days as `<clone>-kept-<time>`. On Linux such an agent run in a clone with nested repositories is refused before it starts (that request only, "use sync"). Mac app and `minigw serve`, both clients.
+
 ## 0.5.20
 
 - Fixed: on Linux `minigw serve`, Bash never worked for Claude CLI in worktree mode (Claude Code's sandbox could not create its sockets under the long temporary folder in the clone); each run now gets a short private temporary folder (also on macOS and Windows `minigw serve`).

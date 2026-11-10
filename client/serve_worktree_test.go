@@ -1367,6 +1367,28 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
 	if !unconfined && !strings.Contains(gitT(t, filepath.Join(client, "other"), "show", branch+":agent.txt"), "agent\nagent") {
 		t.Fatalf("other nested repository not delivered:\n%s", out)
 	}
+	if unconfined { // naslednji čist tek dostavi zavrnjeno delo; šele tedaj kept ni več
+		s.hub.mu.Lock()
+		kept := slot.kept
+		slot.unconfined = false
+		s.hub.mu.Unlock()
+		os.Remove(filepath.Join(root, "second"))
+		if kept != line[1] {
+			t.Fatalf("kept %q, line %q", kept, line[1])
+		}
+		run(true)
+		if got := gitT(t, filepath.Join(client, "lib"), "show", branch+":agent.txt"); got != "agent\nagent\nagent" {
+			t.Fatalf("refused work not delivered by the next run: %q", got)
+		}
+		s.hub.mu.Lock()
+		kept = slot.kept
+		s.hub.mu.Unlock()
+		sc.unregister()
+		if _, err := os.Stat(line[1]); kept != "" || err == nil {
+			t.Fatalf("clone kept after everything was delivered: %q", kept)
+		}
+		return
+	}
 	sc.unregister() // konec seje: klon z nedostavljenim delom ostane
 	if b, err := os.ReadFile(filepath.Join(line[1], "lib", "agent.txt")); err != nil || string(b) != "agent\nagent\n" {
 		t.Fatalf("kept clone %s: %v %q", line[1], err, b)
@@ -1374,7 +1396,17 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
 	if _, err := os.Stat(slot.wt); err == nil {
 		t.Fatal("clone left at its working path")
 	}
-	pruneMirrors(filepath.Dir(filepath.Dir(filepath.Dir(tree.worktrees))), time.Now().Add(31*24*time.Hour))
+	// Zrcalo po 30 dneh gre, ohranjeni klon (mlajši od 30 dni) ne; po svojih 30 dneh gre tudi on.
+	scratch, later := filepath.Dir(filepath.Dir(filepath.Dir(tree.worktrees))), time.Now().Add(20*24*time.Hour)
+	os.Chtimes(line[1], later, later)
+	pruneMirrors(scratch, time.Now().Add(31*24*time.Hour))
+	if _, err := os.Stat(line[1]); err != nil {
+		t.Fatal("kept clone removed with its mirror before its 30 days")
+	}
+	if _, err := os.Stat(tree.repo); err == nil {
+		t.Fatal("mirror not pruned")
+	}
+	pruneMirrors(scratch, time.Now().Add(51*24*time.Hour))
 	if _, err := os.Stat(line[1]); err == nil {
 		t.Fatal("kept clone not pruned after 30 days")
 	}
@@ -1390,5 +1422,51 @@ func TestMarkUnconfinedRefusesNested(t *testing.T) {
 	}
 	if why := h.markUnconfined("/w/b", "codex"); why != "" || !b.unconfined {
 		t.Fatalf("%q %v", why, b.unconfined)
+	}
+}
+
+// L6: Codex (in Grok, Copilot) brez svojega imenskega prostora PID v klonu z ugnezdenimi: končna zavrnitev 400 pred
+// zagonom, besedilo kot pri Claude CLI (sicer 502 prek classifyAgentError in Claude Code ponavlja).
+func TestCodexUnconfinedNestedRefused(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake codex is a shell script")
+	}
+	if !gitAttrSource() {
+		t.Skip("git before 2.40: the client refuses nested repositories")
+	}
+	root := t.TempDir()
+	client := filepath.Join(root, "client")
+	for _, d := range []string{client, filepath.Join(client, "lib")} {
+		os.MkdirAll(d, 0o755)
+		gitT(t, d, "init", "-q", "-b", "main")
+		writeT(t, filepath.Join(d, "f.txt"), "f\n")
+		gitT(t, d, "add", "f.txt")
+		gitT(t, d, "commit", "-qm", "first")
+	}
+	codex := filepath.Join(root, "codex")
+	writeT(t, codex, "#!/bin/sh\ntouch "+root+"/started\nexit 1\n")
+	os.Chmod(codex, 0o755)
+	old := agentUnconfined
+	agentUnconfined = func(string) bool { return true }
+	defer func() { agentUnconfined = old }()
+	s, _ := testServer(t, func(c *serveConfig) {
+		c.AllowUnsandboxedBash = true
+		t.Setenv("CODEX_HOME", t.TempDir())
+		c.Codex = agentCLI{Enabled: true, Executable: codex}
+	})
+	s.hub.nestedBlocker = func(string) string { return "" }
+	c := startLoopback(t, s)
+	sc := &shareClient{c: c, session: "sidu", root: client, worktree: true, top: filepath.ToSlash(client), synced: map[string]syncEntry{}, reported: map[string]bool{}}
+	if !sc.register() {
+		t.Fatal("register failed: " + sc.refusal)
+	}
+	sc.start(2)
+	defer sc.unregister()
+	h := map[string]string{"x-claude-mini-session": "sidu", "x-claude-mini-cwd": client, "content-type": "application/json"}
+	body := `{"model":"claude-codex","tools":[{"name":"x"}],"messages":[{"role":"user","content":"go"}]}`
+	st, data := call(c, "POST", "/v1/messages", h, []byte(body), 60*time.Second)
+	want := "nested repositories need bwrap for codex on this Linux gateway (its own PID namespace); this request did not run; use sync"
+	if _, err := os.Stat(filepath.Join(root, "started")); err == nil || st != 400 || !strings.Contains(string(data), want) {
+		t.Fatalf("not refused before the agent: %d %s", st, data)
 	}
 }

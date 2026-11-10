@@ -1355,6 +1355,39 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     await hub.unregister(key: key)  // konec seje: klon z nedostavljenim delom ostane
     #expect((try? String(contentsOfFile: kept + "/lib/agent.txt", encoding: .utf8)) == "agent\n")
     #expect(wt.map { !FileManager.default.fileExists(atPath: $0.path) } == true)
-    Worktree.prune(scratch: tree.repo.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent(), days: -31)
+    // Zrcalo po 30 dneh gre, ohranjeni klon (mlajši od 30 dni) ne; po svojih 30 dneh gre tudi on.
+    let scratch = tree.repo.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(40 * 86400)], ofItemAtPath: kept)  // prune premakne mejo (days), ne ure
+    Worktree.prune(scratch: scratch, days: -31)
+    #expect(FileManager.default.fileExists(atPath: kept) && !FileManager.default.fileExists(atPath: tree.repo.path))
+    Worktree.prune(scratch: scratch, days: -51)
     #expect(!FileManager.default.fileExists(atPath: kept))
+}
+
+/// L6 (M1, native): zamenjan .git/objects uporabnika ustavi dostavo; sporočilo pove, da klon z delom ostane, ob koncu
+/// seje gre v kept.
+@Test func nativeObjectsReplacedKeepsClone() async throws {
+    let (root, client, mirror) = try fixture()
+    defer { cleanup(root) }
+    let (top, sub) = try #require(Router.nativeBranches(client, inPlace: false, roots: root.path, scratch: mirror.repo))
+    let tree = ShareHub.Tree(repo: mirror.repo, worktrees: mirror.worktrees, sub: sub, local: top)
+    let hub = ShareHub(), session = UUID().uuidString, notes = OSAllocatedUnfairLock<[String]>(initialState: [])
+    let key = try #require(await hub.register(session: session, cwd: "/Volumes/share/client", key: nil, device: "dev", tree: tree))
+    let loop = fakeClient(hub, key: key, top: client, notes: notes)
+    defer { loop.cancel() }
+    let id = UUID().uuidString
+    let wt = try #require(await ShareHub.$run.withValue(id) { await ShareHub.$agent.withValue("claude") {
+        await hub.mount(session: session, cwd: nil, base: "", device: "dev", roots: root.path, writes: true) } })
+    try file(wt, "agent.txt", "agent\n")
+    let objects = client.appendingPathComponent(".git/objects")
+    try FileManager.default.moveItem(at: objects, to: client.appendingPathComponent(".git/objects.real"))
+    try FileManager.default.createSymbolicLink(at: objects, withDestinationURL: client.appendingPathComponent(".git/objects.real"))
+    await ShareHub.$run.withValue(id) { await hub.syncBack(session: session) }
+    await hub.finish(run: id)
+    let line = try #require(notes.withLock { $0 }.first { $0.contains(".git/objects was replaced") })
+    let kept = try #require(line.range(of: #"\((\S+-kept-\d{8}-\d{6}) after this session\)$"#, options: .regularExpression)
+        .map { String(line[$0].dropFirst().dropLast(" after this session)".count)) })
+    await hub.unregister(key: key)
+    #expect((try? String(contentsOfFile: kept + "/agent.txt", encoding: .utf8)) == "agent\n")
+    #expect(!FileManager.default.fileExists(atPath: wt.path))
 }

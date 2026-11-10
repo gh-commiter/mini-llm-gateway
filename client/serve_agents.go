@@ -527,6 +527,9 @@ func parseGrokEvent(line []byte) (grokEvent, bool) {
 
 // --- zahteve ---
 
+// agentUnconfined: agent na tem prehodu ne teče v svojem imenskem prostoru PID (Linux brez bwrap); spremenljivka za teste.
+var agentUnconfined = func(cfgDir string) bool { return runtime.GOOS == "linux" && !agentSandboxed(cfgDir) }
+
 // agentFolder: sinhronizirana kopija mape odjemalca za agenta (le sync); st != 0 = odgovor že poslan.
 func (s *server) agentFolder(w http.ResponseWriter, r *req, label, agent string) (dir, note string, readOnly bool, st int) {
 	if p := runOf(r); p != nil && p.shared { // vprašal ga je drug agent: njegova mapa, brez novega prenosa
@@ -651,6 +654,19 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			}
 		}
 	}
+	// N1: brez bwrap (svoj imenski prostor PID) agent lahko preživi do finalize; klon z ugnezdenimi: končna zavrnitev (400)
+	// pred replyWhenDone, kot pri Claude CLI (L6).
+	if agentUnconfined(s.cfgDir) {
+		wt, _, _, _, inTree := s.hub.worktreeOf(r.h("x-claude-mini-session"), k.name)
+		if p := runOf(r); p != nil { // klon klicatelja
+			wt, inTree = p.wt, p.wt != ""
+		}
+		if inTree {
+			if why := s.hub.markUnconfined(wt, k.name); why != "" {
+				return writeError(w, r.rid, 400, why)
+			}
+		}
+	}
 	if st := s.procSlot(w, r); st != 0 {
 		return st
 	}
@@ -682,11 +698,6 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 		gits, objs := s.hub.worktreeGits(wt)
 		if len(objs) == 0 {
 			objs = []string{objects}
-		}
-		if inTree && runtime.GOOS == "linux" && !agentSandboxed(s.cfgDir) {
-			if why := s.hub.markUnconfined(wt, k.name); why != "" { // N1: brez bwrap (svoj imenski prostor PID) agent lahko preživi do finalize
-				return "", errors.New(why)
-			}
 		}
 		if inTree {
 			if treeEnv = worktreeClaudeEnv(wt, maven, filepath.Join(wt, ".build", "tmp"), gw, gits); treeEnv == nil {

@@ -234,7 +234,17 @@ Notes:
   `bwrap-userns-restrict` profile blocks the inner one; allow it (for example with an AppArmor profile for
   `/usr/bin/bwrap` that grants `userns`, or `sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0`) or use sync.
   Without that, a request with nested repositories is refused before the agent starts (a final error: Claude Code does not retry it). macOS `minigw serve` (for
-  development) refuses nested repositories; Windows `minigw serve` handles them.
+  development) refuses nested repositories; Windows `minigw serve` handles them. If an agent would run there without
+  its own process namespace in a clone with nested repositories (for example Codex without bwrap, called by Claude
+  CLI), only that request is refused: "nested repositories need bwrap for <agent> on this Linux gateway (its own PID
+  namespace); this request did not run; use sync". The next request in the session works as before.
+- If a nested repository cannot come back (the agent moved or replaced it, its branch is larger than 64 MB, or the
+  gateway could not save it), the top-level branch and the other nested repositories still come back, without that
+  repository's files. minigw prints one line per such repository with the reason:
+  `minigw: gateway: worktree: <reason>; the agent's clone with this work stays on the gateway for 30 days
+  (<clone>-kept-<time> after this session)`. A later request in the same session that delivers it ends that. When
+  the session ends, the gateway keeps the clone as `<clone>-kept-<yyyyMMdd-HHmmss>` next to the clones and removes it
+  after 30 days. The same applies when no branch could be delivered at all.
 - The agent may commit inside a nested clone: its note names the clones and the form
   `GIT_DIR=<path>/.git GIT_COMMON_DIR=<path>/.git GIT_WORK_TREE=<path> git …` (plain git in the clone works on the top
   repository). Its commits are kept; changes it leaves uncommitted are committed by the gateway. Codex can commit there;
