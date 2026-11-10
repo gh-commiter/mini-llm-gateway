@@ -1259,3 +1259,135 @@ func TestCleanStaleTempRoots(t *testing.T) {
 		}
 	}
 }
+
+// L6: zavrnjen ugnezdeni (premaknjen, večji od 64 MB, unconfined) ne ustavi vrhnjega: vrhnja veja pride (brez vsebine
+// zavrnjenega), ena vrstica pove, kateri in zakaj, klon z delom po koncu seje ostane (kept).
+func TestWorktreeNestedSkippedTopDelivered(t *testing.T) {
+	for _, c := range []struct{ name, agent, why string }{
+		{"moved", `rm -rf lib/.git`, "the nested repository lib was moved or replaced in the agent's clone"},
+		{"big", `head -c 70000000 /dev/urandom > lib/big.bin`, "the agent's branch in the nested repository lib is larger than 64 MB"},
+		{"unconfined", `:`, "the nested repository lib does not come back on this gateway"},
+	} {
+		t.Run(c.name, func(t *testing.T) { testNestedSkipped(t, c.agent, c.why, c.name == "unconfined") })
+	}
+}
+
+func testNestedSkipped(t *testing.T, agent, why string, unconfined bool) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake claude is a shell script")
+	}
+	if !gitAttrSource() {
+		t.Skip("git before 2.40: the client refuses nested repositories")
+	}
+	if runtime.GOOS == "linux" && finalizeBwrap() == "" {
+		t.Skip("Linux without bwrap: nested repositories are refused")
+	}
+	root := t.TempDir()
+	client := filepath.Join(root, "client")
+	for _, d := range []string{client, filepath.Join(client, "lib"), filepath.Join(client, "other")} {
+		os.MkdirAll(d, 0o755)
+		gitT(t, d, "init", "-q", "-b", "main")
+		writeT(t, filepath.Join(d, "f.txt"), "f\n")
+		gitT(t, d, "add", "f.txt")
+		gitT(t, d, "commit", "-qm", "first")
+	}
+	fake := filepath.Join(root, "claude")
+	writeT(t, fake, `#!/bin/sh
+`+cliGuard+`
+cat > /dev/null
+for p in . lib other; do echo "agent" >> "$p/agent.txt"; done
+[ -f `+root+`/second ] && { `+agent+`; }
+echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"done"}}}'
+echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
+`)
+	os.Chmod(fake, 0o755)
+	s, _ := testServer(t, func(c *serveConfig) { c.Claude = fake })
+	s.hub.nestedBlocker = func(string) string { return "" }
+	c := startLoopback(t, s)
+	sc := &shareClient{c: c, session: "sidk", root: client, worktree: true, top: filepath.ToSlash(client), synced: map[string]syncEntry{}, reported: map[string]bool{}}
+	if !sc.register() {
+		t.Fatal("register failed: " + sc.refusal)
+	}
+	sc.start(2)
+	defer sc.unregister()
+	run := func(ok bool) string {
+		stderr := filepath.Join(root, "stderr")
+		f, _ := os.Create(stderr)
+		old := os.Stderr
+		os.Stderr = f
+		body := `{"model":"claude-cli-haiku","tools":[{"name":"x"}],"messages":[{"role":"user","content":"go"}]}`
+		h := map[string]string{"x-claude-mini-session": "sidk", "x-claude-mini-cwd": client, "content-type": "application/json"}
+		st, data := call(c, "POST", "/v1/messages", h, []byte(body), 120*time.Second)
+		os.Stderr = old
+		f.Close()
+		out, _ := os.ReadFile(stderr)
+		if ok && st != 200 {
+			t.Fatalf("messages: %d %s\n%s", st, data, out)
+		}
+		return string(out)
+	}
+	branch := "minigw/claude-" + sha256Hex([]byte("sidk"))[:8] + "-0"
+	run(true) // prvi tek: vse pride, klon ostane za naslednjo zahtevo
+	if !strings.Contains(gitT(t, filepath.Join(client, "lib"), "branch", "--list", branch), branch) {
+		t.Fatal("first run: lib branch not delivered")
+	}
+	writeT(t, filepath.Join(root, "second"), "")
+	s.hub.mu.Lock()
+	var slot *wtSlot
+	var tree *shareTree
+	for _, sh := range s.hub.bySession {
+		if sh.tree != nil {
+			tree, slot = sh.tree, sh.tree.slots["claude"]
+		}
+	}
+	if slot != nil {
+		slot.unconfined = unconfined // obramba v globino: oznaka na klonu z ugnezdenimi (markUnconfined jo zavrne že ob zagonu)
+	}
+	s.hub.mu.Unlock()
+	if slot == nil {
+		t.Fatal("no slot")
+	}
+	libTip := gitT(t, filepath.Join(client, "lib"), "rev-parse", branch)
+	topTip := gitT(t, client, "rev-parse", branch)
+	out := run(false) // moved: nadzor teka agenta ustavi (zamenjan .git), delo vrhnjega vseeno pride
+	line := regexp.MustCompile(`(?m)^minigw: gateway: worktree: ` + regexp.QuoteMeta(why) + `.*; the agent's clone with this work stays on the gateway for 30 days \((\S+-kept-\d{8}-\d{6}) after this session\)$`).FindStringSubmatch(out)
+	if line == nil {
+		t.Fatalf("no skip line:\n%s", out)
+	}
+	if got := gitT(t, client, "rev-parse", branch); got == topTip || !strings.Contains(gitT(t, client, "show", branch+":agent.txt"), "agent\nagent") {
+		t.Fatalf("top level not delivered:\n%s", out)
+	}
+	if files := gitT(t, client, "ls-tree", "-r", "--name-only", branch); strings.Contains(files, "lib/") || strings.Contains(files, "other/") {
+		t.Fatalf("top branch has nested files: %s", files)
+	}
+	if got := gitT(t, filepath.Join(client, "lib"), "rev-parse", branch); got != libTip {
+		t.Fatal("refused nested repository delivered")
+	}
+	if !unconfined && !strings.Contains(gitT(t, filepath.Join(client, "other"), "show", branch+":agent.txt"), "agent\nagent") {
+		t.Fatalf("other nested repository not delivered:\n%s", out)
+	}
+	sc.unregister() // konec seje: klon z nedostavljenim delom ostane
+	if b, err := os.ReadFile(filepath.Join(line[1], "lib", "agent.txt")); err != nil || string(b) != "agent\nagent\n" {
+		t.Fatalf("kept clone %s: %v %q", line[1], err, b)
+	}
+	if _, err := os.Stat(slot.wt); err == nil {
+		t.Fatal("clone left at its working path")
+	}
+	pruneMirrors(filepath.Dir(filepath.Dir(filepath.Dir(tree.worktrees))), time.Now().Add(31*24*time.Hour))
+	if _, err := os.Stat(line[1]); err == nil {
+		t.Fatal("kept clone not pruned after 30 days")
+	}
+}
+
+// L6 (N1): agent brez svojega imenskega prostora PID v klonu z ugnezdenimi ne teče (le ta zahteva); brez ugnezdenih oznaka.
+func TestMarkUnconfinedRefusesNested(t *testing.T) {
+	h := &shareHub{bySession: map[string]*serveShare{}}
+	a, b := &wtSlot{wt: "/w/a", nested: []*wtNested{{path: "lib"}}}, &wtSlot{wt: "/w/b"}
+	h.bySession["s"] = &serveShare{tree: &shareTree{slots: map[string]*wtSlot{"claude": a, "codex": b}}}
+	if why := h.markUnconfined("/w/a", "codex"); !strings.Contains(why, "this request did not run; use sync") || a.unconfined {
+		t.Fatalf("%q %v", why, a.unconfined)
+	}
+	if why := h.markUnconfined("/w/b", "codex"); why != "" || !b.unconfined {
+		t.Fatalf("%q %v", why, b.unconfined)
+	}
+}

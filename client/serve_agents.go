@@ -684,7 +684,9 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			objs = []string{objects}
 		}
 		if inTree && runtime.GOOS == "linux" && !agentSandboxed(s.cfgDir) {
-			s.hub.markUnconfined(wt) // N1: brez bwrap (svoj imenski prostor PID) agent lahko preživi do finalize
+			if why := s.hub.markUnconfined(wt, k.name); why != "" { // N1: brez bwrap (svoj imenski prostor PID) agent lahko preživi do finalize
+				return "", errors.New(why)
+			}
 		}
 		if inTree {
 			if treeEnv = worktreeClaudeEnv(wt, maven, filepath.Join(wt, ".build", "tmp"), gw, gits); treeEnv == nil {
