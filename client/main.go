@@ -1231,10 +1231,14 @@ func autoShare(cwd string) bool {
 	return !mountTop[top] || len(parts) >= 3
 }
 
+// catchInterrupt: Ctrl+C ne konča minigw (dobi ga claude). N3: ujet signal se ob exec vrne na privzetega, ignoriran
+// (signal.Ignore) bi claude podedoval.
+func catchInterrupt() { signal.Notify(make(chan os.Signal, 1), os.Interrupt) }
+
 // runClaude: claude kot podproces (minigw ostane za proxy in mapo); Ctrl+C dobi claude.
 // stream (#78): stdout claude (stream-json) gre skozi streamText.
 func runClaude(args []string, env []string, stream bool) int {
-	signal.Ignore(os.Interrupt)
+	catchInterrupt()
 	cmd := consoleCommand("claude", args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = claudeStdin, os.Stdout, os.Stderr
 	cmd.Env = claudeEnv(os.Environ(), env)
