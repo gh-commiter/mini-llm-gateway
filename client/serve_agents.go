@@ -752,6 +752,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 				}
 				if st != "" {
 					s.log.Printf("%s step: %q", r.rid, st)
+					s.activity.step(r.rid, st)
 				}
 			})
 			text, thread = strings.TrimSpace(answer), resume
@@ -780,6 +781,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 				}
 				if st := codexStep(line); st != "" {
 					s.log.Printf("%s step: %q", r.rid, st)
+					s.activity.step(r.rid, st)
 				}
 			})
 			b, _ := os.ReadFile(out)
@@ -800,6 +802,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 				case !ok:
 				case e.step != "":
 					s.log.Printf("%s step: %q", r.rid, e.step)
+					s.activity.step(r.rid, e.step)
 					answer = "" // odgovor je besedilo po zadnjem orodju
 				case e.err != "":
 					failure = e.err

@@ -930,6 +930,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			send(t.feed(line))
 			if t.step != before {
 				s.log.Printf("%s step: %q", r.rid, t.step)
+				s.activity.step(r.rid, t.step)
 			}
 		}
 		if err != nil {

@@ -422,7 +422,8 @@ type server struct {
 	tmpRoot       string        // tempRoot: koren kratkih map TMPDIR tekov Claude CLI v worktree
 	gwSlots       chan struct{} // največ hkratnih zahtev k prehodom
 	gateways      gwCatalog
-	limits        sync.Map // limitKey → limitHit: omejitev agenta za ponovitev brez pretoka (noteLimit)
+	limits        sync.Map    // limitKey → limitHit: omejitev agenta za ponovitev brez pretoka (noteLimit)
+	activity      activityLog // tekoče in zadnje zahteve modelom (GET /activity)
 }
 
 func newServer(c serveConfig, cfgPath string) (*server, error) {
@@ -973,6 +974,9 @@ func (s *server) ServeHTTP(w http.ResponseWriter, hr *http.Request) {
 	if uw != nil && model != "" { // le zahteva, ki je prišla do modela (overjena, dovoljena naprava)
 		s.recordSession(r, model, status, time.Since(start), uw.in, uw.out)
 	}
+	if model != "" {
+		s.recordActivity(r, model, status, start)
+	}
 	if hr.URL.Path == "/minigw/share/next" && status == 204 {
 		return // long poll vsakih 25 s: brez vrstice
 	}
@@ -1140,6 +1144,7 @@ func (s *server) route(w http.ResponseWriter, r *req) (int, string) {
 	case "GET /v1/models":
 		return writeJSON(w, r.rid, 200, s.modelList()), ""
 	case "POST /v1/messages", "POST /v1/messages/count_tokens":
+		defer s.activity.start(r)()
 		return s.messages(w, r)
 
 	case "POST /minigw/share":

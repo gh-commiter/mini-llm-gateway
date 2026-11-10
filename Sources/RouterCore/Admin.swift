@@ -18,6 +18,8 @@ public struct AdminHooks: Sendable {
     public var peerCheck: (@Sendable (UInt16, UInt16) -> String?)?
     /// L3: Scratch v rabi (agenti, registrirane mape); testi ga zamenjajo.
     public var scratchInUse: @Sendable () async -> Bool = { await Router.scratchInUse() }
+    /// GET /activity: zgodovina okna Activity (najnovejša prva) in tekoče zahteve (id, začetek, model, zadnji korak).
+    public var activity: @Sendable () async -> (requests: [RequestLog], inflight: [(id: String, time: Date, model: String, step: String?)]) = { ([], []) }
 
     public init(secret: String, connect: String, version: String, installed: @escaping @Sendable () -> Bool,
                 setInstalled: (@Sendable (Bool) throws -> Void)? = nil,
@@ -216,6 +218,22 @@ extension Router {
                 return o
             }
             return (200, ["id": arg, "name": d.name, "history": h])
+        case "GET activity":  // le zahteve modelom, največ 200 (kot minigw serve); nikoli vsebina
+            let iso = ISO8601DateFormatter()
+            let (logs, running) = await hooks.activity()
+            let requests: [[String: Any]] = logs.filter { $0.model != nil }.prefix(200).map { e in
+                var o: [String: Any] = ["time": iso.string(from: e.time), "method": e.method, "path": e.path, "model": e.model ?? "",
+                                        "status": e.status, "ms": e.ms, "bytes": e.bytes ?? 0]
+                if let d = e.device { o["device"] = d }
+                if let n = e.deviceName { o["deviceName"] = n }
+                return o
+            }
+            let inflight: [[String: Any]] = running.map { r in
+                var o: [String: Any] = ["id": r.id, "time": iso.string(from: r.time), "model": r.model]
+                if let s = r.step { o["step"] = s }
+                return o
+            }
+            return (200, ["requests": requests, "inflight": inflight])
         case "GET sessions":
             let q = URLComponents(string: "?" + (query ?? ""))?.queryItems ?? []
             let v = { (n: String) in q.first { $0.name == n }?.value ?? "" }
