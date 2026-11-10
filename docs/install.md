@@ -85,9 +85,10 @@ brew install --cask gh-commiter/mini-gateway/minigw
 ```
 
 The `minigw` cask also runs `minigw plugin install`: it adds the Claude Code plugin (`minigw@mini-gateway`) to `~/.claude/settings.json`
-(`extraKnownMarketplaces`, `enabledPlugins`). Claude Code installs it the next time you start `claude` (or run
-`/reload-plugins`). A `"minigw@mini-gateway": false` you set there stays, also on upgrade. `brew uninstall` removes
-the plugin and its marketplace again; `brew upgrade` keeps them.
+(`extraKnownMarketplaces`, `enabledPlugins`) unless it is already there, and says which ("added to" or "already
+in"). Claude Code installs it the next time you start `claude` (or run `/reload-plugins`). A
+`"minigw@mini-gateway": false` you set there stays, also on upgrade. `brew uninstall` removes the plugin and its
+marketplace again; `brew upgrade` keeps them.
 
 ## Client on Windows and Linux
 
@@ -157,7 +158,7 @@ user only, without admin rights, into `%LocalAppData%\Programs\Mini Gateway`. It
 |---|---|---|
 | Client (`Client`) | `minigw.exe` on your PATH, and `minigw-tray.exe` (the installer runs minigw through it, without a console window) | always |
 | Gateway (`Gateway`) | the tray at sign-in, a Start menu entry, `minigw-tui.exe` (`minigw gw settings`); it starts the tray, which creates the config on first start: copy the token from its menu (**Copy Token**) | on |
-| Claude Code plugin (`Plugin`) | runs `minigw plugin install`, which adds `minigw@mini-gateway` and points the plugin at this `minigw.exe` | on |
+| Claude Code plugin (`Plugin`) | runs `minigw plugin install`, which adds `minigw@mini-gateway` (updated automatically from the `release` branch: `autoUpdate`) and points the plugin at this `minigw.exe` | on |
 
 - Without the window: `msiexec /i minigw-windows-amd64.msi /passive` installs all parts; choose them with
   `ADDLOCAL=Client,Plugin` (any list; `Client` is always added).
@@ -205,11 +206,17 @@ The same commands on macOS, Windows and Linux; the installed minigw is the only 
 ```sh
 minigw plugin install     # add minigw@mini-gateway to ~/.claude/settings.json, point the plugin at this minigw
 minigw plugin status      # versions of minigw, Claude Code, the plugin and the gateway; which minigw the plugin uses
+                          # (a plugin older than minigw: it prints the two claude commands that update it)
 minigw plugin uninstall   # remove only what plugin install added ("minigw@mini-gateway": false stays)
 minigw uninstall          # list, then remove what minigw added here: plugin, sign-in start, scratch folders
 minigw uninstall --purge  # also profiles (Keychain, Credential Manager) and the settings folder
 ```
 
+`minigw plugin install` adds the `mini-gateway` marketplace from the `release` branch (`"ref": "release"`, moved only
+by a release) with `"autoUpdate": true`, so Claude Code updates the plugin in the background after it starts
+(third-party marketplaces do not auto-update otherwise). To turn that off, set `"autoUpdate": false` under `extraKnownMarketplaces` → `mini-gateway` in `~/.claude/settings.json`; minigw leaves an entry you
+changed as it is. An entry that minigw 0.5.21 or older added (no `ref`, no `autoUpdate`) is updated; any other entry,
+for example your own `"autoUpdate": false` or another `source`, stays. `minigw plugin uninstall` removes both forms.
 `minigw plugin install` refuses a `settings.json` that is not valid JSON and never overwrites it. It does not link a
 minigw that is, or lies in a folder that is, not owned by you or root, writable by all users, or writable by a group
 you do not trust; move it to a safe folder first. Trusted group: on macOS only the `admin` group
@@ -228,8 +235,11 @@ the MSI, or `rm ~/.local/bin/minigw`.
 | Windows | the [MSI](#windows-installer-msi) | MSI window, **Modify**, or `ADDLOCAL=` | a newer MSI | Settings → Apps → Uninstall | **Modify** → tick → Remove, or `PURGE=1` |
 | Linux | `install.sh` (client + plugin) | `--client`, `--plugin`, `--gateway` | `install.sh` again, or `/minigw:gw update` with a gateway | `install.sh --uninstall` | `install.sh --uninstall --purge` |
 
-- `brew uninstall --zap --cask minigw` runs `minigw uninstall --purge --yes` while minigw is still there: plugin data,
-  profiles (its own Keychain items), `~/Library/Application Support/minigw`, scratch folders.
+- `brew uninstall --zap --cask minigw` runs `minigw uninstall --purge --yes` while minigw is still there, without
+  asking (`--zap` is the explicit request; brew cannot show a prompt reliably). It removes the plugin's entries in
+  `~/.claude/settings.json` and the `mini-gateway` marketplace, `~/.claude/plugins/data/minigw-mini-gateway`, the
+  scratch folder `~/Library/Caches/minigw`, the minigw profiles and device key in the Keychain,
+  `~/Library/Application Support/minigw`, and an old `minigw serve` LaunchAgent if there is one.
 - Run `brew uninstall --zap --cask mini-gateway` while logged in at the Mac: the app's confirmation needs the desktop
   session. Over SSH the dialog cannot show, so the Keychain items stay (the files still go).
 - `brew uninstall --zap --cask mini-gateway` quits the app, lets the app itself delete its Keychain items and its

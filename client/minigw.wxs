@@ -62,7 +62,7 @@
         <ComponentRef Id="Gateway"/>
       </Feature>
       <Feature Id="Plugin" Title="Claude Code plugin" Level="1"
-               Description="Adds the minigw plugin to Claude Code (compatible with the Claude Code CLI) and points it at this minigw.">
+               Description="Adds the minigw plugin to Claude Code (compatible with the Claude Code CLI), updated automatically from the release branch, and points it at this minigw.">
         <ComponentRef Id="Plugin"/>
       </Feature>
     </Feature>
@@ -89,10 +89,10 @@
     <CustomAction Id="StartTray" FileKey="tray" ExeCommand="tray --quiet-if-running --config &quot;[AppDataFolder]minigw\serve.json&quot;" Return="asyncNoWait" Impersonate="yes"/>
     <CustomAction Id="RestartTray" FileKey="tray" ExeCommand="tray --if-was-running --config &quot;[AppDataFolder]minigw\serve.json&quot;" Return="asyncNoWait" Impersonate="yes"/>
     <!-- Vtičnik: minigw plugin install|uninstall (client/plugin.go) kot uporabnik, ko so datoteke na mestu oz. preden
-         izginejo. Prek minigw-tray.exe msi …: zažene minigw.exe brez okna konzole in počaka. -->
+         izginejo. Prek minigw-tray.exe msi …: zažene minigw.exe brez okna konzole in počaka. Ob nadgradnji nič: plugin
+         install novega paketa vnose pusti oz. stari vnos (do 0.5.21) nadgradi (#63). -->
     <CustomAction Id="PluginInstall" FileKey="tray" ExeCommand="msi plugin install" Execute="deferred" Impersonate="yes" Return="ignore"/>
     <CustomAction Id="PluginUninstall" FileKey="tray" ExeCommand="msi plugin uninstall" Execute="deferred" Impersonate="yes" Return="ignore"/>
-    <CustomAction Id="PluginUninstallUpgrading" FileKey="tray" ExeCommand="msi plugin uninstall --upgrading" Execute="deferred" Impersonate="yes" Return="ignore"/>
     <CustomAction Id="Purge" FileKey="tray" ExeCommand="msi uninstall --purge --yes" Execute="deferred" Impersonate="yes" Return="ignore"/>
     <!-- Vrednost Run ob odstranitvi dela Gateway ali celote izbriše tudi minigw (kot uporabnik, po RemoveRegistryValues):
          lahko jo je zapisal pladenj (Zaženi ob prijavi) ali minigw gw autostart, in ostala je (poročilo 0.5.20). Le, če
@@ -105,7 +105,6 @@
       <Custom Action="StopProcesses" Sequence="1002">(REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE) OR WIX_UPGRADE_DETECTED OR WIX_SAME_VERSION_UPGRADE_DETECTED OR REINSTALL</Custom>
       <Custom Action="StopTui" Sequence="1003">&amp;Gateway=2 AND !Gateway=3 AND NOT REMOVE~="ALL"</Custom>
       <Custom Action="PluginUninstall" Sequence="3401">&amp;Plugin=2 AND !Plugin=3 AND NOT UPGRADINGPRODUCTCODE</Custom>
-      <Custom Action="PluginUninstallUpgrading" Sequence="3402">&amp;Plugin=2 AND !Plugin=3 AND UPGRADINGPRODUCTCODE</Custom>
       <Custom Action="Purge" Sequence="3403">REMOVE~="ALL" AND PURGE=1 AND NOT UPGRADINGPRODUCTCODE</Custom>
       <Custom Action="RemoveRun" Sequence="3404">(REMOVE~="ALL" OR (&amp;Gateway=2 AND !Gateway=3)) AND NOT UPGRADINGPRODUCTCODE</Custom>
       <Custom Action="PluginInstall" Sequence="4001">&amp;Plugin=3</Custom>

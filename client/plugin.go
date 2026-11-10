@@ -20,9 +20,12 @@ import (
 )
 
 const (
-	pluginID         = "minigw@mini-gateway"
-	pluginMarket     = "mini-gateway"
-	pluginMarketJSON = `{"source":{"source":"github","repo":"gh-commiter/mini-llm-gateway"}}`
+	pluginID     = "minigw@mini-gateway"
+	pluginMarket = "mini-gateway"
+	// #63: veja release (premika jo le skripta za izdajo) in autoUpdate: Claude Code tretjih marketplace sam ne posodablja
+	pluginMarketJSON = `{"source":{"source":"github","repo":"gh-commiter/mini-llm-gateway","ref":"release"},"autoUpdate":true}`
+	// vnos do 0.5.21 (brez ref in autoUpdate)
+	pluginMarketOldJSON = `{"source":{"source":"github","repo":"gh-commiter/mini-llm-gateway"}}`
 )
 
 func claudeDir() string {
@@ -40,10 +43,17 @@ func pluginDataDir() string {
 	return filepath.Join(claudeDir(), "plugins", "data", "minigw-mini-gateway")
 }
 
-func pluginMarketplace() any {
+func pluginMarketplace() any { return jsonValue(pluginMarketJSON) }
+
+func jsonValue(j string) any {
 	var v any
-	json.Unmarshal([]byte(pluginMarketJSON), &v)
+	json.Unmarshal([]byte(j), &v)
 	return v
+}
+
+// ourMarketplace: vnos, kot ga je zapisal ta ali starejši minigw (uporabnikov spremenjeni vnos ni naš).
+func ourMarketplace(v any) bool {
+	return reflect.DeepEqual(v, pluginMarketplace()) || reflect.DeepEqual(v, jsonValue(pluginMarketOldJSON))
 }
 
 // settingsObject: s[k] kot objekt (manjka ali null: nov); drug tip je napaka (ne prepišemo uporabnikove vrednosti).
@@ -59,26 +69,30 @@ func settingsObject(s map[string]any, k string) (map[string]any, error) {
 	return nil, errors.New(k + " is not a JSON object")
 }
 
-// pluginAdd: marketplace in enabledPlugins le, če ju še ni: uporabnikov »false« ostane (off).
-func pluginAdd(s map[string]any) (changed, off bool, err error) {
+// pluginAdd: marketplace in enabledPlugins le, če ju še ni: uporabnikov »false« ostane (off). updated: le naš stari
+// vnos (brez autoUpdate) je zamenjan z novim; uporabnikov spremenjeni vnos (npr. autoUpdate false) ostane.
+func pluginAdd(s map[string]any) (added, updated, off bool, err error) {
 	m, err := settingsObject(s, "extraKnownMarketplaces")
 	if err != nil {
-		return false, false, err
+		return false, false, false, err
 	}
 	e, err := settingsObject(s, "enabledPlugins")
 	if err != nil {
-		return false, false, err
+		return false, false, false, err
 	}
-	if m[pluginMarket] == nil {
-		m[pluginMarket], changed = pluginMarketplace(), true
+	switch {
+	case m[pluginMarket] == nil:
+		m[pluginMarket], added = pluginMarketplace(), true
+	case reflect.DeepEqual(m[pluginMarket], jsonValue(pluginMarketOldJSON)):
+		m[pluginMarket], updated = pluginMarketplace(), true
 	}
 	if _, ok := e[pluginID]; !ok {
-		e[pluginID], changed = true, true
+		e[pluginID], added = true, true
 	}
-	return changed, e[pluginID] != true, nil
+	return added, updated && !added, e[pluginID] != true, nil
 }
 
-// pluginRemove: le, kar doda pluginAdd (true, isti marketplace); uporabnikov »false« ostane (off).
+// pluginRemove: le, kar doda pluginAdd (true, naš marketplace, nov ali do 0.5.21); uporabnikov »false« ostane (off).
 func pluginRemove(s map[string]any) (changed, off bool) {
 	if e, _ := s["enabledPlugins"].(map[string]any); e != nil {
 		if e[pluginID] == true {
@@ -87,7 +101,7 @@ func pluginRemove(s map[string]any) (changed, off bool) {
 		}
 		_, off = e[pluginID]
 	}
-	if m, _ := s["extraKnownMarketplaces"].(map[string]any); m != nil && reflect.DeepEqual(m[pluginMarket], pluginMarketplace()) {
+	if m, _ := s["extraKnownMarketplaces"].(map[string]any); m != nil && ourMarketplace(m[pluginMarket]) {
 		delete(m, pluginMarket)
 		changed = true
 	}
@@ -256,18 +270,19 @@ const offNote = `; turned off there ("` + pluginID + `": false), left as is`
 
 // pluginInstall: false = kaj ni uspelo (izpisano na stderr).
 func pluginInstall(goos string) bool {
-	ok, path, ch, off := true, claudeSettingsPath(), false, false
+	ok, path, ch, up, off := true, claudeSettingsPath(), false, false, false
 	err := editSettings(path, func(s map[string]any) (c bool, err error) {
-		c, off, err = pluginAdd(s)
-		ch = c
-		return c, err
+		ch, up, off, err = pluginAdd(s)
+		return ch || up, err
 	})
 	switch {
 	case err != nil:
 		fmt.Fprintln(os.Stderr, "minigw: "+err.Error())
 		ok = false
 	case ch:
-		say("Claude Code plugin " + pluginID + ": added to " + path + map[bool]string{true: offNote, false: "; Claude Code installs it the next time claude starts (or /reload-plugins)"}[off])
+		say("Claude Code plugin " + pluginID + ": added to " + path + map[bool]string{true: offNote, false: "; Claude Code installs it the next time claude starts (or /reload-plugins) and updates it automatically from the release branch (autoUpdate)"}[off])
+	case up:
+		say("Claude Code plugin " + pluginID + ": already in " + path + "; marketplace " + pluginMarket + " now updates automatically from the release branch (autoUpdate)" + map[bool]string{true: offNote}[off])
 	default:
 		say("Claude Code plugin " + pluginID + ": already in " + path + map[bool]string{true: offNote}[off])
 	}
@@ -375,6 +390,11 @@ func pluginStatus(goos string) {
 	say("Claude Code: " + cv)
 	if v, p := pluginVersion(); v != "" {
 		say("Plugin:     " + v + " (" + p + ")")
+		if versionLess(v, version) { // #63: starejši vtičnik (marketplace brez autoUpdate ali še ne osvežen)
+			say("            older than minigw " + version + "; update it, then restart claude:")
+			say("              claude plugin marketplace update " + pluginMarket)
+			say("              claude plugin update " + pluginID)
+		}
 	} else {
 		say("Plugin:     not installed in Claude Code (minigw plugin install, then start claude)")
 	}

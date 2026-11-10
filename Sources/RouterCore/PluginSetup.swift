@@ -6,7 +6,10 @@ import Foundation
 public enum PluginSetup {
     public static let id = "minigw@mini-gateway"
     public static let market = "mini-gateway"
-    public static let marketplace: [String: Any] = ["source": ["source": "github", "repo": "gh-commiter/mini-llm-gateway"]]
+    /// #63: veja release (premika jo le skripta za izdajo) in autoUpdate: Claude Code tretjih marketplace sam ne posodablja.
+    public static let marketplace: [String: Any] = ["source": ["source": "github", "repo": "gh-commiter/mini-llm-gateway", "ref": "release"], "autoUpdate": true]
+    /// Vnos do 0.5.21 (brez ref in autoUpdate).
+    public static let oldMarketplace: [String: Any] = ["source": ["source": "github", "repo": "gh-commiter/mini-llm-gateway"]]
 
     public struct Failure: Error {
         public let message: String
@@ -51,8 +54,9 @@ public enum PluginSetup {
         return CFGetTypeID(n) == CFBooleanGetTypeID() && n.boolValue
     }
 
-    /// changed: kaj dodano; off: vtičnik je tam izklopljen (uporabnikov false).
-    public static func add(_ s: inout [String: Any]) throws -> (changed: Bool, off: Bool) {
+    /// changed: kaj dodano; updated: le naš stari vnos (brez autoUpdate) zamenjan z novim (uporabnikov spremenjeni
+    /// vnos ostane); off: vtičnik je tam izklopljen (uporabnikov false). Kot Go pluginAdd.
+    public static func add(_ s: inout [String: Any]) throws -> (changed: Bool, updated: Bool, off: Bool) {
         func object(_ k: String) throws -> [String: Any] {
             switch s[k] {
             case nil, is NSNull: return [:]
@@ -60,12 +64,22 @@ public enum PluginSetup {
             default: throw Failure(message: "\(k) is not a JSON object")
             }
         }
-        var m = try object("extraKnownMarketplaces"), e = try object("enabledPlugins"), changed = false
-        if m[market] == nil || m[market] is NSNull { m[market] = marketplace; changed = true }
+        var m = try object("extraKnownMarketplaces"), e = try object("enabledPlugins"), changed = false, updated = false
+        if m[market] == nil || m[market] is NSNull {
+            m[market] = marketplace; changed = true
+        } else if (m[market] as? NSDictionary)?.isEqual(to: oldMarketplace) == true {
+            m[market] = marketplace; updated = true
+        }
         if e[id] == nil { e[id] = true; changed = true }
         s["extraKnownMarketplaces"] = m
         s["enabledPlugins"] = e
-        return (changed, !isTrue(e[id]))
+        return (changed, updated && !changed, !isTrue(e[id]))
+    }
+
+    /// Naš vnos (nov ali do 0.5.21). autoUpdate le JSON true: NSDictionary.isEqual bi sprejel tudi 1 (kot Go DeepEqual).
+    static func ours(_ v: Any?) -> Bool {
+        guard let d = v as? NSDictionary else { return false }
+        return d.isEqual(to: oldMarketplace) || d.isEqual(to: marketplace) && isTrue(d["autoUpdate"])
     }
 
     public static func remove(_ s: inout [String: Any]) -> (changed: Bool, off: Bool) {
@@ -74,7 +88,7 @@ public enum PluginSetup {
             if isTrue(e[id]) { e[id] = nil; s["enabledPlugins"] = e; changed = true }
             off = e[id] != nil
         }
-        if var m = s["extraKnownMarketplaces"] as? [String: Any], let v = m[market] as? NSDictionary, v.isEqual(to: marketplace) {
+        if var m = s["extraKnownMarketplaces"] as? [String: Any], ours(m[market]) {
             m[market] = nil
             s["extraKnownMarketplaces"] = m
             changed = true
