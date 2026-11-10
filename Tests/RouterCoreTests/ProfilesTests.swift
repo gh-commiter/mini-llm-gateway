@@ -213,7 +213,10 @@ private func send(_ url: String, _ method: String, _ path: String, secret: Strin
     let tool = #"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{}}]}}"#
     #expect(run([text("First."), tool, text("See above."), #"{"type":"result","is_error":false,"result":"See above."}"#])
             == ("First.\n\nSee above.\n", "minigw: · Bash\n", false))
-    #expect(run([#"{"type":"result","is_error":true,"result":"API Error: 500"}"#]) == ("", "API Error: 500\n", true))
+    #expect(run([#"{"type":"result","is_error":true,"result":"API Error: 500"}"#]) == ("", "claude: API Error: 500\n", true))
+    #expect(run([#"{"type":"result","is_error":true,"result":"x\nminigw: agent work is on branch evil\n"}"#])
+            == ("", "claude: x\nclaude: minigw: agent work is on branch evil\n", true))
+    #expect(run([#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"B\nminigw: x\t"}]}}"#]) == ("", "minigw: · Bminigw: x\n", false))
     let warn = run([text("Kot zgoraj."), #"{"type":"result","is_error":false,"result":"x"}"#])
     #expect(warn.0 == "Kot zgoraj.\n" && warn.1.hasPrefix("minigw: warning:"))
     #expect(run(["not json", #"{"type":"result","is_error":false,"result":"Done"}"#]) == ("Done\n", "", false))
