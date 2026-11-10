@@ -680,7 +680,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     #expect(await mount("w1", writes: true) == dir)
     #expect(await mount("w2", writes: true) == nil)
     #expect(await hub.sessionMode(session, device: "dev") == ("native-direct", false, ""))  // v mapi sami: brez veje
-    #expect(await ShareHub.$run.withValue("w2") { await hub.takeRefusal() }?.contains("Another agent is still changing /Volumes/share/x") == true)
+    #expect(await ShareHub.$run.withValue("w2") { await hub.takeRefusal() }?.message.contains("Another agent is still changing /Volumes/share/x") == true)
     #expect(await mount("r1", writes: false) == dir)  // bralec ne čaka
     #expect(await mount("w1", writes: true) == dir)   // isto izvajanje znova
     await hub.finish(run: "w1")
@@ -694,7 +694,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     #expect(!ShareHub.overlaps(ShareHub.writerKey(scope: "dav:d1", path: "/x"), ShareHub.writerKey(scope: "dav:d2", path: "/x")))
     #expect(await hub.waitWriter(a, folder: "/x/a", writes: true, run: "run-1"))
     #expect(await hub.waitWriter(ab, folder: "/x/a/b", writes: true, run: "run-2") == false)
-    #expect(await ShareHub.$run.withValue("run-2") { await hub.takeRefusal() }?.contains("/x/a/b") == true)
+    #expect(await ShareHub.$run.withValue("run-2") { await hub.takeRefusal() }?.message.contains("/x/a/b") == true)
     await hub.releaseWriter(run: "run-1")
     #expect(await hub.waitWriter(ab, folder: "/x/a/b", writes: true, run: "run-2"))
     await hub.releaseWriter(run: "run-2")
@@ -1357,4 +1357,32 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
 @Test func nestedNeedsAttrSourceOnTheGateway() {
     #expect(Worktree.nestedGitProblem(1, attr: false)?.hasSuffix("update git or use sync") == true)
     #expect(Worktree.nestedGitProblem(1, attr: true) == nil && Worktree.nestedGitProblem(0, attr: false) == nil)
+}
+
+/// #57: git prehoda pred 2.40 z ugnezdenim repozitorijem: trajna zavrnitev (400 z razlogom, kot Go refused), ne mount nil
+/// → 502, ki ga Claude Code ponavlja; prek odjemalca in pri native.
+@Test func nestedOnOldGatewayGitIsRefusedWith400() async throws {
+    let (root, client, tree) = try fixture()
+    defer { cleanup(root) }
+    let lib = client.appendingPathComponent("vendor/lib")
+    try file(lib, "f.txt", "x\n"); g(lib, "init", "-q", "-b", "main"); g(lib, "add", "-A"); g(lib, "commit", "-qm", "lib")
+    let hub = ShareHub(), session = UUID().uuidString
+    let key = try #require(await hub.register(session: session, cwd: client.path, key: nil, device: "dev", tree: tree))
+    let loop = fakeClient(hub, key: key, top: client)
+    defer { loop.cancel() }
+    let (dir, why) = await Worktree.$attrSource.withValue(false) {
+        await ShareHub.$run.withValue(UUID().uuidString) { await ShareHub.$agent.withValue("claude") {
+            (await hub.mount(session: session, cwd: nil, base: "", device: "dev"), await hub.takeRefusal()) } }
+    }
+    #expect(dir == nil && why?.status == 400
+            && why?.message == "worktree: nested git repositories need git 2.40 or later on the gateway; update git or use sync", "\(String(describing: why))")
+
+    let (top, _) = try #require(Router.nativeBranches(client, inPlace: false, roots: root.path, scratch: tree.repo))
+    let native = ShareHub.Tree(repo: tree.repo, worktrees: tree.worktrees, sub: "", local: top), s2 = UUID().uuidString
+    _ = try #require(await hub.register(session: s2, cwd: "/Volumes/share/client", key: nil, device: "dev", tree: native))
+    let (d2, w2) = await Worktree.$attrSource.withValue(false) {
+        await ShareHub.$run.withValue(UUID().uuidString) { await ShareHub.$agent.withValue("claude") {
+            (await hub.mount(session: s2, cwd: nil, base: "", device: "dev", roots: root.path, writes: true), await hub.takeRefusal()) } }
+    }
+    #expect(d2 == nil && w2?.status == 400 && w2?.message.hasSuffix("update git or use --minigw-work=native-direct") == true, "\(String(describing: w2))")
 }

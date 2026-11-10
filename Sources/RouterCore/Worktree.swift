@@ -348,7 +348,8 @@ public enum Worktree {
     }
 
     /// Git pozna GIT_ATTR_SOURCE (2.40+, Apple git v Xcode CLT je lahko starejši); starejši --attr-source zavrne.
-    static let attrSource = run(["--attr-source=4b825dc642cb6eb9a060e54bf8d69288fbee4904", "version"], safe: false, hooks: false).status == 0
+    /// TaskLocal: testi prehoda simulirajo starejši git.
+    @TaskLocal static var attrSource = run(["--attr-source=4b825dc642cb6eb9a060e54bf8d69288fbee4904", "version"], safe: false, hooks: false).status == 0
 
     /// #57: ugnezdeni repozitoriji na prehodu le z git 2.40+ (harnessEnv: GIT_ATTR_SOURCE starejši tiho prezre). Zavrne pred
     /// zagonom agenta, način ostane. nil = v redu.
@@ -1034,13 +1035,14 @@ extension ShareHub {
             // A: ugnezdeni repozitoriji kot v worktree (vsak svoj posnetek v svojem zrcalu, klon in veja); brez commita commit
             // brez starša; git na prehodu brez nastavitev sistema in uporabnika (safe).
             // Zaustavitev zaradi ugnezdenega: razlog uporabniku (WORKTREE-NOTE), z namigom na native-direct.
+            let attr = Worktree.attrSource  // TaskLocal ne gre v offPool
             let r = await offPool { () -> Result<(String, [Nested]), StopReason> in
                 let nested = Worktree.nestedRepos(top: local.path, safe: true)
                 let hint = "; use --minigw-work=native-direct"
                 guard nested.count <= Worktree.maxNested else {
                     return .failure(StopReason("\(local.path) has more than \(Worktree.maxNested) nested git repositories; native mode with branches takes at most \(Worktree.maxNested)" + hint))
                 }
-                if let why = Worktree.nestedGitProblem(nested.count, or: "use --minigw-work=native-direct") { return .failure(StopReason(why)) }
+                if let why = Worktree.nestedGitProblem(nested.count, attr: attr, or: "use --minigw-work=native-direct") { return .failure(StopReason(why)) }
                 if let p = nested.first(where: { !Worktree.validNestedPath($0) }) {
                     return .failure(StopReason("the nested repository \(Profiles.line(p, max: 500)) has a name native mode cannot use (\":\", \"\\\", control characters or in .build)" + hint))
                 }
@@ -1069,7 +1071,10 @@ extension ShareHub {
                 guard let n = Worktree.cloneNested(wt: wt, repo: repo, snapshot: snapshot, branch: branch, list) else { return .failure(StopReason(nil)) }
                 return .success((snapshot, n))
             }
-            if case .failure(let why) = r, let m = why.message { Task { await self.note(s, "native: " + m) } }  // ne čaka na minigw
+            if case .failure(let why) = r, let m = why.message {  // trajna zavrnitev: 400, ne 502 (Claude Code bi ponavljal)
+                refusals[id] = (400, "native: " + m)
+                Task { await self.note(s, "native: " + m) }  // ne čaka na minigw
+            }
             let ok = try? r.get()
             return finishMount(ok?.0, k: k, id: id, wt: wt, branch: branch, tree: tree, nested: ok?.1 ?? [])
         }
@@ -1089,8 +1094,8 @@ extension ShareHub {
         let valid = pairs.count <= Worktree.maxNested && Set(pairs.map(\.0)).count == pairs.count
             && pairs.allSatisfy { Worktree.validNestedPath($0.0) && Worktree.isSHA($0.1) }
         var nested: [Nested]?
-        if valid, let why = Worktree.nestedGitProblem(pairs.count) {
-            await note(s, "worktree: " + why)
+        if valid, let why = Worktree.nestedGitProblem(pairs.count) {  // kot Go refused: 400, ne 502 (Claude Code bi ponavljal)
+            refusals[id] = (400, "worktree: " + why)
             return finishMount(nil, k: k, id: id, wt: wt, branch: branch, tree: tree)
         }
         if let snapshot, Worktree.isSHA(snapshot), valid {

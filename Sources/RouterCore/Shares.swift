@@ -394,7 +394,7 @@ public actor ShareHub {
     // MARK: zaklep pisanja (native brez veje, direct: agent piše v pravo mapo)
 
     private var writers: [String: String] = [:]   // ključ mape (kanonična pot; DAV: naprava|pot) → izvajanje, ki v njej piše
-    private var refusals: [String: String] = [:]  // izvajanje → zakaj mount ni uspel (sporočilo za odjemalca)
+    var refusals: [String: (status: Int, message: String)] = [:]  // izvajanje → zakaj mount ni uspel (status in sporočilo za odjemalca)
     static var writerWait: Duration = .seconds(300)
 
     /// Ključ zaklepa: `scope` loči DAV (naprava) od pravih map tega Maca (prazen); mapa in njena podmapa se prekrivata.
@@ -415,8 +415,8 @@ public actor ShareHub {
         while writers.contains(where: { $0.value != id && Self.overlaps($0.key, key) }) {
             if !logged { Router.log.info("waiting for the write lock on \(folder, privacy: .public)"); logged = true }
             guard ContinuousClock.now < end, !Task.isCancelled else {
-                refusals[id] = "Another agent is still changing \(folder) (one writing agent at a time in a folder that is not a git "
-                    + "repository, or with native-direct); try again when it has finished. In a git repository agents work on their own branches."
+                refusals[id] = (409, "Another agent is still changing \(folder) (one writing agent at a time in a folder that is not a git "
+                    + "repository, or with native-direct); try again when it has finished. In a git repository agents work on their own branches.")
                 return false
             }
             try? await Task.sleep(for: .seconds(1))
@@ -444,7 +444,7 @@ public actor ShareHub {
     }
 
     /// Razlog zadnjega neuspelega mount te seje (enkrat).
-    func takeRefusal() -> String? { Self.run.flatMap { refusals.removeValue(forKey: $0) } }
+    func takeRefusal() -> (status: Int, message: String)? { Self.run.flatMap { refusals.removeValue(forKey: $0) } }
 
     // MARK: sync (kopija namesto priklopa; glej Sync)
 
