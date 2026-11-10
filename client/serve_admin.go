@@ -351,6 +351,8 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			h = []deviceConn{}
 		}
 		return 200, map[string]any{"id": arg, "name": s.conf().Devices[i].Name, "history": h}
+	case "GET activity":
+		return 200, s.activity.list()
 	case "GET sessions":
 		return 200, map[string]any{"sessions": s.state.sessions(u.Query().Get("device"), u.Query().Get("folder"))}
 	case "GET sessions/{}":

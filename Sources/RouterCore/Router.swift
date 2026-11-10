@@ -12,6 +12,9 @@ public struct RequestLog: Sendable, Identifiable, Codable {
     public let provider: String?
     public let status: Int
     public let ms: Int
+    public var bytes: Int?          // velikost telesa zahteve (od 0.5.21; starejši activity.json nima)
+    public var device: String?      // ID naprave, kot v zgodovini sej
+    public var deviceName: String?
 }
 
 /// Tekoča zahteva za »Activity«: začetek, zadnji korak agenta (ukaz, datoteka), konec. Le metapodatki.
@@ -90,7 +93,7 @@ public final class Router: Sendable {
         if let d = req.device { onDevice(d) }
         let tracked = req.method == "POST" && req.path.hasPrefix("/v1/messages") && !req.path.hasSuffix("/count_tokens")
         if tracked, let model = (try? JSONSerialization.jsonObject(with: req.body) as? [String: Any])?["model"] as? String {
-            onActivity(.started(id: rid, time: start, model: model))
+            onActivity(.started(id: rid, time: start, model: Self.activityModel(model, status: 0)))
         }
         defer { if tracked { onActivity(.finished(id: rid)) } }
         let usage = tracked ? UsageWriter(writer) : nil
@@ -103,7 +106,22 @@ public final class Router: Sendable {
         let ms = Int(Date().timeIntervalSince(start) * 1000)
         let via = AgentRun.current.map { " via=" + $0.via } ?? ""  // L3: vprašal ga je agent tega prehoda
         Self.log.info("\(rid, privacy: .public)\(via, privacy: .public) \(req.method, privacy: .public) \(req.path.hasPrefix("/dav/") ? "/dav/…" : req.path, privacy: .public) model=\(model ?? "-", privacy: .public) provider=\(provider ?? "-", privacy: .public) status=\(status) \(ms)ms bytes=\(req.body.count)")
-        if provider != "share" { onLog(RequestLog(time: start, method: req.method, path: req.path, model: model, provider: provider, status: status, ms: ms)) }  // brez prometa map v »Activity«
+        if provider != "share" {  // brez prometa map v »Activity«
+            var e = RequestLog(time: start, method: req.method, path: req.path, model: model.map { Self.activityModel($0, status: status) },
+                               provider: provider, status: status, ms: ms)
+            e.bytes = req.body.count
+            // Naprava kot v recordSession: ime s seznama dovoljenih; neznana na loopbacku je ta računalnik.
+            if let d = req.device, !RouterServer.isLoopback(req.peer) || config.devices.contains(where: { $0.id == d.id }) {
+                e.device = d.id
+                e.deviceName = config.devices.first { $0.id == d.id }?.name ?? d.name
+            }
+            onLog(e)
+        }
+    }
+
+    /// Model za Activity: neznan (404) ali predolg niz odjemalca je »unknown« (kot M1 v sejah in minigw serve).
+    static func activityModel(_ model: String, status: Int) -> String {
+        status == 404 || model.utf8.count > 200 ? "unknown" : model
     }
 
     /// Zahteva za model v zgodovino seje (naprava, mapa in način iz glav in delitve; brez besedila), kot v minigw serve.

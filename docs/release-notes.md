@@ -1,5 +1,9 @@
 # Release notes
 
+## Unreleased
+
+- New: `minigw gw settings` has an Activity page (after Sessions), on the Mac app and on `minigw serve`, so Windows, Linux and SSH get what the Mac's Activity window shows: requests running now (model, time, the agent's latest step) at the top, then the last 200 requests to models (time, status, duration, model, device; Enter or a click shows the path, size and device ID). Read-only, reloads every 3 s; metadata and the agent's current step (a tool or command), never prompt or answer text (Codex's messages no longer appear as its step in the Mac Activity window either); an unknown model is recorded as `unknown` (also in the Mac window). A gateway older than 0.5.21 shows "Needs gateway 0.5.21 or newer". New admin API endpoint `GET /activity` with the same JSON on both gateways; `minigw serve` keeps the list in memory, the Mac app in its activity file (which now also records the device and the request size).
+
 ## 0.5.20
 
 - Fixed: on Linux `minigw serve`, Bash never worked for Claude CLI in worktree mode (Claude Code's sandbox could not create its sockets under the long temporary folder in the clone); each run now gets a short private temporary folder (also on macOS and Windows `minigw serve`).

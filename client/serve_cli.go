@@ -581,6 +581,7 @@ func (s *server) messages(w http.ResponseWriter, r *req) (int, string) {
 	if model == "" {
 		return writeError(w, r.rid, 400, "Body must be JSON with a model field"), ""
 	}
+	defer s.activity.start(r, model)()
 	if body["stream"] != true && !strings.HasSuffix(r.URL.Path, "/count_tokens") { // ponovitev po omejitvi v toku (noteLimit)
 		if msg, ok := s.recentLimit(r, model); ok {
 			return writeAgentError(w, r.rid, 429, msg), model
@@ -930,6 +931,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			send(t.feed(line))
 			if t.step != before {
 				s.log.Printf("%s step: %q", r.rid, t.step)
+				s.activity.step(r.rid, t.step)
 			}
 		}
 		if err != nil {
