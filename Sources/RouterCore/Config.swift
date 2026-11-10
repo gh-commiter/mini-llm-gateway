@@ -184,7 +184,7 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         return nil
     }
     /// Podmape, ki jih uporablja scratch(_:); premik prenese le te.
-    public static let scratchSubfolders = ["chat", "sync", "tmp", "attachments", "repos", "worktrees"]
+    public static let scratchSubfolders = ["chat", "sync", "tmp", "attachments", "repos", "worktrees", "deriveddata"]
 
     /// Podmapa scratch mape (ustvari jo); če izbrani disk ni dosegljiv (izklopljen SSD), privzeta mapa.
     public func scratch(_ sub: String) -> URL {

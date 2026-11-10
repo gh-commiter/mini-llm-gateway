@@ -242,7 +242,7 @@ user account there.
 - Off by default; on per device in **Settings → General → minigw run** or with the admin API (`PATCH /run`).
 - Only the listed commands run (default `mvn, swift, xcodebuild`), without a shell, at most two at a time per device.
 - A `sandbox-exec` profile lets it write only to the folder (not its `.git`), `~/.m2` (not `settings*.xml`,
-  `extensions.xml`), `~/Library/Developer` (not `~/Library/Caches`) and SwiftPM's folders (not their configuration).
+  `extensions.xml`) and SwiftPM's folders (not their configuration); not `~/Library/Developer` or `~/Library/Caches`.
 - Each run gets its own temporary folder in the gateway's Scratch folder (`tmp/run-<id>`), removed when the run ends:
   `TMPDIR`, `TMP`, `TEMP`, the clang module cache and `java.io.tmpdir` of every Java process (through
   `JAVA_TOOL_OPTIONS`, so Java prints "Picked up JAVA_TOOL_OPTIONS") point there. The shared `/tmp` is not writable.
@@ -261,6 +261,14 @@ user account there.
   read-only, so your mirrors and the fingerprint check still apply; SwiftPM warns that it "is not accessible or not
   writable". The warnings "couldn't create cache file '/var/folders/…/T/xcrun_db-…'" are harmless: `xcrun` then
   runs without its cache.
+- `xcodebuild` gets `-resultBundlePath`, `-packageCachePath` and `-clonedSourcePackagesDirPath` in the run's
+  temporary folder (unless you pass them yourself) and `-IDEDisablePackageManifestCaching=YES`, so Swift packages
+  without an `.xcodeproj` build too (Xcode otherwise writes its result bundle to `/var/folders/…/T` and manifest
+  diagnostics to `~/Library/Caches`).
+- `xcodebuild` also gets `-derivedDataPath <Scratch>/deriveddata/<id>` (unless you pass it): one folder per project
+  folder (`<id>` is derived from the folder's path), kept between runs so the next build is incremental. These folders
+  are not removed automatically; delete `deriveddata` in the Scratch folder to free the space (the next build is then a
+  full build).
 - It hides `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.netrc`, `~/.git-credentials`, `~/.npmrc`, `~/.pypirc`,
   `~/.gradle/gradle.properties`, shell histories, `~/.config`, `~/.docker`, `~/.kube`, the keychains, cookies,
   `~/Library/Application Support`, `Containers`, `Group Containers`, `Mail`, `Messages`, and Mini Gateway's Scratch

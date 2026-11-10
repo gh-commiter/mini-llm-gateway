@@ -186,7 +186,8 @@ public enum Native {
     /// - Mapa `dir` na drugem disku (npr. /Volumes/Java): Foundation kopijo shranjevanja da na ta disk,
     ///   <disk>/.TemporaryItems/folders.<uid>/TemporaryItems/NSIRD_… (`volumeTempItems`); enako pravilo le za nove NSIRD_*
     ///   tam, in nove (manjkajoče) mape na poti do njih, nič drugega na disku.
-    static func darwinTempRules(dir: String? = nil) -> String? {
+    /// `dirs`: mapa gradnje in mape v Scratch (zagon, DerivedData), ki so lahko vsaka na svojem disku.
+    static func darwinTempRules(dirs: [String] = []) -> String? {
         var b = [CChar](repeating: 0, count: 1024)
         guard confstr(_CS_DARWIN_USER_TEMP_DIR, &b, b.count) > 0,
               let t = Sync.real(URL(fileURLWithPath: String(cString: b)))?.path else { return nil }
@@ -194,7 +195,8 @@ public enum Native {
         var rules = "(allow file-write* (regex #\"^\(te)/TemporaryItems/NSIRD_[^/]+/\") (regex #\"^\(te)/TemporaryDirectory\\.[^/]+/\"))\n"
             + "(allow file-write-create (require-all (vnode-type DIRECTORY)"
             + " (regex #\"^\(te)/(TemporaryItems/NSIRD_[^/]+|TemporaryDirectory\\.[^/]+)$\")))\n"
-        if let dir, let ti = volumeTempItems(dir, temp: t) {
+        var seen = Set<String>()
+        for ti in dirs.compactMap({ volumeTempItems($0, temp: t) }) where seen.insert(ti).inserted {
             let ve = NSRegularExpression.escapedPattern(for: ti)
             let parents = [ti, (ti as NSString).deletingLastPathComponent, ((ti as NSString).deletingLastPathComponent as NSString).deletingLastPathComponent]
             let q = { (p: String) in "\"" + p.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\"" }
@@ -215,12 +217,12 @@ public enum Native {
         return root + "/.TemporaryItems/folders.\(getuid())/TemporaryItems"
     }
 
-    /// `runTmp`: TMPDIR in ModuleCache tega zagona (v Scratch, ki je sicer skrit).
+    /// `runTmp`: TMPDIR in ModuleCache tega zagona (v Scratch, ki je sicer skrit); `derivedData`: DerivedData mape (Scratch).
     /// `writable`: namesto mape in predpomnilnikov gradnje (agent Copilot: le mapa s pisanjem, sicer nič).
     /// `visible`: izrecna pot v skriti mapi (sinhronizirana kopija ali klon iz ShareHub), ki ostane vidna (pisljiva, če je
     /// v `writable`); nikoli izpeljana iz `dir` (R3).
     static func sandboxProfile(dir: String, home: String = NSHomeDirectory(), network: Bool, hidden: [String] = [], routerPort: Int? = nil,
-                               runTmp: String? = nil, writable only: [String]? = nil, visible: String? = nil) -> String? {
+                               runTmp: String? = nil, derivedData: String? = nil, writable only: [String]? = nil, visible: String? = nil) -> String? {
         let writable = only ?? ([dir] + buildCaches(home: home))
         for p in writable where FileManager.default.fileExists(atPath: p) && Sync.real(URL(fileURLWithPath: p))?.path != p { return nil }
         let q = { (p: String) in "\"" + p.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\"" }
@@ -238,7 +240,7 @@ public enum Native {
                            ".bash_history"].map { home + "/" + $0 }
         return "(version 1)\n(allow default)\n(deny file-write*)\n"
             + "(allow file-write* (regex #\"^/dev/\")" + writable.map { " (subpath \(q($0)))" }.joined() + ")\n"
-            + (darwinTempRules(dir: dir) ?? "")
+            + (darwinTempRules(dirs: [dir] + [runTmp, derivedData].compactMap { $0 }) ?? "")
             // Skrite mape (Scratch): ne vsebina, seznam in pisanje; metapodatki (stat) da, sicer mkdir -p in realpath v
             // dovoljeni podmapi ne delujeta. Izrecno vidna mapa seje v njej (sinhronizirana kopija, klon) spet le ta.
             // Dovolitev mora imenovati file-read-data: file-read* ne preglasi ožje prepovedi.
@@ -252,7 +254,8 @@ public enum Native {
             + "(deny file-read*" + rules("subpath", secretDirs) + rules("literal", secretFiles) + ")\n"
             // Nastavitve aplikacije: datoteka in domena cfprefsd skupaj (le ena od obeh branja ne prepreči).
             + "(deny file-read* file-write*" + rules("subpath", [home + "/Library/Preferences/dev.trojar.minigateway.plist"]) + ")\n"
-            + (runTmp.map { "(allow file-read* file-read-data file-write*" + rules("subpath", [$0]) + ")\n" } ?? "")
+            + ([runTmp, derivedData].compactMap { $0 }.isEmpty ? ""
+               : "(allow file-read* file-read-data file-write*" + rules("subpath", [runTmp, derivedData].compactMap { $0 }) + ")\n")
             // Sistemske storitve mimo datotek: nastavitve (cfprefsd), opravila launchd, odpiranje aplikacij, Apple Events.
             // mvn, swift build in xcodebuild delujejo brez izjem.
             + "(deny user-preference-write)\n(deny user-preference-read (preference-domain \"dev.trojar.minigateway\"))\n"
@@ -267,7 +270,8 @@ public enum Native {
             + (network ? "" : "(deny network-outbound (remote ip))\n(deny mach-lookup (global-name-regex #\"^com\\.apple\\.nsurlsessiond\"))\n")
     }
 
-    /// Pisanje, ki ga gradnja potrebuje zunaj mape: Maven, Xcode, SwiftPM (kanonične). Ne /private/tmp (#24): začasne
+    /// Pisanje, ki ga gradnja potrebuje zunaj mape: Maven, SwiftPM (kanonične). Ne ~/Library/Developer (#72): DerivedData
+    /// je v Scratch (-derivedDataPath, `makeDerivedData`); preverjeno z xcodebuild (paket, .xcodeproj) in swift build. Ne /private/tmp (#24): začasne
     /// datoteke so v zasebni mapi zagona v Scratch (`runEnv`), deljena /tmp ni potrebna.
     /// Ne ~/Library/Caches (C1): tam so programi, ki jih aplikacije naložijo brez preverjanja (npr. ~/Library/Caches/copilot).
     /// Preverjeno: mvn package, swift build (z odvisnostjo; SwiftPM brez svojega predpomnilnika le opozori) in
@@ -275,8 +279,7 @@ public enum Native {
     /// Ne DARWIN_USER_TEMP_DIR/DARWIN_USER_CACHE_DIR (/var/folders/…): predpomnilnik xcrun bi izvedel podtaknjen program.
     /// Gradnja ima svoj TMPDIR in ModuleCache (`runTmp` v sandboxProfile); iz DARWIN_USER_TEMP_DIR le `darwinTempRules`.
     static func buildCaches(home: String = NSHomeDirectory()) -> [String] {
-        ["\(home)/.m2", "\(home)/.swiftpm", "\(home)/Library/Developer",
-         "\(home)/Library/org.swift.swiftpm"]
+        ["\(home)/.m2", "\(home)/.swiftpm", "\(home)/Library/org.swift.swiftpm"]
     }
 
     /// Procesi (istega uporabnika, razen tega), ki imajo pisalni konec cevi, katere bralni konec je `fd` tega procesa.
@@ -328,18 +331,44 @@ public enum Native {
         return Sync.real(runTmp)?.path
     }
 
+    /// #72: DerivedData mape `dir` v `base` (<Scratch>/deriveddata/<16 hex SHA-256 poti>), ostane med zagoni (hitre
+    /// ponovne gradnje). Gradnja jo lahko zamenja (povezava, datoteka): taka se odstrani in mapa ustvari znova. Vrne
+    /// kanonično pot ali nil.
+    static func makeDerivedData(_ base: URL, dir: String) -> String? {
+        let name = SHA256.hash(data: Data(dir.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
+        let d = base.appendingPathComponent(name, isDirectory: true)
+        var st = stat()
+        if lstat(d.path, &st) == 0, st.st_mode & S_IFMT != S_IFDIR { unlink(d.path) }
+        guard (try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])) != nil,
+              let parent = Sync.real(base)?.path, let real = Sync.real(d)?.path, real == parent + "/" + name else { return nil }
+        return real
+    }
+
     /// V peskovniku drug peskovnik ni mogoč (sandbox_apply: Operation not permitted), zato SwiftPM in Xcode brez svojega.
-    /// `cache`: predpomnilnik SwiftPM (manifesti, kloni) v zasebni mapi zagona (#24), ne ~/Library/Caches (C1, le branje).
+    /// `runTmp`: zasebna mapa zagona (#24); v njej predpomnilnik SwiftPM (manifesti, kloni; ne ~/Library/Caches, C1, le
+    /// branje), pri xcodebuild še paketi (-packageCachePath, -clonedSourcePackagesDirPath) in rezultat (-resultBundlePath;
+    /// sicer v DARWIN_USER_TEMP_DIR) in `derivedData` (-derivedDataPath, Scratch). Kar uporabnik poda sam, ostane.
     /// Nastavitve in prstni odtisi (~/Library/org.swift.swiftpm/configuration, security) ostanejo lastnikovi in le za
     /// branje: zrcala in TOFU odtisi paketov veljajo tudi v run (svež --security-path bi preverjanje odtisov izklopil).
-    static func withoutNestedSandbox(_ argv: [String], cache: String? = nil) -> [String] {
+    static func withoutNestedSandbox(_ argv: [String], runTmp: String? = nil, derivedData: String? = nil) -> [String] {
         var a = argv
+        let cache = runTmp.map { $0 + "/swiftpm-cache" }
+        func unless(_ flag: String, _ value: String?) {
+            if let value, !a.contains(where: { $0 == flag || $0.hasPrefix(flag + "=") }) { a += [flag, value] }
+        }
         switch a.first {
         case "swift" where a.count > 1 && ["build", "test", "run", "package"].contains(a[1]):
             if let cache, !a.contains(where: { $0 == "--cache-path" || $0.hasPrefix("--cache-path=") }) { a.insert(contentsOf: ["--cache-path", cache], at: 2) }
             if !a.contains("--disable-sandbox") { a.insert("--disable-sandbox", at: 2) }
         case "xcodebuild":
             a += ["-IDEPackageSupportDisableManifestSandbox=YES", "ENABLE_USER_SCRIPT_SANDBOXING=NO"]
+            // #72: diagnostika nalaganja manifestov (ManifestLoading/*.dia) je v ~/Library/Caches ne glede na
+            // -packageCachePath; brez predpomnilnika manifestov je xcodebuild ne piše (paket brez .xcodeproj).
+            if runTmp != nil, !a.contains(where: { $0.hasPrefix("-IDEDisablePackageManifestCaching") }) { a.append("-IDEDisablePackageManifestCaching=YES") }
+            unless("-resultBundlePath", runTmp.map { $0 + "/xcodebuild.xcresult" })
+            unless("-packageCachePath", cache)
+            unless("-clonedSourcePackagesDirPath", runTmp.map { $0 + "/SourcePackages" })
+            unless("-derivedDataPath", derivedData)
         default: break
         }
         return a
@@ -534,11 +563,14 @@ extension Router {
         guard let realTmp = Native.makeRunTmp(runTmp) else {
             return await error(500, "api_error", "minigw run: cannot create its temporary folder in Scratch", rid: rid, writer: writer)
         }
+        guard let derived = Native.makeDerivedData(config.scratch("deriveddata"), dir: dir.path) else {
+            return await error(500, "api_error", "minigw run: cannot create its DerivedData folder in Scratch", rid: rid, writer: writer)
+        }
         guard Sync.real(dir)?.path == dir.path, ClaudeCLI.resolveCwd(dir.path, roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL)?.path == dir.path,
               let profile = Native.sandboxProfile(dir: dir.path, network: config.devices.first { $0.id == d.id }?.runNetwork ?? true,
                                                   hidden: [config.scratchURL.path, RouterConfig.defaultScratch.path], routerPort: Int(config.port),
-                                                  runTmp: realTmp) else {
-            return await error(403, "permission_error", "minigw run: the folder or a build cache folder (~/.m2, ~/Library/Developer …) is a link or not allowed", rid: rid, writer: writer)
+                                                  runTmp: realTmp, derivedData: derived) else {
+            return await error(403, "permission_error", "minigw run: the folder or a build cache folder (~/.m2, ~/.swiftpm …) is a link or not allowed", rid: rid, writer: writer)
         }
         guard await Self.natives.startRun(d.id) else {
             return await error(429, "rate_limit_error", "minigw run: this device already runs \(NativeHub.runsPerDevice) commands", rid: rid, writer: writer)
@@ -555,7 +587,7 @@ extension Router {
         guard let exe = Native.executable(argv[0], dir: dir, path: env["PATH"]!) else {
             return await error(404, "not_found_error", "minigw run: \(argv[0]) not found on the gateway", rid: rid, writer: writer)
         }
-        let args = Array(Native.withoutNestedSandbox(argv, cache: realTmp + "/swiftpm-cache").dropFirst())
+        let args = Array(Native.withoutNestedSandbox(argv, runTmp: realTmp, derivedData: derived).dropFirst())
         guard let (pid, out, err, _) = Native.spawnGroup("/usr/bin/sandbox-exec", ["-p", profile, exe] + args, dir: dir, env: env) else {
             return await self.error(500, "api_error", "minigw run: cannot start \(argv[0])", rid: rid, writer: writer)
         }

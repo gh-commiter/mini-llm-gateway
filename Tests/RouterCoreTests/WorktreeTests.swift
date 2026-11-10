@@ -646,16 +646,46 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
     let t = try #require(Sync.real(URL(fileURLWithPath: String(cString: b)))).path
     let boot = try #require(Sync.real(FileManager.default.temporaryDirectory)).path
     #expect(Native.volumeTempItems(boot, temp: t) == nil)
-    #expect(Native.darwinTempRules(dir: boot)?.contains(".TemporaryItems") == false)
+    #expect(Native.darwinTempRules(dirs: [boot])?.contains(".TemporaryItems") == false)
     let vols = FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: nil, options: [.skipHiddenVolumes]) ?? []
     guard let vol = vols.compactMap({ Sync.real($0)?.path }).first(where: { $0.hasPrefix("/Volumes/") && Native.volumeTempItems($0, temp: t) != nil }) else { return }
     let ti = vol + "/.TemporaryItems/folders.\(getuid())/TemporaryItems"
     #expect(Native.volumeTempItems(vol, temp: t) == ti)
-    let rules = try #require(Native.darwinTempRules(dir: vol))
+    let rules = try #require(Native.darwinTempRules(dirs: [vol, vol]))
     let ve = NSRegularExpression.escapedPattern(for: ti)
     #expect(rules.contains("(allow file-write* (regex #\"^\(ve)/NSIRD_[^/]+/\"))"))
     #expect(rules.contains("(regex #\"^\(ve)/NSIRD_[^/]+$\") (literal \"\(ti)\")"))
     #expect(!rules.contains("(subpath") && rules.components(separatedBy: vol).count == 4)  // nič drugega na disku: le tri mape na poti (regex sta ubežna)
+}
+
+/// #72: DerivedData mape v Scratch (stalno ime iz poti), ne ~/Library/Developer; povezavo, ki jo pusti gradnja, zamenja z
+/// mapo (cilj ostane); peskovnik dovoli pisanje le v DerivedData te mape, ne v sosednje.
+@Test func runDerivedDataUnderScratch() throws {
+    let fm = FileManager.default
+    #expect(!Native.buildCaches().contains { $0.hasSuffix("/Library/Developer") })
+    let base = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("dd72-" + UUID().uuidString)
+    defer { try? fm.removeItem(at: base) }
+    let scratch = base.appendingPathComponent("scratch"), dd = scratch.appendingPathComponent("deriveddata")
+    let proj = base.appendingPathComponent("proj"), target = base.appendingPathComponent("target")
+    for d in [proj, target] { try fm.createDirectory(at: d, withIntermediateDirectories: true) }
+    let a = try #require(Native.makeDerivedData(dd, dir: proj.path))
+    #expect(Native.makeDerivedData(dd, dir: proj.path) == a && Native.makeDerivedData(dd, dir: "/other") != a)
+    #expect(a.hasPrefix(dd.path + "/") && URL(fileURLWithPath: a).lastPathComponent.count == 16)
+    try fm.removeItem(atPath: a)
+    try fm.createSymbolicLink(atPath: a, withDestinationPath: target.path)
+    #expect(Native.makeDerivedData(dd, dir: proj.path) == a && (try? fm.destinationOfSymbolicLink(atPath: a)) == nil && fm.fileExists(atPath: target.path))
+    let other = try #require(Native.makeDerivedData(dd, dir: "/other"))
+    let profile = try #require(Native.sandboxProfile(dir: proj.path, network: false, hidden: [scratch.path], derivedData: a))
+    func sh(_ c: String) throws -> Int32 {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
+        p.arguments = ["-p", profile, "/bin/sh", "-c", c]
+        p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+        try p.run(); p.waitUntilExit()
+        return p.terminationStatus
+    }
+    #expect(try sh("echo x > '\(a)/f'") == 0)
+    #expect(try sh("echo x > '\(other)/f'") != 0 && !fm.fileExists(atPath: other + "/f"))
 }
 
 /// L3 (0.5.16): objects/info, globlja od omejitve brisanja: finalize ne izbriše do konca in ne vrne veje.
