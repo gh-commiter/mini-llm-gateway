@@ -1595,12 +1595,16 @@ final class FakeMinigw: @unchecked Sendable {
 /// Varnost L2: /health/ready našteje ponudnike le temu Macu ali klicatelju z žetonom (kot TestHealthReadyProvidersOnlyLocalOrAuthorized v Go).
 @Test func healthReadyProvidersOnlyLocalOrAuthorized() async {
     let router = Router(config: RouterConfig(), token: "tok", secrets: FakeSecrets(values: [:]))
-    for (peer, token, want) in [("192.0.2.9", "", false), ("192.0.2.9", "tok", true), ("127.0.0.1", "", true)] {
+    // #42: z loopbacka le s Host loopback (DNS rebinding pošlje svoj Host)
+    for (peer, token, host, want) in [("192.0.2.9", "", "127.0.0.1:8080", false), ("192.0.2.9", "tok", "gw.example", true),
+                                      ("127.0.0.1", "", "127.0.0.1:8080", true), ("127.0.0.1", "", "localhost", true),
+                                      ("::1", "", "[::1]:8080", true), ("127.0.0.1", "", "evil.example", false),
+                                      ("127.0.0.1", "", "127.evil.example:8080", false), ("127.0.0.1", "tok", "evil.example", true)] {
         var r = request("GET", "/health/ready", headers: token.isEmpty ? [:] : ["authorization": "Bearer " + token])
-        r.peer = peer
+        r.peer = peer; r.headers["host"] = host
         let w = FakeWriter()
         await router.handle(r, writer: w)
-        #expect(w.status == 200 && w.text.contains(#""providers""#) == want, "\(peer) \(token): \(w.text)")
+        #expect(w.status == 200 && w.text.contains(#""providers""#) == want, "\(peer) \(token) \(host): \(w.text)")
     }
 }
 
@@ -1849,4 +1853,36 @@ final class RateLimitedUpstream: URLProtocol, @unchecked Sendable {
     let st = await makeRouter(session: URLSession(configuration: cfg)).passthrough(
         request("POST", "/v1/messages"), body: ["model": "claude-g"], route: route, key: "k", rid: "r", writer: w)
     #expect(st == 429 && w.status == 429 && w.text.contains("x-should-retry: false") && w.text.contains("free-models-per-min"))
+}
+
+/// Upstream, ki zavrne ključ s 401 in v telesu vrne surovo besedilo (#43).
+final class UnauthorizedUpstream: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func stopLoading() {}
+    override func startLoading() {
+        let resp = HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "text/html"])!
+        client?.urlProtocol(self, didReceive: resp, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data("<html>secret upstream page</html>".utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+}
+
+/// #43: 401/403 upstreama → 502 brez besedila upstreama; drugače le očiščen error.message, največ 300 bajtov.
+@Test func passthroughUpstreamErrorIsSanitized() async {
+    let cfg = URLSessionConfiguration.ephemeral
+    cfg.protocolClasses = [UnauthorizedUpstream.self]
+    let route = Route(provider: ProviderConfig(id: "openrouter", name: "OpenRouter", enabled: true, baseURL: "https://up.example/api", aliases: ""),
+                      name: "g", alias: "claude-g", upstream: "g", window: nil)
+    let w = FakeWriter()
+    let st = await makeRouter(session: URLSession(configuration: cfg)).passthrough(
+        request("POST", "/v1/messages"), body: ["model": "claude-g"], route: route, key: "k", rid: "r", writer: w)
+    #expect(st == 502 && w.status == 502 && !w.text.contains("secret") && w.text.contains("check the API key (minigw gw provider add OpenRouter)"))
+
+    let long = String(repeating: "é", count: 400)
+    let (s1, m1) = Router.upstreamError(status: 500, name: "P", body: Data(#"{"error":{"message":"a\u001b[31m‮b \#(long)"}}"#.utf8))
+    #expect(s1 == 500 && m1.hasPrefix("P: a[31mb ") && m1.utf8.count <= 300 + 3)
+    let (s2, m2) = Router.upstreamError(status: 302, name: "P", body: Data("moved".utf8))
+    #expect(s2 == 502 && m2 == "P: HTTP 302: moved")
+    #expect(Router.upstreamError(status: 403, name: "P", body: Data()).0 == 502)
 }

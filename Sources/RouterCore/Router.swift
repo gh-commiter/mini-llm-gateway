@@ -161,7 +161,7 @@ public final class Router: Sendable {
         case ("GET", "/health/live"):
             return (await json(200, ["status": "ok"], rid: rid, writer: writer), nil, nil)
         case ("GET", "/health/ready"):
-            guard RouterServer.isLoopback(req.peer) || authorized(req) else {  // L2: ponudniki le temu računalniku ali z žetonom
+            guard RouterServer.isLoopback(req.peer) && Self.loopbackHost(req) || authorized(req) else {  // L2, #42: tudi Host loopback
                 return (await json(200, ["status": "ok"], rid: rid, writer: writer), nil, nil)
             }
             var providers: [String: Bool] = [:]
@@ -537,14 +537,19 @@ public final class Router: Sendable {
         guard config.allowLocalApps, ["GET /v1/models", "POST /v1/messages", "POST /v1/messages/count_tokens"].contains(req.method + " " + req.path),
               RouterServer.isLoopback(req.peer), req.header("origin") == nil,
               req.header("anthropic-version") != nil || req.header("x-api-key") != nil else { return false }
+        guard Self.loopbackHost(req) else { return false }
+        return Self.localPeer(req.peerPort, config.port)
+    }
+
+    /// Host je loopback (127.0.0.1, [::1], localhost, z vrati ali brez), ne DNS rebinding (kot Go loopbackHost).
+    static func loopbackHost(_ req: HTTPRequest) -> Bool {
         var host = req.header("host") ?? ""
         if host.hasPrefix("["), let end = host.firstIndex(of: "]") { host = String(host[host.index(after: host.startIndex)..<end]) }
         else if let colon = host.lastIndex(of: ":"), host.firstIndex(of: ":") == colon { host = String(host[..<colon]) }
         // M1: le pravi naslov IP (inet_pton), ne ime »127.evil.example« (DNS rebinding)
         var a4 = in_addr(), a6 = in6_addr()
         let ip = inet_pton(AF_INET, host, &a4) == 1 || inet_pton(AF_INET6, host, &a6) == 1
-        guard host == "localhost" || (ip && RouterServer.isLoopback(host)) else { return false }
-        return Self.localPeer(req.peerPort, config.port)
+        return host == "localhost" || (ip && RouterServer.isLoopback(host))
     }
 
     /// Nov žeton prehoda: »mgw-« + base64url(32 naključnih bajtov), kot Go minigw serve. Predpone nihče ne preverja,
@@ -648,12 +653,24 @@ public final class Router: Sendable {
             let (bytes, resp) = try await session.bytes(for: up)
             guard let http = resp as? HTTPURLResponse else { throw URLError(.badServerResponse) }
             status = http.statusCode
-            // 429 ponudnika (npr. brezplačni model na OpenRouterju) brez ponavljanja, kot omejitev agenta
+            if !(200..<300).contains(status) {  // telesa upstreama ne prepošljemo surovo
+                var d = Data()
+                do {
+                    for try await byte in bytes {
+                        d.append(byte)
+                        if d.count >= 64 << 10 { break }
+                    }
+                } catch {}
+                let (st, msg) = Self.upstreamError(status: status, name: r.provider.name, body: d)
+                // 429 ponudnika (npr. brezplačni model na OpenRouterju) brez ponavljanja, kot omejitev agenta
+                return await self.error(st, Self.errorType(st), msg, rid: rid,
+                                        extra: st == 429 ? [("x-should-retry", "false")] : [], writer: writer)
+            }
             try await writer.write(HTTPResponse.head(status: status, headers: [
                 ("Content-Type", http.value(forHTTPHeaderField: "content-type") ?? "application/json"),
                 ("Cache-Control", "no-cache"),
                 ("request-id", rid),
-            ] + (status == 429 ? [("x-should-retry", "false")] : [])))
+            ]))
             headSent = true
             var chunk = Data()
             for try await byte in bytes {
@@ -668,6 +685,24 @@ public final class Router: Sendable {
         } catch {
             if headSent { return status }  // odjemalec ali upstream je prekinil med tokom
             return await self.error(502, "api_error", "\(r.provider.name) unreachable: \(error.localizedDescription)", rid: rid, writer: writer)
+        }
+    }
+
+    /// Napaka upstreama kot napaka Anthropic (kot upstreamError v Go): le error.message, očiščeno, največ 300 bajtov.
+    /// 401/403 → 502: Claude Code bi ju prikazal kot napačno prijavo v router.
+    static func upstreamError(status: Int, name: String, body: Data) -> (Int, String) {
+        var msg = ((try? JSONSerialization.jsonObject(with: body)) as? [String: Any])
+            .flatMap { $0["error"] as? [String: Any] }?["message"] as? String ?? ""
+        if msg.isEmpty { msg = String(decoding: body, as: UTF8.self) }
+        msg = String(String.UnicodeScalarView(msg.unicodeScalars.filter {
+            $0 == "\n" || ($0.properties.generalCategory != .control && $0.properties.generalCategory != .format)  // tudi bidi
+        })).trimmingCharacters(in: .whitespacesAndNewlines)
+        msg = String(msg.prefix(300))
+        while msg.utf8.count > 300 { msg.removeLast() }
+        switch status {
+        case 401, 403: return (502, "\(name): HTTP \(status), check the API key (minigw gw provider add \(name))")
+        case 400...599: return (status, "\(name): \(msg)")
+        default: return (502, "\(name): HTTP \(status): \(msg)")
         }
     }
 

@@ -35,8 +35,10 @@ public enum Worktree {
     /// `hooks: false` (odjemalec): hooki uporabnika ne tečejo ob začasnem refu refs/minigw/push in posnetku.
     /// `sandbox`: profil sandbox-exec (finalize: branje le v klonu, zrcalu in začasni mapi).
     /// `timeout`: git, ki teče dlje, dobi SIGKILL (L2: ogromen repozitorij, zastal disk).
+    /// `stderr`: tudi napake gita v izhod (razlog za uporabnika).
     static func run(_ args: [String], cwd: String? = nil, env extra: [String: String] = [:], safe: Bool = true, hooks: Bool = true,
-                    input: Data? = nil, sandbox: String? = nil, timeout: TimeInterval? = nil, trim: Bool = true) -> (status: Int32, out: String) {
+                    input: Data? = nil, sandbox: String? = nil, timeout: TimeInterval? = nil, trim: Bool = true,
+                    stderr: Bool = false) -> (status: Int32, out: String) {
         let guardrails = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "submodule.recurse=false",
                           "-c", "protocol.allow=never", "-c", "protocol.file.allow=always", "-c", "maintenance.auto=false", "-c", "gc.auto=0",
                           "-c", "core.commitGraph=false", "-c", "core.multiPackIndex=false"]
@@ -59,7 +61,7 @@ public enum Worktree {
         defer { posix_spawn_file_actions_destroy(&fa); posix_spawnattr_destroy(&at) }
         if input == nil { posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0) } else { posix_spawn_file_actions_adddup2(&fa, i[0], 0) }
         posix_spawn_file_actions_adddup2(&fa, o[1], 1)
-        posix_spawn_file_actions_addopen(&fa, 2, "/dev/null", O_WRONLY, 0)
+        if stderr { posix_spawn_file_actions_adddup2(&fa, o[1], 2) } else { posix_spawn_file_actions_addopen(&fa, 2, "/dev/null", O_WRONLY, 0) }
         if let cwd { posix_spawn_file_actions_addchdir_np(&fa, cwd) }
         // Svoja skupina procesov: časovna omejitev ubije tudi pomožne procese git (ti držijo izhod odprt).
         posix_spawnattr_setflags(&at, Int16(POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETPGROUP))
@@ -346,32 +348,55 @@ public enum Worktree {
     }
 
     /// Git pozna GIT_ATTR_SOURCE (2.40+, Apple git v Xcode CLT je lahko starejši); starejši --attr-source zavrne.
-    static let attrSource = run(["--attr-source=4b825dc642cb6eb9a060e54bf8d69288fbee4904", "version"], safe: false, hooks: false).status == 0
+    /// TaskLocal: testi prehoda simulirajo starejši git.
+    @TaskLocal static var attrSource = run(["--attr-source=4b825dc642cb6eb9a060e54bf8d69288fbee4904", "version"], safe: false, hooks: false).status == 0
 
-    /// fetch iz bundla pred git 2.46 ne preveri objektov (fetch.fsckObjects prezre). Zato novi objekti refs/minigw/incoming
-    /// (brez dosegljivih iz drugih refov): pack-objects in index-pack --fsck-objects v prazen repozitorij (kot finalize),
-    /// objekti uporabnika kot alternates (drevo agenta sme kazati na obstoječ blob). Kot Go fsckIncoming.
-    static func fsckIncoming(top: String) -> Bool {
-        let refs = run(["for-each-ref", "--format=%(objectname) %(refname)"], cwd: top, safe: false, hooks: false)
-        guard refs.status == 0 else { return false }
+    /// #57: ugnezdeni repozitoriji na prehodu le z git 2.40+ (harnessEnv: GIT_ATTR_SOURCE starejši tiho prezre). Zavrne pred
+    /// zagonom agenta, način ostane. nil = v redu.
+    static func nestedGitProblem(_ nested: Int, attr: Bool = attrSource, or alternative: String = "use sync") -> String? {
+        nested > 0 && !attr ? "nested git repositories need git 2.40 or later on the gateway; update git or \(alternative)" : nil
+    }
+
+    /// fetch iz bundla pred git 2.46 ne preveri objektov (fetch.fsckObjects prezre). Zato novi objekti `ref`
+    /// (brez dosegljivih iz drugih refov) v fsckPack. Kot Go fsckIncoming. nil = v redu, sicer razlog.
+    static func fsckIncoming(top: String, ref: String = "refs/minigw/incoming", safe: Bool = false) -> String? {
+        let refs = run(["for-each-ref", "--format=%(objectname) %(refname)"], cwd: top, safe: safe, hooks: false)
+        guard refs.status == 0 else { return "cannot list refs" }
         let not = refs.out.split(separator: "\n").compactMap { l -> String? in
             let f = l.split(separator: " ", maxSplits: 1).map(String.init)
-            return f.count == 2 && isSHA(f[0]) && f[1] != "refs/minigw/incoming" ? f[0] + "\n" : nil
+            return f.count == 2 && isSHA(f[0]) && f[1] != ref ? f[0] + "\n" : nil
         }.joined()
+        return fsckPack(top: top, revs: "\(ref)\n--not\n\(not)", safe: safe)
+    }
+
+    /// Objekti `revs` (vhod pack-objects --revs): pack-objects in index-pack --fsck-objects v prazen repozitorij (kot
+    /// finalize), objekti repozitorija kot alternates (drevo sme kazati na obstoječ blob). Zavrne npr. drevo z ».git«.
+    /// #58: skupna meja `until` (privzeto 10 min) za oba koraka (velik repozitorij, zastal disk). nil = v redu, sicer razlog.
+    static func fsckPack(top: String, revs: String, safe: Bool = false, until: Date = Date() + 600) -> String? {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("minigw-fsck-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: dir) }
         guard (try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])) != nil
-        else { return false }
-        let pack = run(["pack-objects", "--revs", "-q", dir.appendingPathComponent("p").path], cwd: top, safe: false, hooks: false,
-                       input: Data("refs/minigw/incoming\n--not\n\(not)".utf8)).out
+        else { return "cannot create a temporary folder" }
+        func why(_ r: (status: Int32, out: String)) -> String {
+            r.out.split(separator: "\n").first.map { Profiles.line(String($0), max: 300) } ?? "git exited with \(r.status)"
+        }
+        let p = run(["pack-objects", "--revs", "-q", dir.appendingPathComponent("p").path], cwd: top, safe: safe, hooks: false,
+                    input: Data(revs.utf8), timeout: max(1, until.timeIntervalSinceNow), stderr: true)
+        guard p.status == 0 else { return why(p) }
+        let pack = String(p.out.split(separator: "\n").last ?? "")  // pred njim morda opozorila gita
+        guard isSHA(pack) else { return "pack-objects gave no pack" }
         let fsck = dir.appendingPathComponent("fsck.git").path
-        let o = run(["rev-parse", "--git-path", "objects"], cwd: top, safe: false, hooks: false)
-        guard o.status == 0, !o.out.isEmpty else { return false }
+        let o = run(["rev-parse", "--git-path", "objects"], cwd: top, safe: safe, hooks: false)
+        guard o.status == 0, !o.out.isEmpty else { return "cannot find the objects folder" }
         var objs = o.out
         if !objs.hasPrefix("/") { objs = top + "/" + objs }
-        guard isSHA(pack), run(["init", "-q", "--bare", fsck], cwd: dir.path).status == 0,
-              FileManager.default.createFile(atPath: fsck + "/objects/info/alternates", contents: Data((objs + "\n").utf8)) else { return false }
-        return run(["--git-dir", fsck, "index-pack", "--fsck-objects", dir.appendingPathComponent("p-\(pack).pack").path], cwd: dir.path).status == 0
+        guard run(["init", "-q", "--bare", fsck], cwd: dir.path).status == 0,
+              FileManager.default.createFile(atPath: fsck + "/objects/info/alternates", contents: Data((objs + "\n").utf8)) else {
+            return "cannot create the check repository"
+        }
+        let r = run(["--git-dir", fsck, "index-pack", "--fsck-objects", dir.appendingPathComponent("p-\(pack).pack").path], cwd: dir.path,
+                    timeout: max(1, until.timeIntervalSinceNow), stderr: true)
+        return r.status == 0 ? nil : why(r)
     }
 
     /// Pot ugnezdenega repozitorija, ki gre v vrstico o veji (enaka v skillsih in odjemalcu Go).
@@ -393,7 +418,8 @@ public enum Worktree {
                      bundle.path, "+refs/heads/\(branch):refs/minigw/incoming"], cwd: top, safe: false, hooks: false)
         defer { run(["update-ref", "-d", "refs/minigw/incoming"], cwd: top, safe: false, hooks: false) }
         let new = run(["rev-parse", "-q", "--verify", "refs/minigw/incoming^{commit}"], cwd: top, safe: false, hooks: false).out
-        guard r.status == 0, isSHA(new), fsckIncoming(top: top) else { return "git fetch of \(branch) failed (the gateway's branch was rejected)" }
+        guard r.status == 0, isSHA(new) else { return "git fetch of \(branch) failed (the gateway's branch was rejected)" }
+        if let why = fsckIncoming(top: top) { return "the gateway's branch failed the object check (fsck): " + why }  // #58
         // Premik veje z git fetch brez sile: git sam zavrne nehitro posodobitev in vejo, izvlečeno v kateri koli delovni mapi.
         let u = run(["-c", "fetch.recurseSubmodules=false", "-c", "submodule.recurse=false", "-c", "maintenance.auto=false", "-c", "gc.auto=0",
                      "fetch", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--quiet",
@@ -552,6 +578,12 @@ public enum Worktree {
         } else {
             guard run(["--git-dir", repo.path, "update-ref", base, snapshot]).status == 0 else { return false }
         }
+        // #57: fetch iz bundla pred git 2.46 ne preveri objektov; brez bundla sme posnetek kazati na ostanek zavrnjenega
+        // bundla v zrcalu. Dosegljivo iz drugih refov: prazen paket.
+        if fsckIncoming(top: repo.path, ref: base, safe: true) != nil {
+            run(["--git-dir", repo.path, "update-ref", "-d", base])
+            return false
+        }
         return run(["--git-dir", repo.path, "rev-parse", base]).out == snapshot
     }
 
@@ -638,10 +670,16 @@ public enum Worktree {
 
     /// Native z git: bundle veje za repozitorij uporabnika. Posnetek (z njegovimi neshranjenimi spremembami) je le v zrcalu,
     /// zato je pogoj trenutni HEAD uporabnika (ta ga ima), ne posnetek.
-    static func localBundle(repo: URL, top: URL, branch: String, out: URL, gitDir: URL? = nil) -> Bool {
+    /// #57: objekte bundla pred tem preveri fsckPack (fetch iz bundla pred git 2.46 jih ne). nil = v redu, sicer razlog.
+    static func localBundle(repo: URL, top: URL, branch: String, out: URL, gitDir: URL? = nil) -> String? {
         try? FileManager.default.removeItem(at: out)
-        let have = head(gitDir ?? top.appendingPathComponent(".git")).map { ["^" + $0] } ?? []
-        return run(["--git-dir", repo.path, "bundle", "create", out.path, "refs/heads/" + branch] + have, timeout: 600).status == 0 && isBundle(out)
+        let user = head(gitDir ?? top.appendingPathComponent(".git")), until = Date() + 600  // skupna meja za fsck in bundle
+        if let why = fsckPack(top: repo.path, revs: "refs/heads/\(branch)\n" + (user.map { "--not\n\($0)\n" } ?? ""), safe: true, until: until) {
+            return "\(branch) failed the object check (fsck): " + why
+        }
+        let have = user.map { ["^" + $0] } ?? []
+        return run(["--git-dir", repo.path, "bundle", "create", out.path, "refs/heads/" + branch] + have, timeout: max(1, until.timeIntervalSinceNow)).status == 0 && isBundle(out)
+            ? nil : "cannot bundle \(branch)"
     }
 
     /// Native z git: veja iz bundla naravnost v repozitorij uporabnika v enem koraku (H1). git le s pravili prehoda (brez
@@ -998,12 +1036,14 @@ extension ShareHub {
             // A: ugnezdeni repozitoriji kot v worktree (vsak svoj posnetek v svojem zrcalu, klon in veja); brez commita commit
             // brez starša; git na prehodu brez nastavitev sistema in uporabnika (safe).
             // Zaustavitev zaradi ugnezdenega: razlog uporabniku (WORKTREE-NOTE), z namigom na native-direct.
+            let attr = Worktree.attrSource  // TaskLocal ne gre v offPool
             let r = await offPool { () -> Result<(String, [Nested]), StopReason> in
                 let nested = Worktree.nestedRepos(top: local.path, safe: true)
                 let hint = "; use --minigw-work=native-direct"
                 guard nested.count <= Worktree.maxNested else {
                     return .failure(StopReason("\(local.path) has more than \(Worktree.maxNested) nested git repositories; native mode with branches takes at most \(Worktree.maxNested)" + hint))
                 }
+                if let why = Worktree.nestedGitProblem(nested.count, attr: attr, or: "use --minigw-work=native-direct") { return .failure(StopReason(why)) }
                 if let p = nested.first(where: { !Worktree.validNestedPath($0) }) {
                     return .failure(StopReason("the nested repository \(Profiles.line(p, max: 500)) has a name native mode cannot use (\":\", \"\\\", control characters or in .build)" + hint))
                 }
@@ -1032,7 +1072,10 @@ extension ShareHub {
                 guard let n = Worktree.cloneNested(wt: wt, repo: repo, snapshot: snapshot, branch: branch, list) else { return .failure(StopReason(nil)) }
                 return .success((snapshot, n))
             }
-            if case .failure(let why) = r, let m = why.message { Task { await self.note(s, "native: " + m) } }  // ne čaka na minigw
+            if case .failure(let why) = r, let m = why.message {  // trajna zavrnitev: 400, ne 502 (Claude Code bi ponavljal)
+                refusals[id] = (400, "native: " + m)
+                Task { await self.note(s, "native: " + m) }  // ne čaka na minigw
+            }
             let ok = try? r.get()
             return finishMount(ok?.0, k: k, id: id, wt: wt, branch: branch, tree: tree, nested: ok?.1 ?? [])
         }
@@ -1052,6 +1095,10 @@ extension ShareHub {
         let valid = pairs.count <= Worktree.maxNested && Set(pairs.map(\.0)).count == pairs.count
             && pairs.allSatisfy { Worktree.validNestedPath($0.0) && Worktree.isSHA($0.1) }
         var nested: [Nested]?
+        if valid, let why = Worktree.nestedGitProblem(pairs.count) {  // kot Go refused: 400, ne 502 (Claude Code bi ponavljal)
+            refusals[id] = (400, "worktree: " + why)
+            return finishMount(nil, k: k, id: id, wt: wt, branch: branch, tree: tree)
+        }
         if let snapshot, Worktree.isSHA(snapshot), valid {
             nested = await offPool { () -> [Nested]? in
                 guard Worktree.importBase(repo, bundle: FileManager.default.fileExists(atPath: incoming.path) ? incoming : nil, snapshot: snapshot, base: base),
@@ -1211,7 +1258,7 @@ extension ShareHub {
                     let gd = p.isEmpty ? nil : Worktree.localGitDir(top: local, p)
                     if !p.isEmpty, gd == nil { return "\(dir.path): the nested repository changed; \(branch) was not delivered" }
                     return Worktree.localBundle(repo: mirror, top: dir, branch: branch, out: o, gitDir: gd)
-                        ? Worktree.localFetch(top: dir, bundle: o, branch: branch, gitDir: gd) : "cannot bundle \(branch)"
+                        ?? Worktree.localFetch(top: dir, bundle: o, branch: branch, gitDir: gd)
                 }) {
                     Router.log.error("native worktree: \(why, privacy: .public)")
                     await note(s, why)

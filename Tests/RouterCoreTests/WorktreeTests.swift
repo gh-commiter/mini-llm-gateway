@@ -680,7 +680,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     #expect(await mount("w1", writes: true) == dir)
     #expect(await mount("w2", writes: true) == nil)
     #expect(await hub.sessionMode(session, device: "dev") == ("native-direct", false, ""))  // v mapi sami: brez veje
-    #expect(await ShareHub.$run.withValue("w2") { await hub.takeRefusal() }?.contains("Another agent is still changing /Volumes/share/x") == true)
+    #expect(await ShareHub.$run.withValue("w2") { await hub.takeRefusal() }?.message.contains("Another agent is still changing /Volumes/share/x") == true)
     #expect(await mount("r1", writes: false) == dir)  // bralec ne čaka
     #expect(await mount("w1", writes: true) == dir)   // isto izvajanje znova
     await hub.finish(run: "w1")
@@ -694,7 +694,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     #expect(!ShareHub.overlaps(ShareHub.writerKey(scope: "dav:d1", path: "/x"), ShareHub.writerKey(scope: "dav:d2", path: "/x")))
     #expect(await hub.waitWriter(a, folder: "/x/a", writes: true, run: "run-1"))
     #expect(await hub.waitWriter(ab, folder: "/x/a/b", writes: true, run: "run-2") == false)
-    #expect(await ShareHub.$run.withValue("run-2") { await hub.takeRefusal() }?.contains("/x/a/b") == true)
+    #expect(await ShareHub.$run.withValue("run-2") { await hub.takeRefusal() }?.message.contains("/x/a/b") == true)
     await hub.releaseWriter(run: "run-1")
     #expect(await hub.waitWriter(ab, folder: "/x/a/b", writes: true, run: "run-2"))
     await hub.releaseWriter(run: "run-2")
@@ -1310,4 +1310,84 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     #expect((Worktree.snapshot(top: dir.path, noAttr: true) != nil) == Worktree.attrSource && !FileManager.default.fileExists(atPath: marker))
     _ = Worktree.snapshot(top: dir.path)
     #expect(FileManager.default.fileExists(atPath: marker), "the test does not reproduce the filter")
+}
+
+/// #57, #58: tanek bundle (evil..c2, c2 ponovno uporabi drevo z ».git«, ki ga je fetch brez fsck pustil v objektih) fetch
+/// sprejme tudi na novem gitu; fsck ga zavrne pri odjemalcu (lastno sporočilo), ob uvozu v zrcalo prehoda in pri native.
+@Test func thinBundleFailsTheObjectCheck() throws {
+    let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("thin-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let src = root.appendingPathComponent("src"), client = root.appendingPathComponent("client"), mirror = root.appendingPathComponent("m.git")
+    try FileManager.default.createDirectory(at: src, withIntermediateDirectories: true)
+    g(src, "init", "-q", "-b", "main")
+    try file(src, "a.txt", "a\n")
+    g(src, "add", "-A"); g(src, "commit", "-qm", "a")
+    g(root, "clone", "-q", "--no-local", src.path, client.path)
+    g(root, "clone", "-q", "--bare", "--no-local", src.path, mirror.path)
+    func stdin(_ text: String, _ args: String...) -> String { Worktree.run(args, cwd: src.path, safe: false, input: Data(text.utf8)).out }
+    let dg = stdin("100644 blob \(stdin("evil\n", "hash-object", "-w", "--stdin"))\tconfig\n", "mktree")
+    let top = stdin("040000 tree \(dg)\t.git\n", "mktree")
+    let evil = g(src, "commit-tree", top, "-p", "HEAD", "-m", "evil"), c2 = g(src, "commit-tree", top, "-p", evil, "-m", "c2")
+    let branch = "minigw/claude-0123abcd-0"
+    g(src, "update-ref", "refs/heads/bad", evil); g(src, "update-ref", "refs/heads/" + branch, c2); g(src, "update-ref", "refs/minigw/push", c2)
+    let bad = root.appendingPathComponent("bad.bundle"), thin = root.appendingPathComponent("thin.bundle"), push = root.appendingPathComponent("push.bundle")
+    g(src, "bundle", "create", bad.path, "refs/heads/bad")
+    g(src, "bundle", "create", thin.path, "refs/heads/" + branch, "^" + evil)
+    g(src, "bundle", "create", push.path, "refs/minigw/push", "^" + evil)
+    for dir in [client, mirror] {  // zavrnjen fetch pusti objekte, ki jih noben ref ne doseže
+        g(dir, "-c", "fetch.fsckObjects=false", "fetch", "-q", bad.path, "+refs/heads/bad:refs/scratch")
+        g(dir, "update-ref", "-d", "refs/scratch")
+    }
+
+    let why = try #require(Worktree.fetch(top: client.path, bundle: thin, branch: branch))
+    #expect(why.hasPrefix("the gateway's branch failed the object check (fsck): ") && why.contains(".git"), "\(why)")
+    #expect(g(client, "rev-parse", "-q", "--verify", "refs/heads/" + branch).isEmpty)
+    // #57 prehod: uvoz bundla odjemalca v zrcalo
+    #expect(!Worktree.importBase(mirror, bundle: push, snapshot: c2, base: "refs/minigw/base/x"))
+    #expect(g(mirror, "rev-parse", "-q", "--verify", "refs/minigw/base/x").isEmpty)
+    // ostanek zavrnjenega bundla prek zahteve le s posnetkom (brez bundla): prav tako zavrnjen
+    #expect(!Worktree.importBase(mirror, bundle: nil, snapshot: evil, base: "refs/minigw/base/y"))
+    #expect(g(mirror, "rev-parse", "-q", "--verify", "refs/minigw/base/y").isEmpty)
+    let head = g(mirror, "rev-parse", "HEAD")  // dosegljiv posnetek: prazen paket, sprejet
+    #expect(Worktree.importBase(mirror, bundle: nil, snapshot: head, base: "refs/minigw/base/z"))
+    // #57 native: veja zrcala (tu src) v repozitorij uporabnika
+    let out = root.appendingPathComponent("out.bundle")
+    let local = try #require(Worktree.localBundle(repo: src.appendingPathComponent(".git"), top: client, branch: branch, out: out))
+    #expect(local.hasPrefix("\(branch) failed the object check (fsck): ") && !FileManager.default.fileExists(atPath: out.path), "\(local)")
+    g(src, "update-ref", "refs/heads/" + branch, g(src, "commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "fine"))
+    #expect(Worktree.localBundle(repo: src.appendingPathComponent(".git"), top: client, branch: branch, out: out) == nil)
+}
+
+/// #57: ugnezdeni repozitoriji na prehodu z gitom pred 2.40 zavrnjeni pred zagonom (način ostane).
+@Test func nestedNeedsAttrSourceOnTheGateway() {
+    #expect(Worktree.nestedGitProblem(1, attr: false)?.hasSuffix("update git or use sync") == true)
+    #expect(Worktree.nestedGitProblem(1, attr: true) == nil && Worktree.nestedGitProblem(0, attr: false) == nil)
+}
+
+/// #57: git prehoda pred 2.40 z ugnezdenim repozitorijem: trajna zavrnitev (400 z razlogom, kot Go refused), ne mount nil
+/// → 502, ki ga Claude Code ponavlja; prek odjemalca in pri native.
+@Test func nestedOnOldGatewayGitIsRefusedWith400() async throws {
+    let (root, client, tree) = try fixture()
+    defer { cleanup(root) }
+    let lib = client.appendingPathComponent("vendor/lib")
+    try file(lib, "f.txt", "x\n"); g(lib, "init", "-q", "-b", "main"); g(lib, "add", "-A"); g(lib, "commit", "-qm", "lib")
+    let hub = ShareHub(), session = UUID().uuidString
+    let key = try #require(await hub.register(session: session, cwd: client.path, key: nil, device: "dev", tree: tree))
+    let loop = fakeClient(hub, key: key, top: client)
+    defer { loop.cancel() }
+    let (dir, why) = await Worktree.$attrSource.withValue(false) {
+        await ShareHub.$run.withValue(UUID().uuidString) { await ShareHub.$agent.withValue("claude") {
+            (await hub.mount(session: session, cwd: nil, base: "", device: "dev"), await hub.takeRefusal()) } }
+    }
+    #expect(dir == nil && why?.status == 400
+            && why?.message == "worktree: nested git repositories need git 2.40 or later on the gateway; update git or use sync", "\(String(describing: why))")
+
+    let (top, _) = try #require(Router.nativeBranches(client, inPlace: false, roots: root.path, scratch: tree.repo))
+    let native = ShareHub.Tree(repo: tree.repo, worktrees: tree.worktrees, sub: "", local: top), s2 = UUID().uuidString
+    _ = try #require(await hub.register(session: s2, cwd: "/Volumes/share/client", key: nil, device: "dev", tree: native))
+    let (d2, w2) = await Worktree.$attrSource.withValue(false) {
+        await ShareHub.$run.withValue(UUID().uuidString) { await ShareHub.$agent.withValue("claude") {
+            (await hub.mount(session: s2, cwd: nil, base: "", device: "dev", roots: root.path, writes: true), await hub.takeRefusal()) } }
+    }
+    #expect(d2 == nil && w2?.status == 400 && w2?.message.hasSuffix("update git or use --minigw-work=native-direct") == true, "\(String(describing: w2))")
 }

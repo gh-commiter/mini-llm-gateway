@@ -229,7 +229,10 @@ Notes:
   repositories). A gateway older than 0.5.20 stops it with "update the gateway".
 - Client requirement for nested repositories: git 2.40 or later (Debian 12, Ubuntu 22.04 and older Xcode Command Line
   Tools have older git); with older git the request is refused ("update git or use sync").
-- Gateway requirements for nested repositories. Mac app: none. Linux `minigw serve`: bwrap must work, and for Claude
+- Gateway requirements for nested repositories. Mac app: git 2.40 or later on the Mac (older Xcode Command Line Tools
+  git is older), also in native mode; otherwise the request is refused before the agent starts with "nested git
+  repositories need git 2.40 or later on the gateway; update git or use sync" (native mode suggests
+  `--minigw-work=native-direct` instead of sync). Linux `minigw serve`: bwrap must work, and for Claude
   CLI also bwrap inside bwrap, so every agent runs in its own process namespace. On Ubuntu 24.04 AppArmor's
   `bwrap-userns-restrict` profile blocks the inner one; allow it (for example with an AppArmor profile for
   `/usr/bin/bwrap` that grants `userns`, or `sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0`) or use sync.
