@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased
+## 0.5.22
 
 - Fixed: in worktree mode the agent's `git status` no longer shows an untracked `.build/` folder (the gateway's temporary folder in the clone; both gateways).
 - Known limitation: in worktree mode an agent cannot create its own git repositories inside the clone (`git init`, `git clone`, CMake FetchContent with git sources). Build those dependencies in sync mode, or fetch them before the run; a shared dependencies folder for agents comes in 0.5.23.
