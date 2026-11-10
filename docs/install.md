@@ -169,6 +169,9 @@ user only, without admin rights, into `%LocalAppData%\Programs\Mini Gateway`. It
   Windows Installer; run from the MSI folder it updates in the background (about a minute, then `minigw gw status`).
 - **Change parts:** Settings → Apps → Installed apps → Mini Gateway → **Modify**, or open the MSI again: tick or
   untick, then **Change**.
+  Unticking *Claude Code plugin* (also in an upgrade that leaves the part out) removes the plugin entries that `minigw plugin install`
+  added; a `mini-gateway` entry of your own (another source, your own ref, `autoUpdate` false) stays. If `claude` was not found
+  during that removal, the marketplace may stay listed in Claude Code: remove it with `claude plugin marketplace remove mini-gateway`.
 - **Upgrade:** open (or `/passive`) a newer MSI. No questions, the chosen parts stay, and the tray starts again only if
   it was running (from 0.5.19 it starts once, whatever it did before). Before closing the tray it waits up to 2 minutes
 for running agent requests. Then it stops every Mini Gateway program still running from the install folder (also

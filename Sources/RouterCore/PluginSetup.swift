@@ -77,7 +77,7 @@ public enum PluginSetup {
     }
 
     /// Naš vnos (nov ali do 0.5.21). autoUpdate le JSON true: NSDictionary.isEqual bi sprejel tudi 1 (kot Go DeepEqual).
-    static func ours(_ v: Any?) -> Bool {
+    public static func ours(_ v: Any?) -> Bool {
         guard let d = v as? NSDictionary else { return false }
         return d.isEqual(to: oldMarketplace) || d.isEqual(to: marketplace) && isTrue(d["autoUpdate"])
     }

@@ -74,8 +74,15 @@ func TestPluginSettingsNewFileAndRemove(t *testing.T) {
 	if strings.Contains(string(b), "minigw@mini-gateway") || !strings.Contains(string(b), `"/x"`) {
 		t.Fatalf("after uninstall:\n%s", b)
 	}
+	if len(*calls) != 0 { // uporabnikov vnos: tudi CLI remove ne teče
+		t.Fatalf("user's own marketplace: calls %v", *calls)
+	}
+	pluginInstall("linux")
+	os.Remove(p)
+	pluginInstall("linux")
+	pluginUninstall("linux", false)
 	if !slices.Contains(*calls, "/fake/claude plugin marketplace remove mini-gateway --scope user") {
-		t.Fatalf("calls %v", *calls)
+		t.Fatalf("our marketplace: calls %v", *calls)
 	}
 	*calls = nil
 	pluginUninstall("linux", true)

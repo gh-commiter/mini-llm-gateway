@@ -58,21 +58,26 @@ for arch in amd64 arm64; do
   # ignore 64 + deferred 1024, brez NoImpersonate 2048)
   has CustomAction "PluginInstall	1106	tray	msi plugin install"
   has CustomAction "PluginUninstall	1106	tray	msi plugin uninstall"
+  has CustomAction "PluginUninstallUpgrade	1106	tray	msi plugin uninstall"
   has CustomAction "Purge	1106	tray	msi uninstall --purge --yes"
   t CustomAction | awk -F'\t' '$2 % 64 == 18 && $3 != "tray"' | grep -q . && fail "$arch: a custom action runs a console exe"
   has InstallExecuteSequence 'PluginInstall	&Plugin=3'
   has InstallExecuteSequence 'PluginUninstall	&Plugin=2 AND !Plugin=3 AND NOT UPGRADINGPRODUCTCODE'
+  has InstallExecuteSequence 'PluginUninstallUpgrade	(WIX_UPGRADE_DETECTED OR WIX_SAME_VERSION_UPGRADE_DETECTED) AND PLUGIN_WAS AND NOT &Plugin=3'
+  # PLUGIN_WAS: vrednost Plugin, ki jo zapiše komponenta Plugin (raw 2 + 64-bit 16), prebrana pred RemoveExistingProducts
+  has AppSearch "PLUGIN_WAS	PluginWas"
+  has RegLocator "PluginWas	1	Software\Mini Gateway	Plugin	18"
   has InstallExecuteSequence 'Purge	REMOVE~="ALL" AND PURGE=1 AND NOT UPGRADINGPRODUCTCODE'
   # Vrstni red (wixl z After na dejanja po meri razvrsti napačno): zapri pladenj pred odstranitvijo starega paketa,
   # vtičnik in PURGE, ko je minigw.exe še tu, plugin install, ko je že
   seq() { t InstallExecuteSequence | awk -F'\t' -v a=$1 '$1 == a { print $3 }' }
   lt() { (( $(seq $1) < $(seq $2) )) || fail "$arch: $1 ($(seq $1)) not before $2 ($(seq $2))" }
   lt CostFinalize CloseTray; lt CloseTray StopProcesses; lt StopProcesses InstallValidate; lt CloseTray StopTui; lt StopTui InstallValidate
-  lt InstallValidate RemoveExistingProducts
+  lt InstallValidate RemoveExistingProducts; lt AppSearch RemoveExistingProducts
   lt RemoveExistingProducts InstallInitialize
   for a in PluginUninstall Purge RemoveRun; do lt InstallInitialize $a; lt $a RemoveFiles; done
   lt RemoveRegistryValues RemoveRun
-  lt PluginUninstall Purge; lt InstallFiles PluginInstall; lt PluginInstall InstallFinalize
+  lt PluginUninstall Purge; lt InstallFiles PluginInstall; lt InstallFiles PluginUninstallUpgrade; lt PluginUninstallUpgrade InstallFinalize; lt PluginInstall InstallFinalize
   lt InstallFinalize StartTray; lt InstallFinalize RestartTray
   # Okno: izbira delov ob namestitvi, ob ponovnem zagonu še Remove s PURGE; nadgradnja brez okna
   for p in GATEWAY_BOX PLUGIN_BOX PURGE; do has CheckBox "$p	1"; done
