@@ -151,8 +151,17 @@ public enum Profiles {
         guard checkClaudeArgs(env) else { return nil }
         if let r = promptWords(args).lazy.compactMap({ promptRefused($0) }).first { return r }
         guard let r = promptRefused(stdin, mentionsOff: stdinMentionsOff) else { return nil }
-        return r.hasPrefix("a prompt") ? r
-            : "@ before a file name on stdin (claude would attach that file; Claude Code \(minMentionGuard) or newer accepts @ on stdin)"
+        return r.hasPrefix("a prompt") ? r : stdinMention
+    }
+
+    /// Razlog za »@« na stdin; promptRefusal mu doda svoj nasvet (kot Go).
+    static let stdinMention = "@ before a file name on stdin (claude would attach that file)"
+
+    /// Sporočilo ob zavrnitvi navodila z razlogom r iz unsafePrompt (kot Go promptRefusal).
+    public static func promptRefusal(_ r: String) -> String {
+        r == stdinMention
+            ? r + " is not accepted when minigw runs inside Claude Code; remove the @ before file names on stdin or update Claude Code to \(minMentionGuard) or newer"
+            : r + " is not accepted when minigw runs inside Claude Code: paste the text itself into the prompt"
     }
 
     /// Besede navodila v argumentih claude: niso možnost ali njena vrednost, in vse po »--« (kot Go promptWords).

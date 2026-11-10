@@ -946,11 +946,22 @@ func unsafePrompt(args []string, stdin string, env func(string) string, stdinMen
 	}
 	if r := promptRefused(stdin, stdinMentionsOff); r != "" {
 		if !strings.HasPrefix(r, "a prompt") {
-			r = "@ before a file name on stdin (claude would attach that file; Claude Code " + minMentionGuard + " or newer accepts @ on stdin)"
+			r = stdinMention
 		}
 		return r
 	}
 	return ""
+}
+
+// stdinMention: razlog za »@« na stdin; promptRefusal mu doda svoj nasvet.
+const stdinMention = "@ before a file name on stdin (claude would attach that file)"
+
+// promptRefusal: sporočilo ob zavrnitvi navodila z razlogom r iz unsafePrompt.
+func promptRefusal(r string) string {
+	if r == stdinMention {
+		return r + " is not accepted when minigw runs inside Claude Code; remove the @ before file names on stdin or update Claude Code to " + minMentionGuard + " or newer"
+	}
+	return r + " is not accepted when minigw runs inside Claude Code: paste the text itself into the prompt"
 }
 
 // stdinNote: opozorilo, ko minigw stdin (cev ali datoteka), ki v `wait` ni dal ničesar, ni poslal ("" = nič).
@@ -989,7 +1000,7 @@ func refuseUnsafeClaudeFlags(args []string) {
 	// #44: »@« na stdin le, ko ga gnezdeni claude zanesljivo ne bere (varovalo, --settings, različica); preveri le ob »@«
 	off := atMention.Match(in) && promptGuard(args, os.Getenv, stdinTerminal()) && mentionGuardVersion(claudeVersion([]string{"claude"}))
 	if r := unsafePrompt(args, string(in), os.Getenv, off); r != "" {
-		fail(r + " is not accepted when minigw runs inside Claude Code: paste the text itself into the prompt")
+		fail(promptRefusal(r))
 	}
 }
 

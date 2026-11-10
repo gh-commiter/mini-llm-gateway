@@ -713,7 +713,7 @@ func refuseUnsafeClaudeFlags() {
         && Profiles.mentionGuardVersion(pathDirs.map { $0 + "/claude" }.first { FileManager.default.isExecutableFile(atPath: $0) }
             .flatMap { try? ClaudeCLI.validate($0).get() } ?? "")
     if let r = Profiles.unsafePrompt(args, stdin: stdin, env: env, stdinMentionsOff: off) {
-        fail("\(r) is not accepted when minigw runs inside Claude Code: paste the text itself into the prompt")
+        fail(Profiles.promptRefusal(r))
     }
 }
 
