@@ -1,5 +1,17 @@
 # Release notes
 
+## Unreleased
+
+- Security: on `minigw serve`, `/health/ready` lists providers to a local caller without a token only when the Host header is a loopback name or address (a web page reached through DNS rebinding gets only the status).
+- Security: minigw writes its private files (profiles, device key) atomically: a new 0600 file in the 0700 folder, synced and renamed; a link in the file's place is never written through.
+- Security: `minigw gw settings` starts `minigw-tui` only when it and every folder above it are not writable by others and are owned by you or root (Linux and macOS).
+- `minigw serve` as PID 1 in a container (without `docker run --init`) now reaps orphaned processes: it runs the gateway as its child, forwards SIGTERM and SIGINT, and is not readable by agents.
+- Security: on Linux `minigw serve`, Codex, Grok and Copilot cannot read the temporary folders of Claude CLI runs, and Claude CLI's sandbox denies every such folder the gateway has used.
+- Security: `minigw serve` checks (fsck) every object of the client's snapshot on every git version, also when the snapshot is already in the mirror; a rejected snapshot is logged with git's reason.
+- `minigw serve` refuses nested repositories in worktree mode when its git is older than 2.40 ("nested git repositories need git 2.40 or later on the gateway; update git or use sync").
+- Security: on Linux the plugin's session hook no longer runs or links `~/.local/bin/minigw` when it, its folder or a folder above it is not yours (or root's) or is writable by others.
+- Security: `minigw plugin install` links the plugin's minigw only when every folder above minigw is safe (not writable by others, owned by you or root; a sticky folder like /tmp is allowed higher up).
+
 ## 0.5.20
 
 - Fixed: on Linux `minigw serve`, Bash never worked for Claude CLI in worktree mode (Claude Code's sandbox could not create its sockets under the long temporary folder in the clone); each run now gets a short private temporary folder (also on macOS and Windows `minigw serve`).
