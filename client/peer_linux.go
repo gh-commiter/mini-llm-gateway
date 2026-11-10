@@ -31,6 +31,9 @@ func startAgent(cmd *exec.Cmd) error {
 	return cmd.Start()
 }
 
+// stopAgentTree: pomočnik sam pospravi drevo, ko agent konča.
+func stopAgentTree(*exec.Cmd) error { return nil }
+
 // agentReaperMain: pomočnik (glej startAgent): args = program in argumenti agenta. Žetev in pobijanje sta v isti
 // zanki (N5): otrok, ki ga ubijemo, še ni požet, zato njegov PID ne more pripadati drugemu procesu.
 func agentReaperMain(args []string) {

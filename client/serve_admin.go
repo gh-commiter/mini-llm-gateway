@@ -1188,6 +1188,7 @@ func claudeTools(exe []string, dir string) []string { // dir (#68): delovna mapa
 		stop()
 		cmd.Process.Kill()
 		cmd.Wait()
+		stopAgentTree(cmd)
 		var init struct{ Tools []string }
 		if json.Unmarshal(line, &init) == nil && init.Tools != nil {
 			tools = init.Tools

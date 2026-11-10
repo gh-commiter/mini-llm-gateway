@@ -3,11 +3,13 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
 	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -21,6 +23,7 @@ var (
 	pAssignJob      = peerK32.NewProc("AssignProcessToJobObject")
 	pIsProcessInJob = peerK32.NewProc("IsProcessInJob")
 	pTerminateJob   = peerK32.NewProc("TerminateJobObject")
+	pQueryJobInfo   = peerK32.NewProc("QueryInformationJobObject")
 	pNtResume       = syscall.NewLazyDLL("ntdll.dll").NewProc("NtResumeProcess")
 	pGetTCPTable    = syscall.NewLazyDLL("iphlpapi.dll").NewProc("GetExtendedTcpTable")
 
@@ -94,7 +97,8 @@ func agentReaperMain([]string) { os.Exit(2) }
 func initReaper() {}
 
 // N1: vsak tek ima še svoj Job (gnezden v Jobu agentov): ko neposredni proces konča (tudi ubit ob ctx Done), Job teka
-// ubije še vse potomce (kot pomočnik na Linuxu), zato noben vnuk ne drži stdout in branje doseže EOF.
+// ubije še vse potomce (kot pomočnik na Linuxu), zato noben vnuk ne drži stdout in branje doseže EOF. Klicatelj po
+// cmd.Wait() pokliče stopAgentTree (sinhrono, pred prevzemom sprememb); gorutina je le rezerva.
 func startAgent(cmd *exec.Cmd) error {
 	agentJobOnce.Do(createAgentJob)
 	if agentJobErr != nil {
@@ -109,50 +113,76 @@ func startAgent(cmd *exec.Cmd) error {
 		syscall.CloseHandle(run)
 		return err
 	}
+	var once sync.Once
+	var stopErr error
+	stop := func() error {
+		once.Do(func() { stopErr = killJobTree(run) })
+		return stopErr
+	}
+	runJobs.Store(cmd, stop)
 	go func() {
 		syscall.WaitForSingleObject(h, syscall.INFINITE)
-		pTerminateJob.Call(uintptr(run), 1)
-		syscall.CloseHandle(run)
+		stop()
+		runJobs.Delete(cmd)
 		syscall.CloseHandle(h)
 	}()
 	return nil
 }
 
-// startClient: claude odjemalca (runClaude) v Jobu, ki ga zapre šele konec minigw: z minigw (tudi ubitim) umre vse drevo.
-// Brez Joba (napaka) claude vseeno teče, z opozorilom.
-func startClient(cmd *exec.Cmd) error {
-	job, err := newKillJob()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "minigw: warning: no Job for claude ("+err.Error()+"); its processes may outlive minigw")
-		return cmd.Start()
-	}
-	if cmd.SysProcAttr == nil {
-		cmd.SysProcAttr = &syscall.SysProcAttr{}
-	}
-	cmd.SysProcAttr.CreationFlags |= 0x4 // CREATE_SUSPENDED
-	if err := cmd.Start(); err != nil {
-		syscall.CloseHandle(job)
-		return err
-	}
-	const access = 0x0100 | 0x0001 | 0x0800 // PROCESS_SET_QUOTA | PROCESS_TERMINATE | PROCESS_SUSPEND_RESUME
-	h, err := syscall.OpenProcess(access, false, uint32(cmd.Process.Pid))
-	if err != nil {
-		cmd.Process.Kill() // brez ročaja ga ni mogoče pognati
-		cmd.Wait()
-		syscall.CloseHandle(job)
-		return err
-	}
-	defer syscall.CloseHandle(h)
-	if r, _, e := pAssignJob.Call(uintptr(job), uintptr(h)); r == 0 { // ročaj Joba sicer namenoma ostane odprt do konca procesa
-		syscall.CloseHandle(job)
-		fmt.Fprintf(os.Stderr, "minigw: warning: no Job for claude (AssignProcessToJobObject: %v); its processes may outlive minigw\n", e)
-	}
-	if st, _, _ := pNtResume.Call(uintptr(h)); st != 0 {
-		cmd.Process.Kill()
-		cmd.Wait()
-		return fmt.Errorf("NtResumeProcess: 0x%x", st)
+var runJobs sync.Map // *exec.Cmd → stop (startAgent)
+
+// stopAgentTree: Job teka konča in počaka, da v njem ni več procesov (največ 3 s); nato zapre njegov ročaj.
+func stopAgentTree(cmd *exec.Cmd) error {
+	if f, ok := runJobs.Load(cmd); ok {
+		return f.(func() error)()
 	}
 	return nil
+}
+
+func killJobTree(job syscall.Handle) error {
+	defer syscall.CloseHandle(job)
+	if r, _, e := pTerminateJob.Call(uintptr(job), 1); r == 0 {
+		return fmt.Errorf("TerminateJobObject: %v", e)
+	}
+	var acct struct {
+		Times                                                        [4]int64
+		PageFaults, TotalProcesses, ActiveProcesses, TerminatedProcs uint32
+	}
+	for deadline := time.Now().Add(3 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+		r, _, e := pQueryJobInfo.Call(uintptr(job), 1 /* JobObjectBasicAccountingInformation */, uintptr(unsafe.Pointer(&acct)), unsafe.Sizeof(acct), 0)
+		if r == 0 {
+			return fmt.Errorf("QueryInformationJobObject: %v", e)
+		}
+		if acct.ActiveProcesses == 0 {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("%d agent processes still running 3 s after TerminateJobObject", acct.ActiveProcesses)
+		}
+	}
+}
+
+// startClient: claude odjemalca (runClaude) v Jobu, ki ga zapre šele konec minigw: z minigw (tudi ubitim) umre vse drevo.
+// Napaka Joba claude nikoli ne ustavi: ustavljen proces je ubit (še ni izvedel kode) in claude teče znova brez Joba.
+func startClient(cmd *exec.Cmd) error {
+	job, err := newKillJob()
+	if err == nil {
+		var h syscall.Handle
+		if h, err = startInJobs(cmd, job); err == nil {
+			syscall.CloseHandle(h) // ročaj Joba namenoma ostane odprt do konca procesa
+			return nil
+		}
+		syscall.CloseHandle(job)
+		if cmd.Process == nil {
+			return err // zagon sam ni uspel (ne Job)
+		}
+		if sk, ok := cmd.Stdin.(io.Seeker); ok { // kopija stdin je morda že brala
+			sk.Seek(0, io.SeekStart)
+		}
+		*cmd = exec.Cmd{Path: cmd.Path, Args: cmd.Args, Env: cmd.Env, Dir: cmd.Dir, Stdin: cmd.Stdin, Stdout: cmd.Stdout, Stderr: cmd.Stderr}
+	}
+	fmt.Fprintln(os.Stderr, "minigw: warning: no Job for claude ("+err.Error()+"); its processes may outlive minigw")
+	return cmd.Start()
 }
 
 // startInJobs: proces ustvarjen ustavljen, dodan v Jobe (po vrsti: drugi je gnezden v prvem) in šele nato pognan (pred

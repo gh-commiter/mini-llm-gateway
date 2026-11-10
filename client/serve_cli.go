@@ -1049,6 +1049,9 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		}
 	}
 	werr := cmd.Wait()
+	if err := stopAgentTree(cmd); err != nil { // Windows: drevo teka ubito pred prevzemom sprememb
+		s.log.Printf("%s claude: %v", r.rid, err)
+	}
 	stopMoves()                                          // syncBack in konec seje .git klona lahko odstranita
 	run.stop()                                           // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb
 	if worktreeEnv != nil && !s.hub.worktreeIntact(wt) { // N3: naslednji zagon ga zavrne (H2)

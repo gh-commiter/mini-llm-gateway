@@ -4,6 +4,7 @@ import (
 	"context"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // Vsak zunanji ukaz se ustvari tu (proc_test.go to preveri): na Windows brez okna konzole (hideConsole), ker
@@ -17,6 +18,7 @@ func command(name string, args ...string) *exec.Cmd {
 
 func commandContext(ctx context.Context, name string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.WaitDelay = 5 * time.Second // N1: Output() ne obvisi, ko vnuk drži cev (Linux startAgent: 10 s)
 	hideConsole(cmd)
 	return cmd
 }

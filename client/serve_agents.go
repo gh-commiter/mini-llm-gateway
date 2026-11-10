@@ -1302,7 +1302,11 @@ func (s *server) runAgentProcess(ctx context.Context, r *req, exe string, args [
 			break
 		}
 	}
-	if err := cmd.Wait(); err != nil {
+	werr := cmd.Wait()
+	if err := stopAgentTree(cmd); err != nil { // Windows: drevo teka ubito, preden klicatelj prevzame spremembe
+		s.log.Printf("%s %s: %v", r.rid, filepath.Base(exe), err)
+	}
+	if err := werr; err != nil {
 		tail := strings.TrimSpace(stderr.String())
 		if tail != "" {
 			s.log.Printf("%s %s stderr: %s", r.rid, filepath.Base(exe), tail[max(0, len(tail)-2000):])
