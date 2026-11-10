@@ -1065,7 +1065,7 @@ extension ShareHub {
                     let mirror = Worktree.nestedMirror(repo, p)
                     guard let snap = Worktree.localSnapshot(repo: mirror, top: local.appendingPathComponent(p, isDirectory: true), base: base,
                                                             gitDir: dirs[i], skip: skip(p)) else {
-                        return .failure(StopReason("cannot take a snapshot of the nested repository \(Profiles.line(p, max: 500))" + hint))
+                        return .failure(StopReason("cannot take a snapshot of the nested repository \(Profiles.line(p, max: 500))" + hint, final: false))
                     }
                     list.append((p, mirror, snap))
                 }
@@ -1073,7 +1073,7 @@ extension ShareHub {
                 return .success((snapshot, n))
             }
             if case .failure(let why) = r, let m = why.message {  // trajna zavrnitev: 400, ne 502 (Claude Code bi ponavljal)
-                refusals[id] = (400, "native: " + m)
+                if why.final { refusals[id] = (400, "native: " + m) }
                 Task { await self.note(s, "native: " + m) }  // ne čaka na minigw
             }
             let ok = try? r.get()
@@ -1120,7 +1120,8 @@ extension ShareHub {
 }
 
 /// Razlog, zakaj native z git ne more začeti (nil = brez sporočila uporabniku).
-struct StopReason: Error { let message: String?; init(_ m: String?) { message = m } }
+/// `final`: trajna zavrnitev (400); false = morda prehodno (502, Claude Code ponovi), sporočilo le v opombi.
+struct StopReason: Error { let message: String?, final: Bool; init(_ m: String?, final: Bool = true) { message = m; self.final = final } }
 
 extension Worktree {
     /// Ugnezdeni kloni v wt (starš pred otrokom; H1 cloneTarget) in cilj 1: nesleden (v drevesu starša ni gitlink) v
