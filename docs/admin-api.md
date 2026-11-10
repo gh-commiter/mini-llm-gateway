@@ -149,7 +149,7 @@ General  {"port": number, "address": string, "connect": string, "restartRequired
 
 | Method and path | Body | Response |
 |---|---|---|
-| `GET /status` | – | `{"running", "version", "port", "address", "installed", "devices": n, "pending": n, "claude": Claude, "providers": [Provider], "os", "installDir"?, "tray", "autostart", "agents": n, "agentsUnsandboxed"}` |
+| `GET /status` | – | `{"running", "version", "port", "address", "installed", "devices": n, "pending": n, "claude": Claude, "providers": [Provider], "os", "installDir"?, "tray", "autostart", "agents": n, "agentsUnsandboxed", "agentSandbox"?}` |
 | `GET /devices` | – | `{"devices": [Device], "pending": [Device], "allowAnyDevice": bool}` |
 | `POST /devices` | `{"id", "name"}` | `{"device": Device, "added": bool}`; removes it from pending; without a name, the pending device's name |
 | `PATCH /devices/{id}` | `{"name"}` | `{"device": Device}`; renames an allowed device |
@@ -170,7 +170,7 @@ General  {"port": number, "address": string, "connect": string, "restartRequired
 | `GET /agents/claude/tools` | – | `{"tools": [string]}`: the tools of this Claude Code (for the exclude table with local tools) |
 | `PATCH /agents/claude` | any of `{"path", "tools", "allowUnsandboxedBash"}` | Claude |
 | `GET /general` | – | General |
-| `PATCH /general` | any of `{"port", "address", "startAtSignIn", "allowedClients", "allowPlainRemote", "allowAnyDevice", "allowLocalApps", "scratch"}` | General; `"restartRequired": true` for port or address; `allowAnyDevice: true` only while no device is allowed (400) |
+| `PATCH /general` | any of `{"port", "address", "startAtSignIn", "allowedClients", "allowPlainRemote", "allowAnyDevice", "allowLocalApps", "scratch", "worktreeNetwork"}` | General; `"restartRequired": true` for port or address; `allowAnyDevice: true` only while no device is allowed (400) |
 | `POST /general/token` | – | General with the new token in `connect`; the old token stops working at once |
 | `POST /settings/login` | – | `{"url"}`: a one-time link to the settings page (`…/minigw/settings#t=…`, 60 s); `503` when the gateway does not run |
 
@@ -205,7 +205,11 @@ Notes:
   Windows tray runs. `autostart` is `"boot"` (Linux with linger: the gateway starts without anyone signing in),
   `"sign-in"`, or `""` (it does not start on its own). `agents` counts the claude, codex and grok processes that
   run right now; an update stops them, so check it first. `agentsUnsandboxed` (Go gateway): Codex and Grok have no sandbox here that hides the gateway's secrets
-  (Windows, Linux without a working `bwrap`), so they run only with `allowUnsandboxedBash`. `PATCH /general {"startAtSignIn"}` sets the Windows Run
+  (Windows without the Windows sandbox, Linux without a working `bwrap`), so they run only with `allowUnsandboxedBash`.
+  `agentSandbox` (Go gateway on Windows, #68): `{"kind": "mxc", "version": "1.0.1"}` when agents run in the Windows
+  sandbox, else `{"kind": "", "reason": "…"}`. `GET /agents/{codex,grok,copilot}` also has `sandboxed`: the agent has a
+  sandbox without `allowUnsandboxedBash` (on Windows Codex: its own elevated sandbox). `GET/PATCH /general`
+  `worktreeNetwork` (Go gateway too, default true): "Network for builds" of Claude CLI in worktree mode. `PATCH /general {"startAtSignIn"}` sets the Windows Run
   value for the running gateway and, on the Mac, Open at Login; Linux answers `400` (use `minigw serve install`).
   The Mac app leaves `os`, `installDir` and `tray` out.
 - `POST /providers/{name}/models`: `all` first (true = all, false = none), then `enable`, then `disable`.
