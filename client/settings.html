@@ -182,7 +182,7 @@ const S = {
   agentLockedWin: ["Here (Windows, or Linux without bwrap) this needs “Allow commands without a sandbox” under Claude CLI: the agent can read and change everything this user can, including gateway settings.",
     "Tu (Windows ali Linux brez bwrap) to zahteva »Dovoli ukaze brez peskovnika« pod Claude CLI: agent lahko bere in spreminja vse, kar ta uporabnik, tudi nastavitve prehoda."],
   agentWarnWin: ["Here the agent runs without a sandbox: it can read and change everything this user can, including gateway settings.",
-    "Tu agent teče brez sandboxa: lahko bere in spreminja vse, kar ta uporabnik, tudi nastavitve prehoda."],
+    "Tu agent teče brez peskovnika: lahko bere in spreminja vse, kar ta uporabnik, tudi nastavitve prehoda."],
   allowedFoldersShared: ["Shared with Claude CLI. The agent may also write here (Codex).", "Skupne s Claude CLI. Agent sme pisati tudi sem (Codex)."],
   codexFooter: ["The claude-codex models (one per Codex model of your account) run “codex exec” as an agent in the synced copy of the client's folder. Its sandbox writes only to that folder and the allowed folders. Devices that use Codex can read every file this user can read. Sign in once with “codex login”.",
     "Modeli claude-codex (eden za vsak model Codex tvojega računa) poženejo »codex exec« kot agenta v sinhronizirani kopiji mape odjemalca. Njegov sandbox piše le v to mapo in dovoljene mape. Naprave, ki uporabljajo Codex, lahko berejo vsako datoteko, ki jo lahko bere ta uporabnik. Enkrat se prijavi z »codex login«."],
@@ -481,7 +481,7 @@ async function agentPane(kind) {
       toggle(x.enabled, (v, i) => save(n1, async () => { try { await setModel(x.slug, v); } catch (e) { i.checked = !v; throw e; } }))))
     : [row(el("span", {class: "label sub", textContent: a.found ? t("noModels") : t(kind + "NotFound")}))]);
   const bulk = on => save(n1, async () => { await patch({models: on ? null : []}); show(kind); });
-  const bare = a.sandboxed === undefined ? st.agentsUnsandboxed : !a.sandboxed, locked = bare && !c.allowUnsandboxedBash;  // H1, R3: brez sandboxa le z izrecnim dovoljenjem
+  const bare = a.sandboxed === undefined ? st.agentsUnsandboxed : !a.sandboxed, locked = bare && !c.allowUnsandboxedBash;  // H1, R3: brez peskovnika le z izrecnim dovoljenjem
   const lockedText = codex && st.os === "windows" ? "codexLockedWin" : "agentLockedWin";  // #68: Codex na Windows s svojim peskovnikom
   return [
     card(...ICON[kind], codex ? "Codex CLI" : "Grok CLI", t(kind + "Desc")),
