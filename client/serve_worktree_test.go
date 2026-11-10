@@ -367,7 +367,7 @@ func TestWorktreeLimits(t *testing.T) {
 func TestScratchOverlapAndProviderRename(t *testing.T) {
 	s, _, base := liveServer(t, nil)
 	host := strings.TrimPrefix(base, "http://")
-	parent, defParent := filepath.Dir(s.conf().Scratch), filepath.Dir(defaultScratch())
+	parent, defParent := filepath.Dir(s.conf().Scratch), filepath.Dir(newScratchDefault())
 	// mimo checkAgent: starejša nastavitev z mapama okoli testnega in privzetega Scratch
 	s.update(func(c *serveConfig) error { c.AllowedFolders = []string{parent, defParent}; return nil })
 	if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/general", `{"scratch":""}`); st != 400 || !strings.Contains(b, "contains it") {

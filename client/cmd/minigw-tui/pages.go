@@ -158,6 +158,22 @@ func general(u *ui) ([]row, error) {
 		ed("Folder", str(g, "scratch"), func(v string) (string, error) { return patch(map[string]any{"scratch": v}) }),
 		btn("Use the default folder", "", func() (string, error) { return patch(map[string]any{"scratch": ""}) }),
 	)
+	switch str(g, "scratchState") { // N4: mapa drugega prehoda; Take over le, ko ta ne teče
+	case "in-use":
+		rows = append(rows, inf("  Used by another gateway, which is running: agents are off; choose a folder of this gateway.", ""))
+	case "stale":
+		rows = append(rows, inf("  Stale owner: another gateway's folder, not running; agents are off.", ""),
+			btn("Take over", "Take over the other gateway's Scratch folder? It is renamed to this gateway's name", func() (string, error) {
+				r, err := u.call("POST", "/general/scratch/take", nil)
+				if err != nil {
+					return "", err
+				}
+				if w := str(r, "warning"); w != "" {
+					return "Taken over: " + str(r, "scratch") + "; " + w, nil
+				}
+				return "Taken over: " + str(r, "scratch") + ".", nil
+			}))
+	}
 	if sug := str(g, "scratchSuggest"); sug != "" {
 		rows = append(rows, inf("  It is inside your home folder (agents in the Windows sandbox can list the names there); move it to "+sug+".", ""))
 	}

@@ -637,18 +637,18 @@ func TestPickScratch(t *testing.T) {
 		system string
 		want   string
 	}{
-		{[]string{"C:", "D:", "E:"}, "C:", `D:\minigw-scratch\ana`},
-		{[]string{"C:"}, "C:", `C:\minigw-scratch\ana`},
-		{[]string{"C:", "D:"}, "D:", `C:\minigw-scratch\ana`},
-		{nil, "", `C:\minigw-scratch\ana`},
-		{nil, `C:\`, `C:\minigw-scratch\ana`},
+		{[]string{"C:", "D:", "E:"}, "C:", `D:\minigw-scratch`},
+		{[]string{"C:"}, "C:", `C:\minigw-scratch`},
+		{[]string{"C:", "D:"}, "D:", `C:\minigw-scratch`},
+		{nil, "", `C:\minigw-scratch`},
+		{nil, `C:\`, `C:\minigw-scratch`},
 	} {
-		if got := pickScratch(tc.drives, tc.system, "ana"); got != tc.want {
+		if got := pickScratch(tc.drives, tc.system); got != tc.want {
 			t.Errorf("%v %q: %q", tc.drives, tc.system, got)
 		}
 	}
-	if runtime.GOOS != "windows" && newScratchDefault() != "" {
-		t.Fatal("Linux/macOS default changed")
+	if d := newScratchDefault(); runtime.GOOS != "windows" && filepath.Base(d) != "minigw-scratch" { // N4: osnova, mapa je <osnova>/<instanca>
+		t.Fatal("Linux/macOS default base:", d)
 	}
 }
 

@@ -44,9 +44,10 @@ runs; otherwise they go to serve.json.
                                                         client's folder (in a lower mode it only reads)
   minigw gw autostart [on|off]                          Windows: start the tray at sign-in (Linux: minigw serve install); no argument: show it
   minigw gw token [rotate]                              print the connect line; rotate makes a new token
-  minigw gw scratch [move [DIR]]                        the Scratch folder (mirrors, clones, deps, caches, agent
-                                                        state); move: all of it to DIR (no DIR: the proposed folder),
-                                                        only while no minigw session or agent runs
+  minigw gw scratch [move [DIR]|take]                   the Scratch folder (mirrors, clones, deps, caches, agent
+                                                        state); move: all of it to DIR/<instance> (no DIR: the
+                                                        proposed folder), only while no minigw session or agent runs;
+                                                        take: take over the folder of a gateway that is gone
   minigw gw claude|codex|grok|copilot login            the agent's login (set / not set / logged in), never the value
   minigw gw claude|copilot token [remove]               Claude: the token from claude setup-token (needed in the
                                                         Windows sandbox); Copilot: its token for commands (fine-
@@ -631,8 +632,22 @@ func routerCommand(args []string, in io.Reader) {
 		if len(pos) == 1 {
 			a.do("GET", "/general", nil, &g)
 			say("Scratch folder: " + g.Scratch)
+			switch g.ScratchState {
+			case scratchInUse:
+				say("It belongs to another gateway that is running: agents are off; choose another folder (minigw gw scratch move DIR)")
+			case scratchStale:
+				say("It belongs to another gateway that is not running (stale owner): agents are off; take it over (minigw gw scratch take) or choose another folder (minigw gw scratch move DIR)")
+			}
 			if g.ScratchSuggest != "" {
 				say("It is inside your home folder (agents in the Windows sandbox can list the names there); move it: minigw gw scratch move " + g.ScratchSuggest)
+			}
+			return
+		}
+		if pos[1] == "take" && len(pos) == 2 { // N4: headless Linux (stran z nastavitvami, TUI, Mac: Take over)
+			a.do("POST", "/general/scratch/take", nil, &g)
+			say("Scratch folder taken over: " + g.Scratch)
+			if g.Warning != "" {
+				say(g.Warning)
 			}
 			return
 		}

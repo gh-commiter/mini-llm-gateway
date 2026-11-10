@@ -148,7 +148,8 @@ Login    {"state": string, "hint": string, "hasToken"?: bool, "apiKey"?: bool, "
          API)". hint: one line on how to get the login. hasToken: Claude and Copilot; apiKey and apiKeyNote: Claude,
          Codex and Grok (the opt-in "Use an API key instead").
 General  {"port": number, "address": string, "connect": string, "restartRequired"?: true, "allowedClients": string,
-          "allowPlainRemote": bool, "allowAnyDevice": bool, "allowLocalApps": bool, "scratch": string}
+          "allowPlainRemote": bool, "allowAnyDevice": bool, "allowLocalApps": bool, "scratch": string,
+          "scratchState"?: "in-use" | "stale"}
          address: "" = all addresses; connect: the "minigw connect …" line for clients (contains the token).
 ```
 
@@ -179,7 +180,8 @@ General  {"port": number, "address": string, "connect": string, "restartRequired
 | `GET /general` | – | General |
 | `PATCH /general` | any of `{"port", "address", "startAtSignIn", "allowedClients", "allowPlainRemote", "allowAnyDevice", "allowLocalApps", "scratch", "worktreeNetwork"}` | General; `"restartRequired": true` for port or address; `allowAnyDevice: true` only while no device is allowed (400) |
 | `POST /general/token` | – | General with the new token in `connect`; the old token stops working at once |
-| `POST /general/scratch/move` | `{"to": "D:\\minigw-scratch\\ana"}` (empty: the proposed default) | Go gateway (0.5.23): moves the whole Scratch folder and switches `scratch`; General (without `connect`), plus `warning` when the old folder could not be removed. 409 while minigw sessions or agents are active, 400 for a folder the Scratch rules refuse or that is not empty, 500 when the move failed (the old Scratch stays). Client requests during the move get 503 |
+| `POST /general/scratch/move` | `{"to": "D:\\minigw-scratch"}` (a base folder; empty: the proposed default) | Go gateway (0.5.23): moves the whole Scratch folder to `<to>/<instance>` (0.5.24; with the owner file) and switches `scratch`; while the Scratch folder belongs to another gateway (`scratchState`) nothing is moved, the gateway starts its own folder there; General (without `connect`), plus `warning` when the old folder could not be removed. 409 while minigw sessions or agents are active, 400 for a folder the Scratch rules refuse or that is not empty, 500 when the move failed (the old Scratch stays). Client requests during the move get 503 |
+| `POST /general/scratch/take` | – | Both gateways (0.5.24): Take over. Only when `scratchState` is `stale`: the other gateway's folder is renamed to `<base>/<instance>` of this gateway and gets its owner ID; this gateway's own folder already there is deleted when it has no conversations, else kept as `<instance>.old-<date>` (named in `warning`); nothing is merged. Logged. General (without `connect`). 409 when the folder is this gateway's own, `in-use` (the other gateway runs), or minigw sessions or agents are active; 500 when the rename failed (the folder stays) |
 | `POST /settings/login` | – | `{"url"}`: a one-time link to the settings page (`…/minigw/settings#t=…`, 60 s); `503` when the gateway does not run |
 
 Notes:
@@ -214,7 +216,9 @@ Notes:
   `"sign-in"`, or `""` (it does not start on its own). `agents` counts the claude, codex and grok processes that
   run right now; an update stops them, so check it first. `agentsUnsandboxed` (Go gateway): Codex and Grok have no sandbox here that hides the gateway's secrets
   (Windows without the Windows sandbox, Linux without a working `bwrap`), so they run only with `allowUnsandboxedBash`.
-  `scratchSuggest` (Go gateway on Windows, 0.5.23): the proposed Scratch folder when the current one is inside the home folder, else absent. `connect` (the line with the gateway token) is only in `GET /general`; `PATCH /general` and `POST /general/token` leave it out (Go gateway). `agentSandbox` (Go gateway on Windows, #68): `{"kind": "mxc", "version": "1.0.1"}` when agents run in the Windows
+  `scratchSuggest` (Go gateway on Windows, 0.5.23): the proposed Scratch folder when the current one is inside the home folder, else absent.
+  `scratch` names a base folder in `PATCH /general` and the move (0.5.24): the gateway's Scratch is `<base>/<instance>`; `GET` returns the folder in use.
+  `scratchState` (both gateways, 0.5.24): absent when the Scratch folder is this gateway's (its owner file holds this gateway's instance ID, or there is none yet); `"in-use"`: it belongs to another gateway that is running (holds its lock); `"stale"`: another gateway that is not running. In both cases agents are off (client requests get 503 naming the Scratch setting) and nothing in the folder is cleaned up. `connect` (the line with the gateway token) is only in `GET /general`; `PATCH /general` and `POST /general/token` leave it out (Go gateway). `agentSandbox` (Go gateway on Windows, #68): `{"kind": "mxc", "version": "1.0.1"}` when agents run in the Windows
   sandbox (plus `warning` when Scratch is inside the home folder), else `{"kind": "", "reason": "…"}`. When the sandbox cannot reach 127.0.0.1 it also has
   `"askOthers": "agents in the sandbox cannot reach 127.0.0.1, so May ask other models does not work"`.
   `GET /agents/{codex,grok,copilot}` also has `sandboxed`: the agent has a sandbox without `allowUnsandboxedBash`
@@ -332,8 +336,9 @@ The Mac app keeps its settings in its preferences and Keychain; the Settings win
 - **general:** also `worktreeNetwork` and `worktreeCodexNetwork` (Settings → General → Worktree mode: Network for builds,
   Network for Codex builds; `GET` and `PATCH`), and `allowedClients` (IP addresses, comma-separated; empty = all), `allowPlainRemote` and `allowAnyDevice`. `address`
   may be `0.0.0.0`, `::` or `127.0.0.1`. A port or address change restarts the listener, so there is no
-  `restartRequired`. `scratch` is an existing folder: as in Settings, the scratch content moves into a
-  `Mini Gateway Scratch` folder inside it (`""` = the default folder); `GET` returns the folder in use. A path
+  `restartRequired`. `scratch` is an existing folder: as in Settings, the scratch content moves into a folder named
+  after this gateway's instance inside it (0.5.24; before: `Mini Gateway Scratch`, kept by existing installs until
+  they move; `""` = the default folder); `GET` returns the folder in use. A path
   that contains a quotation mark (`"`), also after resolving links, is refused (400).
 - **status:** `installed` is Open at Login.
 - **Not on the Mac:** the settings page and its sessions (`/minigw/settings`, `POST /settings/login`): the app has

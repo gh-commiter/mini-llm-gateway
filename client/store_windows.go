@@ -360,6 +360,24 @@ func releaseScratch() {
 	}
 }
 
+// lockScratch (N4): zaklep mape Scratch je ročaj iz protectScratch (brez FILE_SHARE_DELETE).
+func lockScratch(string) bool { return true }
+
+// scratchLocked: drug prehod drži ročaj mape dir brez deljenja brisanja (odpiranje z DELETE: kršitev deljenja).
+func scratchLocked(dir string) bool {
+	u, err := windows.UTF16PtrFromString(dir)
+	if err != nil {
+		return false
+	}
+	h, err := windows.CreateFile(u, windows.DELETE, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil,
+		windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+	if err != nil {
+		return errors.Is(err, windows.ERROR_SHARING_VIOLATION)
+	}
+	windows.CloseHandle(h)
+	return false
+}
+
 // openDir: ročaj mape p (brez sledenja povezavi, brez FILE_SHARE_DELETE, z WRITE_DAC, če ga dobimo) in odločitev ok iz
 // atributov, lastnika in DACL tega ročaja. Brez dostopa: errForeignOwner (mapa drugega uporabnika).
 func openDir(p string, ok func(mode os.FileMode, owner, me string, dacl []scratchACE) error) (windows.Handle, error) {

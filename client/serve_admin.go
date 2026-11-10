@@ -91,6 +91,7 @@ type apiGeneral struct {
 	Scratch          string `json:"scratch"`
 	WorktreeNetwork  bool   `json:"worktreeNetwork"`          // #68: »Network for builds« (Claude CLI v načinu worktree), kot na Macu
 	ScratchSuggest   string `json:"scratchSuggest,omitempty"` // Scratch ni izbran (v domači mapi, Windows): predlagana mapa za premik
+	ScratchState     string `json:"scratchState,omitempty"`   // N4: in-use, stale (mapa drugega prehoda; Take over)
 	Warning          string `json:"warning,omitempty"`        // le odgovor premika: stara mapa ni odstranjena
 }
 
@@ -907,9 +908,10 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			if filepath.IsAbs(scratch) { // L1′: kot premik (C:\minigw-scratch.\x)
 				scratch, _ = filepath.Abs(scratch)
 			}
-			if why := s.scratchCheck(scratch, *b.Scratch != ""); why != "" {
+			if why := s.scratchCheck(scratch, *b.Scratch != ""); why != "" { // pravila za izbrano osnovo
 				return fail(400, why)
 			}
+			scratch = s.scratchFolder(scratch) // odločitev 3: osnova → <osnova>/<instanca>
 			if err := protectScratch(scratch); err != nil {
 				return fail(400, "scratch folder "+scratch+": "+err.Error()+" (use a folder of your own)")
 			}
@@ -952,6 +954,12 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		}); err != nil {
 			return fail(500, err.Error())
 		}
+		if b.Scratch != nil && !s.offline { // N4: nova mapa: lastnik in zaklep
+			foreign := s.scratchOther.Load()
+			if s.claimScratch(); foreign && !s.scratchOther.Load() {
+				sandboxInit(scratch, s.cfgDir, s.log.Printf)
+			}
+		}
 		g := s.apiGeneral(restart && !s.offline)
 		g.Connect = "" // brez žetona v odgovoru na spremembo
 		return 200, g
@@ -968,6 +976,11 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			return fail(404, "Not found: "+method+" "+uri)
 		}
 		return s.moveScratchAPI(body)
+	case "POST general/{}/take":
+		if arg != "scratch" {
+			return fail(404, "Not found: "+method+" "+uri)
+		}
+		return s.takeScratchAPI()
 	case "POST general/{}":
 		if arg != "token" {
 			return fail(404, "Not found: "+method+" "+uri)
@@ -1142,7 +1155,7 @@ func (s *server) apiGeneral(restart bool) apiGeneral {
 	c := s.conf()
 	return apiGeneral{Port: c.Port, Address: c.Address, Connect: connectLine(c), RestartRequired: restart, AllowedClients: c.AllowedClients,
 		AllowPlainRemote: c.AllowPlainRemote, AllowAnyDevice: c.AllowAnyDevice, AllowLocalApps: c.localApps(), Scratch: c.Scratch,
-		WorktreeNetwork: c.worktreeNet(), ScratchSuggest: scratchSuggest(c.Scratch)}
+		WorktreeNetwork: c.worktreeNet(), ScratchSuggest: scratchSuggest(c.Scratch), ScratchState: scratchState(c.scratchDir(), c.Instance)}
 }
 
 // buildCommit: commit gradnje (go build iz gita), kot »Version 0.5.14 (d62bf92)« na Macu.

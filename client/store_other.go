@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 )
 
@@ -216,6 +217,46 @@ func msiexecPath() string               { return "msiexec" }
 func protectDir(string) error { return nil } // drugod: mapa 0700, datoteke 0600
 
 func releaseScratch() {} // le Windows (L1′: ročaj mape Scratch)
+
+// scratchLock (N4): flock na scratchLockFile v mapi Scratch te instance, dokler prehod teče.
+var scratchLock struct {
+	sync.Mutex
+	f *os.File
+}
+
+// lockScratch: false = zaklep drži drug proces. Datoteke ni mogoče odpreti: brez zaklepa (kot prej).
+func lockScratch(dir string) bool {
+	scratchLock.Lock()
+	defer scratchLock.Unlock()
+	if scratchLock.f != nil { // flock velja za odprto datoteko: tudi naša prejšnja bi zaklep zavrnila
+		scratchLock.f.Close()
+		scratchLock.f = nil
+	}
+	f, err := os.OpenFile(filepath.Join(dir, scratchLockFile), os.O_RDWR|os.O_CREATE|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return true
+	}
+	if syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) != nil {
+		f.Close()
+		return false
+	}
+	scratchLock.f = f
+	return true
+}
+
+// scratchLocked: zaklep mape dir drži drug prehod (ki teče).
+func scratchLocked(dir string) bool {
+	f, err := os.OpenFile(filepath.Join(dir, scratchLockFile), os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	if syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) != nil {
+		return true
+	}
+	syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return false
+}
 
 // protectScratch (L2): mapa s kopijami map odjemalcev je naša (Lstat: ne povezava) in le naša (0700).
 func protectScratch(dir string) error {

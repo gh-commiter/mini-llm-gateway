@@ -53,7 +53,8 @@ func (s *server) scratchCheck(scratch string, explicit bool) string {
 	return ""
 }
 
-// moveScratchAPI: POST /general/scratch/move {"to": "…"}; prazno = predlagana privzeta mapa.
+// moveScratchAPI: POST /general/scratch/move {"to": "…"}; "to" je osnova (odločitev 3: cilj <to>/<instanca>, datoteka
+// lastnika gre z mapo); prazno = privzeta osnova.
 func (s *server) moveScratchAPI(body []byte) (int, any) {
 	fail := func(status int, msg string) (int, any) { return status, errorBody(status, msg) }
 	var b struct {
@@ -71,9 +72,10 @@ func (s *server) moveScratchAPI(body []byte) (int, any) {
 	if filepath.IsAbs(to) { // L1′: Abs (Windows: GetFullPathName) tudi odreže pike in presledke na koncu imen
 		to, _ = filepath.Abs(to)
 	}
-	if why := s.scratchCheck(to, b.To != ""); why != "" {
+	if why := s.scratchCheck(to, b.To != ""); why != "" { // pravila za izbrano osnovo
 		return fail(400, why)
 	}
+	to = s.scratchFolder(to)
 	if !s.scratchGate.TryLock() { // tekoče zahteve odjemalcev (tudi drug premik) držijo bralno ključavnico
 		return fail(409, scratchBusy)
 	}
@@ -81,18 +83,36 @@ func (s *server) moveScratchAPI(body []byte) (int, any) {
 	if s.hub.count() > 0 || s.agentsRunning.Load() > 0 {
 		return fail(409, scratchBusy)
 	}
-	old := s.conf().Scratch
+	old := s.conf().scratchDir()
 	if realPath(old) == realPath(to) {
 		g := s.apiGeneral(false)
 		g.Connect = ""
 		return 200, g
 	}
-	s.log.Printf("moving the scratch folder %s to %s", old, to)
-	defer func() { // L1′ (Windows): ročaj spet na veljavni mapi, tudi po napaki
+	foreign := scratchState(old, s.conf().Instance) != ""
+	defer func() { // L1′ (Windows): ročaj spet na veljavni mapi, tudi po napaki; N4: lastnik in zaklep
 		if err := protectScratch(s.conf().Scratch); err != nil {
 			s.log.Printf("WARNING: scratch folder %s: %v", s.conf().Scratch, err)
 		}
+		if !s.offline {
+			if s.claimScratch(); foreign && !s.scratchOther.Load() {
+				sandboxInit(s.conf().Scratch, s.cfgDir, s.log.Printf)
+			}
+		}
 	}()
+	if foreign { // N4: mapa drugega prehoda ostane, kjer je; ta prehod začne svojo
+		if err := protectTarget(to); err != nil {
+			return fail(500, "scratch folder "+to+": "+err.Error())
+		}
+		if err := s.update(func(c *serveConfig) error { c.Scratch = to; return nil }); err != nil {
+			return fail(500, err.Error())
+		}
+		s.log.Printf("scratch folder %s belongs to another gateway and stays; this gateway now uses %s", old, to)
+		g := s.apiGeneral(false)
+		g.Connect = ""
+		return 200, g
+	}
+	s.log.Printf("moving the scratch folder %s to %s", old, to)
 	renamed, err := moveScratchDir(old, to)
 	if err != nil {
 		s.log.Printf("scratch folder not moved: %v", err)
