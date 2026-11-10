@@ -558,17 +558,17 @@ public actor NativeHub {
     /// imenom; povezava se ne sledi (removeItem odstrani povezavo, ne cilja; tip iz lstat).
     public static func cleanupRunTemps(_ tmp: URL) {
         let fm = FileManager.default
-        // #72: povezave T in C zagonov (linkRunDirs), ki kažejo nikamor; le povezave
+        for n in (try? fm.contentsOfDirectory(atPath: tmp.path)) ?? []
+        where n.range(of: #"^run-req_[0-9a-f]{32}$"#, options: .regularExpression) != nil {
+            let p = tmp.appendingPathComponent(n)
+            if (try? fm.attributesOfItem(atPath: p.path)[.type] as? FileAttributeType) == .typeDirectory { try? fm.removeItem(at: p) }
+        }
+        // #72: povezave T in C zagonov (linkRunDirs), ki po odstranitvi map zgoraj kažejo nikamor; le povezave
         for base in [Native.darwinTemp(), Native.darwinTemp(_CS_DARWIN_USER_CACHE_DIR)].compactMap({ $0 }) {
             for n in (try? fm.contentsOfDirectory(atPath: base)) ?? [] where n.hasPrefix(Native.runDirPrefix) {
                 var st = stat()
                 if stat(base + "/" + n, &st) != 0 { Native.unlinkRunDirs([base + "/" + n]) }
             }
-        }
-        for n in (try? fm.contentsOfDirectory(atPath: tmp.path)) ?? []
-        where n.range(of: #"^run-req_[0-9a-f]{32}$"#, options: .regularExpression) != nil {
-            let p = tmp.appendingPathComponent(n)
-            if (try? fm.attributesOfItem(atPath: p.path)[.type] as? FileAttributeType) == .typeDirectory { try? fm.removeItem(at: p) }
         }
     }
 
