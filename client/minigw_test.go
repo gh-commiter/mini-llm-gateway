@@ -718,7 +718,7 @@ func TestClaudeChildEnvDropsParentSession(t *testing.T) {
 		t.Setenv(k, v)
 	}
 	if runClaude(nil, []string{"ANTHROPIC_BASE_URL=http://gw", "ANTHROPIC_AUTH_TOKEN=t", "ANTHROPIC_API_KEY=",
-		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"}) != 0 {
+		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"}, false) != 0 {
 		t.Fatal("fake claude failed")
 	}
 	b, _ := os.ReadFile(out)

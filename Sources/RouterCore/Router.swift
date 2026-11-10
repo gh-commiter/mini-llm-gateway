@@ -634,7 +634,7 @@ public final class Router: Sendable {
                          "description": "On-device · \(SystemLanguageModel.default.contextSize / 1000)K context · no tools", "created_at": created])
         }
         if config.claudeCLI.enabled, await probes.ok("claude-cli") {  // vgrajeni opus/sonnet/haiku so že v izbirniku Claude Code
-            data += ["opus", "sonnet", "haiku"].map { m in
+            data += ClaudeCLI.families.map { m in
                 ["type": "model", "id": ClaudeCLI.agentPrefix + m, "display_name": "\(m.capitalized) · Claude CLI",
                  "description": "claude -p · \(m) · tools in your folder", "created_at": created]
             }
@@ -703,6 +703,9 @@ public final class Router: Sendable {
             let (bytes, resp) = try await session.bytes(for: up)
             guard let http = resp as? HTTPURLResponse else { throw URLError(.badServerResponse) }
             status = http.statusCode
+            if status == 404, req.path.hasSuffix("/count_tokens") {  // #78: OpenRouter nima count_tokens → ocena kot pri agentih
+                return await json(200, ["input_tokens": req.body.count / 4], rid: rid, writer: writer)
+            }
             if !(200..<300).contains(status) {  // telesa upstreama ne prepošljemo surovo
                 var d = Data()
                 do {

@@ -1004,6 +1004,9 @@ if sid.isEmpty {
 if promptGuard { args = ["--disable-slash-commands"] + args }  // N7
 // I17: env v --settings premaga env v uporabnikovem settings.json (izmerjeno, 2.1.318)
 if mentionSettings { args = ["--settings", Profiles.mentionSettings] + args }
+for (k, v) in Profiles.helperModelEnv(args, env: callerEnv) { setenv(k, v, 1) }  // #78, po #7
+let streamArgs = Profiles.streamArgs(args), streamed = streamArgs != nil  // #78: minigw izpiše vsa besedila modela
+if let streamArgs { args = streamArgs }
 let argv = (["claude"] + args).map { strdup($0) } + [nil]
 let cwd = FileManager.default.currentDirectoryPath
 let routerHost = URLComponents(string: saved.url)?.host ?? ""
@@ -1029,7 +1032,7 @@ setenv("ANTHROPIC_CUSTOM_HEADERS", "x-claude-mini-session: \(sid)\nx-claude-mini
        + (readOnly ? "\nx-claude-mini-ro: 1" : ""), 1)  // --minigw-ro velja tudi brez deljenja (prehod na tem Macu)
 
 // Brez proxyja in brez mape: minigw ni več potreben → exec (razen s prebranim stdin: tega claude dobi po cevi).
-guard claudeStdin != nil || !proxies.isEmpty || (wantShare && !sid.isEmpty) || profiles.count > 1 else {
+guard streamed || claudeStdin != nil || !proxies.isEmpty || (wantShare && !sid.isEmpty) || profiles.count > 1 else {
     execClaude(argv)
     fail("cannot run claude: \(String(cString: strerror(errno))) (is Claude Code installed and in PATH?)", code: 127)
 }
@@ -1156,6 +1159,7 @@ var attr: posix_spawnattr_t?
 posix_spawnattr_init(&attr)
 var defaults = sigset_t()
 sigemptyset(&defaults); sigaddset(&defaults, SIGINT); sigaddset(&defaults, SIGQUIT); sigaddset(&defaults, SIGPIPE)
+sigaddset(&defaults, SIGTERM); sigaddset(&defaults, SIGHUP)
 posix_spawnattr_setsigdefault(&attr, &defaults)
 posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETSIGDEF))
 var actions: posix_spawn_file_actions_t?
@@ -1166,6 +1170,13 @@ if claudeStdin != nil {  // prebrani stdin gre claude po cevi
     posix_spawn_file_actions_adddup2(&actions, stdinPipe[0], 0)
     posix_spawn_file_actions_addclose(&actions, stdinPipe[0])
     posix_spawn_file_actions_addclose(&actions, stdinPipe[1])
+}
+var outPipe: [Int32] = [-1, -1]
+if streamed {  // #78: stdout claude (stream-json) bere minigw
+    guard pipe(&outPipe) == 0 else { fail("cannot run claude: \(String(cString: strerror(errno)))") }
+    posix_spawn_file_actions_adddup2(&actions, outPipe[1], 1)
+    posix_spawn_file_actions_addclose(&actions, outPipe[0])
+    posix_spawn_file_actions_addclose(&actions, outPipe[1])
 }
 var pid: pid_t = 0
 let rc = claudeExe.map { posix_spawn(&pid, $0, &actions, &attr, argv, environ) } ?? posix_spawnp(&pid, "claude", &actions, &attr, argv, environ)
@@ -1179,8 +1190,51 @@ if let data = claudeStdin {
     let w = FileHandle(fileDescriptor: stdinPipe[1], closeOnDealloc: true)
     Thread.detachNewThread { try? w.write(contentsOf: data); try? w.close() }
 }
-var status: Int32 = 0
-while waitpid(pid, &status, 0) == -1 && errno == EINTR {}
+// #78: kill minigw ne pusti claude brez starša: SIGTERM in SIGHUP gresta claude, minigw počaka nanj in pospravi.
+let forwarded = [SIGTERM, SIGHUP].map { sig in
+    signal(sig, SIG_IGN)
+    let src = DispatchSource.makeSignalSource(signal: sig, queue: .global())
+    src.setEventHandler { kill(pid, sig) }
+    src.resume()
+    return src
+}
+var printer = Profiles.StreamText(), streamBroken = false
+var status: Int32 = 0, exited = false
+if streamed {
+    close(outPipe[1])
+    var buf = Data(), chunk = [UInt8](repeating: 0, count: 64 << 10), deadline = Date.distantFuture
+    func show(_ line: Data) {
+        let (o, e) = printer.line(line)
+        if !o.isEmpty { out.write(Data(o.utf8)) }
+        if !e.isEmpty { err.write(Data(e.utf8)) }
+    }
+    // vnuk, ki drži stdout, ne zadrži minigw: po koncu claude še največ 2 s branja
+    reading: while !printer.done, Date() < deadline {
+        var p = pollfd(fd: outPipe[0], events: Int16(POLLIN), revents: 0)
+        if poll(&p, 1, 200) > 0 {
+            let n = read(outPipe[0], &chunk, chunk.count)
+            if n == 0 || (n < 0 && errno != EINTR && errno != EAGAIN) { break }
+            if n > 0 { buf.append(contentsOf: chunk[..<n]) }
+            while let i = buf.firstIndex(of: 0x0A) {
+                show(buf[buf.startIndex..<i])
+                buf.removeSubrange(buf.startIndex...i)
+                if printer.done { break reading }
+            }
+            if buf.count > Profiles.StreamText.lineMax {
+                err.write(Data("minigw: cannot read claude's output: line longer than \(Profiles.StreamText.lineMax >> 20) MB\n".utf8))
+                streamBroken = true
+                break
+            }
+        }
+        if !exited, waitpid(pid, &status, WNOHANG) == pid { exited = true; deadline = Date() + 2 }
+    }
+    if !printer.done, !streamBroken { show(buf) }
+    if let w = printer.warning { err.write(Data(w.utf8)) }
+    close(outPipe[0])  // claude ob nadaljnjem pisanju dobi EPIPE/SIGPIPE, ne obvisi
+}
+if !exited { while waitpid(pid, &status, 0) == -1 && errno == EINTR {} }
+forwarded.forEach { $0.cancel() }
 share.unregister()
 extras.unregister()
-exit(status & 0x7f == 0 ? (status >> 8) & 0xff : 128 + (status & 0x7f))
+let code = status & 0x7f == 0 ? (status >> 8) & 0xff : 128 + (status & 0x7f)
+exit(code == 0 && (printer.failed || streamBroken) ? 1 : code)

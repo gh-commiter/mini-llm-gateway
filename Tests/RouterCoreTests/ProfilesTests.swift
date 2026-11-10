@@ -201,3 +201,28 @@ private func send(_ url: String, _ method: String, _ path: String, secret: Strin
     unlockStatus = errSecInteractionNotAllowed
     #expect(Keychain.unlock(password: pw, verify: { _ in .ok }, unlock: unlock) == "cannot unlock the login keychain (OSStatus \(errSecInteractionNotAllowed))")
 }
+
+/// #78: stream-json → besedilo (enako kot client/stream_test.go).
+@Test func streamTextPrinter() {
+    func run(_ lines: [String]) -> (String, String, Bool) {
+        var p = Profiles.StreamText(), o = "", e = ""
+        for l in lines { let r = p.line(Data(l.utf8)); o += r.out; e += r.err }
+        return (o, e + (p.warning ?? ""), p.failed)
+    }
+    let text = { (s: String) in #"{"type":"assistant","message":{"content":[{"type":"text","text":"\#(s)"}]}}"# }
+    let tool = #"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{}}]}}"#
+    #expect(run([text("First."), tool, text("See above."), #"{"type":"result","is_error":false,"result":"See above."}"#])
+            == ("First.\n\nSee above.\n", "minigw: · Bash\n", false))
+    #expect(run([#"{"type":"result","is_error":true,"result":"API Error: 500"}"#]) == ("", "API Error: 500\n", true))
+    let warn = run([text("Kot zgoraj."), #"{"type":"result","is_error":false,"result":"x"}"#])
+    #expect(warn.0 == "Kot zgoraj.\n" && warn.1.hasPrefix("minigw: warning:"))
+    #expect(run(["not json", #"{"type":"result","is_error":false,"result":"Done"}"#]) == ("Done\n", "", false))
+    #expect(Profiles.streamArgs(["-p", "hi"]) == ["--output-format", "stream-json", "--verbose", "-p", "hi"])
+    #expect(Profiles.streamArgs(["-p", "--output-format=json"]) == nil && Profiles.streamArgs(["hi"]) == nil)
+    #expect(Profiles.helperModelEnv(["--model", "claude-deepseek/deepseek-v4-flash"], env: [:])
+            == ["ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-deepseek/deepseek-v4-flash", "ANTHROPIC_SMALL_FAST_MODEL": "claude-deepseek/deepseek-v4-flash"])
+    for m in ["claude-cli-fable", "opus", "claude-haiku-5-5", "claude-codex-gpt-5", "claude-grok", "claude-copilot", "claude-siri-ai", "claude-apple-fm"] {
+        #expect(Profiles.helperModelEnv(["--model=\(m)"], env: [:]).isEmpty, "\(m)")
+    }
+    #expect(run([text(#"a\u001b[2Jb\tc\u009bd"#)]) == ("a[2Jb\tcd\n", "", false))
+}
