@@ -84,3 +84,17 @@ func TestPinWrapOffWithoutNestedBwrap(t *testing.T) {
 		}
 	}
 }
+
+// #52: minigw serve kot PID 1 (bwrap --as-pid-1, kot vsebnik brez --init) požanje osirotele procese.
+func TestInitReaperReapsOrphans(t *testing.T) {
+	bw, err := exec.LookPath("bwrap")
+	if err != nil || exec.Command(bw, "--unshare-pid", "--as-pid-1", "--dev-bind", "/", "/", "--proc", "/proc", "true").Run() != nil {
+		t.Skip("no usable bwrap (Linux with user namespaces)")
+	}
+	exe, _ := os.Executable()
+	cmd := exec.Command(bw, "--unshare-pid", "--as-pid-1", "--dev-bind", "/", "/", "--proc", "/proc", exe)
+	cmd.Env = append(os.Environ(), "MINIGW_TEST_INIT=1")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+}

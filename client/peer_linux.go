@@ -80,6 +80,44 @@ func agentReaperMain(args []string) {
 	}
 }
 
+// initReaper (#52): PID 1 (vsebnik brez docker run --init) dobi vse osirotele procese (npr. ostanke bwrap --unshare-pid);
+// nepožeti zombiji obdržijo svoje imenske prostore. Wait4(-1) v routerju bi kradel stanja procesov os/exec, zato PID 1
+// zažene isti ukaz kot otroka (prehod), sam pa le žanje vse, posreduje signale in konča z izhodom otroka (kot tini).
+func initReaper() {
+	if os.Getpid() != 1 {
+		return
+	}
+	sigs := make(chan os.Signal, 8)
+	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGUSR1, syscall.SIGUSR2)
+	pid, err := syscall.ForkExec("/proc/self/exe", os.Args, &syscall.ProcAttr{Env: os.Environ(), Files: []uintptr{0, 1, 2}})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "minigw: cannot start the gateway under PID 1: "+err.Error())
+		os.Exit(1)
+	}
+	go func() {
+		for s := range sigs {
+			syscall.Kill(pid, s.(syscall.Signal))
+		}
+	}()
+	for {
+		var ws syscall.WaitStatus
+		p, err := syscall.Wait4(-1, &ws, 0, nil)
+		if err == syscall.EINTR {
+			continue
+		}
+		if err != nil {
+			os.Exit(1)
+		}
+		if p == pid {
+			code := ws.ExitStatus()
+			if ws.Signaled() {
+				code = 128 + int(ws.Signal())
+			}
+			os.Exit(code)
+		}
+	}
+}
+
 // killChildren: SIGKILL vsem otrokom tega procesa (iz /proc/*/stat).
 func killChildren() {
 	self := os.Getpid()

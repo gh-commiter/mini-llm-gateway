@@ -66,6 +66,19 @@ func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == agentReaperCmd {
 		agentReaperMain(os.Args[2:])
 	}
+	if os.Getenv("MINIGW_TEST_INIT") == "1" { // #52: PID 1 žanje (initReaper), otrok pusti osirotelega vnuka
+		initReaper()
+		exec.Command("sh", "-c", "sleep 0.2 &").Run()
+		time.Sleep(time.Second)
+		ents, _ := os.ReadDir("/proc")
+		for _, e := range ents {
+			if b, err := os.ReadFile("/proc/" + e.Name() + "/stat"); err == nil && strings.Contains(string(b), ") Z ") {
+				fmt.Println("zombie: " + string(b))
+				os.Exit(3)
+			}
+		}
+		os.Exit(0)
+	}
 	if os.Getenv("MINIGW_TEST_MAIN") == "1" { // testi poženejo sam ukaz minigw
 		os.Args = append([]string{"minigw"}, os.Args[1:]...)
 		main()

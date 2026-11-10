@@ -315,6 +315,7 @@ func serveCommand(args []string) {
 		fail("unknown command minigw serve " + sub + "\n\n" + serveHelp)
 	}
 
+	initReaper() // #52: kot PID 1 (vsebnik brez --init) prehod teče v otroku, ta proces le žanje
 	c, err := loadServeConfig(*cfgPath)
 	if errors.Is(err, os.ErrNotExist) {
 		fail("cannot read " + *cfgPath + ": run minigw serve init first (" + err.Error() + ")")
