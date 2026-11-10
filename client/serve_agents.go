@@ -803,6 +803,8 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 		// Absolutna pot: PATH izvajanja ne doseže ukazov v sandboxu Codex na Windows (»elevated« = drug uporabnik);
 		// »minigw« iz PATH (askOnPath) je le za pravila Claude Code (askRules).
 		note += "\n\n" + askNote(minigwExe(), false)
+	} else {
+		note += "\n\n" + noAskNote
 	}
 	prompt := note + "\n\n" + cliPrompt(history, last)
 	var extra []string

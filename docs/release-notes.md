@@ -1,5 +1,10 @@
 # Release notes
 
+## Unreleased
+
+- Fixed (#69): a gateway agent asked to "use codex to …" ran the `codex` program itself instead of asking the gateway (with "May ask other models" off, Claude Code's sandbox on the Mac stopped it at `~/.codex/config.toml` and Windows refused the command). Every gateway agent's instructions now say that other agents are reached only with `minigw -p --model …` and never by running `codex`, `claude`, `grok` or `copilot` directly; with "May ask other models" off they say other agents are not available here, so the agent does the task itself and says so. Mac app and `minigw serve`, every agent kind.
+- Fixed (#70): on Windows `minigw serve` in worktree mode, Claude CLI's `git add` and `git commit` in its clone needed approval, which `claude -p` cannot give, so they were refused (the Mac and Linux allow them through Claude Code's sandbox). Now git is pre-approved there (`Bash(git:*)`, `PowerShell(git *)`); Edit and Write in the clone's `.git` stay denied, and the agent's git still ignores hooks and the owner's git config. Worktree mode on Windows already needs "Allow commands without a sandbox".
+
 ## 0.5.22
 
 - Fixed: in worktree mode the agent's `git status` no longer shows an untracked `.build/` folder (the gateway's temporary folder in the clone; both gateways).

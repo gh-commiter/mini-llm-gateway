@@ -220,6 +220,19 @@ func TestWorktreeClaudeArgs(t *testing.T) {
 			t.Fatalf("missing %s in\n%s", want, got)
 		}
 	}
+	// #70: git v klonu le na Windows (brez sandboxa) s pravilom; .git ostane zaprt za Edit/Write
+	if strings.Contains(got, "git:*") != (runtime.GOOS == "windows") {
+		t.Fatalf("git rule outside Windows:\n%s", got)
+	}
+	worktreeNeedsUnsandboxed = true
+	defer func() { worktreeNeedsUnsandboxed = runtime.GOOS == "windows" }()
+	args = []string{"--allowedTools", "Read(./**)", "--disallowedTools", "Read(/cfg/**)"}
+	got = strings.Join(worktreeClaudeArgs(args, "/w", "/m", "/t", nil, nil), " ")
+	for _, want := range []string{",Bash(git:*),PowerShell(git *) ", "Edit(//w/.git/**)", "Write(//w/**/.git/**)"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("Windows: missing %s in\n%s", want, got)
+		}
+	}
 }
 
 // Codex v klonu (Linux: pod bwrap): commit in necommitano pride kot veja; .git/config klona je le za branje (protect).

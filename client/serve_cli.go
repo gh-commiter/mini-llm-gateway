@@ -784,6 +784,8 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			if i := slices.Index(args, "--allowedTools"); onPath && i >= 0 {
 				args[i+1] += "," + askRules
 			}
+		} else {
+			extra += "\n\n" + noAskNote
 		}
 	} else {
 		dir = s.conf().scratch("chat")

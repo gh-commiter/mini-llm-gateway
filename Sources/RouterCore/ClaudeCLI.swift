@@ -538,8 +538,9 @@ extension Router {
         let run = agent ? await startAgentRun(req, kind: "claude", dir: sharedDir, readOnly: readOnly) : nil
         defer { run?.stop() }
         let gitexec = config.scratch("gitexec")  // N9: ovoj git v klonu (Worktree.claudeEnv), berljiv v peskovniku
-        if agent, let note = agentNote("claude") {
-            args = Self.withNote(args, note, read: [Self.minigwExe, gitexec.path] + (run.map { [$0.authFile.path] } ?? []))
+        if agent {  // #69: navodilo vedno; branje minigw in ovoja git kot doslej le s stikalom ali za vprašanega agenta
+            let read = askOthers("claude") || AgentRun.current != nil ? [Self.minigwExe, gitexec.path] + (run.map { [$0.authFile.path] } ?? []) : []
+            args = Self.withNote(args, agentNote("claude"), read: read)
         }
         guard let exe = await ClaudeCLI.executable(cfg.executable) else {
             return await error(503, "api_error", cfg.executable.isEmpty ? "claude not found; set its path in Mini Gateway settings"

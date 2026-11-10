@@ -912,6 +912,9 @@ func worktreeReadOnlyNote(clientCwd, dir string) string {
 		" Nothing goes back to the user, so give your answer in your reply."
 }
 
+// gitRules (#70): git agenta v klonu na Windows brez odobritve (kot askRules: Bash in PowerShell).
+const gitRules = "Bash(git:*),PowerShell(git *)"
+
 // worktreeClaudeArgs: v peskovniku Claude Code (ne Windows) še pisanje v Maven agentov in branje objektov zrcal; .git
 // vseh klonov (gits: config, hooks, info, commondir) ni pisljiv, Edit/Write vanj ne (nastavitve in hooke bere git
 // samega claude). objects: objekti zrcal (vrhnji in ugnezdeni). tmp: TMPDIR teka (runTempDir).
@@ -945,6 +948,9 @@ func worktreeClaudeArgs(args []string, wt, maven, tmp string, objects, gits []st
 		if args[i] == "--allowedTools" && args[i+1] != "" {
 			for _, t := range []string{"Read", "Edit", "Write", "MultiEdit", "Glob", "Grep"} {
 				args[i+1] += "," + t + "(" + ruleAbs(wt) + "/**)"
+			}
+			if worktreeNeedsUnsandboxed { // #70: Windows brez sandboxa (Bash na Macu in Linuxu ga dovoli sandbox); git agenta brez hookov (worktreeHarnessEnv)
+				args[i+1] += "," + gitRules
 			}
 			break
 		}
