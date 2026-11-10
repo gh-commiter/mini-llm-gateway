@@ -5,7 +5,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -368,8 +370,11 @@ func gitFetchBranch(top, bundle, branch string) string {
 		bundle, "+refs/heads/"+branch+":refs/minigw/incoming")
 	defer gitUser(top, nil, "update-ref", "-d", "refs/minigw/incoming")
 	nw, _ := gitUser(top, nil, "rev-parse", "-q", "--verify", "refs/minigw/incoming^{commit}")
-	if err != nil || !shaRe.MatchString(nw) || !fsckIncoming(top) {
+	if err != nil || !shaRe.MatchString(nw) {
 		return "git fetch of " + branch + " failed (the gateway's branch was rejected)"
+	}
+	if err := fsckIncoming(top); err != nil { // #58: ločeno od fetch (npr. delni klon brez bloba .gitattributes)
+		return "the gateway's branch failed the object check (fsck): " + err.Error()
 	}
 	// Premik veje z git fetch brez sile: git sam zavrne nehitro posodobitev in vejo, izvlečeno v kateri koli delovni mapi.
 	if _, e := gitUser(top, nil, "-c", "fetch.recurseSubmodules=false", "-c", "submodule.recurse=false", "-c", "maintenance.auto=false",
@@ -388,11 +393,11 @@ func gitFetchBranch(top, bundle, branch string) string {
 
 // fsckIncoming: fetch iz bundla pred git 2.46 ne preveri objektov (fetch.fsckObjects prezre). Zato novi objekti
 // refs/minigw/incoming (brez dosegljivih iz drugih refov): pack-objects in index-pack --fsck-objects v prazen
-// repozitorij (kot finalize prehoda); zavrne npr. drevo z ».git«.
-func fsckIncoming(top string) bool {
+// repozitorij (kot finalize prehoda); zavrne npr. drevo z ».git«. nil = v redu, sicer razlog (prva vrstica gita).
+func fsckIncoming(top string) error {
 	refs, err := gitUser(top, nil, "for-each-ref", "--format=%(objectname) %(refname)")
 	if err != nil {
-		return false
+		return errors.New("cannot list refs")
 	}
 	in := "refs/minigw/incoming\n--not\n"
 	for _, l := range strings.Split(refs, "\n") {
@@ -402,36 +407,55 @@ func fsckIncoming(top string) bool {
 	}
 	dir, err := os.MkdirTemp("", "minigw-") // 0700
 	if err != nil {
-		return false
+		return err
 	}
 	defer os.RemoveAll(dir)
-	cmd := command("git", "-c", "core.hooksPath="+os.DevNull, "pack-objects", "--revs", "-q", filepath.Join(dir, "p"))
-	cmd.Dir = top
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	cmd.Stdin = strings.NewReader(in)
-	out, err := cmd.Output()
-	pack := strings.TrimSpace(string(out))
-	if err != nil || !shaRe.MatchString(pack) {
-		return false
+	// #58: pack-objects in index-pack z mejo (velik repozitorij, zastal disk)
+	ctx, cancel := context.WithTimeout(context.Background(), fsckTimeout)
+	defer cancel()
+	git := func(cwd, input string, args ...string) (string, error) {
+		cmd := commandContext(ctx, "git", append([]string{"-c", "core.hooksPath=" + os.DevNull, "-c", "core.fsmonitor=false"}, args...)...)
+		cmd.Dir = cwd
+		cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+		cmd.Stdin = strings.NewReader(input)
+		var out, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &out, &stderr
+		if err := cmd.Run(); err != nil {
+			if line, _, _ := strings.Cut(strings.TrimSpace(stderr.String()), "\n"); line != "" {
+				return "", errors.New(clean(line))
+			}
+			return "", err
+		}
+		return strings.TrimSpace(out.String()), nil
+	}
+	pack, err := git(top, in, "pack-objects", "--revs", "-q", filepath.Join(dir, "p"))
+	if err != nil {
+		return err
+	}
+	if !shaRe.MatchString(pack) {
+		return errors.New("pack-objects gave no pack")
 	}
 	fsck := filepath.Join(dir, "fsck.git")
 	if _, err := gitUser(dir, nil, "init", "-q", "--bare", fsck); err != nil {
-		return false
+		return err
 	}
 	// Objekti uporabnika kot alternates: drevo agenta sme kazati na obstoječ blob (npr. .gitattributes), fsck ga prebere.
 	objs, err := gitUser(top, nil, "rev-parse", "--git-path", "objects")
 	if err != nil || objs == "" {
-		return false
+		return errors.New("cannot find the objects folder")
 	}
 	if !filepath.IsAbs(objs) {
 		objs = filepath.Join(top, objs)
 	}
-	if os.WriteFile(filepath.Join(fsck, "objects", "info", "alternates"), []byte(filepath.ToSlash(objs)+"\n"), 0o600) != nil {
-		return false
+	if err := os.WriteFile(filepath.Join(fsck, "objects", "info", "alternates"), []byte(filepath.ToSlash(objs)+"\n"), 0o600); err != nil {
+		return err
 	}
-	_, err = gitUser(dir, nil, "--git-dir", fsck, "index-pack", "--fsck-objects", filepath.Join(dir, "p-"+pack+".pack"))
-	return err == nil
+	_, err = git(dir, "", "--git-dir", fsck, "index-pack", "--fsck-objects", filepath.Join(dir, "p-"+pack+".pack"))
+	return err
 }
+
+// fsckTimeout: meja za pack-objects in index-pack v fsckIncoming (velik repozitorij).
+var fsckTimeout = 10 * time.Minute
 
 // wtPush: WORKTREE-PUSH — posnetek, bundle po delih do 32 MB, odgovor {"snapshot", "nested": [{"path", "snapshot"}]}.
 // Ugnezdeni repozitoriji (vsak svoj posnetek in bundle, x-nested: i) le s prehodom, ki jih pozna (»nested« v zahtevi);

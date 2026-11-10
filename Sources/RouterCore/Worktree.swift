@@ -35,8 +35,10 @@ public enum Worktree {
     /// `hooks: false` (odjemalec): hooki uporabnika ne tečejo ob začasnem refu refs/minigw/push in posnetku.
     /// `sandbox`: profil sandbox-exec (finalize: branje le v klonu, zrcalu in začasni mapi).
     /// `timeout`: git, ki teče dlje, dobi SIGKILL (L2: ogromen repozitorij, zastal disk).
+    /// `stderr`: tudi napake gita v izhod (razlog za uporabnika).
     static func run(_ args: [String], cwd: String? = nil, env extra: [String: String] = [:], safe: Bool = true, hooks: Bool = true,
-                    input: Data? = nil, sandbox: String? = nil, timeout: TimeInterval? = nil, trim: Bool = true) -> (status: Int32, out: String) {
+                    input: Data? = nil, sandbox: String? = nil, timeout: TimeInterval? = nil, trim: Bool = true,
+                    stderr: Bool = false) -> (status: Int32, out: String) {
         let guardrails = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "submodule.recurse=false",
                           "-c", "protocol.allow=never", "-c", "protocol.file.allow=always", "-c", "maintenance.auto=false", "-c", "gc.auto=0",
                           "-c", "core.commitGraph=false", "-c", "core.multiPackIndex=false"]
@@ -59,7 +61,7 @@ public enum Worktree {
         defer { posix_spawn_file_actions_destroy(&fa); posix_spawnattr_destroy(&at) }
         if input == nil { posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0) } else { posix_spawn_file_actions_adddup2(&fa, i[0], 0) }
         posix_spawn_file_actions_adddup2(&fa, o[1], 1)
-        posix_spawn_file_actions_addopen(&fa, 2, "/dev/null", O_WRONLY, 0)
+        if stderr { posix_spawn_file_actions_adddup2(&fa, o[1], 2) } else { posix_spawn_file_actions_addopen(&fa, 2, "/dev/null", O_WRONLY, 0) }
         if let cwd { posix_spawn_file_actions_addchdir_np(&fa, cwd) }
         // Svoja skupina procesov: časovna omejitev ubije tudi pomožne procese git (ti držijo izhod odprt).
         posix_spawnattr_setflags(&at, Int16(POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETPGROUP))
@@ -348,30 +350,46 @@ public enum Worktree {
     /// Git pozna GIT_ATTR_SOURCE (2.40+, Apple git v Xcode CLT je lahko starejši); starejši --attr-source zavrne.
     static let attrSource = run(["--attr-source=4b825dc642cb6eb9a060e54bf8d69288fbee4904", "version"], safe: false, hooks: false).status == 0
 
-    /// fetch iz bundla pred git 2.46 ne preveri objektov (fetch.fsckObjects prezre). Zato novi objekti refs/minigw/incoming
-    /// (brez dosegljivih iz drugih refov): pack-objects in index-pack --fsck-objects v prazen repozitorij (kot finalize),
-    /// objekti uporabnika kot alternates (drevo agenta sme kazati na obstoječ blob). Kot Go fsckIncoming.
-    static func fsckIncoming(top: String) -> Bool {
-        let refs = run(["for-each-ref", "--format=%(objectname) %(refname)"], cwd: top, safe: false, hooks: false)
-        guard refs.status == 0 else { return false }
+    /// fetch iz bundla pred git 2.46 ne preveri objektov (fetch.fsckObjects prezre). Zato novi objekti `ref`
+    /// (brez dosegljivih iz drugih refov) v fsckPack. Kot Go fsckIncoming. nil = v redu, sicer razlog.
+    static func fsckIncoming(top: String, ref: String = "refs/minigw/incoming", safe: Bool = false) -> String? {
+        let refs = run(["for-each-ref", "--format=%(objectname) %(refname)"], cwd: top, safe: safe, hooks: false)
+        guard refs.status == 0 else { return "cannot list refs" }
         let not = refs.out.split(separator: "\n").compactMap { l -> String? in
             let f = l.split(separator: " ", maxSplits: 1).map(String.init)
-            return f.count == 2 && isSHA(f[0]) && f[1] != "refs/minigw/incoming" ? f[0] + "\n" : nil
+            return f.count == 2 && isSHA(f[0]) && f[1] != ref ? f[0] + "\n" : nil
         }.joined()
+        return fsckPack(top: top, revs: "\(ref)\n--not\n\(not)", safe: safe)
+    }
+
+    /// Objekti `revs` (vhod pack-objects --revs): pack-objects in index-pack --fsck-objects v prazen repozitorij (kot
+    /// finalize), objekti repozitorija kot alternates (drevo sme kazati na obstoječ blob). Zavrne npr. drevo z ».git«.
+    /// #58: z mejo 10 min (velik repozitorij, zastal disk). nil = v redu, sicer razlog (prva vrstica gita).
+    static func fsckPack(top: String, revs: String, safe: Bool = false) -> String? {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("minigw-fsck-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: dir) }
         guard (try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])) != nil
-        else { return false }
-        let pack = run(["pack-objects", "--revs", "-q", dir.appendingPathComponent("p").path], cwd: top, safe: false, hooks: false,
-                       input: Data("refs/minigw/incoming\n--not\n\(not)".utf8)).out
+        else { return "cannot create a temporary folder" }
+        func why(_ r: (status: Int32, out: String)) -> String {
+            r.out.split(separator: "\n").first.map { Profiles.line(String($0), max: 300) } ?? "git exited with \(r.status)"
+        }
+        let p = run(["pack-objects", "--revs", "-q", dir.appendingPathComponent("p").path], cwd: top, safe: safe, hooks: false,
+                    input: Data(revs.utf8), timeout: 600, stderr: true)
+        guard p.status == 0 else { return why(p) }
+        let pack = String(p.out.split(separator: "\n").last ?? "")  // pred njim morda opozorila gita
+        guard isSHA(pack) else { return "pack-objects gave no pack" }
         let fsck = dir.appendingPathComponent("fsck.git").path
-        let o = run(["rev-parse", "--git-path", "objects"], cwd: top, safe: false, hooks: false)
-        guard o.status == 0, !o.out.isEmpty else { return false }
+        let o = run(["rev-parse", "--git-path", "objects"], cwd: top, safe: safe, hooks: false)
+        guard o.status == 0, !o.out.isEmpty else { return "cannot find the objects folder" }
         var objs = o.out
         if !objs.hasPrefix("/") { objs = top + "/" + objs }
-        guard isSHA(pack), run(["init", "-q", "--bare", fsck], cwd: dir.path).status == 0,
-              FileManager.default.createFile(atPath: fsck + "/objects/info/alternates", contents: Data((objs + "\n").utf8)) else { return false }
-        return run(["--git-dir", fsck, "index-pack", "--fsck-objects", dir.appendingPathComponent("p-\(pack).pack").path], cwd: dir.path).status == 0
+        guard run(["init", "-q", "--bare", fsck], cwd: dir.path).status == 0,
+              FileManager.default.createFile(atPath: fsck + "/objects/info/alternates", contents: Data((objs + "\n").utf8)) else {
+            return "cannot create the check repository"
+        }
+        let r = run(["--git-dir", fsck, "index-pack", "--fsck-objects", dir.appendingPathComponent("p-\(pack).pack").path], cwd: dir.path,
+                    timeout: 600, stderr: true)
+        return r.status == 0 ? nil : why(r)
     }
 
     /// Pot ugnezdenega repozitorija, ki gre v vrstico o veji (enaka v skillsih in odjemalcu Go).
@@ -393,7 +411,8 @@ public enum Worktree {
                      bundle.path, "+refs/heads/\(branch):refs/minigw/incoming"], cwd: top, safe: false, hooks: false)
         defer { run(["update-ref", "-d", "refs/minigw/incoming"], cwd: top, safe: false, hooks: false) }
         let new = run(["rev-parse", "-q", "--verify", "refs/minigw/incoming^{commit}"], cwd: top, safe: false, hooks: false).out
-        guard r.status == 0, isSHA(new), fsckIncoming(top: top) else { return "git fetch of \(branch) failed (the gateway's branch was rejected)" }
+        guard r.status == 0, isSHA(new) else { return "git fetch of \(branch) failed (the gateway's branch was rejected)" }
+        if let why = fsckIncoming(top: top) { return "the gateway's branch failed the object check (fsck): " + why }  // #58
         // Premik veje z git fetch brez sile: git sam zavrne nehitro posodobitev in vejo, izvlečeno v kateri koli delovni mapi.
         let u = run(["-c", "fetch.recurseSubmodules=false", "-c", "submodule.recurse=false", "-c", "maintenance.auto=false", "-c", "gc.auto=0",
                      "fetch", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--quiet",

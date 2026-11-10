@@ -1311,3 +1311,36 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     _ = Worktree.snapshot(top: dir.path)
     #expect(FileManager.default.fileExists(atPath: marker), "the test does not reproduce the filter")
 }
+
+/// #58: tanek bundle (evil..c2, c2 ponovno uporabi drevo z ».git«, ki ga je fetch brez fsck pustil v objektih) fetch
+/// sprejme tudi na novem gitu; fsck pri odjemalcu ga zavrne z lastnim sporočilom.
+@Test func thinBundleFailsTheObjectCheck() throws {
+    let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("thin-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let src = root.appendingPathComponent("src"), client = root.appendingPathComponent("client"), mirror = root.appendingPathComponent("m.git")
+    try FileManager.default.createDirectory(at: src, withIntermediateDirectories: true)
+    g(src, "init", "-q", "-b", "main")
+    try file(src, "a.txt", "a\n")
+    g(src, "add", "-A"); g(src, "commit", "-qm", "a")
+    g(root, "clone", "-q", "--no-local", src.path, client.path)
+    g(root, "clone", "-q", "--bare", "--no-local", src.path, mirror.path)
+    func stdin(_ text: String, _ args: String...) -> String { Worktree.run(args, cwd: src.path, safe: false, input: Data(text.utf8)).out }
+    let dg = stdin("100644 blob \(stdin("evil\n", "hash-object", "-w", "--stdin"))\tconfig\n", "mktree")
+    let top = stdin("040000 tree \(dg)\t.git\n", "mktree")
+    let evil = g(src, "commit-tree", top, "-p", "HEAD", "-m", "evil"), c2 = g(src, "commit-tree", top, "-p", evil, "-m", "c2")
+    let branch = "minigw/claude-0123abcd-0"
+    g(src, "update-ref", "refs/heads/bad", evil); g(src, "update-ref", "refs/heads/" + branch, c2); g(src, "update-ref", "refs/minigw/push", c2)
+    let bad = root.appendingPathComponent("bad.bundle"), thin = root.appendingPathComponent("thin.bundle"), push = root.appendingPathComponent("push.bundle")
+    g(src, "bundle", "create", bad.path, "refs/heads/bad")
+    g(src, "bundle", "create", thin.path, "refs/heads/" + branch, "^" + evil)
+    g(src, "bundle", "create", push.path, "refs/minigw/push", "^" + evil)
+    for dir in [client, mirror] {  // zavrnjen fetch pusti objekte, ki jih noben ref ne doseže
+        g(dir, "-c", "fetch.fsckObjects=false", "fetch", "-q", bad.path, "+refs/heads/bad:refs/scratch")
+        g(dir, "update-ref", "-d", "refs/scratch")
+    }
+
+    let why = try #require(Worktree.fetch(top: client.path, bundle: thin, branch: branch))
+    #expect(why.hasPrefix("the gateway's branch failed the object check (fsck): ") && why.contains(".git"), "\(why)")
+    #expect(g(client, "rev-parse", "-q", "--verify", "refs/heads/" + branch).isEmpty)
+}
+
