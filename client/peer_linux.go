@@ -250,6 +250,11 @@ func agentWrap(exe string, args []string, m agentMounts) (string, []string) {
 	if rt := os.Getenv("XDG_RUNTIME_DIR"); rt != "" && exists(rt) {
 		hideDirs = append(hideDirs, real(rt))
 	}
+	for _, p := range m.tmps { // #53
+		if exists(p) {
+			hideDirs = append(hideDirs, real(p))
+		}
+	}
 	for _, pat := range []string{"/tmp/dbus-*", "/tmp/ssh-*"} {
 		found, _ := filepath.Glob(pat)
 		for _, p := range found {

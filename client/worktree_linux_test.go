@@ -115,3 +115,20 @@ func TestWatchGitMovesSwapAndRevert(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 	}
 }
+
+// #53: Codex, Grok in Copilot pod bwrap ne vidijo korenov TMPDIR tekov Claude CLI (tudi znotraj pisljive mape).
+func TestBwrapHidesClaudeTempRoots(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "mgw-x")
+	os.MkdirAll(filepath.Join(root, "run"), 0o700)
+	os.WriteFile(filepath.Join(root, "run", "secret"), []byte("CLAUDETMP"), 0o600)
+	name, args := agentWrap("/bin/sh", []string{"-c", "cat " + root + "/run/secret; echo end"},
+		agentMounts{cfgDir: t.TempDir(), rw: []string{base}, tmps: []string{root}})
+	if name == "/bin/sh" {
+		t.Skip("no usable bwrap (Linux with user namespaces)")
+	}
+	out, err := exec.Command(name, args...).CombinedOutput()
+	if strings.Contains(string(out), "CLAUDETMP") || !strings.Contains(string(out), "end") {
+		t.Fatalf("Claude temp root visible under bwrap: %q (%v)", out, err)
+	}
+}
