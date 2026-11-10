@@ -344,3 +344,30 @@ func TestPluginUninstallReportsEntriesRemovedByMarketplace(t *testing.T) {
 		t.Fatalf("output:\n%s", out)
 	}
 }
+
+// #51: minigw-tui se zažene le iz varne mape in ni zapisljiv za druge.
+func TestSettingsTUIPathRefusesUnsafe(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("ACL")
+	}
+	dir := filepath.Join(t.TempDir(), "bin")
+	os.MkdirAll(dir, 0o755)
+	self, tui := filepath.Join(dir, "minigw"), filepath.Join(dir, "minigw-tui")
+	if _, err := settingsTUIPath("linux", self); err == nil || !strings.Contains(err.Error(), "not installed") {
+		t.Fatalf("missing tui: %v", err)
+	}
+	os.WriteFile(tui, []byte("x"), 0o755)
+	if p, err := settingsTUIPath("linux", self); err != nil || p != tui {
+		t.Fatalf("safe tui: %q %v", p, err)
+	}
+	os.Chmod(tui, 0o757)
+	if _, err := settingsTUIPath("linux", self); err == nil {
+		t.Fatal("world-writable minigw-tui started")
+	}
+	os.Chmod(tui, 0o755)
+	os.Chmod(dir, 0o777)
+	defer os.Chmod(dir, 0o755)
+	if _, err := settingsTUIPath("linux", self); err == nil {
+		t.Fatal("minigw-tui in a world-writable folder started")
+	}
+}
