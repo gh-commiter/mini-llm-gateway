@@ -164,10 +164,11 @@ private func send(_ url: String, _ method: String, _ path: String, secret: Strin
     }
 }
 
-/// minigw gw: odklep zaklenjenega prijavnega keychaina le v terminalu (SSH ali zaklenjen); brez pravega keychaina.
+/// minigw gw: odklep prijavnega keychaina le v terminalu in le, ko je zaklenjen (tudi v SSH, #62); brez pravega keychaina.
 @Test func keychainUnlockOffer() {
     for st in [errSecInteractionNotAllowed, errSecAuthFailed] {
-        #expect(Keychain.offerUnlock(status: st, terminal: true, ssh: true, locked: false))
+        #expect(!Keychain.offerUnlock(status: st, terminal: true, ssh: true, locked: false))  // odklenjen: le namig
+        #expect(Keychain.offerUnlock(status: st, terminal: true, ssh: true, locked: true))
         #expect(Keychain.offerUnlock(status: st, terminal: true, ssh: false, locked: true))
         #expect(!Keychain.offerUnlock(status: st, terminal: false, ssh: true, locked: true))  // skripta: le sporočilo
         #expect(!Keychain.offerUnlock(status: st, terminal: true, ssh: false, locked: false))

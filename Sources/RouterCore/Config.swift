@@ -322,10 +322,11 @@ public struct Keychain: SecretStore {
         return SecKeychainOpen(path, &kc) == errSecSuccess ? kc : nil
     }
 
-    /// Ali minigw gw v terminalu ponudi odklep prijavnega keychaina: branje vnosa je zavrnil zaklenjen keychain, stdin in
-    /// stderr sta terminal, seja je SSH ali keychain poroča, da je zaklenjen. Sicer (skripta, veščina) le sporočilo.
+    /// Ali minigw gw v terminalu ponudi odklep prijavnega keychaina: branje vnosa je zavrnil keychain, stdin in stderr
+    /// sta terminal in keychain poroča, da je zaklenjen (tudi v SSH). SecKeychainUnlock na odklenjenem keychainu sprejme
+    /// vsako geslo, zato brez zaklepa ni vprašanja (#62); ssh ostane le za besedilo. Sicer (skripta, veščina) le sporočilo.
     public static func offerUnlock(status: OSStatus, terminal: Bool, ssh: Bool, locked: Bool) -> Bool {
-        (status == errSecInteractionNotAllowed || status == errSecAuthFailed) && terminal && (ssh || locked)
+        (status == errSecInteractionNotAllowed || status == errSecAuthFailed) && terminal && locked
     }
 
     /// nil = vnos je le v prijavnem keychainu, a tega ni (brez zamenjave z drugim keychainom).

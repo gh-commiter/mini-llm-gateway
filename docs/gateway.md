@@ -127,10 +127,12 @@ line with the token appears only after **Show the connect line**.
 
 **Remote administration over SSH (Mac):** there is no remote admin API; `ssh` to the gateway Mac as the user who runs
 Mini Gateway and run `minigw gw …` (or `minigw gw settings`) there. The login keychain is often locked in an SSH
-session, so `minigw` cannot read the gateway's admin key. In a terminal it then asks once: "The login keychain is
-locked in this SSH session. Mac password for <user> (to unlock it): ". The password is read without echo, never from
-the command line, never logged, and goes only to macOS (`SecKeychainUnlock`); `minigw` never runs the `security`
-command. A wrong password ends with "wrong password: the keychain stays locked". The keychain then stays unlocked for
+session, so `minigw` cannot read the gateway's admin key. When macOS reports the login keychain as locked, `minigw` in
+a terminal then asks once: "The login keychain is locked in this SSH session. Mac password for <user> (to unlock
+it): ". The password is read without echo, never from the command line, never logged, and goes only to macOS
+(`SecKeychainUnlock`); `minigw` never runs the `security` command. A wrong password ends with "wrong password: the
+keychain stays locked". When macOS reports the keychain as unlocked, `minigw` does not ask (macOS would accept any
+password then) and shows the message below. The keychain then stays unlocked for
 that SSH session as macOS keeps it (its lock-after-inactivity setting still applies). Without a terminal (scripts,
 Claude Code skills) `minigw` does not ask: it says the keychain is locked; run
 `security unlock-keychain ~/Library/Keychains/login.keychain-db` in the SSH session first, then retry.
