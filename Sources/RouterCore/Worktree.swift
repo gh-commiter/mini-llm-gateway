@@ -464,8 +464,7 @@ public enum Worktree {
         let pairs = [("core.fsmonitor", "false"), ("core.hooksPath", "/dev/null"), ("core.attributesFile", "/dev/null"),
                      ("diff.ignoreSubmodules", "all"), ("submodule.recurse", "false"), ("core.excludesFile", "/dev/null"),
                      ("user.name", author(agent)), ("user.email", agent + "@minigw.invalid"),
-                     ("safe.bareRepository", "explicit"),  // #61: golega repozitorija ne najde sam (le z GIT_DIR/--git-dir)
-                     ("init.templateDir", "")]  // git init/clone agenta ne kopira predlog (vzorčni hooki: .git/hooks je denyWrite)
+                     ("safe.bareRepository", "explicit")]  // #61: golega repozitorija ne najde sam (le z GIT_DIR/--git-dir)
         let git = root.appendingPathComponent(".git").path
         var env = ["GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",
                    "GIT_CONFIG_COUNT": String(pairs.count), "GIT_ATTR_SOURCE": "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
