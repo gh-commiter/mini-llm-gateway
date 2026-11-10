@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased
+## 0.5.23
 
 - Security (#68): `PATCH /general` and `POST /general/token` on `minigw serve` no longer return the connect line with the gateway token; only `GET /general` has it (`minigw gw token rotate` and the settings page read it from there).
 - Changed (#68): when the Windows sandbox is on and the Scratch folder is inside your home folder (`%LOCALAPPDATA%\minigw\scratch`, the default of existing installs), the gateway log, Settings → General → About and `minigw gw settings` warn that agents in the sandbox can list the names in your home folder (not read the files): git in the box needs every folder above its working folder to be listable. Move Scratch outside your home with the settings page's Scratch **Move…** button or `minigw gw scratch move`.
