@@ -169,7 +169,14 @@ func writeFileAtomic(path string, data []byte) error {
 	if err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), path)
+	if err := os.Rename(f.Name(), path); err != nil {
+		return err
+	}
+	if d, err := os.Open(filepath.Dir(path)); err == nil { // L5: preimenovanje trajno (po najboljših močeh)
+		d.Sync()
+		d.Close()
+	}
+	return nil
 }
 
 // connectLine: vrstica za odjemalce (žeton#javni ključ routerja).
