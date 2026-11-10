@@ -1366,13 +1366,28 @@ func (s *server) tempRoot() string {
 	s.tmpMu.Lock()
 	defer s.tmpMu.Unlock()
 	if s.tmpRoot == "" || !ownTempRoot(s.tmpRoot) {
-		s.tmpRoot = shortTempRoot()
+		if s.tmpRoot = shortTempRoot(); s.tmpRoot != "" {
+			s.tmpRoots = append(s.tmpRoots, s.tmpRoot)
+		}
 	}
 	if s.tmpRoot != "" {
 		now := time.Now()
 		os.Chtimes(s.tmpRoot, now, now)
 	}
 	return s.tmpRoot
+}
+
+// tempRoots (#56): obstoječi koreni tega procesa; starejši imajo lahko še TMPDIR živih tekov.
+func (s *server) tempRoots() []string {
+	s.tmpMu.Lock()
+	defer s.tmpMu.Unlock()
+	var out []string
+	for _, r := range s.tmpRoots {
+		if _, err := os.Lstat(r); err == nil {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // staleTempRoot: koren, ki ga ob zagonu pobrišemo (prehod istega uporabnika ga ni rabil dan; živ prehod si ga naredi znova).

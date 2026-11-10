@@ -420,6 +420,7 @@ type server struct {
 	procs         chan struct{} // največ hkratnih procesov claude
 	tmpMu         sync.Mutex
 	tmpRoot       string        // tempRoot: koren kratkih map TMPDIR tekov Claude CLI v worktree
+	tmpRoots      []string      // #56: vsi koreni, ki jih je ta proces naredil (denyRead in skriti pod bwrap)
 	gwSlots       chan struct{} // največ hkratnih zahtev k prehodom
 	gateways      gwCatalog
 	limits        sync.Map // limitKey → limitHit: omejitev agenta za ponovitev brez pretoka (noteLimit)

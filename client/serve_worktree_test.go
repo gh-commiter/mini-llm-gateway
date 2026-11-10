@@ -1259,3 +1259,25 @@ func TestCleanStaleTempRoots(t *testing.T) {
 		}
 	}
 }
+
+// #56: denyRead teka Claude ima vse korene, ki jih je proces naredil (ne le zadnjega).
+func TestAgentArgsDenyAllTempRoots(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no sandbox settings")
+	}
+	s, _ := testServer(t, nil)
+	r1 := s.tempRoot()
+	defer os.RemoveAll(r1)
+	os.Chmod(r1, 0o755) // npr. agent spremeni dovoljenja: nov koren, stari ostane
+	r2 := s.tempRoot()
+	defer os.RemoveAll(r2)
+	if r1 == r2 {
+		t.Fatal("root not replaced")
+	}
+	args := strings.Join(s.agentArgs(t.TempDir(), false, r2), " ")
+	for _, r := range []string{r1, r2} {
+		if !strings.Contains(args, strconv.Quote(r)) {
+			t.Fatalf("%s not in denyRead: %s", r, args)
+		}
+	}
+}
