@@ -1264,9 +1264,10 @@ func TestCleanStaleTempRoots(t *testing.T) {
 // zavrnjenega), ena vrstica pove, kateri in zakaj, klon z delom po koncu seje ostane (kept).
 func TestWorktreeNestedSkippedTopDelivered(t *testing.T) {
 	for _, c := range []struct{ name, agent, why string }{
-		{"moved", `rm -rf lib/.git`, "the nested repository lib was moved or replaced in the agent's clone"},
-		{"big", `head -c 70000000 /dev/urandom > lib/big.bin`, "the agent's branch in the nested repository lib is larger than 64 MB"},
-		{"unconfined", `:`, "the nested repository lib does not come back on this gateway"},
+		// Linux s pin: .git je točka priklopa (ostane prazna mapa), zato »could not save« namesto »moved«.
+		{"moved", `rm -rf lib/.git`, `(?:the nested repository lib was moved or replaced in the agent's clone|the gateway could not save the agent's work in the nested repository lib as a branch)`},
+		{"big", `head -c 70000000 /dev/urandom > lib/big.bin`, `the agent's branch in the nested repository lib is larger than 64 MB`},
+		{"unconfined", `:`, `the nested repository lib does not come back on this gateway`},
 	} {
 		t.Run(c.name, func(t *testing.T) { testNestedSkipped(t, c.agent, c.why, c.name == "unconfined") })
 	}
@@ -1350,7 +1351,7 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
 	libTip := gitT(t, filepath.Join(client, "lib"), "rev-parse", branch)
 	topTip := gitT(t, client, "rev-parse", branch)
 	out := run(false) // moved: nadzor teka agenta ustavi (zamenjan .git), delo vrhnjega vseeno pride
-	line := regexp.MustCompile(`(?m)^minigw: gateway: worktree: ` + regexp.QuoteMeta(why) + `.*; the agent's clone with this work stays on the gateway for 30 days \((\S+-kept-\d{8}-\d{6}) after this session\)$`).FindStringSubmatch(out)
+	line := regexp.MustCompile(`(?m)^minigw: gateway: worktree: ` + why + `.*; the agent's clone with this work stays on the gateway for 30 days \((\S+-kept-\d{8}-\d{6}) after this session\)$`).FindStringSubmatch(out)
 	if line == nil {
 		t.Fatalf("no skip line:\n%s", out)
 	}
