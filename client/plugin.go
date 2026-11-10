@@ -20,10 +20,11 @@ import (
 )
 
 const (
-	pluginID         = "minigw@mini-gateway"
-	pluginMarket     = "mini-gateway"
-	pluginMarketJSON = `{"source":{"source":"github","repo":"gh-commiter/mini-llm-gateway"},"autoUpdate":true}`
-	// #63: vnos do 0.5.21 (brez autoUpdate: Claude Code tretjih marketplace sam ne posodablja)
+	pluginID     = "minigw@mini-gateway"
+	pluginMarket = "mini-gateway"
+	// #63: veja release (premika jo le skripta za izdajo) in autoUpdate: Claude Code tretjih marketplace sam ne posodablja
+	pluginMarketJSON = `{"source":{"source":"github","repo":"gh-commiter/mini-llm-gateway","ref":"release"},"autoUpdate":true}`
+	// vnos do 0.5.21 (brez ref in autoUpdate)
 	pluginMarketOldJSON = `{"source":{"source":"github","repo":"gh-commiter/mini-llm-gateway"}}`
 )
 
@@ -279,9 +280,9 @@ func pluginInstall(goos string) bool {
 		fmt.Fprintln(os.Stderr, "minigw: "+err.Error())
 		ok = false
 	case ch:
-		say("Claude Code plugin " + pluginID + ": added to " + path + map[bool]string{true: offNote, false: "; Claude Code installs it the next time claude starts (or /reload-plugins)"}[off])
+		say("Claude Code plugin " + pluginID + ": added to " + path + map[bool]string{true: offNote, false: "; Claude Code installs it the next time claude starts (or /reload-plugins) and updates it automatically from the release branch (autoUpdate)"}[off])
 	case up:
-		say("Claude Code plugin " + pluginID + ": already in " + path + "; marketplace " + pluginMarket + " now updates automatically (autoUpdate)" + map[bool]string{true: offNote}[off])
+		say("Claude Code plugin " + pluginID + ": already in " + path + "; marketplace " + pluginMarket + " now updates automatically from the release branch (autoUpdate)" + map[bool]string{true: offNote}[off])
 	default:
 		say("Claude Code plugin " + pluginID + ": already in " + path + map[bool]string{true: offNote}[off])
 	}

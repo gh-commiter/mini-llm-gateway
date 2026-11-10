@@ -37,7 +37,7 @@ cask "mini-gateway" do
   caveats <<~EOS
     The minigw command: Mini Gateway → Settings… → Claude CLI → Install (or brew install --cask
     gh-commiter/mini-gateway/minigw, which also adds the Claude Code plugin).
-    The plugin by hand, in Claude Code: /plugin marketplace add gh-commiter/mini-llm-gateway, then
+    The plugin by hand, in Claude Code: /plugin marketplace add gh-commiter/mini-llm-gateway#release, then
     /plugin install minigw@mini-gateway, and turn on auto-update for mini-gateway under /plugin → Marketplaces
   EOS
 end

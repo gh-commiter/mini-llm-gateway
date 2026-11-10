@@ -20,10 +20,11 @@ cask "minigw" do
   binary "minigw-tui"
 
   # Vtičnik za Claude Code: minigw plugin install (client/plugin.go, Sources/MiniGW/PluginCommand.swift) doda
-  # marketplace (z autoUpdate, #63) in enabledPlugins v ~/.claude/settings.json (uporabnikov »false« ostane,
-  # neveljaven JSON ostane) in poveže bin/minigw vtičnika na ta minigw takoj, ne šele ob naslednji seji. Izpiše, kar je res
-  # naredil (added / already in). #64: postflight_steps (nadomestek) teče v peskovniku Homebrew brez ~/.claude
-  # (HOME je začasna mapa, ~/.claude izrecno zaprt) in brez omrežja, zato ostane postflight.
+  # marketplace (veja release, autoUpdate, #63) in enabledPlugins v ~/.claude/settings.json (uporabnikov »false«
+  # ostane, neveljaven JSON ostane) in poveže bin/minigw vtičnika na ta minigw takoj, ne šele ob naslednji seji.
+  # Izpiše, kar je res naredil (added / already in). #64: postflight_steps (nadomestek) v peskovniku Homebrew ne doseže
+  # ~/.claude: HOME je začasna mapa (sandbox.rb, run: "HOME" => tmpdir), ~/.claude in ~/.claude.json pa sta na seznamu
+  # zaprtih poti (deny_read_home); omrežje bi lahko zahtevali (network_access). Zato ostane postflight.
   postflight do
     system_command "#{HOMEBREW_PREFIX}/bin/minigw", args: ["plugin", "install"], must_succeed: false, print_stdout: true
   end
@@ -31,7 +32,8 @@ cask "minigw" do
   # Pred odstranitvijo (minigw je še tu): minigw plugin uninstall odstrani le, kar je dodal plugin install. Ob brew
   # upgrade/reinstall (nato postflight) nič: vnosi, marketplace in povezava ostanejo (vtičnik ne izgine med tekočo
   # sejo), postflight pa pravilno izpiše »already in« (#64; prej je --upgrading vnose odstranil in postflight je
-  # izpisal »added«).
+  # izpisal »added«). uninstall_preflight_steps ne gre: sprejme le dobesedne argumente, nadgradnjo pa loči le
+  # Homebrew.running_command.
   uninstall_preflight do
     upgrading = defined?(Homebrew.running_command) && %w[install upgrade reinstall].include?(Homebrew.running_command)
     minigw = "#{HOMEBREW_PREFIX}/bin/minigw"
@@ -51,9 +53,10 @@ cask "minigw" do
 
   caveats <<~EOS
     minigw plugin install (run above) adds the Claude Code plugin (minigw@mini-gateway) to ~/.claude/settings.json
-    unless it is already there, with auto-update on for its marketplace; Claude Code installs it the next time you start
-    claude (or run /reload-plugins). To skip it, set "minigw@mini-gateway": false under enabledPlugins there (it stays,
-    also on upgrade). brew uninstall removes the plugin again; brew upgrade keeps it.
+    unless it is already there; Claude Code installs it the next time you start claude (or run /reload-plugins) and
+    updates it automatically from the release branch. To skip the plugin, set "minigw@mini-gateway": false under
+    enabledPlugins there; to turn off auto-update, set "autoUpdate": false under extraKnownMarketplaces → mini-gateway
+    (both stay, also on upgrade). brew uninstall removes the plugin again; brew upgrade keeps it.
     brew uninstall --zap --cask minigw runs minigw uninstall --purge --yes without asking and removes: the plugin
     entries and the mini-gateway marketplace, ~/.claude/plugins/data/minigw-mini-gateway, the scratch folder
     ~/Library/Caches/minigw, the minigw profiles and device key in the Keychain, ~/Library/Application Support/minigw

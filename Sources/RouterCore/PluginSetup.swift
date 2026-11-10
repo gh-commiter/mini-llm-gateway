@@ -6,8 +6,9 @@ import Foundation
 public enum PluginSetup {
     public static let id = "minigw@mini-gateway"
     public static let market = "mini-gateway"
-    public static let marketplace: [String: Any] = ["source": ["source": "github", "repo": "gh-commiter/mini-llm-gateway"], "autoUpdate": true]
-    /// #63: vnos do 0.5.21 (brez autoUpdate: Claude Code tretjih marketplace sam ne posodablja).
+    /// #63: veja release (premika jo le skripta za izdajo) in autoUpdate: Claude Code tretjih marketplace sam ne posodablja.
+    public static let marketplace: [String: Any] = ["source": ["source": "github", "repo": "gh-commiter/mini-llm-gateway", "ref": "release"], "autoUpdate": true]
+    /// Vnos do 0.5.21 (brez ref in autoUpdate).
     public static let oldMarketplace: [String: Any] = ["source": ["source": "github", "repo": "gh-commiter/mini-llm-gateway"]]
 
     public struct Failure: Error {
@@ -75,13 +76,19 @@ public enum PluginSetup {
         return (changed, updated && !changed, !isTrue(e[id]))
     }
 
+    /// Naš vnos (nov ali do 0.5.21). autoUpdate le JSON true: NSDictionary.isEqual bi sprejel tudi 1 (kot Go DeepEqual).
+    static func ours(_ v: Any?) -> Bool {
+        guard let d = v as? NSDictionary else { return false }
+        return d.isEqual(to: oldMarketplace) || d.isEqual(to: marketplace) && isTrue(d["autoUpdate"])
+    }
+
     public static func remove(_ s: inout [String: Any]) -> (changed: Bool, off: Bool) {
         var changed = false, off = false
         if var e = s["enabledPlugins"] as? [String: Any] {
             if isTrue(e[id]) { e[id] = nil; s["enabledPlugins"] = e; changed = true }
             off = e[id] != nil
         }
-        if var m = s["extraKnownMarketplaces"] as? [String: Any], let v = m[market] as? NSDictionary, v.isEqual(to: marketplace) || v.isEqual(to: oldMarketplace) {
+        if var m = s["extraKnownMarketplaces"] as? [String: Any], ours(m[market]) {
             m[market] = nil
             s["extraKnownMarketplaces"] = m
             changed = true

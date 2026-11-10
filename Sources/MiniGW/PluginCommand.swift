@@ -101,9 +101,9 @@ func pluginInstall() -> Bool {
     var ok = true, changed = false, updated = false, off = false
     do {
         try PluginSetup.edit(claudeSettings) { s in (changed, updated, off) = try PluginSetup.add(&s); return changed || updated }
-        say("Claude Code plugin \(PluginSetup.id): " + (changed ? "added to \(claudeSettings)" + (off ? offNote : "; Claude Code installs it the next time claude starts (or /reload-plugins)")
+        say("Claude Code plugin \(PluginSetup.id): " + (changed ? "added to \(claudeSettings)" + (off ? offNote : "; Claude Code installs it the next time claude starts (or /reload-plugins) and updates it automatically from the release branch (autoUpdate)")
                                                        : "already in \(claudeSettings)"
-                                                           + (updated ? "; marketplace \(PluginSetup.market) now updates automatically (autoUpdate)" : "") + (off ? offNote : "")))
+                                                           + (updated ? "; marketplace \(PluginSetup.market) now updates automatically from the release branch (autoUpdate)" : "") + (off ? offNote : "")))
     } catch {
         warn((error as? PluginSetup.Failure)?.message ?? error.localizedDescription)
         ok = false

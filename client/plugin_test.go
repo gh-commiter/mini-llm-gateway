@@ -435,7 +435,7 @@ func TestSafePathForeignSticky(t *testing.T) {
 // #63: autoUpdate na našem vnosu; stari vnos (do 0.5.21) nadgradimo, uporabnikovega ne; oba sta naša za odstranitev.
 func TestPluginMarketplaceAutoUpdate(t *testing.T) {
 	const old = `{"source":{"source":"github","repo":"gh-commiter/mini-llm-gateway"}}`
-	const own = `{"source":{"source":"github","repo":"gh-commiter/mini-llm-gateway"},"autoUpdate":false}`
+	const own = `{"source":{"source":"github","repo":"gh-commiter/mini-llm-gateway","ref":"release"},"autoUpdate":false}`
 	settings := func(market string) map[string]any {
 		j := `{"enabledPlugins":{"minigw@mini-gateway":true}}`
 		if market != "" {
@@ -446,7 +446,8 @@ func TestPluginMarketplaceAutoUpdate(t *testing.T) {
 	market := func(s map[string]any) any { return s["extraKnownMarketplaces"].(map[string]any)["mini-gateway"] }
 
 	s := map[string]any{} // nova
-	if a, u, off, err := pluginAdd(s); !a || u || off || err != nil || market(s).(map[string]any)["autoUpdate"] != true {
+	if a, u, off, err := pluginAdd(s); !a || u || off || err != nil || market(s).(map[string]any)["autoUpdate"] != true ||
+		market(s).(map[string]any)["source"].(map[string]any)["ref"] != "release" {
 		t.Fatalf("fresh: %v %v %v %v %v", a, u, off, err, s)
 	}
 	s = settings(old) // nadgradnja starega

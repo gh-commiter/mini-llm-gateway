@@ -158,7 +158,7 @@ user only, without admin rights, into `%LocalAppData%\Programs\Mini Gateway`. It
 |---|---|---|
 | Client (`Client`) | `minigw.exe` on your PATH, and `minigw-tray.exe` (the installer runs minigw through it, without a console window) | always |
 | Gateway (`Gateway`) | the tray at sign-in, a Start menu entry, `minigw-tui.exe` (`minigw gw settings`); it starts the tray, which creates the config on first start: copy the token from its menu (**Copy Token**) | on |
-| Claude Code plugin (`Plugin`) | runs `minigw plugin install`, which adds `minigw@mini-gateway` and points the plugin at this `minigw.exe` | on |
+| Claude Code plugin (`Plugin`) | runs `minigw plugin install`, which adds `minigw@mini-gateway` (updated automatically from the `release` branch: `autoUpdate`) and points the plugin at this `minigw.exe` | on |
 
 - Without the window: `msiexec /i minigw-windows-amd64.msi /passive` installs all parts; choose them with
   `ADDLOCAL=Client,Plugin` (any list; `Client` is always added).
@@ -212,10 +212,11 @@ minigw uninstall          # list, then remove what minigw added here: plugin, si
 minigw uninstall --purge  # also profiles (Keychain, Credential Manager) and the settings folder
 ```
 
-`minigw plugin install` adds the `mini-gateway` marketplace with `"autoUpdate": true`, so Claude Code updates the
-plugin in the background after it starts (third-party marketplaces do not auto-update otherwise). An entry that an
-older minigw added (without `autoUpdate`) is updated; an entry you changed, for example `"autoUpdate": false` or
-another `source`, stays as it is. `minigw plugin uninstall` removes both forms.
+`minigw plugin install` adds the `mini-gateway` marketplace from the `release` branch (`"ref": "release"`, moved only
+by a release) with `"autoUpdate": true`, so Claude Code updates the plugin in the background after it starts
+(third-party marketplaces do not auto-update otherwise). To turn that off, set `"autoUpdate": false` under `extraKnownMarketplaces` → `mini-gateway` in `~/.claude/settings.json`; minigw leaves an entry you
+changed as it is. An entry that minigw 0.5.21 or older added (no `ref`, no `autoUpdate`) is updated; any other entry,
+for example your own `"autoUpdate": false` or another `source`, stays. `minigw plugin uninstall` removes both forms.
 `minigw plugin install` refuses a `settings.json` that is not valid JSON and never overwrites it. It does not link a
 minigw that is, or lies in a folder that is, not owned by you or root, writable by all users, or writable by a group
 you do not trust; move it to a safe folder first. Trusted group: on macOS only the `admin` group

@@ -39,7 +39,7 @@ import Testing
 /// #63: autoUpdate na našem vnosu; stari vnos (do 0.5.21) nadgradimo, uporabnikovega ne; oba sta naša za odstranitev
 /// (kot Go TestPluginMarketplaceAutoUpdate).
 @Test func pluginMarketplaceAutoUpdate() throws {
-    let own: [String: Any] = ["source": ["source": "github", "repo": "gh-commiter/mini-llm-gateway"], "autoUpdate": false]
+    let own: [String: Any] = ["source": ["source": "github", "repo": "gh-commiter/mini-llm-gateway", "ref": "release"], "autoUpdate": false]
     func settings(_ m: [String: Any]?) -> [String: Any] {
         var s: [String: Any] = ["enabledPlugins": [PluginSetup.id: true]]
         if let m { s["extraKnownMarketplaces"] = [PluginSetup.market: m] }
@@ -49,7 +49,8 @@ import Testing
 
     var s: [String: Any] = [:]  // nova
     var r = try PluginSetup.add(&s)
-    #expect(r == (true, false, false) && market(s)?["autoUpdate"] as? Bool == true)
+    #expect(r == (true, false, false) && PluginSetup.isTrue(market(s)?["autoUpdate"])
+            && (market(s)?["source"] as? [String: Any])?["ref"] as? String == "release")
     s = settings(PluginSetup.oldMarketplace)  // nadgradnja starega
     r = try PluginSetup.add(&s)
     #expect(r == (false, true, false) && market(s)?.isEqual(to: PluginSetup.marketplace) == true)
@@ -59,6 +60,8 @@ import Testing
     r = try PluginSetup.add(&s)
     #expect(r == (false, false, false) && market(s)?.isEqual(to: own) == true)
     #expect(PluginSetup.remove(&s).changed && market(s) != nil)
+    var one = PluginSetup.marketplace; one["autoUpdate"] = 1  // 1 ni true (kot Go)
+    #expect(!PluginSetup.ours(one) && PluginSetup.ours(PluginSetup.marketplace) && PluginSetup.ours(PluginSetup.oldMarketplace))
     for m in [PluginSetup.oldMarketplace, PluginSetup.marketplace] {  // odstranitev obeh naših
         s = settings(m)
         #expect(PluginSetup.remove(&s).changed && market(s) == nil && (s["enabledPlugins"] as? [String: Any])?.isEmpty == true)

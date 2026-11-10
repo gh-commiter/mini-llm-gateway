@@ -60,13 +60,14 @@ it, the gateway computer included. The Claude Code plugin installs both.
 2. In Claude Code (2.1.275 or later), add this repository as a plugin marketplace and install the plugin:
 
    ```
-   /plugin marketplace add gh-commiter/mini-llm-gateway
+   /plugin marketplace add gh-commiter/mini-llm-gateway#release
    /plugin install minigw@mini-gateway
    ```
 
-   Then turn on **Enable auto-update** for `mini-gateway` under `/plugin` → **Marketplaces**, so new plugin versions
-   arrive by themselves (`minigw plugin install` and the installers set it for you). To update by hand:
-   `claude plugin marketplace update mini-gateway`, then `claude plugin update minigw@mini-gateway`.
+   `#release` is the branch that only releases move. Then turn on **Enable auto-update** for `mini-gateway` under
+   `/plugin` → **Marketplaces**, so new plugin versions arrive by themselves. `minigw plugin install` and the
+   installers set both for you; to turn auto-update off there, set `"autoUpdate": false` under `extraKnownMarketplaces` → `mini-gateway` in `~/.claude/settings.json`.
+   To update by hand: `claude plugin marketplace update mini-gateway`, then `claude plugin update minigw@mini-gateway`.
 
 3. On the gateway computer:
 
