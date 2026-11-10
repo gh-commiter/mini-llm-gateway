@@ -88,7 +88,7 @@ The `minigw` cask also runs `minigw plugin install`: it adds the Claude Code plu
 (`extraKnownMarketplaces`, `enabledPlugins`) unless it is already there, and says which ("added to" or "already
 in"). Claude Code installs it the next time you start `claude` (or run `/reload-plugins`). A
 `"minigw@mini-gateway": false` you set there stays, also on upgrade. `brew uninstall` removes the plugin and its
-marketplace again; `brew upgrade` keeps them.
+marketplace again (a `mini-gateway` entry of your own stays); `brew upgrade` keeps them.
 
 ## Client on Windows and Linux
 

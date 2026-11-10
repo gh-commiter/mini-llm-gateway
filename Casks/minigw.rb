@@ -56,7 +56,7 @@ cask "minigw" do
     unless it is already there; Claude Code installs it the next time you start claude (or run /reload-plugins) and
     updates it automatically from the release branch. To skip the plugin, set "minigw@mini-gateway": false under
     enabledPlugins there; to turn off auto-update, set "autoUpdate": false under extraKnownMarketplaces → mini-gateway
-    (both stay, also on upgrade). brew uninstall removes the plugin again; brew upgrade keeps it.
+    (both stay, also on upgrade). brew uninstall removes the plugin again (your own mini-gateway entry stays); brew upgrade keeps it.
     brew uninstall --zap --cask minigw runs minigw uninstall --purge --yes without asking and removes: the plugin
     entries and the mini-gateway marketplace, ~/.claude/plugins/data/minigw-mini-gateway, the scratch folder
     ~/Library/Caches/minigw, the minigw profiles and device key in the Keychain, ~/Library/Application Support/minigw

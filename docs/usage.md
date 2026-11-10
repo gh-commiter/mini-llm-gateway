@@ -168,6 +168,10 @@ commits.
 `minigw --minigw-work=worktree …` is the default for the root of a git repository. The agent works in its own clone
 on the gateway; you get its work as a branch and decide what to keep.
 
+An agent cannot create its own git repositories inside the clone (`git init`, `git clone`, CMake FetchContent with git
+sources): build those dependencies in sync mode, or fetch them before the run (a shared dependencies folder comes in
+0.5.23).
+
 **1. Start.** minigw sends the repository to a mirror on the gateway (git bundles over the encrypted connection,
 only missing objects). The agent starts from your exact state: `HEAD` plus your uncommitted changes and your
 untracked files that are not ignored. **Those files are sent to the gateway too.** minigw saves them as a commit
