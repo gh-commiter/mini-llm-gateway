@@ -2317,30 +2317,43 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
     }
 }
 
-/// #73: drevo agenta ni ustavljeno (abandon): klon worktree gre ob koncu teka ven; naslednji tek dobi nov klon (kot po H2)
-/// brez tega, kar je pisal opuščeni.
-@Test func worktreeAbandonedRunDropsClone() async throws {
+/// #73: drevo opuščenega teka še živi: nov tek seje dobi 503; ko je ustavljeno, naslednji tek dela v istem klonu z delom
+/// prejšnjih tekov, brez neshranjenega in zavez opuščenega.
+@Test func worktreeAbandonedRunBlocksUntilStoppedThenResets() async throws {
     let (root, client, tree) = try fixture()
     defer { cleanup(root) }
     let hub = ShareHub(), session = UUID().uuidString
     let key = try #require(await hub.register(session: session, cwd: client.path, key: nil, device: "dev", tree: tree))
     let loop = fakeClient(hub, key: key, top: client)
     defer { loop.cancel() }
+    let stopped = OSAllocatedUnfairLock(initialState: false)
+    ShareHub.stopTree = { _, _ in stopped.withLock { $0 } }
+    ShareHub.stopRetry = .milliseconds(50)
+    defer { ShareHub.stopTree = { g, d in g.map { Native.killTree($0, pipes: []) }.allSatisfy { $0 } && Native.killTree(0, pipes: [], dirs: d) }; ShareHub.stopRetry = .seconds(5) }
     await hub.finish(run: try await agentRun(hub, session) { try file($0, "first.txt", "1\n") })
-    let short = String(Sync.folderID(session).prefix(8))
-    #expect(g(client, "show", "minigw/claude-\(short)-0:first.txt") == "1")
-    var abandoned: URL?
     let id = UUID().uuidString
+    var clone: URL?
     await ShareHub.$run.withValue(id) {
         await ShareHub.$agent.withValue("claude") {
-            abandoned = await hub.mount(session: session, cwd: nil, base: "http://127.0.0.1:1", device: "dev")
-            try? file(abandoned!, "tainted.txt", "x\n")
+            clone = await hub.mount(session: session, cwd: nil, base: "http://127.0.0.1:1", device: "dev")
+            try? file(clone!, "tainted.txt", "x\n")
+            try? file(clone!, "committed.txt", "x\n"); g(clone!, "add", "committed.txt"); g(clone!, "commit", "-qm", "failed run")
             await hub.abandon()
         }
     }
     await hub.finish(run: id)
-    #expect(!FileManager.default.fileExists(atPath: abandoned!.appendingPathComponent("tainted.txt").path))
+    let refused = await ShareHub.$run.withValue("r-blocked") {
+        await ShareHub.$agent.withValue("claude") { () -> (URL?, Int?) in
+            (await hub.mount(session: session, cwd: nil, base: "http://127.0.0.1:1", device: "dev"), await hub.takeRefusal()?.status)
+        }
+    }
+    #expect(refused.0 == nil && refused.1 == 503)
+    stopped.withLock { $0 = true }
+    try await Task.sleep(for: .milliseconds(300))
     _ = try await agentRun(hub, session) { dir in
-        #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("tainted.txt").path))  // nov klon
+        #expect(dir == clone)
+        #expect(FileManager.default.fileExists(atPath: dir.appendingPathComponent("first.txt").path))
+        #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("tainted.txt").path))
+        #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("committed.txt").path))
     }
 }

@@ -1213,6 +1213,10 @@ extension ShareHub {
         // L3: pri native ime veje iz naprave in seje (repozitorij si delijo naprave; seja je od odjemalca)
         let agent = Self.agent ?? "agent", short = String(Sync.folderID((tree.local == nil ? "" : (s.device ?? "") + "|") + s.session).prefix(8))
         await acquire(tree.repo)
+        if slots.contains(where: { $0.key.hasPrefix("\(s.session)|\(agent)|") && $0.value.blocked }) {  // #73
+            refusals[id] = (503, Self.stillStopping); unlock(tree.repo)
+            return nil
+        }
         var n = 0
         while slots["\(s.session)|\(agent)|\(n)"]?.busy == true { n += 1 }
         let k = "\(s.session)|\(agent)|\(n)"
@@ -1221,6 +1225,15 @@ extension ShareHub {
                 refusals[id] = (400, why); unlock(tree.repo)
                 return nil
             }
+            if slot.dirty {  // #73: neshranjeno in zaveze opuščenega teka ven, le v delovnem drevesu klona (ne $MINIGW_DEPS)
+                let (wt, start) = (slot.wt.path, slot.start ?? slot.base)
+                let ok = await offPool { Worktree.run(["-C", wt, "reset", "-q", "--hard", start]).status == 0 && Worktree.run(["-C", wt, "clean", "-qfd"]).status == 0 }
+                guard ok else { refusals[id] = (503, "worktree: the agent's clone could not be reset after a failed run: start a new conversation"); unlock(tree.repo); return nil }
+                slot.dirty = false
+            }
+            let (repo, ref) = (tree.repo.path, "refs/heads/" + slot.branch)  // vrh veje v zrcalu: kar so prejšnji teki prinesli
+            slot.start = await offPool { Worktree.run(["--git-dir", repo, "rev-parse", "--verify", "-q", ref]) }.out
+            if slot.start?.isEmpty != false { slot.start = nil }
             slot.busy = true; runSlot[id] = k; unlock(tree.repo)
             return Self.dir(slot.wt, tree.sub)
         }
@@ -1556,14 +1569,7 @@ extension ShareHub {
     func releaseSlot(run id: String) {
         guard let k = runSlot.removeValue(forKey: id), let slot = slots[k] else { return }
         slot.busy = false
-        if slot.abandoned, slot.kept == nil {  // #73: takoj s poti (naslednji tek naredi nov klon tam), brisanje v ozadju
-            slots[k] = nil
-            let trash = URL(fileURLWithPath: slot.wt.path + "-abandoned-" + UUID().uuidString.prefix(8), isDirectory: true)
-            guard rename(slot.wt.path, trash.path) == 0 else { Self.dropClone(slot); return }
-            rename(Worktree.deps(slot.wt).path, Worktree.deps(trash).path)
-            unlink(Worktree.tmpLink(slot.wt))
-            Task.detached { Self.removeClone(trash) }
-        } else if slot.abandoned || bySessionTree(String(k.split(separator: "|")[0])) == nil {
+        if bySessionTree(String(k.split(separator: "|")[0])) == nil {
             slots[k] = nil
             Self.dropClone(slot)
         } else if Worktree.grantDirs(root: slot.wt) == nil {  // #73: po teku znova $MINIGW_DEPS/tmp, .cache, .maven (dnevnik, popravek)

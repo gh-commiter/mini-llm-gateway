@@ -73,7 +73,9 @@ public actor ShareHub {
         let wt: URL, branch: String, base: String
         let nested: [Nested]  // ugnezdeni repozitoriji odjemalca: vsak svoj klon v wt, starš pred otrokom
         var busy = true
-        var abandoned = false  // #73: drevo agenta ni ustavljeno: ob koncu teka klon ven, naslednji tek iz veje
+        /// #73: drevo opuščenega teka še ni ustavljeno (nov tek seje zavrnjen); `dirty`: pred naslednjim tekom ven neshranjeno
+        /// opuščenega teka (do `start`, vrh ob začetku teka).
+        var blocked = false, dirty = false, start: String?
         var kept: URL?  // L6: v klonu je delo, ki ni prišlo do odjemalca: ob koncu seje gre klon sem (30 dni)
         private let git: [UInt64]?, cfg: Data?  // H2: .git (naprava, inode) in .git/config ob kloniranju
         init(wt: URL, branch: String, base: String, nested: [Nested] = []) {
@@ -583,13 +585,32 @@ public actor ShareHub {
         return dirs
     }
 
-    /// #73 (kot win-run-job): drevo agenta po teku ni ustavljeno: klon sync tega izvajanja ne gre v kopijo (finish);
-    /// klon worktree gre ob releaseSlot ven (proces, ki je preživel, bi ga lahko še pisal).
+    /// #73 (kot win-run-job): drevo agenta po teku ni ustavljeno: klon sync tega izvajanja ne gre v kopijo (finish).
+    /// worktree (le vrhnji tek; vprašani dela v klonu klicatelja, ki še teče): klon ostane, mesto je zaprto, dokler killTree
+    /// v ozadju drevesa ne ustavi; nato ga naslednji tek najprej počisti (worktreeMount).
     func abandon() {
         guard let id = Self.run else { return }
         runs[id]?.merged = true
-        if let k = runSlot[id] { slots[k]?.abandoned = true }
+        guard AgentRun.current == nil, let k = runSlot[id], let slot = slots[k] else { return }
+        slot.blocked = true
+        let groups = Worktree.runGroups.withLock { $0[id] ?? [] }, dirs = [slot.wt.path, Worktree.deps(slot.wt).path]
+        Task.detached { [weak self] in  // ponytail: poskuša, dokler drevesa ni (kot minigw run)
+            while !(await offPool { Self.stopTree(groups, dirs) }) { try? await Task.sleep(for: Self.stopRetry) }
+            await self?.unblock(k)
+        }
     }
+
+    private func unblock(_ k: String) {
+        guard let slot = slots[k] else { return }
+        slot.blocked = false; slot.dirty = true
+    }
+
+    /// Ustavi skupine in procese v mapah opuščenega teka; zamenljivo v testih.
+    nonisolated(unsafe) static var stopTree: @Sendable (Set<pid_t>, [String]) -> Bool = { groups, dirs in
+        groups.map { Native.killTree($0, pipes: []) }.allSatisfy { $0 } && Native.killTree(0, pipes: [], dirs: dirs)
+    }
+    nonisolated(unsafe) static var stopRetry: Duration = .seconds(5)
+    static let stillStopping = "the previous run's processes are still being stopped; try again shortly"
 
     /// Konec izvajanja (tudi ob napaki ali prekinitvi): združi, če prevzema ni bilo, in odstrani klon.
     func finish(run id: String) async {
