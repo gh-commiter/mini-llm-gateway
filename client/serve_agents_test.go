@@ -595,9 +595,22 @@ func TestCappedMode(t *testing.T) {
 		{nil, "read-write"},
 		{[]string{"codex", "grok"}, "read-write (read-only for Codex, Grok: capped by the gateway)"},
 		{[]string{"claude", "codex", "copilot", "grok"}, "read-only (capped by the gateway)"},
+		{[]string{"codex", "codex", "codex", "x\x1b[31m"}, "read-write (read-only for Codex: capped by the gateway)"}, // L1, INFO-2
 	} {
 		if got := cappedMode(c.capped); got != c.want {
 			t.Errorf("%q: %q", c.capped, got)
+		}
+	}
+	for _, c := range []struct {
+		capped []string
+		want   string
+	}{
+		{[]string{"evil"}, ""},
+		{[]string{"grok", "codex"}, ", read-only for Grok, Codex (capped by the gateway)"},
+		{[]string{"grok", "codex", "claude", "copilot"}, ", read-only (capped by the gateway)"},
+	} {
+		if got := cappedNative(c.capped); got != c.want {
+			t.Errorf("native %q: %q", c.capped, got)
 		}
 	}
 	if got := (serveConfig{ClaudeWork: "sync", Copilot: agentCLI{Work: "worktree"}}).cappedKinds("sync"); !slices.Equal(got, []string{"copilot"}) {

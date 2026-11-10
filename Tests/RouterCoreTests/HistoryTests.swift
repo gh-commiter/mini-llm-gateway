@@ -414,3 +414,14 @@ func useOf(_ s: GatewayHistory.Session, _ model: String, role: String = "") -> G
     let got = GatewayHistory.trimBusiest([row("A", "1"), row("B", "1"), row("B", "2"), row("A", "2"), row("B", "3")])
     #expect(got.map { $0.device + $0.day } == ["A1", "B2", "A2", "B3"])
 }
+
+/// #60: začetna vrstica odjemalca (iste besede kot TestCappedMode v Go); neznani agenti odpadejo, ponovitve štejejo enkrat.
+@Test func cappedStartLine() {
+    #expect(SharedFolders.cappedMode([]) == "read-write")
+    #expect(SharedFolders.cappedMode(["codex", "grok"]) == "read-write (read-only for Codex, Grok: capped by the gateway)")
+    #expect(SharedFolders.cappedMode(["claude", "codex", "copilot", "grok"]) == "read-only (capped by the gateway)")
+    #expect(SharedFolders.cappedMode(["codex", "codex", "codex", "x\u{1b}[31m"]) == "read-write (read-only for Codex: capped by the gateway)")
+    #expect(SharedFolders.cappedNative(["evil"]) == "")
+    #expect(SharedFolders.cappedNative(["grok", "codex"]) == ", read-only for Grok, Codex (capped by the gateway)")
+    #expect(SharedFolders.cappedNative(["grok", "codex", "claude", "copilot"]) == ", read-only (capped by the gateway)")
+}

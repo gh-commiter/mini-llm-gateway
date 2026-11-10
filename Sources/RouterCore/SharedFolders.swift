@@ -81,6 +81,27 @@ public enum SharedFolders {
         return (["native", "native-direct", "worktree"].contains(work) && ro ? "direct" : work, ro)
     }
 
+    /// #60: imena omejenih agentov iz odgovora prehoda (le znani, brez ponovitev) in ali so omejeni vsi (kot cappedNames v Go).
+    static func cappedNames(_ capped: [String]) -> (names: [String], all: Bool) {
+        var seen: Set<String> = [], names: [String] = []
+        for k in capped { if let n = Router.agentNames[k], seen.insert(k).inserted { names.append(n) } }
+        return (names, seen.count == Router.agentNames.count)
+    }
+
+    /// #60: način v začetni vrstici; capped = agenti, ki zaradi omejitve prehoda (work) le berejo (kot cappedMode v Go).
+    public static func cappedMode(_ capped: [String]) -> String {
+        let (names, all) = cappedNames(capped)
+        if all { return "read-only (capped by the gateway)" }
+        return names.isEmpty ? "read-write" : "read-write (read-only for \(names.joined(separator: ", ")): capped by the gateway)"
+    }
+
+    /// #60: dodatek vrstici native (v mapi sami); "" brez omejitve (kot cappedNative v Go).
+    public static func cappedNative(_ capped: [String]) -> String {
+        let (names, all) = cappedNames(capped)
+        if all { return ", read-only (capped by the gateway)" }
+        return names.isEmpty ? "" : ", read-only for \(names.joined(separator: ", ")) (capped by the gateway)"
+    }
+
     /// Načini, ki jih minigw poskusi po vrsti (naslednji, če router prejšnjega ne sprejme).
     /// auto: samo za branje → direct; mapa na shemi SMB routerja → native; repozitorij git → worktree; sicer sync.
     /// Repozitorij git nikoli v direct za pisanje (agenti tam ne morejo commitati, .git samo za branje): worktree pade na sync. Izrecen native pade na direct.

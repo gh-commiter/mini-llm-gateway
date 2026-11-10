@@ -268,15 +268,18 @@ func routerCommand(args []string, in io.Reader) {
 		say(routerHelp)
 		return
 	}
+	if set["work"] && !validWork(*work) {
+		fail("--" + badWork)
+	}
+	if set["work"] && !slices.Contains([]string{"claude", "codex", "grok"}, pos[0]) && (pos[0] != "copilot" || len(pos) != 1) {
+		fail("--work only applies to minigw gw claude|codex|grok|copilot")
+	}
 	if len(pos) == 1 && pos[0] == "settings" { // terminal UI: kliče nazaj ta minigw (gw api), skrivnosti ne vidi
 		var extra []string
 		if set["config"] {
 			extra = []string{"--config", *cfgPath}
 		}
 		settingsTUI(extra)
-	}
-	if set["work"] && !validWork(*work) {
-		fail("--" + badWork)
 	}
 	a := openAdmin(*cfgPath)
 	need := func(min, max int) {
@@ -733,5 +736,5 @@ func agentWork(a *adminClient, kind string, set bool, work string) {
 	} else {
 		a.do("GET", "/agents/"+kind, nil, &c)
 	}
-	say(agentNames[kind] + " work: " + c.Work)
+	say(clean(agentNames[kind] + " work: " + c.Work))
 }

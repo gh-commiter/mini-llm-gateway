@@ -207,7 +207,7 @@ private func autostartLine(_ st: [String: Any]) -> String {
 /// #60: minigw gw codex|grok|copilot [--work=…]: omejitev načina agenta prek skrbniškega API (kot agentWork v Go).
 private func agentWork(_ a: AdminConnection, _ kind: String, _ work: String?) {
     let c = work.map { a.call("PATCH", "/agents/" + kind, ["work": $0]) } ?? a.call("GET", "/agents/" + kind)
-    say("\(["codex": "Codex", "grok": "Grok", "copilot": "Copilot"][kind] ?? kind) work: \(c["work"] as? String ?? "")")
+    say(clean("\(["codex": "Codex", "grok": "Grok", "copilot": "Copilot"][kind] ?? kind) work: \(c["work"] as? String ?? "")"))
 }
 
 func routerCommand(_ argv: [String]) {
@@ -232,6 +232,9 @@ func routerCommand(_ argv: [String]) {
         fail("on the Mac use --folders (allowed folders) and --allow-local-tools (Bash runs in Claude Code's sandbox)")
     }
     if let w = flags["work"], !["direct", "sync", "worktree"].contains(w) { fail("--work: direct, sync or worktree") }
+    if flags["work"] != nil, !["claude", "codex", "grok"].contains(pos[0]), pos != ["copilot"] {
+        fail("--work only applies to minigw gw claude|codex|grok|copilot")
+    }
     func need(_ min: Int, _ max: Int) { if pos.count < min || pos.count > max { fail(routerHelp) } }
     let a = AdminConnection.open()
 

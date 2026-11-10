@@ -702,9 +702,7 @@ func main() {
 			if share.lock {
 				lock = ", one writing agent at a time"
 			}
-			if len(capped) > 0 {
-				lock += ", " + cappedMode(capped)
-			}
+			lock += cappedNative(capped)
 			fmt.Fprintf(os.Stderr, "minigw: %s is a folder of %s (SMB): agent models work in it there directly%s (native)\n", cwd, routerHost, lock)
 		} else if ok {
 			share.start(4)
@@ -1062,21 +1060,40 @@ func modelProfile(args, names []string) []string {
 	return args
 }
 
-// cappedMode (#60): način v začetni vrstici; capped = agenti, ki zaradi omejitve prehoda (work) le berejo.
-func cappedMode(capped []string) string {
-	if len(capped) == 0 {
-		return "read-write"
-	}
-	if len(capped) >= len(agentNames) {
-		return "read-only (capped by the gateway)"
-	}
-	names := make([]string, len(capped))
-	for i, k := range capped {
-		if names[i] = agentNames[k]; names[i] == "" {
-			names[i] = k
+// cappedNames (#60): imena omejenih agentov (le znani, brez ponovitev) in ali so omejeni vsi.
+func cappedNames(capped []string) (names []string, all bool) {
+	seen := map[string]bool{}
+	for _, k := range capped {
+		if n := agentNames[k]; n != "" && !seen[k] {
+			seen[k] = true
+			names = append(names, n)
 		}
 	}
+	return names, len(seen) == len(agentNames)
+}
+
+// cappedMode (#60): način v začetni vrstici; capped = agenti, ki zaradi omejitve prehoda (work) le berejo.
+func cappedMode(capped []string) string {
+	names, all := cappedNames(capped)
+	switch {
+	case all:
+		return "read-only (capped by the gateway)"
+	case len(names) == 0:
+		return "read-write"
+	}
 	return "read-write (read-only for " + strings.Join(names, ", ") + ": capped by the gateway)"
+}
+
+// cappedNative (#60): dodatek vrstici native (v mapi sami); "" brez omejitve.
+func cappedNative(capped []string) string {
+	names, all := cappedNames(capped)
+	switch {
+	case all:
+		return ", read-only (capped by the gateway)"
+	case len(names) == 0:
+		return ""
+	}
+	return ", read-only for " + strings.Join(names, ", ") + " (capped by the gateway)"
 }
 
 // registerShare: načini po vrsti (auto: native → worktree → sync); naslednji, če prehod prejšnjega ne sprejme.
