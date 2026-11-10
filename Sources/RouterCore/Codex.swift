@@ -94,6 +94,12 @@ public enum Codex {
         return a + ["-"]  // navodila prek stdin (brez omejitve dolžine argumentov)
     }
 
+    /// Pisljive mape Codex v klonu (worktree): koren, Maven in (#40, M1) vsak ugnezdeni klon, da sandbox Codex zaščiti
+    /// tudi njegov .git (le za branje v vsaki pisljivi mapi): git harnessa zunaj sandboxa zdaj sledi mapi v ugnezden klon.
+    static func treeDirs(root: URL, cwd: URL, maven: URL, gits: [String]) -> [String] {
+        (root.path == cwd.path ? [] : [root.path]) + [maven.path] + gits.dropFirst().map { String($0.dropLast(5)) }
+    }
+
     struct Failure: Error { let message: String }
 
     final class Handle: @unchecked Sendable { let p = Process() }
@@ -235,7 +241,7 @@ extension Router {
             tree = await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "")
             if let tree {
                 try? FileManager.default.createDirectory(at: tree.maven, withIntermediateDirectories: true)
-                extra = (tree.root.path == dir.path ? [] : [tree.root.path]) + [tree.maven.path]
+                extra = Codex.treeDirs(root: tree.root, cwd: dir, maven: tree.maven, gits: tree.gits)
             }
             let cap = await capped(req, kind: "codex")  // #45: način seje nad omejitvijo → le branje
             readOnly = await Self.isReadOnly(req) || cap != nil
@@ -258,7 +264,7 @@ extension Router {
         defer { run?.stop() }
         var treeEnv: [String: String]?  // L-N9a: harness Codex sam poganja git v klonu (ovoj kot pri Claude CLI)
         if let t = tree {
-            guard let e = Worktree.claudeEnv(root: t.root, maven: t.maven, gitexec: config.scratch("gitexec"), gits: t.gits) else {
+            guard let e = Worktree.claudeEnv(root: t.root, maven: t.maven, gitexec: config.scratch("gitexec"), gits: t.gits, agent: "codex") else {
                 return await error(503, "api_error", "Cannot prepare git for the agent's clone (git --exec-path): use sync", rid: rid, writer: writer)
             }
             treeEnv = e

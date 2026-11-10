@@ -66,7 +66,7 @@ func (sl *wtSlot) gitDirs() []string {
 }
 
 // gitIntact (H2): .git vsakega klona (vrhnji in ugnezdeni) je še ista mapa z istim config, brez info/attributes in
-// commondir. Claude Code poganja git sam, zunaj svojega peskovnika (git status ob zagonu): zamenjan .git (mv .git; nov
+// commondir (razen ».« iz makeClone). Claude Code poganja git sam, zunaj svojega peskovnika (git status ob zagonu): zamenjan .git (mv .git; nov
 // config s filter.*.clean ali info/attributes) bi izvedel ukaz agenta brez peskovnika. config, hooks, info in commondir
 // so v denyWrite.
 func (sl *wtSlot) gitIntact() bool {
@@ -88,11 +88,17 @@ func gitSame(g string, git os.FileInfo, cfg []byte) bool {
 	}
 	b, err := os.ReadFile(filepath.Join(g, "config"))
 	for _, p := range []string{filepath.Join("info", "attributes"), "commondir"} {
-		if _, e := os.Lstat(filepath.Join(g, p)); !os.IsNotExist(e) {
+		if st, e := os.Lstat(filepath.Join(g, p)); !os.IsNotExist(e) && (p != "commondir" || !st.Mode().IsRegular() || !selfCommondir(filepath.Join(g, p))) {
 			return false
 		}
 	}
 	return err == nil && bytes.Equal(b, cfg)
+}
+
+// selfCommondir: commondir je točno ».\n« iz makeClone (ta .git), brez obrezovanja.
+func selfCommondir(p string) bool {
+	b, err := os.ReadFile(p)
+	return err == nil && string(b) == ".\n"
 }
 
 // nestedIntact (H1): pot ugnezdenega klona so same prave mape (ne povezava ven) in njegov .git je še ista mapa.
@@ -393,6 +399,11 @@ func makeClone(repo, wt, branch, snapshot string) bool {
 		return false
 	}
 	_, err := gitRun(repo, "", nil, "-C", wt, "checkout", "-q", "-b", branch, snapshot)
+	if err == nil && runtime.GOOS == "linux" {
+		// #40: peskovnik Claude Code na Linuxu na manjkajočo pot iz denyWrite priklopi /dev/null (branje: EACCES) in git
+		// commondir vedno bere, zato je vsak git v Bash padel; ».« = ta .git (gitSame ga sprejme), ostane le za branje
+		err = os.WriteFile(filepath.Join(wt, ".git", "commondir"), []byte(".\n"), 0o644)
+	}
 	return err == nil
 }
 
@@ -615,15 +626,24 @@ func finalize(repo, wt, branch, base, agent, out string, links map[string]string
 // worktreeHarnessEnv: okolje procesov agenta v klonu (kot Worktree.harnessEnv): nastavitve iz okolja preglasijo
 // .git/config klona (fsmonitor, hooki, atributi), GIT_ATTR_SOURCE = prazno drevo izklopi .gitattributes, GIT_DIR in
 // GIT_WORK_TREE: ugnezden .git agenta ne velja; Maven dobi svoj lokalni repozitorij. tmp: TMPDIR agenta.
-func worktreeHarnessEnv(wt, maven, tmp string) []string {
-	return []string{"GIT_CONFIG_COUNT=5", "GIT_CONFIG_KEY_0=core.fsmonitor", "GIT_CONFIG_VALUE_0=false",
+// #40: brez lastnikovih nastavitev git (identiteta, podpis, poverilnice, insteadOf); avtor commitov je agent (agent: codex …).
+func worktreeHarnessEnv(wt, maven, tmp, agent string) []string {
+	return []string{"GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_NOSYSTEM=1",
+		"GIT_CONFIG_COUNT=8", "GIT_CONFIG_KEY_0=core.fsmonitor", "GIT_CONFIG_VALUE_0=false",
 		"GIT_CONFIG_KEY_1=core.hooksPath", "GIT_CONFIG_VALUE_1=" + os.DevNull, // ne v klonu: tja agent lahko piše
 		"GIT_CONFIG_KEY_2=core.attributesFile", "GIT_CONFIG_VALUE_2=" + os.DevNull,
 		// N9: status in diff ne vstopita v podmodul (submodule.<ime>.ignore iz .gitmodules to preglasi: gitExecWrap)
 		"GIT_CONFIG_KEY_3=diff.ignoreSubmodules", "GIT_CONFIG_VALUE_3=all", "GIT_CONFIG_KEY_4=submodule.recurse", "GIT_CONFIG_VALUE_4=false",
+		"GIT_CONFIG_KEY_5=core.excludesFile", "GIT_CONFIG_VALUE_5=" + os.DevNull, // ne ~/.config/git/ignore (peskovnik: EPERM)
+		"GIT_CONFIG_KEY_6=user.name", "GIT_CONFIG_VALUE_6=" + agentAuthor(agent), "GIT_CONFIG_KEY_7=user.email", "GIT_CONFIG_VALUE_7=" + agent + "@minigw.invalid",
 		"GIT_ATTR_SOURCE=4b825dc642cb6eb9a060e54bf8d69288fbee4904",
 		"GIT_DIR=" + filepath.Join(wt, ".git"), "GIT_WORK_TREE=" + wt, "GIT_COMMON_DIR=" + filepath.Join(wt, ".git"),
 		"MAVEN_OPTS=-Dmaven.repo.local=" + maven + " -Djava.io.tmpdir=" + tmp, "TMPDIR=" + tmp, "TMP=" + tmp, "TEMP=" + tmp}
+}
+
+// agentAuthor: ime avtorja commitov agenta (kot Worktree.author na Macu).
+func agentAuthor(agent string) string {
+	return strings.ToUpper(agent[:1]) + agent[1:] + " (Mini Gateway)"
 }
 
 // gitExecWrap (N9): GIT_EXEC_PATH za Claude CLI v klonu. Git zažene vgnezden git (stanje podmodula: git status v
@@ -643,8 +663,10 @@ func gitExecWrap(dir string) string {
 	if err != nil || !filepath.IsAbs(real) {
 		return ""
 	}
-	script := wrapScript(filepath.Join(real, "git"))
-	if b, err := os.ReadFile(filepath.Join(dir, "git")); err == nil && string(b) == script {
+	script, path := wrapScript(filepath.Join(real, "git")), pathWrapScript(filepath.Join(real, "git"))
+	b, err := os.ReadFile(filepath.Join(dir, "git"))
+	pb, perr := os.ReadFile(filepath.Join(dir, "bin", "git"))
+	if err == nil && perr == nil && string(b) == script && string(pb) == path {
 		return dir
 	}
 	os.RemoveAll(dir)
@@ -657,7 +679,8 @@ func gitExecWrap(dir string) string {
 			return ""
 		}
 	}
-	if os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0o700) != nil {
+	if os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0o700) != nil || os.Mkdir(filepath.Join(dir, "bin"), 0o700) != nil ||
+		os.WriteFile(filepath.Join(dir, "bin", "git"), []byte(path), 0o700) != nil {
 		return ""
 	}
 	return dir
@@ -674,11 +697,40 @@ func wrapScript(git string) string {
 		"exec '" + strings.ReplaceAll(git, "'", `'\''`) + `' "$@"` + "\n"
 }
 
+// pathWrapScript (#40): »git« na PATH agenta (bin v gitExecWrap, enak kot Worktree.pathWrapScript na Macu): git dela v
+// registriranem klonu (MINIGW_GIT_DIRS), ki vsebuje trenutno mapo ali pot -C; drugače ostane okolje (vrhnji klon).
+func pathWrapScript(git string) string {
+	return "#!/bin/sh\n# minigw: git works in the registered clone (MINIGW_GIT_DIRS) that holds the folder or the -C <path>\n" +
+		"real='" + strings.ReplaceAll(git, "'", `'\''`) + `'; d=$(pwd -P) || exec "$real" "$@"` + "\n" +
+		`i=1; while [ $i -le $# ]; do eval "a=\${$i}"; case $a in` + "\n" +
+		`  -C) i=$((i+1)); eval "p=\${$i}"; case $p in /*) ;; *) p=$d/$p;; esac; d=$(cd "$p" 2>/dev/null && pwd -P) || exec "$real" "$@";;` + "\n" +
+		`  -c) i=$((i+1));; -*) ;; *) break;; esac; i=$((i+1)); done` + "\n" +
+		"b=; g=; set -f; IFS='\n'\n" +
+		`for e in $MINIGW_GIT_DIRS; do w=$(cd "${e%/.git}" 2>/dev/null && pwd -P) || continue; case $d/ in "$w"/*) [ ${#w} -gt ${#b} ] && b=$w g=$e;; esac; done` + "\n" +
+		`[ -n "$g" ] && export GIT_DIR="$g" GIT_COMMON_DIR="$g" GIT_WORK_TREE="${g%/.git}"` + "\n" +
+		`exec "$real" "$@"` + "\n"
+}
+
+// pinPaths (#40 M2): .git vseh klonov in vsaka mapa na poti od wt do ugnezdenega klona (pin: preimenovanje EBUSY, da
+// agent ne podtakne nove <pot>/.git, v kateri bi git harnessa ali ovoj pathWrapScript delal); predniki pred potomci.
+func pinPaths(wt string, gits []string) []string {
+	var out []string
+	for _, g := range gits {
+		out = append(out, g)
+		for d := filepath.Dir(g); strings.HasPrefix(d, wt+string(filepath.Separator)); d = filepath.Dir(d) {
+			out = append(out, d)
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
 // worktreeClaudeEnv: okolje procesa Claude CLI v klonu: worktreeHarnessEnv, drugje kot na Windows še ovoj gitExecWrap
 // v mapi gw (N9; na Windows teče Claude v worktree le z »Allow commands without a sandbox«). gits: .git vseh klonov
-// (vrhnji prvi, hub.worktreeGits). nil = ovoja ni.
-func worktreeClaudeEnv(wt, maven, tmp, gw string, gits []string) []string {
-	env := worktreeHarnessEnv(wt, maven, tmp)
+// (vrhnji prvi, hub.worktreeGits). nil = ovoja ni. agent: vrsta agenta (avtor commitov); #40: PATH najprej gw/bin
+// (pathWrapScript), za vse agente, ker jim navodilo nestedClonesNote ponudi git -C v ugnezdenem klonu.
+func worktreeClaudeEnv(wt, maven, tmp, gw string, gits []string, agent string) []string {
+	env := worktreeHarnessEnv(wt, maven, tmp, agent)
 	if runtime.GOOS == "windows" {
 		return env
 	}
@@ -686,7 +738,16 @@ func worktreeClaudeEnv(wt, maven, tmp, gw string, gits []string) []string {
 	if w == nil {
 		return nil
 	}
-	return append(env, w...)
+	path := []string{filepath.Join(gw, "bin")}
+	for _, p := range filepath.SplitList(os.Getenv("PATH")) {
+		if p != "" && p != "." { // L2: ne trenutna mapa (klon agenta)
+			path = append(path, p)
+		}
+	}
+	if len(path) == 1 {
+		path = append(path, "/usr/bin", "/bin")
+	}
+	return append(append(env, w...), "PATH="+strings.Join(path, ":"))
 }
 
 // gitWrapEnv: GIT_EXEC_PATH z ovojem gitExecWrap v gw in MINIGW_GIT_DIRS (edini GIT_DIR, ki jih ovoj pusti; absolutne
@@ -727,8 +788,15 @@ func nestedClonesNote(gits []string) string {
 		dirs = append(dirs, filepath.Dir(g))
 	}
 	return " These nested repositories and submodules are their own clones on the same branch, and their changes come back too: " +
-		strings.Join(dirs, ", ") + ". Plain git here works on the top repository; to commit in a nested one run" +
-		" GIT_DIR=<path>/.git GIT_COMMON_DIR=<path>/.git GIT_WORK_TREE=<path> git … with its path. Changes you leave uncommitted there are committed for you."
+		strings.Join(dirs, ", ") + ". Plain git here works on the top repository; " + nestedGitHow() + " Changes you leave uncommitted there are committed for you."
+}
+
+// nestedGitHow: kako git v ugnezdenem klonu; na Windows ni ovoja pathWrapScript (ukaz z okoljem, ki ga Claude Code ne dovoli: commit na koncu).
+func nestedGitHow() string {
+	if runtime.GOOS == "windows" {
+		return "to commit in a nested one run GIT_DIR=<path>/.git GIT_COMMON_DIR=<path>/.git GIT_WORK_TREE=<path> git … with its path."
+	}
+	return "git run in one of these folders (cd <path> && git … or git -C <path> …) works in that one."
 }
 
 // worktreeReadOnlyNote: agent brez pisanja v klonu (kot ClaudeCLI.mountNote z branch in readOnly na Macu).

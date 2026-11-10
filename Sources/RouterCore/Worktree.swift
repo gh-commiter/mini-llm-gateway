@@ -455,12 +455,16 @@ public enum Worktree {
     /// ponytail: .git/info/attributes klona ostane; v peskovniku Claude Code je .git/config zaščiten, Codex ima .git le za branje.
     /// GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR: git ne išče repozitorija (ugnezden .git agenta ne velja); MAVEN_OPTS: lokalni
     /// repozitorij Maven agentov namesto lastnikovega ~/.m2/repository.
-    public static func harnessEnv(root: URL, maven: URL) -> [String: String] {
+    /// #40 (kot Go): brez lastnikovih nastavitev git (identiteta, podpis, poverilnice, insteadOf; v peskovniku ~ da EPERM),
+    /// avtor commitov je agent (`agent`: claude, codex …).
+    public static func harnessEnv(root: URL, maven: URL, agent: String) -> [String: String] {
         // N9: status in diff ne vstopita v podmodul (submodule.<ime>.ignore iz .gitmodules to preglasi: claudeEnv)
         let pairs = [("core.fsmonitor", "false"), ("core.hooksPath", "/dev/null"), ("core.attributesFile", "/dev/null"),
-                     ("diff.ignoreSubmodules", "all"), ("submodule.recurse", "false")]
+                     ("diff.ignoreSubmodules", "all"), ("submodule.recurse", "false"), ("core.excludesFile", "/dev/null"),
+                     ("user.name", author(agent)), ("user.email", agent + "@minigw.invalid")]
         let git = root.appendingPathComponent(".git").path
-        var env = ["GIT_CONFIG_COUNT": String(pairs.count), "GIT_ATTR_SOURCE": "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+        var env = ["GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",
+                   "GIT_CONFIG_COUNT": String(pairs.count), "GIT_ATTR_SOURCE": "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
                    "GIT_DIR": git, "GIT_WORK_TREE": root.path, "GIT_COMMON_DIR": git,
                    "MAVEN_OPTS": "-Dmaven.repo.local=\(maven.path) -Djava.io.tmpdir=\(root.appendingPathComponent(".build/tmp").path)",
                    "TMPDIR": root.appendingPathComponent(".build/tmp").path + "/",
@@ -474,9 +478,30 @@ public enum Worktree {
     /// agentovi) z »git« iz mape exec: ovoj pusti le git s klonovim GIT_DIR (MINIGW_GIT_DIR), drugo zavrne. Ostale datoteke
     /// so povezave na pravo mapo exec. `gitexec` je v Scratch (agenti tja ne pišejo). nil = ovoja ni.
     /// `gits`: .git vseh klonov (vrhnji in ugnezdeni, ShareHub.worktree); prazno = le vrhnji.
-    public static func claudeEnv(root: URL, maven: URL, gitexec: URL, gits: [String] = []) -> [String: String]? {
+    /// #40: PATH najprej `gitexec`/bin (pathWrapScript), za vse agente: navodilo ponudi git -C v ugnezdenem klonu. `path`: PATH procesa.
+    public static func claudeEnv(root: URL, maven: URL, gitexec: URL, gits: [String] = [], agent: String,
+                                 path: String = ProcessInfo.processInfo.environment["PATH"] ?? "") -> [String: String]? {
         guard let wrap = wrapEnv(gitDirs: gits.isEmpty ? [root.appendingPathComponent(".git").path] : gits, gitexec: gitexec) else { return nil }
-        return harnessEnv(root: root, maven: maven).merging(wrap) { $1 }
+        let rest = path.split(separator: ":").map(String.init).filter { $0 != "." }  // L2: ne trenutna mapa (klon agenta); split izpusti prazne
+        let bin = ([gitexec.appendingPathComponent("bin").path] + (rest.isEmpty ? ["/usr/bin", "/bin"] : rest)).joined(separator: ":")
+        return harnessEnv(root: root, maven: maven, agent: agent).merging(wrap) { $1 }.merging(["PATH": bin]) { $1 }
+    }
+
+    /// Ime avtorja commitov agenta (kot Go agentAuthor).
+    static func author(_ agent: String) -> String { agent.prefix(1).uppercased() + agent.dropFirst() + " (Mini Gateway)" }
+
+    /// #40 (enak kot Go pathWrapScript, testdata/pathwrap.golden): »git« na PATH agenta dela v registriranem klonu
+    /// (MINIGW_GIT_DIRS), ki vsebuje trenutno mapo ali pot -C; drugače ostane okolje (vrhnji klon).
+    static func pathWrapScript(real: String) -> String {
+        "#!/bin/sh\n# minigw: git works in the registered clone (MINIGW_GIT_DIRS) that holds the folder or the -C <path>\n"
+            + "real='" + real.replacingOccurrences(of: "'", with: #"'\''"#) + #"'; d=$(pwd -P) || exec "$real" "$@""# + "\n"
+            + #"i=1; while [ $i -le $# ]; do eval "a=\${$i}"; case $a in"# + "\n"
+            + #"  -C) i=$((i+1)); eval "p=\${$i}"; case $p in /*) ;; *) p=$d/$p;; esac; d=$(cd "$p" 2>/dev/null && pwd -P) || exec "$real" "$@";;"# + "\n"
+            + #"  -c) i=$((i+1));; -*) ;; *) break;; esac; i=$((i+1)); done"# + "\n"
+            + "b=; g=; set -f; IFS='\n'\n"
+            + #"for e in $MINIGW_GIT_DIRS; do w=$(cd "${e%/.git}" 2>/dev/null && pwd -P) || continue; case $d/ in "$w"/*) [ ${#w} -gt ${#b} ] && b=$w g=$e;; esac; done"# + "\n"
+            + #"[ -n "$g" ] && export GIT_DIR="$g" GIT_COMMON_DIR="$g" GIT_WORK_TREE="${g%/.git}""# + "\n"
+            + #"exec "$real" "$@""# + "\n"
     }
 
     /// GIT_EXEC_PATH z ovojem v `gitexec` in MINIGW_GIT_DIRS (edini GIT_DIR, ki jih ovoj pusti; absolutne poti brez nove
@@ -497,14 +522,15 @@ public enum Worktree {
         wrapLock.lock(); defer { wrapLock.unlock() }
         let real = run(["--exec-path"]).out.trimmingCharacters(in: .whitespacesAndNewlines)
         guard real.hasPrefix("/") else { return false }
-        let fm = FileManager.default, wrapper = dir.appendingPathComponent("git")
+        let fm = FileManager.default, wrapper = dir.appendingPathComponent("git"), pathWrapper = dir.appendingPathComponent("bin/git")
         // Enak kot Go wrapScript: točno ujemanje GIT_DIR z enim od nepraznih vnosov MINIGW_GIT_DIRS.
         let script = "#!/bin/sh\n# minigw (N9): git runs only in the clones minigw registered, not in a nested repository the agent made\n"
             + "ok=; set -f; IFS='\n'\n"
             + #"for d in $MINIGW_GIT_DIRS; do [ -n "$GIT_DIR" ] && [ "$GIT_DIR" = "$d" ] && ok=1; done"# + "\n"
             + #"[ -n "$ok" ] || { echo "minigw: git in a nested repository is off in worktree mode" >&2; exit 128; }"# + "\n"
             + "exec '" + (real + "/git").replacingOccurrences(of: "'", with: #"'\''"#) + #"' "$@""# + "\n"
-        if fm.contents(atPath: wrapper.path) == Data(script.utf8) { return true }
+        let path = pathWrapScript(real: real + "/git")
+        if fm.contents(atPath: wrapper.path) == Data(script.utf8), fm.contents(atPath: pathWrapper.path) == Data(path.utf8) { return true }
         try? fm.removeItem(at: dir)
         guard (try? fm.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])) != nil,
               let names = try? fm.contentsOfDirectory(atPath: real) else { return false }
@@ -512,6 +538,8 @@ public enum Worktree {
             guard (try? fm.createSymbolicLink(atPath: dir.appendingPathComponent(n).path, withDestinationPath: real + "/" + n)) != nil else { return false }
         }
         return fm.createFile(atPath: wrapper.path, contents: Data(script.utf8), attributes: [.posixPermissions: 0o700])
+            && (try? fm.createDirectory(at: pathWrapper.deletingLastPathComponent(), withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])) != nil
+            && fm.createFile(atPath: pathWrapper.path, contents: Data(path.utf8), attributes: [.posixPermissions: 0o700])
     }
 
     /// N9 (kot Go nestedProblem): .git (mapa ali datoteka) pod korenom klona na poti, ki je git ne prezre, razen točno

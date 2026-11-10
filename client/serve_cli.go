@@ -762,7 +762,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			defer done()
 			args = worktreeClaudeArgs(args, wt, maven, tmp, objs, gits)
 			gw := s.conf().scratch("gitexec")
-			if worktreeEnv = worktreeClaudeEnv(wt, maven, tmp, gw, gits); worktreeEnv == nil {
+			if worktreeEnv = worktreeClaudeEnv(wt, maven, tmp, gw, gits, "claude"); worktreeEnv == nil {
 				return writeError(w, r.rid, 503, "Cannot prepare git for the agent's clone (git --exec-path): use sync")
 			}
 			args = sandboxAllowRead(args, gw)
@@ -806,7 +806,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	unpinned := false       // N3b: brez pin (ni bwrap ali gnezdeni ne deluje) se klon preverja med tekom (watch spodaj)
 	if worktreeEnv != nil { // N3: .git klona je med tekom točka priklopa (kot pins pri Codex), zamenjati ga ni mogoče
 		gits, _ := s.hub.worktreeGits(wt)
-		name, cargs = pinWrap(s.cfgDir, name, cargs, gits, s.log.Printf)
+		name, cargs = pinWrap(s.cfgDir, name, cargs, pinPaths(wt, gits), s.log.Printf) // M2: tudi mape do ugnezdenih klonov
 		if unpinned = name == exe[0]; unpinned && runtime.GOOS == "linux" {
 			if why := s.hub.markUnconfined(wt, "Claude CLI"); why != "" { // N1: brez imenskega prostora PID agent lahko preživi do finalize
 				return writeError(w, r.rid, 400, why)
@@ -821,7 +821,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		var stops []func()
 		ok := true
 		gits, _ := s.hub.worktreeGits(wt)
-		for _, g := range gits { // vsak .git (vrhnji in ugnezdeni)
+		for _, g := range pinPaths(wt, gits) { // vsak .git (vrhnji in ugnezdeni) in mape do ugnezdenih (M2)
 			stop, o := watchGitMoves(g, func() {
 				if swapped.CompareAndSwap(false, true) {
 					kill()

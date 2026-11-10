@@ -132,3 +132,24 @@ func TestBwrapHidesClaudeTempRoots(t *testing.T) {
 		t.Fatalf("Claude temp root visible under bwrap: %q (%v)", out, err)
 	}
 }
+
+// #40 M2: pod bwrap ni mogoče preimenovati ne .git ne mape na poti do ugnezdenega klona (nova a/b/.git bi prevzela git
+// harnessa); datoteke v njih so pisljive.
+func TestBwrapPinsNestedPath(t *testing.T) {
+	wt := t.TempDir()
+	for _, d := range []string{".git", "a/b/.git", "a/b/c/.git"} {
+		os.MkdirAll(filepath.Join(wt, d), 0o700)
+	}
+	gits := []string{filepath.Join(wt, ".git"), filepath.Join(wt, "a", "b", ".git"), filepath.Join(wt, "a", "b", "c", ".git")}
+	m := agentMounts{cfgDir: t.TempDir(), rw: []string{wt}, pins: pinPaths(wt, gits)}
+	script := "cd " + wt + "; for p in a a/b a/b/c a/b/.git a/b/c/.git; do mv $p $p.x 2>/dev/null && echo moved-$p; done; " +
+		"echo f > a/b/f.txt && echo write-ok"
+	name, args := agentWrap("/bin/sh", []string{"-c", script}, m)
+	if name == "/bin/sh" {
+		t.Skip("no usable bwrap (Linux with user namespaces)")
+	}
+	out, err := exec.Command(name, args...).CombinedOutput()
+	if s := string(out); strings.Contains(s, "moved-") || !strings.Contains(s, "write-ok") {
+		t.Fatalf("nested path not pinned: %q (%v)", s, err)
+	}
+}

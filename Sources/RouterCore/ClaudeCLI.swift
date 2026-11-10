@@ -420,8 +420,8 @@ extension Router {
     static func nestedClonesNote(_ gits: [String]) -> String {
         guard gits.count > 1 else { return "" }
         return " These nested repositories and submodules are their own clones on the same branch, and their changes come back too: "
-            + gits.dropFirst().map { String($0.dropLast(5)) }.joined(separator: ", ") + ". Plain git here works on the top repository; to commit in a nested one run"
-            + " GIT_DIR=<path>/.git GIT_COMMON_DIR=<path>/.git GIT_WORK_TREE=<path> git … with its path. Changes you leave uncommitted there are committed for you."
+            + gits.dropFirst().map { String($0.dropLast(5)) }.joined(separator: ", ") + ". Plain git here works on the top repository; git run in one of these folders"
+            + " (cd <path> && git … or git -C <path> …) works in that one. Changes you leave uncommitted there are committed for you."
     }
 
     static func mountNote(_ clientCwd: String, _ shared: URL, readOnly: Bool, synced: Bool = false, branch: String? = nil, gits: [String] = []) -> String {
@@ -555,7 +555,7 @@ extension Router {
         }
         env["PATH"] = (env["PATH"].map { $0 + ":" } ?? "") + "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
         if agent, let t = await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "") {
-            guard let tenv = Worktree.claudeEnv(root: t.root, maven: t.maven, gitexec: gitexec, gits: t.gits) else {
+            guard let tenv = Worktree.claudeEnv(root: t.root, maven: t.maven, gitexec: gitexec, gits: t.gits, agent: "claude", path: env["PATH"] ?? "") else {
                 return await error(503, "api_error", "Cannot prepare git for the agent's clone (git --exec-path): use sync", rid: rid, writer: writer)
             }
             env.merge(tenv) { $1 }
