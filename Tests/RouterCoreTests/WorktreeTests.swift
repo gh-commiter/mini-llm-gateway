@@ -1639,3 +1639,25 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
     let top = g(client, "ls-tree", "-r", "--name-only", br)
     #expect(top.contains("top.txt") && !top.contains("lib/") && g(client, "log", "-1", "--format=%an", br) == "Claude (Mini Gateway)")
 }
+
+/// #40 M1: vsak ugnezdeni klon je pisljiva mapa Codex, zato je njegov .git v sandboxu Codex le za branje (git harnessa
+/// zunaj sandboxa bi sicer izvedel podtaknjen filter); s pravim codex (če je nameščen) ukaz ne zapiše sub/.git/config.
+@Test func codexProtectsNestedCloneGit() throws {
+    let fm = FileManager.default
+    let wt = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("cx-" + UUID().uuidString)
+    defer { try? fm.removeItem(at: wt) }
+    let m = wt.appendingPathComponent(".maven"), sub = wt.appendingPathComponent("sub")
+    let dirs = Codex.treeDirs(root: wt, cwd: wt, maven: m, gits: [wt.path + "/.git", sub.path + "/.git"])
+    #expect(dirs == [m.path, sub.path])
+    for d in [wt, sub] { try fm.createDirectory(at: d.appendingPathComponent(".git/info"), withIntermediateDirectories: true); try file(d, ".git/config", "") }
+    guard let exe = ["/opt/homebrew/bin/codex", "/usr/local/bin/codex"].first(where: { fm.isExecutableFile(atPath: $0) }) else { return }
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: exe); p.currentDirectoryURL = wt
+    p.arguments = ["sandbox", "-c", #"sandbox_mode="workspace-write""#, "-c", "sandbox_workspace_write.writable_roots=[" + dirs.map { "\"\($0)\"" }.joined(separator: ",") + "]",
+                   "--", "sh", "-c", "echo x >> sub/.git/config; echo x > sub/.git/info/attributes; echo x >> .git/config; echo ok > a.txt"]
+    p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+    try p.run(); p.waitUntilExit()
+    #expect(fm.fileExists(atPath: wt.path + "/a.txt"), "codex sandbox did not run")
+    for f in ["sub/.git/config", ".git/config"] { #expect(try String(contentsOf: wt.appendingPathComponent(f), encoding: .utf8).isEmpty, "\(f)") }
+    #expect(!fm.fileExists(atPath: sub.path + "/.git/info/attributes"))
+}
