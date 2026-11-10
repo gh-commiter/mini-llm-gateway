@@ -126,16 +126,18 @@ Details:
   agent's PATH is a copy of `minigw.exe` named `git.exe` (under `Scratch\gitexec\win-<hash>`, checked against its hash
   before use; stale copies are removed at start), with the same `init`/`clone` rule; every other git command goes
   unchanged to the real git.
-- **Windows sandbox (minigw serve, #68).** On Windows the gateway starts Claude CLI, Copilot and Grok as a whole (the
-  CLI and every command it runs) in a Microsoft MXC process container (`wxc-exec.exe` from MXC 1.0.1 in the install
-  folder's `mxc` subfolder; low integrity and an AppContainer, no admin rights). It needs Windows 11 build
-  26100.9550 / 26200.9550 or later (KB5124010 or any later cumulative update). At start the gateway checks `wxc-exec.exe` against the SHA-256 built
-  into minigw (again before every run; the `mxc` folder may hold only `wxc-exec.exe` and `LICENSE.txt`, and during a
-  run the gateway keeps `wxc-exec.exe` open so it cannot be changed or deleted) and runs a probe in the container
-  (prompt on stdin and exit code, writing a granted folder, the config folder's `admin.secret` unreadable, a connection
-  to the gateway on 127.0.0.1). If any check fails, the settings page shows "Agent sandbox: not available (reason)" and
-  agents run only with **Allow commands without a sandbox**, as before; the reason names the Windows build only when
-  the connection to 127.0.0.1 fails. Inside the container reads are an allow-list too:
+- **Windows sandbox (minigw serve, #68).** On Windows the gateway starts Claude CLI, Copilot and Grok as a whole
+  (the CLI and every command it runs) in a Microsoft MXC process container (`wxc-exec.exe` from MXC 1.0.1 in the
+  install folder's `mxc` subfolder; low integrity and an AppContainer, no admin rights). It needs Windows 11 build
+  26100.9278 / 26200.9278 or later (the Windows process container); an older build is refused before the probe, with
+  the build in the reason. At start the gateway checks `wxc-exec.exe` against the SHA-256 built into minigw (again
+  before every run; the `mxc` folder may hold only `wxc-exec.exe` and `LICENSE.txt`, and during a run the gateway
+  keeps `wxc-exec.exe` open so it cannot be changed or deleted) and runs a probe in the container (prompt on stdin and
+  exit code, writing a granted folder, the config folder's `admin.secret` unreadable). If any check fails, the
+  settings page shows "Agent sandbox: not available (reason)" and agents run only with **Allow commands without a
+  sandbox**, as before. The probe also tries a connection to the gateway on 127.0.0.1; that does not decide
+  availability: when it fails (loopback may need a newer cumulative update), the gateway log says so and
+  `status.agentSandbox` says "May ask other models" does not work. Inside the container reads are an allow-list too:
   - read and write: the clone or synced copy (only when the agent may write), `$MINIGW_DEPS`, the project's Maven
     repository and caches, a temporary folder for the run under Scratch (`Scratch\tmp\run-*`: `TEMP`, `TMP` and a
     fresh home, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`; Claude's `CLAUDE_CONFIG_DIR` is there too), and Grok's
@@ -163,13 +165,22 @@ Details:
     key instead** passes `ANTHROPIC_API_KEY` or `XAI_API_KEY` from the key store (billed through the provider's API).
     API-key variables in the gateway's own environment (`ANTHROPIC_*`, `OPENAI_API_KEY`, `CODEX_API_KEY`, `XAI_API_KEY`,
     `GROK_CODE_XAI_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`) never reach any agent run (every `minigw serve`).
-  - Claude uses its PowerShell tool for commands (`Bash` in the tools list means PowerShell there) and commits its own
-    work in worktree mode, as on the Mac. The per-second `.git` check runs in the container too. Network: on, except
-    Claude in worktree mode with **Network for builds** off: then the container has no network, and Claude Code
-    reaches only `api.anthropic.com` on port 443 through a CONNECT proxy on the run's loopback port. The gateway
-    resolves the name once and connects only to a public IP (never loopback, private, link-local or multicast), allows
-    at most 16 tunnels per run and logs refused hosts. Claude's web fetch and web search fail then too. Runs with
-    network get no proxy (asking other models needs only the loopback port), and Codex never uses it.
+  - Claude uses its PowerShell tool for commands (`Bash` in the tools list means PowerShell there) and commits its
+    own work in worktree mode, as on the Mac. The per-second `.git` check runs in the container too. Network: outbound
+    allowed, except Claude in worktree mode with **Network for builds** off: then the container denies all outbound
+    traffic except TCP 443 to the IP addresses of `api.anthropic.com` resolved when the run starts (every A/AAAA,
+    logged in the gateway log). If the name cannot be resolved, the run is refused: "Cannot resolve api.anthropic.com
+    for Claude CLI without network for builds; try again, or turn on Settings → General → Worktree mode → Network for
+    builds" (503). Claude's web fetch and web search and every other host fail. There is no proxy in the container:
+    MXC's `allowedProxyPeer` is a package identity, not a host and port, and MXC's proxying on Windows covers only
+    WinHTTP clients.
+  - Loopback: the run port on 127.0.0.1 exists only with **May ask other models**; then the container gets MXC's
+    `ingress.hostLoopback` "allow", which opens all of the host's 127.0.0.1 services to the agent in both directions.
+    Without it loopback is denied. The gateway still refuses the agent there: the admin API refuses every process in
+    the gateway's agent Job (the boxed process inherits it), the main port treats AppContainer processes as confined
+    and needs the token (which the agent cannot read: the config folder is denied), and the run port accepts only that
+    run's process tree with its token. Other local services (for example LiteLLM, Foundry Local) are reachable by the
+    agent, so keep **May ask other models** off if you run local services you do not want agents to reach.
   - Codex does not start inside an MXC container (it cannot read its own `CODEX_HOME` there). It runs with its own
     **elevated** Windows sandbox when that is set up (`[windows] sandbox = "elevated"` in `~\.codex\config.toml`, done
     once by `codex sandbox setup --elevated` as administrator; each run then gets `-c windows.sandbox="elevated"`);

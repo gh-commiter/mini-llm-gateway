@@ -38,11 +38,12 @@ type agentMounts struct {
 	// started: PID procesa agenta po zagonu (vrata izvajanja sprejmejo le njegovo drevo procesov).
 	started func(pid int)
 	// #68, le Windows (škatla MXC, mxc.go): celo okolje procesa (gre v zahtevo), delovna mapa, dom agenta (USERPROFILE,
-	// APPDATA; "" = v temp), TEMP zagona ("" = nova v Scratch\tmp, pobrisana po teku), vrata izvajanja za posrednik in
-	// unboxed (Codex: svoj peskovnik »elevated«, ne v škatli).
+	// APPDATA; "" = v temp), TEMP zagona ("" = nova v Scratch\tmp, pobrisana po teku), allowIPs (brez omrežja: le API
+	// ponudnika na 443), loopback (vrata izvajanja za vprašanja drugim modelom) in unboxed (Codex: svoj peskovnik).
 	cmdEnv          []string
 	cwd, home, temp string
-	proxy           string
+	allowIPs        []net.IP
+	loopback        bool
 	unboxed         bool
 }
 

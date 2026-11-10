@@ -78,14 +78,13 @@ func wxcVerify(p string) (*os.File, error) {
 
 // mxcRequest: zahteva wxc-exec (OneShotRequest pogodbe 1.0.0).
 type mxcRequest struct {
-	Version          string      `json:"version"`
-	Containment      string      `json:"containment"`
-	Process          mxcProcess  `json:"process"`
-	Filesystem       mxcFS       `json:"filesystem"`
-	ProcessContainer mxcPC       `json:"processContainer"`
-	Network          mxcNet      `json:"network"`
-	RuntimeConfig    *mxcRuntime `json:"runtimeConfig,omitempty"`
-	UI               mxcUI       `json:"ui"`
+	Version          string     `json:"version"`
+	Containment      string     `json:"containment"`
+	Process          mxcProcess `json:"process"`
+	Filesystem       mxcFS      `json:"filesystem"`
+	ProcessContainer mxcPC      `json:"processContainer"`
+	Network          mxcNet     `json:"network"`
+	UI               mxcUI      `json:"ui"`
 }
 
 type mxcProcess struct {
@@ -106,27 +105,42 @@ type mxcPC struct {
 	Filesystem struct {
 		Enumerate []string `json:"enumeratePaths"`
 	} `json:"filesystem"`
-	Network *mxcPCNet `json:"network,omitempty"`
-}
-
-// mxcPCNet: networkProxy v processcontainer zahteva allowedProxyPeer ali ingress.hostLoopback=allow (ta bi odprl vse
-// lokalne storitve); preverjeno z mxc-exec-mac --dry-run iz iste izdaje (»a ProcessContainer proxy without
-// allowedProxyPeer requires network.ingress.hostLoopback='allow'«).
-type mxcPCNet struct {
-	AllowedProxyPeer string `json:"allowedProxyPeer"`
 }
 
 type mxcNet struct {
-	Egress  mxcDefault  `json:"egress"`
-	Ingress *mxcDefault `json:"ingress,omitempty"`
+	Egress  mxcEgress  `json:"egress"`
+	Ingress mxcIngress `json:"ingress"`
+}
+
+// mxcEgress: privzeto dejanje in pravila allow (CIDR + vrata; MXC pravila so le številska).
+type mxcEgress struct {
+	Default string    `json:"default"`
+	Allow   []mxcRule `json:"allow,omitempty"`
+}
+
+type mxcRule struct {
+	To    []mxcPeer `json:"to"`
+	Ports []mxcPort `json:"ports"`
+}
+
+type mxcPeer struct {
+	CIDR string `json:"cidr"`
+}
+
+type mxcPort struct {
+	Protocol string `json:"protocol"`
+	Port     int    `json:"port"`
+}
+
+// mxcIngress: hostLoopback »allow« odpre ves loopback gostitelja v obe smeri (le za vrata izvajanja, »May ask other
+// models«); posrednik MXC (networkProxy) ne pride v poštev: allowedProxyPeer je identiteta paketa, ne host:port, in
+// proxy na Windows velja le za odjemalce WinHTTP (HPX360, 2026-11-10).
+type mxcIngress struct {
+	HostLoopback string `json:"hostLoopback"`
 }
 
 type mxcDefault struct {
 	Default string `json:"default"`
-}
-
-type mxcRuntime struct {
-	NetworkProxy string `json:"networkProxy"`
 }
 
 type mxcUI struct {
@@ -140,7 +154,8 @@ type mxcSpec struct {
 	env          []string
 	rw, ro, deny []string
 	egressDeny   bool
-	proxy        string // vrata izvajanja (127.0.0.1:port): posrednik CONNECT in vprašanja drugim modelom; "" = brez
+	allowIPs     []net.IP // z egressDeny: le ti naslovi na vratih 443 (API ponudnika, razrešen ob začetku teka)
+	loopback     bool     // hostLoopback allow (vrata izvajanja za vprašanja drugim modelom)
 }
 
 // mxcRequestFor: zahteva iz mxcSpec. Branje je seznam dovoljenih: kar ni v rw/ro, ni berljivo; enumerate = vsi predniki
@@ -160,18 +175,23 @@ func mxcRequestFor(sp mxcSpec) mxcRequest {
 	r := mxcRequest{Version: mxcContract, Containment: "processcontainer",
 		Process:    mxcProcess{CommandLine: winCmdLine(sp.argv), Cwd: sp.cwd, Env: sp.env, Timeout: mxcTimeout.Milliseconds()},
 		Filesystem: mxcFS{ReadWrite: nonNil(rw), ReadOnly: nonNil(ro), Denied: nonNil(slices.Clone(sp.deny))},
-		Network:    mxcNet{Egress: mxcDefault{"allow"}}}
+		Network:    mxcNet{Egress: mxcEgress{Default: "allow"}}}
 	r.ProcessContainer.Filesystem.Enumerate = nonNil(mxcAncestors(append(slices.Clone(rw), ro...), sp.deny))
 	if sp.egressDeny {
 		r.Network.Egress.Default = "deny"
-	}
-	if sp.proxy != "" { // W9: loopback do vrat izvajanja (vprašanja drugim modelom); posrednik le brez omrežja
-		r.Network.Ingress = &mxcDefault{"allow"}
-		if sp.egressDeny { // networkProxy zahteva egress deny, ingress allow in allowedProxyPeer (pravila 1.0.1)
-			r.RuntimeConfig = &mxcRuntime{NetworkProxy: "http://" + sp.proxy}
-			r.ProcessContainer.Network = &mxcPCNet{AllowedProxyPeer: sp.proxy}
+		var to []mxcPeer
+		for _, ip := range sp.allowIPs {
+			bits := 128
+			if ip.To4() != nil {
+				bits = 32
+			}
+			to = append(to, mxcPeer{CIDR: (&net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)}).String()})
+		}
+		if len(to) > 0 {
+			r.Network.Egress.Allow = []mxcRule{{To: to, Ports: []mxcPort{{Protocol: "tcp", Port: 443}}}}
 		}
 	}
+	r.Network.Ingress.HostLoopback = map[bool]string{true: "allow", false: "deny"}[sp.loopback]
 	return r
 }
 
@@ -359,10 +379,6 @@ func mxcWrap(wxc, exe string, args []string, m agentMounts) (string, []string, f
 		"TEMP": temp, "TMP": temp, "TMPDIR": temp, "PATH": strings.Join(path, string(os.PathListSeparator)), "MINIGW_SANDBOXED": "1"} {
 		env = envSet(env, k, v)
 	}
-	if m.noNet && m.proxy != "" { // omrežje izklopljeno: le gostitelji ponudnika prek posrednika (W8: brez njega Claude visi)
-		env = envSet(env, "HTTPS_PROXY", "http://"+m.proxy) // Windows: imena brez razlike v velikih črkah
-		env = envSet(env, "NO_PROXY", "127.0.0.1,localhost")
-	}
 	slices.Sort(env)
 	cwd := m.cwd
 	var deny []string
@@ -370,7 +386,7 @@ func mxcWrap(wxc, exe string, args []string, m agentMounts) (string, []string, f
 		deny = []string{m.cfgDir}
 	}
 	req := mxcRequestFor(mxcSpec{argv: append([]string{exe}, args...), cwd: cwd, env: env, rw: rw, ro: ro,
-		deny: deny, egressDeny: m.noNet, proxy: m.proxy})
+		deny: deny, egressDeny: m.noNet, allowIPs: m.allowIPs, loopback: m.loopback})
 	b, err := json.MarshalIndent(req, "", " ")
 	if err != nil {
 		done()
@@ -405,14 +421,17 @@ func mxcWrap(wxc, exe string, args []string, m agentMounts) (string, []string, f
 	return wxc, []string{f.Name()}, done, nil
 }
 
-// buildTooOld: »26100.x« ali »26200.x« z UBR pod 9550, ali starejša gradnja; neznano = ne (odloči preizkus).
+// buildTooOld: »26100.x« ali »26200.x« z UBR pod 9278 (processcontainer), ali starejša gradnja; neznano = ne.
 func buildTooOld(b string) bool {
 	var major, ubr int
 	if n, _ := fmt.Sscanf(b, "%d.%d", &major, &ubr); n != 2 {
 		return false
 	}
-	return major < 26100 || (major == 26100 || major == 26200) && ubr < 9550
+	return major < 26100 || (major == 26100 || major == 26200) && ubr < 9278
 }
+
+// mxcResolve: naslovi gostitelja za pravila egress (testi: lažni).
+var mxcResolve = func(host string) ([]net.IP, error) { return net.LookupIP(host) }
 
 // boxWrap: agentWrap s škatlo (Windows; drugje le testi z lažnim wxc-exec): wxc-exec.exe se pred vsako rabo preveri.
 // Napaka: agent ne teče (nikoli brez škatle, ko je vklopljena).
@@ -491,8 +510,9 @@ func mxcProbeMain(args []string) {
 	os.Exit(7)
 }
 
-// mxcProbeVerdict: "" = škatla deluje, sicer razlog (angleško, za stran z nastavitvami in dnevnik).
-func mxcProbeVerdict(out string, code int, nonce string, loopback bool) string {
+// mxcProbeVerdict: "" = škatla deluje, sicer razlog (angleško, za stran z nastavitvami in dnevnik). loopOK: škatla doseže
+// 127.0.0.1 (le za »May ask other models«; na razpoložljivost ne vpliva).
+func mxcProbeVerdict(out string, code int, nonce string, loopback bool) (why string, loopOK bool) {
 	got := map[string]string{}
 	for _, l := range strings.Split(strings.ReplaceAll(out, "\r", ""), "\n") {
 		if k, v, ok := strings.Cut(l, ":"); ok {
@@ -501,34 +521,32 @@ func mxcProbeVerdict(out string, code int, nonce string, loopback bool) string {
 	}
 	switch {
 	case got["nonce"] != nonce || code != 7:
-		return fmt.Sprintf("wxc-exec did not pass the prompt and the exit code through (exit %d)", code)
+		return fmt.Sprintf("wxc-exec did not pass the prompt and the exit code through (exit %d)", code), false
 	case got["write"] != "ok":
-		return "a folder granted for writing could not be written"
+		return "a folder granted for writing could not be written", false
 	case got["deny"] != "ok":
-		return "the gateway's config was readable inside the sandbox"
-	case got["loopback"] != "ok" || !loopback:
-		return "the sandbox cannot reach the gateway on 127.0.0.1 (needs Windows 11 build 26100.9550 / 26200.9550 or later)"
+		return "the gateway's config was readable inside the sandbox", false
 	}
-	return ""
+	return "", got["loopback"] == "ok" && loopback
 }
 
 // mxcProbe: preizkus škatle z wxc (preverjen) in minigw (programom za __mxc-probe). "" = deluje, sicer razlog;
-// detail: izhod wxc-exec (stdout, stderr, skrajšano) za dnevnik.
-func mxcProbe(wxc, minigw, scratch, cfgDir string) (why, detail string) {
+// detail: izhod wxc-exec (stdout, stderr, skrajšano) za dnevnik; loopOK: 127.0.0.1 dosegljiv (vprašanja drugim modelom).
+func mxcProbe(wxc, minigw, scratch, cfgDir string) (why, detail string, loopOK bool) {
 	f, err := wxcVerify(wxc)
 	if err != nil {
-		return err.Error(), ""
+		return err.Error(), "", false
 	}
 	defer f.Close()
 	os.MkdirAll(filepath.Join(scratch, "tmp"), 0o700)
 	dir, err := os.MkdirTemp(filepath.Join(scratch, "tmp"), "probe-*")
 	if err != nil {
-		return err.Error(), ""
+		return err.Error(), "", false
 	}
 	defer os.RemoveAll(dir)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return err.Error(), ""
+		return err.Error(), "", false
 	}
 	defer ln.Close()
 	reached := make(chan bool, 1)
@@ -549,10 +567,10 @@ func mxcProbe(wxc, minigw, scratch, cfgDir string) (why, detail string) {
 		}
 	}()
 	m := agentMounts{cfgDir: cfgDir, hide: scratch, rw: []string{dir}, temp: dir, cwd: dir, cmdEnv: agentEnv(os.Environ()),
-		noNet: true, proxy: ln.Addr().String()}
+		noNet: true, loopback: true}
 	name, args, done, err := mxcWrap(wxc, minigw, []string{mxcProbeCmd, dir, filepath.Join(cfgDir, "admin.secret"), ln.Addr().String()}, m)
 	if err != nil {
-		return err.Error(), ""
+		return err.Error(), "", false
 	}
 	defer done()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -568,14 +586,14 @@ func mxcProbe(wxc, minigw, scratch, cfgDir string) (why, detail string) {
 	if e, ok := err.(*exec.ExitError); ok {
 		code = e.ExitCode()
 	} else if err != nil {
-		return "cannot run wxc-exec.exe: " + err.Error(), ""
+		return "cannot run wxc-exec.exe: " + err.Error(), "", false
 	}
 	ok := false
 	select {
 	case ok = <-reached:
 	case <-time.After(2 * time.Second):
 	}
-	why = mxcProbeVerdict(out.String(), code, nonce, ok)
+	why, loopOK = mxcProbeVerdict(out.String(), code, nonce, ok)
 	if why != "" && strings.TrimSpace(stderr.String()) != "" {
 		first, _, _ := strings.Cut(strings.TrimSpace(stderr.String()), "\n")
 		why += ": " + strings.TrimSpace(first)
@@ -583,7 +601,10 @@ func mxcProbe(wxc, minigw, scratch, cfgDir string) (why, detail string) {
 	if why != "" {
 		detail = "wxc-exec exit " + fmt.Sprint(code) + "; stdout: " + tailText(out.String(), 600) + "; stderr: " + tailText(stderr.String(), 1500)
 	}
-	return why, detail
+	if why == "" && !loopOK {
+		detail = "loopback: " + tailText(out.String(), 300)
+	}
+	return why, detail, loopOK
 }
 
 // --- prijave in stanje agentov v škatli (Windows: povezave zahtevajo pravice, trde ne prečkajo nosilcev C: → D:) ---

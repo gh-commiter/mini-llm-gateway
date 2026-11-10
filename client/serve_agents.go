@@ -940,10 +940,10 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 				treeEnv = slices.DeleteFunc(treeEnv, func(kv string) bool { return strings.HasPrefix(kv, "MINIGW_DEPS=") })
 			}
 		}
-		run, runEnv := s.startRun(r, k.name, dir, readOnly, true, wt, maven, objects, tmp, nil, "") // »May ask other models«; mapa je deljena (agentFolder); žeton v tmp zahteve
+		run, runEnv := s.startRun(r, k.name, dir, readOnly, true, wt, maven, objects, tmp) // »May ask other models«; mapa je deljena (agentFolder); žeton v tmp zahteve
 		defer run.stop()
 		withTree := func(m agentMounts) agentMounts { // worktree: Maven agentov, objekti zrcala (branje), .git klona le za branje
-			m.env, m.started, m.proxy = append(m.env, runEnv...), run.started, run.runAddr()
+			m.env, m.started, m.loopback = append(m.env, runEnv...), run.started, run.asks() // #68: loopback le za vrata izvajanja
 			if runEnv != nil {
 				m.ro = append(m.ro, minigwExe())
 			}

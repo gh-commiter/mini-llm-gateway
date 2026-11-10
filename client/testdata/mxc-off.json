@@ -1,0 +1,63 @@
+{
+ "version": "1.0.0",
+ "containment": "processcontainer",
+ "process": {
+  "commandLine": "C:\\Users\\u\\AppData\\Local\\Programs\\Mini Gateway\\minigw.exe __mxc-probe D:\\s\\tmp\\probe-1 C:\\Users\\u\\AppData\\Roaming\\minigw\\admin.secret 127.0.0.1:5000",
+  "cwd": "D:\\s\\tmp\\probe-1",
+  "env": [
+   "LOCALAPPDATA=D:\\s\\tmp\\probe-1\\home\\AppData\\Local",
+   "SYSTEMROOT=C:\\Windows",
+   "TEMP=D:\\s\\tmp\\probe-1"
+  ],
+  "inheritDefaultEnv": false,
+  "timeout": 86400000
+ },
+ "filesystem": {
+  "readwritePaths": [
+   "D:\\s\\tmp\\probe-1"
+  ],
+  "readonlyPaths": [
+   "C:\\p"
+  ],
+  "deniedPaths": [
+   "C:\\Users\\u\\AppData\\Roaming\\minigw"
+  ]
+ },
+ "processContainer": {
+  "filesystem": {
+   "enumeratePaths": [
+    "C:\\",
+    "D:\\"
+   ]
+  }
+ },
+ "network": {
+  "egress": {
+   "default": "deny",
+   "allow": [
+    {
+     "to": [
+      {
+       "cidr": "160.79.104.10/32"
+      },
+      {
+       "cidr": "2607:6bc0::10/128"
+      }
+     ],
+     "ports": [
+      {
+       "protocol": "tcp",
+       "port": 443
+      }
+     ]
+    }
+   ]
+  },
+  "ingress": {
+   "hostLoopback": "deny"
+  }
+ },
+ "ui": {
+  "disable": false
+ }
+}

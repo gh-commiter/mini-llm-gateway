@@ -14,9 +14,10 @@ import (
 // Windows: škatla MXC (mxc.go) je vklopljena, ko preizkus ob zagonu minigw serve uspe; sicer ostane vse kot prej
 // (agenti le z »Allow commands without a sandbox«).
 var mxcState struct {
-	mu     sync.Mutex
-	ready  bool
-	reason string
+	mu       sync.Mutex
+	ready    bool
+	reason   string
+	loopback bool // preizkus je dosegel 127.0.0.1 (vprašanja drugim modelom)
 }
 
 // windowsBox: agenti (razen Codex) tečejo v škatli MXC.
@@ -51,25 +52,22 @@ func sandboxInit(scratch, cfgDir string, logf func(string, ...any)) {
 	for _, p := range old {
 		os.Remove(p)
 	}
-	why, detail := "", ""
-	if b := windowsBuild(); buildTooOld(b) { // pred preizkusom: jasen razlog
-		why = "needs Windows 11 build 26100.9550 / 26200.9550 or later (KB5124010 or any later cumulative update); this computer has " + b
+	why, detail, loopOK := "", "", false
+	if b := windowsBuild(); buildTooOld(b) { // pred preizkusom: le res prestara gradnja
+		why = "needs Windows 11 build 26100.9278 / 26200.9278 or later (the Windows process container); this computer has " + b
 	} else {
-		why, detail = mxcProbe(wxcExe(), minigwExe(), scratch, cfgDir)
+		why, detail, loopOK = mxcProbe(wxcExe(), minigwExe(), scratch, cfgDir)
 	}
 	mxcState.mu.Lock()
-	mxcState.ready, mxcState.reason = why == "", why
+	mxcState.ready, mxcState.reason, mxcState.loopback = why == "", why, loopOK
 	mxcState.mu.Unlock()
 	worktreeNeedsUnsandboxed = why != ""
 	if why == "" {
 		logf("agents run in the Windows sandbox (MXC %s)", mxcRelease)
+		if !loopOK { // vpliva le na »May ask other models« (vrata izvajanja na 127.0.0.1)
+			logf("Windows sandbox: agents in it cannot reach 127.0.0.1, so \"May ask other models\" does not work there (%s)", detail)
+		}
 		return
-	}
-	if b := windowsBuild(); b != "" && strings.Contains(why, "127.0.0.1") { // build le pri napaki loopback
-		why += "; this computer has " + b
-		mxcState.mu.Lock()
-		mxcState.reason = why
-		mxcState.mu.Unlock()
 	}
 	logf("Windows sandbox (MXC) not available: %s; agents run only with \"Allow commands without a sandbox\"", why)
 	if detail != "" {
@@ -82,7 +80,11 @@ func agentSandboxInfo() map[string]string {
 	mxcState.mu.Lock()
 	defer mxcState.mu.Unlock()
 	if mxcState.ready {
-		return map[string]string{"kind": "mxc", "version": mxcRelease}
+		o := map[string]string{"kind": "mxc", "version": mxcRelease}
+		if !mxcState.loopback {
+			o["askOthers"] = "agents in the sandbox cannot reach 127.0.0.1, so May ask other models does not work"
+		}
+		return o
 	}
 	r := mxcState.reason
 	if r == "" {
