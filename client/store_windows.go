@@ -299,7 +299,7 @@ func protectScratch(dir string) error {
 		}
 		var mine bool
 		var verdict error
-		ph, err := openDir(p, func(mode os.FileMode, owner, me string, dacl []scratchACE) error {
+		ph, err := openDir(p, false, func(mode os.FileMode, owner, me string, dacl []scratchACE) error {
 			if mine, verdict = owner == me, scratchParentOK(mode, owner, me, dacl); errors.Is(verdict, errUnprotected) {
 				return nil // popravimo spodaj, če imamo WRITE_DAC
 			}
@@ -320,7 +320,7 @@ func protectScratch(dir string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	h, err := openDir(dir, func(mode os.FileMode, owner, me string, _ []scratchACE) error { return scratchDirOK(mode, owner, me) })
+	h, err := openDir(dir, true, func(mode os.FileMode, owner, me string, _ []scratchACE) error { return scratchDirOK(mode, owner, me) })
 	if err != nil {
 		if errors.Is(err, errForeignOwner) { // ni dostopa: mapa drugega uporabnika
 			err = errScratchTaken
@@ -343,6 +343,8 @@ func protectScratch(dir string) error {
 // scratchParentSDDL: lastnik (ta uporabnik), SYSTEM in Administrators vse; Authenticated Users le prehod, seznam in
 // nova podmapa v tej mapi; CREATOR OWNER vse na podmapah (vsaka mapa prehoda ima še svoj zaščiten DACL).
 const scratchParentSDDL = "D:P(A;;FA;;;%s)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;;0x1200ad;;;AU)(A;OICIIO;FA;;;CO)"
+
+var errScratchNoHold = errors.New("cannot be held open (no list access for this user): set \"scratch\" to a folder of your own")
 
 // scratchHold: ročaj trenutne mape Scratch (openDir: s seznamom, brez FILE_SHARE_DELETE), odprt, dokler prehod teče.
 var scratchHold struct {
@@ -368,7 +370,7 @@ const oNoBlock = 0
 
 // scratchFolderMine (N4): prava mapa tega uporabnika, preverjena prek ročaja (kot protectScratch).
 func scratchFolderMine(dir string) bool {
-	h, err := openDir(dir, func(mode os.FileMode, owner, me string, _ []scratchACE) error { return scratchDirOK(mode, owner, me) })
+	h, err := openDir(dir, false, func(mode os.FileMode, owner, me string, _ []scratchACE) error { return scratchDirOK(mode, owner, me) })
 	if err != nil {
 		return false
 	}
@@ -397,7 +399,8 @@ func scratchLocked(dir string) bool {
 // Ročaj ima tudi FILE_LIST_DIRECTORY|FILE_TRAVERSE: NTFS deljenje uveljavi le proti ročajem s podatkovnim dostopom ali
 // DELETE, ročaj samo z READ_CONTROL/WRITE_DAC ne prepreči poznejšega odpiranja z DELETE (preimenovanje, HPX360). Drugo
 // odpiranje iste mape (tudi naše, med držanjem) mora zato deliti READ|WRITE in ne sme zahtevati DELETE (kot tu).
-func openDir(p string, ok func(mode os.FileMode, owner, me string, dacl []scratchACE) error) (windows.Handle, error) {
+// hold: ročaj bo zaklep (mapa Scratch); brez seznama ga ni, zato errScratchNoHold namesto ročaja, ki ne drži.
+func openDir(p string, hold bool, ok func(mode os.FileMode, owner, me string, dacl []scratchACE) error) (windows.Handle, error) {
 	u, err := windows.UTF16PtrFromString(p)
 	if err != nil {
 		return 0, err
@@ -406,13 +409,16 @@ func openDir(p string, ok func(mode os.FileMode, owner, me string, dacl []scratc
 		return windows.CreateFile(u, access, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_EXISTING,
 			windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
 	}
-	const hold = windows.FILE_LIST_DIRECTORY | windows.FILE_TRAVERSE | windows.READ_CONTROL
-	h, err := open(hold | windows.WRITE_DAC)
+	const held = windows.FILE_LIST_DIRECTORY | windows.FILE_TRAVERSE | windows.READ_CONTROL
+	h, err := open(held | windows.WRITE_DAC)
 	if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
-		h, err = open(hold)
+		h, err = open(held)
 	}
 	if errors.Is(err, windows.ERROR_ACCESS_DENIED) { // le odločitev (npr. tuja mapa brez seznama); tak ročaj ne drži
-		h, err = open(windows.READ_CONTROL)
+		if h, err = open(windows.READ_CONTROL); err == nil && hold {
+			windows.CloseHandle(h)
+			return 0, errScratchNoHold
+		}
 	}
 	if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
 		return 0, errForeignOwner
