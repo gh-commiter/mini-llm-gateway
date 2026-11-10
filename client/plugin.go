@@ -523,6 +523,20 @@ func uninstallSteps(goos string, purge bool) (steps []uninstallStep, kept []stri
 			steps = append(steps, uninstallStep{"scratch folder " + d, func() error { return os.RemoveAll(d) }})
 		}
 	}
+	if c, err := loadServeConfig(defaultServeConfigPath()); err == nil && goos != "windows" && c.Instance != "" {
+		if base := newScratchDefault(); base != "" { // N4: le privzeta mapa te instance, nikoli druge mape v osnovi
+			d := filepath.Join(base, c.Instance)
+			if scratchOwner(d) == c.Instance && scratchFolderMine(d) {
+				steps = append(steps, uninstallStep{"scratch folder " + d, func() error {
+					if err := os.RemoveAll(d); err != nil {
+						return err
+					}
+					os.Remove(base) // le prazna
+					return nil
+				}})
+			}
+		}
+	}
 	var dirs []string
 	for _, f := range []func() (string, error){os.UserConfigDir, configBase} {
 		if d, err := f(); err == nil && errFromStat(filepath.Join(d, "minigw")) == nil && !slices.Contains(dirs, filepath.Join(d, "minigw")) {

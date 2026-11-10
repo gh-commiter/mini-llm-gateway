@@ -361,7 +361,20 @@ func releaseScratch() {
 }
 
 // lockScratch (N4): zaklep mape Scratch je ročaj iz protectScratch (brez FILE_SHARE_DELETE).
-func lockScratch(string) bool { return true }
+func lockScratch(string) error { return nil }
+
+// oNoBlock: na Windows ni cevi v mapi (datoteka lastnika se preveri s Stat).
+const oNoBlock = 0
+
+// scratchFolderMine (N4): prava mapa tega uporabnika, preverjena prek ročaja (kot protectScratch).
+func scratchFolderMine(dir string) bool {
+	h, err := openDir(dir, func(mode os.FileMode, owner, me string, _ []scratchACE) error { return scratchDirOK(mode, owner, me) })
+	if err != nil {
+		return false
+	}
+	windows.CloseHandle(h)
+	return true
+}
 
 // scratchLocked: drug prehod drži ročaj mape dir brez deljenja brisanja (odpiranje z DELETE: kršitev deljenja).
 func scratchLocked(dir string) bool {

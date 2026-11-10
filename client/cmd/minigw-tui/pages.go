@@ -160,7 +160,8 @@ func general(u *ui) ([]row, error) {
 	)
 	switch str(g, "scratchState") { // N4: mapa drugega prehoda; Take over le, ko ta ne teče
 	case "in-use":
-		rows = append(rows, inf("  Used by another gateway, which is running: agents are off; choose a folder of this gateway.", ""))
+		rows = append(rows, inf("  Used by another gateway, which is running: agents are off; choose a folder of this gateway.", ""),
+			btn("Take over", "", func() (string, error) { return "", errInUse }))
 	case "stale":
 		rows = append(rows, inf("  Stale owner: another gateway's folder, not running; agents are off.", ""),
 			btn("Take over", "Take over the other gateway's Scratch folder? It is renamed to this gateway's name", func() (string, error) {
@@ -179,7 +180,8 @@ func general(u *ui) ([]row, error) {
 		m, _ := o.(map[string]any)
 		name := str(m, "name")
 		if str(m, "state") == "in-use" {
-			rows = append(rows, inf("  "+clean(name)+": used by another gateway (running)", ""))
+			rows = append(rows, inf("  "+clean(name)+": used by another gateway (running)", ""),
+				btn("Take over "+clean(name), "", func() (string, error) { return "", errInUse }))
 			continue
 		}
 		rows = append(rows, inf("  "+clean(name)+": stale owner (another gateway's folder, not running)", ""),
@@ -911,3 +913,6 @@ func loginRows(kind string, a map[string]any, p func(map[string]any) (string, er
 	}
 	return rows
 }
+
+// errInUse (N4): Take over ni mogoč, dokler drug prehod teče (drži zaklep mape).
+var errInUse = errors.New("used by another gateway that is running: stop it first (Take over works only for a stale owner)")

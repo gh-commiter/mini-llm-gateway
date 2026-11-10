@@ -635,7 +635,7 @@ func routerCommand(args []string, in io.Reader) {
 			say("Scratch folder: " + g.Scratch)
 			switch g.ScratchState {
 			case scratchInUse:
-				say("It belongs to another gateway that is running: agents are off; choose another folder (minigw gw scratch move DIR)")
+				say("It is " + inUseText() + ": agents are off; choose another folder (minigw gw scratch move DIR)")
 			case scratchStale:
 				say("It belongs to another gateway that is not running (stale owner): agents are off; take it over (minigw gw scratch take) or choose another folder (minigw gw scratch move DIR)")
 			}

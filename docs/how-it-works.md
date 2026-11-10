@@ -155,8 +155,13 @@ Details:
     `%LOCALAPPDATA%\minigw\scratch`, the default of installs before #68) or an allowed folder inside your home, that includes the home and every
     folder on the way, and the gateway warns about Scratch there: move it outside your home with the settings page's Scratch field. New
     installs and the Scratch **Default** button use `<first fixed drive that is not the system drive, else the system
-    drive>\minigw-scratch\<Windows user name>` (for example `D:\minigw-scratch\ana`), with an owner-only protected
-    access list. MXC may let a listing grant reach subfolders (HPX360 saw
+    drive>\minigw-scratch\<instance>` (0.5.24; for example `D:\minigw-scratch\gw-3f9a1c2b7d4e`), with an owner-only protected
+    access list; existing `\minigw-scratch\<Windows user name>` folders stay. On every platform the Scratch setting names a base
+    folder and each gateway's Scratch is `<base>/<instance>`: an owner file (`.minigw-owner`) holds the gateway's instance ID,
+    and a running gateway holds a lock on it (Windows: the open folder handle; macOS and Linux: `flock` on `.minigw-lock`).
+    A folder of another gateway is not used (no agents, no cleanup) until it is taken over with **Take over** (only for
+    a stale owner: rename, never merge). A Scratch base on a network drive shared by more than one computer is not
+    supported (`flock` may not work there). MXC may let a listing grant reach subfolders (HPX360 saw
     `dir ~\.ssh` list names while reading the files was denied): names can show, file contents cannot.
   - The request for each run (it holds the Claude token or an API key you chose) is written to `Scratch\tmp\mxc`, a
     folder only your user can open (protected access list, also on a D: drive), outside every grant, and deleted after

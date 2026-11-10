@@ -23,10 +23,10 @@ func TestClaimScratchOwner(t *testing.T) {
 	if err := protectScratch(a); err != nil { // Windows: ročaj je zaklep
 		t.Fatal(err)
 	}
-	if st := claimScratch(a, "gw-a"); st != "" || scratchOwner(a) != "gw-a" {
+	if st, _ := claimScratch(a, "gw-a"); st != "" || scratchOwner(a) != "gw-a" {
 		t.Fatalf("first use: %q %q", st, scratchOwner(a))
 	}
-	if st := claimScratch(a, "gw-a"); st != "" {
+	if st, _ := claimScratch(a, "gw-a"); st != "" {
 		t.Fatalf("own folder again: %q", st)
 	}
 	if st := scratchState(a, "gw-b"); st != scratchInUse { // gw-a teče (ta proces drži zaklep)
@@ -36,7 +36,7 @@ func TestClaimScratchOwner(t *testing.T) {
 	t.Cleanup(releaseScratch) // Windows: ročaj bi preprečil brisanje TempDir
 	protectScratch(b)
 	claimScratch(b, "gw-a") // zaklep gre na drugo mapo: a ostane brez
-	if st := claimScratch(a, "gw-b"); st != scratchStale || scratchOwner(a) != "gw-a" {
+	if st, _ := claimScratch(a, "gw-b"); st != scratchStale || scratchOwner(a) != "gw-a" {
 		t.Fatalf("stale owner: %q, owner %q", st, scratchOwner(a))
 	}
 }

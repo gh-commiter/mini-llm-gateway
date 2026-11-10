@@ -5,9 +5,12 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -48,9 +51,35 @@ func ensureInstance(cfgPath string, c *serveConfig) error {
 	return writeServeConfig(cfgPath, file)
 }
 
+// scratchOwner: ID iz datoteke lastnika; "" = je ni. Neberljiva, ne navadna datoteka ali povezava: scratchUnknown
+// (tuja, nikoli prevzeta samodejno). oNoBlock: podtaknjena cev ne ustavi GET /general.
 func scratchOwner(dir string) string {
-	b, _ := os.ReadFile(filepath.Join(dir, scratchOwnerFile))
+	f, err := os.OpenFile(filepath.Join(dir, scratchOwnerFile), os.O_RDONLY|oNoBlock, 0)
+	if errors.Is(err, fs.ErrNotExist) {
+		return ""
+	} else if err != nil {
+		return scratchUnknown
+	}
+	defer f.Close()
+	if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() {
+		return scratchUnknown
+	}
+	b, err := io.ReadAll(io.LimitReader(f, 256))
+	if err != nil {
+		return scratchUnknown
+	}
 	return strings.TrimSpace(string(b))
+}
+
+// scratchUnknown: lastnik, ki ga ni mogoče prebrati (odločitev: zaprto, kot tuj).
+const scratchUnknown = "?"
+
+// inUseText: drug prehod drži zaklep (Windows: ali program, ki ima mapo odprto, npr. ukazna vrstica v njej).
+func inUseText() string {
+	if runtime.GOOS == "windows" {
+		return "used by another gateway that is running (or a program has the folder open)"
+	}
+	return "used by another gateway that is running"
 }
 
 // scratchState: "" = mapa te instance (ali še brez lastnika), sicer scratchInUse ali scratchStale.
@@ -64,28 +93,49 @@ func scratchState(dir, id string) string {
 	return scratchStale
 }
 
-// claimScratch: prva raba zapiše datoteko lastnika (O_EXCL: od dveh hkratnih zagonov zmaga eden); mapa te instance
-// dobi zaklep. Vrne scratchState.
-func claimScratch(dir, id string) string {
-	if f, err := os.OpenFile(filepath.Join(dir, scratchOwnerFile), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600); err == nil {
-		_, err = f.WriteString(id + "\n")
-		if f.Close() != nil || err != nil {
-			os.Remove(f.Name())
+// claimScratch: prva raba zapiše datoteko lastnika (O_EXCL: od dveh hkratnih zagonov zmaga eden), le v mapi tega
+// uporabnika, ki je nihče ne drži (obstoječa mapa 0.5.23 je tako prevzeta enkrat); mapa te instance dobi zaklep.
+// Vrne scratchState in opozorilo (zaklepa ni bilo mogoče dobiti, npr. omrežni disk brez flock).
+func claimScratch(dir, id string) (string, error) {
+	if scratchOwner(dir) == "" {
+		releaseScratch() // Windows: naš ročaj bi bil videti kot zaklep
+		if scratchLocked(dir) {
+			return scratchInUse, nil
+		}
+		if err := protectScratch(dir); err != nil || !scratchFolderMine(dir) {
+			releaseScratch()
+			return scratchStale, err
+		}
+		if f, err := os.OpenFile(filepath.Join(dir, scratchOwnerFile), os.O_WRONLY|os.O_CREATE|os.O_EXCL|oNoBlock, 0o600); err == nil {
+			_, err = f.WriteString(id + "\n")
+			if f.Close() != nil || err != nil {
+				os.Remove(f.Name())
+			}
 		}
 	}
-	if o := scratchOwner(dir); o != "" && o != id {
-		releaseScratch() // Windows: naš ročaj bi bil videti kot zaklep drugega
-		return scratchState(dir, id)
+	if o := scratchOwner(dir); o != id {
+		releaseScratch()
+		if o == "" {
+			return scratchStale, nil
+		}
+		return scratchState(dir, id), nil
 	}
-	if !lockScratch(dir) {
-		return scratchInUse
+	if err := lockScratch(dir); errors.Is(err, errScratchHeld) {
+		return scratchInUse, nil
+	} else if err != nil {
+		return "", fmt.Errorf("scratch folder %s: no lock (%v): a Scratch base shared by more than one computer is not supported", dir, err)
 	}
-	return ""
+	return "", nil
 }
+
+var errScratchHeld = errors.New("held by another process")
 
 func (s *server) claimScratch() {
 	c := s.conf()
-	st := claimScratch(c.Scratch, c.Instance)
+	st, warn := claimScratch(c.Scratch, c.Instance)
+	if warn != nil {
+		s.log.Print("WARNING: ", warn)
+	}
 	s.scratchOther.Store(st != "")
 	if st != "" {
 		s.log.Print("WARNING: " + scratchOtherMsg(c.Scratch, st))
@@ -93,11 +143,11 @@ func (s *server) claimScratch() {
 }
 
 func scratchOtherMsg(dir, st string) string {
-	who := "another gateway that is not running (stale owner)"
+	who := "belongs to another gateway that is not running (stale owner)"
 	if st == scratchInUse {
-		who = "another gateway that is running"
+		who = "is " + inUseText()
 	}
-	return "the Scratch folder " + dir + " belongs to " + who + ": agents are off and nothing in it is cleaned up. " +
+	return "the Scratch folder " + dir + " " + who + ": agents are off and nothing in it is cleaned up. " +
 		"Choose a Scratch folder of this gateway (Settings → General → Scratch folder → Move…, or minigw gw scratch move <folder>), " +
 		"or, if that gateway is gone, Take over (minigw gw scratch take)"
 }
@@ -146,13 +196,17 @@ func scratchHasConversations(dir string) bool {
 	return false
 }
 
-// takeScratch (odločitev 2: prevzem = preimenovanje, nikoli združevanje): stara mapa druge instance (old) postane
-// <osnova>/<id> z ID-jem te instance. Trenutna mapa te instance (cur, tudi sosednja) in mapa <osnova>/<id>, ki je na
-// poti: brez pogovorov izbrisani, s pogovori ob strani kot <id>.old-<datum> (aside). Zaklep drugega prehoda: zavrnitev.
+// takeScratch (odločitev 2: prevzem = preimenovanje, nikoli združevanje): stara mapa druge instance (old, prava mapa
+// tega uporabnika) postane <osnova>/<id> z ID-jem te instance in zaščito (protectScratch; napaka: vse nazaj).
+// Trenutna mapa te instance (cur, tudi sosednja) in mapa <osnova>/<id>, ki je na poti: brez pogovorov izbrisani, s
+// pogovori ob strani kot <id>.old-<datum> (aside). Zaklep drugega prehoda: zavrnitev.
 func takeScratch(old, cur, id string, now time.Time) (dst, aside string, err error) {
 	releaseScratch()
 	if scratchLocked(old) {
-		return "", "", errors.New("the folder is used by another gateway that is running: stop it first")
+		return "", "", errors.New("the folder is " + inUseText() + ": stop it first")
+	}
+	if !scratchFolderMine(old) {
+		return "", "", errors.New("the folder is not a real folder of this user")
 	}
 	dst = filepath.Join(filepath.Dir(old), id)
 	var moved [][2]string // za vrnitev ob napaki
@@ -190,8 +244,17 @@ func takeScratch(old, cur, id string, now time.Time) (dst, aside string, err err
 		if err := os.Rename(old, dst); err != nil {
 			return undo(err)
 		}
+		moved = append(moved, [2]string{old, dst})
 	}
-	return dst, aside, writeFileAtomic(filepath.Join(dst, scratchOwnerFile), []byte(id+"\n"))
+	if err := protectScratch(dst); err != nil {
+		releaseScratch()
+		return undo(fmt.Errorf("%s: %w", dst, err))
+	}
+	if err := writeFileAtomic(filepath.Join(dst, scratchOwnerFile), []byte(id+"\n")); err != nil {
+		releaseScratch()
+		return undo(err)
+	}
+	return dst, aside, nil
 }
 
 // scratchSibling: druga mapa instance v osnovi (Scratch row: »used by another gateway«, »stale owner«; Take over).
@@ -201,13 +264,15 @@ type scratchSibling struct {
 }
 
 // scratchSiblings: prave mape v osnovi trenutnega Scratch z datoteko lastnika druge instance (brez *.old-*, brez
-// trenutne mape). Mape brez datoteke lastnika ne štejejo (neznano, čigave so).
+// trenutne mape), le mape tega uporabnika. Mape brez datoteke lastnika ne štejejo (lastnik: prehod 0.5.23 → 0.5.24 je
+// le prevzem nastavljene mape ob prvem zagonu).
 func scratchSiblings(cur, id string) []scratchSibling {
 	ents, _ := os.ReadDir(filepath.Dir(cur))
 	var out []scratchSibling
 	for _, e := range ents {
 		p := filepath.Join(filepath.Dir(cur), e.Name())
-		if !e.IsDir() || e.Type()&fs.ModeSymlink != 0 || strings.Contains(e.Name(), ".old-") || realPath(p) == realPath(cur) {
+		if !e.IsDir() || e.Type()&fs.ModeSymlink != 0 || strings.Contains(e.Name(), ".old-") || realPath(p) == realPath(cur) ||
+			scratchOwner(p) == "" || !scratchFolderMine(p) {
 			continue
 		}
 		if st := scratchState(p, id); st != "" {
@@ -235,6 +300,18 @@ func (s *server) takeScratchAPI(body []byte) (int, any) {
 	if (s.hub != nil && s.hub.count() > 0) || s.agentsRunning.Load() > 0 {
 		return fail(409, scratchBusy)
 	}
+	foreign := s.scratchOther.Load()
+	defer func() { // tudi po napaki: ročaj, lastnik in zaklep na mapi v nastavitvah (kot premik)
+		if s.offline {
+			return
+		}
+		if err := protectScratch(s.conf().Scratch); err != nil {
+			s.log.Printf("WARNING: scratch folder %s: %v", s.conf().Scratch, err)
+		}
+		if s.claimScratch(); foreign && !s.scratchOther.Load() {
+			sandboxInit(s.conf().Scratch, s.cfgDir, s.log.Printf)
+		}
+	}()
 	c := s.conf()
 	cur, old := c.scratchDir(), c.scratchDir()
 	if b.Name != "" { // le neposredna podmapa osnove, prava mapa druge instance
@@ -250,7 +327,7 @@ func (s *server) takeScratchAPI(body []byte) (int, any) {
 	case "":
 		return fail(409, "the Scratch folder "+old+" is this gateway's own: nothing to take over")
 	case scratchInUse:
-		return fail(409, "the Scratch folder "+old+" is used by another gateway that is running: stop it first, or choose another folder")
+		return fail(409, "the Scratch folder "+old+" is "+inUseText()+": stop it first, or choose another folder")
 	}
 	id := c.Instance
 	if id == "" { // minigw gw brez prehoda, pred prvim zagonom te izdaje
@@ -273,14 +350,6 @@ func (s *server) takeScratchAPI(body []byte) (int, any) {
 		note = "; this gateway's previous folder is kept as " + aside
 	}
 	s.log.Printf("scratch folder %s taken over from another gateway: now %s%s", old, dst, note)
-	if !s.offline {
-		if err := protectScratch(dst); err != nil {
-			s.log.Printf("WARNING: scratch folder %s: %v", dst, err)
-		}
-		if s.claimScratch(); !s.scratchOther.Load() {
-			sandboxInit(dst, s.cfgDir, s.log.Printf)
-		}
-	}
 	g := s.apiGeneral(false)
 	g.Connect = ""
 	if aside != "" {
