@@ -213,9 +213,10 @@ func TestWorktreeFinalizeRejectedKeepsMirror(t *testing.T) {
 func TestWorktreeClaudeArgs(t *testing.T) {
 	args := []string{"--allowedTools", "Read(./**)", "--disallowedTools", "Read(/cfg/**)", "--settings",
 		`{"sandbox":{"filesystem":{"allowRead":["/w/sub"],"allowWrite":["/w/sub"],"denyRead":["~"]}}}`}
-	got := strings.Join(worktreeClaudeArgs(args, "/w", "/m", "/t", []string{"/r/objects", "/r-k/objects"}, []string{"/w/.git", "/w/lib/.git"}), " ")
-	for _, want := range []string{`"allowWrite":["/w/sub","/w","/m","/t","/w.deps","/.cache"]`, `"allowRead":["/w/sub","/w","/m","/t","/w.deps","/.cache","/r/objects","/r-k/objects"]`, "--add-dir /w",
-		"Edit(//w/**)", `"denyWrite":["/w/.git/config"`, `"/w/lib/.git/config","/w/lib/.git/hooks","/w/lib/.git/info","/w/lib/.git/commondir"]`, "Edit(//w/.git/**)"} {
+	got := strings.Join(worktreeClaudeArgs(args, "/w", []string{"/m", "/w.deps"}, "/tmp/mgw-1", []string{"/r/objects", "/r-k/objects"}, []string{"/w/.git", "/w/lib/.git"}), " ")
+	for _, want := range []string{`"allowWrite":["/w/sub","/w","/m","/w.deps"]`, `"allowRead":["/w/sub","/w","/m","/w.deps","/r/objects","/r-k/objects"]`, "--add-dir /w",
+		`"/w/lib/.git/commondir","/tmp/mgw-1"]`, // #67 M2: koren povezav TMPDIR ni pisljiv
+		"Edit(//w/**)", `"denyWrite":["/w/.git/config"`, `"/w/lib/.git/config","/w/lib/.git/hooks","/w/lib/.git/info","/w/lib/.git/commondir"`, "Edit(//w/.git/**)"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %s in\n%s", want, got)
 		}
@@ -224,17 +225,17 @@ func TestWorktreeClaudeArgs(t *testing.T) {
 	worktreeNeedsUnsandboxed = true
 	defer func() { worktreeNeedsUnsandboxed = runtime.GOOS == "windows" }()
 	args = []string{"--allowedTools", "Read(./**)", "--disallowedTools", "Read(/cfg/**)"}
-	got = strings.Join(worktreeClaudeArgs(args, "/w", "/m", "/t", nil, nil), " ")
+	got = strings.Join(worktreeClaudeArgs(args, "/w", []string{"/m"}, "", nil, nil), " ")
 	if strings.Contains(got, "Bash(") || strings.Contains(got, "PowerShell(") || !strings.Contains(got, "Edit(//w/.git/**)") {
 		t.Fatalf("Windows: git or shell rule in\n%s", got)
 	}
-	n := worktreeNote("/c", "/w", "minigw/claude-1", []string{"/w/.git", "/w/lib/.git"})
+	n := worktreeNote("/c", "/w", "minigw/claude-1", []string{"/w/.git", "/w/lib/.git"}, true)
 	if !strings.Contains(n, "Do not run git add or git commit: the gateway commits your changes on this branch when you finish.") ||
 		strings.Contains(n, "Commit your work") || strings.Contains(n, "GIT_DIR") || !strings.Contains(n, "/w/lib") {
 		t.Fatalf("Windows note: %s", n)
 	}
 	worktreeNeedsUnsandboxed = false
-	if n := worktreeNote("/c", "/w", "b", []string{"/w/.git", "/w/lib/.git"}); !strings.Contains(n, "Commit your work on this branch") || !strings.Contains(n, "git -C <path>") {
+	if n := worktreeNote("/c", "/w", "b", []string{"/w/.git", "/w/lib/.git"}, true); !strings.Contains(n, "Commit your work on this branch") || !strings.Contains(n, "git -C <path>") {
 		t.Fatalf("sandboxed note: %s", n)
 	}
 }
@@ -2322,5 +2323,53 @@ func TestRunTempLink(t *testing.T) {
 	}
 	if es, _ := os.ReadDir(root); len(es) != 0 {
 		t.Fatalf("left in the root: %v", es)
+	}
+}
+
+// #67 H1: agent zamenja mapo za pisanje s povezavo (ali datoteko); ob naslednjem teku je vnos spet prava mapa 0700,
+// cilj povezave ostane nedotaknjen in ni med mapami za peskovnik.
+func TestGrantDirsReplacesPlantedLinks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no sandbox on Windows")
+	}
+	root := t.TempDir()
+	wt, home := filepath.Join(root, "clones", "c"), filepath.Join(root, "home")
+	os.MkdirAll(wt, 0o700)
+	writeT(t, filepath.Join(home, "secret"), "s")
+	os.Symlink(home, depsDir(wt))                                   // rm -rf "$MINIGW_DEPS"; ln -s ~ "$MINIGW_DEPS"
+	os.Symlink(home, filepath.Join(root, "clones", ".cache"))       // skupni predpomnilnik
+	writeT(t, filepath.Join(root, "clones", ".maven"), "not a dir") // datoteka namesto mape
+	dirs, fixed, err := grantDirs(wt)
+	if err != nil || len(fixed) != 4 || len(dirs) != 4 {
+		t.Fatalf("grantDirs: %v %v %v", dirs, fixed, err)
+	}
+	for _, d := range dirs {
+		if st, err := os.Lstat(d); err != nil || !st.IsDir() || st.Mode().Perm() != 0o700 {
+			t.Fatalf("%s: %v %v", d, st, err)
+		}
+	}
+	if b, err := os.ReadFile(filepath.Join(home, "secret")); err != nil || string(b) != "s" {
+		t.Fatal("link target touched")
+	}
+	if _, fixed, err := grantDirs(wt); err != nil || len(fixed) != 0 {
+		t.Fatalf("second run: %v %v", fixed, err)
+	}
+}
+
+// #67: navodilo o $MINIGW_DEPS z oznako peskovnika in brez (Windows, Copilot brez bwrap); ime nastavitve omrežja.
+func TestDepsNoteAndNetworkOff(t *testing.T) {
+	on, off := depsNote("/d", true), depsNote("/d", false)
+	if !strings.Contains(on, "$MINIGW_DEPS (/d)") || !strings.Contains(on, "git init and git clone work only there.") ||
+		!strings.Contains(off, "git init and git clone are not available on this gateway (no sandbox).") || strings.Contains(off, "work only there") {
+		t.Fatalf("notes:\n%s\n%s", on, off)
+	}
+	if n := worktreeNote("/c", "/w", "b", []string{"/w/.git"}, true); strings.Contains(n, "work only there") != (runtime.GOOS != "windows") {
+		t.Fatalf("note on %s: %s", runtime.GOOS, n)
+	}
+	if got := networkOffEnv("codex", false); !slices.Equal(got, []string{"MINIGW_NETWORK_OFF=Settings → Codex → Allow network access for commands"}) {
+		t.Fatalf("codex: %v", got)
+	}
+	if networkOffEnv("codex", true) != nil || networkOffEnv("copilot", false) != nil || networkOffEnv("claude", false) != nil {
+		t.Fatal("network off without a switch")
 	}
 }

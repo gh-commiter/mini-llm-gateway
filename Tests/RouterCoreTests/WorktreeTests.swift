@@ -236,6 +236,7 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
     #expect((sb["network"] as? [String: [String]])?["allowedDomains"] == [])
     #expect(a.contains("--add-dir") && a.contains("default") && a.contains("acceptEdits"))
     #expect(Array((fs["denyWrite"] ?? []).prefix(4)) == ["config", "hooks", "info", "commondir"].map { root.path + "/.git/" + $0 })
+    #expect((fs["denyWrite"] ?? []).contains("/private/tmp/mgw-\(getuid())"))  // #67 M2
     #expect(a[a.firstIndex(of: "--disallowedTools")! + 1].contains("Edit(/" + root.path + "/**/.git/**)"))
     #expect(Worktree.scratchIsSafe(URL(fileURLWithPath: NSHomeDirectory() + "/Library/Caches/dev.trojar.minigateway/Scratch")))
     #expect(!Worktree.scratchIsSafe(URL(fileURLWithPath: "/private/tmp/scratch")))
@@ -2183,4 +2184,39 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
     #expect(lstat(real, &st) == 0)
     ShareHub.removeClone(root)
     #expect(lstat(real, &st) != 0)
+}
+
+/// #67 H1 (kot Go TestGrantDirsReplacesPlantedLinks): povezava ali datoteka namesto mape za pisanje se odstrani in naredi
+/// znova (0700), cilj ostane nedotaknjen; v profilu Copilot le dobesedne poti in prepoved zamenjave.
+@Test func grantDirsReplacesPlantedLinks() throws {
+    let fm = FileManager.default
+    let root = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("gd-" + UUID().uuidString)
+    defer { try? fm.removeItem(at: root) }
+    let wt = root.appendingPathComponent("clones/c"), home = root.appendingPathComponent("home")
+    try fm.createDirectory(at: wt, withIntermediateDirectories: true)
+    try file(home, "secret", "s")
+    try fm.createSymbolicLink(at: Worktree.deps(wt), withDestinationURL: home)
+    try fm.createSymbolicLink(at: Worktree.cache(wt), withDestinationURL: home)
+    try file(root, "clones/.maven", "x")
+    let dirs = try #require(Worktree.grantDirs(root: wt))
+    for d in dirs {
+        var st = stat()
+        #expect(lstat(d, &st) == 0 && st.st_mode & S_IFMT == S_IFDIR && st.st_mode & 0o777 == 0o700, "\(d)")
+    }
+    #expect(try String(contentsOf: home.appendingPathComponent("secret"), encoding: .utf8) == "s")
+}
+
+/// #67: navodilo z oznako peskovnika in brez; imena nastavitev omrežja po agentu (Mac).
+@Test func depsNoteAndNetworkOff() {
+    #expect(Router.depsNote("/d").contains("$MINIGW_DEPS (/d), kept for this conversation; git init and git clone work only there."))
+    #expect(Router.depsNote("/d", sandboxed: false).contains("git init and git clone are not available on this gateway (no sandbox)."))
+    var c = RouterConfig()
+    c.worktreeNetwork = false; c.worktreeCodexNetwork = false; c.codex.network = true; c.copilot.network = true
+    #expect(Worktree.networkOff("claude", c) == "Settings → General → Worktree mode → Network for builds")
+    #expect(Worktree.networkOff("codex", c) == "Settings → General → Worktree mode → Network for Codex builds")
+    #expect(Worktree.networkOff("copilot", c) == "Settings → General → Worktree mode → Network for Codex builds")
+    c.codex.network = false
+    #expect(Worktree.networkOff("codex", c) == "Settings → Codex → Allow network access for commands")  // kot Go
+    c.worktreeNetwork = true; c.worktreeCodexNetwork = true; c.codex.network = true
+    #expect(Worktree.networkOff("claude", c) == nil && Worktree.networkOff("codex", c) == nil && Worktree.networkOff("copilot", c) == nil)
 }

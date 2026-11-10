@@ -453,13 +453,48 @@ public enum Worktree {
     static func cache(_ root: URL) -> URL { root.deletingLastPathComponent().appendingPathComponent(".cache", isDirectory: true) }
 
     /// #67 (kot Go depsEnv): vse za gradnje agenta pod Scratch, nikoli v $TMPDIR, /tmp ali domači mapi. Skupno za projekt
-    /// (.cache, kot .maven): Go (GOMODCACHE, GOCACHE), npm, pip — vsebina po zgoščenih vrednostih, hkratna raba z
-    /// zaklepi. Za pogovor ($MINIGW_DEPS): Cargo in Gradle, ker njuni domači mapi vsebujeta nastavitve in skripte
-    /// (config.toml, init.d), ki jih gradnja izvede. CLAUDE_CODE_TMPDIR: začasne datoteke Claude Code.
+    /// (.cache, kot .maven; sprejeto): GOMODCACHE, npm, pip — vsebina po zgoščenih vrednostih, hkratna raba z zaklepi.
+    /// Za pogovor ($MINIGW_DEPS): GOCACHE (M3: izhodi prevajanja se ob rabi ne preverjajo), Cargo in Gradle (nastavitve in
+    /// skripte gradnje: config.toml, init.d). CLAUDE_CODE_TMPDIR: začasne datoteke Claude Code.
     static func depsEnv(_ root: URL) -> [String: String] {
         let deps = deps(root).path, cache = cache(root).path
-        return ["MINIGW_DEPS": deps, "CLAUDE_CODE_TMPDIR": deps + "/tmp", "GOMODCACHE": cache + "/go-mod", "GOCACHE": cache + "/go-build",
+        return ["MINIGW_DEPS": deps, "CLAUDE_CODE_TMPDIR": deps + "/tmp", "GOMODCACHE": cache + "/go-mod", "GOCACHE": deps + "/go-build",
                 "npm_config_cache": cache + "/npm", "PIP_CACHE_DIR": cache + "/pip", "CARGO_HOME": deps + "/cargo", "GRADLE_USER_HOME": deps + "/gradle"]
+    }
+
+    /// #67 H1 (kot Go grantDirs): mape pod Scratch, ki jih agent dobi za pisanje poleg klona (.maven, .cache, $MINIGW_DEPS in
+    /// njegov tmp), preverjene ob vsakem začetku teka, preden nastane peskovnik: agent bi lahko mapo zamenjal s povezavo
+    /// (rm -rf "$MINIGW_DEPS"; ln -s ~ "$MINIGW_DEPS") in naslednji peskovnik bi mu dal pisanje v cilj. Vsak vnos mora biti
+    /// prava mapa (lstat) tega uporabnika; drugo se odstrani (unlink, nikoli sledenje) in naredi znova 0700 (dnevnik).
+    /// nil = ni mogoče (teka ni). V pravilih peskovnika le te dobesedne poti (nikoli razrešene).
+    /// #67: MINIGW_NETWORK_OFF agenta v načinu worktree (ime nastavitve, ki izklopi omrežje gradenj; nil = omrežje je).
+    /// Codex: kot njegov peskovnik; Copilot: kot njegovo orodje url (ukazi imajo omrežje vedno, ovoj zavrne le git clone).
+    static func networkOff(_ agent: String, _ c: RouterConfig) -> String? {
+        let builds = "Settings → General → Worktree mode → Network for builds", codex = "Settings → General → Worktree mode → Network for Codex builds"
+        switch agent {
+        case "claude": return c.worktreeNetwork ? nil : builds
+        case "codex": return !c.codex.network ? "Settings → Codex → Allow network access for commands" : c.worktreeCodexNetwork ? nil : codex
+        case "copilot": return !c.worktreeCodexNetwork ? codex : c.copilot.network ? nil : "Settings → Copilot → Allow web access (fetch tool)"
+        default: return nil
+        }
+    }
+
+    static let unsafeFolders = "The agent's folders on the gateway are not safe to use (see the gateway log): start a new conversation"
+
+    static func grantDirs(root: URL) -> [String]? {
+        func own(_ p: String) -> Bool { var st = stat(); return lstat(p, &st) == 0 && st.st_mode & S_IFMT == S_IFDIR && st.st_uid == getuid() }
+        let clones = root.deletingLastPathComponent().path, deps = deps(root).path
+        guard own(clones) else { return nil }
+        let dirs = [clones + "/.maven", clones + "/.cache", deps, deps + "/tmp"]
+        for d in dirs where !own(d) {
+            var st = stat()
+            if lstat(d, &st) == 0 {
+                guard st.st_mode & S_IFMT != S_IFDIR, unlink(d) == 0 else { return nil }  // tuja prava mapa: ne brišemo
+            }
+            guard mkdir(d, 0o700) == 0, own(d) else { return nil }
+            Router.log.error("worktree: \(d, privacy: .public) was not a folder of the gateway; made again")
+        }
+        return dirs
     }
 
     /// #67: kratka pot za CLAUDE_CODE_TMPDIR klona: Claude Code ukazom v peskovniku da svojo začasno mapo le, če je pot z
@@ -491,7 +526,9 @@ public enum Worktree {
     /// Nikoli DARWIN_USER_TEMP_DIR in DARWIN_USER_CACHE_DIR (/var/folders/…/T, …/C) ali njuna nadrejena mapa: tam sta
     /// predpomnilnik xcrun (xcrun_db, po njem /usr/bin/git in drugi shimi izvedejo program) in ModuleCache clang.
     /// Agent ima svoj TMPDIR in ModuleCache v .build klona (harnessEnv), DerivedData z -derivedDataPath .build/DerivedData.
-    static func caches(home: String = NSHomeDirectory()) -> [String] { ["/private/tmp"] }
+    /// #67 (lastnik): nič zunaj Scratch, tudi /private/tmp ne. swift build in xcodebuild v peskovniku Claude Code tako ali tako
+    /// ne uspeta (DARWIN_USER_TEMP_DIR, gnezden sandbox-exec; preverjeno): minigw run.
+    static func caches(home: String = NSHomeDirectory()) -> [String] { [] }
 
     /// Okolje procesov agenta (claude -p, codex, grok) v načinu worktree. Ti sami (zunaj peskovnika orodij) poganjajo git
     /// v klonu, ki ga agent lahko spremeni: nastavitve iz ukazne vrstice preglasijo .git/config klona (fsmonitor, hooki,
@@ -514,7 +551,8 @@ public enum Worktree {
                    "GIT_DIR": git, "GIT_WORK_TREE": root.path, "GIT_COMMON_DIR": git,
                    "MAVEN_OPTS": "-Dmaven.repo.local=\(maven.path) -Djava.io.tmpdir=\(root.appendingPathComponent(".build/tmp").path)",
                    "TMPDIR": root.appendingPathComponent(".build/tmp").path + "/",
-                   "CLANG_MODULE_CACHE_PATH": root.appendingPathComponent(".build/ModuleCache").path, "xcrun_nocache": "1"]
+                   "CLANG_MODULE_CACHE_PATH": root.appendingPathComponent(".build/ModuleCache").path, "xcrun_nocache": "1",
+                   "TMPPREFIX": root.appendingPathComponent(".build/tmp/zsh").path]  // #67: here-doc zsh ne v /tmp
         for (i, (k, v)) in pairs.enumerated() { env["GIT_CONFIG_KEY_\(i)"] = k; env["GIT_CONFIG_VALUE_\(i)"] = v }
         return env.merging(depsEnv(root)) { $1 }
     }
@@ -576,7 +614,7 @@ public enum Worktree {
         case $c in init|clone)
           [ -n "$MINIGW_DEPS" ] || no "this run cannot write (read-only)"
           u=; t=; x=; while [ $i -lt $# ]; do i=$((i+1)); eval "a=\${$i}"; case $a in
-            --separate-git-dir*) x=1;; -[bcjou]|--template|--initial-branch|--object-format|--ref-format|--origin|--branch|--upload-pack|--reference|--reference-if-able|--depth|--shallow-since|--shallow-exclude|--config|--server-option|--jobs|--filter|--bundle-uri) i=$((i+1));;
+            --separate-git-dir*) x=1;; -[bcjou]|--revision|--template|--initial-branch|--object-format|--ref-format|--origin|--branch|--upload-pack|--reference|--reference-if-able|--depth|--shallow-since|--shallow-exclude|--config|--server-option|--jobs|--filter|--bundle-uri) i=$((i+1));;
             -*) ;; *) if [ -n "$u" ]; then t=${t:-$a}; else u=$a; fi;; esac; done
           if [ $c = init ]; then t=${u:-.}; elif [ -z "$t" ]; then t=${u%/}; t=${t%/.git}; t=${t##*[/:]}; t=${t%.git}; fi
           case $t in /*) ;; *) t=$d/$t;; esac; case /$t/ in */../*) x=1;; esac
@@ -685,7 +723,7 @@ public enum Worktree {
     /// Scratch (zrcala) ni v nobeni pisljivi mapi agentov (npr. izbran v /tmp): sicer worktree ni varen.
     static func scratchIsSafe(_ scratch: URL, home: String = NSHomeDirectory()) -> Bool {
         let s = (Sync.real(scratch) ?? scratch).path
-        return !caches(home: home).contains { s == $0 || s.hasPrefix($0 + "/") }
+        return !(caches(home: home) + ["/private/tmp"]).contains { s == $0 || s.hasPrefix($0 + "/") }  // /private/tmp: drugi načini (Native.buildCaches)
     }
 
     /// Vrhovi refov zrcala (odjemalec po njih pošlje le manjkajoče).

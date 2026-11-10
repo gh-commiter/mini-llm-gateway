@@ -12,7 +12,7 @@ no() { echo "minigw: $1" >&2; exit 128; }
 case $c in init|clone)
   [ -n "$MINIGW_DEPS" ] || no "this run cannot write (read-only)"
   u=; t=; x=; while [ $i -lt $# ]; do i=$((i+1)); eval "a=\${$i}"; case $a in
-    --separate-git-dir*) x=1;; -[bcjou]|--template|--initial-branch|--object-format|--ref-format|--origin|--branch|--upload-pack|--reference|--reference-if-able|--depth|--shallow-since|--shallow-exclude|--config|--server-option|--jobs|--filter|--bundle-uri) i=$((i+1));;
+    --separate-git-dir*) x=1;; -[bcjou]|--revision|--template|--initial-branch|--object-format|--ref-format|--origin|--branch|--upload-pack|--reference|--reference-if-able|--depth|--shallow-since|--shallow-exclude|--config|--server-option|--jobs|--filter|--bundle-uri) i=$((i+1));;
     -*) ;; *) if [ -n "$u" ]; then t=${t:-$a}; else u=$a; fi;; esac; done
   if [ $c = init ]; then t=${u:-.}; elif [ -z "$t" ]; then t=${u%/}; t=${t%/.git}; t=${t##*[/:]}; t=${t%.git}; fi
   case $t in /*) ;; *) t=$d/$t;; esac; case /$t/ in */../*) x=1;; esac

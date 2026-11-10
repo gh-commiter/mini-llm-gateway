@@ -133,7 +133,7 @@ public enum Codex {
     /// vrhnjega klona (harness Codex jih obdrži, Worktree.claudeEnv).
     /// L1: iskanje repozitorija ne nad klonom; `deny`: mape brez dostopa (L3: podatki aplikacije, kot Go mapa nastavitev).
     static func treeProfile(writable: [String], gits: [String], deny: [String] = [], network: Bool, path: String) -> [String] {
-        var fs = ["/": "read", "/private/tmp": "write", "/tmp": "write"]
+        var fs = ["/": "read"]  // #67: nič v /tmp (vse pod Scratch; TMPDIR ukazov je .build/tmp klona)
         for d in deny { fs[d] = "none" }
         for d in writable { fs[d] = "write" }
         for g in gits {
@@ -289,7 +289,9 @@ extension Router {
             // worktree: pisljiv le klon (koren, ne dovoljene mape)
             tree = await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "")
             if let tree {
-                try? FileManager.default.createDirectory(at: tree.maven, withIntermediateDirectories: true)
+                guard Worktree.grantDirs(root: tree.root) != nil else {  // #67 H1: pred peskovnikom (tudi .maven)
+                    return await error(503, "api_error", Worktree.unsafeFolders, rid: rid, writer: writer)
+                }
                 extra = Codex.treeDirs(root: tree.root, cwd: dir, maven: tree.maven)
             }
             let cap = await capped(req, kind: "codex")  // #45: način seje nad omejitvijo → le branje
@@ -305,10 +307,11 @@ extension Router {
         }
         let output = config.scratch("tmp").appendingPathComponent("codex-\(rid).txt")
         defer { try? FileManager.default.removeItem(at: output) }
-        // Zasebni TMPDIR v /private/tmp (pisljiv v sandboxu Codex), ne $TMPDIR uporabnika (glej Codex.args).
+        // Zasebni TMPDIR v /private/tmp (pisljiv v sandboxu Codex), ne $TMPDIR uporabnika (glej Codex.args); #67: le zunaj
+        // worktree (tam je TMPDIR .build/tmp klona pod Scratch)
         let privateTmp = URL(fileURLWithPath: "/private/tmp/minigw-codex-\(rid)", isDirectory: true)
-        try? FileManager.default.createDirectory(at: privateTmp, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
-        defer { try? FileManager.default.removeItem(at: privateTmp) }
+        if tree == nil { try? FileManager.default.createDirectory(at: privateTmp, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]) }
+        defer { if tree == nil { try? FileManager.default.removeItem(at: privateTmp) } }
         let run = agent ? await startAgentRun(req, kind: "codex", dir: sharedDir, readOnly: readOnly || (tree != nil && !config.codex.write)) : nil
         defer { run?.stop() }
         var treeEnv: [String: String]?  // L-N9a: harness Codex sam poganja git v klonu (ovoj kot pri Claude CLI)
@@ -318,8 +321,7 @@ extension Router {
             }
             treeEnv = e
             if !config.codex.write || readOnly { treeEnv?["MINIGW_DEPS"] = nil }  // #67: le s pisanjem
-            else if !config.codex.network { treeEnv?["MINIGW_NETWORK_OFF"] = "Settings → Codex → Allow network access for commands" }
-            else if !config.worktreeCodexNetwork { treeEnv?["MINIGW_NETWORK_OFF"] = "Settings → General → Worktree mode → Network for Codex builds" }
+            else { treeEnv?["MINIGW_NETWORK_OFF"] = Worktree.networkOff("codex", config) }
         }
         let codexEnv = (treeEnv
             ?? ["TMPDIR": privateTmp.path + "/", "CLANG_MODULE_CACHE_PATH": privateTmp.appendingPathComponent("ModuleCache").path, "xcrun_nocache": "1"])

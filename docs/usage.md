@@ -181,11 +181,16 @@ available; the folder still holds downloads and caches.
 
 Everything agent builds write is under the Scratch folder, never in the system's temporary folder or your home folder:
 the clone, `$MINIGW_DEPS` (also Claude Code's temporary folder, `CLAUDE_CODE_TMPDIR`), one Maven repository per project
-and shared caches per project for Go (`GOMODCACHE`, `GOCACHE`), npm and pip. Cargo (`CARGO_HOME`) and Gradle
-(`GRADLE_USER_HOME`) get their own folder per conversation in `$MINIGW_DEPS`, because their folders hold settings and
-scripts that builds run. Claude Code needs a short temporary path (its sockets), so on the Mac and Linux it gets a
-link `/tmp/mgw-…/<name>` that points into `$MINIGW_DEPS/tmp`: the files stay under Scratch, and only the link is in
-`/tmp`, in a private folder of the gateway user. The link goes with the clone (Mac) or the run (`minigw serve`).
+and shared download caches per project for Go modules (`GOMODCACHE`), npm and pip. Like the Maven repository, those
+are shared by the project's conversations, so one conversation's agent could change what another one downloads; this
+is accepted for reuse. The Go build cache (`GOCACHE`), Cargo (`CARGO_HOME`) and Gradle (`GRADLE_USER_HOME`) get their
+own folder per conversation in `$MINIGW_DEPS`, because builds use their content without checking it (compiled
+output, settings and scripts). Claude Code needs a short temporary path (its sockets), so on the Mac and Linux it
+gets a link `/tmp/mgw-…/<name>` that points into `$MINIGW_DEPS/tmp`: the files stay under Scratch, and only the link
+is in `/tmp`, in a private folder of the gateway user that agents cannot write. The link goes with the clone (Mac) or
+the run (`minigw serve`); if the gateway cannot make it, the run is refused. On Windows the temporary folder is
+`$MINIGW_DEPS/tmp` itself. Before every run the gateway checks that these folders are still real folders of its user
+(an agent could replace one with a link to another place) and makes them again if not.
 
 **1. Start.** minigw sends the repository to a mirror on the gateway (git bundles over the encrypted connection,
 only missing objects). The agent starts from your exact state: `HEAD` plus your uncommitted changes and your
@@ -329,13 +334,16 @@ Notes:
   writable folder.
 - Agents that may not write (Codex, Copilot or Grok with writing off) only read in the clone and bring back no branch.
 - Grok with writing on is refused in worktree mode: "rerun with minigw --minigw-work=sync …".
-- On the Mac, agents write only to the clone, `$MINIGW_DEPS`, the project's Maven repository and build caches under
-  Scratch, DerivedData and temporary folders, never to
-  your `~/.m2` settings, plugins or SwiftPM configuration. Claude cannot read your home folder (from `~/.m2` only
-  `settings.xml` and `toolchains.xml`). Maven
-  builds work; `swift build` and `xcodebuild` may fail there. Build Swift and Xcode projects in sync mode or with
+- Agents write only under the Scratch folder: the clone, `$MINIGW_DEPS` (repositories they create, CMake, SwiftPM,
+  DerivedData, Cargo, Gradle, the Go build cache, temporary files), the project's Maven repository and the shared
+  download caches (Go modules, npm, pip). Not `/tmp`, never your `~/.m2` settings, plugins or SwiftPM configuration.
+  Claude cannot read your home folder (from `~/.m2` only `settings.xml` and `toolchains.xml`). Maven builds work;
+  on the Mac `swift build` and `xcodebuild` fail in the agents' sandbox (they need macOS's per-user temporary folder
+  and a nested sandbox). Build Swift and Xcode projects in sync mode or with
   [`minigw run`](#native-mode-and-builds-on-the-gateway-mac).
-- Network for builds (Mac): on for Claude, off for Codex. Change it in Settings → General → Worktree mode.
+- Network for builds (Mac): on for Claude, off for Codex. Change it in Settings → General → Worktree mode. With it off
+  a `git clone` of a remote URL is refused and names the setting; Copilot follows "Network for Codex builds" (and its
+  "Allow web access") for that, although its commands always have network.
 - On `minigw serve`, agent requests run one at a time per device and repository, also across that device's
   sessions. The gateway uses its own `git` from PATH, without system or global config, hooks, fsmonitor or
   submodules.

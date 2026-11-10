@@ -322,10 +322,18 @@ extension Router {
                 " (subpath \"" + $0.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\")"
             }.joined()
         }
-        // #67: s pisanjem $MINIGW_DEPS (tudi .git repozitorijev, ki jih agent naredi tam), Maven in predpomnilniki pod Scratch
-        let deps = tree.flatMap { t in agent && write ? [t.maven.path, Worktree.deps(t.root).path, Worktree.cache(t.root).path] : nil }
+        // #67: s pisanjem $MINIGW_DEPS (tudi .git repozitorijev, ki jih agent naredi tam), Maven in predpomnilniki pod Scratch.
+        // H1: preverjene (grantDirs) in le z razrešeno nadrejeno mapo (Scratch je prehodov), zadnji del nikoli razrešen;
+        // vnosov samih agent ne more odstraniti ali zamenjati (unlink, create na dobesedni poti).
+        var deps: [String]?
+        if let t = tree, agent && write {
+            guard let g = Worktree.grantDirs(root: t.root) else { return await error(503, "api_error", Worktree.unsafeFolders, rid: rid, writer: writer) }
+            deps = g.map { p in (Sync.real(URL(fileURLWithPath: (p as NSString).deletingLastPathComponent))?.path ?? (p as NSString).deletingLastPathComponent) + "/" + (p as NSString).lastPathComponent }
+        }
+        func q(_ p: String) -> String { "\"" + p.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\"" }
         let sandbox = profile + (tree == nil ? "" : "(allow file-read* file-read-data" + subpaths([gitexec]) + ")\n")
-            + (deps.map { "(allow file-read* file-read-data file-write*" + subpaths($0) + ")\n" } ?? "")
+            + (deps.map { d in "(allow file-read* file-read-data file-write*" + d.map { " (subpath \(q($0)))" }.joined() + ")\n"
+                + "(deny file-write-unlink file-write-create" + d.map { " (literal \(q($0)))" }.joined() + ")\n" } ?? "")
         var treeEnv: [String: String]?  // L-N9a: harness Copilot sam poganja git v klonu (ovoj kot pri Claude CLI)
         if let t = tree {
             guard let e = Worktree.claudeEnv(root: t.root, maven: t.maven, gitexec: config.scratch("gitexec"), gits: t.gits, agent: "copilot") else {
@@ -333,6 +341,8 @@ extension Router {
             }
             treeEnv = e
             if deps == nil { treeEnv?["MINIGW_DEPS"] = nil } else { treeEnv?["MINIGW_SANDBOXED"] = "1" }  // #67: ves Copilot je v sandbox-exec
+            // #67: omrežje za git clone po istem pravilu kot orodje url (Copilot.args spodaj)
+            if deps != nil { treeEnv?["MINIGW_NETWORK_OFF"] = Worktree.networkOff("copilot", config) }
         }
         let extraEnv = treeEnv
             ?? ["TMPDIR": tmp.path + "/", "CLANG_MODULE_CACHE_PATH": tmp.appendingPathComponent("ModuleCache").path]

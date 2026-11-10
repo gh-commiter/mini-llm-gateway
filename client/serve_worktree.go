@@ -710,21 +710,63 @@ func worktreeHarnessEnv(wt, maven, tmp, agent string) []string {
 		"GIT_CONFIG_KEY_8=safe.bareRepository", "GIT_CONFIG_VALUE_8=explicit", // #61: golega repozitorija ne najde sam (le z GIT_DIR)
 		"GIT_ATTR_SOURCE=4b825dc642cb6eb9a060e54bf8d69288fbee4904",
 		"GIT_DIR=" + filepath.Join(wt, ".git"), "GIT_WORK_TREE=" + wt, "GIT_COMMON_DIR=" + filepath.Join(wt, ".git"),
-		"MAVEN_OPTS=-Dmaven.repo.local=" + maven + " -Djava.io.tmpdir=" + tmp, "TMPDIR=" + tmp, "TMP=" + tmp, "TEMP=" + tmp}, pair9...), depsEnv(wt)...)
+		"MAVEN_OPTS=-Dmaven.repo.local=" + maven + " -Djava.io.tmpdir=" + tmp, "TMPDIR=" + tmp, "TMP=" + tmp, "TEMP=" + tmp,
+		"TMPPREFIX=" + filepath.Join(tmp, "zsh")}, pair9...), depsEnv(wt)...) // #67: TMPPREFIX: here-doc zsh ne v /tmp
 }
 
 // depsDir (#67): mapa odvisnosti pogovora ($MINIGW_DEPS) poleg klona (ista mapa klonov pod Scratch, isti nosilec);
 // tja agent naredi repozitorije (git init/clone, FetchContent, SwiftPM). Gre s klonom (removeClone), ni ohranjena (kept).
 func depsDir(wt string) string { return wt + ".deps" }
 
+// grantDirs (#67 H1, kot Worktree.grantDirs na Macu): mape pod Scratch, ki jih agent dobi za pisanje poleg klona (.maven,
+// .cache, $MINIGW_DEPS in njegov tmp), preverjene ob vsakem začetku teka, preden nastane peskovnik: agent bi lahko mapo
+// zamenjal s povezavo (rm -rf "$MINIGW_DEPS"; ln -s ~ "$MINIGW_DEPS") in naslednji peskovnik (bwrap --bind, pravila po
+// razrešeni poti) bi mu dal pisanje v cilj. Vsak vnos mora biti prava mapa (lstat, brez sledenja) tega uporabnika; drugo
+// se odstrani (unlink, nikoli sledenje) in naredi znova 0700. fixed: popravljeni vnosi (za dnevnik); napaka = teka ni.
+func grantDirs(wt string) (dirs, fixed []string, err error) {
+	clones, deps := filepath.Dir(wt), depsDir(wt)
+	if !ownedByMe(clones) {
+		return nil, nil, errors.New("the clones folder is not a folder of this user: " + clones)
+	}
+	dirs = []string{filepath.Join(clones, ".maven"), filepath.Join(clones, ".cache"), deps, filepath.Join(deps, "tmp")}
+	for _, d := range dirs {
+		if ownedByMe(d) {
+			continue
+		}
+		if st, lerr := os.Lstat(d); lerr == nil {
+			if st.IsDir() { // prava mapa drugega uporabnika: ne brišemo tuje
+				return nil, nil, errors.New("not a folder of this user: " + d)
+			}
+			if err = os.Remove(d); err != nil { // povezava ali datoteka: odstrani vnos, cilja ne
+				return nil, nil, err
+			}
+		}
+		if err = os.Mkdir(d, 0o700); err != nil || !ownedByMe(d) {
+			return nil, nil, fmt.Errorf("cannot make %s: %v", d, err)
+		}
+		fixed = append(fixed, d)
+	}
+	return dirs, fixed, nil
+}
+
+// networkOffEnv (#67, kot Worktree.networkOff na Macu): MINIGW_NETWORK_OFF z imenom nastavitve, ko agent v klonu nima
+// omrežja za gradnje (ovoj zavrne oddaljen git clone). minigw serve ima stikalo le za Codex; Claude in Copilot ga nimata.
+func networkOffEnv(agent string, network bool) []string {
+	if agent == "codex" && !network {
+		return []string{"MINIGW_NETWORK_OFF=Settings → Codex → Allow network access for commands"}
+	}
+	return nil
+}
+
 // depsEnv (#67, kot Worktree.depsEnv na Macu): vse za gradnje agenta pod Scratch, nikoli v $TMPDIR, /tmp ali domači mapi.
-// Skupno za projekt (mapa klonov/.cache, kot .maven): Go (GOMODCACHE, GOCACHE), npm, pip — vsebina po zgoščenih
-// vrednostih, hkratna raba z zaklepi. Za pogovor ($MINIGW_DEPS): Cargo in Gradle, ker njuni domači mapi vsebujeta
-// nastavitve in skripte (config.toml, init.d), ki jih gradnja izvede. CLAUDE_CODE_TMPDIR: začasne datoteke Claude Code.
+// Skupno za projekt (mapa klonov/.cache, kot .maven; sprejeto: pogovor lahko podtakne vsebino drugemu pogovoru istega
+// projekta): GOMODCACHE, npm, pip — vsebina po zgoščenih vrednostih, hkratna raba z zaklepi. Za pogovor ($MINIGW_DEPS):
+// GOCACHE (#67 M3: izhodi prevajanja se ob rabi ne preverjajo), Cargo in Gradle (domači mapi z nastavitvami in skriptami
+// gradnje, config.toml, init.d). CLAUDE_CODE_TMPDIR: začasne datoteke Claude Code.
 func depsEnv(wt string) []string {
 	deps, cache := depsDir(wt), filepath.Join(filepath.Dir(wt), ".cache")
 	return []string{"MINIGW_DEPS=" + deps, "CLAUDE_CODE_TMPDIR=" + filepath.Join(deps, "tmp"),
-		"GOMODCACHE=" + filepath.Join(cache, "go-mod"), "GOCACHE=" + filepath.Join(cache, "go-build"),
+		"GOMODCACHE=" + filepath.Join(cache, "go-mod"), "GOCACHE=" + filepath.Join(deps, "go-build"),
 		"npm_config_cache=" + filepath.Join(cache, "npm"), "PIP_CACHE_DIR=" + filepath.Join(cache, "pip"),
 		"CARGO_HOME=" + filepath.Join(deps, "cargo"), "GRADLE_USER_HOME=" + filepath.Join(deps, "gradle")}
 }
@@ -818,7 +860,7 @@ no() { echo "minigw: $1" >&2; exit 128; }
 case $c in init|clone)
   [ -n "$MINIGW_DEPS" ] || no "this run cannot write (read-only)"
   u=; t=; x=; while [ $i -lt $# ]; do i=$((i+1)); eval "a=\${$i}"; case $a in
-    --separate-git-dir*) x=1;; -[bcjou]|--template|--initial-branch|--object-format|--ref-format|--origin|--branch|--upload-pack|--reference|--reference-if-able|--depth|--shallow-since|--shallow-exclude|--config|--server-option|--jobs|--filter|--bundle-uri) i=$((i+1));;
+    --separate-git-dir*) x=1;; -[bcjou]|--revision|--template|--initial-branch|--object-format|--ref-format|--origin|--branch|--upload-pack|--reference|--reference-if-able|--depth|--shallow-since|--shallow-exclude|--config|--server-option|--jobs|--filter|--bundle-uri) i=$((i+1));;
     -*) ;; *) if [ -n "$u" ]; then t=${t:-$a}; else u=$a; fi;; esac; done
   if [ $c = init ]; then t=${u:-.}; elif [ -z "$t" ]; then t=${u%/}; t=${t%/.git}; t=${t##*[/:]}; t=${t%.git}; fi
   case $t in /*) ;; *) t=$d/$t;; esac; case /$t/ in */../*) x=1;; esac
@@ -924,7 +966,8 @@ func gitWrapEnv(gitDirs []string, gw string) []string {
 // worktreeNote: navodilo agentu v klonu.
 // Besedilo kot ClaudeCLI.mountNote na Macu, brez stavka o minigw run (ta je le na Macu).
 // gits: .git vseh klonov (hub.worktreeGits; ugnezdeni za prvim) — agent jih dobi poimenovane z ukazom za commit v njih.
-func worktreeNote(clientCwd, dir, branch string, gits []string) string {
+// sandboxed (#67): agent ima peskovnik z oznako za ovoj git (depsNote).
+func worktreeNote(clientCwd, dir, branch string, gits []string, sandboxed bool) string {
 	commit := " Commit your work on this branch; changes you leave uncommitted are committed for you at the end."
 	if worktreeNeedsUnsandboxed { // #70: na Windows brez sandboxa git agenta ni vnaprej dovoljen (git -c, alias … = poljuben ukaz); commit na koncu
 		commit = " Do not run git add or git commit: the gateway commits your changes on this branch when you finish."
@@ -932,14 +975,15 @@ func worktreeNote(clientCwd, dir, branch string, gits []string) string {
 	return "The user's folder " + clientCwd + " (on their computer, a git repository) is a clone here at " + dir + ", your working" +
 		" directory, on branch " + branch + ". Map paths under " + clientCwd + " to it." + commit +
 		" The branch goes back to the user's repository; their files are not changed." +
-		" Build output (.build, target, DerivedData) is never committed." + nestedClonesNote(gits) + depsNote(depsDir(filepath.Dir(gits[0])))
+		" Build output (.build, target, DerivedData) is never committed." + nestedClonesNote(gits) + depsNote(depsDir(filepath.Dir(gits[0])), sandboxed && runtime.GOOS != "windows")
 }
 
 // depsNote (#67, kot ClaudeCLI.depsNote na Macu): kam gredo odvisnosti in repozitoriji agenta. Windows: brez peskovnika
 // agenta (#68) git init/clone tam ni (ovoja PATH ni, GIT_DIR klona bi ga znova inicializiral).
-func depsNote(deps string) string {
+// sandboxed: ukazi agenta nosijo oznako peskovnika (sicer ovoj git init/clone zavrne, npr. Copilot brez bwrap).
+func depsNote(deps string, sandboxed bool) string {
 	git := "git init and git clone work only there"
-	if runtime.GOOS == "windows" {
+	if !sandboxed {
 		git = "git init and git clone are not available on this gateway (no sandbox)"
 	}
 	return " Dependencies and repositories you create go to $MINIGW_DEPS (" + deps + "), kept for this conversation; " + git + "." +
@@ -973,11 +1017,12 @@ func worktreeReadOnlyNote(clientCwd, dir string) string {
 		" Nothing goes back to the user, so give your answer in your reply."
 }
 
-// worktreeClaudeArgs: v peskovniku Claude Code (ne Windows) še pisanje v Maven agentov, $MINIGW_DEPS in predpomnilnike
-// (#67) in branje objektov zrcal; .git
-// vseh klonov (gits: config, hooks, info, commondir) ni pisljiv, Edit/Write vanj ne (nastavitve in hooke bere git
-// samega claude). objects: objekti zrcal (vrhnji in ugnezdeni). tmp: TMPDIR teka (runTempDir).
-func worktreeClaudeArgs(args []string, wt, maven, tmp string, objects, gits []string) []string {
+// worktreeClaudeArgs: v peskovniku Claude Code (ne Windows) še pisanje v mape grants (#67: grantDirs: .maven, .cache,
+// $MINIGW_DEPS in njegov tmp, cilj povezave TMPDIR) in branje objektov zrcal; .git vseh klonov (gits: config, hooks,
+// info, commondir) ni pisljiv, Edit/Write vanj ne (nastavitve in hooke bere git samega claude). objects: objekti zrcal
+// (vrhnji in ugnezdeni). tmpRoot (#67 M2): koren povezav TMPDIR (runTempLink) ni pisljiv, povezava teka ni v pravilih
+// (peskovnik dobi cilj).
+func worktreeClaudeArgs(args []string, wt string, grants []string, tmpRoot string, objects, gits []string) []string {
 	for i := 0; i+1 < len(args); i++ {
 		if args[i] != "--settings" {
 			continue
@@ -988,8 +1033,7 @@ func worktreeClaudeArgs(args []string, wt, maven, tmp string, objects, gits []st
 		}
 		if sb, _ := st["sandbox"].(map[string]any); sb != nil {
 			if fs, _ := sb["filesystem"].(map[string]any); fs != nil {
-				// koren klona (tudi .git za commit), ko je cwd podmapa; #67: $MINIGW_DEPS in skupni predpomnilniki (depsEnv)
-				rw := []string{wt, maven, tmp, depsDir(wt), filepath.Join(filepath.Dir(wt), ".cache")}
+				rw := append([]string{wt}, grants...) // koren klona (tudi .git za commit), ko je cwd podmapa
 				fs["allowWrite"] = append(toStrings(fs["allowWrite"]), rw...)
 				fs["allowRead"] = append(append(toStrings(fs["allowRead"]), rw...), objects...)
 				var deny []string
@@ -997,6 +1041,9 @@ func worktreeClaudeArgs(args []string, wt, maven, tmp string, objects, gits []st
 					for _, d := range []string{"config", "hooks", "info", "commondir"} {
 						deny = append(deny, filepath.Join(g, d))
 					}
+				}
+				if tmpRoot != "" {
+					deny = append(deny, tmpRoot)
 				}
 				fs["denyWrite"] = deny
 			}

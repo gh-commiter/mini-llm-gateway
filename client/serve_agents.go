@@ -280,7 +280,7 @@ func trimFinalPrefix(s string) string {
 // GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR (harness: /dev/null), iskanje repozitorija ne nad klonom (L1). deny: mape
 // brez dostopa (L3: mapa nastavitev prehoda, kot --deny pri Grok).
 func codexTreeProfile(writable, gits, deny []string, network bool, path string) []string {
-	fs := map[string]string{"/": "read", "/private/tmp": "write", "/tmp": "write"}
+	fs := map[string]string{"/": "read"} // #67: nič v /tmp (vse pod Scratch; TMPDIR ukazov je .build/tmp klona)
 	for _, d := range deny {
 		fs[d] = "none"
 	}
@@ -644,7 +644,9 @@ func (s *server) agentFolder(w http.ResponseWriter, r *req, label, agent string)
 		}
 		wt, branch, _, _, _ := s.hub.worktreeOf(r.h("x-claude-mini-session"), agent)
 		gits, _ := s.hub.worktreeGits(wt)
-		return dir, worktreeNote(clientCwd, dir, branch, gits), false, 0
+		// #67: Copilot ima oznako peskovnika le pod bwrap (Linux); Codex prek profila, Grok v klonu le bere
+		sandboxed := agent != "copilot" || runtime.GOOS == "linux" && !agentUnconfined(s.cfgDir)
+		return dir, worktreeNote(clientCwd, dir, branch, gits, sandboxed), false, 0
 	case share != nil:
 		if dir, _ = s.hub.push(share, agent); dir == "" {
 			return "", "", false, writeError(w, r.rid, 502, "Syncing "+clientCwd+" to the gateway failed (see minigw output)")
@@ -902,11 +904,16 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			if treeEnv = worktreeClaudeEnv(wt, maven, filepath.Join(wt, ".build", "tmp"), gw, gits, k.name); treeEnv == nil {
 				return "", errors.New("cannot prepare git for the agent's clone (git --exec-path); use sync")
 			}
-			if write {
-				deps = []string{maven, depsDir(wt), filepath.Join(filepath.Dir(wt), ".cache")}
-				if k.name == "codex" && !ac.Network { // ovoj zavrne oddaljen git clone z imenom nastavitve
-					treeEnv = append(treeEnv, "MINIGW_NETWORK_OFF=Codex: Allow network access for commands")
+			if write { // #67 H1: mape za pisanje pod Scratch preverjene, preden nastane peskovnik
+				var fixed []string
+				if deps, fixed, err = grantDirs(wt); err != nil {
+					s.log.Printf("%s worktree folders: %v", r.rid, err)
+					return "", errors.New("the agent's folders on the gateway are not safe to use (see the gateway log): start a new conversation")
 				}
+				for _, f := range fixed {
+					s.log.Printf("%s worktree: %s was not a folder of the gateway; made again", r.rid, f)
+				}
+				treeEnv = append(treeEnv, networkOffEnv(k.name, ac.Network)...)
 			} else {
 				treeEnv = slices.DeleteFunc(treeEnv, func(kv string) bool { return strings.HasPrefix(kv, "MINIGW_DEPS=") })
 			}
@@ -920,7 +927,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			}
 			if inTree {
 				m.rw, m.ro = append(append(m.rw, maven), deps...), append(append(m.ro, objs...), gw)
-				m.pins = pinPaths(wt, gits) // L1, M2: .git vsakega klona in mape do ugnezdenih so točke priklopa (mv/rm: EBUSY)
+				m.pins = append(pinPaths(wt, gits), deps...) // L1, M2: .git vsakega klona in mape do ugnezdenih so točke priklopa (mv/rm: EBUSY); #67 H1: tudi mape pod Scratch
 				for _, g := range gits {
 					for _, d := range []string{"config", "hooks", "info", "commondir"} {
 						m.protect = append(m.protect, filepath.Join(g, d))

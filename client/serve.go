@@ -65,7 +65,7 @@ type serveConfig struct {
 	ClaudeAskOthers  bool          `json:"claudeAskOthers,omitempty"`  // agent Claude CLI sme vprašati druge modele
 	ClaudeWork       string        `json:"claudeWork,omitempty"`       // #45: najvišji način za pisanje Claude CLI; "" = direct
 	DisabledTools    []string      `json:"disabledTools,omitempty"`
-	SettingSources   string        `json:"settingSources,omitempty"` // --setting-sources; prazno = brez (hooki iz mape ne tečejo)
+	SettingSources   string        `json:"settingSources,omitempty"` // --setting-sources; prazno = brez (hooki iz mape ne tečejo); #67 L6: »project« sme nastaviti tudi env agenta
 	Codex            agentCLI      `json:"codex"`                    // Codex CLI (serve_agents.go), privzeto izklopljen
 	Grok             agentCLI      `json:"grok"`                     // Grok CLI, privzeto izklopljen
 	Foundry          foundryConfig `json:"foundry"`                  // Foundry Local na napravi (foundry.go), privzeto izklopljen

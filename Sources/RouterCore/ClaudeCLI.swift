@@ -92,6 +92,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
             // agenta lahko ne uspeta (gradnja z minigw run ali v načinu sync); Maven deluje.
             "filesystem": ["denyRead": ["~"] + Self.scratchPaths(scratch), "allowRead": dirs + Self.mavenConfig() + read.map(\.path), "allowWrite": dirs,
                            "denyWrite": (gits.isEmpty ? [root.path + "/.git"] : gits).flatMap { g in ["config", "hooks", "info", "commondir"].map { g + "/" + $0 } }
+                               + [(Worktree.tmpLink(root) as NSString).deletingLastPathComponent]  // #67 M2: koren povezav TMPDIR
                                + Native.buildCacheDenies().paths + Self.scratchPaths(RouterConfig.copilotCache)],
         ]]
         let settings = String(decoding: try! JSONSerialization.data(withJSONObject: sandbox, options: [.sortedKeys]), as: UTF8.self)
@@ -444,9 +445,11 @@ extension Router {
             + (readOnly ? " The folder is shared read-only: do not try to create, change or delete files in it."
                 + " Open SQLite databases with the URI file:<path>?mode=ro&immutable=1 (no journal or lock files)." : "")
     }
-    /// #67 (kot Go depsNote): kam gredo odvisnosti in repozitoriji agenta.
-    static func depsNote(_ deps: String) -> String {
-        " Dependencies and repositories you create go to $MINIGW_DEPS (\(deps)), kept for this conversation; git init and git clone work only there."
+    /// #67 (kot Go depsNote): kam gredo odvisnosti in repozitoriji agenta. `sandboxed`: ukazi agenta nosijo oznako peskovnika
+    /// (na Macu vsi pišoči agenti: Claude, Codex, Copilot).
+    static func depsNote(_ deps: String, sandboxed: Bool = true) -> String {
+        " Dependencies and repositories you create go to $MINIGW_DEPS (\(deps)), kept for this conversation; "
+            + (sandboxed ? "git init and git clone work only there." : "git init and git clone are not available on this gateway (no sandbox).")
             + #" CMake: -DFETCHCONTENT_BASE_DIR="$MINIGW_DEPS/cmake". SwiftPM: swift build --scratch-path "$MINIGW_DEPS/swiftpm"."#
             + #" Xcode: -clonedSourcePackagesDirPath "$MINIGW_DEPS/spm" -derivedDataPath "$MINIGW_DEPS/DerivedData"."#
             + " Maven, Go, npm, pip, Cargo and Gradle caches are already set."
@@ -495,6 +498,9 @@ extension Router {
             readOnly = await Self.isReadOnly(req) || cap != nil
             Self.runBranch?.readOnly = readOnly  // #46a
             if readOnly, tree != nil { return await error(400, "invalid_request_error", Self.readOnlyWorktree, rid: rid, writer: writer) }  // R4: tudi vprašani (kot Go)
+            if let t = tree, Worktree.grantDirs(root: t.root) == nil {  // #67 H1: pred peskovnikom
+                return await error(503, "api_error", Worktree.unsafeFolders, rid: rid, writer: writer)
+            }
             if let shared, let clientCwd {
                 args += ["--append-system-prompt", Self.mountNote(clientCwd, shared, readOnly: readOnly, synced: synced, branch: tree?.branch, gits: tree?.gits ?? [])]
             }
@@ -567,8 +573,12 @@ extension Router {
                 return await error(503, "api_error", "Cannot prepare git for the agent's clone (git --exec-path): use sync", rid: rid, writer: writer)
             }
             env.merge(tenv) { $1 }
-            if let link = Worktree.makeTmpLink(t.root) { env["CLAUDE_CODE_TMPDIR"] = link }  // #67: kratka pot, podatki pod Scratch
-            if !config.worktreeNetwork { env["MINIGW_NETWORK_OFF"] = "Settings → General → Worktree mode → Network for builds" }  // #67: ovoj git
+            guard let link = Worktree.makeTmpLink(t.root) else {  // #67: kratka pot, podatki pod Scratch; brez nje ne v /tmp
+                return await error(503, "api_error", "Cannot prepare Claude Code's temporary folder link in /private/tmp/mgw-\(getuid()) (it must be a private folder of the gateway user): start a new conversation",
+                                   rid: rid, writer: writer)
+            }
+            env["CLAUDE_CODE_TMPDIR"] = link
+            env["MINIGW_NETWORK_OFF"] = Worktree.networkOff("claude", config)  // #67: ovoj git
         }
         for k in ["MINIGW_AGENT_URL", "MINIGW_AGENT_AUTH_FILE"] { env[k] = run?.env[k] }
         env["CLAUDE_CODE_DISABLE_FILE_MENTIONS"] = "1"
