@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path"
@@ -807,10 +808,7 @@ func toStrings(v any) []string {
 func (h *shareHub) worktreeMount(s *serveShare, agent string) (dir, refused string) {
 	h.mu.Lock()
 	t, ro := s.tree, s.readOnly
-	slot, kept := t.slots[agent], ""
-	if slot != nil {
-		kept = slot.kept
-	}
+	slot := t.slots[agent]
 	h.mu.Unlock()
 	if ro {
 		return "", ""
@@ -818,11 +816,14 @@ func (h *shareHub) worktreeMount(s *serveShare, agent string) (dir, refused stri
 	if slot != nil && slot.gitIntact() && nestedProblem(slot.wt, t.repo, slot.nested) == "" { // sicer nov klon (makeClone pobriše starega)
 		return worktreeDir(slot.wt, t.sub), ""
 	}
-	if kept != "" { // L6 (L1): nedostavljeno delo starega klona najprej v kept, nato nov klon na isti poti
-		keepClone(slot.wt, kept, h.logf)
+	if slot != nil { // L6 (L1): nedostavljeno delo starega klona najprej v kept, nato nov klon na isti poti
 		h.mu.Lock()
-		slot.kept = ""
+		kept := slot.kept
+		slot.kept = "" // dropClones ga ne ohrani še enkrat
 		h.mu.Unlock()
+		if kept != "" {
+			keepClone(slot.wt, kept, h.logf)
+		}
 	}
 	short := sha256Hex([]byte(s.session))[:8]
 	name := agent + "-" + short + "-0"
@@ -1350,7 +1351,7 @@ func (h *shareHub) worktreeResult(key, owner string, nested int) ([]byte, int, s
 func dropClones(t *shareTree, logf func(string, ...any)) {
 	for _, sl := range t.slots {
 		if sl.kept != "" {
-			keepClone(sl.wt, sl.kept, logf)
+			go keepClone(sl.wt, sl.kept, logf) // ne pod h.mu (hoja po klonu); pot ima zgoščeno sejo
 			continue
 		}
 		go removeClone(sl.wt)
@@ -1361,32 +1362,48 @@ func dropClones(t *shareTree, logf func(string, ...any)) {
 // maxKept (M1): največ ohranjenih klonov v mapi klonov repozitorija (najstarejši gredo).
 const maxKept = 3
 
-// keepClone (L6): klon wt z nedostavljenim delom gre v kept. M2: vsak .git (mapa ali datoteka, katerakoli globina, brez
-// sledenja povezavam) se prej preimenuje v .git.agent: git ga tam ne najde, zato config, kljuke in fsmonitor agenta ne
-// tečejo, ko uporabnik pogleda datoteke. L2: le prava mapa; L4: neuspeh → klon gre (zapis v dnevnik).
+// keepClone (L6): klon wt z nedostavljenim delom gre v kept. M2: vsak .git (mapa ali datoteka, katerakoli globina) in
+// HEAD v mapi z obliko golega repozitorija (HEAD, objects, refs) se prej preimenujeta v *.agent: git ju tam ne najde,
+// zato config, kljuke in fsmonitor agenta ne tečejo. Vse prek os.Root klona (povezava ali zamenjana mapa ne preusmeri
+// preimenovanja ven) in os.Root starša za premik; nič se ne briše. Neuspeh premika: klon gre (zapis v dnevnik).
 func keepClone(wt, kept string, logf func(string, ...any)) {
-	if st, err := os.Lstat(wt); err != nil || !st.IsDir() {
+	pr, err := os.OpenRoot(filepath.Dir(wt))
+	if err != nil {
 		return
 	}
-	filepath.WalkDir(wt, func(p string, d os.DirEntry, err error) error {
-		if err != nil || p == wt || !isGitPath(d.Name()) {
+	defer pr.Close()
+	if st, err := pr.Lstat(filepath.Base(wt)); err != nil || !st.IsDir() {
+		return
+	}
+	if root, err := pr.OpenRoot(filepath.Base(wt)); err == nil {
+		disarm := func(p string) {
+			if root.Rename(p, p+".agent") != nil {
+				root.Rename(p, p+".agent-"+strconv.FormatInt(time.Now().UnixNano(), 10)) // *.agent že obstaja (agent)
+			}
+		}
+		isDir := func(p string) bool { st, err := root.Lstat(p); return err == nil && st.IsDir() }
+		fs.WalkDir(root.FS(), ".", func(p string, d fs.DirEntry, err error) error {
+			switch {
+			case err != nil || p == ".":
+			case isGitPath(d.Name()):
+				disarm(p)
+				if d.IsDir() {
+					return fs.SkipDir
+				}
+			case strings.EqualFold(d.Name(), "HEAD") && isDir(path.Join(path.Dir(p), "objects")) && isDir(path.Join(path.Dir(p), "refs")):
+				disarm(p) // goli repozitorij (#4)
+			}
 			return nil
-		}
-		if os.Rename(p, p+".agent") != nil {
-			os.RemoveAll(p) // .git.agent že obstaja (agent): metapodatki gita nikoli ostanejo
-		}
-		if d.IsDir() {
-			return filepath.SkipDir
-		}
-		return nil
-	})
-	if err := os.Rename(wt, kept); err != nil {
+		})
+		root.Close()
+	}
+	if err := pr.Rename(filepath.Base(wt), filepath.Base(kept)); err != nil {
 		logf("worktree: cannot keep the agent's clone %s: %v; removed", wt, err)
 		removeClone(wt)
 		return
 	}
 	now := time.Now()
-	os.Chtimes(kept, now, now) // pravkar preimenovana prava mapa
+	pr.Chtimes(filepath.Base(kept), now, now) // pravkar preimenovana prava mapa
 	pruneKept(filepath.Dir(kept), time.Time{})
 }
 

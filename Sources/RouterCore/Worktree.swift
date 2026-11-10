@@ -1026,7 +1026,10 @@ extension ShareHub {
             slot.busy = true; runSlot[id] = k; unlock(tree.repo)
             return Self.dir(slot.wt, tree.sub)
         }
-        if let old = slots[k], old.kept != nil { Self.dropClone(old); old.kept = nil }  // L6 (L1): nedostavljeno delo pred novim klonom v kept
+        if let old = slots[k], let kept = old.kept {  // L6 (L1): nedostavljeno delo pred novim klonom v kept (zunaj akterja)
+            old.kept = nil
+            await offPool { Self.keepClone(old.wt, kept) }
+        }
         let branch = "minigw/\(agent)-\(short)-\(n)", wt = tree.worktrees.appendingPathComponent("\(agent)-\(short)-\(n)", isDirectory: true)
         let base = "refs/minigw/base/\(agent)-\(short)-\(n)", repo = tree.repo
         // »nested«: vrhovi obstoječih zrcal ugnezdenih repozitorijev po ključu (Worktree.nestedKey); prisotnost pove
@@ -1226,6 +1229,10 @@ extension ShareHub {
     func worktreeBack(_ s: Share, _ tree: Tree) async {
         guard let id = Self.run, let k = runSlot[id], let slot = slots[k] else { return }
         await acquire(tree.repo)
+        await offPool {  // N1: pred vsakim izhodom spodaj (tudi kept), ne šele ob finalize
+            Worktree.killGroups(run: id)  // skupine procesov agentov tega izvajanja
+            Worktree.killProcesses(in: slot.wt)  // ves klon, preden ugnezdeni (finalize ustavi le procese v svoji mapi)
+        }
         let out = tree.repo.deletingLastPathComponent().appendingPathComponent(tree.repo.lastPathComponent + ".result")
         let (repo, agent) = (tree.repo, String(k.split(separator: "|")[1]))
         // L6: kar ni prišlo do odjemalca, ostane v klonu; ob koncu seje gre klon v kept (prune: 30 dni).
@@ -1249,8 +1256,6 @@ extension ShareHub {
         let read = tree.local.map { [$0.appendingPathComponent(".git/objects")] } ?? []
         // L6: zavrnjen ugnezdeni (razlog) ne ustavi vrhnjega in ostalih; njegova pot je pri staršu izpuščena, gitlink ostane.
         let (nested, top, skipped) = await offPool { () -> ([(path: String, tip: String, out: URL)], String?, [String]) in
-            Worktree.killGroups(run: id)  // N1: skupine procesov agentov tega izvajanja
-            Worktree.killProcesses(in: slot.wt)  // ves klon, preden ugnezdeni (finalize ustavi le procese v svoji mapi)
             var links: [String: [String: String]] = ["": [:]], changed: [(path: String, tip: String, out: URL)] = [], skipped: [String] = []
             for n in slot.nested { links[n.path] = [:] }
             for (i, n) in slot.nested.enumerated().reversed() {
@@ -1373,7 +1378,8 @@ extension ShareHub {
     /// Klon gre; z nedostavljenim delom (L6) ostane kot kept (keepClone; kot Go dropClones).
     static func dropClone(_ slot: Slot) {
         if let kept = slot.kept {
-            keepClone(slot.wt, kept)
+            let wt = slot.wt
+            Task.detached { keepClone(wt, kept) }  // zunaj akterja (hoja po klonu); pot ima zgoščeno sejo
             return
         }
         let wt = slot.wt
@@ -1383,26 +1389,50 @@ extension ShareHub {
     /// Največ ohranjenih klonov v mapi klonov repozitorija (M1; najstarejši gredo).
     static let maxKept = 3
 
-    /// L6 (kot Go keepClone): klon z nedostavljenim delom gre v kept. M2: vsak .git (mapa ali datoteka, katerakoli globina,
-    /// brez sledenja povezavam) se prej preimenuje v .git.agent: git ga tam ne najde (config, kljuke, fsmonitor agenta ne
-    /// tečejo). L2: le prava mapa; L4: neuspeh → klon gre (dnevnik).
+    /// L6 (kot Go keepClone): klon z nedostavljenim delom gre v kept. M2: vsak .git (mapa ali datoteka, katerakoli globina)
+    /// in HEAD v mapi z obliko golega repozitorija (HEAD, objects, refs) se prej preimenujeta v *.agent: git ju tam ne najde
+    /// (config, kljuke, fsmonitor agenta ne tečejo). Vse prek odprtih map (openat z O_NOFOLLOW, renameat): povezava ali
+    /// zamenjana mapa ne preusmeri ničesar ven; nič se ne briše. Neuspeh premika: klon gre (dnevnik).
     nonisolated static func keepClone(_ wt: URL, _ kept: URL) {
-        var st = stat()
-        guard lstat(wt.path, &st) == 0, st.st_mode & S_IFMT == S_IFDIR else { return }
-        var gits: [URL] = []
-        let e = FileManager.default.enumerator(at: wt, includingPropertiesForKeys: nil, options: [], errorHandler: { _, _ in true })
-        while let u = e?.nextObject() as? URL {
-            if Sync.normName(u.lastPathComponent) == ".git" { gits.append(u); e?.skipDescendants() }
-        }
-        for g in gits where rename(g.path, g.path + ".agent") != 0 {
-            try? FileManager.default.removeItem(at: g)  // .git.agent že obstaja (agent): metapodatki gita nikoli ostanejo
-        }
-        guard rename(wt.path, kept.path) == 0 else {
+        let pfd = open(wt.deletingLastPathComponent().path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        guard pfd >= 0 else { return }
+        defer { close(pfd) }
+        let name = wt.lastPathComponent
+        let fd = openat(pfd, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard fd >= 0 else { return }  // povezava ali nič
+        disarmGit(fd)
+        close(fd)
+        guard renameat(pfd, name, pfd, kept.lastPathComponent) == 0 else {
             Router.log.error("worktree: cannot keep the agent's clone \(wt.path, privacy: .public); removed")
             removeClone(wt); return
         }
-        try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: kept.path)  // pravkar preimenovana prava mapa
+        var ts = [timespec(tv_sec: 0, tv_nsec: Int(UTIME_NOW)), timespec(tv_sec: 0, tv_nsec: Int(UTIME_NOW))]
+        _ = utimensat(pfd, kept.lastPathComponent, &ts, AT_SYMLINK_NOFOLLOW)  // pravkar preimenovana prava mapa
         pruneKept(kept.deletingLastPathComponent(), before: .distantPast)
+    }
+
+    /// Preimenuje .git in HEAD golega repozitorija v odprti mapi `dir` in podmapah (brez sledenja povezavam).
+    nonisolated static func disarmGit(_ dir: Int32) {
+        let dup = dup(dir)
+        guard dup >= 0, let d = fdopendir(dup) else { return }
+        var names: [String] = []
+        while let e = readdir(d) {
+            let n = withUnsafeBytes(of: e.pointee.d_name) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+            if n != "." && n != ".." { names.append(n) }
+        }
+        closedir(d)
+        func isDir(_ n: String) -> Bool { var st = stat(); return fstatat(dir, n, &st, AT_SYMLINK_NOFOLLOW) == 0 && st.st_mode & S_IFMT == S_IFDIR }
+        func disarm(_ n: String) {
+            if renameat(dir, n, dir, n + ".agent") != 0 { _ = renameat(dir, n, dir, n + ".agent-" + UUID().uuidString) }  // *.agent že obstaja
+        }
+        for n in names {
+            if Sync.normName(n) == ".git" || n.uppercased() == "HEAD" && isDir("objects") && isDir("refs") {
+                disarm(n)  // goli repozitorij (#4): brez HEAD ga git ne prepozna
+            } else if isDir(n) {
+                let fd = openat(dir, n, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+                if fd >= 0 { disarmGit(fd); close(fd) }
+            }
+        }
     }
 
     /// Ohranjeni kloni v mapi klonov `dir` starejši od `before` in vsi razen maxKept najnovejših (lstat, brez povezav).

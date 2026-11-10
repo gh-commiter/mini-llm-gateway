@@ -1502,7 +1502,13 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
 			gitT(t, d, "config", "core.fsmonitor", "touch "+marker+"; false")
 		}
 	}
-	sc.unregister() // konec seje: klon z nedostavljenim delom ostane
+	sc.unregister() // konec seje: klon z nedostavljenim delom ostane (keepClone v gorutini)
+	for i := 0; i < 100; i++ {
+		if _, err := os.Stat(slot.wt); err != nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 	for _, d := range []string{line[1], filepath.Join(line[1], "lib"), filepath.Join(line[1], "other")} {
 		if _, err := os.Lstat(filepath.Join(d, ".git")); err == nil {
 			t.Fatalf("%s/.git kept", d)
@@ -1628,5 +1634,51 @@ func TestPruneKept(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(outside, "x-kept-1", "f")); err != nil {
 		t.Fatal("link followed")
+	}
+}
+
+// M2, #4, #1: keepClone preimenuje vsak .git in HEAD golega repozitorija v klonu, nikoli prek povezave ven; klon, ki je
+// povezava, ostane, kot je.
+func TestKeepCloneDisarmsGit(t *testing.T) {
+	root := t.TempDir()
+	wt, outside, kept := filepath.Join(root, "c-0"), filepath.Join(root, "outside"), filepath.Join(root, "c-0-kept-1")
+	gitT(t, root, "init", "-q", wt)
+	gitT(t, root, "init", "-q", "--bare", filepath.Join(wt, "bare"))
+	gitT(t, root, "init", "-q", outside)
+	gitT(t, root, "init", "-q", "--bare", filepath.Join(outside, "b"))
+	writeT(t, filepath.Join(wt, "sub", ".git"), "gitdir: ../x\n")
+	writeT(t, filepath.Join(wt, "f.txt"), "agent\n")
+	os.Symlink(outside, filepath.Join(wt, "link"))
+	os.Symlink(filepath.Join(outside, "b"), filepath.Join(wt, "blink"))
+	keepClone(wt, kept, t.Logf)
+	for _, p := range []string{".git.agent", "sub/.git.agent", "bare/HEAD.agent", "f.txt"} {
+		if _, err := os.Lstat(filepath.Join(kept, p)); err != nil {
+			t.Fatalf("%s: %v", p, err)
+		}
+	}
+	for _, p := range []string{".git", "sub/.git", "bare/HEAD"} {
+		if _, err := os.Lstat(filepath.Join(kept, p)); err == nil {
+			t.Fatalf("%s left", p)
+		}
+	}
+	for _, d := range []string{kept, filepath.Join(kept, "bare"), filepath.Join(kept, "sub")} {
+		c := exec.Command("git", "-C", d, "rev-parse", "--git-dir")
+		c.Env = append(os.Environ(), "GIT_CEILING_DIRECTORIES="+root)
+		if out, err := c.CombinedOutput(); err == nil {
+			t.Fatalf("git finds a repository in %s: %s", d, out)
+		}
+	}
+	for _, p := range []string{".git", "b/HEAD"} {
+		if _, err := os.Stat(filepath.Join(outside, p)); err != nil {
+			t.Fatalf("outside %s touched: %v", p, err)
+		}
+	}
+	os.Symlink(outside, filepath.Join(root, "c-1")) // klon je povezava: nič
+	keepClone(filepath.Join(root, "c-1"), filepath.Join(root, "c-1-kept-1"), t.Logf)
+	if _, err := os.Stat(filepath.Join(outside, ".git")); err != nil {
+		t.Fatal("outside .git touched through a linked clone")
+	}
+	if _, err := os.Lstat(filepath.Join(root, "c-1-kept-1")); err == nil {
+		t.Fatal("linked clone kept")
 	}
 }

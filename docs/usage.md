@@ -257,7 +257,8 @@ Notes:
   worktrees/<device>/<id>/<clone>-kept-<time> after this session (files only; its .git folders renamed .git.agent —
   do not run git there)`. The path is inside the gateway's Scratch folder. A later request in the same session that
   delivers the work ends that. When the session ends (or the next request needs a new clone), the gateway keeps the
-  agent's files there with every `.git` renamed `.git.agent`, so no git command picks up the agent's git settings or
+  agent's files there with every `.git` renamed `.git.agent` (and the `HEAD` of any folder shaped like a bare
+  repository renamed `HEAD.agent`), so no git command picks up the agent's git settings or
   hooks; copy the files you need. At most 3 such folders are kept per repository (the oldest goes first), each for
   30 days. The same applies when no branch could be delivered at all, except for a clone refused as too large.
 - The agent may commit inside a nested clone: its note names the clones and the form
