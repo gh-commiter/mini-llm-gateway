@@ -151,10 +151,12 @@ Details:
     worktree mode;
   - denied: the gateway's config folder. Everything else (your home folder, other devices' copies, the rest of Scratch,
     the registry outside the container) is not readable. The container can list the names in the folders above the
-    folders it may write and above its working folder (git needs them), not above read-only ones; with Scratch (the
-    default `%LOCALAPPDATA%\minigw\scratch`) or an allowed folder inside your home, that includes the home and every
-    folder on the way, and the gateway warns about Scratch there: move it outside your home (for example
-    `D:\minigw-scratch`). MXC may let a listing grant reach subfolders (HPX360 saw
+    folders it may write and above its working folder (git needs them), not above read-only ones; with Scratch (for example
+    `%LOCALAPPDATA%\minigw\scratch`, the default of installs before #68) or an allowed folder inside your home, that includes the home and every
+    folder on the way, and the gateway warns about Scratch there: move it outside your home with the settings page's Scratch field. New
+    installs and the Scratch **Default** button use `<first fixed drive that is not the system drive, else the system
+    drive>\minigw-scratch\<Windows user name>` (for example `D:\minigw-scratch\ana`), with an owner-only protected
+    access list. MXC may let a listing grant reach subfolders (HPX360 saw
     `dir ~\.ssh` list names while reading the files was denied): names can show, file contents cannot.
   - The request for each run (it holds the Claude token or an API key you chose) is written to `Scratch\tmp\mxc`, a
     folder only your user can open (protected access list, also on a D: drive), outside every grant, and deleted after
@@ -187,10 +189,14 @@ Details:
     and needs the token (which the agent cannot read: the config folder is denied), and the run port accepts only that
     run's process tree with its token. Other local services (for example LiteLLM, Foundry Local) are reachable by the
     agent, so keep **May ask other models** off if you run local services you do not want agents to reach.
-  - Codex does not start inside an MXC container (it cannot read its own `CODEX_HOME` there). It runs with its own
-    **elevated** Windows sandbox when that is set up (`[windows] sandbox = "elevated"` in `~\.codex\config.toml`, done
-    once by `codex sandbox setup --elevated` as administrator; each run then gets `-c windows.sandbox="elevated"`);
-    without it Codex still needs **Allow commands without a sandbox**. Codex keeps the real `~\.codex` (its ChatGPT
+  - Codex does not start inside an MXC container (it cannot read its own `CODEX_HOME` there). On Windows it runs only
+    with **Allow commands without a sandbox**, also when its own **elevated** Windows sandbox is set up: HPX360 showed
+    a Codex command in that sandbox reading `%APPDATA%\minigw\admin.secret` and `serve.json` (its read roots cover
+    most of the profile). When it is set up (`[windows] sandbox = "elevated"` in `~\.codex\config.toml` and
+    `.sandbox-secrets` in `CODEX_HOME`, done once by `codex sandbox setup --elevated` as administrator) each run still
+    gets `-c windows.sandbox="elevated"` as extra protection (`~\.ssh`, writes in the profile). When `config.toml` asks
+    for `elevated` but it is not set up, the run is refused ("Codex's elevated Windows sandbox is not set up on the gateway: run codex sandbox setup --elevated once at the gateway PC (as administrator)") instead of Codex starting a UAC prompt nobody
+    can confirm (error 1223). Codex keeps the real `~\.codex` (its ChatGPT
     login refreshes itself) and gets the run's folder under Scratch as `TEMP`/`TMP`; the opt-in API key is passed as
     `CODEX_API_KEY`.
 - How a nested clone is read after the run: on the Mac the path is checked once and then never resolved again (its
@@ -337,8 +343,8 @@ stays on the gateway computer. See it in **Settings → Sessions** or with `mini
   (a VPN, another Wi-Fi or a spoofed mDNS answer can serve them), so prefer `https`.
 - **Windows commands.** With the Windows sandbox (MXC, see
   [How the folder reaches the agent](#how-the-folder-reaches-the-agent)) agent commands run in a container that cannot
-  read your files or the gateway's settings. Without it (older Windows builds), and for Codex without its own elevated
-  sandbox, agents run only with **Allow commands without a sandbox**: then they can run any command as you and read
+  read your files or the gateway's settings. Without it (older Windows builds), and for Codex always (also with its
+  own elevated sandbox), agents run only with **Allow commands without a sandbox**: then they can run any command as you and read
   the provider API keys in Credential Manager and the admin secret.
 - **Siri AI** uses Accessibility UI automation of the Siri AI app. It only touches that app, but Accessibility is a
   powerful permission.

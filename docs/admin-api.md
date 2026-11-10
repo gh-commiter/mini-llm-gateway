@@ -217,7 +217,7 @@ Notes:
   sandbox (plus `warning` when Scratch is inside the home folder), else `{"kind": "", "reason": "…"}`. When the sandbox cannot reach 127.0.0.1 it also has
   `"askOthers": "agents in the sandbox cannot reach 127.0.0.1, so May ask other models does not work"`.
   `GET /agents/{codex,grok,copilot}` also has `sandboxed`: the agent has a sandbox without `allowUnsandboxedBash`
-  (on Windows Codex: its own elevated sandbox). `GET/PATCH /general`
+  (on Windows Codex is always false: its own elevated sandbox can read the gateway's settings). `GET/PATCH /general`
   `worktreeNetwork` (Go gateway too, default true): "Network for builds" of Claude CLI in worktree mode; on Windows
   without the Windows sandbox it has no effect. `PATCH /general {"startAtSignIn"}` sets the Windows Run
   value for the running gateway and, on the Mac, Open at Login; Linux answers `400` (use `minigw serve install`).
