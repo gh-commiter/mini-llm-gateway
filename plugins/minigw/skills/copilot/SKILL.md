@@ -22,7 +22,7 @@ PROMPT
 )"
 ```
 
-minigw refuses a prompt argument that starts with `/` or has `@` at the start of a word (`@file`, `(@x`, `"@x`): the nested claude would run a slash command or attach that file. Name files by their path without `@`, or paste their text. Text on stdin may contain `@` (minigw 0.5.21 and Claude Code 2.1.318 or newer): pipe a diff instead of pasting it.
+minigw refuses a prompt argument that starts with `/` or has `@` at the start of a word (`@file`, `(@x`, `"@x`): the nested claude would run a slash command or attach that file. Name files by their path without `@`, or paste their text. Text on stdin may contain `@` (minigw 0.5.21 and Claude Code 2.1.299 or newer): pipe a diff instead of pasting it.
 
 Copilot on the gateway needs its own GitHub token (`minigw gw copilot token` on the gateway), is read-only unless its
 settings allow writing, and runs commands only with "Allow commands": if it says it cannot edit or run something, tell the user

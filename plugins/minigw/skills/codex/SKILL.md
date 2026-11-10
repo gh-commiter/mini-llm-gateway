@@ -21,7 +21,7 @@ PROMPT
 )"
 ```
 
-minigw refuses a prompt argument that starts with `/` or has `@` at the start of a word (`@file`, `(@x`, `"@x`): the nested claude would run a slash command or attach that file. Name files by their path without `@`, or paste their text. Text on stdin may contain `@` (minigw 0.5.21 and Claude Code 2.1.318 or newer): pipe a diff instead of pasting it.
+minigw refuses a prompt argument that starts with `/` or has `@` at the start of a word (`@file`, `(@x`, `"@x`): the nested claude would run a slash command or attach that file. Name files by their path without `@`, or paste their text. Text on stdin may contain `@` (minigw 0.5.21 and Claude Code 2.1.299 or newer): pipe a diff instead of pasting it.
 
 Always run it; do not assume Codex cannot see the files. If minigw prints that the folder "is not shared with the gateway", run `"${CLAUDE_PLUGIN_DATA}/bin/minigw" share add` (the user asked for Codex in this folder) and run the task again.
 

@@ -1094,7 +1094,7 @@ func TestUnsafePromptStdin(t *testing.T) {
 	if r := unsafePrompt(m, diff, env, true); r != "" {
 		t.Errorf("diff refused with mentions off: %s", r)
 	}
-	if r := promptRefusal(unsafePrompt(m, diff, env, false)); r != "@ before a file name on stdin (claude would attach that file) is not accepted when minigw runs inside Claude Code; remove the @ before file names on stdin or update Claude Code to 2.1.318 or newer" {
+	if r := promptRefusal(unsafePrompt(m, diff, env, false)); r != "@ before a file name on stdin (claude would attach that file) is not accepted when minigw runs inside Claude Code; remove the @ before file names on stdin or update Claude Code to 2.1.299 or newer" {
 		t.Errorf("diff without mentions off: %q", r)
 	}
 	if r := promptRefusal(unsafePrompt([]string{"-p", "--", "@x"}, "", env, true)); r != "@ before a file name (claude would attach that file) is not accepted when minigw runs inside Claude Code: paste the text itself into the prompt" {
@@ -1103,8 +1103,8 @@ func TestUnsafePromptStdin(t *testing.T) {
 	if unsafePrompt([]string{"-p", "--", "@x review"}, "", env, true) == "" || unsafePrompt([]string{"-p", "--", "ok"}, " /config x", env, true) == "" {
 		t.Error("@ in the argument or / on stdin accepted")
 	}
-	for v, want := range map[string]bool{"2.1.318 (Claude Code)": true, "2.1.319": true, "2.2.0 (Claude Code)": true, "10.0.0": true,
-		"2.1.317 (Claude Code)": false, "2.0.999": false, "garbage": false, "": false, "2.1.318-beta": false} {
+	for v, want := range map[string]bool{"2.1.299 (Claude Code)": true, "2.1.319": true, "2.2.0 (Claude Code)": true, "10.0.0": true,
+		"2.1.296 (Claude Code)": false, "2.0.999": false, "garbage": false, "": false, "2.1.299-beta": false} {
 		if mentionGuardVersion(v) != want {
 			t.Errorf("version %q: want %v", v, want)
 		}
@@ -1116,15 +1116,15 @@ func TestStdinMentionsOff(t *testing.T) {
 	asked := 0
 	v := func(s string) func() string { return func() string { asked++; return s } }
 	diff := "@@ -1 +1 @@\n"
-	if !stdinMentionsOff(diff, false, true, v("2.1.318 (Claude Code)")) {
-		t.Error("diff refused with guard and 2.1.318")
+	if !stdinMentionsOff(diff, false, true, v("2.1.299 (Claude Code)")) {
+		t.Error("diff refused with guard and 2.1.299")
 	}
-	if stdinMentionsOff(diff, true, true, v("2.1.318")) || stdinMentionsOff(diff, false, false, v("2.1.318")) ||
-		stdinMentionsOff(diff, false, true, v("2.1.317")) || stdinMentionsOff(diff, false, true, v("")) {
+	if stdinMentionsOff(diff, true, true, v("2.1.299")) || stdinMentionsOff(diff, false, false, v("2.1.299")) ||
+		stdinMentionsOff(diff, false, true, v("2.1.296")) || stdinMentionsOff(diff, false, true, v("")) {
 		t.Error("accepted on the info path, without the guard, or with an old or unknown claude")
 	}
 	asked = 0
-	if stdinMentionsOff("no mention", false, true, v("2.1.318")) || asked != 0 {
+	if stdinMentionsOff("no mention", false, true, v("2.1.299")) || asked != 0 {
 		t.Errorf("no @: version asked %d times", asked)
 	}
 }

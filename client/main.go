@@ -887,14 +887,14 @@ func promptWords(args []string) []string {
 	return words
 }
 
-// minMentionGuard: prva izmerjena različica Claude Code, ki s CLAUDE_CODE_DISABLE_FILE_MENTIONS=1 ne prebere nobene
+// minMentionGuard: najstarejša različica Claude Code (izmerjeno 2026-11-10), ki s CLAUDE_CODE_DISABLE_FILE_MENTIONS=1 in --settings ne prebere nobene
 // oblike »@pot« (0.5.19); mentionSettings ga postavi tudi mimo env v uporabnikovem settings.json (I17).
 const (
-	minMentionGuard = "2.1.318"
+	minMentionGuard = "2.1.299"
 	mentionSettings = `{"env":{"CLAUDE_CODE_DISABLE_FILE_MENTIONS":"1"}}`
 )
 
-// mentionGuardVersion: izpis »claude --version« (»2.1.318 (Claude Code)«) je vsaj minMentionGuard; neznan = ne.
+// mentionGuardVersion: izpis »claude --version« (»2.1.299 (Claude Code)«) je vsaj minMentionGuard; neznan = ne.
 func mentionGuardVersion(out string) bool {
 	f := strings.Fields(out)
 	return len(f) > 0 && strings.Trim(f[0], "0123456789.") == "" && !versionLess(f[0], minMentionGuard)
