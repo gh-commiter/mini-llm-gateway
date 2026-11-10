@@ -64,6 +64,7 @@ func TestTakeScratch(t *testing.T) {
 	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
 	setup := func(t *testing.T, own string) (old, dst string) {
 		base := t.TempDir()
+		t.Cleanup(releaseScratch) // Windows: ročaj Scratch bi preprečil brisanje TempDir
 		old, dst = filepath.Join(base, "ana"), filepath.Join(base, "gw-new")
 		writeOwner(t, old, "gw-old")
 		os.MkdirAll(filepath.Join(old, "worktrees", "dev"), 0o700)

@@ -51,6 +51,7 @@ func checkFixture(t *testing.T, dir string) {
 
 func TestMoveScratchRenameSameVolume(t *testing.T) {
 	old, dst := filepath.Join(t.TempDir(), "old"), filepath.Join(t.TempDir(), "new", "scratch")
+	t.Cleanup(releaseScratch) // Windows: ročaj Scratch bi preprečil brisanje TempDir
 	scratchFixture(t, old)
 	renamed, err := moveScratchDir(old, dst)
 	if err != nil || !renamed {
@@ -65,6 +66,7 @@ func TestMoveScratchRenameSameVolume(t *testing.T) {
 // Drug nosilec: scratchCopy neposredno (rename v testu vedno uspe), nato preverjanje in povezave.
 func TestMoveScratchCopyCrossVolume(t *testing.T) {
 	old, dst := filepath.Join(t.TempDir(), "old"), filepath.Join(t.TempDir(), "new")
+	t.Cleanup(releaseScratch) // Windows: ročaj Scratch bi preprečil brisanje TempDir
 	scratchFixture(t, old)
 	if err := protectTarget(dst); err != nil {
 		t.Fatal(err)

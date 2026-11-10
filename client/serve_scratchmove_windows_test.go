@@ -9,6 +9,7 @@ import (
 // Windows: DACL le za lastnika (protectScratch) na cilju, preden je v njem katerakoli datoteka.
 func TestMoveScratchProtectsTargetFirstWindows(t *testing.T) {
 	old, dst := filepath.Join(t.TempDir(), "old"), filepath.Join(t.TempDir(), "new")
+	t.Cleanup(releaseScratch) // Windows: ročaj Scratch bi preprečil brisanje TempDir
 	scratchFixture(t, old)
 	called, src := false, old
 	protectTarget = func(d string) error { // po preimenovanju (vira ni več) so datoteke že v cilju

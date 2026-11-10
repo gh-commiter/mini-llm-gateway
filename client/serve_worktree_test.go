@@ -295,6 +295,7 @@ echo "done" > "$out"
 // H1 (1. plast): dovoljena mapa okoli Scratch ali v njem: ob zagonu ne velja (Claude in Codex izklopljena), PATCH 400.
 func TestAllowedFolderAroundScratch(t *testing.T) {
 	parent := t.TempDir()
+	t.Cleanup(releaseScratch) // Windows: ročaj Scratch bi preprečil brisanje TempDir
 	scratch := filepath.Join(parent, "scratch")
 	os.MkdirAll(scratch, 0o700)
 	k, _ := ecdh.X25519().GenerateKey(rand.Reader)
