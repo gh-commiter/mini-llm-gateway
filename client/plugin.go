@@ -523,10 +523,10 @@ func uninstallSteps(goos string, purge bool) (steps []uninstallStep, kept []stri
 			steps = append(steps, uninstallStep{"scratch folder " + d, func() error { return os.RemoveAll(d) }})
 		}
 	}
-	if c, err := loadServeConfig(defaultServeConfigPath()); err == nil && goos != "windows" && c.Instance != "" {
+	if c, err := loadServeConfig(defaultServeConfigPath()); err == nil && goos != "windows" && validInstance.MatchString(c.Instance) {
 		if base := newScratchDefault(); base != "" { // N4: le privzeta mapa te instance, nikoli druge mape v osnovi
 			d := filepath.Join(base, c.Instance)
-			if scratchOwner(d) == c.Instance && scratchFolderMine(d) {
+			if scratchOwner(d) == c.Instance && scratchFolderMine(d) && !scratchLocked(d) { // ne, dokler minigw serve teče
 				steps = append(steps, uninstallStep{"scratch folder " + d, func() error {
 					if err := os.RemoveAll(d); err != nil {
 						return err

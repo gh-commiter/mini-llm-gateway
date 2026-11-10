@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -30,6 +31,9 @@ const (
 
 // scratchNotConversations (odločitev 2): ne štejejo kot pogovori, ko je na poti stara mapa te instance.
 var scratchNotConversations = []string{scratchOwnerFile, scratchLockFile, "tmp", "mxc", "gitexec", "prompts", "cache", "caches", "deriveddata"}
+
+// validInstance: oblika newInstanceID (ime mape; uninstall ga sestavi v pot).
+var validInstance = regexp.MustCompile(`^gw-[0-9a-f]{12}$`)
 
 func newInstanceID() string {
 	b := make([]byte, 6)

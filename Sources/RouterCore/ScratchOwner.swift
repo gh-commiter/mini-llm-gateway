@@ -147,7 +147,12 @@ public enum ScratchOwner {
             do { try fm.moveItem(at: old, to: dst); moved.append((old, dst)) } catch { throw undo(error) }
         }
         do {  // zaščita (0700) in lastnik; napaka: vse nazaj
-            guard chmod(dst.path, 0o700) == 0, mine(dst) else { throw error("\(dst.path): cannot make it private to this user") }
+            let fd = open(dst.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)  // ne sledi povezavi
+            defer { if fd >= 0 { close(fd) } }
+            var st = stat()
+            guard fd >= 0, fstat(fd, &st) == 0, st.st_uid == getuid(), fchmod(fd, 0o700) == 0 else {
+                throw error("\(dst.path): cannot make it private to this user")
+            }
             try Data((id + "\n").utf8).write(to: dst.appendingPathComponent(ownerFile), options: .atomic)
         } catch { throw undo(error) }
         log.notice("scratch folder \(old.path, privacy: .public) taken over from another gateway: now \(dst.path, privacy: .public)\(aside.map { "; this gateway's previous folder is kept as " + $0.path } ?? "", privacy: .public)")
