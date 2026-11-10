@@ -97,7 +97,7 @@ public enum Codex {
     final class Handle: @unchecked Sendable { let p = Process() }
 
     /// Zažene codex in vrne zadnje sporočilo agenta; prekinitev odjemalca ustavi codex.
-    /// Korak iz dogodka `codex exec --json` (ukaz ali vmesno sporočilo agenta), za Activity.
+    /// Korak iz dogodka `codex exec --json` (ukaz ali orodje; nikoli besedilo agenta), za Activity.
     static func step(_ line: Data) -> String? {
         guard let obj = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
               let item = obj["item"] as? [String: Any] else { return nil }
@@ -106,8 +106,6 @@ public enum Codex {
             var cmd = item["command"] as? String ?? ""
             if let r = cmd.range(of: "-lc '"), cmd.hasSuffix("'") { cmd = String(cmd[r.upperBound...].dropLast()) }  // /bin/zsh -lc '…'
             return "$ " + cmd.prefix(120)
-        case ("item.completed", "agent_message"?):
-            return (item["text"] as? String).map { String($0.split(separator: "\n").first ?? "").prefix(120) }.map(String.init)
         case ("item.started", let t?) where t != "reasoning":
             return t.replacingOccurrences(of: "_", with: " ")
         default:

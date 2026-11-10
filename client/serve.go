@@ -1144,7 +1144,6 @@ func (s *server) route(w http.ResponseWriter, r *req) (int, string) {
 	case "GET /v1/models":
 		return writeJSON(w, r.rid, 200, s.modelList()), ""
 	case "POST /v1/messages", "POST /v1/messages/count_tokens":
-		defer s.activity.start(r)()
 		return s.messages(w, r)
 
 	case "POST /minigw/share":

@@ -464,6 +464,24 @@ private func acceptPeerPort(_ fd: Int32) -> (Int32, UInt16) {
             && runs[0]["time"] as? String == "1970-01-01T00:00:00Z")
 }
 
+/// Activity: neznan model (404) in predolg niz odjemalca sta »unknown« (zgodovina in tekoča zahteva).
+@Test func activityUnknownModel() async {
+    final class Seen: @unchecked Sendable { let lock = NSLock(); var logs: [RequestLog] = []; var started: [String] = [] }
+    let seen = Seen()
+    let r = Router(config: RouterConfig(), token: "tok", secrets: FakeSecrets(values: [:]),
+                   onLog: { e in seen.lock.withLock { seen.logs.append(e) } },
+                   onActivity: { if case .started(_, _, let m) = $0 { seen.lock.withLock { seen.started.append(m) } } })
+    for model in ["nope-SECRET", String(repeating: "m", count: 201)] {
+        let w = FakeWriter()
+        await r.handle(request("POST", "/v1/messages", headers: ["Authorization": "Bearer tok"], body: #"{"model":"\#(model)","messages":[]}"#), writer: w)
+        #expect(w.status == 404)
+    }
+    seen.lock.withLock {
+        #expect(seen.logs.map(\.model) == ["unknown", "unknown"] && seen.started == ["nope-SECRET", "unknown"])
+    }
+    #expect(Router.activityModel("claude-x", status: 200) == "claude-x")
+}
+
 /// M2: stara privzeta settingSources (project,local) postane "", izrecna druga ostane.
 @Test func settingSourcesMigration() throws {
     let old = try JSONDecoder().decode(ClaudeCLIConfig.self, from: Data(#"{"settingSources":"project,local"}"#.utf8))

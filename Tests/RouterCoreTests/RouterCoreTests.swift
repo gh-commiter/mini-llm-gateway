@@ -687,7 +687,7 @@ final class SeenDevices: @unchecked Sendable {
 
 @Test func agentStepsForActivity() {
     #expect(Codex.step(Data(#"{"type":"item.started","item":{"type":"command_execution","command":"/bin/zsh -lc 'cat a.txt'","status":"in_progress"}}"#.utf8)) == "$ cat a.txt")
-    #expect(Codex.step(Data(#"{"type":"item.completed","item":{"type":"agent_message","text":"Reading docs\nmore"}}"#.utf8)) == "Reading docs")
+    #expect(Codex.step(Data(#"{"type":"item.completed","item":{"type":"agent_message","text":"Reading docs\nmore"}}"#.utf8)) == nil)  // besedilo agenta ne v Activity
     #expect(Codex.step(Data(#"{"type":"turn.started"}"#.utf8)) == nil)
     var t = StreamTranslator(model: "m")
     _ = t.feed(Data(#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"docs/x.md"}}]}}"#.utf8))

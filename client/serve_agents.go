@@ -781,7 +781,9 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 				}
 				if st := codexStep(line); st != "" {
 					s.log.Printf("%s step: %q", r.rid, st)
-					s.activity.step(r.rid, st)
+					if !codexMessage(line) { // besedilo agenta le v dnevnik
+						s.activity.step(r.rid, st)
+					}
 				}
 			})
 			b, _ := os.ReadFile(out)

@@ -93,7 +93,7 @@ public final class Router: Sendable {
         if let d = req.device { onDevice(d) }
         let tracked = req.method == "POST" && req.path.hasPrefix("/v1/messages") && !req.path.hasSuffix("/count_tokens")
         if tracked, let model = (try? JSONSerialization.jsonObject(with: req.body) as? [String: Any])?["model"] as? String {
-            onActivity(.started(id: rid, time: start, model: model))
+            onActivity(.started(id: rid, time: start, model: Self.activityModel(model, status: 0)))
         }
         defer { if tracked { onActivity(.finished(id: rid)) } }
         let usage = tracked ? UsageWriter(writer) : nil
@@ -107,7 +107,8 @@ public final class Router: Sendable {
         let via = AgentRun.current.map { " via=" + $0.via } ?? ""  // L3: vprašal ga je agent tega prehoda
         Self.log.info("\(rid, privacy: .public)\(via, privacy: .public) \(req.method, privacy: .public) \(req.path.hasPrefix("/dav/") ? "/dav/…" : req.path, privacy: .public) model=\(model ?? "-", privacy: .public) provider=\(provider ?? "-", privacy: .public) status=\(status) \(ms)ms bytes=\(req.body.count)")
         if provider != "share" {  // brez prometa map v »Activity«
-            var e = RequestLog(time: start, method: req.method, path: req.path, model: model, provider: provider, status: status, ms: ms)
+            var e = RequestLog(time: start, method: req.method, path: req.path, model: model.map { Self.activityModel($0, status: status) },
+                               provider: provider, status: status, ms: ms)
             e.bytes = req.body.count
             // Naprava kot v recordSession: ime s seznama dovoljenih; neznana na loopbacku je ta računalnik.
             if let d = req.device, !RouterServer.isLoopback(req.peer) || config.devices.contains(where: { $0.id == d.id }) {
@@ -116,6 +117,11 @@ public final class Router: Sendable {
             }
             onLog(e)
         }
+    }
+
+    /// Model za Activity: neznan (404) ali predolg niz odjemalca je »unknown« (kot M1 v sejah in minigw serve).
+    static func activityModel(_ model: String, status: Int) -> String {
+        status == 404 || model.utf8.count > 200 ? "unknown" : model
     }
 
     /// Zahteva za model v zgodovino seje (naprava, mapa in način iz glav in delitve; brez besedila), kot v minigw serve.

@@ -1,10 +1,10 @@
 package main
 
 // Activity (GET /activity): tekoče in zadnje zahteve modelom, kot okno Activity na Macu. Le metapodatki, nikoli
-// vsebina; v pomnilniku (ob ponovnem zagonu prazno).
+// vsebina (korak agenta je orodje ali ukaz); v pomnilniku (ob ponovnem zagonu prazno).
 
 import (
-	"encoding/json"
+	"bytes"
 	"slices"
 	"sync"
 	"time"
@@ -39,14 +39,24 @@ type activityLog struct {
 	reqs []activityReq // najnovejša prva, največ activityMax
 }
 
-// start: tekoča zahteva do vrnjene funkcije (kot Activity.started na Macu: le /v1/messages z modelom).
-func (a *activityLog) start(r *req) func() {
-	var b struct{ Model string }
-	if r.Method != "POST" || r.URL.Path != "/v1/messages" || json.Unmarshal(r.body, &b) != nil || b.Model == "" {
+// activityModel: niz odjemalca le, če je kratek; neznan model (404) ali predolg niz je »unknown« (kot M1 v sejah).
+func activityModel(model string, status int) string {
+	if status == 404 || len(model) > 200 {
+		return "unknown"
+	}
+	return model
+}
+
+// codexMessage: dogodek Codex z besedilom agenta (ne v Activity). ponytail: iskanje niza, preskoči kvečjemu korak več.
+func codexMessage(line []byte) bool { return bytes.Contains(line, []byte(`"agent_message"`)) }
+
+// start: tekoča zahteva do vrnjene funkcije (kot Activity.started na Macu: le /v1/messages).
+func (a *activityLog) start(r *req, model string) func() {
+	if r.URL.Path != "/v1/messages" {
 		return func() {}
 	}
 	a.mu.Lock()
-	a.runs = slices.Insert(a.runs, 0, activityRun{ID: r.rid, Time: time.Now().UTC().Format(time.RFC3339), Model: b.Model})
+	a.runs = slices.Insert(a.runs, 0, activityRun{ID: r.rid, Time: time.Now().UTC().Format(time.RFC3339), Model: activityModel(model, 0)})
 	a.mu.Unlock()
 	return func() {
 		a.mu.Lock()
@@ -80,7 +90,7 @@ func (a *activityLog) list() map[string]any {
 
 // recordActivity: končana zahteva z modelom; naprava kot v zgodovini sej (ime s seznama dovoljenih).
 func (s *server) recordActivity(r *req, model string, status int, start time.Time) {
-	x := activityReq{Time: start.UTC().Format(time.RFC3339), Method: r.Method, Path: r.URL.Path, Model: model, Status: status,
+	x := activityReq{Time: start.UTC().Format(time.RFC3339), Method: r.Method, Path: r.URL.Path, Model: activityModel(model, status), Status: status,
 		MS: time.Since(start).Milliseconds(), Bytes: len(r.body)}
 	if d := r.conn.device; d != nil && (!r.conn.loopback() || s.conf().listed(d.ID)) {
 		x.Device, x.DeviceName = d.ID, d.Name
