@@ -418,6 +418,7 @@ func fsckIncoming(top string) error {
 		cmd.Dir = cwd
 		cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 		cmd.Stdin = strings.NewReader(input)
+		cmd.WaitDelay = 5 * time.Second // zaganjalnik Git for Windows lahko drži cevi odprte po ubitju
 		var out, stderr bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &out, &stderr
 		if err := cmd.Run(); err != nil {
