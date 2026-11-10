@@ -61,7 +61,7 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":3}}'
 	defer sc.unregister()
 	body := `{"model":"claude-cli-haiku","tools":[{"name":"x"}],"messages":[{"role":"user","content":"go"}]}`
 	h := map[string]string{"x-claude-mini-session": "sidbox", "x-claude-mini-cwd": dir, "content-type": "application/json"}
-	if st, data := call(c, "POST", "/v1/messages", h, []byte(body), 30*time.Second); st != 503 || !strings.Contains(string(data), "claude setup-token") {
+	if st, data := call(c, "POST", "/v1/messages", h, []byte(body), 30*time.Second); st != 403 || !strings.Contains(string(data), "claude setup-token") {
 		t.Fatalf("without a token: %d %s", st, data)
 	}
 	setAgentToken(s.cfgDir, "claude", "sk-ant-oat01-test-token-0123456789")

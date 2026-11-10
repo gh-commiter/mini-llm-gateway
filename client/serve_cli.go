@@ -879,7 +879,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	if box {
 		key, token := agentAPIKey(s.cfgDir, "claude"), agentToken(s.cfgDir, "claude")
 		if key == "" && token == "" {
-			return writeError(w, r.rid, 503, "Claude CLI in the Windows sandbox needs a long-lived sign-in token: run claude setup-token, then minigw gw claude token")
+			return writeError(w, r.rid, 403, "Claude CLI in the Windows sandbox needs a long-lived sign-in token: run claude setup-token, then minigw gw claude token")
 		}
 		if key == "" {
 			cmdEnv = append(cmdEnv, "CLAUDE_CODE_OAUTH_TOKEN="+token)

@@ -243,7 +243,7 @@ Notes:
   Copilot; write-only, `""` removes it) is stored in the key store (Credential Manager, Secret Service), never in
   `serve.json` or an answer. Claude's token is the long-lived one from `claude setup-token` (`sk-ant-…`, your Claude
   subscription, valid one year), passed as `CLAUDE_CODE_OAUTH_TOKEN`; without it a Claude request in the Windows sandbox
-  is refused (`503` "Claude CLI in the Windows sandbox needs a long-lived sign-in token: run claude setup-token, then
+  is refused (`403` "Claude CLI in the Windows sandbox needs a long-lived sign-in token: run claude setup-token, then
   minigw gw claude token"). `apiKey` (Claude CLI, Codex, Grok; write-only, `""` goes back to the login) is passed only
   when set, as `ANTHROPIC_API_KEY`, `CODEX_API_KEY` or `XAI_API_KEY`, and is billed through the provider's API, not the
   subscription; Copilot answers `400`. API-key variables in the gateway's own environment (`ANTHROPIC_*`,
