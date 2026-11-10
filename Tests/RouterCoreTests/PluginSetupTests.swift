@@ -136,3 +136,9 @@ import Testing
     FileManager.default.createFile(atPath: tmp + "/minigw", contents: Data())
     #expect(PluginSetup.safeAncestors(tmp + "/minigw"))
 }
+
+@Test func pluginSetupOursIgnoresUserEntry() {
+    #expect(PluginSetup.ours(PluginSetup.marketplace) && PluginSetup.ours(PluginSetup.oldMarketplace))
+    #expect(!PluginSetup.ours(["source": ["source": "github", "repo": "me/fork", "ref": "release"], "autoUpdate": true]))
+    #expect(!PluginSetup.ours(["source": PluginSetup.marketplace["source"]!, "autoUpdate": false]))
+}

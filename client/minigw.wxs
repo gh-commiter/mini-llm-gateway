@@ -93,6 +93,7 @@
          install novega paketa vnose pusti oz. stari vnos (do 0.5.21) nadgradi (#63). -->
     <CustomAction Id="PluginInstall" FileKey="tray" ExeCommand="msi plugin install" Execute="deferred" Impersonate="yes" Return="ignore"/>
     <CustomAction Id="PluginUninstall" FileKey="tray" ExeCommand="msi plugin uninstall" Execute="deferred" Impersonate="yes" Return="ignore"/>
+    <CustomAction Id="PluginUninstallUpgrade" FileKey="tray" ExeCommand="msi plugin uninstall" Execute="deferred" Impersonate="yes" Return="ignore"/>
     <CustomAction Id="Purge" FileKey="tray" ExeCommand="msi uninstall --purge --yes" Execute="deferred" Impersonate="yes" Return="ignore"/>
     <!-- Vrednost Run ob odstranitvi dela Gateway ali celote izbriše tudi minigw (kot uporabnik, po RemoveRegistryValues):
          lahko jo je zapisal pladenj (Zaženi ob prijavi) ali minigw gw autostart, in ostala je (poročilo 0.5.20). Le, če
@@ -108,6 +109,9 @@
       <Custom Action="Purge" Sequence="3403">REMOVE~="ALL" AND PURGE=1 AND NOT UPGRADINGPRODUCTCODE</Custom>
       <Custom Action="RemoveRun" Sequence="3404">(REMOVE~="ALL" OR (&amp;Gateway=2 AND !Gateway=3)) AND NOT UPGRADINGPRODUCTCODE</Custom>
       <Custom Action="PluginInstall" Sequence="4001">&amp;Plugin=3</Custom>
+      <!-- Nadgradnja, pri kateri uporabnik izklopi del Plugin: ne stari paket (UPGRADINGPRODUCTCODE) ne PluginInstall ne
+           odstranita vnosa, zato ga odstrani novi paket po InstallFiles (minigw.exe je že nov). -->
+      <Custom Action="PluginUninstallUpgrade" Sequence="4002">WIX_UPGRADE_DETECTED AND NOT &amp;Plugin=3 AND NOT !Plugin=3</Custom>
       <Custom Action="StartTray" Sequence="6601">&amp;Gateway=3 AND NOT WIX_UPGRADE_DETECTED AND NOT WIX_SAME_VERSION_UPGRADE_DETECTED AND NOT REINSTALL</Custom>
       <!-- Nadgradnja in popravilo (REINSTALL; CloseTray ga je zaprl): pladenj znova, le če je tekel. -->
       <Custom Action="RestartTray" Sequence="6602">(&amp;Gateway=3 AND (WIX_UPGRADE_DETECTED OR WIX_SAME_VERSION_UPGRADE_DETECTED)) OR (REINSTALL AND !Gateway=3)</Custom>

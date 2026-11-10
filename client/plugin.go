@@ -303,9 +303,14 @@ func pluginInstall(goos string) bool {
 func pluginUninstall(goos string, upgrading bool) bool {
 	ok := true
 	path := claudeSettingsPath()
-	had, hadOff := false, false // pred »marketplace remove«, ki vnose v settings.json odstrani že sam
-	editSettings(path, func(s map[string]any) (bool, error) { had, hadOff = pluginRemove(s); return false, nil })
-	if c := findClaudeFn(); c != "" && !upgrading {
+	had, hadOff, ours := false, false, false // pred »marketplace remove«, ki vnose v settings.json odstrani že sam
+	editSettings(path, func(s map[string]any) (bool, error) {
+		m, _ := s["extraKnownMarketplaces"].(map[string]any)
+		ours = ourMarketplace(m[pluginMarket]) // pred pluginRemove; uporabnikov vnos (fork, ref, autoUpdate false) ostane kot v pluginRemove
+		had, hadOff = pluginRemove(s)
+		return false, nil
+	})
+	if c := findClaudeFn(); c != "" && !upgrading && ours {
 		if err := runCmd(c, "plugin", "marketplace", "remove", pluginMarket, "--scope", "user"); err != nil {
 			say("Claude Code: marketplace " + pluginMarket + " not removed (claude plugin marketplace remove failed)")
 		} else {
