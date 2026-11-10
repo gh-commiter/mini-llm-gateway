@@ -1150,6 +1150,17 @@ func TestNestedBlockerMatchesSandbox(t *testing.T) {
 	}
 }
 
+// #55: git pred 2.40 (brez GIT_ATTR_SOURCE) ugnezdenih ne začne, z razlogom (način se ne spremeni tiho).
+func TestNestedBlockerOldGit(t *testing.T) {
+	s, _ := testServer(t, nil)
+	old := gitAttrSource
+	defer func() { gitAttrSource = old }()
+	gitAttrSource = func() bool { return false }
+	if why := s.nestedBlocker("codex"); !strings.Contains(why, "older than 2.40") || !strings.HasSuffix(why, "use sync") {
+		t.Fatalf("old git: %q", why)
+	}
+}
+
 // TMPDIR Claude CLI v klonu: kratek (Claude Code na Linux v njem odpre vtičnice peskovnika, največ 108 bajtov; pri 80
 // znakih že odpove), le za ta tek, 0700, po teku pobrisan brez sledenja povezavam.
 func TestRunTempDir(t *testing.T) {

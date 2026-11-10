@@ -918,6 +918,8 @@ func (h *shareHub) worktreeMount(s *serveShare, agent string) (dir, refused stri
 func (s *server) nestedBlocker(agent string) string {
 	const tail = "; use sync"
 	switch {
+	case !gitAttrSource(): // #55: starejši git GIT_ATTR_SOURCE tiho prezre (filtri .gitattributes ugnezdenih bi tekli)
+		return "the gateway's git is older than 2.40 (nested repositories need GIT_ATTR_SOURCE); update git" + tail
 	case runtime.GOOS == "darwin":
 		return "nested repositories need the Mac app or a Linux gateway with bwrap" + tail
 	case runtime.GOOS != "linux":
