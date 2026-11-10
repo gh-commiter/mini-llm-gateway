@@ -14,7 +14,7 @@ public enum PluginSetup {
     }
 
     /// L3: mapa ali datoteka ni zapisljiva za druge, je last tega uporabnika ali root, za skupino pa le, če ji uporabnik
-    /// zaupa (trustedGroup; Homebrew: /opt/homebrew/bin je drwxrwxr-x uros:admin). Kot Go safeDir.
+    /// zaupa (trustedGroup; Homebrew: /opt/homebrew/bin je drwxrwxr-x <user>:admin). Kot Go safeDir.
     public static func safePath(_ path: String) -> Bool {
         var st = stat()
         return stat(path, &st) == 0 && st.st_mode & 0o002 == 0 && (st.st_uid == getuid() || st.st_uid == 0)
