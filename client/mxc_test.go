@@ -652,6 +652,52 @@ func TestPickScratch(t *testing.T) {
 	}
 }
 
+// L1′: skupna mapa minigw-scratch: drugi smejo le ustvariti svojo podmapo; mapa prehoda v njej je prava mapa tega uporabnika.
+func TestScratchParentOK(t *testing.T) {
+	const me, other, ba, sy, au = "S-1-5-21-1-2-3-1001", "S-1-5-21-1-2-3-1002", "S-1-5-32-544", "S-1-5-18", "S-1-5-11"
+	ours := []scratchACE{{0, 0x3, 0x1f01ff, sy}, {0, 0x3, 0x1f01ff, ba}, {0, 0, 0x1200ad, au}, {0, 0xb, 0x1f01ff, "S-1-3-0"}}
+	for i, tc := range []struct {
+		mode  os.FileMode
+		owner string
+		dacl  []scratchACE
+		want  error
+	}{
+		{os.ModeDir, me, nil, nil}, // naša: dobi scratchParentSDDL
+		{os.ModeDir, other, ours, nil},
+		{os.ModeDir, ba, ours, nil},
+		{os.ModeDir, sy, ours, nil},
+		{os.ModeDir | os.ModeIrregular, me, nil, errScratchLink}, // junction
+		{os.ModeDir | os.ModeSymlink, ba, ours, errScratchLink},
+		{0, other, ours, errScratchLink},                                                          // datoteka
+		{os.ModeDir, ba, append(ours, scratchACE{0, 0x10, 0x1301bf, au}), errUnprotected},         // podedovan AU Modify
+		{os.ModeDir, other, append(ours, scratchACE{0, 0, 0x40, "S-1-5-32-545"}), errUnprotected}, // BU DELETE_CHILD
+		{os.ModeDir, sy, append(ours, scratchACE{0, 0, 0x40000, "S-1-5-21-9"}), errUnprotected},   // WRITE_DAC
+		{os.ModeDir, ba, append(ours, scratchACE{0, 0, 0x2, au}), errUnprotected},                 // ADD_FILE
+		{os.ModeDir, ba, append(ours, scratchACE{0, 0, 0x10000000, "S-1-1-0"}), errUnprotected},   // WD GENERIC_ALL
+		{os.ModeDir, ba, append(ours, scratchACE{5, 0, 0x1, ""}), errUnprotected},                 // objektna dovolitev
+		{os.ModeDir, ba, append(ours, scratchACE{0, 0xb, 0x1f01ff, au}), nil},                     // le dedovanje
+		{os.ModeDir, ba, append(ours, scratchACE{1, 0, 0x1f01ff, au}), nil},                       // zavrnitev
+	} {
+		if got := scratchParentOK(tc.mode, tc.owner, me, tc.dacl); got != tc.want {
+			t.Errorf("parent %d: %v", i, got)
+		}
+	}
+	for i, tc := range []struct {
+		mode  os.FileMode
+		owner string
+		want  error
+	}{
+		{os.ModeDir, me, nil},
+		{os.ModeDir, other, errScratchTaken}, // ime že ima drug račun
+		{os.ModeDir | os.ModeIrregular, me, errScratchLink},
+		{0, me, errScratchLink},
+	} {
+		if got := scratchDirOK(tc.mode, tc.owner, me); got != tc.want {
+			t.Errorf("dir %d: %v", i, got)
+		}
+	}
+}
+
 // Codex »elevated« (#68): nedokončana nastavitev → zavrnitev z ukazom (brez UAC iz teka); ne odklene Codex.
 func TestCodexSandboxProblem(t *testing.T) {
 	ch := t.TempDir()

@@ -30,6 +30,7 @@ func liveServer(t *testing.T, mod func(*serveConfig)) (*server, string, string) 
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(releaseScratch) // Windows: ročaj Scratch bi preprečil brisanje TempDir
 	k, _ := ecdh.X25519().GenerateKey(rand.Reader)
 	c := serveConfig{Token: "tok", Key: base64url(k.Bytes()), Port: ln.Addr().(*net.TCPAddr).Port, Tools: defaultTools,
 		PermissionMode: "dontAsk", Scratch: t.TempDir(), Claude: "/bin/sh", Devices: []serveDevice{}}

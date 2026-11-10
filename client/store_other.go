@@ -215,6 +215,8 @@ func msiexecPath() string               { return "msiexec" }
 
 func protectDir(string) error { return nil } // drugod: mapa 0700, datoteke 0600
 
+func releaseScratch() {} // le Windows (L1′: ročaj mape Scratch)
+
 // protectScratch (L2): mapa s kopijami map odjemalcev je naša (Lstat: ne povezava) in le naša (0700).
 func protectScratch(dir string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
