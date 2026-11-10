@@ -550,7 +550,7 @@ func (s *server) agentFolder(w http.ResponseWriter, r *req, label, agent string)
 		if dir, refused = s.hub.push(share, agent); refused != "" {
 			return "", "", false, writeError(w, r.rid, 400, refused) // N1: končna, Claude Code je ne ponovi
 		} else if dir == "" {
-			return "", "", false, writeError(w, r.rid, 502, "Cloning "+clientCwd+" on the gateway failed (worktree mode; see minigw output)")
+			return "", "", false, writeError(w, r.rid, 502, "Cloning "+clientCwd+" on the gateway failed (worktree mode; see minigw output and the gateway log)")
 		}
 		wt, branch, _, _, _ := s.hub.worktreeOf(r.h("x-claude-mini-session"), agent)
 		gits, _ := s.hub.worktreeGits(wt)

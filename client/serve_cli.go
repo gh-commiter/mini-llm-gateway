@@ -703,7 +703,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			if dir, refused = s.hub.push(share, "claude"); refused != "" {
 				return writeError(w, r.rid, 400, refused) // N1: končna, Claude Code je ne ponovi
 			} else if dir == "" {
-				return writeError(w, r.rid, 502, "Cloning "+clientCwd+" on the gateway failed (worktree mode; see minigw output)")
+				return writeError(w, r.rid, 502, "Cloning "+clientCwd+" on the gateway failed (worktree mode; see minigw output and the gateway log)")
 			}
 			wt, branch, _, _, _ := s.hub.worktreeOf(session, "claude")
 			gits, _ := s.hub.worktreeGits(wt)

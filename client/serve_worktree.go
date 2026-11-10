@@ -401,20 +401,24 @@ func fsckBase(repo, base string) error {
 	return err
 }
 
-// makeClone: klon za agenta na veji iz posnetka (objekti zrcala le za branje, novi v klonu).
-func makeClone(repo, wt, branch, snapshot string) bool {
-	os.RemoveAll(wt) // ostanek prekinjenega zagona
+// makeClone: klon za agenta na veji iz posnetka (objekti zrcala le za branje, novi v klonu); napaka z razlogom gita.
+func makeClone(repo, wt, branch, snapshot string) error {
+	if err := os.RemoveAll(wt); err != nil { // ostanek prekinjenega zagona
+		return fmt.Errorf("cannot remove the old clone: %w", err)
+	}
 	os.MkdirAll(filepath.Dir(wt), 0o700)
 	if _, err := gitRun(repo, "", nil, "clone", "-q", "--shared", "--no-checkout", repo, wt); err != nil {
-		return false
+		return fmt.Errorf("git clone of the mirror: %w", err)
 	}
-	_, err := gitRun(repo, "", nil, "-C", wt, "checkout", "-q", "-b", branch, snapshot)
-	if err == nil && runtime.GOOS == "linux" {
+	if _, err := gitRun(repo, "", nil, "-C", wt, "checkout", "-q", "-b", branch, snapshot); err != nil {
+		return fmt.Errorf("git checkout of the snapshot: %w", err)
+	}
+	if runtime.GOOS == "linux" {
 		// #40: peskovnik Claude Code na Linuxu na manjkajočo pot iz denyWrite priklopi /dev/null (branje: EACCES) in git
 		// commondir vedno bere, zato je vsak git v Bash padel; ».« = ta .git (gitSame ga sprejme), ostane le za branje
-		err = os.WriteFile(filepath.Join(wt, ".git", "commondir"), []byte(".\n"), 0o644)
+		return os.WriteFile(filepath.Join(wt, ".git", "commondir"), []byte(".\n"), 0o644)
 	}
-	return err == nil
+	return nil
 }
 
 // readSmall: datoteka do 4 KB brez sledenja povezavi na zadnjem delu poti.
@@ -914,8 +918,12 @@ func (h *shareHub) worktreeMount(s *serveShare, agent string) (dir, refused stri
 	short := sha256Hex([]byte(s.session))[:8]
 	name := agent + "-" + short + "-0"
 	branch, wt, base := "minigw/"+name, filepath.Join(t.worktrees, name), "refs/minigw/base/"+name
-	if ensureMirror(t.repo) != nil {
+	fail := func(f string, a ...any) (string, string) { // nikoli 502 brez razloga v dnevniku
+		h.logf("worktree %s (%s): "+f, append([]any{branch, s.session}, a...)...)
 		return "", ""
+	}
+	if err := ensureMirror(t.repo); err != nil {
+		return fail("cannot create the mirror: %v", err)
 	}
 	touchUsed(t.repo) // pruneMirrors: zadnja raba
 	incoming := t.repo + ".incoming"
@@ -952,8 +960,13 @@ func (h *shareHub) worktreeMount(s *serveShare, agent string) (dir, refused stri
 			Snapshot string `json:"snapshot"`
 		} `json:"nested"`
 	}
-	if r == nil || r.Status != 200 || json.Unmarshal(r.Body, &reply) != nil || !shaRe.MatchString(reply.Snapshot) || len(reply.Nested) > maxNestedRepos {
-		return "", ""
+	switch {
+	case r == nil:
+		return fail("minigw did not answer WORKTREE-PUSH (gone or timed out)")
+	case r.Status != 200:
+		return fail("minigw could not send the snapshot (status %d; the reason is in minigw's output on the client)", r.Status)
+	case json.Unmarshal(r.Body, &reply) != nil || !shaRe.MatchString(reply.Snapshot) || len(reply.Nested) > maxNestedRepos:
+		return fail("bad WORKTREE-PUSH reply from minigw")
 	}
 	// N1 (lastnik): kjer agent ne bi tekel v svojem imenskem prostoru PID ali git ob finalize ne v bwrap, se z ugnezdenimi
 	// repozitoriji ne začne (nič se ne izgubi); po teku ostane še zavrnitev v finalizeNested.
@@ -968,11 +981,10 @@ func (h *shareHub) worktreeMount(s *serveShare, agent string) (dir, refused stri
 		file = incoming
 	}
 	if err := importBase(t.repo, file, reply.Snapshot, base); err != nil {
-		h.logf("worktree %s (%s): %v", branch, s.session, err)
-		return "", ""
+		return fail("%v", err)
 	}
-	if !makeClone(t.repo, wt, branch, reply.Snapshot) {
-		return "", ""
+	if err := makeClone(t.repo, wt, branch, reply.Snapshot); err != nil {
+		return fail("%v", err)
 	}
 	// Ugnezdeni: vsak v svoje zrcalo (<repo>-<ključ>.git) in klon na svoji poti v klonu (H1: pot je preverjena, vsak
 	// obstoječ del prava mapa, cilj prazen); starš pred otrokom.
@@ -981,13 +993,12 @@ func (h *shareHub) worktreeMount(s *serveShare, agent string) (dir, refused stri
 	for i, n := range reply.Nested {
 		in := incomingFile(incoming, i+1)
 		if !validNestedPath(n.Path) || seen[n.Path] || !shaRe.MatchString(n.Snapshot) {
-			h.logf("worktree %s (%s): bad nested repository from the client", branch, s.session)
-			return "", ""
+			return fail("bad nested repository from the client")
 		}
 		seen[n.Path] = true
 		mirror := nestedMirror(t.repo, n.Path)
-		if ensureMirror(mirror) != nil {
-			return "", ""
+		if err := ensureMirror(mirror); err != nil {
+			return fail("cannot create the mirror of the nested repository %s: %v", n.Path, err)
 		}
 		touchUsed(mirror)
 		file := ""
@@ -995,16 +1006,17 @@ func (h *shareHub) worktreeMount(s *serveShare, agent string) (dir, refused stri
 			file = in
 		}
 		if err := importBase(mirror, file, n.Snapshot, base); err != nil {
-			h.logf("worktree %s (%s): nested repository %s: %v", branch, s.session, n.Path, err)
-			return "", ""
+			return fail("nested repository %s: %v", n.Path, err)
 		}
 		nested = append(nested, &wtNested{path: n.Path, repo: mirror, base: n.Snapshot})
 	}
 	slices.SortStableFunc(nested, func(a, b *wtNested) int { return strings.Count(a.path, "/") - strings.Count(b.path, "/") })
 	for _, n := range nested {
-		if !cloneTarget(wt, n.path) || !makeClone(n.repo, n.dir(wt), branch, n.base) {
-			h.logf("worktree %s (%s): cannot clone the nested repository %s", branch, s.session, n.path)
-			return "", ""
+		if !cloneTarget(wt, n.path) {
+			return fail("cannot clone the nested repository %s: its path in the clone is not an empty folder", n.path)
+		}
+		if err := makeClone(n.repo, n.dir(wt), branch, n.base); err != nil {
+			return fail("cannot clone the nested repository %s: %v", n.path, err)
 		}
 		n.git, _ = os.Lstat(filepath.Join(n.dir(wt), ".git"))
 		n.cfg, _ = os.ReadFile(filepath.Join(n.dir(wt), ".git", "config"))
@@ -1017,7 +1029,7 @@ func (h *shareHub) worktreeMount(s *serveShare, agent string) (dir, refused stri
 		if l, _ := gitRun(prepo, "", nil, "--git-dir", prepo, "ls-tree", psnap, "--", rel); !strings.HasPrefix(l, "160000 ") {
 			f, err := os.OpenFile(filepath.Join(pdir, ".git", "info", "exclude"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 			if err != nil {
-				return "", ""
+				return fail("%v", err)
 			}
 			f.WriteString("\n/" + excludeEscape(rel) + "\n")
 			f.Close()
@@ -1030,7 +1042,7 @@ func (h *shareHub) worktreeMount(s *serveShare, agent string) (dir, refused stri
 	sl.git, _ = os.Lstat(filepath.Join(wt, ".git"))
 	sl.cfg, _ = os.ReadFile(filepath.Join(wt, ".git", "config"))
 	if !sl.gitIntact() {
-		return "", ""
+		return fail("the new clone's .git changed while it was set up")
 	}
 	h.mu.Lock()
 	t.slots[agent] = sl
