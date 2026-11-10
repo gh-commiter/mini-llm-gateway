@@ -16,7 +16,7 @@ PROMPT
 )"
 ```
 
-minigw refuses a prompt (also on stdin) that starts with `/` or has `@` at the start of a word (`@file`, `(@x`, `"@x`): the nested claude would run a slash command or attach that file. Name files by their path without `@`, or paste their text; leave out lines that have `@` at the start of a word (`@Test`, `@@` diff headers) and name the file instead.
+minigw refuses a prompt argument that starts with `/` or has `@` at the start of a word (`@file`, `(@x`, `"@x`): the nested claude would run a slash command or attach that file. Name files by their path without `@`, or paste their text. Text on stdin may contain `@` (minigw 0.5.21 and Claude Code 2.1.318 or newer): pipe a diff instead of pasting it.
 
 - `--ro` in the arguments (or a task that only reads or answers): put `--minigw-ro` right after `--model <model>`, so agent models get the folder read-only and cannot change files.
 - `--role <name>` in the arguments: put `--minigw-role <name>` right after `--model <model>` (or keep `MINIGW_ROLE` from the environment). The gateway records the role in its session history; it is a label, not a security boundary.

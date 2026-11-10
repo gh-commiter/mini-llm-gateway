@@ -703,9 +703,16 @@ func refuseUnsafeClaudeFlags() {
     guard Profiles.checkClaudeArgs(env) else { return }
     var st = stat()
     if fstat(0, &st) == 0, st.st_mode & S_IFMT != S_IFCHR {  // terminal, /dev/null: ne bere
-        claudeStdin = Profiles.readStdin(fd: 0, waitMs: Profiles.promptWords(args).isEmpty ? 0 : 3000) ?? Data()
+        let wait: Int32 = Profiles.promptWords(args).isEmpty ? 0 : 3000, read = Profiles.readStdin(fd: 0, waitMs: wait)
+        if let n = Profiles.stdinNote(read: read, waitMs: wait, mode: st.st_mode) { FileHandle.standardError.write(Data((n + "\n").utf8)) }
+        claudeStdin = read ?? Data()
     }
-    if let r = Profiles.unsafePrompt(args, stdin: String(decoding: claudeStdin ?? Data(), as: UTF8.self), env: env) {
+    let stdin = String(decoding: claudeStdin ?? Data(), as: UTF8.self)
+    // #44: »@« na stdin le, ko ga gnezdeni claude zanesljivo ne bere (varovalo, --settings, različica); preveri le ob »@«
+    let off = Profiles.atMention(stdin) && Profiles.promptGuard(args, env: env, stdinTerminal: isatty(0) == 1)
+        && Profiles.mentionGuardVersion(pathDirs.map { $0 + "/claude" }.first { FileManager.default.isExecutableFile(atPath: $0) }
+            .flatMap { try? ClaudeCLI.validate($0).get() } ?? "")
+    if let r = Profiles.unsafePrompt(args, stdin: stdin, env: env, stdinMentionsOff: off) {
         fail("\(r) is not accepted when minigw runs inside Claude Code: paste the text itself into the prompt")
     }
 }
@@ -921,6 +928,7 @@ if profiles.isEmpty { _ = requireProfile() }
 let saved = profiles[0].conn  // privzeti profil: mapa, glave in modeli brez pripone kot prej
 let c = route(profiles[0])
 let promptGuard = Profiles.promptGuard(args, env: ProcessInfo.processInfo.environment, stdinTerminal: isatty(0) == 1)  // pred #7 (CLAUDECODE)
+let mentionSettings = promptGuard && Profiles.checkClaudeArgs(ProcessInfo.processInfo.environment)  // I17, pred #7
 for k in ProcessInfo.processInfo.environment.keys where Profiles.parentClaudeVar(k) { unsetenv(k) }  // #7
 if promptGuard { setenv("CLAUDE_CODE_DISABLE_FILE_MENTIONS", "1", 1) }  // N6b
 setenv("ANTHROPIC_BASE_URL", c.url, 1)
@@ -950,6 +958,8 @@ if sid.isEmpty {
 }
 
 if promptGuard { args = ["--disable-slash-commands"] + args }  // N7
+// I17: env v --settings premaga env v uporabnikovem settings.json (izmerjeno, 2.1.318)
+if mentionSettings { args = ["--settings", Profiles.mentionSettings] + args }
 let argv = (["claude"] + args).map { strdup($0) } + [nil]
 let cwd = FileManager.default.currentDirectoryPath
 let routerHost = URLComponents(string: saved.url)?.host ?? ""

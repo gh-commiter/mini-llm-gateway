@@ -1798,6 +1798,28 @@ final class FakeMinigw: @unchecked Sendable {
     #expect(Profiles.unsafePrompt(["-p", "@/etc/hosts"], stdin: "", env: ["CLAUDECODE": "1", "MINIGW_ALLOW_UNSAFE_FLAGS": "1"]) == nil)
 }
 
+/// #44: diff na stdin (»@@«) gre naprej le, ko claude »@« zanesljivo ne bere; »/« na stdin in »@« v argumentih ostaneta zavrnjena.
+@Test func unsafePromptStdin() {
+    let env = ["CLAUDECODE": "1"], m = ["-p", "--model", "m", "--", "review"]
+    let diff = "diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+@~/.ssh/id_ed25519\n"
+    #expect(Profiles.unsafePrompt(m, stdin: diff, env: env, stdinMentionsOff: true) == nil)
+    #expect(Profiles.unsafePrompt(m, stdin: diff, env: env)?.contains("Claude Code 2.1.318 or newer accepts @ on stdin") == true)
+    #expect(Profiles.unsafePrompt(["-p", "--", "@x review"], stdin: "", env: env, stdinMentionsOff: true) != nil)
+    #expect(Profiles.unsafePrompt(["-p", "--", "ok"], stdin: " /config x", env: env, stdinMentionsOff: true) != nil)
+    for (v, want) in ["2.1.318 (Claude Code)": true, "2.1.319": true, "2.2.0 (Claude Code)": true, "10.0.0": true,
+                      "2.1.317 (Claude Code)": false, "2.0.999": false, "garbage": false, "": false, "2.1.318-beta": false] {
+        #expect(Profiles.mentionGuardVersion(v) == want, "\(v)")
+    }
+}
+
+@Test func stdinNoteForADroppedPipe() {
+    #expect(Profiles.stdinNote(read: nil, waitMs: 3000, mode: S_IFIFO) == "minigw: stdin had no data within 3 s and was not sent")
+    #expect(Profiles.stdinNote(read: nil, waitMs: 3000, mode: S_IFREG) != nil)
+    #expect(Profiles.stdinNote(read: Data(), waitMs: 3000, mode: S_IFIFO) == nil)
+    #expect(Profiles.stdinNote(read: nil, waitMs: 0, mode: S_IFIFO) == nil)
+    #expect(Profiles.stdinNote(read: nil, waitMs: 3000, mode: S_IFSOCK) == nil)
+}
+
 /// N6b, N7: claude brez terminala ali z -p (tudi zunaj Claude Code) dobi --disable-slash-commands in brez @-priponk.
 @Test func promptGuardOutsideATerminal() {
     let cc = ["CLAUDECODE": "1"]

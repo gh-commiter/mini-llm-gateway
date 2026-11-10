@@ -1,5 +1,10 @@
 # Release notes
 
+## Unreleased
+
+- `/minigw:review` on a Windows or Linux gateway: the skill now pipes `git diff HEAD` to the reviewer on stdin, so the reviewer sees the real diff instead of a description (the gateway's read-only copy has no `.git`). Inside Claude Code, minigw accepts `@` on stdin (diff `@@` lines) when Claude Code is 2.1.318 or newer; it then also passes `--settings` that keep file mentions off for the nested claude even if your `settings.json` `env` turns them on. With an older Claude Code such stdin is refused as before, with a hint. `@` in prompt arguments and `/` at the start of a prompt or of stdin are still refused. The other agent skills say that a diff can be piped. Both clients.
+- Fixed: when a run with a prompt argument got no stdin data within 3 s (for example a slow `git diff`), minigw sent nothing without a word; it now prints `minigw: stdin had no data within 3 s and was not sent`. Both clients.
+
 ## 0.5.20
 
 - Fixed: on Linux `minigw serve`, Bash never worked for Claude CLI in worktree mode (Claude Code's sandbox could not create its sockets under the long temporary folder in the clone); each run now gets a short private temporary folder (also on macOS and Windows `minigw serve`).
