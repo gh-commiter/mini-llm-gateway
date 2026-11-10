@@ -272,9 +272,14 @@ func safeDir(dir string) bool {
 		(perm&0o020 == 0 || trustedGroup(runtime.GOOS, st.Gid, readGroupFile()))
 }
 
-// safePath (#48): safeDir za p, njegovo mapo in vse mape nad njo do /; višje mape smejo biti zapisljive le z bitom
-// sticky (/tmp): tam drugi ne preimenujejo ali zamenjajo vnosa, ki je naš.
+// safePath (#48): safeDir za p, njegovo mapo in vse mape nad njo do /, za dano in za pravo pot (brez povezav); višje
+// mape smejo biti zapisljive le z bitom sticky (/tmp): tam drugi ne preimenujejo ali zamenjajo vnosa, ki je naš.
 func safePath(p string) bool {
+	real, err := filepath.EvalSymlinks(p)
+	return err == nil && safeChain(p) && safeChain(real)
+}
+
+func safeChain(p string) bool {
 	p, err := filepath.Abs(p)
 	if err != nil || !safeDir(p) {
 		return false

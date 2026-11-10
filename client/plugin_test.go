@@ -394,6 +394,12 @@ func TestSafePathAncestors(t *testing.T) {
 	if _, err := settingsTUIPath("linux", self); err == nil {
 		t.Fatal("minigw-tui under a world-writable ancestor")
 	}
+	// povezava iz varne mape na minigw pod mapo, ki je vsem zapisljiva
+	link := filepath.Join(t.TempDir(), "minigw")
+	os.Symlink(self, link)
+	if safePath(link) {
+		t.Fatal("symlink into an unsafe folder accepted")
+	}
 	os.Chmod(top, 0o777|os.ModeSticky) // sticky (kot /tmp): višje mape smejo
 	if !safePath(self) {
 		t.Fatal("sticky ancestor refused")

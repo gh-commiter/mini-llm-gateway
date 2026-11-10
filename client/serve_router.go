@@ -664,7 +664,7 @@ func settingsTUIPath(goos, self string) (string, error) {
 		return "", errors.New("the settings terminal UI is not installed (" + tui + "): it comes with Mini Gateway 0.5.20 or newer (https://github.com/gh-commiter/mini-llm-gateway/releases/latest); or open the settings page with: minigw gw settings link")
 	}
 	if goos != "windows" {
-		if real, err := filepath.EvalSymlinks(tui); err != nil || !safePath(tui) || !safePath(real) {
+		if !safePath(tui) {
 			return "", errors.New(tui + " or a folder above it is writable by others or not owned by you or root: not starting it; reinstall Mini Gateway in a safe folder")
 		}
 	}
