@@ -444,5 +444,6 @@ func startTrayRouter(cfgPath string) (s *server, ln net.Listener, logPath string
 		return nil, nil, logPath, false, fmt.Errorf("port %d: %v (is minigw serve already running?)", c.Port, err)
 	}
 	s.announce(ln)
+	sandboxInit(s.conf().Scratch, s.cfgDir, s.log.Printf) // #68: Windows, preizkus škatle MXC pred strežbo
 	return s, ln, logPath, fresh, nil
 }

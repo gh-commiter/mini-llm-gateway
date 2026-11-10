@@ -2369,7 +2369,11 @@ func TestDepsNoteAndNetworkOff(t *testing.T) {
 	if got := networkOffEnv("codex", false); !slices.Equal(got, []string{"MINIGW_NETWORK_OFF=Settings → Codex → Allow network access for commands"}) {
 		t.Fatalf("codex: %v", got)
 	}
-	if networkOffEnv("codex", true) != nil || networkOffEnv("copilot", false) != nil || networkOffEnv("claude", false) != nil {
+	if networkOffEnv("codex", true) != nil || networkOffEnv("copilot", false) != nil || networkOffEnv("claude", true) != nil {
 		t.Fatal("network off without a switch")
+	}
+	// #68 (odločitev 7): Claude ima »Network for builds« kot na Macu (isto besedilo kot Worktree.networkOff)
+	if got := networkOffEnv("claude", false); !slices.Equal(got, []string{"MINIGW_NETWORK_OFF=Settings → General → Worktree mode → Network for builds"}) {
+		t.Fatalf("claude: %v", got)
 	}
 }

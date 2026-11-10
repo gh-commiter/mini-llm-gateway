@@ -107,6 +107,13 @@ func general(u *ui) ([]row, error) {
 	if d := str(st, "installDir"); d != "" {
 		rows = append(rows, inf("Installed in", d))
 	}
+	if sb, ok := st["agentSandbox"].(map[string]any); ok { // #68: Windows
+		v := "not available (" + clean(str(sb, "reason")) + ")"
+		if str(sb, "kind") == "mxc" {
+			v = "Windows sandbox (MXC " + str(sb, "version") + ")"
+		}
+		rows = append(rows, inf("Agent sandbox", v))
+	}
 	switch os := str(st, "os"); os {
 	case "linux", "darwin": // darwin: minigw serve for development
 		rows = append(rows, inf("Startup", map[string]string{"boot": "starts at boot", "sign-in": "starts at sign-in",
@@ -148,6 +155,11 @@ func general(u *ui) ([]row, error) {
 		ed("Folder", str(g, "scratch"), func(v string) (string, error) { return patch(map[string]any{"scratch": v}) }),
 		btn("Use the default folder", "", func() (string, error) { return patch(map[string]any{"scratch": ""}) }),
 	)
+	if _, ok := g["worktreeNetwork"]; ok && str(st, "os") != "" { // #68: minigw serve (the Mac shows it under Mac only)
+		rows = append(rows, hdr("Worktree mode"),
+			tog("Network for builds", yes(g, "worktreeNetwork"), func(v bool) (string, error) { return patch(map[string]any{"worktreeNetwork": v}) }),
+			inf("  Claude CLI's builds in its clone may download; off: no network for its commands, a remote git clone is refused.", ""))
+	}
 	return rows, nil
 }
 
@@ -387,9 +399,13 @@ func agents(u *ui) ([]row, error) {
 	}))
 	rows = append(rows, workRow(c, pc)...)
 	if _, ok := c["allowUnsandboxedBash"]; ok && (str(st, "os") == "windows" || yes(st, "agentsUnsandboxed")) {
+		note := "  Agents can then read this computer's files and the gateway's secrets."
+		if sb, _ := st["agentSandbox"].(map[string]any); str(sb, "kind") == "mxc" { // #68
+			note = "  Not needed: agents run in the Windows sandbox (Codex: its own sandbox)."
+		}
 		rows = append(rows, tog("Allow commands without a sandbox", yes(c, "allowUnsandboxedBash"), func(v bool) (string, error) {
 			return pc(map[string]any{"allowUnsandboxedBash": v})
-		}), inf("  Agents can then read this computer's files and the gateway's secrets.", ""))
+		}), inf(note, ""))
 	}
 
 	for _, k := range []struct{ kind, title string }{{"codex", "Codex CLI"}, {"grok", "Grok CLI"}} {
@@ -399,8 +415,12 @@ func agents(u *ui) ([]row, error) {
 		}
 		p := patch("/agents/" + k.kind)
 		rows = append(rows, hdr(k.title))
-		if bare {
-			rows = append(rows, inf("  No sandbox here: turn on Allow commands without a sandbox (Claude CLI) first.", ""))
+		if sb, ok := a["sandboxed"].(bool); ok && !sb && !yes(c, "allowUnsandboxedBash") || !ok && bare { // #68: per agent
+			if k.kind == "codex" && str(st, "os") == "windows" {
+				rows = append(rows, inf("  No sandbox here: run codex sandbox setup --elevated once (as administrator), or turn on Allow commands without a sandbox (Claude CLI).", ""))
+			} else {
+				rows = append(rows, inf("  No sandbox here: turn on Allow commands without a sandbox (Claude CLI) first.", ""))
+			}
 		}
 		rows = append(rows, tog("Enabled", yes(a, "enabled"), func(v bool) (string, error) { return p(map[string]any{"enabled": v}) }),
 			inf("Program", found(a)),

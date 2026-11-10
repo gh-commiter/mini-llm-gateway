@@ -37,6 +37,13 @@ type agentMounts struct {
 	pins []string
 	// started: PID procesa agenta po zagonu (vrata izvajanja sprejmejo le njegovo drevo procesov).
 	started func(pid int)
+	// #68, le Windows (škatla MXC, mxc.go): celo okolje procesa (gre v zahtevo), delovna mapa, dom agenta (USERPROFILE,
+	// APPDATA; "" = v temp), TEMP zagona ("" = nova v Scratch\tmp, pobrisana po teku), vrata izvajanja za posrednik in
+	// unboxed (Codex: svoj peskovnik »elevated«, ne v škatli).
+	cmdEnv          []string
+	cwd, home, temp string
+	proxy           string
+	unboxed         bool
 }
 
 // packageRoot: mapa, ki jo CLI pod domačo mapo potrebuje: različica nvm (~/.nvm/versions/node/<v>), sicer najbližja

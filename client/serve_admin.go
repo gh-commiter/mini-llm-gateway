@@ -88,6 +88,7 @@ type apiGeneral struct {
 	AllowAnyDevice   bool   `json:"allowAnyDevice"`
 	AllowLocalApps   bool   `json:"allowLocalApps"`
 	Scratch          string `json:"scratch"`
+	WorktreeNetwork  bool   `json:"worktreeNetwork"` // #68: »Network for builds« (Claude CLI v načinu worktree), kot na Macu
 }
 
 type apiStatus struct {
@@ -109,6 +110,8 @@ type apiStatus struct {
 	Autostart  string       `json:"autostart"`            // "boot", "sign-in" ali "" (minigw serve install)
 	// AgentsUnsandboxed: Codex in Grok tu nimata sandboxa, ki skrije skrivnosti (Windows, Linux brez bwrap).
 	AgentsUnsandboxed bool `json:"agentsUnsandboxed"`
+	// AgentSandbox (#68, Windows): {"kind":"mxc","version":"1.0.1"} ali {"kind":"","reason":"…"}; drugje ga ni.
+	AgentSandbox map[string]string `json:"agentSandbox,omitempty"`
 }
 
 // adminSecret: 32 naključnih bajtov (base64url) v admin.secret (0600) v mapi nastavitev, ki je agentom prepovedana.
@@ -328,7 +331,8 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		c := s.conf()
 		st := apiStatus{Running: !s.offline, Version: version, Port: c.Port, Address: c.Address, Installed: serviceInstalled(runtime.GOOS),
 			Devices: len(c.Devices), Claude: s.claudeInfo(), Gateways: s.apiGateways(c), OS: runtime.GOOS, Tray: trayRunning(), Build: buildCommit(),
-			Agents: int(s.agentsRunning.Load()), Autostart: autostart(runtime.GOOS), AgentsUnsandboxed: !agentSandboxed(s.cfgDir)}
+			Agents: int(s.agentsRunning.Load()), Autostart: autostart(runtime.GOOS), AgentsUnsandboxed: !agentSandboxed(s.cfgDir),
+			AgentSandbox: agentSandboxInfo()}
 		if d := installDir(runtime.GOOS); d != "" { // le če je minigw tam res nameščen
 			if _, err := os.Stat(filepath.Join(d, map[bool]string{true: "minigw.exe", false: "minigw"}[runtime.GOOS == "windows"])); err == nil {
 				st.InstallDir = d
@@ -864,6 +868,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			AllowAnyDevice   *bool   `json:"allowAnyDevice"`
 			AllowLocalApps   *bool   `json:"allowLocalApps"`
 			Scratch          *string `json:"scratch"`
+			WorktreeNetwork  *bool   `json:"worktreeNetwork"`
 		}
 		if err := decodeStrict(body, &b); err != nil {
 			return fail(400, err.Error())
@@ -938,6 +943,9 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			if b.Scratch != nil {
 				c.Scratch = scratch
 			}
+			if b.WorktreeNetwork != nil {
+				c.WorktreeNetwork = b.WorktreeNetwork
+			}
 			return nil
 		}); err != nil {
 			return fail(500, err.Error())
@@ -973,7 +981,7 @@ func (s *server) agentAPI(method string, k agentKind, body []byte) (int, any) {
 		ac := k.conf(s.conf())
 		exe, _ := resolveAgent(k, ac.Executable)
 		o := map[string]any{"enabled": ac.Enabled, "path": ac.Executable, "found": exe != "", "exe": exe, "write": ac.canWrite(k), "models": ac.Models,
-			"askOthers": ac.AskOthers, "work": apiWork(ac.Work)}
+			"askOthers": ac.AskOthers, "work": apiWork(ac.Work), "sandboxed": s.agentsAllowed(serveConfig{}, k.name)} // #68: peskovnik brez stikala
 		if k.name != "grok" {
 			o["network"] = ac.Network
 		}
@@ -1097,7 +1105,8 @@ func findGateway(c serveConfig, name string) (serveGateway, bool) {
 func (s *server) apiGeneral(restart bool) apiGeneral {
 	c := s.conf()
 	return apiGeneral{Port: c.Port, Address: c.Address, Connect: connectLine(c), RestartRequired: restart, AllowedClients: c.AllowedClients,
-		AllowPlainRemote: c.AllowPlainRemote, AllowAnyDevice: c.AllowAnyDevice, AllowLocalApps: c.localApps(), Scratch: c.Scratch}
+		AllowPlainRemote: c.AllowPlainRemote, AllowAnyDevice: c.AllowAnyDevice, AllowLocalApps: c.localApps(), Scratch: c.Scratch,
+		WorktreeNetwork: c.worktreeNet()}
 }
 
 // buildCommit: commit gradnje (go build iz gita), kot »Version 0.5.14 (d62bf92)« na Macu.

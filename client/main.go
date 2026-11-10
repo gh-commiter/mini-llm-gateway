@@ -276,6 +276,9 @@ func getJSON(c connection, path string) (int, map[string]any) {
 }
 
 func main() {
+	if isGitWrap() { // #68: kopija minigw.exe kot git.exe v škatli MXC (gitwrap.go)
+		gitWrapMain(os.Args[1:])
+	}
 	refreshPath() // Windows: trenutni uporabnikov PATH, tudi v lupini, odprti pred namestitvijo CLI
 	args := os.Args[1:]
 	if isTrayExe(os.Args[0]) { // minigw-tray.exe: router z ikono v območju za obvestila
@@ -327,6 +330,8 @@ func main() {
 		}
 		say("SHA256SUMS: good signature")
 		return
+	case mxcProbeCmd: // #68 (skrit): preizkus škatle MXC ob zagonu minigw serve (mxc.go)
+		mxcProbeMain(args[1:])
 	case agentReaperCmd: // pomočnik za procese agentov (Linux)
 		agentReaperMain(args[1:])
 		return

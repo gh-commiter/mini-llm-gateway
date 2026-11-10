@@ -146,12 +146,19 @@ func (s *server) agentArgs(dir string, readOnly bool) []string {
 		}
 	}
 	var args []string
+	box := windowsBox() // #68: ves Claude v škatli MXC; ukazi z orodjem PowerShell (Git Bash je MSYS2, v škatli umre, W4)
+	if box && !readOnly {
+		deny = append(deny, "Bash")
+	}
 	if c.AllowLocalTools { // vsa orodja Claude Code razen izjem; datoteke le v mapah, Bash v sandboxu (kot na Macu)
 		var allowed []string
 		for t := range pathTools {
 			if !slices.Contains(c.DisabledTools, t) && (!readOnly || roAllowed(t)) {
 				allowed = append(allowed, scope(t)...)
 			}
+		}
+		if box && !readOnly && !slices.Contains(c.DisabledTools, "Bash") && !slices.Contains(c.DisabledTools, "PowerShell") {
+			allowed = append(allowed, "PowerShell") // kot autoAllowBashIfSandboxed: škatla je peskovnik
 		}
 		slices.Sort(allowed)
 		tools := "default"
@@ -174,6 +181,9 @@ func (s *server) agentArgs(dir string, readOnly bool) []string {
 				continue
 			case pathTools[t]:
 				allowed = append(allowed, scope(t)...)
+			case box && t == "Bash": // #68: »Bash« iz nastavitev je v škatli PowerShell
+				t = "PowerShell"
+				allowed = append(allowed, t)
 			case t != "Bash" || runtime.GOOS == "windows": // Bash v sandboxu dovoli autoAllowBashIfSandboxed
 				allowed = append(allowed, t)
 			}
@@ -680,7 +690,13 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	var wt, maven, objects string
 	parent := runOf(r) // vprašal ga je drug agent tega prehoda (serve_agentcalls.go)
 	extraFlag := "--append-system-prompt-file"
+	box := windowsBox() // #68: ves claude v škatli MXC (Windows)
+	var boxRW, boxRO []string
+	boxTemp, netOff := "", false
 	if !chat {
+		if why := s.conf().unsandboxedRefusal(s.cfgDir); why != "" { // #68: prej ob nalaganju nastavitev
+			return writeError(w, r.rid, 403, why)
+		}
 		clientCwd := r.h("x-claude-mini-cwd")
 		var share *serveShare
 		if parent == nil {
@@ -736,6 +752,20 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		// #46a: zgodovina zapiše, kar je veljalo
 		r.applied = &appliedLimits{readOnly: ro, cap: cap}
 		args = append(args, s.agentArgs(dir, ro)...)
+		if ro { // #68: mapa in dovoljene mape v škatli
+			boxRO = append(boxRO, dir)
+		} else {
+			boxRW = append(boxRW, dir)
+		}
+		for _, f := range s.conf().AllowedFolders {
+			if f != dir && len(scratchOverlaps([]string{f}, s.conf().Scratch)) == 0 && len(copilotCacheOverlaps([]string{f})) == 0 { // kot agentArgs
+				if ro {
+					boxRO = append(boxRO, f)
+				} else {
+					boxRW = append(boxRW, f)
+				}
+			}
+		}
 		ok := false
 		if wt, _, maven, objects, ok = s.hub.worktreeOf(session, "claude"); parent != nil {
 			wt, maven, objects, ok = parent.wt, parent.maven, parent.objects, parent.wt != ""
@@ -785,11 +815,24 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			}
 			worktreeEnv = append(worktreeEnv, "CLAUDE_CODE_TMPDIR="+tmp) // #67: kratka povezava (zadnja vrednost velja)
 			args = sandboxAllowRead(args, gw)
+			// #68 (odločitev 7): »Network for builds« kot na Macu: brez omrežja ukazi brez omrežja, ovoj git zavrne oddaljen clone
+			if netOff = !s.conf().worktreeNet(); netOff {
+				args = sandboxNetwork(args, []string{})
+				worktreeEnv = append(worktreeEnv, networkOffEnv("claude", false)...)
+			}
+			boxRW = append(append(boxRW, wt), grants...)
+			boxRO = append(append(boxRO, objs...), gw)
+			boxTemp = tmp
 		}
 		shared := share != nil || (parent != nil && parent.shared)
-		run, runEnv = s.startRun(r, "claude", dir, ro, shared, wt, maven, objects, "") // »May ask other models«
+		var proxy []string
+		if box && netOff { // #68: škatla brez omrežja; Claude Code doseže le API prek posrednika vrat izvajanja
+			proxy = claudeAPIHosts
+		}
+		run, runEnv = s.startRun(r, "claude", dir, ro, shared, wt, maven, objects, "", proxy, claudeNetworkSetting) // »May ask other models«
 		defer run.stop()
-		if run != nil {
+		if run.asks() {
+			boxRO = append(boxRO, filepath.Dir(run.authFile))
 			exe := minigwExe()
 			onPath := s.conf().askOnPath(dir)
 			extra += "\n\n" + askNote(exe, onPath)
@@ -802,6 +845,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		}
 	} else {
 		dir = s.conf().scratch("chat")
+		boxRO = append(boxRO, dir)
 		prompt = cliPrompt(history, last)
 		args = append(args, "--tools", "", "--no-session-persistence")
 		extra, extraFlag = systemText(body["system"]), "--system-prompt-file"
@@ -813,6 +857,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		}
 		defer os.Remove(f)
 		args = append(args, extraFlag, f)
+		boxRO = append(boxRO, f)
 	}
 
 	exe := s.claudeExe()
@@ -824,8 +869,34 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	}
 	defer func() { <-s.procs }()
 	name, cargs := exe[0], append(exe[1:], args...)
-	unpinned := false       // N3b: brez pin (ni bwrap ali gnezdeni ne deluje) se klon preverja med tekom (watch spodaj)
-	if worktreeEnv != nil { // N3: .git klona je med tekom točka priklopa (kot pins pri Codex), zamenjati ga ni mogoče
+	unpinned := false // N3b: brez pin (ni bwrap ali gnezdeni ne deluje) se klon preverja med tekom (watch spodaj)
+	// brez ANTHROPIC_* (klic nazaj v router), žetonov GitHub/Copilot in agentov ključev (M1)
+	cmdEnv := append(append(append(agentEnv(os.Environ()), worktreeEnv...), runEnv...), "CLAUDE_CODE_DISABLE_FILE_MENTIONS=1")
+	if p := envGet(worktreeEnv, "PATH"); p != "" && envGet(runEnv, "PATH") != "" { // askOnPath in ovoj git (#68): oba na PATH
+		cmdEnv = envSet(cmdEnv, "PATH", filepath.Dir(minigwExe())+string(os.PathListSeparator)+p)
+	}
+	// #68: ves claude v škatli MXC; svoj CLAUDE_CONFIG_DIR naprave s kopijo prijave (ne pravi ~\.claude)
+	if box {
+		state, _, err := agentState(s.conf().Scratch, claudeKind, r.owner())
+		if err != nil {
+			s.log.Printf("%s claude state: %v", r.rid, err)
+			return writeError(w, r.rid, 500, "Cannot prepare Claude CLI's folder on the gateway (see the gateway log)")
+		}
+		defer restoreAuth(state, claudeKind)
+		cmdEnv = append(cmdEnv, "CLAUDE_CONFIG_DIR="+state, "CLAUDE_CODE_USE_POWERSHELL_TOOL=1")
+		if len(exe) > 1 { // node + cli.js
+			boxRO = append(boxRO, filepath.Dir(exe[1]))
+		}
+		var done func()
+		var err2 error
+		name, cargs, done, err2 = agentWrap(name, cargs, agentMounts{cfgDir: s.cfgDir, state: state, rw: boxRW, ro: boxRO, hide: s.conf().Scratch,
+			cmdEnv: cmdEnv, cwd: dir, home: filepath.Join(filepath.Dir(state), "home"), temp: boxTemp, noNet: netOff, proxy: run.runAddr()})
+		if err2 != nil {
+			s.log.Printf("%s claude: %v", r.rid, err2)
+			return writeError(w, r.rid, 503, "Cannot start Claude CLI in the Windows sandbox: "+err2.Error())
+		}
+		defer done()
+	} else if worktreeEnv != nil { // N3: .git klona je med tekom točka priklopa (kot pins pri Codex), zamenjati ga ni mogoče
 		gits, _ := s.hub.worktreeGits(wt)
 		name, cargs = pinWrap(s.cfgDir, name, cargs, append(pinPaths(wt, gits), grants...), s.log.Printf) // M2: tudi mape do ugnezdenih klonov; #67 H1: mape pod Scratch (zamenjava: EBUSY)
 		if unpinned = name == exe[0]; unpinned && runtime.GOOS == "linux" {
@@ -861,13 +932,13 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	}
 	cmd := commandContext(ctx, name, cargs...)
 	cmd.Dir = dir
-	cmd.Env = append(append(append(agentEnv(os.Environ()), worktreeEnv...), runEnv...), "CLAUDE_CODE_DISABLE_FILE_MENTIONS=1") // brez ANTHROPIC_* (klic nazaj v router), žetonov GitHub/Copilot in agentov ključev (M1)
+	cmd.Env = cmdEnv
 	cmd.Stdin = strings.NewReader(prompt)
 	stderr := &tailBuffer{}
 	cmd.Stderr = stderr
 	stdout, err := cmd.StdoutPipe()
 	if err == nil {
-		err = startAgent(cmd) // Windows: v Job agentov (peer check)
+		err = startAgent(cmd) // Windows: v Job agentov (peer check; tudi claude v škatli, otrok wxc-exec)
 	}
 	if err != nil {
 		return writeError(w, r.rid, 500, "Cannot start claude: "+err.Error())

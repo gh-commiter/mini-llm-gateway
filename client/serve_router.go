@@ -305,6 +305,13 @@ func routerCommand(args []string, in io.Reader) {
 		say(fmt.Sprintf("version %s, port %d on %s", st.Version, st.Port, addr))
 		say(autostartLine(st.Autostart))
 		say(fmt.Sprintf("agent requests running: %d", st.Agents))
+		if sb := st.AgentSandbox; sb != nil { // #68: Windows
+			if sb["kind"] == "mxc" {
+				say("agent sandbox: Windows sandbox (MXC " + sb["version"] + ")")
+			} else {
+				say(clean("agent sandbox: not available (" + sb["reason"] + ")"))
+			}
+		}
 		say(installedInfo(runtime.GOOS))
 		say(fmt.Sprintf("devices: %d allowed, %d waiting (minigw gw devices)", st.Devices, st.Pending))
 		claude := "not found"

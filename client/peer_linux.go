@@ -230,10 +230,10 @@ func watchGitMoves(dirs []string, moved func()) (stop func(), ok bool) {
 // točne mape s programi iz PATH in paket CLI (samo za branje), stanje CLI te naprave in njene datoteke prijave,
 // kopija mape, začasna mapa zahteve in dovoljene mape. Skriti so XDG_RUNTIME_DIR (D-Bus, keyring, agent gpg),
 // /tmp/dbus-*, /tmp/ssh-* in občutljive mape, če bi bile znotraj vezane mape. Poti brez simbolnih povezav (R5).
-func agentWrap(exe string, args []string, m agentMounts) (string, []string) {
+func agentWrap(exe string, args []string, m agentMounts) (string, []string, func(), error) {
 	bw := bwrapReady(m.cfgDir)
 	if bw == "" {
-		return exe, args
+		return exe, args, func() {}, nil
 	}
 	real := func(p string) string {
 		if r, err := filepath.EvalSymlinks(p); err == nil {
@@ -332,7 +332,7 @@ func agentWrap(exe string, args []string, m agentMounts) (string, []string) {
 	if m.noNet {
 		a = append([]string{"--unshare-net"}, a...)
 	}
-	return bw, append(append(a, "--", exe), args...)
+	return bw, append(append(a, "--", exe), args...), func() {}, nil
 }
 
 // listenerIsOurs (F2): vrata poslušajo le procesi tega uporabnika (uid iz /proc/net/tcp{,6}); nič najdenega = ne.

@@ -190,8 +190,8 @@ const S = {
   copilotToken: ["GitHub token for commands (fine-grained, only “Copilot Requests”)", "Žeton GitHub za ukaze (fine-grained, le »Copilot Requests«)"],
   copilotTokenShort: ["This is not a whole GitHub token (at least 40 characters)", "To ni cel žeton GitHub (vsaj 40 znakov)"],
   copilotTokenSaved: ["Token saved; enter a new one to replace it", "Žeton shranjen; vnesi novega za zamenjavo"],
-  copilotFooter: ["The claude-copilot models run Copilot CLI as an agent in the synced copy of the client's folder, on Linux under bwrap with a fresh Copilot home for each request. By default it may only read that folder; with writing on it may edit files there. Commands only with “Allow commands” and the token above. On Linux it signs in with the GitHub CLI (gh auth login) or that token; on Windows it uses this user's Copilot sign-in (copilot login) and ~/.copilot.",
-    "Modeli claude-copilot poženejo Copilot CLI kot agenta v sinhronizirani kopiji mape odjemalca, na Linuxu pod bwrap s svežo domačo mapo Copilot za vsako zahtevo. Privzeto sme mapo le brati; s pisanjem sme v njej urejati datoteke. Ukazi le z »Dovoli ukaze« in žetonom zgoraj. Na Linuxu se prijavi z GitHub CLI (gh auth login) ali tem žetonom; na Windows uporabi prijavo Copilot tega uporabnika (copilot login) in ~/.copilot."],
+  copilotFooter: ["The claude-copilot models run Copilot CLI as an agent in the synced copy of the client's folder, on Linux under bwrap with a fresh Copilot home for each request. By default it may only read that folder; with writing on it may edit files there. Commands only with “Allow commands” and the token above. On Linux it signs in with the GitHub CLI (gh auth login) or that token; on Windows it runs in the Windows sandbox (MXC) with a fresh Copilot home, or without it (with “Allow commands without a sandbox”) with this user's Copilot sign-in (copilot login) and ~/.copilot.",
+    "Modeli claude-copilot poženejo Copilot CLI kot agenta v sinhronizirani kopiji mape odjemalca, na Linuxu pod bwrap s svežo domačo mapo Copilot za vsako zahtevo. Privzeto sme mapo le brati; s pisanjem sme v njej urejati datoteke. Ukazi le z »Dovoli ukaze« in žetonom zgoraj. Na Linuxu se prijavi z GitHub CLI (gh auth login) ali tem žetonom; na Windows teče v peskovniku Windows (MXC) s svežo domačo mapo Copilot, brez njega (z »Dovoli ukaze brez sandboxa«) pa s prijavo Copilot tega uporabnika (copilot login) in ~/.copilot."],
   foundryDesc: ["Microsoft Foundry Local: models on this computer, without the cloud.", "Microsoft Foundry Local: modeli na tem računalniku, brez oblaka."],
   foundryMissing: ["Foundry Local is not installed. Windows: winget install Microsoft.FoundryLocal; macOS: brew tap microsoft/foundrylocal && brew install foundrylocal. Then download a model, e.g. foundry model download phi-4-mini.",
     "Foundry Local ni nameščen. Windows: winget install Microsoft.FoundryLocal; macOS: brew tap microsoft/foundrylocal && brew install foundrylocal. Nato prenesi model, npr. foundry model download phi-4-mini."],
@@ -263,6 +263,17 @@ const S = {
   unsandboxedWarn: ["Windows has no sandbox for commands: agents can then run anything as you and read the provider keys and the admin secret.",
     "Windows nima sandboxa za ukaze: agenti lahko tedaj zaženejo karkoli kot ti in preberejo ključe ponudnikov in skrivnost API."],
   sandboxNote: ["Bash runs in Claude Code's sandbox (on Linux it needs bubblewrap and socat).", "Bash teče v sandboxu Claude Code (na Linuxu potrebuje bubblewrap in socat)."],
+  unsandboxedNotNeeded: ["Not needed: agents run in the Windows sandbox.", "Ni potrebno: agenti tečejo v peskovniku Windows."],
+  sandboxNoteWin: ["Commands run in the Windows sandbox (MXC) with Claude Code's PowerShell tool (Bash in Tools means PowerShell): they write only to the session's folder and the gateway's folders for this conversation, and cannot read your home folder or the gateway's settings.",
+    "Ukazi tečejo v peskovniku Windows (MXC) z orodjem PowerShell Claude Code (Bash med orodji pomeni PowerShell): pišejo le v mapo seje in mape prehoda za ta pogovor, domače mape in nastavitev prehoda ne morejo brati."],
+  localToolsBox: ["Every Claude Code tool, including commands: they run in the Windows sandbox (MXC).", "Vsa orodja Claude Code, tudi ukazi: tečejo v peskovniku Windows (MXC)."],
+  agentSandbox: ["Agent sandbox", "Peskovnik agentov"], sandboxMXC: ["Windows sandbox (MXC %s)", "Peskovnik Windows (MXC %s)"],
+  sandboxNone: ["not available (%s)", "ni na voljo (%s)"],
+  worktreeMode: ["Worktree mode", "Način worktree"], worktreeNetwork: ["Network for builds", "Omrežje za gradnje"],
+  worktreeNetworkHelp: ["Claude CLI in worktree mode (minigw --minigw-work=worktree) works in a git clone under the Scratch folder. With this on its builds may download (Maven, npm, git clone); off, its commands have no network and a remote git clone is refused (on Windows Claude Code itself still reaches its API through the gateway).",
+    "Claude CLI v načinu worktree (minigw --minigw-work=worktree) dela v klonu git pod mapo Scratch. Ko je vklopljeno, smejo njegove gradnje prenašati (Maven, npm, git clone); izklopljeno: ukazi nimajo omrežja, oddaljen git clone je zavrnjen (na Windows Claude Code svoj API še vedno doseže prek prehoda)."],
+  codexLockedWin: ["On Windows Codex runs in its own sandbox: set it up once with “codex sandbox setup --elevated” (as administrator). Otherwise it needs “Allow commands without a sandbox” under Claude CLI: the agent can read and change everything this user can, including gateway settings.",
+    "Na Windows Codex teče v svojem peskovniku: enkrat ga nastavi z »codex sandbox setup --elevated« (kot skrbnik). Sicer potrebuje »Dovoli ukaze brez sandboxa« pod Claude CLI: agent lahko bere in spreminja vse, kar ta uporabnik, tudi nastavitve prehoda."],
   signin: ["Not signed in, or the session has expired. Open Settings… from the tray icon again (or run minigw gw settings link).",
     "Ni prijave ali je seja potekla. Znova odpri Nastavitve … v ikoni pladnja (ali zaženi minigw gw settings link)."],
 };
@@ -426,10 +437,11 @@ async function agentPane(kind) {
       toggle(x.enabled, (v, i) => save(n1, async () => { try { await setModel(x.slug, v); } catch (e) { i.checked = !v; throw e; } }))))
     : [row(el("span", {class: "label sub", textContent: a.found ? t("noModels") : t(kind + "NotFound")}))]);
   const bulk = on => save(n1, async () => { await patch({models: on ? null : []}); show(kind); });
-  const bare = st.agentsUnsandboxed, locked = bare && !c.allowUnsandboxedBash;  // H1, R3: brez sandboxa le z izrecnim dovoljenjem
+  const bare = a.sandboxed === undefined ? st.agentsUnsandboxed : !a.sandboxed, locked = bare && !c.allowUnsandboxedBash;  // H1, R3: brez sandboxa le z izrecnim dovoljenjem
+  const lockedText = codex && st.os === "windows" ? "codexLockedWin" : "agentLockedWin";  // #68: Codex na Windows s svojim peskovnikom
   return [
     card(...ICON[kind], codex ? "Codex CLI" : "Grok CLI", t(kind + "Desc")),
-    group(row(labelSub(t("enabled"), bare ? t(locked ? "agentLockedWin" : "agentWarnWin") : null),
+    group(row(labelSub(t("enabled"), bare ? t(locked ? lockedText : "agentWarnWin") : null),
         toggle(a.enabled && !locked, v => save(n1, async () => { await patch({enabled: v}); nav(); }), locked)),
       row(labelSub(t("path")), path, browse(path, n1, async v => { await patch({path: v}); show(kind); }))),
     el("div", {class: "note"}, status),
@@ -456,7 +468,7 @@ async function copilotPane() {
   autosave(path, n1, async v => { await patch({path: v}); show("copilot"); });
   const models = el("input", {type: "text", value: (a.models || []).join(", "), placeholder: "gpt-5.2, claude-sonnet-4.5"});
   autosave(models, n1, v => patch({models: v.split(",").map(x => x.trim()).filter(Boolean)}));
-  const bare = st.agentsUnsandboxed, locked = bare && !c.allowUnsandboxedBash;
+  const bare = a.sandboxed === undefined ? st.agentsUnsandboxed : !a.sandboxed, locked = bare && !c.allowUnsandboxedBash;
   const commands = toggle(a.commands, (v, i) => save(n2, async () => {
     if (v && !confirm(t("copilotCommandsAsk"))) { i.checked = false; return; }
     await patch({commands: v});
@@ -539,6 +551,7 @@ const pages = {
     const showBtn = button(t("show"), () => { shown = !shown; line.textContent = shown ? token().split("#")[0] : "•".repeat(24); showBtn.textContent = t(shown ? "hide" : "show"); });
     const scratch = el("input", {type: "text", class: "left wide", value: g.scratch});
     autosave(scratch, n4, v => api("PATCH", "/general", {scratch: v}));
+    const n6 = note(t("worktreeNetworkHelp")), sb = st.agentSandbox;
     return [
       card(...ICON.general, t("general"), t("generalDesc")),
       group(win ? row(t("startup"), toggle(st.installed, on => save(n1, () => api("PATCH", "/general", {startAtSignIn: on}))))
@@ -565,6 +578,9 @@ const pages = {
         })) : null,
         button(t("default"), () => save(n4, async () => { const r = await api("PATCH", "/general", {scratch: ""}); scratch.value = r.scratch; }))))),
       n4,
+      section(t("worktreeMode")),
+      group(row(t("worktreeNetwork"), toggle(g.worktreeNetwork, v => save(n6, () => api("PATCH", "/general", {worktreeNetwork: v}))))),
+      n6,
       section(t("status")),
       group(
         row(t("router"), el("span", {class: "value"}, el("span", {class: "dot" + (st.running ? " ok" : "")}), t("runningOn", st.port))),
@@ -574,6 +590,7 @@ const pages = {
         win ? row(t("tray"), value(t(st.tray ? "trayOn" : "trayOff"))) : null),
       section(t("about")),
       group(row(t("version"), value(st.version + (st.build ? " (" + st.build + ")" : ""))),
+        sb ? row(t("agentSandbox"), value(sb.kind === "mxc" ? t("sandboxMXC", sb.version) : t("sandboxNone", sb.reason))) : null,
         row(t("license"), el("a", {href: "https://github.com/gh-commiter/mini-llm-gateway/blob/main/LICENSE", target: "_blank", rel: "noopener noreferrer",
           textContent: "MIT License", class: "link"}))),
     ];
@@ -765,7 +782,8 @@ const pages = {
       try { await sendTools(); } catch (e) { v ? on.delete(name) : on.add(name); i.checked = !v; throw e; }
     }), disabled));
     const bulk = v => save(n2, async () => { for (const [n] of TOOLS) v ? on.add(n) : on.delete(n); await sendTools(); show("claude"); });
-    const cmdLocked = win && !c.allowUnsandboxedBash;
+    const box = !!(st.agentSandbox && st.agentSandbox.kind === "mxc");  // #68: škatla MXC na Windows
+    const cmdLocked = win && !box && !c.allowUnsandboxedBash;
     const sources = el("input", {type: "text", value: c.settingSources, placeholder: t("none")});
     autosave(sources, n2, v => patch({settingSources: v}));
     const mode = el("select", {}, ...["dontAsk", "acceptEdits", "auto", "plan"].map(m => el("option", {value: m, textContent: m, selected: c.permissionMode === m})));
@@ -791,12 +809,13 @@ const pages = {
         section(t("tools"), button(t("enableAll"), () => bulk(true)), button(t("disableAll"), () => bulk(false))),
         group(TOOLS.map(x => toolRow(x, false))),
         section(t("commands")),
-        group(win ? row(labelSub(t("unsandboxed"), null), toggle(c.allowUnsandboxedBash, v => save(n2, async () => {
+        group(win ? row(labelSub(t("unsandboxed"), box ? t("unsandboxedNotNeeded") : null), toggle(c.allowUnsandboxedBash, v => save(n2, async () => {
             const body = {allowUnsandboxedBash: v};
             if (!v) { for (const [n] of COMMANDS) on.delete(n); body.tools = [...on].join(","); }
             await patch(body); show("claude");
-          }))) : null,
-          win ? row(el("div", {class: "label warn", textContent: t("unsandboxedWarn")})) : row(el("div", {class: "label sub", textContent: t("sandboxNote")})),
+          }), box)) : null,
+          win && !box ? row(el("div", {class: "label warn", textContent: t("unsandboxedWarn")}))
+            : row(el("div", {class: "label sub", textContent: t(box ? "sandboxNoteWin" : "sandboxNote")})),
           COMMANDS.filter(x => win || x[0] !== "PowerShell").map(x => toolRow(x, cmdLocked))),
       ];
     }
@@ -812,7 +831,7 @@ const pages = {
       el("div", {class: "note"}, status), n1,
       section(t("allowedFolders")), folderList(c.folders, v => patch({folders: v}), t("allowedFoldersHint"), win, c.leftOut),
       el("div", {style: "height:12px"}),
-      group(row(labelSub(t("localTools"), win ? t("localToolsWin") : t("localToolsHelp")), toggle(c.allowLocalTools, v => save(n2, async () => { await patch({allowLocalTools: v}); show("claude"); }))),
+      group(row(labelSub(t("localTools"), win ? t(box ? "localToolsBox" : "localToolsWin") : t("localToolsHelp")), toggle(c.allowLocalTools, v => save(n2, async () => { await patch({allowLocalTools: v}); show("claude"); }))),
         c.allowLocalTools ? null : row(t("permissionMode"), mode),
         row(labelSub(t("settingSources"), t("settingSourcesHelp")), sources),
         workRow(c, patch, n2),

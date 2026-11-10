@@ -43,6 +43,11 @@ for arch in amd64 arm64; do
   for fc in "Client	Main" "Gateway	Gateway" "Plugin	Plugin"; do has FeatureComponents $fc; done
   has File "tui	Gateway	minigw-tui.exe"
   has File "tray	Main	minigw-tray.exe"
+  # #68: peskovnik agentov (MXC) v mxc\ z licenco, del Gateway; isti program kot pripet v client/mxc.go
+  has Directory "MXCDIR	INSTALLDIR	mxc"
+  has File "wxcexec	Sandbox	wxc-exec.exe"
+  has File "wxclicense	Sandbox	LICENSE.txt"
+  has FeatureComponents "Gateway	Sandbox"
   has Registry "Software\Microsoft\Windows\CurrentVersion\Run	MiniGatewayRouter	"
   t Registry | grep -F 'MiniGatewayRouter' | grep -q '	Gateway$' || fail "$arch: Run value is not in the Gateway feature"
   # Del Gateway: komponenta s ključem (KeyPath) v registru, ki ga zapiše le ta del; serve install bere stanje dela iz

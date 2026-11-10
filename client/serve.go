@@ -70,7 +70,12 @@ type serveConfig struct {
 	Grok             agentCLI      `json:"grok"`                     // Grok CLI, privzeto izklopljen
 	Foundry          foundryConfig `json:"foundry"`                  // Foundry Local na napravi (foundry.go), privzeto izklopljen
 	Copilot          agentCLI      `json:"copilot"`                  // GitHub Copilot CLI, privzeto izklopljen (le branje)
+	// #68 (odločitev 7): omrežje gradenj Claude CLI v načinu worktree, kot »Network for builds« na Macu; nil = vklopljeno.
+	WorktreeNetwork *bool `json:"worktreeNetwork,omitempty"`
 }
+
+// worktreeNet: »Network for builds« (privzeto vklopljeno, kot na Macu).
+func (c serveConfig) worktreeNet() bool { return c.WorktreeNetwork == nil || *c.WorktreeNetwork }
 
 const serveHelp = `minigw serve: Mini Gateway, the LLM gateway, on this computer (Windows, Linux) for minigw clients.
 
@@ -344,6 +349,7 @@ func serveCommand(args []string) {
 		fail(err.Error())
 	}
 	s.announce(ln)
+	sandboxInit(s.conf().Scratch, s.cfgDir, s.log.Printf) // #68: Windows, preizkus škatle MXC pred strežbo
 	fail(s.serve(ln).Error())
 }
 
@@ -570,9 +576,6 @@ func checkAgent(c *serveConfig, cfgDir string) ([]string, error) {
 		return nil, errors.New("allowed folder " + bad[0] + " contains or is inside Copilot's package cache " + copilotCacheDir() +
 			" (agents could plant code the gateway runs): choose another folder")
 	}
-	if c.AllowLocalTools && runtime.GOOS == "windows" && !c.AllowUnsandboxedBash {
-		return nil, errors.New("local tools include commands (Bash, PowerShell), which have no sandbox on Windows: also set \"allowUnsandboxedBash\": true, or turn local tools off")
-	}
 	for _, t := range c.DisabledTools {
 		if !validTools.MatchString(t) {
 			return nil, errors.New("disabled tool: not a tool name: " + t)
@@ -591,10 +594,23 @@ func checkAgent(c *serveConfig, cfgDir string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if t := unsandboxedTools(c.Tools); len(t) > 0 && runtime.GOOS == "windows" && !c.AllowUnsandboxedBash {
-		return nil, errors.New("tools " + strings.Join(t, ", ") + " have no sandbox on Windows: remove them from tools, or set \"allowUnsandboxedBash\": true to let agents run any command as this user (and read the provider API keys in Credential Manager and the admin secret)")
-	}
 	return exe, nil
+}
+
+// unsandboxedRefusal (#68): na Windows brez škatle MXC ukazi agenta (lokalna orodja, Bash, PowerShell) le z
+// allowUnsandboxedBash. Prej ob nalaganju nastavitev; zdaj ob zahtevi, ker o škatli odloči preizkus ob zagonu.
+// "" = dovoljeno.
+func (c serveConfig) unsandboxedRefusal(cfgDir string) string {
+	if runtime.GOOS != "windows" || c.AllowUnsandboxedBash || agentSandboxed(cfgDir) {
+		return ""
+	}
+	if c.AllowLocalTools {
+		return "local tools include commands (Bash, PowerShell), which have no sandbox on Windows: also set \"allowUnsandboxedBash\": true, or turn local tools off"
+	}
+	if t := unsandboxedTools(c.Tools); len(t) > 0 {
+		return "tools " + strings.Join(t, ", ") + " have no sandbox on Windows: remove them from tools, or set \"allowUnsandboxedBash\": true to let agents run any command as this user (and read the provider API keys in Credential Manager and the admin secret)"
+	}
+	return ""
 }
 
 var validSources = regexp.MustCompile(`^((user|project|local)(,(user|project|local))*)?$`)

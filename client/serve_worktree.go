@@ -750,13 +750,25 @@ func grantDirs(wt string) (dirs, fixed []string, err error) {
 }
 
 // networkOffEnv (#67, kot Worktree.networkOff na Macu): MINIGW_NETWORK_OFF z imenom nastavitve, ko agent v klonu nima
-// omrežja za gradnje (ovoj zavrne oddaljen git clone). minigw serve ima stikalo le za Codex; Claude in Copilot ga nimata.
+// omrežja za gradnje (ovoj zavrne oddaljen git clone). network: Codex »Allow network access«, Claude (#68, odločitev 7)
+// »Network for builds« (worktreeNetwork, isto ime kot na Macu); Copilot stikala na minigw serve nima.
 func networkOffEnv(agent string, network bool) []string {
-	if agent == "codex" && !network {
+	switch {
+	case agent == "codex" && !network:
 		return []string{"MINIGW_NETWORK_OFF=Settings → Codex → Allow network access for commands"}
+	case agent == "claude" && !network:
+		return []string{"MINIGW_NETWORK_OFF=" + claudeNetworkSetting}
 	}
 	return nil
 }
+
+// claudeNetworkSetting: stikalo omrežja gradenj Claude (enako besedilo kot Worktree.networkOff na Macu).
+const claudeNetworkSetting = "Settings → General → Worktree mode → Network for builds"
+
+// claudeAPIHosts (#68): gostitelji, ki jih Claude Code v škatli MXC brez omrežja gradenj doseže prek posrednika vrat
+// izvajanja (API, prijava in osvežitev žetona). ponytail: seznam iz dokumentacije; zavrnjeni gostitelji so v dnevniku
+// (»refused CONNECT«), dodaj jih ob pravi napaki na HPX360.
+var claudeAPIHosts = []string{"api.anthropic.com", "console.anthropic.com", "platform.claude.com", "claude.ai", "statsig.anthropic.com"}
 
 // depsEnv (#67, kot Worktree.depsEnv na Macu): vse za gradnje agenta pod Scratch, nikoli v $TMPDIR, /tmp ali domači mapi.
 // Skupno za projekt (mapa klonov/.cache, kot .maven; sprejeto: pogovor lahko podtakne vsebino drugemu pogovoru istega
@@ -897,13 +909,38 @@ const tooManyPins = "nested clones too deep: use sync"
 func tooDeep(wt string, gits []string) bool { return len(pinPaths(wt, gits)) > maxPins }
 
 // worktreeClaudeEnv: okolje procesa Claude CLI v klonu: worktreeHarnessEnv, drugje kot na Windows še ovoj gitExecWrap
-// v mapi gw (N9; na Windows teče Claude v worktree le z »Allow commands without a sandbox«). gits: .git vseh klonov
+// v mapi gw (N9). Windows: v škatli MXC (#68) brez GIT_DIR in z ovojem gitWrapBin; brez škatle (le z »Allow commands
+// without a sandbox«) kot prej. gits: .git vseh klonov
 // (vrhnji prvi, hub.worktreeGits). nil = ovoja ni. agent: vrsta agenta (avtor commitov); #40: PATH najprej gw/bin
 // (pathWrapScript), za vse agente, ker jim navodilo nestedClonesNote ponudi git -C v ugnezdenem klonu.
 func worktreeClaudeEnv(wt, maven, tmp, gw string, gits []string, agent string) []string {
 	env := worktreeHarnessEnv(wt, maven, tmp, agent)
 	if runtime.GOOS == "windows" {
-		return env
+		if !windowsBox() || agent == "codex" { // brez škatle (in Codex, ki ni v njej): GIT_DIR klona, brez ovoja
+			return env
+		}
+		// #68: v škatli kot na Macu brez GIT_DIR (git najde klon in ugnezdene sam); ovoj git (minigw.exe) prvi na PATH
+		bin, real := gitWrapBin(gw), ""
+		if g, err := gitExe(); err == nil {
+			real = g
+		}
+		if bin == "" || real == "" {
+			return nil
+		}
+		path := []string{bin}
+		for _, p := range filepath.SplitList(os.Getenv("PATH")) {
+			if filepath.IsAbs(p) {
+				path = append(path, p)
+			}
+		}
+		out := []string{"MINIGW_CLONE=" + wt, "GIT_CEILING_DIRECTORIES=" + filepath.Dir(wt), "PATH=" + strings.Join(path, string(os.PathListSeparator)),
+			"MINIGW_REAL_GIT=" + real}
+		for _, kv := range env {
+			if k, _, _ := strings.Cut(kv, "="); k != "GIT_DIR" && k != "GIT_WORK_TREE" && k != "GIT_COMMON_DIR" {
+				out = append(out, kv)
+			}
+		}
+		return out
 	}
 	w := gitWrapEnv(gits, gw)
 	if w == nil {
@@ -943,7 +980,7 @@ func agentPath(gw string) string {
 	if len(path) == 1 {
 		path = append(path, "/usr/bin", "/bin")
 	}
-	return strings.Join(path, ":")
+	return strings.Join(path, string(os.PathListSeparator))
 }
 
 // gitWrapEnv: GIT_EXEC_PATH z ovojem gitExecWrap v gw in MINIGW_GIT_DIRS (edini GIT_DIR, ki jih ovoj pusti; absolutne
@@ -975,11 +1012,11 @@ func worktreeNote(clientCwd, dir, branch string, gits []string, sandboxed bool) 
 	return "The user's folder " + clientCwd + " (on their computer, a git repository) is a clone here at " + dir + ", your working" +
 		" directory, on branch " + branch + ". Map paths under " + clientCwd + " to it." + commit +
 		" The branch goes back to the user's repository; their files are not changed." +
-		" Build output (.build, target, DerivedData) is never committed." + nestedClonesNote(gits) + depsNote(depsDir(filepath.Dir(gits[0])), sandboxed && runtime.GOOS != "windows")
+		" Build output (.build, target, DerivedData) is never committed." + nestedClonesNote(gits) + depsNote(depsDir(filepath.Dir(gits[0])), sandboxed && (runtime.GOOS != "windows" || windowsBox()))
 }
 
-// depsNote (#67, kot ClaudeCLI.depsNote na Macu): kam gredo odvisnosti in repozitoriji agenta. Windows: brez peskovnika
-// agenta (#68) git init/clone tam ni (ovoja PATH ni, GIT_DIR klona bi ga znova inicializiral).
+// depsNote (#67, kot ClaudeCLI.depsNote na Macu): kam gredo odvisnosti in repozitoriji agenta. Windows: le v škatli MXC
+// (#68, ovoj minigw.exe kot git.exe); brez nje git init/clone tam ni (ovoja PATH ni, GIT_DIR klona bi ga znova inicializiral).
 // sandboxed: ukazi agenta nosijo oznako peskovnika (sicer ovoj git init/clone zavrne, npr. Copilot brez bwrap).
 func depsNote(deps string, sandboxed bool) string {
 	git := "git init and git clone work only there"

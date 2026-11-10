@@ -235,7 +235,7 @@ func TestAgentsWithoutSandboxNeedOptIn(t *testing.T) {
 	if runtime.GOOS != "linux" && sandboxed { // F4: le Linux z bwrap
 		t.Fatalf("%s sandboxed=%v", runtime.GOOS, sandboxed)
 	}
-	if s.agentsAllowed(serveConfig{}) != sandboxed || !s.agentsAllowed(serveConfig{AllowUnsandboxedBash: true}) {
+	if s.agentsAllowed(serveConfig{}, "grok") != sandboxed || !s.agentsAllowed(serveConfig{AllowUnsandboxedBash: true}, "grok") {
 		t.Fatal("opt-in")
 	}
 }

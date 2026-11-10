@@ -63,6 +63,12 @@ func TestPeerTables(t *testing.T) {
 
 // Testni program je tudi pomočnik agentov (startAgent na Linuxu požene /proc/self/exe __minigw-agent …).
 func TestMain(m *testing.M) {
+	if os.Getenv("MINIGW_TEST_FAKE_WXC") == "1" { // #68: lažni wxc-exec (mxc_test.go)
+		fakeWxcMain()
+	}
+	if isGitWrap() { // #68: kopija testnega programa kot git.exe (TestGitWrapExec)
+		gitWrapMain(os.Args[1:])
+	}
 	if len(os.Args) > 1 && os.Args[1] == agentReaperCmd {
 		agentReaperMain(os.Args[2:])
 	}
@@ -213,7 +219,7 @@ func TestAgentWrapHidesConfig(t *testing.T) {
 	defer os.Remove(home + "/.minigw-test-private")
 	copyDir := t.TempDir()
 	os.WriteFile(copyDir+"/src.txt", []byte("COPY"), 0o600)
-	name, args := agentWrap("/bin/sh", []string{"-c", "cat " + cfg + "/serve.json " + home + "/.minigw-test-private " + copyDir + "/src.txt " +
+	name, args, _, _ := agentWrap("/bin/sh", []string{"-c", "cat " + cfg + "/serve.json " + home + "/.minigw-test-private " + copyDir + "/src.txt " +
 		home + "/.mgwtest/bin/tool " + home + "/.mgwtest/other; ls -A " + home + "/.mgwtest/bin/.ssh; echo end"},
 		agentMounts{cfgDir: cfg, rw: []string{copyDir}})
 	if name == "/bin/sh" {
