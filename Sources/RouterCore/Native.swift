@@ -329,17 +329,29 @@ public enum Native {
     }
 
     /// V peskovniku drug peskovnik ni mogoč (sandbox_apply: Operation not permitted), zato SwiftPM in Xcode brez svojega.
-    /// `cache`: predpomnilnik SwiftPM (manifesti, kloni) v zasebni mapi zagona (#24), ne ~/Library/Caches (C1, le branje).
+    /// `runTmp`: zasebna mapa zagona (#24); v njej predpomnilnik SwiftPM (manifesti, kloni; ne ~/Library/Caches, C1, le
+    /// branje), pri xcodebuild še paketi (-packageCachePath, -clonedSourcePackagesDirPath) in rezultat (-resultBundlePath;
+    /// sicer v DARWIN_USER_TEMP_DIR). Kar uporabnik poda sam, ostane. DerivedData ostane v ~/Library/Developer (buildCaches).
     /// Nastavitve in prstni odtisi (~/Library/org.swift.swiftpm/configuration, security) ostanejo lastnikovi in le za
     /// branje: zrcala in TOFU odtisi paketov veljajo tudi v run (svež --security-path bi preverjanje odtisov izklopil).
-    static func withoutNestedSandbox(_ argv: [String], cache: String? = nil) -> [String] {
+    static func withoutNestedSandbox(_ argv: [String], runTmp: String? = nil) -> [String] {
         var a = argv
+        let cache = runTmp.map { $0 + "/swiftpm-cache" }
+        func unless(_ flag: String, _ value: String?) {
+            if let value, !a.contains(where: { $0 == flag || $0.hasPrefix(flag + "=") }) { a += [flag, value] }
+        }
         switch a.first {
         case "swift" where a.count > 1 && ["build", "test", "run", "package"].contains(a[1]):
             if let cache, !a.contains(where: { $0 == "--cache-path" || $0.hasPrefix("--cache-path=") }) { a.insert(contentsOf: ["--cache-path", cache], at: 2) }
             if !a.contains("--disable-sandbox") { a.insert("--disable-sandbox", at: 2) }
         case "xcodebuild":
             a += ["-IDEPackageSupportDisableManifestSandbox=YES", "ENABLE_USER_SCRIPT_SANDBOXING=NO"]
+            // #72: diagnostika nalaganja manifestov (ManifestLoading/*.dia) je v ~/Library/Caches ne glede na
+            // -packageCachePath; brez predpomnilnika manifestov je xcodebuild ne piše (paket brez .xcodeproj).
+            if runTmp != nil, !a.contains(where: { $0.hasPrefix("-IDEDisablePackageManifestCaching") }) { a.append("-IDEDisablePackageManifestCaching=YES") }
+            unless("-resultBundlePath", runTmp.map { $0 + "/xcodebuild.xcresult" })
+            unless("-packageCachePath", cache)
+            unless("-clonedSourcePackagesDirPath", runTmp.map { $0 + "/SourcePackages" })
         default: break
         }
         return a
@@ -555,7 +567,7 @@ extension Router {
         guard let exe = Native.executable(argv[0], dir: dir, path: env["PATH"]!) else {
             return await error(404, "not_found_error", "minigw run: \(argv[0]) not found on the gateway", rid: rid, writer: writer)
         }
-        let args = Array(Native.withoutNestedSandbox(argv, cache: realTmp + "/swiftpm-cache").dropFirst())
+        let args = Array(Native.withoutNestedSandbox(argv, runTmp: realTmp).dropFirst())
         guard let (pid, out, err, _) = Native.spawnGroup("/usr/bin/sandbox-exec", ["-p", profile, exe] + args, dir: dir, env: env) else {
             return await self.error(500, "api_error", "minigw run: cannot start \(argv[0])", rid: rid, writer: writer)
         }

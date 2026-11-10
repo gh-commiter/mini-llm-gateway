@@ -275,11 +275,18 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     #expect(Native.withoutNestedSandbox(["swift", "--version"]) == ["swift", "--version"])
     #expect(Native.withoutNestedSandbox(["mvn", "-q"]) == ["mvn", "-q"])
     // #24: predpomnilnik SwiftPM v zasebni mapi zagona; lastna --cache-path ostane
-    #expect(Native.withoutNestedSandbox(["swift", "build"], cache: "/s/c") == ["swift", "build", "--disable-sandbox", "--cache-path", "/s/c"])
-    #expect(Native.withoutNestedSandbox(["swift", "package", "resolve"], cache: "/s/c") == ["swift", "package", "--disable-sandbox", "--cache-path", "/s/c", "resolve"])
-    #expect(Native.withoutNestedSandbox(["swift", "build", "--cache-path=/x"], cache: "/s/c") == ["swift", "build", "--disable-sandbox", "--cache-path=/x"])
-    #expect(Native.withoutNestedSandbox(["swift", "test", "--disable-sandbox"], cache: "/s/c") == ["swift", "test", "--cache-path", "/s/c", "--disable-sandbox"])
-    #expect(Native.withoutNestedSandbox(["mvn"], cache: "/s/c") == ["mvn"])
+    #expect(Native.withoutNestedSandbox(["swift", "build"], runTmp: "/s") == ["swift", "build", "--disable-sandbox", "--cache-path", "/s/swiftpm-cache"])
+    #expect(Native.withoutNestedSandbox(["swift", "package", "resolve"], runTmp: "/s") == ["swift", "package", "--disable-sandbox", "--cache-path", "/s/swiftpm-cache", "resolve"])
+    #expect(Native.withoutNestedSandbox(["swift", "build", "--cache-path=/x"], runTmp: "/s") == ["swift", "build", "--disable-sandbox", "--cache-path=/x"])
+    #expect(Native.withoutNestedSandbox(["swift", "test", "--disable-sandbox"], runTmp: "/s") == ["swift", "test", "--cache-path", "/s/swiftpm-cache", "--disable-sandbox"])
+    #expect(Native.withoutNestedSandbox(["mvn"], runTmp: "/s") == ["mvn"])
+    // #72: xcodebuild: rezultat, paketi in predpomnilnik v zasebni mapi zagona; uporabnikove poti ostanejo
+    let x = ["xcodebuild", "-IDEPackageSupportDisableManifestSandbox=YES", "ENABLE_USER_SCRIPT_SANDBOXING=NO"]
+    #expect(Native.withoutNestedSandbox(["xcodebuild"], runTmp: "/s") == x + ["-IDEDisablePackageManifestCaching=YES", "-resultBundlePath", "/s/xcodebuild.xcresult",
+        "-packageCachePath", "/s/swiftpm-cache", "-clonedSourcePackagesDirPath", "/s/SourcePackages"])
+    #expect(Native.withoutNestedSandbox(["xcodebuild", "-resultBundlePath", "/r", "-clonedSourcePackagesDirPath", "/p"], runTmp: "/s")
+            == ["xcodebuild", "-resultBundlePath", "/r", "-clonedSourcePackagesDirPath", "/p"] + x.dropFirst() + ["-IDEDisablePackageManifestCaching=YES", "-packageCachePath", "/s/swiftpm-cache"])
+    #expect(Native.withoutNestedSandbox(["xcodebuild"]) == x)
 }
 
 @Test func nativeRunIsSandboxedAndEndsWithItsGroup() async throws {
