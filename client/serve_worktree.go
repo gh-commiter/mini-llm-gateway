@@ -297,7 +297,12 @@ func gitRunBox(box *gitBox, repo, cwd string, env []string, input string, args .
 	cmd.Stdout, cmd.Stderr, cmd.Stdin = &out, &stderr, strings.NewReader(input)
 	err = cmd.Run()
 	if line, _, _ := strings.Cut(strings.TrimSpace(stderr.String()), "\n"); err != nil && line != "" {
-		err = fmt.Errorf("%w: %s", err, clean(line)) // #54: razlog gita (prva vrstica) v logu
+		if r := []rune(clean(line)); len(r) > 300 { // #54: razlog gita (prva vrstica, največ 300 znakov) v logu
+			line = string(r[:300]) + "…"
+		} else {
+			line = string(r)
+		}
+		err = fmt.Errorf("%w: %s", err, line)
 	}
 	return strings.TrimSpace(out.String()), err
 }
