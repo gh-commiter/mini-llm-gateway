@@ -680,7 +680,8 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     #expect(await mount("w1", writes: true) == dir)
     #expect(await mount("w2", writes: true) == nil)
     #expect(await hub.sessionMode(session, device: "dev") == ("native-direct", false, ""))  // v mapi sami: brez veje
-    #expect(await ShareHub.$run.withValue("w2") { await hub.takeRefusal() }?.message.contains("Another agent is still changing /Volumes/share/x") == true)
+    let w2 = await ShareHub.$run.withValue("w2") { await hub.takeRefusal() }
+    #expect(w2?.status == 409 && w2?.message.contains("Another agent is still changing /Volumes/share/x") == true)
     #expect(await mount("r1", writes: false) == dir)  // bralec ne čaka
     #expect(await mount("w1", writes: true) == dir)   // isto izvajanje znova
     await hub.finish(run: "w1")
@@ -694,7 +695,8 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     #expect(!ShareHub.overlaps(ShareHub.writerKey(scope: "dav:d1", path: "/x"), ShareHub.writerKey(scope: "dav:d2", path: "/x")))
     #expect(await hub.waitWriter(a, folder: "/x/a", writes: true, run: "run-1"))
     #expect(await hub.waitWriter(ab, folder: "/x/a/b", writes: true, run: "run-2") == false)
-    #expect(await ShareHub.$run.withValue("run-2") { await hub.takeRefusal() }?.message.contains("/x/a/b") == true)
+    let r2 = await ShareHub.$run.withValue("run-2") { await hub.takeRefusal() }
+    #expect(r2?.status == 409 && r2?.message.contains("/x/a/b") == true)
     await hub.releaseWriter(run: "run-1")
     #expect(await hub.waitWriter(ab, folder: "/x/a/b", writes: true, run: "run-2"))
     await hub.releaseWriter(run: "run-2")
