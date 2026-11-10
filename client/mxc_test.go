@@ -594,3 +594,30 @@ func TestToolRoot(t *testing.T) {
 		}
 	}
 }
+
+// Scratch v domači mapi: opozorilo (naštevanje domače mape v škatli); zunaj nje nič.
+func TestScratchHomeWarning(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	if w := scratchHomeWarning(filepath.Join(home, "AppData", "Local", "minigw", "scratch")); !strings.Contains(w, "inside your home folder") {
+		t.Fatalf("warning: %q", w)
+	}
+	if w := scratchHomeWarning(t.TempDir()); w != "" {
+		t.Fatalf("outside: %q", w)
+	}
+}
+
+// PATCH in POST general ne vrneta vrstice za povezavo (žeton); GET jo.
+func TestGeneralNoTokenEcho(t *testing.T) {
+	s, _, base := liveServer(t, nil)
+	if _, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/general", `{"allowedClients":""}`); strings.Contains(b, "connect") || strings.Contains(b, s.conf().Token) {
+		t.Fatalf("PATCH: %s", b)
+	}
+	if _, b := adminNoise(t, s, base, s.admin, "POST", adminPrefix+"/general/token", ""); strings.Contains(b, "connect") || strings.Contains(b, s.conf().Token) {
+		t.Fatalf("POST token: %s", b)
+	}
+	if _, b := adminNoise(t, s, base, s.admin, "GET", adminPrefix+"/general", ""); !strings.Contains(b, "connect") {
+		t.Fatalf("GET: %s", b)
+	}
+}

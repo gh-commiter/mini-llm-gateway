@@ -17,7 +17,8 @@ var mxcState struct {
 	mu       sync.Mutex
 	ready    bool
 	reason   string
-	loopback bool // preizkus je dosegel 127.0.0.1 (vprašanja drugim modelom)
+	loopback bool   // preizkus je dosegel 127.0.0.1 (vprašanja drugim modelom)
+	warning  string // npr. Scratch v domači mapi
 }
 
 // windowsBox: agenti (razen Codex) tečejo v škatli MXC.
@@ -64,6 +65,12 @@ func sandboxInit(scratch, cfgDir string, logf func(string, ...any)) {
 	worktreeNeedsUnsandboxed = why != ""
 	if why == "" {
 		logf("agents run in the Windows sandbox (MXC %s)", mxcRelease)
+		if w := scratchHomeWarning(scratch); w != "" {
+			mxcState.mu.Lock()
+			mxcState.warning = w
+			mxcState.mu.Unlock()
+			logf("Windows sandbox: %s", w)
+		}
 		if !loopOK { // vpliva le na »May ask other models« (vrata izvajanja na 127.0.0.1)
 			logf("Windows sandbox: agents in it cannot reach 127.0.0.1, so \"May ask other models\" does not work there (%s)", detail)
 		}
@@ -81,6 +88,9 @@ func agentSandboxInfo() map[string]string {
 	defer mxcState.mu.Unlock()
 	if mxcState.ready {
 		o := map[string]string{"kind": "mxc", "version": mxcRelease}
+		if mxcState.warning != "" {
+			o["warning"] = mxcState.warning
+		}
 		if !mxcState.loopback {
 			o["askOthers"] = "agents in the sandbox cannot reach 127.0.0.1, so May ask other models does not work"
 		}

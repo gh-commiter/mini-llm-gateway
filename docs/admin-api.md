@@ -213,8 +213,8 @@ Notes:
   `"sign-in"`, or `""` (it does not start on its own). `agents` counts the claude, codex and grok processes that
   run right now; an update stops them, so check it first. `agentsUnsandboxed` (Go gateway): Codex and Grok have no sandbox here that hides the gateway's secrets
   (Windows without the Windows sandbox, Linux without a working `bwrap`), so they run only with `allowUnsandboxedBash`.
-  `agentSandbox` (Go gateway on Windows, #68): `{"kind": "mxc", "version": "1.0.1"}` when agents run in the Windows
-  sandbox, else `{"kind": "", "reason": "…"}`. When the sandbox cannot reach 127.0.0.1 it also has
+  `connect` (the line with the gateway token) is only in `GET /general`; `PATCH /general` and `POST /general/token` leave it out (Go gateway). `agentSandbox` (Go gateway on Windows, #68): `{"kind": "mxc", "version": "1.0.1"}` when agents run in the Windows
+  sandbox (plus `warning` when Scratch is inside the home folder), else `{"kind": "", "reason": "…"}`. When the sandbox cannot reach 127.0.0.1 it also has
   `"askOthers": "agents in the sandbox cannot reach 127.0.0.1, so May ask other models does not work"`.
   `GET /agents/{codex,grok,copilot}` also has `sandboxed`: the agent has a sandbox without `allowUnsandboxedBash`
   (on Windows Codex: its own elevated sandbox). `GET/PATCH /general`

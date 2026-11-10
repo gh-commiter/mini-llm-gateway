@@ -151,8 +151,10 @@ Details:
     worktree mode;
   - denied: the gateway's config folder. Everything else (your home folder, other devices' copies, the rest of Scratch,
     the registry outside the container) is not readable. The container can list the names in the folders above the
-    folders it may write and above its working folder (git needs them), not above read-only ones; with an allowed
-    folder inside your home, that includes the home. MXC may let a listing grant reach subfolders (HPX360 saw
+    folders it may write and above its working folder (git needs them), not above read-only ones; with Scratch (the
+    default `%LOCALAPPDATA%\minigw\scratch`) or an allowed folder inside your home, that includes the home and every
+    folder on the way, and the gateway warns about Scratch there: move it outside your home (for example
+    `D:\minigw-scratch`). MXC may let a listing grant reach subfolders (HPX360 saw
     `dir ~\.ssh` list names while reading the files was denied): names can show, file contents cannot.
   - The request for each run (it holds the Claude token or an API key you chose) is written to `Scratch\tmp\mxc`, a
     folder only your user can open (protected access list, also on a D: drive), outside every grant, and deleted after

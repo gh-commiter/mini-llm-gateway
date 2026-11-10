@@ -312,6 +312,17 @@ func mxcPathDirs(path []string, keep []string, home, scratch, cfgDir string) []s
 	return out
 }
 
+// scratchHomeWarning (#68): Scratch v domači mapi (privzeto %LOCALAPPDATA%\minigw\scratch): git v škatli rabi
+// naštevanje vseh prednikov svoje mape, zato agenti vidijo imena v domači mapi (tudi .ssh), ne vsebine. "" = ne.
+func scratchHomeWarning(scratch string) string {
+	home, _ := os.UserHomeDir()
+	if home == "" || scratch == "" || !under(realPath(scratch), realPath(home)) {
+		return ""
+	}
+	return "the Scratch folder " + scratch + " is inside your home folder, so agents in the sandbox can list the names " +
+		"in your home folder (not read the files); move Scratch outside your home, for example D:\\minigw-scratch (Settings → General → Scratch folder)"
+}
+
 // toolRoot: za mapo PATH »…\bin« njen starš (koren orodja: Maven boot, lib, conf; JDK), razen če je koren diska ali
 // domača mapa, Scratch ali mapa nastavitev, v njih ali nad njimi; sicer "".
 func toolRoot(d, home, scratch, cfgDir string) string {

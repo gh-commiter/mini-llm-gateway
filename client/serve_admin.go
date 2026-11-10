@@ -82,7 +82,7 @@ type apiClaude struct {
 type apiGeneral struct {
 	Port             int    `json:"port"`
 	Address          string `json:"address"`
-	Connect          string `json:"connect"`
+	Connect          string `json:"connect,omitempty"` // le GET (žeton prehoda); PATCH in POST ga ne vrneta
 	RestartRequired  bool   `json:"restartRequired,omitempty"`
 	AllowedClients   string `json:"allowedClients"`
 	AllowPlainRemote bool   `json:"allowPlainRemote"`
@@ -956,7 +956,9 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		}); err != nil {
 			return fail(500, err.Error())
 		}
-		return 200, s.apiGeneral(restart && !s.offline)
+		g := s.apiGeneral(restart && !s.offline)
+		g.Connect = "" // brez žetona v odgovoru na spremembo
+		return 200, g
 	case "POST settings/{}":
 		if arg != "login" {
 			return fail(404, "Not found: "+method+" "+uri)
@@ -976,7 +978,9 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			return fail(500, err.Error())
 		}
 		s.settings.clear() // nov žeton konča tudi seje strani z nastavitvami
-		return 200, s.apiGeneral(false)
+		g := s.apiGeneral(false)
+		g.Connect = "" // novo vrstico da le GET general
+		return 200, g
 	}
 	return fail(404, "Not found: "+method+" "+uri)
 }
