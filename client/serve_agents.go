@@ -1280,6 +1280,7 @@ func (s *server) runAgentProcess(ctx context.Context, r *req, exe string, args [
 	}
 	s.agentsRunning.Add(1)
 	defer s.agentsRunning.Add(-1)
+	defer context.AfterFunc(ctx, func() { stdout.Close() })() // N1: branje konča tudi, ko vnuk še drži stdout
 	br := bufio.NewReader(stdout)
 	var line []byte
 	skip := false // L4: vrstica nad maxAgentLine se zavrže (pomnilnik)

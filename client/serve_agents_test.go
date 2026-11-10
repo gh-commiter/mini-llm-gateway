@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -666,5 +667,31 @@ func TestCappedMode(t *testing.T) {
 	}
 	if got := (serveConfig{Codex: agentCLI{Work: "worktree"}}).cappedKinds("worktree"); got != nil {
 		t.Errorf("cappedKinds worktree: %q", got)
+	}
+}
+
+// N1: prekinitev konča branje izhoda, tudi ko vnuk še drži stdout (prej je zanka čakala na EOF in mesto teka ostalo zasedeno).
+func TestRunAgentProcessCancelGrandchild(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sh")
+	}
+	s := &server{log: log.New(io.Discard, "", 0)}
+	ctx, cancel := context.WithCancel(context.Background())
+	lines := make(chan string, 1)
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() {
+		done <- s.runAgentProcess(ctx, &req{rid: "req_1"}, "sh", []string{"-c", "sleep 20 2>/dev/null & echo up; sleep 20"}, agentMounts{}, t.TempDir(), "",
+			func(b []byte) { lines <- string(b) })
+	}()
+	<-lines
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the read loop did not end after cancel")
+	}
+	if d := time.Since(start); d > 10*time.Second {
+		t.Fatalf("took %v", d)
 	}
 }

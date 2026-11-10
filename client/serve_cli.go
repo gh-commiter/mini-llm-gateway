@@ -1031,6 +1031,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			}
 		}()
 	}
+	defer context.AfterFunc(ctx, func() { stdout.Close() })() // N1: branje konča tudi, ko vnuk še drži stdout
 	br := bufio.NewReader(stdout)
 	for {
 		line, err := br.ReadBytes('\n')
