@@ -36,6 +36,7 @@ func testServer(t *testing.T, mod func(*serveConfig)) (*server, *ecdh.PrivateKey
 	t.Helper()
 	k, _ := ecdh.X25519().GenerateKey(rand.Reader)
 	c := serveConfig{Token: "tok", Key: base64url(k.Bytes()), Tools: defaultTools, PermissionMode: "dontAsk", Scratch: t.TempDir()}
+	t.Cleanup(releaseScratch) // Windows: ročaj Scratch bi preprečil brisanje TempDir
 	if mod != nil {
 		mod(&c)
 	}
@@ -389,6 +390,7 @@ func TestServeRealClaudeStaysInCopy(t *testing.T) {
 		t.Skip("set MINIGW_REAL_CLAUDE=1 with Claude Code installed")
 	}
 	base, _ := filepath.EvalSymlinks(t.TempDir())
+	t.Cleanup(releaseScratch) // Windows: ročaj Scratch bi preprečil brisanje TempDir
 	cfgPath := filepath.Join(base, "cfg", "serve.json")
 	os.MkdirAll(filepath.Dir(cfgPath), 0o700)
 	os.WriteFile(cfgPath, []byte(`{"token":"CONFIG-SECRET-7731"}`), 0o600)
@@ -453,6 +455,7 @@ func TestServeFolderNotNearConfig(t *testing.T) {
 	for _, d := range []string{"cfg/x", "work"} {
 		os.MkdirAll(filepath.Join(base, d), 0o700)
 	}
+	t.Cleanup(releaseScratch)
 	scratch := filepath.Join(t.TempDir(), "scratch") // ne v base: dovoljena mapa okoli Scratch se ob zagonu le izpusti
 	for folder, bad := range map[string]bool{base: true, filepath.Join(base, "cfg"): true, filepath.Join(base, "cfg", "x"): true, filepath.Join(base, "work"): false} {
 		_, err := newServer(serveConfig{Token: "tok", Key: base64url(k.Bytes()), Claude: "/bin/sh", Scratch: scratch, AllowedFolders: []string{folder}}, cfgPath)

@@ -344,7 +344,7 @@ func protectScratch(dir string) error {
 // nova podmapa v tej mapi; CREATOR OWNER vse na podmapah (vsaka mapa prehoda ima še svoj zaščiten DACL).
 const scratchParentSDDL = "D:P(A;;FA;;;%s)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;;0x1200ad;;;AU)(A;OICIIO;FA;;;CO)"
 
-// scratchHold: ročaj trenutne mape Scratch (brez FILE_SHARE_DELETE), odprt, dokler prehod teče.
+// scratchHold: ročaj trenutne mape Scratch (openDir: s seznamom, brez FILE_SHARE_DELETE), odprt, dokler prehod teče.
 var scratchHold struct {
 	sync.Mutex
 	h windows.Handle
@@ -376,7 +376,8 @@ func scratchFolderMine(dir string) bool {
 	return true
 }
 
-// scratchLocked: drug prehod drži ročaj mape dir brez deljenja brisanja (odpiranje z DELETE: kršitev deljenja).
+// scratchLocked: drug prehod (ali program z mapo kot trenutno) drži ročaj mape dir s podatkovnim dostopom brez deljenja
+// brisanja: odpiranje z DELETE je kršitev deljenja. Druge napake (npr. ni dostopa) niso zaklep.
 func scratchLocked(dir string) bool {
 	u, err := windows.UTF16PtrFromString(dir)
 	if err != nil {
@@ -393,6 +394,9 @@ func scratchLocked(dir string) bool {
 
 // openDir: ročaj mape p (brez sledenja povezavi, brez FILE_SHARE_DELETE, z WRITE_DAC, če ga dobimo) in odločitev ok iz
 // atributov, lastnika in DACL tega ročaja. Brez dostopa: errForeignOwner (mapa drugega uporabnika).
+// Ročaj ima tudi FILE_LIST_DIRECTORY|FILE_TRAVERSE: NTFS deljenje uveljavi le proti ročajem s podatkovnim dostopom ali
+// DELETE, ročaj samo z READ_CONTROL/WRITE_DAC ne prepreči poznejšega odpiranja z DELETE (preimenovanje, HPX360). Drugo
+// odpiranje iste mape (tudi naše, med držanjem) mora zato deliti READ|WRITE in ne sme zahtevati DELETE (kot tu).
 func openDir(p string, ok func(mode os.FileMode, owner, me string, dacl []scratchACE) error) (windows.Handle, error) {
 	u, err := windows.UTF16PtrFromString(p)
 	if err != nil {
@@ -402,8 +406,12 @@ func openDir(p string, ok func(mode os.FileMode, owner, me string, dacl []scratc
 		return windows.CreateFile(u, access, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_EXISTING,
 			windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
 	}
-	h, err := open(windows.READ_CONTROL | windows.WRITE_DAC)
+	const hold = windows.FILE_LIST_DIRECTORY | windows.FILE_TRAVERSE | windows.READ_CONTROL
+	h, err := open(hold | windows.WRITE_DAC)
 	if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+		h, err = open(hold)
+	}
+	if errors.Is(err, windows.ERROR_ACCESS_DENIED) { // le odločitev (npr. tuja mapa brez seznama); tak ročaj ne drži
 		h, err = open(windows.READ_CONTROL)
 	}
 	if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
