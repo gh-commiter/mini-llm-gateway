@@ -1049,8 +1049,9 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		}
 	}
 	werr := cmd.Wait()
-	if err := stopAgentTree(cmd); err != nil { // Windows: drevo teka ubito pred prevzemom sprememb
-		s.log.Printf("%s claude: %v", r.rid, err)
+	treeErr := stopAgentTree(cmd) // Windows: drevo teka ubito pred prevzemom sprememb; sicer jih ne prevzame
+	if treeErr != nil {
+		s.log.Printf("%s claude: %v", r.rid, treeErr)
 	}
 	stopMoves()                                          // syncBack in konec seje .git klona lahko odstranita
 	run.stop()                                           // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb
@@ -1061,7 +1062,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		return 499 // Claude Code je prekinil
 	}
 	// sync: spremembe agenta k odjemalcu pred koncem odgovora (Claude Code jih nato že vidi); med tem še ping
-	if !chat {
+	if !chat && treeErr == nil {
 		// vprašani agent: spremembe prenese klicatelj na koncu; L1: omejen (#45) ne prenese ničesar
 		if parent == nil && (r.applied == nil || r.applied.cap == "") {
 			s.hub.syncBack(session, "claude")
@@ -1070,6 +1071,9 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	msg := t.resultError
 	if swapped.Load() {
 		msg = "the agent replaced its clone's .git during the run (worktree mode), so the gateway stopped it"
+	}
+	if treeErr != nil {
+		msg = "its processes did not stop after the run, so the gateway did not take its changes; details are in the gateway log, request " + r.rid
 	}
 	if msg == "" && werr != nil && t.text == "" { // stderr le v dnevnik (I1)
 		if tail := strings.TrimSpace(stderr.String()); tail != "" {
@@ -1083,7 +1087,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		if !stream {
 			return writeAgentError(w, r.rid, status, "claude: "+clean)
 		}
-		if t.text == "" {
+		if t.text == "" || treeErr != nil {
 			s.noteLimit(r, model, status, "claude: "+clean)
 			send(sse("error", map[string]any{"type": "error", "error": map[string]string{"type": errType(status), "message": "claude: " + clean}}))
 			return status

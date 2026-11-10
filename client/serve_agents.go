@@ -1303,8 +1303,9 @@ func (s *server) runAgentProcess(ctx context.Context, r *req, exe string, args [
 		}
 	}
 	werr := cmd.Wait()
-	if err := stopAgentTree(cmd); err != nil { // Windows: drevo teka ubito, preden klicatelj prevzame spremembe
+	if err := stopAgentTree(cmd); err != nil { // Windows: drevo teka ubito, preden klicatelj prevzame spremembe; sicer jih ne prevzame
 		s.log.Printf("%s %s: %v", r.rid, filepath.Base(exe), err)
+		return fmt.Errorf("%s: its processes did not stop after the run, so the gateway did not take its changes; details are in the gateway log, request %s", filepath.Base(exe), r.rid)
 	}
 	if err := werr; err != nil {
 		tail := strings.TrimSpace(stderr.String())
