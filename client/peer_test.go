@@ -68,7 +68,7 @@ func TestMain(m *testing.M) {
 	}
 	if os.Getenv("MINIGW_TEST_INIT") == "1" { // #52: PID 1 žanje (initReaper), otrok pusti osirotelega vnuka
 		initReaper()
-		if _, err := os.ReadFile("/proc/1/environ"); err == nil { // M1: PID 1 ni dumpable
+		if _, err := os.ReadFile("/proc/1/environ"); err == nil && os.Getuid() != 0 { // M1: PID 1 ni dumpable (root ga bere vseeno)
 			fmt.Println("/proc/1/environ is readable")
 			os.Exit(4)
 		}
