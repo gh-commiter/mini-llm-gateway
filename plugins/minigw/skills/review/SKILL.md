@@ -2,31 +2,26 @@
 name: review
 description: Get an independent review of the current changes, a plan or a bug analysis from OpenAI Codex (GPT-6-Astra) through Mini Gateway. Use when the user asks for a second opinion or a review by another model.
 argument-hint: "[--rw] [--profile <p>] [what to review]"
-allowed-tools: Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw --minigw-ro -p --model *), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw -p --model *), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw --version), Bash(git diff), Bash(git diff --staged), Bash(git status), Bash(git status --short)
+allowed-tools: Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw --minigw-ro -p --model *), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw -p --model *), Bash(${CLAUDE_PLUGIN_DATA}/bin/minigw --version), Bash(git diff), Bash(git diff --staged), Bash(git diff HEAD), Bash(git status), Bash(git status --short)
 ---
 
 Profiles (`--name`, `profiles`, `--minigw-profile`, `<model>@<profile>`) need minigw 0.5.18 or newer: if the first line of `"${CLAUDE_PLUGIN_DATA}/bin/minigw" --version` is older, tell the user to run `/minigw:gw update` and do not use them (an older minigw passes them to claude).
 
-1. Collect what to review: the user's argument, or `git diff` and `git diff --staged` in a git repository. Read the diff yourself; the reviewer does not get it pasted (see below).
-2. Run the review with Bash (timeout 600000 ms). The folder is shared read-only (`--minigw-ro`): the reviewer cannot change files. Leave out `--minigw-ro` only if the user passed `--rw` (for example so the reviewer may run a build that writes output):
+1. Collect what to review: the user's argument, or `git diff` and `git diff --staged` in a git repository. Read the diff yourself.
+2. Run the review with Bash (timeout 600000 ms). The folder is shared read-only (`--minigw-ro`): the reviewer cannot change files. Leave out `--minigw-ro` only if the user passed `--rw` (for example so the reviewer may run a build that writes output). In a git repository, pipe the diff to minigw on stdin: a Windows or Linux gateway gets a read-only copy without `.git`, so the reviewer cannot run `git diff` there. Use exactly `git diff HEAD` (never other `git diff` options); for only the staged or only the unstaged changes use `git diff --staged` or `git diff`:
 
 ```sh
-"${CLAUDE_PLUGIN_DATA}/bin/minigw" --minigw-ro -p --model claude-codex-gpt-6-astra -- "$(cat <<'PROMPT'
+git diff HEAD | "${CLAUDE_PLUGIN_DATA}/bin/minigw" --minigw-ro -p --model claude-codex-gpt-6-astra -- "$(cat <<'PROMPT'
 You are an independent reviewer. Do not modify files.
 Goal of the change: <one or two sentences>
-Review the following in the current folder and report concrete problems first (bug, wrong assumption, missing case, security), with file and line, then smaller improvements briefly:
-<git range or "the uncommitted changes (git diff, git diff --staged)", and the changed file names>
-Changes per file (file, line ranges, what each hunk changes):
-<description per file, or the plan>
+The diff is on stdin. Review it together with the files in the current folder and report concrete problems first (bug, wrong assumption, missing case, security), with file and line, then smaller improvements briefly.
+Changed files, one line each (what changes):
+<short description per file, or the plan>
 PROMPT
 )"
 ```
 
-minigw refuses a prompt (also on stdin) that starts with `/` or has `@` at the start of a word (`@file`, `(@x`, `"@x`): the nested claude would run a slash command or attach that file. A pasted diff has `@@` headers and often `@` attributes, so never paste it. Give the reviewer two things instead:
-- the git range or "the uncommitted changes" and the changed file names, so a reviewer that sees `.git` (a Mac gateway in direct mode) can run `git diff` itself;
-- always also a description of the change per file: file name, line ranges and what each hunk changes. Quote changed lines only when they have no `@` at the start of a word and do not start with `/`; rewrite or describe the others.
-
-On a Windows or Linux gateway (read-only sync, no `.git`) the reviewer sees only the current files and this description, so make it complete enough to review from.
+minigw refuses a prompt argument that starts with `/` or has `@` at the start of a word (`@file`, `(@x`, `"@x`): the nested claude would run a slash command or attach that file. Text on stdin may contain `@` (the `@@` headers of a diff), but must not start with `/`. This needs minigw 0.5.21 or newer and Claude Code 2.1.318 or newer. If `minigw --version` is older, if `git diff HEAD` is empty or fails (for example no commit yet), if minigw refuses the stdin with "@ before a file name on stdin", or if it prints "stdin had no data within 3 s and was not sent", run without the pipe and do not paste the diff: give the git range or "the uncommitted changes", and a description per file (file name, line ranges, what each hunk changes); quote changed lines only when they have no `@` at the start of a word and do not start with `/`.
 
 `--profile <p>`: use `--model claude-codex-gpt-6-astra@<p>` (that gateway; `minigw profiles` lists them).
 

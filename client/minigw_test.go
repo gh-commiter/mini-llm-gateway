@@ -1050,7 +1050,7 @@ func TestUnsafePromptInsideClaudeCode(t *testing.T) {
 		{append(m, "@~/.ssh/id"), ""}, {append(m, "--", `see @"a b"`), ""}, {append(m, "--", "(@x"), ""}, {append(m, "--", "x\t@'y'"), ""},
 		{append(m, "--", "ok"), "summarize @/etc/passwd"}, {m, "/config permissionMode=acceptEdits"}, {[]string{"-p", "fix", "@/etc/hosts"}, ""},
 	} {
-		if unsafePrompt(c.args, c.stdin, env) == "" {
+		if unsafePrompt(c.args, c.stdin, env, false) == "" {
 			t.Errorf("%q stdin %q accepted", c.args, c.stdin)
 		}
 	}
@@ -1061,28 +1061,83 @@ func TestUnsafePromptInsideClaudeCode(t *testing.T) {
 		{append(m, "--", "email a@b.com"), ""}, {append(m, "--", "use 2 / 3"), ""}, {append(m, "--", "- fix x"), ""},
 		{append(m, "task"), "mail to a@b, not to me"}, {[]string{"-p", "--model", "/m", "--append-system-prompt", "@x", "ok"}, ""}, {nil, ""},
 	} {
-		if r := unsafePrompt(c.args, c.stdin, env); r != "" {
+		if r := unsafePrompt(c.args, c.stdin, env, false); r != "" {
 			t.Errorf("%q stdin %q refused (%s)", c.args, c.stdin, r)
 		}
 	}
 	// N6b: ločila pred @, ki jih claude 2.1.318 šteje za začetek besede (JS \s, U+FEFF, 。、？！), tudi na stdin
 	for _, sep := range []string{"\u00a0", "\u1680", "\u2000", "\u2003", "\u200a", "\u2028", "\u2029", "\u202f", "\u205f", "\u3000",
 		"\ufeff", "\v", "。", "、", "？", "！"} {
-		if unsafePrompt(append(m, "--", "x"+sep+"@/etc/hosts"), "", env) == "" || unsafePrompt(m, "x"+sep+"@/etc/hosts", env) == "" {
+		if unsafePrompt(append(m, "--", "x"+sep+"@/etc/hosts"), "", env, false) == "" || unsafePrompt(m, "x"+sep+"@/etc/hosts", env, false) == "" {
 			t.Errorf("%U before @ accepted", []rune(sep)[0])
 		}
 	}
 	for _, p := range []string{"a\u200b@b", "x\u0085@y", "x＠/etc/hosts", "x=@y", "x:@y"} { // claude jih ne priloži (izmerjeno)
-		if r := unsafePrompt(append(m, "--", p), "", env); r != "" {
+		if r := unsafePrompt(append(m, "--", p), "", env, false); r != "" {
 			t.Errorf("%q refused (%s)", p, r)
 		}
 	}
-	if unsafePrompt([]string{"-p", "/config x"}, "", func(string) string { return "" }) != "" {
+	if unsafePrompt([]string{"-p", "/config x"}, "", func(string) string { return "" }, false) != "" {
 		t.Error("refused outside Claude Code")
 	}
 	in["MINIGW_ALLOW_UNSAFE_FLAGS"] = "1"
-	if unsafePrompt([]string{"-p", "@/etc/hosts"}, "", env) != "" {
+	if unsafePrompt([]string{"-p", "@/etc/hosts"}, "", env, false) != "" {
 		t.Error("MINIGW_ALLOW_UNSAFE_FLAGS=1 ignored")
+	}
+}
+
+// #44: diff na stdin (»@@«) gre naprej le, ko claude »@« zanesljivo ne bere; »/« na stdin in »@« v argumentih ostaneta zavrnjena.
+func TestUnsafePromptStdin(t *testing.T) {
+	env := func(k string) string { return map[string]string{"CLAUDECODE": "1"}[k] }
+	m := []string{"-p", "--model", "m", "--", "review"}
+	diff := "diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+@~/.ssh/id_ed25519\n"
+	if r := unsafePrompt(m, diff, env, true); r != "" {
+		t.Errorf("diff refused with mentions off: %s", r)
+	}
+	if r := promptRefusal(unsafePrompt(m, diff, env, false)); r != "@ before a file name on stdin (claude would attach that file) is not accepted when minigw runs inside Claude Code; remove the @ before file names on stdin or update Claude Code to 2.1.318 or newer" {
+		t.Errorf("diff without mentions off: %q", r)
+	}
+	if r := promptRefusal(unsafePrompt([]string{"-p", "--", "@x"}, "", env, true)); r != "@ before a file name (claude would attach that file) is not accepted when minigw runs inside Claude Code: paste the text itself into the prompt" {
+		t.Errorf("argument: %q", r)
+	}
+	if unsafePrompt([]string{"-p", "--", "@x review"}, "", env, true) == "" || unsafePrompt([]string{"-p", "--", "ok"}, " /config x", env, true) == "" {
+		t.Error("@ in the argument or / on stdin accepted")
+	}
+	for v, want := range map[string]bool{"2.1.318 (Claude Code)": true, "2.1.319": true, "2.2.0 (Claude Code)": true, "10.0.0": true,
+		"2.1.317 (Claude Code)": false, "2.0.999": false, "garbage": false, "": false, "2.1.318-beta": false} {
+		if mentionGuardVersion(v) != want {
+			t.Errorf("version %q: want %v", v, want)
+		}
+	}
+}
+
+// I1: na poti -v/-h claude nima --settings, zato »@« na stdin nikoli; različico preveri le ob »@«.
+func TestStdinMentionsOff(t *testing.T) {
+	asked := 0
+	v := func(s string) func() string { return func() string { asked++; return s } }
+	diff := "@@ -1 +1 @@\n"
+	if !stdinMentionsOff(diff, false, true, v("2.1.318 (Claude Code)")) {
+		t.Error("diff refused with guard and 2.1.318")
+	}
+	if stdinMentionsOff(diff, true, true, v("2.1.318")) || stdinMentionsOff(diff, false, false, v("2.1.318")) ||
+		stdinMentionsOff(diff, false, true, v("2.1.317")) || stdinMentionsOff(diff, false, true, v("")) {
+		t.Error("accepted on the info path, without the guard, or with an old or unknown claude")
+	}
+	asked = 0
+	if stdinMentionsOff("no mention", false, true, v("2.1.318")) || asked != 0 {
+		t.Errorf("no @: version asked %d times", asked)
+	}
+}
+
+func TestStdinNote(t *testing.T) {
+	if n := stdinNote(nil, stdinWait, os.ModeNamedPipe); n != "minigw: stdin had no data within 3 s and was not sent" {
+		t.Errorf("pipe: %q", n)
+	}
+	if stdinNote(nil, stdinWait, 0) == "" { // navadna datoteka
+		t.Error("regular file: no note")
+	}
+	if stdinNote([]byte{}, stdinWait, os.ModeNamedPipe) != "" || stdinNote(nil, 0, os.ModeNamedPipe) != "" || stdinNote(nil, stdinWait, os.ModeSocket) != "" {
+		t.Error("note without a dropped pipe")
 	}
 }
 

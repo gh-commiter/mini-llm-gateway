@@ -17,6 +17,8 @@
 - `minigw serve` refuses nested repositories in worktree mode when its git is older than 2.40 ("nested git repositories need git 2.40 or later on the gateway; update git or use sync").
 - Security: on Linux the plugin's session hook no longer runs or links `~/.local/bin/minigw` when it, its folder or a folder above it is not yours (or root's) or is writable by others.
 - Security: `minigw plugin install` links the plugin's minigw only when every folder above minigw is safe (not writable by others, owned by you or root; a sticky folder like /tmp is allowed higher up).
+- `/minigw:review` on a Windows or Linux gateway: the skill now pipes `git diff HEAD` to the reviewer on stdin, so the reviewer sees the real diff instead of a description (the gateway's read-only copy has no `.git`). Inside Claude Code, minigw accepts `@` on stdin (diff `@@` lines) when Claude Code is 2.1.318 or newer; it then also passes `--settings` that keep file mentions off for the nested claude even if your `settings.json` `env` turns them on. With an older Claude Code such stdin is refused as before, with a hint. `@` in prompt arguments and `/` at the start of a prompt or of stdin are still refused. The other agent skills say that a diff can be piped. Both clients.
+- Fixed: when a run with a prompt argument got no stdin data within 3 s (for example a slow `git diff`), minigw sent nothing without a word; it now prints `minigw: stdin had no data within 3 s and was not sent`. Both clients.
 
 ## 0.5.20
 

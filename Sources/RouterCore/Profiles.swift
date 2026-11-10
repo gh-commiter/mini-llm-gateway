@@ -109,12 +109,47 @@ public enum Profiles {
     /// N6, N7: claude -p bere navodilo kot vnos uporabnika: »@pot« (na začetku besede, tudi za ( " ', U+FEFF in 。、？！ kot
     /// pri claude, N6b) priloži katero koli datoteko, »/ukaz« zažene ukaz s poševnico (npr. /config permissionMode=…).
     /// nil = dovoljeno (kot Go promptRefused). Le še varovalka: claude dobi CLAUDE_CODE_DISABLE_FILE_MENTIONS (promptGuard).
-    static func promptRefused(_ p: String) -> String? {
+    /// mentionsOff: »@« dovoljen (claude ga zanesljivo ne bere, #44).
+    static func promptRefused(_ p: String, mentionsOff: Bool = false) -> String? {
         if p.drop(while: { $0.isWhitespace }).hasPrefix("/") { return "a prompt that starts with / (a slash command)" }
-        if p.range(of: #"(^|[\s\x{FEFF}\x{3002}\x{3001}\x{FF1F}\x{FF01}("'])@\S"#, options: .regularExpression) != nil {
-            return "@ before a file name (claude would attach that file)"
-        }
+        if !mentionsOff, atMention(p) { return "@ before a file name (claude would attach that file)" }
         return nil
+    }
+
+    /// »@« na začetku besede (kot Go atMention).
+    public static func atMention(_ p: String) -> Bool {
+        p.range(of: #"(^|[\s\x{FEFF}\x{3002}\x{3001}\x{FF1F}\x{FF01}("'])@\S"#, options: .regularExpression) != nil
+    }
+
+    /// Prva izmerjena različica Claude Code, ki s CLAUDE_CODE_DISABLE_FILE_MENTIONS=1 ne prebere nobene oblike »@pot«
+    /// (0.5.19); mentionSettings ga postavi tudi mimo env v uporabnikovem settings.json (I17; kot Go).
+    public static let minMentionGuard = "2.1.318"
+    public static let mentionSettings = #"{"env":{"CLAUDE_CODE_DISABLE_FILE_MENTIONS":"1"}}"#
+
+    /// Izpis »claude --version« (»2.1.318 (Claude Code)«) je vsaj minMentionGuard; neznan = ne (kot Go mentionGuardVersion).
+    public static func mentionGuardVersion(_ out: String) -> Bool {
+        let v = out.split(whereSeparator: \.isWhitespace).first.map(String.init) ?? ""
+        return !v.isEmpty && v.allSatisfy { "0123456789.".contains($0) } && v.compare(minMentionGuard, options: .numeric) != .orderedAscending
+    }
+
+    /// #44: »@« na stdin gre naprej le, ko ga gnezdeni claude zanesljivo ne bere: varovalo, različica vsaj minMentionGuard
+    /// (preveri le ob »@«); info (-v, -h: claude brez --settings) nikoli (kot Go stdinMentionsOff).
+    public static func stdinMentionsOff(_ stdin: String, info: Bool, guard on: Bool, version: () -> String) -> Bool {
+        !info && on && atMention(stdin) && mentionGuardVersion(version())
+    }
+
+    /// L1: prva absolutna mapa v path (vrstni red kot execvp) z navadno izvršljivo datoteko `name`; nil = je ni.
+    public static func executable(_ name: String, path: String) -> String? {
+        path.split(separator: ":").lazy.filter { $0.hasPrefix("/") }.map { String($0) + "/" + name }.first { p in
+            var st = stat()
+            return stat(p, &st) == 0 && st.st_mode & S_IFMT == S_IFREG && access(p, X_OK) == 0
+        }
+    }
+
+    /// Opozorilo, ko minigw stdin (cev ali datoteka), ki v waitMs ni dal ničesar, ni poslal (nil = nič; kot Go stdinNote).
+    public static func stdinNote(read: Data?, waitMs: Int32, mode: mode_t) -> String? {
+        guard read == nil, waitMs > 0, mode & S_IFMT == S_IFIFO || mode & S_IFMT == S_IFREG else { return nil }
+        return "minigw: stdin had no data within \(waitMs / 1000) s and was not sent"
     }
 
     /// N6b, N7: claude brez terminala na stdin ali z -p bere navodilo kot vnos uporabnika: tedaj dobi --disable-slash-commands
@@ -125,10 +160,22 @@ public enum Profiles {
     }
 
     /// Razlog za zavrnitev navodila pod Claude Code (nil = dovoljeno): besede, ki niso možnost ali njena vrednost, vse po
-    /// »--« in stdin (kot Go unsafePrompt).
-    public static func unsafePrompt(_ args: [String], stdin: String, env: [String: String]) -> String? {
+    /// »--« in stdin (kot Go unsafePrompt). stdinMentionsOff (#44): na stdin le »/« na začetku (diff ima »@@«).
+    public static func unsafePrompt(_ args: [String], stdin: String, env: [String: String], stdinMentionsOff: Bool = false) -> String? {
         guard checkClaudeArgs(env) else { return nil }
-        return ([stdin] + promptWords(args)).lazy.compactMap(promptRefused).first
+        if let r = promptWords(args).lazy.compactMap({ promptRefused($0) }).first { return r }
+        guard let r = promptRefused(stdin, mentionsOff: stdinMentionsOff) else { return nil }
+        return r.hasPrefix("a prompt") ? r : stdinMention
+    }
+
+    /// Razlog za »@« na stdin; promptRefusal mu doda svoj nasvet (kot Go).
+    static let stdinMention = "@ before a file name on stdin (claude would attach that file)"
+
+    /// Sporočilo ob zavrnitvi navodila z razlogom r iz unsafePrompt (kot Go promptRefusal).
+    public static func promptRefusal(_ r: String) -> String {
+        r == stdinMention
+            ? r + " is not accepted when minigw runs inside Claude Code; remove the @ before file names on stdin or update Claude Code to \(minMentionGuard) or newer"
+            : r + " is not accepted when minigw runs inside Claude Code: paste the text itself into the prompt"
     }
 
     /// Besede navodila v argumentih claude: niso možnost ali njena vrednost, in vse po »--« (kot Go promptWords).

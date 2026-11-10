@@ -543,7 +543,7 @@ func main() {
 		if first == "--minigw-help" {
 			return
 		}
-		refuseUnsafeClaudeFlags(args)
+		refuseUnsafeClaudeFlags(args, true)
 		os.Exit(runClaude(args, nil)) // le podatki o claude: brez routerja, seje in deljenja mape
 	}
 
@@ -570,8 +570,8 @@ func main() {
 			i--
 		}
 	}
-	refuseUnsafeClaudeFlags(args)       // H3: pred deljenjem mape in sejo
-	if work != "" && !workModes[work] { // native: mapa je prek SMB mapa routerja (native.go)
+	refuseUnsafeClaudeFlags(args, false) // H3: pred deljenjem mape in sejo
+	if work != "" && !workModes[work] {  // native: mapa je prek SMB mapa routerja (native.go)
 		fail("unknown --minigw-work=" + work + " (use direct, sync, native, native-direct, worktree or auto)")
 	}
 	cwd, _ := os.Getwd()
@@ -659,6 +659,9 @@ func main() {
 	if promptGuard(args, os.Getenv, stdinTerminal()) {
 		args = append([]string{"--disable-slash-commands"}, args...)
 		env = append(env, "CLAUDE_CODE_DISABLE_FILE_MENTIONS=1")
+		if checkClaudeArgs(os.Getenv) { // I17: env v --settings premaga env v uporabnikovem settings.json (izmerjeno, 2.1.318)
+			args = append([]string{"--settings", mentionSettings}, args...)
+		}
 	}
 
 	// Načini po vrsti (auto: native → worktree → sync); naslednji, če router prejšnjega ne sprejme.
@@ -856,11 +859,12 @@ func stdinTerminal() bool {
 
 // promptRefused (N6, N7): claude -p bere navodilo kot vnos uporabnika: »@pot« priloži katero koli datoteko, »/ukaz«
 // zažene ukaz s poševnico (npr. /config permissionMode=… v globalnih nastavitvah). "" = dovoljeno.
-func promptRefused(p string) string {
+// mentionsOff: »@« dovoljen (claude ga zanesljivo ne bere, #44).
+func promptRefused(p string, mentionsOff bool) string {
 	if strings.HasPrefix(strings.TrimLeftFunc(p, unicode.IsSpace), "/") {
 		return "a prompt that starts with / (a slash command)"
 	}
-	if atMention.MatchString(p) {
+	if !mentionsOff && atMention.MatchString(p) {
 		return "@ before a file name (claude would attach that file)"
 	}
 	return ""
@@ -881,6 +885,19 @@ func promptWords(args []string) []string {
 		}
 	}
 	return words
+}
+
+// minMentionGuard: prva izmerjena različica Claude Code, ki s CLAUDE_CODE_DISABLE_FILE_MENTIONS=1 ne prebere nobene
+// oblike »@pot« (0.5.19); mentionSettings ga postavi tudi mimo env v uporabnikovem settings.json (I17).
+const (
+	minMentionGuard = "2.1.318"
+	mentionSettings = `{"env":{"CLAUDE_CODE_DISABLE_FILE_MENTIONS":"1"}}`
+)
+
+// mentionGuardVersion: izpis »claude --version« (»2.1.318 (Claude Code)«) je vsaj minMentionGuard; neznan = ne.
+func mentionGuardVersion(out string) bool {
+	f := strings.Fields(out)
+	return len(f) > 0 && strings.Trim(f[0], "0123456789.") == "" && !versionLess(f[0], minMentionGuard)
 }
 
 // stdinWait: claude -p z navodilom v argumentih čaka na stdin 3 s in nato nadaljuje brez njega; minigw enako, zato
@@ -917,23 +934,55 @@ func readStdin(r io.Reader, wait time.Duration) ([]byte, error) {
 }
 
 // unsafePrompt: razlog za zavrnitev navodila pod Claude Code ("" = dovoljeno): besede, ki niso možnost ali njena
-// vrednost, vse po »--« in stdin.
-func unsafePrompt(args []string, stdin string, env func(string) string) string {
+// vrednost, vse po »--« in stdin. stdinMentionsOff (#44): na stdin le »/« na začetku (diff ima »@@«).
+func unsafePrompt(args []string, stdin string, env func(string) string, stdinMentionsOff bool) string {
 	if !checkClaudeArgs(env) {
 		return ""
 	}
-	for _, w := range append(promptWords(args), stdin) {
-		if r := promptRefused(w); r != "" {
+	for _, w := range promptWords(args) {
+		if r := promptRefused(w, false); r != "" {
 			return r
 		}
 	}
+	if r := promptRefused(stdin, stdinMentionsOff); r != "" {
+		if !strings.HasPrefix(r, "a prompt") {
+			r = stdinMention
+		}
+		return r
+	}
 	return ""
+}
+
+// stdinMention: razlog za »@« na stdin; promptRefusal mu doda svoj nasvet.
+const stdinMention = "@ before a file name on stdin (claude would attach that file)"
+
+// promptRefusal: sporočilo ob zavrnitvi navodila z razlogom r iz unsafePrompt.
+func promptRefusal(r string) string {
+	if r == stdinMention {
+		return r + " is not accepted when minigw runs inside Claude Code; remove the @ before file names on stdin or update Claude Code to " + minMentionGuard + " or newer"
+	}
+	return r + " is not accepted when minigw runs inside Claude Code: paste the text itself into the prompt"
+}
+
+// stdinMentionsOff (#44): »@« na stdin gre naprej le, ko ga gnezdeni claude zanesljivo ne bere: varovalo, različica vsaj
+// minMentionGuard (preveri le ob »@«); info (-v, -h: claude brez --settings) nikoli.
+func stdinMentionsOff(stdin string, info, guard bool, version func() string) bool {
+	return !info && guard && atMention.MatchString(stdin) && mentionGuardVersion(version())
+}
+
+// stdinNote: opozorilo, ko minigw stdin (cev ali datoteka), ki v `wait` ni dal ničesar, ni poslal ("" = nič).
+func stdinNote(read []byte, wait time.Duration, mode os.FileMode) string {
+	if read != nil || wait <= 0 || (mode&os.ModeNamedPipe == 0 && !mode.IsRegular()) {
+		return ""
+	}
+	return fmt.Sprintf("minigw: stdin had no data within %g s and was not sent", wait.Seconds())
 }
 
 // claudeStdin: stdin za claude; pod Claude Code ga minigw prebere v celoti in preveri (N6, N7), nato preda iste bajte.
 var claudeStdin io.Reader = os.Stdin
 
-func refuseUnsafeClaudeFlags(args []string) {
+// info: le podatki o claude (-v, -h), brez --settings (I1).
+func refuseUnsafeClaudeFlags(args []string, info bool) {
 	if f := unsafeClaudeFlag(args, os.Getenv); f != "" {
 		fail(f + " is not accepted when minigw runs inside Claude Code: it could give the gateway's model permissions without asking you")
 	}
@@ -950,10 +999,16 @@ func refuseUnsafeClaudeFlags(args []string) {
 		if err != nil {
 			fail("cannot read stdin: " + err.Error())
 		}
+		if n := stdinNote(b, wait, fi.Mode()); n != "" {
+			fmt.Fprintln(os.Stderr, n)
+		}
 		in, claudeStdin = b, bytes.NewReader(b)
 	}
-	if r := unsafePrompt(args, string(in), os.Getenv); r != "" {
-		fail(r + " is not accepted when minigw runs inside Claude Code: paste the text itself into the prompt")
+	// #44: »@« na stdin le, ko ga gnezdeni claude zanesljivo ne bere (varovalo, --settings, različica); preveri le ob »@«
+	// claudeVersion in runClaude najdeta claude z istim exec.LookPath (L1)
+	off := stdinMentionsOff(string(in), info, promptGuard(args, os.Getenv, stdinTerminal()), func() string { return claudeVersion([]string{"claude"}) })
+	if r := unsafePrompt(args, string(in), os.Getenv, off); r != "" {
+		fail(promptRefusal(r))
 	}
 }
 

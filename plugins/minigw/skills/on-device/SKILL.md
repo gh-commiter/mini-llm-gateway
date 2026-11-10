@@ -14,6 +14,6 @@ PROMPT
 )"
 ```
 
-minigw refuses a prompt (also on stdin) that starts with `/` or has `@` at the start of a word (`@file`, `(@x`, `"@x`): the nested claude would run a slash command or attach that file. Name files by their path without `@`, or paste their text; leave out lines that have `@` at the start of a word (`@Test`, `@@` diff headers) and name the file instead.
+minigw refuses a prompt argument that starts with `/` or has `@` at the start of a word (`@file`, `(@x`, `"@x`): the nested claude would run a slash command or attach that file. Name files by their path without `@`, or paste their text. Text on stdin may contain `@` (minigw 0.5.21 and Claude Code 2.1.318 or newer): pipe a diff instead of pasting it.
 
 `--profile <p>`: `--model claude-apple-fm@<p>` (a Mac gateway; Windows and Linux gateways have no Apple models).
