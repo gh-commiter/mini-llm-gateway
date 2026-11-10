@@ -127,3 +127,29 @@ func cleanGitWraps(gw string) {
 		}
 	}
 }
+
+// fixedDrives: fiksni pogoni (»D:«, urejeno) in sistemski pogon (%SystemDrive%, sicer pogon mape Windows).
+func fixedDrives() ([]string, string) {
+	system := os.Getenv("SystemDrive")
+	if system == "" {
+		if d, err := windows.GetWindowsDirectory(); err == nil && len(d) >= 2 {
+			system = d[:2]
+		}
+	}
+	mask, err := windows.GetLogicalDrives()
+	if err != nil {
+		return nil, system
+	}
+	var out []string
+	for i := 0; i < 26; i++ {
+		if mask&(1<<uint(i)) == 0 {
+			continue
+		}
+		d := string(rune('A'+i)) + ":"
+		p, _ := windows.UTF16PtrFromString(d + `\`)
+		if windows.GetDriveType(p) == windows.DRIVE_FIXED {
+			out = append(out, d)
+		}
+	}
+	return out, system
+}

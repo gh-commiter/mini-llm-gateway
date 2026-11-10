@@ -621,3 +621,25 @@ func TestGeneralNoTokenEcho(t *testing.T) {
 		t.Fatalf("GET: %s", b)
 	}
 }
+
+// Privzeti Scratch nove namestitve na Windows (#68): prvi fiksni ne-sistemski pogon, sicer sistemski; drugod "".
+func TestPickScratch(t *testing.T) {
+	for _, tc := range []struct {
+		drives []string
+		system string
+		want   string
+	}{
+		{[]string{"C:", "D:", "E:"}, "C:", `D:\minigw-scratch\ana`},
+		{[]string{"C:"}, "C:", `C:\minigw-scratch\ana`},
+		{[]string{"C:", "D:"}, "D:", `C:\minigw-scratch\ana`},
+		{nil, "", `C:\minigw-scratch\ana`},
+		{nil, `C:\`, `C:\minigw-scratch\ana`},
+	} {
+		if got := pickScratch(tc.drives, tc.system, "ana"); got != tc.want {
+			t.Errorf("%v %q: %q", tc.drives, tc.system, got)
+		}
+	}
+	if runtime.GOOS != "windows" && newScratchDefault() != "" {
+		t.Fatal("Linux/macOS default changed")
+	}
+}

@@ -364,7 +364,38 @@ func newServeConfig() serveConfig {
 	t := make([]byte, 24)
 	rand.Read(t)
 	return serveConfig{Token: "mgw-" + base64url(t), Key: base64url(k.Bytes()), Port: 8765, Tools: defaultTools,
-		PermissionMode: "dontAsk", Devices: []serveDevice{}}
+		PermissionMode: "dontAsk", Devices: []serveDevice{}, Scratch: newScratchDefault()}
+}
+
+// newScratchDefault (#68, odločitev lastnika): Windows: Scratch nove namestitve zunaj domače mape (škatla MXC sicer
+// pokaže imena v njej): prvi fiksni pogon, ki ni sistemski, sicer sistemski, mapa minigw-scratch\<uporabnik>
+// (protectScratch ji da zaščiten DACL le za lastnika; korenske mape na C: sicer podedujejo Authenticated Users). Drugod ""
+// (defaultScratch, kot prej). Obstoječe namestitve ostanejo, kjer so.
+func newScratchDefault() string {
+	if runtime.GOOS != "windows" {
+		return ""
+	}
+	drives, system := fixedDrives()
+	u := os.Getenv("USERNAME")
+	if u == "" || strings.ContainsAny(u, `\/:*?"<>|`) {
+		u = "user"
+	}
+	return pickScratch(drives, system, u)
+}
+
+// pickScratch: <prvi fiksni ne-sistemski pogon>\minigw-scratch\<u>, sicer <sistemski>\minigw-scratch\<u>.
+func pickScratch(drives []string, system, user string) string {
+	root := system
+	for _, d := range drives {
+		if !strings.EqualFold(d, system) {
+			root = d
+			break
+		}
+	}
+	if root == "" {
+		root = "C:"
+	}
+	return strings.TrimRight(root, `\`) + `\minigw-scratch\` + user
 }
 
 // announce: vrstica zagona, opozorila o ključih prehodov in odkrivanje modelov v ozadju.
