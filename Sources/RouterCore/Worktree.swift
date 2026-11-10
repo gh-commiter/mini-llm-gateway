@@ -1213,6 +1213,10 @@ extension ShareHub {
         // L3: pri native ime veje iz naprave in seje (repozitorij si delijo naprave; seja je od odjemalca)
         let agent = Self.agent ?? "agent", short = String(Sync.folderID((tree.local == nil ? "" : (s.device ?? "") + "|") + s.session).prefix(8))
         await acquire(tree.repo)
+        if slots.contains(where: { $0.key.hasPrefix("\(s.session)|\(agent)|") && $0.value.blocked }) {  // #73
+            refusals[id] = (503, Self.stillStopping); unlock(tree.repo)
+            return nil
+        }
         var n = 0
         while slots["\(s.session)|\(agent)|\(n)"]?.busy == true { n += 1 }
         let k = "\(s.session)|\(agent)|\(n)"
@@ -1221,6 +1225,17 @@ extension ShareHub {
                 refusals[id] = (400, why); unlock(tree.repo)
                 return nil
             }
+            // #73: klon in vsak ugnezdeni (delovno drevo, zrcalo, posnetek); `start` vzporedno
+            let repos = [(slot.wt.path, tree.repo.path, slot.base)] + slot.nested.map { ($0.dir(slot.wt).path, $0.repo.path, $0.base) }
+            if slot.dirty {  // #73: neshranjeno in zaveze opuščenega teka ven, le v delovnih drevesih klonov (ne $MINIGW_DEPS)
+                let todo = repos.enumerated().map { i, r in (r.0, slot.start.indices.contains(i) && !slot.start[i].isEmpty ? slot.start[i] : r.2) }
+                let ok = await offPool { todo.allSatisfy { wt, start in
+                    Worktree.run(["-C", wt, "reset", "-q", "--hard", start]).status == 0 && Worktree.run(["-C", wt, "clean", "-qfd"]).status == 0 } }
+                guard ok else { refusals[id] = (503, "worktree: the agent's clone could not be reset after a failed run: start a new conversation"); unlock(tree.repo); return nil }
+                slot.dirty = false
+            }
+            let ref = "refs/heads/" + slot.branch  // vrh veje v zrcalih: kar so prejšnji teki prinesli
+            slot.start = await offPool { repos.map { Worktree.run(["--git-dir", $0.1, "rev-parse", "--verify", "-q", ref]).out } }
             slot.busy = true; runSlot[id] = k; unlock(tree.repo)
             return Self.dir(slot.wt, tree.sub)
         }
@@ -1559,6 +1574,8 @@ extension ShareHub {
         if bySessionTree(String(k.split(separator: "|")[0])) == nil {
             slots[k] = nil
             Self.dropClone(slot)
+        } else if Worktree.grantDirs(root: slot.wt) == nil {  // #73: po teku znova $MINIGW_DEPS/tmp, .cache, .maven (dnevnik, popravek)
+            Router.log.error("worktree: after the run, the agent's folders next to \(slot.wt.path, privacy: .public) could not be repaired")
         }
     }
 
