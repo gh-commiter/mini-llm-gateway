@@ -373,7 +373,13 @@ public enum Worktree {
     /// finalize), objekti repozitorija kot alternates (drevo sme kazati na obstoječ blob). Zavrne npr. drevo z ».git«.
     /// #58: skupna meja `until` (privzeto 10 min) za oba koraka (velik repozitorij, zastal disk). nil = v redu, sicer razlog.
     static func fsckPack(top: String, revs: String, safe: Bool = false, until: Date = Date() + 600) -> String? {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("minigw-fsck-" + UUID().uuidString)
+        let o = run(["rev-parse", "--git-path", "objects"], cwd: top, safe: safe, hooks: false)
+        guard o.status == 0, !o.out.isEmpty else { return "cannot find the objects folder" }
+        var objs = o.out
+        if !objs.hasPrefix("/") { objs = top + "/" + objs }
+        // Mapa ob objects (kot Go fsckBase): pack-objects sestavi paket v objects/pack in ga preimenuje v dir; začasna mapa
+        // na drugem disku (Scratch na zunanjem disku, repozitorij zunaj $TMPDIR) da »Cross-device link« in vsak uvoz pade.
+        let dir = URL(fileURLWithPath: objs).deletingLastPathComponent().appendingPathComponent("minigw-fsck-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: dir) }
         guard (try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])) != nil
         else { return "cannot create a temporary folder" }
@@ -386,10 +392,6 @@ public enum Worktree {
         let pack = String(p.out.split(separator: "\n").last ?? "")  // pred njim morda opozorila gita
         guard isSHA(pack) else { return "pack-objects gave no pack" }
         let fsck = dir.appendingPathComponent("fsck.git").path
-        let o = run(["rev-parse", "--git-path", "objects"], cwd: top, safe: safe, hooks: false)
-        guard o.status == 0, !o.out.isEmpty else { return "cannot find the objects folder" }
-        var objs = o.out
-        if !objs.hasPrefix("/") { objs = top + "/" + objs }
         guard run(["init", "-q", "--bare", fsck], cwd: dir.path).status == 0,
               FileManager.default.createFile(atPath: fsck + "/objects/info/alternates", contents: Data((objs + "\n").utf8)) else {
             return "cannot create the check repository"

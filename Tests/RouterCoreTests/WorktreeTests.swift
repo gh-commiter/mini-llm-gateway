@@ -1488,6 +1488,35 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
     #expect(Worktree.localBundle(repo: src.appendingPathComponent(".git"), top: client, branch: branch, out: out) == nil)
 }
 
+/// Scratch na drugem disku kot $TMPDIR (zunanji disk): fsck uvoza ne sme pasti na »Cross-device link« (pack-objects
+/// preimenuje paket iz objects/pack v začasno mapo), sicer vsak worktree vrne 502.
+@Test func importBaseWithMirrorOnAnotherVolume() throws {
+    let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("xdev-" + UUID().uuidString)
+    let mnt = root.appendingPathComponent("mnt")
+    try FileManager.default.createDirectory(at: mnt, withIntermediateDirectories: true)
+    func hdiutil(_ a: String...) -> Int32 {
+        let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil"); p.arguments = a
+        p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+        try? p.run(); p.waitUntilExit(); return p.terminationStatus
+    }
+    let img = root.appendingPathComponent("v.dmg").path
+    try #require(hdiutil("create", "-size", "16m", "-fs", "HFS+", "-volname", "xdev", img) == 0)
+    try #require(hdiutil("attach", "-nobrowse", "-mountpoint", mnt.path, img) == 0)
+    defer { _ = hdiutil("detach", "-force", mnt.path); try? FileManager.default.removeItem(at: root) }
+    let src = root.appendingPathComponent("src"), mirror = mnt.appendingPathComponent("m.git")
+    try FileManager.default.createDirectory(at: src, withIntermediateDirectories: true)
+    g(src, "init", "-q", "-b", "main")
+    try file(src, "a.txt", "a\n")
+    g(src, "add", "-A"); g(src, "commit", "-qm", "a")
+    let snap = g(src, "rev-parse", "HEAD")
+    g(src, "update-ref", "refs/minigw/push", snap)
+    let push = root.appendingPathComponent("push.bundle")
+    g(src, "bundle", "create", push.path, "refs/minigw/push")
+    g(root, "init", "-q", "--bare", mirror.path)
+    #expect(Worktree.importBase(mirror, bundle: push, snapshot: snap, base: "refs/minigw/base/x"))
+    #expect(Worktree.fsckIncoming(top: mirror.path, ref: "refs/minigw/base/x", safe: true) == nil)
+}
+
 /// #57: ugnezdeni repozitoriji na prehodu z gitom pred 2.40 zavrnjeni pred zagonom (način ostane).
 @Test func nestedNeedsAttrSourceOnTheGateway() {
     #expect(Worktree.nestedGitProblem(1, attr: false)?.hasSuffix("update git or use sync") == true)

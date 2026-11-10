@@ -488,3 +488,35 @@ func TestWorktreeFetchThinBundleFsck(t *testing.T) {
 		t.Fatal(why)
 	}
 }
+
+// Repozitorij na drugem disku kot TMP (macOS: slika diska): fsckIncoming ne sme pasti na »cross-device link«
+// (pack-objects preimenuje paket iz objects/pack v začasno mapo).
+func TestWorktreeFetchRepoOnAnotherVolume(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("needs hdiutil (macOS)")
+	}
+	root := t.TempDir()
+	mnt, img := filepath.Join(root, "mnt"), filepath.Join(root, "v.dmg")
+	os.MkdirAll(mnt, 0o755)
+	if out, err := exec.Command("hdiutil", "create", "-size", "16m", "-fs", "HFS+", "-volname", "xdev", img).CombinedOutput(); err != nil {
+		t.Fatalf("hdiutil create: %v %s", err, out)
+	}
+	if out, err := exec.Command("hdiutil", "attach", "-nobrowse", "-mountpoint", mnt, img).CombinedOutput(); err != nil {
+		t.Fatalf("hdiutil attach: %v %s", err, out)
+	}
+	defer exec.Command("hdiutil", "detach", "-force", mnt).Run()
+	src, client := filepath.Join(root, "src"), filepath.Join(mnt, "client")
+	os.MkdirAll(src, 0o755)
+	gitT(t, src, "init", "-q", "-b", "main")
+	writeT(t, filepath.Join(src, "a.txt"), "a\n")
+	gitT(t, src, "add", "-A")
+	gitT(t, src, "commit", "-qm", "a")
+	gitT(t, root, "clone", "-q", "--no-local", src, client)
+	branch := "minigw/claude-0123abcd-0"
+	gitT(t, src, "update-ref", "refs/heads/"+branch, gitT(t, src, "commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "agent"))
+	b := filepath.Join(root, "b.bundle")
+	gitT(t, src, "bundle", "create", b, "refs/heads/"+branch, "^HEAD")
+	if why := gitFetchBranch(client, b, branch); why != "" {
+		t.Fatal(why)
+	}
+}
