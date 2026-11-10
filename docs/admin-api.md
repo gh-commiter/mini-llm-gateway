@@ -307,7 +307,8 @@ The Mac app keeps its settings in its preferences and Keychain; the Settings win
   Network for Codex builds; `GET` and `PATCH`), and `allowedClients` (IP addresses, comma-separated; empty = all), `allowPlainRemote` and `allowAnyDevice`. `address`
   may be `0.0.0.0`, `::` or `127.0.0.1`. A port or address change restarts the listener, so there is no
   `restartRequired`. `scratch` is an existing folder: as in Settings, the scratch content moves into a
-  `Mini Gateway Scratch` folder inside it (`""` = the default folder); `GET` returns the folder in use.
+  `Mini Gateway Scratch` folder inside it (`""` = the default folder); `GET` returns the folder in use. A path
+  that contains a quotation mark (`"`), also after resolving links, is refused (400).
 - **status:** `installed` is Open at Login.
 - **Not on the Mac:** the settings page and its sessions (`/minigw/settings`, `POST /settings/login`): the app has
   its own Settings window, so only the admin secret (`minigw gw`) opens the API, and it never sets cookies.

@@ -172,11 +172,17 @@ public enum Native {
                         e(home + "/Library/org.swift.swiftpm/repositories/") + "[^/]+/(config|hooks)(/|$)"])
     }
 
-    /// Foundation (atomarno pisanje: TemporaryItems/NSIRD_…) in storitev gradnje SwiftPM/Xcode (TemporaryDirectory.XXXX)
-    /// pišeta v DARWIN_USER_TEMP_DIR ne glede na TMPDIR; brez tega swift build in xcodebuild ne uspeta. Pisanje le znotraj
-    /// takih map in le nove take mape (nikoli datoteka ali povezava na tem mestu): vnosov TemporaryItems in obstoječih
-    /// TemporaryDirectory.* ni mogoče preimenovati, izbrisati ali zamenjati. Mapa sama (xcrun_db) in DARWIN_USER_CACHE_DIR
-    /// ostaneta zaprti. ponytail: vsebino sočasne mape drugega procesa zagon lahko spremeni (glej poročilo, issue).
+    /// Edini dovoljenji zunaj Scratch in mape gradnje (#24: preizkušeno z mvn package, swift build in xcodebuild build
+    /// .xcodeproj brez njiju, brez /private/tmp in z zasebnim TMPDIR v Scratch): Foundation na macOS za NSTemporaryDirectory
+    /// in mapo za zamenjavo vnosa bere le confstr(DARWIN_USER_TEMP_DIR), TMPDIR prezre (okolje tega ne preusmeri).
+    /// - TemporaryItems/NSIRD_…: vsako atomarno pisanje Foundation (Data.write(.atomic)) v mapo na zagonskem disku; brez
+    ///   njega swift build (manifest.json v .build) in xcodebuild (DerivedData) ne uspeta.
+    /// - TemporaryDirectory.XXXXXX: korak Ld storitve Swift Build (swift build) dobi okolje brez TMPDIR, zato swiftc za
+    ///   povezovanje ustvari začasno mapo v DARWIN_USER_TEMP_DIR; brez nje swift build ne poveže programa.
+    /// Pisanje le znotraj takih map in le nove take mape (nikoli datoteka ali povezava na tem mestu): vnosov TemporaryItems
+    /// in obstoječih TemporaryDirectory.* ni mogoče preimenovati, izbrisati ali zamenjati. Mapa sama (xcrun_db) in
+    /// DARWIN_USER_CACHE_DIR ostaneta zaprti. ponytail: vsebino sočasne mape drugega procesa zagon lahko spremeni (I4, #24);
+    /// peskovnik ne loči svojih map od tujih, Foundation pa druge poti ne pozna.
     static func darwinTempRules() -> String? {
         var b = [CChar](repeating: 0, count: 1024)
         guard confstr(_CS_DARWIN_USER_TEMP_DIR, &b, b.count) > 0,
@@ -239,7 +245,8 @@ public enum Native {
             + (network ? "" : "(deny network-outbound (remote ip))\n(deny mach-lookup (global-name-regex #\"^com\\.apple\\.nsurlsessiond\"))\n")
     }
 
-    /// Pisanje, ki ga gradnja potrebuje zunaj mape: Maven, Xcode, SwiftPM, začasne mape (kanonične).
+    /// Pisanje, ki ga gradnja potrebuje zunaj mape: Maven, Xcode, SwiftPM (kanonične). Ne /private/tmp (#24): začasne
+    /// datoteke so v zasebni mapi zagona v Scratch (`runEnv`), deljena /tmp ni potrebna.
     /// Ne ~/Library/Caches (C1): tam so programi, ki jih aplikacije naložijo brez preverjanja (npr. ~/Library/Caches/copilot).
     /// Preverjeno: mvn package, swift build (z odvisnostjo; SwiftPM brez svojega predpomnilnika le opozori) in
     /// xcodebuild build projekta .xcodeproj delujejo brez njega.
@@ -247,7 +254,7 @@ public enum Native {
     /// Gradnja ima svoj TMPDIR in ModuleCache (`runTmp` v sandboxProfile); iz DARWIN_USER_TEMP_DIR le `darwinTempRules`.
     static func buildCaches(home: String = NSHomeDirectory()) -> [String] {
         ["\(home)/.m2", "\(home)/.swiftpm", "\(home)/Library/Developer",
-         "\(home)/Library/org.swift.swiftpm", "/private/tmp"]
+         "\(home)/Library/org.swift.swiftpm"]
     }
 
     /// Procesi (istega uporabnika, razen tega), ki imajo pisalni konec cevi, katere bralni konec je `fd` tega procesa.
@@ -272,6 +279,31 @@ public enum Native {
             }
         }
         return out
+    }
+
+    /// Okolje `minigw run` (#24): vse začasne mape gradnje v `runTmp`, zasebni mapi zagona v Scratch (nikoli $TMPDIR,
+    /// /tmp ali domača mapa): TMPDIR, TMP, TEMP, ModuleCache clang in java.io.tmpdir vsakega JVM (JAVA_TOOL_OPTIONS:
+    /// Maven, viljuške surefire, Gradle in njegov demon; Java na macOS TMPDIR prezre). Brez skrivnosti agentov in SSH agenta.
+    static func runEnv(_ base: [String: String], runTmp: URL) -> [String: String] {
+        var env = base
+        for k in env.keys where k.hasPrefix("ANTHROPIC_") || k.hasPrefix("CLAUDE_CODE_") || k == "CLAUDECODE" || k == "SSH_AUTH_SOCK" { env[k] = nil }
+        env["PATH"] = (env["PATH"].map { $0 + ":" } ?? "") + "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        env["TMPDIR"] = runTmp.path + "/"; env["TMP"] = runTmp.path; env["TEMP"] = runTmp.path
+        env["CLANG_MODULE_CACHE_PATH"] = runTmp.appendingPathComponent("ModuleCache").path
+        // V narekovajih le s presledkom (Scratch na »Fast SSD«; JDK 9+ jih razčleni, JDK 8 jih pusti v poti).
+        // Narekovaja v poti scratchProblem ne dovoli.
+        let jt = runTmp.path.contains(" ") ? "\"" + runTmp.path + "\"" : runTmp.path
+        env["JAVA_TOOL_OPTIONS"] = (env["JAVA_TOOL_OPTIONS"].map { $0 + " " } ?? "") + "-Djava.io.tmpdir=" + jt
+        env["xcrun_db"] = nil; env["xcrun_nocache"] = "1"
+        return env
+    }
+
+    /// #24: ustvari zasebno mapo zagona (z ModuleCache, 0700); vrne njeno kanonično pot ali nil (gradnja brez nje bi
+    /// padla šele z »Operation not permitted«).
+    static func makeRunTmp(_ runTmp: URL) -> String? {
+        guard (try? FileManager.default.createDirectory(at: runTmp.appendingPathComponent("ModuleCache"), withIntermediateDirectories: true,
+                                                        attributes: [.posixPermissions: 0o700])) != nil else { return nil }
+        return Sync.real(runTmp)?.path
     }
 
     /// V peskovniku drug peskovnik ni mogoč (sandbox_apply: Operation not permitted), zato SwiftPM in Xcode brez svojega.
@@ -399,6 +431,17 @@ public actor NativeHub {
         }
     }
 
+    /// #24: zasebne začasne mape `minigw run` (<Scratch>/tmp/run-req_<32 hex>), ki jih je pustil sesutje. Le mape s tem
+    /// imenom; povezava se ne sledi (removeItem odstrani povezavo, ne cilja; tip iz lstat).
+    public static func cleanupRunTemps(_ tmp: URL) {
+        let fm = FileManager.default
+        for n in (try? fm.contentsOfDirectory(atPath: tmp.path)) ?? []
+        where n.range(of: #"^run-req_[0-9a-f]{32}$"#, options: .regularExpression) != nil {
+            let p = tmp.appendingPathComponent(n)
+            if (try? fm.attributesOfItem(atPath: p.path)[.type] as? FileAttributeType) == .typeDirectory { try? fm.removeItem(at: p) }
+        }
+    }
+
     static func random(_ bytes: Int) -> String {
         SymmetricKey(size: SymmetricKeySize(bitCount: bytes * 8)).withUnsafeBytes { $0.map { String(format: "%02x", $0) }.joined() }
     }
@@ -459,15 +502,16 @@ extension Router {
         }
         // Mapa je lahko po dokazu zamenjana s povezavo (npr. na domačo mapo): znova kanonična in v dovoljenih mapah,
         // profil peskovnika iz dobesedne poti (sandboxProfile zavrne povezave).
-        // Svoj TMPDIR in ModuleCache v Scratch (ne /var/folders/…, glej buildCaches); odstrani se po zagonu.
+        // Zasebna začasna mapa zagona v Scratch (runEnv; ne /var/folders/…, /tmp ali domača mapa); odstrani se po zagonu.
         let runTmp = config.scratch("tmp").appendingPathComponent("run-" + rid, isDirectory: true)
-        try? FileManager.default.createDirectory(at: runTmp.appendingPathComponent("ModuleCache"), withIntermediateDirectories: true,
-                                                 attributes: [.posixPermissions: 0o700])
         defer { try? FileManager.default.removeItem(at: runTmp) }
+        guard let realTmp = Native.makeRunTmp(runTmp) else {
+            return await error(500, "api_error", "minigw run: cannot create its temporary folder in Scratch", rid: rid, writer: writer)
+        }
         guard Sync.real(dir)?.path == dir.path, ClaudeCLI.resolveCwd(dir.path, roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL)?.path == dir.path,
               let profile = Native.sandboxProfile(dir: dir.path, network: config.devices.first { $0.id == d.id }?.runNetwork ?? true,
                                                   hidden: [config.scratchURL.path, RouterConfig.defaultScratch.path], routerPort: Int(config.port),
-                                                  runTmp: Sync.real(runTmp)?.path) else {
+                                                  runTmp: realTmp) else {
             return await error(403, "permission_error", "minigw run: the folder or a build cache folder (~/.m2, ~/Library/Developer …) is a link or not allowed", rid: rid, writer: writer)
         }
         guard await Self.natives.startRun(d.id) else {
@@ -481,12 +525,7 @@ extension Router {
                                rid: rid, writer: writer)
         }
         defer { Task { await Self.shares.releaseWriter(run: lock) } }
-        var env = ProcessInfo.processInfo.environment
-        for k in env.keys where k.hasPrefix("ANTHROPIC_") || k.hasPrefix("CLAUDE_CODE_") || k == "CLAUDECODE" || k == "SSH_AUTH_SOCK" { env[k] = nil }
-        env["PATH"] = (env["PATH"].map { $0 + ":" } ?? "") + "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-        env["TMPDIR"] = runTmp.path + "/"; env["CLANG_MODULE_CACHE_PATH"] = runTmp.appendingPathComponent("ModuleCache").path
-        env["MAVEN_OPTS"] = ((env["MAVEN_OPTS"].map { $0 + " " }) ?? "") + "-Djava.io.tmpdir=" + runTmp.path  // Java ne bere TMPDIR
-        env["xcrun_db"] = nil; env["xcrun_nocache"] = "1"
+        let env = Native.runEnv(ProcessInfo.processInfo.environment, runTmp: runTmp)
         guard let exe = Native.executable(argv[0], dir: dir, path: env["PATH"]!) else {
             return await error(404, "not_found_error", "minigw run: \(argv[0]) not found on the gateway", rid: rid, writer: writer)
         }
