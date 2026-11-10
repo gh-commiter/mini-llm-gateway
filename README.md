@@ -104,6 +104,10 @@ In Claude Code with the plugin:
 /minigw:ask claude-cli-opus Why does the cache test fail on Windows?
 ```
 
+<img src="docs/images/claude-code-plugin.png" width="600" alt="The plugin in the Claude desktop app: /minigw:status shows the gateway and its models, then /minigw:review asks Codex for a review">
+
+*The plugin in the Claude desktop app (Code); it works the same in the Claude Code CLI in a terminal.*
+
 In a terminal:
 
 ```sh
@@ -111,8 +115,6 @@ minigw                                  # Claude Code through the gateway; choos
 minigw -p --model claude-codex "Fix the failing test in pkg/store"
 minigw models                           # list the models
 ```
-
-<img src="docs/images/claude-code-plugin.png" width="600" alt="Claude Code: /minigw:status shows the gateway and its models, then /minigw:review asks Codex for a review">
 
 In the root of a git repository the agent works in a clone and its work comes back as a branch
 `minigw/<agent>-…`; minigw prints the range to review. Elsewhere the folder is synced and the changes land in your
