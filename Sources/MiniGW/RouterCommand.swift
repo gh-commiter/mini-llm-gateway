@@ -4,6 +4,7 @@
 // (HMAC nad rokovanjem Noise), zato lažen strežnik ali program na vratih ne dobi ničesar uporabnega (S1, M1).
 import CryptoKit
 import Foundation
+import OpenDirectory
 import RouterCore
 import Security
 
@@ -94,24 +95,39 @@ private func loginLocked() -> Bool {
 
 /// Odklene prijavni keychain z geslom s terminala (brez odmeva; nikoli iz argv, nikoli ukaz security), medpomnilnik
 /// se pred izhodom pobriše. Napačno geslo konča ukaz. Keychain ostane odklenjen po privzetih nastavitvah macOS.
-/// SecKeychainUnlock na odklenjenem keychainu vrne uspeh za vsako geslo (#62): zato pred klicem znova preveri zaklep,
-/// po uspehu pa, da keychain res ni več zaklenjen.
+/// SecKeychainUnlock na odklenjenem keychainu vrne uspeh za vsako geslo (#62), v seji SSH pa tudi, ko ima Macova
+/// lastna seja keychain odklenjen: zato geslo najprej preveri Open Directory (macVerify), pred klicem znova preveri
+/// zaklep, po uspehu pa, da keychain res ni več zaklenjen.
 private func unlockLoginKeychain(ssh: Bool) {
     guard let kc = Keychain.loginKeychain() else { return }
     err.write(Data("The login keychain is locked\(ssh ? " in this SSH session" : ""). Mac password for \(userName(getuid())) (to unlock it): ".utf8))
     var buf = [CChar](repeating: 0, count: 1024)
     let got = readpassphrase("", &buf, buf.count, RPP_REQUIRE_TTY) != nil
     let locked = loginLocked()  // med vnosom gesla ga je morda odklenil drug proces
-    let st = got && locked ? SecKeychainUnlock(kc, UInt32(strlen(buf)), buf, true) : errSecSuccess
+    let st = got ? Keychain.unlock(password: buf, verify: macVerify,
+                                   unlock: { locked ? SecKeychainUnlock(kc, UInt32(strlen($0)), $0, true) : errSecSuccess })
+                 : errSecSuccess
     memset_s(&buf, buf.count, 0, buf.count)
     guard got else { fail("no password: the keychain stays locked") }
+    if st == errSecAuthFailed { fail("wrong password: the keychain stays locked") }
     guard locked else {
         err.write(Data("The login keychain was unlocked meanwhile; the password was not used.\n".utf8))
         return
     }
-    if st == errSecAuthFailed { fail("wrong password: the keychain stays locked") }
     if st != errSecSuccess { fail("cannot unlock the login keychain (OSStatus \(st))") }
     if loginLocked() { fail("the keychain stays locked") }
+}
+
+/// Preveri geslo trenutnega uporabnika v Open Directory (neodvisno od stanja keychaina, #62). NSString kaže na
+/// medpomnilnik klicatelja (bytesNoCopy), da v procesu ni še ene kopije; kopije, ki jih naredita Foundation in
+/// opendirectoryd med klicem, ostanejo zunaj našega dosega in se ne pobrišejo.
+private func macVerify(_ pw: UnsafePointer<CChar>) -> Bool {
+    guard let me = getpwuid(getuid()).map({ String(cString: $0.pointee.pw_name) }),
+          let s = NSString(bytesNoCopy: UnsafeMutableRawPointer(mutating: pw), length: strlen(pw),
+                           encoding: String.Encoding.utf8.rawValue, freeWhenDone: false),
+          let node = try? ODNode(session: ODSession.default(), type: ODNodeType(kODNodeTypeAuthentication)),
+          let rec = try? node.record(withRecordType: kODRecordTypeUsers, name: me, attributes: nil) else { return false }
+    return (try? rec.verifyPassword(s as String)) != nil
 }
 
 /// Jasno sporočilo za napako Keychaina pri vnosu »admin«. ssh: namig za zaklenjen keychain v seji SSH.

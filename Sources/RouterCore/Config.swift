@@ -329,6 +329,14 @@ public struct Keychain: SecretStore {
         (status == errSecInteractionNotAllowed || status == errSecAuthFailed) && terminal && locked
     }
 
+    /// Odklep z geslom minigw gw (#62): v seji SSH, ko ima Macova lastna seja keychain odklenjen, SecKeychainUnlock
+    /// sprejme vsako geslo. Zato verify (Open Directory) geslo preveri prej; napačno geslo vrne errSecAuthFailed in
+    /// unlock se sploh ne kliče.
+    public static func unlock(password: UnsafePointer<CChar>, verify: (UnsafePointer<CChar>) -> Bool,
+                              unlock: (UnsafePointer<CChar>) -> OSStatus) -> OSStatus {
+        verify(password) ? unlock(password) : errSecAuthFailed
+    }
+
     /// Namig minigw gw, ko Keychain zavrne branje vnosa »admin«. V SSH nasvet za ukaz security le pri zaklenjenem
     /// keychainu: na odklenjenem ta ukaz sprejme vsako geslo in nič ne popravi (#62).
     public static func deniedHint(ssh: Bool, locked: Bool) -> String {

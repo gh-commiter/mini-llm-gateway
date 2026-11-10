@@ -181,3 +181,14 @@ private func send(_ url: String, _ method: String, _ path: String, secret: Strin
     #expect(!Keychain.deniedHint(ssh: true, locked: false).contains("security unlock-keychain"))
     #expect(Keychain.deniedHint(ssh: true, locked: true).contains("run security unlock-keychain"))
 }
+
+/// minigw gw: napačno geslo (Open Directory) ne pokliče SecKeychainUnlock, pravo ga (#62); brez pravega gesla.
+@Test func keychainUnlockVerifiesFirst() {
+    var calls = 0
+    let unlock: (UnsafePointer<CChar>) -> OSStatus = { _ in calls += 1; return errSecSuccess }
+    let pw: [CChar] = Array("x".utf8CString)
+    #expect(Keychain.unlock(password: pw, verify: { _ in false }, unlock: unlock) == errSecAuthFailed)
+    #expect(calls == 0)
+    #expect(Keychain.unlock(password: pw, verify: { String(cString: $0) == "x" }, unlock: unlock) == errSecSuccess)
+    #expect(calls == 1)
+}
