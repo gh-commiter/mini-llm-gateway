@@ -1,5 +1,12 @@
 # Release notes
 
+## Unreleased
+
+- Fixed: the Mac app passed a provider's error body to Claude Code unchanged; it now sends only the provider's cleaned error message (at most 300 bytes) as "<Provider>: message", and a provider's 401/403 becomes 502 "check the API key (minigw gw provider add <name>)", like `minigw serve`.
+- Fixed: the Mac app gateway now checks (fsck) the objects of a client's bundle and of the native-mode branch it delivers on every git version (git older than 2.46 skipped it). Nested repositories now need git 2.40 or later on the Mac app gateway too (worktree and native mode); with older git the request is refused before the agent starts ("nested git repositories need git 2.40 or later on the gateway; update git or use sync").
+- When the agent's branch fails the client's object check, minigw now says "the gateway's branch failed the object check (fsck): …" instead of a failed fetch, and the check stops after 10 minutes. Both clients (macOS, Linux, Windows).
+- `minigw plugin` links the plugin's minigw only when no folder above minigw is writable by others (a sticky folder such as /tmp is allowed above its own folder), not only its own folder. Both clients (macOS, Linux).
+
 ## 0.5.20
 
 - Fixed: on Linux `minigw serve`, Bash never worked for Claude CLI in worktree mode (Claude Code's sandbox could not create its sockets under the long temporary folder in the clone); each run now gets a short private temporary folder (also on macOS and Windows `minigw serve`).
