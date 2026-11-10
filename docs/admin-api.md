@@ -220,6 +220,7 @@ Notes:
   session it registered, never a header; a nested call is capped by the asked agent's kind in the caller's session).
   `chat` (no shared folder) is not capped. `minigw serve` has only sync and worktree, so there `sync` acts as `direct`.
   The config stores direct as empty (`claudeWork`, `codex.work`, … in serve.json; `work` in the Mac config).
+  `minigw gw claude|codex|grok|copilot --work=direct|sync|worktree` sets it; without `--work` it shows it.
 - `PATCH /agents/claude`: the gateway checks the path, that the folder exists and is not near the config folder,
   and that Bash on Windows has `allowUnsandboxedBash`. While `leftOut` is not empty, every PATCH without `"folders"`
   returns 400 "first save the allowed folders without …" (Go gateway only).

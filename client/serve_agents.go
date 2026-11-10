@@ -638,6 +638,22 @@ func (c serveConfig) workCap(kind string) string {
 	return ""
 }
 
+// cappedKinds (#60): agenti, ki v načinu seje mode zaradi omejitve (work) le berejo; odgovor na registracijo mape jih
+// pove odjemalcu za začetno vrstico (starejši odjemalci polje prezrejo).
+func (c serveConfig) cappedKinds(mode string) []string {
+	lvl, ok := modeLevels[mode]
+	if !ok {
+		return nil
+	}
+	var kinds []string
+	for _, k := range []string{"claude", "codex", "copilot", "grok"} {
+		if lvl < workLevels[c.workCap(k)] {
+			kinds = append(kinds, k)
+		}
+	}
+	return kinds
+}
+
 // agentNames: imena agentov v sporočilih uporabniku.
 var agentNames = map[string]string{"claude": "Claude CLI", "codex": "Codex", "grok": "Grok", "copilot": "Copilot"}
 

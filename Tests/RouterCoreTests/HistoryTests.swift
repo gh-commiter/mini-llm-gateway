@@ -287,6 +287,17 @@ func useOf(_ s: GatewayHistory.Session, _ model: String, role: String = "") -> G
     for mode in ["sync", "direct", "native-direct"] { #expect(await cap(mode, "codex") == "worktree", "\(mode)") }
     for mode in ["direct", "native-direct"] { #expect(await cap(mode, "claude") == "sync", "\(mode)") }
     for (mode, kind) in [("sync", "claude"), ("sync", "grok"), ("chat", "codex")] { #expect(await cap(mode, kind) == nil, "\(mode) \(kind)") }
+    // #60: odgovor na registracijo mape pove omejene agente (začetna vrstica odjemalca); samo za branje in worktree brez njih.
+    #expect(router.cappedKinds("sync") == ["codex"] && router.cappedKinds("direct") == ["claude", "codex"])
+    #expect(router.cappedKinds("worktree").isEmpty && router.cappedKinds("native").isEmpty && router.cappedKinds("chat").isEmpty)
+    for (ro, want) in [(false, ["claude", "codex"]), (true, nil)] {
+        let w = FakeWriter()
+        let sid = "cap-reg-\(ro)-" + id
+        await router.handle(request("POST", "/minigw/share", headers: ["Authorization": "Bearer tok", "x-claude-mini-session": sid, "x-claude-mini-cwd": "/p",
+                                                                     "x-share-mode": ro ? "ro" : "rw"]), writer: w)
+        let o = try JSONSerialization.jsonObject(with: Data((w.text.components(separatedBy: "\r\n\r\n").last ?? "").utf8)) as? [String: Any]
+        #expect(o?["key"] is String && o?["capped"] as? [String] == want, "\(ro) \(w.text)")
+    }
     // Skrbniški API: work na /agents/*; druga vrednost 400 z istim besedilom kot v Go; direct = "".
     for a in ["claude", "codex", "grok", "copilot"] {
         let bad = await admin(router, "PATCH", "/agents/\(a)", body: #"{"work":"readonly"}"#)

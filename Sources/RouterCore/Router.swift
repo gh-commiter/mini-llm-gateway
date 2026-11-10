@@ -405,7 +405,10 @@ public final class Router: Sendable {
                 return (await error(409, "invalid_request_error", "Session already has a folder", rid: rid, writer: writer), nil, "share")
             }
             // starejši odjemalci: le key; branches = veje v repozitoriju, lock = en pisoči agent naenkrat (native v mapi sami)
-            let reply: [String: Any] = tree?.local != nil ? ["key": key, "branches": true] : native != nil ? ["key": key, "lock": true] : ["key": key]
+            var reply: [String: Any] = tree?.local != nil ? ["key": key, "branches": true] : native != nil ? ["key": key, "lock": true] : ["key": key]
+            if !readOnly, case let c = cappedKinds(await Self.shares.sessionMode(session, device: req.device?.id).mode), !c.isEmpty {
+                reply["capped"] = c  // #60
+            }
             return (await json(200, reply, rid: rid, writer: writer), nil, "share")
         case ("GET", "/minigw/share/next"):
             switch await Self.shares.poll(key: req.header("x-share-key") ?? "") {
@@ -548,6 +551,13 @@ public final class Router: Sendable {
         case "copilot": config.copilot.work
         default: ""
         }
+    }
+
+    /// #60: agenti, ki v načinu seje `mode` zaradi omejitve (work) le berejo; odgovor na registracijo mape jih pove
+    /// odjemalcu za začetno vrstico (starejši odjemalci polje prezrejo).
+    func cappedKinds(_ mode: String) -> [String] {
+        guard let level = Self.modeLevels[mode] else { return [] }
+        return Self.agentNames.keys.sorted().filter { level < Self.workLevels[workCap($0)] ?? 0 }
     }
 
     /// #45: način seje (iz deljenja na prehodu, ne iz glave) je nad omejitvijo agenta → vrne omejitev in pošlje opombo
