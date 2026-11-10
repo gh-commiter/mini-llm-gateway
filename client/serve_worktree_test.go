@@ -1779,7 +1779,7 @@ func TestWorktreeHarnessEnvGitConfig(t *testing.T) {
 		return
 	}
 	gw := filepath.Join(t.TempDir(), "gitexec")
-	t.Setenv("PATH", ":/usr/bin::.:/bin:")
+	t.Setenv("PATH", ":/usr/bin::.:bin:./x:/bin:")
 	path := ""
 	for _, kv := range worktreeClaudeEnv("/w", "/m", "/t", gw, []string{"/w/.git"}, "claude") {
 		if p, ok := strings.CutPrefix(kv, "PATH="); ok {

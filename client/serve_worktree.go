@@ -748,7 +748,7 @@ func worktreeClaudeEnv(wt, maven, tmp, gw string, gits []string, agent string) [
 	}
 	path := []string{filepath.Join(gw, "bin")}
 	for _, p := range filepath.SplitList(os.Getenv("PATH")) {
-		if p != "" && p != "." { // L2: ne trenutna mapa (klon agenta)
+		if filepath.IsAbs(p) { // L2: le absolutne (ne trenutna mapa, ne relativna v klonu agenta)
 			path = append(path, p)
 		}
 	}
