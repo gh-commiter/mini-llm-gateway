@@ -29,21 +29,30 @@
     "C:\\",
     "D:\\"
    ]
-  },
-  "network": {
-   "allowedProxyPeer": "127.0.0.1:5000"
   }
  },
  "network": {
   "egress": {
-   "default": "deny"
+   "default": "deny",
+   "allow": [
+    {
+     "to": [
+      {
+       "cidr": "160.79.104.10/32"
+      }
+     ],
+     "ports": [
+      {
+       "protocol": "tcp",
+       "port": 443
+      }
+     ]
+    }
+   ]
   },
   "ingress": {
-   "default": "allow"
+   "hostLoopback": "allow"
   }
- },
- "runtimeConfig": {
-  "networkProxy": "http://127.0.0.1:5000"
  },
  "ui": {
   "disable": false

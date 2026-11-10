@@ -765,9 +765,9 @@ func networkOffEnv(agent string, network bool) []string {
 // claudeNetworkSetting: stikalo omrežja gradenj Claude (enako besedilo kot Worktree.networkOff na Macu).
 const claudeNetworkSetting = "Settings → General → Worktree mode → Network for builds"
 
-// claudeAPIHosts (#68): gostitelji, ki jih Claude Code v škatli MXC brez omrežja gradenj doseže prek posrednika vrat
-// izvajanja: le API (žeton setup-token se ne osvežuje). Zavrnjeni gostitelji so v dnevniku (»refused CONNECT«).
-var claudeAPIHosts = []string{"api.anthropic.com"}
+// claudeAPIHost (#68): edini gostitelj, ki ga Claude Code v škatli MXC brez omrežja gradenj doseže (pravilo egress za
+// njegove naslove ob začetku teka; žeton setup-token se ne osvežuje).
+const claudeAPIHost = "api.anthropic.com"
 
 // depsEnv (#67, kot Worktree.depsEnv na Macu): vse za gradnje agenta pod Scratch, nikoli v $TMPDIR, /tmp ali domači mapi.
 // Skupno za projekt (mapa klonov/.cache, kot .maven; sprejeto: pogovor lahko podtakne vsebino drugemu pogovoru istega

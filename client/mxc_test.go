@@ -1,15 +1,11 @@
 package main
 
 import (
-	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -104,18 +100,19 @@ func TestMXCRequestFor(t *testing.T) {
 	base := mxcSpec{argv: []string{"claude", "-p"}, cwd: "/s/w/c", env: []string{"A=1"}, deny: []string{cfg},
 		rw: []string{"/s/w/c", "/s/w/c.deps", "/s/w/c"}, ro: []string{"/p/bin", "/s/w/c", filepath.Join(cfg, "x")}}
 	for _, tc := range []struct {
-		name               string
-		egressDeny         bool
-		proxy, wantEgress  string
-		wantRuntime, wantI bool
+		name                 string
+		egressDeny, loop     bool
+		wantEgress, wantLoop string
+		wantRules            int
 	}{
-		{"allow", false, "", "allow", false, false},
-		{"deny with proxy", true, "127.0.0.1:5000", "deny", true, true},
-		{"allow with ask port", false, "127.0.0.1:5000", "allow", false, true},
-		{"deny without port", true, "", "deny", false, false},
+		{"network on", false, false, "allow", "deny", 0},
+		{"network off", true, false, "deny", "deny", 1},
+		{"ask others", false, true, "allow", "allow", 0},
+		{"off and ask", true, true, "deny", "allow", 1},
 	} {
 		sp := base
-		sp.egressDeny, sp.proxy = tc.egressDeny, tc.proxy
+		sp.egressDeny, sp.loopback = tc.egressDeny, tc.loop
+		sp.allowIPs = []net.IP{net.ParseIP("160.79.104.10"), net.ParseIP("2607:6bc0::10")}
 		r := mxcRequestFor(sp)
 		fs := r.Filesystem
 		if r.Version != "1.0.0" || r.Containment != "processcontainer" || r.UI.Disable || r.Process.Timeout <= 90000 || r.Process.InheritDefaultEnv {
@@ -127,11 +124,14 @@ func TestMXCRequestFor(t *testing.T) {
 		if want := []string{"/", "/p", "/s", "/s/w"}; !slices.Equal(r.ProcessContainer.Filesystem.Enumerate, want) {
 			t.Fatalf("%s: enumerate %v", tc.name, r.ProcessContainer.Filesystem.Enumerate)
 		}
-		if r.Network.Egress.Default != tc.wantEgress || (r.RuntimeConfig != nil) != tc.wantRuntime || (r.Network.Ingress != nil) != tc.wantI {
-			t.Fatalf("%s: network %+v %+v", tc.name, r.Network, r.RuntimeConfig)
+		if r.Network.Egress.Default != tc.wantEgress || r.Network.Ingress.HostLoopback != tc.wantLoop || len(r.Network.Egress.Allow) != tc.wantRules {
+			t.Fatalf("%s: network %+v", tc.name, r.Network)
 		}
-		if tc.wantRuntime && r.RuntimeConfig.NetworkProxy != "http://"+tc.proxy {
-			t.Fatalf("%s: proxy %v", tc.name, r.RuntimeConfig)
+		if tc.wantRules == 1 {
+			if a := r.Network.Egress.Allow[0]; len(a.To) != 2 || a.To[0].CIDR != "160.79.104.10/32" || a.To[1].CIDR != "2607:6bc0::10/128" ||
+				len(a.Ports) != 1 || a.Ports[0] != (mxcPort{"tcp", 443}) {
+				t.Fatalf("%s: rule %+v", tc.name, a)
+			}
 		}
 		b, _ := json.Marshal(r)
 		for _, k := range []string{`"readwritePaths"`, `"enumeratePaths"`, `"commandLine":"claude -p"`, `"ui":{"disable":false}`} {
@@ -186,7 +186,7 @@ func TestMXCWrapRun(t *testing.T) {
 	wxc, log := useFakeWxc(t)
 	scratch, cfg, work := t.TempDir(), t.TempDir(), t.TempDir()
 	for _, noNet := range []bool{false, true} {
-		m := agentMounts{cfgDir: cfg, hide: scratch, rw: []string{work}, cwd: work, noNet: noNet, proxy: "127.0.0.1:4999",
+		m := agentMounts{cfgDir: cfg, hide: scratch, rw: []string{work}, cwd: work, noNet: noNet,
 			cmdEnv: append(agentEnv(os.Environ()), "GIT_DIR=/nope", "PATH=/usr/bin:/bin")}
 		name, args, done, err := mxcWrap(wxc, "/bin/sh", []string{"-c", `read x; echo "in=$x"; echo "tmp=$TEMP"; echo "home=$USERPROFILE"; echo "proxy=$HTTPS_PROXY"; echo "box=$MINIGW_SANDBOXED"; exit 3`}, m)
 		if err != nil {
@@ -207,7 +207,7 @@ func TestMXCWrapRun(t *testing.T) {
 			}
 		}
 		if !strings.Contains(got, "in=hello\n") || !under(tmp, scratch) || !strings.Contains(got, "home="+filepath.Join(tmp, "home")+"\n") ||
-			!strings.Contains(got, "box=1\n") || strings.Contains(got, "proxy=http") != noNet {
+			!strings.Contains(got, "box=1\n") || strings.Contains(got, "proxy=http") {
 			t.Fatalf("output: %s", got)
 		}
 		var req mxcRequest
@@ -234,38 +234,40 @@ func TestMXCProbe(t *testing.T) {
 	wxc, _ := useFakeWxc(t)
 	t.Setenv("MINIGW_TEST_MAIN", "1")
 	scratch, cfg := t.TempDir(), t.TempDir()
-	if why, _ := mxcProbe(wxc, wxc, scratch, cfg); why != "" {
+	if why, _, _ := mxcProbe(wxc, wxc, scratch, cfg); why != "" {
 		t.Fatalf("probe: %s", why)
 	}
 	os.WriteFile(filepath.Join(cfg, "admin.secret"), []byte("x"), 0o600) // brez peskovnika berljiva: preizkus to vidi
-	if why, _ := mxcProbe(wxc, wxc, scratch, cfg); why != "the gateway's config was readable inside the sandbox" {
+	if why, _, _ := mxcProbe(wxc, wxc, scratch, cfg); why != "the gateway's config was readable inside the sandbox" {
 		t.Fatalf("probe deny: %q", why)
 	}
 	wxcHashes[runtime.GOARCH] = strings.Repeat("0", 64)
-	if why, _ := mxcProbe(wxc, wxc, scratch, cfg); !strings.Contains(why, "wxc-exec.exe changed") {
+	if why, _, _ := mxcProbe(wxc, wxc, scratch, cfg); !strings.Contains(why, "wxc-exec.exe changed") {
 		t.Fatalf("probe hash: %q", why)
 	}
 }
 
 func TestMXCProbeVerdict(t *testing.T) {
 	ok := "nonce:n\nwrite:ok\ndeny:ok\nloopback:ok\nfinal:\n"
+	noLoop := strings.Replace(ok, "loopback:ok", "loopback:fail i/o timeout", 1)
 	for _, tc := range []struct {
 		out      string
 		code     int
 		loopback bool
 		want     string
+		loopOK   bool
 	}{
-		{ok, 7, true, ""},
-		{strings.ReplaceAll(ok, "\n", "\r\n"), 7, true, ""},
-		{ok, 0, true, "wxc-exec did not pass the prompt and the exit code through (exit 0)"},
-		{"", 7, true, "wxc-exec did not pass the prompt and the exit code through (exit 7)"},
-		{strings.Replace(ok, "write:ok", "write:fail x", 1), 7, true, "a folder granted for writing could not be written"},
-		{strings.Replace(ok, "deny:ok", "deny:fail", 1), 7, true, "the gateway's config was readable inside the sandbox"},
-		{strings.Replace(ok, "loopback:ok", "loopback:fail refused", 1), 7, true, "the sandbox cannot reach the gateway on 127.0.0.1 (needs Windows 11 build 26100.9550 / 26200.9550 or later)"},
-		{ok, 7, false, "the sandbox cannot reach the gateway on 127.0.0.1 (needs Windows 11 build 26100.9550 / 26200.9550 or later)"},
+		{ok, 7, true, "", true},
+		{strings.ReplaceAll(ok, "\n", "\r\n"), 7, true, "", true},
+		{noLoop, 7, true, "", false}, // HPX360: škatla deluje, le vprašanja drugim modelom ne
+		{ok, 7, false, "", false},
+		{ok, 0, true, "wxc-exec did not pass the prompt and the exit code through (exit 0)", false},
+		{"", 7, true, "wxc-exec did not pass the prompt and the exit code through (exit 7)", false},
+		{strings.Replace(ok, "write:ok", "write:fail x", 1), 7, true, "a folder granted for writing could not be written", false},
+		{strings.Replace(ok, "deny:ok", "deny:fail", 1), 7, true, "the gateway's config was readable inside the sandbox", false},
 	} {
-		if got := mxcProbeVerdict(tc.out, tc.code, "n", tc.loopback); got != tc.want {
-			t.Errorf("%q %d: %q", tc.out, tc.code, got)
+		if got, loop := mxcProbeVerdict(tc.out, tc.code, "n", tc.loopback); got != tc.want || loop != tc.loopOK {
+			t.Errorf("%q %d: %q %v", tc.out, tc.code, got, loop)
 		}
 	}
 }
@@ -417,99 +419,6 @@ func TestGitWrapExec(t *testing.T) {
 	}
 }
 
-// Posrednik CONNECT vrat izvajanja (#68): dovoljen gostitelj → tunel; drug gostitelj ali vrata → 403 z imenom
-// nastavitve; brez »May ask other models« navadne zahteve 404 (vrata so le za posrednik).
-func TestRunConnectProxy(t *testing.T) {
-	s, _ := testServer(t, nil)
-	echo, _ := net.Listen("tcp", "127.0.0.1:0")
-	defer echo.Close()
-	go func() {
-		for {
-			c, err := echo.Accept()
-			if err != nil {
-				return
-			}
-			go func() { io.Copy(c, c); c.Close() }()
-		}
-	}()
-	old, oldR := proxyDial, proxyResolve
-	proxyResolve = func(host string) ([]net.IP, error) {
-		if host == "api.anthropic.com" {
-			return []net.IP{net.ParseIP("10.1.1.1"), net.ParseIP("160.79.104.10")}, nil // privatni se preskoči
-		}
-		return []net.IP{net.ParseIP("127.0.0.1")}, nil
-	}
-	proxyDial = func(addr string) (net.Conn, error) {
-		if addr != "160.79.104.10:443" {
-			t.Errorf("dial %s", addr)
-		}
-		return net.Dial("tcp", echo.Addr().String())
-	}
-	defer func() { proxyDial, proxyResolve = old, oldR }()
-	parent := httptest.NewRequest("POST", "/v1/messages", nil)
-	r := &req{Request: parent, conn: &serveConn{device: &serveDevice{Name: "pc"}, peer: "10.0.0.9"}}
-	run, env := s.startRun(r, "claude", "/copy", false, true, "", "", "", "", claudeAPIHosts, claudeNetworkSetting)
-	if run == nil || env != nil || run.asks() || run.runAddr() == "" {
-		t.Fatalf("run: %v %v", run, env)
-	}
-	defer run.stop()
-	connect := func(host string) (string, net.Conn) {
-		c, err := net.Dial("tcp", run.addr)
-		if err != nil {
-			t.Fatal(err)
-		}
-		c.Write([]byte("CONNECT " + host + " HTTP/1.1\r\nHost: " + host + "\r\n\r\n"))
-		br := bufio.NewReader(c)
-		resp, err := http.ReadResponse(br, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if resp.StatusCode != 200 {
-			body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-			c.Close()
-			return resp.Status + " " + string(body), nil
-		}
-		return resp.Status, c
-	}
-	if st, _ := connect("api.anthropic.com:443"); st != "403 Forbidden" && !strings.Contains(st, "Not a process") {
-		t.Fatalf("before start: %s", st)
-	}
-	run.started(os.Getpid())
-	st, c := connect("api.anthropic.com:443")
-	if c == nil {
-		t.Fatalf("allowed host: %s", st)
-	}
-	c.Write([]byte("ping\n"))
-	if l, _ := bufio.NewReader(c).ReadString('\n'); l != "ping\n" {
-		t.Fatalf("tunnel: %q", l)
-	}
-	c.Close()
-	claudeAPIHosts = append(claudeAPIHosts, "rebind.example") // dovoljen gostitelj, ki se razreši v loopback
-	defer func() { claudeAPIHosts = claudeAPIHosts[:len(claudeAPIHosts)-1] }()
-	run.allow = claudeAPIHosts
-	for _, h := range []string{"github.com:443", "api.anthropic.com:80", "127.0.0.1:443", "rebind.example:443"} {
-		if st, c := connect(h); c != nil || !strings.HasPrefix(st, "403") || !strings.Contains(st, "Network for builds") {
-			t.Fatalf("%s: %s", h, st)
-		}
-	}
-	// izvajanje z omrežjem (le vprašanja drugim modelom, Codex): posrednika ni
-	s2, _ := testServer(t, func(c *serveConfig) { c.Codex.AskOthers = true })
-	run2, _ := s2.startRun(r, "codex", "/copy", false, true, "", "", "", "", nil, "")
-	defer run2.stop()
-	run2.started(os.Getpid())
-	c2, _ := net.Dial("tcp", run2.addr)
-	c2.Write([]byte("CONNECT api.anthropic.com:443 HTTP/1.1\r\nHost: api.anthropic.com:443\r\n\r\n"))
-	if resp, err := http.ReadResponse(bufio.NewReader(c2), nil); err != nil || resp.StatusCode != 403 {
-		t.Fatalf("CONNECT without the proxy: %v %v", resp, err)
-	}
-	c2.Close()
-	q, _ := http.NewRequest("GET", "http://"+run.addr+"/v1/models", nil)
-	q.Header.Set("Authorization", "Bearer "+run.token)
-	if resp, err := http.DefaultClient.Do(q); err != nil || resp.StatusCode != 404 {
-		t.Fatalf("ask without the switch: %v %v", resp, err)
-	}
-}
-
 // Pripeti vrednosti v minigw in v gradnji (scripts/mxc.sha256, fetch-mxc.sh) se ujemata.
 func TestWxcHashesMatchBuild(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join("..", "scripts", "mxc.sha256"))
@@ -575,7 +484,7 @@ func TestAgentLoginAPI(t *testing.T) {
 
 // Gradnja pred preizkusom (UBR) in podedovani ključi *_API_KEY.
 func TestBuildTooOldAndKeyStrip(t *testing.T) {
-	for b, want := range map[string]bool{"26200.9711": false, "26200.9549": true, "26100.9550": false, "22631.5000": true, "28000.100": false, "": false, "x": false} {
+	for b, want := range map[string]bool{"26200.9711": false, "26200.9549": false, "26200.9277": true, "26100.9278": false, "22631.5000": true, "28000.100": false, "": false, "x": false} {
 		if buildTooOld(b) != want {
 			t.Errorf("%q", b)
 		}
@@ -621,32 +530,39 @@ func jsonPaths(v any, prefix string, out *[]string) {
 	}
 }
 
-// Oblika zahteve preizkusa je ista kot testdata/mxc-probe-request.json, ki ga pogodba 1.0.1 sprejme (mxc-exec-mac
-// --dry-run iz iste izdaje; brez allowedProxyPeer: »Request error«, kot na HPX360).
-func TestMXCProbeRequestShape(t *testing.T) {
-	gold, err := os.ReadFile(filepath.Join("testdata", "mxc-probe-request.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	r := mxcRequestFor(mxcSpec{argv: []string{"minigw.exe", mxcProbeCmd, "/d/p", "/c/cfg/admin.secret", "127.0.0.1:5000"}, cwd: "/d/p",
-		env: []string{"SYSTEMROOT=C:\\Windows"}, rw: []string{"/d/p"}, ro: []string{"/c/p"}, deny: []string{"/c/cfg"}, egressDeny: true, proxy: "127.0.0.1:5000"})
-	b, _ := json.Marshal(r)
-	var got, want any
-	json.Unmarshal(b, &got)
-	json.Unmarshal(gold, &want)
-	var gp, wp []string
-	jsonPaths(got, "", &gp)
-	jsonPaths(want, "", &wp)
-	slices.Sort(gp)
-	slices.Sort(wp)
-	if !slices.Equal(gp, wp) {
-		t.Fatalf("request shape\n got %v\nwant %v", gp, wp)
-	}
-	if r.ProcessContainer.Network == nil || r.ProcessContainer.Network.AllowedProxyPeer != "127.0.0.1:5000" || r.Network.Ingress.Default != "allow" {
-		t.Fatalf("proxy rules: %+v %+v", r.ProcessContainer, r.Network)
-	}
-	if rr := mxcRequestFor(mxcSpec{argv: []string{"x"}, proxy: "127.0.0.1:5000"}); rr.RuntimeConfig != nil || rr.ProcessContainer.Network != nil {
-		t.Fatal("proxy without egress deny")
+// Oblike zahtev (brez omrežja, z omrežjem, z vprašanji drugim modelom, preizkus) so iste kot v testdata/mxc-*.json, ki jih
+// sprejme razčlenjevalnik 1.0.1 (mxc-exec-mac --dry-run iz iste izdaje). Brez posrednika (networkProxy,
+// allowedProxyPeer: identiteta paketa, ne host:port), hostLoopback le z vrati izvajanja.
+func TestMXCRequestShapes(t *testing.T) {
+	ips := []net.IP{net.ParseIP("160.79.104.10"), net.ParseIP("2607:6bc0::10")}
+	for name, sp := range map[string]mxcSpec{
+		"off": {egressDeny: true, allowIPs: ips}, "on": {}, "ask": {loopback: true}, "off-ask": {egressDeny: true, allowIPs: ips[:1], loopback: true},
+		"probe": {egressDeny: true, loopback: true},
+	} {
+		sp.argv, sp.cwd, sp.env = []string{"minigw.exe", mxcProbeCmd}, "/d/p", []string{"SYSTEMROOT=C:\\Windows"}
+		sp.rw, sp.ro, sp.deny = []string{"/d/p"}, []string{"/c/p"}, []string{"/c/cfg"}
+		gold, err := os.ReadFile(filepath.Join("testdata", "mxc-"+name+".json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := json.Marshal(mxcRequestFor(sp))
+		var got, want any
+		json.Unmarshal(b, &got)
+		json.Unmarshal(gold, &want)
+		var gp, wp []string
+		jsonPaths(got, "", &gp)
+		jsonPaths(want, "", &wp)
+		slices.Sort(gp)
+		slices.Sort(wp)
+		if !slices.Equal(gp, wp) {
+			t.Fatalf("%s: request shape\n got %v\nwant %v", name, gp, wp)
+		}
+		if strings.Contains(string(b), "networkProxy") || strings.Contains(string(b), "allowedProxyPeer") {
+			t.Fatalf("%s: proxy in the request: %s", name, b)
+		}
+		if gn := got.(map[string]any)["network"]; fmt.Sprint(gn) != fmt.Sprint(want.(map[string]any)["network"]) && name != "off" && name != "off-ask" {
+			t.Fatalf("%s: network %v, want %v", name, gn, want.(map[string]any)["network"])
+		}
 	}
 	if got := redactEnv([]string{"CLAUDE_CODE_OAUTH_TOKEN=s", "XAI_API_KEY=k", "PATH=/bin"}); !slices.Equal(got, []string{"CLAUDE_CODE_OAUTH_TOKEN=REDACTED", "XAI_API_KEY=REDACTED", "PATH=/bin"}) {
 		t.Fatalf("redact: %v", got)

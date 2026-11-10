@@ -11,7 +11,6 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"os"
@@ -19,7 +18,6 @@ import (
 	"runtime"
 	"slices"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -40,24 +38,12 @@ type agentRun struct {
 	srv                *http.Server
 	slots              chan struct{} // M1: največ maxNested hkratnih vprašanj tega izvajanja
 	root               atomic.Int64  // M2: PID procesa agenta (0 = še ne teče); odjemalec mora biti v njegovem drevesu
-	ask                bool          // »May ask other models« (vrata so lahko odprta le za posrednik, #68)
-	allow              []string      // #68: posrednik CONNECT: dovoljeni gostitelji (vrata 443); nil = vsi (omrežje vklopljeno)
-	netOff             string        // #68: ime nastavitve, ki je omrežje izklopila (sporočilo 403)
+	ask                bool          // »May ask other models«
 	addr               string        // 127.0.0.1:port vrat izvajanja
-	tunMu              sync.Mutex
-	tunnels            []net.Conn // #68: odprti tuneli CONNECT, zaprti ob stop
 }
 
 // asks: izvajanje sme vprašati druge modele (nil = ne).
 func (run *agentRun) asks() bool { return run != nil && run.ask }
-
-// runAddr: naslov vrat izvajanja za škatlo MXC (posrednik, loopback); "" = vrat ni.
-func (run *agentRun) runAddr() string {
-	if run == nil {
-		return ""
-	}
-	return run.addr
-}
 
 // maxNested (M1): hkratna vprašanja drugim modelom na izvajanje; vsa vgnezdena izvajanja štejejo tudi v s.procs.
 const maxNested = 2
@@ -111,11 +97,9 @@ func chainRefusal(r *req, kind string) string {
 
 // startRun: vrata in žeton za izvajanje, če ima agent stikalo; nil, ko ga nima. Okolje gre agentu. `secretDir`: začasna
 // mapa izvajanja, ki jo agent vidi (sandbox), za datoteko z žetonom; "" = nova v Scratch/tmp.
-// #68: proxy (gostitelji ponudnika) odpre vrata tudi brez stikala: posrednik CONNECT za škatlo MXC brez omrežja;
-// netOff je ime nastavitve za zavrnitev.
-func (s *server) startRun(r *req, kind, dir string, readOnly, shared bool, wt, maven, objects, secretDir string, proxy []string, netOff string) (*agentRun, []string) {
+func (s *server) startRun(r *req, kind, dir string, readOnly, shared bool, wt, maven, objects, secretDir string) (*agentRun, []string) {
 	ask := s.conf().askOthers(kind)
-	if !ask && proxy == nil {
+	if !ask {
 		return nil, nil
 	}
 	ownDir := ""
@@ -143,7 +127,7 @@ func (s *server) startRun(r *req, kind, dir string, readOnly, shared bool, wt, m
 	}
 	run := &agentRun{kind: kind, device: r.conn.device, session: r.h("x-claude-mini-session"), cwd: r.h("x-claude-mini-cwd"), role: reqRole(r),
 		dir: dir, readOnly: readOnly, shared: shared, wt: wt, maven: maven, objects: objects, token: token, url: "http://" + ln.Addr().String(),
-		authFile: authFile, ownDir: ownDir, slots: make(chan struct{}, maxNested), ask: ask, allow: proxy, netOff: netOff, addr: ln.Addr().String()}
+		authFile: authFile, ownDir: ownDir, slots: make(chan struct{}, maxNested), ask: ask, addr: ln.Addr().String()}
 	if p := runOf(r); p != nil {
 		run.chain = append(slices.Clone(p.chain), kind)
 	} else {
@@ -155,9 +139,6 @@ func (s *server) startRun(r *req, kind, dir string, readOnly, shared bool, wt, m
 			return context.WithValue(ctx, connKey{}, &serveConn{Conn: c, br: bufio.NewReader(c), peer: peer, device: run.device})
 		}}
 	go run.srv.Serve(ln)
-	if !ask {
-		return run, nil
-	}
 	env := []string{"MINIGW_AGENT_URL=" + run.url, "MINIGW_AGENT_AUTH_FILE=" + run.authFile}
 	if s.conf().askOnPath(dir) { // askNote: »minigw« je ta minigw.exe
 		env = append(env, "PATH="+filepath.Dir(minigwExe())+";"+os.Getenv("PATH"))
@@ -169,12 +150,6 @@ func (s *server) startRun(r *req, kind, dir string, readOnly, shared bool, wt, m
 func (run *agentRun) stop() {
 	if run != nil {
 		run.srv.Close()
-		run.tunMu.Lock()
-		for _, c := range run.tunnels { // hijacked povezav srv.Close ne zapre
-			c.Close()
-		}
-		run.tunnels = nil
-		run.tunMu.Unlock()
 		os.Remove(run.authFile)
 		if run.ownDir != "" {
 			os.RemoveAll(run.ownDir)
@@ -187,14 +162,6 @@ var runAllowed = map[string]bool{"GET /v1/models": true, "POST /v1/messages": tr
 
 func (s *server) runHandler(run *agentRun) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, hr *http.Request) {
-		if hr.Method == http.MethodConnect { // #68: posrednik škatle MXC (identiteta: drevo procesov, brez žetona)
-			s.runConnect(run, w, hr)
-			return
-		}
-		if !run.ask {
-			writeError(w, "", 404, "Not available to agents: "+hr.Method+" "+hr.URL.Path)
-			return
-		}
 		got := strings.TrimPrefix(hr.Header.Get("Authorization"), "Bearer ")
 		if hr.Header.Get("Authorization") == "" {
 			got = hr.Header.Get("X-Api-Key")
@@ -239,96 +206,6 @@ func (s *server) runHandler(run *agentRun) http.Handler {
 		}
 		s.ServeHTTP(w, hr.WithContext(context.WithValue(hr.Context(), agentRunKey{}, run)))
 	})
-}
-
-// proxyDial, proxyResolve: povezava posrednika in razreševanje imena (testi: preslikava na lokalni strežnik).
-var (
-	proxyDial    = func(addr string) (net.Conn, error) { return net.DialTimeout("tcp", addr, 30*time.Second) }
-	proxyResolve = func(host string) ([]net.IP, error) { return net.LookupIP(host) }
-)
-
-// maxTunnels: največ hkratnih tunelov CONNECT enega izvajanja.
-const maxTunnels = 16
-
-// publicIP: naslov, ki ga posrednik sme klicati (ne loopback, zasebni, link-local, nedoločen ali multicast).
-func publicIP(ip net.IP) bool {
-	return !(ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() ||
-		ip.IsMulticast() || ip.IsInterfaceLocalMulticast())
-}
-
-// runConnect (#68): le za izvajanje v škatli brez omrežja (allow != nil): CONNECT <dovoljen gostitelj>:443 od procesa
-// tega izvajanja (peerInTree); ime se razreši enkrat, klic gre na javni IP (brez DNS rebinding, nikoli loopback ali
-// lokalno omrežje), nato tunel v obe smeri; drugo 403 z imenom nastavitve in vrstica v dnevniku.
-func (s *server) runConnect(run *agentRun, w http.ResponseWriter, hr *http.Request) {
-	c, _ := hr.Context().Value(connKey{}).(*serveConn)
-	if c == nil {
-		writeError(w, "", 403, "Not a process of this agent run")
-		return
-	}
-	ours, ok1 := c.LocalAddr().(*net.TCPAddr)
-	peer, ok2 := c.RemoteAddr().(*net.TCPAddr)
-	if root := int(run.root.Load()); root == 0 || !ok1 || !ok2 || !peerInTree(ours, peer, root) {
-		writeError(w, "", 403, "Not a process of this agent run")
-		return
-	}
-	host, port, err := net.SplitHostPort(hr.Host)
-	if err != nil || run.allow == nil || port != "443" || !slices.Contains(run.allow, strings.ToLower(host)) {
-		s.log.Printf("agent %s: refused CONNECT %s (%s is off)", run.via(), hr.Host, run.netOff)
-		writeError(w, "", 403, "network for this agent is off ("+run.netOff+")")
-		return
-	}
-	ips, err := proxyResolve(host)
-	var ip net.IP
-	for _, x := range ips {
-		if publicIP(x) {
-			ip = x
-			break
-		}
-	}
-	if err != nil || ip == nil {
-		s.log.Printf("agent %s: refused CONNECT %s (no public address)", run.via(), hr.Host)
-		writeError(w, "", 403, "network for this agent is off ("+run.netOff+")")
-		return
-	}
-	run.tunMu.Lock()
-	full := len(run.tunnels) >= 2*maxTunnels
-	run.tunMu.Unlock()
-	if full {
-		writeError(w, "", 429, "too many connections from this agent run")
-		return
-	}
-	up, err := proxyDial(net.JoinHostPort(ip.String(), port))
-	if err != nil {
-		writeError(w, "", 502, "cannot connect to "+hr.Host)
-		return
-	}
-	hj, ok := w.(http.Hijacker)
-	if !ok {
-		up.Close()
-		writeError(w, "", 500, "no tunnel")
-		return
-	}
-	conn, brw, err := hj.Hijack()
-	if err != nil {
-		up.Close()
-		return
-	}
-	run.tunMu.Lock()
-	run.tunnels = append(run.tunnels, conn, up)
-	run.tunMu.Unlock()
-	conn.Write([]byte("HTTP/1.1 200 Connection established\r\n\r\n"))
-	go func() {
-		io.Copy(up, brw) // tudi že prebrano v medpomnilniku
-		if t, ok := up.(*net.TCPConn); ok {
-			t.CloseWrite()
-		}
-	}()
-	io.Copy(conn, up)
-	conn.Close()
-	up.Close()
-	run.tunMu.Lock()
-	run.tunnels = slices.DeleteFunc(run.tunnels, func(c net.Conn) bool { return c == conn || c == up })
-	run.tunMu.Unlock()
 }
 
 // minigwExe: ta program (z razrešenimi povezavami): agent z njim vpraša druge modele, sandbox ga mora videti.

@@ -13,6 +13,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -825,11 +826,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			boxTemp = tmp
 		}
 		shared := share != nil || (parent != nil && parent.shared)
-		var proxy []string
-		if box && netOff { // #68: škatla brez omrežja; Claude Code doseže le API prek posrednika vrat izvajanja
-			proxy = claudeAPIHosts
-		}
-		run, runEnv = s.startRun(r, "claude", dir, ro, shared, wt, maven, objects, "", proxy, claudeNetworkSetting) // »May ask other models«
+		run, runEnv = s.startRun(r, "claude", dir, ro, shared, wt, maven, objects, "") // »May ask other models«
 		defer run.stop()
 		if run.asks() {
 			boxRO = append(boxRO, filepath.Dir(run.authFile))
@@ -903,10 +900,18 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		if len(exe) > 1 { // node + cli.js
 			boxRO = append(boxRO, filepath.Dir(exe[1]))
 		}
+		var apiIPs []net.IP
+		if netOff { // #68: brez omrežja le naslovi API (razrešeni zdaj, pravila MXC so številska), vrata 443
+			if apiIPs, err = mxcResolve(claudeAPIHost); err != nil || len(apiIPs) == 0 {
+				s.log.Printf("%s claude: cannot resolve %s: %v", r.rid, claudeAPIHost, err)
+				return writeError(w, r.rid, 503, "Cannot resolve "+claudeAPIHost+" for Claude CLI without network for builds; try again, or turn on "+claudeNetworkSetting)
+			}
+			s.log.Printf("%s claude: network for builds off, only %s %v:443", r.rid, claudeAPIHost, apiIPs)
+		}
 		var done func()
 		var err2 error
 		name, cargs, done, err2 = agentWrap(name, cargs, agentMounts{cfgDir: s.cfgDir, rw: append(boxRW, conf), ro: boxRO, hide: s.conf().Scratch,
-			cmdEnv: cmdEnv, cwd: dir, home: filepath.Join(runDir, "home"), temp: boxTemp, noNet: netOff, proxy: run.runAddr()})
+			cmdEnv: cmdEnv, cwd: dir, home: filepath.Join(runDir, "home"), temp: boxTemp, noNet: netOff, allowIPs: apiIPs, loopback: run.asks()})
 		if err2 != nil {
 			s.log.Printf("%s claude: %v", r.rid, err2)
 			return writeError(w, r.rid, 503, "Cannot start Claude CLI in the Windows sandbox: "+err2.Error())
