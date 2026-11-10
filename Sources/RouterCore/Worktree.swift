@@ -1438,7 +1438,7 @@ extension ShareHub {
             // L2: mapa brez pravic → 0700 (relativno na koren, brez sledenja povezavam) in znova
             func openDir() -> Int32 { openat(root, rel, O_RDONLY | O_DIRECTORY | O_NOFOLLOW_ANY | O_CLOEXEC) }
             var fd = openDir()
-            if fd < 0, fchmodat(root, rel, 0o700, AT_SYMLINK_NOFOLLOW) == 0 { fd = openDir() }
+            if fd < 0, fchmodat(root, rel, 0o700, AT_SYMLINK_NOFOLLOW_ANY) == 0 { fd = openDir() }
             guard fd >= 0 else { return false }  // L3: prava mapa, ki je ni mogoče odpreti
             defer { close(fd) }
             guard let d = fdopendir(dup(fd)) else { return false }
