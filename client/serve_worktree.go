@@ -708,16 +708,16 @@ func wrapScript(git string) string {
 }
 
 // pathWrapScript (#40): »git« na PATH agenta (bin v gitExecWrap, enak kot Worktree.pathWrapScript na Macu): git dela v
-// registriranem klonu (MINIGW_GIT_DIRS), ki vsebuje trenutno mapo ali pot -C; drugače ostane okolje (vrhnji klon).
+// registriranem klonu (MINIGW_GIT_DIRS), ki vsebuje trenutno mapo ali pot -C; drugače v vrhnjem (prvi vnos).
 func pathWrapScript(git string) string {
 	return "#!/bin/sh\n# minigw: git works in the registered clone (MINIGW_GIT_DIRS) that holds the folder or the -C <path>\n" +
 		"real='" + strings.ReplaceAll(git, "'", `'\''`) + `'; d=$(pwd -P) || exec "$real" "$@"` + "\n" +
 		`i=1; while [ $i -le $# ]; do eval "a=\${$i}"; case $a in` + "\n" +
-		`  -C) i=$((i+1)); eval "p=\${$i}"; case $p in /*) ;; *) p=$d/$p;; esac; d=$(cd "$p" 2>/dev/null && pwd -P) || exec "$real" "$@";;` + "\n" +
+		`  -C) i=$((i+1)); eval "p=\${$i}"; case $p in /*) ;; *) p=$d/$p;; esac; q=$(cd "$p" 2>/dev/null && pwd -P) && d=$q || break;;` + "\n" +
 		`  -c) i=$((i+1));; -*) ;; *) break;; esac; i=$((i+1)); done` + "\n" +
 		"b=; g=; set -f; IFS='\n'\n" +
 		`for e in $MINIGW_GIT_DIRS; do w=$(cd "${e%/.git}" 2>/dev/null && pwd -P) || continue; case $d/ in "$w"/*) [ ${#w} -gt ${#b} ] && b=$w g=$e;; esac; done` + "\n" +
-		`[ -n "$g" ] && export GIT_DIR="$g" GIT_COMMON_DIR="$g" GIT_WORK_TREE="${g%/.git}"` + "\n" +
+		`[ -n "$g" ] || g=${MINIGW_GIT_DIRS%%'` + "\n" + `'*}; [ -n "$g" ] && export GIT_DIR="$g" GIT_COMMON_DIR="$g" GIT_WORK_TREE="${g%/.git}"` + "\n" +
 		`exec "$real" "$@"` + "\n"
 }
 
@@ -756,16 +756,32 @@ func worktreeClaudeEnv(wt, maven, tmp, gw string, gits []string, agent string) [
 	if w == nil {
 		return nil
 	}
+	if agent == "codex" { // harness Codex (zunaj peskovnika) ostane v vrhnjem klonu; ukazi dobijo ovoj prek codexArgs
+		return append(env, w...)
+	}
+	// #40: brez GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR vrhnjega klona (git -C <ugnezdeni> bi sicer delal v vrhnjem);
+	// ovoj na PATH jih nastavi za vsak klic, git mimo njega najde repozitorij sam, ne nad klonom (GIT_CEILING_DIRECTORIES).
+	out := []string{"MINIGW_CLONE=" + wt, "GIT_CEILING_DIRECTORIES=" + filepath.Dir(wt), "PATH=" + agentPath(gw)}
+	for _, kv := range env {
+		if k, _, _ := strings.Cut(kv, "="); k != "GIT_DIR" && k != "GIT_WORK_TREE" && k != "GIT_COMMON_DIR" {
+			out = append(out, kv)
+		}
+	}
+	return append(out, w...)
+}
+
+// agentPath: PATH agenta, najprej ovoj gw/bin (pathWrapScript); L2: le absolutne poti.
+func agentPath(gw string) string {
 	path := []string{filepath.Join(gw, "bin")}
 	for _, p := range filepath.SplitList(os.Getenv("PATH")) {
-		if filepath.IsAbs(p) { // L2: le absolutne (ne trenutna mapa, ne relativna v klonu agenta)
+		if filepath.IsAbs(p) {
 			path = append(path, p)
 		}
 	}
 	if len(path) == 1 {
 		path = append(path, "/usr/bin", "/bin")
 	}
-	return append(append(env, w...), "PATH="+strings.Join(path, ":"))
+	return strings.Join(path, ":")
 }
 
 // gitWrapEnv: GIT_EXEC_PATH z ovojem gitExecWrap v gw in MINIGW_GIT_DIRS (edini GIT_DIR, ki jih ovoj pusti; absolutne

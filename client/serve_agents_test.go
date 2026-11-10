@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -17,26 +18,26 @@ import (
 
 // Kot testi Codex.args in Grok.args na Macu.
 func TestCodexAndGrokArgs(t *testing.T) {
-	a := codexArgs("/w", []string{"/tmp/x"}, true, "/o.txt", "", true, true, "")
+	a := codexArgs("/w", []string{"/tmp/x"}, true, "/o.txt", "", true, true, "", nil, "")
 	j := strings.Join(a, " ")
 	if !strings.HasPrefix(j, "exec --json --skip-git-repo-check --color never -C /w -o /o.txt --sandbox workspace-write --add-dir /tmp/x") ||
 		!strings.HasSuffix(j, `-c sandbox_mode="workspace-write" -c sandbox_workspace_write.network_access=true -c sandbox_workspace_write.writable_roots=["/tmp/x"] -`) ||
 		slices.Contains(a, "--ephemeral") {
 		t.Fatalf("codex agent: %v", a)
 	}
-	if r := codexArgs("/w", nil, false, "/o", "", true, true, ""); !slices.Contains(r, "read-only") || !slices.Contains(r, "--ephemeral") {
+	if r := codexArgs("/w", nil, false, "/o", "", true, true, "", nil, ""); !slices.Contains(r, "read-only") || !slices.Contains(r, "--ephemeral") {
 		t.Fatalf("codex chat: %v", r)
 	}
-	if r := codexArgs("/w", []string{"/tmp/x"}, true, "/o", "gpt-6-luna", false, true, ""); !slices.Contains(r, "read-only") || slices.Contains(r, "--add-dir") ||
+	if r := codexArgs("/w", []string{"/tmp/x"}, true, "/o", "gpt-6-luna", false, true, "", nil, ""); !slices.Contains(r, "read-only") || slices.Contains(r, "--add-dir") ||
 		!slices.Contains(r, "gpt-6-luna") || strings.Contains(strings.Join(r, " "), "network_access") {
 		t.Fatalf("codex read-only: %v", r)
 	}
 	// I5: sandbox tudi za »exec resume« (ta nima --sandbox): -c za »resume <nit>«.
-	if r := strings.Join(codexArgs("/w", nil, true, "/o", "", true, false, "t1"), " "); !strings.Contains(r, `resume t1 -c sandbox_mode="workspace-write" -c sandbox_workspace_write.network_access=false`) ||
+	if r := strings.Join(codexArgs("/w", nil, true, "/o", "", true, false, "t1", nil, ""), " "); !strings.Contains(r, `resume t1 -c sandbox_mode="workspace-write" -c sandbox_workspace_write.network_access=false`) ||
 		!strings.HasSuffix(r, " -") {
 		t.Fatalf("codex resume: %s", r)
 	}
-	if r := strings.Join(codexArgs("/w", nil, true, "/o", "", false, false, "t1"), " "); !strings.HasSuffix(r, `resume t1 -c sandbox_mode="read-only" -`) {
+	if r := strings.Join(codexArgs("/w", nil, true, "/o", "", false, false, "t1", nil, ""), " "); !strings.HasSuffix(r, `resume t1 -c sandbox_mode="read-only" -`) {
 		t.Fatalf("codex read-only resume: %s", r)
 	}
 	// H1: mapa nastavitev prepovedana (Read, Edit, Write); brez pisanja tudi brez spleta.
@@ -538,5 +539,46 @@ case "$p" in *"shared read-only"*) echo ro-note > "$out";; *) echo no-note > "$o
 	}
 	if _, err := os.Stat(filepath.Join(dir, "agent.txt")); err != nil {
 		t.Fatal("an uncapped run did not sync back (the test would prove nothing)")
+	}
+}
+
+// #40: Codex v klonu dobi profil dovoljenj: commit v vrhnjem in ugnezdenem klonu gre, config, hooks in info .git ne;
+// ukazi brez GIT_DIR vrhnjega klona in z ovojem na PATH. S pravim codex (če je nameščen; macOS Seatbelt) še zares.
+func TestCodexTreeProfile(t *testing.T) {
+	wt := filepath.Join(t.TempDir(), "w")
+	gits := []string{filepath.Join(wt, ".git"), filepath.Join(wt, "lib", ".git")}
+	a := strings.Join(codexArgs(wt, []string{"/m"}, true, "/o", "", true, false, "", gits, "/gw/bin:/usr/bin"), " ")
+	for _, want := range []string{`default_permissions="minigw"`, `"` + gits[1] + `"="write"`, `"` + gits[1] + `/config"="read"`, `"` + gits[0] + `/hooks"="read"`,
+		`"/m"="write"`, `permissions.minigw.network.enabled=false`, `shell_environment_policy.exclude=["GIT_DIR","GIT_WORK_TREE","GIT_COMMON_DIR"]`,
+		`shell_environment_policy.set.PATH="/gw/bin:/usr/bin"`} {
+		if !strings.Contains(a, want) {
+			t.Fatalf("missing %s in %s", want, a)
+		}
+	}
+	if strings.Contains(a, "--sandbox") || strings.Contains(a, "workspace-write") {
+		t.Fatalf("workspace-write in a clone: %s", a)
+	}
+	exe, err := exec.LookPath("codex")
+	if err != nil || runtime.GOOS != "darwin" {
+		t.Skip("real codex sandbox: macOS with codex only")
+	}
+	for _, g := range gits {
+		os.MkdirAll(filepath.Dir(g), 0o755)
+		gitT(t, filepath.Dir(g), "init", "-q", "-b", "main")
+	}
+	var sb []string
+	p := codexTreeProfile([]string{wt}, gits, false, "/usr/bin:/bin")
+	for i := 0; i+1 < len(p); i += 2 {
+		if !strings.HasPrefix(p[i+1], "shell_environment_policy") {
+			sb = append(sb, p[i], p[i+1])
+		}
+	}
+	script := `git -C lib commit -q --allow-empty -m sub && git commit -q --allow-empty -m top && echo COMMITS; ` +
+		`for f in .git/config lib/.git/config lib/.git/hooks/x lib/.git/info/attributes lib/.git/commondir; do (echo x >> $f) 2>/dev/null && echo WROTE-$f; done; echo end`
+	c := exec.Command(exe, append(append([]string{"sandbox"}, sb...), "-P", "minigw", "--", "sh", "-c", script)...)
+	c.Dir, c.Env = wt, append(os.Environ(), "GIT_CONFIG_COUNT=2", "GIT_CONFIG_KEY_0=user.name", "GIT_CONFIG_VALUE_0=c", "GIT_CONFIG_KEY_1=user.email", "GIT_CONFIG_VALUE_1=c@x")
+	out, _ := c.CombinedOutput()
+	if s := string(out); !strings.Contains(s, "COMMITS") || strings.Contains(s, "WROTE-") || !strings.Contains(s, "end") {
+		t.Fatalf("codex sandbox: %s", s)
 	}
 }

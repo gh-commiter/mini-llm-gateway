@@ -480,29 +480,39 @@ public enum Worktree {
     /// agentovi) z »git« iz mape exec: ovoj pusti le git s klonovim GIT_DIR (MINIGW_GIT_DIR), drugo zavrne. Ostale datoteke
     /// so povezave na pravo mapo exec. `gitexec` je v Scratch (agenti tja ne pišejo). nil = ovoja ni.
     /// `gits`: .git vseh klonov (vrhnji in ugnezdeni, ShareHub.worktree); prazno = le vrhnji.
-    /// #40: PATH najprej `gitexec`/bin (pathWrapScript), za vse agente: navodilo ponudi git -C v ugnezdenem klonu. `path`: PATH procesa.
+    /// #40: PATH najprej `gitexec`/bin (pathWrapScript) in brez GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR vrhnjega klona (git -C
+    /// <ugnezdeni> bi sicer delal v vrhnjem; ovoj jih nastavi za vsak klic, git mimo njega najde repozitorij sam, ne nad
+    /// klonom: GIT_CEILING_DIRECTORIES). Harness Codex (zunaj peskovnika) jih obdrži, ukazi dobijo ovoj prek Codex.args.
+    /// `path`: PATH procesa (kot Go worktreeClaudeEnv).
     public static func claudeEnv(root: URL, maven: URL, gitexec: URL, gits: [String] = [], agent: String,
                                  path: String = ProcessInfo.processInfo.environment["PATH"] ?? "") -> [String: String]? {
         guard let wrap = wrapEnv(gitDirs: gits.isEmpty ? [root.appendingPathComponent(".git").path] : gits, gitexec: gitexec) else { return nil }
-        let rest = path.split(separator: ":").map(String.init).filter { $0.hasPrefix("/") }  // L2: le absolutne (ne mapa v klonu agenta)
-        let bin = ([gitexec.appendingPathComponent("bin").path] + (rest.isEmpty ? ["/usr/bin", "/bin"] : rest)).joined(separator: ":")
-        return harnessEnv(root: root, maven: maven, agent: agent).merging(wrap) { $1 }.merging(["PATH": bin]) { $1 }
+        let env = harnessEnv(root: root, maven: maven, agent: agent).merging(wrap) { $1 }
+        if agent == "codex" { return env }
+        return env.filter { !["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR"].contains($0.key) }.merging(
+            ["PATH": agentPath(gitexec: gitexec, path: path), "MINIGW_CLONE": root.path, "GIT_CEILING_DIRECTORIES": root.deletingLastPathComponent().path]) { $1 }
+    }
+
+    /// PATH agenta, najprej ovoj `gitexec`/bin; L2: le absolutne poti (kot Go agentPath).
+    static func agentPath(gitexec: URL, path: String) -> String {
+        let rest = path.split(separator: ":").map(String.init).filter { $0.hasPrefix("/") }
+        return ([gitexec.appendingPathComponent("bin").path] + (rest.isEmpty ? ["/usr/bin", "/bin"] : rest)).joined(separator: ":")
     }
 
     /// Ime avtorja commitov agenta (kot Go agentAuthor).
     static func author(_ agent: String) -> String { agent.prefix(1).uppercased() + agent.dropFirst() + " (Mini Gateway)" }
 
     /// #40 (enak kot Go pathWrapScript, testdata/pathwrap.golden): »git« na PATH agenta dela v registriranem klonu
-    /// (MINIGW_GIT_DIRS), ki vsebuje trenutno mapo ali pot -C; drugače ostane okolje (vrhnji klon).
+    /// (MINIGW_GIT_DIRS), ki vsebuje trenutno mapo ali pot -C; drugače v vrhnjem (prvi vnos).
     static func pathWrapScript(real: String) -> String {
         "#!/bin/sh\n# minigw: git works in the registered clone (MINIGW_GIT_DIRS) that holds the folder or the -C <path>\n"
             + "real='" + real.replacingOccurrences(of: "'", with: #"'\''"#) + #"'; d=$(pwd -P) || exec "$real" "$@""# + "\n"
             + #"i=1; while [ $i -le $# ]; do eval "a=\${$i}"; case $a in"# + "\n"
-            + #"  -C) i=$((i+1)); eval "p=\${$i}"; case $p in /*) ;; *) p=$d/$p;; esac; d=$(cd "$p" 2>/dev/null && pwd -P) || exec "$real" "$@";;"# + "\n"
+            + #"  -C) i=$((i+1)); eval "p=\${$i}"; case $p in /*) ;; *) p=$d/$p;; esac; q=$(cd "$p" 2>/dev/null && pwd -P) && d=$q || break;;"# + "\n"
             + #"  -c) i=$((i+1));; -*) ;; *) break;; esac; i=$((i+1)); done"# + "\n"
             + "b=; g=; set -f; IFS='\n'\n"
             + #"for e in $MINIGW_GIT_DIRS; do w=$(cd "${e%/.git}" 2>/dev/null && pwd -P) || continue; case $d/ in "$w"/*) [ ${#w} -gt ${#b} ] && b=$w g=$e;; esac; done"# + "\n"
-            + #"[ -n "$g" ] && export GIT_DIR="$g" GIT_COMMON_DIR="$g" GIT_WORK_TREE="${g%/.git}""# + "\n"
+            + #"[ -n "$g" ] || g=${MINIGW_GIT_DIRS%%'"# + "\n" + #"'*}; [ -n "$g" ] && export GIT_DIR="$g" GIT_COMMON_DIR="$g" GIT_WORK_TREE="${g%/.git}""# + "\n"
             + #"exec "$real" "$@""# + "\n"
     }
 

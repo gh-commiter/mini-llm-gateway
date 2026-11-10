@@ -1607,7 +1607,7 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
                               (ab, ["status"], inn(top)), (root.path, ["status"], inn(top)), (top, ["-C", "missing", "status"], inn(top))] {
         let p = Process(), out = Pipe()
         p.executableURL = wrap; p.arguments = args; p.currentDirectoryURL = URL(fileURLWithPath: cwd); p.standardOutput = out
-        p.environment = ProcessInfo.processInfo.environment.merging(["GIT_DIR": top + "/.git", "GIT_WORK_TREE": top, "GIT_COMMON_DIR": top + "/.git", "MINIGW_GIT_DIRS": reg]) { $1 }
+        p.environment = ProcessInfo.processInfo.environment.merging(["MINIGW_GIT_DIRS": reg]) { $1 }  // #40: brez GIT_DIR; brez ujemanja vrhnji
         try p.run(); p.waitUntilExit()
         let got = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         #expect(got == want + "|" + args.joined(separator: " "), "\(cwd) \(args)")
@@ -1625,6 +1625,7 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
     let gx = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("gx-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: gx) }
     let c = try #require(Worktree.claudeEnv(root: URL(fileURLWithPath: "/w"), maven: URL(fileURLWithPath: "/m"), gitexec: gx, agent: "claude", path: ":/usr/bin::.:bin:./x:/bin:"))
+    #expect(c["GIT_DIR"] == nil && c["GIT_WORK_TREE"] == nil && c["GIT_COMMON_DIR"] == nil && c["MINIGW_CLONE"] == "/w" && c["GIT_CEILING_DIRECTORIES"] == "/")  // #40
     #expect(c["PATH"] == gx.path + "/bin:/usr/bin:/bin" && c["GIT_CONFIG_VALUE_6"] == "Claude (Mini Gateway)")
     #expect(FileManager.default.isExecutableFile(atPath: gx.path + "/bin/git"))
 }
@@ -1669,26 +1670,31 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
     #expect(top.contains("top.txt") && !top.contains("lib/") && g(client, "log", "-1", "--format=%an", br) == "Claude (Mini Gateway)")
 }
 
-/// #40 M1: vsak ugnezdeni klon je pisljiva mapa Codex, zato je njegov .git v sandboxu Codex le za branje (git harnessa
-/// zunaj sandboxa bi sicer izvedel podtaknjen filter); s pravim codex (če je nameščen) ukaz ne zapiše sub/.git/config.
-@Test func codexProtectsNestedCloneGit() throws {
+/// #40 (kot Go TestCodexTreeProfile): Codex v klonu dobi profil dovoljenj: commit v vrhnjem in ugnezdenem klonu gre,
+/// config, hooks, info in commondir .git ne; s pravim codex (če je nameščen) še zares.
+@Test func codexTreeProfileCommitsButProtectsGitConfig() throws {
     let fm = FileManager.default
     let wt = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("cx-" + UUID().uuidString)
     defer { try? fm.removeItem(at: wt) }
-    let m = wt.appendingPathComponent(".maven"), sub = wt.appendingPathComponent("sub")
-    let dirs = Codex.treeDirs(root: wt, cwd: wt, maven: m, gits: [wt.path + "/.git", sub.path + "/.git"])
-    #expect(dirs == [m.path, sub.path])
-    for d in [wt, sub] { try fm.createDirectory(at: d.appendingPathComponent(".git/info"), withIntermediateDirectories: true); try file(d, ".git/config", "") }
+    let gits = [wt.path + "/.git", wt.path + "/lib/.git"]
+    let a = Codex.args(cwd: wt, extraDirs: ["/m"], agent: true, output: wt, write: true, gits: gits, path: "/gw/bin:/usr/bin").joined(separator: " ")
+    for want in [#"default_permissions="minigw""#, "\"\(gits[1])\"=\"write\"", "\"\(gits[1])/config\"=\"read\"", "\"\(gits[0])/hooks\"=\"read\"",
+                 #""/m"="write""#, #"shell_environment_policy.exclude=["GIT_DIR","GIT_WORK_TREE","GIT_COMMON_DIR"]"#, #"shell_environment_policy.set.PATH="/gw/bin:/usr/bin""#] {
+        #expect(a.contains(want), "\(want)")
+    }
+    #expect(!a.contains("workspace-write") && !a.contains("--sandbox"))
+    #expect(Worktree.claudeEnv(root: wt, maven: wt, gitexec: wt.appendingPathComponent("gx"), agent: "codex")?["GIT_DIR"] == wt.path + "/.git")
     guard let exe = ["/opt/homebrew/bin/codex", "/usr/local/bin/codex"].first(where: { fm.isExecutableFile(atPath: $0) }) else { return }
-    let p = Process()
-    p.executableURL = URL(fileURLWithPath: exe); p.currentDirectoryURL = wt
-    p.arguments = ["sandbox", "-c", #"sandbox_mode="workspace-write""#, "-c", "sandbox_workspace_write.writable_roots=[" + dirs.map { "\"\($0)\"" }.joined(separator: ",") + "]",
-                   "--", "sh", "-c", "echo x >> sub/.git/config; echo x > sub/.git/info/attributes; echo x >> .git/config; echo ok > a.txt"]
-    p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+    for d in gits.map({ String($0.dropLast(5)) }) { try fm.createDirectory(atPath: d, withIntermediateDirectories: true); g(URL(fileURLWithPath: d), "init", "-q") }
+    let prof = Codex.treeProfile(writable: [wt.path], gits: gits, network: false, path: "/usr/bin:/bin")
+    let p = Process(), out = Pipe()
+    p.executableURL = URL(fileURLWithPath: exe); p.currentDirectoryURL = wt; p.standardOutput = out; p.standardError = out
+    p.arguments = ["sandbox"] + prof.prefix(6) + ["-P", "minigw", "--", "sh", "-c",
+        "git -C lib -c user.name=c -c user.email=c@x commit -q --allow-empty -m sub && git -c user.name=c -c user.email=c@x commit -q --allow-empty -m top && echo COMMITS; "
+        + "for f in .git/config lib/.git/config lib/.git/hooks/x lib/.git/info/attributes lib/.git/commondir; do (echo x >> $f) 2>/dev/null && echo WROTE-$f; done; echo end"]
     try p.run(); p.waitUntilExit()
-    #expect(fm.fileExists(atPath: wt.path + "/a.txt"), "codex sandbox did not run")
-    for f in ["sub/.git/config", ".git/config"] { #expect(try String(contentsOf: wt.appendingPathComponent(f), encoding: .utf8).isEmpty, "\(f)") }
-    #expect(!fm.fileExists(atPath: sub.path + "/.git/info/attributes"))
+    let s = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    #expect(s.contains("COMMITS") && !s.contains("WROTE-") && s.contains("end"), "\(s)")
 }
 
 /// #40: klon se znova uporabi le, če je vsak ugnezdeni klon še na svoji poti (pot, zamenjana s povezavo na isti .git,

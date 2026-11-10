@@ -36,7 +36,10 @@ func killInside(wt string) {
 		// N1: tudi proces, ki je zapustil sejo (setsid) in klon (cd /): okolje agenta nosi GIT_WORK_TREE tega klona
 		// (worktreeHarnessEnv); environ je berljiv le za procese istega uporabnika.
 		env, _ := os.ReadFile("/proc/" + e.Name() + "/environ")
-		marked := strings.Contains("\x00"+string(env), "\x00GIT_WORK_TREE="+wt+"\x00") || strings.Contains("\x00"+string(env), "\x00GIT_WORK_TREE="+root+"\x00")
+		marked := false
+		for _, k := range []string{"GIT_WORK_TREE=", "MINIGW_CLONE="} { // #40: MINIGW_CLONE pri agentih z ovojem git (brez GIT_WORK_TREE)
+			marked = marked || strings.Contains("\x00"+string(env), "\x00"+k+wt+"\x00") || strings.Contains("\x00"+string(env), "\x00"+k+root+"\x00")
+		}
 		if !marked && (f[3] != strconv.Itoa(int(mySid)) || f[3] == e.Name()) { // brez znaka le v seji prehoda, ne njen vodja
 			continue
 		}
