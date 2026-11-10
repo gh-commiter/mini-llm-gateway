@@ -322,6 +322,14 @@ func makeRouter(session: URLSession = .shared) -> Router {
         #expect(w.text.hasSuffix("event: message_stop\ndata: {}\n\n"))
     }
 
+    @Test func passthroughForwardsOnlyBetaQuery() {
+        #expect(Router.betaQuery("beta=true") == "?beta=true")
+        #expect(Router.betaQuery("evil=1&beta=true") == "?beta=true")
+        #expect(Router.betaQuery("evil=1") == "")
+        #expect(Router.betaQuery("beta=false") == "")
+        #expect(Router.betaQuery(nil) == "")
+    }
+
     @Test func bothAliasAndPublishedIDRouteAndWindowIsEnforced() async throws {
         let cfg = URLSessionConfiguration.ephemeral
         cfg.protocolClasses = [StubUpstream.self]

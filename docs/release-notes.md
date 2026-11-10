@@ -3,6 +3,7 @@
 ## Unreleased
 
 - New: `minigw gw settings` has an Activity page (after Sessions), on the Mac app and on `minigw serve`, so Windows, Linux and SSH get what the Mac's Activity window shows: requests running now (model, time, the agent's latest step) at the top, then the last 200 requests to models (time, status, duration, model, device; Enter or a click shows the path, size and device ID). Read-only, reloads every 3 s; metadata and the agent's current step (a tool or command), never prompt or answer text (Codex's messages no longer appear as its step in the Mac Activity window either); an unknown model is recorded as `unknown` (also in the Mac window). A gateway older than 0.5.21 shows "Needs gateway 0.5.21 or newer". New admin API endpoint `GET /activity` with the same JSON on both gateways; `minigw serve` keeps the list in memory, the Mac app in its activity file (which now also records the device and the request size).
+- Security: the gateway passthrough forwards only `?beta=true` to the provider, not the device's other query parameters (both gateways); gateway responses carry `X-Content-Type-Options: nosniff`; an upstream response without Content-Type defaults to `application/json`; the sync path check is now explicit.
 
 ## 0.5.20
 

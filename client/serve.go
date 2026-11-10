@@ -965,6 +965,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, hr *http.Request) {
 	b := make([]byte, 16)
 	rand.Read(b)
 	r := &req{Request: hr, conn: hr.Context().Value(connKey{}).(*serveConn), rid: fmt.Sprintf("req_%x", b)}
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	var uw *usageWriter
 	if hr.Method == "POST" && hr.URL.Path == "/v1/messages" {
 		uw = &usageWriter{ResponseWriter: w}

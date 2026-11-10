@@ -614,6 +614,12 @@ public final class Router: Sendable {
                 "first_id": data.first?["id"] ?? NSNull(), "last_id": data.last?["id"] ?? NSNull()]
     }
 
+    /// Naprej le ?beta=true; drugih parametrov naprave ne (ključ skrbnika jih overi).
+    static func betaQuery(_ q: String?) -> String {
+        let items = URLComponents(string: "?" + (q ?? ""))?.queryItems ?? []
+        return items.contains { $0.name == "beta" && $0.value == "true" } ? "?beta=true" : ""
+    }
+
     /// Zamenja ime modela in overitev, telo in SSE tok prepošlje nespremenjena.
     func passthrough(_ req: HTTPRequest, body: [String: Any], route r: Route, key: String,
                      rid: String, writer: ResponseWriter) async -> Int {
@@ -623,7 +629,7 @@ public final class Router: Sendable {
             return await error(502, "api_error", "\(r.provider.name): \(e)", rid: rid, writer: writer)
         }
         let base = r.provider.baseURL.hasSuffix("/") ? String(r.provider.baseURL.dropLast()) : r.provider.baseURL
-        guard let url = URL(string: base + req.path + (req.query.map { "?" + $0 } ?? "")),
+        guard let url = URL(string: base + req.path + (Self.betaQuery(req.query))),
               let data = try? JSONSerialization.data(withJSONObject: body) else {
             return await error(500, "api_error", "Bad upstream URL for \(r.provider.name)", rid: rid, writer: writer)
         }

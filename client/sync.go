@@ -293,8 +293,12 @@ func syncResolve(rel, root string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	p, _, ok := davResolve("/"+strings.Join(comps, "/"), "", filepath.Clean(r))
-	return p, ok
+	r = filepath.Clean(r)
+	p, _, ok := davResolve("/"+strings.Join(comps, "/"), "", r)
+	if !ok || !strings.HasPrefix(filepath.Clean(p), r+string(filepath.Separator)) { // izrecna zadnja zaščita
+		return "", false
+	}
+	return p, true
 }
 
 // syncWrite: atomarno zapiše datoteko (ustvari mape), nastavi čas spremembe druge strani in ohrani način obstoječe
