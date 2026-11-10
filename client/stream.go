@@ -123,7 +123,11 @@ func streamText(in io.Reader, out, errOut io.Writer) (failed bool) {
 		}
 	}
 	if err := sc.Err(); err != nil && !errors.Is(err, os.ErrClosed) {
-		fmt.Fprintln(errOut, "minigw: cannot read claude's output: "+err.Error())
+		msg := err.Error()
+		if errors.Is(err, bufio.ErrTooLong) {
+			msg = "line longer than 64 MB"
+		}
+		fmt.Fprintln(errOut, "minigw: cannot read claude's output: "+msg)
 		failed = true
 	}
 	if n == 1 && backRef.MatchString(last) {
