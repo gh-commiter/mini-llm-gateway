@@ -24,6 +24,11 @@ jobs:
       - name: gofmt
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - run: go vet ./...
+      # bwrap in bwrap v bwrap (gnezdeni repozitoriji, .git pin): Ubuntu 24.04+ to z AppArmor privzeto prepove
+      - name: bubblewrap for the gateway sandbox tests
+        run: |
+          sudo apt-get install -y -qq bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - run: go test ./...
       - name: Cross-build (Windows, Linux, macOS)
         run: |

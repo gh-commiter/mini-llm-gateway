@@ -662,8 +662,9 @@ func testNestedRoundTrip(t *testing.T, blockNested string) {
 	if !gitAttrSource() {
 		t.Skip("git before 2.40: the client refuses nested repositories (TestNestedSnapshotRunsNoCleanFilter)")
 	}
-	if runtime.GOOS == "linux" && blockNested == "" && finalizeBwrap() == "" {
-		t.Skip("Linux without bwrap: nested repositories are refused (TestNestedBlockerMatchesSandbox)")
+	if runtime.GOOS == "linux" && blockNested == "" && (finalizeBwrap() == "" || !claudePinOK(t.TempDir(), t.Logf)) {
+		// npr. Ubuntu 24.04+ (GitHub Actions): AppArmor ne dovoli bwrap v bwrap, gateway gnezdene zavrne
+		t.Skip("Linux without bwrap inside bwrap: nested repositories are refused (TestNestedBlockerMatchesSandbox)")
 	}
 	root := t.TempDir()
 	client, src := filepath.Join(root, "client"), filepath.Join(root, "subsrc")
