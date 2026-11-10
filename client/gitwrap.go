@@ -173,8 +173,16 @@ func gitWrapBin(gw string) string {
 	}
 	bin := filepath.Join(gw, "win-"+h, "bin")
 	dst := filepath.Join(bin, "git.exe")
-	if st, err := os.Lstat(dst); err == nil && st.Mode().IsRegular() {
-		return bin
+	if st, err := os.Lstat(dst); err == nil && st.Mode().IsRegular() { // L5: obstoječa kopija le, če je še ista
+		if f, err := os.Open(dst); err == nil {
+			hh := sha256.New()
+			io.Copy(hh, f)
+			f.Close()
+			if hex.EncodeToString(hh.Sum(nil))[:16] == h {
+				return bin
+			}
+		}
+		os.Remove(dst)
 	}
 	in, err := os.Open(minigwExe())
 	if err != nil || os.MkdirAll(bin, 0o700) != nil {

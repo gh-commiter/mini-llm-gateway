@@ -60,22 +60,23 @@ type apiGateway struct {
 }
 
 type apiClaude struct {
-	Path                 string   `json:"path"` // prazno = iz PATH
-	Found                bool     `json:"found"`
-	Tools                string   `json:"tools"`
-	AllowUnsandboxedBash bool     `json:"allowUnsandboxedBash"`
-	Exe                  string   `json:"exe,omitempty"`     // najdena pot (tudi pri samodejnem iskanju)
-	ClaudeVersion        string   `json:"version,omitempty"` // claude --version
-	Enabled              bool     `json:"enabled"`
-	Folders              string   `json:"folders"` // dovoljene mape, ločene z vejico (kot na Macu)
-	AllowLocalTools      bool     `json:"allowLocalTools"`
-	AskOthers            bool     `json:"askOthers"`
-	DisabledTools        []string `json:"disabledTools"`
-	PermissionMode       string   `json:"permissionMode"`
-	SettingSources       string   `json:"settingSources"`
-	Work                 string   `json:"work"`              // #45: direct, sync ali worktree
-	Off                  string   `json:"off,omitempty"`     // zakaj sta Claude CLI in Codex izklopljena ob zagonu (offReason)
-	LeftOut              []string `json:"leftOut,omitempty"` // mape iz serve.json, izpuščene ob zagonu (offFolders)
+	Path                 string         `json:"path"` // prazno = iz PATH
+	Found                bool           `json:"found"`
+	Tools                string         `json:"tools"`
+	AllowUnsandboxedBash bool           `json:"allowUnsandboxedBash"`
+	Exe                  string         `json:"exe,omitempty"`     // najdena pot (tudi pri samodejnem iskanju)
+	ClaudeVersion        string         `json:"version,omitempty"` // claude --version
+	Enabled              bool           `json:"enabled"`
+	Folders              string         `json:"folders"` // dovoljene mape, ločene z vejico (kot na Macu)
+	AllowLocalTools      bool           `json:"allowLocalTools"`
+	AskOthers            bool           `json:"askOthers"`
+	DisabledTools        []string       `json:"disabledTools"`
+	PermissionMode       string         `json:"permissionMode"`
+	SettingSources       string         `json:"settingSources"`
+	Work                 string         `json:"work"`              // #45: direct, sync ali worktree
+	Off                  string         `json:"off,omitempty"`     // zakaj sta Claude CLI in Codex izklopljena ob zagonu (offReason)
+	LeftOut              []string       `json:"leftOut,omitempty"` // mape iz serve.json, izpuščene ob zagonu (offFolders)
+	Login                map[string]any `json:"login"`             // #68: vrstica Login (stanje žetona setup-token / ključa API, nikoli vrednost)
 }
 
 type apiGeneral struct {
@@ -722,7 +723,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		if arg != "claude" {
 			return fail(404, "no agent "+arg)
 		}
-		return 200, map[string]any{"tools": claudeTools(s.claudeExe())}
+		return 200, map[string]any{"tools": claudeTools(s.claudeExe(), s.conf().scratch("tmp"))}
 	case "GET agents/{}/models": // Codex, Grok: modeli računa za tabelo v nastavitvah
 		k, ok := map[string]agentKind{"codex": codexKind, "grok": grokKind}[arg]
 		if !ok {
@@ -733,7 +734,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		if err != nil || exe == "" {
 			return 200, map[string]any{"models": []agentModel{}}
 		}
-		models := agentCatalog(k, exe)
+		models := agentCatalog(k, exe, s.conf().scratch("tmp"))
 		for i := range models {
 			models[i].Enabled = ac.modelEnabled(models[i].Slug)
 		}
@@ -760,12 +761,17 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			PermissionMode       *string   `json:"permissionMode"`
 			SettingSources       *string   `json:"settingSources"`
 			Work                 *string   `json:"work"`
+			Token                *string   `json:"token"`  // #68: claude setup-token (le za pisanje; "" izbriše)
+			APIKey               *string   `json:"apiKey"` // #68: izbira »Use an API key instead« ("" = nazaj na prijavo)
 		}
 		if err := decodeStrict(body, &b); err != nil {
 			return fail(400, err.Error())
 		}
 		if b.Work != nil && !validWork(*b.Work) {
 			return fail(400, badWork)
+		}
+		if st, e := s.patchLogin("claude", b.Token, b.APIKey); st != 0 {
+			return st, e
 		}
 		if b.Tools != nil {
 			if *b.Tools = strings.ReplaceAll(*b.Tools, " ", ""); !validTools.MatchString(*b.Tools) {
@@ -975,12 +981,43 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 	return fail(404, "Not found: "+method+" "+uri)
 }
 
+// patchLogin (#68): žeton (Claude, Copilot) in ključ API (Claude, Codex, Grok) v shrambo ključev; 0 = v redu.
+func (s *server) patchLogin(kind string, token, apiKey *string) (int, any) {
+	if token != nil && !agentHasToken(kind) {
+		return 400, errorBody(400, "token: Claude CLI and Copilot only")
+	}
+	if token != nil && *token != "" {
+		if why := agentTokenProblem(kind, *token); why != "" {
+			return 400, errorBody(400, why)
+		}
+	}
+	if apiKey != nil && *apiKey != "" {
+		if why := apiKeyProblem(kind, *apiKey); why != "" {
+			return 400, errorBody(400, why)
+		}
+	} else if apiKey != nil && agentAPIKeyEnv[kind] == "" {
+		return 400, errorBody(400, "apiKey: Claude CLI, Codex and Grok only")
+	}
+	if token != nil {
+		if err := setAgentToken(s.cfgDir, kind, *token); err != nil {
+			return 500, errorBody(500, "token not stored: "+err.Error())
+		}
+	}
+	if apiKey != nil {
+		if err := setAgentAPIKey(s.cfgDir, kind, *apiKey); err != nil {
+			return 500, errorBody(500, "API key not stored: "+err.Error())
+		}
+	}
+	return 0, nil
+}
+
 // agentAPI: agents/codex in agents/grok, ista oblika JSON kot na Macu (enabled, path, found, write, network, models).
 func (s *server) agentAPI(method string, k agentKind, body []byte) (int, any) {
 	info := func() map[string]any {
 		ac := k.conf(s.conf())
 		exe, _ := resolveAgent(k, ac.Executable)
 		o := map[string]any{"enabled": ac.Enabled, "path": ac.Executable, "found": exe != "", "exe": exe, "write": ac.canWrite(k), "models": ac.Models,
+			"login":     agentLogin(s.cfgDir, k.name),
 			"askOthers": ac.AskOthers, "work": apiWork(ac.Work), "sandboxed": s.agentsAllowed(serveConfig{}, k.name)} // #68: peskovnik brez stikala
 		if k.name != "grok" {
 			o["network"] = ac.Network
@@ -1006,6 +1043,7 @@ func (s *server) agentAPI(method string, k agentKind, body []byte) (int, any) {
 		Commands  *bool           `json:"commands"`  // Copilot: ukazi lupine (izrecno dovoljenje)
 		AskOthers *bool           `json:"askOthers"` // sme vprašati druge modele tega prehoda
 		Token     *string         `json:"token"`     // Copilot: žeton za ukaze (le za pisanje; "" ga izbriše)
+		APIKey    *string         `json:"apiKey"`    // #68: Codex, Grok: ključ API namesto prijave ("" = nazaj na prijavo)
 		Models    json.RawMessage `json:"models"`    // null = vsi; seznam = le ti; brez polja = brez spremembe
 		Work      *string         `json:"work"`      // #45: direct, sync, worktree
 	}
@@ -1021,15 +1059,8 @@ func (s *server) agentAPI(method string, k agentKind, body []byte) (int, any) {
 	if (b.Commands != nil || b.Token != nil) && k.name != "copilot" {
 		return 400, errorBody(400, "commands, token: Copilot only")
 	}
-	if b.Token != nil && *b.Token != "" && !validCopilotToken(*b.Token) {
-		return 400, errorBody(400, "token: a fine-grained personal access token (github_pat_…) with only the Copilot Requests permission")
-	}
-	if b.Token != nil { // pred nastavitvami: ključ ni del datoteke nastavitev
-		if *b.Token == "" {
-			keyDel(s.cfgDir, copilotKey)
-		} else if _, err := keySet(s.cfgDir, copilotKey, *b.Token); err != nil {
-			return 500, errorBody(500, "token not stored: "+err.Error())
-		}
+	if st, e := s.patchLogin(k.name, b.Token, b.APIKey); st != 0 { // pred nastavitvami: ključ ni del datoteke nastavitev
+		return st, e
 	}
 	var models []string
 	setModels := len(b.Models) > 0
@@ -1134,7 +1165,7 @@ var claudeToolLists sync.Map // pot → orodja te različice Claude Code
 
 // claudeTools: orodja Claude Code (dogodek init pri »claude -p --tools default«), kot ClaudeCLI.availableTools na Macu;
 // proces se ustavi po prvi vrstici (pred klicem modela), največ 15 s; v predpomnilniku po poti.
-func claudeTools(exe []string) []string {
+func claudeTools(exe []string, dir string) []string { // dir (#68): delovna mapa poizvedbe (Scratch\tmp)
 	if len(exe) == 0 {
 		return []string{}
 	}
@@ -1146,7 +1177,7 @@ func claudeTools(exe []string) []string {
 	defer cancel()
 	cmd := commandContext(ctx, exe[0], append(exe[1:], "-p", "x", "--model", "haiku", "--output-format", "stream-json", "--verbose",
 		"--tools", "default", "--setting-sources", "", "--strict-mcp-config", "--no-session-persistence")...)
-	cmd.Dir = os.TempDir()
+	cmd.Dir = dir
 	out, err := cmd.StdoutPipe()
 	tools := []string{}
 	if err == nil && startAgent(cmd) == nil {
@@ -1170,7 +1201,7 @@ func (s *server) claudeInfo() apiClaude {
 	info := apiClaude{Path: c.Claude, Found: len(exe) > 0, Tools: c.Tools, AllowUnsandboxedBash: c.AllowUnsandboxedBash,
 		Enabled: !c.ClaudeDisabled, Folders: strings.Join(c.AllowedFolders, ","), AllowLocalTools: c.AllowLocalTools, AskOthers: c.ClaudeAskOthers,
 		DisabledTools: append([]string{}, c.DisabledTools...), PermissionMode: c.PermissionMode, SettingSources: c.SettingSources,
-		Work: apiWork(c.ClaudeWork)}
+		Work: apiWork(c.ClaudeWork), Login: agentLogin(s.cfgDir, "claude")}
 	if len(exe) > 0 {
 		info.Exe, info.ClaudeVersion = exe[len(exe)-1], claudeVersion(exe)
 	}

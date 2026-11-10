@@ -2,8 +2,12 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 
+	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 )
 
@@ -42,6 +46,7 @@ func windowsBuild() string {
 // sandboxInit: preizkus ob zagonu (pred strežbo, zato brez tekmovanja z zahtevami); uspeh vklopi škatlo in z njo
 // git agenta v klonu (#70 velja le brez škatle).
 func sandboxInit(scratch, cfgDir string, logf func(string, ...any)) {
+	cleanGitWraps(filepath.Join(scratch, "gitexec"))
 	why := mxcProbe(wxcExe(), minigwExe(), scratch, cfgDir)
 	mxcState.mu.Lock()
 	mxcState.ready, mxcState.reason = why == "", why
@@ -51,8 +56,8 @@ func sandboxInit(scratch, cfgDir string, logf func(string, ...any)) {
 		logf("agents run in the Windows sandbox (MXC %s)", mxcRelease)
 		return
 	}
-	if b := windowsBuild(); b != "" {
-		why += " (Windows 11 26100.9278 / 26200.9278 or later needed, loopback .9550; this computer has " + b + ")"
+	if b := windowsBuild(); b != "" && strings.Contains(why, "127.0.0.1") { // build le pri napaki loopback
+		why += "; this computer has " + b
 		mxcState.mu.Lock()
 		mxcState.reason = why
 		mxcState.mu.Unlock()
@@ -72,4 +77,29 @@ func agentSandboxInfo() map[string]string {
 		r = "not checked (the gateway is not running)"
 	}
 	return map[string]string{"kind": "", "reason": r}
+}
+
+// wxcOpen (L1): branje z deljenjem le za branje: dokler je odprta, je ni mogoče zamenjati, spremeniti ali izbrisati
+// (zagon jo odpre le za branje in izvajanje).
+func wxcOpen(p string) (*os.File, error) {
+	u, err := windows.UTF16PtrFromString(p)
+	if err != nil {
+		return nil, err
+	}
+	h, err := windows.CreateFile(u, windows.GENERIC_READ, windows.FILE_SHARE_READ, nil, windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		return nil, err
+	}
+	return os.NewFile(uintptr(h), p), nil
+}
+
+// cleanGitWraps (#68): stare kopije ovoja git (gitexec\win-<druga zgoščena>) ob zagonu; trenutna ostane.
+func cleanGitWraps(gw string) {
+	keep := "win-" + selfHash()
+	ents, _ := os.ReadDir(gw)
+	for _, e := range ents {
+		if strings.HasPrefix(e.Name(), "win-") && e.Name() != keep {
+			os.RemoveAll(filepath.Join(gw, e.Name()))
+		}
+	}
 }

@@ -187,9 +187,6 @@ const S = {
   allowCommands: ["Allow commands", "Dovoli ukaze"],
   copilotCommandsAsk: ["Copilot then runs commands as this user. On Linux with bwrap they run in the sandbox (home folder hidden, writing only to the session's folder and a temporary folder); otherwise they can read and change everything this user can, including gateway settings, and use the network. Commands need the token below (fine-grained, only “Copilot Requests”) and can use it to make Copilot requests on your account. Allow only if you trust the devices that use Copilot.",
     "Copilot nato izvaja ukaze kot ta uporabnik. Na Linuxu z bwrap tečejo v sandboxu (domača mapa skrita, pisanje le v mapo seje in začasno mapo); sicer lahko berejo in spreminjajo vse, kar ta uporabnik, tudi nastavitve prehoda, in uporabljajo omrežje. Ukazi potrebujejo žeton spodaj (fine-grained, le »Copilot Requests«) in lahko z njim pošiljajo zahteve Copilot na tvoj račun. Dovoli le, če zaupaš napravam, ki uporabljajo Copilot."],
-  copilotToken: ["GitHub token for commands (fine-grained, only “Copilot Requests”)", "Žeton GitHub za ukaze (fine-grained, le »Copilot Requests«)"],
-  copilotTokenShort: ["This is not a whole GitHub token (at least 40 characters)", "To ni cel žeton GitHub (vsaj 40 znakov)"],
-  copilotTokenSaved: ["Token saved; enter a new one to replace it", "Žeton shranjen; vnesi novega za zamenjavo"],
   copilotFooter: ["The claude-copilot models run Copilot CLI as an agent in the synced copy of the client's folder, on Linux under bwrap with a fresh Copilot home for each request. By default it may only read that folder; with writing on it may edit files there. Commands only with “Allow commands” and the token above. On Linux it signs in with the GitHub CLI (gh auth login) or that token; on Windows it runs in the Windows sandbox (MXC) with a fresh Copilot home, or without it (with “Allow commands without a sandbox”) with this user's Copilot sign-in (copilot login) and ~/.copilot.",
     "Modeli claude-copilot poženejo Copilot CLI kot agenta v sinhronizirani kopiji mape odjemalca, na Linuxu pod bwrap s svežo domačo mapo Copilot za vsako zahtevo. Privzeto sme mapo le brati; s pisanjem sme v njej urejati datoteke. Ukazi le z »Dovoli ukaze« in žetonom zgoraj. Na Linuxu se prijavi z GitHub CLI (gh auth login) ali tem žetonom; na Windows teče v peskovniku Windows (MXC) s svežo domačo mapo Copilot, brez njega (z »Dovoli ukaze brez sandboxa«) pa s prijavo Copilot tega uporabnika (copilot login) in ~/.copilot."],
   foundryDesc: ["Microsoft Foundry Local: models on this computer, without the cloud.", "Microsoft Foundry Local: modeli na tem računalniku, brez oblaka."],
@@ -263,6 +260,19 @@ const S = {
   unsandboxedWarn: ["Windows has no sandbox for commands: agents can then run anything as you and read the provider keys and the admin secret.",
     "Windows nima sandboxa za ukaze: agenti lahko tedaj zaženejo karkoli kot ti in preberejo ključe ponudnikov in skrivnost API."],
   sandboxNote: ["Bash runs in Claude Code's sandbox (on Linux it needs bubblewrap and socat).", "Bash teče v sandboxu Claude Code (na Linuxu potrebuje bubblewrap in socat)."],
+  login: ["Login", "Prijava"], apiKey: ["Use an API key instead", "Namesto tega uporabi ključ API"],
+  apiKeyNote: ["Use an API key instead: billed through the provider's API, not your subscription.", "Namesto tega uporabi ključ API: obračuna se prek API ponudnika, ne prek naročnine."],
+  loginSet: ["set", "nastavljen"], loginNotSet: ["not set", "ni nastavljen"], remove: ["Remove", "Odstrani"],
+  tokenField: ["Token (stored in the key store, never shown)", "Žeton (shranjen v shrambi ključev, nikoli prikazan)"],
+  loginHint_claude: ["Create it with `claude setup-token` (your Claude subscription, valid one year); needed in the Windows sandbox.",
+    "Naredi ga z `claude setup-token` (tvoja naročnina Claude, velja eno leto); potreben v peskovniku Windows."],
+  loginHint_codex: ["Codex uses this user's ChatGPT sign-in (`codex login`); it refreshes itself.", "Codex uporablja prijavo ChatGPT tega uporabnika (`codex login`); osveži se sama."],
+  loginHint_grok: ["Grok uses a copy of this user's sign-in (`grok login`); after Grok refreshes it, log in again with `grok login`.",
+    "Grok uporablja kopijo prijave tega uporabnika (`grok login`); ko jo Grok osveži, se znova prijavi z `grok login`."],
+  loginHint_copilot: ["A fine-grained GitHub token with only the Copilot Requests permission; needed for commands.", "Fine-grained žeton GitHub le s pravico Copilot Requests; potreben za ukaze."],
+  pathHomeWarn: ["In the Windows sandbox, folders on PATH inside your home folder (for example ~\\.local\\bin) are readable by agents; keep no secrets there.",
+    "V peskovniku Windows agenti lahko berejo mape s PATH v domači mapi (npr. ~\\.local\\bin); tam ne hrani skrivnosti."],
+  worktreeNetworkNoBox: ["No effect on this computer: there is no Windows sandbox, so agents' network is not limited.", "Na tem računalniku nima učinka: peskovnika Windows ni, zato omrežje agentov ni omejeno."],
   unsandboxedNotNeeded: ["Not needed: agents run in the Windows sandbox.", "Ni potrebno: agenti tečejo v peskovniku Windows."],
   sandboxNoteWin: ["Commands run in the Windows sandbox (MXC) with Claude Code's PowerShell tool (Bash in Tools means PowerShell): they write only to the session's folder and the gateway's folders for this conversation, and cannot read your home folder or the gateway's settings.",
     "Ukazi tečejo v peskovniku Windows (MXC) z orodjem PowerShell Claude Code (Bash med orodji pomeni PowerShell): pišejo le v mapo seje in mape prehoda za ta pogovor, domače mape in nastavitev prehoda ne morejo brati."],
@@ -270,8 +280,8 @@ const S = {
   agentSandbox: ["Agent sandbox", "Peskovnik agentov"], sandboxMXC: ["Windows sandbox (MXC %s)", "Peskovnik Windows (MXC %s)"],
   sandboxNone: ["not available (%s)", "ni na voljo (%s)"],
   worktreeMode: ["Worktree mode", "Način worktree"], worktreeNetwork: ["Network for builds", "Omrežje za gradnje"],
-  worktreeNetworkHelp: ["Claude CLI in worktree mode (minigw --minigw-work=worktree) works in a git clone under the Scratch folder. With this on its builds may download (Maven, npm, git clone); off, its commands have no network and a remote git clone is refused (on Windows Claude Code itself still reaches its API through the gateway).",
-    "Claude CLI v načinu worktree (minigw --minigw-work=worktree) dela v klonu git pod mapo Scratch. Ko je vklopljeno, smejo njegove gradnje prenašati (Maven, npm, git clone); izklopljeno: ukazi nimajo omrežja, oddaljen git clone je zavrnjen (na Windows Claude Code svoj API še vedno doseže prek prehoda)."],
+  worktreeNetworkHelp: ["Claude CLI in worktree mode (minigw --minigw-work=worktree) works in a git clone under the Scratch folder. With this on its builds may download (Maven, npm, git clone); off, its commands have no network and a remote git clone is refused (on Windows Claude Code itself still reaches its API through the gateway, and its web fetch and web search fail too).",
+    "Claude CLI v načinu worktree (minigw --minigw-work=worktree) dela v klonu git pod mapo Scratch. Ko je vklopljeno, smejo njegove gradnje prenašati (Maven, npm, git clone); izklopljeno: ukazi nimajo omrežja, oddaljen git clone je zavrnjen (na Windows Claude Code svoj API še vedno doseže prek prehoda, spletno branje in iskanje pa tudi ne delata)."],
   codexLockedWin: ["On Windows Codex runs in its own sandbox: set it up once with “codex sandbox setup --elevated” (as administrator). Otherwise it needs “Allow commands without a sandbox” under Claude CLI: the agent can read and change everything this user can, including gateway settings.",
     "Na Windows Codex teče v svojem peskovniku: enkrat ga nastavi z »codex sandbox setup --elevated« (kot skrbnik). Sicer potrebuje »Dovoli ukaze brez sandboxa« pod Claude CLI: agent lahko bere in spreminja vse, kar ta uporabnik, tudi nastavitve prehoda."],
   signin: ["Not signed in, or the session has expired. Open Settings… from the tray icon again (or run minigw gw settings link).",
@@ -306,6 +316,23 @@ const workRow = (a, patch, n, disabled) => {
   return row(labelSub(t("work"), t("workHelp")), s);
 };
 const row = (label, ...right) => el("div", {class: "row"}, typeof label === "string" ? el("span", {class: "label", textContent: label}) : label, ...right);
+// loginGroup (#68): vrstica Login (stanje, nikoli vrednost; namig), žeton (Claude, Copilot) in izbira ključa API
+// (Claude, Codex, Grok), enako za vse agente.
+function loginGroup(kind, lg, patch, n) {
+  lg = lg || {};
+  const state = lg.state === "set" ? t("loginSet") : lg.state === "not set" ? t("loginNotSet") : (lg.state || "");
+  const secret = (field, ph) => {
+    const i = el("input", {type: "password", autocomplete: "off", placeholder: ph});
+    i.addEventListener("change", () => { const v = i.value.trim(); if (v) save(n, () => patch({[field]: v}).then(r => { i.value = ""; show(kind); return r; })); });
+    return i;
+  };
+  const rows = [row(labelSub(t("login") + ": " + state, t("loginHint_" + kind)))];
+  if (kind === "claude" || kind === "copilot") rows.push(row(labelSub(t("tokenField")), secret("token", lg.hasToken ? t("loginSet") : (kind === "claude" ? "sk-ant-oat01-…" : "github_pat_…")),
+    lg.hasToken ? button(t("remove"), () => save(n, async () => { await patch({token: ""}); show(kind); })) : null));
+  if ("apiKey" in lg) rows.push(row(labelSub(t("apiKey"), t("apiKeyNote")), secret("apiKey", lg.apiKey ? t("loginSet") : ""),
+    lg.apiKey ? button(t("remove"), () => save(n, async () => { await patch({apiKey: ""}); show(kind); })) : null));
+  return group(...rows);
+}
 const labelSub = (main, sub) => el("div", {class: "label"}, el("div", {textContent: main}), sub ? el("div", {class: "sub", textContent: sub}) : null);
 const group = (...rows) => el("div", {class: "group"}, ...rows);
 const button = (text, onclick, primary) => el("button", {class: "btn" + (primary ? " primary" : ""), textContent: text, onclick});
@@ -447,6 +474,7 @@ async function agentPane(kind) {
     el("div", {class: "note"}, status),
     el("h3", {}, el("span", {textContent: t("models")}), buttons(button(t("enableAll"), () => bulk(true)), button(t("disableAll"), () => bulk(false)))),
     list, n1,
+    section(t("login")), loginGroup(kind, a.login, patch, n1),
     ...(codex ? [section(t("allowedFolders")), folderList(c.folders, v => api("PATCH", "/agents/claude", {folders: v}), t("allowedFoldersShared"), win, c.leftOut)] : []),
     section(t("sandbox")),
     group(row(t("allowWrite"), toggle(a.write, v => save(n2, async () => { await patch({write: v}); show(kind); }), locked)),
@@ -473,26 +501,18 @@ async function copilotPane() {
     if (v && !confirm(t("copilotCommandsAsk"))) { i.checked = false; return; }
     await patch({commands: v});
   }), !a.write || locked);
-  // Žeton le za pisanje (API ga ne vrne); prazno polje ga ne izbriše.
-  const token = el("input", {type: "password", autocomplete: "off", placeholder: a.hasToken ? t("copilotTokenSaved") : "github_pat_…"});
-  // L6: shrani ob change (Enter ali izhod iz polja), ne ob vsaki tipki; žeton GitHub ima vsaj 40 znakov.
-  token.addEventListener("change", () => {
-    const v = token.value.trim();
-    if (v) save(n2, () => v.length < 40 ? Promise.reject(new Error(t("copilotTokenShort"))) :
-      patch({token: v}).then(r => { token.value = ""; token.placeholder = t("copilotTokenSaved"); return r; }));
-  });
   return [
     card(...ICON.copilot, "Copilot CLI", t("copilotDesc")),
     group(row(labelSub(t("enabled"), bare ? t(locked ? "agentLockedWin" : "agentWarnWin") : null),
         toggle(a.enabled && !locked, v => save(n1, async () => { await patch({enabled: v}); nav(); }), locked)),
       row(labelSub(t("path")), path, browse(path, n1, async v => { await patch({path: v}); show("copilot"); })), row(labelSub(t("copilotModels")), models)),
     el("div", {class: "note"}, status), n1,
+    section(t("login")), loginGroup("copilot", a.login, patch, n1),
     section(t("sandbox")),
     group(row(t("allowWrite"), toggle(a.write, v => save(n2, async () => { await patch({write: v}); show("copilot"); }), locked)),
       row(t("allowWeb"), toggle(a.network, v => save(n2, () => patch({network: v})), locked)),
       row(t("allowCommands"), commands),
       workRow(a, patch, n2, locked),
-      row(labelSub(t("copilotToken")), token),
       row(labelSub(t("askOthers"), t("askOthersHelp")), toggle(a.askOthers, v => save(n2, () => patch({askOthers: v})), locked))),
     n2, n3,
   ];
@@ -551,7 +571,7 @@ const pages = {
     const showBtn = button(t("show"), () => { shown = !shown; line.textContent = shown ? token().split("#")[0] : "•".repeat(24); showBtn.textContent = t(shown ? "hide" : "show"); });
     const scratch = el("input", {type: "text", class: "left wide", value: g.scratch});
     autosave(scratch, n4, v => api("PATCH", "/general", {scratch: v}));
-    const n6 = note(t("worktreeNetworkHelp")), sb = st.agentSandbox;
+    const sb = st.agentSandbox, n6 = note(t(win && !(sb && sb.kind === "mxc") ? "worktreeNetworkNoBox" : "worktreeNetworkHelp"));
     return [
       card(...ICON.general, t("general"), t("generalDesc")),
       group(win ? row(t("startup"), toggle(st.installed, on => save(n1, () => api("PATCH", "/general", {startAtSignIn: on}))))
@@ -829,7 +849,9 @@ const pages = {
       group(row(labelSub(t("path")), path, button(t("find"), () => save(n1, async () => { path.value = ""; showStatus(await patch({path: ""})); })),
         browse(path, n1, async v => showStatus(await patch({path: v}))))),
       el("div", {class: "note"}, status), n1,
+      section(t("login")), loginGroup("claude", c.login, patch, n1),
       section(t("allowedFolders")), folderList(c.folders, v => patch({folders: v}), t("allowedFoldersHint"), win, c.leftOut),
+      box ? el("div", {class: "note warn", textContent: t("pathHomeWarn")}) : null,
       el("div", {style: "height:12px"}),
       group(row(labelSub(t("localTools"), win ? t(box ? "localToolsBox" : "localToolsWin") : t("localToolsHelp")), toggle(c.allowLocalTools, v => save(n2, async () => { await patch({allowLocalTools: v}); show("claude"); }))),
         c.allowLocalTools ? null : row(t("permissionMode"), mode),

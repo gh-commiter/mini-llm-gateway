@@ -25,7 +25,6 @@ import (
 	"runtime"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -45,25 +44,36 @@ var wxcHashes = map[string]string{
 // wxcExe: wxc-exec.exe ob minigw.exe (mxc\wxc-exec.exe, komponenta MSI Sandbox), nikoli iz PATH; testi: lažni.
 var wxcExe = func() string { return filepath.Join(filepath.Dir(minigwExe()), "mxc", "wxc-exec.exe") }
 
-// wxcVerify: datoteka ima pripeto zgoščeno vrednost za to arhitekturo.
-func wxcVerify(p string) error {
+// wxcVerify: datoteka ima pripeto zgoščeno vrednost za to arhitekturo; mapa mxc ima le wxc-exec.exe in LICENSE.txt.
+// Vrne odprto datoteko (Windows: brez deljenja za pisanje in brisanje): klicatelj jo zapre šele po cmd.Start, da je
+// med preverbo in zagonom nihče ne zamenja.
+func wxcVerify(p string) (*os.File, error) {
 	want := wxcHashes[runtime.GOARCH]
 	if want == "" {
-		return errors.New("no wxc-exec.exe for " + runtime.GOARCH)
+		return nil, errors.New("no wxc-exec.exe for " + runtime.GOARCH)
 	}
-	f, err := os.Open(p)
+	if d := filepath.Dir(p); strings.EqualFold(filepath.Base(d), "mxc") {
+		ents, _ := os.ReadDir(d)
+		for _, e := range ents {
+			if n := strings.ToLower(e.Name()); n != "wxc-exec.exe" && n != "license.txt" {
+				return nil, errors.New("the mxc folder holds more than wxc-exec.exe and LICENSE.txt (" + e.Name() + ")")
+			}
+		}
+	}
+	f, err := wxcOpen(p)
 	if err != nil {
-		return errors.New("wxc-exec.exe is missing (" + p + ")")
+		return nil, errors.New("wxc-exec.exe is missing or in use (" + p + ")")
 	}
-	defer f.Close()
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
-		return err
+		f.Close()
+		return nil, err
 	}
 	if hex.EncodeToString(h.Sum(nil)) != want {
-		return errors.New("wxc-exec.exe changed (its SHA-256 is not the one this minigw ships)")
+		f.Close()
+		return nil, errors.New("wxc-exec.exe changed (its SHA-256 is not the one this minigw ships)")
 	}
-	return nil
+	return f, nil
 }
 
 // mxcRequest: zahteva wxc-exec (OneShotRequest pogodbe 1.0.0).
@@ -147,9 +157,11 @@ func mxcRequestFor(sp mxcSpec) mxcRequest {
 	if sp.egressDeny {
 		r.Network.Egress.Default = "deny"
 	}
-	if sp.proxy != "" { // W9: posrednik klicatelja; loopback do teh vrat (tudi vprašanja drugim modelom)
-		r.RuntimeConfig = &mxcRuntime{NetworkProxy: "http://" + sp.proxy}
+	if sp.proxy != "" { // W9: loopback do vrat izvajanja (vprašanja drugim modelom); posrednik le brez omrežja
 		r.Network.Ingress = &mxcDefault{"allow"}
+		if sp.egressDeny {
+			r.RuntimeConfig = &mxcRuntime{NetworkProxy: "http://" + sp.proxy}
+		}
 	}
 	return r
 }
@@ -238,7 +250,7 @@ func mxcPathDirs(path []string, keep []string, home, scratch, cfgDir string) []s
 		if d == "" || !filepath.IsAbs(d) || slices.Contains(out, d) {
 			continue
 		}
-		if slices.Contains(keep, d) {
+		if slices.ContainsFunc(keep, func(k string) bool { return under(d, k) }) { // ovoj git v gitexec\win-…\bin
 			out = append(out, d)
 			continue
 		}
@@ -373,10 +385,16 @@ func mxcWrap(wxc, exe string, args []string, m agentMounts) (string, []string, f
 // Napaka: agent ne teče (nikoli brez škatle, ko je vklopljena).
 func boxWrap(exe string, args []string, m agentMounts) (string, []string, func(), error) {
 	wxc := wxcExe()
-	if err := wxcVerify(wxc); err != nil {
+	f, err := wxcVerify(wxc)
+	if err != nil {
 		return "", nil, nil, fmt.Errorf("Windows sandbox: %v", err)
 	}
-	return mxcWrap(wxc, exe, args, m)
+	name, a, done, err := mxcWrap(wxc, exe, args, m)
+	if err != nil {
+		f.Close()
+		return "", nil, nil, err
+	}
+	return name, a, func() { done(); f.Close() }, nil // ročaj do konca teka (po cmd.Start)
 }
 
 // --- preizkus ob zagonu (minigw.exe __mxc-probe v škatli) ---
@@ -439,9 +457,11 @@ func mxcProbeVerdict(out string, code int, nonce string, loopback bool) string {
 
 // mxcProbe: preizkus škatle z wxc (preverjen) in minigw (programom za __mxc-probe). "" = deluje, sicer razlog.
 func mxcProbe(wxc, minigw, scratch, cfgDir string) string {
-	if err := wxcVerify(wxc); err != nil {
+	f, err := wxcVerify(wxc)
+	if err != nil {
 		return err.Error()
 	}
+	defer f.Close()
 	os.MkdirAll(filepath.Join(scratch, "tmp"), 0o700)
 	dir, err := os.MkdirTemp(filepath.Join(scratch, "tmp"), "probe-*")
 	if err != nil {
@@ -472,7 +492,7 @@ func mxcProbe(wxc, minigw, scratch, cfgDir string) string {
 	}()
 	m := agentMounts{cfgDir: cfgDir, hide: scratch, rw: []string{dir}, temp: dir, cwd: dir, cmdEnv: agentEnv(os.Environ()),
 		noNet: true, proxy: ln.Addr().String()}
-	name, args, done, err := mxcWrap(wxc, minigw, []string{mxcProbeCmd, dir, filepath.Join(cfgDir, "serve.json"), ln.Addr().String()}, m)
+	name, args, done, err := mxcWrap(wxc, minigw, []string{mxcProbeCmd, dir, filepath.Join(cfgDir, "admin.secret"), ln.Addr().String()}, m)
 	if err != nil {
 		return err.Error()
 	}
@@ -505,59 +525,67 @@ func mxcProbe(wxc, minigw, scratch, cfgDir string) string {
 	return why
 }
 
-// --- prijave agentov: kopija noter, nazaj le ob nespremenjeni pravi (Windows: povezave zahtevajo pravice, trde ne
-// prečkajo nosilcev C: → D:) ---
+// --- prijave in stanje agentov v škatli (Windows: povezave zahtevajo pravice, trde ne prečkajo nosilcev C: → D:) ---
 
-var (
-	authMu     sync.Mutex
-	authCopied = map[string]string{} // kopija v stanju naprave → SHA-256 prave datoteke ob zadnji kopiji noter
-)
+// maxCopied: največja kopirana datoteka (prijava, nastavitev, prepis seje).
+const maxCopied = 256 << 20
 
-func fileSum(p string) (string, []byte) {
-	b, err := os.ReadFile(p)
+// copyRegular: le navadna datoteka src (Lstat, brez povezav, do max bajtov) atomarno v dst; dst, ki ni navadna
+// datoteka, se ne prepiše (napaka).
+func copyRegular(src, dst string, max int64) error {
+	li, err := os.Lstat(src)
 	if err != nil {
-		return "", nil
-	}
-	s := sha256.Sum256(b)
-	return hex.EncodeToString(s[:]), b
-}
-
-// authCopyIn: prava datoteka real → dst. Prijava (config=false) se ne prepiše, če se prava od zadnje kopije ni
-// spremenila (dst je lahko novejša, ker jo je CLI osvežil; authCopyBack jo prenese). Nastavitve (config) vedno znova:
-// agent jih ne more podtakniti naslednjemu teku.
-func authCopyIn(real, dst string, config bool) error {
-	authMu.Lock()
-	defer authMu.Unlock()
-	sum, b := fileSum(real)
-	if sum == "" {
-		return nil
-	}
-	if cur, _ := fileSum(dst); !config && cur != "" && authCopied[dst] == sum {
-		return nil
-	}
-	if err := writeFileAtomic(dst, b); err != nil {
 		return err
 	}
-	authCopied[dst] = sum
-	return nil
+	if !li.Mode().IsRegular() || li.Size() > max {
+		return errors.New("not a regular file of at most " + fmt.Sprint(max) + " bytes: " + src)
+	}
+	if di, err := os.Lstat(dst); err == nil && !di.Mode().IsRegular() {
+		return errors.New("not a regular file: " + dst)
+	}
+	f, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if fi, err := f.Stat(); err != nil || !os.SameFile(li, fi) {
+		return errors.New("changed while copying: " + src)
+	}
+	b, err := io.ReadAll(io.LimitReader(f, max+1))
+	if err != nil || int64(len(b)) > max {
+		return errors.New("cannot read " + src)
+	}
+	return writeFileAtomic(dst, b)
 }
 
-// authCopyBack: spremenjena kopija dst gre v real atomarno, le če ima real še vrednost ob kopiji noter; sicer zmaga
-// novejša prava (drug tek ali lastnikov CLI), naslednji tek jo kopira noter.
-func authCopyBack(real, dst string) bool {
-	authMu.Lock()
-	defer authMu.Unlock()
-	was, ok := authCopied[dst]
-	sum, b := fileSum(dst)
-	if !ok || sum == "" || sum == was {
-		return false
+// authCopyIn: prava datoteka v stanje naprave (vsakič znova, nikoli nazaj); manjkajoča prava ni napaka.
+func authCopyIn(real, dst string) error {
+	if _, err := os.Lstat(real); errors.Is(err, os.ErrNotExist) {
+		os.Remove(dst)
+		return nil
 	}
-	if cur, _ := fileSum(real); cur != was {
-		return false
-	}
-	if writeFileAtomic(real, b) != nil {
-		return false
-	}
-	authCopied[dst] = sum
-	return true
+	return copyRegular(real, dst, 1<<20)
+}
+
+// copyRegularTree: navadne datoteke iz src v dst (mape naredi, povezav ne sledi in jih izpusti); src, ki ga ni, je prazen.
+func copyRegularTree(src, dst string) {
+	filepath.WalkDir(src, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		rel, _ := filepath.Rel(src, p)
+		switch {
+		case d.IsDir():
+			os.MkdirAll(filepath.Join(dst, rel), 0o700)
+		case d.Type().IsRegular():
+			copyRegular(p, filepath.Join(dst, rel), maxCopied)
+		}
+		return nil
+	})
+}
+
+// claudeSessionStore (#68): prepis seje Claude v škatli med teki (CLAUDE_CONFIG_DIR je vsak tek svež).
+func claudeSessionStore(scratch, owner, session string) string {
+	sum := sha256.Sum256([]byte(owner))
+	return filepath.Join(scratch, "state", hex.EncodeToString(sum[:8]), "claude", "sessions", filepath.Base(session))
 }

@@ -875,27 +875,44 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	if p := envGet(worktreeEnv, "PATH"); p != "" && envGet(runEnv, "PATH") != "" { // askOnPath in ovoj git (#68): oba na PATH
 		cmdEnv = envSet(cmdEnv, "PATH", filepath.Dir(minigwExe())+string(os.PathListSeparator)+p)
 	}
-	// #68: ves claude v škatli MXC; svoj CLAUDE_CONFIG_DIR naprave s kopijo prijave (ne pravi ~\.claude)
+	cmdEnv = append(cmdEnv, agentKeyEnv(s.cfgDir, "claude")...) // #68: ključ API le, če ga je uporabnik izbral
+	// #68: ves claude v škatli MXC s prijavo »claude setup-token« (CLAUDE_CODE_OAUTH_TOKEN; ~\.claude se ne kopira) in
+	// svežim CLAUDE_CONFIG_DIR ter domom vsak tek; med teki ostane le prepis seje (--resume) v stanju naprave.
 	if box {
-		state, _, err := agentState(s.conf().Scratch, claudeKind, r.owner())
-		if err != nil {
-			s.log.Printf("%s claude state: %v", r.rid, err)
-			return writeError(w, r.rid, 500, "Cannot prepare Claude CLI's folder on the gateway (see the gateway log)")
+		key, token := agentAPIKey(s.cfgDir, "claude"), agentToken(s.cfgDir, "claude")
+		if key == "" && token == "" {
+			return writeError(w, r.rid, 503, "Claude CLI in the Windows sandbox needs a long-lived sign-in token: run claude setup-token, then minigw gw claude token")
 		}
-		defer restoreAuth(state, claudeKind)
-		cmdEnv = append(cmdEnv, "CLAUDE_CONFIG_DIR="+state, "CLAUDE_CODE_USE_POWERSHELL_TOOL=1")
+		if key == "" {
+			cmdEnv = append(cmdEnv, "CLAUDE_CODE_OAUTH_TOKEN="+token)
+		}
+		runDir, err := os.MkdirTemp(s.conf().scratch("tmp"), "run-*")
+		if err != nil {
+			return writeError(w, r.rid, 500, "Cannot prepare Claude CLI's folder on the gateway: "+err.Error())
+		}
+		defer os.RemoveAll(runDir)
+		conf := filepath.Join(runDir, "claude")
+		store := ""
+		if !chat {
+			store = claudeSessionStore(s.conf().Scratch, r.owner(), sessionID)
+			copyRegularTree(store, filepath.Join(conf, "projects"))
+			defer func() { copyRegularTree(filepath.Join(conf, "projects"), store) }()
+		}
+		os.MkdirAll(conf, 0o700)
+		cmdEnv = append(cmdEnv, "CLAUDE_CONFIG_DIR="+conf, "CLAUDE_CODE_USE_POWERSHELL_TOOL=1")
 		if len(exe) > 1 { // node + cli.js
 			boxRO = append(boxRO, filepath.Dir(exe[1]))
 		}
 		var done func()
 		var err2 error
-		name, cargs, done, err2 = agentWrap(name, cargs, agentMounts{cfgDir: s.cfgDir, state: state, rw: boxRW, ro: boxRO, hide: s.conf().Scratch,
-			cmdEnv: cmdEnv, cwd: dir, home: filepath.Join(filepath.Dir(state), "home"), temp: boxTemp, noNet: netOff, proxy: run.runAddr()})
+		name, cargs, done, err2 = agentWrap(name, cargs, agentMounts{cfgDir: s.cfgDir, rw: append(boxRW, conf), ro: boxRO, hide: s.conf().Scratch,
+			cmdEnv: cmdEnv, cwd: dir, home: filepath.Join(runDir, "home"), temp: boxTemp, noNet: netOff, proxy: run.runAddr()})
 		if err2 != nil {
 			s.log.Printf("%s claude: %v", r.rid, err2)
 			return writeError(w, r.rid, 503, "Cannot start Claude CLI in the Windows sandbox: "+err2.Error())
 		}
 		defer done()
+		unpinned = worktreeEnv != nil // odločitev: .git klona se preverja vsako sekundo tudi v škatli
 	} else if worktreeEnv != nil { // N3: .git klona je med tekom točka priklopa (kot pins pri Codex), zamenjati ga ni mogoče
 		gits, _ := s.hub.worktreeGits(wt)
 		name, cargs = pinWrap(s.cfgDir, name, cargs, append(pinPaths(wt, gits), grants...), s.log.Printf) // M2: tudi mape do ugnezdenih klonov; #67 H1: mape pod Scratch (zamenjava: EBUSY)

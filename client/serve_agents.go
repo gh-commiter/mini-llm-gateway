@@ -70,8 +70,6 @@ var (
 	codexKind   = agentKind{"codex", "claude-codex", "codex", func(c serveConfig) agentCLI { return c.Codex }}
 	grokKind    = agentKind{"grok", "claude-grok", "grok", func(c serveConfig) agentCLI { return c.Grok }}
 	copilotKind = agentKind{"copilot", "claude-copilot", "copilot", func(c serveConfig) agentCLI { return c.Copilot }}
-	// claudeKind (#68): le za stanje naprave (agentState, restoreAuth) Claude CLI v škatli MXC na Windows
-	claudeKind = agentKind{"claude", cliAgentPrefix, "claude", func(serveConfig) agentCLI { return agentCLI{} }}
 )
 
 // match: »claude-codex« = privzeti model ("", true), »claude-codex-<m>« = m; ok=false, če ime ni tega agenta.
@@ -131,7 +129,8 @@ type cachedCatalog struct {
 }
 
 // agentCatalog: Codex »codex debug models« (JSON), Grok »grok models« (besedilo); največ 20 s, 5 min v predpomnilniku.
-func agentCatalog(k agentKind, exe string) []agentModel {
+// dir (#68): delovna mapa poizvedbe (Scratch\tmp), ne sistemska začasna mapa.
+func agentCatalog(k agentKind, exe, dir string) []agentModel {
 	key := k.name + "|" + exe
 	if v, ok := agentCatalogs.Load(key); ok && time.Since(v.(cachedCatalog).at) < 5*time.Minute {
 		return v.(cachedCatalog).models
@@ -143,10 +142,10 @@ func agentCatalog(k agentKind, exe string) []agentModel {
 		args = []string{"debug", "models"}
 	}
 	if k.name == "codex" { // #59: brez projektnih nastavitev (.codex/config.toml) v začasni mapi ali nad njo
-		args = append(codexUntrusted(os.TempDir()), args...)
+		args = append(codexUntrusted(dir), args...)
 	}
 	cmd := commandContext(ctx, exe, args...)
-	cmd.Dir = os.TempDir()
+	cmd.Dir = dir
 	out, _ := cmd.Output()
 	models := parseCodexCatalog(out)
 	if k.name == "grok" {
@@ -904,9 +903,13 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 		}
 		defer restoreAuth(state, k)
 		m := agentMounts{cfgDir: s.cfgDir, state: state, envVar: strings.ToUpper(k.bin) + "_HOME", files: files, rw: append([]string{dir, tmp}, extra...),
-			hide: c.Scratch, tmps: s.tempRoots(), temp: tmp, unboxed: k.name == "codex"} // #68: Codex ima na Windows svoj peskovnik
-		if state != "" { // #68: dom agenta naprave (USERPROFILE, APPDATA v škatli)
-			m.home = filepath.Join(filepath.Dir(state), "home")
+			hide: c.Scratch, tmps: s.tempRoots(), temp: tmp, unboxed: k.name == "codex", // #68: Codex ima na Windows svoj peskovnik
+			env: agentKeyEnv(s.cfgDir, k.name)} // #68: ključ API le, če ga je uporabnik izbral; dom v škatli svež vsak tek
+		if runtime.GOOS == "windows" && k.name == "codex" { // #68: začasne datoteke Codex pod Scratch (tek)
+			m.env = append(m.env, "TEMP="+tmp, "TMP="+tmp)
+		}
+		if runtime.GOOS == "windows" && state != "" && k.name == "grok" && agentAPIKey(s.cfgDir, "grok") != "" {
+			os.Remove(filepath.Join(state, "auth.json")) // izbran ključ API: prijava ne gre v škatlo
 		}
 		wt, _, maven, objects, inTree := s.hub.worktreeOf(r.h("x-claude-mini-session"), k.name)
 		if p := runOf(r); p != nil { // klon klicatelja
@@ -1028,6 +1031,9 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 				cgits, cpath, cdeny = gits, agentPath(gw), []string{s.cfgDir}
 			}
 			args := codexArgs(dir, append(extra, deps...), agent, out, model, write, ac.Network, resume, cgits, cpath, cdeny)
+			if runtime.GOOS == "windows" && codexElevated() { // #68: Codex' peskovnik »elevated« izrecno za vsak zagon
+				args = append([]string{args[0], "-c", `windows.sandbox="elevated"`}, args[1:]...)
+			}
 			var failure string
 			err = s.runAgentProcess(ctx, r, exe, args, withTree(m), dir, prompt, func(line []byte) {
 				if f := codexFailure(line); f != "" {
@@ -1109,7 +1115,9 @@ func agentEnv(env []string) []string {
 		if strings.HasPrefix(name, "ANTHROPIC_") || strings.HasPrefix(name, "CLAUDE_CODE_") || slices.Contains([]string{"CLAUDECODE",
 			"DBUS_SESSION_BUS_ADDRESS", "SSH_AUTH_SOCK", "GPG_AGENT_INFO", "GNOME_KEYRING_CONTROL", "CODEX_HOME", "GROK_HOME", "MINIGW_AGENT_URL", "MINIGW_AGENT_AUTH_FILE",
 			"GH_TOKEN", "GITHUB_TOKEN", "SANDBOX_RUNTIME", "MINIGW_SANDBOXED", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED", // #67: oznake peskovnika
-			"MINIGW_DEPS", "MINIGW_NETWORK_OFF"}, name) || strings.HasPrefix(name, "COPILOT_") {
+			"MINIGW_DEPS", "MINIGW_NETWORK_OFF",
+			// #68: ključi API iz okolja prehoda nikoli do agenta (obračun API); le izrecno nastavljen (agentKeyEnv)
+			"OPENAI_API_KEY", "CODEX_API_KEY", "XAI_API_KEY", "GROK_CODE_XAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"}, name) || strings.HasPrefix(name, "COPILOT_") {
 			continue
 		}
 		out = append(out, e)
@@ -1129,9 +1137,6 @@ func agentAuthFiles(k agentKind) (real string, names []string) {
 	if k.name == "copilot" { // M1: ne prave config.json; prijava je žeton iz okolja (copilotToken ali namenski žeton)
 		return filepath.Join(home, ".copilot"), nil
 	}
-	if k.name == "claude" { // #68: le Windows (v škatli MXC), kopija prijave v CLAUDE_CONFIG_DIR naprave
-		return filepath.Join(home, ".claude"), []string{".credentials.json"}
-	}
 	if real = os.Getenv("GROK_HOME"); real == "" {
 		real = filepath.Join(home, ".grok")
 	}
@@ -1150,12 +1155,12 @@ func agentState(scratch string, k agentKind, owner string) (string, []string, er
 		return "", nil, err
 	}
 	real, names := agentAuthFiles(k)
-	if runtime.GOOS == "windows" { // #68: povezave zahtevajo pravice, trde ne prečkajo nosilcev: kopija noter (authCopyIn)
+	if runtime.GOOS == "windows" { // #68: povezave zahtevajo pravice, trde ne prečkajo nosilcev: le kopija noter, nikoli nazaj
 		for _, n := range names {
 			if strings.HasSuffix(n, ".lock") {
 				continue
 			}
-			if err := authCopyIn(filepath.Join(real, n), filepath.Join(dir, n), strings.HasSuffix(n, ".toml")); err != nil {
+			if err := authCopyIn(filepath.Join(real, n), filepath.Join(dir, n)); err != nil {
 				return "", nil, err
 			}
 		}
@@ -1187,13 +1192,8 @@ func restoreAuth(dir string, k agentKind) {
 	if dir == "" {
 		return
 	}
-	real, names := agentAuthFiles(k)
-	if runtime.GOOS == "windows" { // #68: spremenjena prijava nazaj, le če je prava še ista (config.toml nikoli)
-		for _, n := range names {
-			if n == "auth.json" || n == ".credentials.json" {
-				authCopyBack(filepath.Join(real, n), filepath.Join(dir, n))
-			}
-		}
+	real, _ := agentAuthFiles(k)
+	if runtime.GOOS == "windows" { // #68: iz škatle nikoli nič nazaj
 		return
 	}
 	dst, src := filepath.Join(dir, "auth.json"), filepath.Join(real, "auth.json")
@@ -1444,7 +1444,7 @@ func (s *server) agentModelList(k agentKind) []map[string]any {
 		}
 		return out
 	}
-	for _, m := range agentCatalog(k, exe) {
+	for _, m := range agentCatalog(k, exe, c.scratch("tmp")) {
 		if !ac.modelEnabled(m.Slug) {
 			continue
 		}

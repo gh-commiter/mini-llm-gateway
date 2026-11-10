@@ -109,7 +109,7 @@ func TestMXCRequestFor(t *testing.T) {
 	}{
 		{"allow", false, "", "allow", false, false},
 		{"deny with proxy", true, "127.0.0.1:5000", "deny", true, true},
-		{"allow with ask port", false, "127.0.0.1:5000", "allow", true, true},
+		{"allow with ask port", false, "127.0.0.1:5000", "allow", false, true},
 		{"deny without port", true, "", "deny", false, false},
 	} {
 		sp := base
@@ -235,7 +235,7 @@ func TestMXCProbe(t *testing.T) {
 	if why := mxcProbe(wxc, wxc, scratch, cfg); why != "" {
 		t.Fatalf("probe: %s", why)
 	}
-	os.WriteFile(filepath.Join(cfg, "serve.json"), []byte("{}"), 0o600) // brez peskovnika berljiva: preizkus to vidi
+	os.WriteFile(filepath.Join(cfg, "admin.secret"), []byte("x"), 0o600) // brez peskovnika berljiva: preizkus to vidi
 	if why := mxcProbe(wxc, wxc, scratch, cfg); why != "the gateway's config was readable inside the sandbox" {
 		t.Fatalf("probe deny: %q", why)
 	}
@@ -268,46 +268,44 @@ func TestMXCProbeVerdict(t *testing.T) {
 	}
 }
 
-// Prijave: kopija noter zapiše vrednost; spremenjena kopija gre nazaj le ob nespremenjeni pravi; sicer zmaga prava;
-// nastavitve vedno znova noter in nikoli nazaj.
-func TestAuthCopy(t *testing.T) {
+// Prijave v škatli: le kopija noter (vsakič znova), nikoli nazaj; le navadne datoteke do meje; manjkajoča prava
+// odstrani kopijo.
+func TestAuthCopyIn(t *testing.T) {
 	d := t.TempDir()
 	real, dst := filepath.Join(d, "real", "auth.json"), filepath.Join(d, "state", "auth.json")
 	os.MkdirAll(filepath.Dir(real), 0o700)
 	read := func(p string) string { b, _ := os.ReadFile(p); return string(b) }
 	os.WriteFile(real, []byte("A"), 0o600)
-	if authCopyIn(real, dst, false) != nil || read(dst) != "A" {
+	if authCopyIn(real, dst) != nil || read(dst) != "A" {
 		t.Fatal("copy in")
 	}
-	if authCopyBack(real, dst) { // nespremenjena
-		t.Fatal("unchanged copy went back")
+	os.WriteFile(dst, []byte("B"), 0o600) // agent je kopijo spremenil: nazaj nikoli, naslednji tek dobi pravo
+	if authCopyIn(real, dst) != nil || read(dst) != "A" || read(real) != "A" {
+		t.Fatal("copy changed")
 	}
-	os.WriteFile(dst, []byte("B"), 0o600) // CLI je osvežil prijavo
-	if !authCopyBack(real, dst) || read(real) != "B" {
-		t.Fatalf("refresh not copied back: %q", read(real))
+	os.WriteFile(filepath.Join(d, "big"), make([]byte, 2<<20), 0o600)
+	if authCopyIn(filepath.Join(d, "big"), dst) == nil {
+		t.Fatal("oversized file copied")
 	}
-	authCopyIn(real, dst, false) // prava = zadnja kopija: B ostane
-	os.WriteFile(dst, []byte("C"), 0o600)
-	os.WriteFile(real, []byte("R"), 0o600) // lastnikov CLI je medtem osvežil pravo
-	if authCopyBack(real, dst) || read(real) != "R" {
-		t.Fatal("newer real file overwritten")
+	if runtime.GOOS != "windows" {
+		os.Symlink(real, filepath.Join(d, "link"))
+		if authCopyIn(filepath.Join(d, "link"), dst) == nil {
+			t.Fatal("link followed")
+		}
 	}
-	if authCopyIn(real, dst, false) != nil || read(dst) != "R" {
-		t.Fatal("newer real not copied in")
+	os.Remove(real)
+	if authCopyIn(real, dst) != nil {
+		t.Fatal("missing real")
 	}
-	// dst novejša od prave, prava nespremenjena: kopija noter je ne prepiše
-	os.WriteFile(dst, []byte("S"), 0o600)
-	authCopyIn(real, dst, false)
-	if read(dst) != "S" {
-		t.Fatal("fresher copy overwritten on copy in")
+	if _, err := os.Stat(dst); err == nil {
+		t.Fatal("stale copy kept")
 	}
-	creal, cdst := filepath.Join(d, "real", "config.toml"), filepath.Join(d, "state", "config.toml")
-	os.WriteFile(creal, []byte("x=1"), 0o600)
-	authCopyIn(creal, cdst, true)
-	os.WriteFile(cdst, []byte("notify=[\"evil\"]"), 0o600)
-	authCopyIn(creal, cdst, true)
-	if read(cdst) != "x=1" || read(creal) != "x=1" {
-		t.Fatal("config not restored")
+	src, out := filepath.Join(d, "tree"), filepath.Join(d, "out")
+	os.MkdirAll(filepath.Join(src, "p"), 0o700)
+	os.WriteFile(filepath.Join(src, "p", "s.jsonl"), []byte("x"), 0o600)
+	copyRegularTree(src, out)
+	if read(filepath.Join(out, "p", "s.jsonl")) != "x" {
+		t.Fatal("tree")
 	}
 }
 
@@ -432,14 +430,20 @@ func TestRunConnectProxy(t *testing.T) {
 			go func() { io.Copy(c, c); c.Close() }()
 		}
 	}()
-	old := proxyDial
+	old, oldR := proxyDial, proxyResolve
+	proxyResolve = func(host string) ([]net.IP, error) {
+		if host == "api.anthropic.com" {
+			return []net.IP{net.ParseIP("10.1.1.1"), net.ParseIP("160.79.104.10")}, nil // privatni se preskoči
+		}
+		return []net.IP{net.ParseIP("127.0.0.1")}, nil
+	}
 	proxyDial = func(addr string) (net.Conn, error) {
-		if addr != "api.anthropic.com:443" {
+		if addr != "160.79.104.10:443" {
 			t.Errorf("dial %s", addr)
 		}
 		return net.Dial("tcp", echo.Addr().String())
 	}
-	defer func() { proxyDial = old }()
+	defer func() { proxyDial, proxyResolve = old, oldR }()
 	parent := httptest.NewRequest("POST", "/v1/messages", nil)
 	r := &req{Request: parent, conn: &serveConn{device: &serveDevice{Name: "pc"}, peer: "10.0.0.9"}}
 	run, env := s.startRun(r, "claude", "/copy", false, true, "", "", "", "", claudeAPIHosts, claudeNetworkSetting)
@@ -478,11 +482,25 @@ func TestRunConnectProxy(t *testing.T) {
 		t.Fatalf("tunnel: %q", l)
 	}
 	c.Close()
-	for _, h := range []string{"github.com:443", "api.anthropic.com:80"} {
+	claudeAPIHosts = append(claudeAPIHosts, "rebind.example") // dovoljen gostitelj, ki se razreši v loopback
+	defer func() { claudeAPIHosts = claudeAPIHosts[:len(claudeAPIHosts)-1] }()
+	run.allow = claudeAPIHosts
+	for _, h := range []string{"github.com:443", "api.anthropic.com:80", "127.0.0.1:443", "rebind.example:443"} {
 		if st, c := connect(h); c != nil || !strings.HasPrefix(st, "403") || !strings.Contains(st, "Network for builds") {
 			t.Fatalf("%s: %s", h, st)
 		}
 	}
+	// izvajanje z omrežjem (le vprašanja drugim modelom, Codex): posrednika ni
+	s2, _ := testServer(t, func(c *serveConfig) { c.Codex.AskOthers = true })
+	run2, _ := s2.startRun(r, "codex", "/copy", false, true, "", "", "", "", nil, "")
+	defer run2.stop()
+	run2.started(os.Getpid())
+	c2, _ := net.Dial("tcp", run2.addr)
+	c2.Write([]byte("CONNECT api.anthropic.com:443 HTTP/1.1\r\nHost: api.anthropic.com:443\r\n\r\n"))
+	if resp, err := http.ReadResponse(bufio.NewReader(c2), nil); err != nil || resp.StatusCode != 403 {
+		t.Fatalf("CONNECT without the proxy: %v %v", resp, err)
+	}
+	c2.Close()
 	q, _ := http.NewRequest("GET", "http://"+run.addr+"/v1/models", nil)
 	q.Header.Set("Authorization", "Bearer "+run.token)
 	if resp, err := http.DefaultClient.Do(q); err != nil || resp.StatusCode != 404 {
@@ -504,5 +522,51 @@ func TestWxcHashesMatchBuild(t *testing.T) {
 	}
 	if got["x64/wxc-exec.exe"] != wxcHashes["amd64"] || got["arm64/wxc-exec.exe"] != wxcHashes["arm64"] {
 		t.Fatalf("scripts/mxc.sha256 %v, client/mxc.go %v", got, wxcHashes)
+	}
+}
+
+// Vrstica Login v skrbniškem API (#68): žeton Claude in ključ API se shranita, odgovor ima le stanje; napačne vrste
+// in oblike so 400; podedovani ključi API ne pridejo do agenta.
+func TestAgentLoginAPI(t *testing.T) {
+	keys := map[string]string{}
+	og, os2, od := keyGet, keySet, keyDel
+	keyGet = func(_, n string) (string, string) { return keys[n], "" }
+	keySet = func(_, n, v string) (string, error) { keys[n] = v; return "", nil }
+	keyDel = func(_, n string) { delete(keys, n) }
+	defer func() { keyGet, keySet, keyDel = og, os2, od }()
+	s, _, base := liveServer(t, nil)
+	tok := "sk-ant-oat01-secret-value-0123456789"
+	for _, tc := range []struct {
+		path, body string
+		want       int
+	}{
+		{"/agents/claude", `{"token":"` + tok + `"}`, 200},
+		{"/agents/claude", `{"token":"github_pat_x"}`, 400},
+		{"/agents/codex", `{"apiKey":"sk-proj-0123456789abcdefghij"}`, 200},
+		{"/agents/codex", `{"token":"x"}`, 400},
+		{"/agents/copilot", `{"apiKey":"0123456789abcdefghijk"}`, 400},
+		{"/agents/grok", `{"apiKey":"bad key with spaces 12345"}`, 400},
+	} {
+		if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+tc.path, tc.body); st != tc.want || strings.Contains(b, tok) {
+			t.Fatalf("%s %s: %d %s", tc.path, tc.body, st, b)
+		}
+	}
+	if keys[agentLoginKey("claude")] != tok || keys[agentAPIKeyName("codex")] == "" {
+		t.Fatalf("keys: %v", keys)
+	}
+	_, b := adminNoise(t, s, base, s.admin, "GET", adminPrefix+"/agents/claude", "")
+	if !strings.Contains(b, `"state":"set"`) || !strings.Contains(b, "claude setup-token") || strings.Contains(b, tok) {
+		t.Fatalf("claude login: %s", b)
+	}
+	if _, b := adminNoise(t, s, base, s.admin, "GET", adminPrefix+"/agents/codex", ""); !strings.Contains(b, "billed through the provider's API") || strings.Contains(b, "sk-proj") {
+		t.Fatalf("codex login: %s", b)
+	}
+	if got := agentKeyEnv(s.cfgDir, "codex"); len(got) != 1 || !strings.HasPrefix(got[0], "CODEX_API_KEY=sk-proj") {
+		t.Fatalf("codex env: %v", got)
+	}
+	for _, k := range []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "XAI_API_KEY", "CODEX_API_KEY"} {
+		if slices.ContainsFunc(agentEnv([]string{k + "=inherited"}), func(kv string) bool { return strings.HasPrefix(kv, k) }) {
+			t.Fatalf("%s inherited", k)
+		}
 	}
 }

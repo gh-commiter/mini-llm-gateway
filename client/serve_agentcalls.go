@@ -241,11 +241,24 @@ func (s *server) runHandler(run *agentRun) http.Handler {
 	})
 }
 
-// proxyDial: povezava posrednika do gostitelja (testi: preslikava na lokalni strežnik).
-var proxyDial = func(addr string) (net.Conn, error) { return net.DialTimeout("tcp", addr, 30*time.Second) }
+// proxyDial, proxyResolve: povezava posrednika in razreševanje imena (testi: preslikava na lokalni strežnik).
+var (
+	proxyDial    = func(addr string) (net.Conn, error) { return net.DialTimeout("tcp", addr, 30*time.Second) }
+	proxyResolve = func(host string) ([]net.IP, error) { return net.LookupIP(host) }
+)
 
-// runConnect (#68): CONNECT host:443 od procesa tega izvajanja (peerInTree) do dovoljenega gostitelja, nato tunel v
-// obe smeri; drugo 403 z imenom nastavitve in vrstica v dnevniku (seznam gostiteljev se uči iz njih).
+// maxTunnels: največ hkratnih tunelov CONNECT enega izvajanja.
+const maxTunnels = 16
+
+// publicIP: naslov, ki ga posrednik sme klicati (ne loopback, zasebni, link-local, nedoločen ali multicast).
+func publicIP(ip net.IP) bool {
+	return !(ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() ||
+		ip.IsMulticast() || ip.IsInterfaceLocalMulticast())
+}
+
+// runConnect (#68): le za izvajanje v škatli brez omrežja (allow != nil): CONNECT <dovoljen gostitelj>:443 od procesa
+// tega izvajanja (peerInTree); ime se razreši enkrat, klic gre na javni IP (brez DNS rebinding, nikoli loopback ali
+// lokalno omrežje), nato tunel v obe smeri; drugo 403 z imenom nastavitve in vrstica v dnevniku.
 func (s *server) runConnect(run *agentRun, w http.ResponseWriter, hr *http.Request) {
 	c, _ := hr.Context().Value(connKey{}).(*serveConn)
 	if c == nil {
@@ -259,12 +272,32 @@ func (s *server) runConnect(run *agentRun, w http.ResponseWriter, hr *http.Reque
 		return
 	}
 	host, port, err := net.SplitHostPort(hr.Host)
-	if err != nil || run.allow != nil && (port != "443" || !slices.Contains(run.allow, strings.ToLower(host))) {
+	if err != nil || run.allow == nil || port != "443" || !slices.Contains(run.allow, strings.ToLower(host)) {
 		s.log.Printf("agent %s: refused CONNECT %s (%s is off)", run.via(), hr.Host, run.netOff)
 		writeError(w, "", 403, "network for this agent is off ("+run.netOff+")")
 		return
 	}
-	up, err := proxyDial(net.JoinHostPort(host, port))
+	ips, err := proxyResolve(host)
+	var ip net.IP
+	for _, x := range ips {
+		if publicIP(x) {
+			ip = x
+			break
+		}
+	}
+	if err != nil || ip == nil {
+		s.log.Printf("agent %s: refused CONNECT %s (no public address)", run.via(), hr.Host)
+		writeError(w, "", 403, "network for this agent is off ("+run.netOff+")")
+		return
+	}
+	run.tunMu.Lock()
+	full := len(run.tunnels) >= 2*maxTunnels
+	run.tunMu.Unlock()
+	if full {
+		writeError(w, "", 429, "too many connections from this agent run")
+		return
+	}
+	up, err := proxyDial(net.JoinHostPort(ip.String(), port))
 	if err != nil {
 		writeError(w, "", 502, "cannot connect to "+hr.Host)
 		return
@@ -293,6 +326,9 @@ func (s *server) runConnect(run *agentRun, w http.ResponseWriter, hr *http.Reque
 	io.Copy(conn, up)
 	conn.Close()
 	up.Close()
+	run.tunMu.Lock()
+	run.tunnels = slices.DeleteFunc(run.tunnels, func(c net.Conn) bool { return c == conn || c == up })
+	run.tunMu.Unlock()
 }
 
 // minigwExe: ta program (z razrešenimi povezavami): agent z njim vpraša druge modele, sandbox ga mora videti.
