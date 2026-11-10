@@ -51,11 +51,11 @@ func sandboxInit(scratch, cfgDir string, logf func(string, ...any)) {
 	for _, p := range old {
 		os.Remove(p)
 	}
-	why := ""
+	why, detail := "", ""
 	if b := windowsBuild(); buildTooOld(b) { // pred preizkusom: jasen razlog
 		why = "needs Windows 11 build 26100.9550 / 26200.9550 or later (KB5124010 or any later cumulative update); this computer has " + b
 	} else {
-		why = mxcProbe(wxcExe(), minigwExe(), scratch, cfgDir)
+		why, detail = mxcProbe(wxcExe(), minigwExe(), scratch, cfgDir)
 	}
 	mxcState.mu.Lock()
 	mxcState.ready, mxcState.reason = why == "", why
@@ -72,6 +72,9 @@ func sandboxInit(scratch, cfgDir string, logf func(string, ...any)) {
 		mxcState.mu.Unlock()
 	}
 	logf("Windows sandbox (MXC) not available: %s; agents run only with \"Allow commands without a sandbox\"", why)
+	if detail != "" {
+		logf("Windows sandbox probe: %s (MINIGW_MXC_DEBUG=1 keeps the request, without secrets, in %s)", detail, filepath.Join(scratch, "tmp", "mxc"))
+	}
 }
 
 // agentSandboxInfo: {"kind":"mxc","version":"1.0.1"} ali {"kind":"","reason":"…"} (status, stran z nastavitvami, TUI).
