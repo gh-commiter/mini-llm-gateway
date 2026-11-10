@@ -189,6 +189,13 @@ func (h *shareHub) isRefused(session string) bool {
 }
 
 // register: false, če ima seja že mapo drugega lastnika (brez njegovega ključa je ni mogoče prevzeti).
+// count: registrirane seje (premik Scratch le brez njih, kot na Macu).
+func (h *shareHub) count() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.bySession)
+}
+
 func (h *shareHub) register(session, cwd, key string, readOnly bool, copy, owner string) (string, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

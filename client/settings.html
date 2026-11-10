@@ -134,6 +134,12 @@ const S = {
   plainRemoteHelp: ["minigw always encrypts. Turn on only for other clients on a trusted network; they have no device key, so they also need “any device” under Devices.",
     "minigw vedno šifrira. Vklopi le za druge odjemalce v zaupanja vrednem omrežju; nimajo ključa naprave, zato potrebujejo še »vsaka naprava« pod Naprave."],
   scratch: ["Scratch folder", "Mapa za začasne datoteke"], default: ["Default", "Privzeto"],
+  move: ["Move…", "Premakni …"],
+  moveAsk: ["Move the whole Scratch folder (mirrors, clones, dependencies, caches, agent state) to this folder. It works only while no minigw session or agent runs; new sessions wait until it is done.",
+    "Premakni celo mapo Scratch (zrcala, klone, odvisnosti, predpomnilnike, stanje agentov) v to mapo. Gre le, ko ne teče nobena seja minigw ali agent; nove seje počakajo, da je premik končan."],
+  moving: ["Moving… (a copy to another disk can take a while)", "Premikam … (kopija na drug disk lahko traja)"],
+  moved: ["Moved to %s", "Premaknjeno v %s"],
+  scratchSuggest: ["The Scratch folder is inside your home folder. Move it to %s (Move…).", "Mapa Scratch je v domači mapi. Premakni jo v %s (Premakni …)."],
   scratchHint: ["Temporary files of agents: synced copies, conversations, attachments. A new folder applies to new sessions; existing copies stay where they are.",
     "Začasne datoteke agentov: sinhronizirane kopije, pogovori, priponke. Nova mapa velja za nove seje; obstoječe kopije ostanejo, kjer so."],
   installedYes: ["minigw serve install", "minigw serve install"], enabled: ["Enabled", "Vklopljeno"],
@@ -277,8 +283,8 @@ const S = {
   sandboxNoteWin: ["Commands run in the Windows sandbox (MXC) with Claude Code's PowerShell tool (Bash in Tools means PowerShell): they write only to the session's folder and the gateway's folders for this conversation, and cannot read your home folder or the gateway's settings.",
     "Ukazi tečejo v peskovniku Windows (MXC) z orodjem PowerShell Claude Code (Bash med orodji pomeni PowerShell): pišejo le v mapo seje in mape prehoda za ta pogovor, domače mape in nastavitev prehoda ne morejo brati."],
   localToolsBox: ["Every Claude Code tool, including commands: they run in the Windows sandbox (MXC).", "Vsa orodja Claude Code, tudi ukazi: tečejo v peskovniku Windows (MXC)."],
-  scratchHomeWarn: ["The Scratch folder is inside your home folder, so agents in the Windows sandbox can list the names in your home folder (not read the files). Move Scratch outside your home, for example D:\\minigw-scratch.",
-    "Mapa Scratch je v domači mapi, zato agenti v peskovniku Windows vidijo imena v domači mapi (ne vsebine datotek). Mapo Scratch premakni iz domače mape, npr. D:\\minigw-scratch."],
+  scratchHomeWarn: ["The Scratch folder is inside your home folder, so agents in the Windows sandbox can list the names in your home folder (not read the files). Move Scratch outside your home with Move… under General → Scratch folder.",
+    "Mapa Scratch je v domači mapi, zato agenti v peskovniku Windows vidijo imena v domači mapi (ne vsebine datotek). Mapo Scratch premakni iz domače mape s Premakni … pod Splošno → Mapa za začasne datoteke."],
   agentSandbox: ["Agent sandbox", "Peskovnik agentov"], sandboxMXC: ["Windows sandbox (MXC %s)", "Peskovnik Windows (MXC %s)"],
   sandboxNone: ["not available (%s)", "ni na voljo (%s)"],
   worktreeMode: ["Worktree mode", "Način worktree"], worktreeNetwork: ["Network for builds", "Omrežje za gradnje"],
@@ -581,6 +587,7 @@ const pages = {
     const line = value("•".repeat(24), true);
     const showBtn = button(t("show"), () => { shown = !shown; line.textContent = shown ? token().split("#")[0] : "•".repeat(24); showBtn.textContent = t(shown ? "hide" : "show"); });
     const scratch = el("input", {type: "text", class: "left wide", value: g.scratch});
+    const ns = el("div", {class: "note warn", textContent: g.scratchSuggest ? t("scratchSuggest", g.scratchSuggest) : ""});
     autosave(scratch, n4, v => api("PATCH", "/general", {scratch: v}));
     const sb = st.agentSandbox, n6 = note(t(win && !(sb && sb.kind === "mxc") ? "worktreeNetworkNoBox" : "worktreeNetworkHelp"));
     return [
@@ -607,8 +614,14 @@ const pages = {
           const p = await pick("folder");
           if (p) { const r = await api("PATCH", "/general", {scratch: p}); scratch.value = r.scratch; }
         })) : null,
-        button(t("default"), () => save(n4, async () => { const r = await api("PATCH", "/general", {scratch: ""}); scratch.value = r.scratch; }))))),
-      n4,
+        button(t("default"), () => save(n4, async () => { const r = await api("PATCH", "/general", {scratch: ""}); scratch.value = r.scratch; })),
+        button(t("move"), async () => {  // cela mapa, tudi na drug disk (POST /general/scratch/move)
+          const to = prompt(t("moveAsk"), g.scratchSuggest || scratch.value);
+          if (!to || !to.trim()) return;
+          const r = await save(n4, () => { n4.textContent = t("moving"); return api("POST", "/general/scratch/move", {to: to.trim()}); }, r => r.warning || t("moved", r.scratch));
+          if (r) { scratch.value = r.scratch; g.scratchSuggest = r.scratchSuggest; ns.textContent = r.scratchSuggest ? t("scratchSuggest", r.scratchSuggest) : ""; }
+        })))),
+      ns, n4,
       section(t("worktreeMode")),
       group(row(t("worktreeNetwork"), toggle(g.worktreeNetwork, v => save(n6, () => api("PATCH", "/general", {worktreeNetwork: v}))))),
       n6,

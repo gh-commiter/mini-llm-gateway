@@ -44,6 +44,9 @@ runs; otherwise they go to serve.json.
                                                         client's folder (in a lower mode it only reads)
   minigw gw autostart [on|off]                          Windows: start the tray at sign-in (Linux: minigw serve install); no argument: show it
   minigw gw token [rotate]                              print the connect line; rotate makes a new token
+  minigw gw scratch [move [DIR]]                        the Scratch folder (mirrors, clones, deps, caches, agent
+                                                        state); move: all of it to DIR (no DIR: the proposed folder),
+                                                        only while no minigw session or agent runs
   minigw gw claude|codex|grok|copilot login            the agent's login (set / not set / logged in), never the value
   minigw gw claude|copilot token [remove]               Claude: the token from claude setup-token (needed in the
                                                         Windows sandbox); Copilot: its token for commands (fine-
@@ -201,7 +204,11 @@ func (a *adminClient) do(method, path string, body, out any) {
 	var resp []byte
 	if a.off == nil {
 		var err error
-		if status, resp, err = a.http(method, path, data, 60*time.Second); err != nil {
+		timeout := 60 * time.Second
+		if path == "/general/scratch/move" { // kopija na drug disk traja
+			timeout = 4 * time.Hour
+		}
+		if status, resp, err = a.http(method, path, data, timeout); err != nil {
 			fail("gateway admin API: " + err.Error())
 		}
 	} else {
@@ -618,6 +625,34 @@ func routerCommand(args []string, in io.Reader) {
 			say("On each client run:")
 		}
 		say("  " + g.Connect)
+	case "scratch":
+		need(1, 3)
+		var g apiGeneral
+		if len(pos) == 1 {
+			a.do("GET", "/general", nil, &g)
+			say("Scratch folder: " + g.Scratch)
+			if g.ScratchSuggest != "" {
+				say("It is inside your home folder (agents in the Windows sandbox can list the names there); move it: minigw gw scratch move " + g.ScratchSuggest)
+			}
+			return
+		}
+		if pos[1] != "move" {
+			fail(routerHelp)
+		}
+		to := ""
+		if len(pos) == 3 {
+			abs, err := filepath.Abs(pos[2])
+			if err != nil {
+				fail(err.Error())
+			}
+			to = abs
+		}
+		say("Moving the Scratch folder (new sessions wait until it is done) …")
+		a.do("POST", "/general/scratch/move", map[string]string{"to": to}, &g)
+		say("Scratch folder: " + g.Scratch)
+		if g.Warning != "" {
+			say("WARNING: " + g.Warning)
+		}
 	case "codex", "grok", "copilot": // #60: omejitev načina (work); brez --work le izpis; #68: login, token, apikey
 		if len(pos) > 1 {
 			agentLoginCmd(a, in, pos)
