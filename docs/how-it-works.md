@@ -145,11 +145,15 @@ Details:
   - read only: the folders on `PATH` except Git's MSYS2 tools (`Git\usr\bin`, which cannot run there), folders above
     the home and folders in or above the Scratch or config folders; folders on `PATH` inside your home (for example
     `~\.local\bin`) are readable, and the settings page warns about them, so keep no secrets there; the CLI's own
-    folder, the Git install, `JAVA_HOME`, `MAVEN_HOME`, `DOTNET_ROOT` and the minigw install folder; the mirror objects
-    in worktree mode;
+    folder, the Git install, `JAVA_HOME`, `MAVEN_HOME`, `GRADLE_HOME`, `DOTNET_ROOT`, `GOROOT` and the minigw install
+    folder; for a `PATH` folder named `bin` also the folder above it (the tool's root: Maven's `boot`, `lib`, `conf`, a
+    JDK), except a drive root or a folder in or above the home, Scratch or config folders; the mirror objects in
+    worktree mode;
   - denied: the gateway's config folder. Everything else (your home folder, other devices' copies, the rest of Scratch,
-    the registry outside the container) is not readable. The container can list the names of the folders above the
-    granted ones (not their files).
+    the registry outside the container) is not readable. The container can list the names in the folders above the
+    folders it may write and above its working folder (git needs them), not above read-only ones; with an allowed
+    folder inside your home, that includes the home. MXC may let a listing grant reach subfolders (HPX360 saw
+    `dir ~\.ssh` list names while reading the files was denied): names can show, file contents cannot.
   - The request for each run (it holds the Claude token or an API key you chose) is written to `Scratch\tmp\mxc`, a
     folder only your user can open (protected access list, also on a D: drive), outside every grant, and deleted after
     the run; leftovers are deleted when the gateway starts. Inherited environment variables ending in `_API_KEY` never

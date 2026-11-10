@@ -121,7 +121,7 @@ func TestMXCRequestFor(t *testing.T) {
 		if !slices.Equal(fs.ReadWrite, []string{"/s/w/c", "/s/w/c.deps"}) || !slices.Equal(fs.ReadOnly, []string{"/p/bin"}) || !slices.Equal(fs.Denied, []string{cfg}) {
 			t.Fatalf("%s: grants %+v", tc.name, fs)
 		}
-		if want := []string{"/", "/p", "/s", "/s/w"}; !slices.Equal(r.ProcessContainer.Filesystem.Enumerate, want) {
+		if want := []string{"/", "/s", "/s/w"}; !slices.Equal(r.ProcessContainer.Filesystem.Enumerate, want) { // ro (/p/bin) brez prednikov
 			t.Fatalf("%s: enumerate %v", tc.name, r.ProcessContainer.Filesystem.Enumerate)
 		}
 		if r.Network.Egress.Default != tc.wantEgress || r.Network.Ingress.HostLoopback != tc.wantLoop || len(r.Network.Egress.Allow) != tc.wantRules {
@@ -581,5 +581,16 @@ func TestMXCDebugCopy(t *testing.T) {
 	b, err := os.ReadFile(strings.TrimSuffix(args[0], ".json") + ".debug.json")
 	if err != nil || strings.Contains(string(b), "sk-ant-secret") || !strings.Contains(string(b), "CLAUDE_CODE_OAUTH_TOKEN=REDACTED") {
 		t.Fatalf("debug copy: %v %s", err, b)
+	}
+}
+
+// Koren orodja ob mapi PATH »bin« (Maven: boot\plexus-classworlds; JDK), nikoli koren diska, dom, Scratch, nastavitve.
+func TestToolRoot(t *testing.T) {
+	home, scratch, cfg := "/u/me", "/d/s", "/u/me/cfg"
+	for d, want := range map[string]string{"/opt/apache-maven-3.6.3/bin": "/opt/apache-maven-3.6.3", "/opt/jdk-21/BIN": "/opt/jdk-21",
+		"/bin": "", "/u/me/.local/bin": "", "/u/me/bin": "", "/d/s/gitexec/win-1/bin": "", "/opt/tool/cmd": "", "/u/bin": "", "/srv/x/bin": "/srv/x"} {
+		if got := toolRoot(d, home, scratch, cfg); got != want {
+			t.Errorf("%s: %q", d, got)
+		}
 	}
 }

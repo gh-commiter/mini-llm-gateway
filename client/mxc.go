@@ -176,7 +176,13 @@ func mxcRequestFor(sp mxcSpec) mxcRequest {
 		Process:    mxcProcess{CommandLine: winCmdLine(sp.argv), Cwd: sp.cwd, Env: sp.env, Timeout: mxcTimeout.Milliseconds()},
 		Filesystem: mxcFS{ReadWrite: nonNil(rw), ReadOnly: nonNil(ro), Denied: nonNil(slices.Clone(sp.deny))},
 		Network:    mxcNet{Egress: mxcEgress{Default: "allow"}}}
-	r.ProcessContainer.Filesystem.Enumerate = nonNil(mxcAncestors(append(slices.Clone(rw), ro...), sp.deny))
+	// le predniki pisljivih map in delovne mape (git jih rabi navzgor, W3); branje ro dela brez njih (spike:
+	// ~\.local\bin le readonly, claude je tekel), zato domača mapa ni naštevna zaradi programov v njej.
+	from := slices.Clone(rw)
+	if sp.cwd != "" {
+		from = append(from, filepath.Clean(sp.cwd))
+	}
+	r.ProcessContainer.Filesystem.Enumerate = nonNil(mxcAncestors(from, sp.deny))
 	if sp.egressDeny {
 		r.Network.Egress.Default = "deny"
 		var to []mxcPeer
@@ -306,6 +312,24 @@ func mxcPathDirs(path []string, keep []string, home, scratch, cfgDir string) []s
 	return out
 }
 
+// toolRoot: za mapo PATH »…\bin« njen starš (koren orodja: Maven boot, lib, conf; JDK), razen če je koren diska ali
+// domača mapa, Scratch ali mapa nastavitev, v njih ali nad njimi; sicer "".
+func toolRoot(d, home, scratch, cfgDir string) string {
+	if !strings.EqualFold(filepath.Base(d), "bin") {
+		return ""
+	}
+	p := filepath.Dir(d)
+	if filepath.Dir(p) == p {
+		return ""
+	}
+	for _, x := range []string{home, scratch, cfgDir} {
+		if x != "" && (under(p, x) || under(x, p)) { // ne v njih in ne nad njimi
+			return ""
+		}
+	}
+	return p
+}
+
 // mxcWrap: zahteva za exe z args v škatli (agentMounts) v datoteko <Scratch>\tmp\mxc-*.json (zunaj vseh dovoljenj) in
 // ukaz wxc-exec zanjo. cleanup po cmd.Wait pobriše zahtevo in začasno mapo, ki jo je naredil (m.temp prazen).
 func mxcWrap(wxc, exe string, args []string, m agentMounts) (string, []string, func(), error) {
@@ -362,7 +386,7 @@ func mxcWrap(wxc, exe string, args []string, m agentMounts) (string, []string, f
 		ro = append(ro, packageRoot(userHome, exe))
 	}
 	env := slices.Clone(m.cmdEnv)
-	for _, k := range []string{"JAVA_HOME", "MAVEN_HOME", "M2_HOME", "DOTNET_ROOT", "GOROOT"} { // orodja zunaj PATH
+	for _, k := range []string{"JAVA_HOME", "MAVEN_HOME", "M2_HOME", "GRADLE_HOME", "DOTNET_ROOT", "GOROOT"} { // orodja zunaj PATH
 		if v := envGet(env, k); v != "" && filepath.IsAbs(v) && exists(v) {
 			ro = append(ro, v)
 		}
@@ -371,6 +395,9 @@ func mxcWrap(wxc, exe string, args []string, m agentMounts) (string, []string, f
 	path := mxcPathDirs(filepath.SplitList(envGet(env, "PATH")), keep, userHome, scratch, m.cfgDir)
 	for _, d := range path {
 		ro = append(ro, d)
+		if r := toolRoot(d, userHome, scratch, m.cfgDir); r != "" { // Maven boot/lib/conf, koren JDK
+			ro = append(ro, r)
+		}
 		if strings.EqualFold(filepath.Base(d), "cmd") && exists(filepath.Join(d, "git.exe")) { // Git for Windows: mingw64\libexec\git-core
 			ro = append(ro, filepath.Dir(d))
 		}
