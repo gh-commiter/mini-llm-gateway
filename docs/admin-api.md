@@ -105,15 +105,17 @@ Use      {"model": string, "role"?: string, "via"?: string, "readOnly"?: true, "
          only; read-only drops `write` and `commands`; Codex `network` only with `write`). errors: 5xx and aborted; refused: 4xx; seconds:
          total request time (for agents their run time); tokens from the response's usage.
 Running  {"id": string, "time": string, "model": string, "step"?: string}
-         A model request (`POST /v1/messages`) still running. id: its request ID; step: the agent's latest step
-         (a command or a file it reads), if any.
+         A model request (`POST /v1/messages`) still running. id: its request ID; model: the client's model name
+         (`"unknown"` when over 200 bytes); step: the agent's current step (a tool, a file it reads or a command with
+         its arguments), never the agent's text. The Mac lists a request here before its device is checked.
 Request  {"time": string, "method": string, "path": string, "model": string, "status": number, "ms": number,
          "bytes": number, "device"?: string, "deviceName"?: string}
          A finished request that reached a model (`/v1/messages`, `/v1/messages/count_tokens`; not admin, share or
-         health requests). time: its start (RFC 3339, UTC); bytes: the request body's size; device absent = this
+         health requests). model: `"unknown"` for an unknown or refused model (404) or a name over 200 bytes, never the
+         client's string (as in Session). time: its start (RFC 3339, UTC); bytes: the request body's size; device absent = this
          computer without a device key (as in Session). The last 200; `minigw serve` keeps them in memory (empty after
          a restart), the Mac app in its activity file (kept across restarts; entries from before 0.5.21 have
-         `"bytes": 0` and no device). Never prompt or answer text.
+         `"bytes": 0` and no device). Never prompt or answer text; the step may contain a command's arguments.
 Model    {"id": string, "model": string, "window"?: number, "enabled": bool}
          id: the ID at the provider; model: the name for /model (the id itself when it starts with "claude-" in any letter case,
          else "claude-" + id; the original id also works in requests); window: context window in tokens, if known.
