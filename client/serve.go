@@ -999,7 +999,7 @@ func (s *server) handle(w http.ResponseWriter, r *req) (int, string) {
 	case "GET /health/live":
 		return writeJSON(w, r.rid, 200, map[string]string{"status": "ok"}), ""
 	case "GET /health/ready":
-		if !r.conn.loopback() && !s.authorized(r) { // L2: imena ponudnikov le temu računalniku ali z žetonom
+		if !s.authorized(r) && !(r.conn.loopback() && loopbackHost(r)) { // L2, #42: le temu računalniku (ne DNS rebinding) ali z žetonom
 			return writeJSON(w, r.rid, 200, map[string]any{"status": "ok"}), ""
 		}
 		providers := map[string]bool{"claude-cli": len(s.claudeExe()) > 0}
@@ -1109,18 +1109,24 @@ func (s *server) localApp(r *req) bool {
 	default:
 		return false
 	}
-	host := r.Host
-	if h, _, err := net.SplitHostPort(r.Host); err == nil {
-		host = h
-	}
-	host = strings.Trim(host, "[]")
 	if !s.conf().localApps() || !r.conn.loopback() || r.h("origin") != "" || (r.h("anthropic-version") == "" && r.h("x-api-key") == "") ||
-		(host != "localhost" && !(net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback())) {
+		!loopbackHost(r) {
 		return false
 	}
 	ours, ok1 := r.conn.LocalAddr().(*net.TCPAddr)
 	peer, ok2 := r.conn.RemoteAddr().(*net.TCPAddr)
 	return ok1 && ok2 && localPeer(ours, peer)
+}
+
+// loopbackHost: glava Host je localhost ali loopback IP (zahteva ni prišla prek DNS rebindinga).
+func loopbackHost(r *req) bool {
+	host := r.Host
+	if h, _, err := net.SplitHostPort(r.Host); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	ip := net.ParseIP(host)
+	return host == "localhost" || (ip != nil && ip.IsLoopback())
 }
 
 func (s *server) authorized(r *req) bool {
