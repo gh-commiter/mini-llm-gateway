@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func gitT(t *testing.T, dir string, args ...string) string {
@@ -432,5 +433,58 @@ func TestNestedSnapshotRunsNoCleanFilter(t *testing.T) {
 	gitSnapshot(dir, false, false)
 	if _, err := os.Stat(marker); err != nil {
 		t.Fatal("the test does not reproduce the filter")
+	}
+}
+
+// #58: tanek bundle evil..c2 (c2 ponovno uporabi drevo z ».git«, ki ga je fetch brez fsck pustil v objektih): fetch ga
+// sprejme tudi na novem gitu (prejme le commit), fsckIncoming ga zavrne z lastnim sporočilom; časovna meja velja.
+func TestWorktreeFetchThinBundleFsck(t *testing.T) {
+	root := t.TempDir()
+	src, client := filepath.Join(root, "src"), filepath.Join(root, "client")
+	os.MkdirAll(src, 0o755)
+	gitT(t, src, "init", "-q", "-b", "main")
+	writeT(t, filepath.Join(src, "a.txt"), "a\n")
+	gitT(t, src, "add", "-A")
+	gitT(t, src, "commit", "-qm", "a")
+	gitT(t, root, "clone", "-q", "--no-local", src, client)
+	in := func(input string, args ...string) string {
+		cmd := exec.Command("git", append([]string{"-C", src}, args...)...)
+		cmd.Stdin = strings.NewReader(input)
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("git %v: %v", args, err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	dg := in("100644 blob "+in("evil\n", "hash-object", "-w", "--stdin")+"\tconfig\n", "mktree")
+	top := in("040000 tree "+dg+"\t.git\n", "mktree")
+	evil := gitT(t, src, "commit-tree", top, "-p", "HEAD", "-m", "evil")
+	branch, ok := "minigw/claude-0123abcd-0", "minigw/claude-0123abcd-1"
+	gitT(t, src, "update-ref", "refs/heads/bad", evil)
+	gitT(t, src, "update-ref", "refs/heads/"+branch, gitT(t, src, "commit-tree", top, "-p", evil, "-m", "c2"))
+	gitT(t, src, "update-ref", "refs/heads/"+ok, gitT(t, src, "commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "fine"))
+	bad, thin, good := filepath.Join(root, "bad.bundle"), filepath.Join(root, "thin.bundle"), filepath.Join(root, "good.bundle")
+	gitT(t, src, "bundle", "create", bad, "refs/heads/bad")
+	gitT(t, src, "bundle", "create", thin, "refs/heads/"+branch, "^"+evil)
+	gitT(t, src, "bundle", "create", good, "refs/heads/"+ok, "^HEAD")
+	gitT(t, client, "-c", "fetch.fsckObjects=false", "fetch", "-q", bad, "+refs/heads/bad:refs/scratch")
+	gitT(t, client, "update-ref", "-d", "refs/scratch")
+
+	why := gitFetchBranch(client, thin, branch)
+	if !strings.HasPrefix(why, "the gateway's branch failed the object check (fsck): ") || !strings.Contains(why, ".git") {
+		t.Fatalf("thin bundle: %q", why)
+	}
+	if out, _ := exec.Command("git", "-C", client, "rev-parse", "-q", "--verify", "refs/heads/"+branch).Output(); len(out) > 0 {
+		t.Fatal("the rejected branch was created")
+	}
+	old := fsckTimeout
+	fsckTimeout = time.Nanosecond
+	why = gitFetchBranch(client, good, ok)
+	fsckTimeout = old
+	if !strings.HasPrefix(why, "the gateway's branch failed the object check (fsck)") {
+		t.Fatalf("fsck ran past its timeout: %q", why)
+	}
+	if why := gitFetchBranch(client, good, ok); why != "" {
+		t.Fatal(why)
 	}
 }

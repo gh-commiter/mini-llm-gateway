@@ -1196,3 +1196,19 @@ func TestReadStdinDoesNotBlockWithPrompt(t *testing.T) {
 		t.Fatal("promptWords")
 	}
 }
+
+func TestSyncResolveStaysUnderRoot(t *testing.T) {
+	base := t.TempDir()
+	base, _ = filepath.EvalSymlinks(base)
+	root := filepath.Join(base, "r")
+	os.MkdirAll(filepath.Join(root, "a"), 0o755)
+	os.Symlink(base, filepath.Join(root, "link"))
+	if p, ok := syncResolve("a/new.txt", root); !ok || !strings.HasPrefix(p, root+string(filepath.Separator)) {
+		t.Fatalf("valid path: %q %v", p, ok)
+	}
+	for _, bad := range []string{"../x", "a/../../x", "/abs", "a\\b", "link/x", ""} {
+		if p, ok := syncResolve(bad, root); ok {
+			t.Errorf("%q accepted: %q", bad, p)
+		}
+	}
+}

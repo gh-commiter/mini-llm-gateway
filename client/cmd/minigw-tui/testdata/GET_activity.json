@@ -1,0 +1,4 @@
+{"inflight":[{"id":"req_5f1c","time":"2026-11-09T09:00:00Z","model":"claude-codex","step":"Read docs/usage.md"}],
+ "requests":[{"time":"2026-11-09T08:59:41Z","method":"POST","path":"/v1/messages","model":"claude-cli-sonnet","status":200,"ms":12345,"bytes":48211,"device":"Qm9iJ3MgTWFjQm9vayBkZXZpY2Uga2V5IDMyIGJ5dGVz","deviceName":"Bob's MacBook"},
+  {"time":"2026-11-09T08:58:02Z","method":"POST","path":"/v1/messages/count_tokens","model":"claude-cli-sonnet","status":200,"ms":3,"bytes":1022},
+  {"time":"2026-11-09T08:51:17Z","method":"POST","path":"/v1/messages","model":"claude-gpt-y","status":429,"ms":840,"bytes":2048,"device":"dGhpbmtwYWQ","deviceName":"thinkpad"}]}

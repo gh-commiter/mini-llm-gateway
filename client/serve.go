@@ -422,7 +422,8 @@ type server struct {
 	tmpRoot       string        // tempRoot: koren kratkih map TMPDIR tekov Claude CLI v worktree
 	gwSlots       chan struct{} // največ hkratnih zahtev k prehodom
 	gateways      gwCatalog
-	limits        sync.Map // limitKey → limitHit: omejitev agenta za ponovitev brez pretoka (noteLimit)
+	limits        sync.Map    // limitKey → limitHit: omejitev agenta za ponovitev brez pretoka (noteLimit)
+	activity      activityLog // tekoče in zadnje zahteve modelom (GET /activity)
 }
 
 func newServer(c serveConfig, cfgPath string) (*server, error) {
@@ -964,6 +965,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, hr *http.Request) {
 	b := make([]byte, 16)
 	rand.Read(b)
 	r := &req{Request: hr, conn: hr.Context().Value(connKey{}).(*serveConn), rid: fmt.Sprintf("req_%x", b)}
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	var uw *usageWriter
 	if hr.Method == "POST" && hr.URL.Path == "/v1/messages" {
 		uw = &usageWriter{ResponseWriter: w}
@@ -972,6 +974,9 @@ func (s *server) ServeHTTP(w http.ResponseWriter, hr *http.Request) {
 	status, model := s.handle(w, r)
 	if uw != nil && model != "" { // le zahteva, ki je prišla do modela (overjena, dovoljena naprava)
 		s.recordSession(r, model, status, time.Since(start), uw.in, uw.out)
+	}
+	if model != "" {
+		s.recordActivity(r, model, status, start)
 	}
 	if hr.URL.Path == "/minigw/share/next" && status == 204 {
 		return // long poll vsakih 25 s: brez vrstice

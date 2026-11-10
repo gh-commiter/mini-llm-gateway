@@ -101,7 +101,7 @@ The Mac app's **Settings…** window and the `minigw serve` settings page have t
 ### Settings in the terminal
 
 `minigw gw settings` shows the settings in the terminal, on any gateway (the Mac app and `minigw serve`), also over
-SSH and inside tmux. Keyboard first (←/→ or 1-7 page, ↑/↓ move, Enter change, Esc back, q quit); a click on a page
+SSH and inside tmux. Keyboard first (←/→ or 1-7 page, 1-8 on the Mac, ↑/↓ move, Enter change, Esc back, q quit); a click on a page
 name or a row works too. No colors, English only, at least 80 columns. It is the helper `minigw-tui` next to `minigw`
 (on the Mac in the app's `Contents/Helpers`; `minigw` checks its signature first). It reads and changes everything
 through `minigw gw api` of the same `minigw`, so the same rules apply: only on the gateway computer, as the user who
@@ -116,6 +116,7 @@ line with the token appears only after **Show the connect line**.
 | Agents | Claude CLI (enabled, path, local tools, tools, permission mode, setting sources, ask others), Codex and Grok CLI (enabled, path, write, network, ask others, models), Copilot CLI (models, write, web, commands, token), Foundry Local | | Allow commands without a sandbox (Windows, Linux without `bwrap`) |
 | Folders | Allowed folders: add, remove; folders left out at startup | | |
 | Sessions | Recent sessions with details, Clear history | | |
+| Activity | Requests running now (model, time, the agent's latest step) at the top, then the last 200 requests to models (time, status, duration, model, device; Enter or a click shows the path, size and device ID). Read-only, reloads every 3 s. Metadata and the agent's current step (a tool or command), never prompt or answer text; an unknown model shows as `unknown`. A gateway older than 0.5.21 shows "Needs gateway 0.5.21 or newer" | | Empty after the gateway restarts |
 | Mac | – | Siri AI (on, timeout, per device), Apple Foundation Models (on, instructions), `minigw run` (commands, per device, network) | |
 
 **Over SSH on a Mac:** the login keychain is locked in an SSH session, so `minigw` cannot read the gateway's admin

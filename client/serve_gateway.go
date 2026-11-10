@@ -445,8 +445,8 @@ func (s *server) passthrough(w http.ResponseWriter, r *req, g serveGateway, m gw
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
 	defer cancel()
 	target := g.BaseURL + r.URL.Path
-	if r.URL.RawQuery != "" {
-		target += "?" + r.URL.RawQuery
+	if r.URL.Query().Get("beta") == "true" { // naprej le ?beta=true, drugih parametrov naprave ne
+		target += "?beta=true"
 	}
 	up, _ := http.NewRequestWithContext(ctx, "POST", target, bytes.NewReader(data))
 	up.Header.Set("content-type", "application/json")
@@ -467,7 +467,11 @@ func (s *server) passthrough(w http.ResponseWriter, r *req, g serveGateway, m gw
 	if resp.StatusCode/100 != 2 {
 		return upstreamError(w, r.rid, g.Name, resp)
 	}
-	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+	ct := resp.Header.Get("Content-Type")
+	if ct == "" {
+		ct = "application/json"
+	}
+	w.Header().Set("Content-Type", ct)
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("request-id", r.rid)
 	w.WriteHeader(resp.StatusCode)
