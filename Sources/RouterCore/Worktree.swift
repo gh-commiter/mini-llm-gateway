@@ -30,6 +30,13 @@ public enum Worktree {
             .first { !$0.hasPrefix("/usr/bin") && FileManager.default.isExecutableFile(atPath: $0) } ?? "/usr/bin/git"
     }()
 
+    /// Pripete nastavitve varnega gita (`safe`). #71: tudi pager, zunanji diff, ssh in pomočnik za poverilnice iz
+    /// nastavitev repozitorija (agent v peskovniku sam dela commite in lahko piše .git/config).
+    static let guardrails = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "submodule.recurse=false",
+                             "-c", "protocol.allow=never", "-c", "protocol.file.allow=always", "-c", "maintenance.auto=false", "-c", "gc.auto=0",
+                             "-c", "core.commitGraph=false", "-c", "core.multiPackIndex=false",
+                             "-c", "core.pager=cat", "-c", "diff.external=", "-c", "core.sshCommand=", "-c", "credential.helper="]
+
     /// git z izhodom; `safe`: brez sistemske in uporabniške nastavitve in brez hookov (router, prevzem pri odjemalcu).
     @discardableResult
     /// `hooks: false` (odjemalec): hooki uporabnika ne tečejo ob začasnem refu refs/minigw/push in posnetku.
@@ -39,9 +46,6 @@ public enum Worktree {
     static func run(_ args: [String], cwd: String? = nil, env extra: [String: String] = [:], safe: Bool = true, hooks: Bool = true,
                     input: Data? = nil, sandbox: String? = nil, timeout: TimeInterval? = nil, trim: Bool = true,
                     stderr: Bool = false) -> (status: Int32, out: String) {
-        let guardrails = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "submodule.recurse=false",
-                          "-c", "protocol.allow=never", "-c", "protocol.file.allow=always", "-c", "maintenance.auto=false", "-c", "gc.auto=0",
-                          "-c", "core.commitGraph=false", "-c", "core.multiPackIndex=false"]
         let gitArgs = (safe ? guardrails : hooks ? [] : ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"]) + args
         let exe = sandbox == nil ? git : "/usr/bin/sandbox-exec"
         var env = ProcessInfo.processInfo.environment

@@ -341,6 +341,25 @@ func toolRoot(d, home, scratch, cfgDir string) string {
 	return p
 }
 
+// scratchLink (M1): prva sestavina poti od scratch (vključno) do p, ki je povezava (symlink, junction ali druga točka
+// ponovne razčlenitve; lstat, brez sledenja); "" = ni ali p ni pod scratch.
+func scratchLink(p, scratch string) string {
+	if !under(p, scratch) {
+		return ""
+	}
+	rel, _ := filepath.Rel(scratch, p)
+	cur := scratch
+	for _, c := range append([]string{""}, strings.Split(rel, string(filepath.Separator))...) {
+		if c != "" && c != "." {
+			cur = filepath.Join(cur, c)
+		}
+		if fi, err := os.Lstat(cur); err == nil && fi.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 {
+			return cur
+		}
+	}
+	return ""
+}
+
 // mxcWrap: zahteva za exe z args v škatli (agentMounts) v datoteko <Scratch>\tmp\mxc-*.json (zunaj vseh dovoljenj) in
 // ukaz wxc-exec zanjo. cleanup po cmd.Wait pobriše zahtevo in začasno mapo, ki jo je naredil (m.temp prazen).
 func mxcWrap(wxc, exe string, args []string, m agentMounts) (string, []string, func(), error) {
@@ -410,7 +429,10 @@ func mxcWrap(wxc, exe string, args []string, m agentMounts) (string, []string, f
 			ro = append(ro, r)
 		}
 		if strings.EqualFold(filepath.Base(d), "cmd") && exists(filepath.Join(d, "git.exe")) { // Git for Windows: mingw64\libexec\git-core
-			ro = append(ro, filepath.Dir(d))
+			// L2: starš z istimi pogoji kot toolRoot (ne koren diska, domača mapa, Scratch, nastavitve; ne v njih ali nad njimi)
+			if r := toolRoot(filepath.Join(filepath.Dir(d), "bin"), userHome, scratch, m.cfgDir); r != "" {
+				ro = append(ro, r)
+			}
 		}
 	}
 	for k, v := range map[string]string{"USERPROFILE": home, "HOME": home, "APPDATA": roaming, "LOCALAPPDATA": local,
@@ -420,6 +442,13 @@ func mxcWrap(wxc, exe string, args []string, m agentMounts) (string, []string, f
 		"PSModuleAnalysisCachePath":   filepath.Join(local, "Microsoft", "Windows", "PowerShell", "ModuleAnalysisCache"),
 		"POWERSHELL_TELEMETRY_OPTOUT": "1", "POWERSHELL_UPDATECHECK": "Off"} {
 		env = envSet(env, k, v)
+	}
+	// M1: dovoljenje skozi povezavo pod Scratch (agent je mapo zamenjal z junction) bi škatli dalo cilj povezave
+	for _, p := range slices.Concat(rw, ro) {
+		if scratchLink(p, scratch) != "" {
+			done()
+			return "", nil, nil, errors.New("the agent's folders on the gateway are not safe to use (a link under the scratch folder): start a new conversation")
+		}
 	}
 	slices.Sort(env)
 	cwd := m.cwd
@@ -508,6 +537,17 @@ func boxWrap(exe string, args []string, m agentMounts) (string, []string, func()
 		return "", nil, nil, err
 	}
 	return name, a, func() { done(); f.Close() }, nil // ročaj do konca teka (po cmd.Start)
+}
+
+// redactText (L5): v besedilu (izhod preizkusa za dnevnik) vsaka beseda IME=vrednost kot pri redactEnv; presledki strnjeni.
+func redactText(s string) string {
+	f := strings.Fields(s)
+	for i, w := range f {
+		if strings.Contains(w, "=") {
+			f[i] = redactEnv([]string{w})[0]
+		}
+	}
+	return strings.Join(f, " ")
 }
 
 // redactEnv: vrednosti spremenljivk z imenom, ki vsebuje TOKEN, KEY, SECRET, PASSWORD ali AUTH, zamenjane.
@@ -660,7 +700,7 @@ func mxcProbe(wxc, minigw, scratch, cfgDir string) (why, detail string, loopOK b
 		why += ": " + strings.TrimSpace(first)
 	}
 	if why != "" {
-		detail = "wxc-exec exit " + fmt.Sprint(code) + "; stdout: " + tailText(out.String(), 600) + "; stderr: " + tailText(stderr.String(), 1500)
+		detail = "wxc-exec exit " + fmt.Sprint(code) + "; stdout: " + tailText(out.String(), 600) + "; stderr: " + tailText(redactText(stderr.String()), 1500)
 	}
 	if why == "" && !loopOK {
 		detail = "loopback: " + tailText(out.String(), 300)

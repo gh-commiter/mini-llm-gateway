@@ -783,7 +783,7 @@ func agentLoginCmd(a *adminClient, in io.Reader, pos []string) {
 	}
 	if pos[1] == "login" {
 		a.do("GET", "/agents/"+kind, nil, &info)
-		say(clean(fmt.Sprintf("%s login: %v", kind, info.Login["state"])))
+		say(clean(fmt.Sprintf("%s login: %v", agentNames[kind], info.Login["state"])))
 		say(clean(fmt.Sprint(info.Login["hint"])))
 		if n, ok := info.Login["apiKeyNote"]; ok {
 			say(clean(fmt.Sprint(n)) + " (minigw gw " + kind + " apikey)")
@@ -793,7 +793,7 @@ func agentLoginCmd(a *adminClient, in io.Reader, pos []string) {
 	what := map[string]string{"claude": "Claude token (from claude setup-token, sk-ant-…)", "copilot": "Copilot token (github_pat_…, only the Copilot Requests permission)"}[kind]
 	field := "token"
 	if pos[1] == "apikey" {
-		what, field = kind+" API key (billed through the provider's API)", "apiKey"
+		what, field = agentNames[kind]+" API key (billed through the provider's API)", "apiKey"
 	}
 	v := ""
 	if len(pos) == 2 {
@@ -805,8 +805,8 @@ func agentLoginCmd(a *adminClient, in io.Reader, pos []string) {
 	}
 	a.do("PATCH", "/agents/"+kind, map[string]any{field: v}, nil)
 	if v == "" {
-		say("removed " + kind + "'s " + map[string]string{"token": "token", "apiKey": "API key (the login is used again)"}[field])
+		say("removed " + agentNames[kind] + "'s " + map[string]string{"token": "token", "apiKey": "API key (the login is used again)"}[field])
 	} else {
-		say(kind + "'s " + map[string]string{"token": "token", "apiKey": "API key"}[field] + " stored in the key store")
+		say(agentNames[kind] + "'s " + map[string]string{"token": "token", "apiKey": "API key"}[field] + " stored in the key store")
 	}
 }

@@ -466,7 +466,8 @@ minigw run -- mvn -q verify                   # run a build there; output and ex
   read-only mount instead.
 - **Requirements:** the folder is in a writable SMB share of the gateway Mac (System Settings → Sharing) and inside
   its allowed folders. minigw proves it is the same folder: the gateway writes a check file with random content and
-  minigw must read it back through its mount.
+  minigw must read it back through its mount. Only shares listed in File Sharing work; the automatic home-folder
+  share does not (#74).
 - **Detection:** automatic on macOS, Linux (cifs) and Windows (UNC path or mapped drive). Elsewhere set
   `MINIGW_NATIVE_MOUNT=<share>=<mount folder>`. If the folder is not a gateway share, minigw falls back to the usual
   mount.
@@ -570,6 +571,9 @@ fixed NTFS drive. The same move works on Linux.
   Claude request is refused with "Claude CLI in the Windows sandbox needs a long-lived sign-in token: run claude
   setup-token, then minigw gw claude token". Each run starts with a fresh Claude config and home; only the
   conversation's transcript is kept between turns, so `--resume` works.
+- The sign-in the agent runs with (Claude's `claude setup-token` token, Copilot's token, or the API key you chose
+  with `minigw gw <agent> apikey`) is in the sandbox's environment, so the agent's own commands in the box can read it
+  (and, with network, send it elsewhere). For untrusted repositories keep **Network for builds** off.
 - **Grok** has no long-lived token: its `~\.grok\auth.json` and `config.toml` are copied into its own home for the
   device before each run, never back. After Grok refreshes its login you may need `grok login` again.
 - Claude runs commands with PowerShell (Git Bash cannot run in the sandbox); `Bash` in the tools list means PowerShell.

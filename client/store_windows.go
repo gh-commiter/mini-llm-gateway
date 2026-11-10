@@ -8,6 +8,7 @@ package main
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -282,9 +283,14 @@ func regRunDel(name string) {
 
 // protectDir: zaščiten DACL samo za lastnika in SYSTEM (mapa nastavitev zunaj %AppData%, kjer ni privzeto zasebna).
 // protectScratch (L2): kot mapa nastavitev (DACL le za uporabnika; tuj lastnik = zavrnitev).
+// L1: privzeta nadrejena mapa <pogon>\minigw-scratch mora biti prava mapa tega uporabnika (na deljenem računalniku bi
+// jo sicer drug račun lahko preimenoval ali zamenjal skupaj z našo mapo v njej).
 func protectScratch(dir string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
+	}
+	if p := filepath.Dir(dir); strings.EqualFold(filepath.Base(p), "minigw-scratch") && !ownedByMe(p) {
+		return fmt.Errorf("%s %w", p, errForeignOwner)
 	}
 	return protectDir(dir)
 }
@@ -294,36 +300,17 @@ func protectDir(dir string) error {
 		pConvert = advapi32.NewProc("ConvertStringSecurityDescriptorToSecurityDescriptorW")
 		pGetDacl = advapi32.NewProc("GetSecurityDescriptorDacl")
 		pSetSec  = advapi32.NewProc("SetNamedSecurityInfoW")
-		pGetSec  = advapi32.NewProc("GetNamedSecurityInfoW")
 		pFree    = syscall.NewLazyDLL("kernel32.dll").NewProc("LocalFree")
 	)
-	// SID trenutnega uporabnika iz žetona procesa (ne OW: lastnika lahko spremeni drug).
-	tok, err := syscall.OpenCurrentProcessToken()
+	ownerSID, me, err := ownerAndMe(dir)
 	if err != nil {
 		return err
 	}
-	defer tok.Close()
-	tu, err := tok.GetTokenUser()
-	if err != nil {
-		return err
-	}
-	me, err := tu.User.Sid.String()
-	if err != nil {
-		return err
-	}
-	name, _ := syscall.UTF16PtrFromString(dir)
-	const seFileObject, ownerInfo, daclInfo, protectedDacl = 1, 0x1, 0x4, 0x80000000
-	var owner *syscall.SID
-	var osd uintptr
-	if r, _, _ := pGetSec.Call(uintptr(unsafe.Pointer(name)), seFileObject, ownerInfo, uintptr(unsafe.Pointer(&owner)), 0, 0, 0,
-		uintptr(unsafe.Pointer(&osd))); r != 0 {
-		return syscall.Errno(r)
-	}
-	ownerSID, _ := owner.String()
-	pFree.Call(osd)
 	if ownerSID != me {
 		return errForeignOwner
 	}
+	name, _ := syscall.UTF16PtrFromString(dir)
+	const seFileObject, daclInfo, protectedDacl = 1, 0x4, 0x80000000
 	var sd uintptr
 	sddl, _ := syscall.UTF16PtrFromString("D:P(A;OICI;FA;;;" + me + ")(A;OICI;FA;;;SY)")
 	if r, _, err := pConvert.Call(uintptr(unsafe.Pointer(sddl)), 1 /* SDDL_REVISION_1 */, uintptr(unsafe.Pointer(&sd)), 0); r == 0 {
@@ -613,8 +600,42 @@ func regEnvPathSet(value string) error {
 	return nil
 }
 
-// ownedByMe (L2): %TEMP% je na Windows v profilu uporabnika, zato brez preverjanja lastnika.
-func ownedByMe(string) bool { return true }
+// ownerAndMe: SID lastnika path in SID trenutnega uporabnika iz žetona procesa (ne OW: lastnika lahko spremeni drug).
+func ownerAndMe(path string) (owner, me string, err error) {
+	tok, err := syscall.OpenCurrentProcessToken()
+	if err != nil {
+		return "", "", err
+	}
+	defer tok.Close()
+	tu, err := tok.GetTokenUser()
+	if err != nil {
+		return "", "", err
+	}
+	if me, err = tu.User.Sid.String(); err != nil {
+		return "", "", err
+	}
+	name, _ := syscall.UTF16PtrFromString(path)
+	var sid *syscall.SID
+	var osd uintptr
+	if r, _, _ := advapi32.NewProc("GetNamedSecurityInfoW").Call(uintptr(unsafe.Pointer(name)), 1 /* SE_FILE_OBJECT */, 0x1, /* OWNER */
+		uintptr(unsafe.Pointer(&sid)), 0, 0, 0, uintptr(unsafe.Pointer(&osd))); r != 0 {
+		return "", "", syscall.Errno(r)
+	}
+	defer syscall.NewLazyDLL("kernel32.dll").NewProc("LocalFree").Call(osd)
+	owner, err = sid.String()
+	return owner, me, err
+}
+
+// ownedByMe (L2, M1): prava mapa (lstat; ne junction, symlink ali druga točka ponovne razčlenitve), katere lastnik je
+// uporabnik žetona tega procesa (isti SID kot protectDir).
+func ownedByMe(dir string) bool {
+	fi, err := os.Lstat(dir)
+	if err != nil || !fi.IsDir() || fi.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 {
+		return false
+	}
+	owner, me, err := ownerAndMe(dir)
+	return err == nil && owner == me
+}
 
 // shortPath: kratka pot 8.3 (minigw.cmd: ne-ASCII pot v kodni strani cmd); brez nje dolga.
 func shortPath(p string) string {
