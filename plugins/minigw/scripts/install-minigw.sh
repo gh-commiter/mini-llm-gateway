@@ -80,6 +80,7 @@ esac
 mine() { [ ! -L "$1" ] && m=$(stat -c '%u %a' "$1" 2>/dev/null) && [ "${m%% *}" = "$(id -u)" ] && [ $((0${m#* } & 022)) -eq 0 ]; }
 above() {
   d=$1
+  case $d in /*) ;; *) return 1 ;; esac
   while [ "$d" != / ]; do
     d=${d%/*}; d=${d:-/}
     m=$(stat -L -c '%u %a' "$d" 2>/dev/null) || return 1

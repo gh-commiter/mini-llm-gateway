@@ -89,12 +89,10 @@ func initReaper() {
 	}
 	hardenRouter() // ima vse okolje (žetoni): /proc/1/environ ni berljiv agentom; otrok (exec) se zaščiti sam
 	sigs := make(chan os.Signal, 8)
-	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT) // le ta dva; drugi signali ostanejo kot prej (PID 1 jih prezre)
-	exe := "/proc/self/exe"
-	if _, err := os.Stat(exe); err != nil { // brez /proc
-		exe, _ = exec.LookPath(os.Args[0])
-	}
-	pid, err := syscall.ForkExec(exe, os.Args, &syscall.ProcAttr{Env: os.Environ(), Files: []uintptr{0, 1, 2}})
+	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT) // le ta dva posreduje
+	signal.Ignore(syscall.SIGHUP, syscall.SIGQUIT)       // kot prej: PID 1 jih ne konča
+	// vedno sam sebe; brez /proc ForkExec ne uspe (agenti /proc tako ali tako rabijo)
+	pid, err := syscall.ForkExec("/proc/self/exe", os.Args, &syscall.ProcAttr{Env: os.Environ(), Files: []uintptr{0, 1, 2}})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "minigw: cannot start the gateway under PID 1: "+err.Error())
 		os.Exit(1)
