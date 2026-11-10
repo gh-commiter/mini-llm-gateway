@@ -480,6 +480,11 @@ func TestWorktreeGitSwapRefused(t *testing.T) {
 		}
 		os.Remove(filepath.Join(g, p))
 	}
+	// #40: commondir ».« (makeClone na Linuxu) je ta .git
+	writeT(t, filepath.Join(g, "commondir"), ".\n")
+	if !sl.gitIntact() {
+		t.Fatal("commondir . refused")
+	}
 }
 
 // N9: agent v klonu naredi ugnezden repozitorij (mapa .git ali datoteka gitdir:) s svojim filtrom, gitlink v indeksu in

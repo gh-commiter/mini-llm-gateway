@@ -2,7 +2,7 @@
 # Linux minigw serve (Docker) z ugnezdenimi repozitoriji v načinu worktree in pravim Claude Code (brez prijave: lažni
 # API Anthropic v node ga prek tool_use vodi z Read/Edit/Write/Bash). Odjemalec je Go minigw na tem Macu.
 # Pozitivno: podmodul sub, nesleden vendor/lib (commit) in vendor/new (le git init), prezrt build/_deps/x → vsak svojo
-# vejo in vrstico, vrhnja veja top.txt in gitlink sub, cherry-pick čist; agent teče v svojem imenskem prostoru PID.
+# vejo in vrstico, vrhnja veja top.txt in gitlink sub, cherry-pick čist; agent teče v svojem imenskem prostoru PID. Claude commita v sub z git -C sub (#40, avtor »Claude (Mini Gateway)«).
 # Negativno: user.max_user_namespaces=1 (le VM Dockerja, na koncu nazaj): zunanji bwrap dela, gnezdeni ne → zahteva z
 # ugnezdenimi zavrnjena pred začetkom, repozitorij brez njih dela. AppArmor Ubuntu 24.04 se v Dockerju ne da posnemati.
 # Preveri še, da je zavrnitev končna (enkrat, hitro) in da Bash v peskovniku dela (kratek TMPDIR teka).
@@ -71,6 +71,7 @@ http.createServer((req, res) => { let b = ""; req.on("data", c => b += c); req.o
   const steps = fs.readFileSync("/opt/t/scenario", "utf8").trim() === "plain" ? [top, bash] : [
     {name: "Read", input: {file_path: f("sub/README")}},
     {name: "Edit", input: {file_path: f("sub/README"), old_string: "sub readme", new_string: "sub readme\nagent edit sub"}},
+    {name: "Bash", input: {command: "git -C sub add -A && git -C sub commit -m x", description: "commit in sub"}}, // #40
     {name: "Write", input: {file_path: f("vendor/new/b.txt"), content: "b\nagent edit new\n"}},
     {name: "Write", input: {file_path: f("vendor/lib/a.txt"), content: "a\nagent edit lib\n"}}, top, bash];
   const s = steps[results.length];
@@ -146,9 +147,12 @@ rdiff vendor/new | grep -q '^+agent edit new' || fail "vendor/new diff: $(rdiff 
 K=$T/pick; gc clone -q $C $K; gc -C $K fetch -q $C "${br}:$br"
 gc -C $K cherry-pick -n $base..$br >/dev/null 2>&1 || fail "cherry-pick -n $base..$br not clean"
 [[ $(git -C $C/sub rev-parse HEAD) == $subhead ]] || fail "user's sub HEAD moved"
+# #40: Claude commita v podmodulu z git -C (ovoj git na PATH), avtor je agent, ne lastnik
+git -C $C/sub log --format='%an|%s' $br | grep -qx 'Claude (Mini Gateway)|x' || fail "agent commit in sub: $(git -C $C/sub log --format='%an|%s' $br; docker exec $NAME grep -F 'commit in sub' /tmp/tools.log; docker exec $NAME cat /tmp/tools.log)"
+docker exec $NAME grep -q "requires approval" /tmp/tools.log && fail "a command required approval: $(docker exec $NAME cat /tmp/tools.log)"
 n1=$(nspid); [[ $n1 == 2 ]] || fail "claude not in its own PID namespace: NSpid levels '$n1'"
 bashok $C $br nested
-print "ok: nested ($br in ., sub, vendor/lib, vendor/new; build/_deps none; cherry-pick clean; claude NSpid levels $n1: own PID namespace)"
+print "ok: nested ($br in ., sub, vendor/lib, vendor/new; agent commit in sub by Claude (Mini Gateway); build/_deps none; cherry-pick clean; claude NSpid levels $n1: own PID namespace)"
 
 # 2: brez gnezdenih uporabniških imenskih prostorov (velja za ves VM Dockerja; cleanup vrne vrednost)
 NS0=$(docker exec $NAME cat /proc/sys/user/max_user_namespaces)

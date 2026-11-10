@@ -66,7 +66,7 @@ func (sl *wtSlot) gitDirs() []string {
 }
 
 // gitIntact (H2): .git vsakega klona (vrhnji in ugnezdeni) je še ista mapa z istim config, brez info/attributes in
-// commondir. Claude Code poganja git sam, zunaj svojega peskovnika (git status ob zagonu): zamenjan .git (mv .git; nov
+// commondir (razen ».« iz makeClone). Claude Code poganja git sam, zunaj svojega peskovnika (git status ob zagonu): zamenjan .git (mv .git; nov
 // config s filter.*.clean ali info/attributes) bi izvedel ukaz agenta brez peskovnika. config, hooks, info in commondir
 // so v denyWrite.
 func (sl *wtSlot) gitIntact() bool {
@@ -88,7 +88,7 @@ func gitSame(g string, git os.FileInfo, cfg []byte) bool {
 	}
 	b, err := os.ReadFile(filepath.Join(g, "config"))
 	for _, p := range []string{filepath.Join("info", "attributes"), "commondir"} {
-		if _, e := os.Lstat(filepath.Join(g, p)); !os.IsNotExist(e) {
+		if _, e := os.Lstat(filepath.Join(g, p)); !os.IsNotExist(e) && (p != "commondir" || readSmall(filepath.Join(g, p)) != ".") { // ».«: ta .git (makeClone)
 			return false
 		}
 	}
@@ -393,6 +393,11 @@ func makeClone(repo, wt, branch, snapshot string) bool {
 		return false
 	}
 	_, err := gitRun(repo, "", nil, "-C", wt, "checkout", "-q", "-b", branch, snapshot)
+	if err == nil && runtime.GOOS == "linux" {
+		// #40: peskovnik Claude Code na Linuxu na manjkajočo pot iz denyWrite priklopi /dev/null (branje: EACCES) in git
+		// commondir vedno bere, zato je vsak git v Bash padel; ».« = ta .git (gitSame ga sprejme), ostane le za branje
+		err = os.WriteFile(filepath.Join(wt, ".git", "commondir"), []byte(".\n"), 0o644)
+	}
 	return err == nil
 }
 
