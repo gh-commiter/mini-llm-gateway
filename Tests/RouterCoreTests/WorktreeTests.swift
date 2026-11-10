@@ -308,6 +308,20 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
     }
 }
 
+/// A3 (kot Go TestCloneExcludesBuild): .build klona (TMPDIR agenta) ni v git status agenta (info/exclude klona).
+@Test func worktreeCloneExcludesBuild() async throws {
+    let (root, client, tree) = try fixture()
+    defer { cleanup(root) }
+    let hub = ShareHub(), session = UUID().uuidString
+    let key = try #require(await hub.register(session: session, cwd: client.path, key: nil, device: "dev", tree: tree))
+    let loop = fakeClient(hub, key: key, top: client)
+    defer { loop.cancel() }
+    _ = try await agentRun(hub, session) { dir in
+        try file(dir, ".build/tmp/x", "x\n")
+        #expect(g(dir, "status", "--porcelain").isEmpty)
+    }
+}
+
 /// N1: agent zamenja .git/objects klona s povezavo ven: finalize ne briše in ne piše tam (in ne vrne veje).
 /// Izhod gradnje (.build, target) nikoli v vejo (info/exclude zrcala).
 @Test func worktreeFinalizeRefusesSymlinkedObjectsAndSkipsBuildOutput() async throws {

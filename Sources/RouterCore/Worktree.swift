@@ -697,7 +697,12 @@ public enum Worktree {
         let c = run(["clone", "-q", "--shared", "--no-checkout", repo.path, wt.path], stderr: true)
         guard c.status == 0 else { return logFail(repo, "git clone of the mirror", c.out) }
         let o = run(["-C", wt.path, "checkout", "-q", "-b", branch, snapshot], stderr: true)
-        return o.status == 0 || logFail(repo, "git checkout of the snapshot", o.out)
+        guard o.status == 0 else { return logFail(repo, "git checkout of the snapshot", o.out) }
+        // .build (TMPDIR in ModuleCache agenta, harnessEnv) v git status agenta ni nesledena mapa; info je zanj denyWrite
+        try? FileManager.default.createDirectory(at: wt.appendingPathComponent(".git/info"), withIntermediateDirectories: true)
+        let ex = wt.appendingPathComponent(".git/info/exclude").path
+        let old = FileManager.default.contents(atPath: ex) ?? Data()
+        return FileManager.default.createFile(atPath: ex, contents: old + Data("\n/.build/\n".utf8)) || logFail(repo, "info/exclude of the clone", "")
     }
 
     /// Native z git (repozitorij na tem Macu): posnetek mape uporabnika v zrcalu kot `base`, brez git v njegovem

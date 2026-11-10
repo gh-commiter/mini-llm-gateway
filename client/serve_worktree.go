@@ -454,6 +454,14 @@ func makeClone(repo, wt, branch, snapshot string) error {
 	if _, err := gitRun(repo, "", nil, "-C", wt, "checkout", "-q", "-b", branch, snapshot); err != nil {
 		return fmt.Errorf("git checkout of the snapshot: %w", err)
 	}
+	// .build (TMPDIR agenta, worktreeHarnessEnv) v git status agenta ni nesledena mapa; info je zanj denyWrite
+	os.MkdirAll(filepath.Join(wt, ".git", "info"), 0o755)
+	f, err := os.OpenFile(filepath.Join(wt, ".git", "info", "exclude"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return fmt.Errorf("info/exclude of the clone: %w", err)
+	}
+	f.WriteString("\n/.build/\n")
+	f.Close()
 	if runtime.GOOS == "linux" {
 		// #40: peskovnik Claude Code na Linuxu na manjkajočo pot iz denyWrite priklopi /dev/null (branje: EACCES) in git
 		// commondir vedno bere, zato je vsak git v Bash padel; ».« = ta .git (gitSame ga sprejme), ostane le za branje

@@ -1802,6 +1802,28 @@ func TestWorktreeHarnessEnvGitConfig(t *testing.T) {
 	}
 }
 
+// A3: .build klona (TMPDIR agenta) ni v git status agenta (makeClone: info/exclude).
+func TestCloneExcludesBuild(t *testing.T) {
+	root := t.TempDir()
+	client, repo, wt := filepath.Join(root, "c"), filepath.Join(root, "repos", "d", "r.git"), filepath.Join(root, "wt")
+	os.MkdirAll(client, 0o755)
+	gitT(t, client, "init", "-q", "-b", "main")
+	writeT(t, filepath.Join(client, "a.txt"), "a\n")
+	gitT(t, client, "add", "a.txt")
+	gitT(t, client, "commit", "-qm", "first")
+	head := gitT(t, client, "rev-parse", "HEAD")
+	b := filepath.Join(root, "push.bundle")
+	gitUser(client, nil, "update-ref", "refs/minigw/push", head)
+	gitUser(client, nil, "bundle", "create", b, "refs/minigw/push")
+	if ensureMirror(repo) != nil || importBase(repo, b, head, "refs/minigw/base/x") != nil || makeClone(repo, wt, "minigw/claude-12345678-0", head) != nil {
+		t.Fatal("mirror or clone")
+	}
+	writeT(t, filepath.Join(wt, ".build", "tmp", "x"), "x\n")
+	if st := gitT(t, wt, "status", "--porcelain"); st != "" {
+		t.Fatalf("clone status: %q", st)
+	}
+}
+
 // waitFor: ok v 5 s (razorožitev ohranjenega klona teče v ozadju).
 func waitFor(t *testing.T, ok func() bool) {
 	t.Helper()
