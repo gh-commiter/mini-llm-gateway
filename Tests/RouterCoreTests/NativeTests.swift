@@ -287,6 +287,9 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     #expect(Native.withoutNestedSandbox(["xcodebuild", "-resultBundlePath", "/r", "-clonedSourcePackagesDirPath", "/p"], runTmp: "/s")
             == ["xcodebuild", "-resultBundlePath", "/r", "-clonedSourcePackagesDirPath", "/p"] + x.dropFirst() + ["-IDEDisablePackageManifestCaching=YES", "-packageCachePath", "/s/swiftpm-cache"])
     #expect(Native.withoutNestedSandbox(["xcodebuild"]) == x)
+    #expect(Native.withoutNestedSandbox(["xcodebuild"], derivedData: "/s/dd") == x + ["-derivedDataPath", "/s/dd"])
+    #expect(Native.withoutNestedSandbox(["xcodebuild", "-derivedDataPath", "/mine"], derivedData: "/s/dd") == ["xcodebuild", "-derivedDataPath", "/mine"] + x.dropFirst())
+    #expect(Native.withoutNestedSandbox(["swift", "build"], derivedData: "/s/dd") == ["swift", "build", "--disable-sandbox"])
 }
 
 @Test func nativeRunIsSandboxedAndEndsWithItsGroup() async throws {
