@@ -464,6 +464,9 @@ func (s *server) passthrough(w http.ResponseWriter, r *req, g serveGateway, m gw
 		return writeError(w, r.rid, 502, g.Name+" unreachable: "+err.Error())
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == 404 && strings.HasSuffix(r.URL.Path, "/count_tokens") { // #78: OpenRouter nima count_tokens → ocena kot pri agentih
+		return writeJSON(w, r.rid, 200, map[string]int{"input_tokens": len(r.body) / 4})
+	}
 	if resp.StatusCode/100 != 2 {
 		return upstreamError(w, r.rid, g.Name, resp)
 	}

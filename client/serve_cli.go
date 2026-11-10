@@ -347,7 +347,7 @@ func (t *tailBuffer) String() string {
 func (s *server) modelList() map[string]any {
 	data := append([]map[string]any{}, s.gatewayModelList()...)
 	if len(s.claudeExe()) > 0 && !s.conf().ClaudeDisabled {
-		for _, m := range cliFamilies[:3] {
+		for _, m := range cliFamilies {
 			data = append(data, map[string]any{"type": "model", "id": cliAgentPrefix + m,
 				"display_name": strings.ToUpper(m[:1]) + m[1:] + " · Claude CLI",
 				"description":  "claude -p · " + m + " · tools in your synced folder", "created_at": "2026-01-01T00:00:00Z"})
