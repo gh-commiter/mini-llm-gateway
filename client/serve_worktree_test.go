@@ -183,7 +183,7 @@ func TestWorktreeFinalizeRejectedKeepsMirror(t *testing.T) {
 	b := filepath.Join(root, "push.bundle")
 	gitUser(client, nil, "update-ref", "refs/minigw/push", head)
 	gitUser(client, nil, "bundle", "create", b, "refs/minigw/push")
-	if ensureMirror(repo) != nil || importBase(repo, b, head, "refs/minigw/base/x") != nil || !makeClone(repo, wt, "minigw/claude-12345678-0", head) {
+	if ensureMirror(repo) != nil || importBase(repo, b, head, "refs/minigw/base/x") != nil || makeClone(repo, wt, "minigw/claude-12345678-0", head) != nil {
 		t.Fatal("mirror or clone")
 	}
 	blob := gitT(t, wt, "hash-object", "-w", "--stdin")
@@ -204,7 +204,7 @@ func TestWorktreeFinalizeRejectedKeepsMirror(t *testing.T) {
 		t.Fatalf("finalize accepted a .git tree: %s", tip)
 	}
 	os.RemoveAll(wt)
-	if !makeClone(repo, filepath.Join(root, "wt2"), "minigw/claude-12345678-1", head) {
+	if makeClone(repo, filepath.Join(root, "wt2"), "minigw/claude-12345678-1", head) != nil {
 		t.Fatal("mirror broken after a rejected result")
 	}
 }
@@ -431,7 +431,7 @@ func TestWorktreeGitSwapRefused(t *testing.T) {
 	b := filepath.Join(root, "push.bundle")
 	gitUser(client, nil, "update-ref", "refs/minigw/push", head)
 	gitUser(client, nil, "bundle", "create", b, "refs/minigw/push")
-	if ensureMirror(repo) != nil || importBase(repo, b, head, "refs/minigw/base/x") != nil || !makeClone(repo, wt, "minigw/claude-12345678-0", head) {
+	if ensureMirror(repo) != nil || importBase(repo, b, head, "refs/minigw/base/x") != nil || makeClone(repo, wt, "minigw/claude-12345678-0", head) != nil {
 		t.Fatal("mirror or clone")
 	}
 	sl := &wtSlot{wt: wt}
@@ -512,7 +512,7 @@ func TestWorktreeNestedRepoFilterDoesNotRun(t *testing.T) {
 		b := filepath.Join(root, "push.bundle")
 		gitUser(client, nil, "update-ref", "refs/minigw/push", head)
 		gitUser(client, nil, "bundle", "create", b, "refs/minigw/push")
-		if ensureMirror(repo) != nil || importBase(repo, b, head, "refs/minigw/base/x") != nil || !makeClone(repo, wt, "minigw/claude-12345678-0", head) {
+		if ensureMirror(repo) != nil || importBase(repo, b, head, "refs/minigw/base/x") != nil || makeClone(repo, wt, "minigw/claude-12345678-0", head) != nil {
 			t.Fatal("mirror or clone")
 		}
 		if cloneProblem(wt, repo, nil) != "" {
@@ -592,7 +592,7 @@ func TestWorktreeNestedRepoIgnoredDelivered(t *testing.T) {
 	b := filepath.Join(root, "push.bundle")
 	gitUser(client, nil, "update-ref", "refs/minigw/push", head)
 	gitUser(client, nil, "bundle", "create", b, "refs/minigw/push")
-	if ensureMirror(repo) != nil || importBase(repo, b, head, "refs/minigw/base/x") != nil || !makeClone(repo, wt, "minigw/claude-12345678-0", head) {
+	if ensureMirror(repo) != nil || importBase(repo, b, head, "refs/minigw/base/x") != nil || makeClone(repo, wt, "minigw/claude-12345678-0", head) != nil {
 		t.Fatal("mirror or clone")
 	}
 	dep := filepath.Join(wt, "build", "_deps", "foo-src") // FetchContent
@@ -862,7 +862,7 @@ func TestWorktreeNestedClonesRegistered(t *testing.T) {
 	if !strings.HasSuffix(n.repo, "r-"+nestedKey("lib")+".git") || filepath.Dir(n.repo) != filepath.Dir(repo) {
 		t.Fatalf("nested mirror %s", n.repo)
 	}
-	if !makeClone(repo, wt, "minigw/claude-12345678-0", head) || !cloneTarget(wt, "lib") || !makeClone(n.repo, n.dir(wt), "minigw/claude-12345678-0", n.base) {
+	if makeClone(repo, wt, "minigw/claude-12345678-0", head) != nil || !cloneTarget(wt, "lib") || makeClone(n.repo, n.dir(wt), "minigw/claude-12345678-0", n.base) != nil {
 		t.Fatal("clone")
 	}
 	n.git, _ = os.Lstat(filepath.Join(wt, "lib", ".git"))
@@ -964,7 +964,7 @@ func TestWorktreeNestedSwapDuringFinalize(t *testing.T) {
 	b := filepath.Join(root, "push.bundle")
 	gitUser(filepath.Join(client, "lib"), nil, "update-ref", "refs/minigw/push", n.base)
 	gitUser(filepath.Join(client, "lib"), nil, "bundle", "create", b, "refs/minigw/push")
-	if ensureMirror(n.repo) != nil || importBase(n.repo, b, n.base, "refs/minigw/base/x") != nil || !makeClone(n.repo, n.dir(wt), "minigw/claude-12345678-0", n.base) {
+	if ensureMirror(n.repo) != nil || importBase(n.repo, b, n.base, "refs/minigw/base/x") != nil || makeClone(n.repo, n.dir(wt), "minigw/claude-12345678-0", n.base) != nil {
 		t.Fatal("mirror or clone")
 	}
 	n.git, _ = os.Lstat(filepath.Join(wt, "lib", ".git"))
@@ -1032,7 +1032,7 @@ func TestWorktreeFinalizeAllCommitted(t *testing.T) {
 	b := filepath.Join(root, "push.bundle")
 	gitUser(client, nil, "update-ref", "refs/minigw/push", head)
 	gitUser(client, nil, "bundle", "create", b, "refs/minigw/push")
-	if ensureMirror(repo) != nil || importBase(repo, b, head, "refs/minigw/base/x") != nil || !makeClone(repo, wt, "minigw/claude-12345678-0", head) {
+	if ensureMirror(repo) != nil || importBase(repo, b, head, "refs/minigw/base/x") != nil || makeClone(repo, wt, "minigw/claude-12345678-0", head) != nil {
 		t.Fatal("mirror")
 	}
 	writeT(t, filepath.Join(wt, "b.txt"), "b\n")
@@ -1107,7 +1107,7 @@ func TestWorktreeNestedSwapAndRestore(t *testing.T) {
 	b := filepath.Join(root, "push.bundle")
 	gitUser(filepath.Join(client, "lib"), nil, "update-ref", "refs/minigw/push", n.base)
 	gitUser(filepath.Join(client, "lib"), nil, "bundle", "create", b, "refs/minigw/push")
-	if ensureMirror(n.repo) != nil || importBase(n.repo, b, n.base, "refs/minigw/base/x") != nil || !makeClone(n.repo, n.dir(wt), "minigw/claude-12345678-0", n.base) {
+	if ensureMirror(n.repo) != nil || importBase(n.repo, b, n.base, "refs/minigw/base/x") != nil || makeClone(n.repo, n.dir(wt), "minigw/claude-12345678-0", n.base) != nil {
 		t.Fatal("mirror or clone")
 	}
 	n.git, _ = os.Lstat(filepath.Join(wt, "lib", ".git"))
@@ -1772,7 +1772,7 @@ func TestWorktreeHarnessEnvGitConfig(t *testing.T) {
 	for i := range want {
 		got = append(got, env["GIT_CONFIG_KEY_"+strconv.Itoa(i)]+"="+env["GIT_CONFIG_VALUE_"+strconv.Itoa(i)])
 	}
-	if env["GIT_CONFIG_GLOBAL"] != os.DevNull || env["GIT_CONFIG_NOSYSTEM"] != "1" || env["GIT_CONFIG_COUNT"] != "8" || !slices.Equal(got, want) {
+	if env["GIT_CONFIG_GLOBAL"] != os.DevNull || env["GIT_CONFIG_NOSYSTEM"] != "1" || env["GIT_CONFIG_COUNT"] != map[bool]string{false: "8", true: "9"}[gitLongPaths] || !slices.Equal(got, want) {
 		t.Fatalf("git config env: %v", env)
 	}
 	if runtime.GOOS == "windows" {
@@ -1894,5 +1894,101 @@ func TestSlotNestedIntact(t *testing.T) {
 	}
 	if !sl.gitIntact() || sl.nestedIntact() {
 		t.Fatalf("linked path: gitIntact %v, nestedIntact %v", sl.gitIntact(), sl.nestedIntact())
+	}
+}
+
+// Poročilo Windows e1f30bb (Air → HPX360): 502 »Cloning … failed« brez vrstice v dnevniku. Vsak neuspel korak
+// worktreeMount zapiše korak in razlog gita (tu: odgovor minigw ni 200; klon v mapo, ki je ni mogoče narediti).
+func TestWorktreeMountLogsEveryFailure(t *testing.T) {
+	root := t.TempDir()
+	client := filepath.Join(root, "c")
+	os.MkdirAll(client, 0o755)
+	gitT(t, client, "init", "-q", "-b", "main")
+	writeT(t, filepath.Join(client, "a.txt"), "a\n")
+	gitT(t, client, "add", "a.txt")
+	gitT(t, client, "commit", "-qm", "first")
+	head := gitT(t, client, "rev-parse", "HEAD")
+	b := filepath.Join(root, "push.bundle")
+	gitT(t, client, "update-ref", "refs/minigw/push", head)
+	gitT(t, client, "bundle", "create", "-q", b, "refs/minigw/push")
+	bundle, _ := os.ReadFile(b)
+	notDir := filepath.Join(root, "file")
+	writeT(t, notDir, "x")
+	for _, c := range []struct {
+		status    int
+		worktrees string
+		want      string
+	}{
+		{500, filepath.Join(root, "wts"), "status 500"},
+		{200, filepath.Join(notDir, "wts"), "cannot remove the old clone"},
+	} {
+		h := newShareHub()
+		var logged []string
+		h.logf = func(f string, a ...any) { logged = append(logged, fmt.Sprintf(f, a...)) }
+		tree := &shareTree{repo: filepath.Join(root, "repos", "d", "r.git"), worktrees: c.worktrees, slots: map[string]*wtSlot{}}
+		key, _ := h.registerTree("s", "/p", "", tree, "dev")
+		go func() {
+			j := <-h.bySession["s"].jobs
+			if c.status == 200 && h.worktreePut(key, 0, 0, bundle, "dev") != 204 {
+				t.Error("bundle upload")
+			}
+			h.reply(key, "dev", davReply{ID: j.ID, Response: davResponse{Status: c.status, Body: []byte(`{"snapshot":"` + head + `","nested":[]}`)}})
+		}()
+		if dir, _ := h.worktreeMount(h.bySession["s"], "claude"); dir != "" || len(logged) != 1 || !strings.Contains(logged[0], c.want) {
+			t.Fatalf("%q: dir %q, log %q", c.want, dir, logged)
+		}
+		if c.status == 200 { // git's own line comes with the step
+			err := makeClone(tree.repo, filepath.Join(root, "wt"), "minigw/bad..name", head)
+			if err == nil || !strings.Contains(err.Error(), "git checkout of the snapshot: exit status 128: fatal:") {
+				t.Fatalf("checkout error: %v", err)
+			}
+		}
+	}
+}
+
+// Poročilo Windows 73eeb13 (Air → HPX360): klon ~132 znakov + pot posnetka 141 = 274 > MAX_PATH, checkout »Filename too
+// long«. Na Windows git prehoda (gitRun) in okolje agenta nosita core.longpaths=true; drugje ne.
+func TestWorktreeGitLongPaths(t *testing.T) {
+	old := gitLongPaths
+	t.Cleanup(func() { gitLongPaths = old })
+	for _, on := range []bool{false, true} {
+		gitLongPaths = on
+		got, _ := gitRun(filepath.Join(t.TempDir(), "r.git"), "", nil, "config", "core.longpaths")
+		env := map[string]string{}
+		for _, kv := range worktreeHarnessEnv("/w", "/m", "/t", "claude") {
+			k, v, _ := strings.Cut(kv, "=")
+			env[k] = v
+		}
+		pair := env["GIT_CONFIG_COUNT"] == "9" && env["GIT_CONFIG_KEY_8"] == "core.longpaths" && env["GIT_CONFIG_VALUE_8"] == "true"
+		if (got == "true") != on || pair != on || !on && env["GIT_CONFIG_COUNT"] != "8" {
+			t.Fatalf("longpaths %v: git %q env %v", on, got, env)
+		}
+	}
+	if runtime.GOOS != "windows" {
+		t.Skip("MAX_PATH checkout only on Windows")
+	}
+	gitLongPaths = true
+	root := t.TempDir()
+	client := filepath.Join(root, "c")
+	deep := filepath.Join(client, strings.Repeat("d", 100), strings.Repeat("e", 100), strings.Repeat("f", 60)+".txt")
+	os.MkdirAll(filepath.Dir(deep), 0o755)
+	gitT(t, client, "init", "-q", "-b", "main")
+	gitT(t, client, "config", "core.longpaths", "true")
+	writeT(t, deep, "x\n")
+	gitT(t, client, "add", "-A")
+	gitT(t, client, "commit", "-qm", "deep")
+	head := gitT(t, client, "rev-parse", "HEAD")
+	b := filepath.Join(root, "push.bundle")
+	gitT(t, client, "update-ref", "refs/minigw/push", head)
+	gitT(t, client, "bundle", "create", "-q", b, "refs/minigw/push")
+	repo, wt := filepath.Join(root, "repos", "d", "r.git"), filepath.Join(root, "worktrees", strings.Repeat("o", 43), strings.Repeat("1", 16), "claude-12345678-0")
+	if ensureMirror(repo) != nil || importBase(repo, b, head, "refs/minigw/base/x") != nil {
+		t.Fatal("mirror")
+	}
+	if err := makeClone(repo, wt, "minigw/claude-12345678-0", head); err != nil {
+		t.Fatalf("long path clone: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(wt, strings.TrimPrefix(deep, client))); err != nil {
+		t.Fatal(err)
 	}
 }

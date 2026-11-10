@@ -613,18 +613,28 @@ public enum Worktree {
     /// Uvoz bundla odjemalca (ref refs/minigw/push) kot `base` zrcala; brez bundla mora posnetek v zrcalu že obstajati.
     static func importBase(_ repo: URL, bundle: URL?, snapshot: String, base: String) -> Bool {
         if let bundle {
-            guard isBundle(bundle), run(["--git-dir", repo.path, "-c", "transfer.fsckObjects=true", "-c", "fetch.fsckObjects=true",
-                                         "fetch", "-q", "--no-tags", bundle.path, "+refs/minigw/push:\(base)"]).status == 0 else { return false }
+            guard isBundle(bundle) else { return logFail(repo, "the client did not send a git bundle") }
+            let f = run(["--git-dir", repo.path, "-c", "transfer.fsckObjects=true", "-c", "fetch.fsckObjects=true",
+                         "fetch", "-q", "--no-tags", bundle.path, "+refs/minigw/push:\(base)"], stderr: true)
+            guard f.status == 0 else { return logFail(repo, "git fetch of the client's bundle", f.out) }
         } else {
-            guard run(["--git-dir", repo.path, "update-ref", base, snapshot]).status == 0 else { return false }
+            let u = run(["--git-dir", repo.path, "update-ref", base, snapshot], stderr: true)
+            guard u.status == 0 else { return logFail(repo, "the snapshot is not in the mirror", u.out) }
         }
         // #57: fetch iz bundla pred git 2.46 ne preveri objektov; brez bundla sme posnetek kazati na ostanek zavrnjenega
         // bundla v zrcalu. Dosegljivo iz drugih refov: prazen paket.
-        if fsckIncoming(top: repo.path, ref: base, safe: true) != nil {
+        if let why = fsckIncoming(top: repo.path, ref: base, safe: true) {
             run(["--git-dir", repo.path, "update-ref", "-d", base])
-            return false
+            return logFail(repo, "the client's snapshot failed the object check (fsck)", why)
         }
-        return run(["--git-dir", repo.path, "rev-parse", base]).out == snapshot
+        return run(["--git-dir", repo.path, "rev-parse", base]).out == snapshot || logFail(repo, "the bundle does not hold the snapshot")
+    }
+
+    /// Neuspel korak uvoza ali klona v dnevnik routerja s prvo vrstico gita (nikoli 502 brez razloga); vedno false.
+    static func logFail(_ repo: URL, _ step: String, _ git: String = "") -> Bool {
+        let line = git.split(separator: "\n").first.map { ": " + Profiles.line(String($0), max: 300) } ?? ""
+        Router.log.error("worktree \(repo.lastPathComponent, privacy: .public): \(step, privacy: .public)\(line, privacy: .public)")
+        return false
     }
 
     /// Pot kot dobesedni vzorec .gitignore (kot Go excludeEscape).
@@ -661,8 +671,10 @@ public enum Worktree {
         try? FileManager.default.removeItem(at: wt)  // ostanek prekinjenega zagona
         try? FileManager.default.createDirectory(at: wt.deletingLastPathComponent(), withIntermediateDirectories: true,
                                                  attributes: [.posixPermissions: 0o700])
-        return run(["clone", "-q", "--shared", "--no-checkout", repo.path, wt.path]).status == 0
-            && run(["-C", wt.path, "checkout", "-q", "-b", branch, snapshot]).status == 0
+        let c = run(["clone", "-q", "--shared", "--no-checkout", repo.path, wt.path], stderr: true)
+        guard c.status == 0 else { return logFail(repo, "git clone of the mirror", c.out) }
+        let o = run(["-C", wt.path, "checkout", "-q", "-b", branch, snapshot], stderr: true)
+        return o.status == 0 || logFail(repo, "git checkout of the snapshot", o.out)
     }
 
     /// Native z git (repozitorij na tem Macu): posnetek mape uporabnika v zrcalu kot `base`, brez git v njegovem
@@ -1145,6 +1157,10 @@ extension ShareHub {
         let r = await send(s, job, timeout: 900)
         s.pushing = nil
         let reply = r.flatMap { $0.status == 200 ? (try? JSONSerialization.jsonObject(with: $0.body) as? [String: Any]) : nil }
+        if reply == nil {  // nikoli 502 brez razloga v dnevniku (kot Go worktreeMount)
+            _ = Worktree.logFail(repo, r.map { "minigw could not send the snapshot (status \($0.status); the reason is in minigw's output on the client)" }
+                                 ?? "minigw did not answer WORKTREE-PUSH (gone or timed out)")
+        }
         let snapshot = reply?["snapshot"] as? String
         // Ugnezdeni (kot Go): poti preverjene (H1), vsak v svoje zrcalo <repo>-<ključ>.git in klon na svoji poti, starš pred otrokom.
         let pairs = ((reply?["nested"] as? [[String: Any]]) ?? []).map { ($0["path"] as? String ?? "", $0["snapshot"] as? String ?? "") }
