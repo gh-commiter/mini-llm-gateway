@@ -774,7 +774,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			return writeError(w, r.rid, 400, tooManyPins)
 		}
 		if gits, _ := s.hub.worktreeGits(wt); wt != "" {
-			if why := foreignGit(wt, gits); why != "" { // #61: pred vsakim zagonom harnessa (tudi v klonu klicatelja)
+			if why := foreignGit(wt, dir, gits); why != "" { // #61: pred vsakim zagonom harnessa (tudi v klonu klicatelja)
 				return writeError(w, r.rid, 400, why)
 			}
 		}

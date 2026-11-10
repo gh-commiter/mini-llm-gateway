@@ -750,8 +750,8 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			return writeError(w, r.rid, 400, "The agent's clone was changed (its .git was replaced): start a new conversation")
 		}
 		if ok {
-			gits, objs := s.hub.worktreeGits(wt)        // ugnezdeni kloni enako kot vrhnji
-			if why := foreignGit(wt, gits); why != "" { // #61: tudi v klonu klicatelja
+			gits, objs := s.hub.worktreeGits(wt)             // ugnezdeni kloni enako kot vrhnji
+			if why := foreignGit(wt, dir, gits); why != "" { // #61: tudi v klonu klicatelja
 				return writeError(w, r.rid, 400, why)
 			}
 			if len(objs) == 0 {

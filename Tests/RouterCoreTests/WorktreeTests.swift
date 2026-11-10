@@ -1049,9 +1049,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     let loop = fakeClient(hub, key: key, top: client)
     defer { loop.cancel() }
     let br = "minigw/claude-\(String(Sync.folderID(session).prefix(8)))-0"
-    var first: URL?
     let id = try await agentRun(hub, session) { dir in
-        first = dir
         let dep = dir.appendingPathComponent("build/_deps/foo-src")
         try FileManager.default.createDirectory(at: dep, withIntermediateDirectories: true)
         g(dep, "init", "-q"); try file(dep, "x.c", "int x;\n")
@@ -1060,14 +1058,6 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     await hub.finish(run: id)
     #expect(g(client, "show", "\(br):agent.txt").trimmingCharacters(in: .whitespacesAndNewlines) == "A")
     #expect(g(client, "ls-tree", "-r", "--name-only", br).contains("build/") == false)
-    // #61: nov .git (tudi v prezrti poti) zavrne naslednji zagon v istem klonu (400, ne nov klon)
-    let why = await ShareHub.$run.withValue(UUID().uuidString) {
-        await ShareHub.$agent.withValue("claude") { () -> String? in
-            await hub.mount(session: session, cwd: nil, base: "http://127.0.0.1:1", device: "dev") == nil ? await hub.takeRefusal()?.message : nil
-        }
-    }
-    #expect(why == "The agent's clone was changed (a .git appeared at build/_deps/foo-src/.git): start a new conversation")
-    try FileManager.default.removeItem(at: try #require(first).appendingPathComponent("build/_deps"))
     let id2 = try await agentRun(hub, session) { dir in
         let lib = dir.appendingPathComponent("vendor/lib")
         try FileManager.default.createDirectory(at: lib, withIntermediateDirectories: true)
@@ -1760,24 +1750,26 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
     }
 }
 
-/// #61 (kot Go TestForeignGit): .git, ki ga je agent naredil v prezrti mapi (datoteka gitdir:), zavrne zagon; .git klona in
-/// registriranega ugnezdenega ne; povezavi ne sledi; mape, ki je ni mogoče prebrati, ne pregleda (zavrne).
-@Test func foreignGitRefusesPlantedGit() throws {
+/// #61 (kot Go TestForeignGit): .git, ki ga je agent naredil v začetni mapi harnessa ali mapi nad njo (datoteka gitdir:),
+/// zavrne zagon; .git v prezrtem build/_deps zunaj te poti in registriran ugnezdeni klon kot začetna mapa ne; povezavi ne sledi.
+@Test func foreignGitRefusesPlantedGitOnCwdPath() throws {
     let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("fg-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let wt = root.appendingPathComponent("wt"), out = root.appendingPathComponent("out")
-    for d in [".git/info", "lib/.git", "build/sub"] { try FileManager.default.createDirectory(at: wt.appendingPathComponent(d), withIntermediateDirectories: true) }
-    try FileManager.default.createDirectory(at: out.appendingPathComponent(".git"), withIntermediateDirectories: true)
-    try FileManager.default.createSymbolicLink(at: wt.appendingPathComponent("ln"), withDestinationURL: out)
+    for d in [".git/info", "lib/.git", "lib/src", "app/src", "build/_deps/foo/.git"] {
+        try FileManager.default.createDirectory(at: wt.appendingPathComponent(d), withIntermediateDirectories: true)
+    }
+    try FileManager.default.createDirectory(at: out.appendingPathComponent("x/.git"), withIntermediateDirectories: true)
     try file(wt, ".gitignore", "build/\n")
     let lib = ShareHub.Nested(path: "lib", repo: root.appendingPathComponent("m.git"), base: "", wt: wt)
-    #expect(Worktree.foreignGit(wt, nested: [lib]) == nil)
-    #expect(Worktree.foreignGit(wt)?.contains("a .git appeared at lib/.git") == true)
-    try file(wt, "build/sub/.git", "gitdir: \(out.path)/.git\n")
-    #expect(Worktree.foreignGit(wt, nested: [lib]) == "The agent's clone was changed (a .git appeared at build/sub/.git): start a new conversation")
-    try FileManager.default.removeItem(at: wt.appendingPathComponent("build/sub/.git"))
-    let locked = wt.appendingPathComponent("build/sub")
-    _ = chmod(locked.path, 0o100)
-    defer { _ = chmod(locked.path, 0o700) }
-    #expect(Worktree.foreignGit(wt, nested: [lib])?.contains("cannot be checked") == true)
+    let cwd = wt.appendingPathComponent("app/src")
+    #expect(Worktree.foreignGit(wt, cwd: cwd, nested: [lib]) == nil)
+    #expect(Worktree.foreignGit(wt, cwd: wt, nested: [lib]) == nil)
+    #expect(Worktree.foreignGit(wt, cwd: wt.appendingPathComponent("lib/src"), nested: [lib]) == nil)
+    #expect(Worktree.foreignGit(wt, cwd: wt.appendingPathComponent("lib/src"))?.contains("a .git appeared at lib/.git") == true)
+    try file(wt, "app/.git", "gitdir: \(out.path)/x/.git\n")
+    #expect(Worktree.foreignGit(wt, cwd: cwd, nested: [lib]) == "The agent's clone was changed (a .git appeared at app/.git): start a new conversation")
+    try FileManager.default.removeItem(at: wt.appendingPathComponent("app"))
+    try FileManager.default.createSymbolicLink(at: wt.appendingPathComponent("app"), withDestinationURL: out)
+    #expect(Worktree.foreignGit(wt, cwd: wt.appendingPathComponent("app/x"), nested: [lib])?.contains("a link at app") == true)
 }

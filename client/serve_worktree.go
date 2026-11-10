@@ -223,36 +223,37 @@ func nestedProblem(wt, repo string, nested []*wtNested) string {
 	return ""
 }
 
-// foreignGit (#61): .git (mapa, datoteka ali povezava) kjer koli v klonu wt (tudi v prezrti poti), ki ni med gits
-// (.git klona in registriranih ugnezdenih, worktreeGits): harness agenta (zunaj peskovnika) bi z git po absolutni poti v
-// tej mapi bral agentove nastavitve. Povezavam ne sledi; mapa, ki je ni mogoče prebrati, ali več kot 10 × maxSyncFiles
-// vnosov: zavrne (ne pregleda). "" = v redu, sicer sporočilo zavrnitve (400).
-func foreignGit(wt string, gits []string) string {
+// foreignGit (#61): git harnessa agenta (zunaj peskovnika) poišče repozitorij od svoje začetne mape dir navzgor: v dir in
+// vsaki mapi nad njo do korena klona wt (brez korena) ne sme biti .git (mapa, datoteka ali povezava), ki ni med gits (.git
+// registriranih ugnezdenih, worktreeGits), niti povezave namesto mape (ji ne sledi). Drugje v klonu (npr. build/_deps od
+// CMake FetchContent) sme. "" = v redu (tudi dir zunaj klona), sicer sporočilo zavrnitve (400).
+func foreignGit(wt, dir string, gits []string) string {
 	own := map[string]bool{}
 	for _, g := range gits {
 		own[filepath.Clean(g)] = true
 	}
-	why, n := "", 0
-	unchecked := "The agent's clone cannot be checked (too large, or a folder cannot be read): start a new conversation"
-	filepath.WalkDir(wt, func(p string, d os.DirEntry, err error) error {
-		if n++; err != nil || n > 10*maxSyncFiles {
-			why = unchecked
-			return filepath.SkipAll
+	rel, err := filepath.Rel(wt, dir)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return ""
+	}
+	d := wt
+	for _, c := range strings.Split(rel, string(filepath.Separator)) {
+		d = filepath.Join(d, c)
+		fi, err := os.Lstat(d)
+		if err != nil {
+			return "" // ni mape: harness ne začne v njej
 		}
-		if normName(d.Name()) != ".git" {
-			return nil
+		r := shortLine(filepath.ToSlash(strings.TrimPrefix(d, wt+string(filepath.Separator))), 500)
+		if fi.Mode()&os.ModeSymlink != 0 || fi.Mode()&os.ModeIrregular != 0 {
+			return "The agent's clone was changed (a link at " + r + "): start a new conversation"
 		}
-		if !own[p] {
-			rel, _ := filepath.Rel(wt, p)
-			why = "The agent's clone was changed (a .git appeared at " + shortLine(filepath.ToSlash(rel), 500) + "): start a new conversation"
-			return filepath.SkipAll
+		if g := filepath.Join(d, ".git"); !own[g] {
+			if _, err := os.Lstat(g); err == nil {
+				return "The agent's clone was changed (a .git appeared at " + r + "/.git): start a new conversation"
+			}
 		}
-		if d.IsDir() {
-			return filepath.SkipDir
-		}
-		return nil
-	})
-	return why
+	}
+	return ""
 }
 
 // gitExecDir: mapa ovoja gitExecWrap v Scratch zrcala repo (scratch/repos/<naprava>/<id>.git → scratch/gitexec).

@@ -352,7 +352,7 @@ public actor ShareHub {
         guard let s = share(session: session, device: device), cwd == nil || cwd == s.cwd else { return nil }
         if let p = AgentRun.current, p.session == session, let dir = p.dir {  // vprašani agent: mapa klicatelja
             // #61: harness vprašanega agenta začne v klonu klicatelja, kjer agent klicatelja še dela
-            if let id = p.runID, let k = runSlot[id], let slot = slots[k], let why = Worktree.foreignGit(slot.wt, nested: slot.nested) {
+            if let id = p.runID, let k = runSlot[id], let slot = slots[k], let why = Worktree.foreignGit(slot.wt, cwd: dir, nested: slot.nested) {
                 refusals[id] = (400, why)
                 return nil
             }
