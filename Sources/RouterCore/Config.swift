@@ -161,9 +161,13 @@ public struct RouterConfig: Codable, Sendable, Equatable {
     /// ali mapa v dovoljeni mapi agentov (ali obratno), in »Mini Gateway Scratch« v njej ne sme biti povezava.
     public static func scratchProblem(_ folder: URL, allowedRoots: String) -> String? {
         let fm = FileManager.default
+        // #24: pot gre v JAVA_TOOL_OPTIONS (-Djava.io.tmpdir v narekovajih) in v profil peskovnika
+        let quote = "its path contains a quotation mark"
+        if folder.path.contains("\"") { return quote }
         var isDir: ObjCBool = false
         guard folder.path.hasPrefix("/"), fm.fileExists(atPath: folder.path, isDirectory: &isDir), isDir.boolValue,
               let real = Sync.real(folder)?.path else { return "it is not an existing folder (absolute path)" }
+        if real.contains("\"") { return quote }
         let d = dedicated(folder)
         if (try? fm.destinationOfSymbolicLink(atPath: d.path)) != nil { return "\(d.path) is a symbolic link" }
         func inside(_ a: String, _ b: String) -> Bool { a == b || a.hasPrefix(b == "/" ? "/" : b + "/") }

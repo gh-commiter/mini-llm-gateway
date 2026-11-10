@@ -322,8 +322,12 @@ func TestAskOnPathOnlyOutsideAgentFolders(t *testing.T) {
 	if n := askNote(`C:\x\minigw.exe`, false); !strings.Contains(n, `"C:\x\minigw.exe" -p`) || !strings.Contains(n, "`& `") {
 		t.Fatalf("absolute path note: %s", n)
 	}
-	if n := askNote(`C:\x\minigw.exe`, true); !strings.Contains(n, "`minigw -p") {
+	if n := askNote(`C:\x\minigw.exe`, true); !strings.Contains(n, "`minigw -p") || !strings.Contains(n, "reached only this way: never run their command-line programs (codex, claude, grok, copilot)") {
 		t.Fatalf("PATH note: %s", n)
+	}
+	// #69: brez stikala agent ne išče programov drugih agentov, odgovori sam
+	if !strings.Contains(noAskNote, "not available to you here: never run their command-line programs (codex, claude, grok, copilot) yourself. If you are asked to use one, do the task yourself") {
+		t.Fatalf("no-ask note: %s", noAskNote)
 	}
 	if runtime.GOOS != "windows" && (serveConfig{}).askOnPath(bin) {
 		t.Fatal("askOnPath outside Windows")

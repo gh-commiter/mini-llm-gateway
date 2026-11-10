@@ -220,6 +220,23 @@ func TestWorktreeClaudeArgs(t *testing.T) {
 			t.Fatalf("missing %s in\n%s", want, got)
 		}
 	}
+	// #70: na Windows (brez sandboxa) git agenta ni vnaprej dovoljen (git -c, alias … = poljuben ukaz); commit naredi prehod
+	worktreeNeedsUnsandboxed = true
+	defer func() { worktreeNeedsUnsandboxed = runtime.GOOS == "windows" }()
+	args = []string{"--allowedTools", "Read(./**)", "--disallowedTools", "Read(/cfg/**)"}
+	got = strings.Join(worktreeClaudeArgs(args, "/w", "/m", "/t", nil, nil), " ")
+	if strings.Contains(got, "Bash(") || strings.Contains(got, "PowerShell(") || !strings.Contains(got, "Edit(//w/.git/**)") {
+		t.Fatalf("Windows: git or shell rule in\n%s", got)
+	}
+	n := worktreeNote("/c", "/w", "minigw/claude-1", []string{"/w/.git", "/w/lib/.git"})
+	if !strings.Contains(n, "Do not run git add or git commit: the gateway commits your changes on this branch when you finish.") ||
+		strings.Contains(n, "Commit your work") || strings.Contains(n, "GIT_DIR") || !strings.Contains(n, "/w/lib") {
+		t.Fatalf("Windows note: %s", n)
+	}
+	worktreeNeedsUnsandboxed = false
+	if n := worktreeNote("/c", "/w", "b", []string{"/w/.git", "/w/lib/.git"}); !strings.Contains(n, "Commit your work on this branch") || !strings.Contains(n, "git -C <path>") {
+		t.Fatalf("sandboxed note: %s", n)
+	}
 }
 
 // Codex v klonu (Linux: pod bwrap): commit in necommitano pride kot veja; .git/config klona je le za branje (protect).

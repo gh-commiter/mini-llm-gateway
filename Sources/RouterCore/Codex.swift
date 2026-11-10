@@ -328,7 +328,7 @@ extension Router {
         let scope = Self.agentScope("codex", req, cwd: cwd)
         let existing = agent ? await Self.codexSessions.get(ClaudeCLI.key(all.dropLast(), scope: scope)) : nil
         if existing != nil { prompt = last.text }
-        if agent, let note = agentNote("codex") { prompt = note + "\n\n" + prompt }
+        if agent { prompt = agentNote("codex") + "\n\n" + prompt }
         let args = Codex.args(cwd: cwd, extraDirs: extra, agent: agent, output: output, model: model,
                               write: config.codex.write && !readOnly, network: config.codex.network && (tree == nil || config.worktreeCodexNetwork),
                               resume: existing, gits: tree?.gits ?? [],
