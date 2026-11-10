@@ -1970,3 +1970,24 @@ final class UnauthorizedUpstream: URLProtocol, @unchecked Sendable {
     #expect(s2 == 502 && m2 == "P: HTTP 302: moved")
     #expect(Router.upstreamError(status: 403, name: "P", body: Data()).0 == 502)
 }
+
+/// #73: drevo agenta po teku ni ustavljeno (abandon): klon sync ne gre v kopijo; runDirs da klon za killTree.
+@Test func syncAbandonedRunIsNotMerged() async throws {
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent("syncab-" + UUID().uuidString)
+    let client = base.appendingPathComponent("client"), copy = base.appendingPathComponent("sync/local/x")
+    defer { try? FileManager.default.removeItem(at: base) }
+    try FileManager.default.createDirectory(at: client, withIntermediateDirectories: true)
+    try Data("v1".utf8).write(to: client.appendingPathComponent("f.txt"))
+    let hub = ShareHub()
+    let key = try #require(await hub.register(session: "p", cwd: client.path, key: nil, copy: copy))
+    let minigw = FakeMinigw(hub, key: key, root: client)
+    let server = minigw.serve()
+    defer { server.cancel() }
+    let d = try #require(await ShareHub.$run.withValue("r1") { await hub.mount(session: "p", cwd: client.path, base: "") })
+    try Data("agent".utf8).write(to: d.appendingPathComponent("f.txt"))
+    #expect(await ShareHub.$run.withValue("r1") { await hub.runDirs() }.contains(d.path))
+    await ShareHub.$run.withValue("r1") { await hub.abandon() }
+    await hub.finish(run: "r1")
+    #expect(try String(contentsOf: copy.appendingPathComponent("f.txt"), encoding: .utf8) == "v1")
+    #expect(!FileManager.default.fileExists(atPath: copy.appendingPathComponent("f.txt.minigw-agent").path))
+}

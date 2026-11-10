@@ -796,6 +796,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			for _, f := range fixed {
 				s.log.Printf("%s worktree: %s was not a folder of the gateway; made again", r.rid, f)
 			}
+			defer s.recheckGrants(r.rid, wt) // #73: po teku znova
 			// kratek TMPDIR: vtičnice peskovnika Claude Code (maxRunTemp); #67: povezava, podatki pod Scratch ($MINIGW_DEPS/tmp);
 			// Windows (brez peskovnika): kar $MINIGW_DEPS/tmp
 			tmpRoot, tmp, done := "", filepath.Join(depsDir(wt), "tmp"), func() {}

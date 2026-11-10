@@ -593,7 +593,7 @@ extension Router {
         p.standardInput = stdin
         p.standardOutput = stdout
         p.standardError = stderr
-        let exit = ExitWaiter(), pipes = [stdout.fileHandleForReading, stderr.fileHandleForReading]
+        let exit = ExitWaiter(), pipes = [stdout.fileHandleForReading, stderr.fileHandleForReading], dirs = await Self.shares.runDirs()
         p.terminationHandler = { p in  // waitUntilExit brez run loopa lahko obvisi
             exit.done(p.terminationStatus)
             let g = p.processIdentifier  // #73: 2 s po koncu drevo (tudi vnuk s cevjo) ven, da se branje konča
@@ -642,19 +642,23 @@ extension Router {
             Native.terminateGroup(p.processIdentifier)
             _ = await firstOf(Task { await exit.wait() }, within: .seconds(5))  // sync: klon se odstrani šele po koncu agenta
             let pid = p.processIdentifier
-            if !(await offPool { Native.killTree(pid, pipes: pipes) }) { Self.log.error("\(rid, privacy: .public) claude: its processes could not be stopped") }
+            if !(await offPool { Native.killTree(pid, pipes: pipes, dirs: dirs) }) {
+                Self.log.error("\(rid, privacy: .public) claude: its processes could not be stopped")
+                await Self.shares.abandon()  // #73: klon sync ne gre v kopijo
+            }
             return headSent ? 200 : 499
         }
         let status = await exit.wait()
         run?.stop()  // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb
         let pid = p.processIdentifier
-        let stopped = await offPool { Native.killTree(pid, pipes: pipes) }  // #73: finalize (syncBack) le, ko drevesa ni več
+        let stopped = await offPool { Native.killTree(pid, pipes: pipes, dirs: dirs) }  // #73: finalize (syncBack) le, ko drevesa ni več
+        if !stopped { await Self.shares.abandon() }  // klon sync ne gre v kopijo
         // sync: spremembe agenta k odjemalcu pred koncem odgovora (Claude Code jih nato že vidi); med tem še ping
         if agent && stopped { await Self.shares.syncBack(session: req.header("x-claude-mini-session") ?? "") }
         pinger?.cancel()
         let errText = await errTask.value
 
-        if let msg = (stopped ? nil : "its processes could not be stopped") ?? t.resultError
+        if let msg = (stopped ? nil : Native.notStopped(rid)) ?? t.resultError
             ?? (status != 0 && t.text.isEmpty ? (errText.isEmpty ? "claude exited with \(status)" : errText) : nil) {
             Self.log.error("\(rid, privacy: .public) claude failed: \(msg, privacy: .public)")
             let (code, type, text) = AgentError.classify(msg)

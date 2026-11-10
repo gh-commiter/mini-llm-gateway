@@ -186,7 +186,7 @@ public enum Codex {
         return o["thread_id"] as? String
     }
 
-    static func run(_ exe: String, args: [String], cwd: URL, prompt: String, output: URL, env extra: [String: String] = [:],
+    static func run(_ exe: String, args: [String], cwd: URL, prompt: String, output: URL, env extra: [String: String] = [:], dirs: [String] = [],
                     started: @escaping @Sendable (pid_t) -> Void = { _ in },
                     onStep: @escaping @Sendable (String) -> Void = { _ in }) async throws -> (String, String?) {
         let h = Handle()
@@ -232,7 +232,7 @@ public enum Codex {
                 while errReader.isExecuting { usleep(10_000) }
                 p.waitUntilExit()
                 // #73: finalize (syncBack) le, ko drevesa ni več
-                guard Native.killTree(p.processIdentifier, pipes: pipes) else { throw Failure(message: "codex: its processes could not be stopped") }
+                guard Native.killTree(p.processIdentifier, pipes: pipes, dirs: dirs) else { throw Native.TreeAlive(agent: "codex") }
                 let text = (try? String(contentsOf: output, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 guard p.terminationStatus == 0, !text.isEmpty else {
                     let tail = String(decoding: stderr.suffix(400), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -347,7 +347,7 @@ extension Router {
         let sessions = Self.codexSessions, session = req.header("x-claude-mini-session") ?? ""
         return await replyWhenDone(body: body, model: "claude-codex", rid: rid, writer: writer, req: req) {
             let (text, thread) = try await Codex.run(exe, args: args, cwd: cwd, prompt: prompt, output: output,
-                                                         env: codexEnv, started: { run?.started($0) }) { [onActivity] s in
+                                                         env: codexEnv, dirs: await Self.shares.runDirs(), started: { run?.started($0) }) { [onActivity] s in
                 onActivity(.step(id: rid, text: s))
             }
             run?.stop()  // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb
@@ -411,7 +411,9 @@ extension Router {
             let (status, type, message) = (error as? SiriError)?.status
                 ?? (error as? Codex.Failure).map { AgentError.classify($0.message) }
                 ?? (error as? Grok.Failure).map { AgentError.classify($0.message) }
-                ?? (error as? Copilot.Failure).map { AgentError.classify($0.message) } ?? (500, "api_error", "\(error)")
+                ?? (error as? Copilot.Failure).map { AgentError.classify($0.message) }
+                ?? (error as? Native.TreeAlive).map { (500, "api_error", "\($0.agent): " + Native.notStopped(rid)) } ?? (500, "api_error", "\(error)")
+            if error is Native.TreeAlive { await Self.shares.abandon() }  // #73: klon sync ne gre v kopijo
             Self.log.error("\(rid, privacy: .public) \(model, privacy: .public) failed: \(message, privacy: .public)")
             let agentLimit = status == 429 && !(error is SiriError)
             if let req, agentLimit, stream, sent.head || writer is EarlyStreamWriter {  // napaka bo dogodek SSE

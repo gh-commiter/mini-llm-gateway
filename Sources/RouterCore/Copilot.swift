@@ -160,7 +160,7 @@ public enum Copilot {
     /// Zažene copilot v peskovniku (`sandbox`: profil sandbox-exec) v lastni skupini procesov (R5) in vrne zadnje sporočilo
     /// agenta. Po koncu glavnega procesa (in 2 s) SIGKILL skupini in vsakemu procesu s pisalnim koncem cevi (kot minigw run);
     /// ob prekinitvi SIGTERM, po 5 s SIGKILL.
-    static func run(_ exe: String, args: [String], prompt: String, cwd: URL, env: [String: String], sandbox: String,
+    static func run(_ exe: String, args: [String], prompt: String, cwd: URL, env: [String: String], sandbox: String, dirs: [String] = [],
                     started: @escaping @Sendable (pid_t) -> Void = { _ in }, onStep: @escaping @Sendable (String) -> Void) async throws -> String {
         guard let (pid, out, err, input) = Native.spawnGroup("/usr/bin/sandbox-exec", ["-p", sandbox, exe] + args, dir: cwd, env: env, input: true),
               let input else { throw Failure(message: "cannot start copilot") }
@@ -205,7 +205,7 @@ public enum Copilot {
             }
             let code = await exit.wait()
             // #73: ostanki skupine; finalize (syncBack) le, ko drevesa ni več
-            guard await offPool({ Native.killTree(pid, pipes: [out, err]) }) else { throw Failure(message: "copilot: its processes could not be stopped") }
+            guard await offPool({ Native.killTree(pid, pipes: [out, err], dirs: dirs) }) else { throw Native.TreeAlive(agent: "copilot") }
             let text = answer.trimmingCharacters(in: .whitespacesAndNewlines)
             guard code == 0, !text.isEmpty else {
                 let tail = String(decoding: stderr.suffix(400), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -367,7 +367,7 @@ extension Router {
                                 network: cfg.network && (tree == nil || config.worktreeCodexNetwork), session: session)
         let sessions = Self.copilotSessions, client = req.header("x-claude-mini-session") ?? ""
         return await replyWhenDone(body: body, model: "claude-copilot", rid: rid, writer: writer, req: req) {
-            let text = try await Copilot.run(exe, args: args, prompt: prompt, cwd: cwd, env: env, sandbox: sandbox, started: { run?.started($0) }) { [onActivity] s in
+            let text = try await Copilot.run(exe, args: args, prompt: prompt, cwd: cwd, env: env, sandbox: sandbox, dirs: await Self.shares.runDirs(), started: { run?.started($0) }) { [onActivity] s in
                 onActivity(.step(id: rid, text: s))
             }
             run?.stop()  // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb

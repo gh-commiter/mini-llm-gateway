@@ -961,6 +961,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 				for _, f := range fixed {
 					s.log.Printf("%s worktree: %s was not a folder of the gateway; made again", r.rid, f)
 				}
+				defer s.recheckGrants(r.rid, wt) // #73: po teku znova
 				treeEnv = append(treeEnv, networkOffEnv(k.name, ac.Network)...)
 			} else {
 				treeEnv = slices.DeleteFunc(treeEnv, func(kv string) bool { return strings.HasPrefix(kv, "MINIGW_DEPS=") })

@@ -376,6 +376,19 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     #expect(Darwin.kill(p, 0) != 0)
 }
 
+/// #73: proces v svoji seji brez cevi (stdio na /dev/null) z delovno mapo v klonu se ustavi, preden se tek vrne (syncBack).
+@Test func agentEndStopsSetsidWithoutPipeInClone() async throws {
+    let dir = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("kt-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let out = dir.appendingPathComponent("out"), pid = dir.appendingPathComponent("pid")
+    let script = "perl -MPOSIX -e 'POSIX::setsid(); sleep 60' </dev/null >/dev/null 2>&1 & echo $! > '\(pid.path)'; echo done > '\(out.path)'"
+    let (text, _) = try await Codex.run("/bin/sh", args: ["-c", script], cwd: dir, prompt: "", output: out, dirs: [dir.path])
+    #expect(text == "done")
+    let p = try #require(pid_t(String(contentsOf: pid, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+    #expect(Darwin.kill(p, 0) != 0)
+}
+
 @Test func nativeRunRechecksFolderAfterProof() async throws {  // N1
     let f = try nativeFixture()
     defer { try? FileManager.default.removeItem(at: f.root) }

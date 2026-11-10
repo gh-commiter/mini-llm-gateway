@@ -754,6 +754,18 @@ func grantDirs(wt string) (dirs, fixed []string, err error) {
 	return dirs, fixed, nil
 }
 
+// recheckGrants (#73, kot releaseSlot na Macu): po teku agenta znova grantDirs; zamenjana mapa se zapiše v dnevnik in
+// naredi znova (agent bi jo lahko med tekom zamenjal s povezavo, npr. $MINIGW_DEPS/tmp ali skupni .cache, .maven).
+func (s *server) recheckGrants(rid, wt string) {
+	_, fixed, err := grantDirs(wt)
+	if err != nil {
+		s.log.Printf("%s worktree folders after the run: %v", rid, err)
+	}
+	for _, f := range fixed {
+		s.log.Printf("%s worktree: after the run %s was not a folder of the gateway; made again", rid, f)
+	}
+}
+
 // networkOffEnv (#67, kot Worktree.networkOff na Macu): MINIGW_NETWORK_OFF z imenom nastavitve, ko agent v klonu nima
 // omrežja za gradnje (ovoj zavrne oddaljen git clone). network: Codex »Allow network access«, Claude (#68, odločitev 7)
 // »Network for builds« (worktreeNetwork, isto ime kot na Macu); Copilot stikala na minigw serve nima.

@@ -519,20 +519,46 @@ public enum Native {
     }
 
     /// Konec drevesa procesov (kot stopAgentTree v win-run-job): SIGKILL skupini `pgid` (Process in spawnGroup dasta otroku
-    /// svojo) in vsakemu procesu s pisalnim koncem cevi `pipes` (tudi setsid), dokler ni nobenega več, največ `timeout`.
+    /// svojo), vsakemu procesu s pisalnim koncem cevi `pipes` (tudi setsid) in vsakemu procesu tega uporabnika (razen
+    /// prehoda) z delovno mapo v `dirs` (klon, runTmp: setsid brez cevi), dokler ni nobenega več, največ `timeout`.
     /// Bralec teh cevi nato dobi EOF. false = drevo še živi: brez finalize/commit, tek je neuspešen.
     @discardableResult
-    static func killTree(_ pgid: pid_t, pipes: [FileHandle], timeout: TimeInterval = 3) -> Bool {
+    static func killTree(_ pgid: pid_t, pipes: [FileHandle], dirs: [String] = [], timeout: TimeInterval = 3) -> Bool {
         let group = pgid > 1 && pgid != getpgrp(), end = Date().addingTimeInterval(timeout)
+        let roots = dirs.map { Sync.real(URL(fileURLWithPath: $0))?.path ?? $0 }
         while true {
-            let writers = pipes.flatMap { pipeWriters(of: $0.fileDescriptor) }
-            if !(group && Darwin.kill(-pgid, 0) == 0) && writers.isEmpty { return true }
+            let left = pipes.flatMap { pipeWriters(of: $0.fileDescriptor) } + (roots.isEmpty ? [] : pids(cwdIn: roots))
+            if !(group && Darwin.kill(-pgid, 0) == 0) && left.isEmpty { return true }
             if group { _ = Darwin.kill(-pgid, SIGKILL) }
-            for w in writers { _ = Darwin.kill(w, SIGKILL) }
+            for w in left { _ = Darwin.kill(w, SIGKILL) }
             if Date() >= end { return false }
             usleep(20_000)
         }
     }
+
+    /// Procesi tega uporabnika (razen prehoda) z delovno mapo v eni od `roots` (prave poti).
+    static func pids(cwdIn roots: [String]) -> [pid_t] {
+        let n = proc_listallpids(nil, 0)
+        guard n > 0 else { return [] }
+        var pids = [pid_t](repeating: 0, count: Int(n) + 64)
+        let count = proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size))
+        return pids.prefix(max(0, Int(count))).filter { pid in
+            guard pid > 1, pid != getpid() else { return false }
+            var bsd = proc_bsdinfo(), info = proc_vnodepathinfo()
+            guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &bsd, Int32(MemoryLayout<proc_bsdinfo>.size)) > 0, bsd.pbi_uid == getuid(),
+                  proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &info, Int32(MemoryLayout<proc_vnodepathinfo>.size)) > 0 else { return false }
+            let cwd = withUnsafeBytes(of: info.pvi_cdir.vip_path) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+            return roots.contains { cwd == $0 || cwd.hasPrefix($0 + "/") }
+        }
+    }
+
+    /// #73 (kot Go): besedilo napake, ko drevesa agenta po teku ni bilo mogoče ustaviti.
+    static func notStopped(_ rid: String) -> String {
+        "its processes did not stop after the run, so the gateway did not take its changes; details are in the gateway log, request " + rid
+    }
+
+    /// Drevo agenta po teku ni ustavljeno (killTree false): brez syncBack in brez združitve klona.
+    struct TreeAlive: Error { let agent: String }
 
     /// Prekinitev: SIGTERM skupini `pgid`, po 5 s SIGKILL.
     static func terminateGroup(_ pgid: pid_t) {
@@ -706,7 +732,8 @@ extension Router {
         // profil peskovnika iz dobesedne poti (sandboxProfile zavrne povezave).
         // Zasebna začasna mapa zagona v Scratch (runEnv; ne /var/folders/…, /tmp ali domača mapa); odstrani se po zagonu.
         let runTmp = config.scratch("tmp").appendingPathComponent("run-" + rid, isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: runTmp) }
+        var keep = false  // #73: drevo ni ustavljeno: mapa, povezavi in zaklep ostanejo do uboja v ozadju
+        defer { if !keep { try? FileManager.default.removeItem(at: runTmp) } }
         guard let realTmp = Native.makeRunTmp(runTmp) else {
             return await error(500, "api_error", "minigw run: cannot create its temporary folder in Scratch", rid: rid, writer: writer)
         }
@@ -730,13 +757,13 @@ extension Router {
             return await error(409, "invalid_request_error", "minigw run: another agent or build is still changing \(dir.path); try again when it has finished",
                                rid: rid, writer: writer)
         }
-        defer { Task { await Self.shares.releaseWriter(run: lock) } }
+        defer { if !keep { Task { await Self.shares.releaseWriter(run: lock) } } }
         // #72: T in C zagona v Scratch (povezavi); brez obeh se ne zažene.
         let suffix = Native.runDirPrefix + rid.filter { $0 != "/" }
         guard let links = Native.linkRunDirs(realTmp, suffix: suffix) else {
             return await error(500, "api_error", "minigw run: cannot link its temporary folders in Scratch", rid: rid, writer: writer)
         }
-        defer { Native.unlinkRunDirs(links) }
+        defer { if !keep { Native.unlinkRunDirs(links) } }
         let env = Native.runEnv(ProcessInfo.processInfo.environment, runTmp: runTmp, suffix: suffix)
         guard let exe = Native.executable(argv[0], dir: dir, path: env["PATH"]!) else {
             return await error(404, "not_found_error", "minigw run: \(argv[0]) not found on the gateway", rid: rid, writer: writer)
@@ -750,39 +777,59 @@ extension Router {
         // Skupina procesov: ob prekinitvi SIGTERM, po 5 s SIGKILL. Po koncu glavnega procesa in 2 s: SIGKILL skupini in
         // vsakemu procesu s pisalnim koncem cevi (tudi setsid), nato se tok zapre, tudi če cev še kdo drži.
         // ponytail: pid skupine je lahko po izhodu znova dodeljen; ob 2–5 s in zaporednih pid je tveganje zanemarljivo.
-        // #73 N2: `gone` šele po uboju skupine (in kopijah shranjevanja); začasna mapa, povezavi in zaklep pisanja šele po njem.
+        // #73 N2: začasna mapa, povezavi in zaklep pisanja šele po uboju skupine (`stopped`) in kopijah shranjevanja (`gone`).
         let exit = ExitWaiter(), gone = ExitWaiter()  // en čakalec
         Thread {
             var st: Int32 = 0
             while waitpid(pid, &st, 0) == -1 && errno == EINTR {}
             exit.done(st & 0x7f == 0 ? (st >> 8) & 0xff : 128 + (st & 0x7f))
             DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
-                let stopped = Native.killTree(pid, pipes: [out, err])
+                Native.killTree(pid, pipes: [out, err], dirs: [realTmp])
                 DispatchQueue.global().asyncAfter(deadline: .now() + 1) { closeFrames() }
                 // #72: po uboju skupine in ko so tudi zadnje mape umirjene (`settled`)
                 DispatchQueue.global().asyncAfter(deadline: .now() + 2.5) {
                     Native.removeSaveCopies(after: Native.saveCopies(dirs: tempDirs), before: copies, since: runStart)
-                    gone.done(stopped ? 0 : 1)
+                    gone.done(0)
                 }
             }
         }.start()
         @Sendable func stop() { Native.terminateGroup(pid) }
         Self.log.info("\(rid, privacy: .public) run start device=\(d.name, privacy: .public) folder=\(dir.path, privacy: .private) argv=\(argv.joined(separator: " "), privacy: .private)")
-        var code: Int32 = -1
+        @Sendable func killed() async -> Bool { await offPool { Native.killTree(pid, pipes: [out, err], dirs: [realTmp]) } }
+        var code: Int32 = -1, stopped: Bool?
         await withTaskCancellationHandler {
             do {
                 try await writer.write(HTTPResponse.head(status: 200, headers: [("Content-Type", "text/plain"), ("Cache-Control", "no-cache"), ("request-id", rid)]))
                 for await f in frames { try await writer.write(f.data); if f.counted { written() } }  // en pisec
                 code = await exit.wait()
+                stopped = await killed()  // cevi so zaprte: ostanki skupine takoj
+                if stopped == false {
+                    let msg = "minigw run: processes of this run did not stop; see the gateway log, request \(rid)\n"
+                    try await writer.write(Data("e \(Data(msg.utf8).base64EncodedString())\n".utf8))
+                    if code == 0 { code = 1 }
+                }
                 try await writer.write(Data("x \(code)\n".utf8))
             } catch {
                 stop()  // odjemalec je odšel
             }
         } onCancel: { stop() }
         if code < 0 { code = await exit.wait() }
-        if await gone.wait() != 0 { Self.log.error("\(rid, privacy: .public) run: processes of the command could not be stopped") }
-        Native.unlinkRunDirs(links)
-        try? FileManager.default.removeItem(at: runTmp)  // zaklep pisanja (defer) šele za tem
+        if stopped == nil { stopped = await killed() }
+        _ = await gone.wait()
+        if stopped == false {  // ponytail: poskuša, dokler drevesa ni; zaklep mape ostane do tedaj
+            Self.log.error("\(rid, privacy: .public) run: processes of the command could not be stopped; the folder stays locked until they are gone")
+            keep = true
+            Task.detached {
+                while !(await killed()) { try? await Task.sleep(for: .seconds(5)) }
+                Native.unlinkRunDirs(links)
+                try? FileManager.default.removeItem(at: runTmp)
+                await Self.shares.releaseWriter(run: lock)
+                Self.log.info("\(rid, privacy: .public) run: its processes are gone, the folder is unlocked")
+            }
+        } else {
+            Native.unlinkRunDirs(links)
+            try? FileManager.default.removeItem(at: runTmp)  // zaklep pisanja (defer) šele za tem
+        }
         Self.log.info("\(rid, privacy: .public) run end device=\(d.name, privacy: .public) exit=\(code)")
         return 200
     }

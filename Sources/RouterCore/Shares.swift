@@ -573,6 +573,20 @@ public actor ShareHub {
         }
     }
 
+    /// #73: mape tega izvajanja (klon sync, klon worktree in njegov $MINIGW_DEPS) za killTree; vprašani agent nič (dela v
+    /// klonu klicatelja, ki še teče).
+    func runDirs() -> [String] {
+        guard AgentRun.current == nil, let id = Self.run else { return [] }
+        var dirs = [runs[id]?.clone.path].compactMap { $0 }
+        if let k = runSlot[id], let wt = slots[k]?.wt { dirs += [wt.path, Worktree.deps(wt).path] }
+        return dirs
+    }
+
+    /// #73 (kot win-run-job): drevo agenta po teku ni ustavljeno: klon sync tega izvajanja ne gre v kopijo (finish).
+    func abandon() {
+        if let id = Self.run { runs[id]?.merged = true }
+    }
+
     /// Konec izvajanja (tudi ob napaki ali prekinitvi): združi, če prevzema ni bilo, in odstrani klon.
     func finish(run id: String) async {
         releaseSlot(run: id)  // worktree: mesto spet prosto
