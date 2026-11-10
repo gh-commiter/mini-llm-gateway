@@ -777,8 +777,17 @@ func worktreeClaudeEnv(wt, maven, tmp, gw string, gits []string, agent string) [
 	if w == nil {
 		return nil
 	}
-	if agent == "codex" { // harness Codex (zunaj peskovnika) ostane v vrhnjem klonu; ukazi dobijo ovoj prek codexArgs
-		return append(env, w...)
+	if agent == "codex" {
+		// M2: git harnessa Codex (zunaj peskovnika) ne dela v klonu (GIT_DIR=/dev/null): .git, ki ga agent spremeni, ne
+		// doseže nobenega gita zunaj peskovnika; ukazi dobijo ovoj prek codexArgs. N1: MINIGW_CLONE za killInside.
+		out := []string{"MINIGW_CLONE=" + wt}
+		for _, kv := range append(env, w...) {
+			if k, _, _ := strings.Cut(kv, "="); k == "GIT_DIR" || k == "GIT_COMMON_DIR" {
+				kv = k + "=" + os.DevNull
+			}
+			out = append(out, kv)
+		}
+		return out
 	}
 	// #40: brez GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR vrhnjega klona (git -C <ugnezdeni> bi sicer delal v vrhnjem);
 	// ovoj na PATH jih nastavi za vsak klic, git mimo njega najde repozitorij sam, ne nad klonom (GIT_CEILING_DIRECTORIES).

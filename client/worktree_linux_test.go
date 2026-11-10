@@ -179,3 +179,31 @@ func TestWatchGitMovesManyPaths(t *testing.T) {
 		t.Fatal("watch of a missing path accepted")
 	}
 }
+
+// #40 N1: agent z okoljem Claude CLI ali Codex (MINIGW_CLONE, brez GIT_WORK_TREE), ki je zapustil klon in sejo, se ustavi.
+func TestKillInsideMinigwClone(t *testing.T) {
+	wt := t.TempDir()
+	for _, agent := range []string{"claude", "codex"} {
+		var mark string
+		for _, kv := range worktreeClaudeEnv(wt, wt, wt, filepath.Join(t.TempDir(), "gx"), []string{filepath.Join(wt, ".git")}, agent) {
+			if strings.HasPrefix(kv, "MINIGW_CLONE=") {
+				mark = kv
+			}
+		}
+		c := exec.Command("sleep", "30")
+		c.Dir, c.Env = "/", []string{mark}
+		c.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		if mark == "" || c.Start() != nil {
+			t.Fatalf("%s: mark %q", agent, mark)
+		}
+		killInside(wt)
+		done := make(chan error, 1)
+		go func() { done <- c.Wait() }()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			c.Process.Kill()
+			t.Fatalf("%s: agent process with MINIGW_CLONE survived", agent)
+		}
+	}
+}

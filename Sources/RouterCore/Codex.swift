@@ -78,11 +78,11 @@ public enum Codex {
     /// Brez orodij (naslovi, povzetki) le branje v začasni mapi.
     /// `resume`: ID niti Codex za nadaljevanje (možnosti exec, tudi sandbox, veljajo tudi zanj).
     static func args(cwd: URL, extraDirs: [String], agent: Bool, output: URL, model: String? = nil,
-                     write: Bool = true, network: Bool = false, resume: String? = nil, gits: [String] = [], path: String = "") -> [String] {
+                     write: Bool = true, network: Bool = false, resume: String? = nil, gits: [String] = [], path: String = "", deny: [String] = []) -> [String] {
         var a = ["exec", "--json", "--skip-git-repo-check", "--color", "never", "-C", cwd.path, "-o", output.path]
         if let model { a += ["-m", model] }
         if agent && write && !gits.isEmpty {  // #40: klon, profil dovoljenj namesto workspace-write
-            a += treeProfile(writable: [cwd.path] + extraDirs, gits: gits, network: network, path: path)
+            a += treeProfile(writable: [cwd.path] + extraDirs, gits: gits, deny: deny, network: network, path: path)
         } else if agent && write {
             // $TMPDIR (/var/folders/…/T) ni pisljiv: tam je predpomnilnik xcrun (shim /usr/bin/git ga izvede); TMPDIR je zasebna mapa.
             a += ["--sandbox", "workspace-write", "-c", "sandbox_workspace_write.network_access=\(network)",
@@ -106,8 +106,10 @@ public enum Codex {
     /// v celoti (commit ni mogoč): .git vsakega klona pisljiv razen nastavitev, hookov, info, commondir in preusmeritev
     /// (git harnessa jih bere zunaj peskovnika). Ukazi agenta: PATH z ovojem, brez GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR
     /// vrhnjega klona (harness Codex jih obdrži, Worktree.claudeEnv).
-    static func treeProfile(writable: [String], gits: [String], network: Bool, path: String) -> [String] {
+    /// L1: iskanje repozitorija ne nad klonom; `deny`: mape brez dostopa (L3: podatki aplikacije, kot Go mapa nastavitev).
+    static func treeProfile(writable: [String], gits: [String], deny: [String] = [], network: Bool, path: String) -> [String] {
         var fs = ["/": "read", "/private/tmp": "write", "/tmp": "write"]
+        for d in deny { fs[d] = "none" }
         for d in writable { fs[d] = "write" }
         for g in gits {
             fs[g] = "write"
@@ -117,7 +119,8 @@ public enum Codex {
         let table = fs.keys.sorted().map { q($0) + "=\"" + fs[$0]! + "\"" }.joined(separator: ",")
         return ["-c", #"default_permissions="minigw""#, "-c", "permissions.minigw.filesystem={" + table + "}",
                 "-c", "permissions.minigw.network.enabled=\(network)",
-                "-c", #"shell_environment_policy.exclude=["GIT_DIR","GIT_WORK_TREE","GIT_COMMON_DIR"]"#, "-c", "shell_environment_policy.set.PATH=" + q(path)]
+                "-c", #"shell_environment_policy.exclude=["GIT_DIR","GIT_WORK_TREE","GIT_COMMON_DIR"]"#, "-c", "shell_environment_policy.set.PATH=" + q(path),
+                "-c", "shell_environment_policy.set.GIT_CEILING_DIRECTORIES=" + q(URL(fileURLWithPath: gits[0]).deletingLastPathComponent().deletingLastPathComponent().path)]
     }
 
     struct Failure: Error { let message: String }
@@ -300,7 +303,8 @@ extension Router {
         let args = Codex.args(cwd: cwd, extraDirs: extra, agent: agent, output: output, model: model,
                               write: config.codex.write && !readOnly, network: config.codex.network && (tree == nil || config.worktreeCodexNetwork),
                               resume: existing, gits: tree?.gits ?? [],
-                              path: tree == nil ? "" : Worktree.agentPath(gitexec: config.scratch("gitexec"), path: ProcessInfo.processInfo.environment["PATH"] ?? ""))
+                              path: tree == nil ? "" : Worktree.agentPath(gitexec: config.scratch("gitexec"), path: ProcessInfo.processInfo.environment["PATH"] ?? ""),
+                              deny: [GatewayHistory.defaultFile.deletingLastPathComponent().path])  // L3
         let sessions = Self.codexSessions, session = req.header("x-claude-mini-session") ?? ""
         return await replyWhenDone(body: body, model: "claude-codex", rid: rid, writer: writer, req: req) {
             let (text, thread) = try await Codex.run(exe, args: args, cwd: cwd, prompt: prompt, output: output,

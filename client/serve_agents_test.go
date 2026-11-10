@@ -18,26 +18,26 @@ import (
 
 // Kot testi Codex.args in Grok.args na Macu.
 func TestCodexAndGrokArgs(t *testing.T) {
-	a := codexArgs("/w", []string{"/tmp/x"}, true, "/o.txt", "", true, true, "", nil, "")
+	a := codexArgs("/w", []string{"/tmp/x"}, true, "/o.txt", "", true, true, "", nil, "", nil)
 	j := strings.Join(a, " ")
 	if !strings.HasPrefix(j, "exec --json --skip-git-repo-check --color never -C /w -o /o.txt --sandbox workspace-write --add-dir /tmp/x") ||
 		!strings.HasSuffix(j, `-c sandbox_mode="workspace-write" -c sandbox_workspace_write.network_access=true -c sandbox_workspace_write.writable_roots=["/tmp/x"] -`) ||
 		slices.Contains(a, "--ephemeral") {
 		t.Fatalf("codex agent: %v", a)
 	}
-	if r := codexArgs("/w", nil, false, "/o", "", true, true, "", nil, ""); !slices.Contains(r, "read-only") || !slices.Contains(r, "--ephemeral") {
+	if r := codexArgs("/w", nil, false, "/o", "", true, true, "", nil, "", nil); !slices.Contains(r, "read-only") || !slices.Contains(r, "--ephemeral") {
 		t.Fatalf("codex chat: %v", r)
 	}
-	if r := codexArgs("/w", []string{"/tmp/x"}, true, "/o", "gpt-6-luna", false, true, "", nil, ""); !slices.Contains(r, "read-only") || slices.Contains(r, "--add-dir") ||
+	if r := codexArgs("/w", []string{"/tmp/x"}, true, "/o", "gpt-6-luna", false, true, "", nil, "", nil); !slices.Contains(r, "read-only") || slices.Contains(r, "--add-dir") ||
 		!slices.Contains(r, "gpt-6-luna") || strings.Contains(strings.Join(r, " "), "network_access") {
 		t.Fatalf("codex read-only: %v", r)
 	}
 	// I5: sandbox tudi za »exec resume« (ta nima --sandbox): -c za »resume <nit>«.
-	if r := strings.Join(codexArgs("/w", nil, true, "/o", "", true, false, "t1", nil, ""), " "); !strings.Contains(r, `resume t1 -c sandbox_mode="workspace-write" -c sandbox_workspace_write.network_access=false`) ||
+	if r := strings.Join(codexArgs("/w", nil, true, "/o", "", true, false, "t1", nil, "", nil), " "); !strings.Contains(r, `resume t1 -c sandbox_mode="workspace-write" -c sandbox_workspace_write.network_access=false`) ||
 		!strings.HasSuffix(r, " -") {
 		t.Fatalf("codex resume: %s", r)
 	}
-	if r := strings.Join(codexArgs("/w", nil, true, "/o", "", false, false, "t1", nil, ""), " "); !strings.HasSuffix(r, `resume t1 -c sandbox_mode="read-only" -`) {
+	if r := strings.Join(codexArgs("/w", nil, true, "/o", "", false, false, "t1", nil, "", nil), " "); !strings.HasSuffix(r, `resume t1 -c sandbox_mode="read-only" -`) {
 		t.Fatalf("codex read-only resume: %s", r)
 	}
 	// H1: mapa nastavitev prepovedana (Read, Edit, Write); brez pisanja tudi brez spleta.
@@ -547,10 +547,10 @@ case "$p" in *"shared read-only"*) echo ro-note > "$out";; *) echo no-note > "$o
 func TestCodexTreeProfile(t *testing.T) {
 	wt := filepath.Join(t.TempDir(), "w")
 	gits := []string{filepath.Join(wt, ".git"), filepath.Join(wt, "lib", ".git")}
-	a := strings.Join(codexArgs(wt, []string{"/m"}, true, "/o", "", true, false, "", gits, "/gw/bin:/usr/bin"), " ")
+	a := strings.Join(codexArgs(wt, []string{"/m"}, true, "/o", "", true, false, "", gits, "/gw/bin:/usr/bin", []string{"/cfg"}), " ")
 	for _, want := range []string{`default_permissions="minigw"`, `"` + gits[1] + `"="write"`, `"` + gits[1] + `/config"="read"`, `"` + gits[0] + `/hooks"="read"`,
 		`"/m"="write"`, `permissions.minigw.network.enabled=false`, `shell_environment_policy.exclude=["GIT_DIR","GIT_WORK_TREE","GIT_COMMON_DIR"]`,
-		`shell_environment_policy.set.PATH="/gw/bin:/usr/bin"`} {
+		`shell_environment_policy.set.PATH="/gw/bin:/usr/bin"`, `"/cfg"="none"`, `shell_environment_policy.set.GIT_CEILING_DIRECTORIES="` + filepath.Dir(wt) + `"`} {
 		if !strings.Contains(a, want) {
 			t.Fatalf("missing %s in %s", want, a)
 		}
@@ -567,7 +567,7 @@ func TestCodexTreeProfile(t *testing.T) {
 		gitT(t, filepath.Dir(g), "init", "-q", "-b", "main")
 	}
 	var sb []string
-	p := codexTreeProfile([]string{wt}, gits, false, "/usr/bin:/bin")
+	p := codexTreeProfile([]string{wt}, gits, nil, false, "/usr/bin:/bin")
 	for i := 0; i+1 < len(p); i += 2 {
 		if !strings.HasPrefix(p[i+1], "shell_environment_policy") {
 			sb = append(sb, p[i], p[i+1])

@@ -488,7 +488,9 @@ public enum Worktree {
                                  path: String = ProcessInfo.processInfo.environment["PATH"] ?? "") -> [String: String]? {
         guard let wrap = wrapEnv(gitDirs: gits.isEmpty ? [root.appendingPathComponent(".git").path] : gits, gitexec: gitexec) else { return nil }
         let env = harnessEnv(root: root, maven: maven, agent: agent).merging(wrap) { $1 }
-        if agent == "codex" { return env }
+        // M2: git harnessa Codex (zunaj peskovnika) ne dela v klonu (GIT_DIR=/dev/null); ukazi dobijo ovoj prek Codex.args.
+        // N1: MINIGW_CLONE za killProcesses.
+        if agent == "codex" { return env.merging(["GIT_DIR": "/dev/null", "GIT_COMMON_DIR": "/dev/null", "MINIGW_CLONE": root.path]) { $1 } }
         return env.filter { !["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR"].contains($0.key) }.merging(
             ["PATH": agentPath(gitexec: gitexec, path: path), "MINIGW_CLONE": root.path, "GIT_CEILING_DIRECTORIES": root.deletingLastPathComponent().path]) { $1 }
     }
@@ -962,10 +964,10 @@ public enum Worktree {
 
     /// Procesi istega uporabnika s trenutno mapo v klonu (agent v ozadju): SIGKILL pred finalize.
     /// ponytail: proces, ki je zapustil klon (cd drugam), ostane; finalize ga omeji s peskovnikom.
-    /// N1: tudi proces, ki je zapustil klon (cd /) ali sejo: okolje agenta nosi GIT_WORK_TREE klona (harnessEnv).
+    /// N1: tudi proces, ki je zapustil klon (cd /) ali sejo: okolje agenta nosi MINIGW_CLONE (claudeEnv) ali GIT_WORK_TREE klona.
     static func killProcesses(in wt: URL) {
         guard let root = Sync.real(wt)?.path else { return }
-        let marks: Set<String> = ["GIT_WORK_TREE=" + wt.path, "GIT_WORK_TREE=" + root]
+        let marks: Set<String> = ["GIT_WORK_TREE=" + wt.path, "GIT_WORK_TREE=" + root, "MINIGW_CLONE=" + wt.path, "MINIGW_CLONE=" + root]  // #40: agenti brez GIT_WORK_TREE
         let n = proc_listallpids(nil, 0)
         guard n > 0 else { return }
         var pids = [pid_t](repeating: 0, count: Int(n) + 64)

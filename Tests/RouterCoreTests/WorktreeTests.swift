@@ -1677,13 +1677,15 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
     let wt = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("cx-" + UUID().uuidString)
     defer { try? fm.removeItem(at: wt) }
     let gits = [wt.path + "/.git", wt.path + "/lib/.git"]
-    let a = Codex.args(cwd: wt, extraDirs: ["/m"], agent: true, output: wt, write: true, gits: gits, path: "/gw/bin:/usr/bin").joined(separator: " ")
+    let a = Codex.args(cwd: wt, extraDirs: ["/m"], agent: true, output: wt, write: true, gits: gits, path: "/gw/bin:/usr/bin", deny: ["/cfg"]).joined(separator: " ")
+    #expect(a.contains(#""/cfg"="none""#) && a.contains("shell_environment_policy.set.GIT_CEILING_DIRECTORIES=\"" + wt.deletingLastPathComponent().path + "\""))
     for want in [#"default_permissions="minigw""#, "\"\(gits[1])\"=\"write\"", "\"\(gits[1])/config\"=\"read\"", "\"\(gits[0])/hooks\"=\"read\"",
                  #""/m"="write""#, #"shell_environment_policy.exclude=["GIT_DIR","GIT_WORK_TREE","GIT_COMMON_DIR"]"#, #"shell_environment_policy.set.PATH="/gw/bin:/usr/bin""#] {
         #expect(a.contains(want), "\(want)")
     }
     #expect(!a.contains("workspace-write") && !a.contains("--sandbox"))
-    #expect(Worktree.claudeEnv(root: wt, maven: wt, gitexec: wt.appendingPathComponent("gx"), agent: "codex")?["GIT_DIR"] == wt.path + "/.git")
+    let cenv = Worktree.claudeEnv(root: wt, maven: wt, gitexec: wt.appendingPathComponent("gx"), agent: "codex")
+    #expect(cenv?["GIT_DIR"] == "/dev/null" && cenv?["GIT_COMMON_DIR"] == "/dev/null" && cenv?["MINIGW_CLONE"] == wt.path && cenv?["PATH"] == nil)  // M2, N1
     guard let exe = ["/opt/homebrew/bin/codex", "/usr/local/bin/codex"].first(where: { fm.isExecutableFile(atPath: $0) }) else { return }
     for d in gits.map({ String($0.dropLast(5)) }) { try fm.createDirectory(atPath: d, withIntermediateDirectories: true); g(URL(fileURLWithPath: d), "init", "-q") }
     let prof = Codex.treeProfile(writable: [wt.path], gits: gits, network: false, path: "/usr/bin:/bin")
@@ -1720,4 +1722,30 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
         linked = (try? fm.destinationOfSymbolicLink(atPath: dir.appendingPathComponent("lib").path)) != nil
     })
     #expect(!linked, "clone with a moved nested clone was reused")
+}
+
+/// #40 N1: proces agenta, ki je zapustil klon (cd /), s okoljem Claude CLI ali Codex (brez GIT_WORK_TREE) killProcesses
+/// ustavi pred finalize (znak MINIGW_CLONE).
+@Test func killProcessesFindsAgentsWithoutGitWorkTree() throws {
+    let fm = FileManager.default
+    let wt = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("kp-" + UUID().uuidString)
+    defer { try? fm.removeItem(at: wt) }
+    try fm.createDirectory(at: wt, withIntermediateDirectories: true)
+    // Ne sistemski program: macOS sistemskim (/bin/sleep) okolja v KERN_PROCARGS2 ne pokaže, agentom (node, codex) ga.
+    let src = wt.appendingPathComponent("s.c"), exe = wt.appendingPathComponent("s")
+    try Data("#include <unistd.h>\nint main(void){sleep(5);return 0;}\n".utf8).write(to: src)
+    let cc = Process(); cc.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun"); cc.arguments = ["clang", "-o", exe.path, src.path]
+    try cc.run(); cc.waitUntilExit()
+    try #require(cc.terminationStatus == 0)
+    for agent in ["claude", "codex"] {
+        let env = try #require(Worktree.claudeEnv(root: wt, maven: wt, gitexec: wt.appendingPathComponent("gx"), agent: agent))
+        #expect(env["GIT_WORK_TREE"] == nil || agent == "codex")
+        let p = Process()
+        p.executableURL = exe; p.currentDirectoryURL = URL(fileURLWithPath: "/")
+        p.environment = ["MINIGW_CLONE": env["MINIGW_CLONE"] ?? "", "PATH": "/usr/bin:/bin"]
+        try p.run()
+        Worktree.killProcesses(in: wt)
+        p.waitUntilExit()
+        #expect(p.terminationReason == .uncaughtSignal && p.terminationStatus == SIGKILL, "\(agent)")
+    }
 }

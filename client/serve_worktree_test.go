@@ -1790,7 +1790,8 @@ func TestWorktreeHarnessEnvGitConfig(t *testing.T) {
 		}
 	}
 	codex := strings.Join(worktreeClaudeEnv("/w", "/m", "/t", gw, []string{"/w/.git"}, "codex"), "\n")
-	if !strings.Contains(codex, "GIT_DIR=/w/.git") || strings.Contains("\n"+codex, "\nPATH=") { // harness Codex ostane v vrhnjem
+	if !strings.Contains(codex, "GIT_DIR="+os.DevNull) || !strings.Contains(codex, "GIT_COMMON_DIR="+os.DevNull) || !strings.Contains(codex, "MINIGW_CLONE=/w") ||
+		strings.Contains("\n"+codex, "\nPATH=") { // M2: harness Codex ne dela v klonu
 		t.Fatalf("Codex env: %s", codex)
 	}
 	if path != filepath.Join(gw, "bin")+":/usr/bin:/bin" {
