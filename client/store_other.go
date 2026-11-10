@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 )
 
@@ -216,6 +217,64 @@ func msiexecPath() string               { return "msiexec" }
 func protectDir(string) error { return nil } // drugod: mapa 0700, datoteke 0600
 
 func releaseScratch() {} // le Windows (L1′: ročaj mape Scratch)
+
+// scratchFolderMine (N4): prava mapa (ne povezava) tega uporabnika.
+func scratchFolderMine(dir string) bool { return ownedByMe(dir) }
+
+// scratchLock (N4): flock na scratchLockFile v mapi Scratch te instance, dokler prehod teče.
+var scratchLock struct {
+	sync.Mutex
+	f *os.File
+}
+
+// oNoBlock (N4): datoteke lastnika in zaklepa: podtaknjena cev ne blokira, povezava se ne sledi.
+const oNoBlock = syscall.O_NONBLOCK | syscall.O_NOFOLLOW
+
+// lockScratch: errScratchHeld = zaklep drži drug proces; druga napaka (ni navadna datoteka, flock ni podprt) = brez zaklepa.
+func lockScratch(dir string) error {
+	scratchLock.Lock()
+	defer scratchLock.Unlock()
+	if scratchLock.f != nil { // flock velja za odprto datoteko: tudi naša prejšnja bi zaklep zavrnila
+		scratchLock.f.Close()
+		scratchLock.f = nil
+	}
+	f, err := os.OpenFile(filepath.Join(dir, scratchLockFile), os.O_RDWR|os.O_CREATE|oNoBlock, 0o600)
+	if err != nil {
+		return err
+	}
+	if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() {
+		f.Close()
+		return errors.New(scratchLockFile + " is not a regular file")
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); errors.Is(err, syscall.EWOULDBLOCK) {
+		f.Close()
+		return errScratchHeld
+	} else if err != nil {
+		f.Close()
+		return err
+	}
+	scratchLock.f = f
+	return nil
+}
+
+// scratchLocked: zaklep mape dir drži drug prehod (ki teče).
+func scratchLocked(dir string) bool {
+	f, err := os.OpenFile(filepath.Join(dir, scratchLockFile), os.O_RDONLY|oNoBlock, 0)
+	if errors.Is(err, os.ErrNotExist) {
+		return false
+	} else if err != nil {
+		return true // zaprto: ni mogoče preveriti
+	}
+	defer f.Close()
+	if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() {
+		return true
+	}
+	if syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) != nil {
+		return true
+	}
+	syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return false
+}
 
 // protectScratch (L2): mapa s kopijami map odjemalcev je naša (Lstat: ne povezava) in le naša (0700).
 func protectScratch(dir string) error {

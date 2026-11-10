@@ -72,6 +72,9 @@ type serveConfig struct {
 	Copilot          agentCLI      `json:"copilot"`                  // GitHub Copilot CLI, privzeto izklopljen (le branje)
 	// #68 (odločitev 7): omrežje gradenj Claude CLI v načinu worktree, kot »Network for builds« na Macu; nil = vklopljeno.
 	WorktreeNetwork *bool `json:"worktreeNetwork,omitempty"`
+
+	// N4: trajni ID te namestitve prehoda (datoteka lastnika v Scratch; ensureInstance)
+	Instance string `json:"instance,omitempty"`
 }
 
 // worktreeNet: »Network for builds« (privzeto vklopljeno, kot na Macu).
@@ -339,6 +342,9 @@ func serveCommand(args []string) {
 		c.Port = *port
 	}
 	deprecatedFolder(&c, *folder)
+	if err := ensureInstance(*cfgPath, &c); err != nil {
+		fail(err.Error())
+	}
 	s, err := newServer(c, *cfgPath)
 	if err != nil {
 		fail(err.Error())
@@ -349,7 +355,9 @@ func serveCommand(args []string) {
 		fail(err.Error())
 	}
 	s.announce(ln)
-	sandboxInit(s.conf().Scratch, s.cfgDir, s.log.Printf) // #68: Windows, preizkus škatle MXC pred strežbo
+	if !s.scratchOther.Load() { // N4: v mapi drugega prehoda nič (tudi ne čiščenje gitexec in mxc)
+		sandboxInit(s.conf().Scratch, s.cfgDir, s.log.Printf) // #68: Windows, preizkus škatle MXC pred strežbo
+	}
 	fail(s.serve(ln).Error())
 }
 
@@ -363,28 +371,31 @@ func newServeConfig() serveConfig {
 	k, _ := ecdh.X25519().GenerateKey(rand.Reader)
 	t := make([]byte, 24)
 	rand.Read(t)
-	return serveConfig{Token: "mgw-" + base64url(t), Key: base64url(k.Bytes()), Port: 8765, Tools: defaultTools,
-		PermissionMode: "dontAsk", Devices: []serveDevice{}, Scratch: newScratchDefault()}
+	c := serveConfig{Token: "mgw-" + base64url(t), Key: base64url(k.Bytes()), Port: 8765, Tools: defaultTools,
+		PermissionMode: "dontAsk", Devices: []serveDevice{}, Instance: newInstanceID()}
+	if base := newScratchDefault(); base != "" { // N4, odločitev 3: <osnova>\<instanca>
+		c.Scratch = filepath.Join(base, c.Instance)
+	}
+	return c
 }
 
-// newScratchDefault (#68, odločitev lastnika): Windows: Scratch nove namestitve zunaj domače mape (škatla MXC sicer
-// pokaže imena v njej): prvi fiksni pogon, ki ni sistemski, sicer sistemski, mapa minigw-scratch\<uporabnik>
-// (protectScratch ji da zaščiten DACL le za lastnika; korenske mape na C: sicer podedujejo Authenticated Users). Drugod ""
-// (defaultScratch, kot prej). Obstoječe namestitve ostanejo, kjer so.
+// newScratchDefault (#68, odločitev lastnika; N4, odločitev 3): privzeta OSNOVA za Scratch (mapa prehoda je
+// <osnova>\<instanca>). Windows: zunaj domače mape (škatla MXC sicer pokaže imena v njej): prvi fiksni pogon, ki ni
+// sistemski, sicer sistemski, mapa minigw-scratch (protectScratch ji da DACL scratchParentSDDL). Drugod
+// <predpomnilnik>/minigw-scratch. Obstoječe namestitve (0.5.23 <osnova>\<uporabnik>, prazno = defaultScratch) ostanejo.
 func newScratchDefault() string {
 	if runtime.GOOS != "windows" {
+		if dir, err := os.UserCacheDir(); err == nil {
+			return filepath.Join(dir, "minigw-scratch")
+		}
 		return ""
 	}
 	drives, system := fixedDrives()
-	u := os.Getenv("USERNAME")
-	if u == "" || strings.ContainsAny(u, `\/:*?"<>|`) {
-		u = "user"
-	}
-	return pickScratch(drives, system, u)
+	return pickScratch(drives, system)
 }
 
-// pickScratch: <prvi fiksni ne-sistemski pogon>\minigw-scratch\<u>, sicer <sistemski>\minigw-scratch\<u>.
-func pickScratch(drives []string, system, user string) string {
+// pickScratch: <prvi fiksni ne-sistemski pogon>\minigw-scratch, sicer <sistemski>\minigw-scratch.
+func pickScratch(drives []string, system string) string {
 	root := system
 	for _, d := range drives {
 		if !strings.EqualFold(d, system) {
@@ -395,7 +406,7 @@ func pickScratch(drives []string, system, user string) string {
 	if root == "" {
 		root = "C:"
 	}
-	return strings.TrimRight(root, `\`) + `\minigw-scratch\` + user
+	return strings.TrimRight(root, `\`) + `\minigw-scratch`
 }
 
 // announce: vrstica zagona, opozorila o ključih prehodov in odkrivanje modelov v ozadju.
@@ -459,6 +470,7 @@ type server struct {
 	// agentsRunning: tekoči procesi agentov (claude, codex, grok), za status in posodobitev brez prekinitve
 	agentsRunning atomic.Int32
 	scratchGate   sync.RWMutex // zahteve odjemalcev bralno, premik Scratch pisalno (serve_scratchmove.go)
+	scratchOther  atomic.Bool  // N4: Scratch je mapa drugega prehoda: brez agentov in čiščenja (serve_scratchowner.go)
 	foundry       foundryState // Foundry Local: vrata, modeli
 	key           *ecdh.PrivateKey
 	log           *log.Logger
@@ -564,6 +576,10 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	if len(exe) == 0 {
 		s.log.Printf("WARNING: claude not found (install Claude Code or set \"claude\" in the config); no models")
 	}
+	if s.cfg.Instance == "" { // le testi (zagon ga shrani prej, ensureInstance)
+		s.cfg.Instance = newInstanceID()
+	}
+	s.claimScratch()
 	return s, nil
 }
 
@@ -1269,6 +1285,10 @@ func (s *server) route(w http.ResponseWriter, r *req) (int, string) {
 		return writeError(w, r.rid, 503, scratchMovingMsg), ""
 	}
 	defer s.scratchGate.RUnlock()
+	if s.scratchOther.Load() { // N4: mapa drugega prehoda
+		c := s.conf()
+		return writeError(w, r.rid, 503, "Gateway: "+scratchOtherMsg(c.Scratch, scratchState(c.Scratch, c.Instance))), ""
+	}
 	switch r.Method + " " + path {
 	case "GET /v1/models":
 		return writeJSON(w, r.rid, 200, s.modelList()), ""

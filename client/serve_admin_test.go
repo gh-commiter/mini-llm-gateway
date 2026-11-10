@@ -549,8 +549,8 @@ func TestParityGeneralAndClaude(t *testing.T) {
 	if st, _ := admin("PATCH", adminPrefix+"/general", `{"allowedClients":"not-an-ip"}`); st != 400 {
 		t.Fatal("bad IP accepted")
 	}
-	sc := filepath.Join(nonTempDir(t), "scratch") // M1: začasne mape so zavrnjene
-	if st, b := admin("PATCH", adminPrefix+"/general", `{"scratch":"`+sc+`"}`); st != 200 || s.conf().Scratch != sc {
+	sc := filepath.Join(nonTempDir(t), "scratch") // M1: začasne mape so zavrnjene; odločitev 3: osnova
+	if st, b := admin("PATCH", adminPrefix+"/general", `{"scratch":"`+sc+`"}`); st != 200 || s.conf().Scratch != filepath.Join(sc, s.conf().Instance) {
 		t.Fatalf("scratch: %d %s", st, b)
 	}
 	for _, bad := range []string{filepath.Join(t.TempDir(), "x"), "/"} { // začasna mapa, koren diska
@@ -634,11 +634,12 @@ func TestScratchFolderProtected(t *testing.T) {
 	if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/general", `{"scratch":"`+open+`"}`); st != 200 {
 		t.Fatalf("scratch: %d %s", st, b)
 	}
-	if fi, _ := os.Stat(open); fi.Mode().Perm() != 0o700 {
+	if fi, _ := os.Stat(s.conf().Scratch); fi.Mode().Perm() != 0o700 || filepath.Dir(s.conf().Scratch) != open {
 		t.Fatalf("mode %v", fi.Mode())
 	}
-	link := filepath.Join(nonTempDir(t), "link")
-	os.Symlink(open, link)
+	link := filepath.Join(nonTempDir(t), "link") // odločitev 3: povezava na mestu <osnova>/<instanca>
+	os.Mkdir(link, 0o700)
+	os.Symlink(open, filepath.Join(link, s.conf().Instance))
 	if st, _ := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/general", `{"scratch":"`+link+`"}`); st != 400 {
 		t.Fatalf("symlink accepted: %d", st)
 	}

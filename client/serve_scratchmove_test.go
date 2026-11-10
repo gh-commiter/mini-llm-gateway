@@ -113,7 +113,8 @@ func TestMoveScratchAPI(t *testing.T) {
 	s, cfg, _ := liveServer(t, nil)
 	old := s.conf().Scratch
 	scratchFixture(t, old)
-	dst := filepath.Join(nonTempDir(t), "moved")
+	to := filepath.Join(nonTempDir(t), "moved")
+	dst := filepath.Join(to, s.conf().Instance) // odločitev 3: "to" je osnova
 	api := func(body string) (int, map[string]any) {
 		st, obj := s.adminDo("POST", "/general/scratch/move", []byte(body))
 		m, _ := obj.(map[string]any)
@@ -124,19 +125,19 @@ func TestMoveScratchAPI(t *testing.T) {
 	}
 	// zaposlen: tekoča zahteva drži bralno ključavnico, seja v hubu, agent
 	s.scratchGate.RLock()
-	if st, m := api(`{"to":"` + filepath.ToSlash(dst) + `"}`); st != 409 || !strings.Contains(errMsg(m), "sessions or agents are active") {
+	if st, m := api(`{"to":"` + filepath.ToSlash(to) + `"}`); st != 409 || !strings.Contains(errMsg(m), "sessions or agents are active") {
 		t.Fatalf("busy request: %d %v", st, m)
 	}
 	s.scratchGate.RUnlock()
 	s.agentsRunning.Add(1)
-	if st, _ := api(`{"to":"` + filepath.ToSlash(dst) + `"}`); st != 409 {
+	if st, _ := api(`{"to":"` + filepath.ToSlash(to) + `"}`); st != 409 {
 		t.Fatalf("busy agent: %d", st)
 	}
 	s.agentsRunning.Add(-1)
 	if st, _ := api(`{"to":"relative"}`); st != 400 {
 		t.Fatalf("relative: %d", st)
 	}
-	if st, m := api(`{"to":"` + filepath.ToSlash(dst) + `"}`); st != 200 || m["scratch"] != filepath.Clean(dst) {
+	if st, m := api(`{"to":"` + filepath.ToSlash(to) + `"}`); st != 200 || m["scratch"] != filepath.Clean(dst) {
 		t.Fatalf("move: %d %v", st, m)
 	}
 	checkFixture(t, dst)
@@ -150,7 +151,7 @@ func TestMoveScratchAPI(t *testing.T) {
 	}
 	back := filepath.Join(nonTempDir(t), "back")
 	out = stdout(t, func() { routerCommand([]string{"scratch", "move", back, "--config", cfg}, strings.NewReader("")) })
-	if !strings.Contains(out, "Scratch folder: "+back) || s.conf().Scratch != back {
+	if back = filepath.Join(back, s.conf().Instance); !strings.Contains(out, "Scratch folder: "+back) || s.conf().Scratch != back {
 		t.Fatalf("cli move: %q %q", out, s.conf().Scratch)
 	}
 	checkFixture(t, back)
@@ -191,7 +192,7 @@ func TestMoveScratchConfigFailureRollsBack(t *testing.T) {
 	if s.conf().Scratch != old {
 		t.Fatal("scratch switched")
 	}
-	if _, err := os.Stat(dst); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(dst, s.conf().Instance)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("target left: %v", err)
 	}
 }

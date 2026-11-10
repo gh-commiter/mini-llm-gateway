@@ -15,6 +15,10 @@ public struct RequestLog: Sendable, Identifiable, Codable {
     public var bytes: Int?          // velikost telesa zahteve (od 0.5.21; starejši activity.json nima)
     public var device: String?      // ID naprave, kot v zgodovini sej
     public var deviceName: String?
+
+    public init(time: Date, method: String, path: String, model: String?, provider: String?, status: Int, ms: Int) {
+        (self.time, self.method, self.path, self.model, self.provider, self.status, self.ms) = (time, method, path, model, provider, status, ms)
+    }
 }
 
 /// Tekoča zahteva za »Activity«: začetek, zadnji korak agenta (ukaz, datoteka), konec. Le metapodatki.
@@ -257,6 +261,11 @@ public final class Router: Sendable {
     }
 
     private func routeAllowed(_ req: HTTPRequest, rid: String, writer: ResponseWriter) async -> (Int, String?, String?) {
+        if ScratchOwner.blocked.withLock({ $0 }) {  // N4: Scratch je mapa drugega prehoda
+            let st = ScratchOwner.state(config.scratchURL, id: config.instanceID)
+            return (await error(503, "api_error", "Gateway: " + ScratchOwner.message(config.scratchURL, st.isEmpty ? ScratchOwner.stale : st),
+                                rid: rid, writer: writer), nil, nil)
+        }
 
         switch (req.method, req.path) {
         case ("GET", "/v1/models"):

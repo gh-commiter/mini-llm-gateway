@@ -158,6 +158,44 @@ func general(u *ui) ([]row, error) {
 		ed("Folder", str(g, "scratch"), func(v string) (string, error) { return patch(map[string]any{"scratch": v}) }),
 		btn("Use the default folder", "", func() (string, error) { return patch(map[string]any{"scratch": ""}) }),
 	)
+	switch str(g, "scratchState") { // N4: mapa drugega prehoda; Take over le, ko ta ne teče
+	case "in-use":
+		rows = append(rows, inf("  Used by another gateway, which is running: agents are off; choose a folder of this gateway.", ""),
+			btn("Take over", "", func() (string, error) { return "", errInUse }))
+	case "stale":
+		rows = append(rows, inf("  Stale owner: another gateway's folder, not running; agents are off.", ""),
+			btn("Take over", "Take over the other gateway's Scratch folder? It is renamed to this gateway's name", func() (string, error) {
+				r, err := u.call("POST", "/general/scratch/take", nil)
+				if err != nil {
+					return "", err
+				}
+				if w := str(r, "warning"); w != "" {
+					return "Taken over: " + str(r, "scratch") + "; " + w, nil
+				}
+				return "Taken over: " + str(r, "scratch") + ".", nil
+			}))
+	}
+	others, _ := g["scratchOthers"].([]any) // N4: sosednje mape drugih prehodov v osnovi
+	for _, o := range others {
+		m, _ := o.(map[string]any)
+		name := str(m, "name")
+		if str(m, "state") == "in-use" {
+			rows = append(rows, inf("  "+clean(name)+": used by another gateway (running)", ""),
+				btn("Take over "+clean(name), "", func() (string, error) { return "", errInUse }))
+			continue
+		}
+		rows = append(rows, inf("  "+clean(name)+": stale owner (another gateway's folder, not running)", ""),
+			btn("Take over "+clean(name), "Take over "+clean(name)+"? It becomes this gateway's Scratch folder; the current one is deleted without conversations, else kept aside", func() (string, error) {
+				r, err := u.call("POST", "/general/scratch/take", map[string]any{"name": name})
+				if err != nil {
+					return "", err
+				}
+				if w := str(r, "warning"); w != "" {
+					return "Taken over: " + str(r, "scratch") + "; " + w, nil
+				}
+				return "Taken over: " + str(r, "scratch") + ".", nil
+			}))
+	}
 	if sug := str(g, "scratchSuggest"); sug != "" {
 		rows = append(rows, inf("  It is inside your home folder (agents in the Windows sandbox can list the names there); move it to "+sug+".", ""))
 	}
@@ -878,3 +916,6 @@ func loginRows(kind string, a map[string]any, p func(map[string]any) (string, er
 	}
 	return rows
 }
+
+// errInUse (N4): Take over ni mogoč, dokler drug prehod teče (drži zaklep mape).
+var errInUse = errors.New("used by another gateway that is running: stop it first (Take over works only for a stale owner)")

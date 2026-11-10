@@ -538,9 +538,11 @@ later (the Windows process container). Settings page → General → About shows
 1.0.1)", or "not available (reason)"; then agents run only with **Allow commands without a sandbox**, as in 0.5.22.
 With the sandbox that switch is not needed for Claude CLI, Copilot and Grok (Codex still needs it, see below).
 New installs (`minigw serve init`, the tray's first start) and the settings page's Scratch **Default** button put the
-Scratch folder at `minigw-scratch\<Windows user name>` on the first fixed drive that is not the system drive, else on
-the system drive (for example `D:\minigw-scratch\ana`), with an access list only your user can open. Existing installs
-keep their Scratch folder; when it is inside your home folder (for example the old default
+Scratch folder at `minigw-scratch\<instance>` on the first fixed drive that is not the system drive, else on
+the system drive (for example `D:\minigw-scratch\gw-3f9a1c2b7d4e`; 0.5.24), with an access list only your user can open.
+Each gateway has its own folder `<base>\<instance>` with an owner file; a folder of another gateway is not used, and
+after a reinstall **Take over** in the Scratch row (or `minigw gw scratch take [NAME]`) renames the old folder to the
+new gateway's. Existing installs (for example `D:\minigw-scratch\ana`) keep their Scratch folder; when it is inside your home folder (for example the old default
 `%LOCALAPPDATA%\minigw\scratch`) the gateway warns and proposes the new location. Move it with
 `minigw gw scratch move [DIR]` (no DIR: the proposed folder), the settings page's Scratch **Move…** button or
 `minigw gw settings` → General → Move everything to. The move takes everything along (mirrors, clones, `$MINIGW_DEPS`,

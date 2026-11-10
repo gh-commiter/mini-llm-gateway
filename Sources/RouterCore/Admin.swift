@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import os
 
 /// Kar skrbniški API (docs/admin-api.md) potrebuje od aplikacije. Nastavitve so aplikacijine: `update` jih spremeni
 /// prek istega `apply` kot okno Settings (shrani, znova zažene router), zato jih okno takoj prikaže. Ključi so v
@@ -429,8 +430,10 @@ extension Router {
             }
         case "GET agents/{}/tools":
             guard arg == "claude" else { throw AdminError(404, "no agent \(arg)") }
+            try Self.scratchGuard(c)
             return (200, ["tools": await Self.toolList.get(c.claudeCLI.executable)])
         case "GET agents/{}/models":  // Codex, Grok: modeli računa (kot minigw serve)
+            try Self.scratchGuard(c)
             switch arg {
             case "codex":
                 guard let exe = await Codex.executable(c.codex.executable) else { return (200, ["models": [Any]()]) }
@@ -605,7 +608,7 @@ extension Router {
                     let expanded = (scratch as NSString).expandingTildeInPath
                     guard expanded.hasPrefix("/") else { throw AdminError(400, "scratch folder: an absolute path") }
                     let url = URL(fileURLWithPath: expanded, isDirectory: true)
-                    if let why = RouterConfig.scratchProblem(url, allowedRoots: c.claudeCLI.allowedRoots) { throw AdminError(400, "scratch folder: \(why)") }
+                    if let why = RouterConfig.scratchProblem(url, allowedRoots: c.claudeCLI.allowedRoots, name: c.instanceID) { throw AdminError(400, "scratch folder: \(why)") }
                     newScratch = Sync.real(url)?.path ?? url.path
                 } else { newScratch = "" }
                 if await hooks.scratchInUse() {
@@ -619,10 +622,14 @@ extension Router {
             }
             let moveTo = newScratch
             let n = try await hooks.update { c in
-                if let newScratch = moveTo, newScratch != c.scratchFolder {  // L2: premik v isti spremembi nastavitev (trenutna, ne posnetek)
-                    let to = newScratch.isEmpty ? RouterConfig.defaultScratch : RouterConfig.dedicated(URL(fileURLWithPath: newScratch, isDirectory: true))
-                    do { try RouterConfig.moveScratch(from: c.scratchURL, to: to) } catch { throw AdminError(500, "scratch folder: \(error.localizedDescription)") }
+                // L2: premik v isti spremembi nastavitev (trenutna, ne posnetek); odločitev 3: <osnova>/<instanca>
+                if let newScratch = moveTo, c.scratchTarget(newScratch.isEmpty ? nil : URL(fileURLWithPath: newScratch, isDirectory: true)).path != c.scratchURL.path {
+                    let to = c.scratchTarget(newScratch.isEmpty ? nil : URL(fileURLWithPath: newScratch, isDirectory: true))
+                    if !ScratchOwner.blocked.withLock({ $0 }) {  // N4: mapa drugega prehoda ostane; ta začne svojo
+                        do { try RouterConfig.moveScratch(from: c.scratchURL, to: to) } catch { throw AdminError(500, "scratch folder: \(error.localizedDescription)") }
+                    }
                     c.scratchFolder = newScratch
+                    if !c.instanceID.isEmpty { c.scratchName = c.instanceID }
                 }
                 if let port { c.port = UInt16(port) }
                 if let address { c.host = address }
@@ -634,6 +641,22 @@ extension Router {
                 if let wtCodexNet { c.worktreeCodexNetwork = wtCodexNet }
             }
             return (200, general(n, connect: hooks.connect))  // aplikacija znova zažene router: brez restartRequired
+        case "POST general/{}/take":  // N4: Take over (Settings → General → Scratch folder; ScratchOwner.take)
+            guard arg == "scratch" else { throw AdminError(404, "Not found: \(method) \(path)") }
+            let name = body.isEmpty ? nil : try AdminBody(body, ["name"]).string("name")  // sosednja mapa v osnovi
+            if await hooks.scratchInUse() {
+                throw AdminError(409, "scratch folder: minigw sessions or agents are active; take it over when no minigw session runs")
+            }
+            let aside = OSAllocatedUnfairLock<String?>(initialState: nil)
+            let n = try await hooks.update { c in
+                do { let a = try ScratchOwner.take(&c, name: name); aside.withLock { $0 = a?.path } } catch let e as ScratchOwner.TakeError {
+                    throw AdminError(e.status, e.message)
+                }
+            }
+            var g = general(n, connect: hooks.connect)
+            g["connect"] = nil
+            if let a = aside.withLock({ $0 }) { g["warning"] = "this gateway's previous folder is kept as \(a)" }
+            return (200, g)
         case "POST general/{}":
             guard arg == "token" else { throw AdminError(404, "Not found: \(method) \(path)") }
             return (200, general(c, connect: await hooks.rotateToken()))  // cela vrstica minigw connect, kot v Go
@@ -694,11 +717,23 @@ extension Router {
          "devices": c.devices.map { ["id": $0.id, "name": $0.name, "siri": $0.siri] }]
     }
 
+    /// N4: v mapi drugega prehoda nič (kot minigw serve: tudi poizvedbe orodij in modelov).
+    static func scratchGuard(_ c: RouterConfig) throws {
+        guard ScratchOwner.blocked.withLock({ $0 }) else { return }
+        let st = ScratchOwner.state(c.scratchURL, id: c.instanceID)
+        throw AdminError(503, ScratchOwner.message(c.scratchURL, st.isEmpty ? ScratchOwner.stale : st))
+    }
+
     func general(_ c: RouterConfig, connect: String) -> [String: Any] {
-        ["port": Int(c.port), "address": c.host, "allowedClients": c.allowedClients, "allowPlainRemote": c.allowPlainRemote,
+        var g: [String: Any] = ["port": Int(c.port), "address": c.host, "allowedClients": c.allowedClients, "allowPlainRemote": c.allowPlainRemote,
          "scratch": c.scratchURL.path, "allowAnyDevice": c.allowAnyDevice, "allowLocalApps": c.allowLocalApps,
          "worktreeNetwork": c.worktreeNetwork, "worktreeCodexNetwork": c.worktreeCodexNetwork,
          "connect": "minigw connect \(c.host == "0.0.0.0" || c.host == "::" ? Self.localIP() : c.host):\(c.port) --token '\(connect)'"]
+        if !c.instanceID.isEmpty, case let st = ScratchOwner.state(c.scratchURL, id: c.instanceID), !st.isEmpty { g["scratchState"] = st }  // N4: in-use, stale
+        if !c.instanceID.isEmpty, case let o = ScratchOwner.siblings(c.scratchURL, id: c.instanceID), !o.isEmpty {
+            g["scratchOthers"] = o.map { ["name": $0.name, "state": $0.state] }  // N4: mape drugih prehodov v osnovi
+        }
+        return g
     }
 
     func gateway(_ p: ProviderConfig, ready: Bool) -> [String: Any] {

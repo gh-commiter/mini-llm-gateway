@@ -124,14 +124,16 @@ final class AppState: ObservableObject {
             Task { @MainActor in self?.pendingChanged(Router.deviceLog.pending) }
         }
         ShareHub.cleanupStale()
-        NativeHub.cleanupStale(config.scratch("tmp").appendingPathComponent("native-markers"))  // označbe native po sesutju
-        NativeHub.cleanupRunTemps(config.scratch("tmp"))  // začasne mape minigw run po sesutju
-        Worktree.prune(scratch: config.scratchURL)  // worktree: zrcala, ki jih 30 dni ni uporabil noben agent
-        // Kloni prejšnjega zagona: le imena klonov (<lastnik>-<16 hex>[-ro].<n>), nikoli cela mapa.
-        let runs = config.scratch("sync").appendingPathComponent("runs")
-        for n in (try? FileManager.default.contentsOfDirectory(atPath: runs.path)) ?? []
-        where n.range(of: #"^.+-[0-9a-f]{16}(-ro)?\.[0-9]+$"#, options: .regularExpression) != nil {
-            try? FileManager.default.removeItem(at: runs.appendingPathComponent(n))
+        if ScratchOwner.claim(config.scratchURL, id: config.instanceID).isEmpty {  // N4: v mapi drugega prehoda nič
+            NativeHub.cleanupStale(config.scratch("tmp").appendingPathComponent("native-markers"))  // označbe native po sesutju
+            NativeHub.cleanupRunTemps(config.scratch("tmp"))  // začasne mape minigw run po sesutju
+            Worktree.prune(scratch: config.scratchURL)  // worktree: zrcala, ki jih 30 dni ni uporabil noben agent
+            // Kloni prejšnjega zagona: le imena klonov (<lastnik>-<16 hex>[-ro].<n>), nikoli cela mapa.
+            let runs = config.scratch("sync").appendingPathComponent("runs")
+            for n in (try? FileManager.default.contentsOfDirectory(atPath: runs.path)) ?? []
+            where n.range(of: #"^.+-[0-9a-f]{16}(-ro)?\.[0-9]+$"#, options: .regularExpression) != nil {
+                try? FileManager.default.removeItem(at: runs.appendingPathComponent(n))
+            }
         }
         start()
     }
@@ -229,6 +231,7 @@ final class AppState: ObservableObject {
     }
 
     func start() {
+        ScratchOwner.claim(config.scratchURL, id: config.instanceID)  // N4: nova mapa po premiku ali prevzemu (Router zavrača)
         Router.history.prune(allowed: Set(config.devices.map(\.id)))  // odstranjena naprava: brez priklopov, seje označene
         let router = Router(config: config, token: token, secrets: keychain, onLog: { [weak self] entry in
             Task { @MainActor in
@@ -335,6 +338,23 @@ final class AppState: ObservableObject {
     }
 
     func reject(_ p: DeviceLog.Pending) { Router.deviceLog.removePending(p.id) }
+
+    /// N4: Take over iz Settings po isti poti kot skrbniški API (sprememba nastavitev na glavni niti, nato ponovni zagon
+    /// routerja), zapisano tudi v Activity. Vrne napako ali nil.
+    func takeScratch(_ name: String?) async -> String? {
+        if await Router.scratchInUse() {
+            return String(localized: "minigw sessions or agents are active. Take over the scratch folder when no minigw session runs.")
+        }
+        let start = Date()
+        var c = config
+        var status = 200, failure: String?
+        do { _ = try ScratchOwner.take(&c, name: name); apply(c) } catch let e as ScratchOwner.TakeError {
+            (status, failure) = (e.status, e.message)
+        } catch { (status, failure) = (500, error.localizedDescription) }
+        logs = Array(([RequestLog(time: start, method: "POST", path: "/general/scratch/take", model: nil, provider: "settings",
+                                  status: status, ms: Int(Date().timeIntervalSince(start) * 1000))] + logs).prefix(500))
+        return failure
+    }
 
     func apply(_ c: RouterConfig) {
         config = c

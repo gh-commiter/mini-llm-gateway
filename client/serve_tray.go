@@ -437,6 +437,9 @@ func startTrayRouter(cfgPath string) (s *server, ln net.Listener, logPath string
 		return nil, nil, logPath, false, err
 	}
 	c.Log = "" // newServer naj ne odpre še enkrat
+	if err = ensureInstance(cfgPath, &c); err != nil {
+		return nil, nil, logPath, false, err
+	}
 	if s, err = newServer(c, cfgPath); err != nil {
 		return nil, nil, logPath, false, err
 	}
@@ -444,6 +447,8 @@ func startTrayRouter(cfgPath string) (s *server, ln net.Listener, logPath string
 		return nil, nil, logPath, false, fmt.Errorf("port %d: %v (is minigw serve already running?)", c.Port, err)
 	}
 	s.announce(ln)
-	sandboxInit(s.conf().Scratch, s.cfgDir, s.log.Printf) // #68: Windows, preizkus škatle MXC pred strežbo
+	if !s.scratchOther.Load() { // N4: v mapi drugega prehoda nič
+		sandboxInit(s.conf().Scratch, s.cfgDir, s.log.Printf) // #68: Windows, preizkus škatle MXC pred strežbo
+	}
 	return s, ln, logPath, fresh, nil
 }

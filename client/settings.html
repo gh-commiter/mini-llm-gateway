@@ -135,8 +135,16 @@ const S = {
     "minigw vedno šifrira. Vklopi le za druge odjemalce v zaupanja vrednem omrežju; nimajo ključa naprave, zato potrebujejo še »vsaka naprava« pod Naprave."],
   scratch: ["Scratch folder", "Mapa za začasne datoteke"], default: ["Default", "Privzeto"],
   move: ["Move…", "Premakni …"],
-  moveAsk: ["Move the whole Scratch folder (mirrors, clones, dependencies, caches, agent state) to this folder. It works only while no minigw session or agent runs; new sessions wait until it is done.",
-    "Premakni celo mapo Scratch (zrcala, klone, odvisnosti, predpomnilnike, stanje agentov) v to mapo. Gre le, ko ne teče nobena seja minigw ali agent; nove seje počakajo, da je premik končan."],
+  moveAsk: ["Move the whole Scratch folder (mirrors, clones, dependencies, caches, agent state) into this folder, in a subfolder named after this gateway. It works only while no minigw session or agent runs; new sessions wait until it is done.",
+    "Premakni celo mapo Scratch (zrcala, klone, odvisnosti, predpomnilnike, stanje agentov) v to mapo, v podmapo z imenom tega prehoda. Gre le, ko ne teče nobena seja minigw ali agent; nove seje počakajo, da je premik končan."],
+  scratchInUse: ["Used by another gateway, which is running. Agents are off: choose a folder of this gateway (Move…).",
+    "Uporablja jo drug prehod, ki teče. Agenti so izklopljeni: izberi mapo tega prehoda (Premakni …)."],
+  scratchStale: ["Stale owner: another gateway's folder, and that gateway is not running. Agents are off: take the folder over or choose another one (Move…).",
+    "Zastarel lastnik: mapa drugega prehoda, ki ne teče. Agenti so izklopljeni: prevzemi mapo ali izberi drugo (Premakni …)."],
+  takeOver: ["Take over", "Prevzemi"], taken: ["Taken over: %s", "Prevzeto: %s"],
+  otherInUse: ["%s: used by another gateway", "%s: uporablja jo drug prehod"], otherStale: ["%s: stale owner", "%s: zastarel lastnik"],
+  othersHint: ["Folders of other gateways next to this gateway's Scratch folder. Take over renames a stale one to this gateway's folder; this gateway's current folder is deleted when it holds no conversations, else kept aside.",
+    "Mape drugih prehodov ob mapi Scratch tega prehoda. Prevzemi preimenuje zastarelo v mapo tega prehoda; trenutna mapa tega prehoda se izbriše, če nima pogovorov, sicer ostane ob strani."],
   moving: ["Moving… (a copy to another disk can take a while)", "Premikam … (kopija na drug disk lahko traja)"],
   moved: ["Moved to %s", "Premaknjeno v %s"],
   scratchSuggest: ["The Scratch folder is inside your home folder. Move it to %s (Move…).", "Mapa Scratch je v domači mapi. Premakni jo v %s (Premakni …)."],
@@ -587,8 +595,24 @@ const pages = {
     const line = value("•".repeat(24), true);
     const showBtn = button(t("show"), () => { shown = !shown; line.textContent = shown ? token().split("#")[0] : "•".repeat(24); showBtn.textContent = t(shown ? "hide" : "show"); });
     const scratch = el("input", {type: "text", class: "left wide", value: g.scratch});
+    const owner = el("div", {class: "note warn", textContent: g.scratchState ? t(g.scratchState === "in-use" ? "scratchInUse" : "scratchStale") : ""});
     const ns = el("div", {class: "note warn", textContent: g.scratchSuggest ? t("scratchSuggest", g.scratchSuggest) : ""});
     autosave(scratch, n4, v => api("PATCH", "/general", {scratch: v}));
+    // N4: mapa drugega prehoda; Take over le, ko ga ni (zaklep ni zaseden)
+    const take = button(t("takeOver"), async () => {
+      const r = await save(n4, () => api("POST", "/general/scratch/take"), r => r.warning || t("taken", r.scratch));
+      if (r) { scratch.value = r.scratch; owner.textContent = ""; take.hidden = true; }
+    });
+    take.hidden = !g.scratchState;
+    take.disabled = g.scratchState === "in-use";
+    const others = (g.scratchOthers || []).map(o => {  // N4: sosednje mape drugih prehodov v osnovi
+      const b = button(t("takeOver"), async () => {
+        const r = await save(n4, () => api("POST", "/general/scratch/take", {name: o.name}), r => r.warning || t("taken", r.scratch));
+        if (r) { scratch.value = r.scratch; owner.textContent = ""; take.hidden = true; b.closest(".row").remove(); }
+      });
+      b.disabled = o.state === "in-use";
+      return row(t(o.state === "in-use" ? "otherInUse" : "otherStale", o.name), buttons(b));
+    });
     const sb = st.agentSandbox, n6 = note(t(win && !(sb && sb.kind === "mxc") ? "worktreeNetworkNoBox" : "worktreeNetworkHelp"));
     return [
       card(...ICON.general, t("general"), t("generalDesc")),
@@ -619,9 +643,9 @@ const pages = {
           const to = prompt(t("moveAsk"), g.scratchSuggest || scratch.value);
           if (!to || !to.trim()) return;
           const r = await save(n4, () => { n4.textContent = t("moving"); return api("POST", "/general/scratch/move", {to: to.trim()}); }, r => r.warning || t("moved", r.scratch));
-          if (r) { scratch.value = r.scratch; g.scratchSuggest = r.scratchSuggest; ns.textContent = r.scratchSuggest ? t("scratchSuggest", r.scratchSuggest) : ""; }
-        })))),
-      ns, n4,
+          if (r) { scratch.value = r.scratch; g.scratchSuggest = r.scratchSuggest; ns.textContent = r.scratchSuggest ? t("scratchSuggest", r.scratchSuggest) : ""; owner.textContent = ""; take.hidden = true; }
+        }), take)),
+      owner, ns, others.length ? group(...others) : null, others.length ? note(t("othersHint")) : null, n4,
       section(t("worktreeMode")),
       group(row(t("worktreeNetwork"), toggle(g.worktreeNetwork, v => save(n6, () => api("PATCH", "/general", {worktreeNetwork: v}))))),
       n6,
