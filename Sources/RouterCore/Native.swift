@@ -290,8 +290,10 @@ public enum Native {
         env["PATH"] = (env["PATH"].map { $0 + ":" } ?? "") + "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
         env["TMPDIR"] = runTmp.path + "/"; env["TMP"] = runTmp.path; env["TEMP"] = runTmp.path
         env["CLANG_MODULE_CACHE_PATH"] = runTmp.appendingPathComponent("ModuleCache").path
-        // V narekovajih: Scratch je lahko na disku s presledkom v imenu (JDK 9+ jih razčleni).
-        env["JAVA_TOOL_OPTIONS"] = (env["JAVA_TOOL_OPTIONS"].map { $0 + " " } ?? "") + "-Djava.io.tmpdir=\"" + runTmp.path + "\""
+        // V narekovajih le s presledkom (Scratch na »Fast SSD«; JDK 9+ jih razčleni, JDK 8 jih pusti v poti).
+        // Narekovaja v poti scratchProblem ne dovoli.
+        let jt = runTmp.path.contains(" ") ? "\"" + runTmp.path + "\"" : runTmp.path
+        env["JAVA_TOOL_OPTIONS"] = (env["JAVA_TOOL_OPTIONS"].map { $0 + " " } ?? "") + "-Djava.io.tmpdir=" + jt
         env["xcrun_db"] = nil; env["xcrun_nocache"] = "1"
         return env
     }
@@ -418,6 +420,17 @@ public actor NativeHub {
                 unlink(path)
             }
             unlink(r.path)
+        }
+    }
+
+    /// #24: zasebne začasne mape `minigw run` (<Scratch>/tmp/run-req_<32 hex>), ki jih je pustil sesutje. Le mape s tem
+    /// imenom; povezava se ne sledi (removeItem odstrani povezavo, ne cilja; tip iz lstat).
+    public static func cleanupRunTemps(_ tmp: URL) {
+        let fm = FileManager.default
+        for n in (try? fm.contentsOfDirectory(atPath: tmp.path)) ?? []
+        where n.range(of: #"^run-req_[0-9a-f]{32}$"#, options: .regularExpression) != nil {
+            let p = tmp.appendingPathComponent(n)
+            if (try? fm.attributesOfItem(atPath: p.path)[.type] as? FileAttributeType) == .typeDirectory { try? fm.removeItem(at: p) }
         }
     }
 

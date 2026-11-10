@@ -552,9 +552,41 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
                              "SSH_AUTH_SOCK": "/s", "xcrun_db": "/d", "PATH": "/usr/bin"], runTmp: run)
     #expect(env["TMPDIR"] == run.path + "/" && env["TMP"] == run.path && env["TEMP"] == run.path)
     #expect(env["CLANG_MODULE_CACHE_PATH"] == run.path + "/ModuleCache")
-    #expect(env["JAVA_TOOL_OPTIONS"] == "-Xmx1g -Djava.io.tmpdir=\"" + run.path + "\"")
+    #expect(env["JAVA_TOOL_OPTIONS"] == "-Xmx1g -Djava.io.tmpdir=\"" + run.path + "\"")  // presledek: v narekovajih
+    let plain = URL(fileURLWithPath: "/Volumes/SSD/Scratch/tmp/run-1")
+    #expect(Native.runEnv([:], runTmp: plain)["JAVA_TOOL_OPTIONS"] == "-Djava.io.tmpdir=" + plain.path)  // brez: JDK 8
     #expect(env["ANTHROPIC_API_KEY"] == nil && env["SSH_AUTH_SOCK"] == nil && env["xcrun_db"] == nil && env["xcrun_nocache"] == "1")
     #expect(env["PATH"]?.hasPrefix("/usr/bin:") == true)
+}
+
+/// #24 L1: Scratch z narekovajem v poti (JAVA_TOOL_OPTIONS, profil peskovnika) je zavrnjen, tudi kot obstoječa mapa.
+@Test func scratchRefusesQuoteInPath() throws {
+    #expect(RouterConfig.scratchProblem(URL(fileURLWithPath: "/Volumes/X/a\"b"), allowedRoots: "") == "its path contains a quotation mark")
+    let fm = FileManager.default
+    let base = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("q24-" + UUID().uuidString)
+    defer { try? fm.removeItem(at: base) }
+    let real = base.appendingPathComponent("a\"b"), link = base.appendingPathComponent("link")
+    try fm.createDirectory(at: real, withIntermediateDirectories: true)
+    try fm.createSymbolicLink(at: link, withDestinationURL: real)
+    #expect(RouterConfig.scratchProblem(link, allowedRoots: "") == "its path contains a quotation mark")  // razrešena pot
+}
+
+/// #24 L2: ob zagonu ostanejo le mape run-req_<32 hex>; druga imena, datoteke in povezave (ter njihov cilj) ostanejo.
+@Test func cleanupRunTempsRemovesOnlyRunFolders() throws {
+    let fm = FileManager.default
+    let base = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("rt24-" + UUID().uuidString)
+    defer { try? fm.removeItem(at: base) }
+    let tmp = base.appendingPathComponent("tmp"), target = base.appendingPathComponent("target")
+    let hex = String(repeating: "0123456789abcdef", count: 2), hex2 = String(repeating: "fedcba9876543210", count: 2)
+    try fm.createDirectory(at: tmp.appendingPathComponent("run-req_" + hex + "/ModuleCache"), withIntermediateDirectories: true)
+    for n in ["native-markers", "run-req_XYZ", "run-" + UUID().uuidString] { try fm.createDirectory(at: tmp.appendingPathComponent(n), withIntermediateDirectories: true) }
+    try fm.createDirectory(at: target, withIntermediateDirectories: true)
+    try Data("k".utf8).write(to: target.appendingPathComponent("keep"))
+    try fm.createSymbolicLink(at: tmp.appendingPathComponent("run-req_" + hex2), withDestinationURL: target)
+    NativeHub.cleanupRunTemps(tmp)
+    let left = Set(try fm.contentsOfDirectory(atPath: tmp.path))
+    #expect(!left.contains("run-req_" + hex) && left.contains("native-markers") && left.contains("run-req_XYZ") && left.count == 4)
+    #expect(fm.fileExists(atPath: target.appendingPathComponent("keep").path))  // cilj povezave nedotaknjen
 }
 
 /// #24: peskovnik minigw run ne dovoli /private/tmp in ne datotek v DARWIN_USER_TEMP_DIR; z okoljem runEnv gre začasno
