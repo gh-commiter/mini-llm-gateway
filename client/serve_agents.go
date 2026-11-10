@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -194,14 +195,16 @@ func parseGrokCatalog(text string) []agentModel {
 
 // codexArgs: kot Codex.args na Macu. Agent piše le v mapi seje in dovoljenih mapah (sandbox Codex); brez orodij
 // (naslovi, povzetki) le branje in brez zapisa seje. resume: nit Codex za nadaljevanje (možnosti exec veljajo zanjo).
-func codexArgs(cwd string, extraDirs []string, agent bool, output, model string, write, network bool, resume string) []string {
+func codexArgs(cwd string, extraDirs []string, agent bool, output, model string, write, network bool, resume string, gits []string, path string, deny []string) []string {
 	a := []string{"exec", "--json", "--skip-git-repo-check", "--color", "never", "-C", cwd, "-o", output}
 	if model != "" {
 		a = append(a, "-m", model)
 	}
 	// Sandbox tudi kot -c: »exec resume« nima --sandbox in --add-dir, -c pa sprejme (I5).
 	sandbox := []string{"-c", `sandbox_mode="read-only"`}
-	if agent && write {
+	if agent && write && len(gits) > 0 { // #40: klon, profil dovoljenj namesto workspace-write
+		sandbox = codexTreeProfile(append([]string{cwd}, extraDirs...), gits, deny, network, path)
+	} else if agent && write {
 		a = append(a, "--sandbox", "workspace-write")
 		for _, d := range extraDirs {
 			a = append(a, "--add-dir", d)
@@ -219,6 +222,42 @@ func codexArgs(cwd string, extraDirs []string, agent bool, output, model string,
 		a = append(a, "resume", resume)
 	}
 	return append(append(a, sandbox...), "-") // navodila prek stdin
+}
+
+// codexTreeProfile (#40, kot Codex.treeProfile na Macu): v klonu profil dovoljenj Codex namesto workspace-write, ki
+// .git vsake pisljive mape zaklene v celoti (commit ni mogoč): .git vsakega klona pisljiv razen nastavitev, hookov,
+// info, commondir in preusmeritev (git harnessa jih bere zunaj peskovnika). Ukazi agenta: PATH z ovojem in brez
+// GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR (harness: /dev/null), iskanje repozitorija ne nad klonom (L1). deny: mape
+// brez dostopa (L3: mapa nastavitev prehoda, kot --deny pri Grok).
+func codexTreeProfile(writable, gits, deny []string, network bool, path string) []string {
+	fs := map[string]string{"/": "read", "/private/tmp": "write", "/tmp": "write"}
+	for _, d := range deny {
+		fs[d] = "none"
+	}
+	for _, d := range writable {
+		fs[d] = "write"
+	}
+	for _, g := range gits {
+		fs[g] = "write"
+		for _, d := range gitDenies {
+			fs[filepath.Join(g, d)] = "read"
+		}
+	}
+	keys := slices.Sorted(maps.Keys(fs))
+	var b strings.Builder
+	for i, k := range keys {
+		q, _ := json.Marshal(k)
+		if i > 0 {
+			b.WriteString(",")
+		}
+		b.WriteString(string(q) + `="` + fs[k] + `"`)
+	}
+	p, _ := json.Marshal(path)
+	c, _ := json.Marshal(filepath.Dir(filepath.Dir(gits[0]))) // nad vrhnjim klonom
+	return []string{"-c", `default_permissions="minigw"`, "-c", "permissions.minigw.filesystem={" + b.String() + "}",
+		"-c", fmt.Sprintf("permissions.minigw.network.enabled=%v", network),
+		"-c", `shell_environment_policy.exclude=["GIT_DIR","GIT_WORK_TREE","GIT_COMMON_DIR"]`, "-c", "shell_environment_policy.set.PATH=" + string(p),
+		"-c", "shell_environment_policy.set.GIT_CEILING_DIRECTORIES=" + string(c)}
 }
 
 // grokArgs: kot Grok.args na Macu; jedrni sandbox »workspace« piše le v mapo seje (dodatnih map ne dovoli).
@@ -860,7 +899,12 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			}
 		} else if k.name == "codex" {
 			out := filepath.Join(tmp, "codex.txt")
-			args := codexArgs(dir, extra, agent, out, model, write, ac.Network, resume)
+			var cgits, cdeny []string
+			cpath := ""
+			if inTree && runtime.GOOS != "windows" {
+				cgits, cpath, cdeny = gits, agentPath(gw), []string{s.cfgDir}
+			}
+			args := codexArgs(dir, extra, agent, out, model, write, ac.Network, resume, cgits, cpath, cdeny)
 			var failure string
 			err = s.runAgentProcess(ctx, r, exe, args, withTree(m), dir, prompt, func(line []byte) {
 				if f := codexFailure(line); f != "" {

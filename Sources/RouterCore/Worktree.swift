@@ -480,29 +480,41 @@ public enum Worktree {
     /// agentovi) z »git« iz mape exec: ovoj pusti le git s klonovim GIT_DIR (MINIGW_GIT_DIR), drugo zavrne. Ostale datoteke
     /// so povezave na pravo mapo exec. `gitexec` je v Scratch (agenti tja ne pišejo). nil = ovoja ni.
     /// `gits`: .git vseh klonov (vrhnji in ugnezdeni, ShareHub.worktree); prazno = le vrhnji.
-    /// #40: PATH najprej `gitexec`/bin (pathWrapScript), za vse agente: navodilo ponudi git -C v ugnezdenem klonu. `path`: PATH procesa.
+    /// #40: PATH najprej `gitexec`/bin (pathWrapScript) in brez GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR vrhnjega klona (git -C
+    /// <ugnezdeni> bi sicer delal v vrhnjem; ovoj jih nastavi za vsak klic, git mimo njega najde repozitorij sam, ne nad
+    /// klonom: GIT_CEILING_DIRECTORIES). Harness Codex (zunaj peskovnika) jih obdrži, ukazi dobijo ovoj prek Codex.args.
+    /// `path`: PATH procesa (kot Go worktreeClaudeEnv).
     public static func claudeEnv(root: URL, maven: URL, gitexec: URL, gits: [String] = [], agent: String,
                                  path: String = ProcessInfo.processInfo.environment["PATH"] ?? "") -> [String: String]? {
         guard let wrap = wrapEnv(gitDirs: gits.isEmpty ? [root.appendingPathComponent(".git").path] : gits, gitexec: gitexec) else { return nil }
-        let rest = path.split(separator: ":").map(String.init).filter { $0.hasPrefix("/") }  // L2: le absolutne (ne mapa v klonu agenta)
-        let bin = ([gitexec.appendingPathComponent("bin").path] + (rest.isEmpty ? ["/usr/bin", "/bin"] : rest)).joined(separator: ":")
-        return harnessEnv(root: root, maven: maven, agent: agent).merging(wrap) { $1 }.merging(["PATH": bin]) { $1 }
+        let env = harnessEnv(root: root, maven: maven, agent: agent).merging(wrap) { $1 }
+        // M2: git harnessa Codex (zunaj peskovnika) ne dela v klonu (GIT_DIR=/dev/null); ukazi dobijo ovoj prek Codex.args.
+        // N1: MINIGW_CLONE za killProcesses.
+        if agent == "codex" { return env.merging(["GIT_DIR": "/dev/null", "GIT_COMMON_DIR": "/dev/null", "MINIGW_CLONE": root.path]) { $1 } }
+        return env.filter { !["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR"].contains($0.key) }.merging(
+            ["PATH": agentPath(gitexec: gitexec, path: path), "MINIGW_CLONE": root.path, "GIT_CEILING_DIRECTORIES": root.deletingLastPathComponent().path]) { $1 }
+    }
+
+    /// PATH agenta, najprej ovoj `gitexec`/bin; L2: le absolutne poti (kot Go agentPath).
+    static func agentPath(gitexec: URL, path: String) -> String {
+        let rest = path.split(separator: ":").map(String.init).filter { $0.hasPrefix("/") }
+        return ([gitexec.appendingPathComponent("bin").path] + (rest.isEmpty ? ["/usr/bin", "/bin"] : rest)).joined(separator: ":")
     }
 
     /// Ime avtorja commitov agenta (kot Go agentAuthor).
     static func author(_ agent: String) -> String { agent.prefix(1).uppercased() + agent.dropFirst() + " (Mini Gateway)" }
 
     /// #40 (enak kot Go pathWrapScript, testdata/pathwrap.golden): »git« na PATH agenta dela v registriranem klonu
-    /// (MINIGW_GIT_DIRS), ki vsebuje trenutno mapo ali pot -C; drugače ostane okolje (vrhnji klon).
+    /// (MINIGW_GIT_DIRS), ki vsebuje trenutno mapo ali pot -C; drugače v vrhnjem (prvi vnos).
     static func pathWrapScript(real: String) -> String {
         "#!/bin/sh\n# minigw: git works in the registered clone (MINIGW_GIT_DIRS) that holds the folder or the -C <path>\n"
             + "real='" + real.replacingOccurrences(of: "'", with: #"'\''"#) + #"'; d=$(pwd -P) || exec "$real" "$@""# + "\n"
             + #"i=1; while [ $i -le $# ]; do eval "a=\${$i}"; case $a in"# + "\n"
-            + #"  -C) i=$((i+1)); eval "p=\${$i}"; case $p in /*) ;; *) p=$d/$p;; esac; d=$(cd "$p" 2>/dev/null && pwd -P) || exec "$real" "$@";;"# + "\n"
+            + #"  -C) i=$((i+1)); eval "p=\${$i}"; case $p in /*) ;; *) p=$d/$p;; esac; q=$(cd "$p" 2>/dev/null && pwd -P) && d=$q || break;;"# + "\n"
             + #"  -c) i=$((i+1));; -*) ;; *) break;; esac; i=$((i+1)); done"# + "\n"
             + "b=; g=; set -f; IFS='\n'\n"
             + #"for e in $MINIGW_GIT_DIRS; do w=$(cd "${e%/.git}" 2>/dev/null && pwd -P) || continue; case $d/ in "$w"/*) [ ${#w} -gt ${#b} ] && b=$w g=$e;; esac; done"# + "\n"
-            + #"[ -n "$g" ] && export GIT_DIR="$g" GIT_COMMON_DIR="$g" GIT_WORK_TREE="${g%/.git}""# + "\n"
+            + #"[ -n "$g" ] || g=${MINIGW_GIT_DIRS%%'"# + "\n" + #"'*}; [ -n "$g" ] && export GIT_DIR="$g" GIT_COMMON_DIR="$g" GIT_WORK_TREE="${g%/.git}""# + "\n"
             + #"exec "$real" "$@""# + "\n"
     }
 
@@ -952,10 +964,10 @@ public enum Worktree {
 
     /// Procesi istega uporabnika s trenutno mapo v klonu (agent v ozadju): SIGKILL pred finalize.
     /// ponytail: proces, ki je zapustil klon (cd drugam), ostane; finalize ga omeji s peskovnikom.
-    /// N1: tudi proces, ki je zapustil klon (cd /) ali sejo: okolje agenta nosi GIT_WORK_TREE klona (harnessEnv).
+    /// N1: tudi proces, ki je zapustil klon (cd /) ali sejo: okolje agenta nosi MINIGW_CLONE (claudeEnv) ali GIT_WORK_TREE klona.
     static func killProcesses(in wt: URL) {
         guard let root = Sync.real(wt)?.path else { return }
-        let marks: Set<String> = ["GIT_WORK_TREE=" + wt.path, "GIT_WORK_TREE=" + root]
+        let marks: Set<String> = ["GIT_WORK_TREE=" + wt.path, "GIT_WORK_TREE=" + root, "MINIGW_CLONE=" + wt.path, "MINIGW_CLONE=" + root]  // #40: agenti brez GIT_WORK_TREE
         let n = proc_listallpids(nil, 0)
         guard n > 0 else { return }
         var pids = [pid_t](repeating: 0, count: Int(n) + 64)

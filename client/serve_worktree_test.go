@@ -1750,7 +1750,7 @@ func TestPathWrapScript(t *testing.T) {
 		{top, []string{"-C", "missing", "status"}, harness},
 	} {
 		cmd := exec.Command(wrap, c.args...)
-		cmd.Dir, cmd.Env = c.cwd, append(os.Environ(), "GIT_DIR="+top+"/.git", "GIT_WORK_TREE="+top, "GIT_COMMON_DIR="+top+"/.git", "MINIGW_GIT_DIRS="+reg)
+		cmd.Dir, cmd.Env = c.cwd, append(os.Environ(), "MINIGW_GIT_DIRS="+reg) // #40: brez GIT_DIR v okolju; brez ujemanja vrhnji
 		out, err := cmd.Output()
 		if got := strings.TrimSpace(string(out)); err != nil || got != c.want+"|"+strings.Join(c.args, " ") {
 			t.Errorf("%s: git %v: %v %q, want %q", c.cwd, c.args, err, got, c.want)
@@ -1785,6 +1785,14 @@ func TestWorktreeHarnessEnvGitConfig(t *testing.T) {
 		if p, ok := strings.CutPrefix(kv, "PATH="); ok {
 			path = p
 		}
+		if k, _, _ := strings.Cut(kv, "="); k == "GIT_DIR" || k == "GIT_WORK_TREE" || k == "GIT_COMMON_DIR" { // #40
+			t.Fatalf("Claude env exports %s", kv)
+		}
+	}
+	codex := strings.Join(worktreeClaudeEnv("/w", "/m", "/t", gw, []string{"/w/.git"}, "codex"), "\n")
+	if !strings.Contains(codex, "GIT_DIR="+os.DevNull) || !strings.Contains(codex, "GIT_COMMON_DIR="+os.DevNull) || !strings.Contains(codex, "MINIGW_CLONE=/w") ||
+		strings.Contains("\n"+codex, "\nPATH=") { // M2: harness Codex ne dela v klonu
+		t.Fatalf("Codex env: %s", codex)
 	}
 	if path != filepath.Join(gw, "bin")+":/usr/bin:/bin" {
 		t.Fatalf("PATH without the git wrapper first: %q", path)
