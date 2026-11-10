@@ -155,10 +155,14 @@ public enum Native {
     /// Kanonična mapa je domača mapa sama, skrita mapa v njej (~/.ssh …) ali ~/Library (obeski, žetoni): nikoli native
     /// ali `minigw run`, za vsako shemo in tudi prek povezave (npr. ~/Google Drive → ~/Library/CloudStorage).
     public static func homeSecret(_ dir: String, home: String = NSHomeDirectory()) -> Bool {
-        guard let h = Sync.real(URL(fileURLWithPath: home))?.path, h != "/" else { return false }
-        if dir == h { return true }
-        guard dir.hasPrefix(h + "/"), let first = dir.dropFirst(h.count + 1).split(separator: "/").first else { return false }
-        return first.hasPrefix(".") || first.caseInsensitiveCompare("Library") == .orderedSame
+        guard let real = Sync.real(URL(fileURLWithPath: home))?.path, real != "/" else { return false }
+        // Firmlink: /System/Volumes/Data/Users/x je ista mapa kot /Users/x.
+        for h in [real, "/System/Volumes/Data" + real] {
+            if dir == h { return true }
+            guard dir.hasPrefix(h + "/"), let first = dir.dropFirst(h.count + 1).split(separator: "/").first else { continue }
+            if first.hasPrefix(".") || first.caseInsensitiveCompare("Library") == .orderedSame { return true }
+        }
+        return false
     }
 
     /// #74: samodejna shema domače mape (ime = uporabnik, ki se prijavi; `sharing -l` je ne izpiše) le za uporabnika

@@ -659,6 +659,10 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     #expect(Native.resolve(share: "Users", path: "Java/projects", shares: users, roots: f.root.path, home: home)?.path == f.project.path)
     #expect(!Native.homeSecret(f.project.path, home: home) && Native.homeSecret(cloud.path, home: home))
     #expect(!Native.homeSecret("/", home: "/"))
+    let realHome = Sync.real(URL(fileURLWithPath: home))!.path
+    #expect(Native.homeSecret("/System/Volumes/Data" + realHome + "/Library/LaunchAgents", home: home))
+    #expect(Native.homeSecret("/System/Volumes/Data" + realHome, home: home))
+    #expect(!Native.homeSecret("/System/Volumes/Data" + realHome + "/Development", home: home))
 }
 
 @Test func nativeSmbdEnabled() {
