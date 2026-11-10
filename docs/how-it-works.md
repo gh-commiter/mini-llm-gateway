@@ -249,6 +249,14 @@ user account there.
   `swift build` and `xcodebuild` work. The build can create such folders and write inside them, but cannot rename,
   delete or replace them or write any other file there. A build could still change the contents of such a folder that
   another program of yours is using at the same moment.
+- When the folder is on another disk (for example `/Volumes/Java`), Foundation puts its save copies on that disk, in
+  `/Volumes/<disk>/.TemporaryItems/folders.<uid>/TemporaryItems`. The same rule applies there: new `NSIRD_*` folders
+  (and that path's folders when missing), nothing else on the disk.
+- `swift build|test|run|package` get `--cache-path` in the run's temporary folder, so SwiftPM keeps its manifest and
+  repository cache in Scratch. SwiftPM's configuration and package fingerprints (`~/Library/org.swift.swiftpm`) stay
+  read-only, so your mirrors and the fingerprint check still apply; SwiftPM warns that it "is not accessible or not
+  writable". The warnings "couldn't create cache file '/var/folders/…/T/xcrun_db-…'" are harmless: `xcrun` then
+  runs without its cache.
 - It hides `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.netrc`, `~/.git-credentials`, `~/.npmrc`, `~/.pypirc`,
   `~/.gradle/gradle.properties`, shell histories, `~/.config`, `~/.docker`, `~/.kube`, the keychains, cookies,
   `~/Library/Application Support`, `Containers`, `Group Containers`, `Mail`, `Messages`, and Mini Gateway's Scratch

@@ -638,6 +638,26 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
     #expect(try sh("echo x > '\(scratch.path)/tmp/other'") != 0)  // drugje v Scratch ne
 }
 
+/// #24: mapa na drugem disku dobi le nove NSIRD_* v <disk>/.TemporaryItems/folders.<uid>/TemporaryItems (in manjkajoče
+/// mape do tja), mapa na zagonskem disku nič na drugem disku. Drug disk: prvi priklopljeni (sicer le del za zagonski disk).
+@Test func runProfileVolumeSaveCopies() throws {
+    var b = [CChar](repeating: 0, count: 1024)
+    #expect(confstr(_CS_DARWIN_USER_TEMP_DIR, &b, b.count) > 0)
+    let t = try #require(Sync.real(URL(fileURLWithPath: String(cString: b)))).path
+    let boot = try #require(Sync.real(FileManager.default.temporaryDirectory)).path
+    #expect(Native.volumeTempItems(boot, temp: t) == nil)
+    #expect(Native.darwinTempRules(dir: boot)?.contains(".TemporaryItems") == false)
+    let vols = FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: nil, options: [.skipHiddenVolumes]) ?? []
+    guard let vol = vols.compactMap({ Sync.real($0)?.path }).first(where: { $0.hasPrefix("/Volumes/") && Native.volumeTempItems($0, temp: t) != nil }) else { return }
+    let ti = vol + "/.TemporaryItems/folders.\(getuid())/TemporaryItems"
+    #expect(Native.volumeTempItems(vol, temp: t) == ti)
+    let rules = try #require(Native.darwinTempRules(dir: vol))
+    let ve = NSRegularExpression.escapedPattern(for: ti)
+    #expect(rules.contains("(allow file-write* (regex #\"^\(ve)/NSIRD_[^/]+/\"))"))
+    #expect(rules.contains("(regex #\"^\(ve)/NSIRD_[^/]+$\") (literal \"\(ti)\")"))
+    #expect(!rules.contains("(subpath") && rules.components(separatedBy: vol).count == 4)  // nič drugega na disku: le tri mape na poti (regex sta ubežna)
+}
+
 /// L3 (0.5.16): objects/info, globlja od omejitve brisanja: finalize ne izbriše do konca in ne vrne veje.
 @Test func worktreeFinalizeGivesUpOnTooDeepInfo() async throws {
     let (root, client, tree) = try fixture()

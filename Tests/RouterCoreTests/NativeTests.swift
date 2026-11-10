@@ -274,6 +274,12 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     #expect(Native.withoutNestedSandbox(["swift", "build", "-c", "release"]) == ["swift", "build", "--disable-sandbox", "-c", "release"])
     #expect(Native.withoutNestedSandbox(["swift", "--version"]) == ["swift", "--version"])
     #expect(Native.withoutNestedSandbox(["mvn", "-q"]) == ["mvn", "-q"])
+    // #24: predpomnilnik SwiftPM v zasebni mapi zagona; lastna --cache-path ostane
+    #expect(Native.withoutNestedSandbox(["swift", "build"], cache: "/s/c") == ["swift", "build", "--disable-sandbox", "--cache-path", "/s/c"])
+    #expect(Native.withoutNestedSandbox(["swift", "package", "resolve"], cache: "/s/c") == ["swift", "package", "--disable-sandbox", "--cache-path", "/s/c", "resolve"])
+    #expect(Native.withoutNestedSandbox(["swift", "build", "--cache-path=/x"], cache: "/s/c") == ["swift", "build", "--disable-sandbox", "--cache-path=/x"])
+    #expect(Native.withoutNestedSandbox(["swift", "test", "--disable-sandbox"], cache: "/s/c") == ["swift", "test", "--cache-path", "/s/c", "--disable-sandbox"])
+    #expect(Native.withoutNestedSandbox(["mvn"], cache: "/s/c") == ["mvn"])
 }
 
 @Test func nativeRunIsSandboxedAndEndsWithItsGroup() async throws {
