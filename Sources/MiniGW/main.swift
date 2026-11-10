@@ -2,6 +2,7 @@
 // Podpisan pomožni program v Mini Gateway.app (Contents/Helpers); Install v PATH naredi povezavo nanj.
 import CryptoKit
 import Foundation
+import os
 import RouterCore
 import Security
 
@@ -270,6 +271,11 @@ final class ShareClient: @unchecked Sendable {
     private var reported: Set<String> = []          // že javljene prevelike datoteke
     private var snaps: [String] = []                // worktree: posnetki, poslani prehodu (začetek dela agenta)
     private var nestedSnaps: [String: [String]] = [:]  // worktree: ugnezdeni repozitorij (pot) → njegovi poslani posnetki
+    var conv = Worktree.Conv()                       // worktree (#66): pogovor (Worktree.conversation); prazen = brez nadaljevanja
+    var gateway = ""                                 // worktree (#66): prehod (naslov profila); pogovor nadaljuje le na istem
+    private var chain: [String: Worktree.ConvRecord]?       // worktree (#66): poslani posnetek ali vrh → veriga (nil = še ni odločeno)
+    private var contTip: String?                     // worktree (#66): vrh, iz katerega začnejo vsi agenti zagona (nil = iz mape)
+    private var contRec: Worktree.ConvRecord?
     private var unpulled = false                    // spremembe agenta, ki niso bile prevzete in potrjene
 
     init(_ c: Connection, session: String, root: URL, readOnly: Bool, kind: String, top: String? = nil) {
@@ -374,18 +380,32 @@ final class ShareClient: @unchecked Sendable {
             if reported.insert(f.key).inserted { note(f.message) }
             return DAVResponse(500)
         }
-        guard upload(k, top, r.snap, have, 0) else { return DAVResponse(500) }
+        // #66: isti pogovor nadaljuje na vrhu svoje zadnje veje. Odločitev enkrat na zagon (prvi WORKTREE-PUSH): vsi
+        // agenti zagona začnejo iz istega začetka, neodvisno od vrstnega reda.
+        var snap = r.snap
+        if chain == nil {
+            chain = [:]
+            let c = Worktree.continueFrom(top: top, conv: conv.from, gateway: gateway, snap: snap, nested: !r.nested.isEmpty)
+            if let m = c.message { note(m) }
+            if let tip = c.tip, let rec = c.record { contTip = tip; contRec = Worktree.chain(top: top, base: rec.base, snap: snap) }
+        }
+        if let tip = contTip, let rec = contRec {
+            snap = tip; chain?[tip] = rec
+        } else if chain?[snap] == nil {
+            chain?[snap] = Worktree.chain(top: top, base: snap, snap: snap)
+        }
+        guard upload(k, top, snap, have, 0) else { return DAVResponse(500) }
         for (i, n) in r.nested.enumerated() {
             guard upload(k, top + "/" + n.path, n.snapshot, nestedHave?[Worktree.nestedKey(n.path)] as? [String] ?? [], i + 1) else { return DAVResponse(500) }
         }
-        snaps.append(r.snap)
+        snaps.append(snap)
         if snaps.count > 64 { snaps.removeFirst() }
         for n in r.nested {
             nestedSnaps[n.path, default: []].append(n.snapshot)
             if nestedSnaps[n.path]!.count > 64 { nestedSnaps[n.path]!.removeFirst() }
         }
         let nested = r.nested.map { ["path": $0.path, "snapshot": $0.snapshot] }
-        return DAVResponse(200, [:], (try? JSONSerialization.data(withJSONObject: ["snapshot": r.snap, "nested": nested] as [String: Any])) ?? Data())
+        return DAVResponse(200, [:], (try? JSONSerialization.data(withJSONObject: ["snapshot": snap, "nested": nested] as [String: Any])) ?? Data())
     }
 
     /// Bundle posnetka repozitorija dir brez objektov, ki jih zrcalo ima, po delih do 32 MB (idx > 0: ugnezden).
@@ -438,7 +458,17 @@ final class ShareClient: @unchecked Sendable {
         if let why = Worktree.fetch(top: dir, bundle: file, branch: branch) {
             note("worktree: " + (rel.map { "nested repository \(oneLine($0)): " } ?? "") + why); return false
         }
-        branchNote(branch, Worktree.agentBase(top: dir, branch: branch, sent: rel.flatMap { nestedSnaps[$0] } ?? snaps), nested: rel)
+        let sent = Worktree.agentBase(top: dir, branch: branch, sent: rel.flatMap { nestedSnaps[$0] } ?? snaps)
+        if let rel {
+            branchNote(branch, sent, nested: rel)
+        } else {
+            let (base, continued) = Worktree.remember(top: dir, conv: conv, gateway: gateway, branch: branch, sent: sent, chain: chain ?? [:])
+            if !continued {
+                branchNote(branch, base)
+            } else if reported.insert("branch::\(branch)@\(base)").inserted {
+                note(Worktree.continuedLine(branch: branch, base: base))
+            }
+        }
         return true
     }
 
@@ -951,17 +981,21 @@ setenv("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1", 1)
 // Seja: router po njej loči seje claude -p in niti Siri. Obstoječa ob --resume <id>, sicer nova.
 var sid = ""
 var own = false
+// #66: cont (-c), picker (--resume brez ID-ja), parent (ID ob --resume), fork (--fork-session), explicit (--session-id)
+var cont = false, picker = false, fork = false, explicit = false, parent = ""
 for (i, a) in args.enumerated() {
     switch a {
     case "-r", "--resume":  // brez ID-ja = izbirnik sej v claude; nikoli skupaj z --session-id
         own = true
-        if i + 1 < args.count, !args[i + 1].hasPrefix("-") { sid = args[i + 1] }
-    case let a where a.hasPrefix("--resume="): own = true; sid = String(a.dropFirst("--resume=".count))
-    case "--session-id": if i + 1 < args.count { sid = args[i + 1] }; own = true
-    case "-c", "--continue": own = true
+        if i + 1 < args.count, !args[i + 1].hasPrefix("-") { sid = args[i + 1]; parent = sid } else { picker = true }
+    case let a where a.hasPrefix("--resume="): own = true; sid = String(a.dropFirst("--resume=".count)); parent = sid
+    case "--session-id": if i + 1 < args.count { sid = args[i + 1] }; own = true; explicit = true
+    case "-c", "--continue": own = true; cont = true
+    case "--fork-session": fork = true
     default: break
     }
 }
+if fork, !parent.isEmpty, !explicit { sid = "" }  // L2: razcepljen pogovor je na prehodu nova seja (svoja veja), ne seja starša
 if sid.isEmpty {
     sid = UUID().uuidString.lowercased()  // tudi pri -c/--continue: router po njem deli mapo
     if !own { args = ["--session-id", sid] + args }
@@ -1016,6 +1050,18 @@ if tries.isEmpty {
     fail("--minigw-work=\(flagWork ?? "") is not possible in \(cwd), and inside Claude Code minigw does not fall back to direct "
         + "(the agent would change your files without a branch to review); put MINIGW_WORK=direct in front of the command instead")
 }
+/// #66: ključ pogovora enkrat na zagon (tudi za druge prehode).
+let convKey = OSAllocatedUnfairLock<Worktree.Conv?>(initialState: nil)
+@Sendable func conversation(_ top: String?) -> Worktree.Conv {
+    guard let top else { return Worktree.Conv() }
+    return convKey.withLock { k in
+        if k == nil {
+            k = Worktree.conversation(top: top, rel: Worktree.relCwd(top: top, cwd: cwd), session: sid, parent: parent, cont: cont, picker: picker, fork: fork)
+        }
+        return k!
+    }
+}
+
 var share = ShareClient(c, session: sid, root: URL(fileURLWithPath: cwd), readOnly: readOnly, kind: "direct")
 var registered = false
 if wantShare, !sid.isEmpty {
@@ -1027,6 +1073,7 @@ let capped = share.capped  // pred start: ponovna registracija ga lahko prepiše
 if !wantShare || sid.isEmpty {
     // le šifrirani proxy
 } else if registered {
+    if share.worktree { share.conv = conversation(share.top); share.gateway = saved.url }
     share.start()
     if share.native && share.branches {
         err.write(Data("minigw: \(cwd) is a folder of \(routerHost) (SMB): agent models work there in clones of this git repository, each on its own branch minigw/… (native; --minigw-work=native-direct = in the folder itself)\n".utf8))
@@ -1083,10 +1130,11 @@ if profiles.count > 1 {
         let remote = !p.conn.isLocal
         let want = shareEnv == "1" || (shareEnv != "0" && remote && (SharedFolders.autoShare(cwd) || SharedFolders.lookup(sharedFolders(), cwd: cwd) != nil))
         guard want, !sid.isEmpty else { continue }
-        let name = p.name
+        let name = p.name, gw = p.conn.url
         hooks[name] = {
             let (sc, ok) = registerShare(rc, tries: tries, quiet: true)
             guard ok else { err.write(Data("minigw: gateway \(name) did not accept the folder: \(sc.refusal)\n".utf8)); return false }
+            if sc.worktree { sc.conv = conversation(sc.top); sc.gateway = gw }
             sc.start(); extras.add(sc)
             return true
         }

@@ -611,26 +611,35 @@ func main() {
 	}
 
 	// Seja: router po njej loči seje claude -p in niti Siri. Obstoječa ob --resume <id>, sicer nova.
-	sid, own := "", false
+	// #66: cont (-c), picker (--resume brez ID-ja), parent (ID ob --resume), fork (--fork-session), explicit (--session-id)
+	sid, own, cont, picker, fork, explicit, parent := "", false, false, false, false, false, ""
 	for i, a := range args {
 		switch a {
 		case "-r", "--resume": // brez ID-ja = izbirnik sej v claude; nikoli skupaj z --session-id
 			own = true
 			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-				sid = args[i+1]
+				sid, parent = args[i+1], args[i+1]
+			} else {
+				picker = true
 			}
 		case "--session-id":
 			if i+1 < len(args) {
 				sid = args[i+1]
 			}
-			own = true
+			own, explicit = true, true
 		case "-c", "--continue":
-			own = true
+			own, cont = true, true
+		case "--fork-session":
+			fork = true
 		default:
 			if strings.HasPrefix(a, "--resume=") {
 				own, sid = true, strings.TrimPrefix(a, "--resume=")
+				parent = sid
 			}
 		}
+	}
+	if fork && parent != "" && !explicit {
+		sid = "" // L2: razcepljen pogovor je na prehodu nova seja (svoja veja), ne seja starša
 	}
 	if sid == "" {
 		sid = newUUID() // tudi pri -c/--continue: router po njem deli mapo
@@ -680,6 +689,13 @@ func main() {
 			"(the agent would change your files without a branch to review); put MINIGW_WORK=direct in front of the command instead")
 	}
 	share := &shareClient{c: c, session: sid, root: cwd, readOnly: readOnly, synced: map[string]syncEntry{}, reported: map[string]bool{}}
+	// #66: ključ pogovora enkrat na zagon (tudi za druge prehode)
+	var convOnce sync.Once
+	var convKey wtConv
+	conv := func(top string) wtConv {
+		convOnce.Do(func() { convKey = wtConversation(top, wtRel(top, cwd), sid, parent, cont, picker, fork) })
+		return convKey
+	}
 	if wantShare && sid != "" {
 		if work == "worktree" && top == "" {
 			fmt.Fprintln(os.Stderr, "minigw: "+cwd+" is not in a git repository; worktree mode is not possible")
@@ -691,6 +707,7 @@ func main() {
 		share, ok = registerShare(c, sid, cwd, readOnly, top, tries, false, implicit)
 		capped := share.capped // pred start: ponovna registracija ga piše pod share.mu
 		if ok && share.worktree {
+			share.conv, share.gateway = conv(share.top), saved.URL
 			share.start(4)
 			fmt.Fprintf(os.Stderr, "minigw: agent models work in a clone of this git repository on %s; their work comes back as branch minigw/… (minigw prints the range to review; your uncommitted and untracked, not ignored files are sent too; worktree)\n", routerHost)
 		} else if ok && share.native && share.branches {
@@ -747,6 +764,9 @@ func main() {
 					if !ok {
 						fmt.Fprintln(os.Stderr, "minigw: gateway "+p.name+" did not accept the folder: "+oneLine(sc.refusal))
 						return false
+					}
+					if sc.worktree {
+						sc.conv, sc.gateway = conv(sc.top), p.conn.URL
 					}
 					sc.start(4)
 					mu.Lock()

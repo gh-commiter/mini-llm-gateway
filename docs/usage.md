@@ -210,6 +210,33 @@ git branch -D minigw/codex-1a2b3c4d-0
 On the gateway, mirrors and clones that no agent used for 30 days are removed; `minigw serve` removes a session's
 clone when the session ends.
 
+**Continuing a conversation:** `minigw -p --continue …` (or `--resume <id>`) starts the agent from the
+conversation's last branch, not from your folder, so it sees the files it made in the earlier turns. It does so even
+when your folder changed since the last turn (your own edits, new commits, a branch you cherry-picked or applied); those changes
+are not in the agent's copy, and minigw says so:
+
+```
+minigw: worktree: continuing from minigw/codex-1a2b3c4d-0; changes in your folder since the last turn are not in the agent's copy
+```
+
+The new branch contains the earlier turns too, and its line says
+`(<base> = your state when this conversation started; this branch includes the earlier turns)`: one range covers the
+whole conversation, so bring in only the newest branch (after applying an earlier one, review the range for what is
+new). `--resume <id>` reuses that session's branch name, which moves forward; `--continue` gets a new branch name each
+turn.
+
+- `--continue` takes the last conversation minigw ran in this folder (per folder, like Claude Code's `-c`);
+  `--resume <id>` that session; `--resume <id> --fork-session` continues from that session's branch, and the fork then
+  goes on as its own conversation. `--resume` without an id (the session picker) starts from your folder.
+- All agents of one minigw run start from the same point (decided at the run's first agent), so agents in one turn
+  stay independent of each other. The next turn continues from the branch that came back last in the previous run.
+- It starts from your folder, with one line `minigw: worktree: starting from your folder, not from minigw/…: <reason>`,
+  when you deleted the branch, when the conversation ran on another gateway (the branch of gateway A is never sent to
+  gateway B), or in a repository with nested repositories; also for a conversation that has no branch yet. A branch
+  you already merged into `HEAD` starts from your folder without a line: your folder has its work and your newer work.
+- To start a conversation fresh from your folder, delete its branch (`git branch -D minigw/…`).
+- minigw keeps the last branch per conversation in `.git/minigw-continue.json`.
+
 **What the fetch does not do:** it takes only a git bundle, checks objects (fsck), runs no hooks, submodules or
 filters, and does not change `.git/config`. If you committed on that branch yourself, your commits stay and the
 agent's version is not fetched.
