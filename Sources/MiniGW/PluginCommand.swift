@@ -82,7 +82,7 @@ func warn(_ s: String) { err.write(Data(("minigw: " + s + "\n").utf8)) }
 func pluginLink(_ self: String) throws -> String? {
     let bin = pluginDataDir + "/bin"
     if sameFile((self as NSString).deletingLastPathComponent, bin) { return nil }
-    guard PluginSetup.safeAncestors(self), PluginSetup.safePath(self) else { throw PluginSetup.Failure(message: "\(self) or its folder is writable by others or not owned by you or root: move minigw to a safe folder") }
+    guard PluginSetup.safeAncestors(self), PluginSetup.safePath(self) else { throw PluginSetup.Failure(message: "\(self) or a folder above it is writable by others or not owned by you or root: move minigw to a safe folder") }
     try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
     if (try? FileManager.default.destinationOfSymbolicLink(atPath: pluginLinkPath)) != self {
         unlink(pluginLinkPath)

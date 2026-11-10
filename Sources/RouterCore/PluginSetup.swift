@@ -22,15 +22,18 @@ public enum PluginSetup {
     }
 
     /// #48: vse nadrejene mape poti do / (kot je podana in prava pot) po pravilih safePath: kdor lahko zamenja katero koli,
-    /// zamenja minigw. Kot Go safeDir za vsako nadrejeno.
+    /// zamenja minigw. Višje mape (nad neposredno) smejo biti zapisljive le z bitom sticky (/tmp): tam drugi ne
+    /// zamenjajo našega vnosa. Kot Go safePath.
     public static func safeAncestors(_ path: String) -> Bool {
         guard let real = realpath(path, nil) else { return false }
         defer { free(real) }
         for start in [path, String(cString: real)] {
-            var d = start
+            var d = start, strict = true
             repeat {
                 d = (d as NSString).deletingLastPathComponent
-                guard safePath(d) else { return false }
+                var st = stat()
+                guard stat(d, &st) == 0, safePath(d) || !strict && st.st_mode & S_ISVTX != 0 else { return false }
+                strict = false
             } while d != "/" && !d.isEmpty
         }
         return true

@@ -76,5 +76,24 @@ import Testing
     #expect(PluginSetup.safeAncestors(exe) && PluginSetup.safeAncestors(link))
     chmod(root + "/a", 0o777)  // dve ravni nad mapo minigw
     #expect(!PluginSetup.safeAncestors(exe) && !PluginSetup.safeAncestors(link))
-    #expect(!PluginSetup.safeAncestors("/tmp/x") && !PluginSetup.safeAncestors(root + "/missing"))
+    #expect(!PluginSetup.safeAncestors(root + "/missing"))
+    chmod(root + "/a", 0o1777)  // sticky (kot /tmp): višje mape smejo
+    #expect(PluginSetup.safeAncestors(exe))
+    chmod(bin, 0o1777)  // mapa minigw sama: nikoli
+    #expect(!PluginSetup.safeAncestors(exe))
+    chmod(bin, 0o755)
+    // povezava v nevarno mapo: prava pot šteje
+    let bad = root + "/bad", badExe = bad + "/minigw", safeLink = root + "/a/b/bin/via"
+    try FileManager.default.createDirectory(atPath: bad, withIntermediateDirectories: true)
+    FileManager.default.createFile(atPath: badExe, contents: Data())
+    chmod(bad, 0o777)
+    try FileManager.default.createSymbolicLink(atPath: safeLink, withDestinationPath: badExe)
+    #expect(!PluginSetup.safeAncestors(safeLink))
+    chmod(bad, 0o755)
+    // minigw v lastni mapi pod /tmp (sticky)
+    let tmp = "/tmp/minigw-anc-\(UUID().uuidString)"
+    try FileManager.default.createDirectory(atPath: tmp, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o755])
+    defer { try? FileManager.default.removeItem(atPath: tmp) }
+    FileManager.default.createFile(atPath: tmp + "/minigw", contents: Data())
+    #expect(PluginSetup.safeAncestors(tmp + "/minigw"))
 }
