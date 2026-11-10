@@ -681,7 +681,7 @@ func TestRunAgentProcessCancelGrandchild(t *testing.T) {
 	done := make(chan error, 1)
 	start := time.Now()
 	go func() {
-		done <- s.runAgentProcess(ctx, &req{rid: "req_1"}, "sh", []string{"-c", "sleep 20 2>/dev/null & echo up; sleep 20"}, agentMounts{}, t.TempDir(), "",
+		done <- s.runAgentProcess(ctx, &req{rid: "req_1"}, "sh", []string{"-c", "sleep 20 2>/dev/null & echo up; exec sleep 20"}, agentMounts{}, t.TempDir(), "",
 			func(b []byte) { lines <- string(b) })
 	}()
 	<-lines

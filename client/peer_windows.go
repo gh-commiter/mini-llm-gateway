@@ -119,16 +119,39 @@ func startAgent(cmd *exec.Cmd) error {
 }
 
 // startClient: claude odjemalca (runClaude) v Jobu, ki ga zapre šele konec minigw: z minigw (tudi ubitim) umre vse drevo.
+// Brez Joba (napaka) claude vseeno teče, z opozorilom.
 func startClient(cmd *exec.Cmd) error {
 	job, err := newKillJob()
 	if err != nil {
-		return cmd.Start() // brez Joba claude vseeno teče (kot prej)
+		fmt.Fprintln(os.Stderr, "minigw: warning: no Job for claude ("+err.Error()+"); its processes may outlive minigw")
+		return cmd.Start()
 	}
-	h, err := startInJobs(cmd, job) // ročaj Joba namenoma ostane odprt do konca procesa
-	if err != nil {
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.CreationFlags |= 0x4 // CREATE_SUSPENDED
+	if err := cmd.Start(); err != nil {
+		syscall.CloseHandle(job)
 		return err
 	}
-	syscall.CloseHandle(h)
+	const access = 0x0100 | 0x0001 | 0x0800 // PROCESS_SET_QUOTA | PROCESS_TERMINATE | PROCESS_SUSPEND_RESUME
+	h, err := syscall.OpenProcess(access, false, uint32(cmd.Process.Pid))
+	if err != nil {
+		cmd.Process.Kill() // brez ročaja ga ni mogoče pognati
+		cmd.Wait()
+		syscall.CloseHandle(job)
+		return err
+	}
+	defer syscall.CloseHandle(h)
+	if r, _, e := pAssignJob.Call(uintptr(job), uintptr(h)); r == 0 { // ročaj Joba sicer namenoma ostane odprt do konca procesa
+		syscall.CloseHandle(job)
+		fmt.Fprintf(os.Stderr, "minigw: warning: no Job for claude (AssignProcessToJobObject: %v); its processes may outlive minigw\n", e)
+	}
+	if st, _, _ := pNtResume.Call(uintptr(h)); st != 0 {
+		cmd.Process.Kill()
+		cmd.Wait()
+		return fmt.Errorf("NtResumeProcess: 0x%x", st)
+	}
 	return nil
 }
 
