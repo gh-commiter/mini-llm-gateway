@@ -1825,6 +1825,36 @@ final class FakeMinigw: @unchecked Sendable {
     }
 }
 
+/// I1: na poti -v/-h claude nima --settings, zato »@« na stdin nikoli; različico preveri le ob »@«.
+@Test func stdinMentionsOffGate() {
+    let diff = "@@ -1 +1 @@\n"
+    #expect(Profiles.stdinMentionsOff(diff, info: false, guard: true) { "2.1.318 (Claude Code)" })
+    #expect(!Profiles.stdinMentionsOff(diff, info: true, guard: true) { "2.1.318" })
+    #expect(!Profiles.stdinMentionsOff(diff, info: false, guard: false) { "2.1.318" })
+    #expect(!Profiles.stdinMentionsOff(diff, info: false, guard: true) { "2.1.317" })
+    #expect(!Profiles.stdinMentionsOff(diff, info: false, guard: true) { "" })
+    var asked = 0
+    #expect(!Profiles.stdinMentionsOff("no mention", info: false, guard: true) { asked += 1; return "2.1.318" })
+    #expect(asked == 0)
+}
+
+/// L1: claude je prva navadna izvršljiva datoteka v absolutni mapi PATH (vrstni red kot execvp); mape, neizvršljive
+/// datoteke in relativne mape preskoči; nič ustreznega = nil.
+@Test func executableOnAbsolutePath() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("exe-\(UUID().uuidString)").path
+    defer { try? FileManager.default.removeItem(atPath: root) }
+    let fm = FileManager.default
+    for d in ["dir", "plain", "real", "later"] { try fm.createDirectory(atPath: "\(root)/\(d)", withIntermediateDirectories: true) }
+    try fm.createDirectory(atPath: "\(root)/dir/claude", withIntermediateDirectories: true)  // mapa z imenom claude
+    fm.createFile(atPath: "\(root)/plain/claude", contents: Data("x".utf8), attributes: [.posixPermissions: 0o644])
+    fm.createFile(atPath: "\(root)/real/claude", contents: Data("x".utf8), attributes: [.posixPermissions: 0o755])
+    fm.createFile(atPath: "\(root)/later/claude", contents: Data("x".utf8), attributes: [.posixPermissions: 0o755])
+    try fm.createSymbolicLink(atPath: "\(root)/link", withDestinationPath: "\(root)/real/claude")
+    #expect(Profiles.executable("claude", path: "real:\(root)/dir:\(root)/plain::\(root)/real:\(root)/later") == "\(root)/real/claude")
+    #expect(Profiles.executable("link", path: root) == "\(root)/link")  // simbolna povezava na datoteko velja
+    #expect(Profiles.executable("claude", path: "\(root)/dir:\(root)/plain:.:real") == nil)
+}
+
 @Test func stdinNoteForADroppedPipe() {
     #expect(Profiles.stdinNote(read: nil, waitMs: 3000, mode: S_IFIFO) == "minigw: stdin had no data within 3 s and was not sent")
     #expect(Profiles.stdinNote(read: nil, waitMs: 3000, mode: S_IFREG) != nil)

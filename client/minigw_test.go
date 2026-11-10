@@ -1111,6 +1111,24 @@ func TestUnsafePromptStdin(t *testing.T) {
 	}
 }
 
+// I1: na poti -v/-h claude nima --settings, zato »@« na stdin nikoli; različico preveri le ob »@«.
+func TestStdinMentionsOff(t *testing.T) {
+	asked := 0
+	v := func(s string) func() string { return func() string { asked++; return s } }
+	diff := "@@ -1 +1 @@\n"
+	if !stdinMentionsOff(diff, false, true, v("2.1.318 (Claude Code)")) {
+		t.Error("diff refused with guard and 2.1.318")
+	}
+	if stdinMentionsOff(diff, true, true, v("2.1.318")) || stdinMentionsOff(diff, false, false, v("2.1.318")) ||
+		stdinMentionsOff(diff, false, true, v("2.1.317")) || stdinMentionsOff(diff, false, true, v("")) {
+		t.Error("accepted on the info path, without the guard, or with an old or unknown claude")
+	}
+	asked = 0
+	if stdinMentionsOff("no mention", false, true, v("2.1.318")) || asked != 0 {
+		t.Errorf("no @: version asked %d times", asked)
+	}
+}
+
 func TestStdinNote(t *testing.T) {
 	if n := stdinNote(nil, stdinWait, os.ModeNamedPipe); n != "minigw: stdin had no data within 3 s and was not sent" {
 		t.Errorf("pipe: %q", n)

@@ -132,6 +132,20 @@ public enum Profiles {
         return !v.isEmpty && v.allSatisfy { "0123456789.".contains($0) } && v.compare(minMentionGuard, options: .numeric) != .orderedAscending
     }
 
+    /// #44: »@« na stdin gre naprej le, ko ga gnezdeni claude zanesljivo ne bere: varovalo, različica vsaj minMentionGuard
+    /// (preveri le ob »@«); info (-v, -h: claude brez --settings) nikoli (kot Go stdinMentionsOff).
+    public static func stdinMentionsOff(_ stdin: String, info: Bool, guard on: Bool, version: () -> String) -> Bool {
+        !info && on && atMention(stdin) && mentionGuardVersion(version())
+    }
+
+    /// L1: prva absolutna mapa v path (vrstni red kot execvp) z navadno izvršljivo datoteko `name`; nil = je ni.
+    public static func executable(_ name: String, path: String) -> String? {
+        path.split(separator: ":").lazy.filter { $0.hasPrefix("/") }.map { String($0) + "/" + name }.first { p in
+            var st = stat()
+            return stat(p, &st) == 0 && st.st_mode & S_IFMT == S_IFREG && access(p, X_OK) == 0
+        }
+    }
+
     /// Opozorilo, ko minigw stdin (cev ali datoteka), ki v waitMs ni dal ničesar, ni poslal (nil = nič; kot Go stdinNote).
     public static func stdinNote(read: Data?, waitMs: Int32, mode: mode_t) -> String? {
         guard read == nil, waitMs > 0, mode & S_IFMT == S_IFIFO || mode & S_IFMT == S_IFREG else { return nil }
