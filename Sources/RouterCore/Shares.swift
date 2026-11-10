@@ -49,6 +49,7 @@ public actor ShareHub {
         let tree: Tree?                                   // worktree: zrcalo in kloni agentov (glej Worktree)
         var pushing: URL?                                 // worktree: bundle, ki ga minigw prav zdaj nalaga (WORKTREE-PUSH)
         var results: [URL] = []                           // worktree: bundli vej, ki jih minigw prav zdaj prevzema (0 = vrhnji, i = i-ti ugnezdeni v WORKTREE-PULL)
+        var capNoted: Set<String> = []                    // L4: agenti, ki jim je opomba o omejitvi #45 že poslana
         init(session: String, cwd: String, readOnly: Bool, copy: URL?, device: String?, native: URL? = nil, tree: Tree? = nil) {
             self.session = session; self.cwd = cwd; self.readOnly = readOnly; self.copy = copy; self.device = device; self.native = native
             self.tree = tree
@@ -439,6 +440,9 @@ public actor ShareHub {
         _ = await send(s, DAVJob(id: UUID().uuidString, method: "WORKTREE-NOTE", path: "", prefix: "", headers: [:], body: body), timeout: 10)
     }
 
+    /// L4: opomba o omejitvi agenta enkrat na sejo (mapo) in agenta.
+    func firstCapNote(session: String, kind: String) -> Bool { bySession[session]?.capNoted.insert(kind).inserted ?? false }
+
     /// Sporočilo uporabniku te seje (WORKTREE-NOTE), npr. agent brez pisanja v načinu worktree.
     func note(session: String, _ message: String) async {
         if let s = bySession[session] { await note(s, message) }
@@ -575,6 +579,7 @@ public actor ShareHub {
     /// Konča se pred odgovorom, da jih Claude Code že vidi.
     func syncBack(session: String) async {
         guard AgentRun.current == nil else { return }  // vprašani agent: prevzem ob koncu izvajanja klicatelja
+        guard Router.runBranch?.cap.isEmpty ?? true else { return }  // L1: tek, omejen z #45, ni pisal: nič nazaj k odjemalcu
         if let s = bySession[session], let tree = s.tree { await worktreeBack(s, tree); return }
         guard let s = bySession[session], let copy = s.copy, !s.readOnly else { return }
         let r = Self.run.flatMap { runs[$0] }.flatMap { $0.share === s ? $0 : nil }

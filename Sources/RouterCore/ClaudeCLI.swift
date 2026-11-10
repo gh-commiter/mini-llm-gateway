@@ -16,6 +16,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
     public var disabledTools: [String] = []          // izjeme pri allowLocalTools (tabela v nastavitvah)
     public var settingSources = ""                   // M2: brez nastavitev map (hooki iz dovoljene mape bi tekli zunaj sandboxa), kot Go
     public var askOthers = false          // »May ask other models«: agent vpraša drug model prehoda (AgentRun)
+    public var work = ""                  // #45: najvišji način za pisanje (sync, worktree); "" = direct, vsi načini
 
     public init() {}
 
@@ -131,6 +132,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
         disabledTools = try c.decodeIfPresent([String].self, forKey: .disabledTools) ?? d.disabledTools
         settingSources = try c.decodeIfPresent(String.self, forKey: .settingSources) ?? d.settingSources
         askOthers = try c.decodeIfPresent(Bool.self, forKey: .askOthers) ?? d.askOthers
+        work = try c.decodeIfPresent(String.self, forKey: .work) ?? d.work
         if settingSources == "project,local" { settingSources = "" }  // M2: stara privzeta vrednost → nova; izrecna druga ostane
     }
 }
@@ -472,6 +474,7 @@ extension Router {
         var sessionID: String?
         var registryKey: String?
         var sharedDir: URL?
+        var readOnly = false
 
         if agent {
             // Mapa odjemalca (minigw na drugem Macu) ima prednost pred enako potjo na tem Macu.
@@ -481,7 +484,9 @@ extension Router {
                                                  roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL, writes: true)
             let synced = await Self.shares.isSync(session: req.header("x-claude-mini-session") ?? "")
             let tree = await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "")
-            let readOnly = await Self.isReadOnly(req)
+            let cap = await capped(req, kind: "claude")  // #45: način seje nad omejitvijo → le branje
+            readOnly = await Self.isReadOnly(req) || cap != nil
+            Self.runBranch?.readOnly = readOnly  // #46a
             if readOnly, tree != nil { return await error(400, "invalid_request_error", Self.readOnlyWorktree, rid: rid, writer: writer) }  // R4: tudi vprašani (kot Go)
             if let shared, let clientCwd {
                 args += ["--append-system-prompt", Self.mountNote(clientCwd, shared, readOnly: readOnly, synced: synced, branch: tree?.branch, gits: tree?.gits ?? [])]
@@ -530,7 +535,7 @@ extension Router {
             try await writer.write(chunks.reduce(Data(), +))
         }
 
-        let run = agent ? await startAgentRun(req, kind: "claude", dir: sharedDir) : nil
+        let run = agent ? await startAgentRun(req, kind: "claude", dir: sharedDir, readOnly: readOnly) : nil
         defer { run?.stop() }
         let gitexec = config.scratch("gitexec")  // N9: ovoj git v klonu (Worktree.claudeEnv), berljiv v peskovniku
         if agent, let note = agentNote("claude") {

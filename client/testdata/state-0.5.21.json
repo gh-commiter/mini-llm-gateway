@@ -1,0 +1,5 @@
+{"devices":{"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA":{"lastSeen":"2026-11-10T09:00:00Z","client":"Windows, minigw 0.5.21","history":[{"time":"2026-11-10T09:00:00Z","address":"192.0.2.7","client":"Windows, minigw 0.5.21"}]}},
+"sessions":[{"id":"s1","device":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","deviceName":"PC","start":"2026-11-10T09:00:00Z","last":"2026-11-10T09:05:00Z","folder":"C:/proj","os":"Windows","mode":"sync","readOnly":true,
+ "models":[{"model":"claude-codex","readOnly":true,"cap":"worktree","requests":2,"errors":0,"refused":1,"seconds":42.5,"inputTokens":100,"outputTokens":20}]}],
+"projects":[{"device":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","folder":"C:/proj","os":"Windows","day":"2026-11-10","agent":"codex","requests":2,"errors":0,"refused":1,"seconds":42.5,"inputTokens":100,"outputTokens":20},
+ {"folder":"/home/u/p","day":"2026-11-09","agent":"other","requests":1,"errors":1,"refused":0,"seconds":1,"inputTokens":0,"outputTokens":0}]}

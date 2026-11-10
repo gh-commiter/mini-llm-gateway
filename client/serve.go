@@ -63,6 +63,7 @@ type serveConfig struct {
 	AllowedFolders   []string      `json:"allowedFolders,omitempty"`   // dodatne mape, v katerih agenti smejo delati
 	AllowLocalTools  bool          `json:"allowLocalTools,omitempty"`  // vsa orodja Claude Code (razen DisabledTools)
 	ClaudeAskOthers  bool          `json:"claudeAskOthers,omitempty"`  // agent Claude CLI sme vprašati druge modele
+	ClaudeWork       string        `json:"claudeWork,omitempty"`       // #45: najvišji način za pisanje Claude CLI; "" = direct
 	DisabledTools    []string      `json:"disabledTools,omitempty"`
 	SettingSources   string        `json:"settingSources,omitempty"` // --setting-sources; prazno = brez (hooki iz mape ne tečejo)
 	Codex            agentCLI      `json:"codex"`                    // Codex CLI (serve_agents.go), privzeto izklopljen
@@ -951,9 +952,10 @@ func (c *serveConn) readDevice() error {
 
 type req struct {
 	*http.Request
-	conn *serveConn
-	body []byte
-	rid  string
+	conn    *serveConn
+	body    []byte
+	rid     string
+	applied *appliedLimits // #46a: omejitve izvajanja agenta (runAgent, runCLI)
 }
 
 func (r *req) h(name string) string { return r.Header.Get(name) }

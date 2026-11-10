@@ -14,6 +14,12 @@ public final class GatewayHistory: @unchecked Sendable {
         var lastSeen: Date
         var client = ""
         var history: [Connection] = []  // najstarejši prvi
+        init(lastSeen: Date) { self.lastSeen = lastSeen }
+        init(from decoder: Decoder) throws {  // manjkajoča polja (Go jih izpusti) = privzeta
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            lastSeen = try c.decode(Date.self, forKey: .lastSeen)
+            client = try c.v(.client, client); history = try c.v(.history, history)
+        }
     }
 
     /// Števci enega modela ali agenta v seji za eno vlogo in klicatelja (osnova za kasnejše omejitve); readOnly in
@@ -24,10 +30,39 @@ public final class GatewayHistory: @unchecked Sendable {
         public var via = ""        // agent ali veriga, ki je klicala (agent-calls); "" = odjemalec
         public var readOnly = false
         public var tools = ""      // Claude CLI: orodja ali »local«; Codex, Grok, Copilot: write, network, commands
+        public var cap = ""        // #45: omejitev načina (sync, worktree), zaradi katere je agent le bral
         public var requests = 0, errors = 0, refused = 0  // errors: 5xx in prekinjene; refused: 4xx
         public var seconds = 0.0                           // skupni čas zahtev (pri agentih čas izvajanja)
         public var inputTokens = 0, outputTokens = 0
         public init() {}
+        public init(from decoder: Decoder) throws {  // manjkajoča polja (starejša datoteka, Go jih izpusti) = privzeta
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            model = try c.v(.model, model); role = try c.v(.role, role); via = try c.v(.via, via); readOnly = try c.v(.readOnly, readOnly)
+            tools = try c.v(.tools, tools); cap = try c.v(.cap, cap); requests = try c.v(.requests, requests); errors = try c.v(.errors, errors)
+            refused = try c.v(.refused, refused); seconds = try c.v(.seconds, seconds)
+            inputTokens = try c.v(.inputTokens, inputTokens); outputTokens = try c.v(.outputTokens, outputTokens)
+        }
+    }
+
+    /// #46b: števci enega agenta v mapi naprave za en dan UTC; ostanejo, ko seja odpade (osnova za omejitve). Le števila,
+    /// nikoli besedila; žetone javi ponudnik (niso preverjeni). Kot projectUse v minigw serve.
+    public struct ProjectUse: Codable, Sendable, Equatable {
+        public var device = ""   // "" = ta računalnik brez ključa naprave
+        public var folder = ""   // mapa seje: vgnezdeni klici štejejo pod projekt klicatelja
+        public var os = ""
+        public var day = ""      // UTC yyyy-MM-dd
+        public var agent = ""    // claude, codex, grok, copilot ali other (ponudniki)
+        public var requests = 0, errors = 0, refused = 0
+        public var seconds = 0.0
+        public var inputTokens = 0, outputTokens = 0
+        public init() {}
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            device = try c.v(.device, device); folder = try c.v(.folder, folder); os = try c.v(.os, os); day = try c.v(.day, day)
+            agent = try c.v(.agent, agent); requests = try c.v(.requests, requests); errors = try c.v(.errors, errors)
+            refused = try c.v(.refused, refused); seconds = try c.v(.seconds, seconds)
+            inputTokens = try c.v(.inputTokens, inputTokens); outputTokens = try c.v(.outputTokens, outputTokens)
+        }
     }
 
     public struct Session: Codable, Sendable, Identifiable {
@@ -44,12 +79,20 @@ public final class GatewayHistory: @unchecked Sendable {
         public var readOnly = false
         public var branch = ""
         public var models: [ModelUse] = []
+        init(id: String, device: String, start: Date, last: Date) { self.id = id; self.device = device; self.start = start; self.last = last }
+        public init(from decoder: Decoder) throws {  // manjkajoča polja (Go jih izpusti) = privzeta
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id); start = try c.decode(Date.self, forKey: .start); last = try c.decode(Date.self, forKey: .last)
+            device = try c.v(.device, device); deviceName = try c.v(.deviceName, deviceName); deviceRemoved = try c.v(.deviceRemoved, deviceRemoved)
+            folder = try c.v(.folder, folder); os = try c.v(.os, os); role = try c.v(.role, role); mode = try c.v(.mode, mode)
+            readOnly = try c.v(.readOnly, readOnly); branch = try c.v(.branch, branch); models = try c.v(.models, models)
+        }
     }
 
     /// Ena zahteva za model (brez besedila).
     public struct Use: Sendable {
         public var session = "", device = "", deviceName = "", folder = "", os = "", mode = "chat", branch = "", model = "", role = ""
-        public var via = "", tools = ""
+        public var via = "", tools = "", cap = ""  // cap: #45 omejitev, ki jo je izvajanje uporabilo
         public var readOnly = false
         public var status = 200
         public var took = 0.0
@@ -60,12 +103,20 @@ public final class GatewayHistory: @unchecked Sendable {
     struct State: Codable {
         var devices: [String: DeviceState] = [:]
         var sessions: [Session] = []  // po začetku, najstarejša prva
+        var projects: [ProjectUse] = []  // #46b: po nastanku (dnevi naraščajo), najstarejša prva
+        init() {}
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            devices = try c.v(.devices, devices); sessions = try c.v(.sessions, sessions); projects = try c.v(.projects, projects)
+        }
     }
 
     static let historyPerDevice = 20, maxSessions = 200, maxSessionModels = 32
     static let maxDeviceSessions = 50  // M2: seje ene naprave (najprej odpadejo njene najstarejše)
     static let connectionGap: TimeInterval = 600  // priklop = prva zahteva po 10 minutah tišine; tudi meja seje brez ID-ja
     static let maxFile = 4 << 20
+    static let projectDays = 31, maxProjects = 5000, maxDeviceProjects = 1250  // #46b: kot v minigw serve
+    static let maxProjectFolder = 256  // L2: ključ mape v števcih (bajti UTF-8)
 
     private let lock = NSLock()
     private var state = State()
@@ -102,8 +153,12 @@ public final class GatewayHistory: @unchecked Sendable {
             guard dirty, let file else { return (nil, nil) }
             dirty = false
             var data = try? Self.encoder.encode(state)
-            while let d = data, d.count > Self.maxFile, !state.sessions.isEmpty {  // M1: datoteka nikoli čez mejo
-                state.sessions.removeFirst(max(1, state.sessions.count / 10))
+            while let d = data, d.count > Self.maxFile, !state.sessions.isEmpty || !state.projects.isEmpty {  // M1: datoteka nikoli čez mejo
+                if !state.sessions.isEmpty {  // najprej seje; števci projektov naj ostanejo
+                    state.sessions.removeFirst(max(1, state.sessions.count / 10))
+                } else {  // L2: najprej najstarejše vrstice naprave z največ vrsticami
+                    state.projects = Self.trimBusiest(state.projects)
+                }
                 data = try? Self.encoder.encode(state)
             }
             return (data, file)
@@ -204,7 +259,7 @@ public final class GatewayHistory: @unchecked Sendable {
             }
             if j == nil { s.models.append(key); j = s.models.count - 1 }
             var m = s.models[j!]
-            m.readOnly = u.readOnly; m.tools = Self.clip(u.tools, 256)
+            m.readOnly = u.readOnly; m.tools = Self.clip(u.tools, 256); m.cap = Self.clip(u.cap, 16)
             m.requests += 1
             if u.status >= 500 || u.status == 499 || u.status == 0 { m.errors += 1 } else if u.status >= 400 { m.refused += 1 }
             m.seconds += u.took
@@ -220,8 +275,75 @@ public final class GatewayHistory: @unchecked Sendable {
                 state.sessions.append(s)
                 state.sessions = Array(state.sessions.suffix(Self.maxSessions))
             }
+            if !s.folder.isEmpty { Self.count(&state.projects, s, u, now) }
             changed()
         }
+    }
+
+    static let dayFormat: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX"); f.timeZone = TimeZone(identifier: "UTC"); f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+    static func day(_ d: Date) -> String { dayFormat.string(from: d) }
+
+    /// #46b (pod lock): zahteva v števce projekta (naprava, mapa seje, dan UTC, agent). Nova vrstica: brez dni, starejših
+    /// od 31; naprava največ maxDeviceProjects vrstic (najprej njena najstarejša), skupaj maxProjects. Kot count v Go.
+    static func count(_ rows: inout [ProjectUse], _ s: Session, _ u: Use, _ now: Date) {
+        let day = Self.day(now), agent = Self.agent(u.model) ?? "other", folder = Self.clip(s.folder, Self.maxProjectFolder)
+        var i = rows.lastIndex { $0.day == day && $0.agent == agent && $0.device == s.device && $0.folder == folder }
+        if i == nil {
+            let oldest = Self.day(now.addingTimeInterval(-Double(Self.projectDays - 1) * 86400))
+            rows.removeAll { $0.day < oldest }
+            if rows.count(where: { $0.device == s.device }) >= Self.maxDeviceProjects, let k = rows.firstIndex(where: { $0.device == s.device }) {
+                rows.remove(at: k)
+            }
+            var p = ProjectUse()
+            p.device = s.device; p.folder = folder; p.os = s.os; p.day = day; p.agent = agent
+            rows.append(p)
+            if rows.count > Self.maxProjects { rows.removeFirst(rows.count - Self.maxProjects) }
+            i = rows.count - 1
+        }
+        rows[i!].requests += 1
+        if u.status >= 500 || u.status == 499 || u.status == 0 { rows[i!].errors += 1 } else if u.status >= 400 { rows[i!].refused += 1 }
+        rows[i!].seconds += u.took
+        rows[i!].inputTokens += u.input
+        rows[i!].outputTokens += u.output
+    }
+
+    /// L2: brez desetine (vsaj ene) najstarejših vrstic naprave z največ vrsticami (kot trimBusiest v Go).
+    static func trimBusiest(_ rows: [ProjectUse]) -> [ProjectUse] {
+        let n = Dictionary(rows.map { ($0.device, 1) }, uniquingKeysWith: +)
+        guard let busiest = n.max(by: { $0.value != $1.value ? $0.value < $1.value : $0.key > $1.key })?.key else { return rows }
+        var drop = max(1, n[busiest]! / 10)
+        return rows.filter { r in
+            guard r.device == busiest, drop > 0 else { return true }
+            drop -= 1
+            return false
+        }
+    }
+
+    /// Agent modela (kot agentOfModel v Go): claude, codex, grok, copilot; nil za druge modele.
+    static func agent(_ m: String) -> String? {
+        [("claude-cli-", "claude"), ("claude-chat-", "claude"), ("claude-codex", "codex"), ("claude-grok", "grok"), ("claude-copilot", "copilot")]
+            .first { m.hasPrefix($0.0) }?.1
+    }
+
+    /// #46b: števci zadnjih `days` dni (danes je prvi), najnovejši dan prvi, nato mapa, naprava, agent (kot usage v Go).
+    public func usage(device: String = "", folder: String = "", days: Int = 7, now: Date = Date()) -> [ProjectUse] {
+        let from = Self.day(now.addingTimeInterval(-Double(days - 1) * 86400)), f = Self.folder(folder)
+        return lock.withLock {
+            state.projects.filter { $0.day >= from && (device.isEmpty || $0.device == device) && (folder.isEmpty || Self.inFolder($0.folder, f, os: $0.os)) }
+        }.sorted { ($1.day, $0.folder, $0.device, $0.agent) < ($0.day, $1.folder, $1.device, $1.agent) }
+    }
+
+    /// Oblika za skrbniški API, enaka kot v minigw serve (prazna device in os izpuščena).
+    static func json(_ p: ProjectUse) -> [String: Any] {
+        var o: [String: Any] = ["folder": p.folder, "day": p.day, "agent": p.agent, "requests": p.requests, "errors": p.errors, "refused": p.refused,
+                                "seconds": p.seconds, "inputTokens": p.inputTokens, "outputTokens": p.outputTokens]
+        if !p.device.isEmpty { o["device"] = p.device }
+        if !p.os.isEmpty { o["os"] = p.os }
+        return o
     }
 
     /// Seje, najnovejša prva, modeli po modelu, vlogi in klicatelju; folder: ta mapa in njene podmape (inFolder).
@@ -291,7 +413,7 @@ public final class GatewayHistory: @unchecked Sendable {
     }
 
     public func clearSessions() {
-        lock.withLock { state.sessions = []; changed() }
+        lock.withLock { state.sessions = []; state.projects = []; changed() }  // tudi števci: eno dejanje lastnika
         save()
     }
 
@@ -307,6 +429,7 @@ public final class GatewayHistory: @unchecked Sendable {
                                     if !m.via.isEmpty { o["via"] = m.via }
                                     if m.readOnly { o["readOnly"] = true }
                                     if !m.tools.isEmpty { o["tools"] = m.tools }
+                                    if !m.cap.isEmpty { o["cap"] = m.cap }
                                     return o
                                 }]
         if !s.device.isEmpty { o["device"] = s.device }
@@ -382,4 +505,9 @@ extension GatewayHistory {
         }
         return (role, rest, !missing && (role.isEmpty || validRole(role)))
     }
+}
+
+extension KeyedDecodingContainer {
+    /// Vrednost ali privzeta, če ključa ni (datoteke drugih različic, Go izpusti prazna polja).
+    func v<T: Decodable>(_ key: Key, _ d: T) throws -> T { try decodeIfPresent(T.self, forKey: key) ?? d }
 }

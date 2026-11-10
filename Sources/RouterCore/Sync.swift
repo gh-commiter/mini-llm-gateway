@@ -109,6 +109,21 @@ public enum Sync {
 
     /// Posel routerja za minigw (router ni zaupanja vreden): SYNC-* le v načinu sync, SYNC-PULL nikoli pri --minigw-ro,
     /// WebDAV le v načinu direct (pisanje ne pri --minigw-ro).
+    /// Posel routerja v minigw. worktree: le WORKTREE-PUSH (posnetek k routerju) in WORKTREE-PULL (veja agenta kot ref);
+    /// native: nič razen opombe; sync, direct: jobAllowed, brez WORKTREE-*. WORKTREE-NOTE v vsakem načinu (le izpis;
+    /// native z git: veja (ne)dostavljena; #45 sync, direct: agent je le bral). nil = zavrne (403).
+    public enum ClientJob { case note, worktreePush, worktreePull, syncPush, syncPull, webDAV }
+    public static func clientJob(_ method: String, kind: String, readOnly: Bool, write: Bool) -> ClientJob? {
+        if method == "WORKTREE-NOTE" { return .note }
+        switch kind {
+        case "worktree": return method == "WORKTREE-PUSH" ? .worktreePush : method == "WORKTREE-PULL" ? .worktreePull : nil
+        case "native", "native-direct": return nil
+        default:
+            guard !method.hasPrefix("WORKTREE-"), jobAllowed(method, sync: kind == "sync", readOnly: readOnly, write: write) else { return nil }
+            return method == "SYNC-PUSH" ? .syncPush : method == "SYNC-PULL" ? .syncPull : .webDAV
+        }
+    }
+
     public static func jobAllowed(_ method: String, sync: Bool, readOnly: Bool, write: Bool) -> Bool {
         if method.hasPrefix("SYNC-") { return sync && (method == "SYNC-PUSH" || (method == "SYNC-PULL" && !readOnly)) }
         return !sync && !(readOnly && write)

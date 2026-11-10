@@ -14,6 +14,7 @@ minigw gw: show or change the Mini Gateway app on this Mac. Changes apply at onc
   minigw gw devices [allow <device id> [--name N] | rename <device id> --name N | deny <device id>]
   minigw gw devices history <device id>                 the device's last connections
   minigw gw sessions [--device ID] [--folder DIR] | <session id> | clear
+  minigw gw usage [--days N] [--device ID] [--folder DIR]   counters per folder, day (UTC) and agent (clear: sessions clear)
   minigw gw provider add <name> <baseURL> [--insecure]   the API key is read from stdin or asked for
   minigw gw provider remove <name> | list
   minigw gw provider models <name> [text] [--all] [--enable m1,m2|all] [--disable m1,m2|all]
@@ -144,7 +145,7 @@ private func autostartLine(_ st: [String: Any]) -> String {
 func routerCommand(_ argv: [String]) {
     // Ukazi in zastavice v poljubnem vrstnem redu (»--x v« ali »--x=v«).
     var pos: [String] = [], flags: [String: String] = [:]
-    let valued: Set<String> = ["name", "enable", "disable", "path", "tools", "folders", "allow-local-tools", "ask-others", "folder", "allow-unsandboxed-bash", "config", "device"]
+    let valued: Set<String> = ["name", "enable", "disable", "path", "tools", "folders", "allow-local-tools", "ask-others", "folder", "allow-unsandboxed-bash", "config", "device", "days"]
     var i = 0
     while i < argv.count {
         let a = argv[i]
@@ -241,6 +242,13 @@ func routerCommand(_ argv: [String]) {
         } else {
             fail(routerHelp)
         }
+
+    case "usage":
+        guard pos.count == 1 else { fail(routerHelp) }
+        let query = "?days=" + esc(flags["days"] ?? "7") + "&device=" + esc(flags["device"] ?? "") + "&folder=" + esc(flags["folder"] ?? "")
+        let list = a.call("GET", "/usage" + query)["usage"] as? [[String: Any]] ?? []
+        list.forEach { say(usageLine($0)) }
+        if list.isEmpty { say("no usage recorded") }
 
     case "provider", "gateway":  // gateway: starejše ime, skrit alias
         guard pos.count >= 2 else { fail(routerHelp) }
@@ -388,7 +396,10 @@ func helperSignatureProblem(_ path: String) -> String? {
 func sessionLine(_ x: [String: Any]) -> String {
     var name = x["device"] == nil ? "this computer" : x["deviceName"] as? String ?? ""
     if x["deviceRemoved"] as? Bool == true { name += " (device removed)" }
-    let mode = (x["mode"] as? String ?? "") + (x["readOnly"] as? Bool == true ? ", read-only" : "")
+    var mode = (x["mode"] as? String ?? "") + (x["readOnly"] as? Bool == true ? ", read-only" : "")
+    if x["readOnly"] as? Bool == true, let cap = (x["models"] as? [[String: Any]])?.compactMap({ $0["cap"] as? String }).first(where: { !$0.isEmpty }) {
+        mode += " (cap \(cap))"
+    }
     var models: [String] = []  // L4: imena v narekovajih, v vrstnem redu vnosov (kot v Go)
     for m in x["models"] as? [[String: Any]] ?? [] {
         let q = Noise.quoted(m["model"] as? String ?? "")
@@ -402,8 +413,17 @@ func useLine(_ m: [String: Any]) -> String {
     var label = Noise.quoted(m["model"] as? String ?? "")
     if let r = m["role"] as? String, !r.isEmpty { label += " role " + r }
     if let v = m["via"] as? String, !v.isEmpty { label += " via " + Noise.quoted(v) }
-    if m["readOnly"] as? Bool == true { label += " read-only" }
+    if m["readOnly"] as? Bool == true { label += " read-only" + ((m["cap"] as? String).map { $0.isEmpty ? "" : " (cap \($0))" } ?? "") }
     if let t = m["tools"] as? String, !t.isEmpty { label += " tools " + t }
     let i = { (k: String) in m[k] as? Int ?? 0 }
     return "\(label): \(i("requests")) requests, \(i("errors")) errors, \(i("refused")) refused, \(String(format: "%.0f", m["seconds"] as? Double ?? 0))s, \(i("inputTokens")) input and \(i("outputTokens")) output tokens"
+}
+
+/// Vrstica števcev projekta za minigw gw usage (enako kot usageLine v Go).
+func usageLine(_ p: [String: Any]) -> String {
+    let i = { (k: String) in p[k] as? Int ?? 0 }
+    let device = p["device"] as? String ?? "this computer"
+    return "\(p["day"] as? String ?? "")  \(Noise.quoted(p["folder"] as? String ?? ""))  \(device)  \(p["agent"] as? String ?? ""): \(i("requests")) requests, "
+        + "\(i("errors")) errors, \(i("refused")) refused, \(String(format: "%.1f", (p["seconds"] as? Double ?? 0) / 60)) agent minutes, "
+        + "\(i("inputTokens")) input and \(i("outputTokens")) output tokens"
 }

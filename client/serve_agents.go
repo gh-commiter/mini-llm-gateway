@@ -38,6 +38,7 @@ type agentCLI struct {
 	Write      bool     `json:"write,omitempty"`      // Copilot: pisanje (privzeto le branje)
 	Commands   bool     `json:"commands,omitempty"`   // Copilot: ukazi lupine (izrecno dovoljenje)
 	AskOthers  bool     `json:"askOthers,omitempty"`  // agent sme vprašati druge modele tega prehoda (serve_agentcalls.go)
+	Work       string   `json:"work,omitempty"`       // #45: najvišji način za pisanje (sync, worktree); "" = direct, vsi načini
 }
 
 func (a agentCLI) modelEnabled(m string) bool { return a.Models == nil || slices.Contains(a.Models, m) }
@@ -558,13 +559,7 @@ func (s *server) agentFolder(w http.ResponseWriter, r *req, label, agent string)
 		if dir, _ = s.hub.push(share, agent); dir == "" {
 			return "", "", false, writeError(w, r.rid, 502, "Syncing "+clientCwd+" to the gateway failed (see minigw output)")
 		}
-		note = "The user's folder " + clientCwd + " (on their computer) is synced here as " + dir + ", your working directory: a local copy"
-		if share.readOnly {
-			note += ". Map paths under " + clientCwd + " to it. The folder is shared read-only: do not try to create, change or delete files in it."
-		} else {
-			note += " whose changed source files are copied back to the user when you finish. Map paths under " + clientCwd + " to it."
-		}
-		return dir, note, share.readOnly, 0
+		return dir, syncNote(clientCwd, dir, share.readOnly), share.readOnly, 0
 	case s.hub.isRefused(session):
 		return "", "", false, writeError(w, r.rid, 400, refusedDirect)
 	case r.h("x-claude-mini-share") == "1":
@@ -572,6 +567,70 @@ func (s *server) agentFolder(w http.ResponseWriter, r *req, label, agent string)
 	}
 	return "", "", false, writeError(w, r.rid, 400, "The folder "+clientCwd+" is not shared with the gateway, so "+label+" agents cannot work in it: "+
 		"in that folder run minigw share add (or MINIGW_SHARE=1 for one run), then start minigw again")
+}
+
+// syncNote: navodilo agentu za sinhronizirano kopijo mape odjemalca (kot ClaudeCLI.mountNote na Macu).
+func syncNote(clientCwd, dir string, readOnly bool) string {
+	note := "The user's folder " + clientCwd + " (on their computer) is synced here as " + dir + ", your working directory: a local copy"
+	if readOnly {
+		return note + ". Map paths under " + clientCwd + " to it. The folder is shared read-only: do not try to create, change or delete files in it."
+	}
+	return note + " whose changed source files are copied back to the user when you finish. Map paths under " + clientCwd + " to it."
+}
+
+// workLevels (#45): zaupanje omejitve agenta (work) in načina seje; višje = manj zaupanja. chat in refused nimata mape.
+var (
+	workLevels = map[string]int{"": 0, "direct": 0, "sync": 1, "worktree": 2}
+	modeLevels = map[string]int{"direct": 0, "native-direct": 0, "sync": 1, "native": 2, "worktree": 2}
+)
+
+// workCap: omejitev načina agenta `kind` (claude, codex, grok, copilot); "" = direct.
+func (c serveConfig) workCap(kind string) string {
+	switch kind {
+	case "claude":
+		return c.ClaudeWork
+	case "codex":
+		return c.Codex.Work
+	case "grok":
+		return c.Grok.Work
+	case "copilot":
+		return c.Copilot.Work
+	}
+	return ""
+}
+
+// agentNames: imena agentov v sporočilih uporabniku.
+var agentNames = map[string]string{"claude": "Claude CLI", "codex": "Codex", "grok": "Grok", "copilot": "Copilot"}
+
+// capped (#45): način seje (iz deljenja na prehodu, ne iz glave) je nad omejitvijo agenta → vrne omejitev in pošlje
+// opombo odjemalcu; agent tedaj le bere. Vgnezdeni klic: seja klicatelja, omejitev vprašanega agenta. "" = brez omejitve.
+func (s *server) capped(r *req, kind string) string {
+	cap := s.conf().workCap(kind)
+	session := r.h("x-claude-mini-session")
+	mode, _, _ := s.hub.sessionMode(session, r.owner(), kind)
+	if lvl, ok := modeLevels[mode]; !ok || lvl >= workLevels[cap] {
+		return ""
+	}
+	if !s.hub.firstCapNote(session, kind) {
+		return cap
+	}
+	modes := map[string]string{"sync": "sync or worktree mode", "worktree": "worktree mode"}[cap]
+	s.hub.note(session, "Mini Gateway lets "+agentNames[kind]+" change files only in "+modes+", so it only read the folder (run minigw --minigw-work="+cap+")")
+	return cap
+}
+
+// cappedNote: navodilo agentu, ki zaradi omejitve le bere (sync: kopija samo za branje; vgnezdeni: mapa klicatelja).
+func cappedNote(r *req, dir, note string) string {
+	if runOf(r) != nil {
+		return note + " The folder is read-only for you: do not try to create, change or delete files in it."
+	}
+	return syncNote(r.h("x-claude-mini-cwd"), dir, true)
+}
+
+// appliedLimits (#46a): omejitve, ki jih je izvajanje res uporabilo (zgodovina jih ne izračuna znova).
+type appliedLimits struct {
+	readOnly bool
+	cap      string
 }
 
 // runAgent: Codex ali Grok za eno zahtevo; odgovor kot en besedilni blok (pri pretoku ping med čakanjem).
@@ -612,6 +671,13 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 	if st != 0 {
 		return st
 	}
+	cap := ""
+	if agent { // #45: način seje nad omejitvijo agenta → le branje
+		if cap = s.capped(r, k.name); cap != "" {
+			note = cappedNote(r, dir, note)
+			readOnly = true
+		}
+	}
 	// --minigw-ro tudi brez mape le za branje
 	readOnly = readOnly || r.h("x-claude-mini-ro") == "1"
 	if readOnly && treeRun && runOf(r) == nil { // L2: kot na Macu (zahteva samo za branje; odjemalca je ne pošiljata)
@@ -622,6 +688,8 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 		s.hub.note(r.h("x-claude-mini-session"), name+" may not write, so it only reads in the clone; no branch comes back")
 		note, readOnly = worktreeReadOnlyNote(r.h("x-claude-mini-cwd"), dir), true
 	}
+	// #46a: zgodovina zapiše, kar je veljalo
+	r.applied = &appliedLimits{readOnly: readOnly, cap: cap}
 	if c.askOthers(k.name) { // vrata izvajanja (startRun spodaj)
 		// Absolutna pot: PATH izvajanja ne doseže ukazov v sandboxu Codex na Windows (»elevated« = drug uporabnik);
 		// »minigw« iz PATH (askOnPath) je le za pravila Claude Code (askRules).
@@ -840,8 +908,9 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			return "", err
 		}
 		if agent {
-			run.stop()           // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb
-			if runOf(r) == nil { // vprašani agent: spremembe prenese klicatelj na koncu
+			run.stop() // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb
+			// vprašani agent: spremembe prenese klicatelj na koncu; L1: omejen (#45) ne prenese ničesar
+			if runOf(r) == nil && (r.applied == nil || r.applied.cap == "") {
 				s.hub.syncBack(r.h("x-claude-mini-session"), k.name) // spremembe agenta k odjemalcu pred odgovorom
 			}
 			if thread != "" {

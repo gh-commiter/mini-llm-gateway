@@ -404,5 +404,139 @@ case "$p" in *"read-only for you"*) echo ro-note > "$out";; *) echo no-note > "$
 	}
 	if _, err := gitUser(client, nil, "rev-parse", "--verify", "-q", "refs/heads/minigw/codex-"+sha256Hex([]byte("sidr"))[:8]+"-0"); err == nil {
 		t.Fatal("a read-only agent brought back a branch")
+	} // #46a: zgodovina zapiše le branje, ki ga je izvajanje uporabilo (deljenje samo ni samo za branje)
+	if x := s.state.sessions("", ""); len(x) != 1 || len(x[0].Models) != 1 || !x[0].Models[0].ReadOnly || x[0].Models[0].Tools != "" {
+		t.Fatalf("history: %+v", x)
+	}
+}
+
+// #45: način seje nad omejitvijo agenta (work) → agent le bere, opomba gre odjemalcu; worktree in "" ostaneta.
+func TestWorkCap(t *testing.T) {
+	s, _, base := liveServer(t, func(c *serveConfig) { c.Codex.Work = "worktree"; c.ClaudeWork = "sync" })
+	if _, ok := s.hub.register("s", "/p", "k", false, filepath.Join(t.TempDir(), "c"), "local"); !ok {
+		t.Fatal("register")
+	}
+	if _, ok := s.hub.register("w", "/p", "k2", false, "", "local"); !ok {
+		t.Fatal("register")
+	}
+	s.hub.mu.Lock()
+	s.hub.bySession["w"].tree = &shareTree{slots: map[string]*wtSlot{}}
+	s.hub.mu.Unlock()
+	r := func(session string) *req {
+		hr := httptest.NewRequest("POST", "/v1/messages", nil)
+		hr.Header.Set("x-claude-mini-session", session)
+		return &req{Request: hr, conn: &serveConn{peer: "127.0.0.1"}}
+	}
+	if got := s.capped(r("s"), "codex"); got != "worktree" {
+		t.Fatalf("sync session, codex work=worktree: %q", got)
+	}
+	select {
+	case j := <-s.hub.bySession["s"].jobs:
+		if j.Method != "WORKTREE-NOTE" || !strings.Contains(string(j.Body), "lets Codex change files only in worktree mode") ||
+			!strings.Contains(string(j.Body), "--minigw-work=worktree") {
+			t.Fatalf("note: %s %s", j.Method, j.Body)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no note queued")
+	}
+	if got := s.capped(r("s"), "codex"); got != "worktree" { // L4: opomba le enkrat na sejo in agenta
+		t.Fatalf("second turn: %q", got)
+	}
+	select {
+	case j := <-s.hub.bySession["s"].jobs:
+		t.Fatalf("second note: %s", j.Body)
+	case <-time.After(300 * time.Millisecond):
+	}
+	for _, c := range []struct{ session, kind string }{{"w", "codex"}, {"s", "claude"}, {"s", "grok"}, {"w", "claude"}, {"chat", "codex"}} {
+		if got := s.capped(r(c.session), c.kind); got != "" {
+			t.Errorf("%s %s: capped %q", c.session, c.kind, got)
+		}
+	}
+	if workLevels["sync"] <= workLevels[""] || modeLevels["native-direct"] != workLevels["direct"] {
+		t.Error("levels")
+	}
+	for _, p := range []string{"/agents/codex", "/agents/claude", "/agents/copilot", "/agents/grok"} {
+		if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+p, `{"work":"readonly"}`); st != 400 || !strings.Contains(b, "work: direct, sync or worktree") {
+			t.Fatalf("%s bad work: %d %s", p, st, b)
+		}
+		if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+p, `{"work":"sync"}`); st != 200 || !strings.Contains(b, `"work":"sync"`) {
+			t.Fatalf("%s work: %d %s", p, st, b)
+		}
+		if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+p, `{"work":"direct"}`); st != 200 || !strings.Contains(b, `"work":"direct"`) {
+			t.Fatalf("%s work direct: %d %s", p, st, b)
+		}
+	}
+	if c := s.conf(); c.ClaudeWork != "" || c.Codex.Work != "" { // direct = "" (izpuščeno v serve.json)
+		t.Fatalf("direct stored as %q %q", c.ClaudeWork, c.Codex.Work)
+	}
+}
+
+// #45, #46a: Codex z work=worktree v seji sync le bere (sandbox read-only, navodilo), zgodovina zapiše omejitev.
+func TestWorkCapRun(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake codex is a shell script")
+	}
+	bin := t.TempDir()
+	argsFile := filepath.Join(bin, "args")
+	codex := filepath.Join(bin, "codex")
+	os.WriteFile(codex, []byte(`#!/bin/sh
+if [ "$1" = debug ]; then echo '{"models":[]}'; exit 0; fi
+printf '%s\n' "$@" > "`+argsFile+`"
+out=""; prev=""
+cwd=""
+for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; [ "$prev" = "-C" ] && cwd="$a"; prev="$a"; done
+echo agent > "$cwd/agent.txt" # sandbox brez učinka: L1 preveri, da se ne vrne odjemalcu
+p=$(cat)
+echo '{"type":"thread.started","thread_id":"t1"}'
+case "$p" in *"shared read-only"*) echo ro-note > "$out";; *) echo no-note > "$out";; esac
+`), 0o755)
+	s, _ := testServer(t, func(c *serveConfig) {
+		c.AllowUnsandboxedBash = true
+		t.Setenv("CODEX_HOME", t.TempDir())
+		c.Codex = agentCLI{Enabled: true, Executable: codex, Work: "worktree"}
+	})
+	c := startLoopback(t, s)
+	dir := t.TempDir()
+	sc := &shareClient{c: c, session: "sidw", root: dir, sync: true, synced: map[string]syncEntry{}, reported: map[string]bool{}}
+	if !sc.register() {
+		t.Fatal("register failed: " + sc.refusal)
+	}
+	sc.start(2)
+	defer sc.unregister()
+	h := map[string]string{"x-claude-mini-session": "sidw", "x-claude-mini-cwd": dir, "content-type": "application/json"}
+	body := `{"model":"claude-codex","tools":[{"name":"x"}],"messages":[{"role":"user","content":"change"}]}`
+	st, data := call(c, "POST", "/v1/messages", h, []byte(body), 30*time.Second)
+	if args, _ := os.ReadFile(argsFile); st != 200 || !strings.Contains(string(data), "ro-note") || !strings.Contains(string(args), "read-only") ||
+		strings.Contains(string(args), "workspace-write") {
+		t.Fatalf("capped codex: %d %s %q", st, data, args)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "agent.txt")); err == nil { // L1: omejen tek ne prenese sprememb nazaj
+		t.Fatal("a capped run synced changes back")
+	}
+	x := s.state.sessions("", "")
+	if len(x) != 1 || !x[0].ReadOnly || len(x[0].Models) != 1 || x[0].Models[0].Cap != "worktree" || !x[0].Models[0].ReadOnly || x[0].Models[0].Tools != "" {
+		t.Fatalf("history: %+v", x)
+	}
+	if l := sessionLine(x[0]); !strings.Contains(l, "sync, read-only (cap worktree)") {
+		t.Fatalf("sessionLine: %q", l)
+	}
+	if l := useLine(x[0].Models[0]); !strings.Contains(l, `"claude-codex" read-only (cap worktree):`) {
+		t.Fatalf("useLine: %q", l)
+	}
+	s.mu.Lock()
+	s.cfg.Codex.Work = "" // direct: piše kot doslej
+	s.mu.Unlock()
+	if st, _ := call(c, "POST", "/v1/messages", h, []byte(body), 30*time.Second); st != 200 {
+		t.Fatal(st)
+	}
+	if args, _ := os.ReadFile(argsFile); !strings.Contains(string(args), "workspace-write") {
+		t.Fatalf("direct cap: %q", args)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for _, err := os.Stat(filepath.Join(dir, "agent.txt")); err != nil && time.Now().Before(deadline); _, err = os.Stat(filepath.Join(dir, "agent.txt")) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "agent.txt")); err != nil {
+		t.Fatal("an uncapped run did not sync back (the test would prove nothing)")
 	}
 }

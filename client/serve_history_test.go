@@ -374,3 +374,122 @@ func TestLoopbackDeviceSessionsAndHistory(t *testing.T) {
 		t.Fatalf("removed: %+v", l)
 	}
 }
+
+// #46b: števci po projektu (naprava, mapa seje, dan UTC, agent): seštevanje, nov dan, 31 dni, meja naprave in skupna,
+// API /usage (najnovejši dan prvi), brisanje skupaj s sejami, CLI.
+func TestProjectCounters(t *testing.T) {
+	g := loadState("")
+	day := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	use := func(session, device, folder, model string, status int, at time.Time) {
+		g.record(sessionUse{session: session, device: device, folder: folder, os: "macOS", model: model, status: status, took: 30 * time.Second, in: 10, out: 2}, at)
+	}
+	use("a", "D", "/p", "claude-cli-opus", 200, day)
+	use("a", "D", "/p/sub", "claude-cli-opus", 500, day)               // mapa seje ostane /p
+	use("a", "D", "/p", "claude-codex", 403, day)                      // drug agent
+	use("b", "D", "/p", "or-qwen", 200, day)                           // ponudnik: other
+	use("a", "D", "/p", "claude-cli-opus", 200, day.Add(13*time.Hour)) // nov dan UTC
+	use("c", "D", "", "claude-cli-opus", 200, day)                     // brez mape: ne šteje
+	rows := g.usage("", "", 7, day.Add(13*time.Hour))
+	if len(rows) != 4 || rows[0].Day != "2026-11-11" || rows[1].Day != "2026-11-10" {
+		t.Fatalf("rows: %+v", rows)
+	}
+	c := rows[1] // 2026-11-10, /p, D, claude
+	if c.Agent != "claude" || c.Requests != 2 || c.Errors != 1 || c.Seconds != 60 || c.InputTokens != 20 || c.OutputTokens != 4 || c.OS != "macOS" {
+		t.Fatalf("claude row: %+v", c)
+	}
+	if rows[2].Agent != "codex" || rows[2].Refused != 1 || rows[3].Agent != "other" {
+		t.Fatalf("agents: %+v", rows)
+	}
+	if n := len(g.usage("", "/P", 1, day.Add(13*time.Hour))); n != 1 { // macOS: brez razlike v velikih črkah; le danes
+		t.Fatalf("folder/days filter: %d", n)
+	}
+	if n := len(g.usage("X", "", 7, day)); n != 0 {
+		t.Fatal("device filter")
+	}
+	use("a", "D", "/p", "claude-cli-opus", 200, day.AddDate(0, 0, 31)) // nova vrstica: starejši od 31 dni odpadejo
+	if n := len(g.Projects); n != 2 {
+		t.Fatalf("retention: %d rows", n)
+	}
+	for i := range maxDeviceProj + 10 { // ena naprava ne izrine drugih
+		use(fmt.Sprintf("x%d", i), "BIG", fmt.Sprintf("/f%d", i), "m", 200, day.AddDate(0, 0, 31))
+	}
+	if mine := len(g.usage("BIG", "", 31, day.AddDate(0, 0, 31))); mine != maxDeviceProj || len(g.usage("D", "", 31, day.AddDate(0, 0, 31))) != 2 {
+		t.Fatalf("device cap: %d", mine)
+	}
+	for i := range maxProjects + 10 { // skupna meja: najstarejše odpadejo
+		use(fmt.Sprintf("y%d", i), fmt.Sprintf("E%d", i%8), fmt.Sprintf("/g%d", i), "m", 200, day.AddDate(0, 0, 31))
+	}
+	if n := len(g.Projects); n != maxProjects {
+		t.Fatalf("total cap: %d", n)
+	}
+	g.clearSessions()
+	if len(g.Projects) != 0 || len(g.Sessions) != 0 {
+		t.Fatal("clear kept the counters")
+	}
+	if usageLine(rows[1]) != `2026-11-10  "/p"  D  claude: 2 requests, 1 errors, 0 refused, 1.0 agent minutes, 20 input and 4 output tokens` {
+		t.Fatalf("usageLine: %q", usageLine(rows[1]))
+	}
+
+	s, cfg, base := liveServer(t, nil)
+	s.state.record(sessionUse{session: "u", folder: "/proj", model: "claude-codex", status: 200, took: time.Minute, in: 5, out: 6}, time.Now())
+	if st, b := adminNoise(t, s, base, s.admin, "GET", adminPrefix+"/usage?days=1&folder=/proj", ""); st != 200 ||
+		!strings.Contains(b, `"folder":"/proj"`) || !strings.Contains(b, `"agent":"codex"`) || !strings.Contains(b, `"requests":1`) || strings.Contains(b, `"device"`) {
+		t.Fatalf("usage API: %d %s", st, b)
+	}
+	if st, b := adminNoise(t, s, base, s.admin, "GET", adminPrefix+"/usage?days=32", ""); st != 400 || !strings.Contains(b, "days: 1-31") {
+		t.Fatalf("days=32: %d %s", st, b)
+	}
+	out := stdout(t, func() { routerCommand([]string{"usage", "--days", "2", "--config", cfg}, strings.NewReader("")) })
+	if !strings.Contains(out, `"/proj"  this computer  codex: 1 requests`) {
+		t.Fatalf("cli usage: %q", out)
+	}
+	if st, _ := adminNoise(t, s, base, s.admin, "DELETE", adminPrefix+"/sessions", ""); st != 200 || len(s.state.usage("", "", 31, time.Now())) != 0 {
+		t.Fatal("DELETE /sessions kept the counters")
+	}
+}
+
+// M1: najslabši primer števcev (vsa mesta z najdaljšimi mapami) ostane pod mejo datoteke in se prebere.
+func TestProjectCountersFileLimit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	g := loadState(path)
+	now := time.Now()
+	for i := range maxProjects {
+		g.record(sessionUse{session: fmt.Sprintf("s%d", i), device: fmt.Sprintf("D%d", i%8), folder: fmt.Sprintf("/%d", i) + strings.Repeat("<", 2000), model: "m"}, now)
+	}
+	if len(g.Projects) != maxProjects {
+		t.Fatalf("rows: %d", len(g.Projects))
+	}
+	if err := g.save(); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := os.Stat(path); st.Size() > maxStateFile || len(g.Projects) == maxProjects {
+		t.Fatalf("state.json %d bytes, %d rows", st.Size(), len(g.Projects))
+	}
+	if h := loadState(path); len(h.Projects) == 0 || len(h.Projects[0].Folder) > maxProjectFolder { // L2: ključ mape ≤ 256 B
+		t.Fatal("state.json not read back")
+	}
+}
+
+// L2: pri meji datoteke najprej odpadejo vrstice naprave z največ vrsticami (najstarejše).
+func TestTrimBusiest(t *testing.T) {
+	rows := []*projectUse{{Device: "A", Day: "1"}, {Device: "B", Day: "1"}, {Device: "B", Day: "2"}, {Device: "A", Day: "2"}, {Device: "B", Day: "3"}}
+	got := trimBusiest(rows)
+	if len(got) != 4 || got[1].Device != "B" || got[1].Day != "2" || got[0].Device != "A" {
+		t.Fatalf("%+v", got)
+	}
+}
+
+// Parity: isti state.json (testdata, tudi v HistoryTests.swift) prebereta oba prehoda.
+func TestStateParitySample(t *testing.T) {
+	g := loadState(filepath.Join("testdata", "state-0.5.21.json"))
+	if len(g.Sessions) != 1 || len(g.Projects) != 2 || g.Sessions[0].Models[0].Cap != "worktree" || !g.Sessions[0].Models[0].ReadOnly {
+		t.Fatalf("sample: %+v %+v", g.Sessions, g.Projects)
+	}
+	now := time.Date(2026, 11, 10, 18, 0, 0, 0, time.UTC)
+	if u := g.usage("", "c:/PROJ", 7, now); len(u) != 1 || u[0].Agent != "codex" || u[0].Seconds != 42.5 || u[0].Refused != 1 {
+		t.Fatalf("usage: %+v", u)
+	}
+	if u := g.usage("", "", 2, now); len(u) != 2 || u[0].Day != "2026-11-10" || u[1].Device != "" {
+		t.Fatalf("usage: %+v", u)
+	}
+}

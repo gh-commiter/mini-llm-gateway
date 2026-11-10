@@ -32,6 +32,7 @@ runs; otherwise they go to serve.json.
   minigw gw devices [allow <device id> [--name N] | rename <device id> --name N | deny <device id>]
   minigw gw devices history <device id>                 the device's last connections
   minigw gw sessions [--device ID] [--folder DIR] | <session id> | clear
+  minigw gw usage [--days N] [--device ID] [--folder DIR]   counters per folder, day (UTC) and agent (clear: sessions clear)
   minigw gw provider add <name> <baseURL> [--insecure]   the API key is read from stdin or asked for
   minigw gw provider remove <name> | list
   minigw gw provider models <name> [text] [--all] [--enable m1,m2|all] [--disable m1,m2|all]
@@ -236,6 +237,7 @@ func routerCommand(args []string, in io.Reader) {
 	all := fs.Bool("all", false, "provider models: also list the disabled models")
 	device := fs.String("device", "", "sessions: only this device")
 	folder := fs.String("folder", "", "sessions: only this folder and its subfolders")
+	days := fs.String("days", "7", "usage: the last N days (1-31; the gateway checks it)")
 	devName := fs.String("name", "", "devices allow/rename: the device's name (a label; the ID identifies it)")
 	path := fs.String("path", "", "claude: path to claude (empty = PATH)")
 	tools := fs.String("tools", "", "claude: the agent's tools")
@@ -414,6 +416,19 @@ func routerCommand(args []string, in io.Reader) {
 			}
 		default:
 			fail(routerHelp)
+		}
+
+	case "usage":
+		if len(pos) != 1 {
+			fail(routerHelp)
+		}
+		var r struct{ Usage []projectUse }
+		a.do("GET", "/usage?days="+url.QueryEscape(*days)+"&device="+url.QueryEscape(*device)+"&folder="+url.QueryEscape(*folder), nil, &r)
+		for _, p := range r.Usage {
+			say(usageLine(p))
+		}
+		if len(r.Usage) == 0 {
+			say("no usage recorded")
 		}
 
 	case "provider", "gateway": // gateway: starejše ime, skrit alias

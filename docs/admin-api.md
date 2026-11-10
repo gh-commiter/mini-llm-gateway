@@ -93,7 +93,7 @@ Session  {"id": string, "device"?: string, "deviceName"?: string, "deviceRemoved
          The last 200 sessions are kept, at most 50 per device (a device's oldest go first); before saving, the oldest
          go until the file is under 4 MB. Folder ≤ 1 KiB, branch ≤ 255 B (UTF-8, control, C1 and bidi
          characters removed). Never prompt or answer text.
-Use      {"model": string, "role"?: string, "via"?: string, "readOnly"?: true, "tools"?: string, "requests": number,
+Use      {"model": string, "role"?: string, "via"?: string, "readOnly"?: true, "tools"?: string, "cap"?: string, "requests": number,
           "errors": number, "refused": number, "seconds": number, "inputTokens": number, "outputTokens": number}
          One entry per model, role and via (sorted by them; at most 32, then "other"). model ≤ 64 B; a request for
          an unknown or refused model (404) counts as "unknown". via: the agent or chain that
@@ -102,8 +102,18 @@ Use      {"model": string, "role"?: string, "via"?: string, "readOnly"?: true, "
          or `--minigw-ro` (header `x-claude-mini-ro`, also without a share; a nested request keeps its caller's); Claude CLI's
          tools (read-only: only Read, Grep, Glob, LS, WebSearch, WebFetch of them) or "local" (Allow local tools; read-only:
          "local,read-only"), Codex, Grok and Copilot's switches `write`, `network`, `commands` as they applied (empty = read
-         only; read-only drops `write` and `commands`; Codex `network` only with `write`). errors: 5xx and aborted; refused: 4xx; seconds:
+         only; read-only drops `write` and `commands`; Codex `network` only with `write`). An agent's run records what it
+         applied, not values recomputed afterwards: also read-only from an agent without writing in worktree mode, and from
+         the agent's `work` cap; `cap` (`sync` or `worktree`) is the cap that made the run read-only (`minigw gw sessions`
+         prints "read-only (cap worktree)"). errors: 5xx and aborted; refused: 4xx; seconds:
          total request time (for agents their run time); tokens from the response's usage.
+Project  {"device"?: string, "folder": string, "os"?: string, "day": string, "agent": string, "requests": number,
+          "errors": number, "refused": number, "seconds": number, "inputTokens": number, "outputTokens": number}
+         Counters per device, folder, UTC day (`YYYY-MM-DD`) and agent kind (`claude`, `codex`, `grok`, `copilot`, or
+         `other` for provider models); they stay when sessions are dropped. folder: the session's folder (a nested agent
+         call counts under its caller's project; at most 256 bytes); requests without a folder are not counted. Kept 31 days, at most 5000
+         rows (the oldest day goes first), at most 1250 per device (its oldest first, so one device cannot push out the
+         others; at the 4 MB file limit the device with the most rows loses its oldest first). Tokens are what the provider reports and are not checked. Never prompt or answer text.
 Running  {"id": string, "time": string, "model": string, "step"?: string}
          A model request (`POST /v1/messages`) still running. id: its request ID; model: the client's model name
          (`"unknown"` when over 200 bytes); step: the agent's current step (a tool, a file it reads or a command with
@@ -147,7 +157,8 @@ General  {"port": number, "address": string, "connect": string, "restartRequired
 | `GET /devices/{id}/history` | – | `{"id", "name", "history": [Connection]}`, newest first; 404 for a device that is not allowed |
 | `GET /sessions` | query `device`, `folder` (that folder and its subfolders) | `{"sessions": [Session]}`, newest first |
 | `GET /sessions/{id}` | – | Session |
-| `DELETE /sessions` | – | `{"cleared": true}`; clears the session history (connection histories stay) |
+| `DELETE /sessions` | – | `{"cleared": true}`; clears the session history and the project counters (connection histories stay) |
+| `GET /usage` | query `device`, `folder` (that folder and its subfolders), `days` (1-31, default 7; else 400 "days: 1-31") | `{"usage": [Project]}`: today and the days before, newest day first, then folder, device, agent |
 | `GET /activity` | – | `{"inflight": [Running], "requests": [Request]}`, newest first: what the Mac app's Activity window shows |
 | `GET /providers` | – | `{"providers": [Provider]}` |
 | `POST /providers` | `{"name", "baseURL", "key", "insecure"}` | `{"provider": Provider, "keyStore": string, "models": [Model]}` |
@@ -199,7 +210,16 @@ Notes:
   The Mac app leaves `os`, `installDir` and `tray` out.
 - `POST /providers/{name}/models`: `all` first (true = all, false = none), then `enable`, then `disable`.
 - The Go gateway's Claude also has `"enabled", "folders"` (comma-separated allowed folders), `"allowLocalTools",
-  "disabledTools", "permissionMode", "settingSources", "askOthers"`, as on the Mac; see [windows-parity.md](windows-parity.md).
+  "disabledTools", "permissionMode", "settingSources", "askOthers", "work"`, as on the Mac; see [windows-parity.md](windows-parity.md).
+- `work` (every agent, `GET` and `PATCH`): the highest work mode in which the agent may change the client's folder:
+  `"direct"` (default: any mode), `"sync"` (sync, worktree and native with git) or `"worktree"` (only modes that return
+  a branch: worktree, native with git); any other value is 400 "work: direct, sync or worktree". When the session's
+  mode is above the cap, the agent runs read-only (a capped sync run copies nothing back to the client) and the
+  client gets, once per session and agent, the note "Mini Gateway lets <Agent> change files
+  only in worktree mode, so it only read the folder (run minigw --minigw-work=worktree)" (the gateway checks the
+  session it registered, never a header; a nested call is capped by the asked agent's kind in the caller's session).
+  `chat` (no shared folder) is not capped. `minigw serve` has only sync and worktree, so there `sync` acts as `direct`.
+  The config stores direct as empty (`claudeWork`, `codex.work`, … in serve.json; `work` in the Mac config).
 - `PATCH /agents/claude`: the gateway checks the path, that the folder exists and is not near the config folder,
   and that Bash on Windows has `allowUnsandboxedBash`. While `leftOut` is not empty, every PATCH without `"folders"`
   returns 400 "first save the allowed folders without …" (Go gateway only).
@@ -214,12 +234,12 @@ Notes:
 
 | Method and path | Body | Response |
 |---|---|---|
-| `GET /agents/codex`, `PATCH` | any of `{"enabled", "path", "write", "network", "models", "askOthers"}` | `{"enabled", "path", "found", "write", "network", "models": [string] \| null, "askOthers"}` |
+| `GET /agents/codex`, `PATCH` | any of `{"enabled", "path", "write", "network", "models", "askOthers", "work"}` | `{"enabled", "path", "found", "write", "network", "models": [string] \| null, "askOthers", "work"}` |
 | `GET /agents/codex/models`, `GET /agents/grok/models` | – | `{"models": [{"slug", "name", "description"?, "window"?, "enabled"}]}`: the account's models |
 | `GET /foundry`, `PATCH` | any of `{"enabled", "path", "instructions", "models"}` | `{"enabled", "path", "found", "exe", "running", "error", "instructions", "models": [string] \| null}`: Foundry Local on this computer |
 | `GET /foundry/models` | – | `{"models": [{"name", "vision", "enabled"}]}`: models downloaded in Foundry Local; `503` when it is not installed or does not answer (Go gateway and the Mac app) |
-| `GET /agents/grok`, `PATCH` | any of `{"enabled", "path", "write", "models", "askOthers"}` | `{"enabled", "path", "found", "write", "models", "askOthers"}` |
-| `GET /agents/copilot`, `PATCH` | any of `{"enabled", "path", "write", "network", "commands", "models", "token", "askOthers"}` | `{"enabled", "path", "found", "write", "network", "commands", "models": [string], "hasToken", "askOthers"}` |
+| `GET /agents/grok`, `PATCH` | any of `{"enabled", "path", "write", "models", "askOthers", "work"}` | `{"enabled", "path", "found", "write", "models", "askOthers", "work"}` |
+| `GET /agents/copilot`, `PATCH` | any of `{"enabled", "path", "write", "network", "commands", "models", "token", "askOthers", "work"}` | `{"enabled", "path", "found", "write", "network", "commands", "models": [string], "hasToken", "askOthers", "work"}` |
 | `GET /appleFM`, `PATCH` (Mac) | any of `{"enabled", "instructions"}` | `{"enabled", "instructions"}`: Apple Foundation Models (Settings → Apple Foundation Models); instructions up to 8000 characters |
 | `GET /siri`, `PATCH` | any of `{"enabled", "timeout", "allow": [id], "deny": [id]}` | `{"enabled", "timeout", "devices": [{"id", "name", "siri"}]}` |
 | `GET /run`, `PATCH` (Mac) | any of `{"commands", "allow": [id], "deny": [id], "allowNetwork": [id], "denyNetwork": [id]}` | `{"commands", "devices": [{"id", "name", "run", "network"}]}` |

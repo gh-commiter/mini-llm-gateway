@@ -8,6 +8,7 @@ public struct GrokConfig: Codable, Sendable, Equatable {
     public var enabledModels: [String]?   // nil = vsi modeli računa; seznam = le ti
     public var write = true               // sandbox workspace (sicer read-only)
     public var askOthers = false          // »May ask other models«: agent vpraša drug model prehoda (AgentRun)
+    public var work = ""                  // #45: najvišji način za pisanje (sync, worktree); "" = direct, vsi načini
     public init() {}
 
     public init(from decoder: Decoder) throws {
@@ -18,6 +19,7 @@ public struct GrokConfig: Codable, Sendable, Equatable {
         enabledModels = try c.decodeIfPresent([String].self, forKey: .enabledModels)
         write = try c.decodeIfPresent(Bool.self, forKey: .write) ?? d.write
         askOthers = try c.decodeIfPresent(Bool.self, forKey: .askOthers) ?? d.askOthers
+        work = try c.decodeIfPresent(String.self, forKey: .work) ?? d.work
     }
 
     public func isModelEnabled(_ m: String) -> Bool { enabledModels?.contains(m) ?? true }
@@ -210,7 +212,9 @@ extension Router {
             sharedDir = shared
             extra = config.claudeCLI.allowedRoots.split(separator: ",").map { ClaudeCLI.expand($0.trimmingCharacters(in: .whitespaces)) }
                 .filter { $0 != "/" && !$0.isEmpty && $0 != dir.path && FileManager.default.fileExists(atPath: $0) }
-            readOnly = await Self.isReadOnly(req)
+            let cap = await capped(req, kind: "grok")  // #45: način seje nad omejitvijo → le branje
+            readOnly = await Self.isReadOnly(req) || cap != nil
+            Self.runBranch?.readOnly = readOnly || inTree  // #46a
             if readOnly, inTree, AgentRun.current == nil { return await error(400, "invalid_request_error", Self.readOnlyWorktree, rid: rid, writer: writer) }  // kot Codex
             if let shared, let clientCwd {
                 prompt = Self.mountNote(clientCwd, shared, readOnly: readOnly || inTree, synced: synced) + "\n\n" + prompt
@@ -227,7 +231,7 @@ extension Router {
         }
         if agent, let note = agentNote("grok") { prompt = note + "\n\n" + prompt }
         let sessions = Self.grokSessions, client = req.header("x-claude-mini-session") ?? ""
-        let run = agent ? await startAgentRun(req, kind: "grok", dir: sharedDir, readOnly: inTree) : nil
+        let run = agent ? await startAgentRun(req, kind: "grok", dir: sharedDir, readOnly: readOnly || inTree) : nil
         defer { run?.stop() }
         var env = run?.env ?? [:]
         if inTree, let t = await Self.shares.worktree(session: client) {  // L-N9a: Grok bere v klonu; njegov git z ovojem

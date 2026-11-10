@@ -165,7 +165,7 @@ func (s *shareClient) handle(job davJob, k string) davResponse {
 		s.syncMu.Lock()
 		defer s.syncMu.Unlock()
 		return s.wtPush(k, job)
-	case (s.native || s.worktree) && job.Method == "WORKTREE-NOTE": // sporočilo prehoda (native: dostavljena ali nedostavljena veja)
+	case job.Method == "WORKTREE-NOTE": // sporočilo prehoda (native: dostavljena ali nedostavljena veja; #45 tudi sync: agent le bere)
 		var n struct{ Message, Branch, Base, Nested string }
 		json.Unmarshal(job.Body, &n)
 		s.syncMu.Lock()

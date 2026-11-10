@@ -1,0 +1,5 @@
+{"usage": [{"device": "Qm9iJ3MgTWFjQm9vayBkZXZpY2Uga2V5IDMyIGJ5dGVz", "folder": "/Users/bob/src/app", "os": "macOS", "day": "2026-11-09", "agent": "codex",
+  "requests": 4, "errors": 0, "refused": 0, "seconds": 312, "inputTokens": 48211, "outputTokens": 5120},
+ {"device": "Qm9iJ3MgTWFjQm9vayBkZXZpY2Uga2V5IDMyIGJ5dGVz", "folder": "/Users/bob/src/app", "os": "macOS", "day": "2026-11-08", "agent": "other",
+  "requests": 2, "errors": 0, "refused": 0, "seconds": 9, "inputTokens": 3100, "outputTokens": 410},
+ {"folder": "/home/ana/notes", "os": "Linux", "day": "2026-11-08", "agent": "claude", "requests": 1, "errors": 1, "refused": 0, "seconds": 60, "inputTokens": 0, "outputTokens": 0}]}
