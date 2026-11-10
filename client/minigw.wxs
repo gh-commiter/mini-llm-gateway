@@ -147,7 +147,7 @@
         <Control Id="GatewayBox" Type="CheckBox" X="20" Y="45" Width="330" Height="28" Property="GATEWAY_BOX" CheckBoxValue="1"
                  Text="Gateway: run a gateway on this PC (tray icon, starts at sign-in, minigw gw settings)"/>
         <Control Id="PluginBox" Type="CheckBox" X="20" Y="78" Width="330" Height="28" Property="PLUGIN_BOX" CheckBoxValue="1"
-                 Text="Claude Code plugin: the minigw skills, compatible with the Claude Code CLI"/>
+                 Text="Claude Code plugin: the minigw skills, compatible with the Claude Code CLI; updates automatically from the release branch"/>
         <Control Id="Install" Type="PushButton" X="236" Y="220" Width="56" Height="17" Default="yes" Text="Install"
                  HideCondition="Installed" ShowCondition="NOT Installed">
           <Publish Event="AddLocal" Value="Gateway" Condition="GATEWAY_BOX" Order="1"/>
