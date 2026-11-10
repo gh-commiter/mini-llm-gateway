@@ -257,6 +257,7 @@ final class ShareClient: @unchecked Sendable {
     var native: Bool { kind == "native" || kind == "native-direct" }
     var branches = false  // native v repozitoriju git: agenti na svojih vejah (odgovor prehoda)
     var locked = false    // native v mapi sami: en pisoči agent naenkrat (starejši prehod tega ne pošlje)
+    var capped: [String] = []  // #60: agenti, ki zaradi omejitve prehoda le berejo (starejši prehod tega ne pošlje)
     var worktree: Bool { kind == "worktree" }
     var refusal = ""  // zakaj router mape ni sprejel
     static let writeMethods: Set<String> = ["PUT", "DELETE", "MKCOL", "MOVE", "COPY", "PROPPATCH", "LOCK"]
@@ -294,6 +295,7 @@ final class ShareClient: @unchecked Sendable {
         lock.withLock { current = k }
         branches = o?["branches"] as? Bool == true
         locked = o?["lock"] as? Bool == true
+        capped = o?["capped"] as? [String] ?? []
         return true
     }
 
@@ -1021,6 +1023,7 @@ if wantShare, !sid.isEmpty {
     if let noSnapshot { err.write(Data("minigw: \(noSnapshot); using \(tries[0])\n".utf8)) }
     (share, registered) = registerShare(c, tries: tries, quiet: false)
 }
+let capped = share.capped  // pred start: ponovna registracija ga lahko prepiše
 if !wantShare || sid.isEmpty {
     // le šifrirani proxy
 } else if registered {
@@ -1028,11 +1031,11 @@ if !wantShare || sid.isEmpty {
     if share.native && share.branches {
         err.write(Data("minigw: \(cwd) is a folder of \(routerHost) (SMB): agent models work there in clones of this git repository, each on its own branch minigw/… (native; --minigw-work=native-direct = in the folder itself)\n".utf8))
     } else if share.native {
-        err.write(Data("minigw: \(cwd) is a folder of \(routerHost) (SMB): agent models work in it there directly\(share.locked ? ", one writing agent at a time" : "") (native)\n".utf8))
+        err.write(Data("minigw: \(cwd) is a folder of \(routerHost) (SMB): agent models work in it there directly\(share.locked ? ", one writing agent at a time" : "")\(SharedFolders.cappedNative(capped)) (native)\n".utf8))
     } else if share.worktree {
         err.write(Data("minigw: agent models work in a clone of this git repository on \(routerHost); their work comes back as branch minigw/… (minigw prints the range to review; your uncommitted and untracked, not ignored files are sent too; worktree)\n".utf8))
     } else {
-        err.write(Data("minigw: \(share.sync ? "syncing" : "sharing") \(cwd) \(readOnly ? "read-only" : "read-write") with \(routerHost) for agent models (--minigw-ro = read-only, MINIGW_SHARE=0 = off)\n".utf8))
+        err.write(Data("minigw: \(share.sync ? "syncing" : "sharing") \(cwd) \(readOnly ? "read-only" : SharedFolders.cappedMode(capped)) with \(routerHost) for agent models (--minigw-ro = read-only, MINIGW_SHARE=0 = off)\n".utf8))
     }
 } else {
     err.write(Data("minigw: gateway did not accept the folder; Claude CLI models with tools will not see it\n".utf8))

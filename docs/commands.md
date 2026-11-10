@@ -90,6 +90,7 @@ only on the gateway computer.
 | `minigw gw provider models <name> [text] [--all] [--enable m1,m2\|all] [--disable m1,m2\|all]` | Show, enable or disable a provider's models |
 | `minigw gw claude [--path FILE] [--tools T1,T2] [--folders DIR1,DIR2] [--allow-local-tools=true\|false] [--ask-others=true\|false]` | Claude CLI settings |
 | `minigw gw claude --allow-unsandboxed-bash=true\|false` | Commands without a sandbox (`minigw serve` only) |
+| `minigw gw claude\|codex\|grok\|copilot [--work=direct\|sync\|worktree]` | Show or set the agent's cap: the highest work mode in which it may change the client's folder (in a lower mode it only reads) |
 | `minigw gw copilot token [remove]` | Copilot's GitHub token for commands, read from stdin or asked for |
 | `minigw gw autostart [on\|off]` | Mac: Open at Login. Windows: the tray at sign-in. No argument: show it |
 | `minigw gw token [rotate]` | Print the connect line for clients; `rotate` makes a new token |

@@ -689,6 +689,7 @@ func main() {
 		}
 		var ok bool
 		share, ok = registerShare(c, sid, cwd, readOnly, top, tries, false, implicit)
+		capped := share.capped // pred start: ponovna registracija ga piše pod share.mu
 		if ok && share.worktree {
 			share.start(4)
 			fmt.Fprintf(os.Stderr, "minigw: agent models work in a clone of this git repository on %s; their work comes back as branch minigw/… (minigw prints the range to review; your uncommitted and untracked, not ignored files are sent too; worktree)\n", routerHost)
@@ -701,10 +702,11 @@ func main() {
 			if share.lock {
 				lock = ", one writing agent at a time"
 			}
+			lock += cappedNative(capped)
 			fmt.Fprintf(os.Stderr, "minigw: %s is a folder of %s (SMB): agent models work in it there directly%s (native)\n", cwd, routerHost, lock)
 		} else if ok {
 			share.start(4)
-			mode := "read-write"
+			mode := cappedMode(capped)
 			if readOnly {
 				mode = "read-only"
 			}
@@ -1056,6 +1058,42 @@ func modelProfile(args, names []string) []string {
 		}
 	}
 	return args
+}
+
+// cappedNames (#60): imena omejenih agentov (le znani, brez ponovitev) in ali so omejeni vsi.
+func cappedNames(capped []string) (names []string, all bool) {
+	seen := map[string]bool{}
+	for _, k := range capped {
+		if n := agentNames[k]; n != "" && !seen[k] {
+			seen[k] = true
+			names = append(names, n)
+		}
+	}
+	return names, len(seen) == len(agentNames)
+}
+
+// cappedMode (#60): način v začetni vrstici; capped = agenti, ki zaradi omejitve prehoda (work) le berejo.
+func cappedMode(capped []string) string {
+	names, all := cappedNames(capped)
+	switch {
+	case all:
+		return "read-only (capped by the gateway)"
+	case len(names) == 0:
+		return "read-write"
+	}
+	return "read-write (read-only for " + strings.Join(names, ", ") + ": capped by the gateway)"
+}
+
+// cappedNative (#60): dodatek vrstici native (v mapi sami); "" brez omejitve.
+func cappedNative(capped []string) string {
+	names, all := cappedNames(capped)
+	switch {
+	case all:
+		return ", read-only (capped by the gateway)"
+	case len(names) == 0:
+		return ""
+	}
+	return ", read-only for " + strings.Join(names, ", ") + " (capped by the gateway)"
 }
 
 // registerShare: načini po vrsti (auto: native → worktree → sync); naslednji, če prehod prejšnjega ne sprejme.

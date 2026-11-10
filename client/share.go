@@ -41,6 +41,7 @@ type shareClient struct {
 	inPlace  bool                // native-direct: agenti v mapi sami (tudi v repozitoriju git), ne na svojih vejah
 	branches bool                // native v repozitoriju git: agenti na svojih vejah minigw/… (odgovor prehoda)
 	lock     bool                // native v mapi sami: en pisoči agent naenkrat (odgovor prehoda; starejši prehod ga ne pošlje)
+	capped   []string            // #60: agenti, ki zaradi omejitve prehoda le berejo (odgovor prehoda)
 	worktree bool                // --minigw-work=worktree: posnetek kot bundle, veja agenta nazaj kot ref (worktree.go)
 	top      string              // worktree: koren repozitorija git
 	snaps    []string            // worktree: posnetki, poslani prehodu (začetek dela agenta za vrstico o veji)
@@ -95,9 +96,10 @@ func (s *shareClient) register() bool {
 	}
 	st, data := call(s.c, "POST", "/minigw/share", h, nil, 10*time.Second)
 	var r struct {
-		Key      string `json:"key"`
-		Branches bool   `json:"branches"`
-		Lock     bool   `json:"lock"`
+		Key      string   `json:"key"`
+		Branches bool     `json:"branches"`
+		Lock     bool     `json:"lock"`
+		Capped   []string `json:"capped"` // #60: agenti, ki zaradi omejitve prehoda le berejo (starejši prehod: nič)
 		Error    struct {
 			Message string `json:"message"`
 		} `json:"error"`
@@ -110,7 +112,7 @@ func (s *shareClient) register() bool {
 		return false
 	}
 	s.mu.Lock()
-	s.key, s.branches, s.lock = r.Key, r.Branches, r.Lock
+	s.key, s.branches, s.lock, s.capped = r.Key, r.Branches, r.Lock, r.Capped
 	s.mu.Unlock()
 	return true
 }

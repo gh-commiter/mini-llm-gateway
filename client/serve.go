@@ -1211,7 +1211,11 @@ func (s *server) route(w http.ResponseWriter, r *req) (int, string) {
 		if !ok {
 			return writeError(w, r.rid, 409, "Session already has a folder"), ""
 		}
-		return writeJSON(w, r.rid, 200, map[string]string{"key": k}), ""
+		reply := map[string]any{"key": k}
+		if c := s.conf().cappedKinds("sync"); !ro && len(c) > 0 { // #60; worktree ni nikoli omejen
+			reply["capped"] = c
+		}
+		return writeJSON(w, r.rid, 200, reply), ""
 	case "DELETE /minigw/share":
 		s.hub.unregister(key, dev)
 		return writeStatus(w, 204, "", nil), ""

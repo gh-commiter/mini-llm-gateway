@@ -287,6 +287,17 @@ func useOf(_ s: GatewayHistory.Session, _ model: String, role: String = "") -> G
     for mode in ["sync", "direct", "native-direct"] { #expect(await cap(mode, "codex") == "worktree", "\(mode)") }
     for mode in ["direct", "native-direct"] { #expect(await cap(mode, "claude") == "sync", "\(mode)") }
     for (mode, kind) in [("sync", "claude"), ("sync", "grok"), ("chat", "codex")] { #expect(await cap(mode, kind) == nil, "\(mode) \(kind)") }
+    // #60: odgovor na registracijo mape pove omejene agente (začetna vrstica odjemalca); samo za branje in worktree brez njih.
+    #expect(router.cappedKinds("sync") == ["codex"] && router.cappedKinds("direct") == ["claude", "codex"])
+    #expect(router.cappedKinds("worktree").isEmpty && router.cappedKinds("native").isEmpty && router.cappedKinds("chat").isEmpty)
+    for (ro, want) in [(false, ["claude", "codex"]), (true, nil)] {
+        let w = FakeWriter()
+        let sid = "cap-reg-\(ro)-" + id
+        await router.handle(request("POST", "/minigw/share", headers: ["Authorization": "Bearer tok", "x-claude-mini-session": sid, "x-claude-mini-cwd": "/p",
+                                                                     "x-share-mode": ro ? "ro" : "rw"]), writer: w)
+        let o = try JSONSerialization.jsonObject(with: Data((w.text.components(separatedBy: "\r\n\r\n").last ?? "").utf8)) as? [String: Any]
+        #expect(o?["key"] is String && o?["capped"] as? [String] == want, "\(ro) \(w.text)")
+    }
     // Skrbniški API: work na /agents/*; druga vrednost 400 z istim besedilom kot v Go; direct = "".
     for a in ["claude", "codex", "grok", "copilot"] {
         let bad = await admin(router, "PATCH", "/agents/\(a)", body: #"{"work":"readonly"}"#)
@@ -402,4 +413,15 @@ func useOf(_ s: GatewayHistory.Session, _ model: String, role: String = "") -> G
     func row(_ d: String, _ day: String) -> GatewayHistory.ProjectUse { var p = GatewayHistory.ProjectUse(); p.device = d; p.day = day; return p }
     let got = GatewayHistory.trimBusiest([row("A", "1"), row("B", "1"), row("B", "2"), row("A", "2"), row("B", "3")])
     #expect(got.map { $0.device + $0.day } == ["A1", "B2", "A2", "B3"])
+}
+
+/// #60: začetna vrstica odjemalca (iste besede kot TestCappedMode v Go); neznani agenti odpadejo, ponovitve štejejo enkrat.
+@Test func cappedStartLine() {
+    #expect(SharedFolders.cappedMode([]) == "read-write")
+    #expect(SharedFolders.cappedMode(["codex", "grok"]) == "read-write (read-only for Codex, Grok: capped by the gateway)")
+    #expect(SharedFolders.cappedMode(["claude", "codex", "copilot", "grok"]) == "read-only (capped by the gateway)")
+    #expect(SharedFolders.cappedMode(["codex", "codex", "codex", "x\u{1b}[31m"]) == "read-write (read-only for Codex: capped by the gateway)")
+    #expect(SharedFolders.cappedNative(["evil"]) == "")
+    #expect(SharedFolders.cappedNative(["grok", "codex"]) == ", read-only for Grok, Codex (capped by the gateway)")
+    #expect(SharedFolders.cappedNative(["grok", "codex", "claude", "copilot"]) == ", read-only (capped by the gateway)")
 }

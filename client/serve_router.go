@@ -39,6 +39,9 @@ runs; otherwise they go to serve.json.
   minigw gw claude [--path FILE] [--tools T1,T2] [--folders DIR1,DIR2] [--allow-local-tools=true|false]
                   [--ask-others=true|false]   (may ask other models of this gateway; needs --allow-local-tools)
                   [--allow-unsandboxed-bash=true|false]   (minigw serve only)
+  minigw gw claude|codex|grok|copilot [--work=direct|sync|worktree]
+                                                        the highest work mode in which the agent may change the
+                                                        client's folder (in a lower mode it only reads)
   minigw gw autostart [on|off]                          Windows: start the tray at sign-in (Linux: minigw serve install); no argument: show it
   minigw gw token [rotate]                              print the connect line; rotate makes a new token
   minigw gw copilot token [remove]                      Copilot's token for commands (fine-grained, only Copilot
@@ -245,6 +248,7 @@ func routerCommand(args []string, in io.Reader) {
 	folders := fs.String("folders", "", "claude: allowed folders, comma-separated (as on the Mac)")
 	localTools := fs.String("allow-local-tools", "", "claude: true or false")
 	askOthers := fs.String("ask-others", "", "claude: true or false")
+	work := fs.String("work", "", "claude, codex, grok, copilot: direct, sync or worktree")
 	fs.Usage = func() { fmt.Fprintln(os.Stderr, routerHelp) }
 	var pos []string // ukazi in zastavice v poljubnem vrstnem redu
 	for {
@@ -263,6 +267,12 @@ func routerCommand(args []string, in io.Reader) {
 	if len(pos) == 0 || pos[0] == "help" {
 		say(routerHelp)
 		return
+	}
+	if set["work"] && !validWork(*work) {
+		fail("--" + badWork)
+	}
+	if set["work"] && !slices.Contains([]string{"claude", "codex", "grok"}, pos[0]) && (pos[0] != "copilot" || len(pos) != 1) {
+		fail("--work only applies to minigw gw claude|codex|grok|copilot")
 	}
 	if len(pos) == 1 && pos[0] == "settings" { // terminal UI: kliče nazaj ta minigw (gw api), skrivnosti ne vidi
 		var extra []string
@@ -515,8 +525,11 @@ func routerCommand(args []string, in io.Reader) {
 	case "claude":
 		need(1, 1)
 		var c apiClaude
-		if set["path"] || set["tools"] || set["allow-unsandboxed-bash"] || set["folders"] || set["allow-local-tools"] || set["ask-others"] {
+		if set["path"] || set["tools"] || set["allow-unsandboxed-bash"] || set["folders"] || set["allow-local-tools"] || set["ask-others"] || set["work"] {
 			body := map[string]any{}
+			if set["work"] {
+				body["work"] = *work
+			}
 			if set["path"] {
 				body["path"] = *path
 			}
@@ -555,8 +568,8 @@ func routerCommand(args []string, in io.Reader) {
 		if path == "" {
 			path = "(from PATH)"
 		}
-		say(clean(fmt.Sprintf("path: %s, found: %v\ntools: %s\nallowLocalTools: %v\naskOthers: %v\nfolders: %s\nallowUnsandboxedBash: %v",
-			path, c.Found, c.Tools, c.AllowLocalTools, c.AskOthers, c.Folders, c.AllowUnsandboxedBash)))
+		say(clean(fmt.Sprintf("path: %s, found: %v\ntools: %s\nallowLocalTools: %v\naskOthers: %v\nfolders: %s\nallowUnsandboxedBash: %v\nwork: %s",
+			path, c.Found, c.Tools, c.AllowLocalTools, c.AskOthers, c.Folders, c.AllowUnsandboxedBash, c.Work)))
 		if c.Off != "" {
 			say(clean("Claude CLI and Codex are off: " + c.Off))
 		}
@@ -589,7 +602,14 @@ func routerCommand(args []string, in io.Reader) {
 			say("On each client run:")
 		}
 		say("  " + g.Connect)
+	case "codex", "grok": // #60: omejitev načina (work); brez --work le izpis
+		need(1, 1)
+		agentWork(a, pos[0], set["work"], *work)
 	case "copilot":
+		if len(pos) == 1 {
+			agentWork(a, "copilot", set["work"], *work)
+			return
+		}
 		need(2, 3)
 		if pos[1] != "token" || (len(pos) == 3 && pos[2] != "remove") {
 			fail(routerHelp)
@@ -706,4 +726,15 @@ func enabledText(models []apiModel) string {
 		}
 	}
 	return strconv.Itoa(n)
+}
+
+// agentWork (#60): minigw gw codex|grok|copilot [--work=…]: omejitev načina agenta prek skrbniškega API.
+func agentWork(a *adminClient, kind string, set bool, work string) {
+	var c struct{ Work string }
+	if set {
+		a.do("PATCH", "/agents/"+kind, map[string]any{"work": work}, &c)
+	} else {
+		a.do("GET", "/agents/"+kind, nil, &c)
+	}
+	say(clean(agentNames[kind] + " work: " + c.Work))
 }

@@ -21,6 +21,9 @@ minigw gw: show or change the Mini Gateway app on this Mac. Changes apply at onc
   minigw gw provider models <name> [text] [--all] [--enable m1,m2|all] [--disable m1,m2|all]
   minigw gw claude [--path FILE] [--tools T1,T2] [--folders DIR1,DIR2] [--allow-local-tools=true|false]
                   [--ask-others=true|false]   (may ask other models of this gateway; needs --allow-local-tools)
+  minigw gw claude|codex|grok|copilot [--work=direct|sync|worktree]
+                                                        the highest work mode in which the agent may change the
+                                                        client's folder (in a lower mode it only reads)
   minigw gw token [rotate]                              print the connect line; rotate makes a new token
   minigw gw copilot token [remove]                      Copilot's token for commands (fine-grained, only Copilot
                                                         Requests), read from stdin or asked for
@@ -201,10 +204,16 @@ private func autostartLine(_ st: [String: Any]) -> String {
     st["installed"] as? Bool == true ? "starts at sign-in (Settings → General → Open at Login)" : "does not start at sign-in (Settings → General → Open at Login)"
 }
 
+/// #60: minigw gw codex|grok|copilot [--work=…]: omejitev načina agenta prek skrbniškega API (kot agentWork v Go).
+private func agentWork(_ a: AdminConnection, _ kind: String, _ work: String?) {
+    let c = work.map { a.call("PATCH", "/agents/" + kind, ["work": $0]) } ?? a.call("GET", "/agents/" + kind)
+    say(clean("\(["codex": "Codex", "grok": "Grok", "copilot": "Copilot"][kind] ?? kind) work: \(c["work"] as? String ?? "")"))
+}
+
 func routerCommand(_ argv: [String]) {
     // Ukazi in zastavice v poljubnem vrstnem redu (»--x v« ali »--x=v«).
     var pos: [String] = [], flags: [String: String] = [:]
-    let valued: Set<String> = ["name", "enable", "disable", "path", "tools", "folders", "allow-local-tools", "ask-others", "folder", "allow-unsandboxed-bash", "config", "device", "days"]
+    let valued: Set<String> = ["name", "enable", "disable", "path", "tools", "folders", "allow-local-tools", "ask-others", "work", "folder", "allow-unsandboxed-bash", "config", "device", "days"]
     var i = 0
     while i < argv.count {
         let a = argv[i]
@@ -221,6 +230,10 @@ func routerCommand(_ argv: [String]) {
     if flags["config"] != nil { fail("the Mac router keeps its settings in the Mini Gateway app (no --config)") }
     if pos.first == "claude" && flags["folder"] != nil || flags["allow-unsandboxed-bash"] != nil {
         fail("on the Mac use --folders (allowed folders) and --allow-local-tools (Bash runs in Claude Code's sandbox)")
+    }
+    if let w = flags["work"], !["direct", "sync", "worktree"].contains(w) { fail("--work: direct, sync or worktree") }
+    if flags["work"] != nil, !["claude", "codex", "grok"].contains(pos[0]), pos != ["copilot"] {
+        fail("--work only applies to minigw gw claude|codex|grok|copilot")
     }
     func need(_ min: Int, _ max: Int) { if pos.count < min || pos.count > max { fail(routerHelp) } }
     let a = AdminConnection.open()
@@ -372,9 +385,10 @@ func routerCommand(_ argv: [String]) {
             guard v == "true" || v == "false" else { fail("--ask-others: true or false") }
             body["askOthers"] = v == "true"
         }
+        if let v = flags["work"] { body["work"] = v }
         let c = body.isEmpty ? a.call("GET", "/agents/claude") : a.call("PATCH", "/agents/claude", body)
         let path = (c["path"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "(from PATH)"
-        say(clean("path: \(path), found: \(c["found"] as? Bool ?? false)\ntools: \(c["tools"] as? String ?? "")\nallowLocalTools: \(c["allowLocalTools"] as? Bool ?? false)\naskOthers: \(c["askOthers"] as? Bool ?? false)\nfolders: \(c["folders"] as? String ?? "")"))
+        say(clean("path: \(path), found: \(c["found"] as? Bool ?? false)\ntools: \(c["tools"] as? String ?? "")\nallowLocalTools: \(c["allowLocalTools"] as? Bool ?? false)\naskOthers: \(c["askOthers"] as? Bool ?? false)\nfolders: \(c["folders"] as? String ?? "")\nwork: \(c["work"] as? String ?? "")"))
 
     case "autostart":
         need(1, 2)
@@ -396,7 +410,12 @@ func routerCommand(_ argv: [String]) {
         }
         say("  " + (g["connect"] as? String ?? ""))
 
+    case "codex", "grok":  // #60: omejitev načina (work); brez --work le izpis
+        need(1, 1)
+        agentWork(a, pos[0], flags["work"])
+
     case "copilot":
+        if pos.count == 1 { agentWork(a, "copilot", flags["work"]); return }
         need(2, 3)
         guard pos[1] == "token", pos.count == 2 || pos[2] == "remove" else { fail(routerHelp) }
         let token = pos.count == 3 ? "" : readKey("Copilot token (github_pat_…, only the Copilot Requests permission)")

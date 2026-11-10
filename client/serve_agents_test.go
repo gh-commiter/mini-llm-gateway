@@ -502,6 +502,9 @@ case "$p" in *"shared read-only"*) echo ro-note > "$out";; *) echo no-note > "$o
 	if !sc.register() {
 		t.Fatal("register failed: " + sc.refusal)
 	}
+	if !slices.Equal(sc.capped, []string{"codex"}) { // #60: začetna vrstica odjemalca
+		t.Fatalf("capped in the share reply: %q", sc.capped)
+	}
 	sc.start(2)
 	defer sc.unregister()
 	h := map[string]string{"x-claude-mini-session": "sidw", "x-claude-mini-cwd": dir, "content-type": "application/json"}
@@ -580,5 +583,40 @@ func TestCodexTreeProfile(t *testing.T) {
 	out, _ := c.CombinedOutput()
 	if s := string(out); !strings.Contains(s, "COMMITS") || strings.Contains(s, "WROTE-") || !strings.Contains(s, "end") {
 		t.Fatalf("codex sandbox: %s", s)
+	}
+}
+
+// #60: začetna vrstica odjemalca po omejitvah iz odgovora prehoda (starejši prehod: brez polja → read-write).
+func TestCappedMode(t *testing.T) {
+	for _, c := range []struct {
+		capped []string
+		want   string
+	}{
+		{nil, "read-write"},
+		{[]string{"codex", "grok"}, "read-write (read-only for Codex, Grok: capped by the gateway)"},
+		{[]string{"claude", "codex", "copilot", "grok"}, "read-only (capped by the gateway)"},
+		{[]string{"codex", "codex", "codex", "x\x1b[31m"}, "read-write (read-only for Codex: capped by the gateway)"}, // L1, INFO-2
+	} {
+		if got := cappedMode(c.capped); got != c.want {
+			t.Errorf("%q: %q", c.capped, got)
+		}
+	}
+	for _, c := range []struct {
+		capped []string
+		want   string
+	}{
+		{[]string{"evil"}, ""},
+		{[]string{"grok", "codex"}, ", read-only for Grok, Codex (capped by the gateway)"},
+		{[]string{"grok", "codex", "claude", "copilot"}, ", read-only (capped by the gateway)"},
+	} {
+		if got := cappedNative(c.capped); got != c.want {
+			t.Errorf("native %q: %q", c.capped, got)
+		}
+	}
+	if got := (serveConfig{ClaudeWork: "sync", Copilot: agentCLI{Work: "worktree"}}).cappedKinds("sync"); !slices.Equal(got, []string{"copilot"}) {
+		t.Errorf("cappedKinds sync: %q", got)
+	}
+	if got := (serveConfig{Codex: agentCLI{Work: "worktree"}}).cappedKinds("worktree"); got != nil {
+		t.Errorf("cappedKinds worktree: %q", got)
 	}
 }
