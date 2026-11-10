@@ -1993,3 +1993,40 @@ func TestWorktreeGitLongPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// #61: .git, ki ga je agent naredil v prezrti mapi (datoteka gitdir:), zavrne zagon; .git klona in registriranega
+// ugnezdenega ne; povezavi ne sledi.
+func TestForeignGit(t *testing.T) {
+	root := t.TempDir()
+	wt, out := filepath.Join(root, "wt"), filepath.Join(root, "out")
+	for _, d := range []string{filepath.Join(wt, ".git", "info"), filepath.Join(wt, "lib", ".git"), filepath.Join(wt, "build", "sub"), filepath.Join(out, ".git")} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(out, filepath.Join(wt, "ln")); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(wt, ".gitignore"), []byte("build/\n"), 0o600)
+	gits := []string{filepath.Join(wt, ".git"), filepath.Join(wt, "lib", ".git")}
+	if why := foreignGit(wt, gits); why != "" {
+		t.Fatalf("registered nested repository refused: %s", why)
+	}
+	if why := foreignGit(wt, gits[:1]); !strings.Contains(why, "a .git appeared at lib/.git") {
+		t.Fatalf("unregistered nested .git not refused: %q", why)
+	}
+	os.WriteFile(filepath.Join(wt, "build", "sub", ".git"), []byte("gitdir: "+out+"/.git\n"), 0o600)
+	if why := foreignGit(wt, gits); !strings.Contains(why, "a .git appeared at build/sub/.git") {
+		t.Fatalf("planted .git not refused: %q", why)
+	}
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 { // root bere tudi mapo brez pravic
+		return
+	}
+	os.Remove(filepath.Join(wt, "build", "sub", ".git"))
+	locked := filepath.Join(wt, "build", "sub")
+	os.Chmod(locked, 0o100)
+	defer os.Chmod(locked, 0o700)
+	if why := foreignGit(wt, gits); !strings.Contains(why, "cannot be checked") {
+		t.Fatalf("unreadable folder not refused: %q", why)
+	}
+}

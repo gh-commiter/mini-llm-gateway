@@ -589,6 +589,28 @@ public enum Worktree {
         return nil
     }
 
+    /// #61: .git (mapa, datoteka ali povezava) kjer koli v klonu (tudi v prezrti poti), ki ni .git klona ali registriranega
+    /// ugnezdenega: harness agenta (zunaj peskovnika) bi z git po absolutni poti v tej mapi bral agentove nastavitve.
+    /// Povezavam ne sledi; mapa, ki je ni mogoče prebrati, ali več kot 10 × Sync.maxFiles vnosov: zavrne (ne pregleda).
+    /// nil = v redu, sicer sporočilo zavrnitve (400).
+    static func foreignGit(_ wt: URL, nested: [ShareHub.Nested] = []) -> String? {
+        let own = Set([".git"] + nested.map { $0.path + "/.git" })
+        let unchecked = "The agent's clone cannot be checked (too large, or a folder cannot be read): start a new conversation"
+        var failed = false, parts: [String] = [], n = 0
+        guard let e = FileManager.default.enumerator(at: wt, includingPropertiesForKeys: nil, errorHandler: { _, _ in failed = true; return true })
+        else { return unchecked }
+        for case let u as URL in e {
+            n += 1
+            if n > Sync.maxFiles * 10 { return unchecked }
+            parts = Array(parts.prefix(e.level - 1)) + [u.lastPathComponent]
+            guard Sync.normName(u.lastPathComponent) == ".git" else { continue }
+            e.skipDescendants()
+            let rel = parts.joined(separator: "/")
+            if !own.contains(rel) { return "The agent's clone was changed (a .git appeared at \(Profiles.line(rel, max: 500))): start a new conversation" }
+        }
+        return failed ? unchecked : nil
+    }
+
     /// Scratch (zrcala) ni v nobeni pisljivi mapi agentov (npr. izbran v /tmp): sicer worktree ni varen.
     static func scratchIsSafe(_ scratch: URL, home: String = NSHomeDirectory()) -> Bool {
         let s = (Sync.real(scratch) ?? scratch).path
@@ -1077,6 +1099,10 @@ extension ShareHub {
         while slots["\(s.session)|\(agent)|\(n)"]?.busy == true { n += 1 }
         let k = "\(s.session)|\(agent)|\(n)"
         if let slot = slots[k], slot.gitIntact, slot.nested.allSatisfy({ $0.intact(slot.wt) }), Worktree.nestedProblem(slot.wt, repo: tree.repo, nested: slot.nested) == nil {  // sicer nov klon (H2, N9; #40: ugnezdeni na svoji poti)
+            if let why = Worktree.foreignGit(slot.wt, nested: slot.nested) {  // #61: nov .git (tudi prezrt): zavrnitev, ne nov klon
+                refusals[id] = (400, why); unlock(tree.repo)
+                return nil
+            }
             slot.busy = true; runSlot[id] = k; unlock(tree.repo)
             return Self.dir(slot.wt, tree.sub)
         }
