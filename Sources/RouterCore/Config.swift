@@ -314,12 +314,18 @@ public struct Keychain: SecretStore {
 
     /// Prijavni keychain po poti iz baze uporabnikov (getpwuid, ne HOME/CFFIXED_USER_HOME). Za aplikacijo Developer ID
     /// brez profila je to preprostejše kot keychain za zaščito podatkov (ta zahteva pravice dostopne skupine).
-    static func loginKeychain() -> SecKeychain? {
+    public static func loginKeychain() -> SecKeychain? {
         guard let pw = getpwuid(getuid()), let dir = pw.pointee.pw_dir else { return nil }
         let path = String(cString: dir) + "/Library/Keychains/login.keychain-db"
         guard FileManager.default.fileExists(atPath: path) else { return nil }
         var kc: SecKeychain?
         return SecKeychainOpen(path, &kc) == errSecSuccess ? kc : nil
+    }
+
+    /// Ali minigw gw v terminalu ponudi odklep prijavnega keychaina: branje vnosa je zavrnil zaklenjen keychain, stdin in
+    /// stderr sta terminal, seja je SSH ali keychain poroča, da je zaklenjen. Sicer (skripta, veščina) le sporočilo.
+    public static func offerUnlock(status: OSStatus, terminal: Bool, ssh: Bool, locked: Bool) -> Bool {
+        (status == errSecInteractionNotAllowed || status == errSecAuthFailed) && terminal && (ssh || locked)
     }
 
     /// nil = vnos je le v prijavnem keychainu, a tega ni (brez zamenjave z drugim keychainom).

@@ -40,11 +40,20 @@ private struct AdminConnection {
         if ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"] != nil {
             fail("CFFIXED_USER_HOME is set: minigw gw does not run with a redirected home folder")
         }
-        let (v, st) = Keychain(loginOnly: true).lookup("admin")  // le prijavni keychain: drug ga ne zasenči
+        let kc = Keychain(loginOnly: true)  // le prijavni keychain: drug ga ne zasenči
+        var (v, st) = kc.lookup("admin")
+        let ssh = !(ProcessInfo.processInfo.environment["SSH_CONNECTION"] ?? "").isEmpty
+        var unlocked = false
+        if appOwner().map({ $0 == getuid() }) ?? true,
+           Keychain.offerUnlock(status: st, terminal: isatty(0) == 1 && isatty(2) == 1, ssh: ssh, locked: loginLocked()) {
+            unlockLoginKeychain(ssh: ssh)
+            (v, st) = kc.lookup("admin")  // en sam ponovni poskus
+            unlocked = true
+        }
         guard st == errSecSuccess, let o = v.flatMap({ try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }),
               let secret = o["secret"] as? String, let port = (o["port"] as? Int).flatMap(UInt16.init(exactly:)),
               let key = (o["key"] as? String).flatMap(Noise.fromBase64url), key.count == 32 else {
-            fail(keychainHint(st))
+            fail(keychainHint(st, ssh: ssh && !unlocked))
         }
         let a = AdminConnection(port: port, key: key, secret: secret)
         guard a.raw("GET", "/health/live", nil).0 == 200 else {  // rokovanje s ključem aplikacije, brez dokaza
@@ -76,8 +85,29 @@ private struct AdminConnection {
     }
 }
 
-/// Jasno sporočilo za napako Keychaina pri vnosu »admin«.
-private func keychainHint(_ st: OSStatus) -> String {
+/// Prijavni keychain je zaklenjen (SecKeychainGetStatus).
+private func loginLocked() -> Bool {
+    var s: SecKeychainStatus = 0
+    guard let kc = Keychain.loginKeychain(), SecKeychainGetStatus(kc, &s) == errSecSuccess else { return false }
+    return s & SecKeychainStatus(kSecUnlockStateStatus) == 0
+}
+
+/// Odklene prijavni keychain z geslom s terminala (brez odmeva; nikoli iz argv, nikoli ukaz security), medpomnilnik
+/// se pred izhodom pobriše. Napačno geslo konča ukaz. Keychain ostane odklenjen po privzetih nastavitvah macOS.
+private func unlockLoginKeychain(ssh: Bool) {
+    guard let kc = Keychain.loginKeychain() else { return }
+    err.write(Data("The login keychain is locked\(ssh ? " in this SSH session" : ""). Mac password for \(userName(getuid())) (to unlock it): ".utf8))
+    var buf = [CChar](repeating: 0, count: 1024)
+    let got = readpassphrase("", &buf, buf.count, RPP_REQUIRE_TTY) != nil
+    let st = got ? SecKeychainUnlock(kc, UInt32(strlen(buf)), buf, true) : errSecSuccess
+    memset_s(&buf, buf.count, 0, buf.count)
+    guard got else { fail("no password: the keychain stays locked") }
+    if st == errSecAuthFailed { fail("wrong password: the keychain stays locked") }
+    if st != errSecSuccess { fail("cannot unlock the login keychain (OSStatus \(st))") }
+}
+
+/// Jasno sporočilo za napako Keychaina pri vnosu »admin«. ssh: namig za zaklenjen keychain v seji SSH.
+private func keychainHint(_ st: OSStatus, ssh: Bool) -> String {
     let me = userName(getuid())
     if let owner = appOwner(), owner != getuid() || st == errSecNoSuchKeychain {
         return "run minigw gw as the user who runs Mini Gateway (\(userName(owner))), not as \(me)"
@@ -87,7 +117,7 @@ private func keychainHint(_ st: OSStatus) -> String {
     case errSecItemNotFound: return "start Mini Gateway 0.5.15 or newer once, so it can create the admin item"
     case errSecAuthFailed, errSecUserCanceled, errSecInteractionNotAllowed:  // brez dialoga (main.swift)
         // SSH: prijavni Keychain je v seji SSH zaklenjen; minigw sam nikoli ne kliče ukaza security.
-        if !(ProcessInfo.processInfo.environment["SSH_CONNECTION"] ?? "").isEmpty {
+        if ssh {
             return "the login keychain is locked in this SSH session: run security unlock-keychain ~/Library/Keychains/login.keychain-db in the SSH session first, then retry (if it still fails, quit and open the Mini Gateway app once on the Mac)"
         }
         return "Mini Gateway has not given minigw access to its admin key yet: quit and open the Mini Gateway app once, then run the command again; if the login keychain is locked, unlock it first"
