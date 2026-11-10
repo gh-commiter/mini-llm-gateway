@@ -1563,16 +1563,18 @@ extension ShareHub {
 /// Zapis v <git-path>/minigw-continue.json (enak kot v odjemalcu Go).
 extension Worktree {
     /// Zadnja veja pogovora; base = stanje uporabnika ob začetku pogovora (začetek obsega); head in tree = HEAD
-    /// uporabnika in drevo posnetka mape ob zadnjem zagonu (za vrstico o spremembah v mapi).
+    /// uporabnika in drevo posnetka mape ob zadnjem zagonu (za vrstico o spremembah v mapi); gateway = prehod (naslov
+    /// profila), na katerem je tekel pogovor. ponytail: prehod po naslovu profila; nov naslov istega prehoda začne iz mape.
     public struct ConvRecord: Codable, Sendable, Equatable {
-        public var branch: String, base: String, head: String, tree: String
-        public init(branch: String = "", base: String, head: String, tree: String) {
-            self.branch = branch; self.base = base; self.head = head; self.tree = tree
+        public var branch: String, base: String, head: String, tree: String, gateway: String
+        public init(branch: String = "", base: String, head: String, tree: String, gateway: String = "") {
+            self.branch = branch; self.base = base; self.head = head; self.tree = tree; self.gateway = gateway
         }
-        public init(from d: Decoder) throws {  // zapis brez »tree« (ali »head«): neznano
+        public init(from d: Decoder) throws {  // zapis brez »tree«, »head« ali »gateway«: neznano
             let c = try d.container(keyedBy: CodingKeys.self)
             branch = try c.decode(String.self, forKey: .branch); base = try c.decode(String.self, forKey: .base)
             head = (try? c.decode(String.self, forKey: .head)) ?? ""; tree = (try? c.decode(String.self, forKey: .tree)) ?? ""
+            gateway = (try? c.decode(String.self, forKey: .gateway)) ?? ""
         }
     }
 
@@ -1630,16 +1632,19 @@ extension Worktree {
         return c
     }
 
-    /// Vrh zadnje veje pogovora conv (nadaljevanje vedno, tudi ko se je mapa spremenila); tip nil = posnetek mape (ni
-    /// zapisa, veje ni več ali ugnezdeni repozitoriji). message: vrstica uporabniku (nil = brez).
+    /// Vrh zadnje veje pogovora conv na prehodu gateway (nadaljevanje vedno, tudi ko se je mapa spremenila); tip nil =
+    /// posnetek mape (ni zapisa, veje ni več, drug prehod, ugnezdeni repozitoriji ali veja že v HEAD). message: vrstica
+    /// uporabniku (nil = brez).
     /// ponytail: ugnezdeni repozitoriji ne nadaljujejo (vsak bi rabil svojo verigo in gitlink starša); tedaj posnetek mape.
-    public static func continueFrom(top: String, conv: String, snap: String, nested: Bool) -> (tip: String?, record: ConvRecord?, message: String?) {
+    public static func continueFrom(top: String, conv: String, gateway: String, snap: String, nested: Bool) -> (tip: String?, record: ConvRecord?, message: String?) {
         guard !conv.isEmpty, let r = convLoad(top).0.convs[conv], validBranch(r.branch), isSHA(r.base) else { return (nil, nil, nil) }
         let from = "worktree: starting from your folder, not from \(r.branch): "
         guard let t = branchTip(top, r.branch) else { return (nil, r, from + "the branch no longer exists") }
+        if r.gateway != gateway { return (nil, r, from + "the conversation ran on another gateway") }
         if nested { return (nil, r, from + "nested git repositories always start from your folder") }
         func git(_ a: String...) -> (status: Int32, out: String) { run(a, cwd: top, safe: false, hooks: false) }
-        if git("merge-base", "--is-ancestor", t, "HEAD").status == 0 { return (t, r, nil) }  // veja je že v HEAD (merge)
+        // L-A: veja je že v HEAD (merge): posnetek mape ima njeno delo in novejše delo uporabnika
+        if git("merge-base", "--is-ancestor", t, "HEAD").status == 0 { return (nil, r, nil) }
         let tree = git("rev-parse", snap + "^{tree}").out
         if git("rev-parse", "HEAD").out != r.head || tree.isEmpty || tree != r.tree {
             return (t, r, "worktree: continuing from \(r.branch); changes in your folder since the last turn are not in the agent's copy")
@@ -1655,7 +1660,7 @@ extension Worktree {
 
     /// Veja branch (začetek sent = poslani posnetek ali vrh; chain: poslani → veriga) kot zadnja veja pogovora;
     /// vrne začetek obsega in ali je nadaljevanje (začetek je stanje ob začetku pogovora, ne poslani posnetek).
-    public static func remember(top: String, conv: Conv, branch: String, sent: String, chain: [String: ConvRecord]) -> (base: String, continued: Bool) {
+    public static func remember(top: String, conv: Conv, gateway: String, branch: String, sent: String, chain: [String: ConvRecord]) -> (base: String, continued: Bool) {
         var (st, p) = convLoad(top)
         // npr. prehod je ponovno uporabil klon seje (brez WORKTREE-PUSH): veriga iz zapisa
         guard let r = chain[sent] ?? (conv.from.isEmpty ? nil : st.convs[conv.from]).flatMap({ r in
@@ -1663,7 +1668,7 @@ extension Worktree {
         }) else { return (sent, false) }
         if !conv.to.isEmpty {
             st.convs = st.convs.filter { branchTip(top, $0.value.branch) != nil }  // pogovori, katerih veje ni več
-            st.convs[conv.to] = ConvRecord(branch: branch, base: r.base, head: r.head, tree: r.tree)
+            st.convs[conv.to] = ConvRecord(branch: branch, base: r.base, head: r.head, tree: r.tree, gateway: gateway)
             convSave(p, st)
         }
         return (r.base, r.base != sent)

@@ -49,7 +49,7 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
 		if !sc.register() {
 			t.Fatal("register failed: " + sc.refusal)
 		}
-		sc.conv = conv
+		sc.conv, sc.gateway = conv, "https://gw-a:8443"
 		sc.start(2)
 		defer sc.unregister()
 		body := `{"model":"claude-cli-haiku","tools":[{"name":"x"}],"messages":[{"role":"user","content":"go"}]}`
@@ -86,7 +86,7 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
 	snap := func() string { return gitSnapshot(client, false, false) }
 	check := func(what, wantTip, wantMsg string) {
 		t.Helper()
-		if tip, _, msg := wtContinue(client, "sid1", snap(), false); tip != wantTip || msg != wantMsg {
+		if tip, _, msg := wtContinue(client, "sid1", "https://gw-a:8443", snap(), false); tip != wantTip || msg != wantMsg {
 			t.Fatalf("%s: %q %q", what, tip, msg)
 		}
 	}
@@ -95,7 +95,7 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
 		return "worktree: continuing from " + b + "; changes in your folder since the last turn are not in the agent's copy"
 	}
 	check("unchanged folder", tip(b2), "")
-	if tip, _, msg := wtContinue(client, "sid1", snap(), true); tip != "" || msg != "worktree: starting from your folder, not from "+b2+": nested git repositories always start from your folder" {
+	if tip, _, msg := wtContinue(client, "sid1", "https://gw-a:8443", snap(), true); tip != "" || msg != "worktree: starting from your folder, not from "+b2+": nested git repositories always start from your folder" {
 		t.Fatalf("nested: %q %q", tip, msg)
 	}
 	writeT(t, filepath.Join(client, "mine.txt"), "m\n")
@@ -118,8 +118,24 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
 	if f := files(b5); f != "mine.txt,readme.txt,turn0.txt" {
 		t.Fatalf("turn 5 (deleted) did not start from the folder: %s", f)
 	}
+	// L-B: drug prehod začne iz mape.
+	if tip, _, msg := wtContinue(client, "sid1", "https://gw-b:8443", snap(), false); tip != "" ||
+		msg != "worktree: starting from your folder, not from "+b5+": the conversation ran on another gateway" {
+		t.Fatalf("other gateway: %q %q", tip, msg)
+	}
+	// L-A: veja, že v HEAD, in novejši commit uporabnika: iz mape (agent vidi novejši commit), brez vrstice.
 	gitT(t, client, "merge", "-q", "--ff-only", b5)
-	check("merged", tip(b5), "")
+	writeT(t, filepath.Join(client, "newer.txt"), "n\n")
+	gitT(t, client, "add", "-A")
+	gitT(t, client, "commit", "-qm", "newer")
+	check("merged", "", "")
+	b6 := turn("sid6m", true)
+	if f := files(b6); f != "mine.txt,newer.txt,readme.txt,turn0.txt,turn1.txt" {
+		t.Fatalf("turn after merge did not start from the folder: %s", f)
+	}
+	if r := mustRecord(t, client, "sid1"); r.Branch != b6 || r.Base != gitT(t, client, "rev-parse", "HEAD") {
+		t.Fatalf("new chain after merge: %+v", r)
+	}
 	// Nov pogovor (brez --continue) ne nadaljuje starega; --resume <id> nadaljuje svojega.
 	conv := func(sid, parent string, cont, picker, fork bool) wtConv {
 		return wtConversation(client, ".", sid, parent, cont, picker, fork)
@@ -201,4 +217,14 @@ func TestWorktreeContinueDecidedOncePerRun(t *testing.T) {
 	if !strings.Contains(continuedLine(b2, head), "("+head+" = your state when this conversation started; this branch includes the earlier turns)") {
 		t.Fatal("continued line")
 	}
+}
+
+func mustRecord(t *testing.T, top, key string) wtRecord {
+	t.Helper()
+	st, _ := wtLoad(top)
+	r, ok := st.Convs[key]
+	if !ok {
+		t.Fatalf("no record %s", key)
+	}
+	return r
 }

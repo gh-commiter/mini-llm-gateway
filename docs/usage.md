@@ -212,7 +212,7 @@ clone when the session ends.
 
 **Continuing a conversation:** `minigw -p --continue …` (or `--resume <id>`) starts the agent from the
 conversation's last branch, not from your folder, so it sees the files it made in the earlier turns. It does so even
-when your folder changed since the last turn (your own edits, new commits, a branch you already applied); those changes
+when your folder changed since the last turn (your own edits, new commits, a branch you cherry-picked or applied); those changes
 are not in the agent's copy, and minigw says so:
 
 ```
@@ -231,11 +231,11 @@ turn.
 - All agents of one minigw run start from the same point (decided at the run's first agent), so agents in one turn
   stay independent of each other. The next turn continues from the branch that came back last in the previous run.
 - It starts from your folder, with one line `minigw: worktree: starting from your folder, not from minigw/…: <reason>`,
-  when you deleted the branch or in a repository with nested repositories; also for a conversation that has no
-  branch yet.
+  when you deleted the branch, when the conversation ran on another gateway (the branch of gateway A is never sent to
+  gateway B), or in a repository with nested repositories; also for a conversation that has no branch yet. A branch
+  you already merged into `HEAD` starts from your folder without a line: your folder has its work and your newer work.
+- To start a conversation fresh from your folder, delete its branch (`git branch -D minigw/…`).
 - minigw keeps the last branch per conversation in `.git/minigw-continue.json`.
-- With several gateway profiles, a continued branch that came from gateway A is sent to gateway B when an agent of B
-  runs in that conversation.
 
 **What the fetch does not do:** it takes only a git bundle, checks objects (fsck), runs no hooks, submodules or
 filters, and does not change `.git/config`. If you committed on that branch yourself, your commits stay and the

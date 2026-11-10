@@ -518,7 +518,7 @@ func (s *shareClient) wtPush(k string, job davJob) davResponse {
 	tree, _ := gitUser(s.top, nil, "rev-parse", snap+"^{tree}")
 	if s.chain == nil {
 		s.chain = map[string]wtRecord{}
-		tip, r, msg := wtContinue(s.top, s.conv.From, snap, len(nested) > 0)
+		tip, r, msg := wtContinue(s.top, s.conv.From, s.gateway, snap, len(nested) > 0)
 		if msg != "" {
 			s.note(msg)
 		}
@@ -791,11 +791,13 @@ func workCandidates(work string, readOnly, smb, git bool) []string {
 
 // wtRecord: zadnja veja pogovora; Base = stanje uporabnika ob začetku pogovora (začetek obsega); Head in Tree = HEAD
 // uporabnika in drevo posnetka mape ob zadnjem zagonu (za vrstico o spremembah v mapi).
+// ponytail: prehod po naslovu profila; nov naslov istega prehoda začne iz mape.
 type wtRecord struct {
-	Branch string `json:"branch"`
-	Base   string `json:"base"`
-	Head   string `json:"head"`
-	Tree   string `json:"tree"`
+	Branch  string `json:"branch"`
+	Base    string `json:"base"`
+	Head    string `json:"head"`
+	Tree    string `json:"tree"`
+	Gateway string `json:"gateway"` // prehod (naslov profila), na katerem je tekel pogovor
 }
 
 type wtState struct {
@@ -883,10 +885,11 @@ func wtConversation(top, rel, sid, parent string, cont, picker, fork bool) wtCon
 	return c
 }
 
-// wtContinue: vrh zadnje veje pogovora conv (nadaljevanje vedno, tudi ko se je mapa spremenila); "" = posnetek mape
-// (ni zapisa, veje ni več ali ugnezdeni repozitoriji). msg: vrstica uporabniku ("" = brez).
+// wtContinue: vrh zadnje veje pogovora conv na prehodu gateway (nadaljevanje vedno, tudi ko se je mapa spremenila);
+// "" = posnetek mape (ni zapisa, veje ni več, drug prehod, ugnezdeni repozitoriji ali veja že v HEAD). msg: vrstica
+// uporabniku ("" = brez).
 // ponytail: ugnezdeni repozitoriji ne nadaljujejo (vsak bi rabil svojo verigo in gitlink starša); tedaj posnetek mape.
-func wtContinue(top, conv, snap string, nested bool) (tip string, r wtRecord, msg string) {
+func wtContinue(top, conv, gateway, snap string, nested bool) (tip string, r wtRecord, msg string) {
 	if conv == "" {
 		return "", r, ""
 	}
@@ -900,11 +903,14 @@ func wtContinue(top, conv, snap string, nested bool) (tip string, r wtRecord, ms
 	if err != nil || !shaRe.MatchString(t) {
 		return "", r, from + "the branch no longer exists"
 	}
+	if r.Gateway != gateway {
+		return "", r, from + "the conversation ran on another gateway"
+	}
 	if nested {
 		return "", r, from + "nested git repositories always start from your folder"
 	}
 	if _, err := gitUser(top, nil, "merge-base", "--is-ancestor", t, "HEAD"); err == nil {
-		return t, r, "" // veja je že v HEAD (merge): mapa ima njeno delo
+		return "", r, "" // L-A: veja je že v HEAD (merge): posnetek mape ima njeno delo in novejše delo uporabnika
 	}
 	head, _ := gitUser(top, nil, "rev-parse", "HEAD")
 	if tree, _ := gitUser(top, nil, "rev-parse", snap+"^{tree}"); head != r.Head || tree == "" || tree != r.Tree {
@@ -933,7 +939,7 @@ func (s *shareClient) wtRemember(branch, sent string) (string, bool) {
 				delete(st.Convs, k)
 			}
 		}
-		st.Convs[s.conv.To] = wtRecord{Branch: branch, Base: r.Base, Head: r.Head, Tree: r.Tree}
+		st.Convs[s.conv.To] = wtRecord{Branch: branch, Base: r.Base, Head: r.Head, Tree: r.Tree, Gateway: s.gateway}
 		wtSave(p, st)
 	}
 	return r.Base, r.Base != sent

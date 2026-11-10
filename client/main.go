@@ -707,7 +707,7 @@ func main() {
 		share, ok = registerShare(c, sid, cwd, readOnly, top, tries, false, implicit)
 		capped := share.capped // pred start: ponovna registracija ga piše pod share.mu
 		if ok && share.worktree {
-			share.conv = conv(share.top)
+			share.conv, share.gateway = conv(share.top), saved.URL
 			share.start(4)
 			fmt.Fprintf(os.Stderr, "minigw: agent models work in a clone of this git repository on %s; their work comes back as branch minigw/… (minigw prints the range to review; your uncommitted and untracked, not ignored files are sent too; worktree)\n", routerHost)
 		} else if ok && share.native && share.branches {
@@ -766,7 +766,7 @@ func main() {
 						return false
 					}
 					if sc.worktree {
-						sc.conv = conv(sc.top)
+						sc.conv, sc.gateway = conv(sc.top), p.conn.URL
 					}
 					sc.start(4)
 					mu.Lock()

@@ -50,6 +50,7 @@ type shareClient struct {
 	chain    map[string]wtRecord // worktree (#66): poslani posnetek ali vrh → začetek verige pogovora (nil = še ni odločeno)
 	contTip  string              // worktree (#66): vrh, iz katerega začnejo vsi agenti zagona ("" = iz mape)
 	contRec  wtRecord            // worktree (#66): veriga vrha contTip
+	gateway  string              // worktree (#66): prehod (naslov profila); pogovor nadaljuje le na istem
 	mu       sync.Mutex
 	key      string
 	syncMu   sync.Mutex

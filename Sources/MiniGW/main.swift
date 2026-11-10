@@ -272,6 +272,7 @@ final class ShareClient: @unchecked Sendable {
     private var snaps: [String] = []                // worktree: posnetki, poslani prehodu (začetek dela agenta)
     private var nestedSnaps: [String: [String]] = [:]  // worktree: ugnezdeni repozitorij (pot) → njegovi poslani posnetki
     var conv = Worktree.Conv()                       // worktree (#66): pogovor (Worktree.conversation); prazen = brez nadaljevanja
+    var gateway = ""                                 // worktree (#66): prehod (naslov profila); pogovor nadaljuje le na istem
     private var chain: [String: Worktree.ConvRecord]?       // worktree (#66): poslani posnetek ali vrh → veriga (nil = še ni odločeno)
     private var contTip: String?                     // worktree (#66): vrh, iz katerega začnejo vsi agenti zagona (nil = iz mape)
     private var contRec: Worktree.ConvRecord?
@@ -384,7 +385,7 @@ final class ShareClient: @unchecked Sendable {
         var snap = r.snap
         if chain == nil {
             chain = [:]
-            let c = Worktree.continueFrom(top: top, conv: conv.from, snap: snap, nested: !r.nested.isEmpty)
+            let c = Worktree.continueFrom(top: top, conv: conv.from, gateway: gateway, snap: snap, nested: !r.nested.isEmpty)
             if let m = c.message { note(m) }
             if let tip = c.tip, let rec = c.record { contTip = tip; contRec = Worktree.chain(top: top, base: rec.base, snap: snap) }
         }
@@ -461,7 +462,7 @@ final class ShareClient: @unchecked Sendable {
         if let rel {
             branchNote(branch, sent, nested: rel)
         } else {
-            let (base, continued) = Worktree.remember(top: dir, conv: conv, branch: branch, sent: sent, chain: chain ?? [:])
+            let (base, continued) = Worktree.remember(top: dir, conv: conv, gateway: gateway, branch: branch, sent: sent, chain: chain ?? [:])
             if !continued {
                 branchNote(branch, base)
             } else if reported.insert("branch::\(branch)@\(base)").inserted {
@@ -1072,7 +1073,7 @@ let capped = share.capped  // pred start: ponovna registracija ga lahko prepiše
 if !wantShare || sid.isEmpty {
     // le šifrirani proxy
 } else if registered {
-    if share.worktree { share.conv = conversation(share.top) }
+    if share.worktree { share.conv = conversation(share.top); share.gateway = saved.url }
     share.start()
     if share.native && share.branches {
         err.write(Data("minigw: \(cwd) is a folder of \(routerHost) (SMB): agent models work there in clones of this git repository, each on its own branch minigw/… (native; --minigw-work=native-direct = in the folder itself)\n".utf8))
@@ -1129,11 +1130,11 @@ if profiles.count > 1 {
         let remote = !p.conn.isLocal
         let want = shareEnv == "1" || (shareEnv != "0" && remote && (SharedFolders.autoShare(cwd) || SharedFolders.lookup(sharedFolders(), cwd: cwd) != nil))
         guard want, !sid.isEmpty else { continue }
-        let name = p.name
+        let name = p.name, gw = p.conn.url
         hooks[name] = {
             let (sc, ok) = registerShare(rc, tries: tries, quiet: true)
             guard ok else { err.write(Data("minigw: gateway \(name) did not accept the folder: \(sc.refusal)\n".utf8)); return false }
-            if sc.worktree { sc.conv = conversation(sc.top) }
+            if sc.worktree { sc.conv = conversation(sc.top); sc.gateway = gw }
             sc.start(); extras.add(sc)
             return true
         }
