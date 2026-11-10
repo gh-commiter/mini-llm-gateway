@@ -877,9 +877,13 @@ func gitWrapEnv(gitDirs []string, gw string) []string {
 // Besedilo kot ClaudeCLI.mountNote na Macu, brez stavka o minigw run (ta je le na Macu).
 // gits: .git vseh klonov (hub.worktreeGits; ugnezdeni za prvim) — agent jih dobi poimenovane z ukazom za commit v njih.
 func worktreeNote(clientCwd, dir, branch string, gits []string) string {
+	commit := " Commit your work on this branch; changes you leave uncommitted are committed for you at the end."
+	if worktreeNeedsUnsandboxed { // #70: na Windows brez sandboxa git agenta ni vnaprej dovoljen (git -c, alias … = poljuben ukaz); commit na koncu
+		commit = " Do not run git add or git commit: the gateway commits your changes on this branch when you finish."
+	}
 	return "The user's folder " + clientCwd + " (on their computer, a git repository) is a clone here at " + dir + ", your working" +
-		" directory, on branch " + branch + ". Map paths under " + clientCwd + " to it. Commit your work on this branch; changes you leave" +
-		" uncommitted are committed for you at the end. The branch goes back to the user's repository; their files are not changed." +
+		" directory, on branch " + branch + ". Map paths under " + clientCwd + " to it." + commit +
+		" The branch goes back to the user's repository; their files are not changed." +
 		" Build output (.build, target, DerivedData) is never committed." + nestedClonesNote(gits) +
 		" Do not create git repositories or submodules here outside ignored folders: then nothing comes back (use sync for that)."
 }
@@ -893,16 +897,13 @@ func nestedClonesNote(gits []string) string {
 	for _, g := range gits[1:] {
 		dirs = append(dirs, filepath.Dir(g))
 	}
-	return " These nested repositories and submodules are their own clones on the same branch, and their changes come back too: " +
-		strings.Join(dirs, ", ") + ". Plain git here works on the top repository; " + nestedGitHow() + " Changes you leave uncommitted there are committed for you."
-}
-
-// nestedGitHow: kako git v ugnezdenem klonu; na Windows ni ovoja pathWrapScript (ukaz z okoljem, ki ga Claude Code ne dovoli: commit na koncu).
-func nestedGitHow() string {
-	if runtime.GOOS == "windows" {
-		return "to commit in a nested one run GIT_DIR=<path>/.git GIT_COMMON_DIR=<path>/.git GIT_WORK_TREE=<path> git … with its path."
+	n := " These nested repositories and submodules are their own clones on the same branch, and their changes come back too: " +
+		strings.Join(dirs, ", ") + "."
+	if worktreeNeedsUnsandboxed { // #70: na Windows commit na koncu (tudi v ugnezdenih)
+		return n + " The gateway commits your changes there too."
 	}
-	return "git run in one of these folders (cd <path> && git … or git -C <path> …) works in that one."
+	return n + " Plain git here works on the top repository; git run in one of these folders (cd <path> && git … or git -C <path> …)" +
+		" works in that one. Changes you leave uncommitted there are committed for you."
 }
 
 // worktreeReadOnlyNote: agent brez pisanja v klonu (kot ClaudeCLI.mountNote z branch in readOnly na Macu).
@@ -911,9 +912,6 @@ func worktreeReadOnlyNote(clientCwd, dir string) string {
 		" directory, read-only for you: do not try to create, change or delete files in it. Map paths under " + clientCwd + " to it." +
 		" Nothing goes back to the user, so give your answer in your reply."
 }
-
-// gitRules (#70): git agenta v klonu na Windows brez odobritve (kot askRules: Bash in PowerShell).
-const gitRules = "Bash(git:*),PowerShell(git *)"
 
 // worktreeClaudeArgs: v peskovniku Claude Code (ne Windows) še pisanje v Maven agentov in branje objektov zrcal; .git
 // vseh klonov (gits: config, hooks, info, commondir) ni pisljiv, Edit/Write vanj ne (nastavitve in hooke bere git
@@ -948,9 +946,6 @@ func worktreeClaudeArgs(args []string, wt, maven, tmp string, objects, gits []st
 		if args[i] == "--allowedTools" && args[i+1] != "" {
 			for _, t := range []string{"Read", "Edit", "Write", "MultiEdit", "Glob", "Grep"} {
 				args[i+1] += "," + t + "(" + ruleAbs(wt) + "/**)"
-			}
-			if worktreeNeedsUnsandboxed { // #70: Windows brez sandboxa (Bash na Macu in Linuxu ga dovoli sandbox); git agenta brez hookov (worktreeHarnessEnv)
-				args[i+1] += "," + gitRules
 			}
 			break
 		}
