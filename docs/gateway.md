@@ -125,9 +125,15 @@ line with the token appears only after **Show the connect line**.
 | Activity | Requests running now (model, time, the agent's latest step) at the top, then the last 200 requests to models (time, status, duration, model, device; Enter or a click shows the path, size and device ID). Read-only, reloads every 3 s. Metadata and the agent's current step (a tool or command), never prompt or answer text; an unknown model shows as `unknown`. A gateway older than 0.5.21 shows "Needs gateway 0.5.21 or newer" | | Empty after the gateway restarts |
 | Mac | – | Siri AI (on, timeout, per device), Apple Foundation Models (on, instructions), `minigw run` (commands, per device, network) | |
 
-**Over SSH on a Mac:** the login keychain is locked in an SSH session, so `minigw` cannot read the gateway's admin
-key and says so. Run `security unlock-keychain ~/Library/Keychains/login.keychain-db` in the SSH session first (it asks
-for your login password), then retry. `minigw` never runs the `security` command itself.
+**Remote administration over SSH (Mac):** there is no remote admin API; `ssh` to the gateway Mac as the user who runs
+Mini Gateway and run `minigw gw …` (or `minigw gw settings`) there. The login keychain is often locked in an SSH
+session, so `minigw` cannot read the gateway's admin key. In a terminal it then asks once: "The login keychain is
+locked in this SSH session. Mac password for <user> (to unlock it): ". The password is read without echo, never from
+the command line, never logged, and goes only to macOS (`SecKeychainUnlock`); `minigw` never runs the `security`
+command. A wrong password ends with "wrong password: the keychain stays locked". The keychain then stays unlocked for
+that SSH session as macOS keeps it (its lock-after-inactivity setting still applies). Without a terminal (scripts,
+Claude Code skills) `minigw` does not ask: it says the keychain is locked; run
+`security unlock-keychain ~/Library/Keychains/login.keychain-db` in the SSH session first, then retry.
 
 Not in the terminal: Claude CLI's per-tool switches (the tools
 are a comma-separated field) and copying the token to the clipboard.

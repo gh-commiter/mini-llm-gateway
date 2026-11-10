@@ -163,3 +163,16 @@ private func send(_ url: String, _ method: String, _ path: String, secret: Strin
         #expect(!r.authorized(request("GET", "/v1/models", headers: ["authorization": "Bearer " + t + "x"])))
     }
 }
+
+/// minigw gw: odklep zaklenjenega prijavnega keychaina le v terminalu (SSH ali zaklenjen); brez pravega keychaina.
+@Test func keychainUnlockOffer() {
+    for st in [errSecInteractionNotAllowed, errSecAuthFailed] {
+        #expect(Keychain.offerUnlock(status: st, terminal: true, ssh: true, locked: false))
+        #expect(Keychain.offerUnlock(status: st, terminal: true, ssh: false, locked: true))
+        #expect(!Keychain.offerUnlock(status: st, terminal: false, ssh: true, locked: true))  // skripta: le sporočilo
+        #expect(!Keychain.offerUnlock(status: st, terminal: true, ssh: false, locked: false))
+    }
+    for st in [errSecSuccess, errSecItemNotFound, errSecNoSuchKeychain, errSecUserCanceled] {
+        #expect(!Keychain.offerUnlock(status: st, terminal: true, ssh: true, locked: true))
+    }
+}
