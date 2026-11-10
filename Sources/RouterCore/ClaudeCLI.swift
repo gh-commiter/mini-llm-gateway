@@ -447,11 +447,13 @@ extension Router {
     }
     /// #67 (kot Go depsNote): kam gredo odvisnosti in repozitoriji agenta. `sandboxed`: ukazi agenta nosijo oznako peskovnika
     /// (na Macu vsi pišoči agenti: Claude, Codex, Copilot).
+    /// Recepti z dobesedno potjo: Claude Code v -p zavrne ukaz s spremenljivko, ki je ne more preveriti vnaprej.
     static func depsNote(_ deps: String, sandboxed: Bool = true) -> String {
         " Dependencies and repositories you create go to $MINIGW_DEPS (\(deps)), kept for this conversation; "
             + (sandboxed ? "git init and git clone work only there." : "git init and git clone are not available on this gateway (no sandbox).")
-            + #" CMake: -DFETCHCONTENT_BASE_DIR="$MINIGW_DEPS/cmake". SwiftPM: swift build --scratch-path "$MINIGW_DEPS/swiftpm"."#
-            + #" Xcode: -clonedSourcePackagesDirPath "$MINIGW_DEPS/spm" -derivedDataPath "$MINIGW_DEPS/DerivedData"."#
+            + " CMake: -DFETCHCONTENT_BASE_DIR=\"\(deps)/cmake\". SwiftPM: swift build --scratch-path \"\(deps)/swiftpm\"."
+            + " Xcode: -clonedSourcePackagesDirPath \"\(deps)/spm\" -derivedDataPath \"\(deps)/DerivedData\"."
+            + " Use these paths as written, not $MINIGW_DEPS in a command."
             + " Maven, Go, npm, pip, Cargo and Gradle caches are already set."
     }
     static let toolList = ToolList()
@@ -552,7 +554,10 @@ extension Router {
         defer { run?.stop() }
         let gitexec = config.scratch("gitexec")  // N9: ovoj git v klonu (Worktree.claudeEnv), berljiv v peskovniku
         if agent {  // #69: navodilo vedno; branje minigw in ovoja git kot doslej le s stikalom ali za vprašanega agenta
-            let read = askOthers("claude") || AgentRun.current != nil ? [Self.minigwExe, gitexec.path] + (run.map { [$0.authFile.path] } ?? []) : []
+            // #67 (Air): ovoj git (gitexec/bin/git prvi na PATH, exec-path) v klonu vedno, sicer peskovnik ne izvede ovoja
+            // (git z drugega PATH, exec-path v gitexec neberljiv: remote-https, CMake GIT_EXECUTABLE)
+            let read = (askOthers("claude") || AgentRun.current != nil ? [Self.minigwExe] + (run.map { [$0.authFile.path] } ?? []) : [])
+                + (await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "") != nil ? [gitexec.path] : [])
             args = Self.withNote(args, agentNote("claude"), read: read)
         }
         guard let exe = await ClaudeCLI.executable(cfg.executable) else {

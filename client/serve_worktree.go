@@ -877,7 +877,7 @@ case $c in init|clone)
   case $t in /*) ;; *) t=$d/$t;; esac; case /$t/ in */../*) x=1;; esac
   p=$t; while [ ! -d "$p" ]; do p=${p%/*}; p=${p:-/}; done; r=$(cd "$p" && pwd -P)/
   [ -z "$x" ] && [ -n "$D" ] && case $r in "$D"/*) ;; *) false;; esac ||
-    no "create repositories only under \$MINIGW_DEPS ($MINIGW_DEPS), e.g. cmake -DFETCHCONTENT_BASE_DIR=\"\$MINIGW_DEPS/cmake\", swift build --scratch-path \"\$MINIGW_DEPS/swiftpm\""
+    no "create repositories only under \$MINIGW_DEPS ($MINIGW_DEPS), e.g. cmake -DFETCHCONTENT_BASE_DIR=\"$MINIGW_DEPS/cmake\", swift build --scratch-path \"$MINIGW_DEPS/swiftpm\""
   [ -n "$s" ] || no "git init and git clone need the agent sandbox, which this run does not have"
   [ $c = init ] || [ -z "$MINIGW_NETWORK_OFF" ] || case $u in file://*|/*|.*) ;; *://*|[!/]*:*) no "network for this agent's builds is off ($MINIGW_NETWORK_OFF)";; esac
   plain "$@";;
@@ -1022,9 +1022,11 @@ func depsNote(deps string, sandboxed bool) string {
 	if !sandboxed {
 		git = "git init and git clone are not available on this gateway (no sandbox)"
 	}
+	// dobesedne poti: Claude Code v -p zavrne ukaz s spremenljivko, ki je ne more preveriti vnaprej
 	return " Dependencies and repositories you create go to $MINIGW_DEPS (" + deps + "), kept for this conversation; " + git + "." +
-		` CMake: -DFETCHCONTENT_BASE_DIR="$MINIGW_DEPS/cmake". SwiftPM: swift build --scratch-path "$MINIGW_DEPS/swiftpm".` +
-		` Xcode: -clonedSourcePackagesDirPath "$MINIGW_DEPS/spm" -derivedDataPath "$MINIGW_DEPS/DerivedData".` +
+		` CMake: -DFETCHCONTENT_BASE_DIR="` + deps + `/cmake". SwiftPM: swift build --scratch-path "` + deps + `/swiftpm".` +
+		` Xcode: -clonedSourcePackagesDirPath "` + deps + `/spm" -derivedDataPath "` + deps + `/DerivedData".` +
+		" Use these paths as written, not $MINIGW_DEPS in a command." +
 		" Maven, Go, npm, pip, Cargo and Gradle caches are already set."
 }
 

@@ -2220,3 +2220,41 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
     c.worktreeNetwork = true; c.worktreeCodexNetwork = true; c.codex.network = true
     #expect(Worktree.networkOff("claude", c) == nil && Worktree.networkOff("codex", c) == nil && Worktree.networkOff("copilot", c) == nil)
 }
+
+/// #67 (Air): claude -p v klonu ima ovoj git (gitexec) berljiv v peskovniku tudi brez »May ask other models« (sicer git z
+/// drugega PATH in neberljiv exec-path: remote-https, CMake GIT_EXECUTABLE); navodilo da recepte z dobesedno potjo.
+@Test func worktreeClaudeReadsGitWrapperWithoutAskOthers() async throws {
+    let (root, client, tree) = try fixture()
+    defer { cleanup(root) }
+    let fake = root.appendingPathComponent("claude"), dump = root.appendingPathComponent("args")
+    try Data("""
+        #!/bin/sh
+        [ "$1" = --version ] && { echo '2.1.0 (Claude Code)'; exit 0; }
+        printf '%s\\n' "$@" > '\(dump.path)'
+        [ -n "$MINIGW_KEEP_ARGS" ] && { printf '%s\\0' "$@" > "$MINIGW_KEEP_ARGS.args"; env -0 > "$MINIGW_KEEP_ARGS.env"; }
+        cat > /dev/null
+        echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"done"}}}'
+        echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
+
+        """.utf8).write(to: fake)
+    chmod(fake.path, 0o755)
+    var c = RouterConfig()
+    c.claudeCLI.enabled = true; c.claudeCLI.executable = fake.path; c.claudeCLI.askOthers = false
+    let router = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]))
+    let hub = Router.shares, session = UUID().uuidString
+    let key = try #require(await hub.register(session: session, cwd: client.path, key: nil, device: "dev", tree: tree))
+    let loop = fakeClient(hub, key: key, top: client)
+    defer { loop.cancel() }
+    var r = request("POST", "/v1/messages", headers: ["Authorization": "Bearer tok", "x-claude-mini-session": session, "x-claude-mini-cwd": client.path],
+                    body: #"{"model":"claude-cli-haiku","tools":[{"name":"x"}],"messages":[{"role":"user","content":"go"}]}"#)
+    r.device = Noise.Device(id: "dev", name: "dev")
+    let w = FakeWriter()
+    await router.handle(r, writer: w)
+    #expect(w.status == 200, "\(w.text)")
+    let args = try String(contentsOf: dump, encoding: .utf8).split(separator: "\n").map(String.init)
+    let settings = try #require(args.firstIndex(of: "--settings").map { args[$0 + 1] })
+    let fs = try #require(((JSONSerialization.jsonObject(with: Data(settings.utf8)) as? [String: Any])?["sandbox"] as? [String: Any])?["filesystem"] as? [String: Any])
+    #expect((fs["allowRead"] as? [String] ?? []).contains(c.scratch("gitexec").path), "\(fs)")
+    let note = args.joined(separator: "\n")
+    #expect(note.contains(#"-DFETCHCONTENT_BASE_DIR=""#) && !note.contains(#"="$MINIGW_DEPS/cmake""#) && note.contains(".deps/cmake\""))
+}
