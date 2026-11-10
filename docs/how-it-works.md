@@ -82,7 +82,7 @@ The gateway on another computer never connects back to the client. Everything go
 | direct | The gateway Mac mounts the folder with macOS's own WebDAV client; requests go over the encrypted connection | The client's files |
 | sync | Files go over the connection before each request, changes come back after it | A copy in the gateway's Scratch folder |
 | worktree | Git bundles with only the missing objects | A clone of a mirror in Scratch |
-| native | Nothing; the folder is the gateway's own SMB share | The gateway's folder, or a clone of it |
+| native | Nothing; the folder is the gateway's own SMB share (also the automatic home share, see [usage](usage.md#native-mode-and-builds-on-the-gateway-mac)); never the home folder itself, a top-level hidden folder or `~/Library` (resolved path) | The gateway's folder, or a clone of it |
 
 Details:
 
