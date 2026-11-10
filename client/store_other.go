@@ -55,8 +55,8 @@ func storeSave(name string, data []byte) error {
 	return writePrivate(profilePath(name), data)
 }
 
-// writePrivate (L2, #49): mapa 0700, datoteka 0600 atomarno (nova datoteka O_EXCL 0600, fsync, preimenovanje): povezava
-// (simbolna ali trda) na mestu datoteke se ne sledi, prekinjen zapis ne pusti prirezane datoteke.
+// writePrivate (L2, #49): mapa 0700, datoteka 0600 atomarno (nova datoteka O_EXCL 0600, fsync, preimenovanje): simbolna
+// povezava na mestu datoteke je napaka, trda se ne sledi, prekinjen zapis ne pusti prirezane datoteke.
 func writePrivate(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -64,6 +64,9 @@ func writePrivate(path string, data []byte) error {
 	}
 	if err := os.Chmod(dir, 0o700); err != nil {
 		return err
+	}
+	if fi, err := os.Lstat(path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return errors.New(path + " is a symbolic link: not written")
 	}
 	return writeFileAtomic(path, data)
 }
