@@ -466,8 +466,11 @@ minigw run -- mvn -q verify                   # run a build there; output and ex
   read-only mount instead.
 - **Requirements:** the folder is in a writable SMB share of the gateway Mac (System Settings → Sharing) and inside
   its allowed folders. minigw proves it is the same folder: the gateway writes a check file with random content and
-  minigw must read it back through its mount. Only shares listed in File Sharing work; the automatic home-folder
-  share does not (#74).
+  minigw must read it back through its mount. Shares listed in File Sharing work, and the automatic home-folder
+  share of the gateway Mac's user (named after that user, for example `uros` = `/Users/uros`) unless it is turned off
+  (`VirtualHomeShares` false in `com.apple.smb.server`). In the home share only allowed folders below the home work,
+  never the home folder itself, a hidden folder (`~/.ssh` …) or `~/Library`, also when the whole home is allowed. The
+  gateway shares nothing itself.
 - **Detection:** automatic on macOS, Linux (cifs) and Windows (UNC path or mapped drive). Elsewhere set
   `MINIGW_NATIVE_MOUNT=<share>=<mount folder>`. If the folder is not a gateway share, minigw falls back to the usual
   mount.

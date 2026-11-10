@@ -625,3 +625,22 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     Native.unlinkRunDirs(links)
     #expect(links.allSatisfy { var st = stat(); return lstat($0, &st) != 0 })
 }
+
+/// #74: samodejna shema domače mape (ime uporabnika) → domača mapa; ne skrite mape, ne Library, ne domača mapa sama.
+@Test func nativeHomeShare() throws {
+    let f = try nativeFixture()
+    defer { try? FileManager.default.removeItem(at: f.root) }
+    let home = f.share.path, explicit = ["Java": "/Volumes/Java"]
+    #expect(Native.withHomeShare(explicit, virtualHomes: nil, user: "ana", home: home) == ["Java": "/Volumes/Java", "ana": home])
+    #expect(Native.withHomeShare(explicit, virtualHomes: false, user: "ana", home: home) == explicit)  // izklopljeno
+    #expect(Native.withHomeShare(["ANA": "/Volumes/X"], virtualHomes: true, user: "ana", home: home) == ["ANA": "/Volumes/X"])  // izrecna ima prednost
+    let shares = Native.withHomeShare([:], virtualHomes: true, user: "ana", home: home)
+    try FileManager.default.createDirectory(at: f.share.appendingPathComponent(".ssh"), withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: f.share.appendingPathComponent("Library/Keychains"), withIntermediateDirectories: true)
+    #expect(Native.resolve(share: "ana", path: "projects", shares: shares, roots: f.project.path, home: home)?.path == f.project.path)
+    #expect(Native.resolve(share: "ana", path: "private", shares: shares, roots: f.project.path, home: home) == nil)  // ni dovoljena
+    for p in ["", ".ssh", "Library/Keychains", "library"] {  // tudi ko je vsa domača mapa dovoljena
+        #expect(Native.resolve(share: "ana", path: p, shares: shares, roots: home, home: home) == nil)
+    }
+    #expect(Native.resolve(share: "ana", path: "private", shares: shares, roots: home, home: home)?.path == f.outside.path)
+}

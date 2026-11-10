@@ -125,17 +125,33 @@ public enum Native {
         guard (try? p.run()) != nil else { return [:] }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()
-        return smbShares(String(decoding: data, as: UTF8.self))
+        let prefs = NSDictionary(contentsOfFile: "/Library/Preferences/SystemConfiguration/com.apple.smb.server.plist")
+        return withHomeShare(smbShares(String(decoding: data, as: UTF8.self)), virtualHomes: prefs?["VirtualHomeShares"] as? Bool)
+    }
+
+    /// #74: samodejna shema domače mape (ime = uporabnik, ki se prijavi; `sharing -l` je ne izpiše) le za uporabnika
+    /// routerja in le, ko je ne izklopi `VirtualHomeShares` = false. Izrecna shema z istim imenom ima prednost.
+    /// Mapa ostane v dovoljenih mapah; skrite mape in Library domače mape niso nikoli (resolve).
+    public static func withHomeShare(_ shares: [String: String], virtualHomes: Bool?, user: String = NSUserName(),
+                                     home: String = NSHomeDirectory()) -> [String: String] {
+        guard virtualHomes != false, !user.isEmpty,
+              !shares.keys.contains(where: { $0.caseInsensitiveCompare(user) == .orderedSame }) else { return shares }
+        return shares.merging([user: home]) { a, _ in a }
     }
 
     /// Shema + relativna pot → mapa tega Maca; nil, če sheme ni, pot pobegne iz nje (»..«, povezava) ali mapa ni v
     /// dovoljenih mapah (`roots`, Settings → Allowed folders). Shema brez razlike v velikih črkah (SMB).
-    public static func resolve(share: String, path rel: String, shares: [String: String], roots: String, scratch: URL? = nil) -> URL? {
+    /// Shema domače mape (#74 ali izrecna): ne domača mapa sama, ne skrite mape (~/.ssh …) in ne ~/Library (obeski,
+    /// žetoni), tudi ko je domača mapa v dovoljenih mapah.
+    public static func resolve(share: String, path rel: String, shares: [String: String], roots: String, scratch: URL? = nil,
+                               home: String = NSHomeDirectory()) -> URL? {
         guard let base = shares.first(where: { $0.key.caseInsensitiveCompare(share) == .orderedSame })?.value,
               let root = Sync.real(URL(fileURLWithPath: base)) else { return nil }
         let comps = rel.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
         guard rel.isEmpty || !comps.contains(where: { $0.isEmpty || $0 == "." || $0 == ".." || $0.contains("\\") || $0.contains("\0") })
         else { return nil }
+        if root.path == Sync.real(URL(fileURLWithPath: home))?.path,
+           rel.isEmpty || comps[0].hasPrefix(".") || comps[0].caseInsensitiveCompare("Library") == .orderedSame { return nil }
         guard let dir = Sync.real(rel.isEmpty ? root : root.appendingPathComponent(rel)),
               dir.path == root.path || dir.path.hasPrefix(root.path + "/"),
               ClaudeCLI.resolveCwd(dir.path, roots: roots, scratch: scratch) != nil else { return nil }
