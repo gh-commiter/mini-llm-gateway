@@ -41,9 +41,10 @@ private func cleanup(_ root: URL) {
 
 /// minigw za teste: obdela WORKTREE-PUSH in WORKTREE-PULL kot ShareClient (MiniGW/main.swift) prek ShareHub.
 /// conv (#66): ključ pogovora; nadaljevanje na prejšnji veji kot ShareClient.
-private func fakeClient(_ hub: ShareHub, key: String, top: URL, notes: OSAllocatedUnfairLock<[String]>? = nil, conv: String = "") -> Task<Void, Never> {
+private func fakeClient(_ hub: ShareHub, key: String, top: URL, notes: OSAllocatedUnfairLock<[String]>? = nil,
+                        conv: Worktree.Conv = Worktree.Conv()) -> Task<Void, Never> {
     Task {
-        var chain: [String: Worktree.ConvRecord] = [:], sent: [String] = []
+        var chain: [String: Worktree.ConvRecord]?, sent: [String] = [], contTip: String?, contRec: Worktree.ConvRecord?
         while !Task.isCancelled {
             guard case .some(.some(let job)) = await hub.poll(key: key, wait: 0.2) else { continue }
             var r = DAVResponse(403)
@@ -52,9 +53,14 @@ private func fakeClient(_ hub: ShareHub, key: String, top: URL, notes: OSAllocat
                 let have = req["have"] as? [String] ?? [], nestedHave = req["nested"] as? [String: [String]]
                 // git odjemalca zunaj bazena Swift concurrency (kot minigw v svojem procesu): vzporedni testi ne čakajo nanj
                 var snaps = await offPool { Worktree.snapshots(top: top.path, gateway: nestedHave != nil) }
-                if snaps.failure == nil, !conv.isEmpty {
-                    let c = Worktree.continueFrom(top: top.path, conv: conv, snap: snaps.snap, nested: !snaps.nested.isEmpty)
-                    if let tip = c.tip, let r = c.record { snaps.snap = tip; chain[tip] = r } else { chain[snaps.snap] = Worktree.newChain(top: top.path, snap: snaps.snap) }
+                if snaps.failure == nil, conv != Worktree.Conv() {
+                    if chain == nil {  // kot ShareClient: odločitev enkrat na zagon
+                        chain = [:]
+                        let c = Worktree.continueFrom(top: top.path, conv: conv.from, snap: snaps.snap, nested: !snaps.nested.isEmpty)
+                        if let m = c.message { notes?.withLock { $0.append(m) } }
+                        if let tip = c.tip, let r = c.record { contTip = tip; contRec = Worktree.chain(top: top.path, base: r.base, snap: snaps.snap) }
+                    }
+                    if let tip = contTip, let r = contRec { snaps.snap = tip; chain?[tip] = r } else { chain?[snaps.snap] = Worktree.chain(top: top.path, base: snaps.snap, snap: snaps.snap) }
                     sent.append(snaps.snap)
                 }
                 if snaps.failure == nil {
@@ -78,8 +84,9 @@ private func fakeClient(_ hub: ShareHub, key: String, top: URL, notes: OSAllocat
                     let idx = req["nestedOnly"] as? Bool == true ? i + 1 : i
                     if let d = await hub.worktreeResult(key: key, device: "dev", nested: idx) { try? d.write(to: f) }
                     ok = await offPool { Worktree.fetch(top: dir, bundle: f, branch: branch) } == nil && ok
-                    if !conv.isEmpty, dir == top.path {
-                        _ = Worktree.remember(top: dir, conv: conv, branch: branch, sent: Worktree.agentBase(top: dir, branch: branch, sent: sent), chain: chain)
+                    if conv != Worktree.Conv(), dir == top.path {
+                        let r = Worktree.remember(top: dir, conv: conv, branch: branch, sent: Worktree.agentBase(top: dir, branch: branch, sent: sent), chain: chain ?? [:])
+                        if r.continued { notes?.withLock { $0.append(Worktree.continuedLine(branch: branch, base: r.base)) } }
                     }
                     try? FileManager.default.removeItem(at: f)
                 }
@@ -1830,51 +1837,123 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
     #expect(why == "The agent's clone was changed (a .git appeared at app/.git): start a new conversation")
 }
 
-/// #66: --continue v načinu worktree: drugi zagon (nova seja, isti pogovor) začne na veji prvega; nadomestne poti
-/// (spremenjena mapa, premaknjen HEAD, izbrisana ali že združena veja, ugnezdeni) začnejo iz mape.
+/// #66: --continue v načinu worktree: drugi zagon (nova seja, isti pogovor) začne na veji prvega, tudi ko se je mapa
+/// spremenila (z vrstico); iz mape le brez veje in pri ugnezdenih. Ključ po mapah, izbirnik, fork, stara oblika zapisa.
 @Test func worktreeContinueConversation() async throws {
     let (root, client, tree) = try fixture()
     defer { cleanup(root) }
-    let hub = ShareHub(), head = g(client, "rev-parse", "HEAD")
+    let hub = ShareHub(), head = g(client, "rev-parse", "HEAD"), notes = OSAllocatedUnfairLock<[String]>(initialState: [])
     func turn(_ session: String, cont: Bool, _ work: @escaping (URL) throws -> Void) async throws -> String {
         let key = try #require(await hub.register(session: session, cwd: client.path, key: nil, device: "dev", tree: tree))
-        let loop = fakeClient(hub, key: key, top: client, conv: Worktree.conversation(top: client.path, session: session, cont: cont))
+        let conv = Worktree.conversation(top: client.path, rel: ".", session: session, parent: "", cont: cont, picker: false, fork: false)
+        let loop = fakeClient(hub, key: key, top: client, notes: notes, conv: conv)
         defer { loop.cancel() }
         let id = try await agentRun(hub, session, work: work)
         await hub.finish(run: id)
         return "minigw/claude-\(Sync.folderID(session).prefix(8))-0"
     }
+    func has(_ dir: URL, _ f: String) -> Bool { FileManager.default.fileExists(atPath: dir.appendingPathComponent(f).path) }
     let b1 = try await turn("s1", cont: false) { try file($0, "agent.txt", "agent\n") }
     let b2 = try await turn("s2", cont: true) { dir in
-        #expect(FileManager.default.fileExists(atPath: dir.appendingPathComponent("agent.txt").path) && (try? String(contentsOf: dir.appendingPathComponent("agent.txt"), encoding: .utf8)) == "agent\n")
+        #expect(has(dir, "agent.txt"))
         try file(dir, "b.txt", "b\n")
     }
     #expect(b1 != b2 && g(client, "show", "\(b2):agent.txt") == "agent" && g(client, "show", "\(b2):b.txt") == "b")
     let (st, _) = Worktree.convLoad(client.path)
-    #expect(st.last == "s1" && st.convs["s1"]?.branch == b2 && st.convs["s1"]?.head == head)
+    #expect(st.last == [".": "s1"] && st.convs["s1"]?.branch == b2 && st.convs["s1"]?.head == head)
     // Začetek obsega je stanje uporabnika ob prvem zagonu (posnetek z neshranjenimi spremembami), prednik obeh vej.
     let base = try #require(st.convs["s1"]?.base)
     #expect(g(client, "show", "\(base):new.txt") == "untracked" && g(client, "rev-parse", "\(b1)~1") == base)
+    #expect(notes.withLock { $0 }.contains(Worktree.continuedLine(branch: b2, base: base)))
+    #expect(Worktree.continuedLine(branch: b2, base: base).contains("(\(base) = your state when this conversation started; this branch includes the earlier turns)"))
     #expect(g(client, "rev-parse", "HEAD") == head)
 
     func snap() throws -> String { try #require(Worktree.snapshot(top: client.path)) }
-    #expect(try Worktree.continueFrom(top: client.path, conv: "s1", snap: snap(), nested: false).tip == g(client, "rev-parse", b2))
-    #expect(try Worktree.continueFrom(top: client.path, conv: "s1", snap: snap(), nested: true).why == "nested git repositories always start from your folder")
+    func check(_ tip: String?, _ msg: String?) throws {
+        let c = try Worktree.continueFrom(top: client.path, conv: "s1", snap: snap(), nested: false)
+        #expect(c.tip == tip && c.message == msg)
+    }
+    func changed(_ b: String) -> String { "worktree: continuing from \(b); changes in your folder since the last turn are not in the agent's copy" }
+    try check(g(client, "rev-parse", b2), nil)
+    #expect(try Worktree.continueFrom(top: client.path, conv: "s1", snap: snap(), nested: true).message
+        == "worktree: starting from your folder, not from \(b2): nested git repositories always start from your folder")
     try file(client, "mine.txt", "m\n")
-    #expect(try Worktree.continueFrom(top: client.path, conv: "s1", snap: snap(), nested: false).why == "your folder changed since the last turn")
+    try check(g(client, "rev-parse", b2), changed(b2))
     let b3 = try await turn("s3", cont: true) { dir in
-        #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("agent.txt").path))
+        #expect(has(dir, "b.txt") && !has(dir, "mine.txt"))
         try file(dir, "c.txt", "c\n")
     }
+    #expect(notes.withLock { $0 }.contains(changed(b2)))
+    try check(g(client, "rev-parse", b3), nil)
     g(client, "add", "-A"); g(client, "commit", "-qm", "mine")
-    #expect(try Worktree.continueFrom(top: client.path, conv: "s1", snap: snap(), nested: false).why == "your folder changed since the last turn")
-    g(client, "branch", "-D", b3)
-    #expect(try Worktree.continueFrom(top: client.path, conv: "s1", snap: snap(), nested: false).why == "the branch no longer exists")
-    let b4 = try await turn("s4", cont: true) { try file($0, "d.txt", "d\n") }
-    g(client, "merge", "-q", "--ff-only", b4)
-    let merged = try Worktree.continueFrom(top: client.path, conv: "s1", snap: snap(), nested: false)
-    #expect(merged.tip == nil && merged.why == nil)
-    #expect(Worktree.conversation(top: client.path, session: "s5", cont: false) == "s5"
-        && Worktree.conversation(top: client.path, session: "s1", cont: false) == "s1"
-        && Worktree.conversation(top: client.path, session: "s6", cont: true) == "s1")
+    try check(g(client, "rev-parse", b3), changed(b3))
+    let b4 = try await turn("s4", cont: true) { dir in
+        #expect(has(dir, "c.txt"))
+        try file(dir, "d.txt", "d\n")
+    }
+    g(client, "branch", "-D", b4)
+    try check(nil, "worktree: starting from your folder, not from \(b4): the branch no longer exists")
+    let b5 = try await turn("s5", cont: true) { dir in
+        #expect(!has(dir, "agent.txt") && has(dir, "mine.txt"))
+        try file(dir, "e.txt", "e\n")
+    }
+    g(client, "merge", "-q", "--ff-only", b5)
+    try check(g(client, "rev-parse", b5), nil)
+
+    // Ključ: po mapah (kot claude -c), izbirnik ne nadaljuje in ne zapiše, fork nadaljuje starša pod novo sejo.
+    func conv(_ s: String, rel: String = ".", parent: String = "", cont: Bool = false, picker: Bool = false, fork: Bool = false) -> Worktree.Conv {
+        Worktree.conversation(top: client.path, rel: rel, session: s, parent: parent, cont: cont, picker: picker, fork: fork)
+    }
+    #expect(conv("s6") == Worktree.Conv(from: "", to: "s6") && conv("x", parent: "s1") == Worktree.Conv(from: "s1", to: "s1")
+        && conv("s7", cont: true) == Worktree.Conv(from: "s1", to: "s1"))
+    #expect(conv("s8", rel: "sub", cont: true) == Worktree.Conv(from: "", to: "s8") && conv("s9", cont: true).from == "s1")
+    #expect(conv("s10", picker: true) == Worktree.Conv() && conv("s11", cont: true).from == "s1")
+    #expect(conv("f1", parent: "s1", fork: true) == Worktree.Conv(from: "s1", to: "f1") && conv("s12", cont: true).from == "f1")
+    let (_, p) = Worktree.convLoad(client.path)
+    #expect(((try? FileManager.default.attributesOfItem(atPath: p))?[.posixPermissions] as? Int) == 0o600)
+    #expect(Worktree.relCwd(top: client.path, cwd: client.appendingPathComponent("sub").path) == "." && Worktree.relCwd(top: client.path, cwd: client.path) == ".")
+    try FileManager.default.createDirectory(at: client.appendingPathComponent("sub"), withIntermediateDirectories: true)
+    #expect(Worktree.relCwd(top: client.path, cwd: client.appendingPathComponent("sub").path) == "sub")
+    // Starejša oblika (»last« kot niz): neznano, zapisi ostanejo.
+    let old = try String(contentsOfFile: p, encoding: .utf8)
+    let n = Worktree.convLoad(client.path).0.convs.count
+    try old.replacingOccurrences(of: #""last":{"#, with: #""last":"s1","x":{"#).write(toFile: p, atomically: true, encoding: .utf8)
+    #expect(Worktree.convLoad(client.path).0.last.isEmpty && Worktree.convLoad(client.path).0.convs.count == n && conv("s13", cont: true).from == "")
+}
+
+/// #66: odločitev enkrat na zagon: drugi WORKTREE-PUSH istega zagona začne iz istega vrha, tudi ko je vmes prišla nova
+/// veja; naslednji zagon nadaljuje iz zadnje prevzete veje.
+@Test func worktreeContinueDecidedOncePerRun() async throws {
+    let (root, client, tree) = try fixture()
+    defer { cleanup(root) }
+    let hub = ShareHub()
+    func session(_ s: String, cont: Bool) async throws -> (String, Task<Void, Never>) {
+        let key = try #require(await hub.register(session: s, cwd: client.path, key: nil, device: "dev", tree: tree))
+        return (s, fakeClient(hub, key: key, top: client, conv: Worktree.conversation(top: client.path, rel: ".", session: s, parent: "", cont: cont, picker: false, fork: false)))
+    }
+    let (s1, l1) = try await session("o1", cont: false)
+    let a = try await agentRun(hub, s1) { try file($0, "one.txt", "1\n") }
+    await hub.finish(run: a); l1.cancel()
+    let b1 = "minigw/claude-\(Sync.folderID(s1).prefix(8))-0"
+    // Zagon 2: agent A konča (nova veja), agent B (drug agent, svoj klon) začne pozneje v istem zagonu: iz istega vrha kot A.
+    let (s2, l2) = try await session("o2", cont: true)
+    defer { l2.cancel() }
+    let ra = UUID().uuidString
+    let dirA = try await ShareHub.$run.withValue(ra) { try await ShareHub.$agent.withValue("claude") { try #require(await hub.mount(session: s2, cwd: nil, base: "", device: "dev")) } }
+    let rb = UUID().uuidString
+    let dirB = try await ShareHub.$run.withValue(rb) { try await ShareHub.$agent.withValue("codex") { () async throws -> URL in
+        try file(dirA, "two.txt", "2\n")
+        await ShareHub.$run.withValue(ra) { await hub.syncBack(session: s2) }
+        await hub.finish(run: ra)  // veja A je prevzeta pred začetkom B
+        return try #require(await hub.mount(session: s2, cwd: nil, base: "", device: "dev"))
+    } }
+    let short = Sync.folderID(s2).prefix(8)
+    #expect(g(client, "show", "minigw/claude-\(short)-0:two.txt") == "2")
+    #expect(FileManager.default.fileExists(atPath: dirB.appendingPathComponent("one.txt").path))
+    #expect(!FileManager.default.fileExists(atPath: dirB.appendingPathComponent("two.txt").path))
+    try file(dirB, "three.txt", "3\n")
+    await ShareHub.$run.withValue(rb) { await hub.syncBack(session: s2) }
+    await hub.finish(run: rb)
+    #expect(g(client, "show", "minigw/codex-\(short)-0:three.txt") == "3" && g(client, "show", "minigw/codex-\(short)-0:one.txt") == "1")
+    #expect(Worktree.convLoad(client.path).0.convs["o1"]?.branch == "minigw/codex-\(short)-0" && b1 != "minigw/codex-\(short)-0")
 }

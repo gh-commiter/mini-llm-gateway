@@ -611,26 +611,35 @@ func main() {
 	}
 
 	// Seja: router po njej loči seje claude -p in niti Siri. Obstoječa ob --resume <id>, sicer nova.
-	sid, own, cont := "", false, false
+	// #66: cont (-c), picker (--resume brez ID-ja), parent (ID ob --resume), fork (--fork-session), explicit (--session-id)
+	sid, own, cont, picker, fork, explicit, parent := "", false, false, false, false, false, ""
 	for i, a := range args {
 		switch a {
 		case "-r", "--resume": // brez ID-ja = izbirnik sej v claude; nikoli skupaj z --session-id
 			own = true
 			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-				sid = args[i+1]
+				sid, parent = args[i+1], args[i+1]
+			} else {
+				picker = true
 			}
 		case "--session-id":
 			if i+1 < len(args) {
 				sid = args[i+1]
 			}
-			own = true
+			own, explicit = true, true
 		case "-c", "--continue":
 			own, cont = true, true
+		case "--fork-session":
+			fork = true
 		default:
 			if strings.HasPrefix(a, "--resume=") {
 				own, sid = true, strings.TrimPrefix(a, "--resume=")
+				parent = sid
 			}
 		}
+	}
+	if fork && parent != "" && !explicit {
+		sid = "" // L2: razcepljen pogovor je na prehodu nova seja (svoja veja), ne seja starša
 	}
 	if sid == "" {
 		sid = newUUID() // tudi pri -c/--continue: router po njem deli mapo
@@ -682,9 +691,9 @@ func main() {
 	share := &shareClient{c: c, session: sid, root: cwd, readOnly: readOnly, synced: map[string]syncEntry{}, reported: map[string]bool{}}
 	// #66: ključ pogovora enkrat na zagon (tudi za druge prehode)
 	var convOnce sync.Once
-	convKey := ""
-	conv := func(top string) string {
-		convOnce.Do(func() { convKey = wtConversation(top, sid, cont) })
+	var convKey wtConv
+	conv := func(top string) wtConv {
+		convOnce.Do(func() { convKey = wtConversation(top, wtRel(top, cwd), sid, parent, cont, picker, fork) })
 		return convKey
 	}
 	if wantShare && sid != "" {

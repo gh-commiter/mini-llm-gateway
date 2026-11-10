@@ -271,8 +271,10 @@ final class ShareClient: @unchecked Sendable {
     private var reported: Set<String> = []          // že javljene prevelike datoteke
     private var snaps: [String] = []                // worktree: posnetki, poslani prehodu (začetek dela agenta)
     private var nestedSnaps: [String: [String]] = [:]  // worktree: ugnezdeni repozitorij (pot) → njegovi poslani posnetki
-    var conv = ""                                    // worktree (#66): ključ pogovora (Worktree.conversation); "" = brez nadaljevanja
-    private var chain: [String: Worktree.ConvRecord] = [:]  // worktree (#66): poslani posnetek ali vrh → začetek verige pogovora
+    var conv = Worktree.Conv()                       // worktree (#66): pogovor (Worktree.conversation); prazen = brez nadaljevanja
+    private var chain: [String: Worktree.ConvRecord]?       // worktree (#66): poslani posnetek ali vrh → veriga (nil = še ni odločeno)
+    private var contTip: String?                     // worktree (#66): vrh, iz katerega začnejo vsi agenti zagona (nil = iz mape)
+    private var contRec: Worktree.ConvRecord?
     private var unpulled = false                    // spremembe agenta, ki niso bile prevzete in potrjene
 
     init(_ c: Connection, session: String, root: URL, readOnly: Bool, kind: String, top: String? = nil) {
@@ -377,16 +379,19 @@ final class ShareClient: @unchecked Sendable {
             if reported.insert(f.key).inserted { note(f.message) }
             return DAVResponse(500)
         }
-        // #66: isti pogovor nadaljuje na vrhu svoje prejšnje veje, če se mapa od takrat ni spremenila
+        // #66: isti pogovor nadaljuje na vrhu svoje zadnje veje. Odločitev enkrat na zagon (prvi WORKTREE-PUSH): vsi
+        // agenti zagona začnejo iz istega začetka, neodvisno od vrstnega reda.
         var snap = r.snap
-        let c = Worktree.continueFrom(top: top, conv: conv, snap: snap, nested: !r.nested.isEmpty)
-        if let why = c.why, let b = c.record?.branch, reported.insert("continue:" + b).inserted {
-            note("worktree: starting from your folder, not from \(b): \(why)")
+        if chain == nil {
+            chain = [:]
+            let c = Worktree.continueFrom(top: top, conv: conv.from, snap: snap, nested: !r.nested.isEmpty)
+            if let m = c.message { note(m) }
+            if let tip = c.tip, let rec = c.record { contTip = tip; contRec = Worktree.chain(top: top, base: rec.base, snap: snap) }
         }
-        if let tip = c.tip, let rec = c.record {
-            snap = tip; chain[tip] = rec
-        } else if chain[snap] == nil {
-            chain[snap] = Worktree.newChain(top: top, snap: snap)
+        if let tip = contTip, let rec = contRec {
+            snap = tip; chain?[tip] = rec
+        } else if chain?[snap] == nil {
+            chain?[snap] = Worktree.chain(top: top, base: snap, snap: snap)
         }
         guard upload(k, top, snap, have, 0) else { return DAVResponse(500) }
         for (i, n) in r.nested.enumerated() {
@@ -453,7 +458,16 @@ final class ShareClient: @unchecked Sendable {
             note("worktree: " + (rel.map { "nested repository \(oneLine($0)): " } ?? "") + why); return false
         }
         let sent = Worktree.agentBase(top: dir, branch: branch, sent: rel.flatMap { nestedSnaps[$0] } ?? snaps)
-        branchNote(branch, rel == nil ? Worktree.remember(top: dir, conv: conv, branch: branch, sent: sent, chain: chain) : sent, nested: rel)
+        if let rel {
+            branchNote(branch, sent, nested: rel)
+        } else {
+            let (base, continued) = Worktree.remember(top: dir, conv: conv, branch: branch, sent: sent, chain: chain ?? [:])
+            if !continued {
+                branchNote(branch, base)
+            } else if reported.insert("branch::\(branch)@\(base)").inserted {
+                note(Worktree.continuedLine(branch: branch, base: base))
+            }
+        }
         return true
     }
 
@@ -966,18 +980,21 @@ setenv("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1", 1)
 // Seja: router po njej loči seje claude -p in niti Siri. Obstoječa ob --resume <id>, sicer nova.
 var sid = ""
 var own = false
-var cont = false  // #66: -c/--continue (worktree: nadaljuje zadnji pogovor v repozitoriju)
+// #66: cont (-c), picker (--resume brez ID-ja), parent (ID ob --resume), fork (--fork-session), explicit (--session-id)
+var cont = false, picker = false, fork = false, explicit = false, parent = ""
 for (i, a) in args.enumerated() {
     switch a {
     case "-r", "--resume":  // brez ID-ja = izbirnik sej v claude; nikoli skupaj z --session-id
         own = true
-        if i + 1 < args.count, !args[i + 1].hasPrefix("-") { sid = args[i + 1] }
-    case let a where a.hasPrefix("--resume="): own = true; sid = String(a.dropFirst("--resume=".count))
-    case "--session-id": if i + 1 < args.count { sid = args[i + 1] }; own = true
+        if i + 1 < args.count, !args[i + 1].hasPrefix("-") { sid = args[i + 1]; parent = sid } else { picker = true }
+    case let a where a.hasPrefix("--resume="): own = true; sid = String(a.dropFirst("--resume=".count)); parent = sid
+    case "--session-id": if i + 1 < args.count { sid = args[i + 1] }; own = true; explicit = true
     case "-c", "--continue": own = true; cont = true
+    case "--fork-session": fork = true
     default: break
     }
 }
+if fork, !parent.isEmpty, !explicit { sid = "" }  // L2: razcepljen pogovor je na prehodu nova seja (svoja veja), ne seja starša
 if sid.isEmpty {
     sid = UUID().uuidString.lowercased()  // tudi pri -c/--continue: router po njem deli mapo
     if !own { args = ["--session-id", sid] + args }
@@ -1033,11 +1050,13 @@ if tries.isEmpty {
         + "(the agent would change your files without a branch to review); put MINIGW_WORK=direct in front of the command instead")
 }
 /// #66: ključ pogovora enkrat na zagon (tudi za druge prehode).
-let convKey = OSAllocatedUnfairLock<String?>(initialState: nil)
-@Sendable func conversation(_ top: String?) -> String {
-    guard let top else { return "" }
+let convKey = OSAllocatedUnfairLock<Worktree.Conv?>(initialState: nil)
+@Sendable func conversation(_ top: String?) -> Worktree.Conv {
+    guard let top else { return Worktree.Conv() }
     return convKey.withLock { k in
-        if k == nil { k = Worktree.conversation(top: top, session: sid, cont: cont) }
+        if k == nil {
+            k = Worktree.conversation(top: top, rel: Worktree.relCwd(top: top, cwd: cwd), session: sid, parent: parent, cont: cont, picker: picker, fork: fork)
+        }
         return k!
     }
 }
