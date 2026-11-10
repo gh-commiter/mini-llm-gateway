@@ -261,14 +261,14 @@ Notes:
   repository renamed `HEAD.agent`), so no git command picks up the agent's git settings or
   hooks; copy the files you need. At most 3 such folders are kept per repository (the oldest goes first), each for
   30 days. The same applies when no branch could be delivered at all, except for a clone refused as too large.
-- The agent may commit inside a nested clone: its note names the clones. On the Mac app and on Linux and macOS
+- The agent may commit inside a nested clone: its note names the clones. On the Mac app and on Linux
   `minigw serve`, git run in a nested clone's folder (`cd <path> && git …` or `git -C <path> …`) works in that clone,
   and plain git elsewhere in the clone works on the top repository. This holds for every agent (Claude CLI, Codex, Grok,
   Copilot). On a Windows `minigw serve` gateway the note gives the form
   `GIT_DIR=<path>/.git GIT_COMMON_DIR=<path>/.git GIT_WORK_TREE=<path> git …`, which Claude Code does not run without
   asking, so there the gateway commits Claude's changes. The agent's commits are kept; changes it leaves uncommitted are
   committed by the gateway.
-- Agent git in the clone does not use the gateway owner's git config (identity, signing, credential helpers,
+- Agent git in the clone (all gateways, Windows too) does not use the gateway owner's git config (identity, signing, credential helpers,
   `url.*.insteadOf`, global ignore file). Agent commits are authored as the agent, for example
   `Claude (Mini Gateway) <claude@minigw.invalid>`, `Codex (Mini Gateway) <codex@minigw.invalid>`, Grok or Copilot
   likewise; you see that author in `git log <base>..<branch>` of the delivered branch.
