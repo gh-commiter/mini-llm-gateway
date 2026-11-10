@@ -322,10 +322,23 @@ public struct Keychain: SecretStore {
         return SecKeychainOpen(path, &kc) == errSecSuccess ? kc : nil
     }
 
-    /// Ali minigw gw v terminalu ponudi odklep prijavnega keychaina: branje vnosa je zavrnil zaklenjen keychain, stdin in
-    /// stderr sta terminal, seja je SSH ali keychain poroča, da je zaklenjen. Sicer (skripta, veščina) le sporočilo.
+    /// Ali minigw gw v terminalu ponudi odklep prijavnega keychaina: branje vnosa je zavrnil keychain, stdin in stderr
+    /// sta terminal in keychain poroča, da je zaklenjen (tudi v SSH). SecKeychainUnlock na odklenjenem keychainu sprejme
+    /// vsako geslo, zato brez zaklepa ni vprašanja (#62); ssh ostane le za besedilo. Sicer (skripta, veščina) le sporočilo.
     public static func offerUnlock(status: OSStatus, terminal: Bool, ssh: Bool, locked: Bool) -> Bool {
-        (status == errSecInteractionNotAllowed || status == errSecAuthFailed) && terminal && (ssh || locked)
+        (status == errSecInteractionNotAllowed || status == errSecAuthFailed) && terminal && locked
+    }
+
+    /// Namig minigw gw, ko Keychain zavrne branje vnosa »admin«. V SSH nasvet za ukaz security le pri zaklenjenem
+    /// keychainu: na odklenjenem ta ukaz sprejme vsako geslo in nič ne popravi (#62).
+    public static func deniedHint(ssh: Bool, locked: Bool) -> String {
+        if ssh && locked {
+            return "the login keychain is locked in this SSH session: run security unlock-keychain ~/Library/Keychains/login.keychain-db in the SSH session first, then retry (if it still fails, quit and open the Mini Gateway app once on the Mac)"
+        }
+        if ssh {
+            return "macOS reports the login keychain as unlocked but does not let minigw read Mini Gateway's admin item in this SSH session: quit and open the Mini Gateway app once on the Mac, then retry"
+        }
+        return "Mini Gateway has not given minigw access to its admin key yet: quit and open the Mini Gateway app once, then run the command again; if the login keychain is locked, unlock it first"
     }
 
     /// nil = vnos je le v prijavnem keychainu, a tega ni (brez zamenjave z drugim keychainom).

@@ -94,16 +94,24 @@ private func loginLocked() -> Bool {
 
 /// Odklene prijavni keychain z geslom s terminala (brez odmeva; nikoli iz argv, nikoli ukaz security), medpomnilnik
 /// se pred izhodom pobriše. Napačno geslo konča ukaz. Keychain ostane odklenjen po privzetih nastavitvah macOS.
+/// SecKeychainUnlock na odklenjenem keychainu vrne uspeh za vsako geslo (#62): zato pred klicem znova preveri zaklep,
+/// po uspehu pa, da keychain res ni več zaklenjen.
 private func unlockLoginKeychain(ssh: Bool) {
     guard let kc = Keychain.loginKeychain() else { return }
     err.write(Data("The login keychain is locked\(ssh ? " in this SSH session" : ""). Mac password for \(userName(getuid())) (to unlock it): ".utf8))
     var buf = [CChar](repeating: 0, count: 1024)
     let got = readpassphrase("", &buf, buf.count, RPP_REQUIRE_TTY) != nil
-    let st = got ? SecKeychainUnlock(kc, UInt32(strlen(buf)), buf, true) : errSecSuccess
+    let locked = loginLocked()  // med vnosom gesla ga je morda odklenil drug proces
+    let st = got && locked ? SecKeychainUnlock(kc, UInt32(strlen(buf)), buf, true) : errSecSuccess
     memset_s(&buf, buf.count, 0, buf.count)
     guard got else { fail("no password: the keychain stays locked") }
+    guard locked else {
+        err.write(Data("The login keychain was unlocked meanwhile; the password was not used.\n".utf8))
+        return
+    }
     if st == errSecAuthFailed { fail("wrong password: the keychain stays locked") }
     if st != errSecSuccess { fail("cannot unlock the login keychain (OSStatus \(st))") }
+    if loginLocked() { fail("the keychain stays locked") }
 }
 
 /// Jasno sporočilo za napako Keychaina pri vnosu »admin«. ssh: namig za zaklenjen keychain v seji SSH.
@@ -116,11 +124,8 @@ private func keychainHint(_ st: OSStatus, ssh: Bool) -> String {
     case errSecNoSuchKeychain: return "run minigw gw as the user who runs Mini Gateway, not as \(me) (\(me) has no login keychain)"
     case errSecItemNotFound: return "start Mini Gateway 0.5.15 or newer once, so it can create the admin item"
     case errSecAuthFailed, errSecUserCanceled, errSecInteractionNotAllowed:  // brez dialoga (main.swift)
-        // SSH: prijavni Keychain je v seji SSH zaklenjen; minigw sam nikoli ne kliče ukaza security.
-        if ssh {
-            return "the login keychain is locked in this SSH session: run security unlock-keychain ~/Library/Keychains/login.keychain-db in the SSH session first, then retry (if it still fails, quit and open the Mini Gateway app once on the Mac)"
-        }
-        return "Mini Gateway has not given minigw access to its admin key yet: quit and open the Mini Gateway app once, then run the command again; if the login keychain is locked, unlock it first"
+        // minigw sam nikoli ne kliče ukaza security; nasvet zanj le pri zaklenjenem keychainu (#62).
+        return Keychain.deniedHint(ssh: ssh, locked: loginLocked())
     default: return "cannot read Mini Gateway's admin item from the Keychain (OSStatus \(st))"
     }
 }
