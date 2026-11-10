@@ -672,3 +672,32 @@ func TestCodexSandboxProblem(t *testing.T) {
 		t.Fatal("elevated sandbox unlocked Codex")
 	}
 }
+
+// M1: povezava pod Scratch (namesto mape dovoljenja) se najde; prave mape in poti zunaj Scratch ne.
+func TestScratchLinkM1(t *testing.T) {
+	scratch, out := t.TempDir(), t.TempDir()
+	os.MkdirAll(filepath.Join(scratch, "clones", "a.deps"), 0o700)
+	if err := os.Symlink(out, filepath.Join(scratch, "clones", "b.deps")); err != nil {
+		t.Skip(err)
+	}
+	if got := scratchLink(filepath.Join(scratch, "clones", "a.deps"), scratch); got != "" {
+		t.Errorf("real folder reported as a link: %s", got)
+	}
+	if got := scratchLink(filepath.Join(scratch, "clones", "b.deps", "tmp"), scratch); got != filepath.Join(scratch, "clones", "b.deps") {
+		t.Errorf("link not found: %q", got)
+	}
+	if got := scratchLink(out, scratch); got != "" {
+		t.Errorf("outside scratch: %q", got)
+	}
+	_, _, _, err := mxcWrap("wxc", "/bin/sh", nil, agentMounts{cfgDir: t.TempDir(), hide: scratch, rw: []string{filepath.Join(scratch, "clones", "b.deps")}})
+	if err == nil || !strings.Contains(err.Error(), "not safe to use") {
+		t.Errorf("mxcWrap granted through a link: %v", err)
+	}
+}
+
+// L5: izhod preizkusa v dnevniku brez vrednosti skrivnosti.
+func TestRedactTextL5(t *testing.T) {
+	if got := redactText("bad env\nCLAUDE_CODE_OAUTH_TOKEN=sk-ant-x PATH=C:\\x"); strings.Contains(got, "sk-ant-x") || !strings.Contains(got, "PATH=C:\\x") {
+		t.Errorf("redactText = %q", got)
+	}
+}

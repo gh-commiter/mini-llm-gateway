@@ -293,6 +293,13 @@ type gitBox struct {
 	mount, tmp string
 }
 
+// gitGuardPins: nastavitve, ki jih git prehoda vedno pripne (poleg core.hooksPath). #71: tudi pager, zunanji diff, ssh
+// in pomočnik za poverilnice iz nastavitev repozitorija (agent v peskovniku sam dela commite in lahko piše .git/config).
+var gitGuardPins = []string{"-c", "core.fsmonitor=false", "-c", "submodule.recurse=false",
+	"-c", "protocol.allow=never", "-c", "protocol.file.allow=always", "-c", "maintenance.auto=false", "-c", "gc.auto=0",
+	"-c", "core.commitGraph=false", "-c", "core.multiPackIndex=false",
+	"-c", "core.pager=cat", "-c", "diff.external=", "-c", "core.sshCommand=", "-c", "credential.helper="}
+
 // gitRunBox: gitRunInput, z box v bwrap (boxGit); brez bwrap napaka (nikoli brez peskovnika po poti).
 func gitRunBox(box *gitBox, repo, cwd string, env []string, input string, args ...string) (string, error) {
 	exe, err := gitExe()
@@ -300,9 +307,7 @@ func gitRunBox(box *gitBox, repo, cwd string, env []string, input string, args .
 		return "", errors.New("git not found on the gateway (install git)")
 	}
 	hooks, cfg := gitEmpty(repo)
-	guard := []string{"-c", "core.hooksPath=" + hooks, "-c", "core.fsmonitor=false", "-c", "submodule.recurse=false",
-		"-c", "protocol.allow=never", "-c", "protocol.file.allow=always", "-c", "maintenance.auto=false", "-c", "gc.auto=0",
-		"-c", "core.commitGraph=false", "-c", "core.multiPackIndex=false"}
+	guard := append([]string{"-c", "core.hooksPath=" + hooks}, gitGuardPins...)
 	if gitLongPaths {
 		guard = append(guard, "-c", "core.longpaths=true")
 	}

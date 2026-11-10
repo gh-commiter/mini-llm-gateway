@@ -161,20 +161,22 @@ func general(u *ui) ([]row, error) {
 	if sug := str(g, "scratchSuggest"); sug != "" {
 		rows = append(rows, inf("  It is inside your home folder (agents in the Windows sandbox can list the names there); move it to "+sug+".", ""))
 	}
-	to := str(g, "scratchSuggest")
-	if to == "" {
-		to = str(g, "scratch")
+	if str(st, "os") != "" { // le minigw serve (aplikacija na Macu nima /general/scratch/move; odločitev A)
+		to := str(g, "scratchSuggest")
+		if to == "" {
+			to = str(g, "scratch")
+		}
+		rows = append(rows, ed("Move everything to", to, func(v string) (string, error) { // mirrors, clones, deps, caches, agent state
+			r, err := u.call("POST", "/general/scratch/move", map[string]any{"to": v})
+			if err != nil {
+				return "", err
+			}
+			if w := str(r, "warning"); w != "" {
+				return "Moved to " + str(r, "scratch") + "; " + w, nil
+			}
+			return "Moved to " + str(r, "scratch") + ".", nil
+		}))
 	}
-	rows = append(rows, ed("Move everything to", to, func(v string) (string, error) { // mirrors, clones, deps, caches, agent state
-		r, err := u.call("POST", "/general/scratch/move", map[string]any{"to": v})
-		if err != nil {
-			return "", err
-		}
-		if w := str(r, "warning"); w != "" {
-			return "Moved to " + str(r, "scratch") + "; " + w, nil
-		}
-		return "Moved to " + str(r, "scratch") + ".", nil
-	}))
 	if _, ok := g["worktreeNetwork"]; ok && str(st, "os") != "" { // #68: minigw serve (the Mac shows it under Mac only)
 		rows = append(rows, hdr("Worktree mode"),
 			tog("Network for builds", yes(g, "worktreeNetwork"), func(v bool) (string, error) { return patch(map[string]any{"worktreeNetwork": v}) }),

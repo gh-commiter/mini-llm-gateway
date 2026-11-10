@@ -269,6 +269,8 @@ user account there.
   read-only, so your mirrors and the fingerprint check still apply; SwiftPM warns that it "is not accessible or not
   writable". The warnings "couldn't create cache file '/var/folders/…/T/xcrun_db-…'" are harmless: `xcrun` then
   runs without its cache.
+- Known limitation: `swift test` and `swift run` under `minigw run` do not work yet (#72); empty `NSIRD_*` folders
+  are left in the temporary folder.
 - `xcodebuild` gets `-resultBundlePath`, `-packageCachePath` and `-clonedSourcePackagesDirPath` in the run's
   temporary folder (unless you pass them yourself) and `-IDEDisablePackageManifestCaching=YES`, so Swift packages
   without an `.xcodeproj` build too (Xcode otherwise writes its result bundle to `/var/folders/…/T` and manifest

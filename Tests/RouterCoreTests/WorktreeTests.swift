@@ -2308,3 +2308,11 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
     let note = args.joined(separator: "\n")
     #expect(note.contains(#"-DFETCHCONTENT_BASE_DIR=""#) && !note.contains(#"="$MINIGW_DEPS/cmake""#) && note.contains(".deps/cmake\""))
 }
+
+// #71: varni git pripne pager, zunanji diff, ssh in pomočnik za poverilnice (agent piše .git/config klona).
+@Test func gitGuardrailsPinPagerDiffSshCredential() {
+    let g = Worktree.guardrails.joined(separator: " ")
+    for pin in ["core.pager=cat", "diff.external=", "core.sshCommand=", "credential.helper=", "core.hooksPath=/dev/null"] {
+        #expect(g.contains("-c " + pin), "\(pin)")
+    }
+}

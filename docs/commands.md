@@ -91,7 +91,10 @@ only on the gateway computer.
 | `minigw gw claude [--path FILE] [--tools T1,T2] [--folders DIR1,DIR2] [--allow-local-tools=true\|false] [--ask-others=true\|false]` | Claude CLI settings |
 | `minigw gw claude --allow-unsandboxed-bash=true\|false` | Commands without a sandbox (`minigw serve` only) |
 | `minigw gw claude\|codex\|grok\|copilot [--work=direct\|sync\|worktree]` | Show or set the agent's cap: the highest work mode in which it may change the client's folder (in a lower mode it only reads) |
-| `minigw gw copilot token [remove]` | Copilot's GitHub token for commands, read from stdin or asked for |
+| `minigw gw claude\|codex\|grok\|copilot login` | The agent's login (set / not set / logged in), never the value |
+| `minigw gw claude\|copilot token [remove]` | Claude: the token from `claude setup-token` (needed in the Windows sandbox); Copilot: its GitHub token for commands (fine-grained, only Copilot Requests). Read from stdin or asked for |
+| `minigw gw claude\|codex\|grok apikey [remove]` | Use an API key instead of the login (billed through the provider's API), read from stdin or asked for; `remove`: back to the login |
+| `minigw gw scratch [move [DIR]]` | Show the Scratch folder (mirrors, clones, deps, caches, agent state); `move`: all of it to DIR (no DIR: the proposed folder), only while no minigw session or agent runs (`minigw serve` only) |
 | `minigw gw autostart [on\|off]` | Mac: Open at Login. Windows: the tray at sign-in. No argument: show it |
 | `minigw gw token [rotate]` | Print the connect line for clients; `rotate` makes a new token |
 | `minigw gw settings` | The settings in this terminal, also over SSH: the pages General, Devices, Providers, Agents, Folders, Sessions, Activity (`minigw-tui`) |

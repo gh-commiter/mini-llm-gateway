@@ -2380,3 +2380,13 @@ func TestDepsNoteAndNetworkOff(t *testing.T) {
 		t.Fatalf("claude: %v", got)
 	}
 }
+
+// #71: git prehoda pripne pager, zunanji diff, ssh in pomočnik za poverilnice (agent piše .git/config klona).
+func TestGitGuardPins71(t *testing.T) {
+	g := strings.Join(gitGuardPins, " ")
+	for _, pin := range []string{"core.pager=cat", "diff.external=", "core.sshCommand=", "credential.helper=", "protocol.allow=never"} {
+		if !strings.Contains(g, "-c "+pin) {
+			t.Errorf("missing -c %s in %q", pin, g)
+		}
+	}
+}
