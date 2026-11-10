@@ -354,7 +354,8 @@ func fsckBase(repo, base string) error {
 		return err
 	}
 	defer os.RemoveAll(dir)
-	pack, err := gitRunInput(repo, dir, nil, in, "--git-dir", repo, "pack-objects", "--revs", "-q", filepath.Join(dir, "p"))
+	// pack.window=0: brez iskanja delt (le za fsck)
+	pack, err := gitRunInput(repo, dir, nil, in, "--git-dir", repo, "-c", "pack.window=0", "pack-objects", "--revs", "-q", filepath.Join(dir, "p"))
 	if err != nil {
 		return err
 	}
