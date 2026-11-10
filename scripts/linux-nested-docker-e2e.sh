@@ -25,7 +25,7 @@ fail() { print -u2 "FAIL $*"; docker exec $NAME sh -c "tail -30 /cfg/serve.log; 
 mkdir -p $T/opt/bin
 (cd $ROOT/client && GOOS=linux GOARCH=arm64 go build -o $T/opt/bin/minigw . && go build -o $T/minigw .)
 docker build -q -t $IMG - <<'EOF' >/dev/null
-FROM node:22-bookworm-slim
+FROM node:22-trixie-slim
 RUN apt-get update -qq && apt-get install -y -qq bubblewrap git socat ripgrep procps >/dev/null && rm -rf /var/lib/apt/lists/*
 RUN npm install -g --silent @anthropic-ai/claude-code
 EOF
