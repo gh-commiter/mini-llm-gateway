@@ -243,6 +243,15 @@ extension Router {
                 throw AdminError(404, "no session \(arg) (minigw gw sessions lists them)")
             }
             return (200, GatewayHistory.json(s))
+        case "GET usage":  // #46b: števci po projektu, najnovejši dan prvi
+            let q = URLComponents(string: "?" + (query ?? ""))?.queryItems ?? []
+            let v = { (n: String) in q.first { $0.name == n }?.value ?? "" }
+            var days = 7
+            if !v("days").isEmpty {
+                guard let n = Int(v("days")), (1...GatewayHistory.projectDays).contains(n) else { throw AdminError(400, "days: 1-31") }
+                days = n
+            }
+            return (200, ["usage": history.usage(device: v("device"), folder: v("folder"), days: days).map(GatewayHistory.json)])
         case "DELETE sessions":
             history.clearSessions()
             return (200, ["cleared": true])
@@ -477,7 +486,7 @@ extension Router {
         case "PATCH agents/{}":
             switch arg {
             case "claude":
-                let b = try AdminBody(body, ["enabled", "path", "tools", "folders", "allowLocalTools", "disabledTools", "permissionMode", "settingSources", "askOthers"])
+                let b = try AdminBody(body, ["enabled", "path", "tools", "folders", "allowLocalTools", "disabledTools", "permissionMode", "settingSources", "askOthers", "work"])
                 let mode = try b.string("permissionMode"), sources = try b.string("settingSources").map { $0.replacingOccurrences(of: " ", with: "") }
                 if let mode, !["dontAsk", "acceptEdits", "auto", "plan"].contains(mode) {
                     throw AdminError(400, "permission mode: dontAsk, acceptEdits, auto or plan")
@@ -488,6 +497,7 @@ extension Router {
                 let enabled = try b.bool("enabled"), path = try b.string("path"), folders = try b.string("folders")
                 let local = try b.bool("allowLocalTools"), disabled = try b.strings("disabledTools"), ask = try b.bool("askOthers")
                 let tools = try b.string("tools").map { $0.replacingOccurrences(of: " ", with: "") }
+                let work = try Self.work(b)
                 if let t = tools, !t.isEmpty, t.range(of: #"^[A-Za-z0-9_]+(,[A-Za-z0-9_]+)*$"#, options: .regularExpression) == nil {
                     throw AdminError(400, "tools: comma-separated tool names, e.g. Read,Grep,Glob")
                 }
@@ -509,6 +519,7 @@ extension Router {
                     if let mode { c.claudeCLI.permissionMode = mode }
                     if let sources { c.claudeCLI.settingSources = sources }
                     if let ask { c.claudeCLI.askOthers = ask }
+                    if let work { c.claudeCLI.work = work }
                     if c.claudeCLI.enabled, !found {
                         throw AdminError(400, "claude not found: set path")
                     }
@@ -517,10 +528,10 @@ extension Router {
             case "copilot":
                 // Kot codex; models = seznam imen (Copilot nima seznama modelov), commands = ukazi lupine (privolitev).
                 // token: le za pisanje (kot ključi ponudnikov); "" ga izbriše.
-                let b = try AdminBody(body, ["enabled", "path", "write", "network", "commands", "models", "token", "askOthers"])
+                let b = try AdminBody(body, ["enabled", "path", "write", "network", "commands", "models", "token", "askOthers", "work"])
                 let enabled = try b.bool("enabled"), path = try b.string("path"), write = try b.bool("write")
                 let network = try b.bool("network"), commands = try b.bool("commands"), models = try b.models("models")
-                let token = try b.string("token"), ask = try b.bool("askOthers")
+                let token = try b.string("token"), ask = try b.bool("askOthers"), work = try Self.work(b)
                 if let token, !token.isEmpty, !Copilot.validToken(token) {
                     throw AdminError(400, "token: a fine-grained personal access token (github_pat_…) with only the Copilot Requests permission")
                 }
@@ -533,15 +544,16 @@ extension Router {
                     if let network { c.copilot.network = network }
                     if let commands { c.copilot.commands = commands }
                     if let ask { c.copilot.askOthers = ask }
+                    if let work { c.copilot.work = work }
                     if let models { c.copilot.models = (models ?? []).joined(separator: ", ") }  // null = le privzeti model
                 }
                 var info = await copilotInfo(n.copilot)
                 if let token { info["hasToken"] = !token.isEmpty }  // ključ se shrani šele po odgovoru (ponovni zagon)
                 return (200, info)
             case "codex", "grok":
-                let b = try AdminBody(body, arg == "codex" ? ["enabled", "path", "write", "network", "models", "askOthers"] : ["enabled", "path", "write", "models", "askOthers"])
+                let b = try AdminBody(body, arg == "codex" ? ["enabled", "path", "write", "network", "models", "askOthers", "work"] : ["enabled", "path", "write", "models", "askOthers", "work"])
                 let enabled = try b.bool("enabled"), path = try b.string("path"), write = try b.bool("write")
-                let network = try b.bool("network"), models = try b.models("models"), ask = try b.bool("askOthers")
+                let network = try b.bool("network"), models = try b.models("models"), ask = try b.bool("askOthers"), work = try Self.work(b)
                 if let path, !path.isEmpty, !FileManager.default.isExecutableFile(atPath: path) { throw AdminError(400, "not an executable: \(path)") }
                 let n = try await hooks.update { c in
                     if arg == "codex" {
@@ -551,12 +563,14 @@ extension Router {
                         if let network { c.codex.network = network }
                         if let models { c.codex.enabledModels = models }
                         if let ask { c.codex.askOthers = ask }
+                        if let work { c.codex.work = work }
                     } else {
                         if let enabled { c.grok.enabled = enabled }
                         if let path { c.grok.executable = path }
                         if let write { c.grok.write = write }
                         if let models { c.grok.enabledModels = models }
                         if let ask { c.grok.askOthers = ask }
+                        if let work { c.grok.work = work }
                     }
                 }
                 return (200, arg == "codex" ? await codexInfo(n.codex) : await grokInfo(n.grok))
@@ -633,18 +647,21 @@ extension Router {
     func claudeInfo(_ c: ClaudeCLIConfig) async -> [String: Any] {
         ["enabled": c.enabled, "path": c.executable, "found": await ClaudeCLI.executable(c.executable) != nil, "tools": c.tools,
          "folders": c.allowedRoots, "allowLocalTools": c.allowLocalTools, "disabledTools": c.disabledTools,
-         "permissionMode": c.permissionMode, "settingSources": c.settingSources, "askOthers": c.askOthers]
+         "permissionMode": c.permissionMode, "settingSources": c.settingSources, "askOthers": c.askOthers,
+         "work": Self.apiWork(c.work)]
     }
 
     func codexInfo(_ c: CodexConfig) async -> [String: Any] {
         ["enabled": c.enabled, "path": c.executable, "found": await Codex.executable(c.executable) != nil, "write": c.write,
-         "network": c.network, "models": c.enabledModels.map { $0 as Any } ?? NSNull(), "askOthers": c.askOthers]
+         "network": c.network, "models": c.enabledModels.map { $0 as Any } ?? NSNull(), "askOthers": c.askOthers,
+         "work": Self.apiWork(c.work)]
     }
 
     func copilotInfo(_ c: CopilotConfig) async -> [String: Any] {
         ["enabled": c.enabled, "path": c.executable, "found": await Copilot.executable(c.executable) != nil, "write": c.write,
          "network": c.network, "commands": c.commands, "models": c.modelList,
-         "hasToken": !(secrets.get(Copilot.tokenAccount) ?? "").isEmpty, "askOthers": c.askOthers]
+         "hasToken": !(secrets.get(Copilot.tokenAccount) ?? "").isEmpty, "askOthers": c.askOthers,
+         "work": Self.apiWork(c.work)]
     }
 
     func foundryInfo(_ c: FoundryConfig) async -> [String: Any] {
@@ -655,8 +672,18 @@ extension Router {
 
     func grokInfo(_ c: GrokConfig) async -> [String: Any] {
         ["enabled": c.enabled, "path": c.executable, "found": await Grok.executable(c.executable) != nil, "write": c.write,
-         "models": c.enabledModels.map { $0 as Any } ?? NSNull(), "askOthers": c.askOthers]
+         "models": c.enabledModels.map { $0 as Any } ?? NSNull(), "askOthers": c.askOthers,
+         "work": Self.apiWork(c.work)]
     }
+
+    /// #45: omejitev načina agenta v API (direct, sync, worktree; v nastavitvah direct = ""), kot v minigw serve.
+    static func work(_ b: AdminBody) throws -> String? {
+        guard let w = try b.string("work") else { return nil }
+        guard ["direct", "sync", "worktree"].contains(w) else { throw AdminError(400, "work: direct, sync or worktree") }
+        return w == "direct" ? "" : w
+    }
+
+    static func apiWork(_ w: String) -> String { ["sync", "worktree"].contains(w) ? w : "direct" }
 
     func runInfo(_ c: RouterConfig) -> [String: Any] {
         ["commands": c.runCommands, "devices": c.devices.map { ["id": $0.id, "name": $0.name, "run": $0.run, "network": $0.runNetwork] }]

@@ -475,6 +475,7 @@ struct SettingsView: View {
     private var sessions: some View {
         Form {
             header
+            projectsSection
             Section {
                 TimelineView(.periodic(from: .now, by: 15)) { _ in
                     let list = Router.history.sessions()
@@ -490,14 +491,15 @@ struct SettingsView: View {
                                 } label: {
                                     Text(verbatim: u.model)
                                     let sub = [u.role.isEmpty ? nil : String(localized: "Role \(u.role)"), u.via.isEmpty ? nil : String(localized: "via \(u.via)"),
-                                               u.readOnly ? String(localized: "read-only") : nil, u.tools.isEmpty ? nil : String(localized: "tools \(u.tools)")]
+                                               u.readOnly ? (u.cap.isEmpty ? String(localized: "read-only") : String(localized: "read-only (cap \(u.cap))")) : nil, u.tools.isEmpty ? nil : String(localized: "tools \(u.tools)")]
                                         .compactMap { $0 }.joined(separator: " · ")
                                     if !sub.isEmpty { Text(verbatim: sub) }
                                 }
                             }
                         } label: {
                             Text(verbatim: s.last.formatted(date: .abbreviated, time: .shortened) + " · " + Self.who(s))
-                            Text(verbatim: ([s.folder, s.mode + (s.readOnly ? ", " + String(localized: "read-only") : ""),
+                            let cap = s.models.first { !$0.cap.isEmpty }?.cap ?? ""
+                            Text(verbatim: ([s.folder, s.mode + (!s.readOnly ? "" : ", " + (cap.isEmpty ? String(localized: "read-only") : String(localized: "read-only (cap \(cap))"))),
                                             Set(s.models.map(\.model)).sorted().joined(separator: ", ")].filter { !$0.isEmpty }).joined(separator: " · "))
                                 .foregroundStyle(.secondary)
                         }
@@ -518,6 +520,44 @@ struct SettingsView: View {
         .alert(Text("Clear the session history?"), isPresented: $clearingSessions) {
             Button("Clear History", role: .destructive) { Router.history.clearSessions() }
             Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    /// #45: najvišji način, v katerem agent sme spreminjati mapo odjemalca; v višjem le bere (minigw to sporoči).
+    private func workPicker(_ work: Binding<String>) -> some View {
+        Picker("Changes in the client's folder", selection: work) {
+            Text("In the folder or a copy (any mode)").tag("")
+            Text("Only in a copy or on a branch (sync, worktree)").tag("sync")
+            Text("Only on a branch (worktree)").tag("worktree")
+        }
+        .help(String(localized: "In a mode above this the agent only reads the folder, and minigw tells the client."))
+    }
+
+    /// #46b: števci zadnjih 7 dni po mapi in napravi (vsi agenti skupaj), kot razdelek Projects v minigw-tui.
+    private var projectsSection: some View {
+        Section {
+            TimelineView(.periodic(from: .now, by: 15)) { _ in
+                let rows = Dictionary(grouping: Router.history.usage(days: 7)) { [$0.folder, $0.device] }
+                    .map { key, v in (folder: key[0], device: key[1], requests: v.reduce(0) { $0 + $1.requests },
+                                      minutes: Int((v.reduce(0) { $0 + $1.seconds } / 60).rounded(.down)),
+                                      tokens: v.reduce(0) { $0 + $1.inputTokens + $1.outputTokens }) }
+                    .sorted { ($0.folder, $0.device) < ($1.folder, $1.device) }
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, p in
+                    LabeledContent {
+                        Text("\(p.requests) requests · \(p.minutes) agent min · \(p.tokens) tokens")
+                    } label: {
+                        Text(verbatim: p.folder)
+                        Text(verbatim: p.device.isEmpty ? String(localized: "This computer")
+                             : draft.devices.first { $0.id == p.device }.map { $0.name.isEmpty ? p.device : $0.name } ?? String(localized: "\(p.device) (removed)"))
+                    }
+                }
+                if rows.isEmpty { Text("No usage recorded.").foregroundStyle(.secondary) }
+            }
+        } header: {
+            Text("Projects (7 days)")
+        } footer: {
+            Text("Counters per folder, device, day and agent, kept for 31 days, also after their sessions are gone. Clear History clears them too.")
+                .font(.caption).foregroundStyle(.secondary)
         }
     }
 
@@ -666,6 +706,7 @@ struct SettingsView: View {
                 Toggle("Allow writing in the session's folder", isOn: $draft.codex.write)
                 Toggle("Allow network access for commands", isOn: $draft.codex.network)
                     .disabled(!draft.codex.write)
+                workPicker($draft.codex.work)
                 Toggle("May ask other models", isOn: $draft.codex.askOthers)
                     .help(String(localized: "The agent may ask another model of this gateway (for example Codex) with minigw, in the same folder and with the same device's rights; one level deep, never its own kind. Codex needs “Allow network access for commands” for it."))
             } header: {
@@ -694,6 +735,7 @@ struct SettingsView: View {
                 Toggle("Allow commands (in a sandbox)", isOn: Binding(get: { draft.copilot.commands },
                                                 set: { on in if on { askCopilotCommands = true } else { draft.copilot.commands = false } }))
                     .disabled(!draft.copilot.write)
+                workPicker($draft.copilot.work)
                 SecureField(state.keychain.lookup(Copilot.tokenAccount).value?.isEmpty == false
                             ? "GitHub token for Copilot (saved; enter to replace)"
                             : "GitHub token for Copilot (fine-grained, only “Copilot Requests”)", text: keyBinding(Copilot.tokenAccount))
@@ -749,6 +791,7 @@ struct SettingsView: View {
             }
             Section {
                 Toggle("Allow writing in the session's folder", isOn: $draft.grok.write)
+                workPicker($draft.grok.work)
                 Toggle("May ask other models", isOn: $draft.grok.askOthers)
                     .help(String(localized: "The agent may ask another model of this gateway (for example Codex) with minigw, in the same folder and with the same device's rights; one level deep, never its own kind. Codex needs “Allow network access for commands” for it."))
             } header: {
@@ -794,6 +837,7 @@ struct SettingsView: View {
                     }
                 }
                 TextField("Setting sources", text: $draft.claudeCLI.settingSources)
+                workPicker($draft.claudeCLI.work)
                 Toggle("May ask other models", isOn: $draft.claudeCLI.askOthers)
                     .disabled(!draft.claudeCLI.allowLocalTools)
                     .help(String(localized: "The agent may ask another model of this gateway (for example Codex) with minigw, in the same folder and with the same device's rights; one level deep, never its own kind. Needs “Allow local tools” (Bash)."))

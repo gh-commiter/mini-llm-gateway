@@ -9,6 +9,7 @@ public struct CodexConfig: Codable, Sendable, Equatable {
     public var write = true               // sandbox workspace-write (sicer read-only)
     public var network = false            // omrežje za ukaze v sandboxu (npr. gradnja); privzeto izklopljeno kot v Go
     public var askOthers = false          // »May ask other models«: agent vpraša drug model prehoda (AgentRun)
+    public var work = ""                  // #45: najvišji način za pisanje (sync, worktree); "" = direct, vsi načini
     public init() {}
 
     public func isModelEnabled(_ slug: String) -> Bool { enabledModels?.contains(slug) ?? true }
@@ -29,6 +30,7 @@ public struct CodexConfig: Codable, Sendable, Equatable {
         write = try c.decodeIfPresent(Bool.self, forKey: .write) ?? d.write
         network = try c.decodeIfPresent(Bool.self, forKey: .network) ?? d.network
         askOthers = try c.decodeIfPresent(Bool.self, forKey: .askOthers) ?? d.askOthers
+        work = try c.decodeIfPresent(String.self, forKey: .work) ?? d.work
     }
 }
 
@@ -235,7 +237,9 @@ extension Router {
                 try? FileManager.default.createDirectory(at: tree.maven, withIntermediateDirectories: true)
                 extra = (tree.root.path == dir.path ? [] : [tree.root.path]) + [tree.maven.path]
             }
-            readOnly = await Self.isReadOnly(req)
+            let cap = await capped(req, kind: "codex")  // #45: način seje nad omejitvijo → le branje
+            readOnly = await Self.isReadOnly(req) || cap != nil
+            Self.runBranch?.readOnly = readOnly || (tree != nil && !config.codex.write)  // #46a
             if readOnly, tree != nil, AgentRun.current == nil { return await error(400, "invalid_request_error", Self.readOnlyWorktree, rid: rid, writer: writer) }
             if let shared, let clientCwd {
                 prompt = Self.mountNote(clientCwd, shared, readOnly: readOnly || (tree != nil && !config.codex.write), synced: synced,
@@ -250,7 +254,7 @@ extension Router {
         let privateTmp = URL(fileURLWithPath: "/private/tmp/minigw-codex-\(rid)", isDirectory: true)
         try? FileManager.default.createDirectory(at: privateTmp, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         defer { try? FileManager.default.removeItem(at: privateTmp) }
-        let run = agent ? await startAgentRun(req, kind: "codex", dir: sharedDir, readOnly: tree != nil && !config.codex.write) : nil
+        let run = agent ? await startAgentRun(req, kind: "codex", dir: sharedDir, readOnly: readOnly || (tree != nil && !config.codex.write)) : nil
         defer { run?.stop() }
         var treeEnv: [String: String]?  // L-N9a: harness Codex sam poganja git v klonu (ovoj kot pri Claude CLI)
         if let t = tree {

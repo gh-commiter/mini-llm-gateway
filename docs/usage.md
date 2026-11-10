@@ -254,8 +254,8 @@ Notes:
   gateway could not save it), the top-level branch and the other nested repositories still come back, without that
   repository's files. minigw prints one line per such repository with the reason:
   `minigw: gateway: worktree: <reason>; the agent's files are kept on the gateway for 30 days as
-  worktrees/<device>/<id>/<clone>-kept-<time> after this session (files only; its .git folders renamed .git.agent —
-  do not run git there)`. The path is inside the gateway's Scratch folder. A later request in the same session that
+  worktrees/<device>/<id>/<clone>-kept-<time> after this session (files only; its .git folders renamed .git.agent, or
+  nothing is kept if that fails — do not run git there)`. The path is inside the gateway's Scratch folder. A later request in the same session that
   delivers the work ends that. When the session ends (or the next request needs a new clone), the gateway keeps the
   agent's files there with every `.git` renamed `.git.agent` (and the `HEAD` of any folder shaped like a bare
   repository renamed `HEAD.agent`), so no git command picks up the agent's git settings or
@@ -306,6 +306,12 @@ its reading tools (Read, Grep, Glob, web search and fetch; commands only in a sa
 folder). This also holds when the gateway runs on the same computer. `/minigw:ask --ro` and `/minigw:review` use it.
 Leaving `--minigw-ro` out is not prompted: a model call without it inside Claude Code is pre-approved like one with it,
 so the agent may write (in worktree mode only on its branch).
+
+**The gateway's cap per agent:** the gateway's owner can set, per agent, the highest mode in which it may change your
+folder (Settings → the agent → **Changes in the client's folder**; admin API `work`). In a mode above it the agent
+still runs, but only reads the folder, and minigw prints for example `minigw: gateway: Mini Gateway lets Codex change
+files only in worktree mode, so it only read the folder (run minigw --minigw-work=worktree)`. Run again with that
+mode to let it change files.
 
 **Role** (`--minigw-role NAME` or `MINIGW_ROLE`, 1–32 letters, digits, `. _ -`): a label the gateway records in its
 session history, for example `security` in a subagent's environment. It is a guard against mistakes, not a security

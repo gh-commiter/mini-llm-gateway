@@ -12,6 +12,7 @@ public struct CopilotConfig: Codable, Sendable, Equatable {
     public var commands = false    // ukazi lupine (sandbox-exec; z dovoljenjem: agent lahko uporabi prijavo GitHub)
     public var network = false     // spletna orodja (url); omrežja ukazov lupine ne omeji (copilot ga potrebuje sam)
     public var askOthers = false          // »May ask other models«: agent vpraša drug model prehoda (AgentRun)
+    public var work = ""                  // #45: najvišji način za pisanje (sync, worktree); "" = direct, vsi načini
     public init() {}
 
     public var modelList: [String] {
@@ -28,6 +29,7 @@ public struct CopilotConfig: Codable, Sendable, Equatable {
         commands = try c.decodeIfPresent(Bool.self, forKey: .commands) ?? d.commands
         network = try c.decodeIfPresent(Bool.self, forKey: .network) ?? d.network
         askOthers = try c.decodeIfPresent(Bool.self, forKey: .askOthers) ?? d.askOthers
+        work = try c.decodeIfPresent(String.self, forKey: .work) ?? d.work
     }
 }
 
@@ -290,7 +292,9 @@ extension Router {
             sharedDir = shared
             cwd = tree?.root ?? dir  // M3: koren klona namesto --add-dir; sporočilo spodaj pove mapo seje
             if shared != nil || tree != nil { visible = cwd }  // R3: le pot iz ShareHub sme biti v (skritem) Scratch
-            readOnly = await Self.isReadOnly(req)
+            let cap = await capped(req, kind: "copilot")  // #45: način seje nad omejitvijo → le branje
+            readOnly = await Self.isReadOnly(req) || cap != nil
+            Self.runBranch?.readOnly = readOnly || (tree != nil && !cfg.write)  // #46a
             if readOnly, tree != nil, AgentRun.current == nil { return await error(400, "invalid_request_error", Self.readOnlyWorktree, rid: rid, writer: writer) }
             if let shared, let clientCwd {
                 prompt = Self.mountNote(clientCwd, shared, readOnly: readOnly || (tree != nil && !cfg.write), synced: synced,
@@ -326,7 +330,7 @@ extension Router {
         }
         let extraEnv = treeEnv
             ?? ["TMPDIR": tmp.path + "/", "CLANG_MODULE_CACHE_PATH": tmp.appendingPathComponent("ModuleCache").path]
-        let run = agent ? await startAgentRun(req, kind: "copilot", dir: sharedDir, secretDir: reqDir, readOnly: tree != nil && !cfg.write) : nil  // peskovnik: zaprta le vrata prehoda; žeton v mapi zahteve
+        let run = agent ? await startAgentRun(req, kind: "copilot", dir: sharedDir, secretDir: reqDir, readOnly: readOnly || (tree != nil && !cfg.write)) : nil  // peskovnik: zaprta le vrata prehoda; žeton v mapi zahteve
         defer { run?.stop() }
         let env = Copilot.environment(base, home: home, token: token, extra: extraEnv.merging(run?.env ?? [:]) { $1 })
         // Nadaljevanje seje Copilot (--session-id): ključ je dosedanji pogovor v tej mapi; stanje seje iz Scratch.

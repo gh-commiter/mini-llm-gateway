@@ -1319,14 +1319,15 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     #expect(FileManager.default.fileExists(atPath: marker), "the test does not reproduce the filter")
 }
 
-/// keepClone teče zunaj akterja: počakaj nanj (največ 5 s).
-private func waitKept(_ kept: String) async {
-    for _ in 0..<100 where !FileManager.default.fileExists(atPath: kept) { try? await Task.sleep(nanoseconds: 50_000_000) }
+/// Razorožitev ohranjenega klona teče v ozadju: počakaj, da so poti `want` v njem (največ 5 s).
+private func waitKept(_ kept: String, _ want: [String] = [".git.agent"]) async {
+    func lexists(_ p: String) -> Bool { var st = stat(); return lstat(p, &st) == 0 }
+    for _ in 0..<100 where !want.allSatisfy({ lexists(kept + "/" + $0) }) { try? await Task.sleep(nanoseconds: 50_000_000) }
 }
 
 /// Absolutna pot ohranjenega klona iz sporočila (L3: pot glede na Scratch prehoda).
 private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
-    guard let r = line.range(of: #"as worktrees/\S+-kept-\d{8}-\d{6}-\d{9} after this session \(files only; its \.git folders renamed \.git\.agent — do not run git there\)$"#, options: .regularExpression) else { return nil }
+    guard let r = line.range(of: #"as worktrees/\S+-kept-\d{8}-\d{6}-\d{9} after this session \(files only; its \.git folders renamed \.git\.agent, or nothing is kept if that fails — do not run git there\)$"#, options: .regularExpression) else { return nil }
     let rel = line[r].dropFirst(3).prefix { $0 != " " }
     return tree.worktrees.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent(String(rel)).path
 }
@@ -1523,7 +1524,7 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
 
 /// M2, #4, #1 (kot Go TestKeepCloneDisarmsGit): keepClone preimenuje vsak .git in HEAD golega repozitorija v klonu, nikoli
 /// prek povezave ven; klon, ki je povezava, ostane, kot je.
-@Test func keepCloneDisarmsGit() throws {
+@Test func keepCloneDisarmsGit() async throws {
     let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("kc-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let wt = root.appendingPathComponent("c-0"), outside = root.appendingPathComponent("outside"), kept = root.appendingPathComponent("c-0-kept-1")
@@ -1533,10 +1534,16 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
     try file(wt.appendingPathComponent("sub"), ".git", "gitdir: ../x\n"); try file(wt, "f.txt", "agent\n")
     try FileManager.default.createSymbolicLink(at: wt.appendingPathComponent("link"), withDestinationURL: outside)
     try FileManager.default.createSymbolicLink(at: wt.appendingPathComponent("blink"), withDestinationURL: outside.appendingPathComponent("b"))
+    g(root, "init", "-q", wt.appendingPathComponent("ro/r").path)  // L2: agent vzame pravice mapam
+    chmod(wt.appendingPathComponent("ro/r").path, 0o555); chmod(wt.appendingPathComponent("ro").path, 0o555)
+    defer { for d in ["ro", "ro/r"] { chmod(kept.path + "/" + d, 0o755) } }
     ShareHub.keepClone(wt, kept)
     func exists(_ p: String) -> Bool { var st = stat(); return lstat(p, &st) == 0 }
-    for p in [".git.agent", "sub/.git.agent", "bare/HEAD.agent", "f.txt"] { #expect(exists(kept.path + "/" + p), "\(p)") }
-    for p in [".git", "sub/.git", "bare/HEAD"] { #expect(!exists(kept.path + "/" + p), "\(p)") }
+    #expect(!exists(wt.path) && exists(kept.path))  // L1: premik takoj
+    let want = [".git.agent", "sub/.git.agent", "bare/HEAD.agent", "ro/r/.git.agent", "f.txt"]
+    await waitKept(kept.path, want)
+    for p in want { #expect(exists(kept.path + "/" + p), "\(p)") }
+    for p in [".git", "sub/.git", "bare/HEAD", "ro/r/.git"] { #expect(!exists(kept.path + "/" + p), "\(p)") }
     for d in ["", "/bare", "/sub"] {
         #expect(Worktree.run(["rev-parse", "--git-dir"], cwd: kept.path + d, env: ["GIT_CEILING_DIRECTORIES": root.path], safe: false).status != 0, "\(d)")
     }
@@ -1544,6 +1551,9 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
     try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("c-1"), withDestinationURL: outside)
     ShareHub.keepClone(root.appendingPathComponent("c-1"), root.appendingPathComponent("c-1-kept-1"))
     #expect(exists(outside.path + "/.git") && !exists(root.path + "/c-1-kept-1"))
+    // L4: ohranjeni klon, ki je povezava, se ne razoroži in ne pobriše (cilj ostane)
+    try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("l-kept-1"), withDestinationURL: outside)
+    #expect(!ShareHub.disarmKept(root.appendingPathComponent("l-kept-1")) && exists(outside.path + "/.git"))
 }
 
 /// #40 (kot Go TestPathWrapScript): besedilo enako kot v Go (client/testdata/pathwrap.golden); git dela v registriranem

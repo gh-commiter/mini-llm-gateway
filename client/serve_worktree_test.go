@@ -1457,7 +1457,7 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
 		}
 		return
 	}
-	line := regexp.MustCompile(`(?m)^minigw: gateway: worktree: ` + why + `.*; the agent's files are kept on the gateway for 30 days as (worktrees/\S+-kept-\d{8}-\d{6}-\d{9}) after this session \(files only; its \.git folders renamed \.git\.agent — do not run git there\)$`).FindStringSubmatch(out)
+	line := regexp.MustCompile(`(?m)^minigw: gateway: worktree: ` + why + `.*; the agent's files are kept on the gateway for 30 days as (worktrees/\S+-kept-\d{8}-\d{6}-\d{9}) after this session \(files only; its \.git folders renamed \.git\.agent, or nothing is kept if that fails — do not run git there\)$`).FindStringSubmatch(out)
 	if line == nil {
 		t.Fatalf("no skip line:\n%s", out)
 	}
@@ -1510,13 +1510,11 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
 			gitT(t, d, "config", "core.fsmonitor", "touch "+marker+"; false")
 		}
 	}
-	sc.unregister() // konec seje: klon z nedostavljenim delom ostane (keepClone v gorutini)
-	for i := 0; i < 100; i++ {
-		if _, err := os.Stat(slot.wt); err != nil {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
+	sc.unregister() // konec seje: klon takoj v kept (L1), razorožitev v ozadju
+	if _, err := os.Stat(slot.wt); err == nil {
+		t.Fatal("clone not moved to kept when the session ended")
 	}
+	waitFor(t, func() bool { _, err := os.Lstat(filepath.Join(line[1], ".git.agent")); return err == nil })
 	for _, d := range []string{line[1], filepath.Join(line[1], "lib"), filepath.Join(line[1], "other")} {
 		if _, err := os.Lstat(filepath.Join(d, ".git")); err == nil {
 			t.Fatalf("%s/.git kept", d)
@@ -1656,15 +1654,26 @@ func TestKeepCloneDisarmsGit(t *testing.T) {
 	gitT(t, root, "init", "-q", "--bare", filepath.Join(outside, "b"))
 	writeT(t, filepath.Join(wt, "sub", ".git"), "gitdir: ../x\n")
 	writeT(t, filepath.Join(wt, "f.txt"), "agent\n")
+	gitT(t, root, "init", "-q", filepath.Join(wt, "ro", "r"))
+	t.Cleanup(func() { chmodTree(kept) })
+	os.Chmod(filepath.Join(wt, "ro", "r"), 0o555) // L2: agent vzame pravice mapi
+	os.Chmod(filepath.Join(wt, "ro"), 0o555)
 	os.Symlink(outside, filepath.Join(wt, "link"))
 	os.Symlink(filepath.Join(outside, "b"), filepath.Join(wt, "blink"))
 	keepClone(wt, kept, t.Logf)
-	for _, p := range []string{".git.agent", "sub/.git.agent", "bare/HEAD.agent", "f.txt"} {
-		if _, err := os.Lstat(filepath.Join(kept, p)); err != nil {
-			t.Fatalf("%s: %v", p, err)
-		}
+	if _, err := os.Lstat(wt); err == nil { // L1: premik takoj
+		t.Fatal("clone still at its path after keepClone")
 	}
-	for _, p := range []string{".git", "sub/.git", "bare/HEAD"} {
+	want := []string{".git.agent", "sub/.git.agent", "bare/HEAD.agent", "ro/r/.git.agent", "f.txt"}
+	waitFor(t, func() bool {
+		for _, p := range want {
+			if _, err := os.Lstat(filepath.Join(kept, p)); err != nil {
+				return false
+			}
+		}
+		return true
+	})
+	for _, p := range []string{".git", "sub/.git", "bare/HEAD", "ro/r/.git"} {
 		if _, err := os.Lstat(filepath.Join(kept, p)); err == nil {
 			t.Fatalf("%s left", p)
 		}
@@ -1776,4 +1785,47 @@ func TestWorktreeHarnessEnvGitConfig(t *testing.T) {
 	if b, err := os.ReadFile(filepath.Join(gw, "bin", "git")); err != nil || !strings.Contains(string(b), "MINIGW_GIT_DIRS") {
 		t.Fatalf("no PATH wrapper: %v", err)
 	}
+}
+
+// waitFor: ok v 5 s (razorožitev ohranjenega klona teče v ozadju).
+func waitFor(t *testing.T, ok func() bool) {
+	t.Helper()
+	for i := 0; i < 100 && !ok(); i++ {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !ok() {
+		t.Fatal("timed out")
+	}
+}
+
+// L2, L4: zamenjan koren (povezava) se ne razoroži in ne sledi; mapa brez pisanja dobi 0700 in uspe.
+func TestDisarmKeptFailsClosed(t *testing.T) {
+	root := t.TempDir()
+	kept := filepath.Join(root, "c-0-kept-1")
+	gitT(t, root, "init", "-q", kept)
+	os.Symlink(kept, filepath.Join(root, "l-kept-1"))
+	if disarmKept(filepath.Join(root, "l-kept-1")) {
+		t.Fatal("linked kept clone disarmed")
+	}
+	if _, err := os.Lstat(filepath.Join(kept, ".git")); err != nil {
+		t.Fatal("link target touched")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores folder permissions")
+	}
+	t.Cleanup(func() { chmodTree(kept) })
+	os.Chmod(kept, 0o500)
+	if !disarmKept(kept) { // mapa brez pisanja: 0700 in znova uspe
+		t.Fatal("folder without write permission not disarmed")
+	}
+}
+
+// chmodTree: pravice za pospravljanje (mape 555 v testu).
+func chmodTree(dir string) {
+	filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err == nil && d.IsDir() {
+			os.Chmod(p, 0o755)
+		}
+		return nil
+	})
 }

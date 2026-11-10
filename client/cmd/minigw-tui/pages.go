@@ -385,6 +385,7 @@ func agents(u *ui) ([]row, error) {
 	rows = append(rows, ed("Setting sources (comma-separated)", str(c, "settingSources"), func(v string) (string, error) {
 		return pc(map[string]any{"settingSources": v})
 	}))
+	rows = append(rows, workRow(c, pc)...)
 	if _, ok := c["allowUnsandboxedBash"]; ok && (str(st, "os") == "windows" || yes(st, "agentsUnsandboxed")) {
 		rows = append(rows, tog("Allow commands without a sandbox", yes(c, "allowUnsandboxedBash"), func(v bool) (string, error) {
 			return pc(map[string]any{"allowUnsandboxedBash": v})
@@ -408,6 +409,7 @@ func agents(u *ui) ([]row, error) {
 		if k.kind == "codex" {
 			rows = append(rows, tog("Allow network in commands", yes(a, "network"), func(v bool) (string, error) { return p(map[string]any{"network": v}) }))
 		}
+		rows = append(rows, workRow(a, p)...)
 		rows = append(rows, tog("May ask other models of this gateway", yes(a, "askOthers"), func(v bool) (string, error) { return p(map[string]any{"askOthers": v}) }))
 		m, _ := u.call("GET", "/agents/"+k.kind+"/models", nil)
 		rows = append(rows, modelToggles(m, "slug", strs(a, "models"), p)...)
@@ -429,19 +431,20 @@ func agents(u *ui) ([]row, error) {
 			ed("Models (comma-separated)", strings.Join(strs(a, "models"), ", "), func(v string) (string, error) { return p(map[string]any{"models": csv(v)}) }),
 			tog("Allow writing in the session's folder", yes(a, "write"), func(v bool) (string, error) { return p(map[string]any{"write": v}) }),
 			tog("Allow the web tool", yes(a, "network"), func(v bool) (string, error) { return p(map[string]any{"network": v}) }),
-			tog("Allow commands (needs writing, token)", yes(a, "commands"), func(v bool) (string, error) { return p(map[string]any{"commands": v}) }),
-			sec("Token (github_pat_…, Copilot Requests)", token, func(v string) (string, error) {
-				if v == "" {
-					return "", nil
-				}
-				if len(v) < 40 {
-					return "", errors.New("this is not a GitHub token (too short)")
-				}
-				return p(map[string]any{"token": v})
-			}))
+			tog("Allow commands (needs writing, token)", yes(a, "commands"), func(v bool) (string, error) { return p(map[string]any{"commands": v}) }))
 		if !yes(a, "commands") { // commands are an explicit opt-in: ask before turning them on
-			rows[len(rows)-2].confirm = "Copilot may then run commands in the session's folder. Turn on"
+			rows[len(rows)-1].confirm = "Copilot may then run commands in the session's folder. Turn on"
 		}
+		rows = append(rows, workRow(a, p)...)
+		rows = append(rows, sec("Token (github_pat_…, Copilot Requests)", token, func(v string) (string, error) {
+			if v == "" {
+				return "", nil
+			}
+			if len(v) < 40 {
+				return "", errors.New("this is not a GitHub token (too short)")
+			}
+			return p(map[string]any{"token": v})
+		}))
 		if yes(a, "hasToken") {
 			rows = append(rows, btn("Remove the token", "Remove Copilot's token", func() (string, error) { return p(map[string]any{"token": ""}) }))
 		}
@@ -463,6 +466,25 @@ func agents(u *ui) ([]row, error) {
 		rows = append(rows, modelToggles(m, "name", strs(f, "models"), p)...)
 	}
 	return rows, nil
+}
+
+// workModes: the agent's cap on the work mode (#45), most trust first; a session above it runs the agent read-only.
+var workModes = []struct{ value, label string }{
+	{"direct", "In the folder or a copy (any mode)"},
+	{"sync", "Only in a copy or on a branch (sync, worktree)"},
+	{"worktree", "Only on a branch (worktree)"},
+}
+
+// workRow: "Changes in the client's folder", cycling like the permission mode; none for a gateway without the field.
+func workRow(a map[string]any, patch func(map[string]any) (string, error)) []row {
+	if _, ok := a["work"]; !ok {
+		return nil
+	}
+	i := max(0, slices.IndexFunc(workModes, func(w struct{ value, label string }) bool { return w.value == str(a, "work") }))
+	next := workModes[(i+1)%len(workModes)]
+	r := btn("Changes in the client's folder: "+workModes[i].value, "", func() (string, error) { return patch(map[string]any{"work": next.value}) })
+	r.value = "(enter: " + next.value + ")"
+	return []row{r, inf("  "+workModes[i].label, "")}
 }
 
 // modelToggles: an agent's models (Codex, Grok, Foundry Local), with all on and all off.
@@ -531,7 +553,8 @@ func sessions(u *ui) ([]row, error) {
 		return nil, err
 	}
 	list := objs(r, "sessions")
-	rows := []row{hdr(fmt.Sprintf("Sessions (%d, newest first; never prompt or answer text)", len(list)))}
+	rows := projects(u)
+	rows = append(rows, hdr(fmt.Sprintf("Sessions (%d, newest first; never prompt or answer text)", len(list))))
 	if len(list) > 0 {
 		rows = append(rows, btn("Clear history", "Clear the session history", func() (string, error) {
 			_, err := u.call("DELETE", "/sessions", nil)
@@ -550,6 +573,12 @@ func sessions(u *ui) ([]row, error) {
 			who += " (removed)"
 		}
 		mode := str(x, "mode") + onOff(yes(x, "readOnly"), ", read-only", "")
+		for _, m := range objs(x, "models") {
+			if c := str(m, "cap"); c != "" && yes(x, "readOnly") {
+				mode += " (cap " + c + ")"
+				break
+			}
+		}
 		var models []string
 		for _, m := range objs(x, "models") {
 			if !slices.Contains(models, str(m, "model")) {
@@ -574,13 +603,13 @@ func sessions(u *ui) ([]row, error) {
 		}
 		for _, m := range objs(x, "models") {
 			extra := []string{}
-			for _, k := range []string{"role", "via", "tools"} {
-				if v := str(m, k); v != "" {
+			for _, k := range []string{"role", "via", "readOnly", "tools"} {
+				switch v := str(m, k); {
+				case k == "readOnly" && yes(m, k):
+					extra = append(extra, "read-only"+onOff(str(m, "cap") != "", " (cap "+str(m, "cap")+")", ""))
+				case v != "":
 					extra = append(extra, k+" "+v)
 				}
-			}
-			if yes(m, "readOnly") {
-				extra = append(extra, "read-only")
 			}
 			rows = append(rows, inf("    "+clean(str(m, "model")), clean(strings.Join(extra, " · "))),
 				inf(fmt.Sprintf("      %d requests, %d errors, %d refused, %ds, %d in / %d out tokens", num(m, "requests"), num(m, "errors"),
@@ -588,6 +617,49 @@ func sessions(u *ui) ([]row, error) {
 		}
 	}
 	return rows, nil
+}
+
+// projects: the counters per folder and device of the last 7 days (GET /usage, all agents together); none for an
+// older gateway. They outlive the sessions; Clear history clears them too.
+func projects(u *ui) []row {
+	r, err := u.call("GET", "/usage?days=7", nil)
+	if err != nil {
+		return nil
+	}
+	names := map[string]string{"": "this computer"}
+	if d, err := u.call("GET", "/devices", nil); err == nil {
+		for _, x := range objs(d, "devices") {
+			names[str(x, "id")] = onOff(str(x, "name") != "", str(x, "name"), "device")
+		}
+	}
+	type sum struct {
+		folder, device         string
+		requests, seconds, tok int
+	}
+	var all []*sum
+	for _, x := range objs(r, "usage") {
+		i := slices.IndexFunc(all, func(s *sum) bool { return s.folder == str(x, "folder") && s.device == str(x, "device") })
+		if i < 0 {
+			all = append(all, &sum{folder: str(x, "folder"), device: str(x, "device")})
+			i = len(all) - 1
+		}
+		all[i].requests += num(x, "requests")
+		all[i].seconds += num(x, "seconds")
+		all[i].tok += num(x, "inputTokens") + num(x, "outputTokens")
+	}
+	rows := []row{hdr("Projects (7 days)")}
+	if len(all) == 0 {
+		rows = append(rows, inf("No usage recorded.", ""))
+	}
+	for _, p := range all {
+		who, ok := names[p.device]
+		if !ok {
+			who = p.device + " (removed)" // as Sessions
+		}
+		rows = append(rows, inf(clean(p.folder), clean(who)),
+			inf(fmt.Sprintf("    %d requests, %d agent minutes, %d tokens", p.requests, p.seconds/60, p.tok), ""))
+	}
+	return rows
 }
 
 // errOldGateway: the gateway has no GET /activity (404); the page then stops reloading itself.

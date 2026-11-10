@@ -310,18 +310,17 @@ final class ShareClient: @unchecked Sendable {
             switch s {
             case 200:
                 guard let d, let job = try? JSONDecoder().decode(DAVJob.self, from: d) else { continue }
-                // Router ni zaupanja vreden: Sync.jobAllowed (SYNC-* le v sync, PULL ne pri --minigw-ro, WebDAV le v direct).
-                // worktree: le WORKTREE-PUSH (posnetek k routerju) in WORKTREE-PULL (veja agenta kot ref).
-                let r = worktree ? (job.method == "WORKTREE-PUSH" ? syncLock.withLock { wtPush(k, job) }
-                                    : job.method == "WORKTREE-PULL" ? syncLock.withLock { wtPull(k, job) }
-                                    : job.method == "WORKTREE-NOTE" ? syncLock.withLock { noteJob(job) } : DAVResponse(403))
-                    : native && job.method == "WORKTREE-NOTE" ? syncLock.withLock { noteJob(job) }  // native z git: veja (ne)dostavljena
-                    : native || job.method.hasPrefix("WORKTREE-")
-                        || !Sync.jobAllowed(job.method, sync: sync, readOnly: readOnly, write: Self.writeMethods.contains(job.method))
-                    ? DAVResponse(403)
-                    : job.method == "SYNC-PUSH" ? DAVResponse(syncLock.withLock { push(k) } ? 200 : 500)
-                    : job.method == "SYNC-PULL" ? DAVResponse(syncLock.withLock { pull(k) } ? 200 : 500)
-                    : WebDAV.handle(method: job.method, path: job.path, headers: job.headers, body: job.body, root: root, prefix: job.prefix)
+                // Router ni zaupanja vreden: Sync.clientJob odloči po načinu (glej tam).
+                let r: DAVResponse
+                switch Sync.clientJob(job.method, kind: kind, readOnly: readOnly, write: Self.writeMethods.contains(job.method)) {
+                case .note: r = syncLock.withLock { noteJob(job) }
+                case .worktreePush: r = syncLock.withLock { wtPush(k, job) }
+                case .worktreePull: r = syncLock.withLock { wtPull(k, job) }
+                case .syncPush: r = DAVResponse(syncLock.withLock { push(k) } ? 200 : 500)
+                case .syncPull: r = DAVResponse(syncLock.withLock { pull(k) } ? 200 : 500)
+                case .webDAV: r = WebDAV.handle(method: job.method, path: job.path, headers: job.headers, body: job.body, root: root, prefix: job.prefix)
+                case nil: r = DAVResponse(403)
+                }
                 guard let body = try? JSONEncoder().encode(DAVReply(id: job.id, response: r)) else { continue }
                 _ = call(c, "POST", "/minigw/share/reply", ["x-share-key": k, "content-type": "application/json"], body, timeout: 120)
             case 204:

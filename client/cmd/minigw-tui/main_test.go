@@ -293,3 +293,41 @@ func TestFailureMessages(t *testing.T) {
 		t.Fatalf("%q", s)
 	}
 }
+
+// #45: the work-mode row cycles like the permission mode (none for a gateway without the field); #46: the Sessions
+// page sums the counters per folder and device, and a capped model shows its cap.
+func TestWorkCapAndProjects(t *testing.T) {
+	u, dir := fake(t)
+	m, v := screen(t, model{u: u, tab: 3})
+	t.Logf("\n%s", v)
+	for _, want := range []string{"Changes in the client's folder: direct", "(enter: sync)", "In the folder or a copy (any mode)",
+		"Changes in the client's folder: worktree", "(enter: direct)", "Only on a branch (worktree)"} {
+		if !strings.Contains(v, want) {
+			t.Fatalf("agents page lacks %q", want)
+		}
+	}
+	if strings.Count(v, "Changes in the client's folder") != 2 { // Copilot's answer has no "work": an older gateway
+		t.Fatalf("work rows: %d", strings.Count(v, "Changes in the client's folder"))
+	}
+	i := slices.IndexFunc(m.rows, func(r row) bool { return r.label == "Changes in the client's folder: worktree" })
+	for m.cur != i {
+		m = press(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+	press(t, m, enter)
+	if in := read(t, filepath.Join(dir, "stdin.log")); !strings.Contains(read(t, filepath.Join(dir, "calls.log")), "gw api PATCH /agents/codex") ||
+		!strings.Contains(in, `{"work":"direct"}`) {
+		t.Fatalf("patch: %q", in)
+	}
+	m, v = screen(t, model{u: u, tab: 5})
+	t.Logf("\n%s", v)
+	for _, want := range []string{"Projects (7 days)", "/Users/bob/src/app", "Bob's MacBook", "6 requests, 5 agent minutes, 56841 tokens",
+		"/home/ana/notes", "this computer", "1 requests, 1 agent minutes, 0 tokens"} {
+		if !strings.Contains(v, want) {
+			t.Fatalf("sessions page lacks %q", want)
+		}
+	}
+	u.session = "5f1c2a90-7d1e-4a51-9a43-2b8f0c1d7e11"
+	if _, v = screen(t, model{u: u, tab: 5}); !strings.Contains(v, "read-only (cap worktree)") {
+		t.Fatalf("cap not shown:\n%s", v)
+	}
+}

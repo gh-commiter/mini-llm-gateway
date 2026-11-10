@@ -256,3 +256,150 @@ func useOf(_ s: GatewayHistory.Session, _ model: String, role: String = "") -> G
     await router.handle(r, writer: FakeWriter())
     #expect(!history.history(listed).isEmpty)
 }
+
+/// #45: način seje nad omejitvijo agenta (work) → le branje (cap v dejstvih izvajanja); worktree, native, chat in "" ostanejo.
+/// Enako kot TestWorkCap v Go, še direct in native-direct z work=sync.
+@Test func workCapPerAgent() async throws {
+    var c = RouterConfig()
+    c.codex.work = "worktree"; c.claudeCLI.work = "sync"; c.grok.work = ""
+    let app = FakeApp(c), router = app.router()
+    let id = UUID().uuidString, tmp = FileManager.default.temporaryDirectory
+    let sessions = ["sync": "cap-s-" + id, "direct": "cap-d-" + id, "native-direct": "cap-n-" + id]
+    _ = await Router.shares.register(session: sessions["sync"]!, cwd: "/p", key: nil, copy: tmp.appendingPathComponent(id), device: "dev")
+    _ = await Router.shares.register(session: sessions["direct"]!, cwd: "/p", key: nil, device: "dev")
+    _ = await Router.shares.register(session: sessions["native-direct"]!, cwd: "/p", key: nil, device: "dev", native: tmp)
+    func cap(_ mode: String, _ kind: String) async -> String? {
+        var r = request("POST", "/v1/messages", headers: ["x-claude-mini-session": sessions[mode] ?? "cap-none-" + id])
+        r.device = Noise.Device(id: "dev", name: "PC")
+        let facts = Router.RunBranch()
+        let got = await Router.$runBranch.withValue(facts) { await router.capped(r, kind: kind) }
+        #expect(facts.cap == (got ?? ""))
+        return got
+    }
+    #expect(await Router.shares.sessionMode(sessions["native-direct"]!, device: "dev").mode == "native-direct")
+    let once = "cap-once-" + id  // L4: opomba enkrat na sejo in agenta
+    _ = await Router.shares.register(session: once, cwd: "/p", key: nil, device: "dev")
+    var notes: [Bool] = []
+    for (sid, kind) in [(once, "codex"), (once, "codex"), (once, "claude"), ("none-" + id, "codex")] {
+        notes.append(await Router.shares.firstCapNote(session: sid, kind: kind))
+    }
+    #expect(notes == [true, false, true, false])
+    for mode in ["sync", "direct", "native-direct"] { #expect(await cap(mode, "codex") == "worktree", "\(mode)") }
+    for mode in ["direct", "native-direct"] { #expect(await cap(mode, "claude") == "sync", "\(mode)") }
+    for (mode, kind) in [("sync", "claude"), ("sync", "grok"), ("chat", "codex")] { #expect(await cap(mode, kind) == nil, "\(mode) \(kind)") }
+    // Skrbniški API: work na /agents/*; druga vrednost 400 z istim besedilom kot v Go; direct = "".
+    for a in ["claude", "codex", "grok", "copilot"] {
+        let bad = await admin(router, "PATCH", "/agents/\(a)", body: #"{"work":"readonly"}"#)
+        #expect(bad.status == 400 && bad.text.contains("work: direct, sync or worktree"), "\(a) \(bad.text)")
+        let ok = await admin(router, "PATCH", "/agents/\(a)", body: #"{"work":"sync"}"#)
+        #expect(ok.status == 200 && ok.text.contains(#""work":"sync""#), "\(a) \(ok.text)")
+        let d = await admin(router, "PATCH", "/agents/\(a)", body: #"{"work":"direct"}"#)
+        #expect(d.status == 200 && d.text.contains(#""work":"direct""#), "\(a) \(d.text)")
+    }
+    #expect(app.config.codex.work == "" && app.config.claudeCLI.work == "")
+}
+
+/// #46a: zgodovina zapiše omejitve, ki jih je izvajanje uporabilo (dejstva izvajanja), ne izračunanih iz seje.
+@Test func appliedLimitsInHistory() async throws {
+    var c = RouterConfig()
+    c.codex.write = true
+    let history = GatewayHistory()
+    let router = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]), history: history)
+    let sid = "applied-" + UUID().uuidString
+    let r = request("POST", "/v1/messages", headers: ["x-claude-mini-session": sid])
+    let facts = Router.RunBranch()
+    facts.readOnly = true; facts.cap = "worktree"
+    await router.recordSession(r, model: "claude-codex", status: 200, took: 1, usage: (0, 0), facts: facts)
+    await router.recordSession(r, model: "claude-sonnet", status: 200, took: 1, usage: (0, 0))
+    let s = try #require(history.sessions().first { $0.id == sid })
+    let m = try #require(useOf(s, "claude-codex"))
+    #expect(m.readOnly && m.cap == "worktree" && m.tools == "" && s.readOnly)  // pisanje vklopljeno, a izvajanje je le bralo
+    #expect(useOf(s, "claude-sonnet")?.cap == "" && useOf(s, "claude-sonnet")?.readOnly == false)
+    let json = GatewayHistory.json(s)
+    #expect((json["models"] as? [[String: Any]])?.first?["cap"] as? String == "worktree")
+}
+
+/// #46b: števci po projektu; enaki primeri kot TestProjectCounters v Go.
+@Test func projectCounters() async throws {
+    let g = GatewayHistory()
+    let day = ISO8601DateFormatter().date(from: "2026-11-10T12:00:00Z")!
+    func use(_ session: String, _ device: String, _ folder: String, _ model: String, _ status: Int, _ at: Date) {
+        var u = GatewayHistory.Use()
+        u.session = session; u.device = device; u.folder = folder; u.os = "macOS"; u.model = model; u.status = status; u.took = 30; u.input = 10; u.output = 2
+        g.record(u, now: at)
+    }
+    use("a", "D", "/p", "claude-cli-opus", 200, day)
+    use("a", "D", "/p/sub", "claude-cli-opus", 500, day)
+    use("a", "D", "/p", "claude-codex", 403, day)
+    use("b", "D", "/p", "or-qwen", 200, day)
+    use("a", "D", "/p", "claude-cli-opus", 200, day.addingTimeInterval(13 * 3600))
+    use("c", "D", "", "claude-cli-opus", 200, day)
+    let later = day.addingTimeInterval(13 * 3600)
+    let rows = g.usage(days: 7, now: later)
+    #expect(rows.count == 4 && rows[0].day == "2026-11-11" && rows[1].day == "2026-11-10", "\(rows)")
+    let c = rows[1]
+    #expect(c.agent == "claude" && c.requests == 2 && c.errors == 1 && c.seconds == 60 && c.inputTokens == 20 && c.outputTokens == 4 && c.os == "macOS")
+    #expect(rows[2].agent == "codex" && rows[2].refused == 1 && rows[3].agent == "other")
+    #expect(g.usage(folder: "/P", days: 1, now: later).count == 1 && g.usage(device: "X", now: day).isEmpty)
+    let d31 = day.addingTimeInterval(31 * 86400)
+    use("a", "D", "/p", "claude-cli-opus", 200, d31)  // nova vrstica: starejše od 31 dni odpadejo
+    #expect(g.usage(days: 31, now: d31).count == 2)  // 11. 11. ostane, 10. 11. ne
+    for i in 0..<(GatewayHistory.maxDeviceProjects + 10) { use("x\(i)", "BIG", "/f\(i)", "m", 200, d31) }
+    #expect(g.usage(device: "BIG", days: 31, now: d31).count == GatewayHistory.maxDeviceProjects && g.usage(device: "D", days: 31, now: d31).count == 2)
+    g.clearSessions()
+    #expect(g.usage(days: 31, now: d31).isEmpty && g.sessions().isEmpty)
+    #expect(GatewayHistory.json(rows[3])["device"] as? String == "D" && GatewayHistory.json({ var p = rows[3]; p.device = ""; return p }())["device"] == nil)
+
+    let r = FakeApp().router()
+    var u = GatewayHistory.Use()
+    u.session = "usage-" + UUID().uuidString; u.folder = "/proj-" + u.session; u.model = "claude-codex"; u.took = 60; u.input = 5; u.output = 6
+    Router.history.record(u)
+    let list = await admin(r, "GET", "/usage?days=1&folder=" + u.folder)
+    #expect(list.status == 200 && list.text.contains(#""agent":"codex""#) && list.text.contains(#""requests":1"#) && !list.text.contains(#""device""#), "\(list.text)")
+    let bad = await admin(r, "GET", "/usage?days=32")
+    #expect(bad.status == 400 && bad.text.contains("days: 1-31"))
+}
+
+/// Parity: isti state.json kot TestStateParitySample v Go (client/testdata) se prebere enako.
+@Test func stateParitySample() throws {
+    let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    let g = GatewayHistory()
+    g.load(root.appendingPathComponent("client/testdata/state-0.5.21.json"))
+    let s = try #require(g.sessions().first)
+    #expect(g.sessions().count == 1 && s.models.first?.cap == "worktree" && s.models.first?.readOnly == true && s.models.first?.role == "")
+    #expect(g.lastSeen(String(repeating: "A", count: 43)) != nil && g.history(String(repeating: "A", count: 43)).count == 1)
+    let now = ISO8601DateFormatter().date(from: "2026-11-10T18:00:00Z")!
+    let u = g.usage(folder: "c:/PROJ", now: now)
+    #expect(u.count == 1 && u.first?.agent == "codex" && u.first?.seconds == 42.5 && u.first?.refused == 1)
+    let all = g.usage(days: 2, now: now)
+    #expect(all.count == 2 && all[0].day == "2026-11-10" && all[1].device == "")
+}
+
+/// L1 (#45): tek, ki ga je omejitev naredila le za branje, ne prevzame sprememb kopije k odjemalcu (SYNC-PULL).
+@Test func cappedRunDoesNotSyncBack() async throws {
+    let hub = ShareHub()
+    let copy = FileManager.default.temporaryDirectory.appendingPathComponent("capsync-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: copy) }
+    let key = try #require(await hub.register(session: "c", cwd: "/a", key: nil, copy: copy))
+    let facts = Router.RunBranch()
+    facts.cap = "worktree"
+    await Router.$runBranch.withValue(facts) { await hub.syncBack(session: "c") }  // vrne takoj, brez posla
+    guard case .some(.none) = await hub.poll(key: key, wait: 0.2) else { Issue.record("capped run queued a job"); return }
+    let back = Task { await hub.syncBack(session: "c") }  // brez omejitve: SYNC-PULL
+    guard case .some(.some(let job)) = await hub.poll(key: key, wait: 5) else { Issue.record("no SYNC-PULL"); return }
+    #expect(job.method == "SYNC-PULL")
+    _ = await hub.reply(key: key, DAVReply(id: job.id, response: DAVResponse(200)))
+    await back.value
+}
+
+/// L2: ključ mape ≤ 256 B; pri meji datoteke najprej odpadejo vrstice naprave z največ vrsticami (kot TestTrimBusiest v Go).
+@Test func projectFolderClipAndTrim() {
+    let g = GatewayHistory()
+    var u = GatewayHistory.Use()
+    u.session = "clip"; u.folder = "/" + String(repeating: "ž", count: 300); u.model = "m"
+    g.record(u)
+    #expect(g.usage().first.map { $0.folder.utf8.count <= 256 } == true)
+    func row(_ d: String, _ day: String) -> GatewayHistory.ProjectUse { var p = GatewayHistory.ProjectUse(); p.device = d; p.day = day; return p }
+    let got = GatewayHistory.trimBusiest([row("A", "1"), row("B", "1"), row("B", "2"), row("A", "2"), row("B", "3")])
+    #expect(got.map { $0.device + $0.day } == ["A1", "B2", "A2", "B3"])
+}

@@ -28,6 +28,10 @@ const (
 	maxSessionModels = 32               // modeli na sejo; ostali štejejo pod »other«
 	connectionGap    = 10 * time.Minute // priklop = prva zahteva po tolikšni tišini; tudi meja seje brez ID-ja
 	maxStateFile     = 4 << 20          // večje datoteke ne bere (ročno spremenjena ali pokvarjena)
+	projectDays      = 31               // #46b: števci po projektu (dnevi UTC)
+	maxProjects      = 5000             // vrstice števcev (najprej odpade najstarejši dan)
+	maxDeviceProj    = 1250             // vrstice ene naprave (četrtina, kot seje M2: naprava ne izrine drugih)
+	maxProjectFolder = 256              // L2: ključ mape v števcih (bajti UTF-8)
 )
 
 type deviceConn struct {
@@ -50,6 +54,7 @@ type modelUse struct {
 	Via          string  `json:"via,omitempty"`      // agent ali veriga, ki je klicala (agent-calls); "" = odjemalec
 	ReadOnly     bool    `json:"readOnly,omitempty"` // mapa seje le za branje
 	Tools        string  `json:"tools,omitempty"`    // Claude CLI: orodja ali »local«; Codex, Grok, Copilot: write, network, commands
+	Cap          string  `json:"cap,omitempty"`      // #45: omejitev načina (sync, worktree), zaradi katere je agent le bral
 	Requests     int     `json:"requests"`
 	Errors       int     `json:"errors"`  // 5xx in prekinjene
 	Refused      int     `json:"refused"` // 4xx
@@ -74,12 +79,29 @@ type sessionRecord struct {
 	Models        []*modelUse `json:"models"`
 }
 
+// projectUse (#46b): števci enega agenta v mapi naprave za en dan UTC; ostanejo, ko seja odpade (osnova za omejitve).
+// Le števila, nikoli besedila; žetone javi ponudnik (niso preverjeni).
+type projectUse struct {
+	Device       string  `json:"device,omitempty"` // "" = ta računalnik brez ključa naprave
+	Folder       string  `json:"folder"`           // mapa seje (normFolder): vgnezdeni klici štejejo pod projekt klicatelja
+	OS           string  `json:"os,omitempty"`
+	Day          string  `json:"day"`   // UTC YYYY-MM-DD
+	Agent        string  `json:"agent"` // claude, codex, grok, copilot ali other (ponudniki)
+	Requests     int     `json:"requests"`
+	Errors       int     `json:"errors"`
+	Refused      int     `json:"refused"`
+	Seconds      float64 `json:"seconds"`
+	InputTokens  int64   `json:"inputTokens"`
+	OutputTokens int64   `json:"outputTokens"`
+}
+
 type gwState struct {
 	mu       sync.Mutex
 	path     string
 	dirty    bool
 	Devices  map[string]*deviceState `json:"devices"`
-	Sessions []*sessionRecord        `json:"sessions"` // po začetku, najstarejša prva
+	Sessions []*sessionRecord        `json:"sessions"`           // po začetku, najstarejša prva
+	Projects []*projectUse           `json:"projects,omitempty"` // #46b: po nastanku (dnevi naraščajo), najstarejša prva
 }
 
 func loadState(path string) *gwState {
@@ -101,6 +123,7 @@ func loadState(path string) *gwState {
 	for _, r := range g.Sessions {
 		r.Models = slices.DeleteFunc(r.Models, func(m *modelUse) bool { return m == nil })
 	}
+	g.Projects = slices.DeleteFunc(g.Projects, func(p *projectUse) bool { return p == nil })
 	return g
 }
 
@@ -111,8 +134,12 @@ func (g *gwState) save() error {
 		return nil
 	}
 	b, err := json.Marshal(g)
-	for err == nil && len(b) > maxStateFile && len(g.Sessions) > 0 { // M1: datoteka nikoli čez mejo (sicer je ob branju ni)
-		g.Sessions = slices.Delete(g.Sessions, 0, max(1, len(g.Sessions)/10))
+	for err == nil && len(b) > maxStateFile && len(g.Sessions)+len(g.Projects) > 0 { // M1: datoteka nikoli čez mejo (sicer je ob branju ni)
+		if len(g.Sessions) > 0 { // najprej seje; števci projektov naj ostanejo
+			g.Sessions = slices.Delete(g.Sessions, 0, max(1, len(g.Sessions)/10))
+		} else { // L2: najprej najstarejše vrstice naprave z največ vrsticami
+			g.Projects = trimBusiest(g.Projects)
+		}
 		b, err = json.Marshal(g)
 	}
 	if err != nil {
@@ -188,11 +215,11 @@ func (g *gwState) prune(devices []serveDevice) {
 
 // sessionUse: ena zahteva za model (brez besedila).
 type sessionUse struct {
-	session, device, deviceName, folder, os, mode, branch, model, role, via, tools string
-	readOnly                                                                       bool
-	status                                                                         int
-	took                                                                           time.Duration
-	in, out                                                                        int64
+	session, device, deviceName, folder, os, mode, branch, model, role, via, tools, cap string
+	readOnly                                                                            bool
+	status                                                                              int
+	took                                                                                time.Duration
+	in, out                                                                             int64
 }
 
 func (g *gwState) record(u sessionUse, now time.Time) {
@@ -263,7 +290,7 @@ func (g *gwState) record(u sessionUse, now time.Time) {
 		i = len(r.Models) - 1
 	}
 	m := r.Models[i]
-	m.ReadOnly, m.Tools = u.readOnly, clip(u.tools, 256)
+	m.ReadOnly, m.Tools, m.Cap = u.readOnly, clip(u.tools, 256), clip(u.cap, 16)
 	m.Requests++
 	switch {
 	case u.status >= 500 || u.status == 499 || u.status == 0:
@@ -274,12 +301,103 @@ func (g *gwState) record(u sessionUse, now time.Time) {
 	m.Seconds += u.took.Seconds()
 	m.InputTokens += u.in
 	m.OutputTokens += u.out
+	if r.Folder != "" {
+		g.count(r, u, now)
+	}
 	g.dirty = true
 }
 
+// count (#46b, pod g.mu): zahteva v števce projekta (naprava, mapa seje, dan UTC, agent). Nova vrstica: brez dni,
+// starejših od projectDays; naprava največ maxDeviceProj vrstic (najprej njena najstarejša), skupaj maxProjects.
+func (g *gwState) count(r *sessionRecord, u sessionUse, now time.Time) {
+	day, agent, folder := now.Format(time.DateOnly), agentOfModel(u.model), clip(r.Folder, maxProjectFolder)
+	if agent == "" {
+		agent = "other"
+	}
+	var p *projectUse
+	for i := len(g.Projects) - 1; i >= 0 && p == nil; i-- {
+		if x := g.Projects[i]; x.Day == day && x.Agent == agent && x.Device == r.Device && x.Folder == folder {
+			p = x
+		}
+	}
+	if p == nil {
+		oldest := now.AddDate(0, 0, 1-projectDays).Format(time.DateOnly)
+		g.Projects = slices.DeleteFunc(g.Projects, func(x *projectUse) bool { return x.Day < oldest })
+		mine := 0
+		for _, x := range g.Projects {
+			if x.Device == r.Device {
+				mine++
+			}
+		}
+		if mine >= maxDeviceProj {
+			k := slices.IndexFunc(g.Projects, func(x *projectUse) bool { return x.Device == r.Device })
+			g.Projects = slices.Delete(g.Projects, k, k+1)
+		}
+		p = &projectUse{Device: r.Device, Folder: folder, OS: r.OS, Day: day, Agent: agent}
+		g.Projects = append(g.Projects, p)
+		if n := len(g.Projects) - maxProjects; n > 0 {
+			g.Projects = slices.Delete(g.Projects, 0, n)
+		}
+	}
+	p.Requests++
+	switch {
+	case u.status >= 500 || u.status == 499 || u.status == 0:
+		p.Errors++
+	case u.status >= 400:
+		p.Refused++
+	}
+	p.Seconds += u.took.Seconds()
+	p.InputTokens += u.in
+	p.OutputTokens += u.out
+}
+
+// trimBusiest (L2): brez desetine (vsaj ene) najstarejših vrstic naprave z največ vrsticami (ena naprava ne izrine drugih).
+func trimBusiest(rows []*projectUse) []*projectUse {
+	n := map[string]int{}
+	for _, x := range rows {
+		n[x.Device]++
+	}
+	busiest := rows[0].Device
+	for d, c := range n {
+		if c > n[busiest] || c == n[busiest] && d < busiest {
+			busiest = d
+		}
+	}
+	drop := max(1, n[busiest]/10)
+	return slices.DeleteFunc(rows, func(x *projectUse) bool {
+		if x.Device == busiest && drop > 0 {
+			drop--
+			return true
+		}
+		return false
+	})
+}
+
+// usage (#46b): števci zadnjih `days` dni (danes je prvi), najnovejši dan prvi, nato mapa, naprava, agent (enako na Macu).
+func (g *gwState) usage(device, folder string, days int, now time.Time) []projectUse {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	from := now.UTC().AddDate(0, 0, 1-days).Format(time.DateOnly)
+	f := normFolder(folder)
+	out := []projectUse{}
+	for _, p := range g.Projects {
+		if p.Day >= from && (device == "" || p.Device == device) && (folder == "" || inFolder(p.Folder, f, p.OS)) {
+			out = append(out, *p)
+		}
+	}
+	slices.SortFunc(out, func(a, b projectUse) int {
+		if c := strings.Compare(b.Day, a.Day); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Folder+"\x00"+a.Device+"\x00"+a.Agent, b.Folder+"\x00"+b.Device+"\x00"+b.Agent)
+	})
+	return out
+}
+
+// clearSessions: seje in števci projektov (eno dejanje lastnika; kasnejše omejitve morda dobijo svoje brisanje).
 func (g *gwState) clearSessions() {
 	g.mu.Lock()
-	g.Sessions, g.dirty = nil, true
+	g.Sessions, g.Projects, g.dirty = nil, nil, true
 	g.mu.Unlock()
 }
 
@@ -439,8 +557,12 @@ func (s *server) recordSession(r *req, model string, status int, took time.Durat
 	if session != "" {
 		u.mode, u.readOnly, u.branch = s.hub.sessionMode(session, r.owner(), agent)
 	}
-	u.readOnly = u.readOnly || r.h("x-claude-mini-ro") == "1" // tudi brez deljenja; vgnezdeni klic: glava iz izvajanja
-	u.tools = s.conf().agentRestrictions(model, u.readOnly)   // veljavne omejitve (brez pisanja pri --minigw-ro)
+	if a := r.applied; a != nil { // #46a: kar je izvajanje res uporabilo (tudi le branje brez pisanja v worktree, omejitev #45)
+		u.readOnly, u.cap = a.readOnly, a.cap
+	} else {
+		u.readOnly = u.readOnly || r.h("x-claude-mini-ro") == "1" // tudi brez deljenja; vgnezdeni klic: glava iz izvajanja
+	}
+	u.tools = s.conf().agentRestrictions(model, u.readOnly) // veljavne omejitve (brez pisanja pri --minigw-ro)
 	s.state.record(u, time.Now())
 }
 
@@ -456,6 +578,9 @@ func sessionLine(x apiSession) string {
 	mode := x.Mode
 	if x.ReadOnly {
 		mode += ", read-only"
+		if i := slices.IndexFunc(x.Models, func(m *modelUse) bool { return m.Cap != "" }); i >= 0 {
+			mode += " (cap " + x.Models[i].Cap + ")"
+		}
 	}
 	var models []string
 	for _, m := range x.Models {
@@ -554,6 +679,9 @@ func useLine(m *modelUse) string {
 	}
 	if m.ReadOnly {
 		label += " read-only"
+		if m.Cap != "" {
+			label += " (cap " + m.Cap + ")"
+		}
 	}
 	if m.Tools != "" {
 		label += " tools " + m.Tools
@@ -569,4 +697,14 @@ func reqRole(r *req) string {
 		return role
 	}
 	return ""
+}
+
+// usageLine: vrstica števcev projekta za minigw gw usage (enako v minigw za macOS).
+func usageLine(p projectUse) string {
+	name := p.Device
+	if name == "" {
+		name = "this computer"
+	}
+	return fmt.Sprintf("%s  %q  %s  %s: %d requests, %d errors, %d refused, %.1f agent minutes, %d input and %d output tokens", p.Day, p.Folder,
+		name, p.Agent, p.Requests, p.Errors, p.Refused, p.Seconds/60, p.InputTokens, p.OutputTokens)
 }

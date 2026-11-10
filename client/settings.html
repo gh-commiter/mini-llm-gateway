@@ -167,6 +167,12 @@ const S = {
   noModels: ["No models (sign in once with the CLI's login command)", "Ni modelov (enkrat se prijavi z ukazom login tega CLI)"],
   sandbox: ["Sandbox", "Sandbox"], allowWrite: ["Allow writing in the session's folder", "Dovoli pisanje v mapo seje"],
   allowNetwork: ["Allow network access for commands", "Dovoli omrežje za ukaze"],
+  work: ["Changes in the client's folder", "Spremembe v mapi odjemalca"],
+  workHelp: ["In a mode above this the agent only reads the folder, and minigw tells the client.",
+    "V višjem načinu agent mapo le bere, minigw pa to sporoči odjemalcu."],
+  workDirect: ["In the folder or a copy (any mode)", "V mapi ali kopiji (vsi načini)"],
+  workSync: ["Only in a copy or on a branch (sync, worktree)", "Le v kopiji ali na veji (sync, worktree)"],
+  workWorktree: ["Only on a branch (worktree)", "Le na veji (worktree)"],
   agentLockedWin: ["Here (Windows, or Linux without bwrap) this needs “Allow commands without a sandbox” under Claude CLI: the agent can read and change everything this user can, including gateway settings.",
     "Tu (Windows ali Linux brez bwrap) to zahteva »Dovoli ukaze brez sandboxa« pod Claude CLI: agent lahko bere in spreminja vse, kar ta uporabnik, tudi nastavitve prehoda."],
   agentWarnWin: ["Here the agent runs without a sandbox: it can read and change everything this user can, including gateway settings.",
@@ -224,7 +230,11 @@ const S = {
     "Nedavne seje odjemalcev: mapa, način dela in uporaba po modelih. Pozivi in odgovori se nikoli ne shranijo."],
   noSessions: ["No sessions recorded.", "Ni zabeleženih sej."], clearHistory: ["Clear History", "Počisti zgodovino"],
   clearAsk: ["Clear the session history?", "Počistim zgodovino sej?"], thisComputer: ["This computer", "Ta računalnik"],
-  deviceRemoved: ["%s (removed)", "%s (odstranjena)"], readOnly: ["read-only", "samo za branje"],
+  deviceRemoved: ["%s (removed)", "%s (odstranjena)"], readOnly: ["read-only", "samo za branje"], readOnlyCap: ["read-only (cap %s)", "samo za branje (omejitev %s)"],
+  projects: ["Projects (7 days)", "Projekti (7 dni)"], noUsage: ["No usage recorded.", "Ni zabeležene rabe."],
+  projectUse: ["%s requests · %s agent min · %s tokens", "zahtev %s · min agenta %s · žetonov %s"],
+  projectsFooter: ["Counters per folder, device, day and agent, kept for 31 days, also after their sessions are gone. Clear History clears them too.",
+    "Števci po mapi, napravi, dnevu in agentu ostanejo 31 dni, tudi ko njihovih sej ni več. »Počisti zgodovino« jih tudi izbriše."],
   sessionTime: ["Started %s · %s min", "Začetek %s · %s min"], branch: ["Branch %s", "Veja %s"], role: ["Role %s", "Vloga %s"], via: ["via %s", "prek %s"], tools: ["tools %s", "orodja %s"],
   modelUse: ["%s requests · %s errors · %s refused · %s s · tokens %s in, %s out", "zahtev %s · napak %s · zavrnjenih %s · %s s · žetonov %s vhod, %s izhod"],
   sessionsFooter: ["The last 200 sessions and the last 20 connections of each allowed device are kept on this computer.",
@@ -276,6 +286,14 @@ function el(tag, props, ...kids) {
   for (const k of kids.flat()) if (k !== null && k !== undefined && k !== false) e.append(k);
   return e;
 }
+// workRow (#45): najvišji način, v katerem agent sme spreminjati mapo odjemalca; nad njim le bere.
+const workRow = (a, patch, n, disabled) => {
+  const s = el("select", {}, ...[["direct", "workDirect"], ["sync", "workSync"], ["worktree", "workWorktree"]]
+    .map(([v, k]) => el("option", {value: v, textContent: t(k), selected: (a.work || "direct") === v})));
+  s.disabled = !!disabled;
+  s.addEventListener("change", () => save(n, () => patch({work: s.value})));
+  return row(labelSub(t("work"), t("workHelp")), s);
+};
 const row = (label, ...right) => el("div", {class: "row"}, typeof label === "string" ? el("span", {class: "label", textContent: label}) : label, ...right);
 const labelSub = (main, sub) => el("div", {class: "label"}, el("div", {textContent: main}), sub ? el("div", {class: "sub", textContent: sub}) : null);
 const group = (...rows) => el("div", {class: "group"}, ...rows);
@@ -421,6 +439,7 @@ async function agentPane(kind) {
     section(t("sandbox")),
     group(row(t("allowWrite"), toggle(a.write, v => save(n2, async () => { await patch({write: v}); show(kind); }), locked)),
       codex ? row(t("allowNetwork"), toggle(a.network, v => save(n2, () => patch({network: v})), !a.write || locked)) : null,
+      workRow(a, patch, n2, locked),
       row(labelSub(t("askOthers"), t("askOthersHelp")), toggle(a.askOthers, v => save(n2, () => patch({askOthers: v})), locked))),
     n2, n3,
   ];
@@ -460,6 +479,7 @@ async function copilotPane() {
     group(row(t("allowWrite"), toggle(a.write, v => save(n2, async () => { await patch({write: v}); show("copilot"); }), locked)),
       row(t("allowWeb"), toggle(a.network, v => save(n2, () => patch({network: v})), locked)),
       row(t("allowCommands"), commands),
+      workRow(a, patch, n2, locked),
       row(labelSub(t("copilotToken")), token),
       row(labelSub(t("askOthers"), t("askOthersHelp")), toggle(a.askOthers, v => save(n2, () => patch({askOthers: v})), locked))),
     n2, n3,
@@ -611,23 +631,38 @@ const pages = {
 
   // sessions: enako kot podokno Sessions na Macu: seznam (čas, naprava, mapa, način, modeli), klik razširi števce po modelih.
   async sessions() {
-    const {sessions} = await api("GET", "/sessions");
+    const [{sessions}, usage, devs] = await Promise.all([api("GET", "/sessions"), api("GET", "/usage?days=7").catch(() => null), api("GET", "/devices")]);
     const n = note();
+    // Projekti (#46b): vsote po mapi in napravi (vsi agenti skupaj); starejši prehod brez /usage: brez razdelka.
+    const sums = [];
+    for (const p of usage ? usage.usage : []) {
+      let x = sums.find(y => y.folder === p.folder && y.device === (p.device || ""));
+      if (!x) sums.push(x = {folder: p.folder, device: p.device || "", requests: 0, seconds: 0, tokens: 0});
+      x.requests += p.requests; x.seconds += p.seconds; x.tokens += p.inputTokens + p.outputTokens;
+    }
+    sums.sort((a, b) => a.folder < b.folder ? -1 : a.folder > b.folder ? 1 : a.device < b.device ? -1 : a.device > b.device ? 1 : 0);
+    const devName = id => { const d = devs.devices.find(d => d.id === id); return !id ? t("thisComputer") : d ? d.name || id : t("deviceRemoved", id); };
+    const projects = usage ? [section(t("projects")),
+      group(sums.length ? sums.map(x => row(labelSub(x.folder, devName(x.device)),
+          el("span", {class: "value sub", textContent: t("projectUse", x.requests, Math.floor(x.seconds / 60), x.tokens)})))
+        : row(el("span", {class: "label sub", textContent: t("noUsage")}))),
+      el("p", {class: "note", textContent: t("projectsFooter")})] : [];
     const when = x => new Date(x).toLocaleString();
     const who = x => x.device ? (x.deviceRemoved ? t("deviceRemoved", x.deviceName || x.device) : x.deviceName || x.device) : t("thisComputer");
     const detail = x => [
       el("div", {class: "row sub-row"}, el("span", {class: "label sub", textContent: t("sessionTime", when(x.start), Math.round(x.duration / 60))
         + (x.branch ? " · " + t("branch", x.branch) : "") + (x.role ? " · " + t("role", x.role) : "")})),
       ...(x.models || []).map(u => el("div", {class: "row sub-row"},
-        labelSub(u.model, [u.role && t("role", u.role), u.via && t("via", u.via), u.readOnly && t("readOnly"), u.tools && t("tools", u.tools)].filter(Boolean).join(" · ")),
+        labelSub(u.model, [u.role && t("role", u.role), u.via && t("via", u.via), u.readOnly && (u.cap ? t("readOnlyCap", u.cap) : t("readOnly")), u.tools && t("tools", u.tools)].filter(Boolean).join(" · ")),
         el("span", {class: "value sub", textContent: t("modelUse", u.requests, u.errors, u.refused, Math.round(u.seconds), u.inputTokens, u.outputTokens)})))];
     return [
       card(...ICON.sessions, t("sessions"), t("sessionsDesc")),
+      ...projects,
       section(t("sessions"), ...(sessions.length ? [button(t("clearHistory"), () => { if (confirm(t("clearAsk"))) save(n, async () => { await api("DELETE", "/sessions"); show("sessions"); }); })] : [])),
       group(sessions.length ? sessions.flatMap(x => [
         el("div", {class: "row clickable", onclick: () => { openSession = openSession === x.id ? "" : x.id; show("sessions"); }},
           labelSub((openSession === x.id ? "▾ " : "▸ ") + when(x.last) + " · " + who(x),
-            [x.folder, x.mode + (x.readOnly ? ", " + t("readOnly") : ""), [...new Set((x.models || []).map(u => u.model))].sort().join(", ")].filter(Boolean).join(" · "))),
+            [x.folder, x.mode + (x.readOnly ? ", " + ((c => c ? t("readOnlyCap", c) : t("readOnly"))((x.models || []).map(u => u.cap).find(Boolean))) : ""), [...new Set((x.models || []).map(u => u.model))].sort().join(", ")].filter(Boolean).join(" · "))),
         ...(openSession === x.id ? detail(x) : [])])
         : row(el("span", {class: "label sub", textContent: t("noSessions")}))),
       el("p", {class: "note", textContent: t("sessionsFooter")}), n,
@@ -780,6 +815,7 @@ const pages = {
       group(row(labelSub(t("localTools"), win ? t("localToolsWin") : t("localToolsHelp")), toggle(c.allowLocalTools, v => save(n2, async () => { await patch({allowLocalTools: v}); show("claude"); }))),
         c.allowLocalTools ? null : row(t("permissionMode"), mode),
         row(labelSub(t("settingSources"), t("settingSourcesHelp")), sources),
+        workRow(c, patch, n2),
         row(labelSub(t("askOthers"), t("askOthersClaudeHelp")), toggle(c.askOthers, v => save(n2, () => patch({askOthers: v})), !c.allowLocalTools))),
       n2,
       ...toolsPart,

@@ -1257,6 +1257,19 @@ final class FakeMinigw: @unchecked Sendable {
 
 @Test func syncJobAllowedOnlyInItsMode() {
     #expect(Sync.jobAllowed("SYNC-PUSH", sync: true, readOnly: true, write: false))
+    // #45: minigw izpiše opombo prehoda v vsakem načinu (tudi sync in direct); drugi posli kot doslej.
+    for kind in ["sync", "direct", "native", "native-direct", "worktree"] {
+        #expect(Sync.clientJob("WORKTREE-NOTE", kind: kind, readOnly: true, write: false) == .note, "\(kind)")
+    }
+    #expect(Sync.clientJob("WORKTREE-PUSH", kind: "sync", readOnly: false, write: false) == nil
+            && Sync.clientJob("SYNC-PULL", kind: "sync", readOnly: false, write: false) == .syncPull
+            && Sync.clientJob("SYNC-PULL", kind: "sync", readOnly: true, write: false) == nil
+            && Sync.clientJob("PUT", kind: "direct", readOnly: false, write: true) == .webDAV
+            && Sync.clientJob("PUT", kind: "native", readOnly: false, write: true) == nil
+            && Sync.clientJob("WORKTREE-PULL", kind: "worktree", readOnly: false, write: false) == .worktreePull
+            && Sync.clientJob("SYNC-PUSH", kind: "worktree", readOnly: false, write: false) == nil)
+    #expect(Profiles.gatewayNote("Mini Gateway lets Codex change files only in worktree mode, so it only read the folder (run minigw --minigw-work=worktree)")
+            == "minigw: gateway: Mini Gateway lets Codex change files only in worktree mode, so it only read the folder (run minigw --minigw-work=worktree)")
     #expect(!Sync.jobAllowed("SYNC-PULL", sync: true, readOnly: true, write: false))   // --minigw-ro: router ne piše
     #expect(Sync.jobAllowed("SYNC-PULL", sync: true, readOnly: false, write: false))
     #expect(!Sync.jobAllowed("SYNC-PULL", sync: false, readOnly: false, write: false)) // direct: brez SYNC-*

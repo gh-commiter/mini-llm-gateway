@@ -74,8 +74,10 @@ The Mac app's **Settings…** window and the `minigw serve` settings page have t
   unencrypted connections from other computers, devices waiting for approval (editable name, ID, address, time, OS,
   minigw version; **Allow** / **Reject**), allowed devices (rename, ID, last seen, **History**, **Copy ID**,
   **Remove**).
-- **Sessions:** the last 200 client sessions with device, folder, work mode and models; open one for requests,
-  errors, refusals, time and tokens per model. **Clear History**. No prompt text is stored.
+- **Sessions:** **Projects (7 days)**: requests, agent minutes and tokens per folder and device (kept 31 days, also
+  after their sessions are gone); the last 200 client sessions with device, folder, work mode and models; open one for
+  requests, errors, refusals, time and tokens per model, and "read-only (cap worktree)" when the agent's cap made it
+  read-only. **Clear History** clears both. No prompt text is stored.
 - **Providers** (LiteLLM, OpenRouter or any other Anthropic-compatible one): name, base URL, API key, **Allow http**,
   a switch per discovered model. **+ / −** under the sidebar adds or removes providers.
 - **Siri AI** (Mac): off by default; turning it on asks for Accessibility permission. Lists the devices that may use
@@ -86,6 +88,10 @@ The Mac app's **Settings…** window and the `minigw serve` settings page have t
   `minigw` command-line tool (Mac: Install). On Windows also **Allow commands without a sandbox**.
 - **Codex CLI / Grok CLI / Copilot CLI:** off by default; a switch per model, **Allow writing**, network (Codex,
   Copilot), and for Copilot **Allow commands** with its own GitHub token.
+- **Changes in the client's folder** (each agent pane): **In the folder or a copy (any mode)** (default), **Only in a
+  copy or on a branch (sync, worktree)** or **Only on a branch (worktree)**. In a mode above it the agent only reads
+  the folder, and minigw says so ("Mini Gateway lets Codex change files only in worktree mode, so it only read the
+  folder (run minigw --minigw-work=worktree)"). The client can only choose a lower mode, never a higher one.
 - **May ask other models** (each agent pane, off by default): the agent may ask another model of this gateway with
   `minigw -p --model <id> "…"`, in the same folder and with your device's rights, one level deep, never its own kind.
   Claude CLI needs **Allow local tools**, Codex its network switch. On Windows Codex can ask only with its unelevated
@@ -113,9 +119,9 @@ line with the token appears only after **Show the connect line**.
 | General | Status, version, address, port, token (show, new), this user's apps, scratch folder | Open at Login | Windows: Start at sign-in; Linux: how it starts |
 | Devices | Allow any device, allowed client addresses, unencrypted clients, waiting devices (allow with a name, reject), allowed devices (rename, history, remove) | | |
 | Providers | Enabled, name, base URL, Allow http, aliases, API key, models (search, a switch each, all, none), add, remove | | |
-| Agents | Claude CLI (enabled, path, local tools, tools, permission mode, setting sources, ask others), Codex and Grok CLI (enabled, path, write, network, ask others, models), Copilot CLI (models, write, web, commands, token), Foundry Local | | Allow commands without a sandbox (Windows, Linux without `bwrap`) |
+| Agents | Claude CLI (enabled, path, local tools, tools, permission mode, setting sources, changes in the client's folder, ask others), Codex and Grok CLI (enabled, path, write, changes in the client's folder, network, ask others, models), Copilot CLI (models, write, changes in the client's folder, web, commands, token), Foundry Local | | Allow commands without a sandbox (Windows, Linux without `bwrap`) |
 | Folders | Allowed folders: add, remove; folders left out at startup | | |
-| Sessions | Recent sessions with details, Clear history | | |
+| Sessions | Projects (7 days) per folder and device, recent sessions with details, Clear history | | |
 | Activity | Requests running now (model, time, the agent's latest step) at the top, then the last 200 requests to models (time, status, duration, model, device; Enter or a click shows the path, size and device ID). Read-only, reloads every 3 s. Metadata and the agent's current step (a tool or command), never prompt or answer text; an unknown model shows as `unknown`. A gateway older than 0.5.21 shows "Needs gateway 0.5.21 or newer" | | Empty after the gateway restarts |
 | Mac | – | Siri AI (on, timeout, per device), Apple Foundation Models (on, instructions), `minigw run` (commands, per device, network) | |
 

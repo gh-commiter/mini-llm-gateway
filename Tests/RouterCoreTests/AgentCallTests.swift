@@ -39,6 +39,8 @@ private func get(_ run: AgentRun, _ path: String, token: String?) async -> Int {
     #expect(await get(local, "/v1/models", token: local.token) == 403)  // M2: proces agenta še ne teče
     local.started(getpid())
     #expect(await get(local, "/v1/models", token: local.token) == 200)
+    // Mesto prejšnje zahteve se sprosti šele za odgovorom (defer v serve): počakaj nanj, sicer ga sprostitev odšteje od maxNested.
+    for _ in 0..<250 where local.running.withLock({ $0 }) != 0 { try await Task.sleep(for: .milliseconds(20)) }
     local.running.withLock { $0 = AgentRun.maxNested }  // M1: vsa mesta izvajanja zasedena
     #expect(await get(local, "/v1/models", token: local.token) == 429)
     local.running.withLock { $0 = 0 }

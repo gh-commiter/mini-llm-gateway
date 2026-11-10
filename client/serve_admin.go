@@ -73,6 +73,7 @@ type apiClaude struct {
 	DisabledTools        []string `json:"disabledTools"`
 	PermissionMode       string   `json:"permissionMode"`
 	SettingSources       string   `json:"settingSources"`
+	Work                 string   `json:"work"`              // #45: direct, sync ali worktree
 	Off                  string   `json:"off,omitempty"`     // zakaj sta Claude CLI in Codex izklopljena ob zagonu (offReason)
 	LeftOut              []string `json:"leftOut,omitempty"` // mape iz serve.json, izpuščene ob zagonu (offFolders)
 }
@@ -362,6 +363,17 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			}
 		}
 		return fail(404, "no session "+arg+" (minigw gw sessions lists them)")
+	case "GET usage": // #46b: števci po projektu, najnovejši dan prvi
+		q := u.Query()
+		days := 7
+		if v := q.Get("days"); v != "" {
+			if n, err := strconv.Atoi(v); err != nil || n < 1 || n > projectDays {
+				return fail(400, "days: 1-31")
+			} else {
+				days = n
+			}
+		}
+		return 200, map[string]any{"usage": s.state.usage(q.Get("device"), q.Get("folder"), days, time.Now())}
 	case "DELETE sessions":
 		s.state.clearSessions()
 		s.state.save()
@@ -743,9 +755,13 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			DisabledTools        *[]string `json:"disabledTools"`
 			PermissionMode       *string   `json:"permissionMode"`
 			SettingSources       *string   `json:"settingSources"`
+			Work                 *string   `json:"work"`
 		}
 		if err := decodeStrict(body, &b); err != nil {
 			return fail(400, err.Error())
+		}
+		if b.Work != nil && !validWork(*b.Work) {
+			return fail(400, badWork)
 		}
 		if b.Tools != nil {
 			if *b.Tools = strings.ReplaceAll(*b.Tools, " ", ""); !validTools.MatchString(*b.Tools) {
@@ -797,6 +813,9 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			}
 			if b.SettingSources != nil {
 				c.SettingSources = strings.ReplaceAll(*b.SettingSources, " ", "")
+			}
+			if b.Work != nil {
+				c.ClaudeWork = storedWork(*b.Work)
 			}
 			e, err := checkAgent(c, s.cfgDir)
 			exe = e
@@ -954,7 +973,7 @@ func (s *server) agentAPI(method string, k agentKind, body []byte) (int, any) {
 		ac := k.conf(s.conf())
 		exe, _ := resolveAgent(k, ac.Executable)
 		o := map[string]any{"enabled": ac.Enabled, "path": ac.Executable, "found": exe != "", "exe": exe, "write": ac.canWrite(k), "models": ac.Models,
-			"askOthers": ac.AskOthers}
+			"askOthers": ac.AskOthers, "work": apiWork(ac.Work)}
 		if k.name != "grok" {
 			o["network"] = ac.Network
 		}
@@ -980,9 +999,13 @@ func (s *server) agentAPI(method string, k agentKind, body []byte) (int, any) {
 		AskOthers *bool           `json:"askOthers"` // sme vprašati druge modele tega prehoda
 		Token     *string         `json:"token"`     // Copilot: žeton za ukaze (le za pisanje; "" ga izbriše)
 		Models    json.RawMessage `json:"models"`    // null = vsi; seznam = le ti; brez polja = brez spremembe
+		Work      *string         `json:"work"`      // #45: direct, sync, worktree
 	}
 	if err := decodeStrict(body, &b); err != nil {
 		return 400, errorBody(400, err.Error())
+	}
+	if b.Work != nil && !validWork(*b.Work) {
+		return 400, errorBody(400, badWork)
 	}
 	if b.Network != nil && k.name == "grok" {
 		return 400, errorBody(400, "network: Codex and Copilot only")
@@ -1036,6 +1059,9 @@ func (s *server) agentAPI(method string, k agentKind, body []byte) (int, any) {
 		}
 		if b.Network != nil {
 			ac.Network = *b.Network
+		}
+		if b.Work != nil {
+			ac.Work = storedWork(*b.Work)
 		}
 		if setModels {
 			ac.Models = slices.Clone(models)
@@ -1134,7 +1160,8 @@ func (s *server) claudeInfo() apiClaude {
 	c, exe := s.conf(), s.claudeExe()
 	info := apiClaude{Path: c.Claude, Found: len(exe) > 0, Tools: c.Tools, AllowUnsandboxedBash: c.AllowUnsandboxedBash,
 		Enabled: !c.ClaudeDisabled, Folders: strings.Join(c.AllowedFolders, ","), AllowLocalTools: c.AllowLocalTools, AskOthers: c.ClaudeAskOthers,
-		DisabledTools: append([]string{}, c.DisabledTools...), PermissionMode: c.PermissionMode, SettingSources: c.SettingSources}
+		DisabledTools: append([]string{}, c.DisabledTools...), PermissionMode: c.PermissionMode, SettingSources: c.SettingSources,
+		Work: apiWork(c.ClaudeWork)}
 	if len(exe) > 0 {
 		info.Exe, info.ClaudeVersion = exe[len(exe)-1], claudeVersion(exe)
 	}
@@ -1264,4 +1291,23 @@ func (s *server) foundryAPI(method string, body []byte) (int, any) {
 	s.foundry.base, s.foundry.models = "", nil // nova pot ali vklop: znova poišči
 	s.foundry.mu.Unlock()
 	return 200, info()
+}
+
+// #45: omejitev načina agenta v API (direct, sync, worktree; v serve.json direct = "").
+const badWork = "work: direct, sync or worktree"
+
+func validWork(v string) bool { return v == "direct" || v == "sync" || v == "worktree" }
+
+func storedWork(v string) string {
+	if v == "direct" {
+		return ""
+	}
+	return v
+}
+
+func apiWork(v string) string {
+	if validWork(v) {
+		return v
+	}
+	return "direct"
 }

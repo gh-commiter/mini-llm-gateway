@@ -101,7 +101,7 @@ public final class Router: Sendable {
         let (status, model, provider) = await Self.$runBranch.withValue(branch) { await route(req, rid: rid, writer: usage ?? writer) }
         writer.close()
         if let usage, let model {  // le zahteva, ki je prišla do modela (overjena, dovoljena naprava)
-            await recordSession(req, model: model, status: status, took: Date().timeIntervalSince(start), usage: usage.usage, branch: branch.branch)
+            await recordSession(req, model: model, status: status, took: Date().timeIntervalSince(start), usage: usage.usage, facts: branch)
         }
         let ms = Int(Date().timeIntervalSince(start) * 1000)
         let via = AgentRun.current.map { " via=" + $0.via } ?? ""  // L3: vprašal ga je agent tega prehoda
@@ -125,9 +125,9 @@ public final class Router: Sendable {
     }
 
     /// Zahteva za model v zgodovino seje (naprava, mapa in način iz glav in delitve; brez besedila), kot v minigw serve.
-    /// `branch`: veja izvajanja te zahteve (worktree, native z git); nil = vzame jo iz seje.
+    /// `facts`: dejstva izvajanja: veja (worktree, native z git; nil = iz seje) in #46a omejitve, ki jih je izvajanje uporabilo.
     func recordSession(_ req: HTTPRequest, model: String, status: Int, took: TimeInterval, usage: (input: Int, output: Int),
-                       branch: String? = nil) async {
+                       facts: RunBranch? = nil) async {
         var u = GatewayHistory.Use()
         u.session = req.header("x-claude-mini-session") ?? ""
         u.folder = req.header("x-claude-mini-cwd") ?? ""
@@ -143,9 +143,13 @@ public final class Router: Sendable {
         }
         if !u.session.isEmpty {
             (u.mode, u.readOnly, u.branch) = await Self.shares.sessionMode(u.session, device: req.device?.id)
-            if let branch { u.branch = branch }
+            if let branch = facts?.branch { u.branch = branch }
         }
-        u.readOnly = u.readOnly || req.header("x-claude-mini-ro") == "1"  // tudi brez deljenja; vgnezdeni klic: AgentRun
+        if let ro = facts?.readOnly {  // #46a: kar je izvajanje res uporabilo (tudi le branje brez pisanja v worktree, omejitev #45)
+            u.readOnly = ro; u.cap = facts?.cap ?? ""
+        } else {
+            u.readOnly = u.readOnly || req.header("x-claude-mini-ro") == "1"  // tudi brez deljenja; vgnezdeni klic: AgentRun
+        }
         u.tools = GatewayHistory.restrictions(model, config, readOnly: u.readOnly, tree: u.mode == "worktree" || u.mode == "native")  // veljavne omejitve (brez pisanja pri --minigw-ro)
         history.record(u)
     }
@@ -521,9 +525,45 @@ public final class Router: Sendable {
         return status
     }
 
-    /// Veja izvajanja zahteve (handle → syncRun → recordSession); vgnezdeni klic dobi vejo klicatelja.
-    final class RunBranch: @unchecked Sendable { var branch: String? }
+    /// Dejstva izvajanja zahteve (handle → syncRun, agent → recordSession): veja (vgnezdeni klic dobi vejo klicatelja);
+    /// #46a: omejitve, ki jih je izvajanje res uporabilo (readOnly nil = brez izvajanja agenta, cap: omejitev #45).
+    final class RunBranch: @unchecked Sendable {
+        var branch: String?
+        var readOnly: Bool?
+        var cap = ""
+    }
     @TaskLocal static var runBranch: RunBranch?
+
+    /// #45: zaupanje omejitve agenta (work) in načina seje; višje = manj zaupanja. chat nima mape (brez omejitve).
+    static let workLevels = ["": 0, "direct": 0, "sync": 1, "worktree": 2]
+    static let modeLevels = ["direct": 0, "native-direct": 0, "sync": 1, "native": 2, "worktree": 2]
+    static let agentNames = ["claude": "Claude CLI", "codex": "Codex", "grok": "Grok", "copilot": "Copilot"]
+
+    /// Omejitev načina agenta `kind` (claude, codex, grok, copilot); "" = direct.
+    func workCap(_ kind: String) -> String {
+        switch kind {
+        case "claude": config.claudeCLI.work
+        case "codex": config.codex.work
+        case "grok": config.grok.work
+        case "copilot": config.copilot.work
+        default: ""
+        }
+    }
+
+    /// #45: način seje (iz deljenja na prehodu, ne iz glave) je nad omejitvijo agenta → vrne omejitev in pošlje opombo
+    /// odjemalcu; agent tedaj le bere. Vgnezdeni klic: seja klicatelja, omejitev vprašanega agenta. nil = brez omejitve.
+    func capped(_ req: HTTPRequest, kind: String) async -> String? {
+        let cap = workCap(kind), session = req.header("x-claude-mini-session") ?? ""
+        guard let level = Self.modeLevels[await Self.shares.sessionMode(session, device: req.device?.id).mode],
+              level < Self.workLevels[cap] ?? 0 else { return nil }
+        let modes = cap == "sync" ? "sync or worktree mode" : "worktree mode"
+        let msg = "Mini Gateway lets \(Self.agentNames[kind] ?? kind) change files only in \(modes), so it only read the folder (run minigw --minigw-work=\(cap))"
+        Self.runBranch?.cap = cap
+        if await Self.shares.firstCapNote(session: session, kind: kind) {  // L4: enkrat na sejo in agenta
+            Task { await Self.shares.note(session: session, msg) }  // ne čaka na odgovor minigw
+        }
+        return cap
+    }
 
     /// Proces odjemalca na loopbacku je tega uporabnika in ni agent (PeerProcess.sameUserApp); testi ga zamenjajo.
     nonisolated(unsafe) static var localPeer: @Sendable (_ peerPort: UInt16, _ routerPort: UInt16) -> Bool = {

@@ -83,7 +83,8 @@ only on the gateway computer.
 | `minigw gw devices deny <id>` | Remove an allowed device or reject a waiting one |
 | `minigw gw devices history <id>` | The device's last 20 connections (time, address, OS, minigw version) |
 | `minigw gw sessions [--device ID] [--folder DIR]` | Recent sessions |
-| `minigw gw sessions <session id>` \| `clear` | One session in detail / clear the history |
+| `minigw gw sessions <session id>` \| `clear` | One session in detail / clear the history (and the project counters) |
+| `minigw gw usage [--days N] [--device ID] [--folder DIR]` | Counters per folder, UTC day and agent (the last 7 days; 1-31) |
 | `minigw gw provider add <name> <baseURL> [--insecure]` | Add a provider; the API key is read from stdin or asked for |
 | `minigw gw provider list` \| `remove <name>` | List or remove providers |
 | `minigw gw provider models <name> [text] [--all] [--enable m1,m2\|all] [--disable m1,m2\|all]` | Show, enable or disable a provider's models |

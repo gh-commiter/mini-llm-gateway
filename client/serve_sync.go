@@ -29,6 +29,22 @@ type serveShare struct {
 	big                            map[string]bool       // že javljene prevelike datoteke
 	execKnown                      bool                  // odjemalec pozna bit x (ne Windows)
 	tree                           *shareTree            // worktree: zrcalo in kloni agentov (serve_worktree.go); nil = sync
+	capNoted                       map[string]bool       // L4: agenti, ki jim je opomba o omejitvi #45 že poslana
+}
+
+// firstCapNote (L4): opomba o omejitvi agenta enkrat na sejo (mapo) in agenta.
+func (h *shareHub) firstCapNote(session, kind string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	s := h.bySession[session]
+	if s == nil || s.capNoted[kind] {
+		return false
+	}
+	if s.capNoted == nil {
+		s.capNoted = map[string]bool{}
+	}
+	s.capNoted[kind] = true
+	return true
 }
 
 type shareHub struct {

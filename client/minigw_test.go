@@ -1230,3 +1230,22 @@ func TestSyncResolveStaysUnderRoot(t *testing.T) {
 		}
 	}
 }
+
+// #45: minigw v načinu sync (in direct) izpiše opombo prehoda (agent je le bral); drugih poslov worktree ne sprejme.
+func TestSyncClientPrintsGatewayNote(t *testing.T) {
+	for _, sc := range []*shareClient{{root: t.TempDir(), sync: true}, {root: t.TempDir()}} {
+		r, w, _ := os.Pipe()
+		old := os.Stderr
+		os.Stderr = w
+		resp := sc.handle(davJob{Method: "WORKTREE-NOTE", Body: []byte(`{"message":"Mini Gateway lets Codex change files only in worktree mode, so it only read the folder (run minigw --minigw-work=worktree)"}`)}, "k")
+		os.Stderr = old
+		w.Close()
+		b, _ := io.ReadAll(r)
+		if resp.Status != 200 || string(b) != "minigw: gateway: Mini Gateway lets Codex change files only in worktree mode, so it only read the folder (run minigw --minigw-work=worktree)\n" {
+			t.Fatalf("sync=%v: %d %q", sc.sync, resp.Status, b)
+		}
+		if resp := sc.handle(davJob{Method: "WORKTREE-PUSH"}, "k"); resp.Status == 200 {
+			t.Fatalf("sync=%v accepted WORKTREE-PUSH", sc.sync)
+		}
+	}
+}

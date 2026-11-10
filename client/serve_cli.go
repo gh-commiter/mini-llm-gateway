@@ -712,13 +712,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			if dir, _ = s.hub.push(share, "claude"); dir == "" {
 				return writeError(w, r.rid, 502, "Syncing "+clientCwd+" to the gateway failed (see minigw output)")
 			}
-			note := "The user's folder " + clientCwd + " (on their computer) is synced here as " + dir + ", your working directory: a local copy"
-			if share.readOnly {
-				note += ". Map paths under " + clientCwd + " to it. The folder is shared read-only: do not try to create, change or delete files in it."
-			} else {
-				note += " whose changed source files are copied back to the user when you finish. Map paths under " + clientCwd + " to it."
-			}
-			extra = note
+			extra = syncNote(clientCwd, dir, share.readOnly)
 		case s.hub.isRefused(session): // odjemalec je poslal mapo brez sync
 			return writeError(w, r.rid, 400, refusedDirect)
 		case r.h("x-claude-mini-share") == "1": // mapa je bila napovedana, a ni prišla
@@ -736,7 +730,13 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			args = append(args, "--session-id", sessionID)
 			prompt = cliPrompt(history, last)
 		}
-		ro := (share != nil && share.readOnly) || (parent != nil && parent.readOnly) || r.h("x-claude-mini-ro") == "1"
+		cap := s.capped(r, "claude") // #45: način seje nad omejitvijo → le branje
+		if cap != "" {
+			extra = cappedNote(r, dir, extra)
+		}
+		ro := (share != nil && share.readOnly) || (parent != nil && parent.readOnly) || r.h("x-claude-mini-ro") == "1" || cap != ""
+		// #46a: zgodovina zapiše, kar je veljalo
+		r.applied = &appliedLimits{readOnly: ro, cap: cap}
 		tmpRoot := s.tempRoot() // isti koren za denyRead in TMPDIR teka (M1)
 		args = append(args, s.agentArgs(dir, ro, tmpRoot)...)
 		ok := false
@@ -955,7 +955,8 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	}
 	// sync: spremembe agenta k odjemalcu pred koncem odgovora (Claude Code jih nato že vidi); med tem še ping
 	if !chat {
-		if parent == nil { // vprašani agent: spremembe prenese klicatelj na koncu
+		// vprašani agent: spremembe prenese klicatelj na koncu; L1: omejen (#45) ne prenese ničesar
+		if parent == nil && (r.applied == nil || r.applied.cap == "") {
 			s.hub.syncBack(session, "claude")
 		}
 	}
