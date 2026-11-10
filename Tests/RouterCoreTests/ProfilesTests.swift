@@ -176,4 +176,8 @@ private func send(_ url: String, _ method: String, _ path: String, secret: Strin
     for st in [errSecSuccess, errSecItemNotFound, errSecNoSuchKeychain, errSecUserCanceled] {
         #expect(!Keychain.offerUnlock(status: st, terminal: true, ssh: true, locked: true))
     }
+    // namig: v SSH ukaz security le za zaklenjen keychain (brez terminala), odklenjen dobi svoj namig (#62)
+    #expect(Keychain.deniedHint(ssh: true, locked: false).hasPrefix("macOS reports the login keychain as unlocked"))
+    #expect(!Keychain.deniedHint(ssh: true, locked: false).contains("security unlock-keychain"))
+    #expect(Keychain.deniedHint(ssh: true, locked: true).contains("run security unlock-keychain"))
 }

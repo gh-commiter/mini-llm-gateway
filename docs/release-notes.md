@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Fixed (#62): over SSH, `minigw gw` asked for the Mac password even when the login keychain was already unlocked, and then accepted any password (macOS does not check it on an unlocked keychain). Now it asks only when macOS reports the login keychain as locked (otherwise it shows the existing message), checks again just before unlocking, and after unlocking makes sure the keychain is really unlocked ("the keychain stays locked"); a wrong password on a locked keychain still ends with "wrong password: the keychain stays locked". macOS only (the Go client has no Keychain admin path).
+- Fixed (#62): over SSH, `minigw gw` asked for the Mac password even when the login keychain was already unlocked, and then accepted any password (macOS does not check it on an unlocked keychain). Now it asks only when macOS reports the login keychain as locked (when macOS reports it unlocked but the admin item still cannot be read, it says so and asks to quit and open the Mini Gateway app once on the Mac, instead of advising `security unlock-keychain`, which also accepts any password on an unlocked keychain), checks again just before unlocking, and after unlocking makes sure the keychain is really unlocked ("the keychain stays locked"); a wrong password on a locked keychain still ends with "wrong password: the keychain stays locked". macOS only (the Go client has no Keychain admin path).
 
 ## 0.5.21
 
