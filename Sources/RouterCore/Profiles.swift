@@ -205,7 +205,7 @@ public enum Profiles {
                     if c["type"] as? String == "text", let t = c["text"] as? String, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         texts.append(t)
                     } else if c["type"] as? String == "tool_use" {
-                        err += "minigw: · \(Self.printable(c["name"] as? String ?? ""))\n"
+                        err += "minigw: · \(Self.printable(c["name"] as? String ?? "").filter { $0 != "\n" && $0 != "\t" })\n"
                     }
                 }
             case "result":
@@ -213,7 +213,10 @@ public enum Profiles {
                 let r = ev["result"] as? String ?? ""
                 if ev["is_error"] as? Bool == true {
                     failed = true
-                    err += Self.printable(r) + "\n"
+                    // vsaka vrstica s predpono claude: — model ne more ponarediti vrstice minigw:, ki ji skill zaupa (kot Go)
+                    var r2 = Self.printable(r)
+                    while r2.hasSuffix("\n") { r2.removeLast() }
+                    for l in r2.split(separator: "\n", omittingEmptySubsequences: false) { err += "claude: \(l)\n" }
                 } else if n == 0, !r.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     texts.append(r)
                 }

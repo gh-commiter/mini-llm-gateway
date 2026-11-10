@@ -287,6 +287,8 @@ func scratchSiblings(cur, id string) []scratchSibling {
 }
 
 // takeScratchAPI: POST /general/scratch/take (Take over; minigw gw scratch take). Zapisano v dnevnik.
+const scratchTakeBusy = "scratch folder: minigw sessions or agents are active; take it over when no minigw session runs"
+
 func (s *server) takeScratchAPI(body []byte) (int, any) {
 	fail := func(status int, msg string) (int, any) { return status, errorBody(status, msg) }
 	var b struct {
@@ -298,11 +300,11 @@ func (s *server) takeScratchAPI(body []byte) (int, any) {
 		}
 	}
 	if !s.scratchGate.TryLock() {
-		return fail(409, scratchBusy)
+		return fail(409, scratchTakeBusy)
 	}
 	defer s.scratchGate.Unlock()
 	if (s.hub != nil && s.hub.count() > 0) || s.agentsRunning.Load() > 0 {
-		return fail(409, scratchBusy)
+		return fail(409, scratchTakeBusy)
 	}
 	foreign := s.scratchOther.Load()
 	defer func() { // tudi po napaki: ročaj, lastnik in zaklep na mapi v nastavitvah (kot premik)

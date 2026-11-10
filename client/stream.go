@@ -107,13 +107,16 @@ func streamText(in io.Reader, out, errOut io.Writer) (failed bool) {
 				if c.Type == "text" && strings.TrimSpace(c.Text) != "" {
 					emit(c.Text)
 				} else if c.Type == "tool_use" {
-					fmt.Fprintln(errOut, "minigw: · "+printable(c.Name))
+					fmt.Fprintln(errOut, "minigw: · "+strings.NewReplacer("\n", "", "\t", "").Replace(printable(c.Name)))
 				}
 			}
 		case "result":
 			if ev.IsError {
 				failed = true
-				fmt.Fprintln(errOut, printable(ev.Result))
+				// vsaka vrstica s predpono claude: — model ne more ponarediti vrstice minigw:, ki ji skill zaupa
+				for _, l := range strings.Split(printable(strings.TrimRight(ev.Result, "\n")), "\n") {
+					fmt.Fprintln(errOut, "claude: "+l)
+				}
 			} else if n == 0 && strings.TrimSpace(ev.Result) != "" {
 				emit(ev.Result)
 			}
