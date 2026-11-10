@@ -152,6 +152,75 @@ public enum Profiles {
         return "minigw: stdin had no data within \(waitMs / 1000) s and was not sent"
     }
 
+    /// #78 (kot Go streamArgs): claude -p brez izbranega --output-format teče s stream-json (nil = argumenti ostanejo).
+    public static func streamArgs(_ args: [String]) -> [String]? {
+        let opts = args.prefix { $0 != "--" }
+        guard opts.contains(where: { $0 == "-p" || $0 == "--print" }),
+              !opts.contains(where: { $0 == "--output-format" || $0.hasPrefix("--output-format=") }) else { return nil }
+        return ["--output-format", "stream-json", "--verbose"] + args
+    }
+
+    /// #78 (kot Go helperModelEnv): model ponudnika (ne opus/sonnet/haiku/fable): pomožni klici Claude Code gredo k istemu
+    /// modelu, ne k claude-haiku-…, ki ga prehod morda nima (404). Uporabnikove vrednosti ostanejo.
+    public static func helperModelEnv(_ args: [String], env: [String: String]) -> [String: String] {
+        var model = ""
+        let opts = Array(args.prefix { $0 != "--" })
+        for (i, a) in opts.enumerated() {
+            if a == "--model", i + 1 < opts.count { model = opts[i + 1] } else if a.hasPrefix("--model=") { model = String(a.dropFirst(8)) }
+        }
+        guard !model.isEmpty, ClaudeCLI.match(model.lowercased()) == nil else { return [:] }
+        return Dictionary(uniqueKeysWithValues: ["ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_SMALL_FAST_MODEL"].map { k in
+            (k, env[k].flatMap { $0.isEmpty ? nil : $0 } ?? model)
+        })
+    }
+
+    /// #78 (kot Go streamText): dogodki claude --output-format stream-json → vsak blok besedila modela za stdout (prazna
+    /// vrstica med njimi), uporaba orodja kot kratka vrstica za stderr; končni result ni izpisan dvakrat.
+    public struct StreamText {
+        var n = 0, last = ""
+        public private(set) var failed = false
+        public init() {}
+
+        /// Ena vrstica JSON → besedilo za stdout in stderr.
+        public mutating func line(_ data: Data) -> (out: String, err: String) {
+            guard let ev = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return ("", "") }
+            var out = "", err = ""
+            var texts: [String] = []
+            switch ev["type"] as? String {
+            case "assistant":
+                for c in ((ev["message"] as? [String: Any])?["content"] as? [[String: Any]]) ?? [] {
+                    if c["type"] as? String == "text", let t = c["text"] as? String, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        texts.append(t)
+                    } else if c["type"] as? String == "tool_use" {
+                        err += "minigw: · \(c["name"] as? String ?? "")\n"
+                    }
+                }
+            case "result":
+                let r = ev["result"] as? String ?? ""
+                if ev["is_error"] as? Bool == true {
+                    failed = true
+                    err += r + "\n"
+                } else if n == 0, !r.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    texts.append(r)
+                }
+            default: break
+            }
+            for t in texts {
+                var t2 = t
+                while t2.hasSuffix("\n") { t2.removeLast() }
+                out += (n > 0 ? "\n" : "") + t2 + "\n"
+                n += 1; last = t
+            }
+            return (out, err)
+        }
+
+        /// Opozorilo, ko se edino besedilo sklicuje na prejšnje (»above«, »zgoraj«), ki ga ni bilo (nil = ni).
+        public var warning: String? {
+            n == 1 && last.range(of: #"\babove\b|\bsee (the )?previous\b|zgoraj"#, options: [.regularExpression, .caseInsensitive]) != nil
+                ? "minigw: warning: the answer refers to earlier text that the model did not send; it may be incomplete\n" : nil
+        }
+    }
+
     /// N6b, N7: claude brez terminala na stdin ali z -p bere navodilo kot vnos uporabnika: tedaj dobi --disable-slash-commands
     /// in CLAUDE_CODE_DISABLE_FILE_MENTIONS=1. Ostane le pogovor v terminalu, kjer tipka človek (kot Go promptGuard).
     public static func promptGuard(_ args: [String], env: [String: String], stdinTerminal: Bool) -> Bool {

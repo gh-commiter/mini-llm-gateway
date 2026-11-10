@@ -3,6 +3,10 @@
 ## Unreleased
 
 - Fixed (Windows): cancel or timeout ends the whole agent tree and frees the run slot; local claude ends with minigw.
+- Changed (#78): `minigw -p` without `--output-format` prints every text the model writes as it arrives (all turns, blank line between them), not only the final message; tool use shows as a short `minigw: · <tool>` line on stderr. An error result prints its text and exits non-zero. When the only text refers back ("above", "zgoraj") minigw warns that the answer may be incomplete. An explicit `--output-format` is passed through unchanged.
+- Fixed (#78): with a provider model (for example `claude-deepseek/…` on OpenRouter) Claude Code's helper calls go to the same model (`ANTHROPIC_DEFAULT_HAIKU_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL`, unless you set them) instead of `claude-haiku-…`.
+- Fixed (#78): `count_tokens` for a provider without it (OpenRouter answers 404, shown as model `unknown` in the activity) now gets an estimate from the gateway, as for agent models.
+- Fixed (#78): `minigw models` lists `claude-cli-fable`.
 
 ## 0.5.23
 

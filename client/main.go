@@ -549,7 +549,7 @@ func main() {
 			return
 		}
 		refuseUnsafeClaudeFlags(args, true)
-		os.Exit(runClaude(args, nil)) // le podatki o claude: brez routerja, seje in deljenja mape
+		os.Exit(runClaude(args, nil, false)) // le podatki o claude: brez routerja, seje in deljenja mape
 	}
 
 	// Claude Code prek routerja.
@@ -791,7 +791,9 @@ func main() {
 			fmt.Fprintf(os.Stderr, "minigw: %d gateways; models of %s also without a suffix, the others as <model>@<profile> (minigw models)\n", len(targets), ps[0].name)
 		}
 	}
-	code := runClaude(args, env)
+	env = append(env, helperModelEnv(args, os.Getenv)...)
+	args, stream := streamArgs(args)
+	code := runClaude(args, env, stream)
 	share.unregister()
 	mu.Lock()
 	for _, sc := range extra {
@@ -1229,12 +1231,31 @@ func autoShare(cwd string) bool {
 }
 
 // runClaude: claude kot podproces (minigw ostane za proxy in mapo); Ctrl+C dobi claude.
-func runClaude(args []string, env []string) int {
+// stream (#78): stdout claude (stream-json) gre skozi streamText.
+func runClaude(args []string, env []string, stream bool) int {
 	signal.Ignore(os.Interrupt)
 	cmd := consoleCommand("claude", args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = claudeStdin, os.Stdout, os.Stderr
 	cmd.Env = claudeEnv(os.Environ(), env)
+	var pr, pw *os.File
+	if stream {
+		var err error
+		if pr, pw, err = os.Pipe(); err != nil {
+			fmt.Fprintln(os.Stderr, "minigw: cannot run claude: "+err.Error())
+			return 1
+		}
+		cmd.Stdout = pw // os.Pipe, ne StdoutPipe: Windows ob napaki Joba claude zažene znova z istim cmd.Stdout
+	}
 	err := startClient(cmd) // Windows: Job, ki z minigw ubije vse drevo claude
+	failed := false
+	if stream {
+		pw.Close()
+		if err == nil {
+			failed = streamText(pr, os.Stdout, os.Stderr)
+			io.Copy(io.Discard, pr) // claude ne dobi SIGPIPE, če tok ni bil prebran do konca
+		}
+		pr.Close()
+	}
 	if err == nil {
 		err = cmd.Wait()
 	}
@@ -1244,6 +1265,9 @@ func runClaude(args []string, env []string) int {
 		}
 		fmt.Fprintln(os.Stderr, "minigw: cannot run claude: "+err.Error()+" (is Claude Code installed and in PATH?)")
 		return 127
+	}
+	if failed {
+		return 1
 	}
 	return 0
 }
