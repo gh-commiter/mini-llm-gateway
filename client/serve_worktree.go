@@ -919,7 +919,7 @@ func (s *server) nestedBlocker(agent string) string {
 	const tail = "; use sync"
 	switch {
 	case !gitAttrSource(): // #55: starejši git GIT_ATTR_SOURCE tiho prezre (filtri .gitattributes ugnezdenih bi tekli)
-		return "the gateway's git is older than 2.40 (nested repositories need GIT_ATTR_SOURCE); update git" + tail
+		return "nested git repositories need git 2.40 or later on the gateway; update git or use sync"
 	case runtime.GOOS == "darwin":
 		return "nested repositories need the Mac app or a Linux gateway with bwrap" + tail
 	case runtime.GOOS != "linux":

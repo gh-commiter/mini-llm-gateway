@@ -1156,7 +1156,7 @@ func TestNestedBlockerOldGit(t *testing.T) {
 	old := gitAttrSource
 	defer func() { gitAttrSource = old }()
 	gitAttrSource = func() bool { return false }
-	if why := s.nestedBlocker("codex"); !strings.Contains(why, "older than 2.40") || !strings.HasSuffix(why, "use sync") {
+	if why := s.nestedBlocker("codex"); why != "nested git repositories need git 2.40 or later on the gateway; update git or use sync" {
 		t.Fatalf("old git: %q", why)
 	}
 }
