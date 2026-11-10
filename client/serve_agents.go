@@ -114,7 +114,7 @@ func resolveAgent(k agentKind, configured string) (string, error) {
 
 // npmNative (#77): izvorni program v paketu npm ob ovoju (copilot.cmd/.ps1 v dir). Copilot: npm-loader.js prek node
 // le zažene copilot.exe iz platformnega paketa (@github/copilot-win32-<arch>, pri -g vgnezden v paketu), zato teče
-// ta neposredno, brez node in ovoja; škatla dobi le mapo platformnega paketa (packageRoot), nikoli %APPDATA% ali npm.
+// ta neposredno, brez node in ovoja; škatla dobi le le mapo, v kateri je exe, nikoli %APPDATA% ali npm.
 func npmNative(name, dir, goarch string) string {
 	pats := map[string][]string{"codex": {"@openai/codex/vendor/*/codex/codex.exe"}}[name]
 	if name == "copilot" { // najprej arhitektura minigw, nato druga (x64 minigw na ARM64 Windows, Copilot arm64)
