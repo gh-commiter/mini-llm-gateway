@@ -113,7 +113,11 @@ public struct RouterConfig: Codable, Sendable, Equatable {
     public var copilot = CopilotConfig()
     public var grok = GrokConfig()
     public var foundry = FoundryConfig()  // Foundry Local na tem Macu (Foundry.swift)
-    public var scratchFolder = ""  // prazno = defaultScratch (Caches); npr. hiter zunanji SSD
+    public var scratchFolder = ""  // osnova (odločitev 3); prazno = defaultBase (Caches); npr. hiter zunanji SSD
+    /// N4 (0.5.24): trajni ID te namestitve (datoteka lastnika v Scratch, ScratchOwner); load() ga ustvari enkrat.
+    public var instanceID = ""
+    /// Ime mape Scratch v osnovi (odločitev 3: <osnova>/<instanca>); "" = prejšnje ime (Scratch, »Mini Gateway Scratch«).
+    public var scratchName = ""
     /// minigw run: dovoljeni ukazi (prvi argument, ločeno z vejico). Ni peskovnik: gradnja izvaja kodo projekta.
     public var runCommands = "mvn, swift, xcodebuild"
     /// --minigw-work=worktree: ukazi agentov (Bash, Codex, Grok) smejo v omrežje (Maven, SwiftPM prenašajo odvisnosti).
@@ -124,12 +128,20 @@ public struct RouterConfig: Codable, Sendable, Equatable {
     public init() {}
 
     /// Začasne datoteke agentov (pogovori, izhodi, priponke; pozneje delovne kopije in build izhodi).
-    public static let defaultScratch = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("dev.trojar.minigateway/Scratch", isDirectory: true)
+    public static let defaultBase = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("dev.trojar.minigateway", isDirectory: true)
+    public static let defaultScratch = defaultBase.appendingPathComponent("Scratch", isDirectory: true)
 
     public var scratchURL: URL {
-        scratchFolder.isEmpty ? Self.defaultScratch
-            : Self.dedicated(URL(fileURLWithPath: (scratchFolder as NSString).expandingTildeInPath, isDirectory: true))
+        let base = scratchFolder.isEmpty ? Self.defaultBase : URL(fileURLWithPath: (scratchFolder as NSString).expandingTildeInPath, isDirectory: true)
+        if !scratchName.isEmpty { return base.appendingPathComponent(scratchName, isDirectory: true) }
+        return scratchFolder.isEmpty ? Self.defaultScratch : Self.dedicated(base)
+    }
+
+    /// Odločitev 3: izbrana osnova (nil = privzeta) → mapa tega prehoda <osnova>/<instanca>; brez ID-ja kot prej.
+    public func scratchTarget(_ base: URL?) -> URL {
+        guard !instanceID.isEmpty else { return base.map(Self.dedicated) ?? Self.defaultScratch }
+        return (base ?? Self.defaultBase).appendingPathComponent(instanceID, isDirectory: true)
     }
 
     /// Izbrana mapa dobi lastno podmapo (nikoli ne pišemo med uporabnikove datoteke), razen če se že tako imenuje.
@@ -159,7 +171,7 @@ public struct RouterConfig: Codable, Sendable, Equatable {
     /// M1, L1: izbrana mapa za Scratch (Settings in API); nil = v redu, sicer razlog. Scratch hrani kopije drugih naprav
     /// in zrcala, ki jih bere git prehoda: ne sme biti koren diska, domača mapa ali mapa, ki jo vsebuje, začasna mapa
     /// ali mapa v dovoljeni mapi agentov (ali obratno), in »Mini Gateway Scratch« v njej ne sme biti povezava.
-    public static func scratchProblem(_ folder: URL, allowedRoots: String) -> String? {
+    public static func scratchProblem(_ folder: URL, allowedRoots: String, name: String = "") -> String? {
         let fm = FileManager.default
         // #24: pot gre v JAVA_TOOL_OPTIONS (-Djava.io.tmpdir v narekovajih) in v profil peskovnika
         let quote = "its path contains a quotation mark"
@@ -168,7 +180,7 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         guard folder.path.hasPrefix("/"), fm.fileExists(atPath: folder.path, isDirectory: &isDir), isDir.boolValue,
               let real = Sync.real(folder)?.path else { return "it is not an existing folder (absolute path)" }
         if real.contains("\"") { return quote }
-        let d = dedicated(folder)
+        let d = name.isEmpty ? dedicated(folder) : folder.appendingPathComponent(name)  // odločitev 3: <osnova>/<instanca>
         if (try? fm.destinationOfSymbolicLink(atPath: d.path)) != nil { return "\(d.path) is a symbolic link" }
         func inside(_ a: String, _ b: String) -> Bool { a == b || a.hasPrefix(b == "/" ? "/" : b + "/") }
         let home = Sync.real(URL(fileURLWithPath: NSHomeDirectory()))?.path ?? NSHomeDirectory()
@@ -189,7 +201,7 @@ public struct RouterConfig: Codable, Sendable, Equatable {
     /// Podmapa scratch mape (ustvari jo); če izbrani disk ni dosegljiv (izklopljen SSD), privzeta mapa.
     public func scratch(_ sub: String) -> URL {
         let fm = FileManager.default
-        for base in [scratchURL, Self.defaultScratch] {
+        for base in [scratchURL, scratchName.isEmpty ? Self.defaultScratch : Self.defaultBase.appendingPathComponent(scratchName)] {
             let dir = base.appendingPathComponent(sub, isDirectory: true)
             if (try? fm.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])) != nil {
                 return dir
@@ -198,8 +210,8 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         return fm.temporaryDirectory.appendingPathComponent(sub, isDirectory: true)
     }
 
-    /// Premakne znane podmape scratch mape v novo (tudi na drug disk). Obstoječega v cilju ne briše: napaka.
-    /// Staro mapo odstrani le, če je prazna.
+    /// Premakne znane podmape scratch mape v novo (tudi na drug disk), z datoteko lastnika (N4). Obstoječega v cilju ne
+    /// briše: napaka. Staro mapo odstrani le, če je prazna.
     public static func moveScratch(from old: URL, to new: URL) throws {
         let fm = FileManager.default
         let o = old.standardizedFileURL.path, n = new.standardizedFileURL.path
@@ -207,12 +219,13 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         guard !n.hasPrefix(o + "/"), !o.hasPrefix(n + "/") else {
             throw CocoaError(.fileWriteInvalidFileName, userInfo: [NSLocalizedDescriptionKey: "The new folder is inside the old one or the other way round."])
         }
-        let items = scratchSubfolders.filter { fm.fileExists(atPath: old.appendingPathComponent($0).path) }
+        let items = (scratchSubfolders + [ScratchOwner.ownerFile]).filter { fm.fileExists(atPath: old.appendingPathComponent($0).path) }
         if let taken = items.first(where: { fm.fileExists(atPath: new.appendingPathComponent($0).path) }) {
             throw CocoaError(.fileWriteFileExists, userInfo: [NSLocalizedDescriptionKey: "The new folder already contains “\(taken)”."])
         }
         try fm.createDirectory(at: new, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         for name in items { try fm.moveItem(at: old.appendingPathComponent(name), to: new.appendingPathComponent(name)) }
+        unlink(old.appendingPathComponent(ScratchOwner.lockFile).path)  // naš zaklep; claim ga naredi v novi mapi
         rmdir(old.path)  // le prazna
     }
 
@@ -237,6 +250,8 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         grok = try c.decodeIfPresent(GrokConfig.self, forKey: .grok) ?? d.grok
         foundry = try c.decodeIfPresent(FoundryConfig.self, forKey: .foundry) ?? d.foundry
         scratchFolder = try c.decodeIfPresent(String.self, forKey: .scratchFolder) ?? d.scratchFolder
+        instanceID = try c.decodeIfPresent(String.self, forKey: .instanceID) ?? ""
+        scratchName = try c.decodeIfPresent(String.self, forKey: .scratchName) ?? ""
         runCommands = try c.decodeIfPresent(String.self, forKey: .runCommands) ?? d.runCommands
         worktreeNetwork = try c.decodeIfPresent(Bool.self, forKey: .worktreeNetwork) ?? d.worktreeNetwork
         worktreeCodexNetwork = try c.decodeIfPresent(Bool.self, forKey: .worktreeCodexNetwork) ?? d.worktreeCodexNetwork
@@ -261,7 +276,7 @@ public struct RouterConfig: Codable, Sendable, Equatable {
             if draft[keyPath: kp] == old[keyPath: kp] { d[keyPath: kp] = new[keyPath: kp] }
         }
         take(\.host); take(\.port); take(\.allowedClients); take(\.allowPlainRemote); take(\.allowAnyDevice); take(\.allowLocalApps); take(\.claudeCLI); take(\.appleFM)
-        take(\.siri); take(\.codex); take(\.copilot); take(\.grok); take(\.foundry); take(\.scratchFolder); take(\.runCommands); take(\.worktreeNetwork); take(\.worktreeCodexNetwork)
+        take(\.siri); take(\.codex); take(\.copilot); take(\.grok); take(\.foundry); take(\.scratchFolder); take(\.scratchName); take(\.runCommands); take(\.worktreeNetwork); take(\.worktreeCodexNetwork)
         d.devices = mergeList(draft.devices, old.devices, new.devices)
         d.providers = mergeList(draft.providers, old.providers, new.providers)
         return d
@@ -290,13 +305,23 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         switch defaults.object(forKey: defaultsKey) {
         case let dict as [String: Any]:
             if let data = try? PropertyListSerialization.data(fromPropertyList: dict, format: .binary, options: 0),
-               let c = try? PropertyListDecoder().decode(RouterConfig.self, from: data) { return c }
+               let c = try? PropertyListDecoder().decode(RouterConfig.self, from: data) { return c.withInstance() }
         case let data as Data:
-            if let c = try? JSONDecoder().decode(RouterConfig.self, from: data) { return c }
+            if let c = try? JSONDecoder().decode(RouterConfig.self, from: data) { return c.withInstance() }
         default:
             break
         }
-        return RouterConfig()
+        var c = RouterConfig()  // nova namestitev: Scratch <osnova>/<instanca> (odločitev 3)
+        c.instanceID = ScratchOwner.newID()
+        c.scratchName = c.instanceID
+        return c
+    }
+
+    /// N4: obstoječa namestitev dobi ID enkrat (AppState ga takoj shrani); njen Scratch ostane in ga prevzame kot svojega.
+    func withInstance() -> RouterConfig {
+        var c = self
+        if c.instanceID.isEmpty { c.instanceID = ScratchOwner.newID() }
+        return c
     }
 
     public func save(_ defaults: UserDefaults = .standard) {

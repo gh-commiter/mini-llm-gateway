@@ -1250,8 +1250,10 @@ struct ScratchSection: View {
     @Binding var draft: RouterConfig
     @State private var moving = false
     @State private var failure: String?
+    @State private var owner = ""  // N4: "", in-use, stale (ScratchOwner.state)
 
     private var shown: String { (draft.scratchURL.path as NSString).abbreviatingWithTildeInPath }
+    private func refresh() { owner = draft.instanceID.isEmpty ? "" : ScratchOwner.state(draft.scratchURL, id: draft.instanceID) }
 
     var body: some View {
         Section {
@@ -1260,6 +1262,13 @@ struct ScratchSection: View {
                     if moving { ProgressView().controlSize(.small) }
                     Text(verbatim: shown).truncationMode(.middle).lineLimit(1).textSelection(.enabled)
                 }
+            }
+            if !owner.isEmpty {
+                Label(owner == ScratchOwner.inUse
+                      ? String(localized: "Used by another gateway, which is running. Agents are off: choose a folder of this gateway (Choose…).")
+                      : String(localized: "Stale owner: another gateway's folder, and that gateway is not running. Agents are off: take the folder over or choose another one (Choose…)."),
+                      systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange).font(.callout)
             }
             HStack {
                 Spacer()
@@ -1270,14 +1279,17 @@ struct ScratchSection: View {
                     }
                     WideButton("Default") { move(to: nil) }.disabled(draft.scratchFolder.isEmpty || moving)
                     WideButton("Choose…") { choose() }.disabled(moving)
+                    if !owner.isEmpty { WideButton("Take over") { take() }.disabled(owner == ScratchOwner.inUse || moving) }
                 }
             }
         } header: {
             Text("Scratch folder")
         } footer: {
-            Text("Temporary files of agents: conversations, outputs, attachments. Choosing another folder moves them into a “Mini Gateway Scratch” folder inside it, for example on a fast external SSD. If that disk is not connected, the default folder is used.")
+            Text("Temporary files of agents: conversations, outputs, attachments. Choosing another folder moves them into a folder named after this gateway inside it, for example on a fast external SSD. If that disk is not connected, the default folder is used.")
                 .font(.caption).foregroundStyle(.secondary)
         }
+        .onAppear(perform: refresh)
+        .onChange(of: draft.scratchURL) { refresh() }
         .alert(String(localized: "The scratch folder could not be moved"), isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
             Button("OK") { failure = nil }
         } message: { Text(verbatim: failure ?? "") }
@@ -1297,22 +1309,44 @@ struct ScratchSection: View {
     /// nil = privzeta mapa.
     private func move(to url: URL?) {
         // M1, L1: ista pravila kot API; shrani se kanonična pot. L3: ne med sejami minigw ali agenti.
-        if let url, let why = RouterConfig.scratchProblem(url, allowedRoots: draft.claudeCLI.allowedRoots) {
+        if let url, let why = RouterConfig.scratchProblem(url, allowedRoots: draft.claudeCLI.allowedRoots, name: draft.instanceID) {
             failure = String(localized: "This folder cannot hold the scratch folder: \(why).")
             return
         }
         let real = url.map { Sync.real($0) ?? $0 }
-        let old = draft.scratchURL, new = real.map(RouterConfig.dedicated) ?? RouterConfig.defaultScratch
+        let old = draft.scratchURL, new = draft.scratchTarget(real), foreign = !owner.isEmpty  // odločitev 3: <osnova>/<instanca>
         moving = true
         Task.detached {
             if await Router.scratchInUse() {
                 await MainActor.run { moving = false; failure = String(localized: "minigw sessions or agents are active. Move the scratch folder when no minigw session runs.") }
                 return
             }
-            let error: String? = { do { try RouterConfig.moveScratch(from: old, to: new); return nil } catch { return error.localizedDescription } }()
+            // N4: mapa drugega prehoda ostane, kjer je; ta prehod začne svojo
+            let error: String? = foreign ? nil : { do { try RouterConfig.moveScratch(from: old, to: new); return nil } catch { return error.localizedDescription } }()
             await MainActor.run {
                 moving = false
-                if let error { failure = error } else { draft.scratchFolder = real?.path ?? "" }
+                if let error { failure = error } else {
+                    draft.scratchFolder = real?.path ?? ""
+                    if !draft.instanceID.isEmpty { draft.scratchName = draft.instanceID }
+                }
+            }
+        }
+    }
+
+    /// N4, odločitev 2: prevzem mape prehoda, ki ga ni več (preimenovanje, nikoli združevanje; ScratchOwner.takeOver).
+    private func take() {
+        let old = draft.scratchURL, id = draft.instanceID
+        moving = true
+        Task.detached {
+            if await Router.scratchInUse() {
+                await MainActor.run { moving = false; failure = String(localized: "minigw sessions or agents are active. Take over the scratch folder when no minigw session runs.") }
+                return
+            }
+            let error: String? = { do { try ScratchOwner.takeOver(old, id: id); return nil } catch { return error.localizedDescription } }()
+            await MainActor.run {
+                moving = false
+                if let error { failure = error } else { draft.scratchName = id }
+                refresh()
             }
         }
     }

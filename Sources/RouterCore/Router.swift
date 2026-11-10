@@ -257,6 +257,11 @@ public final class Router: Sendable {
     }
 
     private func routeAllowed(_ req: HTTPRequest, rid: String, writer: ResponseWriter) async -> (Int, String?, String?) {
+        if ScratchOwner.blocked.withLock({ $0 }) {  // N4: Scratch je mapa drugega prehoda
+            let st = ScratchOwner.state(config.scratchURL, id: config.instanceID)
+            return (await error(503, "api_error", "Gateway: " + ScratchOwner.message(config.scratchURL, st.isEmpty ? ScratchOwner.stale : st),
+                                rid: rid, writer: writer), nil, nil)
+        }
 
         switch (req.method, req.path) {
         case ("GET", "/v1/models"):

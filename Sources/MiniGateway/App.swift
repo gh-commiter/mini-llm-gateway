@@ -124,14 +124,16 @@ final class AppState: ObservableObject {
             Task { @MainActor in self?.pendingChanged(Router.deviceLog.pending) }
         }
         ShareHub.cleanupStale()
-        NativeHub.cleanupStale(config.scratch("tmp").appendingPathComponent("native-markers"))  // označbe native po sesutju
-        NativeHub.cleanupRunTemps(config.scratch("tmp"))  // začasne mape minigw run po sesutju
-        Worktree.prune(scratch: config.scratchURL)  // worktree: zrcala, ki jih 30 dni ni uporabil noben agent
-        // Kloni prejšnjega zagona: le imena klonov (<lastnik>-<16 hex>[-ro].<n>), nikoli cela mapa.
-        let runs = config.scratch("sync").appendingPathComponent("runs")
-        for n in (try? FileManager.default.contentsOfDirectory(atPath: runs.path)) ?? []
-        where n.range(of: #"^.+-[0-9a-f]{16}(-ro)?\.[0-9]+$"#, options: .regularExpression) != nil {
-            try? FileManager.default.removeItem(at: runs.appendingPathComponent(n))
+        if ScratchOwner.claim(config.scratchURL, id: config.instanceID).isEmpty {  // N4: v mapi drugega prehoda nič
+            NativeHub.cleanupStale(config.scratch("tmp").appendingPathComponent("native-markers"))  // označbe native po sesutju
+            NativeHub.cleanupRunTemps(config.scratch("tmp"))  // začasne mape minigw run po sesutju
+            Worktree.prune(scratch: config.scratchURL)  // worktree: zrcala, ki jih 30 dni ni uporabil noben agent
+            // Kloni prejšnjega zagona: le imena klonov (<lastnik>-<16 hex>[-ro].<n>), nikoli cela mapa.
+            let runs = config.scratch("sync").appendingPathComponent("runs")
+            for n in (try? FileManager.default.contentsOfDirectory(atPath: runs.path)) ?? []
+            where n.range(of: #"^.+-[0-9a-f]{16}(-ro)?\.[0-9]+$"#, options: .regularExpression) != nil {
+                try? FileManager.default.removeItem(at: runs.appendingPathComponent(n))
+            }
         }
         start()
     }
@@ -229,6 +231,7 @@ final class AppState: ObservableObject {
     }
 
     func start() {
+        ScratchOwner.claim(config.scratchURL, id: config.instanceID)  // N4: nova mapa po premiku ali prevzemu (Router zavrača)
         Router.history.prune(allowed: Set(config.devices.map(\.id)))  // odstranjena naprava: brez priklopov, seje označene
         let router = Router(config: config, token: token, secrets: keychain, onLog: { [weak self] entry in
             Task { @MainActor in
