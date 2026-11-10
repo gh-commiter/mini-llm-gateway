@@ -46,6 +46,8 @@ type shareClient struct {
 	top      string              // worktree: koren repozitorija git
 	snaps    []string            // worktree: posnetki, poslani prehodu (začetek dela agenta za vrstico o veji)
 	nested   map[string][]string // worktree: ugnezdeni repozitoriji (pot) → njihovi poslani posnetki
+	conv     string              // worktree (#66): ključ pogovora (wtConversation); "" = brez nadaljevanja
+	chain    map[string]wtRecord // worktree (#66): poslani posnetek ali vrh → začetek verige pogovora
 	mu       sync.Mutex
 	key      string
 	syncMu   sync.Mutex

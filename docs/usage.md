@@ -210,6 +210,21 @@ git branch -D minigw/codex-1a2b3c4d-0
 On the gateway, mirrors and clones that no agent used for 30 days are removed; `minigw serve` removes a session's
 clone when the session ends.
 
+**Continuing a conversation:** `minigw -p --continue …` (or `--resume <id>`) starts the agent from the
+conversation's last branch instead of from your folder, so it sees the files it made in the earlier turns. The new
+branch contains that work too, and the printed `<base>` is your state at the conversation's first turn, so one range
+covers the whole conversation; bring in only the newest branch. `--continue` takes the last conversation minigw ran in
+this repository, `--resume <id>` that session; minigw keeps the last branch per conversation in
+`.git/minigw-continue.json`. It starts from your folder instead when your folder changed since the last turn (other
+uncommitted changes or another `HEAD`, for example after you applied the branch), when you deleted the branch, or in a
+repository with nested repositories, and says so:
+
+```
+minigw: worktree: starting from your folder, not from minigw/codex-1a2b3c4d-0: your folder changed since the last turn
+```
+
+A branch you merged into `HEAD` needs no line: your folder already has its work.
+
 **What the fetch does not do:** it takes only a git bundle, checks objects (fsck), runs no hooks, submodules or
 filters, and does not change `.git/config`. If you committed on that branch yourself, your commits stay and the
 agent's version is not fetched.

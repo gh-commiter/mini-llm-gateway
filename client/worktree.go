@@ -512,6 +512,22 @@ func (s *shareClient) wtPush(k string, job davJob) davResponse {
 	if snap == "" {
 		return fail("snapshot", "worktree: cannot take a snapshot of "+s.top+" (git add or write-tree failed)")
 	}
+	// #66: isti pogovor nadaljuje na vrhu svoje prejšnje veje, če se mapa od takrat ni spremenila
+	tip, r, why := wtContinue(s.top, s.conv, snap, len(nested) > 0)
+	if why != "" && !s.reported["continue:"+r.Branch] {
+		s.reported["continue:"+r.Branch] = true
+		s.note("worktree: starting from your folder, not from " + r.Branch + ": " + why)
+	}
+	if s.chain == nil {
+		s.chain = map[string]wtRecord{}
+	}
+	if tip != "" {
+		snap = tip
+		s.chain[tip] = r
+	} else if _, ok := s.chain[snap]; !ok {
+		head, _ := gitUser(s.top, nil, "rev-parse", "HEAD")
+		s.chain[snap] = wtRecord{Base: snap, Head: head}
+	}
 	if !s.wtUpload(k, s.top, snap, req.Have, 0) {
 		return dav(500, nil, nil)
 	}
@@ -670,7 +686,7 @@ func (s *shareClient) wtFetch(k, dir, rel, branch string, idx int) bool {
 		return false
 	}
 	if rel == "" {
-		s.branchNote(branch, agentBase(dir, branch, s.snaps))
+		s.branchNote(branch, s.wtRemember(branch, agentBase(dir, branch, s.snaps)))
 	} else {
 		s.branchNote(branch, agentBase(dir, branch, s.nested[rel]), rel)
 	}
@@ -759,4 +775,121 @@ func workCandidates(work string, readOnly, smb, git bool) []string {
 		return []string{"direct"}
 	}
 	return []string{work}
+}
+
+// #66: naslednji zagon istega pogovora (--continue, --resume) začne iz vrha prejšnje veje pogovora, ne iz mape
+// uporabnika (ta se ne spremeni), zato agent vidi svoje prejšnje delo. Zapis v <git-path>/minigw-continue.json.
+
+// wtRecord: zadnja veja pogovora; Base = stanje uporabnika ob začetku verige (začetek obsega), Head = njegov HEAD tedaj.
+type wtRecord struct {
+	Branch string `json:"branch"`
+	Base   string `json:"base"`
+	Head   string `json:"head"`
+}
+
+type wtState struct {
+	Last  string              `json:"last"` // zadnji pogovor v tem repozitoriju (za --continue)
+	Convs map[string]wtRecord `json:"convs"`
+}
+
+func wtStatePath(top string) string {
+	p, _ := gitUser(top, nil, "rev-parse", "--git-path", "minigw-continue.json")
+	if p != "" && !filepath.IsAbs(p) {
+		p = filepath.Join(top, p)
+	}
+	return p
+}
+
+func wtLoad(top string) (wtState, string) {
+	st, p := wtState{}, wtStatePath(top)
+	if b, err := os.ReadFile(p); err == nil {
+		json.Unmarshal(b, &st)
+	}
+	if st.Convs == nil {
+		st.Convs = map[string]wtRecord{}
+	}
+	return st, p
+}
+
+// wtSave: zamenjava datoteke naenkrat.
+func wtSave(p string, st wtState) {
+	if p == "" {
+		return
+	}
+	b, _ := json.Marshal(st)
+	if os.WriteFile(p+".tmp", b, 0o600) == nil {
+		os.Rename(p+".tmp", p)
+	}
+}
+
+// wtConversation: ključ pogovora — --continue: zadnji pogovor v repozitoriju; sicer seja (nova, --resume <id>,
+// --session-id). Zapiše ga kot zadnjega (naslednji --continue nadaljuje ta pogovor).
+func wtConversation(top, sid string, cont bool) string {
+	st, p := wtLoad(top)
+	key := sid
+	if cont && st.Last != "" {
+		key = st.Last
+	}
+	if st.Last != key {
+		st.Last = key
+		wtSave(p, st)
+	}
+	return key
+}
+
+// wtContinue: vrh prejšnje veje pogovora conv, če je mapa od zadnjega posnetka verige enaka (isti HEAD, isto drevo
+// posnetka snap); "" = posnetek snap (why: zakaj ne, "" = brez sporočila: ni veje ali je že v HEAD).
+// ponytail: ugnezdeni repozitoriji ne nadaljujejo (vsak bi rabil svojo verigo in gitlink starša); tedaj posnetek mape.
+func wtContinue(top, conv, snap string, nested bool) (tip string, r wtRecord, why string) {
+	if conv == "" {
+		return "", r, ""
+	}
+	st, _ := wtLoad(top)
+	r, ok := st.Convs[conv]
+	if !ok || !branchRe.MatchString(r.Branch) || !shaRe.MatchString(r.Base) || !shaRe.MatchString(r.Head) {
+		return "", r, ""
+	}
+	t, err := gitUser(top, nil, "rev-parse", "-q", "--verify", "refs/heads/"+r.Branch+"^{commit}")
+	if err != nil || !shaRe.MatchString(t) {
+		return "", r, "the branch no longer exists"
+	}
+	if _, err := gitUser(top, nil, "merge-base", "--is-ancestor", t, "HEAD"); err == nil {
+		return "", r, "" // veja je že v HEAD (merge): posnetek mape jo ima
+	}
+	if nested {
+		return "", r, "nested git repositories always start from your folder"
+	}
+	head, _ := gitUser(top, nil, "rev-parse", "HEAD")
+	a, _ := gitUser(top, nil, "rev-parse", snap+"^{tree}")
+	b, _ := gitUser(top, nil, "rev-parse", r.Base+"^{tree}")
+	if head != r.Head || a == "" || a != b {
+		return "", r, "your folder changed since the last turn"
+	}
+	return t, r, ""
+}
+
+// wtRemember: veja branch (začetek sent = poslani posnetek ali vrh) kot zadnja veja pogovora.
+func (s *shareClient) wtRemember(branch, sent string) string {
+	r, ok := s.chain[sent]
+	if !ok {
+		st, _ := wtLoad(s.top) // npr. prehod je ponovno uporabil klon seje (brez WORKTREE-PUSH): veriga iz zapisa
+		if r, ok = st.Convs[s.conv]; !ok || !shaRe.MatchString(r.Base) {
+			return sent
+		}
+		if _, err := gitUser(s.top, nil, "merge-base", "--is-ancestor", r.Base, "refs/heads/"+branch); err != nil {
+			return sent
+		}
+	}
+	if s.conv != "" {
+		st, p := wtLoad(s.top)
+		for k, o := range st.Convs { // pogovori, katerih veje ni več (uporabnik jo je izbrisal)
+			if _, err := gitUser(s.top, nil, "rev-parse", "-q", "--verify", "refs/heads/"+o.Branch+"^{commit}"); err != nil || !branchRe.MatchString(o.Branch) {
+				delete(st.Convs, k)
+			}
+		}
+		st.Convs[s.conv] = wtRecord{Branch: branch, Base: r.Base, Head: r.Head}
+		st.Last = s.conv
+		wtSave(p, st)
+	}
+	return r.Base
 }

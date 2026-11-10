@@ -1557,3 +1557,80 @@ extension ShareHub {
         }
     }
 }
+
+/// #66 (kot Go wtConversation, wtContinue, wtRemember): naslednji zagon istega pogovora (--continue, --resume) začne iz
+/// vrha prejšnje veje pogovora, ne iz mape uporabnika (ta se ne spremeni), zato agent vidi svoje prejšnje delo.
+/// Zapis v <git-path>/minigw-continue.json (enak kot v odjemalcu Go).
+extension Worktree {
+    /// Zadnja veja pogovora; base = stanje uporabnika ob začetku verige (začetek obsega), head = njegov HEAD tedaj.
+    public struct ConvRecord: Codable, Sendable, Equatable {
+        public var branch: String, base: String, head: String
+        public init(branch: String = "", base: String, head: String) { self.branch = branch; self.base = base; self.head = head }
+    }
+
+    struct ConvState: Codable { var last = ""; var convs: [String: ConvRecord] = [:] }
+
+    static func convLoad(_ top: String) -> (ConvState, String) {
+        var p = run(["rev-parse", "--git-path", "minigw-continue.json"], cwd: top, safe: false, hooks: false).out
+        if !p.isEmpty, !p.hasPrefix("/") { p = top + "/" + p }
+        let st = (try? Data(contentsOf: URL(fileURLWithPath: p))).flatMap { try? JSONDecoder().decode(ConvState.self, from: $0) } ?? ConvState()
+        return (st, p)
+    }
+
+    static func convSave(_ p: String, _ st: ConvState) {
+        guard !p.isEmpty, let d = try? JSONEncoder().encode(st) else { return }
+        try? d.write(to: URL(fileURLWithPath: p), options: .atomic)
+    }
+
+    static func branchTip(_ top: String, _ branch: String) -> String? {
+        let r = run(["rev-parse", "-q", "--verify", "refs/heads/\(branch)^{commit}"], cwd: top, safe: false, hooks: false)
+        return validBranch(branch) && r.status == 0 && isSHA(r.out) ? r.out : nil
+    }
+
+    /// Ključ pogovora — --continue: zadnji pogovor v repozitoriju; sicer seja (nova, --resume <id>, --session-id).
+    /// Zapiše ga kot zadnjega (naslednji --continue nadaljuje ta pogovor).
+    public static func conversation(top: String, session: String, cont: Bool) -> String {
+        var (st, p) = convLoad(top)
+        let key = cont && !st.last.isEmpty ? st.last : session
+        if st.last != key { st.last = key; convSave(p, st) }
+        return key
+    }
+
+    /// Vrh prejšnje veje pogovora conv, če je mapa od zadnjega posnetka verige enaka (isti HEAD, isto drevo posnetka
+    /// snap); tip nil = posnetek snap (why: zakaj ne, nil = brez sporočila: ni veje ali je že v HEAD).
+    /// ponytail: ugnezdeni repozitoriji ne nadaljujejo (vsak bi rabil svojo verigo in gitlink starša); tedaj posnetek mape.
+    public static func continueFrom(top: String, conv: String, snap: String, nested: Bool) -> (tip: String?, record: ConvRecord?, why: String?) {
+        guard !conv.isEmpty, let r = convLoad(top).0.convs[conv], validBranch(r.branch), isSHA(r.base), isSHA(r.head) else { return (nil, nil, nil) }
+        guard let t = branchTip(top, r.branch) else { return (nil, r, "the branch no longer exists") }
+        func git(_ a: String...) -> (status: Int32, out: String) { run(a, cwd: top, safe: false, hooks: false) }
+        if git("merge-base", "--is-ancestor", t, "HEAD").status == 0 { return (nil, r, nil) }  // veja je že v HEAD (merge)
+        if nested { return (nil, r, "nested git repositories always start from your folder") }
+        let a = git("rev-parse", snap + "^{tree}").out
+        guard git("rev-parse", "HEAD").out == r.head, !a.isEmpty, a == git("rev-parse", r.base + "^{tree}").out else {
+            return (nil, r, "your folder changed since the last turn")
+        }
+        return (t, r, nil)
+    }
+
+    /// Nova veriga iz posnetka snap (HEAD uporabnika zdaj).
+    public static func newChain(top: String, snap: String) -> ConvRecord {
+        ConvRecord(base: snap, head: run(["rev-parse", "HEAD"], cwd: top, safe: false, hooks: false).out)
+    }
+
+    /// Veja branch (začetek sent = poslani posnetek ali vrh; chain: poslani → veriga) kot zadnja veja pogovora conv;
+    /// vrne začetek obsega za vrstico o veji.
+    public static func remember(top: String, conv: String, branch: String, sent: String, chain: [String: ConvRecord]) -> String {
+        var (st, p) = convLoad(top)
+        // npr. prehod je ponovno uporabil klon seje (brez WORKTREE-PUSH): veriga iz zapisa
+        guard let r = chain[sent] ?? st.convs[conv].flatMap({ r in
+            isSHA(r.base) && run(["merge-base", "--is-ancestor", r.base, "refs/heads/" + branch], cwd: top, safe: false, hooks: false).status == 0 ? r : nil
+        }) else { return sent }
+        if !conv.isEmpty {
+            st.convs = st.convs.filter { branchTip(top, $0.value.branch) != nil }  // pogovori, katerih veje ni več
+            st.convs[conv] = ConvRecord(branch: branch, base: r.base, head: r.head)
+            st.last = conv
+            convSave(p, st)
+        }
+        return r.base
+    }
+}

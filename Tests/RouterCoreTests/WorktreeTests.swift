@@ -40,8 +40,10 @@ private func cleanup(_ root: URL) {
 }
 
 /// minigw za teste: obdela WORKTREE-PUSH in WORKTREE-PULL kot ShareClient (MiniGW/main.swift) prek ShareHub.
-private func fakeClient(_ hub: ShareHub, key: String, top: URL, notes: OSAllocatedUnfairLock<[String]>? = nil) -> Task<Void, Never> {
+/// conv (#66): ključ pogovora; nadaljevanje na prejšnji veji kot ShareClient.
+private func fakeClient(_ hub: ShareHub, key: String, top: URL, notes: OSAllocatedUnfairLock<[String]>? = nil, conv: String = "") -> Task<Void, Never> {
     Task {
+        var chain: [String: Worktree.ConvRecord] = [:], sent: [String] = []
         while !Task.isCancelled {
             guard case .some(.some(let job)) = await hub.poll(key: key, wait: 0.2) else { continue }
             var r = DAVResponse(403)
@@ -49,7 +51,12 @@ private func fakeClient(_ hub: ShareHub, key: String, top: URL, notes: OSAllocat
                 let req = (try? JSONSerialization.jsonObject(with: job.body) as? [String: Any]) ?? [:]
                 let have = req["have"] as? [String] ?? [], nestedHave = req["nested"] as? [String: [String]]
                 // git odjemalca zunaj bazena Swift concurrency (kot minigw v svojem procesu): vzporedni testi ne čakajo nanj
-                let snaps = await offPool { Worktree.snapshots(top: top.path, gateway: nestedHave != nil) }
+                var snaps = await offPool { Worktree.snapshots(top: top.path, gateway: nestedHave != nil) }
+                if snaps.failure == nil, !conv.isEmpty {
+                    let c = Worktree.continueFrom(top: top.path, conv: conv, snap: snaps.snap, nested: !snaps.nested.isEmpty)
+                    if let tip = c.tip, let r = c.record { snaps.snap = tip; chain[tip] = r } else { chain[snaps.snap] = Worktree.newChain(top: top.path, snap: snaps.snap) }
+                    sent.append(snaps.snap)
+                }
                 if snaps.failure == nil {
                     for (i, (dir, snap, h)) in ([(top.path, snaps.snap, have)] + snaps.nested.map { (top.path + "/" + $0.path, $0.snapshot, nestedHave?[Worktree.nestedKey($0.path)] ?? []) }).enumerated() {
                         let f = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".bundle")
@@ -71,6 +78,9 @@ private func fakeClient(_ hub: ShareHub, key: String, top: URL, notes: OSAllocat
                     let idx = req["nestedOnly"] as? Bool == true ? i + 1 : i
                     if let d = await hub.worktreeResult(key: key, device: "dev", nested: idx) { try? d.write(to: f) }
                     ok = await offPool { Worktree.fetch(top: dir, bundle: f, branch: branch) } == nil && ok
+                    if !conv.isEmpty, dir == top.path {
+                        _ = Worktree.remember(top: dir, conv: conv, branch: branch, sent: Worktree.agentBase(top: dir, branch: branch, sent: sent), chain: chain)
+                    }
                     try? FileManager.default.removeItem(at: f)
                 }
                 r = DAVResponse(ok ? 200 : 500)
@@ -1818,4 +1828,53 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
         }
     }
     #expect(why == "The agent's clone was changed (a .git appeared at app/.git): start a new conversation")
+}
+
+/// #66: --continue v načinu worktree: drugi zagon (nova seja, isti pogovor) začne na veji prvega; nadomestne poti
+/// (spremenjena mapa, premaknjen HEAD, izbrisana ali že združena veja, ugnezdeni) začnejo iz mape.
+@Test func worktreeContinueConversation() async throws {
+    let (root, client, tree) = try fixture()
+    defer { cleanup(root) }
+    let hub = ShareHub(), head = g(client, "rev-parse", "HEAD")
+    func turn(_ session: String, cont: Bool, _ work: @escaping (URL) throws -> Void) async throws -> String {
+        let key = try #require(await hub.register(session: session, cwd: client.path, key: nil, device: "dev", tree: tree))
+        let loop = fakeClient(hub, key: key, top: client, conv: Worktree.conversation(top: client.path, session: session, cont: cont))
+        defer { loop.cancel() }
+        let id = try await agentRun(hub, session, work: work)
+        await hub.finish(run: id)
+        return "minigw/claude-\(Sync.folderID(session).prefix(8))-0"
+    }
+    let b1 = try await turn("s1", cont: false) { try file($0, "agent.txt", "agent\n") }
+    let b2 = try await turn("s2", cont: true) { dir in
+        #expect(FileManager.default.fileExists(atPath: dir.appendingPathComponent("agent.txt").path) && (try? String(contentsOf: dir.appendingPathComponent("agent.txt"), encoding: .utf8)) == "agent\n")
+        try file(dir, "b.txt", "b\n")
+    }
+    #expect(b1 != b2 && g(client, "show", "\(b2):agent.txt") == "agent" && g(client, "show", "\(b2):b.txt") == "b")
+    let (st, _) = Worktree.convLoad(client.path)
+    #expect(st.last == "s1" && st.convs["s1"]?.branch == b2 && st.convs["s1"]?.head == head)
+    // Začetek obsega je stanje uporabnika ob prvem zagonu (posnetek z neshranjenimi spremembami), prednik obeh vej.
+    let base = try #require(st.convs["s1"]?.base)
+    #expect(g(client, "show", "\(base):new.txt") == "untracked" && g(client, "rev-parse", "\(b1)~1") == base)
+    #expect(g(client, "rev-parse", "HEAD") == head)
+
+    func snap() throws -> String { try #require(Worktree.snapshot(top: client.path)) }
+    #expect(try Worktree.continueFrom(top: client.path, conv: "s1", snap: snap(), nested: false).tip == g(client, "rev-parse", b2))
+    #expect(try Worktree.continueFrom(top: client.path, conv: "s1", snap: snap(), nested: true).why == "nested git repositories always start from your folder")
+    try file(client, "mine.txt", "m\n")
+    #expect(try Worktree.continueFrom(top: client.path, conv: "s1", snap: snap(), nested: false).why == "your folder changed since the last turn")
+    let b3 = try await turn("s3", cont: true) { dir in
+        #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("agent.txt").path))
+        try file(dir, "c.txt", "c\n")
+    }
+    g(client, "add", "-A"); g(client, "commit", "-qm", "mine")
+    #expect(try Worktree.continueFrom(top: client.path, conv: "s1", snap: snap(), nested: false).why == "your folder changed since the last turn")
+    g(client, "branch", "-D", b3)
+    #expect(try Worktree.continueFrom(top: client.path, conv: "s1", snap: snap(), nested: false).why == "the branch no longer exists")
+    let b4 = try await turn("s4", cont: true) { try file($0, "d.txt", "d\n") }
+    g(client, "merge", "-q", "--ff-only", b4)
+    let merged = try Worktree.continueFrom(top: client.path, conv: "s1", snap: snap(), nested: false)
+    #expect(merged.tip == nil && merged.why == nil)
+    #expect(Worktree.conversation(top: client.path, session: "s5", cont: false) == "s5"
+        && Worktree.conversation(top: client.path, session: "s1", cont: false) == "s1"
+        && Worktree.conversation(top: client.path, session: "s6", cont: true) == "s1")
 }

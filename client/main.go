@@ -611,7 +611,7 @@ func main() {
 	}
 
 	// Seja: router po njej loči seje claude -p in niti Siri. Obstoječa ob --resume <id>, sicer nova.
-	sid, own := "", false
+	sid, own, cont := "", false, false
 	for i, a := range args {
 		switch a {
 		case "-r", "--resume": // brez ID-ja = izbirnik sej v claude; nikoli skupaj z --session-id
@@ -625,7 +625,7 @@ func main() {
 			}
 			own = true
 		case "-c", "--continue":
-			own = true
+			own, cont = true, true
 		default:
 			if strings.HasPrefix(a, "--resume=") {
 				own, sid = true, strings.TrimPrefix(a, "--resume=")
@@ -680,6 +680,13 @@ func main() {
 			"(the agent would change your files without a branch to review); put MINIGW_WORK=direct in front of the command instead")
 	}
 	share := &shareClient{c: c, session: sid, root: cwd, readOnly: readOnly, synced: map[string]syncEntry{}, reported: map[string]bool{}}
+	// #66: ključ pogovora enkrat na zagon (tudi za druge prehode)
+	var convOnce sync.Once
+	convKey := ""
+	conv := func(top string) string {
+		convOnce.Do(func() { convKey = wtConversation(top, sid, cont) })
+		return convKey
+	}
 	if wantShare && sid != "" {
 		if work == "worktree" && top == "" {
 			fmt.Fprintln(os.Stderr, "minigw: "+cwd+" is not in a git repository; worktree mode is not possible")
@@ -691,6 +698,7 @@ func main() {
 		share, ok = registerShare(c, sid, cwd, readOnly, top, tries, false, implicit)
 		capped := share.capped // pred start: ponovna registracija ga piše pod share.mu
 		if ok && share.worktree {
+			share.conv = conv(share.top)
 			share.start(4)
 			fmt.Fprintf(os.Stderr, "minigw: agent models work in a clone of this git repository on %s; their work comes back as branch minigw/… (minigw prints the range to review; your uncommitted and untracked, not ignored files are sent too; worktree)\n", routerHost)
 		} else if ok && share.native && share.branches {
@@ -747,6 +755,9 @@ func main() {
 					if !ok {
 						fmt.Fprintln(os.Stderr, "minigw: gateway "+p.name+" did not accept the folder: "+oneLine(sc.refusal))
 						return false
+					}
+					if sc.worktree {
+						sc.conv = conv(sc.top)
 					}
 					sc.start(4)
 					mu.Lock()
