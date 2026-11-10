@@ -123,10 +123,10 @@ public enum Profiles {
 
     /// Prva izmerjena različica Claude Code, ki s CLAUDE_CODE_DISABLE_FILE_MENTIONS=1 ne prebere nobene oblike »@pot«
     /// (0.5.19); mentionSettings ga postavi tudi mimo env v uporabnikovem settings.json (I17; kot Go).
-    public static let minMentionGuard = "2.1.318"
+    public static let minMentionGuard = "2.1.299"
     public static let mentionSettings = #"{"env":{"CLAUDE_CODE_DISABLE_FILE_MENTIONS":"1"}}"#
 
-    /// Izpis »claude --version« (»2.1.318 (Claude Code)«) je vsaj minMentionGuard; neznan = ne (kot Go mentionGuardVersion).
+    /// Izpis »claude --version« (»2.1.299 (Claude Code)«) je vsaj minMentionGuard; neznan = ne (kot Go mentionGuardVersion).
     public static func mentionGuardVersion(_ out: String) -> Bool {
         let v = out.split(whereSeparator: \.isWhitespace).first.map(String.init) ?? ""
         return !v.isEmpty && v.allSatisfy { "0123456789.".contains($0) } && v.compare(minMentionGuard, options: .numeric) != .orderedAscending

@@ -1830,12 +1830,12 @@ final class FakeMinigw: @unchecked Sendable {
     let env = ["CLAUDECODE": "1"], m = ["-p", "--model", "m", "--", "review"]
     let diff = "diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+@~/.ssh/id_ed25519\n"
     #expect(Profiles.unsafePrompt(m, stdin: diff, env: env, stdinMentionsOff: true) == nil)
-    #expect(Profiles.unsafePrompt(m, stdin: diff, env: env).map(Profiles.promptRefusal) == "@ before a file name on stdin (claude would attach that file) is not accepted when minigw runs inside Claude Code; remove the @ before file names on stdin or update Claude Code to 2.1.318 or newer")
+    #expect(Profiles.unsafePrompt(m, stdin: diff, env: env).map(Profiles.promptRefusal) == "@ before a file name on stdin (claude would attach that file) is not accepted when minigw runs inside Claude Code; remove the @ before file names on stdin or update Claude Code to 2.1.299 or newer")
     #expect(Profiles.unsafePrompt(["-p", "--", "@x"], stdin: "", env: env, stdinMentionsOff: true).map(Profiles.promptRefusal) == "@ before a file name (claude would attach that file) is not accepted when minigw runs inside Claude Code: paste the text itself into the prompt")
     #expect(Profiles.unsafePrompt(["-p", "--", "@x review"], stdin: "", env: env, stdinMentionsOff: true) != nil)
     #expect(Profiles.unsafePrompt(["-p", "--", "ok"], stdin: " /config x", env: env, stdinMentionsOff: true) != nil)
-    for (v, want) in ["2.1.318 (Claude Code)": true, "2.1.319": true, "2.2.0 (Claude Code)": true, "10.0.0": true,
-                      "2.1.317 (Claude Code)": false, "2.0.999": false, "garbage": false, "": false, "2.1.318-beta": false] {
+    for (v, want) in ["2.1.299 (Claude Code)": true, "2.1.319": true, "2.2.0 (Claude Code)": true, "10.0.0": true,
+                      "2.1.296 (Claude Code)": false, "2.0.999": false, "garbage": false, "": false, "2.1.299-beta": false] {
         #expect(Profiles.mentionGuardVersion(v) == want, "\(v)")
     }
 }
@@ -1843,13 +1843,13 @@ final class FakeMinigw: @unchecked Sendable {
 /// I1: na poti -v/-h claude nima --settings, zato »@« na stdin nikoli; različico preveri le ob »@«.
 @Test func stdinMentionsOffGate() {
     let diff = "@@ -1 +1 @@\n"
-    #expect(Profiles.stdinMentionsOff(diff, info: false, guard: true) { "2.1.318 (Claude Code)" })
-    #expect(!Profiles.stdinMentionsOff(diff, info: true, guard: true) { "2.1.318" })
-    #expect(!Profiles.stdinMentionsOff(diff, info: false, guard: false) { "2.1.318" })
-    #expect(!Profiles.stdinMentionsOff(diff, info: false, guard: true) { "2.1.317" })
+    #expect(Profiles.stdinMentionsOff(diff, info: false, guard: true) { "2.1.299 (Claude Code)" })
+    #expect(!Profiles.stdinMentionsOff(diff, info: true, guard: true) { "2.1.299" })
+    #expect(!Profiles.stdinMentionsOff(diff, info: false, guard: false) { "2.1.299" })
+    #expect(!Profiles.stdinMentionsOff(diff, info: false, guard: true) { "2.1.296" })
     #expect(!Profiles.stdinMentionsOff(diff, info: false, guard: true) { "" })
     var asked = 0
-    #expect(!Profiles.stdinMentionsOff("no mention", info: false, guard: true) { asked += 1; return "2.1.318" })
+    #expect(!Profiles.stdinMentionsOff("no mention", info: false, guard: true) { asked += 1; return "2.1.299" })
     #expect(asked == 0)
 }
 
