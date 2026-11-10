@@ -81,7 +81,7 @@ func TestWatchGitMovesSwapAndRevert(t *testing.T) {
 	g := filepath.Join(wt, ".git")
 	os.MkdirAll(g, 0o700)
 	moved := make(chan struct{}, 1)
-	stop, ok := watchGitMoves(g, func() { moved <- struct{}{} })
+	stop, ok := watchGitMoves([]string{g}, func() { moved <- struct{}{} })
 	if !ok {
 		t.Fatal("inotify watch failed")
 	}
@@ -104,7 +104,7 @@ func TestWatchGitMovesSwapAndRevert(t *testing.T) {
 	}
 	// stop: zaprtje ni premik (vsaka druga napaka branja bi bila)
 	stopped := make(chan struct{}, 1)
-	stop2, ok := watchGitMoves(g, func() { stopped <- struct{}{} })
+	stop2, ok := watchGitMoves([]string{g}, func() { stopped <- struct{}{} })
 	if !ok {
 		t.Fatal("second watch failed")
 	}
@@ -151,5 +151,31 @@ func TestBwrapPinsNestedPath(t *testing.T) {
 	out, err := exec.Command(name, args...).CombinedOutput()
 	if s := string(out); strings.Contains(s, "moved-") || !strings.Contains(s, "write-ok") {
 		t.Fatalf("nested path not pinned: %q (%v)", s, err)
+	}
+}
+
+// #40: ena instanca inotify za vse poti (pinPaths): premik katerekoli (tudi mape do ugnezdenega klona) se vidi.
+func TestWatchGitMovesManyPaths(t *testing.T) {
+	wt := t.TempDir()
+	dirs := []string{filepath.Join(wt, ".git"), filepath.Join(wt, "a"), filepath.Join(wt, "a", "lib", ".git")}
+	for _, d := range dirs {
+		os.MkdirAll(d, 0o700)
+	}
+	moved := make(chan struct{}, 1)
+	stop, ok := watchGitMoves(dirs, func() { moved <- struct{}{} })
+	if !ok {
+		t.Fatal("inotify watch failed")
+	}
+	defer stop()
+	if os.Rename(filepath.Join(wt, "a"), filepath.Join(wt, "b")) != nil {
+		t.Fatal("rename")
+	}
+	select {
+	case <-moved:
+	case <-time.After(2 * time.Second):
+		t.Fatal("move of a/ not seen")
+	}
+	if _, ok := watchGitMoves([]string{filepath.Join(wt, "missing")}, func() {}); ok {
+		t.Fatal("watch of a missing path accepted")
 	}
 }

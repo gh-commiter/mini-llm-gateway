@@ -1595,7 +1595,7 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
     #expect(env["GIT_CONFIG_GLOBAL"] == "/dev/null" && env["GIT_CONFIG_NOSYSTEM"] == "1" && env["GIT_CONFIG_COUNT"] == "8")
     let gx = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("gx-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: gx) }
-    let c = try #require(Worktree.claudeEnv(root: URL(fileURLWithPath: "/w"), maven: URL(fileURLWithPath: "/m"), gitexec: gx, agent: "claude", path: ":/usr/bin::.:/bin:"))
+    let c = try #require(Worktree.claudeEnv(root: URL(fileURLWithPath: "/w"), maven: URL(fileURLWithPath: "/m"), gitexec: gx, agent: "claude", path: ":/usr/bin::.:bin:./x:/bin:"))
     #expect(c["PATH"] == gx.path + "/bin:/usr/bin:/bin" && c["GIT_CONFIG_VALUE_6"] == "Claude (Mini Gateway)")
     #expect(FileManager.default.isExecutableFile(atPath: gx.path + "/bin/git"))
 }
@@ -1660,4 +1660,29 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
     #expect(fm.fileExists(atPath: wt.path + "/a.txt"), "codex sandbox did not run")
     for f in ["sub/.git/config", ".git/config"] { #expect(try String(contentsOf: wt.appendingPathComponent(f), encoding: .utf8).isEmpty, "\(f)") }
     #expect(!fm.fileExists(atPath: sub.path + "/.git/info/attributes"))
+}
+
+/// #40: klon se znova uporabi le, če je vsak ugnezdeni klon še na svoji poti (pot, zamenjana s povezavo na isti .git,
+/// prestane gitIntact): sicer nov klon.
+@Test func worktreeReuseNeedsNestedIntact() async throws {
+    let (root, client, tree) = try fixture()
+    defer { cleanup(root) }
+    let lib = client.appendingPathComponent("lib")
+    try file(lib, "f.txt", "lib\n"); g(lib, "init", "-q", "-b", "main"); g(lib, "add", "-A"); g(lib, "commit", "-qm", "lib")
+    let hub = ShareHub(), session = UUID().uuidString
+    let key = try #require(await hub.register(session: session, cwd: client.path, key: nil, device: "dev", tree: tree))
+    let loop = fakeClient(hub, key: key, top: client)
+    defer { loop.cancel() }
+    let fm = FileManager.default
+    var first: URL?
+    await hub.finish(run: try await agentRun(hub, session) { first = $0 })
+    let wt = try #require(first)
+    let away = root.appendingPathComponent("lib-away")  // zunaj klona: nestedProblem je ne vidi kot tuj repozitorij
+    try fm.moveItem(at: wt.appendingPathComponent("lib"), to: away)
+    try fm.createSymbolicLink(atPath: wt.appendingPathComponent("lib").path, withDestinationPath: away.path)
+    var linked = true
+    await hub.finish(run: try await agentRun(hub, session) { dir in
+        linked = (try? fm.destinationOfSymbolicLink(atPath: dir.appendingPathComponent("lib").path)) != nil
+    })
+    #expect(!linked, "clone with a moved nested clone was reused")
 }

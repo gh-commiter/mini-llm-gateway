@@ -101,6 +101,16 @@ func selfCommondir(p string) bool {
 	return err == nil && string(b) == ".\n"
 }
 
+// nestedIntact (#40): vsak ugnezdeni klon je še na svoji poti (nestedIntact); pogoj za ponovno uporabo klona.
+func (sl *wtSlot) nestedIntact() bool {
+	for _, n := range sl.nested {
+		if !nestedIntact(sl.wt, n) {
+			return false
+		}
+	}
+	return true
+}
+
 // nestedIntact (H1): pot ugnezdenega klona so same prave mape (ne povezava ven) in njegov .git je še ista mapa.
 func nestedIntact(wt string, n *wtNested) bool {
 	d := wt
@@ -725,6 +735,14 @@ func pinPaths(wt string, gits []string) []string {
 	return slices.Compact(out)
 }
 
+// maxPins: največ točk priklopa pinPaths (bwrap argumenti, ure inotify); več = zahteva zavrnjena (400).
+const maxPins = 512
+
+const tooManyPins = "nested clones too deep: use sync"
+
+// tooDeep: pinPaths klona ima več kot maxPins poti (zavrni pred pinWrap in agentWrap).
+func tooDeep(wt string, gits []string) bool { return len(pinPaths(wt, gits)) > maxPins }
+
 // worktreeClaudeEnv: okolje procesa Claude CLI v klonu: worktreeHarnessEnv, drugje kot na Windows še ovoj gitExecWrap
 // v mapi gw (N9; na Windows teče Claude v worktree le z »Allow commands without a sandbox«). gits: .git vseh klonov
 // (vrhnji prvi, hub.worktreeGits). nil = ovoja ni. agent: vrsta agenta (avtor commitov); #40: PATH najprej gw/bin
@@ -740,7 +758,7 @@ func worktreeClaudeEnv(wt, maven, tmp, gw string, gits []string, agent string) [
 	}
 	path := []string{filepath.Join(gw, "bin")}
 	for _, p := range filepath.SplitList(os.Getenv("PATH")) {
-		if p != "" && p != "." { // L2: ne trenutna mapa (klon agenta)
+		if filepath.IsAbs(p) { // L2: le absolutne (ne trenutna mapa, ne relativna v klonu agenta)
 			path = append(path, p)
 		}
 	}
@@ -881,7 +899,7 @@ func (h *shareHub) worktreeMount(s *serveShare, agent string) (dir, refused stri
 	if ro {
 		return "", ""
 	}
-	if slot != nil && slot.gitIntact() && nestedProblem(slot.wt, t.repo, slot.nested) == "" { // sicer nov klon (makeClone pobriše starega)
+	if slot != nil && slot.gitIntact() && slot.nestedIntact() && nestedProblem(slot.wt, t.repo, slot.nested) == "" { // sicer nov klon (makeClone pobriše starega)
 		return worktreeDir(slot.wt, t.sub), ""
 	}
 	if slot != nil { // L6 (L1): nedostavljeno delo starega klona najprej v kept, nato nov klon na isti poti
@@ -1236,7 +1254,7 @@ func (h *shareHub) worktreeIntact(wt string) bool {
 		}
 		for _, sl := range s.tree.slots {
 			if sl.wt == wt {
-				return sl.gitIntact()
+				return sl.gitIntact() && sl.nestedIntact()
 			}
 		}
 	}

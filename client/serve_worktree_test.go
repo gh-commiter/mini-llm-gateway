@@ -1779,7 +1779,7 @@ func TestWorktreeHarnessEnvGitConfig(t *testing.T) {
 		return
 	}
 	gw := filepath.Join(t.TempDir(), "gitexec")
-	t.Setenv("PATH", ":/usr/bin::.:/bin:")
+	t.Setenv("PATH", ":/usr/bin::.:bin:./x:/bin:")
 	path := ""
 	for _, kv := range worktreeClaudeEnv("/w", "/m", "/t", gw, []string{"/w/.git"}, "claude") {
 		if p, ok := strings.CutPrefix(kv, "PATH="); ok {
@@ -1845,5 +1845,47 @@ func TestPinPaths(t *testing.T) {
 		filepath.Join(wt, "a", "x"), filepath.Join(wt, "a", "x", ".git")}
 	if !slices.Equal(got, want) {
 		t.Fatalf("pinPaths: %v", got)
+	}
+}
+
+// #40: več kot maxPins točk priklopa (globoki ugnezdeni kloni) = zavrnitev.
+func TestTooDeep(t *testing.T) {
+	wt := filepath.Join("/w", "c")
+	gits, d := []string{filepath.Join(wt, ".git")}, wt
+	for i := 0; i < 255; i++ { // 1 + 255 × (mapa + .git) = 511
+		d = filepath.Join(d, "a")
+		gits = append(gits, filepath.Join(d, ".git"))
+	}
+	if tooDeep(wt, gits) {
+		t.Fatal("511 pins refused")
+	}
+	if !tooDeep(wt, append(gits, filepath.Join(d, "b", "x", ".git"))) {
+		t.Fatal("514 pins accepted")
+	}
+}
+
+// #40: ugnezdeni klon, katerega pot je zamenjana s povezavo na isti .git, prestane gitIntact, nestedIntact pa ne:
+// klon se ne uporabi znova.
+func TestSlotNestedIntact(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks")
+	}
+	wt := t.TempDir()
+	os.MkdirAll(filepath.Join(wt, ".git"), 0o700)
+	os.MkdirAll(filepath.Join(wt, "a", "lib", ".git"), 0o700)
+	writeT(t, filepath.Join(wt, ".git", "config"), "c")
+	writeT(t, filepath.Join(wt, "a", "lib", ".git", "config"), "n")
+	n := &wtNested{path: "a/lib", cfg: []byte("n")}
+	n.git, _ = os.Lstat(filepath.Join(wt, "a", "lib", ".git"))
+	sl := &wtSlot{wt: wt, cfg: []byte("c"), nested: []*wtNested{n}}
+	sl.git, _ = os.Lstat(filepath.Join(wt, ".git"))
+	if !sl.gitIntact() || !sl.nestedIntact() {
+		t.Fatal("fresh slot refused")
+	}
+	if os.Rename(filepath.Join(wt, "a"), filepath.Join(wt, "b")) != nil || os.Symlink("b", filepath.Join(wt, "a")) != nil {
+		t.Fatal("swap")
+	}
+	if !sl.gitIntact() || sl.nestedIntact() {
+		t.Fatalf("linked path: gitIntact %v, nestedIntact %v", sl.gitIntact(), sl.nestedIntact())
 	}
 }
