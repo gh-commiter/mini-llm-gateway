@@ -217,8 +217,13 @@ extension Router {
     /// minigw te aplikacije (Contents/Helpers): agent z njim vpraša druge modele.
     static var minigwExe: String { Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/minigw").path }
 
+    /// #69 (kot Go noAgentCLIs, noAskNote): agent ne zažene programa drugega agenta sam; brez stikala jih ni, odgovori sam.
+    static let noAgentCLIs = "never run their command-line programs (codex, claude, grok, copilot) yourself."
+    static let noAskNote = "Other models and agents of this gateway (Codex, Claude, Grok, Copilot) are not available to you here: " + noAgentCLIs
+        + " If you are asked to use one, do the task yourself and say that other agents are not available here."
+
     /// Navodilo agentu `kind`: vprašal ga je drug agent (mapa klicatelja) in/ali sme vprašati druge modele. Kot v Go.
-    func agentNote(_ kind: String) -> String? {
+    func agentNote(_ kind: String) -> String {
         var notes: [String] = []
         if let p = AgentRun.current {
             let dir = p.dir?.path ?? p.cwd
@@ -227,9 +232,12 @@ extension Router {
         }
         if askOthers(kind) {
             let exe = Self.minigwExe
-            notes.append("You may ask another model of this gateway: `\"\(exe)\" -p --model <id> \"…\"`; `\"\(exe)\" models` lists them.")
+            notes.append("You may ask another model of this gateway: `\"\(exe)\" -p --model <id> \"…\"`; `\"\(exe)\" models` lists them."
+                + " Other agents of this gateway (Codex, Claude, Grok, Copilot) are reached only this way: " + Self.noAgentCLIs)
+        } else {
+            notes.append(Self.noAskNote)
         }
-        return notes.isEmpty ? nil : notes.joined(separator: "\n\n")
+        return notes.joined(separator: "\n\n")
     }
 
     /// Vrata izvajanja, če ima agent `kind` stikalo »May ask other models«; okolje gre agentu, `stop()` ob koncu.

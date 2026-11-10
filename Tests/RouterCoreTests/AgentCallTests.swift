@@ -159,8 +159,13 @@ private func get(_ run: AgentRun, _ path: String, token: String?) async -> Int {
     var c = RouterConfig()
     c.claudeCLI.askOthers = true
     let router = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]))
-    #expect(!router.askOthers("claude") && router.agentNote("claude") == nil)
+    #expect(!router.askOthers("claude") && router.agentNote("claude") == Router.noAskNote)
+    // #69: brez stikala agent ne išče programov drugih agentov, odgovori sam
+    #expect(Router.noAskNote.contains("not available to you here: never run their command-line programs (codex, claude, grok, copilot) yourself. If you are asked to use one, do the task yourself"))
     #expect(await router.startAgentRun(request("POST", "/v1/messages"), kind: "claude", dir: nil) == nil)
+    c.claudeCLI.allowLocalTools = true
+    let on = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:])).agentNote("claude")
+    #expect(on.contains("-p --model <id>") && on.contains("reached only this way: never run their command-line programs (codex, claude, grok, copilot)"))
 }
 
 @Test func codexUsageLimitIs429() {

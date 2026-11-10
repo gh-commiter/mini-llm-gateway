@@ -240,8 +240,15 @@ func askNote(exe string, onPath bool) string {
 	if !onPath && strings.HasSuffix(strings.ToLower(exe), ".exe") { // PowerShell zažene pot v narekovajih le z &
 		n += " In PowerShell put `& ` before the quoted path."
 	}
-	return n
+	return n + " Other agents of this gateway (Codex, Claude, Grok, Copilot) are reached only this way: " + noAgentCLIs
 }
+
+// noAgentCLIs, noAskNote (#69): agent ne zažene programa drugega agenta sam (»use codex to …« je zagnal codex); brez stikala
+// »May ask other models« jih ni, zato odgovori sam.
+const noAgentCLIs = "never run their command-line programs (codex, claude, grok, copilot) yourself."
+
+const noAskNote = "Other models and agents of this gateway (Codex, Claude, Grok, Copilot) are not available to you here: " + noAgentCLIs +
+	" If you are asked to use one, do the task yourself and say that other agents are not available here."
 
 // askRules: pravila, ki agentu Claude na Windows dovolijo le ukaz iz askNote (le z askOnPath); Claude Code na Windows
 // ukaze praviloma poganja z orodjem PowerShell, ki ima svoja pravila (Bash(...) zanj ne velja).
