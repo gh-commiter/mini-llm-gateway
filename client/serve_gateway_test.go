@@ -544,3 +544,37 @@ func TestServeGatewayReadyAfterKeyAdded(t *testing.T) {
 		}
 	}
 }
+
+func TestServeGatewayForwardsOnlyBetaQuery(t *testing.T) {
+	keys := fakeKeys(t)
+	keys["gw"] = gwKey
+	queries := make(chan string, 4)
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/messages" {
+			io.WriteString(w, `{"data":[{"id":"m1"}]}`)
+			return
+		}
+		queries <- r.URL.RawQuery
+		io.WriteString(w, `{}`) // brez Content-Type: gateway ga postavi na application/json
+	}))
+	defer up.Close()
+	s, _ := testServer(t, func(c *serveConfig) {
+		c.Gateways = []serveGateway{{Name: "gw", BaseURL: up.URL + "/v1/", Insecure: true, Models: []string{"m1"}}}
+	})
+	conn := startLoopback(t, s)
+	for query, want := range map[string]string{"?beta=true&evil=1": "beta=true", "?evil=1": "", "": "", "?beta=false": ""} {
+		r, _ := http.NewRequest("POST", conn.URL+"/v1/messages"+query, strings.NewReader(`{"model":"m1","messages":[]}`))
+		r.Header.Set("authorization", "Bearer tok")
+		resp, err := http.DefaultClient.Do(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if got := <-queries; got != want {
+			t.Errorf("query %q: upstream got %q, want %q", query, got, want)
+		}
+		if resp.Header.Get("X-Content-Type-Options") != "nosniff" {
+			t.Errorf("nosniff missing")
+		}
+	}
+}

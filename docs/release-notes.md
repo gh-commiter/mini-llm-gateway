@@ -1,5 +1,9 @@
 # Release notes
 
+## Unreleased
+
+- Security: the gateway passthrough forwards only `?beta=true` to the provider, not the device's other query parameters (both gateways); gateway responses carry `X-Content-Type-Options: nosniff`; an upstream response without Content-Type defaults to `application/json`; the sync path check is now explicit.
+
 ## 0.5.20
 
 - Fixed: on Linux `minigw serve`, Bash never worked for Claude CLI in worktree mode (Claude Code's sandbox could not create its sockets under the long temporary folder in the clone); each run now gets a short private temporary folder (also on macOS and Windows `minigw serve`).
