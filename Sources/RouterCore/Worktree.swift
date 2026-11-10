@@ -951,6 +951,16 @@ public enum Worktree {
                     .appendingPathComponent(String(name.dropLast(4))))
             }
         }
+        let wts = scratch.appendingPathComponent("worktrees")  // L6: ohranjeni kloni (<klon>-kept-<čas>)
+        for owner in (try? fm.contentsOfDirectory(atPath: wts.path)) ?? [] {
+            for id in (try? fm.contentsOfDirectory(atPath: wts.appendingPathComponent(owner).path)) ?? [] {
+                let dir = wts.appendingPathComponent(owner).appendingPathComponent(id)
+                for k in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] where k.contains("-kept-") {
+                    let u = dir.appendingPathComponent(k)
+                    if ((try? fm.attributesOfItem(atPath: u.path))?[.modificationDate] as? Date ?? .distantFuture) < cut { try? fm.removeItem(at: u) }
+                }
+            }
+        }
     }
 }
 
@@ -1171,32 +1181,49 @@ extension ShareHub {
             await note(s, "\(tree.local!.path): the repository's .git/objects was replaced; \(slot.branch) was not delivered")
             unlock(tree.repo); return
         }
+        // L6: kar ni prišlo do odjemalca, ostane v klonu; ob koncu seje gre klon v kept (prune: 30 dni).
+        let fmt = DateFormatter()
+        fmt.locale = Locale(identifier: "en_US_POSIX"); fmt.dateFormat = "yyyyMMdd-HHmmss"
+        let kept = URL(fileURLWithPath: slot.wt.path + "-kept-" + fmt.string(from: Date()), isDirectory: true)
+        let keep = "; the agent's clone with this work stays on the gateway for 30 days (\(kept.path) after this session)"
         if let why = await offPool({ Worktree.nestedProblem(slot.wt, repo: repo, nested: slot.nested) }) {  // N9; sporočilo kot pri Go (WORKTREE-PULL)
-            await note(s, "worktree: cannot get \(slot.branch) from the gateway: " + why)
+            slot.kept = kept
+            await note(s, "worktree: cannot get \(slot.branch) from the gateway: " + why + keep)
             unlock(tree.repo); return
         }
         let read = tree.local.map { [$0.appendingPathComponent(".git/objects")] } ?? []
-        let (nested, top, why) = await offPool { () -> ([(path: String, tip: String, out: URL)], String?, String?) in
+        // L6: zavrnjen ugnezdeni (razlog) ne ustavi vrhnjega in ostalih; njegova pot je pri staršu izpuščena, gitlink ostane.
+        let (nested, top, skipped) = await offPool { () -> ([(path: String, tip: String, out: URL)], String?, [String]) in
             Worktree.killGroups(run: id)  // N1: skupine procesov agentov tega izvajanja
             Worktree.killProcesses(in: slot.wt)  // ves klon, preden ugnezdeni (finalize ustavi le procese v svoji mapi)
-            var links: [String: [String: String]] = ["": [:]], changed: [(path: String, tip: String, out: URL)] = []
+            var links: [String: [String: String]] = ["": [:]], changed: [(path: String, tip: String, out: URL)] = [], skipped: [String] = []
             for n in slot.nested { links[n.path] = [:] }
             for (i, n) in slot.nested.enumerated().reversed() {
                 let o = URL(fileURLWithPath: out.path + ".\(i + 1)")
                 let nread = tree.local.flatMap { Worktree.localGitDir(top: $0, n.path) }.map { [$0.appendingPathComponent("objects")] } ?? []
-                let (t, why) = Worktree.finalizeNested(slot, n, agent: agent, out: o, links: links[n.path] ?? [:], read: nread)
-                guard let tip = t else { return ([], nil, why) }
+                var (t, why) = Worktree.finalizeNested(slot, n, agent: agent, out: o, links: links[n.path] ?? [:], read: nread)
+                if let tip = t, tip != n.base, ((try? FileManager.default.attributesOfItem(atPath: o.path))?[.size] as? NSNumber)?.int64Value ?? 0 > Sync.maxFile {
+                    (t, why) = (nil, "the agent's branch in the nested repository \(n.path) is larger than 64 MB; it stays on the gateway's mirror (\(slot.branch))")
+                }
                 let parent = slot.nested.map(\.path).filter { n.path.hasPrefix($0 + "/") }.max { $0.count < $1.count } ?? ""
-                links[parent, default: [:]][parent.isEmpty ? n.path : String(n.path.dropFirst(parent.count + 1))] = tip == n.base ? "" : tip
-                if tip != n.base { changed.append((n.path, tip, o)) }
+                let rel = parent.isEmpty ? n.path : String(n.path.dropFirst(parent.count + 1))
+                links[parent, default: [:]][rel] = ""
+                guard let tip = t else { skipped.append(why); continue }
+                if tip != n.base { links[parent, default: [:]][rel] = tip; changed.append((n.path, tip, o)) }
             }
             return (changed, Worktree.finalize(repo: repo, wt: slot.wt, branch: slot.branch, base: slot.base, agent: agent, out: out, read: read,
-                                               links: links[""] ?? [:]), nil)
+                                               links: links[""] ?? [:]), skipped)
         }
         defer { for i in 0...slot.nested.count { try? FileManager.default.removeItem(at: URL(fileURLWithPath: out.path + (i == 0 ? "" : ".\(i)"))) } }
+        slot.kept = top == nil || !skipped.isEmpty ? kept : nil
+        for m in skipped {
+            Router.log.error("worktree \(slot.branch, privacy: .public): \(m, privacy: .public)")
+            await note(s, "worktree: " + m + keep)
+        }
         guard let tip = top else {
-            Router.log.error("worktree \(slot.branch, privacy: .public): \(why ?? "the gateway could not save the agent's work as a branch", privacy: .public)")
-            if let why { await note(s, "worktree: cannot get \(slot.branch) from the gateway: " + why) }
+            let why = "the gateway could not save the agent's work as a branch (see the gateway log)"
+            Router.log.error("worktree \(slot.branch, privacy: .public): \(why, privacy: .public)")
+            await note(s, "worktree: cannot get \(slot.branch) from the gateway: " + why + keep)
             unlock(tree.repo); return
         }
         if let local = tree.local {
@@ -1265,8 +1292,7 @@ extension ShareHub {
         slot.busy = false
         if bySessionTree(String(k.split(separator: "|")[0])) == nil {
             slots[k] = nil
-            let wt = slot.wt
-            Task.detached { Self.removeClone(wt) }
+            Self.dropClone(slot)
         }
     }
 
@@ -1284,8 +1310,17 @@ extension ShareHub {
     func dropSlots(session: String) {
         for (k, slot) in slots where k.hasPrefix(session + "|") && !slot.busy {
             slots[k] = nil
-            let wt = slot.wt
-            Task.detached { Self.removeClone(wt) }
+            Self.dropClone(slot)
         }
+    }
+
+    /// Klon gre; z nedostavljenim delom (L6) ostane kot kept (prune ga pobriše po 30 dneh; kot Go dropClones).
+    static func dropClone(_ slot: Slot) {
+        if let kept = slot.kept {
+            if rename(slot.wt.path, kept.path) == 0 { try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: kept.path) }
+            return
+        }
+        let wt = slot.wt
+        Task.detached { removeClone(wt) }
     }
 }

@@ -1,4 +1,5 @@
 import Foundation
+import os
 import Testing
 @testable import RouterCore
 
@@ -39,7 +40,7 @@ private func cleanup(_ root: URL) {
 }
 
 /// minigw za teste: obdela WORKTREE-PUSH in WORKTREE-PULL kot ShareClient (MiniGW/main.swift) prek ShareHub.
-private func fakeClient(_ hub: ShareHub, key: String, top: URL) -> Task<Void, Never> {
+private func fakeClient(_ hub: ShareHub, key: String, top: URL, notes: OSAllocatedUnfairLock<[String]>? = nil) -> Task<Void, Never> {
     Task {
         while !Task.isCancelled {
             guard case .some(.some(let job)) = await hub.poll(key: key, wait: 0.2) else { continue }
@@ -73,6 +74,10 @@ private func fakeClient(_ hub: ShareHub, key: String, top: URL) -> Task<Void, Ne
                     try? FileManager.default.removeItem(at: f)
                 }
                 r = DAVResponse(ok ? 200 : 500)
+            } else if job.method == "WORKTREE-NOTE", let notes {
+                let m = (try? JSONSerialization.jsonObject(with: job.body) as? [String: Any])?["message"] as? String ?? ""
+                notes.withLock { $0.append(m) }
+                r = DAVResponse(200)
             }
             _ = await hub.reply(key: key, DAVReply(id: job.id, response: r))
         }
@@ -1310,4 +1315,46 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     #expect((Worktree.snapshot(top: dir.path, noAttr: true) != nil) == Worktree.attrSource && !FileManager.default.fileExists(atPath: marker))
     _ = Worktree.snapshot(top: dir.path)
     #expect(FileManager.default.fileExists(atPath: marker), "the test does not reproduce the filter")
+}
+
+/// L6 (kot Go TestWorktreeNestedSkippedTopDelivered): zavrnjen ugnezdeni (premaknjen, večji od 64 MB) ne ustavi vrhnjega:
+/// vrhnja veja pride (brez vsebine zavrnjenega), ena vrstica pove, kateri in zakaj, klon z delom po koncu seje ostane.
+@Test(arguments: ["moved", "big"]) func worktreeNestedSkippedTopDelivered(_ kind: String) async throws {
+    let (root, client, tree) = try fixture()
+    defer { cleanup(root) }
+    for p in ["lib", "other"] {
+        let d = client.appendingPathComponent(p)
+        try file(d, "f.txt", "f\n"); g(d, "init", "-q", "-b", "main"); g(d, "add", "f.txt"); g(d, "commit", "-qm", "first")
+    }
+    let hub = ShareHub(), session = UUID().uuidString, notes = OSAllocatedUnfairLock<[String]>(initialState: [])
+    let key = try #require(await hub.register(session: session, cwd: client.path, key: nil, device: "dev", tree: tree))
+    let loop = fakeClient(hub, key: key, top: client, notes: notes)
+    defer { loop.cancel() }
+    let br = "minigw/claude-\(String(Sync.folderID(session).prefix(8)))-0"
+    var wt: URL?
+    let id = try await agentRun(hub, session) { dir in
+        wt = dir
+        for p in [".", "lib", "other"] { try file(dir.appendingPathComponent(p), "agent.txt", "agent\n") }
+        if kind == "moved" {
+            try FileManager.default.removeItem(at: dir.appendingPathComponent("lib/.git"))
+        } else {
+            try FileHandle(forReadingAtPath: "/dev/urandom")!.readData(ofLength: 70_000_000).write(to: dir.appendingPathComponent("lib/big.bin"))
+        }
+    }
+    await hub.finish(run: id)
+    let why = kind == "moved" ? "the nested repository lib was moved or replaced in the agent's clone"
+        : "the agent's branch in the nested repository lib is larger than 64 MB; it stays on the gateway's mirror (\(br))"
+    #expect(g(client, "show", br + ":agent.txt") == "agent")
+    let top = g(client, "ls-tree", "-r", "--name-only", br)
+    #expect(!top.contains("lib/") && !top.contains("other/"))
+    #expect(g(client.appendingPathComponent("lib"), "branch", "--list", br).isEmpty)
+    #expect(g(client.appendingPathComponent("other"), "show", br + ":agent.txt") == "agent")
+    let line = try #require(notes.withLock { $0 }.first { $0.hasPrefix("worktree: " + why + "; the agent's clone with this work stays on the gateway for 30 days (") })
+    let kept = try #require(line.range(of: #"\((\S+-kept-\d{8}-\d{6}) after this session\)$"#, options: .regularExpression)
+        .map { String(line[$0].dropFirst().dropLast(" after this session)".count)) })
+    await hub.unregister(key: key)  // konec seje: klon z nedostavljenim delom ostane
+    #expect((try? String(contentsOfFile: kept + "/lib/agent.txt", encoding: .utf8)) == "agent\n")
+    #expect(wt.map { !FileManager.default.fileExists(atPath: $0.path) } == true)
+    Worktree.prune(scratch: tree.repo.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent(), days: -31)
+    #expect(!FileManager.default.fileExists(atPath: kept))
 }

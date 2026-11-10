@@ -72,6 +72,7 @@ public actor ShareHub {
         let wt: URL, branch: String, base: String
         let nested: [Nested]  // ugnezdeni repozitoriji odjemalca: vsak svoj klon v wt, starš pred otrokom
         var busy = true
+        var kept: URL?  // L6: v klonu je delo, ki ni prišlo do odjemalca: ob koncu seje gre klon sem (30 dni)
         private let git: [UInt64]?, cfg: Data?  // H2: .git (naprava, inode) in .git/config ob kloniranju
         init(wt: URL, branch: String, base: String, nested: [Nested] = []) {
             self.wt = wt; self.branch = branch; self.base = base; self.nested = nested
