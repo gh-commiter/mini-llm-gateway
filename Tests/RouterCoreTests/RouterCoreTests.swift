@@ -1587,12 +1587,16 @@ final class FakeMinigw: @unchecked Sendable {
 /// Varnost L2: /health/ready našteje ponudnike le temu Macu ali klicatelju z žetonom (kot TestHealthReadyProvidersOnlyLocalOrAuthorized v Go).
 @Test func healthReadyProvidersOnlyLocalOrAuthorized() async {
     let router = Router(config: RouterConfig(), token: "tok", secrets: FakeSecrets(values: [:]))
-    for (peer, token, want) in [("192.0.2.9", "", false), ("192.0.2.9", "tok", true), ("127.0.0.1", "", true)] {
+    // #42: z loopbacka le s Host loopback (DNS rebinding pošlje svoj Host)
+    for (peer, token, host, want) in [("192.0.2.9", "", "127.0.0.1:8080", false), ("192.0.2.9", "tok", "gw.example", true),
+                                      ("127.0.0.1", "", "127.0.0.1:8080", true), ("127.0.0.1", "", "localhost", true),
+                                      ("::1", "", "[::1]:8080", true), ("127.0.0.1", "", "evil.example", false),
+                                      ("127.0.0.1", "", "127.evil.example:8080", false), ("127.0.0.1", "tok", "evil.example", true)] {
         var r = request("GET", "/health/ready", headers: token.isEmpty ? [:] : ["authorization": "Bearer " + token])
-        r.peer = peer
+        r.peer = peer; r.headers["host"] = host
         let w = FakeWriter()
         await router.handle(r, writer: w)
-        #expect(w.status == 200 && w.text.contains(#""providers""#) == want, "\(peer) \(token): \(w.text)")
+        #expect(w.status == 200 && w.text.contains(#""providers""#) == want, "\(peer) \(token) \(host): \(w.text)")
     }
 }
 

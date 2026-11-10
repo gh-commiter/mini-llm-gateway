@@ -143,7 +143,7 @@ public final class Router: Sendable {
         case ("GET", "/health/live"):
             return (await json(200, ["status": "ok"], rid: rid, writer: writer), nil, nil)
         case ("GET", "/health/ready"):
-            guard RouterServer.isLoopback(req.peer) || authorized(req) else {  // L2: ponudniki le temu računalniku ali z žetonom
+            guard RouterServer.isLoopback(req.peer) && Self.loopbackHost(req) || authorized(req) else {  // L2, #42: tudi Host loopback
                 return (await json(200, ["status": "ok"], rid: rid, writer: writer), nil, nil)
             }
             var providers: [String: Bool] = [:]
@@ -519,14 +519,19 @@ public final class Router: Sendable {
         guard config.allowLocalApps, ["GET /v1/models", "POST /v1/messages", "POST /v1/messages/count_tokens"].contains(req.method + " " + req.path),
               RouterServer.isLoopback(req.peer), req.header("origin") == nil,
               req.header("anthropic-version") != nil || req.header("x-api-key") != nil else { return false }
+        guard Self.loopbackHost(req) else { return false }
+        return Self.localPeer(req.peerPort, config.port)
+    }
+
+    /// Host je loopback (127.0.0.1, [::1], localhost, z vrati ali brez), ne DNS rebinding (kot Go loopbackHost).
+    static func loopbackHost(_ req: HTTPRequest) -> Bool {
         var host = req.header("host") ?? ""
         if host.hasPrefix("["), let end = host.firstIndex(of: "]") { host = String(host[host.index(after: host.startIndex)..<end]) }
         else if let colon = host.lastIndex(of: ":"), host.firstIndex(of: ":") == colon { host = String(host[..<colon]) }
         // M1: le pravi naslov IP (inet_pton), ne ime »127.evil.example« (DNS rebinding)
         var a4 = in_addr(), a6 = in6_addr()
         let ip = inet_pton(AF_INET, host, &a4) == 1 || inet_pton(AF_INET6, host, &a6) == 1
-        guard host == "localhost" || (ip && RouterServer.isLoopback(host)) else { return false }
-        return Self.localPeer(req.peerPort, config.port)
+        return host == "localhost" || (ip && RouterServer.isLoopback(host))
     }
 
     /// Nov žeton prehoda: »mgw-« + base64url(32 naključnih bajtov), kot Go minigw serve. Predpone nihče ne preverja,
