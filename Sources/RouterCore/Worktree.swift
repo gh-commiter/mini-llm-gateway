@@ -350,6 +350,12 @@ public enum Worktree {
     /// Git pozna GIT_ATTR_SOURCE (2.40+, Apple git v Xcode CLT je lahko starejši); starejši --attr-source zavrne.
     static let attrSource = run(["--attr-source=4b825dc642cb6eb9a060e54bf8d69288fbee4904", "version"], safe: false, hooks: false).status == 0
 
+    /// #57: ugnezdeni repozitoriji na prehodu le z git 2.40+ (harnessEnv: GIT_ATTR_SOURCE starejši tiho prezre). Zavrne pred
+    /// zagonom agenta, način ostane. nil = v redu.
+    static func nestedGitProblem(_ nested: Int, attr: Bool = attrSource, or alternative: String = "use sync") -> String? {
+        nested > 0 && !attr ? "nested git repositories need git 2.40 or later on the gateway; update git or \(alternative)" : nil
+    }
+
     /// fetch iz bundla pred git 2.46 ne preveri objektov (fetch.fsckObjects prezre). Zato novi objekti `ref`
     /// (brez dosegljivih iz drugih refov) v fsckPack. Kot Go fsckIncoming. nil = v redu, sicer razlog.
     static func fsckIncoming(top: String, ref: String = "refs/minigw/incoming", safe: Bool = false) -> String? {
@@ -568,6 +574,11 @@ public enum Worktree {
         if let bundle {
             guard isBundle(bundle), run(["--git-dir", repo.path, "-c", "transfer.fsckObjects=true", "-c", "fetch.fsckObjects=true",
                                          "fetch", "-q", "--no-tags", bundle.path, "+refs/minigw/push:\(base)"]).status == 0 else { return false }
+            // #57: fetch iz bundla pred git 2.46 ne preveri objektov
+            if fsckIncoming(top: repo.path, ref: base, safe: true) != nil {
+                run(["--git-dir", repo.path, "update-ref", "-d", base])
+                return false
+            }
         } else {
             guard run(["--git-dir", repo.path, "update-ref", base, snapshot]).status == 0 else { return false }
         }
@@ -657,10 +668,16 @@ public enum Worktree {
 
     /// Native z git: bundle veje za repozitorij uporabnika. Posnetek (z njegovimi neshranjenimi spremembami) je le v zrcalu,
     /// zato je pogoj trenutni HEAD uporabnika (ta ga ima), ne posnetek.
-    static func localBundle(repo: URL, top: URL, branch: String, out: URL, gitDir: URL? = nil) -> Bool {
+    /// #57: objekte bundla pred tem preveri fsckPack (fetch iz bundla pred git 2.46 jih ne). nil = v redu, sicer razlog.
+    static func localBundle(repo: URL, top: URL, branch: String, out: URL, gitDir: URL? = nil) -> String? {
         try? FileManager.default.removeItem(at: out)
-        let have = head(gitDir ?? top.appendingPathComponent(".git")).map { ["^" + $0] } ?? []
+        let user = head(gitDir ?? top.appendingPathComponent(".git"))
+        if let why = fsckPack(top: repo.path, revs: "refs/heads/\(branch)\n" + (user.map { "--not\n\($0)\n" } ?? ""), safe: true) {
+            return "\(branch) failed the object check (fsck): " + why
+        }
+        let have = user.map { ["^" + $0] } ?? []
         return run(["--git-dir", repo.path, "bundle", "create", out.path, "refs/heads/" + branch] + have, timeout: 600).status == 0 && isBundle(out)
+            ? nil : "cannot bundle \(branch)"
     }
 
     /// Native z git: veja iz bundla naravnost v repozitorij uporabnika v enem koraku (H1). git le s pravili prehoda (brez
@@ -1023,6 +1040,7 @@ extension ShareHub {
                 guard nested.count <= Worktree.maxNested else {
                     return .failure(StopReason("\(local.path) has more than \(Worktree.maxNested) nested git repositories; native mode with branches takes at most \(Worktree.maxNested)" + hint))
                 }
+                if let why = Worktree.nestedGitProblem(nested.count, or: "use --minigw-work=native-direct") { return .failure(StopReason(why)) }
                 if let p = nested.first(where: { !Worktree.validNestedPath($0) }) {
                     return .failure(StopReason("the nested repository \(Profiles.line(p, max: 500)) has a name native mode cannot use (\":\", \"\\\", control characters or in .build)" + hint))
                 }
@@ -1071,6 +1089,10 @@ extension ShareHub {
         let valid = pairs.count <= Worktree.maxNested && Set(pairs.map(\.0)).count == pairs.count
             && pairs.allSatisfy { Worktree.validNestedPath($0.0) && Worktree.isSHA($0.1) }
         var nested: [Nested]?
+        if valid, let why = Worktree.nestedGitProblem(pairs.count) {
+            await note(s, "worktree: " + why)
+            return finishMount(nil, k: k, id: id, wt: wt, branch: branch, tree: tree)
+        }
         if let snapshot, Worktree.isSHA(snapshot), valid {
             nested = await offPool { () -> [Nested]? in
                 guard Worktree.importBase(repo, bundle: FileManager.default.fileExists(atPath: incoming.path) ? incoming : nil, snapshot: snapshot, base: base),
@@ -1230,7 +1252,7 @@ extension ShareHub {
                     let gd = p.isEmpty ? nil : Worktree.localGitDir(top: local, p)
                     if !p.isEmpty, gd == nil { return "\(dir.path): the nested repository changed; \(branch) was not delivered" }
                     return Worktree.localBundle(repo: mirror, top: dir, branch: branch, out: o, gitDir: gd)
-                        ? Worktree.localFetch(top: dir, bundle: o, branch: branch, gitDir: gd) : "cannot bundle \(branch)"
+                        ?? Worktree.localFetch(top: dir, bundle: o, branch: branch, gitDir: gd)
                 }) {
                     Router.log.error("native worktree: \(why, privacy: .public)")
                     await note(s, why)

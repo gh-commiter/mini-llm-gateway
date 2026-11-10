@@ -1312,8 +1312,8 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     #expect(FileManager.default.fileExists(atPath: marker), "the test does not reproduce the filter")
 }
 
-/// #58: tanek bundle (evil..c2, c2 ponovno uporabi drevo z ».git«, ki ga je fetch brez fsck pustil v objektih) fetch
-/// sprejme tudi na novem gitu; fsck pri odjemalcu ga zavrne z lastnim sporočilom.
+/// #57, #58: tanek bundle (evil..c2, c2 ponovno uporabi drevo z ».git«, ki ga je fetch brez fsck pustil v objektih) fetch
+/// sprejme tudi na novem gitu; fsck ga zavrne pri odjemalcu (lastno sporočilo), ob uvozu v zrcalo prehoda in pri native.
 @Test func thinBundleFailsTheObjectCheck() throws {
     let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("thin-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -1342,5 +1342,19 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     let why = try #require(Worktree.fetch(top: client.path, bundle: thin, branch: branch))
     #expect(why.hasPrefix("the gateway's branch failed the object check (fsck): ") && why.contains(".git"), "\(why)")
     #expect(g(client, "rev-parse", "-q", "--verify", "refs/heads/" + branch).isEmpty)
+    // #57 prehod: uvoz bundla odjemalca v zrcalo
+    #expect(!Worktree.importBase(mirror, bundle: push, snapshot: c2, base: "refs/minigw/base/x"))
+    #expect(g(mirror, "rev-parse", "-q", "--verify", "refs/minigw/base/x").isEmpty)
+    // #57 native: veja zrcala (tu src) v repozitorij uporabnika
+    let out = root.appendingPathComponent("out.bundle")
+    let local = try #require(Worktree.localBundle(repo: src.appendingPathComponent(".git"), top: client, branch: branch, out: out))
+    #expect(local.hasPrefix("\(branch) failed the object check (fsck): ") && !FileManager.default.fileExists(atPath: out.path), "\(local)")
+    g(src, "update-ref", "refs/heads/" + branch, g(src, "commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "fine"))
+    #expect(Worktree.localBundle(repo: src.appendingPathComponent(".git"), top: client, branch: branch, out: out) == nil)
 }
 
+/// #57: ugnezdeni repozitoriji na prehodu z gitom pred 2.40 zavrnjeni pred zagonom (način ostane).
+@Test func nestedNeedsAttrSourceOnTheGateway() {
+    #expect(Worktree.nestedGitProblem(1, attr: false)?.hasSuffix("update git or use sync") == true)
+    #expect(Worktree.nestedGitProblem(1, attr: true) == nil && Worktree.nestedGitProblem(0, attr: false) == nil)
+}
