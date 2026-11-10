@@ -205,14 +205,17 @@ func claudePinOK(cfgDir string, logf func(string, ...any)) bool {
 // watchGitMoves (N3c): inotify na mapi .git klona (IN_MOVE_SELF, IN_DELETE_SELF). Dogodek ostane v vrsti jedra, tudi če
 // agent .git takoj vrne nazaj, zato ga zamenjava in vrnitev med dvema preverbama ne skrijeta; moved teče ob prvem
 // dogodku (tudi IN_IGNORED, prepolna vrsta) in ob vsaki napaki branja razen zaprtja (stop). false: inotify ne deluje.
-func watchGitMoves(gitDir string, moved func()) (stop func(), ok bool) {
+// dirs: vse mape (pinPaths) z eno instanco inotify (meja instanc na uporabnika je nizka, 128).
+func watchGitMoves(dirs []string, moved func()) (stop func(), ok bool) {
 	fd, err := syscall.InotifyInit1(syscall.IN_CLOEXEC | syscall.IN_NONBLOCK)
 	if err != nil {
 		return nil, false
 	}
-	if _, err := syscall.InotifyAddWatch(fd, gitDir, syscall.IN_MOVE_SELF|syscall.IN_DELETE_SELF); err != nil {
-		syscall.Close(fd)
-		return nil, false
+	for _, d := range dirs {
+		if _, err := syscall.InotifyAddWatch(fd, d, syscall.IN_MOVE_SELF|syscall.IN_DELETE_SELF); err != nil {
+			syscall.Close(fd)
+			return nil, false
+		}
 	}
 	f := os.NewFile(uintptr(fd), "inotify") // neblokirajoč: Close prekine Read
 	go func() {

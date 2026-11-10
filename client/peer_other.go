@@ -20,7 +20,7 @@ func claudePinOK(cfgDir string, logf func(string, ...any)) bool { return false }
 
 // watchGitMoves (N3c): le Linux (inotify); drugje runCLI preverja klon vsako sekundo (macOS serve je za razvoj, na
 // Windows teče Claude v worktree le z »Allow commands without a sandbox«).
-func watchGitMoves(gitDir string, moved func()) (stop func(), ok bool) { return nil, false }
+func watchGitMoves(dirs []string, moved func()) (stop func(), ok bool) { return nil, false }
 
 // agentSandboxed: brez preverjenega sandboxa, ki skrije skrivnosti routerja: Codex in Grok le z izrecnim dovoljenjem (F4).
 func agentSandboxed(cfgDir string) bool { return false }

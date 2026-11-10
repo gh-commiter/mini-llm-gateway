@@ -1847,3 +1847,19 @@ func TestPinPaths(t *testing.T) {
 		t.Fatalf("pinPaths: %v", got)
 	}
 }
+
+// #40: več kot maxPins točk priklopa (globoki ugnezdeni kloni) = zavrnitev.
+func TestTooDeep(t *testing.T) {
+	wt := filepath.Join("/w", "c")
+	gits, d := []string{filepath.Join(wt, ".git")}, wt
+	for i := 0; i < 255; i++ { // 1 + 255 × (mapa + .git) = 511
+		d = filepath.Join(d, "a")
+		gits = append(gits, filepath.Join(d, ".git"))
+	}
+	if tooDeep(wt, gits) {
+		t.Fatal("511 pins refused")
+	}
+	if !tooDeep(wt, append(gits, filepath.Join(d, "b", "x", ".git"))) {
+		t.Fatal("514 pins accepted")
+	}
+}

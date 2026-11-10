@@ -81,7 +81,7 @@ func TestWatchGitMovesSwapAndRevert(t *testing.T) {
 	g := filepath.Join(wt, ".git")
 	os.MkdirAll(g, 0o700)
 	moved := make(chan struct{}, 1)
-	stop, ok := watchGitMoves(g, func() { moved <- struct{}{} })
+	stop, ok := watchGitMoves([]string{g}, func() { moved <- struct{}{} })
 	if !ok {
 		t.Fatal("inotify watch failed")
 	}
@@ -104,7 +104,7 @@ func TestWatchGitMovesSwapAndRevert(t *testing.T) {
 	}
 	// stop: zaprtje ni premik (vsaka druga napaka branja bi bila)
 	stopped := make(chan struct{}, 1)
-	stop2, ok := watchGitMoves(g, func() { stopped <- struct{}{} })
+	stop2, ok := watchGitMoves([]string{g}, func() { stopped <- struct{}{} })
 	if !ok {
 		t.Fatal("second watch failed")
 	}

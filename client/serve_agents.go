@@ -722,6 +722,15 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			}
 		}
 	}
+	// M2: preveč točk priklopa (pinPaths): končna zavrnitev (400) pred replyWhenDone
+	if wt, _, _, _, inTree := s.hub.worktreeOf(r.h("x-claude-mini-session"), k.name); inTree || runOf(r) != nil {
+		if p := runOf(r); p != nil { // klon klicatelja
+			wt = p.wt
+		}
+		if gits, _ := s.hub.worktreeGits(wt); wt != "" && tooDeep(wt, gits) {
+			return writeError(w, r.rid, 400, tooManyPins)
+		}
+	}
 	// N1: brez bwrap (svoj imenski prostor PID) agent lahko preživi do finalize; klon z ugnezdenimi: končna zavrnitev (400)
 	// pred replyWhenDone, kot pri Claude CLI (L6).
 	if agentUnconfined(s.cfgDir) {

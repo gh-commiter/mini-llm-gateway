@@ -762,6 +762,9 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			defer done()
 			args = worktreeClaudeArgs(args, wt, maven, tmp, objs, gits)
 			gw := s.conf().scratch("gitexec")
+			if tooDeep(wt, gits) {
+				return writeError(w, r.rid, 400, tooManyPins)
+			}
 			if worktreeEnv = worktreeClaudeEnv(wt, maven, tmp, gw, gits, "claude"); worktreeEnv == nil {
 				return writeError(w, r.rid, 503, "Cannot prepare git for the agent's clone (git --exec-path): use sync")
 			}
@@ -818,27 +821,15 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	var swapped atomic.Bool
 	stopMoves := func() {}
 	if unpinned { // N3c: brez pin vsak premik .git (tudi zamenjava, ki jo agent vrne pred naslednjo preverbo) ustavi tek
-		var stops []func()
-		ok := true
 		gits, _ := s.hub.worktreeGits(wt)
-		for _, g := range pinPaths(wt, gits) { // vsak .git (vrhnji in ugnezdeni) in mape do ugnezdenih (M2)
-			stop, o := watchGitMoves(g, func() {
-				if swapped.CompareAndSwap(false, true) {
-					kill()
-					killInside(wt) // tudi git, ki ga je claude že zagnal v klonu
-				}
-			})
-			if ok = ok && o; o {
-				stops = append(stops, stop)
+		// vsak .git (vrhnji in ugnezdeni) in mape do ugnezdenih (M2)
+		stop, ok := watchGitMoves(pinPaths(wt, gits), func() {
+			if swapped.CompareAndSwap(false, true) {
+				kill()
+				killInside(wt) // tudi git, ki ga je claude že zagnal v klonu
 			}
-		}
-		stop := func() {
-			for _, f := range stops {
-				f()
-			}
-		}
+		})
 		if !ok && runtime.GOOS == "linux" {
-			stop()
 			return writeError(w, r.rid, 503, "Cannot watch the agent's clone (inotify) and nested bwrap does not work here, "+
 				"so Claude CLI cannot run in worktree mode on this gateway now: use sync")
 		}

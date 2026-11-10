@@ -725,6 +725,14 @@ func pinPaths(wt string, gits []string) []string {
 	return slices.Compact(out)
 }
 
+// maxPins: največ točk priklopa pinPaths (bwrap argumenti, ure inotify); več = zahteva zavrnjena (400).
+const maxPins = 512
+
+const tooManyPins = "nested clones too deep: use sync"
+
+// tooDeep: pinPaths klona ima več kot maxPins poti (zavrni pred pinWrap in agentWrap).
+func tooDeep(wt string, gits []string) bool { return len(pinPaths(wt, gits)) > maxPins }
+
 // worktreeClaudeEnv: okolje procesa Claude CLI v klonu: worktreeHarnessEnv, drugje kot na Windows še ovoj gitExecWrap
 // v mapi gw (N9; na Windows teče Claude v worktree le z »Allow commands without a sandbox«). gits: .git vseh klonov
 // (vrhnji prvi, hub.worktreeGits). nil = ovoja ni. agent: vrsta agenta (avtor commitov); #40: PATH najprej gw/bin
