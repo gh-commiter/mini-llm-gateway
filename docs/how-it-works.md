@@ -166,8 +166,15 @@ user account there.
 - Off by default; on per device in **Settings → General → minigw run** or with the admin API (`PATCH /run`).
 - Only the listed commands run (default `mvn, swift, xcodebuild`), without a shell, at most two at a time per device.
 - A `sandbox-exec` profile lets it write only to the folder (not its `.git`), `~/.m2` (not `settings*.xml`,
-  `extensions.xml`), `~/Library/Developer` (not `~/Library/Caches`), SwiftPM's folders (not their configuration) and
-  temporary folders.
+  `extensions.xml`), `~/Library/Developer` (not `~/Library/Caches`) and SwiftPM's folders (not their configuration).
+- Each run gets its own temporary folder in the gateway's Scratch folder (`tmp/run-<id>`), removed when the run ends:
+  `TMPDIR`, `TMP`, `TEMP`, the clang module cache and `java.io.tmpdir` of every Java process (through
+  `JAVA_TOOL_OPTIONS`, so Java prints "Picked up JAVA_TOOL_OPTIONS") point there. The shared `/tmp` is not writable.
+- Two allowances in the macOS user temporary folder remain, because macOS tools ignore `TMPDIR` there: new
+  `TemporaryItems/NSIRD_*` folders (every atomic file save by Foundation, used by `swift build` and `xcodebuild`) and
+  new `TemporaryDirectory.*` folders (the link step of `swift build`). The build can create such folders and write
+  inside them, but cannot rename, delete or replace them or write any other file there. A build could still change the
+  contents of such a folder that another program of yours is using at the same moment.
 - It hides `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.netrc`, `~/.git-credentials`, `~/.npmrc`, `~/.pypirc`,
   `~/.gradle/gradle.properties`, shell histories, `~/.config`, `~/.docker`, `~/.kube`, the keychains, cookies,
   `~/Library/Application Support`, `Containers`, `Group Containers`, `Mail`, `Messages`, and Mini Gateway's Scratch

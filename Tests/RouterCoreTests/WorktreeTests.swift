@@ -545,6 +545,49 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
     #expect(sh("mv '\(mine)' '\(mine)-2'") != 0 && sh("rm -rf '\(mine)'") != 0 && fm.fileExists(atPath: mine))  // vnos: ne
 }
 
+/// #24: okolje minigw run usmeri vse začasne mape v zasebno mapo zagona (v Scratch); skrivnosti agentov in SSH agent ne.
+@Test func runEnvKeepsTempUnderRunFolder() {
+    let run = URL(fileURLWithPath: "/Volumes/Fast SSD/Scratch/tmp/run-1")
+    let env = Native.runEnv(["TMPDIR": "/var/folders/x/T/", "TMP": "/tmp", "JAVA_TOOL_OPTIONS": "-Xmx1g", "ANTHROPIC_API_KEY": "k",
+                             "SSH_AUTH_SOCK": "/s", "xcrun_db": "/d", "PATH": "/usr/bin"], runTmp: run)
+    #expect(env["TMPDIR"] == run.path + "/" && env["TMP"] == run.path && env["TEMP"] == run.path)
+    #expect(env["CLANG_MODULE_CACHE_PATH"] == run.path + "/ModuleCache")
+    #expect(env["JAVA_TOOL_OPTIONS"] == "-Xmx1g -Djava.io.tmpdir=\"" + run.path + "\"")
+    #expect(env["ANTHROPIC_API_KEY"] == nil && env["SSH_AUTH_SOCK"] == nil && env["xcrun_db"] == nil && env["xcrun_nocache"] == "1")
+    #expect(env["PATH"]?.hasPrefix("/usr/bin:") == true)
+}
+
+/// #24: peskovnik minigw run ne dovoli /private/tmp in ne datotek v DARWIN_USER_TEMP_DIR; z okoljem runEnv gre začasno
+/// pisanje (sh, java.io.tmpdir) v zasebno mapo zagona v skritem Scratch. Ob nepričakovanem uspehu počisti.
+@Test func runProfileKeepsTempInScratch() throws {
+    let fm = FileManager.default
+    var b = [CChar](repeating: 0, count: 1024)
+    #expect(confstr(_CS_DARWIN_USER_TEMP_DIR, &b, b.count) > 0)
+    let t = try #require(Sync.real(URL(fileURLWithPath: String(cString: b)))).path
+    let base = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("run24-" + UUID().uuidString)
+    let dir = base.appendingPathComponent("proj"), scratch = base.appendingPathComponent("scratch")
+    let run = scratch.appendingPathComponent("tmp/run-x")
+    for d in [dir, run.appendingPathComponent("ModuleCache")] { try fm.createDirectory(at: d, withIntermediateDirectories: true) }
+    let id = UUID().uuidString, shared = "/private/tmp/minigw-test-" + id, inT = t + "/minigw-test-" + id
+    defer { for p in [shared, inT] { try? fm.removeItem(atPath: p) }; try? fm.removeItem(at: base) }
+    let profile = try #require(Native.sandboxProfile(dir: dir.path, network: false, hidden: [scratch.path], runTmp: run.path))
+    #expect(!profile.contains("\"/private/tmp\""))
+    func sh(_ c: String) throws -> Int32 {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
+        p.arguments = ["-p", profile, "/bin/sh", "-c", c]
+        p.environment = Native.runEnv(ProcessInfo.processInfo.environment, runTmp: run)
+        p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+        try p.run(); p.waitUntilExit()
+        return p.terminationStatus
+    }
+    #expect(try sh("echo x > '\(shared)'") != 0 && !fm.fileExists(atPath: shared))
+    #expect(try sh("echo x > '\(inT)'") != 0 && !fm.fileExists(atPath: inT))
+    #expect(try sh("echo x > \"$TMPDIR/a\" && echo x > \"$TMP/b\" && echo x > \"$TEMP/c\"") == 0)
+    #expect(["a", "b", "c"].allSatisfy { fm.fileExists(atPath: run.appendingPathComponent($0).path) })
+    #expect(try sh("echo x > '\(scratch.path)/tmp/other'") != 0)  // drugje v Scratch ne
+}
+
 /// L3 (0.5.16): objects/info, globlja od omejitve brisanja: finalize ne izbriše do konca in ne vrne veje.
 @Test func worktreeFinalizeGivesUpOnTooDeepInfo() async throws {
     let (root, client, tree) = try fixture()

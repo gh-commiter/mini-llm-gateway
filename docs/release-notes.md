@@ -1,5 +1,9 @@
 # Release notes
 
+## Unreleased
+
+- Security (#24): every `minigw run` on the Mac gateway now keeps its temporary files in its own folder in the gateway's Scratch folder (`tmp/run-<id>`, removed when the run ends): `TMPDIR`, `TMP`, `TEMP`, the clang module cache and `java.io.tmpdir` of every Java process (`JAVA_TOOL_OPTIONS`, which replaces the `MAVEN_OPTS` setting, so Maven's forked test JVMs and Gradle get it too; Java prints "Picked up JAVA_TOOL_OPTIONS"). The build can no longer write the shared `/tmp`. Fixed with it: Maven tests that create temporary files failed in `minigw run` ("Operation not permitted"). Two allowances in the macOS user temporary folder stay, because Foundation and the `swift build` link step ignore `TMPDIR`: new `TemporaryItems/NSIRD_*` and `TemporaryDirectory.*` folders, as before (see How it works, minigw run sandbox). Mac app only (`minigw serve` has no `minigw run`).
+
 ## 0.5.22
 
 - Fixed: in worktree mode the agent's `git status` no longer shows an untracked `.build/` folder (the gateway's temporary folder in the clone; both gateways).
