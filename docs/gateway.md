@@ -133,13 +133,18 @@ it): ". The password is read without echo, never from the command line, never lo
 first checked against the Mac account (Open Directory), then unlocks the keychain (`SecKeychainUnlock`); `minigw`
 never runs the `security` command. The check is needed because macOS alone does not check the password in an SSH
 session while the Mac's own session has the keychain unlocked. A wrong password ends with "wrong password: the
-keychain stays locked" and the keychain is not touched. After a right password the keychain stays unlocked for that SSH session as macOS keeps it (its
-lock-after-inactivity setting still applies). Without a terminal (scripts, Claude Code skills) `minigw` does not ask:
-it says the keychain is locked; run `security unlock-keychain ~/Library/Keychains/login.keychain-db` in the SSH
-session first, then retry. When macOS reports the keychain as unlocked, `minigw` never asks (macOS would accept any
-password then); if it still cannot read the admin item it says "macOS reports the login keychain as unlocked but does
-not let minigw read Mini Gateway's admin item in this SSH session: quit and open the Mini Gateway app once on the Mac,
-then retry".
+keychain stays locked" and the keychain is not touched; if Open Directory cannot check the password, `minigw` says
+"cannot check the Mac password (Open Directory: …)". If the Mac password is right but the keychain has another
+password (out of sync, for example after a password reset), it says "the Mac password does not unlock the login
+keychain": unlock it in the Mac's own session or with Keychain Access, then retry. After a right password the
+keychain stays unlocked for that SSH session as macOS keeps it (its lock-after-inactivity setting still applies).
+Without a terminal (scripts, Claude Code skills) `minigw` does not ask: it says the keychain is locked. Prefer running
+`minigw gw` once in an interactive SSH terminal; the fallback `security unlock-keychain
+~/Library/Keychains/login.keychain-db` in the SSH session works too, but macOS does not check that password while the
+Mac's own session has the keychain unlocked. When macOS reports the keychain as unlocked, `minigw` never asks (macOS
+would accept any password then); if it still cannot read the admin item it says "macOS reports the login keychain as
+unlocked but does not let minigw read Mini Gateway's admin item in this SSH session: quit and open the Mini Gateway
+app once on the Mac, then retry".
 
 Not in the terminal: Claude CLI's per-tool switches (the tools
 are a comma-separated field) and copying the token to the clipboard.

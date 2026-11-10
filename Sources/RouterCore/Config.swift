@@ -329,19 +329,32 @@ public struct Keychain: SecretStore {
         (status == errSecInteractionNotAllowed || status == errSecAuthFailed) && terminal && locked
     }
 
+    /// Izid preverjanja gesla Mac v Open Directory: pravo, napačno ali ga ni bilo mogoče preveriti (napaka OD).
+    public enum PasswordCheck: Equatable, Sendable { case ok, wrong, unavailable(String) }
+
     /// Odklep z geslom minigw gw (#62): v seji SSH, ko ima Macova lastna seja keychain odklenjen, SecKeychainUnlock
-    /// sprejme vsako geslo. Zato verify (Open Directory) geslo preveri prej; napačno geslo vrne errSecAuthFailed in
-    /// unlock se sploh ne kliče.
-    public static func unlock(password: UnsafePointer<CChar>, verify: (UnsafePointer<CChar>) -> Bool,
-                              unlock: (UnsafePointer<CChar>) -> OSStatus) -> OSStatus {
-        verify(password) ? unlock(password) : errSecAuthFailed
+    /// sprejme vsako geslo. Zato verify (Open Directory) geslo preveri prej; brez izida ok se unlock sploh ne kliče.
+    /// nil = odklenjeno, sicer sporočilo za napako.
+    public static func unlock(password: UnsafePointer<CChar>, verify: (UnsafePointer<CChar>) -> PasswordCheck,
+                              unlock: (UnsafePointer<CChar>) -> OSStatus) -> String? {
+        switch verify(password) {
+        case .wrong: return "wrong password: the keychain stays locked"
+        case .unavailable(let e): return "cannot check the Mac password (Open Directory: \(e)): the keychain stays locked"
+        case .ok:
+            switch unlock(password) {
+            case errSecSuccess: return nil
+            // geslo Mac velja, keychain pa ima drugo (npr. po ponastavitvi gesla)
+            case errSecAuthFailed: return "the Mac password does not unlock the login keychain (its password differs, for example after a password reset): unlock it in the Mac's own session or with Keychain Access, then retry"
+            case let st: return "cannot unlock the login keychain (OSStatus \(st))"
+            }
+        }
     }
 
     /// Namig minigw gw, ko Keychain zavrne branje vnosa »admin«. V SSH nasvet za ukaz security le pri zaklenjenem
     /// keychainu: na odklenjenem ta ukaz sprejme vsako geslo in nič ne popravi (#62).
     public static func deniedHint(ssh: Bool, locked: Bool) -> String {
         if ssh && locked {
-            return "the login keychain is locked in this SSH session: run security unlock-keychain ~/Library/Keychains/login.keychain-db in the SSH session first, then retry (if it still fails, quit and open the Mini Gateway app once on the Mac)"
+            return "the login keychain is locked in this SSH session: run minigw gw in an interactive SSH terminal, which asks for the Mac password and checks it; otherwise run security unlock-keychain ~/Library/Keychains/login.keychain-db in the SSH session first, then retry (macOS does not check that password while the Mac's own session has the keychain unlocked; if it still fails, quit and open the Mini Gateway app once on the Mac)"
         }
         if ssh {
             return "macOS reports the login keychain as unlocked but does not let minigw read Mini Gateway's admin item in this SSH session: quit and open the Mini Gateway app once on the Mac, then retry"

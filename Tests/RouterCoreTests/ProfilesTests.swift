@@ -179,16 +179,25 @@ private func send(_ url: String, _ method: String, _ path: String, secret: Strin
     // namig: v SSH ukaz security le za zaklenjen keychain (brez terminala), odklenjen dobi svoj namig (#62)
     #expect(Keychain.deniedHint(ssh: true, locked: false).hasPrefix("macOS reports the login keychain as unlocked"))
     #expect(!Keychain.deniedHint(ssh: true, locked: false).contains("security unlock-keychain"))
-    #expect(Keychain.deniedHint(ssh: true, locked: true).contains("run security unlock-keychain"))
+    #expect(Keychain.deniedHint(ssh: true, locked: true).contains("run minigw gw in an interactive SSH terminal"))
+    #expect(Keychain.deniedHint(ssh: true, locked: true).contains("run security unlock-keychain"))  // le še kot rezerva
+    #expect(Keychain.deniedHint(ssh: true, locked: true).contains("macOS does not check that password"))
 }
 
-/// minigw gw: napačno geslo (Open Directory) ne pokliče SecKeychainUnlock, pravo ga (#62); brez pravega gesla.
+/// minigw gw: brez potrjenega gesla (Open Directory) ni SecKeychainUnlock; vsak izid ima svoje sporočilo (#62).
 @Test func keychainUnlockVerifiesFirst() {
-    var calls = 0
-    let unlock: (UnsafePointer<CChar>) -> OSStatus = { _ in calls += 1; return errSecSuccess }
+    var calls = 0, unlockStatus = errSecSuccess
+    let unlock: (UnsafePointer<CChar>) -> OSStatus = { _ in calls += 1; return unlockStatus }
     let pw: [CChar] = Array("x".utf8CString)
-    #expect(Keychain.unlock(password: pw, verify: { _ in false }, unlock: unlock) == errSecAuthFailed)
+    #expect(Keychain.unlock(password: pw, verify: { _ in .wrong }, unlock: unlock) == "wrong password: the keychain stays locked")
+    #expect(Keychain.unlock(password: pw, verify: { _ in .unavailable("node down") }, unlock: unlock)
+            == "cannot check the Mac password (Open Directory: node down): the keychain stays locked")
     #expect(calls == 0)
-    #expect(Keychain.unlock(password: pw, verify: { String(cString: $0) == "x" }, unlock: unlock) == errSecSuccess)
+    #expect(Keychain.unlock(password: pw, verify: { String(cString: $0) == "x" ? .ok : .wrong }, unlock: unlock) == nil)
     #expect(calls == 1)
+    unlockStatus = errSecAuthFailed  // geslo Mac velja, keychain ima drugo
+    #expect(Keychain.unlock(password: pw, verify: { _ in .ok }, unlock: unlock)?
+            .hasPrefix("the Mac password does not unlock the login keychain (its password differs") == true)
+    unlockStatus = errSecInteractionNotAllowed
+    #expect(Keychain.unlock(password: pw, verify: { _ in .ok }, unlock: unlock) == "cannot unlock the login keychain (OSStatus \(errSecInteractionNotAllowed))")
 }
