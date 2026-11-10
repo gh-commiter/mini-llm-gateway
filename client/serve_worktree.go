@@ -88,11 +88,17 @@ func gitSame(g string, git os.FileInfo, cfg []byte) bool {
 	}
 	b, err := os.ReadFile(filepath.Join(g, "config"))
 	for _, p := range []string{filepath.Join("info", "attributes"), "commondir"} {
-		if _, e := os.Lstat(filepath.Join(g, p)); !os.IsNotExist(e) && (p != "commondir" || readSmall(filepath.Join(g, p)) != ".") { // ».«: ta .git (makeClone)
+		if st, e := os.Lstat(filepath.Join(g, p)); !os.IsNotExist(e) && (p != "commondir" || !st.Mode().IsRegular() || !selfCommondir(filepath.Join(g, p))) {
 			return false
 		}
 	}
 	return err == nil && bytes.Equal(b, cfg)
+}
+
+// selfCommondir: commondir je točno ».\n« iz makeClone (ta .git), brez obrezovanja.
+func selfCommondir(p string) bool {
+	b, err := os.ReadFile(p)
+	return err == nil && string(b) == ".\n"
 }
 
 // nestedIntact (H1): pot ugnezdenega klona so same prave mape (ne povezava ven) in njegov .git je še ista mapa.
@@ -705,6 +711,20 @@ func pathWrapScript(git string) string {
 		`exec "$real" "$@"` + "\n"
 }
 
+// pinPaths (#40 M2): .git vseh klonov in vsaka mapa na poti od wt do ugnezdenega klona (pin: preimenovanje EBUSY, da
+// agent ne podtakne nove <pot>/.git, v kateri bi git harnessa ali ovoj pathWrapScript delal); predniki pred potomci.
+func pinPaths(wt string, gits []string) []string {
+	var out []string
+	for _, g := range gits {
+		out = append(out, g)
+		for d := filepath.Dir(g); strings.HasPrefix(d, wt+string(filepath.Separator)); d = filepath.Dir(d) {
+			out = append(out, d)
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
 // worktreeClaudeEnv: okolje procesa Claude CLI v klonu: worktreeHarnessEnv, drugje kot na Windows še ovoj gitExecWrap
 // v mapi gw (N9; na Windows teče Claude v worktree le z »Allow commands without a sandbox«). gits: .git vseh klonov
 // (vrhnji prvi, hub.worktreeGits). nil = ovoja ni. agent: vrsta agenta (avtor commitov); #40: PATH najprej gw/bin
@@ -718,11 +738,16 @@ func worktreeClaudeEnv(wt, maven, tmp, gw string, gits []string, agent string) [
 	if w == nil {
 		return nil
 	}
-	path := os.Getenv("PATH")
-	if path == "" {
-		path = "/usr/bin:/bin" // ne »:« na koncu (trenutna mapa)
+	path := []string{filepath.Join(gw, "bin")}
+	for _, p := range filepath.SplitList(os.Getenv("PATH")) {
+		if p != "" && p != "." { // L2: ne trenutna mapa (klon agenta)
+			path = append(path, p)
+		}
 	}
-	return append(append(env, w...), "PATH="+filepath.Join(gw, "bin")+":"+path)
+	if len(path) == 1 {
+		path = append(path, "/usr/bin", "/bin")
+	}
+	return append(append(env, w...), "PATH="+strings.Join(path, ":"))
 }
 
 // gitWrapEnv: GIT_EXEC_PATH z ovojem gitExecWrap v gw in MINIGW_GIT_DIRS (edini GIT_DIR, ki jih ovoj pusti; absolutne

@@ -482,7 +482,8 @@ public enum Worktree {
     public static func claudeEnv(root: URL, maven: URL, gitexec: URL, gits: [String] = [], agent: String,
                                  path: String = ProcessInfo.processInfo.environment["PATH"] ?? "") -> [String: String]? {
         guard let wrap = wrapEnv(gitDirs: gits.isEmpty ? [root.appendingPathComponent(".git").path] : gits, gitexec: gitexec) else { return nil }
-        let bin = gitexec.appendingPathComponent("bin").path + ":" + (path.isEmpty ? "/usr/bin:/bin" : path)  // ne »:« na koncu (trenutna mapa)
+        let rest = path.split(separator: ":").map(String.init).filter { $0 != "." }  // L2: ne trenutna mapa (klon agenta); split izpusti prazne
+        let bin = ([gitexec.appendingPathComponent("bin").path] + (rest.isEmpty ? ["/usr/bin", "/bin"] : rest)).joined(separator: ":")
         return harnessEnv(root: root, maven: maven, agent: agent).merging(wrap) { $1 }.merging(["PATH": bin]) { $1 }
     }
 

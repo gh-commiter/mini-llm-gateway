@@ -481,6 +481,12 @@ func TestWorktreeGitSwapRefused(t *testing.T) {
 		os.Remove(filepath.Join(g, p))
 	}
 	// #40: commondir ».« (makeClone na Linuxu) je ta .git
+	for _, c := range []string{".", " .\n", "./\n", ".\n\n"} {
+		writeT(t, filepath.Join(g, "commondir"), c)
+		if sl.gitIntact() {
+			t.Fatalf("commondir %q accepted", c)
+		}
+	}
 	writeT(t, filepath.Join(g, "commondir"), ".\n")
 	if !sl.gitIntact() {
 		t.Fatal("commondir . refused")
@@ -1773,13 +1779,14 @@ func TestWorktreeHarnessEnvGitConfig(t *testing.T) {
 		return
 	}
 	gw := filepath.Join(t.TempDir(), "gitexec")
+	t.Setenv("PATH", ":/usr/bin::.:/bin:")
 	path := ""
 	for _, kv := range worktreeClaudeEnv("/w", "/m", "/t", gw, []string{"/w/.git"}, "claude") {
 		if p, ok := strings.CutPrefix(kv, "PATH="); ok {
 			path = p
 		}
 	}
-	if !strings.HasPrefix(path, filepath.Join(gw, "bin")+":") {
+	if path != filepath.Join(gw, "bin")+":/usr/bin:/bin" {
 		t.Fatalf("PATH without the git wrapper first: %q", path)
 	}
 	if b, err := os.ReadFile(filepath.Join(gw, "bin", "git")); err != nil || !strings.Contains(string(b), "MINIGW_GIT_DIRS") {
@@ -1828,4 +1835,15 @@ func chmodTree(dir string) {
 		}
 		return nil
 	})
+}
+
+// #40 M2: pinPaths: .git vseh klonov in mape do ugnezdenih, predniki pred potomci, brez korena klona.
+func TestPinPaths(t *testing.T) {
+	wt := filepath.Join("/w", "c")
+	got := pinPaths(wt, []string{filepath.Join(wt, ".git"), filepath.Join(wt, "a", "b", ".git"), filepath.Join(wt, "a", "x", ".git")})
+	want := []string{filepath.Join(wt, ".git"), filepath.Join(wt, "a"), filepath.Join(wt, "a", "b"), filepath.Join(wt, "a", "b", ".git"),
+		filepath.Join(wt, "a", "x"), filepath.Join(wt, "a", "x", ".git")}
+	if !slices.Equal(got, want) {
+		t.Fatalf("pinPaths: %v", got)
+	}
 }

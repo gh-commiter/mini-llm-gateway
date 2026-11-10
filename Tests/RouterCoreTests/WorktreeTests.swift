@@ -1595,8 +1595,8 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
     #expect(env["GIT_CONFIG_GLOBAL"] == "/dev/null" && env["GIT_CONFIG_NOSYSTEM"] == "1" && env["GIT_CONFIG_COUNT"] == "8")
     let gx = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("gx-" + UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: gx) }
-    let c = try #require(Worktree.claudeEnv(root: URL(fileURLWithPath: "/w"), maven: URL(fileURLWithPath: "/m"), gitexec: gx, agent: "claude", path: "/usr/bin"))
-    #expect(c["PATH"] == gx.path + "/bin:/usr/bin" && c["GIT_CONFIG_VALUE_6"] == "Claude (Mini Gateway)")
+    let c = try #require(Worktree.claudeEnv(root: URL(fileURLWithPath: "/w"), maven: URL(fileURLWithPath: "/m"), gitexec: gx, agent: "claude", path: ":/usr/bin::.:/bin:"))
+    #expect(c["PATH"] == gx.path + "/bin:/usr/bin:/bin" && c["GIT_CONFIG_VALUE_6"] == "Claude (Mini Gateway)")
     #expect(FileManager.default.isExecutableFile(atPath: gx.path + "/bin/git"))
 }
 
