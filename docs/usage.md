@@ -346,10 +346,11 @@ Notes:
   builds"). `minigw serve`: settings page → General → Worktree mode → **Network for builds** (Claude CLI; Codex follows
   its own "Allow network access for commands"), `minigw gw settings` → General, or `PATCH general {"worktreeNetwork":
   false}`. With it off Claude's commands have no network (Linux and macOS `minigw serve`: Claude Code's sandbox; Windows:
-  the Windows sandbox, where Claude Code still reaches `api.anthropic.com` through the gateway, and its web fetch and
-  web search fail) and a `git clone` of a remote URL is refused and names the setting; on a Windows gateway without
-  the Windows sandbox the switch has no effect. On the Mac Copilot follows "Network for Codex builds" (and its "Allow
-  web access") for that, although its commands always have network.
+  the Windows sandbox, which allows only TCP 443 to the addresses of `api.anthropic.com` resolved when the run starts,
+  so Claude's web fetch and web search fail; if the name cannot be resolved the run is refused) and a `git clone` of a
+  remote URL is refused and names the setting; on a Windows gateway without the Windows sandbox the switch has no
+  effect. On the Mac Copilot follows "Network for Codex builds" (and its "Allow web access") for that, although its
+  commands always have network.
 - On `minigw serve`, agent requests run one at a time per device and repository, also across that device's
   sessions. The gateway uses its own `git` from PATH, without system or global config, hooks, fsmonitor or
   submodules.
@@ -531,16 +532,27 @@ environment (`ANTHROPIC_*`, `OPENAI_API_KEY`, `CODEX_API_KEY`, `XAI_API_KEY`, `G
 ### Windows gateway sandbox
 
 `minigw serve` on Windows (MSI, part Gateway) runs Claude CLI, Copilot and Grok in the Windows sandbox, Microsoft MXC
-(`mxc\wxc-exec.exe` in the install folder, no admin rights). It needs Windows 11 build 26100.9550 / 26200.9550 or
-later (KB5124010 or any later cumulative update). Settings page → General → About shows "Agent sandbox: Windows sandbox (MXC 1.0.1)",
-or "not available (reason)"; then agents run only with **Allow commands without a sandbox**, as in 0.5.22. With the
-sandbox that switch is not needed and cannot be changed. Keep the Scratch folder on a fixed NTFS drive (for example
-`D:\minigw-scratch` for builds on D:).
+(`mxc\wxc-exec.exe` in the install folder, no admin rights). It needs Windows 11 build 26100.9278 / 26200.9278 or
+later (the Windows process container). Settings page → General → About shows "Agent sandbox: Windows sandbox (MXC
+1.0.1)", or "not available (reason)"; then agents run only with **Allow commands without a sandbox**, as in 0.5.22.
+With the sandbox that switch is not needed and cannot be changed. Keep the Scratch folder on a fixed NTFS drive (for
+example `D:\minigw-scratch` for builds on D:).
 - The agents write only to the session's folder (when allowed), `$MINIGW_DEPS`, caches and temporary files under
   Scratch; they cannot read your home folder, other devices' copies or the gateway's settings
   ([How it works](how-it-works.md#how-the-folder-reaches-the-agent), Windows sandbox).
 - Folders on `PATH` inside your home folder (for example `~\.local\bin`) are readable by agents; the settings page
   warns about them. Keep no secrets there.
+- Network: agents have outbound network, except Claude in worktree mode with **Network for builds** off: then only
+  TCP 443 to the addresses of `api.anthropic.com` resolved when the run starts (logged in the gateway log); Claude's
+  web fetch and web search and every other host fail. If the name cannot be resolved the run is refused: "Cannot
+  resolve api.anthropic.com for Claude CLI without network for builds; try again, or turn on Settings → General →
+  Worktree mode → Network for builds" (503). There is no proxy in the sandbox.
+- **May ask other models** opens the host's `127.0.0.1` to the sandbox (both directions), because the run port is
+  there; without it loopback is denied. The gateway still refuses the agent (the admin API refuses it, the main port
+  needs the token, which the agent cannot read, and the run port accepts only that run's processes), but other local
+  services such as LiteLLM or Foundry Local are reachable: keep the switch off if you run local services agents should
+  not reach. If the sandbox cannot reach `127.0.0.1` on this computer (it may need a newer cumulative update), the
+  gateway log says so and "May ask other models" does not work there.
 - **Claude CLI** needs the long-lived token from `claude setup-token` (your Claude subscription, valid one year):
   run `claude setup-token`, then `minigw gw claude token` (or settings page → Claude CLI → Login, or
   `minigw gw settings`). It is kept in Credential Manager; `~\.claude` is never copied into the sandbox. Without it a
@@ -582,6 +594,7 @@ that `minigw models` prints.
 each sandbox request, without secrets (variables with TOKEN, KEY, SECRET, PASSWORD or AUTH in the name read
 `REDACTED`), as `Scratch\tmp\mxc\mxc-<n>.debug.json`, a folder only your user can open; replay it with
 `"%LOCALAPPDATA%\Programs\Mini Gateway\mxc\wxc-exec.exe" --debug <file>`. The probe itself is
-`minigw.exe __mxc-probe <writable folder> <file that must be unreadable> 127.0.0.1:<port>` with one line on stdin; it
-prints `nonce:<line>`, `write:ok`, `deny:ok`, `loopback:ok` and `final:<path>` and exits 7 (wrong arguments: a
-message on stderr and exit 2).
+`minigw.exe __mxc-probe <writable folder> <file that must be unreadable> 127.0.0.1:<port>` with one line on stdin,
+run with outbound network denied and loopback allowed; it prints `nonce:<line>`, `write:ok`, `deny:ok`, `loopback:ok`
+and `final:<path>` and exits 7 (wrong arguments: a message on stderr and exit 2). A failed `loopback` check alone does
+not make the sandbox unavailable; only "May ask other models" does not work there then.
