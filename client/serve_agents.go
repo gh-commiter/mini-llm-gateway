@@ -139,6 +139,9 @@ func agentCatalog(k agentKind, exe string) []agentModel {
 	if k.name == "codex" {
 		args = []string{"debug", "models"}
 	}
+	if k.name == "codex" { // #59: brez projektnih nastavitev (.codex/config.toml) v začasni mapi ali nad njo
+		args = append(codexUntrusted(os.TempDir()), args...)
+	}
 	cmd := commandContext(ctx, exe, args...)
 	cmd.Dir = os.TempDir()
 	out, _ := cmd.Output()
@@ -235,6 +238,9 @@ func codexUntrusted(cwd string) []string {
 	if r, err := filepath.EvalSymlinks(cwd); err == nil {
 		starts = append(starts, r)
 	}
+	if f := codexFinalPath(cwd); f != "" { // Windows: stičišča (codexpath_windows.go)
+		starts = append(starts, f)
+	}
 	for _, d := range starts {
 		for {
 			if runtime.GOOS == "windows" {
@@ -258,6 +264,14 @@ func codexUntrusted(cwd string) []string {
 		b.WriteString(string(q) + `={trust_level="untrusted"}`)
 	}
 	return []string{"-c", "projects={" + b.String() + "}"}
+}
+
+// trimFinalPrefix: pot GetFinalPathNameByHandle brez »\\?\« (»\\?\UNC\« → »\\«), kot ključ Codex.
+func trimFinalPrefix(s string) string {
+	if r, ok := strings.CutPrefix(s, `\\?\UNC\`); ok {
+		return `\\` + r
+	}
+	return strings.TrimPrefix(s, `\\?\`)
 }
 
 // codexTreeProfile (#40, kot Codex.treeProfile na Macu): v klonu profil dovoljenj Codex namesto workspace-write, ki

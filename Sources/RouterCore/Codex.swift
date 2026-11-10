@@ -51,7 +51,10 @@ public enum Codex {
     public static func catalog(_ exe: String) -> [Model] {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: exe)
-        p.arguments = ["debug", "models"]
+        // #59: v znani mapi in brez projektnih nastavitev (.codex/config.toml) v njej ali nad njo
+        let dir = FileManager.default.temporaryDirectory
+        p.currentDirectoryURL = dir
+        p.arguments = untrustedProjects(dir) + ["debug", "models"]
         let out = Pipe()
         p.standardOutput = out
         p.standardError = FileHandle.nullDevice
