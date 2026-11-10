@@ -624,12 +624,24 @@ public final class Router: Sendable {
             let (bytes, resp) = try await session.bytes(for: up)
             guard let http = resp as? HTTPURLResponse else { throw URLError(.badServerResponse) }
             status = http.statusCode
-            // 429 ponudnika (npr. brezplačni model na OpenRouterju) brez ponavljanja, kot omejitev agenta
+            if !(200..<300).contains(status) {  // telesa upstreama ne prepošljemo surovo
+                var d = Data()
+                do {
+                    for try await byte in bytes {
+                        d.append(byte)
+                        if d.count >= 64 << 10 { break }
+                    }
+                } catch {}
+                let (st, msg) = Self.upstreamError(status: status, name: r.provider.name, body: d)
+                // 429 ponudnika (npr. brezplačni model na OpenRouterju) brez ponavljanja, kot omejitev agenta
+                return await self.error(st, Self.errorType(st), msg, rid: rid,
+                                        extra: st == 429 ? [("x-should-retry", "false")] : [], writer: writer)
+            }
             try await writer.write(HTTPResponse.head(status: status, headers: [
                 ("Content-Type", http.value(forHTTPHeaderField: "content-type") ?? "application/json"),
                 ("Cache-Control", "no-cache"),
                 ("request-id", rid),
-            ] + (status == 429 ? [("x-should-retry", "false")] : [])))
+            ]))
             headSent = true
             var chunk = Data()
             for try await byte in bytes {
@@ -644,6 +656,24 @@ public final class Router: Sendable {
         } catch {
             if headSent { return status }  // odjemalec ali upstream je prekinil med tokom
             return await self.error(502, "api_error", "\(r.provider.name) unreachable: \(error.localizedDescription)", rid: rid, writer: writer)
+        }
+    }
+
+    /// Napaka upstreama kot napaka Anthropic (kot upstreamError v Go): le error.message, očiščeno, največ 300 bajtov.
+    /// 401/403 → 502: Claude Code bi ju prikazal kot napačno prijavo v router.
+    static func upstreamError(status: Int, name: String, body: Data) -> (Int, String) {
+        var msg = ((try? JSONSerialization.jsonObject(with: body)) as? [String: Any])
+            .flatMap { $0["error"] as? [String: Any] }?["message"] as? String ?? ""
+        if msg.isEmpty { msg = String(decoding: body, as: UTF8.self) }
+        msg = String(String.UnicodeScalarView(msg.unicodeScalars.filter {
+            $0 == "\n" || ($0.properties.generalCategory != .control && $0.properties.generalCategory != .format)  // tudi bidi
+        })).trimmingCharacters(in: .whitespacesAndNewlines)
+        msg = String(msg.prefix(300))
+        while msg.utf8.count > 300 { msg.removeLast() }
+        switch status {
+        case 401, 403: return (502, "\(name): HTTP \(status), check the API key (minigw gw provider add \(name))")
+        case 400...599: return (status, "\(name): \(msg)")
+        default: return (502, "\(name): HTTP \(status): \(msg)")
         }
     }
 
