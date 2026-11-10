@@ -21,7 +21,7 @@ func TestAgentRunListener(t *testing.T) {
 	parent.Header.Set("X-Claude-Mini-Session", "sid1")
 	parent.Header.Set("X-Claude-Mini-Cwd", "/client/dir")
 	r := &req{Request: parent, conn: &serveConn{device: dev, peer: "10.0.0.9"}}
-	run, env := s.startRun(r, "claude", "/copy", false, true, "", "", "", "")
+	run, env := s.startRun(r, "claude", "/copy", false, true, "", "", "", "", nil, "")
 	run.started(os.Getpid()) // M2: ta proces je »agent« izvajanja
 	if run == nil || len(env) != 2 || !strings.HasPrefix(env[0], "MINIGW_AGENT_URL=http://127.0.0.1:") || env[1] != "MINIGW_AGENT_AUTH_FILE="+run.authFile {
 		t.Fatalf("env: %v", env)
@@ -98,7 +98,7 @@ func TestAgentRunListener(t *testing.T) {
 	}
 
 	// Stikalo izklopljeno: ni vrat ne okolja.
-	if run, env := s.startRun(r, "codex", "/copy", false, true, "", "", "", ""); run != nil || env != nil {
+	if run, env := s.startRun(r, "codex", "/copy", false, true, "", "", "", "", nil, ""); run != nil || env != nil {
 		t.Fatal("codex without askOthers got a run listener")
 	}
 }

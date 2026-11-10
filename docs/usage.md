@@ -176,8 +176,9 @@ the clone, git refuses with a hint to use `$MINIGW_DEPS` (for example
 `-clonedSourcePackagesDirPath "$MINIGW_DEPS/spm" -derivedDataPath "$MINIGW_DEPS/DerivedData"`). The folder is kept
 for the whole conversation and removed with the clone; it never comes back to you and is not kept with a kept clone.
 Only an agent that may write gets it; `git clone` of a remote URL needs the agent's network for builds (the refusal
-names the setting). On a Windows gateway agents have no sandbox yet, so there `git init` and `git clone` are not
-available; the folder still holds downloads and caches.
+names the setting). On a Windows gateway this works in the Windows sandbox (Claude CLI, Copilot); Codex there, and
+every agent on a Windows gateway without the Windows sandbox, cannot create repositories; the folder still holds
+downloads and caches.
 
 Everything agent builds write is under the Scratch folder, never in the system's temporary folder or your home folder:
 the clone, `$MINIGW_DEPS` (also Claude Code's temporary folder, `CLAUDE_CODE_TMPDIR`), one Maven repository per project
@@ -189,7 +190,7 @@ output, settings and scripts). Claude Code needs a short temporary path (its soc
 gets a link `/tmp/mgw-…/<name>` that points into `$MINIGW_DEPS/tmp`: the files stay under Scratch, and only the link
 is in `/tmp`, in a private folder of the gateway user that agents cannot write. The link goes with the clone (Mac) or
 the run (`minigw serve`); if the gateway cannot make it, the run is refused. On Windows the temporary folder is
-`$MINIGW_DEPS/tmp` itself. Before every run the gateway checks that these folders are still real folders of its user
+`$MINIGW_DEPS/tmp` itself (in sync mode a folder under `Scratch\tmp` for the run, removed after it). Before every run the gateway checks that these folders are still real folders of its user
 (an agent could replace one with a link to another place) and makes them again if not.
 
 **1. Start.** minigw sends the repository to a mirror on the gateway (git bundles over the encrypted connection,
@@ -315,9 +316,9 @@ Notes:
 - The agent may commit inside a nested clone: its note names the clones. On the Mac app and on Linux
   `minigw serve`, git run in a nested clone's folder (`cd <path> && git …` or `git -C <path> …`) works in that clone,
   and plain git elsewhere in the clone works on the top repository. This holds for every agent (Claude CLI, Codex, Grok,
-  Copilot). On a Windows `minigw serve` gateway the note gives the form
-  `GIT_DIR=<path>/.git GIT_COMMON_DIR=<path>/.git GIT_WORK_TREE=<path> git …`, which Claude Code does not run without
-  asking, so there the gateway commits Claude's changes. The agent's commits are kept; changes it leaves uncommitted are
+  Copilot). On a Windows `minigw serve` gateway with the Windows sandbox it is the same, and the agent commits its own
+  work. Without the Windows sandbox the note there tells the agent not to run `git add` or `git commit`, and the
+  gateway commits its changes when it finishes. The agent's commits are kept; changes it leaves uncommitted are
   committed by the gateway.
 - Agent git in the clone (all gateways, Windows too) does not use the gateway owner's git config (identity, signing, credential helpers,
   `url.*.insteadOf`, global ignore file). Agent commits are authored as the agent, for example
@@ -341,9 +342,14 @@ Notes:
   on the Mac `swift build` and `xcodebuild` fail in the agents' sandbox (they need macOS's per-user temporary folder
   and a nested sandbox). Build Swift and Xcode projects in sync mode or with
   [`minigw run`](#native-mode-and-builds-on-the-gateway-mac).
-- Network for builds (Mac): on for Claude, off for Codex. Change it in Settings → General → Worktree mode. With it off
-  a `git clone` of a remote URL is refused and names the setting; Copilot follows "Network for Codex builds" (and its
-  "Allow web access") for that, although its commands always have network.
+- Network for builds: on for Claude, off for Codex. Mac: Settings → General → Worktree mode (also "Network for Codex
+  builds"). `minigw serve`: settings page → General → Worktree mode → **Network for builds** (Claude CLI; Codex follows
+  its own "Allow network access for commands"), `minigw gw settings` → General, or `PATCH general {"worktreeNetwork":
+  false}`. With it off Claude's commands have no network (Linux and macOS `minigw serve`: Claude Code's sandbox; Windows:
+  the Windows sandbox, where Claude Code still reaches `api.anthropic.com` through the gateway, and its web fetch and
+  web search fail) and a `git clone` of a remote URL is refused and names the setting; on a Windows gateway without
+  the Windows sandbox the switch has no effect. On the Mac Copilot follows "Network for Codex builds" (and its "Allow
+  web access") for that, although its commands always have network.
 - On `minigw serve`, agent requests run one at a time per device and repository, also across that device's
   sessions. The gateway uses its own `git` from PATH, without system or global config, hooks, fsmonitor or
   submodules.
@@ -490,7 +496,8 @@ The gateway picks the provider by the model name.
 Tools are read-only by default; **Allow local tools** gives every Claude Code tool (commands, builds), with a table
 to exclude single tools. File tools are refused outside the session folder and the allowed folders, and commands run
 in Claude Code's sandbox (no reads of the home folder, writes only in these folders, network allowed). On a Windows
-gateway commands need **Allow commands without a sandbox**.
+gateway the whole Claude Code runs in the Windows sandbox (see [Windows gateway](#windows-gateway-sandbox)) and runs
+commands with its PowerShell tool; without the Windows sandbox commands need **Allow commands without a sandbox**.
 
 **Codex** runs one entry per enabled Codex model of your account. Its sandbox writes only to the session folder and
 the allowed folders. Within a conversation Codex continues its own thread (`codex exec resume`), also after
@@ -499,17 +506,53 @@ the allowed folders. Within a conversation Codex continues its own thread (`code
 **Grok** runs in its kernel sandbox: `workspace` (writes only to the session folder) or `read-only`. Within a
 conversation it continues its own session (`-r`).
 
-**Copilot** runs in a sandbox (on the Mac a `sandbox-exec` profile, on Linux bwrap) with a fresh Copilot home for
-each request, deleted afterwards. Windows has no sandbox: there Copilot, Codex and Grok run only with **Allow commands
-without a sandbox**. `claude-copilot` uses Copilot's default model (`auto`); list other models by
-name in its settings.
+**Copilot** runs in a sandbox (on the Mac a `sandbox-exec` profile, on Linux bwrap, on Windows the Windows sandbox) with
+a fresh Copilot home for each request, deleted afterwards. On a Windows gateway without the Windows sandbox, Copilot
+and Grok run only with **Allow commands without a sandbox**; Codex there needs its own elevated sandbox or that switch.
+`claude-copilot` uses Copilot's default model (`auto`); list other models by name in its settings.
 - It only reads the folder unless **Allow writing** is on.
 - Commands need **Allow commands** together with **Allow writing**, and a dedicated GitHub token: a fine-grained
   personal access token with only the Copilot Requests permission (`minigw gw copilot token`). Commands can use that
   token to make Copilot requests on your account. `gh` and `security` stay denied.
 - The Mac app needs that token for every request. `minigw serve` on Linux may also use the GitHub CLI's sign-in
-  (`gh auth login`), and on Windows the user's own `copilot login`.
+  (`gh auth login`), and on Windows the user's own `copilot login` (only without the Windows sandbox).
 - Within a conversation Copilot continues its own session (`--session-id`).
+
+**Logins (`minigw serve`).** Agents use your subscription logins, never API keys, and nothing is copied back from an
+agent run. Each agent has a **Login** row (settings page, also the Gateway tray's Settings window; `minigw gw
+settings`; `minigw gw <agent> login`) that shows only the state (set, not set, logged in) and a one-line hint, never
+the value: Claude CLI its `claude setup-token` token (`minigw gw claude token [remove]`, needed in the Windows
+sandbox), Codex its ChatGPT login (`codex login`), Grok its `grok login`, Copilot its token for commands. **Use an API
+key instead** (Claude CLI, Codex, Grok; `minigw gw claude|codex|grok apikey [remove]`) stores a key in the key store
+and passes it only then; it is billed through the provider's API, not your subscription. API keys in the gateway's own
+environment (`ANTHROPIC_*`, `OPENAI_API_KEY`, `CODEX_API_KEY`, `XAI_API_KEY`, `GROK_CODE_XAI_API_KEY`,
+`GEMINI_API_KEY`, `GOOGLE_API_KEY`) never reach an agent. The Mac app has no Login row: Claude uses your Keychain login.
+
+### Windows gateway sandbox
+
+`minigw serve` on Windows (MSI, part Gateway) runs Claude CLI, Copilot and Grok in the Windows sandbox, Microsoft MXC
+(`mxc\wxc-exec.exe` in the install folder, no admin rights). It needs Windows 11 build 26100.9550 / 26200.9550 or
+later (KB5124010 or any later cumulative update). Settings page → General → About shows "Agent sandbox: Windows sandbox (MXC 1.0.1)",
+or "not available (reason)"; then agents run only with **Allow commands without a sandbox**, as in 0.5.22. With the
+sandbox that switch is not needed and cannot be changed. Keep the Scratch folder on a fixed NTFS drive (for example
+`D:\minigw-scratch` for builds on D:).
+- The agents write only to the session's folder (when allowed), `$MINIGW_DEPS`, caches and temporary files under
+  Scratch; they cannot read your home folder, other devices' copies or the gateway's settings
+  ([How it works](how-it-works.md#how-the-folder-reaches-the-agent), Windows sandbox).
+- Folders on `PATH` inside your home folder (for example `~\.local\bin`) are readable by agents; the settings page
+  warns about them. Keep no secrets there.
+- **Claude CLI** needs the long-lived token from `claude setup-token` (your Claude subscription, valid one year):
+  run `claude setup-token`, then `minigw gw claude token` (or settings page → Claude CLI → Login, or
+  `minigw gw settings`). It is kept in Credential Manager; `~\.claude` is never copied into the sandbox. Without it a
+  Claude request is refused with "Claude CLI in the Windows sandbox needs a long-lived sign-in token: run claude
+  setup-token, then minigw gw claude token". Each run starts with a fresh Claude config and home; only the
+  conversation's transcript is kept between turns, so `--resume` works.
+- **Grok** has no long-lived token: its `~\.grok\auth.json` and `config.toml` are copied into its own home for the
+  device before each run, never back. After Grok refreshes its login you may need `grok login` again.
+- Claude runs commands with PowerShell (Git Bash cannot run in the sandbox); `Bash` in the tools list means PowerShell.
+- **Codex** does not run in the Windows sandbox. Set up Codex's own elevated sandbox once, as administrator:
+  `codex sandbox setup --elevated`; the gateway then runs Codex without **Allow commands without a sandbox**. Codex
+  uses your real `~\.codex` and its ChatGPT login, which refreshes itself.
 
 **Siri AI** is driven through Accessibility, in the background. It keeps one Siri thread per Claude Code
 conversation and has no tools.

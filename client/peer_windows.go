@@ -65,7 +65,14 @@ func createAgentJob() {
 }
 
 // startAgent: proces ustvarjen ustavljen, dodan v Job in šele nato pognan (pred tem ne more ustvariti otrok).
-func agentWrap(exe string, args []string, m agentMounts) (string, []string) { return exe, args }
+// agentWrap (#68): s škatlo MXC ves CLI v njej (mxcWrap); wxc-exec.exe se pred vsako rabo preveri (zgoščena vrednost).
+// Napaka: agent ne teče (nikoli brez škatle, ko je vklopljena). Codex (unboxed) in brez škatle: kot prej.
+func agentWrap(exe string, args []string, m agentMounts) (string, []string, func(), error) {
+	if m.unboxed || !windowsBox() {
+		return exe, args, func() {}, nil
+	}
+	return boxWrap(exe, args, m)
+}
 
 func pinWrap(cfgDir, exe string, args, pins []string, logf func(string, ...any)) (string, []string) {
 	return exe, args
@@ -74,8 +81,8 @@ func pinWrap(cfgDir, exe string, args, pins []string, logf func(string, ...any))
 // claudePinOK: pin (bwrap) je le na Linux.
 func claudePinOK(cfgDir string, logf func(string, ...any)) bool { return false }
 
-// agentSandboxed: sandbox Codex in Grok na Windows ni preverjen: le z izrecnim dovoljenjem.
-func agentSandboxed(cfgDir string) bool { return false }
+// agentSandboxed (#68): agenti so v škatli MXC (preizkus ob zagonu uspel); sicer le z izrecnim dovoljenjem.
+func agentSandboxed(cfgDir string) bool { return windowsBox() }
 
 func hardenRouter() {}
 

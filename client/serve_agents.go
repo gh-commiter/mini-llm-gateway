@@ -3,8 +3,9 @@ package main
 // Codex CLI in Grok CLI kot agenta (kot RouterCore/Codex.swift in Grok.swift): claude-codex, claude-codex-<model>,
 // claude-grok, claude-grok-<model>. Privzeto izklopljena; agent dela le v sinhronizirani kopiji mape odjemalca.
 // Peskovnik postavi CLI sam (Codex: workspace-write / read-only, na Linuxu Landlock in seccomp; Grok: workspace /
-// read-only). Oba bereta povsod: Grok dobi pravila --deny za mapo nastavitev; na Windows (brez preverjenega sandboxa)
-// tečeta le z allowUnsandboxedBash. Skrbniški API zavrne procese agentov (peer check).
+// read-only). Oba bereta povsod: Grok dobi pravila --deny za mapo nastavitev. Windows (#68): Grok in Copilot v škatli
+// MXC (mxc.go), Codex s svojim peskovnikom »elevated«; brez tega le z allowUnsandboxedBash. Skrbniški API zavrne
+// procese agentov (peer check).
 
 import (
 	"bufio"
@@ -128,7 +129,8 @@ type cachedCatalog struct {
 }
 
 // agentCatalog: Codex »codex debug models« (JSON), Grok »grok models« (besedilo); največ 20 s, 5 min v predpomnilniku.
-func agentCatalog(k agentKind, exe string) []agentModel {
+// dir (#68): delovna mapa poizvedbe (Scratch\tmp), ne sistemska začasna mapa.
+func agentCatalog(k agentKind, exe, dir string) []agentModel {
 	key := k.name + "|" + exe
 	if v, ok := agentCatalogs.Load(key); ok && time.Since(v.(cachedCatalog).at) < 5*time.Minute {
 		return v.(cachedCatalog).models
@@ -140,10 +142,10 @@ func agentCatalog(k agentKind, exe string) []agentModel {
 		args = []string{"debug", "models"}
 	}
 	if k.name == "codex" { // #59: brez projektnih nastavitev (.codex/config.toml) v začasni mapi ali nad njo
-		args = append(codexUntrusted(os.TempDir()), args...)
+		args = append(codexUntrusted(dir), args...)
 	}
 	cmd := commandContext(ctx, exe, args...)
-	cmd.Dir = os.TempDir()
+	cmd.Dir = dir
 	out, _ := cmd.Output()
 	models := parseCodexCatalog(out)
 	if k.name == "grok" {
@@ -478,8 +480,8 @@ func copilotCacheOverlaps(allowed []string) []string {
 // copilotPrepare: pod bwrap brez omrežja (#26): podtaknjena koda v paketu ne vidi nastavitev, ključev, Scratch in
 // omrežja; pisanje v paket, začasni COPILOT_HOME in začasno mapo zahteve (cwd).
 func copilotPrepare(ctx context.Context, exe, home, cwd, cfgDir, scratch string, tmps []string) {
-	if runtime.GOOS != "linux" {
-		return // Windows: brez peskovnika
+	if runtime.GOOS != "linux" && !windowsBox() {
+		return // Windows brez škatle MXC: brez peskovnika (paket razširi copilot sam)
 	}
 	real, err := filepath.EvalSymlinks(exe)
 	if err != nil {
@@ -500,10 +502,16 @@ func copilotPrepare(ctx context.Context, exe, home, cwd, cfgDir, scratch string,
 	defer cancel()
 	os.MkdirAll(copilotCacheDir(), 0o700)
 	os.MkdirAll(home, 0o700)
-	name, args := agentWrap(exe, []string{"--version"}, agentMounts{cfgDir: cfgDir, rw: []string{copilotCacheDir(), home, cwd}, hide: scratch, tmps: tmps, noNet: true})
+	env := append(agentEnv(os.Environ()), "COPILOT_HOME="+home, "COPILOT_AUTO_UPDATE=false")
+	name, args, done, err := agentWrap(exe, []string{"--version"}, agentMounts{cfgDir: cfgDir, rw: []string{copilotCacheDir(), home, cwd}, hide: scratch, tmps: tmps, noNet: true,
+		cmdEnv: env, cwd: cwd})
+	if err != nil {
+		return
+	}
+	defer done()
 	cmd := commandContext(ctx, name, args...)
 	cmd.Dir = cwd
-	cmd.Env = append(agentEnv(os.Environ()), "COPILOT_HOME="+home, "COPILOT_AUTO_UPDATE=false")
+	cmd.Env = env
 	if cmd.Run() == nil {
 		copilotPrepared.Store(key, true)
 	}
@@ -646,6 +654,9 @@ func (s *server) agentFolder(w http.ResponseWriter, r *req, label, agent string)
 		gits, _ := s.hub.worktreeGits(wt)
 		// #67: Copilot ima oznako peskovnika le pod bwrap (Linux); Codex prek profila, Grok v klonu le bere
 		sandboxed := agent != "copilot" || runtime.GOOS == "linux" && !agentUnconfined(s.cfgDir)
+		if runtime.GOOS == "windows" { // #68: ovoj git (minigw.exe kot git.exe) le v škatli MXC; Codex ni v njej
+			sandboxed = windowsBox() && agent != "codex"
+		}
 		return dir, worktreeNote(clientCwd, dir, branch, gits, sandboxed), false, 0
 	case share != nil:
 		if dir, _ = s.hub.push(share, agent); dir == "" {
@@ -749,9 +760,13 @@ type appliedLimits struct {
 func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k agentKind, model string) int {
 	c := s.conf()
 	ac := k.conf(c)
-	if !s.agentsAllowed(c) {
+	if !s.agentsAllowed(c, k.name) {
+		hint := ""
+		if k.name == "codex" && runtime.GOOS == "windows" { // #68: Codex na Windows ne teče v škatli MXC
+			hint = "; or set up Codex's own Windows sandbox once (codex sandbox setup --elevated, as administrator)"
+		}
 		return writeError(w, r.rid, 403, k.bin+" needs \"Allow commands without a sandbox\" (Claude CLI settings) on this gateway (Windows, "+
-			"or Linux without bwrap): it can read and change everything this user can, including the gateway's settings")
+			"or Linux without bwrap): it can read and change everything this user can, including the gateway's settings"+hint)
 	}
 	if model != "" && !validAgentModel.MatchString(model) {
 		return writeError(w, r.rid, 400, "Invalid model name")
@@ -888,7 +903,14 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 		}
 		defer restoreAuth(state, k)
 		m := agentMounts{cfgDir: s.cfgDir, state: state, envVar: strings.ToUpper(k.bin) + "_HOME", files: files, rw: append([]string{dir, tmp}, extra...),
-			hide: c.Scratch, tmps: s.tempRoots()}
+			hide: c.Scratch, tmps: s.tempRoots(), temp: tmp, unboxed: k.name == "codex", // #68: Codex ima na Windows svoj peskovnik
+			env: agentKeyEnv(s.cfgDir, k.name)} // #68: ključ API le, če ga je uporabnik izbral; dom v škatli svež vsak tek
+		if runtime.GOOS == "windows" && k.name == "codex" { // #68: začasne datoteke Codex pod Scratch (tek)
+			m.env = append(m.env, "TEMP="+tmp, "TMP="+tmp)
+		}
+		if runtime.GOOS == "windows" && state != "" && k.name == "grok" && agentAPIKey(s.cfgDir, "grok") != "" {
+			os.Remove(filepath.Join(state, "auth.json")) // izbran ključ API: prijava ne gre v škatlo
+		}
 		wt, _, maven, objects, inTree := s.hub.worktreeOf(r.h("x-claude-mini-session"), k.name)
 		if p := runOf(r); p != nil { // klon klicatelja
 			wt, maven, objects, inTree = p.wt, p.maven, p.objects, p.wt != ""
@@ -918,14 +940,17 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 				treeEnv = slices.DeleteFunc(treeEnv, func(kv string) bool { return strings.HasPrefix(kv, "MINIGW_DEPS=") })
 			}
 		}
-		run, runEnv := s.startRun(r, k.name, dir, readOnly, true, wt, maven, objects, tmp) // »May ask other models«; mapa je deljena (agentFolder); žeton v tmp zahteve
+		run, runEnv := s.startRun(r, k.name, dir, readOnly, true, wt, maven, objects, tmp, nil, "") // »May ask other models«; mapa je deljena (agentFolder); žeton v tmp zahteve
 		defer run.stop()
 		withTree := func(m agentMounts) agentMounts { // worktree: Maven agentov, objekti zrcala (branje), .git klona le za branje
-			m.env, m.started = append(m.env, runEnv...), run.started
+			m.env, m.started, m.proxy = append(m.env, runEnv...), run.started, run.runAddr()
 			if runEnv != nil {
 				m.ro = append(m.ro, minigwExe())
 			}
 			if inTree {
+				if write { // #68: koren klona (tudi .git za commit), ko je mapa podmapa
+					m.rw = append(m.rw, wt)
+				}
 				m.rw, m.ro = append(append(m.rw, maven), deps...), append(append(m.ro, objs...), gw)
 				m.pins = append(pinPaths(wt, gits), deps...) // L1, M2: .git vsakega klona in mape do ugnezdenih so točke priklopa (mv/rm: EBUSY); #67 H1: tudi mape pod Scratch
 				for _, g := range gits {
@@ -962,7 +987,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 				m.env = append(m.env, "MINIGW_SANDBOXED=1")
 			}
 			// C2: svež COPILOT_HOME vsake zahteve (hooki, nastavitve, zaupane mape prejšnjega zagona ne obstajajo); med
-			// zahtevami ostane le stanje seje (brez povezav) v stanju naprave, ki ga bwrap ne vidi. Windows: pravi ~/.copilot (I1).
+			// zahtevami ostane le stanje seje (brez povezav) v stanju naprave, ki ga bwrap ne vidi. Windows brez škatle MXC: pravi ~/.copilot (I1).
 			store := ""
 			if state != "" {
 				store = filepath.Join(state, "sessions")
@@ -1006,6 +1031,9 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 				cgits, cpath, cdeny = gits, agentPath(gw), []string{s.cfgDir}
 			}
 			args := codexArgs(dir, append(extra, deps...), agent, out, model, write, ac.Network, resume, cgits, cpath, cdeny)
+			if runtime.GOOS == "windows" && codexElevated() { // #68: Codex' peskovnik »elevated« izrecno za vsak zagon
+				args = append([]string{args[0], "-c", `windows.sandbox="elevated"`}, args[1:]...)
+			}
 			var failure string
 			err = s.runAgentProcess(ctx, r, exe, args, withTree(m), dir, prompt, func(line []byte) {
 				if f := codexFailure(line); f != "" {
@@ -1083,11 +1111,16 @@ func agentEnv(env []string) []string {
 	var out []string
 	for _, e := range env {
 		name, _, _ := strings.Cut(e, "=")
-		name = strings.ToUpper(name) // Windows: imena spremenljivk brez razlike med velikimi in malimi črkami
+		name = strings.ToUpper(name)             // Windows: imena spremenljivk brez razlike med velikimi in malimi črkami
+		if strings.HasSuffix(name, "_API_KEY") { // #68: noben podedovan ključ API (le izrecno nastavljen, agentKeyEnv)
+			continue
+		}
 		if strings.HasPrefix(name, "ANTHROPIC_") || strings.HasPrefix(name, "CLAUDE_CODE_") || slices.Contains([]string{"CLAUDECODE",
 			"DBUS_SESSION_BUS_ADDRESS", "SSH_AUTH_SOCK", "GPG_AGENT_INFO", "GNOME_KEYRING_CONTROL", "CODEX_HOME", "GROK_HOME", "MINIGW_AGENT_URL", "MINIGW_AGENT_AUTH_FILE",
 			"GH_TOKEN", "GITHUB_TOKEN", "SANDBOX_RUNTIME", "MINIGW_SANDBOXED", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED", // #67: oznake peskovnika
-			"MINIGW_DEPS", "MINIGW_NETWORK_OFF"}, name) || strings.HasPrefix(name, "COPILOT_") {
+			"MINIGW_DEPS", "MINIGW_NETWORK_OFF",
+			// #68: ključi API iz okolja prehoda nikoli do agenta (obračun API); le izrecno nastavljen (agentKeyEnv)
+			"OPENAI_API_KEY", "CODEX_API_KEY", "XAI_API_KEY", "GROK_CODE_XAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"}, name) || strings.HasPrefix(name, "COPILOT_") {
 			continue
 		}
 		out = append(out, e)
@@ -1116,7 +1149,7 @@ func agentAuthFiles(k agentKind) (real string, names []string) {
 // agentState: <scratch>/state/<naprava>/<cli> s povezavami na prave datoteke prijave (Codex piše auth.json na
 // mestu, skozi povezavo: preverjeno s codex 0.167). Vrne mapo in prave datoteke za bwrap.
 func agentState(scratch string, k agentKind, owner string) (string, []string, error) {
-	if runtime.GOOS == "windows" { // povezave tam zahtevajo pravice; agenti tam tako ali tako tečejo le z izrecnim dovoljenjem
+	if runtime.GOOS == "windows" && (!windowsBox() || k.name == "codex") { // brez škatle (in Codex): kot prej, prave mape CLI
 		return "", nil, nil
 	}
 	sum := sha256.Sum256([]byte(owner))
@@ -1125,6 +1158,25 @@ func agentState(scratch string, k agentKind, owner string) (string, []string, er
 		return "", nil, err
 	}
 	real, names := agentAuthFiles(k)
+	if runtime.GOOS == "windows" { // #68: povezave zahtevajo pravice, trde ne prečkajo nosilcev: le kopija noter, nikoli nazaj
+		// pred vsakim tekom vse drugo iz stanja ven (nastavitve, vtičniki, zaupane mape, ki jih je pustil prejšnji tek);
+		// ostanejo le prijava, nastavitve in seje (-r nadaljuje sejo)
+		ents, _ := os.ReadDir(dir)
+		for _, e := range ents {
+			if n := e.Name(); !slices.Contains(names, n) && n != "sessions" {
+				os.RemoveAll(filepath.Join(dir, n))
+			}
+		}
+		for _, n := range names {
+			if strings.HasSuffix(n, ".lock") {
+				continue
+			}
+			if err := authCopyIn(filepath.Join(real, n), filepath.Join(dir, n)); err != nil {
+				return "", nil, err
+			}
+		}
+		return dir, nil, nil
+	}
 	var files []string
 	for _, n := range names {
 		src, dst := filepath.Join(real, n), filepath.Join(dir, n)
@@ -1152,6 +1204,9 @@ func restoreAuth(dir string, k agentKind) {
 		return
 	}
 	real, _ := agentAuthFiles(k)
+	if runtime.GOOS == "windows" { // #68: iz škatle nikoli nič nazaj
+		return
+	}
 	dst, src := filepath.Join(dir, "auth.json"), filepath.Join(real, "auth.json")
 	if fi, err := os.Lstat(dst); err != nil || !fi.Mode().IsRegular() {
 		return
@@ -1191,19 +1246,25 @@ func (s *server) procSlot(w http.ResponseWriter, r *req) int {
 }
 
 func (s *server) runAgentProcess(ctx context.Context, r *req, exe string, args []string, m agentMounts, dir, stdin string, onLine func([]byte)) error {
-	name, args := agentWrap(exe, args, m) // Linux: domača mapa in mapa nastavitev skriti (bwrap), če je na voljo
+	env := append(agentEnv(os.Environ()), m.env...)
+	if m.state != "" {
+		env = append(env, m.envVar+"="+m.state)
+	}
+	m.cmdEnv, m.cwd = env, dir
+	name, args, done, err := agentWrap(exe, args, m) // Linux: domača mapa in mapa nastavitev skriti (bwrap), če je na voljo; Windows: škatla MXC
+	if err != nil {
+		return err
+	}
+	defer done()
 	cmd := commandContext(ctx, name, args...)
 	cmd.Dir = dir
-	cmd.Env = append(agentEnv(os.Environ()), m.env...)
-	if m.state != "" {
-		cmd.Env = append(cmd.Env, m.envVar+"="+m.state)
-	}
+	cmd.Env = env
 	cmd.Stdin = strings.NewReader(stdin)
 	stderr := &tailBuffer{}
 	cmd.Stderr = stderr
 	stdout, err := cmd.StdoutPipe()
 	if err == nil {
-		err = startAgent(cmd) // Windows: Job agentov; Linux: pomočnik subreaper (peer check)
+		err = startAgent(cmd) // Windows: Job agentov (tudi proces v škatli, otrok wxc-exec); Linux: pomočnik subreaper (peer check)
 	}
 	if err != nil {
 		return err
@@ -1327,8 +1388,52 @@ func (s *server) replyWhenDone(w http.ResponseWriter, r *req, body map[string]an
 
 // agentsAllowed: brez sandboxa, ki skrije skrivnosti routerja (Windows; Linux brez delujočega bwrap), Codex in Grok
 // bereta in pišeta vse, kar uporabnik: le z izrecnim allowUnsandboxedBash, v vsakem načinu (H1, R3).
-func (s *server) agentsAllowed(c serveConfig) bool {
+// #68: Codex na Windows ne teče v škatli MXC (canonicalize CODEX_HOME tam pade): le s svojim peskovnikom »elevated«.
+func (s *server) agentsAllowed(c serveConfig, kind string) bool {
+	if kind == "codex" && runtime.GOOS == "windows" {
+		return codexElevated() || c.AllowUnsandboxedBash
+	}
 	return agentSandboxed(s.cfgDir) || c.AllowUnsandboxedBash
+}
+
+// codexElevated (#68): Codex ima nastavljen svoj peskovnik Windows »elevated« (enkratni »codex sandbox setup
+// --elevated« kot skrbnik): [windows] sandbox = "elevated" v config.toml in mapa .sandbox-secrets (gesla uporabnikov
+// peskovnika) v CODEX_HOME. Ta peskovnik ukazom ne da brati ~/.ssh in pisati v profil (HPX360, 2026-11-10).
+func codexElevated() bool {
+	real, _ := agentAuthFiles(codexKind)
+	b, err := os.ReadFile(filepath.Join(real, "config.toml"))
+	if err != nil || !tomlElevated(string(b)) {
+		return false
+	}
+	st, err := os.Stat(filepath.Join(real, ".sandbox-secrets"))
+	return err == nil && st.IsDir()
+}
+
+// tomlElevated: [windows] sandbox = "elevated" ali windows.sandbox = "elevated" (preprosto branje TOML, brez tabel v vrstici).
+func tomlElevated(toml string) bool {
+	section := ""
+	for _, l := range strings.Split(toml, "\n") {
+		l = strings.TrimSpace(l)
+		if l == "" || strings.HasPrefix(l, "#") {
+			continue
+		}
+		if strings.HasPrefix(l, "[") {
+			section = strings.TrimSpace(strings.Trim(l, "[]"))
+			continue
+		}
+		k, v, ok := strings.Cut(l, "=")
+		if !ok {
+			continue
+		}
+		k, v = strings.TrimSpace(k), strings.TrimSpace(v)
+		if i := strings.Index(v, "#"); i >= 0 {
+			v = strings.TrimSpace(v[:i])
+		}
+		if (section == "windows" && k == "sandbox" || section == "" && k == "windows.sandbox") && strings.Trim(v, `"'`) == "elevated" {
+			return true
+		}
+	}
+	return false
 }
 
 // agentModelList: claude-codex in claude-codex-<model> (vklopljeni), enako za Grok; le vklopljen agent z najdenim CLI.
@@ -1336,7 +1441,7 @@ func (s *server) agentModelList(k agentKind) []map[string]any {
 	c := s.conf()
 	ac := k.conf(c)
 	exe, _ := resolveAgent(k, ac.Executable)
-	if !ac.Enabled || exe == "" || !s.agentsAllowed(c) {
+	if !ac.Enabled || exe == "" || !s.agentsAllowed(c, k.name) {
 		return nil
 	}
 	label := map[string]string{"codex": "Codex CLI", "grok": "Grok CLI", "copilot": "Copilot CLI"}[k.name]
@@ -1350,7 +1455,7 @@ func (s *server) agentModelList(k agentKind) []map[string]any {
 		}
 		return out
 	}
-	for _, m := range agentCatalog(k, exe) {
+	for _, m := range agentCatalog(k, exe, c.scratch("tmp")) {
 		if !ac.modelEnabled(m.Slug) {
 			continue
 		}

@@ -107,6 +107,13 @@ func general(u *ui) ([]row, error) {
 	if d := str(st, "installDir"); d != "" {
 		rows = append(rows, inf("Installed in", d))
 	}
+	if sb, ok := st["agentSandbox"].(map[string]any); ok { // #68: Windows
+		v := "not available (" + clean(str(sb, "reason")) + ")"
+		if str(sb, "kind") == "mxc" {
+			v = "Windows sandbox (MXC " + str(sb, "version") + ")"
+		}
+		rows = append(rows, inf("Agent sandbox", v))
+	}
 	switch os := str(st, "os"); os {
 	case "linux", "darwin": // darwin: minigw serve for development
 		rows = append(rows, inf("Startup", map[string]string{"boot": "starts at boot", "sign-in": "starts at sign-in",
@@ -148,6 +155,14 @@ func general(u *ui) ([]row, error) {
 		ed("Folder", str(g, "scratch"), func(v string) (string, error) { return patch(map[string]any{"scratch": v}) }),
 		btn("Use the default folder", "", func() (string, error) { return patch(map[string]any{"scratch": ""}) }),
 	)
+	if _, ok := g["worktreeNetwork"]; ok && str(st, "os") != "" { // #68: minigw serve (the Mac shows it under Mac only)
+		rows = append(rows, hdr("Worktree mode"),
+			tog("Network for builds", yes(g, "worktreeNetwork"), func(v bool) (string, error) { return patch(map[string]any{"worktreeNetwork": v}) }),
+			inf("  Claude CLI's builds in its clone may download; off: no network for its commands (on Windows also no web fetch), a remote git clone is refused.", ""))
+		if sb, _ := st["agentSandbox"].(map[string]any); str(st, "os") == "windows" && str(sb, "kind") != "mxc" {
+			rows = append(rows, inf("  No effect on this computer: there is no Windows sandbox, so agents' network is not limited.", ""))
+		}
+	}
 	return rows, nil
 }
 
@@ -386,10 +401,16 @@ func agents(u *ui) ([]row, error) {
 		return pc(map[string]any{"settingSources": v})
 	}))
 	rows = append(rows, workRow(c, pc)...)
+	rows = append(rows, loginRows("claude", c, pc)...)
 	if _, ok := c["allowUnsandboxedBash"]; ok && (str(st, "os") == "windows" || yes(st, "agentsUnsandboxed")) {
-		rows = append(rows, tog("Allow commands without a sandbox", yes(c, "allowUnsandboxedBash"), func(v bool) (string, error) {
-			return pc(map[string]any{"allowUnsandboxedBash": v})
-		}), inf("  Agents can then read this computer's files and the gateway's secrets.", ""))
+		if sb, _ := st["agentSandbox"].(map[string]any); str(sb, "kind") == "mxc" { // #68: read-only, as on the settings page
+			rows = append(rows, inf("Allow commands without a sandbox", onOff(yes(c, "allowUnsandboxedBash"), "on", "off")),
+				inf("  Not needed: agents run in the Windows sandbox.", ""))
+		} else {
+			rows = append(rows, tog("Allow commands without a sandbox", yes(c, "allowUnsandboxedBash"), func(v bool) (string, error) {
+				return pc(map[string]any{"allowUnsandboxedBash": v})
+			}), inf("  Agents can then read this computer's files and the gateway's secrets.", ""))
+		}
 	}
 
 	for _, k := range []struct{ kind, title string }{{"codex", "Codex CLI"}, {"grok", "Grok CLI"}} {
@@ -399,8 +420,12 @@ func agents(u *ui) ([]row, error) {
 		}
 		p := patch("/agents/" + k.kind)
 		rows = append(rows, hdr(k.title))
-		if bare {
-			rows = append(rows, inf("  No sandbox here: turn on Allow commands without a sandbox (Claude CLI) first.", ""))
+		if sb, ok := a["sandboxed"].(bool); ok && !sb && !yes(c, "allowUnsandboxedBash") || !ok && bare { // #68: per agent
+			if k.kind == "codex" && str(st, "os") == "windows" {
+				rows = append(rows, inf("  No sandbox here: run codex sandbox setup --elevated once (as administrator), or turn on Allow commands without a sandbox (Claude CLI).", ""))
+			} else {
+				rows = append(rows, inf("  No sandbox here: turn on Allow commands without a sandbox (Claude CLI) first.", ""))
+			}
 		}
 		rows = append(rows, tog("Enabled", yes(a, "enabled"), func(v bool) (string, error) { return p(map[string]any{"enabled": v}) }),
 			inf("Program", found(a)),
@@ -410,6 +435,7 @@ func agents(u *ui) ([]row, error) {
 			rows = append(rows, tog("Allow network in commands", yes(a, "network"), func(v bool) (string, error) { return p(map[string]any{"network": v}) }))
 		}
 		rows = append(rows, workRow(a, p)...)
+		rows = append(rows, loginRows(k.kind, a, p)...)
 		rows = append(rows, tog("May ask other models of this gateway", yes(a, "askOthers"), func(v bool) (string, error) { return p(map[string]any{"askOthers": v}) }))
 		m, _ := u.call("GET", "/agents/"+k.kind+"/models", nil)
 		rows = append(rows, modelToggles(m, "slug", strs(a, "models"), p)...)
@@ -420,10 +446,6 @@ func agents(u *ui) ([]row, error) {
 		rows = append(rows, hdr("Copilot CLI"))
 		if bare {
 			rows = append(rows, inf("  No sandbox here: turn on Allow commands without a sandbox (Claude CLI) first.", ""))
-		}
-		token := "(not set)"
-		if yes(a, "hasToken") {
-			token = "(stored)"
 		}
 		rows = append(rows, tog("Enabled", yes(a, "enabled"), func(v bool) (string, error) { return p(map[string]any{"enabled": v}) }),
 			inf("Program", found(a)),
@@ -436,18 +458,7 @@ func agents(u *ui) ([]row, error) {
 			rows[len(rows)-1].confirm = "Copilot may then run commands in the session's folder. Turn on"
 		}
 		rows = append(rows, workRow(a, p)...)
-		rows = append(rows, sec("Token (github_pat_…, Copilot Requests)", token, func(v string) (string, error) {
-			if v == "" {
-				return "", nil
-			}
-			if len(v) < 40 {
-				return "", errors.New("this is not a GitHub token (too short)")
-			}
-			return p(map[string]any{"token": v})
-		}))
-		if yes(a, "hasToken") {
-			rows = append(rows, btn("Remove the token", "Remove Copilot's token", func() (string, error) { return p(map[string]any{"token": ""}) }))
-		}
+		rows = append(rows, loginRows("copilot", a, p)...)
 		rows = append(rows, tog("May ask other models of this gateway", yes(a, "askOthers"), func(v bool) (string, error) { return p(map[string]any{"askOthers": v}) }))
 	}
 
@@ -807,4 +818,37 @@ func clean(s string) string {
 		}
 		return r
 	}, s)
+}
+
+// loginRows (#68): the agent's Login row as on the settings page: state (never the value), hint, token (Claude,
+// Copilot) and the opt-in API key (Claude, Codex, Grok).
+func loginRows(kind string, a map[string]any, p func(map[string]any) (string, error)) []row {
+	lg, _ := a["login"].(map[string]any)
+	if lg == nil {
+		return nil // older gateway
+	}
+	rows := []row{inf("Login", str(lg, "state")), inf("  "+str(lg, "hint"), "")}
+	if kind == "claude" || kind == "copilot" {
+		rows = append(rows, sec("Token", map[bool]string{true: "(stored)", false: "(not set)"}[yes(lg, "hasToken")], func(v string) (string, error) {
+			if v == "" {
+				return "", nil
+			}
+			return p(map[string]any{"token": v})
+		}))
+		if yes(lg, "hasToken") {
+			rows = append(rows, btn("Remove the token", "Remove the "+kind+" token", func() (string, error) { return p(map[string]any{"token": ""}) }))
+		}
+	}
+	if _, ok := lg["apiKey"]; ok {
+		rows = append(rows, sec("Use an API key instead", map[bool]string{true: "(stored)", false: "(not set)"}[yes(lg, "apiKey")], func(v string) (string, error) {
+			if v == "" {
+				return "", nil
+			}
+			return p(map[string]any{"apiKey": v})
+		}), inf("  "+str(lg, "apiKeyNote"), ""))
+		if yes(lg, "apiKey") {
+			rows = append(rows, btn("Remove the API key (use the login again)", "Remove the "+kind+" API key", func() (string, error) { return p(map[string]any{"apiKey": ""}) }))
+		}
+	}
+	return rows
 }

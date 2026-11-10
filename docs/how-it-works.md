@@ -97,7 +97,8 @@ Details:
   that run (`-c projects={"<folder>"={trust_level="untrusted"},…}`), so a project or parent folder trusted in
   `~/.codex/config.toml` does not load them. Every gateway Codex run, every mode, both gateways.
 - Sync copies of all devices are in the gateway's Scratch folder. Agents that can read every file of the gateway's
-  user (Codex and Grok on the Mac, any agent on Windows) can read them too. Keep Scratch on APFS, NTFS or ext4:
+  user (Codex and Grok on the Mac, Codex on Windows without its own sandbox, any agent on a Windows gateway without
+  the Windows sandbox) can read them too. Keep Scratch on APFS, NTFS or ext4:
   exFAT ignores the folder's private permissions.
 - In worktree mode the gateway never runs git with the agent's own `.git` (config, hooks) and reads the clone only
   from a sandbox. On Linux `minigw serve` pins the clone's `.git` with bwrap (`.git/config`, `hooks` and `info`
@@ -121,7 +122,60 @@ Details:
   Bash with `SANDBOX_RUNTIME=1`, the gateway marks Codex commands and the sandboxed Copilot with `MINIGW_SANDBOXED=1`);
   there it runs plain git without the clone's `GIT_DIR`. Everywhere else, and for the agent CLIs themselves (outside
   the sandbox, without the markers), git keeps working only in the registered clones. The folder lives as long as the
-  clone, is never delivered and is not kept with a kept clone.
+  clone, is never delivered and is not kept with a kept clone. On Windows (in the Windows sandbox) the `git` on the
+  agent's PATH is a copy of `minigw.exe` named `git.exe` (under `Scratch\gitexec\win-<hash>`, checked against its hash
+  before use; stale copies are removed at start), with the same `init`/`clone` rule; every other git command goes
+  unchanged to the real git.
+- **Windows sandbox (minigw serve, #68).** On Windows the gateway starts Claude CLI, Copilot and Grok as a whole (the
+  CLI and every command it runs) in a Microsoft MXC process container (`wxc-exec.exe` from MXC 1.0.1 in the install
+  folder's `mxc` subfolder; low integrity and an AppContainer, no admin rights). It needs Windows 11 build
+  26100.9550 / 26200.9550 or later (KB5124010 or any later cumulative update). At start the gateway checks `wxc-exec.exe` against the SHA-256 built
+  into minigw (again before every run; the `mxc` folder may hold only `wxc-exec.exe` and `LICENSE.txt`, and during a
+  run the gateway keeps `wxc-exec.exe` open so it cannot be changed or deleted) and runs a probe in the container
+  (prompt on stdin and exit code, writing a granted folder, the config folder's `admin.secret` unreadable, a connection
+  to the gateway on 127.0.0.1). If any check fails, the settings page shows "Agent sandbox: not available (reason)" and
+  agents run only with **Allow commands without a sandbox**, as before; the reason names the Windows build only when
+  the connection to 127.0.0.1 fails. Inside the container reads are an allow-list too:
+  - read and write: the clone or synced copy (only when the agent may write), `$MINIGW_DEPS`, the project's Maven
+    repository and caches, a temporary folder for the run under Scratch (`Scratch\tmp\run-*`: `TEMP`, `TMP` and a
+    fresh home, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`; Claude's `CLAUDE_CONFIG_DIR` is there too), and Grok's
+    per-device `GROK_HOME` under `Scratch\state\<device>\` (Copilot gets a fresh `COPILOT_HOME` per request);
+  - read only: the folders on `PATH` except Git's MSYS2 tools (`Git\usr\bin`, which cannot run there), folders above
+    the home and folders in or above the Scratch or config folders; folders on `PATH` inside your home (for example
+    `~\.local\bin`) are readable, and the settings page warns about them, so keep no secrets there; the CLI's own
+    folder, the Git install, `JAVA_HOME`, `MAVEN_HOME`, `DOTNET_ROOT` and the minigw install folder; the mirror objects
+    in worktree mode;
+  - denied: the gateway's config folder. Everything else (your home folder, other devices' copies, the rest of Scratch,
+    the registry outside the container) is not readable. The container can list the names of the folders above the
+    granted ones (not their files).
+  - The request for each run (it holds the Claude token or an API key you chose) is written to `Scratch\tmp\mxc`, a
+    folder only your user can open (protected access list, also on a D: drive), outside every grant, and deleted after
+    the run; leftovers are deleted when the gateway starts. Inherited environment variables ending in `_API_KEY` never
+    reach an agent. Grok's home in the box keeps only `auth.json`, `config.toml` and its sessions between runs.
+  - Logins: agents use subscription logins, never API keys unless you set one, and nothing is ever copied back from
+    the container. Claude gets the long-lived token from `claude setup-token` (your Claude subscription, valid one
+    year), stored in Credential Manager and passed as `CLAUDE_CODE_OAUTH_TOKEN`; `~\.claude` is never copied in.
+    Without the token a Claude request is refused: "Claude CLI in the Windows sandbox needs a long-lived sign-in token:
+    run claude setup-token, then minigw gw claude token". Only the conversation's transcript is kept between turns
+    (`Scratch\state\<device>\claude\sessions\<session>`), so `--resume` works. Grok has no long-lived token: before
+    each run the gateway copies `~\.grok\auth.json` and `config.toml` into its `GROK_HOME` (regular files only, with a
+    size limit), never back; after Grok refreshes its login you may need `grok login` again. The opt-in **Use an API
+    key instead** passes `ANTHROPIC_API_KEY` or `XAI_API_KEY` from the key store (billed through the provider's API).
+    API-key variables in the gateway's own environment (`ANTHROPIC_*`, `OPENAI_API_KEY`, `CODEX_API_KEY`, `XAI_API_KEY`,
+    `GROK_CODE_XAI_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`) never reach any agent run (every `minigw serve`).
+  - Claude uses its PowerShell tool for commands (`Bash` in the tools list means PowerShell there) and commits its own
+    work in worktree mode, as on the Mac. The per-second `.git` check runs in the container too. Network: on, except
+    Claude in worktree mode with **Network for builds** off: then the container has no network, and Claude Code
+    reaches only `api.anthropic.com` on port 443 through a CONNECT proxy on the run's loopback port. The gateway
+    resolves the name once and connects only to a public IP (never loopback, private, link-local or multicast), allows
+    at most 16 tunnels per run and logs refused hosts. Claude's web fetch and web search fail then too. Runs with
+    network get no proxy (asking other models needs only the loopback port), and Codex never uses it.
+  - Codex does not start inside an MXC container (it cannot read its own `CODEX_HOME` there). It runs with its own
+    **elevated** Windows sandbox when that is set up (`[windows] sandbox = "elevated"` in `~\.codex\config.toml`, done
+    once by `codex sandbox setup --elevated` as administrator; each run then gets `-c windows.sandbox="elevated"`);
+    without it Codex still needs **Allow commands without a sandbox**. Codex keeps the real `~\.codex` (its ChatGPT
+    login refreshes itself) and gets the run's folder under Scratch as `TEMP`/`TMP`; the opt-in API key is passed as
+    `CODEX_API_KEY`.
 - How a nested clone is read after the run: on the Mac the path is checked once and then never resolved again (its
   objects are opened without following links, and git's sandbox may read only that real path), so a folder swapped
   for a link afterwards is refused. On Linux the clone folder is opened once and bound into a bwrap sandbox for git, so
@@ -248,8 +302,11 @@ stays on the gateway computer. See it in **Settings → Sessions** or with `mini
 - **Providers over http.** A provider's API key goes over `http` only to localhost, a private or loopback IP or a
   `.local` name, and only with **Allow http** on. Such addresses are no proof that the provider is on your own network
   (a VPN, another Wi-Fi or a spoofed mDNS answer can serve them), so prefer `https`.
-- **Windows commands.** Windows has no sandbox for agent commands. With **Allow commands without a sandbox** agents
-  can run any command as you and read the provider API keys in Credential Manager and the admin secret.
+- **Windows commands.** With the Windows sandbox (MXC, see
+  [How the folder reaches the agent](#how-the-folder-reaches-the-agent)) agent commands run in a container that cannot
+  read your files or the gateway's settings. Without it (older Windows builds), and for Codex without its own elevated
+  sandbox, agents run only with **Allow commands without a sandbox**: then they can run any command as you and read
+  the provider API keys in Credential Manager and the admin secret.
 - **Siri AI** uses Accessibility UI automation of the Siri AI app. It only touches that app, but Accessibility is a
   powerful permission.
 - **Release downloads** are checked against `SHA256SUMS`, which is signed with a key that is not on GitHub

@@ -1,6 +1,6 @@
 #!/bin/zsh
 # MSI za Windows iz že zgrajenih minigw-windows-<arch>.exe, minigw-tray-windows-<arch>.exe in minigw-tui-windows-<arch>.exe
-# v <dir>:
+# v <dir> (wxc-exec-windows-<arch>.exe prenese scripts/fetch-mxc.sh, če ga ni):
 #   build-msi.sh <version> <dir>   →  <dir>/minigw-windows-amd64.msi, <dir>/minigw-windows-arm64.msi
 # wixl (brew install msitools) nima predloge arm64: paket arm64 ima predlogo x64 (Windows 11 na ARM ga namesti),
 # datoteke v njem so arm64. --ext ui: brez nje wixl tabel oken (Dialog, Control, CheckBox) ne ustvari; okna so v
@@ -9,9 +9,12 @@ emulate -L zsh; set -eu
 V=${1:?usage: build-msi.sh <version> <dir>}; D=${2:?usage: build-msi.sh <version> <dir>}
 command -v wixl >/dev/null || { print -u2 "MSI needs wixl: brew install msitools"; exit 1 }
 cd ${0:A:h}/..
+# #68: wxc-exec.exe (MXC) za del Gateway, preverjen s scripts/mxc.sha256
+[[ -f $D/wxc-exec-windows-amd64.exe && -f $D/wxc-exec-windows-arm64.exe ]] || scripts/fetch-mxc.sh $D
 for arch in amd64 arm64; do
   wixl --ext ui -a x64 -D Version=$V -D Icon=client/tray.ico \
     -D Exe=$D/minigw-windows-$arch.exe -D Tray=$D/minigw-tray-windows-$arch.exe -D Tui=$D/minigw-tui-windows-$arch.exe \
+    -D Wxc=$D/wxc-exec-windows-$arch.exe -D WxcLicense=scripts/mxc-LICENSE.txt \
     -o $D/minigw-windows-$arch.msi client/minigw.wxs
   # Zapiranje pred InstallValidate teče iz kopije pladnja tega paketa (Binary stopper, tip 66 = 2 + ignore 64), ne iz
   # nameščenega starega: wixl BinaryKey z ExeCommand ne zna, zato tu (client/minigw.wxs, CloseTray).

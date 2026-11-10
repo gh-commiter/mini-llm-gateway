@@ -31,7 +31,7 @@ func TestBwrapWorktreeMounts(t *testing.T) {
 		"cd " + wt + " && (mv .git .g 2>/dev/null && echo mv-ok || echo mv-denied); " +
 		"(echo x >> .git/config 2>/dev/null && echo cfg-written || echo cfg-denied); " +
 		"(echo o > .git/objects/o && echo objects-writable); echo end"
-	name, args := agentWrap("/bin/sh", []string{"-c", script}, m)
+	name, args, _, _ := agentWrap("/bin/sh", []string{"-c", script}, m)
 	if name == "/bin/sh" {
 		t.Skip("no usable bwrap (Linux with user namespaces)")
 	}
@@ -122,7 +122,7 @@ func TestBwrapHidesClaudeTempRoots(t *testing.T) {
 	root := filepath.Join(base, "mgw-x")
 	os.MkdirAll(filepath.Join(root, "run"), 0o700)
 	os.WriteFile(filepath.Join(root, "run", "secret"), []byte("CLAUDETMP"), 0o600)
-	name, args := agentWrap("/bin/sh", []string{"-c", "cat " + root + "/run/secret; echo end"},
+	name, args, _, _ := agentWrap("/bin/sh", []string{"-c", "cat " + root + "/run/secret; echo end"},
 		agentMounts{cfgDir: t.TempDir(), rw: []string{base}, tmps: []string{root}})
 	if name == "/bin/sh" {
 		t.Skip("no usable bwrap (Linux with user namespaces)")
@@ -144,7 +144,7 @@ func TestBwrapPinsNestedPath(t *testing.T) {
 	m := agentMounts{cfgDir: t.TempDir(), rw: []string{wt}, pins: pinPaths(wt, gits)}
 	script := "cd " + wt + "; for p in a a/b a/b/c a/b/.git a/b/c/.git; do mv $p $p.x 2>/dev/null && echo moved-$p; done; " +
 		"echo f > a/b/f.txt && echo write-ok"
-	name, args := agentWrap("/bin/sh", []string{"-c", script}, m)
+	name, args, _, _ := agentWrap("/bin/sh", []string{"-c", script}, m)
 	if name == "/bin/sh" {
 		t.Skip("no usable bwrap (Linux with user namespaces)")
 	}

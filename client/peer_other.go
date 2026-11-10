@@ -9,7 +9,12 @@ import (
 )
 
 // macOS in drugi: router je aplikacija Mini Gateway (PeerProcess); minigw serve tu je za razvoj, brez preverjanja.
-func agentWrap(exe string, args []string, m agentMounts) (string, []string) { return exe, args }
+func agentWrap(exe string, args []string, m agentMounts) (string, []string, func(), error) {
+	if windowsBox() && !m.unboxed { // le testi (škatla MXC z lažnim wxc-exec, mxc_test.go)
+		return boxWrap(exe, args, m)
+	}
+	return exe, args, func() {}, nil
+}
 
 func pinWrap(cfgDir, exe string, args, pins []string, logf func(string, ...any)) (string, []string) {
 	return exe, args

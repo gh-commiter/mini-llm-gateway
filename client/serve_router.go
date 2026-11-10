@@ -44,8 +44,12 @@ runs; otherwise they go to serve.json.
                                                         client's folder (in a lower mode it only reads)
   minigw gw autostart [on|off]                          Windows: start the tray at sign-in (Linux: minigw serve install); no argument: show it
   minigw gw token [rotate]                              print the connect line; rotate makes a new token
-  minigw gw copilot token [remove]                      Copilot's token for commands (fine-grained, only Copilot
-                                                        Requests), read from stdin or asked for
+  minigw gw claude|codex|grok|copilot login            the agent's login (set / not set / logged in), never the value
+  minigw gw claude|copilot token [remove]               Claude: the token from claude setup-token (needed in the
+                                                        Windows sandbox); Copilot: its token for commands (fine-
+                                                        grained, only Copilot Requests); read from stdin or asked for
+  minigw gw claude|codex|grok apikey [remove]           use an API key instead of the login (billed through the
+                                                        provider's API); remove: back to the login
   minigw gw settings                                    the settings in this terminal (minigw-tui; also over SSH)
   minigw gw settings link                               a one-time link (60 s) to the settings page
   minigw gw api GET|POST|PATCH|DELETE <path>            one admin API request (docs/admin-api.md): the JSON body
@@ -305,6 +309,13 @@ func routerCommand(args []string, in io.Reader) {
 		say(fmt.Sprintf("version %s, port %d on %s", st.Version, st.Port, addr))
 		say(autostartLine(st.Autostart))
 		say(fmt.Sprintf("agent requests running: %d", st.Agents))
+		if sb := st.AgentSandbox; sb != nil { // #68: Windows
+			if sb["kind"] == "mxc" {
+				say("agent sandbox: Windows sandbox (MXC " + sb["version"] + ")")
+			} else {
+				say(clean("agent sandbox: not available (" + sb["reason"] + ")"))
+			}
+		}
 		say(installedInfo(runtime.GOOS))
 		say(fmt.Sprintf("devices: %d allowed, %d waiting (minigw gw devices)", st.Devices, st.Pending))
 		claude := "not found"
@@ -523,6 +534,10 @@ func routerCommand(args []string, in io.Reader) {
 		}
 
 	case "claude":
+		if len(pos) > 1 {
+			agentLoginCmd(a, in, pos)
+			return
+		}
 		need(1, 1)
 		var c apiClaude
 		if set["path"] || set["tools"] || set["allow-unsandboxed-bash"] || set["folders"] || set["allow-local-tools"] || set["ask-others"] || set["work"] {
@@ -602,32 +617,13 @@ func routerCommand(args []string, in io.Reader) {
 			say("On each client run:")
 		}
 		say("  " + g.Connect)
-	case "codex", "grok": // #60: omejitev načina (work); brez --work le izpis
-		need(1, 1)
-		agentWork(a, pos[0], set["work"], *work)
-	case "copilot":
-		if len(pos) == 1 {
-			agentWork(a, "copilot", set["work"], *work)
+	case "codex", "grok", "copilot": // #60: omejitev načina (work); brez --work le izpis; #68: login, token, apikey
+		if len(pos) > 1 {
+			agentLoginCmd(a, in, pos)
 			return
 		}
-		need(2, 3)
-		if pos[1] != "token" || (len(pos) == 3 && pos[2] != "remove") {
-			fail(routerHelp)
-		}
-		token := ""
-		if len(pos) == 2 {
-			t, err := readKey(in, "Copilot token (github_pat_…, only the Copilot Requests permission)")
-			if err != nil {
-				fail(err.Error())
-			}
-			token = t
-		}
-		a.do("PATCH", "/agents/copilot", map[string]any{"token": token}, nil)
-		if token == "" {
-			say("removed Copilot's token")
-		} else {
-			say("Copilot's token stored in the key store")
-		}
+		need(1, 1)
+		agentWork(a, pos[0], set["work"], *work)
 	case "api": // minigw-tui: ena zahteva skrbniškega API; telo JSON s stdin (ključi nikoli v argv), odgovor JSON na stdout
 		need(3, 3)
 		if !apiRequestOK(pos[1], pos[2]) {
@@ -737,4 +733,44 @@ func agentWork(a *adminClient, kind string, set bool, work string) {
 		a.do("GET", "/agents/"+kind, nil, &c)
 	}
 	say(clean(agentNames[kind] + " work: " + c.Work))
+}
+
+// agentLoginCmd (#68): minigw gw <agent> login | token [remove] | apikey [remove]; ključ s stdin ali vprašan, nikoli v argv.
+func agentLoginCmd(a *adminClient, in io.Reader, pos []string) {
+	kind := pos[0]
+	if len(pos) > 3 || len(pos) == 3 && pos[2] != "remove" || !slices.Contains([]string{"login", "token", "apikey"}, pos[1]) ||
+		pos[1] == "token" && !agentHasToken(kind) || pos[1] == "apikey" && agentAPIKeyEnv[kind] == "" || pos[1] == "login" && len(pos) != 2 {
+		fail(routerHelp)
+	}
+	var info struct {
+		Login map[string]any `json:"login"`
+	}
+	if pos[1] == "login" {
+		a.do("GET", "/agents/"+kind, nil, &info)
+		say(clean(fmt.Sprintf("%s login: %v", kind, info.Login["state"])))
+		say(clean(fmt.Sprint(info.Login["hint"])))
+		if n, ok := info.Login["apiKeyNote"]; ok {
+			say(clean(fmt.Sprint(n)) + " (minigw gw " + kind + " apikey)")
+		}
+		return
+	}
+	what := map[string]string{"claude": "Claude token (from claude setup-token, sk-ant-…)", "copilot": "Copilot token (github_pat_…, only the Copilot Requests permission)"}[kind]
+	field := "token"
+	if pos[1] == "apikey" {
+		what, field = kind+" API key (billed through the provider's API)", "apiKey"
+	}
+	v := ""
+	if len(pos) == 2 {
+		t, err := readKey(in, what)
+		if err != nil {
+			fail(err.Error())
+		}
+		v = t
+	}
+	a.do("PATCH", "/agents/"+kind, map[string]any{field: v}, nil)
+	if v == "" {
+		say("removed " + kind + "'s " + map[string]string{"token": "token", "apiKey": "API key (the login is used again)"}[field])
+	} else {
+		say(kind + "'s " + map[string]string{"token": "token", "apiKey": "API key"}[field] + " stored in the key store")
+	}
 }

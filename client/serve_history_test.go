@@ -189,7 +189,7 @@ func TestNestedCallLandsInCallersSession(t *testing.T) {
 	parent.Header.Set("X-Claude-Mini-Session", "sid1")
 	parent.Header.Set("X-Claude-Mini-Cwd", "/client/dir")
 	parent.Header.Set("X-Claude-Mini-Role", "dev")
-	run, _ := s.startRun(&req{Request: parent, conn: &serveConn{device: &dev, peer: "10.0.0.9"}}, "claude", "/copy", true, true, "", "", "", "")
+	run, _ := s.startRun(&req{Request: parent, conn: &serveConn{device: &dev, peer: "10.0.0.9"}}, "claude", "/copy", true, true, "", "", "", "", nil, "")
 	if run == nil {
 		t.Fatal("no run")
 	}

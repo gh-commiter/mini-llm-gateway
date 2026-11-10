@@ -28,7 +28,9 @@
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="LocalAppDataFolder">
         <Directory Id="ProgramsDir" Name="Programs">
-          <Directory Id="INSTALLDIR" Name="Mini Gateway"/>
+          <Directory Id="INSTALLDIR" Name="Mini Gateway">
+            <Directory Id="MXCDIR" Name="mxc"/>
+          </Directory>
         </Directory>
       </Directory>
       <Directory Id="ProgramMenuFolder"/>
@@ -55,6 +57,18 @@
         <Shortcut Id="StartMenu" Directory="ProgramMenuFolder" Name="Mini Gateway" Target="[INSTALLDIR]minigw-tray.exe"
                   Arguments="tray --config &quot;[AppDataFolder]minigw\serve.json&quot;" WorkingDirectory="INSTALLDIR" Icon="tray.ico"/>
       </Component>
+    </DirectoryRef>
+    <!-- #68: peskovnik agentov minigw serve (Microsoft MXC, MIT): wxc-exec.exe in licenca v mxc\; minigw ga uporabi le, če
+         ima pripeto zgoščeno vrednost (client/mxc.go). Del Gateway. -->
+    <DirectoryRef Id="MXCDIR">
+      <Component Id="Sandbox" Guid="*">
+        <RegistryValue Root="HKCU" Key="Software\Mini Gateway" Name="Sandbox" Type="integer" Value="1" KeyPath="yes"/>
+        <File Id="wxcexec" Name="wxc-exec.exe" Source="$(var.Wxc)"/>
+        <File Id="wxclicense" Name="LICENSE.txt" Source="$(var.WxcLicense)"/>
+        <RemoveFolder Id="RemoveMxcDir" On="uninstall"/>
+      </Component>
+    </DirectoryRef>
+    <DirectoryRef Id="INSTALLDIR">
       <!-- Brez datotek: vtičnik zapiše minigw plugin install (spodaj); vnos v registru le označi, da je del nameščen. -->
       <Component Id="Plugin" Guid="*">
         <RegistryValue Root="HKCU" Key="Software\Mini Gateway" Name="Plugin" Type="integer" Value="1" KeyPath="yes"/>
@@ -66,6 +80,7 @@
       <Feature Id="Gateway" Title="Gateway" Level="1"
                Description="Runs a gateway on this PC: tray icon, start at sign-in, minigw gw settings (minigw-tui).">
         <ComponentRef Id="Gateway"/>
+        <ComponentRef Id="Sandbox"/>
       </Feature>
       <Feature Id="Plugin" Title="Claude Code plugin" Level="1"
                Description="Adds the minigw plugin to Claude Code (compatible with the Claude Code CLI), updated automatically from the release branch, and points it at this minigw.">
