@@ -652,6 +652,28 @@ func TestPickScratch(t *testing.T) {
 	}
 }
 
+// L1′: nadrejena mapa minigw-scratch le kot prava mapa tega uporabnika, Administrators ali SYSTEM.
+func TestScratchParentOK(t *testing.T) {
+	me := "S-1-5-21-1-2-3-1001"
+	for _, tc := range []struct {
+		mode  os.FileMode
+		owner string
+		want  bool
+	}{
+		{os.ModeDir, me, true},
+		{os.ModeDir, "S-1-5-32-544", true},
+		{os.ModeDir, "S-1-5-18", true},
+		{os.ModeDir, "S-1-5-21-1-2-3-1002", false},           // drug račun
+		{os.ModeDir | os.ModeIrregular, me, false},           // junction
+		{os.ModeDir | os.ModeSymlink, "S-1-5-32-544", false}, // symlink
+		{0, me, false}, // datoteka
+	} {
+		if got := scratchParentOK(tc.mode, tc.owner, me); got != tc.want {
+			t.Errorf("%v %s: %v", tc.mode, tc.owner, got)
+		}
+	}
+}
+
 // Codex »elevated« (#68): nedokončana nastavitev → zavrnitev z ukazom (brez UAC iz teka); ne odklene Codex.
 func TestCodexSandboxProblem(t *testing.T) {
 	ch := t.TempDir()

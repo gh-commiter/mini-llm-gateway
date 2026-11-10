@@ -127,7 +127,8 @@ func moveScratchDir(old, dst string) (renamed bool, err error) {
 	if _, err := os.Lstat(old); errors.Is(err, fs.ErrNotExist) { // še ni bilo nič: le nova mapa
 		return false, protectTarget(dst)
 	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+	if err := protectTarget(dst); err != nil { // L1′: nadrejena mapa preverjena, preden gre vanjo stara mapa
+		os.Remove(dst)
 		return false, err
 	}
 	os.Remove(dst) // prazna (zgoraj): Rename na Windows ne gre v obstoječo mapo

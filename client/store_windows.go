@@ -283,14 +283,37 @@ func regRunDel(name string) {
 
 // protectDir: zaščiten DACL samo za lastnika in SYSTEM (mapa nastavitev zunaj %AppData%, kjer ni privzeto zasebna).
 // protectScratch (L2): kot mapa nastavitev (DACL le za uporabnika; tuj lastnik = zavrnitev).
-// L1: privzeta nadrejena mapa <pogon>\minigw-scratch mora biti prava mapa tega uporabnika (na deljenem računalniku bi
-// jo sicer drug račun lahko preimenoval ali zamenjal skupaj z našo mapo v njej).
+// L1, L1′: privzeta nadrejena mapa <pogon>\minigw-scratch mora biti prava mapa (ne povezava) tega uporabnika,
+// Administrators ali SYSTEM, preden v njej karkoli ustvarimo (na deljenem računalniku bi jo sicer drug račun lahko
+// preimenoval ali zamenjal skupaj z našo mapo v njej); naša dobi zaščiten DACL (sicer podeduje ACL pogona, kjer
+// Authenticated Users smejo spreminjati). <u> mora biti prava mapa tega uporabnika (ne junction drugega računa).
 func protectScratch(dir string) error {
+	if p := filepath.Dir(dir); strings.EqualFold(filepath.Base(p), "minigw-scratch") {
+		if err := os.MkdirAll(p, 0o700); err != nil {
+			return err
+		}
+		fi, err := os.Lstat(p)
+		if err != nil {
+			return err
+		}
+		owner, me, err := ownerAndMe(p)
+		if err != nil {
+			return err
+		}
+		if !scratchParentOK(fi.Mode(), owner, me) {
+			return fmt.Errorf("%s %w", p, errForeignOwner)
+		}
+		if owner == me {
+			if err := protectDir(p); err != nil {
+				return fmt.Errorf("%s: %v", p, err)
+			}
+		}
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	if p := filepath.Dir(dir); strings.EqualFold(filepath.Base(p), "minigw-scratch") && !ownedByMe(p) {
-		return fmt.Errorf("%s %w", p, errForeignOwner)
+	if !ownedByMe(dir) {
+		return fmt.Errorf("%s %w", dir, errForeignOwner)
 	}
 	return protectDir(dir)
 }

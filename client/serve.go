@@ -688,6 +688,13 @@ func unsandboxedTools(tools string) []string {
 
 var errForeignOwner = errors.New("is owned by another user")
 
+// scratchParentOK (L1′): nadrejena mapa minigw-scratch je prava mapa (ne junction, symlink ali druga točka ponovne
+// razčlenitve), katere lastnik je ta uporabnik, Administrators ali SYSTEM (tuj lastnik bi jo lahko preimenoval).
+func scratchParentOK(mode os.FileMode, owner, me string) bool {
+	return mode.IsDir() && mode&(os.ModeSymlink|os.ModeIrregular) == 0 &&
+		(owner == me || owner == "S-1-5-32-544" || owner == "S-1-5-18")
+}
+
 // protectConfigDir: na Windows mapa nastavitev zunaj %AppData% dobi DACL samo za lastnika (v %AppData% je že
 // zasebna). Drugod je mapa 0700.
 func protectConfigDir(cfgDir string) error {
