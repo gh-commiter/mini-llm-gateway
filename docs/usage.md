@@ -254,8 +254,8 @@ Notes:
   gateway could not save it), the top-level branch and the other nested repositories still come back, without that
   repository's files. minigw prints one line per such repository with the reason:
   `minigw: gateway: worktree: <reason>; the agent's files are kept on the gateway for 30 days as
-  worktrees/<device>/<id>/<clone>-kept-<time> after this session (files only; its .git folders renamed .git.agent —
-  do not run git there)`. The path is inside the gateway's Scratch folder. A later request in the same session that
+  worktrees/<device>/<id>/<clone>-kept-<time> after this session (files only; its .git folders renamed .git.agent, or
+  nothing is kept if that fails — do not run git there)`. The path is inside the gateway's Scratch folder. A later request in the same session that
   delivers the work ends that. When the session ends (or the next request needs a new clone), the gateway keeps the
   agent's files there with every `.git` renamed `.git.agent` (and the `HEAD` of any folder shaped like a bare
   repository renamed `HEAD.agent`), so no git command picks up the agent's git settings or
