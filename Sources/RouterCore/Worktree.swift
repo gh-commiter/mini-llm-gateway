@@ -1225,15 +1225,17 @@ extension ShareHub {
                 refusals[id] = (400, why); unlock(tree.repo)
                 return nil
             }
-            if slot.dirty {  // #73: neshranjeno in zaveze opuščenega teka ven, le v delovnem drevesu klona (ne $MINIGW_DEPS)
-                let (wt, start) = (slot.wt.path, slot.start ?? slot.base)
-                let ok = await offPool { Worktree.run(["-C", wt, "reset", "-q", "--hard", start]).status == 0 && Worktree.run(["-C", wt, "clean", "-qfd"]).status == 0 }
+            // #73: klon in vsak ugnezdeni (delovno drevo, zrcalo, posnetek); `start` vzporedno
+            let repos = [(slot.wt.path, tree.repo.path, slot.base)] + slot.nested.map { ($0.dir(slot.wt).path, $0.repo.path, $0.base) }
+            if slot.dirty {  // #73: neshranjeno in zaveze opuščenega teka ven, le v delovnih drevesih klonov (ne $MINIGW_DEPS)
+                let todo = repos.enumerated().map { i, r in (r.0, slot.start.indices.contains(i) && !slot.start[i].isEmpty ? slot.start[i] : r.2) }
+                let ok = await offPool { todo.allSatisfy { wt, start in
+                    Worktree.run(["-C", wt, "reset", "-q", "--hard", start]).status == 0 && Worktree.run(["-C", wt, "clean", "-qfd"]).status == 0 } }
                 guard ok else { refusals[id] = (503, "worktree: the agent's clone could not be reset after a failed run: start a new conversation"); unlock(tree.repo); return nil }
                 slot.dirty = false
             }
-            let (repo, ref) = (tree.repo.path, "refs/heads/" + slot.branch)  // vrh veje v zrcalu: kar so prejšnji teki prinesli
-            slot.start = await offPool { Worktree.run(["--git-dir", repo, "rev-parse", "--verify", "-q", ref]) }.out
-            if slot.start?.isEmpty != false { slot.start = nil }
+            let ref = "refs/heads/" + slot.branch  // vrh veje v zrcalih: kar so prejšnji teki prinesli
+            slot.start = await offPool { repos.map { Worktree.run(["--git-dir", $0.1, "rev-parse", "--verify", "-q", ref]).out } }
             slot.busy = true; runSlot[id] = k; unlock(tree.repo)
             return Self.dir(slot.wt, tree.sub)
         }

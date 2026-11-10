@@ -75,7 +75,7 @@ public actor ShareHub {
         var busy = true
         /// #73: drevo opuščenega teka še ni ustavljeno (nov tek seje zavrnjen); `dirty`: pred naslednjim tekom ven neshranjeno
         /// opuščenega teka (do `start`, vrh ob začetku teka).
-        var blocked = false, dirty = false, start: String?
+        var blocked = false, dirty = false, start: [String] = []
         var kept: URL?  // L6: v klonu je delo, ki ni prišlo do odjemalca: ob koncu seje gre klon sem (30 dni)
         private let git: [UInt64]?, cfg: Data?  // H2: .git (naprava, inode) in .git/config ob kloniranju
         init(wt: URL, branch: String, base: String, nested: [Nested] = []) {
