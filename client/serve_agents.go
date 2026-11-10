@@ -307,7 +307,8 @@ func codexTreeProfile(writable, gits, deny []string, network bool, path string) 
 	return []string{"-c", `default_permissions="minigw"`, "-c", "permissions.minigw.filesystem={" + b.String() + "}",
 		"-c", fmt.Sprintf("permissions.minigw.network.enabled=%v", network),
 		"-c", `shell_environment_policy.exclude=["GIT_DIR","GIT_WORK_TREE","GIT_COMMON_DIR"]`, "-c", "shell_environment_policy.set.PATH=" + string(p),
-		"-c", "shell_environment_policy.set.GIT_CEILING_DIRECTORIES=" + string(c)}
+		"-c", "shell_environment_policy.set.GIT_CEILING_DIRECTORIES=" + string(c),
+		"-c", `shell_environment_policy.set.MINIGW_SANDBOXED="1"`} // #67: le ukazi (v peskovniku), ne harness
 }
 
 // grokArgs: kot Grok.args na Macu; jedrni sandbox »workspace« piše le v mapo seje (dodatnih map ne dovoli).
@@ -894,9 +895,18 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 		if len(objs) == 0 {
 			objs = []string{objects}
 		}
+		var deps []string // #67: $MINIGW_DEPS in skupni predpomnilniki, le s pisanjem (sicer agent nima MINIGW_DEPS)
 		if inTree {
 			if treeEnv = worktreeClaudeEnv(wt, maven, filepath.Join(wt, ".build", "tmp"), gw, gits, k.name); treeEnv == nil {
 				return "", errors.New("cannot prepare git for the agent's clone (git --exec-path); use sync")
+			}
+			if write {
+				deps = []string{maven, depsDir(wt), filepath.Join(filepath.Dir(wt), ".cache")}
+				if k.name == "codex" && !ac.Network { // ovoj zavrne oddaljen git clone z imenom nastavitve
+					treeEnv = append(treeEnv, "MINIGW_NETWORK_OFF=Codex: Allow network access for commands")
+				}
+			} else {
+				treeEnv = slices.DeleteFunc(treeEnv, func(kv string) bool { return strings.HasPrefix(kv, "MINIGW_DEPS=") })
 			}
 		}
 		run, runEnv := s.startRun(r, k.name, dir, readOnly, true, wt, maven, objects, tmp) // »May ask other models«; mapa je deljena (agentFolder); žeton v tmp zahteve
@@ -907,7 +917,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 				m.ro = append(m.ro, minigwExe())
 			}
 			if inTree {
-				m.rw, m.ro = append(m.rw, maven), append(append(m.ro, objs...), gw)
+				m.rw, m.ro = append(append(m.rw, maven), deps...), append(append(m.ro, objs...), gw)
 				m.pins = pinPaths(wt, gits) // L1, M2: .git vsakega klona in mape do ugnezdenih so točke priklopa (mv/rm: EBUSY)
 				for _, g := range gits {
 					for _, d := range []string{"config", "hooks", "info", "commondir"} {
@@ -938,6 +948,9 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			}
 			if token != "" {
 				m.env = []string{"COPILOT_GITHUB_TOKEN=" + token}
+			}
+			if deps != nil && runtime.GOOS == "linux" && !agentUnconfined(s.cfgDir) { // #67: ves Copilot je v bwrap (ovoj git: init/clone v $MINIGW_DEPS)
+				m.env = append(m.env, "MINIGW_SANDBOXED=1")
 			}
 			// C2: svež COPILOT_HOME vsake zahteve (hooki, nastavitve, zaupane mape prejšnjega zagona ne obstajajo); med
 			// zahtevami ostane le stanje seje (brez povezav) v stanju naprave, ki ga bwrap ne vidi. Windows: pravi ~/.copilot (I1).
@@ -983,7 +996,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			if inTree && runtime.GOOS != "windows" {
 				cgits, cpath, cdeny = gits, agentPath(gw), []string{s.cfgDir}
 			}
-			args := codexArgs(dir, extra, agent, out, model, write, ac.Network, resume, cgits, cpath, cdeny)
+			args := codexArgs(dir, append(extra, deps...), agent, out, model, write, ac.Network, resume, cgits, cpath, cdeny)
 			var failure string
 			err = s.runAgentProcess(ctx, r, exe, args, withTree(m), dir, prompt, func(line []byte) {
 				if f := codexFailure(line); f != "" {
@@ -1064,7 +1077,8 @@ func agentEnv(env []string) []string {
 		name = strings.ToUpper(name) // Windows: imena spremenljivk brez razlike med velikimi in malimi črkami
 		if strings.HasPrefix(name, "ANTHROPIC_") || strings.HasPrefix(name, "CLAUDE_CODE_") || slices.Contains([]string{"CLAUDECODE",
 			"DBUS_SESSION_BUS_ADDRESS", "SSH_AUTH_SOCK", "GPG_AGENT_INFO", "GNOME_KEYRING_CONTROL", "CODEX_HOME", "GROK_HOME", "MINIGW_AGENT_URL", "MINIGW_AGENT_AUTH_FILE",
-			"GH_TOKEN", "GITHUB_TOKEN"}, name) || strings.HasPrefix(name, "COPILOT_") {
+			"GH_TOKEN", "GITHUB_TOKEN", "SANDBOX_RUNTIME", "MINIGW_SANDBOXED", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED", // #67: oznake peskovnika
+			"MINIGW_DEPS", "MINIGW_NETWORK_OFF"}, name) || strings.HasPrefix(name, "COPILOT_") {
 			continue
 		}
 		out = append(out, e)

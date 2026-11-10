@@ -435,14 +435,21 @@ extension Router {
                 + " directory, on branch \(branch). Map paths under \(clientCwd) to it. Commit your work on this branch; changes you leave"
                 + " uncommitted are committed for you at the end. The branch goes back to the user's repository; their files are not changed."
                 + " Build output (.build, target, DerivedData) is never committed." + Self.nestedClonesNote(gits)
-                + " Do not create git repositories or submodules here outside ignored folders: then nothing comes back (use sync for that). Maven builds work here; swift build and xcodebuild"
-                + " may fail in this sandbox: then tell the user to build with minigw run."
+                + Self.depsNote(Worktree.deps(gits.first.map { URL(fileURLWithPath: $0).deletingLastPathComponent() } ?? shared).path)
+                + " Maven builds work here; swift build and xcodebuild may fail in this sandbox: then tell the user to build with minigw run."
         }
         return (synced ? "The user's folder \(clientCwd) (on their computer) is synced here as \(shared.path), your working directory: a local copy"
             + (readOnly ? "" : " whose changed source files are copied back to the user when you finish") + ". Map paths under \(clientCwd) to it."
             : "The user's folder \(clientCwd) (on their computer) is mounted here as \(shared.path), your working directory. Map paths under \(clientCwd) to it.")
             + (readOnly ? " The folder is shared read-only: do not try to create, change or delete files in it."
                 + " Open SQLite databases with the URI file:<path>?mode=ro&immutable=1 (no journal or lock files)." : "")
+    }
+    /// #67 (kot Go depsNote): kam gredo odvisnosti in repozitoriji agenta.
+    static func depsNote(_ deps: String) -> String {
+        " Dependencies and repositories you create go to $MINIGW_DEPS (\(deps)), kept for this conversation; git init and git clone work only there."
+            + #" CMake: -DFETCHCONTENT_BASE_DIR="$MINIGW_DEPS/cmake". SwiftPM: swift build --scratch-path "$MINIGW_DEPS/swiftpm"."#
+            + #" Xcode: -clonedSourcePackagesDirPath "$MINIGW_DEPS/spm" -derivedDataPath "$MINIGW_DEPS/DerivedData"."#
+            + " Maven, Go, npm, pip, Cargo and Gradle caches are already set."
     }
     static let toolList = ToolList()
 
@@ -550,8 +557,8 @@ extension Router {
         p.arguments = args
         p.currentDirectoryURL = cwd
         var env = ProcessInfo.processInfo.environment
-        for k in env.keys where k.hasPrefix("ANTHROPIC_") || k.hasPrefix("CLAUDE_CODE_") || k == "CLAUDECODE" {
-            env[k] = nil  // sicer bi notranji claude klical nazaj ta router
+        for k in env.keys where k.hasPrefix("ANTHROPIC_") || k.hasPrefix("CLAUDE_CODE_") || k == "CLAUDECODE" || Worktree.sandboxMarkers.contains(k) {
+            env[k] = nil  // sicer bi notranji claude klical nazaj ta router; #67: harness ni v peskovniku
         }
         env["PATH"] = (env["PATH"].map { $0 + ":" } ?? "") + "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
         if agent, let t = await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "") {
@@ -559,6 +566,7 @@ extension Router {
                 return await error(503, "api_error", "Cannot prepare git for the agent's clone (git --exec-path): use sync", rid: rid, writer: writer)
             }
             env.merge(tenv) { $1 }
+            if !config.worktreeNetwork { env["MINIGW_NETWORK_OFF"] = "Settings → General → Worktree mode → Network for builds" }  // #67: ovoj git
         }
         for k in ["MINIGW_AGENT_URL", "MINIGW_AGENT_AUTH_FILE"] { env[k] = run?.env[k] }
         env["CLAUDE_CODE_DISABLE_FILE_MENTIONS"] = "1"

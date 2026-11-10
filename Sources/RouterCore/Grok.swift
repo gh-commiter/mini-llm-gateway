@@ -238,7 +238,7 @@ extension Router {
             guard let e = Worktree.claudeEnv(root: t.root, maven: t.maven, gitexec: config.scratch("gitexec"), gits: t.gits, agent: "grok") else {
                 return await error(503, "api_error", "Cannot prepare git for the agent's clone (git --exec-path): use sync", rid: rid, writer: writer)
             }
-            env.merge(e) { $1 }
+            env.merge(e.filter { $0.key != "MINIGW_DEPS" }) { $1 }  // #67: Grok v klonu le bere
         }
         return await replyWhenDone(body: body, model: "claude-grok", rid: rid, writer: writer, req: req) {
             let (text, session) = try await Grok.run(exe, args: args, cwd: cwd, prompt: prompt, env: env, started: { run?.started($0) }) { [onActivity] s in onActivity(.step(id: rid, text: s)) }

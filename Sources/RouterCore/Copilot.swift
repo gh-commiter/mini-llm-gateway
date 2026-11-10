@@ -317,16 +317,22 @@ extension Router {
         }
         // L-N9a: ovoj git (Scratch, sicer skrit) berljiv v peskovniku, kot ro pri Go agentWrap
         let gitexec = config.scratch("gitexec").path
-        let sandbox = profile + (tree == nil ? "" : "(allow file-read* file-read-data"
-            + Set([gitexec, Sync.real(URL(fileURLWithPath: gitexec))?.path ?? gitexec]).map {
+        func subpaths(_ ps: [String]) -> String {
+            Set(ps.flatMap { [$0, Sync.real(URL(fileURLWithPath: $0))?.path ?? $0] }).sorted().map {
                 " (subpath \"" + $0.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\")"
-            }.joined() + ")\n")
+            }.joined()
+        }
+        // #67: s pisanjem $MINIGW_DEPS (tudi .git repozitorijev, ki jih agent naredi tam), Maven in predpomnilniki pod Scratch
+        let deps = tree.flatMap { t in agent && write ? [t.maven.path, Worktree.deps(t.root).path, Worktree.cache(t.root).path] : nil }
+        let sandbox = profile + (tree == nil ? "" : "(allow file-read* file-read-data" + subpaths([gitexec]) + ")\n")
+            + (deps.map { "(allow file-read* file-read-data file-write*" + subpaths($0) + ")\n" } ?? "")
         var treeEnv: [String: String]?  // L-N9a: harness Copilot sam poganja git v klonu (ovoj kot pri Claude CLI)
         if let t = tree {
             guard let e = Worktree.claudeEnv(root: t.root, maven: t.maven, gitexec: config.scratch("gitexec"), gits: t.gits, agent: "copilot") else {
                 return await error(503, "api_error", "Cannot prepare git for the agent's clone (git --exec-path): use sync", rid: rid, writer: writer)
             }
             treeEnv = e
+            if deps == nil { treeEnv?["MINIGW_DEPS"] = nil } else { treeEnv?["MINIGW_SANDBOXED"] = "1" }  // #67: ves Copilot je v sandbox-exec
         }
         let extraEnv = treeEnv
             ?? ["TMPDIR": tmp.path + "/", "CLANG_MODULE_CACHE_PATH": tmp.appendingPathComponent("ModuleCache").path]

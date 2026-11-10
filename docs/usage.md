@@ -168,9 +168,23 @@ commits.
 `minigw --minigw-work=worktree …` is the default for the root of a git repository. The agent works in its own clone
 on the gateway; you get its work as a branch and decide what to keep.
 
-An agent cannot create its own git repositories inside the clone (`git init`, `git clone`, CMake FetchContent with git
-sources): build those dependencies in sync mode, or fetch them before the run (a shared dependencies folder comes in
-0.5.23).
+**Dependencies folder.** Each conversation's clone has a dependencies folder next to it under the gateway's Scratch
+folder; agents see it as `$MINIGW_DEPS`. Repositories an agent creates (`git init`, `git clone`, CMake FetchContent
+with git sources, SwiftPM checkouts) go only there, and the same rule holds for every agent: anywhere else, also inside
+the clone, git refuses with a hint to use `$MINIGW_DEPS` (for example
+`cmake -DFETCHCONTENT_BASE_DIR="$MINIGW_DEPS/cmake"`, `swift build --scratch-path "$MINIGW_DEPS/swiftpm"`, Xcode
+`-clonedSourcePackagesDirPath "$MINIGW_DEPS/spm" -derivedDataPath "$MINIGW_DEPS/DerivedData"`). The folder is kept
+for the whole conversation and removed with the clone; it never comes back to you and is not kept with a kept clone.
+Only an agent that may write gets it; `git clone` of a remote URL needs the agent's network for builds (the refusal
+names the setting). On a Windows gateway agents have no sandbox yet, so there `git init` and `git clone` are not
+available; the folder still holds downloads and caches.
+
+Everything agent builds write is under the Scratch folder, never in the system's temporary folder or your home folder:
+the clone, `$MINIGW_DEPS` (also Claude Code's temporary folder, `CLAUDE_CODE_TMPDIR`), one Maven repository per project
+and shared caches per project for Go (`GOMODCACHE`, `GOCACHE`), npm and pip. Cargo (`CARGO_HOME`) and Gradle
+(`GRADLE_USER_HOME`) get their own folder per conversation in `$MINIGW_DEPS`, because their folders hold settings and
+scripts that builds run. One exception: Claude Code gives commands in its sandbox a short temporary folder under `/tmp`
+when the Scratch path is too long for its sockets.
 
 **1. Start.** minigw sends the repository to a mirror on the gateway (git bundles over the encrypted connection,
 only missing objects). The agent starts from your exact state: `HEAD` plus your uncommitted changes and your
@@ -303,9 +317,10 @@ Notes:
   `url.*.insteadOf`, global ignore file). Agent commits are authored as the agent, for example
   `Claude (Mini Gateway) <claude@minigw.invalid>`, `Codex (Mini Gateway) <codex@minigw.invalid>`, Grok or Copilot
   likewise; you see that author in `git log <base>..<branch>` of the delivered branch.
-- A nested repository in a folder git ignores (for example `build/_deps` from CMake FetchContent) stays out, as before.
-  If the agent itself creates a repository in the clone, minigw prints "changes inside the nested repository <path>
-  do not come back in worktree mode; use sync" and no branch is delivered for that run.
+- A nested repository in a folder git ignores (for example `build/_deps` from a tarball download) stays out, as before.
+  `git init` and `git clone` in the clone are refused (use `$MINIGW_DEPS`); if a repository appears in the clone
+  anyway, minigw prints "changes inside the nested repository <path> do not come back in worktree mode; use sync" and
+  no branch is delivered for that run.
 
 **Agents in worktree mode:**
 
@@ -313,7 +328,8 @@ Notes:
   writable folder.
 - Agents that may not write (Codex, Copilot or Grok with writing off) only read in the clone and bring back no branch.
 - Grok with writing on is refused in worktree mode: "rerun with minigw --minigw-work=sync …".
-- On the Mac, agents write only to the clone, their own Maven repository, DerivedData and temporary folders, never to
+- On the Mac, agents write only to the clone, `$MINIGW_DEPS`, the project's Maven repository and build caches under
+  Scratch, DerivedData and temporary folders, never to
   your `~/.m2` settings, plugins or SwiftPM configuration. Claude cannot read your home folder (from `~/.m2` only
   `settings.xml` and `toolchains.xml`). Maven
   builds work; `swift build` and `xcodebuild` may fail there. Build Swift and Xcode projects in sync mode or with

@@ -440,9 +440,30 @@ public enum Worktree {
     /// zrcali: agent ne sme pisati v zrcalo, ki ga router bere s svojim git).
     /// Lastnikovih predpomnilnikov (~/.m2, SwiftPM) ne: tja bi agent podtaknil vtičnik ali nastavitve za lastnikovo naslednjo
     /// gradnjo. Maven dobi svoj lokalni repozitorij (`maven`, MAVEN_OPTS), SwiftPM dela v .build klona.
+    /// #67: še $MINIGW_DEPS in skupni predpomnilniki projekta (depsEnv).
     public static func writable(root: URL, maven: URL, home: String = NSHomeDirectory()) -> [String] {
-        [root.path, maven.path] + caches(home: home)
+        [root.path, maven.path, deps(root).path, cache(root).path] + caches(home: home)
     }
+
+    /// #67 (kot Go depsDir): mapa odvisnosti pogovora ($MINIGW_DEPS) poleg klona (ista mapa klonov pod Scratch, isti
+    /// nosilec); tja agent naredi repozitorije (git init/clone, FetchContent, SwiftPM). Gre s klonom, ni ohranjena (kept).
+    static func deps(_ root: URL) -> URL { URL(fileURLWithPath: root.path + ".deps", isDirectory: true) }
+
+    /// #67: skupni predpomnilniki projekta (mapa klonov/.cache, kot .maven).
+    static func cache(_ root: URL) -> URL { root.deletingLastPathComponent().appendingPathComponent(".cache", isDirectory: true) }
+
+    /// #67 (kot Go depsEnv): vse za gradnje agenta pod Scratch, nikoli v $TMPDIR, /tmp ali domači mapi. Skupno za projekt
+    /// (.cache, kot .maven): Go (GOMODCACHE, GOCACHE), npm, pip — vsebina po zgoščenih vrednostih, hkratna raba z
+    /// zaklepi. Za pogovor ($MINIGW_DEPS): Cargo in Gradle, ker njuni domači mapi vsebujeta nastavitve in skripte
+    /// (config.toml, init.d), ki jih gradnja izvede. CLAUDE_CODE_TMPDIR: začasne datoteke Claude Code.
+    static func depsEnv(_ root: URL) -> [String: String] {
+        let deps = deps(root).path, cache = cache(root).path
+        return ["MINIGW_DEPS": deps, "CLAUDE_CODE_TMPDIR": deps + "/tmp", "GOMODCACHE": cache + "/go-mod", "GOCACHE": cache + "/go-build",
+                "npm_config_cache": cache + "/npm", "PIP_CACHE_DIR": cache + "/pip", "CARGO_HOME": deps + "/cargo", "GRADLE_USER_HOME": deps + "/gradle"]
+    }
+
+    /// #67: oznake peskovnika; okolje harnessa (zunaj peskovnika) jih nima, sicer bi ovoj git v $MINIGW_DEPS pustil navaden git.
+    static let sandboxMarkers = ["SANDBOX_RUNTIME", "MINIGW_SANDBOXED", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED", "MINIGW_DEPS", "MINIGW_NETWORK_OFF"]
 
     /// Skupni pisljivi predpomnilniki gradnje (začasne mape, DerivedData).
     /// ponytail: DerivedData je skupen z lastnikovimi projekti; ločen (-derivedDataPath), če bo treba.
@@ -464,7 +485,8 @@ public enum Worktree {
         let pairs = [("core.fsmonitor", "false"), ("core.hooksPath", "/dev/null"), ("core.attributesFile", "/dev/null"),
                      ("diff.ignoreSubmodules", "all"), ("submodule.recurse", "false"), ("core.excludesFile", "/dev/null"),
                      ("user.name", author(agent)), ("user.email", agent + "@minigw.invalid"),
-                     ("safe.bareRepository", "explicit")]  // #61: golega repozitorija ne najde sam (le z GIT_DIR/--git-dir)
+                     ("safe.bareRepository", "explicit"),  // #61: golega repozitorija ne najde sam (le z GIT_DIR/--git-dir)
+                     ("init.templateDir", "")]  // #67: git init/clone agenta (le v $MINIGW_DEPS) ne kopira predlog (vzorčni hooki)
         let git = root.appendingPathComponent(".git").path
         var env = ["GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",
                    "GIT_CONFIG_COUNT": String(pairs.count), "GIT_ATTR_SOURCE": "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
@@ -473,7 +495,7 @@ public enum Worktree {
                    "TMPDIR": root.appendingPathComponent(".build/tmp").path + "/",
                    "CLANG_MODULE_CACHE_PATH": root.appendingPathComponent(".build/ModuleCache").path, "xcrun_nocache": "1"]
         for (i, (k, v)) in pairs.enumerated() { env["GIT_CONFIG_KEY_\(i)"] = k; env["GIT_CONFIG_VALUE_\(i)"] = v }
-        return env
+        return env.merging(depsEnv(root)) { $1 }
     }
 
     /// N9 (kot Go worktreeClaudeEnv): okolje claude -p v klonu: harnessEnv in GIT_EXEC_PATH z ovojem `gitexec`. Git zažene
@@ -507,17 +529,46 @@ public enum Worktree {
 
     /// #40 (enak kot Go pathWrapScript, testdata/pathwrap.golden): »git« na PATH agenta dela v registriranem klonu
     /// (MINIGW_GIT_DIRS), ki vsebuje trenutno mapo ali pot -C; drugače v vrhnjem (prvi vnos).
+    /// #67: init in clone le pod $MINIGW_DEPS in le v peskovniku (SANDBOX_RUNTIME od Claude Code, MINIGW_SANDBOXED od
+    /// prehoda); tam in za druge ukaze v $MINIGW_DEPS iz peskovnika navaden git. Harness ima za druge ukaze nespremenjeno pravilo.
     static func pathWrapScript(real: String) -> String {
-        "#!/bin/sh\n# minigw: git works in the registered clone (MINIGW_GIT_DIRS) that holds the folder or the -C <path>\n"
+        "#!/bin/sh\n# minigw: git works in the registered clone (MINIGW_GIT_DIRS) that holds the folder or the -C <path>; new repositories only under $MINIGW_DEPS\n"
             + "real='" + real.replacingOccurrences(of: "'", with: #"'\''"#) + #"'; d=$(pwd -P) || exec "$real" "$@""# + "\n"
             + #"i=1; while [ $i -le $# ]; do eval "a=\${$i}"; case $a in"# + "\n"
             + #"  -C) i=$((i+1)); eval "p=\${$i}"; case $p in /*) ;; *) p=$d/$p;; esac; q=$(cd "$p" 2>/dev/null && pwd -P) && d=$q || break;;"# + "\n"
-            + #"  -c) i=$((i+1));; -*) ;; *) break;; esac; i=$((i+1)); done"# + "\n"
+            + #"  -c|--git-dir|--work-tree|--namespace|--config-env) i=$((i+1));; -*) ;; *) break;; esac; i=$((i+1)); done"# + "\n"
+            + pathWrapDeps
             + "b=; g=; set -f; IFS='\n'\n"
             + #"for e in $MINIGW_GIT_DIRS; do w=$(cd "${e%/.git}" 2>/dev/null && pwd -P) || continue; case $d/ in "$w"/*) [ ${#w} -gt ${#b} ] && b=$w g=$e;; esac; done"# + "\n"
             + #"[ -n "$g" ] || g=${MINIGW_GIT_DIRS%%'"# + "\n" + #"'*}; [ -n "$g" ] && export GIT_DIR="$g" GIT_COMMON_DIR="$g" GIT_WORK_TREE="${g%/.git}""# + "\n"
             + #"exec "$real" "$@""# + "\n"
     }
+
+    /// #67 (kot Go pathWrapDeps): del pathWrapScript za $MINIGW_DEPS (podukaz c, peskovnik s, mapa D; cilj init/clone
+    /// fizično, brez »..« v še neobstoječem delu). MINIGW_NETWORK_OFF: ime nastavitve, ko je omrežje gradenj izklopljeno.
+    static let pathWrapDeps = #"""
+        c=; [ $i -le $# ] && eval "c=\${$i}"
+        s=; { [ "$SANDBOX_RUNTIME" = 1 ] || [ "$MINIGW_SANDBOXED" = 1 ]; } && s=1
+        D=; [ -n "$MINIGW_DEPS" ] && D=$(cd "$MINIGW_DEPS" 2>/dev/null && pwd -P)
+        plain() { unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_ATTR_SOURCE GIT_EXEC_PATH; exec "$real" "$@"; }
+        no() { echo "minigw: $1" >&2; exit 128; }
+        case $c in init|clone)
+          [ -n "$MINIGW_DEPS" ] || no "this run cannot write (read-only)"
+          u=; t=; x=; while [ $i -lt $# ]; do i=$((i+1)); eval "a=\${$i}"; case $a in
+            --separate-git-dir*) x=1;; -[bcjou]|--template|--initial-branch|--object-format|--ref-format|--origin|--branch|--upload-pack|--reference|--reference-if-able|--depth|--shallow-since|--shallow-exclude|--config|--server-option|--jobs|--filter|--bundle-uri) i=$((i+1));;
+            -*) ;; *) if [ -n "$u" ]; then t=${t:-$a}; else u=$a; fi;; esac; done
+          if [ $c = init ]; then t=${u:-.}; elif [ -z "$t" ]; then t=${u%/}; t=${t%/.git}; t=${t##*[/:]}; t=${t%.git}; fi
+          case $t in /*) ;; *) t=$d/$t;; esac; case /$t/ in */../*) x=1;; esac
+          p=$t; while [ ! -d "$p" ]; do p=${p%/*}; p=${p:-/}; done; r=$(cd "$p" && pwd -P)/
+          [ -z "$x" ] && [ -n "$D" ] && case $r in "$D"/*) ;; *) false;; esac ||
+            no "create repositories only under \$MINIGW_DEPS ($MINIGW_DEPS), e.g. cmake -DFETCHCONTENT_BASE_DIR=\"\$MINIGW_DEPS/cmake\", swift build --scratch-path \"\$MINIGW_DEPS/swiftpm\""
+          [ -n "$s" ] || no "git init and git clone need the agent sandbox, which this run does not have"
+          [ $c = init ] || [ -z "$MINIGW_NETWORK_OFF" ] || case $u in file://*|/*|.*) ;; *://*|[!/]*:*) no "network for this agent's builds is off ($MINIGW_NETWORK_OFF)";; esac
+          plain "$@";;
+        esac
+        [ -n "$s" ] && [ -n "$D" ] && case $d/ in "$D"/*) plain "$@";; esac
+
+        """#
 
     /// GIT_EXEC_PATH z ovojem v `gitexec` in MINIGW_GIT_DIRS (edini GIT_DIR, ki jih ovoj pusti; absolutne poti brez nove
     /// vrstice); nil = ovoja ni (kot Go gitWrapEnv).
@@ -1260,7 +1311,10 @@ extension ShareHub {
                 try? FileManager.default.createDirectory(at: wt.appendingPathComponent(d), withIntermediateDirectories: true,
                                                          attributes: [.posixPermissions: 0o700])
             }
-            try? FileManager.default.createDirectory(at: tree.worktrees.appendingPathComponent(".maven"), withIntermediateDirectories: true)
+            // #67: $MINIGW_DEPS s TMPDIR Claude Code in skupni predpomnilniki projekta (Worktree.depsEnv)
+            for d in [tree.worktrees.appendingPathComponent(".maven"), Worktree.deps(wt).appendingPathComponent("tmp"), Worktree.cache(wt)] {
+                try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            }
         }
         unlock(tree.repo)
         return snapshot == nil ? nil : Self.dir(wt, tree.sub)
@@ -1445,14 +1499,16 @@ extension ShareHub {
         }
     }
 
-    /// Klon, nato še prazen .maven in mapa klonov, ko v njej ni drugega klona (kot removeClone v Go); .maven z vsebino
-    /// je predpomnilnik Maven in ostane do odstranitve zrcala.
+    /// Klon in njegove odvisnosti (#67), nato še prazna .maven in .cache ter mapa klonov, ko v njej ni drugega klona (kot
+    /// removeClone v Go); .maven in .cache z vsebino sta predpomnilnika in ostaneta do odstranitve zrcala.
     nonisolated static func removeClone(_ wt: URL) {
         try? FileManager.default.removeItem(at: wt)
+        try? FileManager.default.removeItem(at: Worktree.deps(wt))
         let dir = wt.deletingLastPathComponent()
-        if (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) == [".maven"], rmdir(dir.appendingPathComponent(".maven").path) == 0 {
-            rmdir(dir.path)
-        }
+        let es = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+        guard es.allSatisfy({ $0 == ".maven" || $0 == ".cache" }) else { return }
+        for e in es { rmdir(dir.appendingPathComponent(e).path) }
+        rmdir(dir.path)
     }
 
     /// Ob koncu seje: kloni gredo (veje ostanejo v zrcalu in pri odjemalcu).
@@ -1491,7 +1547,10 @@ extension ShareHub {
         }
         var ts = [timespec(tv_sec: 0, tv_nsec: Int(UTIME_NOW)), timespec(tv_sec: 0, tv_nsec: Int(UTIME_NOW))]
         _ = utimensat(pfd, kept.lastPathComponent, &ts, AT_SYMLINK_NOFOLLOW)
+        // #67: odvisnosti niso delo agenta in ne ostanejo; premik takoj (nov klon na isti poti dobi svoje), brisanje v ozadju
+        _ = renameat(pfd, Worktree.deps(wt).lastPathComponent, pfd, Worktree.deps(kept).lastPathComponent)
         Task.detached {
+            try? FileManager.default.removeItem(at: Worktree.deps(kept))
             if !disarmKept(kept) { Router.log.error("worktree: cannot rename the git folders in the kept clone \(kept.path, privacy: .public); removed") }
             pruneKept(kept.deletingLastPathComponent(), before: .distantPast)
         }

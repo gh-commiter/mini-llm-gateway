@@ -1,5 +1,10 @@
 # Release notes
 
+## Unreleased
+
+- New (#67): in worktree mode each conversation's agents get a dependencies folder `$MINIGW_DEPS` next to their clone under the gateway's Scratch folder. Repositories an agent creates (`git init`, `git clone`, CMake FetchContent with git sources, SwiftPM checkouts) work there, kept for the whole conversation and removed with the clone; anywhere else, also inside the clone, git refuses with a hint (`cmake -DFETCHCONTENT_BASE_DIR="$MINIGW_DEPS/cmake"`, `swift build --scratch-path "$MINIGW_DEPS/swiftpm"`), the same for every agent. This replaces the 0.5.22 limitation. Only agents that may write get it; a `git clone` of a remote URL with the agent's build network off is refused with the setting's name. Windows gateways have no agent sandbox yet, so there agents cannot create repositories (the agent note says so).
+- Changed (#67): everything agent builds write stays under the Scratch folder: Claude Code's temporary folder (`CLAUDE_CODE_TMPDIR`), the project's Maven repository (as before), shared Go (`GOMODCACHE`, `GOCACHE`), npm and pip caches per project, and Cargo (`CARGO_HOME`) and Gradle (`GRADLE_USER_HOME`) per conversation. Commands in Claude Code's sandbox still get a short folder under `/tmp` when the Scratch path is too long for Claude Code's sockets. Both gateways.
+
 ## 0.5.22
 
 - Fixed: in worktree mode the agent's `git status` no longer shows an untracked `.build/` folder (the gateway's temporary folder in the clone; both gateways).

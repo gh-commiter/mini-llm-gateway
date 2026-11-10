@@ -122,8 +122,9 @@ public enum Codex {
 
     /// Pisljive mape Codex v klonu (worktree): koren, Maven in (#40, M1) vsak ugnezdeni klon, da sandbox Codex zaščiti
     /// tudi njegov .git (le za branje v vsaki pisljivi mapi): git harnessa zunaj sandboxa zdaj sledi mapi v ugnezden klon.
+    /// #67: še $MINIGW_DEPS in skupni predpomnilniki projekta.
     static func treeDirs(root: URL, cwd: URL, maven: URL) -> [String] {
-        (root.path == cwd.path ? [] : [root.path]) + [maven.path]
+        (root.path == cwd.path ? [] : [root.path]) + [maven.path, Worktree.deps(root).path, Worktree.cache(root).path]
     }
 
     /// #40 (kot Go codexTreeProfile): v klonu profil dovoljenj namesto workspace-write, ki .git vsake pisljive mape zaklene
@@ -144,7 +145,8 @@ public enum Codex {
         return ["-c", #"default_permissions="minigw""#, "-c", "permissions.minigw.filesystem={" + table + "}",
                 "-c", "permissions.minigw.network.enabled=\(network)",
                 "-c", #"shell_environment_policy.exclude=["GIT_DIR","GIT_WORK_TREE","GIT_COMMON_DIR"]"#, "-c", "shell_environment_policy.set.PATH=" + q(path),
-                "-c", "shell_environment_policy.set.GIT_CEILING_DIRECTORIES=" + q(URL(fileURLWithPath: gits[0]).deletingLastPathComponent().deletingLastPathComponent().path)]
+                "-c", "shell_environment_policy.set.GIT_CEILING_DIRECTORIES=" + q(URL(fileURLWithPath: gits[0]).deletingLastPathComponent().deletingLastPathComponent().path),
+                "-c", #"shell_environment_policy.set.MINIGW_SANDBOXED="1""#]  // #67: le ukazi (v peskovniku), ne harness
     }
 
     struct Failure: Error { let message: String }
@@ -194,8 +196,8 @@ public enum Codex {
                 p.executableURL = URL(fileURLWithPath: exe)
                 p.arguments = args
                 p.currentDirectoryURL = cwd
-                p.environment = ProcessInfo.processInfo.environment.filter { $0.key != "SSH_AUTH_SOCK" }  // brez agenta ključev SSH
-                    .merging(extra) { $1 }
+                p.environment = ProcessInfo.processInfo.environment  // brez agenta ključev SSH; #67: harness ni v peskovniku
+                    .filter { $0.key != "SSH_AUTH_SOCK" && !Worktree.sandboxMarkers.contains($0.key) }.merging(extra) { $1 }
                 let input = Pipe(), errors = Pipe()
                 let events = Pipe()
                 p.standardInput = input
@@ -315,6 +317,9 @@ extension Router {
                 return await error(503, "api_error", "Cannot prepare git for the agent's clone (git --exec-path): use sync", rid: rid, writer: writer)
             }
             treeEnv = e
+            if !config.codex.write || readOnly { treeEnv?["MINIGW_DEPS"] = nil }  // #67: le s pisanjem
+            else if !config.codex.network { treeEnv?["MINIGW_NETWORK_OFF"] = "Settings → Codex → Allow network access for commands" }
+            else if !config.worktreeCodexNetwork { treeEnv?["MINIGW_NETWORK_OFF"] = "Settings → General → Worktree mode → Network for Codex builds" }
         }
         let codexEnv = (treeEnv
             ?? ["TMPDIR": privateTmp.path + "/", "CLANG_MODULE_CACHE_PATH": privateTmp.appendingPathComponent("ModuleCache").path, "xcrun_nocache": "1"])
