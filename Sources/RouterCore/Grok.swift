@@ -121,6 +121,12 @@ public enum Grok {
                 final class Box: @unchecked Sendable { var data = Data() }
                 let stderr = Box()
                 let errReader = Thread { stderr.data = errors.fileHandleForReading.readDataToEndOfFile() }
+                // #73: 2 s po koncu grok drevo (tudi vnuk s cevjo) ven, da se branje spodaj konča
+                let pipes = [events.fileHandleForReading, errors.fileHandleForReading]
+                p.terminationHandler = { p in
+                    let g = p.processIdentifier
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 2) { Native.killTree(g, pipes: pipes) }
+                }
                 try p.run()
                 started(p.processIdentifier)
                 AgentCount.running.add(1, ordering: .relaxed)
@@ -144,6 +150,8 @@ public enum Grok {
                 }
                 p.waitUntilExit()
                 while errReader.isExecuting { usleep(10_000) }
+                // #73: finalize (syncBack) le, ko drevesa ni več
+                guard Native.killTree(p.processIdentifier, pipes: pipes) else { throw Failure(message: "grok: its processes could not be stopped") }
                 let text = answer.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard failure == nil, !text.isEmpty else {
                     let tail = String(decoding: stderr.data.suffix(400), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -151,7 +159,7 @@ public enum Grok {
                 }
                 return (text, session)
             }
-        } onCancel: { if h.p.isRunning { h.p.terminate() } }
+        } onCancel: { if h.p.isRunning { Native.terminateGroup(h.p.processIdentifier) } }
     }
 }
 

@@ -469,6 +469,29 @@ public enum Native {
                 input ? FileHandle(fileDescriptor: i[1], closeOnDealloc: true) : nil)
     }
 
+    /// Konec drevesa procesov (kot stopAgentTree v win-run-job): SIGKILL skupini `pgid` (Process in spawnGroup dasta otroku
+    /// svojo) in vsakemu procesu s pisalnim koncem cevi `pipes` (tudi setsid), dokler ni nobenega več, največ `timeout`.
+    /// Bralec teh cevi nato dobi EOF. false = drevo še živi: brez finalize/commit, tek je neuspešen.
+    @discardableResult
+    static func killTree(_ pgid: pid_t, pipes: [FileHandle], timeout: TimeInterval = 3) -> Bool {
+        let group = pgid > 1 && pgid != getpgrp(), end = Date().addingTimeInterval(timeout)
+        while true {
+            let writers = pipes.flatMap { pipeWriters(of: $0.fileDescriptor) }
+            if !(group && Darwin.kill(-pgid, 0) == 0) && writers.isEmpty { return true }
+            if group { _ = Darwin.kill(-pgid, SIGKILL) }
+            for w in writers { _ = Darwin.kill(w, SIGKILL) }
+            if Date() >= end { return false }
+            usleep(20_000)
+        }
+    }
+
+    /// Prekinitev: SIGTERM skupini `pgid`, po 5 s SIGKILL.
+    static func terminateGroup(_ pgid: pid_t) {
+        guard pgid > 1, pgid != getpgrp() else { return }
+        _ = Darwin.kill(-pgid, SIGTERM)
+        DispatchQueue.global().asyncAfter(deadline: .now() + 5) { _ = Darwin.kill(-pgid, SIGKILL) }
+    }
+
     /// Izvršljiva datoteka ukaza: z »/« relativno na mapo (npr. ./mvnw), sicer v PATH.
     static func executable(_ name: String, dir: URL, path: String) -> String? {
         if name.contains("/") {
@@ -677,25 +700,23 @@ extension Router {
         // Skupina procesov: ob prekinitvi SIGTERM, po 5 s SIGKILL. Po koncu glavnega procesa in 2 s: SIGKILL skupini in
         // vsakemu procesu s pisalnim koncem cevi (tudi setsid), nato se tok zapre, tudi če cev še kdo drži.
         // ponytail: pid skupine je lahko po izhodu znova dodeljen; ob 2–5 s in zaporednih pid je tveganje zanemarljivo.
-        let exit = ExitWaiter()  // en čakalec
+        // #73 N2: `gone` šele po uboju skupine (in kopijah shranjevanja); začasna mapa, povezavi in zaklep pisanja šele po njem.
+        let exit = ExitWaiter(), gone = ExitWaiter()  // en čakalec
         Thread {
             var st: Int32 = 0
             while waitpid(pid, &st, 0) == -1 && errno == EINTR {}
             exit.done(st & 0x7f == 0 ? (st >> 8) & 0xff : 128 + (st & 0x7f))
             DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
-                _ = Darwin.kill(-pid, SIGKILL)
-                for h in [out, err] { for w in Native.pipeWriters(of: h.fileDescriptor) { _ = Darwin.kill(w, SIGKILL) } }
+                let stopped = Native.killTree(pid, pipes: [out, err])
                 DispatchQueue.global().asyncAfter(deadline: .now() + 1) { closeFrames() }
                 // #72: po uboju skupine in ko so tudi zadnje mape umirjene (`settled`)
                 DispatchQueue.global().asyncAfter(deadline: .now() + 2.5) {
                     Native.removeSaveCopies(after: Native.saveCopies(dirs: tempDirs), before: copies, since: runStart)
+                    gone.done(stopped ? 0 : 1)
                 }
             }
         }.start()
-        @Sendable func stop() {
-            Darwin.kill(-pid, SIGTERM)
-            Task { try? await Task.sleep(for: .seconds(5)); Darwin.kill(-pid, SIGKILL) }
-        }
+        @Sendable func stop() { Native.terminateGroup(pid) }
         Self.log.info("\(rid, privacy: .public) run start device=\(d.name, privacy: .public) folder=\(dir.path, privacy: .private) argv=\(argv.joined(separator: " "), privacy: .private)")
         var code: Int32 = -1
         await withTaskCancellationHandler {
@@ -709,6 +730,9 @@ extension Router {
             }
         } onCancel: { stop() }
         if code < 0 { code = await exit.wait() }
+        if await gone.wait() != 0 { Self.log.error("\(rid, privacy: .public) run: processes of the command could not be stopped") }
+        Native.unlinkRunDirs(links)
+        try? FileManager.default.removeItem(at: runTmp)  // zaklep pisanja (defer) šele za tem
         Self.log.info("\(rid, privacy: .public) run end device=\(d.name, privacy: .public) exit=\(code)")
         return 200
     }

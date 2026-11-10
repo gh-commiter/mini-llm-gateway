@@ -1559,6 +1559,8 @@ extension ShareHub {
         if bySessionTree(String(k.split(separator: "|")[0])) == nil {
             slots[k] = nil
             Self.dropClone(slot)
+        } else if Worktree.grantDirs(root: slot.wt) == nil {  // #73: po teku znova $MINIGW_DEPS/tmp, .cache, .maven (dnevnik, popravek)
+            Router.log.error("worktree: after the run, the agent's folders next to \(slot.wt.path, privacy: .public) could not be repaired")
         }
     }
 

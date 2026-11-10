@@ -172,10 +172,7 @@ public enum Copilot {
             var st: Int32 = 0
             while waitpid(pid, &st, 0) == -1 && errno == EINTR {}
             exit.done(st & 0x7f == 0 ? (st >> 8) & 0xff : 128 + (st & 0x7f))
-            DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
-                _ = Darwin.kill(-pid, SIGKILL)
-                for h in [out, err] { for w in Native.pipeWriters(of: h.fileDescriptor) { _ = Darwin.kill(w, SIGKILL) } }
-            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 2) { Native.killTree(pid, pipes: [out, err]) }
         }.start()
         Thread {  // ločeno od branja dogodkov: velik pogovor ne zaklene cevi; try?: copilot je lahko že končal
             try? input.write(contentsOf: Data(prompt.utf8))
@@ -207,17 +204,15 @@ public enum Copilot {
                 return (answer, stderr.data)
             }
             let code = await exit.wait()
-            _ = Darwin.kill(-pid, SIGKILL)  // ostanki skupine
+            // #73: ostanki skupine; finalize (syncBack) le, ko drevesa ni več
+            guard await offPool({ Native.killTree(pid, pipes: [out, err]) }) else { throw Failure(message: "copilot: its processes could not be stopped") }
             let text = answer.trimmingCharacters(in: .whitespacesAndNewlines)
             guard code == 0, !text.isEmpty else {
                 let tail = String(decoding: stderr.suffix(400), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
                 throw Failure(message: "copilot exited with \(code)" + (tail.isEmpty ? "" : ": \(tail)"))
             }
             return text
-        } onCancel: {
-            _ = Darwin.kill(-pid, SIGTERM)
-            DispatchQueue.global().asyncAfter(deadline: .now() + 5) { _ = Darwin.kill(-pid, SIGKILL) }
-        }
+        } onCancel: { Native.terminateGroup(pid) }
     }
 }
 
@@ -328,7 +323,9 @@ extension Router {
         var deps: [String]?
         if let t = tree, agent && write {
             guard let g = Worktree.grantDirs(root: t.root) else { return await error(503, "api_error", Worktree.unsafeFolders, rid: rid, writer: writer) }
-            deps = g.map { p in (Sync.real(URL(fileURLWithPath: (p as NSString).deletingLastPathComponent))?.path ?? (p as NSString).deletingLastPathComponent) + "/" + (p as NSString).lastPathComponent }
+            // #73: mapa klonov razrešena enkrat (ne starš $MINIGW_DEPS/tmp, ki ga agent piše), nato dobesedni deli
+            let clones = t.root.deletingLastPathComponent().path, real = Sync.real(URL(fileURLWithPath: clones))?.path ?? clones
+            deps = g.map { real + $0.dropFirst(clones.count) }
         }
         func q(_ p: String) -> String { "\"" + p.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\"" }
         let sandbox = profile + (tree == nil ? "" : "(allow file-read* file-read-data" + subpaths([gitexec]) + ")\n")

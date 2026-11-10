@@ -213,7 +213,7 @@ public enum ClaudeCLI {
         p.standardError = out
         p.standardInput = FileHandle.nullDevice
         guard (try? p.run()) != nil else { return .failure(.init("Cannot run file")) }
-        let killer = DispatchWorkItem { if p.isRunning { p.terminate() } }
+        let killer = DispatchWorkItem { Native.killTree(p.processIdentifier, pipes: [out.fileHandleForReading]) }  // #73: tudi vnuk s cevjo
         DispatchQueue.global().asyncAfter(deadline: .now() + 5, execute: killer)
         let text = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -237,9 +237,10 @@ public enum ClaudeCLI {
             p.standardError = FileHandle.nullDevice
             p.standardInput = FileHandle.nullDevice
             guard (try? p.run()) != nil else { return [] }
-            let killer = DispatchWorkItem { if p.isRunning { p.terminate() } }
+            // #73: drevo (tudi vnuk s cevjo), ne le claude: sicer branje spodaj obvisi
+            let killer = DispatchWorkItem { Native.killTree(p.processIdentifier, pipes: [out.fileHandleForReading]) }
             DispatchQueue.global().asyncAfter(deadline: .now() + 15, execute: killer)
-            defer { killer.cancel(); if p.isRunning { p.terminate() } }
+            defer { killer.cancel(); Native.killTree(p.processIdentifier, pipes: [out.fileHandleForReading]) }
             var line = Data()
             while let b = try? out.fileHandleForReading.read(upToCount: 1), let c = b.first, c != 10 { line.append(c) }
             let tools = (try? JSONSerialization.jsonObject(with: line) as? [String: Any])?["tools"] as? [String]
@@ -592,8 +593,12 @@ extension Router {
         p.standardInput = stdin
         p.standardOutput = stdout
         p.standardError = stderr
-        let exit = ExitWaiter()
-        p.terminationHandler = { exit.done($0.terminationStatus) }  // waitUntilExit brez run loopa lahko obvisi
+        let exit = ExitWaiter(), pipes = [stdout.fileHandleForReading, stderr.fileHandleForReading]
+        p.terminationHandler = { p in  // waitUntilExit brez run loopa lahko obvisi
+            exit.done(p.terminationStatus)
+            let g = p.processIdentifier  // #73: 2 s po koncu drevo (tudi vnuk s cevjo) ven, da se branje konča
+            DispatchQueue.global().asyncAfter(deadline: .now() + 2) { Native.killTree(g, pipes: pipes) }
+        }
 
         do {
             try p.run()
@@ -630,26 +635,31 @@ extension Router {
                     if let s = t.step, s != before { onActivity(.step(id: rid, text: s)) }
                 }
             } onCancel: {
-                p.terminate()
+                Native.terminateGroup(p.processIdentifier)
             }
         } catch {
             pinger?.cancel()
-            p.terminate()
+            Native.terminateGroup(p.processIdentifier)
             _ = await firstOf(Task { await exit.wait() }, within: .seconds(5))  // sync: klon se odstrani šele po koncu agenta
+            let pid = p.processIdentifier
+            if !(await offPool { Native.killTree(pid, pipes: pipes) }) { Self.log.error("\(rid, privacy: .public) claude: its processes could not be stopped") }
             return headSent ? 200 : 499
         }
         let status = await exit.wait()
         run?.stop()  // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb
+        let pid = p.processIdentifier
+        let stopped = await offPool { Native.killTree(pid, pipes: pipes) }  // #73: finalize (syncBack) le, ko drevesa ni več
         // sync: spremembe agenta k odjemalcu pred koncem odgovora (Claude Code jih nato že vidi); med tem še ping
-        if agent { await Self.shares.syncBack(session: req.header("x-claude-mini-session") ?? "") }
+        if agent && stopped { await Self.shares.syncBack(session: req.header("x-claude-mini-session") ?? "") }
         pinger?.cancel()
         let errText = await errTask.value
 
-        if let msg = t.resultError ?? (status != 0 && t.text.isEmpty ? (errText.isEmpty ? "claude exited with \(status)" : errText) : nil) {
+        if let msg = (stopped ? nil : "its processes could not be stopped") ?? t.resultError
+            ?? (status != 0 && t.text.isEmpty ? (errText.isEmpty ? "claude exited with \(status)" : errText) : nil) {
             Self.log.error("\(rid, privacy: .public) claude failed: \(msg, privacy: .public)")
             let (code, type, text) = AgentError.classify(msg)
             if !stream { return await error(code, type, "claude: \(text)", rid: rid, extra: code == 429 ? [("x-should-retry", "false")] : [], writer: writer) }
-            if t.text.isEmpty {
+            if t.text.isEmpty || !stopped {
                 if code == 429 { AgentError.note(AgentError.key(req, model: t.model), "claude: \(text)") }  // ponovitev brez pretoka
                 try? await writer.write(StreamTranslator.sse("error", ["type": "error", "error": ["type": type, "message": "claude: \(text)"]]))
                 return code
