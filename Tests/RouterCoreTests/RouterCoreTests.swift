@@ -435,6 +435,10 @@ func makeRouter(session: URLSession = .shared) -> Router {
     c.providers[1].enabledModels = ["a/b"]
     c.siri.enabled = true
     c.save(d)
+    let fresh = RouterConfig.load(d)  // N4: shranjene nastavitve brez ID-ja ga dobijo, Scratch ostane prejšnji
+    #expect(fresh.instanceID.hasPrefix("gw-") && fresh.scratchName.isEmpty && fresh.scratchURL == c.scratchURL)
+    c.instanceID = "gw-test"
+    c.save(d)
     #expect(d.object(forKey: "routerConfig") is [String: Any])  // struktura, ne blob
     #expect(RouterConfig.load(d) == c)
     d.set(try JSONEncoder().encode(c), forKey: "routerConfig")  // stara oblika

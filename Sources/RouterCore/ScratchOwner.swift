@@ -87,37 +87,52 @@ public enum ScratchOwner {
         }
     }
 
-    /// Odločitev 2 (prevzem = preimenovanje, nikoli združevanje): stara mapa druge instance postane <osnova>/<id> z ID-jem
-    /// te instance. Mapa te instance, ki je že tam: brez pogovorov izbrisana, s pogovori ob strani kot <id>.old-<datum>.
-    /// Zaklep drugega prehoda: napaka. Zapisano v dnevnik.
-    @discardableResult public static func takeOver(_ old: URL, id: String, now: Date = Date()) throws -> (folder: URL, aside: URL?) {
+    /// Odločitev 2 (prevzem = preimenovanje, nikoli združevanje): stara mapa druge instance (old) postane <osnova>/<id> z
+    /// ID-jem te instance. Trenutna mapa te instance (current, tudi sosednja) in mapa <osnova>/<id>, ki je na poti: brez
+    /// pogovorov izbrisani, s pogovori ob strani kot <id>.old-<datum>. Zaklep drugega prehoda: napaka. Zapisano v dnevnik.
+    @discardableResult public static func takeOver(_ old: URL, current: URL? = nil, id: String, now: Date = Date()) throws -> (folder: URL, aside: URL?) {
         guard !id.isEmpty else { throw error("this gateway has no instance ID yet") }
         guard !locked(old) else { throw error("the folder is used by another gateway that is running: stop it first") }
         let fm = FileManager.default
         let dst = old.deletingLastPathComponent().appendingPathComponent(id, isDirectory: true)
-        var aside: URL?
+        var aside: URL?, moved: [(URL, URL)] = []
+        func undo(_ e: Error) -> Error {
+            for (from, to) in moved.reversed() { try? fm.moveItem(at: to, to: from) }
+            return e
+        }
+        for p in [current, dst].compactMap({ $0 }) where p.standardizedFileURL.path != old.standardizedFileURL.path {
+            guard (try? fm.attributesOfItem(atPath: p.path)) != nil else { continue }
+            do {
+                if !hasConversations(p) { try fm.removeItem(at: p); continue }
+                let f = DateFormatter()
+                f.locale = Locale(identifier: "en_US_POSIX")
+                f.dateFormat = "yyyy-MM-dd"
+                var a = dst.path + ".old-" + f.string(from: now)
+                if fm.fileExists(atPath: a) { f.dateFormat = "-HHmmss"; a += f.string(from: now) }
+                try fm.moveItem(atPath: p.path, toPath: a)
+                aside = URL(fileURLWithPath: a, isDirectory: true)
+                moved.append((p, aside!))
+            } catch { throw undo(error) }
+        }
         if old.lastPathComponent != id {
-            if (try? fm.attributesOfItem(atPath: dst.path)) != nil {
-                if hasConversations(dst) {
-                    let f = DateFormatter()
-                    f.locale = Locale(identifier: "en_US_POSIX")
-                    f.dateFormat = "yyyy-MM-dd"
-                    var a = dst.path + ".old-" + f.string(from: now)
-                    if fm.fileExists(atPath: a) { f.dateFormat = "-HHmmss"; a += f.string(from: now) }
-                    try fm.moveItem(atPath: dst.path, toPath: a)
-                    aside = URL(fileURLWithPath: a, isDirectory: true)
-                } else {
-                    try fm.removeItem(at: dst)
-                }
-            }
-            do { try fm.moveItem(at: old, to: dst) } catch {
-                if let aside { try? fm.moveItem(at: aside, to: dst) }
-                throw error
-            }
+            do { try fm.moveItem(at: old, to: dst) } catch { throw undo(error) }
         }
         try Data((id + "\n").utf8).write(to: dst.appendingPathComponent(ownerFile), options: .atomic)
         log.notice("scratch folder \(old.path, privacy: .public) taken over from another gateway: now \(dst.path, privacy: .public)\(aside.map { "; this gateway's previous folder is kept as " + $0.path } ?? "", privacy: .public)")
         return (dst, aside)
+    }
+
+    /// Prave mape v osnovi trenutnega Scratch z datoteko lastnika druge instance (brez *.old-*, brez trenutne mape):
+    /// (ime, inUse ali stale). Mape brez datoteke lastnika ne štejejo.
+    public static func siblings(_ current: URL, id: String) -> [(name: String, state: String)] {
+        let fm = FileManager.default, base = current.deletingLastPathComponent()
+        return ((try? fm.contentsOfDirectory(atPath: base.path)) ?? []).sorted().compactMap { n in
+            let p = base.appendingPathComponent(n, isDirectory: true)
+            guard n != current.lastPathComponent, !n.contains(".old-"),
+                  (try? fm.attributesOfItem(atPath: p.path)[.type] as? FileAttributeType) == .typeDirectory else { return nil }
+            let st = state(p, id: id)
+            return st.isEmpty ? nil : (n, st)
+        }
     }
 
     static func error(_ s: String) -> Error { CocoaError(.fileWriteNoPermission, userInfo: [NSLocalizedDescriptionKey: s]) }

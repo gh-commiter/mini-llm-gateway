@@ -641,18 +641,35 @@ extension Router {
             return (200, general(n, connect: hooks.connect))  // aplikacija znova zažene router: brez restartRequired
         case "POST general/{}/take":  // N4: Take over (Settings → General → Scratch folder)
             guard arg == "scratch" else { throw AdminError(404, "Not found: \(method) \(path)") }
+            let name = body.isEmpty ? nil : try AdminBody(body, ["name"]).string("name")  // sosednja mapa v osnovi
+            var old = c.scratchURL
+            let sibling = name.flatMap { $0.isEmpty ? nil : $0 }
+            if let name = sibling {  // le neposredna podmapa osnove, prava mapa druge instance
+                guard !name.contains("/"), !name.contains(":"), name != ".", name != ".." else {
+                    throw AdminError(400, "name: a folder name in the Scratch base, without path separators")
+                }
+                guard !c.instanceID.isEmpty, ScratchOwner.siblings(c.scratchURL, id: c.instanceID).contains(where: { $0.name == name }) else {
+                    throw AdminError(400, "name: \(name) is not another gateway's Scratch folder in \(c.scratchURL.deletingLastPathComponent().path)")
+                }
+                old = c.scratchURL.deletingLastPathComponent().appendingPathComponent(name, isDirectory: true)
+            }
             if await hooks.scratchInUse() {
                 throw AdminError(409, "scratch folder: minigw sessions or agents are active; take it over when no minigw session runs")
             }
-            switch ScratchOwner.state(c.scratchURL, id: c.instanceID) {
-            case "": throw AdminError(409, "the Scratch folder \(c.scratchURL.path) is this gateway's own: nothing to take over")
-            case ScratchOwner.inUse: throw AdminError(409, "the Scratch folder \(c.scratchURL.path) is used by another gateway that is running: stop it first, or choose another folder")
+            switch ScratchOwner.state(old, id: c.instanceID) {
+            case "": throw AdminError(409, "the Scratch folder \(old.path) is this gateway's own: nothing to take over")
+            case ScratchOwner.inUse: throw AdminError(409, "the Scratch folder \(old.path) is used by another gateway that is running: stop it first, or choose another folder")
             default: break
             }
             let aside = OSAllocatedUnfairLock<String?>(initialState: nil)
             let n = try await hooks.update { c in
-                do { aside.withLock { $0 = nil }; let r = try ScratchOwner.takeOver(c.scratchURL, id: c.instanceID); aside.withLock { $0 = r.aside?.path } } catch {
-                    throw AdminError(500, "scratch folder not taken over (it stays \(c.scratchURL.path)): \(error.localizedDescription)")
+                let from = sibling.map { c.scratchURL.deletingLastPathComponent().appendingPathComponent($0, isDirectory: true) } ?? c.scratchURL
+                do {
+                    aside.withLock { $0 = nil }
+                    let r = try ScratchOwner.takeOver(from, current: from == c.scratchURL ? nil : c.scratchURL, id: c.instanceID)
+                    aside.withLock { $0 = r.aside?.path }
+                } catch {
+                    throw AdminError(500, "scratch folder not taken over (it stays \(from.path)): \(error.localizedDescription)")
                 }
                 c.scratchName = c.instanceID
             }
@@ -726,6 +743,9 @@ extension Router {
          "worktreeNetwork": c.worktreeNetwork, "worktreeCodexNetwork": c.worktreeCodexNetwork,
          "connect": "minigw connect \(c.host == "0.0.0.0" || c.host == "::" ? Self.localIP() : c.host):\(c.port) --token '\(connect)'"]
         if !c.instanceID.isEmpty, case let st = ScratchOwner.state(c.scratchURL, id: c.instanceID), !st.isEmpty { g["scratchState"] = st }  // N4: in-use, stale
+        if !c.instanceID.isEmpty, case let o = ScratchOwner.siblings(c.scratchURL, id: c.instanceID), !o.isEmpty {
+            g["scratchOthers"] = o.map { ["name": $0.name, "state": $0.state] }  // N4: mape drugih prehodov v osnovi
+        }
         return g
     }
 

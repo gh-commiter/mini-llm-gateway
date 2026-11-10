@@ -92,3 +92,31 @@ private func put(_ dir: URL, _ rel: String, _ text: String = "x") throws {
     #expect(ScratchOwner.owner(base.appendingPathComponent("gw-me")) == "gw-me")
     #expect(await admin(app.router(scratchInUse: false), "POST", "/general/scratch/take").status == 409)
 }
+
+/// Glavni primer po ponovni namestitvi: stara mapa je sosednja v osnovi; prevzem po imenu, trenutna mapa ob strani.
+@Test func adminScratchSiblingTakeOver() async throws {
+    let fm = FileManager.default
+    let base = try tempBase()
+    defer { try? fm.removeItem(at: base) }
+    try put(base.appendingPathComponent("gw-old"), ScratchOwner.ownerFile, "gw-old\n")
+    try put(base.appendingPathComponent("gw-old"), "keep", "old")
+    try put(base.appendingPathComponent("gw-z.old-2026-01-01"), ScratchOwner.ownerFile, "gw-z\n")
+    try put(base.appendingPathComponent("gw-me"), ScratchOwner.ownerFile, "gw-me\n")
+    try put(base.appendingPathComponent("gw-me"), "chat/c.json", "new")
+    var c = RouterConfig()
+    c.instanceID = "gw-me"
+    c.scratchFolder = base.path
+    c.scratchName = "gw-me"
+    let app = FakeApp(c)
+    let g = await admin(app.router(), "GET", "/general")
+    #expect(g.text.contains(#""scratchOthers":[{"#) && g.text.contains(#""name":"gw-old""#) && !g.text.contains("gw-z") && !g.text.contains("scratchState"), "\(g.text)")
+    for bad in ["../gw-old", "nope", "gw-z.old-2026-01-01", "gw-me"] {
+        #expect(await admin(app.router(scratchInUse: false), "POST", "/general/scratch/take", body: #"{"name":"\#(bad)"}"#).status == 400, "\(bad)")
+    }
+    let r = await admin(app.router(scratchInUse: false), "POST", "/general/scratch/take", body: #"{"name":"gw-old"}"#)
+    #expect(r.status == 200 && r.text.contains("warning"), "\(r.text)")
+    let me = base.appendingPathComponent("gw-me")
+    #expect(ScratchOwner.owner(me) == "gw-me" && (try? String(contentsOf: me.appendingPathComponent("keep"), encoding: .utf8)) == "old")
+    #expect(!fm.fileExists(atPath: base.appendingPathComponent("gw-old").path) && !fm.fileExists(atPath: me.appendingPathComponent("chat").path))
+    #expect(app.config.scratchURL.path == me.path)
+}

@@ -1251,9 +1251,13 @@ struct ScratchSection: View {
     @State private var moving = false
     @State private var failure: String?
     @State private var owner = ""  // N4: "", in-use, stale (ScratchOwner.state)
+    @State private var others: [(name: String, state: String)] = []  // N4: mape drugih prehodov v osnovi
 
     private var shown: String { (draft.scratchURL.path as NSString).abbreviatingWithTildeInPath }
-    private func refresh() { owner = draft.instanceID.isEmpty ? "" : ScratchOwner.state(draft.scratchURL, id: draft.instanceID) }
+    private func refresh() {
+        owner = draft.instanceID.isEmpty ? "" : ScratchOwner.state(draft.scratchURL, id: draft.instanceID)
+        others = draft.instanceID.isEmpty ? [] : ScratchOwner.siblings(draft.scratchURL, id: draft.instanceID)
+    }
 
     var body: some View {
         Section {
@@ -1279,8 +1283,21 @@ struct ScratchSection: View {
                     }
                     WideButton("Default") { move(to: nil) }.disabled(draft.scratchFolder.isEmpty || moving)
                     WideButton("Choose…") { choose() }.disabled(moving)
-                    if !owner.isEmpty { WideButton("Take over") { take() }.disabled(owner == ScratchOwner.inUse || moving) }
+                    if !owner.isEmpty { WideButton("Take over") { take(nil) }.disabled(owner == ScratchOwner.inUse || moving) }
                 }
+            }
+            ForEach(others, id: \.name) { o in
+                LabeledContent {
+                    HStack {
+                        Text(o.state == ScratchOwner.inUse ? String(localized: "Used by another gateway") : String(localized: "Stale owner"))
+                            .foregroundStyle(.secondary)
+                        WideButton("Take over") { take(o.name) }.disabled(o.state == ScratchOwner.inUse || moving)
+                    }
+                } label: { Text(verbatim: o.name) }
+            }
+            if !others.isEmpty {
+                Text("Folders of other gateways next to this gateway's Scratch folder. Take over renames a stale one to this gateway's folder; this gateway's current folder is deleted when it holds no conversations, else kept aside.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         } header: {
             Text("Scratch folder")
@@ -1334,15 +1351,17 @@ struct ScratchSection: View {
     }
 
     /// N4, odločitev 2: prevzem mape prehoda, ki ga ni več (preimenovanje, nikoli združevanje; ScratchOwner.takeOver).
-    private func take() {
-        let old = draft.scratchURL, id = draft.instanceID
+    /// name = sosednja mapa v osnovi (po ponovni namestitvi); nil = mapa, ki jo imenuje nastavitev.
+    private func take(_ name: String?) {
+        let cur = draft.scratchURL, id = draft.instanceID
+        let old = name.map { cur.deletingLastPathComponent().appendingPathComponent($0, isDirectory: true) } ?? cur
         moving = true
         Task.detached {
             if await Router.scratchInUse() {
                 await MainActor.run { moving = false; failure = String(localized: "minigw sessions or agents are active. Take over the scratch folder when no minigw session runs.") }
                 return
             }
-            let error: String? = { do { try ScratchOwner.takeOver(old, id: id); return nil } catch { return error.localizedDescription } }()
+            let error: String? = { do { try ScratchOwner.takeOver(old, current: name == nil ? nil : cur, id: id); return nil } catch { return error.localizedDescription } }()
             await MainActor.run {
                 moving = false
                 if let error { failure = error } else { draft.scratchName = id }
