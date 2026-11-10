@@ -1234,7 +1234,11 @@ func runClaude(args []string, env []string) int {
 	cmd := consoleCommand("claude", args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = claudeStdin, os.Stdout, os.Stderr
 	cmd.Env = claudeEnv(os.Environ(), env)
-	if err := cmd.Run(); err != nil {
+	err := startClient(cmd) // Windows: Job, ki z minigw ubije vse drevo claude
+	if err == nil {
+		err = cmd.Wait()
+	}
+	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
 			return ee.ExitCode()
 		}

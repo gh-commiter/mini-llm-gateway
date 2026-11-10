@@ -3,11 +3,13 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
 	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -20,6 +22,8 @@ var (
 	pSetJobInfo     = peerK32.NewProc("SetInformationJobObject")
 	pAssignJob      = peerK32.NewProc("AssignProcessToJobObject")
 	pIsProcessInJob = peerK32.NewProc("IsProcessInJob")
+	pTerminateJob   = peerK32.NewProc("TerminateJobObject")
+	pQueryJobInfo   = peerK32.NewProc("QueryInformationJobObject")
 	pNtResume       = syscall.NewLazyDLL("ntdll.dll").NewProc("NtResumeProcess")
 	pGetTCPTable    = syscall.NewLazyDLL("iphlpapi.dll").NewProc("GetExtendedTcpTable")
 
@@ -49,19 +53,20 @@ type jobExtendedLimits struct {
 	PeakJobMemoryUsed     uintptr
 }
 
-func createAgentJob() {
+func createAgentJob() { agentJob, agentJobErr = newKillJob() }
+
+// newKillJob: Job z KILL_ON_JOB_CLOSE (zapiranje ročaja ali konec minigw ubije vse njegove procese).
+func newKillJob() (syscall.Handle, error) {
 	h, _, err := pCreateJob.Call(0, 0)
 	if h == 0 {
-		agentJobErr = fmt.Errorf("CreateJobObject: %v", err)
-		return
+		return 0, fmt.Errorf("CreateJobObject: %v", err)
 	}
 	info := jobExtendedLimits{Basic: jobBasicLimits{LimitFlags: 0x2000}} // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
 	if r, _, err := pSetJobInfo.Call(h, 9 /* JobObjectExtendedLimitInformation */, uintptr(unsafe.Pointer(&info)), unsafe.Sizeof(info)); r == 0 {
 		syscall.CloseHandle(syscall.Handle(h))
-		agentJobErr = fmt.Errorf("SetInformationJobObject: %v", err)
-		return
+		return 0, fmt.Errorf("SetInformationJobObject: %v", err)
 	}
-	agentJob = syscall.Handle(h)
+	return syscall.Handle(h), nil
 }
 
 // startAgent: proces ustvarjen ustavljen, dodan v Job in šele nato pognan (pred tem ne more ustvariti otrok).
@@ -91,34 +96,129 @@ func agentReaperMain([]string) { os.Exit(2) }
 // initReaper: le Linux (PID 1 v vsebniku).
 func initReaper() {}
 
+// N1: vsak tek ima še svoj Job (gnezden v Jobu agentov): ko neposredni proces konča (tudi ubit ob ctx Done), Job teka
+// ubije še vse potomce (kot pomočnik na Linuxu), zato noben vnuk ne drži stdout in branje doseže EOF. Klicatelj po
+// cmd.Wait() pokliče stopAgentTree (sinhrono, pred prevzemom sprememb); gorutina je le rezerva.
 func startAgent(cmd *exec.Cmd) error {
 	agentJobOnce.Do(createAgentJob)
 	if agentJobErr != nil {
 		return agentJobErr // brez Joba ga peer check ne bi prepoznal: agent ne teče
 	}
+	run, err := newKillJob()
+	if err != nil {
+		return err
+	}
+	h, err := startInJobs(cmd, agentJob, run)
+	if err != nil {
+		syscall.CloseHandle(run)
+		return err
+	}
+	var once sync.Once
+	var stopErr error
+	stop := func() error {
+		once.Do(func() { stopErr = killJobTree(run) })
+		return stopErr
+	}
+	runJobs.Store(cmd, stop)
+	go func() {
+		syscall.WaitForSingleObject(h, syscall.INFINITE)
+		stop()
+		runJobs.Delete(cmd)
+		syscall.CloseHandle(h)
+	}()
+	return nil
+}
+
+var runJobs sync.Map // *exec.Cmd → stop (startAgent)
+
+// stopAgentTree: Job teka konča in počaka, da v njem ni več procesov (največ 3 s); nato zapre njegov ročaj.
+func stopAgentTree(cmd *exec.Cmd) error {
+	if f, ok := runJobs.Load(cmd); ok {
+		return f.(func() error)()
+	}
+	return nil
+}
+
+func killJobTree(job syscall.Handle) error {
+	defer syscall.CloseHandle(job)
+	if r, _, e := pTerminateJob.Call(uintptr(job), 1); r == 0 {
+		return fmt.Errorf("TerminateJobObject: %v", e)
+	}
+	var acct struct {
+		Times                                                        [4]int64
+		PageFaults, TotalProcesses, ActiveProcesses, TerminatedProcs uint32
+	}
+	for deadline := time.Now().Add(3 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+		r, _, e := pQueryJobInfo.Call(uintptr(job), 1 /* JobObjectBasicAccountingInformation */, uintptr(unsafe.Pointer(&acct)), unsafe.Sizeof(acct), 0)
+		if r == 0 {
+			return fmt.Errorf("QueryInformationJobObject: %v", e)
+		}
+		if acct.ActiveProcesses == 0 {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("%d agent processes still running 3 s after TerminateJobObject", acct.ActiveProcesses)
+		}
+	}
+}
+
+// startClient: claude odjemalca (runClaude) v Jobu, ki ga zapre šele konec minigw: z minigw (tudi ubitim) umre vse drevo.
+// Napaka Joba claude nikoli ne ustavi: ustavljen proces je ubit (še ni izvedel kode) in claude teče znova brez Joba.
+func startClient(cmd *exec.Cmd) error {
+	job, err := newKillJob()
+	if err == nil {
+		var h syscall.Handle
+		if h, err = startInJobs(cmd, job); err == nil {
+			syscall.CloseHandle(h) // ročaj Joba namenoma ostane odprt do konca procesa
+			return nil
+		}
+		syscall.CloseHandle(job)
+		if cmd.Process == nil {
+			return err // zagon sam ni uspel (ne Job)
+		}
+		if sk, ok := cmd.Stdin.(io.Seeker); ok { // kopija stdin je morda že brala
+			sk.Seek(0, io.SeekStart)
+		}
+		*cmd = exec.Cmd{Path: cmd.Path, Args: cmd.Args, Env: cmd.Env, Dir: cmd.Dir, Stdin: cmd.Stdin, Stdout: cmd.Stdout, Stderr: cmd.Stderr}
+	}
+	fmt.Fprintln(os.Stderr, "minigw: warning: no Job for claude ("+err.Error()+"); its processes may outlive minigw")
+	return cmd.Start()
+}
+
+// startInJobs: proces ustvarjen ustavljen, dodan v Jobe (po vrsti: drugi je gnezden v prvem) in šele nato pognan (pred
+// tem ne more ustvariti otrok). Vrne ročaj procesa (SYNCHRONIZE), ki ga zapre klicatelj.
+func startInJobs(cmd *exec.Cmd, jobs ...syscall.Handle) (syscall.Handle, error) {
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
 	cmd.SysProcAttr.CreationFlags |= 0x4 // CREATE_SUSPENDED
 	if err := cmd.Start(); err != nil {
-		return err
+		return 0, err
 	}
-	const access = 0x0100 | 0x0001 | 0x0800 // PROCESS_SET_QUOTA | PROCESS_TERMINATE | PROCESS_SUSPEND_RESUME
+	const access = 0x0100 | 0x0001 | 0x0800 | 0x00100000 // PROCESS_SET_QUOTA | PROCESS_TERMINATE | PROCESS_SUSPEND_RESUME | SYNCHRONIZE
 	h, err := syscall.OpenProcess(access, false, uint32(cmd.Process.Pid))
 	if err == nil {
-		defer syscall.CloseHandle(h)
-		if r, _, e := pAssignJob.Call(uintptr(agentJob), uintptr(h)); r == 0 {
-			err = fmt.Errorf("AssignProcessToJobObject: %v", e)
-		} else if st, _, _ := pNtResume.Call(uintptr(h)); st != 0 {
-			err = fmt.Errorf("NtResumeProcess: 0x%x", st)
+		for _, j := range jobs {
+			if r, _, e := pAssignJob.Call(uintptr(j), uintptr(h)); r == 0 {
+				err = fmt.Errorf("AssignProcessToJobObject: %v", e)
+				break
+			}
+		}
+		if err == nil {
+			if st, _, _ := pNtResume.Call(uintptr(h)); st != 0 {
+				err = fmt.Errorf("NtResumeProcess: 0x%x", st)
+			}
+		}
+		if err != nil {
+			syscall.CloseHandle(h)
 		}
 	}
 	if err != nil {
 		cmd.Process.Kill()
 		cmd.Wait()
-		return err
+		return 0, err
 	}
-	return nil
+	return h, nil
 }
 
 func peerCheck(ours, peer *net.TCPAddr) error {

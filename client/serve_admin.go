@@ -1183,9 +1183,12 @@ func claudeTools(exe []string, dir string) []string { // dir (#68): delovna mapa
 	out, err := cmd.StdoutPipe()
 	tools := []string{}
 	if err == nil && startAgent(cmd) == nil {
+		stop := context.AfterFunc(ctx, func() { out.Close() }) // N1: rok konča tudi branje
 		line, _ := bufio.NewReader(out).ReadBytes('\n')
+		stop()
 		cmd.Process.Kill()
 		cmd.Wait()
+		stopAgentTree(cmd)
 		var init struct{ Tools []string }
 		if json.Unmarshal(line, &init) == nil && init.Tools != nil {
 			tools = init.Tools

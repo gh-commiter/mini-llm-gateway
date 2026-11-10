@@ -1280,6 +1280,7 @@ func (s *server) runAgentProcess(ctx context.Context, r *req, exe string, args [
 	}
 	s.agentsRunning.Add(1)
 	defer s.agentsRunning.Add(-1)
+	defer context.AfterFunc(ctx, func() { stdout.Close() })() // N1: branje konča tudi, ko vnuk še drži stdout
 	br := bufio.NewReader(stdout)
 	var line []byte
 	skip := false // L4: vrstica nad maxAgentLine se zavrže (pomnilnik)
@@ -1301,7 +1302,12 @@ func (s *server) runAgentProcess(ctx context.Context, r *req, exe string, args [
 			break
 		}
 	}
-	if err := cmd.Wait(); err != nil {
+	werr := cmd.Wait()
+	if err := stopAgentTree(cmd); err != nil { // Windows: drevo teka ubito, preden klicatelj prevzame spremembe; sicer jih ne prevzame
+		s.log.Printf("%s %s: %v", r.rid, filepath.Base(exe), err)
+		return fmt.Errorf("%s: its processes did not stop after the run, so the gateway did not take its changes; details are in the gateway log, request %s", filepath.Base(exe), r.rid)
+	}
+	if err := werr; err != nil {
 		tail := strings.TrimSpace(stderr.String())
 		if tail != "" {
 			s.log.Printf("%s %s stderr: %s", r.rid, filepath.Base(exe), tail[max(0, len(tail)-2000):])

@@ -1,5 +1,9 @@
 # Release notes
 
+## Unreleased
+
+- Fixed (Windows): cancel or timeout ends the whole agent tree and frees the run slot; local claude ends with minigw.
+
 ## 0.5.23
 
 - Security (#68): `PATCH /general` and `POST /general/token` on `minigw serve` no longer return the connect line with the gateway token; only `GET /general` has it (`minigw gw token rotate` and the settings page read it from there).

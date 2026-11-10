@@ -39,6 +39,9 @@ func initReaper() {}
 
 func startAgent(cmd *exec.Cmd) error { return cmd.Start() }
 
+// stopAgentTree: Job teka je le na Windows.
+func stopAgentTree(*exec.Cmd) error { return nil }
+
 func peerCheck(ours, peer *net.TCPAddr) error { return nil }
 
 // peerInTree: na macOS to preveri aplikacija (PeerProcess); minigw serve tu je za razvoj, brez preverjanja.
