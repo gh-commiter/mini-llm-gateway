@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func str(m map[string]any, k string) string { s, _ := m[k].(string); return s }
@@ -584,6 +585,64 @@ func sessions(u *ui) ([]row, error) {
 			rows = append(rows, inf("    "+clean(str(m, "model")), clean(strings.Join(extra, " · "))),
 				inf(fmt.Sprintf("      %d requests, %d errors, %d refused, %ds, %d in / %d out tokens", num(m, "requests"), num(m, "errors"),
 					num(m, "refused"), num(m, "seconds"), num(m, "inputTokens"), num(m, "outputTokens")), ""))
+		}
+	}
+	return rows, nil
+}
+
+// activity: requests running now at the top, then the recent ones (GET /activity); metadata only.
+func activity(u *ui) ([]row, error) {
+	r, err := u.call("GET", "/activity", nil)
+	if err != nil {
+		return nil, err
+	}
+	when := func(x map[string]any) string {
+		if t, err := time.Parse(time.RFC3339, str(x, "time")); err == nil {
+			return t.Local().Format("Jan 02 15:04:05")
+		}
+		return clean(str(x, "time"))
+	}
+	toggle := func(key string) func() (string, error) {
+		open := u.activity == key
+		return func() (string, error) { u.activity = onOff(open, "", key); return "", nil }
+	}
+	var rows []row
+	if runs := objs(r, "inflight"); len(runs) > 0 {
+		rows = append(rows, hdr(fmt.Sprintf("Running now (%d)", len(runs))))
+		for _, x := range runs {
+			key := "run " + str(x, "id")
+			took := "?"
+			if t, err := time.Parse(time.RFC3339, str(x, "time")); err == nil {
+				took = time.Since(t).Round(time.Second).String()
+			}
+			rows = append(rows, btn(clean(fmt.Sprintf("%s● %-8s %s", onOff(u.activity == key, "▾ ", "▸ "), took, str(x, "model"))), "", toggle(key)))
+			rows[len(rows)-1].value = clean(onOff(str(x, "step") != "", str(x, "step"), "working…"))
+			if u.activity == key {
+				rows = append(rows, inf("    Started", when(x)), inf("    Request", clean(str(x, "id"))))
+			}
+		}
+	}
+	reqs := objs(r, "requests")
+	rows = append(rows, hdr(fmt.Sprintf("Recent requests (%d, newest first; never prompt or answer text)", len(reqs))))
+	if len(reqs) == 0 {
+		rows = append(rows, inf("No requests yet.", ""))
+	}
+	for _, x := range reqs {
+		key := fmt.Sprint(str(x, "time"), str(x, "model"), num(x, "ms"), str(x, "device"))
+		who := onOff(str(x, "deviceName") != "", str(x, "deviceName"), onOff(str(x, "device") != "", "device", "this computer"))
+		took := fmt.Sprintf("%d ms", num(x, "ms"))
+		if num(x, "ms") >= 1000 {
+			took = fmt.Sprintf("%.1f s", float64(num(x, "ms"))/1000)
+		}
+		rows = append(rows, btn(clean(fmt.Sprintf("%s%s  %3d  %-8s  %s", onOff(u.activity == key, "▾ ", "▸ "), when(x), num(x, "status"), took,
+			str(x, "model"))), "", toggle(key)))
+		rows[len(rows)-1].value = clean(who)
+		if u.activity != key {
+			continue
+		}
+		rows = append(rows, inf("    Request", clean(str(x, "method")+" "+str(x, "path"))), inf("    Size", fmt.Sprintf("%d bytes", num(x, "bytes"))))
+		if d := str(x, "device"); d != "" {
+			rows = append(rows, inf("    Device ID", clean(d)))
 		}
 	}
 	return rows, nil

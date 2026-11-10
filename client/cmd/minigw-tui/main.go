@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	_ "dev.trojar/minigw-tui-quiet" // first: no terminal query at start (see the package)
@@ -34,8 +35,9 @@ type ui struct {
 		name, url string
 		insecure  bool
 	} // "Add a provider"
-	connect bool   // the connect line (with the token) is shown
-	session string // session with its details shown
+	connect  bool   // the connect line (with the token) is shown
+	session  string // session with its details shown
+	activity string // Activity entry with its details shown
 }
 
 // call: one admin API request through "minigw gw api"; the body goes on stdin, never in argv.
@@ -122,11 +124,14 @@ type page struct {
 	load  func(u *ui) ([]row, error)
 }
 
-// providersTab: the page with the model list of one provider (esc goes back).
-const providersTab = 2
+// providersTab: the page with the model list of one provider (esc goes back); activityTab reloads by itself.
+const (
+	providersTab = 2
+	activityTab  = 6
+)
 
 var pages = []page{{"General", general}, {"Devices", devices}, {"Providers", providers}, {"Agents", agents},
-	{"Folders", folders}, {"Sessions", sessions}}
+	{"Folders", folders}, {"Sessions", sessions}, {"Activity", activity}}
 
 // macPage: only when the gateway is the Mac app (its status has no "os").
 var macPage = page{"Mac", macOnly}
@@ -141,6 +146,13 @@ type loaded struct {
 
 type isMac bool
 
+// tick: the Activity page's refresh every 3 s, for the visit of the page that started it.
+type tick int
+
+func every(visit int) tea.Cmd {
+	return tea.Tick(3*time.Second, func(time.Time) tea.Msg { return tick(visit) })
+}
+
 type model struct {
 	u          *ui
 	mac        bool
@@ -154,6 +166,7 @@ type model struct {
 	input      []rune
 	asking     bool
 	loadFailed error
+	visit      int // counts page changes (an older page's tick stops)
 }
 
 func (m model) pages() []page {
@@ -198,6 +211,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.w, m.h = msg.Width, msg.Height
 	case isMac:
 		m.mac = bool(msg)
+	case tick:
+		if int(msg) != m.visit || m.tab != activityTab {
+			return m, nil
+		}
+		if m.busy || m.asking {
+			return m, every(m.visit)
+		}
+		return m, tea.Batch(every(m.visit), m.reload(m.note, m.bad))
 	case loaded:
 		if msg.tab != m.tab {
 			return m, nil
@@ -229,9 +250,12 @@ func (m *model) move(d int) {
 
 // goTo: another page; the connect line and the model list close.
 func (m model) goTo(tab int) (tea.Model, tea.Cmd) {
-	m.tab = tab
+	m.tab, m.visit = tab, m.visit+1
 	m.u.connect, m.u.models = false, ""
 	m.rows, m.cur, m.note, m.busy, m.editing, m.asking, m.input = nil, 0, "", true, false, false, nil
+	if tab == activityTab {
+		return m, tea.Batch(m.reload("", false), every(m.visit))
+	}
 	return m, m.reload("", false)
 }
 
@@ -345,8 +369,9 @@ func (m model) mouse(e tea.MouseMsg) (tea.Model, tea.Cmd) {
 		m.move(1)
 	case e.Button != tea.MouseButtonLeft || e.Action != tea.MouseActionPress:
 	case e.Y == 1:
-		for i, x := range m.tabStarts() {
-			if e.X >= x && (i+1 == len(m.tabStarts()) || e.X < m.tabStarts()[i+1]) {
+		_, starts := m.tabs()
+		for i, x := range starts {
+			if e.X >= x && (i+1 == len(starts) || e.X < starts[i+1]) {
 				return m.goTo(i)
 			}
 		}
@@ -369,27 +394,30 @@ func (m model) size() (int, int) {
 
 func (m model) room() int { _, h := m.size(); return max(h-6, 3) }
 
-// tabLine and tabStarts: the page names and the column where each starts.
-func (m model) tabLine() string {
-	s := " "
-	for i, p := range m.pages() {
-		if i == m.tab {
-			s += fmt.Sprintf("[%d %s]", i+1, p.title)
-		} else {
-			s += fmt.Sprintf(" %d %s ", i+1, p.title)
+// tabs: the page names and the column where each starts; one space apart when they do not fit otherwise.
+func (m model) tabs() (line string, starts []int) {
+	w, _ := m.size()
+	for _, full := range []bool{true, false} {
+		line, starts = onOff(full, " ", ""), nil
+		for i, p := range m.pages() {
+			if !full && i > 0 {
+				line += " "
+			}
+			starts = append(starts, utf8.RuneCountInString(line))
+			item := fmt.Sprintf("%d %s", i+1, p.title)
+			switch {
+			case i == m.tab:
+				item = "[" + item + "]"
+			case full:
+				item = " " + item + " "
+			}
+			line += item
+		}
+		if utf8.RuneCountInString(line) <= w {
+			break
 		}
 	}
-	return s
-}
-
-func (m model) tabStarts() []int {
-	var xs []int
-	x := 1
-	for _, p := range m.pages() {
-		xs = append(xs, x)
-		x += utf8.RuneCountInString(fmt.Sprintf(" %d %s ", 1, p.title))
-	}
-	return xs
+	return line, starts
 }
 
 // body: the page's lines, the row of each line (-1 = none) and the first line shown (the cursor stays visible).
@@ -436,7 +464,8 @@ func (m model) View() string {
 	var b strings.Builder
 	line := func(s string) { b.WriteString(cut(s, w) + "\n") }
 	line(" Mini Gateway settings")
-	line(m.tabLine())
+	tabs, _ := m.tabs()
+	line(tabs)
 	line(strings.Repeat("─", w))
 	body, _, top := m.body()
 	for i := top; i < top+m.room(); i++ {
@@ -467,6 +496,8 @@ func (m model) View() string {
 		help = " enter save  esc cancel  ctrl+u clear"
 	case m.tab == providersTab && m.u.models != "":
 		help = " ↑/↓ move  enter change  esc back  r reload  q quit"
+	case m.tab == activityTab:
+		help = " ←/→ page  ↑/↓ move  enter details  r reload (also every 3 s)  q quit"
 	}
 	b.WriteString(cut(help, w))
 	return b.String()
