@@ -231,7 +231,7 @@ extension Router {
         defer { run?.stop() }
         var env = run?.env ?? [:]
         if inTree, let t = await Self.shares.worktree(session: client) {  // L-N9a: Grok bere v klonu; njegov git z ovojem
-            guard let e = Worktree.claudeEnv(root: t.root, maven: t.maven, gitexec: config.scratch("gitexec"), gits: t.gits) else {
+            guard let e = Worktree.claudeEnv(root: t.root, maven: t.maven, gitexec: config.scratch("gitexec"), gits: t.gits, agent: "grok") else {
                 return await error(503, "api_error", "Cannot prepare git for the agent's clone (git --exec-path): use sync", rid: rid, writer: writer)
             }
             env.merge(e) { $1 }

@@ -213,7 +213,7 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
     if let real = Sync.real(URL(fileURLWithPath: NSHomeDirectory() + "/.swiftpm/configuration")), real.path != NSHomeDirectory() + "/.swiftpm/configuration" {
         #expect(fs["denyWrite"]?.contains(real.path) == true)  // povezava ~/.swiftpm/configuration → ~/Library/org.swift.swiftpm/…
     }
-    let env = Worktree.harnessEnv(root: root, maven: maven)
+    let env = Worktree.harnessEnv(root: root, maven: maven, agent: "claude")
     #expect(env["GIT_DIR"] == root.path + "/.git" && env["GIT_WORK_TREE"] == root.path && env["GIT_COMMON_DIR"] == root.path + "/.git"
             && env["MAVEN_OPTS"] == "-Dmaven.repo.local=" + maven.path + " -Djava.io.tmpdir=" + root.path + "/.build/tmp")
     #expect((sb["network"] as? [String: [String]])?["allowedDomains"] == [])
@@ -255,7 +255,7 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
             Worktree.run(args, cwd: repo.path, env: env, safe: false)
         }
     }
-    agentGit(Worktree.harnessEnv(root: repo, maven: root.appendingPathComponent("m2")))
+    agentGit(Worktree.harnessEnv(root: repo, maven: root.appendingPathComponent("m2"), agent: "claude"))
     #expect(((try? FileManager.default.contentsOfDirectory(atPath: marks.path)) ?? []).isEmpty)
     try file(repo, "a.txt", "again\n")
     agentGit([:])  // kontrola: brez okolja se vse troje zažene
@@ -430,7 +430,7 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
             for d in darwin { #expect(!(d == real || d.hasPrefix(real + "/") || d == w || d.hasPrefix(w + "/")), "\(w) covers \(d)") }
         }
     }
-    let env = Worktree.harnessEnv(root: root, maven: root)
+    let env = Worktree.harnessEnv(root: root, maven: root, agent: "claude")
     #expect(env["TMPDIR"] == root.path + "/.build/tmp/" && env["CLANG_MODULE_CACHE_PATH"] == root.path + "/.build/ModuleCache"
             && env["xcrun_nocache"] == "1")
     let codex = Codex.args(cwd: root, extraDirs: [], agent: true, output: root, write: true)
@@ -1026,12 +1026,12 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
             return FileManager.default.fileExists(atPath: marker)
         }
         let maven = root.appendingPathComponent("m")
-        #expect(status(Worktree.harnessEnv(root: wt, maven: maven)), "gitfile=\(gitfile): the test does not reproduce the attack")
-        let env = try #require(Worktree.claudeEnv(root: wt, maven: maven, gitexec: root.appendingPathComponent("gitexec")))
+        #expect(status(Worktree.harnessEnv(root: wt, maven: maven, agent: "claude")), "gitfile=\(gitfile): the test does not reproduce the attack")
+        let env = try #require(Worktree.claudeEnv(root: wt, maven: maven, gitexec: root.appendingPathComponent("gitexec"), agent: "claude"))
         #expect(!status(env), "gitfile=\(gitfile): nested filter ran under the Claude CLI environment")
         // Tudi registriran ugnezdeni klon (0.5.20): git samega claude vanj vstopi z relativnim GIT_DIR, ovoj ga zavrne.
         let reg = try #require(Worktree.claudeEnv(root: wt, maven: maven, gitexec: root.appendingPathComponent("gitexec"),
-                                                  gits: [wt.appendingPathComponent(".git").path, gd.path]))
+                                                  gits: [wt.appendingPathComponent(".git").path, gd.path], agent: "claude"))
         #expect(!status(reg), "gitfile=\(gitfile): registered nested filter ran")
         #expect(Worktree.nestedProblem(wt, repo: root.appendingPathComponent("repos/d/r.git"))
                 == "changes inside the nested repository sub do not come back in worktree mode; use sync")
@@ -1544,4 +1544,88 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
     try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("c-1"), withDestinationURL: outside)
     ShareHub.keepClone(root.appendingPathComponent("c-1"), root.appendingPathComponent("c-1-kept-1"))
     #expect(exists(outside.path + "/.git") && !exists(root.path + "/c-1-kept-1"))
+}
+
+/// #40 (kot Go TestPathWrapScript): besedilo enako kot v Go (client/testdata/pathwrap.golden); git dela v registriranem
+/// klonu, ki vsebuje mapo ali -C <pot> (najdaljši), drugače ostane okolje; neregistriran .git in predpona /x/ab ne veljata.
+@Test func pathWrapScriptMapsRegisteredClones() throws {
+    let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    #expect(try String(contentsOf: repo.appendingPathComponent("client/testdata/pathwrap.golden"), encoding: .utf8) == Worktree.pathWrapScript(real: "/REAL/git"))
+    let fm = FileManager.default
+    let root = fm.temporaryDirectory.appendingPathComponent("pw-" + UUID().uuidString + "/a b'c")  // ne kanonična pot (/var → /private/var)
+    defer { try? fm.removeItem(at: root.deletingLastPathComponent()) }
+    let real = root.appendingPathComponent("real/git"), wrap = root.appendingPathComponent("bin/git")
+    try file(root, "real/git", "#!/bin/sh\necho \"$GIT_DIR|$GIT_WORK_TREE|$GIT_COMMON_DIR|$*\"\n")
+    try file(root, "bin/git", Worktree.pathWrapScript(real: real.path))
+    chmod(real.path, 0o755); chmod(wrap.path, 0o755)
+    let top = root.path + "/w", lib = top + "/lib", ab = root.path + "/x/ab"
+    for d in [top, lib, lib + "/inner", root.path + "/x/a", ab, lib + "/src"] { try fm.createDirectory(atPath: d + "/.git", withIntermediateDirectories: true) }
+    let reg = [top + "/.git", lib + "/.git", root.path + "/x/a/.git"].joined(separator: "\n")
+    func inn(_ p: String) -> String { p + "/.git|" + p + "|" + p + "/.git" }
+    for (cwd, args, want) in [(top, ["status"], inn(top)), (lib + "/src", ["status"], inn(lib)), (top, ["-C", "lib", "commit", "-m", "x"], inn(lib)),
+                              (top, ["-c", "a=b", "--no-pager", "-C", "lib", "status"], inn(lib)), (top, ["-C", "lib", "-C", "src", "status"], inn(lib)),
+                              (top, ["-C", lib + "/..", "status"], inn(top)), (top, ["status", "-C", "lib"], inn(top)), (lib + "/inner", ["status"], inn(lib)),
+                              (ab, ["status"], inn(top)), (root.path, ["status"], inn(top)), (top, ["-C", "missing", "status"], inn(top))] {
+        let p = Process(), out = Pipe()
+        p.executableURL = wrap; p.arguments = args; p.currentDirectoryURL = URL(fileURLWithPath: cwd); p.standardOutput = out
+        p.environment = ProcessInfo.processInfo.environment.merging(["GIT_DIR": top + "/.git", "GIT_WORK_TREE": top, "GIT_COMMON_DIR": top + "/.git", "MINIGW_GIT_DIRS": reg]) { $1 }
+        try p.run(); p.waitUntilExit()
+        let got = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        #expect(got == want + "|" + args.joined(separator: " "), "\(cwd) \(args)")
+    }
+}
+
+/// #40 (kot Go TestWorktreeHarnessEnvGitConfig): brez lastnikovih nastavitev git, avtor je agent, isti vrstni red parov;
+/// PATH najprej ovoj gitexec/bin.
+@Test func harnessEnvOwnGitConfig() throws {
+    let env = Worktree.harnessEnv(root: URL(fileURLWithPath: "/w"), maven: URL(fileURLWithPath: "/m"), agent: "codex")
+    let want = ["core.fsmonitor=false", "core.hooksPath=/dev/null", "core.attributesFile=/dev/null", "diff.ignoreSubmodules=all",
+                "submodule.recurse=false", "core.excludesFile=/dev/null", "user.name=Codex (Mini Gateway)", "user.email=codex@minigw.invalid"]
+    #expect((0..<want.count).map { env["GIT_CONFIG_KEY_\($0)"]! + "=" + env["GIT_CONFIG_VALUE_\($0)"]! } == want)
+    #expect(env["GIT_CONFIG_GLOBAL"] == "/dev/null" && env["GIT_CONFIG_NOSYSTEM"] == "1" && env["GIT_CONFIG_COUNT"] == "8")
+    let gx = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("gx-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: gx) }
+    let c = try #require(Worktree.claudeEnv(root: URL(fileURLWithPath: "/w"), maven: URL(fileURLWithPath: "/m"), gitexec: gx, agent: "claude", path: "/usr/bin"))
+    #expect(c["PATH"] == gx.path + "/bin:/usr/bin" && c["GIT_CONFIG_VALUE_6"] == "Claude (Mini Gateway)")
+    #expect(FileManager.default.isExecutableFile(atPath: gx.path + "/bin/git"))
+}
+
+/// #40: Claude CLI v klonu commita v ugnezdenem klonu z git -C (ovoj na PATH); commit pride na vejo ugnezdenega
+/// repozitorija z avtorjem agenta, vrhnja veja ga nima.
+@Test func worktreeClaudeCommitsInNestedClone() async throws {
+    let (root, client, tree) = try fixture()
+    defer { cleanup(root) }
+    let lib = client.appendingPathComponent("lib")
+    try file(lib, "f.txt", "lib\n"); g(lib, "init", "-q", "-b", "main"); g(lib, "add", "-A"); g(lib, "commit", "-qm", "lib")
+    let fake = root.appendingPathComponent("claude")
+    try Data("""
+        #!/bin/sh
+        [ "$1" = --version ] && { echo '2.1.0 (Claude Code)'; exit 0; }
+        cat > /dev/null
+        if [ -d lib ]; then  # ne poskus claude -p x zunaj klona
+          echo x > lib/n.txt && git -C lib add -A && git -C lib commit -qm "agent in lib" || exit 9
+          echo y > top.txt && git add -A && git commit -qm "agent top" || exit 9
+        fi
+        echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"done"}}}'
+        echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
+
+        """.utf8).write(to: fake)
+    chmod(fake.path, 0o755)
+    var c = RouterConfig()
+    c.claudeCLI.enabled = true; c.claudeCLI.executable = fake.path
+    let router = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]))
+    let hub = Router.shares, session = UUID().uuidString
+    let key = try #require(await hub.register(session: session, cwd: client.path, key: nil, device: "dev", tree: tree))
+    let loop = fakeClient(hub, key: key, top: client)
+    defer { loop.cancel() }
+    var r = request("POST", "/v1/messages", headers: ["Authorization": "Bearer tok", "x-claude-mini-session": session, "x-claude-mini-cwd": client.path],
+                    body: #"{"model":"claude-cli-haiku","tools":[{"name":"x"}],"messages":[{"role":"user","content":"go"}]}"#)
+    r.device = Noise.Device(id: "dev", name: "dev")
+    let w = FakeWriter()
+    await router.handle(r, writer: w)
+    #expect(w.status == 200 && w.text.contains("done"), "\(w.text)")
+    let br = "minigw/claude-\(String(Sync.folderID(session).prefix(8)))-0"
+    #expect(g(lib, "log", "-1", "--format=%an <%ae> %s", br) == "Claude (Mini Gateway) <claude@minigw.invalid> agent in lib")
+    let top = g(client, "ls-tree", "-r", "--name-only", br)
+    #expect(top.contains("top.txt") && !top.contains("lib/") && g(client, "log", "-1", "--format=%an", br) == "Claude (Mini Gateway)")
 }

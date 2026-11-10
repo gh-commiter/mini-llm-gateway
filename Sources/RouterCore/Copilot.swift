@@ -319,7 +319,7 @@ extension Router {
             }.joined() + ")\n")
         var treeEnv: [String: String]?  // L-N9a: harness Copilot sam poganja git v klonu (ovoj kot pri Claude CLI)
         if let t = tree {
-            guard let e = Worktree.claudeEnv(root: t.root, maven: t.maven, gitexec: config.scratch("gitexec"), gits: t.gits) else {
+            guard let e = Worktree.claudeEnv(root: t.root, maven: t.maven, gitexec: config.scratch("gitexec"), gits: t.gits, agent: "copilot") else {
                 return await error(503, "api_error", "Cannot prepare git for the agent's clone (git --exec-path): use sync", rid: rid, writer: writer)
             }
             treeEnv = e
