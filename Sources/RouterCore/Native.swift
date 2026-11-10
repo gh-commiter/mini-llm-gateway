@@ -183,14 +183,36 @@ public enum Native {
     /// in obstoječih TemporaryDirectory.* ni mogoče preimenovati, izbrisati ali zamenjati. Mapa sama (xcrun_db) in
     /// DARWIN_USER_CACHE_DIR ostaneta zaprti. ponytail: vsebino sočasne mape drugega procesa zagon lahko spremeni (I4, #24);
     /// peskovnik ne loči svojih map od tujih, Foundation pa druge poti ne pozna.
-    static func darwinTempRules() -> String? {
+    /// - Mapa `dir` na drugem disku (npr. /Volumes/Java): Foundation kopijo shranjevanja da na ta disk,
+    ///   <disk>/.TemporaryItems/folders.<uid>/TemporaryItems/NSIRD_… (`volumeTempItems`); enako pravilo le za nove NSIRD_*
+    ///   tam, in nove (manjkajoče) mape na poti do njih, nič drugega na disku.
+    static func darwinTempRules(dir: String? = nil) -> String? {
         var b = [CChar](repeating: 0, count: 1024)
         guard confstr(_CS_DARWIN_USER_TEMP_DIR, &b, b.count) > 0,
               let t = Sync.real(URL(fileURLWithPath: String(cString: b)))?.path else { return nil }
         let te = NSRegularExpression.escapedPattern(for: t)
-        return "(allow file-write* (regex #\"^\(te)/TemporaryItems/NSIRD_[^/]+/\") (regex #\"^\(te)/TemporaryDirectory\\.[^/]+/\"))\n"
+        var rules = "(allow file-write* (regex #\"^\(te)/TemporaryItems/NSIRD_[^/]+/\") (regex #\"^\(te)/TemporaryDirectory\\.[^/]+/\"))\n"
             + "(allow file-write-create (require-all (vnode-type DIRECTORY)"
             + " (regex #\"^\(te)/(TemporaryItems/NSIRD_[^/]+|TemporaryDirectory\\.[^/]+)$\")))\n"
+        if let dir, let ti = volumeTempItems(dir, temp: t) {
+            let ve = NSRegularExpression.escapedPattern(for: ti)
+            let parents = [ti, (ti as NSString).deletingLastPathComponent, ((ti as NSString).deletingLastPathComponent as NSString).deletingLastPathComponent]
+            let q = { (p: String) in "\"" + p.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\"" }
+            rules += "(allow file-write* (regex #\"^\(ve)/NSIRD_[^/]+/\"))\n"
+                + "(allow file-write-create (require-all (vnode-type DIRECTORY) (require-any (regex #\"^\(ve)/NSIRD_[^/]+$\")"
+                + parents.map { " (literal \(q($0)))" }.joined() + ")))\n"
+        }
+        return rules
+    }
+
+    /// <disk>/.TemporaryItems/folders.<uid>/TemporaryItems diska mape `dir` (kanonično), če ni disk začasne mape `temp`
+    /// (zagonski disk); sicer nil. Tako izbere Foundation mapo za zamenjavo vnosa (preizkušeno na APFS /Volumes/…).
+    static func volumeTempItems(_ dir: String, temp: String) -> String? {
+        var a = stat(), t = stat()
+        guard stat(dir, &a) == 0, stat(temp, &t) == 0, a.st_dev != t.st_dev,
+              let vol = (try? URL(fileURLWithPath: dir).resourceValues(forKeys: [.volumeURLKey]))?.volume,
+              let root = Sync.real(vol)?.path, root != "/" else { return nil }
+        return root + "/.TemporaryItems/folders.\(getuid())/TemporaryItems"
     }
 
     /// `runTmp`: TMPDIR in ModuleCache tega zagona (v Scratch, ki je sicer skrit).
@@ -216,7 +238,7 @@ public enum Native {
                            ".bash_history"].map { home + "/" + $0 }
         return "(version 1)\n(allow default)\n(deny file-write*)\n"
             + "(allow file-write* (regex #\"^/dev/\")" + writable.map { " (subpath \(q($0)))" }.joined() + ")\n"
-            + (darwinTempRules() ?? "")
+            + (darwinTempRules(dir: dir) ?? "")
             // Skrite mape (Scratch): ne vsebina, seznam in pisanje; metapodatki (stat) da, sicer mkdir -p in realpath v
             // dovoljeni podmapi ne delujeta. Izrecno vidna mapa seje v njej (sinhronizirana kopija, klon) spet le ta.
             // Dovolitev mora imenovati file-read-data: file-read* ne preglasi ožje prepovedi.
@@ -307,11 +329,15 @@ public enum Native {
     }
 
     /// V peskovniku drug peskovnik ni mogoč (sandbox_apply: Operation not permitted), zato SwiftPM in Xcode brez svojega.
-    static func withoutNestedSandbox(_ argv: [String]) -> [String] {
+    /// `cache`: predpomnilnik SwiftPM (manifesti, kloni) v zasebni mapi zagona (#24), ne ~/Library/Caches (C1, le branje).
+    /// Nastavitve in prstni odtisi (~/Library/org.swift.swiftpm/configuration, security) ostanejo lastnikovi in le za
+    /// branje: zrcala in TOFU odtisi paketov veljajo tudi v run (svež --security-path bi preverjanje odtisov izklopil).
+    static func withoutNestedSandbox(_ argv: [String], cache: String? = nil) -> [String] {
         var a = argv
         switch a.first {
-        case "swift" where a.count > 1 && ["build", "test", "run", "package"].contains(a[1]) && !a.contains("--disable-sandbox"):
-            a.insert("--disable-sandbox", at: 2)
+        case "swift" where a.count > 1 && ["build", "test", "run", "package"].contains(a[1]):
+            if let cache, !a.contains(where: { $0 == "--cache-path" || $0.hasPrefix("--cache-path=") }) { a.insert(contentsOf: ["--cache-path", cache], at: 2) }
+            if !a.contains("--disable-sandbox") { a.insert("--disable-sandbox", at: 2) }
         case "xcodebuild":
             a += ["-IDEPackageSupportDisableManifestSandbox=YES", "ENABLE_USER_SCRIPT_SANDBOXING=NO"]
         default: break
@@ -529,7 +555,7 @@ extension Router {
         guard let exe = Native.executable(argv[0], dir: dir, path: env["PATH"]!) else {
             return await error(404, "not_found_error", "minigw run: \(argv[0]) not found on the gateway", rid: rid, writer: writer)
         }
-        let args = Array(Native.withoutNestedSandbox(argv).dropFirst())
+        let args = Array(Native.withoutNestedSandbox(argv, cache: realTmp + "/swiftpm-cache").dropFirst())
         guard let (pid, out, err, _) = Native.spawnGroup("/usr/bin/sandbox-exec", ["-p", profile, exe] + args, dir: dir, env: env) else {
             return await self.error(500, "api_error", "minigw run: cannot start \(argv[0])", rid: rid, writer: writer)
         }
