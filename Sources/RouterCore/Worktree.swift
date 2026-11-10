@@ -1556,7 +1556,14 @@ extension ShareHub {
     func releaseSlot(run id: String) {
         guard let k = runSlot.removeValue(forKey: id), let slot = slots[k] else { return }
         slot.busy = false
-        if bySessionTree(String(k.split(separator: "|")[0])) == nil {
+        if slot.abandoned, slot.kept == nil {  // #73: takoj s poti (naslednji tek naredi nov klon tam), brisanje v ozadju
+            slots[k] = nil
+            let trash = URL(fileURLWithPath: slot.wt.path + "-abandoned-" + UUID().uuidString.prefix(8), isDirectory: true)
+            guard rename(slot.wt.path, trash.path) == 0 else { Self.dropClone(slot); return }
+            rename(Worktree.deps(slot.wt).path, Worktree.deps(trash).path)
+            unlink(Worktree.tmpLink(slot.wt))
+            Task.detached { Self.removeClone(trash) }
+        } else if slot.abandoned || bySessionTree(String(k.split(separator: "|")[0])) == nil {
             slots[k] = nil
             Self.dropClone(slot)
         } else if Worktree.grantDirs(root: slot.wt) == nil {  // #73: po teku znova $MINIGW_DEPS/tmp, .cache, .maven (dnevnik, popravek)

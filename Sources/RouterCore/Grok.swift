@@ -104,6 +104,7 @@ public enum Grok {
     /// Zažene grok in vrne končni odgovor (besedilo po zadnjem klicu orodja); prekinitev odjemalca ustavi grok.
     /// Vrne končni odgovor in ID Grokove seje (za nadaljevanje z -r).
     static func run(_ exe: String, args: [String], cwd: URL, prompt: String, env extra: [String: String] = [:], dirs: [String] = [],
+                    stopNested: @escaping @Sendable () -> Void = {},
                     started: @escaping @Sendable (pid_t) -> Void = { _ in }, onStep: @escaping @Sendable (String) -> Void) async throws -> (String, String?) {
         let h = Handle()
         return try await withTaskCancellationHandler {
@@ -151,6 +152,7 @@ public enum Grok {
                 p.waitUntilExit()
                 while errReader.isExecuting { usleep(10_000) }
                 // #73: finalize (syncBack) le, ko drevesa ni več
+                stopNested()  // vprašani agenti se končajo urejeno, ne s SIGKILL (kot ClaudeCLI)
                 guard Native.killTree(p.processIdentifier, pipes: pipes, dirs: dirs) else { throw Native.TreeAlive(agent: "grok") }
                 let text = answer.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard failure == nil, !text.isEmpty else {
@@ -249,7 +251,7 @@ extension Router {
             env.merge(e.filter { $0.key != "MINIGW_DEPS" }) { $1 }  // #67: Grok v klonu le bere
         }
         return await replyWhenDone(body: body, model: "claude-grok", rid: rid, writer: writer, req: req) {
-            let (text, session) = try await Grok.run(exe, args: args, cwd: cwd, prompt: prompt, env: env, dirs: await Self.shares.runDirs(), started: { run?.started($0) }) { [onActivity] s in onActivity(.step(id: rid, text: s)) }
+            let (text, session) = try await Grok.run(exe, args: args, cwd: cwd, prompt: prompt, env: env, dirs: await Self.shares.runDirs(), stopNested: { run?.stop() }, started: { run?.started($0) }) { [onActivity] s in onActivity(.step(id: rid, text: s)) }
             run?.stop()  // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb
             if agent { await Self.shares.syncBack(session: client) }  // sync: spremembe agenta k odjemalcu pred odgovorom
             if agent, let session {

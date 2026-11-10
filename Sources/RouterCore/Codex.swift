@@ -187,6 +187,7 @@ public enum Codex {
     }
 
     static func run(_ exe: String, args: [String], cwd: URL, prompt: String, output: URL, env extra: [String: String] = [:], dirs: [String] = [],
+                    stopNested: @escaping @Sendable () -> Void = {},
                     started: @escaping @Sendable (pid_t) -> Void = { _ in },
                     onStep: @escaping @Sendable (String) -> Void = { _ in }) async throws -> (String, String?) {
         let h = Handle()
@@ -232,6 +233,7 @@ public enum Codex {
                 while errReader.isExecuting { usleep(10_000) }
                 p.waitUntilExit()
                 // #73: finalize (syncBack) le, ko drevesa ni več
+                stopNested()  // vprašani agenti se končajo urejeno, ne s SIGKILL (kot ClaudeCLI)
                 guard Native.killTree(p.processIdentifier, pipes: pipes, dirs: dirs) else { throw Native.TreeAlive(agent: "codex") }
                 let text = (try? String(contentsOf: output, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 guard p.terminationStatus == 0, !text.isEmpty else {
@@ -347,7 +349,7 @@ extension Router {
         let sessions = Self.codexSessions, session = req.header("x-claude-mini-session") ?? ""
         return await replyWhenDone(body: body, model: "claude-codex", rid: rid, writer: writer, req: req) {
             let (text, thread) = try await Codex.run(exe, args: args, cwd: cwd, prompt: prompt, output: output,
-                                                         env: codexEnv, dirs: await Self.shares.runDirs(), started: { run?.started($0) }) { [onActivity] s in
+                                                         env: codexEnv, dirs: await Self.shares.runDirs(), stopNested: { run?.stop() }, started: { run?.started($0) }) { [onActivity] s in
                 onActivity(.step(id: rid, text: s))
             }
             run?.stop()  // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb

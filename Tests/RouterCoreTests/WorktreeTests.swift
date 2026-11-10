@@ -2316,3 +2316,31 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
         #expect(g.contains("-c " + pin), "\(pin)")
     }
 }
+
+/// #73: drevo agenta ni ustavljeno (abandon): klon worktree gre ob koncu teka ven; naslednji tek dobi nov klon (kot po H2)
+/// brez tega, kar je pisal opuščeni.
+@Test func worktreeAbandonedRunDropsClone() async throws {
+    let (root, client, tree) = try fixture()
+    defer { cleanup(root) }
+    let hub = ShareHub(), session = UUID().uuidString
+    let key = try #require(await hub.register(session: session, cwd: client.path, key: nil, device: "dev", tree: tree))
+    let loop = fakeClient(hub, key: key, top: client)
+    defer { loop.cancel() }
+    await hub.finish(run: try await agentRun(hub, session) { try file($0, "first.txt", "1\n") })
+    let short = String(Sync.folderID(session).prefix(8))
+    #expect(g(client, "show", "minigw/claude-\(short)-0:first.txt") == "1")
+    var abandoned: URL?
+    let id = UUID().uuidString
+    await ShareHub.$run.withValue(id) {
+        await ShareHub.$agent.withValue("claude") {
+            abandoned = await hub.mount(session: session, cwd: nil, base: "http://127.0.0.1:1", device: "dev")
+            try? file(abandoned!, "tainted.txt", "x\n")
+            await hub.abandon()
+        }
+    }
+    await hub.finish(run: id)
+    #expect(!FileManager.default.fileExists(atPath: abandoned!.appendingPathComponent("tainted.txt").path))
+    _ = try await agentRun(hub, session) { dir in
+        #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("tainted.txt").path))  // nov klon
+    }
+}

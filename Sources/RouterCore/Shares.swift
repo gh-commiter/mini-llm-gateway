@@ -73,6 +73,7 @@ public actor ShareHub {
         let wt: URL, branch: String, base: String
         let nested: [Nested]  // ugnezdeni repozitoriji odjemalca: vsak svoj klon v wt, starš pred otrokom
         var busy = true
+        var abandoned = false  // #73: drevo agenta ni ustavljeno: ob koncu teka klon ven, naslednji tek iz veje
         var kept: URL?  // L6: v klonu je delo, ki ni prišlo do odjemalca: ob koncu seje gre klon sem (30 dni)
         private let git: [UInt64]?, cfg: Data?  // H2: .git (naprava, inode) in .git/config ob kloniranju
         init(wt: URL, branch: String, base: String, nested: [Nested] = []) {
@@ -582,9 +583,12 @@ public actor ShareHub {
         return dirs
     }
 
-    /// #73 (kot win-run-job): drevo agenta po teku ni ustavljeno: klon sync tega izvajanja ne gre v kopijo (finish).
+    /// #73 (kot win-run-job): drevo agenta po teku ni ustavljeno: klon sync tega izvajanja ne gre v kopijo (finish);
+    /// klon worktree gre ob releaseSlot ven (proces, ki je preživel, bi ga lahko še pisal).
     func abandon() {
-        if let id = Self.run { runs[id]?.merged = true }
+        guard let id = Self.run else { return }
+        runs[id]?.merged = true
+        if let k = runSlot[id] { slots[k]?.abandoned = true }
     }
 
     /// Konec izvajanja (tudi ob napaki ali prekinitvi): združi, če prevzema ni bilo, in odstrani klon.
