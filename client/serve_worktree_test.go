@@ -1281,3 +1281,46 @@ func TestAgentArgsDenyAllTempRoots(t *testing.T) {
 		}
 	}
 }
+
+// #54: bundle odjemalca z drevesom ».git« zrcalo zavrne tudi na git pred 2.46 (fetch iz bundla tam ne preveri objektov);
+// ref base ne ostane. Isti posnetek pod drugim base (brez novih objektov) gre.
+func TestImportBaseFsck(t *testing.T) {
+	root := t.TempDir()
+	client, repo := filepath.Join(root, "c"), filepath.Join(root, "repos", "d", "r.git")
+	os.MkdirAll(client, 0o755)
+	gitT(t, client, "init", "-q", "-b", "main")
+	writeT(t, filepath.Join(client, "a.txt"), "a\n")
+	gitT(t, client, "add", "a.txt")
+	gitT(t, client, "commit", "-qm", "first")
+	head := gitT(t, client, "rev-parse", "HEAD")
+	mk := func(in string) string {
+		c := exec.Command("git", "-C", client, "mktree")
+		c.Stdin = strings.NewReader(in)
+		out, err := c.Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	blob := gitT(t, client, "hash-object", "-w", "--stdin")
+	evil := gitT(t, client, "commit-tree", mk("040000 tree "+mk("100644 blob "+blob+"\tpost-checkout\n")+"\t.git\n"), "-p", head, "-m", "dot git")
+	bundle := func(name, tip string) string {
+		b := filepath.Join(root, name)
+		gitT(t, client, "update-ref", "refs/minigw/push", tip)
+		gitT(t, client, "bundle", "create", b, "refs/minigw/push")
+		return b
+	}
+	if ensureMirror(repo) != nil {
+		t.Fatal("mirror")
+	}
+	if importBase(repo, bundle("evil.bundle", evil), evil, "refs/minigw/base/e") {
+		t.Fatal("a tree with .git was imported")
+	}
+	if got, _ := gitRun(repo, "", nil, "--git-dir", repo, "rev-parse", "-q", "--verify", "refs/minigw/base/e"); got != "" {
+		t.Fatalf("rejected base kept: %s", got)
+	}
+	b := bundle("good.bundle", head)
+	if !importBase(repo, b, head, "refs/minigw/base/x") || !importBase(repo, b, head, "refs/minigw/base/y") {
+		t.Fatal("good bundle refused")
+	}
+}

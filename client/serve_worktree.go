@@ -311,8 +311,10 @@ func importBase(repo, bundle, snapshot, base string) bool {
 		if !isBundle(bundle) {
 			return false
 		}
-		if _, err := gitRun(repo, "", nil, "--git-dir", repo, "-c", "transfer.fsckObjects=true", "-c", "fetch.fsckObjects=true",
-			"fetch", "-q", "--no-tags", bundle, "+refs/minigw/push:"+base); err != nil {
+		_, err := gitRun(repo, "", nil, "--git-dir", repo, "-c", "transfer.fsckObjects=true", "-c", "fetch.fsckObjects=true",
+			"fetch", "-q", "--no-tags", bundle, "+refs/minigw/push:"+base)
+		if err != nil || !fsckBase(repo, base) {
+			gitRun(repo, "", nil, "--git-dir", repo, "update-ref", "-d", base)
 			return false
 		}
 	} else if _, err := gitRun(repo, "", nil, "--git-dir", repo, "update-ref", base, snapshot); err != nil {
@@ -320,6 +322,41 @@ func importBase(repo, bundle, snapshot, base string) bool {
 	}
 	got, _ := gitRun(repo, "", nil, "--git-dir", repo, "rev-parse", base)
 	return got == snapshot
+}
+
+// fsckBase (#54): fetch iz bundla pred git 2.46 ne preveri objektov (fetch.fsckObjects prezre), novejši pa ne objektov,
+// ki so v zrcalu že brez refa. Zato vsi objekti base, nedosegljivi iz drugih refov: pack-objects in index-pack
+// --fsck-objects v prazen repozitorij z objekti zrcala kot alternates (kot finalize in fsckIncoming odjemalca).
+func fsckBase(repo, base string) bool {
+	refs, err := gitRun(repo, "", nil, "--git-dir", repo, "for-each-ref", "--format=%(objectname) %(refname)")
+	if err != nil {
+		return false
+	}
+	in := base + "\n--not\n"
+	for _, l := range strings.Split(refs, "\n") {
+		if sha, ref, _ := strings.Cut(l, " "); shaRe.MatchString(sha) && ref != base {
+			in += sha + "\n"
+		}
+	}
+	dir, err := os.MkdirTemp(repo, "minigw-fsck-") // 0700, v zrcalu (ne v skupni začasni mapi)
+	if err != nil {
+		return false
+	}
+	defer os.RemoveAll(dir)
+	pack, err := gitRunInput(repo, dir, nil, in, "--git-dir", repo, "pack-objects", "--revs", "-q", filepath.Join(dir, "p"))
+	if err != nil || !shaRe.MatchString(pack) {
+		return false
+	}
+	fsck := filepath.Join(dir, "fsck.git")
+	if _, err := gitRun(repo, dir, nil, "init", "-q", "--bare", fsck); err != nil {
+		return false
+	}
+	objs, err := filepath.Abs(filepath.Join(repo, "objects"))
+	if err != nil || os.WriteFile(filepath.Join(fsck, "objects", "info", "alternates"), []byte(filepath.ToSlash(objs)+"\n"), 0o600) != nil {
+		return false
+	}
+	_, err = gitRun(repo, dir, nil, "--git-dir", fsck, "index-pack", "--fsck-objects", filepath.Join(dir, "p-"+pack+".pack"))
+	return err == nil
 }
 
 // makeClone: klon za agenta na veji iz posnetka (objekti zrcala le za branje, novi v klonu).
