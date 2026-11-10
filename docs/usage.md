@@ -241,10 +241,13 @@ Notes:
 - If a nested repository cannot come back (the agent moved or replaced it, its branch is larger than 64 MB, or the
   gateway could not save it), the top-level branch and the other nested repositories still come back, without that
   repository's files. minigw prints one line per such repository with the reason:
-  `minigw: gateway: worktree: <reason>; the agent's clone with this work stays on the gateway for 30 days
-  (<clone>-kept-<time> after this session)`. A later request in the same session that delivers it ends that. When
-  the session ends, the gateway keeps the clone as `<clone>-kept-<yyyyMMdd-HHmmss>` next to the clones and removes it
-  after 30 days. The same applies when no branch could be delivered at all.
+  `minigw: gateway: worktree: <reason>; the agent's files are kept on the gateway for 30 days as
+  worktrees/<device>/<id>/<clone>-kept-<time> after this session (files only; its .git folders renamed .git.agent —
+  do not run git there)`. The path is inside the gateway's Scratch folder. A later request in the same session that
+  delivers the work ends that. When the session ends (or the next request needs a new clone), the gateway keeps the
+  agent's files there with every `.git` renamed `.git.agent`, so no git command picks up the agent's git settings or
+  hooks; copy the files you need. At most 3 such folders are kept per repository (the oldest goes first), each for
+  30 days. The same applies when no branch could be delivered at all, except for a clone refused as too large.
 - The agent may commit inside a nested clone: its note names the clones and the form
   `GIT_DIR=<path>/.git GIT_COMMON_DIR=<path>/.git GIT_WORK_TREE=<path> git …` (plain git in the clone works on the top
   repository). Its commits are kept; changes it leaves uncommitted are committed by the gateway. Codex can commit there;

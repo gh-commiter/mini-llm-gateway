@@ -940,14 +940,12 @@ public enum Worktree {
     /// Ob zagonu aplikacije: zrcala, ki jih 30 dni ni uporabil noben agent, in njihovi kloni.
     public static func prune(scratch: URL, days: Double = 30) {
         let fm = FileManager.default, repos = scratch.appendingPathComponent("repos"), cut = Date().addingTimeInterval(-days * 86400)
-        let wts = scratch.appendingPathComponent("worktrees")  // L6: ohranjeni kloni (<klon>-kept-<čas>)
-        for owner in (try? fm.contentsOfDirectory(atPath: wts.path)) ?? [] {
+        let wts = scratch.appendingPathComponent("worktrees")  // L6: ohranjeni kloni (<klon>-kept-<čas>); L2: le prave mape
+        func realDir(_ u: URL) -> Bool { var st = stat(); return lstat(u.path, &st) == 0 && st.st_mode & S_IFMT == S_IFDIR }
+        for owner in (try? fm.contentsOfDirectory(atPath: wts.path)) ?? [] where realDir(wts.appendingPathComponent(owner)) {
             for id in (try? fm.contentsOfDirectory(atPath: wts.appendingPathComponent(owner).path)) ?? [] {
                 let dir = wts.appendingPathComponent(owner).appendingPathComponent(id)
-                for k in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] where k.contains("-kept-") {
-                    let u = dir.appendingPathComponent(k)
-                    if ((try? fm.attributesOfItem(atPath: u.path))?[.modificationDate] as? Date ?? .distantFuture) < cut { try? fm.removeItem(at: u) }
-                }
+                if realDir(dir) { ShareHub.pruneKept(dir, before: cut) }
             }
         }
         for owner in (try? fm.contentsOfDirectory(atPath: repos.path)) ?? [] {
@@ -958,7 +956,8 @@ public enum Worktree {
                 guard used < cut else { continue }
                 try? fm.removeItem(at: repo)
                 let clones = scratch.appendingPathComponent("worktrees").appendingPathComponent(owner).appendingPathComponent(String(name.dropLast(4)))
-                for e in (try? fm.contentsOfDirectory(atPath: clones.path)) ?? [] where !e.contains("-kept-") {  // L6: ohranjeni imajo svojih 30 dni
+                for e in (realDir(clones.deletingLastPathComponent()) && realDir(clones) ? (try? fm.contentsOfDirectory(atPath: clones.path)) ?? [] : [])
+                where !e.contains("-kept-") {  // L6: ohranjeni imajo svojih 30 dni
                     try? fm.removeItem(at: clones.appendingPathComponent(e))
                 }
                 rmdir(clones.path)
@@ -989,6 +988,7 @@ extension ShareHub {
             slot.busy = true; runSlot[id] = k; unlock(tree.repo)
             return Self.dir(slot.wt, tree.sub)
         }
+        if let old = slots[k], old.kept != nil { Self.dropClone(old); old.kept = nil }  // L6 (L1): nedostavljeno delo pred novim klonom v kept
         let branch = "minigw/\(agent)-\(short)-\(n)", wt = tree.worktrees.appendingPathComponent("\(agent)-\(short)-\(n)", isDirectory: true)
         let base = "refs/minigw/base/\(agent)-\(short)-\(n)", repo = tree.repo
         // »nested«: vrhovi obstoječih zrcal ugnezdenih repozitorijev po ključu (Worktree.nestedKey); prisotnost pove
@@ -1181,10 +1181,13 @@ extension ShareHub {
         let out = tree.repo.deletingLastPathComponent().appendingPathComponent(tree.repo.lastPathComponent + ".result")
         let (repo, agent) = (tree.repo, String(k.split(separator: "|")[1]))
         // L6: kar ni prišlo do odjemalca, ostane v klonu; ob koncu seje gre klon v kept (prune: 30 dni).
-        let fmt = DateFormatter()
+        let fmt = DateFormatter(), now = Date()
         fmt.locale = Locale(identifier: "en_US_POSIX"); fmt.dateFormat = "yyyyMMdd-HHmmss"
-        let kept = URL(fileURLWithPath: slot.wt.path + "-kept-" + fmt.string(from: Date()), isDirectory: true)
-        let keep = "; the agent's clone with this work stays on the gateway for 30 days (\(kept.path) after this session)"
+        let nanos = String(format: "%09d", Int(now.timeIntervalSince1970.truncatingRemainder(dividingBy: 1) * 1e9))  // L4: brez trka
+        let kept = URL(fileURLWithPath: slot.wt.path + "-kept-" + fmt.string(from: now) + "-" + nanos, isDirectory: true)
+        // L3: pot glede na Scratch prehoda; M2: le datoteke, .git preimenovani (keepClone)
+        let rel = ["worktrees", tree.worktrees.deletingLastPathComponent().lastPathComponent, tree.worktrees.lastPathComponent, kept.lastPathComponent].joined(separator: "/")
+        let keep = "; the agent's files are kept on the gateway for 30 days as \(rel) after this session (files only; its .git folders renamed .git.agent — do not run git there)"
         if tree.local != nil, !tree.localObjectsIntact {  // M1
             slot.kept = kept
             await note(s, "\(tree.local!.path): the repository's .git/objects was replaced; \(slot.branch) was not delivered" + keep)
@@ -1319,13 +1322,51 @@ extension ShareHub {
         }
     }
 
-    /// Klon gre; z nedostavljenim delom (L6) ostane kot kept (prune ga pobriše po 30 dneh; kot Go dropClones).
+    /// Klon gre; z nedostavljenim delom (L6) ostane kot kept (keepClone; kot Go dropClones).
     static func dropClone(_ slot: Slot) {
         if let kept = slot.kept {
-            if rename(slot.wt.path, kept.path) == 0 { try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: kept.path) }
+            keepClone(slot.wt, kept)
             return
         }
         let wt = slot.wt
         Task.detached { removeClone(wt) }
+    }
+
+    /// Največ ohranjenih klonov v mapi klonov repozitorija (M1; najstarejši gredo).
+    static let maxKept = 3
+
+    /// L6 (kot Go keepClone): klon z nedostavljenim delom gre v kept. M2: vsak .git (mapa ali datoteka, katerakoli globina,
+    /// brez sledenja povezavam) se prej preimenuje v .git.agent: git ga tam ne najde (config, kljuke, fsmonitor agenta ne
+    /// tečejo). L2: le prava mapa; L4: neuspeh → klon gre (dnevnik).
+    nonisolated static func keepClone(_ wt: URL, _ kept: URL) {
+        var st = stat()
+        guard lstat(wt.path, &st) == 0, st.st_mode & S_IFMT == S_IFDIR else { return }
+        var gits: [URL] = []
+        let e = FileManager.default.enumerator(at: wt, includingPropertiesForKeys: nil, options: [], errorHandler: { _, _ in true })
+        while let u = e?.nextObject() as? URL {
+            if Sync.normName(u.lastPathComponent) == ".git" { gits.append(u); e?.skipDescendants() }
+        }
+        for g in gits where rename(g.path, g.path + ".agent") != 0 {
+            try? FileManager.default.removeItem(at: g)  // .git.agent že obstaja (agent): metapodatki gita nikoli ostanejo
+        }
+        guard rename(wt.path, kept.path) == 0 else {
+            Router.log.error("worktree: cannot keep the agent's clone \(wt.path, privacy: .public); removed")
+            removeClone(wt); return
+        }
+        try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: kept.path)  // pravkar preimenovana prava mapa
+        pruneKept(kept.deletingLastPathComponent(), before: .distantPast)
+    }
+
+    /// Ohranjeni kloni v mapi klonov `dir` starejši od `before` in vsi razen maxKept najnovejših (lstat, brez povezav).
+    nonisolated static func pruneKept(_ dir: URL, before: Date) {
+        let kept = ((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []).filter { $0.contains("-kept-") }
+            .compactMap { n -> (String, Date)? in
+                var st = stat()
+                guard lstat(dir.appendingPathComponent(n).path, &st) == 0, st.st_mode & S_IFMT == S_IFDIR else { return nil }
+                return (n, Date(timeIntervalSince1970: TimeInterval(st.st_mtimespec.tv_sec)))
+            }.sorted { $0.1 > $1.1 }
+        for (i, (n, t)) in kept.enumerated() where i >= maxKept || t < before {
+            try? FileManager.default.removeItem(at: dir.appendingPathComponent(n))
+        }
     }
 }

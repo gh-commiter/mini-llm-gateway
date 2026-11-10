@@ -1317,6 +1317,13 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     #expect(FileManager.default.fileExists(atPath: marker), "the test does not reproduce the filter")
 }
 
+/// Absolutna pot ohranjenega klona iz sporočila (L3: pot glede na Scratch prehoda).
+private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
+    guard let r = line.range(of: #"as worktrees/\S+-kept-\d{8}-\d{6}-\d{9} after this session \(files only; its \.git folders renamed \.git\.agent — do not run git there\)$"#, options: .regularExpression) else { return nil }
+    let rel = line[r].dropFirst(3).prefix { $0 != " " }
+    return tree.worktrees.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent(String(rel)).path
+}
+
 /// L6 (kot Go TestWorktreeNestedSkippedTopDelivered): zavrnjen ugnezdeni (premaknjen, večji od 64 MB) ne ustavi vrhnjega:
 /// vrhnja veja pride (brez vsebine zavrnjenega), ena vrstica pove, kateri in zakaj, klon z delom po koncu seje ostane.
 @Test(arguments: ["moved", "big"]) func worktreeNestedSkippedTopDelivered(_ kind: String) async throws {
@@ -1349,12 +1356,26 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     #expect(!top.contains("lib/") && !top.contains("other/"))
     #expect(g(client.appendingPathComponent("lib"), "branch", "--list", br).isEmpty)
     #expect(g(client.appendingPathComponent("other"), "show", br + ":agent.txt") == "agent")
-    let line = try #require(notes.withLock { $0 }.first { $0.hasPrefix("worktree: " + why + "; the agent's clone with this work stays on the gateway for 30 days (") })
-    let kept = try #require(line.range(of: #"\((\S+-kept-\d{8}-\d{6}) after this session\)$"#, options: .regularExpression)
-        .map { String(line[$0].dropFirst().dropLast(" after this session)".count)) })
+    let line = try #require(notes.withLock { $0 }.first { $0.hasPrefix("worktree: " + why + "; the agent's files are kept on the gateway for 30 days as worktrees/") })
+    let kept = try #require(keptPath(line, tree))
+    if kind == "moved" {  // L1: naslednja zahteva naredi nov klon na isti poti; nedostavljeno delo prej v kept
+        let id2 = try await agentRun(hub, session) { _ in }
+        await hub.finish(run: id2)
+        #expect((try? String(contentsOfFile: kept + "/lib/agent.txt", encoding: .utf8)) == "agent\n")
+    }
+    // M2: config agenta s fsmonitor v .git klona ob ohranitvi ne sme več teči
+    let marker = root.appendingPathComponent("fsmonitor-ran")
+    for d in ["", "/other"] where FileManager.default.fileExists(atPath: wt!.path + d + "/.git") {
+        g(URL(fileURLWithPath: wt!.path + d), "config", "core.fsmonitor", "touch \(marker.path); false")
+    }
     await hub.unregister(key: key)  // konec seje: klon z nedostavljenim delom ostane
     #expect((try? String(contentsOfFile: kept + "/lib/agent.txt", encoding: .utf8)) == "agent\n")
-    #expect(wt.map { !FileManager.default.fileExists(atPath: $0.path) } == true)
+    for d in ["", "/lib", "/other"] {
+        var st = stat()
+        #expect(lstat(kept + d + "/.git", &st) != 0, "\(d)")
+        #expect(Worktree.run(["status"], cwd: kept + d, env: ["GIT_CEILING_DIRECTORIES": URL(fileURLWithPath: kept).deletingLastPathComponent().path], safe: false).status != 0, "\(d)")
+    }
+    #expect(FileManager.default.fileExists(atPath: kept + "/.git.agent") && !FileManager.default.fileExists(atPath: marker.path))
     // Zrcalo po 30 dneh gre, ohranjeni klon (mlajši od 30 dni) ne; po svojih 30 dneh gre tudi on.
     let scratch = tree.repo.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(40 * 86400)], ofItemAtPath: kept)  // prune premakne mejo (days), ne ure
@@ -1385,9 +1406,28 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     await ShareHub.$run.withValue(id) { await hub.syncBack(session: session) }
     await hub.finish(run: id)
     let line = try #require(notes.withLock { $0 }.first { $0.contains(".git/objects was replaced") })
-    let kept = try #require(line.range(of: #"\((\S+-kept-\d{8}-\d{6}) after this session\)$"#, options: .regularExpression)
-        .map { String(line[$0].dropFirst().dropLast(" after this session)".count)) })
+    let kept = try #require(keptPath(line, tree))
     await hub.unregister(key: key)
     #expect((try? String(contentsOfFile: kept + "/agent.txt", encoding: .utf8)) == "agent\n")
     #expect(!FileManager.default.fileExists(atPath: wt.path))
+}
+
+/// M1, L2 (kot Go TestPruneKept): največ maxKept ohranjenih (najstarejši gredo), starejši od meje gredo; povezava se ne sledi.
+@Test func pruneKeptCapsAndSkipsLinks() throws {
+    let base = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("pk-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: base) }
+    let dir = base.appendingPathComponent("d"), outside = base.appendingPathComponent("o/x-kept-1")
+    try file(outside, "f", "x"); try file(dir.appendingPathComponent("c-0"), "f", "x")
+    try FileManager.default.createSymbolicLink(at: dir.appendingPathComponent("link-kept-0"), withDestinationURL: outside)
+    let now = Date()
+    for i in 1...5 {
+        let d = dir.appendingPathComponent("c-kept-\(i)")
+        try file(d, "f", "x")
+        try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(Double(i) * 3600)], ofItemAtPath: d.path)
+    }
+    ShareHub.pruneKept(dir, before: .distantPast)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path).sorted() == ["c-0", "c-kept-3", "c-kept-4", "c-kept-5", "link-kept-0"])
+    ShareHub.pruneKept(dir, before: now.addingTimeInterval(4 * 3600))
+    #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("c-kept-3").path))
+    #expect(FileManager.default.fileExists(atPath: outside.appendingPathComponent("f").path))
 }

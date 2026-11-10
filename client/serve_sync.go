@@ -228,7 +228,7 @@ func (h *shareHub) registerTree(session, cwd, key string, t *shareTree, owner st
 // close: pod h.mu.
 func (h *shareHub) close(s *serveShare) {
 	if s.tree != nil {
-		dropClones(s.tree)
+		dropClones(s.tree, h.logf)
 	}
 	delete(h.bySession, s.session)
 	close(s.done)

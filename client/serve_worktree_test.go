@@ -1268,12 +1268,14 @@ func TestWorktreeNestedSkippedTopDelivered(t *testing.T) {
 		{"moved", `rm -rf lib/.git`, `(?:the nested repository lib was moved or replaced in the agent's clone|the gateway could not save the agent's work in the nested repository lib as a branch)`},
 		{"big", `head -c 70000000 /dev/urandom > lib/big.bin`, `the agent's branch in the nested repository lib is larger than 64 MB`},
 		{"unconfined", `:`, `the nested repository lib does not come back on this gateway`},
+		{"toolarge", `mkdir many && (cd many && seq 1 100001 | xargs touch)`, ``}, // M1: prevelik klon se ne ohrani
 	} {
-		t.Run(c.name, func(t *testing.T) { testNestedSkipped(t, c.agent, c.why, c.name == "unconfined") })
+		t.Run(c.name, func(t *testing.T) { testNestedSkipped(t, c.agent, c.why, c.name) })
 	}
 }
 
-func testNestedSkipped(t *testing.T, agent, why string, unconfined bool) {
+func testNestedSkipped(t *testing.T, agent, why, kind string) {
+	unconfined := kind == "unconfined"
 	if runtime.GOOS == "windows" {
 		t.Skip("fake claude is a shell script")
 	}
@@ -1351,10 +1353,22 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
 	libTip := gitT(t, filepath.Join(client, "lib"), "rev-parse", branch)
 	topTip := gitT(t, client, "rev-parse", branch)
 	out := run(false) // moved: nadzor teka agenta ustavi (zamenjan .git), delo vrhnjega vseeno pride
-	line := regexp.MustCompile(`(?m)^minigw: gateway: worktree: ` + why + `.*; the agent's clone with this work stays on the gateway for 30 days \((\S+-kept-\d{8}-\d{6}) after this session\)$`).FindStringSubmatch(out)
+	if kind == "toolarge" {
+		if !strings.Contains(out, "the agent's clone is too large to return") || strings.Contains(out, "kept on the gateway") {
+			t.Fatalf("too large clone:\n%s", out)
+		}
+		sc.unregister()
+		if k, _ := filepath.Glob(filepath.Join(tree.worktrees, "*-kept-*")); len(k) != 0 {
+			t.Fatalf("too large clone kept: %v", k)
+		}
+		return
+	}
+	line := regexp.MustCompile(`(?m)^minigw: gateway: worktree: ` + why + `.*; the agent's files are kept on the gateway for 30 days as (worktrees/\S+-kept-\d{8}-\d{6}-\d{9}) after this session \(files only; its \.git folders renamed \.git\.agent — do not run git there\)$`).FindStringSubmatch(out)
 	if line == nil {
 		t.Fatalf("no skip line:\n%s", out)
 	}
+	scratch := filepath.Dir(filepath.Dir(filepath.Dir(tree.worktrees)))
+	line[1] = filepath.Join(scratch, filepath.FromSlash(line[1])) // L3: pot v sporočilu je glede na Scratch
 	if got := gitT(t, client, "rev-parse", branch); got == topTip || !strings.Contains(gitT(t, client, "show", branch+":agent.txt"), "agent\nagent") {
 		t.Fatalf("top level not delivered:\n%s", out)
 	}
@@ -1373,7 +1387,7 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
 		slot.unconfined = false
 		s.hub.mu.Unlock()
 		os.Remove(filepath.Join(root, "second"))
-		if kept != line[1] {
+		if filepath.Join(filepath.Dir(slot.wt), filepath.Base(line[1])) != kept {
 			t.Fatalf("kept %q, line %q", kept, line[1])
 		}
 		run(true)
@@ -1389,7 +1403,36 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
 		}
 		return
 	}
+	if kind == "moved" { // L1: naslednja zahteva naredi nov klon na isti poti; nedostavljeno delo prej v kept
+		run(false)
+		if b, err := os.ReadFile(filepath.Join(line[1], "lib", "agent.txt")); err != nil || string(b) != "agent\nagent\n" {
+			t.Fatalf("kept clone before the new clone %s: %v %q", line[1], err, b)
+		}
+	}
+	// M2: config agenta s fsmonitor v .git klona (vrhnji in ugnezdeni) ob ohranitvi ne sme več teči
+	marker := filepath.Join(root, "fsmonitor-ran")
+	for _, d := range []string{slot.wt, filepath.Join(slot.wt, "lib")} {
+		if _, err := os.Stat(filepath.Join(d, ".git")); err == nil {
+			gitT(t, d, "config", "core.fsmonitor", "touch "+marker+"; false")
+		}
+	}
 	sc.unregister() // konec seje: klon z nedostavljenim delom ostane
+	for _, d := range []string{line[1], filepath.Join(line[1], "lib"), filepath.Join(line[1], "other")} {
+		if _, err := os.Lstat(filepath.Join(d, ".git")); err == nil {
+			t.Fatalf("%s/.git kept", d)
+		}
+		c := exec.Command("git", "-C", d, "status")
+		c.Env = append(os.Environ(), "GIT_CEILING_DIRECTORIES="+filepath.Dir(line[1]))
+		if out, err := c.CombinedOutput(); err == nil {
+			t.Fatalf("git finds a repository in the kept clone %s: %s", d, out)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(line[1], ".git.agent")); err != nil {
+		t.Fatal("no .git.agent in the kept clone")
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the agent's fsmonitor ran")
+	}
 	if b, err := os.ReadFile(filepath.Join(line[1], "lib", "agent.txt")); err != nil || string(b) != "agent\nagent\n" {
 		t.Fatalf("kept clone %s: %v %q", line[1], err, b)
 	}
@@ -1397,7 +1440,7 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
 		t.Fatal("clone left at its working path")
 	}
 	// Zrcalo po 30 dneh gre, ohranjeni klon (mlajši od 30 dni) ne; po svojih 30 dneh gre tudi on.
-	scratch, later := filepath.Dir(filepath.Dir(filepath.Dir(tree.worktrees))), time.Now().Add(20*24*time.Hour)
+	later := time.Now().Add(20 * 24 * time.Hour)
 	os.Chtimes(line[1], later, later)
 	pruneMirrors(scratch, time.Now().Add(31*24*time.Hour))
 	if _, err := os.Stat(line[1]); err != nil {
@@ -1468,5 +1511,36 @@ func TestCodexUnconfinedNestedRefused(t *testing.T) {
 	want := "nested repositories need bwrap for codex on this Linux gateway (its own PID namespace); this request did not run; use sync"
 	if _, err := os.Stat(filepath.Join(root, "started")); err == nil || st != 400 || !strings.Contains(string(data), want) {
 		t.Fatalf("not refused before the agent: %d %s", st, data)
+	}
+}
+
+// M1, L2: največ maxKept ohranjenih klonov (najstarejši gredo), starejši od meje gredo; povezava se ne sledi.
+func TestPruneKept(t *testing.T) {
+	dir, outside := t.TempDir(), t.TempDir()
+	writeT(t, filepath.Join(outside, "x-kept-1", "f"), "x")
+	os.Symlink(filepath.Join(outside, "x-kept-1"), filepath.Join(dir, "link-kept-0"))
+	now := time.Now()
+	for i := 1; i <= 5; i++ {
+		d := filepath.Join(dir, fmt.Sprintf("c-kept-%d", i))
+		writeT(t, filepath.Join(d, "f"), "x")
+		ts := now.Add(time.Duration(i) * time.Hour)
+		os.Chtimes(d, ts, ts)
+	}
+	writeT(t, filepath.Join(dir, "c-0", "f"), "x") // klon, ki ni ohranjen
+	pruneKept(dir, time.Time{})
+	var left []string
+	es, _ := os.ReadDir(dir)
+	for _, e := range es {
+		left = append(left, e.Name())
+	}
+	if strings.Join(left, ",") != "c-0,c-kept-3,c-kept-4,c-kept-5,link-kept-0" {
+		t.Fatalf("left %v", left)
+	}
+	pruneKept(dir, now.Add(4*time.Hour))
+	if _, err := os.Stat(filepath.Join(dir, "c-kept-3")); err == nil {
+		t.Fatal("older than the cut kept")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "x-kept-1", "f")); err != nil {
+		t.Fatal("link followed")
 	}
 }

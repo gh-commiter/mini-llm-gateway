@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -116,6 +117,11 @@ func cloneProblem(wt, repo string, nested []*wtNested) string {
 	if why := nestedProblem(wt, repo, nested); why != "" {
 		return why
 	}
+	return cloneTooLarge(wt)
+}
+
+// cloneTooLarge (L5): klon presega meje kopije sync; "" = v redu.
+func cloneTooLarge(wt string) string {
 	files, bytes := 0, int64(0)
 	filepath.WalkDir(wt, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -746,13 +752,22 @@ func toStrings(v any) []string {
 func (h *shareHub) worktreeMount(s *serveShare, agent string) (dir, refused string) {
 	h.mu.Lock()
 	t, ro := s.tree, s.readOnly
-	slot := t.slots[agent]
+	slot, kept := t.slots[agent], ""
+	if slot != nil {
+		kept = slot.kept
+	}
 	h.mu.Unlock()
 	if ro {
 		return "", ""
 	}
 	if slot != nil && slot.gitIntact() && nestedProblem(slot.wt, t.repo, slot.nested) == "" { // sicer nov klon (makeClone pobriše starega)
 		return worktreeDir(slot.wt, t.sub), ""
+	}
+	if kept != "" { // L6 (L1): nedostavljeno delo starega klona najprej v kept, nato nov klon na isti poti
+		keepClone(slot.wt, kept, h.logf)
+		h.mu.Lock()
+		slot.kept = ""
+		h.mu.Unlock()
 	}
 	short := sha256Hex([]byte(s.session))[:8]
 	name := agent + "-" + short + "-0"
@@ -1110,7 +1125,11 @@ func (h *shareHub) worktreeBack(s *serveShare, agent string) {
 	killInside(slot.wt)
 	out := t.repo + ".result"
 	defer os.Remove(out)
-	why, tip := cloneProblem(slot.wt, t.repo, slot.nested), ""
+	why, tip, big := nestedProblem(slot.wt, t.repo, slot.nested), "", false
+	if why == "" {
+		why = cloneTooLarge(slot.wt)
+		big = why != "" // M1: prevelik klon se ne ohrani (disk)
+	}
 	type changed struct {
 		Path string `json:"path"`
 		Tip  string `json:"tip"`
@@ -1156,11 +1175,14 @@ func (h *shareHub) worktreeBack(s *serveShare, agent string) {
 		}
 	}
 	// L6: kar ni prišlo do odjemalca, ostane v klonu; ob koncu seje ga dropClones prestavi v kept (pruneMirrors: 30 dni).
-	kept := ""
-	if why != "" || len(skipped) > 0 {
-		kept = slot.wt + "-kept-" + time.Now().Format("20060102-150405")
+	kept, keep := "", ""
+	if why != "" && !big || len(skipped) > 0 {
+		now := time.Now()
+		kept = slot.wt + "-kept-" + now.Format("20060102-150405") + fmt.Sprintf("-%09d", now.Nanosecond()) // L4: brez trka
+		// L3: pot glede na Scratch prehoda; M2: le datoteke, .git preimenovani (keepClone)
+		keep = "; the agent's files are kept on the gateway for 30 days as " + path.Join("worktrees", filepath.Base(filepath.Dir(t.worktrees)),
+			filepath.Base(t.worktrees), filepath.Base(kept)) + " after this session (files only; its .git folders renamed .git.agent — do not run git there)"
 	}
-	keep := "; the agent's clone with this work stays on the gateway for 30 days (" + kept + " after this session)"
 	h.mu.Lock()
 	slot.kept = kept
 	h.mu.Unlock()
@@ -1262,19 +1284,65 @@ func (h *shareHub) worktreeResult(key, owner string, nested int) ([]byte, int, s
 }
 
 // dropClones: ob koncu seje kloni gredo (veje ostanejo v zrcalu in pri odjemalcu); klon z nedostavljenim delom (L6)
-// ostane kot kept (pruneMirrors ga pobriše po 30 dneh). Pod h.mu.
-func dropClones(t *shareTree) {
+// ostane kot kept (keepClone). Pod h.mu.
+func dropClones(t *shareTree, logf func(string, ...any)) {
 	for _, sl := range t.slots {
 		if sl.kept != "" {
-			if os.Rename(sl.wt, sl.kept) == nil {
-				now := time.Now()
-				os.Chtimes(sl.kept, now, now)
-			}
+			keepClone(sl.wt, sl.kept, logf)
 			continue
 		}
 		go removeClone(sl.wt)
 	}
 	t.slots = map[string]*wtSlot{}
+}
+
+// maxKept (M1): največ ohranjenih klonov v mapi klonov repozitorija (najstarejši gredo).
+const maxKept = 3
+
+// keepClone (L6): klon wt z nedostavljenim delom gre v kept. M2: vsak .git (mapa ali datoteka, katerakoli globina, brez
+// sledenja povezavam) se prej preimenuje v .git.agent: git ga tam ne najde, zato config, kljuke in fsmonitor agenta ne
+// tečejo, ko uporabnik pogleda datoteke. L2: le prava mapa; L4: neuspeh → klon gre (zapis v dnevnik).
+func keepClone(wt, kept string, logf func(string, ...any)) {
+	if st, err := os.Lstat(wt); err != nil || !st.IsDir() {
+		return
+	}
+	filepath.WalkDir(wt, func(p string, d os.DirEntry, err error) error {
+		if err != nil || p == wt || !isGitPath(d.Name()) {
+			return nil
+		}
+		if os.Rename(p, p+".agent") != nil {
+			os.RemoveAll(p) // .git.agent že obstaja (agent): metapodatki gita nikoli ostanejo
+		}
+		if d.IsDir() {
+			return filepath.SkipDir
+		}
+		return nil
+	})
+	if err := os.Rename(wt, kept); err != nil {
+		logf("worktree: cannot keep the agent's clone %s: %v; removed", wt, err)
+		removeClone(wt)
+		return
+	}
+	now := time.Now()
+	os.Chtimes(kept, now, now) // pravkar preimenovana prava mapa
+	pruneKept(filepath.Dir(kept), time.Time{})
+}
+
+// pruneKept: ohranjeni kloni v mapi klonov dir starejši od cut in vsi razen maxKept najnovejših (Lstat, brez povezav).
+func pruneKept(dir string, cut time.Time) {
+	es, _ := os.ReadDir(dir)
+	var kept []os.FileInfo
+	for _, e := range es {
+		if st, err := e.Info(); err == nil && st.IsDir() && strings.Contains(e.Name(), "-kept-") {
+			kept = append(kept, st)
+		}
+	}
+	slices.SortFunc(kept, func(a, b os.FileInfo) int { return b.ModTime().Compare(a.ModTime()) })
+	for i, st := range kept {
+		if i >= maxKept || st.ModTime().Before(cut) {
+			os.RemoveAll(filepath.Join(dir, st.Name()))
+		}
+	}
 }
 
 // removeClone: klon, nato še prazen .maven in mapa klonov, ko v njej ni drugega klona (sicer ostane prazna mapa;
@@ -1289,10 +1357,17 @@ func removeClone(wt string) {
 
 // pruneMirrors: zrcala (scratch/repos/<naprava>/<repo>.git), ki jih 30 dni ni uporabil noben agent, in njihovi kloni.
 func pruneMirrors(scratch string, now time.Time) {
-	kept, _ := filepath.Glob(filepath.Join(scratch, "worktrees", "*", "*", "*-kept-*")) // L6: ohranjeni kloni
-	for _, k := range kept {
-		if st, err := os.Lstat(k); err == nil && now.Sub(st.ModTime()) > 30*24*time.Hour {
-			os.RemoveAll(k)
+	wroot := filepath.Join(scratch, "worktrees") // L6: ohranjeni kloni; L2: ReadDir da vrsto brez sledenja povezavam
+	wo, _ := os.ReadDir(wroot)
+	for _, o := range wo {
+		if !o.IsDir() {
+			continue
+		}
+		ids, _ := os.ReadDir(filepath.Join(wroot, o.Name()))
+		for _, id := range ids {
+			if id.IsDir() {
+				pruneKept(filepath.Join(wroot, o.Name(), id.Name()), now.Add(-30*24*time.Hour))
+			}
 		}
 	}
 	repos := filepath.Join(scratch, "repos")
@@ -1318,7 +1393,10 @@ func pruneMirrors(scratch string, now time.Time) {
 				os.RemoveAll(repo)
 				os.Remove(repo + ".used")
 				wts := filepath.Join(scratch, "worktrees", o.Name(), name)
-				es, _ := os.ReadDir(wts)
+				var es []os.DirEntry
+				if realDir(filepath.Dir(wts)) && realDir(wts) { // L2
+					es, _ = os.ReadDir(wts)
+				}
 				for _, e := range es {
 					if !strings.Contains(e.Name(), "-kept-") { // L6: ohranjeni kloni imajo svojih 30 dni (spodaj)
 						os.RemoveAll(filepath.Join(wts, e.Name()))
