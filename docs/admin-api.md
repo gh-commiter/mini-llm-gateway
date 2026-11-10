@@ -104,6 +104,16 @@ Use      {"model": string, "role"?: string, "via"?: string, "readOnly"?: true, "
          "local,read-only"), Codex, Grok and Copilot's switches `write`, `network`, `commands` as they applied (empty = read
          only; read-only drops `write` and `commands`; Codex `network` only with `write`). errors: 5xx and aborted; refused: 4xx; seconds:
          total request time (for agents their run time); tokens from the response's usage.
+Running  {"id": string, "time": string, "model": string, "step"?: string}
+         A model request (`POST /v1/messages`) still running. id: its request ID; step: the agent's latest step
+         (a command or a file it reads), if any.
+Request  {"time": string, "method": string, "path": string, "model": string, "status": number, "ms": number,
+         "bytes": number, "device"?: string, "deviceName"?: string}
+         A finished request that reached a model (`/v1/messages`, `/v1/messages/count_tokens`; not admin, share or
+         health requests). time: its start (RFC 3339, UTC); bytes: the request body's size; device absent = this
+         computer without a device key (as in Session). The last 200; `minigw serve` keeps them in memory (empty after
+         a restart), the Mac app in its activity file (kept across restarts; entries from before 0.5.21 have
+         `"bytes": 0` and no device). Never prompt or answer text.
 Model    {"id": string, "model": string, "window"?: number, "enabled": bool}
          id: the ID at the provider; model: the name for /model (the id itself when it starts with "claude-" in any letter case,
          else "claude-" + id; the original id also works in requests); window: context window in tokens, if known.
@@ -136,6 +146,7 @@ General  {"port": number, "address": string, "connect": string, "restartRequired
 | `GET /sessions` | query `device`, `folder` (that folder and its subfolders) | `{"sessions": [Session]}`, newest first |
 | `GET /sessions/{id}` | – | Session |
 | `DELETE /sessions` | – | `{"cleared": true}`; clears the session history (connection histories stay) |
+| `GET /activity` | – | `{"inflight": [Running], "requests": [Request]}`, newest first: what the Mac app's Activity window shows |
 | `GET /providers` | – | `{"providers": [Provider]}` |
 | `POST /providers` | `{"name", "baseURL", "key", "insecure"}` | `{"provider": Provider, "keyStore": string, "models": [Model]}` |
 | `PATCH /providers/{name}` | any of `{"name", "enabled", "baseURL", "insecure", "aliases"}` | `{"provider": Provider}`; a new name moves the key; the key stays for a new URL |
