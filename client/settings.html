@@ -283,7 +283,7 @@ const S = {
   loginHint_codex: ["Codex uses this user's ChatGPT sign-in (`codex login`); it refreshes itself.", "Codex uporablja prijavo ChatGPT tega uporabnika (`codex login`); osveži se sama."],
   loginHint_grok: ["Grok uses a copy of this user's sign-in (`grok login`); after Grok refreshes it, log in again with `grok login`.",
     "Grok uporablja kopijo prijave tega uporabnika (`grok login`); ko jo Grok osveži, se znova prijavi z `grok login`."],
-  loginHint_copilot: ["A fine-grained GitHub token with only the Copilot Requests permission; needed for commands.", "Fine-grained žeton GitHub le s pravico Copilot Requests; potreben za ukaze."],
+  loginHint_copilot: ["A fine-grained GitHub token with only the Copilot Requests permission; needed for commands, and for every request when the GitHub CLI (gh auth login) is not signed in on the gateway.", "Fine-grained žeton GitHub le s pravico Copilot Requests; potreben za ukaze in za vsako zahtevo, če GitHub CLI (gh auth login) na gatewayu ni prijavljen."],
   pathHomeWarn: ["In the Windows sandbox, folders on PATH inside your home folder (for example ~\\.local\\bin) are readable by agents; keep no secrets there.",
     "V peskovniku Windows agenti lahko berejo mape s PATH v domači mapi (npr. ~\\.local\\bin); tam ne hrani skrivnosti."],
   worktreeNetworkNoBox: ["No effect on this computer: there is no Windows sandbox, so agents' network is not limited.", "Na tem računalniku nima učinka: peskovnika Windows ni, zato omrežje agentov ni omejeno."],
