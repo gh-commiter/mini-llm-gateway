@@ -249,10 +249,11 @@ the nested, gateway-driven `claude` permissions the user never approved.
 With `-p` and no `--output-format`, minigw runs `claude` with `--output-format stream-json --verbose
 --include-partial-messages` and prints every text the model writes as it arrives, piece by piece (all turns, a blank line
 between them, without terminal control characters). Tool use shows on stderr as one `minigw: · <tool>` line, also the
-tools of a gateway agent (a Claude CLI agent sends its whole run as one streamed answer, its tools marked `⏺ <tool>`).
-Codex, Grok and Copilot send only their final answer, when they finish. The `agent work is on branch …` lines wait until
-the answer is printed, so they come on stderr after it. When the only text refers back ("above", "zgoraj"), minigw warns
-on stderr that the answer may be incomplete. An explicit `--output-format` turns this off and is passed through unchanged.
+tools of a gateway agent (a Claude CLI agent sends its whole run as one streamed answer, its tools marked `⏺ <tool>`); a
+tool name other than letters, digits and `_.:@/-` (at most 80) shows as `tool`. Codex, Grok, Copilot and Siri AI (Mac)
+send only their final answer, when they finish. The `agent work is on branch …` lines wait until the answer is printed,
+so they come on stderr after it. When the only text refers back ("above", "zgoraj"), minigw warns on stderr that the
+answer may be incomplete. An explicit `--output-format` turns this off and is passed through unchanged.
 With a provider model (not opus, sonnet, haiku, fable or an agent model) minigw also sets `ANTHROPIC_DEFAULT_HAIKU_MODEL`
 and `ANTHROPIC_SMALL_FAST_MODEL` to it, unless you set them.
 

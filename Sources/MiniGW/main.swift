@@ -14,7 +14,8 @@ func say(_ s: String) { out.write(Data((s + "\n").utf8)) }
 /// Besedilo routerja brez kontrolnih znakov (razen \n), da ne krmili terminala.
 func clean(_ s: String) -> String {
     String(String.UnicodeScalarView(s.unicodeScalars.filter {
-        $0 == "\n" || !($0.value < 0x20 || (0x7f...0x9f).contains($0.value) || $0.properties.generalCategory == .format)  // tudi bidi, ničelna širina
+        $0 == "\n" || !($0.value < 0x20 || (0x7f...0x9f).contains($0.value) || $0.value == 0x2028 || $0.value == 0x2029
+                         || $0.properties.generalCategory == .format)  // tudi bidi, ničelna širina, ločilo vrstic
     }))
 }
 /// Besedilo prehoda v eni vrstici: brez znaka za novo vrstico, da ne ponaredi vrstice »Device:« ali »Status:«.
@@ -261,7 +262,7 @@ func releaseHeld() {
         defer { h = (false, []) }
         return h.lines
     }
-    for l in lines { err.write(Data(("minigw: " + oneLine(l) + "\n").utf8)) }
+    for l in lines { try? err.write(contentsOf: Data(("minigw: " + oneLine(l) + "\n").utf8)) }
 }
 
 final class ShareClient: @unchecked Sendable {
@@ -1223,12 +1224,13 @@ let forwarded = [SIGTERM, SIGHUP].map { sig in
 var printer = Profiles.StreamText(), streamBroken = false
 var status: Int32 = 0, exited = false
 if streamed {
+    signal(SIGPIPE, SIG_IGN)  // L2: | head → EPIPE, vrstice o vejah gredo še na stderr (claude dobi privzetega: setsigdefault)
     close(outPipe[1])
     var buf = Data(), chunk = [UInt8](repeating: 0, count: 64 << 10), deadline = Date.distantFuture
     func show(_ line: Data) {
         let (o, e) = printer.line(line)
-        if !o.isEmpty { out.write(Data(o.utf8)) }
-        if !e.isEmpty { err.write(Data(e.utf8)) }
+        if !o.isEmpty { try? out.write(contentsOf: Data(o.utf8)) }
+        if !e.isEmpty { try? err.write(contentsOf: Data(e.utf8)) }
     }
     // vnuk, ki drži stdout, ne zadrži minigw: po koncu claude še največ 2 s branja
     reading: while !printer.done, Date() < deadline {
@@ -1251,8 +1253,8 @@ if streamed {
         if !exited, waitpid(pid, &status, WNOHANG) == pid { exited = true; deadline = Date() + 2 }
     }
     if !printer.done, !streamBroken { show(buf) }
-    out.write(Data(printer.tail.utf8))
-    if let w = printer.warning { err.write(Data(w.utf8)) }
+    try? out.write(contentsOf: Data(printer.tail.utf8))
+    if let w = printer.warning { try? err.write(contentsOf: Data(w.utf8)) }
     close(outPipe[0])  // claude ob nadaljnjem pisanju dobi EPIPE/SIGPIPE, ne obvisi
 }
 if !exited { while waitpid(pid, &status, 0) == -1 && errno == EINTR {} }

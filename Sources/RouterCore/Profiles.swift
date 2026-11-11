@@ -197,13 +197,22 @@ public enum Profiles {
             }))
         }
 
-        /// Oznaka orodja agenta prehoda v besedilu (StreamTranslator: »⏺ Bash«) kot cel delta (kot Go toolMark).
+        /// Oznaka orodja agenta prehoda v besedilu (StreamTranslator: »⏺ Bash«) kot cel delta z imenom validName (kot Go
+        /// toolMark), sicer je delta besedilo odgovora.
         static func toolMark(_ s: String) -> String? {
             let m = s.hasPrefix("\n") ? s.dropFirst() : Substring(s)
             guard m.hasPrefix("⏺ "), m.hasSuffix("\n") else { return nil }
-            let name = m.dropFirst(2).dropLast()
-            return name.isEmpty || name.contains("\n") ? nil : String(name)
+            let name = String(m.dropFirst(2).dropLast())
+            return validName(name) ? name : nil
         }
+
+        /// Ime orodja za vrstico minigw: · : le [A-Za-z0-9_.:@/-], 1–80 znakov (model ne ponaredi vrstice z U+2028, bidi).
+        static func validName(_ s: String) -> Bool {
+            (1...80).contains(s.unicodeScalars.count) && s.unicodeScalars.allSatisfy { $0.isASCII && (CharacterSet.alphanumerics.contains($0) || "_.:@/-".unicodeScalars.contains($0)) }
+        }
+
+        /// Besedilo bloka za opozorilo (agent prehoda pošlje vse v enem bloku; kot Go lastMax).
+        static let lastMax = 64 << 10
 
         mutating func text(_ raw: String) -> String {
             let t = Self.printable(raw)
@@ -213,17 +222,17 @@ public enum Profiles {
                 if n > 0 { out = "\n\n" }
                 open = true; n += 1; last = ""
             }
-            last += t
+            if last.utf8.count < Self.lastMax { last += t }
             var body = t
             while body.hasSuffix("\n") { body.removeLast() }
-            if body.isEmpty { pend += t; return out }
+            if body.isEmpty { pend = String((pend + t).prefix(2)); return out }  // največ ena prazna vrstica
             out += pend + body
-            pend = String(t.dropFirst(body.count))
+            pend = String(t.dropFirst(body.count).prefix(2))
             return out
         }
 
         static func tool(_ name: String) -> String {
-            "minigw: · \(printable(name).filter { $0 != "\n" && $0 != "\t" })\n"
+            "minigw: · \(validName(name) ? name : "tool")\n"
         }
 
         /// Ena vrstica JSON → besedilo za stdout in stderr.

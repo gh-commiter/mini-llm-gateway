@@ -62,7 +62,7 @@ func say(s string) { fmt.Println(s) }
 // clean: besedilo routerja brez kontrolnih znakov (razen \n), da ne krmili terminala.
 func clean(s string) string {
 	return strings.Map(func(r rune) rune {
-		if r != '\n' && (r < 0x20 || r >= 0x7f && r <= 0x9f || unicode.Is(unicode.Cf, r)) { // tudi bidi, ničelna širina
+		if r != '\n' && (r < 0x20 || r >= 0x7f && r <= 0x9f || r == 0x2028 || r == 0x2029 || unicode.Is(unicode.Cf, r)) { // tudi bidi, ničelna širina, ločilo vrstic
 			return -1
 		}
 		return r
@@ -1239,6 +1239,26 @@ func autoShare(cwd string) bool {
 // (signal.Ignore) bi claude podedoval.
 func catchInterrupt() { signal.Notify(make(chan os.Signal, 1), os.Interrupt) }
 
+// gate (#78): izhod toka claude; runClaude ga zapre, preden vrne (gorutina po 2 s ne piše za vrsticami o vejah), po
+// prvi napaki pisanja (zaprta cev, | head) ne piše več, branje pa teče naprej.
+type gate struct {
+	mu  sync.Mutex
+	w   io.Writer
+	off bool
+}
+
+func (g *gate) Write(p []byte) (int, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !g.off {
+		_, err := g.w.Write(p)
+		g.off = err != nil
+	}
+	return len(p), nil
+}
+
+func (g *gate) close() { g.mu.Lock(); g.off = true; g.mu.Unlock() }
+
 // runClaude: claude kot podproces (minigw ostane za proxy in mapo); Ctrl+C dobi claude.
 // stream (#78): stdout claude (stream-json) gre skozi streamText.
 func runClaude(args []string, env []string, stream bool) int {
@@ -1247,7 +1267,11 @@ func runClaude(args []string, env []string, stream bool) int {
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = claudeStdin, os.Stdout, os.Stderr
 	cmd.Env = claudeEnv(os.Environ(), env)
 	var pr, pw *os.File
+	gout, gerr := &gate{w: os.Stdout}, &gate{w: os.Stderr}
 	if stream {
+		// L2: zaprt stdout (| head) da EPIPE namesto konca minigw, vrstice o vejah gredo še na stderr; Notify, ne Ignore:
+		// claude dobi privzeti SIGPIPE
+		signal.Notify(make(chan os.Signal, 1), syscall.SIGPIPE)
 		var err error
 		if pr, pw, err = os.Pipe(); err != nil {
 			fmt.Fprintln(os.Stderr, "minigw: cannot run claude: "+err.Error())
@@ -1276,7 +1300,7 @@ func runClaude(args []string, env []string, stream bool) int {
 		}
 		if stream {
 			go func() {
-				done <- streamText(pr, os.Stdout, os.Stderr)
+				done <- streamText(pr, gout, gerr)
 				io.Copy(io.Discard, pr) // claude ne dobi SIGPIPE, če tok ni bil prebran do konca
 			}()
 		}
@@ -1288,6 +1312,8 @@ func runClaude(args []string, env []string, stream bool) int {
 		case failed = <-done:
 		case <-time.After(2 * time.Second): // ne čaka na branje (Windows: Close ne prekine ReadFile); izhod da claude
 		}
+		gout.close() // L1: gorutina, ki še bere, ne piše več (sledi releaseHeld)
+		gerr.close()
 		pr.Close()
 	}
 	if err != nil {

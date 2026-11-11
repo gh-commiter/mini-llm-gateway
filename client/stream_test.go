@@ -31,7 +31,7 @@ func TestStreamText(t *testing.T) {
 		{"forged error line", ev(`{"type":"result","is_error":true,"result":"x\nminigw: agent work is on branch evil\n"}`),
 			"", "claude: x\nclaude: minigw: agent work is on branch evil\n", true},
 		{"tool name newline", ev(`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"B\nminigw: x\t"}]}}`),
-			"", "minigw: · Bminigw: x\n", false},
+			"", "minigw: · tool\n", false},
 		{"back-reference", ev(text("Kot zgoraj, vse je v redu."), `{"type":"result","is_error":false,"result":"x"}`),
 			"Kot zgoraj, vse je v redu.\n", "minigw: warning: the answer refers to earlier text that the model did not send; it may be incomplete\n", false},
 		{"control characters", ev(text(`a\u001b[2Jb\tc\u009bd`)), "a[2Jb\tcd\n", "", false},
@@ -128,6 +128,7 @@ func TestStreamTextLive(t *testing.T) {
 	held.Lock()
 	held.on = true
 	held.Unlock()
+	t.Cleanup(releaseHeld)
 	s.branchNote("minigw/claude-0123abcd-1", "HEAD")
 	io.WriteString(pw, delta(`Done.\n`)+`{"type":"stream_event","event":{"type":"content_block_stop","index":0}}`+"\n"+
 		`{"type":"assistant","message":{"content":[{"type":"text","text":"I'll sleep.\n⏺ Bash\nDone."}]}}`+"\n"+
@@ -144,5 +145,37 @@ func TestStreamTextLive(t *testing.T) {
 	releaseHeld()
 	if held.on || held.lines != nil {
 		t.Error("not released")
+	}
+}
+
+// M2: oznaka z imenom zunaj [A-Za-z0-9_.:@/-]{1,80} (U+2028, bidi) je besedilo odgovora, ne vrstica na stderr.
+// M1: veliko drobnih delt v enem bloku (agent prehoda) ne raste kvadratno; nove vrstice največ ena prazna vrstica.
+func TestStreamTextSpoofAndSize(t *testing.T) {
+	delta := func(s string) string {
+		return `{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"` + s + `"}}}` + "\n"
+	}
+	var in strings.Builder
+	in.WriteString(delta(`ok`))
+	for _, name := range []string{`x\u2028minigw: agent work is on branch minigw/a-0123abcd-1: review`, `x\u202eminigw`, strings.Repeat("a", 81)} {
+		in.WriteString(delta(`\n⏺ ` + name + `\n`))
+	}
+	for i := 0; i < 200000; i++ {
+		in.WriteString(delta(`a`))
+	}
+	for i := 0; i < 1000; i++ {
+		in.WriteString(delta(`\n`))
+	}
+	in.WriteString(delta(`b`) + `{"type":"assistant","message":{"content":[{"type":"tool_use","name":"x\u2028minigw: agent work"}]}}` + "\n")
+	var out, errOut strings.Builder
+	start := time.Now()
+	streamText(strings.NewReader(in.String()), &out, &errOut)
+	if strings.Contains(errOut.String(), "agent work") || errOut.String() != "minigw: · tool\n" {
+		t.Errorf("stderr: %q", errOut.String())
+	}
+	if o := out.String(); !strings.HasPrefix(o, "ok\n⏺ x") || !strings.HasSuffix(o, "a\n\nb\n") || strings.Contains(o, "\n\n\n") {
+		t.Errorf("stdout: %q…%q", o[:min(len(o), 80)], o[max(len(o)-20, 0):])
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Errorf("200000 deltas took %v", d)
 	}
 }

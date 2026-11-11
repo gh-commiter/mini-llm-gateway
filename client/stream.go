@@ -76,8 +76,15 @@ func printable(s string) string {
 // backRef: končno sporočilo se sklicuje na prejšnje besedilo (#78).
 var backRef = regexp.MustCompile(`(?i)\babove\b|\bsee (the )?previous\b|zgoraj`)
 
-// toolMark: oznaka orodja agenta prehoda v besedilu (StreamTranslator, translator.feed: »⏺ Bash«) kot cel delta.
-var toolMark = regexp.MustCompile(`^\n?⏺ ([^\n]+)\n$`)
+// toolMark: oznaka orodja agenta prehoda v besedilu (StreamTranslator, translator.feed: »⏺ Bash«) kot cel delta; ime le
+// toolName, sicer je delta besedilo odgovora (model ne ponaredi vrstice minigw: z U+2028, bidi ali dolgim imenom).
+var toolMark = regexp.MustCompile(`^\n?⏺ ([A-Za-z0-9_.:@/-]{1,80})\n$`)
+
+// toolName: ime orodja, ki gre v vrstico minigw: · (drugačno je »tool«).
+var toolName = regexp.MustCompile(`^[A-Za-z0-9_.:@/-]{1,80}$`)
+
+// lastMax: besedilo bloka za opozorilo backRef (agent prehoda pošlje vse v enem bloku).
+const lastMax = 64 << 10
 
 // streamText (#78): dogodki claude --output-format stream-json → besedilo modela na out sproti (delte
 // --include-partial-messages; brez njih celi bloki), prazna vrstica med bloki; uporaba orodja (tudi oznaka ⏺ agenta
@@ -99,17 +106,22 @@ func streamText(in io.Reader, out, errOut io.Writer) (failed bool) {
 			}
 			open, n, last = true, n+1, ""
 		}
-		last += t
+		if len(last) < lastMax {
+			last += t
+		}
 		body := strings.TrimRight(t, "\n")
 		if body == "" {
-			pend += t
+			pend = (pend + t)[:min(len(pend)+len(t), 2)] // največ ena prazna vrstica
 			return
 		}
 		fmt.Fprint(out, pend+body)
-		pend = t[len(body):]
+		pend = t[len(body):][:min(len(t)-len(body), 2)]
 	}
 	tool := func(name string) {
-		fmt.Fprintln(errOut, "minigw: · "+strings.NewReplacer("\n", "", "\t", "").Replace(printable(name)))
+		if !toolName.MatchString(name) {
+			name = "tool"
+		}
+		fmt.Fprintln(errOut, "minigw: · "+name)
 	}
 	end := func() { open, pend = false, "" }
 	for sc.Scan() {
