@@ -220,6 +220,9 @@ private func send(_ url: String, _ method: String, _ path: String, secret: Strin
     let warn = run([text("Kot zgoraj."), #"{"type":"result","is_error":false,"result":"x"}"#])
     #expect(warn.0 == "Kot zgoraj.\n" && warn.1.hasPrefix("minigw: warning:"))
     #expect(run(["not json", #"{"type":"result","is_error":false,"result":"Done"}"#]) == ("Done\n", "", false))
+    // claude 2.1.322 ob 400 prehoda (posneto, kot Go »api error once«): napaka le enkrat, na stderr
+    #expect(run([#"{"type":"assistant","message":{"model":"<synthetic>","role":"assistant","stop_reason":"stop_sequence","type":"message","content":[{"type":"text","text":"API Error: 400 nested repositories need bwrap: use sync"}]},"parent_tool_use_id":null,"error":"unknown","is_api_error_message":true,"api_error_status":400}"#, #"{"type":"result","subtype":"success","is_error":true,"result":"API Error: 400 nested repositories need bwrap: use sync","terminal_reason":"api_error"}"#])
+            == ("", "claude: API Error: 400 nested repositories need bwrap: use sync\n", true))
     // Agent prehoda (en blok, kot client/stream_test.go TestStreamTextLive): besedilo ob delti, ne ob koncu bloka; ⏺ na stderr
     let delta = { (s: String) in #"{"type":"stream_event","parent_tool_use_id":null,"event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\#(s)"}}}"# }
     var p = Profiles.StreamText()

@@ -267,7 +267,8 @@ public enum Profiles {
                 }
             case "assistant":
                 for c in ((ev["message"] as? [String: Any])?["content"] as? [[String: Any]]) ?? [] {
-                    if c["type"] as? String == "text", !partial, let t = c["text"] as? String {
+                    // sintetično sporočilo z napako API (is_api_error_message): isto besedilo da result, le enkrat kot claude: na stderr
+                    if c["type"] as? String == "text", !partial, ev["is_api_error_message"] as? Bool != true, let t = c["text"] as? String {
                         out += text(t)
                         open = false; pend = 0
                     } else if c["type"] as? String == "tool_use" {

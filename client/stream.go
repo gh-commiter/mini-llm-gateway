@@ -134,11 +134,12 @@ func streamText(in io.Reader, out, errOut io.Writer) (failed bool) {
 	end := func() { open, pend = false, 0 }
 	for sc.Scan() {
 		var ev struct {
-			Type    string  `json:"type"`
-			IsError bool    `json:"is_error"`
-			Result  string  `json:"result"`
-			Parent  *string `json:"parent_tool_use_id"`
-			Event   struct {
+			Type     string  `json:"type"`
+			IsError  bool    `json:"is_error"`
+			APIError bool    `json:"is_api_error_message"` // sintetično sporočilo z napako API: isto besedilo da result
+			Result   string  `json:"result"`
+			Parent   *string `json:"parent_tool_use_id"`
+			Event    struct {
 				Type  string
 				Delta struct{ Type, Text string }
 			} `json:"event"`
@@ -171,7 +172,7 @@ func streamText(in io.Reader, out, errOut io.Writer) (failed bool) {
 			}
 		case "assistant":
 			for _, c := range ev.Message.Content {
-				if c.Type == "text" && !partial {
+				if c.Type == "text" && !partial && !ev.APIError { // napaka API le enkrat, kot claude: na stderr
 					text(c.Text)
 					end()
 				} else if c.Type == "tool_use" {

@@ -35,6 +35,9 @@ func TestStreamText(t *testing.T) {
 		{"back-reference", ev(text("Kot zgoraj, vse je v redu."), `{"type":"result","is_error":false,"result":"x"}`),
 			"Kot zgoraj, vse je v redu.\n", "minigw: warning: the answer refers to earlier text that the model did not send; it may be incomplete\n", false},
 		{"control characters", ev(text(`a\u001b[2Jb\tc\u009bd`)), "a[2Jb\tcd\n", "", false},
+		// claude 2.1.322 ob 400 prehoda (posneto): sintetično sporočilo in result z isto napako → le enkrat, na stderr
+		{"api error once", ev(`{"type":"system","subtype":"status","status":"requesting"}`, `{"type":"assistant","message":{"model":"<synthetic>","role":"assistant","stop_reason":"stop_sequence","type":"message","content":[{"type":"text","text":"API Error: 400 nested repositories need bwrap: use sync"}]},"parent_tool_use_id":null,"error":"unknown","is_api_error_message":true,"api_error_status":400}`, `{"type":"result","subtype":"success","is_error":true,"result":"API Error: 400 nested repositories need bwrap: use sync","terminal_reason":"api_error"}`),
+			"", "claude: API Error: 400 nested repositories need bwrap: use sync\n", true},
 		{"result only", ev(`not json`, `{"type":"result","is_error":false,"result":"Done"}`), "Done\n", "", false},
 	} {
 		var out, errOut strings.Builder
