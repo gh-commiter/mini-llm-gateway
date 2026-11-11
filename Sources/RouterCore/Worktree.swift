@@ -1446,8 +1446,9 @@ extension ShareHub {
 
     /// Po agentu: veje v zrcalih (z neshranjenimi spremembami; ugnezdeni najprej, globlji pred plitvejšimi: starš dobi novi
     /// gitlink) in prevzem pri odjemalcu (WORKTREE-PULL: veja, nestedOnly, spremenjeni ugnezdeni; kot Go worktreeBack).
-    func worktreeBack(_ s: Share, _ tree: Tree) async {
-        guard let id = Self.run, let k = runSlot[id], let slot = slots[k] else { return }
+    /// Vrne, zakaj veje minigw ni prevzel (#82; nil = prevzel ali ni česa prevzeti).
+    func worktreeBack(_ s: Share, _ tree: Tree) async -> String? {
+        guard let id = Self.run, let k = runSlot[id], let slot = slots[k] else { return nil }
         await acquire(tree.repo)
         await offPool {  // N1: pred vsakim izhodom spodaj (tudi kept), ne šele ob finalize
             Worktree.killGroups(run: id)  // skupine procesov agentov tega izvajanja
@@ -1466,12 +1467,12 @@ extension ShareHub {
         if tree.local != nil, !tree.localObjectsIntact {  // M1
             slot.kept = kept
             await note(s, "\(tree.local!.path): the repository's .git/objects was replaced; \(slot.branch) was not delivered" + keep)
-            unlock(tree.repo); return
+            unlock(tree.repo); return nil
         }
         if let why = await offPool({ Worktree.nestedProblem(slot.wt, repo: repo, nested: slot.nested) }) {  // N9; sporočilo kot pri Go (WORKTREE-PULL)
             slot.kept = kept
             await note(s, "worktree: cannot get \(slot.branch) from the gateway: " + why + keep)
-            unlock(tree.repo); return
+            unlock(tree.repo); return nil
         }
         let read = tree.local.map { [$0.appendingPathComponent(".git/objects")] } ?? []
         // L6: zavrnjen ugnezdeni (razlog) ne ustavi vrhnjega in ostalih; njegova pot je pri staršu izpuščena, gitlink ostane.
@@ -1504,7 +1505,7 @@ extension ShareHub {
             let why = "the gateway could not save the agent's work as a branch (see the gateway log)"
             Router.log.error("worktree \(slot.branch, privacy: .public): \(why, privacy: .public)")
             await note(s, "worktree: cannot get \(slot.branch) from the gateway: " + why + keep)
-            unlock(tree.repo); return
+            unlock(tree.repo); return nil
         }
         if let local = tree.local {
             // native z git: veja naravnost v repozitorij uporabnika (le naprej, brez hookov, fsck, v peskovniku); mapa, indeks,
@@ -1533,10 +1534,18 @@ extension ShareHub {
             let msg: [String: Any] = ["branch": slot.branch, "tip": tip, "nestedOnly": tip == slot.base,
                                       "nested": nested.map { ["path": $0.path, "tip": $0.tip] }]
             let body = (try? JSONSerialization.data(withJSONObject: msg)) ?? Data()
-            _ = await send(s, DAVJob(id: UUID().uuidString, method: "WORKTREE-PULL", path: "", prefix: "", headers: [:], body: body), timeout: 300)
+            let fail = Self.pullFailure(await send(s, DAVJob(id: UUID().uuidString, method: "WORKTREE-PULL", path: "", prefix: "", headers: [:], body: body), timeout: 300))
             s.results = []
+            if let fail {  // #82: veja ne izgine; ostane v zrcalu, datoteke v kept, naslednja zahteva seje jo dostavi
+                slot.kept = kept
+                Router.log.error("worktree \(slot.branch, privacy: .public): not delivered: \(fail, privacy: .public)")
+                await note(s, "worktree: \(slot.branch) was not delivered (\(fail)); it stays on the gateway and the next request in this session delivers it" + keep)
+                unlock(tree.repo)
+                return "the agent's branch was not delivered to your folder: \(fail); it stays on the gateway and the next request in this session delivers it"
+            }
         }
         unlock(tree.repo)
+        return nil
     }
 
     /// Največji bundle odjemalca (prvi prenos velikega repozitorija); večji → 413.

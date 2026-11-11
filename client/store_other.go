@@ -426,9 +426,14 @@ func openLockFile(p string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() {
+	var st *syscall.Stat_t
+	fi, err := f.Stat()
+	if err == nil {
+		st, _ = fi.Sys().(*syscall.Stat_t)
+	}
+	if st == nil || !fi.Mode().IsRegular() || int(st.Uid) != os.Getuid() { // L1: le naša navadna datoteka
 		f.Close()
-		return nil, errors.New(p + " is not a regular file")
+		return nil, errors.New(p + " is not a regular file of this user")
 	}
 	return f, nil
 }

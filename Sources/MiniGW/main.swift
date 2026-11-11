@@ -351,10 +351,11 @@ final class ShareClient: @unchecked Sendable {
                 if rootID == nil || SharedFolders.fileID(root.path) != rootID { r = DAVResponse(403) } else {
                     switch Sync.clientJob(job.method, kind: kind, readOnly: readOnly, write: Self.writeMethods.contains(job.method)) {
                     case .note: r = syncLock.withLock { noteJob(job) }
-                    case .worktreePush: r = locked(true) { syncLock.withLock { wtPush(k, job) } }
-                    case .worktreePull: r = locked(true) { syncLock.withLock { wtPull(k, job) } }
-                    case .syncPush: r = locked(true) { DAVResponse(syncLock.withLock { push(k) } ? 200 : 500) }
-                    case .syncPull: r = locked(true) { DAVResponse(syncLock.withLock { pull(k) } ? 200 : 500) }
+                    // sync in worktree do roka posla prehoda; SYNC-PUSH mapo le bere
+                    case .worktreePush: r = locked(true, FolderLock.syncWait) { syncLock.withLock { wtPush(k, job) } }
+                    case .worktreePull: r = locked(true, FolderLock.worktreePullWait) { syncLock.withLock { wtPull(k, job) } }
+                    case .syncPush: r = locked(false, FolderLock.syncWait) { DAVResponse(syncLock.withLock { push(k) } ? 200 : 500) }
+                    case .syncPull: r = locked(true, FolderLock.syncWait) { DAVResponse(syncLock.withLock { pull(k) } ? 200 : 500) }
                     case .webDAV:
                         r = locked(Self.writeMethods.contains(job.method)) {
                             WebDAV.handle(method: job.method, path: job.path, headers: job.headers, body: job.body, root: root, prefix: job.prefix)
@@ -379,10 +380,11 @@ final class ShareClient: @unchecked Sendable {
     }
 
     /// #82: posel pod zaklepom mape; drug proces ga drži predolgo → 503 z besedilom.
-    private func locked(_ exclusive: Bool, _ job: () -> DAVResponse) -> DAVResponse {
+    private func locked(_ exclusive: Bool, _ wait: TimeInterval? = nil, _ job: () -> DAVResponse) -> DAVResponse {
         guard let folderLock else { return DAVResponse(403) }
-        return folderLock.with(exclusive: exclusive, job)
-            ?? DAVResponse(503, ["content-type": "text/plain", "retry-after": "5"], Data((FolderLock.busyText + "\n").utf8))
+        return folderLock.with(exclusive: exclusive, wait: wait) {
+            SharedFolders.fileID(root.path) == rootID ? job() : DAVResponse(403)  // I2: koren znova pod zaklepom
+        } ?? DAVResponse(503, ["content-type": "text/plain", "retry-after": "5"], Data((FolderLock.busyText + "\n").utf8))
     }
 
     private func note(_ s: String) { try? err.write(contentsOf: Data(("minigw: " + oneLine(s) + "\n").utf8)) }

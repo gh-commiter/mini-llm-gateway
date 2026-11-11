@@ -90,12 +90,16 @@ Details:
   serves a mount only to the system `webdavfs_agent` process that its own mount started; an agent or another local
   user with the URL is refused.
 - minigw checks each path of a gateway request (inside the folder, protected files such as `.git`) and then acts on
-  it. So that a folder moved in between cannot redirect the request, reads (GET, HEAD, PROPFIND) share a lock on the
-  folder and writes, sync and worktree jobs take it alone. The lock also holds between minigw sessions on the same
-  folder: a lock file named after the folder's identity in minigw's settings folder (`minigw/locks`, never in the
-  project; `flock`, on Windows `LockFileEx`), released by the system if minigw crashes. A request that waits more than
-  5 seconds for another session gets 503 "the shared folder is busy". A local program that moves folders itself is
-  not covered; in 0.5.26 every operation goes through the opened folder instead (#82).
+  it. So that a folder moved in between cannot redirect the request, reads (GET, HEAD, PROPFIND, and the sync upload)
+  share a lock on the folder; writes, copying the agent's changes back and worktree jobs take it alone. The lock also
+  holds between minigw sessions on the same folder: a lock file named after the folder's identity in minigw's
+  settings folder (`minigw/locks`, private to you, never in the project; `flock`, on Windows `LockFileEx`), released
+  by the system if minigw crashes. A WebDAV request that waits more than 5 seconds for another session gets 503 "the
+  shared folder is busy"; sync and worktree jobs wait up to the gateway's limit for the job. If the agent's work still
+  cannot be copied back, the request ends with that error instead of an answer: sync changes stay on the gateway and
+  come back with the next request in the folder; a worktree branch stays on the gateway and the next request in the
+  session delivers it. A local program that moves folders itself is not covered; in 0.5.26 every operation goes
+  through the opened folder instead (#82).
 - The gateway caches folder listings (PROPFIND) for 10 seconds, like davfs2's `dir_refresh`. Writes through the
   mount clear the cache at once; changes made on the client outside the mount show up within 10 seconds.
 - The folder's own Claude Code settings and hooks are not loaded on the gateway.

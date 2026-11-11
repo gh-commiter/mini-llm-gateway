@@ -1067,10 +1067,11 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		return 499 // Claude Code je prekinil
 	}
 	// sync: spremembe agenta k odjemalcu pred koncem odgovora (Claude Code jih nato že vidi); med tem še ping
+	pullErr := "" // #82: delo agenta ni prišlo k odjemalcu → napaka, ne uspeh
 	if !chat && treeErr == nil {
 		// vprašani agent: spremembe prenese klicatelj na koncu; L1: omejen (#45) ne prenese ničesar
 		if parent == nil && (r.applied == nil || r.applied.cap == "") {
-			s.hub.syncBack(session, "claude")
+			pullErr = s.hub.syncBack(session, "claude")
 		}
 	}
 	msg := t.resultError
@@ -1086,13 +1087,16 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		}
 		msg = "claude failed (" + werr.Error() + "); details are in the gateway log, request " + r.rid
 	}
+	if msg == "" {
+		msg = pullErr
+	}
 	if msg != "" {
 		s.log.Printf("%s claude failed: %s", r.rid, msg)
 		status, clean := classifyAgentError(msg)
 		if !stream {
 			return writeAgentError(w, r.rid, status, "claude: "+clean)
 		}
-		if t.text == "" || treeErr != nil {
+		if t.text == "" || treeErr != nil || pullErr != "" {
 			s.noteLimit(r, model, status, "claude: "+clean)
 			send(sse("error", map[string]any{"type": "error", "error": map[string]string{"type": errType(status), "message": "claude: " + clean}}))
 			return status

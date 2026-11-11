@@ -88,3 +88,28 @@ private func tempDir(_ name: String) throws -> URL {
     other.waitUntilExit()
     #expect(lock.with(exclusive: false) { 1 } == 1)
 }
+
+/// L2: ime datoteke zaklepa kot Go (TestFolderLockNameMatchesSwift): st_dev z visokim bitom kot UInt32.
+@Test func folderLockNameMatchesGo() {
+    #expect(FolderLock.name([UInt64(UInt32(bitPattern: -5)), 0x1234]) == "fffffffb-1234.lock")
+}
+
+/// L3: tudi zaklep v procesu le do roka.
+@Test func folderLockInProcessTimeout() throws {
+    let locks = try tempDir("locks")
+    defer { try? FileManager.default.removeItem(at: locks) }
+    let l = FolderLock(id: [5, 6], dir: locks.path)
+    let t0 = Date()
+    let inner = l.with(exclusive: true) { l.with(exclusive: false, wait: 0.1) { 1 } }
+    #expect(inner == .some(nil) && Date().timeIntervalSince(t0) >= 0.1)
+}
+
+/// L1: mapa zaklepov, v katero sme pisati kdor koli, ni uporabljena (le zaklep v procesu, opozorilo).
+@Test func folderLockRefusesSharedLockDir() throws {
+    let base = try tempDir("locks"), d = base.appendingPathComponent("locks")
+    defer { try? FileManager.default.removeItem(at: base) }
+    try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+    chmod(d.path, 0o777)
+    #expect(FolderLock(id: [7, 8], dir: d.path).with(exclusive: true) { 1 } == 1)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: d.path).isEmpty)
+}

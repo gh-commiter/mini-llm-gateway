@@ -353,7 +353,8 @@ extension Router {
                 onActivity(.step(id: rid, text: s))
             }
             run?.stop()  // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb
-            if agent { await Self.shares.syncBack(session: session) }  // sync: spremembe agenta k odjemalcu pred odgovorom
+            // sync: spremembe agenta k odjemalcu pred odgovorom; #82: neprevzete niso uspeh
+            if agent, let why = await Self.shares.syncBack(session: session) { throw Codex.Failure(message: why) }
             if agent, let thread {
                 await sessions.set(ClaudeCLI.key(all + [ClaudeCLI.Turn(role: "assistant", text: text)], scope: scope), thread)
             }

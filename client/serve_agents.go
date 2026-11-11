@@ -1138,7 +1138,9 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			run.stop() // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb
 			// vprašani agent: spremembe prenese klicatelj na koncu; L1: omejen (#45) ne prenese ničesar
 			if runOf(r) == nil && (r.applied == nil || r.applied.cap == "") {
-				s.hub.syncBack(r.h("x-claude-mini-session"), k.name) // spremembe agenta k odjemalcu pred odgovorom
+				if why := s.hub.syncBack(r.h("x-claude-mini-session"), k.name); why != "" { // spremembe agenta k odjemalcu pred odgovorom
+					return "", errors.New(why) // #82: ne kot dostavljeno
+				}
 			}
 			if thread != "" {
 				s.sessions.set(transcriptKey(append(slices.Clone(all), turn{"assistant", text}), scope), thread)

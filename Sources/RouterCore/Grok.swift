@@ -253,7 +253,8 @@ extension Router {
         return await replyWhenDone(body: body, model: "claude-grok", rid: rid, writer: writer, req: req) {
             let (text, session) = try await Grok.run(exe, args: args, cwd: cwd, prompt: prompt, env: env, dirs: await Self.shares.runDirs(), stopNested: { run?.stop() }, started: { run?.started($0) }) { [onActivity] s in onActivity(.step(id: rid, text: s)) }
             run?.stop()  // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb
-            if agent { await Self.shares.syncBack(session: client) }  // sync: spremembe agenta k odjemalcu pred odgovorom
+            // sync: spremembe agenta k odjemalcu pred odgovorom; #82: neprevzete niso uspeh
+            if agent, let why = await Self.shares.syncBack(session: client) { throw Grok.Failure(message: why) }
             if agent, let session {
                 await sessions.set(ClaudeCLI.key(all + [ClaudeCLI.Turn(role: "assistant", text: text)], scope: scope), session)
             }

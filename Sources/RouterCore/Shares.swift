@@ -626,24 +626,41 @@ public actor ShareHub {
 
     /// Po agentu: minigw prevzame spremembe klona izvajanja (ne pri --minigw-ro), nato gredo v kopijo.
     /// Konča se pred odgovorom, da jih Claude Code že vidi.
-    func syncBack(session: String) async {
-        guard AgentRun.current == nil else { return }  // vprašani agent: prevzem ob koncu izvajanja klicatelja
-        guard Router.runBranch?.cap.isEmpty ?? true else { return }  // L1: tek, omejen z #45, ni pisal: nič nazaj k odjemalcu
-        if let s = bySession[session], let tree = s.tree { await worktreeBack(s, tree); return }
-        guard let s = bySession[session], let copy = s.copy, !s.readOnly else { return }
+    /// Vrne, zakaj dela agenta minigw ni dobil (#82: zahteva se konča z napako, Claude Code ga ne javi kot dostavljenega).
+    @discardableResult func syncBack(session: String) async -> String? {
+        guard AgentRun.current == nil else { return nil }  // vprašani agent: prevzem ob koncu izvajanja klicatelja
+        guard Router.runBranch?.cap.isEmpty ?? true else { return nil }  // L1: tek, omejen z #45, ni pisal: nič nazaj k odjemalcu
+        if let s = bySession[session], let tree = s.tree { return await worktreeBack(s, tree) }
+        guard let s = bySession[session], let copy = s.copy, !s.readOnly else { return nil }
         let r = Self.run.flatMap { runs[$0] }.flatMap { $0.share === s ? $0 : nil }
         await acquire(copy)  // en prevzem naenkrat: zahteve minigw (changes/file/ack) veljajo za s.pulling
         s.pulling = r
-        _ = await syncJob(s, "SYNC-PULL")
+        let why = Self.pullFailure(await send(s, Self.job("SYNC-PULL"), timeout: 900))
         s.pulling = nil
         if let r { await merge(r) }
         unlock(copy)
+        guard let why else { return nil }
+        Router.log.error("sync \(s.session, privacy: .public): the agent's changes were not copied back: \(why, privacy: .public)")
+        return "the agent's changes were not copied back to your folder: \(why); they are kept on the gateway and are copied back with the next request in this folder"
+    }
+
+    /// #82 (kot pullFailure v Go): zakaj minigw dela agenta ni prevzel (nil = prevzel).
+    static func pullFailure(_ r: DAVResponse?) -> String? {
+        guard let r else { return "minigw did not answer in time" }
+        switch r.status {
+        case 200: return nil
+        case 503: return "the shared folder is busy: another minigw session on this folder is using it"
+        default: return "minigw could not take them (HTTP \(r.status); minigw printed why)"
+        }
+    }
+
+    static func job(_ method: String, _ body: Data = Data()) -> DAVJob {
+        DAVJob(id: UUID().uuidString, method: method, path: "", prefix: "", headers: [:], body: body)
     }
 
     /// minigw naj prenese (SYNC-PUSH) ali prevzame (SYNC-PULL); zaporedje zagotavlja zaklep kopije.
     private func syncJob(_ s: Share, _ method: String) async -> Bool {
-        let job = DAVJob(id: UUID().uuidString, method: method, path: "", prefix: "", headers: [:], body: Data())
-        return await send(s, job, timeout: 900)?.status == 200  // prvi prenos velike mape traja
+        await send(s, Self.job(method), timeout: 900)?.status == 200  // prvi prenos velike mape traja
     }
 
     /// Manifest odjemalca → poti, ki jih kopija potrebuje; datoteke, ki jih odjemalec nima več, izbriše.
