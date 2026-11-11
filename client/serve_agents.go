@@ -786,6 +786,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 	c := s.conf()
 	ac := k.conf(c)
 	if k.name == "copilot" && copilotUnsupported {
+		w.Header().Set("x-should-retry", "false")
 		return writeError(w, r.rid, 400, copilotUnsupportedMsg)
 	}
 	if !s.agentsAllowed(c, k.name) {

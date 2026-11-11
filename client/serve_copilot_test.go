@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -314,5 +315,13 @@ func TestCopilotUnsupportedOnWindows(t *testing.T) {
 	if st, b := adminReq(t, base2, host2, "tok", "POST", "/v1/messages", `{"model":"claude-copilot","messages":[{"role":"user","content":"hi"}]}`); st != 400 ||
 		!strings.Contains(b, copilotUnsupportedMsg) {
 		t.Fatalf("disabled run: %d %s", st, b)
+	}
+	req, _ := http.NewRequest("POST", base2+"/v1/messages", strings.NewReader(`{"model":"claude-copilot","messages":[]}`))
+	req.Host = host2
+	req.Header.Set("authorization", "Bearer tok")
+	if resp, err := http.DefaultClient.Do(req); err != nil || resp.Header.Get("x-should-retry") != "false" {
+		t.Fatalf("retry header: %v %v", err, resp)
+	} else {
+		resp.Body.Close()
 	}
 }
