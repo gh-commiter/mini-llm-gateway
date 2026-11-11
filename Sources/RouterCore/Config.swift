@@ -161,7 +161,7 @@ public struct RouterConfig: Codable, Sendable, Equatable {
 
     /// M1 (0.5.24): mape, ki jih peskovniki agentov skrijejo (dobesedno in kanonično), ob vsakem zagonu (mape ob strani
     /// nastanejo s prevzemom): Scratch, nadomestna mapa scratch(_:) (defaultBase/<ime>), defaultScratch, ter v osnovi
-    /// Scratch in v defaultBase prave mape z datoteko lastnika, mape *.old-* in »Mini Gateway Scratch«. Osnove same nikoli
+    /// Scratch in v defaultBase prave mape z datoteko lastnika, mape ob strani (<id>.old-<datum>[-<čas>], ScratchOwner.takeOver) in »Mini Gateway Scratch«. Osnove same nikoli
     /// (lahko je uporabnikova mapa z drugo vsebino).
     public static func hiddenScratch(_ scratch: URL?) -> [String] {
         let fm = FileManager.default
@@ -172,7 +172,7 @@ public struct RouterConfig: Codable, Sendable, Equatable {
                 let p = base.appendingPathComponent(n, isDirectory: true)
                 var st = stat()
                 guard lstat(p.path, &st) == 0, st.st_mode & S_IFMT == S_IFDIR else { continue }  // ne povezave
-                if n.contains(".old-") || n == dedicatedName || !ScratchOwner.owner(p).isEmpty { dirs.append(p) }
+                if n.range(of: #"\.old-\d{4}-\d{2}-\d{2}(-\d{6})?$"#, options: .regularExpression) != nil || n == dedicatedName || !ScratchOwner.owner(p).isEmpty { dirs.append(p) }
             }
         }
         var seen = Set<String>()

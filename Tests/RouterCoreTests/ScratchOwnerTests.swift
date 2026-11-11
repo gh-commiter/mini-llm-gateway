@@ -148,13 +148,16 @@ private func put(_ dir: URL, _ rel: String, _ text: String = "x") throws {
     try put(base, "gw-mine.old-2026-11-10/chat/x")
     try put(base, "gw-other/" + ScratchOwner.ownerFile, "gw-other\n")
     try put(base, "Mini Gateway Scratch/chat/x")
+    try put(base, "gw-mine.old-2026-11-10-142233/chat/x")  // druga ob strani istega dne
     try put(base, "Photos/a.jpg")
+    try put(base, "Work.old-2025/a.txt")  // uporabnikova mapa, ne ob strani
     let h = RouterConfig.hiddenScratch(cur)
-    for n in ["gw-mine", "gw-mine.old-2026-11-10", "gw-other", "Mini Gateway Scratch"] {
+    for n in ["gw-mine", "gw-mine.old-2026-11-10", "gw-mine.old-2026-11-10-142233", "gw-other", "Mini Gateway Scratch"] {
         #expect(h.contains(base.appendingPathComponent(n).path), "\(n): \(h)")
     }
     #expect(h.contains(RouterConfig.defaultBase.appendingPathComponent("gw-mine").path))  // nadomestna mapa scratch(_:)
     #expect(h.contains(RouterConfig.defaultScratch.path))
+    #expect(!h.contains(base.appendingPathComponent("Work.old-2025").path))
     #expect(!h.contains(base.appendingPathComponent("Photos").path) && !h.contains(base.path) && !h.contains(base.standardizedFileURL.path))
 }
 

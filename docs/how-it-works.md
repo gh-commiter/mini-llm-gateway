@@ -104,10 +104,15 @@ Details:
   bwrap on Linux) is worked out at each run from the layout: the current Scratch; on the Mac its fallback in the
   default base (used while the chosen disk is unplugged) and the old default `Scratch`; on `minigw serve` the old
   default `~/.cache/minigw/scratch`; and, in the Scratch base and in the default base, every folder with an owner file
-  (other gateways'), every `*.old-*` folder (this gateway's kept folders after Take over) and `Mini Gateway Scratch`.
+  (other gateways'), every folder named `<instance>.old-<YYYY-MM-DD>` (optionally `-<HHMMSS>`: this gateway's kept
+  folders after Take over; a folder such as `Work.old-2025` is not one) and, Mac only, `Mini Gateway Scratch`.
   The base itself and other folders in it stay visible. Paths are resolved (`/private`, links). The run's own folders
-  in Scratch (temporary folder, DerivedData, sync copy or clone) are allowed again after these rules. A Scratch base
-  that is, or is inside, a folder with another gateway's owner file is refused.
+  in Scratch (temporary folder, DerivedData, sync copy or clone) are allowed again after these rules. An allowed
+  folder inside one of these folders, or around one, is left out of the agent's folders (Mac: refused as the working
+  folder; `minigw serve`: not passed to Claude CLI, Codex, Grok or Copilot). Windows: the MXC box sees only its
+  granted folders; Codex and Copilot outside the box see everything (see [windows-parity](windows-parity.md)).
+  A Scratch base that is, or is inside, a folder with another gateway's owner file is refused; this check runs when
+  Scratch is set or moved, not at start.
 - In worktree mode the gateway never runs git with the agent's own `.git` (config, hooks) and reads the clone only
   from a sandbox. On Linux `minigw serve` pins the clone's `.git` with bwrap (`.git/config`, `hooks` and `info`
   read-only); without the pin Linux watches `.git` with inotify (no watch: the run is refused), and macOS and Windows

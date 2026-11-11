@@ -855,7 +855,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 	prompt := note + "\n\n" + cliPrompt(history, last)
 	var extra []string
 	for _, f := range c.AllowedFolders {
-		if f != dir && len(scratchOverlaps([]string{f}, c.Scratch)) == 0 && len(copilotCacheOverlaps([]string{f})) == 0 { // L1, #26
+		if f != dir && !scratchHiddenOverlaps(f, c.Scratch) && len(copilotCacheOverlaps([]string{f})) == 0 { // L1, #26
 			extra = append(extra, f)
 		}
 	}

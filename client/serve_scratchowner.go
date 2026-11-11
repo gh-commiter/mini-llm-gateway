@@ -291,7 +291,7 @@ func scratchSiblings(cur, id string) []scratchSibling {
 
 // scratchHidden (M1, 0.5.24): mape, ki jih peskovniki agentov skrijejo (dobesedno in kanonično), ob vsakem zagonu (mape
 // ob strani nastanejo s prevzemom): Scratch, defaultScratch (0.5.23), ter v osnovi Scratch in v privzeti osnovi
-// (newScratchDefault) prave mape z datoteko lastnika in mape *.old-*. Osnove same nikoli (uporabnikova mapa). Kot
+// (newScratchDefault) prave mape z datoteko lastnika in mape ob strani (scratchAside). Osnove same nikoli (uporabnikova mapa). Kot
 // RouterConfig.hiddenScratch na Macu. "" = nič.
 func scratchHidden(scratch string) []string {
 	if scratch == "" {
@@ -305,7 +305,7 @@ func scratchHidden(scratch string) []string {
 		ents, _ := os.ReadDir(base)
 		for _, e := range ents {
 			if p := filepath.Join(base, e.Name()); e.IsDir() && e.Type()&fs.ModeSymlink == 0 &&
-				(strings.Contains(e.Name(), ".old-") || scratchOwner(p) != "") {
+				(scratchAside.MatchString(e.Name()) || scratchOwner(p) != "") {
 				dirs = append(dirs, p)
 			}
 		}
@@ -319,6 +319,20 @@ func scratchHidden(scratch string) []string {
 		}
 	}
 	return out
+}
+
+// scratchAside: ime mape ob strani, kot jo naredi takeScratch (<id>.old-<datum>[-<čas>]).
+var scratchAside = regexp.MustCompile(`\.old-\d{4}-\d{2}-\d{2}(-\d{6})?$`)
+
+// scratchHiddenOverlaps: dovoljena mapa je v kateri od skritih map (scratchHidden) ali jo vsebuje (kot resolveCwd na
+// Macu): bwrap bi jo sicer spet vezal, allowRead Claude pa preglasil denyRead. Le obstoječe skrite mape.
+func scratchHiddenOverlaps(f, scratch string) bool {
+	for _, h := range scratchHidden(scratch) {
+		if _, err := os.Stat(h); err == nil && len(scratchOverlaps([]string{f}, h)) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // scratchInsideOther (L1, 0.5.24): osnova je mapa z datoteko lastnika druge instance ali v njej (njen prevzem bi
