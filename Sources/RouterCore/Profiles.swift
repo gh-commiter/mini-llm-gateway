@@ -184,7 +184,9 @@ public enum Profiles {
         public static let lineMax = 64 << 20
         var n = 0, last = ""          // izpisani bloki, besedilo zadnjega
         var partial = false, open = false  // partial: delte namesto celih blokov; open: blok se izpisuje
-        var pend = ""                 // zadržane nove vrstice na koncu besedila (pred nadaljevanjem; na koncu ena)
+        /// Nove vrstice, ki jih besedilo želi na koncu (največ ena prazna vrstica), in že izpisane: prva gre takoj, da je
+        /// vrstica cela pred oznako orodja (kot Go pend, nl).
+        var pend = 0, nl = 0
         public private(set) var failed = false
         /// Dogodek result: zadnji dogodek claude -p, branje se konča.
         public private(set) var done = false
@@ -219,16 +221,24 @@ public enum Profiles {
             var out = ""
             if !open {
                 if t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "" }
-                if n > 0 { out = "\n\n" }
+                if n > 0 { pend = 2 }
                 open = true; n += 1; last = ""
             }
             if last.utf8.count < Self.lastMax { last += t }
             var body = t
             while body.hasSuffix("\n") { body.removeLast() }
-            if body.isEmpty { pend = String((pend + t).prefix(2)); return out }  // največ ena prazna vrstica
-            out += pend + body
-            pend = String(t.dropFirst(body.count).prefix(2))
-            return out
+            if !body.isEmpty {
+                out += String(repeating: "\n", count: max(pend - nl, 0)) + body
+                pend = 0; nl = 0
+            }
+            pend = min(pend + t.count - body.count, 2)
+            return out + lineEnd()
+        }
+
+        mutating func lineEnd() -> String {
+            guard pend > 0, nl == 0 else { return "" }
+            nl = 1
+            return "\n"
         }
 
         static func tool(_ name: String) -> String {
@@ -247,19 +257,19 @@ public enum Profiles {
                 if e["type"] as? String == "content_block_delta", let d = e["delta"] as? [String: Any],
                    d["type"] as? String == "text_delta", let t = d["text"] as? String {
                     if let name = Self.toolMark(t) {
+                        if open { pend = 2; out += lineEnd() }  // vrstica pred oznako je cela, preden gre oznaka na stderr
                         err += Self.tool(name)
-                        if open { pend = "\n\n" }
                     } else {
                         out += text(t)
                     }
                 } else if e["type"] as? String == "content_block_stop" {
-                    open = false; pend = ""
+                    open = false; pend = 0
                 }
             case "assistant":
                 for c in ((ev["message"] as? [String: Any])?["content"] as? [[String: Any]]) ?? [] {
                     if c["type"] as? String == "text", !partial, let t = c["text"] as? String {
                         out += text(t)
-                        open = false; pend = ""
+                        open = false; pend = 0
                     } else if c["type"] as? String == "tool_use" {
                         err += Self.tool(c["name"] as? String ?? "")
                     }
@@ -276,14 +286,14 @@ public enum Profiles {
                 } else if n == 0 {
                     out += text(r)
                 }
-                if n > 0 { out += "\n" }
+                if n > 0, nl == 0 { out += "\n"; nl = 1 }
             default: break
             }
             return (out, err)
         }
 
         /// Konec brez dogodka result: zaključna nova vrstica izpisanega besedila.
-        public var tail: String { n > 0 && !done ? "\n" : "" }
+        public var tail: String { n > 0 && !done && nl == 0 ? "\n" : "" }
 
         /// Opozorilo, ko se edino besedilo sklicuje na prejšnje (»above«, »zgoraj«), ki ga ni bilo (nil = ni).
         public var warning: String? {

@@ -94,7 +94,15 @@ func streamText(in io.Reader, out, errOut io.Writer) (failed bool) {
 	sc.Buffer(make([]byte, 64<<10), streamLineMax)
 	n, last := 0, ""              // izpisani bloki, besedilo zadnjega
 	partial, open := false, false // partial: delte namesto celih blokov; open: blok se izpisuje
-	pend := ""                    // zadržane nove vrstice na koncu besedila (pred nadaljevanjem; na koncu ena)
+	// pend: nove vrstice, ki jih besedilo želi na koncu (največ ena prazna vrstica); nl: že izpisane. Prva gre takoj,
+	// da je vrstica cela pred oznako orodja (bralec po vrsticah, npr. časovni žigi, sicer dobi stavek šele z naslednjim).
+	pend, nl := 0, 0
+	lineEnd := func() {
+		if pend > 0 && nl == 0 {
+			fmt.Fprint(out, "\n")
+			nl = 1
+		}
+	}
 	text := func(t string) {
 		t = printable(t)
 		if !open {
@@ -102,7 +110,7 @@ func streamText(in io.Reader, out, errOut io.Writer) (failed bool) {
 				return
 			}
 			if n > 0 {
-				fmt.Fprint(out, "\n\n")
+				pend = 2
 			}
 			open, n, last = true, n+1, ""
 		}
@@ -110,12 +118,12 @@ func streamText(in io.Reader, out, errOut io.Writer) (failed bool) {
 			last += t
 		}
 		body := strings.TrimRight(t, "\n")
-		if body == "" {
-			pend = (pend + t)[:min(len(pend)+len(t), 2)] // največ ena prazna vrstica
-			return
+		if body != "" {
+			fmt.Fprint(out, strings.Repeat("\n", max(pend-nl, 0))+body)
+			pend, nl = 0, 0
 		}
-		fmt.Fprint(out, pend+body)
-		pend = t[len(body):][:min(len(t)-len(body), 2)]
+		pend = min(pend+len(t)-len(body), 2)
+		lineEnd()
 	}
 	tool := func(name string) {
 		if !toolName.MatchString(name) {
@@ -123,7 +131,7 @@ func streamText(in io.Reader, out, errOut io.Writer) (failed bool) {
 		}
 		fmt.Fprintln(errOut, "minigw: · "+name)
 	}
-	end := func() { open, pend = false, "" }
+	end := func() { open, pend = false, 0 }
 	for sc.Scan() {
 		var ev struct {
 			Type    string  `json:"type"`
@@ -150,10 +158,11 @@ func streamText(in io.Reader, out, errOut io.Writer) (failed bool) {
 			switch {
 			case ev.Event.Type == "content_block_delta" && ev.Event.Delta.Type == "text_delta":
 				if m := toolMark.FindStringSubmatch(ev.Event.Delta.Text); m != nil {
-					tool(m[1])
-					if open {
-						pend = "\n\n"
+					if open { // vrstica pred oznako je cela, preden gre oznaka na stderr
+						pend = 2
+						lineEnd()
 					}
+					tool(m[1])
 				} else {
 					text(ev.Event.Delta.Text)
 				}
@@ -184,7 +193,7 @@ func streamText(in io.Reader, out, errOut io.Writer) (failed bool) {
 			break
 		}
 	}
-	if n > 0 {
+	if n > 0 && nl == 0 {
 		fmt.Fprintln(out)
 	}
 	if err := sc.Err(); err != nil && !errors.Is(err, os.ErrClosed) {

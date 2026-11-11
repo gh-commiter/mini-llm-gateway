@@ -124,6 +124,9 @@ func TestStreamTextLive(t *testing.T) {
 	wait(&out, "I'll sleep.")
 	io.WriteString(pw, delta(`\n⏺ Bash\n`)+`{"type":"stream_event","parent_tool_use_id":"x","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"sub"}}}`+"\n")
 	wait(&errOut, "minigw: · Bash\n")
+	if out.String() != "I'll sleep.\n" { // A3: vrstica pred oznako mora biti cela, ko pride oznaka (bralec po vrsticah)
+		t.Fatalf("line before the tool mark not complete when the mark is printed: %q", out.String())
+	}
 	s := &shareClient{reported: map[string]bool{}}
 	held.Lock()
 	held.on = true

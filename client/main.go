@@ -793,6 +793,9 @@ func main() {
 		}
 	}
 	env = append(env, helperModelEnv(args, os.Getenv)...)
+	if os.Getenv("ENABLE_CLAUDEAI_MCP_SERVERS") == "" { // prijava s prehodom: povezav claude.ai tako ni, brez opozorila claude ob vsakem zagonu
+		env = append(env, "ENABLE_CLAUDEAI_MCP_SERVERS=false")
+	}
 	args, stream := streamArgs(args)
 	held.Lock()
 	held.on = stream

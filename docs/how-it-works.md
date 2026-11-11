@@ -256,7 +256,8 @@ send only their final answer, when they finish. The `agent work is on branch …
 so they come on stderr after it. When the only text refers back ("above", "zgoraj"), minigw warns on stderr that the
 answer may be incomplete. An explicit `--output-format` turns this off and is passed through unchanged.
 With a provider model (not opus, sonnet, haiku, fable or an agent model) minigw also sets `ANTHROPIC_DEFAULT_HAIKU_MODEL`
-and `ANTHROPIC_SMALL_FAST_MODEL` to it, unless you set them.
+and `ANTHROPIC_SMALL_FAST_MODEL` to it, unless you set them. minigw also sets `ENABLE_CLAUDEAI_MCP_SERVERS=false` unless
+you set it: with the gateway's token claude.ai connectors cannot load, and Claude Code would warn about it on every run.
 
 ## minigw run sandbox
 
