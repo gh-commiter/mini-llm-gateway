@@ -292,6 +292,22 @@ func TestAgentStatePerDevice(t *testing.T) {
 	}
 }
 
+// M1: Copilot nikoli ne dobi ~/.copilot (hooki, MCP, zaupane mape) ali stikal, ki naložijo hooke in MCP repozitorija:
+// stanje naprave (svež COPILOT_HOME vsak tek) na vseh sistemih, tudi na Windows zunaj škatle; GITHUB_COPILOT_* ne pride do njega.
+func TestCopilotNoUserOrRepoHooks(t *testing.T) {
+	scratch := t.TempDir()
+	st, files, err := agentState(scratch, copilotKind, "dev")
+	if err != nil || st == "" || !under(st, scratch) || len(files) != 0 {
+		t.Fatalf("copilot state: %q %v %v", st, files, err)
+	}
+	for _, kv := range agentEnv([]string{"GITHUB_COPILOT_PROMPT_MODE_REPO_HOOKS=true", "github_copilot_prompt_mode_workspace_mcp=true",
+		"GITHUB_COPILOT_PROMPT_MODE_EXTENSIONS=true", "COPILOT_ALLOW_ALL=true", "COPILOT_HOME=/real", "KEEP=1"}) {
+		if kv != "KEEP=1" {
+			t.Errorf("reached Copilot: %s", kv)
+		}
+	}
+}
+
 func TestCodexUsageLimitIs429(t *testing.T) {
 	msg := codexFailure([]byte(`{"type":"turn.failed","error":{"message":"You’ve hit your usage limit. Try again at 7:52 PM. /Users/x/secret"}}`))
 	if st, m := classifyAgentError(msg); st != 429 || strings.Contains(m, "/Users") || !strings.Contains(m, "usage limit") {

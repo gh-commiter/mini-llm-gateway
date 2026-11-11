@@ -48,9 +48,11 @@ private func rules(_ a: [String]) -> (allow: [String], deny: [String]) {
     let env = Copilot.environment(["COPILOT_ALLOW_ALL": "true", "COPILOT_ASSISTED_APPROVAL": "1", "ANTHROPIC_BASE_URL": "x",
                                    "COPILOT_PROVIDER_API_KEY_COMMAND": "touch /tmp/x", "COPILOT_CLI_DIST_DIR": "/evil",
                                    "COPILOT_CUSTOM_INSTRUCTIONS_DIRS": "/evil", "GH_TOKEN": "user", "GITHUB_TOKEN": "user",
-                                   "CLAUDE_CODE_X": "1", "SSH_AUTH_SOCK": "/s", "COPILOT_HOME": "/home/u/.copilot", "PATH": "/bin"],
+                                   "CLAUDE_CODE_X": "1", "SSH_AUTH_SOCK": "/s", "COPILOT_HOME": "/home/u/.copilot", "PATH": "/bin",
+                                   "GITHUB_COPILOT_PROMPT_MODE_REPO_HOOKS": "true", "GITHUB_COPILOT_PROMPT_MODE_WORKSPACE_MCP": "true"],
                                   home: URL(fileURLWithPath: "/req/home"), token: "tok", extra: ["TMPDIR": "/t/"])
     #expect(env.keys.filter { $0.hasPrefix("COPILOT_") }.sorted() == ["COPILOT_AUTO_UPDATE", "COPILOT_GITHUB_TOKEN", "COPILOT_HOME"])
+    #expect(!env.keys.contains { $0.hasPrefix("GITHUB_COPILOT_") })  // M1: hooki in MCP repozitorija v načinu -p
     #expect(env["GH_TOKEN"] == nil && env["GITHUB_TOKEN"] == nil && env["ANTHROPIC_BASE_URL"] == nil && env["CLAUDE_CODE_X"] == nil
             && env["SSH_AUTH_SOCK"] == nil)
     #expect(env["COPILOT_HOME"] == "/req/home" && env["COPILOT_GITHUB_TOKEN"] == "tok" && env["PATH"] == "/bin" && env["TMPDIR"] == "/t/"

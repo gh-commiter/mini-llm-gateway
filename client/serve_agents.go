@@ -3,8 +3,8 @@ package main
 // Codex CLI in Grok CLI kot agenta (kot RouterCore/Codex.swift in Grok.swift): claude-codex, claude-codex-<model>,
 // claude-grok, claude-grok-<model>. Privzeto izklopljena; agent dela le v sinhronizirani kopiji mape odjemalca.
 // Peskovnik postavi CLI sam (Codex: workspace-write / read-only, na Linuxu Landlock in seccomp; Grok: workspace /
-// read-only). Oba bereta povsod: Grok dobi pravila --deny za mapo nastavitev. Windows (#68): Grok in Copilot v škatli
-// MXC (mxc.go), Codex s svojim peskovnikom »elevated«; brez tega le z allowUnsandboxedBash. Skrbniški API zavrne
+// read-only). Oba bereta povsod: Grok dobi pravila --deny za mapo nastavitev. Windows (#68): Grok v škatli MXC (mxc.go);
+// Codex in Copilot se v njej ne zaženeta (outsideBox), zato le z allowUnsandboxedBash. Skrbniški API zavrne
 // procese agentov (peer check).
 
 import (
@@ -114,7 +114,7 @@ func resolveAgent(k agentKind, configured string) (string, error) {
 
 // npmNative (#77): izvorni program v paketu npm ob ovoju (copilot.cmd/.ps1 v dir). Copilot: npm-loader.js prek node
 // le zažene copilot.exe iz platformnega paketa (@github/copilot-win32-<arch>, pri -g vgnezden v paketu), zato teče
-// ta neposredno, brez node in ovoja; škatla dobi le mapo, v kateri je exe, nikoli %APPDATA% ali npm.
+// ta neposredno, brez node in ovoja (Copilot na Windows teče zunaj škatle, outsideBox).
 func npmNative(name, dir, goarch string) string {
 	pats := map[string][]string{"codex": {"@openai/codex/vendor/*/codex/codex.exe"}}[name]
 	if name == "copilot" { // najprej arhitektura minigw, nato druga (x64 minigw na ARM64 Windows, Copilot arm64)
@@ -936,7 +936,11 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 		if runtime.GOOS == "windows" && outsideBox(k.name) { // #68: začasne datoteke Codex in Copilot pod Scratch (tek)
 			m.env = append(m.env, "TEMP="+tmp, "TMP="+tmp)
 			if k.name == "copilot" { // razširjen paket (~265 MB, enkrat na različico) in predpomnilnik SDK pod Scratch
-				m.env = append(m.env, "COPILOT_CACHE_HOME="+c.scratch(filepath.Join("cache", "copilot")))
+				pkg := c.scratch(filepath.Join("cache", "copilot"))
+				if under(pkg, dir) || under(dir, pkg) { // L3 (kot R9): orodje write ne sme spremeniti paketa za naslednji zagon
+					return "", errors.New("copilot: the session's folder overlaps Copilot's package cache (" + pkg + ")")
+				}
+				m.env = append(m.env, "COPILOT_CACHE_HOME="+pkg)
 			}
 		}
 		if runtime.GOOS == "windows" && state != "" && k.name == "grok" && agentAPIKey(s.cfgDir, "grok") != "" {
@@ -1009,7 +1013,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			if token == "" {
 				token = copilotToken(ctx)
 			}
-			if token == "" && runtime.GOOS == "linux" {
+			if token == "" && runtime.GOOS != "darwin" { // M1: svež COPILOT_HOME nima prijave copilot login
 				return "", errors.New("copilot: no GitHub sign-in on the gateway; sign in with the GitHub CLI (gh auth login) or set a token (minigw gw copilot token)")
 			}
 			if token != "" {
@@ -1019,7 +1023,8 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 				m.env = append(m.env, "MINIGW_SANDBOXED=1")
 			}
 			// C2: svež COPILOT_HOME vsake zahteve (hooki, nastavitve, zaupane mape prejšnjega zagona ne obstajajo); med
-			// zahtevami ostane le stanje seje (brez povezav) v stanju naprave, ki ga bwrap ne vidi. Windows brez škatle MXC: pravi ~/.copilot (I1).
+			// zahtevami ostane le stanje seje (brez povezav) v stanju naprave, ki ga bwrap ne vidi. M1: tudi na Windows zunaj škatle (nikoli ~\.copilot: hooki, MCP, zaupane mape;
+			// brez zaupane mape copilot v načinu -p hookov in MCP repozitorija ne naloži), prijava le z žetonom.
 			store := ""
 			if state != "" {
 				store = filepath.Join(state, "sessions")
@@ -1157,7 +1162,8 @@ func agentEnv(env []string) []string {
 			"GH_TOKEN", "GITHUB_TOKEN", "SANDBOX_RUNTIME", "MINIGW_SANDBOXED", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED", // #67: oznake peskovnika
 			"MINIGW_DEPS", "MINIGW_NETWORK_OFF",
 			// #68: ključi API iz okolja prehoda nikoli do agenta (obračun API); le izrecno nastavljen (agentKeyEnv)
-			"OPENAI_API_KEY", "CODEX_API_KEY", "XAI_API_KEY", "GROK_CODE_XAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"}, name) || strings.HasPrefix(name, "COPILOT_") {
+			"OPENAI_API_KEY", "CODEX_API_KEY", "XAI_API_KEY", "GROK_CODE_XAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"}, name) || strings.HasPrefix(name, "COPILOT_") ||
+			strings.HasPrefix(name, "GITHUB_COPILOT_") { // M1: GITHUB_COPILOT_PROMPT_MODE_REPO_HOOKS (… _WORKSPACE_MCP, _EXTENSIONS) naloži hooke repozitorija
 			continue
 		}
 		out = append(out, e)
@@ -1186,7 +1192,9 @@ func agentAuthFiles(k agentKind) (real string, names []string) {
 // agentState: <scratch>/state/<naprava>/<cli> s povezavami na prave datoteke prijave (Codex piše auth.json na
 // mestu, skozi povezavo: preverjeno s codex 0.167). Vrne mapo in prave datoteke za bwrap.
 func agentState(scratch string, k agentKind, owner string) (string, []string, error) {
-	if runtime.GOOS == "windows" && (!windowsBox() || outsideBox(k.name)) { // brez škatle (in Codex, Copilot): kot prej, prave mape CLI
+	// brez škatle (in Codex): kot prej, prave mape CLI. M1: Copilot vedno svoje stanje (svež COPILOT_HOME vsak tek, brez
+	// hookov, MCP in zaupanih map iz ~\.copilot; brez zaupanja copilot hookov in MCP repozitorija ne naloži)
+	if runtime.GOOS == "windows" && (!windowsBox() && k.name != "copilot" || k.name == "codex") {
 		return "", nil, nil
 	}
 	sum := sha256.Sum256([]byte(owner))
