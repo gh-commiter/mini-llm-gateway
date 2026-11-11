@@ -745,7 +745,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		case parent != nil: // mapa klicatelja, brez novega prenosa
 			dir, extra = parent.dir, nestedNote(parent)
 		case share != nil && share.tree != nil:
-			if worktreeNeedsUnsandboxed && !s.conf().AllowUnsandboxedBash { // L3: kot Codex in Copilot na Windows
+			if (worktreeNeedsUnsandboxed || runtime.GOOS == "windows" && !box) && !s.conf().AllowUnsandboxedBash { // L3; box iz začetka zahteve (ponovna sonda med waitShare)
 				return writeError(w, r.rid, 400, "Claude CLI in worktree mode on Windows needs \"Allow commands without a sandbox\" "+
 					"(settings page → Claude CLI): Claude Code's own git runs there without a sandbox; use sync")
 			}
