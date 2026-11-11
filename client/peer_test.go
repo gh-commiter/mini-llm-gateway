@@ -64,6 +64,9 @@ func TestPeerTables(t *testing.T) {
 
 // Testni program je tudi pomočnik agentov (startAgent na Linuxu požene /proc/self/exe __minigw-agent …).
 func TestMain(m *testing.M) {
+	if strings.HasPrefix(strings.ToLower(filepath.Base(os.Args[0])), "claude") { // #79: lažni claude (TestClaudeAncestorRefusesBeforeClaude)
+		fakeClaudeMain()
+	}
 	if os.Getenv("MINIGW_TEST_FAKE_WXC") == "1" { // #68: lažni wxc-exec (mxc_test.go)
 		fakeWxcMain()
 	}

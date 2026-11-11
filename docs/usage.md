@@ -127,7 +127,8 @@ A subfolder of a git repository is synced, so files outside it are never sent. O
 `--minigw-work=worktree` uses the parent repository. An explicit `--minigw-work=direct` is refused by a Windows or
 Linux gateway. `minigw share add --work=direct` keeps direct mode as the default for one folder.
 
-**Inside Claude Code** (the plugin's skills, `CLAUDECODE` set), `--minigw-work=direct`, `sync` and `native-direct` are
+**Inside Claude Code** (the plugin's skills; see [What minigw passes to Claude Code](how-it-works.md#what-minigw-passes-to-claude-code)
+for how minigw tells), `--minigw-work=direct`, `sync` and `native-direct` are
 refused, because the skills' model calls run without asking you and these modes change your files without a branch to
 review. They work when the run is read-only, when the folder is saved with that mode (`minigw share add --work=`), or
 with `MINIGW_WORK=<mode>` in front of the command, which Claude Code asks you about. An explicit `native` or `worktree`
@@ -248,11 +249,15 @@ minigw: worktree: continuing from minigw/codex-1a2b3c4d-0; changes in your folde
 The new branch contains the earlier turns too, and its line says
 `(<base> = your state when this conversation started; this branch includes the earlier turns)`: one range covers the
 whole conversation, so bring in only the newest branch (after applying an earlier one, review the range for what is
-new). `--resume <id>` reuses that session's branch name, which moves forward; `--continue` gets a new branch name each
-turn.
+new). `--resume <id>` and `--continue` reuse that session's branch name, which moves forward.
 
-- `--continue` takes the last conversation minigw ran in this folder (per folder, like Claude Code's `-c`);
-  `--resume <id>` that session; `--resume <id> --fork-session` continues from that session's branch, and the fork then
+- `--continue` (`-c`) takes the last conversation minigw ran in this folder: minigw passes it to `claude` as
+  `--resume <id>` of that conversation. It never continues a Claude Code conversation you had without minigw (plain
+  `claude -c` would take the newest one in the folder and send its transcript to the gateway). When minigw has no
+  conversation in this folder yet, it starts a new one and says `minigw: no earlier minigw conversation in …; starting
+  a new one`. minigw keeps the last conversation per folder in `minigw/last-session.json` (macOS
+  `~/Library/Application Support`, Linux `~/.config`, Windows `%AppData%`).
+  `--resume <id>` takes that session; `--resume <id> --fork-session` continues from that session's branch, and the fork then
   goes on as its own conversation. `--resume` without an id (the session picker) starts from your folder.
 - All agents of one minigw run start from the same point (decided at the run's first agent), so agents in one turn
   stay independent of each other. The next turn continues from the branch that came back last in the previous run.

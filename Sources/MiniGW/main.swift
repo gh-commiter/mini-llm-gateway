@@ -762,6 +762,8 @@ func execClaude(_ argv: [UnsafeMutablePointer<CChar>?]) {
 /// H3: pod Claude Code le možnosti claude, ki ne dajo dovoljenj (Profiles.unsafeClaudeFlag); N6, N7: navodilo brez »@pot«
 /// in »/ukaz« (Profiles.unsafePrompt), tudi na stdin. info: le podatki o claude (-v, -h), brez --settings (I1).
 func refuseUnsafeClaudeFlags(info: Bool = false) {
+    // #79: tudi claude med predniki, ne le CLAUDECODE; vsa varovala nato veljajo kot ob spremenljivki (claude je ne dobi, #7)
+    if (ProcessInfo.processInfo.environment["CLAUDECODE"] ?? "").isEmpty, Profiles.claudeAncestor() { setenv("CLAUDECODE", "1", 1) }
     let env = ProcessInfo.processInfo.environment
     if let f = Profiles.unsafeClaudeFlag(args, env: env) {
         fail("\(f) is not accepted when minigw runs inside Claude Code: it could give the gateway's model permissions without asking you")
@@ -1005,12 +1007,21 @@ setenv("CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "1", 1)
 setenv("API_TIMEOUT_MS", "1800000", 1)
 setenv("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1", 1)
 
+// #79: -c/--continue = zadnji pogovor minigw v tej mapi (--resume <id>), ne zadnji pogovor claude v ~/.claude
+let lastSessionFile = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    .appendingPathComponent("minigw/last-session.json")
+let continued = Profiles.continueSession(args, last: Profiles.lastSession(file: lastSessionFile, cwd: FileManager.default.currentDirectoryPath))
+args = continued.args
+if continued.dropped {
+    err.write(Data("minigw: no earlier minigw conversation in \(FileManager.default.currentDirectoryPath); starting a new one\n".utf8))
+}
 // Seja: router po njej loči seje claude -p in niti Siri. Obstoječa ob --resume <id>, sicer nova.
 var sid = ""
 var own = false
 // #66: cont (-c), picker (--resume brez ID-ja), parent (ID ob --resume), fork (--fork-session), explicit (--session-id)
 var cont = false, picker = false, fork = false, explicit = false, parent = ""
 for (i, a) in args.enumerated() {
+    if a == "--" { break }  // po »--« so le argumenti
     switch a {
     case "-r", "--resume":  // brez ID-ja = izbirnik sej v claude; nikoli skupaj z --session-id
         own = true
@@ -1026,6 +1037,9 @@ if fork, !parent.isEmpty, !explicit { sid = "" }  // L2: razcepljen pogovor je n
 if sid.isEmpty {
     sid = UUID().uuidString.lowercased()  // tudi pri -c/--continue: router po njem deli mapo
     if !own { args = ["--session-id", sid] + args }
+}
+if !picker, !fork || parent.isEmpty || explicit {  // ID seje claude je znan (izbirnik in razcep ga izbereta sama)
+    Profiles.saveLastSession(file: lastSessionFile, cwd: FileManager.default.currentDirectoryPath, sid: sid)
 }
 
 if promptGuard { args = ["--disable-slash-commands"] + args }  // N7

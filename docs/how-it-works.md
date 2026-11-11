@@ -245,7 +245,7 @@ Native mode does not protect these paths: the agent can change every file there.
 ## What minigw passes to Claude Code
 
 In a terminal every `claude` option works. Inside Claude Code (a skill, a subagent or its Bash tool) minigw passes
-on only these options and refuses any other:
+on only these options and refuses any other, before it shares the folder or starts `claude`:
 
 `-p`/`--print`, `--model`, `--output-format`, `--verbose`, `--max-turns`, `--append-system-prompt`,
 `--fallback-model`, `-h`/`--help`
@@ -256,6 +256,17 @@ that starts with `/`, and a prompt argument that has `@` at the start of a word.
 inside Claude Code, or with stdin that is not a terminal, the nested `claude` runs with file mentions and slash
 commands off; inside Claude Code minigw also passes `--settings` so that your `settings.json` cannot turn file
 mentions back on. `MINIGW_ALLOW_UNSAFE_FLAGS=1` turns these checks off for a person who wants them off.
+
+**How minigw tells that it runs inside Claude Code:** `CLAUDECODE` is set, or one of minigw's parent processes is
+Claude Code itself: the `claude` program (also the native installer's `…/claude/versions/<version>`) or `node` running
+Claude Code's `cli.js`. minigw walks up to 64 parent processes (macOS: `sysctl`; Linux: `/proc`; Windows: a process
+snapshot, and the command line of `node.exe`). So `env -u CLAUDECODE minigw -p --continue …` from Claude Code's Bash
+tool is refused like the same command with `CLAUDECODE`. When minigw cannot read its parent processes, it counts as
+inside Claude Code unless stdin is a terminal. A person at a terminal and your own scripts outside Claude Code (also
+with stdin from a pipe or a file) keep every option, `--continue` and `--resume` included. A trusted script that runs
+inside Claude Code and needs other options sets `MINIGW_ALLOW_UNSAFE_FLAGS=1`; Claude Code then asks you before it
+runs that command, because the skills' pre-approved `minigw -p --model …` rule does not cover it. This is a guard rail,
+not a boundary: a process that detaches from Claude Code's process tree, or another agent tool, is not recognised.
 
 The reason: other options (`--dangerously-skip-permissions`, `--allowedTools`, `--add-dir`, `--settings` …) would give
 the nested, gateway-driven `claude` permissions the user never approved.

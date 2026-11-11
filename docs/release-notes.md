@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Security: minigw recognises that it runs inside Claude Code also when `CLAUDECODE` is not set (for example `env -u CLAUDECODE minigw -p --continue …`): one of its parent processes is Claude Code. Then only the safe options are accepted, as with `CLAUDECODE`. When the parent processes cannot be read, this applies unless stdin is a terminal. A person at a terminal and your own scripts outside Claude Code keep every option; `MINIGW_ALLOW_UNSAFE_FLAGS=1` still turns the checks off. Both clients.
+- Fixed: `minigw --continue` (`-c`) continues the last conversation minigw ran in this folder (as `--resume <id>`), as documented. Before, `claude` got `-c` and continued the newest Claude Code conversation in the folder, also one you had without minigw, and sent its transcript to the gateway. With no earlier minigw conversation in the folder, minigw starts a new one and says so. In worktree mode, `--continue` now keeps the conversation's branch name, like `--resume <id>`. Both clients.
 - Fixed: while an agent was starting, the gateway could, rarely, see its own Scratch folder as used by another gateway and refuse requests (also right after a settings change). Mac app and `minigw serve` on macOS and Linux.
 - Fixed (Mac `minigw`): with several gateway profiles, a request could, rarely, get 502 "gateway … is not reachable" for up to 30 s.
 

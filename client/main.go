@@ -616,11 +616,19 @@ func main() {
 		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
 	}
 
+	// #79: -c/--continue = zadnji pogovor minigw v tej mapi (--resume <id>), ne zadnji pogovor claude v ~/.claude
+	args, dropped := continueSession(args, lastSession(cwd))
+	if dropped {
+		fmt.Fprintln(os.Stderr, "minigw: no earlier minigw conversation in "+cwd+"; starting a new one")
+	}
 	// Seja: router po njej loči seje claude -p in niti Siri. Obstoječa ob --resume <id>, sicer nova.
 	// #66: cont (-c), picker (--resume brez ID-ja), parent (ID ob --resume), fork (--fork-session), explicit (--session-id)
 	sid, own, cont, picker, fork, explicit, parent := "", false, false, false, false, false, ""
+sessionArgs:
 	for i, a := range args {
 		switch a {
+		case "--": // po »--« so le argumenti
+			break sessionArgs
 		case "-r", "--resume": // brez ID-ja = izbirnik sej v claude; nikoli skupaj z --session-id
 			own = true
 			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
@@ -652,6 +660,9 @@ func main() {
 		if !own {
 			args = append([]string{"--session-id", sid}, args...)
 		}
+	}
+	if !picker && (!fork || parent == "" || explicit) { // ID seje claude je znan (izbirnik in razcep ga izbereta sama)
+		saveLastSession(cwd, sid)
 	}
 
 	u, _ := url.Parse(saved.URL)
@@ -1025,6 +1036,7 @@ var claudeStdin io.Reader = os.Stdin
 
 // info: le podatki o claude (-v, -h), brez --settings (I1).
 func refuseUnsafeClaudeFlags(args []string, info bool) {
+	markClaudeCode() // #79: tudi claude med predniki, ne le CLAUDECODE
 	if f := unsafeClaudeFlag(args, os.Getenv); f != "" {
 		fail(f + " is not accepted when minigw runs inside Claude Code: it could give the gateway's model permissions without asking you")
 	}

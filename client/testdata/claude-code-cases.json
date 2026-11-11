@@ -1,0 +1,71 @@
+{
+  "procs": [
+    {"exe": "/opt/homebrew/Caskroom/claude-code/2.1.322/claude", "args": ["claude", "--resume"], "claude": true},
+    {"exe": "/home/u/.local/share/claude/versions/2.1.322", "args": ["/home/u/.local/bin/x"], "claude": true},
+    {"exe": "claude", "args": null, "claude": true},
+    {"exe": "C:\\Users\\u\\.local\\bin\\claude.exe", "args": null, "claude": true},
+    {"exe": "Claude.EXE", "args": null, "claude": true},
+    {"exe": "/usr/bin/node", "args": ["claude"], "claude": true},
+    {"exe": "/usr/bin/node", "args": ["node", "/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js", "-p"], "claude": true},
+    {"exe": "C:\\Program Files\\nodejs\\node.exe", "args": ["node", "C:\\Users\\u\\AppData\\Roaming\\npm\\node_modules\\@anthropic-ai\\claude-code\\cli.js"], "claude": true},
+    {"exe": "/usr/bin/node", "args": ["node", "server.js"], "claude": false},
+    {"exe": "/bin/sh", "args": ["sh", "/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js"], "claude": false},
+    {"exe": "/bin/zsh", "args": ["-zsh"], "claude": false},
+    {"exe": "/usr/bin/claude-helper", "args": ["claude-helper"], "claude": false},
+    {"exe": "/usr/bin/python3", "args": ["python3", "claude"], "claude": false},
+    {"exe": "/home/u/claude/bin/bash", "args": ["bash"], "claude": false},
+    {"exe": "", "args": null, "claude": false}
+  ],
+  "chains": [
+    {"name": "person at a terminal", "terminal": true, "claude": false,
+     "chain": [{"exe": "/bin/zsh"}, {"exe": "/usr/bin/login"}, {"exe": "/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal"}, {"exe": "/sbin/launchd"}]},
+    {"name": "user's script, stdin a pipe", "terminal": false, "claude": false,
+     "chain": [{"exe": "/bin/bash", "args": ["bash", "build.sh"]}, {"exe": "/bin/zsh"}, {"exe": "/sbin/launchd"}]},
+    {"name": "Bash tool of Claude Code", "terminal": false, "claude": true,
+     "chain": [{"exe": "/bin/zsh"}, {"exe": "/opt/homebrew/Caskroom/claude-code/2.1.322/claude", "args": ["claude"]}, {"exe": "/bin/zsh"}, {"exe": "/sbin/launchd"}]},
+    {"name": "node Claude Code, stdin a terminal", "terminal": true, "claude": true,
+     "chain": [{"exe": "/usr/bin/env"}, {"exe": "/usr/bin/node", "args": ["node", "/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js"]}, {"exe": "/sbin/init"}]},
+    {"name": "unreadable ancestor, stdin a pipe", "terminal": false, "claude": true,
+     "chain": [{"exe": "/bin/sh"}, {"unreadable": true}]},
+    {"name": "unreadable ancestor, stdin a terminal", "terminal": true, "claude": false,
+     "chain": [{"exe": "/bin/sh"}, {"unreadable": true}]},
+    {"name": "claude below an unreadable ancestor", "terminal": true, "claude": true,
+     "chain": [{"exe": "C:\\Users\\u\\.local\\bin\\claude.exe"}, {"unreadable": true}]},
+    {"name": "loop in the parent chain, stdin a pipe", "terminal": false, "claude": true,
+     "chain": [{"exe": "/bin/sh"}, {"exe": "/bin/sh", "loop": true}]},
+    {"name": "loop in the parent chain, stdin a terminal", "terminal": true, "claude": false,
+     "chain": [{"exe": "/bin/sh"}, {"exe": "/bin/sh", "loop": true}]},
+    {"name": "parent exited (Windows: not in the snapshot)", "terminal": false, "claude": false,
+     "chain": [{"exe": "cmd.exe"}, {"gone": true}]}
+  ],
+  "policy": [
+    {"name": "person at a terminal", "marker": false, "chain": 0, "override": false, "checked": false},
+    {"name": "user's script", "marker": false, "chain": 1, "override": false, "checked": false},
+    {"name": "CLAUDECODE set", "marker": true, "chain": 1, "override": false, "checked": true},
+    {"name": "env -u CLAUDECODE under claude", "marker": false, "chain": 2, "override": false, "checked": true},
+    {"name": "unreadable chain, pipe", "marker": false, "chain": 4, "override": false, "checked": true},
+    {"name": "unreadable chain, terminal", "marker": false, "chain": 5, "override": false, "checked": false},
+    {"name": "MINIGW_ALLOW_UNSAFE_FLAGS=1 under claude", "marker": false, "chain": 2, "override": true, "checked": false},
+    {"name": "MINIGW_ALLOW_UNSAFE_FLAGS=1 with CLAUDECODE", "marker": true, "chain": 0, "override": true, "checked": false}
+  ],
+  "args": [
+    {"args": ["-p", "--continue", "x"], "refused": true},
+    {"args": ["-p", "-c", "x"], "refused": true},
+    {"args": ["--print", "--resume", "0c3b5a52-4f0e-4c4b-9d7e-2b1f1a6e9c01", "x"], "refused": true},
+    {"args": ["-p", "--resume=0c3b5a52-4f0e-4c4b-9d7e-2b1f1a6e9c01", "x"], "refused": true},
+    {"args": ["-p", "--session-id", "0c3b5a52-4f0e-4c4b-9d7e-2b1f1a6e9c01", "x"], "refused": true},
+    {"args": ["-p", "--permission-mode=bypassPermissions", "x"], "refused": true},
+    {"args": ["-p", "--model=claude-codex-gpt-6.1-sol", "x"], "refused": false},
+    {"args": ["--print", "--model", "m", "--output-format=stream-json", "--verbose", "x"], "refused": false},
+    {"args": ["-p", "--model", "m", "--", "--continue"], "refused": false},
+    {"args": ["-p", "--model", "m", "--", "-c", "--resume", "id"], "refused": false}
+  ],
+  "continue": [
+    {"args": ["-p", "--continue", "x"], "last": "0c3b5a52-4f0e-4c4b-9d7e-2b1f1a6e9c01", "out": ["-p", "--resume", "0c3b5a52-4f0e-4c4b-9d7e-2b1f1a6e9c01", "x"], "dropped": false},
+    {"args": ["-c", "-p", "x"], "last": "0c3b5a52-4f0e-4c4b-9d7e-2b1f1a6e9c01", "out": ["--resume", "0c3b5a52-4f0e-4c4b-9d7e-2b1f1a6e9c01", "-p", "x"], "dropped": false},
+    {"args": ["-c", "-p", "x"], "last": "", "out": ["-p", "x"], "dropped": true},
+    {"args": ["-p", "--", "-c"], "last": "0c3b5a52-4f0e-4c4b-9d7e-2b1f1a6e9c01", "out": ["-p", "--", "-c"], "dropped": false},
+    {"args": ["-p", "--resume", "9d1e0f3a-1111-4222-8333-444455556666", "x"], "last": "0c3b5a52-4f0e-4c4b-9d7e-2b1f1a6e9c01", "out": ["-p", "--resume", "9d1e0f3a-1111-4222-8333-444455556666", "x"], "dropped": false},
+    {"args": ["-p", "x"], "last": "", "out": ["-p", "x"], "dropped": false}
+  ]
+}
