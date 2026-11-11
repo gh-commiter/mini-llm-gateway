@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -190,6 +191,12 @@ func TestScratchSiblingTakeOver(t *testing.T) {
 	for _, bad := range []string{`{"name":"../ana"}`, `{"name":"nope"}`, `{"name":"gw-x.old-2026-01-01"}`, `{"name":"` + filepath.Base(cur) + `"}`} {
 		if st, _ := s.adminDo("POST", "/general/scratch/take", []byte(bad)); st != 400 {
 			t.Fatalf("%s: %d", bad, st)
+		}
+	}
+	for _, bad := range []string{"", "..", "a/b", `..\x`, "C:x", "/abs"} {
+		body, _ := json.Marshal(map[string]string{"name": bad})
+		if st, _ := s.adminDo("POST", "/general/scratch/take", body); st != 400 {
+			t.Fatalf("name %q: %d", bad, st)
 		}
 	}
 	if s.scratchOther.Load() {

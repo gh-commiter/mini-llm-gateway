@@ -216,6 +216,9 @@ func takeScratch(old, cur, id string, now time.Time) (dst, aside string, err err
 		return "", "", errors.New("the folder is not a real folder of this user")
 	}
 	dst = filepath.Join(filepath.Dir(old), id)
+	if !strings.HasPrefix(filepath.Clean(dst), filepath.Clean(filepath.Dir(old))+string(filepath.Separator)) {
+		return "", "", errors.New("the new folder name is not inside the Scratch base")
+	}
 	var moved [][2]string // za vrnitev ob napaki
 	undo := func(err error) (string, string, error) {
 		for _, m := range slices.Backward(moved) {
@@ -370,7 +373,7 @@ const scratchTakeBusy = "scratch folder: minigw sessions or agents are active; t
 func (s *server) takeScratchAPI(body []byte) (int, any) {
 	fail := func(status int, msg string) (int, any) { return status, errorBody(status, msg) }
 	var b struct {
-		Name string `json:"name"` // sosednja mapa v osnovi; prazno = mapa, ki jo imenuje nastavitev
+		Name *string `json:"name"` // sosednja mapa v osnovi; izpuščeno = mapa, ki jo imenuje nastavitev (prazno ime: 400)
 	}
 	if len(bytes.TrimSpace(body)) > 0 {
 		if err := decodeStrict(body, &b); err != nil {
@@ -401,13 +404,18 @@ func (s *server) takeScratchAPI(body []byte) (int, any) {
 	}()
 	c := s.conf()
 	cur, old := c.scratchDir(), c.scratchDir()
-	if b.Name != "" { // le neposredna podmapa osnove, prava mapa druge instance
-		if strings.ContainsAny(b.Name, `/\:`) || b.Name == "." || b.Name == ".." || filepath.Base(b.Name) != b.Name {
+	if b.Name != nil { // le neposredna podmapa osnove, prava mapa druge instance
+		name := *b.Name
+		if !filepath.IsLocal(name) || filepath.Base(name) != name || strings.ContainsAny(name, `/\:`) {
 			return fail(400, "name: a folder name in the Scratch base, without path separators")
 		}
-		old = filepath.Join(filepath.Dir(cur), b.Name)
-		if i := slices.IndexFunc(scratchSiblings(cur, c.Instance), func(x scratchSibling) bool { return x.Name == b.Name }); i < 0 {
-			return fail(400, "name: "+b.Name+" is not another gateway's Scratch folder in "+filepath.Dir(cur))
+		base := filepath.Clean(filepath.Dir(cur))
+		old = filepath.Join(base, name)
+		if !strings.HasPrefix(old, base+string(filepath.Separator)) {
+			return fail(400, "name: a folder name in the Scratch base, without path separators")
+		}
+		if i := slices.IndexFunc(scratchSiblings(cur, c.Instance), func(x scratchSibling) bool { return x.Name == name }); i < 0 {
+			return fail(400, "name: "+name+" is not another gateway's Scratch folder in "+filepath.Dir(cur))
 		}
 	}
 	switch scratchState(old, c.Instance) {
