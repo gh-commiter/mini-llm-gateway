@@ -4,6 +4,7 @@
 
 ## 0.5.25
 
+- Fixed (Windows gateway `minigw serve`, #83): an allowed folder below a junction in its path (for example `C:\work\x\proj` where `x` is a junction) was refused with "folder: The system cannot find the path specified."; it is accepted now, and still refused when the junction leads into the config folder.
 - Fixed (#83, `minigw serve`, all systems): an allowed folder that does not exist (a drive that is not attached, for example `F:\proj` with no F:) stopped the gateway from starting ("cannot start: folder: … cannot find the path"); it now starts, keeps the folder and Claude CLI and Codex stay on. Agents get the folder only once it exists and passes the folder checks again (real path, not near the config folder); a folder that was missing must also be a real folder of this user with no link in its path, else it stays unused (logged once) until it is removed and added again in the allowed folders (a mapped NAS drive that was missing at start included). Saving the allowed folders still refuses a new folder that does not exist.
 - Changed (Windows gateway): Scratch on a network share (a mapped drive to a NAS, a UNC path) is refused with "Scratch is not supported on a network share: the owner of folders there cannot be checked" instead of "is owned by another user" (the check is unchanged since 0.5.24).
 - Fixed (settings page, #83): a left-out allowed folder shows its own reason ("cannot be checked" or "scratch folder or Copilot's cache"), and in Slovenian the reason after "Claude CLI in Codex sta izklopljena:" is in Slovenian.
