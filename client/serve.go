@@ -719,6 +719,9 @@ func checkFolder(f, cfgDir string, missingOK bool) (string, error) {
 	if err != nil && runtime.GOOS == "windows" { // stičišče sredi poti (C:\work\x\proj, x = stičišče): EvalSymlinks pade
 		if r, ferr := finalPath(abs); ferr == nil {
 			real, err = r, nil
+			if strings.HasPrefix(r, `\\`) && !strings.HasPrefix(abs, `\\`) {
+				real = abs // mapiran pogon: ostane črka (Claude Code ne bere poti UNC); fin spodaj preveri r
+			}
 		}
 	}
 	var fin string
