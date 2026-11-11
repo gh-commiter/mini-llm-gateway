@@ -122,7 +122,7 @@ func (s *server) agentArgs(dir string, readOnly bool) []string {
 	c := s.conf()
 	dirs := []string{dir} // delovna mapa in dovoljene mape (kot allowedRoots na Macu)
 	for _, f := range c.AllowedFolders {
-		if f != dir && !scratchHiddenOverlaps(f, c.Scratch) && len(copilotCacheOverlaps([]string{f})) == 0 { // L1, #26
+		if f != dir && !scratchHiddenOverlaps(f, c.Scratch) && len(copilotCacheOverlaps([]string{f})) == 0 && isDir(f) { // L1, #26
 			dirs = append(dirs, f)
 		}
 	}
@@ -273,6 +273,9 @@ func scratchOverlaps(allowed []string, scratch string) []string {
 	}
 	return bad
 }
+
+// isDir (#83): dovoljena mapa, ki je zdaj ni (pogon odklopljen), ne gre agentom (kot fileExists na Macu).
+func isDir(p string) bool { st, err := os.Stat(p); return err == nil && st.IsDir() }
 
 // realPath (#83): kanonična pot (finalPath: na Windows tudi stičišča, preslikan pogon → UNC); za pot, ki je še ni, prek
 // najbližje obstoječe nadrejene mape. Navzgor le, ko pot res ne obstaja; vsaka druga napaka (dostop zavrnjen, visoča
@@ -798,7 +801,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			boxRW = append(boxRW, dir)
 		}
 		for _, f := range s.conf().AllowedFolders {
-			if f != dir && !scratchHiddenOverlaps(f, s.conf().Scratch) && len(copilotCacheOverlaps([]string{f})) == 0 { // kot agentArgs
+			if f != dir && !scratchHiddenOverlaps(f, s.conf().Scratch) && len(copilotCacheOverlaps([]string{f})) == 0 && isDir(f) { // kot agentArgs
 				if ro {
 					boxRO = append(boxRO, f)
 				} else {

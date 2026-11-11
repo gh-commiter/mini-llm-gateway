@@ -64,7 +64,7 @@ func TestRealPathLinks(t *testing.T) {
 	if agentWritable(exeDir, []string{target}) {
 		t.Error("unrelated folder counted as writable")
 	}
-	if _, err := checkFolder(toCfg, cfg); err == nil {
+	if _, err := checkFolder(toCfg, cfg, true); err == nil {
 		t.Error("checkFolder: link to the config folder accepted")
 	}
 	if !under(realOf(t, filepath.Join(toCfg, "admin.secret")), cfg) {

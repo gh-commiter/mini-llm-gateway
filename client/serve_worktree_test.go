@@ -372,7 +372,7 @@ func TestAllowedFolderAroundScratch(t *testing.T) {
 	for _, f := range []string{parent, inside} {
 		cc := s.conf()
 		cc.AllowedFolders = []string{f}
-		if _, err := checkAgent(&cc, s.cfgDir); err == nil || !strings.Contains(err.Error(), "scratch folder") {
+		if _, err := checkAgent(&cc, s.cfgDir, nil); err == nil || !strings.Contains(err.Error(), "scratch folder") {
 			t.Fatalf("%s accepted: %v", f, err)
 		}
 	}
@@ -2434,5 +2434,80 @@ func TestGitGuardPins71(t *testing.T) {
 		if !strings.Contains(g, "-c "+pin) {
 			t.Errorf("missing -c %s in %q", pin, g)
 		}
+	}
+}
+
+// #83 (W6.1): dovoljena mapa, ki je ni (Windows: tudi pogon, ki ga ni), ob zagonu ne ustavi prehoda: ostane, Claude CLI
+// in Codex ostaneta vklopljena; sprememba drugih nastavitev jo obdrži, nova mapa, ki je ni, je zavrnjena.
+func TestAllowedFolderMissingAtStart(t *testing.T) {
+	missing := []string{filepath.Join(t.TempDir(), "gone", "proj")}
+	if runtime.GOOS == "windows" {
+		for l := 'Z'; l >= 'D'; l-- {
+			if _, err := os.Stat(string(l) + `:\`); os.IsNotExist(err) {
+				missing = append(missing, string(l)+`:\proj`)
+				break
+			}
+		}
+		if len(missing) == 1 {
+			t.Log("no unused drive letter: missing drive not tested")
+		}
+	}
+	for _, m := range missing {
+		t.Cleanup(releaseScratch)
+		scratch := filepath.Join(t.TempDir(), "scratch")
+		os.MkdirAll(scratch, 0o700)
+		k, _ := ecdh.X25519().GenerateKey(rand.Reader)
+		c := serveConfig{Token: "tok", Key: base64url(k.Bytes()), Tools: defaultTools, PermissionMode: "dontAsk", Scratch: scratch,
+			AllowedFolders: []string{m}, Codex: agentCLI{Enabled: true}}
+		cfg := filepath.Join(t.TempDir(), "serve.json")
+		writeServeConfig(cfg, c)
+		s, err := newServer(c, cfg)
+		if err != nil {
+			t.Fatalf("%s: gateway did not start: %v", m, err)
+		}
+		if got := s.conf(); got.ClaudeDisabled || !got.Codex.Enabled || !slices.Equal(got.AllowedFolders, []string{m}) || s.claudeInfo().Off != "" {
+			t.Fatalf("%s: %+v, off %q", m, got, s.claudeInfo().Off)
+		}
+		if a := strings.Join(s.agentArgs(t.TempDir(), false), " "); strings.Contains(a, "proj") { // ga ni: ne agentom
+			t.Fatalf("%s: missing folder given to the agent: %s", m, a)
+		}
+		if st, b := s.adminDo("PATCH", "/agents/claude", []byte(`{"permissionMode":"acceptEdits"}`)); st != 200 {
+			t.Fatalf("%s: other change refused: %d %v", m, st, b)
+		}
+		if st, _ := s.adminDo("PATCH", "/agents/claude", []byte(`{"folders":"`+strings.ReplaceAll(m, `\`, `\\`)+`,`+strings.ReplaceAll(m+"2", `\`, `\\`)+`"}`)); st != 400 {
+			t.Fatalf("%s: new missing folder accepted: %d", m, st)
+		}
+		cc := s.conf()
+		cc.AllowedFolders = []string{filepath.Join(filepath.Dir(cfg), "later")} // še ni, v mapi nastavitev
+		if _, err := checkAgent(&cc, s.cfgDir, cc.AllowedFolders); err == nil || !strings.Contains(err.Error(), "config folder") {
+			t.Fatalf("missing folder inside the config folder accepted: %v", err)
+		}
+	}
+}
+
+// #83 (W6.2): visoča povezava kot dovoljena mapa ob zagonu: izpuščena, Claude CLI in Codex izklopljena; stran dobi
+// mapo med »ni je mogoče preveriti« in napako razrešitve (sestavi razlog v slovenščini).
+func TestAllowedFolderUncheckedAtStart(t *testing.T) {
+	t.Cleanup(releaseScratch)
+	dir := t.TempDir()
+	dangling := filepath.Join(dir, "link")
+	if err := os.Symlink(filepath.Join(dir, "gone"), dangling); err != nil {
+		t.Skip("no symlinks:", err)
+	}
+	scratch := filepath.Join(t.TempDir(), "scratch")
+	os.MkdirAll(scratch, 0o700)
+	k, _ := ecdh.X25519().GenerateKey(rand.Reader)
+	c := serveConfig{Token: "tok", Key: base64url(k.Bytes()), Tools: defaultTools, PermissionMode: "dontAsk", Scratch: scratch,
+		AllowedFolders: []string{dangling}, Codex: agentCLI{Enabled: true}}
+	cfg := filepath.Join(t.TempDir(), "serve.json")
+	writeServeConfig(cfg, c)
+	s, err := newServer(c, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := s.claudeInfo()
+	if !s.conf().ClaudeDisabled || !slices.Equal(info.LeftOut, []string{dangling}) || !slices.Equal(info.LeftOutUnchecked, []string{dangling}) ||
+		len(info.OffErrors) != 1 || !strings.Contains(info.Off, "cannot be checked") {
+		t.Fatalf("%+v", info)
 	}
 }

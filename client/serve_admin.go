@@ -73,10 +73,12 @@ type apiClaude struct {
 	DisabledTools        []string       `json:"disabledTools"`
 	PermissionMode       string         `json:"permissionMode"`
 	SettingSources       string         `json:"settingSources"`
-	Work                 string         `json:"work"`              // #45: direct, sync ali worktree
-	Off                  string         `json:"off,omitempty"`     // zakaj sta Claude CLI in Codex izklopljena ob zagonu (offReason)
-	LeftOut              []string       `json:"leftOut,omitempty"` // mape iz serve.json, izpuščene ob zagonu (offFolders)
-	Login                map[string]any `json:"login"`             // #68: vrstica Login (stanje žetona setup-token / ključa API, nikoli vrednost)
+	Work                 string         `json:"work"`                       // #45: direct, sync ali worktree
+	Off                  string         `json:"off,omitempty"`              // zakaj sta Claude CLI in Codex izklopljena ob zagonu (offReason)
+	LeftOut              []string       `json:"leftOut,omitempty"`          // mape iz serve.json, izpuščene ob zagonu (offFolders)
+	LeftOutUnchecked     []string       `json:"leftOutUnchecked,omitempty"` // od teh tiste, ki jih ni mogoče preveriti (offUnchecked)
+	OffErrors            []string       `json:"offErrors,omitempty"`        // napake razrešitve v razlogu (offErrors)
+	Login                map[string]any `json:"login"`                      // #68: vrstica Login (stanje žetona setup-token / ključa API, nikoli vrednost)
 }
 
 type apiGeneral struct {
@@ -796,7 +798,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			}
 		}
 		s.mu.RLock()
-		left := s.offFolders
+		left, kept := s.offFolders, slices.Clone(s.cfg.AllowedFolders)
 		s.mu.RUnlock()
 		if b.Folders == nil && len(left) > 0 { // vsaka sprememba brez map: sicer »serve.json differs« (mapa je še v datoteki)
 			return fail(400, "first save the allowed folders without "+strings.Join(left, ", ")+" (settings page → Claude CLI → Allowed folders, or minigw gw claude --folders …)")
@@ -844,7 +846,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			if b.Work != nil {
 				c.ClaudeWork = storedWork(*b.Work)
 			}
-			e, err := checkAgent(c, s.cfgDir)
+			e, err := checkAgent(c, s.cfgDir, kept)
 			exe = e
 			return err
 		}, func() {
@@ -853,7 +855,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 				s.offReason = ""
 			}
 			if b.Folders != nil { // shranjen seznam je brez izpuščenih map (tudi v serve.json)
-				s.offFolders = nil
+				s.offFolders, s.offUnchecked, s.offErrors = nil, nil, nil
 			}
 		})
 		if err != nil {
@@ -1256,7 +1258,7 @@ func (s *server) claudeInfo() apiClaude {
 	}
 	if c.ClaudeDisabled {
 		s.mu.RLock()
-		info.Off, info.LeftOut = s.offReason, s.offFolders
+		info.Off, info.LeftOut, info.LeftOutUnchecked, info.OffErrors = s.offReason, s.offFolders, s.offUnchecked, s.offErrors
 		s.mu.RUnlock()
 	}
 	return info
