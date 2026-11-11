@@ -44,7 +44,15 @@ func (s *server) scratchCheck(scratch string, explicit bool) string {
 			return "scratch folder: " + why
 		}
 	}
-	if under(scratch, s.cfgDir) || under(s.cfgDir, scratch) {
+	rs, err := realPath(scratch)
+	if err != nil { // #83: nerazrešljivo = zavrnjeno (scratchOverlaps, scratchInsideOther)
+		return "scratch folder: " + err.Error()
+	}
+	rc, err := realPath(s.cfgDir)
+	if err != nil {
+		return "scratch folder: " + err.Error()
+	}
+	if under(scratch, s.cfgDir) || under(s.cfgDir, scratch) || under(rs, rc) || under(rc, rs) { // #83: tudi skozi stičišče
 		return "scratch folder: must not contain or be inside the config folder " + s.cfgDir
 	}
 	if bad := scratchOverlaps(s.conf().AllowedFolders, scratch); len(bad) > 0 { // L1: tudi privzeta mapa
@@ -90,7 +98,12 @@ func (s *server) moveScratchAPI(body []byte) (int, any) {
 		return fail(409, why)
 	}
 	old := s.conf().scratchDir()
-	if realPath(old) == realPath(to) {
+	ro, err1 := realPath(old)
+	rt, err2 := realPath(to)
+	if err := errors.Join(err1, err2); err != nil { // #83
+		return fail(400, err.Error())
+	}
+	if samePath(ro, rt) {
 		g := s.apiGeneral(false)
 		g.Connect = ""
 		return 200, g

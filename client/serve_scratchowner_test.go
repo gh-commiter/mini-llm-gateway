@@ -298,7 +298,7 @@ func TestScratchHiddenSiblings(t *testing.T) {
 	if slices.Contains(h, filepath.Join(base, "Work.old-2025")) {
 		t.Fatalf("user folder named *.old-* hidden: %v", h)
 	}
-	if slices.Contains(h, filepath.Join(base, "Photos")) || slices.Contains(h, base) || slices.Contains(h, realPath(base)) {
+	if slices.Contains(h, filepath.Join(base, "Photos")) || slices.Contains(h, base) || slices.Contains(h, realOf(t, base)) {
 		t.Fatalf("base or unrelated folder hidden: %v", h)
 	}
 }
@@ -324,7 +324,7 @@ func TestScratchBaseInsideOtherRefused(t *testing.T) {
 // M1 (0.5.24, kot resolveCwd na Macu): dovoljena mapa v skriti mapi ali okoli nje ne gre v peskovnik agenta (bwrap bi
 // jo spet vezal, allowRead Claude bi preglasil denyRead); druga mapa v osnovi gre.
 func TestAllowedFolderInHiddenScratchSkipped(t *testing.T) {
-	base := realPath(t.TempDir()) // newServer hrani kanonične poti
+	base := realOf(t, t.TempDir()) // newServer hrani kanonične poti
 	in := filepath.Join(base, "gw-x.old-2026-11-10", "proj")
 	os.MkdirAll(in, 0o700)
 	writeOwner(t, filepath.Join(base, "gw-other"), "gw-other")

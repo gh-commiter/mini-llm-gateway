@@ -291,7 +291,7 @@ func TestServeRefusesDirectMode(t *testing.T) {
 		sc.unregister()
 	}
 	// M1: repozitorij v nadrejeni mapi (dotfiles v domači mapi, monorepo) → sync, ne worktree; koren sam → worktree.
-	repo := realPath(t.TempDir()) // macOS: /var → /private/var, kot ga vrne git
+	repo := realOf(t, t.TempDir()) // macOS: /var → /private/var, kot ga vrne git
 	writeT(t, filepath.Join(repo, "sub", "a.txt"), "a\n")
 	gitT(t, repo, "init", "-q", "-b", "main")
 	gitT(t, repo, "add", "-A")

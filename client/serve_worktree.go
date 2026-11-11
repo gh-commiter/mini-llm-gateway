@@ -1338,7 +1338,7 @@ func finalizeNested(slot *wtSlot, n *wtNested, agent, out string, links map[stri
 	if slot.unconfined || runtime.GOOS == "linux" && finalizeBwrap() == "" {
 		return "", "the nested repository " + n.path + " does not come back on this gateway: that needs bwrap with its own PID namespace for the agent; use sync"
 	}
-	rr, err := os.OpenRoot(realPath(slot.wt))
+	rr, err := os.OpenRoot(slot.wt) // #83: OpenRoot sam razreši povezave v poti; ista pot gre gitu (brez UNC namesto Q:)
 	if err != nil {
 		return "", moved
 	}
@@ -1359,7 +1359,7 @@ func finalizeNested(slot *wtSlot, n *wtNested, agent, out string, links map[stri
 	if runtime.GOOS == "linux" {
 		tip = finalize(n.repo, "", slot.branch, n.base, agent, out, links, nr)
 	} else {
-		tip = finalize(n.repo, filepath.Join(realPath(slot.wt), filepath.FromSlash(n.path)), slot.branch, n.base, agent, out, links, nil)
+		tip = finalize(n.repo, filepath.Join(slot.wt, filepath.FromSlash(n.path)), slot.branch, n.base, agent, out, links, nil)
 	}
 	if afterNestedFinalize != nil {
 		afterNestedFinalize(n)

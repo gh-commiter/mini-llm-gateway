@@ -168,7 +168,7 @@ func (c serveConfig) scratchDir() string {
 // Osnova, ki je že Scratch tega prehoda ali se imenuje po instanci, ostane.
 func (s *server) scratchFolder(base string) string {
 	c := s.conf()
-	if c.Instance == "" || filepath.Base(base) == c.Instance || realPath(base) == realPath(c.scratchDir()) {
+	if c.Instance == "" || filepath.Base(base) == c.Instance || sameReal(base, c.scratchDir()) {
 		return base
 	}
 	return filepath.Join(base, c.Instance)
@@ -289,7 +289,7 @@ func scratchSiblings(cur, id string) []scratchSibling {
 	var out []scratchSibling
 	for _, e := range ents {
 		p := filepath.Join(filepath.Dir(cur), e.Name())
-		if !e.IsDir() || e.Type()&fs.ModeSymlink != 0 || strings.Contains(e.Name(), ".old-") || realPath(p) == realPath(cur) ||
+		if !e.IsDir() || e.Type()&fs.ModeSymlink != 0 || strings.Contains(e.Name(), ".old-") || sameReal(p, cur) ||
 			scratchOwner(p) == "" || !scratchFolderMine(p) {
 			continue
 		}
@@ -349,7 +349,11 @@ func scratchHiddenOverlaps(f, scratch string) bool {
 // scratchInsideOther (L1, 0.5.24): osnova je mapa z datoteko lastnika druge instance ali v njej (njen prevzem bi
 // pobrisal našo mapo v njej); "" = ne, sicer ta mapa.
 func scratchInsideOther(base, id string) string {
-	for _, start := range []string{filepath.Clean(base), realPath(base)} {
+	starts := []string{filepath.Clean(base)}
+	if r, err := realPath(base); err == nil { // napaka: scratchCheck zavrne že prej
+		starts = append(starts, r)
+	}
+	for _, start := range starts {
 		for d := start; ; d = filepath.Dir(d) {
 			if o := scratchOwner(d); o != "" && o != id {
 				return d

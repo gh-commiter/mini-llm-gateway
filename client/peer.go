@@ -222,15 +222,13 @@ func listenerInDir(port int, dir string) bool {
 	if !ok {
 		return true
 	}
-	canon := func(p string) string { // Windows: preslikan pogon (Q:\) in pot procesa (\\strežnik\…) do iste oblike
-		if f, err := finalPath(p); err == nil {
-			return f
-		}
-		return realPath(p)
+	// Windows: preslikan pogon (Q:\) in pot procesa (\\strežnik\…) do iste oblike; #83: nerazrešljivo = ne
+	root, err := realPath(dir)
+	if dir == "" || err != nil {
+		return false
 	}
-	root := canon(dir)
 	for _, e := range exes {
-		if !under(canon(e), root) {
+		if r, err := realPath(e); err != nil || !under(r, root) {
 			return false
 		}
 	}
@@ -243,9 +241,14 @@ func listenerInDir(port int, dir string) bool {
 // ponytail: strežnik mora biti pod njo; drugačna postavitev paketa bi ga zavrnila.
 func foundryInstallDir(exe string) string {
 	abs, _ := filepath.Abs(exe)
-	d := filepath.Dir(realPath(exe))
+	r, err := realPath(exe)
+	if err != nil {
+		return "" // #83: listenerInDir zavrne
+	}
+	d := filepath.Dir(r)
 	up := strings.ToLower(filepath.Base(filepath.Dir(d)) + "/" + filepath.Base(filepath.Dir(filepath.Dir(d))))
-	if strings.EqualFold(filepath.Base(d), "bin") && (d != realPath(filepath.Dir(abs)) || strings.Contains(up, "foundry")) {
+	ra, err := realPath(filepath.Dir(abs)) // napaka: ostane bin (ožji koren)
+	if strings.EqualFold(filepath.Base(d), "bin") && (err == nil && !samePath(d, ra) || strings.Contains(up, "foundry")) {
 		d = filepath.Dir(d)
 	}
 	return d

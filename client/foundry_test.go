@@ -256,7 +256,7 @@ func TestFoundryReviewFixes(t *testing.T) {
 		t.Fatalf("install dir: %s", d)
 	}
 	// N4: navaden bin ostane bin; povezava v paket z lastno mapo gre nad njegov bin
-	tmp := realPath(t.TempDir())
+	tmp := realOf(t, t.TempDir())
 	os.MkdirAll(filepath.Join(tmp, "usr", "bin"), 0o700)
 	os.MkdirAll(filepath.Join(tmp, "pkg", "2.0", "bin"), 0o700)
 	os.WriteFile(filepath.Join(tmp, "usr", "bin", "foundry"), nil, 0o700)

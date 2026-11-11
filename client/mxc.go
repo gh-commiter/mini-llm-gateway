@@ -316,7 +316,10 @@ func mxcPathDirs(path []string, keep []string, home, scratch, cfgDir string) []s
 // naštevanje vseh prednikov svoje mape, zato agenti vidijo imena v domači mapi (tudi .ssh), ne vsebine. "" = ne.
 func scratchHomeWarning(scratch string) string {
 	home, _ := os.UserHomeDir()
-	if home == "" || scratch == "" || !under(realPath(scratch), realPath(home)) {
+	rs, err1 := realPath(scratch)
+	rh, err2 := realPath(home)
+	if home == "" || scratch == "" || err1 != nil || err2 != nil || !under(rs, rh) { // le opozorilo
+
 		return ""
 	}
 	return "the Scratch folder " + scratch + " is inside your home folder, so agents in the sandbox can list the names " +
@@ -453,10 +456,7 @@ func mxcWrap(wxc, exe string, args []string, m agentMounts) (string, []string, f
 	}
 	slices.Sort(env)
 	cwd := m.cwd
-	var deny []string
-	if m.cfgDir != "" {
-		deny = []string{m.cfgDir}
-	}
+	deny := scratchPaths(m.cfgDir) // #83: dobesedno in kanonično (dovoljenje skozi drugo obliko poti ne obide prepovedi)
 	req := mxcRequestFor(mxcSpec{argv: append([]string{exe}, args...), cwd: cwd, env: env, rw: rw, ro: ro,
 		deny: deny, egressDeny: m.noNet, allowIPs: m.allowIPs, loopback: m.loopback})
 	b, err := json.MarshalIndent(req, "", " ")

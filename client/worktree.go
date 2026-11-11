@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -46,8 +45,7 @@ func gitToplevel(cwd string) string {
 // repoRoot: top je ta mapa (worktree le v korenu repozitorija: nadrejeni, npr. dotfiles v domači mapi ali monorepo,
 // bi poslal tudi datoteke zunaj nje; M1).
 func repoRoot(top, cwd string) bool {
-	rt, rc := realPath(top), realPath(cwd)
-	return top != "" && (rt == rc || runtime.GOOS == "windows" && strings.EqualFold(rt, rc))
+	return top != "" && sameReal(top, cwd)
 }
 
 // workTop: repozitorij za worktree; auto le v korenu repozitorija (podmapa → sync), izrecni worktree tudi nadrejeni.
@@ -115,8 +113,10 @@ func nestedInside(top, rel string) bool {
 			return false
 		}
 	}
-	t, rt := gitToplevel(d), realPath(top)
-	return t != "" && realPath(t) == realPath(d) && strings.HasPrefix(realPath(d), rt+string(filepath.Separator))
+	t := gitToplevel(d)
+	rd, err1 := realPath(d)
+	rt, err2 := realPath(top)
+	return t != "" && err1 == nil && err2 == nil && sameReal(t, d) && hasPathPrefix(rd, rt) // #83: napaka = ne
 }
 
 // gitlinks: poti gitlinkov (160000) v indeksu repozitorija dir.
