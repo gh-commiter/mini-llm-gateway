@@ -109,8 +109,11 @@ func defaultServeConfigPath() string {
 // configBase: mapa nastavitev brez spremenljivk okolja (XDG_CONFIG_HOME, HOME, APPDATA): proces, ki jih nastavi, ne
 // sme minigw router preusmeriti na lažen serve.json. Windows: znana mapa RoamingAppData; drugod domača mapa iz baze
 // uporabnikov. Šele če to ne uspe, os.UserConfigDir.
+// knownConfigDirFn: testi (runIsolated) jo preusmerijo; znana mapa ne bere okolja.
+var knownConfigDirFn = knownConfigDir
+
 func configBase() (string, error) {
-	if dir, err := knownConfigDir(); err == nil && dir != "" {
+	if dir, err := knownConfigDirFn(); err == nil && dir != "" {
 		return dir, nil
 	}
 	return os.UserConfigDir()

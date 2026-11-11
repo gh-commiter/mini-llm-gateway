@@ -43,10 +43,24 @@ func codexFinalPath(p string) string {
 	buf := make([]uint16, windows.MAX_LONG_PATH)
 	for _, flags := range []uint32{0, 0x8} { // FILE_NAME_NORMALIZED, FILE_NAME_OPENED
 		if n, err := windows.GetFinalPathNameByHandle(h, &buf[0], uint32(len(buf)), flags); err == nil && n > 0 && int(n) < len(buf) {
-			return trimFinalPrefix(windows.UTF16ToString(buf[:n]))
+			f := trimFinalPrefix(windows.UTF16ToString(buf[:n]))
+			if flags != 0 && hasShortName(f) { // L-a: odprto ime ni razširjeno; kratko ime 8.3 je druga pot do iste mape
+				return ""
+			}
+			return f
 		}
 	}
 	return ""
+}
+
+// hasShortName: katera sestavina poti je kratko ime 8.3 (shortName, sync.go).
+func hasShortName(p string) bool {
+	for _, c := range strings.Split(p, `\`) {
+		if shortName.MatchString(c) {
+			return true
+		}
+	}
+	return false
 }
 
 // finalPath: kanonična pot za preverbo »ostane v korenu« (davResolve, protectedCanonical). filepath.EvalSymlinks od

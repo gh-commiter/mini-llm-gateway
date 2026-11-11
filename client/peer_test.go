@@ -98,31 +98,6 @@ func TestMain(m *testing.M) {
 	os.Exit(runIsolated(m))
 }
 
-// runIsolated: na Windows ves tek z lastnima %APPDATA% in %LOCALAPPDATA% (os.UserConfigDir, os.UserCacheDir), da test
-// nikoli ne piše v pravo namestitev (connection.json, serve.json, mapa minigw). Mapa je pod pravo %LOCALAPPDATA%, ne v
-// %TEMP% (nonTempDir: Scratch zunaj začasnih map); po teku izbrisana. Register in Credential Manager testi zamenjajo sami.
-func runIsolated(m *testing.M) int {
-	if runtime.GOOS != "windows" {
-		return m.Run()
-	}
-	base, err := os.UserCacheDir()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "no %LOCALAPPDATA%: refusing to run tests against the real profile")
-		return 2
-	}
-	d, err := os.MkdirTemp(base, "minigw-test-profile-")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "cannot isolate the profile:", err)
-		return 2
-	}
-	defer os.RemoveAll(d)
-	for k, sub := range map[string]string{"APPDATA": "Roaming", "LOCALAPPDATA": "Local"} {
-		os.MkdirAll(filepath.Join(d, sub), 0o700)
-		os.Setenv(k, filepath.Join(d, sub))
-	}
-	return m.Run()
-}
-
 // H1, R1, R4: proces, ki ga je pognal router (agent), tudi vnuk po dvojnem forku, ne pride skozi skrbniški API
 // (s pravo skrivnostjo) in ne do prijave strani z nastavitvami.
 func TestAdminRefusesAgentProcess(t *testing.T) {

@@ -90,7 +90,7 @@ func davRefuse(rel []string) davResponse {
 // (razrešitev in pisanje v istem ročaju korena) — 0.5.25.
 var davWriteMu sync.Mutex
 
-var davMutating = map[string]bool{"PUT": true, "MOVE": true, "COPY": true, "DELETE": true, "MKCOL": true, "PROPPATCH": true}
+var davMutating = map[string]bool{"PUT": true, "MOVE": true, "COPY": true, "DELETE": true, "MKCOL": true, "PROPPATCH": true, "LOCK": true}
 
 func davHandle(method, path string, headers map[string]string, body []byte, root, prefix string) davResponse {
 	if davMutating[method] {

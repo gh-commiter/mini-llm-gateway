@@ -63,3 +63,12 @@ func TestDavResolveLongPathAndJunction(t *testing.T) {
 		t.Error("sync: escaped through a junction before a long path")
 	}
 }
+
+// L-a: kratko ime 8.3 v poti (odprto ime, FILE_NAME_OPENED) se zavrne.
+func TestHasShortName(t *testing.T) {
+	for p, want := range map[string]bool{`\\srv\share\PROGRA~1\x`: true, `C:\Users\ANA~1`: true, `C:\a~b\c`: false, `C:\Users\ana\x.txt`: false} {
+		if hasShortName(p) != want {
+			t.Errorf("%q", p)
+		}
+	}
+}

@@ -409,7 +409,12 @@ func TestAdminReviewFixes(t *testing.T) {
 	data, _ := os.ReadFile(cfg)
 	os.WriteFile(outside, data, 0o644)
 	os.Remove(cfg)
-	os.Symlink(outside, cfg) // Windows brez Developer Mode: povezave ni, serve.json se le zapiše na novo
+	if err := os.Symlink(outside, cfg); err != nil { // Windows brez Developer Mode: povezave ni, serve.json ostane datoteka
+		if runtime.GOOS != "windows" {
+			t.Fatal(err)
+		}
+		os.WriteFile(cfg, data, 0o600)
+	}
 	if st, _ := admin("PATCH", adminPrefix+"/agents/claude", `{"tools":"Glob,LS"}`); st != 200 {
 		t.Fatal("update")
 	}

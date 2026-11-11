@@ -610,6 +610,7 @@ func TestWorktreeNestedRepoFilterDoesNotRun(t *testing.T) {
 // N9 (odločitev 0.5.20): ugnezden repozitorij v poti, ki jo git prezre (build/_deps od CMake FetchContent), ne ustavi
 // vrnitve veje; v poti, ki je git ne prezre (podmodul, ugnezden repozitorij), veja ne gre nazaj, sporočilo pove zakaj.
 func TestWorktreeNestedRepoIgnoredDelivered(t *testing.T) {
+	t.Setenv("GIT_CONFIG_PARAMETERS", "'safe.bareRepository=explicit'") // pogosta utrditev (HPX360): pot izdelka je ne sme rabiti
 	root := t.TempDir()
 	client, repo, wt := filepath.Join(root, "c"), filepath.Join(root, "repos", "d", "r.git"), filepath.Join(root, "wt")
 	os.MkdirAll(client, 0o755)

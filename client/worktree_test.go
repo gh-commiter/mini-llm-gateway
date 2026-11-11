@@ -16,7 +16,11 @@ func gitT(t *testing.T, dir string, args ...string) string {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not installed")
 	}
-	out, err := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@x"}, args...)...).Output()
+	at := []string{"-C", dir}
+	if _, err := os.Stat(filepath.Join(dir, "HEAD")); err == nil && errFromStat(filepath.Join(dir, ".git")) != nil {
+		at = []string{"--git-dir", dir} // golo: z safe.bareRepository=explicit git ga sam ne najde
+	}
+	out, err := exec.Command("git", append(append(at, "-c", "user.name=t", "-c", "user.email=t@x"), args...)...).Output()
 	if err != nil {
 		var stderr []byte
 		if e, ok := err.(*exec.ExitError); ok {
@@ -37,6 +41,7 @@ func writeT(t *testing.T, path, text string) {
 
 // Router, kot ga naredi Worktree.swift: golo zrcalo iz bundla odjemalca, klon agenta, bundle veje nazaj.
 func TestWorktreeClientRoundTripAndMaliciousBranch(t *testing.T) {
+	t.Setenv("GIT_CONFIG_PARAMETERS", "'safe.bareRepository=explicit'") // pogosta utrditev (HPX360): pot izdelka je ne sme rabiti
 	root := t.TempDir()
 	client, marks := filepath.Join(root, "client"), filepath.ToSlash(filepath.Join(root, "marks")) // / tudi na Windows: lupina sh použije \
 	os.MkdirAll(client, 0o755)
