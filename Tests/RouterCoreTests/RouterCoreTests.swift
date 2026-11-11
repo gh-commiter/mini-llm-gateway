@@ -1991,3 +1991,27 @@ final class UnauthorizedUpstream: URLProtocol, @unchecked Sendable {
     #expect(try String(contentsOf: copy.appendingPathComponent("f.txt"), encoding: .utf8) == "v1")
     #expect(!FileManager.default.fileExists(atPath: copy.appendingPathComponent("f.txt.minigw-agent").path))
 }
+
+@Test func syncSummarySkipsUnapplied() {
+    var ch = Sync.Changes()
+    ch.changed = [Sync.Entry(path: "a", size: 1, mtime: 0, sha256: "x"), Sync.Entry(path: ".git/x", size: 1, mtime: 0, sha256: "y")]
+    ch.deleted = ["b", ".git/y"]
+    #expect(Sync.summary(ch, notes: ["skipped .git/x: protected path", "not deleted .git/y: protected path"])
+        == "synced back from the gateway: 1 changed, 1 deleted")
+    ch.changed.removeFirst(); ch.deleted.removeFirst()
+    #expect(Sync.summary(ch, notes: ["skipped .git/x: protected path", "not deleted .git/y: protected path"]) == nil)
+    #expect(Sync.summary(Sync.Changes(), notes: []) == nil)
+}
+
+@Test func shareAddRefusesHomeAndRoot() throws {
+    let tmp = Sync.real(FileManager.default.temporaryDirectory)!.appendingPathComponent("share-\(UUID().uuidString)")
+    let home = tmp.appendingPathComponent("home"), proj = home.appendingPathComponent("proj"), link = tmp.appendingPathComponent("link")
+    try FileManager.default.createDirectory(at: proj, withIntermediateDirectories: true)
+    try FileManager.default.createSymbolicLink(at: link, withDestinationURL: home)
+    defer { try? FileManager.default.removeItem(at: tmp) }
+    #expect(!SharedFolders.shareAllowed("/", home: home.path))
+    #expect(!SharedFolders.shareAllowed(home.path, home: home.path))
+    #expect(!SharedFolders.shareAllowed(link.path, home: home.path))  // povezava na dom
+    #expect(!SharedFolders.shareAllowed(home.path, home: link.path))
+    #expect(SharedFolders.shareAllowed(proj.path, home: home.path))
+}

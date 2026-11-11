@@ -22,7 +22,10 @@ func TestAgentRunListener(t *testing.T) {
 	parent.Header.Set("X-Claude-Mini-Cwd", "/client/dir")
 	r := &req{Request: parent, conn: &serveConn{device: dev, peer: "10.0.0.9"}}
 	run, env := s.startRun(r, "claude", "/copy", false, true, "", "", "", "")
-	run.started(os.Getpid()) // M2: ta proces je »agent« izvajanja
+	run.started(os.Getpid())                                                              // M2: ta proces je »agent« izvajanja
+	if runtime.GOOS == "windows" && len(env) == 3 && strings.HasPrefix(env[2], "PATH=") { // askOnPath: minigw.exe na PATH agenta
+		env = env[:2]
+	}
 	if run == nil || len(env) != 2 || !strings.HasPrefix(env[0], "MINIGW_AGENT_URL=http://127.0.0.1:") || env[1] != "MINIGW_AGENT_AUTH_FILE="+run.authFile {
 		t.Fatalf("env: %v", env)
 	}
@@ -248,7 +251,7 @@ func TestAgentModeRefusesCommands(t *testing.T) {
 	os.WriteFile(f, []byte("rt\n"), 0o600)
 	for _, c := range []string{"connect", "reconnect", "disconnect", "profiles", "plugin", "uninstall"} {
 		cmd := exec.Command(os.Args[0], c, "--no-such-flag") // brez zavrnitve le napaka uporabe, nič se ne spremeni
-		cmd.Env = append(os.Environ(), "MINIGW_TEST_MAIN=1", "MINIGW_AGENT_URL=http://127.0.0.1:1", "MINIGW_AGENT_AUTH_FILE="+f, "HOME="+t.TempDir())
+		cmd.Env = append(os.Environ(), "MINIGW_TEST_MAIN=1", "MINIGW_AGENT_URL=http://127.0.0.1:1", "MINIGW_AGENT_AUTH_FILE="+f, "HOME="+t.TempDir(), "USERPROFILE="+t.TempDir())
 		out, err := cmd.CombinedOutput()
 		if err == nil || !strings.Contains(string(out), "minigw runs inside an agent of the gateway (MINIGW_AGENT_URL): "+c+" is not available here") {
 			t.Fatalf("%s: %v %s", c, err, out)

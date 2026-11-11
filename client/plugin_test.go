@@ -11,6 +11,10 @@ import (
 	"testing"
 )
 
+// linkOS: install/uninstall kot na tem sistemu, a Windows z lupinama (bin/minigw, .cmd): simbolna povezava (linux) na
+// Windows rabi Developer Mode ali skrbnika; pravi minigw na Windows je tudi ne dela.
+var linkOS = map[bool]string{true: "windows", false: "linux"}[runtime.GOOS == "windows"]
+
 // pluginHome: začasna domača mapa (nikoli prava ~/.claude) in brez pravega claude.
 func pluginHome(t *testing.T) (home string, calls *[]string) {
 	home = t.TempDir()
@@ -18,6 +22,8 @@ func pluginHome(t *testing.T) (home string, calls *[]string) {
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	t.Setenv("APPDATA", filepath.Join(home, "AppData", "Roaming")) // Windows: os.UserConfigDir, os.UserCacheDir
+	t.Setenv("LOCALAPPDATA", filepath.Join(home, "AppData", "Local"))
 	t.Setenv("CLAUDE_PLUGIN_DATA", "")
 	var c []string
 	f, r := findClaudeFn, runCmd
@@ -32,7 +38,7 @@ func TestPluginSettingsMergeKeepsUserFalseAndMode(t *testing.T) {
 	p := filepath.Join(home, ".claude", "settings.json")
 	os.MkdirAll(filepath.Dir(p), 0o700)
 	os.WriteFile(p, []byte(`{"model":"opus","n":12345678901234567890,"url":"a<b>&c","enabledPlugins":{"minigw@mini-gateway":false}}`), 0o640)
-	if !pluginInstall("linux") {
+	if !pluginInstall(linkOS) {
 		t.Fatal("install failed")
 	}
 	b, _ := os.ReadFile(p)
@@ -45,7 +51,7 @@ func TestPluginSettingsMergeKeepsUserFalseAndMode(t *testing.T) {
 	if fi, _ := os.Stat(p); runtime.GOOS != "windows" && fi.Mode().Perm() != 0o640 {
 		t.Fatalf("mode %v", fi.Mode().Perm())
 	}
-	if !pluginUninstall("linux", true) {
+	if !pluginUninstall(linkOS, true) {
 		t.Fatal("uninstall failed")
 	}
 	b, _ = os.ReadFile(p)
@@ -57,7 +63,7 @@ func TestPluginSettingsMergeKeepsUserFalseAndMode(t *testing.T) {
 func TestPluginSettingsNewFileAndRemove(t *testing.T) {
 	home, calls := pluginHome(t)
 	p := filepath.Join(home, ".claude", "settings.json")
-	if !pluginInstall("linux") {
+	if !pluginInstall(linkOS) {
 		t.Fatal("install failed")
 	}
 	b, _ := os.ReadFile(p)
@@ -69,7 +75,7 @@ func TestPluginSettingsNewFileAndRemove(t *testing.T) {
 	}
 	// Uporabnikov lasten marketplace z istim imenom ostane.
 	os.WriteFile(p, []byte(`{"enabledPlugins":{"minigw@mini-gateway":true},"extraKnownMarketplaces":{"mini-gateway":{"source":{"source":"directory","path":"/x"}}}}`), 0o600)
-	pluginUninstall("linux", false)
+	pluginUninstall(linkOS, false)
 	b, _ = os.ReadFile(p)
 	if strings.Contains(string(b), "minigw@mini-gateway") || !strings.Contains(string(b), `"/x"`) {
 		t.Fatalf("after uninstall:\n%s", b)
@@ -77,15 +83,15 @@ func TestPluginSettingsNewFileAndRemove(t *testing.T) {
 	if len(*calls) != 0 { // uporabnikov vnos: tudi CLI remove ne teče
 		t.Fatalf("user's own marketplace: calls %v", *calls)
 	}
-	pluginInstall("linux")
+	pluginInstall(linkOS)
 	os.Remove(p)
-	pluginInstall("linux")
-	pluginUninstall("linux", false)
+	pluginInstall(linkOS)
+	pluginUninstall(linkOS, false)
 	if !slices.Contains(*calls, "/fake/claude plugin marketplace remove mini-gateway --scope user") {
 		t.Fatalf("our marketplace: calls %v", *calls)
 	}
 	*calls = nil
-	pluginUninstall("linux", true)
+	pluginUninstall(linkOS, true)
 	if len(*calls) != 0 {
 		t.Fatalf("upgrading ran %v", *calls)
 	}
@@ -101,10 +107,10 @@ func TestPluginSettingsInvalidRefused(t *testing.T) {
 	for _, bad := range []string{`{"a":1,}`, `[]`, `null`, ``, `{"a":1} x`, `{"enabledPlugins":[]}`, `{"enabledPlugins":1}`,
 		`{"extraKnownMarketplaces":"x"}`, `{"extraKnownMarketplaces":[1],"enabledPlugins":{}}`} {
 		os.WriteFile(p, []byte(bad), 0o600)
-		if pluginInstall("linux") {
+		if pluginInstall(linkOS) {
 			t.Fatalf("%q accepted", bad)
 		}
-		if pluginUninstall("linux", true) && !nonObject[bad] {
+		if pluginUninstall(linkOS, true) && !nonObject[bad] {
 			t.Fatalf("%q accepted by uninstall", bad)
 		}
 		if b, _ := os.ReadFile(p); string(b) != bad {
@@ -124,7 +130,7 @@ func TestPluginSettingsThroughSymlink(t *testing.T) {
 	p := filepath.Join(home, ".claude", "settings.json")
 	os.MkdirAll(filepath.Dir(p), 0o700)
 	os.Symlink(real, p)
-	pluginInstall("linux")
+	pluginInstall(linkOS)
 	if fi, _ := os.Lstat(p); fi.Mode()&os.ModeSymlink == 0 {
 		t.Fatal("link replaced")
 	}
@@ -230,6 +236,9 @@ func TestUninstallSteps(t *testing.T) {
 	home, calls := pluginHome(t)
 	cfg, _ := os.UserConfigDir()
 	cache, _ := os.UserCacheDir()
+	if runtime.GOOS == "windows" { // izolirana shramba (credNS) je prazna: profil default ustvari test
+		saveProfile("default", connection{})
+	}
 	unit := servicePath("linux")
 	for _, f := range []string{unit, filepath.Join(cache, "minigw", "scratch", "x"), filepath.Join(cfg, "minigw", "connection.json")} {
 		os.MkdirAll(filepath.Dir(f), 0o700)
@@ -337,14 +346,14 @@ func TestPluginDataSafeAndUnsafeDir(t *testing.T) {
 func TestPluginUninstallReportsEntriesRemovedByMarketplace(t *testing.T) {
 	home, _ := pluginHome(t)
 	p := filepath.Join(home, ".claude", "settings.json")
-	if !pluginInstall("linux") {
+	if !pluginInstall(linkOS) {
 		t.Fatal("install failed")
 	}
 	runCmd = func(string, ...string) error { return os.WriteFile(p, []byte(`{}`), 0o600) }
 	r, w, _ := os.Pipe()
 	stdout := os.Stdout
 	os.Stdout = w
-	pluginUninstall("linux", false)
+	pluginUninstall(linkOS, false)
 	os.Stdout = stdout
 	w.Close()
 	out, _ := io.ReadAll(r)

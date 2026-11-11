@@ -88,7 +88,7 @@ func TestAdminAPIAuth(t *testing.T) {
 	s, cfg, base := liveServer(t, nil)
 	host := strings.TrimPrefix(base, "http://")
 	st, _ := os.Stat(filepath.Join(filepath.Dir(cfg), "admin.secret"))
-	if st == nil || st.Mode().Perm() != 0o600 || len(s.admin) != 43 {
+	if st == nil || (runtime.GOOS != "windows" && st.Mode().Perm() != 0o600) || len(s.admin) != 43 { // Windows: le bit samo za branje
 		t.Fatalf("admin.secret: %v %q", st, s.admin)
 	}
 	// Navaden HTTP: skrivnost (Bearer) ni nikoli sprejeta; Host se preveri pred overitvijo.
@@ -398,8 +398,9 @@ func TestAdminReviewFixes(t *testing.T) {
 		t.Fatal("relative folder accepted")
 	}
 	link := filepath.Join(t.TempDir(), "link")
-	os.Symlink(filepath.Dir(cfg), link)
-	if st, b := admin("PATCH", adminPrefix+"/agents/claude", `{"folders":"`+link+`"}`); st != 400 || !strings.Contains(b, "config folder") {
+	dirLink(t, filepath.Dir(cfg), link) // Windows: stičišče
+	jlink, _ := json.Marshal(link)      // Windows: \ v poti
+	if st, b := admin("PATCH", adminPrefix+"/agents/claude", `{"folders":`+string(jlink)+`}`); st != 400 || !strings.Contains(b, "config folder") {
 		t.Fatalf("symlink to the config folder: %d %s", st, b)
 	}
 
@@ -408,14 +409,19 @@ func TestAdminReviewFixes(t *testing.T) {
 	data, _ := os.ReadFile(cfg)
 	os.WriteFile(outside, data, 0o644)
 	os.Remove(cfg)
-	os.Symlink(outside, cfg)
+	if err := os.Symlink(outside, cfg); err != nil { // Windows brez Developer Mode: povezave ni, serve.json ostane datoteka
+		if runtime.GOOS != "windows" {
+			t.Fatal(err)
+		}
+		os.WriteFile(cfg, data, 0o600)
+	}
 	if st, _ := admin("PATCH", adminPrefix+"/agents/claude", `{"tools":"Glob,LS"}`); st != 200 {
 		t.Fatal("update")
 	}
 	if b, _ := os.ReadFile(outside); strings.Contains(string(b), "Glob,LS") {
 		t.Fatal("symlink at serve.json followed")
 	}
-	if st, _ := os.Lstat(cfg); st == nil || st.Mode()&os.ModeSymlink != 0 || st.Mode().Perm() != 0o600 {
+	if st, _ := os.Lstat(cfg); st == nil || st.Mode()&os.ModeSymlink != 0 || (runtime.GOOS != "windows" && st.Mode().Perm() != 0o600) {
 		t.Fatalf("serve.json: %v", st)
 	}
 

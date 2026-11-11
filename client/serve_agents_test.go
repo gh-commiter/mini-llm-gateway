@@ -611,9 +611,10 @@ func TestCodexTreeProfile(t *testing.T) {
 	wt := filepath.Join(t.TempDir(), "w")
 	gits := []string{filepath.Join(wt, ".git"), filepath.Join(wt, "lib", ".git")}
 	a := strings.Join(codexArgs(wt, []string{"/m"}, true, "/o", "", true, false, "", gits, "/gw/bin:/usr/bin", []string{"/cfg"}), " ")
-	for _, want := range []string{`default_permissions="minigw"`, `"` + gits[1] + `"="write"`, `"` + gits[1] + `/config"="read"`, `"` + gits[0] + `/hooks"="read"`,
+	q := func(p string) string { b, _ := json.Marshal(p); return string(b) } // Windows: \\ v poti
+	for _, want := range []string{`default_permissions="minigw"`, q(gits[1]) + `="write"`, q(filepath.Join(gits[1], "config")) + `="read"`, q(filepath.Join(gits[0], "hooks")) + `="read"`,
 		`"/m"="write"`, `permissions.minigw.network.enabled=false`, `shell_environment_policy.exclude=["GIT_DIR","GIT_WORK_TREE","GIT_COMMON_DIR"]`,
-		`shell_environment_policy.set.PATH="/gw/bin:/usr/bin"`, `"/cfg"="none"`, `shell_environment_policy.set.GIT_CEILING_DIRECTORIES="` + filepath.Dir(wt) + `"`,
+		`shell_environment_policy.set.PATH="/gw/bin:/usr/bin"`, `"/cfg"="none"`, `shell_environment_policy.set.GIT_CEILING_DIRECTORIES=` + q(filepath.Dir(wt)),
 		`shell_environment_policy.set.MINIGW_SANDBOXED="1"`} { // #67
 		if !strings.Contains(a, want) {
 			t.Fatalf("missing %s in %s", want, a)

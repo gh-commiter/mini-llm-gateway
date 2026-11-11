@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/ecdh"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -214,9 +215,11 @@ func TestWorktreeClaudeArgs(t *testing.T) {
 	args := []string{"--allowedTools", "Read(./**)", "--disallowedTools", "Read(/cfg/**)", "--settings",
 		`{"sandbox":{"filesystem":{"allowRead":["/w/sub"],"allowWrite":["/w/sub"],"denyRead":["~"]}}}`}
 	got := strings.Join(worktreeClaudeArgs(args, "/w", []string{"/m", "/w.deps"}, "/tmp/mgw-1", []string{"/r/objects", "/r-k/objects"}, []string{"/w/.git", "/w/lib/.git"}), " ")
+	jq := func(p ...string) string { b, _ := json.Marshal(filepath.Join(p...)); return string(b) } // Windows: filepath.Join daje »\«
 	for _, want := range []string{`"allowWrite":["/w/sub","/w","/m","/w.deps"]`, `"allowRead":["/w/sub","/w","/m","/w.deps","/r/objects","/r-k/objects"]`, "--add-dir /w",
-		`"/w/lib/.git/commondir","/tmp/mgw-1"]`, // #67 M2: koren povezav TMPDIR ni pisljiv
-		"Edit(//w/**)", `"denyWrite":["/w/.git/config"`, `"/w/lib/.git/config","/w/lib/.git/hooks","/w/lib/.git/info","/w/lib/.git/commondir"`, "Edit(//w/.git/**)"} {
+		jq("/w/lib/.git", "commondir") + `,"/tmp/mgw-1"]`, // #67 M2: koren povezav TMPDIR ni pisljiv
+		"Edit(//w/**)", `"denyWrite":[` + jq("/w/.git", "config"),
+		strings.Join([]string{jq("/w/lib/.git", "config"), jq("/w/lib/.git", "hooks"), jq("/w/lib/.git", "info"), jq("/w/lib/.git", "commondir")}, ","), "Edit(//w/.git/**)"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %s in\n%s", want, got)
 		}
@@ -231,7 +234,7 @@ func TestWorktreeClaudeArgs(t *testing.T) {
 	}
 	n := worktreeNote("/c", "/w", "minigw/claude-1", []string{"/w/.git", "/w/lib/.git"}, true)
 	if !strings.Contains(n, "Do not run git add or git commit: the gateway commits your changes on this branch when you finish.") ||
-		strings.Contains(n, "Commit your work") || strings.Contains(n, "GIT_DIR") || !strings.Contains(n, "/w/lib") {
+		strings.Contains(n, "Commit your work") || strings.Contains(n, "GIT_DIR") || !strings.Contains(n, filepath.FromSlash("/w/lib")) {
 		t.Fatalf("Windows note: %s", n)
 	}
 	worktreeNeedsUnsandboxed = false
@@ -381,8 +384,13 @@ func TestScratchOverlapAndProviderRename(t *testing.T) {
 		c.Gateways = append(c.Gateways, serveGateway{Name: "Foo", BaseURL: "https://foo.example"}, serveGateway{Name: "Bar", BaseURL: "https://bar.example"})
 		return nil
 	})
+	keys := map[string]string{} // nikoli prava shramba ključev (Windows: Credential Manager uporabnika)
+	og, os2, od := keyGet, keySet, keyDel
+	keyGet = func(_, n string) (string, string) { return keys[n], "" }
+	keySet = func(_, n, v string) (string, error) { keys[n] = v; return "", nil }
+	keyDel = func(_, n string) { delete(keys, n) }
+	t.Cleanup(func() { keyGet, keySet, keyDel = og, os2, od })
 	keySet(s.cfgDir, "Bar", "key-bar")
-	t.Cleanup(func() { keyDel(s.cfgDir, "Bar"); keyDel(s.cfgDir, "foo") })
 	if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/providers/Bar", `{"name":"foo"}`); st != 400 || !strings.Contains(b, "already exists") {
 		t.Fatalf("rename to a taken name: %d %s", st, b)
 	}
@@ -419,10 +427,13 @@ func TestWorktreeDirSymlink(t *testing.T) {
 	os.MkdirAll(filepath.Join(wt, "x", "y"), 0o755)
 	os.MkdirAll(filepath.Join(home, ".ssh"), 0o700)
 	os.MkdirAll(filepath.Join(root, "outside", "z"), 0o755)
-	if os.Symlink(home, filepath.Join(wt, "a")) != nil || os.Symlink(filepath.Join("..", "outside"), filepath.Join(wt, "b")) != nil {
-		t.Skip("no symlinks")
+	outside := filepath.Join("..", "outside")
+	if runtime.GOOS == "windows" {
+		outside = filepath.Join(root, "outside") // stičišče (dirLink) ne zna relativnega cilja
 	}
-	os.Symlink(filepath.Join(home, ".ssh"), filepath.Join(wt, "x", "s"))
+	dirLink(t, home, filepath.Join(wt, "a"))
+	dirLink(t, outside, filepath.Join(wt, "b"))
+	dirLink(t, filepath.Join(home, ".ssh"), filepath.Join(wt, "x", "s"))
 	for _, sub := range []string{"a", "a/.ssh", "b", "b/z", "x/s", "x/../a/.ssh", "missing"} {
 		if got := worktreeDir(wt, sub); got != wt {
 			t.Fatalf("%s: %s", sub, got)
@@ -599,6 +610,7 @@ func TestWorktreeNestedRepoFilterDoesNotRun(t *testing.T) {
 // N9 (odločitev 0.5.20): ugnezden repozitorij v poti, ki jo git prezre (build/_deps od CMake FetchContent), ne ustavi
 // vrnitve veje; v poti, ki je git ne prezre (podmodul, ugnezden repozitorij), veja ne gre nazaj, sporočilo pove zakaj.
 func TestWorktreeNestedRepoIgnoredDelivered(t *testing.T) {
+	t.Setenv("GIT_CONFIG_PARAMETERS", "'safe.bareRepository=explicit'") // pogosta utrditev (HPX360): pot izdelka je ne sme rabiti
 	root := t.TempDir()
 	client, repo, wt := filepath.Join(root, "c"), filepath.Join(root, "repos", "d", "r.git"), filepath.Join(root, "wt")
 	os.MkdirAll(client, 0o755)
@@ -900,7 +912,7 @@ func TestWorktreeNestedClonesRegistered(t *testing.T) {
 	}
 	os.RemoveAll(filepath.Join(wt, "lib", "x"))
 	// H1: povezava v poti, neprazen cilj
-	os.Symlink(root, filepath.Join(wt, "link"))
+	dirLink(t, root, filepath.Join(wt, "link"))
 	os.MkdirAll(filepath.Join(wt, "full"), 0o755)
 	writeT(t, filepath.Join(wt, "full", "f"), "x")
 	for _, p := range []string{"link/x", "link", "full", "f.txt/x"} {
@@ -912,7 +924,7 @@ func TestWorktreeNestedClonesRegistered(t *testing.T) {
 		t.Fatal("new path refused")
 	}
 	os.Rename(filepath.Join(wt, "lib"), filepath.Join(wt, "lib2"))
-	os.Symlink(filepath.Join(wt, "lib2"), filepath.Join(wt, "lib"))
+	dirLink(t, filepath.Join(wt, "lib2"), filepath.Join(wt, "lib"))
 	if nestedIntact(wt, n) {
 		t.Fatal("nested clone behind a symlink accepted")
 	}
@@ -965,7 +977,7 @@ func TestWorktreeNestedSwapDuringFinalize(t *testing.T) {
 		t.Skip("Linux without bwrap: nested repositories are refused")
 	}
 	if runtime.GOOS == "windows" {
-		t.Skip("symlink")
+		t.Skip("the hook renames the clone's folder while finalizeNested holds it open (os.Root), which Windows refuses")
 	}
 	root := t.TempDir()
 	client, wt, repo := filepath.Join(root, "c"), filepath.Join(root, "wt"), filepath.Join(root, "repos", "d", "r.git")
@@ -1009,9 +1021,6 @@ func TestWorktreeNestedSwapDuringFinalize(t *testing.T) {
 // N2: povezava na poti gitlinka ali ugnezdenega repozitorija (na repozitorij zunaj mape) ni ugnezden repozitorij te
 // mape: posnetek in prevzem je ne vzameta. N5/N6: imena s HFS+ prezrtimi znaki in pot v .build.
 func TestNestedReposRefuseSymlinks(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("symlink")
-	}
 	root := t.TempDir()
 	top, outside := filepath.Join(root, "top"), filepath.Join(root, "outside")
 	for _, d := range []string{top, outside, filepath.Join(top, "real")} {
@@ -1022,10 +1031,10 @@ func TestNestedReposRefuseSymlinks(t *testing.T) {
 		gitT(t, d, "commit", "-qm", "x")
 	}
 	sha := gitT(t, outside, "rev-parse", "HEAD")
-	os.Symlink(outside, filepath.Join(top, "link"))
+	dirLink(t, outside, filepath.Join(top, "link"))
 	gitT(t, top, "update-index", "--add", "--cacheinfo", "160000,"+sha+",link") // gitlink na poti povezave
 	os.MkdirAll(filepath.Join(top, "d"), 0o755)
-	os.Symlink(outside, filepath.Join(top, "d", "inner"))
+	dirLink(t, outside, filepath.Join(top, "d", "inner"))
 	if n := nestedRepos(top); !slices.Equal(n, []string{"real"}) {
 		t.Fatalf("nested repos: %q", n)
 	}
@@ -1214,7 +1223,7 @@ func TestRunTempDir(t *testing.T) {
 	}
 	other, done2, _ := runTempDir(root)
 	defer done2()
-	if len(dir) > maxRunTemp || filepath.Dir(dir) != root || dir == other {
+	if len(dir) > maxRunTemp && runtime.GOOS != "windows" || filepath.Dir(dir) != root || dir == other { // maxRunTemp: meja vtičnic Linux; Windows: dolga pot %TEMP%
 		t.Fatalf("run temp %q (root %q, other %q)", dir, root, other)
 	}
 	if st, err := os.Stat(dir); err != nil || runtime.GOOS != "windows" && st.Mode().Perm() != 0o700 {
@@ -1222,7 +1231,7 @@ func TestRunTempDir(t *testing.T) {
 	}
 	os.WriteFile(keep, []byte("x"), 0o600)
 	os.WriteFile(filepath.Join(dir, "f"), []byte("x"), 0o600)
-	os.Symlink(filepath.Dir(keep), filepath.Join(dir, "link"))
+	dirLink(t, filepath.Dir(keep), filepath.Join(dir, "link"))
 	done()
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Fatal("run temp not removed")
@@ -1634,7 +1643,7 @@ func TestCodexUnconfinedNestedRefused(t *testing.T) {
 func TestPruneKept(t *testing.T) {
 	dir, outside := t.TempDir(), t.TempDir()
 	writeT(t, filepath.Join(outside, "x-kept-1", "f"), "x")
-	os.Symlink(filepath.Join(outside, "x-kept-1"), filepath.Join(dir, "link-kept-0"))
+	dirLink(t, filepath.Join(outside, "x-kept-1"), filepath.Join(dir, "link-kept-0"))
 	now := time.Now()
 	for i := 1; i <= 5; i++ {
 		d := filepath.Join(dir, fmt.Sprintf("c-kept-%d", i))
@@ -1676,8 +1685,8 @@ func TestKeepCloneDisarmsGit(t *testing.T) {
 	t.Cleanup(func() { chmodTree(kept) })
 	os.Chmod(filepath.Join(wt, "ro", "r"), 0o555) // L2: agent vzame pravice mapi
 	os.Chmod(filepath.Join(wt, "ro"), 0o555)
-	os.Symlink(outside, filepath.Join(wt, "link"))
-	os.Symlink(filepath.Join(outside, "b"), filepath.Join(wt, "blink"))
+	dirLink(t, outside, filepath.Join(wt, "link"))
+	dirLink(t, filepath.Join(outside, "b"), filepath.Join(wt, "blink"))
 	keepClone(wt, kept, t.Logf)
 	if _, err := os.Lstat(wt); err == nil { // L1: premik takoj
 		t.Fatal("clone still at its path after keepClone")
@@ -1708,7 +1717,7 @@ func TestKeepCloneDisarmsGit(t *testing.T) {
 			t.Fatalf("outside %s touched: %v", p, err)
 		}
 	}
-	os.Symlink(outside, filepath.Join(root, "c-1")) // klon je povezava: nič
+	dirLink(t, outside, filepath.Join(root, "c-1")) // klon je povezava: nič
 	keepClone(filepath.Join(root, "c-1"), filepath.Join(root, "c-1-kept-1"), t.Logf)
 	if _, err := os.Stat(filepath.Join(outside, ".git")); err != nil {
 		t.Fatal("outside .git touched through a linked clone")
@@ -1722,9 +1731,9 @@ func TestKeepCloneDisarmsGit(t *testing.T) {
 // (vrhnji klon); ugnezden .git, ki ga minigw ni registriral, ne velja; predpona /x/a ni /x/ab. Besedilo je enako kot na
 // Macu (testdata/pathwrap.golden, Worktree.pathWrapScript).
 func TestPathWrapScript(t *testing.T) {
-	golden, err := os.ReadFile(filepath.Join("testdata", "pathwrap.golden"))
-	if err != nil || string(golden) != pathWrapScript("/REAL/git") {
-		t.Fatalf("pathWrapScript differs from testdata/pathwrap.golden (%v)", err)
+	golden := srcFile(t, filepath.Join("testdata", "pathwrap.golden"))
+	if string(golden) != pathWrapScript("/REAL/git") {
+		t.Fatal("pathWrapScript differs from testdata/pathwrap.golden")
 	}
 	if runtime.GOOS == "windows" {
 		t.Skip("no PATH wrapper on Windows")
@@ -1854,7 +1863,7 @@ func TestDisarmKeptFailsClosed(t *testing.T) {
 	root := t.TempDir()
 	kept := filepath.Join(root, "c-0-kept-1")
 	gitT(t, root, "init", "-q", kept)
-	os.Symlink(kept, filepath.Join(root, "l-kept-1"))
+	dirLink(t, kept, filepath.Join(root, "l-kept-1"))
 	if disarmKept(filepath.Join(root, "l-kept-1")) {
 		t.Fatal("linked kept clone disarmed")
 	}
@@ -1911,9 +1920,6 @@ func TestTooDeep(t *testing.T) {
 // #40: ugnezdeni klon, katerega pot je zamenjana s povezavo na isti .git, prestane gitIntact, nestedIntact pa ne:
 // klon se ne uporabi znova.
 func TestSlotNestedIntact(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("symlinks")
-	}
 	wt := t.TempDir()
 	os.MkdirAll(filepath.Join(wt, ".git"), 0o700)
 	os.MkdirAll(filepath.Join(wt, "a", "lib", ".git"), 0o700)
@@ -1926,9 +1932,10 @@ func TestSlotNestedIntact(t *testing.T) {
 	if !sl.gitIntact() || !sl.nestedIntact() {
 		t.Fatal("fresh slot refused")
 	}
-	if os.Rename(filepath.Join(wt, "a"), filepath.Join(wt, "b")) != nil || os.Symlink("b", filepath.Join(wt, "a")) != nil {
+	if os.Rename(filepath.Join(wt, "a"), filepath.Join(wt, "b")) != nil {
 		t.Fatal("swap")
 	}
+	dirLink(t, filepath.Join(wt, "b"), filepath.Join(wt, "a"))
 	if !sl.gitIntact() || sl.nestedIntact() {
 		t.Fatalf("linked path: gitIntact %v, nestedIntact %v", sl.gitIntact(), sl.nestedIntact())
 	}
@@ -1971,7 +1978,9 @@ func TestWorktreeMountLogsEveryFailure(t *testing.T) {
 			}
 			h.reply(key, "dev", davReply{ID: j.ID, Response: davResponse{Status: c.status, Body: []byte(`{"snapshot":"` + head + `","nested":[]}`)}})
 		}()
-		if dir, _ := h.worktreeMount(h.bySession["s"], "claude"); dir != "" || len(logged) != 1 || !strings.Contains(logged[0], c.want) {
+		// Windows: RemoveAll pod datoteko je »ni poti« (uspeh), napaka je šele pri git clone: korak »cannot remove« tam ne obstaja
+		skipLog := runtime.GOOS == "windows" && c.status == 200
+		if dir, _ := h.worktreeMount(h.bySession["s"], "claude"); dir != "" || !skipLog && (len(logged) != 1 || !strings.Contains(logged[0], c.want)) {
 			t.Fatalf("%q: dir %q, log %q", c.want, dir, logged)
 		}
 		if c.status == 200 { // git's own line comes with the step
@@ -1986,6 +1995,9 @@ func TestWorktreeMountLogsEveryFailure(t *testing.T) {
 // Poročilo Windows 73eeb13 (Air → HPX360): klon ~132 znakov + pot posnetka 141 = 274 > MAX_PATH, checkout »Filename too
 // long«. Na Windows git prehoda (gitRun) in okolje agenta nosita core.longpaths=true; drugje ne.
 func TestWorktreeGitLongPaths(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
 	old := gitLongPaths
 	t.Cleanup(func() { gitLongPaths = old })
 	for _, on := range []bool{false, true} {
@@ -2055,13 +2067,8 @@ func TestForeignGit(t *testing.T) {
 	if why := foreignGit(wt, cwd, gits); why != "The agent's clone was changed (a .git appeared at app/.git): start a new conversation" {
 		t.Fatalf("planted .git not refused: %q", why)
 	}
-	if runtime.GOOS == "windows" {
-		return
-	}
 	os.RemoveAll(filepath.Join(wt, "app"))
-	if err := os.Symlink(out, filepath.Join(wt, "app")); err != nil {
-		t.Fatal(err)
-	}
+	dirLink(t, out, filepath.Join(wt, "app"))
 	if why := foreignGit(wt, filepath.Join(wt, "app", "x"), gits); !strings.Contains(why, "a link at app") {
 		t.Fatalf("link not refused: %q", why)
 	}

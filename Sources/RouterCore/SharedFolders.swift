@@ -122,6 +122,13 @@ public enum SharedFolders {
         return top.map { real($0) == real(cwd) } == true
     }
 
+    /// share add: nikoli koren diska ali domača mapa sama; kanonični poti (povezava na dom je dom).
+    public static func shareAllowed(_ dir: String, home: String = NSHomeDirectory()) -> Bool {
+        let real = { (p: String) in Sync.real(URL(fileURLWithPath: p))?.path ?? p }
+        let d = real(dir)
+        return d != "/" && d != real(home)
+    }
+
     /// Pot za seznam: ena vrstica, tabulator loči možnosti.
     public static func validPath(_ p: String) -> Bool { !p.contains { $0 == "\t" || $0 == "\n" || $0 == "\r" } }
 }

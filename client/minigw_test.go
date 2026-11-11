@@ -20,7 +20,7 @@ import (
 func TestDavResolveStaysInRoot(t *testing.T) {
 	root := t.TempDir()
 	os.WriteFile(filepath.Join(root, "a.txt"), []byte("x"), 0o644)
-	os.Symlink(os.TempDir(), filepath.Join(root, "out"))
+	dirLink(t, os.TempDir(), filepath.Join(root, "out")) // Windows brez pravice: stičišče
 	r, _ := filepath.EvalSymlinks(root)
 	if _, _, ok := davResolve("/dav/s/a.txt", "/dav/s", r); !ok {
 		t.Fatal("file in root rejected")
@@ -46,6 +46,35 @@ func TestDavResolveStaysInRoot(t *testing.T) {
 	}
 }
 
+// Windows: stičišče (mklink /J, brez pravic) ven iz korena: filepath.EvalSymlinks ga od Go 1.23 ne razreši, finalPath da.
+func TestDavResolveRefusesJunction(t *testing.T) {
+	base := t.TempDir()
+	base, _ = filepath.EvalSymlinks(base)
+	root, out := filepath.Join(base, "r"), filepath.Join(base, "out")
+	os.MkdirAll(filepath.Join(root, "in"), 0o755)
+	os.MkdirAll(out, 0o755)
+	os.WriteFile(filepath.Join(base, "secret"), []byte("no"), 0o644)
+	junction(t, out, filepath.Join(root, "j"))
+	junction(t, filepath.Join(root, "in"), filepath.Join(root, "ok"))
+	for _, p := range []string{"/s/j", "/s/j/x", "/s/j/new/y"} {
+		if _, _, ok := davResolve(p, "/s", root); ok {
+			t.Errorf("%s escaped root through a junction", p)
+		}
+	}
+	if _, ok := syncResolve("j/x", root); ok {
+		t.Error("sync: j/x escaped root through a junction")
+	}
+	if _, _, ok := davResolve("/s/ok/x", "/s", root); !ok {
+		t.Error("junction inside root refused")
+	}
+	if r := davHandle("PUT", "/s/j/x", nil, []byte("y"), root, "/s"); r.Status != 403 {
+		t.Errorf("PUT through junction: %d", r.Status)
+	}
+	if _, err := os.Stat(filepath.Join(out, "x")); err == nil {
+		t.Error("written outside root")
+	}
+}
+
 func TestFramesRoundTrip(t *testing.T) {
 	key := make([]byte, 32)
 	send, recv := newNoiseCipher(key), newNoiseCipher(key)
@@ -64,6 +93,7 @@ func TestShareCommandAndWanted(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", cfg)
 	t.Setenv("APPDATA", cfg)
 	t.Setenv("HOME", cfg)
+	t.Setenv("USERPROFILE", cfg) // os.UserHomeDir na Windows
 	t.Setenv("MINIGW_SHARE", "")
 	sub := filepath.Join(proj, "src")
 	os.Mkdir(sub, 0o755)
@@ -77,6 +107,10 @@ func TestShareCommandAndWanted(t *testing.T) {
 	}
 	if shareAllowed(filepath.VolumeName(proj)+string(filepath.Separator)) || shareAllowed(cfg) {
 		t.Fatal("drive root or home folder allowed")
+	}
+	dirLink(t, cfg, filepath.Join(proj, "home")) // Windows brez pravice: stičišče
+	if shareAllowed(filepath.Join(proj, "home")) || shareAllowed(cfg+string(filepath.Separator)) {
+		t.Fatal("home folder allowed through a link or with a trailing separator")
 	}
 }
 
@@ -195,7 +229,7 @@ func TestSyncScanAndPaths(t *testing.T) {
 	}
 	os.WriteFile(filepath.Join(root, ".gitignore"), []byte("*.log\r\n"), 0o644)
 	os.WriteFile(filepath.Join(base, "secret"), []byte("no"), 0o644)
-	os.Symlink(base, filepath.Join(root, "link"))
+	dirLink(t, base, filepath.Join(root, "link"))
 	files, skipped := syncScan(root, nil, true)
 	if len(files) != 2 || files["src/a.swift"].SHA256 != sha256Hex([]byte("src/a.swift")) || files[".gitignore"].Path == "" || len(skipped) != 0 {
 		t.Fatalf("scan: %v %v", files, skipped)
@@ -337,7 +371,7 @@ func TestSyncApplySkipsIgnoredAndKeepsMode(t *testing.T) {
 	root := t.TempDir()
 	os.WriteFile(filepath.Join(root, "run.sh"), []byte("old"), 0o755)
 	state, _ := syncScan(root, nil, true)
-	if !state["run.sh"].Exec {
+	if !state["run.sh"].Exec && runtime.GOOS != "windows" { // Windows: brez bitov x
 		t.Fatal("exec flag missing")
 	}
 	blobs := map[string][]byte{"run.sh": []byte("new"), "node_modules/p/i.js": []byte("x"), ".git/config": []byte("evil"), "tool": []byte("t")}
@@ -353,6 +387,9 @@ func TestSyncApplySkipsIgnoredAndKeepsMode(t *testing.T) {
 		if _, err := os.Lstat(filepath.Join(root, p)); err == nil {
 			t.Fatalf("%s written although ignored", p)
 		}
+	}
+	if runtime.GOOS == "windows" {
+		return
 	}
 	if st, _ := os.Stat(filepath.Join(root, "run.sh")); st.Mode().Perm() != 0o755 {
 		t.Fatalf("run.sh mode %v", st.Mode())
@@ -444,7 +481,7 @@ func TestSyncApplyExecOnlyAndInvalidPath(t *testing.T) {
 	e.Exec = true
 	_, done := syncApply(syncChanges{Changed: []syncEntry{e, {Path: "../bad", SHA256: "z"}}, Deleted: []string{"../gone"}}, root, state,
 		func(string) []byte { return nil })
-	if st, _ := os.Stat(filepath.Join(root, "run.sh")); st.Mode().Perm()&0o100 == 0 {
+	if st, _ := os.Stat(filepath.Join(root, "run.sh")); st.Mode().Perm()&0o100 == 0 && runtime.GOOS != "windows" {
 		t.Fatalf("exec bit not applied: %v", st.Mode())
 	}
 	if strings.Join(done, ",") != "../gone,run.sh,../bad" {
@@ -454,6 +491,7 @@ func TestSyncApplyExecOnlyAndInvalidPath(t *testing.T) {
 
 // Uporabnikov bit x ostane; agentov chmod +x s spremembo vsebine pride do odjemalca.
 func TestSyncApplyRespectsUserExecBit(t *testing.T) {
+	noExecBits(t)
 	root := t.TempDir()
 	a, b := filepath.Join(root, "a.sh"), filepath.Join(root, "b.sh")
 	os.WriteFile(a, []byte("v1"), 0o644)
@@ -555,10 +593,13 @@ func TestDavCopySkipsNestedSymlinks(t *testing.T) {
 	os.MkdirAll(filepath.Join(root, "d"), 0o755)
 	os.WriteFile(filepath.Join(base, "secret"), []byte("no"), 0o644)
 	os.WriteFile(filepath.Join(root, "d", "f.txt"), []byte("ok"), 0o644)
-	if err := os.Symlink(filepath.Join(base, "secret"), filepath.Join(root, "d", "link")); err != nil {
-		t.Skip("no symlinks:", err)
+	links := []string{"up"}
+	if os.Symlink(filepath.Join(base, "secret"), filepath.Join(root, "d", "link")) == nil {
+		links = append(links, "link")
+	} else if runtime.GOOS != "windows" {
+		t.Fatal("symlink failed")
 	}
-	os.Symlink(base, filepath.Join(root, "d", "up"))
+	dirLink(t, base, filepath.Join(root, "d", "up")) // Windows brez pravice: stičišče
 	r := davHandle("COPY", "/dav/s/d", map[string]string{"destination": "http://x/dav/s/e"}, nil, root, "/dav/s")
 	if r.Status != 201 {
 		t.Fatalf("COPY: %d", r.Status)
@@ -566,7 +607,7 @@ func TestDavCopySkipsNestedSymlinks(t *testing.T) {
 	if b, _ := os.ReadFile(filepath.Join(root, "e", "f.txt")); string(b) != "ok" {
 		t.Fatal("file not copied")
 	}
-	for _, p := range []string{"link", "up"} {
+	for _, p := range links {
 		if _, err := os.Lstat(filepath.Join(root, "e", p)); err == nil {
 			t.Fatalf("symlink %s followed or copied", p)
 		}
@@ -637,9 +678,7 @@ func TestSyncProtectedThroughLink(t *testing.T) {
 	root := t.TempDir()
 	os.MkdirAll(filepath.Join(root, ".git", "hooks"), 0o755)
 	os.WriteFile(filepath.Join(root, ".git", "hooks", "old"), []byte("x"), 0o644)
-	if os.Symlink(filepath.Join(".git", "hooks"), filepath.Join(root, "hooks")) != nil {
-		t.Skip("no symlinks here")
-	}
+	dirLink(t, filepath.Join(".git", "hooks"), filepath.Join(root, "hooks")) // Windows brez pravice: stičišče
 	data := []byte("#!/bin/sh\necho owned\n")
 	sum := sha256Hex(data)
 	ch := syncChanges{Changed: []syncEntry{{Path: "hooks/pre-commit", Size: int64(len(data)), SHA256: sum},
@@ -799,7 +838,7 @@ func TestDavRefusesProtectedWrites(t *testing.T) {
 	os.MkdirAll(filepath.Join(root, ".git", "hooks"), 0o755)
 	os.WriteFile(filepath.Join(root, ".git", "HEAD"), []byte("ref"), 0o644)
 	os.WriteFile(filepath.Join(root, "a.txt"), []byte("x"), 0o644)
-	linked := os.Symlink(filepath.Join(root, ".git", "hooks"), filepath.Join(root, "hooks")) == nil
+	dirLink(t, filepath.Join(root, ".git", "hooks"), filepath.Join(root, "hooks"))
 	h := func(m, p, dst string) int {
 		hd := map[string]string{}
 		if dst != "" {
@@ -819,10 +858,8 @@ func TestDavRefusesProtectedWrites(t *testing.T) {
 			t.Fatalf("%s %s %s: %d", c[0], c[1], c[2], s)
 		}
 	}
-	if linked {
-		if s := h("PUT", "hooks/pre-commit", ""); s != 403 {
-			t.Fatalf("PUT through link: %d", s)
-		}
+	if s := h("PUT", "hooks/pre-commit", ""); s != 403 {
+		t.Fatalf("PUT through link: %d", s)
 	}
 	if s := h("GET", ".git/HEAD", ""); s != 200 {
 		t.Fatalf("GET .git/HEAD: %d", s)
@@ -1220,7 +1257,7 @@ func TestSyncResolveStaysUnderRoot(t *testing.T) {
 	base, _ = filepath.EvalSymlinks(base)
 	root := filepath.Join(base, "r")
 	os.MkdirAll(filepath.Join(root, "a"), 0o755)
-	os.Symlink(base, filepath.Join(root, "link"))
+	dirLink(t, base, filepath.Join(root, "link"))
 	if p, ok := syncResolve("a/new.txt", root); !ok || !strings.HasPrefix(p, root+string(filepath.Separator)) {
 		t.Fatalf("valid path: %q %v", p, ok)
 	}
@@ -1247,5 +1284,29 @@ func TestSyncClientPrintsGatewayNote(t *testing.T) {
 		if resp := sc.handle(davJob{Method: "WORKTREE-PUSH"}, "k"); resp.Status == 200 {
 			t.Fatalf("sync=%v accepted WORKTREE-PUSH", sc.sync)
 		}
+	}
+}
+
+// Povzetek prevzema ne šteje preskočenih sprememb (»invalid path here«).
+func TestSyncPullSummarySkipsSkipped(t *testing.T) {
+	root := t.TempDir()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/minigw/sync/changes" {
+			json.NewEncoder(w).Encode(map[string]any{"changed": []map[string]any{{"path": "../x", "sha256": "z"}}, "deleted": []string{}})
+			return
+		}
+		w.WriteHeader(204)
+	}))
+	defer srv.Close()
+	s := &shareClient{c: connection{URL: srv.URL}, root: root, sync: true, synced: map[string]syncEntry{}, reported: map[string]bool{}}
+	rd, wr, _ := os.Pipe()
+	old := os.Stderr
+	os.Stderr = wr
+	ok := s.syncPull("k")
+	os.Stderr = old
+	wr.Close()
+	out, _ := io.ReadAll(rd)
+	if !ok || !strings.Contains(string(out), "invalid path here") || strings.Contains(string(out), "synced back") {
+		t.Fatalf("summary: %v %q", ok, out)
 	}
 }

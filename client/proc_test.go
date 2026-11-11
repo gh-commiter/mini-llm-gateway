@@ -14,6 +14,9 @@ func TestProcessStartsGoThroughProcGo(t *testing.T) {
 	banned := map[string]bool{"exec.Command": true, "exec.CommandContext": true, "os.StartProcess": true,
 		"syscall.StartProcess": true, "syscall.CreateProcess": true, "windows.CreateProcess": true}
 	files, _ := filepath.Glob("*.go")
+	if len(files) == 0 {
+		t.Skip("needs the client/ source tree; run with go test or from the client folder")
+	}
 	fset := token.NewFileSet()
 	for _, f := range files {
 		if f == "proc.go" || strings.HasSuffix(f, "_test.go") {

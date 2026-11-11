@@ -211,11 +211,11 @@ func TestShareRefusesLineBreaksAndTabs(t *testing.T) { // L6
 func TestReadMarkerRefusesLinksAndBigFiles(t *testing.T) { // M2
 	d := t.TempDir()
 	os.WriteFile(filepath.Join(d, "secret"), []byte("s3cret"), 0o600)
-	os.Symlink(filepath.Join(d, "secret"), filepath.Join(d, "link"))
+	linked := os.Symlink(filepath.Join(d, "secret"), filepath.Join(d, "link")) == nil // Windows brez Developer Mode: brez povezave (junction ne more biti datoteka)
 	os.WriteFile(filepath.Join(d, "big"), bytes.Repeat([]byte("a"), 129), 0o600)
 	os.WriteFile(filepath.Join(d, "ok"), []byte("nonce\n"), 0o600)
 	os.Mkdir(filepath.Join(d, "dir"), 0o700)
-	if _, ok := readMarker(filepath.Join(d, "link")); ok {
+	if _, ok := readMarker(filepath.Join(d, "link")); linked && ok {
 		t.Error("followed a symlink")
 	}
 	if _, ok := readMarker(filepath.Join(d, "big")); ok {

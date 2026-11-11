@@ -256,6 +256,7 @@ func TestRotatingLog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { l.f.Close() }) // Windows: odprte datoteke TempDir ne izbriše
 	chunk := []byte(strings.Repeat("x", 1<<20))
 	for range 6 {
 		l.Write(chunk)
@@ -278,10 +279,7 @@ func TestTrayTipAndBadge(t *testing.T) {
 	if s := trayTip(st, 1, true); !strings.HasSuffix(s, " · na odobritev čaka naprav: 1") {
 		t.Fatal(s)
 	}
-	ico, err := os.ReadFile("tray.ico")
-	if err != nil {
-		t.Fatal(err)
-	}
+	ico := srcFile(t, "tray.ico")
 	for i := 0; i < int(binary.LittleEndian.Uint16(ico[4:])); i++ { // vsak vnos .ico (16, 32, 48)
 		e := ico[6+16*i:]
 		size, off := binary.LittleEndian.Uint32(e[8:]), binary.LittleEndian.Uint32(e[12:])

@@ -96,9 +96,9 @@ func TestWinCmdLine(t *testing.T) {
 
 // Gradnik zahteve: dovoljenja, predniki, mapa nastavitev le v deny, omrežje in vrata izvajanja.
 func TestMXCRequestFor(t *testing.T) {
-	cfg := filepath.FromSlash("/u/AppData/Roaming/minigw")
-	base := mxcSpec{argv: []string{"claude", "-p"}, cwd: "/s/w/c", env: []string{"A=1"}, deny: []string{cfg},
-		rw: []string{"/s/w/c", "/s/w/c.deps", "/s/w/c"}, ro: []string{"/p/bin", "/s/w/c", filepath.Join(cfg, "x")}}
+	cfg, fs := filepath.FromSlash("/u/AppData/Roaming/minigw"), filepath.FromSlash // mxcRequestFor čisti poti (Windows: »\«)
+	base := mxcSpec{argv: []string{"claude", "-p"}, cwd: fs("/s/w/c"), env: []string{"A=1"}, deny: []string{cfg},
+		rw: []string{fs("/s/w/c"), fs("/s/w/c.deps"), fs("/s/w/c")}, ro: []string{fs("/p/bin"), fs("/s/w/c"), filepath.Join(cfg, "x")}}
 	for _, tc := range []struct {
 		name                 string
 		egressDeny, loop     bool
@@ -114,14 +114,14 @@ func TestMXCRequestFor(t *testing.T) {
 		sp.egressDeny, sp.loopback = tc.egressDeny, tc.loop
 		sp.allowIPs = []net.IP{net.ParseIP("160.79.104.10"), net.ParseIP("2607:6bc0::10")}
 		r := mxcRequestFor(sp)
-		fs := r.Filesystem
+		g := r.Filesystem
 		if r.Version != "1.0.0" || r.Containment != "processcontainer" || r.UI.Disable || r.Process.Timeout <= 90000 || r.Process.InheritDefaultEnv {
 			t.Fatalf("%s: header %+v", tc.name, r)
 		}
-		if !slices.Equal(fs.ReadWrite, []string{"/s/w/c", "/s/w/c.deps"}) || !slices.Equal(fs.ReadOnly, []string{"/p/bin"}) || !slices.Equal(fs.Denied, []string{cfg}) {
-			t.Fatalf("%s: grants %+v", tc.name, fs)
+		if !slices.Equal(g.ReadWrite, []string{fs("/s/w/c"), fs("/s/w/c.deps")}) || !slices.Equal(g.ReadOnly, []string{fs("/p/bin")}) || !slices.Equal(g.Denied, []string{cfg}) {
+			t.Fatalf("%s: grants %+v", tc.name, g)
 		}
-		if want := []string{"/", "/s", "/s/w"}; !slices.Equal(r.ProcessContainer.Filesystem.Enumerate, want) { // ro (/p/bin) brez prednikov
+		if want := []string{fs("/"), fs("/s"), fs("/s/w")}; !slices.Equal(r.ProcessContainer.Filesystem.Enumerate, want) { // ro (/p/bin) brez prednikov
 			t.Fatalf("%s: enumerate %v", tc.name, r.ProcessContainer.Filesystem.Enumerate)
 		}
 		if r.Network.Egress.Default != tc.wantEgress || r.Network.Ingress.HostLoopback != tc.wantLoop || len(r.Network.Egress.Allow) != tc.wantRules {
@@ -429,10 +429,7 @@ func TestGitWrapExec(t *testing.T) {
 
 // Pripeti vrednosti v minigw in v gradnji (scripts/mxc.sha256, fetch-mxc.sh) se ujemata.
 func TestWxcHashesMatchBuild(t *testing.T) {
-	b, err := os.ReadFile(filepath.Join("..", "scripts", "mxc.sha256"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	b := srcFile(t, filepath.Join("..", "scripts", "mxc.sha256"))
 	got := map[string]string{}
 	for _, l := range strings.Split(string(b), "\n") {
 		if f := strings.Fields(l); len(f) == 2 {
@@ -504,10 +501,13 @@ func TestBuildTooOldAndKeyStrip(t *testing.T) {
 
 // Vsako stanje vrstice Login (agentlogin.go) ima slovenski prevod na strani z nastavitvami (LOGIN_STATES).
 func TestLoginStatesTranslated(t *testing.T) {
-	src, _ := os.ReadFile("agentlogin.go")
-	page, _ := os.ReadFile("settings.html")
-	i := strings.Index(string(page), "const LOGIN_STATES = {")
-	block := string(page)[i : i+strings.Index(string(page)[i:], "};")]
+	src, page := srcFile(t, "agentlogin.go"), settingsPage // stran je vgrajena
+	i := strings.Index(page, "const LOGIN_STATES = {")
+	n := strings.Index(page[max(i, 0):], "};")
+	if i < 0 || n < 0 {
+		t.Fatal("settings.html: no LOGIN_STATES block")
+	}
+	block := page[i : i+n]
 	found := regexp.MustCompile(`(?:return|o\["state"\] =) "((?:logged in|not logged in|unknown|API key \()[^"]*)"`).FindAllStringSubmatch(string(src), -1)
 	if len(found) < 7 {
 		t.Fatalf("state strings: %v", found)
@@ -549,10 +549,7 @@ func TestMXCRequestShapes(t *testing.T) {
 	} {
 		sp.argv, sp.cwd, sp.env = []string{"minigw.exe", mxcProbeCmd}, "/d/p", []string{"SYSTEMROOT=C:\\Windows"}
 		sp.rw, sp.ro, sp.deny = []string{"/d/p"}, []string{"/c/p"}, []string{"/c/cfg"}
-		gold, err := os.ReadFile(filepath.Join("testdata", "mxc-"+name+".json"))
-		if err != nil {
-			t.Fatal(err)
-		}
+		gold := srcFile(t, filepath.Join("testdata", "mxc-"+name+".json"))
 		b, _ := json.Marshal(mxcRequestFor(sp))
 		var got, want any
 		json.Unmarshal(b, &got)
@@ -597,7 +594,7 @@ func TestToolRoot(t *testing.T) {
 	home, scratch, cfg := "/u/me", "/d/s", "/u/me/cfg"
 	for d, want := range map[string]string{"/opt/apache-maven-3.6.3/bin": "/opt/apache-maven-3.6.3", "/opt/jdk-21/BIN": "/opt/jdk-21",
 		"/bin": "", "/u/me/.local/bin": "", "/u/me/bin": "", "/d/s/gitexec/win-1/bin": "", "/opt/tool/cmd": "", "/u/bin": "", "/srv/x/bin": "/srv/x"} {
-		if got := toolRoot(d, home, scratch, cfg); got != want {
+		if got := toolRoot(d, home, scratch, cfg); got != filepath.FromSlash(want) { // filepath.Dir: Windows »\«
 			t.Errorf("%s: %q", d, got)
 		}
 	}

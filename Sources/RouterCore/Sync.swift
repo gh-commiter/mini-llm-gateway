@@ -306,6 +306,13 @@ public enum Sync {
                 }.sorted())
     }
 
+    /// Povzetek po apply brez preskočenih sprememb in neizbrisanih poti (kot odjemalec Go); nil, če ni bilo nič uveljavljeno.
+    public static func summary(_ ch: Changes, notes: [String]) -> String? {
+        let changed = ch.changed.count - notes.filter { $0.hasPrefix("skipped ") }.count
+        let deleted = ch.deleted.count - notes.filter { $0.hasPrefix("not deleted ") }.count
+        return changed + deleted > 0 ? "synced back from the gateway: \(changed) changed, \(deleted) deleted" : nil
+    }
+
     /// Odjemalec po agentu: zapiše in izbriše, kar je agent spremenil. Datoteke, ki ni več različica, iz katere je agent
     /// začel (`ch.base`; spremenil jo je uporabnik ali drug agent), ne prepiše: različico routerja zapiše kot
     /// `<ime>.minigw-conflict`. Poti, prezrte pri odjemalcu, preskoči.

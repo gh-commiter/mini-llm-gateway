@@ -52,6 +52,39 @@ const (
 	credPersistLocalMachine = 2
 )
 
+// credNS: predpona vseh poverilnic minigw; "" v pravem programu, testi (runIsolated) jo nastavijo, da nikoli ne
+// berejo ali pišejo uporabnikovih (profili, ključ naprave, ključi prehodov).
+var credNS string
+
+// credPurge: testi po teku izbrišejo svoje poverilnice (vse s predpono ns); prazna predpona nikoli.
+func credPurge(ns string) {
+	if ns == "" {
+		return
+	}
+	for _, t := range credTargets(ns + "*") {
+		if strings.HasPrefix(t, ns) {
+			procDelete.Call(uintptr(unsafe.Pointer(u16ptr(t))), credTypeGeneric, 0)
+		}
+	}
+}
+
+func u16ptr(s string) *uint16 { p, _ := syscall.UTF16PtrFromString(s); return p }
+
+// credTargets: imena poverilnic, ki ustrezajo filtru CredEnumerateW.
+func credTargets(filter string) []string {
+	var n uint32
+	var list **credential
+	if r, _, _ := procEnumerate.Call(uintptr(unsafe.Pointer(u16ptr(filter))), 0, uintptr(unsafe.Pointer(&n)), uintptr(unsafe.Pointer(&list))); r == 0 {
+		return nil
+	}
+	defer procFree.Call(uintptr(unsafe.Pointer(list)))
+	var out []string
+	for _, c := range unsafe.Slice(list, n) {
+		out = append(out, syscall.UTF16ToString(unsafe.Slice(c.TargetName, wcslen(c.TargetName))))
+	}
+	return out
+}
+
 // credTargetFor: profil »default« je prejšnja edina povezava (minigw:router), drugi minigw:router:<ime> (#17).
 func credTargetFor(name string) string {
 	if name == defaultProfile {
@@ -83,16 +116,9 @@ func storeDelete(name string) {
 
 // storeNames: imena profilov iz Credential Manager (CredEnumerateW s filtrom minigw:router*).
 func storeNames() []string {
-	filter, _ := syscall.UTF16PtrFromString(credTarget + "*")
-	var n uint32
-	var list **credential
-	if r, _, _ := procEnumerate.Call(uintptr(unsafe.Pointer(filter)), 0, uintptr(unsafe.Pointer(&n)), uintptr(unsafe.Pointer(&list))); r == 0 {
-		return nil
-	}
-	defer procFree.Call(uintptr(unsafe.Pointer(list)))
 	var out []string
-	for _, c := range unsafe.Slice(list, n) {
-		t := syscall.UTF16ToString(unsafe.Slice(c.TargetName, wcslen(c.TargetName)))
+	for _, t := range credTargets(credNS + credTarget + "*") {
+		t = strings.TrimPrefix(t, credNS)
 		if t == credTarget {
 			out = append(out, defaultProfile)
 		} else if name, ok := strings.CutPrefix(t, credTarget+":"); ok && validProfile(name) && name != defaultProfile {
@@ -118,7 +144,7 @@ func deviceSave(d string) error { return credSave(deviceTarget, []byte(d)) }
 func deviceDelete()             { credDelete(deviceTarget) }
 
 func credLoad(name string) ([]byte, error) {
-	target, _ := syscall.UTF16PtrFromString(name)
+	target, _ := syscall.UTF16PtrFromString(credNS + name)
 	var c *credential
 	r, _, err := procRead.Call(uintptr(unsafe.Pointer(target)), credTypeGeneric, 0, uintptr(unsafe.Pointer(&c)))
 	if r == 0 {
@@ -132,7 +158,7 @@ func credLoad(name string) ([]byte, error) {
 }
 
 func credSave(name string, data []byte) error {
-	target, _ := syscall.UTF16PtrFromString(name)
+	target, _ := syscall.UTF16PtrFromString(credNS + name)
 	user, _ := syscall.UTF16PtrFromString("minigw")
 	c := credential{Type: credTypeGeneric, TargetName: target, UserName: user, Persist: credPersistLocalMachine,
 		CredentialBlobSize: uint32(len(data))}
@@ -146,7 +172,7 @@ func credSave(name string, data []byte) error {
 }
 
 func credDelete(name string) {
-	target, _ := syscall.UTF16PtrFromString(name)
+	target, _ := syscall.UTF16PtrFromString(credNS + name)
 	procDelete.Call(uintptr(unsafe.Pointer(target)), credTypeGeneric, 0)
 }
 

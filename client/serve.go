@@ -109,8 +109,11 @@ func defaultServeConfigPath() string {
 // configBase: mapa nastavitev brez spremenljivk okolja (XDG_CONFIG_HOME, HOME, APPDATA): proces, ki jih nastavi, ne
 // sme minigw router preusmeriti na lažen serve.json. Windows: znana mapa RoamingAppData; drugod domača mapa iz baze
 // uporabnikov. Šele če to ne uspe, os.UserConfigDir.
+// knownConfigDirFn: testi (runIsolated) jo preusmerijo; znana mapa ne bere okolja.
+var knownConfigDirFn = knownConfigDir
+
 func configBase() (string, error) {
-	if dir, err := knownConfigDir(); err == nil && dir != "" {
+	if dir, err := knownConfigDirFn(); err == nil && dir != "" {
 		return dir, nil
 	}
 	return os.UserConfigDir()
@@ -682,8 +685,17 @@ func checkFolder(f, cfgDir string) (string, error) {
 	if err != nil {
 		realCfg = cfgDir
 	}
-	for _, a := range []string{abs, real} {
-		for _, d := range []string{cfgDir, realCfg} {
+	// Windows: EvalSymlinks stičišča ne razreši; finalPath ga (preverba; shranjena ostane pot EvalSymlinks).
+	fin, err := finalPath(abs)
+	if err != nil {
+		return "", errors.New("folder: " + err.Error())
+	}
+	finCfg, err := finalPath(cfgDir)
+	if err != nil {
+		finCfg = realCfg
+	}
+	for _, a := range []string{abs, real, fin} {
+		for _, d := range []string{cfgDir, realCfg, finCfg} {
 			if under(d, a) || under(a, d) { // agent bi dosegel žeton in ključ routerja
 				return "", errors.New("folder must not contain or be inside the config folder " + cfgDir)
 			}

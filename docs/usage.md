@@ -410,6 +410,8 @@ first agent request.
 credentials out of project folders you use with a gateway, or list them in `.gitignore` for sync and worktree mode.
 
 If minigw prints that the folder "is not shared with the gateway", run `minigw share add` or `/minigw:share`.
+If it prints "not sharing …: this drive does not report real paths (network or virtual drive)" (Windows), the folder is on a
+network or virtual drive that minigw cannot check safely: share a folder on a local disk instead.
 
 ## Several gateways (profiles)
 
