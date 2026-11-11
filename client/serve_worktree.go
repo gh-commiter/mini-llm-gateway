@@ -854,7 +854,7 @@ var gitWrapMu sync.Mutex
 // wrapScript: ovoj gitExecWrap (enak v Worktree.gitExecWrap na Macu): točno ujemanje GIT_DIR z enim od nepraznih vnosov.
 func wrapScript(git string) string {
 	return "#!/bin/sh\n# minigw (N9): git runs only in the clones minigw registered, not in a nested repository the agent made\n" +
-		"ok=; set -f; IFS='\n'\n" +
+		"unset DBUS_SESSION_BUS_ADDRESS\nok=; set -f; IFS='\n'\n" +
 		`for d in $MINIGW_GIT_DIRS; do [ -n "$GIT_DIR" ] && [ "$GIT_DIR" = "$d" ] && ok=1; done` + "\n" +
 		`[ -n "$ok" ] || { echo "minigw: git in a nested repository is off in worktree mode" >&2; exit 128; }` + "\n" +
 		"exec '" + strings.ReplaceAll(git, "'", `'\''`) + `' "$@"` + "\n"
@@ -867,7 +867,7 @@ func wrapScript(git string) string {
 // Klicatelj zunaj peskovnika (harness) ima za druge ukaze nespremenjeno pravilo.
 func pathWrapScript(git string) string {
 	return "#!/bin/sh\n# minigw: git works in the registered clone (MINIGW_GIT_DIRS) that holds the folder or the -C <path>; new repositories only under $MINIGW_DEPS\n" +
-		"real='" + strings.ReplaceAll(git, "'", `'\''`) + `'; d=$(pwd -P) || exec "$real" "$@"` + "\n" +
+		"unset DBUS_SESSION_BUS_ADDRESS\nreal='" + strings.ReplaceAll(git, "'", `'\''`) + `'; d=$(pwd -P) || exec "$real" "$@"` + "\n" +
 		`i=1; while [ $i -le $# ]; do eval "a=\${$i}"; case $a in` + "\n" +
 		`  -C) i=$((i+1)); eval "p=\${$i}"; case $p in /*) ;; *) p=$d/$p;; esac; q=$(cd "$p" 2>/dev/null && pwd -P) && d=$q || break;;` + "\n" +
 		`  -c|--git-dir|--work-tree|--namespace|--config-env) i=$((i+1));; -*) ;; *) break;; esac; i=$((i+1)); done` + "\n" +

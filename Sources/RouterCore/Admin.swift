@@ -536,6 +536,7 @@ extension Router {
                 let enabled = try b.bool("enabled"), path = try b.string("path"), write = try b.bool("write")
                 let network = try b.bool("network"), commands = try b.bool("commands"), models = try b.models("models")
                 let ask = try b.bool("askOthers"), work = try Self.work(b)
+                if commands == true { throw AdminError(400, Copilot.noCommands) }  // #81 H1
                 if let path, !path.isEmpty, !FileManager.default.isExecutableFile(atPath: path) { throw AdminError(400, "not an executable: \(path)") }
                 if case let list?? = models, let bad = list.first(where: { !Self.validModel($0) }) { throw AdminError(400, "invalid model name: \(bad)") }
                 let n = try await hooks.update { c in
@@ -678,7 +679,7 @@ extension Router {
 
     func copilotInfo(_ c: CopilotConfig) async -> [String: Any] {
         ["enabled": c.enabled, "path": c.executable, "found": await Copilot.executable(c.executable) != nil, "write": c.write,
-         "network": c.network, "commands": c.commands, "models": c.modelList, "askOthers": c.askOthers,
+         "network": c.network, "commands": false, "commandsUnavailable": Copilot.noCommands, "models": c.modelList, "askOthers": c.askOthers,
          "work": Self.apiWork(c.work)].merging(Self.copilotLogin(Copilot.login(copilotConfig).problem)) { $1 }
     }
 

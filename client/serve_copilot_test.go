@@ -114,19 +114,22 @@ func TestCopilotLoginPointer(t *testing.T) {
 	}
 	user := `{"host":"github.com","login":"u"}`
 	for body, want := range map[string]string{
-		`{"loggedInUsers":[` + user + `]}`:                                       "",
-		`{"loggedInUsers":[` + user + `],"authTokens":{"github.com:u":"gho_x"}}`: "plain text",
-		`{"loggedInUsers":[` + user + `],"copilotTokens":{"x":"y"}}`:             "plain text",
-		`{"loggedInUsers":[]}`:                                                   "not signed in",
-		`{"trustedFolders":["/"]}`:                                               "not signed in",
-		`not json`:                                                               "expected form",
-		`{"loggedInUsers":[{"host":"github.com","login":"u","token":"x"}]}`:      "expected form", // tuji ključ
-		`{"loggedInUsers":[{"host":"github.com/../x","login":"u"}]}`:             "expected form",
-		`{"loggedInUsers":[{"host":"file:///etc","login":"u"}]}`:                 "expected form",
-		`{"loggedInUsers":[{"host":"github.com","login":"-u"}]}`:                 "expected form",
-		`{"loggedInUsers":[{"host":"github.com","login":"u;rm"}]}`:               "expected form",
-		`{"loggedInUsers":[{"host":"github.com"}]}`:                              "expected form",
-		`{"loggedInUsers":[{"host":"github.com","login":"u","kind":7}]}`:         "expected form",
+		`{"loggedInUsers":[` + user + `]}`:                                                                     "",
+		`{"loggedInUsers":[` + user + `],"authTokens":{"github.com:u":"gho_x"}}`:                               "plain text",
+		`{"loggedInUsers":[` + user + `],"copilotTokens":{"x":"y"}}`:                                           "plain text",
+		`{"loggedInUsers":[]}`:                                                                                 "not signed in",
+		`{"trustedFolders":["/"]}`:                                                                             "not signed in",
+		`not json`:                                                                                             "expected form",
+		`{"loggedInUsers":[{"host":"github.com","login":"u","token":"x"}]}`:                                    "expected form", // tuji ključ
+		`{"loggedInUsers":[{"host":"github.com/../x","login":"u"}]}`:                                           "expected form",
+		`{"loggedInUsers":[{"host":"file:///etc","login":"u"}]}`:                                               "expected form",
+		`{"loggedInUsers":[{"host":"github.com","login":"-u"}]}`:                                               "expected form",
+		`{"loggedInUsers":[{"host":"github.com","login":"u;rm"}]}`:                                             "expected form",
+		`{"loggedInUsers":[{"host":"github.com"}]}`:                                                            "expected form",
+		`{"loggedInUsers":[{"host":"github.com","login":"u","kind":7}]}`:                                       "expected form",
+		`{"loggedInUsers":[{"host":"github.com","login":"u","kind":"User"}]}`:                                  "expected form", // L4: le [a-z][a-z0-9-]
+		`{"loggedInUsers":[{"host":"github.com","login":"u","derivedFrom":"github.com:u"}]}`:                   "expected form",
+		`{"loggedInUsers":[{"host":"github.com","login":"u","kind":"enterprise-user","derivedFrom":"oauth"}]}`: "",
 		`{"loggedInUsers":[{"host":"github.com","login":"u","kind":"a
 b"}]}`: "expected form",
 		`{"loggedInUsers":[` + user + `],"lastLoggedInUser":{"host":"","login":"u"}}`: "expected form",
@@ -159,6 +162,10 @@ func TestCopilotKeyringDetection(t *testing.T) {
 		secretServiceListed(`as 2 "org.freedesktop.secrets.x" "org.freedesktop.DBus"`) {
 		t.Fatal("listing")
 	}
+	// M1: git (ovoja exec in PATH) nikoli ne dobi posrednika shrambe ključev
+	if !strings.Contains(wrapScript("/g"), "\nunset DBUS_SESSION_BUS_ADDRESS\n") || !strings.Contains(pathWrapScript("/g"), "\nunset DBUS_SESSION_BUS_ADDRESS\n") {
+		t.Fatal("git wrappers keep DBUS_SESSION_BUS_ADDRESS")
+	}
 	if got := dbusEscape("/run/user/1 x/bus"); got != "/run/user/1%20x/bus" {
 		t.Fatalf("escape %q", got)
 	}
@@ -184,6 +191,10 @@ case "$*" in *ListActivatableNames*) echo '   string "org.freedesktop.secrets"';
 	script("busctl", `echo 'as 1 "org.freedesktop.DBus"'`) // busctl ima prednost: tu ni Secret Service
 	if why := copilotKeyring(); !strings.Contains(why, "headless") {
 		t.Fatalf("headless: %q", why)
+	}
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:abstract=/tmp/dbus-x,guid=1") // M1: dosegljiva iz bwrap
+	if why := copilotKeyring(); !strings.Contains(why, "unix:abstract=") {
+		t.Fatalf("abstract: %q", why)
 	}
 	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "") // brez seje D-Bus
 	os.Remove(filepath.Join(bin, "busctl"))
@@ -336,20 +347,15 @@ echo '{"type":"assistant.message","data":{"content":"copilot says hi turn='$((n 
 		!strings.Contains(b, `"commands":false`) || !strings.Contains(b, `"network":false`) {
 		t.Fatalf("copilot API defaults: %d %s", st, b)
 	}
-	if runtime.GOOS == "linux" { // #81: ukazi bi prebrali shrambo ključev
-		if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/agents/copilot", `{"write":true,"commands":true}`); st != 400 ||
-			!strings.Contains(b, copilotLinuxCommands) {
-			t.Fatalf("linux commands: %d %s", st, b)
-		}
-		s.update(func(c *serveConfig) error { c.Copilot.Commands = true; return nil }) // starejša nastavitev: ukazov vseeno ni
+	// H1: ukazov Copilot ni nikjer: PATCH 400 z razlogom, shranjen true ne velja (GET commands:false + razlog)
+	if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/agents/copilot", `{"write":true,"commands":true}`); st != 400 ||
+		!strings.Contains(b, copilotNoCommands) {
+		t.Fatalf("commands: %d %s", st, b)
 	}
-	if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/agents/copilot", `{"write":true}`); st != 200 || !strings.Contains(b, `"write":true`) {
+	s.update(func(c *serveConfig) error { c.Copilot.Commands = true; return nil }) // starejša nastavitev
+	if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/agents/copilot", `{"write":true}`); st != 200 || !strings.Contains(b, `"write":true`) ||
+		!strings.Contains(b, `"commands":false`) || !strings.Contains(b, `"commandsUnavailable":"`+copilotNoCommands) {
 		t.Fatalf("copilot API: %d %s", st, b)
-	}
-	if runtime.GOOS != "linux" {
-		if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/agents/copilot", `{"commands":true}`); st != 200 || !strings.Contains(b, `"commands":true`) {
-			t.Fatalf("copilot commands: %d %s", st, b)
-		}
 	}
 	if st, _ := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/agents/codex", `{"commands":true}`); st != 400 {
 		t.Fatal("codex commands accepted")
@@ -362,8 +368,7 @@ echo '{"type":"assistant.message","data":{"content":"copilot says hi turn='$((n 
 		t.Fatalf("with writing: %d %s %q", st, b, args())
 	}
 	allow, deny = copilotRules(args())
-	if !slices.Contains(allow, "write") || runtime.GOOS == "linux" == slices.Contains(allow, "shell") ||
-		runtime.GOOS != "linux" && !slices.Contains(deny, "shell(gh:*)") {
+	if !slices.Contains(allow, "write") || slices.Contains(allow, "shell") || !slices.Contains(deny, "shell") {
 		t.Fatalf("after PATCH: allow %q deny %q", allow, deny)
 	}
 	// D1: brez uporabne prijave copilot login Copilot ni na voljo, z razlogom (zahteva, API, status)

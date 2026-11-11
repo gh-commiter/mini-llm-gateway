@@ -24,6 +24,7 @@ minigw gw: show or change the Mini Gateway app on this Mac. Changes apply at onc
   minigw gw claude|codex|grok|copilot [--work=direct|sync|worktree]
                                                         the highest work mode in which the agent may change the
                                                         client's folder (in a lower mode it only reads)
+  minigw gw copilot login                               Copilot's sign-in state (copilot login on this Mac), never a value
   minigw gw token [rotate]                              print the connect line; rotate makes a new token
   minigw gw autostart [on|off]                          Open at Login (Settings → General); no argument: show it
   minigw gw settings                                    the settings in this terminal (minigw-tui; also over SSH)
@@ -413,7 +414,13 @@ func routerCommand(_ argv: [String]) {
         need(1, 1)
         agentWork(a, pos[0], flags["work"])
 
-    case "copilot":  // #81: brez žetona (le copilot login)
+    case "copilot":  // #81: brez žetona (le copilot login); login: stanje prijave kot v Go
+        if pos.count == 2, pos[1] == "login" {
+            let login = a.call("GET", "/agents/copilot")["login"] as? [String: Any] ?? [:]
+            say(clean("Copilot login: \(login["state"] as? String ?? "unknown")"))
+            say(clean(login["hint"] as? String ?? ""))
+            return
+        }
         need(1, 1)
         agentWork(a, "copilot", flags["work"])
 

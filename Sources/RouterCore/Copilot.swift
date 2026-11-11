@@ -8,13 +8,14 @@ import Foundation
 /// ~/.copilot/config.json, preverjena oblika); žeton ostane v Keychainu (storitev com.github.copilot.cli, račun iz gostitelja
 /// in prijave, ne iz poti) in ga copilot prebere sam: profil peskovnika mu dovoli branje ~/Library/Keychains (`keychainRule`;
 /// postavke ščiti ACL Keychaina, le podpisani copilot jih bere brez vprašanja). Brez prijave ali z žetonom v navadnem
-/// besedilu Copilot ni na voljo, z razlogom (`login`).
+/// besedilu Copilot ni na voljo, z razlogom (`login`). H1: ukazov lupine ni (ukaz bi prebral login.keychain-db ali zagnal
+/// podpisani copilot s podtaknjenim paketom in prebral žeton), zato Keychain bere le drevo procesov copilota samega.
 public struct CopilotConfig: Codable, Sendable, Equatable {
     public var enabled = false
     public var executable = ""     // prazno = samodejno iskanje
     public var models = ""         // ločeno z vejico; claude-copilot-<model> za vsakega (Copilot nima seznama modelov)
     public var write = false       // urejanje datotek v mapi seje (sicer le branje)
-    public var commands = false    // ukazi lupine (sandbox-exec; z dovoljenjem: agent lahko uporabi prijavo GitHub)
+    public var commands = false    // ukazi lupine: #81 H1 nikoli (shranjen true ne velja, Copilot.noCommands)
     public var network = false     // spletna orodja (url); omrežja ukazov lupine ne omeji (copilot ga potrebuje sam)
     public var askOthers = false          // »May ask other models«: agent vpraša drug model prehoda (AgentRun)
     public var work = ""                  // #45: najvišji način za pisanje (sync, worktree); "" = direct, vsi načini
@@ -83,13 +84,18 @@ public enum Copilot {
     static let tokenVars = ["COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"]
 
     static let signIn = "sign in with `copilot login` on the gateway as the gateway user"
+    /// H1: zakaj Copilot nima ukazov (enako besedilo kot copilotNoCommands v Go).
+    public static let noCommands = "Copilot commands are not available: a command could read Copilot's sign-in from the system keyring"
+    /// Vrsta razloga (nastavitve ga pokažejo prevedenega; API in zahteva angleško besedilo).
+    public enum LoginProblem: Sendable { case notSignedIn, unreadable, plainText, badForm }
     /// Prava nastavitev copilot uporabnika (le kazalec na prijavo se prebere).
     public static var userConfig: URL { URL(fileURLWithPath: NSHomeDirectory() + "/.copilot/config.json") }
 
     nonisolated(unsafe) static let hostRe = try! Regex(#"(https://)?[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*"#)
     nonisolated(unsafe) static let loginRe = try! Regex(#"[A-Za-z0-9][A-Za-z0-9_-]{0,99}"#)  // GitHub; _ za Enterprise Managed Users
+    nonisolated(unsafe) static let kindRe = try! Regex(#"[a-z][a-z0-9-]{0,31}"#)  // kind, derivedFrom (L4)
 
-    /// En LoggedInUser: host, login obvezna; kind, derivedFrom neobvezna niza natisljivega ASCII; drugi ključi = nil.
+    /// En LoggedInUser: host, login obvezna; kind, derivedFrom neobvezna (^[a-z][a-z0-9-]{0,31}$); drugi ključi = nil.
     static func user(_ v: Any?) -> [String: String]? {
         guard let o = v as? [String: Any] else { return nil }
         var u: [String: String] = [:]
@@ -98,7 +104,7 @@ public enum Copilot {
             switch k {
             case "host": guard s.utf8.count <= 253, (try? hostRe.wholeMatch(in: s)) != nil else { return nil }
             case "login": guard (try? loginRe.wholeMatch(in: s)) != nil else { return nil }
-            case "kind", "derivedFrom": guard !s.isEmpty, s.utf8.count <= 256, s.unicodeScalars.allSatisfy({ (0x20...0x7e).contains($0.value) }) else { return nil }
+            case "kind", "derivedFrom": guard (try? kindRe.wholeMatch(in: s)) != nil else { return nil }
             default: return nil
             }
             u[k] = s
@@ -108,21 +114,36 @@ public enum Copilot {
 
     /// #81: nov config.json za svež COPILOT_HOME (le loggedInUsers in lastLoggedInUser iz `url`) ali razlog, zakaj prijave
     /// ni mogoče uporabiti (kot copilotLoginPointer v Go). Vrednosti žetona ne kopira in ne izpiše.
-    public static func login(_ url: URL) -> (config: Data?, problem: String?) {
-        let p = url.path, bad = "Copilot's sign-in (\(p)) is not in the expected form: " + signIn
-        let notIn = "Copilot is not signed in on the gateway: " + signIn
+    public static func login(_ url: URL) -> (config: Data?, problem: String?, kind: LoginProblem?) {
+        let r = loginPointer(url)
+        guard let why = r.problem else { return (r.config, nil, nil) }
+        let p = url.path
+        let text = switch why {
+        case .notSignedIn: "Copilot is not signed in on the gateway: " + signIn
+        case .unreadable: "Copilot's sign-in (\(p)) cannot be read: " + signIn
+        case .badForm: "Copilot's sign-in (\(p)) is not in the expected form: " + signIn
+        case .plainText: "Copilot's sign-in on the gateway is stored as plain text (no system keyring, e.g. a headless Linux), "
+            + "which Mini Gateway does not use: Copilot needs the sign-in in the system keyring (Secret Service, Keychain)"
+        }
+        return (nil, text, why)
+    }
+
+    static func loginPointer(_ url: URL) -> (config: Data?, problem: LoginProblem?) {
+        let p = url.path, bad = LoginProblem.badForm, notIn = LoginProblem.notSignedIn
         guard (try? FileManager.default.attributesOfItem(atPath: p))?[.type] as? FileAttributeType == .typeRegular else { return (nil, notIn) }
-        let fd = open(p, O_RDONLY | O_NOFOLLOW)  // brez sledenja povezavi
-        guard fd >= 0 else { return (nil, "Copilot's sign-in (\(p)) cannot be read: " + signIn) }
-        let data = (try? FileHandle(fileDescriptor: fd, closeOnDealloc: true).read(upToCount: 1 << 20)) ?? Data()
+        let fd = open(p, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)  // brez sledenja povezavi; FIFO ne blokira (L2)
+        guard fd >= 0 else { return (nil, .unreadable) }
+        let fh = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        var st = stat()
+        guard fstat(fd, &st) == 0, st.st_mode & S_IFMT == S_IFREG else { return (nil, .unreadable) }  // ista datoteka je navadna
+        let data = (try? fh.read(upToCount: 1 << 20)) ?? Data()
         // copilot začne datoteko s celimi vrsticami »// …« (niz JSON ne more čez vrstico)
         let text = String(decoding: data, as: UTF8.self).split(separator: "\n", omittingEmptySubsequences: false)
             .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }.joined(separator: "\n")
         guard let top = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else { return (nil, bad) }
         for (k, v) in top where k.lowercased().contains("token") {  // žeton v navadnem besedilu (ni shrambe ključev): ne kopira se
             if let n = v as? NSNumber, CFGetTypeID(n) == CFBooleanGetTypeID() { continue }
-            return (nil, "Copilot's sign-in on the gateway is stored as plain text (no system keyring, e.g. a headless Linux), "
-                    + "which Mini Gateway does not use: Copilot needs the sign-in in the system keyring (Secret Service, Keychain)")
+            return (nil, .plainText)
         }
         guard let list = top["loggedInUsers"] as? [Any], !list.isEmpty else { return (nil, notIn) }
         guard list.count <= 32 else { return (nil, bad) }
@@ -309,7 +330,7 @@ extension Router {
         // #81 (D1): le copilot login uporabnika (kazalec v svež COPILOT_HOME, žeton v Keychainu), nikoli žeton v okolju
         let login = Copilot.login(copilotConfig)
         guard let loginConfig = login.config else {
-            return await error(503, "api_error", login.problem ?? Copilot.signIn, rid: rid, writer: writer)
+            return await error(503, "api_error", login.problem ?? Copilot.signIn, rid: rid, extra: [("x-should-retry", "false")], writer: writer)
         }
         // Začasna mapa zahteve (0700, nepredvidljivo ime) v Scratch, ki je skrit vsem profilom; ta profil jo izrecno dovoli
         // (R2): COPILOT_HOME (h), TMPDIR (t) in pogovor brez orodij. Kratka imena: poti vtičnic so omejene.
@@ -361,7 +382,8 @@ extension Router {
                                         branch: tree?.branch, gits: tree?.gits ?? []) + "\n\n" + prompt
             }
         }
-        let write = cfg.write && !readOnly, commands = agent && cfg.commands && write  // peskovnik piše v mapo: ukazi le s pisanjem (tudi ne pri --ro)
+        let write = cfg.write && !readOnly, commands = false  // #81 H1: ukaz bi prebral prijavo (Keychain); shranjen true ne velja
+        if agent && write && cfg.commands, let s = req.header("x-claude-mini-session") { await Self.shares.note(session: s, Copilot.noCommands) }
         let base = ProcessInfo.processInfo.environment
         let root = tree?.root ?? cwd
         // R9: mapa seje ne sme vsebovati paketa copilot (orodje write bi ga spremenilo za naslednji zagon brez peskovnika).

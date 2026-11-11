@@ -124,6 +124,7 @@ final class AppState: ObservableObject {
             Task { @MainActor in self?.pendingChanged(Router.deviceLog.pending) }
         }
         ShareHub.cleanupStale()
+        keychain.delete("copilot-token")  // #81 L1: žeton Copilot do 0.5.24 se ne uporablja več
         if ScratchOwner.claim(config.scratchURL, id: config.instanceID).isEmpty {  // N4: v mapi drugega prehoda nič
             NativeHub.cleanupStale(config.scratch("tmp").appendingPathComponent("native-markers"))  // označbe native po sesutju
             NativeHub.cleanupRunTemps(config.scratch("tmp"))  // začasne mape minigw run po sesutju

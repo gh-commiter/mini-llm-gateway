@@ -283,8 +283,8 @@ sandbox may use the network (default: off); `models: null` = all the account's m
 devices (Siri uses this Mac's personal data). `run` allows `minigw run` for a device (off by default): it runs the
 listed commands (comma-separated, first argument only) in a native folder on the Mac, so it is code execution there.
 Copilot: `write` lets it edit files in the session's folder (default: off, read-only), `network` allows its web tool,
-`commands` its shell (an explicit opt-in that needs `write`; Linux: `PATCH {"commands": true}` is 400 and
-`commandsUnavailable` says why, a command could read the keyring). On a Windows gateway Copilot is not supported
+`commands` is always `false` (#81 H1, both gateways: `PATCH {"commands": true}` is 400 and `commandsUnavailable`
+says why: a command could read Copilot's sign-in from the system keyring; a stored `true` is ignored). On a Windows gateway Copilot is not supported
 in this version: `GET` has `"unsupported": true`, `"enabled": false` and `reason` "Copilot is not supported on a Windows
 gateway in this version"; `PATCH {"enabled": true}` and requests to `claude-copilot*` get 400 with that text, and the
 models are not listed. On the Mac Copilot always runs in a `sandbox-exec` profile and on Linux under bwrap, each request with a fresh

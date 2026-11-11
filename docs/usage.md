@@ -358,8 +358,7 @@ Notes:
   the Windows sandbox, which allows only TCP 443 to the addresses of `api.anthropic.com` resolved when the run starts,
   so Claude's web fetch and web search fail; if the name cannot be resolved the run is refused) and a `git clone` of a
   remote URL is refused and names the setting; on a Windows gateway without the Windows sandbox the switch has no
-  effect. On the Mac Copilot follows "Network for Codex builds" (and its "Allow web access") for that, although its
-  commands always have network.
+  effect. On the Mac Copilot follows "Network for Codex builds" (and its "Allow web access") for that.
 - On `minigw serve`, agent requests run one at a time per device and repository, also across that device's
   sessions. The gateway uses its own `git` from PATH, without system or global config, hooks, fsmonitor or
   submodules.
@@ -545,8 +544,8 @@ needs that switch.
   no token, `gh` or PAT sign-in. Without a usable login Copilot is off and the settings, `minigw gw status` and the
   request say why. A headless Linux gateway (no Secret Service; `copilot login` then stores the token in plain text)
   has no Copilot. Linux also needs `xdg-dbus-proxy`, so Copilot reaches only the keyring from its sandbox.
-- Commands need **Allow commands** together with **Allow writing** (Mac only: on Linux a command could read the
-  keyring). Commands can make Copilot requests with your sign-in. `gh` and `security` stay denied.
+- Copilot has no commands (its shell tool is always denied; **Allow commands** is greyed out with the reason): a command
+  could read Copilot's sign-in from the Keychain or keyring.
 - Within a conversation Copilot continues its own session (`--session-id`).
 
 **Logins (`minigw serve`).** Agents use your subscription logins, never API keys, and nothing is copied back from an

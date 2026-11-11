@@ -835,10 +835,10 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			w.Header().Set("x-should-retry", "false")
 			return writeError(w, r.rid, 503, why)
 		}
-		if runtime.GOOS == "linux" && commands { // ukaz bi prek posrednika D-Bus prebral vse ključe zbirke
+		if commands { // H1: ukaz bi prebral prijavo iz shrambe ključev (vse platforme)
 			commands = false
 			if agent && write {
-				s.hub.note(r.h("x-claude-mini-session"), copilotLinuxCommands)
+				s.hub.note(r.h("x-claude-mini-session"), copilotNoCommands)
 			}
 		}
 	}
@@ -1157,7 +1157,7 @@ func agentAuthFiles(k agentKind) (real string, names []string) {
 		}
 		return real, []string{"auth.json", "config.toml"}
 	}
-	if k.name == "copilot" { // M1: ne prave config.json; prijava je žeton iz okolja (copilotToken ali namenski žeton)
+	if k.name == "copilot" { // M1: ne prave config.json (iz nje le kazalec na prijavo, copilotLogin, #81)
 		return filepath.Join(home, ".copilot"), nil
 	}
 	if real = os.Getenv("GROK_HOME"); real == "" {

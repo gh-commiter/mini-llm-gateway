@@ -103,6 +103,9 @@ private let copilotPointer = #"{"lastLoggedInUser":{"host":"https:\/\/github.com
         (#"{"loggedInUsers":[{"host":"github.com","login":"u;rm"}]}"#, "expected form"),
         (#"{"loggedInUsers":[{"host":"github.com"}]}"#, "expected form"),
         (#"{"loggedInUsers":[{"host":"github.com","login":"u","kind":7}]}"#, "expected form"),
+        (#"{"loggedInUsers":[{"host":"github.com","login":"u","kind":"User"}]}"#, "expected form"),  // L4: le [a-z][a-z0-9-]
+        (#"{"loggedInUsers":[{"host":"github.com","login":"u","derivedFrom":"github.com:u"}]}"#, "expected form"),
+        (#"{"loggedInUsers":[{"host":"github.com","login":"u","kind":"enterprise-user","derivedFrom":"oauth"}]}"#, nil),
         (#"{"loggedInUsers":[{"host":"github.com","login":"u","kind":"a\nb"}]}"#, "expected form"),
         (#"{"loggedInUsers":[\#(user)],"lastLoggedInUser":{"host":"","login":"u"}}"#, "expected form"),
     ]
@@ -119,6 +122,7 @@ private let copilotPointer = #"{"lastLoggedInUser":{"host":"https:\/\/github.com
 }
 
 /// #81: peskovnik Copilota sme brati ~/Library/Keychains (prijava v Keychainu), ne pisati vanj; drugo ostane skrito.
+/// Bere ga le drevo procesov copilota (H1: Copilot nima ukazov).
 /// Začasna domača mapa, nikoli pravi Keychain.
 @Test func copilotSandboxReadsOnlyTheKeychainFolder() throws {
     let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("copilot-kc-" + UUID().uuidString)
@@ -228,7 +232,7 @@ private func field(_ text: String, _ name: String) -> String {
 @Test func copilotWorktreeNeedsWritingAndAdminAPI() async throws {
     var c = RouterConfig()
     c.copilot.enabled = true; c.copilot.write = false
-    let r = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]))
+    let r = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]), copilotConfig: URL(fileURLWithPath: "/nonexistent/.copilot/config.json"))  // L5
     let session = UUID().uuidString
     _ = await Router.shares.register(session: session, cwd: "/p", key: nil, device: nil,
                                      tree: ShareHub.Tree(repo: URL(fileURLWithPath: "/nonexistent/x.git"), worktrees: URL(fileURLWithPath: "/nonexistent/w"), sub: ""))
@@ -241,6 +245,13 @@ private func field(_ text: String, _ name: String) -> String {
 
     let app = FakeApp()
     #expect(await admin(app.router(), "GET", "/agents/copilot").text.contains(#""commands":false"#))
+    // #81 H1: ukazov ni: PATCH 400 z razlogom; GET commands:false in razlog tudi, ko je shranjen true
+    let cmd = await admin(app.router(), "PATCH", "/agents/copilot", body: #"{"write":true,"commands":true}"#)
+    #expect(cmd.status == 400 && cmd.text.contains("Copilot commands are not available") && !app.config.copilot.commands)
+    app.config.copilot.commands = true
+    let stored = await admin(app.router(), "GET", "/agents/copilot")
+    #expect(stored.text.contains(#""commands":false"#) && stored.text.contains(#""commandsUnavailable":"Copilot commands are not available"#))
+    app.config.copilot.commands = false
     #expect(await admin(app.router(), "PATCH", "/agents/copilot", body: #"{"enabled":true,"write":true,"models":["gpt-5.2"]}"#).status == 200)
     #expect(app.config.copilot.enabled && app.config.copilot.write && app.config.copilot.models == "gpt-5.2")
     #expect(await admin(app.router(), "PATCH", "/agents/copilot", body: #"{"models":["--yolo"]}"#).status == 400)
@@ -252,7 +263,8 @@ private func field(_ text: String, _ name: String) -> String {
     #expect(await admin(app.router(), "GET", "/status").text.contains(#""copilot":"Copilot is not signed in"#))
 }
 
-/// Ukazi lupine (z dovoljenjem): pišejo v mapo seje in COPILOT_HOME zahteve, ne v domačo mapo. Brez prijave copilot login nič.
+/// Peskovnik copilota: piše v mapo seje in COPILOT_HOME zahteve, ne v domačo mapo. #81 H1: shranjen commands=true ne da
+/// orodja shell. Brez prijave copilot login nič (503, x-should-retry: false).
 @Test func copilotCommandsRunInTheSandbox() async throws {
     let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("copilot-sb-" + UUID().uuidString)
     let outside = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".minigw-copilot-test-" + UUID().uuidString)
@@ -263,7 +275,7 @@ private func field(_ text: String, _ name: String) -> String {
     echo in > inside.txt; inside=$?
     echo out > "\(outside.path)" 2>/dev/null; out=$?
     mkdir -p "$HOME/Library/Caches/copilot/pkg-minigw-test" 2>/dev/null; cache=$?
-    echo '{"type":"assistant.message","data":{"content":"WROTE='$inside$out$cache' TOKEN='$COPILOT_GITHUB_TOKEN'"}}'
+    echo '{"type":"assistant.message","data":{"content":"WROTE='$inside$out$cache' TOKEN='$COPILOT_GITHUB_TOKEN' ARGS='"$(echo "$@" | tr ' ' '|')"'"}}'
     exit 0
     """)
     var c = RouterConfig()
@@ -280,13 +292,15 @@ private func field(_ text: String, _ name: String) -> String {
     }
     let login = try copilotLogin(root)
     let w = await ask(Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]), copilotConfig: login))
-    #expect(w.status == 200 && w.text.contains("WROTE=011") && w.text.contains("TOKEN=\""), "\(w.text)")  // mapa da; domača mapa, ~/Library/Caches ne
+    #expect(w.status == 200 && w.text.contains("WROTE=011") && w.text.contains("TOKEN= ARGS="), "\(w.text)")  // mapa da; domača mapa, ~/Library/Caches ne
     #expect(FileManager.default.fileExists(atPath: proj.appendingPathComponent("inside.txt").path) && !FileManager.default.fileExists(atPath: outside.path))
+    let args = field(w.text, "ARGS").split(separator: "|").map(String.init)
+    #expect(rules(args).allow.contains("write") && !rules(args).allow.contains("shell") && rules(args).deny.contains("shell"), "\(args)")
     // #81 (D1): brez uporabne prijave ni Copilota (ne z ukazi ne brez), z razlogom; nikoli žeton
     c.copilot.commands = false
     let none = await ask(Router(config: c, token: "tok", secrets: FakeSecrets(values: ["copilot-token": "github_pat_old"]),
                                 copilotConfig: root.appendingPathComponent("none/config.json")))
-    #expect(none.status == 503 && none.text.contains("copilot login"))
+    #expect(none.status == 503 && none.text.contains("copilot login") && none.text.lowercased().contains("x-should-retry: false"))
     try Data(#"{"loggedInUsers":[{"host":"github.com","login":"u"}],"authTokens":{"github.com:u":"gho_secret"}}"#.utf8).write(to: login)
     let plain = await ask(Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]), copilotConfig: login))
     #expect(plain.status == 503 && plain.text.contains("plain text") && !plain.text.contains("gho_secret"))

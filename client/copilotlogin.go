@@ -6,8 +6,9 @@ package main
 // prijavo (loggedInUsers, lastLoggedInUser iz prave ~/.copilot/config.json; po pravilu, brez drugih ključev). Žeton v
 // navadnem besedilu (Linux brez Secret Service: authTokens/copilotTokens v config.json) se ne kopira: Copilot tam ni na
 // voljo. Na Linuxu copilot doseže shrambo ključev le prek xdg-dbus-proxy (le org.freedesktop.secrets), ne cele seje
-// D-Bus (systemd --user bi zagnal program zunaj bwrap). Ukazi lupine Copilot na Linuxu niso na voljo: Secret Service
-// nima pravic po programih, ukaz bi prebral vse ključe odklenjene zbirke.
+// D-Bus (systemd --user bi zagnal program zunaj bwrap). Ukazov lupine Copilot ni (H1, nikjer): na Linuxu Secret Service
+// nima pravic po programih (ukaz bi prebral vse ključe zbirke), na Macu bi ukaz prebral login.keychain-db ali zagnal
+// podpisani copilot s podtaknjenim paketom (ACL Keychaina mu zaupa) in prebral žeton.
 
 import (
 	"context"
@@ -25,15 +26,16 @@ import (
 
 const copilotSignIn = "sign in with `copilot login` on the gateway as the gateway user"
 
-// copilotLinuxCommands: zakaj na Linuxu ni ukazov Copilot (nastavitve, opomba seje).
-const copilotLinuxCommands = "Copilot commands are not available on a Linux gateway: a command could read the keyring that holds Copilot's sign-in"
+// copilotNoCommands (H1): zakaj Copilot nima ukazov (nastavitve, opomba seje; enako besedilo na Macu).
+const copilotNoCommands = "Copilot commands are not available: a command could read Copilot's sign-in from the system keyring"
 
 var (
 	copilotHostRe  = regexp.MustCompile(`^(https://)?[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$`)
 	copilotLoginRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$`) // GitHub; _ za Enterprise Managed Users
+	copilotKindRe  = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)           // kind, derivedFrom (L4)
 )
 
-// copilotUser: en LoggedInUser (host, login obvezna; kind, derivedFrom neobvezna niza natisljivega ASCII); drugi
+// copilotUser: en LoggedInUser (host, login obvezna; kind, derivedFrom neobvezna, ^[a-z][a-z0-9-]{0,31}$); drugi
 // ključi ali druga oblika = nil.
 func copilotUser(raw json.RawMessage) map[string]string {
 	var o map[string]any
@@ -56,7 +58,7 @@ func copilotUser(raw json.RawMessage) map[string]string {
 				return nil
 			}
 		case "kind", "derivedFrom":
-			if s == "" || len(s) > 256 || strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || r > 0x7e }) {
+			if !copilotKindRe.MatchString(s) {
 				return nil
 			}
 		default:
@@ -150,6 +152,9 @@ var copilotKeyring = func() string {
 	if lookPath("xdg-dbus-proxy") == "" {
 		return "Copilot needs xdg-dbus-proxy on a Linux gateway (Copilot reaches only the keyring through it, from its sandbox): install the xdg-dbus-proxy package"
 	}
+	if strings.HasPrefix(sessionBus(), "unix:abstract=") { // M1: abstraktna vtičnica je dosegljiva tudi iz bwrap (ni datoteka)
+		return "Copilot needs the gateway user's D-Bus session on a socket file (unix:path=…): with unix:abstract= the sandbox could reach the whole session bus"
+	}
 	if !secretService(sessionBus()) {
 		return "Copilot needs a Secret Service keyring (e.g. GNOME Keyring or KWallet) on the gateway user's D-Bus session; " +
 			"a headless Linux gateway is not supported. With a keyring: " + copilotSignIn
@@ -218,6 +223,7 @@ func dbusEscape(s string) string {
 var copilotBusProxy = func(dir string) (string, func(), error) {
 	sock := filepath.Join(dir, "bus")
 	cmd := command(lookPath("xdg-dbus-proxy"), sessionBus(), sock, "--filter", "--talk=org.freedesktop.secrets")
+	proxyDies(cmd)
 	if err := cmd.Start(); err != nil {
 		return "", nil, errors.New("copilot: cannot start xdg-dbus-proxy: " + err.Error())
 	}

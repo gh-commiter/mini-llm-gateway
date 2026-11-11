@@ -1,5 +1,6 @@
 #!/bin/sh
 # minigw: git works in the registered clone (MINIGW_GIT_DIRS) that holds the folder or the -C <path>; new repositories only under $MINIGW_DEPS
+unset DBUS_SESSION_BUS_ADDRESS
 real='/REAL/git'; d=$(pwd -P) || exec "$real" "$@"
 i=1; while [ $i -le $# ]; do eval "a=\${$i}"; case $a in
   -C) i=$((i+1)); eval "p=\${$i}"; case $p in /*) ;; *) p=$d/$p;; esac; q=$(cd "$p" 2>/dev/null && pwd -P) && d=$q || break;;

@@ -507,9 +507,6 @@ func agents(u *ui) ([]row, error) {
 	} else if err == nil {
 		p := patch("/agents/copilot")
 		rows = append(rows, hdr("Copilot CLI"))
-		if why := str(a, "loginProblem"); why != "" { // #81: why Copilot is not available
-			rows = append(rows, inf("  "+why, ""))
-		}
 		if sb, ok := a["sandboxed"].(bool); ok && !sb && !yes(c, "allowUnsandboxedBash") || !ok && bare { // #68: per agent
 			rows = append(rows, inf("  No sandbox here: turn on Allow commands without a sandbox (Claude CLI) first.", ""))
 		}
@@ -518,10 +515,14 @@ func agents(u *ui) ([]row, error) {
 			ed("Path (empty = from PATH)", str(a, "path"), func(v string) (string, error) { return p(map[string]any{"path": v}) }),
 			ed("Models (comma-separated)", strings.Join(strs(a, "models"), ", "), func(v string) (string, error) { return p(map[string]any{"models": csv(v)}) }),
 			tog("Allow writing in the session's folder", yes(a, "write"), func(v bool) (string, error) { return p(map[string]any{"write": v}) }),
-			tog("Allow the web tool", yes(a, "network"), func(v bool) (string, error) { return p(map[string]any{"network": v}) }),
-			tog("Allow commands (needs writing)", yes(a, "commands"), func(v bool) (string, error) { return p(map[string]any{"commands": v}) }))
-		if !yes(a, "commands") { // commands are an explicit opt-in: ask before turning them on
-			rows[len(rows)-1].confirm = "Copilot may then run commands in the session's folder. Turn on"
+			tog("Allow the web tool", yes(a, "network"), func(v bool) (string, error) { return p(map[string]any{"network": v}) }))
+		if why := str(a, "commandsUnavailable"); why != "" { // #81 H1: no commands, with the reason instead of the toggle
+			rows = append(rows, inf("Allow commands", "not available"), inf("  "+why, ""))
+		} else {
+			rows = append(rows, tog("Allow commands (needs writing)", yes(a, "commands"), func(v bool) (string, error) { return p(map[string]any{"commands": v}) }))
+			if !yes(a, "commands") { // commands are an explicit opt-in: ask before turning them on
+				rows[len(rows)-1].confirm = "Copilot may then run commands in the session's folder. Turn on"
+			}
 		}
 		rows = append(rows, workRow(a, p)...)
 		rows = append(rows, loginRows("copilot", a, p)...)

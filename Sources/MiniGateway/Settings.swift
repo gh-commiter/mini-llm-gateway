@@ -31,7 +31,8 @@ struct SettingsView: View {
             ?? String(localized: "Never connected")
     }
     @State private var codexModels: [Codex.Model] = []
-    @State private var askCopilotCommands = false
+    @State private var copilotSignIn: Copilot.LoginProblem?  // #81: ob odprtju in vklopu (L2: ne ob vsakem izrisu)
+    @State private var copilotChecked = false
     @State private var grokModels: [String] = []
     @State private var foundryModels: [Foundry.Model] = []
     @State private var foundryStatus = ""
@@ -728,17 +729,22 @@ struct SettingsView: View {
                         .labelsHidden()
                 }
                 TextField("Models (comma-separated; empty = only the default, “auto”)", text: $draft.copilot.models)
-                // #81: le copilot login (žeton v Keychainu); razlog iz API ostane angleški
-                LabeledContent("Sign-in") {
-                    if let why = Copilot.login(Copilot.userConfig).problem { Text(verbatim: why) } else { Text("Signed in (copilot login)") }
+                // #81: le copilot login (žeton v Keychainu), kot vrstica Login na strani z nastavitvami
+                LabeledContent {
+                    Text(copilotChecked ? copilotLoginText : "…")
+                } label: {
+                    Text("Login")
+                    Text("Copilot uses your own sign-in (copilot login on this Mac, as this user); the token stays in your Keychain.")
                 }
             }
             Section {
                 Toggle("Allow writing in the session's folder", isOn: $draft.copilot.write)
                 Toggle("Allow web access (fetch tool)", isOn: $draft.copilot.network)
-                Toggle("Allow commands (in a sandbox)", isOn: Binding(get: { draft.copilot.commands },
-                                                set: { on in if on { askCopilotCommands = true } else { draft.copilot.commands = false } }))
-                    .disabled(!draft.copilot.write)
+                Toggle(isOn: .constant(false)) {  // #81 H1: nikoli (shranjena vrednost ne velja)
+                    Text("Allow commands")
+                    Text("Not available: a command could read Copilot's sign-in from your Keychain.")
+                }
+                .disabled(true)
                 workPicker($draft.copilot.work)
                 Toggle("May ask other models", isOn: $draft.copilot.askOthers)
                     .help(String(localized: "The agent may ask another model of this gateway (for example Codex) with minigw, in the same folder and with the same device's rights; one level deep, never its own kind. Codex needs “Allow network access for commands” for it."))
@@ -749,11 +755,22 @@ struct SettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
-        .alert("Allow Copilot to run commands?", isPresented: $askCopilotCommands) {
-            Button("Allow Commands", role: .destructive) { draft.copilot.commands = true }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Copilot then runs commands as you on this Mac, in a sandbox that writes only to the session's folder and a temporary folder, and hides your keys, sign-ins and app data; commands can still read your other files and use the network. Commands can make Copilot requests with your sign-in. Allow only if you trust the devices that use Copilot.")
+        .onAppear(perform: checkCopilotLogin)
+        .onChange(of: draft.copilot.enabled) { checkCopilotLogin() }
+    }
+
+    private func checkCopilotLogin() {
+        copilotSignIn = Copilot.login(Copilot.userConfig).kind
+        copilotChecked = true
+    }
+
+    private var copilotLoginText: LocalizedStringKey {
+        switch copilotSignIn {
+        case nil: "Signed in (copilot login)"
+        case .notSignedIn: "Not signed in: run copilot login on this Mac, as this user"
+        case .unreadable: "Not available: ~/.copilot/config.json cannot be read; run copilot login again"
+        case .badForm: "Not available: ~/.copilot/config.json is not in the expected form; run copilot login again"
+        case .plainText: "Not available: the sign-in is stored as plain text, not in your Keychain; run copilot login again"
         }
     }
 

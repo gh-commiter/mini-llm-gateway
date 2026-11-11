@@ -1061,12 +1061,9 @@ func (s *server) agentAPI(method string, k agentKind, body []byte) (int, any) {
 			o["enabled"], o["unsupported"], o["reason"] = false, true, copilotUnsupportedMsg
 		}
 		if k.name == "copilot" {
-			o["commands"] = ac.Commands
-			if _, why := copilotLogin(); why != "" && !copilotUnsupported { // #81: zakaj Copilot ni na voljo
+			o["commands"], o["commandsUnavailable"] = false, copilotNoCommands // H1: shranjen true ne velja
+			if _, why := copilotLogin(); why != "" && !copilotUnsupported {    // #81: zakaj Copilot ni na voljo
 				o["loginProblem"] = why
-			}
-			if runtime.GOOS == "linux" {
-				o["commandsUnavailable"] = copilotLinuxCommands
 			}
 			if ac.Models == nil {
 				o["models"] = []string{} // Copilot: imena modelov (ni seznama računa); prazno = le privzeti
@@ -1104,8 +1101,8 @@ func (s *server) agentAPI(method string, k agentKind, body []byte) (int, any) {
 	if b.Commands != nil && k.name != "copilot" {
 		return 400, errorBody(400, "commands: Copilot only")
 	}
-	if b.Commands != nil && *b.Commands && runtime.GOOS == "linux" {
-		return 400, errorBody(400, copilotLinuxCommands)
+	if b.Commands != nil && *b.Commands {
+		return 400, errorBody(400, copilotNoCommands)
 	}
 	if st, e := s.patchLogin(k.name, b.Token, b.APIKey); st != 0 { // pred nastavitvami: ključ ni del datoteke nastavitev
 		return st, e
