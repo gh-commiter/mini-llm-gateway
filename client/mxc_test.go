@@ -516,7 +516,7 @@ func TestLoginStatesTranslated(t *testing.T) {
 		t.Fatal("settings.html: no LOGIN_STATES block")
 	}
 	block := page[i : i+n]
-	found := regexp.MustCompile(`(?:return|o\["state"\] =) "((?:logged in|not logged in|unknown|API key \()[^"]*)"`).FindAllStringSubmatch(string(src), -1)
+	found := regexp.MustCompile(`(?:return|o\["state"\] =) "((?:logged in|not logged in|signed in|unknown|API key \()[^"]*)"`).FindAllStringSubmatch(string(src), -1)
 	if len(found) < 7 {
 		t.Fatalf("state strings: %v", found)
 	}

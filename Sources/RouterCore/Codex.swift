@@ -414,7 +414,12 @@ extension Router {
             let (status, type, message) = (error as? SiriError)?.status
                 ?? (error as? Codex.Failure).map { AgentError.classify($0.message) }
                 ?? (error as? Grok.Failure).map { AgentError.classify($0.message) }
-                ?? (error as? Copilot.Failure).map { AgentError.classify($0.message) }
+                ?? (error as? Copilot.Failure).map { f -> (Int, String, String) in  // omejitev: stderr le v dnevnik, kot minigw serve
+                    let c = AgentError.classify(f.message)
+                    guard c.0 == 429 else { return c }
+                    Self.log.error("\(rid, privacy: .public) copilot stderr: \(AgentError.message(f.message), privacy: .public)")
+                    return (429, c.1, "copilot: usage or rate limit reached; details are in the gateway log, request \(rid)")
+                }
                 ?? (error as? ShareHub.PullFailed).map { AgentError.classify($0.message) }
                 ?? (error as? Native.TreeAlive).map { (500, "api_error", "\($0.agent): " + Native.notStopped(rid)) } ?? (500, "api_error", "\(error)")
             if error is Native.TreeAlive { await Self.shares.abandon() }  // #73: klon sync ne gre v kopijo

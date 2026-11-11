@@ -1,8 +1,8 @@
 import Foundation
 
 /// Ponudnik `copilot -p` (GitHub Copilot CLI): agent v mapi seje, kot Codex. Copilot nima lastnega peskovnika za vgrajena
-/// orodja (urejanje datotek preveri le pot), zato privzeto le branje; pisanje datotek le v mapi seje; ukazi lupine le z
-/// izrecnim dovoljenjem in tedaj ves copilot v sandbox-exec (pisanje le v mapo, branje domače mape ne).
+/// orodja (urejanje datotek preveri le pot), zato privzeto le branje; pisanje datotek le v mapi seje; ukazov lupine ni
+/// (#81 H1); ves copilot vedno v sandbox-exec (pisanje le v mapo seje s pisanjem, domača mapa skrita, `runCopilot`).
 /// #81 (0.5.25, lastnik D1): Copilot se prijavi le s `copilot login` uporabnika tega Maca; brez žetona, `gh` ali PAT.
 /// Svež COPILOT_HOME vsake zahteve dobi nov config.json le s kazalcem na prijavo (`loggedInUsers`, `lastLoggedInUser` iz
 /// ~/.copilot/config.json, preverjena oblika); žeton ostane v Keychainu (storitev com.github.copilot.cli, račun iz gostitelja

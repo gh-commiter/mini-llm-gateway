@@ -373,6 +373,12 @@ echo '{"type":"assistant.message","data":{"content":"copilot says hi turn='$((n 
 	if !slices.Contains(allow, "write") || slices.Contains(allow, "shell") || !slices.Contains(deny, "shell") {
 		t.Fatalf("after PATCH: allow %q deny %q", allow, deny)
 	}
+	// Omejitev: stderr ostane v dnevniku, odjemalec dobi stalno besedilo (Mac: očiščen konec stderr)
+	os.WriteFile(copilot, []byte("#!/bin/sh\n[ \"$1\" = --version ] && exit 0\necho \"You've hit your 5-hour limit STDERR_TAIL\" >&2\nexit 1\n"), 0o755)
+	if st, b := ask("claude-copilot"); st != 429 || !strings.Contains(b, "copilot: usage or rate limit reached; details are in the gateway log") ||
+		strings.Contains(b, "STDERR_TAIL") {
+		t.Fatalf("limit: %d %s", st, b)
+	}
 	// D1: brez uporabne prijave copilot login Copilot ni na voljo, z razlogom (zahteva, API, status)
 	os.WriteFile(filepath.Join(home, ".copilot", "config.json"), []byte(`{"loggedInUsers":[{"host":"github.com","login":"u"}],"authTokens":{"x":"y"}}`), 0o600)
 	if st, b := ask("claude-copilot"); st != 503 || !strings.Contains(b, "plain text") || strings.Contains(b, `"y"`) {
