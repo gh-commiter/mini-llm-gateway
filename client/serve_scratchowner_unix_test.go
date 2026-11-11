@@ -108,3 +108,29 @@ func TestTakeScratchCurHeld(t *testing.T) {
 		t.Fatalf("own lock: %q %v", dst, err)
 	}
 }
+
+// Kopija deskriptorja zaklepa (kot jo ima otrok fork/exec do exec) ne sme zadržati zaklepa po premiku na drugo mapo
+// (Swift: scratchOwnerClaimLockAndTakeOver).
+func TestScratchLockReleasedDespiteCopy(t *testing.T) {
+	a, other := t.TempDir(), t.TempDir()
+	if err := lockScratch(a); err != nil {
+		t.Fatal(err)
+	}
+	defer lockScratch(t.TempDir())
+	scratchLock.Lock()
+	cp, err := syscall.Dup(int(scratchLock.f.Fd()))
+	scratchLock.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer syscall.Close(cp)
+	if err := lockScratch(other); err != nil {
+		t.Fatal(err)
+	}
+	if scratchLocked(a) {
+		t.Fatal("old folder still locked after the lock moved")
+	}
+	if err := lockScratch(a); err != nil { // in znova ista mapa
+		t.Fatalf("relock: %v", err)
+	}
+}
