@@ -2512,37 +2512,67 @@ func TestAllowedFolderUncheckedAtStart(t *testing.T) {
 	}
 }
 
-// #83 (A1): na mestu dovoljene mape, ki je ob zagonu ni bilo, podtaknjena povezava (v mapo nastavitev ali drugam) ne
-// gre agentu; prava mapa tega uporabnika gre.
+// #83 (A1, R1, R2): na mestu dovoljene mape, ki je ob zagonu ni bilo, podtaknjena povezava (v mapo nastavitev ali
+// drugam, tudi v nadrejeni mapi) ne gre agentu, tudi po drugi spremembi ali shranjevanju istega seznama; prava mapa tega
+// uporabnika gre; odstranjena in znova dodana mapa velja kot nova; nova obstoječa mapa gre takoj.
 func TestAllowedFolderPlantedAfterStart(t *testing.T) {
 	t.Cleanup(releaseScratch)
-	m := filepath.Join(t.TempDir(), "gone", "proj")
+	base := realOf(t, t.TempDir()) // macOS: /var → /private/var (sicer povezava v nadrejeni mapi)
+	m, viaParent := filepath.Join(base, "gone", "proj"), filepath.Join(base, "x", "proj")
 	scratch := filepath.Join(t.TempDir(), "scratch")
 	os.MkdirAll(scratch, 0o700)
 	k, _ := ecdh.X25519().GenerateKey(rand.Reader)
 	c := serveConfig{Token: "tok", Key: base64url(k.Bytes()), Tools: defaultTools, PermissionMode: "dontAsk", Scratch: scratch,
-		AllowedFolders: []string{m}, Codex: agentCLI{Enabled: true}}
+		AllowedFolders: []string{m, viaParent}, Codex: agentCLI{Enabled: true}}
 	cfg := filepath.Join(t.TempDir(), "serve.json")
 	writeServeConfig(cfg, c)
 	s, err := newServer(c, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
+	folders := func() []string { return s.agentFolders(s.conf(), t.TempDir()) }
+	esc := func(l ...string) string { return strings.ReplaceAll(strings.Join(l, ","), `\`, `\\`) }
+	patch := func(body string) {
+		t.Helper()
+		if st, b := s.adminDo("PATCH", "/agents/claude", []byte(body)); st != 200 {
+			t.Fatalf("%s: %d %v", body, st, b)
+		}
+	}
+	own := filepath.Join(base, "own")
+	os.MkdirAll(filepath.Join(own, "proj"), 0o700)
+	if err := os.Symlink(own, filepath.Join(base, "x")); err != nil { // R2: povezava v nadrejeni mapi
+		t.Skip("no symlinks:", err)
+	}
 	os.MkdirAll(filepath.Dir(m), 0o700)
 	for _, target := range []string{s.cfgDir, t.TempDir()} {
 		if err := os.Symlink(target, m); err != nil {
-			t.Skip("no symlinks:", err)
+			t.Fatal(err)
 		}
-		if got := s.agentFolders(s.conf(), t.TempDir()); len(got) != 0 {
+		if got := folders(); len(got) != 0 {
 			t.Fatalf("planted link to %s given to agents: %v", target, got)
 		}
 		if a := strings.Join(s.agentArgs(t.TempDir(), false), " "); strings.Contains(a, "proj") {
 			t.Fatalf("planted link to %s in the agent's arguments: %s", target, a)
 		}
+		for _, body := range []string{`{"permissionMode":"acceptEdits"}`, `{"folders":"` + esc(s.conf().AllowedFolders...) + `"}`} {
+			// R1: druga sprememba ne prepiše poti v cilj povezave, isti seznam ne pobriše oznake; povezava v mapo
+			// nastavitev zavrne vsako spremembo (checkAgent)
+			if st, b := s.adminDo("PATCH", "/agents/claude", []byte(body)); (target == s.cfgDir) != (st == 400) {
+				t.Fatalf("%s with a link to %s: %d %v", body, target, st, b)
+			}
+		}
+		if got := folders(); len(got) != 0 || !slices.Equal(s.conf().AllowedFolders, []string{m, viaParent}) {
+			t.Fatalf("after saving, link to %s: %v, list %v", target, got, s.conf().AllowedFolders)
+		}
 		os.Remove(m)
 	}
 	os.Mkdir(m, 0o700)
-	if got := s.agentFolders(s.conf(), t.TempDir()); !slices.Equal(got, []string{m}) {
+	if got := folders(); !slices.Equal(got, []string{m}) {
 		t.Fatalf("own folder that appeared later: %v", got)
+	}
+	patch(`{"folders":""}`)
+	patch(`{"folders":"` + esc(viaParent, own) + `"}`) // znova dodana (skozi povezavo) in nova mapa: veljata
+	if got := folders(); len(got) != 2 {
+		t.Fatalf("folders added again: %v (list %v)", got, s.conf().AllowedFolders)
 	}
 }

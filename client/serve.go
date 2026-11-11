@@ -476,7 +476,8 @@ type server struct {
 	offFolders []string // dovoljene mape iz serve.json, izpuščene ob zagonu (stran jih pokaže, da jih uporabnik odstrani)
 	// offUnchecked, offErrors: med offFolders tiste, ki jih ni mogoče preveriti, in napake razrešitve (stran sestavi razlog)
 	offUnchecked, offErrors []string
-	wasMissing              sync.Map // #83: dovoljene mape, ki so kdaj manjkale (agentFolders); PATCH map jo počisti
+	wasMissing              sync.Map // #83: dovoljene mape, ki so kdaj manjkale (agentFolders); odide le z mapo s seznama
+	refusedLogged           sync.Map // #83: zavrnjene označene mape, že v dnevniku (enkrat na mapo)
 	settings                settingsState
 	pick                    atomic.Pointer[pickFunc] // izbirno okno pladnja (Windows); nil = ni GUI
 	picking                 atomic.Bool              // eno okno naenkrat
@@ -564,7 +565,13 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 		c.AllowedFolders = slices.DeleteFunc(slices.Clone(c.AllowedFolders), func(f string) bool { return slices.Contains(bad, f) })
 		c.ClaudeDisabled, c.Codex.Enabled = true, false
 	}
-	exe, err := checkAgent(&c, cfgDir, slices.Clone(c.AllowedFolders))
+	var missing []string // #83: manjka ob zagonu (odklopljen pogon): ostane, agentFolders jo preveri strožje (wasMissing)
+	for _, f := range c.AllowedFolders {
+		if _, err := os.Lstat(f); errors.Is(err, os.ErrNotExist) {
+			missing = append(missing, f)
+		}
+	}
+	exe, err := checkAgent(&c, cfgDir, missing)
 	if err != nil {
 		return nil, err
 	}
@@ -608,10 +615,8 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	if s.cfg.Instance == "" { // le testi (zagon ga shrani prej, ensureInstance)
 		s.cfg.Instance = newInstanceID()
 	}
-	for _, f := range s.cfg.AllowedFolders { // #83: manjka ob zagonu
-		if _, err := os.Stat(f); err != nil {
-			s.wasMissing.Store(f, true)
-		}
+	for _, f := range missing {
+		s.wasMissing.Store(f, true)
 	}
 	s.claimScratch()
 	return s, nil
@@ -643,8 +648,9 @@ func deprecatedFolder(c *serveConfig, f string) {
 }
 
 // checkAgent: mapa ne sme biti blizu mape nastavitev, claude mora obstajati, Bash na Windows le z dovoljenjem.
-// Za zagon in za spremembe prek skrbniškega API. kept (#83): mape, ki smejo manjkati (ob zagonu vse, ob spremembi
-// že shranjene), da odklopljen pogon ne ustavi prehoda; nova mapa, ki je ni, je zavrnjena.
+// Za zagon in za spremembe prek skrbniškega API. kept (#83): mape, ki smejo manjkati (ob zagonu manjkajoče, ob
+// spremembi že shranjene), da odklopljen pogon ne ustavi prehoda, in ostanejo zapisane, kot so (ne cilj povezave);
+// nova mapa, ki je ni, je zavrnjena.
 func checkAgent(c *serveConfig, cfgDir string, kept []string) ([]string, error) {
 	for i, f := range c.AllowedFolders {
 		if f == "" || !filepath.IsAbs(f) {
@@ -654,7 +660,9 @@ func checkAgent(c *serveConfig, cfgDir string, kept []string) ([]string, error) 
 		if err != nil {
 			return nil, err
 		}
-		c.AllowedFolders[i] = real
+		if !slices.Contains(kept, f) { // shranjena mapa ostane, kot je (oznaka wasMissing je po tej poti)
+			c.AllowedFolders[i] = real
+		}
 	}
 	if bad := scratchOverlaps(c.AllowedFolders, c.Scratch); len(bad) > 0 { // H1: PATCH, minigw gw claude --folders, serve.json
 		return nil, errors.New("allowed folder " + bad[0] + " contains or is inside the scratch folder " + c.Scratch +

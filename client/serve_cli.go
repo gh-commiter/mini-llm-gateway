@@ -274,7 +274,7 @@ func scratchOverlaps(allowed []string, scratch string) []string {
 // (kot fileExists na Macu), niso dir, ne Scratch ne predpomnilnik Copilot (L1, #26) in znova prestanejo checkFolder
 // (prava pot, mapa nastavitev). Mapa, ki je kdaj manjkala (ob zagonu ali med tekom; wasMissing), se pojavi le kot
 // prava mapa tega uporabnika: na njenem mestu bi drug uporabnik, nov disk ali agent podtaknil povezavo ali svojo mapo
-// (CLAUDE.md, .mcp.json). Shranjevanje seznama map (PATCH) to pozabi.
+// (CLAUDE.md, .mcp.json). Oznako odstrani le odstranitev mape s seznama (nato jo skrbnik doda znova).
 func (s *server) agentFolders(c serveConfig, dir string) []string {
 	var out []string
 	for _, f := range c.AllowedFolders {
@@ -289,7 +289,11 @@ func (s *server) agentFolders(c serveConfig, dir string) []string {
 			continue
 		}
 		if _, missed := s.wasMissing.Load(f); missed {
-			if r, err := realPath(f); err != nil || !ownedByMe(f) || !ownedByMe(r) { // f sam ni povezava
+			// prava pot je ista (nobene povezave tudi v nadrejenih mapah), mapa je tega uporabnika
+			if r, err := realPath(f); err != nil || !samePath(r, f) || !ownedByMe(f) || !ownedByMe(r) {
+				if _, logged := s.refusedLogged.LoadOrStore(f, true); !logged {
+					s.log.Printf("WARNING: allowed folder %s was missing and is not a real folder of this user (or reached through a link): remove and add it again in the allowed folders to use it", f)
+				}
 				continue
 			}
 		}
