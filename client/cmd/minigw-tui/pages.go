@@ -515,10 +515,14 @@ func agents(u *ui) ([]row, error) {
 			ed("Path (empty = from PATH)", str(a, "path"), func(v string) (string, error) { return p(map[string]any{"path": v}) }),
 			ed("Models (comma-separated)", strings.Join(strs(a, "models"), ", "), func(v string) (string, error) { return p(map[string]any{"models": csv(v)}) }),
 			tog("Allow writing in the session's folder", yes(a, "write"), func(v bool) (string, error) { return p(map[string]any{"write": v}) }),
-			tog("Allow the web tool", yes(a, "network"), func(v bool) (string, error) { return p(map[string]any{"network": v}) }),
-			tog("Allow commands (needs writing, token)", yes(a, "commands"), func(v bool) (string, error) { return p(map[string]any{"commands": v}) }))
-		if !yes(a, "commands") { // commands are an explicit opt-in: ask before turning them on
-			rows[len(rows)-1].confirm = "Copilot may then run commands in the session's folder. Turn on"
+			tog("Allow the web tool", yes(a, "network"), func(v bool) (string, error) { return p(map[string]any{"network": v}) }))
+		if why := str(a, "commandsUnavailable"); why != "" { // #81 H1: no commands, with the reason instead of the toggle
+			rows = append(rows, inf("Allow commands", "not available"), inf("  "+why, ""))
+		} else {
+			rows = append(rows, tog("Allow commands (needs writing)", yes(a, "commands"), func(v bool) (string, error) { return p(map[string]any{"commands": v}) }))
+			if !yes(a, "commands") { // commands are an explicit opt-in: ask before turning them on
+				rows[len(rows)-1].confirm = "Copilot may then run commands in the session's folder. Turn on"
+			}
 		}
 		rows = append(rows, workRow(a, p)...)
 		rows = append(rows, loginRows("copilot", a, p)...)
@@ -886,15 +890,15 @@ func clean(s string) string {
 	}, s)
 }
 
-// loginRows (#68): the agent's Login row as on the settings page: state (never the value), hint, token (Claude,
-// Copilot) and the opt-in API key (Claude, Codex, Grok).
+// loginRows (#68): the agent's Login row as on the settings page: state (never the value), hint, token (Claude)
+// and the opt-in API key (Claude, Codex, Grok).
 func loginRows(kind string, a map[string]any, p func(map[string]any) (string, error)) []row {
 	lg, _ := a["login"].(map[string]any)
 	if lg == nil {
 		return nil // older gateway
 	}
 	rows := []row{inf("Login", str(lg, "state")), inf("  "+str(lg, "hint"), "")}
-	if kind == "claude" || kind == "copilot" {
+	if kind == "claude" {
 		rows = append(rows, sec("Token", map[bool]string{true: "(stored)", false: "(not set)"}[yes(lg, "hasToken")], func(v string) (string, error) {
 			if v == "" {
 				return "", nil

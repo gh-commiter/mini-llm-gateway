@@ -87,7 +87,7 @@ The Mac app's **Settings…** window and the `minigw serve` settings page have t
 - **Claude CLI:** path to `claude`, allowed folders, **Allow local tools** with a table to exclude tools, the
   `minigw` command-line tool (Mac: Install). On Windows also **Allow commands without a sandbox**.
 - **Codex CLI / Grok CLI / Copilot CLI:** off by default; a switch per model, **Allow writing**, network (Codex,
-  Copilot), and for Copilot **Allow commands** with its own GitHub token.
+  Copilot). Copilot has no commands (greyed out with the reason) and signs in with `copilot login`.
 - **Changes in the client's folder** (each agent pane): **In the folder or a copy (any mode)** (default), **Only in a
   copy or on a branch (sync, worktree)** or **Only on a branch (worktree)**. In a mode above it the agent only reads
   the folder, and minigw says so ("Mini Gateway lets Codex change files only in worktree mode, so it only read the
@@ -111,7 +111,7 @@ SSH and inside tmux. Keyboard first (←/→ or 1-7 page, 1-8 on the Mac, ↑/�
 name or a row works too. No colors, English only, at least 80 columns. It is the helper `minigw-tui` next to `minigw`
 (on the Mac in the app's `Contents/Helpers`; `minigw` checks its signature first). It reads and changes everything
 through `minigw gw api` of the same `minigw`, so the same rules apply: only on the gateway computer, as the user who
-runs the gateway. API keys and the Copilot token you type go to `minigw` on stdin and are never shown; the connect
+runs the gateway. API keys and the Claude token you type go to `minigw` on stdin and are never shown; the connect
 line with the token appears only after **Show the connect line**.
 
 | Page | Both gateways | Mac app only | `minigw serve` only |
@@ -119,7 +119,7 @@ line with the token appears only after **Show the connect line**.
 | General | Status, version, address, port, token (show, new), this user's apps, scratch folder | Open at Login | Windows: Start at sign-in; Linux: how it starts |
 | Devices | Allow any device, allowed client addresses, unencrypted clients, waiting devices (allow with a name, reject), allowed devices (rename, history, remove) | | |
 | Providers | Enabled, name, base URL, Allow http, aliases, API key, models (search, a switch each, all, none), add, remove | | |
-| Agents | Claude CLI (enabled, path, local tools, tools, permission mode, setting sources, changes in the client's folder, ask others), Codex and Grok CLI (enabled, path, write, changes in the client's folder, network, ask others, models), Copilot CLI (models, write, changes in the client's folder, web, commands, token), Foundry Local | | Allow commands without a sandbox (Windows, Linux without `bwrap`) |
+| Agents | Claude CLI (enabled, path, local tools, tools, permission mode, setting sources, changes in the client's folder, ask others), Codex and Grok CLI (enabled, path, write, changes in the client's folder, network, ask others, models), Copilot CLI (models, write, changes in the client's folder, web, login; commands shown as not available), Foundry Local | | Allow commands without a sandbox (Windows, Linux without `bwrap`) |
 | Folders | Allowed folders: add, remove; folders left out at startup | | |
 | Sessions | Projects (7 days) per folder and device, recent sessions with details, Clear history | | |
 | Activity | Requests running now (model, time, the agent's latest step) at the top, then the last 200 requests to models (time, status, duration, model, device; Enter or a click shows the path, size and device ID). Read-only, reloads every 3 s. Metadata and the agent's current step (a tool or command), never prompt or answer text; an unknown model shows as `unknown`. A gateway older than 0.5.21 shows "Needs gateway 0.5.21 or newer" | | Empty after the gateway restarts |

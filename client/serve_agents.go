@@ -363,12 +363,12 @@ func grokArgs(cwd, promptFile, cfgDir string, agent bool, model string, write bo
 }
 
 // copilotArgs: kot Copilot.args na Macu. Nikoli --allow-all-tools/-paths/-urls, --allow-all ali --yolo: v načinu -p Copilot
-// zavrne vsako orodje brez --allow-tool; zavrnitve so tu še izrecno. Privzeto le branje; write le z dovoljenjem; lupina le
-// z dovoljenjem (commands), gh in security tudi tedaj ne; url le z omrežjem. Brez sistemske začasne mape, vgrajenih MCP
+// zavrne vsako orodje brez --allow-tool; zavrnitve so tu še izrecno. Privzeto le branje; write le z dovoljenjem; lupine
+// nikoli (#81 H1; gh in security še posebej, obramba v globino); url le z omrežjem. Brez sistemske začasne mape, vgrajenih MCP
 // (GitHub s prijavo uporabnika), vprašanj in samodejnih posodobitev; seja po --session-id.
 // Navodilo gre na stdin (brez -p; preverjeno s copilot 1.0.107), ne v ukazno vrstico: to vidijo ps in /proc/<pid>/cmdline.
 // Brez --add-dir (M3): ta naloži .github/skills in .github/agents mape kot zaupanja vredne; agent vidi le mapo seje.
-func copilotArgs(agent bool, model string, write, commands, network bool, session string) []string {
+func copilotArgs(agent bool, model string, write, network bool, session string) []string {
 	a := []string{"--output-format", "json", "--no-ask-user", "--disable-builtin-mcps", "--disallow-temp-dir",
 		"--no-auto-update", "--no-color", "--disable-client-telemetry",
 		"--secret-env-vars=" + strings.Join(copilotTokenVars, ","), "--session-id", session}
@@ -385,11 +385,7 @@ func copilotArgs(agent bool, model string, write, commands, network bool, sessio
 	}
 	pick(agent, "read")
 	pick(agent && write, "write")
-	commands = commands && write // ukazi pišejo mimo pravila write (tudi ne pri --ro): le s pisanjem
-	pick(agent && commands, "shell")
-	if agent && commands {
-		deny = append(deny, "shell(gh:*)", "shell(security:*)")
-	}
+	deny = append(deny, "shell", "shell(gh:*)", "shell(security:*)") // #81 H1: brez ukazov
 	pick(agent && network, "url")
 	for _, t := range allow {
 		a = append(a, "--allow-tool", t)
@@ -402,45 +398,6 @@ func copilotArgs(agent bool, model string, write, commands, network bool, sessio
 
 // copilotTokenVars: žetoni, ki jih copilot sprejme iz okolja; ukazom lupine jih skrije (--secret-env-vars).
 var copilotTokenVars = []string{"COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"}
-
-// copilotGH: GitHub CLI (var: testi podtaknejo lažnega).
-var copilotGH = func() string { return lookPath("gh") }
-
-// copilotKey: ime žetona za ukaze (fine-grained PAT le z »Copilot Requests«) v shrambi ključev; »:« ime ponudnika ne more imeti.
-const copilotKey = "agent:copilot"
-
-// validCopilotToken: le fine-grained PAT (github_pat_…), natisljiv ASCII brez presledkov.
-func validCopilotToken(t string) bool {
-	return strings.HasPrefix(t, "github_pat_") && len(t) <= 255 && !strings.ContainsFunc(t, func(r rune) bool { return r < 0x21 || r > 0x7e })
-}
-
-// copilotToken: žeton iz okolja routerja ali GitHub CLI (»gh auth token«, zunaj bwrap; največ 10 s) za copilot pod bwrap,
-// ki skrije ~/.config/gh, shrambo ključev in D-Bus (na Macu pod sandbox-exec copilot 1.0.107: »No authentication
-// information found«). Okolje agenta žetonov nima (agentEnv). "" brez žetona, gh ali prijave.
-func copilotToken(ctx context.Context) string {
-	for _, v := range copilotTokenVars {
-		if t := os.Getenv(v); t != "" {
-			return t
-		}
-	}
-	gh := copilotGH()
-	if gh == "" {
-		return ""
-	}
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	cmd := commandContext(ctx, gh, "auth", "token", "--hostname", "github.com")
-	cmd.Env = append(os.Environ(), "GH_PROMPT_DISABLED=1", "GH_NO_UPDATE_NOTIFIER=1")
-	out, err := cmd.Output()
-	t := strings.TrimSpace(string(out))
-	bad := strings.IndexFunc(t, func(r rune) bool {
-		return r != '_' && (r < '0' || r > '9') && (r < 'a' || r > 'z') && (r < 'A' || r > 'Z')
-	})
-	if err != nil || t == "" || len(t) > 255 || bad >= 0 {
-		return ""
-	}
-	return t
-}
 
 // copilotSessionFiles: datoteke stanja seje, ki jih copilot potrebuje za nadaljevanje (preverjeno s copilot 1.0.107);
 // checkpoints, rewind-file-snapshots, files … ne gredo med zahtevami (R6).
@@ -865,13 +822,16 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 		}
 	}
 	write := ac.canWrite(k) && !readOnly
-	// H1: ukazi Copilot le z namenskim žetonom (ukaz lahko prebere okolje copilota; žeton gh ima vse pravice uporabnika).
-	pat := ""
+	// #81 (D1): Copilot le s prijavo copilot login uporabnika prehoda (kazalec v svež COPILOT_HOME), brez žetona in gh.
+	var copilotConf []byte
 	if k.name == "copilot" {
-		pat, _ = keyGet(s.cfgDir, copilotKey)
-		if agent && write && ac.Commands && pat == "" {
-			return writeError(w, r.rid, 503, "Copilot commands need their own GitHub token (fine-grained, only the \"Copilot Requests\" "+
-				"permission): minigw gw copilot token")
+		var why string
+		if copilotConf, why = copilotLogin(); why != "" {
+			w.Header().Set("x-should-retry", "false")
+			return writeError(w, r.rid, 503, why)
+		}
+		if ac.Commands && agent && write { // H1: ukazov ni (ukaz bi prebral prijavo iz shrambe ključev), shranjen true ne velja
+			s.hub.note(r.h("x-claude-mini-session"), copilotNoCommands)
 		}
 	}
 	scope := k.name + "|" + r.owner() + "|" + r.h("x-claude-mini-cwd")
@@ -1014,33 +974,42 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			if pkg := filepath.Join(cache, "copilot"); pkg == dir || strings.HasPrefix(pkg, dir+string(filepath.Separator)) {
 				return "", errors.New("copilot: the session's folder contains Copilot's package cache (" + pkg + ")")
 			}
-			token := pat
-			if token == "" {
-				token = copilotToken(ctx)
+			if runtime.GOOS == "linux" { // #81: le Secret Service (posrednik), ne cela seja D-Bus
+				addr, stop, err := copilotBusProxy(tmp)
+				if err != nil {
+					return "", err
+				}
+				defer stop()
+				m.env = append(m.env, "DBUS_SESSION_BUS_ADDRESS="+addr)
 			}
-			if token == "" && runtime.GOOS != "darwin" { // M1: svež COPILOT_HOME nima prijave copilot login
-				return "", errors.New("copilot: no GitHub sign-in on the gateway; sign in with the GitHub CLI (gh auth login) or set a token (minigw gw copilot token)")
-			}
-			if token != "" {
-				m.env = append(m.env, "COPILOT_GITHUB_TOKEN="+token)
+			m.env = append(m.env, copilotGitPins...)
+			if !inTree { // #81 N1, N3: git copilota tudi v sync brez .git/config odjemalca; brez repozitorija (kot harness Codex)
+				m.env = append(append(m.env, gitGuardEnv(k.name)...), "GIT_DIR="+os.DevNull, "GIT_CEILING_DIRECTORIES="+filepath.Dir(dir))
+				if runtime.GOOS == "linux" && gitExecWrap(gw) != "" { // ovoj git na PATH (brez posrednika D-Bus)
+					m.env, m.ro = append(m.env, "PATH="+agentPath(gw)), append(m.ro, gw)
+				}
 			}
 			if deps != nil && runtime.GOOS == "linux" && !agentUnconfined(s.cfgDir) { // #67: ves Copilot je v bwrap (ovoj git: init/clone v $MINIGW_DEPS)
 				m.env = append(m.env, "MINIGW_SANDBOXED=1")
 			}
 			// C2: svež COPILOT_HOME vsake zahteve (hooki, nastavitve, zaupane mape prejšnjega zagona ne obstajajo); med
-			// zahtevami ostane le stanje seje (brez povezav) v stanju naprave, ki ga bwrap ne vidi. M1: tudi na Windows zunaj škatle (nikoli ~\.copilot: hooki, MCP, zaupane mape;
-			// brez zaupane mape copilot v načinu -p hookov in MCP repozitorija ne naloži), prijava le z žetonom.
-			store := ""
-			if state != "" {
-				store = filepath.Join(state, "sessions")
-				m.state, m.files = filepath.Join(tmp, "home"), nil
-				if copySession(filepath.Join(store, resume), filepath.Join(m.state, "session-state", resume)) != nil {
-					os.MkdirAll(filepath.Join(m.state, "session-state"), 0o700)
-					prompt = note + "\n\n" + cliPrompt(history, last) // stanja seje ni: ves pogovor
-				}
+			// zahtevami ostane le stanje seje (brez povezav) v stanju naprave, ki ga bwrap ne vidi. M1: nikoli ~/.copilot (hooki, MCP, vtičniki, zaupane mape;
+			// brez zaupane mape copilot v načinu -p hookov in MCP repozitorija ne naloži); iz nje le kazalec na prijavo (#81).
+			if state == "" {
+				return "", errors.New("copilot: no state folder for its fresh home")
+			}
+			store := filepath.Join(state, "sessions")
+			m.state, m.files = filepath.Join(tmp, "home"), nil
+			if copySession(filepath.Join(store, resume), filepath.Join(m.state, "session-state", resume)) != nil {
+				os.MkdirAll(filepath.Join(m.state, "session-state"), 0o700)
+				prompt = note + "\n\n" + cliPrompt(history, last) // stanja seje ni: ves pogovor
+			}
+			// #81: nov config.json le s kazalcem na prijavo (loggedInUsers, lastLoggedInUser); žeton prebere copilot sam
+			if err := os.WriteFile(filepath.Join(m.state, "config.json"), copilotConf, 0o600); err != nil {
+				return "", err
 			}
 			copilotPrepare(ctx, exe, filepath.Join(tmp, "prep"), tmp, s.cfgDir, c.Scratch, s.tempRoots())
-			args := copilotArgs(agent, model, write, ac.Commands, ac.Network, resume)
+			args := copilotArgs(agent, model, write, ac.Network, resume)
 			var answer string
 			err = s.runAgentProcess(ctx, r, exe, args, withTree(m), dir, prompt, func(line []byte) {
 				t, st := copilotEvent(line)
@@ -1187,7 +1156,7 @@ func agentAuthFiles(k agentKind) (real string, names []string) {
 		}
 		return real, []string{"auth.json", "config.toml"}
 	}
-	if k.name == "copilot" { // M1: ne prave config.json; prijava je žeton iz okolja (copilotToken ali namenski žeton)
+	if k.name == "copilot" { // M1: ne prave config.json (iz nje le kazalec na prijavo, copilotLogin, #81)
 		return filepath.Join(home, ".copilot"), nil
 	}
 	if real = os.Getenv("GROK_HOME"); real == "" {

@@ -199,10 +199,9 @@ const S = {
   copilotModels: ["Models (comma-separated; empty = only the default, “auto”)", "Modeli (ločeni z vejico; prazno = le privzeti, »auto«)"],
   allowWeb: ["Allow web access (fetch tool)", "Dovoli dostop do spleta (orodje fetch)"],
   allowCommands: ["Allow commands", "Dovoli ukaze"],
-  copilotCommandsAsk: ["Copilot then runs commands as this user. On Linux with bwrap they run in the sandbox (home folder hidden, writing only to the session's folder and a temporary folder); otherwise they can read and change everything this user can, including gateway settings, and use the network. Commands need the token below (fine-grained, only “Copilot Requests”) and can use it to make Copilot requests on your account. Allow only if you trust the devices that use Copilot.",
-    "Copilot nato izvaja ukaze kot ta uporabnik. Na Linuxu z bwrap tečejo v sandboxu (domača mapa skrita, pisanje le v mapo seje in začasno mapo); sicer lahko berejo in spreminjajo vse, kar ta uporabnik, tudi nastavitve prehoda, in uporabljajo omrežje. Ukazi potrebujejo žeton spodaj (fine-grained, le »Copilot Requests«) in lahko z njim pošiljajo zahteve Copilot na tvoj račun. Dovoli le, če zaupaš napravam, ki uporabljajo Copilot."],
-  copilotFooter: ["The claude-copilot models run Copilot CLI as an agent in the synced copy of the client's folder, on Linux under bwrap with a fresh Copilot home for each request. By default it may only read that folder; with writing on it may edit files there. Commands only with “Allow commands” and the token above. On Linux it signs in with the GitHub CLI (gh auth login) or that token. Copilot is not supported on a Windows gateway in this version.",
-    "Modeli claude-copilot poženejo Copilot CLI kot agenta v sinhronizirani kopiji mape odjemalca, na Linuxu pod bwrap s svežo domačo mapo Copilot za vsako zahtevo. Privzeto sme mapo le brati; s pisanjem sme v njej urejati datoteke. Ukazi le z »Dovoli ukaze« in žetonom zgoraj. Na Linuxu se prijavi z GitHub CLI (gh auth login) ali tem žetonom. Copilot v tej različici na prehodu Windows ni podprt."],
+  copilotNoCommands: ["Not available: a command could read Copilot's sign-in from the system keyring.", "Ni na voljo: ukaz bi lahko prebral prijavo Copilot iz sistemske shrambe ključev."],
+  copilotFooter: ["The claude-copilot models run Copilot CLI as an agent in the synced copy of the client's folder, on Linux under bwrap with a fresh Copilot home for each request. By default it may only read that folder; with writing on it may edit files there. It signs in only with this user's own `copilot login`, whose token stays in the system keyring; on Linux that needs a Secret Service keyring (GNOME Keyring, KWallet) and xdg-dbus-proxy, so a headless Linux gateway has no Copilot. Commands are not available (a command could read the sign-in). Copilot is not supported on a Windows gateway in this version.",
+    "Modeli claude-copilot poženejo Copilot CLI kot agenta v sinhronizirani kopiji mape odjemalca, na Linuxu pod bwrap s svežo domačo mapo Copilot za vsako zahtevo. Privzeto sme mapo le brati; s pisanjem sme v njej urejati datoteke. Prijavi se le s `copilot login` tega uporabnika, katere žeton ostane v sistemski shrambi ključev; na Linuxu to potrebuje shrambo Secret Service (GNOME Keyring, KWallet) in xdg-dbus-proxy, zato prehod Linux brez namizja Copilota nima. Ukazov ni (ukaz bi lahko prebral prijavo). Copilot v tej različici na prehodu Windows ni podprt."],
   foundryDesc: ["Microsoft Foundry Local: models on this computer, without the cloud.", "Microsoft Foundry Local: modeli na tem računalniku, brez oblaka."],
   foundryMissing: ["Foundry Local is not installed. Windows: winget install Microsoft.FoundryLocal; macOS: brew tap microsoft/foundrylocal && brew install foundrylocal. Then download a model, e.g. foundry model download phi-4-mini.",
     "Foundry Local ni nameščen. Windows: winget install Microsoft.FoundryLocal; macOS: brew tap microsoft/foundrylocal && brew install foundrylocal. Nato prenesi model, npr. foundry model download phi-4-mini."],
@@ -283,7 +282,7 @@ const S = {
   loginHint_codex: ["Codex uses this user's ChatGPT sign-in (`codex login`); it refreshes itself.", "Codex uporablja prijavo ChatGPT tega uporabnika (`codex login`); osveži se sama."],
   loginHint_grok: ["Grok uses a copy of this user's sign-in (`grok login`); after Grok refreshes it, log in again with `grok login`.",
     "Grok uporablja kopijo prijave tega uporabnika (`grok login`); ko jo Grok osveži, se znova prijavi z `grok login`."],
-  loginHint_copilot: ["A fine-grained GitHub token with only the Copilot Requests permission; needed for commands, and for every request when the GitHub CLI (gh auth login) is not signed in on the gateway.", "Fine-grained žeton GitHub le s pravico Copilot Requests; potreben za ukaze in za vsako zahtevo, če GitHub CLI (gh auth login) na gatewayu ni prijavljen."],
+  loginHint_copilot: ["Copilot uses this user's own sign-in (`copilot login` on the gateway, as the gateway user); the token stays in the system keyring.", "Copilot uporablja prijavo tega uporabnika (`copilot login` na prehodu, kot uporabnik prehoda); žeton ostane v sistemski shrambi ključev."],
   pathHomeWarn: ["In the Windows sandbox, folders on PATH inside your home folder (for example ~\\.local\\bin) are readable by agents; keep no secrets there.",
     "V peskovniku Windows agenti lahko berejo mape s PATH v domači mapi (npr. ~\\.local\\bin); tam ne hrani skrivnosti."],
   worktreeNetworkNoBox: ["No effect on this computer: there is no Windows sandbox, so agents' network is not limited.", "Na tem računalniku nima učinka: peskovnika Windows ni, zato omrežje agentov ni omejeno."],
@@ -340,9 +339,10 @@ const LOGIN_STATES = {
   "not logged in (codex login)": "ni prijave (codex login)", "unknown (auth.json unreadable)": "neznano (auth.json ni berljiv)",
   "logged in (may need to log in again in Grok after it refreshes)": "prijavljen (po osvežitvi v Grok se bo morda treba znova prijaviti)",
   "not logged in (grok login)": "ni prijave (grok login)",
+  "signed in (copilot login)": "prijavljen (copilot login)",
   "API key (billed through the provider's API)": "ključ API (obračun prek API ponudnika)",
 };
-// loginGroup (#68): vrstica Login (stanje, nikoli vrednost; namig), žeton (Claude, Copilot) in izbira ključa API
+// loginGroup (#68): vrstica Login (stanje, nikoli vrednost; namig), žeton (Claude) in izbira ključa API
 // (Claude, Codex, Grok), enako za vse agente.
 function loginGroup(kind, lg, patch, n) {
   lg = lg || {};
@@ -353,7 +353,7 @@ function loginGroup(kind, lg, patch, n) {
     return i;
   };
   const rows = [row(labelSub(t("login") + ": " + state, t("loginHint_" + kind)))];
-  if (kind === "claude" || kind === "copilot") rows.push(row(labelSub(t("tokenField")), secret("token", lg.hasToken ? t("loginSet") : (kind === "claude" ? "sk-ant-oat01-…" : "github_pat_…")),
+  if (kind === "claude") rows.push(row(labelSub(t("tokenField")), secret("token", lg.hasToken ? t("loginSet") : "sk-ant-oat01-…"),
     lg.hasToken ? button(t("remove"), () => save(n, async () => { await patch({token: ""}); show(kind); })) : null));
   if ("apiKey" in lg) rows.push(row(labelSub(t("apiKey"), t("apiKeyNote")), secret("apiKey", lg.apiKey ? t("loginSet") : ""),
     lg.apiKey ? button(t("remove"), () => save(n, async () => { await patch({apiKey: ""}); show(kind); })) : null));
@@ -524,10 +524,7 @@ async function copilotPane() {
   const models = el("input", {type: "text", value: (a.models || []).join(", "), placeholder: "gpt-5.2, claude-sonnet-4.5"});
   autosave(models, n1, v => patch({models: v.split(",").map(x => x.trim()).filter(Boolean)}));
   const bare = a.sandboxed === undefined ? st.agentsUnsandboxed : !a.sandboxed, locked = bare && !c.allowUnsandboxedBash;
-  const commands = toggle(a.commands, (v, i) => save(n2, async () => {
-    if (v && !confirm(t("copilotCommandsAsk"))) { i.checked = false; return; }
-    await patch({commands: v});
-  }), !a.write || locked);
+  const commands = toggle(false, () => {}, true);  // #81 H1: Copilot nima ukazov (razlog spodaj)
   return [
     card(...ICON.copilot, "Copilot CLI", t("copilotDesc")),
     group(row(labelSub(t("enabled"), bare ? t(locked ? "agentLockedWin" : "agentWarnWin") : null),
@@ -538,7 +535,7 @@ async function copilotPane() {
     section(t("sandbox")),
     group(row(t("allowWrite"), toggle(a.write, v => save(n2, async () => { await patch({write: v}); show("copilot"); }), locked)),
       row(t("allowWeb"), toggle(a.network, v => save(n2, () => patch({network: v})), locked)),
-      row(t("allowCommands"), commands),
+      row(labelSub(t("allowCommands"), t("copilotNoCommands")), commands),
       workRow(a, patch, n2, locked),
       row(labelSub(t("askOthers"), t("askOthersHelp")), toggle(a.askOthers, v => save(n2, () => patch({askOthers: v})), locked))),
     n2, n3,

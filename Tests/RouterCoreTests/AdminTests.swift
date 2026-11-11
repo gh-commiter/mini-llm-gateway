@@ -27,7 +27,8 @@ final class FakeApp: @unchecked Sendable {
                                },
                                rotateToken: { "newtok#KEY" })
         if let busy = scratchInUse { hooks.scratchInUse = { busy } }
-        return lock.withLock { Router(config: config, token: "tok", secrets: FakeSecrets(values: keys), session: session, admin: hooks) }
+        return lock.withLock { Router(config: config, token: "tok", secrets: FakeSecrets(values: keys), session: session, admin: hooks,
+                                         copilotConfig: URL(fileURLWithPath: "/nonexistent/.copilot/config.json")) }  // #81: nikoli prava prijava
     }
 }
 

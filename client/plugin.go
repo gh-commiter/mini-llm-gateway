@@ -574,7 +574,7 @@ func uninstallSteps(goos string, purge bool) (steps []uninstallStep, kept []stri
 			for _, g := range c.Gateways {
 				keyDel(filepath.Dir(cfg), g.Name)
 			}
-			keyDel(filepath.Dir(cfg), copilotKey)
+			keyDel(filepath.Dir(cfg), agentLoginKey("copilot")) // žeton Copilot do 0.5.24
 			return nil
 		}})
 	}

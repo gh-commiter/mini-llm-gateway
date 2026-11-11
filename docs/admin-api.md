@@ -142,10 +142,11 @@ Claude   {"path": string, "found": bool, "tools": string, "allowUnsandboxedBash"
          in serve.json (Go gateway only); cleared when the allowed folders are saved.
 Login    {"state": string, "hint": string, "hasToken"?: bool, "apiKey"?: bool, "apiKeyNote"?: string}
          Go gateway only (#68), in GET /agents/{claude,codex,grok,copilot}: the agent's login, never a value. state:
-         Claude and Copilot "set" / "not set" (the stored token); Codex from ~/.codex/auth.json ("logged in (ChatGPT)",
+         Claude "set" / "not set" (the stored token); Copilot "signed in (copilot login)" / "not available: <reason>"
+         (#81; also in the Mac app); Codex from ~/.codex/auth.json ("logged in (ChatGPT)",
          "logged in (API key)", "not logged in (codex login)"); Grok "logged in (may need to log in again in Grok after
          it refreshes)" / "not logged in (grok login)"; with an API key set "API key (billed through the provider's
-         API)". hint: one line on how to get the login. hasToken: Claude and Copilot; apiKey and apiKeyNote: Claude,
+         API)". hint: one line on how to get the login. hasToken: Claude; apiKey and apiKeyNote: Claude,
          Codex and Grok (the opt-in "Use an API key instead").
 General  {"port": number, "address": string, "connect": string, "restartRequired"?: true, "allowedClients": string,
           "allowPlainRemote": bool, "allowAnyDevice": bool, "allowLocalApps": bool, "scratch": string,
@@ -254,7 +255,7 @@ Notes:
   when set, as `ANTHROPIC_API_KEY`, `CODEX_API_KEY` or `XAI_API_KEY`, and is billed through the provider's API, not the
   subscription; Copilot answers `400`. API-key variables in the gateway's own environment (`ANTHROPIC_*`,
   `OPENAI_API_KEY`, `CODEX_API_KEY`, `XAI_API_KEY`, `GROK_CODE_XAI_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`) never
-  reach an agent run. `minigw gw <agent> login`, `minigw gw claude|copilot token [remove]` and
+  reach an agent run. `minigw gw <agent> login`, `minigw gw claude token [remove]` and
   `minigw gw claude|codex|grok apikey [remove]` use these fields. The Mac app has no Login field.
 - `askOthers` (every agent, off by default): the agent may ask another model of the same gateway with minigw, through a
   loopback port and token valid only for that run (`MINIGW_AGENT_URL`; the token is in a 0600 file of the run, `MINIGW_AGENT_AUTH_FILE`, never in the environment). Claude uses it only with
@@ -272,7 +273,7 @@ Notes:
 | `GET /foundry`, `PATCH` | any of `{"enabled", "path", "instructions", "models"}` | `{"enabled", "path", "found", "exe", "running", "error", "instructions", "models": [string] \| null}`: Foundry Local on this computer |
 | `GET /foundry/models` | – | `{"models": [{"name", "vision", "enabled"}]}`: models downloaded in Foundry Local; `503` when it is not installed or does not answer (Go gateway and the Mac app) |
 | `GET /agents/grok`, `PATCH` | any of `{"enabled", "path", "write", "models", "askOthers", "work", "apiKey"}` | `{"enabled", "path", "found", "write", "models", "askOthers", "work", "login"?: Login}` |
-| `GET /agents/copilot`, `PATCH` | any of `{"enabled", "path", "write", "network", "commands", "models", "token", "askOthers", "work"}` | `{"enabled", "path", "found", "write", "network", "commands", "models": [string], "hasToken", "askOthers", "work", "login"?: Login}` |
+| `GET /agents/copilot`, `PATCH` | any of `{"enabled", "path", "write", "network", "commands", "models", "askOthers", "work"}` | `{"enabled", "path", "found", "write", "network", "commands", "models": [string], "askOthers", "work", "login": Login, "loginProblem"?, "commandsUnavailable"?}` |
 | `GET /appleFM`, `PATCH` (Mac) | any of `{"enabled", "instructions"}` | `{"enabled", "instructions"}`: Apple Foundation Models (Settings → Apple Foundation Models); instructions up to 8000 characters |
 | `GET /siri`, `PATCH` | any of `{"enabled", "timeout", "allow": [id], "deny": [id]}` | `{"enabled", "timeout", "devices": [{"id", "name", "siri"}]}` |
 | `GET /run`, `PATCH` (Mac) | any of `{"commands", "allow": [id], "deny": [id], "allowNetwork": [id], "denyNetwork": [id]}` | `{"commands", "devices": [{"id", "name", "run", "network"}]}` |
@@ -282,19 +283,19 @@ sandbox may use the network (default: off); `models: null` = all the account's m
 devices (Siri uses this Mac's personal data). `run` allows `minigw run` for a device (off by default): it runs the
 listed commands (comma-separated, first argument only) in a native folder on the Mac, so it is code execution there.
 Copilot: `write` lets it edit files in the session's folder (default: off, read-only), `network` allows its web tool,
-`commands` its shell (an explicit opt-in that needs `write` and `token`). On a Windows gateway Copilot is not supported
+`commands` is always `false` (#81 H1, both gateways: `PATCH {"commands": true}` is 400 and `commandsUnavailable`
+says why: a command could read Copilot's sign-in from the system keyring; a stored `true` is ignored). On a Windows gateway Copilot is not supported
 in this version: `GET` has `"unsupported": true`, `"enabled": false` and `reason` "Copilot is not supported on a Windows
 gateway in this version"; `PATCH {"enabled": true}` and requests to `claude-copilot*` get 400 with that text, and the
 models are not listed. On the Mac Copilot always runs in a `sandbox-exec` profile and on Linux under bwrap, each request with a fresh
-`COPILOT_HOME` that is deleted afterwards; only the session state is kept between turns. `token` is write-only like
-provider keys: a fine-grained personal access token (`github_pat_…`) with only the Copilot Requests permission, stored in
-the Keychain or the OS key store (`""` removes it); `hasToken` says whether one is stored. The Mac app needs it for every
-Copilot request (other sandboxed agents could read a token in Copilot's environment, so never the GitHub CLI's), and
-commands need it everywhere. On Linux without commands the gateway may instead pass its own `COPILOT_GITHUB_TOKEN`/
-`GH_TOKEN`/`GITHUB_TOKEN` or the GitHub CLI's (`gh auth token`), always as `COPILOT_GITHUB_TOKEN` (agents there have their
-own PID namespace). Only `events.jsonl` and `workspace.yaml` of a session are kept between turns. When the Copilot binary
+`COPILOT_HOME` that is deleted afterwards; only the session state is kept between turns. Sign-in (#81): only the
+gateway user's `copilot login`, no token (`PATCH {"token"}` is 400). The fresh home gets a `config.json` with only
+`loggedInUsers` and `lastLoggedInUser` from `~/.copilot/config.json`; the token stays in the Keychain or Secret Service
+and Copilot reads it itself. When that login cannot be used (not signed in, a token stored in plain text, an unexpected
+form, on Linux no Secret Service on the D-Bus session or no `xdg-dbus-proxy`), `loginProblem` and `status.copilot` (when
+Copilot is on) give the reason and requests get `503` with it. Only `events.jsonl` and `workspace.yaml` of a session are kept between turns. When the Copilot binary
 changes or its package cache is missing, the gateway runs `copilot --version` once outside the sandbox (no prompt, no
-model call, no token) so that Copilot can unpack its package, which the sandbox can only read. `models` lists model names
+model call, no sign-in) so that Copilot can unpack its package, which the sandbox can only read. `models` lists model names
 (Copilot has no model list; empty = only `claude-copilot`, Copilot's default); other names are refused (`404`), and a name
 that is not a valid model name is a `400`.
 

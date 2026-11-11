@@ -151,6 +151,28 @@ Details:
   agent's PATH is a copy of `minigw.exe` named `git.exe` (under `Scratch\gitexec\win-<hash>`, checked against its hash
   before use; stale copies are removed at start), with the same `init`/`clone` rule; every other git command goes
   unchanged to the real git.
+- **Copilot sign-in (#81).** Copilot uses only the gateway user's own `copilot login`; there is no token, `gh` or PAT
+  path. Each request gets a fresh `COPILOT_HOME` (0700) with a newly written `config.json` that holds only
+  `loggedInUsers` and `lastLoggedInUser` from the user's `~/.copilot/config.json` (read without following links, shape
+  checked, every other key such as `trustedFolders` or `installedPlugins` left out). The token itself stays in the
+  OS key store, addressed by host and login, not by the home path, and Copilot reads it there. `COPILOT_GITHUB_TOKEN`,
+  `GH_TOKEN`, `GITHUB_TOKEN` and every inherited `COPILOT_*`/`GITHUB_COPILOT_*` are dropped (they would override the
+  login or load config, trust, providers or another package), and `COPILOT_AUTO_UPDATE=false`. Mac: the Copilot
+  `sandbox-exec` profile may read `~/Library/Keychains` (not write it); the Keychain item's access list lets only the
+  signed `copilot` read it without a prompt. Linux `minigw serve`: Copilot runs only when a Secret Service keyring is on
+  the user's D-Bus session (`busctl`/`dbus-send` list `org.freedesktop.secrets`, running or activatable) and
+  `xdg-dbus-proxy` is installed; bwrap still hides the session bus, and Copilot gets only a per-request proxy socket
+  that allows nothing but `org.freedesktop.secrets` (the full session bus would let it start programs outside bwrap
+  through `systemd --user`); a `unix:abstract=` session bus is refused (bwrap does not hide abstract sockets), the proxy
+  is killed with the gateway (Pdeathsig), and the git wrappers unset `DBUS_SESSION_BUS_ADDRESS`, so git and what it runs
+  never get the proxy. Copilot has no commands on any gateway (shell tool always denied): on Linux Secret Service has
+  no per-program access and a command could read the whole unlocked keyring; on the Mac a command could read
+  `login.keychain-db` or start the ACL-trusted `copilot` with a planted package and read the token. With no commands
+  only Copilot's own process tree reads the Keychain folder that its profile allows. Outside worktree mode Copilot sees
+  no git repository (`GIT_DIR=/dev/null`), so a folder's `.git/config` or `.git/info/attributes` cannot run code in it. The old 0.5.24 Copilot token is
+  deleted from the Keychain (`copilot-token`) or key store (`agent:copilot`) at start. A token that `copilot login` stored in plain text (headless Linux: an
+  `authTokens`/`copilotTokens` key in `config.json`) is never copied: Copilot is then off. Windows: not supported.
+  Without a usable login the settings, `GET /status` (`copilot`), `minigw gw status` and the request (503) give the reason.
 - **Windows sandbox (minigw serve, #68).** On Windows the gateway starts Claude CLI and Grok as a whole (the CLI
   and every command it runs; Codex and Copilot cannot start there: both fail on Rust `std::fs::canonicalize`,
   "Access is denied (os error 5)", so they run outside it only with **Allow commands without a sandbox**) in a Microsoft MXC process container (`wxc-exec.exe` from MXC 1.0.1 in the

@@ -543,22 +543,28 @@ public enum Worktree {
     /// #40 (kot Go): brez lastnikovih nastavitev git (identiteta, podpis, poverilnice, insteadOf; v peskovniku ~ da EPERM),
     /// avtor commitov je agent (`agent`: claude, codex …).
     public static func harnessEnv(root: URL, maven: URL, agent: String) -> [String: String] {
+        let git = root.appendingPathComponent(".git").path
+        let env = ["GIT_DIR": git, "GIT_WORK_TREE": root.path, "GIT_COMMON_DIR": git,
+                   "MAVEN_OPTS": "-Dmaven.repo.local=\(maven.path) -Djava.io.tmpdir=\(root.appendingPathComponent(".build/tmp").path)",
+                   "TMPDIR": root.appendingPathComponent(".build/tmp").path + "/",
+                   "CLANG_MODULE_CACHE_PATH": root.appendingPathComponent(".build/ModuleCache").path, "xcrun_nocache": "1",
+                   "TMPPREFIX": root.appendingPathComponent(".build/tmp/zsh").path]  // #67: here-doc zsh ne v /tmp
+        return gitGuardEnv(agent: agent).merging(env) { $1 }.merging(depsEnv(root)) { $1 }
+    }
+
+    /// Nastavitve git iz okolja, ki preglasijo .git/config agenta ali odjemalca (kot Go gitGuardEnv): worktree
+    /// (`harnessEnv`) in #81 N1 Copilot v vsakem načinu.
+    static func gitGuardEnv(agent: String) -> [String: String] {
         // N9: status in diff ne vstopita v podmodul (submodule.<ime>.ignore iz .gitmodules to preglasi: claudeEnv)
         let pairs = [("core.fsmonitor", "false"), ("core.hooksPath", "/dev/null"), ("core.attributesFile", "/dev/null"),
                      ("diff.ignoreSubmodules", "all"), ("submodule.recurse", "false"), ("core.excludesFile", "/dev/null"),
                      ("user.name", author(agent)), ("user.email", agent + "@minigw.invalid"),
                      ("safe.bareRepository", "explicit"),  // #61: golega repozitorija ne najde sam (le z GIT_DIR/--git-dir)
                      ("init.templateDir", "")]  // #67: git init/clone agenta (le v $MINIGW_DEPS) ne kopira predlog (vzorčni hooki)
-        let git = root.appendingPathComponent(".git").path
         var env = ["GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",
-                   "GIT_CONFIG_COUNT": String(pairs.count), "GIT_ATTR_SOURCE": "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
-                   "GIT_DIR": git, "GIT_WORK_TREE": root.path, "GIT_COMMON_DIR": git,
-                   "MAVEN_OPTS": "-Dmaven.repo.local=\(maven.path) -Djava.io.tmpdir=\(root.appendingPathComponent(".build/tmp").path)",
-                   "TMPDIR": root.appendingPathComponent(".build/tmp").path + "/",
-                   "CLANG_MODULE_CACHE_PATH": root.appendingPathComponent(".build/ModuleCache").path, "xcrun_nocache": "1",
-                   "TMPPREFIX": root.appendingPathComponent(".build/tmp/zsh").path]  // #67: here-doc zsh ne v /tmp
+                   "GIT_CONFIG_COUNT": String(pairs.count), "GIT_ATTR_SOURCE": "4b825dc642cb6eb9a060e54bf8d69288fbee4904"]
         for (i, (k, v)) in pairs.enumerated() { env["GIT_CONFIG_KEY_\(i)"] = k; env["GIT_CONFIG_VALUE_\(i)"] = v }
-        return env.merging(depsEnv(root)) { $1 }
+        return env
     }
 
     /// N9 (kot Go worktreeClaudeEnv): okolje claude -p v klonu: harnessEnv in GIT_EXEC_PATH z ovojem `gitexec`. Git zažene
@@ -596,7 +602,7 @@ public enum Worktree {
     /// prehoda); tam in za druge ukaze v $MINIGW_DEPS iz peskovnika navaden git. Harness ima za druge ukaze nespremenjeno pravilo.
     static func pathWrapScript(real: String) -> String {
         "#!/bin/sh\n# minigw: git works in the registered clone (MINIGW_GIT_DIRS) that holds the folder or the -C <path>; new repositories only under $MINIGW_DEPS\n"
-            + "real='" + real.replacingOccurrences(of: "'", with: #"'\''"#) + #"'; d=$(pwd -P) || exec "$real" "$@""# + "\n"
+            + "unset DBUS_SESSION_BUS_ADDRESS\nreal='" + real.replacingOccurrences(of: "'", with: #"'\''"#) + #"'; d=$(pwd -P) || exec "$real" "$@""# + "\n"
             + #"i=1; while [ $i -le $# ]; do eval "a=\${$i}"; case $a in"# + "\n"
             + #"  -C) i=$((i+1)); eval "p=\${$i}"; case $p in /*) ;; *) p=$d/$p;; esac; q=$(cd "$p" 2>/dev/null && pwd -P) && d=$q || break;;"# + "\n"
             + #"  -c|--git-dir|--work-tree|--namespace|--config-env) i=$((i+1));; -*) ;; *) break;; esac; i=$((i+1)); done"# + "\n"
@@ -654,7 +660,7 @@ public enum Worktree {
         let fm = FileManager.default, wrapper = dir.appendingPathComponent("git"), pathWrapper = dir.appendingPathComponent("bin/git")
         // Enak kot Go wrapScript: točno ujemanje GIT_DIR z enim od nepraznih vnosov MINIGW_GIT_DIRS.
         let script = "#!/bin/sh\n# minigw (N9): git runs only in the clones minigw registered, not in a nested repository the agent made\n"
-            + "ok=; set -f; IFS='\n'\n"
+            + "unset DBUS_SESSION_BUS_ADDRESS\nok=; set -f; IFS='\n'\n"
             + #"for d in $MINIGW_GIT_DIRS; do [ -n "$GIT_DIR" ] && [ "$GIT_DIR" = "$d" ] && ok=1; done"# + "\n"
             + #"[ -n "$ok" ] || { echo "minigw: git in a nested repository is off in worktree mode" >&2; exit 128; }"# + "\n"
             + "exec '" + (real + "/git").replacingOccurrences(of: "'", with: #"'\''"#) + #"' "$@""# + "\n"

@@ -50,9 +50,8 @@ runs; otherwise they go to serve.json.
                                                         take: take over the folder (or NAME next to it) of a
                                                         gateway that is gone
   minigw gw claude|codex|grok|copilot login            the agent's login (set / not set / logged in), never the value
-  minigw gw claude|copilot token [remove]               Claude: the token from claude setup-token (needed in the
-                                                        Windows sandbox); Copilot: its token for commands (fine-
-                                                        grained, only Copilot Requests); read from stdin or asked for
+  minigw gw claude token [remove]                       the token from claude setup-token (needed in the Windows
+                                                        sandbox); read from stdin or asked for
   minigw gw claude|codex|grok apikey [remove]           use an API key instead of the login (billed through the
                                                         provider's API); remove: back to the login
   minigw gw settings                                    the settings in this terminal (minigw-tui; also over SSH)
@@ -340,6 +339,9 @@ func routerCommand(args []string, in io.Reader) {
 		say(clean(fmt.Sprintf("claude: %s, tools %s", claude, st.Claude.Tools)))
 		if st.Claude.Off != "" {
 			say(clean("Claude CLI and Codex are off: " + st.Claude.Off))
+		}
+		if st.Copilot != "" { // #81
+			say(clean("Copilot is off: " + st.Copilot))
 		}
 		for _, g := range st.Gateways {
 			n := "all"
@@ -844,7 +846,7 @@ func agentLoginCmd(a *adminClient, in io.Reader, pos []string) {
 		}
 		return
 	}
-	what := map[string]string{"claude": "Claude token (from claude setup-token, sk-ant-…)", "copilot": "Copilot token (github_pat_…, only the Copilot Requests permission)"}[kind]
+	what := "Claude token (from claude setup-token, sk-ant-…)"
 	field := "token"
 	if pos[1] == "apikey" {
 		what, field = agentNames[kind]+" API key (billed through the provider's API)", "apiKey"

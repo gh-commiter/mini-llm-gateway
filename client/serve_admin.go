@@ -119,6 +119,8 @@ type apiStatus struct {
 	AgentsUnsandboxed bool `json:"agentsUnsandboxed"`
 	// AgentSandbox (#68, Windows): {"kind":"mxc","version":"1.0.1"} ali {"kind":"","reason":"…"}; drugje ga ni.
 	AgentSandbox map[string]string `json:"agentSandbox,omitempty"`
+	// Copilot (#81): zakaj vklopljeni Copilot ni na voljo (prijava copilot login, shramba ključev); "" = v redu ali izklopljen.
+	Copilot string `json:"copilot,omitempty"`
 }
 
 // adminSecret: 32 naključnih bajtov (base64url) v admin.secret (0600) v mapi nastavitev, ki je agentom prepovedana.
@@ -340,6 +342,9 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			Devices: len(c.Devices), Claude: s.claudeInfo(), Gateways: s.apiGateways(c), OS: runtime.GOOS, Tray: trayRunning(), Build: buildCommit(),
 			Agents: int(s.agentsRunning.Load()), Autostart: autostart(runtime.GOOS), AgentsUnsandboxed: !agentSandboxed(s.cfgDir),
 			AgentSandbox: agentSandboxInfo()}
+		if c.Copilot.Enabled {
+			_, st.Copilot = copilotLogin()
+		}
 		if d := installDir(runtime.GOOS); d != "" { // le če je minigw tam res nameščen
 			if _, err := os.Stat(filepath.Join(d, map[bool]string{true: "minigw.exe", false: "minigw"}[runtime.GOOS == "windows"])); err == nil {
 				st.InstallDir = d
@@ -1008,10 +1013,10 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 	return fail(404, "Not found: "+method+" "+uri)
 }
 
-// patchLogin (#68): žeton (Claude, Copilot) in ključ API (Claude, Codex, Grok) v shrambo ključev; 0 = v redu.
+// patchLogin (#68): žeton (Claude) in ključ API (Claude, Codex, Grok) v shrambo ključev; 0 = v redu.
 func (s *server) patchLogin(kind string, token, apiKey *string) (int, any) {
 	if token != nil && !agentHasToken(kind) {
-		return 400, errorBody(400, "token: Claude CLI and Copilot only")
+		return 400, errorBody(400, "token: Claude CLI only")
 	}
 	if token != nil && *token != "" {
 		if why := agentTokenProblem(kind, *token); why != "" {
@@ -1056,9 +1061,10 @@ func (s *server) agentAPI(method string, k agentKind, body []byte) (int, any) {
 			o["enabled"], o["unsupported"], o["reason"] = false, true, copilotUnsupportedMsg
 		}
 		if k.name == "copilot" {
-			o["commands"] = ac.Commands
-			t, _ := keyGet(s.cfgDir, copilotKey)
-			o["hasToken"] = t != "" // žeton le za pisanje
+			o["commands"], o["commandsUnavailable"] = false, copilotNoCommands // H1: shranjen true ne velja
+			if _, why := copilotLogin(); why != "" && !copilotUnsupported {    // #81: zakaj Copilot ni na voljo
+				o["loginProblem"] = why
+			}
 			if ac.Models == nil {
 				o["models"] = []string{} // Copilot: imena modelov (ni seznama računa); prazno = le privzeti
 			}
@@ -1075,7 +1081,7 @@ func (s *server) agentAPI(method string, k agentKind, body []byte) (int, any) {
 		Network   *bool           `json:"network"`
 		Commands  *bool           `json:"commands"`  // Copilot: ukazi lupine (izrecno dovoljenje)
 		AskOthers *bool           `json:"askOthers"` // sme vprašati druge modele tega prehoda
-		Token     *string         `json:"token"`     // Copilot: žeton za ukaze (le za pisanje; "" ga izbriše)
+		Token     *string         `json:"token"`     // Claude: žeton (le za pisanje; "" ga izbriše)
 		APIKey    *string         `json:"apiKey"`    // #68: Codex, Grok: ključ API namesto prijave ("" = nazaj na prijavo)
 		Models    json.RawMessage `json:"models"`    // null = vsi; seznam = le ti; brez polja = brez spremembe
 		Work      *string         `json:"work"`      // #45: direct, sync, worktree
@@ -1092,8 +1098,11 @@ func (s *server) agentAPI(method string, k agentKind, body []byte) (int, any) {
 	if b.Network != nil && k.name == "grok" {
 		return 400, errorBody(400, "network: Codex and Copilot only")
 	}
-	if (b.Commands != nil || b.Token != nil) && k.name != "copilot" {
-		return 400, errorBody(400, "commands, token: Copilot only")
+	if b.Commands != nil && k.name != "copilot" {
+		return 400, errorBody(400, "commands: Copilot only")
+	}
+	if b.Commands != nil && *b.Commands {
+		return 400, errorBody(400, copilotNoCommands)
 	}
 	if st, e := s.patchLogin(k.name, b.Token, b.APIKey); st != 0 { // pred nastavitvami: ključ ni del datoteke nastavitev
 		return st, e
