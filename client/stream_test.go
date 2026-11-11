@@ -1,11 +1,13 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -85,5 +87,62 @@ func TestRunClaudeStream(t *testing.T) {
 	os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\n(sleep 20 2>/dev/null &)\nexit 3\n"), 0o755) // brez result: 2 s
 	if code := runClaude([]string{"-p", "x"}, nil, true); code != 3 || time.Since(start) > 10*time.Second {
 		t.Fatalf("no result: exit %d after %v", code, time.Since(start))
+	}
+}
+
+// lockedBuf: izhod streamText, ki ga test bere med branjem.
+type lockedBuf struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (l *lockedBuf) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+func (l *lockedBuf) String() string { l.mu.Lock(); defer l.mu.Unlock(); return l.b.String() }
+
+// Agent prehoda pošlje vse v enem bloku (StreamTranslator): besedilo gre na stdout ob delti, ne šele ob koncu bloka,
+// oznaka ⏺ kot vrstica na stderr; vrstica o veji med tokom počaka na konec odgovora.
+func TestStreamTextLive(t *testing.T) {
+	delta := func(s string) string {
+		return `{"type":"stream_event","parent_tool_use_id":null,"event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"` + s + `"}}}` + "\n"
+	}
+	pr, pw := io.Pipe()
+	var out, errOut lockedBuf
+	done := make(chan bool)
+	go func() { done <- streamText(pr, &out, &errOut) }()
+	wait := func(b *lockedBuf, want string) {
+		for end := time.Now().Add(5 * time.Second); !strings.Contains(b.String(), want); time.Sleep(10 * time.Millisecond) {
+			if time.Now().After(end) {
+				t.Fatalf("%q not printed before the end of the answer: out=%q err=%q", want, out.String(), errOut.String())
+			}
+		}
+	}
+	io.WriteString(pw, `{"type":"stream_event","event":{"type":"message_start"}}`+"\n"+delta(`I'll sleep.`))
+	wait(&out, "I'll sleep.")
+	io.WriteString(pw, delta(`\n⏺ Bash\n`)+`{"type":"stream_event","parent_tool_use_id":"x","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"sub"}}}`+"\n")
+	wait(&errOut, "minigw: · Bash\n")
+	s := &shareClient{reported: map[string]bool{}}
+	held.Lock()
+	held.on = true
+	held.Unlock()
+	s.branchNote("minigw/claude-0123abcd-1", "HEAD")
+	io.WriteString(pw, delta(`Done.\n`)+`{"type":"stream_event","event":{"type":"content_block_stop","index":0}}`+"\n"+
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"I'll sleep.\n⏺ Bash\nDone."}]}}`+"\n"+
+		`{"type":"result","is_error":false,"result":"Done."}`+"\n")
+	if failed := <-done; failed || out.String() != "I'll sleep.\n\nDone.\n" || errOut.String() != "minigw: · Bash\n" {
+		t.Errorf("failed=%v out=%q err=%q", failed, out.String(), errOut.String())
+	}
+	held.Lock()
+	lines := held.lines
+	held.Unlock()
+	if len(lines) != 1 || !strings.HasPrefix(lines[0], "agent work is on branch minigw/claude-0123abcd-1:") {
+		t.Errorf("branch line printed during the answer: held %q", lines)
+	}
+	releaseHeld()
+	if held.on || held.lines != nil {
+		t.Error("not released")
 	}
 }

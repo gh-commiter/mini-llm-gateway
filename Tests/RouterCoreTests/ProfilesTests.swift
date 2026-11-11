@@ -207,7 +207,7 @@ private func send(_ url: String, _ method: String, _ path: String, secret: Strin
     func run(_ lines: [String]) -> (String, String, Bool) {
         var p = Profiles.StreamText(), o = "", e = ""
         for l in lines { let r = p.line(Data(l.utf8)); o += r.out; e += r.err }
-        return (o, e + (p.warning ?? ""), p.failed)
+        return (o + p.tail, e + (p.warning ?? ""), p.failed)
     }
     let text = { (s: String) in #"{"type":"assistant","message":{"content":[{"type":"text","text":"\#(s)"}]}}"# }
     let tool = #"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{}}]}}"#
@@ -220,7 +220,17 @@ private func send(_ url: String, _ method: String, _ path: String, secret: Strin
     let warn = run([text("Kot zgoraj."), #"{"type":"result","is_error":false,"result":"x"}"#])
     #expect(warn.0 == "Kot zgoraj.\n" && warn.1.hasPrefix("minigw: warning:"))
     #expect(run(["not json", #"{"type":"result","is_error":false,"result":"Done"}"#]) == ("Done\n", "", false))
-    #expect(Profiles.streamArgs(["-p", "hi"]) == ["--output-format", "stream-json", "--verbose", "-p", "hi"])
+    // Agent prehoda (en blok, kot client/stream_test.go TestStreamTextLive): besedilo ob delti, ne ob koncu bloka; ⏺ na stderr
+    let delta = { (s: String) in #"{"type":"stream_event","parent_tool_use_id":null,"event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\#(s)"}}}"# }
+    var p = Profiles.StreamText()
+    #expect(p.line(Data(delta("I'll sleep.").utf8)) == ("I'll sleep.", ""))
+    #expect(p.line(Data(delta(#"\n⏺ Bash\n"#).utf8)) == ("", "minigw: · Bash\n"))
+    #expect(p.line(Data(#"{"type":"stream_event","parent_tool_use_id":"x","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"sub"}}}"#.utf8)) == ("", ""))
+    #expect(p.line(Data(delta(#"Done.\n"#).utf8)) == ("\n\nDone.", ""))
+    #expect(p.line(Data(#"{"type":"stream_event","event":{"type":"content_block_stop","index":0}}"#.utf8)) == ("", ""))
+    #expect(p.line(Data(#"{"type":"assistant","message":{"content":[{"type":"text","text":"I'll sleep. Done."}]}}"#.utf8)) == ("", ""))
+    #expect(p.line(Data(#"{"type":"result","is_error":false,"result":"Done."}"#.utf8)) == ("\n", "") && p.tail == "")
+    #expect(Profiles.streamArgs(["-p", "hi"]) == ["--output-format", "stream-json", "--verbose", "--include-partial-messages", "-p", "hi"])
     #expect(Profiles.streamArgs(["-p", "--output-format=json"]) == nil && Profiles.streamArgs(["hi"]) == nil)
     #expect(Profiles.helperModelEnv(["--model", "claude-deepseek/deepseek-v4-flash"], env: [:])
             == ["ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-deepseek/deepseek-v4-flash", "ANTHROPIC_SMALL_FAST_MODEL": "claude-deepseek/deepseek-v4-flash"])

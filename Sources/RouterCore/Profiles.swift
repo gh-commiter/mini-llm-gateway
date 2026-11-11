@@ -152,12 +152,12 @@ public enum Profiles {
         return "minigw: stdin had no data within \(waitMs / 1000) s and was not sent"
     }
 
-    /// #78 (kot Go streamArgs): claude -p brez izbranega --output-format teče s stream-json (nil = argumenti ostanejo).
+    /// #78 (kot Go streamArgs): claude -p brez izbranega --output-format teče s stream-json in deltami (nil = argumenti ostanejo).
     public static func streamArgs(_ args: [String]) -> [String]? {
         let opts = args.prefix { $0 != "--" }
         guard opts.contains(where: { $0 == "-p" || $0 == "--print" }),
               !opts.contains(where: { $0 == "--output-format" || $0.hasPrefix("--output-format=") }) else { return nil }
-        return ["--output-format", "stream-json", "--verbose"] + args
+        return ["--output-format", "stream-json", "--verbose", "--include-partial-messages"] + args
     }
 
     /// #78 (kot Go helperModelEnv): model ponudnika (ne opus/sonnet/haiku/fable): pomožni klici Claude Code gredo k istemu
@@ -176,12 +176,15 @@ public enum Profiles {
         })
     }
 
-    /// #78 (kot Go streamText): dogodki claude --output-format stream-json → vsak blok besedila modela za stdout (prazna
-    /// vrstica med njimi), uporaba orodja kot kratka vrstica za stderr; končni result ni izpisan dvakrat.
+    /// #78 (kot Go streamText): dogodki claude --output-format stream-json → besedilo modela za stdout sproti (delte
+    /// --include-partial-messages; brez njih celi bloki), prazna vrstica med bloki; uporaba orodja (tudi oznaka ⏺ agenta
+    /// prehoda) kot kratka vrstica za stderr; končni result ni izpisan dvakrat.
     public struct StreamText {
         /// Najdaljša vrstica stream-json (enako kot Go streamLineMax).
         public static let lineMax = 64 << 20
-        var n = 0, last = ""
+        var n = 0, last = ""          // izpisani bloki, besedilo zadnjega
+        var partial = false, open = false  // partial: delte namesto celih blokov; open: blok se izpisuje
+        var pend = ""                 // zadržane nove vrstice na koncu besedila (pred nadaljevanjem; na koncu ena)
         public private(set) var failed = false
         /// Dogodek result: zadnji dogodek claude -p, branje se konča.
         public private(set) var done = false
@@ -194,18 +197,62 @@ public enum Profiles {
             }))
         }
 
+        /// Oznaka orodja agenta prehoda v besedilu (StreamTranslator: »⏺ Bash«) kot cel delta (kot Go toolMark).
+        static func toolMark(_ s: String) -> String? {
+            let m = s.hasPrefix("\n") ? s.dropFirst() : Substring(s)
+            guard m.hasPrefix("⏺ "), m.hasSuffix("\n") else { return nil }
+            let name = m.dropFirst(2).dropLast()
+            return name.isEmpty || name.contains("\n") ? nil : String(name)
+        }
+
+        mutating func text(_ raw: String) -> String {
+            let t = Self.printable(raw)
+            var out = ""
+            if !open {
+                if t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "" }
+                if n > 0 { out = "\n\n" }
+                open = true; n += 1; last = ""
+            }
+            last += t
+            var body = t
+            while body.hasSuffix("\n") { body.removeLast() }
+            if body.isEmpty { pend += t; return out }
+            out += pend + body
+            pend = String(t.dropFirst(body.count))
+            return out
+        }
+
+        static func tool(_ name: String) -> String {
+            "minigw: · \(printable(name).filter { $0 != "\n" && $0 != "\t" })\n"
+        }
+
         /// Ena vrstica JSON → besedilo za stdout in stderr.
         public mutating func line(_ data: Data) -> (out: String, err: String) {
             guard let ev = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return ("", "") }
             var out = "", err = ""
-            var texts: [String] = []
             switch ev["type"] as? String {
+            case "stream_event":
+                partial = true
+                guard ev["parent_tool_use_id"] == nil || ev["parent_tool_use_id"] is NSNull,  // notranji podagent
+                      let e = ev["event"] as? [String: Any] else { break }
+                if e["type"] as? String == "content_block_delta", let d = e["delta"] as? [String: Any],
+                   d["type"] as? String == "text_delta", let t = d["text"] as? String {
+                    if let name = Self.toolMark(t) {
+                        err += Self.tool(name)
+                        if open { pend = "\n\n" }
+                    } else {
+                        out += text(t)
+                    }
+                } else if e["type"] as? String == "content_block_stop" {
+                    open = false; pend = ""
+                }
             case "assistant":
                 for c in ((ev["message"] as? [String: Any])?["content"] as? [[String: Any]]) ?? [] {
-                    if c["type"] as? String == "text", let t = c["text"] as? String, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        texts.append(t)
+                    if c["type"] as? String == "text", !partial, let t = c["text"] as? String {
+                        out += text(t)
+                        open = false; pend = ""
                     } else if c["type"] as? String == "tool_use" {
-                        err += "minigw: · \(Self.printable(c["name"] as? String ?? "").filter { $0 != "\n" && $0 != "\t" })\n"
+                        err += Self.tool(c["name"] as? String ?? "")
                     }
                 }
             case "result":
@@ -217,19 +264,17 @@ public enum Profiles {
                     var r2 = Self.printable(r)
                     while r2.hasSuffix("\n") { r2.removeLast() }
                     for l in r2.split(separator: "\n", omittingEmptySubsequences: false) { err += "claude: \(l)\n" }
-                } else if n == 0, !r.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    texts.append(r)
+                } else if n == 0 {
+                    out += text(r)
                 }
+                if n > 0 { out += "\n" }
             default: break
-            }
-            for t in texts {
-                var t2 = t
-                while t2.hasSuffix("\n") { t2.removeLast() }
-                out += (n > 0 ? "\n" : "") + Self.printable(t2) + "\n"
-                n += 1; last = t
             }
             return (out, err)
         }
+
+        /// Konec brez dogodka result: zaključna nova vrstica izpisanega besedila.
+        public var tail: String { n > 0 && !done ? "\n" : "" }
 
         /// Opozorilo, ko se edino besedilo sklicuje na prejšnje (»above«, »zgoraj«), ki ga ni bilo (nil = ni).
         public var warning: String? {

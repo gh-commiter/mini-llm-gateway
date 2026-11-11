@@ -12,8 +12,8 @@ import (
 	"strings"
 )
 
-// streamArgs (#78): claude -p brez izbranega --output-format teče s stream-json; minigw sproti izpiše vsa besedila modela
-// (ne le zadnjega sporočila). Izbran --output-format gre naprej nespremenjen.
+// streamArgs (#78): claude -p brez izbranega --output-format teče s stream-json in deltami; minigw sproti izpiše vsa
+// besedila modela (ne le zadnjega sporočila), tudi agenta prehoda, ki vse pošlje v enem bloku. Izbran --output-format gre naprej nespremenjen.
 func streamArgs(args []string) ([]string, bool) {
 	print := false
 	for _, a := range args {
@@ -28,7 +28,7 @@ func streamArgs(args []string) ([]string, bool) {
 	if !print {
 		return args, false
 	}
-	return append([]string{"--output-format", "stream-json", "--verbose"}, args...), true
+	return append([]string{"--output-format", "stream-json", "--verbose", "--include-partial-messages"}, args...), true
 }
 
 // helperModelEnv (#78): model ponudnika (ne opus/sonnet/haiku/fable): pomožni klici Claude Code (naslov, povzetki,
@@ -76,24 +76,52 @@ func printable(s string) string {
 // backRef: končno sporočilo se sklicuje na prejšnje besedilo (#78).
 var backRef = regexp.MustCompile(`(?i)\babove\b|\bsee (the )?previous\b|zgoraj`)
 
-// streamText (#78): dogodki claude --output-format stream-json → vsak blok besedila modela na out (prazna vrstica med
-// njimi), uporaba orodja kot kratka vrstica na errOut; končni result ni izpisan dvakrat in konča branje. failed = result z napako.
+// toolMark: oznaka orodja agenta prehoda v besedilu (StreamTranslator, translator.feed: »⏺ Bash«) kot cel delta.
+var toolMark = regexp.MustCompile(`^\n?⏺ ([^\n]+)\n$`)
+
+// streamText (#78): dogodki claude --output-format stream-json → besedilo modela na out sproti (delte
+// --include-partial-messages; brez njih celi bloki), prazna vrstica med bloki; uporaba orodja (tudi oznaka ⏺ agenta
+// prehoda) kot kratka vrstica na errOut; končni result ni izpisan dvakrat in konča branje. failed = result z napako.
 func streamText(in io.Reader, out, errOut io.Writer) (failed bool) {
 	sc := bufio.NewScanner(in)
 	sc.Buffer(make([]byte, 64<<10), streamLineMax)
-	n, last := 0, ""
-	emit := func(t string) {
-		if n > 0 {
-			fmt.Fprintln(out)
+	n, last := 0, ""              // izpisani bloki, besedilo zadnjega
+	partial, open := false, false // partial: delte namesto celih blokov; open: blok se izpisuje
+	pend := ""                    // zadržane nove vrstice na koncu besedila (pred nadaljevanjem; na koncu ena)
+	text := func(t string) {
+		t = printable(t)
+		if !open {
+			if strings.TrimSpace(t) == "" {
+				return
+			}
+			if n > 0 {
+				fmt.Fprint(out, "\n\n")
+			}
+			open, n, last = true, n+1, ""
 		}
-		fmt.Fprintln(out, printable(strings.TrimRight(t, "\n")))
-		n, last = n+1, t
+		last += t
+		body := strings.TrimRight(t, "\n")
+		if body == "" {
+			pend += t
+			return
+		}
+		fmt.Fprint(out, pend+body)
+		pend = t[len(body):]
 	}
+	tool := func(name string) {
+		fmt.Fprintln(errOut, "minigw: · "+strings.NewReplacer("\n", "", "\t", "").Replace(printable(name)))
+	}
+	end := func() { open, pend = false, "" }
 	for sc.Scan() {
 		var ev struct {
-			Type    string `json:"type"`
-			IsError bool   `json:"is_error"`
-			Result  string `json:"result"`
+			Type    string  `json:"type"`
+			IsError bool    `json:"is_error"`
+			Result  string  `json:"result"`
+			Parent  *string `json:"parent_tool_use_id"`
+			Event   struct {
+				Type  string
+				Delta struct{ Type, Text string }
+			} `json:"event"`
 			Message struct {
 				Content []struct{ Type, Text, Name string } `json:"content"`
 			} `json:"message"`
@@ -102,12 +130,31 @@ func streamText(in io.Reader, out, errOut io.Writer) (failed bool) {
 			continue
 		}
 		switch ev.Type {
+		case "stream_event":
+			partial = true
+			if ev.Parent != nil { // notranji podagent
+				break
+			}
+			switch {
+			case ev.Event.Type == "content_block_delta" && ev.Event.Delta.Type == "text_delta":
+				if m := toolMark.FindStringSubmatch(ev.Event.Delta.Text); m != nil {
+					tool(m[1])
+					if open {
+						pend = "\n\n"
+					}
+				} else {
+					text(ev.Event.Delta.Text)
+				}
+			case ev.Event.Type == "content_block_stop":
+				end()
+			}
 		case "assistant":
 			for _, c := range ev.Message.Content {
-				if c.Type == "text" && strings.TrimSpace(c.Text) != "" {
-					emit(c.Text)
+				if c.Type == "text" && !partial {
+					text(c.Text)
+					end()
 				} else if c.Type == "tool_use" {
-					fmt.Fprintln(errOut, "minigw: · "+strings.NewReplacer("\n", "", "\t", "").Replace(printable(c.Name)))
+					tool(c.Name)
 				}
 			}
 		case "result":
@@ -117,13 +164,16 @@ func streamText(in io.Reader, out, errOut io.Writer) (failed bool) {
 				for _, l := range strings.Split(printable(strings.TrimRight(ev.Result, "\n")), "\n") {
 					fmt.Fprintln(errOut, "claude: "+l)
 				}
-			} else if n == 0 && strings.TrimSpace(ev.Result) != "" {
-				emit(ev.Result)
+			} else if n == 0 {
+				text(ev.Result)
 			}
 		}
 		if ev.Type == "result" { // zadnji dogodek claude -p
 			break
 		}
+	}
+	if n > 0 {
+		fmt.Fprintln(out)
 	}
 	if err := sc.Err(); err != nil && !errors.Is(err, os.ErrClosed) {
 		msg := err.Error()

@@ -251,6 +251,19 @@ func call(_ c: Connection, _ method: String, _ path: String, _ headers: [String:
 /// Trenutna mapa za claude -p na Mac miniju: router jo priklopi (mount_webdav), minigw streže datoteke.
 /// Mac mini odjemalca ne doseže, zato vse teče po povezavah, ki jih odpre minigw (long poll).
 /// --minigw-work=sync: namesto priklopa router dobi kopijo (Sync); pred agentom jo minigw posodobi, po njem prevzame spremembe.
+/// #78 (kot Go held): vrstice o vejah med claude -p s tokom počakajo na konec odgovora: skill zaupa le vrstici na stderr
+/// po odgovoru (vgnezden model lahko vrstico s tem besedilom izpiše v odgovoru).
+let held = OSAllocatedUnfairLock(initialState: (on: false, lines: [String]()))
+
+/// Zadržane vrstice o vejah, ko je odgovor izpisan; nove gredo odslej takoj.
+func releaseHeld() {
+    let lines = held.withLock { h in
+        defer { h = (false, []) }
+        return h.lines
+    }
+    for l in lines { err.write(Data(("minigw: " + oneLine(l) + "\n").utf8)) }
+}
+
 final class ShareClient: @unchecked Sendable {
     let c: Connection, session: String, root: URL, readOnly: Bool, kind: String  // direct, sync, native, native-direct, worktree
     let top: String?  // worktree: koren repozitorija git
@@ -347,6 +360,14 @@ final class ShareClient: @unchecked Sendable {
 
     private func note(_ s: String) { err.write(Data(("minigw: " + oneLine(s) + "\n").utf8)) }
 
+    private func noteAfter(_ s: String) {
+        let waits = held.withLock { h in
+            if h.on { h.lines.append(s) }
+            return h.on
+        }
+        if !waits { note(s) }
+    }
+
     /// Sporočilo prehoda v eni vrstici; native z git: dostavljena veja (preverjeno ime in SHA) kot vrstica o veji.
     private func noteJob(_ job: DAVJob) -> DAVResponse {
         let n = (try? JSONSerialization.jsonObject(with: job.body)) as? [String: Any]
@@ -365,7 +386,7 @@ final class ShareClient: @unchecked Sendable {
     /// Vrstica o veji enkrat na vejo, repozitorij in začetek v zagonu (pod syncLock).
     private func branchNote(_ branch: String, _ base: String, nested: String? = nil) {
         if reported.insert("branch:\(nested ?? ""):\(branch)@\(base)").inserted {
-            note(Worktree.branchLine(branch: branch, base: base, nested: nested))
+            noteAfter(Worktree.branchLine(branch: branch, base: base, nested: nested))
         }
     }
 
@@ -466,7 +487,7 @@ final class ShareClient: @unchecked Sendable {
             if !continued {
                 branchNote(branch, base)
             } else if reported.insert("branch::\(branch)@\(base)").inserted {
-                note(Worktree.continuedLine(branch: branch, base: base))
+                noteAfter(Worktree.continuedLine(branch: branch, base: base))
             }
         }
         return true
@@ -1007,6 +1028,7 @@ if mentionSettings { args = ["--settings", Profiles.mentionSettings] + args }
 for (k, v) in Profiles.helperModelEnv(args, env: callerEnv) { setenv(k, v, 1) }  // #78, po #7
 let streamArgs = Profiles.streamArgs(args), streamed = streamArgs != nil  // #78: minigw izpiše vsa besedila modela
 if let streamArgs { args = streamArgs }
+held.withLock { $0.on = streamed }
 let argv = (["claude"] + args).map { strdup($0) } + [nil]
 let cwd = FileManager.default.currentDirectoryPath
 let routerHost = URLComponents(string: saved.url)?.host ?? ""
@@ -1229,10 +1251,12 @@ if streamed {
         if !exited, waitpid(pid, &status, WNOHANG) == pid { exited = true; deadline = Date() + 2 }
     }
     if !printer.done, !streamBroken { show(buf) }
+    out.write(Data(printer.tail.utf8))
     if let w = printer.warning { err.write(Data(w.utf8)) }
     close(outPipe[0])  // claude ob nadaljnjem pisanju dobi EPIPE/SIGPIPE, ne obvisi
 }
 if !exited { while waitpid(pid, &status, 0) == -1 && errno == EINTR {} }
+releaseHeld()
 forwarded.forEach { $0.cancel() }
 share.unregister()
 extras.unregister()

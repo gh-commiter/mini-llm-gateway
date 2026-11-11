@@ -794,7 +794,11 @@ func main() {
 	}
 	env = append(env, helperModelEnv(args, os.Getenv)...)
 	args, stream := streamArgs(args)
+	held.Lock()
+	held.on = stream
+	held.Unlock()
 	code := runClaude(args, env, stream)
+	releaseHeld()
 	share.unregister()
 	mu.Lock()
 	for _, sc := range extra {

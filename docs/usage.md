@@ -203,7 +203,8 @@ Parallel agents get separate branches. On `minigw serve` there is one clone per 
 ends in `-0` and a second request in the same session moves it forward.
 
 **3. Results come back.** After each request the gateway commits what the agent left uncommitted, and minigw
-fetches the branch into your repository. It is never checked out. minigw prints one line per branch:
+fetches the branch into your repository. It is never checked out. minigw prints one line per branch on stderr (with
+`minigw -p`, after the model's answer):
 
 ```
 minigw: agent work is on branch minigw/codex-1a2b3c4d-0: review with git diff <base>..minigw/codex-1a2b3c4d-0 (<base> = your state when the agent started), then bring it in with git cherry-pick <base>..minigw/codex-1a2b3c4d-0 or git diff --binary <base>..minigw/codex-1a2b3c4d-0 | git apply
