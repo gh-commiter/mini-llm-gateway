@@ -411,8 +411,18 @@ minigw share list
 minigw share remove
 ```
 
-A root is always refused. The share list is per computer: with several profiles every gateway gets the folder on its
-first agent request.
+`minigw share add` always refuses a drive root, the root of the volume that holds your home folder or the system
+(`/System/Volumes/Data` on macOS; on Linux a mount of the same file system as home or `/` that shows it from its top,
+such as a btrfs pool next to `@home`; on Windows a folder mount of the system or home volume), your home folder and any
+folder that contains it (`/Users`, `/home`, `C:\Users`). Another disk (`/Volumes/<Disk>`, a Windows folder mount of
+another volume), a devcontainer `/workspaces/<project>` or a Docker volume can be shared. minigw checks the folder
+itself, not its name, so a link, junction, 8.3 short name or macOS alias such as `/System/Volumes/Data/Users/<you>` is
+refused too; a folder it cannot check is refused (on Linux this includes every folder when `/proc/self/mountinfo`
+cannot be read). minigw checks again each time it shares: a current folder that is a link to your home folder prints
+"minigw: not sharing … (…)" and is not shared, even with `MINIGW_SHARE=1`; a folder saved by an older version that is
+now refused prints `minigw: not sharing … (…); remove it with: minigw share remove "…"` and is not shared, and
+`minigw share list` marks it "not shared". The share list is per computer: with several profiles every gateway gets
+the folder on its first agent request.
 
 **Everything inside a shared folder is shared**, hidden files included (`.claude/`, `.env`, `.secret/`). Keep
 credentials out of project folders you use with a gateway, or list them in `.gitignore` for sync and worktree mode.

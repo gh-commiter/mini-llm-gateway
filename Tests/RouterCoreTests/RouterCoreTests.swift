@@ -2009,9 +2009,37 @@ final class UnauthorizedUpstream: URLProtocol, @unchecked Sendable {
     try FileManager.default.createDirectory(at: proj, withIntermediateDirectories: true)
     try FileManager.default.createSymbolicLink(at: link, withDestinationURL: home)
     defer { try? FileManager.default.removeItem(at: tmp) }
-    #expect(!SharedFolders.shareAllowed("/", home: home.path))
-    #expect(!SharedFolders.shareAllowed(home.path, home: home.path))
-    #expect(!SharedFolders.shareAllowed(link.path, home: home.path))  // povezava na dom
-    #expect(!SharedFolders.shareAllowed(home.path, home: link.path))
-    #expect(SharedFolders.shareAllowed(proj.path, home: home.path))
+    let refused = { (d: String, h: String) in SharedFolders.shareRefusal(d, home: h) != nil }
+    #expect(refused("/", home.path))
+    #expect(refused(home.path, home.path))
+    #expect(refused(link.path, home.path))  // povezava na dom
+    #expect(refused(home.path, link.path))
+    #expect(refused(tmp.path, home.path))  // vsebuje dom (#84)
+    #expect(refused(home.appendingPathComponent("missing").path, home.path))  // ni istovetnosti: zavrne
+    #expect(!refused(proj.path, home.path))
+    #expect(SharedFolders.shareCheck(proj.path, home: home.path).id == SharedFolders.fileID(proj.path))  // preverjena istovetnost za start
+    #expect(!refused(link.appendingPathComponent("proj").path, home.path))
+    // #84: ob uporabi mapa s seznama, ki jo zdaj zavrne (dodana pred 0.5.25), ni deljena; projekt je
+    let list = [SharedFolders.Entry(path: tmp.path), SharedFolders.Entry(path: proj.path)]
+    let other = SharedFolders.lookupAllowed(list, cwd: tmp.appendingPathComponent("other").path, home: home.path)
+    #expect(other.entry == nil && other.refused?.contains("not sharing \(tmp.path)") == true)
+    #expect(SharedFolders.lookupAllowed(list, cwd: proj.appendingPathComponent("src").path, home: home.path).entry?.path == proj.path)
+}
+
+/// #84: firmlink /System/Volumes/Data/Users/<ime> je dom (isti st_dev/st_ino, realpath ga pusti), /System/Volumes/Data
+/// je koren nosilca, /Users vsebuje dom; projekt pod aliasom je dovoljen.
+@Test func shareRefusesMacFirmlinks() throws {
+    let home = NSHomeDirectory(), data = "/System/Volumes/Data"
+    guard FileManager.default.fileExists(atPath: data + home) else { return }
+    for d in [data + home, data, data + "/Users", "/Users", home, "/"] { #expect(SharedFolders.shareRefusal(d) != nil, "\(d)") }
+    let proj = data + home + "/minigw-share-id-test-\(UUID().uuidString)"
+    try FileManager.default.createDirectory(atPath: proj, withIntermediateDirectories: false)
+    defer { try? FileManager.default.removeItem(atPath: proj) }
+    #expect(SharedFolders.shareRefusal(proj) == nil)
+    // drug disk (/Volumes/<Disk>, koren nosilca brez doma ali sistema) je dovoljen
+    for v in (try? FileManager.default.contentsOfDirectory(atPath: "/Volumes")) ?? [] where !v.hasPrefix(".") && v != "Recovery" {
+        let p = "/Volumes/" + v, a = try? FileManager.default.attributesOfItem(atPath: p)  // lstat: povezava (Macintosh HD → /) ne
+        guard a?[.type] as? FileAttributeType == .typeDirectory, (a?[.ownerAccountID] as? NSNumber)?.uint32Value == getuid() else { continue }
+        #expect(SharedFolders.shareRefusal(p) == nil, "\(p)")
+    }
 }

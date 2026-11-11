@@ -326,7 +326,15 @@ final class ShareClient: @unchecked Sendable {
 
     func unregister() { guard !key.isEmpty else { return }; _ = call(c, "DELETE", "/minigw/share", ["x-share-key": key], timeout: 3) }
 
-    func start(workers: Int = 4) {
+    private var rootID: [UInt64]?  // L6 (#84): istovetnost korena ob start; nil = ni znana ali ni preverjena → vsi posli zavrnjeni
+
+    /// checked: istovetnost, ki jo je preveril cwdShareAllowed; drugačen koren ob start (zamenjava) ni deljen (#84).
+    func start(checked: [UInt64]?, workers: Int = 4) {
+        rootID = SharedFolders.fileID(root.path)
+        if rootID != checked {
+            rootID = nil
+            try? FileHandle.standardError.write(contentsOf: Data("minigw: not sharing \(root.path) (the folder changed after it was checked)\n".utf8))
+        }
         for _ in 0..<workers { Thread { self.work() }.start() }
     }
 
@@ -339,16 +347,19 @@ final class ShareClient: @unchecked Sendable {
                 guard let d, let job = try? JSONDecoder().decode(DAVJob.self, from: d) else { continue }
                 // Router ni zaupanja vreden: Sync.clientJob odloči po načinu (glej tam).
                 let r: DAVResponse
-                switch Sync.clientJob(job.method, kind: kind, readOnly: readOnly, write: Self.writeMethods.contains(job.method)) {
-                case .note: r = syncLock.withLock { noteJob(job) }
-                case .worktreePush: r = syncLock.withLock { wtPush(k, job) }
-                case .worktreePull: r = syncLock.withLock { wtPull(k, job) }
-                case .syncPush: r = DAVResponse(syncLock.withLock { push(k) } ? 200 : 500)
-                case .syncPull: r = DAVResponse(syncLock.withLock { pull(k) } ? 200 : 500)
-                case .webDAV:
-                    let dav = { WebDAV.handle(method: job.method, path: job.path, headers: job.headers, body: job.body, root: self.root, prefix: job.prefix) }
-                    r = Self.writeMethods.contains(job.method) ? davWriteLock.withLock(dav) : dav()
-                case nil: r = DAVResponse(403)
+                // L6 (#84): koren zamenjan med sejo → vsi posli (WebDAV, sync, worktree) zavrnjeni
+                if rootID == nil || SharedFolders.fileID(root.path) != rootID { r = DAVResponse(403) } else {
+                    switch Sync.clientJob(job.method, kind: kind, readOnly: readOnly, write: Self.writeMethods.contains(job.method)) {
+                    case .note: r = syncLock.withLock { noteJob(job) }
+                    case .worktreePush: r = syncLock.withLock { wtPush(k, job) }
+                    case .worktreePull: r = syncLock.withLock { wtPull(k, job) }
+                    case .syncPush: r = DAVResponse(syncLock.withLock { push(k) } ? 200 : 500)
+                    case .syncPull: r = DAVResponse(syncLock.withLock { pull(k) } ? 200 : 500)
+                    case .webDAV:
+                        let dav = { WebDAV.handle(method: job.method, path: job.path, headers: job.headers, body: job.body, root: self.root, prefix: job.prefix) }
+                        r = Self.writeMethods.contains(job.method) ? davWriteLock.withLock(dav) : dav()
+                    case nil: r = DAVResponse(403)
+                    }
                 }
                 guard let body = try? JSONEncoder().encode(DAVReply(id: job.id, response: r)) else { continue }
                 _ = call(c, "POST", "/minigw/share/reply", ["x-share-key": k, "content-type": "application/json"], body, timeout: 120)
@@ -707,6 +718,26 @@ func sharedFolders() -> [SharedFolders.Entry] {
     SharedFolders.parse((try? String(contentsOf: sharedFoldersFile, encoding: .utf8)) ?? "")
 }
 
+/// #84: mapa s seznama za cwd ob uporabi. Mapo, ki je shareRefusal zdaj zavrne (dodana pred 0.5.25), pove enkrat in je
+/// ne deli (kot sharedFolderFor v Go).
+var refusedShares: Set<String> = []
+func savedShare(_ cwd: String) -> SharedFolders.Entry? {
+    let (e, refused) = SharedFolders.lookupAllowed(sharedFolders(), cwd: cwd)
+    if let refused, refusedShares.insert(refused).inserted { try? FileHandle.standardError.write(contentsOf: Data((refused + "\n").utf8)) }
+    return e
+}
+
+/// H1 (#84): deli se cwd sam (root = cwd), zato ga shareCheck preveri, ko bi bil deljen; zavrnitev pove enkrat.
+/// Preverjeno istovetnost hrani v checkedShareID (ShareClient.start: zamenjava mape med preverbo in start).
+var checkedShareID: [UInt64]?
+func cwdShareAllowed(_ cwd: String) -> Bool {
+    let (id, why) = SharedFolders.shareCheck(cwd)
+    checkedShareID = id
+    guard let why else { return true }
+    if refusedShares.insert(cwd).inserted { try? FileHandle.standardError.write(contentsOf: Data("minigw: not sharing \(cwd) (\(why))\n".utf8)) }
+    return false
+}
+
 func shareCommand(_ a: [String]) -> Never {
     let sub = a.first ?? "list"
     // add: --work=direct|sync|native|native-direct|worktree|auto in --ro = privzeti način te mape in podmap (zastavica ob zagonu ima prednost)
@@ -731,9 +762,7 @@ func shareCommand(_ a: [String]) -> Never {
     case "add":
         var isDir: ObjCBool = false
         guard FileManager.default.fileExists(atPath: dir, isDirectory: &isDir), isDir.boolValue else { fail("not a folder: \(dir)") }
-        guard SharedFolders.shareAllowed(dir) else {
-            fail("refusing to share \(dir) (the disk root or your home folder would expose everything); share a project folder")
-        }
+        if let why = SharedFolders.shareRefusal(dir) { fail("refusing to share \(dir) (\(why)); share a project folder") }
         let e = SharedFolders.Entry(path: dir, work: work, readOnly: ro)
         if list.contains(e) { print("already shared: \(describe(e))"); exit(0) }
         list.removeAll { $0.path == dir }; list.append(e); save()
@@ -743,7 +772,9 @@ func shareCommand(_ a: [String]) -> Never {
         print("no longer shared: \(dir)")
     case "list":
         if list.isEmpty { print("no extra shared folders (folders under your home folder are shared by default)") }
-        list.forEach { print(describe($0)) }
+        for e in list {
+            print(describe(e) + (SharedFolders.shareRefusal(e.path).map { "  not shared: \($0) (minigw share remove \"\(e.path)\")" } ?? ""))
+        }
     default:
         fail("usage: minigw share add [--work=direct|sync|native|native-direct|worktree|auto] [--ro] [folder] | minigw share remove [folder] | minigw share list")
     }
@@ -979,7 +1010,7 @@ default:
 refuseUnsafeClaudeFlags()  // H3: pred deljenjem mape in sejo (CLAUDECODE še ni odstranjen)
 let callerEnv = ProcessInfo.processInfo.environment  // N8, L-31: pred odstranitvijo CLAUDECODE (#7)
 if let f = flagWork {
-    let entry = SharedFolders.lookup(sharedFolders(), cwd: FileManager.default.currentDirectoryPath)
+    let entry = savedShare(FileManager.default.currentDirectoryPath)
     if Profiles.unsafeWork(f, saved: entry?.work, readOnly: readOnly || entry?.readOnly == true, env: callerEnv) {
         fail("--minigw-work=\(f) is not accepted when minigw runs inside Claude Code: the agent would change your files without a branch "
             + "to review; put MINIGW_WORK=\(f) in front of the command instead, so Claude Code asks you first (or save it for this folder: "
@@ -1060,17 +1091,17 @@ let routerHost = URLComponents(string: saved.url)?.host ?? ""
 // Mapo deli le z oddaljenim routerjem (pravilo v autoShare, enako kot odjemalec Go); MINIGW_SHARE=0/1 preglasi.
 let shareEnv = ProcessInfo.processInfo.environment["MINIGW_SHARE"]
 let remoteRouter = !["127.0.0.1", "localhost", "::1"].contains(routerHost)
-let wantShare = shareEnv == "1"
+let wantShare = (shareEnv == "1"
     || (shareEnv != "0" && remoteRouter
-        && (SharedFolders.autoShare(cwd) || SharedFolders.lookup(sharedFolders(), cwd: cwd) != nil))
-let mode = SharedFolders.mode(flag: workFlag, saved: SharedFolders.lookup(sharedFolders(), cwd: cwd), readOnly: readOnly)
-if let asked = workFlag ?? SharedFolders.lookup(sharedFolders(), cwd: cwd)?.work, asked.hasPrefix("native") || asked == "worktree", mode.work != asked {
+        && (SharedFolders.autoShare(cwd) || savedShare(cwd) != nil))) && cwdShareAllowed(cwd)  // H1 (#84), tudi MINIGW_SHARE=1
+let mode = SharedFolders.mode(flag: workFlag, saved: savedShare(cwd), readOnly: readOnly)
+if let asked = workFlag ?? savedShare(cwd)?.work, asked.hasPrefix("native") || asked == "worktree", mode.work != asked {
     try? err.write(contentsOf: Data("minigw: \(asked) mode cannot be read-only; sharing the folder read-only instead\n".utf8))
 }
 let work = mode.work
 readOnly = mode.readOnly
 // direct ni izbran izrecno (privzeto, auto ali samo za branje namesto worktree/native): prehod brez priklopa → sync
-let askedWork = workFlag ?? SharedFolders.lookup(sharedFolders(), cwd: cwd)?.work
+let askedWork = workFlag ?? savedShare(cwd)?.work
 let implicitWork = SharedFolders.implicitWork(asked: askedWork, work: work)
 
 // x-claude-mini-share: router po ponovnem zagonu počaka, da se mapa znova registrira (namesto napake cwd_unavailable).
@@ -1095,7 +1126,7 @@ var tries = SharedFolders.candidates(work: work, readOnly: readOnly, smb: smb, g
 // Brez commita ni posnetka: enkrat preveri, nato sync (#10).
 let noSnapshot = top.flatMap { tries.contains("worktree") ? Worktree.snapshotBlocker(top: $0) : nil }
 if noSnapshot != nil { tries.removeAll { $0 == "worktree" } }
-tries = Profiles.noDirectFallback(tries, flag: flagWork, saved: SharedFolders.lookup(sharedFolders(), cwd: cwd)?.work, readOnly: readOnly, env: callerEnv)
+tries = Profiles.noDirectFallback(tries, flag: flagWork, saved: savedShare(cwd)?.work, readOnly: readOnly, env: callerEnv)
 if tries.isEmpty {
     fail("--minigw-work=\(flagWork ?? "") is not possible in \(cwd), and inside Claude Code minigw does not fall back to direct "
         + "(the agent would change your files without a branch to review); put MINIGW_WORK=direct in front of the command instead")
@@ -1116,7 +1147,7 @@ if !wantShare || sid.isEmpty {
     // le šifrirani proxy
 } else if registered {
     if share.worktree { share.conv = conversation(share.top); share.gateway = saved.url }
-    share.start()
+    share.start(checked: checkedShareID)
     if share.native && share.branches {
         try? err.write(contentsOf: Data("minigw: \(cwd) is a folder of \(routerHost) (SMB): agent models work there in clones of this git repository, each on its own branch minigw/… (native; --minigw-work=native-direct = in the folder itself)\n".utf8))
     } else if share.native {
@@ -1170,14 +1201,14 @@ if profiles.count > 1 {
         }
         targets.append(ProfileMux.Target(name: p.name, url: rc.url, token: rc.token))
         let remote = !p.conn.isLocal
-        let want = shareEnv == "1" || (shareEnv != "0" && remote && (SharedFolders.autoShare(cwd) || SharedFolders.lookup(sharedFolders(), cwd: cwd) != nil))
+        let want = (shareEnv == "1" || (shareEnv != "0" && remote && (SharedFolders.autoShare(cwd) || savedShare(cwd) != nil))) && cwdShareAllowed(cwd)
         guard want, !sid.isEmpty else { continue }
         let name = p.name, gw = p.conn.url
         hooks[name] = {
             let (sc, ok) = registerShare(rc, tries: tries, quiet: true)
             guard ok else { try? err.write(contentsOf: Data("minigw: gateway \(name) did not accept the folder: \(sc.refusal)\n".utf8)); return false }
             if sc.worktree { sc.conv = conversation(sc.top); sc.gateway = gw }
-            sc.start(); extras.add(sc)
+            sc.start(checked: checkedShareID); extras.add(sc)
             return true
         }
     }
