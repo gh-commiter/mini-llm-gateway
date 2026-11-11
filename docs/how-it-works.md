@@ -169,13 +169,15 @@ Details:
   no per-program access and a command could read the whole unlocked keyring; on the Mac a command could read
   `login.keychain-db` or start the ACL-trusted `copilot` with a planted package and read the token. With no commands
   only Copilot's own process tree reads the Keychain folder that its profile allows. Outside worktree mode Copilot sees
-  no git repository (`GIT_DIR=/dev/null`), so a folder's `.git/config` or `.git/info/attributes` cannot run code in it. The old 0.5.24 Copilot token is
-  deleted from the Keychain (`copilot-token`) or key store (`agent:copilot`) at start. A token that `copilot login` stored in plain text (headless Linux: an
-  `authTokens`/`copilotTokens` key in `config.json`) is never copied: Copilot is then off. Windows: not supported.
+  no git repository (`GIT_DIR=/dev/null`), so a folder's `.git/config` or `.git/info/attributes` cannot run code in
+  it. The old 0.5.24 Copilot token is deleted from the Keychain (`copilot-token`) or key store (`agent:copilot`) at
+  start. A token that `copilot login` stored in plain text (headless Linux: an `authTokens`/`copilotTokens` key in
+  `config.json`) is never copied: Copilot is then off. Windows: not supported.
   Without a usable login the settings, `GET /status` (`copilot`), `minigw gw status` and the request (503) give the reason.
 - **Windows sandbox (minigw serve, #68).** On Windows the gateway starts Claude CLI and Grok as a whole (the CLI
   and every command it runs; Codex and Copilot cannot start there: both fail on Rust `std::fs::canonicalize`,
-  "Access is denied (os error 5)", so they run outside it only with **Allow commands without a sandbox**) in a Microsoft MXC process container (`wxc-exec.exe` from MXC 1.0.1 in the
+  "Access is denied (os error 5)", so Codex runs outside it only with **Allow commands without a sandbox** and Copilot
+  is not supported on a Windows gateway) in a Microsoft MXC process container (`wxc-exec.exe` from MXC 1.0.1 in the
   install folder's `mxc` subfolder; low integrity and an AppContainer, no admin rights). It needs Windows 11 build
   26100.9278 / 26200.9278 or later (the Windows process container); an older build is refused before the probe, with
   the build in the reason. At start the gateway checks `wxc-exec.exe` against the SHA-256 built into minigw (again

@@ -246,8 +246,8 @@ Notes:
 - `PATCH /agents/claude`: the gateway checks the path, that the folder exists and is not near the config folder,
   and that Bash on Windows has `allowUnsandboxedBash`. While `leftOut` is not empty, every PATCH without `"folders"`
   returns 400 "first save the allowed folders without …" (Go gateway only).
-- Logins (Go gateway, #68): agents use subscription logins, never API keys, unless you set one. `token` (Claude CLI,
-  Copilot; write-only, `""` removes it) is stored in the key store (Credential Manager, Secret Service), never in
+- Logins (Go gateway, #68): agents use subscription logins, never API keys, unless you set one. `token` (Claude CLI
+  only; write-only, `""` removes it) is stored in the key store (Credential Manager, Secret Service), never in
   `serve.json` or an answer. Claude's token is the long-lived one from `claude setup-token` (`sk-ant-…`, your Claude
   subscription, valid one year), passed as `CLAUDE_CODE_OAUTH_TOKEN`; without it a Claude request in the Windows sandbox
   is refused (`403` "Claude CLI in the Windows sandbox needs a long-lived sign-in token: run claude setup-token, then
