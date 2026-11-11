@@ -389,16 +389,35 @@ func (h *shareHub) push(s *serveShare, agent string) (dir, refused string) {
 	return "", ""
 }
 
-// syncBack: po agentu minigw prevzame spremembe kopije (ne pri --minigw-ro), pred koncem odgovora.
-func (h *shareHub) syncBack(session, agent string) {
+// syncBack: po agentu minigw prevzame spremembe kopije (ne pri --minigw-ro), pred koncem odgovora. Vrne, zakaj dela
+// agenta ni dobil (#82: zahteva se konča z napako, Claude Code ga ne javi kot dostavljenega); "" = dobil ali nič.
+func (h *shareHub) syncBack(session, agent string) string {
 	h.mu.Lock()
 	s := h.bySession[session]
 	h.mu.Unlock()
 	if s != nil && s.tree != nil {
-		h.worktreeBack(s, agent)
+		return h.worktreeBack(s, agent)
 	} else if s != nil && !s.readOnly {
-		h.send(s, "SYNC-PULL", 900*time.Second)
+		if why := pullFailure(h.send(s, "SYNC-PULL", 900*time.Second)); why != "" {
+			h.logf("sync (%s): the agent's changes were not copied back: %s", s.session, why)
+			return "the agent's changes were not copied back to your folder: " + why +
+				"; they are kept on the gateway and only the next agent request in this folder copies them back"
+		}
 	}
+	return ""
+}
+
+// pullFailure (#82): zakaj minigw dela agenta ni prevzel ("" = prevzel).
+func pullFailure(r *davResponse) string {
+	switch {
+	case r == nil:
+		return "minigw did not answer in time"
+	case r.Status == 503:
+		return "the shared folder is busy: another minigw session on this folder is using it"
+	case r.Status != 200:
+		return fmt.Sprintf("minigw could not take them (HTTP %d; minigw printed why)", r.Status)
+	}
+	return ""
 }
 
 // isGitPath: ».git« v kateri koli obliki (».GIT«, ».git.«, »git~1«): nikoli v kopiji ali iz nje.

@@ -899,3 +899,33 @@ func shortPath(p string) string {
 
 func safeDir(string) bool  { return true } // Windows: pravice ACL, ne bitov načina
 func safePath(string) bool { return true }
+
+// openLockFile (#82): zaklep mape.
+func openLockFile(p string) (*os.File, error) {
+	if fi, err := os.Lstat(p); err == nil && !fi.Mode().IsRegular() {
+		return nil, errors.New(p + " is not a regular file")
+	}
+	f, err := os.OpenFile(p, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if owner, me, err := ownerAndMe(p); err != nil || owner != me { // L1
+		f.Close()
+		return nil, errors.New(p + " is not a file of this user")
+	}
+	return f, nil
+}
+
+// tryLockFile (#82): LockFileEx prvega bajta brez čakanja; busy = drži ga drug ročaj (drug proces ali posel).
+func tryLockFile(f *os.File, exclusive bool) (busy bool, err error) {
+	flags := uint32(windows.LOCKFILE_FAIL_IMMEDIATELY)
+	if exclusive {
+		flags |= windows.LOCKFILE_EXCLUSIVE_LOCK
+	}
+	err = windows.LockFileEx(windows.Handle(f.Fd()), flags, 0, 1, 0, new(windows.Overlapped))
+	return errors.Is(err, windows.ERROR_LOCK_VIOLATION), err
+}
+
+func unlockFile(f *os.File) {
+	windows.UnlockFileEx(windows.Handle(f.Fd()), 0, 1, 0, new(windows.Overlapped))
+}

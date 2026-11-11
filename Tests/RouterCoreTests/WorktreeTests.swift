@@ -41,14 +41,17 @@ private func cleanup(_ root: URL) {
 
 /// minigw za teste: obdela WORKTREE-PUSH in WORKTREE-PULL kot ShareClient (MiniGW/main.swift) prek ShareHub.
 /// conv (#66): ključ pogovora; nadaljevanje na prejšnji veji kot ShareClient.
+/// pullStatus (#82): ne 200 → WORKTREE-PULL odgovori s tem (npr. 503, mapo drži druga seja).
 private func fakeClient(_ hub: ShareHub, key: String, top: URL, notes: OSAllocatedUnfairLock<[String]>? = nil,
-                        conv: Worktree.Conv = Worktree.Conv()) -> Task<Void, Never> {
+                        conv: Worktree.Conv = Worktree.Conv(), pullStatus: OSAllocatedUnfairLock<Int>? = nil) -> Task<Void, Never> {
     Task {
         var chain: [String: Worktree.ConvRecord]?, sent: [String] = [], contTip: String?, contRec: Worktree.ConvRecord?
         while !Task.isCancelled {
             guard case .some(.some(let job)) = await hub.poll(key: key, wait: 0.2) else { continue }
             var r = DAVResponse(403)
-            if job.method == "WORKTREE-PUSH" {
+            if job.method == "WORKTREE-PULL", let st = pullStatus?.withLock({ $0 }), st != 200 {
+                r = DAVResponse(st)
+            } else if job.method == "WORKTREE-PUSH" {
                 let req = (try? JSONSerialization.jsonObject(with: job.body) as? [String: Any]) ?? [:]
                 let have = req["have"] as? [String] ?? [], nestedHave = req["nested"] as? [String: [String]]
                 // git odjemalca zunaj bazena Swift concurrency (kot minigw v svojem procesu): vzporedni testi ne čakajo nanj
@@ -2354,4 +2357,37 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
         #expect(FileManager.default.fileExists(atPath: dir.appendingPathComponent("vendor/lib/first.txt").path))
         #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("vendor/lib/tainted.txt").path))
     }
+}
+
+/// #82 cilj 1: WORKTREE-PULL, ki ga minigw zavrne s 503, vrne napako »busy« (zahteva ni uspeh); veja ne izgine: minigw
+/// dobi sporočilo, naslednja zahteva seje jo dostavi z vsem delom agenta.
+@Test func worktreePullRefusedBusyKeepsBranch() async throws {
+    let (root, client, tree) = try fixture()
+    defer { cleanup(root) }
+    let hub = ShareHub(), session = UUID().uuidString
+    let key = try #require(await hub.register(session: session, cwd: client.path, key: nil, device: "dev", tree: tree))
+    let notes = OSAllocatedUnfairLock<[String]>(initialState: []), status = OSAllocatedUnfairLock(initialState: 503)
+    let loop = fakeClient(hub, key: key, top: client, notes: notes, pullStatus: status)
+    defer { loop.cancel() }
+    let br = "minigw/claude-\(String(Sync.folderID(session).prefix(8)))-0"
+    func run(_ n: Int) async throws -> String? {
+        let id = UUID().uuidString
+        let why = try await ShareHub.$run.withValue(id) {
+            try await ShareHub.$agent.withValue("claude") { () async throws -> String? in
+                let dir = try #require(await hub.mount(session: session, cwd: nil, base: "", device: "dev"))
+                try file(dir, "agent\(n).txt", "\(n)\n"); g(dir, "add", "agent\(n).txt"); g(dir, "commit", "-qm", "agent \(n)")
+                return await hub.syncBack(session: session)
+            }
+        }
+        await hub.finish(run: id)
+        return why
+    }
+    let why = try await run(0)
+    #expect(why?.contains("the shared folder is busy") == true && why?.contains("stays on the gateway") == true, "\(why ?? "nil")")
+    #expect(notes.withLock { $0 }.contains { $0.contains("\(br) was not delivered") && $0.contains("kept on the gateway") })
+    #expect(g(client, "branch", "--list", br).isEmpty)
+    status.withLock { $0 = 200 }
+    #expect(try await run(1) == nil)
+    let files = g(client, "ls-tree", "-r", "--name-only", br)
+    #expect(files.contains("agent0.txt") && files.contains("agent1.txt"), "\(files)")
 }

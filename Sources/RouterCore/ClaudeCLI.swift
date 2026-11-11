@@ -654,17 +654,19 @@ extension Router {
         let stopped = await offPool { Native.killTree(pid, pipes: pipes, dirs: dirs) }  // #73: finalize (syncBack) le, ko drevesa ni več
         if !stopped { await Self.shares.abandon() }  // klon sync ne gre v kopijo
         // sync: spremembe agenta k odjemalcu pred koncem odgovora (Claude Code jih nato že vidi); med tem še ping
-        if agent && stopped { await Self.shares.syncBack(session: req.header("x-claude-mini-session") ?? "") }
+        let pullErr = agent && stopped ? await Self.shares.syncBack(session: req.header("x-claude-mini-session") ?? "") : nil  // #82
         pinger?.cancel()
         let errText = await errTask.value
 
         if let msg = (stopped ? nil : Native.notStopped(rid)) ?? t.resultError
-            ?? (status != 0 && t.text.isEmpty ? (errText.isEmpty ? "claude exited with \(status)" : errText) : nil) {
+            ?? (status != 0 && t.text.isEmpty ? (errText.isEmpty ? "claude exited with \(status)" : errText) : nil) ?? pullErr {
             Self.log.error("\(rid, privacy: .public) claude failed: \(msg, privacy: .public)")
             let (code, type, text) = AgentError.classify(msg)
-            if !stream { return await error(code, type, "claude: \(text)", rid: rid, extra: code == 429 ? [("x-should-retry", "false")] : [], writer: writer) }
-            if t.text.isEmpty || !stopped {
-                if code == 429 { AgentError.note(AgentError.key(req, model: t.model), "claude: \(text)") }  // ponovitev brez pretoka
+            // #82: neprevzeto delo agenta je končno (ponovitev bi agenta zagnala znova in spremembe uveljavila dvakrat)
+            let final = code == 429 || pullErr != nil
+            if !stream { return await error(code, type, "claude: \(text)", rid: rid, extra: final ? [("x-should-retry", "false")] : [], writer: writer) }
+            if t.text.isEmpty || !stopped || pullErr != nil {
+                if final { AgentError.note(AgentError.key(req, model: t.model), "claude: \(text)", status: code) }  // ponovitev brez pretoka
                 try? await writer.write(StreamTranslator.sse("error", ["type": "error", "error": ["type": type, "message": "claude: \(text)"]]))
                 return code
             }

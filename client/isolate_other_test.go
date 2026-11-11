@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -14,6 +15,7 @@ func runIsolated(m *testing.M) int {
 	if err == nil {
 		defer os.RemoveAll(d)
 		err = isolateGit(d)
+		folderLockDir = filepath.Join(d, "locks") // #82: zaklepi map ne v pravi mapi nastavitev
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "minigw tests: cannot isolate git config:", err)

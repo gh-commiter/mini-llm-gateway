@@ -992,6 +992,7 @@ final class FakeMinigw: @unchecked Sendable {
     let hub: ShareHub, key: String, root: URL
     var state: [String: Sync.Entry] = [:], notes: [String] = []
     var failGet: Set<String> = []  // prenos teh poti ne uspe (brez potrditve)
+    var refusePull = false  // #82: SYNC-PULL odgovori 503 (mapo drži druga seja), nič ne prevzame
     init(_ hub: ShareHub, key: String, root: URL) { self.hub = hub; self.key = key; self.root = root }
 
     func serve() -> Task<Void, Never> {
@@ -1004,6 +1005,9 @@ final class FakeMinigw: @unchecked Sendable {
                         _ = await hub.syncPut(key: key, path: p, data: (try? Data(contentsOf: root.appendingPathComponent(p))) ?? Data())
                     }
                     state = files
+                } else if refusePull {
+                    _ = await hub.reply(key: key, DAVReply(id: job.id, response: DAVResponse(503)))
+                    continue
                 } else if let ch = await hub.syncChanges(key: key) {
                     var blobs: [String: Data] = [:]
                     for e in ch.changed where !failGet.contains(e.path) { blobs[e.path] = await hub.syncGet(key: key, path: e.path) }
@@ -2042,4 +2046,51 @@ final class UnauthorizedUpstream: URLProtocol, @unchecked Sendable {
         guard a?[.type] as? FileAttributeType == .typeDirectory, (a?[.ownerAccountID] as? NSNumber)?.uint32Value == getuid() else { continue }
         #expect(SharedFolders.shareRefusal(p) == nil, "\(p)")
     }
+}
+
+/// #82: SYNC-PULL, zavrnjen s 503, nič ne prevzame; naslednji prenos in prevzem dostavita obe spremembi natanko enkrat
+/// (združitev klona v kopijo, merge(r), ju ne uveljavi dvakrat: brez sporov, brez kopij »minigw-agent«).
+@Test func syncRefusedPullDeliveredOnceByNextRequest() async throws {
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent("syncbusy-" + UUID().uuidString)
+    let client = base.appendingPathComponent("client"), copy = base.appendingPathComponent("sync/local/x")
+    defer { try? FileManager.default.removeItem(at: base) }
+    func put(_ root: URL, _ p: String, _ s: String) throws {
+        try FileManager.default.createDirectory(at: root.appendingPathComponent(p).deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(s.utf8).write(to: root.appendingPathComponent(p))
+    }
+    func read(_ root: URL, _ p: String) -> String? { (try? Data(contentsOf: root.appendingPathComponent(p))).map { String(decoding: $0, as: UTF8.self) } }
+    try FileManager.default.createDirectory(at: client, withIntermediateDirectories: true)
+    try put(client, "a.txt", "v1"); try put(client, "b.txt", "v1")
+    let hub = ShareHub()
+    let key = try #require(await hub.register(session: "p", cwd: client.path, key: nil, copy: copy))
+    let minigw = FakeMinigw(hub, key: key, root: client)
+    let server = minigw.serve()
+    defer { server.cancel() }
+    func mount(_ run: String) async -> URL? { await ShareHub.$run.withValue(run) { await hub.mount(session: "p", cwd: client.path, base: "") } }
+    func pull(_ run: String) async -> String? {
+        let why = await ShareHub.$run.withValue(run) { await hub.syncBack(session: "p") }
+        await hub.finish(run: run)
+        return why
+    }
+
+    let d1 = try #require(await mount("r1"))
+    try put(d1, "a.txt", "agent1"); try put(d1, "n1.txt", "new1")
+    minigw.refusePull = true
+    let why = await pull("r1")
+    #expect(why?.contains("the shared folder is busy") == true && why?.contains("only the next agent request") == true, "\(why ?? "nil")")
+    #expect(read(client, "a.txt") == "v1" && read(client, "n1.txt") == nil)
+    minigw.refusePull = false
+    let d2 = try #require(await mount("r2"))
+    #expect(read(d2, "a.txt") == "agent1" && read(d2, "n1.txt") == "new1")  // agent nadaljuje od svojih sprememb
+    try put(d2, "b.txt", "agent2"); try put(d2, "n2.txt", "new2")
+    #expect(await pull("r2") == nil)
+    for (p, v) in [("a.txt", "agent1"), ("n1.txt", "new1"), ("b.txt", "agent2"), ("n2.txt", "new2")] { #expect(read(client, p) == v, "\(p)") }
+    let left = (try? FileManager.default.contentsOfDirectory(atPath: client.path)) ?? []
+    #expect(!left.contains { $0.contains("minigw-") }, "\(left)")
+    #expect(!minigw.notes.contains { $0.hasPrefix("conflict:") }, "\(minigw.notes)")
+    // Tretji prevzem brez dela agenta nič ne uveljavi znova.
+    let before = minigw.notes.count
+    _ = try #require(await mount("r3"))
+    #expect(await pull("r3") == nil)
+    #expect(minigw.notes.count == before && read(client, "a.txt") == "agent1")
 }

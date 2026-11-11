@@ -425,3 +425,18 @@ func useOf(_ s: GatewayHistory.Session, _ model: String, role: String = "") -> G
     #expect(SharedFolders.cappedNative(["grok", "codex"]) == ", read-only for Grok, Codex (capped by the gateway)")
     #expect(SharedFolders.cappedNative(["grok", "codex", "claude", "copilot"]) == ", read-only (capped by the gateway)")
 }
+
+/// #82 cilj 1: SYNC-PULL, ki ga minigw zavrne s 503, vrne napako »busy« (zahteva ni uspeh, spremembe ostanejo na prehodu).
+@Test func syncPullRefusedBusyIsAFailure() async throws {
+    let hub = ShareHub()
+    let copy = FileManager.default.temporaryDirectory.appendingPathComponent("busysync-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: copy) }
+    let key = try #require(await hub.register(session: "b", cwd: "/a", key: nil, copy: copy))
+    for (status, want) in [(503, "the shared folder is busy"), (500, "HTTP 500"), (200, "")] {
+        let back = Task { await hub.syncBack(session: "b") }
+        guard case .some(.some(let job)) = await hub.poll(key: key, wait: 5) else { Issue.record("no SYNC-PULL"); return }
+        _ = await hub.reply(key: key, DAVReply(id: job.id, response: DAVResponse(status)))
+        let why = await back.value
+        #expect(want.isEmpty ? why == nil : why?.contains(want) == true && why?.contains("kept on the gateway") == true, "\(status): \(why ?? "nil")")
+    }
+}

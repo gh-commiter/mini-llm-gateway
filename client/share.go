@@ -13,8 +13,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -63,6 +65,8 @@ type shareClient struct {
 	checked  *fileID                    // #84: istovetnost, ki jo je preveril shareWanted (nil: preizkusi brez preverbe)
 	rootID   fileID                     // L6 (#84): istovetnost korena ob start; ničelna brez start (preizkusi)
 	rootErr  error                      // L6: ob start ni znana ali ni preverjena → vsi posli zavrnjeni
+	fsMu     sync.RWMutex               // #82: lockFolder v tem procesu (branje deljeno, pisanje izključno)
+	fsWant   atomic.Int32               // #82 N1: čakajoča pisanja; branje se jim umakne (do svojega roka)
 }
 
 var writeMethods = map[string]bool{"PUT": true, "DELETE": true, "MKCOL": true, "MOVE": true, "COPY": true, "PROPPATCH": true, "LOCK": true}
@@ -179,6 +183,18 @@ func (s *shareClient) handle(job davJob, k string) davResponse {
 	if !s.sameRoot() { // L6 (#84): vsi posli (WebDAV, SYNC-*, WORKTREE-*), ne le WebDAV
 		return dav(403, nil, nil)
 	}
+	if job.Method != "WORKTREE-NOTE" { // #82: sporočilo mape ne bere in ne piše
+		// SYNC-PUSH mapo le bere; sync in worktree čakajo do roka posla prehoda (sicer bi se delo agenta izgubilo)
+		exclusive := writeMethods[job.Method] || job.Method == "SYNC-PULL" || strings.HasPrefix(job.Method, "WORKTREE-")
+		unlock := s.lockFolder(exclusive, folderLockWaitFor(job.Method))
+		if unlock == nil {
+			return dav(503, map[string]string{"content-type": "text/plain", "retry-after": "5"}, []byte(folderBusyText+"\n"))
+		}
+		defer unlock()
+		if !s.sameRoot() { // I2: znova pod zaklepom
+			return dav(403, nil, nil)
+		}
+	}
 	switch {
 	case s.worktree && job.Method == "WORKTREE-PUSH":
 		s.syncMu.Lock()
@@ -219,6 +235,113 @@ func (s *shareClient) handle(job davJob, k string) davResponse {
 		return dav(403, nil, nil)
 	}
 	return davHandle(job.Method, job.Path, job.Headers, job.Body, s.root, job.Prefix)
+}
+
+// folderLockWait (#82, vmesno): toliko posel WebDAV čaka zaklep mape, nato 503 (nikoli ne obvisi).
+var folderLockWait = 5 * time.Second
+
+// folderSyncWait, folderWorktreePullWait: sync in worktree čakajo skoraj do roka posla prehoda (WORKTREE-PULL 300 s,
+// drugi 900 s), da prehod odgovor (tudi 503) dobi pred svojim rokom; 5 s bi delo agenta pustilo na prehodu.
+var folderSyncWait, folderWorktreePullWait = 880 * time.Second, 280 * time.Second
+
+func folderLockWaitFor(method string) time.Duration {
+	switch {
+	case method == "WORKTREE-PULL":
+		return folderWorktreePullWait
+	case strings.HasPrefix(method, "SYNC-"), strings.HasPrefix(method, "WORKTREE-"):
+		return folderSyncWait
+	}
+	return folderLockWait
+}
+
+// folderLockDir: mapa zaklepov ("" = <mapa nastavitev>/minigw/locks; preizkusi začasno mapo).
+var folderLockDir string
+
+const folderBusyText = "minigw: the shared folder is busy (another minigw session on this folder is using it); try again"
+
+var (
+	folderLockOnce sync.Once
+	folderBusyMu   sync.Mutex
+	folderBusyLast time.Time
+)
+
+// folderLockName: ime datoteke zaklepa; st_dev na macOS kot uint32 (kot SharedFolders.fileID v Swift), da oba odjemalca
+// zaklepata isto datoteko. Le za ime: shranjene istovetnosti #84 ostanejo.
+func folderLockName(id fileID, goos string) string {
+	if goos == "darwin" {
+		id.dev = uint64(uint32(id.dev))
+	}
+	return fmt.Sprintf("%x-%x.lock", id.dev, id.ino)
+}
+
+// lockFolder (#82, vmesno): branje (GET, HEAD, PROPFIND, SYNC-PUSH) deljeno, pisanje, SYNC-PULL in worktree izključno —
+// v procesu (fsMu) in med procesi (flock / LockFileEx na datoteki, imenovani po istovetnosti korena, v mapi nastavitev,
+// ne v projektu; ob sesutju ga sprosti jedro). Tako branje ne dirka z MOVE nadrejene mape med preverbo poti in branjem in
+// dve seji minigw na isti mapi ne pišeta hkrati. nil = zaklepa ni bilo v roku wait (503).
+// ponytail: preveri-nato-uporabi ostane za lokalni proces brez zaklepa; popolno (operacije prek odprtega korena) 0.5.26.
+func (s *shareClient) lockFolder(exclusive bool, wait time.Duration) func() {
+	try, unlock := s.fsMu.TryRLock, s.fsMu.RUnlock
+	if exclusive {
+		try, unlock = s.fsMu.TryLock, s.fsMu.Unlock
+	}
+	deadline := time.Now().Add(wait)
+	busy := func() func() {
+		folderBusyMu.Lock()
+		if time.Since(folderBusyLast) >= 30*time.Second { // vsaka nova zasedenost, največ enkrat na 30 s
+			fmt.Fprintln(os.Stderr, folderBusyText)
+		}
+		folderBusyLast = time.Now()
+		folderBusyMu.Unlock()
+		return nil
+	}
+	if exclusive { // N1: prednost pisanju (TryLock je nima): novo branje čaka, dokler pisanje čaka
+		s.fsWant.Add(1)
+		defer s.fsWant.Add(-1)
+	}
+	for (!exclusive && s.fsWant.Load() > 0) || !try() { // L3: tudi v procesu le do roka
+		if time.Now().After(deadline) {
+			return busy()
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	id := s.rootID
+	if id == (fileID{}) {
+		id, _ = fileIDOf(s.root) // brez start (preizkusi)
+	}
+	dir := folderLockDir
+	if dir == "" {
+		if d, err := os.UserConfigDir(); err == nil {
+			dir = filepath.Join(d, "minigw", "locks")
+		}
+	}
+	var f *os.File
+	err := os.MkdirAll(dir, 0o700)
+	if err == nil && !(ownedByMe(dir) && safeDir(dir)) { // L1: mapa zaklepov le naša
+		err = errors.New(dir + " is not a private folder of this user")
+	}
+	if err == nil {
+		f, err = openLockFile(filepath.Join(dir, folderLockName(id, runtime.GOOS)))
+	}
+	for ; err == nil; time.Sleep(10 * time.Millisecond) {
+		busyLock, lerr := tryLockFile(f, exclusive)
+		if lerr == nil {
+			return func() { unlockFile(f); f.Close(); unlock() } // odklep pred Close (kot lockScratch)
+		} else if !busyLock {
+			err = lerr
+		} else if time.Now().After(deadline) {
+			f.Close()
+			unlock()
+			return busy()
+		}
+	}
+	if f != nil {
+		f.Close()
+	}
+	// Zaklep ni mogoč (npr. mapa nastavitev na disku brez flock, tuja mapa): kot 0.5.24, le znotraj procesa.
+	folderLockOnce.Do(func() {
+		fmt.Fprintln(os.Stderr, "minigw: cannot lock the shared folder against other minigw sessions ("+err.Error()+")")
+	})
+	return unlock
 }
 
 // sameRoot (L6, #84): koren je še ista mapa kot ob start (mapo med sejo ni zamenjala povezava ali druga mapa).

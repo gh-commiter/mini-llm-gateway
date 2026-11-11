@@ -44,6 +44,7 @@ func runIsolated(m *testing.M) int {
 		return fail(err.Error())
 	}
 	knownConfigDirFn = func() (string, error) { return roaming, nil }
+	folderLockDir = filepath.Join(d, "locks") // #82: pomočnik TestFolderLockAcrossProcesses dobi isto mapo (MINIGW_TEST_LOCK_DIR)
 	userHomeFn = func() string { return d }
 	userProgramsDir = func() string { return filepath.Join(local, "Programs") }
 	reg := map[string]string{}

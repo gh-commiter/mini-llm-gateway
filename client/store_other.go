@@ -419,3 +419,33 @@ func ownedByMe(dir string) bool {
 	st, ok := fi.Sys().(*syscall.Stat_t)
 	return ok && fi.IsDir() && int(st.Uid) == os.Getuid()
 }
+
+// openLockFile (#82): zaklep mape; povezava se ne sledi, le navadna datoteka.
+func openLockFile(p string) (*os.File, error) {
+	f, err := os.OpenFile(p, os.O_RDWR|os.O_CREATE|oNoBlock, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	var st *syscall.Stat_t
+	fi, err := f.Stat()
+	if err == nil {
+		st, _ = fi.Sys().(*syscall.Stat_t)
+	}
+	if st == nil || !fi.Mode().IsRegular() || int(st.Uid) != os.Getuid() { // L1: le naša navadna datoteka
+		f.Close()
+		return nil, errors.New(p + " is not a regular file of this user")
+	}
+	return f, nil
+}
+
+// tryLockFile (#82): flock brez čakanja; busy = drži ga druga odprta datoteka (drug proces ali posel).
+func tryLockFile(f *os.File, exclusive bool) (busy bool, err error) {
+	how := syscall.LOCK_SH
+	if exclusive {
+		how = syscall.LOCK_EX
+	}
+	err = syscall.Flock(int(f.Fd()), how|syscall.LOCK_NB)
+	return errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EINTR), err
+}
+
+func unlockFile(f *os.File) { syscall.Flock(int(f.Fd()), syscall.LOCK_UN) }

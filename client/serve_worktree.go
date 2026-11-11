@@ -1526,13 +1526,13 @@ func (h *shareHub) worktreeIntact(wt string) bool {
 
 // worktreeBack: po agentu veje v zrcalih (ugnezdeni najprej, globlji pred plitvejšimi: starš dobi novi gitlink) in
 // prevzem pri odjemalcu (WORKTREE-PULL: veja, nestedOnly, spremenjeni ugnezdeni).
-func (h *shareHub) worktreeBack(s *serveShare, agent string) {
+func (h *shareHub) worktreeBack(s *serveShare, agent string) string {
 	h.mu.Lock()
 	t := s.tree
 	slot := t.slots[agent]
 	h.mu.Unlock()
 	if slot == nil {
-		return
+		return ""
 	}
 	killInside(slot.wt)
 	out := t.repo + ".result"
@@ -1588,12 +1588,15 @@ func (h *shareHub) worktreeBack(s *serveShare, agent string) {
 	}
 	// L6: kar ni prišlo do odjemalca, ostane v klonu; ob koncu seje ga dropClones prestavi v kept (pruneMirrors: 30 dni).
 	kept, keep := "", ""
-	if why != "" && !big || len(skipped) > 0 {
+	mkKeep := func() {
 		now := time.Now()
 		kept = slot.wt + "-kept-" + now.Format("20060102-150405") + fmt.Sprintf("-%09d", now.Nanosecond()) // L4: brez trka
 		// L3: pot glede na Scratch prehoda; M2: le datoteke, .git preimenovani (keepClone)
 		keep = "; the agent's files are kept on the gateway for 30 days as " + path.Join("worktrees", filepath.Base(filepath.Dir(t.worktrees)),
 			filepath.Base(t.worktrees), filepath.Base(kept)) + " after this session (files only; its .git folders renamed .git.agent, or nothing is kept if that fails — do not run git there)"
+	}
+	if why != "" && !big || len(skipped) > 0 {
+		mkKeep()
 	}
 	h.mu.Lock()
 	slot.kept = kept
@@ -1604,7 +1607,7 @@ func (h *shareHub) worktreeBack(s *serveShare, agent string) {
 		h.sendJob(s, "WORKTREE-NOTE", body, 10*time.Second)
 	}
 	if why == "" && tip == slot.base && len(nested) == 0 {
-		return // agent ni spremenil ničesar (ali le v zavrnjenih ugnezdenih)
+		return "" // agent ni spremenil ničesar (ali le v zavrnjenih ugnezdenih)
 	}
 	msg := map[string]any{"branch": slot.branch, "tip": tip}
 	if why != "" {
@@ -1618,10 +1621,23 @@ func (h *shareHub) worktreeBack(s *serveShare, agent string) {
 	t.results, t.resultErr = results, why
 	h.mu.Unlock()
 	body, _ := json.Marshal(msg)
-	h.sendJob(s, "WORKTREE-PULL", body, 300*time.Second)
+	r := h.sendJob(s, "WORKTREE-PULL", body, 300*time.Second)
 	h.mu.Lock()
 	t.results, t.resultErr = nil, ""
 	h.mu.Unlock()
+	if fail := pullFailure(r); why == "" && fail != "" { // #82: veja ne izgine; ostane v zrcalu, datoteke v kept
+		if kept == "" && !big {
+			mkKeep()
+			h.mu.Lock()
+			slot.kept = kept
+			h.mu.Unlock()
+		}
+		h.logf("worktree %s (%s): not delivered: %s", slot.branch, s.session, fail)
+		note, _ := json.Marshal(map[string]string{"message": "worktree: " + slot.branch + " was not delivered (" + fail + "); it stays on the gateway: the next agent request (same agent) in this session delivers it; otherwise it is kept on the gateway for 30 days" + keep})
+		h.sendJob(s, "WORKTREE-NOTE", note, 10*time.Second)
+		return "the agent's branch was not delivered to your folder: " + fail + "; it stays on the gateway: the next agent request (same agent) in this session delivers it; otherwise it is kept on the gateway for 30 days"
+	}
+	return ""
 }
 
 // worktreePut: del bundla odjemalca med WORKTREE-PUSH (del 0 začne datoteko; nested > 0: i-ti ugnezdeni). Status HTTP.

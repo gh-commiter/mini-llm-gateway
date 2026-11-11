@@ -1138,7 +1138,9 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			run.stop() // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb
 			// vprašani agent: spremembe prenese klicatelj na koncu; L1: omejen (#45) ne prenese ničesar
 			if runOf(r) == nil && (r.applied == nil || r.applied.cap == "") {
-				s.hub.syncBack(r.h("x-claude-mini-session"), k.name) // spremembe agenta k odjemalcu pred odgovorom
+				if why := s.hub.syncBack(r.h("x-claude-mini-session"), k.name); why != "" { // spremembe agenta k odjemalcu pred odgovorom
+					return "", pullError(why) // #82: ne kot dostavljeno, končna napaka
+				}
 			}
 			if thread != "" {
 				s.sessions.set(transcriptKey(append(slices.Clone(all), turn{"assistant", text}), scope), thread)
@@ -1422,7 +1424,10 @@ func (s *server) replyWhenDone(w http.ResponseWriter, r *req, body map[string]an
 	if err != nil {
 		s.log.Printf("%s %s failed: %v", r.rid, model, err)
 		status, msg := classifyAgentError(err.Error())
-		if _, early := w.(*earlyWriter); stream && (headSent || early) { // napaka bo dogodek SSE
+		var pe pullError
+		if _, early := w.(*earlyWriter); stream && (headSent || early) && errors.As(err, &pe) { // napaka bo dogodek SSE
+			s.noteFinal(r, model, status, msg)
+		} else if stream && (headSent || early) {
 			s.noteLimit(r, model, status, msg)
 		}
 		if headSent {
@@ -1581,9 +1586,14 @@ func agentLimit(msg string) bool {
 // noteLimit: omejitev agenta, sporočena kot dogodek SSE (glava 200 je bila že poslana): Claude Code na tako napako takoj
 // ponovi zahtevo brez pretoka; recentLimit ji 60 s odgovori z istim 429 brez novega zagona CLI.
 func (s *server) noteLimit(r *req, model string, status int, msg string) {
-	if status != 429 {
-		return
+	if status == 429 {
+		s.noteFinal(r, model, status, msg)
 	}
+}
+
+// noteFinal (#82): končna napaka po glavi (omejitev, neprevzeto delo agenta): ponovitev brez pretoka dobi isti status z
+// x-should-retry: false namesto novega zagona agenta (sicer bi se njegove spremembe uveljavile dvakrat).
+func (s *server) noteFinal(r *req, model string, status int, msg string) {
 	now := time.Now()
 	s.limits.Range(func(k, v any) bool { // stari vnosi
 		if now.Sub(v.(limitHit).at) > time.Minute {
@@ -1591,22 +1601,28 @@ func (s *server) noteLimit(r *req, model string, status int, msg string) {
 		}
 		return true
 	})
-	s.limits.Store(limitKey(r, model), limitHit{msg, now})
+	s.limits.Store(limitKey(r, model), limitHit{msg, now, status})
 }
 
-// recentLimit: nedavna omejitev za ta model, napravo in sejo (enkrat; le zahteva brez pretoka).
-func (s *server) recentLimit(r *req, model string) (string, bool) {
+// recentLimit: nedavna končna napaka za ta model, napravo in sejo (enkrat; le zahteva brez pretoka).
+func (s *server) recentLimit(r *req, model string) (string, int, bool) {
 	v, ok := s.limits.LoadAndDelete(limitKey(r, model))
 	if !ok || time.Since(v.(limitHit).at) > time.Minute {
-		return "", false
+		return "", 0, false
 	}
-	return v.(limitHit).msg, true
+	return v.(limitHit).msg, v.(limitHit).status, true
 }
 
 type limitHit struct {
-	msg string
-	at  time.Time
+	msg    string
+	at     time.Time
+	status int
 }
+
+// pullError (#82): minigw dela agenta ni prevzel; končna napaka (Claude Code agenta ne sme zagnati znova).
+type pullError string
+
+func (e pullError) Error() string { return string(e) }
 
 func limitKey(r *req, model string) string {
 	return model + "|" + r.owner() + "|" + r.h("x-claude-mini-session")

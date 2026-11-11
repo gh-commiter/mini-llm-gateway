@@ -220,13 +220,30 @@ private func get(_ run: AgentRun, _ path: String, token: String?) async -> Int {
         throw limit
     }
     #expect(w.status == 200 && w.text.contains("x-should-retry: false") && w.text.contains("event: error") && w.text.contains("rate_limit_error"))
-    #expect(AgentError.recent(AgentError.key(req, model: "claude-grok")) == "You have run out of credits.")
+    #expect(AgentError.recent(AgentError.key(req, model: "claude-grok"))?.message == "You have run out of credits.")
     #expect(AgentError.recent(AgentError.key(req, model: "claude-grok")) == nil)  // enkrat
     let fallback = FakeWriter()
     AgentError.note(AgentError.key(req, model: "claude-grok"), "You have run out of credits.")
     await router.handle(request("POST", "/v1/messages", headers: ["Authorization": "Bearer tok", "x-claude-mini-session": req.header("x-claude-mini-session")!],
                                     body: #"{"model":"claude-grok","messages":[{"role":"user","content":"hi"}]}"#), writer: fallback)
     #expect(fallback.status == 429 && fallback.text.contains("x-should-retry: false") && fallback.text.contains("run out of credits"))
+    // #82: neprevzeto delo agenta je končno: pred glavo 502 z x-should-retry: false, po glavi dogodek SSE in ponovitev brez
+    // pretoka dobi isti 502 brez novega zagona (spremembe agenta bi se uveljavile dvakrat)
+    let pull = ShareHub.PullFailed(message: "the agent's changes were not copied back to your folder: the shared folder is busy")
+    let before = FakeWriter()
+    let bst = await router.replyWhenDone(body: ["model": "claude-grok"], model: "claude-grok", rid: "req_4", writer: before, req: req) { throw pull }
+    #expect(bst == 502 && before.status == 502 && before.text.contains("x-should-retry: false") && before.text.contains("busy"))
+    let after = FakeWriter()
+    _ = await router.replyWhenDone(body: ["model": "claude-grok", "stream": true], model: "claude-grok", rid: "req_5", writer: after, req: req,
+                                   headDelay: .milliseconds(10)) {
+        try await Task.sleep(for: .milliseconds(1500))
+        throw pull
+    }
+    #expect(after.status == 200 && after.text.contains("event: error") && after.text.contains("busy"))
+    let retry = FakeWriter()
+    await router.handle(request("POST", "/v1/messages", headers: ["Authorization": "Bearer tok", "x-claude-mini-session": req.header("x-claude-mini-session")!],
+                                body: #"{"model":"claude-grok","messages":[{"role":"user","content":"hi"}]}"#), writer: retry)
+    #expect(retry.status == 502 && retry.text.contains("x-should-retry: false") && retry.text.contains("busy"))
 }
 
 /// --minigw-ro brez deljenja (prehod na istem Macu): glava x-claude-mini-ro da Claude CLI brez orodij za pisanje in

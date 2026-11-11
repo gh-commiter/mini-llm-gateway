@@ -278,8 +278,8 @@ public final class Router: Sendable {
             }
             guard let r = await catalog.route(model) else {
                 // ponovitev brez pretoka po omejitvi agenta, sporočeni v toku (AgentError.note): isti 429 brez novega zagona CLI
-                if req.path == "/v1/messages", body["stream"] as? Bool != true, let msg = AgentError.recent(AgentError.key(req, model: model)) {
-                    return (await error(429, "rate_limit_error", msg, rid: rid, extra: [("x-should-retry", "false")], writer: writer), model, nil)
+                if req.path == "/v1/messages", body["stream"] as? Bool != true, let hit = AgentError.recent(AgentError.key(req, model: model)) {
+                    return (await error(hit.status, Router.errorType(hit.status), hit.message, rid: rid, extra: [("x-should-retry", "false")], writer: writer), model, nil)
                 }
                 if config.siri.enabled, Siri.ids.contains(model) {
                     guard config.siriAllowed(peer: req.peer, device: req.device) else {

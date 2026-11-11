@@ -596,8 +596,9 @@ func (s *server) messages(w http.ResponseWriter, r *req) (int, string) {
 	}
 	defer s.activity.start(r, model)()
 	if body["stream"] != true && !strings.HasSuffix(r.URL.Path, "/count_tokens") { // ponovitev po omejitvi v toku (noteLimit)
-		if msg, ok := s.recentLimit(r, model); ok {
-			return writeAgentError(w, r.rid, 429, msg), model
+		if msg, status, ok := s.recentLimit(r, model); ok {
+			w.Header().Set("x-should-retry", "false")
+			return writeAgentError(w, r.rid, status, msg), model
 		}
 	}
 	_, _, isCLI := cliMatch(model)                     // model claude-cli ne čaka na odkrivanje prehodov
@@ -1067,10 +1068,11 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		return 499 // Claude Code je prekinil
 	}
 	// sync: spremembe agenta k odjemalcu pred koncem odgovora (Claude Code jih nato že vidi); med tem še ping
+	pullErr := "" // #82: delo agenta ni prišlo k odjemalcu → napaka, ne uspeh
 	if !chat && treeErr == nil {
 		// vprašani agent: spremembe prenese klicatelj na koncu; L1: omejen (#45) ne prenese ničesar
 		if parent == nil && (r.applied == nil || r.applied.cap == "") {
-			s.hub.syncBack(session, "claude")
+			pullErr = s.hub.syncBack(session, "claude")
 		}
 	}
 	msg := t.resultError
@@ -1086,14 +1088,24 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		}
 		msg = "claude failed (" + werr.Error() + "); details are in the gateway log, request " + r.rid
 	}
+	if msg == "" {
+		msg = pullErr
+	}
 	if msg != "" {
 		s.log.Printf("%s claude failed: %s", r.rid, msg)
 		status, clean := classifyAgentError(msg)
+		if pullErr != "" { // #82: končna; Claude Code agenta ne zažene znova (spremembe bi se uveljavile dvakrat)
+			w.Header().Set("x-should-retry", "false")
+		}
 		if !stream {
 			return writeAgentError(w, r.rid, status, "claude: "+clean)
 		}
-		if t.text == "" || treeErr != nil {
-			s.noteLimit(r, model, status, "claude: "+clean)
+		if t.text == "" || treeErr != nil || pullErr != "" {
+			if pullErr != "" {
+				s.noteFinal(r, model, status, "claude: "+clean)
+			} else {
+				s.noteLimit(r, model, status, "claude: "+clean)
+			}
 			send(sse("error", map[string]any{"type": "error", "error": map[string]string{"type": errType(status), "message": "claude: " + clean}}))
 			return status
 		}
