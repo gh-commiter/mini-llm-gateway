@@ -323,7 +323,10 @@ final class ShareClient: @unchecked Sendable {
 
     func unregister() { guard !key.isEmpty else { return }; _ = call(c, "DELETE", "/minigw/share", ["x-share-key": key], timeout: 3) }
 
+    private var rootID: [UInt64]?  // L6 (#84): istovetnost korena ob start; nil = ni znana → WebDAV zavrnjen
+
     func start(workers: Int = 4) {
+        rootID = SharedFolders.fileID(root.path)
         for _ in 0..<workers { Thread { self.work() }.start() }
     }
 
@@ -342,6 +345,8 @@ final class ShareClient: @unchecked Sendable {
                 case .worktreePull: r = syncLock.withLock { wtPull(k, job) }
                 case .syncPush: r = DAVResponse(syncLock.withLock { push(k) } ? 200 : 500)
                 case .syncPull: r = DAVResponse(syncLock.withLock { pull(k) } ? 200 : 500)
+                case .webDAV where rootID == nil || SharedFolders.fileID(root.path) != rootID:  // L6: koren zamenjan med sejo
+                    r = DAVResponse(403)
                 case .webDAV:
                     let dav = { WebDAV.handle(method: job.method, path: job.path, headers: job.headers, body: job.body, root: self.root, prefix: job.prefix) }
                     r = Self.writeMethods.contains(job.method) ? davWriteLock.withLock(dav) : dav()
@@ -713,6 +718,13 @@ func savedShare(_ cwd: String) -> SharedFolders.Entry? {
     return e
 }
 
+/// H1 (#84): deli se cwd sam (root = cwd), zato ga shareRefusal preveri, ko bi bil deljen; zavrnitev pove enkrat.
+func cwdShareAllowed(_ cwd: String) -> Bool {
+    guard let why = SharedFolders.shareRefusal(cwd) else { return true }
+    if refusedShares.insert(cwd).inserted { FileHandle.standardError.write(Data("minigw: not sharing \(cwd) (\(why))\n".utf8)) }
+    return false
+}
+
 func shareCommand(_ a: [String]) -> Never {
     let sub = a.first ?? "list"
     // add: --work=direct|sync|native|native-direct|worktree|auto in --ro = privzeti način te mape in podmap (zastavica ob zagonu ima prednost)
@@ -748,7 +760,7 @@ func shareCommand(_ a: [String]) -> Never {
     case "list":
         if list.isEmpty { print("no extra shared folders (folders under your home folder are shared by default)") }
         for e in list {
-            print(describe(e) + (SharedFolders.shareRefusal(e.path).map { "  not shared: \($0) (minigw share remove \(e.path))" } ?? ""))
+            print(describe(e) + (SharedFolders.shareRefusal(e.path).map { "  not shared: \($0) (minigw share remove \"\(e.path)\")" } ?? ""))
         }
     default:
         fail("usage: minigw share add [--work=direct|sync|native|native-direct|worktree|auto] [--ro] [folder] | minigw share remove [folder] | minigw share list")
@@ -1050,9 +1062,9 @@ let routerHost = URLComponents(string: saved.url)?.host ?? ""
 // Mapo deli le z oddaljenim routerjem (pravilo v autoShare, enako kot odjemalec Go); MINIGW_SHARE=0/1 preglasi.
 let shareEnv = ProcessInfo.processInfo.environment["MINIGW_SHARE"]
 let remoteRouter = !["127.0.0.1", "localhost", "::1"].contains(routerHost)
-let wantShare = shareEnv == "1"
+let wantShare = (shareEnv == "1"
     || (shareEnv != "0" && remoteRouter
-        && (SharedFolders.autoShare(cwd) || savedShare(cwd) != nil))
+        && (SharedFolders.autoShare(cwd) || savedShare(cwd) != nil))) && cwdShareAllowed(cwd)  // H1 (#84), tudi MINIGW_SHARE=1
 let mode = SharedFolders.mode(flag: workFlag, saved: savedShare(cwd), readOnly: readOnly)
 if let asked = workFlag ?? savedShare(cwd)?.work, asked.hasPrefix("native") || asked == "worktree", mode.work != asked {
     err.write(Data("minigw: \(asked) mode cannot be read-only; sharing the folder read-only instead\n".utf8))
@@ -1168,7 +1180,7 @@ if profiles.count > 1 {
         }
         targets.append(ProfileMux.Target(name: p.name, url: rc.url, token: rc.token))
         let remote = !p.conn.isLocal
-        let want = shareEnv == "1" || (shareEnv != "0" && remote && (SharedFolders.autoShare(cwd) || savedShare(cwd) != nil))
+        let want = (shareEnv == "1" || (shareEnv != "0" && remote && (SharedFolders.autoShare(cwd) || savedShare(cwd) != nil))) && cwdShareAllowed(cwd)
         guard want, !sid.isEmpty else { continue }
         let name = p.name, gw = p.conn.url
         hooks[name] = {

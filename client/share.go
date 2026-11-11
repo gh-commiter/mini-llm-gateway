@@ -59,6 +59,8 @@ type shareClient struct {
 	reported map[string]bool            // že javljene prevelike datoteke
 	unpulled bool                       // spremembe agenta, ki niso bile prevzete in potrjene
 	refusal  string                     // sporočilo routerja ob zavrnjeni registraciji (npr. le način sync)
+	rootID   fileID                     // L6 (#84): istovetnost korena ob start; ničelna brez start (preizkusi)
+	rootErr  error                      // L6: istovetnosti ob start ni bilo mogoče ugotoviti → WebDAV zavrnjen
 }
 
 var writeMethods = map[string]bool{"PUT": true, "DELETE": true, "MKCOL": true, "MOVE": true, "COPY": true, "PROPPATCH": true, "LOCK": true}
@@ -129,6 +131,7 @@ func (s *shareClient) unregister() {
 }
 
 func (s *shareClient) start(workers int) {
+	s.rootID, s.rootErr = fileIDOf(s.root)
 	for i := 0; i < workers; i++ {
 		go s.work()
 	}
@@ -206,7 +209,19 @@ func (s *shareClient) handle(job davJob, k string) davResponse {
 	case s.sync || (s.readOnly && writeMethods[job.Method]):
 		return dav(403, nil, nil)
 	}
+	if !s.sameRoot() {
+		return dav(403, nil, nil)
+	}
 	return davHandle(job.Method, job.Path, job.Headers, job.Body, s.root, job.Prefix)
+}
+
+// sameRoot (L6, #84): koren je še ista mapa kot ob start (mapo med sejo ni zamenjala povezava ali druga mapa).
+func (s *shareClient) sameRoot() bool {
+	if s.rootID == (fileID{}) && s.rootErr == nil {
+		return true // brez start (preizkusi)
+	}
+	id, err := fileIDOf(s.root)
+	return s.rootErr == nil && err == nil && id == s.rootID
 }
 
 // gatewayNote (M2): besedilo prehoda kot »minigw: gateway: …« v eni vrstici; vrstico o veji izpiše le minigw sam iz

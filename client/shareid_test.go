@@ -51,3 +51,42 @@ func TestSharedFolderForRechecks(t *testing.T) {
 		t.Errorf("project share not used: %v", s)
 	}
 }
+
+// H1 (#84): deli se cwd sam; $PWD, ki je povezava (na Windows stičišče) na dom v projektu, ni deljen, tudi ne z
+// MINIGW_SHARE=1.
+func TestShareWantedRefusesHomeLinkCwd(t *testing.T) {
+	home, proj := fakeHome(t)
+	t.Setenv("MINIGW_SHARE", "")
+	shareCommand([]string{"add", proj})
+	if !shareWanted(proj, false) {
+		t.Fatal("project not shared")
+	}
+	link := filepath.Join(proj, "home")
+	dirLink(t, home, link)
+	t.Chdir(link)
+	t.Setenv("PWD", link)
+	cwd, _ := os.Getwd()
+	if shareWanted(cwd, false) {
+		t.Errorf("cwd %s (link to home) shared", cwd)
+	}
+	t.Setenv("MINIGW_SHARE", "1")
+	if shareWanted(cwd, false) {
+		t.Errorf("cwd %s (link to home) shared with MINIGW_SHARE=1", cwd)
+	}
+}
+
+// L6 (#84): koren, zamenjan med sejo (druga mapa na isti poti), WebDAV zavrne.
+func TestShareRootReplacedRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "p")
+	os.Mkdir(root, 0o755)
+	s := &shareClient{root: root}
+	s.rootID, s.rootErr = fileIDOf(root)
+	if !s.sameRoot() {
+		t.Fatal("same root refused")
+	}
+	os.Rename(root, root+".old")
+	os.Mkdir(root, 0o755)
+	if s.sameRoot() || s.handle(davJob{Method: "PROPFIND", Path: "/"}, "").Status != 403 {
+		t.Error("replaced root accepted")
+	}
+}

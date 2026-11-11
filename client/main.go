@@ -1172,17 +1172,25 @@ func registerShare(c connection, sid, cwd string, readOnly bool, top string, tri
 // shareWanted: projektno mapo (autoShare ali minigw share add) deli samodejno; nikoli cele domače mape, skritih map ali
 // sistemskih podatkov; MINIGW_SHARE=0/1 preglasi. Prehod na tem Macu (aplikacija) dela v mapi sami, zato tam ne;
 // minigw serve na tem računalniku (Windows, Linux) pa mapo potrebuje kot oddaljen (#9).
+// H1 (#84): deli se cwd sam (root=cwd; os.Getwd obdrži $PWD, ki je lahko povezava ali stičišče na dom), zato ga
+// shareRefusal preveri vedno, ko bi bil deljen, tudi pri MINIGW_SHARE=1.
 func shareWanted(cwd string, local bool) bool {
 	switch os.Getenv("MINIGW_SHARE") {
-	case "1":
-		return true
 	case "0":
 		return false
+	case "1":
+	default:
+		if local && runtime.GOOS == "darwin" || sharedFolderFor(cwd) == nil && !autoShare(cwd) {
+			return false
+		}
 	}
-	if local && runtime.GOOS == "darwin" {
+	if why := shareRefusal(cwd); why != "" {
+		if _, done := refusedShares.LoadOrStore(cwd, true); !done {
+			fmt.Fprintln(os.Stderr, "minigw: not sharing "+cwd+" ("+why+")")
+		}
 		return false
 	}
-	return sharedFolderFor(cwd) != nil || autoShare(cwd)
+	return true
 }
 
 // Sistemske mape (prva raven pod korenom diska, male črke): nikoli samodejno.
@@ -1478,8 +1486,8 @@ const noRealPaths = "this drive does not report real paths (network or virtual d
 // fileID: istovetnost mape (st_dev+st_ino; na Windows serijska številka nosilca in indeks datoteke).
 type fileID struct{ dev, ino uint64 }
 
-// shareRefusal (#84): zakaj mape ni dovoljeno deliti, "" = dovoljeno. Nikoli koren diska ali nosilca (tudi
-// /System/Volumes/Data na macOS) ali mapa, ki je domača mapa ali jo vsebuje (/Users, C:\Users). Primerja istovetnost
+// shareRefusal (#84): zakaj mape ni dovoljeno deliti, "" = dovoljeno. Nikoli koren diska ali koren nosilca z domom
+// ali sistemom (mountRoot: /System/Volumes/Data na macOS; /Volumes/<Disk> sme) ali mapa, ki je domača mapa ali jo vsebuje (/Users, C:\Users). Primerja istovetnost
 // (fileIDOf), ne nizov: /System/Volumes/Data/Users/<ime>, povezava, stičišče ali ime 8.3 je ista mapa. Ko istovetnosti
 // ni mogoče ugotoviti, zavrne. Velja ob share add in ob vsaki uporabi mape s seznama (sharedFolderFor).
 func shareRefusal(dir string) string {
@@ -1498,10 +1506,10 @@ func shareRefusal(dir string) string {
 	if filepath.Dir(dir) == dir {
 		return "a disk root" + all
 	}
-	if root, err := mountRoot(dir, id); err != nil {
+	if root, err := mountRoot(dir, id, home); err != nil {
 		return "cannot tell whether this is a volume root: " + err.Error()
 	} else if root {
-		return "a volume root" + all
+		return "the root of the volume with your home folder or the system" + all
 	}
 	homes := []string{home}
 	if r, err := finalPath(home); err == nil {
@@ -1513,7 +1521,7 @@ func shareRefusal(dir string) string {
 			if err != nil {
 				return "cannot check your home folder: " + err.Error()
 			}
-			if hid == id || strings.EqualFold(filepath.Clean(dir), filepath.Clean(h)) {
+			if hid == id || samePath(dir, h) {
 				return "your home folder or a folder that contains it" + all
 			}
 			if filepath.Dir(h) == h {
@@ -1535,7 +1543,7 @@ func sharedFolderFor(cwd string) *sharedFolder {
 	}
 	if why := shareRefusal(f.Path); why != "" {
 		if _, done := refusedShares.LoadOrStore(f.Path, true); !done {
-			fmt.Fprintln(os.Stderr, "minigw: not sharing "+f.Path+" ("+why+"); remove it with: minigw share remove "+f.Path)
+			fmt.Fprintln(os.Stderr, "minigw: not sharing "+f.Path+" ("+why+`); remove it with: minigw share remove "`+f.Path+`"`)
 		}
 		return nil
 	}
@@ -1628,7 +1636,7 @@ func shareCommand(args []string) {
 		}
 		for _, f := range list {
 			if why := shareRefusal(f.Path); why != "" {
-				fmt.Println(describe(f) + "  not shared: " + why + " (minigw share remove " + f.Path + ")")
+				fmt.Println(describe(f) + "  not shared: " + why + ` (minigw share remove "` + f.Path + `")`)
 			} else {
 				fmt.Println(describe(f))
 			}

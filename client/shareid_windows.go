@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -27,16 +28,47 @@ func fileIDOf(p string) (fileID, error) {
 	return fileID{uint64(fi.VolumeSerialNumber), uint64(fi.FileIndexHigh)<<32 | uint64(fi.FileIndexLow)}, nil
 }
 
-// mountRoot (#84): dir je koren nosilca (pogon ali nosilec, priklopljen v mapo; GetVolumePathName).
-func mountRoot(dir string, _ fileID) (bool, error) {
-	u, err := windows.UTF16PtrFromString(dir)
+// volumeOf (#84): GUID nosilca, ki hrani p (\\?\Volume{…}\), in ali je p sam točka priklopa (koren pogona ali
+// nosilec, priklopljen v mapo). extendedPath tudi nad 260 znaki; predpona se pred primerjavo odstrani.
+func volumeOf(p string) (guid string, root bool, err error) {
+	u, err := windows.UTF16PtrFromString(extendedPath(p))
 	if err != nil {
-		return false, err
+		return "", false, err
 	}
 	buf := make([]uint16, windows.MAX_LONG_PATH)
 	if err := windows.GetVolumePathName(u, &buf[0], uint32(len(buf))); err != nil {
+		return "", false, err
+	}
+	vp := windows.UTF16ToString(buf)
+	trim := func(p string) string { return strings.TrimRight(filepath.Clean(trimFinalPrefix(p)), `\`) }
+	root = strings.EqualFold(trim(vp), trim(extendedPath(p)))
+	g := make([]uint16, 64)
+	for _, m := range []string{vp, trimFinalPrefix(vp)} { // nekatere različice ne sprejmejo »\\?\«
+		v, err2 := windows.UTF16PtrFromString(strings.TrimRight(m, `\`) + `\`)
+		if err = err2; err == nil {
+			if err = windows.GetVolumeNameForVolumeMountPoint(v, &g[0], uint32(len(g))); err == nil {
+				return windows.UTF16ToString(g), root, nil
+			}
+		}
+	}
+	return "", false, err
+}
+
+// mountRoot (#84): dir je nosilec, priklopljen v mapo, in to je nosilec %SystemDrive% ali doma (korene pogonov zavrne
+// že shareRefusal). Nosilec z drugimi podatki, priklopljen v mapo, je dovoljen.
+func mountRoot(dir string, _ fileID, home string) (bool, error) {
+	g, root, err := volumeOf(dir)
+	if err != nil || !root {
 		return false, err
 	}
-	trim := func(p string) string { return strings.TrimRight(filepath.Clean(p), `\`) }
-	return strings.EqualFold(trim(windows.UTF16ToString(buf)), trim(dir)), nil
+	for _, p := range []string{os.Getenv("SystemDrive") + `\`, home} {
+		o, _, err := volumeOf(p)
+		if err != nil {
+			return false, err
+		}
+		if strings.EqualFold(o, g) {
+			return true, nil
+		}
+	}
+	return false, nil
 }

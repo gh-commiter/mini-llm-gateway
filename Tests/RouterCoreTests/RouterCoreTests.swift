@@ -2035,4 +2035,10 @@ final class UnauthorizedUpstream: URLProtocol, @unchecked Sendable {
     try FileManager.default.createDirectory(atPath: proj, withIntermediateDirectories: false)
     defer { try? FileManager.default.removeItem(atPath: proj) }
     #expect(SharedFolders.shareRefusal(proj) == nil)
+    // drug disk (/Volumes/<Disk>, koren nosilca brez doma ali sistema) je dovoljen
+    for v in (try? FileManager.default.contentsOfDirectory(atPath: "/Volumes")) ?? [] where !v.hasPrefix(".") && v != "Recovery" {
+        let p = "/Volumes/" + v, a = try? FileManager.default.attributesOfItem(atPath: p)  // lstat: povezava (Macintosh HD → /) ne
+        guard a?[.type] as? FileAttributeType == .typeDirectory, (a?[.ownerAccountID] as? NSNumber)?.uint32Value == getuid() else { continue }
+        #expect(SharedFolders.shareRefusal(p) == nil, "\(p)")
+    }
 }
