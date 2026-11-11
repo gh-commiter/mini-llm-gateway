@@ -829,8 +829,8 @@ type wtRecord struct {
 	Gateway string `json:"gateway"` // prehod (naslov profila), na katerem je tekel pogovor
 }
 
+// #79: zadnjega pogovora po mapah (»last« starejših različic) ni več: -c postane --resume <id> (continueSession).
 type wtState struct {
-	Last  map[string]string   `json:"last"` // mapa (pot glede na koren repozitorija) → zadnji pogovor v njej (za --continue)
 	Convs map[string]wtRecord `json:"convs"`
 }
 
@@ -846,18 +846,10 @@ func wtStatePath(top string) string {
 }
 
 func wtLoad(top string) (wtState, string) {
-	var raw struct {
-		Last  json.RawMessage     `json:"last"`
-		Convs map[string]wtRecord `json:"convs"`
-	}
+	var st wtState
 	p := wtStatePath(top)
 	if b, err := os.ReadFile(p); err == nil {
-		json.Unmarshal(b, &raw)
-	}
-	st := wtState{Convs: raw.Convs}
-	json.Unmarshal(raw.Last, &st.Last) // starejša oblika (niz): neznano, začne iz mape
-	if st.Last == nil {
-		st.Last = map[string]string{}
+		json.Unmarshal(b, &st)
 	}
 	if st.Convs == nil {
 		st.Convs = map[string]wtRecord{}
@@ -881,35 +873,15 @@ func wtSave(p string, st wtState) {
 	}
 }
 
-// wtRel: mapa cwd glede na koren repozitorija (».« = koren), kot »claude -c« po mapah.
-func wtRel(top, cwd string) string {
-	r, err := filepath.Rel(realPath(top), realPath(cwd))
-	if err != nil || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
-		return "."
+// wtConversation: --resume <id> (tudi -c, continueSession) = parent; izbirnik (--resume brez ID-ja) ne nadaljuje in ne
+// zapiše; fork (--fork-session): nadaljuje starša, zapiše pod novo sejo sid; sicer nov pogovor pod sid.
+func wtConversation(sid, parent string, picker, fork bool) wtConv {
+	if picker {
+		return wtConv{}
 	}
-	return filepath.ToSlash(r)
-}
-
-// wtConversation: --continue = zadnji pogovor v mapi rel; --resume <id> = parent; izbirnik (--resume brez ID-ja) ne
-// nadaljuje in ne zapiše; fork (--fork-session): nadaljuje starša, zapiše pod novo sejo sid. Novi zapiše kot zadnjega v rel.
-func wtConversation(top, rel, sid, parent string, cont, picker, fork bool) wtConv {
-	st, p := wtLoad(top)
-	var c wtConv
-	switch {
-	case picker:
-		return c
-	case cont:
-		c.From = st.Last[rel]
-	case parent != "":
-		c.From = parent
-	}
-	c.To = c.From
+	c := wtConv{From: parent, To: parent}
 	if fork || c.To == "" {
 		c.To = sid
-	}
-	if c.To != "" && st.Last[rel] != c.To {
-		st.Last[rel] = c.To
-		wtSave(p, st)
 	}
 	return c
 }

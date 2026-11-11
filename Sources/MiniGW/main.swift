@@ -796,6 +796,8 @@ func execClaude(_ argv: [UnsafeMutablePointer<CChar>?]) {
 /// H3: pod Claude Code le možnosti claude, ki ne dajo dovoljenj (Profiles.unsafeClaudeFlag); N6, N7: navodilo brez »@pot«
 /// in »/ukaz« (Profiles.unsafePrompt), tudi na stdin. info: le podatki o claude (-v, -h), brez --settings (I1).
 func refuseUnsafeClaudeFlags(info: Bool = false) {
+    // #79: tudi claude med predniki, ne le CLAUDECODE; vsa varovala nato veljajo kot ob spremenljivki (claude je ne dobi, #7)
+    if (ProcessInfo.processInfo.environment["CLAUDECODE"] ?? "").isEmpty, Profiles.claudeAncestor() { setenv("CLAUDECODE", "1", 1) }
     let env = ProcessInfo.processInfo.environment
     if let f = Profiles.unsafeClaudeFlag(args, env: env) {
         fail("\(f) is not accepted when minigw runs inside Claude Code: it could give the gateway's model permissions without asking you")
@@ -1039,28 +1041,42 @@ setenv("CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "1", 1)
 setenv("API_TIMEOUT_MS", "1800000", 1)
 setenv("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1", 1)
 
+// #79: -c/--continue = zadnji pogovor minigw v tej mapi (--resume <id>), ne zadnji pogovor claude v ~/.claude
+let lastSessionFile = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    .appendingPathComponent("minigw/last-session.json")
+if let f = Profiles.combinedSessionFlag(args) {
+    fail("\(f): write -c and -r as separate options (for example -p -c), so that minigw can pass the right conversation")
+}
+let continued = Profiles.continueSession(args, last: Profiles.lastSession(file: lastSessionFile, cwd: FileManager.default.currentDirectoryPath))
+args = continued.args
+if continued.dropped {
+    err.write(Data("minigw: no earlier minigw conversation in \(FileManager.default.currentDirectoryPath); starting a new one\n".utf8))
+}
 // Seja: router po njej loči seje claude -p in niti Siri. Obstoječa ob --resume <id>, sicer nova.
 var sid = ""
 var own = false
-// #66: cont (-c), picker (--resume brez ID-ja), parent (ID ob --resume), fork (--fork-session), explicit (--session-id)
-var cont = false, picker = false, fork = false, explicit = false, parent = ""
+// #66: picker (--resume brez ID-ja), parent (ID ob --resume), fork (--fork-session), explicit (--session-id)
+var picker = false, fork = false, explicit = false, parent = ""
 for (i, a) in args.enumerated() {
+    if a == "--" { break }  // po »--« so le argumenti
     switch a {
     case "-r", "--resume":  // brez ID-ja = izbirnik sej v claude; nikoli skupaj z --session-id
         own = true
         if i + 1 < args.count, !args[i + 1].hasPrefix("-") { sid = args[i + 1]; parent = sid } else { picker = true }
     case let a where a.hasPrefix("--resume="): own = true; sid = String(a.dropFirst("--resume=".count)); parent = sid
     case "--session-id": if i + 1 < args.count { sid = args[i + 1] }; own = true; explicit = true
-    case "-c", "--continue": own = true; cont = true
     case "--fork-session": fork = true
     default: break
     }
 }
 if fork, !parent.isEmpty, !explicit { sid = "" }  // L2: razcepljen pogovor je na prehodu nova seja (svoja veja), ne seja starša
 if sid.isEmpty {
-    sid = UUID().uuidString.lowercased()  // tudi pri -c/--continue: router po njem deli mapo
+    sid = UUID().uuidString.lowercased()  // tudi ob izbirniku: router po njem deli mapo
     if !own { args = ["--session-id", sid] + args }
 }
+// Zapis le zunaj Claude Code (skilli ne prepišejo pogovora uporabnika) in ko je ID seje claude znan (izbirnik in razcep
+// ga izbereta sama); po uspešnem teku claude (zato tedaj brez exec).
+let recordSession = (callerEnv["CLAUDECODE"] ?? "").isEmpty && !picker && (!fork || parent.isEmpty || explicit)
 
 if promptGuard { args = ["--disable-slash-commands"] + args }  // N7
 // I17: env v --settings premaga env v uporabnikovem settings.json (izmerjeno, 2.1.318)
@@ -1094,7 +1110,7 @@ setenv("ANTHROPIC_CUSTOM_HEADERS", "x-claude-mini-session: \(sid)\nx-claude-mini
        + (readOnly ? "\nx-claude-mini-ro: 1" : ""), 1)  // --minigw-ro velja tudi brez deljenja (prehod na tem Macu)
 
 // Brez proxyja in brez mape: minigw ni več potreben → exec (razen s prebranim stdin: tega claude dobi po cevi).
-guard streamed || claudeStdin != nil || !proxies.isEmpty || (wantShare && !sid.isEmpty) || profiles.count > 1 else {
+guard streamed || claudeStdin != nil || !proxies.isEmpty || (wantShare && !sid.isEmpty) || profiles.count > 1 || recordSession else {
     execClaude(argv)
     fail("cannot run claude: \(String(cString: strerror(errno))) (is Claude Code installed and in PATH?)", code: 127)
 }
@@ -1115,17 +1131,9 @@ if tries.isEmpty {
     fail("--minigw-work=\(flagWork ?? "") is not possible in \(cwd), and inside Claude Code minigw does not fall back to direct "
         + "(the agent would change your files without a branch to review); put MINIGW_WORK=direct in front of the command instead")
 }
-/// #66: ključ pogovora enkrat na zagon (tudi za druge prehode).
-let convKey = OSAllocatedUnfairLock<Worktree.Conv?>(initialState: nil)
-@Sendable func conversation(_ top: String?) -> Worktree.Conv {
-    guard let top else { return Worktree.Conv() }
-    return convKey.withLock { k in
-        if k == nil {
-            k = Worktree.conversation(top: top, rel: Worktree.relCwd(top: top, cwd: cwd), session: sid, parent: parent, cont: cont, picker: picker, fork: fork)
-        }
-        return k!
-    }
-}
+/// #66: ključ pogovora (enak za vse prehode).
+let convKey = Worktree.conversation(session: sid, parent: parent, picker: picker, fork: fork)
+@Sendable func conversation(_ top: String?) -> Worktree.Conv { top == nil ? Worktree.Conv() : convKey }
 
 var share = ShareClient(c, session: sid, root: URL(fileURLWithPath: cwd), readOnly: readOnly, kind: "direct")
 var registered = false
@@ -1304,10 +1312,29 @@ if streamed {
     }
     close(outPipe[0])  // claude ob nadaljnjem pisanju dobi EPIPE/SIGPIPE, ne obvisi
 }
-if !exited { while waitpid(pid, &status, 0) == -1 && errno == EINTR {} }
+// L-b: claude se ustavi sam (Ctrl+Z: SIGSTOP sebi, terminal je v načinu raw): minigw se ustavi za njim, da lupina dobi
+// terminal nazaj; po fg (SIGCONT skupini) še claude dobi SIGCONT.
+while !exited {
+    if waitpid(pid, &status, WUNTRACED) == -1 {
+        if errno == EINTR { continue }
+        break
+    }
+    if status & 0x7f == 0x7f {  // WIFSTOPPED
+        kill(getpid(), SIGSTOP)
+        kill(pid, SIGCONT)
+        continue
+    }
+    exited = true
+}
 releaseHeld()
 forwarded.forEach { $0.cancel() }
 share.unregister()
 extras.unregister()
-let code = status & 0x7f == 0 ? (status >> 8) & 0xff : 128 + (status & 0x7f)
+let killedBy = status & 0x7f  // WTERMSIG (0 = izhod)
+let code = killedBy == 0 ? (status >> 8) & 0xff : 128 + killedBy
+if code == 0, recordSession { Profiles.saveLastSession(file: lastSessionFile, cwd: FileManager.default.currentDirectoryPath, sid: sid) }
+if killedBy != 0 {  // L-b: minigw konča z istim signalom kot claude (lupina vidi signal, ne 128+n)
+    signal(killedBy, SIG_DFL)
+    kill(getpid(), killedBy)
+}
 exit(code == 0 && (printer.failed || streamBroken || outputDropped) ? 1 : code)

@@ -551,7 +551,7 @@ func main() {
 			return
 		}
 		refuseUnsafeClaudeFlags(args, true)
-		os.Exit(runClaude(args, nil, false)) // le podatki o claude: brez routerja, seje in deljenja mape
+		exitClaude(runClaude(args, nil, false)) // le podatki o claude: brez routerja, seje in deljenja mape
 	}
 
 	// Claude Code prek routerja.
@@ -618,11 +618,26 @@ func main() {
 		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
 	}
 
+	// #79: -c/--continue = zadnji pogovor minigw v tej mapi (--resume <id>), ne zadnji pogovor claude v ~/.claude
+	if f := combinedSessionFlag(args); f != "" {
+		fail(f + ": write -c and -r as separate options (for example -p -c), so that minigw can pass the right conversation")
+	}
+	sessionKey := cwd // isti ključ kot minigw v aplikaciji (razrešena pot)
+	if r, err := filepath.EvalSymlinks(cwd); err == nil {
+		sessionKey = r
+	}
+	args, dropped := continueSession(args, lastSession(sessionKey))
+	if dropped {
+		fmt.Fprintln(os.Stderr, "minigw: no earlier minigw conversation in "+cwd+"; starting a new one")
+	}
 	// Seja: router po njej loči seje claude -p in niti Siri. Obstoječa ob --resume <id>, sicer nova.
-	// #66: cont (-c), picker (--resume brez ID-ja), parent (ID ob --resume), fork (--fork-session), explicit (--session-id)
-	sid, own, cont, picker, fork, explicit, parent := "", false, false, false, false, false, ""
+	// #66: picker (--resume brez ID-ja), parent (ID ob --resume), fork (--fork-session), explicit (--session-id)
+	sid, own, picker, fork, explicit, parent := "", false, false, false, false, ""
+sessionArgs:
 	for i, a := range args {
 		switch a {
+		case "--": // po »--« so le argumenti
+			break sessionArgs
 		case "-r", "--resume": // brez ID-ja = izbirnik sej v claude; nikoli skupaj z --session-id
 			own = true
 			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
@@ -635,8 +650,6 @@ func main() {
 				sid = args[i+1]
 			}
 			own, explicit = true, true
-		case "-c", "--continue":
-			own, cont = true, true
 		case "--fork-session":
 			fork = true
 		default:
@@ -650,11 +663,14 @@ func main() {
 		sid = "" // L2: razcepljen pogovor je na prehodu nova seja (svoja veja), ne seja starša
 	}
 	if sid == "" {
-		sid = newUUID() // tudi pri -c/--continue: router po njem deli mapo
+		sid = newUUID() // tudi ob izbirniku: router po njem deli mapo
 		if !own {
 			args = append([]string{"--session-id", sid}, args...)
 		}
 	}
+	// zapis le zunaj Claude Code (skilli ne prepišejo pogovora uporabnika) in ko je ID seje claude znan (izbirnik in
+	// razcep ga izbereta sama); po uspešnem teku claude
+	record := os.Getenv("CLAUDECODE") == "" && !picker && (!fork || parent == "" || explicit)
 
 	u, _ := url.Parse(saved.URL)
 	routerHost := ""
@@ -703,13 +719,7 @@ func main() {
 			"(the agent would change your files without a branch to review); put MINIGW_WORK=direct in front of the command instead")
 	}
 	share := &shareClient{c: c, session: sid, root: cwd, readOnly: readOnly, synced: map[string]syncEntry{}, reported: map[string]bool{}}
-	// #66: ključ pogovora enkrat na zagon (tudi za druge prehode)
-	var convOnce sync.Once
-	var convKey wtConv
-	conv := func(top string) wtConv {
-		convOnce.Do(func() { convKey = wtConversation(top, wtRel(top, cwd), sid, parent, cont, picker, fork) })
-		return convKey
-	}
+	conv := wtConversation(sid, parent, picker, fork) // #66: ključ pogovora (enak za vse prehode)
 	if wantShare && sid != "" {
 		if work == "worktree" && top == "" {
 			fmt.Fprintln(os.Stderr, "minigw: "+cwd+" is not in a git repository; worktree mode is not possible")
@@ -722,7 +732,7 @@ func main() {
 		share.checked = checked
 		capped := share.capped // pred start: ponovna registracija ga piše pod share.mu
 		if ok && share.worktree {
-			share.conv, share.gateway = conv(share.top), saved.URL
+			share.conv, share.gateway = conv, saved.URL
 			share.start(4)
 			fmt.Fprintf(os.Stderr, "minigw: agent models work in a clone of this git repository on %s; their work comes back as branch minigw/… (minigw prints the range to review; your uncommitted and untracked, not ignored files are sent too; worktree)\n", routerHost)
 		} else if ok && share.native && share.branches {
@@ -786,7 +796,7 @@ func main() {
 						return false
 					}
 					if sc.worktree {
-						sc.conv, sc.gateway = conv(sc.top), p.conn.URL
+						sc.conv, sc.gateway = conv, p.conn.URL
 					}
 					sc.start(4)
 					mu.Lock()
@@ -815,6 +825,9 @@ func main() {
 	held.on = stream
 	held.Unlock()
 	code := runClaude(args, env, stream)
+	if code == 0 && record {
+		saveLastSession(sessionKey, sid)
+	}
 	releaseHeld()
 	share.unregister()
 	mu.Lock()
@@ -822,7 +835,7 @@ func main() {
 		sc.unregister()
 	}
 	mu.Unlock()
-	os.Exit(code)
+	exitClaude(code)
 }
 
 // claudeSafe: možnosti claude, ki jih minigw pod Claude Code preda naprej (H3); true = ima vrednost. Druge (npr.
@@ -1034,6 +1047,7 @@ var claudeStdin io.Reader = os.Stdin
 
 // info: le podatki o claude (-v, -h), brez --settings (I1).
 func refuseUnsafeClaudeFlags(args []string, info bool) {
+	markClaudeCode() // #79: tudi claude med predniki, ne le CLAUDECODE
 	if f := unsafeClaudeFlag(args, os.Getenv); f != "" {
 		fail(f + " is not accepted when minigw runs inside Claude Code: it could give the gateway's model permissions without asking you")
 	}
@@ -1335,6 +1349,7 @@ func runClaude(args []string, env []string, stream bool) int {
 				}
 			}()
 		}
+		go followStops(cmd.Process.Pid)
 		if stream {
 			go func() {
 				done <- streamText(pr, gout, gerr)
@@ -1355,6 +1370,10 @@ func runClaude(args []string, env []string, stream bool) int {
 	}
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
+			if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+				claudeSignal = ws.Signal()
+				return 128 + int(claudeSignal)
+			}
 			return ee.ExitCode()
 		}
 		fmt.Fprintln(os.Stderr, "minigw: cannot run claude: "+err.Error()+" (is Claude Code installed and in PATH?)")
@@ -1364,6 +1383,21 @@ func runClaude(args []string, env []string, stream bool) int {
 		return 1
 	}
 	return 0
+}
+
+// claudeSignal: signal, ki je končal claude (0 = ni); exitClaude z njim konča tudi minigw.
+var claudeSignal syscall.Signal
+
+// exitClaude (L-b): izhod minigw po claude; ko ga je končal signal, minigw po pospravljanju konča z istim signalom
+// (lupina vidi signal, ne 128+n), sicer s kodo.
+func exitClaude(code int) {
+	if claudeSignal != 0 {
+		signal.Reset(claudeSignal)
+		if p, err := os.FindProcess(os.Getpid()); err == nil && p.Signal(claudeSignal) == nil {
+			time.Sleep(time.Second) // dostava signala; sicer koda
+		}
+	}
+	os.Exit(code)
 }
 
 // claudeEnv: okolje za claude brez podedovanih ANTHROPIC_*, CLAUDECODE in CLAUDE_CODE_* (seja in prijava starševskega
