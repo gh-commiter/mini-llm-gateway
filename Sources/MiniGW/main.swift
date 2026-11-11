@@ -6,6 +6,9 @@ import os
 import RouterCore
 import Security
 
+// L3 (#80): manjkajoči fd 0–2 (2>&-) postane /dev/null, da ga ne dobi vtičnica ali datoteka (diagnostika v datoteko).
+for fd: Int32 in 0...2 where fcntl(fd, F_GETFD) == -1 { _ = open("/dev/null", fd == 0 ? O_RDONLY : O_WRONLY) }
+
 let service = "dev.trojar.minigateway.cli"
 // Keychain brez dialogov: vnos, ki minigw ne zaupa (drug podpis), vrne errSecInteractionNotAllowed in jasno napako.
 SecKeychainSetUserInteractionAllowed(false)
@@ -603,8 +606,8 @@ func runRemote(_ c: Connection, _ argv: [String], _ proof: [String: String]) -> 
             var (fOut, fErr) = (Native.TerminalFilter(), Native.TerminalFilter())
             for try await line in bytes.lines {
                 let v = String(line.dropFirst(2))
-                if line.hasPrefix("o "), let d = Data(base64Encoded: v) { out.write(ttyOut ? fOut.feed(d) : d) }
-                else if line.hasPrefix("e "), let d = Data(base64Encoded: v) { err.write(ttyErr ? fErr.feed(d) : d) }
+                if line.hasPrefix("o "), let d = Data(base64Encoded: v) { try? out.write(contentsOf: ttyOut ? fOut.feed(d) : d) }
+                else if line.hasPrefix("e "), let d = Data(base64Encoded: v) { try? err.write(contentsOf: ttyErr ? fErr.feed(d) : d) }
                 else if line.hasPrefix("x "), let n = Int32(v) { box.code = n; break }  // zadnji okvir: ne čaka na EOF povezave
             }
         } catch { try? err.write(contentsOf: Data("minigw: lost the connection to the gateway: \(error.localizedDescription)\n".utf8)) }
@@ -1226,7 +1229,7 @@ let forwarded = [SIGTERM, SIGHUP].map { sig in
     src.resume()
     return src
 }
-var printer = Profiles.StreamText(), streamBroken = false
+var printer = Profiles.StreamText(), streamBroken = false, outputDropped = false
 var status: Int32 = 0, exited = false
 if streamed {
     signal(SIGPIPE, SIG_IGN)  // L2: | head → EPIPE, vrstice o vejah gredo še na stderr (claude dobi privzetega: setsigdefault)
@@ -1263,7 +1266,11 @@ if streamed {
     gate.out(o)
     gate.err(e)
     if let w = printer.warning { gate.err(w) }
-    gate.close(timeout: 2)  // kot Go: največ 2 s za izhod, nato vrstice o vejah (releaseHeld)
+    gate.close(timeout: exited ? deadline.timeIntervalSinceNow : 2)  // kot Go: največ 2 s po koncu claude, nato vrstice o vejah
+    if gate.dropped {
+        outputDropped = true
+        try? err.write(contentsOf: Data("minigw: output dropped: nobody read stdout (over 16 MB waiting)\n".utf8))
+    }
     close(outPipe[0])  // claude ob nadaljnjem pisanju dobi EPIPE/SIGPIPE, ne obvisi
 }
 if !exited { while waitpid(pid, &status, 0) == -1 && errno == EINTR {} }
@@ -1272,4 +1279,4 @@ forwarded.forEach { $0.cancel() }
 share.unregister()
 extras.unregister()
 let code = status & 0x7f == 0 ? (status >> 8) & 0xff : 128 + (status & 0x7f)
-exit(code == 0 && (printer.failed || streamBroken) ? 1 : code)
+exit(code == 0 && (printer.failed || streamBroken || outputDropped) ? 1 : code)

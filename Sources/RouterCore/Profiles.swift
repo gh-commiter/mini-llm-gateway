@@ -320,23 +320,46 @@ public enum Profiles {
 
     /// #80 (kot Go gate): izhod toka claude piše svoja nit, da stdout, ki ga nihče ne bere (Ctrl+S, cev brez bralca),
     /// ne ustavi branja in roka 2 s. Ena vrsta za stdout in stderr ohrani vrstni red; po prvi napaki pisanja (| head,
-    /// zaprt stderr) ta ročaj ne piše več. Po close se novo pisanje ne začne, tisto v teku se lahko še konča.
+    /// zaprt stderr) ta ročaj ne piše več. Čakajoči izhod ima mejo (stdout 16 MB, stderr 1 MB): čez njo ročaj ne piše
+    /// več, za stdout je dropped (Go namesto tega zadrži claude kot navadna cev). Po close se ne začne noben nov kos
+    /// (64 KB), tisti v teku se lahko še konča.
     public final class OutputGate: @unchecked Sendable {
+        static let chunk = 64 << 10
         private let queue = DispatchQueue(label: "minigw.output")
         private let handles: [FileHandle]
+        private let caps: [Int]
         private let lock = NSLock()
-        private var off: Set<Int> = [], closed = false
+        private var off: Set<Int> = [], closed = false, pending = [0, 0], isDropped = false
+        /// stdout je bil čez mejo izpuščen (nihče ga ni bral).
+        public var dropped: Bool { lock.withLock { isDropped } }
 
-        public init(out: FileHandle, err: FileHandle) { handles = [out, err] }
+        public init(out: FileHandle, err: FileHandle, outCap: Int = 16 << 20, errCap: Int = 1 << 20) {
+            handles = [out, err]
+            caps = [outCap, errCap]
+        }
 
-        public func out(_ s: String) { write(s, 0) }
-        public func err(_ s: String) { write(s, 1) }
+        public func out(_ s: String) { write(Data(s.utf8), 0) }
+        public func err(_ s: String) { write(Data(s.utf8), 1) }
 
-        private func write(_ s: String, _ i: Int) {
-            guard !s.isEmpty else { return }
+        private func write(_ d: Data, _ i: Int) {
+            guard !d.isEmpty, lock.withLock({ () -> Bool in
+                guard !closed, !off.contains(i) else { return false }
+                guard pending[i] + d.count <= caps[i] else {
+                    off.insert(i)
+                    if i == 0 { isDropped = true }
+                    return false
+                }
+                pending[i] += d.count
+                return true
+            }) else { return }
             queue.async { [self] in
-                guard lock.withLock({ !closed && !off.contains(i) }) else { return }
-                do { try handles[i].write(contentsOf: Data(s.utf8)) } catch { lock.withLock { _ = off.insert(i) } }
+                defer { lock.withLock { pending[i] -= d.count } }
+                var at = d.startIndex
+                while at < d.endIndex, lock.withLock({ !closed && !off.contains(i) }) {
+                    let end = min(at + Self.chunk, d.endIndex)
+                    do { try handles[i].write(contentsOf: d[at..<end]) } catch { lock.withLock { _ = off.insert(i) } }
+                    at = end
+                }
             }
         }
 
@@ -344,7 +367,7 @@ public enum Profiles {
         public func close(timeout: TimeInterval) {
             let s = DispatchSemaphore(value: 0)
             queue.async { s.signal() }
-            _ = s.wait(timeout: .now() + timeout)
+            _ = s.wait(timeout: .now() + max(timeout, 0))
             lock.withLock { closed = true }
         }
     }

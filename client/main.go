@@ -1249,7 +1249,7 @@ func autoShare(cwd string) bool {
 func catchInterrupt() { signal.Notify(make(chan os.Signal, 1), os.Interrupt) }
 
 // gate (#78): izhod toka claude; runClaude ga zapre, preden vrne (gorutina po 2 s ne piše za vrsticami o vejah), po
-// prvi napaki pisanja (zaprta cev, | head) ne piše več, branje pa teče naprej. #80: close ne čaka na mu (pisanje, ki
+// prvi napaki pisanja (zaprta cev, | head) ne piše več, branje pa teče naprej. #80: close na mu čaka največ 100 ms (pisanje, ki
 // visi na neizpraznjenem stdout, Ctrl+S, ne zadrži minigw); pisanje, ki je že teklo, se lahko še konča, novo ne začne.
 type gate struct {
 	mu  sync.Mutex // zaporedje pisanj
@@ -1268,7 +1268,15 @@ func (g *gate) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func (g *gate) close() { g.off.Store(true) }
+func (g *gate) close() {
+	g.off.Store(true)
+	for end := time.Now().Add(100 * time.Millisecond); time.Now().Before(end); time.Sleep(time.Millisecond) {
+		if g.mu.TryLock() { // pisanje v teku se je končalo pred vrsticami o vejah
+			g.mu.Unlock()
+			return
+		}
+	}
+}
 
 // runClaude: claude kot podproces (minigw ostane za proxy in mapo); Ctrl+C dobi claude.
 // stream (#78): stdout claude (stream-json) gre skozi streamText.

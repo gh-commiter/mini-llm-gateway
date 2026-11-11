@@ -429,7 +429,7 @@ func routerCommand(_ argv: [String]) {
         if pos[1] == "POST" || pos[1] == "PATCH" {
             do { body = try AdminClient.apiBody(FileHandle.standardInput.readData(ofLength: 1 << 20)) } catch { fail("minigw gw api: the body on stdin is not JSON") }
         }
-        out.write(a.send(pos[1], pos[2], body) + Data("\n".utf8))
+        try? out.write(contentsOf: a.send(pos[1], pos[2], body) + Data("\n".utf8))
 
     case "settings":  // terminal UI (Go, minigw-tui): kliče nazaj ta minigw (gw api), skrivnosti ne vidi
         need(1, 1)

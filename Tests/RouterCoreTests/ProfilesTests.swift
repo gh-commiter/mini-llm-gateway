@@ -300,27 +300,44 @@ private func send(_ url: String, _ method: String, _ path: String, secret: Strin
 }
 
 /// #80 (kot client/stream_test.go TestGateCloseBlockedWrite, TestRunClaudeStalledOutput): stdout, ki ga nihče ne bere,
-/// ne zadrži close dlje od roka; pisanje v teku se konča, novo po close ne začne; stderr gre po stdout.
+/// ne zadrži close dlje od roka; po close se konča le kos (64 KB) v teku, nič novega; stderr gre po stdout.
 @Test func outputGateUnreadStdout() throws {
     signal(SIGPIPE, SIG_IGN)
     let o = Pipe(), e = Pipe()
     let gate = Profiles.OutputGate(out: o.fileHandleForWriting, err: e.fileHandleForWriting)
-    let big = String(repeating: "a", count: 1 << 20)  // več kot medpomnilnik cevi
-    gate.out(big)
+    let big = 4 << 20  // več kot medpomnilnik cevi
+    gate.out(String(repeating: "a", count: big))
     gate.out("after")
     gate.err("minigw: · Bash\n")
     let start = Date()
     gate.close(timeout: 0.3)
     #expect(Date().timeIntervalSince(start) < 2, "close waited on a blocked write")
     gate.err("late\n")
-    var got = Data()
-    while got.count < big.utf8.count, let d = try o.fileHandleForReading.read(upToCount: 1 << 16), !d.isEmpty { got += d }
-    Thread.sleep(forTimeInterval: 0.3)  // vrsta bi zdaj napisala, kar je za pisanjem v teku
-    try o.fileHandleForWriting.close()
+    let r = o.fileHandleForReading.fileDescriptor
+    _ = fcntl(r, F_SETFL, fcntl(r, F_GETFL) | O_NONBLOCK)
+    var got = 0, buf = [UInt8](repeating: 0, count: 1 << 16)
+    for _ in 0..<50 {  // izprazni cev; kos v teku se konča, naslednji se ne začne
+        while case let n = read(r, &buf, buf.count), n > 0 { got += n }
+        Thread.sleep(forTimeInterval: 0.01)
+    }
+    #expect(got > 0 && got < 1 << 20, "\(got) bytes reached stdout after close, want at most the pipe buffer and one chunk")
     try e.fileHandleForWriting.close()
-    got += o.fileHandleForReading.readDataToEndOfFile()
-    #expect(got.count == big.utf8.count, "writes after close reached stdout")
     #expect(e.fileHandleForReading.readDataToEndOfFile().isEmpty, "stderr written after close or ahead of stdout")
+}
+
+/// M1: stdout brez bralca čez mejo 16 MB: ne piše več, dropped, close vrne.
+@Test func outputGateCap() throws {
+    signal(SIGPIPE, SIG_IGN)
+    let o = Pipe(), e = Pipe()
+    let gate = Profiles.OutputGate(out: o.fileHandleForWriting, err: e.fileHandleForWriting)
+    let mb = String(repeating: "a", count: 1 << 20)
+    for _ in 0..<16 { gate.out(mb) }
+    #expect(!gate.dropped)
+    gate.out(mb)
+    #expect(gate.dropped)
+    let start = Date()
+    gate.close(timeout: 0.3)
+    #expect(Date().timeIntervalSince(start) < 2)
 }
 
 /// | head in zaprt stderr: napaka pisanja ne sproži izjeme, ročaj ne piše več, drugi piše naprej po vrsti.
