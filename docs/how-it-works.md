@@ -247,6 +247,8 @@ Details:
   - in a sandbox (the Windows MXC box, bwrap, Seatbelt) the deny applies to the folder itself, so a path through a
     junction or link into the config folder is denied; a hard link to a file in it can only be made by a process that
     can already reach the file, which a sandboxed agent cannot;
+  - Claude CLI's tool rules (and Grok's `--deny`) are defence in depth only: they match paths as the CLI sees them.
+    The boundary is the sandbox's deny (MXC denied paths, bwrap, Seatbelt `denyRead`);
   - outside a sandbox (Codex on Windows always, any agent with **Allow commands without a sandbox**) a path deny
     cannot help: such an agent can read every file this user can, including the config folder. That is what the
     switch says; the tool rules are defence in depth only.

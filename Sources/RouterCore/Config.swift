@@ -150,11 +150,12 @@ public struct RouterConfig: Codable, Sendable, Equatable {
     }
     public static let dedicatedName = "Mini Gateway Scratch"
 
-    /// H1: dovoljena mapa vsebuje Scratch ali je v njem (agenti bi pisali v zrcala in kopije drugih naprav).
+    /// H1: dovoljena mapa vsebuje Scratch ali je v njem (agenti bi pisali v zrcala in kopije drugih naprav). #83: pot, ki
+    /// je ni mogoče razrešiti (obstaja, a realpath ne uspe), šteje kot prekrivanje; manjkajoča prek obstoječe nadrejene.
     public static func overlapsScratch(_ root: String, scratch: URL) -> Bool {
         let p = ClaudeCLI.expand(root.trimmingCharacters(in: .whitespaces))
         guard !p.isEmpty else { return false }
-        let r = Sync.real(URL(fileURLWithPath: p))?.path ?? p, s = Sync.real(scratch)?.path ?? scratch.standardizedFileURL.path
+        guard let r = Sync.realResolving(URL(fileURLWithPath: p))?.path, let s = Sync.realResolving(scratch)?.path else { return true }
         func inside(_ a: String, _ b: String) -> Bool { a == b || a.hasPrefix(b == "/" ? "/" : b + "/") }
         return inside(s, r) || inside(r, s)
     }
@@ -218,7 +219,8 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         }
         for r in allowedRoots.split(separator: ",") {
             let p = ClaudeCLI.expand(r.trimmingCharacters(in: .whitespaces))
-            guard !p.isEmpty, let rr = Sync.real(URL(fileURLWithPath: p))?.path else { continue }
+            guard !p.isEmpty else { continue }
+            guard let rr = Sync.realResolving(URL(fileURLWithPath: p))?.path else { return "the allowed folder \(p) cannot be resolved" }  // #83
             if inside(real, rr) || inside(rr, real) { return "it is inside or contains the allowed folder \(p) (agents could read other devices' copies)" }
         }
         return nil

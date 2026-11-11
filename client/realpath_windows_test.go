@@ -122,3 +122,8 @@ func TestRealPathSubstAndUNCWindows(t *testing.T) {
 		t.Errorf("extended prefix kept: %s", got)
 	}
 }
+
+// #83: mapa nastavitev skozi stičišče (mklink /J), podana mxcWrap: Denied ima tudi cilj.
+func TestMXCWrapDeniesConfigJunctionWindows(t *testing.T) {
+	mxcDeniesTarget(t, junction)
+}

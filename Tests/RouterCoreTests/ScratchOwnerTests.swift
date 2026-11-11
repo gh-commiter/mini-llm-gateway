@@ -182,3 +182,28 @@ private func put(_ dir: URL, _ rel: String, _ text: String = "x") throws {
     #expect(RouterConfig.scratchProblem(base, allowedRoots: "", name: "gw-mine") == nil)
     #expect(RouterConfig.scratchProblem(base.appendingPathComponent("gw-mine"), allowedRoots: "", name: "gw-mine") == nil)
 }
+
+/// #83 (kot realpath_test.go): manjkajoča pot prek obstoječe nadrejene; visoča povezava = prekrivanje / zavrnjeno.
+@Test func realResolvingFailsClosed() throws {
+    let fm = FileManager.default
+    let base = try tempBase()
+    defer { try? fm.removeItem(at: base) }
+    let realBase = Sync.real(base)!
+    let scratch = base.appendingPathComponent("scratch"), other = base.appendingPathComponent("other")
+    try fm.createDirectory(at: scratch, withIntermediateDirectories: true)
+    try fm.createDirectory(at: other, withIntermediateDirectories: true)
+    #expect(Sync.realResolving(base.appendingPathComponent("new/deeper"))?.path == realBase.appendingPathComponent("new/deeper").path)
+    let link = base.appendingPathComponent("link")
+    try fm.createSymbolicLink(at: link, withDestinationURL: scratch)
+    #expect(Sync.realResolving(link.appendingPathComponent("x/y"))?.path == realBase.appendingPathComponent("scratch/x/y").path)
+    #expect(RouterConfig.overlapsScratch(link.appendingPathComponent("x").path, scratch: scratch))
+    let dangling = base.appendingPathComponent("dangling")
+    try fm.createSymbolicLink(at: dangling, withDestinationURL: base.appendingPathComponent("gone"))
+    #expect(Sync.realResolving(dangling) == nil)
+    #expect(Sync.realResolving(dangling.appendingPathComponent("x")) == nil)
+    #expect(RouterConfig.overlapsScratch(dangling.path, scratch: scratch))
+    #expect(!RouterConfig.overlapsScratch(other.path, scratch: scratch))
+    #expect(!RouterConfig.overlapsScratch(other.appendingPathComponent("missing").path, scratch: scratch))
+    #expect(RouterConfig.scratchProblem(scratch, allowedRoots: dangling.path)?.contains("cannot be resolved") == true)
+    #expect(RouterConfig.scratchProblem(scratch, allowedRoots: other.appendingPathComponent("missing").path) == nil)
+}
