@@ -235,6 +235,9 @@ func lockScratch(dir string) error {
 	scratchLock.Lock()
 	defer scratchLock.Unlock()
 	if scratchLock.f != nil { // flock velja za odprto datoteko: tudi naša prejšnja bi zaklep zavrnila
+		// LOCK_UN pred Close: otrok fork/exec druge gorutine ima do exec kopijo datoteke (tudi O_CLOEXEC), zato sam
+		// Close zaklepa ne sprosti takoj (ponovni lockScratch iste mape bi vrnil errScratchHeld)
+		syscall.Flock(int(scratchLock.f.Fd()), syscall.LOCK_UN)
 		scratchLock.f.Close()
 		scratchLock.f = nil
 	}

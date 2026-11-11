@@ -129,6 +129,48 @@ private func send(_ url: String, _ method: String, _ path: String, secret: Strin
     #expect((try await URLSession.shared.data(for: bad).1 as! HTTPURLResponse).statusCode == 400)
 }
 
+/// Prehod na portu, ki je bil malo prej odjemalec usmerjevalnika (par v TIME_WAIT pri usmerjevalniku): Network.framework je
+/// za posredovanje vzel star lokalni port, .waiting(EADDRINUSE) → 502 (občasno v profileMuxRoutesBySuffix ob ponovitvah).
+@Test func profileMuxReachesAPortThatWasItsClient() async throws {
+    let first = ProfileMux(targets: [.init(name: "mini", url: "http://127.0.0.1:1", token: "x")])
+    try first.start()
+    defer { first.stop() }
+    func addr(_ port: UInt16) -> sockaddr_in {
+        var a = sockaddr_in(); a.sin_family = sa_family_t(AF_INET); a.sin_addr.s_addr = inet_addr("127.0.0.1"); a.sin_port = port.bigEndian; return a
+    }
+    var a = addr(first.localPort), n = socklen_t(MemoryLayout<sockaddr_in>.size)
+    let fd = socket(AF_INET, SOCK_STREAM, 0)
+    _ = withUnsafePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, n) } }
+    _ = withUnsafeMutablePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &n) } }
+    let port = UInt16(bigEndian: a.sin_port)
+    let req = Array("GET /v1/models HTTP/1.1\r\nhost: x\r\n\r\n".utf8)
+    _ = write(fd, req, req.count)
+    var buf = [UInt8](repeating: 0, count: 4096)
+    while read(fd, &buf, buf.count) > 0 {}  // 401; usmerjevalnik zapre prvi (par v TIME_WAIT pri njem)
+    close(fd)
+    // prehod na portu odjemalca (vtičnica BSD z SO_REUSEADDR: port ima lahko star par v TIME_WAIT)
+    let l = socket(AF_INET, SOCK_STREAM, 0)
+    defer { shutdown(l, SHUT_RDWR); close(l) }  // zbudi accept, če povezave ni bilo
+    var one: Int32 = 1
+    setsockopt(l, SOL_SOCKET, SO_REUSEADDR, &one, socklen_t(MemoryLayout<Int32>.size))
+    var la = addr(port)
+    #expect(withUnsafePointer(to: &la) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(l, $0, n) } } == 0, "bind \(port): \(errno)")
+    listen(l, 4)
+    Thread {
+        let c = accept(l, nil, nil)
+        guard c >= 0 else { return }
+        var b = [UInt8](repeating: 0, count: 4096)
+        _ = read(c, &b, b.count)
+        let ok = Array("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok".utf8)
+        _ = write(c, ok, ok.count)
+        close(c)
+    }.start()
+    let m = ProfileMux(targets: [.init(name: "mini", url: "http://127.0.0.1:\(port)", token: "t")])
+    try m.start()
+    defer { m.stop() }
+    #expect(try await send(m.localURL, "POST", "/v1/messages", secret: m.secret, body: #"{"model":"claude-siri-ai"}"#) == (200, "ok"))
+}
+
 /// L2: seznam modelov ne sledi preusmeritvi drugega prehoda (žeton ne gre na drug proxy).
 @Test func profileMuxModelsDoNotFollowRedirects() async throws {
     let other = try FakeGateway(models: #"{"id":"stolen"}"#)
