@@ -296,14 +296,20 @@ func mxcPathDirs(path []string, keep []string, home, scratch, cfgDir string) []s
 		if _, err := os.Stat(filepath.Join(d, "msys-2.0.dll")); err == nil {
 			continue
 		}
+		rd, err := realPath(d) // #83: povezava ali stičišče v Scratch/mapo nastavitev; nerazrešljivo = ven
+		if err != nil {
+			continue
+		}
 		bad := false
-		for _, x := range []string{scratch, cfgDir} {
-			if x != "" && (under(d, x) || under(x, d)) {
+		for _, x := range slices.Concat(pathForms(scratch), pathForms(cfgDir)) {
+			if under(d, x) || under(x, d) || under(rd, x) || under(x, rd) {
 				bad = true
 			}
 		}
-		if home != "" && under(home, d) {
-			bad = true
+		for _, h := range pathForms(home) {
+			if under(h, d) || under(h, rd) {
+				bad = true
+			}
 		}
 		if !bad {
 			out = append(out, d)
@@ -316,7 +322,9 @@ func mxcPathDirs(path []string, keep []string, home, scratch, cfgDir string) []s
 // naštevanje vseh prednikov svoje mape, zato agenti vidijo imena v domači mapi (tudi .ssh), ne vsebine. "" = ne.
 func scratchHomeWarning(scratch string) string {
 	home, _ := os.UserHomeDir()
-	if home == "" || scratch == "" || !under(realPath(scratch), realPath(home)) {
+	rs, err1 := realPath(scratch)
+	rh, err2 := realPath(home)
+	if home == "" || scratch == "" || err1 == nil && err2 == nil && !under(rs, rh) { // #83: nerazrešljivo = opozorilo
 		return ""
 	}
 	return "the Scratch folder " + scratch + " is inside your home folder, so agents in the sandbox can list the names " +
@@ -330,15 +338,28 @@ func toolRoot(d, home, scratch, cfgDir string) string {
 		return ""
 	}
 	p := filepath.Dir(d)
-	if filepath.Dir(p) == p {
+	rp, err := realPath(p) // #83: tudi skozi povezavo/stičišče; nerazrešljivo = ne
+	if filepath.Dir(p) == p || err != nil || filepath.Dir(rp) == rp {
 		return ""
 	}
-	for _, x := range []string{home, scratch, cfgDir} {
-		if x != "" && (under(p, x) || under(x, p)) { // ne v njih in ne nad njimi
+	for _, x := range slices.Concat(pathForms(home), pathForms(scratch), pathForms(cfgDir)) {
+		if under(p, x) || under(x, p) || under(rp, x) || under(x, rp) { // ne v njih in ne nad njimi
 			return ""
 		}
 	}
 	return p
+}
+
+// pathForms (#83): p dobesedno in razrešeno (realPath, če uspe); "" = nič.
+func pathForms(p string) []string {
+	if p == "" {
+		return nil
+	}
+	out := []string{filepath.Clean(p)}
+	if r, err := realPath(p); err == nil && r != out[0] {
+		out = append(out, r)
+	}
+	return out
 }
 
 // scratchLink (M1): prva sestavina poti od scratch (vključno) do p, ki je povezava (symlink, junction ali druga točka
@@ -453,10 +474,7 @@ func mxcWrap(wxc, exe string, args []string, m agentMounts) (string, []string, f
 	}
 	slices.Sort(env)
 	cwd := m.cwd
-	var deny []string
-	if m.cfgDir != "" {
-		deny = []string{m.cfgDir}
-	}
+	deny := scratchPaths(m.cfgDir) // #83: dobesedno in kanonično (dovoljenje skozi drugo obliko poti ne obide prepovedi)
 	req := mxcRequestFor(mxcSpec{argv: append([]string{exe}, args...), cwd: cwd, env: env, rw: rw, ro: ro,
 		deny: deny, egressDeny: m.noNet, allowIPs: m.allowIPs, loopback: m.loopback})
 	b, err := json.MarshalIndent(req, "", " ")

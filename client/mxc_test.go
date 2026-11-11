@@ -221,7 +221,7 @@ func TestMXCWrapRun(t *testing.T) {
 		var req mxcRequest
 		b, _ := os.ReadFile(log)
 		json.Unmarshal(b, &req)
-		if !slices.Contains(req.Filesystem.ReadWrite, work) || !slices.Equal(req.Filesystem.Denied, []string{cfg}) || (req.Network.Egress.Default == "deny") != noNet {
+		if !slices.Contains(req.Filesystem.ReadWrite, work) || !slices.Equal(req.Filesystem.Denied, scratchPaths(cfg)) || (req.Network.Egress.Default == "deny") != noNet {
 			t.Fatalf("request: %s", b)
 		}
 		if _, err := os.Stat(args[0]); err != nil || !under(args[0], filepath.Join(scratch, "tmp")) {

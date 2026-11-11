@@ -229,6 +229,24 @@ public enum Sync {
         return URL(fileURLWithPath: String(cString: p))
     }
 
+    /// #83 (kot realPath v Go): kanonična pot; za pot, ki je še ni, prek najbližje obstoječe nadrejene mape. nil, ko
+    /// pot (ali nadrejena) obstaja, a je ni mogoče razrešiti (visoča povezava, dostop zavrnjen): varovala zavrnejo.
+    public static func realResolving(_ url: URL) -> URL? {
+        var p = url.standardizedFileURL.path, rest: [String] = []
+        while true {
+            if let r = realpath(p, nil) {
+                defer { free(r) }
+                return rest.reversed().reduce(URL(fileURLWithPath: String(cString: r))) { $0.appendingPathComponent($1) }
+            }
+            var st = stat()
+            guard lstat(p, &st) != 0, errno == ENOENT else { return nil }
+            let parent = (p as NSString).deletingLastPathComponent
+            if parent == p || parent.isEmpty { return nil }
+            rest.append((p as NSString).lastPathComponent)
+            p = parent
+        }
+    }
+
     /// Vsebina navadne datoteke (glej openRegular); nil, če je večja od `max`.
     static func read(_ url: URL, max: Int, flags: Int32 = O_NOFOLLOW) -> Data? {
         guard let f = openRegular(url, flags: flags), let d = try? f.read(upToCount: max + 1) ?? Data(), d.count <= max else { return nil }

@@ -12,7 +12,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -131,8 +133,11 @@ func (s *server) agentArgs(dir string, readOnly bool) []string {
 		}
 		return out
 	}
-	cfg := ruleAbs(s.cfgDir) + "/**"
-	deny := []string{"Read(" + cfg + ")", "Edit(" + cfg + ")", "Write(" + cfg + ")"}
+	var deny []string // #83: mapa nastavitev dobesedno in kanonično (Claude Code primerja tudi cilj povezave/stičišča)
+	for _, d := range scratchPaths(s.cfgDir) {
+		cfg := ruleAbs(d) + "/**"
+		deny = append(deny, "Read("+cfg+")", "Edit("+cfg+")", "Write("+cfg+")")
+	}
 	var gitDeny []string // M4 (kot ClaudeCLI.gitDenies): .git, ki ga bere git lastnika (nastavitve, hooki, preusmeritve)
 	if readOnly {
 		deny = append(deny, roDenied()...)
@@ -205,7 +210,7 @@ func (s *server) agentArgs(dir string, readOnly bool) []string {
 			// M1: Scratch (kopije drugih naprav, zrcala) tudi zunaj domače mape; mapa seje v njem ostane berljiva (allowRead).
 			// #26 (N2): paket Copilot nikoli za pisanje (naloži ga priprava paketa), tudi če je v dovoljeni mapi.
 			// --minigw-ro: pisanje v te mape prepovedano (denyWrite velja tudi za delovno mapo, ki jo Claude Code dovoli sam).
-			"filesystem": map[string]any{"denyRead": append([]string{"~", s.cfgDir}, scratchHidden(c.Scratch)...), "allowRead": dirs, "allowWrite": onlyIf(!readOnly, dirs),
+			"filesystem": map[string]any{"denyRead": slices.Concat([]string{"~"}, scratchPaths(s.cfgDir), scratchHidden(c.Scratch)), "allowRead": dirs, "allowWrite": onlyIf(!readOnly, dirs),
 				"denyWrite": append(append(scratchPaths(copilotCacheDir()), onlyIf(readOnly, dirs)...), gitDeny...)},
 		}})
 		args = append(args, "--settings", string(settings))
@@ -241,53 +246,78 @@ func onlyIf(ok bool, dirs []string) []string {
 	return []string{}
 }
 
-// scratchPaths: Scratch dobesedno in kanonično (za denyRead peskovnika Claude).
+// scratchPaths: Scratch (ali mapa nastavitev) dobesedno in kanonično (za denyRead peskovnika Claude, prepovedi orodij).
 func scratchPaths(scratch string) []string {
 	if scratch == "" {
 		return nil
 	}
 	out := []string{scratch}
-	if r, err := filepath.EvalSymlinks(scratch); err == nil && r != scratch {
+	if r, err := finalPath(scratch); err == nil && r != scratch { // #83: na Windows tudi stičišča
 		out = append(out, r)
 	}
 	return out
 }
 
-// scratchOverlaps (H1): dovoljene mape, ki vsebujejo Scratch ali so v njem (kanonično).
+// scratchOverlaps (H1): dovoljene mape, ki vsebujejo Scratch ali so v njem (kanonično). #83: mapa, ki je ni mogoče
+// razrešiti (ali Scratch), šteje kot prekrivanje.
 func scratchOverlaps(allowed []string, scratch string) []string {
 	if scratch == "" {
 		return nil
 	}
-	sc := realPath(scratch)
+	sc, err := realPath(scratch)
 	var bad []string
 	for _, a := range allowed {
-		if ra := realPath(a); under(sc, ra) || under(ra, sc) {
+		if ra, err2 := realPath(a); err != nil || err2 != nil || under(sc, ra) || under(ra, sc) {
 			bad = append(bad, a)
 		}
 	}
 	return bad
 }
 
-// realPath: kanonično; za pot, ki je še ni, prek najbližje obstoječe nadrejene mape.
-func realPath(p string) string {
+// realPath (#83): kanonična pot (finalPath: na Windows tudi stičišča, preslikan pogon → UNC); za pot, ki je še ni, prek
+// najbližje obstoječe nadrejene mape. Navzgor le, ko pot res ne obstaja; vsaka druga napaka (dostop zavrnjen, visoča
+// povezava, ime 8.3 brez dolge oblike) je napaka: varovala zavrnejo, ne primerjajo sestavljene poti. Pot na pogonu, ki
+// ga ni (odklopljen disk z dovoljeno mapo), ostane, kot je.
+func realPath(p string) (string, error) {
 	p, rest := filepath.Clean(p), ""
 	for {
-		if r, err := filepath.EvalSymlinks(p); err == nil {
-			return filepath.Join(r, rest)
+		r, err := finalPath(p)
+		if err == nil {
+			return filepath.Join(r, rest), nil
+		}
+		if _, lerr := os.Lstat(p); !errors.Is(lerr, fs.ErrNotExist) {
+			return "", fmt.Errorf("cannot resolve the real path of %s: %v", p, err)
 		}
 		parent := filepath.Dir(p)
-		if parent == p {
-			return filepath.Join(p, rest)
+		if parent == p { // nič ne obstaja (pogon ni priklopljen): ni povezave, ki bi ji sledili
+			return filepath.Join(p, rest), nil
 		}
 		rest, p = filepath.Join(filepath.Base(p), rest), parent
 	}
 }
 
+// sameReal: a in b sta po realPath ista pot (samePath); napaka = ne.
+func sameReal(a, b string) bool {
+	ra, err1 := realPath(a)
+	rb, err2 := realPath(b)
+	return err1 == nil && err2 == nil && samePath(ra, rb)
+}
+
 // scratchProblem (M1): Scratch ni koren diska, domača mapa ali mapa nad njo, začasna mapa ali mapa v dovoljeni mapi
-// agentov (ali obratno): tam bi agenti brali kopije drugih naprav. "" = v redu.
+// agentov (ali obratno): tam bi agenti brali kopije drugih naprav. "" = v redu. #83: nerazrešljiva pot = zavrnjeno.
 func scratchProblem(scratch string, allowed []string) string {
-	real := realPath
+	var bad error
+	real := func(p string) string {
+		r, err := realPath(p)
+		if err != nil && bad == nil {
+			bad = err
+		}
+		return r
+	}
 	sc := real(scratch)
+	if bad != nil {
+		return bad.Error()
+	}
 	if filepath.Dir(sc) == sc {
 		return "it is a disk root"
 	}
@@ -303,6 +333,9 @@ func scratchProblem(scratch string, allowed []string) string {
 		if ra := real(a); under(sc, ra) || under(ra, sc) {
 			return "it is inside or contains the allowed folder " + a
 		}
+	}
+	if bad != nil {
+		return bad.Error()
 	}
 	return ""
 }

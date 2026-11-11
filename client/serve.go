@@ -533,8 +533,17 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	bad := append(scratchOverlaps(c.AllowedFolders, c.Scratch), copilotCacheOverlaps(c.AllowedFolders)...)
 	slices.Sort(bad)
 	if bad = slices.Compact(bad); len(bad) > 0 { // mapa je lahko v obeh
-		offReason = "the allowed folder(s) " + strings.Join(bad, ", ") + " contain or are inside the scratch folder " + c.Scratch +
-			" or Copilot's package cache " + copilotCacheDir() + ": they are left out; save the allowed folders without them (settings page → Claude CLI → Allowed folders, or minigw gw claude --folders …), then turn Claude CLI and Codex on"
+		var unresolved []string // #83: nerazrešljiva mapa (dostop zavrnjen, NAS brez povezave) šteje kot prekrivanje
+		for _, f := range append([]string{c.Scratch, copilotCacheDir()}, bad...) {
+			if _, err := realPath(f); err != nil {
+				unresolved = append(unresolved, err.Error())
+			}
+		}
+		why := " contain or are inside the scratch folder " + c.Scratch + " or Copilot's package cache " + copilotCacheDir()
+		if len(unresolved) > 0 {
+			why += ", or cannot be checked (" + strings.Join(unresolved, "; ") + ")"
+		}
+		offReason = "the allowed folder(s) " + strings.Join(bad, ", ") + why + ": they are left out; save the allowed folders without them (settings page → Claude CLI → Allowed folders, or minigw gw claude --folders …), then turn Claude CLI and Codex on"
 		c.AllowedFolders = slices.DeleteFunc(slices.Clone(c.AllowedFolders), func(f string) bool { return slices.Contains(bad, f) })
 		c.ClaudeDisabled, c.Codex.Enabled = true, false
 	}
@@ -626,7 +635,7 @@ func checkAgent(c *serveConfig, cfgDir string) ([]string, error) {
 	}
 	if bad := scratchOverlaps(c.AllowedFolders, c.Scratch); len(bad) > 0 { // H1: PATCH, minigw gw claude --folders, serve.json
 		return nil, errors.New("allowed folder " + bad[0] + " contains or is inside the scratch folder " + c.Scratch +
-			" (agents could change the gateway's mirrors and other devices' copies): choose another folder")
+			", or cannot be checked (agents could change the gateway's mirrors and other devices' copies): choose another folder")
 	}
 	if bad := copilotCacheOverlaps(c.AllowedFolders); len(bad) > 0 { // #26
 		return nil, errors.New("allowed folder " + bad[0] + " contains or is inside Copilot's package cache " + copilotCacheDir() +
@@ -691,8 +700,8 @@ func checkFolder(f, cfgDir string) (string, error) {
 		return "", errors.New("folder: " + err.Error())
 	}
 	finCfg, err := finalPath(cfgDir)
-	if err != nil {
-		finCfg = realCfg
+	if err != nil { // #83: brez nadomestka
+		return "", errors.New("config folder: " + err.Error())
 	}
 	for _, a := range []string{abs, real, fin} {
 		for _, d := range []string{cfgDir, realCfg, finCfg} {

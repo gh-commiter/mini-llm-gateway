@@ -90,8 +90,8 @@ func gitWrapRefusal(d string, args []string, env func(string) string) string {
 		}
 		p = up
 	}
-	rd, err1 := filepath.EvalSymlinks(deps)
-	rp, err2 := filepath.EvalSymlinks(p)
+	rd, err1 := realPath(deps) // #83: na Windows tudi stičišča
+	rp, err2 := realPath(p)
 	if sep || err1 != nil || err2 != nil || !under(rp, rd) {
 		return "create repositories only under $MINIGW_DEPS (" + deps + "), e.g. cmake -DFETCHCONTENT_BASE_DIR=\"$MINIGW_DEPS/cmake\", swift build --scratch-path \"$MINIGW_DEPS/swiftpm\""
 	}

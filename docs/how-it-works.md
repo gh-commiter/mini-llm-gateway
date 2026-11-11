@@ -230,6 +230,28 @@ Details:
     can confirm (error 1223). Codex keeps the real `~\.codex` (its ChatGPT
     login refreshes itself) and gets the run's folder under Scratch as `TEMP`/`TMP`; the opt-in API key is passed as
     `CODEX_API_KEY`.
+- **Real paths in the gateway's checks (`minigw serve`, #83).** Every check that compares folders (an allowed
+  folder in or around Scratch or Copilot's package cache, the minigw install folder inside a folder an agent can
+  change, Scratch moves and owners, the Foundry Local port check, worktree repository roots) uses the folder's real
+  path: on Windows `GetFinalPathNameByHandle`, which follows directory junctions (Go's `EvalSymlinks` does not since
+  Go 1.23), gives the long name for an 8.3 short name, the `\\server\share` form for a mapped network drive and the
+  local folder for a `subst` drive; elsewhere `EvalSymlinks`. A path that does not exist yet
+  is resolved through its nearest existing parent. Any other failure (access denied, a link or junction whose target
+  is gone, a short name that cannot be expanded) fails closed: the folder counts as overlapping Scratch, as writable
+  by agents, or the setting is refused, never compared as an unresolved path. A `\\localhost\C$\…` path is a
+  different string from `C:\…` and is not matched to it; do not use admin-share paths for Scratch or allowed folders.
+- **Config folder through aliases (#83).** The gateway's config folder (`admin.secret`, `serve.json`, keys) is denied
+  by its given and its real path in Claude CLI's tool rules (`Read`/`Edit`/`Write(<config>/**)`), in the Claude
+  sandbox's `denyRead` (macOS, Linux) and in the Windows sandbox's denied paths. A link, junction or hard link to it
+  inside an allowed folder is a different matter per agent:
+  - in a sandbox (the Windows MXC box, bwrap, Seatbelt) the deny applies to the folder itself, so a path through a
+    junction or link into the config folder is denied; a hard link to a file in it can only be made by a process that
+    can already reach the file, which a sandboxed agent cannot;
+  - Claude CLI's tool rules (and Grok's `--deny`) are defence in depth only: they match paths as the CLI sees them.
+    The boundary is the sandbox's deny (MXC denied paths, bwrap, Seatbelt `denyRead`);
+  - outside a sandbox (Codex on Windows always, any agent with **Allow commands without a sandbox**) a path deny
+    cannot help: such an agent can read every file this user can, including the config folder. That is what the
+    switch says; the tool rules are defence in depth only.
 - How a nested clone is read after the run: on the Mac the path is checked once and then never resolved again (its
   objects are opened without following links, and git's sandbox may read only that real path), so a folder swapped
   for a link afterwards is refused. On Linux the clone folder is opened once and bound into a bwrap sandbox for git, so

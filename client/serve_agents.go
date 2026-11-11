@@ -347,8 +347,10 @@ func grokArgs(cwd, promptFile, cfgDir string, agent bool, model string, write bo
 	if model != "" {
 		a = append(a, "-m", model)
 	}
-	cfg := filepath.ToSlash(cfgDir) + "/**"
-	a = append(a, "--deny", "Read("+cfg+")", "--deny", "Edit("+cfg+")", "--deny", "Write("+cfg+")")
+	for _, d := range scratchPaths(cfgDir) { // #83: dobesedno in kanonično
+		cfg := filepath.ToSlash(d) + "/**"
+		a = append(a, "--deny", "Read("+cfg+")", "--deny", "Edit("+cfg+")", "--deny", "Write("+cfg+")")
+	}
 	if agent && write {
 		a = append(a, "--sandbox", "workspace", "--always-approve")
 	} else {
@@ -1068,7 +1070,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			var cgits, cdeny []string
 			cpath := ""
 			if inTree && runtime.GOOS != "windows" {
-				cgits, cpath, cdeny = gits, agentPath(gw), []string{s.cfgDir}
+				cgits, cpath, cdeny = gits, agentPath(gw), scratchPaths(s.cfgDir) // #83
 			}
 			args := codexArgs(dir, append(extra, deps...), agent, out, model, write, ac.Network, resume, cgits, cpath, cdeny)
 			if runtime.GOOS == "windows" { // #68: nikoli namestitev z UAC iz teka prehoda

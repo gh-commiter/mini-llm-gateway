@@ -231,9 +231,13 @@ func (c serveConfig) askOnPath(dir string) bool {
 	return runtime.GOOS == "windows" && !agentWritable(filepath.Dir(minigwExe()), append(slices.Clone(c.AllowedFolders), dir, c.Scratch))
 }
 
-// agentWritable: mapa d je v eni od map (kanonično), ki jih agent lahko spreminja.
+// agentWritable: mapa d je v eni od map (kanonično), ki jih agent lahko spreminja. #83: nerazrešljiva pot = pisljiva.
 func agentWritable(d string, folders []string) bool {
-	return slices.ContainsFunc(folders, func(f string) bool { return f != "" && under(realPath(d), realPath(f)) })
+	rd, err := realPath(d)
+	return slices.ContainsFunc(folders, func(f string) bool {
+		rf, err2 := realPath(f)
+		return f != "" && (err != nil || err2 != nil || under(rd, rf))
+	})
 }
 
 // askNote: navodilo agentu z vrati izvajanja; onPath (askOnPath): »minigw« iz PATH izvajanja, sicer absolutna pot.
