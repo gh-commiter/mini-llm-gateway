@@ -103,7 +103,7 @@ private func loginLocked() -> Bool {
 /// zaklep, po uspehu pa, da keychain res ni več zaklenjen.
 private func unlockLoginKeychain(ssh: Bool) {
     guard let kc = Keychain.loginKeychain() else { return }
-    err.write(Data("The login keychain is locked\(ssh ? " in this SSH session" : ""). Mac password for \(userName(getuid())) (to unlock it): ".utf8))
+    try? err.write(contentsOf: Data("The login keychain is locked\(ssh ? " in this SSH session" : ""). Mac password for \(userName(getuid())) (to unlock it): ".utf8))
     var buf = [CChar](repeating: 0, count: 1024)
     let got = readpassphrase("", &buf, buf.count, RPP_REQUIRE_TTY) != nil
     let locked = loginLocked()  // med vnosom gesla ga je morda odklenil drug proces
@@ -114,7 +114,7 @@ private func unlockLoginKeychain(ssh: Bool) {
     guard got else { fail("no password: the keychain stays locked") }
     if let failure { fail(failure) }
     guard locked else {
-        err.write(Data("The login keychain was unlocked meanwhile; the password was checked but not needed.\n".utf8))
+        try? err.write(contentsOf: Data("The login keychain was unlocked meanwhile; the password was checked but not needed.\n".utf8))
         return
     }
     if loginLocked() { fail("the keychain stays locked") }
@@ -429,7 +429,7 @@ func routerCommand(_ argv: [String]) {
         if pos[1] == "POST" || pos[1] == "PATCH" {
             do { body = try AdminClient.apiBody(FileHandle.standardInput.readData(ofLength: 1 << 20)) } catch { fail("minigw gw api: the body on stdin is not JSON") }
         }
-        out.write(a.send(pos[1], pos[2], body) + Data("\n".utf8))
+        try? out.write(contentsOf: a.send(pos[1], pos[2], body) + Data("\n".utf8))
 
     case "settings":  // terminal UI (Go, minigw-tui): kliče nazaj ta minigw (gw api), skrivnosti ne vidi
         need(1, 1)
@@ -461,7 +461,7 @@ func helperSignatureProblem(_ path: String) -> String? {
     var me: SecCode?, meStatic: SecStaticCode?
     if SecCodeCopySelf([], &me) != errSecSuccess || me.map({ SecCodeCopyStaticCode($0, [], &meStatic) }) != errSecSuccess
         || meStatic.map({ valid($0, team) }) != errSecSuccess {
-        err.write(Data("minigw: warning: this minigw is a development build (not signed by Mini Gateway): \(path) is started without a signature check\n".utf8))
+        try? err.write(contentsOf: Data("minigw: warning: this minigw is a development build (not signed by Mini Gateway): \(path) is started without a signature check\n".utf8))
         return nil
     }
     var code: SecStaticCode?

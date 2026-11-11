@@ -6,6 +6,7 @@
 - Fixed: `minigw --continue` (`-c`) continues the last conversation minigw ran in this folder (as `--resume <id>`), as documented. Before, `claude` got `-c` and continued the newest Claude Code conversation in the folder, also one you had without minigw, and sent its transcript to the gateway. With no earlier minigw conversation in the folder, minigw starts a new one and says so. In worktree mode, `--continue` now keeps the conversation's branch name, like `--resume <id>`. Both clients.
 - Fixed: while an agent was starting, the gateway could, rarely, see its own Scratch folder as used by another gateway and refuse requests (also right after a settings change). Mac app and `minigw serve` on macOS and Linux.
 - Fixed (Mac `minigw`): with several gateway profiles, a request could, rarely, get 502 "gateway … is not reachable" for up to 30 s.
+- Fixed (`minigw` on all systems): `minigw claude -p` no longer hangs after Claude Code ends when an unread pipe holds its output; it ends at most about 2 s later and prints the branch line. With a paused terminal (Ctrl+S) the branch line appears when the terminal resumes. While nobody reads the output, Windows and Linux `minigw` hold Claude Code back like a plain pipe; the Mac `minigw` keeps up to 16 MB of the answer (and 1 MB of tool lines on stderr) waiting, then drops the waiting output, prints "minigw: output dropped: nobody read stdout (over 16 MB waiting)" and exits with 1. On the Mac, `minigw` no longer crashes when its error output is closed (`2>&-`).
 
 ## 0.5.24
 
