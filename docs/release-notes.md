@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Fixed: while an agent was starting, the gateway could, rarely, see its own Scratch folder as used by another gateway and refuse requests (also right after a settings change). Mac app and `minigw serve` on macOS and Linux.
+- Fixed (Mac `minigw`): with several gateway profiles, a request could, rarely, get 502 "gateway … is not reachable" for up to 30 s.
+
 ## 0.5.24
 
 - Security: minigw (Windows and Linux) is built with Go 1.27.4, which fixes an HTTP server crash in the Go standard library (GO-2026-6859).
