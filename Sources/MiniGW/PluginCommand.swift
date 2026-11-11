@@ -76,7 +76,7 @@ func pluginDataSafe(_ d: String) -> Bool {
 /// L5: kot root bi minigw pisal v korenove ~/.claude in povezave.
 func refuseRoot(_ cmd: String) { if geteuid() == 0 { fail("run minigw \(cmd) as yourself, not as root") } }
 
-func warn(_ s: String) { err.write(Data(("minigw: " + s + "\n").utf8)) }
+func warn(_ s: String) { try? err.write(contentsOf: Data(("minigw: " + s + "\n").utf8)) }
 
 /// bin/minigw vtičnika → self; nil = self je že minigw vtičnika (prenesen, brez namestitve).
 func pluginLink(_ self: String) throws -> String? {
@@ -255,7 +255,7 @@ func uninstallCommand(_ a: [String]) -> Never {
     say("Not removed: minigw itself (\(selfPath())): " + how)
     if !yes {
         guard isatty(0) == 1 else { fail("stdin is not a terminal: confirm with minigw uninstall --yes") }
-        FileHandle.standardOutput.write(Data("Remove them? [y/N] ".utf8))
+        try? FileHandle.standardOutput.write(contentsOf: Data("Remove them? [y/N] ".utf8))
         guard ["y", "yes"].contains((readLine() ?? "").trimmingCharacters(in: .whitespaces).lowercased()) else { say("Nothing removed"); exit(0) }
     }
     var failed = false

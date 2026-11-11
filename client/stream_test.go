@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -185,5 +187,123 @@ func TestStreamTextSpoofAndSize(t *testing.T) {
 	}
 	if d := time.Since(start); d > 5*time.Second {
 		t.Errorf("200000 deltas took %v", d)
+	}
+}
+
+// blockWriter: pisanje visi, dokler test ne sprosti release (stdout, ki ga nihče ne bere).
+type blockWriter struct {
+	entered, release chan struct{}
+	n                atomic.Int32
+}
+
+func (b *blockWriter) Write(p []byte) (int, error) {
+	b.n.Add(1)
+	b.entered <- struct{}{}
+	<-b.release
+	return len(p), nil
+}
+
+// #80: close ne čaka na pisanje, ki visi; po close se novo pisanje ne začne (tudi ne tisto, ki je čakalo na mu),
+// pisanje v teku se konča.
+func TestGateCloseBlockedWrite(t *testing.T) {
+	b := &blockWriter{entered: make(chan struct{}, 2), release: make(chan struct{})}
+	g := &gate{w: b}
+	first, second := make(chan struct{}), make(chan struct{})
+	go func() { g.Write([]byte("a")); close(first) }()
+	<-b.entered
+	go func() { g.Write([]byte("b")); close(second) }() // čaka na mu
+	closed := make(chan struct{})
+	go func() { g.close(); close(closed) }()
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("close waited on a blocked write")
+	}
+	close(b.release)
+	for _, c := range []chan struct{}{first, second} {
+		select {
+		case <-c:
+		case <-time.After(time.Second):
+			t.Fatal("write did not finish after release")
+		}
+	}
+	g.Write([]byte("c"))
+	if n := b.n.Load(); n != 1 {
+		t.Errorf("%d writes reached the writer, want 1 (the one in progress)", n)
+	}
+}
+
+// errWriter: zaprt stdout/stderr (EPIPE, EBADF).
+type errWriter struct{ n int }
+
+func (e *errWriter) Write(p []byte) (int, error) { e.n++; return 0, errors.New("broken pipe") }
+
+func TestGateWriteError(t *testing.T) {
+	e := &errWriter{}
+	g := &gate{w: e}
+	if n, err := g.Write([]byte("a")); n != 1 || err != nil {
+		t.Errorf("write error reached streamText: %d %v", n, err)
+	}
+	g.Write([]byte("b"))
+	if e.n != 1 {
+		t.Errorf("%d writes after the first error, want 1", e.n)
+	}
+}
+
+// #80: stdout, ki ga nihče ne bere (polna cev), in zaprt stdout/stderr ne zadržijo minigw za claude; vrstica o veji gre
+// na stderr za odgovorom.
+func TestRunClaudeStalledOutput(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake claude is a shell script")
+	}
+	bin := t.TempDir()
+	big := filepath.Join(bin, "out.json") // več kot medpomnilnik cevi (64 KiB Linux/macOS)
+	os.WriteFile(big, []byte(`{"type":"assistant","message":{"content":[{"type":"text","text":"`+strings.Repeat("a", 1<<20)+`"}]}}`+"\n"+
+		`{"type":"result","is_error":false,"result":"x"}`+"\n"), 0o644)
+	os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\ncat '"+big+"'\n"), 0o755)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	stdout, stderr := os.Stdout, os.Stderr
+	t.Cleanup(func() { os.Stdout, os.Stderr = stdout, stderr })
+
+	run := func(name string) int {
+		t.Helper()
+		held.Lock()
+		held.on = true
+		held.lines = []string{"agent work is on branch minigw/claude-0123abcd-1"}
+		held.Unlock()
+		code := make(chan int, 1)
+		go func() { c := runClaude([]string{"-p", "x"}, nil, true); releaseHeld(); code <- c }()
+		select {
+		case c := <-code:
+			return c
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%s: minigw did not end", name)
+			return -1
+		}
+	}
+
+	// polna cev na stdout, ki je nihče ne prazni; stderr se bere
+	or, ow, _ := os.Pipe()
+	er, ew, _ := os.Pipe()
+	t.Cleanup(func() { or.Close() }) // gorutina, ki še visi na pisanju, dobi EPIPE
+	errOut := make(chan string)
+	go func() { b, _ := io.ReadAll(er); errOut <- string(b) }()
+	os.Stdout, os.Stderr = ow, ew
+	if c := run("unread stdout"); c != 0 {
+		t.Errorf("unread stdout: exit %d", c)
+	}
+	os.Stdout, os.Stderr = stdout, stderr
+	ew.Close()
+	if e := <-errOut; !strings.HasSuffix(e, "minigw: agent work is on branch minigw/claude-0123abcd-1\n") {
+		t.Errorf("branch line not last on stderr: %q", e)
+	}
+
+	// stdout in stderr brez bralca
+	cr, cw, _ := os.Pipe() // | head: bralec je odšel (EPIPE)
+	cr.Close()
+	t.Cleanup(func() { cw.Close() })
+	os.Stdout, os.Stderr = cw, cw
+	if c := run("closed stdout and stderr"); c != 0 {
+		t.Errorf("closed stdout and stderr: exit %d", c)
 	}
 }

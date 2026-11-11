@@ -44,7 +44,7 @@ public enum WebDAV {
     /// razvidno, da je zavrnila ta zaščita in ne peskovnik agenta. Le relativna pot v deljeni mapi.
     static func refuse(_ rel: [String]) -> DAVResponse {
         let p = rel.joined(separator: "/")
-        if let line = refused.withLock({ $0.line(p) }) { FileHandle.standardError.write(Data(line.utf8)) }
+        if let line = refused.withLock({ $0.line(p) }) { try? FileHandle.standardError.write(contentsOf: Data(line.utf8)) }
         return DAVResponse(403)
     }
 

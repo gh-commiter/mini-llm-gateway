@@ -6,11 +6,14 @@ import os
 import RouterCore
 import Security
 
+// L3 (#80): manjkajoči fd 0–2 (2>&-) postane /dev/null, da ga ne dobi vtičnica ali datoteka (diagnostika v datoteko).
+for fd: Int32 in 0...2 where fcntl(fd, F_GETFD) == -1 { _ = open("/dev/null", fd == 0 ? O_RDONLY : O_WRONLY) }
+
 let service = "dev.trojar.minigateway.cli"
 // Keychain brez dialogov: vnos, ki minigw ne zaupa (drug podpis), vrne errSecInteractionNotAllowed in jasno napako.
 SecKeychainSetUserInteractionAllowed(false)
 let out = FileHandle.standardOutput, err = FileHandle.standardError
-func say(_ s: String) { out.write(Data((s + "\n").utf8)) }
+func say(_ s: String) { try? out.write(contentsOf: Data((s + "\n").utf8)) }
 /// Besedilo routerja brez kontrolnih znakov (razen \n), da ne krmili terminala.
 func clean(_ s: String) -> String {
     String(String.UnicodeScalarView(s.unicodeScalars.filter {
@@ -20,7 +23,7 @@ func clean(_ s: String) -> String {
 }
 /// Besedilo prehoda v eni vrstici: brez znaka za novo vrstico, da ne ponaredi vrstice »Device:« ali »Status:«.
 func oneLine(_ s: String) -> String { clean(s).replacingOccurrences(of: "\n", with: " ") }
-func fail(_ s: String, code: Int32 = 1) -> Never { err.write(Data(("minigw: " + s + "\n").utf8)); exit(code) }
+func fail(_ s: String, code: Int32 = 1) -> Never { try? err.write(contentsOf: Data(("minigw: " + s + "\n").utf8)); exit(code) }
 
 // MARK: shranjena povezava (Keychain ukaza; ne vsebuje je nobena datoteka)
 
@@ -91,13 +94,13 @@ func loadProfile(_ name: String, skip: Bool = false) -> Connection? {
     let st = SecItemCopyMatching(q as CFDictionary, &item)
     let again = "run minigw disconnect --name \(name), then minigw connect again"
     if st == errSecInteractionNotAllowed || st == errSecAuthFailed {
-        if skip { err.write(Data("minigw: profile \(name) left out: macOS would ask before minigw reads it from the Keychain\n".utf8)); return nil }
+        if skip { try? err.write(contentsOf: Data("minigw: profile \(name) left out: macOS would ask before minigw reads it from the Keychain\n".utf8)); return nil }
         fail("macOS would ask before minigw reads profile \(name) (the Keychain is locked, or the profile was saved by a minigw with another signature): unlock the Keychain, or \(again)")
     }
     if st == errSecItemNotFound { return nil }
     // profil v rabi, ki ga ni mogoče prebrati: napaka, ne tiho naslednji profil
     guard st == errSecSuccess, let d = item as? Data, let c = try? JSONDecoder().decode(Connection.self, from: d) else {
-        if skip { err.write(Data("minigw: profile \(name) left out: it cannot be read from the Keychain (OSStatus \(st))\n".utf8)); return nil }
+        if skip { try? err.write(contentsOf: Data("minigw: profile \(name) left out: it cannot be read from the Keychain (OSStatus \(st))\n".utf8)); return nil }
         fail("cannot read profile \(name) from the Keychain (OSStatus \(st)): \(again)")
     }
     return c
@@ -368,7 +371,7 @@ final class ShareClient: @unchecked Sendable {
         }
     }
 
-    private func note(_ s: String) { err.write(Data(("minigw: " + oneLine(s) + "\n").utf8)) }
+    private func note(_ s: String) { try? err.write(contentsOf: Data(("minigw: " + oneLine(s) + "\n").utf8)) }
 
     private func noteAfter(_ s: String) {
         let waits = held.withLock { h in
@@ -388,7 +391,7 @@ final class ShareClient: @unchecked Sendable {
                   let top = Worktree.toplevel(root.path), Worktree.nestedInside(top: top, p), Worktree.delivered(root: top + "/" + p, branch: b, base: base) {
             branchNote(b, base, nested: p)  // A: ugnezden repozitorij v native (pot in veja preverjena tu)
         } else {
-            err.write(Data((Profiles.gatewayNote(n?["message"] as? String ?? "") + "\n").utf8))
+            try? err.write(contentsOf: Data((Profiles.gatewayNote(n?["message"] as? String ?? "") + "\n").utf8))
         }
         return DAVResponse(200)
     }
@@ -601,18 +604,18 @@ func runRemote(_ c: Connection, _ argv: [String], _ proof: [String: String]) -> 
                 var d = Data()
                 for try await b in bytes { d.append(b); if d.count > 1 << 16 { break } }
                 let msg = ((try? JSONSerialization.jsonObject(with: d) as? [String: Any])?["error"] as? [String: Any])?["message"] as? String
-                err.write(Data("minigw: \(oneLine(msg ?? "the router answered HTTP \((resp as? HTTPURLResponse)?.statusCode ?? 0)"))\n".utf8))
+                try? err.write(contentsOf: Data("minigw: \(oneLine(msg ?? "the router answered HTTP \((resp as? HTTPURLResponse)?.statusCode ?? 0)"))\n".utf8))
                 return
             }
             let (ttyOut, ttyErr) = (isatty(1) == 1, isatty(2) == 1)  // terminal: le barve, brez drugih zaporedij routerja
             var (fOut, fErr) = (Native.TerminalFilter(), Native.TerminalFilter())
             for try await line in bytes.lines {
                 let v = String(line.dropFirst(2))
-                if line.hasPrefix("o "), let d = Data(base64Encoded: v) { out.write(ttyOut ? fOut.feed(d) : d) }
-                else if line.hasPrefix("e "), let d = Data(base64Encoded: v) { err.write(ttyErr ? fErr.feed(d) : d) }
+                if line.hasPrefix("o "), let d = Data(base64Encoded: v) { try? out.write(contentsOf: ttyOut ? fOut.feed(d) : d) }
+                else if line.hasPrefix("e "), let d = Data(base64Encoded: v) { try? err.write(contentsOf: ttyErr ? fErr.feed(d) : d) }
                 else if line.hasPrefix("x "), let n = Int32(v) { box.code = n; break }  // zadnji okvir: ne čaka na EOF povezave
             }
-        } catch { err.write(Data("minigw: lost the connection to the gateway: \(error.localizedDescription)\n".utf8)) }
+        } catch { try? err.write(contentsOf: Data("minigw: lost the connection to the gateway: \(error.localizedDescription)\n".utf8)) }
     }
     done.wait()
     return box.code
@@ -714,14 +717,14 @@ func sharedFolders() -> [SharedFolders.Entry] {
 var refusedShares: Set<String> = []
 func savedShare(_ cwd: String) -> SharedFolders.Entry? {
     let (e, refused) = SharedFolders.lookupAllowed(sharedFolders(), cwd: cwd)
-    if let refused, refusedShares.insert(refused).inserted { FileHandle.standardError.write(Data((refused + "\n").utf8)) }
+    if let refused, refusedShares.insert(refused).inserted { try? FileHandle.standardError.write(contentsOf: Data((refused + "\n").utf8)) }
     return e
 }
 
 /// H1 (#84): deli se cwd sam (root = cwd), zato ga shareRefusal preveri, ko bi bil deljen; zavrnitev pove enkrat.
 func cwdShareAllowed(_ cwd: String) -> Bool {
     guard let why = SharedFolders.shareRefusal(cwd) else { return true }
-    if refusedShares.insert(cwd).inserted { FileHandle.standardError.write(Data("minigw: not sharing \(cwd) (\(why))\n".utf8)) }
+    if refusedShares.insert(cwd).inserted { try? FileHandle.standardError.write(contentsOf: Data("minigw: not sharing \(cwd) (\(why))\n".utf8)) }
     return false
 }
 
@@ -791,7 +794,7 @@ func refuseUnsafeClaudeFlags(info: Bool = false) {
     var st = stat()
     if fstat(0, &st) == 0, st.st_mode & S_IFMT != S_IFCHR {  // terminal, /dev/null: ne bere
         let wait: Int32 = Profiles.promptWords(args).isEmpty ? 0 : 3000, read = Profiles.readStdin(fd: 0, waitMs: wait)
-        if let n = Profiles.stdinNote(read: read, waitMs: wait, mode: st.st_mode) { FileHandle.standardError.write(Data((n + "\n").utf8)) }
+        if let n = Profiles.stdinNote(read: read, waitMs: wait, mode: st.st_mode) { try? FileHandle.standardError.write(contentsOf: Data((n + "\n").utf8)) }
         claudeStdin = read ?? Data()
     }
     let stdin = String(decoding: claudeStdin ?? Data(), as: UTF8.self)
@@ -945,7 +948,7 @@ case "models":
             case .success(let c): (l, why) = fetchModels(c, p.name)
             case .failure(let e): why = e.message
             }
-            if l == nil { err.write(Data("minigw: gateway \(p.name) (\(p.conn.url)): \(why); its models are left out\n".utf8)) }
+            if l == nil { try? err.write(contentsOf: Data("minigw: gateway \(p.name) (\(p.conn.url)): \(why); its models are left out\n".utf8)) }
             return l
         }
         guard let m = Profiles.merge(lists, names: ps.map(\.name)) else { fail("no gateway can list models (minigw status)") }
@@ -1067,7 +1070,7 @@ let wantShare = (shareEnv == "1"
         && (SharedFolders.autoShare(cwd) || savedShare(cwd) != nil))) && cwdShareAllowed(cwd)  // H1 (#84), tudi MINIGW_SHARE=1
 let mode = SharedFolders.mode(flag: workFlag, saved: savedShare(cwd), readOnly: readOnly)
 if let asked = workFlag ?? savedShare(cwd)?.work, asked.hasPrefix("native") || asked == "worktree", mode.work != asked {
-    err.write(Data("minigw: \(asked) mode cannot be read-only; sharing the folder read-only instead\n".utf8))
+    try? err.write(contentsOf: Data("minigw: \(asked) mode cannot be read-only; sharing the folder read-only instead\n".utf8))
 }
 let work = mode.work
 readOnly = mode.readOnly
@@ -1087,7 +1090,7 @@ guard streamed || claudeStdin != nil || !proxies.isEmpty || (wantShare && !sid.i
 }
 
 if !wantShare && remoteRouter && shareEnv != "0" {
-    err.write(Data("minigw: \(cwd) is not shared with the gateway, so agent models (Codex, Claude CLI, Grok) cannot see it; to share it run: minigw share add\n".utf8))
+    try? err.write(contentsOf: Data("minigw: \(cwd) is not shared with the gateway, so agent models (Codex, Claude CLI, Grok) cannot see it; to share it run: minigw share add\n".utf8))
 }
 // Načini po vrsti (auto: native → worktree → sync); naslednji, če router prejšnjega ne sprejme.
 // auto: worktree le v korenu repozitorija; izrecni worktree tudi v nadrejenem.
@@ -1117,8 +1120,8 @@ let convKey = OSAllocatedUnfairLock<Worktree.Conv?>(initialState: nil)
 var share = ShareClient(c, session: sid, root: URL(fileURLWithPath: cwd), readOnly: readOnly, kind: "direct")
 var registered = false
 if wantShare, !sid.isEmpty {
-    if work == "worktree", top == nil { err.write(Data("minigw: \(cwd) is not in a git repository; worktree mode is not possible\n".utf8)) }
-    if let noSnapshot { err.write(Data("minigw: \(noSnapshot); using \(tries[0])\n".utf8)) }
+    if work == "worktree", top == nil { try? err.write(contentsOf: Data("minigw: \(cwd) is not in a git repository; worktree mode is not possible\n".utf8)) }
+    if let noSnapshot { try? err.write(contentsOf: Data("minigw: \(noSnapshot); using \(tries[0])\n".utf8)) }
     (share, registered) = registerShare(c, tries: tries, quiet: false)
 }
 let capped = share.capped  // pred start: ponovna registracija ga lahko prepiše
@@ -1128,16 +1131,16 @@ if !wantShare || sid.isEmpty {
     if share.worktree { share.conv = conversation(share.top); share.gateway = saved.url }
     share.start()
     if share.native && share.branches {
-        err.write(Data("minigw: \(cwd) is a folder of \(routerHost) (SMB): agent models work there in clones of this git repository, each on its own branch minigw/… (native; --minigw-work=native-direct = in the folder itself)\n".utf8))
+        try? err.write(contentsOf: Data("minigw: \(cwd) is a folder of \(routerHost) (SMB): agent models work there in clones of this git repository, each on its own branch minigw/… (native; --minigw-work=native-direct = in the folder itself)\n".utf8))
     } else if share.native {
-        err.write(Data("minigw: \(cwd) is a folder of \(routerHost) (SMB): agent models work in it there directly\(share.locked ? ", one writing agent at a time" : "")\(SharedFolders.cappedNative(capped)) (native)\n".utf8))
+        try? err.write(contentsOf: Data("minigw: \(cwd) is a folder of \(routerHost) (SMB): agent models work in it there directly\(share.locked ? ", one writing agent at a time" : "")\(SharedFolders.cappedNative(capped)) (native)\n".utf8))
     } else if share.worktree {
-        err.write(Data("minigw: agent models work in a clone of this git repository on \(routerHost); their work comes back as branch minigw/… (minigw prints the range to review; your uncommitted and untracked, not ignored files are sent too; worktree)\n".utf8))
+        try? err.write(contentsOf: Data("minigw: agent models work in a clone of this git repository on \(routerHost); their work comes back as branch minigw/… (minigw prints the range to review; your uncommitted and untracked, not ignored files are sent too; worktree)\n".utf8))
     } else {
-        err.write(Data("minigw: \(share.sync ? "syncing" : "sharing") \(cwd) \(readOnly ? "read-only" : SharedFolders.cappedMode(capped)) with \(routerHost) for agent models (--minigw-ro = read-only, MINIGW_SHARE=0 = off)\n".utf8))
+        try? err.write(contentsOf: Data("minigw: \(share.sync ? "syncing" : "sharing") \(cwd) \(readOnly ? "read-only" : SharedFolders.cappedMode(capped)) with \(routerHost) for agent models (--minigw-ro = read-only, MINIGW_SHARE=0 = off)\n".utf8))
     }
 } else {
-    err.write(Data("minigw: gateway did not accept the folder; Claude CLI models with tools will not see it\n".utf8))
+    try? err.write(contentsOf: Data("minigw: gateway did not accept the folder; Claude CLI models with tools will not see it\n".utf8))
 }
 
 /// Načini po vrsti (auto: native → worktree → sync); naslednji, če prehod prejšnjega ne sprejme.
@@ -1148,14 +1151,14 @@ if !wantShare || sid.isEmpty {
     for (i, w) in tries.enumerated() {
         sc = ShareClient(c, session: sid, root: URL(fileURLWithPath: cwd), readOnly: readOnly, kind: w, top: top)
         if sc.register() { return (sc, true) }
-        if i + 1 < tries.count, !quiet { err.write(Data("minigw: \(w) mode not available: \(sc.refusal); trying \(tries[i + 1])\n".utf8)) }
+        if i + 1 < tries.count, !quiet { try? err.write(contentsOf: Data("minigw: \(w) mode not available: \(sc.refusal); trying \(tries[i + 1])\n".utf8)) }
     }
     guard implicit, sc.refusal.hasPrefix("this gateway supports --minigw-work=") else { return (sc, false) }
     let t = Worktree.toplevel(cwd)
     let why = !readOnly && SharedFolders.repoRoot(t, cwd) ? t.map { Worktree.snapshotBlocker(top: $0) ?? "" } : nil
-    if let why, !why.isEmpty, !quiet { err.write(Data("minigw: \(why)\n".utf8)) }
+    if let why, !why.isEmpty, !quiet { try? err.write(contentsOf: Data("minigw: \(why)\n".utf8)) }
     let auto = why == "" ? ["worktree", "sync"] : ["sync"]
-    if !quiet { err.write(Data("minigw: the gateway has no folder mount; using \(auto[0]) mode (--minigw-work= to choose)\n".utf8)) }
+    if !quiet { try? err.write(contentsOf: Data("minigw: the gateway has no folder mount; using \(auto[0]) mode (--minigw-work= to choose)\n".utf8)) }
     return registerShare(c, tries: auto, quiet: quiet, top: t, implicit: false)
 }
 
@@ -1176,7 +1179,7 @@ if profiles.count > 1 {
         let rc: Connection
         switch routeResult(p) {
         case .success(let r): rc = r
-        case .failure(let e): err.write(Data("minigw: \(e.message); its models are left out\n".utf8)); continue
+        case .failure(let e): try? err.write(contentsOf: Data("minigw: \(e.message); its models are left out\n".utf8)); continue
         }
         targets.append(ProfileMux.Target(name: p.name, url: rc.url, token: rc.token))
         let remote = !p.conn.isLocal
@@ -1185,7 +1188,7 @@ if profiles.count > 1 {
         let name = p.name, gw = p.conn.url
         hooks[name] = {
             let (sc, ok) = registerShare(rc, tries: tries, quiet: true)
-            guard ok else { err.write(Data("minigw: gateway \(name) did not accept the folder: \(sc.refusal)\n".utf8)); return false }
+            guard ok else { try? err.write(contentsOf: Data("minigw: gateway \(name) did not accept the folder: \(sc.refusal)\n".utf8)); return false }
             if sc.worktree { sc.conv = conversation(sc.top); sc.gateway = gw }
             sc.start(); extras.add(sc)
             return true
@@ -1197,7 +1200,7 @@ if profiles.count > 1 {
         mux = m
         setenv("ANTHROPIC_BASE_URL", m.localURL, 1)
         setenv("ANTHROPIC_AUTH_TOKEN", m.secret, 1)
-        err.write(Data("minigw: \(targets.count) gateways; models of \(profiles[0].name) also without a suffix, the others as <model>@<profile> (minigw models)\n".utf8))
+        try? err.write(contentsOf: Data("minigw: \(targets.count) gateways; models of \(profiles[0].name) also without a suffix, the others as <model>@<profile> (minigw models)\n".utf8))
     }
 }
 
@@ -1247,16 +1250,17 @@ let forwarded = [SIGTERM, SIGHUP].map { sig in
     src.resume()
     return src
 }
-var printer = Profiles.StreamText(), streamBroken = false
+var printer = Profiles.StreamText(), streamBroken = false, outputDropped = false
 var status: Int32 = 0, exited = false
 if streamed {
     signal(SIGPIPE, SIG_IGN)  // L2: | head → EPIPE, vrstice o vejah gredo še na stderr (claude dobi privzetega: setsigdefault)
     close(outPipe[1])
     var buf = Data(), chunk = [UInt8](repeating: 0, count: 64 << 10), deadline = Date.distantFuture
+    let gate = Profiles.OutputGate(out: out, err: err)  // #80: stdout brez bralca ne ustavi branja in roka
     func show(_ line: Data) {
         let (o, e) = printer.line(line)
-        if !o.isEmpty { try? out.write(contentsOf: Data(o.utf8)) }
-        if !e.isEmpty { try? err.write(contentsOf: Data(e.utf8)) }
+        gate.out(o)
+        gate.err(e)
     }
     // vnuk, ki drži stdout, ne zadrži minigw: po koncu claude še največ 2 s branja
     reading: while !printer.done, Date() < deadline {
@@ -1271,7 +1275,7 @@ if streamed {
                 if printer.done { break reading }
             }
             if buf.count > Profiles.StreamText.lineMax {
-                err.write(Data("minigw: cannot read claude's output: line longer than \(Profiles.StreamText.lineMax >> 20) MB\n".utf8))
+                gate.err("minigw: cannot read claude's output: line longer than \(Profiles.StreamText.lineMax >> 20) MB\n")
                 streamBroken = true
                 break
             }
@@ -1280,9 +1284,14 @@ if streamed {
     }
     if !printer.done, !streamBroken { show(buf) }
     let (o, e) = printer.end()
-    try? out.write(contentsOf: Data(o.utf8))
-    if !e.isEmpty { try? err.write(contentsOf: Data(e.utf8)) }
-    if let w = printer.warning { try? err.write(contentsOf: Data(w.utf8)) }
+    gate.out(o)
+    gate.err(e)
+    if let w = printer.warning { gate.err(w) }
+    gate.close(timeout: exited ? deadline.timeIntervalSinceNow : 2)  // kot Go: največ 2 s po koncu claude, nato vrstice o vejah
+    if gate.dropped {
+        outputDropped = true
+        try? err.write(contentsOf: Data("minigw: output dropped: nobody read stdout (over 16 MB waiting)\n".utf8))
+    }
     close(outPipe[0])  // claude ob nadaljnjem pisanju dobi EPIPE/SIGPIPE, ne obvisi
 }
 if !exited { while waitpid(pid, &status, 0) == -1 && errno == EINTR {} }
@@ -1291,4 +1300,4 @@ forwarded.forEach { $0.cancel() }
 share.unregister()
 extras.unregister()
 let code = status & 0x7f == 0 ? (status >> 8) & 0xff : 128 + (status & 0x7f)
-exit(code == 0 && (printer.failed || streamBroken) ? 1 : code)
+exit(code == 0 && (printer.failed || streamBroken || outputDropped) ? 1 : code)

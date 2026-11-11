@@ -90,6 +90,12 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(0)
 	}
+	if f := os.Getenv("MINIGW_TEST_FDS"); f != "" { // #80: datoteka, odprta pri zaprtem fd 2, ne dobi diagnostike (fds_unix_test.go)
+		h, _ := os.Create(f)
+		fmt.Fprintln(os.Stderr, "minigw: diagnostic")
+		h.Close()
+		os.Exit(0)
+	}
 	if os.Getenv("MINIGW_TEST_MAIN") == "1" { // testi poženejo sam ukaz minigw
 		os.Args = append([]string{"minigw"}, os.Args[1:]...)
 		main()
