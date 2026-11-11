@@ -256,6 +256,7 @@ func TestRotatingLog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { l.f.Close() }) // Windows: odprte datoteke TempDir ne izbriše
 	chunk := []byte(strings.Repeat("x", 1<<20))
 	for range 6 {
 		l.Write(chunk)

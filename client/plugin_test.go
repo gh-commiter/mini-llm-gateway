@@ -22,6 +22,8 @@ func pluginHome(t *testing.T) (home string, calls *[]string) {
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	t.Setenv("APPDATA", filepath.Join(home, "AppData", "Roaming")) // Windows: os.UserConfigDir, os.UserCacheDir
+	t.Setenv("LOCALAPPDATA", filepath.Join(home, "AppData", "Local"))
 	t.Setenv("CLAUDE_PLUGIN_DATA", "")
 	var c []string
 	f, r := findClaudeFn, runCmd

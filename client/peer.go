@@ -222,9 +222,15 @@ func listenerInDir(port int, dir string) bool {
 	if !ok {
 		return true
 	}
-	root := realPath(dir)
+	canon := func(p string) string { // Windows: preslikan pogon (Q:\) in pot procesa (\\strežnik\…) do iste oblike
+		if f, err := finalPath(p); err == nil {
+			return f
+		}
+		return realPath(p)
+	}
+	root := canon(dir)
 	for _, e := range exes {
-		if !under(realPath(e), root) {
+		if !under(canon(e), root) {
 			return false
 		}
 	}

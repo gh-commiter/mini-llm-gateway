@@ -384,8 +384,13 @@ func TestScratchOverlapAndProviderRename(t *testing.T) {
 		c.Gateways = append(c.Gateways, serveGateway{Name: "Foo", BaseURL: "https://foo.example"}, serveGateway{Name: "Bar", BaseURL: "https://bar.example"})
 		return nil
 	})
+	keys := map[string]string{} // nikoli prava shramba ključev (Windows: Credential Manager uporabnika)
+	og, os2, od := keyGet, keySet, keyDel
+	keyGet = func(_, n string) (string, string) { return keys[n], "" }
+	keySet = func(_, n, v string) (string, error) { keys[n] = v; return "", nil }
+	keyDel = func(_, n string) { delete(keys, n) }
+	t.Cleanup(func() { keyGet, keySet, keyDel = og, os2, od })
 	keySet(s.cfgDir, "Bar", "key-bar")
-	t.Cleanup(func() { keyDel(s.cfgDir, "Bar"); keyDel(s.cfgDir, "foo") })
 	if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/providers/Bar", `{"name":"foo"}`); st != 400 || !strings.Contains(b, "already exists") {
 		t.Fatalf("rename to a taken name: %d %s", st, b)
 	}

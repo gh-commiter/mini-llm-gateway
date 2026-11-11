@@ -18,7 +18,11 @@ func gitT(t *testing.T, dir string, args ...string) string {
 	}
 	out, err := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@x"}, args...)...).Output()
 	if err != nil {
-		t.Fatalf("git %v: %v", args, err)
+		var stderr []byte
+		if e, ok := err.(*exec.ExitError); ok {
+			stderr = e.Stderr
+		}
+		t.Fatalf("git %v: %v %s", args, err, stderr)
 	}
 	return strings.TrimSpace(string(out))
 }

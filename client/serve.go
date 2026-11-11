@@ -682,8 +682,17 @@ func checkFolder(f, cfgDir string) (string, error) {
 	if err != nil {
 		realCfg = cfgDir
 	}
-	for _, a := range []string{abs, real} {
-		for _, d := range []string{cfgDir, realCfg} {
+	// Windows: EvalSymlinks stičišča ne razreši; finalPath ga (preverba; shranjena ostane pot EvalSymlinks).
+	fin, err := finalPath(abs)
+	if err != nil {
+		return "", errors.New("folder: " + err.Error())
+	}
+	finCfg, err := finalPath(cfgDir)
+	if err != nil {
+		finCfg = realCfg
+	}
+	for _, a := range []string{abs, real, fin} {
+		for _, d := range []string{cfgDir, realCfg, finCfg} {
 			if under(d, a) || under(a, d) { // agent bi dosegel žeton in ključ routerja
 				return "", errors.New("folder must not contain or be inside the config folder " + cfgDir)
 			}

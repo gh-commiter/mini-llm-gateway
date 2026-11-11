@@ -619,8 +619,16 @@ func (s *shareClient) syncPull(k string) bool {
 			s.unpulled = true
 		}
 	}
-	if len(ch.Changed)+len(ch.Deleted) > 0 {
-		s.note(fmt.Sprintf("synced back from the gateway: %d changed, %d deleted", len(ch.Changed), len(ch.Deleted)))
+	changed, deleted := len(ch.Changed), len(ch.Deleted) // brez preskočenih (opomba zgoraj)
+	for _, n := range notes {
+		if strings.HasPrefix(n, "skipped ") {
+			changed--
+		} else if strings.HasPrefix(n, "not deleted ") {
+			deleted--
+		}
+	}
+	if changed+deleted > 0 {
+		s.note(fmt.Sprintf("synced back from the gateway: %d changed, %d deleted", changed, deleted))
 	}
 	return true
 }

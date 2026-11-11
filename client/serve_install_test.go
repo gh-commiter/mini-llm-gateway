@@ -156,7 +156,16 @@ func TestInstallFileAndPath(t *testing.T) {
 	}
 }
 
+// noTrayBeside: testni program ne sme imeti pladnja ob sebi (trayBeside bi ga namestil namesto lažnega).
+func noTrayBeside(t *testing.T) {
+	t.Helper()
+	if exe, _ := os.Executable(); trayBeside(exe) != "" {
+		t.Skip("a minigw-tray exe is next to the test exe (" + trayBeside(exe) + "); run the test exe from a folder without it")
+	}
+}
+
 func TestServeInstallFiles(t *testing.T) {
+	noTrayBeside(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
@@ -166,11 +175,12 @@ func TestServeInstallFiles(t *testing.T) {
 	var calls, started []string
 	reg := map[string]string{}
 	envPath := `C:\Windows`
-	o1, o2, o3, o4, o5, o6, o7, o8, o9, o10 := runCmd, runValueSet, runValueGet, runValueDel, userHomeFn, userProgramsDir, trayClose, startDetached, envPathGet, envPathSet
+	o1, o2, o3, o4, o5, o6, o7, o8, o9, o10, o11 := runCmd, runValueSet, runValueGet, runValueDel, userHomeFn, userProgramsDir, trayClose, startDetached, envPathGet, envPathSet, msiDir
 	t.Cleanup(func() {
-		runCmd, runValueSet, runValueGet, runValueDel, userHomeFn, userProgramsDir, trayClose, startDetached, envPathGet, envPathSet = o1, o2, o3, o4, o5, o6, o7, o8, o9, o10
+		runCmd, runValueSet, runValueGet, runValueDel, userHomeFn, userProgramsDir, trayClose, startDetached, envPathGet, envPathSet, msiDir = o1, o2, o3, o4, o5, o6, o7, o8, o9, o10, o11
 	})
-	noLinger := false // loginctl in sudo -n zavrneta linger
+	msiDir = func() string { return "" } // nikoli prava namestitev MSI na tem računalniku
+	noLinger := false                    // loginctl in sudo -n zavrneta linger
 	runCmd = func(name string, args ...string) error {
 		calls = append(calls, name+" "+strings.Join(args, " "))
 		if noLinger && slices.Contains(args, "enable-linger") {
@@ -289,7 +299,7 @@ func TestServeInstallWithMSI(t *testing.T) {
 		return os.WriteFile(dst, []byte("msi"), 0o600)
 	}
 	runCmd = func(name string, args ...string) error {
-		calls = append(calls, name+" "+args[0]+" "+strings.Join(args[2:], " "))
+		calls = append(calls, msiexecName(name)+" "+args[0]+" "+strings.Join(args[2:], " "))
 		if b, _ := os.ReadFile(args[1]); string(b) != "msi" {
 			t.Errorf("msiexec got %s", args[1])
 		}
@@ -323,7 +333,10 @@ func TestServeInstallWithMSI(t *testing.T) {
 	o7, o8 := msiDir, startDetached
 	var bg []string
 	msiDir = func() string { return filepath.Dir(self) + `\` }
-	startDetached = func(exe string, args ...string) error { bg = append(bg, exe+" "+args[0]+" "+args[2]); return nil }
+	startDetached = func(exe string, args ...string) error {
+		bg = append(bg, msiexecName(exe)+" "+args[0]+" "+args[2])
+		return nil
+	}
 	calls = nil
 	if msg, err := installWindows(os.Args[0], cfg); err != nil || len(calls) != 0 || !slices.Equal(bg, []string{"msiexec /i /passive"}) || !strings.Contains(msg, "in the background") {
 		t.Fatalf("from the MSI folder: %v %q %v %v", err, msg, calls, bg)
@@ -347,8 +360,14 @@ func TestServeInstallWithMSI(t *testing.T) {
 	}
 }
 
+// msiexecName: Windows kliče %SystemRoot%\System32\msiexec.exe (L5, ne iz PATH); drugje »msiexec«.
+func msiexecName(p string) string {
+	return strings.TrimSuffix(strings.ToLower(filepath.Base(p)), ".exe")
+}
+
 // Meni pladnja: le vrednost Run (celotna namestitev bi zaprla pladenj, ki jo je sprožil).
 func TestTrayStartupOnlyRunValue(t *testing.T) {
+	noTrayBeside(t) // tudi: test bi pladenj ob sebi prepisal in izbrisal
 	reg := map[string]string{}
 	o1, o2, o3 := runValueSet, runValueDel, trayClose
 	t.Cleanup(func() { runValueSet, runValueDel, trayClose = o1, o2, o3 })

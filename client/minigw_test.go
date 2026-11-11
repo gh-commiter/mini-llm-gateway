@@ -1286,3 +1286,27 @@ func TestSyncClientPrintsGatewayNote(t *testing.T) {
 		}
 	}
 }
+
+// Povzetek prevzema ne šteje preskočenih sprememb (»invalid path here«).
+func TestSyncPullSummarySkipsSkipped(t *testing.T) {
+	root := t.TempDir()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/minigw/sync/changes" {
+			json.NewEncoder(w).Encode(map[string]any{"changed": []map[string]any{{"path": "../x", "sha256": "z"}}, "deleted": []string{}})
+			return
+		}
+		w.WriteHeader(204)
+	}))
+	defer srv.Close()
+	s := &shareClient{c: connection{URL: srv.URL}, root: root, sync: true, synced: map[string]syncEntry{}, reported: map[string]bool{}}
+	rd, wr, _ := os.Pipe()
+	old := os.Stderr
+	os.Stderr = wr
+	ok := s.syncPull("k")
+	os.Stderr = old
+	wr.Close()
+	out, _ := io.ReadAll(rd)
+	if !ok || !strings.Contains(string(out), "invalid path here") || strings.Contains(string(out), "synced back") {
+		t.Fatalf("summary: %v %q", ok, out)
+	}
+}
