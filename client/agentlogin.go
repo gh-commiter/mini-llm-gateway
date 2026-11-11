@@ -76,7 +76,7 @@ var agentLoginHint = map[string]string{
 	"claude":  "Create it with `claude setup-token` (your Claude subscription, valid one year); needed in the Windows sandbox.",
 	"codex":   "Codex uses this user's ChatGPT sign-in (`codex login`); it refreshes itself.",
 	"grok":    "Grok uses a copy of this user's sign-in (`grok login`); after Grok refreshes it, log in again with `grok login`.",
-	"copilot": "A fine-grained GitHub token with only the Copilot Requests permission; needed for commands.",
+	"copilot": "A fine-grained GitHub token with only the Copilot Requests permission; needed for commands, and for every request when the GitHub CLI (gh auth login) is not signed in on the gateway.",
 }
 
 // agentTokenProblem: "" = ključ je videti veljaven za to vrsto (le natisljivi ASCII brez presledkov, do 512 znakov).
