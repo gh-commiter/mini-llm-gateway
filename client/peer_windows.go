@@ -71,7 +71,7 @@ func newKillJob() (syscall.Handle, error) {
 
 // startAgent: proces ustvarjen ustavljen, dodan v Job in šele nato pognan (pred tem ne more ustvariti otrok).
 // agentWrap (#68): s škatlo MXC ves CLI v njej (mxcWrap); wxc-exec.exe se pred vsako rabo preveri (zgoščena vrednost).
-// Napaka: agent ne teče (nikoli brez škatle, ko je vklopljena). Codex (unboxed) in brez škatle: kot prej.
+// Napaka: agent ne teče (nikoli brez škatle, ko je vklopljena). Codex, Copilot (unboxed) in brez škatle: kot prej.
 func agentWrap(exe string, args []string, m agentMounts) (string, []string, func(), error) {
 	if m.unboxed || !windowsBox() {
 		return exe, args, func() {}, nil

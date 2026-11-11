@@ -1,7 +1,7 @@
 package main
 
 // Peskovnik agentov na Windows (#68, docs/plans/design-0.5.23-windows-sandbox.md): minigw serve zažene ves CLI agenta
-// (Claude Code, Copilot, Grok; Codex ne, ta ima svoj »elevated« peskovnik) prek wxc-exec.exe v MXC processcontainer
+// (Claude Code, Grok; Codex in Copilot ne, outsideBox) prek wxc-exec.exe v MXC processcontainer
 // (uporabnik z nizko integriteto + AppContainer). Ena zahteva JSON na zagon (pogodba 1.0.0, shema
 // schemas/stable/mxc-config.schema.1.0.0.json v microsoft/mxc): pisanje le v klon, $MINIGW_DEPS, predpomnilnike, TEMP
 // zagona in dom agenta pod Scratch; branje le dovoljenih map (programi iz PATH, namestitev minigw); mapa nastavitev
@@ -512,7 +512,7 @@ func (s *server) boxNote(r *req, kind string) {
 		return
 	}
 	switch {
-	case kind == "codex":
+	case outsideBox(kind):
 		s.hub.note(session, agentNames[kind]+" runs outside the Windows sandbox (with \"Allow commands without a sandbox\")")
 	case windowsBox():
 		s.hub.note(session, agentNames[kind]+" runs in the Windows sandbox")
@@ -520,6 +520,11 @@ func (s *server) boxNote(r *req, kind string) {
 		s.hub.note(session, agentNames[kind]+" runs without a sandbox on this gateway (\"Allow commands without a sandbox\")")
 	}
 }
+
+// outsideBox (#68): agenti, ki na Windows ne tečejo v škatli MXC: Codex in Copilot. Oba v škatli padeta na Rust
+// std::fs::canonicalize (GetFinalPathNameByHandleW v škatli: »Access is denied«, os error 5): Codex na CODEX_HOME,
+// Copilot 1.0.10x (cli-native.node) na poti svojega runtime.node, tudi ko je ta že naložen. Le z allowUnsandboxedBash.
+func outsideBox(kind string) bool { return kind == "codex" || kind == "copilot" }
 
 // mxcResolve: naslovi gostitelja za pravila egress (testi: lažni).
 var mxcResolve = func(host string) ([]net.IP, error) { return net.LookupIP(host) }

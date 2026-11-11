@@ -463,10 +463,10 @@ func agents(u *ui) ([]row, error) {
 	rows = append(rows, workRow(c, pc)...)
 	rows = append(rows, loginRows("claude", c, pc)...)
 	if _, ok := c["allowUnsandboxedBash"]; ok && (str(st, "os") == "windows" || yes(st, "agentsUnsandboxed")) {
-		if sb, _ := st["agentSandbox"].(map[string]any); str(sb, "kind") == "mxc" { // #68: Codex still needs the switch
+		if sb, _ := st["agentSandbox"].(map[string]any); str(sb, "kind") == "mxc" { // #68: Codex and Copilot still need the switch
 			rows = append(rows, tog("Allow commands without a sandbox", yes(c, "allowUnsandboxedBash"), func(v bool) (string, error) {
 				return pc(map[string]any{"allowUnsandboxedBash": v})
-			}), inf("  Not needed for Claude CLI, Copilot and Grok: they run in the Windows sandbox. Codex still needs it.", ""))
+			}), inf("  Not needed for Claude CLI and Grok: they run in the Windows sandbox. Codex and Copilot still need it (they cannot start in it).", ""))
 		} else {
 			rows = append(rows, tog("Allow commands without a sandbox", yes(c, "allowUnsandboxedBash"), func(v bool) (string, error) {
 				return pc(map[string]any{"allowUnsandboxedBash": v})

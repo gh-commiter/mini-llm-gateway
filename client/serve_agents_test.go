@@ -239,6 +239,13 @@ func TestAgentsWithoutSandboxNeedOptIn(t *testing.T) {
 	if s.agentsAllowed(serveConfig{}, "grok") != sandboxed || !s.agentsAllowed(serveConfig{AllowUnsandboxedBash: true}, "grok") {
 		t.Fatal("opt-in")
 	}
+	// HPX360 (0.5.24): Copilot se v škatli MXC ne zažene (canonicalize runtime.node): na Windows kot Codex le s stikalom
+	if !outsideBox("copilot") || !outsideBox("codex") || outsideBox("grok") || outsideBox("claude") {
+		t.Fatal("outsideBox")
+	}
+	if runtime.GOOS == "windows" && (s.agentsAllowed(serveConfig{}, "copilot") || !s.agentsAllowed(serveConfig{AllowUnsandboxedBash: true}, "copilot")) {
+		t.Fatal("copilot on Windows: only with the switch")
+	}
 }
 
 // L3: prehod ne zakrije imen Codex in Grok.
@@ -367,6 +374,11 @@ func TestReplyWhenDoneRetryHeaders(t *testing.T) {
 	}
 	if _, ok := s.recentLimit(newReq(), "claude-grok"); ok {
 		t.Fatal("an HTTP 429 is final: nothing to remember")
+	}
+	// HPX360: agent, ki je padel (502), Claude Code ne zažene znova
+	w0 := httptest.NewRecorder()
+	if st := s.replyWhenDone(w0, newReq(), map[string]any{"model": "claude-copilot"}, func() (string, error) { return "", errors.New("copilot.exe failed (exit status 1)") }); st != 502 || w0.Header().Get("x-should-retry") != "false" {
+		t.Fatalf("failed run: %d %q", st, w0.Header().Get("x-should-retry"))
 	}
 	w := httptest.NewRecorder()
 	slow := func() (string, error) { time.Sleep(150 * time.Millisecond); return limit() }
