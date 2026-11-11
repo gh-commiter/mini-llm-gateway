@@ -81,13 +81,13 @@ func TestHelperModelEnv(t *testing.T) {
 func TestRunClaudeStream(t *testing.T) {
 	bin := t.TempDir()
 	// vnuk drži stdout odprt: minigw konča največ 2 s po claude
-	fakeCLI(t, bin, "claude", fakePrint, fakeParams{"orphan": "20s", "stdout": `{"type":"result","is_error":true,"result":"boom"}` + "\n"})
+	fakeCLI(t, bin, "claude", fakePrint, fakeParams{"orphan": "12s", "stdout": `{"type":"result","is_error":true,"result":"boom"}` + "\n"})
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	start := time.Now()
 	if code := runClaude([]string{"-p", "x"}, nil, true); code != 1 || time.Since(start) > 10*time.Second {
 		t.Fatalf("exit %d after %v", code, time.Since(start))
 	}
-	fakeCLI(t, bin, "claude", fakePrint, fakeParams{"orphan": "20s", "exit": "3"}) // brez result: 2 s
+	fakeCLI(t, bin, "claude", fakePrint, fakeParams{"orphan": "12s", "exit": "3"}) // brez result: 2 s
 	if code := runClaude([]string{"-p", "x"}, nil, true); code != 3 || time.Since(start) > 10*time.Second {
 		t.Fatalf("no result: exit %d after %v", code, time.Since(start))
 	}

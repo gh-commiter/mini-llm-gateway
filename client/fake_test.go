@@ -35,11 +35,14 @@ type fakeSpec struct {
 	Self string // testni program (fakeOrphan)
 }
 
-func fakeSidecar(exe string) string {
-	if runtime.GOOS == "windows" {
-		exe = strings.TrimSuffix(strings.ToLower(exe), ".exe")
+// fakeSidecar: <ime brez .exe>.fake v mapi programa (po imenu v mapi, ne po celi poti: Windows ima lahko isto mapo
+// kot kratko ime 8.3 ali drugače zapisano).
+func fakeSidecar(dir, exe string) string {
+	base := filepath.Base(exe)
+	if runtime.GOOS == "windows" && strings.EqualFold(filepath.Ext(base), ".exe") {
+		base = base[:len(base)-4]
 	}
-	return exe + ".fake"
+	return filepath.Join(dir, base+".fake")
 }
 
 // fakeCLI: lažni program name v mapi dir z vedenjem behaviour; vrne njegovo pot. Ponoven klic zamenja le vedenje.
@@ -65,30 +68,46 @@ func fakeCLI(t *testing.T, dir, name, behaviour string, p fakeParams) string {
 	}
 	self, _ := os.Executable()
 	b, _ := json.Marshal(fakeSpec{behaviour, p, self})
-	if err := os.WriteFile(fakeSidecar(exe), b, 0o600); err != nil {
+	if err := os.WriteFile(fakeSidecar(dir, exe), b, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return exe
 }
 
-// fakeMain (TestMain): ta proces je lažni program, če ima ob sebi stransko datoteko.
+// fakeMain (TestMain): ta proces je lažni program, če ima ob sebi stransko datoteko. Brez nje, a z drugimi *.fake v
+// isti mapi (lažni program, ki svoje ne najde), glasno izhod 97: nikoli testi namesto vedenja (L1).
 func fakeMain() {
 	if v := os.Getenv("MINIGW_TEST_FAKE_SLEEP"); v != "" { // vnuk, ki drži stdout (fakeOrphan)
 		d, _ := time.ParseDuration(v)
 		time.Sleep(d)
 		os.Exit(0)
 	}
-	exe, err := os.Executable()
-	if err != nil {
-		return
+	exe, _ := os.Executable()
+	arg0, _ := filepath.Abs(os.Args[0])
+	var b []byte
+	var sidecar string
+	for _, p := range []string{exe, arg0} {
+		if p == "" {
+			continue
+		}
+		sidecar = fakeSidecar(filepath.Dir(p), p)
+		if r, err := os.ReadFile(sidecar); err == nil {
+			b = r
+			break
+		}
 	}
-	b, err := os.ReadFile(fakeSidecar(exe))
-	if err != nil {
+	if b == nil {
+		for _, p := range []string{exe, arg0} {
+			if m, _ := filepath.Glob(filepath.Join(filepath.Dir(p), "*.fake")); p != "" && len(m) > 0 {
+				fmt.Fprintln(os.Stderr, "fake: no sidecar for "+exe)
+				os.Exit(97)
+			}
+		}
 		return
 	}
 	var s fakeSpec
 	if json.Unmarshal(b, &s) != nil || fakes[s.Fake] == nil {
-		fmt.Fprintln(os.Stderr, "fake: unknown behaviour in "+fakeSidecar(exe))
+		fmt.Fprintln(os.Stderr, "fake: unknown behaviour in "+sidecar)
 		os.Exit(97)
 	}
 	fakeSelf = s.Self
@@ -166,7 +185,7 @@ func fakeGit(dir string, args ...string) bool {
 
 var fakeSelf string
 
-// fakeOrphan: (sleep d 2>/dev/null &) — vnuk podeduje stdout in ga drži odprtega. Teče testni program zunaj TempDir
+// fakeOrphan: (sleep d 2>/dev/null &) — vnuk podeduje stdout in ga drži odprtega (testi: 12 s, nad mejo 10 s). Teče testni program zunaj TempDir
 // (Windows: tekoč program ali mapa cwd se ne da izbrisati).
 func fakeOrphan(d string) {
 	c := exec.Command(fakeSelf)

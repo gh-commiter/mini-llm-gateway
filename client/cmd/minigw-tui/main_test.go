@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -11,11 +13,64 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// fake: testdata (canned answers and the fake minigw script) in a temp dir.
-func fake(t *testing.T) (*ui, string) {
-	if runtime.GOOS == "windows" {
-		t.Skip("the fake minigw is a shell script")
+// TestMain: with MINIGW_TUI_RUN=1 the test binary is minigw-tui itself (same imports, same init order); a copy
+// named fake-minigw(.exe) next to a fake-minigw.fake file is the fake minigw (fakeMinigw).
+func TestMain(m *testing.M) {
+	if exe, err := os.Executable(); err == nil && fakeName(exe) == "fake-minigw" { // first: the TUI it serves has MINIGW_TUI_RUN=1
+		if _, err := os.Stat(filepath.Join(filepath.Dir(exe), "fake-minigw.fake")); err != nil {
+			fmt.Fprintln(os.Stderr, "fake: no sidecar for "+exe) // never the tests instead of the fake
+			os.Exit(97)
+		}
+		os.Exit(fakeMinigw(filepath.Dir(exe), os.Args[1:]))
 	}
+	if os.Getenv("MINIGW_TUI_RUN") == "1" {
+		main()
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
+func fakeName(exe string) string {
+	b := filepath.Base(exe)
+	if runtime.GOOS == "windows" && strings.EqualFold(filepath.Ext(b), ".exe") {
+		b = b[:len(b)-4]
+	}
+	return b
+}
+
+// fakeMinigw: "gw api METHOD PATH [options]"; answers GETs from <METHOD>_<path>.json next to it, logs argv and stdin,
+// and fails like minigw for a path without a file.
+func fakeMinigw(d string, args []string) int {
+	appendFile := func(name string, b []byte) {
+		if f, err := os.OpenFile(filepath.Join(d, name), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+			f.Write(b)
+			f.Close()
+		}
+	}
+	appendFile("calls.log", []byte(strings.Join(args, " ")+"\n"))
+	in, _ := io.ReadAll(os.Stdin)
+	appendFile("stdin.log", in)
+	arg := func(i int) string {
+		if i < len(args) {
+			return args[i]
+		}
+		return ""
+	}
+	path, _, _ := strings.Cut(arg(3), "?")
+	if b, err := os.ReadFile(filepath.Join(d, arg(2)+strings.ReplaceAll(path, "/", "_")+".json")); err == nil {
+		os.Stdout.Write(b)
+		return 0
+	}
+	if arg(2) != "GET" {
+		fmt.Println("{}")
+		return 0
+	}
+	fmt.Fprintln(os.Stderr, "minigw: not found: "+arg(3))
+	return 1
+}
+
+// fake: testdata (canned answers) and the fake minigw (a copy of this test binary) in a temp dir.
+func fake(t *testing.T) (*ui, string) {
 	dir := t.TempDir()
 	files, _ := os.ReadDir("testdata")
 	for _, f := range files {
@@ -23,9 +78,24 @@ func fake(t *testing.T) (*ui, string) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		os.WriteFile(filepath.Join(dir, f.Name()), b, 0o755)
+		os.WriteFile(filepath.Join(dir, f.Name()), b, 0o644)
 	}
-	return &ui{minigw: filepath.Join(dir, "fake-minigw"), extra: []string{"--config", "/x/serve.json"}, open: map[string]bool{}}, dir
+	exe := filepath.Join(dir, "fake-minigw")
+	if runtime.GOOS == "windows" {
+		exe += ".exe"
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS == "windows" || os.Link(self, exe) != nil { // Windows: copy (a link to the running exe cannot be deleted)
+		b, err := os.ReadFile(self)
+		if err != nil || os.WriteFile(exe, b, 0o755) != nil {
+			t.Fatalf("fake minigw: %v", err)
+		}
+	}
+	os.WriteFile(filepath.Join(dir, "fake-minigw.fake"), nil, 0o600)
+	return &ui{minigw: exe, extra: []string{"--config", "/x/serve.json"}, open: map[string]bool{}}, dir
 }
 
 func read(t *testing.T, p string) string {

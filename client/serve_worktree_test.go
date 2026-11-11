@@ -51,6 +51,23 @@ func TestServeWorktreeRoundTrip(t *testing.T) {
 	os.MkdirAll(filepath.Join(client, "sub"), 0o755)
 	os.MkdirAll(marks, 0o755)
 	sh := filepath.ToSlash(marks) // v ukazih za lupino git (Windows: »\« bi lupina pojedla)
+	// Kontrola: isti zapis ukaza (touch <sh>/…) git na tem sistemu res izvede (hook in filter), sicer bi spodnje
+	// preverbe »nič ni teklo« ne dokazale ničesar (Windows: lupina Git for Windows).
+	ctl, ctlSh := filepath.Join(root, "control"), filepath.ToSlash(filepath.Join(root, "control"))
+	os.MkdirAll(ctl, 0o755)
+	gitT(t, ctl, "init", "-q", "-b", "main")
+	gitT(t, ctl, "config", "filter.ok.clean", "touch "+ctlSh+"/filter-ran; cat")
+	writeT(t, filepath.Join(ctl, ".gitattributes"), "* filter=ok\n")
+	writeT(t, filepath.Join(ctl, ".git/hooks", "post-commit"), "#!/bin/sh\ntouch "+ctlSh+"/hook-ran\n")
+	os.Chmod(filepath.Join(ctl, ".git/hooks", "post-commit"), 0o755)
+	writeT(t, filepath.Join(ctl, "c.txt"), "c\n")
+	gitT(t, ctl, "add", "-A")
+	gitT(t, ctl, "-c", "user.name=c", "-c", "user.email=c@x", "commit", "-qm", "control")
+	for _, m := range []string{"filter-ran", "hook-ran"} {
+		if _, err := os.Stat(filepath.Join(ctl, m)); err != nil {
+			t.Fatalf("control: planted %s did not run: the checks below would prove nothing", strings.TrimSuffix(m, "-ran"))
+		}
+	}
 	gitT(t, client, "init", "-q", "-b", "main")
 	writeT(t, filepath.Join(client, "a.txt"), "one\n")
 	writeT(t, filepath.Join(client, "sub", "s.txt"), "s\n")
@@ -462,9 +479,6 @@ func TestWorktreeDirSymlink(t *testing.T) {
 // H2: zamenjan .git klona (nov config s filtrom, info/attributes) ali podtaknjen commondir: klon ni več v redu, zato
 // claude v njem ne začne (git status samega claude bi filter izvedel zunaj peskovnika).
 func TestWorktreeGitSwapRefused(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("filter command is a shell script")
-	}
 	root := t.TempDir()
 	client, repo, wt := filepath.Join(root, "c"), filepath.Join(root, "repos", "d", "r.git"), filepath.Join(root, "wt")
 	os.MkdirAll(client, 0o755)
@@ -492,12 +506,12 @@ func TestWorktreeGitSwapRefused(t *testing.T) {
 	if err := os.Rename(g, filepath.Join(wt, ".g")); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command("cp", "-R", filepath.Join(wt, ".g"), g).CombinedOutput(); err != nil {
-		t.Fatal(string(out))
+	if err := copyTree(filepath.Join(wt, ".g"), g); err != nil { // cp -R
+		t.Fatal(err)
 	}
 	marker := filepath.Join(root, "ran")
 	f, _ := os.OpenFile(filepath.Join(g, "config"), os.O_APPEND|os.O_WRONLY, 0)
-	f.WriteString("[filter \"x\"]\n\tclean = touch " + marker + "; cat\n")
+	f.WriteString("[filter \"x\"]\n\tclean = touch " + filepath.ToSlash(marker) + "; cat\n") // »/«: lupina git na Windows
 	f.Close()
 	os.MkdirAll(filepath.Join(g, "info"), 0o755)
 	writeT(t, filepath.Join(g, "info", "attributes"), "* filter=x\n")
@@ -542,8 +556,8 @@ func TestWorktreeGitSwapRefused(t *testing.T) {
 // .gitmodules z ignore=none; git status samega claude (okolje worktreeClaudeEnv) filtra ne sme izvesti, cloneProblem
 // klon zavrne.
 func TestWorktreeNestedRepoFilterDoesNotRun(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Windows: Claude in worktree needs unsandboxed Bash; filter command is a shell script")
+	if runtime.GOOS == "windows" { // worktreeClaudeEnv: brez škatle MXC le okolje harnessa (GIT_DIR), ovoj je le v škatli (pravi wxc-exec, HPX360)
+		t.Skip("without the MXC box Windows has no git exec wrapper for Claude's git (Claude in worktree mode runs only with Allow commands without a sandbox); the boxed path needs the real wxc-exec")
 	}
 	for _, gitfile := range []bool{false, true} {
 		root := t.TempDir()

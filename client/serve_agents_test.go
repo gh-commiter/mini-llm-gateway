@@ -723,7 +723,7 @@ func TestCappedMode(t *testing.T) {
 
 // N1: prekinitev konča branje izhoda, tudi ko vnuk še drži stdout (prej je zanka čakala na EOF in mesto teka ostalo zasedeno).
 func TestRunAgentProcessCancelGrandchild(t *testing.T) {
-	agent := fakeCLI(t, t.TempDir(), "agent", fakePrint, fakeParams{"orphan": "20s", "stdout": "up\n", "sleep": "20s"}) // sleep 20 & echo up; exec sleep 20
+	agent := fakeCLI(t, t.TempDir(), "agent", fakePrint, fakeParams{"orphan": "12s", "stdout": "up\n", "sleep": "20s"}) // sleep 12 & echo up; exec sleep 20
 	s := &server{log: log.New(io.Discard, "", 0)}
 	ctx, cancel := context.WithCancel(context.Background())
 	lines := make(chan string, 1)
