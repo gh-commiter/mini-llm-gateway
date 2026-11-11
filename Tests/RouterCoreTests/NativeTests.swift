@@ -734,3 +734,73 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     #expect(!Native.smbdEnabled("\t\t\"com.apple.smbd\" => disabled\n"))
     #expect(!Native.smbdEnabled(nil) && !Native.smbdEnabled(""))
 }
+
+/// 0.5.24 round 1 A/B: odgovor run brez »nosniff« URLSession zadrži do 512 bajtov (iskanje vrste vsebine): odjemalec
+/// (minigw prek šifriranega proxyja) ne vidi izhoda do konca kratkega ali tihega zagona. Izhod mora priti sproti.
+@Test func runOutputStreamsBeforeTheCommandEnds() async throws {
+    let f = try nativeFixture()
+    defer { try? FileManager.default.removeItem(at: f.root) }
+    let dev = Curve25519.Signing.PrivateKey(), devID = Noise.base64url(dev.publicKey.rawRepresentation)
+    var c = RouterConfig()
+    let port = freeTCPPort()
+    c.host = "127.0.0.1"; c.port = port
+    c.claudeCLI.allowedRoots = f.share.path
+    c.devices = [DeviceConfig(id: devID, name: "Air", run: true)]
+    c.runCommands = "sh"
+    let key = Noise.newKey()
+    let r = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]))
+    let server = RouterServer(router: r, key: key)
+    try server.start()
+    defer { server.stop() }
+    for _ in 0..<100 where !portInUse(port) { try await Task.sleep(for: .milliseconds(50)) }
+    let proxy = try #require(NoiseProxy(routerURL: "http://127.0.0.1:\(port)", routerKey: key.publicKey.rawRepresentation,
+                                        device: (key: dev, name: "Air"), suite: .aesGCM))
+    try proxy.start()
+    defer { proxy.stop() }
+    let ch = await challenge(r, f, device: devID)
+    let proof = try #require(Native.readMarker(f.project.appendingPathComponent(ch.file)))
+    var q = URLRequest(url: URL(string: proxy.localURL + "/minigw/run")!, timeoutInterval: 120)
+    q.httpMethod = "POST"
+    q.httpBody = Data(#"{"argv":["sh","-c","echo started; sleep 10; echo done"]}"#.utf8)
+    q.setValue("Bearer tok", forHTTPHeaderField: "authorization")
+    q.setValue(ch.id, forHTTPHeaderField: "x-native-id"); q.setValue(proof, forHTTPHeaderField: "x-native-proof")
+    let start = Date()
+    var first = -1.0, last = ""
+    let (bytes, _) = try await URLSession.shared.bytes(for: q)
+    for try await l in bytes.lines {
+        if first < 0 { first = Date().timeIntervalSince(start) }
+        last = l
+    }
+    #expect(first >= 0 && first < 5, "first line after \(first) s")  // brez nosniff: šele ob koncu (~15 s)
+    #expect(last == "x 0")
+}
+
+/// 0.5.24 round 1 B: xcrun v run brez predpomnilnika (xcrun_nocache) je ~1,5 s na klic, Swift Build pa ga kliče ~23-krat
+/// na gradnjo (vtool -show-build XCTest/Testing vseh platform, --show-sdk-platform-path …): ponovna gradnja ~36 s.
+/// Predpomnilnik zagona v runTmp: nekaj sekund.
+@Test func runSwiftBuildIsNotSlowedByColdXcrun() async throws {
+    try #require(FileManager.default.isExecutableFile(atPath: "/usr/bin/xcrun"))
+    let f = try nativeFixture()
+    defer { try? FileManager.default.removeItem(at: f.root) }
+    let pkg = f.project
+    try FileManager.default.createDirectory(at: pkg.appendingPathComponent("Sources/Hello"), withIntermediateDirectories: true)
+    try #"// swift-tools-version:5.9\#nimport PackageDescription\#nlet package = Package(name: "Hello", targets: [.target(name: "Hello"), .testTarget(name: "HelloTests", dependencies: ["Hello"])])\#n"#
+        .write(to: pkg.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+    try FileManager.default.createDirectory(at: pkg.appendingPathComponent("Tests/HelloTests"), withIntermediateDirectories: true)
+    try "public let hi = 1".write(to: pkg.appendingPathComponent("Sources/Hello/Hello.swift"), atomically: true, encoding: .utf8)
+    try "import XCTest\nimport Hello\nfinal class T: XCTestCase { func testA() { XCTAssertEqual(hi, 1) } }\n"
+        .write(to: pkg.appendingPathComponent("Tests/HelloTests/T.swift"), atomically: true, encoding: .utf8)
+    let on = nativeRouter(f.project.path, devices: [DeviceConfig(id: "dev-xcrun", name: "Air", run: true)], commands: "swift")
+    func build() async -> (FakeWriter, TimeInterval) {
+        let c = await challenge(on, f, device: "dev-xcrun")
+        let proof = Native.readMarker(f.project.appendingPathComponent(c.file)) ?? ""
+        let w = FakeWriter(), start = Date()
+        await on.handle(nativeReq("POST", "/minigw/run", ["x-native-id": c.id, "x-native-proof": proof], #"{"argv":["swift","build","--build-tests"]}"#,
+                                  device: "dev-xcrun"), writer: w)
+        return (w, Date().timeIntervalSince(start))
+    }
+    let (first, _) = await build()
+    #expect(first.text.hasSuffix("x 0\n"), "\(first.text)")
+    let (second, t2) = await build()  // nič za prevesti: le odkrivanje orodij (xcrun) in ~5,5 s pospravljanja run
+    #expect(second.text.hasSuffix("x 0\n") && t2 < 20, "second build took \(t2) s")
+}
