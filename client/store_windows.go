@@ -321,7 +321,7 @@ func regRunDel(name string) {
 func protectScratch(dir string) error {
 	err := protectScratchDir(dir)
 	if (errors.Is(err, errForeignOwner) || errors.Is(err, errUnprotected)) && remoteVolume(dir) { // W5: razlog, ne »drug uporabnik«
-		return fmt.Errorf("%s %w", dir, errScratchNetwork)
+		return errScratchNetwork // brez poti: klicatelji jo dodajo; ne errScratchTaken (»drug uporabnik na tem PC«)
 	}
 	return err
 }
@@ -377,10 +377,6 @@ func protectScratchDir(dir string) error {
 // scratchParentSDDL: lastnik (ta uporabnik), SYSTEM in Administrators vse; Authenticated Users le prehod, seznam in
 // nova podmapa v tej mapi; CREATOR OWNER vse na podmapah (vsaka mapa prehoda ima še svoj zaščiten DACL).
 const scratchParentSDDL = "D:P(A;;FA;;;%s)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;;0x1200ad;;;AU)(A;OICIIO;FA;;;CO)"
-
-// errScratchNetwork (W5): na omrežnem disku (preslikan pogon, \\strežnik\mapa) je lastnik map lastnik strežnika (NAS:
-// njegov SID), ne ta uporabnik; lastnika in DACL tam ni mogoče preveriti, zato Scratch tam ni (preverba ostane).
-var errScratchNetwork = errors.New("is on a network share: the owner of folders there cannot be checked, so Scratch is not supported there: choose a folder on a local disk")
 
 // remoteVolume: pot je na omrežnem disku (GetDriveType korena: DRIVE_REMOTE; tudi pot UNC).
 func remoteVolume(p string) bool {

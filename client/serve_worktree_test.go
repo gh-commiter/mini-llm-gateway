@@ -2511,3 +2511,38 @@ func TestAllowedFolderUncheckedAtStart(t *testing.T) {
 		t.Fatalf("%+v", info)
 	}
 }
+
+// #83 (A1): na mestu dovoljene mape, ki je ob zagonu ni bilo, podtaknjena povezava (v mapo nastavitev ali drugam) ne
+// gre agentu; prava mapa tega uporabnika gre.
+func TestAllowedFolderPlantedAfterStart(t *testing.T) {
+	t.Cleanup(releaseScratch)
+	m := filepath.Join(t.TempDir(), "gone", "proj")
+	scratch := filepath.Join(t.TempDir(), "scratch")
+	os.MkdirAll(scratch, 0o700)
+	k, _ := ecdh.X25519().GenerateKey(rand.Reader)
+	c := serveConfig{Token: "tok", Key: base64url(k.Bytes()), Tools: defaultTools, PermissionMode: "dontAsk", Scratch: scratch,
+		AllowedFolders: []string{m}, Codex: agentCLI{Enabled: true}}
+	cfg := filepath.Join(t.TempDir(), "serve.json")
+	writeServeConfig(cfg, c)
+	s, err := newServer(c, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.MkdirAll(filepath.Dir(m), 0o700)
+	for _, target := range []string{s.cfgDir, t.TempDir()} {
+		if err := os.Symlink(target, m); err != nil {
+			t.Skip("no symlinks:", err)
+		}
+		if got := s.agentFolders(s.conf(), t.TempDir()); len(got) != 0 {
+			t.Fatalf("planted link to %s given to agents: %v", target, got)
+		}
+		if a := strings.Join(s.agentArgs(t.TempDir(), false), " "); strings.Contains(a, "proj") {
+			t.Fatalf("planted link to %s in the agent's arguments: %s", target, a)
+		}
+		os.Remove(m)
+	}
+	os.Mkdir(m, 0o700)
+	if got := s.agentFolders(s.conf(), t.TempDir()); !slices.Equal(got, []string{m}) {
+		t.Fatalf("own folder that appeared later: %v", got)
+	}
+}

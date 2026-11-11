@@ -307,7 +307,7 @@ const S = {
   signin: ["Not signed in, or the session has expired. Open Settings… from the tray icon again (or run minigw gw settings link).",
     "Ni prijave ali je seja potekla. Znova odpri Nastavitve … v ikoni pladnja (ali zaženi minigw gw settings link)."],
 };
-const t = (k, ...a) => { let s = (S[k] || [k, k])[SL ? 1 : 0]; for (const x of a) s = s.replace("%s", x); return s; };
+const t = (k, ...a) => { let s = (S[k] || [k, k])[SL ? 1 : 0]; for (const x of a) s = s.replace("%s", () => x); return s; }; // funkcija: $& in $' v poti ostaneta
 const TOOLS = [
   ["Read", "Read files", "Branje datotek"], ["Grep", "Search file contents", "Iskanje po vsebini"], ["Glob", "Find files by name", "Iskanje datotek po imenu"],
   ["LS", "List folders", "Seznam map"], ["Edit", "Edit files", "Urejanje datotek"], ["Write", "Create and overwrite files", "Ustvarjanje in prepis datotek"],

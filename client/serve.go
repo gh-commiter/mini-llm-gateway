@@ -476,6 +476,7 @@ type server struct {
 	offFolders []string // dovoljene mape iz serve.json, izpuščene ob zagonu (stran jih pokaže, da jih uporabnik odstrani)
 	// offUnchecked, offErrors: med offFolders tiste, ki jih ni mogoče preveriti, in napake razrešitve (stran sestavi razlog)
 	offUnchecked, offErrors []string
+	wasMissing              sync.Map // #83: dovoljene mape, ki so kdaj manjkale (agentFolders); PATCH map jo počisti
 	settings                settingsState
 	pick                    atomic.Pointer[pickFunc] // izbirno okno pladnja (Windows); nil = ni GUI
 	picking                 atomic.Bool              // eno okno naenkrat
@@ -516,7 +517,7 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	if err := protectScratch(c.Scratch); errors.Is(err, errScratchTaken) { // L1′
 		return nil, fmt.Errorf("scratch folder %s: %v: set \"scratch\" in %s to a folder of your own (another user on this PC uses %s)",
 			c.Scratch, err, cfgPath, c.Scratch)
-	} else if errors.Is(err, errForeignOwner) || errors.Is(err, errUnprotected) || errors.Is(err, errScratchLink) {
+	} else if errors.Is(err, errForeignOwner) || errors.Is(err, errUnprotected) || errors.Is(err, errScratchLink) || errors.Is(err, errScratchNetwork) {
 		return nil, fmt.Errorf("scratch folder %s: %v: set \"scratch\" in %s to a folder of your own", c.Scratch, err, cfgPath)
 	} else if err != nil {
 		return nil, fmt.Errorf("scratch folder %s: %v: use a folder of your own", c.Scratch, err)
@@ -606,6 +607,11 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	}
 	if s.cfg.Instance == "" { // le testi (zagon ga shrani prej, ensureInstance)
 		s.cfg.Instance = newInstanceID()
+	}
+	for _, f := range s.cfg.AllowedFolders { // #83: manjka ob zagonu
+		if _, err := os.Stat(f); err != nil {
+			s.wasMissing.Store(f, true)
+		}
 	}
 	s.claimScratch()
 	return s, nil
@@ -754,6 +760,10 @@ func unsandboxedTools(tools string) []string {
 }
 
 var errForeignOwner = errors.New("is owned by another user")
+
+// errScratchNetwork (W5, Windows): na omrežnem disku (preslikan pogon, \\strežnik\mapa) je lastnik map lastnik
+// strežnika (NAS: njegov SID), ne ta uporabnik; lastnika in DACL tam ni mogoče preveriti (preverba ostane).
+var errScratchNetwork = errors.New("Scratch is not supported on a network share: the owner of folders there cannot be checked")
 
 var errUnprotected = errors.New("is not protected from other users: ask an administrator to protect it")
 

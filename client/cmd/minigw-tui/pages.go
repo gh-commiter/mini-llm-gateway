@@ -607,8 +607,13 @@ func folders(u *ui) ([]row, error) {
 		return u.save("PATCH", "/agents/claude", map[string]any{"folders": strings.Join(l, ",")})
 	}
 	rows := []row{hdr("Allowed folders"), inf("Claude CLI and Codex work only in these and in the folders clients share.", "")}
+	unchecked := strs(c, "leftOutUnchecked")
 	for _, f := range strs(c, "leftOut") {
-		rows = append(rows, inf("! "+clean(f), "left out at startup"))
+		why := "left out at startup"
+		if slices.Contains(unchecked, f) {
+			why = "left out (cannot be checked)"
+		}
+		rows = append(rows, inf("! "+clean(f), why))
 	}
 	for _, f := range list {
 		rows = append(rows, btn(clean(f), "Remove "+f+" from the allowed folders", func() (string, error) {

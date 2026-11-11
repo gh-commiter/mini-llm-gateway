@@ -856,6 +856,12 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			}
 			if b.Folders != nil { // shranjen seznam je brez izpuščenih map (tudi v serve.json)
 				s.offFolders, s.offUnchecked, s.offErrors = nil, nil, nil
+				s.wasMissing.Clear() // gesta skrbnika: mape so znova preverjene (checkAgent); manjkajoče ostanejo označene
+				for _, f := range s.cfg.AllowedFolders {
+					if _, err := os.Stat(f); err != nil {
+						s.wasMissing.Store(f, true)
+					}
+				}
 			}
 		})
 		if err != nil {

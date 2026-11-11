@@ -815,12 +815,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 		note += "\n\n" + noAskNote
 	}
 	prompt := note + "\n\n" + cliPrompt(history, last)
-	var extra []string
-	for _, f := range c.AllowedFolders {
-		if f != dir && !scratchHiddenOverlaps(f, c.Scratch) && len(copilotCacheOverlaps([]string{f})) == 0 && isDir(f) { // L1, #26
-			extra = append(extra, f)
-		}
-	}
+	extra := s.agentFolders(c, dir) // L1, #26, #83
 	write := ac.canWrite(k) && !readOnly
 	// #81 (D1): Copilot le s prijavo copilot login uporabnika prehoda (kazalec v svež COPILOT_HOME), brez žetona in gh.
 	var copilotConf []byte
