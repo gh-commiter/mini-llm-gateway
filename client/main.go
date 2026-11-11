@@ -551,7 +551,7 @@ func main() {
 			return
 		}
 		refuseUnsafeClaudeFlags(args, true)
-		os.Exit(runClaude(args, nil, false)) // le podatki o claude: brez routerja, seje in deljenja mape
+		exitClaude(runClaude(args, nil, false)) // le podatki o claude: brez routerja, seje in deljenja mape
 	}
 
 	// Claude Code prek routerja.
@@ -835,7 +835,7 @@ sessionArgs:
 		sc.unregister()
 	}
 	mu.Unlock()
-	os.Exit(code)
+	exitClaude(code)
 }
 
 // claudeSafe: možnosti claude, ki jih minigw pod Claude Code preda naprej (H3); true = ima vrednost. Druge (npr.
@@ -1349,6 +1349,7 @@ func runClaude(args []string, env []string, stream bool) int {
 				}
 			}()
 		}
+		go followStops(cmd.Process.Pid)
 		if stream {
 			go func() {
 				done <- streamText(pr, gout, gerr)
@@ -1369,6 +1370,10 @@ func runClaude(args []string, env []string, stream bool) int {
 	}
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
+			if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+				claudeSignal = ws.Signal()
+				return 128 + int(claudeSignal)
+			}
 			return ee.ExitCode()
 		}
 		fmt.Fprintln(os.Stderr, "minigw: cannot run claude: "+err.Error()+" (is Claude Code installed and in PATH?)")
@@ -1378,6 +1383,21 @@ func runClaude(args []string, env []string, stream bool) int {
 		return 1
 	}
 	return 0
+}
+
+// claudeSignal: signal, ki je končal claude (0 = ni); exitClaude z njim konča tudi minigw.
+var claudeSignal syscall.Signal
+
+// exitClaude (L-b): izhod minigw po claude; ko ga je končal signal, minigw po pospravljanju konča z istim signalom
+// (lupina vidi signal, ne 128+n), sicer s kodo.
+func exitClaude(code int) {
+	if claudeSignal != 0 {
+		signal.Reset(claudeSignal)
+		if p, err := os.FindProcess(os.Getpid()); err == nil && p.Signal(claudeSignal) == nil {
+			time.Sleep(time.Second) // dostava signala; sicer koda
+		}
+	}
+	os.Exit(code)
 }
 
 // claudeEnv: okolje za claude brez podedovanih ANTHROPIC_*, CLAUDECODE in CLAUDE_CODE_* (seja in prijava starševskega

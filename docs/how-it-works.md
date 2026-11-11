@@ -270,10 +270,12 @@ options: a trusted script run by Claude Code, and a launchd or `systemd --user` 
 its shell ended) without a terminal. Inside Claude Code, Claude Code then asks you before it runs that command, because the
 skills' pre-approved `minigw -p --model …` rule covers only that prefix.
 
-This is a guard rail, not a boundary. A command that gives minigw a new terminal and parent (`tmux`, `screen`, a new
-Terminal window) is not recognised, nor is another agent tool. The boundary is Claude Code's permission prompt: the
-plugin pre-approves only commands that start with `minigw -p --model`, so any other way to run minigw from Claude Code
-asks you first.
+This is a guard rail, not a boundary. minigw catches one orphaning: its own parent ended and minigw was handed to
+`launchd`, `init`, `systemd` or process 1. It does not catch deeper re-parenting (a chain of processes that hands minigw
+to another long-running process), a command that gives minigw a new terminal and parent (`tmux`, `screen`, a new
+Terminal window, any new pty), or another agent tool. The boundary is Claude Code's permission prompt: the plugin
+pre-approves only commands that start with `minigw -p --model`, so every other way to run minigw from Claude Code,
+including the ones above, asks you first.
 
 The reason: other options (`--dangerously-skip-permissions`, `--allowedTools`, `--add-dir`, `--settings` …) would give
 the nested, gateway-driven `claude` permissions the user never approved.

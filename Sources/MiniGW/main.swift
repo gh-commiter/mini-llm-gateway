@@ -1312,11 +1312,29 @@ if streamed {
     }
     close(outPipe[0])  // claude ob nadaljnjem pisanju dobi EPIPE/SIGPIPE, ne obvisi
 }
-if !exited { while waitpid(pid, &status, 0) == -1 && errno == EINTR {} }
+// L-b: claude se ustavi sam (Ctrl+Z: SIGSTOP sebi, terminal je v načinu raw): minigw se ustavi za njim, da lupina dobi
+// terminal nazaj; po fg (SIGCONT skupini) še claude dobi SIGCONT.
+while !exited {
+    if waitpid(pid, &status, WUNTRACED) == -1 {
+        if errno == EINTR { continue }
+        break
+    }
+    if status & 0x7f == 0x7f {  // WIFSTOPPED
+        kill(getpid(), SIGSTOP)
+        kill(pid, SIGCONT)
+        continue
+    }
+    exited = true
+}
 releaseHeld()
 forwarded.forEach { $0.cancel() }
 share.unregister()
 extras.unregister()
-let code = status & 0x7f == 0 ? (status >> 8) & 0xff : 128 + (status & 0x7f)
+let killedBy = status & 0x7f  // WTERMSIG (0 = izhod)
+let code = killedBy == 0 ? (status >> 8) & 0xff : 128 + killedBy
 if code == 0, recordSession { Profiles.saveLastSession(file: lastSessionFile, cwd: FileManager.default.currentDirectoryPath, sid: sid) }
+if killedBy != 0 {  // L-b: minigw konča z istim signalom kot claude (lupina vidi signal, ne 128+n)
+    signal(killedBy, SIG_DFL)
+    kill(getpid(), killedBy)
+}
 exit(code == 0 && (printer.failed || streamBroken || outputDropped) ? 1 : code)

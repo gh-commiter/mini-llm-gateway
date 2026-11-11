@@ -9,7 +9,9 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // claudeCodeCases: primeri #79, isti za Swift (RouterCoreTests, claudeCodeCases).
@@ -183,7 +185,59 @@ func fakeClaudeMain() {
 		os.Exit(0)
 	}
 	os.WriteFile(os.Getenv("MINIGW_TEST_CLAUDE_LOG"), []byte(strings.Join(os.Args[1:], " ")), 0o600)
+	if s := os.Getenv("MINIGW_TEST_CLAUDE_SIGNAL"); s != "" { // L-b: claude se konča s signalom (TERM) ali se ustavi (STOP)
+		p, _ := os.FindProcess(os.Getpid())
+		if s == "STOP" && fakeStop != nil {
+			p.Signal(fakeStop)
+			os.Exit(0) // po SIGCONT
+		}
+		p.Signal(syscall.SIGTERM)
+		time.Sleep(5 * time.Second)
+	}
 	os.Exit(0)
+}
+
+// fakeStop: SIGSTOP, kjer ga test rabi (claudewait_linux_test.go).
+var fakeStop os.Signal
+
+// fakeClaudeDir: mapa z lažnim claude (kopija testnega programa) in dnevnik njegovih argumentov.
+func fakeClaudeDir(t *testing.T) (dir, log string) {
+	dir = t.TempDir()
+	fake := filepath.Join(dir, "claude")
+	if runtime.GOOS == "windows" {
+		fake += ".exe"
+	}
+	b, err := os.ReadFile(os.Args[0])
+	if err != nil || os.WriteFile(fake, b, 0o755) != nil {
+		t.Fatal(err)
+	}
+	return dir, filepath.Join(dir, "claude.log")
+}
+
+// minigwCmd: »minigw args…« (testni program) z lažnim claude v PATH, brez CLAUDECODE; MINIGW_ALLOW_UNSAFE_FLAGS=1,
+// ker test morda teče v Claude Code.
+func minigwCmd(dir, log string, env []string, args ...string) *exec.Cmd {
+	cmd := exec.Command(os.Args[0], args...)
+	cmd.Env = append(slices.DeleteFunc(os.Environ(), func(kv string) bool {
+		return strings.HasPrefix(kv, "CLAUDECODE=") || strings.HasPrefix(strings.ToUpper(kv), "PATH=")
+	}), append(env, "MINIGW_TEST_MAIN=1", "MINIGW_ALLOW_UNSAFE_FLAGS=1", "MINIGW_TEST_CLAUDE_LOG="+log, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"))...)
+	return cmd
+}
+
+// L-b: claude, ki ga konča signal, konča minigw z istim signalom (ne 128+n).
+func TestClaudeSignalExit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no signals")
+	}
+	dir, log := fakeClaudeDir(t)
+	err := minigwCmd(dir, log, []string{"MINIGW_TEST_CLAUDE_SIGNAL=TERM"}, "-h").Run()
+	ee, ok := err.(*exec.ExitError)
+	if !ok {
+		t.Fatalf("minigw: %v", err)
+	}
+	if ws := ee.Sys().(syscall.WaitStatus); !ws.Signaled() || ws.Signal() != syscall.SIGTERM {
+		t.Fatalf("minigw ended with %v, not SIGTERM", ws)
+	}
 }
 
 // #79: »env -u CLAUDECODE minigw … --continue« pod pravim procesom claude minigw zavrne, preden zažene claude;
