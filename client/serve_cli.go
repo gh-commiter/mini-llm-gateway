@@ -290,9 +290,19 @@ func (s *server) agentFolders(c serveConfig, dir string) []string {
 		}
 		if _, missed := s.wasMissing.Load(f); missed {
 			// prava pot je ista (nobene povezave tudi v nadrejenih mapah), mapa je tega uporabnika
-			if r, err := realPath(f); err != nil || !samePath(r, f) || !ownedByMe(f) || !ownedByMe(r) {
+			why := ""
+			r, err := realPath(f)
+			switch {
+			case err != nil:
+				why = "cannot resolve its real path"
+			case !samePath(r, f):
+				why = "it is reached through a link to " + r
+			case !ownedByMe(f) || !ownedByMe(r):
+				why = "it is a link or owned by another user"
+			}
+			if why != "" {
 				if _, logged := s.refusedLogged.LoadOrStore(f, true); !logged {
-					s.log.Printf("WARNING: allowed folder %s was missing and is not a real folder of this user (or reached through a link): remove and add it again in the allowed folders to use it", f)
+					s.log.Printf("WARNING: allowed folder %s was missing at start and is not used: %s; if you trust it, remove and add it again in the allowed folders", f, why)
 				}
 				continue
 			}
