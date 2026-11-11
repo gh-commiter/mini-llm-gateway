@@ -280,6 +280,8 @@ final class ShareClient: @unchecked Sendable {
     private var current = ""
     var key: String { lock.withLock { current } }
     private let syncLock = NSLock()
+    // Spreminjajoče metode WebDAV ena za drugo (kot davWriteMu v Go); GET in PROPFIND ostaneta sočasna.
+    private let davWriteLock = NSLock()
     private var synced: [String: Sync.Entry] = [:]  // manifest ob zadnjem prenosu (zgoščevanje, spori)
     private var sent: [String: Set<String>] = [:]   // pot → različice, ki jih je router dobil od tega odjemalca (#20)
     private var reported: Set<String> = []          // že javljene prevelike datoteke
@@ -340,7 +342,9 @@ final class ShareClient: @unchecked Sendable {
                 case .worktreePull: r = syncLock.withLock { wtPull(k, job) }
                 case .syncPush: r = DAVResponse(syncLock.withLock { push(k) } ? 200 : 500)
                 case .syncPull: r = DAVResponse(syncLock.withLock { pull(k) } ? 200 : 500)
-                case .webDAV: r = WebDAV.handle(method: job.method, path: job.path, headers: job.headers, body: job.body, root: root, prefix: job.prefix)
+                case .webDAV:
+                    let dav = { WebDAV.handle(method: job.method, path: job.path, headers: job.headers, body: job.body, root: self.root, prefix: job.prefix) }
+                    r = Self.writeMethods.contains(job.method) ? davWriteLock.withLock(dav) : dav()
                 case nil: r = DAVResponse(403)
                 }
                 guard let body = try? JSONEncoder().encode(DAVReply(id: job.id, response: r)) else { continue }
@@ -547,7 +551,7 @@ final class ShareClient: @unchecked Sendable {
             note("the gateway did not confirm the copied-back changes; they come again next time")
             unpulled = true
         }
-        if !ch.changed.isEmpty || !ch.deleted.isEmpty { note("synced back from the gateway: \(ch.changed.count) changed, \(ch.deleted.count) deleted") }
+        if let line = Sync.summary(ch, notes: notes) { note(line) }
         return true
     }
 }
@@ -724,7 +728,7 @@ func shareCommand(_ a: [String]) -> Never {
     case "add":
         var isDir: ObjCBool = false
         guard FileManager.default.fileExists(atPath: dir, isDirectory: &isDir), isDir.boolValue else { fail("not a folder: \(dir)") }
-        guard dir != "/", dir != NSHomeDirectory() else {
+        guard SharedFolders.shareAllowed(dir) else {
             fail("refusing to share \(dir) (the disk root or your home folder would expose everything); share a project folder")
         }
         let e = SharedFolders.Entry(path: dir, work: work, readOnly: ro)
