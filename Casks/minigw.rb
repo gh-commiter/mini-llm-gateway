@@ -47,9 +47,9 @@ cask "minigw" do
     run "/bin/sh",
         args:           ["-c",
                          '[ -x "$0" ] || exit 0; p=$PPID c=; while [ -z "$c" ] && [ "${p:-1}" -gt 1 ]; do ' \
-                         'c=$(ps -o args= -p "$p" | ' \
-                         'sed -n "s|.*/Library/Homebrew/brew\.rb \(-[^ ]* \)*\([a-z]*\).*|\2|p"); ' \
-                         'p=$(ps -o ppid= -p "$p" | tr -d " "); done; ' \
+                         'c=$(/bin/ps -o args= -p "$p" | ' \
+                         '/usr/bin/sed -n "s|.*/Library/Homebrew/brew\.rb \(-[^ ]* \)*\([a-z]*\).*|\2|p"); ' \
+                         'p=$(/bin/ps -o ppid= -p "$p" | /usr/bin/tr -d " "); done; ' \
                          'case $c in uninstall) exec "$0" plugin uninstall ;; esac',
                          "{{HOMEBREW_PREFIX}}/bin/minigw"],
         env:            { "HOME" => "" },
