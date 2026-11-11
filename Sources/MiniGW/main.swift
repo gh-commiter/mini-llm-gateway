@@ -995,6 +995,7 @@ for k in ProcessInfo.processInfo.environment.keys where Profiles.parentClaudeVar
 if promptGuard { setenv("CLAUDE_CODE_DISABLE_FILE_MENTIONS", "1", 1) }  // N6b
 setenv("ANTHROPIC_BASE_URL", c.url, 1)
 setenv("ANTHROPIC_AUTH_TOKEN", c.token, 1)
+setenv("ENABLE_CLAUDEAI_MCP_SERVERS", "false", 0)  // prijava s prehodom: povezav claude.ai tako ni, brez opozorila claude ob vsakem zagonu (kot Go)
 setenv("ANTHROPIC_API_KEY", "", 1)
 setenv("CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "1", 1)
 setenv("API_TIMEOUT_MS", "1800000", 1)
