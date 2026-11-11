@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Fixed: while an agent was starting, the gateway could, rarely, see its own Scratch folder as used by another gateway and refuse requests (also right after a settings change). Mac app and `minigw serve` on macOS and Linux.
+- Security (#84): `minigw share add` compared folder names, so `/System/Volumes/Data/Users/<you>` (the same folder as your macOS home), `/System/Volumes/Data` (almost all of the disk) and folders that contain your home (`/Users`, `C:\Users`) could be shared. It now compares the folder itself (device and inode; on Windows volume and file index) and refuses your home folder, any folder that contains it, and any drive or volume root (also a mount point or bind mount); a folder it cannot check is refused. minigw checks saved folders again each time it uses them: one saved by an older version that is now refused prints "minigw: not sharing … (…); remove it with: minigw share remove …" and is not shared, and `minigw share list` marks it "not shared". Both clients.
 - Fixed (Mac `minigw`): with several gateway profiles, a request could, rarely, get 502 "gateway … is not reachable" for up to 30 s.
 
 ## 0.5.24

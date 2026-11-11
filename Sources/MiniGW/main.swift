@@ -704,6 +704,15 @@ func sharedFolders() -> [SharedFolders.Entry] {
     SharedFolders.parse((try? String(contentsOf: sharedFoldersFile, encoding: .utf8)) ?? "")
 }
 
+/// #84: mapa s seznama za cwd ob uporabi. Mapo, ki je shareRefusal zdaj zavrne (dodana pred 0.5.25), pove enkrat in je
+/// ne deli (kot sharedFolderFor v Go).
+var refusedShares: Set<String> = []
+func savedShare(_ cwd: String) -> SharedFolders.Entry? {
+    let (e, refused) = SharedFolders.lookupAllowed(sharedFolders(), cwd: cwd)
+    if let refused, refusedShares.insert(refused).inserted { FileHandle.standardError.write(Data((refused + "\n").utf8)) }
+    return e
+}
+
 func shareCommand(_ a: [String]) -> Never {
     let sub = a.first ?? "list"
     // add: --work=direct|sync|native|native-direct|worktree|auto in --ro = privzeti način te mape in podmap (zastavica ob zagonu ima prednost)
@@ -728,9 +737,7 @@ func shareCommand(_ a: [String]) -> Never {
     case "add":
         var isDir: ObjCBool = false
         guard FileManager.default.fileExists(atPath: dir, isDirectory: &isDir), isDir.boolValue else { fail("not a folder: \(dir)") }
-        guard SharedFolders.shareAllowed(dir) else {
-            fail("refusing to share \(dir) (the disk root or your home folder would expose everything); share a project folder")
-        }
+        if let why = SharedFolders.shareRefusal(dir) { fail("refusing to share \(dir) (\(why)); share a project folder") }
         let e = SharedFolders.Entry(path: dir, work: work, readOnly: ro)
         if list.contains(e) { print("already shared: \(describe(e))"); exit(0) }
         list.removeAll { $0.path == dir }; list.append(e); save()
@@ -740,7 +747,9 @@ func shareCommand(_ a: [String]) -> Never {
         print("no longer shared: \(dir)")
     case "list":
         if list.isEmpty { print("no extra shared folders (folders under your home folder are shared by default)") }
-        list.forEach { print(describe($0)) }
+        for e in list {
+            print(describe(e) + (SharedFolders.shareRefusal(e.path).map { "  not shared: \($0) (minigw share remove \(e.path))" } ?? ""))
+        }
     default:
         fail("usage: minigw share add [--work=direct|sync|native|native-direct|worktree|auto] [--ro] [folder] | minigw share remove [folder] | minigw share list")
     }
@@ -974,7 +983,7 @@ default:
 refuseUnsafeClaudeFlags()  // H3: pred deljenjem mape in sejo (CLAUDECODE še ni odstranjen)
 let callerEnv = ProcessInfo.processInfo.environment  // N8, L-31: pred odstranitvijo CLAUDECODE (#7)
 if let f = flagWork {
-    let entry = SharedFolders.lookup(sharedFolders(), cwd: FileManager.default.currentDirectoryPath)
+    let entry = savedShare(FileManager.default.currentDirectoryPath)
     if Profiles.unsafeWork(f, saved: entry?.work, readOnly: readOnly || entry?.readOnly == true, env: callerEnv) {
         fail("--minigw-work=\(f) is not accepted when minigw runs inside Claude Code: the agent would change your files without a branch "
             + "to review; put MINIGW_WORK=\(f) in front of the command instead, so Claude Code asks you first (or save it for this folder: "
@@ -1043,15 +1052,15 @@ let shareEnv = ProcessInfo.processInfo.environment["MINIGW_SHARE"]
 let remoteRouter = !["127.0.0.1", "localhost", "::1"].contains(routerHost)
 let wantShare = shareEnv == "1"
     || (shareEnv != "0" && remoteRouter
-        && (SharedFolders.autoShare(cwd) || SharedFolders.lookup(sharedFolders(), cwd: cwd) != nil))
-let mode = SharedFolders.mode(flag: workFlag, saved: SharedFolders.lookup(sharedFolders(), cwd: cwd), readOnly: readOnly)
-if let asked = workFlag ?? SharedFolders.lookup(sharedFolders(), cwd: cwd)?.work, asked.hasPrefix("native") || asked == "worktree", mode.work != asked {
+        && (SharedFolders.autoShare(cwd) || savedShare(cwd) != nil))
+let mode = SharedFolders.mode(flag: workFlag, saved: savedShare(cwd), readOnly: readOnly)
+if let asked = workFlag ?? savedShare(cwd)?.work, asked.hasPrefix("native") || asked == "worktree", mode.work != asked {
     err.write(Data("minigw: \(asked) mode cannot be read-only; sharing the folder read-only instead\n".utf8))
 }
 let work = mode.work
 readOnly = mode.readOnly
 // direct ni izbran izrecno (privzeto, auto ali samo za branje namesto worktree/native): prehod brez priklopa → sync
-let askedWork = workFlag ?? SharedFolders.lookup(sharedFolders(), cwd: cwd)?.work
+let askedWork = workFlag ?? savedShare(cwd)?.work
 let implicitWork = SharedFolders.implicitWork(asked: askedWork, work: work)
 
 // x-claude-mini-share: router po ponovnem zagonu počaka, da se mapa znova registrira (namesto napake cwd_unavailable).
@@ -1076,7 +1085,7 @@ var tries = SharedFolders.candidates(work: work, readOnly: readOnly, smb: smb, g
 // Brez commita ni posnetka: enkrat preveri, nato sync (#10).
 let noSnapshot = top.flatMap { tries.contains("worktree") ? Worktree.snapshotBlocker(top: $0) : nil }
 if noSnapshot != nil { tries.removeAll { $0 == "worktree" } }
-tries = Profiles.noDirectFallback(tries, flag: flagWork, saved: SharedFolders.lookup(sharedFolders(), cwd: cwd)?.work, readOnly: readOnly, env: callerEnv)
+tries = Profiles.noDirectFallback(tries, flag: flagWork, saved: savedShare(cwd)?.work, readOnly: readOnly, env: callerEnv)
 if tries.isEmpty {
     fail("--minigw-work=\(flagWork ?? "") is not possible in \(cwd), and inside Claude Code minigw does not fall back to direct "
         + "(the agent would change your files without a branch to review); put MINIGW_WORK=direct in front of the command instead")
@@ -1159,7 +1168,7 @@ if profiles.count > 1 {
         }
         targets.append(ProfileMux.Target(name: p.name, url: rc.url, token: rc.token))
         let remote = !p.conn.isLocal
-        let want = shareEnv == "1" || (shareEnv != "0" && remote && (SharedFolders.autoShare(cwd) || SharedFolders.lookup(sharedFolders(), cwd: cwd) != nil))
+        let want = shareEnv == "1" || (shareEnv != "0" && remote && (SharedFolders.autoShare(cwd) || savedShare(cwd) != nil))
         guard want, !sid.isEmpty else { continue }
         let name = p.name, gw = p.conn.url
         hooks[name] = {

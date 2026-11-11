@@ -122,11 +122,41 @@ public enum SharedFolders {
         return top.map { real($0) == real(cwd) } == true
     }
 
-    /// share add: nikoli koren diska ali domača mapa sama; kanonični poti (povezava na dom je dom).
-    public static func shareAllowed(_ dir: String, home: String = NSHomeDirectory()) -> Bool {
+    /// #84: zakaj mape ni dovoljeno deliti, nil = dovoljeno (kot shareRefusal v Go). Nikoli koren diska ali nosilca
+    /// (statfs f_mntonname, tudi /System/Volumes/Data) ali mapa, ki je domača mapa ali jo vsebuje (/Users). Primerja
+    /// istovetnost (st_dev+st_ino), ne nizov: /System/Volumes/Data/Users/<ime> ali povezava je ista mapa. Ko istovetnosti
+    /// ni mogoče ugotoviti, zavrne. Velja ob share add in ob vsaki uporabi mape s seznama.
+    public static func shareRefusal(_ dir: String, home: String = NSHomeDirectory()) -> String? {
+        let all = " would expose everything"
         let real = { (p: String) in Sync.real(URL(fileURLWithPath: p))?.path ?? p }
+        let id = { (p: String) -> [UInt64]? in
+            var st = stat()
+            return stat(p, &st) == 0 ? [UInt64(UInt32(bitPattern: st.st_dev)), st.st_ino] : nil
+        }
         let d = real(dir)
-        return d != "/" && d != real(home)
+        guard let did = id(d) else { return "cannot tell which folder this is: \(String(cString: strerror(errno)))" }
+        if d == "/" { return "a disk root" + all }
+        var fs = statfs()
+        guard statfs(d, &fs) == 0 else { return "cannot tell whether this is a volume root: \(String(cString: strerror(errno)))" }
+        let mnt = withUnsafeBytes(of: fs.f_mntonname) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+        if id(mnt) == did { return "a volume root" + all }
+        for h in [home, real(home)] {
+            var p = h
+            while true {
+                guard let hid = id(p) else { return "cannot check your home folder: \(String(cString: strerror(errno)))" }
+                if hid == did || p == d { return "your home folder or a folder that contains it" + all }
+                if p == "/" { break }
+                p = (p as NSString).deletingLastPathComponent
+            }
+        }
+        return nil
+    }
+
+    /// #84: lookup ob uporabi; mapa, ki je shareRefusal zdaj zavrne (dodana pred 0.5.25), ni deljena (refused = vrstica za stderr).
+    public static func lookupAllowed(_ entries: [Entry], cwd: String, home: String = NSHomeDirectory()) -> (entry: Entry?, refused: String?) {
+        guard let e = lookup(entries, cwd: cwd) else { return (nil, nil) }
+        guard let why = shareRefusal(e.path, home: home) else { return (e, nil) }
+        return (nil, "minigw: not sharing \(e.path) (\(why)); remove it with: minigw share remove \(e.path)")
     }
 
     /// Pot za seznam: ena vrstica, tabulator loči možnosti.
