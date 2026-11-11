@@ -63,3 +63,32 @@ func TestScratchHeldSiblingNotTakenWindows(t *testing.T) {
 		t.Fatal("folders changed")
 	}
 }
+
+// H1: minigw gw brez routerja, a prehod te nastavitve teče (drži ročaj Scratch): premik in prevzem 409, mapa cela (prej:
+// preimenovanje ne gre → kopija → brisanje žive mape).
+func TestScratchOfflineWhileRunningWindows(t *testing.T) {
+	cfg, cur := offlineScratchConfig(t)
+	scratchFixture(t, cur)
+	other := filepath.Join(filepath.Dir(cur), "gw-bbbbbbbbbbbb")
+	writeOwner(t, other, "gw-bbbbbbbbbbbb")
+	h, err := openDir(cur, true, func(mode os.FileMode, owner, me string, _ []scratchACE) error { return scratchDirOK(mode, owner, me) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer windows.CloseHandle(h) // prehod te nastavitve teče
+	s, err := offlineServer(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	to := filepath.ToSlash(filepath.Join(nonTempDir(t), "mgw-test"))
+	if st, obj := s.adminDo("POST", "/general/scratch/move", []byte(`{"to":"`+to+`"}`)); st != 409 {
+		t.Fatalf("move: %d %v", st, obj)
+	}
+	if st, obj := s.adminDo("POST", "/general/scratch/take", []byte(`{"name":"gw-bbbbbbbbbbbb"}`)); st != 409 {
+		t.Fatalf("take: %d %v", st, obj)
+	}
+	checkFixture(t, cur)
+	if scratchOwner(other) != "gw-bbbbbbbbbbbb" {
+		t.Fatal("sibling changed")
+	}
+}

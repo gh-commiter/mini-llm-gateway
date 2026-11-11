@@ -81,7 +81,7 @@ const scratchUnknown = "?"
 // inUseText: drug prehod drži zaklep (Windows: ali program, ki ima mapo odprto, npr. ukazna vrstica v njej).
 func inUseText() string {
 	if runtime.GOOS == "windows" {
-		return "used by another gateway that is running (or a program has the folder open)"
+		return "used by another gateway that is running (or a program has the folder open, or it cannot be checked)"
 	}
 	return "used by another gateway that is running"
 }
@@ -209,6 +209,9 @@ func takeScratch(old, cur, id string, now time.Time) (dst, aside string, err err
 	if scratchLocked(old) {
 		return "", "", errors.New("the folder is " + inUseText() + ": stop it first")
 	}
+	if cur != "" && cur != old && !scratchHeldHere(cur) && scratchLocked(cur) { // H1: trenutno mapo drži drug proces
+		return "", "", errors.New("this gateway's Scratch folder " + cur + " is " + inUseText() + ": stop it first")
+	}
 	if !scratchFolderMine(old) {
 		return "", "", errors.New("the folder is not a real folder of this user")
 	}
@@ -286,6 +289,19 @@ func scratchSiblings(cur, id string) []scratchSibling {
 	return out
 }
 
+// offlineScratchHeld (H1): minigw gw brez routerja, a Scratch te nastavitve drži prehod, ki teče (npr. admin.secret
+// manjka, vrata spremenjena): prazen hub ne vidi njegovih sej, zato ne premik ne prevzem. "" = v redu.
+func (s *server) offlineScratchHeld() string {
+	if !s.offline {
+		return ""
+	}
+	releaseScratch() // Windows: lasten ročaj tega procesa ni zaklep drugega
+	if dir := s.conf().scratchDir(); scratchLocked(dir) {
+		return "the Scratch folder " + dir + " is " + inUseText() + ": stop that gateway first"
+	}
+	return ""
+}
+
 // takeScratchAPI: POST /general/scratch/take (Take over; minigw gw scratch take). Zapisano v dnevnik.
 const scratchTakeBusy = "scratch folder: minigw sessions or agents are active; take it over when no minigw session runs"
 
@@ -305,6 +321,9 @@ func (s *server) takeScratchAPI(body []byte) (int, any) {
 	defer s.scratchGate.Unlock()
 	if s.hub.count() > 0 || s.agentsRunning.Load() > 0 {
 		return fail(409, scratchTakeBusy)
+	}
+	if why := s.offlineScratchHeld(); why != "" {
+		return fail(409, why)
 	}
 	foreign := s.scratchOther.Load()
 	defer func() { // tudi po napaki: ročaj, lastnik in zaklep na mapi v nastavitvah (kot premik)

@@ -66,6 +66,9 @@ type adminClient struct {
 	base, secret string  // tekoči router
 	routerKey    []byte  // javni ključ routerja: Noise preveri, da je na vratih res ta router
 	off          *server // router ne teče
+	// answered (H1): vrata so odgovorila (ali ne v času), a ne kot ta router: morda teče; premik in prevzem Scratch ne
+	// gresta mimo njega (prazen hub ne vidi njegovih sej).
+	answered bool
 }
 
 // errNotRouter: na vratih je drug program (rokovanje Noise s ključem routerja ne uspe); skrivnost ni bila poslana.
@@ -179,13 +182,16 @@ func openAdmin(cfgPath string) *adminClient {
 		status, _, err := a.http("GET", "/status", nil, 3*time.Second)
 		switch {
 		case errors.Is(err, errNotRouter):
+			a.answered = true
 			fmt.Fprintf(os.Stderr, "minigw: port %d answers, but not as the gateway of %s (wrong key): changing that file only; nothing was sent to it\n", c.Port, cfgPath)
 		case err != nil: // ne teče
+			a.answered = !connRefused(err)
 		case status == 200:
 			return a
 		case status == 401 || status == 403:
 			fail(fmt.Sprintf("the gateway on port %d refused the admin request (HTTP %d): is it the gateway of %s?", c.Port, status, cfgPath))
 		default:
+			a.answered = true
 			fmt.Fprintf(os.Stderr, "minigw: port %d answers without the admin API (another program, or an older minigw serve): changing %s; restart that gateway\n", c.Port, cfgPath)
 		}
 	}
@@ -630,6 +636,9 @@ func routerCommand(args []string, in io.Reader) {
 	case "scratch":
 		need(1, 3)
 		var g apiGeneral
+		if len(pos) > 1 && a.off != nil && a.answered {
+			fail("the gateway of " + *cfgPath + " may be running (its port answers, but not as that gateway): stop it, or fix the port and admin.secret, then try again")
+		}
 		if len(pos) == 1 {
 			a.do("GET", "/general", nil, &g)
 			say("Scratch folder: " + g.Scratch)

@@ -365,6 +365,15 @@ func releaseScratch() {
 // lockScratch (N4): zaklep mape Scratch je ročaj iz protectScratch (brez FILE_SHARE_DELETE).
 func lockScratch(string) error { return nil }
 
+// scratchHeldHere: takeScratch ročaj tega procesa pred preverjanjem sprosti (releaseScratch), zato nikoli.
+func scratchHeldHere(string) bool { return false }
+
+// crossDevice (M2): preimenovanje ne gre, ker je cilj na drugem nosilcu.
+func crossDevice(err error) bool { return errors.Is(err, windows.ERROR_NOT_SAME_DEVICE) }
+
+// connRefused (H1): na vratih nič ne posluša.
+func connRefused(err error) bool { return errors.Is(err, windows.WSAECONNREFUSED) }
+
 // oNoBlock: na Windows ni cevi v mapi (datoteka lastnika se preveri s Stat).
 const oNoBlock = 0
 
@@ -384,7 +393,7 @@ func scratchFolderMine(dir string) bool {
 func scratchLocked(dir string) bool {
 	u, err := windows.UTF16PtrFromString(dir)
 	if err != nil {
-		return false
+		return true
 	}
 	h, err := windows.CreateFile(u, windows.DELETE, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil,
 		windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)

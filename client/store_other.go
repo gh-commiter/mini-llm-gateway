@@ -257,6 +257,24 @@ func lockScratch(dir string) error {
 	return nil
 }
 
+// scratchHeldHere: zaklep mape dir drži ta proces (scratchLock), ne drug prehod.
+func scratchHeldHere(dir string) bool {
+	scratchLock.Lock()
+	defer scratchLock.Unlock()
+	if scratchLock.f == nil {
+		return false
+	}
+	a, err := scratchLock.f.Stat()
+	b, berr := os.Lstat(filepath.Join(dir, scratchLockFile))
+	return err == nil && berr == nil && os.SameFile(a, b)
+}
+
+// crossDevice (M2): preimenovanje ne gre, ker je cilj na drugem nosilcu.
+func crossDevice(err error) bool { return errors.Is(err, syscall.EXDEV) }
+
+// connRefused (H1): na vratih nič ne posluša.
+func connRefused(err error) bool { return errors.Is(err, syscall.ECONNREFUSED) }
+
 // scratchLocked: zaklep mape dir drži drug prehod (ki teče).
 func scratchLocked(dir string) bool {
 	f, err := os.OpenFile(filepath.Join(dir, scratchLockFile), os.O_RDONLY|oNoBlock, 0)
