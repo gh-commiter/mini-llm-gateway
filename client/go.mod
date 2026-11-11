@@ -2,6 +2,8 @@ module minigw
 
 go 1.27
 
+toolchain go1.27.4
+
 require (
 	dev.trojar/minigw-tui-quiet v0.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
