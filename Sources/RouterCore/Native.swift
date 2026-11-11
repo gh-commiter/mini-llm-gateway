@@ -433,7 +433,9 @@ public enum Native {
         // Narekovaja v poti scratchProblem ne dovoli.
         let jt = runTmp.path.contains(" ") ? "\"" + runTmp.path + "\"" : runTmp.path
         env["JAVA_TOOL_OPTIONS"] = (env["JAVA_TOOL_OPTIONS"].map { $0 + " " } ?? "") + "-Djava.io.tmpdir=" + jt
-        env["xcrun_db"] = nil; env["xcrun_nocache"] = "1"
+        // Predpomnilnik xcrun le tega zagona (v runTmp, izbriše se z njim): lastnikovega (DARWIN_USER_TEMP_DIR, xcrun
+        // DIRHELPER_USER_DIR_SUFFIX prezre) ne piše, brez predpomnilnika pa je vsak klic ~1,5 s (Swift Build ~23 klicev).
+        env["xcrun_db"] = runTmp.appendingPathComponent("xcrun_db").path; env["xcrun_nocache"] = nil
         env["DIRHELPER_USER_DIR_SUFFIX"] = suffix
         return env
     }
@@ -799,7 +801,7 @@ extension Router {
         var code: Int32 = -1, stopped: Bool?
         await withTaskCancellationHandler {
             do {
-                try await writer.write(HTTPResponse.head(status: 200, headers: [("Content-Type", "text/plain"), ("Cache-Control", "no-cache"), ("request-id", rid)]))
+                try await writer.write(HTTPResponse.head(status: 200, headers: [("Content-Type", "text/plain"), ("X-Content-Type-Options", "nosniff"), ("Cache-Control", "no-cache"), ("request-id", rid)]))
                 for await f in frames { try await writer.write(f.data); if f.counted { written() } }  // en pisec
                 code = await exit.wait()
                 stopped = await killed()  // cevi so zaprte: ostanki skupine takoj

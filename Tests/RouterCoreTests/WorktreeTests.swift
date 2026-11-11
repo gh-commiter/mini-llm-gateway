@@ -561,7 +561,7 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
     #expect(env["JAVA_TOOL_OPTIONS"] == "-Xmx1g -Djava.io.tmpdir=\"" + run.path + "\"")  // presledek: v narekovajih
     let plain = URL(fileURLWithPath: "/Volumes/SSD/Scratch/tmp/run-1")
     #expect(Native.runEnv([:], runTmp: plain)["JAVA_TOOL_OPTIONS"] == "-Djava.io.tmpdir=" + plain.path)  // brez: JDK 8
-    #expect(env["ANTHROPIC_API_KEY"] == nil && env["SSH_AUTH_SOCK"] == nil && env["xcrun_db"] == nil && env["xcrun_nocache"] == "1")
+    #expect(env["ANTHROPIC_API_KEY"] == nil && env["SSH_AUTH_SOCK"] == nil && env["xcrun_db"] == run.path + "/xcrun_db" && env["xcrun_nocache"] == nil)  // predpomnilnik xcrun le zagona
     #expect(env["PATH"]?.hasPrefix("/usr/bin:") == true)
 }
 
