@@ -201,8 +201,8 @@ const S = {
   allowCommands: ["Allow commands", "Dovoli ukaze"],
   copilotCommandsAsk: ["Copilot then runs commands as this user. On Linux with bwrap they run in the sandbox (home folder hidden, writing only to the session's folder and a temporary folder); otherwise they can read and change everything this user can, including gateway settings, and use the network. Commands need the token below (fine-grained, only “Copilot Requests”) and can use it to make Copilot requests on your account. Allow only if you trust the devices that use Copilot.",
     "Copilot nato izvaja ukaze kot ta uporabnik. Na Linuxu z bwrap tečejo v sandboxu (domača mapa skrita, pisanje le v mapo seje in začasno mapo); sicer lahko berejo in spreminjajo vse, kar ta uporabnik, tudi nastavitve prehoda, in uporabljajo omrežje. Ukazi potrebujejo žeton spodaj (fine-grained, le »Copilot Requests«) in lahko z njim pošiljajo zahteve Copilot na tvoj račun. Dovoli le, če zaupaš napravam, ki uporabljajo Copilot."],
-  copilotFooter: ["The claude-copilot models run Copilot CLI as an agent in the synced copy of the client's folder, on Linux under bwrap with a fresh Copilot home for each request. By default it may only read that folder; with writing on it may edit files there. Commands only with “Allow commands” and the token above. On Linux it signs in with the GitHub CLI (gh auth login) or that token; on Windows it cannot start in the Windows sandbox, so it runs only with “Allow commands without a sandbox”, also with a fresh Copilot home for each request (never ~/.copilot), signed in with the GitHub CLI (gh auth login) or that token.",
-    "Modeli claude-copilot poženejo Copilot CLI kot agenta v sinhronizirani kopiji mape odjemalca, na Linuxu pod bwrap s svežo domačo mapo Copilot za vsako zahtevo. Privzeto sme mapo le brati; s pisanjem sme v njej urejati datoteke. Ukazi le z »Dovoli ukaze« in žetonom zgoraj. Na Linuxu se prijavi z GitHub CLI (gh auth login) ali tem žetonom; na Windows se v peskovniku Windows ne zažene, zato teče le z »Dovoli ukaze brez peskovnika«, prav tako s svežo domačo mapo Copilot za vsako zahtevo (nikoli ~/.copilot), prijavljen z GitHub CLI (gh auth login) ali tem žetonom."],
+  copilotFooter: ["The claude-copilot models run Copilot CLI as an agent in the synced copy of the client's folder, on Linux under bwrap with a fresh Copilot home for each request. By default it may only read that folder; with writing on it may edit files there. Commands only with “Allow commands” and the token above. On Linux it signs in with the GitHub CLI (gh auth login) or that token. Copilot is not supported on a Windows gateway in this version.",
+    "Modeli claude-copilot poženejo Copilot CLI kot agenta v sinhronizirani kopiji mape odjemalca, na Linuxu pod bwrap s svežo domačo mapo Copilot za vsako zahtevo. Privzeto sme mapo le brati; s pisanjem sme v njej urejati datoteke. Ukazi le z »Dovoli ukaze« in žetonom zgoraj. Na Linuxu se prijavi z GitHub CLI (gh auth login) ali tem žetonom. Copilot v tej različici na prehodu Windows ni podprt."],
   foundryDesc: ["Microsoft Foundry Local: models on this computer, without the cloud.", "Microsoft Foundry Local: modeli na tem računalniku, brez oblaka."],
   foundryMissing: ["Foundry Local is not installed. Windows: winget install Microsoft.FoundryLocal; macOS: brew tap microsoft/foundrylocal && brew install foundrylocal. Then download a model, e.g. foundry model download phi-4-mini.",
     "Foundry Local ni nameščen. Windows: winget install Microsoft.FoundryLocal; macOS: brew tap microsoft/foundrylocal && brew install foundrylocal. Nato prenesi model, npr. foundry model download phi-4-mini."],
@@ -287,7 +287,7 @@ const S = {
   pathHomeWarn: ["In the Windows sandbox, folders on PATH inside your home folder (for example ~\\.local\\bin) are readable by agents; keep no secrets there.",
     "V peskovniku Windows agenti lahko berejo mape s PATH v domači mapi (npr. ~\\.local\\bin); tam ne hrani skrivnosti."],
   worktreeNetworkNoBox: ["No effect on this computer: there is no Windows sandbox, so agents' network is not limited.", "Na tem računalniku nima učinka: peskovnika Windows ni, zato omrežje agentov ni omejeno."],
-  unsandboxedNotNeeded: ["Not needed for Claude CLI and Grok: they run in the Windows sandbox. Codex and Copilot still need it (they cannot start in it); with it on they can read the provider keys and the admin secret.", "Ni potrebno za Claude CLI in Grok: tečeta v peskovniku Windows. Codex in Copilot ga še vedno potrebujeta (v njem se ne zaženeta); ko je vklopljeno, lahko bereta ključe ponudnikov in skrivnost skrbnika."],
+  unsandboxedNotNeeded: ["Not needed for Claude CLI and Grok: they run in the Windows sandbox. Codex still needs it (it cannot start in it); with it on it can read the provider keys and the admin secret. Copilot is not supported on a Windows gateway in this version.", "Ni potrebno za Claude CLI in Grok: tečeta v peskovniku Windows. Codex ga še vedno potrebuje (v njem se ne zažene); ko je vklopljeno, lahko bere ključe ponudnikov in skrivnost skrbnika. Copilot v tej različici na prehodu Windows ni podprt."],
   sandboxNoteWin: ["Commands run in the Windows sandbox (MXC) with Claude Code's PowerShell tool (Bash in Tools means PowerShell): they write only to the session's folder and the gateway's folders for this conversation, and cannot read your home folder or the gateway's settings.",
     "Ukazi tečejo v peskovniku Windows (MXC) z orodjem PowerShell Claude Code (Bash med orodji pomeni PowerShell): pišejo le v mapo seje in mape prehoda za ta pogovor, domače mape in nastavitev prehoda ne morejo brati."],
   localToolsBox: ["Every Claude Code tool, including commands: they run in the Windows sandbox (MXC).", "Vsa orodja Claude Code, tudi ukazi: tečejo v peskovniku Windows (MXC)."],
@@ -300,8 +300,7 @@ const S = {
     "Claude CLI v načinu worktree (minigw --minigw-work=worktree) dela v klonu git pod mapo Scratch. Ko je vklopljeno, smejo njegove gradnje prenašati (Maven, npm, git clone); izklopljeno: ukazi nimajo omrežja, oddaljen git clone je zavrnjen (na Windows Claude Code še vedno doseže api.anthropic.com; njegovo spletno branje in iskanje ne delata)."],
   codexLockedWin: ["On Windows Codex needs “Allow commands without a sandbox” under Claude CLI: it cannot run in the Windows sandbox, and its own elevated sandbox can still read the gateway's settings. With the switch it can read and change everything this user can, including gateway settings.",
     "Na Windows Codex potrebuje »Dovoli ukaze brez peskovnika« pod Claude CLI: v peskovniku Windows ne teče, njegov peskovnik elevated pa še vedno bere nastavitve prehoda. S stikalom lahko bere in spreminja vse, kar ta uporabnik, tudi nastavitve prehoda."],
-  copilotLockedWin: ["On Windows Copilot needs “Allow commands without a sandbox” under Claude CLI: it cannot start in the Windows sandbox. With the switch it can read and change everything this user can, including gateway settings.",
-    "Na Windows Copilot potrebuje »Dovoli ukaze brez peskovnika« pod Claude CLI: v peskovniku Windows se ne zažene. S stikalom lahko bere in spreminja vse, kar ta uporabnik, tudi nastavitve prehoda."],
+  copilotUnsupported: ["Copilot is not supported on a Windows gateway in this version.", "Copilot v tej različici na prehodu Windows ni podprt."],
   signin: ["Not signed in, or the session has expired. Open Settings… from the tray icon again (or run minigw gw settings link).",
     "Ni prijave ali je seja potekla. Znova odpri Nastavitve … v ikoni pladnja (ali zaženi minigw gw settings link)."],
 };
@@ -516,6 +515,7 @@ async function agentPane(kind) {
 // ukazi le z izrecnim potrdilom.
 async function copilotPane() {
   const [a, c, st] = await Promise.all([api("GET", "/agents/copilot"), api("GET", "/agents/claude"), api("GET", "/status")]);
+  if (a.unsupported) return [card(...ICON.copilot, "Copilot CLI", t("copilotDesc")), el("div", {class: "note"}, t("copilotUnsupported"))];  // 0.5.24: Windows, kot TUI
   const n1 = note(), n2 = note(), n3 = note(t("copilotFooter"));
   const patch = body => api("PATCH", "/agents/copilot", body);
   const path = el("input", {type: "text", value: a.path, placeholder: a.exe || "copilot"});
@@ -530,7 +530,7 @@ async function copilotPane() {
   }), !a.write || locked);
   return [
     card(...ICON.copilot, "Copilot CLI", t("copilotDesc")),
-    group(row(labelSub(t("enabled"), bare ? t(locked ? (st.os === "windows" ? "copilotLockedWin" : "agentLockedWin") : "agentWarnWin") : null),
+    group(row(labelSub(t("enabled"), bare ? t(locked ? "agentLockedWin" : "agentWarnWin") : null),
         toggle(a.enabled && !locked, v => save(n1, async () => { await patch({enabled: v}); nav(); }), locked)),
       row(labelSub(t("path")), path, browse(path, n1, async v => { await patch({path: v}); show("copilot"); })), row(labelSub(t("copilotModels")), models)),
     el("div", {class: "note"}, status), n1,

@@ -1052,6 +1052,9 @@ func (s *server) agentAPI(method string, k agentKind, body []byte) (int, any) {
 		if k.name != "grok" {
 			o["network"] = ac.Network
 		}
+		if k.name == "copilot" && copilotUnsupported {
+			o["enabled"], o["unsupported"], o["reason"] = false, true, copilotUnsupportedMsg
+		}
 		if k.name == "copilot" {
 			o["commands"] = ac.Commands
 			t, _ := keyGet(s.cfgDir, copilotKey)
@@ -1082,6 +1085,9 @@ func (s *server) agentAPI(method string, k agentKind, body []byte) (int, any) {
 	}
 	if b.Work != nil && !validWork(*b.Work) {
 		return 400, errorBody(400, badWork)
+	}
+	if b.Enabled != nil && *b.Enabled && k.name == "copilot" && copilotUnsupported {
+		return 400, errorBody(400, copilotUnsupportedMsg)
 	}
 	if b.Network != nil && k.name == "grok" {
 		return 400, errorBody(400, "network: Codex and Copilot only")

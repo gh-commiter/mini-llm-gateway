@@ -283,3 +283,29 @@ func TestCopilotCacheFoldersRefused(t *testing.T) {
 		t.Fatalf("checkAgent: %v", err)
 	}
 }
+
+// 0.5.24 (lastnik): Copilot na prehodu Windows ni podprt: ni na seznamu modelov, vklop in zahteve zavrnjeni z razlogom.
+func TestCopilotUnsupportedOnWindows(t *testing.T) {
+	defer func(v bool) { copilotUnsupported = v }(copilotUnsupported)
+	copilotUnsupported = true
+	exe, _ := os.Executable()
+	s, _, base := liveServer(t, func(c *serveConfig) {
+		c.AllowUnsandboxedBash = true
+		c.Copilot = agentCLI{Enabled: true, Executable: exe}
+	})
+	host := strings.TrimPrefix(base, "http://")
+	if _, models := adminReq(t, base, host, "tok", "GET", "/v1/models", ""); strings.Contains(models, "claude-copilot") {
+		t.Fatalf("listed: %s", models)
+	}
+	if st, b := adminNoise(t, s, base, s.admin, "GET", adminPrefix+"/agents/copilot", ""); st != 200 || !strings.Contains(b, `"unsupported":true`) ||
+		!strings.Contains(b, `"enabled":false`) || !strings.Contains(b, copilotUnsupportedMsg) {
+		t.Fatalf("GET: %d %s", st, b)
+	}
+	if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/agents/copilot", `{"enabled":true}`); st != 400 || !strings.Contains(b, copilotUnsupportedMsg) {
+		t.Fatalf("enable: %d %s", st, b)
+	}
+	if st, b := adminReq(t, base, host, "tok", "POST", "/v1/messages", `{"model":"claude-copilot","messages":[{"role":"user","content":"hi"}]}`); st != 400 ||
+		!strings.Contains(b, copilotUnsupportedMsg) {
+		t.Fatalf("run: %d %s", st, b)
+	}
+}

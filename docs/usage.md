@@ -176,7 +176,7 @@ the clone, git refuses with a hint to use `$MINIGW_DEPS` (for example
 `-clonedSourcePackagesDirPath "$MINIGW_DEPS/spm" -derivedDataPath "$MINIGW_DEPS/DerivedData"`). The folder is kept
 for the whole conversation and removed with the clone; it never comes back to you and is not kept with a kept clone.
 Only an agent that may write gets it; `git clone` of a remote URL needs the agent's network for builds (the refusal
-names the setting). On a Windows gateway this works in the Windows sandbox (Claude CLI); Codex and Copilot there, and
+names the setting). On a Windows gateway this works in the Windows sandbox (Claude CLI); Codex there, and
 every agent on a Windows gateway without the Windows sandbox, cannot create repositories; the folder still holds
 downloads and caches.
 
@@ -513,16 +513,17 @@ the allowed folders. Within a conversation Codex continues its own thread (`code
 conversation it continues its own session (`-r`).
 
 **Copilot** runs in a sandbox (on the Mac a `sandbox-exec` profile, on Linux bwrap) with
-a fresh Copilot home for each request, deleted afterwards (also on Windows). On a Windows gateway without the Windows
-sandbox, Grok runs only with **Allow commands without a sandbox**; Codex and Copilot on Windows always need that switch
-(they cannot start in the Windows sandbox).
+a fresh Copilot home for each request, deleted afterwards. Copilot is not supported on a Windows gateway in this
+version (it cannot start in the Windows sandbox): its models are not listed and it cannot be turned on. On a Windows
+gateway without the Windows sandbox, Grok runs only with **Allow commands without a sandbox**; Codex on Windows always
+needs that switch.
 `claude-copilot` uses Copilot's default model (`auto`); list other models by name in its settings.
 - It only reads the folder unless **Allow writing** is on.
 - Commands need **Allow commands** together with **Allow writing**, and a dedicated GitHub token: a fine-grained
   personal access token with only the Copilot Requests permission (`minigw gw copilot token`). Commands can use that
   token to make Copilot requests on your account. `gh` and `security` stay denied.
 - The Mac app needs that token for every request. `minigw serve` on Linux may also use the GitHub CLI's sign-in
-  (`gh auth login`), also on Windows (never the user's own `copilot login`).
+  (`gh auth login`).
 - Within a conversation Copilot continues its own session (`--session-id`).
 
 **Logins (`minigw serve`).** Agents use your subscription logins, never API keys, and nothing is copied back from an

@@ -41,7 +41,7 @@ work comes back as a branch for you to review. Details: [docs/how-it-works.md](d
 | `claude-foundry-<model>` | Microsoft Foundry Local, on-device |
 | `claude-<id>` | LiteLLM, OpenRouter or any Anthropic-compatible provider |
 
-Codex, Grok, Copilot and Foundry Local are off until the gateway owner turns them on. More: [docs/usage.md → Models](docs/usage.md#models).
+Codex, Grok, Copilot (Copilot: not on a Windows gateway in this version) and Foundry Local are off until the gateway owner turns them on. More: [docs/usage.md → Models](docs/usage.md#models).
 
 ## Requirements
 

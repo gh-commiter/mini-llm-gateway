@@ -223,8 +223,8 @@ Notes:
   sandbox (plus `warning` when Scratch is inside the home folder), else `{"kind": "", "reason": "…"}`. When the sandbox cannot reach 127.0.0.1 it also has
   `"askOthers": "agents in the sandbox cannot reach 127.0.0.1, so May ask other models does not work"`.
   `GET /agents/{codex,grok,copilot}` also has `sandboxed`: the agent has a sandbox without `allowUnsandboxedBash`
-  (on Windows Codex and Copilot are always false: they cannot start in the Windows sandbox, and Codex's own elevated
-  sandbox can read the gateway's settings). `GET/PATCH /general`
+  (on Windows Codex is always false: it cannot start in the Windows sandbox, and its own elevated sandbox can read the
+  gateway's settings; Copilot is not supported on Windows, see below). `GET/PATCH /general`
   `worktreeNetwork` (Go gateway too, default true): "Network for builds" of Claude CLI in worktree mode; on Windows
   without the Windows sandbox it has no effect. `PATCH /general {"startAtSignIn"}` sets the Windows Run
   value for the running gateway and, on the Mac, Open at Login; Linux answers `400` (use `minigw serve install`).
@@ -282,8 +282,10 @@ sandbox may use the network (default: off); `models: null` = all the account's m
 devices (Siri uses this Mac's personal data). `run` allows `minigw run` for a device (off by default): it runs the
 listed commands (comma-separated, first argument only) in a native folder on the Mac, so it is code execution there.
 Copilot: `write` lets it edit files in the session's folder (default: off, read-only), `network` allows its web tool,
-`commands` its shell (an explicit opt-in that needs `write` and `token`; on Windows Copilot always needs
-"Allow commands without a sandbox"). On the Mac Copilot always runs in a `sandbox-exec` profile and on Linux under bwrap, each request with a fresh
+`commands` its shell (an explicit opt-in that needs `write` and `token`). On a Windows gateway Copilot is not supported
+in this version: `GET` has `"unsupported": true`, `"enabled": false` and `reason` "Copilot is not supported on a Windows
+gateway in this version"; `PATCH {"enabled": true}` and requests to `claude-copilot*` get 400 with that text, and the
+models are not listed. On the Mac Copilot always runs in a `sandbox-exec` profile and on Linux under bwrap, each request with a fresh
 `COPILOT_HOME` that is deleted afterwards; only the session state is kept between turns. `token` is write-only like
 provider keys: a fine-grained personal access token (`github_pat_…`) with only the Copilot Requests permission, stored in
 the Keychain or the OS key store (`""` removes it); `hasToken` says whether one is stored. The Mac app needs it for every
@@ -292,7 +294,7 @@ commands need it everywhere. On Linux without commands the gateway may instead p
 `GH_TOKEN`/`GITHUB_TOKEN` or the GitHub CLI's (`gh auth token`), always as `COPILOT_GITHUB_TOKEN` (agents there have their
 own PID namespace). Only `events.jsonl` and `workspace.yaml` of a session are kept between turns. When the Copilot binary
 changes or its package cache is missing, the gateway runs `copilot --version` once outside the sandbox (no prompt, no
-model call, no token) so that Copilot can unpack its package, which the sandbox can only read. On Windows Copilot also gets a fresh `COPILOT_HOME` (never `~/.copilot`), the token or `gh auth token`, and unpacks its package itself into `Scratch\cache\copilot`. `models` lists model names
+model call, no token) so that Copilot can unpack its package, which the sandbox can only read. `models` lists model names
 (Copilot has no model list; empty = only `claude-copilot`, Copilot's default); other names are refused (`404`), and a name
 that is not a valid model name is a `400`.
 
