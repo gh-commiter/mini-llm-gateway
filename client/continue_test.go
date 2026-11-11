@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -10,12 +11,18 @@ import (
 	"time"
 )
 
+// Agent: turn<n>.txt, n = število že obstoječih (vidi delo prejšnjih zagonov).
+var fakeContinueTurn = fake("continue-turn", func(_ fakeParams, args []string) {
+	fakeGuard(args)
+	fakeStdin()
+	n := fakeCount("turn*.txt")
+	fakeWrite(fmt.Sprintf("turn%d.txt", n), fmt.Sprintf("%d\n", n))
+	fakeClaudeDone(1)
+})
+
 // #66: --continue v načinu worktree: drugi zagon začne na veji prvega (prehod Go z lažnim claude), nadomestne poti
 // (spremenjena mapa, premaknjen HEAD, izbrisana ali že združena veja) začnejo iz mape.
 func TestWorktreeContinueConversation(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fake claude is a shell script")
-	}
 	root := t.TempDir()
 	client := filepath.Join(root, "client")
 	os.MkdirAll(client, 0o755)
@@ -25,19 +32,9 @@ func TestWorktreeContinueConversation(t *testing.T) {
 	gitT(t, client, "commit", "-qm", "first")
 	head := gitT(t, client, "rev-parse", "HEAD")
 
-	// Agent: turn<n>.txt, n = število že obstoječih (vidi delo prejšnjih zagonov).
-	fake := filepath.Join(root, "claude")
-	writeT(t, fake, `#!/bin/sh
-`+cliGuard+`
-cat > /dev/null
-n=$(ls turn*.txt 2>/dev/null | wc -l | tr -d ' ')
-echo $n > turn$n.txt
-echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"done"}}}'
-echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
-`)
-	os.Chmod(fake, 0o755)
+	fake := fakeCLI(t, root, "claude", fakeContinueTurn, nil)
 	gateway := func() connection {
-		s, _ := testServer(t, func(c *serveConfig) { c.Claude = fake })
+		s, _ := testServer(t, func(c *serveConfig) { c.Claude = fake; c.AllowUnsandboxedBash = runtime.GOOS == "windows" }) // L3
 		return startLoopback(t, s)
 	}
 	c := gateway()

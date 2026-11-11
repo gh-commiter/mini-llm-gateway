@@ -13,15 +13,6 @@ import (
 	"time"
 )
 
-// TestMain: with MINIGW_TUI_RUN=1 the test binary is minigw-tui itself (same imports, same init order).
-func TestMain(m *testing.M) {
-	if os.Getenv("MINIGW_TUI_RUN") == "1" {
-		main()
-		os.Exit(0)
-	}
-	os.Exit(m.Run())
-}
-
 // A terminal that never answers queries (serial lines, some SSH clients): the first frame comes at once, nothing
 // asks the terminal (OSC 11 background, CSI 6n cursor position), and q quits with 0.
 func TestStartsWithoutTerminalReplies(t *testing.T) {

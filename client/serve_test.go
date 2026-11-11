@@ -165,31 +165,29 @@ func startLoopback(t *testing.T, s *server) connection {
 }
 
 // N9: vsak claude -p prehoda (tudi samo za branje, pogovor, worktree, vprašani agent) brez »@pot« in ukazov s
-// poševnico; ponaredek brez obeh konča brez odgovora.
+// poševnico; ponaredek brez obeh konča brez odgovora (fakeGuard; cliGuard v lupinskih ponaredkih, ki ostanejo POSIX).
 const cliGuard = `[ "$CLAUDE_CODE_DISABLE_FILE_MENTIONS" = 1 ] || exit 9
 case " $* " in *" --disable-slash-commands "*) ;; *) exit 9 ;; esac`
 
+var fakeSyncRoundTrip = fake("sync-roundtrip", func(p fakeParams, args []string) {
+	fakeArgs(p["args"], args)
+	fakeWrite(p["env"], strings.Join(os.Environ(), "\n")+"\n")
+	fakeGuard(args)
+	fakeStdin()
+	b, _ := os.ReadFile("src.txt")
+	fakeWrite("agent.txt", string(b))
+	fmt.Println(`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Write","input":{"file_path":"agent.txt"}}]}}`)
+	fakeClaudeDone(3)
+})
+
 func TestServeSyncAgentRoundTrip(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fake claude is a shell script")
-	}
 	tmp := t.TempDir()
-	fake := filepath.Join(tmp, "claude")
 	argsFile := filepath.Join(tmp, "args")
 	envFile := filepath.Join(tmp, "env")
 	for _, k := range []string{"GH_TOKEN", "GITHUB_TOKEN", "COPILOT_GITHUB_TOKEN", "SSH_AUTH_SOCK"} { // M1: claude dobi agentEnv
 		t.Setenv(k, "leak")
 	}
-	os.WriteFile(fake, []byte(`#!/bin/sh
-printf '%s\n' "$@" > "`+argsFile+`"
-env > "`+envFile+`"
-`+cliGuard+`
-cat > /dev/null
-cat src.txt > agent.txt
-echo '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Write","input":{"file_path":"agent.txt"}}]}}'
-echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"done"}}}'
-echo '{"type":"result","subtype":"success","usage":{"output_tokens":3}}'
-`), 0o755)
+	fake := fakeCLI(t, tmp, "claude", fakeSyncRoundTrip, fakeParams{"args": argsFile, "env": envFile})
 	s, _ := testServer(t, func(c *serveConfig) { c.Claude = fake })
 	c := startLoopback(t, s)
 

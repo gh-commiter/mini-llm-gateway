@@ -5,7 +5,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -80,18 +79,15 @@ func TestHelperModelEnv(t *testing.T) {
 
 // runClaude s tokom: error result → 1, tudi ko claude konča z 0.
 func TestRunClaudeStream(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fake claude is a shell script")
-	}
 	bin := t.TempDir()
 	// vnuk drži stdout odprt: minigw konča največ 2 s po claude
-	os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\n(sleep 20 2>/dev/null &)\necho '{\"type\":\"result\",\"is_error\":true,\"result\":\"boom\"}'\n"), 0o755)
+	fakeCLI(t, bin, "claude", fakePrint, fakeParams{"orphan": "12s", "stdout": `{"type":"result","is_error":true,"result":"boom"}` + "\n"})
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	start := time.Now()
 	if code := runClaude([]string{"-p", "x"}, nil, true); code != 1 || time.Since(start) > 10*time.Second {
 		t.Fatalf("exit %d after %v", code, time.Since(start))
 	}
-	os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\n(sleep 20 2>/dev/null &)\nexit 3\n"), 0o755) // brez result: 2 s
+	fakeCLI(t, bin, "claude", fakePrint, fakeParams{"orphan": "12s", "exit": "3"}) // brez result: 2 s
 	if code := runClaude([]string{"-p", "x"}, nil, true); code != 3 || time.Since(start) > 10*time.Second {
 		t.Fatalf("no result: exit %d after %v", code, time.Since(start))
 	}
@@ -253,14 +249,11 @@ func TestGateWriteError(t *testing.T) {
 // #80: stdout, ki ga nihče ne bere (polna cev), in zaprt stdout/stderr ne zadržijo minigw za claude; vrstica o veji gre
 // na stderr za odgovorom.
 func TestRunClaudeStalledOutput(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fake claude is a shell script")
-	}
 	bin := t.TempDir()
 	big := filepath.Join(bin, "out.json") // več kot medpomnilnik cevi (64 KiB Linux/macOS)
 	os.WriteFile(big, []byte(`{"type":"assistant","message":{"content":[{"type":"text","text":"`+strings.Repeat("a", 1<<20)+`"}]}}`+"\n"+
 		`{"type":"result","is_error":false,"result":"x"}`+"\n"), 0o644)
-	os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\ncat '"+big+"'\n"), 0o755)
+	fakeCLI(t, bin, "claude", fakePrint, fakeParams{"cat": big})
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	stdout, stderr := os.Stdout, os.Stderr
 	t.Cleanup(func() { os.Stdout, os.Stderr = stdout, stderr })

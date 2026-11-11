@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -165,9 +166,6 @@ func TestMXCPathDirs(t *testing.T) {
 // useFakeWxc: lažni wxc-exec (ta testni program) z dovoljeno zgoščeno vrednostjo; vrne datoteko z zadnjo zahtevo.
 func useFakeWxc(t *testing.T) (string, string) {
 	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("fake wxc-exec runs /bin/sh")
-	}
 	exe, _ := os.Executable()
 	b, _ := os.ReadFile(exe)
 	sum := sha256.Sum256(b)
@@ -182,13 +180,23 @@ func useFakeWxc(t *testing.T) (string, string) {
 
 // mxcWrap z lažnim wxc-exec: stdin in izhod skozi, okolje pod Scratch, zahteva in začasna mapa po teku pobrisani,
 // HTTPS_PROXY le brez omrežja z vrati izvajanja.
+var fakeBoxEcho = fake("box-echo", func(_ fakeParams, _ []string) {
+	x, _ := bufio.NewReader(os.Stdin).ReadString('\n') // read x
+	for _, l := range []string{"in=" + strings.TrimRight(x, "\r\n"), "tmp=" + os.Getenv("TEMP"), "home=" + os.Getenv("USERPROFILE"),
+		"proxy=" + os.Getenv("HTTPS_PROXY"), "box=" + os.Getenv("MINIGW_SANDBOXED")} {
+		fmt.Println(l)
+	}
+	os.Exit(3)
+})
+
 func TestMXCWrapRun(t *testing.T) {
 	wxc, log := useFakeWxc(t)
+	agent := fakeCLI(t, t.TempDir(), "agent", fakeBoxEcho, nil)
 	scratch, cfg, work := t.TempDir(), t.TempDir(), t.TempDir()
 	for _, noNet := range []bool{false, true} {
 		m := agentMounts{cfgDir: cfg, hide: scratch, rw: []string{work}, cwd: work, noNet: noNet,
 			cmdEnv: append(agentEnv(os.Environ()), "GIT_DIR=/nope", "PATH=/usr/bin:/bin")}
-		name, args, done, err := mxcWrap(wxc, "/bin/sh", []string{"-c", `read x; echo "in=$x"; echo "tmp=$TEMP"; echo "home=$USERPROFILE"; echo "proxy=$HTTPS_PROXY"; echo "box=$MINIGW_SANDBOXED"; exit 3`}, m)
+		name, args, done, err := mxcWrap(wxc, agent, nil, m)
 		if err != nil {
 			t.Fatal(err)
 		}

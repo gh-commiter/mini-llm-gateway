@@ -498,31 +498,31 @@ func TestAdminProofIsBoundToTheConnection(t *testing.T) {
 
 // Razširitve za stran z nastavitvami: os, pladenj in namestitev v status; najdena pot in različica claude.
 func TestAdminSettingsFields(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fake claude is a shell script")
-	}
-	fake := filepath.Join(t.TempDir(), "claude")
-	os.WriteFile(fake, []byte("#!/bin/sh\necho '9.8.7 (Claude Code)'\n"), 0o755)
+	fake := fakeCLI(t, t.TempDir(), "claude", fakePrint, fakeParams{"stdout": "9.8.7 (Claude Code)\n"})
+	exe, _ := json.Marshal(fake) // Windows: »\« v JSON
 	s, _, base := liveServer(t, func(c *serveConfig) { c.Claude = fake })
 	st, b := adminNoise(t, s, base, s.admin, "GET", adminPrefix+"/status", "")
 	if st != 200 || !strings.Contains(b, `"os":"`+runtime.GOOS+`"`) || !strings.Contains(b, `"tray":false`) {
 		t.Fatalf("status: %d %s", st, b)
 	}
 	st, b = adminNoise(t, s, base, s.admin, "GET", adminPrefix+"/agents/claude", "")
-	if st != 200 || !strings.Contains(b, `"exe":"`+fake+`"`) || !strings.Contains(b, `"version":"9.8.7 (Claude Code)"`) {
+	if st != 200 || !strings.Contains(b, `"exe":`+string(exe)) || !strings.Contains(b, `"version":"9.8.7 (Claude Code)"`) {
 		t.Fatalf("claude: %d %s", st, b)
 	}
-	if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/general", `{"startAtSignIn":true}`); st != 400 || !strings.Contains(b, "minigw serve install") {
+	st, b = adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/general", `{"startAtSignIn":true}`)
+	if runtime.GOOS != "windows" && (st != 400 || !strings.Contains(b, "minigw serve install")) {
 		t.Fatalf("startAtSignIn off Windows: %d %s", st, b)
+	}
+	// Windows: vrednost Run (izolirana, runValueSet) ali napaka brez minigw-tray.exe ob testnem programu
+	if runtime.GOOS == "windows" && st != 200 && (st != 500 || !strings.Contains(b, "minigw-tray.exe is not next to")) {
+		t.Fatalf("startAtSignIn on Windows: %d %s", st, b)
 	}
 }
 
 // Parnost z Macom: dovoljeni odjemalci, navaden HTTP od drugod, izklop Claude CLI, dovoljene mape, lokalna orodja.
 func TestParityGeneralAndClaude(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fake claude is a shell script")
-	}
 	work := t.TempDir()
+	jq := func(p string) string { b, _ := json.Marshal(p); return string(b) } // Windows: »\« v JSON
 	s, _, base := liveServer(t, nil)
 	admin := func(method, path, body string) (int, string) {
 		return adminNoise(t, s, base, s.admin, method, path, body)
@@ -560,11 +560,11 @@ func TestParityGeneralAndClaude(t *testing.T) {
 		t.Fatal("bad IP accepted")
 	}
 	sc := filepath.Join(nonTempDir(t), "scratch") // M1: začasne mape so zavrnjene; odločitev 3: osnova
-	if st, b := admin("PATCH", adminPrefix+"/general", `{"scratch":"`+sc+`"}`); st != 200 || s.conf().Scratch != filepath.Join(sc, s.conf().Instance) {
+	if st, b := admin("PATCH", adminPrefix+"/general", `{"scratch":`+jq(sc)+`}`); st != 200 || s.conf().Scratch != filepath.Join(sc, s.conf().Instance) {
 		t.Fatalf("scratch: %d %s", st, b)
 	}
 	for _, bad := range []string{filepath.Join(t.TempDir(), "x"), "/"} { // začasna mapa, koren diska
-		if st, _ := admin("PATCH", adminPrefix+"/general", `{"scratch":"`+bad+`"}`); st != 400 {
+		if st, _ := admin("PATCH", adminPrefix+"/general", `{"scratch":`+jq(bad)+`}`); st != 400 {
 			t.Fatalf("scratch %s accepted: %d", bad, st)
 		}
 	}
@@ -576,13 +576,17 @@ func TestParityGeneralAndClaude(t *testing.T) {
 	if _, b := adminReq(t, base, strings.TrimPrefix(base, "http://"), "tok", "GET", "/v1/models", ""); strings.Contains(b, "claude-cli-") {
 		t.Fatalf("claude-cli listed while off: %s", b)
 	}
-	st, b := admin("PATCH", adminPrefix+"/agents/claude", `{"enabled":true,"folders":"`+work+`","allowLocalTools":true,"disabledTools":["WebSearch"],"settingSources":"project"}`)
+	st, b := admin("PATCH", adminPrefix+"/agents/claude", `{"enabled":true,"folders":`+jq(work)+`,"allowLocalTools":true,"disabledTools":["WebSearch"],"settingSources":"project"}`)
 	if st != 200 || !strings.Contains(b, `"allowLocalTools":true`) || !strings.Contains(b, `"folders":"`) {
 		t.Fatalf("claude: %d %s", st, b)
 	}
 	args := strings.Join(s.agentArgs("/copy", false), " ")
 	realWork, _ := filepath.EvalSymlinks(work)
-	for _, want := range []string{"--tools default", "--permission-mode acceptEdits", "WebSearch", "--add-dir " + realWork, "Read(" + ruleAbs(realWork) + "/**)", `"allowWrite":["/copy","` + realWork + `"]`} {
+	wants := []string{"--tools default", "--permission-mode acceptEdits", "WebSearch", "--add-dir " + realWork, "Read(" + ruleAbs(realWork) + "/**)"}
+	if runtime.GOOS != "windows" { // sandbox Claude Code (--settings) le zunaj Windows
+		wants = append(wants, `"allowWrite":["/copy",`+jq(realWork)+`]`)
+	}
+	for _, want := range wants {
 		if !strings.Contains(args, want) {
 			t.Fatalf("agent args miss %q: %s", want, args)
 		}

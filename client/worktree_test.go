@@ -418,15 +418,12 @@ func TestDeliveredBranchChecksAncestry(t *testing.T) {
 
 // N3: posnetek ugnezdenega repozitorija ne požene filtra clean iz njegove .gitattributes (vrhnji ostane kot prej).
 func TestNestedSnapshotRunsNoCleanFilter(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("filter is a shell command")
-	}
 	dir, marker := t.TempDir(), filepath.Join(t.TempDir(), "ran")
 	gitT(t, dir, "init", "-q", "-b", "main")
 	writeT(t, filepath.Join(dir, "a.txt"), "a\n")
 	gitT(t, dir, "add", "a.txt")
 	gitT(t, dir, "commit", "-qm", "a")
-	gitT(t, dir, "config", "filter.evil.clean", "touch "+marker+"; cat")
+	gitT(t, dir, "config", "filter.evil.clean", "touch "+filepath.ToSlash(marker)+"; cat") // »/«: lupina git na Windows
 	writeT(t, filepath.Join(dir, ".gitattributes"), "* filter=evil\n")
 	writeT(t, filepath.Join(dir, "a.txt"), "b\n")
 	if !gitAttrSource() { // git pred 2.40: brez posnetka, filter ne teče

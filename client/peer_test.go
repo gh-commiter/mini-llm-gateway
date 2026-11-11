@@ -64,6 +64,8 @@ func TestPeerTables(t *testing.T) {
 
 // Testni program je tudi pomočnik agentov (startAgent na Linuxu požene /proc/self/exe __minigw-agent …).
 func TestMain(m *testing.M) {
+	// lažni CLI (fake_test.go): kopija tega programa s stransko datoteko
+	fakeMain()
 	if strings.HasPrefix(strings.ToLower(filepath.Base(os.Args[0])), "claude") { // #79: lažni claude (TestClaudeAncestorRefusesBeforeClaude)
 		fakeClaudeMain()
 	}

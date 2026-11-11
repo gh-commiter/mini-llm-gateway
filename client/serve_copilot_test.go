@@ -151,7 +151,7 @@ b"}]}`: "expected form",
 // #81 (Linux): Secret Service na seji D-Bus (lažna busctl in dbus-send) in xdg-dbus-proxy; brez njih razlog.
 func TestCopilotKeyringDetection(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("shell scripts")
+		t.Skip("Secret Service over D-Bus (fake busctl, dbus-send, xdg-dbus-proxy): Linux semantics")
 	}
 	if !secretServiceListed(`as 3 ":1.0" "org.freedesktop.DBus" "org.freedesktop.secrets"`) ||
 		!secretServiceListed("method return\n   array [\n      string \"org.freedesktop.secrets\"\n   ]") ||
@@ -230,7 +230,7 @@ case "$*" in *ListActivatableNames*) echo '   string "org.freedesktop.secrets"';
 
 func TestCopilotThroughRouter(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("fake CLIs are shell scripts")
+		t.Skip("Copilot is not supported on Windows gateways (#81); its fake uses POSIX links and $COPILOT_HOME paths")
 	}
 	bin := t.TempDir()
 	argsFile := filepath.Join(bin, "args")

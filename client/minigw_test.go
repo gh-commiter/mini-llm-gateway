@@ -744,12 +744,11 @@ func TestSyncWriteReadOnlyFile(t *testing.T) {
 }
 
 // #7: claude ne podeduje seje in prijave starševskega Claude Code (401 na prehodu); naše vrednosti in drugo ostane.
+var fakeEnvDump = fake("env-dump", func(p fakeParams, _ []string) { fakeWrite(p["out"], strings.Join(os.Environ(), "\n")+"\n") })
+
 func TestClaudeChildEnvDropsParentSession(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fake claude is a shell script")
-	}
 	bin, out := t.TempDir(), filepath.Join(t.TempDir(), "env")
-	os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\nenv > "+out+"\n"), 0o755)
+	fakeCLI(t, bin, "claude", fakeEnvDump, fakeParams{"out": out})
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	for k, v := range map[string]string{"CLAUDECODE": "1", "CLAUDE_CODE_ENTRYPOINT": "claude-desktop", "CLAUDE_CODE_OAUTH_TOKEN": "x",
 		"CLAUDE_CODE_SSE_PORT": "1", "ANTHROPIC_BASE_URL": "http://parent", "ANTHROPIC_MODEL": "m", "ANTHROPIC_API_KEY": "k",

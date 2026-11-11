@@ -18,49 +18,72 @@ import (
 	"time"
 )
 
+// Agent: commit, neshranjena datoteka, .gitattributes s filtrom in podtaknjene nastavitve/hooki klona (p["marks"]:
+// ukazi, ki se ne smejo izvesti, s »/«, da bi jih lupina git tudi na Windows izvedla).
+var fakeWorktreeRoundTrip = fake("wt-roundtrip", func(p fakeParams, args []string) {
+	fakeGuard(args)
+	fakeStdin()
+	if b, err := os.ReadFile("../a.txt"); err == nil && strings.Contains(string(b), "uncommitted") {
+		fakeWrite("../seen.txt", "saw-uncommitted\n")
+	}
+	n := fakeCount("../agent*.txt")
+	f := fmt.Sprintf("../agent%d.txt", n)
+	fakeWrite(f, fmt.Sprintf("agent %d\n", n))
+	_ = fakeGit("", "add", f) && fakeGit("", "-c", "user.name=a", "-c", "user.email=a@x", "commit", "-qm", fmt.Sprintf("agent %d", n))
+	fakeWrite("../left.txt", "left\n")
+	fakeWrite("../.gitattributes", "* filter=evil\n")
+	if gd, m := os.Getenv("GIT_DIR"), p["marks"]; gd != "" { // brez GIT_DIR: lupina je pisala v /config in /hooks (napaka)
+		// config le v zadnji zahtevi: spremenjen config (v peskovniku denyWrite) pomeni nov klon (H2), ne nadaljevanja
+		if n == 1 {
+			fakeAppend(filepath.Join(gd, "config"), "[core]\n\tfsmonitor = touch "+m+"/gw-fsmonitor\n[filter \"evil\"]\n\tclean = touch "+m+"/gw-clean; cat\n")
+		}
+		os.MkdirAll(filepath.Join(gd, "hooks"), 0o755)
+		os.WriteFile(filepath.Join(gd, "hooks", "post-commit"), []byte("#!/bin/sh\ntouch "+m+"/gw-hook\n"), 0o755)
+	}
+	fakeClaudeDone(1)
+})
+
 // Worktree na minigw serve: posnetek odjemalca (tudi neshranjeno) → klon agenta → veja nazaj; uporabnikove datoteke,
 // indeks in veje ostanejo; nastavitve, hooki in filtri agenta ne tečejo ne na prehodu ne pri odjemalcu.
 func TestServeWorktreeRoundTrip(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fake claude is a shell script")
-	}
 	root := t.TempDir()
 	client, marks := filepath.Join(root, "client"), filepath.Join(root, "marks")
 	os.MkdirAll(filepath.Join(client, "sub"), 0o755)
 	os.MkdirAll(marks, 0o755)
+	sh := filepath.ToSlash(marks) // v ukazih za lupino git (Windows: »\« bi lupina pojedla)
+	// Kontrola: isti zapis ukaza (touch <sh>/…) git na tem sistemu res izvede (hook in filter), sicer bi spodnje
+	// preverbe »nič ni teklo« ne dokazale ničesar (Windows: lupina Git for Windows).
+	ctl, ctlSh := filepath.Join(root, "control"), filepath.ToSlash(filepath.Join(root, "control"))
+	os.MkdirAll(ctl, 0o755)
+	gitT(t, ctl, "init", "-q", "-b", "main")
+	gitT(t, ctl, "config", "filter.ok.clean", "touch "+ctlSh+"/filter-ran; cat")
+	writeT(t, filepath.Join(ctl, ".gitattributes"), "* filter=ok\n")
+	writeT(t, filepath.Join(ctl, ".git/hooks", "post-commit"), "#!/bin/sh\ntouch "+ctlSh+"/hook-ran\n")
+	os.Chmod(filepath.Join(ctl, ".git/hooks", "post-commit"), 0o755)
+	writeT(t, filepath.Join(ctl, "c.txt"), "c\n")
+	gitT(t, ctl, "add", "-A")
+	gitT(t, ctl, "-c", "user.name=c", "-c", "user.email=c@x", "commit", "-qm", "control")
+	for _, m := range []string{"filter-ran", "hook-ran"} {
+		if _, err := os.Stat(filepath.Join(ctl, m)); err != nil {
+			t.Fatalf("control: planted %s did not run: the checks below would prove nothing", strings.TrimSuffix(m, "-ran"))
+		}
+	}
 	gitT(t, client, "init", "-q", "-b", "main")
 	writeT(t, filepath.Join(client, "a.txt"), "one\n")
 	writeT(t, filepath.Join(client, "sub", "s.txt"), "s\n")
 	gitT(t, client, "add", "-A")
 	gitT(t, client, "commit", "-qm", "first")
 	writeT(t, filepath.Join(client, "a.txt"), "one\nuncommitted\n")
-	gitT(t, client, "config", "filter.evil.smudge", "touch "+marks+"/client-smudge; cat")
+	gitT(t, client, "config", "filter.evil.smudge", "touch "+sh+"/client-smudge; cat")
 	for _, h := range []string{"reference-transaction", "post-checkout", "post-merge"} {
-		writeT(t, filepath.Join(client, ".git/hooks", h), "#!/bin/sh\ntouch "+marks+"/hook-"+h+"\n")
+		writeT(t, filepath.Join(client, ".git/hooks", h), "#!/bin/sh\ntouch "+sh+"/hook-"+h+"\n")
 		os.Chmod(filepath.Join(client, ".git/hooks", h), 0o755)
 	}
 	status, head := gitT(t, client, "status", "--porcelain"), gitT(t, client, "rev-parse", "HEAD")
 	config, _ := os.ReadFile(filepath.Join(client, ".git/config"))
 
-	// Agent: commit, neshranjena datoteka, .gitattributes s filtrom in podtaknjene nastavitve/hooki klona.
-	fake := filepath.Join(root, "claude")
-	writeT(t, fake, `#!/bin/sh
-`+cliGuard+`
-cat > /dev/null
-[ -f ../a.txt ] && grep -q uncommitted ../a.txt && echo saw-uncommitted > ../seen.txt
-n=$(ls ../agent*.txt 2>/dev/null | wc -l | tr -d ' ')
-echo "agent $n" > ../agent$n.txt
-git add ../agent$n.txt && git -c user.name=a -c user.email=a@x commit -qm "agent $n"
-echo left > ../left.txt
-echo '* filter=evil' > ../.gitattributes
-# config le v zadnji zahtevi: spremenjen config (v peskovniku denyWrite) pomeni nov klon (H2), ne nadaljevanja
-[ "$n" = 1 ] && printf '[core]\n\tfsmonitor = touch `+marks+`/gw-fsmonitor\n[filter "evil"]\n\tclean = touch `+marks+`/gw-clean; cat\n' >> "$GIT_DIR/config"
-mkdir -p "$GIT_DIR/hooks"; printf '#!/bin/sh\ntouch `+marks+`/gw-hook\n' > "$GIT_DIR/hooks/post-commit"; chmod +x "$GIT_DIR/hooks/post-commit"
-echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"done"}}}'
-echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
-`)
-	os.Chmod(fake, 0o755)
-	s, _ := testServer(t, func(c *serveConfig) { c.Claude = fake })
+	fake := fakeCLI(t, root, "claude", fakeWorktreeRoundTrip, fakeParams{"marks": sh})
+	s, _ := testServer(t, func(c *serveConfig) { c.Claude = fake; c.AllowUnsandboxedBash = runtime.GOOS == "windows" }) // L3
 	c := startLoopback(t, s)
 
 	cwd := filepath.Join(client, "sub")
@@ -108,18 +131,25 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
 	}
 	// L3: na Windows Claude v načinu worktree le z »Allow commands without a sandbox«
 	worktreeNeedsUnsandboxed = true
+	s.update(func(c *serveConfig) error { c.AllowUnsandboxedBash = false; return nil })
 	defer func() { worktreeNeedsUnsandboxed = runtime.GOOS == "windows" }()
 	if st, data := call(c, "POST", "/v1/messages", h, []byte(body), 30*time.Second); st != 400 || !strings.Contains(string(data), "Allow commands without a sandbox") {
 		t.Fatalf("windows rule: %d %s", st, data)
 	}
 }
 
+// Agent: mv .git .g && mkdir .git (back: && rmdir .git && mv .g .git), nato exec sleep 20.
+var fakeGitSwap = fake("git-swap", func(p fakeParams, _ []string) {
+	fakeStdin()
+	if os.Rename(".git", ".g") == nil && os.Mkdir(".git", 0o755) == nil && p["back"] != "" && os.Remove(".git") == nil {
+		os.Rename(".g", ".git")
+	}
+	time.Sleep(20 * time.Second)
+})
+
 // N3b: brez pin .git klona runCLI med tekom preveri klon; zamenjan .git ustavi claude (ne šele naslednji zagon).
 // N3c: na Linux tudi zamenjava, ki jo agent takoj vrne (inotify; preverba vsako sekundo bi jo zgrešila).
 func TestServeWorktreeSwapStopsUnpinnedClaude(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fake claude is a shell script")
-	}
 	swaps := []string{"mv .git .g && mkdir .git"}
 	if runtime.GOOS == "linux" {
 		swaps = append(swaps, "mv .git .g && mkdir .git && rmdir .git && mv .g .git")
@@ -130,10 +160,8 @@ func TestServeWorktreeSwapStopsUnpinnedClaude(t *testing.T) {
 		writeT(t, filepath.Join(client, "a.txt"), "one\n")
 		gitT(t, client, "add", "-A")
 		gitT(t, client, "commit", "-qm", "first")
-		fake := filepath.Join(t.TempDir(), "claude")
-		writeT(t, fake, "#!/bin/sh\ncat > /dev/null\n"+swap+"\nexec sleep 20\n")
-		os.Chmod(fake, 0o755)
-		s, _ := testServer(t, func(c *serveConfig) { c.Claude = fake })
+		fake := fakeCLI(t, t.TempDir(), "claude", fakeGitSwap, fakeParams{"back": map[bool]string{true: "1"}[strings.Contains(swap, "rmdir")]})
+		s, _ := testServer(t, func(c *serveConfig) { c.Claude = fake; c.AllowUnsandboxedBash = runtime.GOOS == "windows" }) // L3
 		if name, _ := pinWrap(s.cfgDir, "x", nil, nil, t.Logf); name != "x" {
 			t.Skip("the .git pin is on here (nested bwrap): the swap itself fails")
 		}
@@ -243,11 +271,26 @@ func TestWorktreeClaudeArgs(t *testing.T) {
 	}
 }
 
+var fakeCodexCommit = fake("codex-commit", func(_ fakeParams, args []string) {
+	if len(args) > 2 && args[2] == "debug" {
+		fmt.Println(`{"models":[]}`)
+		return
+	}
+	out := fakeFlag(args, "-o")
+	fakeStdin()
+	fakeWrite("codex.txt", "codex\n")
+	_ = fakeGit("", "add", "codex.txt") && fakeGit("", "-c", "user.name=c", "-c", "user.email=c@x", "commit", "-qm", "codex")
+	if fakeAppend(os.Getenv("GIT_DIR")+"/config", "[core]\n") { // "$GIT_DIR/config" (brez GIT_DIR: /config)
+		fakeWrite("cfgwrite.txt", "written\n")
+	} else {
+		fakeWrite("cfgwrite.txt", "denied\n")
+	}
+	fmt.Println(`{"type":"thread.started","thread_id":"t1"}`)
+	fakeWrite(out, "done\n")
+})
+
 // Codex v klonu (Linux: pod bwrap): commit in necommitano pride kot veja; .git/config klona je le za branje (protect).
 func TestServeWorktreeCodexSandbox(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fake codex is a shell script")
-	}
 	root := t.TempDir()
 	client := filepath.Join(root, "client")
 	os.MkdirAll(client, 0o755)
@@ -255,18 +298,7 @@ func TestServeWorktreeCodexSandbox(t *testing.T) {
 	writeT(t, filepath.Join(client, "a.txt"), "a\n")
 	gitT(t, client, "add", "-A")
 	gitT(t, client, "commit", "-qm", "first")
-	codex := filepath.Join(root, "codex")
-	writeT(t, codex, `#!/bin/sh
-if [ "$3" = debug ]; then echo '{"models":[]}'; exit 0; fi
-out=""; prev=""
-for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done
-cat > /dev/null
-echo codex > codex.txt; git add codex.txt && git -c user.name=c -c user.email=c@x commit -qm codex
-if echo "[core]" >> "$GIT_DIR/config" 2>/dev/null; then echo written > cfgwrite.txt; else echo denied > cfgwrite.txt; fi
-echo '{"type":"thread.started","thread_id":"t1"}'
-echo "done" > "$out"
-`)
-	os.Chmod(codex, 0o755)
+	codex := fakeCLI(t, root, "codex", fakeCodexCommit, nil)
 	s, _ := testServer(t, func(c *serveConfig) {
 		c.AllowUnsandboxedBash = runtime.GOOS != "linux" || bwrapReady(t.TempDir()) == "" // brez bwrap le z izrecnim dovoljenjem
 		t.Setenv("CODEX_HOME", t.TempDir())
@@ -447,9 +479,6 @@ func TestWorktreeDirSymlink(t *testing.T) {
 // H2: zamenjan .git klona (nov config s filtrom, info/attributes) ali podtaknjen commondir: klon ni več v redu, zato
 // claude v njem ne začne (git status samega claude bi filter izvedel zunaj peskovnika).
 func TestWorktreeGitSwapRefused(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("filter command is a shell script")
-	}
 	root := t.TempDir()
 	client, repo, wt := filepath.Join(root, "c"), filepath.Join(root, "repos", "d", "r.git"), filepath.Join(root, "wt")
 	os.MkdirAll(client, 0o755)
@@ -477,12 +506,12 @@ func TestWorktreeGitSwapRefused(t *testing.T) {
 	if err := os.Rename(g, filepath.Join(wt, ".g")); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command("cp", "-R", filepath.Join(wt, ".g"), g).CombinedOutput(); err != nil {
-		t.Fatal(string(out))
+	if err := copyTree(filepath.Join(wt, ".g"), g); err != nil { // cp -R
+		t.Fatal(err)
 	}
 	marker := filepath.Join(root, "ran")
 	f, _ := os.OpenFile(filepath.Join(g, "config"), os.O_APPEND|os.O_WRONLY, 0)
-	f.WriteString("[filter \"x\"]\n\tclean = touch " + marker + "; cat\n")
+	f.WriteString("[filter \"x\"]\n\tclean = touch " + filepath.ToSlash(marker) + "; cat\n") // »/«: lupina git na Windows
 	f.Close()
 	os.MkdirAll(filepath.Join(g, "info"), 0o755)
 	writeT(t, filepath.Join(g, "info", "attributes"), "* filter=x\n")
@@ -527,8 +556,8 @@ func TestWorktreeGitSwapRefused(t *testing.T) {
 // .gitmodules z ignore=none; git status samega claude (okolje worktreeClaudeEnv) filtra ne sme izvesti, cloneProblem
 // klon zavrne.
 func TestWorktreeNestedRepoFilterDoesNotRun(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Windows: Claude in worktree needs unsandboxed Bash; filter command is a shell script")
+	if runtime.GOOS == "windows" { // worktreeClaudeEnv: brez škatle MXC le okolje harnessa (GIT_DIR), ovoj je le v škatli (pravi wxc-exec, HPX360)
+		t.Skip("without the MXC box Windows has no git exec wrapper for Claude's git (Claude in worktree mode runs only with Allow commands without a sandbox); the boxed path needs the real wxc-exec")
 	}
 	for _, gitfile := range []bool{false, true} {
 		root := t.TempDir()
@@ -698,8 +727,8 @@ func TestServeWorktreeNestedRefusedAtStart(t *testing.T) {
 }
 
 func testNestedRoundTrip(t *testing.T, blockNested string) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fake claude is a shell script")
+	if runtime.GOOS == "windows" { // POSIX: git agenta v ugnezdenih gre skozi ovoj PATH (pathWrapScript); Windows: commit na koncu naredi prehod (#70)
+		t.Skip("the agent's git in nested clones goes through the PATH wrapper, which Windows does not have (the gateway commits there)")
 	}
 	if !gitAttrSource() {
 		t.Skip("git before 2.40: the client refuses nested repositories (TestNestedSnapshotRunsNoCleanFilter)")
@@ -1384,22 +1413,44 @@ func TestImportBaseFsck(t *testing.T) {
 // L6: zavrnjen ugnezdeni (premaknjen, večji od 64 MB, unconfined) ne ustavi vrhnjega: vrhnja veja pride (brez vsebine
 // zavrnjenega), ena vrstica pove, kateri in zakaj, klon z delom po koncu seje ostane (kept).
 func TestWorktreeNestedSkippedTopDelivered(t *testing.T) {
-	for _, c := range []struct{ name, agent, why string }{
+	for _, c := range []struct{ name, why string }{ // agent v drugem teku: fakeNestedSkipped
 		// Linux s pin: .git je točka priklopa (ostane prazna mapa), zato »could not save« namesto »moved«.
-		{"moved", `rm -rf lib/.git`, `(?:the nested repository lib was moved or replaced in the agent's clone|the gateway could not save the agent's work in the nested repository lib as a branch)`},
-		{"big", `head -c 70000000 /dev/urandom > lib/big.bin`, `the agent's branch in the nested repository lib is larger than 64 MB`},
-		{"unconfined", `:`, `the nested repository lib does not come back on this gateway`},
-		{"toolarge", `mkdir many && (cd many && seq 1 100001 | xargs touch)`, ``}, // M1: prevelik klon se ne ohrani
+		{"moved", `(?:the nested repository lib was moved or replaced in the agent's clone|the gateway could not save the agent's work in the nested repository lib as a branch)`},
+		{"big", `the agent's branch in the nested repository lib is larger than 64 MB`},
+		{"unconfined", `the nested repository lib does not come back on this gateway`},
+		{"toolarge", ``}, // M1: prevelik klon se ne ohrani
 	} {
-		t.Run(c.name, func(t *testing.T) { testNestedSkipped(t, c.agent, c.why, c.name) })
+		t.Run(c.name, func(t *testing.T) { testNestedSkipped(t, c.name, c.why) })
 	}
 }
 
-func testNestedSkipped(t *testing.T, agent, why, kind string) {
-	unconfined := kind == "unconfined"
-	if runtime.GOOS == "windows" {
-		t.Skip("fake claude is a shell script")
+// Agent: »agent« v . lib other; v drugem teku (p["root"]/second) še zavrnitev po vrsti kind (moved, big, toolarge).
+var fakeNestedSkipped = fake("nested-skipped", func(p fakeParams, args []string) {
+	fakeGuard(args)
+	fakeStdin()
+	for _, d := range []string{".", "lib", "other"} {
+		fakeAppend(filepath.Join(d, "agent.txt"), "agent\n")
 	}
+	if fakeExists(filepath.Join(p["root"], "second")) {
+		switch p["kind"] {
+		case "moved": // rm -rf lib/.git
+			os.RemoveAll(filepath.Join("lib", ".git"))
+		case "big": // head -c 70000000 /dev/urandom > lib/big.bin
+			b := make([]byte, 70000000)
+			rand.Read(b)
+			os.WriteFile(filepath.Join("lib", "big.bin"), b, 0o644)
+		case "toolarge": // mkdir many && (cd many && seq 1 100001 | xargs touch)
+			os.Mkdir("many", 0o755)
+			for i := 1; i <= 100001; i++ {
+				fakeTouch(filepath.Join("many", strconv.Itoa(i)))
+			}
+		}
+	}
+	fakeClaudeDone(1)
+})
+
+func testNestedSkipped(t *testing.T, kind, why string) {
+	unconfined := kind == "unconfined"
 	if !gitAttrSource() {
 		t.Skip("git before 2.40: the client refuses nested repositories")
 	}
@@ -1415,17 +1466,8 @@ func testNestedSkipped(t *testing.T, agent, why, kind string) {
 		gitT(t, d, "add", "f.txt")
 		gitT(t, d, "commit", "-qm", "first")
 	}
-	fake := filepath.Join(root, "claude")
-	writeT(t, fake, `#!/bin/sh
-`+cliGuard+`
-cat > /dev/null
-for p in . lib other; do echo "agent" >> "$p/agent.txt"; done
-[ -f `+root+`/second ] && { `+agent+`; }
-echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"done"}}}'
-echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
-`)
-	os.Chmod(fake, 0o755)
-	s, _ := testServer(t, func(c *serveConfig) { c.Claude = fake })
+	fake := fakeCLI(t, root, "claude", fakeNestedSkipped, fakeParams{"root": root, "kind": kind})
+	s, _ := testServer(t, func(c *serveConfig) { c.Claude = fake; c.AllowUnsandboxedBash = runtime.GOOS == "windows" }) // L3
 	s.hub.nestedBlocker = func(string) string { return "" }
 	c := startLoopback(t, s)
 	sc := &shareClient{c: c, session: "sidk", root: client, worktree: true, top: filepath.ToSlash(client), synced: map[string]syncEntry{}, reported: map[string]bool{}}
@@ -1596,9 +1638,6 @@ func TestMarkUnconfinedRefusesNested(t *testing.T) {
 // L6: Codex (in Grok, Copilot) brez svojega imenskega prostora PID v klonu z ugnezdenimi: končna zavrnitev 400 pred
 // zagonom, besedilo kot pri Claude CLI (sicer 502 prek classifyAgentError in Claude Code ponavlja).
 func TestCodexUnconfinedNestedRefused(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fake codex is a shell script")
-	}
 	if !gitAttrSource() {
 		t.Skip("git before 2.40: the client refuses nested repositories")
 	}
@@ -1611,9 +1650,7 @@ func TestCodexUnconfinedNestedRefused(t *testing.T) {
 		gitT(t, d, "add", "f.txt")
 		gitT(t, d, "commit", "-qm", "first")
 	}
-	codex := filepath.Join(root, "codex")
-	writeT(t, codex, "#!/bin/sh\ntouch "+root+"/started\nexit 1\n")
-	os.Chmod(codex, 0o755)
+	codex := fakeCLI(t, root, "codex", fakePrint, fakeParams{"touch": filepath.Join(root, "started"), "exit": "1"})
 	old := agentUnconfined
 	agentUnconfined = func(string) bool { return true }
 	defer func() { agentUnconfined = old }()
@@ -2109,28 +2146,25 @@ func TestHarnessGitRefusesPlantedBareRepo(t *testing.T) {
 	}
 }
 
+var fakePlantGit = fake("plant-git", func(_ fakeParams, args []string) {
+	fakeGuard(args)
+	fakeStdin()
+	os.MkdirAll("app", 0o755)
+	fakeWrite(filepath.Join("app", ".git"), "gitdir: /nowhere\n")
+	fakeClaudeDone(1)
+})
+
 // #61: seja v prezrti podmapi app; agent v 1. krogu naredi app/.git, 2. krog v istem klonu je zavrnjen z natančnim
 // sporočilom (kot Swift worktreePlantedGitOnCwdPathRefusedNextTurn).
 func TestServeWorktreePlantedGitOnCwdPath(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fake claude is a shell script")
-	}
 	client := t.TempDir()
 	gitT(t, client, "init", "-q", "-b", "main")
 	writeT(t, filepath.Join(client, ".gitignore"), "app/\n")
 	writeT(t, filepath.Join(client, "app", "x.txt"), "x\n")
 	gitT(t, client, "add", "-A")
 	gitT(t, client, "commit", "-qm", "first")
-	fake := filepath.Join(t.TempDir(), "claude")
-	writeT(t, fake, `#!/bin/sh
-`+cliGuard+`
-cat > /dev/null
-mkdir -p app && echo 'gitdir: /nowhere' > app/.git
-echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"done"}}}'
-echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
-`)
-	os.Chmod(fake, 0o755)
-	s, _ := testServer(t, func(c *serveConfig) { c.Claude = fake })
+	fake := fakeCLI(t, t.TempDir(), "claude", fakePlantGit, nil)
+	s, _ := testServer(t, func(c *serveConfig) { c.Claude = fake; c.AllowUnsandboxedBash = runtime.GOOS == "windows" }) // L3
 	c := startLoopback(t, s)
 	cwd := filepath.Join(client, "app")
 	sc := &shareClient{c: c, session: "sid61", root: cwd, worktree: true, top: filepath.ToSlash(client), synced: map[string]syncEntry{}, reported: map[string]bool{}}

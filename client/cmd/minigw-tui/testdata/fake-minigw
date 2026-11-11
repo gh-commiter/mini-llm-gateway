@@ -1,8 +1,0 @@
-#!/bin/sh
-# Fake minigw for the tests: "gw api METHOD PATH [options]"; answers GETs from <METHOD>_<path>.json next to it,
-# logs argv and stdin, and fails like minigw for a path without a file.
-d=$(dirname "$0")
-printf '%s\n' "$*" >> "$d/calls.log"
-cat >> "$d/stdin.log"
-f="$d/$3$(printf '%s' "$4" | sed 's/[?].*//; s#/#_#g').json"
-if [ -f "$f" ]; then cat "$f"; elif [ "$3" != GET ]; then echo '{}'; else echo "minigw: not found: $4" >&2; exit 1; fi
