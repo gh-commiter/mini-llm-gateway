@@ -236,6 +236,9 @@ func TestUninstallSteps(t *testing.T) {
 	home, calls := pluginHome(t)
 	cfg, _ := os.UserConfigDir()
 	cache, _ := os.UserCacheDir()
+	if runtime.GOOS == "windows" { // izolirana shramba (credNS) je prazna: profil default ustvari test
+		saveProfile("default", connection{})
+	}
 	unit := servicePath("linux")
 	for _, f := range []string{unit, filepath.Join(cache, "minigw", "scratch", "x"), filepath.Join(cfg, "minigw", "connection.json")} {
 		os.MkdirAll(filepath.Dir(f), 0o700)
