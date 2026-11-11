@@ -132,6 +132,13 @@ func streamText(in io.Reader, out, errOut io.Writer) (failed bool) {
 		fmt.Fprintln(errOut, "minigw: · "+name)
 	}
 	end := func() { open, pend = false, 0 }
+	apiErr := "" // besedilo sporočila z napako API, dokler ga ne prinese result
+	// claudeLines: vsaka vrstica s predpono claude: — model ne more ponarediti vrstice minigw:, ki ji skill zaupa
+	claudeLines := func(s string) {
+		for _, l := range strings.Split(printable(strings.TrimRight(s, "\n")), "\n") {
+			fmt.Fprintln(errOut, "claude: "+l)
+		}
+	}
 	for sc.Scan() {
 		var ev struct {
 			Type     string  `json:"type"`
@@ -172,7 +179,9 @@ func streamText(in io.Reader, out, errOut io.Writer) (failed bool) {
 			}
 		case "assistant":
 			for _, c := range ev.Message.Content {
-				if c.Type == "text" && !partial && !ev.APIError { // napaka API le enkrat, kot claude: na stderr
+				if c.Type == "text" && ev.APIError { // napaka API le enkrat, kot claude: na stderr (iz result ali na koncu)
+					apiErr += c.Text
+				} else if c.Type == "text" && !partial {
 					text(c.Text)
 					end()
 				} else if c.Type == "tool_use" {
@@ -180,12 +189,10 @@ func streamText(in io.Reader, out, errOut io.Writer) (failed bool) {
 				}
 			}
 		case "result":
+			apiErr = ""
 			if ev.IsError {
 				failed = true
-				// vsaka vrstica s predpono claude: — model ne more ponarediti vrstice minigw:, ki ji skill zaupa
-				for _, l := range strings.Split(printable(strings.TrimRight(ev.Result, "\n")), "\n") {
-					fmt.Fprintln(errOut, "claude: "+l)
-				}
+				claudeLines(ev.Result)
 			} else if n == 0 {
 				text(ev.Result)
 			}
@@ -196,6 +203,10 @@ func streamText(in io.Reader, out, errOut io.Writer) (failed bool) {
 	}
 	if n > 0 && nl == 0 {
 		fmt.Fprintln(out)
+	}
+	if apiErr != "" { // napaka API brez dogodka result (claude je končal brez njega)
+		failed = true
+		claudeLines(apiErr)
 	}
 	if err := sc.Err(); err != nil && !errors.Is(err, os.ErrClosed) {
 		msg := err.Error()

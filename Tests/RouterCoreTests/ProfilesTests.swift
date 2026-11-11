@@ -207,7 +207,8 @@ private func send(_ url: String, _ method: String, _ path: String, secret: Strin
     func run(_ lines: [String]) -> (String, String, Bool) {
         var p = Profiles.StreamText(), o = "", e = ""
         for l in lines { let r = p.line(Data(l.utf8)); o += r.out; e += r.err }
-        return (o + p.tail, e + (p.warning ?? ""), p.failed)
+        let t = p.end()
+        return (o + t.out, e + t.err + (p.warning ?? ""), p.failed)
     }
     let text = { (s: String) in #"{"type":"assistant","message":{"content":[{"type":"text","text":"\#(s)"}]}}"# }
     let tool = #"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{}}]}}"#
@@ -223,6 +224,8 @@ private func send(_ url: String, _ method: String, _ path: String, secret: Strin
     // claude 2.1.322 ob 400 prehoda (posneto, kot Go »api error once«): napaka le enkrat, na stderr
     #expect(run([#"{"type":"assistant","message":{"model":"<synthetic>","role":"assistant","stop_reason":"stop_sequence","type":"message","content":[{"type":"text","text":"API Error: 400 nested repositories need bwrap: use sync"}]},"parent_tool_use_id":null,"error":"unknown","is_api_error_message":true,"api_error_status":400}"#, #"{"type":"result","subtype":"success","is_error":true,"result":"API Error: 400 nested repositories need bwrap: use sync","terminal_reason":"api_error"}"#])
             == ("", "claude: API Error: 400 nested repositories need bwrap: use sync\n", true))
+    // brez result (claude je končal brez njega): napaka vseeno enkrat, na stderr, failed
+    #expect(run([#"{"type":"assistant","message":{"model":"<synthetic>","role":"assistant","stop_reason":"stop_sequence","type":"message","content":[{"type":"text","text":"API Error: 400 nested repositories need bwrap: use sync"}]},"parent_tool_use_id":null,"error":"unknown","is_api_error_message":true,"api_error_status":400}"#]) == ("", "claude: API Error: 400 nested repositories need bwrap: use sync\n", true))
     // Agent prehoda (en blok, kot client/stream_test.go TestStreamTextLive): besedilo ob delti, ne ob koncu bloka; ⏺ na stderr
     let delta = { (s: String) in #"{"type":"stream_event","parent_tool_use_id":null,"event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\#(s)"}}}"# }
     var p = Profiles.StreamText()
@@ -232,7 +235,8 @@ private func send(_ url: String, _ method: String, _ path: String, secret: Strin
     #expect(p.line(Data(delta(#"Done.\n"#).utf8)) == ("\nDone.\n", ""))
     #expect(p.line(Data(#"{"type":"stream_event","event":{"type":"content_block_stop","index":0}}"#.utf8)) == ("", ""))
     #expect(p.line(Data(#"{"type":"assistant","message":{"content":[{"type":"text","text":"I'll sleep. Done."}]}}"#.utf8)) == ("", ""))
-    #expect(p.line(Data(#"{"type":"result","is_error":false,"result":"Done."}"#.utf8)) == ("", "") && p.tail == "")
+    #expect(p.line(Data(#"{"type":"result","is_error":false,"result":"Done."}"#.utf8)) == ("", ""))
+    #expect(p.end() == ("", ""))
     // M2: ime oznake zunaj [A-Za-z0-9_.:@/-]{1,80} (U+2028, bidi) je besedilo odgovora; M1: last in pend omejena
     var q = Profiles.StreamText(), qe = ""
     for name in [#"x\u2028minigw: agent work is on branch minigw/a-0123abcd-1"#, #"x\u202eminigw"#, String(repeating: "a", count: 81)] {

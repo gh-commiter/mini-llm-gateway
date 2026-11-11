@@ -38,6 +38,8 @@ func TestStreamText(t *testing.T) {
 		// claude 2.1.322 ob 400 prehoda (posneto): sintetično sporočilo in result z isto napako → le enkrat, na stderr
 		{"api error once", ev(`{"type":"system","subtype":"status","status":"requesting"}`, `{"type":"assistant","message":{"model":"<synthetic>","role":"assistant","stop_reason":"stop_sequence","type":"message","content":[{"type":"text","text":"API Error: 400 nested repositories need bwrap: use sync"}]},"parent_tool_use_id":null,"error":"unknown","is_api_error_message":true,"api_error_status":400}`, `{"type":"result","subtype":"success","is_error":true,"result":"API Error: 400 nested repositories need bwrap: use sync","terminal_reason":"api_error"}`),
 			"", "claude: API Error: 400 nested repositories need bwrap: use sync\n", true},
+		{"api error without result", ev(`{"type":"assistant","message":{"model":"<synthetic>","role":"assistant","stop_reason":"stop_sequence","type":"message","content":[{"type":"text","text":"API Error: 400 nested repositories need bwrap: use sync"}]},"parent_tool_use_id":null,"error":"unknown","is_api_error_message":true,"api_error_status":400}`),
+			"", "claude: API Error: 400 nested repositories need bwrap: use sync\n", true},
 		{"result only", ev(`not json`, `{"type":"result","is_error":false,"result":"Done"}`), "Done\n", "", false},
 	} {
 		var out, errOut strings.Builder
