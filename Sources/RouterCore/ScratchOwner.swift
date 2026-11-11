@@ -61,7 +61,10 @@ public enum ScratchOwner {
     /// Ob zagonu in ob vsaki spremembi nastavitev: prva raba zapiše lastnika (O_EXCL: od dveh hkratnih zagonov zmaga
     /// eden), mapa te instance dobi zaklep, dokler aplikacija teče. Vrne state(); nastavi blocked.
     @discardableResult public static func claim(_ dir: URL, id: String) -> String {
-        held.withLock { if $0 >= 0 { close($0); $0 = -1 } }  // flock velja za odprto datoteko: tudi naša bi zaklep zavrnila
+        // flock velja za odprto datoteko: tudi naša bi zaklep zavrnila. LOCK_UN pred close: otrok posix_spawn druge niti ima
+        // do exec kopijo odprte datoteke (tudi O_CLOEXEC), zato sam close zaklepa ne sprosti takoj (in ponovni claim iste
+        // mape bi vrnil inUse).
+        held.withLock { if $0 >= 0 { flock($0, LOCK_UN); close($0); $0 = -1 } }
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         // prva raba (tudi obstoječa mapa pred 0.5.24): le prava mapa tega uporabnika, ki je ne drži drug proces
         let fresh = owner(dir).isEmpty && mine(dir) && !locked(dir)

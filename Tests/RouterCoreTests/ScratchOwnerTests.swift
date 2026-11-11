@@ -27,7 +27,13 @@ private func put(_ dir: URL, _ rel: String, _ text: String = "x") throws {
     try put(a, "worktrees/dev/f", "old")
     #expect(throws: (any Error).self) { try ScratchOwner.takeOver(a, id: "gw-new") }
     #expect(ScratchOwner.owner(a) == "gw-old")
-    // zaklep gre na drugo mapo: stari lastnik ne teče več
+    // zaklep gre na drugo mapo: stari lastnik ne teče več. Kopija odprte datoteke zaklepa, kot jo ima otrok posix_spawn
+    // vzporednega testa do exec: zaklep se mora sprostiti tudi z njo (prej občasno inUse in prevzem ni uspel).
+    var lk = stat(), st = stat()
+    stat(a.appendingPathComponent(ScratchOwner.lockFile).path, &lk)
+    let copy = (0..<getdtablesize()).first { fstat($0, &st) == 0 && st.st_dev == lk.st_dev && st.st_ino == lk.st_ino }.map { dup($0) }
+    defer { copy.map { _ = close($0) } }
+    #expect(copy != nil)
     ScratchOwner.claim(other, id: "gw-old")
     #expect(ScratchOwner.state(a, id: "gw-new") == ScratchOwner.stale)
     // lastna mapa s pogovori: ob strani, nič združeno
