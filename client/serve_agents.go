@@ -792,8 +792,6 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 		hint := ""
 		if k.name == "codex" && runtime.GOOS == "windows" { // #68: tudi s peskovnikom »elevated« (bere nastavitve prehoda)
 			hint = "; Codex's own Windows sandbox can read the gateway's settings, so it does not replace this switch"
-		} else if k.name == "copilot" && runtime.GOOS == "windows" {
-			hint = "; Copilot cannot start in the Windows sandbox"
 		}
 		return writeError(w, r.rid, 403, k.bin+" needs \"Allow commands without a sandbox\" (Claude CLI settings) on this gateway (Windows, "+
 			"or Linux without bwrap): it can read and change everything this user can, including the gateway's settings"+hint)

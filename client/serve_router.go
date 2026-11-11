@@ -805,11 +805,17 @@ func enabledText(models []apiModel) string {
 
 // agentWork (#60): minigw gw codex|grok|copilot [--work=…]: omejitev načina agenta prek skrbniškega API.
 func agentWork(a *adminClient, kind string, set bool, work string) {
-	var c struct{ Work string }
+	var c struct {
+		Work        string
+		Unsupported bool
+		Reason      string
+	}
+	if a.do("GET", "/agents/"+kind, nil, &c); c.Unsupported { // 0.5.24: Copilot na prehodu Windows
+		say(clean(c.Reason))
+		return
+	}
 	if set {
 		a.do("PATCH", "/agents/"+kind, map[string]any{"work": work}, &c)
-	} else {
-		a.do("GET", "/agents/"+kind, nil, &c)
 	}
 	say(clean(agentNames[kind] + " work: " + c.Work))
 }
@@ -822,10 +828,15 @@ func agentLoginCmd(a *adminClient, in io.Reader, pos []string) {
 		fail(routerHelp)
 	}
 	var info struct {
-		Login map[string]any `json:"login"`
+		Login       map[string]any `json:"login"`
+		Unsupported bool           `json:"unsupported"`
+		Reason      string         `json:"reason"`
 	}
 	if pos[1] == "login" {
-		a.do("GET", "/agents/"+kind, nil, &info)
+		if a.do("GET", "/agents/"+kind, nil, &info); info.Unsupported { // 0.5.24: Copilot na prehodu Windows
+			say(clean(info.Reason))
+			return
+		}
 		say(clean(fmt.Sprintf("%s login: %v", agentNames[kind], info.Login["state"])))
 		say(clean(fmt.Sprint(info.Login["hint"])))
 		if n, ok := info.Login["apiKeyNote"]; ok {

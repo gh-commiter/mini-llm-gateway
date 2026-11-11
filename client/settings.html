@@ -515,6 +515,7 @@ async function agentPane(kind) {
 // ukazi le z izrecnim potrdilom.
 async function copilotPane() {
   const [a, c, st] = await Promise.all([api("GET", "/agents/copilot"), api("GET", "/agents/claude"), api("GET", "/status")]);
+  if (a.unsupported) return [card(...ICON.copilot, "Copilot CLI", t("copilotDesc")), el("div", {class: "note"}, t("copilotUnsupported"))];  // 0.5.24: Windows, kot TUI
   const n1 = note(), n2 = note(), n3 = note(t("copilotFooter"));
   const patch = body => api("PATCH", "/agents/copilot", body);
   const path = el("input", {type: "text", value: a.path, placeholder: a.exe || "copilot"});
@@ -522,14 +523,14 @@ async function copilotPane() {
   autosave(path, n1, async v => { await patch({path: v}); show("copilot"); });
   const models = el("input", {type: "text", value: (a.models || []).join(", "), placeholder: "gpt-5.2, claude-sonnet-4.5"});
   autosave(models, n1, v => patch({models: v.split(",").map(x => x.trim()).filter(Boolean)}));
-  const bare = a.sandboxed === undefined ? st.agentsUnsandboxed : !a.sandboxed, locked = bare && !c.allowUnsandboxedBash || !!a.unsupported;  // 0.5.24: ne na Windows
+  const bare = a.sandboxed === undefined ? st.agentsUnsandboxed : !a.sandboxed, locked = bare && !c.allowUnsandboxedBash;
   const commands = toggle(a.commands, (v, i) => save(n2, async () => {
     if (v && !confirm(t("copilotCommandsAsk"))) { i.checked = false; return; }
     await patch({commands: v});
   }), !a.write || locked);
   return [
     card(...ICON.copilot, "Copilot CLI", t("copilotDesc")),
-    group(row(labelSub(t("enabled"), a.unsupported ? t("copilotUnsupported") : bare ? t(locked ? "agentLockedWin" : "agentWarnWin") : null),
+    group(row(labelSub(t("enabled"), bare ? t(locked ? "agentLockedWin" : "agentWarnWin") : null),
         toggle(a.enabled && !locked, v => save(n1, async () => { await patch({enabled: v}); nav(); }), locked)),
       row(labelSub(t("path")), path, browse(path, n1, async v => { await patch({path: v}); show("copilot"); })), row(labelSub(t("copilotModels")), models)),
     el("div", {class: "note"}, status), n1,

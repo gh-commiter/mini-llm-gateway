@@ -20,7 +20,7 @@ The gateway runs on one computer and serves every client. Install it with `/mini
 | Runs as | Menu bar app | Tray icon (Windows), systemd user unit (Linux), or a terminal |
 | Settings | Settings window | Settings page in the browser ([below](#settings-page)) |
 | Autostart | Open at Login | At sign-in (Windows), at boot with linger or at sign-in (Linux) |
-| Claude CLI, Codex, Grok, Copilot, Foundry Local, providers | yes | yes |
+| Claude CLI, Codex, Grok, Copilot (Copilot: not on a Windows gateway in this version), Foundry Local, providers | yes | yes |
 | Siri AI, Apple Foundation Models | yes | – |
 | Work modes | auto, worktree, sync, direct, native, native-direct | auto, worktree, sync |
 | `minigw run` | yes | – |
