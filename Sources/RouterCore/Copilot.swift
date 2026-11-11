@@ -80,6 +80,8 @@ public enum Copilot {
 
     static let signIn = "sign in with `copilot login` on the gateway as the gateway user"
     /// H1: zakaj Copilot nima ukazov (enako besedilo kot copilotNoCommands v Go).
+    /// #81 N3: git copilota brez pagerja, urejevalnika, vprašanj in omrežnih protokolov (vsi načini; kot copilotGitPins v Go).
+    static let gitPins = ["GIT_PAGER": "cat", "GIT_EDITOR": "true", "GIT_ALLOW_PROTOCOL": "file", "GIT_TERMINAL_PROMPT": "0"]
     public static let noCommands = "Copilot commands are not available: a command could read Copilot's sign-in from the system keyring"
     /// Vrsta razloga (nastavitve ga pokažejo prevedenega; API in zahteva angleško besedilo).
     public enum LoginProblem: Sendable { case notSignedIn, unreadable, plainText, badForm }
@@ -424,8 +426,12 @@ extension Router {
             // #67: omrežje za git clone po istem pravilu kot orodje url (Copilot.args spodaj)
             if deps != nil { treeEnv?["MINIGW_NETWORK_OFF"] = Worktree.networkOff("copilot", config) }
         }
-        let extraEnv = treeEnv
-            ?? Worktree.gitGuardEnv(agent: "copilot").merging(["TMPDIR": tmp.path + "/", "CLANG_MODULE_CACHE_PATH": tmp.appendingPathComponent("ModuleCache").path]) { $1 }  // #81 N1
+        // #81 N1, N3: zunaj worktree git copilota nima repozitorija (GIT_DIR=/dev/null: .git/info/attributes, filtri, diff
+        // iz .git/config odjemalca ne tečejo), kot harness Codex; povsod še poceni pripone (pager, urejevalnik, protokoli).
+        let extraEnv = (treeEnv
+            ?? Worktree.gitGuardEnv(agent: "copilot").merging(["TMPDIR": tmp.path + "/", "CLANG_MODULE_CACHE_PATH": tmp.appendingPathComponent("ModuleCache").path,
+                                                               "GIT_DIR": "/dev/null", "GIT_CEILING_DIRECTORIES": cwd.deletingLastPathComponent().path]) { $1 })
+            .merging(Copilot.gitPins) { $1 }
         let run = agent ? await startAgentRun(req, kind: "copilot", dir: sharedDir, secretDir: reqDir, readOnly: readOnly || (tree != nil && !cfg.write)) : nil  // peskovnik: zaprta le vrata prehoda; žeton izvajanja v mapi zahteve
         defer { run?.stop() }
         let env = Copilot.environment(base, home: home, extra: extraEnv.merging(run?.env ?? [:]) { $1 })

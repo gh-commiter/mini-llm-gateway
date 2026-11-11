@@ -238,7 +238,7 @@ func TestCopilotThroughRouter(t *testing.T) {
 	os.WriteFile(copilot, []byte(`#!/bin/sh
 if [ "$1" = --version ]; then echo "token=${COPILOT_GITHUB_TOKEN:-none}" >> "`+argsFile+`.version"; exit 0; fi
 id=""; prev=""; for a in "$@"; do [ "$prev" = --session-id ] && id="$a"; prev="$a"; done
-printf '%s\n' "$@" "fsmon=$GIT_CONFIG_KEY_0" "path=$PATH" "dbus=$DBUS_SESSION_BUS_ADDRESS" "config=$(cat "$COPILOT_HOME/config.json")" "home=$COPILOT_HOME" "token=$COPILOT_GITHUB_TOKEN$GH_TOKEN$GITHUB_TOKEN" > "`+argsFile+`"
+printf '%s\n' "$@" "gitdir=$GIT_DIR" "pager=$GIT_PAGER" "fsmon=$GIT_CONFIG_KEY_0" "path=$PATH" "dbus=$DBUS_SESSION_BUS_ADDRESS" "config=$(cat "$COPILOT_HOME/config.json")" "home=$COPILOT_HOME" "token=$COPILOT_GITHUB_TOKEN$GH_TOKEN$GITHUB_TOKEN" > "`+argsFile+`"
 cat > "`+argsFile+`.stdin"
 st="$COPILOT_HOME/session-state/$id"; mkdir -p "$st"
 n=$(cat "$st/events.jsonl" 2>/dev/null || echo 0); echo $((n + 1)) > "$st/events.jsonl"
@@ -325,8 +325,9 @@ echo '{"type":"assistant.message","data":{"content":"copilot says hi turn='$((n 
 		t.Fatalf("login handoff: %q", a)
 	}
 	// #81 N1: tudi zunaj worktree git copilota brez .git/config odjemalca; Linux: ovoj git (brez D-Bus) na PATH
-	if field(a, "fsmon") != "core.fsmonitor" || runtime.GOOS == "linux" && lookPath("git") != "" &&
-		!strings.HasPrefix(field(a, "path"), filepath.Join(s.conf().Scratch, "gitexec", "bin")+":") {
+	if field(a, "fsmon") != "core.fsmonitor" || field(a, "gitdir") != os.DevNull || field(a, "pager") != "cat" || // N3: brez repozitorija
+		runtime.GOOS == "linux" && lookPath("git") != "" &&
+			!strings.HasPrefix(field(a, "path"), filepath.Join(s.conf().Scratch, "gitexec", "bin")+":") {
 		t.Fatalf("git guard: %q", a)
 	}
 	if want := map[bool]string{true: "unix:path=" + proxied + "/bus", false: ""}[runtime.GOOS == "linux"]; field(a, "dbus") != want ||

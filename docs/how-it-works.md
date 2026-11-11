@@ -168,7 +168,8 @@ Details:
   never get the proxy. Copilot has no commands on any gateway (shell tool always denied): on Linux Secret Service has
   no per-program access and a command could read the whole unlocked keyring; on the Mac a command could read
   `login.keychain-db` or start the ACL-trusted `copilot` with a planted package and read the token. With no commands
-  only Copilot's own process tree reads the Keychain folder that its profile allows. The old 0.5.24 Copilot token is
+  only Copilot's own process tree reads the Keychain folder that its profile allows. Outside worktree mode Copilot sees
+  no git repository (`GIT_DIR=/dev/null`), so a folder's `.git/config` or `.git/info/attributes` cannot run code in it. The old 0.5.24 Copilot token is
   deleted from the Keychain (`copilot-token`) or key store (`agent:copilot`) at start. A token that `copilot login` stored in plain text (headless Linux: an
   `authTokens`/`copilotTokens` key in `config.json`) is never copied: Copilot is then off. Windows: not supported.
   Without a usable login the settings, `GET /status` (`copilot`), `minigw gw status` and the request (503) give the reason.

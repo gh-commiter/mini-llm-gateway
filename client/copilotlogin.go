@@ -26,6 +26,10 @@ import (
 
 const copilotSignIn = "sign in with `copilot login` on the gateway as the gateway user"
 
+// copilotGitPins (#81 N3): git copilota brez pagerja, urejevalnika, vprašanj in omrežnih protokolov (vsi načini;
+// kot Copilot.gitPins na Macu). Le Copilot.
+var copilotGitPins = []string{"GIT_PAGER=cat", "GIT_EDITOR=true", "GIT_ALLOW_PROTOCOL=file", "GIT_TERMINAL_PROMPT=0"}
+
 // copilotNoCommands (H1): zakaj Copilot nima ukazov (nastavitve, opomba seje; enako besedilo na Macu).
 const copilotNoCommands = "Copilot commands are not available: a command could read Copilot's sign-in from the system keyring"
 

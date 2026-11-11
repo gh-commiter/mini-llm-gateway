@@ -982,8 +982,9 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 				defer stop()
 				m.env = append(m.env, "DBUS_SESSION_BUS_ADDRESS="+addr)
 			}
-			if !inTree { // #81 N1: git copilota tudi v sync brez .git/config odjemalca (fsmonitor, hooki …)
-				m.env = append(m.env, gitGuardEnv(k.name)...)
+			m.env = append(m.env, copilotGitPins...)
+			if !inTree { // #81 N1, N3: git copilota tudi v sync brez .git/config odjemalca; brez repozitorija (kot harness Codex)
+				m.env = append(append(m.env, gitGuardEnv(k.name)...), "GIT_DIR="+os.DevNull, "GIT_CEILING_DIRECTORIES="+filepath.Dir(dir))
 				if runtime.GOOS == "linux" && gitExecWrap(gw) != "" { // ovoj git na PATH (brez posrednika D-Bus)
 					m.env, m.ro = append(m.env, "PATH="+agentPath(gw)), append(m.ro, gw)
 				}

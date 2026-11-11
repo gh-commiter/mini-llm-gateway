@@ -162,9 +162,9 @@ private func fakeCopilot(_ dir: URL, _ extra: String = "") throws -> URL {
     \(extra)
     echo '{"type":"tool.execution_start","data":{"toolName":"view"}}'
     echo '{"type":"assistant.message","data":{"content":"first","toolRequests":[{}]}}'
-    printf '{"type":"assistant.message","data":{"content":"ARGS=%s;CWD=%s;HOME=%s;TOKEN=%s;STDIN=%s;TURN=%s;HOOKS=%s;LINK=%s;ALLOW=%s;CONFIG=%s;FSMON=%s;"}}\\n' \\
+    printf '{"type":"assistant.message","data":{"content":"ARGS=%s;CWD=%s;HOME=%s;TOKEN=%s;STDIN=%s;TURN=%s;HOOKS=%s;LINK=%s;ALLOW=%s;CONFIG=%s;FSMON=%s;GITDIR=%s;PAGER=%s;"}}\\n' \\
       "$(echo "$@" | tr ' ' '|')" "$(pwd)" "$COPILOT_HOME" "$COPILOT_GITHUB_TOKEN$GH_TOKEN$GITHUB_TOKEN" "$stdin" "$((n + 1))" "$hooks" "$link" "${COPILOT_ALLOW_ALL:-}" \\
-      "$(/usr/bin/base64 < "$COPILOT_HOME/config.json" | tr -d '\\n')" "$GIT_CONFIG_KEY_0"
+      "$(/usr/bin/base64 < "$COPILOT_HOME/config.json" | tr -d '\\n')" "$GIT_CONFIG_KEY_0" "$GIT_DIR" "$GIT_PAGER"
     """.utf8).write(to: exe)
     chmod(exe.path, 0o755)
     return exe
@@ -205,7 +205,7 @@ private func field(_ text: String, _ name: String) -> String {
     #expect(field(w.text, "STDIN") == "1" && !args.contains { $0.contains("read a.txt") })  // navodilo na stdin, ne v argumentih
     #expect(field(w.text, "CWD") == proj.path && field(w.text, "TOKEN").isEmpty && field(w.text, "ALLOW").isEmpty)  // #81: brez žetona
     // #81: svež config.json le s kazalcem na prijavo (ne trustedFolders, installedPlugins)
-    #expect(field(w.text, "FSMON") == "core.fsmonitor")  // #81 N1: tudi v načinu direct git brez .git/config odjemalca
+    #expect(field(w.text, "FSMON") == "core.fsmonitor" && field(w.text, "GITDIR") == "/dev/null" && field(w.text, "PAGER") == "cat")  // N3  // #81 N1: tudi v načinu direct git brez .git/config odjemalca
     #expect(Data(base64Encoded: field(w.text, "CONFIG")).map { String(decoding: $0, as: UTF8.self) } == copilotPointer)
     let home = field(w.text, "HOME")
     let req = (Sync.real(c.scratch("copilot/req")) ?? c.scratch("copilot/req")).path
