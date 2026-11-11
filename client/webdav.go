@@ -391,11 +391,13 @@ func davResolve(path, prefix, root string) (string, []string, bool) {
 		}
 		existing = parent
 	}
-	real, err := filepath.EvalSymlinks(existing)
-	if err != nil {
+	// finalPath: na Windows tudi stičišča (EvalSymlinks jih ne razreši); koren enako, da se poti ujemata.
+	real, err := finalPath(existing)
+	rr, err2 := finalPath(root)
+	if err != nil || err2 != nil {
 		return "", nil, false
 	}
-	if !samePath(real, root) && !hasPathPrefix(real, root) {
+	if !samePath(real, rr) && !hasPathPrefix(real, rr) {
 		return "", nil, false
 	}
 	return full, comps, true

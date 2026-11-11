@@ -1,6 +1,10 @@
 package main
 
-import "golang.org/x/sys/windows"
+import (
+	"errors"
+
+	"golang.org/x/sys/windows"
+)
 
 // codexFinalPath (#59): končna pot mape, kot jo vidi Codex (Rust canonicalize sledi tudi stičiščem in priklopnim
 // točkam, filepath.EvalSymlinks od Go 1.23 ne): GetFinalPathNameByHandle(FILE_NAME_NORMALIZED|VOLUME_NAME_DOS = 0).
@@ -21,4 +25,13 @@ func codexFinalPath(p string) string {
 		return ""
 	}
 	return trimFinalPrefix(windows.UTF16ToString(buf[:n]))
+}
+
+// finalPath: kanonična pot za preverbo »ostane v korenu« (davResolve, protectedCanonical). filepath.EvalSymlinks od
+// Go 1.23 stičišč (mklink /J, brez pravic) ne razreši; pot skoznje bi ušla iz korena. Ne da se odpreti = napaka.
+func finalPath(p string) (string, error) {
+	if f := codexFinalPath(p); f != "" {
+		return f, nil
+	}
+	return "", errors.New("final path of " + p)
 }

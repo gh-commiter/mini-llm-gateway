@@ -1464,8 +1464,15 @@ func under(path, folder string) bool {
 }
 
 // shareAllowed: nikoli koren diska ali domača mapa sama (to bi izpostavilo vse).
+// Kanonični poti: povezava ali stičišče na dom, kratko ime 8.3 (C:\Users\ANA~1) ali preslikan pogon kot \\strežnik\mapa.
 func shareAllowed(dir string) bool {
 	home, _ := os.UserHomeDir()
+	if r, err := finalPath(dir); err == nil {
+		dir = r
+	}
+	if r, err := finalPath(home); err == nil {
+		home = r
+	}
 	return filepath.Dir(dir) != dir && !strings.EqualFold(filepath.Clean(dir), filepath.Clean(home))
 }
 

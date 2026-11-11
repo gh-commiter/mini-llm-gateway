@@ -258,13 +258,13 @@ func sha256Hex(b []byte) string { s := sha256.Sum256(b); return hex.EncodeToStri
 // bi sicer pisanje v »hooks/pre-commit« pustila. Kanonična pot najglobljega obstoječega prednika (Windows: dolga imena)
 // skupaj z manjkajočim koncem; nečitljiva pot = zaščitena.
 func protectedCanonical(full, root string) bool {
-	r, err := filepath.EvalSymlinks(root)
+	r, err := finalPath(root) // Windows: tudi stičišče (hooks → .git\hooks)
 	if err != nil {
 		return true
 	}
 	p, rest := full, ""
 	for {
-		if c, err := filepath.EvalSymlinks(p); err == nil {
+		if c, err := finalPath(p); err == nil {
 			rel, err := filepath.Rel(r, filepath.Join(c, rest))
 			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 				return true
