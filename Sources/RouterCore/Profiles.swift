@@ -344,7 +344,7 @@ public enum Profiles {
         private func write(_ d: Data, _ i: Int) {
             guard !d.isEmpty, lock.withLock({ () -> Bool in
                 guard !closed, !off.contains(i) else { return false }
-                guard pending[i] + d.count <= caps[i] else {
+                guard pending[i] == 0 || pending[i] + d.count <= caps[i] else {  // en sam velik kos gre (kosi po 64 KB)
                     off.insert(i)
                     if i == 0 { isDropped = true }
                     return false

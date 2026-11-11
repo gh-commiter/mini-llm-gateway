@@ -340,6 +340,24 @@ private func send(_ url: String, _ method: String, _ path: String, secret: Strin
     #expect(Date().timeIntervalSince(start) < 2)
 }
 
+/// Low 1: en sam zapis čez mejo, ko nič ne čaka, ni dropped (bralec prazni).
+@Test func outputGateBigWriteDrained() throws {
+    let o = Pipe(), e = Pipe()
+    let gate = Profiles.OutputGate(out: o.fileHandleForWriting, err: e.fileHandleForWriting)
+    let size = 17 << 20
+    let got = DispatchSemaphore(value: 0)
+    let r = o.fileHandleForReading
+    nonisolated(unsafe) var n = 0
+    Thread.detachNewThread {
+        while n < size, let d = try? r.read(upToCount: 1 << 16), !d.isEmpty { n += d.count }
+        got.signal()
+    }
+    gate.out(String(repeating: "a", count: size))
+    #expect(!gate.dropped)
+    gate.close(timeout: 10)
+    #expect(got.wait(timeout: .now() + 10) == .success && n == size, "\(n) of \(size) bytes")
+}
+
 /// | head in zaprt stderr: napaka pisanja ne sproži izjeme, ročaj ne piše več, drugi piše naprej po vrsti.
 @Test func outputGateClosedPipe() throws {
     signal(SIGPIPE, SIG_IGN)
