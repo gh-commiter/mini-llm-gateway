@@ -932,7 +932,7 @@ func tooDeep(wt string, gits []string) bool { return len(pinPaths(wt, gits)) > m
 func worktreeClaudeEnv(wt, maven, tmp, gw string, gits []string, agent string) []string {
 	env := worktreeHarnessEnv(wt, maven, tmp, agent)
 	if runtime.GOOS == "windows" {
-		if !windowsBox() || agent == "codex" { // brez škatle (in Codex, ki ni v njej): GIT_DIR klona, brez ovoja
+		if !windowsBox() || outsideBox(agent) { // brez škatle (in Codex, Copilot, ki nista v njej): GIT_DIR klona, brez ovoja
 			return env
 		}
 		// #68: v škatli kot na Macu brez GIT_DIR (git najde klon in ugnezdene sam); ovoj git (minigw.exe) prvi na PATH

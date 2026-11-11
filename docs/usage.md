@@ -176,7 +176,7 @@ the clone, git refuses with a hint to use `$MINIGW_DEPS` (for example
 `-clonedSourcePackagesDirPath "$MINIGW_DEPS/spm" -derivedDataPath "$MINIGW_DEPS/DerivedData"`). The folder is kept
 for the whole conversation and removed with the clone; it never comes back to you and is not kept with a kept clone.
 Only an agent that may write gets it; `git clone` of a remote URL needs the agent's network for builds (the refusal
-names the setting). On a Windows gateway this works in the Windows sandbox (Claude CLI, Copilot); Codex there, and
+names the setting). On a Windows gateway this works in the Windows sandbox (Claude CLI); Codex and Copilot there, and
 every agent on a Windows gateway without the Windows sandbox, cannot create repositories; the folder still holds
 downloads and caches.
 
@@ -512,16 +512,17 @@ the allowed folders. Within a conversation Codex continues its own thread (`code
 **Grok** runs in its kernel sandbox: `workspace` (writes only to the session folder) or `read-only`. Within a
 conversation it continues its own session (`-r`).
 
-**Copilot** runs in a sandbox (on the Mac a `sandbox-exec` profile, on Linux bwrap, on Windows the Windows sandbox) with
-a fresh Copilot home for each request, deleted afterwards. On a Windows gateway without the Windows sandbox, Copilot
-and Grok run only with **Allow commands without a sandbox**; Codex on Windows always needs that switch.
+**Copilot** runs in a sandbox (on the Mac a `sandbox-exec` profile, on Linux bwrap) with
+a fresh Copilot home for each request, deleted afterwards (also on Windows). On a Windows gateway without the Windows
+sandbox, Grok runs only with **Allow commands without a sandbox**; Codex and Copilot on Windows always need that switch
+(they cannot start in the Windows sandbox).
 `claude-copilot` uses Copilot's default model (`auto`); list other models by name in its settings.
 - It only reads the folder unless **Allow writing** is on.
 - Commands need **Allow commands** together with **Allow writing**, and a dedicated GitHub token: a fine-grained
   personal access token with only the Copilot Requests permission (`minigw gw copilot token`). Commands can use that
   token to make Copilot requests on your account. `gh` and `security` stay denied.
 - The Mac app needs that token for every request. `minigw serve` on Linux may also use the GitHub CLI's sign-in
-  (`gh auth login`), and on Windows the user's own `copilot login` (only without the Windows sandbox).
+  (`gh auth login`), also on Windows (never the user's own `copilot login`).
 - Within a conversation Copilot continues its own session (`--session-id`).
 
 **Logins (`minigw serve`).** Agents use your subscription logins, never API keys, and nothing is copied back from an
@@ -536,11 +537,11 @@ environment (`ANTHROPIC_*`, `OPENAI_API_KEY`, `CODEX_API_KEY`, `XAI_API_KEY`, `G
 
 ### Windows gateway sandbox
 
-`minigw serve` on Windows (MSI, part Gateway) runs Claude CLI, Copilot and Grok in the Windows sandbox, Microsoft MXC
+`minigw serve` on Windows (MSI, part Gateway) runs Claude CLI and Grok in the Windows sandbox, Microsoft MXC
 (`mxc\wxc-exec.exe` in the install folder, no admin rights). It needs Windows 11 build 26100.9278 / 26200.9278 or
 later (the Windows process container). Settings page → General → About shows "Agent sandbox: Windows sandbox (MXC
 1.0.1)", or "not available (reason)"; then agents run only with **Allow commands without a sandbox**, as in 0.5.22.
-With the sandbox that switch is not needed for Claude CLI, Copilot and Grok (Codex still needs it, see below).
+With the sandbox that switch is not needed for Claude CLI and Grok (Codex and Copilot still need it: they cannot start in it).
 New installs (`minigw serve init`, the tray's first start) and the settings page's Scratch **Default** button put the
 Scratch folder at `minigw-scratch\<instance>` on the first fixed drive that is not the system drive, else on
 the system drive (for example `D:\minigw-scratch\gw-3f9a1c2b7d4e`; 0.5.24), with an access list only your user can open.

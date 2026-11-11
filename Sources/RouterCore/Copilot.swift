@@ -120,7 +120,7 @@ public enum Copilot {
     static func environment(_ base: [String: String], home: URL, token: String, extra: [String: String] = [:]) -> [String: String] {
         var env = base.filter { k, _ in
             !(k.hasPrefix("ANTHROPIC_") || k.hasPrefix("CLAUDE_CODE_") || k == "CLAUDECODE" || k == "SSH_AUTH_SOCK"
-              || k.hasPrefix("COPILOT_") || tokenVars.contains(k))
+              || k.hasPrefix("COPILOT_") || k.hasPrefix("GITHUB_COPILOT_") || tokenVars.contains(k))  // M1: …_PROMPT_MODE_REPO_HOOKS
         }
         env["COPILOT_HOME"] = home.path
         env["COPILOT_AUTO_UPDATE"] = "false"

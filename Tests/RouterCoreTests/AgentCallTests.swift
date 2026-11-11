@@ -208,6 +208,11 @@ private func get(_ run: AgentRun, _ path: String, token: String?) async -> Int {
         #expect(st == 429 && w.status == 429 && w.text.contains("x-should-retry: false") && w.text.contains(#""You have run out of credits.""#))
     }
     #expect(AgentError.recent(AgentError.key(req, model: "claude-grok")) == nil)  // HTTP 429 je končen
+    let failed = FakeWriter()  // HPX360: agent, ki je padel (502), Claude Code ne zažene znova
+    let fst = await router.replyWhenDone(body: ["model": "claude-copilot"], model: "claude-copilot", rid: "req_3", writer: failed, req: req) {
+        throw Copilot.Failure(message: "copilot failed (exit 1)")
+    }
+    #expect(fst == 502 && failed.status == 502 && failed.text.contains("x-should-retry: false"))
     let w = FakeWriter()
     _ = await router.replyWhenDone(body: ["model": "claude-grok", "stream": true], model: "claude-grok", rid: "req_2", writer: w, req: req,
                                    headDelay: .milliseconds(10)) {

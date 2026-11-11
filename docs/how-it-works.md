@@ -126,8 +126,9 @@ Details:
   agent's PATH is a copy of `minigw.exe` named `git.exe` (under `Scratch\gitexec\win-<hash>`, checked against its hash
   before use; stale copies are removed at start), with the same `init`/`clone` rule; every other git command goes
   unchanged to the real git.
-- **Windows sandbox (minigw serve, #68).** On Windows the gateway starts Claude CLI, Copilot and Grok as a whole
-  (the CLI and every command it runs) in a Microsoft MXC process container (`wxc-exec.exe` from MXC 1.0.1 in the
+- **Windows sandbox (minigw serve, #68).** On Windows the gateway starts Claude CLI and Grok as a whole (the CLI
+  and every command it runs; Codex and Copilot cannot start there: both fail on Rust `std::fs::canonicalize`,
+  "Access is denied (os error 5)", so they run outside it only with **Allow commands without a sandbox**) in a Microsoft MXC process container (`wxc-exec.exe` from MXC 1.0.1 in the
   install folder's `mxc` subfolder; low integrity and an AppContainer, no admin rights). It needs Windows 11 build
   26100.9278 / 26200.9278 or later (the Windows process container); an older build is refused before the probe, with
   the build in the reason. At start the gateway checks `wxc-exec.exe` against the SHA-256 built into minigw (again

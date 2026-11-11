@@ -425,7 +425,8 @@ extension Router {
                 try? await writer.write(StreamTranslator.sse("error", ["type": "error", "error": ["type": type, "message": message]]))
                 return status
             }
-            return await self.error(status, type, message, rid: rid, extra: agentLimit ? [("x-should-retry", "false")] : [], writer: writer)
+            // HPX360: agent je tekel in padel (ne le omejitev); ponovitev Claude Code bi ga zagnala znova. Siri (zasedena vrsta) ostane ponovljiva.
+            return await self.error(status, type, message, rid: rid, extra: error is SiriError ? [] : [("x-should-retry", "false")], writer: writer)
         }
     }
 }

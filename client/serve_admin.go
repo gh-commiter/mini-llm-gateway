@@ -114,7 +114,8 @@ type apiStatus struct {
 	Tray       bool         `json:"tray"`                 // pladenj teče (Windows)
 	Agents     int          `json:"agents"`               // tekoči procesi agentov (claude, codex, grok)
 	Autostart  string       `json:"autostart"`            // "boot", "sign-in" ali "" (minigw serve install)
-	// AgentsUnsandboxed: Codex in Grok tu nimata sandboxa, ki skrije skrivnosti (Windows, Linux brez bwrap).
+	// AgentsUnsandboxed: agenti tu nimajo sandboxa, ki skrije skrivnosti (Windows brez škatle, Linux brez bwrap); Codex in
+	// Copilot na Windows ga nimata nikoli (agents/<kind>.sandboxed).
 	AgentsUnsandboxed bool `json:"agentsUnsandboxed"`
 	// AgentSandbox (#68, Windows): {"kind":"mxc","version":"1.0.1"} ali {"kind":"","reason":"…"}; drugje ga ni.
 	AgentSandbox map[string]string `json:"agentSandbox,omitempty"`
