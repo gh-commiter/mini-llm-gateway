@@ -59,8 +59,12 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
 		}
 		return "minigw/claude-" + sha256Hex([]byte(sid))[:8] + "-0"
 	}
-	turn := func(sid string, cont bool) string {
-		return turnConv(sid, wtConversation(client, ".", sid, "", cont, false, false))
+	turn := func(sid string, cont bool) string { // cont: -c, ki ga minigw preda kot --resume sid1 (continueSession)
+		parent := ""
+		if cont {
+			parent = "sid1"
+		}
+		return turnConv(sid, wtConversation(sid, parent, false, false))
 	}
 	files := func(branch string) string {
 		return strings.Join(strings.Fields(gitT(t, client, "ls-tree", "-r", "--name-only", branch)), ",")
@@ -75,7 +79,7 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
 		t.Fatalf("turn 2 did not start from turn 1: %s", f)
 	}
 	st, _ := wtLoad(client)
-	if r := st.Convs["sid1"]; st.Last["."] != "sid1" || r.Branch != b2 || r.Base != head || r.Head != head || r.Tree != gitT(t, client, "rev-parse", "HEAD^{tree}") {
+	if r := st.Convs["sid1"]; r.Branch != b2 || r.Base != head || r.Head != head || r.Tree != gitT(t, client, "rev-parse", "HEAD^{tree}") {
 		t.Fatalf("record: %+v", st)
 	}
 	if gitT(t, client, "rev-parse", "HEAD") != head || gitT(t, client, "status", "--porcelain") != "" {
@@ -136,36 +140,17 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
 	if r := mustRecord(t, client, "sid1"); r.Branch != b6 || r.Base != gitT(t, client, "rev-parse", "HEAD") {
 		t.Fatalf("new chain after merge: %+v", r)
 	}
-	// Nov pogovor (brez --continue) ne nadaljuje starega; --resume <id> nadaljuje svojega.
-	conv := func(sid, parent string, cont, picker, fork bool) wtConv {
-		return wtConversation(client, ".", sid, parent, cont, picker, fork)
-	}
-	if conv("sid6", "", false, false, false) != (wtConv{"", "sid6"}) || conv("x", "sid1", false, false, false) != (wtConv{"sid1", "sid1"}) ||
-		conv("sid7", "", true, false, false) != (wtConv{"sid1", "sid1"}) {
+	// Nov pogovor ne nadaljuje starega; --resume <id> nadaljuje svojega; izbirnik ne nadaljuje in ne zapiše.
+	if wtConversation("sid6", "", false, false) != (wtConv{"", "sid6"}) || wtConversation("x", "sid1", false, false) != (wtConv{"sid1", "sid1"}) ||
+		wtConversation("sid11", "", true, false) != (wtConv{}) {
 		t.Fatal("conversation key")
 	}
-	// 1: zadnji pogovor po mapah (kot claude -c); starejša oblika (niz) = neznan.
-	if c := wtConversation(client, "sub", "sid8", "", true, false, false); c != (wtConv{"", "sid8"}) || conv("sid9", "", true, false, false).From != "sid1" {
-		t.Fatalf("per folder: %+v", c)
-	}
-	if wtRel(client, filepath.Join(client, "sub")) != "sub" || wtRel(client, client) != "." || wtRel(client, root) != "." {
-		t.Fatal("wtRel")
-	}
-	st, p := wtLoad(client)
-	b, _ := os.ReadFile(p)
-	writeT(t, p, strings.Replace(string(b), `"last":{"."`, `"last":"sid1","x":{"."`, 1))
-	if st2, _ := wtLoad(client); len(st2.Last) != 0 || len(st2.Convs) != len(st.Convs) || conv("sid10", "", true, false, false).From != "" {
-		t.Fatalf("old format: %+v", st2)
-	}
+	_, p := wtLoad(client)
 	if fi, err := os.Stat(p); err != nil || runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
 		t.Fatalf("record file: %v %v", fi, err)
 	}
-	// 2: izbirnik ne nadaljuje in ne zapiše.
-	if c := conv("sid11", "", false, true, false); c != (wtConv{}) || conv("sid12", "", true, false, false).From != "sid10" {
-		t.Fatalf("picker: %+v", c)
-	}
 	// 3: fork nadaljuje starša, zapiše pod novo sejo (starševski zapis ostane).
-	if c := conv("f1", "sid1", false, false, true); c != (wtConv{"sid1", "f1"}) {
+	if c := wtConversation("f1", "sid1", false, true); c != (wtConv{"sid1", "f1"}) {
 		t.Fatalf("fork: %+v", c)
 	}
 }

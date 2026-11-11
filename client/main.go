@@ -618,13 +618,20 @@ func main() {
 	}
 
 	// #79: -c/--continue = zadnji pogovor minigw v tej mapi (--resume <id>), ne zadnji pogovor claude v ~/.claude
-	args, dropped := continueSession(args, lastSession(cwd))
+	if f := combinedSessionFlag(args); f != "" {
+		fail(f + ": write -c and -r as separate options (for example -p -c), so that minigw can pass the right conversation")
+	}
+	sessionKey := cwd // isti ključ kot minigw v aplikaciji (razrešena pot)
+	if r, err := filepath.EvalSymlinks(cwd); err == nil {
+		sessionKey = r
+	}
+	args, dropped := continueSession(args, lastSession(sessionKey))
 	if dropped {
 		fmt.Fprintln(os.Stderr, "minigw: no earlier minigw conversation in "+cwd+"; starting a new one")
 	}
 	// Seja: router po njej loči seje claude -p in niti Siri. Obstoječa ob --resume <id>, sicer nova.
-	// #66: cont (-c), picker (--resume brez ID-ja), parent (ID ob --resume), fork (--fork-session), explicit (--session-id)
-	sid, own, cont, picker, fork, explicit, parent := "", false, false, false, false, false, ""
+	// #66: picker (--resume brez ID-ja), parent (ID ob --resume), fork (--fork-session), explicit (--session-id)
+	sid, own, picker, fork, explicit, parent := "", false, false, false, false, ""
 sessionArgs:
 	for i, a := range args {
 		switch a {
@@ -642,8 +649,6 @@ sessionArgs:
 				sid = args[i+1]
 			}
 			own, explicit = true, true
-		case "-c", "--continue":
-			own, cont = true, true
 		case "--fork-session":
 			fork = true
 		default:
@@ -657,14 +662,14 @@ sessionArgs:
 		sid = "" // L2: razcepljen pogovor je na prehodu nova seja (svoja veja), ne seja starša
 	}
 	if sid == "" {
-		sid = newUUID() // tudi pri -c/--continue: router po njem deli mapo
+		sid = newUUID() // tudi ob izbirniku: router po njem deli mapo
 		if !own {
 			args = append([]string{"--session-id", sid}, args...)
 		}
 	}
-	if !picker && (!fork || parent == "" || explicit) { // ID seje claude je znan (izbirnik in razcep ga izbereta sama)
-		saveLastSession(cwd, sid)
-	}
+	// zapis le zunaj Claude Code (skilli ne prepišejo pogovora uporabnika) in ko je ID seje claude znan (izbirnik in
+	// razcep ga izbereta sama); po uspešnem teku claude
+	record := os.Getenv("CLAUDECODE") == "" && !picker && (!fork || parent == "" || explicit)
 
 	u, _ := url.Parse(saved.URL)
 	routerHost := ""
@@ -712,13 +717,7 @@ sessionArgs:
 			"(the agent would change your files without a branch to review); put MINIGW_WORK=direct in front of the command instead")
 	}
 	share := &shareClient{c: c, session: sid, root: cwd, readOnly: readOnly, synced: map[string]syncEntry{}, reported: map[string]bool{}}
-	// #66: ključ pogovora enkrat na zagon (tudi za druge prehode)
-	var convOnce sync.Once
-	var convKey wtConv
-	conv := func(top string) wtConv {
-		convOnce.Do(func() { convKey = wtConversation(top, wtRel(top, cwd), sid, parent, cont, picker, fork) })
-		return convKey
-	}
+	conv := wtConversation(sid, parent, picker, fork) // #66: ključ pogovora (enak za vse prehode)
 	if wantShare && sid != "" {
 		if work == "worktree" && top == "" {
 			fmt.Fprintln(os.Stderr, "minigw: "+cwd+" is not in a git repository; worktree mode is not possible")
@@ -730,7 +729,7 @@ sessionArgs:
 		share, ok = registerShare(c, sid, cwd, readOnly, top, tries, false, implicit)
 		capped := share.capped // pred start: ponovna registracija ga piše pod share.mu
 		if ok && share.worktree {
-			share.conv, share.gateway = conv(share.top), saved.URL
+			share.conv, share.gateway = conv, saved.URL
 			share.start(4)
 			fmt.Fprintf(os.Stderr, "minigw: agent models work in a clone of this git repository on %s; their work comes back as branch minigw/… (minigw prints the range to review; your uncommitted and untracked, not ignored files are sent too; worktree)\n", routerHost)
 		} else if ok && share.native && share.branches {
@@ -789,7 +788,7 @@ sessionArgs:
 						return false
 					}
 					if sc.worktree {
-						sc.conv, sc.gateway = conv(sc.top), p.conn.URL
+						sc.conv, sc.gateway = conv, p.conn.URL
 					}
 					sc.start(4)
 					mu.Lock()
@@ -818,6 +817,9 @@ sessionArgs:
 	held.on = stream
 	held.Unlock()
 	code := runClaude(args, env, stream)
+	if code == 0 && record {
+		saveLastSession(sessionKey, sid)
+	}
 	releaseHeld()
 	share.unregister()
 	mu.Lock()

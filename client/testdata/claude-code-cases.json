@@ -35,8 +35,18 @@
      "chain": [{"exe": "/bin/sh"}, {"exe": "/bin/sh", "loop": true}]},
     {"name": "loop in the parent chain, stdin a terminal", "terminal": true, "claude": false,
      "chain": [{"exe": "/bin/sh"}, {"exe": "/bin/sh", "loop": true}]},
-    {"name": "parent exited (Windows: not in the snapshot)", "terminal": false, "claude": false,
-     "chain": [{"exe": "cmd.exe"}, {"gone": true}]}
+    {"name": "ancestor exited (Windows: not in the snapshot)", "terminal": false, "claude": false,
+     "chain": [{"exe": "cmd.exe"}, {"gone": true}]},
+    {"name": "orphaned: parent exited (Windows), stdin a pipe", "terminal": false, "claude": true,
+     "chain": [{"gone": true}]},
+    {"name": "orphaned: parent exited (Windows), stdin a terminal", "terminal": true, "claude": false,
+     "chain": [{"gone": true}]},
+    {"name": "orphaned to launchd (cmd &, nohup, launchd job), stdin a pipe", "terminal": false, "claude": true,
+     "chain": [{"exe": "/sbin/launchd", "args": ["/sbin/launchd"]}]},
+    {"name": "orphaned to launchd, stdin a terminal", "terminal": true, "claude": false,
+     "chain": [{"exe": "launchd"}]},
+    {"name": "orphaned to systemd --user, stdin a pipe", "terminal": false, "claude": true,
+     "chain": [{"exe": "/usr/lib/systemd/systemd", "args": ["/usr/lib/systemd/systemd", "--user"]}, {"exe": "/sbin/init"}]}
   ],
   "policy": [
     {"name": "person at a terminal", "marker": false, "chain": 0, "override": false, "checked": false},
@@ -59,6 +69,17 @@
     {"args": ["--print", "--model", "m", "--output-format=stream-json", "--verbose", "x"], "refused": false},
     {"args": ["-p", "--model", "m", "--", "--continue"], "refused": false},
     {"args": ["-p", "--model", "m", "--", "-c", "--resume", "id"], "refused": false}
+  ],
+  "combined": [
+    {"args": ["-pc", "x"], "flag": "-pc"},
+    {"args": ["-cp", "x"], "flag": "-cp"},
+    {"args": ["-p", "-r0c3b5a52-4f0e-4c4b-9d7e-2b1f1a6e9c01", "x"], "flag": "-r0c3b5a52-4f0e-4c4b-9d7e-2b1f1a6e9c01"},
+    {"args": ["-pvc"], "flag": "-pvc"},
+    {"args": ["-pv", "x"], "flag": ""},
+    {"args": ["-dcache", "-p", "x"], "flag": ""},
+    {"args": ["-p=1"], "flag": ""},
+    {"args": ["-c", "-p", "--continue", "x"], "flag": ""},
+    {"args": ["-p", "--", "-pc"], "flag": ""}
   ],
   "continue": [
     {"args": ["-p", "--continue", "x"], "last": "0c3b5a52-4f0e-4c4b-9d7e-2b1f1a6e9c01", "out": ["-p", "--resume", "0c3b5a52-4f0e-4c4b-9d7e-2b1f1a6e9c01", "x"], "dropped": false},

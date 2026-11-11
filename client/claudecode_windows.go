@@ -9,7 +9,7 @@ import (
 )
 
 // procLookup (Windows): starši in imena iz enega posnetka Toolhelp32 (brez OpenProcess, tudi za procese drugih
-// uporabnikov); proces, ki ga v posnetku ni (starš se je končal), konča verigo. Ukazna vrstica le za node.exe/bun.exe
+// uporabnikov); proces, ki ga v posnetku ni, je errGone. Ukazna vrstica le za node.exe/bun.exe
 // (NtQueryInformationProcess, ProcessCommandLineInformation).
 func procLookup() procFunc {
 	type entry struct {
@@ -32,7 +32,7 @@ func procLookup() procFunc {
 		}
 		e, ok := procs[pid]
 		if !ok {
-			return 0, "", nil, nil
+			return 0, "", nil, errGone
 		}
 		if n := strings.ToLower(strings.TrimSuffix(e.exe, filepath.Ext(e.exe))); n != "node" && n != "bun" {
 			return e.ppid, e.exe, nil, nil

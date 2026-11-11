@@ -256,7 +256,10 @@ new). `--resume <id>` and `--continue` reuse that session's branch name, which m
   `claude -c` would take the newest one in the folder and send its transcript to the gateway). When minigw has no
   conversation in this folder yet, it starts a new one and says `minigw: no earlier minigw conversation in …; starting
   a new one`. minigw keeps the last conversation per folder in `minigw/last-session.json` (macOS
-  `~/Library/Application Support`, Linux `~/.config`, Windows `%AppData%`).
+  `~/Library/Application Support`, Linux `~/.config`, Windows `%AppData%`), and writes it only after `claude` ended
+  without an error, so a failed run keeps the earlier conversation. Only runs outside Claude Code are recorded: model
+  calls from the plugin's skills never replace it, so `minigw -c` in your terminal always continues your own
+  conversation. Write `-c` and `-r` as separate options: minigw refuses combined short options such as `-pc`.
   `--resume <id>` takes that session; `--resume <id> --fork-session` continues from that session's branch, and the fork then
   goes on as its own conversation. `--resume` without an id (the session picker) starts from your folder.
 - All agents of one minigw run start from the same point (decided at the run's first agent), so agents in one turn

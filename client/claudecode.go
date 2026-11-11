@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path"
 	"path/filepath"
@@ -14,19 +15,26 @@ import (
 // terminalu in skripte uporabnika zunaj Claude Code ostanejo brez omejitev (D2). Varovalo, ne meja: proces, ki se
 // odcepi od drevesa (dvojni fork, setsid), ali drug harness ni prepoznan; MINIGW_ALLOW_UNSAFE_FLAGS=1 omejitve izklopi.
 
-// procFunc: starš, program in argumenti procesa pid; err = ni berljivo (veriga se ne da preveriti).
+// procFunc: starš, program in argumenti procesa pid; err = ni berljivo (veriga se ne da preveriti), errGone = procesa
+// ni več (Windows: ni v posnetku).
 type procFunc func(pid int) (ppid int, exe string, args []string, err error)
+
+var errGone = errors.New("process ended")
 
 // maxAncestors: največ toliko prednikov (zanka v podatkih ali zelo globoko drevo = preverjanje ni uspelo).
 const maxAncestors = 64
 
-// claudeCaller: v verigi prednikov od ppid je claude. Ko veriga ni berljiva, šteje kot Claude Code, razen s terminalom
-// na stdin (fail safe: človek tipka, agent ga nima).
+// claudeCaller: v verigi prednikov od ppid je claude. Ko veriga ni berljiva ali je minigw osirotel (starš je PID 1,
+// launchd, init, systemd ali ga ni več: »cmd &«, nohup, setsid, opravilo launchd), šteje kot Claude Code, razen s
+// terminalom na stdin (fail safe: človek tipka, agent ga nima). Višje v verigi končan prednik verigo konča.
 func claudeCaller(ppid int, info procFunc, terminal bool) bool {
 	pid := ppid
-	for range maxAncestors {
+	for depth := range maxAncestors {
 		parent, exe, args, err := info(pid)
-		if err != nil {
+		if errors.Is(err, errGone) && depth > 0 {
+			return false
+		}
+		if err != nil || depth == 0 && (pid == 1 || isReaper(exe, args)) {
 			return !terminal
 		}
 		if isClaudeProc(exe, args) {
@@ -56,6 +64,39 @@ func isClaudeProc(exe string, args []string) bool {
 		}
 	}
 	return false
+}
+
+// isReaper: proces, ki posvoji osirotele procese (launchd, init, systemd, tudi systemd --user).
+func isReaper(exe string, args []string) bool {
+	for _, p := range append([]string{exe}, args[:min(len(args), 1)]...) {
+		if n := path.Base(p); n == "launchd" || n == "init" || n == "systemd" {
+			return true
+		}
+	}
+	return false
+}
+
+// combinedSessionFlag: združene kratke možnosti z -c ali -r (npr. -pc, -cp, -r<id>), ki jih claude (commander) razstavi;
+// minigw jih ne bi prepoznal (continueSession), zato zavrne ("" = jih ni). Šteje do prve črke, ki ni -p/-h/-v (npr. -d
+// vzame ostanek kot vrednost). Po »--« so le argumenti.
+func combinedSessionFlag(args []string) string {
+	for _, a := range args {
+		if a == "--" {
+			return ""
+		}
+		if len(a) < 3 || a[0] != '-' || a[1] == '-' {
+			continue
+		}
+		for _, ch := range a[1:] {
+			if ch == 'c' || ch == 'r' {
+				return a
+			}
+			if ch != 'p' && ch != 'h' && ch != 'v' {
+				break
+			}
+		}
+	}
+	return ""
 }
 
 // markClaudeCode: claude med predniki → CLAUDECODE=1 v tem procesu, zato vsa varovala (checkClaudeArgs, promptGuard,
@@ -126,6 +167,11 @@ func saveLastSession(cwd, sid string) {
 	m := loadLastSessions()
 	if m[cwd] == sid {
 		return
+	}
+	for k := range m { // L3: mape, ki jih ni več
+		if _, err := os.Stat(k); err != nil {
+			delete(m, k)
+		}
 	}
 	m[cwd] = sid
 	b, _ := json.Marshal(m)

@@ -5,17 +5,21 @@ import Foundation
 /// --continue …«. Človek v terminalu in skripte uporabnika zunaj Claude Code ostanejo brez omejitev (D2). Varovalo, ne
 /// meja: proces, ki se odcepi od drevesa (dvojni fork), ali drug harness ni prepoznan; MINIGW_ALLOW_UNSAFE_FLAGS=1 omejitve izklopi.
 extension Profiles {
-    /// Starš, program in argumenti procesa; nil = ni berljivo (veriga se ne da preveriti).
+    /// Starš, program in argumenti procesa; nil = ni berljivo (veriga se ne da preveriti); ppid -1 = procesa ni več (le
+    /// Windows v Go; tu za skupne primere).
     public typealias ProcInfo = (ppid: pid_t, exe: String, args: [String])
 
     /// Največ toliko prednikov (zanka ali zelo globoko drevo = preverjanje ni uspelo).
     static let maxAncestors = 64
 
-    /// V verigi prednikov od ppid je claude. Ko veriga ni berljiva, šteje kot Claude Code, razen s terminalom na stdin.
+    /// V verigi prednikov od ppid je claude. Ko veriga ni berljiva ali je minigw osirotel (starš je PID 1, launchd, init,
+    /// systemd ali ga ni več: »cmd &«, nohup, opravilo launchd), šteje kot Claude Code, razen s terminalom na stdin (kot Go).
     public static func claudeCaller(ppid: pid_t, info: (pid_t) -> ProcInfo?, terminal: Bool) -> Bool {
         var pid = ppid
-        for _ in 0..<maxAncestors {
-            guard let p = info(pid) else { return !terminal }
+        for depth in 0..<maxAncestors {
+            let p = info(pid)
+            if let p, p.ppid < 0, depth > 0 { return false }
+            guard let p, p.ppid >= 0, depth > 0 || (pid != 1 && !isReaper(exe: p.exe, args: p.args)) else { return !terminal }
             if isClaudeProc(exe: p.exe, args: p.args) { return true }
             if p.ppid <= 0 || p.ppid == pid { return false }
             pid = p.ppid
@@ -33,6 +37,23 @@ extension Profiles {
         }
         if name(exe) == "claude" || args.first.map(name) == "claude" || norm(exe).contains("/claude/versions/") { return true }
         return ["node", "bun"].contains(name(exe)) && args.dropFirst().contains { norm($0).hasSuffix("/claude-code/cli.js") }
+    }
+
+    /// Proces, ki posvoji osirotele procese (launchd, init, systemd, tudi systemd --user).
+    static func isReaper(exe: String, args: [String]) -> Bool {
+        ([exe] + args.prefix(1)).contains { ["launchd", "init", "systemd"].contains(($0 as NSString).lastPathComponent) }
+    }
+
+    /// Združene kratke možnosti z -c ali -r (npr. -pc, -cp, -r<id>), ki jih claude razstavi; minigw jih ne bi prepoznal
+    /// (continueSession), zato zavrne (nil = jih ni). Šteje do prve črke, ki ni -p/-h/-v. Po »--« so le argumenti (kot Go).
+    public static func combinedSessionFlag(_ args: [String]) -> String? {
+        for a in args.prefix(while: { $0 != "--" }) where a.count > 2 && a.hasPrefix("-") && !a.hasPrefix("--") {
+            for ch in a.dropFirst() {
+                if ch == "c" || ch == "r" { return a }
+                if !"phv".contains(ch) { break }
+            }
+        }
+        return nil
     }
 
     /// macOS: starš in ime iz sysctl KERN_PROC_PID (tudi procesi drugih uporabnikov), pot in argumenti iz KERN_PROCARGS2
@@ -91,10 +112,13 @@ extension Profiles {
         guard validSession(sid) else { return }
         var m = ((try? JSONSerialization.jsonObject(with: Data(contentsOf: file))) as? [String: Any]) ?? [:]
         guard m[cwd] as? String != sid else { return }
+        m = m.filter { FileManager.default.fileExists(atPath: $0.key) }  // L3: mape, ki jih ni več
         m[cwd] = sid
         try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         guard let d = try? JSONSerialization.data(withJSONObject: m) else { return }
-        try? d.write(to: file, options: .atomic)
-        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+        // L1: začasna datoteka že 0600, nato rename (kot Worktree.convSave)
+        let tmp = file.path + ".tmp" + UUID().uuidString.prefix(8)
+        guard FileManager.default.createFile(atPath: tmp, contents: d, attributes: [.posixPermissions: 0o600]) else { return }
+        if rename(tmp, file.path) != 0 { unlink(tmp) }
     }
 }

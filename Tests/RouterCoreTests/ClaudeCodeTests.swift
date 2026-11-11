@@ -9,8 +9,9 @@ struct ClaudeCodeCases: Decodable {
     struct Chain: Decodable { let name: String; let terminal: Bool; let claude: Bool; let chain: [Link] }
     struct Policy: Decodable { let name: String; let marker: Bool; let chain: Int; let override: Bool; let checked: Bool }
     struct Args: Decodable { let args: [String]; let refused: Bool }
+    struct Combined: Decodable { let args: [String]; let flag: String }
     struct Continue: Decodable { let args: [String]; let last: String; let out: [String]; let dropped: Bool }
-    let procs: [Proc], chains: [Chain], policy: [Policy], args: [Args], `continue`: [Continue]
+    let procs: [Proc], chains: [Chain], policy: [Policy], args: [Args], combined: [Combined], `continue`: [Continue]
 
     static let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     static func load() throws -> ClaudeCodeCases {
@@ -23,7 +24,7 @@ struct ClaudeCodeCases: Decodable {
         return { pid in
             let k = Int(pid) - 1000, e = ch[k]
             if e.unreadable == true { return nil }
-            if e.gone == true { return (0, "", []) }
+            if e.gone == true { return (-1, "", []) }
             let ppid: pid_t = e.loop == true ? 1000 : k == ch.count - 1 ? 0 : pid + 1
             return (ppid, e.exe ?? "", e.args ?? [])
         }
@@ -52,6 +53,7 @@ struct ClaudeCodeCases: Decodable {
 
 @Test func continueSessionCases() throws {
     let c = try ClaudeCodeCases.load()
+    for k in c.combined { #expect(Profiles.combinedSessionFlag(k.args) == (k.flag.isEmpty ? nil : k.flag), "\(k.args)") }
     for k in c.continue {
         let r = Profiles.continueSession(k.args, last: k.last)
         #expect(r.args == k.out && r.dropped == k.dropped, "\(k.args) \(k.last)")
@@ -63,6 +65,10 @@ struct ClaudeCodeCases: Decodable {
     Profiles.saveLastSession(file: f, cwd: "/a", sid: id)
     Profiles.saveLastSession(file: f, cwd: "/b", sid: "--dangerously-skip-permissions")
     #expect(Profiles.lastSession(file: f, cwd: "/a") == id && Profiles.lastSession(file: f, cwd: "/b") == "")
+    #expect(((try? FileManager.default.attributesOfItem(atPath: f.path))?[.posixPermissions] as? Int) == 0o600)
+    // L3: zapis mape, ki je ni več, gre ob naslednjem zapisu (/a ne obstaja)
+    Profiles.saveLastSession(file: f, cwd: dir.path, sid: id)
+    #expect(Profiles.lastSession(file: f, cwd: "/a") == "" && Profiles.lastSession(file: f, cwd: dir.path) == id)
     try Data(#"{"/b":"-x"}"#.utf8).write(to: f)
     #expect(Profiles.lastSession(file: f, cwd: "/b") == "")
 }

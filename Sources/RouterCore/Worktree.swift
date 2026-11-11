@@ -1730,14 +1730,12 @@ extension Worktree {
         public init(from: String = "", to: String = "") { self.from = from; self.to = to }
     }
 
-    /// last: mapa (pot glede na koren repozitorija) → zadnji pogovor v njej (za --continue).
+    /// #79: zadnjega pogovora po mapah (»last« starejših različic) ni več: -c postane --resume <id> (Profiles.continueSession).
     struct ConvState: Codable {
-        var last: [String: String] = [:], convs: [String: ConvRecord] = [:]
+        var convs: [String: ConvRecord] = [:]
         init() {}
         init(from d: Decoder) throws {
-            let c = try d.container(keyedBy: CodingKeys.self)
-            last = (try? c.decode([String: String].self, forKey: .last)) ?? [:]  // starejša oblika (niz): neznano
-            convs = (try? c.decode([String: ConvRecord].self, forKey: .convs)) ?? [:]
+            convs = (try? d.container(keyedBy: CodingKeys.self).decode([String: ConvRecord].self, forKey: .convs)) ?? [:]
         }
     }
 
@@ -1761,21 +1759,11 @@ extension Worktree {
         return validBranch(branch) && r.status == 0 && isSHA(r.out) ? r.out : nil
     }
 
-    /// Mapa cwd glede na koren repozitorija (».« = koren), kot »claude -c« po mapah.
-    public static func relCwd(top: String, cwd: String) -> String {
-        guard let t = Sync.real(URL(fileURLWithPath: top))?.path, let c = Sync.real(URL(fileURLWithPath: cwd))?.path, c.hasPrefix(t + "/") else { return "." }
-        return String(c.dropFirst(t.count + 1))
-    }
-
-    /// --continue = zadnji pogovor v mapi rel; --resume <id> = parent; izbirnik (--resume brez ID-ja) ne nadaljuje in ne
-    /// zapiše; fork (--fork-session): nadaljuje starša, zapiše pod novo sejo. Novi zapiše kot zadnjega v rel.
-    public static func conversation(top: String, rel: String, session: String, parent: String, cont: Bool, picker: Bool, fork: Bool) -> Conv {
+    /// --resume <id> (tudi -c, Profiles.continueSession) = parent; izbirnik (--resume brez ID-ja) ne nadaljuje in ne
+    /// zapiše; fork (--fork-session): nadaljuje starša, zapiše pod novo sejo; sicer nov pogovor pod session (kot Go).
+    public static func conversation(session: String, parent: String, picker: Bool, fork: Bool) -> Conv {
         if picker { return Conv() }
-        var (st, p) = convLoad(top)
-        var c = Conv(from: cont ? st.last[rel] ?? "" : parent)
-        c.to = fork || c.from.isEmpty ? session : c.from
-        if !c.to.isEmpty, st.last[rel] != c.to { st.last[rel] = c.to; convSave(p, st) }
-        return c
+        return Conv(from: parent, to: fork || parent.isEmpty ? session : parent)
     }
 
     /// Vrh zadnje veje pogovora conv na prehodu gateway (nadaljevanje vedno, tudi ko se je mapa spremenila); tip nil =

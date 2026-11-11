@@ -2002,9 +2002,10 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
     let (root, client, tree) = try fixture()
     defer { cleanup(root) }
     let hub = ShareHub(), head = g(client, "rev-parse", "HEAD"), notes = OSAllocatedUnfairLock<[String]>(initialState: [])
+    // cont: -c, ki ga minigw preda kot --resume s1 (Profiles.continueSession)
     func turn(_ session: String, cont: Bool, _ work: @escaping (URL) throws -> Void) async throws -> String {
         let key = try #require(await hub.register(session: session, cwd: client.path, key: nil, device: "dev", tree: tree))
-        let conv = Worktree.conversation(top: client.path, rel: ".", session: session, parent: "", cont: cont, picker: false, fork: false)
+        let conv = Worktree.conversation(session: session, parent: cont ? "s1" : "", picker: false, fork: false)
         let loop = fakeClient(hub, key: key, top: client, notes: notes, conv: conv)
         defer { loop.cancel() }
         let id = try await agentRun(hub, session, work: work)
@@ -2019,7 +2020,7 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
     }
     #expect(b1 != b2 && g(client, "show", "\(b2):agent.txt") == "agent" && g(client, "show", "\(b2):b.txt") == "b")
     let (st, _) = Worktree.convLoad(client.path)
-    #expect(st.last == [".": "s1"] && st.convs["s1"]?.branch == b2 && st.convs["s1"]?.head == head)
+    #expect(st.convs["s1"]?.branch == b2 && st.convs["s1"]?.head == head)
     // Začetek obsega je stanje uporabnika ob prvem zagonu (posnetek z neshranjenimi spremembami), prednik obeh vej.
     let base = try #require(st.convs["s1"]?.base)
     #expect(g(client, "show", "\(base):new.txt") == "untracked" && g(client, "rev-parse", "\(b1)~1") == base)
@@ -2070,25 +2071,17 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
     }
     #expect(Worktree.convLoad(client.path).0.convs["s1"]?.branch == b6 && Worktree.convLoad(client.path).0.convs["s1"]?.base == g(client, "rev-parse", "HEAD"))
 
-    // Ključ: po mapah (kot claude -c), izbirnik ne nadaljuje in ne zapiše, fork nadaljuje starša pod novo sejo.
-    func conv(_ s: String, rel: String = ".", parent: String = "", cont: Bool = false, picker: Bool = false, fork: Bool = false) -> Worktree.Conv {
-        Worktree.conversation(top: client.path, rel: rel, session: s, parent: parent, cont: cont, picker: picker, fork: fork)
-    }
-    #expect(conv("s6") == Worktree.Conv(from: "", to: "s6") && conv("x", parent: "s1") == Worktree.Conv(from: "s1", to: "s1")
-        && conv("s7", cont: true) == Worktree.Conv(from: "s1", to: "s1"))
-    #expect(conv("s8", rel: "sub", cont: true) == Worktree.Conv(from: "", to: "s8") && conv("s9", cont: true).from == "s1")
-    #expect(conv("s10", picker: true) == Worktree.Conv() && conv("s11", cont: true).from == "s1")
-    #expect(conv("f1", parent: "s1", fork: true) == Worktree.Conv(from: "s1", to: "f1") && conv("s12", cont: true).from == "f1")
+    // Ključ: --resume <id> nadaljuje svojega, izbirnik ne nadaljuje in ne zapiše, fork nadaljuje starša pod novo sejo.
+    #expect(Worktree.conversation(session: "s6", parent: "", picker: false, fork: false) == Worktree.Conv(from: "", to: "s6")
+        && Worktree.conversation(session: "x", parent: "s1", picker: false, fork: false) == Worktree.Conv(from: "s1", to: "s1"))
+    #expect(Worktree.conversation(session: "s10", parent: "", picker: true, fork: false) == Worktree.Conv()
+        && Worktree.conversation(session: "f1", parent: "s1", picker: false, fork: true) == Worktree.Conv(from: "s1", to: "f1"))
     let (_, p) = Worktree.convLoad(client.path)
     #expect(((try? FileManager.default.attributesOfItem(atPath: p))?[.posixPermissions] as? Int) == 0o600)
-    #expect(Worktree.relCwd(top: client.path, cwd: client.appendingPathComponent("sub").path) == "." && Worktree.relCwd(top: client.path, cwd: client.path) == ".")
-    try FileManager.default.createDirectory(at: client.appendingPathComponent("sub"), withIntermediateDirectories: true)
-    #expect(Worktree.relCwd(top: client.path, cwd: client.appendingPathComponent("sub").path) == "sub")
-    // Starejša oblika (»last« kot niz): neznano, zapisi ostanejo.
-    let old = try String(contentsOfFile: p, encoding: .utf8)
-    let n = Worktree.convLoad(client.path).0.convs.count
-    try old.replacingOccurrences(of: #""last":{"#, with: #""last":"s1","x":{"#).write(toFile: p, atomically: true, encoding: .utf8)
-    #expect(Worktree.convLoad(client.path).0.last.isEmpty && Worktree.convLoad(client.path).0.convs.count == n && conv("s13", cont: true).from == "")
+    // Starejša oblika (»last«): prezrta, zapisi ostanejo.
+    let old = try String(contentsOfFile: p, encoding: .utf8), n = Worktree.convLoad(client.path).0.convs.count
+    try old.replacingOccurrences(of: #"{"convs""#, with: #"{"last":"s1","convs""#).write(toFile: p, atomically: true, encoding: .utf8)
+    #expect(Worktree.convLoad(client.path).0.convs.count == n)
 }
 
 /// #66: odločitev enkrat na zagon: drugi WORKTREE-PUSH istega zagona začne iz istega vrha, tudi ko je vmes prišla nova
@@ -2099,7 +2092,7 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
     let hub = ShareHub()
     func session(_ s: String, cont: Bool) async throws -> (String, Task<Void, Never>) {
         let key = try #require(await hub.register(session: s, cwd: client.path, key: nil, device: "dev", tree: tree))
-        return (s, fakeClient(hub, key: key, top: client, conv: Worktree.conversation(top: client.path, rel: ".", session: s, parent: "", cont: cont, picker: false, fork: false)))
+        return (s, fakeClient(hub, key: key, top: client, conv: Worktree.conversation(session: s, parent: cont ? "o1" : "", picker: false, fork: false)))
     }
     let (s1, l1) = try await session("o1", cont: false)
     let a = try await agentRun(hub, s1) { try file($0, "one.txt", "1\n") }

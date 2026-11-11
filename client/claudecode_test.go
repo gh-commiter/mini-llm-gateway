@@ -38,6 +38,10 @@ type claudeCodeCases struct {
 		Args    []string
 		Refused bool
 	}
+	Combined []struct {
+		Args []string
+		Flag string
+	}
 	Continue []struct {
 		Args, Out []string
 		Last      string
@@ -66,7 +70,7 @@ func (c claudeCodeCases) fakeChain(i int) procFunc {
 		case e.Unreadable:
 			return 0, "", nil, errors.New("unreadable")
 		case e.Gone:
-			return 0, "", nil, nil
+			return 0, "", nil, errGone
 		case e.Loop:
 			return 1000, e.Exe, e.Args, nil
 		case pid-1000 == len(ch)-1:
@@ -121,6 +125,11 @@ func TestClaudeCodeArgsPolicy(t *testing.T) {
 
 func TestContinueSession(t *testing.T) {
 	c := loadClaudeCodeCases(t)
+	for _, k := range c.Combined {
+		if f := combinedSessionFlag(k.Args); f != k.Flag {
+			t.Errorf("combinedSessionFlag(%q) = %q", k.Args, f)
+		}
+	}
 	for _, k := range c.Continue {
 		out, dropped := continueSession(slices.Clone(k.Args), k.Last)
 		if !slices.Equal(out, k.Out) || dropped != k.Dropped {
@@ -139,6 +148,18 @@ func TestContinueSession(t *testing.T) {
 	saveLastSession(b, "--dangerously-skip-permissions") // ni ID seje: ne zapiše
 	if lastSession(a) != id || lastSession(b) != "" {
 		t.Fatalf("records: %q %q", lastSession(a), lastSession(b))
+	}
+	os.Mkdir(a, 0o700) // L3: zapis mape, ki je ni več, gre ob naslednjem zapisu
+	os.Mkdir(b, 0o700)
+	saveLastSession(b, id)
+	saveLastSession(filepath.Join(home, "gone"), id)
+	os.Remove(filepath.Join(home, "gone"))
+	saveLastSession(b, "9d1e0f3a-1111-4222-8333-444455556666")
+	if m := loadLastSessions(); len(m) != 2 || m[a] != id || m[b] != "9d1e0f3a-1111-4222-8333-444455556666" {
+		t.Fatalf("prune: %v", m)
+	}
+	if fi, err := os.Stat(lastSessionFile()); err != nil || runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
+		t.Fatalf("file mode: %v %v", fi, err)
 	}
 	os.WriteFile(lastSessionFile(), []byte(`{"`+strings.ReplaceAll(b, `\`, `\\`)+`":"-x"}`), 0o600)
 	if lastSession(b) != "" {
