@@ -51,6 +51,8 @@ public final class Router: Sendable {
     let probes = Probes()
     /// Zgodovina naprav in sej: Router.history (aplikacija); testi dajo svojo, da jih vzporedni testi ne motijo.
     let history: GatewayHistory
+    /// #81: ~/.copilot/config.json uporabnika (kazalec na prijavo copilot login); testi dajo svojo v začasni mapi.
+    let copilotConfig: URL
     static let log = Logger(subsystem: "dev.trojar.minigateway", category: "router")
 
     public init(config: RouterConfig, token: String, secrets: SecretStore,
@@ -58,8 +60,9 @@ public final class Router: Sendable {
                 onLog: @escaping @Sendable (RequestLog) -> Void = { _ in },
                 onDevice: @escaping @Sendable (Noise.Device) -> Void = { _ in },
                 onActivity: @escaping @Sendable (Activity) -> Void = { _ in },
-                admin: AdminHooks? = nil, history: GatewayHistory = Router.history) {
+                admin: AdminHooks? = nil, history: GatewayHistory = Router.history, copilotConfig: URL = Copilot.userConfig) {
         self.config = config
+        self.copilotConfig = copilotConfig
         self.history = history
         self.admin = admin
         self.onDevice = onDevice

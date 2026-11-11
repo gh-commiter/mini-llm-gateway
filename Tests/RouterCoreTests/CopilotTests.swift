@@ -49,20 +49,99 @@ private func rules(_ a: [String]) -> (allow: [String], deny: [String]) {
                                    "COPILOT_PROVIDER_API_KEY_COMMAND": "touch /tmp/x", "COPILOT_CLI_DIST_DIR": "/evil",
                                    "COPILOT_CUSTOM_INSTRUCTIONS_DIRS": "/evil", "GH_TOKEN": "user", "GITHUB_TOKEN": "user",
                                    "CLAUDE_CODE_X": "1", "SSH_AUTH_SOCK": "/s", "COPILOT_HOME": "/home/u/.copilot", "PATH": "/bin",
-                                   "GITHUB_COPILOT_PROMPT_MODE_REPO_HOOKS": "true", "GITHUB_COPILOT_PROMPT_MODE_WORKSPACE_MCP": "true"],
-                                  home: URL(fileURLWithPath: "/req/home"), token: "tok", extra: ["TMPDIR": "/t/"])
-    #expect(env.keys.filter { $0.hasPrefix("COPILOT_") }.sorted() == ["COPILOT_AUTO_UPDATE", "COPILOT_GITHUB_TOKEN", "COPILOT_HOME"])
+                                   "GITHUB_COPILOT_PROMPT_MODE_REPO_HOOKS": "true", "GITHUB_COPILOT_PROMPT_MODE_WORKSPACE_MCP": "true",
+                                   "COPILOT_GITHUB_TOKEN": "user", "COPILOT_HMAC_KEY": "k", "COPILOT_PROVIDERS_CONFIG": "/evil"],
+                                  home: URL(fileURLWithPath: "/req/home"), extra: ["TMPDIR": "/t/"])
+    #expect(env.keys.filter { $0.hasPrefix("COPILOT_") }.sorted() == ["COPILOT_AUTO_UPDATE", "COPILOT_HOME"])  // #81: brez žetona
     #expect(!env.keys.contains { $0.hasPrefix("GITHUB_COPILOT_") })  // M1: hooki in MCP repozitorija v načinu -p
     #expect(env["GH_TOKEN"] == nil && env["GITHUB_TOKEN"] == nil && env["ANTHROPIC_BASE_URL"] == nil && env["CLAUDE_CODE_X"] == nil
             && env["SSH_AUTH_SOCK"] == nil)
-    #expect(env["COPILOT_HOME"] == "/req/home" && env["COPILOT_GITHUB_TOKEN"] == "tok" && env["PATH"] == "/bin" && env["TMPDIR"] == "/t/"
-            && env["COPILOT_AUTO_UPDATE"] == "false")
-    #expect(Copilot.validToken("github_pat_11ABC_x") && !Copilot.validToken("gho_abc") && !Copilot.validToken("github_pat_a b"))
+    #expect(env["COPILOT_HOME"] == "/req/home" && env["PATH"] == "/bin" && env["TMPDIR"] == "/t/" && env["COPILOT_AUTO_UPDATE"] == "false")
 
     #expect(Copilot.event(Data(#"{"type":"assistant.message","data":{"content":"Hi!","toolRequests":[]}}"#.utf8)).text == "Hi!")
     #expect(Copilot.event(Data(#"{"type":"assistant.message","data":{"content":"","toolRequests":[{}]}}"#.utf8)).text == nil)
     #expect(Copilot.event(Data(#"{"type":"tool.execution_start","data":{"toolName":"view"}}"#.utf8)).step == "view")
     #expect(Copilot.event(Data("not json".utf8)).text == nil)
+}
+
+/// #81: začasna ~/.copilot/config.json v obliki copilota (vrstice »//«, ključi, ki se ne smejo kopirati); nikoli prava prijava.
+private func copilotLogin(_ root: URL) throws -> URL {
+    let f = root.appendingPathComponent("copilot-home/config.json")
+    try FileManager.default.createDirectory(at: f.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data("""
+    // This file is managed automatically.
+    // User settings belong in settings.json.
+    {"loggedInUsers": [{"host": "https://github.com", "login": "octo-cat"}, {"host": "corp.ghe.com", "login": "octo_corp", "kind": "user"}],
+     "lastLoggedInUser": {"host": "https://github.com", "login": "octo-cat"},
+     "trustedFolders": ["/"], "installedPlugins": [{"name": "evil", "cachePath": "/tmp/evil"}], "storeTokenPlaintext": false}
+    """.utf8).write(to: f)
+    return f
+}
+
+private let copilotPointer = #"{"lastLoggedInUser":{"host":"https:\/\/github.com","login":"octo-cat"},"#
+    + #""loggedInUsers":[{"host":"https:\/\/github.com","login":"octo-cat"},{"host":"corp.ghe.com","kind":"user","login":"octo_corp"}]}"#
+
+/// #81: le loggedInUsers in lastLoggedInUser, preverjena oblika; žeton v navadnem besedilu ali tuja oblika = razlog (kot Go).
+@Test func copilotLoginPointerWhitelist() throws {
+    let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("copilot-login-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let f = try copilotLogin(root)
+    let ok = Copilot.login(f)
+    #expect(ok.problem == nil && ok.config.map { String(decoding: $0, as: UTF8.self) } == copilotPointer)
+    let user = #"{"host":"github.com","login":"u"}"#
+    let cases: [(String, String?)] = [
+        (#"{"loggedInUsers":[\#(user)]}"#, nil),
+        (#"{"loggedInUsers":[\#(user)],"authTokens":{"github.com:u":"gho_x"}}"#, "plain text"),
+        (#"{"loggedInUsers":[\#(user)],"copilotTokens":{"x":"y"}}"#, "plain text"),
+        (#"{"loggedInUsers":[]}"#, "not signed in"),
+        (#"{"trustedFolders":["/"]}"#, "not signed in"),
+        ("not json", "expected form"),
+        (#"{"loggedInUsers":[{"host":"github.com","login":"u","token":"x"}]}"#, "expected form"),
+        (#"{"loggedInUsers":[{"host":"github.com/../x","login":"u"}]}"#, "expected form"),
+        (#"{"loggedInUsers":[{"host":"file:///etc","login":"u"}]}"#, "expected form"),
+        (#"{"loggedInUsers":[{"host":"github.com","login":"-u"}]}"#, "expected form"),
+        (#"{"loggedInUsers":[{"host":"github.com","login":"u;rm"}]}"#, "expected form"),
+        (#"{"loggedInUsers":[{"host":"github.com"}]}"#, "expected form"),
+        (#"{"loggedInUsers":[{"host":"github.com","login":"u","kind":7}]}"#, "expected form"),
+        (#"{"loggedInUsers":[{"host":"github.com","login":"u","kind":"a\nb"}]}"#, "expected form"),
+        (#"{"loggedInUsers":[\#(user)],"lastLoggedInUser":{"host":"","login":"u"}}"#, "expected form"),
+    ]
+    for (body, want) in cases {
+        try Data(body.utf8).write(to: f)
+        let r = Copilot.login(f)
+        #expect(want == nil ? r.problem == nil && r.config != nil : r.problem?.contains(want!) == true && r.config == nil, "\(body): \(r.problem ?? "")")
+    }
+    try FileManager.default.removeItem(at: f)
+    try Data(#"{"loggedInUsers":[\#(user)]}"#.utf8).write(to: root.appendingPathComponent("elsewhere.json"))
+    try FileManager.default.createSymbolicLink(at: f, withDestinationURL: root.appendingPathComponent("elsewhere.json"))
+    #expect(Copilot.login(f).problem?.contains("not signed in") == true)  // povezava: ne sledi
+    #expect(Copilot.login(root.appendingPathComponent("none.json")).problem?.contains("copilot login") == true)
+}
+
+/// #81: peskovnik Copilota sme brati ~/Library/Keychains (prijava v Keychainu), ne pisati vanj; drugo ostane skrito.
+/// Začasna domača mapa, nikoli pravi Keychain.
+@Test func copilotSandboxReadsOnlyTheKeychainFolder() throws {
+    let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("copilot-kc-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let home = root.appendingPathComponent("home"), proj = root.appendingPathComponent("proj")
+    let kc = home.appendingPathComponent("Library/Keychains"), ssh = home.appendingPathComponent(".ssh")
+    for d in [kc, ssh, proj] { try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true) }
+    try Data("kc".utf8).write(to: kc.appendingPathComponent("login.keychain-db"))
+    try Data("key".utf8).write(to: ssh.appendingPathComponent("id"))
+    func run(_ profile: String) throws -> String {
+        let p = Process(), out = Pipe()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
+        p.arguments = ["-p", profile, "/bin/sh", "-c",
+                       #"cat "$1/login.keychain-db"; cat "$2/id"; echo w > "$1/new" && echo W; rm -f "$1/login.keychain-db" && echo R; true"#, "sh", kc.path, ssh.path]
+        p.standardOutput = out; p.standardError = FileHandle.nullDevice
+        try p.run(); p.waitUntilExit()
+        return String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    }
+    let base = try #require(Native.sandboxProfile(dir: proj.path, home: home.path, network: false, writable: [proj.path]))
+    #expect(Copilot.keychainRule(home: home.path).contains("(subpath \"\(kc.path)\")"))
+    #expect(try run(base + Copilot.keychainRule(home: home.path)) == "kc")  // ne .ssh, ne pisanje, ne brisanje
+    #expect(try run(base) == "")  // brez pravila Keychain skrit
+    #expect(FileManager.default.fileExists(atPath: kc.appendingPathComponent("login.keychain-db").path))
 }
 
 /// Lažen copilot (v peskovniku: zapisovati sme le v COPILOT_HOME zahteve): v odgovoru pove argumente, mapo, okolje in
@@ -84,8 +163,9 @@ private func fakeCopilot(_ dir: URL, _ extra: String = "") throws -> URL {
     \(extra)
     echo '{"type":"tool.execution_start","data":{"toolName":"view"}}'
     echo '{"type":"assistant.message","data":{"content":"first","toolRequests":[{}]}}'
-    printf '{"type":"assistant.message","data":{"content":"ARGS=%s;CWD=%s;HOME=%s;TOKEN=%s;STDIN=%s;TURN=%s;HOOKS=%s;LINK=%s;ALLOW=%s;"}}\\n' \\
-      "$(echo "$@" | tr ' ' '|')" "$(pwd)" "$COPILOT_HOME" "$COPILOT_GITHUB_TOKEN" "$stdin" "$((n + 1))" "$hooks" "$link" "${COPILOT_ALLOW_ALL:-}"
+    printf '{"type":"assistant.message","data":{"content":"ARGS=%s;CWD=%s;HOME=%s;TOKEN=%s;STDIN=%s;TURN=%s;HOOKS=%s;LINK=%s;ALLOW=%s;CONFIG=%s;"}}\\n' \\
+      "$(echo "$@" | tr ' ' '|')" "$(pwd)" "$COPILOT_HOME" "$COPILOT_GITHUB_TOKEN$GH_TOKEN$GITHUB_TOKEN" "$stdin" "$((n + 1))" "$hooks" "$link" "${COPILOT_ALLOW_ALL:-}" \\
+      "$(/usr/bin/base64 < "$COPILOT_HOME/config.json" | tr -d '\\n')"
     """.utf8).write(to: exe)
     chmod(exe.path, 0o755)
     return exe
@@ -105,7 +185,7 @@ private func field(_ text: String, _ name: String) -> String {
     c.copilot.enabled = true; c.copilot.executable = try fakeCopilot(bin).path; c.copilot.models = "gpt-5.2"
     c.claudeCLI.allowedRoots = proj.path
     c.scratchFolder = root.appendingPathComponent("scratch").path
-    let r = Router(config: c, token: "tok", secrets: FakeSecrets(values: [Copilot.tokenAccount: "github_pat_test"]))
+    let r = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]), copilotConfig: try copilotLogin(root))
     let models = await r.modelList()
     let ids = (models["data"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String }
     #expect(ids.contains("claude-copilot") && ids.contains("claude-copilot-gpt-5.2"))
@@ -124,11 +204,13 @@ private func field(_ text: String, _ name: String) -> String {
     #expect(!args.contains { forbidden.contains($0) } && rules(args).deny.contains("write") && rules(args).deny.contains("shell"))
     #expect(args[args.firstIndex(of: "--model")! + 1] == "gpt-5.2")
     #expect(field(w.text, "STDIN") == "1" && !args.contains { $0.contains("read a.txt") })  // navodilo na stdin, ne v argumentih
-    #expect(field(w.text, "CWD") == proj.path && field(w.text, "TOKEN") == "github_pat_test" && field(w.text, "ALLOW").isEmpty)
+    #expect(field(w.text, "CWD") == proj.path && field(w.text, "TOKEN").isEmpty && field(w.text, "ALLOW").isEmpty)  // #81: brez žetona
+    // #81: svež config.json le s kazalcem na prijavo (ne trustedFolders, installedPlugins)
+    #expect(Data(base64Encoded: field(w.text, "CONFIG")).map { String(decoding: $0, as: UTF8.self) } == copilotPointer)
     let home = field(w.text, "HOME")
     let req = (Sync.real(c.scratch("copilot/req")) ?? c.scratch("copilot/req")).path
     #expect(home.hasPrefix(req + "/") && !FileManager.default.fileExists(atPath: home))  // svež, v Scratch (R2), po zagonu izbrisan
-    // R7: priprava paketa enkrat brez peskovnika in brez žetona.
+    // R7: priprava paketa (v peskovniku, brez prijave).
     #expect(!FileManager.default.fileExists(atPath: bin.appendingPathComponent("version.log").path))  // #26: v peskovniku (zunaj ne piše)
     #expect(field(w.text, "TURN") == "1" && field(w.text, "HOOKS") == "no")
 
@@ -163,16 +245,14 @@ private func field(_ text: String, _ name: String) -> String {
     #expect(app.config.copilot.enabled && app.config.copilot.write && app.config.copilot.models == "gpt-5.2")
     #expect(await admin(app.router(), "PATCH", "/agents/copilot", body: #"{"models":["--yolo"]}"#).status == 400)
     #expect(await admin(app.router(), "PATCH", "/agents/copilot", body: #"{"allowAll":true}"#).status == 400)
-    // Žeton: le fine-grained PAT, le za pisanje (GET pove le hasToken).
-    #expect(await admin(app.router(), "PATCH", "/agents/copilot", body: #"{"token":"gho_classic"}"#).status == 400)
-    let set = await admin(app.router(), "PATCH", "/agents/copilot", body: #"{"token":"github_pat_secret1"}"#)
-    #expect(set.status == 200 && set.text.contains(#""hasToken":true"#) && app.keys[Copilot.tokenAccount] == "github_pat_secret1")
+    // #81 (D1): brez žetona; GET in status povesta, zakaj Copilot ni na voljo (FakeApp: prijave ni)
+    #expect(await admin(app.router(), "PATCH", "/agents/copilot", body: #"{"token":"github_pat_secret1"}"#).status == 400 && app.keys.isEmpty)
     let got = await admin(app.router(), "GET", "/agents/copilot")
-    #expect(got.text.contains(#""hasToken":true"#) && !got.text.contains("github_pat_secret1"))
-    #expect(await admin(app.router(), "PATCH", "/agents/copilot", body: #"{"token":""}"#).status == 200 && app.keys[Copilot.tokenAccount] == nil)
+    #expect(!got.text.contains("hasToken") && got.text.contains(#""loginProblem":"Copilot is not signed in"#) && got.text.contains("not available: Copilot is not signed in"))
+    #expect(await admin(app.router(), "GET", "/status").text.contains(#""copilot":"Copilot is not signed in"#))
 }
 
-/// Ukazi lupine (z dovoljenjem): pišejo v mapo seje in COPILOT_HOME zahteve, ne v domačo mapo. Brez namenskega žetona nič.
+/// Ukazi lupine (z dovoljenjem): pišejo v mapo seje in COPILOT_HOME zahteve, ne v domačo mapo. Brez prijave copilot login nič.
 @Test func copilotCommandsRunInTheSandbox() async throws {
     let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("copilot-sb-" + UUID().uuidString)
     let outside = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".minigw-copilot-test-" + UUID().uuidString)
@@ -198,16 +278,18 @@ private func field(_ text: String, _ name: String) -> String {
         await r.handle(q, writer: w)
         return w
     }
-    // H1: ukazi brez namenskega žetona: zavrnjeno (žeton GitHub CLI ima vse pravice uporabnika).
-    let refused = await ask(Router(config: c, token: "tok", secrets: FakeSecrets(values: [:])))
-    #expect(refused.status == 503 && refused.text.contains("Copilot Requests"))
-    let w = await ask(Router(config: c, token: "tok", secrets: FakeSecrets(values: [Copilot.tokenAccount: "github_pat_cmd"])))
-    #expect(w.status == 200 && w.text.contains("WROTE=011") && w.text.contains("TOKEN=github_pat_cmd"))  // mapa da; domača mapa, ~/Library/Caches ne
+    let login = try copilotLogin(root)
+    let w = await ask(Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]), copilotConfig: login))
+    #expect(w.status == 200 && w.text.contains("WROTE=011") && w.text.contains("TOKEN=\""), "\(w.text)")  // mapa da; domača mapa, ~/Library/Caches ne
     #expect(FileManager.default.fileExists(atPath: proj.appendingPathComponent("inside.txt").path) && !FileManager.default.fileExists(atPath: outside.path))
-    // R1: tudi brez ukazov le namenski žeton (nikoli GitHub CLI ali okolje).
+    // #81 (D1): brez uporabne prijave ni Copilota (ne z ukazi ne brez), z razlogom; nikoli žeton
     c.copilot.commands = false
-    let none = await ask(Router(config: c, token: "tok", secrets: FakeSecrets(values: [:])))
-    #expect(none.status == 503 && none.text.contains("minigw gw copilot token"))
+    let none = await ask(Router(config: c, token: "tok", secrets: FakeSecrets(values: ["copilot-token": "github_pat_old"]),
+                                copilotConfig: root.appendingPathComponent("none/config.json")))
+    #expect(none.status == 503 && none.text.contains("copilot login"))
+    try Data(#"{"loggedInUsers":[{"host":"github.com","login":"u"}],"authTokens":{"github.com:u":"gho_secret"}}"#.utf8).write(to: login)
+    let plain = await ask(Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]), copilotConfig: login))
+    #expect(plain.status == 503 && plain.text.contains("plain text") && !plain.text.contains("gho_secret"))
 }
 
 /// R9: mapa seje, ki vsebuje paket copilot (~/Library/Caches/copilot), je zavrnjena (pisanje bi ga spremenilo).
@@ -221,7 +303,7 @@ private func field(_ text: String, _ name: String) -> String {
     c.copilot.enabled = true; c.copilot.executable = try fakeCopilot(bin).path; c.copilot.write = true
     c.claudeCLI.allowedRoots = caches.path
     c.scratchFolder = root.appendingPathComponent("scratch").path
-    let r = Router(config: c, token: "tok", secrets: FakeSecrets(values: [Copilot.tokenAccount: "github_pat_test"]))
+    let r = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]), copilotConfig: try copilotLogin(root))
     var q = request("POST", "/v1/messages", headers: ["Authorization": "Bearer tok", "x-claude-mini-session": UUID().uuidString, "x-claude-mini-cwd": caches.path],
                     body: #"{"model":"claude-copilot","max_tokens":5,"tools":[{"name":"x","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":"go"}]}"#)
     q.peer = "127.0.0.1"

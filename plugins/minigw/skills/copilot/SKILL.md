@@ -24,9 +24,10 @@ PROMPT
 
 minigw refuses a prompt argument that starts with `/` or has `@` at the start of a word (`@file`, `(@x`, `"@x`): the nested claude would run a slash command or attach that file. Name files by their path without `@`, or paste their text. Text on stdin may contain `@` (minigw 0.5.21 and Claude Code 2.1.299 or newer): pipe a diff instead of pasting it.
 
-Copilot on the gateway needs its own GitHub token (`minigw gw copilot token` on the gateway), is read-only unless its
+Copilot on the gateway signs in only with the gateway user's own `copilot login` (run once on the gateway), is read-only unless its
 settings allow writing, and runs commands only with "Allow commands": if it says it cannot edit or run something, tell the user
-which switch in Mini Gateway → Settings → Copilot CLI it needs. If the gateway answers "Copilot is not supported on a Windows
+which switch in Mini Gateway → Settings → Copilot CLI it needs. If the gateway says Copilot is not signed in or has no
+keyring, tell the user that reason (it is fixed on the gateway, with `copilot login` as the gateway user). If the gateway answers "Copilot is not supported on a Windows
 gateway in this version", tell the user and offer another gateway (`--model claude-copilot@<profile>`) or another agent. If
 minigw prints that the folder "is not shared with the gateway", run `"${CLAUDE_PLUGIN_DATA}/bin/minigw" share add` and run
 the task again.

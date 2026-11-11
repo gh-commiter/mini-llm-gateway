@@ -539,18 +539,21 @@ gateway without the Windows sandbox, Grok runs only with **Allow commands withou
 needs that switch.
 `claude-copilot` uses Copilot's default model (`auto`); list other models by name in its settings.
 - It only reads the folder unless **Allow writing** is on.
-- Commands need **Allow commands** together with **Allow writing**, and a dedicated GitHub token: a fine-grained
-  personal access token with only the Copilot Requests permission (`minigw gw copilot token`). Commands can use that
-  token to make Copilot requests on your account. `gh` and `security` stay denied.
-- The Mac app needs that token for every request. `minigw serve` on Linux may also use the GitHub CLI's sign-in
-  (`gh auth login`).
+- It signs in only with your own `copilot login`: run it once on the gateway, as the user the gateway runs as. The
+  token stays in the system keyring (Keychain on the Mac, a Secret Service keyring such as GNOME Keyring or KWallet on
+  Linux) and only Copilot reads it; the gateway copies just the account pointer into Copilot's fresh home. There is
+  no token, `gh` or PAT sign-in. Without a usable login Copilot is off and the settings, `minigw gw status` and the
+  request say why. A headless Linux gateway (no Secret Service; `copilot login` then stores the token in plain text)
+  has no Copilot. Linux also needs `xdg-dbus-proxy`, so Copilot reaches only the keyring from its sandbox.
+- Commands need **Allow commands** together with **Allow writing** (Mac only: on Linux a command could read the
+  keyring). Commands can make Copilot requests with your sign-in. `gh` and `security` stay denied.
 - Within a conversation Copilot continues its own session (`--session-id`).
 
 **Logins (`minigw serve`).** Agents use your subscription logins, never API keys, and nothing is copied back from an
 agent run. Each agent has a **Login** row (settings page, also the Gateway tray's Settings window; `minigw gw
 settings`; `minigw gw <agent> login`) that shows only the state (set, not set, logged in) and a one-line hint, never
 the value: Claude CLI its `claude setup-token` token (`minigw gw claude token [remove]`, needed in the Windows
-sandbox), Codex its ChatGPT login (`codex login`), Grok its `grok login`, Copilot its token for commands. **Use an API
+sandbox), Codex its ChatGPT login (`codex login`), Grok its `grok login`, Copilot its `copilot login`. **Use an API
 key instead** (Claude CLI, Codex, Grok; `minigw gw claude|codex|grok apikey [remove]`) stores a key in the key store
 and passes it only then; it is billed through the provider's API, not your subscription. API keys in the gateway's own
 environment (`ANTHROPIC_*`, `OPENAI_API_KEY`, `CODEX_API_KEY`, `XAI_API_KEY`, `GROK_CODE_XAI_API_KEY`,
@@ -599,7 +602,7 @@ fixed NTFS drive. The same move works on Linux.
   Claude request is refused with "Claude CLI in the Windows sandbox needs a long-lived sign-in token: run claude
   setup-token, then minigw gw claude token". Each run starts with a fresh Claude config and home; only the
   conversation's transcript is kept between turns, so `--resume` works.
-- The sign-in the agent runs with (Claude's `claude setup-token` token, Copilot's token, or the API key you chose
+- The sign-in the agent runs with (Claude's `claude setup-token` token or the API key you chose
   with `minigw gw <agent> apikey`) is in the sandbox's environment, so the agent's own commands in the box can read it
   (and, with network, send it elsewhere). For untrusted repositories keep **Network for builds** off.
 - **Grok** has no long-lived token: its `~\.grok\auth.json` and `config.toml` are copied into its own home for the

@@ -25,8 +25,6 @@ minigw gw: show or change the Mini Gateway app on this Mac. Changes apply at onc
                                                         the highest work mode in which the agent may change the
                                                         client's folder (in a lower mode it only reads)
   minigw gw token [rotate]                              print the connect line; rotate makes a new token
-  minigw gw copilot token [remove]                      Copilot's token for commands (fine-grained, only Copilot
-                                                        Requests), read from stdin or asked for
   minigw gw autostart [on|off]                          Open at Login (Settings → General); no argument: show it
   minigw gw settings                                    the settings in this terminal (minigw-tui; also over SSH)
   minigw gw api GET|POST|PATCH|DELETE <path>            one admin API request (docs/admin-api.md): the JSON body
@@ -249,6 +247,7 @@ func routerCommand(_ argv: [String]) {
         say("devices: \(st["devices"] as? Int ?? 0) allowed, \(st["pending"] as? Int ?? 0) waiting (minigw gw devices)")
         let c = st["claude"] as? [String: Any] ?? [:]
         say(clean("claude: \(c["found"] as? Bool == true ? "found" : "not found"), tools \(c["tools"] as? String ?? "")"))
+        if let why = st["copilot"] as? String { say(clean("Copilot is off: " + why)) }  // #81
         for g in st["gateways"] as? [[String: Any]] ?? [] {
             let n = (g["models"] as? [String]).map { String($0.count) } ?? "all"
             let ready = g["enabled"] as? Bool == false ? ", off" : g["ready"] as? Bool == true ? ", ready" : ", models not loaded (see the gateway log)"
@@ -414,13 +413,9 @@ func routerCommand(_ argv: [String]) {
         need(1, 1)
         agentWork(a, pos[0], flags["work"])
 
-    case "copilot":
-        if pos.count == 1 { agentWork(a, "copilot", flags["work"]); return }
-        need(2, 3)
-        guard pos[1] == "token", pos.count == 2 || pos[2] == "remove" else { fail(routerHelp) }
-        let token = pos.count == 3 ? "" : readKey("Copilot token (github_pat_…, only the Copilot Requests permission)")
-        _ = a.call("PATCH", "/agents/copilot", ["token": token])
-        say(token.isEmpty ? "removed Copilot's token" : "Copilot's token stored in the Keychain")
+    case "copilot":  // #81: brez žetona (le copilot login)
+        need(1, 1)
+        agentWork(a, "copilot", flags["work"])
 
     case "api":  // minigw-tui: ena zahteva API; telo JSON s stdin (ključi nikoli v argv), odgovor JSON na stdout
         need(3, 3)

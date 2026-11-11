@@ -92,7 +92,7 @@ only on the gateway computer.
 | `minigw gw claude --allow-unsandboxed-bash=true\|false` | Commands without a sandbox (`minigw serve` only) |
 | `minigw gw claude\|codex\|grok\|copilot [--work=direct\|sync\|worktree]` | Show or set the agent's cap: the highest work mode in which it may change the client's folder (in a lower mode it only reads) |
 | `minigw gw claude\|codex\|grok\|copilot login` | The agent's login (set / not set / logged in), never the value |
-| `minigw gw claude\|copilot token [remove]` | Claude: the token from `claude setup-token` (needed in the Windows sandbox); Copilot: its GitHub token for commands (fine-grained, only Copilot Requests). Read from stdin or asked for |
+| `minigw gw claude token [remove]` | The token from `claude setup-token` (needed in the Windows sandbox). Read from stdin or asked for. Copilot has no token: it uses the gateway user's `copilot login` |
 | `minigw gw claude\|codex\|grok apikey [remove]` | Use an API key instead of the login (billed through the provider's API), read from stdin or asked for; `remove`: back to the login |
 | `minigw gw scratch [move [DIR]]` | Show the Scratch folder (mirrors, clones, deps, caches, agent state); `move`: all of it to DIR (no DIR: the proposed folder), only while no minigw session or agent runs (`minigw serve` only) |
 | `minigw gw autostart [on\|off]` | Mac: Open at Login. Windows: the tray at sign-in. No argument: show it |
@@ -144,7 +144,7 @@ itself when the request fits. Most skills take `--profile <p>` (or a model with 
 | `/minigw:connect [--name P] <gateway[:port]> <token>` | – | Connect this computer to a gateway; `--name` adds another one as a profile |
 | `/minigw:share [folder \| list \| remove [folder]]` | – | Share a folder that minigw does not share by itself |
 | `/minigw:gw install \| update \| uninstall \| status` | – | Install, update, remove or check the gateway on this computer |
-| `/minigw:gw devices \| provider \| claude \| copilot token \| autostart \| token \| settings` | – | Manage it, as `minigw gw` |
+| `/minigw:gw devices \| provider \| claude \| autostart \| token \| settings` | – | Manage it, as `minigw gw` |
 | `/minigw:gw modes` | – | Explain the work modes |
 
 Examples:

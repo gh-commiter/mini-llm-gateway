@@ -728,6 +728,10 @@ struct SettingsView: View {
                         .labelsHidden()
                 }
                 TextField("Models (comma-separated; empty = only the default, “auto”)", text: $draft.copilot.models)
+                // #81: le copilot login (žeton v Keychainu); razlog iz API ostane angleški
+                LabeledContent("Sign-in") {
+                    if let why = Copilot.login(Copilot.userConfig).problem { Text(verbatim: why) } else { Text("Signed in (copilot login)") }
+                }
             }
             Section {
                 Toggle("Allow writing in the session's folder", isOn: $draft.copilot.write)
@@ -736,15 +740,12 @@ struct SettingsView: View {
                                                 set: { on in if on { askCopilotCommands = true } else { draft.copilot.commands = false } }))
                     .disabled(!draft.copilot.write)
                 workPicker($draft.copilot.work)
-                SecureField(state.keychain.lookup(Copilot.tokenAccount).value?.isEmpty == false
-                            ? "GitHub token for Copilot (saved; enter to replace)"
-                            : "GitHub token for Copilot (fine-grained, only “Copilot Requests”)", text: keyBinding(Copilot.tokenAccount))
                 Toggle("May ask other models", isOn: $draft.copilot.askOthers)
                     .help(String(localized: "The agent may ask another model of this gateway (for example Codex) with minigw, in the same folder and with the same device's rights; one level deep, never its own kind. Codex needs “Allow network access for commands” for it."))
             } header: {
                 Text("Sandbox")
             } footer: {
-                Text("The claude-copilot models run Copilot CLI as an agent in the session's folder, also in folders shared from other Macs, always in a sandbox with a fresh Copilot home for each request. By default it may only read the session's folder; with writing on it may edit files there. It signs in only with the token below, a fine-grained token with only the “Copilot Requests” permission, never with the GitHub CLI's sign-in, which other agents could read.")
+                Text("The claude-copilot models run Copilot CLI as an agent in the session's folder, also in folders shared from other Macs, always in a sandbox with a fresh Copilot home for each request. By default it may only read the session's folder; with writing on it may edit files there. It signs in only with your own “copilot login” on this Mac; the token stays in your Keychain and only Copilot reads it.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -752,7 +753,7 @@ struct SettingsView: View {
             Button("Allow Commands", role: .destructive) { draft.copilot.commands = true }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Copilot then runs commands as you on this Mac, in a sandbox that writes only to the session's folder and a temporary folder, and hides your keys, sign-ins and app data; commands can still read your other files and use the network. Commands can use the Copilot token to make Copilot requests on your account. Allow only if you trust the devices that use Copilot.")
+            Text("Copilot then runs commands as you on this Mac, in a sandbox that writes only to the session's folder and a temporary folder, and hides your keys, sign-ins and app data; commands can still read your other files and use the network. Commands can make Copilot requests with your sign-in. Allow only if you trust the devices that use Copilot.")
         }
     }
 

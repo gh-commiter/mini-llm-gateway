@@ -4,7 +4,8 @@ package main
 // nastavitvami in okno pladnja, minigw-tui, skrbniški API, minigw gw <agent> token [remove]). Ključi so v shrambi
 // ključev (Credential Manager, keyring), nikoli v serve.json ali odgovoru API; prikazano je le stanje.
 // Privzeto prijave naročnine; ključ API le izrecno (obračun API). Claude: dolgoživ žeton »claude setup-token«
-// (CLAUDE_CODE_OAUTH_TOKEN; v škatli MXC obvezen, prijava iz ~\.claude se v škatlo ne kopira). Copilot: žeton za ukaze.
+// (CLAUDE_CODE_OAUTH_TOKEN; v škatli MXC obvezen, prijava iz ~\.claude se v škatlo ne kopira). Copilot (#81): le
+// stanje prijave copilot login (copilotLogin), brez žetona.
 // Codex: teče zunaj škatle s pravo ~/.codex (osveževanje dela samo): le stanje prijave ChatGPT. Grok nima dolgoživega
 // žetona (grok login, ni »setup-token«): v škatlo gre kopija ~\.grok\auth.json, nikoli nazaj; po osvežitvi je morda
 // potrebna nova prijava. Izbira uporabnika (#68): namesto prijave ključ API (Claude, Codex, Grok; shramba ključev, le
@@ -22,7 +23,7 @@ import (
 func agentLoginKey(kind string) string { return "agent:" + kind }
 
 // agentHasToken: vrsta ima shranjen žeton (ostali le stanje prijave CLI).
-func agentHasToken(kind string) bool { return kind == "claude" || kind == "copilot" }
+func agentHasToken(kind string) bool { return kind == "claude" }
 
 // agentAPIKeyEnv: spremenljivka ključa API, ki ga CLI bere (Copilot ga nima).
 var agentAPIKeyEnv = map[string]string{"claude": "ANTHROPIC_API_KEY", "codex": "CODEX_API_KEY", "grok": "XAI_API_KEY"}
@@ -76,17 +77,11 @@ var agentLoginHint = map[string]string{
 	"claude":  "Create it with `claude setup-token` (your Claude subscription, valid one year); needed in the Windows sandbox.",
 	"codex":   "Codex uses this user's ChatGPT sign-in (`codex login`); it refreshes itself.",
 	"grok":    "Grok uses a copy of this user's sign-in (`grok login`); after Grok refreshes it, log in again with `grok login`.",
-	"copilot": "A fine-grained GitHub token with only the Copilot Requests permission; needed for commands, and for every request when the GitHub CLI (gh auth login) is not signed in on the gateway.",
+	"copilot": "Copilot uses this user's own sign-in (`copilot login` on the gateway, as the gateway user); the token stays in the system keyring.",
 }
 
 // agentTokenProblem: "" = ključ je videti veljaven za to vrsto (le natisljivi ASCII brez presledkov, do 512 znakov).
 func agentTokenProblem(kind, t string) string {
-	if kind == "copilot" {
-		if !validCopilotToken(t) {
-			return "token: a fine-grained personal access token (github_pat_…) with only the Copilot Requests permission"
-		}
-		return ""
-	}
 	if !strings.HasPrefix(t, "sk-ant-") || len(t) < 20 || len(t) > 512 || strings.ContainsFunc(t, func(r rune) bool { return r < 0x21 || r > 0x7e }) {
 		return "token: the token from claude setup-token (sk-ant-…)"
 	}
@@ -125,6 +120,11 @@ func agentLogin(cfgDir, kind string) map[string]any {
 		o["state"] = codexLoginState()
 	case "grok":
 		o["state"] = grokLoginState()
+	case "copilot":
+		o["state"] = "signed in (copilot login)"
+		if _, why := copilotLogin(); why != "" {
+			o["state"] = "not available: " + why
+		}
 	default:
 		has := agentToken(cfgDir, kind) != ""
 		o["state"], o["hasToken"] = map[bool]string{true: "set", false: "not set"}[has], has

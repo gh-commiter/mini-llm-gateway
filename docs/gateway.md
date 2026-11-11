@@ -111,7 +111,7 @@ SSH and inside tmux. Keyboard first (←/→ or 1-7 page, 1-8 on the Mac, ↑/�
 name or a row works too. No colors, English only, at least 80 columns. It is the helper `minigw-tui` next to `minigw`
 (on the Mac in the app's `Contents/Helpers`; `minigw` checks its signature first). It reads and changes everything
 through `minigw gw api` of the same `minigw`, so the same rules apply: only on the gateway computer, as the user who
-runs the gateway. API keys and the Copilot token you type go to `minigw` on stdin and are never shown; the connect
+runs the gateway. API keys and the Claude token you type go to `minigw` on stdin and are never shown; the connect
 line with the token appears only after **Show the connect line**.
 
 | Page | Both gateways | Mac app only | `minigw serve` only |

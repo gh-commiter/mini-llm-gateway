@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -75,39 +76,148 @@ func TestCopilotArgs(t *testing.T) {
 		(agentCLI{}).canWrite(copilotKind) || !(agentCLI{}).canWrite(codexKind) {
 		t.Fatal("models/write defaults")
 	}
-	if !validCopilotToken("github_pat_11A_x") || validCopilotToken("gho_x") || validCopilotToken("github_pat_a b") {
-		t.Fatal("token validation")
+}
+
+// copilotTestHome (#81): začasni HOME s pravo obliko ~/.copilot/config.json (vrstice »//«, kazalec na prijavo in
+// ključi, ki se ne smejo kopirati); nikoli prava prijava uporabnika.
+func copilotTestHome(t *testing.T) string {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	os.MkdirAll(filepath.Join(home, ".copilot"), 0o700)
+	os.WriteFile(filepath.Join(home, ".copilot", "config.json"), []byte(`// This file is managed automatically.
+// User settings belong in settings.json.
+{
+  "loggedInUsers": [{"host": "https://github.com", "login": "octo-cat"}, {"host": "corp.ghe.com", "login": "octo_corp", "kind": "user"}],
+  "lastLoggedInUser": {"host": "https://github.com", "login": "octo-cat"},
+  "trustedFolders": ["/"], "installedPlugins": [{"name": "evil", "cachePath": "/tmp/evil"}], "storeTokenPlaintext": false
+}
+`), 0o600)
+	return home
+}
+
+// #81: le loggedInUsers in lastLoggedInUser, preverjena oblika; žeton v navadnem besedilu ali tuja oblika = razlog.
+func TestCopilotLoginPointer(t *testing.T) {
+	home := copilotTestHome(t)
+	real := filepath.Join(home, ".copilot")
+	conf, why := copilotLoginPointer(real)
+	if why != "" || string(conf) != `{"lastLoggedInUser":{"host":"https://github.com","login":"octo-cat"},`+
+		`"loggedInUsers":[{"host":"https://github.com","login":"octo-cat"},{"host":"corp.ghe.com","kind":"user","login":"octo_corp"}]}` {
+		t.Fatalf("pointer: %s / %s", conf, why)
+	}
+	write := func(body string) string {
+		os.WriteFile(filepath.Join(real, "config.json"), []byte(body), 0o600)
+		c, why := copilotLoginPointer(real)
+		if why != "" && c != nil {
+			t.Fatalf("both: %s", c)
+		}
+		return why
+	}
+	user := `{"host":"github.com","login":"u"}`
+	for body, want := range map[string]string{
+		`{"loggedInUsers":[` + user + `]}`:                                       "",
+		`{"loggedInUsers":[` + user + `],"authTokens":{"github.com:u":"gho_x"}}`: "plain text",
+		`{"loggedInUsers":[` + user + `],"copilotTokens":{"x":"y"}}`:             "plain text",
+		`{"loggedInUsers":[]}`:                                                   "not signed in",
+		`{"trustedFolders":["/"]}`:                                               "not signed in",
+		`not json`:                                                               "expected form",
+		`{"loggedInUsers":[{"host":"github.com","login":"u","token":"x"}]}`:      "expected form", // tuji ključ
+		`{"loggedInUsers":[{"host":"github.com/../x","login":"u"}]}`:             "expected form",
+		`{"loggedInUsers":[{"host":"file:///etc","login":"u"}]}`:                 "expected form",
+		`{"loggedInUsers":[{"host":"github.com","login":"-u"}]}`:                 "expected form",
+		`{"loggedInUsers":[{"host":"github.com","login":"u;rm"}]}`:               "expected form",
+		`{"loggedInUsers":[{"host":"github.com"}]}`:                              "expected form",
+		`{"loggedInUsers":[{"host":"github.com","login":"u","kind":7}]}`:         "expected form",
+		`{"loggedInUsers":[{"host":"github.com","login":"u","kind":"a
+b"}]}`: "expected form",
+		`{"loggedInUsers":[` + user + `],"lastLoggedInUser":{"host":"","login":"u"}}`: "expected form",
+		`{"loggedInUsers":"u"}`: "not signed in",
+	} {
+		if got := write(body); want == "" && got != "" || want != "" && !strings.Contains(got, want) {
+			t.Errorf("%s: %q, want %q", body, got, want)
+		}
+	}
+	os.Remove(filepath.Join(real, "config.json"))
+	if runtime.GOOS != "windows" {
+		os.WriteFile(filepath.Join(home, "elsewhere.json"), []byte(`{"loggedInUsers":[`+user+`]}`), 0o600)
+		os.Symlink(filepath.Join(home, "elsewhere.json"), filepath.Join(real, "config.json"))
+		if _, why := copilotLoginPointer(real); !strings.Contains(why, "not signed in") { // povezava: ne sledi
+			t.Fatalf("followed a link: %q", why)
+		}
+	}
+	if _, why := copilotLoginPointer(filepath.Join(home, "none")); !strings.Contains(why, "copilot login") {
+		t.Fatalf("no login: %q", why)
 	}
 }
 
-// Žeton GitHub CLI za copilot pod bwrap: lažni gh, nikoli pravi; žeton iz okolja ima prednost, neveljaven izhod ne velja.
-func TestCopilotToken(t *testing.T) {
+// #81 (Linux): Secret Service na seji D-Bus (lažna busctl in dbus-send) in xdg-dbus-proxy; brez njih razlog.
+func TestCopilotKeyringDetection(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("shell script")
+		t.Skip("shell scripts")
 	}
-	for _, v := range copilotTokenVars {
-		t.Setenv(v, "")
+	if !secretServiceListed(`as 3 ":1.0" "org.freedesktop.DBus" "org.freedesktop.secrets"`) ||
+		!secretServiceListed("method return\n   array [\n      string \"org.freedesktop.secrets\"\n   ]") ||
+		secretServiceListed(`as 2 "org.freedesktop.secrets.x" "org.freedesktop.DBus"`) {
+		t.Fatal("listing")
 	}
-	gh := filepath.Join(t.TempDir(), "gh")
-	out := "gho_Test123"
-	write := func() {
-		os.WriteFile(gh, []byte("#!/bin/sh\n[ \"$*\" = 'auth token --hostname github.com' ] && echo '"+out+"'\n"), 0o755)
+	if got := dbusEscape("/run/user/1 x/bus"); got != "/run/user/1%20x/bus" {
+		t.Fatalf("escape %q", got)
 	}
-	write()
-	old := copilotGH
-	copilotGH = func() string { return gh }
-	defer func() { copilotGH = old }()
-	if got := copilotToken(t.Context()); got != "gho_Test123" {
-		t.Fatalf("token %q", got)
+	bin := t.TempDir()
+	t.Setenv("PATH", bin)
+	t.Setenv("XDG_RUNTIME_DIR", "")
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1/bus")
+	script := func(name, body string) {
+		os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755)
 	}
-	out = "gho_x; rm -rf"
-	write()
-	if got := copilotToken(t.Context()); got != "" {
-		t.Fatalf("invalid output accepted: %q", got)
+	if why := copilotKeyring(); !strings.Contains(why, "xdg-dbus-proxy") {
+		t.Fatalf("no proxy: %q", why)
 	}
-	t.Setenv("GH_TOKEN", "envtok") // žeton iz okolja routerja ima prednost (agentEnv ga agentu sicer ne da)
-	if got := copilotToken(t.Context()); got != "envtok" {
-		t.Fatalf("env token: got %q", got)
+	script("xdg-dbus-proxy", "exit 0")
+	if why := copilotKeyring(); !strings.Contains(why, "Secret Service") { // ne busctl ne dbus-send
+		t.Fatalf("no bus tools: %q", why)
+	}
+	script("dbus-send", `[ "$DBUS_SESSION_BUS_ADDRESS" = unix:path=/run/user/1/bus ] || exit 1
+case "$*" in *ListActivatableNames*) echo '   string "org.freedesktop.secrets"';; *) echo '   string "org.freedesktop.DBus"';; esac`)
+	if why := copilotKeyring(); why != "" { // le za zagon ob klicu (gnome-keyring prek aktivacije)
+		t.Fatalf("activatable: %q", why)
+	}
+	script("busctl", `echo 'as 1 "org.freedesktop.DBus"'`) // busctl ima prednost: tu ni Secret Service
+	if why := copilotKeyring(); !strings.Contains(why, "headless") {
+		t.Fatalf("headless: %q", why)
+	}
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "") // brez seje D-Bus
+	os.Remove(filepath.Join(bin, "busctl"))
+	if why := copilotKeyring(); !strings.Contains(why, "Secret Service") {
+		t.Fatalf("no session: %q", why)
+	}
+	// posrednik: vtičnica dir/bus, le org.freedesktop.secrets
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/real/bus")
+	script("xdg-dbus-proxy", `echo "$@" > "`+bin+`/proxy.args"; exec sleep 30`)
+	t.Setenv("PATH", bin+":/usr/bin:/bin")
+	dir, err := os.MkdirTemp("/tmp", "cbp") // kratka pot: vtičnice unix do 104 znakov
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	go func() { // vtičnico posrednika naredi test (lažni posrednik le čaka)
+		for range 200 {
+			if _, err := os.Stat(filepath.Join(bin, "proxy.args")); err == nil {
+				if ln, err := net.Listen("unix", filepath.Join(dir, "bus")); err == nil {
+					t.Cleanup(func() { ln.Close() })
+				}
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+	addr, stop, err := copilotBusProxy(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stop()
+	args, _ := os.ReadFile(filepath.Join(bin, "proxy.args"))
+	if addr != "unix:path="+dir+"/bus" || strings.TrimSpace(string(args)) != "unix:path=/real/bus "+dir+"/bus --filter --talk=org.freedesktop.secrets" {
+		t.Fatalf("proxy: %q %q", addr, args)
 	}
 }
 
@@ -121,7 +231,7 @@ func TestCopilotThroughRouter(t *testing.T) {
 	os.WriteFile(copilot, []byte(`#!/bin/sh
 if [ "$1" = --version ]; then echo "token=${COPILOT_GITHUB_TOKEN:-none}" >> "`+argsFile+`.version"; exit 0; fi
 id=""; prev=""; for a in "$@"; do [ "$prev" = --session-id ] && id="$a"; prev="$a"; done
-printf '%s\n' "$@" "home=$COPILOT_HOME" "token=$COPILOT_GITHUB_TOKEN" > "`+argsFile+`"
+printf '%s\n' "$@" "dbus=$DBUS_SESSION_BUS_ADDRESS" "config=$(cat "$COPILOT_HOME/config.json")" "home=$COPILOT_HOME" "token=$COPILOT_GITHUB_TOKEN$GH_TOKEN$GITHUB_TOKEN" > "`+argsFile+`"
 cat > "`+argsFile+`.stdin"
 st="$COPILOT_HOME/session-state/$id"; mkdir -p "$st"
 n=$(cat "$st/events.jsonl" 2>/dev/null || echo 0); echo $((n + 1)) > "$st/events.jsonl"
@@ -132,14 +242,17 @@ echo '{"type":"session.start","data":{"sessionId":"x"}}'
 echo '{"type":"assistant.message","data":{"content":"first"}}'
 echo '{"type":"assistant.message","data":{"content":"copilot says hi turn='$((n + 1))' hooks='$hooks' link='$link'"}}'
 `), 0o755)
-	for _, v := range copilotTokenVars {
-		t.Setenv(v, "")
+	for _, v := range copilotTokenVars { // #81: žetoni iz okolja prehoda nikoli do copilota
+		t.Setenv(v, "leak")
 	}
-	gh := filepath.Join(bin, "gh") // Linux: žeton pošlje router (lažni gh)
-	os.WriteFile(gh, []byte("#!/bin/sh\necho gho_Test123\n"), 0o755)
-	old := copilotGH
-	copilotGH = func() string { return gh }
-	defer func() { copilotGH = old }()
+	home := copilotTestHome(t)
+	defer func(k func() string, p func(string) (string, func(), error)) { copilotKeyring, copilotBusProxy = k, p }(copilotKeyring, copilotBusProxy)
+	copilotKeyring = func() string { return "" } // Linux: Secret Service je (preverjanje v TestCopilotKeyringDetection)
+	proxied := ""
+	copilotBusProxy = func(dir string) (string, func(), error) {
+		proxied = dir
+		return "unix:path=" + dir + "/bus", func() {}, nil
+	}
 	s, _, base := liveServer(t, func(c *serveConfig) {
 		c.AllowUnsandboxedBash = true // Linux brez bwrap (Docker)
 		t.Setenv("COPILOT_HOME", t.TempDir())
@@ -176,14 +289,22 @@ echo '{"type":"assistant.message","data":{"content":"copilot says hi turn='$((n 
 		t.Fatalf("copilot: %d %s", st, b)
 	}
 	a := args()
-	home := strings.TrimPrefix(a[len(a)-2], "home=")
+	field := func(a []string, k string) string {
+		for _, x := range a {
+			if v, ok := strings.CutPrefix(x, k+"="); ok {
+				return v
+			}
+		}
+		return "?"
+	}
+	reqHome := field(a, "home")
 	allow, deny := copilotRules(a)
 	if !slices.Equal(allow, []string{"read"}) || !slices.Contains(deny, "write") || !slices.Contains(deny, "shell") ||
 		slices.ContainsFunc(a, func(x string) bool { return slices.Contains(copilotForbidden, x) }) ||
-		!strings.HasPrefix(home, s.conf().Scratch+"/tmp/req-") {
+		!strings.HasPrefix(reqHome, s.conf().Scratch+"/tmp/req-") {
 		t.Fatalf("copilot args: %q", a)
 	}
-	if _, err := os.Stat(home); err == nil {
+	if _, err := os.Stat(reqHome); err == nil {
 		t.Fatal("per-request COPILOT_HOME not removed")
 	}
 	// Navodilo na stdin, ne v argumentih (ps, /proc/<pid>/cmdline).
@@ -191,8 +312,14 @@ echo '{"type":"assistant.message","data":{"content":"copilot says hi turn='$((n 
 		slices.ContainsFunc(a, func(x string) bool { return strings.Contains(x, "PROMPT_MARKER") }) {
 		t.Fatalf("prompt not on stdin: %q / %q", in, a)
 	}
-	if a[len(a)-1] != "token=gho_Test123" { // žeton GitHub CLI (agentEnv sam ne da nobenega)
-		t.Fatalf("token handoff: %q", a[len(a)-1])
+	// #81: brez žetona; svež config.json le s kazalcem na prijavo (ne trustedFolders, installedPlugins)
+	if field(a, "token") != "" || field(a, "config") != `{"lastLoggedInUser":{"host":"https://github.com","login":"octo-cat"},`+
+		`"loggedInUsers":[{"host":"https://github.com","login":"octo-cat"},{"host":"corp.ghe.com","kind":"user","login":"octo_corp"}]}` {
+		t.Fatalf("login handoff: %q", a)
+	}
+	if want := map[bool]string{true: "unix:path=" + proxied + "/bus", false: ""}[runtime.GOOS == "linux"]; field(a, "dbus") != want ||
+		runtime.GOOS == "linux" && filepath.Dir(reqHome) != proxied { // Linux: le posrednik v mapi zahteve
+		t.Fatalf("dbus: %q (proxy %q)", field(a, "dbus"), proxied)
 	}
 	// R7: na Linuxu enkrat »--version« brez bwrap in brez žetona (razširitev paketa).
 	if v, _ := os.ReadFile(argsFile + ".version"); runtime.GOOS == "linux" && !strings.HasPrefix(string(v), "token=none") {
@@ -209,30 +336,51 @@ echo '{"type":"assistant.message","data":{"content":"copilot says hi turn='$((n 
 		!strings.Contains(b, `"commands":false`) || !strings.Contains(b, `"network":false`) {
 		t.Fatalf("copilot API defaults: %d %s", st, b)
 	}
-	if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/agents/copilot", `{"write":true,"commands":true}`); st != 200 ||
-		!strings.Contains(b, `"write":true`) || !strings.Contains(b, `"commands":true`) {
+	if runtime.GOOS == "linux" { // #81: ukazi bi prebrali shrambo ključev
+		if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/agents/copilot", `{"write":true,"commands":true}`); st != 400 ||
+			!strings.Contains(b, copilotLinuxCommands) {
+			t.Fatalf("linux commands: %d %s", st, b)
+		}
+		s.update(func(c *serveConfig) error { c.Copilot.Commands = true; return nil }) // starejša nastavitev: ukazov vseeno ni
+	}
+	if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/agents/copilot", `{"write":true}`); st != 200 || !strings.Contains(b, `"write":true`) {
 		t.Fatalf("copilot API: %d %s", st, b)
+	}
+	if runtime.GOOS != "linux" {
+		if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/agents/copilot", `{"commands":true}`); st != 200 || !strings.Contains(b, `"commands":true`) {
+			t.Fatalf("copilot commands: %d %s", st, b)
+		}
 	}
 	if st, _ := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/agents/codex", `{"commands":true}`); st != 400 {
 		t.Fatal("codex commands accepted")
 	}
-	// H1: ukazi brez namenskega žetona: zavrnjeno; z njim gre ta žeton (ne gh).
-	if st, b := ask("claude-copilot"); st != 503 || !strings.Contains(b, "Copilot Requests") {
-		t.Fatalf("commands without token: %d %s", st, b)
-	}
-	if st, _ := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/agents/copilot", `{"token":"gho_classic"}`); st != 400 {
-		t.Fatal("classic token accepted")
-	}
-	if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/agents/copilot", `{"token":"github_pat_cmd1"}`); st != 200 ||
-		!strings.Contains(b, `"hasToken":true`) || strings.Contains(b, "github_pat_cmd1") {
+	if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/agents/copilot", `{"token":"github_pat_cmd1"}`); st != 400 ||
+		strings.Contains(b, "github_pat_cmd1") { // D1: brez žetona
 		t.Fatalf("token: %d %s", st, b)
 	}
-	if st, b := ask("claude-copilot"); st != 200 || args()[len(args())-1] != "token=github_pat_cmd1" {
-		t.Fatalf("commands with token: %d %s %q", st, b, args())
+	if st, b := ask("claude-copilot"); st != 200 || field(args(), "token") != "" {
+		t.Fatalf("with writing: %d %s %q", st, b, args())
 	}
-	defer adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/agents/copilot", `{"token":""}`)
-	if allow, deny = copilotRules(args()); !slices.Contains(allow, "write") || !slices.Contains(allow, "shell") || !slices.Contains(deny, "shell(gh:*)") {
+	allow, deny = copilotRules(args())
+	if !slices.Contains(allow, "write") || runtime.GOOS == "linux" == slices.Contains(allow, "shell") ||
+		runtime.GOOS != "linux" && !slices.Contains(deny, "shell(gh:*)") {
 		t.Fatalf("after PATCH: allow %q deny %q", allow, deny)
+	}
+	// D1: brez uporabne prijave copilot login Copilot ni na voljo, z razlogom (zahteva, API, status)
+	os.WriteFile(filepath.Join(home, ".copilot", "config.json"), []byte(`{"loggedInUsers":[{"host":"github.com","login":"u"}],"authTokens":{"x":"y"}}`), 0o600)
+	if st, b := ask("claude-copilot"); st != 503 || !strings.Contains(b, "plain text") || strings.Contains(b, `"y"`) {
+		t.Fatalf("plaintext: %d %s", st, b)
+	}
+	os.Remove(filepath.Join(home, ".copilot", "config.json"))
+	if st, b := ask("claude-copilot"); st != 503 || !strings.Contains(b, "copilot login") {
+		t.Fatalf("no login: %d %s", st, b)
+	}
+	if st, b := adminNoise(t, s, base, s.admin, "GET", adminPrefix+"/agents/copilot", ""); st != 200 || !strings.Contains(b, `"loginProblem":"Copilot is not signed in`) ||
+		!strings.Contains(b, `not available: Copilot is not signed in`) {
+		t.Fatalf("GET reason: %d %s", st, b)
+	}
+	if st, b := adminNoise(t, s, base, s.admin, "GET", adminPrefix+"/status", ""); st != 200 || !strings.Contains(b, `"copilot":"Copilot is not signed in`) {
+		t.Fatalf("status reason: %d %s", st, b)
 	}
 }
 

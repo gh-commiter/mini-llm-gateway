@@ -193,7 +193,8 @@ extension Router {
             let list = await gateways(c)
             return (200, ["running": true, "version": hooks.version, "port": Int(c.port), "address": c.host, "installed": hooks.installed(),
                           "autostart": hooks.installed() ? "sign-in" : "", "agents": AgentCount.running.load(ordering: .relaxed),
-                          "devices": c.devices.count, "pending": Router.deviceLog.pending.count, "claude": await claudeInfo(c.claudeCLI), "gateways": list, "providers": list])
+                          "devices": c.devices.count, "pending": Router.deviceLog.pending.count, "claude": await claudeInfo(c.claudeCLI), "gateways": list, "providers": list]
+                          .merging(c.copilot.enabled ? Copilot.login(copilotConfig).problem.map { ["copilot": $0] } ?? [:] : [:]) { $1 })  // #81
 
         // Naprave kot v minigw serve: dovoljene (z zadnjim stikom), čakajoče na odobritev, allowAnyDevice.
         case "GET devices":
@@ -530,17 +531,14 @@ extension Router {
                 return (200, await claudeInfo(n.claudeCLI))
             case "copilot":
                 // Kot codex; models = seznam imen (Copilot nima seznama modelov), commands = ukazi lupine (privolitev).
-                // token: le za pisanje (kot ključi ponudnikov); "" ga izbriše.
-                let b = try AdminBody(body, ["enabled", "path", "write", "network", "commands", "models", "token", "askOthers", "work"])
+                // #81 (D1): brez žetona (le copilot login).
+                let b = try AdminBody(body, ["enabled", "path", "write", "network", "commands", "models", "askOthers", "work"])
                 let enabled = try b.bool("enabled"), path = try b.string("path"), write = try b.bool("write")
                 let network = try b.bool("network"), commands = try b.bool("commands"), models = try b.models("models")
-                let token = try b.string("token"), ask = try b.bool("askOthers"), work = try Self.work(b)
-                if let token, !token.isEmpty, !Copilot.validToken(token) {
-                    throw AdminError(400, "token: a fine-grained personal access token (github_pat_…) with only the Copilot Requests permission")
-                }
+                let ask = try b.bool("askOthers"), work = try Self.work(b)
                 if let path, !path.isEmpty, !FileManager.default.isExecutableFile(atPath: path) { throw AdminError(400, "not an executable: \(path)") }
                 if case let list?? = models, let bad = list.first(where: { !Self.validModel($0) }) { throw AdminError(400, "invalid model name: \(bad)") }
-                let n = try await hooks.update(keys: token.map { [Copilot.tokenAccount: $0.isEmpty ? nil : $0] } ?? [:]) { c in
+                let n = try await hooks.update { c in
                     if let enabled { c.copilot.enabled = enabled }
                     if let path { c.copilot.executable = path }
                     if let write { c.copilot.write = write }
@@ -550,9 +548,7 @@ extension Router {
                     if let work { c.copilot.work = work }
                     if let models { c.copilot.models = (models ?? []).joined(separator: ", ") }  // null = le privzeti model
                 }
-                var info = await copilotInfo(n.copilot)
-                if let token { info["hasToken"] = !token.isEmpty }  // ključ se shrani šele po odgovoru (ponovni zagon)
-                return (200, info)
+                return (200, await copilotInfo(n.copilot))
             case "codex", "grok":
                 let b = try AdminBody(body, arg == "codex" ? ["enabled", "path", "write", "network", "models", "askOthers", "work"] : ["enabled", "path", "write", "models", "askOthers", "work"])
                 let enabled = try b.bool("enabled"), path = try b.string("path"), write = try b.bool("write")
@@ -682,9 +678,16 @@ extension Router {
 
     func copilotInfo(_ c: CopilotConfig) async -> [String: Any] {
         ["enabled": c.enabled, "path": c.executable, "found": await Copilot.executable(c.executable) != nil, "write": c.write,
-         "network": c.network, "commands": c.commands, "models": c.modelList,
-         "hasToken": !(secrets.get(Copilot.tokenAccount) ?? "").isEmpty, "askOthers": c.askOthers,
-         "work": Self.apiWork(c.work)]
+         "network": c.network, "commands": c.commands, "models": c.modelList, "askOthers": c.askOthers,
+         "work": Self.apiWork(c.work)].merging(Self.copilotLogin(Copilot.login(copilotConfig).problem)) { $1 }
+    }
+
+    /// #81: vrstica Login (kot minigw serve: stanje in namig, nikoli vrednost) in loginProblem, ko Copilot ni na voljo.
+    static func copilotLogin(_ problem: String?) -> [String: Any] {
+        var o: [String: Any] = ["login": ["state": problem.map { "not available: " + $0 } ?? "signed in (copilot login)",
+                                          "hint": "Copilot uses this user's own sign-in (`copilot login` on the gateway, as the gateway user); the token stays in the system keyring."]]
+        if let problem { o["loginProblem"] = problem }
+        return o
     }
 
     func foundryInfo(_ c: FoundryConfig) async -> [String: Any] {
