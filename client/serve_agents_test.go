@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http/httptest"
@@ -131,30 +132,37 @@ func TestCodexAndGrokArgs(t *testing.T) {
 }
 
 // Prek routerja z lažnima CLI: seznam modelov, pogovor in agent le v sinhronizirani mapi (M1), privzeto brez omrežja.
-func TestCodexAndGrokThroughRouter(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fake CLIs are shell scripts")
+// Lažna codex in grok (TestCodexAndGrokThroughRouter): seznam modelov, argumenti v p["args"], odgovor.
+var fakeCodexHi = fake("codex-hi", func(p fakeParams, args []string) {
+	if len(args) > 1 && args[0] == "-c" && strings.HasPrefix(args[1], "projects=") { // #59: -c projects=… pred »debug models«
+		if len(args) > 3 && args[2] == "debug" && args[3] == "models" {
+			fmt.Println(`{"models":[{"slug":"gpt-x","display_name":"GPT X","context_window":128000}]}`)
+		}
+		return
 	}
+	fakeArgs(p["args"], args, "home="+os.Getenv("CODEX_HOME"))
+	out := fakeFlag(args, "-o")
+	fakeStdin()
+	fmt.Println(`{"type":"thread.started","thread_id":"t9"}`)
+	fakeWrite(out, "codex says hi\n")
+})
+
+var fakeGrokHi = fake("grok-hi", func(p fakeParams, args []string) {
+	if len(args) > 0 && args[0] == "models" {
+		fmt.Print("Available models:\n  * grok-4.7 (default)\n")
+		return
+	}
+	fakeArgs(p["args"], args)
+	fmt.Println(`{"type":"text","data":"grok "}`)
+	fmt.Println(`{"type":"text","data":"says hi"}`)
+	fmt.Println(`{"type":"end","sessionId":"s9"}`)
+})
+
+func TestCodexAndGrokThroughRouter(t *testing.T) {
 	bin := t.TempDir()
 	argsFile := filepath.Join(bin, "args")
-	codex := filepath.Join(bin, "codex")
-	os.WriteFile(codex, []byte(`#!/bin/sh
-case "$1 $2" in "-c projects="*) [ "$3 $4" = "debug models" ] && echo '{"models":[{"slug":"gpt-x","display_name":"GPT X","context_window":128000}]}'; exit 0;; esac # #59: -c projects=… pred »debug models«
-printf '%s\n' "$@" "home=$CODEX_HOME" > "`+argsFile+`"
-out=""; prev=""
-for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done
-cat > /dev/null
-echo '{"type":"thread.started","thread_id":"t9"}'
-echo "codex says hi" > "$out"
-`), 0o755)
-	grok := filepath.Join(bin, "grok")
-	os.WriteFile(grok, []byte(`#!/bin/sh
-if [ "$1" = models ]; then printf 'Available models:\n  * grok-4.7 (default)\n'; exit 0; fi
-printf '%s\n' "$@" > "`+argsFile+`"
-echo '{"type":"text","data":"grok "}'
-echo '{"type":"text","data":"says hi"}'
-echo '{"type":"end","sessionId":"s9"}'
-`), 0o755)
+	codex := fakeCLI(t, bin, "codex", fakeCodexHi, fakeParams{"args": argsFile})
+	grok := fakeCLI(t, bin, "grok", fakeGrokHi, fakeParams{"args": argsFile})
 	s, _, base := liveServer(t, func(c *serveConfig) {
 		c.AllowUnsandboxedBash = true // Linux brez bwrap (Docker): sicer Codex in Grok ne tečeta
 		t.Setenv("CODEX_HOME", t.TempDir())
@@ -191,7 +199,7 @@ echo '{"type":"end","sessionId":"s9"}'
 	}
 	args := func() string { b, _ := os.ReadFile(argsFile); return string(b) }
 	if st, b := chat("claude-codex-gpt-x", false, false); st != 200 || !strings.Contains(b, "codex says hi") || !strings.Contains(args(), "read-only") ||
-		!strings.Contains(args(), "home="+s.conf().Scratch+"/state/") {
+		!strings.Contains(args(), "home="+filepath.Join(s.conf().Scratch, "state")+string(filepath.Separator)) {
 		t.Fatalf("codex chat: %d %s %q", st, b, args())
 	}
 	if st, b := chat("claude-codex", false, true); st != 200 || !strings.Contains(args(), "workspace-write") || !strings.Contains(args(), "network_access=false") {
@@ -435,10 +443,29 @@ func TestReplyWhenDoneRetryHeaders(t *testing.T) {
 }
 
 // F2: Codex brez pisanja v načinu worktree ni zavrnjen (ni 400): v klonu le bere, navodilo pravi samo za branje, veje ni.
-func TestServeWorktreeReadOnlyAgent(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fake codex is a shell script")
+// Lažni codex: odgovor pove, ali je navodilo (stdin) vsebovalo p["note"].
+var fakeCodexNote = fake("codex-note", func(p fakeParams, args []string) {
+	if len(args) > 2 && args[2] == "debug" {
+		fmt.Println(`{"models":[]}`)
+		return
 	}
+	if p["args"] != "" {
+		fakeArgs(p["args"], args)
+	}
+	out := fakeFlag(args, "-o")
+	if p["write"] != "" {
+		fakeWrite(filepath.Join(fakeFlag(args, "-C"), "agent.txt"), "agent\n") // sandbox brez učinka: L1 preveri, da se ne vrne odjemalcu
+	}
+	in := fakeStdin()
+	fmt.Println(`{"type":"thread.started","thread_id":"t1"}`)
+	if strings.Contains(in, p["note"]) {
+		fakeWrite(out, "ro-note\n")
+	} else {
+		fakeWrite(out, "no-note\n")
+	}
+})
+
+func TestServeWorktreeReadOnlyAgent(t *testing.T) {
 	root := t.TempDir()
 	client := filepath.Join(root, "client")
 	os.MkdirAll(client, 0o755)
@@ -446,16 +473,7 @@ func TestServeWorktreeReadOnlyAgent(t *testing.T) {
 	writeT(t, filepath.Join(client, "a.txt"), "a\n")
 	gitT(t, client, "add", "-A")
 	gitT(t, client, "commit", "-qm", "first")
-	codex := filepath.Join(root, "codex")
-	writeT(t, codex, `#!/bin/sh
-if [ "$3" = debug ]; then echo '{"models":[]}'; exit 0; fi
-out=""; prev=""
-for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done
-p=$(cat)
-echo '{"type":"thread.started","thread_id":"t1"}'
-case "$p" in *"read-only for you"*) echo ro-note > "$out";; *) echo no-note > "$out";; esac
-`)
-	os.Chmod(codex, 0o755)
+	codex := fakeCLI(t, root, "codex", fakeCodexNote, fakeParams{"note": "read-only for you"})
 	s, _ := testServer(t, func(c *serveConfig) {
 		c.AllowUnsandboxedBash = runtime.GOOS != "linux" || bwrapReady(t.TempDir()) == ""
 		t.Setenv("CODEX_HOME", t.TempDir())
@@ -552,23 +570,9 @@ func TestWorkCap(t *testing.T) {
 
 // #45, #46a: Codex z work=worktree v seji sync le bere (sandbox read-only, navodilo), zgodovina zapiše omejitev.
 func TestWorkCapRun(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fake codex is a shell script")
-	}
 	bin := t.TempDir()
 	argsFile := filepath.Join(bin, "args")
-	codex := filepath.Join(bin, "codex")
-	os.WriteFile(codex, []byte(`#!/bin/sh
-if [ "$3" = debug ]; then echo '{"models":[]}'; exit 0; fi
-printf '%s\n' "$@" > "`+argsFile+`"
-out=""; prev=""
-cwd=""
-for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; [ "$prev" = "-C" ] && cwd="$a"; prev="$a"; done
-echo agent > "$cwd/agent.txt" # sandbox brez učinka: L1 preveri, da se ne vrne odjemalcu
-p=$(cat)
-echo '{"type":"thread.started","thread_id":"t1"}'
-case "$p" in *"shared read-only"*) echo ro-note > "$out";; *) echo no-note > "$out";; esac
-`), 0o755)
+	codex := fakeCLI(t, bin, "codex", fakeCodexNote, fakeParams{"args": argsFile, "write": "1", "note": "shared read-only"})
 	s, _ := testServer(t, func(c *serveConfig) {
 		c.AllowUnsandboxedBash = true
 		t.Setenv("CODEX_HOME", t.TempDir())
@@ -719,16 +723,14 @@ func TestCappedMode(t *testing.T) {
 
 // N1: prekinitev konča branje izhoda, tudi ko vnuk še drži stdout (prej je zanka čakala na EOF in mesto teka ostalo zasedeno).
 func TestRunAgentProcessCancelGrandchild(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("sh")
-	}
+	agent := fakeCLI(t, t.TempDir(), "agent", fakePrint, fakeParams{"orphan": "20s", "stdout": "up\n", "sleep": "20s"}) // sleep 20 & echo up; exec sleep 20
 	s := &server{log: log.New(io.Discard, "", 0)}
 	ctx, cancel := context.WithCancel(context.Background())
 	lines := make(chan string, 1)
 	done := make(chan error, 1)
 	start := time.Now()
 	go func() {
-		done <- s.runAgentProcess(ctx, &req{rid: "req_1"}, "sh", []string{"-c", "sleep 20 2>/dev/null & echo up; exec sleep 20"}, agentMounts{cfgDir: t.TempDir()}, t.TempDir(), "",
+		done <- s.runAgentProcess(ctx, &req{rid: "req_1"}, agent, nil, agentMounts{cfgDir: t.TempDir()}, t.TempDir(), "",
 			func(b []byte) { lines <- string(b) })
 	}()
 	// cfgDir: brez njega bwrap (CI) dobi »--tmpfs ""«, agent ne izpiše nič in test je prej visel na <-lines do 10 min.

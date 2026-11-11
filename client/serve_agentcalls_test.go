@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -141,38 +144,59 @@ func TestForgedChainHeader(t *testing.T) {
 	}
 }
 
+// fakeAsk: POST na vrata izvajanja (MINIGW_AGENT_URL, žeton iz MINIGW_AGENT_AUTH_FILE); vrne status kot curl -w '%{http_code}'.
+func fakeAsk(model string) string {
+	tok, _ := os.ReadFile(os.Getenv("MINIGW_AGENT_AUTH_FILE"))
+	body := `{"model":"` + model + `","max_tokens":10,"tools":[{"name":"x"}],"messages":[{"role":"user","content":"hi"}]}`
+	req, err := http.NewRequest("POST", os.Getenv("MINIGW_AGENT_URL")+"/v1/messages", strings.NewReader(body))
+	if err != nil {
+		return "000"
+	}
+	req.Header.Set("Authorization", "Bearer "+strings.TrimRight(string(tok), "\n"))
+	req.Header.Set("content-type", "application/json")
+	resp, err := (&http.Client{Transport: &http.Transport{Proxy: agentProxy}}).Do(req)
+	if err != nil {
+		return "000"
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	return strconv.Itoa(resp.StatusCode)
+}
+
+var fakeClaudeAsks = fake("claude-asks", func(_ fakeParams, args []string) {
+	fakeGuard(args)
+	fakeStdin()
+	for i := 1; i < len(args); i++ {
+		switch args[i-1] {
+		case "--append-system-prompt-file":
+			b, _ := os.ReadFile(args[i])
+			fakeWrite("note.txt", string(b))
+		case "--settings":
+			fakeWrite("settings.txt", args[i])
+		}
+	}
+	fakeWrite("asked.txt", fakeAsk("claude-codex")+"\n")
+	fakeClaudeDone(3)
+})
+
+var fakeCodexAsks = fake("codex-asks", func(_ fakeParams, args []string) {
+	if len(args) > 2 && args[2] == "debug" {
+		fmt.Println(`{"models":[]}`)
+		return
+	}
+	out := fakeFlag(args, "-o")
+	fakeWrite("prompt.txt", fakeStdin())
+	fakeWrite("codex.txt", "codex\n")
+	fakeWrite("loop.txt", fakeAsk("claude-cli-haiku")+"\n")
+	fmt.Println(`{"type":"thread.started","thread_id":"t1"}`)
+	fakeWrite(out, "codex answer\n")
+})
+
 // Lažni claude vpraša lažni codex prek MINIGW_AGENT_URL; codex piše v isto kopijo; codex, ki vpraša claude, je zavrnjen.
 func TestAgentAsksAgentInSameFolder(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fake agents are shell scripts")
-	}
 	tmp := t.TempDir()
-	ask := func(model string) string { // POST na vrata izvajanja, status v datoteko
-		return `curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $(cat "$MINIGW_AGENT_AUTH_FILE")" -H 'content-type: application/json' ` +
-			`-d '{"model":"` + model + `","max_tokens":10,"tools":[{"name":"x"}],"messages":[{"role":"user","content":"hi"}]}' "$MINIGW_AGENT_URL/v1/messages"`
-	}
-	claude := filepath.Join(tmp, "claude")
-	writeT(t, claude, `#!/bin/sh
-`+cliGuard+`
-cat > /dev/null
-prev=""; for a in "$@"; do [ "$prev" = --append-system-prompt-file ] && cp "$a" note.txt; [ "$prev" = --settings ] && printf '%s' "$a" > settings.txt; prev="$a"; done
-echo "$(`+ask("claude-codex")+`)" > asked.txt
-echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"done"}}}'
-echo '{"type":"result","subtype":"success","usage":{"output_tokens":3}}'
-`)
-	codex := filepath.Join(tmp, "codex")
-	writeT(t, codex, `#!/bin/sh
-if [ "$3" = debug ]; then echo '{"models":[]}'; exit 0; fi
-out=""; prev=""
-for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done
-cat > prompt.txt
-echo codex > codex.txt
-echo "$(`+ask("claude-cli-haiku")+`)" > loop.txt
-echo '{"type":"thread.started","thread_id":"t1"}'
-echo "codex answer" > "$out"
-`)
-	os.Chmod(claude, 0o755)
-	os.Chmod(codex, 0o755)
+	claude := fakeCLI(t, tmp, "claude", fakeClaudeAsks, nil)
+	codex := fakeCLI(t, tmp, "codex", fakeCodexAsks, nil)
 	s, _ := testServer(t, func(c *serveConfig) {
 		c.Claude, c.ClaudeAskOthers, c.AllowLocalTools = claude, true, true
 		c.AllowUnsandboxedBash = runtime.GOOS != "linux" || bwrapReady(t.TempDir()) == ""

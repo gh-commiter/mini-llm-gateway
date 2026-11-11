@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -201,10 +202,22 @@ func TestFolderLockRefusesSharedLockDir(t *testing.T) {
 // #82 cilj 1: prevzem, ki ga minigw zavrne s 503 (mapo drži druga seja), konča zahtevo z napako »busy«; spremembe
 // ostanejo na prehodu in pridejo z naslednjo zahtevo (sync), veja ostane na prehodu in jo dostavi naslednja zahteva
 // (worktree). Prej je bil odgovor 200, delo agenta pa ni prišlo k odjemalcu.
-func TestPullRefusedBusyFailsRequest(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fake claude is a shell script")
+var fakeBusyAgent = fake("busy-agent", func(p fakeParams, args []string) {
+	fakeGuard(args)
+	fakeStdin()
+	n := fakeCount("agent*.txt")
+	fakeWrite(fmt.Sprintf("agent%d.txt", n), fmt.Sprintf("agent %d\n", n))
+	if p["commit"] != "" {
+		_ = fakeGit("", "add", "-A") && fakeGit("", "-c", "user.name=a", "-c", "user.email=a@x", "commit", "-qm", fmt.Sprintf("agent %d", n))
 	}
+	fakeTouch(filepath.Join(p["marks"], fmt.Sprintf("started%d", n)))
+	for !fakeExists(filepath.Join(p["marks"], fmt.Sprintf("go%d", n))) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	fakeClaudeDone(1)
+})
+
+func TestPullRefusedBusyFailsRequest(t *testing.T) {
 	defer func(a, b time.Duration) { folderSyncWait, folderWorktreePullWait = a, b }(folderSyncWait, folderWorktreePullWait)
 	folderSyncWait, folderWorktreePullWait = 300*time.Millisecond, 300*time.Millisecond
 	for _, mode := range []string{"sync", "worktree"} {
@@ -219,22 +232,13 @@ func TestPullRefusedBusyFailsRequest(t *testing.T) {
 				gitT(t, client, "init", "-q", "-b", "main")
 				gitT(t, client, "add", "-A")
 				gitT(t, client, "commit", "-qm", "first")
-				commit = `git add -A && git -c user.name=a -c user.email=a@x commit -qm "agent $n"`
+				commit = "1"
 			}
-			fake := filepath.Join(root, "claude")
-			writeT(t, fake, `#!/bin/sh
-`+cliGuard+`
-cat > /dev/null
-n=$(ls agent*.txt 2>/dev/null | wc -l | tr -d ' ')
-echo "agent $n" > agent$n.txt
-`+commit+`
-touch `+marks+`/started$n
-while [ ! -e `+marks+`/go$n ]; do sleep 0.05; done
-echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"done"}}}'
-echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
-`)
-			os.Chmod(fake, 0o755)
-			s, _ := testServer(t, func(c *serveConfig) { c.Claude = fake })
+			fake := fakeCLI(t, root, "claude", fakeBusyAgent, fakeParams{"commit": commit, "marks": marks})
+			s, _ := testServer(t, func(c *serveConfig) {
+				c.Claude = fake
+				c.AllowUnsandboxedBash = mode == "worktree" && runtime.GOOS == "windows"
+			}) // L3
 			c := startLoopback(t, s)
 			sid := "sidbusy-" + mode
 			sc := &shareClient{c: c, session: sid, root: client, sync: mode == "sync", worktree: mode == "worktree", top: client,

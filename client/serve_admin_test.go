@@ -498,29 +498,26 @@ func TestAdminProofIsBoundToTheConnection(t *testing.T) {
 
 // Razširitve za stran z nastavitvami: os, pladenj in namestitev v status; najdena pot in različica claude.
 func TestAdminSettingsFields(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fake claude is a shell script")
-	}
-	fake := filepath.Join(t.TempDir(), "claude")
-	os.WriteFile(fake, []byte("#!/bin/sh\necho '9.8.7 (Claude Code)'\n"), 0o755)
+	fake := fakeCLI(t, t.TempDir(), "claude", fakePrint, fakeParams{"stdout": "9.8.7 (Claude Code)\n"})
+	exe, _ := json.Marshal(fake) // Windows: »\« v JSON
 	s, _, base := liveServer(t, func(c *serveConfig) { c.Claude = fake })
 	st, b := adminNoise(t, s, base, s.admin, "GET", adminPrefix+"/status", "")
 	if st != 200 || !strings.Contains(b, `"os":"`+runtime.GOOS+`"`) || !strings.Contains(b, `"tray":false`) {
 		t.Fatalf("status: %d %s", st, b)
 	}
 	st, b = adminNoise(t, s, base, s.admin, "GET", adminPrefix+"/agents/claude", "")
-	if st != 200 || !strings.Contains(b, `"exe":"`+fake+`"`) || !strings.Contains(b, `"version":"9.8.7 (Claude Code)"`) {
+	if st != 200 || !strings.Contains(b, `"exe":`+string(exe)) || !strings.Contains(b, `"version":"9.8.7 (Claude Code)"`) {
 		t.Fatalf("claude: %d %s", st, b)
 	}
-	if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/general", `{"startAtSignIn":true}`); st != 400 || !strings.Contains(b, "minigw serve install") {
+	if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/general", `{"startAtSignIn":true}`); runtime.GOOS != "windows" && (st != 400 || !strings.Contains(b, "minigw serve install")) {
 		t.Fatalf("startAtSignIn off Windows: %d %s", st, b)
 	}
 }
 
 // Parnost z Macom: dovoljeni odjemalci, navaden HTTP od drugod, izklop Claude CLI, dovoljene mape, lokalna orodja.
 func TestParityGeneralAndClaude(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fake claude is a shell script")
+	if runtime.GOOS == "windows" { // ne lažni CLI: poti v telesu JSON brez ubežnih znakov, pričakovani argumenti s potmi POSIX
+		t.Skip("POSIX paths in the request JSON and in the expected Claude arguments")
 	}
 	work := t.TempDir()
 	s, _, base := liveServer(t, nil)
