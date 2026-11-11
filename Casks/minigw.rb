@@ -22,24 +22,41 @@ cask "minigw" do
   # Vtičnik za Claude Code: minigw plugin install (client/plugin.go, Sources/MiniGW/PluginCommand.swift) doda
   # marketplace (veja release, autoUpdate, #63) in enabledPlugins v ~/.claude/settings.json (uporabnikov »false«
   # ostane, neveljaven JSON ostane) in poveže bin/minigw vtičnika na ta minigw takoj, ne šele ob naslednji seji.
-  # Izpiše, kar je res naredil (added / already in). #64: postflight_steps (nadomestek) v peskovniku Homebrew ne doseže
-  # ~/.claude: HOME je začasna mapa (sandbox.rb, run: "HOME" => tmpdir), ~/.claude in ~/.claude.json pa sta na seznamu
-  # zaprtih poti (deny_read_home); omrežje bi lahko zahtevali (network_access). Zato ostane postflight.
-  postflight do
-    system_command "#{HOMEBREW_PREFIX}/bin/minigw", args: ["plugin", "install"], must_succeed: false, print_stdout: true
+  # Izpiše, kar je res naredil (added / already in). Homebrew 7: postflight/uninstall_preflight (Ruby) sta opuščena
+  # in opozarjata ob vsakem ukazu brew, *_steps pa tečejo v peskovniku (sandbox.rb add_install_hook_rules:
+  # deny_read_home zapre ~/.claude in ~/.claude.json, HOME je začasna mapa). writable_paths (writable_base: :home)
+  # ju odpre za ta korak (install_steps.rb sandbox_write_paths → allow_write_path + allow_read), HOME "" pa da minigw
+  # pravo domačo mapo (prazen HOME: NSHomeDirectory(), ki na macOS bere uporabnikov zapis, ne HOME). Omrežja ni.
+  postflight_steps do
+    run "{{HOMEBREW_PREFIX}}/bin/minigw",
+        args:           ["plugin", "install"],
+        env:            { "HOME" => "" },
+        writable_paths: [".claude"],
+        writable_base:  :home,
+        print_stdout:   true,
+        must_succeed:   false
   end
 
-  # Pred odstranitvijo (minigw je še tu): minigw plugin uninstall odstrani le, kar je dodal plugin install. Ob brew
-  # upgrade/reinstall (nato postflight) nič: vnosi, marketplace in povezava ostanejo (vtičnik ne izgine med tekočo
-  # sejo), postflight pa pravilno izpiše »already in« (#64; prej je --upgrading vnose odstranil in postflight je
-  # izpisal »added«). uninstall_preflight_steps ne gre: sprejme le dobesedne argumente, nadgradnjo pa loči le
-  # Homebrew.running_command.
-  uninstall_preflight do
-    upgrading = defined?(Homebrew.running_command) && %w[install upgrade reinstall].include?(Homebrew.running_command)
-    minigw = "#{HOMEBREW_PREFIX}/bin/minigw"
-    if !upgrading && File.executable?(minigw)
-      system_command minigw, args: ["plugin", "uninstall"], must_succeed: false, print_stdout: true
-    end
+  # Pred odstranitvijo (minigw je še tu): minigw plugin uninstall odstrani le, kar je dodal plugin install, in
+  # marketplace (claude plugin marketplace remove piše tudi ~/.claude.json). Ob brew upgrade/reinstall/install nič:
+  # vnosi, marketplace in povezava ostanejo (vtičnik ne izgine med tekočo sejo, postflight izpiše »already in«, #64).
+  # Koraki dobijo le dobesedne argumente in ne vedo, kateri ukaz teče (UninstallPreflightSteps ne preda upgrade:,
+  # Homebrew.running_command v peskovniku ni), zato ukaz brew prebere iz prednika brew.rb (ps; brew rm/remove →
+  # uninstall). Ne najde ga: nič ne odstrani (kot ob nadgradnji); minigw plugin uninstall to naredi ročno.
+  uninstall_preflight_steps do
+    run "/bin/sh",
+        args:           ["-c",
+                         '[ -x "$0" ] || exit 0; p=$PPID c=; while [ -z "$c" ] && [ "${p:-1}" -gt 1 ]; do ' \
+                         'c=$(/bin/ps -o args= -p "$p" | ' \
+                         '/usr/bin/sed -n "s|.*/Library/Homebrew/brew\.rb \(-[^ ]* \)*\([a-z]*\).*|\2|p"); ' \
+                         'p=$(/bin/ps -o ppid= -p "$p" | /usr/bin/tr -d " "); done; ' \
+                         'case $c in uninstall) exec "$0" plugin uninstall ;; esac',
+                         "{{HOMEBREW_PREFIX}}/bin/minigw"],
+        env:            { "HOME" => "" },
+        writable_paths: [".claude", ".claude.json"],
+        writable_base:  :home,
+        print_stdout:   true,
+        must_succeed:   false
   end
 
   # brew uninstall --zap: minigw uninstall --purge --yes (minigw je še tu) odstrani še nastavitve, profile (Keychain,
