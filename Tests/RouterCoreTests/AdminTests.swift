@@ -496,7 +496,7 @@ private func acceptPeerPort(_ fd: Int32) -> (Int32, UInt16) {
     let scratch = URL(fileURLWithPath: "/Volumes/SSD/Mini Gateway Scratch")
     let args = cfg.agentArgs(cwd: URL(fileURLWithPath: "/Volumes/SSD/Mini Gateway Scratch/sync/d/x"), allTools: [], scratch: scratch)
     let s = args[args.firstIndex(of: "--settings")! + 1]
-    #expect(s.contains(#""denyRead":["~","\/Volumes\/SSD\/Mini Gateway Scratch"]"#) || s.contains(#""denyRead":["~","/Volumes/SSD/Mini Gateway Scratch"]"#), "\(s)")
+    #expect(s.contains(#""denyRead":["~","\/Volumes\/SSD\/Mini Gateway Scratch","#) || s.contains(#""denyRead":["~","/Volumes/SSD/Mini Gateway Scratch","#), "\(s)")
     let wt = cfg.worktreeArgs(root: URL(fileURLWithPath: "/w"), maven: URL(fileURLWithPath: "/m"), cwd: URL(fileURLWithPath: "/w"), allTools: [], network: false, scratch: scratch)
     #expect(wt[wt.firstIndex(of: "--settings")! + 1].contains("Mini Gateway Scratch"))
 }

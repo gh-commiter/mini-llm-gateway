@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -265,4 +266,44 @@ func TestScratchMoveTakeOffline(t *testing.T) {
 			t.Fatal("old name still there")
 		}
 	})
+}
+
+// M1 (0.5.24): peskovniki skrijejo tudi mape ob strani in mape drugih instanc; osnove in tujih map v njej ne.
+func TestScratchHiddenSiblings(t *testing.T) {
+	base := t.TempDir()
+	cur := filepath.Join(base, "gw-mine")
+	for _, d := range []string{cur, filepath.Join(base, "gw-mine.old-2026-11-10"), filepath.Join(base, "Photos")} {
+		os.MkdirAll(d, 0o700)
+	}
+	writeOwner(t, filepath.Join(base, "gw-other"), "gw-other")
+	h := scratchHidden(cur)
+	for _, n := range []string{"gw-mine", "gw-mine.old-2026-11-10", "gw-other"} {
+		if !slices.Contains(h, filepath.Join(base, n)) {
+			t.Fatalf("%s not hidden: %v", n, h)
+		}
+	}
+	if d := defaultScratch(); d != "" && !slices.Contains(h, d) {
+		t.Fatalf("defaultScratch not hidden: %v", h)
+	}
+	if slices.Contains(h, filepath.Join(base, "Photos")) || slices.Contains(h, base) || slices.Contains(h, realPath(base)) {
+		t.Fatalf("base or unrelated folder hidden: %v", h)
+	}
+}
+
+// L1 (0.5.24): osnova Scratch ne sme biti mapa drugega prehoda ali v njej; lastna mapa sme.
+func TestScratchBaseInsideOtherRefused(t *testing.T) {
+	s, _ := testServer(t, func(c *serveConfig) { c.Instance = "gw-mine" })
+	base := t.TempDir()
+	writeOwner(t, filepath.Join(base, "gw-other"), "gw-other")
+	writeOwner(t, filepath.Join(base, s.conf().Instance), s.conf().Instance)
+	for _, bad := range []string{filepath.Join(base, "gw-other"), filepath.Join(base, "gw-other", "sub")} {
+		if why := s.scratchCheck(bad, false); !strings.Contains(why, "another gateway's Scratch folder") {
+			t.Fatalf("%s: %q", bad, why)
+		}
+	}
+	for _, ok := range []string{base, filepath.Join(base, s.conf().Instance)} {
+		if why := s.scratchCheck(ok, false); why != "" {
+			t.Fatalf("%s: %q", ok, why)
+		}
+	}
 }

@@ -100,6 +100,14 @@ Details:
   user (Codex and Grok on the Mac, Codex on Windows without its own sandbox, any agent on a Windows gateway without
   the Windows sandbox) can read them too. Keep Scratch on APFS, NTFS or ext4:
   exFAT ignores the folder's private permissions.
+- What the sandboxes hide as Scratch (Mac `minigw run`, Copilot and Claude CLI on the Mac, Claude CLI's `denyRead` and
+  bwrap on Linux) is worked out at each run from the layout: the current Scratch; on the Mac its fallback in the
+  default base (used while the chosen disk is unplugged) and the old default `Scratch`; on `minigw serve` the old
+  default `~/.cache/minigw/scratch`; and, in the Scratch base and in the default base, every folder with an owner file
+  (other gateways'), every `*.old-*` folder (this gateway's kept folders after Take over) and `Mini Gateway Scratch`.
+  The base itself and other folders in it stay visible. Paths are resolved (`/private`, links). The run's own folders
+  in Scratch (temporary folder, DerivedData, sync copy or clone) are allowed again after these rules. A Scratch base
+  that is, or is inside, a folder with another gateway's owner file is refused.
 - In worktree mode the gateway never runs git with the agent's own `.git` (config, hooks) and reads the clone only
   from a sandbox. On Linux `minigw serve` pins the clone's `.git` with bwrap (`.git/config`, `hooks` and `info`
   read-only); without the pin Linux watches `.git` with inotify (no watch: the run is refused), and macOS and Windows

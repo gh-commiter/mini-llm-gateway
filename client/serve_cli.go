@@ -205,7 +205,7 @@ func (s *server) agentArgs(dir string, readOnly bool) []string {
 			// M1: Scratch (kopije drugih naprav, zrcala) tudi zunaj domače mape; mapa seje v njem ostane berljiva (allowRead).
 			// #26 (N2): paket Copilot nikoli za pisanje (naloži ga priprava paketa), tudi če je v dovoljeni mapi.
 			// --minigw-ro: pisanje v te mape prepovedano (denyWrite velja tudi za delovno mapo, ki jo Claude Code dovoli sam).
-			"filesystem": map[string]any{"denyRead": append([]string{"~", s.cfgDir}, scratchPaths(c.Scratch)...), "allowRead": dirs, "allowWrite": onlyIf(!readOnly, dirs),
+			"filesystem": map[string]any{"denyRead": append([]string{"~", s.cfgDir}, scratchHidden(c.Scratch)...), "allowRead": dirs, "allowWrite": onlyIf(!readOnly, dirs),
 				"denyWrite": append(append(scratchPaths(copilotCacheDir()), onlyIf(readOnly, dirs)...), gitDeny...)},
 		}})
 		args = append(args, "--settings", string(settings))
