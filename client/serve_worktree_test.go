@@ -130,11 +130,12 @@ func TestServeWorktreeRoundTrip(t *testing.T) {
 		t.Fatal("agent file in the user's working copy")
 	}
 	// L3: na Windows Claude v načinu worktree le z »Allow commands without a sandbox«
+	oldNeeds := worktreeNeedsUnsandboxed
 	worktreeNeedsUnsandboxed = true
 	if err := s.update(func(c *serveConfig) error { c.AllowUnsandboxedBash = false; return nil }); err != nil || s.conf().AllowUnsandboxedBash {
 		t.Fatal("switch not turned off:", err) // sicer bi 200 na Windows pomenil le, da je stikalo ostalo vklopljeno
 	}
-	defer func() { worktreeNeedsUnsandboxed = runtime.GOOS == "windows" }()
+	defer func() { worktreeNeedsUnsandboxed = oldNeeds }()
 	if st, data := call(c, "POST", "/v1/messages", h, []byte(body), 30*time.Second); st != 400 || !strings.Contains(string(data), "Allow commands without a sandbox") {
 		t.Fatalf("windows rule: %d %s", st, data)
 	}
@@ -255,8 +256,9 @@ func TestWorktreeClaudeArgs(t *testing.T) {
 		}
 	}
 	// #70: na Windows (brez sandboxa) git agenta ni vnaprej dovoljen (git -c, alias … = poljuben ukaz); commit naredi prehod
+	oldNeeds := worktreeNeedsUnsandboxed
 	worktreeNeedsUnsandboxed = true
-	defer func() { worktreeNeedsUnsandboxed = runtime.GOOS == "windows" }()
+	defer func() { worktreeNeedsUnsandboxed = oldNeeds }()
 	args = []string{"--allowedTools", "Read(./**)", "--disallowedTools", "Read(/cfg/**)"}
 	got = strings.Join(worktreeClaudeArgs(args, "/w", []string{"/m"}, "", nil, nil), " ")
 	if strings.Contains(got, "Bash(") || strings.Contains(got, "PowerShell(") || !strings.Contains(got, "Edit(//w/.git/**)") {
