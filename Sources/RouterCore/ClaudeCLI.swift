@@ -54,7 +54,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
             "network": ["allowedDomains": ["*"]],
             // #26 (N2): paket Copilot nikoli za pisanje (naloži ga priprava paketa), tudi če je v dovoljeni mapi.
             // --minigw-ro: pisanje v te mape prepovedano (denyWrite velja tudi za delovno mapo, ki jo Claude Code dovoli sam).
-            "filesystem": ["denyRead": ["~"] + Self.scratchPaths(scratch), "allowRead": dirs, "allowWrite": readOnly ? [] : dirs,
+            "filesystem": ["denyRead": ["~"] + (scratch.map(RouterConfig.hiddenScratch) ?? []), "allowRead": dirs, "allowWrite": readOnly ? [] : dirs,
                            "denyWrite": Self.scratchPaths(RouterConfig.copilotCache)
                                + (readOnly ? dirs : dirs.flatMap { d in Self.gitDenies.flatMap { [d + "/.git/" + $0, d + "/**/.git/" + $0] } + [d + "/**/.git"] })],  // native v mapi sami (H1); N3: tudi ugnezdeni (macOS glob)
         ]]
@@ -90,7 +90,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
             "network": ["allowedDomains": network ? ["*"] : []],
             // Nič iz DARWIN_USER_TEMP_DIR (peskovnik Claude Code ne zna »le znotraj mape«): swift build in xcodebuild
             // agenta lahko ne uspeta (gradnja z minigw run ali v načinu sync); Maven deluje.
-            "filesystem": ["denyRead": ["~"] + Self.scratchPaths(scratch), "allowRead": dirs + Self.mavenConfig() + read.map(\.path), "allowWrite": dirs,
+            "filesystem": ["denyRead": ["~"] + (scratch.map(RouterConfig.hiddenScratch) ?? []), "allowRead": dirs + Self.mavenConfig() + read.map(\.path), "allowWrite": dirs,
                            "denyWrite": (gits.isEmpty ? [root.path + "/.git"] : gits).flatMap { g in ["config", "hooks", "info", "commondir"].map { g + "/" + $0 } }
                                + [(Worktree.tmpLink(root) as NSString).deletingLastPathComponent]  // #67 M2: koren povezav TMPDIR
                                + Native.buildCacheDenies().paths + Self.scratchPaths(RouterConfig.copilotCache)],
@@ -292,7 +292,7 @@ public enum ClaudeCLI {
         let allowed = roots.split(separator: ",").compactMap { Sync.real(URL(fileURLWithPath: expand($0.trimmingCharacters(in: .whitespaces))))?.path }
             .filter { $0 != "/" }
         guard allowed.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) else { return nil }
-        let hidden = ([RouterConfig.defaultScratch] + [scratch].compactMap { $0 }).map { (Sync.real($0) ?? $0.standardizedFileURL).path }
+        let hidden = RouterConfig.hiddenScratch(scratch)
         guard !hidden.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) else { return nil }
         guard !RouterConfig.overlapsCopilotCache(path) else { return nil }  // #26 (N2): ne paket Copilot ali mapa z njim
         return URL(fileURLWithPath: path, isDirectory: true)

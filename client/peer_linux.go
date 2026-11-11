@@ -309,8 +309,10 @@ func agentWrap(exe string, args []string, m agentMounts) (string, []string, func
 		}
 	}
 	var hidden []string
-	if m.hide != "" && exists(m.hide) && !inside(real(m.hide), home) { // v domači mapi jo skrije že --tmpfs home
-		hidden = []string{real(m.hide)}
+	for _, p := range scratchHidden(m.hide) { // M1: tudi mape ob strani in drugih instanc; v domači mapi jih skrije že --tmpfs home
+		if exists(p) && !inside(real(p), home) && !slices.Contains(hidden, real(p)) {
+			hidden = append(hidden, real(p))
+		}
 	}
 	var protect, pins []string
 	for _, p := range m.protect {

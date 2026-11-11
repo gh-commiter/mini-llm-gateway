@@ -159,6 +159,26 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         return inside(s, r) || inside(r, s)
     }
 
+    /// M1 (0.5.24): mape, ki jih peskovniki agentov skrijejo (dobesedno in kanonično), ob vsakem zagonu (mape ob strani
+    /// nastanejo s prevzemom): Scratch, nadomestna mapa scratch(_:) (defaultBase/<ime>), defaultScratch, ter v osnovi
+    /// Scratch in v defaultBase prave mape z datoteko lastnika, mape ob strani (<id>.old-<datum>[-<čas>], ScratchOwner.takeOver) in »Mini Gateway Scratch«. Osnove same nikoli
+    /// (lahko je uporabnikova mapa z drugo vsebino).
+    public static func hiddenScratch(_ scratch: URL?) -> [String] {
+        let fm = FileManager.default
+        var dirs = [defaultScratch]
+        if let scratch { dirs = [scratch, defaultBase.appendingPathComponent(scratch.lastPathComponent, isDirectory: true)] + dirs }
+        for base in Set([scratch?.deletingLastPathComponent(), defaultBase].compactMap { $0?.standardizedFileURL }) {
+            for n in ((try? fm.contentsOfDirectory(atPath: base.path)) ?? []).sorted() {
+                let p = base.appendingPathComponent(n, isDirectory: true)
+                var st = stat()
+                guard lstat(p.path, &st) == 0, st.st_mode & S_IFMT == S_IFDIR else { continue }  // ne povezave
+                if n.range(of: #"\.old-\d{4}-\d{2}-\d{2}(-\d{6})?$"#, options: .regularExpression) != nil || n == dedicatedName || !ScratchOwner.owner(p).isEmpty { dirs.append(p) }
+            }
+        }
+        var seen = Set<String>()
+        return dirs.flatMap { [$0.standardizedFileURL.path, Sync.real($0)?.path].compactMap { $0 } }.filter { seen.insert($0).inserted }
+    }
+
     /// Paket Copilot CLI (koda, ki jo copilot --version naloži in razširi).
     public static var copilotCache: URL {
         (Sync.real(URL(fileURLWithPath: NSHomeDirectory())) ?? URL(fileURLWithPath: NSHomeDirectory())).appendingPathComponent("Library/Caches/copilot")
@@ -188,6 +208,14 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         if inside(home, real) { return "it is your home folder or contains it" }
         let temps = ["/private/tmp", "/private/var/folders", Sync.real(FileManager.default.temporaryDirectory)?.path ?? ""].filter { !$0.isEmpty }
         if temps.contains(where: { inside(real, $0) }) { return "it is a temporary folder" }
+        // L1 (0.5.24): ne v Scratch drugega prehoda (njegov prevzem bi pobrisal našo mapo v njem)
+        var up = URL(fileURLWithPath: real, isDirectory: true)
+        while true {
+            let o = ScratchOwner.owner(up)
+            if !o.isEmpty && o != name { return "it is or is inside another gateway's Scratch folder \(up.path)" }
+            if up.path == "/" { break }
+            up = up.deletingLastPathComponent()
+        }
         for r in allowedRoots.split(separator: ",") {
             let p = ClaudeCLI.expand(r.trimmingCharacters(in: .whitespaces))
             guard !p.isEmpty, let rr = Sync.real(URL(fileURLWithPath: p))?.path else { continue }

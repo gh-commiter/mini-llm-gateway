@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -265,4 +266,72 @@ func TestScratchMoveTakeOffline(t *testing.T) {
 			t.Fatal("old name still there")
 		}
 	})
+}
+
+// M1 (0.5.24): peskovniki skrijejo tudi mape ob strani in mape drugih instanc; osnove in tujih map v njej ne.
+func TestScratchHiddenSiblings(t *testing.T) {
+	base := t.TempDir()
+	cur := filepath.Join(base, "gw-mine")
+	for _, n := range []string{"gw-mine", "gw-mine.old-2026-11-10", "gw-mine.old-2026-11-10-142233", "Photos", "Work.old-2025"} {
+		os.MkdirAll(filepath.Join(base, n), 0o700)
+	}
+	writeOwner(t, filepath.Join(base, "gw-other"), "gw-other")
+	h := scratchHidden(cur)
+	for _, n := range []string{"gw-mine", "gw-mine.old-2026-11-10", "gw-mine.old-2026-11-10-142233", "gw-other"} {
+		if !slices.Contains(h, filepath.Join(base, n)) {
+			t.Fatalf("%s not hidden: %v", n, h)
+		}
+	}
+	if d := defaultScratch(); d != "" && !slices.Contains(h, d) {
+		t.Fatalf("defaultScratch not hidden: %v", h)
+	}
+	if slices.Contains(h, filepath.Join(base, "Work.old-2025")) {
+		t.Fatalf("user folder named *.old-* hidden: %v", h)
+	}
+	if slices.Contains(h, filepath.Join(base, "Photos")) || slices.Contains(h, base) || slices.Contains(h, realPath(base)) {
+		t.Fatalf("base or unrelated folder hidden: %v", h)
+	}
+}
+
+// L1 (0.5.24): osnova Scratch ne sme biti mapa drugega prehoda ali v njej; lastna mapa sme.
+func TestScratchBaseInsideOtherRefused(t *testing.T) {
+	s, _ := testServer(t, func(c *serveConfig) { c.Instance = "gw-mine" })
+	base := t.TempDir()
+	writeOwner(t, filepath.Join(base, "gw-other"), "gw-other")
+	writeOwner(t, filepath.Join(base, s.conf().Instance), s.conf().Instance)
+	for _, bad := range []string{filepath.Join(base, "gw-other"), filepath.Join(base, "gw-other", "sub")} {
+		if why := s.scratchCheck(bad, false); !strings.Contains(why, "another gateway's Scratch folder") {
+			t.Fatalf("%s: %q", bad, why)
+		}
+	}
+	for _, ok := range []string{base, filepath.Join(base, s.conf().Instance)} {
+		if why := s.scratchCheck(ok, false); why != "" {
+			t.Fatalf("%s: %q", ok, why)
+		}
+	}
+}
+
+// M1 (0.5.24, kot resolveCwd na Macu): dovoljena mapa v skriti mapi ali okoli nje ne gre v peskovnik agenta (bwrap bi
+// jo spet vezal, allowRead Claude bi preglasil denyRead); druga mapa v osnovi gre.
+func TestAllowedFolderInHiddenScratchSkipped(t *testing.T) {
+	base := realPath(t.TempDir()) // newServer hrani kanonične poti
+	in := filepath.Join(base, "gw-x.old-2026-11-10", "proj")
+	os.MkdirAll(in, 0o700)
+	writeOwner(t, filepath.Join(base, "gw-other"), "gw-other")
+	around := filepath.Join(base, "gw-other") // vsebuje datoteko lastnika
+	ok := filepath.Join(base, "Work")
+	os.MkdirAll(ok, 0o700)
+	s, _ := testServer(t, func(c *serveConfig) {
+		c.Scratch, c.AllowedFolders = filepath.Join(base, "gw-mine"), []string{in, around, ok}
+	})
+	args := strings.Join(s.agentArgs(t.TempDir(), false), " ")
+	if strings.Contains(args, "--add-dir "+in) || strings.Contains(args, "--add-dir "+around) {
+		t.Fatalf("allowed folder in a hidden Scratch folder passed to claude: %s", args)
+	}
+	if !strings.Contains(args, "--add-dir "+ok) {
+		t.Fatalf("unrelated folder in the base missing: %s", args)
+	}
+	if !scratchHiddenOverlaps(base, s.conf().Scratch) {
+		t.Fatal("a folder around Scratch siblings must overlap")
+	}
 }

@@ -745,7 +745,7 @@ extension Router {
         guard Sync.real(dir)?.path == dir.path, !Native.homeSecret(dir.path),
               ClaudeCLI.resolveCwd(dir.path, roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL)?.path == dir.path,
               let profile = Native.sandboxProfile(dir: dir.path, network: config.devices.first { $0.id == d.id }?.runNetwork ?? true,
-                                                  hidden: [config.scratchURL.path, RouterConfig.defaultScratch.path], routerPort: Int(config.port),
+                                                  hidden: RouterConfig.hiddenScratch(config.scratchURL), routerPort: Int(config.port),
                                                   runTmp: realTmp, derivedData: derived) else {
             return await error(403, "permission_error", "minigw run: the folder or a build cache folder (~/.m2, ~/.swiftpm …) is a link or not allowed", rid: rid, writer: writer)
         }

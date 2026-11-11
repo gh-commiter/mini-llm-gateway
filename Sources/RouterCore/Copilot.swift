@@ -306,7 +306,7 @@ extension Router {
                                rid: rid, writer: writer)
         }
         guard let profile = Native.sandboxProfile(dir: root.path, network: true,
-                                                  hidden: [config.scratchURL.path, RouterConfig.defaultScratch.path], routerPort: Int(config.port),
+                                                  hidden: RouterConfig.hiddenScratch(config.scratchURL), routerPort: Int(config.port),
                                                   runTmp: reqDir.path, writable: agent && write ? [root.path] : [], visible: visible?.path) else {
             return await error(403, "permission_error", "Copilot: the session's folder is a link", rid: rid, writer: writer)
         }
@@ -357,7 +357,7 @@ extension Router {
         if agent { prompt = agentNote("copilot") + "\n\n" + prompt }
         let prepHome = reqDir.appendingPathComponent("p")  // svoj prazen COPILOT_HOME, ne domača mapa seje (R9)
         let cache = RouterConfig.copilotCache.path.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
-        if let box = Native.sandboxProfile(dir: tmp.path, network: false, hidden: [config.scratchURL.path, RouterConfig.defaultScratch.path],
+        if let box = Native.sandboxProfile(dir: tmp.path, network: false, hidden: RouterConfig.hiddenScratch(config.scratchURL),
                                            routerPort: Int(config.port), runTmp: reqDir.path, writable: []) {
             // Paket sme razširiti (zadnje pravilo velja: tudi čez prepoved v buildCacheDenies), drugje nič.
             let prep = box + "(allow file-read* file-read-data file-write* (subpath \"\(cache)\"))\n"
