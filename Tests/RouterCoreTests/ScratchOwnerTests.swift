@@ -136,3 +136,43 @@ private func put(_ dir: URL, _ rel: String, _ text: String = "x") throws {
     #expect(throws: (any Error).self) { try ScratchOwner.takeOver(link, id: "gw-me") }
     #expect(ScratchOwner.siblings(base.appendingPathComponent("gw-me"), id: "gw-me").map(\.name) == ["fifo", "real"])
 }
+
+/// M1 (0.5.24): peskovniki skrijejo tudi mape ob strani, mape drugih instanc, staro ime in nadomestno mapo; osnove in
+/// tujih map v njej ne.
+@Test func hiddenScratchCoversSiblings() throws {
+    let fm = FileManager.default
+    let base = try tempBase()
+    defer { try? fm.removeItem(at: base) }
+    let cur = base.appendingPathComponent("gw-mine")
+    try put(cur, "chat/x")
+    try put(base, "gw-mine.old-2026-11-10/chat/x")
+    try put(base, "gw-other/" + ScratchOwner.ownerFile, "gw-other\n")
+    try put(base, "Mini Gateway Scratch/chat/x")
+    try put(base, "gw-mine.old-2026-11-10-142233/chat/x")  // druga ob strani istega dne
+    try put(base, "Photos/a.jpg")
+    try put(base, "Work.old-2025/a.txt")  // uporabnikova mapa, ne ob strani
+    let h = RouterConfig.hiddenScratch(cur)
+    for n in ["gw-mine", "gw-mine.old-2026-11-10", "gw-mine.old-2026-11-10-142233", "gw-other", "Mini Gateway Scratch"] {
+        #expect(h.contains(base.appendingPathComponent(n).path), "\(n): \(h)")
+    }
+    #expect(h.contains(RouterConfig.defaultBase.appendingPathComponent("gw-mine").path))  // nadomestna mapa scratch(_:)
+    #expect(h.contains(RouterConfig.defaultScratch.path))
+    #expect(!h.contains(base.appendingPathComponent("Work.old-2025").path))
+    #expect(!h.contains(base.appendingPathComponent("Photos").path) && !h.contains(base.path) && !h.contains(base.standardizedFileURL.path))
+}
+
+/// L1 (0.5.24): osnova Scratch ne sme biti v mapi drugega prehoda (ali ta mapa sama); lastna mapa sme.
+@Test func scratchBaseInsideOtherGatewayRefused() throws {
+    let fm = FileManager.default
+    let base = try tempBase()
+    defer { try? fm.removeItem(at: base) }
+    try put(base, "gw-other/" + ScratchOwner.ownerFile, "gw-other\n")
+    try put(base, "gw-other/sub/x")
+    try put(base, "gw-mine/" + ScratchOwner.ownerFile, "gw-mine\n")
+    for bad in ["gw-other", "gw-other/sub"] {
+        let why = RouterConfig.scratchProblem(base.appendingPathComponent(bad), allowedRoots: "", name: "gw-mine")
+        #expect(why?.contains("another gateway's Scratch folder") == true, "\(bad): \(why ?? "nil")")
+    }
+    #expect(RouterConfig.scratchProblem(base, allowedRoots: "", name: "gw-mine") == nil)
+    #expect(RouterConfig.scratchProblem(base.appendingPathComponent("gw-mine"), allowedRoots: "", name: "gw-mine") == nil)
+}

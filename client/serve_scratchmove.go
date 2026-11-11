@@ -50,6 +50,9 @@ func (s *server) scratchCheck(scratch string, explicit bool) string {
 	if bad := scratchOverlaps(s.conf().AllowedFolders, scratch); len(bad) > 0 { // L1: tudi privzeta mapa
 		return "scratch folder: the allowed folder " + bad[0] + " contains it or is inside it"
 	}
+	if d := scratchInsideOther(scratch, s.conf().Instance); d != "" { // L1 (0.5.24)
+		return "scratch folder: it is or is inside another gateway's Scratch folder " + d
+	}
 	return ""
 }
 

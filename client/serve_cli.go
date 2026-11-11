@@ -120,7 +120,7 @@ func (s *server) agentArgs(dir string, readOnly bool) []string {
 	c := s.conf()
 	dirs := []string{dir} // delovna mapa in dovoljene mape (kot allowedRoots na Macu)
 	for _, f := range c.AllowedFolders {
-		if f != dir && len(scratchOverlaps([]string{f}, c.Scratch)) == 0 && len(copilotCacheOverlaps([]string{f})) == 0 { // L1, #26
+		if f != dir && !scratchHiddenOverlaps(f, c.Scratch) && len(copilotCacheOverlaps([]string{f})) == 0 { // L1, #26
 			dirs = append(dirs, f)
 		}
 	}
@@ -205,7 +205,7 @@ func (s *server) agentArgs(dir string, readOnly bool) []string {
 			// M1: Scratch (kopije drugih naprav, zrcala) tudi zunaj domače mape; mapa seje v njem ostane berljiva (allowRead).
 			// #26 (N2): paket Copilot nikoli za pisanje (naloži ga priprava paketa), tudi če je v dovoljeni mapi.
 			// --minigw-ro: pisanje v te mape prepovedano (denyWrite velja tudi za delovno mapo, ki jo Claude Code dovoli sam).
-			"filesystem": map[string]any{"denyRead": append([]string{"~", s.cfgDir}, scratchPaths(c.Scratch)...), "allowRead": dirs, "allowWrite": onlyIf(!readOnly, dirs),
+			"filesystem": map[string]any{"denyRead": append([]string{"~", s.cfgDir}, scratchHidden(c.Scratch)...), "allowRead": dirs, "allowWrite": onlyIf(!readOnly, dirs),
 				"denyWrite": append(append(scratchPaths(copilotCacheDir()), onlyIf(readOnly, dirs)...), gitDeny...)},
 		}})
 		args = append(args, "--settings", string(settings))
@@ -760,7 +760,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			boxRW = append(boxRW, dir)
 		}
 		for _, f := range s.conf().AllowedFolders {
-			if f != dir && len(scratchOverlaps([]string{f}, s.conf().Scratch)) == 0 && len(copilotCacheOverlaps([]string{f})) == 0 { // kot agentArgs
+			if f != dir && !scratchHiddenOverlaps(f, s.conf().Scratch) && len(copilotCacheOverlaps([]string{f})) == 0 { // kot agentArgs
 				if ro {
 					boxRO = append(boxRO, f)
 				} else {
