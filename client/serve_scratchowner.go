@@ -200,6 +200,14 @@ func scratchHasConversations(dir string) bool {
 	return false
 }
 
+// dirPrefix: osnova z ločilom na koncu; koren (/, D:\, \\srv\share\) ga že ima.
+func dirPrefix(base string) string {
+	if strings.HasSuffix(base, string(filepath.Separator)) {
+		return base
+	}
+	return base + string(filepath.Separator)
+}
+
 // takeScratch (odločitev 2: prevzem = preimenovanje, nikoli združevanje): stara mapa druge instance (old, prava mapa
 // tega uporabnika) postane <osnova>/<id> z ID-jem te instance in zaščito (protectScratch; napaka: vse nazaj).
 // Trenutna mapa te instance (cur, tudi sosednja) in mapa <osnova>/<id>, ki je na poti: brez pogovorov izbrisani, s
@@ -216,7 +224,7 @@ func takeScratch(old, cur, id string, now time.Time) (dst, aside string, err err
 		return "", "", errors.New("the folder is not a real folder of this user")
 	}
 	dst = filepath.Join(filepath.Dir(old), id)
-	if !strings.HasPrefix(filepath.Clean(dst), filepath.Clean(filepath.Dir(old))+string(filepath.Separator)) {
+	if !strings.HasPrefix(filepath.Clean(dst), dirPrefix(filepath.Clean(filepath.Dir(old)))) {
 		return "", "", errors.New("the new folder name is not inside the Scratch base")
 	}
 	var moved [][2]string // za vrnitev ob napaki
@@ -411,7 +419,7 @@ func (s *server) takeScratchAPI(body []byte) (int, any) {
 		}
 		base := filepath.Clean(filepath.Dir(cur))
 		old = filepath.Join(base, name)
-		if !strings.HasPrefix(old, base+string(filepath.Separator)) {
+		if !strings.HasPrefix(old, dirPrefix(base)) {
 			return fail(400, "name: a folder name in the Scratch base, without path separators")
 		}
 		if i := slices.IndexFunc(scratchSiblings(cur, c.Instance), func(x scratchSibling) bool { return x.Name == name }); i < 0 {

@@ -345,3 +345,20 @@ func TestAllowedFolderInHiddenScratchSkipped(t *testing.T) {
 		t.Fatal("a folder around Scratch siblings must overlap")
 	}
 }
+
+func TestDirPrefixRoot(t *testing.T) {
+	sep := string(filepath.Separator)
+	root := filepath.Clean(sep) // "/" ali "\"
+	for base, want := range map[string]string{root: root, filepath.Join(root, "gw1"): filepath.Join(root, "gw1") + sep} {
+		if got := dirPrefix(base); got != want || !strings.HasPrefix(filepath.Join(base, "x"), got) {
+			t.Fatalf("%q: %q", base, got)
+		}
+	}
+	if runtime.GOOS == "windows" {
+		for _, base := range []string{`D:\`, `\\srv\share\`} {
+			if got := dirPrefix(filepath.Clean(base)); !strings.HasPrefix(filepath.Join(base, "gw1"), got) {
+				t.Fatalf("%q: %q", base, got)
+			}
+		}
+	}
+}
