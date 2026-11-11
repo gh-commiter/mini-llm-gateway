@@ -241,6 +241,7 @@ func TestScratchMoveTakeOffline(t *testing.T) {
 		cfg, cur := offlineScratchConfig(t)
 		scratchFixture(t, cur)
 		base := filepath.Join(nonTempDir(t), "mgw-test")
+		t.Cleanup(releaseScratch) // Windows: move drži ročaj nove mape; pred brisanjem map (Cleanup LIFO)
 		out := stdout(t, func() { routerCommand([]string{"scratch", "move", base, "--config", cfg}, strings.NewReader("")) })
 		want := filepath.Join(base, "gw-aaaaaaaaaaaa")
 		if c, err := loadServeConfig(cfg); err != nil || c.Scratch != want || !strings.Contains(out, want) {
@@ -253,6 +254,7 @@ func TestScratchMoveTakeOffline(t *testing.T) {
 		other := filepath.Join(filepath.Dir(cur), "gw-bbbbbbbbbbbb")
 		writeOwner(t, other, "gw-bbbbbbbbbbbb")
 		os.WriteFile(filepath.Join(other, "f"), []byte("old"), 0o600)
+		t.Cleanup(releaseScratch) // Windows: takeScratch drži ročaj prevzete mape; pred brisanjem TempDir (Cleanup LIFO)
 		out := stdout(t, func() {
 			routerCommand([]string{"scratch", "take", "gw-bbbbbbbbbbbb", "--config", cfg}, strings.NewReader(""))
 		})

@@ -31,8 +31,12 @@ func liveServer(t *testing.T, mod func(*serveConfig)) (*server, string, string) 
 	}
 	t.Cleanup(func() { ln.Close() })
 	k, _ := ecdh.X25519().GenerateKey(rand.Reader)
+	claude := "/bin/sh"
+	if runtime.GOOS == "windows" { // resolveClaude: obstoječ .exe
+		claude, _ = os.Executable()
+	}
 	c := serveConfig{Token: "tok", Key: base64url(k.Bytes()), Port: ln.Addr().(*net.TCPAddr).Port, Tools: defaultTools,
-		PermissionMode: "dontAsk", Scratch: t.TempDir(), Claude: "/bin/sh", Devices: []serveDevice{}}
+		PermissionMode: "dontAsk", Scratch: t.TempDir(), Claude: claude, Devices: []serveDevice{}}
 	t.Cleanup(releaseScratch) // Windows: ročaj Scratch bi preprečil brisanje TempDir
 	if mod != nil {
 		mod(&c)

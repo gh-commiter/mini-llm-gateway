@@ -252,6 +252,9 @@ func TestPackageRoot(t *testing.T) {
 // H1 (2. plast), L1: dovoljena mapa okoli Scratch: po rw znova tmpfs na Scratch, nato klon in objekti; .git klona je
 // točka priklopa pred zaščitenimi datotekami.
 func TestBwrapRehidesScratch(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bwrap: Linux only (paths with /)")
+	}
 	a := strings.Join(bwrapArgs("/home/u", "/home/u/.config/minigw", nil, []string{"/s/repos/d/r.git/objects"},
 		[]string{"/s/worktrees/d/r/claude-x-0", "/srv"}, "/srv/s", []string{"/s/worktrees/d/r/claude-x-0/.git"},
 		[]string{"/s/worktrees/d/r/claude-x-0/.git/config"}, nil, nil), " ")
