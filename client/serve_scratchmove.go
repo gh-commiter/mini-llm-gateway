@@ -83,6 +83,9 @@ func (s *server) moveScratchAPI(body []byte) (int, any) {
 	if s.hub.count() > 0 || s.agentsRunning.Load() > 0 {
 		return fail(409, scratchBusy)
 	}
+	if why := s.offlineScratchHeld(); why != "" {
+		return fail(409, why)
+	}
 	old := s.conf().scratchDir()
 	if realPath(old) == realPath(to) {
 		g := s.apiGeneral(false)
@@ -161,14 +164,17 @@ func moveScratchDir(old, dst string) (renamed bool, err error) {
 	}
 	releaseScratch() // L1′: ročaj brez deljenja brisanja bi preprečil odstranitev in preimenovanje
 	os.Remove(dst)   // prazna (zgoraj): Rename na Windows ne gre v obstoječo mapo
-	if os.Rename(old, dst) == nil {
+	if err := os.Rename(old, dst); err == nil {
 		if err := protectTarget(dst); err != nil {
 			releaseScratch()
 			return false, errors.Join(err, os.Rename(dst, old))
 		}
 		return true, nil
+	} else if !crossDevice(err) { // M2: kopija in brisanje le na drug nosilec (zaklenjena mapa ostane cela)
+		os.Remove(dst)
+		return false, err
 	}
-	// drug nosilec (ali zaklenjena datoteka): kopija
+	// drug nosilec: kopija
 	if err := protectTarget(dst); err != nil {
 		return false, err
 	}

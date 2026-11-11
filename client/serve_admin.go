@@ -230,7 +230,7 @@ func offlineServer(cfgPath string) (*server, error) {
 	cfgDir, _ := filepath.Abs(filepath.Dir(cfgPath))
 	exe, _ := resolveClaude(c.Claude)
 	return &server{cfg: c, cfgPath: cfgPath, cfgDir: cfgDir, claude: exe, offline: true, log: log.New(io.Discard, "", 0),
-		state: loadState(filepath.Join(cfgDir, "state.json"))}, nil
+		hub: newShareHub(), state: loadState(filepath.Join(cfgDir, "state.json"))}, nil // hub: prazen (brez sej), kot pri tekočem
 }
 
 // deviceSeen: zadnji stik in priklopi dovoljene naprave (state.json); ime, če ga naprava (dodana le z ID-jem ali s

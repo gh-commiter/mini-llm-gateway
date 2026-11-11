@@ -53,3 +53,58 @@ func TestScratchOwnerFailClosed(t *testing.T) {
 		t.Fatalf("siblings: %v", o)
 	}
 }
+
+// H1: minigw gw brez routerja (npr. admin.secret manjka), a prehod te nastavitve teče in drži zaklep Scratch: premik in
+// prevzem 409, nič se ne premakne.
+func TestScratchOfflineWhileRunning(t *testing.T) {
+	cfg, cur := offlineScratchConfig(t)
+	scratchFixture(t, cur)
+	other := filepath.Join(filepath.Dir(cur), "gw-bbbbbbbbbbbb")
+	writeOwner(t, other, "gw-bbbbbbbbbbbb")
+	if err := lockScratch(cur); err != nil { // prehod teče
+		t.Fatal(err)
+	}
+	defer lockScratch(t.TempDir())
+	s, err := offlineServer(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	to := filepath.ToSlash(filepath.Join(nonTempDir(t), "mgw-test"))
+	if st, obj := s.adminDo("POST", "/general/scratch/move", []byte(`{"to":"`+to+`"}`)); st != 409 {
+		t.Fatalf("move: %d %v", st, obj)
+	}
+	if st, obj := s.adminDo("POST", "/general/scratch/take", []byte(`{"name":"gw-bbbbbbbbbbbb"}`)); st != 409 {
+		t.Fatalf("take: %d %v", st, obj)
+	}
+	checkFixture(t, cur)
+	if c, _ := loadServeConfig(cfg); c.Scratch != cur || scratchOwner(other) != "gw-bbbbbbbbbbbb" {
+		t.Fatalf("changed: %q", c.Scratch)
+	}
+}
+
+// H1 (b): takeScratch ne briše ali premakne trenutne mape, ki jo drži drug proces; lasten zaklep ne šteje.
+func TestTakeScratchCurHeld(t *testing.T) {
+	base := t.TempDir()
+	old, cur := filepath.Join(base, "gw-bbbbbbbbbbbb"), filepath.Join(base, "gw-aaaaaaaaaaaa")
+	writeOwner(t, old, "gw-bbbbbbbbbbbb")
+	writeOwner(t, cur, "gw-aaaaaaaaaaaa")
+	f, err := os.OpenFile(filepath.Join(cur, scratchLockFile), os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) // drug proces
+	if _, _, err := takeScratch(old, cur, "gw-aaaaaaaaaaaa", time.Now()); err == nil || !strings.Contains(err.Error(), "running") {
+		t.Fatalf("cur held: %v", err)
+	}
+	if scratchOwner(old) != "gw-bbbbbbbbbbbb" || scratchOwner(cur) != "gw-aaaaaaaaaaaa" {
+		t.Fatal("folders changed")
+	}
+	f.Close()
+	if err := lockScratch(cur); err != nil { // ta prehod sam
+		t.Fatal(err)
+	}
+	defer lockScratch(t.TempDir())
+	if dst, _, err := takeScratch(old, cur, "gw-aaaaaaaaaaaa", time.Now()); err != nil || dst != cur || scratchOwner(cur) != "gw-aaaaaaaaaaaa" {
+		t.Fatalf("own lock: %q %v", dst, err)
+	}
+}
