@@ -785,6 +785,9 @@ type appliedLimits struct {
 func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k agentKind, model string) int {
 	c := s.conf()
 	ac := k.conf(c)
+	if k.name == "copilot" && copilotUnsupported {
+		return writeError(w, r.rid, 400, copilotUnsupportedMsg)
+	}
 	if !s.agentsAllowed(c, k.name) {
 		hint := ""
 		if k.name == "codex" && runtime.GOOS == "windows" { // #68: tudi s peskovnikom »elevated« (bere nastavitve prehoda)
@@ -1443,6 +1446,13 @@ func (s *server) replyWhenDone(w http.ResponseWriter, r *req, body map[string]an
 // bereta in pišeta vse, kar uporabnik: le z izrecnim allowUnsandboxedBash, v vsakem načinu (H1, R3).
 // #68: Codex in Copilot na Windows ne tečeta v škatli MXC (outsideBox). Codexov peskovnik »elevated« bere
 // večino profila, tudi %APPDATA%\minigw (admin.secret, serve.json; HPX360), zato Codex tam le z izrecnim dovoljenjem.
+// copilotUnsupported (0.5.24, lastnik): Copilot na prehodu Windows ni podprt. V škatli MXC se ne zažene (outsideBox),
+// zunaj nje pa bi potreboval ~\.copilot (prijava copilot login je v shrambi poverilnic s ključem, ki ga ne poznamo, ob
+// hookih, MCP in zaupanih mapah, M1). Ni na seznamu modelov, vklop in zahteve so zavrnjeni. Spremenljivka za teste.
+var copilotUnsupported = runtime.GOOS == "windows"
+
+const copilotUnsupportedMsg = "Copilot is not supported on a Windows gateway in this version"
+
 func (s *server) agentsAllowed(c serveConfig, kind string) bool {
 	if outsideBox(kind) && runtime.GOOS == "windows" {
 		return c.AllowUnsandboxedBash
@@ -1506,7 +1516,7 @@ func (s *server) agentModelList(k agentKind) []map[string]any {
 	c := s.conf()
 	ac := k.conf(c)
 	exe, _ := resolveAgent(k, ac.Executable)
-	if !ac.Enabled || exe == "" || !s.agentsAllowed(c, k.name) {
+	if !ac.Enabled || exe == "" || !s.agentsAllowed(c, k.name) || k.name == "copilot" && copilotUnsupported {
 		return nil
 	}
 	label := map[string]string{"codex": "Codex CLI", "grok": "Grok CLI", "copilot": "Copilot CLI"}[k.name]

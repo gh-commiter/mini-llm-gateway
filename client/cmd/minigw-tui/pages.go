@@ -463,10 +463,10 @@ func agents(u *ui) ([]row, error) {
 	rows = append(rows, workRow(c, pc)...)
 	rows = append(rows, loginRows("claude", c, pc)...)
 	if _, ok := c["allowUnsandboxedBash"]; ok && (str(st, "os") == "windows" || yes(st, "agentsUnsandboxed")) {
-		if sb, _ := st["agentSandbox"].(map[string]any); str(sb, "kind") == "mxc" { // #68: Codex and Copilot still need the switch
+		if sb, _ := st["agentSandbox"].(map[string]any); str(sb, "kind") == "mxc" { // #68: Codex still needs the switch
 			rows = append(rows, tog("Allow commands without a sandbox", yes(c, "allowUnsandboxedBash"), func(v bool) (string, error) {
 				return pc(map[string]any{"allowUnsandboxedBash": v})
-			}), inf("  Not needed for Claude CLI and Grok: they run in the Windows sandbox. Codex and Copilot still need it (they cannot start in it); with it on they can read the provider keys and the admin secret.", ""))
+			}), inf("  Not needed for Claude CLI and Grok: they run in the Windows sandbox. Codex still needs it (it cannot start in it); with it on it can read the provider keys and the admin secret. Copilot is not supported here.", ""))
 		} else {
 			rows = append(rows, tog("Allow commands without a sandbox", yes(c, "allowUnsandboxedBash"), func(v bool) (string, error) {
 				return pc(map[string]any{"allowUnsandboxedBash": v})
@@ -502,15 +502,13 @@ func agents(u *ui) ([]row, error) {
 		rows = append(rows, modelToggles(m, "slug", strs(a, "models"), p)...)
 	}
 
-	if a, err := u.call("GET", "/agents/copilot", nil); err == nil {
+	if a, err := u.call("GET", "/agents/copilot", nil); err == nil && yes(a, "unsupported") { // 0.5.24: not on a Windows gateway
+		rows = append(rows, hdr("Copilot CLI"), inf("  "+str(a, "reason")+".", ""))
+	} else if err == nil {
 		p := patch("/agents/copilot")
 		rows = append(rows, hdr("Copilot CLI"))
 		if sb, ok := a["sandboxed"].(bool); ok && !sb && !yes(c, "allowUnsandboxedBash") || !ok && bare { // #68: per agent
-			if str(st, "os") == "windows" {
-				rows = append(rows, inf("  No sandbox here: Copilot needs Allow commands without a sandbox (Claude CLI); it cannot start in the Windows sandbox.", ""))
-			} else {
-				rows = append(rows, inf("  No sandbox here: turn on Allow commands without a sandbox (Claude CLI) first.", ""))
-			}
+			rows = append(rows, inf("  No sandbox here: turn on Allow commands without a sandbox (Claude CLI) first.", ""))
 		}
 		rows = append(rows, tog("Enabled", yes(a, "enabled"), func(v bool) (string, error) { return p(map[string]any{"enabled": v}) }),
 			inf("Program", found(a)),
