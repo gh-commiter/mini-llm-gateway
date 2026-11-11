@@ -36,3 +36,17 @@ jobs:
             GOOS=${target%/*} GOARCH=${target#*/} CGO_ENABLED=0 go build -trimpath -o /dev/null . || exit 1
             GOOS=${target%/*} GOARCH=${target#*/} go vet ./... || exit 1
           done
+
+  # Go 1.23+ ne sledi več stičiščem (junction) v EvalSymlinks: zbirko testov poganjamo tudi na pravem Windows.
+  # TestMain (runIsolated) loči tek od profila izvajalca in konča z 2, če ga ne more.
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: client/go.mod
+      - run: go test ./...
