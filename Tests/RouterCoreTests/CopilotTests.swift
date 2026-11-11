@@ -225,6 +225,26 @@ private func field(_ text: String, _ name: String) -> String {
     #expect(await ask("claude-copilot-unlisted", session: UUID().uuidString).status == 404)  // L1
 }
 
+/// Omejitev porabe: 429 s stalnim besedilom kot minigw serve, stderr copilota ostane v dnevniku (ne pri odjemalcu).
+@Test func copilotLimitSendsFixedTextNotStderr() async throws {
+    let root = try #require(Sync.real(FileManager.default.temporaryDirectory)).appendingPathComponent("copilot-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let proj = root.appendingPathComponent("proj"), bin = root.appendingPathComponent("bin")
+    for d in [proj, bin] { try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true) }
+    var c = RouterConfig()
+    c.copilot.enabled = true; c.copilot.models = "gpt-5.2"
+    c.copilot.executable = try fakeCopilot(bin, "echo 'Error: rate limit reached STDERR_TAIL' >&2; exit 1").path
+    c.claudeCLI.allowedRoots = proj.path
+    c.scratchFolder = root.appendingPathComponent("scratch").path
+    let r = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]), copilotConfig: try copilotLogin(root))
+    var q = request("POST", "/v1/messages", headers: ["Authorization": "Bearer tok", "x-claude-mini-session": UUID().uuidString, "x-claude-mini-cwd": proj.path],
+                    body: #"{"model":"claude-copilot","max_tokens":5,"messages":[{"role":"user","content":"read a.txt"}]}"#)
+    q.peer = "127.0.0.1"
+    let w = FakeWriter()
+    await r.handle(q, writer: w)
+    #expect(w.status == 429 && w.text.contains("copilot: usage or rate limit reached; details are in the gateway log") && !w.text.contains("STDERR_TAIL"))
+}
+
 @Test func copilotWorktreeNeedsWritingAndAdminAPI() async throws {
     var c = RouterConfig()
     c.copilot.enabled = true; c.copilot.write = false
