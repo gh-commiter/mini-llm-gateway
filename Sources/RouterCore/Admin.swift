@@ -506,7 +506,7 @@ extension Router {
                 }
                 if let path, !path.isEmpty, case .failure(let e) = ClaudeCLI.validate(path) { throw AdminError(400, "claude: \(e)") }
                 if let folders, let bad = folders.split(separator: ",").map(String.init).first(where: { RouterConfig.overlapsScratch($0, scratch: c.scratchURL) }) {
-                    throw AdminError(400, "allowed folder \(bad.trimmingCharacters(in: .whitespaces)) contains or is inside the scratch folder \(c.scratchURL.path) (agents could change the gateway's mirrors and other devices' copies): choose another folder")
+                    throw AdminError(400, "allowed folder \(bad.trimmingCharacters(in: .whitespaces)) contains or is inside the scratch folder \(c.scratchURL.path), or cannot be checked (agents could change the gateway's mirrors and other devices' copies): choose another folder")
                 }
                 if let folders, let bad = folders.split(separator: ",").map(String.init).first(where: { RouterConfig.overlapsCopilotCache($0) }) {
                     throw AdminError(400, "allowed folder \(bad.trimmingCharacters(in: .whitespaces)) contains or is inside Copilot's package cache \(RouterConfig.copilotCache.path) (agents could plant code the gateway runs): choose another folder")

@@ -635,7 +635,7 @@ func checkAgent(c *serveConfig, cfgDir string) ([]string, error) {
 	}
 	if bad := scratchOverlaps(c.AllowedFolders, c.Scratch); len(bad) > 0 { // H1: PATCH, minigw gw claude --folders, serve.json
 		return nil, errors.New("allowed folder " + bad[0] + " contains or is inside the scratch folder " + c.Scratch +
-			" (agents could change the gateway's mirrors and other devices' copies): choose another folder")
+			", or cannot be checked (agents could change the gateway's mirrors and other devices' copies): choose another folder")
 	}
 	if bad := copilotCacheOverlaps(c.AllowedFolders); len(bad) > 0 { // #26
 		return nil, errors.New("allowed folder " + bad[0] + " contains or is inside Copilot's package cache " + copilotCacheDir() +
