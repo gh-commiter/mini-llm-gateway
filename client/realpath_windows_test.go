@@ -127,3 +127,21 @@ func TestRealPathSubstAndUNCWindows(t *testing.T) {
 func TestMXCWrapDeniesConfigJunctionWindows(t *testing.T) {
 	mxcDeniesTarget(t, junction)
 }
+
+// HPX360 (0.5.25): stičišče sredi poti (C:\work\x\proj, x = stičišče) — EvalSymlinks pade, checkFolder vzame finalPath;
+// pot skozi stičišče v mapo nastavitev ostane zavrnjena.
+func TestCheckFolderJunctionInParentWindows(t *testing.T) {
+	base := realOf(t, t.TempDir())
+	own, cfg := filepath.Join(base, "own"), filepath.Join(base, "cfg")
+	os.MkdirAll(filepath.Join(own, "proj"), 0o755)
+	os.MkdirAll(filepath.Join(cfg, "sub"), 0o755)
+	junction(t, own, filepath.Join(base, "x"))
+	junction(t, cfg, filepath.Join(base, "y"))
+	real, err := checkFolder(filepath.Join(base, "x", "proj"), cfg, false)
+	if err != nil || !samePath(real, filepath.Join(own, "proj")) {
+		t.Fatalf("folder behind a junction: %q %v", real, err)
+	}
+	if _, err := checkFolder(filepath.Join(base, "y", "sub"), cfg, false); err == nil {
+		t.Fatal("folder inside the config folder through a junction in the parent accepted")
+	}
+}

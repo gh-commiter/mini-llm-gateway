@@ -716,6 +716,11 @@ var validSources = regexp.MustCompile(`^((user|project|local)(,(user|project|loc
 func checkFolder(f, cfgDir string, missingOK bool) (string, error) {
 	abs, _ := filepath.Abs(f)
 	real, err := filepath.EvalSymlinks(abs)
+	if err != nil && runtime.GOOS == "windows" { // stičišče sredi poti (C:\work\x\proj, x = stičišče): EvalSymlinks pade
+		if r, ferr := finalPath(abs); ferr == nil {
+			real, err = r, nil
+		}
+	}
 	var fin string
 	if _, lerr := os.Lstat(abs); err != nil && missingOK && errors.Is(lerr, os.ErrNotExist) {
 		if fin, err = realPath(abs); err != nil { // npr. visoča povezava nad njo
