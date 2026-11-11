@@ -538,7 +538,12 @@ public final class ProfileMux: @unchecked Sendable {
         }
         if t.name != targets[0].name, isShared(t.name) { head += "x-claude-mini-share: 1\r\n" }
         head += "authorization: Bearer \(t.token)\r\ncontent-length: \(body.count)\r\nconnection: close\r\n\r\n"
-        let remote = NWConnection(host: NWEndpoint.Host(h), port: port, using: .tcp)
+        // Lokalni port izbere jedro (prost, kratkotrajen). Brez tega Network.framework za cilj, ki je bil nedavno odjemalec
+        // povezave tega procesa (npr. prek tega usmerjevalnika), ponovno uporabi star lokalni port: par je še v TIME_WAIT,
+        // povezava ostane .waiting(EADDRINUSE) do 30 s in zahteva dobi 502.
+        let params = NWParameters.tcp
+        params.requiredLocalEndpoint = .hostPort(host: "::", port: .any)
+        let remote = NWConnection(host: NWEndpoint.Host(h), port: port, using: params)
         var started = false
         remote.stateUpdateHandler = { [weak self] s in
             switch s {
