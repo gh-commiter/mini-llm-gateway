@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -192,6 +193,15 @@ func TestScratchSiblingTakeOver(t *testing.T) {
 			t.Fatalf("%s: %d", bad, st)
 		}
 	}
+	for _, bad := range []string{"..", "a/b", `..\x`, "C:x", "/abs"} {
+		body, _ := json.Marshal(map[string]string{"name": bad})
+		if st, _ := s.adminDo("POST", "/general/scratch/take", body); st != 400 {
+			t.Fatalf("name %q: %d", bad, st)
+		}
+	}
+	if st, _ := s.adminDo("POST", "/general/scratch/take", []byte(`{"name":""}`)); st != 409 { // kot izpuščeno ime: lastna mapa
+		t.Fatalf("empty name: %d", st)
+	}
 	if s.scratchOther.Load() {
 		t.Fatal("own folder foreign")
 	}
@@ -333,5 +343,22 @@ func TestAllowedFolderInHiddenScratchSkipped(t *testing.T) {
 	}
 	if !scratchHiddenOverlaps(base, s.conf().Scratch) {
 		t.Fatal("a folder around Scratch siblings must overlap")
+	}
+}
+
+func TestDirPrefixRoot(t *testing.T) {
+	sep := string(filepath.Separator)
+	root := filepath.Clean(sep) // "/" ali "\"
+	for base, want := range map[string]string{root: root, filepath.Join(root, "gw1"): filepath.Join(root, "gw1") + sep} {
+		if got := dirPrefix(base); got != want || !strings.HasPrefix(filepath.Join(base, "x"), got) {
+			t.Fatalf("%q: %q", base, got)
+		}
+	}
+	if runtime.GOOS == "windows" {
+		for _, base := range []string{`D:\`, `\\srv\share\`} {
+			if got := dirPrefix(filepath.Clean(base)); !strings.HasPrefix(filepath.Join(base, "gw1"), got) {
+				t.Fatalf("%q: %q", base, got)
+			}
+		}
 	}
 }
