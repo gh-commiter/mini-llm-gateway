@@ -36,10 +36,10 @@ const copilotNoCommands = "Copilot commands are not available: a command could r
 var (
 	copilotHostRe  = regexp.MustCompile(`^(https://)?[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$`)
 	copilotLoginRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$`) // GitHub; _ za Enterprise Managed Users
-	copilotKindRe  = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)           // kind, derivedFrom (L4)
+	copilotKindRe  = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9-]{0,31}$`)     // kind, derivedFrom (L4; copilot writes e.g. "githubDotCom")
 )
 
-// copilotUser: en LoggedInUser (host, login obvezna; kind, derivedFrom neobvezna, ^[a-z][a-z0-9-]{0,31}$); drugi
+// copilotUser: en LoggedInUser (host, login obvezna; kind, derivedFrom neobvezna, ^[A-Za-z][A-Za-z0-9-]{0,31}$); drugi
 // ključi ali druga oblika = nil.
 func copilotUser(raw json.RawMessage) map[string]string {
 	var o map[string]any
