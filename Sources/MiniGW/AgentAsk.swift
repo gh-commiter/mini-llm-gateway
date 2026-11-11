@@ -94,7 +94,7 @@ func agentAsk(_ c: Connection, _ args: [String]) -> Never {
             guard l.hasPrefix("data: "), let e = try? JSONSerialization.jsonObject(with: Data(l.dropFirst(6).utf8)) as? [String: Any] else { continue }
             if e["type"] as? String == "content_block_delta", let d = e["delta"] as? [String: Any], d["type"] as? String == "text_delta",
                let t = d["text"] as? String {
-                FileHandle.standardOutput.write(Data(t.utf8))
+                try? FileHandle.standardOutput.write(contentsOf: Data(t.utf8))
             } else if e["type"] as? String == "error" {
                 failure = (e["error"] as? [String: Any])?["message"] as? String ?? "error"
             }
