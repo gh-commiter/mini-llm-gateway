@@ -283,8 +283,7 @@ final class ShareClient: @unchecked Sendable {
     private var current = ""
     var key: String { lock.withLock { current } }
     private let syncLock = NSLock()
-    // Spreminjajoče metode WebDAV ena za drugo (kot davWriteMu v Go); GET in PROPFIND ostaneta sočasna.
-    private let davWriteLock = NSLock()
+    private var folderLock: FolderLock?  // #82: branje deljeno, pisanje, sync in worktree izključno, tudi med procesi (start)
     private var synced: [String: Sync.Entry] = [:]  // manifest ob zadnjem prenosu (zgoščevanje, spori)
     private var sent: [String: Set<String>] = [:]   // pot → različice, ki jih je router dobil od tega odjemalca (#20)
     private var reported: Set<String> = []          // že javljene prevelike datoteke
@@ -335,6 +334,7 @@ final class ShareClient: @unchecked Sendable {
             rootID = nil
             try? FileHandle.standardError.write(contentsOf: Data("minigw: not sharing \(root.path) (the folder changed after it was checked)\n".utf8))
         }
+        folderLock = rootID.map { FolderLock(id: $0) }
         for _ in 0..<workers { Thread { self.work() }.start() }
     }
 
@@ -351,13 +351,14 @@ final class ShareClient: @unchecked Sendable {
                 if rootID == nil || SharedFolders.fileID(root.path) != rootID { r = DAVResponse(403) } else {
                     switch Sync.clientJob(job.method, kind: kind, readOnly: readOnly, write: Self.writeMethods.contains(job.method)) {
                     case .note: r = syncLock.withLock { noteJob(job) }
-                    case .worktreePush: r = syncLock.withLock { wtPush(k, job) }
-                    case .worktreePull: r = syncLock.withLock { wtPull(k, job) }
-                    case .syncPush: r = DAVResponse(syncLock.withLock { push(k) } ? 200 : 500)
-                    case .syncPull: r = DAVResponse(syncLock.withLock { pull(k) } ? 200 : 500)
+                    case .worktreePush: r = locked(true) { syncLock.withLock { wtPush(k, job) } }
+                    case .worktreePull: r = locked(true) { syncLock.withLock { wtPull(k, job) } }
+                    case .syncPush: r = locked(true) { DAVResponse(syncLock.withLock { push(k) } ? 200 : 500) }
+                    case .syncPull: r = locked(true) { DAVResponse(syncLock.withLock { pull(k) } ? 200 : 500) }
                     case .webDAV:
-                        let dav = { WebDAV.handle(method: job.method, path: job.path, headers: job.headers, body: job.body, root: self.root, prefix: job.prefix) }
-                        r = Self.writeMethods.contains(job.method) ? davWriteLock.withLock(dav) : dav()
+                        r = locked(Self.writeMethods.contains(job.method)) {
+                            WebDAV.handle(method: job.method, path: job.path, headers: job.headers, body: job.body, root: root, prefix: job.prefix)
+                        }
                     case nil: r = DAVResponse(403)
                     }
                 }
@@ -375,6 +376,13 @@ final class ShareClient: @unchecked Sendable {
                 sleep(2)        // router nedosegljiv: poskusi znova
             }
         }
+    }
+
+    /// #82: posel pod zaklepom mape; drug proces ga drži predolgo → 503 z besedilom.
+    private func locked(_ exclusive: Bool, _ job: () -> DAVResponse) -> DAVResponse {
+        guard let folderLock else { return DAVResponse(403) }
+        return folderLock.with(exclusive: exclusive, job)
+            ?? DAVResponse(503, ["content-type": "text/plain", "retry-after": "5"], Data((FolderLock.busyText + "\n").utf8))
     }
 
     private func note(_ s: String) { try? err.write(contentsOf: Data(("minigw: " + oneLine(s) + "\n").utf8)) }

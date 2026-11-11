@@ -63,6 +63,7 @@ type shareClient struct {
 	checked  *fileID                    // #84: istovetnost, ki jo je preveril shareWanted (nil: preizkusi brez preverbe)
 	rootID   fileID                     // L6 (#84): istovetnost korena ob start; ničelna brez start (preizkusi)
 	rootErr  error                      // L6: ob start ni znana ali ni preverjena → vsi posli zavrnjeni
+	fsMu     sync.RWMutex               // #82: lockFolder v tem procesu (branje deljeno, pisanje izključno)
 }
 
 var writeMethods = map[string]bool{"PUT": true, "DELETE": true, "MKCOL": true, "MOVE": true, "COPY": true, "PROPPATCH": true, "LOCK": true}
@@ -179,6 +180,13 @@ func (s *shareClient) handle(job davJob, k string) davResponse {
 	if !s.sameRoot() { // L6 (#84): vsi posli (WebDAV, SYNC-*, WORKTREE-*), ne le WebDAV
 		return dav(403, nil, nil)
 	}
+	if job.Method != "WORKTREE-NOTE" { // #82: sporočilo mape ne bere in ne piše
+		unlock := s.lockFolder(writeMethods[job.Method] || strings.HasPrefix(job.Method, "SYNC-") || strings.HasPrefix(job.Method, "WORKTREE-"))
+		if unlock == nil {
+			return dav(503, map[string]string{"content-type": "text/plain", "retry-after": "5"}, []byte(folderBusyText+"\n"))
+		}
+		defer unlock()
+	}
 	switch {
 	case s.worktree && job.Method == "WORKTREE-PUSH":
 		s.syncMu.Lock()
@@ -219,6 +227,65 @@ func (s *shareClient) handle(job davJob, k string) davResponse {
 		return dav(403, nil, nil)
 	}
 	return davHandle(job.Method, job.Path, job.Headers, job.Body, s.root, job.Prefix)
+}
+
+// folderLockWait (#82, vmesno): toliko čaka zaklep mape, nato 503 (nikoli ne obvisi).
+var folderLockWait = 5 * time.Second
+
+// folderLockDir: mapa zaklepov ("" = <mapa nastavitev>/minigw/locks; preizkusi začasno mapo).
+var folderLockDir string
+
+const folderBusyText = "minigw: the shared folder is busy (another minigw session on this folder is using it); try again"
+
+var folderLockOnce, folderBusyOnce sync.Once
+
+// lockFolder (#82, vmesno): branje (GET, HEAD, PROPFIND) deljeno, pisanje, sync in worktree izključno — v procesu
+// (fsMu) in med procesi (flock / LockFileEx na datoteki, imenovani po istovetnosti korena, v mapi nastavitev, ne v
+// projektu; ob sesutju ga sprosti jedro). Tako branje ne dirka z MOVE nadrejene mape med preverbo poti in branjem in
+// dve seji minigw na isti mapi ne pišeta hkrati. nil = zaklep drži drug proces dlje od folderLockWait (503).
+// ponytail: preveri-nato-uporabi ostane za lokalni proces brez zaklepa; popolno (operacije prek odprtega korena) 0.5.26.
+func (s *shareClient) lockFolder(exclusive bool) func() {
+	lock, unlock := s.fsMu.RLock, s.fsMu.RUnlock
+	if exclusive {
+		lock, unlock = s.fsMu.Lock, s.fsMu.Unlock
+	}
+	lock()
+	id := s.rootID
+	if id == (fileID{}) {
+		id, _ = fileIDOf(s.root) // brez start (preizkusi)
+	}
+	dir := folderLockDir
+	if dir == "" {
+		if d, err := os.UserConfigDir(); err == nil {
+			dir = filepath.Join(d, "minigw", "locks")
+		}
+	}
+	var f *os.File
+	err := os.MkdirAll(dir, 0o700)
+	if err == nil {
+		f, err = openLockFile(filepath.Join(dir, fmt.Sprintf("%x-%x.lock", id.dev, id.ino)))
+	}
+	for deadline := time.Now().Add(folderLockWait); err == nil; time.Sleep(10 * time.Millisecond) {
+		busy, lerr := tryLockFile(f, exclusive)
+		if lerr == nil {
+			return func() { unlockFile(f); f.Close(); unlock() } // odklep pred Close (kot lockScratch)
+		} else if !busy {
+			err = lerr
+		} else if time.Now().After(deadline) {
+			f.Close()
+			unlock()
+			folderBusyOnce.Do(func() { fmt.Fprintln(os.Stderr, folderBusyText) })
+			return nil
+		}
+	}
+	if f != nil {
+		f.Close()
+	}
+	// Zaklep ni mogoč (npr. mapa nastavitev na disku brez flock): kot 0.5.24, le znotraj procesa.
+	folderLockOnce.Do(func() {
+		fmt.Fprintln(os.Stderr, "minigw: cannot lock the shared folder against other minigw sessions ("+err.Error()+")")
+	})
+	return unlock
 }
 
 // sameRoot (L6, #84): koren je še ista mapa kot ob start (mapo med sejo ni zamenjala povezava ali druga mapa).
