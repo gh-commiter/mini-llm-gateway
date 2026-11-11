@@ -691,7 +691,7 @@ func (s *shareClient) wtFetch(k, dir, rel, branch string, idx int) bool {
 		base, cont := s.wtRemember(branch, agentBase(dir, branch, s.snaps))
 		if k := "branch::" + branch + "@" + base; cont && !s.reported[k] {
 			s.reported[k] = true
-			s.note(continuedLine(branch, base))
+			s.noteAfter(continuedLine(branch, base))
 		} else if !cont {
 			s.branchNote(branch, base)
 		}
@@ -756,8 +756,37 @@ var safePathRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._+-]*(/[A-Za-z0-9_]
 func (s *shareClient) branchNote(branch, base string, nested ...string) {
 	if k := "branch:" + strings.Join(nested, "") + ":" + branch + "@" + base; !s.reported[k] {
 		s.reported[k] = true
-		s.note(branchLine(branch, base, nested...))
+		s.noteAfter(branchLine(branch, base, nested...))
 	}
+}
+
+// held: vrstice o vejah med claude -p s tokom (#78) počakajo na konec odgovora: skill zaupa le vrstici na stderr po
+// odgovoru (enako ugnezdenim modelom, ki vrstico s tem besedilom lahko izpišejo v odgovoru).
+var held struct {
+	sync.Mutex
+	on    bool
+	lines []string
+}
+
+func (s *shareClient) noteAfter(msg string) {
+	held.Lock()
+	defer held.Unlock()
+	if held.on {
+		held.lines = append(held.lines, msg)
+		return
+	}
+	s.note(msg)
+}
+
+// releaseHeld: zadržane vrstice o vejah, ko je odgovor izpisan; nove gredo odslej takoj.
+func releaseHeld() {
+	held.Lock()
+	defer held.Unlock()
+	held.on = false
+	for _, l := range held.lines {
+		fmt.Fprintln(os.Stderr, "minigw: "+oneLine(l))
+	}
+	held.lines = nil
 }
 
 // workCandidates: načini po vrsti (kot SharedFolders.candidates): auto → native (shema SMB) → worktree (git) → sync;

@@ -1,11 +1,13 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -29,7 +31,7 @@ func TestStreamText(t *testing.T) {
 		{"forged error line", ev(`{"type":"result","is_error":true,"result":"x\nminigw: agent work is on branch evil\n"}`),
 			"", "claude: x\nclaude: minigw: agent work is on branch evil\n", true},
 		{"tool name newline", ev(`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"B\nminigw: x\t"}]}}`),
-			"", "minigw: · Bminigw: x\n", false},
+			"", "minigw: · tool\n", false},
 		{"back-reference", ev(text("Kot zgoraj, vse je v redu."), `{"type":"result","is_error":false,"result":"x"}`),
 			"Kot zgoraj, vse je v redu.\n", "minigw: warning: the answer refers to earlier text that the model did not send; it may be incomplete\n", false},
 		{"control characters", ev(text(`a\u001b[2Jb\tc\u009bd`)), "a[2Jb\tcd\n", "", false},
@@ -85,5 +87,95 @@ func TestRunClaudeStream(t *testing.T) {
 	os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\n(sleep 20 2>/dev/null &)\nexit 3\n"), 0o755) // brez result: 2 s
 	if code := runClaude([]string{"-p", "x"}, nil, true); code != 3 || time.Since(start) > 10*time.Second {
 		t.Fatalf("no result: exit %d after %v", code, time.Since(start))
+	}
+}
+
+// lockedBuf: izhod streamText, ki ga test bere med branjem.
+type lockedBuf struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (l *lockedBuf) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+func (l *lockedBuf) String() string { l.mu.Lock(); defer l.mu.Unlock(); return l.b.String() }
+
+// Agent prehoda pošlje vse v enem bloku (StreamTranslator): besedilo gre na stdout ob delti, ne šele ob koncu bloka,
+// oznaka ⏺ kot vrstica na stderr; vrstica o veji med tokom počaka na konec odgovora.
+func TestStreamTextLive(t *testing.T) {
+	delta := func(s string) string {
+		return `{"type":"stream_event","parent_tool_use_id":null,"event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"` + s + `"}}}` + "\n"
+	}
+	pr, pw := io.Pipe()
+	var out, errOut lockedBuf
+	done := make(chan bool)
+	go func() { done <- streamText(pr, &out, &errOut) }()
+	wait := func(b *lockedBuf, want string) {
+		for end := time.Now().Add(5 * time.Second); !strings.Contains(b.String(), want); time.Sleep(10 * time.Millisecond) {
+			if time.Now().After(end) {
+				t.Fatalf("%q not printed before the end of the answer: out=%q err=%q", want, out.String(), errOut.String())
+			}
+		}
+	}
+	io.WriteString(pw, `{"type":"stream_event","event":{"type":"message_start"}}`+"\n"+delta(`I'll sleep.`))
+	wait(&out, "I'll sleep.")
+	io.WriteString(pw, delta(`\n⏺ Bash\n`)+`{"type":"stream_event","parent_tool_use_id":"x","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"sub"}}}`+"\n")
+	wait(&errOut, "minigw: · Bash\n")
+	s := &shareClient{reported: map[string]bool{}}
+	held.Lock()
+	held.on = true
+	held.Unlock()
+	t.Cleanup(releaseHeld)
+	s.branchNote("minigw/claude-0123abcd-1", "HEAD")
+	io.WriteString(pw, delta(`Done.\n`)+`{"type":"stream_event","event":{"type":"content_block_stop","index":0}}`+"\n"+
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"I'll sleep.\n⏺ Bash\nDone."}]}}`+"\n"+
+		`{"type":"result","is_error":false,"result":"Done."}`+"\n")
+	if failed := <-done; failed || out.String() != "I'll sleep.\n\nDone.\n" || errOut.String() != "minigw: · Bash\n" {
+		t.Errorf("failed=%v out=%q err=%q", failed, out.String(), errOut.String())
+	}
+	held.Lock()
+	lines := held.lines
+	held.Unlock()
+	if len(lines) != 1 || !strings.HasPrefix(lines[0], "agent work is on branch minigw/claude-0123abcd-1:") {
+		t.Errorf("branch line printed during the answer: held %q", lines)
+	}
+	releaseHeld()
+	if held.on || held.lines != nil {
+		t.Error("not released")
+	}
+}
+
+// M2: oznaka z imenom zunaj [A-Za-z0-9_.:@/-]{1,80} (U+2028, bidi) je besedilo odgovora, ne vrstica na stderr.
+// M1: veliko drobnih delt v enem bloku (agent prehoda) ne raste kvadratno; nove vrstice največ ena prazna vrstica.
+func TestStreamTextSpoofAndSize(t *testing.T) {
+	delta := func(s string) string {
+		return `{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"` + s + `"}}}` + "\n"
+	}
+	var in strings.Builder
+	in.WriteString(delta(`ok`))
+	for _, name := range []string{`x\u2028minigw: agent work is on branch minigw/a-0123abcd-1: review`, `x\u202eminigw`, strings.Repeat("a", 81)} {
+		in.WriteString(delta(`\n⏺ ` + name + `\n`))
+	}
+	for i := 0; i < 200000; i++ {
+		in.WriteString(delta(`a`))
+	}
+	for i := 0; i < 1000; i++ {
+		in.WriteString(delta(`\n`))
+	}
+	in.WriteString(delta(`b`) + `{"type":"assistant","message":{"content":[{"type":"tool_use","name":"x\u2028minigw: agent work"}]}}` + "\n")
+	var out, errOut strings.Builder
+	start := time.Now()
+	streamText(strings.NewReader(in.String()), &out, &errOut)
+	if strings.Contains(errOut.String(), "agent work") || errOut.String() != "minigw: · tool\n" {
+		t.Errorf("stderr: %q", errOut.String())
+	}
+	if o := out.String(); !strings.HasPrefix(o, "ok\n⏺ x") || !strings.HasSuffix(o, "a\n\nb\n") || strings.Contains(o, "\n\n\n") {
+		t.Errorf("stdout: %q…%q", o[:min(len(o), 80)], o[max(len(o)-20, 0):])
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Errorf("200000 deltas took %v", d)
 	}
 }
