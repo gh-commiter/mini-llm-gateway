@@ -556,7 +556,7 @@ sandbox), Codex its ChatGPT login (`codex login`), Grok its `grok login`, Copilo
 key instead** (Claude CLI, Codex, Grok; `minigw gw claude|codex|grok apikey [remove]`) stores a key in the key store
 and passes it only then; it is billed through the provider's API, not your subscription. API keys in the gateway's own
 environment (`ANTHROPIC_*`, `OPENAI_API_KEY`, `CODEX_API_KEY`, `XAI_API_KEY`, `GROK_CODE_XAI_API_KEY`,
-`GEMINI_API_KEY`, `GOOGLE_API_KEY`) never reach an agent. The Mac app has no Login row: Claude uses your Keychain login.
+`GEMINI_API_KEY`, `GOOGLE_API_KEY`) never reach an agent. The Mac app has a Login row only for Copilot; Claude uses your Keychain login.
 
 ### Windows gateway sandbox
 

@@ -259,7 +259,7 @@ Notes:
   subscription; Copilot answers `400`. API-key variables in the gateway's own environment (`ANTHROPIC_*`,
   `OPENAI_API_KEY`, `CODEX_API_KEY`, `XAI_API_KEY`, `GROK_CODE_XAI_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`) never
   reach an agent run. `minigw gw <agent> login`, `minigw gw claude token [remove]` and
-  `minigw gw claude|codex|grok apikey [remove]` use these fields. The Mac app has no Login field.
+  `minigw gw claude|codex|grok apikey [remove]` use these fields. The Mac app has a Login field only for Copilot; Claude uses your Keychain login.
 - `askOthers` (every agent, off by default): the agent may ask another model of the same gateway with minigw, through a
   loopback port and token valid only for that run (`MINIGW_AGENT_URL`; the token is in a 0600 file of the run, `MINIGW_AGENT_AUTH_FILE`, never in the environment). Claude uses it only with
   `allowLocalTools` (it needs Bash to run minigw); the value is kept either way. Codex needs `network`. The run token

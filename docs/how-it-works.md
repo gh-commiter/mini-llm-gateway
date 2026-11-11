@@ -328,6 +328,11 @@ options: a trusted script run by Claude Code, and a launchd or `systemd --user` 
 its shell ended) without a terminal. Inside Claude Code, Claude Code then asks you before it runs that command, because the
 skills' pre-approved `minigw -p --model …` rule covers only that prefix.
 
+**Known differences between the two minigw clients:** (#80) when Claude Code stops reading its output, the Mac
+`minigw` keeps up to 16 MB of standard output and 1 MB of error output, then drops the rest and exits 1; the Go
+`minigw` (Windows, Linux) holds Claude Code back like a plain pipe. The Ctrl+Z (suspend) and signal-exit fix applies to
+macOS and Linux; Windows has no Ctrl+Z job control.
+
 This is a guard rail, not a boundary. minigw catches one orphaning: its own parent ended and minigw was handed to
 `launchd`, `init`, `systemd` or process 1. It does not catch deeper re-parenting (a chain of processes that hands minigw
 to another long-running process), a command that gives minigw a new terminal and parent (`tmux`, `screen`, a new
