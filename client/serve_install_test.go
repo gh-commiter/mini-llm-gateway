@@ -200,6 +200,9 @@ func TestServeInstallFiles(t *testing.T) {
 		t.Fatalf("darwin install: %v", err)
 	}
 	for _, goos := range []string{"linux", "windows"} {
+		if goos == "linux" && runtime.GOOS == "windows" {
+			continue // systemd enota: os.UserConfigDir je %AppData% (pravi profil), systemdQuote podvoji \ v poti
+		}
 		calls = nil
 		msg, err := serviceCommand("install", goos, cfg)
 		if err != nil {
@@ -524,10 +527,7 @@ func winArgv(cmd string) []string {
 // F1: točen ukaz iz minigw.wxs (Binary stopper, [INSTALLDIR] s končnim »\«) prek razdelitve Windows v trayCommand in
 // stopTargets: StopProcesses ustavi naše programe iz mape, StopTui le minigw-tui.exe.
 func TestMSIStopCommandLine(t *testing.T) {
-	wxs, err := os.ReadFile("minigw.wxs")
-	if err != nil {
-		t.Fatal(err)
-	}
+	wxs := srcFile(t, "minigw.wxs")
 	const dir = `C:\Users\ana\AppData\Local\Programs\Mini Gateway\`
 	ps := []procEntry{
 		{1, 1, dir + `minigw.exe`}, {2, 1, dir + `minigw-tui.exe`}, {3, 1, dir + `minigw-tray.exe`},

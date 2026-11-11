@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -205,6 +206,9 @@ func TestBwrapArgs(t *testing.T) {
 
 // H1.5: na Linuxu z bwrap Codex in Grok ne vidita mape nastavitev.
 func TestAgentWrapHidesConfig(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("bwrap: Linux only (/bin/sh, ls, cat)")
+	}
 	home, _ := os.UserHomeDir()
 	// N1: v PATH je točna mapa ~/.mgwtest/bin; ostalo v ~/.mgwtest in ~/.mgwtest/bin/.ssh ostane skrito.
 	os.MkdirAll(home+"/.mgwtest/bin/.ssh", 0o700)
@@ -235,16 +239,17 @@ func TestAgentWrapHidesConfig(t *testing.T) {
 // N1: paket CLI pod domačo mapo: različica nvm, sicer mapa s package.json, sicer mapa programa.
 func TestPackageRoot(t *testing.T) {
 	home := t.TempDir()
-	if r := packageRoot(home, home+"/.nvm/versions/node/v22.1.0/lib/node_modules/@openai/codex/bin/codex.js"); r != home+"/.nvm/versions/node/v22.1.0" {
+	p := filepath.FromSlash // packageRoot vrača očiščene poti (na Windows z \)
+	if r := packageRoot(home, p(home+"/.nvm/versions/node/v22.1.0/lib/node_modules/@openai/codex/bin/codex.js")); r != p(home+"/.nvm/versions/node/v22.1.0") {
 		t.Fatalf("nvm: %s", r)
 	}
-	pkg := home + "/.npm-global/lib/node_modules/@openai/codex"
-	os.MkdirAll(pkg+"/bin", 0o755)
-	os.WriteFile(pkg+"/package.json", []byte("{}"), 0o644)
-	if r := packageRoot(home, pkg+"/bin/codex.js"); r != pkg {
+	pkg := p(home + "/.npm-global/lib/node_modules/@openai/codex")
+	os.MkdirAll(pkg+p("/bin"), 0o755)
+	os.WriteFile(pkg+p("/package.json"), []byte("{}"), 0o644)
+	if r := packageRoot(home, pkg+p("/bin/codex.js")); r != pkg {
 		t.Fatalf("npm: %s", r)
 	}
-	if r := packageRoot(home, home+"/.grok/bin/grok"); r != home+"/.grok/bin" {
+	if r := packageRoot(home, p(home+"/.grok/bin/grok")); r != p(home+"/.grok/bin") {
 		t.Fatalf("plain: %s", r)
 	}
 }

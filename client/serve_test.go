@@ -32,6 +32,18 @@ func (l pipeListener) Accept() (net.Conn, error) {
 func (l pipeListener) Close() error   { return nil }
 func (l pipeListener) Addr() net.Addr { return &net.TCPAddr{} }
 
+// anyClaude: obstoječa izvršljiva pot za serveConfig.Claude, ki je test ne požene (Windows: le .exe, brez /bin/sh).
+func anyClaude(t *testing.T) string {
+	if runtime.GOOS == "windows" {
+		exe, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return exe
+	}
+	return "/bin/sh"
+}
+
 func testServer(t *testing.T, mod func(*serveConfig)) (*server, *ecdh.PrivateKey) {
 	t.Helper()
 	k, _ := ecdh.X25519().GenerateKey(rand.Reader)
@@ -255,7 +267,7 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":3}}'
 }
 
 func TestServeRefusesDirectMode(t *testing.T) {
-	s, _ := testServer(t, func(c *serveConfig) { c.Claude = "/bin/sh" })
+	s, _ := testServer(t, func(c *serveConfig) { c.Claude = anyClaude(t) })
 	c := startLoopback(t, s)
 	sc := &shareClient{c: c, session: "sid2", root: t.TempDir(), synced: map[string]syncEntry{}, reported: map[string]bool{}}
 	if sc.register() || !strings.Contains(sc.refusal, "--minigw-work=sync and worktree") {
@@ -307,7 +319,7 @@ func TestServeRefusesDirectMode(t *testing.T) {
 }
 
 func TestServeRejectsBadModelsBodiesAndForeignOwners(t *testing.T) {
-	s, _ := testServer(t, func(c *serveConfig) { c.Claude = "/bin/sh" })
+	s, _ := testServer(t, func(c *serveConfig) { c.Claude = anyClaude(t) })
 	c := startLoopback(t, s)
 	for _, m := range []string{`claude-cli-opus\" & calc & \"`, "claude-cli-opus x", "Claude-cli-opus", "claude-cli-" + strings.Repeat("a", 70)} {
 		body, _ := json.Marshal(map[string]any{"model": m, "messages": []any{map[string]string{"role": "user", "content": "x"}}})
@@ -342,7 +354,7 @@ func TestServeRejectsBadModelsBodiesAndForeignOwners(t *testing.T) {
 
 	// Orodja agenta le v delovni mapi; mapa nastavitev prepovedana.
 	args := strings.Join(s.agentArgs("/copy", false), " ")
-	for _, want := range []string{"Read(./**)", "Edit(./**)", "Write(./**)", "Grep(./**)", "Read(/" + filepath.ToSlash(s.cfgDir) + "/**)"} {
+	for _, want := range []string{"Read(./**)", "Edit(./**)", "Write(./**)", "Grep(./**)", "Read(" + ruleAbs(s.cfgDir) + "/**)"} {
 		if !strings.Contains(args, want) {
 			t.Fatalf("agent args lack %s: %s", want, args)
 		}
@@ -458,7 +470,7 @@ func TestServeFolderNotNearConfig(t *testing.T) {
 	t.Cleanup(releaseScratch)
 	scratch := filepath.Join(t.TempDir(), "scratch") // ne v base: dovoljena mapa okoli Scratch se ob zagonu le izpusti
 	for folder, bad := range map[string]bool{base: true, filepath.Join(base, "cfg"): true, filepath.Join(base, "cfg", "x"): true, filepath.Join(base, "work"): false} {
-		_, err := newServer(serveConfig{Token: "tok", Key: base64url(k.Bytes()), Claude: "/bin/sh", Scratch: scratch, AllowedFolders: []string{folder}}, cfgPath)
+		_, err := newServer(serveConfig{Token: "tok", Key: base64url(k.Bytes()), Claude: anyClaude(t), Scratch: scratch, AllowedFolders: []string{folder}}, cfgPath)
 		if (err != nil) != bad {
 			t.Fatalf("folder %s: %v", folder, err)
 		}

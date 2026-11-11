@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http/httptest"
+	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -11,7 +13,11 @@ import (
 
 // GET /activity: tekoča zahteva s korakom, končane najnovejše prve, največ 200, brez vsebine.
 func TestActivity(t *testing.T) {
-	s, _ := testServer(t, func(c *serveConfig) { c.Claude = "/bin/sh" })
+	claude := "/bin/sh"
+	if runtime.GOOS == "windows" { // resolveClaude: obstoječ .exe
+		claude, _ = os.Executable()
+	}
+	s, _ := testServer(t, func(c *serveConfig) { c.Claude = claude })
 	get := func() (out struct {
 		Inflight []activityRun
 		Requests []activityReq

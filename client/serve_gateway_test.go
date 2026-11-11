@@ -323,7 +323,7 @@ func TestServeGatewayDeadDoesNotDelayCLI(t *testing.T) {
 	t.Cleanup(up.Close)
 	t.Cleanup(func() { close(block) }) // teče pred up.Close
 	s, _ := testServer(t, func(c *serveConfig) {
-		c.Claude = "/bin/sh"
+		c.Claude = anyClaude(t)
 		c.Gateways = []serveGateway{{Name: "dead", BaseURL: up.URL, Insecure: true}}
 	})
 	conn := startLoopback(t, s)
@@ -352,7 +352,7 @@ func TestServeGatewayNoCLIShadowAndLimit(t *testing.T) {
 	}))
 	defer up.Close()
 	s, _ := testServer(t, func(c *serveConfig) {
-		c.Claude = "/bin/sh"
+		c.Claude = anyClaude(t)
 		c.Gateways = []serveGateway{{Name: "gw", BaseURL: up.URL, Insecure: true}}
 	})
 	conn := startLoopback(t, s)

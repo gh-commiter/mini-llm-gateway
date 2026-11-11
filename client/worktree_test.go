@@ -34,7 +34,7 @@ func writeT(t *testing.T, path, text string) {
 // Router, kot ga naredi Worktree.swift: golo zrcalo iz bundla odjemalca, klon agenta, bundle veje nazaj.
 func TestWorktreeClientRoundTripAndMaliciousBranch(t *testing.T) {
 	root := t.TempDir()
-	client, marks := filepath.Join(root, "client"), filepath.Join(root, "marks")
+	client, marks := filepath.Join(root, "client"), filepath.ToSlash(filepath.Join(root, "marks")) // / tudi na Windows: lupina sh použije \
 	os.MkdirAll(client, 0o755)
 	os.MkdirAll(marks, 0o755)
 	gitT(t, client, "init", "-q", "-b", "main")
@@ -173,6 +173,9 @@ func TestWorkCandidatesAndReadOnly(t *testing.T) {
 	if !repoRoot(dir, dir) || repoRoot(dir, sub) || repoRoot("", dir) {
 		t.Error("repoRoot")
 	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
 	if out, err := exec.Command("git", "init", "-q", dir).CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v %s", err, out)
 	}
@@ -305,12 +308,14 @@ func TestSnapshotSkipsIgnoredFilesAndNeedsACommit(t *testing.T) {
 		t.Fatalf("children of vendor/lib: %q", c)
 	}
 	os.RemoveAll(filepath.Join(repo, "vendor"))
-	deep := filepath.Join(repo, "new", "x\ny") // globoko v nesledeni mapi, ime z novo vrstico: najden, a ga prehod ne vzame
-	os.MkdirAll(deep, 0o755)
-	writeT(t, filepath.Join(repo, "new", "f.txt"), "x\n")
-	gitT(t, deep, "init", "-q")
-	if n := nestedRepos(repo); !slices.Equal(n, []string{"new/x\ny"}) || validNestedPath(n[0]) || !shaRe.MatchString(gitSnapshot(repo, false, false, n...)) {
-		t.Fatalf("deep nested repo: %q", n)
+	if runtime.GOOS != "windows" { // Windows: ime mape ne sme imeti nove vrstice
+		deep := filepath.Join(repo, "new", "x\ny") // globoko v nesledeni mapi, ime z novo vrstico: najden, a ga prehod ne vzame
+		os.MkdirAll(deep, 0o755)
+		writeT(t, filepath.Join(repo, "new", "f.txt"), "x\n")
+		gitT(t, deep, "init", "-q")
+		if n := nestedRepos(repo); !slices.Equal(n, []string{"new/x\ny"}) || validNestedPath(n[0]) || !shaRe.MatchString(gitSnapshot(repo, false, false, n...)) {
+			t.Fatalf("deep nested repo: %q", n)
+		}
 	}
 	for _, p := range []string{"a", "a/b", "a b/c-d.e", ".vendor/x"} {
 		if !validNestedPath(p) {
