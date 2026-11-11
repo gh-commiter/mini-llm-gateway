@@ -2,6 +2,8 @@ package main
 
 import (
 	"bufio"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -243,6 +245,22 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
 			sc.start(2)
 			defer sc.unregister()
 			h := map[string]string{"x-claude-mini-session": sid, "x-claude-mini-cwd": client, "content-type": "application/json"}
+			post := func(n string, stream bool) (int, string, string) {
+				body := `{"model":"claude-cli-haiku","stream":` + map[bool]string{true: "true", false: "false"}[stream] +
+					`,"tools":[{"name":"x"}],"messages":[{"role":"user","content":"go` + n + `"}]}`
+				req, _ := http.NewRequest("POST", c.URL+"/v1/messages", strings.NewReader(body))
+				req.Header.Set("authorization", "Bearer "+c.Token)
+				for k, v := range h {
+					req.Header.Set(k, v)
+				}
+				resp, err := (&http.Client{Timeout: 60 * time.Second}).Do(req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer resp.Body.Close()
+				b, _ := io.ReadAll(resp.Body)
+				return resp.StatusCode, resp.Header.Get("x-should-retry"), string(b)
+			}
 			ask := func(n string, hold bool) (int, string) {
 				go func() { // agent teče: druga seja vzame mapo, nato agent konča
 					for {
@@ -261,14 +279,36 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
 					}
 					os.WriteFile(filepath.Join(marks, "go"+n), nil, 0o644)
 				}()
-				body := `{"model":"claude-cli-haiku","tools":[{"name":"x"}],"messages":[{"role":"user","content":"go` + n + `"}]}`
-				st, data := call(c, "POST", "/v1/messages", h, []byte(body), 60*time.Second)
-				return st, string(data)
+				st, _, data := post(n, false)
+				return st, data
 			}
-			st, data := ask("0", true)
-			if st == 200 || !strings.Contains(data, "the shared folder is busy") ||
-				(mode == "sync" && !strings.Contains(data, "kept on the gateway")) || (mode == "worktree" && !strings.Contains(data, "stays on the gateway")) {
-				t.Fatalf("pull refused: %d %s", st, data)
+			// #82: končna napaka; worktree s pretokom (dogodek SSE), ponovitev brez pretoka dobi isti 502 brez novega zagona
+			stream := mode == "worktree"
+			go func() { // agent teče: druga seja vzame mapo, nato agent konča
+				for {
+					if _, err := os.Stat(filepath.Join(marks, "started0")); err == nil {
+						break
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+				u := (&shareClient{root: client}).lockFolder(true, time.Second)
+				defer u()
+				os.WriteFile(filepath.Join(marks, "go0"), nil, 0o644)
+				time.Sleep(2 * time.Second) // dlje od roka prevzema
+			}()
+			st, retry, data := post("0", stream)
+			if !strings.Contains(data, "the shared folder is busy") ||
+				(mode == "sync" && (st != 502 || retry != "false" || !strings.Contains(data, "kept on the gateway"))) ||
+				(mode == "worktree" && (!strings.Contains(data, "event: error") || !strings.Contains(data, "stays on the gateway"))) {
+				t.Fatalf("pull refused: %d %q %q", st, retry, data)
+			}
+			if stream {
+				if st, retry, data := post("0", false); st != 502 || retry != "false" || !strings.Contains(data, "busy") {
+					t.Fatalf("retry after the stream error: %d %q %s", st, retry, data)
+				}
+				if m, _ := filepath.Glob(filepath.Join(marks, "started*")); len(m) != 1 {
+					t.Fatalf("the agent ran again: %v", m)
+				}
 			}
 			if _, err := os.Stat(filepath.Join(client, "agent0.txt")); mode == "sync" && err == nil {
 				t.Fatal("changes copied back although the pull was refused")
@@ -291,5 +331,31 @@ echo '{"type":"result","subtype":"success","usage":{"output_tokens":1}}'
 				t.Fatalf("branch %s after the next request:\n%s", branch, files)
 			}
 		})
+	}
+}
+
+// N1: čakajoče pisanje ima prednost: novo branje mu ne skoči pred (pisanje ne strada), po roku 503.
+func TestFolderLockWriterPreference(t *testing.T) {
+	s := &shareClient{root: t.TempDir()}
+	r1 := s.lockFolder(false, time.Second)
+	got := make(chan func(), 1)
+	go func() { got <- s.lockFolder(true, 2*time.Second) }()
+	for s.fsWant.Load() == 0 {
+		time.Sleep(time.Millisecond)
+	}
+	if r2 := s.lockFolder(false, 150*time.Millisecond); r2 != nil {
+		r2()
+		t.Fatal("a new reader went ahead of a waiting writer")
+	}
+	r1()
+	w := <-got
+	if w == nil {
+		t.Fatal("the waiting writer did not get the lock")
+	}
+	w()
+	if r := s.lockFolder(false, time.Second); r == nil {
+		t.Fatal("readers after the writer")
+	} else {
+		r()
 	}
 }

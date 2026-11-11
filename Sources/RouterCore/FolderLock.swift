@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// #82 (vmesno, kot lockFolder v client/share.go): branje (GET, HEAD, PROPFIND, SYNC-PUSH) deljeno, pisanje, SYNC-PULL in
 /// worktree izključno — v procesu (pthread_rwlock) in med procesi (flock na datoteki, imenovani po istovetnosti korena, v
@@ -13,6 +14,7 @@ public final class FolderLock: @unchecked Sendable {
     nonisolated(unsafe) public static var syncWait: TimeInterval = 880, worktreePullWait: TimeInterval = 280
     let path: String, wait: TimeInterval
     private let rw: UnsafeMutablePointer<pthread_rwlock_t>
+    let wantWrite = Atomic<Int>(0)  // N1: čakajoča pisanja; branje se jim umakne (do svojega roka)
     private let warned = NSLock()
     private var cantLock = false, lastBusy = Date.distantPast
 
@@ -32,7 +34,10 @@ public final class FolderLock: @unchecked Sendable {
     /// body pod zaklepom; nil = zaklepa ni bilo v roku (wait, sicer self.wait), tudi v tem procesu (L3).
     public func with<T>(exclusive: Bool, wait: TimeInterval? = nil, _ body: () -> T) -> T? {
         let deadline = Date().addingTimeInterval(wait ?? self.wait)
-        while (exclusive ? pthread_rwlock_trywrlock(rw) : pthread_rwlock_tryrdlock(rw)) != 0 {
+        if exclusive { wantWrite.add(1, ordering: .sequentiallyConsistent) }  // N1: prednost pisanju (try* je nima)
+        defer { if exclusive { wantWrite.subtract(1, ordering: .sequentiallyConsistent) } }
+        while (!exclusive && wantWrite.load(ordering: .sequentiallyConsistent) > 0)
+                || (exclusive ? pthread_rwlock_trywrlock(rw) : pthread_rwlock_tryrdlock(rw)) != 0 {
             if Date() > deadline { return busy() }
             usleep(5_000)
         }

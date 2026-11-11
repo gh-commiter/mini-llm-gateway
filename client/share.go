@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -65,6 +66,7 @@ type shareClient struct {
 	rootID   fileID                     // L6 (#84): istovetnost korena ob start; ničelna brez start (preizkusi)
 	rootErr  error                      // L6: ob start ni znana ali ni preverjena → vsi posli zavrnjeni
 	fsMu     sync.RWMutex               // #82: lockFolder v tem procesu (branje deljeno, pisanje izključno)
+	fsWant   atomic.Int32               // #82 N1: čakajoča pisanja; branje se jim umakne (do svojega roka)
 }
 
 var writeMethods = map[string]bool{"PUT": true, "DELETE": true, "MKCOL": true, "MOVE": true, "COPY": true, "PROPPATCH": true, "LOCK": true}
@@ -292,7 +294,11 @@ func (s *shareClient) lockFolder(exclusive bool, wait time.Duration) func() {
 		folderBusyMu.Unlock()
 		return nil
 	}
-	for !try() { // L3: tudi v procesu le do roka
+	if exclusive { // N1: prednost pisanju (TryLock je nima): novo branje čaka, dokler pisanje čaka
+		s.fsWant.Add(1)
+		defer s.fsWant.Add(-1)
+	}
+	for (!exclusive && s.fsWant.Load() > 0) || !try() { // L3: tudi v procesu le do roka
 		if time.Now().After(deadline) {
 			return busy()
 		}

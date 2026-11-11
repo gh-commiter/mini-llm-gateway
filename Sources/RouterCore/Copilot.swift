@@ -372,7 +372,7 @@ extension Router {
             }
             run?.stop()  // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb
             // sync: spremembe agenta k odjemalcu pred odgovorom; #82: neprevzete niso uspeh
-            if agent, let why = await Self.shares.syncBack(session: client) { throw Copilot.Failure(message: why) }
+            if agent, let why = await Self.shares.syncBack(session: client) { throw ShareHub.PullFailed(message: why) }
             if agent {
                 let fm = FileManager.default, next = store.appendingPathComponent(session + ".new-" + rid)
                 if Copilot.copySession(home.appendingPathComponent("session-state/" + session), to: next) {

@@ -401,7 +401,7 @@ func (h *shareHub) syncBack(session, agent string) string {
 		if why := pullFailure(h.send(s, "SYNC-PULL", 900*time.Second)); why != "" {
 			h.logf("sync (%s): the agent's changes were not copied back: %s", s.session, why)
 			return "the agent's changes were not copied back to your folder: " + why +
-				"; they are kept on the gateway and are copied back with the next request in this folder"
+				"; they are kept on the gateway and only the next agent request in this folder copies them back"
 		}
 	}
 	return ""

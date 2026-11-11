@@ -354,7 +354,7 @@ extension Router {
             }
             run?.stop()  // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb
             // sync: spremembe agenta k odjemalcu pred odgovorom; #82: neprevzete niso uspeh
-            if agent, let why = await Self.shares.syncBack(session: session) { throw Codex.Failure(message: why) }
+            if agent, let why = await Self.shares.syncBack(session: session) { throw ShareHub.PullFailed(message: why) }
             if agent, let thread {
                 await sessions.set(ClaudeCLI.key(all + [ClaudeCLI.Turn(role: "assistant", text: text)], scope: scope), thread)
             }
@@ -415,12 +415,14 @@ extension Router {
                 ?? (error as? Codex.Failure).map { AgentError.classify($0.message) }
                 ?? (error as? Grok.Failure).map { AgentError.classify($0.message) }
                 ?? (error as? Copilot.Failure).map { AgentError.classify($0.message) }
+                ?? (error as? ShareHub.PullFailed).map { AgentError.classify($0.message) }
                 ?? (error as? Native.TreeAlive).map { (500, "api_error", "\($0.agent): " + Native.notStopped(rid)) } ?? (500, "api_error", "\(error)")
             if error is Native.TreeAlive { await Self.shares.abandon() }  // #73: klon sync ne gre v kopijo
             Self.log.error("\(rid, privacy: .public) \(model, privacy: .public) failed: \(message, privacy: .public)")
             let agentLimit = status == 429 && !(error is SiriError)
-            if let req, agentLimit, stream, sent.head || writer is EarlyStreamWriter {  // napaka bo dogodek SSE
-                AgentError.note(AgentError.key(req, model: t.model), message)
+            // #82: neprevzeto delo agenta je končno kot omejitev (ponovitev bi agenta zagnala znova in spremembe uveljavila dvakrat)
+            if let req, agentLimit || error is ShareHub.PullFailed, stream, sent.head || writer is EarlyStreamWriter {  // napaka bo dogodek SSE
+                AgentError.note(AgentError.key(req, model: t.model), message, status: status)
             }
             if sent.head {
                 try? await writer.write(StreamTranslator.sse("error", ["type": "error", "error": ["type": type, "message": message]]))
@@ -462,21 +464,22 @@ enum AgentError {
 
     /// Omejitev, sporočena kot dogodek SSE (glava 200 je bila že poslana): Claude Code na tako napako takoj ponovi zahtevo
     /// brez pretoka; `recent` ji 60 s odgovori z istim 429 brez novega zagona CLI (enkrat).
-    static let memo = Mutex<[String: (String, Date)]>([:])
+    /// #82: tudi neprevzeto delo agenta (status 502), z x-should-retry: false.
+    static let memo = Mutex<[String: (String, Date, Int)]>([:])
 
     static func key(_ req: HTTPRequest, model: String) -> String {
         [model, req.device?.id ?? "local", req.header("x-claude-mini-session") ?? ""].joined(separator: "|")
     }
 
-    static func note(_ key: String, _ msg: String) {
+    static func note(_ key: String, _ msg: String, status: Int = 429) {
         memo.withLock { m in
             m = m.filter { $0.value.1.timeIntervalSinceNow > -60 }
-            m[key] = (msg, Date())
+            m[key] = (msg, Date(), status)
         }
     }
 
-    static func recent(_ key: String) -> String? {
-        memo.withLock { m in m.removeValue(forKey: key).flatMap { $0.1.timeIntervalSinceNow > -60 ? $0.0 : nil } }
+    static func recent(_ key: String) -> (message: String, status: Int)? {
+        memo.withLock { m in m.removeValue(forKey: key).flatMap { $0.1.timeIntervalSinceNow > -60 ? ($0.0, $0.2) : nil } }
     }
 
     /// Brez besed s `/` ali `\` (poti), razen http(s) naslovov, in brez dolgih žetonov; ID zahteve (`req_…`) ostane.

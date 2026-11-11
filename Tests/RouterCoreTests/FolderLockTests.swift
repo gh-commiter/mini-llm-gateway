@@ -113,3 +113,23 @@ private func tempDir(_ name: String) throws -> URL {
     #expect(FolderLock(id: [7, 8], dir: d.path).with(exclusive: true) { 1 } == 1)
     #expect(try FileManager.default.contentsOfDirectory(atPath: d.path).isEmpty)
 }
+
+/// N1: čakajoče pisanje ima prednost: novo branje mu ne skoči pred, po roku nil; pisanje dobi zaklep, ko bralec konča.
+@Test func folderLockWriterPreference() throws {
+    let locks = try tempDir("locks")
+    defer { try? FileManager.default.removeItem(at: locks) }
+    let l = FolderLock(id: [9, 10], dir: locks.path)
+    let wrote = NSLock()
+    nonisolated(unsafe) var writerGot: Int?
+    let inner: Int?? = l.with(exclusive: false) {
+        let writer = Thread { let r = l.with(exclusive: true, wait: 2) { 1 }; wrote.withLock { writerGot = r } }
+        writer.start()
+        while l.wantWrite.load(ordering: .sequentiallyConsistent) == 0 { usleep(1000) }
+        return l.with(exclusive: false, wait: 0.15) { 2 }  // nov bralec med čakajočim pisanjem
+    }
+    #expect(inner == .some(nil), "a new reader went ahead of a waiting writer")
+    var tries = 0
+    while wrote.withLock({ writerGot }) == nil && tries < 300 { usleep(10_000); tries += 1 }
+    #expect(wrote.withLock { writerGot } == 1)
+    #expect(l.with(exclusive: false) { 3 } == 3)
+}

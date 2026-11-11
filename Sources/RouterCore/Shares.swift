@@ -641,8 +641,11 @@ public actor ShareHub {
         unlock(copy)
         guard let why else { return nil }
         Router.log.error("sync \(s.session, privacy: .public): the agent's changes were not copied back: \(why, privacy: .public)")
-        return "the agent's changes were not copied back to your folder: \(why); they are kept on the gateway and are copied back with the next request in this folder"
+        return "the agent's changes were not copied back to your folder: \(why); they are kept on the gateway and only the next agent request in this folder copies them back"
     }
+
+    /// #82 (kot pullError v Go): minigw dela agenta ni prevzel; končna napaka (Claude Code agenta ne sme zagnati znova).
+    struct PullFailed: Error { let message: String }
 
     /// #82 (kot pullFailure v Go): zakaj minigw dela agenta ni prevzel (nil = prevzel).
     static func pullFailure(_ r: DAVResponse?) -> String? {

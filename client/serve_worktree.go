@@ -1633,9 +1633,9 @@ func (h *shareHub) worktreeBack(s *serveShare, agent string) string {
 			h.mu.Unlock()
 		}
 		h.logf("worktree %s (%s): not delivered: %s", slot.branch, s.session, fail)
-		note, _ := json.Marshal(map[string]string{"message": "worktree: " + slot.branch + " was not delivered (" + fail + "); it stays on the gateway and the next request in this session delivers it" + keep})
+		note, _ := json.Marshal(map[string]string{"message": "worktree: " + slot.branch + " was not delivered (" + fail + "); it stays on the gateway: the next agent request (same agent) in this session delivers it; otherwise it is kept on the gateway for 30 days" + keep})
 		h.sendJob(s, "WORKTREE-NOTE", note, 10*time.Second)
-		return "the agent's branch was not delivered to your folder: " + fail + "; it stays on the gateway and the next request in this session delivers it"
+		return "the agent's branch was not delivered to your folder: " + fail + "; it stays on the gateway: the next agent request (same agent) in this session delivers it; otherwise it is kept on the gateway for 30 days"
 	}
 	return ""
 }

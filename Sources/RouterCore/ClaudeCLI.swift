@@ -662,9 +662,11 @@ extension Router {
             ?? (status != 0 && t.text.isEmpty ? (errText.isEmpty ? "claude exited with \(status)" : errText) : nil) ?? pullErr {
             Self.log.error("\(rid, privacy: .public) claude failed: \(msg, privacy: .public)")
             let (code, type, text) = AgentError.classify(msg)
-            if !stream { return await error(code, type, "claude: \(text)", rid: rid, extra: code == 429 ? [("x-should-retry", "false")] : [], writer: writer) }
+            // #82: neprevzeto delo agenta je končno (ponovitev bi agenta zagnala znova in spremembe uveljavila dvakrat)
+            let final = code == 429 || pullErr != nil
+            if !stream { return await error(code, type, "claude: \(text)", rid: rid, extra: final ? [("x-should-retry", "false")] : [], writer: writer) }
             if t.text.isEmpty || !stopped || pullErr != nil {
-                if code == 429 { AgentError.note(AgentError.key(req, model: t.model), "claude: \(text)") }  // ponovitev brez pretoka
+                if final { AgentError.note(AgentError.key(req, model: t.model), "claude: \(text)", status: code) }  // ponovitev brez pretoka
                 try? await writer.write(StreamTranslator.sse("error", ["type": "error", "error": ["type": type, "message": "claude: \(text)"]]))
                 return code
             }

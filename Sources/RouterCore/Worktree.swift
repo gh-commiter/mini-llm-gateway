@@ -1539,9 +1539,9 @@ extension ShareHub {
             if let fail {  // #82: veja ne izgine; ostane v zrcalu, datoteke v kept, naslednja zahteva seje jo dostavi
                 slot.kept = kept
                 Router.log.error("worktree \(slot.branch, privacy: .public): not delivered: \(fail, privacy: .public)")
-                await note(s, "worktree: \(slot.branch) was not delivered (\(fail)); it stays on the gateway and the next request in this session delivers it" + keep)
+                await note(s, "worktree: \(slot.branch) was not delivered (\(fail)); it stays on the gateway: the next agent request (same agent) in this session delivers it; otherwise it is kept on the gateway for 30 days" + keep)
                 unlock(tree.repo)
-                return "the agent's branch was not delivered to your folder: \(fail); it stays on the gateway and the next request in this session delivers it"
+                return "the agent's branch was not delivered to your folder: \(fail); it stays on the gateway: the next agent request (same agent) in this session delivers it; otherwise it is kept on the gateway for 30 days"
             }
         }
         unlock(tree.repo)

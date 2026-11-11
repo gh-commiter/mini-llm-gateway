@@ -388,7 +388,7 @@ func TestReplyWhenDoneRetryHeaders(t *testing.T) {
 			t.Fatalf("stream=%v: %d %d %q %s", stream, st, w.Code, w.Header().Get("x-should-retry"), w.Body.String())
 		}
 	}
-	if _, ok := s.recentLimit(newReq(), "claude-grok"); ok {
+	if _, _, ok := s.recentLimit(newReq(), "claude-grok"); ok {
 		t.Fatal("an HTTP 429 is final: nothing to remember")
 	}
 	// HPX360: agent, ki je padel (502), Claude Code ne zažene znova
@@ -403,11 +403,29 @@ func TestReplyWhenDoneRetryHeaders(t *testing.T) {
 		!strings.Contains(w.Body.String(), "rate_limit_error") {
 		t.Fatalf("late error: %d %s", w.Code, w.Body.String())
 	}
-	if m, ok := s.recentLimit(newReq(), "claude-grok"); !ok || m != "You have run out of credits." {
+	if m, _, ok := s.recentLimit(newReq(), "claude-grok"); !ok || m != "You have run out of credits." {
 		t.Fatalf("fallback after a stream error: %q %v", m, ok)
 	}
-	if _, ok := s.recentLimit(newReq(), "claude-grok"); ok {
+	if _, _, ok := s.recentLimit(newReq(), "claude-grok"); ok {
 		t.Fatal("remembered once only")
+	}
+	// #82: neprevzeto delo agenta je končno: pred glavo 502 z x-should-retry: false, po glavi dogodek SSE in ponovitev
+	// brez pretoka dobi isti 502 brez novega zagona (spremembe agenta bi se uveljavile dvakrat)
+	pull := func() (string, error) {
+		return "", pullError("the agent's changes were not copied back to your folder: the shared folder is busy")
+	}
+	w = httptest.NewRecorder()
+	if st := s.replyWhenDone(w, newReq(), map[string]any{"model": "claude-codex"}, pull); st != 502 || w.Header().Get("x-should-retry") != "false" ||
+		!strings.Contains(w.Body.String(), "busy") {
+		t.Fatalf("pull failure before the head: %d %q %s", st, w.Header().Get("x-should-retry"), w.Body.String())
+	}
+	w = httptest.NewRecorder()
+	s.replyWhenDone(w, newReq(), map[string]any{"model": "claude-codex", "stream": true}, func() (string, error) { time.Sleep(150 * time.Millisecond); return pull() })
+	if !strings.Contains(w.Body.String(), "event: error") {
+		t.Fatalf("pull failure after the head: %s", w.Body.String())
+	}
+	if m, st, ok := s.recentLimit(newReq(), "claude-codex"); !ok || st != 502 || !strings.Contains(m, "busy") {
+		t.Fatalf("retry after a stream pull failure must be final: %q %d %v", m, st, ok)
 	}
 	w = httptest.NewRecorder()
 	if st := s.replyWhenDone(w, newReq(), map[string]any{"model": "claude-grok", "stream": true}, func() (string, error) { return "hi", nil }); st != 200 ||
