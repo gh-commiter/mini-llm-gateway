@@ -98,18 +98,18 @@ func TestShareCommandAndWanted(t *testing.T) {
 	sub := filepath.Join(proj, "src")
 	os.Mkdir(sub, 0o755)
 	shareCommand([]string{"add", proj})
-	if !shareWanted(sub, false) || !shareWanted(proj, false) {
+	if shareWanted(sub, false) == nil || shareWanted(proj, false) == nil {
 		t.Fatal("added folder or its subfolder not shared")
 	}
 	// Aplikacija na tem Macu dela v mapi sami; minigw serve na tem računalniku (Windows, Linux) jo potrebuje deljeno (#9).
-	if shareWanted(sub, true) != (runtime.GOOS != "darwin") {
+	if (shareWanted(sub, true) != nil) != (runtime.GOOS != "darwin") {
 		t.Fatal("local gateway: shared on macOS, or not shared on Windows/Linux")
 	}
-	if shareAllowed(filepath.VolumeName(proj)+string(filepath.Separator)) || shareAllowed(cfg) {
+	if shareRefusal(filepath.VolumeName(proj)+string(filepath.Separator)) == "" || shareRefusal(cfg) == "" {
 		t.Fatal("drive root or home folder allowed")
 	}
 	dirLink(t, cfg, filepath.Join(proj, "home")) // Windows brez pravice: stičišče
-	if shareAllowed(filepath.Join(proj, "home")) || shareAllowed(cfg+string(filepath.Separator)) {
+	if shareRefusal(filepath.Join(proj, "home")) == "" || shareRefusal(cfg+string(filepath.Separator)) == "" {
 		t.Fatal("home folder allowed through a link or with a trailing separator")
 	}
 }
