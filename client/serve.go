@@ -352,8 +352,14 @@ func serveCommand(args []string) {
 	if err != nil {
 		fail(err.Error())
 	}
-	hardenRouter()                             // Linux: ni dumpable (agenti ne berejo pomnilnika routerja)
-	keyDel(s.cfgDir, agentLoginKey("copilot")) // #81 L1: žeton Copilot do 0.5.24 se ne uporablja več
+	hardenRouter() // Linux: ni dumpable (agenti ne berejo pomnilnika routerja)
+	// #81 L1, N2: žeton Copilot do 0.5.24 se ne uporablja več; izbriše se le, če je, v ozadju (zaklenjena shramba
+	// ključev ne ustavi zagona). ponytail: visi secret-tool ostane do konca procesa; rok, če bo to kdaj težava.
+	go func() {
+		if t, _ := keyGet(s.cfgDir, agentLoginKey("copilot")); t != "" {
+			keyDel(s.cfgDir, agentLoginKey("copilot"))
+		}
+	}()
 	ln, err := listenRouter(c)
 	if err != nil {
 		fail(err.Error())

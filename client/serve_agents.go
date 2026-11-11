@@ -363,12 +363,12 @@ func grokArgs(cwd, promptFile, cfgDir string, agent bool, model string, write bo
 }
 
 // copilotArgs: kot Copilot.args na Macu. Nikoli --allow-all-tools/-paths/-urls, --allow-all ali --yolo: v načinu -p Copilot
-// zavrne vsako orodje brez --allow-tool; zavrnitve so tu še izrecno. Privzeto le branje; write le z dovoljenjem; lupina le
-// z dovoljenjem (commands), gh in security tudi tedaj ne; url le z omrežjem. Brez sistemske začasne mape, vgrajenih MCP
+// zavrne vsako orodje brez --allow-tool; zavrnitve so tu še izrecno. Privzeto le branje; write le z dovoljenjem; lupine
+// nikoli (#81 H1; gh in security še posebej, obramba v globino); url le z omrežjem. Brez sistemske začasne mape, vgrajenih MCP
 // (GitHub s prijavo uporabnika), vprašanj in samodejnih posodobitev; seja po --session-id.
 // Navodilo gre na stdin (brez -p; preverjeno s copilot 1.0.107), ne v ukazno vrstico: to vidijo ps in /proc/<pid>/cmdline.
 // Brez --add-dir (M3): ta naloži .github/skills in .github/agents mape kot zaupanja vredne; agent vidi le mapo seje.
-func copilotArgs(agent bool, model string, write, commands, network bool, session string) []string {
+func copilotArgs(agent bool, model string, write, network bool, session string) []string {
 	a := []string{"--output-format", "json", "--no-ask-user", "--disable-builtin-mcps", "--disallow-temp-dir",
 		"--no-auto-update", "--no-color", "--disable-client-telemetry",
 		"--secret-env-vars=" + strings.Join(copilotTokenVars, ","), "--session-id", session}
@@ -385,11 +385,7 @@ func copilotArgs(agent bool, model string, write, commands, network bool, sessio
 	}
 	pick(agent, "read")
 	pick(agent && write, "write")
-	commands = commands && write // ukazi pišejo mimo pravila write (tudi ne pri --ro): le s pisanjem
-	pick(agent && commands, "shell")
-	if agent && commands {
-		deny = append(deny, "shell(gh:*)", "shell(security:*)")
-	}
+	deny = append(deny, "shell", "shell(gh:*)", "shell(security:*)") // #81 H1: brez ukazov
 	pick(agent && network, "url")
 	for _, t := range allow {
 		a = append(a, "--allow-tool", t)
@@ -828,18 +824,14 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 	write := ac.canWrite(k) && !readOnly
 	// #81 (D1): Copilot le s prijavo copilot login uporabnika prehoda (kazalec v svež COPILOT_HOME), brez žetona in gh.
 	var copilotConf []byte
-	commands := ac.Commands
 	if k.name == "copilot" {
 		var why string
 		if copilotConf, why = copilotLogin(); why != "" {
 			w.Header().Set("x-should-retry", "false")
 			return writeError(w, r.rid, 503, why)
 		}
-		if commands { // H1: ukaz bi prebral prijavo iz shrambe ključev (vse platforme)
-			commands = false
-			if agent && write {
-				s.hub.note(r.h("x-claude-mini-session"), copilotNoCommands)
-			}
+		if ac.Commands && agent && write { // H1: ukazov ni (ukaz bi prebral prijavo iz shrambe ključev), shranjen true ne velja
+			s.hub.note(r.h("x-claude-mini-session"), copilotNoCommands)
 		}
 	}
 	scope := k.name + "|" + r.owner() + "|" + r.h("x-claude-mini-cwd")
@@ -990,6 +982,12 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 				defer stop()
 				m.env = append(m.env, "DBUS_SESSION_BUS_ADDRESS="+addr)
 			}
+			if !inTree { // #81 N1: git copilota tudi v sync brez .git/config odjemalca (fsmonitor, hooki …)
+				m.env = append(m.env, gitGuardEnv(k.name)...)
+				if runtime.GOOS == "linux" && gitExecWrap(gw) != "" { // ovoj git na PATH (brez posrednika D-Bus)
+					m.env, m.ro = append(m.env, "PATH="+agentPath(gw)), append(m.ro, gw)
+				}
+			}
 			if deps != nil && runtime.GOOS == "linux" && !agentUnconfined(s.cfgDir) { // #67: ves Copilot je v bwrap (ovoj git: init/clone v $MINIGW_DEPS)
 				m.env = append(m.env, "MINIGW_SANDBOXED=1")
 			}
@@ -1010,7 +1008,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 				return "", err
 			}
 			copilotPrepare(ctx, exe, filepath.Join(tmp, "prep"), tmp, s.cfgDir, c.Scratch, s.tempRoots())
-			args := copilotArgs(agent, model, write, commands, ac.Network, resume)
+			args := copilotArgs(agent, model, write, ac.Network, resume)
 			var answer string
 			err = s.runAgentProcess(ctx, r, exe, args, withTree(m), dir, prompt, func(line []byte) {
 				t, st := copilotEvent(line)

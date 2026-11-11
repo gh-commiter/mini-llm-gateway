@@ -199,8 +199,7 @@ const S = {
   copilotModels: ["Models (comma-separated; empty = only the default, “auto”)", "Modeli (ločeni z vejico; prazno = le privzeti, »auto«)"],
   allowWeb: ["Allow web access (fetch tool)", "Dovoli dostop do spleta (orodje fetch)"],
   allowCommands: ["Allow commands", "Dovoli ukaze"],
-  copilotCommandsAsk: ["Copilot then runs commands as this user. They can read and change everything this user can, including gateway settings, use the network, and make Copilot requests with your sign-in. Allow only if you trust the devices that use Copilot.",
-    "Copilot nato izvaja ukaze kot ta uporabnik. Lahko berejo in spreminjajo vse, kar ta uporabnik, tudi nastavitve prehoda, uporabljajo omrežje in s tvojo prijavo pošiljajo zahteve Copilot. Dovoli le, če zaupaš napravam, ki uporabljajo Copilot."],
+  copilotNoCommands: ["Not available: a command could read Copilot's sign-in from the system keyring.", "Ni na voljo: ukaz bi lahko prebral prijavo Copilot iz sistemske shrambe ključev."],
   copilotFooter: ["The claude-copilot models run Copilot CLI as an agent in the synced copy of the client's folder, on Linux under bwrap with a fresh Copilot home for each request. By default it may only read that folder; with writing on it may edit files there. It signs in only with this user's own `copilot login`, whose token stays in the system keyring; on Linux that needs a Secret Service keyring (GNOME Keyring, KWallet) and xdg-dbus-proxy, so a headless Linux gateway has no Copilot. Commands are not available (a command could read the sign-in). Copilot is not supported on a Windows gateway in this version.",
     "Modeli claude-copilot poženejo Copilot CLI kot agenta v sinhronizirani kopiji mape odjemalca, na Linuxu pod bwrap s svežo domačo mapo Copilot za vsako zahtevo. Privzeto sme mapo le brati; s pisanjem sme v njej urejati datoteke. Prijavi se le s `copilot login` tega uporabnika, katere žeton ostane v sistemski shrambi ključev; na Linuxu to potrebuje shrambo Secret Service (GNOME Keyring, KWallet) in xdg-dbus-proxy, zato prehod Linux brez namizja Copilota nima. Ukazov ni (ukaz bi lahko prebral prijavo). Copilot v tej različici na prehodu Windows ni podprt."],
   foundryDesc: ["Microsoft Foundry Local: models on this computer, without the cloud.", "Microsoft Foundry Local: modeli na tem računalniku, brez oblaka."],
@@ -525,10 +524,7 @@ async function copilotPane() {
   const models = el("input", {type: "text", value: (a.models || []).join(", "), placeholder: "gpt-5.2, claude-sonnet-4.5"});
   autosave(models, n1, v => patch({models: v.split(",").map(x => x.trim()).filter(Boolean)}));
   const bare = a.sandboxed === undefined ? st.agentsUnsandboxed : !a.sandboxed, locked = bare && !c.allowUnsandboxedBash;
-  const commands = toggle(a.commands, (v, i) => save(n2, async () => {
-    if (v && !confirm(t("copilotCommandsAsk"))) { i.checked = false; return; }
-    await patch({commands: v});
-  }), !a.write || locked || !!a.commandsUnavailable);
+  const commands = toggle(false, () => {}, true);  // #81 H1: Copilot nima ukazov (razlog spodaj)
   return [
     card(...ICON.copilot, "Copilot CLI", t("copilotDesc")),
     group(row(labelSub(t("enabled"), bare ? t(locked ? "agentLockedWin" : "agentWarnWin") : null),
@@ -539,7 +535,7 @@ async function copilotPane() {
     section(t("sandbox")),
     group(row(t("allowWrite"), toggle(a.write, v => save(n2, async () => { await patch({write: v}); show("copilot"); }), locked)),
       row(t("allowWeb"), toggle(a.network, v => save(n2, () => patch({network: v})), locked)),
-      row(labelSub(t("allowCommands"), a.commandsUnavailable || null), commands),
+      row(labelSub(t("allowCommands"), t("copilotNoCommands")), commands),
       workRow(a, patch, n2, locked),
       row(labelSub(t("askOthers"), t("askOthersHelp")), toggle(a.askOthers, v => save(n2, () => patch({askOthers: v})), locked))),
     n2, n3,

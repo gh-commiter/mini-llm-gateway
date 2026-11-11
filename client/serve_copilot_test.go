@@ -27,12 +27,12 @@ func copilotRules(a []string) (allow, deny []string) {
 }
 
 func TestCopilotArgs(t *testing.T) {
-	ro := copilotArgs(true, "", false, false, false, "s1")
+	ro := copilotArgs(true, "", false, false, "s1")
 	allow, deny := copilotRules(ro)
 	if slices.ContainsFunc(ro, func(x string) bool { return slices.Contains(copilotForbidden, x) || x == "--add-dir" }) { // M3
 		t.Fatalf("forbidden flag: %q", ro)
 	}
-	if !slices.Equal(allow, []string{"read"}) || !slices.Equal(deny, []string{"memory", "write", "shell", "url"}) {
+	if !slices.Equal(allow, []string{"read"}) || !slices.Equal(deny, []string{"memory", "write", "shell", "shell(gh:*)", "shell(security:*)", "url"}) {
 		t.Fatalf("read-only: allow %q deny %q", allow, deny)
 	}
 	for _, f := range []string{"--disallow-temp-dir", "--disable-builtin-mcps", "--no-ask-user", "--no-auto-update",
@@ -44,19 +44,15 @@ func TestCopilotArgs(t *testing.T) {
 	if i := slices.Index(ro, "--session-id"); i < 0 || ro[i+1] != "s1" || slices.Contains(ro, "-p") { // navodilo na stdin
 		t.Fatalf("session/prompt: %q", ro)
 	}
-	w := copilotArgs(true, "gpt-5.2", true, true, true, "s")
+	w := copilotArgs(true, "gpt-5.2", true, true, "s")
 	allow, deny = copilotRules(w)
-	if !slices.Equal(allow, []string{"read", "write", "shell", "url"}) || !slices.Contains(deny, "shell(gh:*)") || !slices.Contains(deny, "shell(security:*)") {
-		t.Fatalf("write+commands: allow %q deny %q", allow, deny)
-	}
-	if allow, deny := copilotRules(copilotArgs(true, "", false, true, false, "s")); !slices.Equal(allow, []string{"read"}) ||
-		!slices.Contains(deny, "shell") {
-		t.Fatalf("commands without write (or --ro): allow %q deny %q", allow, deny)
+	if !slices.Equal(allow, []string{"read", "write", "url"}) || !slices.Contains(deny, "shell") { // #81 H1: lupine nikoli
+		t.Fatalf("write: allow %q deny %q", allow, deny)
 	}
 	if w[slices.Index(w, "--model")+1] != "gpt-5.2" {
 		t.Fatalf("model: %q", w)
 	}
-	chat := copilotArgs(false, "", true, true, true, "s")
+	chat := copilotArgs(false, "", true, true, "s")
 	if allow, deny = copilotRules(chat); len(allow) != 0 || !slices.Contains(deny, "read") {
 		t.Fatalf("chat: allow %q deny %q", allow, deny)
 	}
@@ -242,7 +238,7 @@ func TestCopilotThroughRouter(t *testing.T) {
 	os.WriteFile(copilot, []byte(`#!/bin/sh
 if [ "$1" = --version ]; then echo "token=${COPILOT_GITHUB_TOKEN:-none}" >> "`+argsFile+`.version"; exit 0; fi
 id=""; prev=""; for a in "$@"; do [ "$prev" = --session-id ] && id="$a"; prev="$a"; done
-printf '%s\n' "$@" "dbus=$DBUS_SESSION_BUS_ADDRESS" "config=$(cat "$COPILOT_HOME/config.json")" "home=$COPILOT_HOME" "token=$COPILOT_GITHUB_TOKEN$GH_TOKEN$GITHUB_TOKEN" > "`+argsFile+`"
+printf '%s\n' "$@" "fsmon=$GIT_CONFIG_KEY_0" "path=$PATH" "dbus=$DBUS_SESSION_BUS_ADDRESS" "config=$(cat "$COPILOT_HOME/config.json")" "home=$COPILOT_HOME" "token=$COPILOT_GITHUB_TOKEN$GH_TOKEN$GITHUB_TOKEN" > "`+argsFile+`"
 cat > "`+argsFile+`.stdin"
 st="$COPILOT_HOME/session-state/$id"; mkdir -p "$st"
 n=$(cat "$st/events.jsonl" 2>/dev/null || echo 0); echo $((n + 1)) > "$st/events.jsonl"
@@ -327,6 +323,11 @@ echo '{"type":"assistant.message","data":{"content":"copilot says hi turn='$((n 
 	if field(a, "token") != "" || field(a, "config") != `{"lastLoggedInUser":{"host":"https://github.com","login":"octo-cat"},`+
 		`"loggedInUsers":[{"host":"https://github.com","login":"octo-cat"},{"host":"corp.ghe.com","kind":"user","login":"octo_corp"}]}` {
 		t.Fatalf("login handoff: %q", a)
+	}
+	// #81 N1: tudi zunaj worktree git copilota brez .git/config odjemalca; Linux: ovoj git (brez D-Bus) na PATH
+	if field(a, "fsmon") != "core.fsmonitor" || runtime.GOOS == "linux" && lookPath("git") != "" &&
+		!strings.HasPrefix(field(a, "path"), filepath.Join(s.conf().Scratch, "gitexec", "bin")+":") {
+		t.Fatalf("git guard: %q", a)
 	}
 	if want := map[bool]string{true: "unix:path=" + proxied + "/bus", false: ""}[runtime.GOOS == "linux"]; field(a, "dbus") != want ||
 		runtime.GOOS == "linux" && filepath.Dir(reqHome) != proxied { // Linux: le posrednik v mapi zahteve

@@ -698,13 +698,22 @@ func finalize(repo, wt, branch, base, agent, out string, links map[string]string
 // #40: brez lastnikovih nastavitev git (identiteta, podpis, poverilnice, insteadOf); avtor commitov je agent (agent: codex …).
 // #67: MINIGW_DEPS (depsDir), Claude Code TMPDIR in predpomnilniki orodij pod Scratch (depsEnv).
 func worktreeHarnessEnv(wt, maven, tmp, agent string) []string {
+	return append(append(gitGuardEnv(agent),
+		"GIT_DIR="+filepath.Join(wt, ".git"), "GIT_WORK_TREE="+wt, "GIT_COMMON_DIR="+filepath.Join(wt, ".git"),
+		"MAVEN_OPTS=-Dmaven.repo.local="+maven+" -Djava.io.tmpdir="+tmp, "TMPDIR="+tmp, "TMP="+tmp, "TEMP="+tmp,
+		"TMPPREFIX="+filepath.Join(tmp, "zsh")), depsEnv(wt)...) // #67: TMPPREFIX: here-doc zsh ne v /tmp
+}
+
+// gitGuardEnv: nastavitve git iz okolja, ki preglasijo .git/config agenta ali odjemalca (fsmonitor, hooki, atributi …;
+// kot Worktree.gitGuardEnv na Macu). Worktree (worktreeHarnessEnv) in #81 N1 Copilot v vsakem načinu.
+func gitGuardEnv(agent string) []string {
 	// par 9: git init/clone agenta (le v $MINIGW_DEPS) ne kopira predlog (vzorčni hooki); Windows: core.longpaths (tam
 	// agenti repozitorijev ne delajo, prazna vrednost okolja pa tam ni preverjena)
 	pair9 := []string{"GIT_CONFIG_KEY_9=init.templateDir", "GIT_CONFIG_VALUE_9="}
 	if gitLongPaths { // le Windows (Worktree.harnessEnv na Macu ga nima, vrstni red parov 0–8 enak)
 		pair9 = []string{"GIT_CONFIG_KEY_9=core.longpaths", "GIT_CONFIG_VALUE_9=true"}
 	}
-	return append(append([]string{"GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_NOSYSTEM=1",
+	return append([]string{"GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_NOSYSTEM=1",
 		"GIT_CONFIG_COUNT=10", "GIT_CONFIG_KEY_0=core.fsmonitor", "GIT_CONFIG_VALUE_0=false",
 		"GIT_CONFIG_KEY_1=core.hooksPath", "GIT_CONFIG_VALUE_1=" + os.DevNull, // ne v klonu: tja agent lahko piše
 		"GIT_CONFIG_KEY_2=core.attributesFile", "GIT_CONFIG_VALUE_2=" + os.DevNull,
@@ -713,10 +722,7 @@ func worktreeHarnessEnv(wt, maven, tmp, agent string) []string {
 		"GIT_CONFIG_KEY_5=core.excludesFile", "GIT_CONFIG_VALUE_5=" + os.DevNull, // ne ~/.config/git/ignore (peskovnik: EPERM)
 		"GIT_CONFIG_KEY_6=user.name", "GIT_CONFIG_VALUE_6=" + agentAuthor(agent), "GIT_CONFIG_KEY_7=user.email", "GIT_CONFIG_VALUE_7=" + agent + "@minigw.invalid",
 		"GIT_CONFIG_KEY_8=safe.bareRepository", "GIT_CONFIG_VALUE_8=explicit", // #61: golega repozitorija ne najde sam (le z GIT_DIR)
-		"GIT_ATTR_SOURCE=4b825dc642cb6eb9a060e54bf8d69288fbee4904",
-		"GIT_DIR=" + filepath.Join(wt, ".git"), "GIT_WORK_TREE=" + wt, "GIT_COMMON_DIR=" + filepath.Join(wt, ".git"),
-		"MAVEN_OPTS=-Dmaven.repo.local=" + maven + " -Djava.io.tmpdir=" + tmp, "TMPDIR=" + tmp, "TMP=" + tmp, "TEMP=" + tmp,
-		"TMPPREFIX=" + filepath.Join(tmp, "zsh")}, pair9...), depsEnv(wt)...) // #67: TMPPREFIX: here-doc zsh ne v /tmp
+		"GIT_ATTR_SOURCE=4b825dc642cb6eb9a060e54bf8d69288fbee4904"}, pair9...)
 }
 
 // depsDir (#67): mapa odvisnosti pogovora ($MINIGW_DEPS) poleg klona (ista mapa klonov pod Scratch, isti nosilec);

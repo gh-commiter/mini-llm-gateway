@@ -62,19 +62,14 @@ public enum Copilot {
     /// Brez sistemske začasne mape, vgrajenih strežnikov MCP (GitHub s prijavo), vprašanj in samodejnih posodobitev (zažene
     /// vgrajeno različico, ne paketa iz ~/Library/Caches/copilot); seja po `session`.
     /// Navodilo gre na stdin (brez -p; preverjeno s copilot 1.0.107), ne v ukazno vrstico: to vidijo `ps` in drugi uporabniki.
-    static func args(agent: Bool, model: String?, write: Bool, commands: Bool, network: Bool, session: String) -> [String] {
+    static func args(agent: Bool, model: String?, write: Bool, network: Bool, session: String) -> [String] {
         var a = ["--output-format", "json", "--no-ask-user", "--disable-builtin-mcps", "--disallow-temp-dir", "--no-auto-update", "--no-color",
                  "--disable-client-telemetry", "--secret-env-vars=" + tokenVars.joined(separator: ","), "--session-id", session]
         if let model { a += ["--model", model] }
         var allow: [String] = [], deny = ["memory"]
         if agent { allow.append("read") } else { deny.append("read") }
         if agent && write { allow.append("write") } else { deny.append("write") }
-        if agent && write && commands {  // ukazi pišejo mimo pravila write: le s pisanjem
-            allow.append("shell")
-            deny += ["shell(gh:*)", "shell(security:*)"]  // prijava GitHub in Keychain (najboljši trud: peskovnik je meja)
-        } else {
-            deny.append("shell")
-        }
+        deny += ["shell", "shell(gh:*)", "shell(security:*)"]  // #81 H1: brez ukazov (gh, security še izrecno: obramba v globino)
         if agent && network { allow.append("url") } else { deny.append("url") }
         return a + allow.flatMap { ["--allow-tool", $0] } + deny.flatMap { ["--deny-tool", $0] }
     }
@@ -382,7 +377,7 @@ extension Router {
                                         branch: tree?.branch, gits: tree?.gits ?? []) + "\n\n" + prompt
             }
         }
-        let write = cfg.write && !readOnly, commands = false  // #81 H1: ukaz bi prebral prijavo (Keychain); shranjen true ne velja
+        let write = cfg.write && !readOnly  // #81 H1: brez ukazov (ukaz bi prebral prijavo iz Keychaina); shranjen true ne velja
         if agent && write && cfg.commands, let s = req.header("x-claude-mini-session") { await Self.shares.note(session: s, Copilot.noCommands) }
         let base = ProcessInfo.processInfo.environment
         let root = tree?.root ?? cwd
@@ -430,7 +425,7 @@ extension Router {
             if deps != nil { treeEnv?["MINIGW_NETWORK_OFF"] = Worktree.networkOff("copilot", config) }
         }
         let extraEnv = treeEnv
-            ?? ["TMPDIR": tmp.path + "/", "CLANG_MODULE_CACHE_PATH": tmp.appendingPathComponent("ModuleCache").path]
+            ?? Worktree.gitGuardEnv(agent: "copilot").merging(["TMPDIR": tmp.path + "/", "CLANG_MODULE_CACHE_PATH": tmp.appendingPathComponent("ModuleCache").path]) { $1 }  // #81 N1
         let run = agent ? await startAgentRun(req, kind: "copilot", dir: sharedDir, secretDir: reqDir, readOnly: readOnly || (tree != nil && !cfg.write)) : nil  // peskovnik: zaprta le vrata prehoda; žeton izvajanja v mapi zahteve
         defer { run?.stop() }
         let env = Copilot.environment(base, home: home, extra: extraEnv.merging(run?.env ?? [:]) { $1 })
@@ -451,7 +446,7 @@ extension Router {
             let prep = box + "(allow file-read* file-read-data file-write* (subpath \"\(cache)\"))\n"
             await offPool { Copilot.prepare(exe, base: base, home: prepHome, cwd: tmp, sandbox: prep) }
         }
-        let args = Copilot.args(agent: agent, model: model, write: write, commands: commands,
+        let args = Copilot.args(agent: agent, model: model, write: write,
                                 network: cfg.network && (tree == nil || config.worktreeCodexNetwork), session: session)
         let sessions = Self.copilotSessions, client = req.header("x-claude-mini-session") ?? ""
         return await replyWhenDone(body: body, model: "claude-copilot", rid: rid, writer: writer, req: req) {

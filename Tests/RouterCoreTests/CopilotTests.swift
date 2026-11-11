@@ -16,24 +16,19 @@ private func rules(_ a: [String]) -> (allow: [String], deny: [String]) {
 }
 
 @Test func copilotArgsReadOnlyByDefaultAndNeverAllowAll() {
-    let ro = Copilot.args(agent: true, model: nil, write: false, commands: false, network: false, session: "s1")
+    let ro = Copilot.args(agent: true, model: nil, write: false, network: false, session: "s1")
     #expect(!ro.contains { forbidden.contains($0) || $0 == "--add-dir" })  // M3: koren klona je delovna mapa
-    #expect(rules(ro).allow == ["read"] && Set(rules(ro).deny) == ["memory", "write", "shell", "url"])
+    #expect(rules(ro).allow == ["read"] && Set(rules(ro).deny) == ["memory", "write", "shell", "shell(gh:*)", "shell(security:*)", "url"])
     for f in ["--disallow-temp-dir", "--disable-builtin-mcps", "--no-ask-user", "--no-auto-update", "--disable-client-telemetry",
               "--secret-env-vars=COPILOT_GITHUB_TOKEN,GH_TOKEN,GITHUB_TOKEN"] { #expect(ro.contains(f)) }
     #expect(ro[ro.firstIndex(of: "--session-id")! + 1] == "s1" && !ro.contains("-p") && !ro.contains("--model"))  // navodilo na stdin
 
-    let w = Copilot.args(agent: true, model: "gpt-5.2", write: true, commands: false, network: true, session: "s")
+    let w = Copilot.args(agent: true, model: "gpt-5.2", write: true, network: true, session: "s")  // #81 H1: lupine nikoli
     #expect(rules(w).allow == ["read", "write", "url"] && rules(w).deny.contains("shell") && !w.contains { forbidden.contains($0) })
     #expect(w[w.firstIndex(of: "--model")! + 1] == "gpt-5.2")
 
-    let c = Copilot.args(agent: true, model: nil, write: true, commands: true, network: false, session: "s")
-    #expect(rules(c).allow.contains("shell") && rules(c).deny.contains("shell(gh:*)") && rules(c).deny.contains("shell(security:*)"))
-    let cro = Copilot.args(agent: true, model: nil, write: false, commands: true, network: false, session: "s")
-    #expect(rules(cro).allow == ["read"] && rules(cro).deny.contains("shell"))  // ukazi brez pisanja (ali --ro): ne
-
-    let chat = Copilot.args(agent: false, model: nil, write: true, commands: true, network: true, session: "s")
-    #expect(rules(chat).allow.isEmpty && Set(rules(chat).deny) == ["memory", "read", "write", "shell", "url"])  // brez orodij: nič
+    let chat = Copilot.args(agent: false, model: nil, write: true, network: true, session: "s")
+    #expect(rules(chat).allow.isEmpty && Set(rules(chat).deny) == ["memory", "read", "write", "shell", "shell(gh:*)", "shell(security:*)", "url"])  // brez orodij: nič
 }
 
 @Test func copilotModelsEnvAndEvents() throws {
@@ -167,9 +162,9 @@ private func fakeCopilot(_ dir: URL, _ extra: String = "") throws -> URL {
     \(extra)
     echo '{"type":"tool.execution_start","data":{"toolName":"view"}}'
     echo '{"type":"assistant.message","data":{"content":"first","toolRequests":[{}]}}'
-    printf '{"type":"assistant.message","data":{"content":"ARGS=%s;CWD=%s;HOME=%s;TOKEN=%s;STDIN=%s;TURN=%s;HOOKS=%s;LINK=%s;ALLOW=%s;CONFIG=%s;"}}\\n' \\
+    printf '{"type":"assistant.message","data":{"content":"ARGS=%s;CWD=%s;HOME=%s;TOKEN=%s;STDIN=%s;TURN=%s;HOOKS=%s;LINK=%s;ALLOW=%s;CONFIG=%s;FSMON=%s;"}}\\n' \\
       "$(echo "$@" | tr ' ' '|')" "$(pwd)" "$COPILOT_HOME" "$COPILOT_GITHUB_TOKEN$GH_TOKEN$GITHUB_TOKEN" "$stdin" "$((n + 1))" "$hooks" "$link" "${COPILOT_ALLOW_ALL:-}" \\
-      "$(/usr/bin/base64 < "$COPILOT_HOME/config.json" | tr -d '\\n')"
+      "$(/usr/bin/base64 < "$COPILOT_HOME/config.json" | tr -d '\\n')" "$GIT_CONFIG_KEY_0"
     """.utf8).write(to: exe)
     chmod(exe.path, 0o755)
     return exe
@@ -210,6 +205,7 @@ private func field(_ text: String, _ name: String) -> String {
     #expect(field(w.text, "STDIN") == "1" && !args.contains { $0.contains("read a.txt") })  // navodilo na stdin, ne v argumentih
     #expect(field(w.text, "CWD") == proj.path && field(w.text, "TOKEN").isEmpty && field(w.text, "ALLOW").isEmpty)  // #81: brez žetona
     // #81: svež config.json le s kazalcem na prijavo (ne trustedFolders, installedPlugins)
+    #expect(field(w.text, "FSMON") == "core.fsmonitor")  // #81 N1: tudi v načinu direct git brez .git/config odjemalca
     #expect(Data(base64Encoded: field(w.text, "CONFIG")).map { String(decoding: $0, as: UTF8.self) } == copilotPointer)
     let home = field(w.text, "HOME")
     let req = (Sync.real(c.scratch("copilot/req")) ?? c.scratch("copilot/req")).path

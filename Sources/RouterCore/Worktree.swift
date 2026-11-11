@@ -543,22 +543,28 @@ public enum Worktree {
     /// #40 (kot Go): brez lastnikovih nastavitev git (identiteta, podpis, poverilnice, insteadOf; v peskovniku ~ da EPERM),
     /// avtor commitov je agent (`agent`: claude, codex …).
     public static func harnessEnv(root: URL, maven: URL, agent: String) -> [String: String] {
+        let git = root.appendingPathComponent(".git").path
+        let env = ["GIT_DIR": git, "GIT_WORK_TREE": root.path, "GIT_COMMON_DIR": git,
+                   "MAVEN_OPTS": "-Dmaven.repo.local=\(maven.path) -Djava.io.tmpdir=\(root.appendingPathComponent(".build/tmp").path)",
+                   "TMPDIR": root.appendingPathComponent(".build/tmp").path + "/",
+                   "CLANG_MODULE_CACHE_PATH": root.appendingPathComponent(".build/ModuleCache").path, "xcrun_nocache": "1",
+                   "TMPPREFIX": root.appendingPathComponent(".build/tmp/zsh").path]  // #67: here-doc zsh ne v /tmp
+        return gitGuardEnv(agent: agent).merging(env) { $1 }.merging(depsEnv(root)) { $1 }
+    }
+
+    /// Nastavitve git iz okolja, ki preglasijo .git/config agenta ali odjemalca (kot Go gitGuardEnv): worktree
+    /// (`harnessEnv`) in #81 N1 Copilot v vsakem načinu.
+    static func gitGuardEnv(agent: String) -> [String: String] {
         // N9: status in diff ne vstopita v podmodul (submodule.<ime>.ignore iz .gitmodules to preglasi: claudeEnv)
         let pairs = [("core.fsmonitor", "false"), ("core.hooksPath", "/dev/null"), ("core.attributesFile", "/dev/null"),
                      ("diff.ignoreSubmodules", "all"), ("submodule.recurse", "false"), ("core.excludesFile", "/dev/null"),
                      ("user.name", author(agent)), ("user.email", agent + "@minigw.invalid"),
                      ("safe.bareRepository", "explicit"),  // #61: golega repozitorija ne najde sam (le z GIT_DIR/--git-dir)
                      ("init.templateDir", "")]  // #67: git init/clone agenta (le v $MINIGW_DEPS) ne kopira predlog (vzorčni hooki)
-        let git = root.appendingPathComponent(".git").path
         var env = ["GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",
-                   "GIT_CONFIG_COUNT": String(pairs.count), "GIT_ATTR_SOURCE": "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
-                   "GIT_DIR": git, "GIT_WORK_TREE": root.path, "GIT_COMMON_DIR": git,
-                   "MAVEN_OPTS": "-Dmaven.repo.local=\(maven.path) -Djava.io.tmpdir=\(root.appendingPathComponent(".build/tmp").path)",
-                   "TMPDIR": root.appendingPathComponent(".build/tmp").path + "/",
-                   "CLANG_MODULE_CACHE_PATH": root.appendingPathComponent(".build/ModuleCache").path, "xcrun_nocache": "1",
-                   "TMPPREFIX": root.appendingPathComponent(".build/tmp/zsh").path]  // #67: here-doc zsh ne v /tmp
+                   "GIT_CONFIG_COUNT": String(pairs.count), "GIT_ATTR_SOURCE": "4b825dc642cb6eb9a060e54bf8d69288fbee4904"]
         for (i, (k, v)) in pairs.enumerated() { env["GIT_CONFIG_KEY_\(i)"] = k; env["GIT_CONFIG_VALUE_\(i)"] = v }
-        return env.merging(depsEnv(root)) { $1 }
+        return env
     }
 
     /// N9 (kot Go worktreeClaudeEnv): okolje claude -p v klonu: harnessEnv in GIT_EXEC_PATH z ovojem `gitexec`. Git zažene
