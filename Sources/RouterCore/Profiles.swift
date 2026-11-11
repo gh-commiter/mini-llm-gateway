@@ -318,6 +318,37 @@ public enum Profiles {
         }
     }
 
+    /// #80 (kot Go gate): izhod toka claude piše svoja nit, da stdout, ki ga nihče ne bere (Ctrl+S, cev brez bralca),
+    /// ne ustavi branja in roka 2 s. Ena vrsta za stdout in stderr ohrani vrstni red; po prvi napaki pisanja (| head,
+    /// zaprt stderr) ta ročaj ne piše več. Po close se novo pisanje ne začne, tisto v teku se lahko še konča.
+    public final class OutputGate: @unchecked Sendable {
+        private let queue = DispatchQueue(label: "minigw.output")
+        private let handles: [FileHandle]
+        private let lock = NSLock()
+        private var off: Set<Int> = [], closed = false
+
+        public init(out: FileHandle, err: FileHandle) { handles = [out, err] }
+
+        public func out(_ s: String) { write(s, 0) }
+        public func err(_ s: String) { write(s, 1) }
+
+        private func write(_ s: String, _ i: Int) {
+            guard !s.isEmpty else { return }
+            queue.async { [self] in
+                guard lock.withLock({ !closed && !off.contains(i) }) else { return }
+                do { try handles[i].write(contentsOf: Data(s.utf8)) } catch { lock.withLock { _ = off.insert(i) } }
+            }
+        }
+
+        /// Počaka, da gre izhod ven, največ timeout; nato ne piše več (vrstice o vejah sledijo na stderr).
+        public func close(timeout: TimeInterval) {
+            let s = DispatchSemaphore(value: 0)
+            queue.async { s.signal() }
+            _ = s.wait(timeout: .now() + timeout)
+            lock.withLock { closed = true }
+        }
+    }
+
     /// N6b, N7: claude brez terminala na stdin ali z -p bere navodilo kot vnos uporabnika: tedaj dobi --disable-slash-commands
     /// in CLAUDE_CODE_DISABLE_FILE_MENTIONS=1. Ostane le pogovor v terminalu, kjer tipka človek (kot Go promptGuard).
     public static func promptGuard(_ args: [String], env: [String: String], stdinTerminal: Bool) -> Bool {

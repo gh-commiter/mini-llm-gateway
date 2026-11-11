@@ -4,6 +4,7 @@
 
 - Fixed: while an agent was starting, the gateway could, rarely, see its own Scratch folder as used by another gateway and refuse requests (also right after a settings change). Mac app and `minigw serve` on macOS and Linux.
 - Fixed (Mac `minigw`): with several gateway profiles, a request could, rarely, get 502 "gateway … is not reachable" for up to 30 s.
+- Fixed (`minigw` on all systems): `minigw claude -p` no longer hangs after Claude Code ends when nothing reads its output (an unread pipe, a paused terminal); it ends about 2 s later and still prints the branch line. On the Mac, `minigw` no longer crashes when its error output is closed (`2>&-`, a closed pipe).
 
 ## 0.5.24
 

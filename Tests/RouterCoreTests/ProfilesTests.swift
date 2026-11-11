@@ -298,3 +298,52 @@ private func send(_ url: String, _ method: String, _ path: String, secret: Strin
     }
     #expect(run([text(#"a\u001b[2Jb\tc\u009bd"#)]) == ("a[2Jb\tcd\n", "", false))
 }
+
+/// #80 (kot client/stream_test.go TestGateCloseBlockedWrite, TestRunClaudeStalledOutput): stdout, ki ga nihče ne bere,
+/// ne zadrži close dlje od roka; pisanje v teku se konča, novo po close ne začne; stderr gre po stdout.
+@Test func outputGateUnreadStdout() throws {
+    signal(SIGPIPE, SIG_IGN)
+    let o = Pipe(), e = Pipe()
+    let gate = Profiles.OutputGate(out: o.fileHandleForWriting, err: e.fileHandleForWriting)
+    let big = String(repeating: "a", count: 1 << 20)  // več kot medpomnilnik cevi
+    gate.out(big)
+    gate.out("after")
+    gate.err("minigw: · Bash\n")
+    let start = Date()
+    gate.close(timeout: 0.3)
+    #expect(Date().timeIntervalSince(start) < 2, "close waited on a blocked write")
+    gate.err("late\n")
+    var got = Data()
+    while got.count < big.utf8.count, let d = try o.fileHandleForReading.read(upToCount: 1 << 16), !d.isEmpty { got += d }
+    Thread.sleep(forTimeInterval: 0.3)  // vrsta bi zdaj napisala, kar je za pisanjem v teku
+    try o.fileHandleForWriting.close()
+    try e.fileHandleForWriting.close()
+    got += o.fileHandleForReading.readDataToEndOfFile()
+    #expect(got.count == big.utf8.count, "writes after close reached stdout")
+    #expect(e.fileHandleForReading.readDataToEndOfFile().isEmpty, "stderr written after close or ahead of stdout")
+}
+
+/// | head in zaprt stderr: napaka pisanja ne sproži izjeme, ročaj ne piše več, drugi piše naprej po vrsti.
+@Test func outputGateClosedPipe() throws {
+    signal(SIGPIPE, SIG_IGN)
+    let o = Pipe(), e = Pipe()
+    try o.fileHandleForReading.close()
+    let gate = Profiles.OutputGate(out: o.fileHandleForWriting, err: e.fileHandleForWriting)
+    gate.out("answer\n")
+    gate.err("minigw: · Bash\n")
+    gate.out("more\n")
+    gate.err("done\n")
+    gate.close(timeout: 2)
+    gate.err("late\n")
+    try e.fileHandleForWriting.close()
+    #expect(String(decoding: e.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self) == "minigw: · Bash\ndone\n")
+
+    let o2 = Pipe(), e2 = Pipe()
+    try e2.fileHandleForReading.close()
+    let g2 = Profiles.OutputGate(out: o2.fileHandleForWriting, err: e2.fileHandleForWriting)
+    g2.err("minigw: x\n")
+    g2.out("answer\n")
+    g2.close(timeout: 2)
+    try o2.fileHandleForWriting.close()
+    #expect(String(decoding: o2.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self) == "answer\n")
+}

@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unicode"
@@ -1248,24 +1249,26 @@ func autoShare(cwd string) bool {
 func catchInterrupt() { signal.Notify(make(chan os.Signal, 1), os.Interrupt) }
 
 // gate (#78): izhod toka claude; runClaude ga zapre, preden vrne (gorutina po 2 s ne piše za vrsticami o vejah), po
-// prvi napaki pisanja (zaprta cev, | head) ne piše več, branje pa teče naprej.
+// prvi napaki pisanja (zaprta cev, | head) ne piše več, branje pa teče naprej. #80: close ne čaka na mu (pisanje, ki
+// visi na neizpraznjenem stdout, Ctrl+S, ne zadrži minigw); pisanje, ki je že teklo, se lahko še konča, novo ne začne.
 type gate struct {
-	mu  sync.Mutex
+	mu  sync.Mutex // zaporedje pisanj
 	w   io.Writer
-	off bool
+	off atomic.Bool
 }
 
 func (g *gate) Write(p []byte) (int, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if !g.off {
-		_, err := g.w.Write(p)
-		g.off = err != nil
+	if !g.off.Load() {
+		if _, err := g.w.Write(p); err != nil {
+			g.off.Store(true)
+		}
 	}
 	return len(p), nil
 }
 
-func (g *gate) close() { g.mu.Lock(); g.off = true; g.mu.Unlock() }
+func (g *gate) close() { g.off.Store(true) }
 
 // runClaude: claude kot podproces (minigw ostane za proxy in mapo); Ctrl+C dobi claude.
 // stream (#78): stdout claude (stream-json) gre skozi streamText.
