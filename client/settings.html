@@ -963,7 +963,7 @@ async function show(page, arg) {
   current = page; currentArg = arg || "";
   await nav();
   try {
-    document.getElementById("page").replaceChildren(...(await pages[page](arg)));
+    document.getElementById("page").replaceChildren(...(await pages[page](arg)).filter(k => k !== null && k !== undefined && k !== false));  // kot el(): replaceChildren bi null izpisal kot »null«
   } catch (e) { toast(e.message); }
 }
 // Devices in Claude CLI: spremembe od drugod (minigw gw …, tray) se pokažejo; Claude CLI le ob spremembi (ohrani izbiro mape).

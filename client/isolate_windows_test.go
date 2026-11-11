@@ -76,5 +76,8 @@ func runIsolated(m *testing.M) int {
 			return fail(p + " is outside " + d)
 		}
 	}
+	// Pravi wxc-exec.exe (mxc\ ob testnem programu, npr. HPX360) se v testih nikoli ne zažene: prevzem Scratch kliče
+	// sandboxInit, ki bi sicer za vse nadaljnje teste nastavil mxcState.ready in worktreeNeedsUnsandboxed=false (G1).
+	wxcExe = func() string { return filepath.Join(d, "no-real-wxc", "wxc-exec.exe") }
 	return m.Run()
 }

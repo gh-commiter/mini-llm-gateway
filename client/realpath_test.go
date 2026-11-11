@@ -131,7 +131,7 @@ func TestGrokCodexDenyConfigCanonical(t *testing.T) {
 	}
 	p := strings.Join(codexTreeProfile([]string{"/w"}, []string{"/w/.git"}, scratchPaths(alias), false, "/usr/bin"), " ")
 	for _, d := range []string{alias, cfg} {
-		if !strings.Contains(p, d) {
+		if q, _ := json.Marshal(d); !strings.Contains(p, string(q)+`="none"`) { // TOML-ključ kot v profilu (Windows: \\)
 			t.Errorf("codex profile lacks %s: %s", d, p)
 		}
 	}

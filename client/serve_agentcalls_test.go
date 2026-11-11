@@ -224,10 +224,15 @@ func TestAgentAsksAgentInSameFolder(t *testing.T) {
 		t.Fatal("codex did not write into the caller's folder (or it was not synced back)")
 	}
 	exe := minigwExe()
-	if n := read("note.txt"); !strings.Contains(n, "You may ask another model of this gateway: `\""+exe+"\" -p --model") {
+	cmd := "\"" + exe + "\"" // absolutna pot v narekovajih
+	if runtime.GOOS == "windows" {
+		cmd = "minigw" // askOnPath: mapa testnega programa ni pisljiva agentu, minigw.exe je na PATH izvajanja
+	}
+	if n := read("note.txt"); !strings.Contains(n, "You may ask another model of this gateway: `"+cmd+" -p --model") {
 		t.Fatalf("claude's note: %q", n)
 	}
-	if st := read("settings.txt"); !strings.Contains(st, `"allowRead":[`) || !strings.Contains(st, exe) {
+	// Windows: Claude Code brez sandboxa (--settings ni), zato tam ni allowRead
+	if st := read("settings.txt"); runtime.GOOS != "windows" && (!strings.Contains(st, `"allowRead":[`) || !strings.Contains(st, exe)) {
 		t.Fatalf("minigw not readable in claude's sandbox: %s", st)
 	}
 	if p := read("prompt.txt"); !strings.Contains(p, "Another agent on this gateway (claude) asks you this") || !strings.Contains(p, "You may ask another model") {

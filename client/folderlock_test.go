@@ -288,7 +288,12 @@ func TestPullRefusedBusyFailsRequest(t *testing.T) {
 			}
 			// #82: končna napaka; worktree s pretokom (dogodek SSE), ponovitev brez pretoka dobi isti 502 brez novega zagona
 			stream := mode == "worktree"
+			// Druga seja drži mapo, dokler prehod ne zavrne prevzema (ne fiksen čas: na Windows finalize klona traja dlje).
+			release, released := make(chan struct{}), make(chan struct{})
+			free := sync.OnceFunc(func() { close(release); <-released })
+			defer free()
 			go func() { // agent teče: druga seja vzame mapo, nato agent konča
+				defer close(released)
 				for {
 					if _, err := os.Stat(filepath.Join(marks, "started0")); err == nil {
 						break
@@ -296,9 +301,13 @@ func TestPullRefusedBusyFailsRequest(t *testing.T) {
 					time.Sleep(10 * time.Millisecond)
 				}
 				u := (&shareClient{root: client}).lockFolder(true, time.Second)
+				if u == nil {
+					t.Error("the other session did not get the folder")
+					return
+				}
 				defer u()
 				os.WriteFile(filepath.Join(marks, "go0"), nil, 0o644)
-				time.Sleep(2 * time.Second) // dlje od roka prevzema
+				<-release
 			}()
 			st, retry, data := post("0", stream)
 			if !strings.Contains(data, "the shared folder is busy") ||
@@ -317,7 +326,7 @@ func TestPullRefusedBusyFailsRequest(t *testing.T) {
 			if _, err := os.Stat(filepath.Join(client, "agent0.txt")); mode == "sync" && err == nil {
 				t.Fatal("changes copied back although the pull was refused")
 			}
-			time.Sleep(2 * time.Second) // druga seja spusti mapo
+			free() // druga seja spusti mapo
 			if st, data := ask("1", false); st != 200 {
 				t.Fatalf("next request: %d %s", st, data)
 			}
