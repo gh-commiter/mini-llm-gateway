@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.5.24
+
 - Security: minigw (Windows and Linux) is built with Go 1.27.4, which fixes an HTTP server crash in the Go standard library (GO-2026-6859).
 - Security (Windows): a directory junction inside a shared folder let the gateway read or write outside it (affects 0.5.23). A junction (`mklink /J`, which any user or pnpm can make) is now followed like a symlink everywhere minigw checks a path: direct WebDAV, sync, protected paths (`hooks` → `.git\hooks`) and MOVE/COPY.
 - Fixed (Windows): paths longer than 260 characters in a shared folder work without turning on `LongPathsEnabled`.
