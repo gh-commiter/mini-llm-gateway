@@ -53,11 +53,7 @@ type claudeCodeCases struct {
 
 func loadClaudeCodeCases(t *testing.T) claudeCodeCases {
 	var c claudeCodeCases
-	b, err := os.ReadFile("testdata/claude-code-cases.json")
-	if err == nil {
-		err = json.Unmarshal(b, &c)
-	}
-	if err != nil || len(c.Chains) == 0 {
+	if err := json.Unmarshal(srcFile(t, "testdata/claude-code-cases.json"), &c); err != nil || len(c.Chains) == 0 {
 		t.Fatal(err)
 	}
 	return c

@@ -52,7 +52,11 @@ func testServer(t *testing.T, mod func(*serveConfig)) (*server, *ecdh.PrivateKey
 	if mod != nil {
 		mod(&c)
 	}
-	s, err := newServer(c, filepath.Join(t.TempDir(), "serve.json"))
+	path := filepath.Join(t.TempDir(), "serve.json")
+	if err := writeServeConfig(path, c); err != nil { // s.update piše vanjo (brez nje vrne napako, sprememba se ne zgodi)
+		t.Fatal(err)
+	}
+	s, err := newServer(c, path)
 	if err != nil {
 		t.Fatal(err)
 	}

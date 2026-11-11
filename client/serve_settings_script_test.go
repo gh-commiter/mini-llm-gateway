@@ -21,6 +21,10 @@ func TestSettingsScriptSyntax(t *testing.T) {
 	if len(m) == 0 {
 		t.Fatal("no script in settings.html")
 	}
+	// HPX360 0.5.25: General vrne null za neobstoječe skupine; replaceChildren jih brez filtra izpiše kot »nullnull«
+	if !strings.Contains(page, `replaceChildren(...(await pages[page](arg)).filter(k => k !== null`) {
+		t.Fatal("show(): page parts not filtered for null before replaceChildren")
+	}
 	for i, s := range m {
 		f := filepath.Join(t.TempDir(), "s.js")
 		if err := os.WriteFile(f, []byte(s[1]), 0o600); err != nil {

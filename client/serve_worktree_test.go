@@ -131,7 +131,9 @@ func TestServeWorktreeRoundTrip(t *testing.T) {
 	}
 	// L3: na Windows Claude v načinu worktree le z »Allow commands without a sandbox«
 	worktreeNeedsUnsandboxed = true
-	s.update(func(c *serveConfig) error { c.AllowUnsandboxedBash = false; return nil })
+	if err := s.update(func(c *serveConfig) error { c.AllowUnsandboxedBash = false; return nil }); err != nil || s.conf().AllowUnsandboxedBash {
+		t.Fatal("switch not turned off:", err) // sicer bi 200 na Windows pomenil le, da je stikalo ostalo vklopljeno
+	}
 	defer func() { worktreeNeedsUnsandboxed = runtime.GOOS == "windows" }()
 	if st, data := call(c, "POST", "/v1/messages", h, []byte(body), 30*time.Second); st != 400 || !strings.Contains(string(data), "Allow commands without a sandbox") {
 		t.Fatalf("windows rule: %d %s", st, data)

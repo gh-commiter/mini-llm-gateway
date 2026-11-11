@@ -481,8 +481,9 @@ func TestTrimBusiest(t *testing.T) {
 
 // Parity: isti state.json (testdata, tudi v HistoryTests.swift) prebereta oba prehoda.
 func TestStateParitySample(t *testing.T) {
-	srcFile(t, filepath.Join("testdata", "state-0.5.21.json"))
-	g := loadState(filepath.Join("testdata", "state-0.5.21.json"))
+	p := filepath.Join(t.TempDir(), "state.json")
+	os.WriteFile(p, srcFile(t, "testdata/state-0.5.21.json"), 0o600)
+	g := loadState(p)
 	if len(g.Sessions) != 1 || len(g.Projects) != 2 || g.Sessions[0].Models[0].Cap != "worktree" || !g.Sessions[0].Models[0].ReadOnly {
 		t.Fatalf("sample: %+v %+v", g.Sessions, g.Projects)
 	}

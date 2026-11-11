@@ -198,8 +198,12 @@ func TestCodexAndGrokThroughRouter(t *testing.T) {
 		return st, string(data)
 	}
 	args := func() string { b, _ := os.ReadFile(argsFile); return string(b) }
+	home := "home=" + filepath.Join(s.conf().Scratch, "state") + string(filepath.Separator) // N3: stanje naprave
+	if runtime.GOOS == "windows" {
+		home = "home=\n" // agentState: Codex na Windows brez stanja naprave, CODEX_HOME prehoda ne gre do agenta (agentEnv)
+	}
 	if st, b := chat("claude-codex-gpt-x", false, false); st != 200 || !strings.Contains(b, "codex says hi") || !strings.Contains(args(), "read-only") ||
-		!strings.Contains(args(), "home="+filepath.Join(s.conf().Scratch, "state")+string(filepath.Separator)) {
+		!strings.Contains(args(), home) {
 		t.Fatalf("codex chat: %d %s %q", st, b, args())
 	}
 	if st, b := chat("claude-codex", false, true); st != 200 || !strings.Contains(args(), "workspace-write") || !strings.Contains(args(), "network_access=false") {

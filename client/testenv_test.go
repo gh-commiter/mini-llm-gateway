@@ -1,21 +1,34 @@
 package main
 
 import (
+	"embed"
 	"errors"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
 // Testni program teče tudi sam (GOOS=windows go test -c, navaden uporabnik brez Developer Mode): brez izvorne kode
 // ob sebi in brez pravice za simbolne povezave. Ti pomočniki tak test preskočijo z razlogom, namesto da padejo.
 
+//go:embed testdata
+var testdataFS embed.FS
+
 // srcFile: datoteka izvorne mape (relativno na client/); preskok, ko testni program teče drugje.
+// testdata/ je vgrajen, zato ti primeri tečejo tudi v samostojnem testnem programu (Windows).
 func srcFile(t *testing.T, rel string) []byte {
 	t.Helper()
+	if s := filepath.ToSlash(rel); strings.HasPrefix(s, "testdata/") {
+		b, err := testdataFS.ReadFile(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
 	b, err := os.ReadFile(rel)
 	if errors.Is(err, fs.ErrNotExist) {
 		t.Skip("needs the client/ source tree (" + rel + "); run with go test or from the client folder")

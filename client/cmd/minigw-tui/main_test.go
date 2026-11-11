@@ -1,6 +1,7 @@
 package main
 
 import (
+	"embed"
 	"fmt"
 	"io"
 	"os"
@@ -69,12 +70,20 @@ func fakeMinigw(d string, args []string) int {
 	return 1
 }
 
+// testdata is embedded: the standalone test binary (Windows suite) runs outside the source tree.
+//
+//go:embed testdata
+var testdata embed.FS
+
 // fake: testdata (canned answers) and the fake minigw (a copy of this test binary) in a temp dir.
 func fake(t *testing.T) (*ui, string) {
 	dir := t.TempDir()
-	files, _ := os.ReadDir("testdata")
+	files, err := testdata.ReadDir("testdata")
+	if err != nil || len(files) == 0 {
+		t.Fatal("testdata:", err)
+	}
 	for _, f := range files {
-		b, err := os.ReadFile(filepath.Join("testdata", f.Name()))
+		b, err := testdata.ReadFile("testdata/" + f.Name())
 		if err != nil {
 			t.Fatal(err)
 		}
