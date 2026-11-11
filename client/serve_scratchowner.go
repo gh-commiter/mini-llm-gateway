@@ -303,7 +303,7 @@ func (s *server) takeScratchAPI(body []byte) (int, any) {
 		return fail(409, scratchTakeBusy)
 	}
 	defer s.scratchGate.Unlock()
-	if (s.hub != nil && s.hub.count() > 0) || s.agentsRunning.Load() > 0 {
+	if s.hub.count() > 0 || s.agentsRunning.Load() > 0 {
 		return fail(409, scratchTakeBusy)
 	}
 	foreign := s.scratchOther.Load()

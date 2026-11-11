@@ -222,3 +222,45 @@ func TestScratchForeignProbesRefused(t *testing.T) {
 		}
 	}
 }
+
+// offlineScratchConfig: serve.json kot po minigw serve init (prehod ne teče, brez admin.secret): Scratch <osnova>/<id>.
+func offlineScratchConfig(t *testing.T) (cfg, cur string) {
+	t.Helper()
+	t.Cleanup(releaseScratch) // Windows: ročaj Scratch bi preprečil brisanje TempDir
+	cur = filepath.Join(t.TempDir(), "gw-aaaaaaaaaaaa")
+	writeOwner(t, cur, "gw-aaaaaaaaaaaa")
+	cfg = filepath.Join(t.TempDir(), "serve.json")
+	saveServeConfig(cfg, serveConfig{Token: "tok", Key: base64url(make([]byte, 32)), Port: 1, Tools: defaultTools,
+		PermissionMode: "dontAsk", Scratch: cur, Instance: "gw-aaaaaaaaaaaa", Devices: []serveDevice{}})
+	return cfg, cur
+}
+
+// Prehod ne teče: minigw gw scratch move in take gresta prek offlineServer (prej nil shareHub: panic).
+func TestScratchMoveTakeOffline(t *testing.T) {
+	t.Run("move", func(t *testing.T) {
+		cfg, cur := offlineScratchConfig(t)
+		scratchFixture(t, cur)
+		base := filepath.Join(nonTempDir(t), "mgw-test")
+		out := stdout(t, func() { routerCommand([]string{"scratch", "move", base, "--config", cfg}, strings.NewReader("")) })
+		want := filepath.Join(base, "gw-aaaaaaaaaaaa")
+		if c, err := loadServeConfig(cfg); err != nil || c.Scratch != want || !strings.Contains(out, want) {
+			t.Fatalf("move: %q %q %v", out, c.Scratch, err)
+		}
+		checkFixture(t, want)
+	})
+	t.Run("take", func(t *testing.T) {
+		cfg, cur := offlineScratchConfig(t)
+		other := filepath.Join(filepath.Dir(cur), "gw-bbbbbbbbbbbb")
+		writeOwner(t, other, "gw-bbbbbbbbbbbb")
+		os.WriteFile(filepath.Join(other, "f"), []byte("old"), 0o600)
+		out := stdout(t, func() {
+			routerCommand([]string{"scratch", "take", "gw-bbbbbbbbbbbb", "--config", cfg}, strings.NewReader(""))
+		})
+		if b, _ := os.ReadFile(filepath.Join(cur, "f")); string(b) != "old" || scratchOwner(cur) != "gw-aaaaaaaaaaaa" || !strings.Contains(out, cur) {
+			t.Fatalf("take: %q %q", out, b)
+		}
+		if _, err := os.Stat(other); !os.IsNotExist(err) {
+			t.Fatal("old name still there")
+		}
+	})
+}
