@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.5.25
+
 - Changed (#81): Copilot CLI signs in only with your own `copilot login` on the gateway (as the gateway user); the token stays in the system keyring and only Copilot reads it. The Copilot token (`minigw gw copilot token`, the settings field) and the GitHub CLI sign-in (`gh auth token`) are gone; a stored Copilot token is no longer used. Mac app: Copilot reads its sign-in from your Keychain inside its sandbox. Linux `minigw serve`: Copilot needs a Secret Service keyring (GNOME Keyring, KWallet) and `xdg-dbus-proxy`; a headless Linux gateway, where `copilot login` stores the token in plain text, has no Copilot. Without a usable sign-in the settings, `minigw gw status`, `minigw gw copilot login` and the request say why. Windows: unchanged (not supported).
 - Changed (Mac app): when Copilot hits a usage or rate limit, the gateway answers with the same fixed text as `minigw serve` ("copilot: usage or rate limit reached; details are in the gateway log, request <id>"); Copilot's error output stays in the gateway log and no longer reaches the client.
 - Security (#81): Copilot no longer runs commands on any gateway ("Allow commands" is greyed out with the reason): a command could read Copilot's sign-in from the Keychain or keyring. A stored "Allow commands" is ignored.
