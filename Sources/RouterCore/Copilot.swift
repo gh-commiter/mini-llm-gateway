@@ -90,9 +90,9 @@ public enum Copilot {
 
     nonisolated(unsafe) static let hostRe = try! Regex(#"(https://)?[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*"#)
     nonisolated(unsafe) static let loginRe = try! Regex(#"[A-Za-z0-9][A-Za-z0-9_-]{0,99}"#)  // GitHub; _ za Enterprise Managed Users
-    nonisolated(unsafe) static let kindRe = try! Regex(#"[a-z][a-z0-9-]{0,31}"#)  // kind, derivedFrom (L4)
+    nonisolated(unsafe) static let kindRe = try! Regex(#"[A-Za-z][A-Za-z0-9-]{0,31}"#)  // kind, derivedFrom (L4)
 
-    /// En LoggedInUser: host, login obvezna; kind, derivedFrom neobvezna (^[a-z][a-z0-9-]{0,31}$); drugi ključi = nil.
+    /// En LoggedInUser: host, login obvezna; kind, derivedFrom neobvezna (^[A-Za-z][A-Za-z0-9-]{0,31}$); drugi ključi = nil.
     static func user(_ v: Any?) -> [String: String]? {
         guard let o = v as? [String: Any] else { return nil }
         var u: [String: String] = [:]

@@ -123,7 +123,8 @@ func TestCopilotLoginPointer(t *testing.T) {
 		`{"loggedInUsers":[{"host":"github.com","login":"u;rm"}]}`:                                             "expected form",
 		`{"loggedInUsers":[{"host":"github.com"}]}`:                                                            "expected form",
 		`{"loggedInUsers":[{"host":"github.com","login":"u","kind":7}]}`:                                       "expected form",
-		`{"loggedInUsers":[{"host":"github.com","login":"u","kind":"User"}]}`:                                  "expected form", // L4: le [a-z][a-z0-9-]
+		`{"loggedInUsers":[{"host":"github.com","login":"u","kind":"-user"}]}`:                                 "expected form", // L4: [A-Za-z][A-Za-z0-9-]
+		`{"loggedInUsers":[{"host":"https://github.com","login":"u","kind":"githubDotCom"}]}`:                  "",              // copilot 1.0.1xx
 		`{"loggedInUsers":[{"host":"github.com","login":"u","derivedFrom":"github.com:u"}]}`:                   "expected form",
 		`{"loggedInUsers":[{"host":"github.com","login":"u","kind":"enterprise-user","derivedFrom":"oauth"}]}`: "",
 		`{"loggedInUsers":[{"host":"github.com","login":"u","kind":"a

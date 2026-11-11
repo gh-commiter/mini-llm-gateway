@@ -2516,11 +2516,11 @@ func TestAllowedFolderUncheckedAtStart(t *testing.T) {
 // drugam, tudi v nadrejeni mapi) ne gre agentu, tudi po drugi spremembi ali shranjevanju istega seznama; prava mapa tega
 // uporabnika gre; odstranjena in znova dodana mapa velja kot nova; nova obstoječa mapa gre takoj.
 func TestAllowedFolderPlantedAfterStart(t *testing.T) {
-	t.Cleanup(releaseScratch)
 	base := realOf(t, t.TempDir()) // macOS: /var → /private/var (sicer povezava v nadrejeni mapi)
 	m, viaParent := filepath.Join(base, "gone", "proj"), filepath.Join(base, "x", "proj")
 	scratch := filepath.Join(t.TempDir(), "scratch")
 	os.MkdirAll(scratch, 0o700)
+	t.Cleanup(releaseScratch) // po TempDir: ročaj Scratch (Windows) se zapre pred brisanjem
 	k, _ := ecdh.X25519().GenerateKey(rand.Reader)
 	c := serveConfig{Token: "tok", Key: base64url(k.Bytes()), Tools: defaultTools, PermissionMode: "dontAsk", Scratch: scratch,
 		AllowedFolders: []string{m, viaParent}, Codex: agentCLI{Enabled: true}}
@@ -2540,14 +2540,10 @@ func TestAllowedFolderPlantedAfterStart(t *testing.T) {
 	}
 	own := filepath.Join(base, "own")
 	os.MkdirAll(filepath.Join(own, "proj"), 0o700)
-	if err := os.Symlink(own, filepath.Join(base, "x")); err != nil { // R2: povezava v nadrejeni mapi
-		t.Skip("no symlinks:", err)
-	}
+	dirLink(t, own, filepath.Join(base, "x")) // R2: povezava v nadrejeni mapi (Windows: stičišče)
 	os.MkdirAll(filepath.Dir(m), 0o700)
 	for _, target := range []string{s.cfgDir, t.TempDir()} {
-		if err := os.Symlink(target, m); err != nil {
-			t.Fatal(err)
-		}
+		dirLink(t, target, m)
 		if got := folders(); len(got) != 0 {
 			t.Fatalf("planted link to %s given to agents: %v", target, got)
 		}
