@@ -2,14 +2,35 @@ package main
 
 import (
 	"errors"
+	"path/filepath"
+	"strings"
 
 	"golang.org/x/sys/windows"
 )
 
+// extendedPath (M1): pot za surovi CreateFile tudi nad 260 znaki brez LongPathsEnabled (privzeto 0): »\\?\C:\…«,
+// »\\?\UNC\strežnik\…«; že razširjena (»\\?\«) ali naprava (»\\.\«) ostane. »\\?\« izklopi normalizacijo, zato Clean.
+func extendedPath(p string) string {
+	if strings.HasPrefix(p, `\\?\`) || strings.HasPrefix(p, `\\.\`) {
+		return p
+	}
+	if a, err := filepath.Abs(p); err == nil {
+		p = a // Abs tudi počisti (»/« → »\«, ».«, »..«)
+	}
+	if r, ok := strings.CutPrefix(p, `\\`); ok {
+		return `\\?\UNC\` + r
+	}
+	if filepath.IsAbs(p) {
+		return `\\?\` + p
+	}
+	return p
+}
+
 // codexFinalPath (#59): končna pot mape, kot jo vidi Codex (Rust canonicalize sledi tudi stičiščem in priklopnim
-// točkam, filepath.EvalSymlinks od Go 1.23 ne): GetFinalPathNameByHandle(FILE_NAME_NORMALIZED|VOLUME_NAME_DOS = 0).
+// točkam, filepath.EvalSymlinks od Go 1.23 ne): GetFinalPathNameByHandle(FILE_NAME_NORMALIZED|VOLUME_NAME_DOS = 0),
+// ob napaki enkrat FILE_NAME_OPENED (0x8; mnogi strežniki SMB na NAS normalizirane ne vrnejo).
 func codexFinalPath(p string) string {
-	u, err := windows.UTF16PtrFromString(p)
+	u, err := windows.UTF16PtrFromString(extendedPath(p))
 	if err != nil {
 		return ""
 	}
@@ -20,11 +41,12 @@ func codexFinalPath(p string) string {
 	}
 	defer windows.CloseHandle(h)
 	buf := make([]uint16, windows.MAX_LONG_PATH)
-	n, err := windows.GetFinalPathNameByHandle(h, &buf[0], uint32(len(buf)), 0)
-	if err != nil || n == 0 || int(n) >= len(buf) {
-		return ""
+	for _, flags := range []uint32{0, 0x8} { // FILE_NAME_NORMALIZED, FILE_NAME_OPENED
+		if n, err := windows.GetFinalPathNameByHandle(h, &buf[0], uint32(len(buf)), flags); err == nil && n > 0 && int(n) < len(buf) {
+			return trimFinalPrefix(windows.UTF16ToString(buf[:n]))
+		}
 	}
-	return trimFinalPrefix(windows.UTF16ToString(buf[:n]))
+	return ""
 }
 
 // finalPath: kanonična pot za preverbo »ostane v korenu« (davResolve, protectedCanonical). filepath.EvalSymlinks od

@@ -660,6 +660,11 @@ func main() {
 		routerHost = u.Hostname()
 	}
 	wantShare := shareWanted(cwd, saved.isLocal())
+	realOK := realPathsOK(cwd) // enkrat ob začetku deljenja; brez prave poti nobenemu prehodu
+	if wantShare && !realOK {
+		fmt.Fprintln(os.Stderr, "minigw: not sharing "+cwd+": "+noRealPaths)
+		wantShare = false
+	}
 	headers := "x-claude-mini-session: " + sid + "\nx-claude-mini-cwd: " + cwd
 	if wantShare {
 		headers += "\nx-claude-mini-share: 1" // router po ponovnem zagonu počaka na ponovno registracijo mape
@@ -745,7 +750,7 @@ func main() {
 			}
 			fmt.Fprintln(os.Stderr, "minigw: "+why+"; Claude CLI models with tools will not see it")
 		}
-	} else if !(saved.isLocal() && runtime.GOOS == "darwin") && os.Getenv("MINIGW_SHARE") != "0" {
+	} else if realOK && !(saved.isLocal() && runtime.GOOS == "darwin") && os.Getenv("MINIGW_SHARE") != "0" {
 		why := "" // samodejno se ne delijo sistemske, skrite in domača mapa
 		if os.Getenv("MINIGW_SHARE") == "" {
 			why = " (not shared automatically)"
@@ -764,7 +769,7 @@ func main() {
 				continue
 			}
 			t := &muxTarget{name: p.name, conn: rc}
-			if sid != "" && shareWanted(cwd, p.conn.isLocal()) {
+			if sid != "" && realOK && shareWanted(cwd, p.conn.isLocal()) {
 				t.share = func() bool {
 					sc, ok := registerShare(rc, sid, cwd, readOnly, top, tries, true, implicit)
 					if !ok {
@@ -1463,6 +1468,12 @@ func under(path, folder string) bool {
 	return true
 }
 
+// realPathsOK: varovala poti (davResolve, syncResolve) rabijo finalPath korena; brez njega (Windows: pogon, ki ne
+// vrne prave poti) bi bila vsaka zahteva zavrnjena, zato deljenja sploh ne začnemo. Brez nadomestka EvalSymlinks.
+func realPathsOK(dir string) bool { _, err := finalPath(dir); return err == nil }
+
+const noRealPaths = "this drive does not report real paths (network or virtual drive); share a folder on a local disk"
+
 // shareAllowed: nikoli koren diska ali domača mapa sama (to bi izpostavilo vse).
 // Kanonični poti: povezava ali stičišče na dom, kratko ime 8.3 (C:\Users\ANA~1) ali preslikan pogon kot \\strežnik\mapa.
 func shareAllowed(dir string) bool {
@@ -1540,6 +1551,9 @@ func shareCommand(args []string) {
 		}
 		if !shareAllowed(dir) {
 			fail("refusing to share " + dir + " (a drive root or your home folder would expose everything); share a project folder")
+		}
+		if !realPathsOK(dir) {
+			fail("refusing to share " + dir + ": " + noRealPaths)
 		}
 		e := sharedFolder{Path: dir, Work: work, ReadOnly: ro}
 		for _, f := range list {

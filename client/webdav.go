@@ -85,7 +85,18 @@ func davRefuse(rel []string) davResponse {
 	return dav(403, nil, nil)
 }
 
+// davWriteMu (M2, delno): spreminjajoče metode tečejo ena za drugo, da prehod ne more pisanja dirkati z MOVE nadrejene
+// mape med preverbo poti in pisanjem; GET in PROPFIND ostaneta sočasna. Popolno: vsaka operacija prek os.OpenRoot
+// (razrešitev in pisanje v istem ročaju korena) — 0.5.25.
+var davWriteMu sync.Mutex
+
+var davMutating = map[string]bool{"PUT": true, "MOVE": true, "COPY": true, "DELETE": true, "MKCOL": true, "PROPPATCH": true}
+
 func davHandle(method, path string, headers map[string]string, body []byte, root, prefix string) davResponse {
+	if davMutating[method] {
+		davWriteMu.Lock()
+		defer davWriteMu.Unlock()
+	}
 	r, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		return dav(403, nil, nil)
@@ -280,8 +291,8 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 		}
 		// Mapa v svojo podmapo in vir v cilju (MOVE /a/b → /a bi z brisanjem cilja izbrisal vir): nikoli
 		// (kanonični poti, da povezava ne skrije zanke).
-		rp, err1 := filepath.EvalSymlinks(p)
-		rd, err2 := filepath.EvalSymlinks(filepath.Dir(dest))
+		rp, err1 := finalPath(p) // Windows: tudi stičišča
+		rd, err2 := finalPath(filepath.Dir(dest))
 		rdest := filepath.Join(rd, filepath.Base(dest))
 		if err1 != nil || err2 != nil || hasPathPrefix(rdest, rp) || hasPathPrefix(rp, rdest) {
 			return dav(403, nil, nil)
