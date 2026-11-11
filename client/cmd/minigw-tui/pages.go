@@ -426,7 +426,7 @@ func agents(u *ui) ([]row, error) {
 	if err != nil {
 		return nil, err
 	}
-	bare := yes(st, "agentsUnsandboxed") && !yes(c, "allowUnsandboxedBash") // Codex, Grok, Copilot need the switch
+	bare := yes(st, "agentsUnsandboxed") && !yes(c, "allowUnsandboxedBash") // without the box: Codex and Grok need the switch (Copilot: not on Windows)
 	patch := func(path string) func(map[string]any) (string, error) {
 		return func(body map[string]any) (string, error) { return u.save("PATCH", path, body) }
 	}
@@ -466,7 +466,7 @@ func agents(u *ui) ([]row, error) {
 		if sb, _ := st["agentSandbox"].(map[string]any); str(sb, "kind") == "mxc" { // #68: Codex still needs the switch
 			rows = append(rows, tog("Allow commands without a sandbox", yes(c, "allowUnsandboxedBash"), func(v bool) (string, error) {
 				return pc(map[string]any{"allowUnsandboxedBash": v})
-			}), inf("  Not needed for Claude CLI and Grok: they run in the Windows sandbox. Codex still needs it (it cannot start in it); with it on it can read the provider keys and the admin secret. Copilot is not supported here.", ""))
+			}), inf("  Not needed for Claude CLI and Grok: they run in the Windows sandbox. Codex still needs it (it cannot start in it); with it on it can read the provider keys and the admin secret. Copilot is not supported on a Windows gateway in this version.", ""))
 		} else {
 			rows = append(rows, tog("Allow commands without a sandbox", yes(c, "allowUnsandboxedBash"), func(v bool) (string, error) {
 				return pc(map[string]any{"allowUnsandboxedBash": v})

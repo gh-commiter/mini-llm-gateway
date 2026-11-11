@@ -110,7 +110,7 @@ Details:
   in Scratch (temporary folder, DerivedData, sync copy or clone) are allowed again after these rules. An allowed
   folder inside one of these folders, or around one, is left out of the agent's folders (Mac: refused as the working
   folder; `minigw serve`: not passed to Claude CLI, Codex, Grok or Copilot). Windows: the MXC box sees only its
-  granted folders; Codex and Copilot outside the box see everything (see [windows-parity](windows-parity.md)).
+  granted folders; Codex outside the box sees everything, and Copilot is not supported on a Windows gateway (see [windows-parity](windows-parity.md)).
   A Scratch base that is, or is inside, a folder with another gateway's owner file is refused; this check runs when
   Scratch is set or moved, not at start.
 - In worktree mode the gateway never runs git with the agent's own `.git` (config, hooks) and reads the clone only

@@ -542,7 +542,7 @@ environment (`ANTHROPIC_*`, `OPENAI_API_KEY`, `CODEX_API_KEY`, `XAI_API_KEY`, `G
 (`mxc\wxc-exec.exe` in the install folder, no admin rights). It needs Windows 11 build 26100.9278 / 26200.9278 or
 later (the Windows process container). Settings page → General → About shows "Agent sandbox: Windows sandbox (MXC
 1.0.1)", or "not available (reason)"; then agents run only with **Allow commands without a sandbox**, as in 0.5.22.
-With the sandbox that switch is not needed for Claude CLI and Grok (Codex and Copilot still need it: they cannot start in it).
+With the sandbox that switch is not needed for Claude CLI and Grok (Codex still needs it: it cannot start in it; Copilot is not supported on a Windows gateway in this version).
 New installs (`minigw serve init`, the tray's first start) and the settings page's Scratch **Default** button put the
 Scratch folder at `minigw-scratch\<instance>` on the first fixed drive that is not the system drive, else on
 the system drive (for example `D:\minigw-scratch\gw-3f9a1c2b7d4e`; 0.5.24), with an access list only your user can open.

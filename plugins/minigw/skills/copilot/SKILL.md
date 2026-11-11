@@ -26,7 +26,8 @@ minigw refuses a prompt argument that starts with `/` or has `@` at the start of
 
 Copilot on the gateway needs its own GitHub token (`minigw gw copilot token` on the gateway), is read-only unless its
 settings allow writing, and runs commands only with "Allow commands": if it says it cannot edit or run something, tell the user
-which switch in Mini Gateway → Settings → Copilot CLI it needs. If
+which switch in Mini Gateway → Settings → Copilot CLI it needs. If the gateway answers "Copilot is not supported on a Windows
+gateway in this version", tell the user and offer another gateway (`--model claude-copilot@<profile>`) or another agent. If
 minigw prints that the folder "is not shared with the gateway", run `"${CLAUDE_PLUGIN_DATA}/bin/minigw" share add` and run
 the task again.
 
