@@ -121,11 +121,7 @@ func ruleAbs(p string) string {
 func (s *server) agentArgs(dir string, readOnly bool) []string {
 	c := s.conf()
 	dirs := []string{dir} // delovna mapa in dovoljene mape (kot allowedRoots na Macu)
-	for _, f := range c.AllowedFolders {
-		if f != dir && !scratchHiddenOverlaps(f, c.Scratch) && len(copilotCacheOverlaps([]string{f})) == 0 { // L1, #26
-			dirs = append(dirs, f)
-		}
-	}
+	dirs = append(dirs, s.agentFolders(c, dir)...)
 	scope := func(t string) []string { // orodje z dostopom do datotek le v teh mapah
 		out := []string{t + "(./**)"}
 		for _, d := range dirs[1:] {
@@ -272,6 +268,48 @@ func scratchOverlaps(allowed []string, scratch string) []string {
 		}
 	}
 	return bad
+}
+
+// agentFolders (#83): dovoljene mape, ki jih agent v dir zdaj dobi (Claude CLI, škatla MXC, Codex, Grok): obstajajo
+// (kot fileExists na Macu), niso dir, ne Scratch ne predpomnilnik Copilot (L1, #26) in znova prestanejo checkFolder
+// (prava pot, mapa nastavitev). Mapa, ki je kdaj manjkala (ob zagonu ali med tekom; wasMissing), se pojavi le kot
+// prava mapa tega uporabnika: na njenem mestu bi drug uporabnik, nov disk ali agent podtaknil povezavo ali svojo mapo
+// (CLAUDE.md, .mcp.json). Oznako odstrani le odstranitev mape s seznama (nato jo skrbnik doda znova).
+func (s *server) agentFolders(c serveConfig, dir string) []string {
+	var out []string
+	for _, f := range c.AllowedFolders {
+		if f == dir || scratchHiddenOverlaps(f, c.Scratch) || len(copilotCacheOverlaps([]string{f})) > 0 {
+			continue
+		}
+		if st, err := os.Stat(f); err != nil || !st.IsDir() {
+			s.wasMissing.Store(f, true)
+			continue
+		}
+		if _, err := checkFolder(f, s.cfgDir, false); err != nil {
+			continue
+		}
+		if _, missed := s.wasMissing.Load(f); missed {
+			// prava pot je ista (nobene povezave tudi v nadrejenih mapah), mapa je tega uporabnika
+			why := ""
+			r, err := realPath(f)
+			switch {
+			case err != nil:
+				why = "cannot resolve its real path"
+			case !samePath(r, f):
+				why = "it is reached through a link to " + r
+			case !ownedByMe(f) || !ownedByMe(r):
+				why = "it is a link or owned by another user"
+			}
+			if why != "" {
+				if _, logged := s.refusedLogged.LoadOrStore(f, true); !logged {
+					s.log.Printf("WARNING: allowed folder %s was missing at start and is not used: %s; if you trust it, remove and add it again in the allowed folders", f, why)
+				}
+				continue
+			}
+		}
+		out = append(out, f)
+	}
+	return out
 }
 
 // realPath (#83): kanonična pot (finalPath: na Windows tudi stičišča, preslikan pogon → UNC); za pot, ki je še ni, prek
@@ -797,13 +835,11 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		} else {
 			boxRW = append(boxRW, dir)
 		}
-		for _, f := range s.conf().AllowedFolders {
-			if f != dir && !scratchHiddenOverlaps(f, s.conf().Scratch) && len(copilotCacheOverlaps([]string{f})) == 0 { // kot agentArgs
-				if ro {
-					boxRO = append(boxRO, f)
-				} else {
-					boxRW = append(boxRW, f)
-				}
+		for _, f := range s.agentFolders(s.conf(), dir) { // kot agentArgs
+			if ro {
+				boxRO = append(boxRO, f)
+			} else {
+				boxRW = append(boxRW, f)
 			}
 		}
 		ok := false

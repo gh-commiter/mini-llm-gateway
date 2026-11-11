@@ -474,9 +474,13 @@ type server struct {
 	// offReason: zakaj sta Claude CLI in Codex ob zagonu izklopljena (H1: dovoljena mapa s Scratch); dnevnik, status, stran.
 	offReason  string
 	offFolders []string // dovoljene mape iz serve.json, izpuščene ob zagonu (stran jih pokaže, da jih uporabnik odstrani)
-	settings   settingsState
-	pick       atomic.Pointer[pickFunc] // izbirno okno pladnja (Windows); nil = ni GUI
-	picking    atomic.Bool              // eno okno naenkrat
+	// offUnchecked, offErrors: med offFolders tiste, ki jih ni mogoče preveriti, in napake razrešitve (stran sestavi razlog)
+	offUnchecked, offErrors []string
+	wasMissing              sync.Map // #83: dovoljene mape, ki so kdaj manjkale (agentFolders); odide le z mapo s seznama
+	refusedLogged           sync.Map // #83: zavrnjene označene mape, že v dnevniku (enkrat na mapo)
+	settings                settingsState
+	pick                    atomic.Pointer[pickFunc] // izbirno okno pladnja (Windows); nil = ni GUI
+	picking                 atomic.Bool              // eno okno naenkrat
 	// agentsRunning: tekoči procesi agentov (claude, codex, grok), za status in posodobitev brez prekinitve
 	agentsRunning atomic.Int32
 	scratchGate   sync.RWMutex // zahteve odjemalcev bralno, premik Scratch pisalno (serve_scratchmove.go)
@@ -514,7 +518,7 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	if err := protectScratch(c.Scratch); errors.Is(err, errScratchTaken) { // L1′
 		return nil, fmt.Errorf("scratch folder %s: %v: set \"scratch\" in %s to a folder of your own (another user on this PC uses %s)",
 			c.Scratch, err, cfgPath, c.Scratch)
-	} else if errors.Is(err, errForeignOwner) || errors.Is(err, errUnprotected) || errors.Is(err, errScratchLink) {
+	} else if errors.Is(err, errForeignOwner) || errors.Is(err, errUnprotected) || errors.Is(err, errScratchLink) || errors.Is(err, errScratchNetwork) {
 		return nil, fmt.Errorf("scratch folder %s: %v: set \"scratch\" in %s to a folder of your own", c.Scratch, err, cfgPath)
 	} else if err != nil {
 		return nil, fmt.Errorf("scratch folder %s: %v: use a folder of your own", c.Scratch, err)
@@ -537,15 +541,22 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	// H1: dovoljena mapa, ki vsebuje Scratch (ali je v njem), bi agentom pokazala zrcala in kopije drugih naprav:
 	// ob zagonu (ročno urejen serve.json) take mape ne veljajo, Claude CLI in Codex sta izklopljena, opozorilo v dnevniku.
 	var offReason string
+	var unchecked, offErrors []string // izpuščene mape, ki jih ni mogoče preveriti; napake razrešitve (stran)
 	bad := append(scratchOverlaps(c.AllowedFolders, c.Scratch), copilotCacheOverlaps(c.AllowedFolders)...)
 	slices.Sort(bad)
 	if bad = slices.Compact(bad); len(bad) > 0 { // mapa je lahko v obeh
 		var unresolved []string // #83: nerazrešljiva mapa (dostop zavrnjen, NAS brez povezave) šteje kot prekrivanje
-		for _, f := range append([]string{c.Scratch, copilotCacheDir()}, bad...) {
+		for i, f := range append([]string{c.Scratch, copilotCacheDir()}, bad...) {
 			if _, err := realPath(f); err != nil {
 				unresolved = append(unresolved, err.Error())
+				if i < 2 { // Scratch ali predpomnilnik: nobene mape ni mogoče preveriti
+					unchecked = bad
+				} else if !slices.Contains(unchecked, f) {
+					unchecked = append(unchecked, f)
+				}
 			}
 		}
+		offErrors = unresolved
 		why := " contain or are inside the scratch folder " + c.Scratch + " or Copilot's package cache " + copilotCacheDir()
 		if len(unresolved) > 0 {
 			why += ", or cannot be checked (" + strings.Join(unresolved, "; ") + ")"
@@ -554,7 +565,13 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 		c.AllowedFolders = slices.DeleteFunc(slices.Clone(c.AllowedFolders), func(f string) bool { return slices.Contains(bad, f) })
 		c.ClaudeDisabled, c.Codex.Enabled = true, false
 	}
-	exe, err := checkAgent(&c, cfgDir)
+	var missing []string // #83: manjka ob zagonu (odklopljen pogon): ostane, agentFolders jo preveri strožje (wasMissing)
+	for _, f := range c.AllowedFolders {
+		if _, err := os.Lstat(f); errors.Is(err, os.ErrNotExist) {
+			missing = append(missing, f)
+		}
+	}
+	exe, err := checkAgent(&c, cfgDir, missing)
 	if err != nil {
 		return nil, err
 	}
@@ -586,7 +603,7 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	s.hub.logf = s.log.Printf
 	s.hub.nestedBlocker = s.nestedBlocker
 	if s.offReason = offReason; offReason != "" {
-		s.offFolders = bad
+		s.offFolders, s.offUnchecked, s.offErrors = bad, unchecked, offErrors
 		s.log.Print("WARNING: Claude CLI and Codex are off: " + offReason)
 	}
 	if protectErr != nil {
@@ -597,6 +614,9 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	}
 	if s.cfg.Instance == "" { // le testi (zagon ga shrani prej, ensureInstance)
 		s.cfg.Instance = newInstanceID()
+	}
+	for _, f := range missing {
+		s.wasMissing.Store(f, true)
 	}
 	s.claimScratch()
 	return s, nil
@@ -628,17 +648,21 @@ func deprecatedFolder(c *serveConfig, f string) {
 }
 
 // checkAgent: mapa ne sme biti blizu mape nastavitev, claude mora obstajati, Bash na Windows le z dovoljenjem.
-// Za zagon in za spremembe prek skrbniškega API.
-func checkAgent(c *serveConfig, cfgDir string) ([]string, error) {
+// Za zagon in za spremembe prek skrbniškega API. kept (#83): mape, ki smejo manjkati (ob zagonu manjkajoče, ob
+// spremembi že shranjene), da odklopljen pogon ne ustavi prehoda, in ostanejo zapisane, kot so (ne cilj povezave);
+// nova mapa, ki je ni, je zavrnjena.
+func checkAgent(c *serveConfig, cfgDir string, kept []string) ([]string, error) {
 	for i, f := range c.AllowedFolders {
 		if f == "" || !filepath.IsAbs(f) {
 			return nil, errors.New("allowed folder must be an absolute path: " + f)
 		}
-		real, err := checkFolder(f, cfgDir)
+		real, err := checkFolder(f, cfgDir, slices.Contains(kept, f))
 		if err != nil {
 			return nil, err
 		}
-		c.AllowedFolders[i] = real
+		if !slices.Contains(kept, f) { // shranjena mapa ostane, kot je (oznaka wasMissing je po tej poti)
+			c.AllowedFolders[i] = real
+		}
 	}
 	if bad := scratchOverlaps(c.AllowedFolders, c.Scratch); len(bad) > 0 { // H1: PATCH, minigw gw claude --folders, serve.json
 		return nil, errors.New("allowed folder " + bad[0] + " contains or is inside the scratch folder " + c.Scratch +
@@ -687,24 +711,32 @@ func (c serveConfig) unsandboxedRefusal(cfgDir string) string {
 
 var validSources = regexp.MustCompile(`^((user|project|local)(,(user|project|local))*)?$`)
 
-// checkFolder: mapa obstaja (povezave razrešene) in ni v mapi nastavitev ali okoli nje.
-func checkFolder(f, cfgDir string) (string, error) {
+// checkFolder: mapa obstaja (povezave razrešene) in ni v mapi nastavitev ali okoli nje. missingOK (#83): mapa, ki je
+// ni (pogon ni priklopljen), ostane, kot je, preverjena po realPath (najbližja obstoječa nadrejena mapa).
+func checkFolder(f, cfgDir string, missingOK bool) (string, error) {
 	abs, _ := filepath.Abs(f)
 	real, err := filepath.EvalSymlinks(abs)
-	if err != nil {
-		return "", errors.New("folder: " + err.Error())
-	}
-	if st, err := os.Stat(real); err != nil || !st.IsDir() {
-		return "", errors.New("not a folder: " + f)
+	var fin string
+	if _, lerr := os.Lstat(abs); err != nil && missingOK && errors.Is(lerr, os.ErrNotExist) {
+		if fin, err = realPath(abs); err != nil { // npr. visoča povezava nad njo
+			return "", errors.New("folder: " + err.Error())
+		}
+		real = abs
+	} else {
+		if err != nil {
+			return "", errors.New("folder: " + err.Error())
+		}
+		if st, err := os.Stat(real); err != nil || !st.IsDir() {
+			return "", errors.New("not a folder: " + f)
+		}
+		// Windows: EvalSymlinks stičišča ne razreši; finalPath ga (preverba; shranjena ostane pot EvalSymlinks).
+		if fin, err = finalPath(abs); err != nil {
+			return "", errors.New("folder: " + err.Error())
+		}
 	}
 	realCfg, err := filepath.EvalSymlinks(cfgDir)
 	if err != nil {
 		realCfg = cfgDir
-	}
-	// Windows: EvalSymlinks stičišča ne razreši; finalPath ga (preverba; shranjena ostane pot EvalSymlinks).
-	fin, err := finalPath(abs)
-	if err != nil {
-		return "", errors.New("folder: " + err.Error())
 	}
 	finCfg, err := finalPath(cfgDir)
 	if err != nil { // #83: brez nadomestka
@@ -736,6 +768,10 @@ func unsandboxedTools(tools string) []string {
 }
 
 var errForeignOwner = errors.New("is owned by another user")
+
+// errScratchNetwork (W5, Windows): na omrežnem disku (preslikan pogon, \\strežnik\mapa) je lastnik map lastnik
+// strežnika (NAS: njegov SID), ne ta uporabnik; lastnika in DACL tam ni mogoče preveriti (preverba ostane).
+var errScratchNetwork = errors.New("Scratch is not supported on a network share: the owner of folders there cannot be checked")
 
 var errUnprotected = errors.New("is not protected from other users: ask an administrator to protect it")
 

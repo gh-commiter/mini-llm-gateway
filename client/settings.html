@@ -153,6 +153,10 @@ const S = {
   installedYes: ["minigw serve install", "minigw serve install"], enabled: ["Enabled", "Vklopljeno"],
   claudeOff: ["Claude CLI and Codex are off: %s", "Claude CLI in Codex sta izklopljena: %s"],
   leftOut: ["left out (scratch folder or Copilot's cache): select and remove it", "izpuščena (mapa Scratch ali predpomnilnik Copilot): izberite jo in odstranite"],
+  leftOutUnchecked: ["left out (cannot be checked): select and remove it", "izpuščena (ni je mogoče preveriti): izberite jo in odstranite"],
+  offLeftOut: ["the allowed folder(s) %s contain or are inside the scratch folder or Copilot's package cache%s: they are left out; save the allowed folders without them (Claude CLI → Allowed folders), then turn Claude CLI and Codex on",
+    "dovoljene mape %s vsebujejo mapo Scratch ali predpomnilnik paketov Copilot ali so v njej%s: izpuščene so; shranite dovoljene mape brez njih (Claude CLI → Dovoljene mape), nato vklopite Claude CLI in Codex"],
+  offUnchecked: [", or cannot be checked (%s)", " ali jih ni mogoče preveriti (%s)"],
   detectedAt: ["Detected: %s · %s", "Najdeno: %s · %s"], allowedFolders: ["Allowed folders", "Dovoljene mape"], addFolder: ["Add Folder", "Dodaj mapo"],
   choose: ["Choose…", "Izberi…"], browse: ["Browse…", "Prebrskaj…"],
   allowedFoldersHint: ["Agents work only in the session's folder and these folders. Type a full path and press +.",
@@ -303,7 +307,7 @@ const S = {
   signin: ["Not signed in, or the session has expired. Open Settings… from the tray icon again (or run minigw gw settings link).",
     "Ni prijave ali je seja potekla. Znova odpri Nastavitve … v ikoni pladnja (ali zaženi minigw gw settings link)."],
 };
-const t = (k, ...a) => { let s = (S[k] || [k, k])[SL ? 1 : 0]; for (const x of a) s = s.replace("%s", x); return s; };
+const t = (k, ...a) => { let s = (S[k] || [k, k])[SL ? 1 : 0]; for (const x of a) s = s.replace("%s", () => x); return s; }; // funkcija: $& in $' v poti ostaneta
 const TOOLS = [
   ["Read", "Read files", "Branje datotek"], ["Grep", "Search file contents", "Iskanje po vsebini"], ["Glob", "Find files by name", "Iskanje datotek po imenu"],
   ["LS", "List folders", "Seznam map"], ["Edit", "Edit files", "Urejanje datotek"], ["Write", "Create and overwrite files", "Ustvarjanje in prepis datotek"],
@@ -441,7 +445,8 @@ document.addEventListener("visibilitychange", () => { if (document.visibilitySta
 
 // folderList: seznam map s + / − (kot »Allowed folders« na Macu). Pot se vpiše ali, s pladnjem na Windows, izbere (Izberi…).
 // leftOut: mape iz serve.json, ki jih prehod ob zagonu izpusti; označene, odstrani jih vsako shranjevanje seznama.
-function folderList(csv, send, hint, win, leftOut) {
+// unchecked: od teh tiste, ki jih ni mogoče preveriti (drug razlog).
+function folderList(csv, send, hint, win, leftOut, unchecked) {
   const list = (csv || "").split(",").map(x => x.trim()).filter(Boolean), left = [...(leftOut || [])];
   let sel = null;
   const n = note(hint);
@@ -449,7 +454,7 @@ function folderList(csv, send, hint, win, leftOut) {
   const input = el("input", {type: "text", class: "left wide", placeholder: win ? "C:\\Users\\you\\Projects" : "/home/you/projects"});
   const commit = next => save(n, async () => { await send(next.join(",")); list.splice(0, list.length, ...next); left.length = 0; sel = null; render(); }, () => hint);
   const render = () => box.replaceChildren(
-    ...left.map(f => { const r = row(el("span", {class: "label mono warn", textContent: "⚠️ " + f + " · " + t("leftOut")}));
+    ...left.map(f => { const r = row(el("span", {class: "label mono warn", textContent: "⚠️ " + f + " · " + t((unchecked || []).includes(f) ? "leftOutUnchecked" : "leftOut")}));
       r.classList.toggle("selected", f === sel); r.addEventListener("click", () => { sel = sel === f ? null : f; render(); }); return r; }),
     ...list.map(f => { const r = row(el("span", {class: "label mono", textContent: "📁 " + f}));
       r.classList.toggle("selected", f === sel); r.addEventListener("click", () => { sel = sel === f ? null : f; render(); }); return r; }),
@@ -501,7 +506,7 @@ async function agentPane(kind) {
     el("h3", {}, el("span", {textContent: t("models")}), buttons(button(t("enableAll"), () => bulk(true)), button(t("disableAll"), () => bulk(false)))),
     list, n1,
     section(t("login")), loginGroup(kind, a.login, patch, n1),
-    ...(codex ? [section(t("allowedFolders")), folderList(c.folders, v => api("PATCH", "/agents/claude", {folders: v}), t("allowedFoldersShared"), win, c.leftOut)] : []),
+    ...(codex ? [section(t("allowedFolders")), folderList(c.folders, v => api("PATCH", "/agents/claude", {folders: v}), t("allowedFoldersShared"), win, c.leftOut, c.leftOutUnchecked)] : []),
     section(t("sandbox")),
     group(row(t("allowWrite"), toggle(a.write, v => save(n2, async () => { await patch({write: v}); show(kind); }), locked)),
       codex ? row(t("allowNetwork"), toggle(a.network, v => save(n2, () => patch({network: v})), !a.write || locked)) : null,
@@ -893,12 +898,13 @@ const pages = {
         try { await patch({enabled: v}); } catch (e) { i.checked = !v; throw e; } // napaka ostane pod stikalom
         show("claude");
       }))),
-        c.off ? row(el("div", {class: "label warn", textContent: t("claudeOff", c.off)})) : null), n0,
+        c.off ? row(el("div", {class: "label warn", textContent: t("claudeOff", SL && c.leftOut ? // razlog strežnika je angleški; sl ga sestavi (napake OS ostanejo)
+          t("offLeftOut", c.leftOut.join(", "), c.offErrors ? t("offUnchecked", c.offErrors.join("; ")) : "") : c.off)})) : null), n0,
       group(row(labelSub(t("path")), path, button(t("find"), () => save(n1, async () => { path.value = ""; showStatus(await patch({path: ""})); })),
         browse(path, n1, async v => showStatus(await patch({path: v}))))),
       el("div", {class: "note"}, status), n1,
       section(t("login")), loginGroup("claude", c.login, patch, n1),
-      section(t("allowedFolders")), folderList(c.folders, v => patch({folders: v}), t("allowedFoldersHint"), win, c.leftOut),
+      section(t("allowedFolders")), folderList(c.folders, v => patch({folders: v}), t("allowedFoldersHint"), win, c.leftOut, c.leftOutUnchecked),
       box ? el("div", {class: "note warn", textContent: t("pathHomeWarn")}) : null,
       el("div", {style: "height:12px"}),
       group(row(labelSub(t("localTools"), win ? t(box ? "localToolsBox" : "localToolsWin") : t("localToolsHelp")), toggle(c.allowLocalTools, v => save(n2, async () => { await patch({allowLocalTools: v}); show("claude"); }))),

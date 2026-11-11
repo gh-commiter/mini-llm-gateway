@@ -319,6 +319,14 @@ func regRunDel(name string) {
 // odprt, dokler prehod teče (nihče, tudi lastnik nadrejene mape, je ne preimenuje in na njeno mesto podtakne
 // junction). Ostanek: lastnik nadrejene mape lahko spremeni njen DACL.
 func protectScratch(dir string) error {
+	err := protectScratchDir(dir)
+	if (errors.Is(err, errForeignOwner) || errors.Is(err, errUnprotected)) && remoteVolume(dir) { // W5: razlog, ne »drug uporabnik«
+		return errScratchNetwork // brez poti: klicatelji jo dodajo; ne errScratchTaken (»drug uporabnik na tem PC«)
+	}
+	return err
+}
+
+func protectScratchDir(dir string) error {
 	if p := filepath.Dir(dir); strings.EqualFold(filepath.Base(longPath(p)), "minigw-scratch") {
 		if err := os.MkdirAll(p, 0o700); err != nil {
 			return err
@@ -369,6 +377,12 @@ func protectScratch(dir string) error {
 // scratchParentSDDL: lastnik (ta uporabnik), SYSTEM in Administrators vse; Authenticated Users le prehod, seznam in
 // nova podmapa v tej mapi; CREATOR OWNER vse na podmapah (vsaka mapa prehoda ima še svoj zaščiten DACL).
 const scratchParentSDDL = "D:P(A;;FA;;;%s)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;;0x1200ad;;;AU)(A;OICIIO;FA;;;CO)"
+
+// remoteVolume: pot je na omrežnem disku (GetDriveType korena: DRIVE_REMOTE; tudi pot UNC).
+func remoteVolume(p string) bool {
+	root, err := windows.UTF16PtrFromString(filepath.VolumeName(p) + `\`)
+	return err == nil && windows.GetDriveType(root) == windows.DRIVE_REMOTE
+}
 
 var errScratchNoHold = errors.New("cannot be held open (no list access for this user): set \"scratch\" to a folder of your own")
 

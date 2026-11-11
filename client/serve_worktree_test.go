@@ -372,7 +372,7 @@ func TestAllowedFolderAroundScratch(t *testing.T) {
 	for _, f := range []string{parent, inside} {
 		cc := s.conf()
 		cc.AllowedFolders = []string{f}
-		if _, err := checkAgent(&cc, s.cfgDir); err == nil || !strings.Contains(err.Error(), "scratch folder") {
+		if _, err := checkAgent(&cc, s.cfgDir, nil); err == nil || !strings.Contains(err.Error(), "scratch folder") {
 			t.Fatalf("%s accepted: %v", f, err)
 		}
 	}
@@ -2434,5 +2434,145 @@ func TestGitGuardPins71(t *testing.T) {
 		if !strings.Contains(g, "-c "+pin) {
 			t.Errorf("missing -c %s in %q", pin, g)
 		}
+	}
+}
+
+// #83 (W6.1): dovoljena mapa, ki je ni (Windows: tudi pogon, ki ga ni), ob zagonu ne ustavi prehoda: ostane, Claude CLI
+// in Codex ostaneta vklopljena; sprememba drugih nastavitev jo obdrži, nova mapa, ki je ni, je zavrnjena.
+func TestAllowedFolderMissingAtStart(t *testing.T) {
+	missing := []string{filepath.Join(t.TempDir(), "gone", "proj")}
+	if runtime.GOOS == "windows" {
+		for l := 'Z'; l >= 'D'; l-- {
+			if _, err := os.Stat(string(l) + `:\`); os.IsNotExist(err) {
+				missing = append(missing, string(l)+`:\proj`)
+				break
+			}
+		}
+		if len(missing) == 1 {
+			t.Log("no unused drive letter: missing drive not tested")
+		}
+	}
+	for _, m := range missing {
+		t.Cleanup(releaseScratch)
+		scratch := filepath.Join(t.TempDir(), "scratch")
+		os.MkdirAll(scratch, 0o700)
+		k, _ := ecdh.X25519().GenerateKey(rand.Reader)
+		c := serveConfig{Token: "tok", Key: base64url(k.Bytes()), Tools: defaultTools, PermissionMode: "dontAsk", Scratch: scratch,
+			AllowedFolders: []string{m}, Codex: agentCLI{Enabled: true}}
+		cfg := filepath.Join(t.TempDir(), "serve.json")
+		writeServeConfig(cfg, c)
+		s, err := newServer(c, cfg)
+		if err != nil {
+			t.Fatalf("%s: gateway did not start: %v", m, err)
+		}
+		if got := s.conf(); got.ClaudeDisabled || !got.Codex.Enabled || !slices.Equal(got.AllowedFolders, []string{m}) || s.claudeInfo().Off != "" {
+			t.Fatalf("%s: %+v, off %q", m, got, s.claudeInfo().Off)
+		}
+		if a := strings.Join(s.agentArgs(t.TempDir(), false), " "); strings.Contains(a, "proj") { // ga ni: ne agentom
+			t.Fatalf("%s: missing folder given to the agent: %s", m, a)
+		}
+		if st, b := s.adminDo("PATCH", "/agents/claude", []byte(`{"permissionMode":"acceptEdits"}`)); st != 200 {
+			t.Fatalf("%s: other change refused: %d %v", m, st, b)
+		}
+		if st, _ := s.adminDo("PATCH", "/agents/claude", []byte(`{"folders":"`+strings.ReplaceAll(m, `\`, `\\`)+`,`+strings.ReplaceAll(m+"2", `\`, `\\`)+`"}`)); st != 400 {
+			t.Fatalf("%s: new missing folder accepted: %d", m, st)
+		}
+		cc := s.conf()
+		cc.AllowedFolders = []string{filepath.Join(filepath.Dir(cfg), "later")} // še ni, v mapi nastavitev
+		if _, err := checkAgent(&cc, s.cfgDir, cc.AllowedFolders); err == nil || !strings.Contains(err.Error(), "config folder") {
+			t.Fatalf("missing folder inside the config folder accepted: %v", err)
+		}
+	}
+}
+
+// #83 (W6.2): visoča povezava kot dovoljena mapa ob zagonu: izpuščena, Claude CLI in Codex izklopljena; stran dobi
+// mapo med »ni je mogoče preveriti« in napako razrešitve (sestavi razlog v slovenščini).
+func TestAllowedFolderUncheckedAtStart(t *testing.T) {
+	t.Cleanup(releaseScratch)
+	dir := t.TempDir()
+	dangling := filepath.Join(dir, "link")
+	if err := os.Symlink(filepath.Join(dir, "gone"), dangling); err != nil {
+		t.Skip("no symlinks:", err)
+	}
+	scratch := filepath.Join(t.TempDir(), "scratch")
+	os.MkdirAll(scratch, 0o700)
+	k, _ := ecdh.X25519().GenerateKey(rand.Reader)
+	c := serveConfig{Token: "tok", Key: base64url(k.Bytes()), Tools: defaultTools, PermissionMode: "dontAsk", Scratch: scratch,
+		AllowedFolders: []string{dangling}, Codex: agentCLI{Enabled: true}}
+	cfg := filepath.Join(t.TempDir(), "serve.json")
+	writeServeConfig(cfg, c)
+	s, err := newServer(c, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := s.claudeInfo()
+	if !s.conf().ClaudeDisabled || !slices.Equal(info.LeftOut, []string{dangling}) || !slices.Equal(info.LeftOutUnchecked, []string{dangling}) ||
+		len(info.OffErrors) != 1 || !strings.Contains(info.Off, "cannot be checked") {
+		t.Fatalf("%+v", info)
+	}
+}
+
+// #83 (A1, R1, R2): na mestu dovoljene mape, ki je ob zagonu ni bilo, podtaknjena povezava (v mapo nastavitev ali
+// drugam, tudi v nadrejeni mapi) ne gre agentu, tudi po drugi spremembi ali shranjevanju istega seznama; prava mapa tega
+// uporabnika gre; odstranjena in znova dodana mapa velja kot nova; nova obstoječa mapa gre takoj.
+func TestAllowedFolderPlantedAfterStart(t *testing.T) {
+	t.Cleanup(releaseScratch)
+	base := realOf(t, t.TempDir()) // macOS: /var → /private/var (sicer povezava v nadrejeni mapi)
+	m, viaParent := filepath.Join(base, "gone", "proj"), filepath.Join(base, "x", "proj")
+	scratch := filepath.Join(t.TempDir(), "scratch")
+	os.MkdirAll(scratch, 0o700)
+	k, _ := ecdh.X25519().GenerateKey(rand.Reader)
+	c := serveConfig{Token: "tok", Key: base64url(k.Bytes()), Tools: defaultTools, PermissionMode: "dontAsk", Scratch: scratch,
+		AllowedFolders: []string{m, viaParent}, Codex: agentCLI{Enabled: true}}
+	cfg := filepath.Join(t.TempDir(), "serve.json")
+	writeServeConfig(cfg, c)
+	s, err := newServer(c, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	folders := func() []string { return s.agentFolders(s.conf(), t.TempDir()) }
+	esc := func(l ...string) string { return strings.ReplaceAll(strings.Join(l, ","), `\`, `\\`) }
+	patch := func(body string) {
+		t.Helper()
+		if st, b := s.adminDo("PATCH", "/agents/claude", []byte(body)); st != 200 {
+			t.Fatalf("%s: %d %v", body, st, b)
+		}
+	}
+	own := filepath.Join(base, "own")
+	os.MkdirAll(filepath.Join(own, "proj"), 0o700)
+	if err := os.Symlink(own, filepath.Join(base, "x")); err != nil { // R2: povezava v nadrejeni mapi
+		t.Skip("no symlinks:", err)
+	}
+	os.MkdirAll(filepath.Dir(m), 0o700)
+	for _, target := range []string{s.cfgDir, t.TempDir()} {
+		if err := os.Symlink(target, m); err != nil {
+			t.Fatal(err)
+		}
+		if got := folders(); len(got) != 0 {
+			t.Fatalf("planted link to %s given to agents: %v", target, got)
+		}
+		if a := strings.Join(s.agentArgs(t.TempDir(), false), " "); strings.Contains(a, "proj") {
+			t.Fatalf("planted link to %s in the agent's arguments: %s", target, a)
+		}
+		for _, body := range []string{`{"permissionMode":"acceptEdits"}`, `{"folders":"` + esc(s.conf().AllowedFolders...) + `"}`} {
+			// R1: druga sprememba ne prepiše poti v cilj povezave, isti seznam ne pobriše oznake; povezava v mapo
+			// nastavitev zavrne vsako spremembo (checkAgent)
+			if st, b := s.adminDo("PATCH", "/agents/claude", []byte(body)); (target == s.cfgDir) != (st == 400) {
+				t.Fatalf("%s with a link to %s: %d %v", body, target, st, b)
+			}
+		}
+		if got := folders(); len(got) != 0 || !slices.Equal(s.conf().AllowedFolders, []string{m, viaParent}) {
+			t.Fatalf("after saving, link to %s: %v, list %v", target, got, s.conf().AllowedFolders)
+		}
+		os.Remove(m)
+	}
+	os.Mkdir(m, 0o700)
+	if got := folders(); !slices.Equal(got, []string{m}) {
+		t.Fatalf("own folder that appeared later: %v", got)
+	}
+	patch(`{"folders":""}`)
+	patch(`{"folders":"` + esc(viaParent, own) + `"}`) // znova dodana (skozi povezavo) in nova mapa: veljata
+	if got := folders(); len(got) != 2 {
+		t.Fatalf("folders added again: %v (list %v)", got, s.conf().AllowedFolders)
 	}
 }

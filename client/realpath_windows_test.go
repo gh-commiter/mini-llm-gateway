@@ -37,7 +37,7 @@ func TestRealPathJunctionsWindows(t *testing.T) {
 	if !agentWritable(exeDir, []string{jb}) {
 		t.Error("allowed junction to the minigw.exe folder not detected")
 	}
-	if _, err := checkFolder(jc, cfg); err == nil {
+	if _, err := checkFolder(jc, cfg, true); err == nil {
 		t.Error("checkFolder accepted a junction to the config folder")
 	}
 	if !under(realOf(t, filepath.Join(jc, "admin.secret")), cfg) {

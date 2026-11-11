@@ -441,7 +441,7 @@ func TestCopilotCacheFoldersRefused(t *testing.T) {
 	cfgDir := filepath.Join(home, "cfg")
 	os.MkdirAll(cfgDir, 0o700)
 	c := serveConfig{AllowedFolders: []string{filepath.Dir(cache)}, Scratch: filepath.Join(home, "scratch")}
-	if _, err := checkAgent(&c, cfgDir); err == nil || !strings.Contains(err.Error(), "Copilot's package cache") {
+	if _, err := checkAgent(&c, cfgDir, nil); err == nil || !strings.Contains(err.Error(), "Copilot's package cache") {
 		t.Fatalf("checkAgent: %v", err)
 	}
 }
