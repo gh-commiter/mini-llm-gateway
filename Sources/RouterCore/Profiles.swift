@@ -187,6 +187,7 @@ public enum Profiles {
         /// Nove vrstice, ki jih besedilo želi na koncu (največ ena prazna vrstica), in že izpisane: prva gre takoj, da je
         /// vrstica cela pred oznako orodja (kot Go pend, nl).
         var pend = 0, nl = 0
+        var apiError = ""  // besedilo sporočila z napako API, dokler ga ne prinese result
         public private(set) var failed = false
         /// Dogodek result: zadnji dogodek claude -p, branje se konča.
         public private(set) var done = false
@@ -267,7 +268,10 @@ public enum Profiles {
                 }
             case "assistant":
                 for c in ((ev["message"] as? [String: Any])?["content"] as? [[String: Any]]) ?? [] {
-                    if c["type"] as? String == "text", !partial, let t = c["text"] as? String {
+                    // sintetično sporočilo z napako API (is_api_error_message): isto besedilo da result, le enkrat kot claude: na stderr
+                    if c["type"] as? String == "text", ev["is_api_error_message"] as? Bool == true {
+                        apiError += c["text"] as? String ?? ""  // do result ali konca branja (end)
+                    } else if c["type"] as? String == "text", !partial, let t = c["text"] as? String {
                         out += text(t)
                         open = false; pend = 0
                     } else if c["type"] as? String == "tool_use" {
@@ -276,13 +280,11 @@ public enum Profiles {
                 }
             case "result":
                 done = true
+                apiError = ""
                 let r = ev["result"] as? String ?? ""
                 if ev["is_error"] as? Bool == true {
                     failed = true
-                    // vsaka vrstica s predpono claude: — model ne more ponarediti vrstice minigw:, ki ji skill zaupa (kot Go)
-                    var r2 = Self.printable(r)
-                    while r2.hasSuffix("\n") { r2.removeLast() }
-                    for l in r2.split(separator: "\n", omittingEmptySubsequences: false) { err += "claude: \(l)\n" }
+                    err += Self.claudeLines(r)
                 } else if n == 0 {
                     out += text(r)
                 }
@@ -292,8 +294,22 @@ public enum Profiles {
             return (out, err)
         }
 
-        /// Konec brez dogodka result: zaključna nova vrstica izpisanega besedila.
-        public var tail: String { n > 0 && !done && nl == 0 ? "\n" : "" }
+        /// Konec branja: zaključna nova vrstica izpisanega besedila brez dogodka result in napaka API, ki je result ni
+        /// prinesel (claude je končal brez njega; kot Go).
+        public mutating func end() -> (out: String, err: String) {
+            let o = n > 0 && !done && nl == 0 ? "\n" : ""
+            guard !apiError.isEmpty else { return (o, "") }
+            failed = true
+            defer { apiError = "" }
+            return (o, Self.claudeLines(apiError))
+        }
+
+        /// Vsaka vrstica s predpono claude: — model ne more ponarediti vrstice minigw:, ki ji skill zaupa (kot Go).
+        static func claudeLines(_ s: String) -> String {
+            var r = printable(s)
+            while r.hasSuffix("\n") { r.removeLast() }
+            return r.split(separator: "\n", omittingEmptySubsequences: false).map { "claude: \($0)\n" }.joined()
+        }
 
         /// Opozorilo, ko se edino besedilo sklicuje na prejšnje (»above«, »zgoraj«), ki ga ni bilo (nil = ni).
         public var warning: String? {

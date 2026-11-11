@@ -1254,7 +1254,9 @@ if streamed {
         if !exited, waitpid(pid, &status, WNOHANG) == pid { exited = true; deadline = Date() + 2 }
     }
     if !printer.done, !streamBroken { show(buf) }
-    try? out.write(contentsOf: Data(printer.tail.utf8))
+    let (o, e) = printer.end()
+    try? out.write(contentsOf: Data(o.utf8))
+    if !e.isEmpty { try? err.write(contentsOf: Data(e.utf8)) }
     if let w = printer.warning { try? err.write(contentsOf: Data(w.utf8)) }
     close(outPipe[0])  // claude ob nadaljnjem pisanju dobi EPIPE/SIGPIPE, ne obvisi
 }
