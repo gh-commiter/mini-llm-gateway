@@ -193,11 +193,14 @@ func TestScratchSiblingTakeOver(t *testing.T) {
 			t.Fatalf("%s: %d", bad, st)
 		}
 	}
-	for _, bad := range []string{"", "..", "a/b", `..\x`, "C:x", "/abs"} {
+	for _, bad := range []string{"..", "a/b", `..\x`, "C:x", "/abs"} {
 		body, _ := json.Marshal(map[string]string{"name": bad})
 		if st, _ := s.adminDo("POST", "/general/scratch/take", body); st != 400 {
 			t.Fatalf("name %q: %d", bad, st)
 		}
+	}
+	if st, _ := s.adminDo("POST", "/general/scratch/take", []byte(`{"name":""}`)); st != 409 { // kot izpuščeno ime: lastna mapa
+		t.Fatalf("empty name: %d", st)
 	}
 	if s.scratchOther.Load() {
 		t.Fatal("own folder foreign")

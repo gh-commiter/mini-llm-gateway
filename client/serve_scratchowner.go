@@ -373,7 +373,7 @@ const scratchTakeBusy = "scratch folder: minigw sessions or agents are active; t
 func (s *server) takeScratchAPI(body []byte) (int, any) {
 	fail := func(status int, msg string) (int, any) { return status, errorBody(status, msg) }
 	var b struct {
-		Name *string `json:"name"` // sosednja mapa v osnovi; izpuščeno = mapa, ki jo imenuje nastavitev (prazno ime: 400)
+		Name string `json:"name"` // sosednja mapa v osnovi; prazno = mapa, ki jo imenuje nastavitev
 	}
 	if len(bytes.TrimSpace(body)) > 0 {
 		if err := decodeStrict(body, &b); err != nil {
@@ -404,8 +404,8 @@ func (s *server) takeScratchAPI(body []byte) (int, any) {
 	}()
 	c := s.conf()
 	cur, old := c.scratchDir(), c.scratchDir()
-	if b.Name != nil { // le neposredna podmapa osnove, prava mapa druge instance
-		name := *b.Name
+	if b.Name != "" { // le neposredna podmapa osnove, prava mapa druge instance
+		name := b.Name
 		if !filepath.IsLocal(name) || filepath.Base(name) != name || strings.ContainsAny(name, `/\:`) {
 			return fail(400, "name: a folder name in the Scratch base, without path separators")
 		}
