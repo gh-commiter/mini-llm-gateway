@@ -710,10 +710,17 @@ func TestRunAgentProcessCancelGrandchild(t *testing.T) {
 	done := make(chan error, 1)
 	start := time.Now()
 	go func() {
-		done <- s.runAgentProcess(ctx, &req{rid: "req_1"}, "sh", []string{"-c", "sleep 20 2>/dev/null & echo up; exec sleep 20"}, agentMounts{}, t.TempDir(), "",
+		done <- s.runAgentProcess(ctx, &req{rid: "req_1"}, "sh", []string{"-c", "sleep 20 2>/dev/null & echo up; exec sleep 20"}, agentMounts{cfgDir: t.TempDir()}, t.TempDir(), "",
 			func(b []byte) { lines <- string(b) })
 	}()
-	<-lines
+	// cfgDir: brez njega bwrap (CI) dobi »--tmpfs ""«, agent ne izpiše nič in test je prej visel na <-lines do 10 min.
+	select {
+	case <-lines:
+	case err := <-done:
+		t.Fatalf("the agent ended before its first line: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("no first line from the agent within 10 s")
+	}
 	cancel()
 	select {
 	case <-done:
