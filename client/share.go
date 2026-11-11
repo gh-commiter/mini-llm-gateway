@@ -7,6 +7,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -59,8 +60,9 @@ type shareClient struct {
 	reported map[string]bool            // že javljene prevelike datoteke
 	unpulled bool                       // spremembe agenta, ki niso bile prevzete in potrjene
 	refusal  string                     // sporočilo routerja ob zavrnjeni registraciji (npr. le način sync)
+	checked  *fileID                    // #84: istovetnost, ki jo je preveril shareWanted (nil: preizkusi brez preverbe)
 	rootID   fileID                     // L6 (#84): istovetnost korena ob start; ničelna brez start (preizkusi)
-	rootErr  error                      // L6: istovetnosti ob start ni bilo mogoče ugotoviti → WebDAV zavrnjen
+	rootErr  error                      // L6: ob start ni znana ali ni preverjena → vsi posli zavrnjeni
 }
 
 var writeMethods = map[string]bool{"PUT": true, "DELETE": true, "MKCOL": true, "MOVE": true, "COPY": true, "PROPPATCH": true, "LOCK": true}
@@ -132,6 +134,10 @@ func (s *shareClient) unregister() {
 
 func (s *shareClient) start(workers int) {
 	s.rootID, s.rootErr = fileIDOf(s.root)
+	if s.rootErr == nil && s.checked != nil && *s.checked != s.rootID {
+		s.rootErr = errors.New("the folder changed after it was checked")
+		fmt.Fprintln(os.Stderr, "minigw: not sharing "+s.root+" (the folder changed after it was checked)")
+	}
 	for i := 0; i < workers; i++ {
 		go s.work()
 	}
@@ -170,6 +176,9 @@ func (s *shareClient) work() {
 // handle: posel routerja. Router ni zaupanja vreden: SYNC-* le v načinu sync, SYNC-PULL (piše v mapo) nikoli pri
 // --minigw-ro, WebDAV le v načinu direct (pisanje ne pri --minigw-ro).
 func (s *shareClient) handle(job davJob, k string) davResponse {
+	if !s.sameRoot() { // L6 (#84): vsi posli (WebDAV, SYNC-*, WORKTREE-*), ne le WebDAV
+		return dav(403, nil, nil)
+	}
 	switch {
 	case s.worktree && job.Method == "WORKTREE-PUSH":
 		s.syncMu.Lock()
@@ -207,9 +216,6 @@ func (s *shareClient) handle(job davJob, k string) davResponse {
 		}
 		return dav(500, nil, nil)
 	case s.sync || (s.readOnly && writeMethods[job.Method]):
-		return dav(403, nil, nil)
-	}
-	if !s.sameRoot() {
 		return dav(403, nil, nil)
 	}
 	return davHandle(job.Method, job.Path, job.Headers, job.Body, s.root, job.Prefix)

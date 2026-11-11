@@ -2017,6 +2017,7 @@ final class UnauthorizedUpstream: URLProtocol, @unchecked Sendable {
     #expect(refused(tmp.path, home.path))  // vsebuje dom (#84)
     #expect(refused(home.appendingPathComponent("missing").path, home.path))  // ni istovetnosti: zavrne
     #expect(!refused(proj.path, home.path))
+    #expect(SharedFolders.shareCheck(proj.path, home: home.path).id == SharedFolders.fileID(proj.path))  // preverjena istovetnost za start
     #expect(!refused(link.appendingPathComponent("proj").path, home.path))
     // #84: ob uporabi mapa s seznama, ki jo zdaj zavrne (dodana pred 0.5.25), ni deljena; projekt je
     let list = [SharedFolders.Entry(path: tmp.path), SharedFolders.Entry(path: proj.path)]

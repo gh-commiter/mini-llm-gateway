@@ -131,37 +131,40 @@ public enum SharedFolders {
     /// #84: zakaj mape ni dovoljeno deliti, nil = dovoljeno (kot shareRefusal v Go). Nikoli koren diska ali koren nosilca
     /// z domom ali sistemom (statfs f_mntonname in f_fsid: /System/Volumes/Data da, /Volumes/<Disk> ne) ali mapa, ki je domača mapa ali jo vsebuje (/Users). Primerja
     /// istovetnost (st_dev+st_ino), ne nizov: /System/Volumes/Data/Users/<ime> ali povezava je ista mapa. Ko istovetnosti
-    /// ni mogoče ugotoviti, zavrne. Velja ob share add in ob vsaki uporabi mape s seznama.
-    public static func shareRefusal(_ dir: String, home: String = NSHomeDirectory()) -> String? {
+    /// ni mogoče ugotoviti, zavrne. Velja ob share add in ob vsaki uporabi mape s seznama;
+    /// shareCheck vrne tudi preverjeno istovetnost (ShareClient.start jo primerja s korenom).
+    public static func shareCheck(_ dir: String, home: String = NSHomeDirectory()) -> (id: [UInt64]?, why: String?) {
         let all = " would expose everything"
         let real = { (p: String) in Sync.real(URL(fileURLWithPath: p))?.path ?? p }
         let id = fileID
         let d = real(dir)
-        guard let did = id(d) else { return "cannot tell which folder this is: \(String(cString: strerror(errno)))" }
-        if d == "/" { return "a disk root" + all }
+        guard let did = id(d) else { return (nil, "cannot tell which folder this is: \(String(cString: strerror(errno)))") }
+        if d == "/" { return (nil, "a disk root" + all) }
         var fs = statfs()
-        guard statfs(d, &fs) == 0 else { return "cannot tell whether this is a volume root: \(String(cString: strerror(errno)))" }
+        guard statfs(d, &fs) == 0 else { return (nil, "cannot tell whether this is a volume root: \(String(cString: strerror(errno)))") }
         let mnt = withUnsafeBytes(of: fs.f_mntonname) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
         if id(mnt) == did {  // koren nosilca: zavrnjen le nosilec z domom ali sistemom (/System/Volumes/Data; /Volumes/<Disk> sme)
             for p in [home, "/"] {
                 var o = statfs()
-                guard statfs(p, &o) == 0 else { return "cannot tell whether this is a volume root: \(String(cString: strerror(errno)))" }
+                guard statfs(p, &o) == 0 else { return (nil, "cannot tell whether this is a volume root: \(String(cString: strerror(errno)))") }
                 if o.f_fsid.val.0 == fs.f_fsid.val.0 && o.f_fsid.val.1 == fs.f_fsid.val.1 {
-                    return "the root of the volume with your home folder or the system" + all
+                    return (nil, "the root of the volume with your home folder or the system" + all)
                 }
             }
         }
         for h in [home, real(home)] {
             var p = h
             while true {
-                guard let hid = id(p) else { return "cannot check your home folder: \(String(cString: strerror(errno)))" }
-                if hid == did || p == d { return "your home folder or a folder that contains it" + all }
+                guard let hid = id(p) else { return (nil, "cannot check your home folder: \(String(cString: strerror(errno)))") }
+                if hid == did || p == d { return (nil, "your home folder or a folder that contains it" + all) }
                 if p == "/" { break }
                 p = (p as NSString).deletingLastPathComponent
             }
         }
-        return nil
+        return (did, nil)
     }
+
+    public static func shareRefusal(_ dir: String, home: String = NSHomeDirectory()) -> String? { shareCheck(dir, home: home).why }
 
     /// #84: lookup ob uporabi; mapa, ki je shareRefusal zdaj zavrne (dodana pred 0.5.25), ni deljena (refused = vrstica za stderr).
     public static func lookupAllowed(_ entries: [Entry], cwd: String, home: String = NSHomeDirectory()) -> (entry: Entry?, refused: String?) {

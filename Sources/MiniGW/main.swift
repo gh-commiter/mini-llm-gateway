@@ -326,10 +326,15 @@ final class ShareClient: @unchecked Sendable {
 
     func unregister() { guard !key.isEmpty else { return }; _ = call(c, "DELETE", "/minigw/share", ["x-share-key": key], timeout: 3) }
 
-    private var rootID: [UInt64]?  // L6 (#84): istovetnost korena ob start; nil = ni znana → WebDAV zavrnjen
+    private var rootID: [UInt64]?  // L6 (#84): istovetnost korena ob start; nil = ni znana ali ni preverjena → vsi posli zavrnjeni
 
-    func start(workers: Int = 4) {
+    /// checked: istovetnost, ki jo je preveril cwdShareAllowed; drugačen koren ob start (zamenjava) ni deljen (#84).
+    func start(checked: [UInt64]?, workers: Int = 4) {
         rootID = SharedFolders.fileID(root.path)
+        if rootID != checked {
+            rootID = nil
+            try? FileHandle.standardError.write(contentsOf: Data("minigw: not sharing \(root.path) (the folder changed after it was checked)\n".utf8))
+        }
         for _ in 0..<workers { Thread { self.work() }.start() }
     }
 
@@ -342,18 +347,19 @@ final class ShareClient: @unchecked Sendable {
                 guard let d, let job = try? JSONDecoder().decode(DAVJob.self, from: d) else { continue }
                 // Router ni zaupanja vreden: Sync.clientJob odloči po načinu (glej tam).
                 let r: DAVResponse
-                switch Sync.clientJob(job.method, kind: kind, readOnly: readOnly, write: Self.writeMethods.contains(job.method)) {
-                case .note: r = syncLock.withLock { noteJob(job) }
-                case .worktreePush: r = syncLock.withLock { wtPush(k, job) }
-                case .worktreePull: r = syncLock.withLock { wtPull(k, job) }
-                case .syncPush: r = DAVResponse(syncLock.withLock { push(k) } ? 200 : 500)
-                case .syncPull: r = DAVResponse(syncLock.withLock { pull(k) } ? 200 : 500)
-                case .webDAV where rootID == nil || SharedFolders.fileID(root.path) != rootID:  // L6: koren zamenjan med sejo
-                    r = DAVResponse(403)
-                case .webDAV:
-                    let dav = { WebDAV.handle(method: job.method, path: job.path, headers: job.headers, body: job.body, root: self.root, prefix: job.prefix) }
-                    r = Self.writeMethods.contains(job.method) ? davWriteLock.withLock(dav) : dav()
-                case nil: r = DAVResponse(403)
+                // L6 (#84): koren zamenjan med sejo → vsi posli (WebDAV, sync, worktree) zavrnjeni
+                if rootID == nil || SharedFolders.fileID(root.path) != rootID { r = DAVResponse(403) } else {
+                    switch Sync.clientJob(job.method, kind: kind, readOnly: readOnly, write: Self.writeMethods.contains(job.method)) {
+                    case .note: r = syncLock.withLock { noteJob(job) }
+                    case .worktreePush: r = syncLock.withLock { wtPush(k, job) }
+                    case .worktreePull: r = syncLock.withLock { wtPull(k, job) }
+                    case .syncPush: r = DAVResponse(syncLock.withLock { push(k) } ? 200 : 500)
+                    case .syncPull: r = DAVResponse(syncLock.withLock { pull(k) } ? 200 : 500)
+                    case .webDAV:
+                        let dav = { WebDAV.handle(method: job.method, path: job.path, headers: job.headers, body: job.body, root: self.root, prefix: job.prefix) }
+                        r = Self.writeMethods.contains(job.method) ? davWriteLock.withLock(dav) : dav()
+                    case nil: r = DAVResponse(403)
+                    }
                 }
                 guard let body = try? JSONEncoder().encode(DAVReply(id: job.id, response: r)) else { continue }
                 _ = call(c, "POST", "/minigw/share/reply", ["x-share-key": k, "content-type": "application/json"], body, timeout: 120)
@@ -721,9 +727,13 @@ func savedShare(_ cwd: String) -> SharedFolders.Entry? {
     return e
 }
 
-/// H1 (#84): deli se cwd sam (root = cwd), zato ga shareRefusal preveri, ko bi bil deljen; zavrnitev pove enkrat.
+/// H1 (#84): deli se cwd sam (root = cwd), zato ga shareCheck preveri, ko bi bil deljen; zavrnitev pove enkrat.
+/// Preverjeno istovetnost hrani v checkedShareID (ShareClient.start: zamenjava mape med preverbo in start).
+var checkedShareID: [UInt64]?
 func cwdShareAllowed(_ cwd: String) -> Bool {
-    guard let why = SharedFolders.shareRefusal(cwd) else { return true }
+    let (id, why) = SharedFolders.shareCheck(cwd)
+    checkedShareID = id
+    guard let why else { return true }
     if refusedShares.insert(cwd).inserted { try? FileHandle.standardError.write(contentsOf: Data("minigw: not sharing \(cwd) (\(why))\n".utf8)) }
     return false
 }
@@ -1129,7 +1139,7 @@ if !wantShare || sid.isEmpty {
     // le šifrirani proxy
 } else if registered {
     if share.worktree { share.conv = conversation(share.top); share.gateway = saved.url }
-    share.start()
+    share.start(checked: checkedShareID)
     if share.native && share.branches {
         try? err.write(contentsOf: Data("minigw: \(cwd) is a folder of \(routerHost) (SMB): agent models work there in clones of this git repository, each on its own branch minigw/… (native; --minigw-work=native-direct = in the folder itself)\n".utf8))
     } else if share.native {
@@ -1190,7 +1200,7 @@ if profiles.count > 1 {
             let (sc, ok) = registerShare(rc, tries: tries, quiet: true)
             guard ok else { try? err.write(contentsOf: Data("minigw: gateway \(name) did not accept the folder: \(sc.refusal)\n".utf8)); return false }
             if sc.worktree { sc.conv = conversation(sc.top); sc.gateway = gw }
-            sc.start(); extras.add(sc)
+            sc.start(checked: checkedShareID); extras.add(sc)
             return true
         }
     }

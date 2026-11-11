@@ -58,7 +58,7 @@ func TestShareWantedRefusesHomeLinkCwd(t *testing.T) {
 	home, proj := fakeHome(t)
 	t.Setenv("MINIGW_SHARE", "")
 	shareCommand([]string{"add", proj})
-	if !shareWanted(proj, false) {
+	if shareWanted(proj, false) == nil {
 		t.Fatal("project not shared")
 	}
 	link := filepath.Join(proj, "home")
@@ -66,27 +66,50 @@ func TestShareWantedRefusesHomeLinkCwd(t *testing.T) {
 	t.Chdir(link)
 	t.Setenv("PWD", link)
 	cwd, _ := os.Getwd()
-	if shareWanted(cwd, false) {
+	if shareWanted(cwd, false) != nil {
 		t.Errorf("cwd %s (link to home) shared", cwd)
 	}
 	t.Setenv("MINIGW_SHARE", "1")
-	if shareWanted(cwd, false) {
+	if shareWanted(cwd, false) != nil {
 		t.Errorf("cwd %s (link to home) shared with MINIGW_SHARE=1", cwd)
 	}
 }
 
-// L6 (#84): koren, zamenjan med sejo (druga mapa na isti poti), WebDAV zavrne.
+// L6 (#84): koren, zamenjan med sejo (druga mapa na isti poti), zavrne vse posle: WebDAV in sync.
 func TestShareRootReplacedRefused(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "p")
 	os.Mkdir(root, 0o755)
-	s := &shareClient{root: root}
+	s := &shareClient{root: root, sync: true, synced: map[string]syncEntry{}, reported: map[string]bool{}}
 	s.rootID, s.rootErr = fileIDOf(root)
 	if !s.sameRoot() {
 		t.Fatal("same root refused")
 	}
 	os.Rename(root, root+".old")
 	os.Mkdir(root, 0o755)
-	if s.sameRoot() || s.handle(davJob{Method: "PROPFIND", Path: "/"}, "").Status != 403 {
-		t.Error("replaced root accepted")
+	for _, m := range []string{"SYNC-PUSH", "SYNC-PULL"} {
+		if r := s.handle(davJob{Method: m}, ""); r.Status != 403 {
+			t.Errorf("%s on a replaced root: %d", m, r.Status)
+		}
+	}
+	s.sync = false
+	if s.handle(davJob{Method: "PROPFIND", Path: "/"}, "").Status != 403 {
+		t.Error("PROPFIND on a replaced root accepted")
+	}
+}
+
+// #84: mapa, zamenjana med preverbo (shareWanted) in start, ni deljena.
+func TestShareRootSwappedBeforeStart(t *testing.T) {
+	_, proj := fakeHome(t)
+	t.Setenv("MINIGW_SHARE", "1")
+	checked := shareWanted(proj, false)
+	if checked == nil {
+		t.Fatal("project not shared")
+	}
+	os.Rename(proj, proj+".old")
+	os.Mkdir(proj, 0o755)
+	s := &shareClient{root: proj, checked: checked, c: connection{URL: "http://127.0.0.1:1"}}
+	s.start(0)
+	if s.rootErr == nil || s.sameRoot() {
+		t.Error("folder swapped after the check was shared")
 	}
 }
