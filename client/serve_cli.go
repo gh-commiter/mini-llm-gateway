@@ -609,6 +609,9 @@ func (s *server) messages(w http.ResponseWriter, r *req) (int, string) {
 		if !ok {
 			continue
 		}
+		if k.name == "copilot" && copilotUnsupported { // razlog namesto 404, ki ga Claude Code pokaže kot »model may not exist«
+			return writeError(w, r.rid, 400, copilotUnsupportedMsg), model
+		}
 		if ac := k.conf(s.conf()); !ac.Enabled || (m != "" && !ac.allowsModel(k, m)) {
 			return writeError(w, r.rid, 404, "Unknown model: "+model), model
 		}

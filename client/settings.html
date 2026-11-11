@@ -646,7 +646,7 @@ const pages = {
           if (!to || !to.trim()) return;
           const r = await save(n4, () => { n4.textContent = t("moving"); return api("POST", "/general/scratch/move", {to: to.trim()}); }, r => r.warning || t("moved", r.scratch));
           if (r) { scratch.value = r.scratch; g.scratchSuggest = r.scratchSuggest; ns.textContent = r.scratchSuggest ? t("scratchSuggest", r.scratchSuggest) : ""; owner.textContent = ""; take.hidden = true; }
-        }), take)),
+        }), take))),
       owner, ns, others.length ? group(...others) : null, others.length ? note(t("othersHint")) : null, n4,
       section(t("worktreeMode")),
       group(row(t("worktreeNetwork"), toggle(g.worktreeNetwork, v => save(n6, () => api("PATCH", "/general", {worktreeNetwork: v}))))),

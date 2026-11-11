@@ -308,4 +308,11 @@ func TestCopilotUnsupportedOnWindows(t *testing.T) {
 		!strings.Contains(b, copilotUnsupportedMsg) {
 		t.Fatalf("run: %d %s", st, b)
 	}
+	// Copilot izklopljen (privzeto): še vedno razlog, ne 404 »Unknown model« (Claude Code bi rekel »model may not exist«).
+	_, _, base2 := liveServer(t, nil)
+	host2 := strings.TrimPrefix(base2, "http://")
+	if st, b := adminReq(t, base2, host2, "tok", "POST", "/v1/messages", `{"model":"claude-copilot","messages":[{"role":"user","content":"hi"}]}`); st != 400 ||
+		!strings.Contains(b, copilotUnsupportedMsg) {
+		t.Fatalf("disabled run: %d %s", st, b)
+	}
 }
