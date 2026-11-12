@@ -2489,7 +2489,6 @@ func TestAllowedFolderMissingAtStart(t *testing.T) {
 // #83 (W6.2): visoča povezava kot dovoljena mapa ob zagonu: izpuščena, Claude CLI in Codex izklopljena; stran dobi
 // mapo med »ni je mogoče preveriti« in napako razrešitve (sestavi razlog v slovenščini).
 func TestAllowedFolderUncheckedAtStart(t *testing.T) {
-	t.Cleanup(releaseScratch)
 	dir := t.TempDir()
 	dangling := filepath.Join(dir, "link")
 	if err := os.Symlink(filepath.Join(dir, "gone"), dangling); err != nil {
@@ -2497,6 +2496,7 @@ func TestAllowedFolderUncheckedAtStart(t *testing.T) {
 	}
 	scratch := filepath.Join(t.TempDir(), "scratch")
 	os.MkdirAll(scratch, 0o700)
+	t.Cleanup(releaseScratch) // po TempDir: ročaj Scratch (Windows) se zapre pred brisanjem
 	k, _ := ecdh.X25519().GenerateKey(rand.Reader)
 	c := serveConfig{Token: "tok", Key: base64url(k.Bytes()), Tools: defaultTools, PermissionMode: "dontAsk", Scratch: scratch,
 		AllowedFolders: []string{dangling}, Codex: agentCLI{Enabled: true}}
