@@ -251,15 +251,19 @@ func TestClaudeAncestorRefusesBeforeClaude(t *testing.T) {
 	log := filepath.Join(dir, "claude.log")
 	run := func(extra []string, args ...string) (string, bool) {
 		cmd := exec.Command(fake, append([]string{"--parent", os.Args[0]}, args...)...)
-		if slices.Contains(extra, "direct") { // brez lažnega starša claude
+		if slices.Contains(extra, "direct") { // brez lažnega starša claude; »direct« ni spremenljivka okolja (beseda brez »=« v bloku okolja Windows)
 			cmd = exec.Command(os.Args[0], args...)
+			extra = slices.DeleteFunc(slices.Clone(extra), func(s string) bool { return s == "direct" })
 		}
 		cmd.Env = append(slices.DeleteFunc(os.Environ(), func(kv string) bool {
 			return strings.HasPrefix(kv, "CLAUDECODE=") || strings.HasPrefix(kv, "MINIGW_ALLOW_UNSAFE_FLAGS=") || strings.HasPrefix(strings.ToUpper(kv), "PATH=")
 		}), append(extra, "MINIGW_TEST_MAIN=1", "MINIGW_TEST_CLAUDE_LOG="+log, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"))...)
 		os.Remove(log)
-		out, _ := cmd.CombinedOutput()
-		_, err := os.Stat(log)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			out = append(out, " ("+err.Error()+")"...)
+		}
+		_, err = os.Stat(log)
 		return string(out), err == nil
 	}
 	for _, a := range [][]string{{"-h", "--continue"}, {"-p", "--continue", "x"}, {"-p", "-c", "x"}, {"-p", "--resume", "0c3b5a52-4f0e-4c4b-9d7e-2b1f1a6e9c01", "x"}} {

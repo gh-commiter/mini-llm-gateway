@@ -1227,6 +1227,9 @@ func TestDavGetRefusesFifo(t *testing.T) { // L3
 	if exec.Command("mkfifo", filepath.Join(root, "f")).Run() != nil {
 		t.Skip("no mkfifo")
 	}
+	if fi, err := os.Lstat(filepath.Join(root, "f")); err != nil || fi.Mode()&os.ModeNamedPipe == 0 { // Windows: mkfifo iz Git (MSYS) ne naredi FIFO v datotečnem sistemu
+		t.Skip("mkfifo made no file-system FIFO here")
+	}
 	if r := davHandle("GET", "/dav/s/f", nil, nil, root, "/dav/s"); r.Status != 403 {
 		t.Fatalf("GET fifo: %d", r.Status)
 	}

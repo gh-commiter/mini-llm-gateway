@@ -1458,8 +1458,9 @@ func testNestedSkipped(t *testing.T, kind, why string) {
 	if !gitAttrSource() {
 		t.Skip("git before 2.40: the client refuses nested repositories")
 	}
-	if runtime.GOOS == "linux" && finalizeBwrap() == "" {
-		t.Skip("Linux without bwrap: nested repositories are refused")
+	if runtime.GOOS == "linux" && (finalizeBwrap() == "" || !claudePinOK(t.TempDir(), t.Logf)) {
+		// kot testNestedRoundTrip: brez bwrap v bwrap (Ubuntu 24.04+, GitHub Actions) markUnconfined zavrne zahtevo
+		t.Skip("Linux without bwrap inside bwrap: nested repositories are refused (TestNestedBlockerMatchesSandbox)")
 	}
 	root := t.TempDir()
 	client := filepath.Join(root, "client")

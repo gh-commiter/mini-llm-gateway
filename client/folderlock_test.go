@@ -43,6 +43,7 @@ func TestFolderLockReadNeverRacesParentSwap(t *testing.T) {
 				os.Rename(p("tmp"), p("a"))
 				unlock()
 				swaps.Add(1)
+				time.Sleep(20 * time.Millisecond) // bralci (poskus flock na 10 ms) pridejo na vrsto; sicer na počasnem stroju 503 po folderLockWait
 			}
 		}
 	}()
