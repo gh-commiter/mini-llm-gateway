@@ -39,6 +39,8 @@ struct Route: Sendable {
 /// Overitev, usmerjanje po imenu modela in passthrough do zunanjih ponudnikov.
 /// Brez vsebine zahtev v dnevnikih.
 public final class Router: Sendable {
+    let allowedFolders: AllowedFolders
+    var checkedRoots: String { allowedFolders.folders(config.claudeCLI.allowedRoots, scratch: config.scratchURL).joined(separator: ",") }
     public let config: RouterConfig
     let token: String
     let secrets: SecretStore
@@ -60,7 +62,9 @@ public final class Router: Sendable {
                 onLog: @escaping @Sendable (RequestLog) -> Void = { _ in },
                 onDevice: @escaping @Sendable (Noise.Device) -> Void = { _ in },
                 onActivity: @escaping @Sendable (Activity) -> Void = { _ in },
-                admin: AdminHooks? = nil, history: GatewayHistory = Router.history, copilotConfig: URL = Copilot.userConfig) {
+                admin: AdminHooks? = nil, history: GatewayHistory = Router.history, copilotConfig: URL = Copilot.userConfig, allowedFolders: AllowedFolders = AllowedFolders()) {
+        self.allowedFolders = allowedFolders
+        allowedFolders.record(config.claudeCLI.allowedRoots)
         self.config = config
         self.copilotConfig = copilotConfig
         self.history = history
@@ -379,7 +383,7 @@ public final class Router: Sendable {
             var tree: ShareHub.Tree?
             // native z git (privzeto): agenti na svojih vejah v klonih, repozitorij uporabnika le dobi veje (Worktree.localSnapshot)
             if let dir = native, let owner, let (top, sub) = Self.nativeBranches(dir, inPlace: req.header("x-native-inplace") == "1",
-                                                                              roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL) {
+                                                                              roots: checkedRoots, scratch: config.scratchURL) {
                 guard Worktree.scratchIsSafe(config.scratchURL) else {
                     return (await error(400, "invalid_request_error", "Native mode on a git repository: the Scratch folder must not be in a temporary or build cache folder (or use native-direct)",
                                         rid: rid, writer: writer), nil, "share")

@@ -206,9 +206,9 @@ extension Router {
             let clientCwd = req.header("x-claude-mini-cwd")
             let shared = await Self.shares.mount(session: req.header("x-claude-mini-session") ?? "", cwd: clientCwd, base: localBase,
                                                  wait: req.header("x-claude-mini-share") == "1", device: req.device?.id,
-                                                 roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL, writes: config.grok.write)
+                                                 roots: checkedRoots, scratch: config.scratchURL, writes: config.grok.write)
             let synced = await Self.shares.isSync(session: req.header("x-claude-mini-session") ?? "")
-            guard let dir = shared ?? (synced ? nil : ClaudeCLI.resolveCwd(clientCwd, roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL)) else {
+            guard let dir = shared ?? (synced ? nil : ClaudeCLI.resolveCwd(clientCwd, roots: checkedRoots, scratch: config.scratchURL)) else {
                 if let why = await Self.shares.takeRefusal() {  // zaklep pisanja
                     return await error(why.status, "invalid_request_error", why.message, rid: rid, writer: writer)
                 }
@@ -220,8 +220,7 @@ extension Router {
             }
             cwd = dir
             sharedDir = shared
-            extra = config.claudeCLI.allowedRoots.split(separator: ",").map { ClaudeCLI.expand($0.trimmingCharacters(in: .whitespaces)) }
-                .filter { $0 != "/" && !$0.isEmpty && $0 != dir.path && FileManager.default.fileExists(atPath: $0) }
+            extra = allowedFolders.folders(config.claudeCLI.allowedRoots, excluding: dir.path, scratch: config.scratchURL)
             let cap = await capped(req, kind: "grok")  // #45: način seje nad omejitvijo → le branje
             readOnly = await Self.isReadOnly(req) || cap != nil
             Self.runBranch?.readOnly = readOnly || inTree  // #46a

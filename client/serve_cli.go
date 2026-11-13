@@ -272,7 +272,8 @@ func scratchOverlaps(allowed []string, scratch string) []string {
 
 // agentFolders (#83): dovoljene mape, ki jih agent v dir zdaj dobi (Claude CLI, škatla MXC, Codex, Grok): obstajajo
 // (kot fileExists na Macu), niso dir, ne Scratch ne predpomnilnik Copilot (L1, #26) in znova prestanejo checkFolder
-// (prava pot, mapa nastavitev). Mapa, ki je kdaj manjkala (ob zagonu ali med tekom; wasMissing), se pojavi le kot
+// (prava pot, mapa nastavitev). Končna pot mora ostati shranjena in biti last tega uporabnika.
+// Mapa, ki je kdaj manjkala (ob zagonu ali med tekom; wasMissing), se pojavi le kot
 // prava mapa tega uporabnika: na njenem mestu bi drug uporabnik, nov disk ali agent podtaknil povezavo ali svojo mapo
 // (CLAUDE.md, .mcp.json). Oznako odstrani le odstranitev mape s seznama (nato jo skrbnik doda znova).
 func (s *server) agentFolders(c serveConfig, dir string) []string {
@@ -282,30 +283,33 @@ func (s *server) agentFolders(c serveConfig, dir string) []string {
 			continue
 		}
 		if st, err := os.Stat(f); err != nil || !st.IsDir() {
-			s.wasMissing.Store(f, true)
+			if errors.Is(err, fs.ErrNotExist) {
+				s.wasMissing.Store(f, true)
+			}
 			continue
 		}
 		if _, err := checkFolder(f, s.cfgDir, false); err != nil {
 			continue
 		}
-		if _, missed := s.wasMissing.Load(f); missed {
-			// prava pot je ista (nobene povezave tudi v nadrejenih mapah), mapa je tega uporabnika
-			why := ""
-			r, err := realPath(f)
-			switch {
-			case err != nil:
-				why = "cannot resolve its real path"
-			case !samePath(r, f):
-				why = "it is reached through a link to " + r
-			case !ownedByMe(f) || !ownedByMe(r):
-				why = "it is a link or owned by another user"
+		why := ""
+		r, err := realPath(f)
+		saved, recorded := c.allowedReal[f]
+		_, missed := s.wasMissing.Load(f)
+		switch {
+		case err != nil:
+			why = "cannot resolve its real path"
+		case !recorded || !samePath(r, saved):
+			why = "its real path changed to " + r
+		case missed && !samePath(r, f):
+			why = "it is reached through a link to " + r
+		case !ownedByMe(r) || (missed && !ownedByMe(f)):
+			why = "it is a link or owned by another user"
+		}
+		if why != "" {
+			if _, logged := s.refusedLogged.LoadOrStore(f, true); !logged {
+				s.log.Printf("WARNING: allowed folder %s is not used: %s; if you trust it, remove and add it again in the allowed folders", f, why)
 			}
-			if why != "" {
-				if _, logged := s.refusedLogged.LoadOrStore(f, true); !logged {
-					s.log.Printf("WARNING: allowed folder %s was missing at start and is not used: %s; if you trust it, remove and add it again in the allowed folders", f, why)
-				}
-				continue
-			}
+			continue
 		}
 		out = append(out, f)
 	}

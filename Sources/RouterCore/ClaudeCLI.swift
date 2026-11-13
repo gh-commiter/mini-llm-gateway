@@ -40,15 +40,15 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
     /// Read/Edit/Write zunaj teh map niso dovoljeni, Bash teče v sandboxu Claude Code (brez branja domače mape,
     /// pisanje le v teh mapah, omrežje dovoljeno), izhoda iz sandboxa ni.
     /// `readOnly` (--minigw-ro): brez orodij za pisanje; Bash le v sandboxu brez pisanja v te mape (brez sandboxa ga ni).
-    func agentArgs(cwd: URL, allTools: [String], scratch: URL? = nil, readOnly: Bool = false) -> [String] {
+    func agentArgs(cwd: URL, allTools: [String], scratch: URL? = nil, readOnly: Bool = false, folders: AllowedFolders? = nil) -> [String] {
         guard allowLocalTools else {
             let t = readOnly ? Self.readOnlyTools(tools) : tools
             return ["--tools", t, "--allowedTools", t, "--permission-mode", permissionMode]
         }
-        let dirs = [cwd.path] + allowedRoots.split(separator: ",").map { ClaudeCLI.expand($0.trimmingCharacters(in: .whitespaces)) }
-            .filter { $0 != "/" && !$0.isEmpty && $0 != cwd.path && FileManager.default.fileExists(atPath: $0) }
-            .filter { r in scratch.map { !RouterConfig.overlapsScratch(r, scratch: $0) } ?? true }  // H1: starejše nastavitve
-            .filter { !RouterConfig.overlapsCopilotCache($0) }  // #26: ne paketa Copilot
+        let checked = folders ?? AllowedFolders()
+        if folders == nil { checked.record(allowedRoots) }
+        let dirs = [cwd.path] + checked.folders(allowedRoots, excluding: cwd.path, scratch: scratch)
+
         let sandbox: [String: Any] = ["sandbox": [
             "enabled": true, "failIfUnavailable": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
             "network": ["allowedDomains": ["*"]],
@@ -494,7 +494,7 @@ extension Router {
             let clientCwd = req.header("x-claude-mini-cwd")
             let shared = await Self.shares.mount(session: req.header("x-claude-mini-session") ?? "", cwd: clientCwd, base: localBase,
                                                  wait: req.header("x-claude-mini-share") == "1", device: req.device?.id,
-                                                 roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL, writes: true)
+                                                 roots: checkedRoots, scratch: config.scratchURL, writes: true)
             let synced = await Self.shares.isSync(session: req.header("x-claude-mini-session") ?? "")
             let tree = await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "")
             let cap = await capped(req, kind: "claude")  // #45: način seje nad omejitvijo → le branje
@@ -507,7 +507,7 @@ extension Router {
             if let shared, let clientCwd {
                 args += ["--append-system-prompt", Self.mountNote(clientCwd, shared, readOnly: readOnly, synced: synced, branch: tree?.branch, gits: tree?.gits ?? [])]
             }
-            guard let dir = shared ?? (synced ? nil : ClaudeCLI.resolveCwd(clientCwd, roots: cfg.allowedRoots, scratch: config.scratchURL)) else {
+            guard let dir = shared ?? (synced ? nil : ClaudeCLI.resolveCwd(clientCwd, roots: checkedRoots, scratch: config.scratchURL)) else {
                 if let why = await Self.shares.takeRefusal() {  // zaklep pisanja
                     return await error(why.status, "invalid_request_error", why.message, rid: rid, writer: writer)
                 }
@@ -533,7 +533,7 @@ extension Router {
             let allTools = cfg.allowLocalTools || tree != nil ? await Self.toolList.get(cfg.executable) : []
             args += (tree.map { cfg.worktreeArgs(root: $0.root, maven: $0.maven, cwd: dir, allTools: allTools, network: config.worktreeNetwork,
                                                  scratch: config.scratchURL, read: $0.read, gits: $0.gits) }
-                     ?? cfg.agentArgs(cwd: dir, allTools: allTools, scratch: config.scratchURL, readOnly: readOnly))
+                     ?? cfg.agentArgs(cwd: dir, allTools: allTools, scratch: config.scratchURL, readOnly: readOnly, folders: allowedFolders))
                 + ["--setting-sources", shared == nil ? cfg.settingSources : ""]  // hooki iz mape odjemalca ne tečejo tukaj
         } else {
             cwd = config.scratch("chat")

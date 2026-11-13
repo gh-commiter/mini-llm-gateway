@@ -73,6 +73,8 @@ type serveConfig struct {
 	// #68 (odločitev 7): omrežje gradenj Claude CLI v načinu worktree, kot »Network for builds« na Macu; nil = vklopljeno.
 	WorktreeNetwork *bool `json:"worktreeNetwork,omitempty"`
 
+	allowedReal map[string]string // končne poti ob zagonu ali dodajanju; ohranjene mape jih ne zamenjajo
+
 	// N4: trajni ID te namestitve prehoda (datoteka lastnika v Scratch; ensureInstance)
 	Instance string `json:"instance,omitempty"`
 }
@@ -652,6 +654,7 @@ func deprecatedFolder(c *serveConfig, f string) {
 // spremembi že shranjene), da odklopljen pogon ne ustavi prehoda, in ostanejo zapisane, kot so (ne cilj povezave);
 // nova mapa, ki je ni, je zavrnjena.
 func checkAgent(c *serveConfig, cfgDir string, kept []string) ([]string, error) {
+	saved := make(map[string]string, len(c.AllowedFolders))
 	for i, f := range c.AllowedFolders {
 		if f == "" || !filepath.IsAbs(f) {
 			return nil, errors.New("allowed folder must be an absolute path: " + f)
@@ -663,7 +666,17 @@ func checkAgent(c *serveConfig, cfgDir string, kept []string) ([]string, error) 
 		if !slices.Contains(kept, f) { // shranjena mapa ostane, kot je (oznaka wasMissing je po tej poti)
 			c.AllowedFolders[i] = real
 		}
+		f = c.AllowedFolders[i]
+		r, err := realPath(f)
+		if err != nil {
+			return nil, err
+		}
+		if old, ok := c.allowedReal[f]; ok && slices.Contains(kept, f) {
+			r = old
+		}
+		saved[f] = r
 	}
+	c.allowedReal = saved
 	if bad := scratchOverlaps(c.AllowedFolders, c.Scratch); len(bad) > 0 { // H1: PATCH, minigw gw claude --folders, serve.json
 		return nil, errors.New("allowed folder " + bad[0] + " contains or is inside the scratch folder " + c.Scratch +
 			", or cannot be checked (agents could change the gateway's mirrors and other devices' copies): choose another folder")

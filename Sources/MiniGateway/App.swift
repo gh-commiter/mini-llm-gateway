@@ -96,6 +96,7 @@ func menuBarImage(listening: Bool, active: Int, waiting: Int = 0) -> NSImage {
 
 @MainActor
 final class AppState: ObservableObject {
+    private let allowedFolders = AllowedFolders()
     @Published var config = RouterConfig.load()
     @Published var status = String(localized: "Stopped")
     @Published var running = false
@@ -250,7 +251,7 @@ final class AppState: ObservableObject {
                 case .finished(let id): self.inflight.removeAll { $0.id == id }
                 }
             }
-        }, admin: adminHooks())
+        }, admin: adminHooks(), allowedFolders: allowedFolders)
         writeAdminItem()
         let s = RouterServer(router: router, key: routerKey)
         s.onState = { [weak self] state in

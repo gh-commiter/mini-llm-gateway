@@ -864,7 +864,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 					}
 				}
 				for _, f := range s.cfg.AllowedFolders {
-					if _, err := os.Stat(f); err != nil {
+					if _, err := os.Stat(f); errors.Is(err, os.ErrNotExist) {
 						s.wasMissing.Store(f, true)
 					}
 				}
