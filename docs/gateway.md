@@ -216,7 +216,17 @@ minigw serve                 # or run it in this terminal (--port, --config)
   agents can then run any command as you and read the provider API keys and the admin secret. On Linux Codex, Grok
   and Copilot run under `bwrap`.
 - **Allowed folders** may not contain the Scratch folder or sit inside it: such a folder is refused, and ignored at
-  start.
+  start. Each run uses the checked final path in sandbox rules and `--add-dir`, so retargeting a configured
+  symlink or junction after validation does not grant its new target. The configured spelling stays in settings;
+  agents see the real path (Windows keeps the configured name, so a mapped drive does not turn into a UNC path that Claude Code blocks). Unix launches open the real directory without following a final symlink and compare
+  its device and inode with the validation snapshot just before starting. Linux bwrap binds use those open
+  descriptors when bwrap supports `--bind-fd` (bubblewrap 0.10.0, backported to 0.6.3; also for Claude when an outer,
+  nested bwrap is available). An older bwrap keeps its sandbox: allowed folders are then bound by the checked real path
+  (never the configured name) and the identity is rechecked right before launch, as on macOS; the start log says
+  which mode is used. macOS sandbox profiles and Windows
+  MXC/tool rules accept names, not directory handles; Windows rechecks the volume/file identity of the configured name right before launch.
+  Someone able to write a parent of the **real** path can still replace a component after the last check on
+  macOS, Windows, Linux in path mode, or Linux without the outer bwrap. Keep those parents outside agents' writable folders.
 - **In a container** `minigw serve` may run as PID 1: it then starts the gateway as its child and only reaps orphaned
   processes (left by `bwrap --unshare-pid`) and forwards signals. `docker run --init` works too.
 

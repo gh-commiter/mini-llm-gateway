@@ -815,7 +815,8 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 		note += "\n\n" + noAskNote
 	}
 	prompt := note + "\n\n" + cliPrompt(history, last)
-	extra := s.agentFolders(c, dir) // L1, #26, #83
+	checked := s.checkedAgentFolders(c, dir)
+	extra := checked.paths() // L1, #26, #83
 	write := ac.canWrite(k) && !readOnly
 	// #81 (D1): Copilot le s prijavo copilot login uporabnika prehoda (kazalec v svež COPILOT_HOME), brez žetona in gh.
 	var copilotConf []byte
@@ -890,7 +891,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			return "", err
 		}
 		defer restoreAuth(state, k)
-		m := agentMounts{cfgDir: s.cfgDir, state: state, envVar: strings.ToUpper(k.bin) + "_HOME", files: files, rw: append([]string{dir, tmp}, extra...),
+		m := agentMounts{checked: checked, cfgDir: s.cfgDir, state: state, envVar: strings.ToUpper(k.bin) + "_HOME", files: files, rw: append([]string{dir, tmp}, extra...),
 			hide: c.Scratch, tmps: s.tempRoots(), temp: tmp, unboxed: outsideBox(k.name), // #68: Codex in Copilot nista v škatli
 			env: agentKeyEnv(s.cfgDir, k.name)} // #68: ključ API le, če ga je uporabnik izbral; dom v škatli svež vsak tek
 		if runtime.GOOS == "windows" && outsideBox(k.name) { // #68: začasne datoteke Codex in Copilot pod Scratch (tek)
@@ -965,6 +966,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			cache, _ := os.UserCacheDir()
 			m.ro = []string{filepath.Join(cache, "copilot")} // razširjen paket (Linux, pod bwrap)
 			m.rw = []string{dir, tmp}                        // brez drugih dovoljenih map (M3)
+			m.checked = nil
 			// R9: mapa seje ne sme vsebovati paketa copilot (orodje write bi ga spremenilo za naslednji zagon brez bwrap).
 			if pkg := filepath.Join(cache, "copilot"); pkg == dir || strings.HasPrefix(pkg, dir+string(filepath.Separator)) {
 				return "", errors.New("copilot: the session's folder contains Copilot's package cache (" + pkg + ")")
@@ -1271,13 +1273,23 @@ func (s *server) runAgentProcess(ctx context.Context, r *req, exe string, args [
 	if m.state != "" {
 		env = append(env, m.envVar+"="+m.state)
 	}
+	held, err := m.checked.open()
+	if err != nil {
+		return err
+	}
+	defer closeFolders(held)
 	m.cmdEnv, m.cwd = env, dir
 	name, args, done, err := agentWrap(exe, args, m) // Linux: domača mapa in mapa nastavitev skriti (bwrap), če je na voljo; Windows: škatla MXC
 	if err != nil {
 		return err
 	}
 	defer done()
+	var extraFiles []*os.File
+	if runtime.GOOS == "linux" && name != exe {
+		args, extraFiles = pinAllowedBinds(s.cfgDir, args, m.checked, held)
+	}
 	cmd := commandContext(ctx, name, args...)
+	cmd.ExtraFiles = extraFiles
 	cmd.Dir = dir
 	cmd.Env = env
 	cmd.Stdin = strings.NewReader(stdin)
@@ -1285,7 +1297,10 @@ func (s *server) runAgentProcess(ctx context.Context, r *req, exe string, args [
 	cmd.Stderr = stderr
 	stdout, err := cmd.StdoutPipe()
 	if err == nil {
-		err = startAgent(cmd) // Windows: Job agentov (tudi proces v škatli, otrok wxc-exec); Linux: pomočnik subreaper (peer check)
+		err = m.checked.verify()
+		if err == nil {
+			err = startAgent(cmd)
+		} // Windows: Job agentov (tudi proces v škatli, otrok wxc-exec); Linux: pomočnik subreaper (peer check)
 	}
 	if err != nil {
 		return err

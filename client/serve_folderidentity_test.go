@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -100,7 +101,7 @@ func TestAllowedFolderNonDirectoryDoesNotMarkMissing(t *testing.T) {
 	}
 }
 
-// A retained alias keeps its spelling (a mapped drive on Windows), but records its final path.
+// Configuration keeps its spelling; runs use the checked final path.
 func TestAllowedFolderRetainedAlias(t *testing.T) {
 	base := realOf(t, t.TempDir())
 	first, second, alias := filepath.Join(base, "first"), filepath.Join(base, "second"), filepath.Join(base, "alias")
@@ -119,7 +120,11 @@ func TestAllowedFolderRetainedAlias(t *testing.T) {
 	if c.AllowedFolders[0] != alias || !samePath(c.allowedReal[alias], first) {
 		t.Fatalf("recorded identity: %v %v", c.AllowedFolders, c.allowedReal)
 	}
-	if got := s.agentFolders(c, base); !slices.Equal(got, []string{alias}) {
+	want := first
+	if runtime.GOOS == "windows" { // #93: keeps the drive name, identity checked at launch
+		want = alias
+	}
+	if got := s.agentFolders(c, base); !slices.Equal(got, []string{want}) {
 		t.Fatalf("trusted alias refused: %v", got)
 	}
 	if err := os.Remove(alias); err != nil {

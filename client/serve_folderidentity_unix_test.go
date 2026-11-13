@@ -55,3 +55,25 @@ func TestAllowedFolderForeignOwner(t *testing.T) {
 		t.Fatalf("foreign folder accepted: %v", got)
 	}
 }
+
+func TestAllowedFolderOpenDoesNotFollowFinalLink(t *testing.T) {
+	path := realOf(t, t.TempDir())
+	id, err := fileIDOf(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked := checkedFolders{{path, id}}
+	if err := os.Rename(path, path+"-old"); err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(path + "-old")
+	if err := os.Symlink(path+"-old", path); err != nil {
+		t.Fatal(err)
+	}
+	// Even a link to the same inode must not replace the checked final directory.
+	held, err := checked.open()
+	closeFolders(held)
+	if err == nil {
+		t.Fatal("followed a final symlink")
+	}
+}

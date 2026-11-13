@@ -21,7 +21,7 @@ import (
 // routerja ostane (R1). Pomočnik požanje vse svoje potomce (Wait4(-1) v routerju bi kradel stanja procesov os/exec)
 // in ob koncu agenta ali ob SIGTERM ubije ostale, zato agent ne pusti procesov za sabo.
 func startAgent(cmd *exec.Cmd) error {
-	cmd.Args = append([]string{"/proc/self/exe", agentReaperCmd, cmd.Path}, cmd.Args[1:]...) // tudi, ko je minigw že zamenjan
+	cmd.Args = append([]string{"/proc/self/exe", agentReaperCmd, strconv.Itoa(len(cmd.ExtraFiles)), cmd.Path}, cmd.Args[1:]...) // tudi, ko je minigw že zamenjan
 	cmd.Path = "/proc/self/exe"
 	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGTERM} // router umre: pomočnik pospravi
 	if cmd.Cancel != nil {                                             // CommandContext: SIGTERM, da pomočnik pospravi
@@ -37,8 +37,17 @@ func stopAgentTree(*exec.Cmd) error { return nil }
 // agentReaperMain: pomočnik (glej startAgent): args = program in argumenti agenta. Žetev in pobijanje sta v isti
 // zanki (N5): otrok, ki ga ubijemo, še ni požet, zato njegov PID ne more pripadati drugemu procesu.
 func agentReaperMain(args []string) {
-	if len(args) == 0 {
+	if len(args) < 2 {
 		os.Exit(2)
+	}
+	count, err := strconv.Atoi(args[0])
+	if err != nil || count < 0 || count > 1024 {
+		os.Exit(2)
+	}
+	args = args[1:]
+	files := []uintptr{0, 1, 2}
+	for i := 0; i < count; i++ {
+		files = append(files, uintptr(3+i))
 	}
 	syscall.RawSyscall(syscall.SYS_PRCTL, 36 /* PR_SET_CHILD_SUBREAPER */, 1, 0)
 	sigs := make(chan os.Signal, 8)
@@ -46,7 +55,7 @@ func agentReaperMain(args []string) {
 	exe, err := exec.LookPath(args[0])
 	var pid int
 	if err == nil {
-		pid, err = syscall.ForkExec(exe, args, &syscall.ProcAttr{Env: os.Environ(), Files: []uintptr{0, 1, 2},
+		pid, err = syscall.ForkExec(exe, args, &syscall.ProcAttr{Env: os.Environ(), Files: files,
 			Sys: &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}})
 	}
 	if err != nil {
@@ -197,7 +206,7 @@ func claudePinOK(cfgDir string, logf func(string, ...any)) bool {
 		if nestedBwrap = err == nil && command(bw, "--dev-bind", "/", "/", "--die-with-parent", "--unshare-pid", "--proc", "/proc", "--bind", d, d, "--",
 			bw, "--dev-bind", "/", "/", "--", t).Run() == nil; !nestedBwrap {
 			nestedAt = time.Now()
-			logf("claude: nested bwrap does not work here (user namespaces restricted?), so the .git pin of worktree clones is off; the clone is checked during each run instead")
+			logf("claude: nested bwrap does not work here (user namespaces restricted?), so directory pins are off; checked paths and worktree clones are rechecked before launch")
 		}
 	}
 	ok := nestedBwrap
@@ -239,6 +248,9 @@ func agentWrap(exe string, args []string, m agentMounts) (string, []string, func
 		return exe, args, func() {}, nil
 	}
 	real := func(p string) string {
+		if slices.Contains(m.checked.paths(), p) {
+			return p
+		}
 		if r, err := filepath.EvalSymlinks(p); err == nil {
 			return r
 		}
@@ -514,4 +526,92 @@ func procPPID(pid int) int {
 func procCgroup(pid int) string {
 	b, _ := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cgroup")
 	return string(b)
+}
+
+var (
+	bwrapFDOnce sync.Once
+	bwrapFDOK   bool
+	// bwrapFDMode: bwrap binds open descriptors (--bind-fd, bubblewrap 0.10.0, backported to 0.6.3); a test can replace it.
+	bwrapFDMode = func(cfgDir string) bool {
+		bwrapFDOnce.Do(func() {
+			bw := bwrapReady(cfgDir)
+			t, err := exec.LookPath("true")
+			dir, err2 := os.Open(os.TempDir())
+			if bw == "" || err != nil || err2 != nil {
+				return
+			}
+			defer dir.Close()
+			cmd := command(bw, "--dev-bind", "/", "/", "--ro-bind-fd", "3", os.TempDir(), "--", t)
+			cmd.ExtraFiles = []*os.File{dir}
+			bwrapFDOK = cmd.Run() == nil
+		})
+		return bwrapFDOK
+	}
+)
+
+// logBwrapMode: one line at start saying how allowed folders are bound.
+func logBwrapMode(cfgDir string, logf func(string, ...any)) {
+	if bwrapReady(cfgDir) == "" {
+		return
+	}
+	if bwrapFDMode(cfgDir) {
+		logf("bwrap with --bind-fd: allowed folders are bound by open descriptor")
+	} else {
+		logf("bwrap without --bind-fd: allowed folders are bound by checked path")
+	}
+}
+
+// Pin bind sources to opened directories; bwrap consumes and closes these descriptors.
+// Without --bind-fd support the args stay path binds of the checked real path (identity rechecked before launch).
+func pinAllowedBinds(cfgDir string, args []string, folders checkedFolders, held []*os.File) ([]string, []*os.File) {
+	if !bwrapFDMode(cfgDir) {
+		return args, nil
+	}
+	args = slices.Clone(args)
+	var files []*os.File
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--" {
+			break
+		}
+		if (args[i] == "--bind" || args[i] == "--ro-bind") && i+2 < len(args) {
+			for j, f := range folders {
+				if args[i+1] == f.path {
+					args[i] += "-fd"
+					args[i+1] = strconv.Itoa(3 + len(files))
+					files = append(files, held[j])
+					break
+				}
+			}
+			i += 2
+		}
+	}
+	return args, files
+}
+
+// Claude's inner sandbox still uses names; an outer bwrap pins the checked targets.
+func allowedClaudeWrap(cfgDir, name string, args []string, folders checkedFolders, held []*os.File, readOnly bool, logf func(string, ...any)) (string, []string, []*os.File) {
+	if len(folders) == 0 || !bwrapFDMode(cfgDir) {
+		return name, args, nil
+	}
+	if name != bwrapPath {
+		name, args = pinWrap(cfgDir, name, args, nil, logf)
+	}
+	if name != bwrapPath || name == "" {
+		return name, args, nil
+	}
+	args = slices.Clone(args)
+	i := slices.Index(args, "--")
+	if i < 0 {
+		return name, args, nil
+	}
+	var binds []string
+	mode := "--bind-fd"
+	if readOnly {
+		mode = "--ro-bind-fd"
+	}
+	for j, f := range folders {
+		binds = append(binds, mode, strconv.Itoa(3+j), f.path)
+	}
+	args = slices.Insert(args, i, binds...)
+	return name, args, held
 }
