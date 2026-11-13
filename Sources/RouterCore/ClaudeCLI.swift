@@ -41,14 +41,12 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
     /// Read/Edit/Write zunaj teh map niso dovoljeni, Bash teče v sandboxu Claude Code (brez branja domače mape,
     /// pisanje le v teh mapah, omrežje dovoljeno), izhoda iz sandboxa ni.
     /// `readOnly` (--minigw-ro): brez orodij za pisanje; Bash le v sandboxu brez pisanja v te mape (brez sandboxa ga ni).
-    func agentArgs(cwd: URL, allTools: [String], scratch: URL? = nil, readOnly: Bool = false, folders: AllowedFolders? = nil, checkedPaths: [String]? = nil) -> [String] {
+    func agentArgs(cwd: URL, allTools: [String], scratch: URL? = nil, readOnly: Bool = false, folders: AllowedFolders, checkedPaths: [String]? = nil) -> [String] {
         guard allowLocalTools else {
             let t = readOnly ? Self.readOnlyTools(tools) : tools
             return ["--tools", t, "--allowedTools", t, "--permission-mode", permissionMode]
         }
-        let checked = folders ?? AllowedFolders()
-        if folders == nil { checked.record(allowedRoots) }
-        let dirs = [cwd.path] + (checkedPaths ?? checked.folders(allowedRoots, excluding: cwd.path, scratch: scratch))
+        let dirs = [cwd.path] + (checkedPaths ?? folders.folders(allowedRoots, excluding: cwd.path, scratch: scratch))
 
         let sandbox: [String: Any] = ["sandbox": [
             "enabled": true, "failIfUnavailable": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
@@ -287,10 +285,6 @@ public enum ClaudeCLI {
     /// Delovna mapa mora obstajati in biti pod dovoljenimi korenskimi mapami, nikoli v Scratch (privzeti ali `scratch`:
     /// tam so kopije drugih naprav in stanje agentov, ki ga peskovniki skrijejo; R3) in se ne prekriva s paketom Copilot.
     /// Kanonični poti (realpath, tudi »/private«), da povezava nikjer v poti ne pelje ven.
-    static func resolveCwd(_ raw: String?, roots: String, scratch: URL? = nil) -> URL? {
-        resolveCwd(raw, roots: AllowedFolders.list(roots), scratch: scratch)
-    }
-
     static func resolveCwd(_ raw: String?, roots: [String], scratch: URL? = nil) -> URL? {
         guard let raw, !raw.isEmpty, let path = Sync.real(URL(fileURLWithPath: expand(raw)))?.path else { return nil }
         var isDir: ObjCBool = false

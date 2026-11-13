@@ -63,13 +63,13 @@ private func nativeFixture() throws -> (root: URL, share: URL, project: URL, out
     let f = try nativeFixture()
     defer { try? FileManager.default.removeItem(at: f.root) }
     let shares = ["Java": f.share.path], roots = f.project.path
-    #expect(Native.resolve(share: "java", path: "projects", shares: shares, roots: roots)?.path == f.project.path)  // brez razlike v črkah
-    #expect(Native.resolve(share: "Java", path: "private", shares: shares, roots: roots) == nil)  // ni v dovoljenih mapah
-    #expect(Native.resolve(share: "Java", path: "", shares: shares, roots: roots) == nil)
-    #expect(Native.resolve(share: "Java", path: "projects/../private", shares: shares, roots: f.share.path) == nil)
-    #expect(Native.resolve(share: "Java", path: "projects/link", shares: shares, roots: f.root.path) == nil)  // povezava ven iz sheme
-    #expect(Native.resolve(share: "Other", path: "projects", shares: shares, roots: roots) == nil)
-    #expect(Native.resolve(share: "Java", path: "/etc", shares: shares, roots: "/") == nil)
+    #expect(Native.resolve(share: "java", path: "projects", shares: shares, roots: [roots])?.path == f.project.path)  // brez razlike v črkah
+    #expect(Native.resolve(share: "Java", path: "private", shares: shares, roots: [roots]) == nil)  // ni v dovoljenih mapah
+    #expect(Native.resolve(share: "Java", path: "", shares: shares, roots: [roots]) == nil)
+    #expect(Native.resolve(share: "Java", path: "projects/../private", shares: shares, roots: [f.share.path]) == nil)
+    #expect(Native.resolve(share: "Java", path: "projects/link", shares: shares, roots: [f.root.path]) == nil)  // povezava ven iz sheme
+    #expect(Native.resolve(share: "Other", path: "projects", shares: shares, roots: [roots]) == nil)
+    #expect(Native.resolve(share: "Java", path: "/etc", shares: shares, roots: ["/"]) == nil)
 }
 
 private func nativeRouter(_ roots: String, devices: [DeviceConfig] = [], commands: String = "sh") -> Router {
@@ -115,13 +115,13 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     let session = UUID().uuidString
     #expect(await register(c.id, proof, session: session).status == 200)
     #expect(!FileManager.default.fileExists(atPath: f.project.appendingPathComponent(c.file).path))  // označba izbrisana
-    #expect(await Router.shares.mount(session: session, cwd: nil, base: "http://127.0.0.1:1", roots: f.project.path)?.path == f.project.path)
-    #expect(await Router.shares.mount(session: session, cwd: nil, base: "http://127.0.0.1:1", roots: f.outside.path) == nil)  // ni več dovoljena
+    #expect(await Router.shares.mount(session: session, cwd: nil, base: "http://127.0.0.1:1", roots: [f.project.path])?.path == f.project.path)
+    #expect(await Router.shares.mount(session: session, cwd: nil, base: "http://127.0.0.1:1", roots: [f.outside.path]) == nil)  // ni več dovoljena
     // Mapa zamenjana s povezavo (npr. prek SMB) po dokazu: krog je zavrnjen.
     let moved = f.root.appendingPathComponent("moved")
     try FileManager.default.moveItem(at: f.project, to: moved)
     try FileManager.default.createSymbolicLink(at: f.project, withDestinationURL: f.outside)
-    #expect(await Router.shares.mount(session: session, cwd: nil, base: "http://127.0.0.1:1", roots: f.share.path) == nil)
+    #expect(await Router.shares.mount(session: session, cwd: nil, base: "http://127.0.0.1:1", roots: [f.share.path]) == nil)
     try FileManager.default.removeItem(at: f.project)
     try FileManager.default.moveItem(at: moved, to: f.project)
     #expect(await register(c.id, proof, session: UUID().uuidString).status == 403)  // izziv velja enkrat
@@ -565,12 +565,12 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     defer { try? fm.removeItem(at: base) }
     let scratch = base.appendingPathComponent("Mini Gateway Scratch"), inScratch = scratch.appendingPathComponent("sync/x"), proj = base.appendingPathComponent("proj")
     for d in [inScratch, proj] { try fm.createDirectory(at: d, withIntermediateDirectories: true) }
-    #expect(ClaudeCLI.resolveCwd(proj.path, roots: base.path, scratch: scratch) != nil)
-    #expect(ClaudeCLI.resolveCwd(inScratch.path, roots: base.path, scratch: scratch) == nil && ClaudeCLI.resolveCwd(scratch.path, roots: base.path, scratch: scratch) == nil)
-    #expect(Native.resolve(share: "S", path: "sync/x", shares: ["S": scratch.path], roots: base.path, scratch: scratch) == nil)
+    #expect(ClaudeCLI.resolveCwd(proj.path, roots: [base.path], scratch: scratch) != nil)
+    #expect(ClaudeCLI.resolveCwd(inScratch.path, roots: [base.path], scratch: scratch) == nil && ClaudeCLI.resolveCwd(scratch.path, roots: [base.path], scratch: scratch) == nil)
+    #expect(Native.resolve(share: "S", path: "sync/x", shares: ["S": scratch.path], roots: [base.path], scratch: scratch) == nil)
     let def = RouterConfig.defaultScratch.appendingPathComponent("chat")
     try fm.createDirectory(at: def, withIntermediateDirectories: true)
-    #expect(ClaudeCLI.resolveCwd(def.path, roots: NSHomeDirectory()) == nil)  // privzeti Scratch vedno
+    #expect(ClaudeCLI.resolveCwd(def.path, roots: [NSHomeDirectory()]) == nil)  // privzeti Scratch vedno
 }
 
 /// L1, L2: samodejno deljenje v začasni mapi: podmapa da, koren, skrita, tuja, neobstoječa in zgornje ravni Claude Code ne;
@@ -701,26 +701,26 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     let shares = Native.withHomeShare([:], virtualHomes: true, user: "ana", home: home)
     try FileManager.default.createDirectory(at: f.share.appendingPathComponent(".ssh"), withIntermediateDirectories: true)
     try FileManager.default.createDirectory(at: f.share.appendingPathComponent("Library/Keychains"), withIntermediateDirectories: true)
-    #expect(Native.resolve(share: "ana", path: "projects", shares: shares, roots: f.project.path, home: home)?.path == f.project.path)
-    #expect(Native.resolve(share: "ana", path: "private", shares: shares, roots: f.project.path, home: home) == nil)  // ni dovoljena
+    #expect(Native.resolve(share: "ana", path: "projects", shares: shares, roots: [f.project.path], home: home)?.path == f.project.path)
+    #expect(Native.resolve(share: "ana", path: "private", shares: shares, roots: [f.project.path], home: home) == nil)  // ni dovoljena
     for p in ["", ".ssh", "Library/Keychains", "library"] {  // tudi ko je vsa domača mapa dovoljena
-        #expect(Native.resolve(share: "ana", path: p, shares: shares, roots: home, home: home) == nil)
+        #expect(Native.resolve(share: "ana", path: p, shares: shares, roots: [home], home: home) == nil)
     }
-    #expect(Native.resolve(share: "ana", path: "private", shares: shares, roots: home, home: home)?.path == f.outside.path)
+    #expect(Native.resolve(share: "ana", path: "private", shares: shares, roots: [home], home: home)?.path == f.outside.path)
     // Kanonična pot šteje, za vsako shemo: povezava v dovoljeni mapi (~/Google Drive → ~/Library/CloudStorage) in shema nad domačo mapo.
     let cloud = f.share.appendingPathComponent("Library/CloudStorage")
     try FileManager.default.createDirectory(at: cloud, withIntermediateDirectories: true)
     try FileManager.default.createSymbolicLink(at: f.project.appendingPathComponent("gd"), withDestinationURL: cloud)
     try FileManager.default.createSymbolicLink(at: f.project.appendingPathComponent("ssh"), withDestinationURL: f.share.appendingPathComponent(".ssh"))
     for p in ["projects/gd", "projects/ssh"] {
-        #expect(Native.resolve(share: "ana", path: p, shares: shares, roots: home, home: home) == nil)
+        #expect(Native.resolve(share: "ana", path: p, shares: shares, roots: [home], home: home) == nil)
     }
     let users = ["Users": f.root.path]
     try FileManager.default.createDirectory(at: f.share.appendingPathComponent("Library/LaunchAgents"), withIntermediateDirectories: true)
     for p in ["Java/Library/LaunchAgents", "Java/.ssh", "Java"] {
-        #expect(Native.resolve(share: "Users", path: p, shares: users, roots: f.root.path, home: home) == nil)
+        #expect(Native.resolve(share: "Users", path: p, shares: users, roots: [f.root.path], home: home) == nil)
     }
-    #expect(Native.resolve(share: "Users", path: "Java/projects", shares: users, roots: f.root.path, home: home)?.path == f.project.path)
+    #expect(Native.resolve(share: "Users", path: "Java/projects", shares: users, roots: [f.root.path], home: home)?.path == f.project.path)
     #expect(!Native.homeSecret(f.project.path, home: home) && Native.homeSecret(cloud.path, home: home))
     #expect(!Native.homeSecret("/", home: "/"))
     let realHome = Sync.real(URL(fileURLWithPath: home))!.path

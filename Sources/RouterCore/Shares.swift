@@ -347,11 +347,6 @@ public actor ShareHub {
     /// `wait`: odjemalec deli mapo (minigw), a je po ponovnem zagonu routerja še ni znova registriral → počakaj do 30 s.
     /// `roots`: dovoljene mape (native: mapa se preveri ob vsakem krogu).
     /// `writes`: agent sme pisati (native brez veje in direct: en pisoči agent naenkrat v mapi, waitWriter).
-    func mount(session: String, cwd: String?, base: String, wait: Bool = false, device: String? = nil, roots: String,
-               scratch: URL? = nil, writes: Bool = false) async -> URL? {
-        await mount(session: session, cwd: cwd, base: base, wait: wait, device: device, roots: AllowedFolders.list(roots), scratch: scratch, writes: writes)
-    }
-
     func mount(session: String, cwd: String?, base: String, wait: Bool = false, device: String? = nil, roots: [String]? = nil,
                scratch: URL? = nil, writes: Bool = false) async -> URL? {
         if wait, !session.isEmpty {

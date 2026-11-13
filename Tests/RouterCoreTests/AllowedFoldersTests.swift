@@ -166,7 +166,7 @@ private func allowedTemp() throws -> URL {
     try fm.removeItem(at: folder)
     try fm.createSymbolicLink(at: folder, withDestinationURL: target)
     #expect(router.localMentionFolder(folder.path) == nil)
-    #expect(ClaudeCLI.resolveCwd(folder.path, roots: c.claudeCLI.allowedRoots) != nil)  // the raw list would have trusted it
+    #expect(ClaudeCLI.resolveCwd(folder.path, roots: AllowedFolders.list(c.claudeCLI.allowedRoots)) != nil)  // the raw list would have trusted it
 }
 
 // M2: the record of an allowed folder is saved with the settings and enforced at every start.

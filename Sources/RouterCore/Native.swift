@@ -178,11 +178,6 @@ public enum Native {
     /// Shema + relativna pot → mapa tega Maca; nil, če sheme ni, pot pobegne iz nje (»..«, povezava) ali mapa ni v
     /// dovoljenih mapah (`roots`, Settings → Allowed folders). Shema brez razlike v velikih črkah (SMB).
     /// Nikoli homeSecret (domača mapa sama, ~/.ssh …, ~/Library), tudi ko je domača mapa v dovoljenih mapah.
-    public static func resolve(share: String, path rel: String, shares: [String: String], roots: String, scratch: URL? = nil,
-                               home: String = NSHomeDirectory()) -> URL? {
-        resolve(share: share, path: rel, shares: shares, roots: AllowedFolders.list(roots), scratch: scratch, home: home)
-    }
-
     public static func resolve(share: String, path rel: String, shares: [String: String], roots: [String], scratch: URL? = nil,
                                home: String = NSHomeDirectory()) -> URL? {
         guard let base = shares.first(where: { $0.key.caseInsensitiveCompare(share) == .orderedSame })?.value,

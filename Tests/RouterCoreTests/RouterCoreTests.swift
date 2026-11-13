@@ -122,15 +122,15 @@ func makeRouter(session: URLSession = .shared) -> Router {
     #expect(ClaudeCLI.match("claude-cli-sonnet")! == ("sonnet", false))
     var cli = ClaudeCLIConfig()
     let cwd = URL(fileURLWithPath: "/tmp/session")
-    #expect(cli.agentArgs(cwd: cwd, allTools: []) == ["--tools", "Read,Grep,Glob", "--allowedTools", "Read,Grep,Glob", "--permission-mode", "dontAsk"])
+    #expect(cli.agentArgs(cwd: cwd, allTools: [], folders: AllowedFolders()) == ["--tools", "Read,Grep,Glob", "--allowedTools", "Read,Grep,Glob", "--permission-mode", "dontAsk"])
     cli.tools = "Read,Edit,Bash(git:*),Write,Grep"  // --minigw-ro: brez orodij za pisanje; Bash tu nima sandboxa
-    #expect(cli.agentArgs(cwd: cwd, allTools: [], readOnly: true) == ["--tools", "Read,Grep", "--allowedTools", "Read,Grep", "--permission-mode", "dontAsk"])
+    #expect(cli.agentArgs(cwd: cwd, allTools: [], readOnly: true, folders: AllowedFolders()) == ["--tools", "Read,Grep", "--allowedTools", "Read,Grep", "--permission-mode", "dontAsk"])
     cli.tools = "Read,Monitor,EnterWorktree,WebFetch"  // seznam dovoljenih: orodja, ki niso na njem, odpadejo
-    #expect(cli.agentArgs(cwd: cwd, allTools: [], readOnly: true).prefix(2) == ["--tools", "Read,WebFetch"])
+    #expect(cli.agentArgs(cwd: cwd, allTools: [], readOnly: true, folders: AllowedFolders()).prefix(2) == ["--tools", "Read,WebFetch"])
     cli.tools = "Read,Grep,Glob"
     var local = cli
     local.allowLocalTools = true
-    let ro = local.agentArgs(cwd: cwd, allTools: ["Bash", "Edit", "EnterWorktree", "ExitWorktree", "Monitor", "Read", "Task", "WebFetch"], readOnly: true)
+    let ro = local.agentArgs(cwd: cwd, allTools: ["Bash", "Edit", "EnterWorktree", "ExitWorktree", "Monitor", "Read", "Task", "WebFetch"], readOnly: true, folders: AllowedFolders())
     func value(_ flag: String) -> String { ro.firstIndex(of: flag).map { ro[$0 + 1] } ?? "" }
     #expect(value("--tools") == "Read,Grep,Glob,LS,WebSearch,WebFetch,Bash" && value("--allowedTools") == "WebFetch")
     #expect(["EnterWorktree", "ExitWorktree", "Monitor", "Edit"].allSatisfy { value("--disallowedTools").split(separator: ",").contains(Substring($0)) })
@@ -142,7 +142,9 @@ func makeRouter(session: URLSession = .shared) -> Router {
     defer { try? FileManager.default.removeItem(atPath: mine) }
     cli.allowedRoots = mine
     cli.disabledTools = ["WebSearch"]
-    let a = cli.agentArgs(cwd: cwd, allTools: ["Bash", "Edit", "Read", "Task", "WebFetch", "WebSearch"])
+    let recorded = AllowedFolders()
+    recorded.record(cli.allowedRoots)
+    let a = cli.agentArgs(cwd: cwd, allTools: ["Bash", "Edit", "Read", "Task", "WebFetch", "WebSearch"], folders: recorded)
     #expect(!a.contains("--dangerously-skip-permissions") && a.contains("acceptEdits"))
     #expect(a.contains("--add-dir") && a.contains(mine))
     // datotečna orodja niso splošno dovoljena (veljajo le v mapah), ostala da; izjeme ostanejo zavrnjene
@@ -175,12 +177,12 @@ func makeRouter(session: URLSession = .shared) -> Router {
     let inside = root.appendingPathComponent("proj")
     try FileManager.default.createDirectory(at: inside, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
-    #expect(ClaudeCLI.resolveCwd(inside.path, roots: root.path) != nil)
-    #expect(ClaudeCLI.resolveCwd(inside.path + "/../proj", roots: root.path) != nil)
-    #expect(ClaudeCLI.resolveCwd(root.path + "x/proj", roots: root.path) == nil)  // predpona, ki ni mapa
-    #expect(ClaudeCLI.resolveCwd(inside.path, roots: "/tmp/nope") == nil)
-    #expect(ClaudeCLI.resolveCwd(inside.path + "/missing", roots: root.path) == nil)
-    #expect(ClaudeCLI.resolveCwd(inside.path, roots: "/") == nil)  // koren ni dovoljen
+    #expect(ClaudeCLI.resolveCwd(inside.path, roots: [root.path]) != nil)
+    #expect(ClaudeCLI.resolveCwd(inside.path + "/../proj", roots: [root.path]) != nil)
+    #expect(ClaudeCLI.resolveCwd(root.path + "x/proj", roots: [root.path]) == nil)  // predpona, ki ni mapa
+    #expect(ClaudeCLI.resolveCwd(inside.path, roots: ["/tmp/nope"]) == nil)
+    #expect(ClaudeCLI.resolveCwd(inside.path + "/missing", roots: [root.path]) == nil)
+    #expect(ClaudeCLI.resolveCwd(inside.path, roots: ["/"]) == nil)  // koren ni dovoljen
 }
 
 @Test func streamJsonToAnthropicSSE() {
