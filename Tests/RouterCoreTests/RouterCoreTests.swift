@@ -135,17 +135,22 @@ func makeRouter(session: URLSession = .shared) -> Router {
     #expect(value("--tools") == "Read,Grep,Glob,LS,WebSearch,WebFetch,Bash" && value("--allowedTools") == "WebFetch")
     #expect(["EnterWorktree", "ExitWorktree", "Monitor", "Edit"].allSatisfy { value("--disallowedTools").split(separator: ",").contains(Substring($0)) })
     cli.allowLocalTools = true
-    cli.allowedRoots = "/tmp"
+    // /tmp is owned by root: the allowed-folders rule (own folders only) refuses it, so use a folder of this user
+    let made = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: made, withIntermediateDirectories: true)
+    let mine = try #require(Sync.real(made)).path
+    defer { try? FileManager.default.removeItem(atPath: mine) }
+    cli.allowedRoots = mine
     cli.disabledTools = ["WebSearch"]
     let a = cli.agentArgs(cwd: cwd, allTools: ["Bash", "Edit", "Read", "Task", "WebFetch", "WebSearch"])
     #expect(!a.contains("--dangerously-skip-permissions") && a.contains("acceptEdits"))
-    #expect(a.contains("--add-dir") && a.contains("/tmp"))
+    #expect(a.contains("--add-dir") && a.contains(mine))
     // datotečna orodja niso splošno dovoljena (veljajo le v mapah), ostala da; izjeme ostanejo zavrnjene
     #expect(a[a.firstIndex(of: "--allowedTools")! + 1] == "Task,WebFetch")
     #expect(a[a.count - 2] == "--disallowedTools" && a.last!.hasPrefix("WebSearch,") && a.last!.contains("Edit(//tmp/session/**/.git/config)"))  // N3
     let settings = try JSONSerialization.jsonObject(with: Data(a[a.firstIndex(of: "--settings")! + 1].utf8)) as! [String: Any]
     let sb = settings["sandbox"] as! [String: Any], fs = sb["filesystem"] as! [String: [String]]
-    #expect(sb["allowUnsandboxedCommands"] as? Bool == false && fs["denyRead"] == ["~"] && fs["allowWrite"] == ["/tmp/session", "/tmp"])
+    #expect(sb["allowUnsandboxedCommands"] as? Bool == false && fs["denyRead"] == ["~"] && fs["allowWrite"] == ["/tmp/session", mine])
     #expect(ClaudeCLI.match("claude-siri-ai") == nil)
     #expect(ClaudeCLI.match("claude-chat-gpt") == nil)
 }

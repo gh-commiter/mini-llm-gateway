@@ -17,7 +17,7 @@ public final class AllowedFolders: @unchecked Sendable {
         roots.split(separator: ",").compactMap {
             let p = ($0.trimmingCharacters(in: .whitespaces) as NSString).expandingTildeInPath
             guard p.hasPrefix("/"), p != "/" else { return nil }
-            return URL(fileURLWithPath: p).standardizedFileURL.path
+            return URL(fileURLWithPath: p).standardized.path  // not standardizedFileURL: it drops /private
         }
     }
 
