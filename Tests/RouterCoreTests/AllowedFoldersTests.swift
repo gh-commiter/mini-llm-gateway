@@ -151,3 +151,20 @@ private func allowedTemp() throws -> URL {
     // The same inode behind a new final link is still refused.
     #expect(throws: (any Error).self) { _ = try checked.open() }
 }
+
+@Test func siriRefusesNestedFolderReplacedByLink() throws {
+    let fm = FileManager.default, base = try allowedTemp()
+    defer { try? fm.removeItem(at: base) }
+    let parent = base.appendingPathComponent("parent"), folder = parent.appendingPathComponent("folder")
+    let target = base.appendingPathComponent("target")
+    try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+    try fm.createDirectory(at: target, withIntermediateDirectories: true)
+    var c = RouterConfig()
+    c.claudeCLI.allowedRoots = folder.path
+    let router = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]))
+    #expect(router.localMentionFolder(folder.path)?.path == folder.path)
+    try fm.removeItem(at: folder)
+    try fm.createSymbolicLink(at: folder, withDestinationURL: target)
+    #expect(router.localMentionFolder(folder.path) == nil)
+    #expect(ClaudeCLI.resolveCwd(folder.path, roots: c.claudeCLI.allowedRoots) != nil)  // the raw list would have trusted it
+}

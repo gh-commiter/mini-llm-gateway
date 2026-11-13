@@ -200,6 +200,9 @@ extension Router {
     /// Mapa za priloge Siri: priklopljena ali sinhronizirana mapa odjemalca; mapa tega Maca na isti poti le zunaj sync (#10).
     static func mentionRoot(shared: URL?, synced: Bool, local: () -> URL?) -> URL? { shared ?? (synced ? nil : local()) }
 
+    /// Mapa tega Maca za priloge Siri: samo preverjena dovoljena mapa (kot pri agentih).
+    func localMentionFolder(_ cwd: String?) -> URL? { ClaudeCLI.resolveCwd(cwd, roots: checkedRoots, scratch: config.scratchURL) }
+
     func runSiri(_ req: HTTPRequest, body: [String: Any], rid: String, writer: ResponseWriter) async -> Int {
         let turns = ClaudeCLI.turns(body)
             .map { ClaudeCLI.Turn(role: $0.role, text: AppleFM.stripReminders($0.text)) }
@@ -217,9 +220,9 @@ extension Router {
                 // poti (kot pri agentih): ob neuspelem prenosu Siri dobi vprašanje brez prilog.
                 let shared = await Self.shares.mount(session: scope, cwd: clientCwd, base: localBase,
                                                      wait: req.header("x-claude-mini-share") == "1", device: req.device?.id,
-                                                     roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL)
+                                                     roots: checkedRoots, scratch: config.scratchURL)
                 let synced = await Self.shares.isSync(session: scope)
-                let root = Self.mentionRoot(shared: shared, synced: synced) { ClaudeCLI.resolveCwd(clientCwd, roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL) }
+                let root = Self.mentionRoot(shared: shared, synced: synced) { localMentionFolder(clientCwd) }
                 if shared == nil, synced { Self.log.error("\(rid, privacy: .public) siri: syncing the folder failed; no attachments") }
                 if let root {
                     let names = await Mentions.names(in: question)
