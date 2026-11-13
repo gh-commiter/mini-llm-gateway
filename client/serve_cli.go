@@ -322,7 +322,11 @@ func (s *server) checkedAgentFolders(c serveConfig, dir string) checkedFolders {
 		if err != nil {
 			continue
 		}
-		out = append(out, checkedFolder{r, id})
+		use := r
+		if runtime.GOOS == "windows" { // #93: a mapped drive's final path is UNC, which Claude Code blocks; keep the drive name, verify() compares its identity at launch
+			use = f
+		}
+		out = append(out, checkedFolder{use, id})
 	}
 	return out
 }

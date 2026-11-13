@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -31,6 +32,9 @@ func TestAllowedFolderSnapshotAfterLinkSwap(t *testing.T) {
 				t.Fatal(err)
 			}
 			checked := s.checkedAgentFolders(c, base)
+			if runtime.GOOS == "windows" { // #93: names stay (mapped drives); the launch check catches the swap
+				target = configured
+			}
 			if !slices.Equal(checked.paths(), []string{target}) {
 				t.Fatalf("checked: %v", checked)
 			}
@@ -39,6 +43,12 @@ func TestAllowedFolderSnapshotAfterLinkSwap(t *testing.T) {
 				t.Fatal(err)
 			}
 			dirLink(t, second, alias)
+			if runtime.GOOS == "windows" {
+				if err := checked.verify(); err == nil {
+					t.Fatal("retargeted junction accepted at launch")
+				}
+				return
+			}
 			args := strings.Join(s.agentArgs(base, false, checked.paths()), " ")
 			if strings.Contains(args, alias) || strings.Contains(args, second) || !strings.Contains(args, "--add-dir "+target) {
 				t.Fatalf("permissions followed changed link: %s", args)

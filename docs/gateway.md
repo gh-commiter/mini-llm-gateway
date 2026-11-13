@@ -218,10 +218,10 @@ minigw serve                 # or run it in this terminal (--port, --config)
 - **Allowed folders** may not contain the Scratch folder or sit inside it: such a folder is refused, and ignored at
   start. Each run uses the checked final path in sandbox rules and `--add-dir`, so retargeting a configured
   symlink or junction after validation does not grant its new target. The configured spelling stays in settings;
-  agents see the real path. Unix launches open the real directory without following a final symlink and compare
+  agents see the real path (Windows keeps the configured name, so a mapped drive does not turn into a UNC path that Claude Code blocks). Unix launches open the real directory without following a final symlink and compare
   its device and inode with the validation snapshot just before starting. Linux bwrap binds use those open
   descriptors (also for Claude when an outer, nested bwrap is available). macOS sandbox profiles and Windows
-  MXC/tool rules accept names, not directory handles; Windows rechecks the volume/file identity before launch.
+  MXC/tool rules accept names, not directory handles; Windows rechecks the volume/file identity of the configured name right before launch.
   Someone able to write a parent of the **real** path can still replace a component after the last check on
   macOS, Windows, or Linux without the outer bwrap. Keep those parents outside agents' writable folders.
   Linux requires bwrap's `--bind-fd`/`--ro-bind-fd` support; an older bwrap fails the sandbox availability check.
