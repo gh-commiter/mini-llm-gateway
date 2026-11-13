@@ -549,7 +549,7 @@ var (
 			}
 			// Also proves that this bwrap closes the descriptor before it starts the program: an agent holding it could
 			// write into a folder bound read-only. A bwrap that keeps it is used in path mode.
-			cmd := command(bw, "--dev-bind", "/", "/", "--ro-bind-fd", "3", os.TempDir(), "--", sh, "-c", "[ ! -e /proc/self/fd/3 ]")
+			cmd := command(bw, "--dev-bind", "/", "/", "--ro-bind-fd", "3", os.TempDir(), "--", sh, "-c", "[ -e /proc/self/fd/0 ] && [ ! -e /proc/self/fd/3 ]")
 			cmd.ExtraFiles = []*os.File{dir}
 			bwrapFDOK = cmd.Run() == nil
 		})
