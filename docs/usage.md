@@ -396,7 +396,9 @@ one run.
 Links inside a shared folder work when they stay inside it: relative and absolute symbolic links and, on Windows,
 directory junctions (also with an absolute target, as pnpm and `npm link` create them). A link or junction that
 leads outside the shared folder is refused ("links that lead outside the shared folder are not followed"). Links
-into protected paths such as `.claude/hooks` or `.git` stay read-only for the agent. The user’s linked
+into protected paths such as `.claude/hooks` or `.git` stay read-only for the agent. A link whose target is on another
+drive or a network path (`\\host\share`) is outside and refused without the target being opened (no connection to that
+host). The user’s linked
 `.gitignore` is still read.
 
 minigw shares the current folder with a gateway on another computer when it gets its first request for an agent

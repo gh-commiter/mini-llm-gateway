@@ -62,7 +62,7 @@ func rootResolve(rooted *os.Root, rel string, followLast bool) (string, error) {
 				}
 				var ok bool
 				if np, ok = insideBases(bases, target); !ok {
-					np, ok = insideBases(bases, realTarget(target)) // the link was made with another name of the share
+					np, ok = insideBases(bases, realTarget(target, bases)) // the link was made with another name of the share
 				}
 				if !ok {
 					return "", fmt.Errorf("%s: %s", linkRefusal, next)
@@ -115,12 +115,31 @@ func insideBases(bases []string, target string) (string, bool) {
 	return "", false
 }
 
+// finalPathFn: test hook (a UNC path must never reach it).
+var finalPathFn = finalPath
+
+// sameVolume: target is on the volume or drive of one of the root's own names (compared lexically, nothing is opened).
+// A link may name any absolute path; resolving a UNC or device path would connect to that host (L2).
+func sameVolume(bases []string, target string) bool {
+	v := filepath.VolumeName(target)
+	for _, b := range bases {
+		if strings.EqualFold(filepath.VolumeName(b), v) {
+			return true
+		}
+	}
+	return false
+}
+
 // realTarget: target with its existing part resolved (a link made as /var/x, the share opened as /private/var/x).
-// Only used to pick the path to try; the operation itself still goes through os.Root.
-func realTarget(target string) string {
+// Only used to pick the path to try; the operation itself still goes through os.Root. A target on another volume is
+// returned as it is (then it is outside the root).
+func realTarget(target string, bases []string) string {
+	if !sameVolume(bases, target) {
+		return target
+	}
 	rest := ""
 	for p := filepath.Clean(target); ; {
-		if r, err := finalPath(p); err == nil {
+		if r, err := finalPathFn(p); err == nil {
 			return filepath.Join(r, rest)
 		}
 		parent := filepath.Dir(p)
