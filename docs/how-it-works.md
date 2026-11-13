@@ -99,8 +99,11 @@ Details:
   cannot be copied back, the request ends with that error instead of an answer, and Claude Code does not run the
   agent again. Sync changes stay on the gateway, and only the next agent request in the folder copies them back. A
   worktree branch stays on the gateway: the next agent request (same agent) in the session delivers it; otherwise it
-  is kept on the gateway for 30 days. A local program that moves folders itself is not covered; in 0.5.26 every operation goes
-  through the opened folder instead (#82).
+  is kept on the gateway for 30 days. The Go minigw client also performs DAV and sync file operations through an
+  opened `os.Root`: a link or junction swapped in after a path check cannot redirect access outside the shared folder
+  (#82). This applies on Windows, Linux and macOS. Data operations reject absolute symlinks and Windows junctions,
+  even to a target inside the folder; relative symlinks inside it still work. The user's linked `.gitignore` remains
+  supported for ignore rules. The Swift Mac app still uses the folder locks described above.
 - The gateway caches folder listings (PROPFIND) for 10 seconds, like davfs2's `dir_refresh`. Writes through the
   mount clear the cache at once; changes made on the client outside the mount show up within 10 seconds.
 - The folder's own Claude Code settings and hooks are not loaded on the gateway.

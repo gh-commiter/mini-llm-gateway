@@ -278,7 +278,7 @@ func folderLockName(id fileID, goos string) string {
 // v procesu (fsMu) in med procesi (flock / LockFileEx na datoteki, imenovani po istovetnosti korena, v mapi nastavitev,
 // ne v projektu; ob sesutju ga sprosti jedro). Tako branje ne dirka z MOVE nadrejene mape med preverbo poti in branjem in
 // dve seji minigw na isti mapi ne pišeta hkrati. nil = zaklepa ni bilo v roku wait (503).
-// ponytail: preveri-nato-uporabi ostane za lokalni proces brez zaklepa; popolno (operacije prek odprtega korena) 0.5.26.
+// DAV in sync uporabljata odprt os.Root tudi proti lokalni zamenjavi poti.
 func (s *shareClient) lockFolder(exclusive bool, wait time.Duration) func() {
 	try, unlock := s.fsMu.TryRLock, s.fsMu.RUnlock
 	if exclusive {

@@ -733,7 +733,12 @@ func TestCaseCollisions(t *testing.T) {
 func TestSyncWriteReadOnlyFile(t *testing.T) {
 	full := filepath.Join(t.TempDir(), "ro.txt")
 	os.WriteFile(full, []byte("old"), 0o444)
-	if err := syncWrite(full, []byte("new"), 0, false, true); err != nil {
+	rooted, err := os.OpenRoot(filepath.Dir(full))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rooted.Close()
+	if err := syncWrite(rooted, filepath.Base(full), []byte("new"), 0, false, true); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(full)
