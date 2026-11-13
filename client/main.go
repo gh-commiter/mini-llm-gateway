@@ -281,6 +281,9 @@ func main() {
 	if isGitWrap() { // #68: kopija minigw.exe kot git.exe v škatli MXC (gitwrap.go)
 		gitWrapMain(os.Args[1:])
 	}
+	if err := ownerIsUser(); err != nil {
+		fail("set token owner: " + err.Error())
+	}
 	refreshPath() // Windows: trenutni uporabnikov PATH, tudi v lupini, odprti pred namestitvijo CLI
 	args := os.Args[1:]
 	if isTrayExe(os.Args[0]) { // minigw-tray.exe: router z ikono v območju za obvestila
