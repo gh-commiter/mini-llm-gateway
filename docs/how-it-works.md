@@ -103,7 +103,10 @@ Details:
   opened `os.Root`: a link or junction swapped in after a path check cannot redirect access outside the shared folder
   (#82). This applies on Windows, Linux and macOS. Data operations reject absolute symlinks and Windows junctions,
   even to a target inside the folder; relative symlinks inside it still work. The user's linked `.gitignore` remains
-  supported for ignore rules. The Swift Mac app still uses the folder locks described above.
+  supported for ignore rules. Use a relative link instead of an absolute one. Mutations pin the parent directory,
+  check its actual location for protected paths, and operate relative to that handle, so replacing a parent with
+  a link into a protected directory during a download cannot bypass the protection. An open handle does not lock
+  a directory against a local process renaming it after the check. The Swift Mac app still uses the folder locks described above.
 - The gateway caches folder listings (PROPFIND) for 10 seconds, like davfs2's `dir_refresh`. Writes through the
   mount clear the cache at once; changes made on the client outside the mount show up within 10 seconds.
 - The folder's own Claude Code settings and hooks are not loaded on the gateway.

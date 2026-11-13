@@ -121,26 +121,36 @@ func (h *shareHub) expireCopies(root string, now time.Time) {
 }
 
 func removeOldCopies(root string, active map[string]bool, now time.Time) {
-	owners, _ := os.ReadDir(root)
+	rooted, err := os.OpenRoot(root)
+	if err != nil {
+		return
+	}
+	defer rooted.Close()
+	removeOldCopiesAt(rooted, root, active, now)
+}
+
+func removeOldCopiesAt(rooted *os.Root, root string, active map[string]bool, now time.Time) {
+	owners, _ := rootReadDir(rooted, ".")
 	for _, o := range owners {
 		if !o.IsDir() || o.Name() == "runs" {
 			continue
 		}
-		copies, _ := os.ReadDir(filepath.Join(root, o.Name()))
+		copies, _ := rootReadDir(rooted, o.Name())
 		for _, c := range copies {
-			p := filepath.Join(root, o.Name(), c.Name())
+			rel := filepath.Join(o.Name(), c.Name())
+			p := filepath.Join(root, rel)
 			if !c.IsDir() || active[filepath.Clean(p)] { // c.IsDir: povezava ni mapa
 				continue
 			}
 			used := now
-			if st, err := os.Stat(p + ".used"); err == nil {
+			if st, err := rooted.Stat(rel + ".used"); err == nil {
 				used = st.ModTime()
-			} else if st, err := os.Lstat(p); err == nil {
+			} else if st, err := rooted.Lstat(rel); err == nil {
 				used = st.ModTime()
 			}
 			if now.Sub(used) > copyLifetime {
-				os.RemoveAll(p)
-				os.Remove(p + ".used")
+				rooted.RemoveAll(rel)
+				rooted.Remove(rel + ".used")
 			}
 		}
 	}
@@ -534,7 +544,7 @@ func (h *shareHub) syncManifest(key string, files []syncEntry, execKnown bool, o
 }
 
 // syncPut: datoteka iz manifesta; vsebina se mora ujemati z njim. Status HTTP.
-var syncPutWrite = syncWrite // testi: počasno pisanje
+var syncPutWrite = syncWriteCopy // testi: počasno pisanje
 
 // Pisanje (do 64 MB) teče brez h.mu (#21): počasen prenos ne ustavi pollov in odgovorov drugih map.
 func (h *shareHub) syncPut(key, path string, data []byte, owner string) int {

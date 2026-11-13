@@ -393,6 +393,10 @@ one run.
 
 ## Which folders are shared
 
+Inside a shared folder, data operations do not follow absolute symbolic links, even when the target stays inside
+the share. Use a relative link instead. Windows directory junctions have absolute targets and are also refused;
+junctions inside a share that worked before 0.5.26 no longer work. The user’s linked `.gitignore` is still read.
+
 minigw shares the current folder with a gateway on another computer when it gets its first request for an agent
 model. Any project folder is shared, on any drive (for example `D:\Projects\app` or `/Volumes/Disk/app`).
 
