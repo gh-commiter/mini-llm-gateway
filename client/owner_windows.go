@@ -13,7 +13,11 @@ func ownerIsUser() error {
 		return err
 	}
 	defer tok.Close()
-	if !tok.IsElevated() {
+	elevated, err := tokenElevated(tok)
+	if err != nil {
+		return err
+	}
+	if !elevated {
 		return nil
 	}
 	tu, err := tok.GetTokenUser()
@@ -22,4 +26,11 @@ func ownerIsUser() error {
 	}
 	owner := struct{ Owner *windows.SID }{tu.User.Sid} // TOKEN_OWNER
 	return windows.SetTokenInformation(tok, windows.TokenOwner, (*byte)(unsafe.Pointer(&owner)), uint32(unsafe.Sizeof(owner)))
+}
+
+func tokenElevated(tok windows.Token) (bool, error) {
+	var elevation uint32
+	var size uint32
+	err := windows.GetTokenInformation(tok, windows.TokenElevation, (*byte)(unsafe.Pointer(&elevation)), uint32(unsafe.Sizeof(elevation)), &size)
+	return elevation != 0, err
 }

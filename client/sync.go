@@ -164,13 +164,15 @@ func loadIgnore(root string, trusted bool) []ignoreRule {
 // readRegular: navadna datoteka rel pod root do max bajtov. Brez follow os.Root ne sledi povezavi ven iz root (tudi ne
 // prek podtaknjene starševske mape); O_NONBLOCK ne čaka na FIFO.
 func readRegular(root, rel string, max int64, follow bool) ([]byte, bool) {
-	// Only the user's .gitignore may live outside the share (dotfiles).
+	// Trusted ignore rules intentionally allow an external dotfiles target. Open it directly:
+	// no resolved parent is reopened, and the handle is checked before reading.
 	if follow {
-		full, err := finalPath(filepath.Join(root, filepath.FromSlash(rel)))
+		f, err := os.OpenFile(filepath.Join(root, filepath.FromSlash(rel)), os.O_RDONLY|syscall.O_NONBLOCK, 0)
 		if err != nil {
 			return nil, false
 		}
-		root, rel = filepath.Dir(full), filepath.Base(full)
+		defer f.Close()
+		return readRegularFile(f, max)
 	}
 	r, err := os.OpenRoot(root)
 	if err != nil {
@@ -182,6 +184,10 @@ func readRegular(root, rel string, max int64, follow bool) ([]byte, bool) {
 		return nil, false
 	}
 	defer f.Close()
+	return readRegularFile(f, max)
+}
+
+func readRegularFile(f *os.File, max int64) ([]byte, bool) {
 	if st, err := f.Stat(); err != nil || !st.Mode().IsRegular() || st.Size() > max {
 		return nil, false
 	}
@@ -314,6 +320,15 @@ func syncResolve(rel, root string) (string, bool) {
 // (sicer 0755/0644 po exec; CreateTemp sam naredi 0600).
 // Biti x sledijo exec, razen pri keepX (uporabnik je bit spremenil sam) in na Windows (bita x ni).
 func syncWrite(rooted *os.Root, full string, data []byte, mtime int64, exec, keepX bool) error {
+	return syncWritePolicy(rooted, full, data, mtime, exec, keepX, true)
+}
+
+// Uploads into the gateway copy allow the user's own protected files.
+func syncWriteCopy(rooted *os.Root, full string, data []byte, mtime int64, exec, keepX bool) error {
+	return syncWritePolicy(rooted, full, data, mtime, exec, keepX, false)
+}
+
+func syncWritePolicy(rooted *os.Root, full string, data []byte, mtime int64, exec, keepX, protect bool) error {
 	mode := os.FileMode(0o644)
 	if st, err := rooted.Lstat(full); err == nil && st.Mode().IsRegular() {
 		mode = st.Mode().Perm()
@@ -321,9 +336,27 @@ func syncWrite(rooted *os.Root, full string, data []byte, mtime int64, exec, kee
 	if !keepX && runtime.GOOS != "windows" {
 		mode = withExec(mode, exec)
 	}
-	if err := rooted.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+	var err error
+	if protect {
+		err = (mutationRoot{rooted}).MkdirAll(filepath.Dir(full), 0o755)
+	} else {
+		err = rooted.MkdirAll(filepath.Dir(full), 0o755)
+	}
+	if err != nil {
 		return err
 	}
+	var parent *os.Root
+	name := filepath.Base(full)
+	if protect {
+		parent, name, err = mutationParent(rooted, full)
+	} else {
+		parent, err = rooted.OpenRoot(filepath.Dir(full))
+	}
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	rooted, full = parent, name
 	if st, err := rooted.Lstat(full); err == nil && st.IsDir() {
 		rooted.Remove(full) // prazna mapa na mestu datoteke (mapa → datoteka); polna ostane in pisanje ne uspe
 	}
@@ -348,13 +381,13 @@ func syncWrite(rooted *os.Root, full string, data []byte, mtime int64, exec, kee
 		err = cerr
 	}
 	if err == nil && readOnlyWin {
-		rootChmod(rooted, full, 0o666) // atribut samo za branje dol; po preimenovanju spet gor
+		rooted.Chmod(full, 0o666) // pinned parent; Windows does not follow the final link
 	}
 	if err == nil {
 		err = rooted.Rename(tmpName, full)
 	}
 	if err == nil && readOnlyWin {
-		err = rootChmod(rooted, full, mode)
+		err = rooted.Chmod(full, mode)
 	}
 	if err != nil {
 		rooted.Remove(tmpName)
@@ -418,7 +451,11 @@ func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch fu
 			notes = append(notes, "not deleted "+p+": protected path (through a link)")
 			continue
 		}
-		full = filepath.FromSlash(p)
+		full, err = rootResolve(rooted, filepath.FromSlash(p), false)
+		if err != nil || protectedPath(filepath.ToSlash(full)) {
+			notes = append(notes, "not deleted "+p+": protected path (through a link)")
+			continue
+		}
 		local, has := syncEntryOf(rooted, full, p, state)
 		if !has {
 			delete(state, p)
@@ -431,7 +468,7 @@ func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch fu
 		if runtime.GOOS == "windows" { // #6: datoteke samo za branje Windows ne izbriše
 			rootChmod(rooted, full, 0o666)
 		}
-		rooted.Remove(full)
+		(mutationRoot{rooted}).Remove(full)
 		delete(state, p)
 	}
 	for _, e := range ch.Changed {
@@ -456,7 +493,12 @@ func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch fu
 			done = append(done, e.Path)
 			continue
 		}
-		full = filepath.FromSlash(e.Path)
+		full, err = rootResolve(rooted, filepath.FromSlash(e.Path), false)
+		if err != nil || protectedPath(filepath.ToSlash(full)) {
+			notes = append(notes, "skipped "+e.Path+": protected path (through a link)")
+			done = append(done, e.Path)
+			continue
+		}
 		if local, has := syncEntryOf(rooted, full, e.Path, state); has && local.SHA256 == e.SHA256 {
 			// Le bit x, in le če ga uporabnik od prenosa ni spremenil sam (Windows ga nima).
 			if local.Exec != e.Exec && local.Exec != state[e.Path].Exec { // stanje ostane: bit ostane uporabnikov
@@ -480,7 +522,8 @@ func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch fu
 		local, _ := syncEntryOf(rooted, full, e.Path, state) // znova tik pred pisanjem
 		if local.SHA256 != base(e.Path) {                    // spremenjena (ali izbrisana) tudi tukaj
 			_, ok := syncResolve(e.Path+".minigw-conflict", root)
-			if !ok || syncWrite(rooted, filepath.FromSlash(e.Path+".minigw-conflict"), data, e.Mtime, e.Exec, false) != nil {
+			cfull, err := rootResolve(rooted, filepath.FromSlash(e.Path+".minigw-conflict"), false)
+			if !ok || err != nil || protectedPath(filepath.ToSlash(cfull)) || syncWrite(rooted, cfull, data, e.Mtime, e.Exec, false) != nil {
 				notes = append(notes, "conflict: "+e.Path+" changed here and on the gateway; the gateway's version could not be saved")
 				continue
 			}
@@ -654,10 +697,16 @@ func (s *shareClient) syncPull(k string) bool {
 
 // Open first: Root.Chmod can race a final symlink swap on Unix.
 func rootChmod(rooted *os.Root, p string, mode os.FileMode) error {
-	if runtime.GOOS == "windows" {
-		return rooted.Chmod(p, mode)
+	parent, name, err := mutationParent(rooted, p)
+	if err != nil {
+		return err
 	}
-	f, err := rooted.OpenFile(p, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	defer parent.Close()
+	if runtime.GOOS == "windows" {
+		// Go opens the final component with FILE_OPEN_REPARSE_POINT for Chmod.
+		return parent.Chmod(name, mode)
+	}
+	f, err := mutationOpenFile(parent, name, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return err
 	}
@@ -666,6 +715,24 @@ func rootChmod(rooted *os.Root, p string, mode os.FileMode) error {
 		return err
 	} else if !st.Mode().IsRegular() {
 		return fmt.Errorf("not a regular file: %s", p)
+	}
+
+	rf, err := rooted.Open(".")
+	if err != nil {
+		return err
+	}
+	defer rf.Close()
+	rp, err := mutationHandlePath(rf)
+	if err != nil {
+		return err
+	}
+	fp, err := mutationHandlePath(f)
+	if err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(rp, fp)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || protectedPath(filepath.ToSlash(rel)) {
+		return fmt.Errorf("protected path: %s", p)
 	}
 	return f.Chmod(mode)
 }

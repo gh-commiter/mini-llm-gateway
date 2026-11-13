@@ -33,7 +33,11 @@ func dav(status int, headers map[string]string, body []byte) davResponse {
 		headers = map[string]string{}
 	}
 	if body == nil {
-		body = []byte{}
+		if status == 403 {
+			body = []byte("Access refused. " + linkRefusal + ". Protected paths cannot be modified.")
+		} else {
+			body = []byte{}
+		}
 	}
 	return davResponse{Status: status, Headers: headers, Body: body}
 }
@@ -86,6 +90,14 @@ func davRefuse(rel []string) davResponse {
 	return dav(403, nil, nil)
 }
 
+var davBeforeMutation func() // tests: local swap after the initial checks
+
+func davMutationReady() {
+	if davBeforeMutation != nil {
+		davBeforeMutation()
+	}
+}
+
 func davHandle(method, path string, headers map[string]string, body []byte, root, prefix string) davResponse {
 	r, err := filepath.EvalSymlinks(root)
 	if err != nil {
@@ -97,13 +109,28 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 		return dav(403, nil, nil)
 	}
 	defer rooted.Close()
+	mut := mutationRoot{rooted}
 	p, rel, ok := davResolve(path, prefix, root)
 	if !ok {
 		return dav(403, nil, nil)
 	}
 	p = filepath.Join(append([]string{"."}, rel...)...)
 	junk := isJunk(p)
+	// Links inside the share (also absolute ones) are resolved here; the protected-path policy applies to the result.
+	follow := method == "GET" || method == "HEAD" || method == "PROPFIND" || method == "PUT" || method == "COPY"
+	p, err = rootResolve(rooted, p, follow)
+	if err != nil {
+		return dav(403, nil, []byte("Access refused. "+err.Error()))
+	}
+	href0 := rel
+	rel = relParts(p)
 	info, statErr := rooted.Stat(p)
+	if !follow { // the last component stays a link: delete and rename act on the link itself
+		info, statErr = rooted.Lstat(p)
+	}
+	if statErr != nil && !os.IsNotExist(statErr) {
+		return dav(403, nil, nil)
+	}
 	exists := !junk && statErr == nil
 	isDir := exists && info.IsDir()
 	// Zaščitene poti (kot sync): pisanje v .git, .claude/settings*.json, .vscode/tasks.json, .envrc nikoli, tudi
@@ -135,7 +162,7 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 			path string
 			rel  []string
 		}
-		items := []item{{p, rel}}
+		items := []item{{p, href0}}
 		if isDir && headers["depth"] != "0" {
 			entries, _ := rootReadDir(rooted, p)
 			names := []string{}
@@ -146,7 +173,11 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 			}
 			sort.Strings(names)
 			for _, n := range names {
-				items = append(items, item{filepath.Join(p, n), append(append([]string{}, rel...), n)})
+				child := filepath.Join(p, n)
+				if c, err := rootResolve(rooted, child, true); err == nil {
+					child = c
+				}
+				items = append(items, item{child, append(append([]string{}, href0...), n)})
 			}
 		}
 		var sb strings.Builder
@@ -162,7 +193,7 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 			return dav(404, nil, nil)
 		}
 		return dav(207, map[string]string{"Content-Type": "application/xml; charset=utf-8"}, []byte(
-			"<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<D:multistatus xmlns:D=\"DAV:\"><D:response><D:href>"+href(prefix, rel)+
+			"<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<D:multistatus xmlns:D=\"DAV:\"><D:response><D:href>"+href(prefix, href0)+
 				"</D:href><D:propstat><D:prop/><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response></D:multistatus>"))
 
 	case "GET", "HEAD":
@@ -216,6 +247,7 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 		if !rootParentExists(rooted, p) {
 			return dav(409, nil, nil)
 		}
+		davMutationReady()
 		if err := rootWriteAtomic(rooted, p, body); err != nil {
 			return dav(403, nil, nil)
 		}
@@ -231,7 +263,8 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 		if !rootParentExists(rooted, p) {
 			return dav(409, nil, nil)
 		}
-		if err := rooted.Mkdir(p, 0o755); err != nil {
+		davMutationReady()
+		if err := mut.Mkdir(p, 0o755); err != nil {
 			return dav(403, nil, nil)
 		}
 		return dav(201, nil, nil)
@@ -249,7 +282,8 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 		if rootTreeProtected(rooted, p, rel) {
 			return davRefuse(rel)
 		}
-		if err := rooted.RemoveAll(p); err != nil {
+		davMutationReady()
+		if err := mut.RemoveAll(p); err != nil {
 			return dav(403, nil, nil)
 		}
 		return dav(204, nil, nil)
@@ -276,6 +310,10 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 		// Tudi vsebina mape: nič zaščitenega na cilju (stage/settings.json → .claude), nič zaščitenega ne izgine
 		// (MOVE .claude stran, prepis obstoječe .claude).
 		dest = filepath.Join(append([]string{"."}, destRel...)...)
+		if dest, err = rootResolve(rooted, dest, false); err != nil {
+			return dav(403, nil, []byte("Access refused. "+err.Error()))
+		}
+		destRel = relParts(dest)
 		_, lerr := rooted.Lstat(dest)
 		if protected(dest, destRel) || rootTreeProtected(rooted, p, destRel) || (lerr == nil && rootTreeProtected(rooted, dest, destRel)) {
 			return davRefuse(destRel)
@@ -297,6 +335,7 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 		if err1 != nil || err2 != nil || hasPathPrefix(rdest, rp) || hasPathPrefix(rp, rdest) {
 			return dav(403, nil, nil)
 		}
+		davMutationReady()
 		// Ista datoteka (»a.txt« → »A.txt« na APFS/NTFS, trda povezava): cilja ne brišemo, ker je to vir.
 		// MOVE preimenuje prek začasnega imena (tudi datotečni sistemi, ki sami ne preimenujejo le velikosti črk).
 		if si, err := rooted.Lstat(p); err == nil {
@@ -305,14 +344,14 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 					return dav(403, nil, nil)
 				}
 				tmp := filepath.Join(filepath.Dir(p), ".minigw-mv-"+newUUID())
-				if err := rooted.Rename(p, tmp); err != nil {
+				if err := mut.Rename(p, tmp); err != nil {
 					return dav(403, nil, nil)
 				}
-				if err := rooted.Rename(tmp, dest); err != nil {
-					rooted.Rename(tmp, p)
+				if err := mut.Rename(tmp, dest); err != nil {
+					mut.Rename(tmp, p)
 					return dav(403, nil, nil)
 				}
-				rooted.Remove(tmp) // trda povezava: rename je bil brez učinka, tmp je le še ena povezava cilja
+				mut.Remove(tmp) // trda povezava: rename je bil brez učinka, tmp je le še ena povezava cilja
 				return dav(201, nil, nil)
 			}
 		}
@@ -322,11 +361,13 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 			if strings.ToUpper(headers["overwrite"]) == "F" {
 				return dav(412, nil, nil)
 			}
-			rooted.RemoveAll(dest)
+			if err := mut.RemoveAll(dest); err != nil {
+				return dav(403, nil, nil)
+			}
 		}
 		var err error
 		if method == "MOVE" {
-			err = rooted.Rename(p, dest)
+			err = mut.Rename(p, dest)
 		} else {
 			err = rootCopyTree(rooted, p, dest)
 		}
@@ -345,9 +386,12 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 			if !rootParentExists(rooted, p) {
 				return dav(409, nil, nil)
 			}
-			if f, err := rooted.OpenFile(p, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644); err == nil {
+			davMutationReady()
+			if f, err := mut.OpenFile(p, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644); err == nil {
 				f.Close()
 				created = true
+			} else {
+				return dav(403, nil, nil)
 			}
 		}
 		token := lockTokenRe.FindString(headers["if"])
@@ -448,6 +492,9 @@ func hasPathPrefix(p, root string) bool {
 
 // treeProtected: ali je katera koli pot v drevesu dir (z imenom base) zaščitena; povezavam ne sledi, nečitljivo = zaščiteno.
 func rootTreeProtected(rooted *os.Root, dir string, base []string) bool {
+	if st, err := rooted.Lstat(dir); err == nil && !st.IsDir() { // a link is acted on itself, not walked
+		return protectedPath(strings.Join(base, "/"))
+	}
 	found := false
 	fs.WalkDir(rooted.FS(), filepath.ToSlash(dir), func(p string, _ fs.DirEntry, err error) error {
 		sub, _ := filepath.Rel(dir, filepath.FromSlash(p))
@@ -471,6 +518,12 @@ func rootParentExists(rooted *os.Root, p string) bool {
 }
 
 func rootWriteAtomic(rooted *os.Root, p string, data []byte) error {
+	parent, name, err := mutationParent(rooted, p)
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	rooted, p = parent, name
 	tmpName := filepath.Join(filepath.Dir(p), ".minigw-"+newUUID())
 	tmp, err := rooted.OpenFile(tmpName, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -493,20 +546,7 @@ func rootWriteAtomic(rooted *os.Root, p string, data []byte) error {
 	return nil
 }
 
-// copyTree: simbolnim povezavam (tudi vgnezdenim) ne sledi in jih preskoči: njihov cilj je lahko zunaj mape.
-func copyTree(src, dst string) error {
-	rooted, err := os.OpenRoot(filepath.Dir(src))
-	if err != nil {
-		return err
-	}
-	defer rooted.Close()
-	dest, err := filepath.Rel(filepath.Dir(src), dst)
-	if err != nil {
-		return err
-	}
-	return rootCopyTree(rooted, filepath.Base(src), dest)
-}
-
+// rootCopyTree skips symbolic links, including nested ones.
 func rootCopyTree(rooted *os.Root, src, dst string) error {
 	info, err := rooted.Lstat(src)
 	if err != nil {
@@ -524,7 +564,7 @@ func rootCopyTree(rooted *os.Root, src, dst string) error {
 		if st, err := in.Stat(); err != nil || !st.Mode().IsRegular() {
 			return fmt.Errorf("not a regular file: %s", src)
 		}
-		out, err := rooted.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, info.Mode().Perm())
+		out, err := (mutationRoot{rooted}).OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, info.Mode().Perm())
 		if err != nil {
 			return err
 		}
@@ -534,7 +574,7 @@ func rootCopyTree(rooted *os.Root, src, dst string) error {
 		}
 		return out.Close()
 	}
-	if err := rooted.Mkdir(dst, info.Mode().Perm()); err != nil {
+	if err := (mutationRoot{rooted}).Mkdir(dst, info.Mode().Perm()); err != nil {
 		return err
 	}
 	entries, err := rootReadDir(rooted, src)

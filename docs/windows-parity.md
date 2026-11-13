@@ -66,3 +66,15 @@ round, "no test" is not pinned.
 | Agent limit (usage, rate, quota, credits) | 429 `rate_limit_error` with `x-should-retry: false`, message cleaned (control characters removed) | same | Both send the stream head only after 30 s, so an earlier limit is a real 429; after the head the limit is an SSE error and the gateway remembers it for 60 s, answering Claude Code's non-stream repeat with the same 429 without starting the CLI again. Copilot sends the fixed "copilot: usage or rate limit reached; details are in the gateway log, request <rid>" on both (its stderr stays in the gateway log). Codex, Grok and Claude CLI show the CLI's message on both. Test: Go `TestAgentLimitKeywordsAndCleaning`, `TestCodexUsageLimitIs429`, `TestCopilotThroughRouter` (Copilot's fixed text); Swift `agentLimitKeywordsAndCleaning`, `codexUsageLimitIs429`, `copilotLimitSendsFixedTextNotStderr`. |
 
 On Windows, minigw started from an elevated prompt sets the process token owner to the user SID before creating folders. Scratch and folder locks keep their strict user-owner checks. Scratch on a network share is refused before creating the target folder, including during a move.
+
+### Links and junctions inside a shared folder
+
+Windows junctions and symbolic links inside a shared folder work when their target stays inside it, as before
+the move to Go `os.Root`; absolute targets (every junction) are compared with the share's own real and final path
+(case-insensitive, `\\?\` and drive prefixes removed). A link or junction that leaves the share is refused, and a link
+into a protected folder (`.claude`, `.git`) does not bypass the protected-path rules. Same on Linux and macOS for
+symbolic links. This applies to minigw client DAV and sync data operations. Test: Go
+`TestDavFollowsAbsoluteLinkInsideRoot`, `TestDavRefusesAbsoluteLinkOutsideRoot`, `TestDavFollowsChainOfLinks`,
+`TestDavRefusesLinkLoop`, `TestLinksIntoProtectedFolderAreRefused`; Windows `TestDavFollowsJunctionInsideRoot`,
+`TestDavFollowsJunctionInsideRootOtherSpelling`, `TestDavRefusesJunctionOutsideRoot`,
+`TestDavRefusesJunctionIntoProtectedFolder`.

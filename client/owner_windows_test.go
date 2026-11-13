@@ -41,3 +41,9 @@ func TestOwnerIsUser(t *testing.T) {
 		t.Fatal("new folder is not owned by the user")
 	}
 }
+
+func TestTokenElevationQueryError(t *testing.T) {
+	if _, err := tokenElevated(windows.Token(0)); err == nil {
+		t.Fatal("invalid token query succeeded")
+	}
+}

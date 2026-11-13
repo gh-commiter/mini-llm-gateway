@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Resolve first, then replace a parent: the operation must enforce confinement again.
@@ -156,16 +157,452 @@ func TestDavRelativeLinkInsideRoot(t *testing.T) {
 	}
 }
 
-func TestDavRefusesAbsoluteLinkInsideRoot(t *testing.T) {
+func TestDavFollowsAbsoluteLinkInsideRoot(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "d"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	dirLink(t, filepath.Join(root, "d"), filepath.Join(root, "link"))
-	if r := davHandle("PUT", "/s/link/x", nil, []byte("inside"), root, "/s"); r.Status < 400 {
-		t.Fatalf("PUT: %d", r.Status)
+	if err := os.WriteFile(filepath.Join(root, "d", "old"), []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(root, "d", "x")); !os.IsNotExist(err) {
-		t.Fatalf("unexpected file: %v", err)
+	dirLink(t, filepath.Join(root, "d"), filepath.Join(root, "link"))
+	if r := davHandle("PUT", "/s/link/x", nil, []byte("inside"), root, "/s"); r.Status != 201 {
+		t.Fatalf("PUT: %+v", r)
+	}
+	if b, err := os.ReadFile(filepath.Join(root, "d", "x")); err != nil || string(b) != "inside" {
+		t.Fatalf("file: %q %v", b, err)
+	}
+	if r := davHandle("GET", "/s/link/old", nil, nil, root, "/s"); r.Status != 200 || string(r.Body) != "old" {
+		t.Fatalf("GET: %+v", r)
+	}
+	if r := davHandle("MKCOL", "/s/link/sub", nil, nil, root, "/s"); r.Status != 201 {
+		t.Fatalf("MKCOL: %+v", r)
+	}
+	r := davHandle("PROPFIND", "/s/link", map[string]string{"depth": "1"}, nil, root, "/s")
+	if r.Status != 207 || !strings.Contains(string(r.Body), "/s/link/x") || !strings.Contains(string(r.Body), "/s/link/old") {
+		t.Fatalf("PROPFIND: %+v", r)
+	}
+	if r := davHandle("MOVE", "/s/link/x", map[string]string{"destination": "/s/link/sub/y"}, nil, root, "/s"); r.Status != 201 {
+		t.Fatalf("MOVE: %+v", r)
+	}
+	if b, err := os.ReadFile(filepath.Join(root, "d", "sub", "y")); err != nil || string(b) != "inside" {
+		t.Fatalf("moved: %q %v", b, err)
+	}
+	// DELETE of the link itself removes the link, not its target.
+	if r := davHandle("DELETE", "/s/link", nil, nil, root, "/s"); r.Status != 204 {
+		t.Fatalf("DELETE: %+v", r)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "link")); !os.IsNotExist(err) {
+		t.Fatalf("link kept: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "d", "old")); err != nil {
+		t.Fatalf("target changed: %v", err)
+	}
+}
+
+func TestDavRefusesAbsoluteLinkOutsideRoot(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "secret"), []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dirLink(t, outside, filepath.Join(root, "link"))
+	for _, method := range []string{"PUT", "GET", "MKCOL", "DELETE", "PROPFIND"} {
+		r := davHandle(method, "/s/link/secret", nil, []byte("bad"), root, "/s")
+		if r.Status < 400 {
+			t.Fatalf("%s: %+v", method, r)
+		}
+	}
+	if r := davHandle("PUT", "/s/link/x", nil, []byte("bad"), root, "/s"); r.Status < 400 {
+		t.Fatalf("PUT: %+v", r)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "x")); !os.IsNotExist(err) {
+		t.Fatalf("outside changed: %v", err)
+	}
+	if b, err := os.ReadFile(filepath.Join(outside, "secret")); err != nil || string(b) != "secret" {
+		t.Fatalf("secret: %q %v", b, err)
+	}
+}
+
+func TestDavFollowsChainOfLinks(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "d"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	symlinkOrSkip(t, "d", filepath.Join(root, "rel"))                      // relative → real
+	symlinkOrSkip(t, filepath.Join(root, "rel"), filepath.Join(root, "a")) // absolute → relative link
+	symlinkOrSkip(t, filepath.Join(root, "a"), filepath.Join(root, "b"))   // absolute → absolute
+	if r := davHandle("PUT", "/s/b/x", nil, []byte("chain"), root, "/s"); r.Status != 201 {
+		t.Fatalf("PUT: %+v", r)
+	}
+	if b, err := os.ReadFile(filepath.Join(root, "d", "x")); err != nil || string(b) != "chain" {
+		t.Fatalf("file: %q %v", b, err)
+	}
+}
+
+func TestDavRefusesLinkLoop(t *testing.T) {
+	root := t.TempDir()
+	symlinkOrSkip(t, filepath.Join(root, "b"), filepath.Join(root, "a"))
+	symlinkOrSkip(t, filepath.Join(root, "a"), filepath.Join(root, "b"))
+	for _, method := range []string{"PUT", "GET"} {
+		if r := davHandle(method, "/s/a/x", nil, []byte("x"), root, "/s"); r.Status < 400 {
+			t.Fatalf("%s: %+v", method, r)
+		}
+	}
+}
+
+func TestRootResolveLoopStops(t *testing.T) {
+	root := t.TempDir()
+	symlinkOrSkip(t, filepath.Join(root, "b"), filepath.Join(root, "a"))
+	symlinkOrSkip(t, filepath.Join(root, "a"), filepath.Join(root, "b"))
+	rooted, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rooted.Close()
+	if _, err := rootResolve(rooted, "a/x", true); err == nil || !strings.Contains(err.Error(), "too many links") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// A link into a protected folder must not bypass the protected-path policy, absolute or relative.
+func TestLinksIntoProtectedFolderAreRefused(t *testing.T) {
+	root := t.TempDir()
+	for _, d := range []string{".claude", ".git"} {
+		if err := os.Mkdir(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dirLink(t, filepath.Join(root, ".claude"), filepath.Join(root, "abs"))
+	symlinkOrSkip(t, ".claude", filepath.Join(root, "rel"))
+	dirLink(t, filepath.Join(root, ".git"), filepath.Join(root, "git"))
+	for _, l := range []string{"abs", "rel"} {
+		for _, c := range []struct{ method, path string }{
+			{"PUT", "/s/" + l + "/settings.json"}, {"PUT", "/s/" + l + "/hooks"}, {"MKCOL", "/s/" + l + "/hooks"}, {"PUT", "/s/" + l + "/commands/x"},
+		} {
+			if r := davHandle(c.method, c.path, nil, []byte("{}"), root, "/s"); r.Status < 400 {
+				t.Fatalf("%s %s: %+v", c.method, c.path, r)
+			}
+		}
+	}
+	if r := davHandle("PUT", "/s/git/config", nil, []byte("x"), root, "/s"); r.Status < 400 {
+		t.Fatalf("PUT .git: %+v", r)
+	}
+	if r := davHandle("MOVE", "/s/ok", map[string]string{"destination": "/s/abs/settings.json"}, nil, root, "/s"); r.Status < 400 {
+		t.Fatalf("MOVE: %+v", r)
+	}
+	// Sync: write and delete through the links.
+	data := []byte("{}")
+	notes, done := syncApply(syncChanges{Changed: []syncEntry{{Path: "abs/settings.json", SHA256: sha256Hex(data), Size: 2}, {Path: "git/config", SHA256: sha256Hex(data), Size: 2}},
+		Deleted: []string{"abs/settings.local.json"}}, root, map[string]syncEntry{}, func(string) []byte { return data })
+	if len(notes) != 3 || len(done) != 3 {
+		t.Fatalf("notes=%v done=%v", notes, done)
+	}
+	for _, p := range []string{".claude/settings.json", ".git/config"} {
+		if _, err := os.Lstat(filepath.Join(root, p)); !os.IsNotExist(err) {
+			t.Fatalf("%s created: %v", p, err)
+		}
+	}
+	// Reading through the link stays allowed.
+	if err := os.WriteFile(filepath.Join(root, ".claude", "notes.md"), []byte("n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if r := davHandle("GET", "/s/abs/notes.md", nil, nil, root, "/s"); r.Status != 200 {
+		t.Fatalf("GET: %+v", r)
+	}
+}
+
+func TestMutationsFollowRelativeLinkInsideRoot(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "d"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	symlinkOrSkip(t, "d", filepath.Join(root, "link"))
+	if r := davHandle("PUT", "/s/link/file", nil, []byte("dav"), root, "/s"); r.Status != 201 {
+		t.Fatalf("PUT: %+v", r)
+	}
+	data := []byte("sync")
+	notes, done := syncApply(syncChanges{Changed: []syncEntry{{Path: "link/new", SHA256: sha256Hex(data), Size: int64(len(data))}}}, root,
+		map[string]syncEntry{}, func(string) []byte { return data })
+	if len(notes) != 0 || len(done) != 1 {
+		t.Fatalf("notes=%v done=%v", notes, done)
+	}
+	for name, want := range map[string]string{"file": "dav", "new": "sync"} {
+		if b, err := os.ReadFile(filepath.Join(root, "d", name)); err != nil || string(b) != want {
+			t.Fatalf("%s: %q %v", name, b, err)
+		}
+	}
+}
+
+func TestSyncFollowsAbsoluteLinkInsideRoot(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "d"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	dirLink(t, filepath.Join(root, "d"), filepath.Join(root, "link"))
+	data := []byte("gateway")
+	notes, done := syncApply(syncChanges{Changed: []syncEntry{{Path: "link/new", SHA256: sha256Hex(data), Size: int64(len(data))}}}, root,
+		map[string]syncEntry{}, func(string) []byte { return data })
+	if len(notes) != 0 || len(done) != 1 {
+		t.Fatalf("notes=%v done=%v", notes, done)
+	}
+	if b, err := os.ReadFile(filepath.Join(root, "d", "new")); err != nil || string(b) != "gateway" {
+		t.Fatalf("file: %q %v", b, err)
+	}
+}
+
+func TestSyncRefusesAbsoluteLinkOutsideRoot(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	dirLink(t, outside, filepath.Join(root, "link"))
+	data := []byte("gateway")
+	notes, done := syncApply(syncChanges{Changed: []syncEntry{{Path: "link/new", SHA256: sha256Hex(data)}}}, root,
+		map[string]syncEntry{}, func(string) []byte { return data })
+	if len(done) != 1 || len(notes) == 0 {
+		t.Fatalf("notes=%v done=%v", notes, done)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "new")); !os.IsNotExist(err) {
+		t.Fatalf("outside changed: %v", err)
+	}
+}
+
+func TestSyncPutAllowsUsersProtectedFiles(t *testing.T) {
+	h := newShareHub()
+	root := t.TempDir()
+	key, ok := h.register("s1", "/c", "", false, root, "dev")
+	if !ok {
+		t.Fatal("register")
+	}
+	data := []byte("user settings")
+	for _, p := range []string{".claude/settings.json", ".claude/hooks/user", ".envrc", ".vscode/tasks.json"} {
+		e := syncEntry{Path: p, Size: int64(len(data)), SHA256: sha256Hex(data)}
+		if _, _, ok := h.syncManifest(key, []syncEntry{e}, true, "dev"); !ok {
+			t.Fatal("manifest")
+		}
+		if status := h.syncPut(key, p, data, "dev"); status != 204 {
+			t.Fatalf("upload %s: %d", p, status)
+		}
+		if b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(p))); err != nil || string(b) != string(data) {
+			t.Fatalf("uploaded %s: %q %v", p, b, err)
+		}
+	}
+}
+
+func TestSyncApplyRefusesProtectedParentSwappedDuringFetch(t *testing.T) {
+	root := t.TempDir()
+	for _, d := range []string{"d", ".claude"} {
+		if err := os.Mkdir(filepath.Join(root, d), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	data := []byte("gateway")
+	ch := syncChanges{Changed: []syncEntry{{Path: "d/settings.json", SHA256: sha256Hex(data), Size: int64(len(data))}}}
+	notes, done := syncApply(ch, root, map[string]syncEntry{}, func(string) []byte {
+		if err := os.Rename(filepath.Join(root, "d"), filepath.Join(root, "old")); err != nil {
+			t.Fatal(err)
+		}
+		symlinkOrSkip(t, ".claude", filepath.Join(root, "d"))
+		return data
+	})
+	if len(done) != 0 || !strings.Contains(strings.Join(notes, "\n"), "protected path") {
+		t.Fatalf("notes=%v done=%v", notes, done)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".claude", "settings.json")); !os.IsNotExist(err) {
+		t.Fatalf("protected file: %v", err)
+	}
+}
+
+func TestDavRefusesProtectedParentSwappedBeforeMutation(t *testing.T) {
+	for _, method := range []string{"PUT", "MKCOL", "DELETE", "LOCK", "MOVE", "COPY", "MOVE source"} {
+		t.Run(method, func(t *testing.T) {
+			root := t.TempDir()
+			for _, d := range []string{"d", ".claude"} {
+				if err := os.Mkdir(filepath.Join(root, d), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(filepath.Join(root, "source"), []byte("safe"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			// An existing protected target must also survive DELETE and MOVE of the source.
+			if method == "DELETE" || method == "MOVE source" {
+				for _, d := range []string{"d", ".claude"} {
+					if err := os.WriteFile(filepath.Join(root, d, "settings.json"), []byte("original"), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			old := davBeforeMutation
+			t.Cleanup(func() { davBeforeMutation = old })
+			davBeforeMutation = func() {
+				if err := os.Rename(filepath.Join(root, "d"), filepath.Join(root, "old")); err != nil {
+					t.Fatal(err)
+				}
+				symlinkOrSkip(t, ".claude", filepath.Join(root, "d"))
+			}
+			p := "/s/d/settings.json"
+			headers := map[string]string{}
+			verb := method
+			if method == "MOVE" || method == "COPY" {
+				p = "/s/source"
+				headers["destination"] = "/s/d/settings.json"
+			}
+			if method == "MOVE source" {
+				verb = "MOVE"
+				headers["destination"] = "/s/moved"
+			}
+			r := davHandle(verb, p, headers, []byte("bad"), root, "/s")
+			if r.Status < 400 {
+				t.Fatalf("mutation accepted: %+v", r)
+			}
+			b, err := os.ReadFile(filepath.Join(root, ".claude", "settings.json"))
+			if method == "DELETE" || method == "MOVE source" {
+				if err != nil || string(b) != "original" {
+					t.Fatalf("protected changed: %q %v", b, err)
+				}
+			} else if !os.IsNotExist(err) {
+				t.Fatalf("protected created: %q %v", b, err)
+			}
+		})
+	}
+}
+
+func TestMutationUsesPinnedParent(t *testing.T) {
+	root := t.TempDir()
+	for _, d := range []string{"d", ".claude"} {
+		if err := os.Mkdir(filepath.Join(root, d), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	parent, name, err := mutationParent(r, "d/settings.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer parent.Close()
+	if err := os.Rename(filepath.Join(root, "d"), filepath.Join(root, "old")); err != nil {
+		t.Fatal(err)
+	}
+	symlinkOrSkip(t, ".claude", filepath.Join(root, "d"))
+	if err := parent.WriteFile(name, []byte("safe"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".claude", name)); !os.IsNotExist(err) {
+		t.Fatalf("protected file: %v", err)
+	}
+	if b, err := os.ReadFile(filepath.Join(root, "old", name)); err != nil || string(b) != "safe" {
+		t.Fatalf("pinned file: %q %v", b, err)
+	}
+}
+
+func TestRootChmodRefusesProtectedParentSwap(t *testing.T) {
+	root := t.TempDir()
+	for _, d := range []string{"d", ".claude"} {
+		if err := os.Mkdir(filepath.Join(root, d), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	target := filepath.Join(root, ".claude", "settings.json")
+	if err := os.WriteFile(target, []byte("safe"), 0400); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(target, 0600) })
+	before, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if protectedCanonical(filepath.Join(root, "d", "settings.json"), root) {
+		t.Fatal("initial refusal")
+	}
+	if err := os.Rename(filepath.Join(root, "d"), filepath.Join(root, "old")); err != nil {
+		t.Fatal(err)
+	}
+	symlinkOrSkip(t, ".claude", filepath.Join(root, "d"))
+	if err := rootChmod(r, "d/settings.json", 0777); err == nil {
+		t.Fatal("chmod accepted")
+	}
+	st, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Mode().Perm() != before.Mode().Perm() {
+		t.Fatalf("mode changed: %v", st.Mode())
+	}
+}
+
+func TestMutationOpenRefusesFinalLink(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "target"), []byte("safe"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	symlinkOrSkip(t, "target", filepath.Join(root, "link"))
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	f, err := mutationOpenFile(r, "link", os.O_WRONLY|os.O_TRUNC, 0600)
+	if f != nil {
+		f.Close()
+	}
+	if err == nil {
+		t.Fatal("followed final link")
+	}
+	if b, err := os.ReadFile(filepath.Join(root, "target")); err != nil || string(b) != "safe" {
+		t.Fatalf("target changed: %q %v", b, err)
+	}
+}
+
+func TestTrustedIgnoreOpensExternalLink(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	target := filepath.Join(outside, "ignore")
+	if err := os.WriteFile(target, []byte("ignored.txt\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	symlinkOrSkip(t, target, filepath.Join(root, ".gitignore"))
+	if !ignored(loadIgnore(root, true), "ignored.txt", false) {
+		t.Fatal("trusted external ignore not loaded")
+	}
+	if ignored(loadIgnore(root, false), "ignored.txt", false) {
+		t.Fatal("untrusted external ignore loaded")
+	}
+}
+
+func TestRemoveOldCopiesUsesPinnedRoot(t *testing.T) {
+	base := t.TempDir()
+	root, outside := filepath.Join(base, "copies"), filepath.Join(base, "outside")
+	old := time.Now().Add(-15 * 24 * time.Hour)
+	for _, d := range []string{root, outside} {
+		p := filepath.Join(d, "dev", "old")
+		if err := os.MkdirAll(p, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	saved := filepath.Join(base, "saved")
+	if err := os.Rename(root, saved); err != nil {
+		t.Fatal(err)
+	}
+	dirLink(t, outside, root)
+	removeOldCopiesAt(r, root, nil, time.Now())
+	if _, err := os.Stat(filepath.Join(saved, "dev", "old")); !os.IsNotExist(err) {
+		t.Fatalf("old copy not removed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "dev", "old")); err != nil {
+		t.Fatalf("outside copy removed: %v", err)
 	}
 }
