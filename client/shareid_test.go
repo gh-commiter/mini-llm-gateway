@@ -113,3 +113,19 @@ func TestShareRootSwappedBeforeStart(t *testing.T) {
 		t.Error("folder swapped after the check was shared")
 	}
 }
+
+func TestShareAddSameIdentity(t *testing.T) {
+	_, proj := fakeHome(t)
+	alias := filepath.Join(t.TempDir(), "alias")
+	dirLink(t, proj, alias)
+	shareCommand([]string{"add", proj})
+	shareCommand([]string{"add", "--work=sync", alias})
+	got := sharedFolders()
+	if len(got) != 1 || got[0].Path != proj || got[0].Work != "sync" {
+		t.Fatalf("shares: %+v", got)
+	}
+	shareCommand([]string{"add", alias})
+	if got = sharedFolders(); len(got) != 1 || got[0].Path != proj || got[0].Work != "" {
+		t.Fatalf("shares: %+v", got)
+	}
+}

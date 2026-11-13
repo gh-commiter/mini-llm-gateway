@@ -156,14 +156,23 @@ var copilotKeyring = func() string {
 	if lookPath("xdg-dbus-proxy") == "" {
 		return "Copilot needs xdg-dbus-proxy on a Linux gateway (Copilot reaches only the keyring through it, from its sandbox): install the xdg-dbus-proxy package"
 	}
-	if strings.HasPrefix(sessionBus(), "unix:abstract=") { // M1: abstraktna vtičnica je dosegljiva tudi iz bwrap (ni datoteka)
-		return "Copilot needs the gateway user's D-Bus session on a socket file (unix:path=…): with unix:abstract= the sandbox could reach the whole session bus"
+	if bus := sessionBus(); bus != "" && !socketSessionBus(bus) { // M1: abstraktna vtičnica je dosegljiva tudi iz bwrap (ni datoteka)
+		return "Copilot needs the gateway user's D-Bus session on a socket file (unix:path=…): with other addresses the sandbox could reach the whole session bus"
 	}
 	if !secretService(sessionBus()) {
 		return "Copilot needs a Secret Service keyring (e.g. GNOME Keyring or KWallet) on the gateway user's D-Bus session; " +
 			"a headless Linux gateway is not supported. With a keyring: " + copilotSignIn
 	}
 	return ""
+}
+
+// socketSessionBus: en naslov datotečne vtičnice, z neobveznim guid.
+func socketSessionBus(bus string) bool {
+	parts := strings.Split(bus, ",")
+	if !strings.HasPrefix(parts[0], "unix:path=/") || strings.Contains(bus, ";") {
+		return false
+	}
+	return len(parts) == 1 || (len(parts) == 2 && strings.HasPrefix(parts[1], "guid=") && len(parts[1]) > len("guid="))
 }
 
 // sessionBus: naslov seje D-Bus uporabnika (DBUS_SESSION_BUS_ADDRESS ali $XDG_RUNTIME_DIR/bus) ali "".

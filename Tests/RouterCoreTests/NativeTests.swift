@@ -804,3 +804,21 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     let (second, t2) = await build()  // nič za prevesti: le odkrivanje orodij (xcrun) in ~5,5 s pospravljanja run
     #expect(second.text.hasSuffix("x 0\n") && t2 < 20, "second build took \(t2) s")
 }
+
+@Test func sharedFolderAddSameIdentity() throws {
+    let fm = FileManager.default
+    let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try fm.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: root) }
+    let proj = root.appendingPathComponent("proj"), alias = root.appendingPathComponent("alias")
+    try fm.createDirectory(at: proj, withIntermediateDirectories: true)
+    try fm.createSymbolicLink(at: alias, withDestinationURL: proj)
+    let saved = SharedFolders.Entry(path: proj.path)
+    let updated = SharedFolders.adding(.init(path: alias.path, work: "sync"), to: [saved, .init(path: alias.path)])
+    #expect(updated == [.init(path: proj.path, work: "sync")])
+    #expect(SharedFolders.adding(.init(path: alias.path), to: updated) == [saved])
+    let dataAlias = "/System/Volumes/Data" + proj.path
+    if SharedFolders.fileID(dataAlias) == SharedFolders.fileID(proj.path) {
+        #expect(SharedFolders.adding(.init(path: dataAlias), to: [saved]) == [saved])
+    }
+}

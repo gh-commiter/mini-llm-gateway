@@ -275,6 +275,8 @@ private func field(_ text: String, _ name: String) -> String {
     #expect(await admin(app.router(), "PATCH", "/agents/copilot", body: #"{"allowAll":true}"#).status == 400)
     // #81 (D1): brez žetona; GET in status povesta, zakaj Copilot ni na voljo (FakeApp: prijave ni)
     #expect(await admin(app.router(), "PATCH", "/agents/copilot", body: #"{"token":"github_pat_secret1"}"#).status == 400 && app.keys.isEmpty)
+    let oldToken = await admin(app.router(), "PATCH", "/agents/copilot", body: #"{"token":"old-secret"}"#)
+    #expect(oldToken.status == 400 && oldToken.text.contains(#"bad JSON body: unknown field \"token\""#) && !oldToken.text.contains("old-secret"))
     let got = await admin(app.router(), "GET", "/agents/copilot")
     #expect(!got.text.contains("hasToken") && got.text.contains(#""loginProblem":"Copilot is not signed in"#) && got.text.contains("not available: Copilot is not signed in"))
     #expect(await admin(app.router(), "GET", "/status").text.contains(#""copilot":"Copilot is not signed in"#))

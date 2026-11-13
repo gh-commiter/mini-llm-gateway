@@ -1675,9 +1675,25 @@ func shareCommand(args []string) {
 		if !realPathsOK(dir) {
 			fail("refusing to share " + dir + ": " + noRealPaths)
 		}
+		id, err := fileIDOf(dir)
+		if err != nil {
+			fail("cannot identify folder: " + err.Error())
+		}
+		keep = nil
+		found := false
+		for _, f := range list {
+			other, err := fileIDOf(f.Path)
+			if f.Path == dir || (err == nil && other == id) {
+				if !found {
+					dir, found = f.Path, true
+				}
+			} else {
+				keep = append(keep, f)
+			}
+		}
 		e := sharedFolder{Path: dir, Work: work, ReadOnly: ro}
 		for _, f := range list {
-			if strings.EqualFold(f.Path, dir) && f.Work == work && f.ReadOnly == ro {
+			if len(keep)+1 == len(list) && f.Path == dir && f.Work == work && f.ReadOnly == ro {
 				fmt.Println("already shared:", describe(e))
 				return
 			}
