@@ -571,7 +571,10 @@ func (h *shareHub) syncPut(key, path string, data []byte, owner string) int {
 		return 500
 	}
 	defer rooted.Close()
-	rel := filepath.FromSlash(path)
+	rel, err := rootResolve(rooted, filepath.FromSlash(path), false)
+	if err != nil {
+		return 403
+	}
 	if syncPutWrite(rooted, rel, data, e.Mtime, e.Exec, !execKnown) != nil {
 		return 500
 	}

@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-const linkRefusal = "absolute links are not followed inside a shared folder; use a relative link instead"
+const linkRefusal = "links that lead outside the shared folder are not followed"
 
 // Pin the parent, then check the location of that handle. Mutations use only its basename.
 func mutationParent(root *os.Root, p string) (*os.Root, string, error) {

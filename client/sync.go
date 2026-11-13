@@ -451,7 +451,11 @@ func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch fu
 			notes = append(notes, "not deleted "+p+": protected path (through a link)")
 			continue
 		}
-		full = filepath.FromSlash(p)
+		full, err = rootResolve(rooted, filepath.FromSlash(p), false)
+		if err != nil || protectedPath(filepath.ToSlash(full)) {
+			notes = append(notes, "not deleted "+p+": protected path (through a link)")
+			continue
+		}
 		local, has := syncEntryOf(rooted, full, p, state)
 		if !has {
 			delete(state, p)
@@ -489,7 +493,12 @@ func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch fu
 			done = append(done, e.Path)
 			continue
 		}
-		full = filepath.FromSlash(e.Path)
+		full, err = rootResolve(rooted, filepath.FromSlash(e.Path), false)
+		if err != nil || protectedPath(filepath.ToSlash(full)) {
+			notes = append(notes, "skipped "+e.Path+": protected path (through a link)")
+			done = append(done, e.Path)
+			continue
+		}
 		if local, has := syncEntryOf(rooted, full, e.Path, state); has && local.SHA256 == e.SHA256 {
 			// Le bit x, in le če ga uporabnik od prenosa ni spremenil sam (Windows ga nima).
 			if local.Exec != e.Exec && local.Exec != state[e.Path].Exec { // stanje ostane: bit ostane uporabnikov
@@ -513,7 +522,8 @@ func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch fu
 		local, _ := syncEntryOf(rooted, full, e.Path, state) // znova tik pred pisanjem
 		if local.SHA256 != base(e.Path) {                    // spremenjena (ali izbrisana) tudi tukaj
 			_, ok := syncResolve(e.Path+".minigw-conflict", root)
-			if !ok || syncWrite(rooted, filepath.FromSlash(e.Path+".minigw-conflict"), data, e.Mtime, e.Exec, false) != nil {
+			cfull, err := rootResolve(rooted, filepath.FromSlash(e.Path+".minigw-conflict"), false)
+			if !ok || err != nil || protectedPath(filepath.ToSlash(cfull)) || syncWrite(rooted, cfull, data, e.Mtime, e.Exec, false) != nil {
 				notes = append(notes, "conflict: "+e.Path+" changed here and on the gateway; the gateway's version could not be saved")
 				continue
 			}

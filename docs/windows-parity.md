@@ -67,9 +67,14 @@ round, "no test" is not pinned.
 
 On Windows, minigw started from an elevated prompt sets the process token owner to the user SID before creating folders. Scratch and folder locks keep their strict user-owner checks. Scratch on a network share is refused before creating the target folder, including during a move.
 
-### Shared-folder junction restriction (0.5.26)
+### Links and junctions inside a shared folder
 
-Windows junctions inside a shared folder are now refused by Go `os.Root`, even when their targets stay inside
-the share. This is a compatibility change from the earlier path-based operations. Absolute symbolic links are
-also refused on Windows, Linux and macOS; use a relative symbolic link instead. The user’s linked `.gitignore`
-remains supported. This restriction applies to minigw client DAV and sync data operations.
+Windows junctions and symbolic links inside a shared folder work when their target stays inside it, as before
+the move to Go `os.Root`; absolute targets (every junction) are compared with the share's own real and final path
+(case-insensitive, `\\?\` and drive prefixes removed). A link or junction that leaves the share is refused, and a link
+into a protected folder (`.claude`, `.git`) does not bypass the protected-path rules. Same on Linux and macOS for
+symbolic links. This applies to minigw client DAV and sync data operations. Test: Go
+`TestDavFollowsAbsoluteLinkInsideRoot`, `TestDavRefusesAbsoluteLinkOutsideRoot`, `TestDavFollowsChainOfLinks`,
+`TestDavRefusesLinkLoop`, `TestLinksIntoProtectedFolderAreRefused`; Windows `TestDavFollowsJunctionInsideRoot`,
+`TestDavFollowsJunctionInsideRootOtherSpelling`, `TestDavRefusesJunctionOutsideRoot`,
+`TestDavRefusesJunctionIntoProtectedFolder`.

@@ -101,9 +101,13 @@ Details:
   worktree branch stays on the gateway: the next agent request (same agent) in the session delivers it; otherwise it
   is kept on the gateway for 30 days. The Go minigw client also performs DAV and sync file operations through an
   opened `os.Root`: a link or junction swapped in after a path check cannot redirect access outside the shared folder
-  (#82). This applies on Windows, Linux and macOS. Data operations reject absolute symlinks and Windows junctions,
-  even to a target inside the folder; relative symlinks inside it still work. The user's linked `.gitignore` remains
-  supported for ignore rules. Use a relative link instead of an absolute one. Mutations pin the parent directory,
+  (#82). This applies on Windows, Linux and macOS. Links and Windows junctions that stay inside the shared folder
+  work, also with an absolute target (pnpm and `npm link` trees): the client walks the path one component at a time,
+  and a link whose absolute target lies inside the folder is rewritten to a path relative to the folder, up to 40
+  rewrites (a loop is refused). A link or junction that leaves the folder is refused. The operation itself then goes
+  through `os.Root` with the rewritten path, so a link retargeted after the walk still cannot lead out. The
+  protected-path rules apply to the rewritten path, so a link into `.claude` or `.git` does not bypass them. The
+  user's linked `.gitignore` remains supported for ignore rules. Mutations pin the parent directory,
   check its actual location for protected paths, and operate relative to that handle, so replacing a parent with
   a link into a protected directory during a download cannot bypass the protection. An open handle does not lock
   a directory against a local process renaming it after the check. The Swift Mac app still uses the folder locks described above.

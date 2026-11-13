@@ -116,7 +116,18 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 	}
 	p = filepath.Join(append([]string{"."}, rel...)...)
 	junk := isJunk(p)
+	// Links inside the share (also absolute ones) are resolved here; the protected-path policy applies to the result.
+	follow := method == "GET" || method == "HEAD" || method == "PROPFIND" || method == "PUT" || method == "COPY"
+	p, err = rootResolve(rooted, p, follow)
+	if err != nil {
+		return dav(403, nil, []byte("Access refused. "+err.Error()))
+	}
+	href0 := rel
+	rel = relParts(p)
 	info, statErr := rooted.Stat(p)
+	if !follow { // the last component stays a link: delete and rename act on the link itself
+		info, statErr = rooted.Lstat(p)
+	}
 	if statErr != nil && !os.IsNotExist(statErr) {
 		return dav(403, nil, nil)
 	}
@@ -151,7 +162,7 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 			path string
 			rel  []string
 		}
-		items := []item{{p, rel}}
+		items := []item{{p, href0}}
 		if isDir && headers["depth"] != "0" {
 			entries, _ := rootReadDir(rooted, p)
 			names := []string{}
@@ -162,7 +173,11 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 			}
 			sort.Strings(names)
 			for _, n := range names {
-				items = append(items, item{filepath.Join(p, n), append(append([]string{}, rel...), n)})
+				child := filepath.Join(p, n)
+				if c, err := rootResolve(rooted, child, true); err == nil {
+					child = c
+				}
+				items = append(items, item{child, append(append([]string{}, href0...), n)})
 			}
 		}
 		var sb strings.Builder
@@ -178,7 +193,7 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 			return dav(404, nil, nil)
 		}
 		return dav(207, map[string]string{"Content-Type": "application/xml; charset=utf-8"}, []byte(
-			"<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<D:multistatus xmlns:D=\"DAV:\"><D:response><D:href>"+href(prefix, rel)+
+			"<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<D:multistatus xmlns:D=\"DAV:\"><D:response><D:href>"+href(prefix, href0)+
 				"</D:href><D:propstat><D:prop/><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response></D:multistatus>"))
 
 	case "GET", "HEAD":
@@ -295,6 +310,10 @@ func davHandle(method, path string, headers map[string]string, body []byte, root
 		// Tudi vsebina mape: nič zaščitenega na cilju (stage/settings.json → .claude), nič zaščitenega ne izgine
 		// (MOVE .claude stran, prepis obstoječe .claude).
 		dest = filepath.Join(append([]string{"."}, destRel...)...)
+		if dest, err = rootResolve(rooted, dest, false); err != nil {
+			return dav(403, nil, []byte("Access refused. "+err.Error()))
+		}
+		destRel = relParts(dest)
 		_, lerr := rooted.Lstat(dest)
 		if protected(dest, destRel) || rootTreeProtected(rooted, p, destRel) || (lerr == nil && rootTreeProtected(rooted, dest, destRel)) {
 			return davRefuse(destRel)
@@ -473,6 +492,9 @@ func hasPathPrefix(p, root string) bool {
 
 // treeProtected: ali je katera koli pot v drevesu dir (z imenom base) zaščitena; povezavam ne sledi, nečitljivo = zaščiteno.
 func rootTreeProtected(rooted *os.Root, dir string, base []string) bool {
+	if st, err := rooted.Lstat(dir); err == nil && !st.IsDir() { // a link is acted on itself, not walked
+		return protectedPath(strings.Join(base, "/"))
+	}
 	found := false
 	fs.WalkDir(rooted.FS(), filepath.ToSlash(dir), func(p string, _ fs.DirEntry, err error) error {
 		sub, _ := filepath.Rel(dir, filepath.FromSlash(p))
