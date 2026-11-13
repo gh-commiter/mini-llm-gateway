@@ -310,6 +310,8 @@ func regRunDel(name string) {
 	procRegDelete.Call(h, uintptr(unsafe.Pointer(n)))
 }
 
+var scratchRemoteVolume = remoteVolume
+
 // protectDir: zaščiten DACL samo za lastnika in SYSTEM (mapa nastavitev zunaj %AppData%, kjer ni privzeto zasebna).
 // protectScratch (L2): kot mapa nastavitev (DACL le za uporabnika; tuj lastnik = zavrnitev).
 // L1, L1′: skupna nadrejena mapa <pogon>\minigw-scratch (tudi pod imenom 8.3) je prava mapa; naša (ali taka, na
@@ -319,11 +321,10 @@ func regRunDel(name string) {
 // odprt, dokler prehod teče (nihče, tudi lastnik nadrejene mape, je ne preimenuje in na njeno mesto podtakne
 // junction). Ostanek: lastnik nadrejene mape lahko spremeni njen DACL.
 func protectScratch(dir string) error {
-	err := protectScratchDir(dir)
-	if (errors.Is(err, errForeignOwner) || errors.Is(err, errUnprotected)) && remoteVolume(dir) { // W5: razlog, ne »drug uporabnik«
-		return errScratchNetwork // brez poti: klicatelji jo dodajo; ne errScratchTaken (»drug uporabnik na tem PC«)
+	if scratchRemoteVolume(dir) {
+		return errScratchNetwork
 	}
-	return err
+	return protectScratchDir(dir)
 }
 
 func protectScratchDir(dir string) error {

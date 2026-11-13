@@ -1263,6 +1263,11 @@ func (s *server) procSlot(w http.ResponseWriter, r *req) int {
 
 func (s *server) runAgentProcess(ctx context.Context, r *req, exe string, args []string, m agentMounts, dir, stdin string, onLine func([]byte)) error {
 	env := append(agentEnv(os.Environ()), m.env...)
+	if runtime.GOOS == "windows" && m.state == "" && m.envVar == "CODEX_HOME" {
+		if home := os.Getenv("CODEX_HOME"); home != "" {
+			env = append(env, "CODEX_HOME="+home)
+		}
+	}
 	if m.state != "" {
 		env = append(env, m.envVar+"="+m.state)
 	}
