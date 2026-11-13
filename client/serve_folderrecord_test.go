@@ -2,9 +2,12 @@ package main
 
 import (
 	"bytes"
+	"crypto/ecdh"
+	"crypto/rand"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -109,5 +112,57 @@ func TestAllowedFolderIdentityChangedAtStart(t *testing.T) {
 	s, logs := startFrom(t, s.cfgPath)
 	if got := s.agentFolders(s.conf(), base); len(got) != 0 || !strings.Contains(logs, "its identity changed") {
 		t.Fatalf("replaced folder: %v %q", got, logs)
+	}
+}
+
+// R1: if saving the records fails at start, a later admin PATCH must not record the folder from its current target.
+func TestFailedRecordSaveIsNotReRecordedByPatch(t *testing.T) {
+	if os.Getuid() == 0 || runtime.GOOS == "windows" {
+		t.Skip("needs a config folder that cannot be written")
+	}
+	base := realOf(t, t.TempDir())
+	folder, other := filepath.Join(base, "folder"), filepath.Join(base, "other")
+	for _, d := range []string{folder, other} {
+		if err := os.Mkdir(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	k, _ := ecdh.X25519().GenerateKey(rand.Reader)
+	cfgDir := t.TempDir()
+	path := filepath.Join(cfgDir, "serve.json")
+	if err := writeServeConfig(path, serveConfig{Token: "tok", Key: base64url(k.Bytes()), Tools: defaultTools, PermissionMode: "dontAsk", Scratch: t.TempDir(),
+		AllowedFolders: []string{folder}}); err != nil { // an old config: no records
+		t.Fatal(err)
+	}
+	if _, err := adminSecret(cfgDir); err != nil { // created before the folder becomes read-only
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(cfgDir, 0o700) })
+	if err := os.Chmod(cfgDir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := startFrom(t, path) // the save fails; the live config has the record
+	if err := os.Chmod(cfgDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if file, _ := loadServeConfig(path); len(file.AllowedRecords) != 0 {
+		t.Fatalf("save did not fail: %+v", file.AllowedRecords)
+	}
+	rec := s.cfg.AllowedRecords[folder]
+	if !samePath(rec.Real, folder) {
+		t.Fatalf("no live record: %+v", s.cfg.AllowedRecords)
+	}
+	if err := os.Remove(folder); err != nil {
+		t.Fatal(err)
+	}
+	dirLink(t, other, folder)
+	if st, out := s.adminDo("PATCH", "/agents/claude", []byte(`{"tools":"Read,Grep"}`)); st != 200 {
+		t.Fatalf("PATCH: %d %v", st, out)
+	}
+	if file, _ := loadServeConfig(path); file.AllowedRecords[folder] != rec {
+		t.Fatalf("PATCH re-recorded the folder: %+v want %+v", file.AllowedRecords[folder], rec)
+	}
+	if got := s.agentFolders(s.conf(), base); len(got) != 0 {
+		t.Fatalf("retargeted folder trusted: %v", got)
 	}
 }

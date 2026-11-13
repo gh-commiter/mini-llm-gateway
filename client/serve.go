@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -975,7 +976,17 @@ func (s *server) update(f func(*serveConfig) error, commit ...func()) error {
 	if err != nil {
 		return err
 	}
-	if file = clone(file); f(&file) != nil {
+	file = clone(file)
+	for k, v := range s.cfg.AllowedRecords { // R1: a kept folder keeps the live record even if the file has none (failed save at start)
+		if _, ok := file.AllowedRecords[k]; !ok && slices.Contains(file.AllowedFolders, k) {
+			recs := maps.Clone(file.AllowedRecords)
+			if recs == nil {
+				recs = map[string]folderRecord{}
+			}
+			recs[k], file.AllowedRecords = v, recs
+		}
+	}
+	if f(&file) != nil {
 		return errors.New("serve.json differs from the running gateway: restart minigw serve")
 	}
 	if err := writeServeConfig(s.cfgPath, file); err != nil {
