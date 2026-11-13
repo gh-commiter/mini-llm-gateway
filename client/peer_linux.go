@@ -162,19 +162,9 @@ func bwrapReady(cfgDir string) string {
 		p, err := exec.LookPath("bwrap")
 		t, err2 := exec.LookPath("true")
 		home, _ := os.UserHomeDir()
-		dir, openErr := os.Open(os.TempDir())
-		if openErr != nil {
-			return
-		}
-		defer dir.Close()
-		if err == nil && err2 == nil && home != "" {
-			args := bwrapArgs(home, cfgDir, nil, nil, nil, "", nil, nil, nil, nil)
-			args = append(args, "--ro-bind-fd", "3", os.TempDir(), "--", t)
-			cmd := command(p, args...)
-			cmd.ExtraFiles = []*os.File{dir}
-			if cmd.Run() == nil {
-				bwrapPath = p
-			}
+		if err == nil && err2 == nil && home != "" &&
+			command(p, append(bwrapArgs(home, cfgDir, nil, nil, nil, "", nil, nil, nil, nil), "--", t)...).Run() == nil {
+			bwrapPath = p
 		}
 	})
 	return bwrapPath
@@ -538,8 +528,45 @@ func procCgroup(pid int) string {
 	return string(b)
 }
 
+var (
+	bwrapFDOnce sync.Once
+	bwrapFDOK   bool
+	// bwrapFDMode: bwrap binds open descriptors (--bind-fd, bubblewrap 0.10.0, backported to 0.6.3); a test can replace it.
+	bwrapFDMode = func(cfgDir string) bool {
+		bwrapFDOnce.Do(func() {
+			bw := bwrapReady(cfgDir)
+			t, err := exec.LookPath("true")
+			dir, err2 := os.Open(os.TempDir())
+			if bw == "" || err != nil || err2 != nil {
+				return
+			}
+			defer dir.Close()
+			cmd := command(bw, "--dev-bind", "/", "/", "--ro-bind-fd", "3", os.TempDir(), "--", t)
+			cmd.ExtraFiles = []*os.File{dir}
+			bwrapFDOK = cmd.Run() == nil
+		})
+		return bwrapFDOK
+	}
+)
+
+// logBwrapMode: one line at start saying how allowed folders are bound.
+func logBwrapMode(cfgDir string, logf func(string, ...any)) {
+	if bwrapReady(cfgDir) == "" {
+		return
+	}
+	if bwrapFDMode(cfgDir) {
+		logf("bwrap with --bind-fd: allowed folders are bound by open descriptor")
+	} else {
+		logf("bwrap without --bind-fd: allowed folders are bound by checked path")
+	}
+}
+
 // Pin bind sources to opened directories; bwrap consumes and closes these descriptors.
-func pinAllowedBinds(args []string, folders checkedFolders, held []*os.File) ([]string, []*os.File) {
+// Without --bind-fd support the args stay path binds of the checked real path (identity rechecked before launch).
+func pinAllowedBinds(cfgDir string, args []string, folders checkedFolders, held []*os.File) ([]string, []*os.File) {
+	if !bwrapFDMode(cfgDir) {
+		return args, nil
+	}
 	args = slices.Clone(args)
 	var files []*os.File
 	for i := 0; i < len(args); i++ {
@@ -563,7 +590,7 @@ func pinAllowedBinds(args []string, folders checkedFolders, held []*os.File) ([]
 
 // Claude's inner sandbox still uses names; an outer bwrap pins the checked targets.
 func allowedClaudeWrap(cfgDir, name string, args []string, folders checkedFolders, held []*os.File, readOnly bool, logf func(string, ...any)) (string, []string, []*os.File) {
-	if len(folders) == 0 {
+	if len(folders) == 0 || !bwrapFDMode(cfgDir) {
 		return name, args, nil
 	}
 	if name != bwrapPath {

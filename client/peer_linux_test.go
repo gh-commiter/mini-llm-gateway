@@ -125,6 +125,7 @@ func TestAgentReaperPassesDirectoryFD(t *testing.T) {
 }
 
 func TestAllowedFolderBwrapUsesCheckedFD(t *testing.T) {
+	forceBwrapFD(t, true)
 	base := realOf(t, t.TempDir())
 	first, second, alias := base+"/first", base+"/second", base+"/alias"
 	for _, p := range []string{first, second} {
@@ -150,7 +151,7 @@ func TestAllowedFolderBwrapUsesCheckedFD(t *testing.T) {
 	}
 	defer closeFolders(held)
 	for _, mode := range []string{"--bind", "--ro-bind"} {
-		args, files := pinAllowedBinds([]string{mode, first, first, "--", "agent", mode, first, first}, checked, held)
+		args, files := pinAllowedBinds("", []string{mode, first, first, "--", "agent", mode, first, first}, checked, held)
 		want := []string{mode + "-fd", "3", first, "--", "agent", mode, first, first}
 		if len(files) != 1 || files[0] != held[0] {
 			t.Fatalf("bind handles: %v", files)
@@ -159,7 +160,7 @@ func TestAllowedFolderBwrapUsesCheckedFD(t *testing.T) {
 			t.Fatalf("bind: %v", args)
 		}
 	}
-	repeated, files := pinAllowedBinds([]string{"--bind", first, first, "--ro-bind", first, first}, checked, held)
+	repeated, files := pinAllowedBinds("", []string{"--bind", first, first, "--ro-bind", first, first}, checked, held)
 	if len(files) != 2 || repeated[1] != "3" || repeated[4] != "4" {
 		t.Fatalf("reused consumed fd: %v %v", repeated, files)
 	}
@@ -172,7 +173,7 @@ func TestAllowedFolderBwrapUsesCheckedFD(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer done()
-	args, files = pinAllowedBinds(args, checked, held)
+	args, files = pinAllowedBinds(s.cfgDir, args, checked, held)
 	if strings.Contains(strings.Join(args, " "), alias) || strings.Contains(strings.Join(args, " "), second) {
 		t.Fatalf("retargeted bind: %v", args)
 	}
@@ -186,7 +187,60 @@ func TestAllowedFolderBwrapUsesCheckedFD(t *testing.T) {
 	}
 }
 
+func forceBwrapFD(t *testing.T, on bool) {
+	previous := bwrapFDMode
+	bwrapFDMode = func(string) bool { return on }
+	t.Cleanup(func() { bwrapFDMode = previous })
+}
+
+// Without --bind-fd (bubblewrap before 0.10.0): path binds of the checked real path, identity checked before launch.
+func TestAllowedFolderBwrapPathMode(t *testing.T) {
+	forceBwrapFD(t, false)
+	base := realOf(t, t.TempDir())
+	first, second, alias := base+"/first", base+"/second", base+"/alias"
+	for _, p := range []string{first, second} {
+		if err := os.Mkdir(p, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dirLink(t, first, alias)
+	s, _ := testServer(t, nil)
+	c := s.conf()
+	c.AllowedFolders = []string{alias}
+	if _, err := checkAgent(&c, s.cfgDir, []string{alias}); err != nil {
+		t.Fatal(err)
+	}
+	checked := s.checkedAgentFolders(c, base)
+	if err := os.Remove(alias); err != nil {
+		t.Fatal(err)
+	}
+	dirLink(t, second, alias)
+	in := []string{"--bind", first, first, "--", "agent"}
+	args, files := pinAllowedBinds(s.cfgDir, in, checked, nil)
+	if len(files) != 0 || strings.Join(args, " ") != strings.Join(in, " ") || strings.Contains(strings.Join(args, " "), alias) {
+		t.Fatalf("path mode: %v %v", args, files)
+	}
+	previous := bwrapPath
+	bwrapPath = "/test/bwrap"
+	defer func() { bwrapPath = previous }()
+	name, cargs, files := allowedClaudeWrap(s.cfgDir, "claude", []string{"--", "x"}, checked, nil, false, t.Logf)
+	if name != "claude" || len(files) != 0 || strings.Join(cargs, " ") != "-- x" {
+		t.Fatalf("Claude path mode: %s %v %v", name, cargs, files)
+	}
+	// The link target changed after validation: the checked real path itself is replaced, the launch refuses.
+	if err := os.Rename(first, first+"-old"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(first, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := checked.verify(); err == nil {
+		t.Fatal("launch not refused after the checked folder changed")
+	}
+}
+
 func TestAllowedClaudeWrapPinsSnapshot(t *testing.T) {
+	forceBwrapFD(t, true)
 	path := realOf(t, t.TempDir())
 	id, err := fileIDOf(path)
 	if err != nil {

@@ -61,10 +61,12 @@ func listenerExes(int) ([]string, bool) { return nil, false }
 // bwrapReady: bwrap je le na Linuxu.
 func bwrapReady(string) string { return "" }
 
-func pinAllowedBinds(args []string, folders checkedFolders, held []*os.File) ([]string, []*os.File) {
+func pinAllowedBinds(cfgDir string, args []string, folders checkedFolders, held []*os.File) ([]string, []*os.File) {
 	return args, nil
 }
 
 func allowedClaudeWrap(cfgDir, name string, args []string, folders checkedFolders, held []*os.File, readOnly bool, logf func(string, ...any)) (string, []string, []*os.File) {
 	return name, args, nil
 }
+
+func logBwrapMode(string, func(string, ...any)) {}

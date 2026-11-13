@@ -1286,7 +1286,7 @@ func (s *server) runAgentProcess(ctx context.Context, r *req, exe string, args [
 	defer done()
 	var extraFiles []*os.File
 	if runtime.GOOS == "linux" && name != exe {
-		args, extraFiles = pinAllowedBinds(args, m.checked, held)
+		args, extraFiles = pinAllowedBinds(s.cfgDir, args, m.checked, held)
 	}
 	cmd := commandContext(ctx, name, args...)
 	cmd.ExtraFiles = extraFiles
