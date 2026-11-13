@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -594,10 +595,18 @@ func TestRemoveOldCopiesUsesPinnedRoot(t *testing.T) {
 	}
 	defer r.Close()
 	saved := filepath.Join(base, "saved")
-	if err := os.Rename(root, saved); err != nil {
-		t.Fatal(err)
+	if runtime.GOOS == "windows" {
+		// A directory held open cannot be renamed there: the swap is impossible while the root is pinned.
+		if err := os.Rename(root, saved); err == nil {
+			t.Fatal("a pinned root was renamed")
+		}
+		saved = root
+	} else {
+		if err := os.Rename(root, saved); err != nil {
+			t.Fatal(err)
+		}
+		dirLink(t, outside, root)
 	}
-	dirLink(t, outside, root)
 	removeOldCopiesAt(r, root, nil, time.Now())
 	if _, err := os.Stat(filepath.Join(saved, "dev", "old")); !os.IsNotExist(err) {
 		t.Fatalf("old copy not removed: %v", err)
