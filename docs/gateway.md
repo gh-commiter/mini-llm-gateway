@@ -221,7 +221,7 @@ minigw serve                 # or run it in this terminal (--port, --config)
   agents see the real path (Windows keeps the configured name, so a mapped drive does not turn into a UNC path that Claude Code blocks). Unix launches open the real directory without following a final symlink and compare
   its device and inode with the validation snapshot just before starting. Linux bwrap binds use those open
   descriptors when bwrap supports `--bind-fd` (bubblewrap 0.10.0, backported to 0.6.3; also for Claude when an outer,
-  nested bwrap is available). An older bwrap keeps its sandbox: allowed folders are then bound by the checked real path
+  nested bwrap is available). bwrap closes those descriptors before it starts the agent, so the agent holds none (the start check also proves it for the installed bwrap, else path mode is used; Go test `TestAllowedFolderDescriptorsNotInherited`). An older bwrap keeps its sandbox: allowed folders are then bound by the checked real path
   (never the configured name) and the identity is rechecked right before launch, as on macOS; the start log says
   which mode is used. macOS sandbox profiles and Windows
   MXC/tool rules accept names, not directory handles; Windows rechecks the volume/file identity of the configured name right before launch.

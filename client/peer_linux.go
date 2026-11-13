@@ -62,6 +62,9 @@ func agentReaperMain(args []string) {
 		fmt.Fprintln(os.Stderr, "minigw: cannot start "+args[0]+": "+err.Error())
 		os.Exit(127)
 	}
+	for _, fd := range files[3:] { // the agent has its copies; nothing else may reach them through /proc/<this pid>/fd
+		syscall.Close(int(fd))
+	}
 	code, mainDone, stop := 0, false, false
 	for {
 		for { // požanji vse končane (WNOHANG); ECHILD = nobenega potomca več
@@ -535,13 +538,18 @@ var (
 	bwrapFDMode = func(cfgDir string) bool {
 		bwrapFDOnce.Do(func() {
 			bw := bwrapReady(cfgDir)
-			t, err := exec.LookPath("true")
 			dir, err2 := os.Open(os.TempDir())
-			if bw == "" || err != nil || err2 != nil {
+			if bw == "" || err2 != nil {
 				return
 			}
 			defer dir.Close()
-			cmd := command(bw, "--dev-bind", "/", "/", "--ro-bind-fd", "3", os.TempDir(), "--", t)
+			sh, err3 := exec.LookPath("sh")
+			if err3 != nil {
+				return
+			}
+			// Also proves that this bwrap closes the descriptor before it starts the program: an agent holding it could
+			// write into a folder bound read-only. A bwrap that keeps it is used in path mode.
+			cmd := command(bw, "--dev-bind", "/", "/", "--ro-bind-fd", "3", os.TempDir(), "--", sh, "-c", "[ ! -e /proc/self/fd/3 ]")
 			cmd.ExtraFiles = []*os.File{dir}
 			bwrapFDOK = cmd.Run() == nil
 		})
@@ -561,7 +569,8 @@ func logBwrapMode(cfgDir string, logf func(string, ...any)) {
 	}
 }
 
-// Pin bind sources to opened directories; bwrap consumes and closes these descriptors.
+// Pin bind sources to opened directories. bwrap closes these descriptors before it starts the agent
+// (TestAllowedFolderDescriptorsNotInherited); bwrapFDMode checks that for the installed bwrap.
 // Without --bind-fd support the args stay path binds of the checked real path (identity rechecked before launch).
 func pinAllowedBinds(cfgDir string, args []string, folders checkedFolders, held []*os.File) ([]string, []*os.File) {
 	if !bwrapFDMode(cfgDir) {

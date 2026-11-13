@@ -267,3 +267,73 @@ func TestAllowedClaudeWrapPinsSnapshot(t *testing.T) {
 		}
 	}
 }
+
+// bwrap descriptors: the agent must not hold the descriptors of the allowed folders (a read-only run could write
+// through one). Starts the real wrap; the agent lists every descriptor above 2 it holds.
+func TestAllowedFolderDescriptorsNotInherited(t *testing.T) {
+	probe := bwrapFDMode("")
+	forceBwrapFD(t, true)
+	base := realOf(t, t.TempDir())
+	rw, ro := base+"/rw", base+"/ro"
+	for _, p := range []string{rw, ro} {
+		if err := os.Mkdir(p, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s, _ := testServer(t, nil)
+	if bwrapReady(s.cfgDir) == "" {
+		t.Skip("bwrap not available")
+	}
+	c := s.conf()
+	c.AllowedFolders = []string{rw, ro}
+	if _, err := checkAgent(&c, s.cfgDir, nil); err != nil {
+		t.Fatal(err)
+	}
+	checked := s.checkedAgentFolders(c, base)
+	held, err := checked.open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeFolders(held)
+	// Control: without bwrap the same listing shows an inherited descriptor, so the check below can fail.
+	list := `for f in /proc/$$/fd/*; do n=${f##*/}; [ "$n" -gt 2 ] && echo "$n $(readlink $f)"; done`
+	plain, err := os.Open(rw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer plain.Close()
+	control := exec.Command("/bin/sh", "-c", list)
+	control.ExtraFiles = []*os.File{plain}
+	if b, err := control.Output(); err != nil || !strings.Contains(string(b), rw) {
+		t.Fatalf("the listing does not show an inherited descriptor: %q %v", b, err)
+	}
+	script := list + `; ls ` + rw + ` >/dev/null && echo bound`
+	name, args, done, err := agentWrap("/bin/sh", []string{"-c", script}, agentMounts{cfgDir: s.cfgDir, checked: checked, rw: checked.paths()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer done()
+	args, files := pinAllowedBinds(s.cfgDir, args, checked, held)
+	if len(files) != 2 {
+		t.Fatalf("descriptor binds not used: %v", args)
+	}
+	cmd := exec.Command(name, args...)
+	cmd.ExtraFiles = files
+	var out strings.Builder
+	cmd.Stdout, cmd.Stderr = &out, &out
+	if err := startAgent(cmd); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("%v: %s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "bound") {
+		t.Fatalf("allowed folder not bound: %s", out.String())
+	}
+	for _, line := range strings.Split(out.String(), "\n") {
+		if strings.Contains(line, rw) || strings.Contains(line, ro) {
+			t.Fatalf("the agent holds a descriptor of an allowed folder: %s", out.String())
+		}
+	}
+	t.Logf("descriptors the agent holds above 2: %q; the start probe accepts this bwrap: %v", out.String(), probe)
+}
