@@ -288,10 +288,14 @@ public enum ClaudeCLI {
     /// tam so kopije drugih naprav in stanje agentov, ki ga peskovniki skrijejo; R3) in se ne prekriva s paketom Copilot.
     /// Kanonični poti (realpath, tudi »/private«), da povezava nikjer v poti ne pelje ven.
     static func resolveCwd(_ raw: String?, roots: String, scratch: URL? = nil) -> URL? {
+        resolveCwd(raw, roots: AllowedFolders.list(roots), scratch: scratch)
+    }
+
+    static func resolveCwd(_ raw: String?, roots: [String], scratch: URL? = nil) -> URL? {
         guard let raw, !raw.isEmpty, let path = Sync.real(URL(fileURLWithPath: expand(raw)))?.path else { return nil }
         var isDir: ObjCBool = false
         guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else { return nil }
-        let allowed = roots.split(separator: ",").compactMap { Sync.real(URL(fileURLWithPath: expand($0.trimmingCharacters(in: .whitespaces))))?.path }
+        let allowed = roots.compactMap { Sync.real(URL(fileURLWithPath: expand($0)))?.path }
             .filter { $0 != "/" }
         guard allowed.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) else { return nil }
         let hidden = RouterConfig.hiddenScratch(scratch)

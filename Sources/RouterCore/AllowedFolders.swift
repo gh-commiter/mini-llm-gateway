@@ -42,6 +42,11 @@ public final class AllowedFolders: @unchecked Sendable {
 
     public init() {}
 
+    /// A comma-separated list as typed in settings; checked paths travel as arrays (a real path may contain a comma).
+    static func list(_ roots: String) -> [String] {
+        roots.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+    }
+
     static func paths(_ roots: String) -> [String] {
         roots.split(separator: ",").compactMap {
             let p = ($0.trimmingCharacters(in: .whitespaces) as NSString).expandingTildeInPath

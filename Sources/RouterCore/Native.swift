@@ -180,6 +180,11 @@ public enum Native {
     /// Nikoli homeSecret (domača mapa sama, ~/.ssh …, ~/Library), tudi ko je domača mapa v dovoljenih mapah.
     public static func resolve(share: String, path rel: String, shares: [String: String], roots: String, scratch: URL? = nil,
                                home: String = NSHomeDirectory()) -> URL? {
+        resolve(share: share, path: rel, shares: shares, roots: AllowedFolders.list(roots), scratch: scratch, home: home)
+    }
+
+    public static func resolve(share: String, path rel: String, shares: [String: String], roots: [String], scratch: URL? = nil,
+                               home: String = NSHomeDirectory()) -> URL? {
         guard let base = shares.first(where: { $0.key.caseInsensitiveCompare(share) == .orderedSame })?.value,
               let root = Sync.real(URL(fileURLWithPath: base)) else { return nil }
         let comps = rel.split(separator: "/", omittingEmptySubsequences: false).map(String.init)

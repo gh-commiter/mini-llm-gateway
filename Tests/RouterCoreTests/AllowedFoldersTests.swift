@@ -231,3 +231,20 @@ private func allowedTemp() throws -> URL {
     #expect(restarted.folders(folder.path, log: { logs.append($0) }).isEmpty)
     #expect(logs.first?.contains("its identity changed") == true)
 }
+
+// The checked real path of an allowed folder may contain a comma: it must not be split like the configured list.
+@Test func checkedRootWithCommaIsKept() throws {
+    let fm = FileManager.default, base = try allowedTemp()
+    defer { try? fm.removeItem(at: base) }
+    let real = base.appendingPathComponent("a,b"), alias = base.appendingPathComponent("alias")
+    try fm.createDirectory(at: real.appendingPathComponent("proj"), withIntermediateDirectories: true)
+    try fm.createSymbolicLink(at: alias, withDestinationURL: real)
+    var c = RouterConfig()
+    c.claudeCLI.allowedRoots = alias.path
+    let router = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]))
+    #expect(router.checkedRoots == [real.path])
+    let proj = real.appendingPathComponent("proj").path
+    #expect(router.localMentionFolder(proj)?.path == proj)
+    #expect(ClaudeCLI.resolveCwd(proj, roots: router.checkedRoots) != nil)
+    #expect(Native.resolve(share: "S", path: "proj", shares: ["S": real.path], roots: router.checkedRoots)?.path == proj)
+}

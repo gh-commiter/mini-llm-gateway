@@ -282,7 +282,10 @@ func main() {
 		gitWrapMain(os.Args[1:])
 	}
 	if err := ownerIsUser(); err != nil {
-		fail("set token owner: " + err.Error())
+		if isTrayExe(os.Args[0]) || len(os.Args) > 1 && (os.Args[1] == "serve" || os.Args[1] == "tray") {
+			fail("set token owner: " + err.Error()) // the gateway creates folders and files: they must be the user's
+		}
+		fmt.Fprintln(os.Stderr, "minigw: warning: cannot set the token owner ("+err.Error()+"); folders created by this command may be owned by the administrator")
 	}
 	refreshPath() // Windows: trenutni uporabnikov PATH, tudi v lupini, odprti pred namestitvijo CLI
 	args := os.Args[1:]

@@ -40,7 +40,7 @@ struct Route: Sendable {
 /// Brez vsebine zahtev v dnevnikih.
 public final class Router: Sendable {
     let allowedFolders: AllowedFolders
-    var checkedRoots: String { allowedFolders.folders(config.claudeCLI.allowedRoots, scratch: config.scratchURL).joined(separator: ",") }
+    var checkedRoots: [String] { allowedFolders.folders(config.claudeCLI.allowedRoots, scratch: config.scratchURL) }
     public let config: RouterConfig
     let token: String
     let secrets: SecretStore
@@ -247,6 +247,10 @@ public final class Router: Sendable {
     /// (ni git, .git je datoteka, koren zunaj dovoljenih map, ali odjemalec želi native-direct), z zaklepom pisanja.
     /// ponytail: odločitev le tu; pozneje nastavitev prehoda za projekt.
     static func nativeBranches(_ dir: URL, inPlace: Bool, roots: String, scratch: URL) -> (top: URL, sub: String)? {
+        nativeBranches(dir, inPlace: inPlace, roots: AllowedFolders.list(roots), scratch: scratch)
+    }
+
+    static func nativeBranches(_ dir: URL, inPlace: Bool, roots: [String], scratch: URL) -> (top: URL, sub: String)? {
         guard !inPlace else { return nil }
         var d = dir
         while true {
