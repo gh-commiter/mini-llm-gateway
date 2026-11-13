@@ -31,7 +31,7 @@ private func allowedTemp() throws -> URL {
         #expect(logs.first?.contains("its real path changed to ") == true)
         check.record("")
         check.record(p)
-        #expect(check.folders(p) == [p])
+        #expect(check.folders(p) == [try #require(Sync.real(folder)).path])
     }
 }
 
@@ -69,7 +69,7 @@ private func allowedTemp() throws -> URL {
     check.record(p)
     for code in [EACCES, EIO, ENOTDIR, 0] as [Int32] {
         #expect(check.folders(p, inspect: { _ in (false, code) }).isEmpty)
-        #expect(check.folders(p) == [p]) // A false missing mark would reject the alias.
+        #expect(check.folders(p) == [base.path]) // A false missing mark would reject the alias.
     }
 }
 
@@ -98,4 +98,56 @@ private func allowedTemp() throws -> URL {
     check.record(config)
     #expect(check.folders(config).isEmpty)
     #expect(AllowedFolders.paths(" , /, relative").isEmpty)
+}
+
+@Test func allowedFolderSnapshotAfterLinkSwap() throws {
+    let fm = FileManager.default, base = try allowedTemp()
+    defer { try? fm.removeItem(at: base) }
+    for parent in [false, true] {
+        let root = base.appendingPathComponent(UUID().uuidString)
+        let target = root.appendingPathComponent("first")
+        let other = root.appendingPathComponent("second")
+        let alias = root.appendingPathComponent("alias")
+        for dir in [target, other] {
+            try fm.createDirectory(at: dir.appendingPathComponent("child"), withIntermediateDirectories: true)
+        }
+        try fm.createSymbolicLink(at: alias, withDestinationURL: target)
+        let folder = parent ? alias.appendingPathComponent("child") : alias
+        let real = parent ? target.appendingPathComponent("child") : target
+        let check = AllowedFolders()
+        check.record(folder.path)
+        let checked = check.checked(folder.path)
+        #expect(checked.paths == [real.path])
+        // Swap after validation and before building sandbox arguments.
+        try fm.removeItem(at: alias)
+        try fm.createSymbolicLink(at: alias, withDestinationURL: other)
+        var cfg = ClaudeCLIConfig()
+        cfg.allowLocalTools = true
+        cfg.allowedRoots = folder.path
+        let args = cfg.agentArgs(cwd: base, allTools: [], folders: check, checkedPaths: checked.paths)
+        #expect(args.contains(real.path))
+        #expect(!args.joined(separator: " ").contains(alias.path))
+        #expect(!args.joined(separator: " ").contains(other.path))
+        let held = try checked.open()
+        defer { for handle in held { try? handle.close() } }
+        try fm.moveItem(at: real, to: real.appendingPathExtension("old"))
+        try fm.createDirectory(at: real, withIntermediateDirectories: false)
+        #expect(throws: (any Error).self) { _ = try checked.open() }
+    }
+}
+
+@Test func allowedFolderOpenRejectsFinalLink() throws {
+    let fm = FileManager.default, base = try allowedTemp()
+    defer { try? fm.removeItem(at: base) }
+    let folder = base.appendingPathComponent("folder")
+    let moved = base.appendingPathComponent("moved")
+    try fm.createDirectory(at: folder, withIntermediateDirectories: false)
+    let check = AllowedFolders()
+    check.record(folder.path)
+    let checked = check.checked(folder.path)
+    #expect(checked.paths == [folder.path])
+    try fm.moveItem(at: folder, to: moved)
+    try fm.createSymbolicLink(at: folder, withDestinationURL: moved)
+    // The same inode behind a new final link is still refused.
+    #expect(throws: (any Error).self) { _ = try checked.open() }
 }

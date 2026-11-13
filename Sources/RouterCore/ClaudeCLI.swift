@@ -40,14 +40,14 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
     /// Read/Edit/Write zunaj teh map niso dovoljeni, Bash teče v sandboxu Claude Code (brez branja domače mape,
     /// pisanje le v teh mapah, omrežje dovoljeno), izhoda iz sandboxa ni.
     /// `readOnly` (--minigw-ro): brez orodij za pisanje; Bash le v sandboxu brez pisanja v te mape (brez sandboxa ga ni).
-    func agentArgs(cwd: URL, allTools: [String], scratch: URL? = nil, readOnly: Bool = false, folders: AllowedFolders? = nil) -> [String] {
+    func agentArgs(cwd: URL, allTools: [String], scratch: URL? = nil, readOnly: Bool = false, folders: AllowedFolders? = nil, checkedPaths: [String]? = nil) -> [String] {
         guard allowLocalTools else {
             let t = readOnly ? Self.readOnlyTools(tools) : tools
             return ["--tools", t, "--allowedTools", t, "--permission-mode", permissionMode]
         }
         let checked = folders ?? AllowedFolders()
         if folders == nil { checked.record(allowedRoots) }
-        let dirs = [cwd.path] + checked.folders(allowedRoots, excluding: cwd.path, scratch: scratch)
+        let dirs = [cwd.path] + (checkedPaths ?? checked.folders(allowedRoots, excluding: cwd.path, scratch: scratch))
 
         let sandbox: [String: Any] = ["sandbox": [
             "enabled": true, "failIfUnavailable": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
@@ -480,6 +480,7 @@ extension Router {
 
         // N9: besedilo naprave je vnos uporabnika claude -p: brez ukazov s poševnico (/config piše nastavitve lastnika
         // prehoda) in brez »@pot« (CLAUDE_CODE_DISABLE_FILE_MENTIONS spodaj: priložil bi datoteko prehoda mimo peskovnika)
+        var checked = AllowedFolders.Checked()
         var args = ["-p", "--disable-slash-commands", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
                     "--model", cliModel, "--strict-mcp-config"]
         let cwd: URL
@@ -531,9 +532,10 @@ extension Router {
                 prompt = ClaudeCLI.prompt(history: history, last: last)
             }
             let allTools = cfg.allowLocalTools || tree != nil ? await Self.toolList.get(cfg.executable) : []
+            if tree == nil { checked = allowedFolders.checked(cfg.allowedRoots, excluding: dir.path, scratch: config.scratchURL) }
             args += (tree.map { cfg.worktreeArgs(root: $0.root, maven: $0.maven, cwd: dir, allTools: allTools, network: config.worktreeNetwork,
                                                  scratch: config.scratchURL, read: $0.read, gits: $0.gits) }
-                     ?? cfg.agentArgs(cwd: dir, allTools: allTools, scratch: config.scratchURL, readOnly: readOnly, folders: allowedFolders))
+                     ?? cfg.agentArgs(cwd: dir, allTools: allTools, scratch: config.scratchURL, readOnly: readOnly, folders: allowedFolders, checkedPaths: checked.paths))
                 + ["--setting-sources", shared == nil ? cfg.settingSources : ""]  // hooki iz mape odjemalca ne tečejo tukaj
         } else {
             cwd = config.scratch("chat")
@@ -601,6 +603,8 @@ extension Router {
         }
 
         do {
+            let held = try checked.open()
+            defer { for handle in held { try? handle.close() } }
             try p.run()
             run?.started(p.processIdentifier)
         } catch {

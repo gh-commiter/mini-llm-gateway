@@ -216,7 +216,15 @@ minigw serve                 # or run it in this terminal (--port, --config)
   agents can then run any command as you and read the provider API keys and the admin secret. On Linux Codex, Grok
   and Copilot run under `bwrap`.
 - **Allowed folders** may not contain the Scratch folder or sit inside it: such a folder is refused, and ignored at
-  start.
+  start. Each run uses the checked final path in sandbox rules and `--add-dir`, so retargeting a configured
+  symlink or junction after validation does not grant its new target. The configured spelling stays in settings;
+  agents see the real path. Unix launches open the real directory without following a final symlink and compare
+  its device and inode with the validation snapshot just before starting. Linux bwrap binds use those open
+  descriptors (also for Claude when an outer, nested bwrap is available). macOS sandbox profiles and Windows
+  MXC/tool rules accept names, not directory handles; Windows rechecks the volume/file identity before launch.
+  Someone able to write a parent of the **real** path can still replace a component after the last check on
+  macOS, Windows, or Linux without the outer bwrap. Keep those parents outside agents' writable folders.
+  Linux requires bwrap's `--bind-fd`/`--ro-bind-fd` support; an older bwrap fails the sandbox availability check.
 - **In a container** `minigw serve` may run as PID 1: it then starts the gateway as its child and only reaps orphaned
   processes (left by `bwrap --unshare-pid`) and forwards signals. `docker run --init` works too.
 
