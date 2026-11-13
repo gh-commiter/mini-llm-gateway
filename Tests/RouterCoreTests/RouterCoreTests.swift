@@ -2042,8 +2042,9 @@ final class UnauthorizedUpstream: URLProtocol, @unchecked Sendable {
     #expect(SharedFolders.shareRefusal(proj) == nil)
     // drug disk (/Volumes/<Disk>, koren nosilca brez doma ali sistema) je dovoljen
     for v in (try? FileManager.default.contentsOfDirectory(atPath: "/Volumes")) ?? [] where !v.hasPrefix(".") && v != "Recovery" {
-        let p = "/Volumes/" + v, a = try? FileManager.default.attributesOfItem(atPath: p)  // lstat: povezava (Macintosh HD → /) ne
-        guard a?[.type] as? FileAttributeType == .typeDirectory, (a?[.ownerAccountID] as? NSNumber)?.uint32Value == getuid() else { continue }
+        // lstat: povezava (Macintosh HD → /) ne; brez attributesOfItem, ki bere xattr in na nosilcu Time Machine obvisi
+        let p = "/Volumes/" + v; var st = stat()
+        guard lstat(p, &st) == 0, st.st_mode & S_IFMT == S_IFDIR, st.st_uid == getuid() else { continue }
         #expect(SharedFolders.shareRefusal(p) == nil, "\(p)")
     }
 }
