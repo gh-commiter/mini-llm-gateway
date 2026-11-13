@@ -2,12 +2,40 @@ import Foundation
 import Darwin
 import os
 
+/// M2: the real path and identity of an allowed folder, recorded when it is added (or at the first start of a version
+/// that has records) and saved with the settings. Start compares and refuses a folder that differs; it never rewrites it.
+public struct FolderRecord: Codable, Sendable, Equatable {
+    public var real: String
+    public var dev: UInt64 = 0   // 0 and 0: the folder did not exist when it was recorded
+    public var ino: UInt64 = 0
+}
+
+extension ClaudeCLIConfig {
+    /// Records every allowed folder that has no record yet and drops the records of removed folders. Returns the new ones
+    /// (folder, real path) for the log. An existing record is never changed.
+    @discardableResult
+    public mutating func recordFolders() -> [(folder: String, real: String)] {
+        var records: [String: FolderRecord] = [:], added: [(String, String)] = []
+        for p in AllowedFolders.paths(allowedRoots) {
+            if let old = allowedRecords[p] { records[p] = old; continue }
+            guard let real = Sync.realResolving(URL(fileURLWithPath: p))?.path else { continue }
+            var rec = FolderRecord(real: real), st = stat()
+            if lstat(real, &st) == 0 { rec.dev = UInt64(bitPattern: Int64(st.st_dev)); rec.ino = UInt64(st.st_ino) }
+            records[p] = rec
+            added.append((p, real))
+        }
+        allowedRecords = records
+        return added
+    }
+}
+
 /// Trust lasts until a folder is removed from the list, including across Router rebuilds.
 public final class AllowedFolders: @unchecked Sendable {
     private struct Entry {
         var real: String?
         var missing: Bool
         var logged = false
+        var identityChanged = false  // M2: at start, another folder is at the recorded real path
     }
     private let lock = NSLock()
     private var entries: [String: Entry] = [:]
@@ -22,7 +50,7 @@ public final class AllowedFolders: @unchecked Sendable {
         }
     }
 
-    public func record(_ roots: String) {
+    public func record(_ roots: String, records: [String: FolderRecord] = [:]) {
         lock.withLock {
             let paths = Self.paths(roots)
             entries = entries.filter { paths.contains($0.key) }
@@ -33,7 +61,14 @@ public final class AllowedFolders: @unchecked Sendable {
                     e.missing = e.missing || missing
                     entries[p] = e
                 } else {
-                    entries[p] = Entry(real: Sync.realResolving(URL(fileURLWithPath: p))?.path, missing: missing)
+                    var e = Entry(real: Sync.realResolving(URL(fileURLWithPath: p))?.path, missing: missing)
+                    if let rec = records[p] {  // M2: the saved record, not the current target
+                        var st = stat()
+                        if !missing, rec.dev != 0 || rec.ino != 0, let r = e.real, r == rec.real, lstat(r, &st) == 0,
+                           UInt64(bitPattern: Int64(st.st_dev)) != rec.dev || UInt64(st.st_ino) != rec.ino { e.identityChanged = true }
+                        e.real = rec.real
+                    }
+                    entries[p] = e
                 }
             }
         }
@@ -94,6 +129,7 @@ public final class AllowedFolders: @unchecked Sendable {
                 var why = ""
                 if r == nil { why = "cannot resolve its real path" }
                 else if r != e.real { why = "its real path changed to " + r! }
+                else if e.identityChanged { why = "its identity changed (another folder is there now)" }
                 else if e.missing && r != p { why = "it is reached through a link to " + r! }
                 else if !Self.owned(r!) || (e.missing && !Self.owned(p)) { why = "it is a link or owned by another user" }
                 if !why.isEmpty {

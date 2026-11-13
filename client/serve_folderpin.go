@@ -50,3 +50,5 @@ func closeFolders(held []*os.File) {
 		f.Close()
 	}
 }
+
+func (r folderRecord) id() fileID { return fileID{r.Dev, r.Ino} }

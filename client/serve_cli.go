@@ -289,6 +289,9 @@ func (s *server) checkedAgentFolders(c serveConfig, dir string) checkedFolders {
 		if f == dir || scratchHiddenOverlaps(f, c.Scratch) || len(copilotCacheOverlaps([]string{f})) > 0 {
 			continue
 		}
+		if _, refused := s.startRefused.Load(f); refused { // M2: logged at start
+			continue
+		}
 		if st, err := os.Stat(f); err != nil || !st.IsDir() {
 			if errors.Is(err, fs.ErrNotExist) {
 				s.wasMissing.Store(f, true)
@@ -300,7 +303,8 @@ func (s *server) checkedAgentFolders(c serveConfig, dir string) checkedFolders {
 		}
 		why := ""
 		r, err := realPath(f)
-		saved, recorded := c.allowedReal[f]
+		rec, recorded := c.AllowedRecords[f]
+		saved := rec.Real
 		_, missed := s.wasMissing.Load(f)
 		switch {
 		case err != nil:

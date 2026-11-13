@@ -10,6 +10,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
     public var enabled = false
     public var executable = ""                       // prazno = samodejno iskanje
     public var allowedRoots = "~/Development"        // ločeno z vejico
+    public var allowedRecords: [String: FolderRecord] = [:]  // M2: prava pot in istovetnost vsake dovoljene mape ob dodajanju (ključ: AllowedFolders.paths)
     public var tools = "Read,Grep,Glob"              // na voljo in samodejno dovoljena; prazno = brez orodij
     public var permissionMode = "dontAsk"            // brez vprašanj: kar ni dovoljeno, je zavrnjeno
     public var allowLocalTools = false               // vsa orodja Claude Code na tem Macu brez vprašanj; preglasi tools/permissionMode
@@ -127,6 +128,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? d.enabled
         executable = try c.decodeIfPresent(String.self, forKey: .executable) ?? d.executable
         allowedRoots = try c.decodeIfPresent(String.self, forKey: .allowedRoots) ?? d.allowedRoots
+        allowedRecords = try c.decodeIfPresent([String: FolderRecord].self, forKey: .allowedRecords) ?? d.allowedRecords
         tools = try c.decodeIfPresent(String.self, forKey: .tools) ?? d.tools
         permissionMode = try c.decodeIfPresent(String.self, forKey: .permissionMode) ?? d.permissionMode
         allowLocalTools = try c.decodeIfPresent(Bool.self, forKey: .allowLocalTools) ?? d.allowLocalTools

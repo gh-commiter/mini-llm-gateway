@@ -119,6 +119,9 @@ final class AppState: ObservableObject {
     private let log = Logger(subsystem: "dev.trojar.minigateway", category: "app")
 
     init() {
+        for (folder, real) in config.claudeCLI.recordFolders() {  // M2: stara nastavitev brez zapisov: enkrat zapiši trenutno stanje
+            log.notice("recorded \(folder, privacy: .public) -> \(real, privacy: .public)")
+        }
         config.save()  // starejši JSON blob v preferences → berljiva struktura
         Router.history.load(GatewayHistory.defaultFile)  // zadnji stik, priklopi naprav in seje (state.json)
         Router.deviceLog.onChange = { [weak self] in
@@ -359,6 +362,8 @@ final class AppState: ObservableObject {
     }
 
     func apply(_ c: RouterConfig) {
+        var c = c
+        c.claudeCLI.recordFolders()  // M2: nova mapa dobi zapis; obstoječi ostanejo
         config = c
         c.save()
         restart()

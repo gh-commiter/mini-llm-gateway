@@ -64,7 +64,7 @@ public final class Router: Sendable {
                 onActivity: @escaping @Sendable (Activity) -> Void = { _ in },
                 admin: AdminHooks? = nil, history: GatewayHistory = Router.history, copilotConfig: URL = Copilot.userConfig, allowedFolders: AllowedFolders = AllowedFolders()) {
         self.allowedFolders = allowedFolders
-        allowedFolders.record(config.claudeCLI.allowedRoots)
+        allowedFolders.record(config.claudeCLI.allowedRoots, records: config.claudeCLI.allowedRecords)
         self.config = config
         self.copilotConfig = copilotConfig
         self.history = history
@@ -89,6 +89,7 @@ public final class Router: Sendable {
                 }
             }
         }
+        _ = checkedRoots  // M2: a folder that changed while the app was stopped is logged at start
     }
 
     public static let defaultSession: URLSession = {

@@ -168,3 +168,66 @@ private func allowedTemp() throws -> URL {
     #expect(router.localMentionFolder(folder.path) == nil)
     #expect(ClaudeCLI.resolveCwd(folder.path, roots: c.claudeCLI.allowedRoots) != nil)  // the raw list would have trusted it
 }
+
+// M2: the record of an allowed folder is saved with the settings and enforced at every start.
+@Test func allowedFolderRecordAcrossRestart() throws {
+    let fm = FileManager.default, base = try allowedTemp()
+    defer { try? fm.removeItem(at: base) }
+    let folder = base.appendingPathComponent("folder"), other = base.appendingPathComponent("other")
+    try fm.createDirectory(at: folder, withIntermediateDirectories: false)
+    try fm.createDirectory(at: other, withIntermediateDirectories: false)
+    let p = folder.path
+
+    // An old setting without records is migrated once, then enforced.
+    var cfg = try JSONDecoder().decode(ClaudeCLIConfig.self, from: Data(#"{"allowedRoots":"\#(p)"}"#.utf8))
+    #expect(cfg.allowedRecords.isEmpty)
+    #expect(cfg.recordFolders().map(\.folder) == [p])
+    #expect(cfg.recordFolders().isEmpty)
+    let saved = try JSONDecoder().decode(ClaudeCLIConfig.self, from: JSONEncoder().encode(cfg))
+    #expect(saved.allowedRecords[p]?.real == p)
+
+    // Unchanged: accepted after a restart (a new AllowedFolders).
+    let again = AllowedFolders()
+    again.record(p, records: saved.allowedRecords)
+    #expect(again.folders(p) == [p])
+
+    // Retargeted while stopped: refused, logged once; the record is not rewritten.
+    try fm.removeItem(at: folder)
+    try fm.createSymbolicLink(at: folder, withDestinationURL: other)
+    var logs: [String] = []
+    let restarted = AllowedFolders()
+    restarted.record(p, records: saved.allowedRecords)
+    for _ in 0..<2 { #expect(restarted.folders(p, log: { logs.append($0) }).isEmpty) }
+    #expect(logs.count == 1 && logs[0].contains("its real path changed to "))
+    var kept = saved
+    kept.recordFolders()
+    #expect(kept.allowedRecords == saved.allowedRecords)
+
+    // Removed and added again: accepted with the new target.
+    cfg = saved
+    cfg.allowedRoots = ""
+    cfg.recordFolders()
+    #expect(cfg.allowedRecords.isEmpty)
+    cfg.allowedRoots = p
+    #expect(cfg.recordFolders().first?.real == other.path)
+    let readded = AllowedFolders()
+    readded.record(p, records: cfg.allowedRecords)
+    #expect(readded.folders(p) == [other.path])
+}
+
+@Test func allowedFolderIdentityChangedAtStart() throws {
+    let fm = FileManager.default, base = try allowedTemp()
+    defer { try? fm.removeItem(at: base) }
+    let folder = base.appendingPathComponent("folder")
+    try fm.createDirectory(at: folder, withIntermediateDirectories: false)
+    var cfg = ClaudeCLIConfig()
+    cfg.allowedRoots = folder.path
+    cfg.recordFolders()
+    try fm.moveItem(at: folder, to: base.appendingPathComponent("old"))
+    try fm.createDirectory(at: folder, withIntermediateDirectories: false)
+    var logs: [String] = []
+    let restarted = AllowedFolders()
+    restarted.record(folder.path, records: cfg.allowedRecords)
+    #expect(restarted.folders(folder.path, log: { logs.append($0) }).isEmpty)
+    #expect(logs.first?.contains("its identity changed") == true)
+}

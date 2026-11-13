@@ -227,6 +227,20 @@ minigw serve                 # or run it in this terminal (--port, --config)
   MXC/tool rules accept names, not directory handles; Windows rechecks the volume/file identity of the configured name right before launch.
   Someone able to write a parent of the **real** path can still replace a component after the last check on
   macOS, Windows, Linux in path mode, or Linux without the outer bwrap. Keep those parents outside agents' writable folders.
+  Residual risks, accepted: (1) between the launch check and the moment the sandbox resolves the name there is a short
+  window on macOS, Windows and Linux in path mode; (2) some NAS servers report file index 0, so on such a drive the
+  identity check cannot tell two folders apart (the real-path and owner checks still apply); (3) a local process of
+  the same user could rename a pinned parent folder into a protected folder after the check (it could write there
+  directly anyway).
+- **Allowed folders survive a restart** (M2): when a folder is added (settings, admin API, `minigw gw claude --folders`),
+  the gateway saves its real path and identity with it (Go: `allowedRecords` in `serve.json`; Mac: in the settings,
+  next to the allowed folders; identity = device and inode, on Windows volume serial and file ID). An older config
+  without records is migrated once at the first start of this version by recording the current state (one log line
+  per folder: `recorded <folder> -> <real>`); that single step trusts what is there. At every later start a saved
+  folder whose real path or identity differs from its record is refused like a changed folder at run time (the same
+  reason, logged once; the Go gateway also lists it in `agents/claude.refused`) until you remove it and add it again.
+  A start never rewrites the saved name or the record. A folder that does not exist at start keeps the "was
+  missing" handling.
 - **In a container** `minigw serve` may run as PID 1: it then starts the gateway as its child and only reaps orphaned
   processes (left by `bwrap --unshare-pid`) and forwards signals. `docker run --init` works too.
 

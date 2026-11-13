@@ -73,10 +73,20 @@ type serveConfig struct {
 	// #68 (odločitev 7): omrežje gradenj Claude CLI v načinu worktree, kot »Network for builds« na Macu; nil = vklopljeno.
 	WorktreeNetwork *bool `json:"worktreeNetwork,omitempty"`
 
-	allowedReal map[string]string // končne poti ob zagonu ali dodajanju; ohranjene mape jih ne zamenjajo
+	// M2: real path and identity of each allowed folder, recorded when it is added (or at the first start of a version that
+	// has records). A start compares and refuses a folder that differs; it never rewrites a record.
+	AllowedRecords map[string]folderRecord `json:"allowedRecords,omitempty"`
 
 	// N4: trajni ID te namestitve prehoda (datoteka lastnika v Scratch; ensureInstance)
 	Instance string `json:"instance,omitempty"`
+}
+
+// folderRecord: the final path and identity (st_dev+st_ino; Windows volume serial + file ID) of an allowed folder.
+// Dev and Ino are 0 for a folder that did not exist when it was recorded.
+type folderRecord struct {
+	Real string `json:"real"`
+	Dev  uint64 `json:"dev,omitempty"`
+	Ino  uint64 `json:"ino,omitempty"`
 }
 
 // worktreeNet: »Network for builds« (privzeto vklopljeno, kot na Macu).
@@ -481,6 +491,7 @@ type server struct {
 	offUnchecked, offErrors []string
 	wasMissing              sync.Map // #83: dovoljene mape, ki so kdaj manjkale (agentFolders); odide le z mapo s seznama
 	refusedLogged           sync.Map // #83: zavrnjene označene mape, že v dnevniku (enkrat na mapo)
+	startRefused            sync.Map // M2: mapa → razlog; mapa se je od zapisa spremenila, ko je prehod bil ustavljen
 	settings                settingsState
 	pick                    atomic.Pointer[pickFunc] // izbirno okno pladnja (Windows); nil = ni GUI
 	picking                 atomic.Bool              // eno okno naenkrat
@@ -574,7 +585,8 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 			missing = append(missing, f)
 		}
 	}
-	exe, err := checkAgent(&c, cfgDir, missing)
+	had := c.AllowedRecords
+	exe, err := checkAgent(&c, cfgDir, slices.Clone(c.AllowedFolders)) // M2: saved folders keep their names and records
 	if err != nil {
 		return nil, err
 	}
@@ -621,8 +633,68 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	for _, f := range missing {
 		s.wasMissing.Store(f, true)
 	}
+	s.checkFolderRecords(had, missing)
 	s.claimScratch()
 	return s, nil
+}
+
+// checkFolderRecords (M2): at start, a saved folder that exists and differs from its record (real path or identity) is
+// refused like a changed folder at run time; a folder without a record (an old config) is recorded once and saved.
+// Nothing here rewrites a name or an existing record.
+func (s *server) checkFolderRecords(had map[string]folderRecord, missing []string) {
+	var added []string
+	for _, f := range s.cfg.AllowedFolders {
+		rec, ok := had[f]
+		if !ok {
+			added = append(added, f)
+			s.log.Printf("recorded %s -> %s", f, s.cfg.AllowedRecords[f].Real)
+			continue
+		}
+		if slices.Contains(missing, f) {
+			continue
+		}
+		r, err := realPath(f)
+		if err != nil {
+			continue // the run-time check refuses it
+		}
+		why := ""
+		if !samePath(r, rec.Real) {
+			why = "its real path changed to " + r
+		} else if id, err := fileIDOf(r); err == nil && rec.id() != (fileID{}) && id != rec.id() {
+			why = "its identity changed (another folder is there now)"
+		}
+		if why != "" {
+			s.startRefused.Store(f, why)
+			s.refusedLogged.Store(f, true)
+			s.log.Printf("WARNING: allowed folder %s is not used: %s; if you trust it, remove and add it again in the allowed folders", f, why)
+		}
+	}
+	if len(added) > 0 {
+		if err := saveFolderRecords(s.cfgPath, s.cfg.AllowedRecords, added); err != nil {
+			s.log.Printf("WARNING: cannot save the folder records (%v): they are recorded again at the next start", err)
+		}
+	}
+}
+
+// saveFolderRecords: adds the records of folders that have none in the config file (nothing else changes).
+func saveFolderRecords(path string, records map[string]folderRecord, folders []string) error {
+	file, err := loadServeConfig(path)
+	if err != nil {
+		return err
+	}
+	if file.AllowedRecords == nil {
+		file.AllowedRecords = map[string]folderRecord{}
+	}
+	changed := false
+	for _, f := range folders {
+		if _, ok := file.AllowedRecords[f]; !ok && slices.Contains(file.AllowedFolders, f) {
+			file.AllowedRecords[f], changed = records[f], true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	return writeServeConfig(path, file)
 }
 
 // logOut: dnevnik routerja brez »log« v nastavitvah; pladenj ga nastavi na svojo datoteko pred newServer, da gredo
@@ -651,11 +723,11 @@ func deprecatedFolder(c *serveConfig, f string) {
 }
 
 // checkAgent: mapa ne sme biti blizu mape nastavitev, claude mora obstajati, Bash na Windows le z dovoljenjem.
-// Za zagon in za spremembe prek skrbniškega API. kept (#83): mape, ki smejo manjkati (ob zagonu manjkajoče, ob
-// spremembi že shranjene), da odklopljen pogon ne ustavi prehoda, in ostanejo zapisane, kot so (ne cilj povezave);
-// nova mapa, ki je ni, je zavrnjena.
+// Za zagon in za spremembe prek skrbniškega API. kept (#83, M2): že shranjene mape (ob zagonu vse, ob spremembi te, ki
+// so že na seznamu): smejo manjkati, da odklopljen pogon ne ustavi prehoda, ostanejo zapisane, kot so (ne cilj
+// povezave), in obdržijo svoj zapis (AllowedRecords); nova mapa, ki je ni, je zavrnjena, in dobi nov zapis.
 func checkAgent(c *serveConfig, cfgDir string, kept []string) ([]string, error) {
-	saved := make(map[string]string, len(c.AllowedFolders))
+	records := make(map[string]folderRecord, len(c.AllowedFolders))
 	for i, f := range c.AllowedFolders {
 		if f == "" || !filepath.IsAbs(f) {
 			return nil, errors.New("allowed folder must be an absolute path: " + f)
@@ -664,20 +736,25 @@ func checkAgent(c *serveConfig, cfgDir string, kept []string) ([]string, error) 
 		if err != nil {
 			return nil, err
 		}
-		if !slices.Contains(kept, f) { // shranjena mapa ostane, kot je (oznaka wasMissing je po tej poti)
+		if !slices.Contains(kept, f) { // a saved folder keeps its name and its record (M2)
 			c.AllowedFolders[i] = real
 		}
 		f = c.AllowedFolders[i]
-		r, err := realPath(f)
+		if old, ok := c.AllowedRecords[f]; ok && slices.Contains(kept, f) {
+			records[f] = old
+			continue
+		}
+		r, err := realPath(f) // a new folder, or an old config without records: record the current state
 		if err != nil {
 			return nil, err
 		}
-		if old, ok := c.allowedReal[f]; ok && slices.Contains(kept, f) {
-			r = old
+		rec := folderRecord{Real: r}
+		if id, err := fileIDOf(r); err == nil {
+			rec.Dev, rec.Ino = id.dev, id.ino
 		}
-		saved[f] = r
+		records[f] = rec
 	}
-	c.allowedReal = saved
+	c.AllowedRecords = records
 	if bad := scratchOverlaps(c.AllowedFolders, c.Scratch); len(bad) > 0 { // H1: PATCH, minigw gw claude --folders, serve.json
 		return nil, errors.New("allowed folder " + bad[0] + " contains or is inside the scratch folder " + c.Scratch +
 			", or cannot be checked (agents could change the gateway's mirrors and other devices' copies): choose another folder")

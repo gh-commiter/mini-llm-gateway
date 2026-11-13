@@ -117,8 +117,8 @@ func TestAllowedFolderRetainedAlias(t *testing.T) {
 	if _, err := checkAgent(&c, s.cfgDir, []string{alias}); err != nil {
 		t.Fatal(err)
 	}
-	if c.AllowedFolders[0] != alias || !samePath(c.allowedReal[alias], first) {
-		t.Fatalf("recorded identity: %v %v", c.AllowedFolders, c.allowedReal)
+	if c.AllowedFolders[0] != alias || !samePath(c.AllowedRecords[alias].Real, first) {
+		t.Fatalf("recorded identity: %v %v", c.AllowedFolders, c.AllowedRecords)
 	}
 	want := first
 	if runtime.GOOS == "windows" { // #93: keeps the drive name, identity checked at launch

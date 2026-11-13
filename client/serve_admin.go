@@ -78,6 +78,7 @@ type apiClaude struct {
 	LeftOut              []string       `json:"leftOut,omitempty"`          // mape iz serve.json, izpuščene ob zagonu (offFolders)
 	LeftOutUnchecked     []string       `json:"leftOutUnchecked,omitempty"` // od teh tiste, ki jih ni mogoče preveriti (offUnchecked)
 	OffErrors            []string       `json:"offErrors,omitempty"`        // napake razrešitve v razlogu (offErrors)
+	Refused              []string       `json:"refused,omitempty"`          // M2: mape, ki se od zapisa niso več ujemale ob zagonu; ostanejo na seznamu, dokler jih skrbnik ne odstrani in doda znova
 	Login                map[string]any `json:"login"`                      // #68: vrstica Login (stanje žetona setup-token / ključa API, nikoli vrednost)
 }
 
@@ -861,6 +862,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 					if !slices.Contains(s.cfg.AllowedFolders, f) {
 						s.wasMissing.Delete(f)
 						s.refusedLogged.Delete(f)
+						s.startRefused.Delete(f)
 					}
 				}
 				for _, f := range s.cfg.AllowedFolders {
@@ -1271,6 +1273,13 @@ func (s *server) claudeInfo() apiClaude {
 	if len(exe) > 0 {
 		info.Exe, info.ClaudeVersion = exe[len(exe)-1], claudeVersion(exe)
 	}
+	s.startRefused.Range(func(k, _ any) bool {
+		if slices.Contains(c.AllowedFolders, k.(string)) {
+			info.Refused = append(info.Refused, k.(string))
+		}
+		return true
+	})
+	slices.Sort(info.Refused)
 	if c.ClaudeDisabled {
 		s.mu.RLock()
 		info.Off, info.LeftOut, info.LeftOutUnchecked, info.OffErrors = s.offReason, s.offFolders, s.offUnchecked, s.offErrors
