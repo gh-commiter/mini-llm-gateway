@@ -410,6 +410,8 @@ minigw share list
 minigw share remove
 ```
 
+Adding an alias of an existing shared folder keeps one entry and updates its saved options.
+
 `minigw share add` always refuses a drive root, the root of the volume that holds your home folder or the system
 (`/System/Volumes/Data` on macOS; on Linux a mount of the same file system as home or `/` that shows it from its top,
 such as a btrfs pool next to `@home`; on Windows a folder mount of the system or home volume), your home folder and any

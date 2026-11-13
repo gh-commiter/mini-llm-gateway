@@ -163,7 +163,7 @@ Details:
   the user's D-Bus session (`busctl`/`dbus-send` list `org.freedesktop.secrets`, running or activatable) and
   `xdg-dbus-proxy` is installed; bwrap still hides the session bus, and Copilot gets only a per-request proxy socket
   that allows nothing but `org.freedesktop.secrets` (the full session bus would let it start programs outside bwrap
-  through `systemd --user`); a `unix:abstract=` session bus is refused (bwrap does not hide abstract sockets), the proxy
+  through `systemd --user`); only a `unix:path=` session bus address is accepted, the proxy
   is killed with the gateway (Pdeathsig), and the git wrappers unset `DBUS_SESSION_BUS_ADDRESS`, so git and what it runs
   never get the proxy. Copilot has no commands on any gateway (shell tool always denied): on Linux Secret Service has
   no per-program access and a command could read the whole unlocked keyring; on the Mac a command could read

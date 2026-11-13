@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net"
 	"net/http"
 	"os"
@@ -190,8 +191,14 @@ case "$*" in *ListActivatableNames*) echo '   string "org.freedesktop.secrets"';
 		t.Fatalf("headless: %q", why)
 	}
 	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:abstract=/tmp/dbus-x,guid=1") // M1: dosegljiva iz bwrap
-	if why := copilotKeyring(); !strings.Contains(why, "unix:abstract=") {
+	if why := copilotKeyring(); !strings.Contains(why, "unix:path=") {
 		t.Fatalf("abstract: %q", why)
+	}
+	for _, addr := range []string{"tcp:host=localhost", "unix:dir=/tmp", "unix:tmpdir=/tmp", "unix:path=", "unix:path=/bus;tcp:host=localhost"} {
+		t.Setenv("DBUS_SESSION_BUS_ADDRESS", addr)
+		if why := copilotKeyring(); !strings.Contains(why, "unix:path=") {
+			t.Errorf("accepted %q: %s", addr, why)
+		}
 	}
 	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "") // brez seje D-Bus
 	os.Remove(filepath.Join(bin, "busctl"))
@@ -364,7 +371,7 @@ echo '{"type":"assistant.message","data":{"content":"copilot says hi turn='$((n 
 		t.Fatal("codex commands accepted")
 	}
 	if st, b := adminNoise(t, s, base, s.admin, "PATCH", adminPrefix+"/agents/copilot", `{"token":"github_pat_cmd1"}`); st != 400 ||
-		strings.Contains(b, "github_pat_cmd1") { // D1: brez žetona
+		!strings.Contains(b, `unknown field \"token\"`) || strings.Contains(b, "github_pat_cmd1") { // D1: brez žetona
 		t.Fatalf("token: %d %s", st, b)
 	}
 	if st, b := ask("claude-copilot"); st != 200 || field(args(), "token") != "" {
@@ -485,5 +492,27 @@ func TestCopilotUnsupportedOnWindows(t *testing.T) {
 		t.Fatalf("retry header: %v %v", err, resp)
 	} else {
 		resp.Body.Close()
+	}
+}
+
+func TestCopilotOldTokenPatch(t *testing.T) {
+	token := "old-secret"
+	st, body := (&server{}).patchLogin("copilot", &token, nil)
+	data, err := json.Marshal(body)
+	if err != nil || st != 400 || body.(map[string]any)["error"].(map[string]string)["message"] != `bad JSON body: unknown field "token"` || strings.Contains(string(data), "old-secret") {
+		t.Fatalf("old token: %d %s %v", st, data, err)
+	}
+}
+
+func TestSocketSessionBus(t *testing.T) {
+	for _, addr := range []string{"unix:path=/run/user/1/bus", "unix:path=/run/user/1/bus,guid=123"} {
+		if !socketSessionBus(addr) {
+			t.Errorf("refused %q", addr)
+		}
+	}
+	for _, addr := range []string{"", "tcp:host=localhost", "unix:abstract=x", "unix:dir=/tmp", "unix:tmpdir=/tmp", "unix:path=", "unix:path=relative", "unix:path=/bus;tcp:host=localhost", "unix:path=/bus,abstract=x"} {
+		if socketSessionBus(addr) {
+			t.Errorf("accepted %q", addr)
+		}
 	}
 }

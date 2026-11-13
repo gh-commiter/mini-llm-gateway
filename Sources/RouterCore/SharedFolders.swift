@@ -35,6 +35,15 @@ public enum SharedFolders {
         }.joined(separator: "\n") + "\n"
     }
 
+    /// En vnos na istovetnost; ohrani prvo shranjeno pot in posodobi možnosti.
+    public static func adding(_ entry: Entry, to entries: [Entry]) -> [Entry] {
+        let id = fileID(entry.path)
+        let matches = entries.filter { $0.path == entry.path || (id != nil && fileID($0.path) == id) }
+        var e = entry
+        e.path = matches.first?.path ?? entry.path
+        return entries.filter { !matches.contains($0) } + [e]
+    }
+
     /// Projektna mapa kjer koli (tudi /Volumes/Disk/projekt), razen korena diska ali priklopa, domače mape same,
     /// sistemskih map, domačih map drugih ter skritih map in ~/Library (kot autoShare v minigw Go). Podmapa začasne mape
     /// (/tmp/projekt, mktemp -d) je projektna mapa (privzeti auto jo kopira: worktree ali sync), začasna mapa sama ne,
