@@ -373,6 +373,12 @@ func TestServeRejectsBadModelsBodiesAndForeignOwners(t *testing.T) {
 			}
 		}
 	}
+	// sec-fix F3: a stored configuration with tools outside the deny rules (Task, MCP) never reaches claude without "Allow local tools"
+	s.cfg.Tools = "Read,Task,mcp__x__run,WebFetch,Edit"
+	if i := slices.Index(s.agentArgs("/copy", false), "--tools"); i < 0 || s.agentArgs("/copy", false)[i+1] != "Read,WebFetch,Edit" {
+		t.Fatalf("restricted tools not from the allowlist: %v", s.agentArgs("/copy", false))
+	}
+	s.cfg.Tools = defaultTools
 	// --minigw-ro: brez orodij za pisanje, sandbox ne piše v mapo (na Windows brez sandboxa tudi brez Bash).
 	s.cfg.Tools = defaultTools + ",Monitor,EnterWorktree"
 	roArgs := s.agentArgs("/copy", true)

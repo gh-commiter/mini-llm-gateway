@@ -829,6 +829,11 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			if *b.Tools = strings.ReplaceAll(*b.Tools, " ", ""); !validTools.MatchString(*b.Tools) {
 				return fail(400, "tools: comma-separated tool names, e.g. "+defaultTools)
 			}
+			for _, t := range strings.Split(*b.Tools, ",") {
+				if t != "" && !restrictedOK(t) && !(b.AllowLocalTools != nil && *b.AllowLocalTools || b.AllowLocalTools == nil && s.conf().AllowLocalTools) {
+					return fail(400, "tools: "+t+" needs \"Allow local tools\" (it runs without a sandbox otherwise and could read outside the deny rules)")
+				}
+			}
 		}
 		s.mu.RLock()
 		left, kept := s.offFolders, slices.Clone(s.cfg.AllowedFolders)
