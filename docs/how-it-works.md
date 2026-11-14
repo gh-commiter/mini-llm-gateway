@@ -292,7 +292,7 @@ Details:
   a later swap changes nothing; every agent runs in its own process namespace and cannot outlive its run. A Linux
   gateway without bwrap, or a run without its own process namespace, does not return nested repositories.
 
-## Projects, notes and agents (`minigw serve`, 0.6.0)
+## Projects, notes and agents (`minigw serve` and the Mac app, 0.6.0)
 
 When the folder you start `minigw` in is linked to a project (`minigw project link`), `minigw` sends the project id
 (`X-Minigw-Project`) with the agent requests. The gateway builds the principal as for the member routes (the device

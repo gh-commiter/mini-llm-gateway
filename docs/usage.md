@@ -445,7 +445,7 @@ network or virtual drive that minigw cannot check safely: share a folder on a lo
 
 A **project** is a named place on the gateway where a team keeps short notes (design decisions, structure, data
 facts) that people and agents can read. The gateway owner creates projects, adds you as a member and binds your
-computer's device key to you; you see only the projects you belong to. Needs a Go gateway (`minigw serve`).
+computer's device key to you; you see only the projects you belong to. Works on every gateway: `minigw serve` and the Mac app (project runs of agents on the Mac app included).
 
 ```
 minigw project list                     your projects: your role, and what a grant gives you

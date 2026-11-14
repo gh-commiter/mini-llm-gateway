@@ -50,6 +50,7 @@ All answers are 200 with the JSON shown, unless noted. Errors use the member env
 | `reconcile` | `{"devices":[…]}` | `{"done":[…]}`: epoch raised for each, in order; the first failure stops the list |
 | `ensure-owner` | `{"name":"<OS account>"}` | `{"ok":true}`: creates the owner user once, when there is no user |
 | `bound-user` | `{"device"}` | `{"user":N}`: attribution only, from an in-memory snapshot (the last binding seen when the core is down) |
+| `event-lost` | `{"count","from","to"}` | `202 {"queued":true}`: events the adapter could not deliver (its own queue overflowed while the helper was down); shown as a gap like those the recorder drops itself. Count under 1 is refused (400) |
 | `event-begin`, `event-finish` | `{"event":{"id","parentId","start","end","userId","projectId","deviceId","provider","model","outcome","tokensIn","tokensOut","tokenSource"}}` | `202 {"queued":true}`; never blocks. `tokensIn/out` -1 = unknown; `outcome` `ok\|error\|cancelled`; `tokenSource` `reported\|estimated\|unknown` |
 
 `coreapi.API.Call(ctx, name, in, out)` makes these calls in-process through the same path.
@@ -105,17 +106,21 @@ app may answer itself) and `testdata/paths.json` (`IsMemberPath`, `IsAdminPath`)
 | 1 | Tunnel and device proof | existing Noise code; `device` of a member request is the one proven in this tunnel |
 | 2 | Approved list, revocation | done: `AppState.apply` marks every removal in the same save (`RouterConfig.pendingRevocations`), the admin route calls `device-revoked` before it answers (`CoreHelper.revoke`), the next ready sends `reconcile` before project routes are served |
 | 3 | Admin authentication, non-core admin routes | unchanged; core routes (`IsAdminPath`) are forwarded after it |
-| 4 | Token for member routes, run port exclusion, `agentPeer` | done for the member routes (`Router.memberHTTP`); the run port itself is a later task |
+| 4 | Token for member routes, run port exclusion, `agentPeer` | done (`Router.memberHTTP`; a request that comes through a run port never reaches it: `AgentRun.current`) |
 | 5 | Body reading and the `Request` | done (`MaxBody`, `bodyTooLarge`; `bodyUnreadable` never occurs because the body is complete when routing starts) |
-| 6 | Agent runs, run port, `RunCap` | later |
-| 7 | Project admission of an agent request, `scope`, `agent-home` | later |
-| 8 | Usage events | later (the helper does not start the usage recorder yet) |
+| 6 | Agent runs, run port, `RunCap` | done: `AgentRun` (`Sources/RouterCore/AgentRun.swift`) opens the port when the agent may ask other models **or** the run has a project; the `run` kind (`Router.runNotes`, `ProjectRun.swift`) serves `GET /minigw/v1/notes[/{id}]` only, forwarded with the run's `RunCap` and `approved` = the device on the approved list now; every other method or path is the 404 of the run port, the models' routes only with "May ask other models"; the capability ends with the run (`stop()`: port closed, token file removed); token and process-tree checks unchanged. A nested run inherits the root's capability; the project header is dropped from a nested call |
+| 7 | Project admission of an agent request, `scope`, `agent-home` | done: `Router.admitProject` reads `x-minigw-project` (set by minigw's own proxy; refused with the fixed 403 `no_project_access` or 503 `core_unavailable` in the Anthropic error shape, never run without the project), in `Router.syncRun` for all four agent kinds after `count_tokens`; `conversationScope` (`scope`) for Claude CLI, Codex, Grok and Copilot; `projectHome` (`agent-home`): `<Scratch>/state/<device hash>/proj/<user>-<project>-e<epoch>/<kind>` for Codex (`CODEX_HOME`, login and settings as links), Grok (`GROK_HOME` with its `minigw-core` profile) and Copilot (its session store); Claude CLI keeps its home and is keyed by the scope only (as Go). The folder `<Scratch>/state` is in every agent's deny list |
+| 8 | Usage events | done: `RequestState` (task-local) holds the admission context (`bound-user`, parent id of a nested call); `Router.dispatched` sends `event-begin` where the work really starts (provider request, agent process, Foundry, Apple FM, Siri), `endEvent` sends `event-finish` (outcome, tokens, token source `reported`/`estimated`); a local refusal never dispatches. `UsageSender` queues off the request path (4096, oldest dropped, `event-lost` when the helper is back); the helper now starts the usage recorder (bounded spool in the core folder, replay by event id) when its store is open |
 | 9 | Quota | not part of the core |
 | 10 | Opening the store | done in the helper (`core.Open`, folder 0700 made by the app); `ensure-owner` at the first ready |
 | 11 | Agents out of the data folder | done: Codex always in its permission profile with the folder denied, the folder in the hidden list of Claude CLI, `minigw run` and Copilot, Grok runs only in its kernel-enforced `minigw-core` profile in a gateway-owned `GROK_HOME` (`Grok.prepareCoreHome`); allowed folders around the folder refused (`RouterConfig.overlapsCoreFolder`), hard-link aliases refused at open and at every run (`RouterConfig.coreLinkProblem` in `syncRun`), backups only in `<core>/backups` |
 
-Known difference from `minigw serve`: while the helper is down an agent peer gets the 503 (the helper is what would
-answer 403 first); the gateway has the store in-process and answers 403.
+Known differences from `minigw serve`:
+
+- While the helper is down an agent peer gets the 503 (the helper is what would answer 403 first); the gateway has the store in-process and answers 403.
+- A request with a project header while the helper is down is refused with the 503 (never run without the project); models without a project keep working.
+- Usage events of requests made while the helper is down wait in the app's memory (at most 4096; an overflow becomes a gap) and are sent when it is back; an app that quits meanwhile loses them without a gap. In Go the recorder is in the gateway process and spools them to disk.
+- `approved` of a run is read from the settings the Router was built with; a settings change restarts the Router, and a removed device ends its runs through the epoch bump (`device-revoked`, before the admin call answers), not through this flag.
 
 ## What resisted the split
 

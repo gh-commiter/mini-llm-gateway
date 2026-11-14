@@ -41,7 +41,7 @@ private func tempDir(_ name: String) -> URL {
 }
 
 /// The helper, built once per test run into a temp folder (never into the worktree); concurrent tests await the same build.
-private actor HelperBuild {
+actor HelperBuild {  // internal: ProjectRunTests builds the same helper
     static let shared = HelperBuild()
     private var task: Task<URL, Error>?
     func binary() async throws -> URL {
@@ -56,7 +56,7 @@ private actor HelperBuild {
     }
 }
 
-private actor MemoryMarks: CoreRevocationMarks {
+actor MemoryMarks: CoreRevocationMarks {
     var items: [String] = []
     func list() -> [String] { items }
     func add(_ device: String) { if !items.contains(device) { items.append(device) } }
@@ -293,21 +293,24 @@ private func adm(_ h: CoreHelper, _ method: String, _ path: String, _ body: Stri
         let rows = try JSONSerialization.jsonObject(with: Data(contentsOf: out.appendingPathComponent("cases.json"))) as! [[String: Any]]
         let h = try await helper(store: out.appendingPathComponent("store")); h.start(); defer { h.stop() }
         #expect(await h.waitReady())
-        var checked = 0, skippedRun = 0
+        var checked = 0, runRows = 0
         var seen = Set<Int>()
         for row in rows {
             let cx = row["context"] as! [String: Any]
             let kind = cx["kind"] as! String
-            guard kind != "run" else { skippedRun += 1; continue }  // the run port's context is a later task
+            let cap = (cx["run"] as? [String: Any]).map {  // the run port's context: the capability the Go table carries
+                CoreRunCap(runId: $0["runId"] as! String, userId: $0["userId"] as! Int, deviceId: $0["deviceId"] as! String, projectId: $0["projectId"] as! Int, epoch: $0["epoch"] as! Int)
+            }
             let context = CoreContext(kind: CoreContext.Kind(rawValue: kind)!, device: cx["device"] as? String ?? "", approved: cx["approved"] as? Bool ?? false,
-                                      agentPeer: cx["agentPeer"] as? Bool ?? false)
+                                      agentPeer: cx["agentPeer"] as? Bool ?? false, run: cap)
             let request = try #require(CoreRequest(json: row["request"] as! [String: Any]))
             let want = try #require(CoreResponse(json: row["response"] as! [String: Any]))
             let got = await h.call(context: context, request: request)
             #expect(got.status == want.status && got.header == want.header && got.body == want.body, "\(row["name"] as! String)")
             seen.insert(want.status); checked += 1
+            if kind == "run" { runRows += 1; #expect(cap != nil) }
         }
-        #expect(checked >= 30 && skippedRun >= 5 && rows.count == checked + skippedRun)
+        #expect(checked == 45 && runRows == 7 && rows.count == checked)  // every row of the table, the 7 run rows included
         #expect(seen.isSuperset(of: [200, 400, 403, 404, 413]))  // incl. a no-device 403 and a 404
         #expect(rows.contains { ($0["name"] as! String) == "member: no device" })
     }
