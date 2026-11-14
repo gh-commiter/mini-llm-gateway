@@ -69,7 +69,9 @@ func appendAudit(dir, action string, detail map[string]any) error {
 	return err
 }
 
-// dsn builds a file: URI that also works for Windows drive paths.
+// dsn builds a file: URI from an ABSOLUTE path (callers use filepath.Abs). url.URL escapes spaces, '#', '?' and
+// '%'. Windows: C:\x\y.db becomes file:///C:/x/y.db and a UNC path \\host\share\y.db becomes
+// file:////host/share/y.db (empty authority, path //host/share/y.db), the forms SQLite documents for Windows.
 func dsn(path, query string) string {
 	p := filepath.ToSlash(path)
 	if p[0] != '/' {

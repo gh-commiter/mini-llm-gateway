@@ -59,7 +59,7 @@ func snapshotName(schema int) string {
 // snapshot writes a consistent copy of the open database as a snapshot in the folder and prunes old ones.
 func (s *Store) snapshot(ctx context.Context, schema int) (string, error) {
 	p := filepath.Join(s.dir, snapshotName(schema))
-	if err := s.copyTo(ctx, p); err != nil {
+	if err := s.copyTo(ctx, p, false); err != nil {
 		return "", err
 	}
 	pruneSnapshots(s.dir)

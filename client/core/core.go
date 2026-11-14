@@ -35,14 +35,17 @@ var (
 )
 
 // Options for Open. ProtectDir makes the folder private (on Windows a protected ACL that the files inherit; the
-// caller's protectDir). The package itself only creates files with mode 0600.
+// caller's protectDir). ProtectFile makes one file user-only before anything is written to it (used for backups,
+// which may be written outside the private folder); nil = the package's own (chmod 0600, a protected ACL on Windows).
 type Options struct {
-	ProtectDir func(dir string) error
+	ProtectDir  func(dir string) error
+	ProtectFile func(path string) error
 }
 
 // Store is an open core database. Reads use DB(); every write goes through write().
 type Store struct {
 	dir   string
+	opts  Options
 	db    *sql.DB
 	lock  *os.File
 	rdb   *sql.DB      // read-only handle: deferred transactions, so readers never wait for the writer
@@ -76,6 +79,10 @@ CREATE TABLE audit_events(id INTEGER PRIMARY KEY AUTOINCREMENT, time TEXT NOT NU
 // Open opens (creating if needed) <dir>/core.db and migrates it. It holds an exclusive lock on the folder
 // until Close; a second Open (also from another process) fails with ErrLocked.
 func Open(dir string, opts Options) (*Store, error) {
+	dir, err := filepath.Abs(dir) // SQLite gets a URI; a relative path must not turn into an unrelated absolute one
+	if err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
@@ -92,7 +99,7 @@ func Open(dir string, opts Options) (*Store, error) {
 		lock.Close()
 		return nil, err
 	}
-	s := &Store{dir: dir, lock: lock, now: time.Now, rl: rateLimits{w: map[int64]*window{}}}
+	s := &Store{dir: dir, opts: opts, lock: lock, now: time.Now, rl: rateLimits{w: map[int64]*window{}}}
 	if err := s.open(); err != nil {
 		if s.db != nil {
 			s.db.Close()

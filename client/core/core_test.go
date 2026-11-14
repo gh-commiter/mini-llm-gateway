@@ -437,3 +437,54 @@ func TestConcurrentWriters(t *testing.T) {
 		t.Fatalf("%d rows", n)
 	}
 }
+
+func TestBackupProtectsBeforeWriting(t *testing.T) { // core-fix 3
+	var calls []string
+	var sizeAtHook int64 = -1
+	hook := func(p string) error {
+		fi, err := os.Stat(p)
+		if err != nil {
+			return err
+		}
+		sizeAtHook = fi.Size()
+		calls = append(calls, p)
+		return nil
+	}
+	s, err := Open(t.TempDir(), Options{ProtectFile: hook})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	open := t.TempDir() // a permissive destination folder, outside the private one
+	os.Chmod(open, 0o777)
+	dest := filepath.Join(open, "b.db")
+	if err := s.Backup(ctx, dest); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 1 || calls[0] != dest || sizeAtHook != 0 {
+		t.Fatalf("hook calls %v, size at hook %d (must be 0: nothing written yet)", calls, sizeAtHook)
+	}
+	if fi, _ := os.Stat(dest); fi.Size() == 0 {
+		t.Fatal("empty backup")
+	}
+	// a failing protection aborts the backup and leaves no file
+	s.opts.ProtectFile = func(string) error { return errors.New("acl failed") }
+	bad := filepath.Join(open, "c.db")
+	if err := s.Backup(ctx, bad); err == nil || !strings.Contains(err.Error(), "acl failed") {
+		t.Fatalf("got %v", err)
+	}
+	if _, err := os.Stat(bad); err == nil {
+		t.Fatal("unprotected file left behind")
+	}
+	// the package's own protection: user-only mode (Windows: ACL, see protect_windows.go)
+	s.opts.ProtectFile = nil
+	good := filepath.Join(open, "d.db")
+	if err := s.Backup(ctx, good); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" {
+		if fi, _ := os.Stat(good); fi.Mode().Perm() != 0o600 {
+			t.Fatalf("mode %v", fi.Mode())
+		}
+	}
+}
