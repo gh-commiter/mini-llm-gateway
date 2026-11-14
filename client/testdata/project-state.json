@@ -10,7 +10,7 @@
    "gateway": "url:http://10.0.0.5:8765",
    "project": 9007199254740993,
    "slug": "eureko",
-   "path": "/tmp/a<b>&\"c\\d èč   \u0001\t "
+   "path": "/tmp/a<b>&\"c\\d èč   \u0001\t \b\f "
   }
  ],
  "load_ok": [

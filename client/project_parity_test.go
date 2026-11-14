@@ -215,7 +215,7 @@ type cmdWant struct {
 
 func TestProjectParityCommands(t *testing.T) {
 	var fx struct {
-		Gateway string      `json:"gateway"`
+		Gateway string     `json:"gateway"`
 		Cases   []*cmdCase `json:"cases"`
 	}
 	readFixture(t, "project-commands.json", &fx)
