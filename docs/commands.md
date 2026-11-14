@@ -105,6 +105,16 @@ only on the gateway computer.
 | `minigw gw settings` | The settings in this terminal, also over SSH: the pages General, Devices, Providers, Agents, Folders, Sessions, Activity (`minigw-tui`) |
 | `minigw gw settings link` | Print a one-time link (60 s) to the settings page (`minigw serve` only) |
 | `minigw gw api GET\|POST\|PATCH\|DELETE <path>` | One [admin API](admin-api.md) request: JSON body on stdin, JSON answer on stdout (`minigw-tui` uses it) |
+| `minigw gw user list` \| `add <name>` \| `rename <user> <name>` \| `activate <user>` \| `deactivate <user>` | The users of the project database (0.6.0; also on the Mac). `<user>`: name or number. Deactivating ends the user's runs and capabilities |
+| `minigw gw bind list` \| `<device id> <user>` \| `remove <device id>` | Which user a device belongs to |
+| `minigw gw project list` \| `add <slug> <name>` \| `archive <project>` \| `unarchive <project>` | The projects (`<project>`: slug or number) |
+| `minigw gw member <project> list` \| `set <user> <role>` \| `remove <user>` | Members of a project; role: reader, developer, admin |
+| `minigw gw grant <source> list` \| `add <reader> <class>` \| `remove <reader> <class>` | Which project reads which class (structure, data) of another |
+| `minigw gw core backup [name]` | A consistent copy of the core database into `<core>/backups` (the gateway or app running); a name, not a path |
+| `minigw gw core restore <file\|name> [--yes]` | Only with the gateway stopped (on the Mac: with the app quit; the Mac `minigw` runs `minigw-core restore`); a name is looked up in `<core>/backups` |
+| `minigw gw core audit` | The audit trail of the core |
+| `minigw gw usage-events [--days n] [--user u] [--project p] [--model m]` | Model invocations per day, model and user, with the gaps (events that were lost) |
+| `minigw gw quota [--claude-probe=on\|off]` | Subscription quota and provider credit with source, time and staleness; the Claude probe (`claude -p /usage`, at most every 10 minutes) is off until you turn it on (Mac: also Settings → Claude CLI) |
 
 On Windows and Linux every `minigw gw` command also takes `--config FILE`. `minigw serve allow`, `deny`, `devices`,
 `provider` and `status` are older names for the same commands.
