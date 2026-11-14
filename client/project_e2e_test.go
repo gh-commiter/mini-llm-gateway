@@ -329,7 +329,7 @@ func TestClientErrorsAsSentences(t *testing.T) {
 	}
 	wantErr(t, last, "try again in")
 	// the gateway's project store goes away: 503 in plain words
-	c.f.s.stopUsage() // the usage writer reads s.core: stop it before the test takes the core away
+	c.f.s.api.StopRecorder() // the usage writer reads s.core: stop it before the test takes the core away
 	c.f.s.core = nil
 	_, err = c.run("bor", dir, "", "note", "list")
 	wantErr(t, err, "the gateway's project store is not available")

@@ -23,17 +23,19 @@ const (
 
 // UsageEvent: UserID and ProjectID 0 = none (NULL); TokensIn/TokensOut -1 = unknown (NULL).
 type UsageEvent struct {
-	ID, ParentID string
-	Start, End   time.Time
-	UserID       int64
-	ProjectID    int64
-	DeviceID     string
-	Provider     string
-	Model        string
-	Outcome      string
-	TokensIn     int64
-	TokensOut    int64
-	TokenSource  string // reported, estimated, unknown
+	ID          string    `json:"id"`
+	ParentID    string    `json:"parentId,omitempty"`
+	Start       time.Time `json:"start"`
+	End         time.Time `json:"end"`
+	UserID      int64     `json:"userId,omitempty"`
+	ProjectID   int64     `json:"projectId,omitempty"`
+	DeviceID    string    `json:"deviceId,omitempty"`
+	Provider    string    `json:"provider"`
+	Model       string    `json:"model"`
+	Outcome     string    `json:"outcome"`
+	TokensIn    int64     `json:"tokensIn"`
+	TokensOut   int64     `json:"tokensOut"`
+	TokenSource string    `json:"tokenSource"` // reported, estimated, unknown
 }
 
 func migrate3(tx *sql.Tx) error {
@@ -353,9 +355,10 @@ func (s *Store) reloadBound(ctx context.Context) {
 
 // UsageGapRecord is a gap as the spool keeps it (the id makes a replay idempotent).
 type UsageGapRecord struct {
-	ID       string
-	Count    int64
-	From, To time.Time
+	ID    string    `json:"id"`
+	Count int64     `json:"count"`
+	From  time.Time `json:"from"`
+	To    time.Time `json:"to"`
 }
 
 // ReplayUsage stores spooled events and gaps in one transaction. It is idempotent: events by FinishEvent's rule,

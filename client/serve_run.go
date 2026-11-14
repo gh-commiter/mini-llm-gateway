@@ -4,12 +4,12 @@ package main
 // read-only notes capability on the run port, and the conversation scope.
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"minigw/core"
+	"minigw/coreapi"
 )
 
 // projectHeader: the client's project id for an agent request (minigw project link). Read in attachProject
@@ -31,30 +31,26 @@ func (p *projectCtx) cap() core.RunCap {
 }
 
 // agentScope (Codex, Grok, Copilot) and cliScope (Claude CLI) are the reuse keys of a conversation: the resume
-// registry and the history match both go through them. Without a project they are the 0.5.26 keys byte for byte.
+// registry and the history match both go through them. The key function is coreapi's (the same for every gateway);
+// without a project they are the 0.5.26 keys byte for byte.
 func agentScope(kind, owner, cwd string, p *projectCtx) string {
-	if p == nil {
-		return kind + "|" + owner + "|" + cwd
-	}
-	return p.namespace("agent", kind, owner, cwd)
+	return coreapi.ConversationScope("agent", []string{kind, owner, cwd}, p.parts())
 }
 
 func cliScope(session, dir string, p *projectCtx) string {
-	if p == nil {
-		return session + "|" + dir
-	}
-	return p.namespace("cli", session, dir)
+	return coreapi.ConversationScope("cli", []string{session, dir}, p.parts())
 }
 
-// namespace (A1): project conversations live in their own key space: a NUL prefix (an HTTP header value cannot hold
-// a NUL, so no 0.5.26 key starts with it) and a JSON array, whose encoding of the fields is unambiguous.
-func (p *projectCtx) namespace(site string, fields ...string) string {
-	parts := []any{site}
-	for _, f := range fields {
-		parts = append(parts, f)
+func (p *projectCtx) parts() *coreapi.ScopeParts {
+	if p == nil {
+		return nil
 	}
-	b, _ := json.Marshal(append(parts, p.user, p.project, p.epoch))
-	return "\x00project\x00" + string(b)
+	return &coreapi.ScopeParts{User: p.user, Project: p.project, Epoch: p.epoch}
+}
+
+// namespace: the key of a project conversation at a site.
+func (p *projectCtx) namespace(site string, fields ...string) string {
+	return coreapi.ConversationScope(site, fields, p.parts())
 }
 
 // projectRefusal: the fixed body of a refused agent request (both the Anthropic and the member-route error shape).
@@ -64,8 +60,8 @@ func (s *server) projectRefusal(w http.ResponseWriter, r *req, status int, typ, 
 }
 
 // attachProject sets r.project for an agent request. A nested request (from a run port) inherits its root's project
-// and ignores the header. A request with the header needs the proven device, approved now, bound to an active user
-// with a DIRECT role in that project (as link-check); anything else is refused, never run without the project.
+// and ignores the header. A request with the header goes through coreapi's admit (the proven device, approved now,
+// bound to an active user with a DIRECT role in that project); anything else is refused, never run without the project.
 // 0 = go on, otherwise the response has been written.
 func (s *server) attachProject(w http.ResponseWriter, r *req) int {
 	if run := runOf(r); run != nil {
@@ -76,29 +72,21 @@ func (s *server) attachProject(w http.ResponseWriter, r *req) int {
 	if v == "" {
 		return 0
 	}
-	deny := func() int { return s.projectRefusal(w, r, 403, "no_project_access", "No project access") }
-	if s.core == nil {
+	in := coreapi.AdmitRequest{Project: v}
+	if dev := r.conn.device; dev != nil {
+		in.Device, in.Approved = dev.ID, s.conf().listed(dev.ID)
+	}
+	var rep coreapi.AdmitReply
+	if err := s.api.Call(r.Context(), "admit", in, &rep); err != nil {
 		return s.projectRefusal(w, r, 503, "core_unavailable", "The project database is not available")
 	}
-	id, err := strconv.ParseInt(v, 10, 64)
-	dev := r.conn.device
-	if err != nil || id < 1 || dev == nil {
-		return deny()
-	}
-	ctx := r.Context()
-	epoch, _ := s.core.Epoch(ctx)
-	p, err := s.core.Principal(ctx, dev.ID, s.conf().listed(dev.ID))
-	if err == nil {
-		_, err = s.core.ResolveForLink(ctx, p, strconv.FormatInt(id, 10))
-	}
-	if err != nil {
-		if _, limited := err.(core.ErrLimit); limited {
-			return s.coreError(w, r, err)
+	if !rep.OK {
+		if rep.RetryAfter > 0 {
+			w.Header().Set("Retry-After", strconv.Itoa(rep.RetryAfter))
 		}
-		s.log.Printf("%s project %s refused: %v", r.rid, v, err)
-		return deny()
+		return s.projectRefusal(w, r, rep.Status, rep.Type, rep.Message)
 	}
-	r.project = &projectCtx{runID: randomToken()[:16], user: p.UserID, device: dev.ID, project: id, epoch: epoch}
+	r.project = &projectCtx{runID: rep.RunID, user: rep.User, device: in.Device, project: rep.Project, epoch: rep.Epoch}
 	return 0
 }
 
@@ -107,54 +95,11 @@ func notesPath(method, path string) bool {
 	return method == "GET" && (path == "/minigw/v1/notes" || strings.HasPrefix(path, "/minigw/v1/notes/"))
 }
 
-// runNotes serves GET /minigw/v1/notes[?class=&after=&limit=] and GET /minigw/v1/notes/{id} for a run: only the
-// capability's project and the grants of that project; a project named in the path, query, header or body is not read.
+// runNotes serves the run's notes routes: the run port's token and peer checks passed (runHandler); the rest is coreapi.
 func (s *server) runNotes(w http.ResponseWriter, hr *http.Request, run *agentRun) {
-	r := &req{Request: hr, rid: "run_" + randomToken()[:12]}
-	if s.core == nil {
-		s.projectRefusal(w, r, 503, "core_unavailable", "The project database is not available")
-		return
-	}
 	cap := run.proj.cap()
-	approved := s.conf().listed(cap.DeviceID) // the device must be on the approved list now
-	rest := strings.TrimPrefix(strings.TrimPrefix(hr.URL.Path, "/minigw/v1/notes"), "/")
-	if rest == "" {
-		limit := 0
-		if v := hr.URL.Query().Get("limit"); v != "" {
-			n, err := strconv.Atoi(v)
-			if err != nil {
-				s.coreError(w, r, core.ErrInvalid{What: "limit"})
-				return
-			}
-			limit = n
-		}
-		pg, err := s.core.RunListNotes(hr.Context(), cap, approved, core.Class(hr.URL.Query().Get("class")), hr.URL.Query().Get("after"), limit)
-		if err != nil {
-			s.coreError(w, r, err)
-			return
-		}
-		notes := []noteJSON{}
-		for _, n := range pg.Notes {
-			notes = append(notes, toNote(n, false))
-		}
-		res := map[string]any{"notes": notes}
-		if pg.Next != "" {
-			res["next"] = pg.Next
-		}
-		writeJSON(w, r.rid, 200, res)
-		return
-	}
-	id, err := strconv.ParseInt(rest, 10, 64)
-	if err != nil || id < 1 {
-		s.coreError(w, r, core.ErrNotFound)
-		return
-	}
-	n, err := s.core.RunGetNote(hr.Context(), cap, approved, id)
-	if err != nil {
-		s.coreError(w, r, err)
-		return
-	}
-	writeJSON(w, r.rid, 200, toNote(n, true))
+	c := coreapi.Context{Kind: coreapi.KindRun, Run: &cap, Approved: s.conf().listed(cap.DeviceID)} // the device must be on the approved list now
+	writeAPI(w, "run_"+randomToken()[:12], s.api.Handle(hr.Context(), c, coreapi.Request{Method: hr.Method, Path: hr.URL.Path, RawQuery: hr.URL.RawQuery}))
 }
 
 // notesNote: what the agent is told when its run has a project. Notes are written by people: reference, never orders.

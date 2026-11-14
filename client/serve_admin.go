@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"minigw/coreapi"
 	"net"
 	"net/http"
 	"net/url"
@@ -238,8 +239,10 @@ func offlineServer(cfgPath string) (*server, error) {
 	}
 	cfgDir, _ := filepath.Abs(filepath.Dir(cfgPath))
 	exe, _ := resolveClaude(c.Claude)
-	return &server{cfg: c, cfgPath: cfgPath, cfgDir: cfgDir, claude: exe, offline: true, log: log.New(io.Discard, "", 0),
-		hub: newShareHub(), state: loadState(filepath.Join(cfgDir, "state.json"))}, nil // hub: prazen (brez sej), kot pri tekočem
+	s := &server{cfg: c, cfgPath: cfgPath, cfgDir: cfgDir, claude: exe, offline: true, log: log.New(io.Discard, "", 0),
+		hub: newShareHub(), state: loadState(filepath.Join(cfgDir, "state.json"))} // hub: prazen (brez sej), kot pri tekočem
+	s.api = s.newAPI()
+	return s, nil
 }
 
 // deviceSeen: zadnji stik in priklopi dovoljene naprave (state.json); ime, če ga naprava (dodana le z ID-jem ali s
@@ -328,8 +331,15 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		}
 		seg = append(seg, v)
 	}
-	if st, obj, ok := s.coreAdmin(method, seg, u.Query(), body); ok { // 0.6.0 core (serve_core_admin.go)
-		return st, obj
+	if seg[0] == "quota" { // the quota settings and report are the gateway's (probes run CLIs and provider HTTP here)
+		return s.quotaAdmin(method, seg, body)
+	}
+	if coreapi.IsAdminPath(method, u.EscapedPath()) { // 0.6.0 core: the routes of coreapi
+		r := s.api.Handle(context.Background(), coreapi.Context{Kind: coreapi.KindAdmin},
+			coreapi.Request{Method: method, Path: u.EscapedPath(), RawQuery: u.RawQuery, Body: body})
+		var obj any
+		json.Unmarshal(r.Body, &obj)
+		return r.Status, obj
 	}
 	if seg[0] == "gateways" { // starejše ime (do 0.5.14), ostane kot alias
 		seg[0] = "providers"

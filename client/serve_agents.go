@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"minigw/coreapi"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -1688,25 +1689,23 @@ func writeAgentError(w http.ResponseWriter, rid string, status int, msg string) 
 }
 
 // maxProjectHomes: project homes kept per device; the oldest go first.
-const maxProjectHomes = 20
 
-// projectStateDir (M2): <device state>/proj/<user>-<project>-e<epoch>/<cli>. A run of another user, project or epoch
-// gets another folder, so it never sees a transcript written under notes of the first. Homes of the same user and
-// project from older epochs are dead (their conversations are never resumed) and are removed here, and the folder
-// is bounded to maxProjectHomes by age.
+// projectStateDir (M2): <device state>/proj/<user>-<project>-e<epoch>/<cli>; the key is coreapi's agent-home. A run of
+// another user, project or epoch gets another folder, so it never sees a transcript written under notes of the first.
+// Homes of the same user and project from older epochs are dead (their conversations are never resumed) and are
+// removed here, and the folder is bounded by age.
 func projectStateDir(devDir, kind string, p *projectCtx) string {
+	h := coreapi.AgentHome(coreapi.AgentHomeRequest{Kind: kind, User: p.user, Project: p.project, Epoch: p.epoch})
 	root := filepath.Join(devDir, "proj")
-	name := fmt.Sprintf("%d-%d-e%d", p.user, p.project, p.epoch)
-	pruneProjectHomes(root, name, p)
-	return filepath.Join(root, name, kind)
+	pruneProjectHomes(root, h, p)
+	return filepath.Join(root, h.DirName, kind)
 }
 
-func pruneProjectHomes(root, keep string, p *projectCtx) {
+func pruneProjectHomes(root string, h coreapi.AgentHomeReply, p *projectCtx) {
 	ents, err := os.ReadDir(root)
 	if err != nil {
 		return
 	}
-	prefix := fmt.Sprintf("%d-%d-e", p.user, p.project)
 	type home struct {
 		name string
 		at   time.Time
@@ -1714,11 +1713,11 @@ func pruneProjectHomes(root, keep string, p *projectCtx) {
 	var live []home
 	for _, e := range ents {
 		n := e.Name()
-		if n == keep {
+		if n == h.DirName {
 			continue
 		}
-		if ep, ok := strings.CutPrefix(n, prefix); ok { // same user and project: another epoch
-			if v, err := strconv.ParseInt(ep, 10, 64); err == nil && v < p.epoch {
+		if ep, ok := strings.CutPrefix(n, h.Prefix); ok { // same user and project: another epoch
+			if v, err := strconv.ParseInt(ep, 10, 64); err == nil && v < h.Epoch {
 				os.RemoveAll(filepath.Join(root, n))
 				continue
 			}
@@ -1727,10 +1726,10 @@ func pruneProjectHomes(root, keep string, p *projectCtx) {
 			live = append(live, home{n, fi.ModTime()})
 		}
 	}
-	if len(live) >= maxProjectHomes {
+	if len(live) >= h.MaxHomes {
 		slices.SortFunc(live, func(a, b home) int { return a.at.Compare(b.at) })
-		for _, h := range live[:len(live)-maxProjectHomes+1] {
-			os.RemoveAll(filepath.Join(root, h.name))
+		for _, x := range live[:len(live)-h.MaxHomes+1] {
+			os.RemoveAll(filepath.Join(root, x.name))
 		}
 	}
 }

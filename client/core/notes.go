@@ -554,11 +554,11 @@ func (s *Store) ResolveForLink(ctx context.Context, p Principal, idOrSlug string
 
 // RunCap is the notes capability of one agent run (section 4). The gateway keeps it; the core checks it.
 type RunCap struct {
-	RunID     string
-	UserID    int64
-	DeviceID  string
-	ProjectID int64
-	Epoch     int64
+	RunID     string `json:"runId"`
+	UserID    int64  `json:"userId"`
+	DeviceID  string `json:"deviceId"`
+	ProjectID int64  `json:"projectId"`
+	Epoch     int64  `json:"epoch"`
 }
 
 // runScope authorizes a capability read: epoch unchanged, principal valid now, user a member of the run's

@@ -20,6 +20,7 @@ import (
 	"log"
 	"maps"
 	"minigw/core"
+	"minigw/coreapi"
 	"net"
 	"net/http"
 	"net/url"
@@ -551,7 +552,7 @@ type server struct {
 	core          *core.Store // 0.6.0 core (serve_core.go); nil = not opened (offline) or unusable (coreErr)
 	coreErr       error
 	coreHook      func(r *req, point string) // tests: pause a member operation after admission
-	usage         *usageRecorder             // usage events (serve_usage.go); nil = not started (offline, most tests)
+	api           *coreapi.API               // the core's request handler (serve_core.go); the usage recorder runs in it once openCore started it
 	quota         quotaState                 // quota and provider credit (serve_quota.go)
 }
 
@@ -646,6 +647,7 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	s := &server{cfg: c, cfgPath: cfgPath, cfgDir: cfgDir, claude: exe, admin: secret, key: k, log: log.New(out, "", log.LstdFlags), hub: newShareHub(),
 		sessions: sessionRegistry{m: map[string]string{}}, procs: make(chan struct{}, 6),
 		gwSlots: make(chan struct{}, 16), state: loadState(filepath.Join(cfgDir, "state.json"))}
+	s.api = s.newAPI()
 	cleanStaleTempRoots(tempBase())
 	s.state.prune(c.Devices)
 	switch {

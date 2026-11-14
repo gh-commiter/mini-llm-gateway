@@ -835,7 +835,7 @@ func TestDeviceRemovalIsDurableAndReconciledAtTheNextOpen(t *testing.T) {
 			if c, _ := loadServeConfig(path); len(c.Devices) != 0 {
 				t.Fatal("the device is still listed")
 			}
-			s.stopUsage()
+			s.api.StopRecorder()
 			s2 := restart(t, path)
 			e1, _ := s2.core.Epoch(t0)
 			if e1 <= e0 || len(pending(t, path)) != 0 {

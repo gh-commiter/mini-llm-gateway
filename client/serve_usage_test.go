@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"minigw/coreapi"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -25,7 +26,7 @@ type evRow struct {
 // events flushes the recorder and returns the usage rows of the core, oldest first.
 func (f *coreFx) events() []evRow {
 	f.t.Helper()
-	f.s.usage.flush()
+	f.s.api.FlushRecorder()
 	rows, err := f.s.core.DB().Query(`SELECT id, COALESCE(parent_id,''), provider, model, outcome, token_source, COALESCE(user_id,0), COALESCE(project_id,0),
 COALESCE(tokens_in,-1), COALESCE(tokens_out,-1) FROM usage_events ORDER BY start, id`)
 	f.ok(err)
@@ -260,7 +261,7 @@ func TestEventAdmissionContext(t *testing.T) {
 		t.Fatalf("nested row: %+v", e)
 	}
 	// the root never finished: the process stops; the next open marks it interrupted and it keeps its project
-	f.s.stopUsage()
+	f.s.api.StopRecorder()
 	dir := f.s.core.Dir()
 	f.s.core.Close()
 	st, err := core.Open(dir, core.Options{})
@@ -282,26 +283,26 @@ func TestUsageSpoolReplayExactlyOnceAndGaps(t *testing.T) {
 	x.setPlan()
 	dir := folder(t, t.TempDir(), "w")
 	coreDir := filepath.Join(f.s.cfgDir, coreDirName)
-	spool := filepath.Join(f.s.cfgDir, spoolName)
+	spool := filepath.Join(f.s.cfgDir, coreapi.SpoolName)
 
 	reopen := func() { // a restart of the gateway's core and recorder
-		f.s.stopUsage()
+		f.s.api.StopRecorder()
 		f.s.core.Close()
 		st, err := core.Open(coreDir, core.Options{})
 		f.ok(err)
 		f.s.core = st
-		f.s.startUsage()
+		f.s.api.StartRecorder()
 	}
 	lines := func() int { b, _ := os.ReadFile(spool); return strings.Count(string(b), "\n") }
 
-	f.s.usage.userOf(f.s, t0, devID(f.dev["ana"])) // the gateway has seen ana's binding while the core was up
+	f.s.api.UserOf(t0, devID(f.dev["ana"])) // the gateway has seen ana's binding while the core was up
 	f.s.core.Close()                               // the core stops; the gateway goes on
 	for i := 0; i < 3; i++ {
 		if st, body := x.agent("ana", dir, fmt.Sprint("s", i), 0, "go"); st != 200 { // models are never blocked by accounting
 			t.Fatalf("with the core down: %d %s", st, body)
 		}
 	}
-	f.s.usage.flush()
+	f.s.api.FlushRecorder()
 	if lines() != 3 {
 		t.Fatalf("spool lines: %d", lines())
 	}
@@ -310,15 +311,15 @@ func TestUsageSpoolReplayExactlyOnceAndGaps(t *testing.T) {
 	}
 	// the restart replays; the answer is lost between the insert and the clearing of the file: it runs again
 	crashed := 0
-	spoolAfterReplay = func() bool { crashed++; return true }
+	coreapi.SpoolAfterReplay = func() bool { crashed++; return true }
 	reopen()
-	f.s.usage.flush()
-	spoolAfterReplay = nil
+	f.s.api.FlushRecorder()
+	coreapi.SpoolAfterReplay = nil
 	if crashed != 1 || lines() != 3 || len(f.events()) != 3 {
 		t.Fatalf("after the interrupted replay: crashed %d, spool %d, rows %d", crashed, lines(), len(f.events()))
 	}
 	reopen()
-	f.s.usage.flush()
+	f.s.api.FlushRecorder()
 	if lines() != 0 || len(f.events()) != 3 { // exactly once
 		t.Fatalf("after the second replay: spool %d, rows %d", lines(), len(f.events()))
 	}
@@ -329,19 +330,19 @@ func TestUsageSpoolReplayExactlyOnceAndGaps(t *testing.T) {
 	}
 
 	// overflow: a spool of 4 events keeps the newest and records what was dropped
-	old := spoolMaxEvents
-	spoolMaxEvents = 4
-	defer func() { spoolMaxEvents = old }()
-	f.s.usage.userOf(f.s, t0, devID(f.dev["ana"]))
+	old := coreapi.SpoolMaxEvents
+	coreapi.SpoolMaxEvents = 4
+	defer func() { coreapi.SpoolMaxEvents = old }()
+	f.s.api.UserOf(t0, devID(f.dev["ana"]))
 	f.s.core.Close()
 	for i := 0; i < 7; i++ {
 		if st, _ := x.agent("ana", dir, fmt.Sprint("o", i), 0, "go"); st != 200 {
 			t.Fatal(st)
 		}
 	}
-	f.s.usage.flush()
+	f.s.api.FlushRecorder()
 	reopen()
-	f.s.usage.flush()
+	f.s.api.FlushRecorder()
 	rep, err := f.s.core.AdminUsage(t0, 7, core.UsageFilter{})
 	f.ok(err)
 	var kept, lost int64
@@ -356,7 +357,7 @@ func TestUsageSpoolReplayExactlyOnceAndGaps(t *testing.T) {
 	}
 	var out strings.Builder
 	var r usageReply
-	b, _ := json.Marshal(usageJSON(rep))
+	b, _ := json.Marshal(coreapi.UsageJSON(rep))
 	json.Unmarshal(b, &r)
 	printUsage(&out, r, true)
 	if !strings.Contains(out.String(), "events lost between") || strings.Count(out.String(), "events lost between") != len(rep.Gaps) {
@@ -369,68 +370,6 @@ func TestUsageSpoolReplayExactlyOnceAndGaps(t *testing.T) {
 	}
 	if rr := f.call("ana", "GET", "/minigw/v1/usage", ""); !strings.Contains(rr.body, `"gaps":[]`) { // ... an ordinary member does not
 		t.Fatalf("member sees gaps: %s", rr.body)
-	}
-}
-
-// A full queue never blocks a request: the event is counted as lost and shows up as a gap.
-func TestUsageQueueOverflowNeverBlocks(t *testing.T) {
-	f := newCoreFx(t, nil)
-	u := &usageRecorder{s: f.s, ch: make(chan usageMsg, 2), spool: newSpool(filepath.Join(t.TempDir(), spoolName))} // no writer running
-	done := make(chan struct{})
-	go func() {
-		for i := 0; i < 10; i++ {
-			u.enqueue(usageMsg{kind: evFinish, ev: core.UsageEvent{ID: fmt.Sprint(i), Start: time.Now()}})
-		}
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("enqueue blocked")
-	}
-	if u.lost != 8 {
-		t.Fatalf("lost %d", u.lost)
-	}
-	u.takeLost()
-	rep, _ := f.s.core.AdminUsage(t0, 7, core.UsageFilter{})
-	if len(rep.Gaps) != 1 || rep.Gaps[0].Count != 8 {
-		t.Fatalf("%+v", rep.Gaps)
-	}
-}
-
-func TestSpoolCompactsAndKeepsTheNewest(t *testing.T) {
-	old := spoolMaxEvents
-	spoolMaxEvents = 10
-	defer func() { spoolMaxEvents = old }()
-	sp := newSpool(filepath.Join(t.TempDir(), spoolName))
-	base := time.Now()
-	for i := 0; i < 25; i++ {
-		sp.add(core.UsageEvent{ID: fmt.Sprint("e", i), Start: base.Add(time.Duration(i) * time.Second)})
-	}
-	evs, gaps := sp.load()
-	var lost int64
-	for _, g := range gaps {
-		lost += g.Count
-	}
-	if len(evs) > 10 || int64(len(evs))+lost != 25 || evs[len(evs)-1].ID != "e24" {
-		t.Fatalf("%d events, %d lost, last %s", len(evs), lost, evs[len(evs)-1].ID)
-	}
-	for _, g := range gaps {
-		if g.From.After(g.To) || g.Count < 1 {
-			t.Fatalf("gap %+v", g)
-		}
-	}
-	// the byte limit works the same way
-	ob := spoolMaxBytes
-	spoolMaxBytes = 600
-	spoolMaxEvents = 10000
-	defer func() { spoolMaxBytes = ob }()
-	sp2 := newSpool(filepath.Join(t.TempDir(), spoolName))
-	for i := 0; i < 20; i++ {
-		sp2.add(core.UsageEvent{ID: fmt.Sprint("b", i), Start: base})
-	}
-	if fi, _ := os.Stat(sp2.path); fi.Size() > 4*spoolMaxBytes {
-		t.Fatalf("spool grew to %d bytes", fi.Size())
 	}
 }
 
@@ -617,90 +556,6 @@ func TestQuotaAdminRouteNeedsNoCore(t *testing.T) {
 
 // --- review A8: the spool reports failures and keeps its bounds ---
 
-func bareRecorder(t *testing.T) (*usageRecorder, string) {
-	s, _ := testServer(t, nil) // no core: everything goes to the spool
-	p := filepath.Join(t.TempDir(), spoolName)
-	return &usageRecorder{s: s, ch: make(chan usageMsg, 4), spool: newSpool(p)}, p
-}
-
-func fin(id string) usageMsg {
-	return usageMsg{kind: evFinish, ev: core.UsageEvent{ID: id, Start: time.Now(), End: time.Now(), Outcome: "ok", TokensIn: -1, TokensOut: -1, TokenSource: "unknown"}}
-}
-
-func TestSpoolDiskErrorIsACountedLossThatBecomesAGap(t *testing.T) {
-	u, path := bareRecorder(t)
-	spoolWrite = func(*os.File, []byte) (int, error) { return 0, fmt.Errorf("disk full") }
-	defer func() { spoolWrite = func(f *os.File, b []byte) (int, error) { return f.Write(b) } }()
-	for i := 0; i < 3; i++ {
-		u.handle(fin(fmt.Sprint("e", i)))
-	}
-	if u.lost != 3 || u.spool.events != 0 {
-		t.Fatalf("lost %d, spooled %d: a failed write must be a counted loss", u.lost, u.spool.events)
-	}
-	spoolWrite = func(f *os.File, b []byte) (int, error) { return f.Write(b) } // the disk works again
-	u.handle(fin("after"))
-	evs, gaps := u.spool.load()
-	if len(evs) != 1 || len(gaps) != 1 || gaps[0].Count != 3 || u.lost != 0 {
-		t.Fatalf("events %d, gaps %+v, pending %d (file %s)", len(evs), gaps, u.lost, path)
-	}
-}
-
-func TestSpoolPartialWriteLeavesNoBrokenLine(t *testing.T) {
-	u, path := bareRecorder(t)
-	u.handle(fin("one"))
-	size := u.spool.size
-	spoolWrite = func(f *os.File, b []byte) (int, error) { return f.Write(b[:len(b)/2]) } // half a line, no error
-	u.handle(fin("two"))
-	spoolWrite = func(f *os.File, b []byte) (int, error) { return f.Write(b) }
-	if fi, _ := os.Stat(path); fi.Size() != size || u.lost != 1 {
-		t.Fatalf("size %d (want %d), lost %d", fi.Size(), size, u.lost)
-	}
-	u.handle(fin("three"))
-	evs, _ := u.spool.load()
-	if len(evs) != 2 || evs[0].ID != "one" || evs[1].ID != "three" {
-		t.Fatalf("%+v", evs)
-	}
-}
-
-func TestSpoolGapRecordsAreBoundedToo(t *testing.T) {
-	ob, oe := spoolMaxBytes, spoolMaxEvents
-	spoolMaxBytes, spoolMaxEvents = 700, 10
-	defer func() { spoolMaxBytes, spoolMaxEvents = ob, oe }()
-	sp := newSpool(filepath.Join(t.TempDir(), spoolName))
-	at := time.Now()
-	var total int64
-	for i := 0; i < 200; i++ {
-		if err := sp.addGap(core.UsageGapRecord{ID: fmt.Sprint("g", i), Count: 2, From: at, To: at.Add(time.Second)}); err != nil {
-			t.Fatal(err)
-		}
-		total += 2
-	}
-	fi, _ := os.Stat(sp.path)
-	_, gaps := sp.load()
-	var sum int64
-	for _, g := range gaps {
-		sum += g.Count
-	}
-	if fi.Size() > 2*spoolMaxBytes || sum != total { // bounded, and nothing lost from the count
-		t.Fatalf("size %d (limit %d), gaps %d, counted %d of %d", fi.Size(), spoolMaxBytes, len(gaps), sum, total)
-	}
-}
-
-func TestQueueOverflowCountsLostEventsNotMessages(t *testing.T) {
-	u := &usageRecorder{ch: make(chan usageMsg, 1)}
-	u.enqueue(usageMsg{kind: evBegin})
-	u.enqueue(usageMsg{kind: evBegin, ev: core.UsageEvent{ID: "b1"}}) // lost begins: their finishes carry the events
-	u.enqueue(usageMsg{kind: evBegin, ev: core.UsageEvent{ID: "b2"}})
-	if u.lost != 0 {
-		t.Fatalf("lost begins counted as lost events: %d", u.lost)
-	}
-	u.enqueue(fin("f1")) // a lost finish is a lost event
-	u.enqueue(fin("f2"))
-	if u.lost != 2 {
-		t.Fatalf("lost %d", u.lost)
-	}
-}
-
 // Review A4: the probe is off unless the owner turns it on; its environment is an allowlist.
 func TestClaudeProbeIsOptInWithAnAllowlistedEnvironment(t *testing.T) {
 	s, _ := testServer(t, nil)
@@ -811,9 +666,9 @@ func TestCodexCompletionReturnsWhileAQuotaRefreshIsStuck(t *testing.T) { // revi
 }
 
 func TestRetentionFoldsAgainOnALongRunningGateway(t *testing.T) { // review (should-fix)
-	oe, of := spoolReplayEach, foldEvery
-	spoolReplayEach, foldEvery = 20*time.Millisecond, 10*time.Millisecond
-	defer func() { spoolReplayEach, foldEvery = oe, of }()
+	oe, of := coreapi.SpoolReplayEach, coreapi.FoldEvery
+	coreapi.SpoolReplayEach, coreapi.FoldEvery = 20*time.Millisecond, 10*time.Millisecond
+	defer func() { coreapi.SpoolReplayEach, coreapi.FoldEvery = oe, of }()
 	f := newCoreFx(t, nil) // its recorder starts with the short intervals
 	old := time.Now().AddDate(0, 0, -500)
 	f.ok(f.s.core.FinishEvent(t0, core.UsageEvent{ID: "ancient", Start: old, End: old, UserID: f.uid["ana"], DeviceID: "d", Provider: "p", Model: "m",

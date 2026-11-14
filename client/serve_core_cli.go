@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"minigw/coreapi"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -135,7 +136,7 @@ func coreCommand(a *adminClient, pos []string, o coreOpts) {
 		need(2, 4)
 		switch {
 		case pos[1] == "list" && len(pos) == 2:
-			var r struct{ Projects []projectJSON }
+			var r struct{ Projects []coreapi.ProjectJSON }
 			a.do("GET", "/projects", nil, &r)
 			for _, p := range r.Projects {
 				arch := ""
@@ -318,8 +319,8 @@ func coreRestore(cfgPath, file string, yes bool, in io.Reader) {
 
 // usageReply is the answer of the usage routes (member and admin).
 type usageReply struct {
-	Days []usageRowJSON
-	Gaps []usageGapJSON
+	Days []coreapi.UsageRowJSON
+	Gaps []coreapi.UsageGapJSON
 }
 
 // printUsage: one line per day, model and user, the totals (each event once; nested events are inside them), and

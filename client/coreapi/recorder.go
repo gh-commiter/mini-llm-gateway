@@ -1,0 +1,417 @@
+package coreapi
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"io"
+	"os"
+	"path/filepath"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"minigw/core"
+)
+
+// Usage events (contracts section 7) are written without ever blocking or slowing a request. A request only enqueues;
+// one writer goroutine stores events in the core and, when the core is not usable, appends them to a bounded spool
+// file that is replayed later.
+
+func randToken() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// writeFileAtomic: a new 0600 file in the same folder, fsync, rename.
+func writeFileAtomic(path string, data []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
+}
+
+// Limits of the spool (exported variables so that tests can lower them): at most this many events or bytes; the oldest
+// are dropped.
+var (
+	SpoolMaxEvents  = 10000
+	SpoolMaxBytes   = int64(10 << 20)
+	SpoolReplayEach = 30 * time.Second
+	FoldEvery       = 24 * time.Hour // retention: detail rows past 400 days become daily totals
+	usageQueue      = 4096
+)
+
+// SpoolName is the spool file in Options.Dir.
+const SpoolName = "usage.spool"
+
+type usageKind int
+
+const (
+	evBegin usageKind = iota
+	evFinish
+	evFlush
+)
+
+type recMsg struct {
+	kind  usageKind
+	ev    core.UsageEvent
+	flush chan struct{}
+}
+
+type Recorder struct {
+	api     *API
+	ch      chan recMsg
+	quit    chan struct{}
+	stopped chan struct{}
+	spool   *spool
+	lostMu  sync.Mutex
+	lost    int64
+	lostA   time.Time
+	lostB   time.Time
+	dropped atomic.Int64
+	once    sync.Once
+	bound   sync.Map // device id -> last user seen
+}
+
+// StartRecorder starts the usage recorder (always, also when the core is not usable: events then go to the spool).
+func (a *API) StartRecorder() {
+	u := &Recorder{api: a, ch: make(chan recMsg, usageQueue), quit: make(chan struct{}), stopped: make(chan struct{}),
+		spool: newSpool(filepath.Join(a.o.Dir, SpoolName))}
+	a.rec = u
+	go u.run()
+}
+
+// StopRecorder drains the queue and ends the writer (before the core is closed). Safe to call twice.
+func (a *API) StopRecorder() {
+	if u := a.rec; u != nil {
+		u.once.Do(func() { close(u.quit) })
+		<-u.stopped
+	}
+}
+
+// FlushRecorder waits until everything enqueued so far is processed (tests, shutdown).
+func (a *API) FlushRecorder() { a.rec.flush() }
+
+// enqueue never blocks: when the queue is full a lost FINISH is counted as a lost event (a lost begin whose finish is
+// stored loses nothing: the finish carries the whole event) and shows up as a gap.
+func (u *Recorder) enqueue(m recMsg) {
+	if u == nil {
+		return
+	}
+	select {
+	case u.ch <- m:
+	default:
+		if m.kind == evFinish {
+			u.noteLoss(1, m.ev.Start, time.Now())
+		}
+	}
+}
+
+// noteLoss keeps lost events in a small in-memory gap (count and time span) until it can be written.
+func (u *Recorder) noteLoss(n int64, from, to time.Time) {
+	u.lostMu.Lock()
+	defer u.lostMu.Unlock()
+	if u.lost == 0 || from.Before(u.lostA) {
+		u.lostA = from
+	}
+	if to.After(u.lostB) {
+		u.lostB = to
+	}
+	u.lost += n
+}
+
+// flush waits until everything enqueued so far is processed (tests, shutdown).
+func (u *Recorder) flush() {
+	if u == nil {
+		return
+	}
+	c := make(chan struct{})
+	u.ch <- recMsg{kind: evFlush, flush: c}
+	<-c
+}
+
+func (u *Recorder) run() {
+	defer close(u.stopped)
+	tick := time.NewTicker(SpoolReplayEach)
+	defer tick.Stop()
+	u.replay()
+	lastFold := time.Now() // core.Open folded at start
+	for {
+		select {
+		case m := <-u.ch:
+			u.handle(m)
+		case <-tick.C:
+			u.replay()
+			if st := u.api.store(); st != nil && time.Since(lastFold) >= FoldEvery { // a long-lived gateway folds daily
+				if _, err := st.FoldOldUsage(context.Background()); err == nil {
+					lastFold = time.Now()
+				}
+			}
+		case <-u.quit:
+			for {
+				select {
+				case m := <-u.ch:
+					u.handle(m)
+				default:
+					return
+				}
+			}
+		}
+	}
+}
+
+func (u *Recorder) handle(m recMsg) {
+	u.takeLost()
+	st := u.api.store()
+	ctx := context.Background()
+	switch m.kind {
+	case evFlush:
+		close(m.flush)
+	case evBegin:
+		if st != nil {
+			st.BeginEvent(ctx, m.ev) // a failure is fine: the finish carries the whole event
+		}
+	case evFinish:
+		if st != nil && u.spool.empty() && st.FinishEvent(ctx, m.ev) == nil {
+			return
+		}
+		if err := u.spool.add(m.ev); err != nil { // the core is down and the disk does not take it: a counted loss, never silent
+			u.noteLoss(1, m.ev.Start, m.ev.End)
+		}
+		u.replay()
+	}
+}
+
+// takeLost turns the pending losses into a gap record (stored in the core, or in the spool). If neither works the
+// loss stays pending in memory and is tried again with the next message or tick.
+func (u *Recorder) takeLost() {
+	u.lostMu.Lock()
+	n, a, b := u.lost, u.lostA, u.lostB
+	u.lost = 0
+	u.lostMu.Unlock()
+	if n == 0 {
+		return
+	}
+	g := core.UsageGapRecord{ID: "gap_" + randToken()[:12], Count: n, From: a, To: b}
+	if st := u.api.store(); st != nil && st.ReplayUsage(context.Background(), nil, []core.UsageGapRecord{g}) == nil {
+		return
+	}
+	if u.spool.addGap(g) != nil {
+		u.noteLoss(n, a, b)
+	}
+}
+
+// replay moves the spool into the core; the file is cleared only after the core accepted everything, and a replay
+// that is interrupted in between simply runs again (the core ignores what it already has).
+func (u *Recorder) replay() {
+	st := u.api.store()
+	if st == nil || u.spool.empty() {
+		return
+	}
+	evs, gaps := u.spool.load()
+	if err := st.ReplayUsage(context.Background(), evs, gaps); err != nil {
+		return
+	}
+	if SpoolAfterReplay != nil && SpoolAfterReplay() { // tests: the process dies here
+		return
+	}
+	u.spool.clear()
+}
+
+// SpoolAfterReplay: test hook between the insert and the clearing of the file; true = stop (simulated crash).
+var SpoolAfterReplay func() bool
+
+// --- the spool file: JSON lines, append only, private like the rest of the config folder ---
+
+type spoolLine struct {
+	T     string               `json:"t"` // event or gap
+	Event *core.UsageEvent     `json:"e,omitempty"`
+	Gap   *core.UsageGapRecord `json:"g,omitempty"`
+}
+
+type spool struct {
+	path   string
+	events int
+	size   int64
+}
+
+func newSpool(path string) *spool {
+	sp := &spool{path: path}
+	evs, _ := sp.load()
+	sp.events = len(evs)
+	if fi, err := os.Stat(path); err == nil {
+		sp.size = fi.Size()
+	}
+	return sp
+}
+
+func (sp *spool) empty() bool { return sp.events == 0 && sp.size == 0 }
+
+func (sp *spool) readLines() (out []spoolLine) {
+	b, err := os.ReadFile(sp.path)
+	if err != nil {
+		return nil
+	}
+	for _, l := range bytes.Split(b, []byte("\n")) {
+		var x spoolLine
+		if len(l) > 0 && json.Unmarshal(l, &x) == nil {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+func (sp *spool) load() (evs []core.UsageEvent, gaps []core.UsageGapRecord) {
+	for _, l := range sp.readLines() {
+		switch {
+		case l.T == "event" && l.Event != nil:
+			evs = append(evs, *l.Event)
+		case l.T == "gap" && l.Gap != nil:
+			gaps = append(gaps, *l.Gap)
+		}
+	}
+	return
+}
+
+// appendLine appends one line; it reports every failure. A short write is cut back so that the next line starts clean.
+func (sp *spool) appendLine(l spoolLine) error {
+	b, _ := json.Marshal(l)
+	b = append(b, '\n')
+	if err := os.MkdirAll(filepath.Dir(sp.path), 0o700); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(sp.path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+	if err != nil {
+		return err
+	}
+	n, werr := SpoolWrite(f, b)
+	if werr != nil || n < len(b) {
+		f.Truncate(sp.size)
+		f.Close()
+		if werr == nil {
+			werr = io.ErrShortWrite
+		}
+		return werr
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	sp.size += int64(n)
+	return nil
+}
+
+// SpoolWrite: tests make the disk fail.
+var SpoolWrite = func(f *os.File, b []byte) (int, error) { return f.Write(b) }
+
+func (sp *spool) add(e core.UsageEvent) error {
+	if err := sp.appendLine(spoolLine{T: "event", Event: &e}); err != nil {
+		return err
+	}
+	sp.events++
+	sp.bound()
+	return nil
+}
+
+func (sp *spool) addGap(g core.UsageGapRecord) error {
+	if err := sp.appendLine(spoolLine{T: "gap", Gap: &g}); err != nil {
+		return err
+	}
+	sp.bound()
+	return nil
+}
+
+// bound enforces both limits after every append, gap records included.
+func (sp *spool) bound() {
+	if sp.events > SpoolMaxEvents || sp.size > SpoolMaxBytes {
+		sp.compact()
+	}
+}
+
+// compact drops the oldest events until the spool is at 90% of both limits, and writes one gap record for them
+// (count and time span).
+func (sp *spool) compact() {
+	lines := sp.readLines()
+	enc := make([][]byte, len(lines))
+	var evIdx []int
+	var total int64
+	for i, l := range lines {
+		enc[i], _ = json.Marshal(l)
+		total += int64(len(enc[i]) + 1)
+		if l.T == "event" {
+			evIdx = append(evIdx, i)
+		}
+	}
+	keepEvents, keepBytes := max(1, SpoolMaxEvents*9/10), SpoolMaxBytes*9/10
+	drop, left := 0, len(evIdx)
+	for drop < len(evIdx) && (left > keepEvents || total > keepBytes || drop == 0 && sp.events > SpoolMaxEvents) {
+		total -= int64(len(enc[evIdx[drop]]) + 1)
+		drop++
+		left--
+	}
+	gapLines := 0
+	for _, l := range lines {
+		if l.T == "gap" {
+			gapLines++
+		}
+	}
+	if drop == 0 && gapLines < 2 {
+		return
+	}
+	merged := core.UsageGapRecord{ID: "gap_" + randToken()[:12], Count: int64(drop)}
+	cut := map[int]bool{}
+	for _, i := range evIdx[:drop] {
+		cut[i] = true
+		st := lines[i].Event.Start
+		if merged.From.IsZero() || st.Before(merged.From) {
+			merged.From = st
+		}
+		if st.After(merged.To) {
+			merged.To = st
+		}
+	}
+	for i, l := range lines { // earlier gaps of this spool fold into the new one: one record, never a growing list
+		if l.T == "gap" && l.Gap != nil {
+			cut[i] = true
+			merged.Count += l.Gap.Count
+			if merged.From.IsZero() || l.Gap.From.Before(merged.From) {
+				merged.From = l.Gap.From
+			}
+			if l.Gap.To.After(merged.To) {
+				merged.To = l.Gap.To
+			}
+		}
+	}
+	var b bytes.Buffer
+	for i := range lines {
+		if !cut[i] {
+			b.Write(append(enc[i], '\n'))
+		}
+	}
+	g, _ := json.Marshal(spoolLine{T: "gap", Gap: &merged})
+	b.Write(append(g, '\n'))
+	if writeFileAtomic(sp.path, b.Bytes()) == nil {
+		sp.events -= drop
+		sp.size = int64(b.Len())
+	}
+}
+
+func (sp *spool) clear() {
+	if writeFileAtomic(sp.path, nil) == nil {
+		sp.events, sp.size = 0, 0
+	}
+}

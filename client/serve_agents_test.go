@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"minigw/coreapi"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -808,13 +809,13 @@ func TestAgentHomeIsPerUserProjectAndEpoch(t *testing.T) {
 	if _, err := os.Stat(home(&projectCtx{user: 1, project: 11, epoch: 5})); err != nil {
 		t.Error("another project's home was removed")
 	}
-	// bounded: many projects keep at most maxProjectHomes
-	for i := 0; i < 2*maxProjectHomes; i++ {
+	// bounded: many projects keep at most coreapi.AgentHome(coreapi.AgentHomeRequest{Kind: "codex"}).MaxHomes
+	for i := 0; i < 2*coreapi.AgentHome(coreapi.AgentHomeRequest{Kind: "codex"}).MaxHomes; i++ {
 		home(&projectCtx{user: 1, project: int64(100 + i), epoch: 1})
 	}
 	devDir := filepath.Dir(filepath.Dir(legacy))
 	ents, _ := os.ReadDir(filepath.Join(devDir, filepath.Base(filepath.Dir(legacy)), "proj"))
-	if len(ents) > maxProjectHomes {
+	if len(ents) > coreapi.AgentHome(coreapi.AgentHomeRequest{Kind: "codex"}).MaxHomes {
 		t.Fatalf("%d project homes", len(ents))
 	}
 }
