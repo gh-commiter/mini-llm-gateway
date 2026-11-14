@@ -81,6 +81,11 @@ type serveConfig struct {
 
 	// N4: trajni ID te namestitve prehoda (datoteka lastnika v Scratch; ensureInstance)
 	Instance string `json:"instance,omitempty"`
+
+	// 0.6.0 (review A7): devices removed from the list whose core epoch bump is not done yet (offline removal, core
+	// unavailable, failed write). Written in the same update that removes the device; cleared after the bump; the
+	// next core open does the bump before the project routes are enabled.
+	PendingRevocations []string `json:"pendingRevocations,omitempty"`
 }
 
 // folderRecord: the final path and identity of an allowed folder: a stable volume id (Linux statfs f_fsid, Windows volume
@@ -1015,6 +1020,7 @@ func (s *server) update(f func(*serveConfig) error, commit ...func()) error {
 	clone := func(c serveConfig) serveConfig {
 		c.Devices = slices.Clone(c.Devices)
 		c.Gateways = slices.Clone(c.Gateways)
+		c.PendingRevocations = slices.Clone(c.PendingRevocations)
 		for i := range c.Gateways {
 			c.Gateways[i].Models = slices.Clone(c.Gateways[i].Models) // nil ostane nil (vsi modeli)
 		}

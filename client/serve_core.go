@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os/user"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -30,6 +31,9 @@ func (s *server) openCore() {
 	st, err := core.Open(filepath.Join(s.cfgDir, coreDirName), core.Options{ProtectDir: protectDir})
 	if err == nil {
 		err = ensureOwnerUser(st)
+		if err == nil {
+			err = s.reconcileRevocations(st) // before the project routes are enabled
+		}
 		if err != nil {
 			st.Close()
 		}
@@ -344,4 +348,23 @@ func (s *server) noteRoute(w http.ResponseWriter, r *req, p core.Principal, pid 
 		return 204
 	}
 	return notFound()
+}
+
+// clearRevocation removes a device id from the pending list once its epoch bump is done.
+func (s *server) clearRevocation(id string) {
+	s.update(func(c *serveConfig) error {
+		c.PendingRevocations = slices.DeleteFunc(c.PendingRevocations, func(x string) bool { return x == id })
+		return nil
+	})
+}
+
+// reconcileRevocations does the epoch bumps that a device removal could not (A7): offline, core unavailable, failed write.
+func (s *server) reconcileRevocations(st *core.Store) error {
+	for _, id := range s.conf().PendingRevocations {
+		if err := st.DeviceRevoked(context.Background(), id); err != nil {
+			return err
+		}
+		s.clearRevocation(id)
+	}
+	return nil
 }

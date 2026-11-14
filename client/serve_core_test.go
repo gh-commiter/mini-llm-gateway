@@ -756,3 +756,91 @@ func TestCoreVisibilityBeforePayloadChecks(t *testing.T) { // review A6
 		}
 	}
 }
+
+// Review A7: a device removal is durable (a pending mark next to the device list) whatever the core is doing, and the
+// next core open does the epoch bump before the project routes are enabled.
+func TestDeviceRemovalIsDurableAndReconciledAtTheNextOpen(t *testing.T) {
+	dev := newDevice("gone")
+	id := devID(dev)
+	newSrv := func(t *testing.T) *server {
+		s, _ := testServer(t, func(c *serveConfig) { c.Devices = []serveDevice{{ID: id, Name: "gone"}} })
+		return s
+	}
+	restart := func(t *testing.T, path string) *server {
+		c, err := loadServeConfig(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s, err := newServer(c, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.log.SetOutput(io.Discard)
+		s.openCore()
+		t.Cleanup(s.closeCore)
+		if s.core == nil {
+			t.Fatal(s.coreErr)
+		}
+		return s
+	}
+	pending := func(t *testing.T, path string) []string {
+		c, err := loadServeConfig(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c.PendingRevocations
+	}
+	for _, name := range []string{"offline (minigw gw without a gateway)", "core unavailable", "epoch write fails"} {
+		t.Run(name, func(t *testing.T) {
+			s := newSrv(t)
+			path := s.cfgPath
+			base := restart(t, path) // creates the core; its epoch is the one to beat
+			e0, _ := base.core.Epoch(t0)
+			var st int
+			var body string
+			del := func(x *server) {
+				code, obj := x.adminDo("DELETE", "/devices/"+id, nil)
+				st, body = code, fmt.Sprint(obj)
+			}
+			switch name {
+			case "core unavailable": // another process holds the core: this gateway runs without it
+				s.openCore()
+				if s.core != nil {
+					t.Fatal("the core opened")
+				}
+				del(s)
+				base.closeCore()
+			case "epoch write fails":
+				base.closeCore()
+				s.openCore()
+				if s.core == nil {
+					t.Fatal(s.coreErr)
+				}
+				s.core.Close() // every write now fails
+				del(s)
+			default:
+				base.closeCore()
+				off, err := offlineServer(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				del(off)
+			}
+			if want := map[bool]int{true: 500, false: 200}[name == "epoch write fails"]; st != want {
+				t.Fatalf("%d %s", st, body)
+			}
+			if got := pending(t, path); len(got) != 1 || got[0] != id { // durable before the call answered
+				t.Fatalf("pending revocations: %v", got)
+			}
+			if c, _ := loadServeConfig(path); len(c.Devices) != 0 {
+				t.Fatal("the device is still listed")
+			}
+			s.stopUsage()
+			s2 := restart(t, path)
+			e1, _ := s2.core.Epoch(t0)
+			if e1 <= e0 || len(pending(t, path)) != 0 {
+				t.Fatalf("epoch %d -> %d, pending %v", e0, e1, pending(t, path))
+			}
+		})
+	}
+}

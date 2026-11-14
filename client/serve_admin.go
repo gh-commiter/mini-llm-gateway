@@ -463,16 +463,22 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			}
 			gone = c.Devices[i]
 			c.Devices = slices.Delete(c.Devices, i, i+1)
+			if !slices.Contains(c.PendingRevocations, gone.ID) { // durable before this call answers (A7)
+				c.PendingRevocations = append(c.PendingRevocations, gone.ID)
+			}
 			return nil
 		})
 		if err != nil {
 			return fail(404, "no allowed or waiting device with the ID "+arg+" (minigw gw devices lists the IDs)")
 		}
-		if s.core != nil { // the epoch grows before this call answers; the binding stays (a re-approved device is still bound)
+		// With a live core the epoch goes up now and the mark is cleared; otherwise (offline, core unavailable, a failed
+		// write) the mark stays and the next core open does it before any project route is enabled.
+		if s.core != nil {
 			if err := s.core.DeviceRevoked(context.Background(), gone.ID); err != nil {
-				s.log.Printf("core: DeviceRevoked %s: %v", gone.ID, err)
-				return fail(500, "the device was removed, but the core epoch could not be raised: "+err.Error())
+				s.log.Printf("core: DeviceRevoked %s: %v (recorded, retried at the next core open)", gone.ID, err)
+				return fail(500, "the device was removed and its revocation is recorded, but the core epoch could not be raised yet: "+err.Error())
 			}
+			s.clearRevocation(gone.ID)
 		}
 		return 200, map[string]any{"device": apiDevice{ID: gone.ID, Name: gone.Name}}
 	case "PATCH devices/{}": // preimenovanje dovoljene naprave (ime je le oznaka)
