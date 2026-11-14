@@ -8,8 +8,8 @@
 - Security (#82, shared folder, both clients): reads, writes, moves, copies and deletes of the shared folder through WebDAV and sync go through a pinned folder handle (`os.Root`), so a parent folder swapped for a link during an operation cannot lead out of the share or into a protected path (`.git`, `.claude/settings.json`, ...). Links and Windows junctions inside the share (also with an absolute target) keep working; links that leave it, for example to a network path (UNC) or another drive, are refused.
 - Fixed (#88, Mac app): the allowed folders are checked on every run (recorded final path, owner, a real folder when it was missing), for Claude CLI, Codex, Grok, Copilot and native access.
 - Fixed (#91, #93, `minigw serve`): the same checks on Windows and Linux; a mapped drive keeps its drive name (Claude Code blocks the network path behind it), and a drive that is not attached is kept and used again only when it is a real folder of the user.
-- Fixed (#87, Windows gateway): Codex gets its own `CODEX_HOME`, so it finds its sign-in.
-- Fixed (#95, Windows gateway): when the gateway runs elevated, the owner of its settings and Scratch folders is the user, not the administrators group.
+- Fixed (#87, Windows gateway): `CODEX_HOME` is passed on to Codex.
+- Fixed (#95, Windows gateway): when the gateway runs elevated, the token owner is set to the user.
 - Fixed (#90, Windows gateway): a refused Scratch move leaves no half-created folder behind.
 - Fixed (#89, both clients): `minigw share add` of another name of an already shared folder (same folder, for example a link) keeps one entry.
 - Security (#92, Linux gateway): Copilot's keyring is only reached through a `unix:path=` session bus address.
