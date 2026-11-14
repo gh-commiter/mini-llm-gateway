@@ -538,6 +538,9 @@ public final class Router: Sendable {
 
     /// Vgnezdena zahteva (AgentRun): pravila verige, nato v izvajanju klicatelja (ista mapa, isti klon; konča ga klicatelj).
     func syncRun(agent: String, rid: String, writer: ResponseWriter, _ run: () async -> Int) async -> Int {
+        if core != nil, let why = RouterConfig.coreLinkProblem() {  // 0.6.0 (#106): every agent run, any kind
+            return await error(403, "permission_error", "\(Self.agentNames[agent] ?? agent) cannot run: \(why)", rid: rid, writer: writer)
+        }
         if let p = AgentRun.current {
             if let why = AgentRun.refusal(agent) { return await error(403, "permission_error", why, rid: rid, writer: writer) }
             let status = await ShareHub.$run.withValue(p.runID) { await ShareHub.$agent.withValue(agent) { await run() } }

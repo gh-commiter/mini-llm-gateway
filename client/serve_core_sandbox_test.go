@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"minigw/core"
 	"minigw/coreapi"
 	"os"
 	"path/filepath"
@@ -365,3 +367,41 @@ func TestBackupOnlyIntoTheProtectedFolder(t *testing.T) {
 }
 
 func s0cfg(f *coreFx) string { return f.s.cfgDir }
+
+// A4 (#106 S3): a hard link to a core file from another folder is the same inode under another name and bypasses every
+// deny by path (also the sandbox of a sandboxed agent). The core refuses to open, and every launch is refused.
+func TestHardLinkedCoreFileRefusesOpenAndLaunch(t *testing.T) {
+	s, _ := testServer(t, func(c *serveConfig) { c.Codex.Enabled = true })
+	dir := filepath.Join(s.cfgDir, coreDirName)
+	s.openCore() // a clean open first: a regular core has one name per file
+	if s.core == nil {
+		t.Fatal(s.coreErr)
+	}
+	if why := s.coreRefusal(s.conf(), "codex"); why != "" {
+		t.Fatalf("refused without a link: %s", why)
+	}
+	s.closeCore()
+	work := t.TempDir()
+	alias := filepath.Join(work, "notes.db")
+	if err := os.Link(filepath.Join(dir, "core.db"), alias); err != nil {
+		t.Fatalf("cannot make a hard link in the temp folder: %v", err)
+	}
+	// the launch check (the core is open in the gateway: simulated by the data on disk and an open handle)
+	if why := s.coreRefusal(s.conf(), "codex"); !strings.Contains(why, "names") || !strings.Contains(why, "remove the other link") {
+		t.Fatalf("launch with a hard link: %q", why)
+	}
+	st, err := core.Open(dir, core.Options{})
+	if err == nil {
+		st.Close()
+		t.Fatal("the core opened although core.db has another name")
+	}
+	if !errors.Is(err, core.ErrHardLinked) {
+		t.Fatalf("error: %v", err)
+	}
+	os.Remove(alias)
+	st, err = core.Open(dir, core.Options{})
+	if err != nil {
+		t.Fatalf("after removing the link: %v", err)
+	}
+	st.Close()
+}

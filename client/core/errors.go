@@ -8,9 +8,10 @@ import (
 
 // Errors of the policy layer; the HTTP layer maps them one to one (section 6 of the contracts).
 var (
-	ErrNoProjectAccess = errors.New("no project access") // 403 no_project_access; wrapped detail is for the log only
-	ErrNotFound        = errors.New("not found")         // 404 (missing or not visible)
-	ErrForbidden       = errors.New("forbidden")         // 403 forbidden
+	ErrHardLinked      = errors.New("a core file has more than one name") // the core refuses to open (#106)
+	ErrNoProjectAccess = errors.New("no project access")                  // 403 no_project_access; wrapped detail is for the log only
+	ErrNotFound        = errors.New("not found")                          // 404 (missing or not visible)
+	ErrForbidden       = errors.New("forbidden")                          // 403 forbidden
 	ErrArchived        = errors.New("project is archived")
 	ErrIdempotency     = errors.New("idempotency key used with another payload") // 409 idempotency_conflict
 	ErrTooLarge        = errors.New("too large")                                 // 413

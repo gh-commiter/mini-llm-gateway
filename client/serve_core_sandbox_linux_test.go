@@ -71,3 +71,43 @@ echo end`
 		}
 	}
 }
+
+// A hard link from an allowed folder to core.db: bwrap masks the config folder by path, the alias is the same inode
+// in a folder that is bound, so THE SANDBOX ALONE DOES NOT STOP IT (asserted below as the control). What stops it is the
+// core: it refuses to open while a core file has a name outside the core folder, and every launch is refused.
+func TestBwrapAloneDoesNotStopAHardLinkSoTheCoreRefuses(t *testing.T) {
+	s, _ := testServer(t, func(c *serveConfig) { c.Codex.Enabled = true })
+	if bwrapReady(s.cfgDir) == "" {
+		t.Fatal("bwrap is not available: this test needs it (the release gate runs in a container where it works)")
+	}
+	core := filepath.Join(s.cfgDir, coreDirName)
+	if err := os.MkdirAll(core, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(core, "core.db"), []byte("SECRET-NOTES"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	work := realOf(t, t.TempDir())
+	if err := os.Link(filepath.Join(core, "core.db"), filepath.Join(work, "alias.db")); err != nil {
+		t.Fatal(err)
+	}
+	name, args, done, err := agentWrap("/bin/sh", []string{"-c", `cat "$W/alias.db"`}, agentMounts{cfgDir: s.cfgDir, rw: []string{work}, cwd: work})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer done()
+	cmd := exec.Command(name, args...)
+	cmd.Env = append(os.Environ(), "W="+work)
+	out, _ := cmd.CombinedOutput()
+	if !strings.Contains(string(out), "SECRET-NOTES") {
+		t.Logf("bwrap stopped the alias by itself (more than expected): %q", out) // not a failure: the core still refuses
+	}
+	s.openCore()
+	if s.core != nil {
+		s.closeCore()
+		t.Fatal("the core opened although core.db has a second name")
+	}
+	if why := s.coreRefusal(s.conf(), "codex"); !strings.Contains(why, "remove the other link") {
+		t.Fatalf("launch: %q", why)
+	}
+}

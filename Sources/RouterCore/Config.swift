@@ -220,6 +220,26 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         return out.filter { seen.insert($0).inserted }
     }
 
+    /// 0.6.0 (#106, S3): a hard link to a core file from another folder is the same inode under another name and bypasses
+    /// every deny by path. The helper refuses to open such a store (Go `core.CheckLinks`); this is the cheap stat before each
+    /// agent run for links made while the helper runs. nil = none; names inside the folder (a restore snapshot) are no alias.
+    public static func coreLinkProblem(store: URL = CoreHelper.defaultStore) -> String? {
+        let fm = FileManager.default
+        var files: [(path: String, links: UInt64, id: String)] = []
+        var inside: [String: UInt64] = [:]
+        for dir in [store, store.appendingPathComponent("backups", isDirectory: true)] {
+            for n in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] {
+                let p = dir.appendingPathComponent(n).path
+                var st = stat()
+                guard lstat(p, &st) == 0, st.st_mode & S_IFMT == S_IFREG else { continue }
+                let id = "\(st.st_dev):\(st.st_ino)"
+                files.append((p, UInt64(st.st_nlink), id)); inside[id, default: 0] += 1
+            }
+        }
+        guard let bad = files.first(where: { $0.links > inside[$0.id, default: 0] }) else { return nil }
+        return "\(bad.path) has another name outside the core folder (a hard link to it exists elsewhere, and an agent could read the notes through that name): remove the other link"
+    }
+
     /// An allowed folder that contains the app's data folder or is inside it (agents would reach the core database).
     public static func overlapsCoreFolder(_ root: String) -> Bool {
         [GatewayHistory.defaultFile.deletingLastPathComponent(), CoreHelper.defaultStore].contains { overlapsScratch(root, scratch: $0) }

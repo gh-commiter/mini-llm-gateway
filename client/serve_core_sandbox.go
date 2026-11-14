@@ -8,6 +8,7 @@ package main
 // applied (runAgent, the Claude launch).
 
 import (
+	"minigw/core"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -77,7 +78,17 @@ func (s *server) coreDataOnDisk() string {
 // coreRefusal: the run of this agent kind is refused at launch ("" = it may run): the kind would read the core folder,
 // the folder holds data or the core is open, and the owner has not accepted that.
 func (s *server) coreRefusal(c serveConfig, kind string) string {
-	if c.AcceptAgentsReadNotes || !s.agentReadsCore(c, kind) {
+	exposed := s.agentReadsCore(c, kind)
+	if !exposed || !c.AcceptAgentsReadNotes {
+		// a hard link to a core file somewhere else bypasses every deny by path (also the sandbox of a sandboxed agent):
+		// no run while one exists (a cheap stat of the core folder's files)
+		if dir := s.coreDataOnDisk(); dir != "" {
+			if err := core.CheckLinks(dir); err != nil {
+				return agentNames[kind] + " cannot run on this gateway: " + err.Error()
+			}
+		}
+	}
+	if c.AcceptAgentsReadNotes || !exposed {
 		return ""
 	}
 	if dir := s.coreDataOnDisk(); dir != "" && s.core == nil {

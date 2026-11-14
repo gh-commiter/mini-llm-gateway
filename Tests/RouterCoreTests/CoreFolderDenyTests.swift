@@ -55,6 +55,20 @@ private func run(_ exe: String, _ args: [String], timeout: Double = 60) -> (stat
     #expect(RouterConfig.coreDenied().contains { $0.hasSuffix("/Mini Gateway/core") } && RouterConfig.coreDenied().contains { $0.hasSuffix("/Mini Gateway") })
 }
 
+/// A3 (S3): the backup folder is <core>/backups, inside every deny of the core folder (Seatbelt, Codex profile, Claude rules).
+@Test func backupFolderIsInsideTheCoreDeny() throws {
+    let backups = CoreHelper.defaultStore.appendingPathComponent("backups/core-1.db").path
+    for list in [RouterConfig.coreDenied(), RouterConfig.agentDenied(kind: "codex", scratch: nil), RouterConfig.hiddenScratch(nil)] {
+        #expect(list.contains { backups == $0 || backups.hasPrefix($0 + "/") }, "\(backups) not covered by \(list)")
+    }
+    let f = try Fixture(); defer { f.cleanup() }
+    let b = f.core.appendingPathComponent("backups"); try FileManager.default.createDirectory(at: b, withIntermediateDirectories: true)
+    try Data("SECRET-NOTES".utf8).write(to: b.appendingPathComponent("core-1.db"))
+    let profile = try #require(Native.sandboxProfile(dir: f.work.path, home: f.base.path, network: true, hidden: f.denied, writable: []))
+    let r = run("/usr/bin/sandbox-exec", ["-p", profile, "/bin/cat", b.path + "/core-1.db"])
+    #expect(r.status != 0 && !r.out.contains("SECRET-NOTES"), "\(r)")
+}
+
 @Test func allowedFolderContainingTheCoreIsRefused() throws {
     let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
     for p in [appSupport.path, appSupport.appendingPathComponent("Mini Gateway").path, CoreHelper.defaultStore.path, NSHomeDirectory() + "/Library", "/"] {
@@ -153,6 +167,19 @@ private func profileConfig(_ a: [String]) -> [String] {
         }
     }
     #expect(under(["/bin/sh", "-c", "echo x > '\(f.core.path)/new'"]).status != 0 && !FileManager.default.fileExists(atPath: f.core.path + "/new"))
+    // A hard link from an allowed folder is the same inode under another name: the Seatbelt profile (path based) does not
+    // see it. THE SANDBOX ALONE DOES NOT STOP IT; the core refuses to open (Go) and every run is refused (Swift check below).
+    let alias = f.work.appendingPathComponent("alias.db")
+    try FileManager.default.linkItem(at: f.core.appendingPathComponent("core.db"), to: alias)
+    let viaAlias = under(["/bin/cat", alias.path])
+    #expect(viaAlias.status == 0 && viaAlias.out.contains("SECRET-NOTES"), "the sandbox alone stops a hard link (more than expected): \(viaAlias)")
+    let problem = try #require(RouterConfig.coreLinkProblem(store: f.core))
+    #expect(problem.contains("core.db") && problem.contains("remove the other link"))
+    try FileManager.default.removeItem(at: alias)
+    #expect(RouterConfig.coreLinkProblem(store: f.core) == nil)
+    // a name inside the folder (a snapshot of a restore) is no alias
+    try FileManager.default.linkItem(at: f.core.appendingPathComponent("core.db"), to: f.core.appendingPathComponent("snapshot.db"))
+    #expect(RouterConfig.coreLinkProblem(store: f.core) == nil)
     // the profile itself, built with the real home, also covers Application Support (the folder the core lives in)
     let own = try #require(Native.sandboxProfile(dir: f.work.path, network: true, hidden: RouterConfig.hiddenScratch(nil), writable: []))
     for d in RouterConfig.coreDenied() { #expect(own.contains("\"\(d)\""), "\(d)") }
