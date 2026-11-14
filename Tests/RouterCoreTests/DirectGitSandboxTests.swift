@@ -123,6 +123,7 @@ private struct Repo {
     let git = base.appendingPathComponent(".git")
     for d in ["modules/sub/hooks", "modules/sub/info"] { try fm.createDirectory(at: git.appendingPathComponent(d), withIntermediateDirectories: true) }
     try Data("c".utf8).write(to: git.appendingPathComponent("modules/sub/config"))
+    try Data("ref: refs/heads/x".utf8).write(to: git.appendingPathComponent("modules/sub/HEAD"))
     try fm.createDirectory(at: base.appendingPathComponent("a/b/.git/hooks"), withIntermediateDirectories: true)
     var local = ClaudeCLIConfig(); local.allowLocalTools = true
     let a = local.agentArgs(cwd: base, allTools: [], folders: AllowedFolders(), checkedPaths: [])

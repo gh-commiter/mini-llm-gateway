@@ -362,7 +362,7 @@ public enum Native {
             + (visible.flatMap { writable.contains($0) ? "(allow file-write*" + rules("subpath", [$0]) + ")\n" : nil } ?? "")
             + "(deny file-write*" + rules("subpath", [dir + "/.git"] + denies.paths)
             // tudi ugnezdeni repozitoriji (nastavitve in hooki zunanjega git); ».git« sam ne (preimenovanje, zamenjava z datoteko gitdir)
-            + " (regex #\"/\\.git/(config|config\\.worktree|hooks|info|commondir|worktrees|modules/.*/(config|config\\.worktree|hooks|info))(/|$)\") (regex #\"/\\.git$\")"
+            + " (regex #\"/\\.git/(config|config\\.worktree|hooks|info|commondir|worktrees|modules/.*/(config|config\\.worktree|hooks|info|commondir|worktrees))(/|$)\") (regex #\"/\\.git$\")"
             // #113: the rules above check the two paths of a rename, not the folders above them (`mv n/.git/modules n/m`, write m/sub/config, move back)
             + " (regex #\"/\\.git/modules(/[^/]+)?$\")"
             + denies.regexes.map { " (regex #\"" + $0.replacingOccurrences(of: "\"", with: "\\\"") + "\")" }.joined() + ")\n"
