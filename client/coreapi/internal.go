@@ -261,6 +261,7 @@ func (a *API) internal(ctx context.Context, r Request) Response {
 		}
 		if a.rec != nil {
 			a.rec.noteLoss(in.Count, in.From, in.To)
+			a.rec.kick() // a gap that arrives alone (the app quit with events queued) is stored now
 		}
 		return Response{Status: 202, Header: http.Header{"Content-Type": {"application/json"}}, Body: []byte(`{"queued":true}`)}
 	}

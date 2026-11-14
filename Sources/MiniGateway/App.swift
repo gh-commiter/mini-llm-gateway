@@ -144,6 +144,7 @@ final class AppState: ObservableObject {
                 self.config.save()
             }
         }
+        UsageLoss.attach(file: Self.logsFile.deletingLastPathComponent().appendingPathComponent("usage-lost.json"))  // events lost with the app: a gap at the next ready
         ShareHub.cleanupStale()
         do { try CoreHelper.prepareStoreFolder(CoreHelper.defaultStore); core.start() } catch {
             log.error("core folder: \(error.localizedDescription, privacy: .public): project routes answer 503")  // no helper without its private folder
@@ -586,6 +587,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        UsageLoss.persistPendingAtQuit()  // events still queued are lost with the app: the next start reports them as a gap
         AppState.coreHelper?.stop()  // the helper sees EOF and exits; it also exits by itself when the app dies
     }
 

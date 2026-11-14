@@ -136,6 +136,14 @@ func (u *Recorder) noteLoss(n int64, from, to time.Time) {
 	u.lost += n
 }
 
+// kick makes the run loop store a pending gap now (every message does that first) instead of at the next tick; never blocks.
+func (u *Recorder) kick() {
+	select {
+	case u.ch <- recMsg{kind: evFlush, flush: make(chan struct{})}:
+	default: // the queue is full: the next message or the tick does it
+	}
+}
+
 // flush waits until everything enqueued so far is processed (tests, shutdown).
 func (u *Recorder) flush() {
 	if u == nil {
@@ -157,6 +165,7 @@ func (u *Recorder) run() {
 		case m := <-u.ch:
 			u.handle(m)
 		case <-tick.C:
+			u.takeLost() // a gap that arrived alone (event-lost after a restart of the app) is stored without waiting for an event
 			u.replay()
 			if st := u.api.store(); st != nil && time.Since(lastFold) >= FoldEvery { // a long-lived gateway folds daily
 				if _, err := st.FoldOldUsage(context.Background()); err == nil {

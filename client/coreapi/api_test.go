@@ -376,4 +376,21 @@ func TestEventLostShowsAsAGap(t *testing.T) {
 	}
 }
 
+// A gap that arrives alone (the app quit with events queued, nothing else follows) is stored at once, not at the next event or tick.
+func TestEventLostAloneIsStoredWithoutWaitingForAnEvent(t *testing.T) {
+	f := newFixture(t)
+	f.api.StartRecorder()
+	defer f.api.StopRecorder()
+	if err := f.api.Call(bg, "event-lost", LostRequest{Count: 2, From: nowUTC().Add(-time.Minute), To: nowUTC()}, nil); err != nil {
+		t.Fatal(err)
+	}
+	for range 100 { // no FlushRecorder, no event: the 30 s tick is far away
+		if rep, err := f.st.AdminUsage(bg, 7, core.UsageFilter{}); err == nil && len(rep.Gaps) == 1 && rep.Gaps[0].Count == 2 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("the gap was not stored")
+}
+
 func nowUTC() time.Time { return time.Now().UTC() }
