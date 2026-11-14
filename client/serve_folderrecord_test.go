@@ -272,38 +272,33 @@ func TestFolderRecordSaveDoesNotLoseConcurrentChange(t *testing.T) {
 	}
 }
 
-// W2: the owner check is applied to a folder on a local volume, never to one on a remote volume (a NAS owner is the
-// server's account); a remote folder is still compared by path and identity.
-func TestFolderOwnerOKRemoteVolume(t *testing.T) {
-	oldOwned, oldRemote := ownedByMeFn, remoteVolumeFn
-	t.Cleanup(func() { ownedByMeFn, remoteVolumeFn = oldOwned, oldRemote })
-	foreign := func(string) bool { return false }
-	mine := func(string) bool { return true }
+// W2: the owner rule of the OS. Windows (as in 0.5.25): only a folder that had been missing must be owned by this user.
+// Elsewhere: every run.
+func TestFolderOwnerOKRule(t *testing.T) {
+	oldOwned, oldEvery := ownedByMeFn, ownerEveryRun
+	t.Cleanup(func() { ownedByMeFn, ownerEveryRun = oldOwned, oldEvery })
 	for _, c := range []struct {
-		name          string
-		remote, owned bool
-		missed        bool
-		want          bool
+		name                  string
+		every, ownedR, ownedF bool
+		missed, want          bool
 	}{
-		{"local, mine", false, true, false, true},
-		{"local, foreign", false, false, false, false},
-		{"local, missing before, foreign name", false, false, true, false},
-		{"remote, foreign owner", true, false, false, true},
-		{"remote, missed, foreign owner", true, false, true, true},
+		{"windows, foreign, never missing", false, false, false, false, true},
+		{"windows, missing before, foreign real path", false, false, true, true, false},
+		{"windows, missing before, foreign name", false, true, false, true, false},
+		{"windows, missing before, mine", false, true, true, true, true},
+		{"other, foreign", true, false, false, false, false},
+		{"other, mine", true, true, false, false, true},
+		{"other, missing before, foreign name", true, true, false, true, false},
 	} {
-		remoteVolumeFn = func(string) bool { return c.remote }
-		ownedByMeFn = foreign
-		if c.owned {
-			ownedByMeFn = mine
-		}
-		if got := folderOwnerOK(`Q:\x`, `Q:\x`, c.missed); got != c.want {
+		ownerEveryRun = c.every
+		ownedByMeFn = func(p string) bool { return map[string]bool{"R": c.ownedR, "F": c.ownedF}[p] }
+		if got := folderOwnerOK("R", "F", c.missed); got != c.want {
 			t.Errorf("%s: %v, want %v", c.name, got, c.want)
 		}
 	}
 }
 
-// W2/W3: a remote folder with a foreign owner is used; a local one is refused and listed in `refused` right after the
-// start, as the log says (no agent run needed).
+// W3: at start, the run-time owner refusal is logged and listed in `refused` (no agent run needed).
 func TestRefusedAgreesWithLogAtStart(t *testing.T) {
 	base := realOf(t, t.TempDir())
 	folder := filepath.Join(base, "folder")
@@ -313,20 +308,13 @@ func TestRefusedAgreesWithLogAtStart(t *testing.T) {
 	s, _ := testServer(t, func(c *serveConfig) { c.AllowedFolders = []string{folder} })
 	path := s.cfgPath
 	releaseScratch()
-	oldOwned, oldRemote := ownedByMeFn, remoteVolumeFn
-	t.Cleanup(func() { ownedByMeFn, remoteVolumeFn = oldOwned, oldRemote })
+	oldOwned, oldEvery := ownedByMeFn, ownerEveryRun
+	t.Cleanup(func() { ownedByMeFn, ownerEveryRun = oldOwned, oldEvery })
 	ownedByMeFn = func(string) bool { return false }
-
-	remoteVolumeFn = func(string) bool { return false }
+	ownerEveryRun = true
 	s, logs := startFrom(t, path)
 	if !strings.Contains(logs, "is not used: it is a link or owned by another user") || !slices.Equal(s.claudeInfo().Refused, []string{folder}) {
-		t.Fatalf("local foreign folder: log %q refused %v", logs, s.claudeInfo().Refused)
-	}
-	releaseScratch()
-	remoteVolumeFn = func(string) bool { return true }
-	s, logs = startFrom(t, path)
-	if strings.Contains(logs, "is not used") || len(s.claudeInfo().Refused) != 0 || len(s.agentFolders(s.conf(), base)) != 1 {
-		t.Fatalf("remote folder: log %q refused %v", logs, s.claudeInfo().Refused)
+		t.Fatalf("log %q refused %v", logs, s.claudeInfo().Refused)
 	}
 }
 

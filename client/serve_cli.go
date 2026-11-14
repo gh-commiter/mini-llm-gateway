@@ -374,17 +374,18 @@ func (s *server) adoptFolderIdentity(f string, id fileID) {
 }
 
 var (
-	ownedByMeFn    = ownedByMe      // tests
-	remoteVolumeFn = isRemoteVolume // tests
+	ownedByMeFn   = ownedByMe                 // tests
+	ownerEveryRun = runtime.GOOS != "windows" // tests: the owner rule of the OS
 )
 
-// folderOwnerOK: the folder (real path r; f = the configured name, also checked when the folder was missing) belongs to
-// this user. Not on a remote volume (Windows: a mapped or UNC drive): there the owner is the server's account (a NAS
-// SID), never this user, and 0.5.25 did not check it there either (only for folders that had been missing). Path and
-// identity are still checked for such a folder; a local volume keeps the owner check.
+// folderOwnerOK: the folder (real path r; f = the configured name) belongs to this user. Windows, as in 0.5.25: only a
+// folder that had been missing (missed) must be a real folder of this user, r and f both; on every run the owner is not
+// checked there, because it says nothing reliable about who controls a folder (Administrators-owned folders, a NAS's
+// account, FAT volumes, a data disk from an earlier install). Elsewhere the owner is checked on every run. The real
+// path and the recorded identity are checked on every run everywhere.
 func folderOwnerOK(r, f string, missed bool) bool {
-	if remoteVolumeFn(r) {
-		return true
+	if !ownerEveryRun {
+		return !missed || ownedByMeFn(r) && ownedByMeFn(f)
 	}
 	return ownedByMeFn(r) && (!missed || ownedByMeFn(f))
 }
