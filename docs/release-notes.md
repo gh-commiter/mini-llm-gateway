@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Security (allowed folders, all gateways): an allowed folder (Claude CLI **Folders**) is now recorded when you add it: its final path and its identity (volume and inode; on Windows volume serial and file ID). The gateway checks the record at start, on every agent run and right before the agent starts, and also that the folder belongs to the gateway user. A folder that was replaced by another one (renamed away and a new folder, a disk, a link in its place) is no longer given to agents; the reason is logged once and shown in `agents/claude.refused` (`minigw serve`). If you trust the new folder, remove it from the list and add it again. An existing setting is recorded once at the first start of this version (one log line per folder: `recorded <folder> -> <real path>`); that step trusts what is there. A folder that did not exist when it was recorded takes its identity at its first accepted use. This detects a replaced folder; it does not stop a local process with the gateway user's rights from swapping a folder during the few moments of an agent start.
+- Security (allowed folders): a working folder that is itself an allowed folder is checked at launch like the others (Claude CLI, Codex, Grok). Siri attachments are read only from checked allowed folders. Agent arguments and sandboxes use the checked real path, not the name that was typed (Linux and Mac; on Windows the drive name stays, so mapped drives keep working, and its identity is checked right before launch).
+- Security (Linux gateway): with a bubblewrap that supports `--bind-fd` (0.10.0, or 0.6.3), allowed folders are bound by open descriptor, so the folder cannot be swapped between the check and the sandbox; older bubblewrap uses the checked path plus the launch check.
+- Security (#82, shared folder, both clients): reads, writes, moves, copies and deletes of the shared folder through WebDAV and sync go through a pinned folder handle (`os.Root`), so a parent folder swapped for a link during an operation cannot lead out of the share or into a protected path (`.git`, `.claude/settings.json`, ...). Links and Windows junctions inside the share (also with an absolute target) keep working; links that leave it, for example to a network path (UNC) or another drive, are refused.
+- Fixed (#88, Mac app): the allowed folders are checked on every run (recorded final path, owner, a real folder when it was missing), for Claude CLI, Codex, Grok, Copilot and native access.
+- Fixed (#91, #93, `minigw serve`): the same checks on Windows and Linux; a mapped drive keeps its drive name (Claude Code blocks the network path behind it), and a drive that is not attached is kept and used again only when it is a real folder of the user.
+- Fixed (#87, Windows gateway): Codex gets its own `CODEX_HOME`, so it finds its sign-in.
+- Fixed (#95, Windows gateway): when the gateway runs elevated, the owner of its settings and Scratch folders is the user, not the administrators group.
+- Fixed (#90, Windows gateway): a refused Scratch move leaves no half-created folder behind.
+- Fixed (#89, both clients): `minigw share add` of another name of an already shared folder (same folder, for example a link) keeps one entry.
+- Security (#92, Linux gateway): Copilot's keyring is only reached through a `unix:path=` session bus address.
+- Fixed: an ordinary `minigw` command only warns when it cannot set the owner of the token file; `minigw serve` and the tray still stop.
+- Fixed: both gateways answer a settings change that carries a `token` field with 400 `bad JSON body: unknown field "token"`.
+- Fixed: changes of `serve.json` are locked between processes (`serve.json.lock`, waits up to 5 s), so a `minigw` command and a starting gateway cannot overwrite each other's change.
+- Fixed (Mac app): an open Settings window with older Claude settings no longer undoes the identity a folder has just taken.
+
 ## 0.5.25
 
 - Fixed (Windows gateway `minigw serve`, #83): an allowed folder below a junction in its path (for example `C:\work\x\proj` where `x` is a junction) was refused with "folder: The system cannot find the path specified."; it is accepted now, and still refused when the junction leads into the config folder.
