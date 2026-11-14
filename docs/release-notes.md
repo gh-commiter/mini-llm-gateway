@@ -40,6 +40,10 @@ Mini Gateway 0.6.0: users, projects and notes on the gateway, usage events and q
 - Security (Mac, Linux): a refreshed login (`auth.json`: on the Mac Codex runs with a project, on Linux Codex and Grok) is carried back from a run's home only when it is a regular file of the user with no other name, opened without following a link, at most 256 KiB, written during this run and a JSON object. On Windows nothing is carried back.
 - Security (Windows gateway): a junction from an allowed folder to the core folder is refused, and the deny uses the final path.
 
+### Fixed
+
+- Fixed (Mac app, 0.6.0 deny rules; the 0.5.28 regression is fixed in 0.5.29): the deny rules of the gateway's own folders (the app folder with the core, the credential homes) are not applied where the folder of a run (a remote client's mount under `~/Library/Application Support/Mini Gateway/mounts`, a sync copy) lives inside them, in the restricted mode, the sandboxed mode and Worktree mode; a deny wins over an allow. The rest of the app folder and the other clients' mounts stay refused (only the run's own folders are allowed), and an allowed folder around such a folder that cannot be fenced off is not used (logged).
+
 ### Known limits
 
 - Mac app: the helper `minigw-core` serves the app's requests one at a time, so a slow call delays the next one.
