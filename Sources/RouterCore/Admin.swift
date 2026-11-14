@@ -532,9 +532,6 @@ extension Router {
                 if let folders, let bad = folders.split(separator: ",").map(String.init).first(where: { RouterConfig.overlapsCopilotCache($0) }) {
                     throw AdminError(400, "allowed folder \(bad.trimmingCharacters(in: .whitespaces)) contains or is inside Copilot's package cache \(RouterConfig.copilotCache.path) (agents could plant code the gateway runs): choose another folder")
                 }
-                if let folders, let bad = folders.split(separator: ",").map(String.init).first(where: { RouterConfig.overlapsCoreFolder($0) }) {
-                    throw AdminError(400, "allowed folder \(bad.trimmingCharacters(in: .whitespaces)) contains or is inside the gateway's data folder (the core database of all projects): choose another folder")
-                }
                 if let folders, let bad = folders.split(separator: ",").map(String.init).first(where: { RouterConfig.overlapsGatewayFolder($0, scratch: c.scratchURL) }) {
                     throw AdminError(400, "allowed folder \(bad.trimmingCharacters(in: .whitespaces)) contains, equals or is inside one of the gateway's own folders (the app folder with the mounts of remote clients, the scratch folder, Copilot's package cache): choose another folder")
                 }

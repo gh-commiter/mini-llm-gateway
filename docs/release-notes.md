@@ -43,7 +43,7 @@ Mini Gateway 0.6.0: users, projects and notes on the gateway, usage events and q
 
 ### Fixed
 
-- Fixed (Mac app, 0.6.0 deny rules; the 0.5.28 regression is fixed in 0.5.29): the deny rules of the gateway's own folders (the app folder with the core, the credential homes) are not applied where the folder of a run (a remote client's mount under `~/Library/Application Support/Mini Gateway/mounts`, a sync copy) lives inside them, in the restricted mode, the sandboxed mode and Worktree mode; a deny wins over an allow. The rest of the app folder and the other clients' mounts stay refused (only the run's own folders are allowed), and an allowed folder that contains, equals or is inside the app folder, Scratch or Copilot's package cache is refused when saved and skipped at run (see 0.5.29).
+- Fixed (Mac app, 0.6.0 deny rules; the 0.5.28 regression is fixed in 0.5.29): the deny rules of the gateway's own folders (the app folder with the core, the credential homes) are not applied where the folder of a run (a remote client's mount under `~/Library/Application Support/Mini Gateway/mounts`, a sync copy) lives inside them, in the restricted mode, the sandboxed mode and Worktree mode; a deny wins over an allow. The rest of the app folder and the other clients' mounts stay refused (only the run's own folders are allowed). The refusal of overlapping allowed folders is the one of 0.5.29.
 
 ### Known limits
 
@@ -52,6 +52,11 @@ Mini Gateway 0.6.0: users, projects and notes on the gateway, usage events and q
 - Mac app: the Claude CLI agent reads notes only with "Allow local tools"; Codex only with its network switch on.
 - Teams and delegated administration (project admins managing members and grants) are not in 0.6.0: only the owner manages members and grants. A role change cannot take back what a model has already read.
 - Revocation stops new reads; a conversation that already holds notes is not resumed after the epoch changed.
+
+## 0.5.29
+
+- Fixed (Mac gateway, regression in 0.5.28): with "Allow local tools" off (the default) the Claude CLI models could not read or edit any file of a folder that was shared with the gateway in direct or sync mode whose mount or copy lives in the gateway's own folders: the mount under `~/Library/Application Support/Mini Gateway/mounts` and the copy under the Scratch folder. That is every folder of a remote computer, and sync mode also from the gateway Mac itself (its copy is under `Scratch/sync/local/…`). 0.5.28 denied the tools those gateway folders as hidden, and a deny wins over the allow for the session folder. Not affected: Worktree mode, "Allow local tools" on, and a folder of the same Mac used directly. Now a gateway folder is denied to the tools only where no folder of the run is inside it; where one is, the run's own folders are the only allowed paths, so the other clients' mounts and copies and the app's files stay refused.
+- Changed (Mac gateway): an allowed folder (Settings, Claude CLI, Allowed folders) that contains, equals or is inside one of the gateway's own folders (the app folder `~/Library/Application Support/Mini Gateway`, the Scratch folder, Copilot's package cache) is refused when saved, and a stored one is skipped at run for every agent model (Claude CLI, Codex, Grok; logged once): the agents would otherwise reach the settings and every remote client's mount. New with this version: `~/Library/Application Support`, folders inside the app folder and folders inside old Scratch folders (`*.old-<date>`); `~` and `~/Library` were refused before.
 
 ## 0.5.28
 

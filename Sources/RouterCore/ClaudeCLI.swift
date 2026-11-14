@@ -230,9 +230,9 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
             // S3: what the sandbox branch denies for git (config, hooks, info, redirects) as Edit rules, and the gateway's own folders
             var deny: [String] = []
             if names.contains(where: { Self.editClass.contains(Self.toolName($0)) }) { deny += Self.gitEditDenies(dirs: scopeDirs) + claudeSettingsEditDenies(dirs: scopeDirs) }
-            deny += Self.denyRules(copilotDenied.paths, tools: ["Edit"])
-            let rules = String(decoding: try! JSONSerialization.data(withJSONObject: ["permissions": ["deny": Self.denyRules(hiddenDenied.paths, tools: ["Read", "Edit"])]], options: [.sortedKeys]), as: UTF8.self)
-            return ["--tools", names.joined(separator: ","), "--allowedTools", allowed.joined(separator: ","), "--permission-mode", enforcedMode, "--settings", rules]
+            // the gateway's own folders (app support, Scratch) and the Copilot package cache: never read or edited by these tools, except where a scope folder lives inside them (#114)
+            deny += Self.denyRules(hiddenDenied.paths, tools: ["Read", "Edit"]) + Self.denyRules(copilotDenied.paths, tools: ["Edit"])
+            return ["--tools", names.joined(separator: ","), "--allowedTools", allowed.joined(separator: ","), "--permission-mode", enforcedMode]
                 + (deny.isEmpty ? [] : ["--disallowedTools", deny.joined(separator: ",")])
                 + extra.flatMap { ["--add-dir", $0] }
         }
