@@ -275,6 +275,8 @@ private func field(_ text: String, _ name: String) -> String {
     #expect(await admin(app.router(), "PATCH", "/agents/copilot", body: #"{"allowAll":true}"#).status == 400)
     // #81 (D1): brez žetona; GET in status povesta, zakaj Copilot ni na voljo (FakeApp: prijave ni)
     #expect(await admin(app.router(), "PATCH", "/agents/copilot", body: #"{"token":"github_pat_secret1"}"#).status == 400 && app.keys.isEmpty)
+    let oldToken = await admin(app.router(), "PATCH", "/agents/copilot", body: #"{"token":"old-secret"}"#)
+    #expect(oldToken.status == 400 && oldToken.text.contains(#"bad JSON body: unknown field \"token\""#) && !oldToken.text.contains("old-secret"))
     let got = await admin(app.router(), "GET", "/agents/copilot")
     #expect(!got.text.contains("hasToken") && got.text.contains(#""loginProblem":"Copilot is not signed in"#) && got.text.contains("not available: Copilot is not signed in"))
     #expect(await admin(app.router(), "GET", "/status").text.contains(#""copilot":"Copilot is not signed in"#))
@@ -373,11 +375,11 @@ private func field(_ text: String, _ name: String) -> String {
     let w = await admin(app.router(), "PATCH", "/agents/claude", body: #"{"folders":"~/Library/Caches"}"#)
     #expect(w.status == 400 && w.text.contains("Copilot's package cache"))
     // N2: delovna mapa ne v paketu ali okoli njega; Claude ga ne sme pisati (denyWrite), tudi v načinu worktree
-    #expect(ClaudeCLI.resolveCwd("~/Library/Caches", roots: "~") == nil && ClaudeCLI.resolveCwd(root.path, roots: root.path) != nil)
+    #expect(ClaudeCLI.resolveCwd("~/Library/Caches", roots: ["~"]) == nil && ClaudeCLI.resolveCwd(root.path, roots: [root.path]) != nil)
     var cli = ClaudeCLIConfig()
     cli.allowLocalTools = true
     let cache = RouterConfig.copilotCache.path.replacingOccurrences(of: "/", with: "\\/")
-    for args in [cli.agentArgs(cwd: root, allTools: []),
+    for args in [cli.agentArgs(cwd: root, allTools: [], folders: AllowedFolders()),
                  cli.worktreeArgs(root: root, maven: root, cwd: root, allTools: [], network: false)] {
         let s = args[args.firstIndex(of: "--settings")! + 1]
         #expect(s.contains(#""denyWrite":["#) && s.contains(cache), "\(s)")

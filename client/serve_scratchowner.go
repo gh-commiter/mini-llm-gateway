@@ -46,6 +46,7 @@ func ensureInstance(cfgPath string, c *serveConfig) error {
 	if c.Instance != "" {
 		return nil
 	}
+	defer lockServeConfig(cfgPath)() // A5
 	file, err := loadServeConfig(cfgPath)
 	if err != nil {
 		return err

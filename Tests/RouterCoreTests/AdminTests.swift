@@ -495,7 +495,7 @@ private func acceptPeerPort(_ fd: Int32) -> (Int32, UInt16) {
     var cfg = ClaudeCLIConfig()
     cfg.allowLocalTools = true
     let scratch = URL(fileURLWithPath: "/Volumes/SSD/Mini Gateway Scratch")
-    let args = cfg.agentArgs(cwd: URL(fileURLWithPath: "/Volumes/SSD/Mini Gateway Scratch/sync/d/x"), allTools: [], scratch: scratch)
+    let args = cfg.agentArgs(cwd: URL(fileURLWithPath: "/Volumes/SSD/Mini Gateway Scratch/sync/d/x"), allTools: [], scratch: scratch, folders: AllowedFolders())
     let s = args[args.firstIndex(of: "--settings")! + 1]
     #expect(s.contains(#""denyRead":["~","\/Volumes\/SSD\/Mini Gateway Scratch","#) || s.contains(#""denyRead":["~","/Volumes/SSD/Mini Gateway Scratch","#), "\(s)")
     let wt = cfg.worktreeArgs(root: URL(fileURLWithPath: "/w"), maven: URL(fileURLWithPath: "/m"), cwd: URL(fileURLWithPath: "/w"), allTools: [], network: false, scratch: scratch)
@@ -519,6 +519,8 @@ private func acceptPeerPort(_ fd: Int32) -> (Int32, UInt16) {
     var cfg = ClaudeCLIConfig()
     cfg.allowLocalTools = true
     cfg.allowedRoots = tmp.path
-    let args = cfg.agentArgs(cwd: URL(fileURLWithPath: "/p"), allTools: [], scratch: c.scratchURL)
+    let recorded = AllowedFolders()
+    recorded.record(cfg.allowedRoots)
+    let args = cfg.agentArgs(cwd: URL(fileURLWithPath: "/p"), allTools: [], scratch: c.scratchURL, folders: recorded)
     #expect(!args.contains(tmp.path) && !args[args.firstIndex(of: "--settings")! + 1].contains(#""allowWrite":["\/p","#))
 }

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/url"
 	"os"
 	"path"
@@ -163,20 +164,30 @@ func loadIgnore(root string, trusted bool) []ignoreRule {
 // readRegular: navadna datoteka rel pod root do max bajtov. Brez follow os.Root ne sledi povezavi ven iz root (tudi ne
 // prek podtaknjene starševske mape); O_NONBLOCK ne čaka na FIFO.
 func readRegular(root, rel string, max int64, follow bool) ([]byte, bool) {
-	var f *os.File
-	var err error
+	// Trusted ignore rules intentionally allow an external dotfiles target. Open it directly:
+	// no resolved parent is reopened, and the handle is checked before reading.
 	if follow {
-		f, err = os.OpenFile(filepath.Join(root, filepath.FromSlash(rel)), os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	} else if r, rerr := os.OpenRoot(root); rerr != nil {
-		err = rerr
-	} else {
-		defer r.Close()
-		f, err = r.OpenFile(filepath.FromSlash(rel), os.O_RDONLY|syscall.O_NONBLOCK, 0)
+		f, err := os.OpenFile(filepath.Join(root, filepath.FromSlash(rel)), os.O_RDONLY|syscall.O_NONBLOCK, 0)
+		if err != nil {
+			return nil, false
+		}
+		defer f.Close()
+		return readRegularFile(f, max)
 	}
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, false
+	}
+	defer r.Close()
+	f, err := r.OpenFile(filepath.FromSlash(rel), os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, false
 	}
 	defer f.Close()
+	return readRegularFile(f, max)
+}
+
+func readRegularFile(f *os.File, max int64) ([]byte, bool) {
 	if st, err := f.Stat(); err != nil || !st.Mode().IsRegular() || st.Size() > max {
 		return nil, false
 	}
@@ -190,14 +201,18 @@ func syncScan(root string, prev map[string]syncEntry, trusted bool) (map[string]
 	if r, err := filepath.EvalSymlinks(root); err == nil {
 		root = r
 	}
+	rooted, err := os.OpenRoot(root)
+	if err != nil {
+		return map[string]syncEntry{}, nil
+	}
+	defer rooted.Close()
 	rules := loadIgnore(root, trusted)
 	files, skipped := map[string]syncEntry{}, []string{}
-	filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
-		if err != nil || p == root {
+	fs.WalkDir(rooted.FS(), ".", func(p string, d os.DirEntry, err error) error {
+		if err != nil || p == "." {
 			return nil
 		}
-		rel, _ := filepath.Rel(root, p)
-		rel = filepath.ToSlash(rel)
+		rel := p
 		if normName(d.Name()) == ".git" { // tudi ».GIT«: nikoli ne gre na router
 			if d.IsDir() {
 				return filepath.SkipDir
@@ -217,7 +232,7 @@ func syncScan(root string, prev map[string]syncEntry, trusted bool) (map[string]
 			skipped = append(skipped, rel)
 			return nil
 		}
-		if e, ok := syncEntryOf(p, rel, prev); ok {
+		if e, ok := syncEntryOf(rooted, filepath.FromSlash(p), rel, prev); ok {
 			files[rel] = e
 		}
 		return nil
@@ -226,8 +241,8 @@ func syncScan(root string, prev map[string]syncEntry, trusted bool) (map[string]
 }
 
 // syncEntryOf: ena datoteka; false, če ne obstaja ali ni navadna datoteka.
-func syncEntryOf(full, rel string, prev map[string]syncEntry) (syncEntry, bool) {
-	info, err := os.Lstat(full)
+func syncEntryOf(rooted *os.Root, full, rel string, prev map[string]syncEntry) (syncEntry, bool) {
+	info, err := rooted.Lstat(full)
 	if err != nil || !info.Mode().IsRegular() {
 		return syncEntry{}, false
 	}
@@ -236,7 +251,7 @@ func syncEntryOf(full, rel string, prev map[string]syncEntry) (syncEntry, bool) 
 		p.Exec = e.Exec
 		return p, true
 	}
-	f, err := os.OpenFile(full, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	f, err := rooted.OpenFile(full, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return syncEntry{}, false
 	}
@@ -304,21 +319,49 @@ func syncResolve(rel, root string) (string, bool) {
 // syncWrite: atomarno zapiše datoteko (ustvari mape), nastavi čas spremembe druge strani in ohrani način obstoječe
 // (sicer 0755/0644 po exec; CreateTemp sam naredi 0600).
 // Biti x sledijo exec, razen pri keepX (uporabnik je bit spremenil sam) in na Windows (bita x ni).
-func syncWrite(full string, data []byte, mtime int64, exec, keepX bool) error {
+func syncWrite(rooted *os.Root, full string, data []byte, mtime int64, exec, keepX bool) error {
+	return syncWritePolicy(rooted, full, data, mtime, exec, keepX, true)
+}
+
+// Uploads into the gateway copy allow the user's own protected files.
+func syncWriteCopy(rooted *os.Root, full string, data []byte, mtime int64, exec, keepX bool) error {
+	return syncWritePolicy(rooted, full, data, mtime, exec, keepX, false)
+}
+
+func syncWritePolicy(rooted *os.Root, full string, data []byte, mtime int64, exec, keepX, protect bool) error {
 	mode := os.FileMode(0o644)
-	if st, err := os.Lstat(full); err == nil && st.Mode().IsRegular() {
+	if st, err := rooted.Lstat(full); err == nil && st.Mode().IsRegular() {
 		mode = st.Mode().Perm()
 	}
 	if !keepX && runtime.GOOS != "windows" {
 		mode = withExec(mode, exec)
 	}
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+	var err error
+	if protect {
+		err = (mutationRoot{rooted}).MkdirAll(filepath.Dir(full), 0o755)
+	} else {
+		err = rooted.MkdirAll(filepath.Dir(full), 0o755)
+	}
+	if err != nil {
 		return err
 	}
-	if st, err := os.Lstat(full); err == nil && st.IsDir() {
-		os.Remove(full) // prazna mapa na mestu datoteke (mapa → datoteka); polna ostane in pisanje ne uspe
+	var parent *os.Root
+	name := filepath.Base(full)
+	if protect {
+		parent, name, err = mutationParent(rooted, full)
+	} else {
+		parent, err = rooted.OpenRoot(filepath.Dir(full))
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(full), ".minigw-*")
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	rooted, full = parent, name
+	if st, err := rooted.Lstat(full); err == nil && st.IsDir() {
+		rooted.Remove(full) // prazna mapa na mestu datoteke (mapa → datoteka); polna ostane in pisanje ne uspe
+	}
+	tmpName := filepath.Join(filepath.Dir(full), ".minigw-"+newUUID())
+	tmp, err := rooted.OpenFile(tmpName, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
@@ -331,24 +374,26 @@ func syncWrite(full string, data []byte, mtime int64, exec, keepX bool) error {
 			err = tmp.Chmod(mode)
 		}
 	}
+	if err == nil {
+		err = fileChtimes(tmp, time.UnixMilli(mtime))
+	}
 	if cerr := tmp.Close(); err == nil {
 		err = cerr
 	}
 	if err == nil && readOnlyWin {
-		os.Chmod(full, 0o666) // atribut samo za branje dol; po preimenovanju spet gor
+		rooted.Chmod(full, 0o666) // pinned parent; Windows does not follow the final link
 	}
 	if err == nil {
-		err = os.Rename(tmp.Name(), full)
+		err = rooted.Rename(tmpName, full)
 	}
 	if err == nil && readOnlyWin {
-		err = os.Chmod(full, mode)
+		err = rooted.Chmod(full, mode)
 	}
 	if err != nil {
-		os.Remove(tmp.Name())
+		rooted.Remove(tmpName)
 		return err
 	}
-	t := time.UnixMilli(mtime)
-	return os.Chtimes(full, t, t)
+	return nil
 }
 
 // withExec: biti x tam, kjer je bit r (0644 → 0755); brez exec vsi biti x izklopljeni.
@@ -365,6 +410,11 @@ func withExec(mode os.FileMode, exec bool) os.FileMode {
 // Poti, prezrte pri odjemalcu, preskoči.
 // state = manifest ob prenosu. Vrne sporočila za stderr in obdelane poti (potrditev routerju).
 func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch func(string) []byte) (notes, done []string) {
+	rooted, err := os.OpenRoot(root)
+	if err != nil {
+		return []string{"cannot open shared folder: " + err.Error()}, nil
+	}
+	defer rooted.Close()
 	rules := loadIgnore(root, true) // odjemalec
 	before := map[string]string{}
 	for p, e := range state {
@@ -401,7 +451,12 @@ func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch fu
 			notes = append(notes, "not deleted "+p+": protected path (through a link)")
 			continue
 		}
-		local, has := syncEntryOf(full, p, state)
+		full, err = rootResolve(rooted, filepath.FromSlash(p), false)
+		if err != nil || protectedPath(filepath.ToSlash(full)) {
+			notes = append(notes, "not deleted "+p+": protected path (through a link)")
+			continue
+		}
+		local, has := syncEntryOf(rooted, full, p, state)
 		if !has {
 			delete(state, p)
 			continue
@@ -411,9 +466,9 @@ func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch fu
 			continue
 		}
 		if runtime.GOOS == "windows" { // #6: datoteke samo za branje Windows ne izbriše
-			os.Chmod(full, 0o666)
+			rootChmod(rooted, full, 0o666)
 		}
-		os.Remove(full)
+		(mutationRoot{rooted}).Remove(full)
 		delete(state, p)
 	}
 	for _, e := range ch.Changed {
@@ -438,15 +493,21 @@ func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch fu
 			done = append(done, e.Path)
 			continue
 		}
-		if local, has := syncEntryOf(full, e.Path, state); has && local.SHA256 == e.SHA256 {
+		full, err = rootResolve(rooted, filepath.FromSlash(e.Path), false)
+		if err != nil || protectedPath(filepath.ToSlash(full)) {
+			notes = append(notes, "skipped "+e.Path+": protected path (through a link)")
+			done = append(done, e.Path)
+			continue
+		}
+		if local, has := syncEntryOf(rooted, full, e.Path, state); has && local.SHA256 == e.SHA256 {
 			// Le bit x, in le če ga uporabnik od prenosa ni spremenil sam (Windows ga nima).
 			if local.Exec != e.Exec && local.Exec != state[e.Path].Exec { // stanje ostane: bit ostane uporabnikov
 				notes = append(notes, "kept your file mode of "+e.Path+" (the agent changed it too)")
 				done = append(done, e.Path)
 				continue
 			} else if local.Exec != e.Exec && runtime.GOOS != "windows" {
-				if st, err := os.Stat(full); err == nil {
-					os.Chmod(full, withExec(st.Mode().Perm(), e.Exec))
+				if st, err := rooted.Stat(full); err == nil {
+					rootChmod(rooted, full, withExec(st.Mode().Perm(), e.Exec))
 				}
 			}
 			state[e.Path] = local
@@ -458,10 +519,11 @@ func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch fu
 			notes = append(notes, "skipped "+e.Path+": download failed")
 			continue
 		}
-		local, _ := syncEntryOf(full, e.Path, state) // znova tik pred pisanjem
-		if local.SHA256 != base(e.Path) {            // spremenjena (ali izbrisana) tudi tukaj
-			c, ok := syncResolve(e.Path+".minigw-conflict", root)
-			if !ok || syncWrite(c, data, e.Mtime, e.Exec, false) != nil {
+		local, _ := syncEntryOf(rooted, full, e.Path, state) // znova tik pred pisanjem
+		if local.SHA256 != base(e.Path) {                    // spremenjena (ali izbrisana) tudi tukaj
+			_, ok := syncResolve(e.Path+".minigw-conflict", root)
+			cfull, err := rootResolve(rooted, filepath.FromSlash(e.Path+".minigw-conflict"), false)
+			if !ok || err != nil || protectedPath(filepath.ToSlash(cfull)) || syncWrite(rooted, cfull, data, e.Mtime, e.Exec, false) != nil {
 				notes = append(notes, "conflict: "+e.Path+" changed here and on the gateway; the gateway's version could not be saved")
 				continue
 			}
@@ -472,7 +534,7 @@ func syncApply(ch syncChanges, root string, state map[string]syncEntry, fetch fu
 		// Bit x agenta, razen če ga je uporabnik od prenosa spremenil sam.
 		_, has := state[e.Path]
 		keepX := local.Path != "" && has && local.Exec != state[e.Path].Exec
-		if err := syncWrite(full, data, e.Mtime, e.Exec, keepX); err != nil {
+		if err := syncWrite(rooted, full, data, e.Mtime, e.Exec, keepX); err != nil {
 			notes = append(notes, "cannot write "+e.Path+": "+err.Error())
 			continue
 		}
@@ -558,10 +620,10 @@ func (s *shareClient) syncPush(k string) bool {
 		s.note("the agent's change to " + p + " is not copied back yet; kept on the gateway")
 	}
 	for _, p := range r.Need {
-		full, ok := syncResolve(p, s.root)
+		_, ok := syncResolve(p, s.root)
 		_, listed := files[p]
-		b, err := os.ReadFile(full)
-		if !listed || !ok || err != nil {
+		b, readOK := readRegular(s.root, p, maxSyncFile, false)
+		if !listed || !ok || !readOK {
 			keepOld(p)
 			continue
 		}
@@ -631,4 +693,46 @@ func (s *shareClient) syncPull(k string) bool {
 		s.note(fmt.Sprintf("synced back from the gateway: %d changed, %d deleted", changed, deleted))
 	}
 	return true
+}
+
+// Open first: Root.Chmod can race a final symlink swap on Unix.
+func rootChmod(rooted *os.Root, p string, mode os.FileMode) error {
+	parent, name, err := mutationParent(rooted, p)
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	if runtime.GOOS == "windows" {
+		// Go opens the final component with FILE_OPEN_REPARSE_POINT for Chmod.
+		return parent.Chmod(name, mode)
+	}
+	f, err := mutationOpenFile(parent, name, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if st, err := f.Stat(); err != nil {
+		return err
+	} else if !st.Mode().IsRegular() {
+		return fmt.Errorf("not a regular file: %s", p)
+	}
+
+	rf, err := rooted.Open(".")
+	if err != nil {
+		return err
+	}
+	defer rf.Close()
+	rp, err := mutationHandlePath(rf)
+	if err != nil {
+		return err
+	}
+	fp, err := mutationHandlePath(f)
+	if err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(rp, fp)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || protectedPath(filepath.ToSlash(rel)) {
+		return fmt.Errorf("protected path: %s", p)
+	}
+	return f.Chmod(mode)
 }

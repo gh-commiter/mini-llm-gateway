@@ -10,6 +10,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
     public var enabled = false
     public var executable = ""                       // prazno = samodejno iskanje
     public var allowedRoots = "~/Development"        // ločeno z vejico
+    public var allowedRecords: [String: FolderRecord] = [:]  // M2: prava pot in istovetnost vsake dovoljene mape ob dodajanju (ključ: AllowedFolders.paths)
     public var tools = "Read,Grep,Glob"              // na voljo in samodejno dovoljena; prazno = brez orodij
     public var permissionMode = "dontAsk"            // brez vprašanj: kar ni dovoljeno, je zavrnjeno
     public var allowLocalTools = false               // vsa orodja Claude Code na tem Macu brez vprašanj; preglasi tools/permissionMode
@@ -40,15 +41,13 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
     /// Read/Edit/Write zunaj teh map niso dovoljeni, Bash teče v sandboxu Claude Code (brez branja domače mape,
     /// pisanje le v teh mapah, omrežje dovoljeno), izhoda iz sandboxa ni.
     /// `readOnly` (--minigw-ro): brez orodij za pisanje; Bash le v sandboxu brez pisanja v te mape (brez sandboxa ga ni).
-    func agentArgs(cwd: URL, allTools: [String], scratch: URL? = nil, readOnly: Bool = false) -> [String] {
+    func agentArgs(cwd: URL, allTools: [String], scratch: URL? = nil, readOnly: Bool = false, folders: AllowedFolders, checkedPaths: [String]? = nil) -> [String] {
         guard allowLocalTools else {
             let t = readOnly ? Self.readOnlyTools(tools) : tools
             return ["--tools", t, "--allowedTools", t, "--permission-mode", permissionMode]
         }
-        let dirs = [cwd.path] + allowedRoots.split(separator: ",").map { ClaudeCLI.expand($0.trimmingCharacters(in: .whitespaces)) }
-            .filter { $0 != "/" && !$0.isEmpty && $0 != cwd.path && FileManager.default.fileExists(atPath: $0) }
-            .filter { r in scratch.map { !RouterConfig.overlapsScratch(r, scratch: $0) } ?? true }  // H1: starejše nastavitve
-            .filter { !RouterConfig.overlapsCopilotCache($0) }  // #26: ne paketa Copilot
+        let dirs = [cwd.path] + (checkedPaths ?? folders.folders(allowedRoots, excluding: cwd.path, scratch: scratch))
+
         let sandbox: [String: Any] = ["sandbox": [
             "enabled": true, "failIfUnavailable": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,
             "network": ["allowedDomains": ["*"]],
@@ -127,6 +126,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? d.enabled
         executable = try c.decodeIfPresent(String.self, forKey: .executable) ?? d.executable
         allowedRoots = try c.decodeIfPresent(String.self, forKey: .allowedRoots) ?? d.allowedRoots
+        allowedRecords = try c.decodeIfPresent([String: FolderRecord].self, forKey: .allowedRecords) ?? d.allowedRecords
         tools = try c.decodeIfPresent(String.self, forKey: .tools) ?? d.tools
         permissionMode = try c.decodeIfPresent(String.self, forKey: .permissionMode) ?? d.permissionMode
         allowLocalTools = try c.decodeIfPresent(Bool.self, forKey: .allowLocalTools) ?? d.allowLocalTools
@@ -285,11 +285,11 @@ public enum ClaudeCLI {
     /// Delovna mapa mora obstajati in biti pod dovoljenimi korenskimi mapami, nikoli v Scratch (privzeti ali `scratch`:
     /// tam so kopije drugih naprav in stanje agentov, ki ga peskovniki skrijejo; R3) in se ne prekriva s paketom Copilot.
     /// Kanonični poti (realpath, tudi »/private«), da povezava nikjer v poti ne pelje ven.
-    static func resolveCwd(_ raw: String?, roots: String, scratch: URL? = nil) -> URL? {
+    static func resolveCwd(_ raw: String?, roots: [String], scratch: URL? = nil) -> URL? {
         guard let raw, !raw.isEmpty, let path = Sync.real(URL(fileURLWithPath: expand(raw)))?.path else { return nil }
         var isDir: ObjCBool = false
         guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else { return nil }
-        let allowed = roots.split(separator: ",").compactMap { Sync.real(URL(fileURLWithPath: expand($0.trimmingCharacters(in: .whitespaces))))?.path }
+        let allowed = roots.compactMap { Sync.real(URL(fileURLWithPath: expand($0)))?.path }
             .filter { $0 != "/" }
         guard allowed.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) else { return nil }
         let hidden = RouterConfig.hiddenScratch(scratch)
@@ -480,6 +480,7 @@ extension Router {
 
         // N9: besedilo naprave je vnos uporabnika claude -p: brez ukazov s poševnico (/config piše nastavitve lastnika
         // prehoda) in brez »@pot« (CLAUDE_CODE_DISABLE_FILE_MENTIONS spodaj: priložil bi datoteko prehoda mimo peskovnika)
+        var checked = AllowedFolders.Checked()
         var args = ["-p", "--disable-slash-commands", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
                     "--model", cliModel, "--strict-mcp-config"]
         let cwd: URL
@@ -494,7 +495,7 @@ extension Router {
             let clientCwd = req.header("x-claude-mini-cwd")
             let shared = await Self.shares.mount(session: req.header("x-claude-mini-session") ?? "", cwd: clientCwd, base: localBase,
                                                  wait: req.header("x-claude-mini-share") == "1", device: req.device?.id,
-                                                 roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL, writes: true)
+                                                 roots: checkedRoots, scratch: config.scratchURL, writes: true)
             let synced = await Self.shares.isSync(session: req.header("x-claude-mini-session") ?? "")
             let tree = await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "")
             let cap = await capped(req, kind: "claude")  // #45: način seje nad omejitvijo → le branje
@@ -507,7 +508,7 @@ extension Router {
             if let shared, let clientCwd {
                 args += ["--append-system-prompt", Self.mountNote(clientCwd, shared, readOnly: readOnly, synced: synced, branch: tree?.branch, gits: tree?.gits ?? [])]
             }
-            guard let dir = shared ?? (synced ? nil : ClaudeCLI.resolveCwd(clientCwd, roots: cfg.allowedRoots, scratch: config.scratchURL)) else {
+            guard let dir = shared ?? (synced ? nil : ClaudeCLI.resolveCwd(clientCwd, roots: checkedRoots, scratch: config.scratchURL)) else {
                 if let why = await Self.shares.takeRefusal() {  // zaklep pisanja
                     return await error(why.status, "invalid_request_error", why.message, rid: rid, writer: writer)
                 }
@@ -531,9 +532,10 @@ extension Router {
                 prompt = ClaudeCLI.prompt(history: history, last: last)
             }
             let allTools = cfg.allowLocalTools || tree != nil ? await Self.toolList.get(cfg.executable) : []
+            if tree == nil { checked = allowedFolders.checked(cfg.allowedRoots, scratch: config.scratchURL) }  // A2: also a cwd that is an allowed root is opened and verified at launch
             args += (tree.map { cfg.worktreeArgs(root: $0.root, maven: $0.maven, cwd: dir, allTools: allTools, network: config.worktreeNetwork,
                                                  scratch: config.scratchURL, read: $0.read, gits: $0.gits) }
-                     ?? cfg.agentArgs(cwd: dir, allTools: allTools, scratch: config.scratchURL, readOnly: readOnly))
+                     ?? cfg.agentArgs(cwd: dir, allTools: allTools, scratch: config.scratchURL, readOnly: readOnly, folders: allowedFolders, checkedPaths: checked.paths(without: dir)))  // the cwd itself is in the arguments already
                 + ["--setting-sources", shared == nil ? cfg.settingSources : ""]  // hooki iz mape odjemalca ne tečejo tukaj
         } else {
             cwd = config.scratch("chat")
@@ -601,6 +603,8 @@ extension Router {
         }
 
         do {
+            let held = try checked.open()
+            defer { for handle in held { try? handle.close() } }
             try p.run()
             run?.started(p.processIdentifier)
         } catch {

@@ -99,8 +99,18 @@ Details:
   cannot be copied back, the request ends with that error instead of an answer, and Claude Code does not run the
   agent again. Sync changes stay on the gateway, and only the next agent request in the folder copies them back. A
   worktree branch stays on the gateway: the next agent request (same agent) in the session delivers it; otherwise it
-  is kept on the gateway for 30 days. A local program that moves folders itself is not covered; in 0.5.26 every operation goes
-  through the opened folder instead (#82).
+  is kept on the gateway for 30 days. The Go minigw client also performs DAV and sync file operations through an
+  opened `os.Root`: a link or junction swapped in after a path check cannot redirect access outside the shared folder
+  (#82). This applies on Windows, Linux and macOS. Links and Windows junctions that stay inside the shared folder
+  work, also with an absolute target (pnpm and `npm link` trees): the client walks the path one component at a time,
+  and a link whose absolute target lies inside the folder is rewritten to a path relative to the folder, up to 40
+  rewrites (a loop is refused). A link or junction that leaves the folder is refused. The operation itself then goes
+  through `os.Root` with the rewritten path, so a link retargeted after the walk still cannot lead out. The
+  protected-path rules apply to the rewritten path, so a link into `.claude` or `.git` does not bypass them. The
+  user's linked `.gitignore` remains supported for ignore rules. Mutations pin the parent directory,
+  check its actual location for protected paths, and operate relative to that handle, so replacing a parent with
+  a link into a protected directory during a download cannot bypass the protection. An open handle does not lock
+  a directory against a local process renaming it after the check. The Swift Mac app still uses the folder locks described above.
 - The gateway caches folder listings (PROPFIND) for 10 seconds, like davfs2's `dir_refresh`. Writes through the
   mount clear the cache at once; changes made on the client outside the mount show up within 10 seconds.
 - The folder's own Claude Code settings and hooks are not loaded on the gateway.
@@ -163,7 +173,7 @@ Details:
   the user's D-Bus session (`busctl`/`dbus-send` list `org.freedesktop.secrets`, running or activatable) and
   `xdg-dbus-proxy` is installed; bwrap still hides the session bus, and Copilot gets only a per-request proxy socket
   that allows nothing but `org.freedesktop.secrets` (the full session bus would let it start programs outside bwrap
-  through `systemd --user`); a `unix:abstract=` session bus is refused (bwrap does not hide abstract sockets), the proxy
+  through `systemd --user`); only a `unix:path=` session bus address is accepted, the proxy
   is killed with the gateway (Pdeathsig), and the git wrappers unset `DBUS_SESSION_BUS_ADDRESS`, so git and what it runs
   never get the proxy. Copilot has no commands on any gateway (shell tool always denied): on Linux Secret Service has
   no per-program access and a command could read the whole unlocked keyring; on the Mac a command could read

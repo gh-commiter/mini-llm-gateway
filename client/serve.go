@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -73,8 +74,22 @@ type serveConfig struct {
 	// #68 (odločitev 7): omrežje gradenj Claude CLI v načinu worktree, kot »Network for builds« na Macu; nil = vklopljeno.
 	WorktreeNetwork *bool `json:"worktreeNetwork,omitempty"`
 
+	// M2: real path and identity of each allowed folder, recorded when it is added (or at the first start of a version that
+	// has records). A start compares and refuses a folder that differs; it never rewrites a record.
+	AllowedRecords map[string]folderRecord `json:"allowedRecords,omitempty"`
+
 	// N4: trajni ID te namestitve prehoda (datoteka lastnika v Scratch; ensureInstance)
 	Instance string `json:"instance,omitempty"`
+}
+
+// folderRecord: the final path and identity of an allowed folder: a stable volume id (Linux statfs f_fsid, Windows volume
+// serial; never st_dev, which changes with the mount order) and the inode / file ID (see recordIDOf).
+// Ino is 0 for a folder that did not exist when it was recorded (adopted at its first use). Vol 0 = no stable volume
+// id (some network/FUSE/tmpfs filesystems, macOS): the inode alone is compared.
+type folderRecord struct {
+	Real string `json:"real"`
+	Vol  uint64 `json:"vol,omitempty"`
+	Ino  uint64 `json:"ino,omitempty"`
 }
 
 // worktreeNet: »Network for builds« (privzeto vklopljeno, kot na Macu).
@@ -151,6 +166,27 @@ func loadServeConfig(path string) (serveConfig, error) {
 func saveServeConfig(path string, c serveConfig) {
 	if err := writeServeConfig(path, c); err != nil {
 		fail(err.Error())
+	}
+}
+
+// lockServeConfig (A5): exclusive interprocess lock (<serve.json>.lock) around a load-modify-write of serve.json, so a
+// second process (minigw serve ... without a running gateway, a starting gateway) cannot overwrite it with an older
+// snapshot. Waits up to 5 s; if the lock cannot be had (no flock, a foreign file), it goes on unlocked as before.
+// Not reentrant: take it once per read-modify-write.
+func lockServeConfig(path string) func() {
+	f, err := openLockFile(path + ".lock")
+	if err != nil {
+		return func() {}
+	}
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		busy, lerr := tryLockFile(f, true)
+		if lerr == nil {
+			return func() { unlockFile(f); f.Close() }
+		}
+		if !busy || time.Now().After(deadline) {
+			f.Close()
+			return func() {}
+		}
 	}
 }
 
@@ -286,6 +322,7 @@ func serveCommand(args []string) {
 
 	switch sub {
 	case "init":
+		defer lockServeConfig(*cfgPath)() // B3: load-modify-write
 		c, err := loadServeConfig(*cfgPath)
 		created := errors.Is(err, os.ErrNotExist)
 		if created {
@@ -434,6 +471,7 @@ func (s *server) announce(ln net.Listener) {
 	}
 	s.log.Printf("minigw %s serving on %s (MGW2), claude=%q%s folders=%q%s scratch=%q devices=%d providers=%d config=%q pid=%d", version, ln.Addr(),
 		strings.Join(s.claudeExe(), " "), agents, strings.Join(c.AllowedFolders, ","), off, c.Scratch, len(c.Devices), len(c.Gateways), s.cfgPath, os.Getpid())
+	logBwrapMode(s.cfgDir, s.log.Printf)
 	for _, g := range c.Gateways {
 		if key, where := keyGet(s.cfgDir, g.Name); key == "" && !g.Disabled { // izklopljen (npr. vgrajen brez ključa): brez opozorila
 			s.log.Printf("WARNING: provider %s has no API key: run minigw gw provider add %s %s", g.Name, g.Name, g.BaseURL)
@@ -478,6 +516,8 @@ type server struct {
 	offUnchecked, offErrors []string
 	wasMissing              sync.Map // #83: dovoljene mape, ki so kdaj manjkale (agentFolders); odide le z mapo s seznama
 	refusedLogged           sync.Map // #83: zavrnjene označene mape, že v dnevniku (enkrat na mapo)
+	startRefused            sync.Map // M2: mapa → razlog; mapa se je od zapisa spremenila, ko je prehod bil ustavljen
+	runRefused              sync.Map // A1, A7: mapa → razlog; zavrnjena ob zadnjem zagonu agenta (prava pot, istovetnost)
 	settings                settingsState
 	pick                    atomic.Pointer[pickFunc] // izbirno okno pladnja (Windows); nil = ni GUI
 	picking                 atomic.Bool              // eno okno naenkrat
@@ -571,7 +611,8 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 			missing = append(missing, f)
 		}
 	}
-	exe, err := checkAgent(&c, cfgDir, missing)
+	had := c.AllowedRecords
+	exe, err := checkAgent(&c, cfgDir, slices.Clone(c.AllowedFolders)) // M2: saved folders keep their names and records
 	if err != nil {
 		return nil, err
 	}
@@ -618,8 +659,86 @@ func newServer(c serveConfig, cfgPath string) (*server, error) {
 	for _, f := range missing {
 		s.wasMissing.Store(f, true)
 	}
+	s.checkFolderRecords(had, missing)
 	s.claimScratch()
 	return s, nil
+}
+
+// checkFolderRecords (M2): at start, a saved folder that exists and differs from its record (real path or identity) is
+// refused like a changed folder at run time; a folder without a record (an old config) is recorded once and saved.
+// Nothing here rewrites a name or an existing record.
+func (s *server) checkFolderRecords(had map[string]folderRecord, missing []string) {
+	var added []string
+	for _, f := range s.cfg.AllowedFolders {
+		rec, ok := had[f]
+		if !ok {
+			added = append(added, f)
+			s.log.Printf("recorded %s -> %s", f, s.cfg.AllowedRecords[f].Real)
+			continue
+		}
+		if slices.Contains(missing, f) {
+			continue
+		}
+		r, err := realPath(f)
+		if err != nil {
+			continue // the run-time check refuses it
+		}
+		why := ""
+		if !samePath(r, rec.Real) {
+			why = "its real path changed to " + r
+		} else if id, err := recordIDOf(r); err == nil && !rec.matches(id) {
+			why = "its identity changed (another folder is there now)"
+		}
+		if why != "" {
+			s.startRefused.Store(f, why)
+			s.refusedLogged.Store(f, true)
+			s.log.Printf("WARNING: allowed folder %s is not used: %s; if you trust it, remove and add it again in the allowed folders", f, why)
+		}
+	}
+	if len(added) > 0 {
+		if err := saveFolderRecords(s.cfgPath, s.cfg.AllowedRecords, added); err != nil {
+			s.log.Printf("WARNING: cannot save the folder records (%v): they are recorded again at the next start", err)
+		}
+	}
+}
+
+// saveFolderRecords: adds the records of folders that have none in the config file (nothing else changes).
+func saveFolderRecords(path string, records map[string]folderRecord, folders []string) error {
+	defer lockServeConfig(path)() // A5
+	file, err := loadServeConfig(path)
+	if err != nil {
+		return err
+	}
+	if file.AllowedRecords == nil {
+		file.AllowedRecords = map[string]folderRecord{}
+	}
+	changed := false
+	for _, f := range folders {
+		if _, ok := file.AllowedRecords[f]; !ok && slices.Contains(file.AllowedFolders, f) {
+			file.AllowedRecords[f], changed = records[f], true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	return writeServeConfig(path, file)
+}
+
+// saveFolderIdentity (B2): fills the identity of a record that has none (nothing else changes).
+func saveFolderIdentity(path, folder string, id fileID) error {
+	defer lockServeConfig(path)()
+	file, err := loadServeConfig(path)
+	if err != nil {
+		return err
+	}
+	rec, ok := file.AllowedRecords[folder]
+	if !ok || rec.Ino != 0 || !slices.Contains(file.AllowedFolders, folder) {
+		return nil
+	}
+	file.AllowedRecords = maps.Clone(file.AllowedRecords)
+	rec.Vol, rec.Ino = id.dev, id.ino
+	file.AllowedRecords[folder] = rec
+	return writeServeConfig(path, file)
 }
 
 // logOut: dnevnik routerja brez »log« v nastavitvah; pladenj ga nastavi na svojo datoteko pred newServer, da gredo
@@ -648,10 +767,11 @@ func deprecatedFolder(c *serveConfig, f string) {
 }
 
 // checkAgent: mapa ne sme biti blizu mape nastavitev, claude mora obstajati, Bash na Windows le z dovoljenjem.
-// Za zagon in za spremembe prek skrbniškega API. kept (#83): mape, ki smejo manjkati (ob zagonu manjkajoče, ob
-// spremembi že shranjene), da odklopljen pogon ne ustavi prehoda, in ostanejo zapisane, kot so (ne cilj povezave);
-// nova mapa, ki je ni, je zavrnjena.
+// Za zagon in za spremembe prek skrbniškega API. kept (#83, M2): že shranjene mape (ob zagonu vse, ob spremembi te, ki
+// so že na seznamu): smejo manjkati, da odklopljen pogon ne ustavi prehoda, ostanejo zapisane, kot so (ne cilj
+// povezave), in obdržijo svoj zapis (AllowedRecords); nova mapa, ki je ni, je zavrnjena, in dobi nov zapis.
 func checkAgent(c *serveConfig, cfgDir string, kept []string) ([]string, error) {
+	records := make(map[string]folderRecord, len(c.AllowedFolders))
 	for i, f := range c.AllowedFolders {
 		if f == "" || !filepath.IsAbs(f) {
 			return nil, errors.New("allowed folder must be an absolute path: " + f)
@@ -660,10 +780,25 @@ func checkAgent(c *serveConfig, cfgDir string, kept []string) ([]string, error) 
 		if err != nil {
 			return nil, err
 		}
-		if !slices.Contains(kept, f) { // shranjena mapa ostane, kot je (oznaka wasMissing je po tej poti)
+		if !slices.Contains(kept, f) { // a saved folder keeps its name and its record (M2)
 			c.AllowedFolders[i] = real
 		}
+		f = c.AllowedFolders[i]
+		if old, ok := c.AllowedRecords[f]; ok && slices.Contains(kept, f) {
+			records[f] = old
+			continue
+		}
+		r, err := realPath(f) // a new folder, or an old config without records: record the current state
+		if err != nil {
+			return nil, err
+		}
+		rec := folderRecord{Real: r}
+		if id, err := recordIDOf(r); err == nil {
+			rec.Vol, rec.Ino = id.dev, id.ino
+		}
+		records[f] = rec
 	}
+	c.AllowedRecords = records
 	if bad := scratchOverlaps(c.AllowedFolders, c.Scratch); len(bad) > 0 { // H1: PATCH, minigw gw claude --folders, serve.json
 		return nil, errors.New("allowed folder " + bad[0] + " contains or is inside the scratch folder " + c.Scratch +
 			", or cannot be checked (agents could change the gateway's mirrors and other devices' copies): choose another folder")
@@ -868,6 +1003,7 @@ func (s *server) claudeExe() []string {
 func (s *server) update(f func(*serveConfig) error, commit ...func()) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	defer lockServeConfig(s.cfgPath)() // A5: load-modify-write of serve.json, also against other minigw processes
 	clone := func(c serveConfig) serveConfig {
 		c.Devices = slices.Clone(c.Devices)
 		c.Gateways = slices.Clone(c.Gateways)
@@ -884,7 +1020,17 @@ func (s *server) update(f func(*serveConfig) error, commit ...func()) error {
 	if err != nil {
 		return err
 	}
-	if file = clone(file); f(&file) != nil {
+	file = clone(file)
+	for k, v := range s.cfg.AllowedRecords { // R1: a kept folder keeps the live record even if the file has none (failed save at start)
+		if _, ok := file.AllowedRecords[k]; !ok && slices.Contains(file.AllowedFolders, k) {
+			recs := maps.Clone(file.AllowedRecords)
+			if recs == nil {
+				recs = map[string]folderRecord{}
+			}
+			recs[k], file.AllowedRecords = v, recs
+		}
+	}
+	if f(&file) != nil {
 		return errors.New("serve.json differs from the running gateway: restart minigw serve")
 	}
 	if err := writeServeConfig(s.cfgPath, file); err != nil {

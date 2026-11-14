@@ -546,10 +546,10 @@ func TestSyncPutWritesWithoutTheHubLock(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	o := syncPutWrite
 	t.Cleanup(func() { syncPutWrite = o })
-	syncPutWrite = func(full string, d []byte, m int64, x, k bool) error {
+	syncPutWrite = func(rooted *os.Root, full string, d []byte, m int64, x, k bool) error {
 		close(entered)
 		<-release
-		return o(full, d, m, x, k)
+		return o(rooted, full, d, m, x, k)
 	}
 	done := make(chan int)
 	go func() { done <- h.syncPut(key, "a.txt", data, "dev") }()

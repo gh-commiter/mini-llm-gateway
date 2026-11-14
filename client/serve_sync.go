@@ -121,26 +121,36 @@ func (h *shareHub) expireCopies(root string, now time.Time) {
 }
 
 func removeOldCopies(root string, active map[string]bool, now time.Time) {
-	owners, _ := os.ReadDir(root)
+	rooted, err := os.OpenRoot(root)
+	if err != nil {
+		return
+	}
+	defer rooted.Close()
+	removeOldCopiesAt(rooted, root, active, now)
+}
+
+func removeOldCopiesAt(rooted *os.Root, root string, active map[string]bool, now time.Time) {
+	owners, _ := rootReadDir(rooted, ".")
 	for _, o := range owners {
 		if !o.IsDir() || o.Name() == "runs" {
 			continue
 		}
-		copies, _ := os.ReadDir(filepath.Join(root, o.Name()))
+		copies, _ := rootReadDir(rooted, o.Name())
 		for _, c := range copies {
-			p := filepath.Join(root, o.Name(), c.Name())
+			rel := filepath.Join(o.Name(), c.Name())
+			p := filepath.Join(root, rel)
 			if !c.IsDir() || active[filepath.Clean(p)] { // c.IsDir: povezava ni mapa
 				continue
 			}
 			used := now
-			if st, err := os.Stat(p + ".used"); err == nil {
+			if st, err := rooted.Stat(rel + ".used"); err == nil {
 				used = st.ModTime()
-			} else if st, err := os.Lstat(p); err == nil {
+			} else if st, err := rooted.Lstat(rel); err == nil {
 				used = st.ModTime()
 			}
 			if now.Sub(used) > copyLifetime {
-				os.RemoveAll(p)
-				os.Remove(p + ".used")
+				rooted.RemoveAll(rel)
+				rooted.Remove(rel + ".used")
 			}
 		}
 	}
@@ -434,6 +444,10 @@ func isGitPath(rel string) bool {
 // na novo prezrta ali prevelika datoteka ni izbrisana.
 func syncDiff(old, cur map[string]syncEntry, root string) syncChanges {
 	ch := syncChanges{Changed: []syncEntry{}, Deleted: []string{}, Skipped: []string{}}
+	rooted, err := os.OpenRoot(root)
+	if err == nil {
+		defer rooted.Close()
+	}
 	for p, e := range cur {
 		if o, ok := old[p]; !ok || o.SHA256 != e.SHA256 || o.Exec != e.Exec {
 			ch.Changed = append(ch.Changed, e)
@@ -443,8 +457,8 @@ func syncDiff(old, cur map[string]syncEntry, root string) syncChanges {
 		if _, ok := cur[p]; ok {
 			continue
 		}
-		if full, ok := syncResolve(p, root); ok {
-			if _, err := os.Lstat(full); err == nil {
+		if _, ok := syncResolve(p, root); ok && rooted != nil {
+			if _, err := rooted.Lstat(filepath.FromSlash(p)); err == nil {
 				continue
 			}
 		}
@@ -470,7 +484,14 @@ func (h *shareHub) syncManifest(key string, files []syncEntry, execKnown bool, o
 	prev := s.state
 	h.mu.Unlock()
 
-	os.MkdirAll(s.copy, 0o700)
+	if err := os.MkdirAll(s.copy, 0o700); err != nil {
+		return nil, nil, false
+	}
+	rooted, err := os.OpenRoot(s.copy)
+	if err != nil {
+		return nil, nil, false
+	}
+	defer rooted.Close()
 	current, _ := syncScan(s.copy, prev, false) // zunaj zaklepa: velika mapa traja
 	// Prvi prenos te registracije: stanje ni znano → kopija velja za usklajeno. Pri --minigw-ro je kopija zavrženo delo.
 	base := prev
@@ -508,8 +529,8 @@ func (h *shareHub) syncManifest(key string, files []syncEntry, execKnown bool, o
 	}
 	for p := range current {
 		if _, listed := incoming[p]; !listed && !keep[p] {
-			if full, ok := syncResolve(p, s.copy); ok {
-				os.Remove(full)
+			if _, ok := syncResolve(p, s.copy); ok {
+				rooted.Remove(filepath.FromSlash(p))
 			}
 			delete(state, p)
 		}
@@ -523,7 +544,7 @@ func (h *shareHub) syncManifest(key string, files []syncEntry, execKnown bool, o
 }
 
 // syncPut: datoteka iz manifesta; vsebina se mora ujemati z njim. Status HTTP.
-var syncPutWrite = syncWrite // testi: počasno pisanje
+var syncPutWrite = syncWriteCopy // testi: počasno pisanje
 
 // Pisanje (do 64 MB) teče brez h.mu (#21): počasen prenos ne ustavi pollov in odgovorov drugih map.
 func (h *shareHub) syncPut(key, path string, data []byte, owner string) int {
@@ -537,7 +558,7 @@ func (h *shareHub) syncPut(key, path string, data []byte, owner string) int {
 	e, listed := s.incoming[path]
 	copyDir, execKnown := s.copy, s.execKnown
 	h.mu.Unlock()
-	full, ok := syncResolve(path, copyDir)
+	_, ok := syncResolve(path, copyDir)
 	if !listed || !ok {
 		return 403
 	}
@@ -545,11 +566,20 @@ func (h *shareHub) syncPut(key, path string, data []byte, owner string) int {
 	if int64(len(data)) != e.Size || sha256Hex(data) != want { // M2: kvota šteje velikost iz manifesta
 		return 409 // spremenjena med prenosom
 	}
-	if syncPutWrite(full, data, e.Mtime, e.Exec, !execKnown) != nil {
+	rooted, err := os.OpenRoot(copyDir)
+	if err != nil {
+		return 500
+	}
+	defer rooted.Close()
+	rel, err := rootResolve(rooted, filepath.FromSlash(path), false)
+	if err != nil {
+		return 403
+	}
+	if syncPutWrite(rooted, rel, data, e.Mtime, e.Exec, !execKnown) != nil {
 		return 500
 	}
 	if !execKnown { // Windows: dejanski način kopije
-		if a, ok := syncEntryOf(full, path, nil); ok {
+		if a, ok := syncEntryOf(rooted, rel, path, nil); ok {
 			e = a
 		}
 	}

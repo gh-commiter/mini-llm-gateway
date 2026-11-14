@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"net"
 	"net/http"
 	"os"
@@ -118,10 +119,13 @@ func ruleAbs(p string) string {
 // agentArgs: orodja agenta le v delovni mapi; mapa nastavitev (žeton, ključ routerja) prepovedana. Razen na Windows še
 // sandbox Claude Code (kot ClaudeCLI.agentArgs): Bash ne bere domače mape in piše le v kopijo; z Bash je obvezen.
 // readOnly (--minigw-ro): le orodja s seznama dovoljenih (roAllowed), sandbox ne piše v mape; na Windows (brez sandboxa) brez Bash.
-func (s *server) agentArgs(dir string, readOnly bool) []string {
+func (s *server) agentArgs(dir string, readOnly bool, checked ...[]string) []string {
 	c := s.conf()
 	dirs := []string{dir} // delovna mapa in dovoljene mape (kot allowedRoots na Macu)
-	dirs = append(dirs, s.agentFolders(c, dir)...)
+	if len(checked) == 0 {
+		checked = append(checked, s.agentFolders(c, dir))
+	}
+	dirs = append(dirs, checked[0]...)
 	scope := func(t string) []string { // orodje z dostopom do datotek le v teh mapah
 		out := []string{t + "(./**)"}
 		for _, d := range dirs[1:] {
@@ -272,44 +276,93 @@ func scratchOverlaps(allowed []string, scratch string) []string {
 
 // agentFolders (#83): dovoljene mape, ki jih agent v dir zdaj dobi (Claude CLI, škatla MXC, Codex, Grok): obstajajo
 // (kot fileExists na Macu), niso dir, ne Scratch ne predpomnilnik Copilot (L1, #26) in znova prestanejo checkFolder
-// (prava pot, mapa nastavitev). Mapa, ki je kdaj manjkala (ob zagonu ali med tekom; wasMissing), se pojavi le kot
+// (prava pot, mapa nastavitev). Končna pot mora ostati shranjena in biti last tega uporabnika.
+// Mapa, ki je kdaj manjkala (ob zagonu ali med tekom; wasMissing), se pojavi le kot
 // prava mapa tega uporabnika: na njenem mestu bi drug uporabnik, nov disk ali agent podtaknil povezavo ali svojo mapo
 // (CLAUDE.md, .mcp.json). Oznako odstrani le odstranitev mape s seznama (nato jo skrbnik doda znova).
 func (s *server) agentFolders(c serveConfig, dir string) []string {
-	var out []string
+	return s.checkedAgentFolders(c, dir).paths()
+}
+
+func (s *server) checkedAgentFolders(c serveConfig, dir string) checkedFolders {
+	var out checkedFolders
 	for _, f := range c.AllowedFolders {
 		if f == dir || scratchHiddenOverlaps(f, c.Scratch) || len(copilotCacheOverlaps([]string{f})) > 0 {
 			continue
 		}
+		if _, refused := s.startRefused.Load(f); refused { // M2: logged at start
+			continue
+		}
 		if st, err := os.Stat(f); err != nil || !st.IsDir() {
-			s.wasMissing.Store(f, true)
+			s.runRefused.Delete(f) // B5
+			if errors.Is(err, fs.ErrNotExist) {
+				s.wasMissing.Store(f, true)
+			}
 			continue
 		}
 		if _, err := checkFolder(f, s.cfgDir, false); err != nil {
 			continue
 		}
-		if _, missed := s.wasMissing.Load(f); missed {
-			// prava pot je ista (nobene povezave tudi v nadrejenih mapah), mapa je tega uporabnika
-			why := ""
-			r, err := realPath(f)
-			switch {
-			case err != nil:
-				why = "cannot resolve its real path"
-			case !samePath(r, f):
-				why = "it is reached through a link to " + r
-			case !ownedByMe(f) || !ownedByMe(r):
-				why = "it is a link or owned by another user"
-			}
-			if why != "" {
-				if _, logged := s.refusedLogged.LoadOrStore(f, true); !logged {
-					s.log.Printf("WARNING: allowed folder %s was missing at start and is not used: %s; if you trust it, remove and add it again in the allowed folders", f, why)
-				}
-				continue
-			}
+		why := ""
+		r, err := realPath(f)
+		rec, recorded := c.AllowedRecords[f]
+		saved := rec.Real
+		_, missed := s.wasMissing.Load(f)
+		id, idErr := fileIDOf(r) // launch check (same boot): st_dev + inode
+		rid, ridErr := recordIDOf(r)
+		switch {
+		case err != nil:
+			why = "cannot resolve its real path"
+		case !recorded || !samePath(r, saved):
+			why = "its real path changed to " + r
+		case missed && !samePath(r, f):
+			why = "it is reached through a link to " + r
+		case !ownedByMe(r) || (missed && !ownedByMe(f)):
+			why = "it is a link or owned by another user"
+		case ridErr == nil && !rec.matches(rid): // A1: on every run, not only at start
+			why = "its identity changed (another folder is there now)"
 		}
-		out = append(out, f)
+		if why != "" {
+			s.runRefused.Store(f, why)
+			if _, logged := s.refusedLogged.LoadOrStore(f, true); !logged {
+				s.log.Printf("WARNING: allowed folder %s is not used: %s; if you trust it, remove and add it again in the allowed folders", f, why)
+			}
+			continue
+		}
+		if idErr != nil {
+			s.runRefused.Delete(f) // B5
+			continue
+		}
+		s.runRefused.Delete(f)
+		if rec.Ino == 0 && ridErr == nil && rid.ino != 0 { // B2: recorded while missing: trust on first use
+			s.adoptFolderIdentity(f, rid)
+		}
+		use := r
+		if runtime.GOOS == "windows" { // #93: a mapped drive's final path is UNC, which Claude Code blocks; keep the drive name, verify() compares its identity at launch
+			use = f
+		}
+		out = append(out, checkedFolder{use, id})
 	}
 	return out
+}
+
+// adoptFolderIdentity (B2): a record without identity (the folder did not exist when it was recorded) gets the identity
+// of the folder that was accepted now, in the live config and in serve.json (under lockServeConfig, like the migration).
+func (s *server) adoptFolderIdentity(f string, id fileID) {
+	s.mu.Lock()
+	if rec, ok := s.cfg.AllowedRecords[f]; ok && rec.Ino == 0 {
+		recs := maps.Clone(s.cfg.AllowedRecords)
+		rec.Vol, rec.Ino = id.dev, id.ino
+		recs[f] = rec
+		s.cfg.AllowedRecords = recs
+	}
+	s.mu.Unlock()
+	if s.offline {
+		return
+	}
+	if err := saveFolderIdentity(s.cfgPath, f, id); err != nil {
+		s.log.Printf("WARNING: cannot save the identity of %s (%v): it is adopted again at the next start", f, err)
+	}
 }
 
 // realPath (#83): kanonična pot (finalPath: na Windows tudi stičišča, preslikan pogon → UNC); za pot, ki je še ni, prek
@@ -769,6 +822,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	extraFlag := "--append-system-prompt-file"
 	box := windowsBox() // #68: ves claude v škatli MXC (Windows)
 	var boxRW, boxRO []string
+	var checked checkedFolders
 	boxTemp, netOff := "", false
 	if !chat {
 		if why := s.conf().unsandboxedRefusal(s.cfgDir); why != "" { // #68: prej ob nalaganju nastavitev
@@ -829,13 +883,14 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		// #46a: zgodovina zapiše, kar je veljalo
 		r.applied = &appliedLimits{readOnly: ro, cap: cap}
 		s.boxNote(r, "claude") // #68
-		args = append(args, s.agentArgs(dir, ro)...)
+		checked = s.checkedAgentFolders(s.conf(), dir)
+		args = append(args, s.agentArgs(dir, ro, checked.paths())...)
 		if ro { // #68: mapa in dovoljene mape v škatli
 			boxRO = append(boxRO, dir)
 		} else {
 			boxRW = append(boxRW, dir)
 		}
-		for _, f := range s.agentFolders(s.conf(), dir) { // kot agentArgs
+		for _, f := range checked.paths() { // kot agentArgs
 			if ro {
 				boxRO = append(boxRO, f)
 			} else {
@@ -1028,7 +1083,15 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			return writeError(w, r.rid, 400, "The agent's clone was changed (its .git was replaced): start a new conversation")
 		}
 	}
+	held, err := checked.open()
+	if err != nil {
+		return writeError(w, r.rid, 503, err.Error())
+	}
+	defer closeFolders(held)
+	var extraFiles []*os.File
+	name, cargs, extraFiles = allowedClaudeWrap(s.cfgDir, name, cargs, checked, held, r.applied != nil && r.applied.readOnly, s.log.Printf)
 	cmd := commandContext(ctx, name, cargs...)
+	cmd.ExtraFiles = extraFiles
 	cmd.Dir = dir
 	cmd.Env = cmdEnv
 	cmd.Stdin = strings.NewReader(prompt)
@@ -1036,7 +1099,10 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	cmd.Stderr = stderr
 	stdout, err := cmd.StdoutPipe()
 	if err == nil {
-		err = startAgent(cmd) // Windows: v Job agentov (peer check; tudi claude v škatli, otrok wxc-exec)
+		err = checked.verify()
+		if err == nil {
+			err = startAgent(cmd)
+		} // Windows: v Job agentov (peer check; tudi claude v škatli, otrok wxc-exec)
 	}
 	if err != nil {
 		return writeError(w, r.rid, 500, "Cannot start claude: "+err.Error())

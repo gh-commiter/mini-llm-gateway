@@ -103,7 +103,7 @@ public enum Grok {
 
     /// Zažene grok in vrne končni odgovor (besedilo po zadnjem klicu orodja); prekinitev odjemalca ustavi grok.
     /// Vrne končni odgovor in ID Grokove seje (za nadaljevanje z -r).
-    static func run(_ exe: String, args: [String], cwd: URL, prompt: String, env extra: [String: String] = [:], dirs: [String] = [],
+    static func run(_ exe: String, args: [String], cwd: URL, prompt: String, env extra: [String: String] = [:], dirs: [String] = [], checked: AllowedFolders.Checked = .init(),
                     stopNested: @escaping @Sendable () -> Void = {},
                     started: @escaping @Sendable (pid_t) -> Void = { _ in }, onStep: @escaping @Sendable (String) -> Void) async throws -> (String, String?) {
         let h = Handle()
@@ -128,6 +128,8 @@ public enum Grok {
                     let g = p.processIdentifier
                     DispatchQueue.global().asyncAfter(deadline: .now() + 2) { Native.killTree(g, pipes: pipes) }
                 }
+                let held = try checked.open()
+                defer { for handle in held { try? handle.close() } }
                 try p.run()
                 started(p.processIdentifier)
                 AgentCount.running.add(1, ordering: .relaxed)
@@ -199,6 +201,7 @@ extension Router {
         let agent = (body["tools"] as? [Any])?.isEmpty == false
         var cwd = config.scratch("chat")
         var extra: [String] = []
+        var checked = AllowedFolders.Checked()
         var readOnly = false
         var prompt = ClaudeCLI.prompt(history: all.dropLast(), last: last)
         var sharedDir: URL?
@@ -206,9 +209,9 @@ extension Router {
             let clientCwd = req.header("x-claude-mini-cwd")
             let shared = await Self.shares.mount(session: req.header("x-claude-mini-session") ?? "", cwd: clientCwd, base: localBase,
                                                  wait: req.header("x-claude-mini-share") == "1", device: req.device?.id,
-                                                 roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL, writes: config.grok.write)
+                                                 roots: checkedRoots, scratch: config.scratchURL, writes: config.grok.write)
             let synced = await Self.shares.isSync(session: req.header("x-claude-mini-session") ?? "")
-            guard let dir = shared ?? (synced ? nil : ClaudeCLI.resolveCwd(clientCwd, roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL)) else {
+            guard let dir = shared ?? (synced ? nil : ClaudeCLI.resolveCwd(clientCwd, roots: checkedRoots, scratch: config.scratchURL)) else {
                 if let why = await Self.shares.takeRefusal() {  // zaklep pisanja
                     return await error(why.status, "invalid_request_error", why.message, rid: rid, writer: writer)
                 }
@@ -220,8 +223,8 @@ extension Router {
             }
             cwd = dir
             sharedDir = shared
-            extra = config.claudeCLI.allowedRoots.split(separator: ",").map { ClaudeCLI.expand($0.trimmingCharacters(in: .whitespaces)) }
-                .filter { $0 != "/" && !$0.isEmpty && $0 != dir.path && FileManager.default.fileExists(atPath: $0) }
+            checked = allowedFolders.checked(config.claudeCLI.allowedRoots, scratch: config.scratchURL)  // A2b: a cwd that is an allowed root is verified at launch too
+            extra = checked.paths(without: dir)
             let cap = await capped(req, kind: "grok")  // #45: način seje nad omejitvijo → le branje
             readOnly = await Self.isReadOnly(req) || cap != nil
             Self.runBranch?.readOnly = readOnly || inTree  // #46a
@@ -251,7 +254,7 @@ extension Router {
             env.merge(e.filter { $0.key != "MINIGW_DEPS" }) { $1 }  // #67: Grok v klonu le bere
         }
         return await replyWhenDone(body: body, model: "claude-grok", rid: rid, writer: writer, req: req) {
-            let (text, session) = try await Grok.run(exe, args: args, cwd: cwd, prompt: prompt, env: env, dirs: await Self.shares.runDirs(), stopNested: { run?.stop() }, started: { run?.started($0) }) { [onActivity] s in onActivity(.step(id: rid, text: s)) }
+            let (text, session) = try await Grok.run(exe, args: args, cwd: cwd, prompt: prompt, env: env, dirs: await Self.shares.runDirs(), checked: checked, stopNested: { run?.stop() }, started: { run?.started($0) }) { [onActivity] s in onActivity(.step(id: rid, text: s)) }
             run?.stop()  // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb
             // sync: spremembe agenta k odjemalcu pred odgovorom; #82: neprevzete niso uspeh
             if agent, let why = await Self.shares.syncBack(session: client) { throw ShareHub.PullFailed(message: why) }

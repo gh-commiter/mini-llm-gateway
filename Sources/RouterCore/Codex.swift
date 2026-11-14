@@ -186,7 +186,7 @@ public enum Codex {
         return o["thread_id"] as? String
     }
 
-    static func run(_ exe: String, args: [String], cwd: URL, prompt: String, output: URL, env extra: [String: String] = [:], dirs: [String] = [],
+    static func run(_ exe: String, args: [String], cwd: URL, prompt: String, output: URL, env extra: [String: String] = [:], dirs: [String] = [], checked: AllowedFolders.Checked = .init(),
                     stopNested: @escaping @Sendable () -> Void = {},
                     started: @escaping @Sendable (pid_t) -> Void = { _ in },
                     onStep: @escaping @Sendable (String) -> Void = { _ in }) async throws -> (String, String?) {
@@ -212,6 +212,8 @@ public enum Codex {
                     let g = p.processIdentifier
                     DispatchQueue.global().asyncAfter(deadline: .now() + 2) { Native.killTree(g, pipes: pipes) }
                 }
+                let held = try checked.open()
+                defer { for handle in held { try? handle.close() } }
                 try p.run()
                 started(p.processIdentifier)
                 AgentCount.running.add(1, ordering: .relaxed)
@@ -271,6 +273,7 @@ extension Router {
         let agent = (body["tools"] as? [Any])?.isEmpty == false
         var cwd = config.scratch("chat")
         var extra: [String] = []
+        var checked = AllowedFolders.Checked()
         var readOnly = false
         var tree: (root: URL, branch: String, maven: URL, read: [URL], gits: [String])?
         var prompt = ClaudeCLI.prompt(history: all.dropLast(), last: last)
@@ -279,9 +282,9 @@ extension Router {
             let clientCwd = req.header("x-claude-mini-cwd")
             let shared = await Self.shares.mount(session: req.header("x-claude-mini-session") ?? "", cwd: clientCwd, base: localBase,
                                                  wait: req.header("x-claude-mini-share") == "1", device: req.device?.id,
-                                                 roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL, writes: config.codex.write)
+                                                 roots: checkedRoots, scratch: config.scratchURL, writes: config.codex.write)
             let synced = await Self.shares.isSync(session: req.header("x-claude-mini-session") ?? "")
-            guard let dir = shared ?? (synced ? nil : ClaudeCLI.resolveCwd(clientCwd, roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL)) else {
+            guard let dir = shared ?? (synced ? nil : ClaudeCLI.resolveCwd(clientCwd, roots: checkedRoots, scratch: config.scratchURL)) else {
                 if let why = await Self.shares.takeRefusal() {  // zaklep pisanja
                     return await error(why.status, "invalid_request_error", why.message, rid: rid, writer: writer)
                 }
@@ -293,12 +296,12 @@ extension Router {
             }
             cwd = dir
             sharedDir = shared
-            extra = config.claudeCLI.allowedRoots.split(separator: ",").map { ClaudeCLI.expand($0.trimmingCharacters(in: .whitespaces)) }
-                .filter { $0 != "/" && !$0.isEmpty && $0 != dir.path && FileManager.default.fileExists(atPath: $0) }
-                .filter { !RouterConfig.overlapsScratch($0, scratch: config.scratchURL) && !RouterConfig.overlapsCopilotCache($0) }  // H1, #26
+            checked = allowedFolders.checked(config.claudeCLI.allowedRoots, scratch: config.scratchURL)  // A2b: a cwd that is an allowed root is verified at launch too
+            extra = checked.paths(without: dir)
             // worktree: pisljiv le klon (koren, ne dovoljene mape)
             tree = await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "")
             if let tree {
+                checked = AllowedFolders.Checked()
                 guard Worktree.grantDirs(root: tree.root) != nil else {  // #67 H1: pred peskovnikom (tudi .maven)
                     return await error(503, "api_error", Worktree.unsafeFolders, rid: rid, writer: writer)
                 }
@@ -349,7 +352,7 @@ extension Router {
         let sessions = Self.codexSessions, session = req.header("x-claude-mini-session") ?? ""
         return await replyWhenDone(body: body, model: "claude-codex", rid: rid, writer: writer, req: req) {
             let (text, thread) = try await Codex.run(exe, args: args, cwd: cwd, prompt: prompt, output: output,
-                                                         env: codexEnv, dirs: await Self.shares.runDirs(), stopNested: { run?.stop() }, started: { run?.started($0) }) { [onActivity] s in
+                                                         env: codexEnv, dirs: await Self.shares.runDirs(), checked: checked, stopNested: { run?.stop() }, started: { run?.started($0) }) { [onActivity] s in
                 onActivity(.step(id: rid, text: s))
             }
             run?.stop()  // I2: vprašanja drugim modelom se končajo pred prevzemom sprememb

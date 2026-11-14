@@ -5,7 +5,8 @@ import Synchronization
 /// worktree izključno — v procesu (pthread_rwlock) in med procesi (flock na datoteki, imenovani po istovetnosti korena, v
 /// Application Support/minigw/locks, ne v projektu; ob sesutju ga sprosti jedro). Tako branje ne dirka z MOVE nadrejene
 /// mape med preverbo poti in branjem, dve seji minigw na isti mapi pa ne pišeta hkrati. Isto ime datoteke kot Go.
-/// ponytail: preveri-nato-uporabi ostane za lokalni proces brez zaklepa; popolno (operacije prek odprtega korena) 0.5.26.
+/// ponytail: preveri-nato-uporabi ostane za lokalni proces brez zaklepa; popolno (operacije prek odprtega korena) ima
+/// odjemalec Go od 0.5.26 (#82); aplikacija na Macu še uporablja zaklepe map.
 public final class FolderLock: @unchecked Sendable {
     public static let busyText = "minigw: the shared folder is busy (another minigw session on this folder is using it); try again"
     public static let defaultDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]

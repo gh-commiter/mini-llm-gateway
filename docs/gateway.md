@@ -216,7 +216,35 @@ minigw serve                 # or run it in this terminal (--port, --config)
   agents can then run any command as you and read the provider API keys and the admin secret. On Linux Codex, Grok
   and Copilot run under `bwrap`.
 - **Allowed folders** may not contain the Scratch folder or sit inside it: such a folder is refused, and ignored at
-  start.
+  start. Each run uses the checked final path in sandbox rules and `--add-dir`, so retargeting a configured
+  symlink or junction after validation does not grant its new target. The configured spelling stays in settings;
+  agents see the real path (Windows keeps the configured name, so a mapped drive does not turn into a UNC path that Claude Code blocks). Unix launches open the real directory without following a final symlink and compare
+  its device and inode with the validation snapshot just before starting. Linux bwrap binds use those open
+  descriptors when bwrap supports `--bind-fd` (bubblewrap 0.10.0, backported to 0.6.3; also for Claude when an outer,
+  nested bwrap is available). bwrap closes those descriptors before it starts the agent, so the agent holds none (the start check also proves it for the installed bwrap, else path mode is used; Go test `TestAllowedFolderDescriptorsNotInherited`). An older bwrap keeps its sandbox: allowed folders are then bound by the checked real path
+  (never the configured name) and the identity is rechecked right before launch, as on macOS; the start log says
+  which mode is used. macOS sandbox profiles and Windows
+  MXC/tool rules accept names, not directory handles; Windows rechecks the volume/file identity of the configured name right before launch.
+  Someone able to write a parent of the **real** path can still replace a component after the last check on
+  macOS, Windows, Linux in path mode, or Linux without the outer bwrap. Keep those parents outside agents' writable folders.
+  Residual risks, accepted: (1) between the launch check and the moment the sandbox resolves the name there is a short
+  window on macOS, Windows and Linux in path mode; (2) some NAS servers report file index 0, so on such a drive the
+  identity check cannot tell two folders apart (the real-path and owner checks still apply); (3) a local process of
+  the same user could rename a pinned parent folder into a protected folder after the check (it could write there
+  directly anyway).
+- **Allowed folders survive a restart** (M2): when a folder is added (settings, admin API, `minigw gw claude --folders`),
+  the gateway saves its real path and identity with it (Go: `allowedRecords` in `serve.json`; Mac: in the settings,
+  next to the allowed folders; identity = volume UUID and inode in the Mac app, `statfs` `f_fsid` and inode on Linux,
+  volume serial and file ID on Windows; never the device number, which changes with the mount order; where a
+  filesystem has no stable volume id the inode alone is compared). The identity is compared at start, on every agent
+  run and right before launch. An older config
+  without records is migrated once at the first start of this version by recording the current state (one log line
+  per folder: `recorded <folder> -> <real>`); that single step trusts what is there. At every later start a saved
+  folder whose real path or identity differs from its record is refused like a changed folder at run time (the same
+  reason, logged once; the Go gateway also lists it in `agents/claude.refused`) until you remove it and add it again.
+  A start never rewrites the saved name or the record. A folder that does not exist at start keeps the "was
+  missing" handling; a folder that did not exist when it was added takes its identity at its first accepted use, and
+  that is saved.
 - **In a container** `minigw serve` may run as PID 1: it then starts the gateway as its child and only reaps orphaned
   processes (left by `bwrap --unshare-pid`) and forwards signals. `docker run --init` works too.
 
@@ -244,6 +272,7 @@ creates the config. Its menu shows the status, devices waiting for approval (All
 | Settings | `~/Library/Preferences/dev.trojar.minigateway.plist` | `%AppData%\minigw\serve.json` | `~/.config/minigw/serve.json` (mode 0600) |
 | Token, gateway key | Keychain | `serve.json` | `serve.json` |
 | Provider API keys | Keychain | Credential Manager | Secret Service (`secret-tool`), else `gateway-keys.json` (mode 0600) next to `serve.json` |
+| Lock for changes of `serve.json` | – | `serve.json.lock` next to `serve.json` (a change waits up to 5 s for another process) | same |
 | Admin secret | Keychain | `admin.secret` in the config folder | `admin.secret` in the config folder |
 | Log | – | `minigw-serve.log` in the config folder (tray) | the systemd journal |
 | Agents' copies and clones | Scratch folder (Settings → General) | Scratch folder | Scratch folder |

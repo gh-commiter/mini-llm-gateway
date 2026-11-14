@@ -770,14 +770,14 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     try file(client, ".git/objects/info/alternates", other.appendingPathComponent("objects").path + "\n")
     let config = try Data(contentsOf: client.appendingPathComponent(".git/config"))
     let dir = client.appendingPathComponent("sub")
-    let (top, sub) = try #require(Router.nativeBranches(dir, inPlace: false, roots: root.path, scratch: mirror.repo))
+    let (top, sub) = try #require(Router.nativeBranches(dir, inPlace: false, roots: [root.path], scratch: mirror.repo))
     #expect(top.path == client.path && sub == "sub")
     let tree = ShareHub.Tree(repo: mirror.repo, worktrees: mirror.worktrees, sub: sub, local: top)
     let hub = ShareHub(), session = UUID().uuidString
     _ = try #require(await hub.register(session: session, cwd: "/Volumes/share/client/sub", key: nil, device: "dev", tree: tree))
     func mount(_ id: String) async -> URL? {
         await ShareHub.$run.withValue(id) { await ShareHub.$agent.withValue("claude") {
-            await hub.mount(session: session, cwd: nil, base: "", device: "dev", roots: root.path, writes: true) } }
+            await hub.mount(session: session, cwd: nil, base: "", device: "dev", roots: [root.path], writes: true) } }
     }
     let (a, b) = (UUID().uuidString, UUID().uuidString)
     let (dirA, dirB) = try await (#require(mount(a)), #require(mount(b)))
@@ -802,7 +802,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("agentA.txt").path))
 
     // Siri (brez izvajanja): prava mapa le za branje
-    #expect(await hub.mount(session: session, cwd: nil, base: "", device: "dev", roots: root.path) == dir)
+    #expect(await hub.mount(session: session, cwd: nil, base: "", device: "dev", roots: [root.path]) == dir)
 
     // M1: zamenjan .git/objects (povezava) → brez novega izvajanja in brez branja objektov uporabnika
     let objects = client.appendingPathComponent(".git/objects")
@@ -836,11 +836,11 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     }
     try Data("gitdir: /elsewhere\n".utf8).write(to: linked.appendingPathComponent(".git"))
     let scratch = root.appendingPathComponent("scratch")
-    #expect(Router.nativeBranches(repo.appendingPathComponent("a/b"), inPlace: false, roots: root.path, scratch: scratch)?.sub == "a/b")
-    #expect(Router.nativeBranches(repo, inPlace: true, roots: root.path, scratch: scratch) == nil)
-    #expect(Router.nativeBranches(plain, inPlace: false, roots: root.path, scratch: scratch) == nil)
-    #expect(Router.nativeBranches(linked, inPlace: false, roots: root.path, scratch: scratch) == nil)
-    #expect(Router.nativeBranches(repo, inPlace: false, roots: plain.path, scratch: scratch) == nil)
+    #expect(Router.nativeBranches(repo.appendingPathComponent("a/b"), inPlace: false, roots: [root.path], scratch: scratch)?.sub == "a/b")
+    #expect(Router.nativeBranches(repo, inPlace: true, roots: [root.path], scratch: scratch) == nil)
+    #expect(Router.nativeBranches(plain, inPlace: false, roots: [root.path], scratch: scratch) == nil)
+    #expect(Router.nativeBranches(linked, inPlace: false, roots: [root.path], scratch: scratch) == nil)
+    #expect(Router.nativeBranches(repo, inPlace: false, roots: [plain.path], scratch: scratch) == nil)
     #expect(SharedFolders.candidates(work: "native-direct", readOnly: false, smb: true, git: true) == ["native-direct", "direct"])
     #expect(SharedFolders.mode(flag: "native-direct", saved: nil, readOnly: true).work == "direct")
 }
@@ -857,7 +857,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     ShareHub.writerWait = .seconds(1)
     defer { ShareHub.writerWait = old }
     func mount(_ id: String, writes: Bool) async -> URL? {
-        await ShareHub.$run.withValue(id) { await hub.mount(session: session, cwd: nil, base: "", device: "dev", roots: dir.deletingLastPathComponent().path, writes: writes) }
+        await ShareHub.$run.withValue(id) { await hub.mount(session: session, cwd: nil, base: "", device: "dev", roots: [dir.deletingLastPathComponent().path], writes: writes) }
     }
     #expect(await mount("w1", writes: true) == dir)
     #expect(await mount("w2", writes: true) == nil)
@@ -928,7 +928,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     _ = try #require(await hub.register(session: session, cwd: "/Volumes/share/x", key: nil, device: "dev", native: dir))
     let parent = "parent-run"
     let first = await ShareHub.$run.withValue(parent) {
-        await hub.mount(session: session, cwd: nil, base: "", device: "dev", roots: dir.deletingLastPathComponent().path, writes: true)
+        await hub.mount(session: session, cwd: nil, base: "", device: "dev", roots: [dir.deletingLastPathComponent().path], writes: true)
     }
     #expect(first == dir)  // klicatelj drži zaklep
     var c = RouterConfig()
@@ -943,7 +943,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     let start = ContinuousClock.now
     let nested = await AgentRun.$current.withValue(run) {
         await ShareHub.$run.withValue(parent) {  // syncRun: vprašani agent v izvajanju klicatelja
-            await hub.mount(session: session, cwd: nil, base: "", device: "dev", roots: dir.deletingLastPathComponent().path, writes: true)
+            await hub.mount(session: session, cwd: nil, base: "", device: "dev", roots: [dir.deletingLastPathComponent().path], writes: true)
         }
     }
     #expect(nested == dir && ContinuousClock.now - start < .milliseconds(500))
@@ -1112,7 +1112,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
 @Test func agentArgsDenyGitIndirection() throws {
     var cfg = ClaudeCLIConfig()
     cfg.allowLocalTools = true
-    let args = cfg.agentArgs(cwd: URL(fileURLWithPath: "/p"), allTools: [])
+    let args = cfg.agentArgs(cwd: URL(fileURLWithPath: "/p"), allTools: [], folders: AllowedFolders())
     let s = args[try #require(args.firstIndex(of: "--settings")) + 1]
     for d in ["config", "hooks", "info", "commondir", "worktrees", "config.worktree"] {
         #expect(s.contains(#""\/p\/.git\/"# + d + "\""), "\(d): \(s)")
@@ -1420,14 +1420,14 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
         if commit { g(d, "add", "-A"); g(d, "commit", "-qm", p) }
     }
     let heads = ["", "sub", "vendor/lib"].map { g(client.appendingPathComponent($0), "rev-parse", "HEAD") }
-    let (top, sub) = try #require(Router.nativeBranches(client, inPlace: false, roots: root.path, scratch: mirror.repo))
+    let (top, sub) = try #require(Router.nativeBranches(client, inPlace: false, roots: [root.path], scratch: mirror.repo))
     #expect(sub.isEmpty)
     let tree = ShareHub.Tree(repo: mirror.repo, worktrees: mirror.worktrees, sub: sub, local: top)
     let hub = ShareHub(), session = UUID().uuidString
     _ = try #require(await hub.register(session: session, cwd: "/Volumes/share/client", key: nil, device: "dev", tree: tree))
     let id = UUID().uuidString
     let dir = try #require(await ShareHub.$run.withValue(id) { await ShareHub.$agent.withValue("claude") {
-        await hub.mount(session: session, cwd: nil, base: "", device: "dev", roots: root.path, writes: true) } })
+        await hub.mount(session: session, cwd: nil, base: "", device: "dev", roots: [root.path], writes: true) } })
     for p in [".", "sub", "vendor/lib", "nc"] { try file(dir.appendingPathComponent(p), "agent.txt", "agent\n") }
     await ShareHub.$run.withValue(id) { await hub.syncBack(session: session) }
     await hub.finish(run: id)
@@ -1446,7 +1446,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     let id2 = UUID().uuidString, session2 = UUID().uuidString  // nova seja: nov posnetek (stara bi nadaljevala v svojem klonu)
     _ = try #require(await hub.register(session: session2, cwd: "/Volumes/share/client", key: nil, device: "dev", tree: tree))
     #expect(await ShareHub.$run.withValue(id2) { await ShareHub.$agent.withValue("claude") {
-        await hub.mount(session: session2, cwd: nil, base: "", device: "dev", roots: root.path, writes: true) } } == nil)
+        await hub.mount(session: session2, cwd: nil, base: "", device: "dev", roots: [root.path], writes: true) } } == nil)
 }
 
 /// N1 (recenzija 2): zamenjava poti ugnezdenega klona s povezavo na tuj repozitorij takoj po preverbi exact in vrnitev
@@ -1576,7 +1576,7 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
 @Test func nativeObjectsReplacedKeepsClone() async throws {
     let (root, client, mirror) = try fixture()
     defer { cleanup(root) }
-    let (top, sub) = try #require(Router.nativeBranches(client, inPlace: false, roots: root.path, scratch: mirror.repo))
+    let (top, sub) = try #require(Router.nativeBranches(client, inPlace: false, roots: [root.path], scratch: mirror.repo))
     let tree = ShareHub.Tree(repo: mirror.repo, worktrees: mirror.worktrees, sub: sub, local: top)
     let hub = ShareHub(), session = UUID().uuidString, notes = OSAllocatedUnfairLock<[String]>(initialState: [])
     let key = try #require(await hub.register(session: session, cwd: "/Volumes/share/client", key: nil, device: "dev", tree: tree))
@@ -1584,7 +1584,7 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
     defer { loop.cancel() }
     let id = UUID().uuidString
     let wt = try #require(await ShareHub.$run.withValue(id) { await ShareHub.$agent.withValue("claude") {
-        await hub.mount(session: session, cwd: nil, base: "", device: "dev", roots: root.path, writes: true) } })
+        await hub.mount(session: session, cwd: nil, base: "", device: "dev", roots: [root.path], writes: true) } })
     try file(wt, "agent.txt", "agent\n")
     let objects = client.appendingPathComponent(".git/objects")
     try FileManager.default.moveItem(at: objects, to: client.appendingPathComponent(".git/objects.real"))
@@ -1718,12 +1718,12 @@ private func keptPath(_ line: String, _ tree: ShareHub.Tree) -> String? {
     #expect(dir == nil && why?.status == 400
             && why?.message == "worktree: nested git repositories need git 2.40 or later on the gateway; update git or use sync", "\(String(describing: why))")
 
-    let (top, _) = try #require(Router.nativeBranches(client, inPlace: false, roots: root.path, scratch: tree.repo))
+    let (top, _) = try #require(Router.nativeBranches(client, inPlace: false, roots: [root.path], scratch: tree.repo))
     let native = ShareHub.Tree(repo: tree.repo, worktrees: tree.worktrees, sub: "", local: top), s2 = UUID().uuidString
     _ = try #require(await hub.register(session: s2, cwd: "/Volumes/share/client", key: nil, device: "dev", tree: native))
     let (d2, w2) = await Worktree.$attrSource.withValue(false) {
         await ShareHub.$run.withValue(UUID().uuidString) { await ShareHub.$agent.withValue("claude") {
-            (await hub.mount(session: s2, cwd: nil, base: "", device: "dev", roots: root.path, writes: true), await hub.takeRefusal()) } }
+            (await hub.mount(session: s2, cwd: nil, base: "", device: "dev", roots: [root.path], writes: true), await hub.takeRefusal()) } }
     }
     #expect(d2 == nil && w2?.status == 400 && w2?.message.hasSuffix("update git or use --minigw-work=native-direct") == true, "\(String(describing: w2))")
 }

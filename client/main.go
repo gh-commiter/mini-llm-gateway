@@ -281,6 +281,12 @@ func main() {
 	if isGitWrap() { // #68: kopija minigw.exe kot git.exe v škatli MXC (gitwrap.go)
 		gitWrapMain(os.Args[1:])
 	}
+	if err := ownerIsUser(); err != nil {
+		if isTrayExe(os.Args[0]) || len(os.Args) > 1 && (os.Args[1] == "serve" || os.Args[1] == "tray") {
+			fail("set token owner: " + err.Error()) // the gateway creates folders and files: they must be the user's
+		}
+		fmt.Fprintln(os.Stderr, "minigw: warning: cannot set the token owner ("+err.Error()+"); folders created by this command may be owned by the administrator")
+	}
 	refreshPath() // Windows: trenutni uporabnikov PATH, tudi v lupini, odprti pred namestitvijo CLI
 	args := os.Args[1:]
 	if isTrayExe(os.Args[0]) { // minigw-tray.exe: router z ikono v območju za obvestila
@@ -1675,9 +1681,25 @@ func shareCommand(args []string) {
 		if !realPathsOK(dir) {
 			fail("refusing to share " + dir + ": " + noRealPaths)
 		}
+		id, err := fileIDOf(dir)
+		if err != nil {
+			fail("cannot identify folder: " + err.Error())
+		}
+		keep = nil
+		found := false
+		for _, f := range list {
+			other, err := fileIDOf(f.Path)
+			if f.Path == dir || (err == nil && other == id) {
+				if !found {
+					dir, found = f.Path, true
+				}
+			} else {
+				keep = append(keep, f)
+			}
+		}
 		e := sharedFolder{Path: dir, Work: work, ReadOnly: ro}
 		for _, f := range list {
-			if strings.EqualFold(f.Path, dir) && f.Work == work && f.ReadOnly == ro {
+			if len(keep)+1 == len(list) && f.Path == dir && f.Work == work && f.ReadOnly == ro {
 				fmt.Println("already shared:", describe(e))
 				return
 			}

@@ -21,16 +21,17 @@ const agentReaperCmd = "__minigw-agent"
 
 // agentMounts: kaj Codex ali Grok pod bwrap še vidita (Linux): mapa nastavitev je vedno skrita.
 type agentMounts struct {
-	cfgDir string
-	state  string   // stanje CLI te naprave (<scratch>/state/<naprava>/codex): branje in pisanje
-	envVar string   // CODEX_HOME ali GROK_HOME (kaže na state)
-	files  []string // prave datoteke prijave (~/.codex/auth.json …), na katere kaže stanje: branje in pisanje
-	rw     []string // kopija mape, začasna mapa zahteve, dovoljene mape
-	ro     []string // dodatno le za branje (Copilot: razširjen paket v ~/.cache/copilot)
-	hide   string   // mapa, skrita tudi zunaj domače mape (Scratch: kopije drugih naprav, stanje agentov; I3)
-	tmps   []string // #53: koreni TMPDIR tekov Claude CLI (tempRoots): skriti
-	noNet  bool     // brez omrežja (--unshare-net; priprava paketa Copilot, #26)
-	env    []string // dodatne spremenljivke (Copilot: žeton prijave pod bwrap)
+	checked checkedFolders
+	cfgDir  string
+	state   string   // stanje CLI te naprave (<scratch>/state/<naprava>/codex): branje in pisanje
+	envVar  string   // CODEX_HOME ali GROK_HOME (kaže na state)
+	files   []string // prave datoteke prijave (~/.codex/auth.json …), na katere kaže stanje: branje in pisanje
+	rw      []string // kopija mape, začasna mapa zahteve, dovoljene mape
+	ro      []string // dodatno le za branje (Copilot: razširjen paket v ~/.cache/copilot)
+	hide    string   // mapa, skrita tudi zunaj domače mape (Scratch: kopije drugih naprav, stanje agentov; I3)
+	tmps    []string // #53: koreni TMPDIR tekov Claude CLI (tempRoots): skriti
+	noNet   bool     // brez omrežja (--unshare-net; priprava paketa Copilot, #26)
+	env     []string // dodatne spremenljivke (Copilot: žeton prijave pod bwrap)
 	// protect: le za branje znotraj pisljive mape (worktree: .git/config, hooks, info klona), vezano za rw.
 	protect []string
 	// pins: mape, ki morajo biti same točke priklopa (L1: .git klona, da ga ni mogoče preimenovati in zamenjati).

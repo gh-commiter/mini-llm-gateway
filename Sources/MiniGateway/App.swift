@@ -96,6 +96,7 @@ func menuBarImage(listening: Bool, active: Int, waiting: Int = 0) -> NSImage {
 
 @MainActor
 final class AppState: ObservableObject {
+    private let allowedFolders = AllowedFolders()
     @Published var config = RouterConfig.load()
     @Published var status = String(localized: "Stopped")
     @Published var running = false
@@ -118,10 +119,22 @@ final class AppState: ObservableObject {
     private let log = Logger(subsystem: "dev.trojar.minigateway", category: "app")
 
     init() {
+        for (folder, real) in config.claudeCLI.recordFolders() {  // M2: stara nastavitev brez zapisov: enkrat zapiši trenutno stanje
+            log.notice("recorded \(folder, privacy: .public) -> \(real, privacy: .public)")
+        }
         config.save()  // starejši JSON blob v preferences → berljiva struktura
         Router.history.load(GatewayHistory.defaultFile)  // zadnji stik, priklopi naprav in seje (state.json)
         Router.deviceLog.onChange = { [weak self] in
             Task { @MainActor in self?.pendingChanged(Router.deviceLog.pending) }
+        }
+        allowedFolders.onAdopt = { [weak self] folder, rec in  // B2: a record without identity adopts it at the first use; saved with the settings
+            Task { @MainActor in
+                guard let self, var old = self.config.claudeCLI.allowedRecords[folder], old.ino == 0 else { return }
+                old.volume = rec.volume
+                old.ino = rec.ino
+                self.config.claudeCLI.allowedRecords[folder] = old
+                self.config.save()
+            }
         }
         ShareHub.cleanupStale()
         keychain.delete("copilot-token")  // #81 L1: žeton Copilot do 0.5.24 se ne uporablja več
@@ -250,7 +263,7 @@ final class AppState: ObservableObject {
                 case .finished(let id): self.inflight.removeAll { $0.id == id }
                 }
             }
-        }, admin: adminHooks())
+        }, admin: adminHooks(), allowedFolders: allowedFolders)
         writeAdminItem()
         let s = RouterServer(router: router, key: routerKey)
         s.onState = { [weak self] state in
@@ -358,6 +371,8 @@ final class AppState: ObservableObject {
     }
 
     func apply(_ c: RouterConfig) {
+        var c = c
+        c.claudeCLI.recordFolders()  // M2: nova mapa dobi zapis; obstoječi ostanejo
         config = c
         c.save()
         restart()

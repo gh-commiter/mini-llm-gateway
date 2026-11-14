@@ -1207,7 +1207,7 @@ public enum Worktree {
 extension ShareHub {
     /// Klon izvajanja (le v izvajanju agenta; Siri ga nima): najnižje prosto mesto seje in agenta. Zaporedne zahteve
     /// nadaljujejo v istem klonu in na isti veji; vzporedne dobijo svoje (dve veji). Nov klon začne iz posnetka odjemalca.
-    func worktreeMount(_ s: Share, _ tree: Tree, roots: String? = nil, scratch: URL? = nil) async -> URL? {
+    func worktreeMount(_ s: Share, _ tree: Tree, roots: [String]? = nil, scratch: URL? = nil) async -> URL? {
         // Native z git brez izvajanja (Siri, priloge): prava mapa le za branje
         if Self.run == nil, let local = tree.local {
             guard Sync.real(local)?.path == local.path, let roots, ClaudeCLI.resolveCwd(local.path, roots: roots, scratch: scratch) != nil else { return nil }

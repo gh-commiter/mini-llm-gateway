@@ -9,30 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"unsafe"
-
-	"golang.org/x/sys/windows"
 )
-
-// ownerIsUser (#94): povišan žeton (GitHub Actions windows-latest teče kot skrbnik) ustvarja mape z lastnikom
-// BUILTIN\Administrators, ne SID uporabnika, zato bi ownedByMe (L1, L1′) zavrnil vsako mapo testa. Privzeti lastnik žetona
-// tega procesa (otroci dobijo kopijo) postane uporabnik, kot brez povišanja (HPX360); preverba lastnika ostane stroga.
-func ownerIsUser() error {
-	var tok windows.Token
-	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_QUERY|windows.TOKEN_ADJUST_DEFAULT, &tok); err != nil {
-		return err
-	}
-	defer tok.Close()
-	if !tok.IsElevated() {
-		return nil
-	}
-	tu, err := tok.GetTokenUser()
-	if err != nil {
-		return err
-	}
-	owner := struct{ Owner *windows.SID }{tu.User.Sid} // TOKEN_OWNER
-	return windows.SetTokenInformation(tok, windows.TokenOwner, (*byte)(unsafe.Pointer(&owner)), uint32(unsafe.Sizeof(owner)))
-}
 
 // runIsolated (L-d): ves tek na Windows brez prave namestitve in profila. Okolje (%APPDATA%, %LOCALAPPDATA%,
 // %USERPROFILE%, HOME) kaže v lastno mapo pod pravo %LOCALAPPDATA% (ne %TEMP%: nonTempDir rabi Scratch zunaj začasnih

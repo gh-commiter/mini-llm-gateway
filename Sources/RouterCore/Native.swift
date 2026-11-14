@@ -178,7 +178,7 @@ public enum Native {
     /// Shema + relativna pot → mapa tega Maca; nil, če sheme ni, pot pobegne iz nje (»..«, povezava) ali mapa ni v
     /// dovoljenih mapah (`roots`, Settings → Allowed folders). Shema brez razlike v velikih črkah (SMB).
     /// Nikoli homeSecret (domača mapa sama, ~/.ssh …, ~/Library), tudi ko je domača mapa v dovoljenih mapah.
-    public static func resolve(share: String, path rel: String, shares: [String: String], roots: String, scratch: URL? = nil,
+    public static func resolve(share: String, path rel: String, shares: [String: String], roots: [String], scratch: URL? = nil,
                                home: String = NSHomeDirectory()) -> URL? {
         guard let base = shares.first(where: { $0.key.caseInsensitiveCompare(share) == .orderedSame })?.value,
               let root = Sync.real(URL(fileURLWithPath: base)) else { return nil }
@@ -698,7 +698,7 @@ extension Router {
               let share = b["share"] as? String, let path = b["path"] as? String else {
             return await error(400, "invalid_request_error", "Body must be JSON with share and path", rid: rid, writer: writer)
         }
-        guard let dir = Native.resolve(share: share, path: path, shares: shares(), roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL) else {
+        guard let dir = Native.resolve(share: share, path: path, shares: shares(), roots: checkedRoots, scratch: config.scratchURL) else {
             return await error(403, "permission_error",
                                "Native mode: \(share)/\(path) is not a folder of an SMB share in this Mac's allowed folders (Settings → Claude CLI → Allowed folders)",
                                rid: rid, writer: writer)
@@ -743,7 +743,7 @@ extension Router {
             return await error(500, "api_error", "minigw run: cannot create its DerivedData folder in Scratch", rid: rid, writer: writer)
         }
         guard Sync.real(dir)?.path == dir.path, !Native.homeSecret(dir.path),
-              ClaudeCLI.resolveCwd(dir.path, roots: config.claudeCLI.allowedRoots, scratch: config.scratchURL)?.path == dir.path,
+              ClaudeCLI.resolveCwd(dir.path, roots: checkedRoots, scratch: config.scratchURL)?.path == dir.path,
               let profile = Native.sandboxProfile(dir: dir.path, network: config.devices.first { $0.id == d.id }?.runNetwork ?? true,
                                                   hidden: RouterConfig.hiddenScratch(config.scratchURL), routerPort: Int(config.port),
                                                   runTmp: realTmp, derivedData: derived) else {

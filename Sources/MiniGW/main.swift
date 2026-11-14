@@ -774,8 +774,9 @@ func shareCommand(_ a: [String]) -> Never {
         guard FileManager.default.fileExists(atPath: dir, isDirectory: &isDir), isDir.boolValue else { fail("not a folder: \(dir)") }
         if let why = SharedFolders.shareRefusal(dir) { fail("refusing to share \(dir) (\(why)); share a project folder") }
         let e = SharedFolders.Entry(path: dir, work: work, readOnly: ro)
-        if list.contains(e) { print("already shared: \(describe(e))"); exit(0) }
-        list.removeAll { $0.path == dir }; list.append(e); save()
+        let updated = SharedFolders.adding(e, to: list)
+        if updated == list { print("already shared: \(describe(e))"); exit(0) }
+        list = updated; save()
         print("shared with the gateway from now on: \(describe(e)) (and its subfolders)")
     case "remove":
         list.removeAll { $0.path == dir }; save()

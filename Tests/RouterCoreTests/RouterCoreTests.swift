@@ -122,30 +122,37 @@ func makeRouter(session: URLSession = .shared) -> Router {
     #expect(ClaudeCLI.match("claude-cli-sonnet")! == ("sonnet", false))
     var cli = ClaudeCLIConfig()
     let cwd = URL(fileURLWithPath: "/tmp/session")
-    #expect(cli.agentArgs(cwd: cwd, allTools: []) == ["--tools", "Read,Grep,Glob", "--allowedTools", "Read,Grep,Glob", "--permission-mode", "dontAsk"])
+    #expect(cli.agentArgs(cwd: cwd, allTools: [], folders: AllowedFolders()) == ["--tools", "Read,Grep,Glob", "--allowedTools", "Read,Grep,Glob", "--permission-mode", "dontAsk"])
     cli.tools = "Read,Edit,Bash(git:*),Write,Grep"  // --minigw-ro: brez orodij za pisanje; Bash tu nima sandboxa
-    #expect(cli.agentArgs(cwd: cwd, allTools: [], readOnly: true) == ["--tools", "Read,Grep", "--allowedTools", "Read,Grep", "--permission-mode", "dontAsk"])
+    #expect(cli.agentArgs(cwd: cwd, allTools: [], readOnly: true, folders: AllowedFolders()) == ["--tools", "Read,Grep", "--allowedTools", "Read,Grep", "--permission-mode", "dontAsk"])
     cli.tools = "Read,Monitor,EnterWorktree,WebFetch"  // seznam dovoljenih: orodja, ki niso na njem, odpadejo
-    #expect(cli.agentArgs(cwd: cwd, allTools: [], readOnly: true).prefix(2) == ["--tools", "Read,WebFetch"])
+    #expect(cli.agentArgs(cwd: cwd, allTools: [], readOnly: true, folders: AllowedFolders()).prefix(2) == ["--tools", "Read,WebFetch"])
     cli.tools = "Read,Grep,Glob"
     var local = cli
     local.allowLocalTools = true
-    let ro = local.agentArgs(cwd: cwd, allTools: ["Bash", "Edit", "EnterWorktree", "ExitWorktree", "Monitor", "Read", "Task", "WebFetch"], readOnly: true)
+    let ro = local.agentArgs(cwd: cwd, allTools: ["Bash", "Edit", "EnterWorktree", "ExitWorktree", "Monitor", "Read", "Task", "WebFetch"], readOnly: true, folders: AllowedFolders())
     func value(_ flag: String) -> String { ro.firstIndex(of: flag).map { ro[$0 + 1] } ?? "" }
     #expect(value("--tools") == "Read,Grep,Glob,LS,WebSearch,WebFetch,Bash" && value("--allowedTools") == "WebFetch")
     #expect(["EnterWorktree", "ExitWorktree", "Monitor", "Edit"].allSatisfy { value("--disallowedTools").split(separator: ",").contains(Substring($0)) })
     cli.allowLocalTools = true
-    cli.allowedRoots = "/tmp"
+    // /tmp is owned by root: the allowed-folders rule (own folders only) refuses it, so use a folder of this user
+    let made = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: made, withIntermediateDirectories: true)
+    let mine = try #require(Sync.real(made)).path
+    defer { try? FileManager.default.removeItem(atPath: mine) }
+    cli.allowedRoots = mine
     cli.disabledTools = ["WebSearch"]
-    let a = cli.agentArgs(cwd: cwd, allTools: ["Bash", "Edit", "Read", "Task", "WebFetch", "WebSearch"])
+    let recorded = AllowedFolders()
+    recorded.record(cli.allowedRoots)
+    let a = cli.agentArgs(cwd: cwd, allTools: ["Bash", "Edit", "Read", "Task", "WebFetch", "WebSearch"], folders: recorded)
     #expect(!a.contains("--dangerously-skip-permissions") && a.contains("acceptEdits"))
-    #expect(a.contains("--add-dir") && a.contains("/tmp"))
+    #expect(a.contains("--add-dir") && a.contains(mine))
     // datotečna orodja niso splošno dovoljena (veljajo le v mapah), ostala da; izjeme ostanejo zavrnjene
     #expect(a[a.firstIndex(of: "--allowedTools")! + 1] == "Task,WebFetch")
     #expect(a[a.count - 2] == "--disallowedTools" && a.last!.hasPrefix("WebSearch,") && a.last!.contains("Edit(//tmp/session/**/.git/config)"))  // N3
     let settings = try JSONSerialization.jsonObject(with: Data(a[a.firstIndex(of: "--settings")! + 1].utf8)) as! [String: Any]
     let sb = settings["sandbox"] as! [String: Any], fs = sb["filesystem"] as! [String: [String]]
-    #expect(sb["allowUnsandboxedCommands"] as? Bool == false && fs["denyRead"] == ["~"] && fs["allowWrite"] == ["/tmp/session", "/tmp"])
+    #expect(sb["allowUnsandboxedCommands"] as? Bool == false && fs["denyRead"] == ["~"] && fs["allowWrite"] == ["/tmp/session", mine])
     #expect(ClaudeCLI.match("claude-siri-ai") == nil)
     #expect(ClaudeCLI.match("claude-chat-gpt") == nil)
 }
@@ -170,12 +177,12 @@ func makeRouter(session: URLSession = .shared) -> Router {
     let inside = root.appendingPathComponent("proj")
     try FileManager.default.createDirectory(at: inside, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
-    #expect(ClaudeCLI.resolveCwd(inside.path, roots: root.path) != nil)
-    #expect(ClaudeCLI.resolveCwd(inside.path + "/../proj", roots: root.path) != nil)
-    #expect(ClaudeCLI.resolveCwd(root.path + "x/proj", roots: root.path) == nil)  // predpona, ki ni mapa
-    #expect(ClaudeCLI.resolveCwd(inside.path, roots: "/tmp/nope") == nil)
-    #expect(ClaudeCLI.resolveCwd(inside.path + "/missing", roots: root.path) == nil)
-    #expect(ClaudeCLI.resolveCwd(inside.path, roots: "/") == nil)  // koren ni dovoljen
+    #expect(ClaudeCLI.resolveCwd(inside.path, roots: [root.path]) != nil)
+    #expect(ClaudeCLI.resolveCwd(inside.path + "/../proj", roots: [root.path]) != nil)
+    #expect(ClaudeCLI.resolveCwd(root.path + "x/proj", roots: [root.path]) == nil)  // predpona, ki ni mapa
+    #expect(ClaudeCLI.resolveCwd(inside.path, roots: ["/tmp/nope"]) == nil)
+    #expect(ClaudeCLI.resolveCwd(inside.path + "/missing", roots: [root.path]) == nil)
+    #expect(ClaudeCLI.resolveCwd(inside.path, roots: ["/"]) == nil)  // koren ni dovoljen
 }
 
 @Test func streamJsonToAnthropicSSE() {
@@ -2042,8 +2049,9 @@ final class UnauthorizedUpstream: URLProtocol, @unchecked Sendable {
     #expect(SharedFolders.shareRefusal(proj) == nil)
     // drug disk (/Volumes/<Disk>, koren nosilca brez doma ali sistema) je dovoljen
     for v in (try? FileManager.default.contentsOfDirectory(atPath: "/Volumes")) ?? [] where !v.hasPrefix(".") && v != "Recovery" {
-        let p = "/Volumes/" + v, a = try? FileManager.default.attributesOfItem(atPath: p)  // lstat: povezava (Macintosh HD → /) ne
-        guard a?[.type] as? FileAttributeType == .typeDirectory, (a?[.ownerAccountID] as? NSNumber)?.uint32Value == getuid() else { continue }
+        // lstat: povezava (Macintosh HD → /) ne; brez attributesOfItem, ki bere xattr in na nosilcu Time Machine obvisi
+        let p = "/Volumes/" + v; var st = stat()
+        guard lstat(p, &st) == 0, st.st_mode & S_IFMT == S_IFDIR, st.st_uid == getuid() else { continue }
         #expect(SharedFolders.shareRefusal(p) == nil, "\(p)")
     }
 }

@@ -45,3 +45,25 @@ func ownerOf(p string) int {
 	}
 	return int(st.Uid)
 }
+
+func TestShareAddMacFirmlink(t *testing.T) {
+	_, proj := fakeHome(t)
+	alias := "/System/Volumes/Data" + proj
+	if _, err := os.Stat(alias); err != nil {
+		t.Skip("no data volume alias")
+	}
+	shareCommand([]string{"add", proj})
+	shareCommand([]string{"add", "--work=sync", alias})
+	got := sharedFolders()
+	if len(got) != 1 || got[0].Path != proj || got[0].Work != "sync" {
+		t.Fatalf("shares: %+v", got)
+	}
+	f := sharedFoldersFile()
+	if err := os.WriteFile(f, []byte(formatSharedFolders(append(got, sharedFolder{Path: alias}))), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	shareCommand([]string{"add", alias})
+	if got = sharedFolders(); len(got) != 1 || got[0].Path != proj {
+		t.Fatalf("duplicate aliases: %+v", got)
+	}
+}

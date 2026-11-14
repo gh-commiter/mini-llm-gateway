@@ -510,7 +510,7 @@ func TestWorktreeGitSwapRefused(t *testing.T) {
 	if err := os.Rename(g, filepath.Join(wt, ".g")); err != nil {
 		t.Fatal(err)
 	}
-	if err := copyTree(filepath.Join(wt, ".g"), g); err != nil { // cp -R
+	if err := os.CopyFS(g, os.DirFS(filepath.Join(wt, ".g"))); err != nil { // cp -R
 		t.Fatal(err)
 	}
 	marker := filepath.Join(root, "ran")

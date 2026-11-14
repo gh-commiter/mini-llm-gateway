@@ -134,7 +134,7 @@ Provider  {"name": string, "baseURL": string, "insecure": bool, "models": [strin
          models: enabled provider IDs; null = all discovered, now and later. ready: model list loaded.
 Claude   {"path": string, "found": bool, "tools": string, "allowUnsandboxedBash": bool,
           "exe"?: string, "version"?: string, "off"?: string, "leftOut"?: [string],
-          "leftOutUnchecked"?: [string], "offErrors"?: [string], "login"?: Login}
+          "leftOutUnchecked"?: [string], "offErrors"?: [string], "refused"?: [string], "login"?: Login}
          path: "" = from PATH; tools: comma-separated tool names; exe: the
          claude that was found; version: its `claude --version` (both only when found; Go gateway only).
          off: why Claude CLI and Codex were turned off at startup (an allowed folder contains or is inside the scratch
@@ -142,7 +142,10 @@ Claude   {"path": string, "found": bool, "tools": string, "allowUnsandboxedBash"
          on again (Go gateway only: the Mac ignores such folders and keeps Claude CLI on). leftOut: those folders, still
          in serve.json (Go gateway only); cleared when the allowed folders are saved. leftOutUnchecked: those of them
          that cannot be checked (cannot be resolved); offErrors: the resolve errors in `off` (both Go gateway only,
-         cleared with leftOut; the settings page builds the reason in its language from them).
+         cleared with leftOut; the settings page builds the reason in its language from them). refused: allowed folders
+         (still in the list) whose real path or identity differs from the record saved when they were added, refused
+         at start or at a run; a folder leaves the list when it passes the checks again or is removed from the allowed
+         folders (Go gateway only; the Mac logs the reason once).
 Login    {"state": string, "hint": string, "hasToken"?: bool, "apiKey"?: bool, "apiKeyNote"?: string}
          Go gateway only (#68), in GET /agents/{claude,codex,grok,copilot}: the agent's login, never a value. state:
          Claude "set" / "not set" (the stored token); Copilot "signed in (copilot login)" / "not available: <reason>"
