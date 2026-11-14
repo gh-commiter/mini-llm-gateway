@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -248,6 +249,7 @@ type spool struct {
 	path   string
 	events int
 	size   int64
+	torn   bool // a failed cut-back left half a line: the next line starts after a newline
 }
 
 func newSpool(path string) *spool {
@@ -292,6 +294,9 @@ func (sp *spool) load() (evs []core.UsageEvent, gaps []core.UsageGapRecord) {
 func (sp *spool) appendLine(l spoolLine) error {
 	b, _ := json.Marshal(l)
 	b = append(b, '\n')
+	if sp.torn {
+		b = append([]byte{'\n'}, b...)
+	}
 	if err := os.MkdirAll(filepath.Dir(sp.path), 0o700); err != nil {
 		return err
 	}
@@ -307,19 +312,27 @@ func (sp *spool) appendLine(l spoolLine) error {
 	}
 	n, werr := SpoolWrite(f, b)
 	if werr != nil || n < len(b) {
-		f.Truncate(sp.size)
-		f.Close()
 		if werr == nil {
 			werr = io.ErrShortWrite
 		}
+		if terr := SpoolTruncate(f, sp.size); terr != nil { // the half line stays: count it in the size, end it with a newline next time
+			sp.size += int64(n)
+			sp.torn = true
+			werr = fmt.Errorf("%w; cut-back failed: %v", werr, terr)
+		}
+		f.Close()
 		return werr
 	}
 	if err := f.Close(); err != nil {
 		return err
 	}
 	sp.size += int64(n)
+	sp.torn = false
 	return nil
 }
+
+// SpoolTruncate: tests make the cut-back fail.
+var SpoolTruncate = func(f *os.File, size int64) error { return f.Truncate(size) }
 
 // SpoolWrite: tests make the disk fail.
 var SpoolWrite = func(f *os.File, b []byte) (int, error) { return f.Write(b) }

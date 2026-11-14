@@ -122,6 +122,24 @@ func TestSpoolPartialWriteLeavesNoBrokenLine(t *testing.T) {
 	}
 }
 
+func TestSpoolFailedCutBackIsReportedAndNextLineStaysClean(t *testing.T) {
+	u, _ := bareRecorder(t)
+	u.handle(fin("one"))
+	SpoolWrite = func(f *os.File, b []byte) (int, error) { return f.Write(b[:len(b)/2]) }
+	SpoolTruncate = func(*os.File, int64) error { return fmt.Errorf("access denied") }
+	u.handle(fin("two"))
+	SpoolWrite = func(f *os.File, b []byte) (int, error) { return f.Write(b) }
+	SpoolTruncate = func(f *os.File, n int64) error { return f.Truncate(n) }
+	if u.lost != 1 {
+		t.Fatalf("lost %d: a failed cut-back must be a counted loss", u.lost)
+	}
+	u.handle(fin("three"))
+	evs, _ := u.spool.load()
+	if len(evs) != 2 || evs[0].ID != "one" || evs[1].ID != "three" {
+		t.Fatalf("%+v", evs)
+	}
+}
+
 func TestSpoolGapRecordsAreBoundedToo(t *testing.T) {
 	ob, oe := SpoolMaxBytes, SpoolMaxEvents
 	SpoolMaxBytes, SpoolMaxEvents = 700, 10
