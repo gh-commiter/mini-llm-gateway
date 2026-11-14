@@ -166,3 +166,69 @@ func TestFailedRecordSaveIsNotReRecordedByPatch(t *testing.T) {
 		t.Fatalf("retargeted folder trusted: %v", got)
 	}
 }
+
+// A1: the persisted identity is enforced on every run, not only at start: a folder swapped for another one at the same
+// path is refused (and listed as refused) until the original is back; the same for a folder that was missing at start.
+func TestAllowedFolderIdentityEnforcedAtRunTime(t *testing.T) {
+	base := realOf(t, t.TempDir())
+	folder := filepath.Join(base, "folder")
+	if err := os.Mkdir(folder, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := testServer(t, func(c *serveConfig) { c.AllowedFolders = []string{folder} })
+	path := s.cfgPath
+	releaseScratch()
+	swap := func(away string) { // the folder goes away, another one takes its place
+		t.Helper()
+		if err := os.Rename(folder, away); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(folder, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	back := func(away string) { // the replacement goes, the original returns
+		t.Helper()
+		if err := os.Remove(folder); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(away, folder); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	s, _ = startFrom(t, path)
+	if got := s.agentFolders(s.conf(), base); len(got) != 1 {
+		t.Fatalf("original folder refused: %v", got)
+	}
+	swap(folder + ".old")
+	if got := s.agentFolders(s.conf(), base); len(got) != 0 {
+		t.Fatalf("replaced folder accepted after start: %v", got)
+	}
+	if got := s.claudeInfo().Refused; !slices.Equal(got, []string{folder}) {
+		t.Fatalf("not listed as refused: %v", got)
+	}
+	back(folder + ".old")
+	if got := s.agentFolders(s.conf(), base); len(got) != 1 || len(s.claudeInfo().Refused) != 0 {
+		t.Fatalf("original folder not accepted again: %v %v", got, s.claudeInfo().Refused)
+	}
+
+	// Missing at start, another folder appears, then the original returns.
+	if err := os.Rename(folder, folder+".old"); err != nil {
+		t.Fatal(err)
+	}
+	s, _ = startFrom(t, path)
+	if got := s.agentFolders(s.conf(), base); len(got) != 0 {
+		t.Fatalf("missing folder accepted: %v", got)
+	}
+	if err := os.Mkdir(folder, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.agentFolders(s.conf(), base); len(got) != 0 {
+		t.Fatalf("a different folder accepted for a folder that was missing at start: %v", got)
+	}
+	back(folder + ".old")
+	if got := s.agentFolders(s.conf(), base); len(got) != 1 {
+		t.Fatalf("original folder not accepted again: %v", got)
+	}
+}

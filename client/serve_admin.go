@@ -863,6 +863,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 						s.wasMissing.Delete(f)
 						s.refusedLogged.Delete(f)
 						s.startRefused.Delete(f)
+						s.runRefused.Delete(f)
 					}
 				}
 				for _, f := range s.cfg.AllowedFolders {
@@ -1273,12 +1274,14 @@ func (s *server) claudeInfo() apiClaude {
 	if len(exe) > 0 {
 		info.Exe, info.ClaudeVersion = exe[len(exe)-1], claudeVersion(exe)
 	}
-	s.startRefused.Range(func(k, _ any) bool {
-		if slices.Contains(c.AllowedFolders, k.(string)) {
-			info.Refused = append(info.Refused, k.(string))
-		}
-		return true
-	})
+	for _, m := range []*sync.Map{&s.startRefused, &s.runRefused} { // A7: also folders refused at run time
+		m.Range(func(k, _ any) bool {
+			if f := k.(string); slices.Contains(c.AllowedFolders, f) && !slices.Contains(info.Refused, f) {
+				info.Refused = append(info.Refused, f)
+			}
+			return true
+		})
+	}
 	slices.Sort(info.Refused)
 	if c.ClaudeDisabled {
 		s.mu.RLock()

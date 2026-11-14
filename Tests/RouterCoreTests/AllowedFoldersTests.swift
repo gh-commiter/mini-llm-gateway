@@ -232,6 +232,39 @@ private func allowedTemp() throws -> URL {
     #expect(logs.first?.contains("its identity changed") == true)
 }
 
+// A1: the recorded identity is enforced on every check, also for a folder that was missing at start.
+@Test func allowedFolderIdentityEnforcedAtRunTime() throws {
+    let fm = FileManager.default, base = try allowedTemp()
+    defer { try? fm.removeItem(at: base) }
+    let folder = base.appendingPathComponent("folder"), old = base.appendingPathComponent("old"), p = folder.path
+    try fm.createDirectory(at: folder, withIntermediateDirectories: false)
+    var cfg = ClaudeCLIConfig()
+    cfg.allowedRoots = p
+    cfg.recordFolders()
+    let check = AllowedFolders()
+    check.record(p, records: cfg.allowedRecords)
+    #expect(check.folders(p) == [p])
+    // Swapped after start: refused (logged once) until the original is back.
+    try fm.moveItem(at: folder, to: old)
+    try fm.createDirectory(at: folder, withIntermediateDirectories: false)
+    var logs: [String] = []
+    for _ in 0..<2 { #expect(check.folders(p, log: { logs.append($0) }).isEmpty) }
+    #expect(logs.count == 1 && logs[0].contains("its identity changed"))
+    try fm.removeItem(at: folder)
+    try fm.moveItem(at: old, to: folder)
+    #expect(check.folders(p) == [p])
+    // Missing at start, another folder appears: refused; the original returns: accepted.
+    try fm.moveItem(at: folder, to: old)
+    let restarted = AllowedFolders()
+    restarted.record(p, records: cfg.allowedRecords)
+    #expect(restarted.folders(p).isEmpty)
+    try fm.createDirectory(at: folder, withIntermediateDirectories: false)
+    #expect(restarted.folders(p, log: { _ in }).isEmpty)
+    try fm.removeItem(at: folder)
+    try fm.moveItem(at: old, to: folder)
+    #expect(restarted.folders(p) == [p])
+}
+
 // The checked real path of an allowed folder may contain a comma: it must not be split like the configured list.
 @Test func checkedRootWithCommaIsKept() throws {
     let fm = FileManager.default, base = try allowedTemp()

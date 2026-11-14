@@ -35,7 +35,7 @@ public final class AllowedFolders: @unchecked Sendable {
         var real: String?
         var missing: Bool
         var logged = false
-        var identityChanged = false  // M2: at start, another folder is at the recorded real path
+        var expected: (dev: UInt64, ino: UInt64)?  // M2, A1: the recorded identity (nonzero); compared on every check
     }
     private let lock = NSLock()
     private var entries: [String: Entry] = [:]
@@ -68,9 +68,7 @@ public final class AllowedFolders: @unchecked Sendable {
                 } else {
                     var e = Entry(real: Sync.realResolving(URL(fileURLWithPath: p))?.path, missing: missing)
                     if let rec = records[p] {  // M2: the saved record, not the current target
-                        var st = stat()
-                        if !missing, rec.dev != 0 || rec.ino != 0, let r = e.real, r == rec.real, lstat(r, &st) == 0,
-                           UInt64(bitPattern: Int64(st.st_dev)) != rec.dev || UInt64(st.st_ino) != rec.ino { e.identityChanged = true }
+                        if rec.dev != 0 || rec.ino != 0 { e.expected = (rec.dev, rec.ino) }
                         e.real = rec.real
                     }
                     entries[p] = e
@@ -131,10 +129,12 @@ public final class AllowedFolders: @unchecked Sendable {
                 let config = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Preferences")
                 guard !RouterConfig.overlapsScratch(p, scratch: config) else { return nil }
                 let r = Sync.real(URL(fileURLWithPath: p))?.path
+                var identity = stat()
+                let have = r.map { lstat($0, &identity) == 0 } ?? false
                 var why = ""
                 if r == nil { why = "cannot resolve its real path" }
                 else if r != e.real { why = "its real path changed to " + r! }
-                else if e.identityChanged { why = "its identity changed (another folder is there now)" }
+                else if have, let x = e.expected, UInt64(bitPattern: Int64(identity.st_dev)) != x.dev || UInt64(identity.st_ino) != x.ino { why = "its identity changed (another folder is there now)" }
                 else if e.missing && r != p { why = "it is reached through a link to " + r! }
                 else if !Self.owned(r!) || (e.missing && !Self.owned(p)) { why = "it is a link or owned by another user" }
                 if !why.isEmpty {
@@ -144,8 +144,7 @@ public final class AllowedFolders: @unchecked Sendable {
                     }
                     return nil
                 }
-                var identity = stat()
-                guard lstat(r!, &identity) == 0, identity.st_mode & S_IFMT == S_IFDIR,
+                guard have, identity.st_mode & S_IFMT == S_IFDIR,
                       identity.st_uid == getuid() else { return nil }
                 return Checked.Folder(path: r!, device: identity.st_dev, inode: identity.st_ino)
             }

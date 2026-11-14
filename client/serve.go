@@ -493,6 +493,7 @@ type server struct {
 	wasMissing              sync.Map // #83: dovoljene mape, ki so kdaj manjkale (agentFolders); odide le z mapo s seznama
 	refusedLogged           sync.Map // #83: zavrnjene označene mape, že v dnevniku (enkrat na mapo)
 	startRefused            sync.Map // M2: mapa → razlog; mapa se je od zapisa spremenila, ko je prehod bil ustavljen
+	runRefused              sync.Map // A1, A7: mapa → razlog; zavrnjena ob zadnjem zagonu agenta (prava pot, istovetnost)
 	settings                settingsState
 	pick                    atomic.Pointer[pickFunc] // izbirno okno pladnja (Windows); nil = ni GUI
 	picking                 atomic.Bool              // eno okno naenkrat

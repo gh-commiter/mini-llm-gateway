@@ -306,6 +306,7 @@ func (s *server) checkedAgentFolders(c serveConfig, dir string) checkedFolders {
 		rec, recorded := c.AllowedRecords[f]
 		saved := rec.Real
 		_, missed := s.wasMissing.Load(f)
+		id, idErr := fileIDOf(r)
 		switch {
 		case err != nil:
 			why = "cannot resolve its real path"
@@ -315,17 +316,20 @@ func (s *server) checkedAgentFolders(c serveConfig, dir string) checkedFolders {
 			why = "it is reached through a link to " + r
 		case !ownedByMe(r) || (missed && !ownedByMe(f)):
 			why = "it is a link or owned by another user"
+		case idErr == nil && rec.id() != (fileID{}) && id != rec.id(): // A1: on every run, not only at start
+			why = "its identity changed (another folder is there now)"
 		}
 		if why != "" {
+			s.runRefused.Store(f, why)
 			if _, logged := s.refusedLogged.LoadOrStore(f, true); !logged {
 				s.log.Printf("WARNING: allowed folder %s is not used: %s; if you trust it, remove and add it again in the allowed folders", f, why)
 			}
 			continue
 		}
-		id, err := fileIDOf(r)
-		if err != nil {
+		if idErr != nil {
 			continue
 		}
+		s.runRefused.Delete(f)
 		use := r
 		if runtime.GOOS == "windows" { // #93: a mapped drive's final path is UNC, which Claude Code blocks; keep the drive name, verify() compares its identity at launch
 			use = f
