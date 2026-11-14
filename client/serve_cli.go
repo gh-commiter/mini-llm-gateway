@@ -155,7 +155,13 @@ func (s *server) agentArgs(dir string, readOnly bool, checked ...[]string) []str
 				deny = append(deny, "Edit("+ruleAbs(d)+"/**/.git/"+g+")", "Edit("+ruleAbs(d)+"/**/.git/"+g+"/**)")
 			}
 			deny = append(deny, "Edit("+ruleAbs(d)+"/.git)", "Edit("+ruleAbs(d)+"/**/.git)") // a gitdir: file (submodule) or .git itself
-			if strings.TrimSpace(c.SettingSources) != "" {                                   // T3: .claude/settings*.json of the folder are read with the setting sources project or local (hooks run unsandboxed)
+			for _, g := range submoduleDenies {                                              // V1: the submodules' config, hooks and info (top-level and nested), not the whole .git/modules tree
+				for _, r := range []string{"/.git/modules/**/", "/**/.git/modules/**/"} {
+					deny = append(deny, "Edit("+ruleAbs(d)+r+g+")", "Edit("+ruleAbs(d)+r+g+"/**)")
+					gitDeny = append(gitDeny, filepath.ToSlash(d)+r+g)
+				}
+			}
+			if readsFolderSettings(c.SettingSources) { // T3: .claude/settings*.json of the folder are read with the setting sources project or local (hooks run unsandboxed)
 				deny = append(deny, "Edit("+ruleAbs(d)+"/.claude/**)", "Edit("+ruleAbs(d)+"/**/.claude/**)")
 			}
 		}
@@ -232,7 +238,35 @@ func (s *server) agentArgs(dir string, readOnly bool, checked ...[]string) []str
 	return args
 }
 
-var gitDenies = []string{"config", "config.worktree", "hooks", "info", "commondir", "worktrees", "modules"} // modules: .git/modules/<sub>/{config,hooks} run in the owner's `git status` of the parent
+var gitDenies = []string{"config", "config.worktree", "hooks", "info", "commondir", "worktrees"}
+
+// submoduleDenies (V1): of .git/modules/<sub>/ only what the owner's git runs (config, hooks, info); objects, index and HEAD stay writable.
+var submoduleDenies = []string{"config", "config.worktree", "hooks", "info"}
+
+// submoduleGitPaths: the submodule config, hooks and info paths that exist under a .git folder (for profiles that take literal paths).
+func submoduleGitPaths(git string) []string {
+	var out []string
+	var walk func(dir string, depth int)
+	walk = func(dir string, depth int) {
+		ents, err := os.ReadDir(dir)
+		if depth >= 8 || err != nil {
+			return
+		}
+		for _, e := range ents {
+			p := filepath.Join(dir, e.Name())
+			if e.Type()&os.ModeSymlink != 0 {
+				continue
+			}
+			if slices.Contains(submoduleDenies, e.Name()) {
+				out = append(out, p)
+			} else if e.IsDir() && e.Name() != "objects" && e.Name() != "refs" {
+				walk(p, depth+1)
+			}
+		}
+	}
+	walk(filepath.Join(git, "modules"), 0)
+	return out
+}
 
 const readOnlyWorktree = "Worktree mode cannot be read-only (--minigw-ro): use direct or sync"
 
@@ -245,6 +279,16 @@ func enforcingMode(m string) string {
 		return m
 	}
 	return "dontAsk"
+}
+
+// readsFolderSettings: Claude Code reads .claude/settings*.json of the folder only with the setting sources project or local (user is the owner's home).
+func readsFolderSettings(sources string) bool {
+	for _, x := range strings.Split(sources, ",") {
+		if x = strings.TrimSpace(x); x == "project" || x == "local" {
+			return true
+		}
+	}
+	return false
 }
 
 // ruleSafe (#111 S5): can the path go into a permission rule as it is? No parentheses, glob characters, comma, backslash, `!`, control

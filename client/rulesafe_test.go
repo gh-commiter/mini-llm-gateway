@@ -107,7 +107,7 @@ func TestRestrictedGoModulesAndClaudeSettingsDenied(t *testing.T) {
 	deny := func(a []string) []string { return strings.Split(a[slices.Index(a, "--disallowedTools")+1], ",") }
 	got := deny(s.agentArgs("/copy", false, []string{"/other"}))
 	for _, d := range []string{"//copy", "//other"} {
-		for _, want := range []string{"Edit(" + d + "/.git/modules/**)", "Edit(" + d + "/**/.git/modules/**)", "Edit(" + d + "/.claude/**)", "Edit(" + d + "/**/.claude/**)"} {
+		for _, want := range []string{"Edit(" + d + "/.git/modules/**/hooks)", "Edit(" + d + "/.git/modules/**/config)", "Edit(" + d + "/**/.git/modules/**/info/**)", "Edit(" + d + "/.claude/**)", "Edit(" + d + "/**/.claude/**)"} {
 			if !slices.Contains(got, want) {
 				t.Errorf("missing %s", want)
 			}
@@ -118,5 +118,35 @@ func TestRestrictedGoModulesAndClaudeSettingsDenied(t *testing.T) {
 		if strings.Contains(r, "/.claude") {
 			t.Errorf("no setting sources, yet %s", r)
 		}
+	}
+}
+
+func TestClaudeSettingsDenyOnlyForProjectOrLocalSources(t *testing.T) {
+	for src, want := range map[string]bool{"": false, "user": false, "project": true, "user, local": true, "user,project,local": true} {
+		if got := readsFolderSettings(src); got != want {
+			t.Errorf("%q: %v", src, got)
+		}
+	}
+}
+
+func TestSubmoduleDeniesAreOnlyConfigHooksInfo(t *testing.T) { // V1: not the whole .git/modules tree
+	if slices.Contains(gitDenies, "modules") {
+		t.Fatal("the whole modules tree is denied")
+	}
+	git := filepath.Join(t.TempDir(), ".git")
+	for _, p := range []string{"modules/sub/hooks", "modules/sub/info", "modules/sub/objects/ab", "modules/sub/refs/heads", "modules/sub/modules/deep/hooks"} {
+		os.MkdirAll(filepath.Join(git, p), 0o700)
+	}
+	for _, p := range []string{"modules/sub/config", "modules/sub/HEAD", "modules/sub/index", "modules/sub/modules/deep/config"} {
+		os.WriteFile(filepath.Join(git, p), []byte("x"), 0o600)
+	}
+	got := submoduleGitPaths(git)
+	slices.Sort(got)
+	want := []string{"modules/sub/config", "modules/sub/hooks", "modules/sub/info", "modules/sub/modules/deep/config", "modules/sub/modules/deep/hooks"}
+	for i := range want {
+		want[i] = filepath.Join(git, want[i])
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("got %v want %v", got, want)
 	}
 }
