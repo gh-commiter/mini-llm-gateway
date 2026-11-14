@@ -149,6 +149,7 @@ func newRunFxCfg(t *testing.T, ask, withCodex bool, mod func(*serveConfig)) *run
 		c.Devices = list
 		c.Claude = claude
 		c.AllowUnsandboxedBash = runtime.GOOS != "linux" || bwrapReady(t.TempDir()) == ""
+		c.AcceptAgentsReadNotes = true // #106: the fake agents run without a sandbox where there is none (the gate is in serve_core_sandbox_test.go)
 		if ask {
 			c.ClaudeAskOthers, c.AllowLocalTools = true, true
 		}
