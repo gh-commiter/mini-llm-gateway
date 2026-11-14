@@ -222,6 +222,105 @@
     "minigw: git in this folder, changed by the agent: HEAD is detached; deleted refs: old"
    ],
    "reset": []
+  },
+  {
+   "name": "partial start: index changed",
+   "start": {
+    "head": "main",
+    "refs": {
+     "refs/heads/main": "a"
+    },
+    "index": {},
+    "pending": [],
+    "indexHash": "h1",
+    "partial": true
+   },
+   "end": {
+    "head": "main",
+    "refs": {
+     "refs/heads/main": "a"
+    },
+    "index": {
+     "a.txt": "100644 aaaa 0"
+    },
+    "pending": [],
+    "indexHash": "h2",
+    "partial": false,
+    "cached": [
+     "a.txt"
+    ]
+   },
+   "commits": [],
+   "lines": [
+    "minigw: git in this folder, changed by the agent: the index changed"
+   ],
+   "reset": []
+  },
+  {
+   "name": "partial start: protected path staged",
+   "start": {
+    "head": "main",
+    "refs": {
+     "refs/heads/main": "a"
+    },
+    "index": {
+     ".envrc": "100644 eeee 0"
+    },
+    "pending": [],
+    "indexHash": "h1",
+    "partial": true
+   },
+   "end": {
+    "head": "main",
+    "refs": {
+     "refs/heads/main": "a"
+    },
+    "index": {
+     ".envrc": "100644 aaaa 0",
+     "b.txt": "100644 aaaa 0"
+    },
+    "pending": [],
+    "indexHash": "h2",
+    "partial": false,
+    "cached": [
+     ".envrc",
+     "b.txt"
+    ]
+   },
+   "commits": [],
+   "lines": [
+    "minigw: git in this folder, changed by the agent: the index changed",
+    "minigw: WARNING: the agent staged a protected path: .envrc - removed from the index for you (your files were not touched)"
+   ],
+   "reset": [
+    ".envrc"
+   ]
+  },
+  {
+   "name": "partial start: protected path staged, index unchanged",
+   "start": {
+    "head": "main",
+    "refs": {
+     "refs/heads/main": "a"
+    },
+    "index": {},
+    "pending": [],
+    "indexHash": "h1",
+    "partial": true
+   },
+   "end": {
+    "head": "main",
+    "refs": {
+     "refs/heads/main": "a"
+    },
+    "index": {},
+    "pending": [],
+    "indexHash": "h1",
+    "partial": false
+   },
+   "commits": [],
+   "lines": [],
+   "reset": []
   }
  ]
 }

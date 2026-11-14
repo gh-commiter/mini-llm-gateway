@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -24,6 +26,10 @@ type gitState struct {
 	Index   map[string]string `json:"index"`   // path → "mode id stage"
 	Pending []string          `json:"pending"` // MERGE_HEAD, CHERRY_PICK_HEAD, REVERT_HEAD that exist
 	Cached  []string          `json:"cached"`  // end state only: paths where the index differs from HEAD (what is staged and not committed); nil = all
+	// IndexHash: sha256 of `git ls-files -s -z`. Partial (a start state read back from the store): Index holds only the protected paths, so the staged paths are
+	// told only for those, and a changed IndexHash says that the index changed.
+	IndexHash string `json:"indexHash"`
+	Partial   bool   `json:"partial"`
 }
 
 type gitCommit struct {
@@ -63,13 +69,14 @@ func gitWatchReport(start, end gitState, commits []gitCommit, isProtected func(s
 	}
 	var staged []string
 	notCommitted := func(p string) bool { return end.Cached == nil || slices.Contains(end.Cached, p) } // a path the agent committed is in the index too
+	counted := func(p string) bool { return !start.Partial || isProtected(p) }                         // a partial start state knows only the protected paths
 	for p, v := range end.Index {
-		if start.Index[p] != v && notCommitted(p) {
+		if counted(p) && start.Index[p] != v && notCommitted(p) {
 			staged = append(staged, p)
 		}
 	}
 	for p := range start.Index {
-		if _, ok := end.Index[p]; !ok && notCommitted(p) {
+		if _, ok := end.Index[p]; !ok && counted(p) && notCommitted(p) {
 			staged = append(staged, p)
 		}
 	}
@@ -92,8 +99,10 @@ func gitWatchReport(start, end gitState, commits []gitCommit, isProtected func(s
 			parts = append(parts, p.what+": "+gitNames(p.l))
 		}
 	}
-	if len(staged) > 0 {
+	if len(staged) > 0 && !start.Partial {
 		parts = append(parts, fmt.Sprintf("%d staged path(s)", len(staged)))
+	} else if start.Partial && start.IndexHash != end.IndexHash {
+		parts = append(parts, "the index changed")
 	}
 	if len(parts) > 0 {
 		lines = append(lines, "minigw: git in this folder, changed by the agent: "+strings.Join(parts, "; "))
@@ -134,6 +143,7 @@ func gitWatchReport(start, end gitState, commits []gitCommit, isProtected func(s
 type gitWatch struct {
 	root  string
 	start gitState
+	file  string // the stored copy of the start state (gitwatch_store.go)
 }
 
 var gitWatchPins = []string{"--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=" + os.DevNull, "-c", "core.attributesFile=" + os.DevNull,
@@ -176,6 +186,8 @@ func gitWatchState(root string) (gitState, bool) {
 		st.Head = strings.TrimSpace(h)
 	}
 	idx, _ := gitWatchRun(root, "", "ls-files", "-s", "-z")
+	sum := sha256.Sum256([]byte(idx))
+	st.IndexHash = hex.EncodeToString(sum[:])
 	for _, e := range strings.Split(idx, "\x00") {
 		if meta, p, ok := strings.Cut(e, "\t"); ok {
 			if f := strings.Fields(meta); len(f) == 3 {
@@ -199,17 +211,22 @@ func gitWatchState(root string) (gitState, bool) {
 }
 
 func gitWatchStart(root string) *gitWatch {
+	for _, l := range gitWatchRecover(root, os.Getpid(), gitWatchPidAlive) { // a run in this folder that did not finish (X2)
+		fmt.Fprintln(os.Stderr, l)
+	}
 	if st, ok := gitWatchState(root); ok {
-		return &gitWatch{root: root, start: st}
+		w := &gitWatch{root: root, start: st}
+		w.save()
+		return w
 	}
 	return nil
 }
 
-// report: at the end of the share. Prints to stderr; resets the staged protected paths in the index (plumbing: the work tree is not touched).
-func (w *gitWatch) report() {
+// lines: the comparison of the stored start state with the repository now; the staged protected paths are taken out of the index (plumbing: the work tree is not touched).
+func (w *gitWatch) lines() []string {
 	end, ok := gitWatchState(w.root)
 	if !ok {
-		return
+		return nil
 	}
 	var tips, old []string
 	for _, id := range end.Refs {
@@ -239,9 +256,15 @@ func (w *gitWatch) report() {
 	if len(reset) > 0 && !w.resetIndex(reset) {
 		lines = append(lines, "minigw: could not remove the staged protected paths from the index: run git reset -- "+strings.Join(reset, " "))
 	}
-	for _, l := range lines {
+	return lines
+}
+
+// report: at the end of the share. Prints to stderr, then forgets the stored start state.
+func (w *gitWatch) report() {
+	for _, l := range w.lines() {
 		fmt.Fprintln(os.Stderr, l)
 	}
+	w.forget()
 }
 
 // resetIndex puts the start state of the paths back into the index (git update-index --index-info: mode, id, stage, path; id 0 removes the entry).
