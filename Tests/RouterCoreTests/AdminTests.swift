@@ -185,13 +185,10 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
     @Test func fakeResponderGetsNothingReusable() async throws {
         // Pravi router (strežnik Noise) in lažen odgovornik z lastnim ključem.
         let app = FakeApp()
-        let port = freeTCPPort()  // ne stalen 18767: vzporedni testi in drugi zagoni na istem Macu
-        app.config.host = "127.0.0.1"; app.config.port = port
+        app.config.host = "127.0.0.1"
         let realKey = Noise.newKey()
-        let server = RouterServer(router: app.router(), key: realKey)
-        try server.start()
+        let (server, port) = try await startOnFreePort(key: realKey) { app.config.port = $0; return app.router() }
         defer { server.stop() }
-        for _ in 0..<600 where !portInUse(port) { try await Task.sleep(for: .milliseconds(50)) }
         let fakeKey = Noise.newKey()
         let (l, fakePort) = listener()
         defer { close(l) }

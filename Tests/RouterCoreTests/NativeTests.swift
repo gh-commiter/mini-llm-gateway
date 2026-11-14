@@ -743,17 +743,14 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     defer { try? FileManager.default.removeItem(at: f.root) }
     let dev = Curve25519.Signing.PrivateKey(), devID = Noise.base64url(dev.publicKey.rawRepresentation)
     var c = RouterConfig()
-    let port = freeTCPPort()
-    c.host = "127.0.0.1"; c.port = port
+    c.host = "127.0.0.1"
     c.claudeCLI.allowedRoots = f.share.path
     c.devices = [DeviceConfig(id: devID, name: "Air", run: true)]
     c.runCommands = "sh"
     let key = Noise.newKey()
-    let r = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]))
-    let server = RouterServer(router: r, key: key)
-    try server.start()
+    var r: Router!
+    let (server, port) = try await startOnFreePort(key: key) { c.port = $0; r = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:])); return r }
     defer { server.stop() }
-    for _ in 0..<600 where !portInUse(port) { try await Task.sleep(for: .milliseconds(50)) }
     let proxy = try #require(NoiseProxy(routerURL: "http://127.0.0.1:\(port)", routerKey: key.publicKey.rawRepresentation,
                                         device: (key: dev, name: "Air"), suite: .aesGCM))
     try proxy.start()
