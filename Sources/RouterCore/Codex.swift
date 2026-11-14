@@ -139,7 +139,12 @@ public enum Codex {
         for g in gits {
             fs[g] = "write"
             for d in ClaudeCLIConfig.gitDenies { fs[g + "/" + d] = "read" }
-            for p in ClaudeCLIConfig.submoduleGitPaths(g) { fs[p] = "read" }  // V1: the submodules' config, hooks and info (not the whole modules tree)
+            // V7: all of `modules` is read-only (a submodule added during the run too), each existing submodule git directory writable (a commit inside it) with the same denies
+            fs[g + "/modules"] = "read"
+            for sub in ClaudeCLIConfig.submoduleGitDirs(g) {
+                fs[sub] = "write"
+                for d in ClaudeCLIConfig.submoduleDenies { fs[sub + "/" + d] = "read" }
+            }
         }
         func q(_ s: String) -> String { String(decoding: try! JSONSerialization.data(withJSONObject: s, options: [.fragmentsAllowed, .withoutEscapingSlashes]), as: UTF8.self) }
         let table = fs.keys.sorted().map { q($0) + "=\"" + fs[$0]! + "\"" }.joined(separator: ",")

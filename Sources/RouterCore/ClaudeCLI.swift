@@ -126,9 +126,10 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
 
     /// T3: with setting sources `project` or `local` Claude Code reads `.claude/settings*.json` of the folder (hooks run unsandboxed on the next run; `allow` and
     /// `additionalDirectories` widen the rules): the edit tools may not write `.claude` in the session folder or an allowed folder, nested too (real run: stops Write).
-    /// Claude Code reads `.claude/settings*.json` of the folder only with the setting sources `project` or `local` (`user` is the owner's home).
-    var readsFolderSettings: Bool {
-        settingSources.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.contains { $0 == "project" || $0 == "local" }
+    /// Claude Code reads `.claude/settings*.json` of the folder with the setting sources `project` or `local` (`user` is the owner's home): denied unless the sources are empty or only `user`.
+    var readsFolderSettings: Bool {  // V8: unless every source is exactly `user` (or there are none): Claude Code trims like JS, so no guessing about `project\n`
+        let entries = settingSources.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        return !entries.isEmpty && !entries.allSatisfy { $0 == "user" }
     }
 
     func claudeSettingsEditDenies(dirs: [String]) -> [String] {
@@ -163,7 +164,8 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
             let allowedNames = readOnly ? Self.readOnlyAllowed : Self.restrictedAllowed
             var names: [String] = []
             for t in Self.toolNames(tools) where allowedNames.contains(Self.toolName(t)) {
-                let n = Self.pathToolSet.contains(Self.toolName(t)) ? Self.toolName(t) : t
+                // V6: only a plain WebFetch/WebSearch entry (optionally with domain:…) is kept as written; anything else (a space could make Claude Code read a second entry) is the bare name
+                let n = t.range(of: #"^(WebFetch|WebSearch)(\(domain:[A-Za-z0-9.*-]+\))?$"#, options: .regularExpression) != nil ? t : Self.toolName(t)
                 if !names.contains(n) { names.append(n) }
             }
             let extra = dirs.dropFirst().filter { Self.ruleSafe($0) }
@@ -216,20 +218,22 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
     /// M4: .git, ki ga bere git lastnika: nastavitve, hooki, atributi in preusmeritve na drug gitdir (commondir,
     /// povezani worktree-ji z gitdir, commondir in config.worktree).
     static let gitDenies = ["config", "config.worktree", "hooks", "info", "commondir", "worktrees"]
-    /// V1: of `.git/modules/<sub>/` (the submodules' git directories: objects, index and HEAD must stay writable for a commit inside a submodule or
-    /// `git submodule update`) only what the owner's git runs is denied: config (core.fsmonitor), hooks, info (attributes) and the redirect.
-    static let submoduleDenies = ["config", "config.worktree", "hooks", "info"]
+    /// V1, V5: a submodule's git directory (`.git/modules/<sub>/`) is read by the owner's git like the top-level one: config, hooks, info, and `commondir` or
+    /// `worktrees`, which redirect git to another directory's config and hooks. The same list, so that they cannot drift; objects, index, HEAD and refs stay writable
+    /// (a commit inside a submodule). At 0.5.27 nothing under `.git/modules` was denied except through the sandbox's whole-`.git` entry (still there).
+    static let submoduleDenies = gitDenies
 
-    /// The submodule config, hooks and info paths that exist under a `.git` folder (for profiles that take literal paths only).
-    static func submoduleGitPaths(_ git: String) -> [String] {
+    /// V7: the existing git directories of the submodules under a `.git` folder (a directory with a HEAD file; nested submodules too), for profiles that take literal paths.
+    static func submoduleGitDirs(_ git: String) -> [String] {
         var out: [String] = []
         func walk(_ dir: String, _ depth: Int) {
             guard depth < 8, let names = try? FileManager.default.contentsOfDirectory(atPath: dir) else { return }
             for n in names.sorted() {
                 let p = dir + "/" + n
                 var st = stat()
-                guard lstat(p, &st) == 0, st.st_mode & S_IFMT == S_IFDIR || st.st_mode & S_IFMT == S_IFREG else { continue }  // no links
-                if submoduleDenies.contains(n) { out.append(p) } else if st.st_mode & S_IFMT == S_IFDIR && n != "objects" && n != "refs" { walk(p, depth + 1) }
+                guard lstat(p, &st) == 0, st.st_mode & S_IFMT == S_IFDIR else { continue }  // no links
+                var h = stat()
+                if lstat(p + "/HEAD", &h) == 0 { out.append(p); walk(p + "/modules", depth + 1) } else { walk(p, depth + 1) }
             }
         }
         walk(git + "/modules", 0)
@@ -245,7 +249,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
             for g in Self.gitDenies { out += [d + "/.git/" + g, d + "/**/.git/" + g] }
             out.append(d + "/**/.git")
             for g in Self.submoduleDenies { out += [d + "/.git/modules/**/" + g, d + "/**/.git/modules/**/" + g] }
-            if readsFolderSettings { out += [d + "/.claude", d + "/**/.claude"] }
+            if !settingSources.trimmingCharacters(in: .whitespaces).isEmpty { out += [d + "/.claude", d + "/**/.claude"] }
         }
         return out
     }
