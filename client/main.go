@@ -70,12 +70,15 @@ func clean(s string) string {
 	}, s)
 }
 
+// exitFn: os.Exit; the parity tests replace it to run a command in-process.
+var exitFn = os.Exit
+
 func fail(s string, code ...int) {
 	fmt.Fprintln(os.Stderr, "minigw: "+s)
 	if len(code) > 0 {
-		os.Exit(code[0])
+		exitFn(code[0])
 	}
-	os.Exit(1)
+	exitFn(1)
 }
 
 // requireProfile: profil tega ukaza (--minigw-profile ali privzeti).

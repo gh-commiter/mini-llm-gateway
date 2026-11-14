@@ -30,7 +30,7 @@ minigw gw: show or change the Mini Gateway app on this Mac. Changes apply at onc
   minigw gw settings                                    the settings in this terminal (minigw-tui; also over SSH)
   minigw gw api GET|POST|PATCH|DELETE <path>            one admin API request (docs/admin-api.md): the JSON body
                                                         on stdin, the JSON answer on stdout (used by minigw-tui)
-"""
+""" + "\n  " + AdminCommands.help
 
 private struct AdminConnection {
     let port: UInt16
@@ -212,7 +212,7 @@ private func agentWork(_ a: AdminConnection, _ kind: String, _ work: String?) {
 func routerCommand(_ argv: [String]) {
     // Ukazi in zastavice v poljubnem vrstnem redu (»--x v« ali »--x=v«).
     var pos: [String] = [], flags: [String: String] = [:]
-    let valued: Set<String> = ["name", "enable", "disable", "path", "tools", "folders", "allow-local-tools", "ask-others", "work", "folder", "allow-unsandboxed-bash", "config", "device", "days"]
+    let valued: Set<String> = ["name", "enable", "disable", "path", "tools", "folders", "allow-local-tools", "ask-others", "work", "folder", "allow-unsandboxed-bash", "config", "device", "days", "user", "project", "model", "claude-probe"]
     var i = 0
     while i < argv.count {
         let a = argv[i]
@@ -446,6 +446,16 @@ func routerCommand(_ argv: [String]) {
         let argv = [tui, "--minigw", me].map { strdup($0) } + [nil]
         execv(tui, argv)
         fail("cannot start \(tui): \(String(cString: strerror(errno)))")
+    case "user", "bind", "project", "member", "grant", "core", "usage-events":  // 0.6.0: the owner's commands of the project database
+        let cmd = AdminCommands(call: { method, path, body in
+            let (status, data) = a.raw(method, Router.adminPrefix + path, body, proof: true)
+            return (status, data ?? Data())
+        }, out: { try? out.write(contentsOf: Data($0.utf8)) })
+        do {
+            try cmd.run(pos, AdminOpts(days: flags["days"] ?? "7", user: flags["user"] ?? "", project: flags["project"] ?? "",
+                                       model: flags["model"] ?? "", claudeProbe: flags["claude-probe"] ?? ""))
+        } catch let e as AdminCLIError { fail(e.message, code: e.code) } catch { fail("\(error)") }
+
     default:
         fail("unknown command minigw gw \(pos[0])\n\n" + routerHelp)
     }

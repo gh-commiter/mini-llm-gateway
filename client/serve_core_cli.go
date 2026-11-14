@@ -178,7 +178,8 @@ func coreCommand(a *adminClient, pos []string, o coreOpts) {
 		}
 	case "grant":
 		need(3, 5)
-		src := id(projectID(a, pos[1]), 10)
+		srcID := projectID(a, pos[1])
+		src := id(srcID, 10)
 		switch {
 		case pos[2] == "list" && len(pos) == 3:
 			var r struct {
@@ -194,7 +195,7 @@ func coreCommand(a *adminClient, pos []string, o coreOpts) {
 				}
 			}
 		case pos[2] == "add" && len(pos) == 5:
-			a.do("POST", "/grants", map[string]any{"source": src, "reader": projectID(a, pos[3]), "class": pos[4]}, nil)
+			a.do("POST", "/grants", map[string]any{"source": srcID, "reader": projectID(a, pos[3]), "class": pos[4]}, nil)
 		case pos[2] == "remove" && len(pos) == 5:
 			a.do("DELETE", "/grants?source="+src+"&reader="+id(projectID(a, pos[3]), 10)+"&class="+url.QueryEscape(pos[4]), nil, nil)
 		default:

@@ -1,0 +1,2918 @@
+{
+ "cases": [
+  {
+   "name": "user list",
+   "args": [
+    "user",
+    "list"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /users",
+     "status": 200,
+     "body": "{\"users\":[{\"ID\":1,\"Name\":\"Uros\",\"Active\":true,\"Owner\":true},{\"ID\":2,\"Name\":\"Matic\",\"Active\":true,\"Owner\":false},{\"ID\":3,\"Name\":\"Tilen\",\"Active\":false,\"Owner\":false},{\"ID\":4,\"Name\":\"Bad\\u001b[31m\\u202eName\",\"Active\":true,\"Owner\":false}]}"
+    }
+   ],
+   "want": {
+    "out": "1  Uros  (owner)\n2  Matic\n3  Tilen  (deactivated)\n4  Bad[31mName\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/users",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "user list empty",
+   "args": [
+    "user",
+    "list"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /users",
+     "status": 200,
+     "body": "{\"users\":[]}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/users",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "user list 503",
+   "args": [
+    "user",
+    "list"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /users",
+     "status": 503,
+     "body": "{\"error\":{\"message\":\"The project database is not available: the project helper (minigw-core) is not running\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: The project database is not available: the project helper (minigw-core) is not running\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/users",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "user list 403",
+   "args": [
+    "user",
+    "list"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /users",
+     "status": 403,
+     "body": "{\"error\":{\"message\":\"forbidden\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: forbidden\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/users",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "user add",
+   "args": [
+    "user",
+    "add",
+    "Sebastjan"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "POST /users",
+     "status": 201,
+     "body": "{}"
+    }
+   ],
+   "want": {
+    "out": "user Sebastjan added\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "POST",
+      "/users",
+      "{\"name\":\"Sebastjan\"}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "user add control chars",
+   "args": [
+    "user",
+    "add",
+    "a\u001bb"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "POST /users",
+     "status": 201,
+     "body": "{}"
+    }
+   ],
+   "want": {
+    "out": "user ab added\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "POST",
+      "/users",
+      "{\"name\":\"a\\u001bb\"}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "user add 409",
+   "args": [
+    "user",
+    "add",
+    "Matic"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "POST /users",
+     "status": 409,
+     "body": "{\"error\":{\"message\":\"a user with this name exists\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: a user with this name exists\n",
+    "exit": 1,
+    "requests": [
+     [
+      "POST",
+      "/users",
+      "{\"name\":\"Matic\"}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "user add 400",
+   "args": [
+    "user",
+    "add",
+    ""
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "POST /users",
+     "status": 400,
+     "body": "{\"error\":{\"message\":\"name must not be empty\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: name must not be empty\n",
+    "exit": 1,
+    "requests": [
+     [
+      "POST",
+      "/users",
+      "{\"name\":\"\"}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "user add no name",
+   "args": [
+    "user",
+    "add"
+   ],
+   "opts": {},
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "minigw: minigw gw user list | add <name> | rename <user> <name> | activate <user> | deactivate <user>\n  minigw gw bind list | <device id> <user> | remove <device id>        which user a device belongs to\n  minigw gw project list | add <slug> <name> | archive <project> | unarchive <project>\n  minigw gw member <project> list | set <user> <role> | remove <user>   role: reader, developer, admin\n  minigw gw grant <source> list | add <reader> <class> | remove <reader> <class>   class: structure, data\n  minigw gw core backup [name]                          a consistent copy of the core database into <config>/core/backups (gateway running)\n  minigw gw core restore <file|name> [--yes]            only with the gateway stopped; a name is looked up in <config>/core/backups\n  minigw gw core audit                                  the audit trail of the core\n  minigw gw usage-events [--days n] [--user u] [--project p] [--model m]   model invocations per day, model and user (core; all of them)\n  minigw gw quota [--claude-probe=on|off]               subscription quota and provider credit, with source, time and staleness\n(<user> and <project>: the name or slug, or the number.)\n",
+    "exit": 1,
+    "requests": []
+   }
+  },
+  {
+   "name": "user add too many",
+   "args": [
+    "user",
+    "add",
+    "a",
+    "b"
+   ],
+   "opts": {},
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "minigw: minigw gw user list | add <name> | rename <user> <name> | activate <user> | deactivate <user>\n  minigw gw bind list | <device id> <user> | remove <device id>        which user a device belongs to\n  minigw gw project list | add <slug> <name> | archive <project> | unarchive <project>\n  minigw gw member <project> list | set <user> <role> | remove <user>   role: reader, developer, admin\n  minigw gw grant <source> list | add <reader> <class> | remove <reader> <class>   class: structure, data\n  minigw gw core backup [name]                          a consistent copy of the core database into <config>/core/backups (gateway running)\n  minigw gw core restore <file|name> [--yes]            only with the gateway stopped; a name is looked up in <config>/core/backups\n  minigw gw core audit                                  the audit trail of the core\n  minigw gw usage-events [--days n] [--user u] [--project p] [--model m]   model invocations per day, model and user (core; all of them)\n  minigw gw quota [--claude-probe=on|off]               subscription quota and provider credit, with source, time and staleness\n(<user> and <project>: the name or slug, or the number.)\n",
+    "exit": 1,
+    "requests": []
+   }
+  },
+  {
+   "name": "user rename by name",
+   "args": [
+    "user",
+    "rename",
+    "matic",
+    "Matic S"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /users",
+     "status": 200,
+     "body": "{\"users\":[{\"ID\":1,\"Name\":\"Uros\",\"Active\":true,\"Owner\":true},{\"ID\":2,\"Name\":\"Matic\",\"Active\":true,\"Owner\":false},{\"ID\":3,\"Name\":\"Tilen\",\"Active\":false,\"Owner\":false},{\"ID\":4,\"Name\":\"Bad\\u001b[31m\\u202eName\",\"Active\":true,\"Owner\":false}]}"
+    },
+    {
+     "match": "PATCH /users/2",
+     "status": 200,
+     "body": "{}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/users",
+      ""
+     ],
+     [
+      "PATCH",
+      "/users/2",
+      "{\"name\":\"Matic S\"}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "user rename by number",
+   "args": [
+    "user",
+    "rename",
+    "3",
+    "Tilen B"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /users",
+     "status": 200,
+     "body": "{\"users\":[{\"ID\":1,\"Name\":\"Uros\",\"Active\":true,\"Owner\":true},{\"ID\":2,\"Name\":\"Matic\",\"Active\":true,\"Owner\":false},{\"ID\":3,\"Name\":\"Tilen\",\"Active\":false,\"Owner\":false},{\"ID\":4,\"Name\":\"Bad\\u001b[31m\\u202eName\",\"Active\":true,\"Owner\":false}]}"
+    },
+    {
+     "match": "PATCH /users/3",
+     "status": 200,
+     "body": "{}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/users",
+      ""
+     ],
+     [
+      "PATCH",
+      "/users/3",
+      "{\"name\":\"Tilen B\"}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "user rename unknown",
+   "args": [
+    "user",
+    "rename",
+    "nobody",
+    "x"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /users",
+     "status": 200,
+     "body": "{\"users\":[{\"ID\":1,\"Name\":\"Uros\",\"Active\":true,\"Owner\":true},{\"ID\":2,\"Name\":\"Matic\",\"Active\":true,\"Owner\":false},{\"ID\":3,\"Name\":\"Tilen\",\"Active\":false,\"Owner\":false},{\"ID\":4,\"Name\":\"Bad\\u001b[31m\\u202eName\",\"Active\":true,\"Owner\":false}]}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: no user \"nobody\" (minigw gw user list)\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/users",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "user rename 404",
+   "args": [
+    "user",
+    "rename",
+    "2",
+    "x"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /users",
+     "status": 200,
+     "body": "{\"users\":[{\"ID\":1,\"Name\":\"Uros\",\"Active\":true,\"Owner\":true},{\"ID\":2,\"Name\":\"Matic\",\"Active\":true,\"Owner\":false},{\"ID\":3,\"Name\":\"Tilen\",\"Active\":false,\"Owner\":false},{\"ID\":4,\"Name\":\"Bad\\u001b[31m\\u202eName\",\"Active\":true,\"Owner\":false}]}"
+    },
+    {
+     "match": "PATCH /users/2",
+     "status": 404,
+     "body": "{\"error\":{\"message\":\"no such user\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: no such user\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/users",
+      ""
+     ],
+     [
+      "PATCH",
+      "/users/2",
+      "{\"name\":\"x\"}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "user rename quote in name",
+   "args": [
+    "user",
+    "rename",
+    "2",
+    "a\"b<c>&"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /users",
+     "status": 200,
+     "body": "{\"users\":[{\"ID\":1,\"Name\":\"Uros\",\"Active\":true,\"Owner\":true},{\"ID\":2,\"Name\":\"Matic\",\"Active\":true,\"Owner\":false},{\"ID\":3,\"Name\":\"Tilen\",\"Active\":false,\"Owner\":false},{\"ID\":4,\"Name\":\"Bad\\u001b[31m\\u202eName\",\"Active\":true,\"Owner\":false}]}"
+    },
+    {
+     "match": "PATCH /users/2",
+     "status": 200,
+     "body": "{}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/users",
+      ""
+     ],
+     [
+      "PATCH",
+      "/users/2",
+      "{\"name\":\"a\\\"b\\u003cc\\u003e\\u0026\"}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "user activate",
+   "args": [
+    "user",
+    "activate",
+    "Tilen"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /users",
+     "status": 200,
+     "body": "{\"users\":[{\"ID\":1,\"Name\":\"Uros\",\"Active\":true,\"Owner\":true},{\"ID\":2,\"Name\":\"Matic\",\"Active\":true,\"Owner\":false},{\"ID\":3,\"Name\":\"Tilen\",\"Active\":false,\"Owner\":false},{\"ID\":4,\"Name\":\"Bad\\u001b[31m\\u202eName\",\"Active\":true,\"Owner\":false}]}"
+    },
+    {
+     "match": "PATCH /users/3",
+     "status": 200,
+     "body": "{}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/users",
+      ""
+     ],
+     [
+      "PATCH",
+      "/users/3",
+      "{\"active\":true}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "user deactivate",
+   "args": [
+    "user",
+    "deactivate",
+    "Matic"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /users",
+     "status": 200,
+     "body": "{\"users\":[{\"ID\":1,\"Name\":\"Uros\",\"Active\":true,\"Owner\":true},{\"ID\":2,\"Name\":\"Matic\",\"Active\":true,\"Owner\":false},{\"ID\":3,\"Name\":\"Tilen\",\"Active\":false,\"Owner\":false},{\"ID\":4,\"Name\":\"Bad\\u001b[31m\\u202eName\",\"Active\":true,\"Owner\":false}]}"
+    },
+    {
+     "match": "PATCH /users/2",
+     "status": 200,
+     "body": "{}"
+    }
+   ],
+   "want": {
+    "out": "deactivated: the user's runs and capabilities end (the epoch grew)\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/users",
+      ""
+     ],
+     [
+      "PATCH",
+      "/users/2",
+      "{\"active\":false}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "user deactivate owner 409",
+   "args": [
+    "user",
+    "deactivate",
+    "Uros"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /users",
+     "status": 200,
+     "body": "{\"users\":[{\"ID\":1,\"Name\":\"Uros\",\"Active\":true,\"Owner\":true},{\"ID\":2,\"Name\":\"Matic\",\"Active\":true,\"Owner\":false},{\"ID\":3,\"Name\":\"Tilen\",\"Active\":false,\"Owner\":false},{\"ID\":4,\"Name\":\"Bad\\u001b[31m\\u202eName\",\"Active\":true,\"Owner\":false}]}"
+    },
+    {
+     "match": "PATCH /users/1",
+     "status": 409,
+     "body": "{\"error\":{\"message\":\"the owner cannot be deactivated\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: the owner cannot be deactivated\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/users",
+      ""
+     ],
+     [
+      "PATCH",
+      "/users/1",
+      "{\"active\":false}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "user deactivate unknown",
+   "args": [
+    "user",
+    "deactivate",
+    "zz"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /users",
+     "status": 200,
+     "body": "{\"users\":[{\"ID\":1,\"Name\":\"Uros\",\"Active\":true,\"Owner\":true},{\"ID\":2,\"Name\":\"Matic\",\"Active\":true,\"Owner\":false},{\"ID\":3,\"Name\":\"Tilen\",\"Active\":false,\"Owner\":false},{\"ID\":4,\"Name\":\"Bad\\u001b[31m\\u202eName\",\"Active\":true,\"Owner\":false}]}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: no user \"zz\" (minigw gw user list)\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/users",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "user unknown verb",
+   "args": [
+    "user",
+    "fire",
+    "2"
+   ],
+   "opts": {},
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "minigw: minigw gw user list | add <name> | rename <user> <name> | activate <user> | deactivate <user>\n  minigw gw bind list | <device id> <user> | remove <device id>        which user a device belongs to\n  minigw gw project list | add <slug> <name> | archive <project> | unarchive <project>\n  minigw gw member <project> list | set <user> <role> | remove <user>   role: reader, developer, admin\n  minigw gw grant <source> list | add <reader> <class> | remove <reader> <class>   class: structure, data\n  minigw gw core backup [name]                          a consistent copy of the core database into <config>/core/backups (gateway running)\n  minigw gw core restore <file|name> [--yes]            only with the gateway stopped; a name is looked up in <config>/core/backups\n  minigw gw core audit                                  the audit trail of the core\n  minigw gw usage-events [--days n] [--user u] [--project p] [--model m]   model invocations per day, model and user (core; all of them)\n  minigw gw quota [--claude-probe=on|off]               subscription quota and provider credit, with source, time and staleness\n(<user> and <project>: the name or slug, or the number.)\n",
+    "exit": 1,
+    "requests": []
+   }
+  },
+  {
+   "name": "user alone",
+   "args": [
+    "user"
+   ],
+   "opts": {},
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "minigw: minigw gw user list | add <name> | rename <user> <name> | activate <user> | deactivate <user>\n  minigw gw bind list | <device id> <user> | remove <device id>        which user a device belongs to\n  minigw gw project list | add <slug> <name> | archive <project> | unarchive <project>\n  minigw gw member <project> list | set <user> <role> | remove <user>   role: reader, developer, admin\n  minigw gw grant <source> list | add <reader> <class> | remove <reader> <class>   class: structure, data\n  minigw gw core backup [name]                          a consistent copy of the core database into <config>/core/backups (gateway running)\n  minigw gw core restore <file|name> [--yes]            only with the gateway stopped; a name is looked up in <config>/core/backups\n  minigw gw core audit                                  the audit trail of the core\n  minigw gw usage-events [--days n] [--user u] [--project p] [--model m]   model invocations per day, model and user (core; all of them)\n  minigw gw quota [--claude-probe=on|off]               subscription quota and provider credit, with source, time and staleness\n(<user> and <project>: the name or slug, or the number.)\n",
+    "exit": 1,
+    "requests": []
+   }
+  },
+  {
+   "name": "user list extra",
+   "args": [
+    "user",
+    "list",
+    "x"
+   ],
+   "opts": {},
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "minigw: minigw gw user list | add <name> | rename <user> <name> | activate <user> | deactivate <user>\n  minigw gw bind list | <device id> <user> | remove <device id>        which user a device belongs to\n  minigw gw project list | add <slug> <name> | archive <project> | unarchive <project>\n  minigw gw member <project> list | set <user> <role> | remove <user>   role: reader, developer, admin\n  minigw gw grant <source> list | add <reader> <class> | remove <reader> <class>   class: structure, data\n  minigw gw core backup [name]                          a consistent copy of the core database into <config>/core/backups (gateway running)\n  minigw gw core restore <file|name> [--yes]            only with the gateway stopped; a name is looked up in <config>/core/backups\n  minigw gw core audit                                  the audit trail of the core\n  minigw gw usage-events [--days n] [--user u] [--project p] [--model m]   model invocations per day, model and user (core; all of them)\n  minigw gw quota [--claude-probe=on|off]               subscription quota and provider credit, with source, time and staleness\n(<user> and <project>: the name or slug, or the number.)\n",
+    "exit": 1,
+    "requests": []
+   }
+  },
+  {
+   "name": "user too many args",
+   "args": [
+    "user",
+    "rename",
+    "a",
+    "b",
+    "c"
+   ],
+   "opts": {},
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "minigw: minigw gw user list | add <name> | rename <user> <name> | activate <user> | deactivate <user>\n  minigw gw bind list | <device id> <user> | remove <device id>        which user a device belongs to\n  minigw gw project list | add <slug> <name> | archive <project> | unarchive <project>\n  minigw gw member <project> list | set <user> <role> | remove <user>   role: reader, developer, admin\n  minigw gw grant <source> list | add <reader> <class> | remove <reader> <class>   class: structure, data\n  minigw gw core backup [name]                          a consistent copy of the core database into <config>/core/backups (gateway running)\n  minigw gw core restore <file|name> [--yes]            only with the gateway stopped; a name is looked up in <config>/core/backups\n  minigw gw core audit                                  the audit trail of the core\n  minigw gw usage-events [--days n] [--user u] [--project p] [--model m]   model invocations per day, model and user (core; all of them)\n  minigw gw quota [--claude-probe=on|off]               subscription quota and provider credit, with source, time and staleness\n(<user> and <project>: the name or slug, or the number.)\n",
+    "exit": 1,
+    "requests": []
+   }
+  },
+  {
+   "name": "bind list",
+   "args": [
+    "bind",
+    "list"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /bindings",
+     "status": 200,
+     "body": "{\"bindings\":[{\"Device\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"User\":2},{\"Device\":\"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB\",\"User\":1}]}"
+    }
+   ],
+   "want": {
+    "out": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA  user 2\nBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB  user 1\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/bindings",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "bind list empty",
+   "args": [
+    "bind",
+    "list"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /bindings",
+     "status": 200,
+     "body": "{\"bindings\":[]}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/bindings",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "bind device user",
+   "args": [
+    "bind",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "Matic"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /users",
+     "status": 200,
+     "body": "{\"users\":[{\"ID\":1,\"Name\":\"Uros\",\"Active\":true,\"Owner\":true},{\"ID\":2,\"Name\":\"Matic\",\"Active\":true,\"Owner\":false},{\"ID\":3,\"Name\":\"Tilen\",\"Active\":false,\"Owner\":false},{\"ID\":4,\"Name\":\"Bad\\u001b[31m\\u202eName\",\"Active\":true,\"Owner\":false}]}"
+    },
+    {
+     "match": "PUT /bindings/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+     "status": 200,
+     "body": "{}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/users",
+      ""
+     ],
+     [
+      "PUT",
+      "/bindings/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "{\"user\":2}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "bind device user number",
+   "args": [
+    "bind",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "2"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /users",
+     "status": 200,
+     "body": "{\"users\":[{\"ID\":1,\"Name\":\"Uros\",\"Active\":true,\"Owner\":true},{\"ID\":2,\"Name\":\"Matic\",\"Active\":true,\"Owner\":false},{\"ID\":3,\"Name\":\"Tilen\",\"Active\":false,\"Owner\":false},{\"ID\":4,\"Name\":\"Bad\\u001b[31m\\u202eName\",\"Active\":true,\"Owner\":false}]}"
+    },
+    {
+     "match": "PUT /bindings/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+     "status": 200,
+     "body": "{}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/users",
+      ""
+     ],
+     [
+      "PUT",
+      "/bindings/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "{\"user\":2}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "bind device unknown user",
+   "args": [
+    "bind",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "zzz"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /users",
+     "status": 200,
+     "body": "{\"users\":[{\"ID\":1,\"Name\":\"Uros\",\"Active\":true,\"Owner\":true},{\"ID\":2,\"Name\":\"Matic\",\"Active\":true,\"Owner\":false},{\"ID\":3,\"Name\":\"Tilen\",\"Active\":false,\"Owner\":false},{\"ID\":4,\"Name\":\"Bad\\u001b[31m\\u202eName\",\"Active\":true,\"Owner\":false}]}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: no user \"zzz\" (minigw gw user list)\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/users",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "bind device 404",
+   "args": [
+    "bind",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "Matic"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /users",
+     "status": 200,
+     "body": "{\"users\":[{\"ID\":1,\"Name\":\"Uros\",\"Active\":true,\"Owner\":true},{\"ID\":2,\"Name\":\"Matic\",\"Active\":true,\"Owner\":false},{\"ID\":3,\"Name\":\"Tilen\",\"Active\":false,\"Owner\":false},{\"ID\":4,\"Name\":\"Bad\\u001b[31m\\u202eName\",\"Active\":true,\"Owner\":false}]}"
+    },
+    {
+     "match": "PUT /bindings/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+     "status": 404,
+     "body": "{\"error\":{\"message\":\"no such user\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: no such user\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/users",
+      ""
+     ],
+     [
+      "PUT",
+      "/bindings/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "{\"user\":2}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "bind device 409",
+   "args": [
+    "bind",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "Tilen"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /users",
+     "status": 200,
+     "body": "{\"users\":[{\"ID\":1,\"Name\":\"Uros\",\"Active\":true,\"Owner\":true},{\"ID\":2,\"Name\":\"Matic\",\"Active\":true,\"Owner\":false},{\"ID\":3,\"Name\":\"Tilen\",\"Active\":false,\"Owner\":false},{\"ID\":4,\"Name\":\"Bad\\u001b[31m\\u202eName\",\"Active\":true,\"Owner\":false}]}"
+    },
+    {
+     "match": "PUT /bindings/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+     "status": 409,
+     "body": "{\"error\":{\"message\":\"the user is deactivated\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: the user is deactivated\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/users",
+      ""
+     ],
+     [
+      "PUT",
+      "/bindings/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "{\"user\":3}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "bind remove",
+   "args": [
+    "bind",
+    "remove",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "DELETE /bindings/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+     "status": 204,
+     "body": ""
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "DELETE",
+      "/bindings/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "bind remove 404",
+   "args": [
+    "bind",
+    "remove",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "DELETE /bindings/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+     "status": 404,
+     "body": "{\"error\":{\"message\":\"no binding for this device\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: no binding for this device\n",
+    "exit": 1,
+    "requests": [
+     [
+      "DELETE",
+      "/bindings/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "bind remove odd id",
+   "args": [
+    "bind",
+    "remove",
+    "a/b c"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "DELETE /bindings/a%2Fb%20c",
+     "status": 404,
+     "body": "{\"error\":{\"message\":\"no binding\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: no binding\n",
+    "exit": 1,
+    "requests": [
+     [
+      "DELETE",
+      "/bindings/a%2Fb%20c",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "bind bad device",
+   "args": [
+    "bind",
+    "nodevice",
+    "Matic"
+   ],
+   "opts": {},
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "minigw: minigw gw user list | add <name> | rename <user> <name> | activate <user> | deactivate <user>\n  minigw gw bind list | <device id> <user> | remove <device id>        which user a device belongs to\n  minigw gw project list | add <slug> <name> | archive <project> | unarchive <project>\n  minigw gw member <project> list | set <user> <role> | remove <user>   role: reader, developer, admin\n  minigw gw grant <source> list | add <reader> <class> | remove <reader> <class>   class: structure, data\n  minigw gw core backup [name]                          a consistent copy of the core database into <config>/core/backups (gateway running)\n  minigw gw core restore <file|name> [--yes]            only with the gateway stopped; a name is looked up in <config>/core/backups\n  minigw gw core audit                                  the audit trail of the core\n  minigw gw usage-events [--days n] [--user u] [--project p] [--model m]   model invocations per day, model and user (core; all of them)\n  minigw gw quota [--claude-probe=on|off]               subscription quota and provider credit, with source, time and staleness\n(<user> and <project>: the name or slug, or the number.)\n",
+    "exit": 1,
+    "requests": []
+   }
+  },
+  {
+   "name": "bind alone",
+   "args": [
+    "bind"
+   ],
+   "opts": {},
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "minigw: minigw gw user list | add <name> | rename <user> <name> | activate <user> | deactivate <user>\n  minigw gw bind list | <device id> <user> | remove <device id>        which user a device belongs to\n  minigw gw project list | add <slug> <name> | archive <project> | unarchive <project>\n  minigw gw member <project> list | set <user> <role> | remove <user>   role: reader, developer, admin\n  minigw gw grant <source> list | add <reader> <class> | remove <reader> <class>   class: structure, data\n  minigw gw core backup [name]                          a consistent copy of the core database into <config>/core/backups (gateway running)\n  minigw gw core restore <file|name> [--yes]            only with the gateway stopped; a name is looked up in <config>/core/backups\n  minigw gw core audit                                  the audit trail of the core\n  minigw gw usage-events [--days n] [--user u] [--project p] [--model m]   model invocations per day, model and user (core; all of them)\n  minigw gw quota [--claude-probe=on|off]               subscription quota and provider credit, with source, time and staleness\n(<user> and <project>: the name or slug, or the number.)\n",
+    "exit": 1,
+    "requests": []
+   }
+  },
+  {
+   "name": "project list",
+   "args": [
+    "project",
+    "list"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[{\"id\":10,\"slug\":\"alpha\",\"name\":\"Alpha project\",\"archived\":false},{\"id\":11,\"slug\":\"beta\",\"name\":\"Beta\",\"archived\":true},{\"id\":12,\"slug\":\"gamma\",\"name\":\"Gam\\u0007ma\\n2\",\"archived\":false}]}"
+    }
+   ],
+   "want": {
+    "out": "10  alpha  Alpha project\n11  beta  Beta  (archived)\n12  gamma  Gamma\n2\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "project list empty",
+   "args": [
+    "project",
+    "list"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[]}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "project list 503",
+   "args": [
+    "project",
+    "list"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 503,
+     "body": "{\"error\":{\"message\":\"The project database is not available\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: The project database is not available\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "project add",
+   "args": [
+    "project",
+    "add",
+    "delta",
+    "Delta project"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "POST /projects",
+     "status": 201,
+     "body": "{}"
+    }
+   ],
+   "want": {
+    "out": "project delta added\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "POST",
+      "/projects",
+      "{\"name\":\"Delta project\",\"slug\":\"delta\"}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "project add 409",
+   "args": [
+    "project",
+    "add",
+    "alpha",
+    "Alpha"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "POST /projects",
+     "status": 409,
+     "body": "{\"error\":{\"message\":\"a project with this slug exists\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: a project with this slug exists\n",
+    "exit": 1,
+    "requests": [
+     [
+      "POST",
+      "/projects",
+      "{\"name\":\"Alpha\",\"slug\":\"alpha\"}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "project add 400",
+   "args": [
+    "project",
+    "add",
+    "Bad Slug",
+    "x"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "POST /projects",
+     "status": 400,
+     "body": "{\"error\":{\"message\":\"bad slug\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: bad slug\n",
+    "exit": 1,
+    "requests": [
+     [
+      "POST",
+      "/projects",
+      "{\"name\":\"x\",\"slug\":\"Bad Slug\"}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "project add control chars",
+   "args": [
+    "project",
+    "add",
+    "d\u0007",
+    "N"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "POST /projects",
+     "status": 201,
+     "body": "{}"
+    }
+   ],
+   "want": {
+    "out": "project d added\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "POST",
+      "/projects",
+      "{\"name\":\"N\",\"slug\":\"d\\u0007\"}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "project add too few",
+   "args": [
+    "project",
+    "add",
+    "delta"
+   ],
+   "opts": {},
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "minigw: minigw gw user list | add <name> | rename <user> <name> | activate <user> | deactivate <user>\n  minigw gw bind list | <device id> <user> | remove <device id>        which user a device belongs to\n  minigw gw project list | add <slug> <name> | archive <project> | unarchive <project>\n  minigw gw member <project> list | set <user> <role> | remove <user>   role: reader, developer, admin\n  minigw gw grant <source> list | add <reader> <class> | remove <reader> <class>   class: structure, data\n  minigw gw core backup [name]                          a consistent copy of the core database into <config>/core/backups (gateway running)\n  minigw gw core restore <file|name> [--yes]            only with the gateway stopped; a name is looked up in <config>/core/backups\n  minigw gw core audit                                  the audit trail of the core\n  minigw gw usage-events [--days n] [--user u] [--project p] [--model m]   model invocations per day, model and user (core; all of them)\n  minigw gw quota [--claude-probe=on|off]               subscription quota and provider credit, with source, time and staleness\n(<user> and <project>: the name or slug, or the number.)\n",
+    "exit": 1,
+    "requests": []
+   }
+  },
+  {
+   "name": "project archive by slug",
+   "args": [
+    "project",
+    "archive",
+    "alpha"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[{\"id\":10,\"slug\":\"alpha\",\"name\":\"Alpha project\",\"archived\":false},{\"id\":11,\"slug\":\"beta\",\"name\":\"Beta\",\"archived\":true},{\"id\":12,\"slug\":\"gamma\",\"name\":\"Gam\\u0007ma\\n2\",\"archived\":false}]}"
+    },
+    {
+     "match": "PATCH /projects/10",
+     "status": 200,
+     "body": "{}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "PATCH",
+      "/projects/10",
+      "{\"archived\":true}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "project unarchive by number",
+   "args": [
+    "project",
+    "unarchive",
+    "11"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[{\"id\":10,\"slug\":\"alpha\",\"name\":\"Alpha project\",\"archived\":false},{\"id\":11,\"slug\":\"beta\",\"name\":\"Beta\",\"archived\":true},{\"id\":12,\"slug\":\"gamma\",\"name\":\"Gam\\u0007ma\\n2\",\"archived\":false}]}"
+    },
+    {
+     "match": "PATCH /projects/11",
+     "status": 200,
+     "body": "{}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "PATCH",
+      "/projects/11",
+      "{\"archived\":false}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "project archive unknown",
+   "args": [
+    "project",
+    "archive",
+    "nope"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[{\"id\":10,\"slug\":\"alpha\",\"name\":\"Alpha project\",\"archived\":false},{\"id\":11,\"slug\":\"beta\",\"name\":\"Beta\",\"archived\":true},{\"id\":12,\"slug\":\"gamma\",\"name\":\"Gam\\u0007ma\\n2\",\"archived\":false}]}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: no project \"nope\" (minigw gw project list)\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "project archive 404",
+   "args": [
+    "project",
+    "archive",
+    "alpha"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[{\"id\":10,\"slug\":\"alpha\",\"name\":\"Alpha project\",\"archived\":false},{\"id\":11,\"slug\":\"beta\",\"name\":\"Beta\",\"archived\":true},{\"id\":12,\"slug\":\"gamma\",\"name\":\"Gam\\u0007ma\\n2\",\"archived\":false}]}"
+    },
+    {
+     "match": "PATCH /projects/10",
+     "status": 404,
+     "body": "{\"error\":{\"message\":\"no such project\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: no such project\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "PATCH",
+      "/projects/10",
+      "{\"archived\":true}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "project unknown verb",
+   "args": [
+    "project",
+    "delete",
+    "alpha"
+   ],
+   "opts": {},
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "minigw: minigw gw user list | add <name> | rename <user> <name> | activate <user> | deactivate <user>\n  minigw gw bind list | <device id> <user> | remove <device id>        which user a device belongs to\n  minigw gw project list | add <slug> <name> | archive <project> | unarchive <project>\n  minigw gw member <project> list | set <user> <role> | remove <user>   role: reader, developer, admin\n  minigw gw grant <source> list | add <reader> <class> | remove <reader> <class>   class: structure, data\n  minigw gw core backup [name]                          a consistent copy of the core database into <config>/core/backups (gateway running)\n  minigw gw core restore <file|name> [--yes]            only with the gateway stopped; a name is looked up in <config>/core/backups\n  minigw gw core audit                                  the audit trail of the core\n  minigw gw usage-events [--days n] [--user u] [--project p] [--model m]   model invocations per day, model and user (core; all of them)\n  minigw gw quota [--claude-probe=on|off]               subscription quota and provider credit, with source, time and staleness\n(<user> and <project>: the name or slug, or the number.)\n",
+    "exit": 1,
+    "requests": []
+   }
+  },
+  {
+   "name": "project alone",
+   "args": [
+    "project"
+   ],
+   "opts": {},
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "minigw: minigw gw user list | add <name> | rename <user> <name> | activate <user> | deactivate <user>\n  minigw gw bind list | <device id> <user> | remove <device id>        which user a device belongs to\n  minigw gw project list | add <slug> <name> | archive <project> | unarchive <project>\n  minigw gw member <project> list | set <user> <role> | remove <user>   role: reader, developer, admin\n  minigw gw grant <source> list | add <reader> <class> | remove <reader> <class>   class: structure, data\n  minigw gw core backup [name]                          a consistent copy of the core database into <config>/core/backups (gateway running)\n  minigw gw core restore <file|name> [--yes]            only with the gateway stopped; a name is looked up in <config>/core/backups\n  minigw gw core audit                                  the audit trail of the core\n  minigw gw usage-events [--days n] [--user u] [--project p] [--model m]   model invocations per day, model and user (core; all of them)\n  minigw gw quota [--claude-probe=on|off]               subscription quota and provider credit, with source, time and staleness\n(<user> and <project>: the name or slug, or the number.)\n",
+    "exit": 1,
+    "requests": []
+   }
+  },
+  {
+   "name": "member list",
+   "args": [
+    "member",
+    "alpha",
+    "list"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[{\"id\":10,\"slug\":\"alpha\",\"name\":\"Alpha project\",\"archived\":false},{\"id\":11,\"slug\":\"beta\",\"name\":\"Beta\",\"archived\":true},{\"id\":12,\"slug\":\"gamma\",\"name\":\"Gam\\u0007ma\\n2\",\"archived\":false}]}"
+    },
+    {
+     "match": "GET /projects/10/members",
+     "status": 200,
+     "body": "{\"members\":[{\"User\":1,\"Name\":\"Uros\",\"Role\":\"admin\"},{\"User\":2,\"Name\":\"Matic\",\"Role\":\"developer\"}]}"
+    }
+   ],
+   "want": {
+    "out": "1  Uros  admin\n2  Matic  developer\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "GET",
+      "/projects/10/members",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "member list empty",
+   "args": [
+    "member",
+    "beta",
+    "list"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[{\"id\":10,\"slug\":\"alpha\",\"name\":\"Alpha project\",\"archived\":false},{\"id\":11,\"slug\":\"beta\",\"name\":\"Beta\",\"archived\":true},{\"id\":12,\"slug\":\"gamma\",\"name\":\"Gam\\u0007ma\\n2\",\"archived\":false}]}"
+    },
+    {
+     "match": "GET /projects/11/members",
+     "status": 200,
+     "body": "{\"members\":[]}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "GET",
+      "/projects/11/members",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "member list unknown project",
+   "args": [
+    "member",
+    "nope",
+    "list"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[{\"id\":10,\"slug\":\"alpha\",\"name\":\"Alpha project\",\"archived\":false},{\"id\":11,\"slug\":\"beta\",\"name\":\"Beta\",\"archived\":true},{\"id\":12,\"slug\":\"gamma\",\"name\":\"Gam\\u0007ma\\n2\",\"archived\":false}]}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: no project \"nope\" (minigw gw project list)\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "member list 403",
+   "args": [
+    "member",
+    "alpha",
+    "list"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[{\"id\":10,\"slug\":\"alpha\",\"name\":\"Alpha project\",\"archived\":false},{\"id\":11,\"slug\":\"beta\",\"name\":\"Beta\",\"archived\":true},{\"id\":12,\"slug\":\"gamma\",\"name\":\"Gam\\u0007ma\\n2\",\"archived\":false}]}"
+    },
+    {
+     "match": "GET /projects/10/members",
+     "status": 403,
+     "body": "{\"error\":{\"message\":\"forbidden\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: forbidden\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "GET",
+      "/projects/10/members",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "member set",
+   "args": [
+    "member",
+    "alpha",
+    "set",
+    "Matic",
+    "reader"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[{\"id\":10,\"slug\":\"alpha\",\"name\":\"Alpha project\",\"archived\":false},{\"id\":11,\"slug\":\"beta\",\"name\":\"Beta\",\"archived\":true},{\"id\":12,\"slug\":\"gamma\",\"name\":\"Gam\\u0007ma\\n2\",\"archived\":false}]}"
+    },
+    {
+     "match": "GET /users",
+     "status": 200,
+     "body": "{\"users\":[{\"ID\":1,\"Name\":\"Uros\",\"Active\":true,\"Owner\":true},{\"ID\":2,\"Name\":\"Matic\",\"Active\":true,\"Owner\":false},{\"ID\":3,\"Name\":\"Tilen\",\"Active\":false,\"Owner\":false},{\"ID\":4,\"Name\":\"Bad\\u001b[31m\\u202eName\",\"Active\":true,\"Owner\":false}]}"
+    },
+    {
+     "match": "PUT /projects/10/members/2",
+     "status": 200,
+     "body": "{}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "GET",
+      "/users",
+      ""
+     ],
+     [
+      "PUT",
+      "/projects/10/members/2",
+      "{\"role\":\"reader\"}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "member set 400",
+   "args": [
+    "member",
+    "alpha",
+    "set",
+    "Matic",
+    "boss"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[{\"id\":10,\"slug\":\"alpha\",\"name\":\"Alpha project\",\"archived\":false},{\"id\":11,\"slug\":\"beta\",\"name\":\"Beta\",\"archived\":true},{\"id\":12,\"slug\":\"gamma\",\"name\":\"Gam\\u0007ma\\n2\",\"archived\":false}]}"
+    },
+    {
+     "match": "GET /users",
+     "status": 200,
+     "body": "{\"users\":[{\"ID\":1,\"Name\":\"Uros\",\"Active\":true,\"Owner\":true},{\"ID\":2,\"Name\":\"Matic\",\"Active\":true,\"Owner\":false},{\"ID\":3,\"Name\":\"Tilen\",\"Active\":false,\"Owner\":false},{\"ID\":4,\"Name\":\"Bad\\u001b[31m\\u202eName\",\"Active\":true,\"Owner\":false}]}"
+    },
+    {
+     "match": "PUT /projects/10/members/2",
+     "status": 400,
+     "body": "{\"error\":{\"message\":\"role: reader, developer or admin\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: role: reader, developer or admin\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "GET",
+      "/users",
+      ""
+     ],
+     [
+      "PUT",
+      "/projects/10/members/2",
+      "{\"role\":\"boss\"}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "member set unknown user",
+   "args": [
+    "member",
+    "alpha",
+    "set",
+    "zz",
+    "reader"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[{\"id\":10,\"slug\":\"alpha\",\"name\":\"Alpha project\",\"archived\":false},{\"id\":11,\"slug\":\"beta\",\"name\":\"Beta\",\"archived\":true},{\"id\":12,\"slug\":\"gamma\",\"name\":\"Gam\\u0007ma\\n2\",\"archived\":false}]}"
+    },
+    {
+     "match": "GET /users",
+     "status": 200,
+     "body": "{\"users\":[{\"ID\":1,\"Name\":\"Uros\",\"Active\":true,\"Owner\":true},{\"ID\":2,\"Name\":\"Matic\",\"Active\":true,\"Owner\":false},{\"ID\":3,\"Name\":\"Tilen\",\"Active\":false,\"Owner\":false},{\"ID\":4,\"Name\":\"Bad\\u001b[31m\\u202eName\",\"Active\":true,\"Owner\":false}]}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: no user \"zz\" (minigw gw user list)\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "GET",
+      "/users",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "member remove",
+   "args": [
+    "member",
+    "10",
+    "remove",
+    "2"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[{\"id\":10,\"slug\":\"alpha\",\"name\":\"Alpha project\",\"archived\":false},{\"id\":11,\"slug\":\"beta\",\"name\":\"Beta\",\"archived\":true},{\"id\":12,\"slug\":\"gamma\",\"name\":\"Gam\\u0007ma\\n2\",\"archived\":false}]}"
+    },
+    {
+     "match": "GET /users",
+     "status": 200,
+     "body": "{\"users\":[{\"ID\":1,\"Name\":\"Uros\",\"Active\":true,\"Owner\":true},{\"ID\":2,\"Name\":\"Matic\",\"Active\":true,\"Owner\":false},{\"ID\":3,\"Name\":\"Tilen\",\"Active\":false,\"Owner\":false},{\"ID\":4,\"Name\":\"Bad\\u001b[31m\\u202eName\",\"Active\":true,\"Owner\":false}]}"
+    },
+    {
+     "match": "DELETE /projects/10/members/2",
+     "status": 204,
+     "body": ""
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "GET",
+      "/users",
+      ""
+     ],
+     [
+      "DELETE",
+      "/projects/10/members/2",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "member remove 409",
+   "args": [
+    "member",
+    "alpha",
+    "remove",
+    "Uros"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[{\"id\":10,\"slug\":\"alpha\",\"name\":\"Alpha project\",\"archived\":false},{\"id\":11,\"slug\":\"beta\",\"name\":\"Beta\",\"archived\":true},{\"id\":12,\"slug\":\"gamma\",\"name\":\"Gam\\u0007ma\\n2\",\"archived\":false}]}"
+    },
+    {
+     "match": "GET /users",
+     "status": 200,
+     "body": "{\"users\":[{\"ID\":1,\"Name\":\"Uros\",\"Active\":true,\"Owner\":true},{\"ID\":2,\"Name\":\"Matic\",\"Active\":true,\"Owner\":false},{\"ID\":3,\"Name\":\"Tilen\",\"Active\":false,\"Owner\":false},{\"ID\":4,\"Name\":\"Bad\\u001b[31m\\u202eName\",\"Active\":true,\"Owner\":false}]}"
+    },
+    {
+     "match": "DELETE /projects/10/members/1",
+     "status": 409,
+     "body": "{\"error\":{\"message\":\"the last admin cannot be removed\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: the last admin cannot be removed\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "GET",
+      "/users",
+      ""
+     ],
+     [
+      "DELETE",
+      "/projects/10/members/1",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "member bad args",
+   "args": [
+    "member",
+    "alpha"
+   ],
+   "opts": {},
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "minigw: minigw gw user list | add <name> | rename <user> <name> | activate <user> | deactivate <user>\n  minigw gw bind list | <device id> <user> | remove <device id>        which user a device belongs to\n  minigw gw project list | add <slug> <name> | archive <project> | unarchive <project>\n  minigw gw member <project> list | set <user> <role> | remove <user>   role: reader, developer, admin\n  minigw gw grant <source> list | add <reader> <class> | remove <reader> <class>   class: structure, data\n  minigw gw core backup [name]                          a consistent copy of the core database into <config>/core/backups (gateway running)\n  minigw gw core restore <file|name> [--yes]            only with the gateway stopped; a name is looked up in <config>/core/backups\n  minigw gw core audit                                  the audit trail of the core\n  minigw gw usage-events [--days n] [--user u] [--project p] [--model m]   model invocations per day, model and user (core; all of them)\n  minigw gw quota [--claude-probe=on|off]               subscription quota and provider credit, with source, time and staleness\n(<user> and <project>: the name or slug, or the number.)\n",
+    "exit": 1,
+    "requests": []
+   }
+  },
+  {
+   "name": "member bad verb",
+   "args": [
+    "member",
+    "alpha",
+    "kick"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[{\"id\":10,\"slug\":\"alpha\",\"name\":\"Alpha project\",\"archived\":false},{\"id\":11,\"slug\":\"beta\",\"name\":\"Beta\",\"archived\":true},{\"id\":12,\"slug\":\"gamma\",\"name\":\"Gam\\u0007ma\\n2\",\"archived\":false}]}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: minigw gw user list | add <name> | rename <user> <name> | activate <user> | deactivate <user>\n  minigw gw bind list | <device id> <user> | remove <device id>        which user a device belongs to\n  minigw gw project list | add <slug> <name> | archive <project> | unarchive <project>\n  minigw gw member <project> list | set <user> <role> | remove <user>   role: reader, developer, admin\n  minigw gw grant <source> list | add <reader> <class> | remove <reader> <class>   class: structure, data\n  minigw gw core backup [name]                          a consistent copy of the core database into <config>/core/backups (gateway running)\n  minigw gw core restore <file|name> [--yes]            only with the gateway stopped; a name is looked up in <config>/core/backups\n  minigw gw core audit                                  the audit trail of the core\n  minigw gw usage-events [--days n] [--user u] [--project p] [--model m]   model invocations per day, model and user (core; all of them)\n  minigw gw quota [--claude-probe=on|off]               subscription quota and provider credit, with source, time and staleness\n(<user> and <project>: the name or slug, or the number.)\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "member set too few",
+   "args": [
+    "member",
+    "alpha",
+    "set",
+    "Matic"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[{\"id\":10,\"slug\":\"alpha\",\"name\":\"Alpha project\",\"archived\":false},{\"id\":11,\"slug\":\"beta\",\"name\":\"Beta\",\"archived\":true},{\"id\":12,\"slug\":\"gamma\",\"name\":\"Gam\\u0007ma\\n2\",\"archived\":false}]}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: minigw gw user list | add <name> | rename <user> <name> | activate <user> | deactivate <user>\n  minigw gw bind list | <device id> <user> | remove <device id>        which user a device belongs to\n  minigw gw project list | add <slug> <name> | archive <project> | unarchive <project>\n  minigw gw member <project> list | set <user> <role> | remove <user>   role: reader, developer, admin\n  minigw gw grant <source> list | add <reader> <class> | remove <reader> <class>   class: structure, data\n  minigw gw core backup [name]                          a consistent copy of the core database into <config>/core/backups (gateway running)\n  minigw gw core restore <file|name> [--yes]            only with the gateway stopped; a name is looked up in <config>/core/backups\n  minigw gw core audit                                  the audit trail of the core\n  minigw gw usage-events [--days n] [--user u] [--project p] [--model m]   model invocations per day, model and user (core; all of them)\n  minigw gw quota [--claude-probe=on|off]               subscription quota and provider credit, with source, time and staleness\n(<user> and <project>: the name or slug, or the number.)\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "grant list",
+   "args": [
+    "grant",
+    "alpha",
+    "list"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[{\"id\":10,\"slug\":\"alpha\",\"name\":\"Alpha project\",\"archived\":false},{\"id\":11,\"slug\":\"beta\",\"name\":\"Beta\",\"archived\":true},{\"id\":12,\"slug\":\"gamma\",\"name\":\"Gam\\u0007ma\\n2\",\"archived\":false}]}"
+    },
+    {
+     "match": "GET /grants",
+     "status": 200,
+     "body": "{\"grants\":[{\"Source\":10,\"Reader\":11,\"Class\":\"structure\"},{\"Source\":11,\"Reader\":10,\"Class\":\"data\"},{\"Source\":10,\"Reader\":12,\"Class\":\"data\"}]}"
+    }
+   ],
+   "want": {
+    "out": "project 11 reads structure of alpha\nproject 12 reads data of alpha\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "GET",
+      "/grants",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "grant list none",
+   "args": [
+    "grant",
+    "gamma",
+    "list"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[{\"id\":10,\"slug\":\"alpha\",\"name\":\"Alpha project\",\"archived\":false},{\"id\":11,\"slug\":\"beta\",\"name\":\"Beta\",\"archived\":true},{\"id\":12,\"slug\":\"gamma\",\"name\":\"Gam\\u0007ma\\n2\",\"archived\":false}]}"
+    },
+    {
+     "match": "GET /grants",
+     "status": 200,
+     "body": "{\"grants\":[{\"Source\":10,\"Reader\":11,\"Class\":\"structure\"},{\"Source\":11,\"Reader\":10,\"Class\":\"data\"},{\"Source\":10,\"Reader\":12,\"Class\":\"data\"}]}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "GET",
+      "/grants",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "grant list empty",
+   "args": [
+    "grant",
+    "alpha",
+    "list"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[{\"id\":10,\"slug\":\"alpha\",\"name\":\"Alpha project\",\"archived\":false},{\"id\":11,\"slug\":\"beta\",\"name\":\"Beta\",\"archived\":true},{\"id\":12,\"slug\":\"gamma\",\"name\":\"Gam\\u0007ma\\n2\",\"archived\":false}]}"
+    },
+    {
+     "match": "GET /grants",
+     "status": 200,
+     "body": "{\"grants\":[]}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "GET",
+      "/grants",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "grant add",
+   "args": [
+    "grant",
+    "alpha",
+    "add",
+    "beta",
+    "data"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[{\"id\":10,\"slug\":\"alpha\",\"name\":\"Alpha project\",\"archived\":false},{\"id\":11,\"slug\":\"beta\",\"name\":\"Beta\",\"archived\":true},{\"id\":12,\"slug\":\"gamma\",\"name\":\"Gam\\u0007ma\\n2\",\"archived\":false}]}"
+    },
+    {
+     "match": "POST /grants",
+     "status": 201,
+     "body": "{}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "POST",
+      "/grants",
+      "{\"class\":\"data\",\"reader\":11,\"source\":10}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "grant add 400",
+   "args": [
+    "grant",
+    "alpha",
+    "add",
+    "beta",
+    "secret"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[{\"id\":10,\"slug\":\"alpha\",\"name\":\"Alpha project\",\"archived\":false},{\"id\":11,\"slug\":\"beta\",\"name\":\"Beta\",\"archived\":true},{\"id\":12,\"slug\":\"gamma\",\"name\":\"Gam\\u0007ma\\n2\",\"archived\":false}]}"
+    },
+    {
+     "match": "POST /grants",
+     "status": 400,
+     "body": "{\"error\":{\"message\":\"class: structure or data\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: class: structure or data\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "POST",
+      "/grants",
+      "{\"class\":\"secret\",\"reader\":11,\"source\":10}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "grant add unknown reader",
+   "args": [
+    "grant",
+    "alpha",
+    "add",
+    "zz",
+    "data"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[{\"id\":10,\"slug\":\"alpha\",\"name\":\"Alpha project\",\"archived\":false},{\"id\":11,\"slug\":\"beta\",\"name\":\"Beta\",\"archived\":true},{\"id\":12,\"slug\":\"gamma\",\"name\":\"Gam\\u0007ma\\n2\",\"archived\":false}]}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: no project \"zz\" (minigw gw project list)\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "GET",
+      "/projects",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "grant remove",
+   "args": [
+    "grant",
+    "alpha",
+    "remove",
+    "beta",
+    "data"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[{\"id\":10,\"slug\":\"alpha\",\"name\":\"Alpha project\",\"archived\":false},{\"id\":11,\"slug\":\"beta\",\"name\":\"Beta\",\"archived\":true},{\"id\":12,\"slug\":\"gamma\",\"name\":\"Gam\\u0007ma\\n2\",\"archived\":false}]}"
+    },
+    {
+     "match": "DELETE /grants?source=10&reader=11&class=data",
+     "status": 204,
+     "body": ""
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "DELETE",
+      "/grants?source=10&reader=11&class=data",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "grant remove odd class",
+   "args": [
+    "grant",
+    "alpha",
+    "remove",
+    "beta",
+    "a b&c"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[{\"id\":10,\"slug\":\"alpha\",\"name\":\"Alpha project\",\"archived\":false},{\"id\":11,\"slug\":\"beta\",\"name\":\"Beta\",\"archived\":true},{\"id\":12,\"slug\":\"gamma\",\"name\":\"Gam\\u0007ma\\n2\",\"archived\":false}]}"
+    },
+    {
+     "match": "DELETE /grants?source=10&reader=11&class=a+b%26c",
+     "status": 404,
+     "body": "{\"error\":{\"message\":\"no such grant\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: no such grant\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "DELETE",
+      "/grants?source=10&reader=11&class=a+b%26c",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "grant remove 404",
+   "args": [
+    "grant",
+    "10",
+    "remove",
+    "11",
+    "structure"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[{\"id\":10,\"slug\":\"alpha\",\"name\":\"Alpha project\",\"archived\":false},{\"id\":11,\"slug\":\"beta\",\"name\":\"Beta\",\"archived\":true},{\"id\":12,\"slug\":\"gamma\",\"name\":\"Gam\\u0007ma\\n2\",\"archived\":false}]}"
+    },
+    {
+     "match": "DELETE /grants?source=10&reader=11&class=structure",
+     "status": 404,
+     "body": "{\"error\":{\"message\":\"no such grant\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: no such grant\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "DELETE",
+      "/grants?source=10&reader=11&class=structure",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "grant bad args",
+   "args": [
+    "grant",
+    "alpha"
+   ],
+   "opts": {},
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "minigw: minigw gw user list | add <name> | rename <user> <name> | activate <user> | deactivate <user>\n  minigw gw bind list | <device id> <user> | remove <device id>        which user a device belongs to\n  minigw gw project list | add <slug> <name> | archive <project> | unarchive <project>\n  minigw gw member <project> list | set <user> <role> | remove <user>   role: reader, developer, admin\n  minigw gw grant <source> list | add <reader> <class> | remove <reader> <class>   class: structure, data\n  minigw gw core backup [name]                          a consistent copy of the core database into <config>/core/backups (gateway running)\n  minigw gw core restore <file|name> [--yes]            only with the gateway stopped; a name is looked up in <config>/core/backups\n  minigw gw core audit                                  the audit trail of the core\n  minigw gw usage-events [--days n] [--user u] [--project p] [--model m]   model invocations per day, model and user (core; all of them)\n  minigw gw quota [--claude-probe=on|off]               subscription quota and provider credit, with source, time and staleness\n(<user> and <project>: the name or slug, or the number.)\n",
+    "exit": 1,
+    "requests": []
+   }
+  },
+  {
+   "name": "grant bad verb",
+   "args": [
+    "grant",
+    "alpha",
+    "give",
+    "x"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[{\"id\":10,\"slug\":\"alpha\",\"name\":\"Alpha project\",\"archived\":false},{\"id\":11,\"slug\":\"beta\",\"name\":\"Beta\",\"archived\":true},{\"id\":12,\"slug\":\"gamma\",\"name\":\"Gam\\u0007ma\\n2\",\"archived\":false}]}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: minigw gw user list | add <name> | rename <user> <name> | activate <user> | deactivate <user>\n  minigw gw bind list | <device id> <user> | remove <device id>        which user a device belongs to\n  minigw gw project list | add <slug> <name> | archive <project> | unarchive <project>\n  minigw gw member <project> list | set <user> <role> | remove <user>   role: reader, developer, admin\n  minigw gw grant <source> list | add <reader> <class> | remove <reader> <class>   class: structure, data\n  minigw gw core backup [name]                          a consistent copy of the core database into <config>/core/backups (gateway running)\n  minigw gw core restore <file|name> [--yes]            only with the gateway stopped; a name is looked up in <config>/core/backups\n  minigw gw core audit                                  the audit trail of the core\n  minigw gw usage-events [--days n] [--user u] [--project p] [--model m]   model invocations per day, model and user (core; all of them)\n  minigw gw quota [--claude-probe=on|off]               subscription quota and provider credit, with source, time and staleness\n(<user> and <project>: the name or slug, or the number.)\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/projects",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "core backup named",
+   "args": [
+    "core",
+    "backup",
+    "nightly.db"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "POST /core/backup",
+     "status": 200,
+     "body": "{\"file\":\"/Users/x/config/core/backups/nightly.db\"}"
+    }
+   ],
+   "want": {
+    "out": "backup written to /Users/x/config/core/backups/nightly.db\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "POST",
+      "/core/backup",
+      "{\"name\":\"nightly.db\"}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "core backup path refused",
+   "args": [
+    "core",
+    "backup",
+    "../x.db"
+   ],
+   "opts": {},
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "minigw: a backup is kept in the core folder's backups folder (a copy anywhere else would be readable by agents): give a name, not a path\n",
+    "exit": 1,
+    "requests": []
+   }
+  },
+  {
+   "name": "core backup colon refused",
+   "args": [
+    "core",
+    "backup",
+    "C:x.db"
+   ],
+   "opts": {},
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "minigw: a backup is kept in the core folder's backups folder (a copy anywhere else would be readable by agents): give a name, not a path\n",
+    "exit": 1,
+    "requests": []
+   }
+  },
+  {
+   "name": "core backup backslash refused",
+   "args": [
+    "core",
+    "backup",
+    "a\\b"
+   ],
+   "opts": {},
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "minigw: a backup is kept in the core folder's backups folder (a copy anywhere else would be readable by agents): give a name, not a path\n",
+    "exit": 1,
+    "requests": []
+   }
+  },
+  {
+   "name": "core backup 503",
+   "args": [
+    "core",
+    "backup",
+    "n.db"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "POST /core/backup",
+     "status": 503,
+     "body": "{\"error\":{\"message\":\"The project database is not available\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: The project database is not available\n",
+    "exit": 1,
+    "requests": [
+     [
+      "POST",
+      "/core/backup",
+      "{\"name\":\"n.db\"}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "core backup 409",
+   "args": [
+    "core",
+    "backup",
+    "n.db"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "POST /core/backup",
+     "status": 409,
+     "body": "{\"error\":{\"message\":\"a backup with this name exists\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: a backup with this name exists\n",
+    "exit": 1,
+    "requests": [
+     [
+      "POST",
+      "/core/backup",
+      "{\"name\":\"n.db\"}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "core backup file control chars",
+   "args": [
+    "core",
+    "backup",
+    "n.db"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "POST /core/backup",
+     "status": 200,
+     "body": "{\"file\":\"/x/\\u001b[2Jn.db\"}"
+    }
+   ],
+   "want": {
+    "out": "backup written to /x/\u001b[2Jn.db\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "POST",
+      "/core/backup",
+      "{\"name\":\"n.db\"}"
+     ]
+    ]
+   }
+  },
+  {
+   "name": "core audit",
+   "args": [
+    "core",
+    "audit"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /audit?after=0&limit=500",
+     "status": 200,
+     "body": "{\"events\":[{\"ID\":1,\"Time\":\"2026-11-01T10:00:00Z\",\"Actor\":\"owner\",\"Action\":\"user.add\",\"Subject\":\"user:2\",\"Detail\":{\"name\":\"Matic\"}},{\"ID\":2,\"Time\":\"2026-11-01T10:05:00Z\",\"Actor\":\"owner\",\"Action\":\"project.add\",\"Subject\":\"project:10\",\"Detail\":null}],\"next\":2}"
+    },
+    {
+     "match": "GET /audit?after=2&limit=500",
+     "status": 200,
+     "body": "{\"events\":[{\"ID\":3,\"Time\":\"2026-11-02T10:05:00Z\",\"Actor\":\"a\\u001bb\",\"Action\":\"member.set\",\"Subject\":\"project:10\",\"Detail\":{\"role\":\"reader\",\"user\":2,\"ok\":true,\"tags\":[\"a\",\"b\"],\"big\":1000000,\"frac\":2.5}}],\"next\":3}"
+    },
+    {
+     "match": "GET /audit?after=3&limit=500",
+     "status": 200,
+     "body": "{\"events\":[],\"next\":3}"
+    }
+   ],
+   "want": {
+    "out": "1  2026-11-01T10:00:00Z  owner  user.add  user:2  map[name:Matic]\n2  2026-11-01T10:05:00Z  owner  project.add  project:10  <nil>\n3  2026-11-02T10:05:00Z  ab  member.set  project:10  map[big:1e+06 frac:2.5 ok:true role:reader tags:[a b] user:2]\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/audit?after=0&limit=500",
+      ""
+     ],
+     [
+      "GET",
+      "/audit?after=2&limit=500",
+      ""
+     ],
+     [
+      "GET",
+      "/audit?after=3&limit=500",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "core audit empty",
+   "args": [
+    "core",
+    "audit"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /audit?after=0&limit=500",
+     "status": 200,
+     "body": "{\"events\":[],\"next\":0}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/audit?after=0&limit=500",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "core audit 503",
+   "args": [
+    "core",
+    "audit"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /audit?after=0&limit=500",
+     "status": 503,
+     "body": "{\"error\":{\"message\":\"The project database is not available\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: The project database is not available\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/audit?after=0&limit=500",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "core alone",
+   "args": [
+    "core"
+   ],
+   "opts": {},
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "minigw: minigw gw user list | add <name> | rename <user> <name> | activate <user> | deactivate <user>\n  minigw gw bind list | <device id> <user> | remove <device id>        which user a device belongs to\n  minigw gw project list | add <slug> <name> | archive <project> | unarchive <project>\n  minigw gw member <project> list | set <user> <role> | remove <user>   role: reader, developer, admin\n  minigw gw grant <source> list | add <reader> <class> | remove <reader> <class>   class: structure, data\n  minigw gw core backup [name]                          a consistent copy of the core database into <config>/core/backups (gateway running)\n  minigw gw core restore <file|name> [--yes]            only with the gateway stopped; a name is looked up in <config>/core/backups\n  minigw gw core audit                                  the audit trail of the core\n  minigw gw usage-events [--days n] [--user u] [--project p] [--model m]   model invocations per day, model and user (core; all of them)\n  minigw gw quota [--claude-probe=on|off]               subscription quota and provider credit, with source, time and staleness\n(<user> and <project>: the name or slug, or the number.)\n",
+    "exit": 1,
+    "requests": []
+   }
+  },
+  {
+   "name": "core unknown verb",
+   "args": [
+    "core",
+    "vacuum"
+   ],
+   "opts": {},
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "minigw: minigw gw user list | add <name> | rename <user> <name> | activate <user> | deactivate <user>\n  minigw gw bind list | <device id> <user> | remove <device id>        which user a device belongs to\n  minigw gw project list | add <slug> <name> | archive <project> | unarchive <project>\n  minigw gw member <project> list | set <user> <role> | remove <user>   role: reader, developer, admin\n  minigw gw grant <source> list | add <reader> <class> | remove <reader> <class>   class: structure, data\n  minigw gw core backup [name]                          a consistent copy of the core database into <config>/core/backups (gateway running)\n  minigw gw core restore <file|name> [--yes]            only with the gateway stopped; a name is looked up in <config>/core/backups\n  minigw gw core audit                                  the audit trail of the core\n  minigw gw usage-events [--days n] [--user u] [--project p] [--model m]   model invocations per day, model and user (core; all of them)\n  minigw gw quota [--claude-probe=on|off]               subscription quota and provider credit, with source, time and staleness\n(<user> and <project>: the name or slug, or the number.)\n",
+    "exit": 1,
+    "requests": []
+   }
+  },
+  {
+   "name": "core audit extra",
+   "args": [
+    "core",
+    "audit",
+    "x"
+   ],
+   "opts": {},
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "minigw: minigw gw user list | add <name> | rename <user> <name> | activate <user> | deactivate <user>\n  minigw gw bind list | <device id> <user> | remove <device id>        which user a device belongs to\n  minigw gw project list | add <slug> <name> | archive <project> | unarchive <project>\n  minigw gw member <project> list | set <user> <role> | remove <user>   role: reader, developer, admin\n  minigw gw grant <source> list | add <reader> <class> | remove <reader> <class>   class: structure, data\n  minigw gw core backup [name]                          a consistent copy of the core database into <config>/core/backups (gateway running)\n  minigw gw core restore <file|name> [--yes]            only with the gateway stopped; a name is looked up in <config>/core/backups\n  minigw gw core audit                                  the audit trail of the core\n  minigw gw usage-events [--days n] [--user u] [--project p] [--model m]   model invocations per day, model and user (core; all of them)\n  minigw gw quota [--claude-probe=on|off]               subscription quota and provider credit, with source, time and staleness\n(<user> and <project>: the name or slug, or the number.)\n",
+    "exit": 1,
+    "requests": []
+   }
+  },
+  {
+   "name": "core restore is not an admin call",
+   "args": [
+    "core",
+    "restore",
+    "x.db"
+   ],
+   "opts": {},
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "minigw: minigw gw user list | add <name> | rename <user> <name> | activate <user> | deactivate <user>\n  minigw gw bind list | <device id> <user> | remove <device id>        which user a device belongs to\n  minigw gw project list | add <slug> <name> | archive <project> | unarchive <project>\n  minigw gw member <project> list | set <user> <role> | remove <user>   role: reader, developer, admin\n  minigw gw grant <source> list | add <reader> <class> | remove <reader> <class>   class: structure, data\n  minigw gw core backup [name]                          a consistent copy of the core database into <config>/core/backups (gateway running)\n  minigw gw core restore <file|name> [--yes]            only with the gateway stopped; a name is looked up in <config>/core/backups\n  minigw gw core audit                                  the audit trail of the core\n  minigw gw usage-events [--days n] [--user u] [--project p] [--model m]   model invocations per day, model and user (core; all of them)\n  minigw gw quota [--claude-probe=on|off]               subscription quota and provider credit, with source, time and staleness\n(<user> and <project>: the name or slug, or the number.)\n",
+    "exit": 1,
+    "requests": []
+   }
+  },
+  {
+   "name": "usage-events default",
+   "args": [
+    "usage-events"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /usage/events?days=7",
+     "status": 200,
+     "body": "{\"days\":[{\"day\":\"2026-11-13\",\"model\":\"codex\",\"user\":2,\"userName\":\"Matic\",\"project\":10,\"events\":5,\"tokensIn\":1000,\"tokensOut\":200,\"eventsWithoutTokens\":1,\"nestedEvents\":2,\"failedEvents\":1},{\"day\":\"2026-11-13\",\"model\":\"claude-opus\",\"events\":3,\"tokensIn\":30,\"tokensOut\":4,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0}],\"gaps\":[{\"count\":7,\"from\":\"2026-11-12T08:00:00Z\",\"to\":\"2026-11-12T09:30:00Z\"}]}"
+    }
+   ],
+   "want": {
+    "out": "2026-11-13  codex                     user Matic  project 10  5 events, 1000 in, 200 out, 2 nested, 1 without token counts, 1 failed\n2026-11-13  claude-opus               user -  3 events, 30 in, 4 out\ntotal: 8 events, 1030 in, 204 out (every event once, nested ones included)\n7 events lost between 2026-11-12 08:00 and 2026-11-12 09:30\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/usage/events?days=7",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "usage-events days",
+   "args": [
+    "usage-events"
+   ],
+   "opts": {
+    "days": "30"
+   },
+   "responses": [
+    {
+     "match": "GET /usage/events?days=30",
+     "status": 200,
+     "body": "{\"days\":[{\"day\":\"2026-11-13\",\"model\":\"codex\",\"user\":2,\"userName\":\"Matic\",\"project\":10,\"events\":5,\"tokensIn\":1000,\"tokensOut\":200,\"eventsWithoutTokens\":1,\"nestedEvents\":2,\"failedEvents\":1},{\"day\":\"2026-11-13\",\"model\":\"claude-opus\",\"events\":3,\"tokensIn\":30,\"tokensOut\":4,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0}],\"gaps\":[{\"count\":7,\"from\":\"2026-11-12T08:00:00Z\",\"to\":\"2026-11-12T09:30:00Z\"}]}"
+    }
+   ],
+   "want": {
+    "out": "2026-11-13  codex                     user Matic  project 10  5 events, 1000 in, 200 out, 2 nested, 1 without token counts, 1 failed\n2026-11-13  claude-opus               user -  3 events, 30 in, 4 out\ntotal: 8 events, 1030 in, 204 out (every event once, nested ones included)\n7 events lost between 2026-11-12 08:00 and 2026-11-12 09:30\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/usage/events?days=30",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "usage-events empty",
+   "args": [
+    "usage-events"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /usage/events?days=7",
+     "status": 200,
+     "body": "{\"days\":[],\"gaps\":[]}"
+    }
+   ],
+   "want": {
+    "out": "no events\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/usage/events?days=7",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "usage-events only gaps",
+   "args": [
+    "usage-events"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /usage/events?days=7",
+     "status": 200,
+     "body": "{\"days\":[],\"gaps\":[{\"count\":2,\"from\":\"2026-11-12T08:00:00Z\",\"to\":\"2026-11-12T08:00:00Z\"}]}"
+    }
+   ],
+   "want": {
+    "out": "no events\n2 events lost between 2026-11-12 08:00 and 2026-11-12 08:00\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/usage/events?days=7",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "usage-events filters",
+   "args": [
+    "usage-events"
+   ],
+   "opts": {
+    "user": "Matic",
+    "project": "alpha",
+    "model": "codex"
+   },
+   "responses": [
+    {
+     "match": "GET /users",
+     "status": 200,
+     "body": "{\"users\":[{\"ID\":1,\"Name\":\"Uros\",\"Active\":true,\"Owner\":true},{\"ID\":2,\"Name\":\"Matic\",\"Active\":true,\"Owner\":false},{\"ID\":3,\"Name\":\"Tilen\",\"Active\":false,\"Owner\":false},{\"ID\":4,\"Name\":\"Bad\\u001b[31m\\u202eName\",\"Active\":true,\"Owner\":false}]}"
+    },
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[{\"id\":10,\"slug\":\"alpha\",\"name\":\"Alpha project\",\"archived\":false},{\"id\":11,\"slug\":\"beta\",\"name\":\"Beta\",\"archived\":true},{\"id\":12,\"slug\":\"gamma\",\"name\":\"Gam\\u0007ma\\n2\",\"archived\":false}]}"
+    },
+    {
+     "match": "GET /usage/events?days=7&model=codex&project=10&user=2",
+     "status": 200,
+     "body": "{\"days\":[{\"day\":\"2026-11-13\",\"model\":\"codex\",\"user\":2,\"userName\":\"Matic\",\"project\":10,\"events\":5,\"tokensIn\":1000,\"tokensOut\":200,\"eventsWithoutTokens\":1,\"nestedEvents\":2,\"failedEvents\":1},{\"day\":\"2026-11-13\",\"model\":\"claude-opus\",\"events\":3,\"tokensIn\":30,\"tokensOut\":4,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0}],\"gaps\":[{\"count\":7,\"from\":\"2026-11-12T08:00:00Z\",\"to\":\"2026-11-12T09:30:00Z\"}]}"
+    }
+   ],
+   "want": {
+    "out": "2026-11-13  codex                     user Matic  project 10  5 events, 1000 in, 200 out, 2 nested, 1 without token counts, 1 failed\n2026-11-13  claude-opus               user -  3 events, 30 in, 4 out\ntotal: 8 events, 1030 in, 204 out (every event once, nested ones included)\n7 events lost between 2026-11-12 08:00 and 2026-11-12 09:30\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/users",
+      ""
+     ],
+     [
+      "GET",
+      "/projects",
+      ""
+     ],
+     [
+      "GET",
+      "/usage/events?days=7&model=codex&project=10&user=2",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "usage-events unknown user",
+   "args": [
+    "usage-events"
+   ],
+   "opts": {
+    "user": "nobody"
+   },
+   "responses": [
+    {
+     "match": "GET /users",
+     "status": 200,
+     "body": "{\"users\":[{\"ID\":1,\"Name\":\"Uros\",\"Active\":true,\"Owner\":true},{\"ID\":2,\"Name\":\"Matic\",\"Active\":true,\"Owner\":false},{\"ID\":3,\"Name\":\"Tilen\",\"Active\":false,\"Owner\":false},{\"ID\":4,\"Name\":\"Bad\\u001b[31m\\u202eName\",\"Active\":true,\"Owner\":false}]}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: no user \"nobody\" (minigw gw user list)\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/users",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "usage-events unknown project",
+   "args": [
+    "usage-events"
+   ],
+   "opts": {
+    "user": "2",
+    "project": "nope"
+   },
+   "responses": [
+    {
+     "match": "GET /users",
+     "status": 200,
+     "body": "{\"users\":[{\"ID\":1,\"Name\":\"Uros\",\"Active\":true,\"Owner\":true},{\"ID\":2,\"Name\":\"Matic\",\"Active\":true,\"Owner\":false},{\"ID\":3,\"Name\":\"Tilen\",\"Active\":false,\"Owner\":false},{\"ID\":4,\"Name\":\"Bad\\u001b[31m\\u202eName\",\"Active\":true,\"Owner\":false}]}"
+    },
+    {
+     "match": "GET /projects",
+     "status": 200,
+     "body": "{\"projects\":[{\"id\":10,\"slug\":\"alpha\",\"name\":\"Alpha project\",\"archived\":false},{\"id\":11,\"slug\":\"beta\",\"name\":\"Beta\",\"archived\":true},{\"id\":12,\"slug\":\"gamma\",\"name\":\"Gam\\u0007ma\\n2\",\"archived\":false}]}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: no project \"nope\" (minigw gw project list)\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/users",
+      ""
+     ],
+     [
+      "GET",
+      "/projects",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "usage-events model needs escape",
+   "args": [
+    "usage-events"
+   ],
+   "opts": {
+    "model": "a b&c"
+   },
+   "responses": [
+    {
+     "match": "GET /usage/events?days=7&model=a+b%26c",
+     "status": 200,
+     "body": "{\"days\":[],\"gaps\":[]}"
+    }
+   ],
+   "want": {
+    "out": "no events\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/usage/events?days=7&model=a+b%26c",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "usage-events 400",
+   "args": [
+    "usage-events"
+   ],
+   "opts": {
+    "days": "99"
+   },
+   "responses": [
+    {
+     "match": "GET /usage/events?days=99",
+     "status": 400,
+     "body": "{\"error\":{\"message\":\"days: 1 to 31\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: days: 1 to 31\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/usage/events?days=99",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "usage-events 503",
+   "args": [
+    "usage-events"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /usage/events?days=7",
+     "status": 503,
+     "body": "{\"error\":{\"message\":\"The project database is not available\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "minigw: The project database is not available\n",
+    "exit": 1,
+    "requests": [
+     [
+      "GET",
+      "/usage/events?days=7",
+      ""
+     ]
+    ]
+   }
+  },
+  {
+   "name": "usage-events extra arg",
+   "args": [
+    "usage-events",
+    "x"
+   ],
+   "opts": {},
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "minigw: minigw gw user list | add <name> | rename <user> <name> | activate <user> | deactivate <user>\n  minigw gw bind list | <device id> <user> | remove <device id>        which user a device belongs to\n  minigw gw project list | add <slug> <name> | archive <project> | unarchive <project>\n  minigw gw member <project> list | set <user> <role> | remove <user>   role: reader, developer, admin\n  minigw gw grant <source> list | add <reader> <class> | remove <reader> <class>   class: structure, data\n  minigw gw core backup [name]                          a consistent copy of the core database into <config>/core/backups (gateway running)\n  minigw gw core restore <file|name> [--yes]            only with the gateway stopped; a name is looked up in <config>/core/backups\n  minigw gw core audit                                  the audit trail of the core\n  minigw gw usage-events [--days n] [--user u] [--project p] [--model m]   model invocations per day, model and user (core; all of them)\n  minigw gw quota [--claude-probe=on|off]               subscription quota and provider credit, with source, time and staleness\n(<user> and <project>: the name or slug, or the number.)\n",
+    "exit": 1,
+    "requests": []
+   }
+  },
+  {
+   "name": "usage-events control chars",
+   "args": [
+    "usage-events"
+   ],
+   "opts": {},
+   "responses": [
+    {
+     "match": "GET /usage/events?days=7",
+     "status": 200,
+     "body": "{\"days\":[{\"day\":\"2026-11-13\",\"model\":\"m\\u001b[0m\",\"userName\":\"u\\u202e\",\"events\":1,\"tokensIn\":1,\"tokensOut\":1,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0}],\"gaps\":[]}"
+    }
+   ],
+   "want": {
+    "out": "2026-11-13  m[0m                     user u  1 events, 1 in, 1 out\ntotal: 1 events, 1 in, 1 out (every event once, nested ones included)\n",
+    "err": "",
+    "exit": 0,
+    "requests": [
+     [
+      "GET",
+      "/usage/events?days=7",
+      ""
+     ]
+    ]
+   }
+  }
+ ]
+}

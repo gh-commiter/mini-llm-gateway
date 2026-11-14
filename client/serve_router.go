@@ -71,6 +71,8 @@ type adminClient struct {
 	// answered (H1): vrata so odgovorila (ali ne v času), a ne kot ta router: morda teče; premik in prevzem Scratch ne
 	// gresta mimo njega (prazen hub ne vidi njegovih sej).
 	answered bool
+	// fake: the parity tests answer the requests (status, body) instead of a gateway.
+	fake func(method, path string, body []byte) (int, []byte)
 }
 
 // errNotRouter: na vratih je drug program (rokovanje Noise s ključem routerja ne uspe); skrivnost ni bila poslana.
@@ -212,7 +214,9 @@ func (a *adminClient) do(method, path string, body, out any) {
 	}
 	var status int
 	var resp []byte
-	if a.off == nil {
+	if a.fake != nil {
+		status, resp = a.fake(method, path, data)
+	} else if a.off == nil {
 		var err error
 		timeout := 60 * time.Second
 		if path == "/general/scratch/move" { // kopija na drug disk traja

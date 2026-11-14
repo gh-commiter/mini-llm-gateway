@@ -300,10 +300,10 @@ enum GoJSON {
         return o + "\""
     }
 
-    /// json.Marshal of a map: keys sorted, values String or Int64.
+    /// json.Marshal of a map: keys sorted, values String, Bool or Int64.
     static func object(_ m: [String: Any]) -> String {
         "{" + m.keys.sorted().map { k in
-            string(k) + ":" + ((m[k] as? String).map(string) ?? String(m[k] as? Int64 ?? 0))
+            string(k) + ":" + ((m[k] as? String).map(string) ?? (m[k] as? Bool).map { $0 ? "true" : "false" } ?? String(m[k] as? Int64 ?? 0))
         }.joined(separator: ",") + "}"
     }
 }
