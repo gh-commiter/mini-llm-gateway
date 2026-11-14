@@ -125,16 +125,26 @@ In the root of a git repository the agent works in a clone and its work comes ba
 `minigw/<agent>-…`; minigw prints the range to review. Elsewhere the folder is synced and the changes land in your
 files. See [docs/usage.md → Work modes](docs/usage.md#work-modes-what-happens-to-your-files).
 
+## Projects and notes (0.6.0)
+
+A gateway can keep projects for a team: the owner creates users, binds each person's device to a user, creates a project
+and adds members (`minigw gw user|bind|project|member|grant`). A member links a folder to a project
+(`minigw project link`), pushes and reads short notes (`minigw note`), and an agent started in that folder can read the
+project's notes. `minigw usage` shows model usage per project, user and model. It works on the Mac app and on
+`minigw serve`; the Mac app keeps the database in a helper. Backups with `minigw gw core backup`. Walk-through:
+[docs/usage.md → Projects in 10 minutes](docs/usage.md#projects-in-10-minutes).
+
 ## Documentation
 
 | Page | What is in it |
 |---|---|
-| [docs/usage.md](docs/usage.md) | Scenarios: ask a model, hand a task to an agent, review, work modes and branches, read-only, sharing, profiles, native mode, models |
+| [docs/usage.md](docs/usage.md) | Scenarios: ask a model, hand a task to an agent, review, work modes and branches, read-only, sharing, projects and notes, profiles, native mode, models |
 | [docs/commands.md](docs/commands.md) | Every `minigw` command, option and plugin skill, with examples |
 | [docs/how-it-works.md](docs/how-it-works.md) | Request flow, encryption, devices, folder transport, protected paths, limits, security notes |
-| [docs/gateway.md](docs/gateway.md) | Mac app and `minigw serve`: network, devices, settings, providers, storage |
+| [docs/gateway.md](docs/gateway.md) | Mac app and `minigw serve`: network, devices, settings, providers, the project database, usage and quota, storage |
 | [docs/install.md](docs/install.md) | All install options, checking downloads, building from source |
 | [docs/admin-api.md](docs/admin-api.md) | The gateway's admin API |
+| [docs/core-adapter.md](docs/core-adapter.md) | What a gateway must do itself for projects: the contract between a gateway and the core |
 | [docs/windows-parity.md](docs/windows-parity.md) | Every Mac setting and its Windows/Linux counterpart |
 | [docs/release-notes.md](docs/release-notes.md) | What changed in each release |
 

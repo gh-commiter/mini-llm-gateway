@@ -24,6 +24,9 @@ The gateway runs on one computer and serves every client. Install it with `/mini
 | Siri AI, Apple Foundation Models | yes | – |
 | Work modes | auto, worktree, sync, direct, native, native-direct | auto, worktree, sync |
 | `minigw run` | yes | – |
+| Projects, notes, usage events, quota (0.6.0) | yes, through the helper `minigw-core` ([below](#the-mac-app-the-project-helper)) | yes, in the gateway ([below](#the-core-database-060)) |
+| Owner commands `minigw gw user\|bind\|project\|member\|grant\|core\|usage-events\|quota` | yes | yes |
+| Pages for users and projects | only a status row in Settings → General | – (command line only) |
 | Listens on | `127.0.0.1:8765` until you change it | all addresses, port 8765 |
 
 Both speak the same protocol and the same [admin API](admin-api.md), so every client works with both.
@@ -243,6 +246,9 @@ minigw serve                 # or run it in this terminal (--port, --config)
     `deny` is kernel-enforced: the gateway gives Grok its own home (`GROK_HOME` = `<Scratch>/grok-home`) holding
     `sandbox.toml` with the profiles `minigw-core` and `minigw-core-ro`, rewritten and checked before every run, and keeps
     the login in place (`GROK_AUTH_PATH`); `~/.grok` is not touched. If the profile cannot be set up the run is refused.
+    **Behaviour change:** because Grok's home is the gateway's, the defaults in your `~/.grok/config.toml` are not applied to
+    Grok runs on the Mac, and sessions from before in `~/.grok` are not resumed. On Windows and Linux Grok keeps a home of
+    its own per device in which `config.toml` is linked to yours, so its defaults apply there.
     (Grok's own `--deny` is only a rule of its tools: `python3 -c open(...)` read a denied file, grok 1.0.77.)
   - **Linux** (`<config dir>/core`): `bwrap` masks the config folder with a tmpfs (Codex, Grok, Copilot); Claude Code's
     own sandbox has it in `denyRead`. Without `bwrap` agents run only with **Allow commands without a sandbox**, and then
@@ -276,6 +282,11 @@ minigw serve                 # or run it in this terminal (--port, --config)
   - **Other providers' credentials:** `~/.grok` (or `$GROK_HOME`), `~/.codex` (or `$CODEX_HOME`), `~/.copilot` (or
     `$COPILOT_HOME`) and the gateway's `Scratch/grok-home` and `Scratch/copilot` are denied to every agent of another
     kind (Codex's profile, Grok's `sandbox.toml`, the Seatbelt hidden list, Claude's rules); an agent keeps its own home.
+  - **Claude CLI without "Allow local tools"** (the restricted mode, no sandbox on the Mac): only file tools run there (Read,
+    Grep, Glob, LS, Edit, Write, MultiEdit, NotebookEdit, WebSearch, WebFetch). A configuration that lists `Bash`, `Task`, an
+    MCP tool or another tool is refused when it is saved, and a run with such an older stored configuration is refused (400),
+    because such a tool could read the notes of all projects. `minigw serve` refuses the same tools except `Bash`, which its
+    sandbox confines.
   - **Codex write mode on the Mac** is a permission profile now: writable are the session folder, allowed folders and
     the request's private temporary folder (`/private/tmp/minigw-codex-<id>`, exported as `TMPDIR`); other places in
     `/tmp` are not writable any more (before: all of `/tmp`).
@@ -312,7 +323,11 @@ stops the gateway and removes autostart; the config and keys stay. An MSI instal
 creates the config. Its menu shows the status, devices waiting for approval (Allow / Reject), **Settings…**,
 **Copy Token**, **Start at sign-in**, **Open log** and **Quit**.
 
-## The core database (0.6.0, `minigw serve`)
+## The core database (0.6.0)
+
+The core holds the projects of 0.6.0. It is the same Go code on both gateways: `minigw serve` runs it inside the gateway, the
+Mac app runs it in the helper `minigw-core` ([below](#the-mac-app-the-project-helper)). This part describes the database and
+its commands, which are the same on both; the Mac differences are in the Mac sections after it.
 
 Users, device bindings, projects, members, grants and notes are kept in a SQLite database in the `core` folder next
 to `serve.json` (`core.db`, with its `-wal` and `-shm` files, `core.state`, `core.audit.log`, snapshots). The folder
@@ -344,8 +359,7 @@ holds a lock on it, so only one process uses it at a time.
   `core` with the projects, members, notes, usage events and audit trail, for good. Linux: `install.sh --uninstall` keeps
   `~/.config/minigw/core`, `--purge` deletes it. Mac app: dragging the app to the Trash or `brew uninstall` keeps
   `~/Library/Application Support/Mini Gateway/core`; `brew uninstall --zap` moves it to the Trash. Take a backup first if
-  you may want the projects again. By hand: stop the gateway, then delete the `core` folder (and `usage.spool` next to
-  `serve.json`); the gateway creates an empty core at the next start.
+  you may want the projects again. By hand: stop the gateway, then delete the `core` folder (the usage spool is inside it); the gateway creates an empty core at the next start.
 - **Audit:** `minigw gw core audit` lists the audit trail. `core.audit.log` next to the database also records restores
   and migrations, so they survive a database swap.
 - **Devices:** removing a device from the approved list (`minigw gw devices deny`, the settings page, the tray) raises
@@ -375,7 +389,14 @@ admin proof, the agent check); the helper decides everything else, so both gatew
   answers. If the helper is down the removal still happens at once (the device is refused immediately) and a pending
   mark is saved in the settings with it; the app sends it when the helper is next ready, before any project route is
   served.
-- **First start:** the owner user is created once, named after the Mac account.
+- **First start:** the owner user is created once, named after the Mac account (on `minigw serve` after the OS account).
+- **One request at a time:** the helper serves the app's calls one after another. A slow call delays the next one. Project
+  routes and usage events are small, so this is not noticeable in normal use, but it is a limit of 0.6.0.
+- **Where you see it:** `minigw gw status` prints `projects: on` or `projects: off (reason)` (helper not running, database
+  cannot be opened, a hard link to a core file) and Settings → General shows the same as a row. `minigw serve` prints the
+  same line.
+- **Restore:** `minigw gw core restore <file|name>` needs the app quit: the Mac `minigw` starts `minigw-core restore` itself and
+  it refuses while the helper holds the store.
 
 ### The Mac app: agents with a project
 
@@ -407,25 +428,35 @@ Codex, Grok and Copilot give no counts; the gateway estimates the output from it
 input empty. `unknown`: no counts at all. Totals add every event once: an agent's own tokens do not include the models it
 asked, because each of those calls is its own event (shown as "nested", and already in the totals).
 
-**Never blocks.** A request only puts its event into a queue (4096 events); one writer stores the events. If the queue
-is full the event is counted as lost. If the core cannot be used, events go to the file `usage.spool` in the config
-folder (the same protection as the core): at most 10 000 events or 10 MiB, the oldest are dropped and a gap record (how
-many, from when to when) is kept. The spool is replayed at the next start and every 30 seconds; replaying twice stores
-every event once. `minigw usage` and the usage routes show the gaps ("N events lost between A and B"). Events that were
-only *begun* in the core when the process died become `interrupted`.
+**Never blocks.** A request only puts its event into a queue (4096 events); a writer stores the events. If the queue is
+full the event is counted as lost.
+- **`minigw serve`:** the writer is in the gateway. If the core cannot be used, events go to the file `usage.spool` in the
+  core folder (the same protection as the core): at most 10 000 events or 10 MiB, the oldest are dropped and a gap record
+  (how many, from when to when) is kept. The spool is replayed at the next start and every 30 seconds; replaying twice stores
+  every event once. No spool exists while the core is not open.
+- **Mac app:** the queue is in the app and the helper stores the events (the helper has the same spool for a failing
+  write). While the helper is down the events wait in the app's memory; a longer outage drops the oldest and records a
+  gap. When the app **quits** with events still queued, they are written as one gap (count and time span) to a file in
+  the app's data folder, and the next start sends it to the helper as lost events. If the app **crashes** or is killed, the
+  queued events are lost without a gap record.
+
+`minigw usage` and the usage routes show the gaps ("N events lost between A and B"). Events that were only *begun* in the
+core when the process died become `interrupted`.
 
 **Retention.** Detail rows older than 400 days are folded into daily totals (at start and once a day).
 
-**Quota (owner only, `minigw gw quota`).** Codex: the last `rate_limits` record in the session log of the Codex run the
+**Quota (owner only, `minigw gw quota`; both gateways, 0.6.0).** Codex: the last `rate_limits` record in the session log of the Codex run the
 gateway started (5-hour window and week; as fresh as the last run), read in the background after the answer has gone
 out. OpenRouter credit (`/api/v1/credits`) and LiteLLM spend (`/key/info`) with the provider's key, never logged or
-returned, cached for 10 minutes. **Claude is off by default.** `minigw gw quota --claude-probe=on` lets the gateway run
-`claude -p /usage` (at most every 10 minutes, single-flight, 30 s timeout) in an empty private folder under the config
-folder, with settings sources off, `--strict-mcp-config` and an empty MCP config, and an environment built from an
+returned, cached for 10 minutes. **Claude is off by default.** `minigw gw quota --claude-probe=on` (Mac app: also Settings →
+Claude CLI → Show the subscription quota) lets the gateway run
+`claude -p /usage` (at most every 10 minutes, single-flight, 30 s timeout) in an empty private folder (`minigw serve`: under the config
+folder; Mac app: `quota-tmp` in the app's data folder), with settings sources off, `--strict-mcp-config` and an empty MCP config, and an environment built from an
 allowlist: `PATH`, `HOME`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `SystemRoot`, `windir`, `SystemDrive` (the program
 and its login folder), `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME` (Linux login folder), `CLAUDE_CONFIG_DIR`
 (a moved login folder), `CLAUDE_CODE_OAUTH_TOKEN` (login by token), `LANG`, `LC_ALL`, `TZ` (the reset times); nothing
-else, in particular no `ANTHROPIC_*`. Checked with Claude Code 2.1.322: `/usage` runs no model turn (0 turns, no cost,
+else, in particular no `ANTHROPIC_*`. The Mac app passes only `PATH`, `HOME`, `XDG_CONFIG_HOME`, `CLAUDE_CONFIG_DIR`,
+`CLAUDE_CODE_OAUTH_TOKEN`, `LANG`, `LC_ALL` and `TZ`. Checked with Claude Code 2.1.322: `/usage` runs no model turn (0 turns, no cost,
 no tokens). The residual risk: a future Claude Code could treat `/usage` as a prompt. The gateway checks every answer; a
 run that shows a turn, cost or tokens is refused and the probe is switched off until the gateway restarts, but that
 one run has then already happened. The text format is Claude Code's own, so another version may show `unavailable`.
@@ -454,7 +485,7 @@ place.
 | Token, gateway key | Keychain | `serve.json` | `serve.json` |
 | Provider API keys | Keychain | Credential Manager | Secret Service (`secret-tool`), else `gateway-keys.json` (mode 0600) next to `serve.json` |
 | Lock for changes of `serve.json` | – | `serve.json.lock` next to `serve.json` (a change waits up to 5 s for another process) | same |
-| Usage spool (0.6.0) | – | `usage.spool` next to `serve.json` | same |
+| Usage spool (0.6.0) | `core/usage.spool` (written by the helper) | `core\usage.spool` | `core/usage.spool` |
 | Core database (0.6.0) | `~/Library/Application Support/Mini Gateway/core/` (0700, hosted by the helper `minigw-core`) | `core\` next to `serve.json` | `core/` next to `serve.json` |
 | Admin secret | Keychain | `admin.secret` in the config folder | `admin.secret` in the config folder |
 | Log | – | `minigw-serve.log` in the config folder (tray) | the systemd journal |

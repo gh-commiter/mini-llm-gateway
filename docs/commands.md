@@ -26,8 +26,9 @@ Every `minigw` command and every plugin skill, with an example. `minigw --minigw
 | `minigw share list` | Show shared folders and their saved modes |
 | `minigw project list [--archived] [--json]` | The gateway projects you can see, with your role and grants (see [usage.md](usage.md#projects-and-notes)) |
 | `minigw project link <slug>` / `unlink` / `show` | Link this folder tree to a project you are a direct member of, remove the link, or show which link applies here |
-| `minigw note list [--class c] [--limit n] [--json]` / `read <id>` | Notes of the linked project |
-| `minigw note push [--class c] [--title t] <file\|->` / `edit <id> …` / `rm <id>` | Create, change or delete a note (not inside an agent run) |
+| `minigw note list [--class c] [--limit n] [--after cursor] [--json]` / `read <id> [--json]` | Notes of the linked project (also inside an agent run, on the run's own project) |
+| `minigw note push [--class structure\|data\|private] [--title t] [--key k] <file\|->` | Create a note (default class `data`); `--key` repeats a push whose answer was lost |
+| `minigw note edit <id> [--class c] [--title t] [--revision n] [<file\|->]` / `rm <id> [--revision n]` | Change or delete a note (not inside an agent run) |
 | `minigw usage [--project slug] [--days n] [--json]` | Your model usage per day and model: the linked project's, or your own events in all projects (see [usage.md](usage.md#projects-and-notes)) |
 | `minigw run [--] <command> [args …]` | Run a build in this folder on the gateway Mac (native mode, allowed per device) |
 | `minigw --version` | minigw's version (`claude --version` gives Claude Code's) |
@@ -75,13 +76,13 @@ Claude Code's settings.
 ## Gateway: minigw gw
 
 `minigw gw …` shows or changes the gateway **on this computer**: the Mini Gateway app on a Mac, `minigw serve` on
-Windows and Linux. Changes apply at once. On a Mac the app must be running; on Windows and Linux a stopped gateway's
-`serve.json` is changed instead. `minigw gw` talks to the admin API ([admin-api.md](admin-api.md)), which answers
+Windows and Linux. Changes apply at once. On a Mac the app must be running (except `minigw gw core restore`, which needs the
+app quit); on Windows and Linux a stopped gateway's `serve.json` is changed instead. `minigw gw` talks to the admin API ([admin-api.md](admin-api.md)), which answers
 only on the gateway computer.
 
 | Command | What it does |
 |---|---|
-| `minigw gw status` | Running, version, autostart, agent requests, devices, providers |
+| `minigw gw status` | Running, version, autostart, agent requests, devices, providers, and a line `projects: on` or `projects: off (reason)` for the project database |
 | `minigw gw devices` | Allowed devices and devices waiting for approval |
 | `minigw gw devices allow <id> [--name N]` | Allow a device (compare the ID with `minigw status` on that client first) |
 | `minigw gw devices rename <id> --name N` | Rename a device (the name is only a label) |
@@ -95,6 +96,7 @@ only on the gateway computer.
 | `minigw gw provider models <name> [text] [--all] [--enable m1,m2\|all] [--disable m1,m2\|all]` | Show, enable or disable a provider's models |
 | `minigw gw claude [--path FILE] [--tools T1,T2] [--folders DIR1,DIR2] [--allow-local-tools=true\|false] [--ask-others=true\|false]` | Claude CLI settings |
 | `minigw gw claude --allow-unsandboxed-bash=true\|false` | Commands without a sandbox (`minigw serve` only) |
+| `minigw gw claude --accept-agents-read-notes=true\|false` | Accept that agents without a sandbox can read all project notes; without it the core stays closed on such a Windows or Linux gateway; restart to apply (`minigw serve` only: Mac agents are sandboxed) |
 | `minigw gw claude\|codex\|grok\|copilot [--work=direct\|sync\|worktree]` | Show or set the agent's cap: the highest work mode in which it may change the client's folder (in a lower mode it only reads) |
 | `minigw gw claude\|codex\|grok\|copilot login` | The agent's login (set / not set / logged in), never the value |
 | `minigw gw claude token [remove]` | The token from `claude setup-token` (needed in the Windows sandbox). Read from stdin or asked for. Copilot has no token: it uses the gateway user's `copilot login` |
@@ -111,7 +113,7 @@ only on the gateway computer.
 | `minigw gw member <project> list` \| `set <user> <role>` \| `remove <user>` | Members of a project; role: reader, developer, admin |
 | `minigw gw grant <source> list` \| `add <reader> <class>` \| `remove <reader> <class>` | Which project reads which class (structure, data) of another |
 | `minigw gw core backup [name]` | A consistent copy of the core database into `<core>/backups` (the gateway or app running); a name, not a path |
-| `minigw gw core restore <file\|name> [--yes]` | Only with the gateway stopped (on the Mac: with the app quit; the Mac `minigw` runs `minigw-core restore`); a name is looked up in `<core>/backups` |
+| `minigw gw core restore <file\|name> [--yes]` | Only with the gateway stopped (on the Mac: with the app quit; the Mac `minigw` runs `minigw-core restore`); a name is looked up in `<core>/backups`, a path is accepted here |
 | `minigw gw core audit` | The audit trail of the core |
 | `minigw gw usage-events [--days n] [--user u] [--project p] [--model m]` | Model invocations per day, model and user, with the gaps (events that were lost) |
 | `minigw gw quota [--claude-probe=on\|off]` | Subscription quota and provider credit with source, time and staleness; the Claude probe (`claude -p /usage`, at most every 10 minutes) is off until you turn it on (Mac: also Settings → Claude CLI) |
@@ -158,8 +160,12 @@ itself when the request fits. Most skills take `--profile <p>` (or a model with 
 | `/minigw:version` | – | Versions of minigw, Claude Code, the plugin and the gateway (`minigw plugin status`) |
 | `/minigw:connect [--name P] <gateway[:port]> <token>` | – | Connect this computer to a gateway; `--name` adds another one as a profile |
 | `/minigw:share [folder \| list \| remove [folder]]` | – | Share a folder that minigw does not share by itself |
+| `/minigw:project [list \| show \| link <slug> \| unlink]` | – | The gateway projects: list them, show or change the link of this folder (minigw 0.6.0 or newer) |
+| `/minigw:notes [list \| read <id> \| push … \| edit <id> … \| rm <id>]` | – | Notes of the linked project (minigw 0.6.0 or newer) |
+| `/minigw:usage [--project slug] [--days n]` | – | Your model usage (minigw 0.6.0 or newer) |
 | `/minigw:gw install \| update \| uninstall \| status` | – | Install, update, remove or check the gateway on this computer |
 | `/minigw:gw devices \| provider \| claude \| autostart \| token \| settings` | – | Manage it, as `minigw gw` |
+| `/minigw:gw user \| bind \| project \| member \| grant \| core backup \| core restore \| usage-events \| quota` | – | The owner's commands for projects, usage and quota (0.6.0) |
 | `/minigw:gw modes` | – | Explain the work modes |
 
 Examples:

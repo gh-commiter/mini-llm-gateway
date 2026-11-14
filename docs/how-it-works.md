@@ -122,6 +122,9 @@ Details:
   user (Codex and Grok on the Mac, Codex on Windows without its own sandbox, any agent on a Windows gateway without
   the Windows sandbox) can read them too. Keep Scratch on APFS, NTFS or ext4:
   exFAT ignores the folder's private permissions.
+  The core data folder (the notes of all projects) is the exception since 0.6.0: it is denied to every agent with a sandbox,
+  and on a Windows or Linux gateway with an agent without one the core stays closed unless the owner accepts that those
+  agents read it ([gateway.md](gateway.md#minigw-serve-on-windows-and-linux)).
 - What the sandboxes hide as Scratch (Mac `minigw run`, Copilot and Claude CLI on the Mac, Claude CLI's `denyRead` and
   bwrap on Linux) is worked out at each run from the layout: the current Scratch; on the Mac its fallback in the
   default base (used while the chosen disk is unplugged) and the old default `Scratch`; on `minigw serve` the old

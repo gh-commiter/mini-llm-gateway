@@ -132,7 +132,7 @@ Model    {"id": string, "model": string, "window"?: number, "enabled": bool}
 Provider  {"name": string, "baseURL": string, "insecure": bool, "models": [string] | null, "hasKey": bool, "ready": bool,
           "enabled": bool, "aliases": string}
          models: enabled provider IDs; null = all discovered, now and later. ready: model list loaded.
-Claude   {"path": string, "found": bool, "tools": string, "allowUnsandboxedBash": bool,
+Claude   {"path": string, "found": bool, "tools": string, "allowUnsandboxedBash": bool, "acceptAgentsCanReadNotes"?: bool,
           "exe"?: string, "version"?: string, "off"?: string, "leftOut"?: [string],
           "leftOutUnchecked"?: [string], "offErrors"?: [string], "refused"?: [string], "login"?: Login}
          path: "" = from PATH; tools: comma-separated tool names; exe: the
@@ -183,7 +183,7 @@ General  {"port": number, "address": string, "connect": string, "restartRequired
 | `POST /providers/{name}/models` | `{"all"?: bool, "enable"?: [id or model], "disable"?: [id or model]}` | `{"models": [Model], "changed": [Model]}` |
 | `GET /agents/claude` | – | Claude |
 | `GET /agents/claude/tools` | – | `{"tools": [string]}`: the tools of this Claude Code (for the exclude table with local tools) |
-| `PATCH /agents/claude` | any of `{"path", "tools", "allowUnsandboxedBash", "token", "apiKey"}` | Claude |
+| `PATCH /agents/claude` | any of `{"path", "tools", "allowUnsandboxedBash", "acceptAgentsCanReadNotes", "token", "apiKey"}` | Claude. `acceptAgentsCanReadNotes` (Go gateway, 0.6.0): the owner accepts that agents without a sandbox can read all project notes, so the core opens on a Windows or Linux gateway without a sandbox (a restart applies it; the Mac has no such field: its agents are sandboxed). `tools` without "Allow local tools" refuses `Task`, MCP tools and the like (400); on the Mac also `Bash` |
 | `GET /general` | – | General |
 | `PATCH /general` | any of `{"port", "address", "startAtSignIn", "allowedClients", "allowPlainRemote", "allowAnyDevice", "allowLocalApps", "scratch", "worktreeNetwork"}` | General; `"restartRequired": true` for port or address; `allowAnyDevice: true` only while no device is allowed (400) |
 | `POST /general/token` | – | General with the new token in `connect`; the old token stops working at once |
@@ -191,11 +191,13 @@ General  {"port": number, "address": string, "connect": string, "restartRequired
 | `POST /general/scratch/take` | – or `{"name"}` (a folder from `scratchOthers`) | Both gateways (0.5.24): Take over. Without `name` only when `scratchState` is `stale`; with `name` (only a name: a real folder directly in the base, another gateway's, not `*.old-*`, else 400) the stale sibling, for example after a reinstall. The other gateway's folder is renamed to `<base>/<instance>` of this gateway and gets its owner ID; this gateway's current folder (and one already named `<instance>`) is deleted when it has no conversations, else kept as `<instance>.old-<date>` (named in `warning`); nothing is merged. Logged. General (without `connect`). 409 when the folder is this gateway's own, `in-use` (the other gateway runs), or minigw sessions or agents are active; 500 when the rename failed (the folder stays) |
 | `POST /settings/login` | – | `{"url"}`: a one-time link to the settings page (`…/minigw/settings#t=…`, 60 s); `503` when the gateway does not run |
 
-### Core: users, bindings, projects, members, grants, audit, backup (Go gateway, 0.6.0)
+### Core: users, bindings, projects, members, grants, audit, backup (0.6.0, both gateways)
 
-Projects, members and notes live in the gateway's core database (`<config folder>/core`, see gateway.md). These
-routes need the running gateway; while the core cannot be opened (or the gateway does not run) they answer
-`503`. Ids are numbers. The caller is the owner (admin authentication above); the `owner` mark on a user gives no
+Projects, members and notes live in the gateway's core database (`minigw serve`: `<config folder>/core`; Mac app:
+`~/Library/Application Support/Mini Gateway/core`, kept by the helper `minigw-core`; see gateway.md). The routes are the
+same and answer the same on both: the Mac app authenticates the owner and forwards them to the helper. They need the
+running gateway; while the core cannot be opened they answer `503` (on the Mac also while the helper is not running: the
+message then says `The project database is not available: the project helper (minigw-core) is not running`). Ids are numbers. The caller is the owner (admin authentication above); the `owner` mark on a user gives no
 extra power. Every call writes an audit event; a call that can take access away raises the epoch (all runs and
 conversations of a project end), in the same transaction.
 
@@ -221,13 +223,17 @@ conversations of a project end), in the same transaction.
 
 Errors of these routes use the envelope above (`400` invalid, `404` not found, `503` core unavailable).
 
-### Usage events and quota (Go gateway, 0.6.0)
+### Usage events and quota (0.6.0, both gateways)
 
 | Method and path | Body | Response |
 |---|---|---|
 | `GET /usage/events?days=&user=&project=&model=` | – | `{"days": [{"day", "model", "user"?, "userName"?, "project"?, "events", "tokensIn", "tokensOut", "eventsWithoutTokens", "nestedEvents", "failedEvents"}], "gaps": [{"count", "from", "to"}]}`: every model invocation, per day (UTC), model, user and project, newest first; days 1-3650 (default 7), detail rows older than 400 days are daily totals; also events without a user or project. **Not** `GET /usage` (0.5.x folder counters, unchanged) |
 | `GET /quota` | – | `{"quota": [{"name", "unit", "value"?, "source", "observedAt"?, "resetsAt"?, "resetsText"?, "stale", "note"?, "reason"?}], "claudeProbe": bool}`: Codex windows (`codex-session-log`), the Claude subscription (`claude-usage`, only when the probe is on), OpenRouter credit (`openrouter-api`), LiteLLM spend (`litellm-api`); `source: "unavailable"` with a `reason` (for example `probe off`) when a value cannot be had; works without the core |
 | `PATCH /quota` | `{"claudeProbe": bool}` | as `GET`; turns the Claude quota probe on or off (default off, see gateway.md) |
+
+`GET /usage/events` is a core route (it answers `503` like the others); `GET` and `PATCH /quota` are the gateway's own and
+work without the core. On the Mac app the quota routes are in the app (Codex session log, provider credit, the opt-in
+Claude probe); the Claude probe is also the Settings → Claude CLI switch "Show the subscription quota".
 
 Members read their own usage on the member route `GET /minigw/v1/usage?project=<id or slug>&days=<1-400>` (same
 shape; a reader, a grant-only user or a stranger gets 404).
@@ -282,7 +288,10 @@ Notes:
   with the key before it saves anything, and stores the key in the system's secret store (Credential Manager,
   Keychain or Secret Service), never in the config. `keyStore` says where. A new provider with more than 20 models
   starts with none enabled. The key is never returned.
-- `status`: `os` is `windows`, `linux` or `darwin` (the settings page uses it for commands without a sandbox),
+- `status`: `core` (both gateways, only when the gateway has a core) is one line about the project database: `projects: on`, or
+  `projects: off (reason)`; on `minigw serve` it also says when agents without a sandbox can read all notes (see
+  `acceptAgentsCanReadNotes` below) or that old project data on disk keeps such agents out; on the Mac the reason can be
+  that the helper is not running or a hard link to a core file. `os` is `windows`, `linux` or `darwin` (the settings page uses it for commands without a sandbox),
   `installDir` the folder of `minigw serve install` (only when minigw is installed there), `tray` whether the
   Windows tray runs. `autostart` is `"boot"` (Linux with linger: the gateway starts without anyone signing in),
   `"sign-in"`, or `""` (it does not start on its own). `agents` counts the claude, codex and grok processes that
@@ -417,6 +426,15 @@ The Mac app keeps its settings in its preferences and Keychain; the Settings win
   they move; `""` = the default folder); `GET` returns the folder in use. A path
   that contains a quotation mark (`"`), also after resolving links, is refused (400).
 - **status:** `installed` is Open at Login.
+- **Core routes (0.6.0):** `users`, `bindings`, `projects`, `grants`, `audit`, `core/backup` and `usage/events` are not
+  implemented in Swift: the app authenticates the owner as for every admin call and passes the request to the helper
+  `minigw-core`, whose answer (status, headers, body) goes back unchanged. While the helper is not running the app
+  answers `503` with `The project database is not available: the project helper (minigw-core) is not running`; the model
+  routes and the other admin routes keep working. When the helper is up but cannot open the database, its own `503`
+  carries the reason. There is no admin route for a restore: `minigw gw core restore` runs with the app quit.
+- **Quota:** `GET` and `PATCH /quota` are the app's own (see above) and work without the helper.
+- **tools without "Allow local tools":** `PATCH /agents/claude` refuses a list with `Bash`, `Task`, an MCP tool or any
+  other tool that the file deny rules do not cover (400): the Mac has no sandbox for that mode.
 - **Not on the Mac:** the settings page and its sessions (`/minigw/settings`, `POST /settings/login`): the app has
   its own Settings window, so only the admin secret (`minigw gw`) opens the API, and it never sets cookies.
 

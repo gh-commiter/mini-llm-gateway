@@ -265,7 +265,7 @@ the MSI, or `rm ~/.local/bin/minigw`.
   `dev.trojar.minigateway.core`) runs the project database for the app. It is only in the app, not in `minigw.zip`.
 - **Project database (`minigw serve`, Mac app):** a `core` folder. Mac: `~/Library/Application Support/Mini Gateway/core/`;
   Windows: `%AppData%\minigw\core\`; Linux: `~/.config/minigw/core/`. It holds the projects, members, notes, usage
-  events and audit trail of the gateway; `usage.spool` next to `serve.json` holds usage events waiting for it. A client
+  events and audit trail of the gateway; `usage.spool` inside it holds usage events waiting for it. A client
   that only connects to a gateway has none of this.
 - **Backups:** only the files you ask for with `minigw gw core backup [name]`, written into `core/backups`; snapshots made by
   a migration or a restore also sit inside `core`. Nothing is backed up elsewhere.
@@ -273,7 +273,7 @@ the MSI, or `rm ~/.local/bin/minigw`.
   (`Contents/Resources`), in `minigw.zip`, in the MSI install folder, and a release file next to the Linux binaries.
 - **Uninstall leaves the core folder** on every system; only `--purge`/`PURGE=1`/`brew uninstall --zap` remove it, and
   that also deletes the project database (projects, members, notes, usage) and cannot be undone (on the Mac `--zap` moves
-  the app folder to the Trash; `minigw uninstall --purge` names the folder before it removes it). Details and removal by hand: [Gateway: the core database](gateway.md#the-core-database-060-minigw-serve).
+  the app folder to the Trash; `minigw uninstall --purge` names the folder before it removes it). Details and removal by hand: [Gateway: the core database](gateway.md#the-core-database-060).
 
 ## Build from source
 

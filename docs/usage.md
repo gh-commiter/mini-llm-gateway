@@ -447,6 +447,55 @@ A **project** is a named place on the gateway where a team keeps short notes (de
 facts) that people and agents can read. The gateway owner creates projects, adds you as a member and binds your
 computer's device key to you; you see only the projects you belong to. Works on every gateway: `minigw serve` and the Mac app (project runs of agents on the Mac app included).
 
+### Projects in 10 minutes
+
+The commands are the same on a Mac gateway (the app) and on `minigw serve` (Windows, Linux). Steps 1 to 4 are the
+owner's, on the gateway computer; steps 5 to 8 are on the client of a member.
+
+```sh
+# 1. on the gateway computer: create a user (the owner's own user exists already, named after the OS account)
+minigw gw user add ana
+# 2. bind a device that is on the approved list to the user (the ID is in `minigw gw devices`)
+minigw gw devices
+minigw gw bind <device id> ana
+# 3. create the project and 4. add the member (roles: reader, developer, admin)
+minigw gw project add fakture "FAKTURE importer"
+minigw gw member fakture set ana developer
+
+# 5. on Ana's computer: link the folder to the project (you must be a direct member)
+cd ~/src/fakture && minigw project link fakture
+# 6. push a note, read it back
+minigw note push --class structure notes.md
+minigw note list
+# 7. start the agent in this folder: it can read the project's notes (never `private`) with `minigw note list|read`
+minigw -p --model claude-codex "Read the project notes and explain how the importer is laid out"
+# 8. usage: Ana sees her own events, the owner sees everything
+minigw usage --days 7
+minigw gw usage-events --project fakture            # on the gateway computer
+```
+
+Back up the project database before you change things, and restore it with the gateway stopped:
+
+```sh
+minigw gw core backup before-upgrade                # gateway running; writes <core>/backups/before-upgrade
+# gateway stopped (Mac: the app quit):
+minigw gw core restore before-upgrade
+```
+
+What differs on the Mac app:
+
+- **Restore needs the app quit.** The Mac `minigw` then starts the helper `minigw-core restore` itself, which runs the
+  same restore as `minigw serve`. With the app running it refuses. On Windows and Linux stop the gateway first.
+- **The helper.** The Mac app keeps the database in the helper `minigw-core`. While it is not running, project routes
+  and every request that carries a project answer `503 core_unavailable`; plain model requests work as before.
+  `minigw gw status` and Settings → General say whether the project database works.
+- **No project pages in Settings.** The Mac app has only that status row; users, projects, members and grants are
+  managed with `minigw gw …` on both gateways. Teams and delegated administration are not in 0.6.0.
+- **Agents.** On the Mac the Claude CLI agent reads notes only with **Allow local tools**, Codex only with its network
+  switch on ([gateway.md](gateway.md#the-mac-app-agents-with-a-project)). A Windows or Linux gateway without a sandbox
+  keeps projects off until the owner accepts that agents can read all notes
+  ([gateway.md](gateway.md#minigw-serve-on-windows-and-linux)).
+
 ```
 minigw project list                     your projects: your role, and what a grant gives you
 minigw project link fakture             link this folder (and everything under it) to the project
@@ -487,7 +536,7 @@ project and per minute apply.
 
 `private` = visible to you and the project admins; no grant ever includes it. Administrators manage members and
 grants with `minigw gw member` and `minigw gw grant` (see [gateway.md](gateway.md)). These commands are not
-available inside an agent run, except `note list` and `note read`: when you start `minigw` in a linked folder, the agent run can read that project's notes (never `private` ones) and nothing of your other projects. If the gateway changes who may see what, the next read of a running agent fails; see [how-it-works.md](how-it-works.md#projects-notes-and-agents-minigw-serve-060).
+available inside an agent run, except `note list` and `note read`: when you start `minigw` in a linked folder, the agent run can read that project's notes (never `private` ones) and nothing of your other projects. If the gateway changes who may see what, the next read of a running agent fails; see [how-it-works.md](how-it-works.md#projects-notes-and-agents-minigw-serve-and-the-mac-app-060).
 
 ### Your model usage
 
