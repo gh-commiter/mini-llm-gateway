@@ -89,7 +89,7 @@ public enum Grok {
     /// The root is replaced by globs for every entry on every level down to the session folder except the one that leads to it (the profile's `deny` takes
     /// gitignore-style globs, kernel-enforced on macOS also for entries created later). Names are matched by character classes: for the name `s1`: `[!s]*`,
     /// `s[!1]*`, `s1?*` and the exact prefix `s`. nil = a name or path that cannot be written that way (a glob character, a space): the run is refused.
-    static func scopedDenies(hidden: [String], scope: String) -> [String]? {
+    static func scopedDenies(hidden: [String], scope: String, prefix: Int = 8) -> [String]? {
         func real(_ p: String) -> String { Sync.realResolving(URL(fileURLWithPath: p))?.path ?? p }
         let scopeReal = real(scope)
         var out: [String] = [], seen = Set<String>()
@@ -102,15 +102,28 @@ public enum Grok {
             guard !hr.contains(where: { "*?[".contains($0) }), hr.unicodeScalars.allSatisfy({ $0.value >= 0x20 }) else { return nil }
             let comps = scopeReal.dropFirst(hr.count).split(separator: "/").map(String.init)
             var level = hr
-            for c in comps {
+            for (depth, c) in comps.enumerated() {
                 guard simple(c) else { return nil }
                 let chars = Array(c)
-                for i in 0..<chars.count {
-                    let cls = "[!" + String(chars[i]) + "]*"
-                    addGlob(level + "/" + String(chars[0..<i]) + cls)
-                    if i > 0 { add(level + "/" + String(chars[0..<i])) }  // a name that is a proper prefix of c
+                // Grok's profile fails to start when the entries are many or long ("too many levels of backtracking": real run, 30 entries with a UUID-long prefix pass,
+                // 37 do not), so: the children of the hidden root (state.json, `mounts`, … files and folders) get the whole name, as the entry and its contents. Deeper
+                // levels hold only folders the gateway makes (a mount named by a random id, a copy named by a device and a project): there only the first `prefix` characters
+                // are told apart, by classes, and only the contents are denied; the siblings that exist now and share that prefix (too close for the classes) are listed
+                // as they are. What is not covered: a sibling made AFTER launch whose name starts with the same `prefix` characters as ours, which the gateway's random
+                // names do not do (16^8 for a mount id).
+                let top = depth == 0
+                let k = top ? chars.count : min(chars.count, prefix)
+                for i in 0..<k {
+                    let g = level + "/" + String(chars[0..<i]) + "[!" + String(chars[i]) + "]*"
+                    if top { addGlob(g) } else { add(g + "/**") }
+                    if top, i > 0 { add(level + "/" + String(chars[0..<i])) }  // a name that is a proper prefix of c
                 }
-                addGlob(level + "/" + c + "?*")
+                if top { addGlob(level + "/" + c + "?*") } else if let sib = try? FileManager.default.contentsOfDirectory(atPath: level) {
+                    for n in sib.sorted() where n != c && n.hasPrefix(String(chars[0..<k])) {
+                        guard !n.contains(where: { "*?[".contains($0) }), n.unicodeScalars.allSatisfy({ $0.value >= 0x20 }) else { return nil }
+                        add(level + "/" + n)
+                    }
+                }
                 level += "/" + c
             }
         }

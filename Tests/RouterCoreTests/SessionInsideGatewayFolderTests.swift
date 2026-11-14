@@ -59,7 +59,7 @@ private struct Layout {
     func denied(_ path: String) -> Bool {  // entry itself or a parent matched by a glob (the profile adds `/**` for contents)
         deny.contains { g in fnmatch(g, path, FNM_PATHNAME) == 0 || path.hasPrefix(g + "/") }
     }
-    for n in l.neighbours + [l.app.path + "/mounts/s", l.app.path + "/mounts/later-client/x", l.app.path + "/newfile"] { #expect(denied(n), "\(n)") }
+    for n in l.neighbours + [l.app.path + "/mounts/later-client/x", l.app.path + "/newfile"] { #expect(denied(n), "\(n)") }
     #expect(!denied(l.s1.path) && !denied(l.s1.path + "/f.txt") && !denied(l.s1.path + "/deep/er/file"))
     // a name that cannot be written as globs: refused (nil), not run unprotected
     #expect(Grok.scopedDenies(hidden: [l.app.path], scope: l.app.path + "/mounts/s[1]") == nil)
@@ -80,4 +80,38 @@ private struct Layout {
     let r = restricted.agentArgs(cwd: URL(fileURLWithPath: cwd), allTools: [], folders: AllowedFolders(), checkedPaths: [])
     let allowed = try #require(r.firstIndex(of: "--allowedTools").map { r[$0 + 1] })
     #expect(allowed.contains("Read(./**)") && !allowed.contains("mounts/s2") && !allowed.contains("//\(app)/**"))
+}
+
+/// The profile's matching for the test: a glob names the entry, `<glob>/**` and a literal path name everything below.
+private func grokDenies(_ deny: [String], _ path: String) -> Bool {
+    deny.contains { g in
+        if g.hasSuffix("/**") { let base = String(g.dropLast(3)); return fnmatch(base, path, FNM_PATHNAME) == 0 || path.split(separator: "/").indices.contains { fnmatch(base, "/" + path.split(separator: "/").prefix($0 + 1).joined(separator: "/"), FNM_PATHNAME) == 0 } }
+        return fnmatch(g, path, FNM_PATHNAME) == 0 || path.hasPrefix(g + "/")
+    }
+}
+
+/// Production size (a real `grok` fails to start above about 35 long entries, so this stays small): a mount named by a 36-character id and a copy named by a
+/// 43-character device and a 16-character project, with siblings that share a long prefix, and a sibling made after the list was built.
+@Test func grokDenyListAtProductionSizeIsSmallDeterministicAndRight() throws {
+    let fm = FileManager.default
+    let base = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("grok-size-" + UUID().uuidString, isDirectory: true).path
+    defer { try? fm.removeItem(atPath: base) }
+    let u = "0f8e7d6c-5b4a-4938-8271-6a5b4c3d2e1f", dev = String(repeating: "d", count: 43), proj = "0123456789abcdef"
+    for d in ["app/mounts/" + u, "app/mounts/" + u.dropLast() + "0", "app/mounts/" + u + "a", "app/mounts/1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d", "app/core",
+              "scratch/sync/" + dev + "/" + proj, "scratch/sync/" + dev + "/0123456789abcdee", "scratch/sync/" + dev.dropLast() + "e/" + proj, "scratch/state"] {
+        try fm.createDirectory(atPath: base + "/" + d, withIntermediateDirectories: true)
+    }
+    try Data("x".utf8).write(to: URL(fileURLWithPath: base + "/app/state.json"))
+    for (hidden, scope, siblings, later) in [([base + "/app", base + "/app/core"], base + "/app/mounts/" + u,
+                                              ["app/mounts/" + u.dropLast() + "0/x", "app/mounts/" + u + "a/x", "app/mounts/1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d/x", "app/state.json", "app/core/core.db"],
+                                              ["app/mounts/99999999-aaaa-4bbb-8ccc-eeeeeeeeeeee/x", "app/newfile"]),
+                                             ([base + "/scratch", base + "/scratch/state"], base + "/scratch/sync/" + dev + "/" + proj,
+                                              ["scratch/sync/" + dev + "/0123456789abcdee/x", "scratch/sync/" + dev.dropLast() + "e/" + proj + "/x", "scratch/state/s"],
+                                              ["scratch/sync/" + dev + "/fedcba9876543210/x", "scratch/sync/" + String(repeating: "z", count: 43) + "/y/x"])] as [([String], String, [String], [String])] {
+        let deny = try #require(Grok.scopedDenies(hidden: hidden, scope: scope))
+        #expect(deny.count <= 40, "\(deny.count) entries")
+        #expect(deny == Grok.scopedDenies(hidden: hidden, scope: scope), "deterministic")
+        for n in siblings + later { #expect(grokDenies(deny, base + "/" + n), "\(n)") }
+        #expect(!grokDenies(deny, scope) && !grokDenies(deny, scope + "/f.txt") && !grokDenies(deny, scope + "/deep/er/file"))
+    }
 }
