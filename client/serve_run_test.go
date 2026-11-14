@@ -129,7 +129,10 @@ type runFx struct {
 
 // newRunFx: the gateway with the core fixture, a fake claude (and codex when withCodex) and a real TCP listener,
 // so members come through Noise tunnels with their device keys.
-func newRunFx(t *testing.T, ask, withCodex bool) *runFx {
+func newRunFx(t *testing.T, ask, withCodex bool) *runFx { return newRunFxCfg(t, ask, withCodex, nil) }
+
+// newRunFxCfg: newRunFx with a change of the server config (tests that need a provider).
+func newRunFxCfg(t *testing.T, ask, withCodex bool, mod func(*serveConfig)) *runFx {
 	t.Helper()
 	x := &runFx{t: t, tmp: t.TempDir(), proxy: map[string]connection{}, nps: map[string]*noiseProxy{}, shares: map[string]*shareClient{}}
 	x.plan, x.dump = filepath.Join(x.tmp, "plan.json"), filepath.Join(x.tmp, "dump")
@@ -152,6 +155,9 @@ func newRunFx(t *testing.T, ask, withCodex bool) *runFx {
 		if withCodex {
 			t.Setenv("CODEX_HOME", t.TempDir())
 			c.Codex = agentCLI{Enabled: true, Executable: fakeCLI(t, x.tmp, "codex", fakeCodexRun, fakeParams{"plan": x.plan + ".codex"}), AskOthers: true}
+		}
+		if mod != nil {
+			mod(c)
 		}
 	})
 	f.s.openCore()

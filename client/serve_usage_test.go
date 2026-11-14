@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"minigw/coreapi"
 	"net/http"
 	"net/http/httptest"
@@ -689,5 +690,56 @@ func TestRetentionFoldsAgainOnALongRunningGateway(t *testing.T) { // review (sho
 	f.ok(err)
 	if len(rep.Rows) != 1 || rep.Rows[0].Events != 1 || rep.Rows[0].Failed != 1 || rep.Rows[0].TokensOut != 4 {
 		t.Fatalf("%+v", rep.Rows)
+	}
+}
+
+// Review A5, end to end: a run with a project makes a real nested PROVIDER call through its run port (a fake upstream
+// provider); the stored event of that call carries the root's user and project and the parent id.
+func TestNestedProviderCallCarriesTheRootsAttribution(t *testing.T) {
+	keys := fakeKeys(t)
+	keys["gw"] = gwKey
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			io.WriteString(w, `{"data":[{"id":"anthropic/claude-x","context_length":200000}]}`)
+		case "/v1/messages":
+			w.Header().Set("Content-Type", "text/event-stream")
+			io.WriteString(w, "event: message_delta\ndata: {\"type\":\"message_delta\",\"usage\":{\"input_tokens\":4,\"output_tokens\":6}}\n\n")
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer up.Close()
+	x := newRunFxCfg(t, true, false, func(c *serveConfig) {
+		c.Gateways = []serveGateway{{Name: "gw", BaseURL: up.URL, Insecure: true, Models: []string{"anthropic/claude-x"}}}
+	})
+	f := x.f
+	x.setPlan(runStep{Path: "/v1/messages", Method: "POST",
+		Body: `{"model":"anthropic/claude-x","stream":true,"max_tokens":5,"messages":[{"role":"user","content":"hi"}]}`})
+	dir := folder(t, t.TempDir(), "w")
+	if st, body := x.agent("ana", dir, "sid-np", f.pid["fakture"], "go"); st != 200 {
+		t.Fatalf("%d %s", st, body)
+	}
+	if res := x.results(); len(res) != 1 || res[0].Status != 200 {
+		t.Fatalf("the nested provider call: %+v", res)
+	}
+	f.ok(f.s.core.SetBinding(t0, devID(f.dev["ana"]), f.uid["bor"])) // a rebinding after the fact changes nothing stored
+	var root, nested evRow
+	for _, e := range f.events() {
+		if e.Model == "claude-cli-haiku" {
+			root = e
+		} else {
+			nested = e
+		}
+	}
+	if root.ID == "" || nested.ID == "" {
+		t.Fatalf("events: %+v", f.events())
+	}
+	if nested.Parent != root.ID || nested.User != f.uid["ana"] || nested.Project != f.pid["fakture"] || nested.Provider != "gw" ||
+		nested.Model != "anthropic/claude-x" || nested.Outcome != "ok" || nested.Source != "reported" || nested.In != 4 || nested.Out != 6 {
+		t.Fatalf("nested: %+v (root %+v)", nested, root)
+	}
+	if root.User != f.uid["ana"] || root.Project != f.pid["fakture"] {
+		t.Fatalf("root: %+v", root)
 	}
 }
