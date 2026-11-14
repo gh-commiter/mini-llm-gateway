@@ -134,28 +134,33 @@ func TestMigrationSnapshotAndPrune(t *testing.T) {
 	}
 }
 
-func TestFailedMigrationKeepsOldFile(t *testing.T) {
+func TestFailedMigrationKeepsLastGoodVersion(t *testing.T) {
 	dir := t.TempDir()
 	openT(t, dir).Close()
 	base := migrations
-	before := hash(t, filepath.Join(dir, dbFile))
-	withMigrations(t,
-		func(tx *sql.Tx) error { _, err := tx.Exec(`CREATE TABLE ok2(a)`); return err },
-		func(tx *sql.Tx) error { _, err := tx.Exec(`CREATE TABLE nope(`); return err })
+	good := func(tx *sql.Tx) error { _, err := tx.Exec(`CREATE TABLE ok2(a)`); return err }
+	bad := func(tx *sql.Tx) error { _, err := tx.Exec(`CREATE TABLE half(a); CREATE TABLE nope(`); return err }
+	withMigrations(t, good, bad)
 	if _, err := Open(dir, Options{}); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("migration %d", len(base)+2)) {
 		t.Fatalf("want migration error, got %v", err)
 	}
-	if hash(t, filepath.Join(dir, dbFile)) != before {
-		t.Fatal("database file changed by a failed migration")
-	}
-	if len(snapshots(dir)) != 1 || !strings.Contains(auditLog(t, dir), "migrate.failed") {
+	if n := len(snapshots(dir)); n != 1 || !strings.Contains(auditLog(t, dir), "migrate.failed") {
 		t.Fatalf("snapshots %v, audit %q", snapshots(dir), auditLog(t, dir))
 	}
-	migrations = base
-	s := openT(t, dir) // the lock was released and the old file works
+	// the snapshot is the file as it was before the first pending migration
+	if _, err := validate(ctx, filepath.Join(dir, snapshots(dir)[0]), ""); err != nil {
+		t.Fatal(err)
+	}
+	migrations = append(append([]func(*sql.Tx) error{}, base...), good)
+	s := openT(t, dir) // lock released; migrations 1..N-1 are applied, the failed one left nothing behind
 	defer s.Close()
-	if v, _ := schemaVersion(ctx, s.DB()); v != len(base) {
+	if v, _ := schemaVersion(ctx, s.DB()); v != len(base)+1 {
 		t.Fatalf("schema %d", v)
+	}
+	var n int
+	s.DB().QueryRow(`SELECT count(*) FROM sqlite_master WHERE name IN ('ok2','half')`).Scan(&n)
+	if n != 1 {
+		t.Fatalf("tables from the migrations: %d", n)
 	}
 }
 

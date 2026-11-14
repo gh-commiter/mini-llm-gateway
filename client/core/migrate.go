@@ -12,8 +12,8 @@ import (
 	"time"
 )
 
-// migrate brings the schema to len(migrations). All pending migrations run in ONE transaction (all or nothing),
-// after a consistent snapshot of the old file. A failure rolls back, so the old database stays as it was.
+// migrate brings the schema to len(migrations): one snapshot of the old file first, then one transaction per
+// migration. A failing migration rolls back alone; the schema version stays at the last one that succeeded.
 func (s *Store) migrate(ctx context.Context) error {
 	cur, err := schemaVersion(ctx, s.db)
 	if err != nil {
@@ -32,18 +32,19 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 	}
 	detail := map[string]any{"from": cur, "to": len(migrations), "snapshot": filepath.Base(snap)}
-	err = s.write(ctx, func(tx *sql.Tx) error {
-		for i := cur; i < len(migrations); i++ {
+	for i := cur; i < len(migrations); i++ { // one transaction per migration; a failure keeps 1..i applied
+		err = s.write(ctx, func(tx *sql.Tx) error {
 			if err := migrations[i](tx); err != nil {
-				return fmt.Errorf("migration %d: %w", i+1, err)
+				return err
 			}
+			return setMeta(tx, "schema", strconv.Itoa(i+1))
+		})
+		if err != nil {
+			err = fmt.Errorf("migration %d: %w", i+1, err)
+			detail["error"], detail["applied"] = err.Error(), i
+			appendAudit(s.dir, "migrate.failed", detail)
+			return err
 		}
-		return setMeta(tx, "schema", strconv.Itoa(len(migrations)))
-	})
-	if err != nil {
-		detail["error"] = err.Error()
-		appendAudit(s.dir, "migrate.failed", detail)
-		return err
 	}
 	return appendAudit(s.dir, "migrate", detail)
 }
