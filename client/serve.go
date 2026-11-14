@@ -543,6 +543,8 @@ type server struct {
 	core          *core.Store // 0.6.0 core (serve_core.go); nil = not opened (offline) or unusable (coreErr)
 	coreErr       error
 	coreHook      func(r *req, point string) // tests: pause a member operation after admission
+	usage         *usageRecorder             // usage events (serve_usage.go); nil = not started (offline, most tests)
+	quota         quotaState                 // quota and provider credit (serve_quota.go)
 }
 
 func newServer(c serveConfig, cfgPath string) (*server, error) {
@@ -1300,11 +1302,14 @@ func (c *serveConn) readDevice() error {
 
 type req struct {
 	*http.Request
-	conn    *serveConn
-	body    []byte
-	rid     string
-	applied *appliedLimits // #46a: omejitve izvajanja agenta (runAgent, runCLI)
-	project *projectCtx    // 0.6.0: project of this agent request (attachProject)
+	conn        *serveConn
+	body        []byte
+	rid         string
+	applied     *appliedLimits   // #46a: omejitve izvajanja agenta (runAgent, runCLI)
+	project     *projectCtx      // 0.6.0: project of this agent request (attachProject)
+	event       *core.UsageEvent // 0.6.0: the usage event of this model request (serve_usage.go)
+	provider    string           // provider of the model request, for its usage event
+	tokenSource string           // "estimated" when the agent gives no counts
 }
 
 func (r *req) h(name string) string { return r.Header.Get(name) }
@@ -1332,6 +1337,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, hr *http.Request) {
 		w = uw
 	}
 	status, model := s.handle(w, r)
+	s.endEvent(r, status, uw)
 	if uw != nil && model != "" { // le zahteva, ki je prišla do modela (overjena, dovoljena naprava)
 		s.recordSession(r, model, status, time.Since(start), uw.in, uw.out)
 	}
@@ -1384,7 +1390,7 @@ func (s *server) handle(w http.ResponseWriter, r *req) (int, string) {
 		r.URL.Path == "/minigw/settings/pick" {
 		return s.settingsHTTP(w, r), ""
 	}
-	if r.URL.Path == projectsPrefix || strings.HasPrefix(r.URL.Path, projectsPrefix+"/") {
+	if r.URL.Path == projectsPrefix || strings.HasPrefix(r.URL.Path, projectsPrefix+"/") || r.URL.Path == usagePath {
 		return s.projectHTTP(w, r), "" // its own token, device and principal rules (serve_core.go)
 	}
 	if r.h(agentChainHeader) != "" && runOf(r) == nil { // veriga agentov je le v prehodu; od zunaj je ponarejena

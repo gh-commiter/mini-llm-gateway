@@ -23,6 +23,7 @@ import (
 )
 
 const (
+	usageHelp   = `minigw usage [--project slug] [--days n] [--json]   your model usage (a developer sees own events in a project, an admin all of it)`
 	projectHelp = `minigw project list [--archived] [--json]     the projects you can see (role, and what a grant gives you)
 minigw project link <slug>                  link this folder (and its subfolders) to a project you are a member of
 minigw project unlink                       remove the link that applies here
@@ -55,11 +56,12 @@ type projectEnv struct {
 	sleep   func(time.Duration)
 }
 
-// projectMain and noteMain are the entry points of main().
-func projectMain(args []string) { runProjectCmd(args, false) }
-func noteMain(args []string)    { runProjectCmd(args, true) }
+// projectMain, noteMain and usageMain are the entry points of main().
+func projectMain(args []string) { runProjectCmd("project", args) }
+func noteMain(args []string)    { runProjectCmd("note", args) }
+func usageMain(args []string)   { runProjectCmd("usage", args) }
 
-func runProjectCmd(args []string, note bool) {
+func runProjectCmd(kind string, args []string) {
 	cwd, _ := os.Getwd()
 	e := &projectEnv{state: projectStatePath(), cwd: cwd, in: os.Stdin, out: os.Stdout, err: os.Stderr, agent: agentConn() != nil, do: realDo, sleep: time.Sleep}
 	e.connect = func() (connection, string) {
@@ -71,9 +73,12 @@ func runProjectCmd(args []string, note bool) {
 		e.connect = func() (connection, string) { return *ac, "" }
 	}
 	var err error
-	if note {
+	switch kind {
+	case "note":
 		err = e.note(args)
-	} else {
+	case "usage":
+		err = e.usage(args)
+	default:
 		err = e.project(args)
 	}
 	if err != nil {
@@ -662,5 +667,54 @@ func (e *projectEnv) note(args []string) error {
 			e.say(fmt.Sprintf("note %d deleted", id))
 		}
 	}
+	return nil
+}
+
+// usage: GET /minigw/v1/usage. The project is --project, else the linked project of this folder, else none (then
+// your own events over all your projects).
+func (e *projectEnv) usage(args []string) error {
+	if e.agent {
+		return errors.New(agentRefusal)
+	}
+	fs := flag.NewFlagSet("usage", flag.ContinueOnError)
+	proj := fs.String("project", "", "project slug")
+	days := fs.Int("days", 7, "days (1-400)")
+	asJSON := fs.Bool("json", false, "JSON")
+	pos, err := parseFlags(fs, args)
+	if err != nil || len(pos) != 0 {
+		return errors.New("usage:\n" + usageHelp)
+	}
+	c, gw := e.connect()
+	slug := *proj
+	if slug == "" {
+		if st, err := e.state3(); err == nil {
+			if res, err := projectFor(st, gw, e.cwd); err == nil && res.State == linkOK {
+				slug = res.Link.Slug
+			}
+		}
+	}
+	q := url.Values{"days": {strconv.Itoa(*days)}}
+	if slug != "" {
+		q.Set("project", slug)
+	}
+	st, data, h := e.do(c, "GET", "/minigw/v1/usage?"+q.Encode(), nil, nil)
+	if st != 200 {
+		if st == 404 && slug != "" {
+			return errors.New("no usage to show for project " + slug + ": not found, not visible to you, or you are not a developer or admin there")
+		}
+		return gatewayError(st, data, h)
+	}
+	if *asJSON {
+		e.say(strings.TrimSpace(string(data)))
+		return nil
+	}
+	var r usageReply
+	json.Unmarshal(data, &r)
+	if slug != "" {
+		e.say("project " + slug)
+	} else {
+		e.say("your own usage, all projects")
+	}
+	printUsage(e.out, r, false)
 	return nil
 }

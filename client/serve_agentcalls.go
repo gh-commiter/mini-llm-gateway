@@ -39,6 +39,8 @@ type agentRun struct {
 	slots              chan struct{} // M1: največ maxNested hkratnih vprašanj tega izvajanja
 	root               atomic.Int64  // M2: PID procesa agenta (0 = še ne teče); odjemalec mora biti v njegovem drevesu
 	ask                bool          // »May ask other models«
+	evID               string        // 0.6.0: usage event of the request that started this run (parent of its nested calls)
+	evUser             int64         // and the user it was attributed to (frozen)
 	proj               *projectCtx   // 0.6.0: notes capability (nil = the run has no project); a nested run inherits the root's
 	addr               string        // 127.0.0.1:port vrat izvajanja
 }
@@ -129,6 +131,9 @@ func (s *server) startRun(r *req, kind, dir string, readOnly, shared bool, wt, m
 	run := &agentRun{kind: kind, device: r.conn.device, session: r.h("x-claude-mini-session"), cwd: r.h("x-claude-mini-cwd"), role: reqRole(r),
 		dir: dir, readOnly: readOnly, shared: shared, wt: wt, maven: maven, objects: objects, token: token, url: "http://" + ln.Addr().String(),
 		authFile: authFile, ownDir: ownDir, slots: make(chan struct{}, maxNested), ask: ask, addr: ln.Addr().String(), proj: r.project}
+	if r.event != nil {
+		run.evID, run.evUser = r.event.ID, r.event.UserID
+	}
 	if p := runOf(r); p != nil {
 		run.chain = append(slices.Clone(p.chain), kind)
 	} else {

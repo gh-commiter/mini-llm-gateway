@@ -1065,6 +1065,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 					}
 				}
 			})
+			s.recordCodexQuota(state, thread) // rate_limits of this run's own session log (serve_quota.go)
 			b, _ := os.ReadFile(out)
 			text = strings.TrimSpace(string(b))
 			if failure != "" && (err != nil || text == "") {
@@ -1428,6 +1429,7 @@ func (s *server) replyWhenDone(w http.ResponseWriter, r *req, body map[string]an
 		return writeAgentError(w, r.rid, status, msg)
 	}
 	t.usage = map[string]any{"output_tokens": float64(len(text) / 4)}
+	r.tokenSource = "estimated" // Codex, Grok and Copilot report no counts: the output is estimated from its length
 	if stream {
 		send(append(t.emit(text), t.finish()...))
 		return 200

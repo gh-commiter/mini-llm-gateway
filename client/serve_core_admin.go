@@ -25,11 +25,21 @@ type userJSON struct {
 // coreAdmin handles the core's admin routes; ok = false when seg is not one of them.
 func (s *server) coreAdmin(method string, seg []string, q url.Values, body []byte) (status int, obj any, ok bool) {
 	switch seg[0] {
-	case "users", "bindings", "projects", "grants", "audit", "core":
+	case "users", "bindings", "projects", "grants", "audit", "core", "quota":
+	case "usage": // only usage/events; GET /usage is the 0.5.x folder counters (serve_admin.go)
+		if len(seg) != 2 || seg[1] != "events" {
+			return 0, nil, false
+		}
 	default:
 		return 0, nil, false
 	}
 	fail := func(status int, msg string) (int, any, bool) { return status, errorBody(status, msg), true }
+	if seg[0] == "quota" { // no core needed
+		if method != "GET" || len(seg) != 1 {
+			return fail(404, "Not found: "+method+" "+seg[0])
+		}
+		return 200, map[string]any{"quota": s.quotaReport(context.Background())}, true
+	}
 	if s.core == nil {
 		why := "the gateway is not running"
 		if s.coreErr != nil {
@@ -247,6 +257,23 @@ func (s *server) coreAdmin(method string, seg []string, q url.Values, body []byt
 			res["next"] = evs[len(evs)-1].ID // pass as ?after= for the next page
 		}
 		return 200, res, true
+	case "GET usage/{}": // /usage/events
+		days := 7
+		if v := q.Get("days"); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return fail(400, "days: a number")
+			}
+			days = n
+		}
+		f := core.UsageFilter{Model: q.Get("model")}
+		f.User, _ = strconv.ParseInt(q.Get("user"), 10, 64)
+		f.Project, _ = strconv.ParseInt(q.Get("project"), 10, 64)
+		rep, err := s.core.AdminUsage(ctx, days, f)
+		if err != nil {
+			return failErr(err)
+		}
+		return 200, usageJSON(rep), true
 	case "POST core/backup":
 		var b struct{ File string }
 		if !dec(&b) || b.File == "" || !filepath.IsAbs(b.File) {

@@ -25,6 +25,8 @@ const coreHelp = `
   minigw gw core backup <file>                          a consistent copy of the core database (gateway running)
   minigw gw core restore <file> [--yes]                 only with the gateway stopped
   minigw gw core audit                                  the audit trail of the core
+  minigw gw usage-events [--days n] [--user u] [--project p] [--model m]   model invocations per day, model and user (core; all of them)
+  minigw gw quota                                       subscription quota and provider credit, with source, time and staleness
 (<user> and <project>: the name or slug, or the number.)`
 
 type coreUser struct {
@@ -69,7 +71,10 @@ func projectID(a *adminClient, ref string) int64 {
 	return 0
 }
 
-func coreCommand(a *adminClient, pos []string) {
+// coreOpts: the flags of usage-events.
+type coreOpts struct{ days, user, project, model string }
+
+func coreCommand(a *adminClient, pos []string, o coreOpts) {
 	need := func(min, max int) {
 		if len(pos) < min || len(pos) > max {
 			fail(strings.TrimSpace(coreHelp))
@@ -193,6 +198,47 @@ func coreCommand(a *adminClient, pos []string) {
 		default:
 			fail(strings.TrimSpace(coreHelp))
 		}
+	case "usage-events":
+		need(1, 1)
+		q := url.Values{"days": {o.days}}
+		if o.user != "" {
+			q.Set("user", id(userID(a, o.user), 10))
+		}
+		if o.project != "" {
+			q.Set("project", id(projectID(a, o.project), 10))
+		}
+		if o.model != "" {
+			q.Set("model", o.model)
+		}
+		var r usageReply
+		a.do("GET", "/usage/events?"+q.Encode(), nil, &r)
+		printUsage(os.Stdout, r, true)
+	case "quota":
+		need(1, 1)
+		var r struct{ Quota []quotaValue }
+		a.do("GET", "/quota", nil, &r)
+		for _, v := range r.Quota {
+			val := "-"
+			if v.Value != nil {
+				val = strconv.FormatFloat(*v.Value, 'f', -1, 64) + " " + v.Unit
+			}
+			line := fmt.Sprintf("%-28s %-14s %s", v.Name, val, v.Source)
+			if v.ObservedAt != nil {
+				line += "  observed " + v.ObservedAt.Local().Format("2006-01-02 15:04")
+			}
+			if v.ResetsAt != nil {
+				line += "  resets " + v.ResetsAt.Local().Format("2006-01-02 15:04")
+			} else if v.ResetsText != "" {
+				line += "  resets " + v.ResetsText
+			}
+			if v.Stale {
+				line += "  (stale)"
+			}
+			if v.Note != "" {
+				line += "  " + v.Note
+			}
+			say(clean(line))
+		}
 	case "core":
 		need(2, 3)
 		switch {
@@ -255,4 +301,54 @@ func coreRestore(cfgPath, file string, yes bool, in io.Reader) {
 	if _, err := os.Stat(filepath.Join(cfgDir, coreDirName)); err != nil {
 		fail(err.Error())
 	}
+}
+
+// usageReply is the answer of the usage routes (member and admin).
+type usageReply struct {
+	Days []usageRowJSON
+	Gaps []usageGapJSON
+}
+
+// printUsage: one line per day, model and user, the totals (each event once; nested events are inside them), and
+// the gaps. withUser: the admin view names the user and the project.
+func printUsage(w io.Writer, r usageReply, withUser bool) {
+	var ev, in, out int64
+	for _, d := range r.Days {
+		who := ""
+		if withUser {
+			who = fmt.Sprintf("  user %s", orDash(d.UserName))
+			if d.Project != 0 {
+				who += fmt.Sprintf("  project %d", d.Project)
+			}
+		} else if d.UserName != "" {
+			who = "  " + d.UserName
+		}
+		extra := ""
+		if d.Nested > 0 {
+			extra += fmt.Sprintf(", %d nested", d.Nested)
+		}
+		if d.UnknownTokens > 0 {
+			extra += fmt.Sprintf(", %d without token counts", d.UnknownTokens)
+		}
+		if d.Failed > 0 {
+			extra += fmt.Sprintf(", %d failed", d.Failed)
+		}
+		fmt.Fprintln(w, clean(fmt.Sprintf("%s  %-24s%s  %d events, %d in, %d out%s", d.Day, d.Model, who, d.Events, d.TokensIn, d.TokensOut, extra)))
+		ev, in, out = ev+d.Events, in+d.TokensIn, out+d.TokensOut
+	}
+	if len(r.Days) == 0 {
+		fmt.Fprintln(w, "no events")
+	} else {
+		fmt.Fprintf(w, "total: %d events, %d in, %d out (every event once, nested ones included)\n", ev, in, out)
+	}
+	for _, g := range r.Gaps {
+		fmt.Fprintf(w, "%d events lost between %s and %s\n", g.Count, g.From.Local().Format("2006-01-02 15:04"), g.To.Local().Format("2006-01-02 15:04"))
+	}
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }

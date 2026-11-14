@@ -65,7 +65,7 @@ type state struct {
 }
 
 // migrations is ordered and forward only; migration i brings the schema to version i+1. Tests replace it.
-var migrations = []func(*sql.Tx) error{migrate1, migrate2}
+var migrations = []func(*sql.Tx) error{migrate1, migrate2, migrate3}
 
 func migrate1(tx *sql.Tx) error {
 	_, err := tx.Exec(`
@@ -170,6 +170,12 @@ func (s *Store) open() error {
 	m.Epoch, m.ProjectHigh = max(m.Epoch, side.Epoch), max(m.ProjectHigh, side.ProjectHigh)
 	s.st, s.gw = m, m.GatewayID
 	s.epoch.Store(m.Epoch)
+	if err := s.write(ctx, markInterrupted); err != nil { // events a crash cut off (a spool replay is the caller's business)
+		return err
+	}
+	if _, err := s.FoldOldUsage(ctx); err != nil {
+		return err
+	}
 	if s.rdb, err = sql.Open("sqlite", dsn(path, "_pragma=busy_timeout(10000)&_pragma=foreign_keys(1)&_pragma=query_only(1)")); err != nil {
 		return err
 	}

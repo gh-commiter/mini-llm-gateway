@@ -37,12 +37,15 @@ func (s *server) openCore() {
 	if err != nil {
 		s.coreErr = err
 		s.log.Printf("WARNING: the core database cannot be used, project routes answer 503 core_unavailable (models work): %v", err)
+		s.startUsage() // usage events go to the spool until a start with a usable core
 		return
 	}
 	s.core = st
+	s.startUsage()
 }
 
 func (s *server) closeCore() {
+	s.stopUsage() // drain the usage queue while the core is still open
 	if s.core != nil {
 		s.core.Close()
 	}
@@ -176,6 +179,9 @@ func (s *server) projectHTTP(w http.ResponseWriter, r *req) int {
 }
 
 func (s *server) projectRoute(w http.ResponseWriter, r *req, p core.Principal) int {
+	if r.URL.Path == usagePath {
+		return s.usageRoute(w, r, p)
+	}
 	seg := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, projectsPrefix), "/"), "/")
 	if seg[0] == "" {
 		seg = nil

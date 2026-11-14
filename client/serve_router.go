@@ -270,6 +270,9 @@ func routerCommand(args []string, in io.Reader) {
 	askOthers := fs.String("ask-others", "", "claude: true or false")
 	work := fs.String("work", "", "claude, codex, grok, copilot: direct, sync or worktree")
 	yes := fs.Bool("yes", false, "core restore: do not ask")
+	evUser := fs.String("user", "", "usage-events: only this user (name or number)")
+	evProject := fs.String("project", "", "usage-events: only this project (slug or number)")
+	evModel := fs.String("model", "", "usage-events: only this model")
 	fs.Usage = func() { fmt.Fprintln(os.Stderr, routerHelp) }
 	var pos []string // ukazi in zastavice v poljubnem vrstnem redu
 	for {
@@ -730,8 +733,8 @@ func routerCommand(args []string, in io.Reader) {
 		var out json.RawMessage
 		a.do(pos[1], pos[2], body, &out)
 		os.Stdout.Write(append(out, '\n'))
-	case "user", "bind", "project", "member", "grant", "core":
-		coreCommand(a, pos)
+	case "user", "bind", "project", "member", "grant", "core", "usage-events", "quota":
+		coreCommand(a, pos, coreOpts{*days, *evUser, *evProject, *evModel})
 	case "settings":
 		if len(pos) != 2 || pos[1] != "link" {
 			fail(routerHelp)

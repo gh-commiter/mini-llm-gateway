@@ -744,6 +744,7 @@ func (s *server) messages(w http.ResponseWriter, r *req) (int, string) {
 		return writeError(w, r.rid, 400, "Body must be JSON with a model field"), ""
 	}
 	defer s.activity.start(r, model)()
+	s.beginEvent(r, model)                                                         // 0.6.0: the usage event of this invocation (serve_usage.go)
 	if body["stream"] != true && !strings.HasSuffix(r.URL.Path, "/count_tokens") { // ponovitev po omejitvi v toku (noteLimit)
 		if msg, status, ok := s.recentLimit(r, model); ok {
 			w.Header().Set("x-should-retry", "false")
@@ -752,6 +753,7 @@ func (s *server) messages(w http.ResponseWriter, r *req) (int, string) {
 	}
 	_, _, isCLI := cliMatch(model)                     // model claude-cli ne čaka na odkrivanje prehodov
 	if g, m, ok := s.gatewayRoute(model, !isCLI); ok { // prehodi pred claude-cli (kot Router.swift); ID-ji z »/« (OpenRouter)
+		r.provider = g.Name
 		return s.passthrough(w, r, g, m), model
 	}
 	for _, k := range []agentKind{codexKind, grokKind, copilotKind} { // kot na Macu: claude-codex…, claude-grok…, claude-copilot…
@@ -785,6 +787,7 @@ func (s *server) messages(w http.ResponseWriter, r *req) (int, string) {
 				defer s.hub.unlock(copyDir)
 			}
 		}
+		r.provider = k.name
 		return s.runAgent(w, r, body, k, m), model
 	}
 	if m, ok := strings.CutPrefix(model, foundryPrefix); ok { // Foundry Local (na napravi, kot Apple FM na Macu)
@@ -794,6 +797,7 @@ func (s *server) messages(w http.ResponseWriter, r *req) (int, string) {
 		if strings.HasSuffix(r.URL.Path, "/count_tokens") {
 			return writeJSON(w, r.rid, 200, map[string]int{"input_tokens": len(r.body) / 4}), model
 		}
+		r.provider = "foundry"
 		return s.runFoundry(w, r, body, m), model
 	}
 	cliModel, chat, ok := cliMatch(model)
@@ -828,6 +832,7 @@ func (s *server) messages(w http.ResponseWriter, r *req) (int, string) {
 			defer s.hub.unlock(copyDir)
 		}
 	}
+	r.provider = "claude"
 	return s.runCLI(w, r, body, cliModel, chat || len(tools) == 0), model
 }
 
