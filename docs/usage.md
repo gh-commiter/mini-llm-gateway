@@ -484,7 +484,7 @@ project and per minute apply.
 
 `private` = visible to you and the project admins; no grant ever includes it. Administrators manage members and
 grants with `minigw gw member` and `minigw gw grant` (see [gateway.md](gateway.md)). These commands are not
-available inside an agent run: the gateway gives a run the notes of its project.
+available inside an agent run, except `note list` and `note read`: when you start `minigw` in a linked folder, the agent run can read that project's notes (never `private` ones) and nothing of your other projects. If the gateway changes who may see what, the next read of a running agent fails; see [how-it-works.md](how-it-works.md#projects-notes-and-agents-minigw-serve-060).
 
 ## Several gateways (profiles)
 

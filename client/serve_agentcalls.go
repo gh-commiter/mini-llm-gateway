@@ -39,6 +39,7 @@ type agentRun struct {
 	slots              chan struct{} // M1: največ maxNested hkratnih vprašanj tega izvajanja
 	root               atomic.Int64  // M2: PID procesa agenta (0 = še ne teče); odjemalec mora biti v njegovem drevesu
 	ask                bool          // »May ask other models«
+	proj               *projectCtx   // 0.6.0: notes capability (nil = the run has no project); a nested run inherits the root's
 	addr               string        // 127.0.0.1:port vrat izvajanja
 }
 
@@ -99,7 +100,7 @@ func chainRefusal(r *req, kind string) string {
 // mapa izvajanja, ki jo agent vidi (sandbox), za datoteko z žetonom; "" = nova v Scratch/tmp.
 func (s *server) startRun(r *req, kind, dir string, readOnly, shared bool, wt, maven, objects, secretDir string) (*agentRun, []string) {
 	ask := s.conf().askOthers(kind)
-	if !ask {
+	if !ask && r.project == nil { // the port exists when the run may ask other models or has a project (notes)
 		return nil, nil
 	}
 	ownDir := ""
@@ -127,7 +128,7 @@ func (s *server) startRun(r *req, kind, dir string, readOnly, shared bool, wt, m
 	}
 	run := &agentRun{kind: kind, device: r.conn.device, session: r.h("x-claude-mini-session"), cwd: r.h("x-claude-mini-cwd"), role: reqRole(r),
 		dir: dir, readOnly: readOnly, shared: shared, wt: wt, maven: maven, objects: objects, token: token, url: "http://" + ln.Addr().String(),
-		authFile: authFile, ownDir: ownDir, slots: make(chan struct{}, maxNested), ask: ask, addr: ln.Addr().String()}
+		authFile: authFile, ownDir: ownDir, slots: make(chan struct{}, maxNested), ask: ask, addr: ln.Addr().String(), proj: r.project}
 	if p := runOf(r); p != nil {
 		run.chain = append(slices.Clone(p.chain), kind)
 	} else {
@@ -170,7 +171,8 @@ func (s *server) runHandler(run *agentRun) http.Handler {
 			writeError(w, "", 401, "Invalid token for this agent run")
 			return
 		}
-		if !runAllowed[hr.Method+" "+hr.URL.Path] {
+		notes := run.proj != nil && notesPath(hr.Method, hr.URL.Path)
+		if !(run.ask && runAllowed[hr.Method+" "+hr.URL.Path]) && !notes { // models only with "May ask other models"
 			writeError(w, "", 404, "Not available to agents: "+hr.Method+" "+hr.URL.Path)
 			return
 		}
@@ -189,6 +191,11 @@ func (s *server) runHandler(run *agentRun) http.Handler {
 			writeError(w, "", 429, fmt.Sprintf("This agent already has %d requests to other models running", maxNested))
 			return
 		}
+		if notes { // the run's own notes: no project from the request is read
+			s.runNotes(w, hr, run)
+			return
+		}
+		hr.Header.Del(projectHeader) // a nested call never names a project: the run's own is inherited
 		// Identiteta klicatelja: žeton prehoda (za overitev), seja in mapa izvirne zahteve; brez mape za deljenje.
 		hr.Header.Set("Authorization", "Bearer "+s.conf().Token)
 		hr.Header.Del("X-Api-Key")

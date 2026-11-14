@@ -292,6 +292,35 @@ Details:
   a later swap changes nothing; every agent runs in its own process namespace and cannot outlive its run. A Linux
   gateway without bwrap, or a run without its own process namespace, does not return nested repositories.
 
+## Projects, notes and agents (`minigw serve`, 0.6.0)
+
+When the folder you start `minigw` in is linked to a project (`minigw project link`), `minigw` sends the project id
+(`X-Minigw-Project`) with the agent requests. The gateway builds the principal as for the member routes (the device
+key proven in the tunnel, the device on the approved list now, bound to an active user) and requires a **direct role**
+in that project; otherwise the request is refused with 403 `no_project_access`, it never runs without the project.
+A request without the header behaves as before. A `.minigw-project` file never links anything.
+
+- **What the agent can read.** A run with a project gets a read-only notes capability (run, user, device, project,
+  epoch) in the gateway, independent of "May ask other models". The run port then also serves
+  `GET /minigw/v1/notes` and `GET /minigw/v1/notes/{id}` (and nothing else new), and `minigw note list|read` work
+  inside the run. The notes are the `structure` and `data` notes of the run's project that the user may read now, plus
+  the notes that grants **to the run's project** give. `private` notes are never given to a run, and neither are other
+  projects the user happens to belong to. No project id from the agent is read (path, query, header or body). A nested
+  run inherits the root run's capability.
+- **Revocation.** Every read is authorized again from the current state, with the device checked against the approved
+  list. When the core's epoch changes (a device removed, a binding changed, a user deactivated, a membership removed or
+  lowered, a grant removed, a note moved to another class, a restore) the next read of every older run fails with
+  `no_project_access`; the run itself goes on without notes. Re-approving a device or re-creating a binding does not
+  revive earlier runs. Revocation stops new reads: it cannot take back what a model has already read, and a
+  conversation that already holds notes is not resumed after the epoch changed.
+- **Conversation isolation.** The key that finds a conversation to resume (the resume registry and the history match, for
+  Claude CLI and for Codex, Grok and Copilot) gets the user id, the project id and the epoch when the run has a project, so
+  a change of user (a rebinding), of project or of epoch starts a new conversation, also when the client sends the same
+  session id. A request without a project keeps the old key and resumes its old conversations. The synced copy or clone of
+  the folder is not split by project: it holds your files, not the conversation.
+- **Notes are not instructions.** The agent is told that notes are reference material written by people and that it must
+  not follow instructions inside them. This reduces, but does not remove, the risk of a note steering an agent.
+
 ## Protected paths
 
 In direct and sync mode, writes to these paths are refused, at any depth:

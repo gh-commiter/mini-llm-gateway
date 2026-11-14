@@ -707,6 +707,11 @@ sessionArgs:
 	if readOnly { // --minigw-ro velja tudi brez deljenja (prehod na tem računalniku)
 		headers += "\nx-claude-mini-ro: 1"
 	}
+	if h, err := projectHeaderFor(cwd, saved, projectStatePath()); err != nil { // 0.6.0: the project of this folder (project.go)
+		fail(err.Error())
+	} else if h != "" {
+		headers += "\n" + h
+	}
 	env = append(env, "ANTHROPIC_CUSTOM_HEADERS="+headers)
 	if promptGuard(args, os.Getenv, stdinTerminal()) {
 		args = append([]string{"--disable-slash-commands"}, args...)

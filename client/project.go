@@ -6,11 +6,13 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -167,4 +169,35 @@ func projectFor(st projectState, gateway, cwd string) (projectResolution, error)
 		}
 	}
 	return res, nil
+}
+
+// projectHeaderFor: the header line for the agent requests of a run in cwd, or "" (section 3). A link sends the project
+// id; link + hint with another slug is an error (the request is not sent); no link continues without a project and
+// prints the hint's suggestion (once per minigw run). Not used inside an agent run: the gateway inherits the project.
+func projectHeaderFor(cwd string, c connection, statePath string) (string, error) {
+	if agentConn() != nil {
+		return "", nil
+	}
+	st, err := loadProjectState(statePath)
+	if err != nil {
+		return "", err
+	}
+	res, err := projectFor(st, gatewayID(c), cwd)
+	if err != nil {
+		return "", nil // a folder that cannot be resolved has no link
+	}
+	switch res.State {
+	case linkOK:
+		return "x-minigw-project: " + strconv.FormatInt(res.Link.Project, 10), nil
+	case linkHintDiff:
+		return "", errors.New(hintDiffMessage(res))
+	}
+	if res.Hint != "" {
+		fmt.Fprintf(os.Stderr, "minigw: this folder suggests project %s (%s); run minigw project link %s. Continuing without a project.\n", res.Hint, hintFile, res.Hint)
+	}
+	return "", nil
+}
+
+func hintDiffMessage(res projectResolution) string {
+	return fmt.Sprintf("this folder is linked to %s but %s says %s: run minigw project unlink, link again or remove the hint", res.Link.Slug, hintFile, res.Hint)
 }

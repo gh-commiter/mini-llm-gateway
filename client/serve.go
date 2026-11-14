@@ -1304,6 +1304,7 @@ type req struct {
 	body    []byte
 	rid     string
 	applied *appliedLimits // #46a: omejitve izvajanja agenta (runAgent, runCLI)
+	project *projectCtx    // 0.6.0: project of this agent request (attachProject)
 }
 
 func (r *req) h(name string) string { return r.Header.Get(name) }

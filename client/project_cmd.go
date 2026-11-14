@@ -31,11 +31,11 @@ minigw project show                         the link that applies here, and why`
 minigw note read <id> [--json]
 minigw note push [--class structure|data|private] [--title t] [--key k] <file|->   new note (default class data)
 minigw note edit <id> [--class c] [--title t] [--revision n] [<file|->]
-minigw note rm <id> [--revision n]
+minigw note rm <id> [--revision n]        (inside an agent run only note list and note read work, on the run's own project)
    --project <slug> only confirms the project this folder is linked to; classes: structure, data, private
    (private = visible to you and the project admins)`
 	privateNote  = "private = visible to you and the project admins"
-	agentRefusal = "project and note commands are not available inside an agent run (the gateway gives a run the notes of its project)"
+	agentRefusal = "inside an agent run only minigw note list and note read work (on the run's own project); link, push, edit, rm and project commands are not available"
 	maxNoteBody  = 64 << 10
 	maxNoteTitle = 256
 	pushRetries  = 3
@@ -50,6 +50,7 @@ type projectEnv struct {
 	out     io.Writer
 	err     io.Writer
 	agent   bool
+	runConn *connection // inside an agent run: the run port and its token; only note list|read work, on the run's own project
 	do      func(c connection, method, path string, headers map[string]string, body []byte) (int, []byte, http.Header)
 	sleep   func(time.Duration)
 }
@@ -64,6 +65,10 @@ func runProjectCmd(args []string, note bool) {
 	e.connect = func() (connection, string) {
 		p := requireProfile()
 		return route(p), gatewayID(p.conn)
+	}
+	if ac := agentConn(); ac != nil { // the run port gives the run its project's notes, read only
+		e.runConn = ac
+		e.connect = func() (connection, string) { return *ac, "" }
 	}
 	var err error
 	if note {
@@ -358,7 +363,7 @@ func (e *projectEnv) linkedProject(flagSlug string) (connection, projectLink, er
 		}
 		return c, projectLink{}, errors.New(msg)
 	case linkHintDiff:
-		return c, projectLink{}, fmt.Errorf("this folder is linked to %s but %s says %s: run minigw project unlink, link again or remove the hint", res.Link.Slug, hintFile, res.Hint)
+		return c, projectLink{}, errors.New(hintDiffMessage(res))
 	}
 	if flagSlug != "" && flagSlug != res.Link.Slug {
 		return c, projectLink{}, fmt.Errorf("this folder is linked to %s, not %s: --project only names the linked project (link the other checkout instead)", res.Link.Slug, flagSlug)
@@ -417,11 +422,11 @@ func defaultTitle(body, file string) string {
 }
 
 func (e *projectEnv) note(args []string) error {
-	if e.agent {
-		return errors.New(agentRefusal)
-	}
 	if len(args) == 0 {
 		return errors.New("usage:\n" + noteHelp)
+	}
+	if e.agent && !(e.runConn != nil && (args[0] == "list" || args[0] == "read")) {
+		return errors.New(agentRefusal)
 	}
 	fs := flag.NewFlagSet("note", flag.ContinueOnError)
 	class := fs.String("class", "", "class")
@@ -453,11 +458,20 @@ func (e *projectEnv) note(args []string) error {
 		}
 		pos = pos[1:]
 	}
-	c, link, err := e.linkedProject(*proj)
-	if err != nil {
-		return err
+	var c connection
+	var link projectLink
+	base := "/minigw/v1/notes" // inside a run: the run's own project, named nowhere
+	if e.runConn != nil {
+		if *proj != "" {
+			return errors.New("inside an agent run the project is the run's own: --project is not accepted")
+		}
+		c = *e.runConn
+	} else {
+		if c, link, err = e.linkedProject(*proj); err != nil {
+			return err
+		}
+		base = fmt.Sprintf("%s/%d/notes", apiProjects, link.Project)
 	}
-	base := fmt.Sprintf("%s/%d/notes", apiProjects, link.Project)
 	one := func(method string, hdr map[string]string, body []byte) ([]byte, error) {
 		st, data, h := e.do(c, method, fmt.Sprintf("%s/%d", base, id), hdr, body)
 		if st < 200 || st > 299 {

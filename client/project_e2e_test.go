@@ -343,7 +343,7 @@ func TestClientRefusedInsideAnAgentRun(t *testing.T) {
 		} else {
 			err = e.project(args[1:])
 		}
-		wantErr(t, err, "not available inside an agent run")
+		wantErr(t, err, "inside an agent run only")
 		if strings.Contains(err.Error(), "\n") {
 			t.Fatalf("not one line: %q", err)
 		}

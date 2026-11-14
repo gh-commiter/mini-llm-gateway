@@ -769,6 +769,9 @@ func (s *server) messages(w http.ResponseWriter, r *req) (int, string) {
 		if strings.HasSuffix(r.URL.Path, "/count_tokens") {
 			return writeJSON(w, r.rid, 200, map[string]int{"input_tokens": len(r.body) / 4}), model
 		}
+		if st := s.attachProject(w, r); st != 0 { // 0.6.0: the project of this agent request (serve_run.go)
+			return st, model
+		}
 		if ew := earlyStream(w, r, body); ew != nil { // #4: tudi čakanje na drugega agenta v isti mapi
 			defer ew.done()
 			w = ew
@@ -805,6 +808,9 @@ func (s *server) messages(w http.ResponseWriter, r *req) (int, string) {
 	}
 	if strings.HasSuffix(r.URL.Path, "/count_tokens") {
 		return writeJSON(w, r.rid, 200, map[string]int{"input_tokens": len(r.body) / 4}), model
+	}
+	if st := s.attachProject(w, r); st != 0 { // 0.6.0: the project of this agent request (serve_run.go)
+		return st, model
 	}
 	tools, _ := body["tools"].([]any)
 	if !chat { // #4: glava SSE pred čakanjem na mapo in prenosom
@@ -891,7 +897,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			return writeError(w, r.rid, 400, "The folder "+clientCwd+" is not shared with the gateway, so Claude CLI agents cannot work in it: "+
 				"in that folder run minigw share add (or MINIGW_SHARE=1 for one run), then start minigw again")
 		}
-		scope = session + "|" + dir
+		scope = cliScope(session, dir, r.project) // 0.6.0: + user, project, epoch (serve_run.go)
 		if id := s.sessions.get(transcriptKey(history, scope)); id != "" {
 			args = append(args, "--resume", id)
 			sessionID = id
@@ -982,16 +988,26 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			boxTemp = tmp
 		}
 		shared := share != nil || (parent != nil && parent.shared)
-		run, runEnv = s.startRun(r, "claude", dir, ro, shared, wt, maven, objects, "") // »May ask other models«
+		run, runEnv = s.startRun(r, "claude", dir, ro, shared, wt, maven, objects, "") // »May ask other models« or a project
 		defer run.stop()
-		if run.asks() {
+		if run != nil {
 			boxRO = append(boxRO, filepath.Dir(run.authFile))
 			exe := minigwExe()
 			onPath := s.conf().askOnPath(dir)
-			extra += "\n\n" + askNote(exe, onPath)
+			rules := ""
+			if run.asks() {
+				extra += "\n\n" + askNote(exe, onPath)
+				rules = askRules
+			} else {
+				extra += "\n\n" + noAskNote
+			}
+			if run.proj != nil {
+				extra += "\n\n" + notesNote(exe, onPath)
+				rules = strings.TrimPrefix(rules+","+notesRules, ",")
+			}
 			args = sandboxAllowRead(args, exe, run.authFile) // M3: le ta datoteka iz Scratch
 			if i := slices.Index(args, "--allowedTools"); onPath && i >= 0 {
-				args[i+1] += "," + askRules
+				args[i+1] += "," + rules
 			}
 		} else {
 			extra += "\n\n" + noAskNote
@@ -1067,7 +1083,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		var done func()
 		var err2 error
 		name, cargs, done, err2 = agentWrap(name, cargs, agentMounts{cfgDir: s.cfgDir, rw: append(boxRW, conf), ro: boxRO, hide: s.conf().Scratch,
-			cmdEnv: cmdEnv, cwd: dir, home: filepath.Join(runDir, "home"), temp: boxTemp, noNet: netOff, allowIPs: apiIPs, loopback: run.asks()})
+			cmdEnv: cmdEnv, cwd: dir, home: filepath.Join(runDir, "home"), temp: boxTemp, noNet: netOff, allowIPs: apiIPs, loopback: run != nil})
 		if err2 != nil {
 			s.log.Printf("%s claude: %v", r.rid, err2)
 			return writeError(w, r.rid, 503, "Cannot start Claude CLI in the Windows sandbox: "+err2.Error())

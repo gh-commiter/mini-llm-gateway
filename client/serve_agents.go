@@ -814,6 +814,9 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 	} else {
 		note += "\n\n" + noAskNote
 	}
+	if r.project != nil {
+		note += "\n\n" + notesNote(minigwExe(), false)
+	}
 	prompt := note + "\n\n" + cliPrompt(history, last)
 	checked := s.checkedAgentFolders(c, dir)
 	extra := checked.paths() // L1, #26, #83
@@ -830,7 +833,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			s.hub.note(r.h("x-claude-mini-session"), copilotNoCommands)
 		}
 	}
-	scope := k.name + "|" + r.owner() + "|" + r.h("x-claude-mini-cwd")
+	scope := agentScope(k.name, r.owner(), r.h("x-claude-mini-cwd"), r.project) // 0.6.0: + user, project, epoch (serve_run.go)
 	resume := ""
 	if agent {
 		if resume = s.sessions.get(transcriptKey(history, scope)); resume != "" {
@@ -940,7 +943,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 		run, runEnv := s.startRun(r, k.name, dir, readOnly, true, wt, maven, objects, tmp) // »May ask other models«; mapa je deljena (agentFolder); žeton v tmp zahteve
 		defer run.stop()
 		withTree := func(m agentMounts) agentMounts { // worktree: Maven agentov, objekti zrcala (branje), .git klona le za branje
-			m.env, m.started, m.loopback = append(m.env, runEnv...), run.started, run.asks() // #68: loopback le za vrata izvajanja
+			m.env, m.started, m.loopback = append(m.env, runEnv...), run.started, run != nil // #68: loopback le za vrata izvajanja
 			if runEnv != nil {
 				m.ro = append(m.ro, minigwExe())
 			}
