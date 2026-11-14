@@ -129,24 +129,43 @@ func TestClaudeSettingsDenyOnlyForProjectOrLocalSources(t *testing.T) {
 	}
 }
 
-func TestSubmoduleDeniesAreOnlyConfigHooksInfo(t *testing.T) { // V1: not the whole .git/modules tree
-	if slices.Contains(gitDenies, "modules") {
-		t.Fatal("the whole modules tree is denied")
+func TestSubmoduleDeniesAreTheTopLevelListAndGitDirsAreFound(t *testing.T) { // V1, V5, V7
+	if slices.Contains(gitDenies, "modules") || !slices.Equal(submoduleDenies, gitDenies) {
+		t.Fatal("the submodule list is not the top-level list")
 	}
 	git := filepath.Join(t.TempDir(), ".git")
-	for _, p := range []string{"modules/sub/hooks", "modules/sub/info", "modules/sub/objects/ab", "modules/sub/refs/heads", "modules/sub/modules/deep/hooks"} {
+	for _, p := range []string{"modules/sub/objects/ab", "modules/sub/modules/deep", "modules/other"} {
 		os.MkdirAll(filepath.Join(git, p), 0o700)
 	}
-	for _, p := range []string{"modules/sub/config", "modules/sub/HEAD", "modules/sub/index", "modules/sub/modules/deep/config"} {
-		os.WriteFile(filepath.Join(git, p), []byte("x"), 0o600)
+	for _, p := range []string{"modules/sub/HEAD", "modules/sub/modules/deep/HEAD", "modules/other/HEAD"} {
+		os.WriteFile(filepath.Join(git, p), []byte("ref: refs/heads/main\n"), 0o600)
 	}
-	got := submoduleGitPaths(git)
+	got := submoduleGitDirs(git)
+	want := []string{filepath.Join(git, "modules/sub"), filepath.Join(git, "modules/sub/modules/deep"), filepath.Join(git, "modules/other")}
 	slices.Sort(got)
-	want := []string{"modules/sub/config", "modules/sub/hooks", "modules/sub/info", "modules/sub/modules/deep/config", "modules/sub/modules/deep/hooks"}
-	for i := range want {
-		want[i] = filepath.Join(git, want[i])
-	}
+	slices.Sort(want)
 	if !slices.Equal(got, want) {
 		t.Fatalf("got %v want %v", got, want)
+	}
+	prof := strings.Join(codexTreeProfile([]string{}, []string{git}, nil, false, "/usr/bin"), " ")
+	for _, w := range []string{`modules"`, "modules/sub", "modules/sub/commondir", "modules/sub/worktrees", "modules/sub/hooks"} {
+		if !strings.Contains(prof, w) {
+			t.Errorf("profile lacks %s: %s", w, prof)
+		}
+	}
+}
+
+func TestWebToolEntriesAndSettingSources(t *testing.T) { // V6, V8
+	s, _ := testServer(t, func(c *serveConfig) {
+		c.Tools = "WebFetch(domain:x.org) Bash,WebFetch(domain:ok.org),WebSearch,Read Edit"
+	})
+	a := s.agentArgs("/copy", false, []string{})
+	if got := a[slices.Index(a, "--tools")+1]; got != "WebFetch,WebFetch(domain:ok.org),WebSearch" {
+		t.Errorf("tools %q", got)
+	}
+	for src, want := range map[string]bool{"": false, "user": false, " user ": false, "user,user": false, "project": true, "project\n": true, "local": true, "user, local": true, "Project": true, "bogus": true} {
+		if got := readsFolderSettings(src); got != want {
+			t.Errorf("%q: %v", src, got)
+		}
 	}
 }

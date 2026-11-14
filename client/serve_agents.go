@@ -322,9 +322,14 @@ func codexTreeProfile(writable, gits, deny []string, network bool, path string) 
 		for _, d := range gitDenies {
 			fs[filepath.Join(g, d)] = "read"
 		}
-		for _, p := range submoduleGitPaths(g) { // V1: the submodules' config, hooks and info (not the whole modules tree)
-			fs[p] = "read"
+		fs[filepath.Join(g, "modules")] = "read"  // V7: all of modules read-only (a submodule added during the run too) ...
+		for _, sub := range submoduleGitDirs(g) { // ... each existing submodule git directory writable (a commit inside it), with the same denies
+			fs[sub] = "write"
+			for _, d := range submoduleDenies {
+				fs[filepath.Join(sub, d)] = "read"
+			}
 		}
+
 	}
 	keys := slices.Sorted(maps.Keys(fs))
 	var b strings.Builder

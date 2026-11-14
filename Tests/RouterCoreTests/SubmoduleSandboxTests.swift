@@ -38,7 +38,10 @@ private func sh(_ cmd: String, cwd: String, profile: String? = nil) -> (status: 
     let hook = sh("echo 'echo pwned' > .git/modules/sub/hooks/pre-commit", cwd: repo.path, profile: profile)
     let cfg = sh("echo '[core]' >> .git/modules/sub/config", cwd: repo.path, profile: profile)
     let info = sh("mkdir -p .git/modules/sub/info && echo x > .git/modules/sub/info/attributes", cwd: repo.path, profile: profile)
-    #expect(hook.status != 0 && cfg.status != 0 && info.status != 0, "hook \(hook) config \(cfg) info \(info)")
+    let common = sh("echo ../../../evil > .git/modules/sub/commondir", cwd: repo.path, profile: profile)  // V5: git loads config and hooks from the directory it names
+    let wt = sh("mkdir -p .git/modules/sub/worktrees/x && echo x > .git/modules/sub/worktrees/x/gitdir", cwd: repo.path, profile: profile)
+    #expect(hook.status != 0 && cfg.status != 0 && info.status != 0 && common.status != 0 && wt.status != 0, "hook \(hook) config \(cfg) info \(info) commondir \(common) worktrees \(wt)")
+    #expect(!fm.fileExists(atPath: modules.appendingPathComponent("commondir").path) && !fm.fileExists(atPath: modules.appendingPathComponent("worktrees").path))
     #expect(!fm.fileExists(atPath: modules.appendingPathComponent("hooks/pre-commit").path))
     #expect(!((try? String(contentsOf: modules.appendingPathComponent("config"), encoding: .utf8)) ?? "").hasSuffix("[core]\n"))
 }
