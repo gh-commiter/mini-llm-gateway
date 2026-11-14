@@ -239,9 +239,11 @@ minigw serve                 # or run it in this terminal (--port, --config)
   - **Mac** (app data folder `~/Library/Application Support/Mini Gateway`, the core in `core`): Codex always runs under its
     permission profile (every mode: write, read-only, chat, resume, worktree) with the folder set to `none`; Claude CLI
     (tool rules and sandbox `denyRead`), `minigw run` and Copilot (Seatbelt profile) hide it with the Scratch list
-    (`RouterConfig.hiddenScratch`). **Grok does not run while the gateway has the core:** its `--deny` is a permission
-    rule of its tools, not enforced for commands (`python3 -c open(...)` read a denied file, grok 1.0.77), its own
-    sandbox only limits writing, and it cannot run inside `sandbox-exec`. The error tells the user so.
+    (`RouterConfig.hiddenScratch`). **Grok** runs (while the core is configured) only in a custom sandbox profile whose
+    `deny` is kernel-enforced: the gateway gives Grok its own home (`GROK_HOME` = `<Scratch>/grok-home`) holding
+    `sandbox.toml` with the profiles `minigw-core` and `minigw-core-ro`, rewritten and checked before every run, and keeps
+    the login in place (`GROK_AUTH_PATH`); `~/.grok` is not touched. If the profile cannot be set up the run is refused.
+    (Grok's own `--deny` is only a rule of its tools: `python3 -c open(...)` read a denied file, grok 1.0.77.)
   - **Linux** (`<config dir>/core`): `bwrap` masks the config folder with a tmpfs (Codex, Grok, Copilot); Claude Code's
     own sandbox has it in `denyRead`. Without `bwrap` agents run only with **Allow commands without a sandbox**, and then
     they read it: see the acceptance below.
@@ -253,7 +255,7 @@ minigw serve                 # or run it in this terminal (--port, --config)
     --accept-agents-read-notes=true` (admin `PATCH /agents/claude` with `acceptAgentsCanReadNotes`, key
     `acceptAgentsCanReadNotes` in `serve.json`; restart the gateway). An accepted exposure is logged at start and shown in
     `minigw gw status` (`projects: on; Codex can read all notes (accepted: acceptAgentsCanReadNotes)`; refused:
-    `projects: off (...)`). The check is repeated at **every launch**, next to the config folder's deny: a run of an
+    `projects: off (...)`; if the core folder still holds data of an earlier period it says so: `old project data is still on disk and readable by agents: <folder>`, also logged at start; nothing is deleted). The check is repeated at **every launch**, next to the config folder's deny: a run of an
     agent that would read the folder is refused with 403 while the core is open and not accepted.
 - **Allowed folders survive a restart** (M2): when a folder is added (settings, admin API, `minigw gw claude --folders`),
   the gateway saves its real path and identity with it (Go: `allowedRecords` in `serve.json`; Mac: in the settings,
