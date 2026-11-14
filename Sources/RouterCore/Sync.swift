@@ -134,28 +134,41 @@ public enum Sync {
     public static func scan(_ root: URL, previous: [String: Entry] = [:], trusted: Bool = false) -> (files: [String: Entry], skipped: [String]) {
         let root = trusted ? root : real(root) ?? root
         let ignore = Ignore(root: root, follow: trusted)
+        // Odjemalec: vse prek odprtega korena, da starš, zamenjan s povezavo med pregledom, ne vodi iz mape (#107).
+        let rt = trusted ? ShareRoot(root) : nil
+        if trusted && rt == nil { return ([:], []) }
         var files: [String: Entry] = [:], skipped: [String] = []
-        func walk(_ dir: URL, _ rel: String) {
-            let names = trusted ? (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) : list(dir)
+        func walk(_ dir: URL, _ rel: String, _ fs: String) {
+            let names = rt != nil ? rt!.list(fs) : list(dir)
             for name in (names ?? []).sorted() {
                 // #3: ime v manifestu je NFC (Windows, Linux); datoteka ostane pod svojim imenom (APFS najde obe obliki).
                 let key = name.precomposedStringWithCanonicalMapping
                 let r = rel.isEmpty ? key : rel + "/" + key, url = dir.appendingPathComponent(name)
+                let f = fs == "." ? name : fs + "/" + name
                 if normName(name) == ".git" { continue }  // tudi ».GIT«
-                guard let a = try? FileManager.default.attributesOfItem(atPath: url.path) else { continue }  // ne sledi povezavam
-                switch a[.type] as? FileAttributeType {
-                case .typeDirectory?:
-                    if !ignore.ignored(r, isDir: true) { walk(url, r) }
-                case .typeRegular?:
+                let type: mode_t, size: Int64  // ne sledi povezavam
+                if let rt {
+                    guard let st = rt.lstat(f) else { continue }
+                    (type, size) = (st.st_mode & S_IFMT, Int64(st.st_size))
+                } else {
+                    guard let a = try? FileManager.default.attributesOfItem(atPath: url.path) else { continue }
+                    let t = a[.type] as? FileAttributeType
+                    (type, size) = (t == .typeDirectory ? S_IFDIR : t == .typeRegular ? S_IFREG : 0, (a[.size] as? NSNumber)?.int64Value ?? 0)
+                }
+                switch type {
+                case S_IFDIR:
+                    if !ignore.ignored(r, isDir: true) { walk(url, r, f) }
+                case S_IFREG:
                     guard !ignore.ignored(r, isDir: false) else { continue }
-                    if (a[.size] as? NSNumber)?.int64Value ?? 0 > maxFile { skipped.append(r); continue }
-                    if let e = entry(url, path: r, previous: previous[r], flags: trusted ? O_NOFOLLOW : O_NOFOLLOW_ANY) { files[r] = e }
+                    if size > maxFile { skipped.append(r); continue }
+                    let e = rt != nil ? entry(rt!, f, path: r, previous: previous[r]) : entry(url, path: r, previous: previous[r], flags: O_NOFOLLOW_ANY)
+                    if let e { files[r] = e }
                 default:
                     continue
                 }
             }
         }
-        walk(root, "")
+        walk(root, "", ".")
         return (files, skipped)
     }
 
@@ -210,6 +223,28 @@ public enum Sync {
         var h = SHA256()
         while let d = try? f.read(upToCount: 1 << 20), !d.isEmpty { h.update(data: d) }
         return Entry(path: path, size: size, mtime: mtime, sha256: hex(h.finalize()), exec: exec)
+    }
+
+    /// Kot `entry(url)`, prek odprtega korena: povezava kjerkoli v poti ni datoteka, vmes zamenjana datoteka tudi ne (#107).
+    static func entry(_ rt: ShareRoot, _ rel: String, path: String, previous: Entry?) -> Entry? {
+        guard let st = rt.lstat(rel), st.st_mode & S_IFMT == S_IFREG else { return nil }
+        let size = Int64(st.st_size)
+        let mtime = Int64(((Double(st.st_mtimespec.tv_sec) + Double(st.st_mtimespec.tv_nsec) / 1e9) * 1000).rounded())
+        let exec = st.st_mode & 0o100 != 0
+        if var p = previous, p.size == size, p.mtime == mtime { p.path = path; p.exec = exec; return p }
+        guard let fd = rt.openRead(rel) else { return nil }
+        let f = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        var now = stat()
+        guard fstat(fd, &now) == 0, now.st_dev == st.st_dev, now.st_ino == st.st_ino else { return nil }
+        var h = SHA256()
+        while let d = try? f.read(upToCount: 1 << 20), !d.isEmpty { h.update(data: d) }
+        return Entry(path: path, size: size, mtime: mtime, sha256: hex(h.finalize()), exec: exec)
+    }
+
+    /// Odjemalec: vsebina navadne datoteke `rel` v mapi `root` do maxFile prek odprtega korena (nikoli prek povezave); nil = ni.
+    public static func readShared(_ root: URL, _ rel: String) -> Data? {
+        guard let rt = ShareRoot(root), let st = rt.lstat(rel), st.st_mode & S_IFMT == S_IFREG, st.st_size <= maxFile else { return nil }
+        return rt.readRange(rel, start: 0, count: Int(st.st_size))
     }
 
     /// Navadna datoteka, odprta brez čakanja na FIFO; `flags`: O_NOFOLLOW (zadnji del), O_NOFOLLOW_ANY (nikjer v poti,
@@ -302,6 +337,15 @@ public enum Sync {
                               .posixPermissions: exec.map { withExec(old, $0) } ?? old], ofItemAtPath: url.path)
     }
 
+    /// Kot `write(_:to:)` prek odprtega korena: mape in datoteka le prek pripetih nadrejenih map, zaščitene poti nikoli (#107).
+    static func write(_ data: Data, _ rel: String, in rt: ShareRoot, mtime: Int64, exec: Bool?) -> String? {
+        var old = 0o644
+        if let st = rt.lstat(rel), st.st_mode & S_IFMT == S_IFREG { old = Int(st.st_mode & 0o777) }
+        guard rt.mkdirAll(ShareRoot.join(Array(ShareRoot.comps(rel).dropLast()))) else { return "cannot create the folder" }
+        let e = rt.writeAtomic(rel, data, mode: mode_t(exec.map { withExec(old, $0) } ?? old), mtime: mtime)
+        return e == 0 ? nil : String(cString: strerror(e))
+    }
+
     /// Biti x tam, kjer je bit r (0644 → 0755); brez exec vsi biti x izklopljeni.
     static func withExec(_ mode: Int, _ exec: Bool) -> Int { mode & ~0o111 | (exec ? (mode & 0o444) >> 2 : 0) }
 
@@ -337,6 +381,8 @@ public enum Sync {
     /// `state` = manifest ob prenosu. Vrne sporočila za stderr in obdelane poti (potrditev routerju).
     public static func apply(_ ch: Changes, root: URL, state: inout [String: Entry], known: ((String, String) -> Bool)? = nil,
                              fetch: (String) -> Data?) -> (notes: [String], done: [String]) {
+        // #107: vse prek odprtega korena (kot Go os.Root); povezave v mapi razreši `resolve`, tiste, ki mapo zapustijo, ne.
+        guard let rt = ShareRoot(root) else { return (["cannot open shared folder"], []) }
         let ignore = Ignore(root: root, follow: true)  // odjemalec: mapa uporabnika
         var notes: [String] = [], done: [String] = []
         let before = state
@@ -347,15 +393,21 @@ public enum Sync {
             if let v = b[p], v != before[p]?.sha256, let known, !known(p, v) { return "\u{0}unknown base" }
             return b[p]
         }
+        /// Pot brez povezav za zapis ali izbris (zadnja komponenta ostane); nil = zavrnjena ali zaščitena.
+        func target(_ p: String) -> String? {
+            guard let full = try? rt.resolve(p, followLast: false), !isProtected(full) else { return nil }
+            return full
+        }
         for p in ch.deleted {  // pred spremembami: datoteka »a« → mapa »a/…«
             if isProtected(p) { notes.append("not deleted \(p): protected path"); done.append(p); continue }
             if ignore.covers(p) { done.append(p); continue }
             done.append(p)
             guard let url = resolve(p, root: root) else { continue }
             if protectedCanonical(url, root: root) { notes.append("not deleted \(p): protected path (through a link)"); continue }
-            guard let local = entry(url, path: p, previous: state[p]) else { state[p] = nil; continue }
+            guard let full = target(p) else { notes.append("not deleted \(p): protected path (through a link)"); continue }
+            guard let local = entry(rt, full, path: p, previous: state[p]) else { state[p] = nil; continue }
             if local.sha256 != base(p) { notes.append("conflict: \(p) was deleted on the gateway but changed here; kept"); continue }
-            try? FileManager.default.removeItem(at: url)
+            rt.remove(full)
             state[p] = nil
         }
         for e in ch.changed {
@@ -365,33 +417,35 @@ public enum Sync {
                 notes.append("skipped \(e.path): invalid path here"); done.append(e.path); continue
             }
             if protectedCanonical(url, root: root) { notes.append("skipped \(e.path): protected path (through a link)"); done.append(e.path); continue }
-            if let local = entry(url, path: e.path, previous: state[e.path]), local.sha256 == e.sha256 {
+            guard let full = target(e.path) else { notes.append("skipped \(e.path): protected path (through a link)"); done.append(e.path); continue }
+            if let local = entry(rt, full, path: e.path, previous: state[e.path]), local.sha256 == e.sha256 {
                 // Le bit x, in le če ga uporabnik od prenosa ni spremenil sam.
                 if local.exec != e.exec, local.exec != state[e.path]?.exec {  // stanje ostane: bit ostane uporabnikov
                     notes.append("kept your file mode of \(e.path) (the agent changed it too)")
                     done.append(e.path); continue
-                } else if local.exec != e.exec, let m = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.posixPermissions] as? NSNumber {
-                    try? FileManager.default.setAttributes([.posixPermissions: withExec(m.intValue, e.exec)], ofItemAtPath: url.path)
+                } else if local.exec != e.exec, let m = rt.lstat(full) {
+                    rt.chmod(full, mode_t(withExec(Int(m.st_mode & 0o777), e.exec)))
                 }
                 state[e.path] = local; done.append(e.path); continue
             }
             guard let data = fetch(e.path), sha256(data) == e.sha256 else { notes.append("skipped \(e.path): download failed"); continue }
-            let local = entry(url, path: e.path, previous: state[e.path])  // znova tik pred pisanjem
+            let local = entry(rt, full, path: e.path, previous: state[e.path])  // znova tik pred pisanjem
             if local?.sha256 != base(e.path) {  // spremenjena (ali izbrisana) tudi tukaj
-                guard let c = resolve(e.path + ".minigw-conflict", root: root),
-                      (try? write(data, to: c, mtime: e.mtime, exec: e.exec)) != nil else {
+                guard resolve(e.path + ".minigw-conflict", root: root) != nil, let c = target(e.path + ".minigw-conflict"),
+                      write(data, c, in: rt, mtime: e.mtime, exec: e.exec) == nil else {
                     notes.append("conflict: \(e.path) changed here and on the gateway; the gateway's version could not be saved"); continue
                 }
                 notes.append("conflict: \(e.path) changed here and on the gateway; kept yours, the gateway's version is in \(e.path).minigw-conflict")
                 done.append(e.path)
                 continue
             }
-            do {
-                // Bit x agenta, razen če ga je uporabnik od prenosa spremenil sam.
-                try write(data, to: url, mtime: e.mtime, exec: local != nil && local?.exec != state[e.path]?.exec ? nil : e.exec)
-                state[e.path] = e
-                done.append(e.path)
-            } catch { notes.append("cannot write \(e.path): \(error.localizedDescription)") }
+            // Bit x agenta, razen če ga je uporabnik od prenosa spremenil sam.
+            if let err = write(data, full, in: rt, mtime: e.mtime, exec: local != nil && local?.exec != state[e.path]?.exec ? nil : e.exec) {
+                notes.append("cannot write \(e.path): \(err)")
+                continue
+            }
+            state[e.path] = e
+            done.append(e.path)
         }
         notes += ch.skipped.map { "not copied back (larger than 64 MB): \($0)" }
         return (notes, done)
