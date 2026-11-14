@@ -50,8 +50,7 @@ func (s *server) openCore() {
 	if err != nil {
 		s.coreErr = err
 		s.log.Printf("WARNING: the core database cannot be used, project routes answer 503 core_unavailable (models work): %v", err)
-		s.api.StartRecorder() // usage events go to the spool until a start with a usable core
-		return
+		return // no recorder and no spool file while the core is not open (#106 S3: nothing is written next to protected data)
 	}
 	s.api.StartRecorder()
 }
@@ -84,7 +83,7 @@ func (s *server) newAPI() *coreapi.API {
 			}
 			return ""
 		},
-		Dir: s.cfgDir,
+		Dir: filepath.Join(s.cfgDir, coreDirName), // the usage spool lives inside the protected core folder
 		Log: s.log.Printf,
 		AfterAdmission: func(ctx context.Context, _ coreapi.Context, _ coreapi.Request) {
 			if rq, _ := ctx.Value(reqCtxKey{}).(*req); rq != nil && s.coreHook != nil {

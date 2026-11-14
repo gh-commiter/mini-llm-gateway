@@ -5,8 +5,35 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
+
+// BackupFolder is the protected folder of the backups: inside the core folder, so every deny of the core folder (the
+// Mac sandbox lists, the Linux mask of the config folder, the Windows box) covers it. A backup anywhere else would be a
+// full copy of all notes that agents can read (#106).
+const BackupFolder = "backups"
+
+var backupName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+
+// BackupNamed writes a backup called name (letters, digits, . _ - ; no path) into <core>/backups and returns its path.
+// It never overwrites. The only way to make a backup through the API: no destination outside the protected folder.
+func (s *Store) BackupNamed(ctx context.Context, name string) (string, error) {
+	if !backupName.MatchString(name) {
+		return "", fmt.Errorf("backup name %q: letters, digits, dot, underscore and dash only (at most 64), no path: backups are kept in the core folder's %s folder", name, BackupFolder)
+	}
+	dir := filepath.Join(s.dir, BackupFolder)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	if s.opts.ProtectDir != nil {
+		if err := s.opts.ProtectDir(dir); err != nil {
+			return "", err
+		}
+	}
+	dest := filepath.Join(dir, name)
+	return dest, s.Backup(ctx, dest)
+}
 
 // Backup writes a consistent snapshot of the open database to dest (a new file, mode 0600). It never overwrites.
 // The sidecar is not part of a backup: the epoch and id marks must survive a restore, not be restored.

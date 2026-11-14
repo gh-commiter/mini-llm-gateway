@@ -2,8 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"minigw/coreapi"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -230,7 +233,7 @@ func TestStaleCoreDataIsReported(t *testing.T) {
 	if s.core != nil || s.coreStale != dir || strings.Count(logs.String(), "old project data is still on disk in "+dir) != 1 {
 		t.Fatalf("stale %q log %q", s.coreStale, logs.String())
 	}
-	if line := s.coreStatus(s.conf()); !strings.Contains(line, "projects: off") || !strings.HasSuffix(line, "old project data is still on disk and readable by agents: "+dir) {
+	if line := s.coreStatus(s.conf()); !strings.Contains(line, "projects: off") || !strings.Contains(line, "old project data in "+dir+": agents that can read it are refused") {
 		t.Fatalf("status: %q", line)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "core.db")); err != nil { // nothing is deleted
@@ -244,3 +247,121 @@ func TestStaleCoreDataIsReported(t *testing.T) {
 		t.Fatalf("accepted: %q", s2.coreStatus(s2.conf()))
 	}
 }
+
+// A1 (#106 S3): the config folder, so the core folder in it, is denied to the tools Read/Edit/Write in EVERY Claude mode:
+// the default mode without "Allow local tools" (tools without a sandbox, but scoped to the approved folders) and
+// with it; the file tools are scoped to the session folder and the allowed folders, never a bare Read.
+func TestClaudeToolsDenyTheConfigFolderInEveryMode(t *testing.T) {
+	for _, local := range []bool{false, true} {
+		for _, ro := range []bool{false, true} {
+			s, _ := testServer(t, func(c *serveConfig) { c.AllowLocalTools = local; c.Tools = defaultTools })
+			work := t.TempDir()
+			a := s.agentArgs(work, ro)
+			flag := func(name string) string {
+				for i, x := range a {
+					if x == name && i+1 < len(a) {
+						return a[i+1]
+					}
+				}
+				return ""
+			}
+			deny, allowed := strings.Split(flag("--disallowedTools"), ","), strings.Split(flag("--allowedTools"), ",")
+			for _, d := range scratchPaths(s.cfgDir) {
+				for _, tool := range []string{"Read", "Edit"} {
+					if !slices.Contains(deny, tool+"("+ruleAbs(d)+"/**)") {
+						t.Errorf("local=%v ro=%v: no %s deny for %s in %v", local, ro, tool, d, deny)
+					}
+				}
+			}
+			for _, x := range allowed {
+				if x == "Read" || x == "Grep" || x == "Glob" || x == "Edit" || x == "Write" {
+					t.Errorf("local=%v ro=%v: bare %s allowed (unscoped): %v", local, ro, x, allowed)
+				}
+			}
+		}
+	}
+}
+
+// A2 (#106 S3): with data on disk and no open core, an exposed agent kind is refused at launch (not only while a
+// handle is open); no recorder and no spool file exist while the core is not open; the spool is inside the core folder.
+func TestExposedAgentsRefusedWhileDataIsOnDiskAndNoSpoolWithoutCore(t *testing.T) {
+	s := exposedServer(t, nil)
+	dir := filepath.Join(s.cfgDir, coreDirName)
+	if why := s.coreRefusal(s.conf(), "codex"); why != "" { // no data, no core: nothing to protect, agents run as before
+		t.Fatalf("refused without data: %s", why)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "core.db"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s.openCore() // refused: exposed and not accepted
+	if s.core != nil {
+		t.Fatal("opened")
+	}
+	for _, p := range []string{filepath.Join(s.cfgDir, coreapi.SpoolName), filepath.Join(dir, coreapi.SpoolName)} {
+		if _, err := os.Stat(p); err == nil {
+			t.Fatalf("spool file %s exists while the core is not open", p)
+		}
+	}
+	s.api.FlushRecorder() // no recorder: a no-op, never a crash
+	why := s.coreRefusal(s.conf(), "codex")
+	if !strings.Contains(why, "old project data in "+dir) || !strings.Contains(why, "acceptAgentsCanReadNotes") {
+		t.Fatalf("refusal: %q", why)
+	}
+	c := startLoopback(t, s)
+	st, data := call(c, "POST", "/v1/messages", map[string]string{"content-type": "application/json", "x-claude-mini-session": "sid"},
+		[]byte(`{"model":"claude-codex","tools":[{"name":"x"}],"messages":[{"role":"user","content":"go"}]}`), 20*time.Second)
+	if st != 403 || !strings.Contains(string(data), "old project data in") {
+		t.Fatalf("launch: %d %s", st, data)
+	}
+	// accepted, or the folder moved away: runs again
+	if err := s.update(func(c *serveConfig) error { c.AcceptAgentsReadNotes = true; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if why := s.coreRefusal(s.conf(), "codex"); why != "" {
+		t.Fatalf("refused although accepted: %s", why)
+	}
+}
+
+// A3 (#106 S3): a backup goes only into <core>/backups under a name; no destination elsewhere (a copy in an allowed
+// folder would be readable by agents). The protected folder is inside the core folder, so every deny covers it.
+func TestBackupOnlyIntoTheProtectedFolder(t *testing.T) {
+	f := newCoreFx(t, nil)
+	post := func(body string) (int, any) { return f.s.adminDo("POST", "/core/backup", []byte(body)) }
+	outside := filepath.Join(t.TempDir(), "copy.db")
+	for _, body := range []string{`{"file":"` + filepath.ToSlash(outside) + `"}`, `{"name":"` + filepath.ToSlash(outside) + `"}`, `{"name":"../x"}`, `{"name":"a/b"}`, `{"name":"a\\b"}`,
+		`{"name":".."}`, `{"name":".hidden"}`, `{"name":""}`, `{}`, `{"name":"` + strings.Repeat("a", 65) + `"}`, `{"name":"c:x"}`} {
+		if st, _ := post(body); st != 400 {
+			t.Errorf("%s: %d, want 400", body, st)
+		}
+	}
+	if _, err := os.Stat(outside); err == nil {
+		t.Fatal("a backup was written outside the core folder")
+	}
+	st, obj := post(`{"name":"core-1.db"}`)
+	if st != 200 {
+		t.Fatalf("%d %v", st, obj)
+	}
+	want := filepath.Join(f.s.cfgDir, coreDirName, "backups", "core-1.db")
+	if b, _ := json.Marshal(obj); !strings.Contains(string(b), strings.ReplaceAll(want, `\`, `\\`)) {
+		t.Fatalf("answer %s, want the file %s", b, want)
+	}
+	fi, err := os.Stat(want)
+	if err != nil || fi.Size() == 0 || (runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600) {
+		t.Fatalf("backup file: %v %v", fi, err)
+	}
+	if di, err := os.Stat(filepath.Dir(want)); err != nil || (runtime.GOOS != "windows" && di.Mode().Perm() != 0o700) {
+		t.Fatalf("backups folder: %v %v", di, err)
+	}
+	if st, _ := post(`{"name":"core-1.db"}`); st != 400 { // never overwrites
+		t.Fatalf("overwrite: %d", st)
+	}
+	// inside the folder every deny covers: the config folder (bwrap mask, MXC deny, Claude tool rules) holds the core folder
+	if !under(want, s0cfg(f)) || !under(want, filepath.Join(f.s.cfgDir, coreDirName)) {
+		t.Fatalf("%s is not inside the core folder", want)
+	}
+}
+
+func s0cfg(f *coreFx) string { return f.s.cfgDir }

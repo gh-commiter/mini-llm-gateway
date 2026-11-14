@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"minigw/core"
 )
@@ -23,8 +24,8 @@ const coreHelp = `
   minigw gw project list | add <slug> <name> | archive <project> | unarchive <project>
   minigw gw member <project> list | set <user> <role> | remove <user>   role: reader, developer, admin
   minigw gw grant <source> list | add <reader> <class> | remove <reader> <class>   class: structure, data
-  minigw gw core backup <file>                          a consistent copy of the core database (gateway running)
-  minigw gw core restore <file> [--yes]                 only with the gateway stopped
+  minigw gw core backup [name]                          a consistent copy of the core database into <config>/core/backups (gateway running)
+  minigw gw core restore <file|name> [--yes]            only with the gateway stopped; a name is looked up in <config>/core/backups
   minigw gw core audit                                  the audit trail of the core
   minigw gw usage-events [--days n] [--user u] [--project p] [--model m]   model invocations per day, model and user (core; all of them)
   minigw gw quota [--claude-probe=on|off]               subscription quota and provider credit, with source, time and staleness
@@ -256,16 +257,19 @@ func coreCommand(a *adminClient, pos []string, o coreOpts) {
 	case "core":
 		need(2, 3)
 		switch {
-		case pos[1] == "backup" && len(pos) == 3:
+		case pos[1] == "backup":
 			if a.off != nil {
 				fail("the gateway is not running: a backup needs it (start it, or copy the core folder while it is stopped)")
 			}
-			file, err := filepath.Abs(pos[2])
-			if err != nil {
-				fail(err.Error())
+			name := "core-" + time.Now().UTC().Format("20060102T150405Z") + ".db"
+			if len(pos) == 3 {
+				if name = pos[2]; strings.ContainsAny(name, `/\:`) {
+					fail("a backup is kept in the core folder's backups folder (a copy anywhere else would be readable by agents): give a name, not a path")
+				}
 			}
-			a.do("POST", "/core/backup", map[string]any{"file": file}, nil)
-			say("backup written to " + file)
+			var r struct{ File string }
+			a.do("POST", "/core/backup", map[string]any{"name": name}, &r)
+			say("backup written to " + r.File)
 		case pos[1] == "audit" && len(pos) == 2:
 			var after int64
 			for {
@@ -295,6 +299,11 @@ func coreCommand(a *adminClient, pos []string, o coreOpts) {
 // coreRestore runs core.Restore on the config folder's core, with no gateway running (the store's lock tells).
 func coreRestore(cfgPath, file string, yes bool, in io.Reader) {
 	cfgDir, _ := filepath.Abs(filepath.Dir(cfgPath))
+	if !strings.ContainsAny(file, `/\\`) { // a backup's name: it is in the protected backups folder
+		if p := filepath.Join(cfgDir, coreDirName, core.BackupFolder, file); fileExists(p) {
+			file = p
+		}
+	}
 	say("Restoring " + file + " brings back the users, bindings, memberships and grants of that backup, also ones revoked since.")
 	say("The approved device list (serve.json) is not part of the backup and stays as it is. Every run and conversation ends (the epoch grows).")
 	if !yes {
@@ -379,4 +388,9 @@ func restoreOutcome(err error) (msg string, failed bool) {
 		return "restore APPLIED: the backup is the database now (the previous one is kept as a snapshot next to it), but a cleanup step failed and is finished when the gateway starts: " + err.Error(), false
 	}
 	return "restore NOT applied, the previous database is in place: " + err.Error(), true
+}
+
+func fileExists(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && fi.Mode().IsRegular()
 }

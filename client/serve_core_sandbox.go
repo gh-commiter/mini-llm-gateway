@@ -64,10 +64,26 @@ func (s *server) coreOpenRefusal(c serveConfig) string {
 	return ""
 }
 
-// coreRefusal: the run of this agent kind is refused at launch ("" = it may run): the core is open and the kind
-// would read its folder, and the owner has not accepted that.
+// coreDataOnDisk: the core folder holds data (an open core, a refused or failed one, an earlier period): what must stay
+// out of reach does not depend on an open handle.
+func (s *server) coreDataOnDisk() string {
+	dir := filepath.Join(s.cfgDir, coreDirName)
+	if entries, err := os.ReadDir(dir); err == nil && len(entries) > 0 {
+		return dir
+	}
+	return ""
+}
+
+// coreRefusal: the run of this agent kind is refused at launch ("" = it may run): the kind would read the core folder,
+// the folder holds data or the core is open, and the owner has not accepted that.
 func (s *server) coreRefusal(c serveConfig, kind string) string {
-	if s.core == nil || c.AcceptAgentsReadNotes || !s.agentReadsCore(c, kind) {
+	if c.AcceptAgentsReadNotes || !s.agentReadsCore(c, kind) {
+		return ""
+	}
+	if dir := s.coreDataOnDisk(); dir != "" && s.core == nil {
+		return agentNames[kind] + " cannot run on this gateway: it runs without a sandbox and could read the old project data in " + dir + " (the core is not open). Move that folder away, or " + acceptHint
+	}
+	if s.core == nil {
 		return ""
 	}
 	return agentNames[kind] + " cannot run on this gateway while projects are enabled: it runs without a sandbox and could read the notes of all projects. To run it, " + acceptHint
@@ -76,10 +92,9 @@ func (s *server) coreRefusal(c serveConfig, kind string) string {
 // warnStaleCore: the core is refused, but its folder holds data of an earlier accepted or sandboxed period: the agents
 // that made the refusal necessary can read it. Nothing is deleted; the owner is told (log and status).
 func (s *server) warnStaleCore() {
-	dir := filepath.Join(s.cfgDir, coreDirName)
-	if entries, err := os.ReadDir(dir); err == nil && len(entries) > 0 {
+	if dir := s.coreDataOnDisk(); dir != "" {
 		s.coreStale = dir
-		s.log.Printf("WARNING: old project data is still on disk in %s and agents without a sandbox can read it (the core is not opened); move or delete it, or accept it with acceptAgentsCanReadNotes", dir)
+		s.log.Printf("WARNING: old project data is still on disk in %s and agents without a sandbox can read it (the core is not opened): those agents are refused until you move that folder away or accept it with acceptAgentsCanReadNotes", dir)
 	}
 }
 
@@ -87,7 +102,7 @@ func (s *server) warnStaleCore() {
 func (s *server) coreStatus(c serveConfig) string {
 	switch {
 	case s.coreErr != nil && s.coreStale != "":
-		return "projects: off (" + s.coreErr.Error() + "); old project data is still on disk and readable by agents: " + s.coreStale
+		return "projects: off (" + s.coreErr.Error() + "); old project data in " + s.coreStale + ": agents that can read it are refused (move it away, or set acceptAgentsCanReadNotes)"
 	case s.coreErr != nil:
 		return "projects: off (" + s.coreErr.Error() + ")"
 	case s.core == nil:

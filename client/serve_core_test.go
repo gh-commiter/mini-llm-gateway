@@ -648,10 +648,12 @@ func TestCoreRestoreNeedsTheGatewayStopped(t *testing.T) {
 		return stdout(t, func() { routerCommand(append(args, "--config", cfg), strings.NewReader("")) })
 	}
 	run("user", "add", "ana")
-	dest := filepath.Join(t.TempDir(), "b.db")
-	run("core", "backup", dest)
+	if out := run("core", "backup", "b.db"); !strings.Contains(out, filepath.Join(s.cfgDir, coreDirName, "backups", "b.db")) {
+		t.Fatalf("backup: %q", out)
+	}
+	dest := "b.db" // restore finds a name in the protected folder
 	run("user", "add", "bor")
-	if err := core.Restore(filepath.Join(s.cfgDir, coreDirName), dest); !errors.Is(err, core.ErrLocked) {
+	if err := core.Restore(filepath.Join(s.cfgDir, coreDirName), filepath.Join(s.cfgDir, coreDirName, "backups", dest)); !errors.Is(err, core.ErrLocked) {
 		t.Fatalf("restore with the gateway running: %v", err)
 	}
 	s.closeCore() // the gateway stops
