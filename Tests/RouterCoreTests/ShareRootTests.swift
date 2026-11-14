@@ -71,8 +71,13 @@ private func entry(_ p: String, _ data: String) -> Sync.Entry { Sync.Entry(path:
     #expect(read(out.appendingPathComponent("secret")) == "secret")
     #expect((try? FileManager.default.contentsOfDirectory(atPath: out.path)) == ["secret"])
     // PROPFIND mape: povezava, ki zapusti mapo, ni datoteka z dolžino cilja povezave.
+    // Stran PROPFIND za povezavo ven: datoteka velikosti 0 (ne zbirka, ne dolžina cilja povezave).
     let list = text(dav(root, "PROPFIND", "/", ["depth": "1"]))
-    #expect(list.contains("/s/file") && !list.contains("<D:getcontentlength>\(out.path.utf8.count)<"))
+    let resp = list.components(separatedBy: "<D:response>").dropFirst()
+    func part(_ n: String) -> String { resp.first { $0.contains("<D:href>/s/\(n)</D:href>") || $0.contains("<D:href>/s/\(n)/</D:href>") } ?? "" }
+    for n in ["file", "dir", "rel", "dangling-out"] {
+        #expect(part(n).contains("<D:getcontentlength>0<") && !part(n).contains("<D:collection/>"), "\(n): \(part(n))")
+    }
 }
 
 @Test func shareDanglingLinkListsButDoesNotRead() throws {
@@ -256,4 +261,96 @@ private func entry(_ p: String, _ data: String) -> Sync.Entry { Sync.Entry(path:
     #expect(Set(Sync.scan(root, trusted: true).files.keys) == ["d/a"])
     #expect(Sync.readShared(root, "d/a") == Data("real".utf8))
     for p in ["fl", "dl/a", "out/s", "dangling"] { #expect(Sync.readShared(root, p) == nil, "\(p)") }
+}
+
+/// R1 F1: zavrnitev drevesa ne pusti odprtega deskriptorja.
+@Test func shareRefusedTreeDoesNotLeakDescriptors() throws {
+    let root = try tmp("root"), fm = FileManager.default
+    try fm.createDirectory(at: root.appendingPathComponent("d/.claude"), withIntermediateDirectories: true)
+    try put("{}", root.appendingPathComponent("d/.claude/settings.json"))
+    let rt = try #require(ShareRoot(root))
+    func fds() -> Int { (try? fm.contentsOfDirectory(atPath: "/dev/fd").count) ?? 0 }
+    let before = fds()
+    for _ in 0..<300 { #expect(!rt.removeAll("d")) }
+    #expect(fds() - before < 100, "leaked \(fds() - before)")
+    #expect(!gone(root.appendingPathComponent("d/.claude/settings.json")))
+}
+
+/// R1 F2: nečitljiva podmapa je v zaščitenem pregledu zaščitena; F3: drevo se izbriše prek ene odprtine.
+@Test func shareTreeProtectedFailsClosedAndRemoveAllDeletes() throws {
+    let root = try tmp("root"), fm = FileManager.default
+    try fm.createDirectory(at: root.appendingPathComponent("d/sub"), withIntermediateDirectories: true)
+    try fm.createDirectory(at: root.appendingPathComponent("t/a/b/c"), withIntermediateDirectories: true)
+    try put("x", root.appendingPathComponent("t/a/b/c/f")); try put("y", root.appendingPathComponent("t/g"))
+    try link("g", root.appendingPathComponent("t/l"))
+    let rt = try #require(ShareRoot(root))
+    #expect(!rt.treeProtected("t", base: ["t"]) && !rt.treeProtected("missing", base: ["missing"]))
+    try fm.setAttributes([.posixPermissions: 0], ofItemAtPath: root.appendingPathComponent("d/sub").path)
+    defer { try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: root.appendingPathComponent("d/sub").path) }
+    #expect(rt.treeProtected("d", base: ["d"]) && !rt.removeAll("d"))
+    #expect(rt.removeAll("t") && gone(root.appendingPathComponent("t")))
+}
+
+/// R1 F4: preimenovana mapa deljenja še dela, zaščita velja glede na trenutno mesto.
+@Test func shareRenamedRootKeepsWorking() throws {
+    let root = try tmp("root"), fm = FileManager.default
+    try fm.createDirectory(at: root.appendingPathComponent("d"), withIntermediateDirectories: true)
+    let rt = try #require(ShareRoot(root))
+    let moved = root.deletingLastPathComponent().appendingPathComponent("moved-" + UUID().uuidString)
+    try fm.moveItem(at: root, to: moved)
+    defer { try? fm.removeItem(at: moved) }
+    #expect(rt.writeAtomic("d/x", Data("ok".utf8), mode: nil, mtime: nil) == 0)
+    #expect(read(moved.appendingPathComponent("d/x")) == "ok")
+    #expect(rt.writeAtomic(".claude/settings.json", Data("{}".utf8), mode: nil, mtime: nil) != 0)
+    #expect(rt.path.hasSuffix(moved.lastPathComponent))
+}
+
+/// R1 F5: »..« in absolutna pot sta zavrnjena v vsaki točki vstopa.
+@Test func shareRefusesDotDotEverywhere() throws {
+    let root = try tmp("root"), out = try tmp("out"), fm = FileManager.default
+    try fm.createDirectory(at: root.appendingPathComponent("d"), withIntermediateDirectories: true)
+    try put("o", out.appendingPathComponent("x")); try put("i", root.appendingPathComponent("f"))
+    let rt = try #require(ShareRoot(root))
+    let up = "../" + out.lastPathComponent + "/x"
+    for bad in [up, "d/../f", "d/../../" + out.lastPathComponent, out.appendingPathComponent("x").path] {
+        #expect(rt.lstat(bad) == nil && rt.readlink(bad) == nil && rt.openRead(bad) == nil && rt.list(bad) == nil, "\(bad)")
+        #expect(rt.readRange(bad, start: 0, count: 1) == nil && rt.readAll(bad, max: 10) == nil, "\(bad)")
+        #expect(rt.treeProtected(bad, base: ["x"]) && !rt.copyTree(bad, "c") && !rt.copyTree("f", bad), "\(bad)")
+        #expect(rt.mkdir(bad) != 0 && !rt.mkdirAll(bad) && !rt.remove(bad) && !rt.rename("f", bad) && rt.create(bad) == nil, "\(bad)")
+        #expect(throws: ShareRoot.Refused.self) { try rt.resolve(bad, followLast: true) }
+    }
+    #expect((try? fm.contentsOfDirectory(atPath: out.path)) == ["x"] && read(out.appendingPathComponent("x")) == "o")
+}
+
+/// R1 F6: celotna datoteka prek ene odprtine do meje; večja = nil.
+@Test func shareReadSharedReadsWholeFileWithinLimit() throws {
+    let root = try tmp("root")
+    try put(String(repeating: "a", count: 200_000), root.appendingPathComponent("big"))
+    #expect(Sync.readShared(root, "big")?.count == 200_000)
+    let rt = try #require(ShareRoot(root))
+    #expect(rt.readAll("big", max: 1000) == nil && rt.readAll("big", max: 200_000)?.count == 200_000)
+}
+
+/// R1 F8: čas pred letom 1970 ne da negativnega tv_nsec.
+@Test func shareWriteAtomicNegativeMtime() throws {
+    let root = try tmp("root")
+    let rt = try #require(ShareRoot(root))
+    #expect(rt.writeAtomic("old", Data("x".utf8), mode: 0o644, mtime: -1500) == 0)
+    let st = try #require(rt.lstat("old"))
+    #expect(st.st_mtimespec.tv_sec == -2 && st.st_mtimespec.tv_nsec == 500_000_000)
+}
+
+/// R1 F11 (najbližje dosegljivo): mapa, zamenjana s pravo preimenovano mapo na zaščiteno ime, ne sprejme pisanja.
+@Test func shareParentRenamedOntoProtectedNameIsRefused() throws {
+    let root = try tmp("root"), fm = FileManager.default
+    try fm.createDirectory(at: root.appendingPathComponent("d"), withIntermediateDirectories: true)
+    try fm.createDirectory(at: root.appendingPathComponent(".claude"), withIntermediateDirectories: true)
+    WebDAV.beforeMutation = { r in
+        guard r == root.path else { return }
+        try? fm.moveItem(at: root.appendingPathComponent(".claude"), to: root.appendingPathComponent("aside"))
+        try? fm.moveItem(at: root.appendingPathComponent("d"), to: root.appendingPathComponent(".claude"))
+    }
+    defer { WebDAV.beforeMutation = nil }
+    #expect(dav(root, "PUT", "/d/settings.json", [:], "{}").status >= 400)
+    #expect((try? fm.contentsOfDirectory(atPath: root.appendingPathComponent(".claude").path)) == [])
 }
