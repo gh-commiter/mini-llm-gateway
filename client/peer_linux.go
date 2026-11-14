@@ -538,8 +538,11 @@ var (
 	bwrapFDMode = func(cfgDir string) bool {
 		bwrapFDOnce.Do(func() {
 			bw := bwrapReady(cfgDir)
+			if bw == "" {
+				return
+			}
 			dir, err2 := os.Open(os.TempDir())
-			if bw == "" || err2 != nil {
+			if err2 != nil {
 				return
 			}
 			defer dir.Close()
