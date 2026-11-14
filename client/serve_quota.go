@@ -15,7 +15,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -277,7 +276,7 @@ func runClaudeUsage(ctx context.Context, exe []string, parent string) ([]byte, e
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	args := append(slicesClone(exe[1:]), "-p", "/usage", "--model", "haiku", "--setting-sources", "", "--output-format", "json", "--no-session-persistence")
-	cmd := exec.CommandContext(ctx, exe[0], args...)
+	cmd := commandContext(ctx, exe[0], args...)
 	cmd.Dir = dir
 	for _, e := range os.Environ() {
 		k, _, _ := strings.Cut(e, "=")
