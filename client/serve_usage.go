@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -75,7 +76,8 @@ func (s *server) stopUsage() {
 	}
 }
 
-// enqueue never blocks: when the queue is full the event is counted as lost and shows up as a gap.
+// enqueue never blocks: when the queue is full a lost FINISH is counted as a lost event (a lost begin whose finish is
+// stored loses nothing: the finish carries the whole event) and shows up as a gap.
 func (u *usageRecorder) enqueue(m usageMsg) {
 	if u == nil {
 		return
@@ -83,14 +85,23 @@ func (u *usageRecorder) enqueue(m usageMsg) {
 	select {
 	case u.ch <- m:
 	default:
-		u.lostMu.Lock()
-		if u.lost == 0 {
-			u.lostA = m.ev.Start
+		if m.kind == evFinish {
+			u.noteLoss(1, m.ev.Start, time.Now())
 		}
-		u.lost++
-		u.lostB = time.Now()
-		u.lostMu.Unlock()
 	}
+}
+
+// noteLoss keeps lost events in a small in-memory gap (count and time span) until it can be written.
+func (u *usageRecorder) noteLoss(n int64, from, to time.Time) {
+	u.lostMu.Lock()
+	defer u.lostMu.Unlock()
+	if u.lost == 0 || from.Before(u.lostA) {
+		u.lostA = from
+	}
+	if to.After(u.lostB) {
+		u.lostB = to
+	}
+	u.lost += n
 }
 
 // flush waits until everything enqueued so far is processed (tests, shutdown).
@@ -142,12 +153,15 @@ func (u *usageRecorder) handle(m usageMsg) {
 		if st != nil && u.spool.empty() && st.FinishEvent(ctx, m.ev) == nil {
 			return
 		}
-		u.spool.add(m.ev) // the core is down, or older events wait in the spool: keep the order
+		if err := u.spool.add(m.ev); err != nil { // the core is down and the disk does not take it: a counted loss, never silent
+			u.noteLoss(1, m.ev.Start, m.ev.End)
+		}
 		u.replay()
 	}
 }
 
-// takeLost turns queue overflow into a gap (stored in the core, or in the spool).
+// takeLost turns the pending losses into a gap record (stored in the core, or in the spool). If neither works the
+// loss stays pending in memory and is tried again with the next message or tick.
 func (u *usageRecorder) takeLost() {
 	u.lostMu.Lock()
 	n, a, b := u.lost, u.lostA, u.lostB
@@ -157,8 +171,11 @@ func (u *usageRecorder) takeLost() {
 		return
 	}
 	g := core.UsageGapRecord{ID: "gap_" + randomToken()[:12], Count: n, From: a, To: b}
-	if st := u.s.core; st == nil || st.ReplayUsage(context.Background(), nil, []core.UsageGapRecord{g}) != nil {
-		u.spool.addGap(g)
+	if st := u.s.core; st != nil && st.ReplayUsage(context.Background(), nil, []core.UsageGapRecord{g}) == nil {
+		return
+	}
+	if u.spool.addGap(g) != nil {
+		u.noteLoss(n, a, b)
 	}
 }
 
@@ -234,27 +251,59 @@ func (sp *usageSpool) load() (evs []core.UsageEvent, gaps []core.UsageGapRecord)
 	return
 }
 
-func (sp *usageSpool) appendLine(l spoolLine) {
+// appendLine appends one line; it reports every failure. A short write is cut back so that the next line starts clean.
+func (sp *usageSpool) appendLine(l spoolLine) error {
 	b, _ := json.Marshal(l)
-	os.MkdirAll(filepath.Dir(sp.path), 0o700)
+	b = append(b, '\n')
+	if err := os.MkdirAll(filepath.Dir(sp.path), 0o700); err != nil {
+		return err
+	}
 	f, err := os.OpenFile(sp.path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
 	if err != nil {
-		return
+		return err
 	}
-	n, _ := f.Write(append(b, '\n'))
-	f.Close()
+	n, werr := spoolWrite(f, b)
+	if werr != nil || n < len(b) {
+		f.Truncate(sp.size)
+		f.Close()
+		if werr == nil {
+			werr = io.ErrShortWrite
+		}
+		return werr
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
 	sp.size += int64(n)
+	return nil
 }
 
-func (sp *usageSpool) add(e core.UsageEvent) {
-	sp.appendLine(spoolLine{T: "event", Event: &e})
+// spoolWrite: tests make the disk fail.
+var spoolWrite = func(f *os.File, b []byte) (int, error) { return f.Write(b) }
+
+func (sp *usageSpool) add(e core.UsageEvent) error {
+	if err := sp.appendLine(spoolLine{T: "event", Event: &e}); err != nil {
+		return err
+	}
 	sp.events++
+	sp.bound()
+	return nil
+}
+
+func (sp *usageSpool) addGap(g core.UsageGapRecord) error {
+	if err := sp.appendLine(spoolLine{T: "gap", Gap: &g}); err != nil {
+		return err
+	}
+	sp.bound()
+	return nil
+}
+
+// bound enforces both limits after every append, gap records included.
+func (sp *usageSpool) bound() {
 	if sp.events > spoolMaxEvents || sp.size > spoolMaxBytes {
 		sp.compact()
 	}
 }
-
-func (sp *usageSpool) addGap(g core.UsageGapRecord) { sp.appendLine(spoolLine{T: "gap", Gap: &g}) }
 
 // compact drops the oldest events until the spool is at 90% of both limits, and writes one gap record for them
 // (count and time span).
@@ -272,24 +321,37 @@ func (sp *usageSpool) compact() {
 	}
 	keepEvents, keepBytes := max(1, spoolMaxEvents*9/10), spoolMaxBytes*9/10
 	drop, left := 0, len(evIdx)
-	for drop < len(evIdx) && (left > keepEvents || total > keepBytes || drop == 0) {
+	for drop < len(evIdx) && (left > keepEvents || total > keepBytes || drop == 0 && sp.events > spoolMaxEvents) {
 		total -= int64(len(enc[evIdx[drop]]) + 1)
 		drop++
 		left--
 	}
-	if drop == 0 {
+	gapLines := 0
+	for _, l := range lines {
+		if l.T == "gap" {
+			gapLines++
+		}
+	}
+	if drop == 0 && gapLines < 2 {
 		return
 	}
-	merged := core.UsageGapRecord{ID: "gap_" + randomToken()[:12], Count: int64(drop), From: lines[evIdx[0]].Event.Start, To: lines[evIdx[drop-1]].Event.Start}
+	merged := core.UsageGapRecord{ID: "gap_" + randomToken()[:12], Count: int64(drop)}
 	cut := map[int]bool{}
 	for _, i := range evIdx[:drop] {
 		cut[i] = true
+		st := lines[i].Event.Start
+		if merged.From.IsZero() || st.Before(merged.From) {
+			merged.From = st
+		}
+		if st.After(merged.To) {
+			merged.To = st
+		}
 	}
 	for i, l := range lines { // earlier gaps of this spool fold into the new one: one record, never a growing list
 		if l.T == "gap" && l.Gap != nil {
 			cut[i] = true
 			merged.Count += l.Gap.Count
-			if l.Gap.From.Before(merged.From) {
+			if merged.From.IsZero() || l.Gap.From.Before(merged.From) {
 				merged.From = l.Gap.From
 			}
 			if l.Gap.To.After(merged.To) {

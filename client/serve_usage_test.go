@@ -614,3 +614,89 @@ func TestQuotaAdminRouteNeedsNoCore(t *testing.T) {
 		t.Fatalf("usage/events without a core: %d", st)
 	}
 }
+
+// --- review A8: the spool reports failures and keeps its bounds ---
+
+func bareRecorder(t *testing.T) (*usageRecorder, string) {
+	s, _ := testServer(t, nil) // no core: everything goes to the spool
+	p := filepath.Join(t.TempDir(), spoolName)
+	return &usageRecorder{s: s, ch: make(chan usageMsg, 4), spool: newSpool(p)}, p
+}
+
+func fin(id string) usageMsg {
+	return usageMsg{kind: evFinish, ev: core.UsageEvent{ID: id, Start: time.Now(), End: time.Now(), Outcome: "ok", TokensIn: -1, TokensOut: -1, TokenSource: "unknown"}}
+}
+
+func TestSpoolDiskErrorIsACountedLossThatBecomesAGap(t *testing.T) {
+	u, path := bareRecorder(t)
+	spoolWrite = func(*os.File, []byte) (int, error) { return 0, fmt.Errorf("disk full") }
+	defer func() { spoolWrite = func(f *os.File, b []byte) (int, error) { return f.Write(b) } }()
+	for i := 0; i < 3; i++ {
+		u.handle(fin(fmt.Sprint("e", i)))
+	}
+	if u.lost != 3 || u.spool.events != 0 {
+		t.Fatalf("lost %d, spooled %d: a failed write must be a counted loss", u.lost, u.spool.events)
+	}
+	spoolWrite = func(f *os.File, b []byte) (int, error) { return f.Write(b) } // the disk works again
+	u.handle(fin("after"))
+	evs, gaps := u.spool.load()
+	if len(evs) != 1 || len(gaps) != 1 || gaps[0].Count != 3 || u.lost != 0 {
+		t.Fatalf("events %d, gaps %+v, pending %d (file %s)", len(evs), gaps, u.lost, path)
+	}
+}
+
+func TestSpoolPartialWriteLeavesNoBrokenLine(t *testing.T) {
+	u, path := bareRecorder(t)
+	u.handle(fin("one"))
+	size := u.spool.size
+	spoolWrite = func(f *os.File, b []byte) (int, error) { return f.Write(b[:len(b)/2]) } // half a line, no error
+	u.handle(fin("two"))
+	spoolWrite = func(f *os.File, b []byte) (int, error) { return f.Write(b) }
+	if fi, _ := os.Stat(path); fi.Size() != size || u.lost != 1 {
+		t.Fatalf("size %d (want %d), lost %d", fi.Size(), size, u.lost)
+	}
+	u.handle(fin("three"))
+	evs, _ := u.spool.load()
+	if len(evs) != 2 || evs[0].ID != "one" || evs[1].ID != "three" {
+		t.Fatalf("%+v", evs)
+	}
+}
+
+func TestSpoolGapRecordsAreBoundedToo(t *testing.T) {
+	ob, oe := spoolMaxBytes, spoolMaxEvents
+	spoolMaxBytes, spoolMaxEvents = 700, 10
+	defer func() { spoolMaxBytes, spoolMaxEvents = ob, oe }()
+	sp := newSpool(filepath.Join(t.TempDir(), spoolName))
+	at := time.Now()
+	var total int64
+	for i := 0; i < 200; i++ {
+		if err := sp.addGap(core.UsageGapRecord{ID: fmt.Sprint("g", i), Count: 2, From: at, To: at.Add(time.Second)}); err != nil {
+			t.Fatal(err)
+		}
+		total += 2
+	}
+	fi, _ := os.Stat(sp.path)
+	_, gaps := sp.load()
+	var sum int64
+	for _, g := range gaps {
+		sum += g.Count
+	}
+	if fi.Size() > 2*spoolMaxBytes || sum != total { // bounded, and nothing lost from the count
+		t.Fatalf("size %d (limit %d), gaps %d, counted %d of %d", fi.Size(), spoolMaxBytes, len(gaps), sum, total)
+	}
+}
+
+func TestQueueOverflowCountsLostEventsNotMessages(t *testing.T) {
+	u := &usageRecorder{ch: make(chan usageMsg, 1)}
+	u.enqueue(usageMsg{kind: evBegin})
+	u.enqueue(usageMsg{kind: evBegin, ev: core.UsageEvent{ID: "b1"}}) // lost begins: their finishes carry the events
+	u.enqueue(usageMsg{kind: evBegin, ev: core.UsageEvent{ID: "b2"}})
+	if u.lost != 0 {
+		t.Fatalf("lost begins counted as lost events: %d", u.lost)
+	}
+	u.enqueue(fin("f1")) // a lost finish is a lost event
+	u.enqueue(fin("f2"))
+	if u.lost != 2 {
+		t.Fatalf("lost %d", u.lost)
+	}
+}
