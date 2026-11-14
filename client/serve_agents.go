@@ -24,6 +24,7 @@ import (
 	"regexp"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -889,7 +890,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 		}
 		defer os.RemoveAll(tmp)
 		// N3: vsaka naprava ima svoje stanje CLI (seje, zgodovina); prijava je povezava na pravo datoteko.
-		state, files, err := agentState(c.Scratch, k, r.owner())
+		state, files, err := agentState(c.Scratch, k, r.owner(), r.project)
 		if err != nil {
 			return "", err
 		}
@@ -1168,14 +1169,19 @@ func agentAuthFiles(k agentKind) (real string, names []string) {
 
 // agentState: <scratch>/state/<naprava>/<cli> s povezavami na prave datoteke prijave (Codex piše auth.json na
 // mestu, skozi povezavo: preverjeno s codex 0.167). Vrne mapo in prave datoteke za bwrap.
-func agentState(scratch string, k agentKind, owner string) (string, []string, error) {
+func agentState(scratch string, k agentKind, owner string, p *projectCtx) (string, []string, error) {
 	// brez škatle (in Codex): kot prej, prave mape CLI. M1: Copilot vedno svoje stanje (svež COPILOT_HOME vsak tek, brez
 	// hookov, MCP in zaupanih map iz ~\.copilot; brez zaupanja copilot hookov in MCP repozitorija ne naloži)
-	if runtime.GOOS == "windows" && (!windowsBox() && k.name != "copilot" || k.name == "codex") {
+	// 0.6.0 (review M2): a run with a project never uses the shared real home (its rollout logs would hold notes that a
+	// later run of another project, user or epoch could read): it gets its own home below, on Windows too.
+	if sharedRealHome(runtime.GOOS, windowsBox(), k, p) {
 		return "", nil, nil
 	}
 	sum := sha256.Sum256([]byte(owner))
 	dir := filepath.Join(scratch, "state", hex.EncodeToString(sum[:8]), k.name)
+	if p != nil {
+		dir = projectStateDir(filepath.Join(scratch, "state", hex.EncodeToString(sum[:8])), k.name, p)
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", nil, err
 	}
@@ -1679,4 +1685,58 @@ func writeAgentError(w http.ResponseWriter, rid string, status int, msg string) 
 		w.Header().Set("x-should-retry", "false")
 	}
 	return writeError(w, rid, status, msg)
+}
+
+// maxProjectHomes: project homes kept per device; the oldest go first.
+const maxProjectHomes = 20
+
+// projectStateDir (M2): <device state>/proj/<user>-<project>-e<epoch>/<cli>. A run of another user, project or epoch
+// gets another folder, so it never sees a transcript written under notes of the first. Homes of the same user and
+// project from older epochs are dead (their conversations are never resumed) and are removed here, and the folder
+// is bounded to maxProjectHomes by age.
+func projectStateDir(devDir, kind string, p *projectCtx) string {
+	root := filepath.Join(devDir, "proj")
+	name := fmt.Sprintf("%d-%d-e%d", p.user, p.project, p.epoch)
+	pruneProjectHomes(root, name, p)
+	return filepath.Join(root, name, kind)
+}
+
+func pruneProjectHomes(root, keep string, p *projectCtx) {
+	ents, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	prefix := fmt.Sprintf("%d-%d-e", p.user, p.project)
+	type home struct {
+		name string
+		at   time.Time
+	}
+	var live []home
+	for _, e := range ents {
+		n := e.Name()
+		if n == keep {
+			continue
+		}
+		if ep, ok := strings.CutPrefix(n, prefix); ok { // same user and project: another epoch
+			if v, err := strconv.ParseInt(ep, 10, 64); err == nil && v < p.epoch {
+				os.RemoveAll(filepath.Join(root, n))
+				continue
+			}
+		}
+		if fi, err := e.Info(); err == nil {
+			live = append(live, home{n, fi.ModTime()})
+		}
+	}
+	if len(live) >= maxProjectHomes {
+		slices.SortFunc(live, func(a, b home) int { return a.at.Compare(b.at) })
+		for _, h := range live[:len(live)-maxProjectHomes+1] {
+			os.RemoveAll(filepath.Join(root, h.name))
+		}
+	}
+}
+
+// sharedRealHome: does this run use the CLI's real home (no state folder of its own)? Only on Windows, only Codex and
+// (without the MXC box) Grok, and never for a run with a project (M2).
+func sharedRealHome(goos string, box bool, k agentKind, p *projectCtx) bool {
+	return goos == "windows" && p == nil && (!box && k.name != "copilot" || k.name == "codex")
 }

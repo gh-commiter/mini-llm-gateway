@@ -304,11 +304,11 @@ func coreRestore(cfgPath, file string, yes bool, in io.Reader) {
 		}
 	}
 	err := core.Restore(filepath.Join(cfgDir, coreDirName), file)
-	switch {
-	case errors.Is(err, core.ErrLocked):
-		fail("the gateway (or another minigw) has the core database open: stop minigw serve first, then run the restore again")
-	case err != nil:
-		fail("restore failed, the previous database is in place: " + err.Error())
+	if msg, failed := restoreOutcome(err); failed {
+		fail(msg)
+	} else if err != nil {
+		say(msg)
+		return
 	}
 	say("restored; the previous database is kept next to it as core-<schema>-<time>.db")
 	if _, err := os.Stat(filepath.Join(cfgDir, coreDirName)); err != nil {
@@ -364,4 +364,18 @@ func orDash(s string) string {
 		return "-"
 	}
 	return s
+}
+
+// restoreOutcome says what really happened (review): not applied (the previous database is in place), applied with
+// a cleanup left for the next start, or applied.
+func restoreOutcome(err error) (msg string, failed bool) {
+	switch {
+	case err == nil:
+		return "", false
+	case errors.Is(err, core.ErrLocked):
+		return "the gateway (or another minigw) has the core database open: stop minigw serve first, then run the restore again. Nothing was changed.", true
+	case errors.Is(err, core.ErrRestoreApplied):
+		return "restore APPLIED: the backup is the database now (the previous one is kept as a snapshot next to it), but a cleanup step failed and is finished when the gateway starts: " + err.Error(), false
+	}
+	return "restore NOT applied, the previous database is in place: " + err.Error(), true
 }

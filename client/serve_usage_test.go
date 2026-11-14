@@ -809,3 +809,30 @@ func TestCodexCompletionReturnsWhileAQuotaRefreshIsStuck(t *testing.T) { // revi
 	close(release)
 	<-done
 }
+
+func TestRetentionFoldsAgainOnALongRunningGateway(t *testing.T) { // review (should-fix)
+	oe, of := spoolReplayEach, foldEvery
+	spoolReplayEach, foldEvery = 20*time.Millisecond, 10*time.Millisecond
+	defer func() { spoolReplayEach, foldEvery = oe, of }()
+	f := newCoreFx(t, nil) // its recorder starts with the short intervals
+	old := time.Now().AddDate(0, 0, -500)
+	f.ok(f.s.core.FinishEvent(t0, core.UsageEvent{ID: "ancient", Start: old, End: old, UserID: f.uid["ana"], DeviceID: "d", Provider: "p", Model: "m",
+		Outcome: "error", TokensIn: 3, TokensOut: 4, TokenSource: "reported"}))
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var n int
+		f.s.core.DB().QueryRow(`SELECT count(*) FROM usage_events WHERE id='ancient'`).Scan(&n)
+		if n == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the old event was never folded")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	rep, err := f.s.core.AdminUsage(t0, 3650, core.UsageFilter{})
+	f.ok(err)
+	if len(rep.Rows) != 1 || rep.Rows[0].Events != 1 || rep.Rows[0].Failed != 1 || rep.Rows[0].TokensOut != 4 {
+		t.Fatalf("%+v", rep.Rows)
+	}
+}

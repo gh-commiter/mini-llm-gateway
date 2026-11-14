@@ -844,3 +844,18 @@ func TestDeviceRemovalIsDurableAndReconciledAtTheNextOpen(t *testing.T) {
 		})
 	}
 }
+
+func TestRestoreOutcomeTellsTheRealState(t *testing.T) { // review (should-fix)
+	if m, failed := restoreOutcome(fmt.Errorf("x: %w", core.ErrRestoreApplied)); failed || !strings.Contains(m, "APPLIED") || strings.Contains(m, "previous database is in place") {
+		t.Fatalf("applied: %q %v", m, failed)
+	}
+	if m, failed := restoreOutcome(errors.New("not a core database")); !failed || !strings.Contains(m, "NOT applied") || !strings.Contains(m, "previous database is in place") {
+		t.Fatalf("not applied: %q %v", m, failed)
+	}
+	if m, failed := restoreOutcome(core.ErrLocked); !failed || !strings.Contains(m, "Nothing was changed") {
+		t.Fatalf("locked: %q", m)
+	}
+	if m, failed := restoreOutcome(nil); failed || m != "" {
+		t.Fatal("success")
+	}
+}

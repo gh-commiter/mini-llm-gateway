@@ -26,6 +26,7 @@ var (
 	spoolMaxEvents  = 10000
 	spoolMaxBytes   = int64(10 << 20)
 	spoolReplayEach = 30 * time.Second
+	foldEvery       = 24 * time.Hour // retention: detail rows past 400 days become daily totals
 	usageQueue      = 4096
 )
 
@@ -119,12 +120,18 @@ func (u *usageRecorder) run() {
 	tick := time.NewTicker(spoolReplayEach)
 	defer tick.Stop()
 	u.replay()
+	lastFold := time.Now() // core.Open folded at start
 	for {
 		select {
 		case m := <-u.ch:
 			u.handle(m)
 		case <-tick.C:
 			u.replay()
+			if st := u.s.core; st != nil && time.Since(lastFold) >= foldEvery { // a long-lived gateway folds daily
+				if _, err := st.FoldOldUsage(context.Background()); err == nil {
+					lastFold = time.Now()
+				}
+			}
 		case <-u.quit:
 			for {
 				select {

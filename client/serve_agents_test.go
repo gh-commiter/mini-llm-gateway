@@ -280,8 +280,8 @@ func TestAgentStatePerDevice(t *testing.T) {
 	real, scratch := t.TempDir(), t.TempDir()
 	t.Setenv("CODEX_HOME", real)
 	os.WriteFile(real+"/auth.json", []byte("OLD"), 0o600)
-	a, files, err := agentState(scratch, codexKind, "deviceA")
-	b, _, _ := agentState(scratch, codexKind, "deviceB")
+	a, files, err := agentState(scratch, codexKind, "deviceA", nil)
+	b, _, _ := agentState(scratch, codexKind, "deviceB", nil)
 	if err != nil || a == b || !strings.HasPrefix(a, scratch+"/state/") || len(files) != 1 || files[0] != real+"/auth.json" {
 		t.Fatalf("state: %s %s %v %v", a, b, files, err)
 	}
@@ -308,7 +308,7 @@ func TestAgentStatePerDevice(t *testing.T) {
 // stanje naprave (svež COPILOT_HOME vsak tek) na vseh sistemih, tudi na Windows zunaj škatle; GITHUB_COPILOT_* ne pride do njega.
 func TestCopilotNoUserOrRepoHooks(t *testing.T) {
 	scratch := t.TempDir()
-	st, files, err := agentState(scratch, copilotKind, "dev")
+	st, files, err := agentState(scratch, copilotKind, "dev", nil)
 	if err != nil || st == "" || !under(st, scratch) || len(files) != 0 {
 		t.Fatalf("copilot state: %q %v %v", st, files, err)
 	}
@@ -753,5 +753,93 @@ func TestRunAgentProcessCancelGrandchild(t *testing.T) {
 	}
 	if d := time.Since(start); d > 10*time.Second {
 		t.Fatalf("took %v", d)
+	}
+}
+
+// Review M2: a run with a project has a home of its own per (device, user, project, epoch).
+func TestAgentHomeIsPerUserProjectAndEpoch(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinked login files: Unix; the Windows condition is in TestSharedRealHomeNeverForAProjectRun")
+	}
+	real, scratch := t.TempDir(), t.TempDir()
+	t.Setenv("CODEX_HOME", real)
+	os.WriteFile(real+"/auth.json", []byte("LOGIN"), 0o600)
+	os.WriteFile(real+"/config.toml", []byte("x=1"), 0o600)
+	os.MkdirAll(real+"/sessions/2026/11/14", 0o700)
+	os.WriteFile(real+"/sessions/2026/11/14/rollout-real.jsonl", []byte("a rollout of the shared home"), 0o600)
+	home := func(p *projectCtx) string {
+		d, files, err := agentState(scratch, codexKind, "devA", p)
+		if err != nil || len(files) != 2 {
+			t.Fatalf("%v %v", files, err)
+		}
+		return d
+	}
+	a := &projectCtx{user: 1, project: 10, epoch: 5}
+	homeA := home(a)
+	os.MkdirAll(homeA+"/sessions/2026/11/14", 0o700)
+	rollout := homeA + "/sessions/2026/11/14/rollout-notes.jsonl"
+	os.WriteFile(rollout, []byte("a rollout that holds a note"), 0o600)
+	// only the credential files the existing code links are carried; never sessions or logs
+	for _, n := range []string{"auth.json", "config.toml"} {
+		if l, err := os.Readlink(filepath.Join(homeA, n)); err != nil || l != filepath.Join(real, n) {
+			t.Errorf("%s: %q %v", n, l, err)
+		}
+	}
+	legacy := home(nil)
+	if legacy != filepath.Join(scratch, "state", filepath.Base(filepath.Dir(legacy)), "codex") || strings.Contains(legacy, "proj") { // 0.5.26 layout, byte for byte
+		t.Fatalf("legacy home moved: %s", legacy)
+	}
+	for name, p := range map[string]*projectCtx{"project B": {user: 1, project: 11, epoch: 5}, "user 2": {user: 2, project: 10, epoch: 5}, "epoch 6": {user: 1, project: 10, epoch: 6}, "no project": nil} {
+		h := home(p)
+		if h == homeA {
+			t.Errorf("%s: the same home", name)
+		}
+		if _, err := os.Stat(strings.Replace(rollout, homeA, h, 1)); err == nil {
+			t.Errorf("%s sees the rollout of project A", name)
+		}
+		if _, err := os.Stat(h + "/sessions/2026/11/14/rollout-real.jsonl"); err == nil {
+			t.Errorf("%s: sessions of the real home were carried over", name)
+		}
+	}
+	// dead epochs are removed (epoch 5 went away when epoch 6 was created), other projects' homes stay
+	if _, err := os.Stat(homeA); err == nil {
+		t.Error("the home of the dead epoch 5 is still there")
+	}
+	if _, err := os.Stat(home(&projectCtx{user: 1, project: 11, epoch: 5})); err != nil {
+		t.Error("another project's home was removed")
+	}
+	// bounded: many projects keep at most maxProjectHomes
+	for i := 0; i < 2*maxProjectHomes; i++ {
+		home(&projectCtx{user: 1, project: int64(100 + i), epoch: 1})
+	}
+	devDir := filepath.Dir(filepath.Dir(legacy))
+	ents, _ := os.ReadDir(filepath.Join(devDir, filepath.Base(filepath.Dir(legacy)), "proj"))
+	if len(ents) > maxProjectHomes {
+		t.Fatalf("%d project homes", len(ents))
+	}
+}
+
+func TestSharedRealHomeNeverForAProjectRun(t *testing.T) {
+	p := &projectCtx{user: 1, project: 2, epoch: 3}
+	for _, c := range []struct {
+		goos string
+		box  bool
+		k    agentKind
+		p    *projectCtx
+		want bool
+	}{
+		{"windows", false, codexKind, nil, true}, // 0.5.26: Codex uses the real ~/.codex on Windows
+		{"windows", true, codexKind, nil, true},
+		{"windows", false, grokKind, nil, true},
+		{"windows", true, grokKind, nil, false},
+		{"windows", false, copilotKind, nil, false},
+		{"windows", false, codexKind, p, false}, // a project run: its own home
+		{"windows", false, grokKind, p, false},
+		{"linux", false, codexKind, nil, false},
+		{"darwin", false, codexKind, p, false},
+	} {
+		if got := sharedRealHome(c.goos, c.box, c.k, c.p); got != c.want {
+			t.Errorf("%+v: %v", c, got)
+		}
 	}
 }
