@@ -535,6 +535,9 @@ extension Router {
                 if let folders, let bad = folders.split(separator: ",").map(String.init).first(where: { RouterConfig.overlapsCoreFolder($0) }) {
                     throw AdminError(400, "allowed folder \(bad.trimmingCharacters(in: .whitespaces)) contains or is inside the gateway's data folder (the core database of all projects): choose another folder")
                 }
+                if let folders, let bad = folders.split(separator: ",").map(String.init).first(where: { RouterConfig.overlapsGatewayFolder($0, scratch: c.scratchURL) }) {
+                    throw AdminError(400, "allowed folder \(bad.trimmingCharacters(in: .whitespaces)) contains, equals or is inside one of the gateway's own folders (the app folder with the mounts of remote clients, the scratch folder, Copilot's package cache): choose another folder")
+                }
                 let found = await ClaudeCLI.executable(path ?? config.claudeCLI.executable) != nil
                 let n = try await hooks.update { c in
                     if let enabled { c.claudeCLI.enabled = enabled }
