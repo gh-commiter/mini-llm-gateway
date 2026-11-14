@@ -899,7 +899,8 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 			return "", err
 		}
 		defer releaseHome(state) // F8
-		defer restoreAuth(state, k)
+		runStart := time.Now()
+		defer restoreAuth(state, k, runStart)
 		m := agentMounts{checked: checked, cfgDir: s.cfgDir, state: state, envVar: strings.ToUpper(k.bin) + "_HOME", files: files, rw: append([]string{dir, tmp}, extra...),
 			hide: c.Scratch, tmps: s.tempRoots(), temp: tmp, unboxed: outsideBox(k.name), // #68: Codex in Copilot nista v škatli
 			env: agentKeyEnv(s.cfgDir, k.name)} // #68: ključ API le, če ga je uporabnik izbral; dom v škatli svež vsak tek
@@ -1219,10 +1220,10 @@ func agentState(scratch string, k agentKind, owner string, p *projectCtx) (strin
 			continue
 		}
 		if l, err := os.Readlink(dst); err != nil || l != src {
-			if fi, err := os.Lstat(dst); err == nil && fi.Mode().IsRegular() {
-				continue // CLI jo je zamenjal: restoreAuth jo prenese nazaj
+			if fi, err := os.Lstat(dst); err == nil && fi.IsDir() {
+				continue // not ours to remove
 			}
-			os.Remove(dst)
+			os.Remove(dst) // F6: a file left by an earlier run (carried back or refused at its end) is the link again
 			if err := os.Symlink(src, dst); err != nil {
 				releaseHome(dir)
 				return "", nil, err
@@ -1233,9 +1234,16 @@ func agentState(scratch string, k agentKind, owner string, p *projectCtx) (strin
 	return dir, files, nil
 }
 
+// maxAuthBytes: the largest auth.json that is carried back (a real one is a few KB).
+const maxAuthBytes = 256 << 10
+
 // restoreAuth: če je CLI auth.json zamenjal (zapis z rename namesto skozi povezavo), je ta novejša: v pravo mapo in
 // spet povezava, da prava prijava ne zastari (osvežitveni žetoni se lahko zamenjajo).
-func restoreAuth(dir string, k agentKind) {
+// sec-fix F6 (as Router.restoreProjectAuth on the Mac): the file is written by the agent's CLI, which an agent can drive, so it is
+// carried only when it is opened without following a link, a regular file of this user with no other name, at most maxAuthBytes,
+// modified since `since` (this run) and a JSON object; written by a temporary file and rename; a link or folder at the real name is
+// not touched. A file that fails is dropped and the link made again, so it is not the login of the next run.
+func restoreAuth(dir string, k agentKind, since time.Time) {
 	if dir == "" {
 		return
 	}
@@ -1245,13 +1253,46 @@ func restoreAuth(dir string, k agentKind) {
 	}
 	dst, src := filepath.Join(dir, "auth.json"), filepath.Join(real, "auth.json")
 	if fi, err := os.Lstat(dst); err != nil || !fi.Mode().IsRegular() {
-		return
+		return // still the link (or a link planted: never followed)
 	}
-	if b, err := os.ReadFile(dst); err == nil && writeFileAtomic(src, b) == nil {
-		os.Chmod(src, 0o600)
+	drop := func() {
 		os.Remove(dst)
 		os.Symlink(src, dst)
 	}
+	b, ok := readCarriable(dst, since)
+	var obj map[string]any
+	if !ok || json.Unmarshal(b, &obj) != nil || obj == nil {
+		drop()
+		return
+	}
+	if fi, err := os.Lstat(src); err == nil && !fi.Mode().IsRegular() { // a link or folder at the real name
+		drop()
+		return
+	}
+	if writeFileAtomic(src, b) != nil {
+		drop()
+		return
+	}
+	os.Chmod(src, 0o600)
+	drop()
+}
+
+// readCarriable: the bytes of a small regular file of this user (one name, modified since `since`), opened without following a link.
+func readCarriable(path string, since time.Time) ([]byte, bool) {
+	f, err := openNoFollow(path)
+	if err != nil {
+		return nil, false
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil || !fi.Mode().IsRegular() || !ownedSingleLink(fi) || fi.Size() > maxAuthBytes || fi.ModTime().Before(since) {
+		return nil, false
+	}
+	b, err := io.ReadAll(io.LimitReader(f, maxAuthBytes+1))
+	if err != nil || len(b) > maxAuthBytes {
+		return nil, false
+	}
+	return b, true
 }
 
 // agentTimeout: najdaljši tek Codex ali Grok za eno zahtevo.

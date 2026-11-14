@@ -290,9 +290,9 @@ func TestAgentStatePerDevice(t *testing.T) {
 		t.Fatalf("link: %q", l)
 	}
 	os.Remove(a + "/auth.json") // CLI je zapisal novo datoteko namesto povezave
-	os.WriteFile(a+"/auth.json", []byte("NEW"), 0o600)
-	restoreAuth(a, codexKind)
-	if got, _ := os.ReadFile(real + "/auth.json"); string(got) != "NEW" {
+	os.WriteFile(a+"/auth.json", []byte(`{"t":"NEW"}`), 0o600)
+	restoreAuth(a, codexKind, time.Now().Add(-time.Second))
+	if got, _ := os.ReadFile(real + "/auth.json"); string(got) != `{"t":"NEW"}` {
 		t.Fatalf("not restored: %q", got)
 	}
 	if l, _ := os.Readlink(a + "/auth.json"); l != real+"/auth.json" {
