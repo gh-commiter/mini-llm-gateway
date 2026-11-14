@@ -6,7 +6,7 @@
 #   curl -fsSL …/install.sh | sh -s -- mini.local        # also connect; asks for the token
 #   … | sh -s -- --client | --plugin | --gateway [gateway] # parts (default: client + plugin; --gateway: Linux only)
 #   … | sh -s -- --allow-downgrade [gateway]             # install a release older than the installed minigw
-#   … | sh -s -- --uninstall [--purge]                   # remove it again (--purge: also settings and profiles)
+#   … | sh -s -- --uninstall [--purge]                   # remove it again (--purge: also settings, profiles and the project database; cannot be undone)
 #
 # Token: Mini Gateway → Settings → General → Copy Token (on the gateway Mac), or minigw gw token on the gateway.
 set -eu

@@ -596,6 +596,19 @@ func binaryHint(goos string) string {
 	return "minigw itself (" + self + "): rm " + self
 }
 
+// nonEmptyCoreDirs: the core folders (project database) below the settings folders that --purge removes.
+func nonEmptyCoreDirs() (out []string) {
+	for _, f := range []func() (string, error){os.UserConfigDir, configBase} {
+		if d, err := f(); err == nil {
+			c := filepath.Join(d, "minigw", coreDirName)
+			if e, _ := os.ReadDir(c); len(e) > 0 && !slices.Contains(out, c) {
+				out = append(out, c)
+			}
+		}
+	}
+	return out
+}
+
 func uninstallCommand(args []string) {
 	purge, yes := false, false
 	for _, a := range args {
@@ -605,7 +618,7 @@ func uninstallCommand(args []string) {
 		case "--yes", "-y":
 			yes = true
 		default:
-			fail("usage: minigw uninstall [--purge] [--yes]   (--purge also removes settings, profiles and the device key)")
+			fail("usage: minigw uninstall [--purge] [--yes]   (--purge also removes settings, profiles, the device key and the project database; this cannot be undone)")
 		}
 	}
 	refuseRoot("uninstall")
@@ -616,6 +629,11 @@ func uninstallCommand(args []string) {
 	}
 	for _, k := range kept {
 		say("Kept (--purge removes it): " + k)
+	}
+	if purge {
+		for _, d := range nonEmptyCoreDirs() {
+			say("--purge also deletes the project database (projects, members, notes, usage) in " + d + "; this cannot be undone")
+		}
 	}
 	if busy != "" {
 		say("Kept: " + busy)

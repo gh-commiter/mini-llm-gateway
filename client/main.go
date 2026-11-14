@@ -562,7 +562,7 @@ func main() {
 			"minigw serve [init|allow <id>] [--port N] [--config FILE]   run a gateway here (Windows, Linux)\n" +
 			"minigw gw status|devices|provider|claude|token …  change the gateway here, live (minigw gw help)\n" +
 			"minigw plugin install|uninstall|status       the Claude Code plugin minigw@mini-gateway, using this minigw\n" +
-			"minigw uninstall [--purge] [--yes]          remove what minigw added here (--purge: also settings, profiles, device key)\n" +
+			"minigw uninstall [--purge] [--yes]          remove what minigw added here (--purge: also settings, profiles, device key and the project database, irreversibly)\n" +
 			"minigw [claude options …]                    run Claude Code through the gateway")
 		if first == "--minigw-help" {
 			return

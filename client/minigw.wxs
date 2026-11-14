@@ -42,6 +42,8 @@
         <!-- Pladenj je isti program brez konzole: tudi brez dela Gateway, ker zažene minigw.exe za dejanja namestitve brez
              okna konzole (minigw-tray.exe msi …), in ga minigw serve install pozneje najde ob minigw.exe. -->
         <File Id="tray" Name="minigw-tray.exe" Source="$(var.Tray)"/>
+        <!-- Licence of the software built into minigw.exe (scripts/third-party-notices.sh). -->
+        <File Id="notices" Name="THIRD-PARTY-NOTICES.md" Source="$(var.Notices)"/>
         <!-- »-«: ob odstranitvi le naš del uporabniškega PATH. Brez končnega »\« (kot pathWith v serve_install.go), da
              Windows Installer vnosa, ki ga že ima (tudi od minigw serve install), ne doda še enkrat. -->
         <Environment Id="Path" Name="-PATH" Value="[LocalAppDataFolder]Programs\Mini Gateway" Part="last" Action="set" System="no" Permanent="no"/>
@@ -191,7 +193,7 @@
         </Control>
         <Control Id="Line" Type="Line" X="20" Y="120" Width="330" Height="0" Hidden="yes" ShowCondition="Installed"/>
         <Control Id="PurgeBox" Type="CheckBox" X="20" Y="132" Width="330" Height="28" Property="PURGE" CheckBoxValue="1" Hidden="yes"
-                 ShowCondition="Installed" Text="When removing: also remove settings, profiles and the device key (connections, gateway settings, keys). Otherwise they stay."/>
+                 ShowCondition="Installed" Text="When removing: also remove settings, profiles, the device key and the project database (projects, members, notes, usage). This cannot be undone. Otherwise they stay."/>
         <Control Id="Remove" Type="PushButton" X="20" Y="166" Width="80" Height="17" Text="Remove" Hidden="yes" ShowCondition="Installed">
           <Publish Event="Remove" Value="ALL" Order="1"/>
           <Publish Event="EndDialog" Value="Return" Order="2"/>
