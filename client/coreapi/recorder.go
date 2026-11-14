@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -66,12 +67,15 @@ const (
 	evBegin usageKind = iota
 	evFinish
 	evFlush
+	evGap // a gap record of the adapter: stored durably before the sender is answered
 )
 
 type recMsg struct {
 	kind  usageKind
 	ev    core.UsageEvent
 	flush chan struct{}
+	gap   core.UsageGapRecord
+	done  chan error // evGap: nil once the gap is in the core or in the spool
 }
 
 type Recorder struct {
@@ -136,6 +140,28 @@ func (u *Recorder) noteLoss(n int64, from, to time.Time) {
 	u.lost += n
 }
 
+// storeGap hands a gap record to the writer and waits until it is durable (in the core, or in the spool when the core is
+// not usable); an error means it is not, and the sender must keep it and send it again with the same id.
+func (u *Recorder) storeGap(g core.UsageGapRecord) error {
+	if u == nil {
+		return errors.New("no usage recorder")
+	}
+	m := recMsg{kind: evGap, gap: g, done: make(chan error, 1)}
+	select {
+	case u.ch <- m:
+	case <-u.stopped:
+		return errors.New("the recorder has stopped")
+	case <-time.After(5 * time.Second):
+		return errors.New("the recorder queue is full")
+	}
+	select {
+	case err := <-m.done:
+		return err
+	case <-time.After(15 * time.Second):
+		return errors.New("the recorder did not answer")
+	}
+}
+
 // kick makes the run loop store a pending gap now (every message does that first) instead of at the next tick; never blocks.
 func (u *Recorder) kick() {
 	select {
@@ -192,6 +218,12 @@ func (u *Recorder) handle(m recMsg) {
 	switch m.kind {
 	case evFlush:
 		close(m.flush)
+	case evGap:
+		if st != nil && st.ReplayUsage(ctx, nil, []core.UsageGapRecord{m.gap}) == nil { // INSERT OR IGNORE by id: a repeat is harmless
+			m.done <- nil
+			return
+		}
+		m.done <- u.spool.addGap(m.gap) // the replay into the core is by id too
 	case evBegin:
 		if st != nil {
 			st.BeginEvent(ctx, m.ev) // a failure is fine: the finish carries the whole event

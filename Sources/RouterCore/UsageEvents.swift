@@ -61,65 +61,80 @@ final class RequestState: @unchecked Sendable {
     var wasDispatched: Bool { lock.withLock { _dispatched } }
 }
 
-/// The events that were lost on the way to the helper, as one gap (count and time span), and the file that keeps it: a loss is always shown
-/// as a gap (contract section 7), also when the app quits with events still queued or the queue dropped some. The app attaches one
-/// journal (a file in its own state folder) at start; the file is read then, and a gap found in it is sent as `event-lost` at the
-/// next ready and removed when the helper has accepted it. One in-flight send at a time (a Router restart makes a second sender).
+/// The events that were lost on the way to the helper, as gaps (id, count and time span), and the file that keeps them: a loss is always shown
+/// as a gap (contract section 7), also when the app quits with events still queued or the queue dropped some. The app attaches one journal (a
+/// file in its own state folder) at start; the file is read then, and the gaps in it are sent as `event-lost` at the next ready.
+///
+/// Delivery is exactly-once by id: a gap gets its id when it is created and keeps it in the file; the core stores a gap by id, so a resend after a
+/// lost answer counts once, and the helper answers OK only when the gap is durable (core or spool). A gap is removed from the journal only on that
+/// OK. Losses after a send was attempted go into a NEW gap (a gap that may already be stored keeps its count). One send at a time (a Router restart
+/// makes a second sender).
 final class UsageGapJournal: @unchecked Sendable {
-    struct Gap: Equatable { var count: Int; var from: Date; var to: Date }
+    struct Gap: Equatable {
+        var id: String, count: Int, from: Date, to: Date
+        var attempted = false  // sent (or possibly sent) once: no loss is added to it any more
+    }
 
     /// The app's journal (nil in tests and tools: then every sender has a memory-only one).
     nonisolated(unsafe) static var attached: UsageGapJournal?
 
     private let lock = NSLock()
     private let file: URL?
-    private var pending: Gap?, sending: Gap?
+    private var gaps: [Gap] = []
+    private var inFlight: String?
 
     init(file: URL? = nil) {
         self.file = file
-        if let file, let d = try? Data(contentsOf: file), let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
-           let n = o["count"] as? Int, n > 0, let a = (o["from"] as? String).flatMap(ProjectText.parseTime), let b = (o["to"] as? String).flatMap(ProjectText.parseTime) {
-            pending = Gap(count: n, from: a, to: b)
+        guard let file, let d = try? Data(contentsOf: file), let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return }
+        func gap(_ g: [String: Any]) -> Gap? {
+            guard let n = g["count"] as? Int, n > 0, let a = (g["from"] as? String).flatMap(ProjectText.parseTime), let b = (g["to"] as? String).flatMap(ProjectText.parseTime) else { return nil }
+            return Gap(id: g["id"] as? String ?? Self.newID(), count: n, from: a, to: b, attempted: true)  // an older file has one gap without an id
         }
+        gaps = (o["gaps"] as? [[String: Any]])?.compactMap(gap) ?? gap(o).map { [$0] } ?? []
     }
 
-    var hasPending: Bool { lock.withLock { pending != nil } }
+    static func newID() -> String { "gap_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(12) }
+
+    var hasPending: Bool { lock.withLock { !gaps.isEmpty } }
+    var pendingCount: Int { lock.withLock { gaps.reduce(0) { $0 + $1.count } } }
 
     func add(count: Int, from: Date, to: Date) {
         guard count > 0 else { return }
-        lock.withLock { pending = Self.merge(pending, Gap(count: count, from: from, to: to)); save() }
-    }
-
-    /// The gap to send now (moved to in-flight); nil when there is none or one is on its way.
-    func beginSend() -> Gap? {
         lock.withLock {
-            guard sending == nil, let g = pending else { return nil }
-            sending = g; pending = nil
-            return g
-        }
-    }
-
-    /// The helper accepted (or refused for good) the gap: it is gone; otherwise it goes back (merged with what was lost meanwhile).
-    func settle(sent: Bool) {
-        lock.withLock {
-            if !sent, let g = sending { pending = Self.merge(pending, g) }
-            sending = nil
+            if let last = gaps.last, !last.attempted {
+                gaps[gaps.count - 1].count += count
+                gaps[gaps.count - 1].from = min(last.from, from)
+                gaps[gaps.count - 1].to = max(last.to, to)
+            } else {
+                gaps.append(Gap(id: Self.newID(), count: count, from: from, to: to))
+            }
             save()
         }
     }
 
-    private static func merge(_ a: Gap?, _ b: Gap) -> Gap {
-        guard let a else { return b }
-        return Gap(count: a.count + b.count, from: min(a.from, b.from), to: max(a.to, b.to))
+    /// The gap to send now (the oldest; it is marked attempted); nil when there is none or one is on its way.
+    func beginSend() -> Gap? {
+        lock.withLock {
+            guard inFlight == nil, !gaps.isEmpty else { return nil }
+            gaps[0].attempted = true
+            inFlight = gaps[0].id
+            return gaps[0]
+        }
     }
 
-    private func save() {  // under the lock: what is not yet accepted is pending plus in flight
-        guard let file else { return }
-        guard let g = sending.map({ Self.merge(pending, $0) }) ?? pending else {
-            try? FileManager.default.removeItem(at: file)
-            return
+    /// The helper stored it (or refused it for good): it is gone; otherwise it stays, with its id, to be sent again.
+    func settle(sent: Bool) {
+        lock.withLock {
+            if sent, let id = inFlight { gaps.removeAll { $0.id == id } }
+            inFlight = nil
+            save()
         }
-        let o: [String: Any] = ["count": g.count, "from": UsageEvent.iso(g.from), "to": UsageEvent.iso(g.to)]
+    }
+
+    private func save() {  // under the lock
+        guard let file else { return }
+        guard !gaps.isEmpty else { try? FileManager.default.removeItem(at: file); return }
+        let o: [String: Any] = ["gaps": gaps.map { ["id": $0.id, "count": $0.count, "from": UsageEvent.iso($0.from), "to": UsageEvent.iso($0.to)] as [String: Any] }]
         if let d = try? JSONSerialization.data(withJSONObject: o) { try? d.write(to: file, options: .atomic) }
     }
 }
@@ -206,7 +221,7 @@ final class UsageSender: @unchecked Sendable {
             guard item != nil || gapWaits else { return }
             guard core.isReady else { try? await Task.sleep(for: retry); continue }  // the helper is down: wait, nothing is blocked
             if let gap = journal.beginSend() {  // a gap first (before anything that comes after it)
-                let r = await core.internalCall("event-lost", ["count": gap.count, "from": UsageEvent.iso(gap.from), "to": UsageEvent.iso(gap.to)])
+                let r = await core.internalCall("event-lost", ["id": gap.id, "count": gap.count, "from": UsageEvent.iso(gap.from), "to": UsageEvent.iso(gap.to)])
                 if r.status == 503 { journal.settle(sent: false); try? await Task.sleep(for: retry); continue }
                 journal.settle(sent: true)  // accepted, or refused for good
             }

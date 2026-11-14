@@ -394,3 +394,76 @@ func TestEventLostAloneIsStoredWithoutWaitingForAnEvent(t *testing.T) {
 }
 
 func nowUTC() time.Time { return time.Now().UTC() }
+
+// Q5: a gap of the adapter has a stable id; a lost answer and a resend are one gap, and the answer comes only once the gap is durable.
+func TestEventLostWithAnIDIsIdempotentAndDurable(t *testing.T) {
+	f := newFixture(t)
+	f.api.StartRecorder()
+	defer f.api.StopRecorder()
+	req := LostRequest{ID: "gap_0123456789ab", Count: 3, From: nowUTC().Add(-time.Minute), To: nowUTC()}
+	for i := 0; i < 3; i++ { // the answer was lost twice: the app sends the same gap again
+		if err := f.api.Call(bg, "event-lost", req, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// no FlushRecorder: the answer already meant "stored"
+	rep, err := f.st.AdminUsage(bg, 7, core.UsageFilter{})
+	if err != nil || len(rep.Gaps) != 1 || rep.Gaps[0].Count != 3 {
+		t.Fatalf("%+v %v", rep.Gaps, err)
+	}
+	other := LostRequest{ID: "gap_ba9876543210", Count: 2, From: req.From, To: req.To}
+	if err := f.api.Call(bg, "event-lost", other, nil); err != nil {
+		t.Fatal(err)
+	}
+	var n int64
+	rep, _ = f.st.AdminUsage(bg, 7, core.UsageFilter{})
+	for _, x := range rep.Gaps {
+		n += x.Count
+	}
+	if n != 5 { // a different id is another gap
+		t.Fatalf("counted %d: %+v", n, rep.Gaps)
+	}
+	for _, bad := range []string{"short", "has space in it", "x/../../y1234", string(make([]byte, 65))} {
+		if err := f.api.Call(bg, "event-lost", LostRequest{ID: bad, Count: 1}, nil); err == nil {
+			t.Errorf("id %q accepted", bad)
+		}
+	}
+	// no recorder: not durable, so not answered
+	g := newFixture(t)
+	if err := g.api.Call(bg, "event-lost", req, nil); err == nil {
+		t.Fatal("answered OK without a recorder")
+	}
+}
+
+// The core is not usable when the gap arrives: it is spooled (durable), the answer is OK, and the replay into the core keeps it once,
+// also when the app sent it again.
+func TestEventLostIsSpooledWhenTheCoreIsDownAndCountedOnce(t *testing.T) {
+	u, _ := bareRecorder(t)
+	u.api.o.Store = func() *core.Store { return nil } // the core cannot be opened
+	g := core.UsageGapRecord{ID: "gap_spooled00001", Count: 4, From: nowUTC().Add(-time.Hour), To: nowUTC()}
+	for i := 0; i < 2; i++ { // the second is the resend after a lost answer
+		m := recMsg{kind: evGap, gap: g, done: make(chan error, 1)}
+		u.handle(m)
+		if err := <-m.done; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, gaps := u.spool.load(); len(gaps) == 0 {
+		t.Fatal("not in the spool")
+	}
+	st, err := core.Open(t.TempDir(), core.Options{}) // the core comes back: the replay is by id
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	u.api.o.Store = func() *core.Store { return st }
+	u.replay()
+	rep, _ := st.AdminUsage(bg, 7, core.UsageFilter{})
+	var n int64
+	for _, x := range rep.Gaps {
+		n += x.Count
+	}
+	if n != 4 {
+		t.Fatalf("counted %d, want 4 once: %+v", n, rep.Gaps)
+	}
+}

@@ -156,6 +156,7 @@ type EventRequest struct {
 // LostRequest: events the adapter could not deliver (its own queue overflowed while the helper was down); the core shows
 // them as a gap, as for events its own queue drops.
 type LostRequest struct {
+	ID    string    `json:"id,omitempty"` // chosen once by the sender and kept until it is answered: a repeat is the same gap, never a second one
 	Count int64     `json:"count"`
 	From  time.Time `json:"from"`
 	To    time.Time `json:"to"`
@@ -259,6 +260,16 @@ func (a *API) internal(ctx context.Context, r Request) Response {
 		if decodeStrict(r.Body, &in) != nil || in.Count < 1 {
 			return bad
 		}
+		if in.ID != "" { // answered only when the gap is durable (core or spool), and stored by id: a lost answer and a resend count once
+			if !validGapID(in.ID) {
+				return bad
+			}
+			if err := a.rec.storeGap(core.UsageGapRecord{ID: in.ID, Count: in.Count, From: in.From, To: in.To}); err != nil {
+				a.o.Log("event-lost: %v", err)
+				return unavailable()
+			}
+			return resp(200, map[string]any{"stored": true})
+		}
 		if a.rec != nil {
 			a.rec.noteLoss(in.Count, in.From, in.To)
 			a.rec.kick() // a gap that arrives alone (the app quit with events queued) is stored now
@@ -327,4 +338,17 @@ func (a *API) UserOf(ctx context.Context, device string) int64 {
 		}
 	}
 	return 0
+}
+
+// validGapID: a gap id from the adapter is short and plain (it is a key of the usage_gaps table).
+func validGapID(id string) bool {
+	if len(id) < 8 || len(id) > 64 {
+		return false
+	}
+	for _, c := range id {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
 }
