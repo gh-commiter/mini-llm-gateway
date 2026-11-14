@@ -307,6 +307,9 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         }
         take(\.host); take(\.port); take(\.allowedClients); take(\.allowPlainRemote); take(\.allowAnyDevice); take(\.allowLocalApps); take(\.claudeCLI); take(\.appleFM)
         take(\.siri); take(\.codex); take(\.copilot); take(\.grok); take(\.foundry); take(\.scratchFolder); take(\.scratchName); take(\.runCommands); take(\.worktreeNetwork); take(\.worktreeCodexNetwork)
+        for (p, rec) in d.claudeCLI.allowedRecords where rec.ino == 0 {  // C1: an identity adopted meanwhile is not lost to an older draft
+            if let cur = new.claudeCLI.allowedRecords[p], cur.ino != 0, cur.real == rec.real { d.claudeCLI.allowedRecords[p] = cur }
+        }
         d.devices = mergeList(draft.devices, old.devices, new.devices)
         d.providers = mergeList(draft.providers, old.providers, new.providers)
         return d

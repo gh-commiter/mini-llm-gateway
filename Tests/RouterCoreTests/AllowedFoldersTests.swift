@@ -310,6 +310,20 @@ private func allowedTemp() throws -> URL {
     #expect(check.folders(p, log: { _ in }).isEmpty)
 }
 
+// C1: an open settings draft with an older record (no identity) must not undo an identity adopted meanwhile.
+@Test func settingsMergeKeepsAdoptedIdentity() {
+    var old = RouterConfig()
+    old.claudeCLI.allowedRoots = "/x"
+    old.claudeCLI.allowedRecords["/x"] = FolderRecord(real: "/x")
+    var new = old
+    new.claudeCLI.allowedRecords["/x"] = FolderRecord(real: "/x", volume: "U", ino: 5)
+    var draft = old
+    draft.claudeCLI.enabled.toggle()  // the user changed something else in Claude settings
+    let merged = RouterConfig.merge(draft: draft, old: old, new: new)
+    #expect(merged.claudeCLI.enabled == draft.claudeCLI.enabled)
+    #expect(merged.claudeCLI.allowedRecords["/x"]?.ino == 5)
+}
+
 // The checked real path of an allowed folder may contain a comma: it must not be split like the configured list.
 @Test func checkedRootWithCommaIsKept() throws {
     let fm = FileManager.default, base = try allowedTemp()
