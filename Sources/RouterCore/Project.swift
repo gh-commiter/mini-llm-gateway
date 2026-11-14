@@ -226,7 +226,10 @@ public enum Projects {
     /// The request line and headers (without the final blank line) with every X-Minigw-Project header removed, whatever its case,
     /// and, when the run has a project, the one minigw resolved. The agent CLI's own settings (ANTHROPIC_CUSTOM_HEADERS from a
     /// repository) can therefore never choose the project of a request.
-    public static func rewriteHead(_ head: Data, project: String) -> Data {
+    /// 0.6.0 sec-fix F1, fail closed: nil (close the connection) when the head has a line the gateway's parsers could read differently
+    /// from this one: a line starting with SP/HT (obs-fold), a bare CR or LF inside a line, a line without a colon or a header name that is not an
+    /// RFC 7230 token (`X-Minigw-Project : 7`, a no-break space). The name is compared exactly, as the receiving parser does.
+    public static func rewriteHead(_ head: Data, project: String) -> Data? {
         let crlf = Data("\r\n".utf8)
         var lines: [Data] = []
         var rest = head[...]
@@ -235,41 +238,42 @@ public enum Projects {
         let name = Array("x-minigw-project".utf8)
         func lowered(_ d: Data) -> [UInt8] { d.map { $0 >= 65 && $0 <= 90 ? $0 + 32 : $0 } }
         var out: [Data] = []
-        var skipping = false
         for (i, l) in lines.enumerated() {
-            let lower = lowered(l)
-            if i > 0 && skipping && (l.first == 0x20 || l.first == 0x09) { continue }  // folded continuation of a dropped header
-            if i > 0 && lower.starts(with: name), let colon = lower.firstIndex(of: UInt8(ascii: ":")) {
-                let n = lower[..<colon].drop { isSpace($0) }.reversed().drop { isSpace($0) }.reversed()
-                if Array(n) == name { skipping = true; continue }
+            if l.contains(0x0a) || l.contains(0x0d) { return nil }
+            if i > 0 {
+                guard l.first != 0x20, l.first != 0x09, let colon = l.firstIndex(of: UInt8(ascii: ":")),
+                      colon > l.startIndex, l[..<colon].allSatisfy(isTokenByte) else { return nil }
+                if lowered(l)[..<(colon - l.startIndex)].elementsEqual(name) { continue }
             }
-            skipping = false
             out.append(l)
             if i == 0 && !project.isEmpty { out.append(Data(("X-Minigw-Project: " + project).utf8)) }
         }
         return Data(out.enumerated().reduce(into: [UInt8]()) { $0 += ($1.offset > 0 ? Array(crlf) : []) + Array($1.element) })
     }
 
-    private static func isSpace(_ b: UInt8) -> Bool { b == 0x20 || (0x09...0x0d).contains(b) }
+    /// RFC 7230 tchar.
+    static func isTokenByte(_ b: UInt8) -> Bool {
+        (0x30...0x39).contains(b) || (0x41...0x5a).contains(b) || (0x61...0x7a).contains(b) || "!#$%&'*+-.^_`|~".utf8.contains(b)
+    }
 
     /// The first request's header block of one local connection, until it is complete (the gateway serves one request per connection),
-    /// rewritten with rewriteHead; everything after it passes unchanged. Not complete after 64 KiB: passed on as it is.
+    /// rewritten with rewriteHead; everything after it passes unchanged. F2: not complete after 64 KiB, or a head rewriteHead refuses:
+    /// nil, the caller closes the connection (nothing is passed on unrewritten).
     public final class HeadRewriter: @unchecked Sendable {
         private var head = Data()
         private var done = false
         private let project: String
         public init(project: String) { self.project = project }
 
-        /// The bytes to send on now (empty while the header block is incomplete).
-        public func feed(_ chunk: Data) -> Data {
+        /// The bytes to send on (empty while the header block is incomplete); nil = close the connection.
+        public func feed(_ chunk: Data) -> Data? {
             if done { return chunk }
             head.append(chunk)
-            let end = head.range(of: Data("\r\n\r\n".utf8))
-            guard end != nil || head.count > 64 << 10 else { return Data() }
+            guard let end = head.range(of: Data("\r\n\r\n".utf8)) else { return head.count > 64 << 10 ? nil : Data() }
             done = true
             defer { head = Data() }
-            guard let end else { return head }
-            return Projects.rewriteHead(head[..<end.lowerBound], project: project) + head[end.lowerBound...]
+            guard let rewritten = Projects.rewriteHead(head[..<end.lowerBound], project: project) else { return nil }
+            return rewritten + head[end.lowerBound...]
         }
     }
 }

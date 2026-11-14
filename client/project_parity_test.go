@@ -189,12 +189,16 @@ func TestProjectParityResolutionAndHeader(t *testing.T) {
 
 func TestProjectParityRewriteHead(t *testing.T) {
 	var fx struct {
-		Rewrite []struct{ Name, Head, Project, Want string }
+		Rewrite []struct {
+			Name, Head, Project, Want string
+			Reject                    bool // F1: the connection is closed, nothing is passed on
+		}
 	}
 	readFixture(t, "project-header.json", &fx)
 	for _, c := range fx.Rewrite {
-		if got := string(rewriteHead([]byte(c.Head), c.Project)); got != c.Want {
-			t.Errorf("%s:\n got %q\nwant %q", c.Name, got, c.Want)
+		got, ok := rewriteHead([]byte(c.Head), c.Project)
+		if ok == c.Reject || string(got) != c.Want {
+			t.Errorf("%s:\n got %q ok=%v\nwant %q reject=%v", c.Name, got, ok, c.Want, c.Reject)
 		}
 	}
 }

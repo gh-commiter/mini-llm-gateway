@@ -41,9 +41,14 @@ public enum HTTPParser {
 
         var headers: [String: String] = [:]
         for line in lines {
-            guard let colon = line.firstIndex(of: ":") else { return .error(400, "Bad header line") }
-            headers[line[..<colon].trimmingCharacters(in: .whitespaces).lowercased()] =
-                line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+            // 0.6.0 sec-fix F1: a header line the Go gateway's parser would read differently is refused (obs-fold, a name that is not an
+            // RFC 7230 token such as `X-Minigw-Project : 7` or one with a no-break space, a bare CR or LF): nothing can forge the project header
+            guard let colon = line.firstIndex(of: ":"), colon > line.startIndex,
+                  line[..<colon].utf8.allSatisfy(Projects.isTokenByte), !line.utf8.contains(where: { $0 == 0x0a || $0 == 0x0d })
+            else { return .error(400, "Bad header line") }
+            let name = line[..<colon].lowercased()
+            if name == "x-minigw-project", headers[name] != nil { return .error(400, "More than one X-Minigw-Project header") }
+            headers[name] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
         }
         if headers["transfer-encoding"] != nil { return .error(411, "Chunked request bodies are not supported") }
         guard let length = Int(headers["content-length"] ?? "0"), length >= 0 else { return .error(400, "Bad Content-Length") }

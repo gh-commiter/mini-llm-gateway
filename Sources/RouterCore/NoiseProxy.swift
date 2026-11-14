@@ -100,8 +100,9 @@ public final class NoiseProxy: @unchecked Sendable {
     /// Lokalno (navaden HTTP) → okvirji → router.
     private func pumpUp(_ local: NWConnection, _ remote: NWConnection, _ c: Noise.Cipher, _ rewriter: Projects.HeadRewriter) {
         local.receive(minimumIncompleteLength: 1, maximumLength: Noise.maxPlain) { data, _, end, error in
-            if let data, !data.isEmpty, case let send = rewriter.feed(data), !send.isEmpty {  // the first request's header block is rewritten
-                remote.send(content: Noise.frames(send, c), completion: .contentProcessed { _ in })
+            if let data, !data.isEmpty {
+                guard let send = rewriter.feed(data) else { local.cancel(); remote.cancel(); return }  // F1/F2: a head that cannot be rewritten safely is not passed on
+                if !send.isEmpty { remote.send(content: Noise.frames(send, c), completion: .contentProcessed { _ in }) }  // the first request's header block is rewritten
             }
             if end || error != nil { return }  // odgovor še teče; povezavo zapre router
             self.pumpUp(local, remote, c, rewriter)

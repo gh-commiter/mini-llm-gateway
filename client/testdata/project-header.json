@@ -494,27 +494,30 @@
   },
   {
    "name": "any case, replaced by ours",
-   "head": "POST /v1/messages HTTP/1.1\r\nhost: x\r\nx-MINIGW-project : 9\r\nX-MINIGW-PROJECT: 8",
+   "head": "POST /v1/messages HTTP/1.1\r\nhost: x\r\nx-MINIGW-project: 9\r\nX-MINIGW-PROJECT: 8",
    "project": "42",
    "want": "POST /v1/messages HTTP/1.1\r\nX-Minigw-Project: 42\r\nhost: x"
   },
   {
-   "name": "folded continuation dropped",
+   "name": "refused: obs-fold after the project header",
    "head": "GET / HTTP/1.1\r\nX-Minigw-Project: 9\r\n 10\r\nHost: x",
    "project": "",
-   "want": "GET / HTTP/1.1\r\nHost: x"
+   "want": "",
+   "reject": true
   },
   {
-   "name": "tab folded continuation dropped",
+   "name": "refused: tab obs-fold after the project header",
    "head": "GET / HTTP/1.1\r\nX-Minigw-Project: 9\r\n\t10\r\nHost: x",
    "project": "5",
-   "want": "GET / HTTP/1.1\r\nX-Minigw-Project: 5\r\nHost: x"
+   "want": "",
+   "reject": true
   },
   {
-   "name": "a fold of another header stays",
+   "name": "refused: obs-fold of another header",
    "head": "GET / HTTP/1.1\r\nX-Other: a\r\n b\r\nHost: x",
    "project": "",
-   "want": "GET / HTTP/1.1\r\nX-Other: a\r\n b\r\nHost: x"
+   "want": "",
+   "reject": true
   },
   {
    "name": "similar names stay",
@@ -541,10 +544,11 @@
    "want": "GET / HTTP/1.1\r\nX-Note: x-minigw-project: 1\r\nHost: x"
   },
   {
-   "name": "a line without a colon that starts with the name is kept",
+   "name": "refused: a line without a colon",
    "head": "GET / HTTP/1.1\r\nx-minigw-project\r\nHost: x",
    "project": "",
-   "want": "GET / HTTP/1.1\r\nx-minigw-project\r\nHost: x"
+   "want": "",
+   "reject": true
   },
   {
    "name": "request line only",
@@ -563,6 +567,69 @@
    "head": "GET /è HTTP/1.1\r\nX-Name: čš\r\nX-Minigw-Project: 1",
    "project": "",
    "want": "GET /è HTTP/1.1\r\nX-Name: čš"
+  },
+  {
+   "name": "refused: forged header after a leading space",
+   "head": "GET / HTTP/1.1\r\nHost: x\r\n X-Minigw-Project: 7",
+   "project": "42",
+   "want": "",
+   "reject": true
+  },
+  {
+   "name": "refused: forged header after a leading tab",
+   "head": "GET / HTTP/1.1\r\nHost: x\r\n\tX-Minigw-Project: 7",
+   "project": "",
+   "want": "",
+   "reject": true
+  },
+  {
+   "name": "refused: space before the colon",
+   "head": "GET / HTTP/1.1\r\nHost: x\r\nX-Minigw-Project : 7",
+   "project": "42",
+   "want": "",
+   "reject": true
+  },
+  {
+   "name": "refused: no-break space after the name",
+   "head": "GET / HTTP/1.1\r\nHost: x\r\nX-Minigw-Project : 7",
+   "project": "",
+   "want": "",
+   "reject": true
+  },
+  {
+   "name": "refused: no-break space before the name",
+   "head": "GET / HTTP/1.1\r\nHost: x\r\n X-Minigw-Project: 7",
+   "project": "",
+   "want": "",
+   "reject": true
+  },
+  {
+   "name": "refused: bare LF hides a header",
+   "head": "GET / HTTP/1.1\r\nX-A: 1\nX-Minigw-Project: 7\r\nHost: x",
+   "project": "42",
+   "want": "",
+   "reject": true
+  },
+  {
+   "name": "refused: bare CR in a line",
+   "head": "GET / HTTP/1.1\r\nX-A: 1\rX-Minigw-Project: 7\r\nHost: x",
+   "project": "",
+   "want": "",
+   "reject": true
+  },
+  {
+   "name": "refused: a name with a space",
+   "head": "GET / HTTP/1.1\r\nX Y: 1\r\nHost: x",
+   "project": "",
+   "want": "",
+   "reject": true
+  },
+  {
+   "name": "refused: an empty name",
+   "head": "GET / HTTP/1.1\r\n: 1\r\nHost: x",
+   "project": "",
+   "want": "",
+   "reject": true
   }
  ]
 }
