@@ -269,10 +269,11 @@ private func entry(_ p: String, _ data: String) -> Sync.Entry { Sync.Entry(path:
     try fm.createDirectory(at: root.appendingPathComponent("d/.claude"), withIntermediateDirectories: true)
     try put("{}", root.appendingPathComponent("d/.claude/settings.json"))
     let rt = try #require(ShareRoot(root))
-    func fds() -> Int { (try? fm.contentsOfDirectory(atPath: "/dev/fd").count) ?? 0 }
-    let before = fds()
-    for _ in 0..<300 { #expect(!rt.removeAll("d")) }
-    #expect(fds() - before < 100, "leaked \(fds() - before)")
+    // Le deskriptorji na poti te mape (F_GETPATH): drugi testi v vzporednem teku ne vplivajo na štetje.
+    func mine() -> Int { (3..<1024).filter { ShareRoot.path(of: Int32($0))?.hasPrefix(root.path) == true }.count }
+    let before = mine()
+    for _ in 0..<50 { #expect(!rt.removeAll("d")) }
+    #expect(mine() == before, "leaked \(mine() - before)")
     #expect(!gone(root.appendingPathComponent("d/.claude/settings.json")))
 }
 
@@ -302,7 +303,7 @@ private func entry(_ p: String, _ data: String) -> Sync.Entry { Sync.Entry(path:
     #expect(rt.writeAtomic("d/x", Data("ok".utf8), mode: nil, mtime: nil) == 0)
     #expect(read(moved.appendingPathComponent("d/x")) == "ok")
     #expect(rt.writeAtomic(".claude/settings.json", Data("{}".utf8), mode: nil, mtime: nil) != 0)
-    #expect(rt.path.hasSuffix(moved.lastPathComponent))
+    #expect(rt.path?.hasSuffix(moved.lastPathComponent) == true)
 }
 
 /// R1 F5: »..« in absolutna pot sta zavrnjena v vsaki točki vstopa.
@@ -340,8 +341,9 @@ private func entry(_ p: String, _ data: String) -> Sync.Entry { Sync.Entry(path:
     #expect(st.st_mtimespec.tv_sec == -2 && st.st_mtimespec.tv_nsec == 500_000_000)
 }
 
-/// R1 F11 (najbližje dosegljivo): mapa, zamenjana s pravo preimenovano mapo na zaščiteno ime, ne sprejme pisanja.
-@Test func shareParentRenamedOntoProtectedNameIsRefused() throws {
+/// Mapa, preimenovana na zaščiteno ime pred pisanjem: odpiranje po prvotnem imenu ne uspe, nič ne pristane v .claude.
+/// Preverjanje F_GETPATH v `parent()` ta test ne doseže (brez povezave je pot odprte mape vedno enaka zahtevani).
+@Test func shareParentRenamedAwayBeforePutIsRefusedNearProtectedName() throws {
     let root = try tmp("root"), fm = FileManager.default
     try fm.createDirectory(at: root.appendingPathComponent("d"), withIntermediateDirectories: true)
     try fm.createDirectory(at: root.appendingPathComponent(".claude"), withIntermediateDirectories: true)
@@ -353,4 +355,38 @@ private func entry(_ p: String, _ data: String) -> Sync.Entry { Sync.Entry(path:
     defer { WebDAV.beforeMutation = nil }
     #expect(dav(root, "PUT", "/d/settings.json", [:], "{}").status >= 400)
     #expect((try? fm.contentsOfDirectory(atPath: root.appendingPathComponent(".claude").path)) == [])
+}
+
+/// G2: pregled in brisanje ne gresta globlje od `maxDepth` (zaščiteno oziroma neizbrisano).
+@Test func shareTreeDepthIsBounded() throws {
+    let root = try tmp("root"), fm = FileManager.default
+    try fm.createDirectory(at: root.appendingPathComponent("t/a/b/c/d"), withIntermediateDirectories: true)
+    let rt = try #require(ShareRoot(root))
+    let old = ShareRoot.maxDepth
+    defer { ShareRoot.maxDepth = old }
+    ShareRoot.maxDepth = 10
+    #expect(!rt.treeProtected("t", base: ["t"]) && rt.removeAll("t"))
+    try fm.createDirectory(at: root.appendingPathComponent("u/a/b/c/d/e/f/g/h/i/j/k"), withIntermediateDirectories: true)
+    ShareRoot.maxDepth = 3
+    #expect(rt.treeProtected("u", base: ["u"]) && !rt.removeAll("u"))
+    #expect(!gone(root.appendingPathComponent("u/a")))
+}
+
+/// G3 (F3): mapa se po branju seznama zamenja z drugo pravo mapo; brisanje gre po prvotni odprtini, druga mapa ostane.
+@Test func shareRemoveAllUsesOneOpenFolder() throws {
+    let root = try tmp("root"), fm = FileManager.default
+    try fm.createDirectory(at: root.appendingPathComponent("t"), withIntermediateDirectories: true)
+    try fm.createDirectory(at: root.appendingPathComponent("other"), withIntermediateDirectories: true)
+    try put("f", root.appendingPathComponent("t/f")); try put("keep", root.appendingPathComponent("other/keep"))
+    let rt = try #require(ShareRoot(root))
+    let target = try #require(rt.path) + "/t"
+    ShareRoot.afterList = { dir in
+        guard dir == target else { return }
+        try? fm.moveItem(at: root.appendingPathComponent("t"), to: root.appendingPathComponent("t-old"))
+        try? fm.moveItem(at: root.appendingPathComponent("other"), to: root.appendingPathComponent("t"))
+    }
+    defer { ShareRoot.afterList = nil }
+    #expect(!rt.removeAll("t"))  // izprazni prvotno mapo, a imena »t« (zdaj druga, polna mapa) ne odstrani
+    #expect(read(root.appendingPathComponent("t/keep")) == "keep", "the folder swapped in was emptied")
+    #expect(gone(root.appendingPathComponent("t-old/f")))
 }

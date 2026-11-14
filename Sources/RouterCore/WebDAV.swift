@@ -127,7 +127,7 @@ public enum WebDAV {
             if junk { return DAVResponse(201) }
             if isDir { return DAVResponse(405) }
             guard parentExists(p) else { return DAVResponse(409) }
-            beforeMutation?(rt.path)
+            beforeMutation?(rt.path ?? "")
             // #9: obstoječa datoteka obdrži pravice (0755 build.sh ostane izvršljiv); nova ostane 0600.
             let perm = info.map { $0.st_mode & S_IFMT == S_IFREG ? $0.st_mode & 0o7777 : nil } ?? nil
             guard rt.writeAtomic(p, body, mode: perm, mtime: nil) == 0 else { return forbidden() }
@@ -136,7 +136,7 @@ public enum WebDAV {
         case "MKCOL":
             if info != nil { return DAVResponse(405) }
             guard parentExists(p) else { return DAVResponse(409) }
-            beforeMutation?(rt.path)
+            beforeMutation?(rt.path ?? "")
             guard rt.mkdir(p) == 0 else { return forbidden() }
             return DAVResponse(201)
 
@@ -145,7 +145,7 @@ public enum WebDAV {
             guard exists else { return DAVResponse(404) }
             guard !rel.isEmpty else { return forbidden() }
             guard !rt.treeProtected(p, base: rel) else { return refuse(rel) }
-            beforeMutation?(rt.path)
+            beforeMutation?(rt.path ?? "")
             guard rt.removeAll(p) else { return forbidden() }
             return DAVResponse(204)
 
@@ -170,7 +170,7 @@ public enum WebDAV {
             // (poti sta brez povezav; macOS: velikost črk ni pomembna).
             let src = p.lowercased() + "/", dst = dest.lowercased() + "/"
             if dst != src, dst.hasPrefix(src) || src.hasPrefix(dst) { return forbidden() }
-            beforeMutation?(rt.path)
+            beforeMutation?(rt.path ?? "")
             // Ista datoteka (»a.txt« → »A.txt« na APFS, trda povezava): cilja ne brišemo, ker je to vir.
             // MOVE preimenuje prek začasnega imena (tudi datotečni sistemi, ki sami ne preimenujejo le velikosti črk).
             if let s = rt.lstat(p), let d = rt.lstat(dest), s.st_dev == d.st_dev, s.st_ino == d.st_ino {
@@ -194,7 +194,7 @@ public enum WebDAV {
             var created = false
             if !exists, !junk {
                 guard parentExists(p) else { return DAVResponse(409) }
-                beforeMutation?(rt.path)
+                beforeMutation?(rt.path ?? "")
                 guard let f = rt.create(p) else { return forbidden() }
                 close(f)
                 created = true

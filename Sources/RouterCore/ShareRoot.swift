@@ -13,10 +13,13 @@ final class ShareRoot: @unchecked Sendable {
     struct Refused: Error { let message: String }
 
     let fd: Int32
-    private let openedPath: String
     /// Trenutna prava pot korena (F_GETPATH ob vsakem klicu, kot Go): sklic za pot nadrejene mape, ki jo operacija pripne;
-    /// preimenovana mapa deljenja tako še dela.
-    var path: String { Self.path(of: fd) ?? openedPath }
+    /// preimenovana mapa deljenja tako še dela. nil, če je ni mogoče prebrati: operacije zavrnejo.
+    var path: String? { Self.path(of: fd) }
+    /// Največja globina drevesa pri pregledu in brisanju (test jo zniža); globlje = zaščiteno oziroma ne izbriše.
+    nonisolated(unsafe) static var maxDepth = 1024
+    /// Test: po branju seznama mape, pred brisanjem vsebine; argument = pot mape.
+    nonisolated(unsafe) static var afterList: ((String) -> Void)?
     /// Datotečni sistem razlikuje velike in male črke (primerjava absolutnih ciljev povezav kot Go na Darwinu).
     private let caseSensitive: Bool
     /// Imena korena (kot odprto, prava pot): tako je lahko napisana absolutna povezava, ki kaže v mapo.
@@ -26,8 +29,8 @@ final class ShareRoot: @unchecked Sendable {
         guard let real = Sync.real(url) else { return nil }
         let fd = Darwin.open(real.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
         guard fd >= 0 else { return nil }
+        guard let openedPath = Self.path(of: fd) else { close(fd); return nil }
         self.fd = fd
-        openedPath = Self.path(of: fd) ?? real.path
         caseSensitive = (try? real.resourceValues(forKeys: [.volumeSupportsCaseSensitiveNamesKey]))?.volumeSupportsCaseSensitiveNames ?? false
         bases = Set([url.standardizedFileURL.path, real.path, openedPath]).map(Self.lexical)
     }
@@ -192,8 +195,9 @@ final class ShareRoot: @unchecked Sendable {
         guard let c = Self.local(rel), let name = c.last, !Sync.isProtected(c.joined(separator: "/")) else { return nil }
         let p = openat(fd, Self.join(Array(c.dropLast())), O_RDONLY | O_DIRECTORY | O_NOFOLLOW_ANY | O_CLOEXEC)
         guard p >= 0 else { return nil }
-        let root = path  // ob vsaki spremembi znova iz deskriptorja
-        guard let pp = Self.path(of: p), pp == root || pp.hasPrefix(root + "/"),
+        // Ob vsaki spremembi znova iz deskriptorja; brez poti korena ali mape = zavrnjeno.
+        // Pot odprte mape se od zahtevane razlikuje le prek povezave, ki jo O_NOFOLLOW_ANY že zavrne: obramba v globino.
+        guard let root = path, let pp = Self.path(of: p), pp == root || pp.hasPrefix(root + "/"),
               !Sync.isProtected(pp == root ? name : String(pp.dropFirst(root.count + 1)) + "/" + name)
         else { close(p); return nil }
         return (p, name)
@@ -234,11 +238,12 @@ final class ShareRoot: @unchecked Sendable {
     func removeAll(_ rel: String) -> Bool {
         guard let (p, name) = parent(rel) else { return false }
         defer { close(p) }
-        guard !Self.treeProtected(p, name, [name]) else { return false }
-        return Self.removeTree(p, name)
+        guard !Self.treeProtected(p, name, [name], 0) else { return false }
+        return Self.removeTree(p, name, 0)
     }
 
-    private static func removeTree(_ p: Int32, _ name: String) -> Bool {
+    private static func removeTree(_ p: Int32, _ name: String, _ depth: Int) -> Bool {
+        if depth > maxDepth { return false }
         var st = stat()
         guard fstatat(p, name, &st, AT_SYMLINK_NOFOLLOW) == 0 else { return errno == ENOENT }
         if st.st_mode & S_IFMT == S_IFDIR {
@@ -246,7 +251,8 @@ final class ShareRoot: @unchecked Sendable {
             guard d >= 0 else { return false }
             defer { close(d) }
             guard let kids = names(dup(d)) else { return false }
-            for k in kids where !removeTree(d, k) { return false }
+            if let hook = afterList, let dp = path(of: d) { hook(dp) }
+            for k in kids where !removeTree(d, k, depth + 1) { return false }
             return unlinkat(p, name, AT_REMOVEDIR) == 0
         }
         return unlinkat(p, name, 0) == 0
@@ -254,7 +260,8 @@ final class ShareRoot: @unchecked Sendable {
 
     /// Ali je katera koli pot v drevesu `name` (pod `p`; z imenom `base`) zaščitena; povezavi (ni mapa) se ne sledi,
     /// nečitljivo = zaščiteno (kot Go rootTreeProtected).
-    private static func treeProtected(_ p: Int32, _ name: String, _ base: [String]) -> Bool {
+    private static func treeProtected(_ p: Int32, _ name: String, _ base: [String], _ depth: Int) -> Bool {
+        if depth > maxDepth { return true }
         var st = stat()
         guard fstatat(p, name, &st, AT_SYMLINK_NOFOLLOW) == 0 else { return errno != ENOENT }  // ni je = nič zaščitenega; druga napaka = zaščiteno
         let b = base.joined(separator: "/")
@@ -264,7 +271,7 @@ final class ShareRoot: @unchecked Sendable {
         guard d >= 0 else { return true }
         defer { close(d) }
         guard let kids = names(dup(d)) else { return true }
-        for k in kids where treeProtected(d, k, base + [k]) { return true }
+        for k in kids where treeProtected(d, k, base + [k], depth + 1) { return true }
         return false
     }
 
@@ -274,7 +281,7 @@ final class ShareRoot: @unchecked Sendable {
         let p = openat(fd, Self.join(Array(c.dropLast())), O_RDONLY | O_DIRECTORY | O_NOFOLLOW_ANY | O_CLOEXEC)
         guard p >= 0 else { return true }
         defer { close(p) }
-        return Self.treeProtected(p, c.last ?? ".", base)
+        return Self.treeProtected(p, c.last ?? ".", base, 0)
     }
 
     /// Preimenuje (zaščiteno drevo ni dovoljeno ne kot vir ne kot cilj).
@@ -283,7 +290,7 @@ final class ShareRoot: @unchecked Sendable {
         defer { close(sp) }
         guard let (dp, dn) = parent(dst) else { return false }
         defer { close(dp) }
-        guard !Self.treeProtected(sp, sn, [sn]), !Self.treeProtected(sp, sn, [dn]) else { return false }
+        guard !Self.treeProtected(sp, sn, [sn], 0), !Self.treeProtected(sp, sn, [dn], 0) else { return false }
         return renameat(sp, sn, dp, dn) == 0
     }
 
