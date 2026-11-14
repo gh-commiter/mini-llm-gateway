@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -63,9 +64,12 @@ func (c *clientFx) run(user, cwd, stdin string, args ...string) (string, error) 
 	c.t.Helper()
 	e, o, _ := c.env(user, cwd, stdin)
 	var err error
-	if args[0] == "note" {
+	switch args[0] {
+	case "note":
 		err = e.note(args[1:])
-	} else {
+	case "usage":
+		err = e.usage(args[1:])
+	default:
 		err = e.project(args[1:])
 	}
 	return o.String(), err
@@ -367,4 +371,16 @@ func TestProxyRewritesTheProjectHeader(t *testing.T) { // review L1
 			t.Errorf("%s:\n got %q\nwant %q", c.name, got, c.want)
 		}
 	}
+}
+
+func TestMemberRoutesRefuseAnAgentDescendant(t *testing.T) { // review L7
+	c := newClientFx(t)
+	dir := folder(t, t.TempDir(), "p")
+	c.must("ana", dir, "", "project", "list")
+	adminPeerCheckFn = func(net.Conn) error { return errAgentPeer }
+	defer func() { adminPeerCheckFn = adminPeerCheck }()
+	_, err := c.run("ana", dir, "", "project", "list")
+	wantErr(t, err, "no project access")
+	_, err = c.run("ana", dir, "", "usage")
+	wantErr(t, err, "no project access")
 }

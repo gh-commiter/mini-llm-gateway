@@ -155,6 +155,13 @@ func (s *server) projectHTTP(w http.ResponseWriter, r *req) int {
 	if runOf(r) != nil || !s.authorized(r) {
 		return deny()
 	}
+	// A process of one of this gateway's own agents may not use the member routes, as for the admin API (L7).
+	if r.conn.loopback() {
+		if err := adminPeerCheckFn(r.conn); err != nil {
+			s.log.Printf("%s project route refused: %v", r.rid, err)
+			return deny()
+		}
+	}
 	if s.core == nil {
 		return coreFail(w, r.rid, 503, "core_unavailable", "The project database is not available", nil)
 	}
