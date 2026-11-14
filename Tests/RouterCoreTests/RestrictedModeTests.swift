@@ -189,3 +189,71 @@ private let cwd = URL(fileURLWithPath: "/tmp/session")
         #expect(profile.contains(want), "\(want)")
     }
 }
+
+// #114: a remote client's folder lives inside the gateway's own folders (`<app support>/Mini Gateway/mounts/<dir>`, `<Scratch>/sync/<…>`); a deny beats an allow, so no
+// deny rule may cover a scope folder (the session folder or an allowed folder).
+
+/// Every deny rule of an argv (the --disallowedTools list and the permissions.deny of --settings) as the path it covers.
+private func deniedPaths(_ a: [String]) -> [String] {
+    var rules = value(a, "--disallowedTools").split(separator: ",").map(String.init)
+    if let json = a.firstIndex(of: "--settings").map({ a[$0 + 1] }), let o = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any],
+       let d = (o["permissions"] as? [String: Any])?["deny"] as? [String] { rules += d }
+    return rules.compactMap { r in
+        guard let open = r.firstIndex(of: "("), r.hasSuffix(")") else { return nil }
+        var p = String(r[r.index(after: open)..<r.index(before: r.endIndex)])
+        guard p.hasPrefix("//") else { return nil }  // relative rules (./) are not paths
+        p = String(p.dropFirst()); if p.hasSuffix("/**") { p = String(p.dropLast(3)) }
+        return p
+    }
+}
+
+private func covers(_ deny: String, _ scope: String) -> Bool { scope == deny || scope.hasPrefix(deny + "/") }
+
+@Test func noDenyRuleCoversAScopeFolderInsideTheAppFolderOrScratch() throws {
+    let fm = FileManager.default
+    let app = GatewayHistory.defaultFile.deletingLastPathComponent().standardizedFileURL.path
+    let scratchRoot = fm.temporaryDirectory.appendingPathComponent("scratch-" + UUID().uuidString)
+    defer { try? fm.removeItem(at: scratchRoot) }
+    let scratch = scratchRoot.appendingPathComponent("Mini Gateway Scratch")
+    let sync = scratch.appendingPathComponent("sync/dev1/proj").path
+    try fm.createDirectory(atPath: sync, withIntermediateDirectories: true)
+    var c = ClaudeCLIConfig(); c.tools = "Read,Grep,Glob,Edit,Write"
+    for (name, cwd, extra) in [("direct mount", app + "/mounts/s1", ["/Users/x/src"]), ("sync copy", sync, []), ("both", app + "/mounts/s1", [sync])] {
+        for ro in [false, true] {
+            let a = c.agentArgs(cwd: URL(fileURLWithPath: cwd), allTools: [], scratch: scratch, readOnly: ro, folders: AllowedFolders(), checkedPaths: extra)
+            let scopes = [cwd] + extra
+            for d in deniedPaths(a) { for s in scopes { #expect(!covers(d, s), Comment(rawValue: "\(name) ro=\(ro): deny \(d) covers \(s)")) } }
+            #expect(value(a, "--allowedTools").contains("Read(./**)"), Comment(rawValue: name))
+        }
+    }
+    // the app folder's other files and other clients' mounts are not in the allow side (refused by default)
+    let a = c.agentArgs(cwd: URL(fileURLWithPath: app + "/mounts/s1"), allTools: [], scratch: scratch, folders: AllowedFolders(), checkedPaths: [])
+    #expect(!value(a, "--allowedTools").contains("mounts/s2") && !value(a, "--allowedTools").contains("/\(app)/**"))
+    // a hidden root with no scope folder inside is still denied (the Scratch of the gateway, here: the folder next to the session's)
+    let other = c.agentArgs(cwd: URL(fileURLWithPath: "/Users/x/src"), allTools: [], scratch: scratch, folders: AllowedFolders(), checkedPaths: [])
+    #expect(deniedPaths(other).contains { covers($0, sync) }, "the Scratch root is denied when no scope folder is inside it")
+}
+
+@Test func hiddenRootsAreFencedOffAroundTheScopeFolder() throws {
+    let fm = FileManager.default
+    let base = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("hid-" + UUID().uuidString).path
+    defer { try? fm.removeItem(atPath: base) }
+    for d in ["app/mounts/s1", "app/mounts/s2", "home/app/mounts/s1", "home/app/mounts/s2", "cwd"] { try fm.createDirectory(atPath: base + "/" + d, withIntermediateDirectories: true) }
+    for f in ["app/state.json", "home/app/state.json", "home/app/mounts/s2/x", "home/doc.txt"] { try Data("x".utf8).write(to: URL(fileURLWithPath: base + "/" + f)) }
+    // (a) the scope folder inside the hidden root, nothing around: the root is not denied (the allow side is only the scope folders)
+    #expect(ClaudeCLIConfig.scopedDenies(hidden: [base + "/app"], scopes: [base + "/app/mounts/s1"]).paths.isEmpty)
+    // (b) a hidden root inside an allowed folder, no scope folder inside it: denied
+    #expect(ClaudeCLIConfig.scopedDenies(hidden: [base + "/home/app"], scopes: [base + "/cwd", base + "/home"]).paths == [base + "/home/app"])
+    // (c) both: every entry on the way down is denied except the branch to the scope folder (other sessions, the app's files)
+    let c = ClaudeCLIConfig.scopedDenies(hidden: [base + "/home/app"], scopes: [base + "/home/app/mounts/s1", base + "/home"])
+    #expect(Set(c.paths) == [base + "/home/app/state.json", base + "/home/app/mounts/s2"] && c.dropped.isEmpty)
+    // an entry that cannot go into a rule: the allowed folder around the hidden root is dropped, the session folder stays
+    try Data("x".utf8).write(to: URL(fileURLWithPath: base + "/home/app/bad(1).txt"))
+    let d = ClaudeCLIConfig.scopedDenies(hidden: [base + "/home/app"], scopes: [base + "/home/app/mounts/s1", base + "/home"])
+    #expect(d.dropped == [base + "/home"] && d.paths.isEmpty)
+    // the same through a symbolic link (the scope folder by its link, the hidden root by its real path)
+    try fm.createSymbolicLink(atPath: base + "/lnk", withDestinationPath: base + "/app")
+    #expect(ClaudeCLIConfig.scopedDenies(hidden: [base + "/app"], scopes: [base + "/lnk/mounts/s1"]).paths.isEmpty)
+    // the rules: contents and the entry itself, so that a file is covered
+    #expect(ClaudeCLIConfig.denyRules(["/a/b"], tools: ["Read"]) == ["Read(//a/b/**)", "Read(//a/b)"])
+}

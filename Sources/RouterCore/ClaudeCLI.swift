@@ -151,6 +151,60 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
         return ["\(r)(./**)"] + dirs.dropFirst().map { "\(r)(/\($0)/**)" }
     }
 
+    /// #114: which of the hidden folders (the gateway's app folder, Scratch, the Copilot cache, the core …) may be denied to the tools without denying the run's own files.
+    /// A deny beats an allow, and a remote client's folder lives INSIDE hidden roots (`…/Mini Gateway/mounts/<dir>`, `Scratch/sync/<…>`): denying the root would deny
+    /// the session. So, per hidden root H and the scope folders (the session folder and the checked allowed folders):
+    ///  - no scope folder inside H: H is denied (as before);
+    ///  - a scope folder inside H and no scope folder around H: H is NOT denied: the allow side is only the scope folders, so everything else in H (other clients'
+    ///    mounts and copies, the app's own files) is refused by default;
+    ///  - a scope folder inside H and an allowed folder around H (the admin allowed `~` or `~/Library`): every entry on the way down from H to the scope folder is denied
+    ///    except the branch that leads to it (listed now, links not followed, bounded); if that cannot be done (a name that cannot go into a rule, too many entries) the
+    ///    allowed folder around H is dropped (`dropped`) and the run keeps its own folder.
+    static func scopedDenies(hidden: [String], scopes: [String]) -> (paths: [String], dropped: [String]) {
+        func variants(_ p: String) -> [String] {
+            var v = [p]
+            if let r = Sync.realResolving(URL(fileURLWithPath: p))?.path, r != p { v.append(r) }
+            return v
+        }
+        func under(_ a: String, _ b: String) -> Bool { a == b || a.hasPrefix(b + "/") }
+        func underAny(_ a: [String], _ b: [String]) -> Bool { a.contains { x in b.contains { under(x, $0) } } }
+        var out: [String] = [], dropped = Set<String>(), seen = Set<String>()
+        for h in hidden where seen.insert(h).inserted {
+            let hv = variants(h)
+            let inner = scopes.filter { underAny(variants($0), hv) }
+            if inner.isEmpty { out.append(h); continue }
+            let outer = scopes.filter { !inner.contains($0) && underAny(hv, variants($0)) }
+            if outer.isEmpty { continue }
+            var keep = Set<String>(), dirs: [String] = []
+            for sc in inner {
+                for sv in variants(sc) {
+                    guard let hh = hv.first(where: { under(sv, $0) }), sv != hh else { continue }
+                    var cur = hh
+                    for c in sv.dropFirst(hh.count).split(separator: "/") {
+                        if !dirs.contains(cur) { dirs.append(cur) }
+                        cur += "/" + c
+                        keep.insert(cur)
+                    }
+                }
+            }
+            var found: [String] = [], failed = false
+            for d in dirs {
+                guard let names = try? FileManager.default.contentsOfDirectory(atPath: d), names.count <= 500 else { failed = true; break }
+                for n in names.sorted() where !keep.contains(d + "/" + n) {
+                    if ruleSafe(d + "/" + n) { found.append(d + "/" + n) } else { failed = true }
+                }
+            }
+            if failed {
+                dropped.formUnion(outer)
+                logOnce("claude: the allowed folder(s) \(outer.joined(separator: ", ")) contain the gateway's own folder \(h) and are not used for this run (an entry there cannot be denied)")
+            } else { out += found }
+        }
+        return (out, Array(dropped))
+    }
+
+    /// The rules for denied paths: the folder's contents and the entry itself (a file).
+    static func denyRules(_ paths: [String], tools: [String]) -> [String] { paths.flatMap { p in tools.flatMap { ["\($0)(/\(p)/**)", "\($0)(/\(p))"] } } }
+
     func agentArgs(cwd: URL, allTools: [String], scratch: URL? = nil, readOnly: Bool = false, folders: AllowedFolders, checkedPaths: [String]? = nil) -> [String] {
         // #111: without "Allow local tools" the tools have no sandbox, and a bare `--allowedTools Read` means any path (verified with a real
         // `claude -p`: ~/.ssh, a sibling folder, `../`, and Write outside the folder all worked). Every path tool is scoped as in Go (serve_cli.go
@@ -168,8 +222,12 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
                 let n = t.range(of: #"^(WebFetch|WebSearch)(\(domain:[A-Za-z0-9.*-]+\))?$"#, options: .regularExpression) != nil ? t : Self.toolName(t)
                 if !names.contains(n) { names.append(n) }
             }
-            let extra = dirs.dropFirst().filter { Self.ruleSafe($0) }
+            var extra = dirs.dropFirst().filter { Self.ruleSafe($0) }
             if extra.count != dirs.count - 1 { Self.logOnce("claude: allowed folders with a character that cannot go into a permission rule are skipped: \(dirs.dropFirst().filter { !Self.ruleSafe($0) }.joined(separator: ", "))") }
+            let scopeDirs0 = [cwd.path] + extra
+            let hiddenDenied = Self.scopedDenies(hidden: ((scratch.map(RouterConfig.hiddenScratch) ?? []) + Self.appFolders()).filter { Self.ruleSafe($0) }, scopes: scopeDirs0)
+            let copilotDenied = Self.scopedDenies(hidden: Self.scratchPaths(RouterConfig.copilotCache).filter { Self.ruleSafe($0) }, scopes: scopeDirs0)
+            extra = extra.filter { !hiddenDenied.dropped.contains($0) && !copilotDenied.dropped.contains($0) }  // #114: an allowed folder around a hidden root that cannot be fenced off
             let scopeDirs = [cwd.path] + extra
             if !Self.ruleSafe(cwd.path) {
                 Self.logOnce("claude: the session folder \(cwd.path) has a character that cannot go into a permission rule: no edit tools")
@@ -180,9 +238,8 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
             // S3: what the sandbox branch denies for git (config, hooks, info, redirects) as Edit rules, and the gateway's own folders
             var deny: [String] = []
             if names.contains(where: { Self.editClass.contains(Self.toolName($0)) }) { deny += Self.gitEditDenies(dirs: scopeDirs) + claudeSettingsEditDenies(dirs: scopeDirs) }
-            // the gateway's own folders (app support, Scratch) and the Copilot package cache: never read or edited by these tools
-            let hidden = ((scratch.map(RouterConfig.hiddenScratch) ?? []) + Self.appFolders()).filter { Self.ruleSafe($0) }
-            deny += hidden.flatMap { ["Read(/\($0)/**)", "Edit(/\($0)/**)"] } + Self.scratchPaths(RouterConfig.copilotCache).filter { Self.ruleSafe($0) }.map { "Edit(/\($0)/**)" }
+            // the gateway's own folders (app support, Scratch) and the Copilot package cache: never read or edited by these tools, except where a scope folder lives inside them (#114)
+            deny += Self.denyRules(hiddenDenied.paths, tools: ["Read", "Edit"]) + Self.denyRules(copilotDenied.paths, tools: ["Edit"])
             return ["--tools", names.joined(separator: ","), "--allowedTools", allowed.joined(separator: ","), "--permission-mode", enforcedMode]
                 + (deny.isEmpty ? [] : ["--disallowedTools", deny.joined(separator: ",")])
                 + extra.flatMap { ["--add-dir", $0] }
