@@ -29,19 +29,6 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
     /// Orodja, ki pišejo ali poganjajo ukaze mimo sandboxa Bash (EnterWorktree: git worktree add s hooki): pri --minigw-ro še izrecno prepovedana.
     static let writeTools = ["Edit", "Write", "MultiEdit", "NotebookEdit", "EnterWorktree", "ExitWorktree", "Monitor"]
 
-    /// 0.6.0 sec-fix F3: without "Allow local tools" the run has no sandbox, so only tools whose file access the deny rules
-    /// cover may run: Read (also Grep, Glob, LS), Edit (also Write, MultiEdit, NotebookEdit) and the web tools. Bash, Task,
-    /// MCP tools and the like could read the core folder (`cat`) or hand the work to something that does.
-    static let restrictedAllowed = readOnlyAllowed + ["Edit", "Write", "MultiEdit", "NotebookEdit"]
-
-    static func toolName(_ t: String) -> String { String(t.trimmingCharacters(in: .whitespaces).prefix { $0 != "(" }) }
-
-    /// Entries of a `tools` list that a restricted (no "Allow local tools") run must not get.
-    static func unsafeRestricted(_ tools: String) -> [String] {
-        tools.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty && !restrictedAllowed.contains(toolName($0)) }
-    }
-
     /// Seznam orodij le iz readOnlyAllowed (brez »Allow local tools« ni sandboxa, zato brez Bash); tudi oblike »WebFetch(domain:…)«.
     static func readOnlyTools(_ tools: String) -> String {
         tools.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
@@ -62,6 +49,77 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
         return ["deny": paths.flatMap { p in ["Read", "Edit"].map { t in "\(t)(/\(p)/**)" } }]
     }
 
+    // MARK: restricted mode ("Allow local tools" off): no sandbox, so the tool rules are the only fence (#111, 0.5.28)
+
+    /// Without "Allow local tools" only tools whose file access the path rules cover may run: Read (also Grep, Glob, LS), Edit (also Write, MultiEdit,
+    /// NotebookEdit) and the web tools. Bash, Task, MCP tools and the like run outside every rule (a real run: `python3 -c "print(open(...))"` read a denied file).
+    static let restrictedAllowed = readOnlyAllowed + ["Edit", "Write", "MultiEdit", "NotebookEdit"]
+    /// The tools that edit files (the Edit path rules cover them).
+    static let editClass: Set<String> = ["Edit", "Write", "MultiEdit", "NotebookEdit"]
+    /// Permission modes that enforce the rules (real runs: `auto` let Read, Grep and Write outside the rules through, `plan` let Read and Grep through).
+    public static let restrictedModes = ["dontAsk", "acceptEdits"]
+
+    static func toolName(_ t: String) -> String { String(t.trimmingCharacters(in: .whitespacesAndNewlines).prefix { $0 != "(" }) }
+
+    /// The names of a tools list: split on commas, each trimmed, empty ones dropped (`Read, Grep` is two names; a name with a space went in bare before).
+    static func toolNames(_ raw: String) -> [String] {
+        raw.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+    }
+
+    /// The one rule for a tools text (Settings and the admin API): names of letters, digits and underscore. nil = fine.
+    static func toolsTextProblem(_ raw: String) -> String? {
+        guard let bad = toolNames(raw).first(where: { $0.range(of: "^[A-Za-z0-9_]+$", options: .regularExpression) == nil }) else { return nil }
+        return "tools: \"\(bad)\" is not a tool name (comma-separated names of letters, digits and _, e.g. Read,Grep,Glob)"
+    }
+
+    /// Entries of a `tools` list that a restricted run must not get.
+    static func unsafeRestricted(_ tools: String) -> [String] { toolNames(tools).filter { !restrictedAllowed.contains(toolName($0)) } }
+
+    /// A folder path that can go into a permission rule as it is: no parentheses, glob characters, comma, backslash, `!`, control
+    /// characters, no leading or trailing space in the path or in one of its components (they could split or widen a rule).
+    static func ruleSafe(_ path: String) -> Bool {
+        !path.isEmpty && path.split(separator: "/", omittingEmptySubsequences: false).allSatisfy({ $0 == $0.trimmingCharacters(in: .whitespacesAndNewlines) }) && !path.contains { "()*?[]{},\\!".contains($0) || $0.isNewline || $0.asciiValue.map { $0 < 32 } == true }
+    }
+
+    /// Why this configuration may not run without "Allow local tools" (nil = fine); `fields` limits the check to what a request changed.
+    public func restrictedProblem(tools checkTools: Bool = true, mode checkMode: Bool = true, folders checkFolders: Bool = true) -> String? {
+        guard !allowLocalTools else { return nil }
+        if checkTools {
+            if let p = Self.toolsTextProblem(tools) { return p }
+            if let bad = Self.unsafeRestricted(tools).first {
+                return "tools: \(bad) needs \"Allow local tools\" (without it the tool runs without a sandbox, outside the path rules); allowed here: \(Self.restrictedAllowed.joined(separator: ", ")). Turn on \"Allow local tools\" (commands then run in a sandbox) or remove it."
+            }
+        }
+        if checkMode, !Self.restrictedModes.contains(permissionMode) {
+            return "permission mode \(permissionMode) does not enforce the path rules; use \(Self.restrictedModes.joined(separator: " or ")) (or turn on \"Allow local tools\")"
+        }
+        if checkFolders, let bad = allowedRoots.split(separator: ",").map({ $0.trimmingCharacters(in: .whitespaces) }).first(where: { !$0.isEmpty && !Self.ruleSafe($0) }) {
+            return "allowed folder \(bad) has a character that cannot be used in a permission rule (parentheses, * ? [ ] { }, backslash, !, a control character): choose another folder or turn on \"Allow local tools\""
+        }
+        return nil
+    }
+
+    /// The mode a restricted run uses: one that enforces the rules (a stored `auto` or `plan` becomes dontAsk, logged once).
+    var enforcedMode: String {
+        if Self.restrictedModes.contains(permissionMode) { return permissionMode }
+        Self.logOnce("claude permission mode \(permissionMode) does not enforce the path rules of a restricted run: using dontAsk")
+        return "dontAsk"
+    }
+
+    nonisolated(unsafe) private static var logged = Set<String>()
+    private static let logLock = NSLock()
+    static func logOnce(_ line: String) {
+        logLock.lock(); defer { logLock.unlock() }
+        if logged.insert(line).inserted { FileHandle.standardError.write(Data("minigw: \(line)\n".utf8)) }
+    }
+
+    /// Edit rules that keep the agent from planting what git of the owner runs: `.git` config, hooks, info and the redirects, in the folder
+    /// and nested (the same as the sandbox branch's N3 rules; only Edit(...) rules are matched, and they stop Write too: real run).
+    static func gitEditDenies(dirs: [String]) -> [String] {
+        dirs.flatMap { d in gitDenies.flatMap { g in ["/\(d)/.git/\(g)", "/\(d)/.git/\(g)/**", "/\(d)/**/.git/\(g)", "/\(d)/**/.git/\(g)/**"].map { "Edit(\($0))" } }
+            + ["Edit(/\(d)/.git)", "Edit(/\(d)/**/.git)"] }
+    }
+
     /// The tools that read or write files: allowed only with a path rule (`T(./**)` and `T(//folder/**)`, the double slash is an absolute path).
     static let pathToolSet: Set<String> = ["Read", "Edit", "Write", "MultiEdit", "NotebookEdit", "Glob", "Grep", "LS"]
     /// Claude Code matches path rules only for Read and Edit ("Write(...) rules are not matched, Edit covers all file-editing tools"): Write, MultiEdit and NotebookEdit get the Edit rule.
@@ -76,12 +134,27 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
         // agentArgs): the session's folder and one rule per checked allowed folder (+ --add-dir); the deny rules below stay.
         let dirs = [cwd.path] + (checkedPaths ?? folders.folders(allowedRoots, excluding: cwd.path, scratch: scratch))
         guard allowLocalTools else {
-            let t = readOnly ? Self.readOnlyTools(tools) : tools.split(separator: ",").map(String.init).filter { Self.restrictedAllowed.contains(Self.toolName($0)) }.joined(separator: ",")  // F3: never more than the deny rules cover
+            // #111: a bare `--allowedTools Read` means any path (real `claude -p`: ~/.ssh, a sibling folder, `../`, Write outside the folder all worked), so every
+            // path tool is scoped as in Go (serve_cli.go agentArgs): the session's folder and one rule per checked allowed folder (+ --add-dir). A folder whose path
+            // cannot go into a rule as it is (S5) is skipped (the session's own folder then gets no edit tools); the names are trimmed (S1: ` Grep` went in bare).
+            var names = readOnly ? Self.toolNames(Self.readOnlyTools(tools)) : Self.toolNames(tools).filter { Self.restrictedAllowed.contains(Self.toolName($0)) }  // never more than the path rules cover
+            let extra = dirs.dropFirst().filter { Self.ruleSafe($0) }
+            if extra.count != dirs.count - 1 { Self.logOnce("claude: allowed folders with a character that cannot go into a permission rule are skipped: \(dirs.dropFirst().filter { !Self.ruleSafe($0) }.joined(separator: ", "))") }
+            let scopeDirs = [cwd.path] + extra
+            if !Self.ruleSafe(cwd.path) {
+                Self.logOnce("claude: the session folder \(cwd.path) has a character that cannot go into a permission rule: no edit tools")
+                names = names.filter { !Self.editClass.contains(Self.toolName($0)) }
+            }
             var allowed: [String] = []
-            for x in t.split(separator: ",").map(String.init).flatMap({ Self.pathToolSet.contains($0) ? Self.scoped($0, dirs: dirs) : [$0] }) where !allowed.contains(x) { allowed.append(x) }
+            for x in names.flatMap({ Self.pathToolSet.contains($0) ? Self.scoped($0, dirs: scopeDirs) : [$0] }) where !allowed.contains(x) { allowed.append(x) }
+            // S3: what the sandbox branch denies for git (config, hooks, info, redirects) as Edit rules, and the gateway's own folders
+            var deny: [String] = []
+            if names.contains(where: { Self.editClass.contains(Self.toolName($0)) }) { deny += Self.gitEditDenies(dirs: scopeDirs) }
+            deny += Self.scratchPaths(RouterConfig.copilotCache).filter { Self.ruleSafe($0) }.map { "Edit(/\($0)/**)" }
             let rules = String(decoding: try! JSONSerialization.data(withJSONObject: ["permissions": Self.toolDenySettings(scratch: scratch)], options: [.sortedKeys]), as: UTF8.self)
-            return ["--tools", t, "--allowedTools", allowed.joined(separator: ","), "--permission-mode", permissionMode, "--settings", rules]
-                + dirs.dropFirst().flatMap { ["--add-dir", $0] }
+            return ["--tools", names.joined(separator: ","), "--allowedTools", allowed.joined(separator: ","), "--permission-mode", enforcedMode, "--settings", rules]
+                + (deny.isEmpty ? [] : ["--disallowedTools", deny.joined(separator: ",")])
+                + extra.flatMap { ["--add-dir", $0] }
         }
 
         let sandbox: [String: Any] = ["sandbox": [
@@ -569,8 +642,8 @@ extension Router {
                 sessionID = id
                 prompt = ClaudeCLI.prompt(history: history, last: last)
             }
-            if tree == nil, !cfg.allowLocalTools, let bad = ClaudeCLIConfig.unsafeRestricted(cfg.tools).first {  // F3: a stored configuration of an older version
-                return await error(400, "invalid_request_error", "claude tools: \(bad) is not allowed without \"Allow local tools\" (no sandbox: it could read outside the deny rules); remove it in Settings", rid: rid, writer: writer)
+            if tree == nil, !cfg.allowLocalTools, let why = cfg.restrictedProblem(mode: false, folders: false) {  // a stored configuration of an older version
+                return await error(400, "invalid_request_error", "claude \(why)", rid: rid, writer: writer)
             }
             let allTools = cfg.allowLocalTools || tree != nil ? await Self.toolList.get(cfg.executable) : []
             if tree == nil { checked = allowedFolders.checked(cfg.allowedRoots, scratch: config.scratchURL) }  // A2: also a cwd that is an allowed root is opened and verified at launch

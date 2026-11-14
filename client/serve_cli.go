@@ -204,7 +204,7 @@ func (s *server) agentArgs(dir string, readOnly bool, checked ...[]string) []str
 			tools = append(tools, t)
 		}
 		args = []string{"--tools", strings.Join(tools, ","), "--allowedTools", strings.Join(allowed, ","),
-			"--disallowedTools", strings.Join(deny, ","), "--permission-mode", c.PermissionMode}
+			"--disallowedTools", strings.Join(deny, ","), "--permission-mode", enforcingMode(c.PermissionMode)}
 	}
 	for _, d := range dirs[1:] {
 		args = append(args, "--add-dir", d)
@@ -232,6 +232,36 @@ const readOnlyWorktree = "Worktree mode cannot be read-only (--minigw-ro): use d
 
 // roAllowed: orodje, ki ga ima Claude CLI pri --minigw-ro (seznam dovoljenih kot ClaudeCLIConfig.readOnlyAllowed na Macu);
 // Bash le zunaj Windows, kjer ga sandbox brez pisanja v mape omeji.
+// enforcingMode (#111 S4): without "Allow local tools" only a permission mode that enforces the path rules (real runs: auto let Read, Grep and
+// Write outside the rules through, plan let Read and Grep through); anything else is used as dontAsk.
+func enforcingMode(m string) string {
+	if m == "dontAsk" || m == "acceptEdits" {
+		return m
+	}
+	return "dontAsk"
+}
+
+// ruleSafe (#111 S5): can the path go into a permission rule as it is? No parentheses, glob characters, comma, backslash, `!`, control
+// characters, no leading or trailing space in the path or in one of its components (they could split or widen a rule). Same as
+// ClaudeCLIConfig.ruleSafe on the Mac; on Windows the separators are converted first.
+func ruleSafe(p string) bool {
+	p = filepath.ToSlash(p)
+	if p == "" || strings.ContainsAny(p, "()*?[]{},\\!") {
+		return false
+	}
+	for _, r := range p {
+		if r < 32 || r == 0x7f {
+			return false
+		}
+	}
+	for _, c := range strings.Split(p, "/") {
+		if c != strings.TrimSpace(c) {
+			return false
+		}
+	}
+	return true
+}
+
 // restrictedOK (sec-fix F3): without "Allow local tools" only tools whose file access the Read/Edit deny rules cover, the web
 // tools and Bash (which the sandbox above confines; the Mac refuses it because it has no sandbox there). Task, MCP tools and the
 // like could run or read outside the rules.
@@ -310,6 +340,10 @@ func (s *server) checkedAgentFolders(c serveConfig, dir string) checkedFolders {
 	}
 	for _, f := range c.AllowedFolders {
 		if f == dir || scratchHiddenOverlaps(f, c.Scratch) || len(copilotCacheOverlaps([]string{f})) > 0 {
+			continue
+		}
+		if !c.AllowLocalTools && !ruleSafe(f) { // S5: the tool rules are built from the path
+			refuse(f, "its path has a character that cannot go into a permission rule (parentheses, * ? [ ] { }, comma, backslash, !, a space at an end)")
 			continue
 		}
 		if _, refused := s.startRefused.Load(f); refused { // M2: logged at start

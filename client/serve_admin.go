@@ -849,6 +849,13 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 				}
 			}
 		}
+		if local := b.AllowLocalTools != nil && *b.AllowLocalTools || b.AllowLocalTools == nil && s.conf().AllowLocalTools; !local {
+			for _, f := range folders { // #111 S5: refused when the tools have no sandbox (the path goes into permission rules)
+				if !ruleSafe(f) {
+					return fail(400, "allowed folder "+f+" has a character that cannot be used in a permission rule (parentheses, * ? [ ] { }, comma, backslash, !, a space at an end): choose another folder or turn on \"Allow local tools\"")
+				}
+			}
+		}
 		var exe []string
 		err := s.update(func(c *serveConfig) error {
 			if b.Path != nil {
