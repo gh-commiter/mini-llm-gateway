@@ -356,7 +356,7 @@ func TestServeRejectsBadModelsBodiesAndForeignOwners(t *testing.T) {
 
 	// Orodja agenta le v delovni mapi; mapa nastavitev prepovedana.
 	args := strings.Join(s.agentArgs("/copy", false), " ")
-	for _, want := range []string{"Read(./**)", "Edit(./**)", "Write(./**)", "Grep(./**)", "Read(" + ruleAbs(s.cfgDir) + "/**)"} {
+	for _, want := range []string{"Read(./**)", "Edit(./**)", "Grep(./**)", "Read(" + ruleAbs(s.cfgDir) + "/**)"} {
 		if !strings.Contains(args, want) {
 			t.Fatalf("agent args lack %s: %s", want, args)
 		}
@@ -377,6 +377,12 @@ func TestServeRejectsBadModelsBodiesAndForeignOwners(t *testing.T) {
 	s.cfg.Tools = "Read,Task,mcp__x__run,WebFetch,Edit"
 	if i := slices.Index(s.agentArgs("/copy", false), "--tools"); i < 0 || s.agentArgs("/copy", false)[i+1] != "Read,WebFetch,Edit" {
 		t.Fatalf("restricted tools not from the allowlist: %v", s.agentArgs("/copy", false))
+	}
+	// R1: Claude Code ignores Write(...) path rules: Write, MultiEdit and NotebookEdit are scoped through the Edit rules (a configuration with only Write works)
+	s.cfg.Tools = "Read,Write,MultiEdit"
+	wr := s.agentArgs("/copy", false, []string{"/other"})
+	if i := slices.Index(wr, "--allowedTools"); i < 0 || wr[i+1] != "Read(./**),Read(//other/**),Edit(./**),Edit(//other/**)" {
+		t.Fatalf("Write is not scoped through Edit: %v", wr)
 	}
 	s.cfg.Tools = defaultTools
 	// --minigw-ro: brez orodij za pisanje, sandbox ne piše v mapo (na Windows brez sandboxa tudi brez Bash).

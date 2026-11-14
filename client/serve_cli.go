@@ -127,6 +127,9 @@ func (s *server) agentArgs(dir string, readOnly bool, checked ...[]string) []str
 	}
 	dirs = append(dirs, checked[0]...)
 	scope := func(t string) []string { // orodje z dostopom do datotek le v teh mapah
+		if t == "Write" || t == "MultiEdit" || t == "NotebookEdit" {
+			t = "Edit" // Claude Code matches path rules only for Read and Edit (Edit covers all file-editing tools): a Write(...) rule is ignored
+		}
 		out := []string{t + "(./**)"}
 		for _, d := range dirs[1:] {
 			out = append(out, t+"("+ruleAbs(d)+"/**)")
@@ -167,6 +170,7 @@ func (s *server) agentArgs(dir string, readOnly bool, checked ...[]string) []str
 			allowed = append(allowed, "PowerShell") // kot autoAllowBashIfSandboxed: škatla je peskovnik
 		}
 		slices.Sort(allowed)
+		allowed = slices.Compact(allowed) // Write, MultiEdit and NotebookEdit share the Edit rules
 		tools := "default"
 		if readOnly { // le seznam dovoljenih: nova orodja, ki pišejo, so izključena
 			var ro []string
@@ -186,7 +190,11 @@ func (s *server) agentArgs(dir string, readOnly bool, checked ...[]string) []str
 			case t == "", !restrictedOK(t), readOnly && !roAllowed(strings.SplitN(t, "(", 2)[0]):
 				continue
 			case pathTools[t]:
-				allowed = append(allowed, scope(t)...)
+				for _, r := range scope(t) {
+					if !slices.Contains(allowed, r) {
+						allowed = append(allowed, r)
+					}
+				}
 			case box && t == "Bash": // #68: »Bash« iz nastavitev je v škatli PowerShell
 				t = "PowerShell"
 				allowed = append(allowed, t)
