@@ -112,7 +112,7 @@ Priority: flag or environment, then the saved folder mode, then `auto`.
 | `auto` (default) | Picks one of the modes below | – | all |
 | `worktree` | A clone of your git repository on the gateway | Unchanged; results come back as a branch | Mac, `minigw serve` |
 | `sync` | A copy on the gateway's disk | Changed files are copied back after each request | Mac, `minigw serve` |
-| `direct` | Your folder, mounted on the gateway Mac over the connection (WebDAV) | Changed in place, protected paths read-only | Mac only |
+| `direct` | Your folder, mounted on the gateway Mac over the connection (WebDAV) | Changed in place, git data writable (commits work), other protected paths read-only | Mac only |
 | `native` | The gateway's own folder, when your folder is an SMB mount of it | Git repository: a branch per agent; otherwise in place | Mac only |
 | `native-direct` | As `native`, but always in the folder itself | Changed in place, one writing agent at a time | Mac only |
 
@@ -161,9 +161,12 @@ Limits are in [how-it-works.md → Limits](how-it-works.md#limits).
 ### Direct mode (Mac gateway)
 
 `minigw --minigw-work=direct …` lets the gateway Mac mount your folder through the encrypted connection (built-in
-WebDAV). The agent changes your files in place. Writes to [protected paths](how-it-works.md#protected-paths) are
-refused, so agents cannot `git commit` or change the folder's Claude Code settings there. Use worktree mode for
-commits.
+WebDAV). The agent changes your files in place and, in a git repository, can commit there (`git add`, `git commit`,
+`git branch`, `git checkout`, `git stash`, `git tag`, `git merge` of a local branch). Writes to other
+[protected paths](how-it-works.md#protected-paths) are refused: the agent cannot change `.git/config`, hooks,
+attributes, alternates, a rebase in progress, or the folder's Claude Code settings. Use worktree mode when you want
+the agent to work on a separate copy and bring its work back as a branch. A git repository still gets worktree mode by
+default; direct is only what you ask for. See [Git in direct mode](how-it-works.md#protected-paths).
 
 ## Worktree mode: results as branches
 

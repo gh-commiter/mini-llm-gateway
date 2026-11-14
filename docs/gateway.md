@@ -10,6 +10,7 @@ The gateway runs on one computer and serves every client. Install it with `/mini
 - [Providers](#providers)
 - [Change settings from the command line](#change-settings-from-the-command-line)
 - [minigw serve on Windows and Linux](#minigw-serve-on-windows-and-linux)
+- [Git in direct mode](#git-in-direct-mode-060)
 - [Where things are stored](#where-things-are-stored)
 
 ## Mac app or minigw serve
@@ -476,6 +477,24 @@ over; sessions and logs never are. The homes of dead epochs of the same user and
 is created, and at most 20 project homes are kept per device. Cost: no session resume across an epoch change (by
 design), and one more folder per project in Scratch; on Windows the login file is copied in per run instead of used in
 place.
+
+## Git in direct mode (0.6.0)
+
+A direct-mode agent (Mac app) can commit in the client's repository: the client's share guard and the gateway's
+sandboxes (Claude CLI sandbox rules, the Codex permission profile) let it write git's own data (`index`, `HEAD`, `refs`,
+`logs`, `objects`, `packed-refs`, the commit and merge files) and keep closed what git runs or follows (`config`, `hooks`,
+`info`, `commondir`, `shallow`, `grafts`, `worktrees`, `objects/info/alternates`, `rebase-merge`, `rebase-apply`,
+`sequencer`). The list and what an agent gains from it are in
+[how-it-works.md → Protected paths](how-it-works.md#protected-paths). Per agent:
+
+- **Claude CLI with "Allow local tools"**: Bash runs in Claude Code's sandbox, which allows the folder; its rules deny
+  the closed names; the file tools (Edit, Write) never touch `.git`. Without "Allow local tools" there is no Bash, so no
+  commit, and the file tools stay out of `.git` as before.
+- **Codex**: the permission profile makes the folder's `.git` writable and the closed names read-only.
+- **Grok**: its sandbox has no `.git` rule; the client's guard is the only one.
+- **Copilot**: no commands and no repository of its own (`GIT_DIR=/dev/null`); it cannot commit, and its profile keeps
+  `.git` closed.
+- Worktree, sync and read-only (`--minigw-ro`) runs, and `minigw serve` (no direct mode), are unchanged.
 
 ## Where things are stored
 

@@ -329,15 +329,48 @@ settings is removed), and the member routes refuse requests that come from an ag
 
 ## Protected paths
 
-In direct and sync mode, writes to these paths are refused, at any depth:
+In sync mode and in direct mode, writes to these paths are refused, at any depth:
 
-- `.git` (in any letter case, also `git~1`)
+- `.git` (in any letter case, also `git~1`); in direct mode only what git does not run, see below
 - `.claude/settings*.json`, `.claude/hooks`, `.claude/commands`, `.claude/agents`, `.claude/skills`
 - `.husky`, `.githooks`, `.vscode/tasks.json`, `.envrc`
 
 The check uses the real path, so a link in the folder (for example `hooks → .git/hooks`) does not get around it.
 Moving, copying or deleting a folder is refused too when it would create or remove one of these files. Reading
-still works. In sync mode such files are never copied back.
+still works. In sync mode such files are never copied back, and `.git` is never copied at all.
+
+**Git in direct mode (0.6.0).** An agent in direct mode can commit in your repository: `git add`, `git commit`,
+`git branch`, `git checkout`, `git stash`, `git tag` and `git merge` of a local branch work. For that the client lets
+the agent write git's own data in `.git` (and in the git folder of a submodule, `.git/modules/<name>`, and of a nested
+repository): `index`, `HEAD`, `ORIG_HEAD`, `FETCH_HEAD`, `MERGE_*`, `COMMIT_EDITMSG`, `packed-refs`, `refs/**`,
+`logs/**`, `objects/<xx>/*`, `objects/pack/*`, the commit graph, and the `*.lock` files git writes next to these. A
+client that wants the gateway to work on a separate copy uses worktree mode; direct is direct. What can run code or
+send git elsewhere stays refused, in the same list on the gateway's sandboxes and in the client (Go and Swift):
+
+- `.git/config`, `config.worktree`, `hooks/`, `info/` (attributes, exclude), `commondir`, `gitdir`, `shallow`, `grafts`,
+  `remotes/`, `branches/`, `worktrees/` (`git worktree add` by the agent does not work in direct mode),
+  `objects/info/alternates` and `http-alternates`, and the same names inside `.git/modules/<name>/`;
+- `rebase-merge/`, `rebase-apply/` and `sequencer/`: an agent could leave a rebase in progress whose todo file has an
+  `exec` line that you would run with `git rebase --continue`. So `git rebase` (it always writes `rebase-merge/`) and
+  a `git cherry-pick` or `git revert` of several commits (`sequencer/`) fail in direct mode and leave nothing behind;
+  a single `git cherry-pick`, `git revert`, `git commit --amend` and `git merge` work;
+- any name git does not write for the commands above (also `gc.pid`: `git gc` by the agent fails), `.git` itself being replaced by a file or a link, and
+  `refs`, `logs`, `objects` and `modules` themselves (their contents are writable, the folders cannot be removed or
+  renamed);
+- the `.lock` file of a refused name, so the lock-file-then-rename that git uses for `config` stays refused while
+  `index.lock` to `index` works.
+
+Not protected today and not changed: `.gitattributes` and `.gitmodules` in the work tree (they are ordinary files; a
+`filter=` or `diff=` attribute needs a definition in `.git/config`, which stays closed; review `.gitmodules` URLs as
+before).
+
+What the agent gains by writing refs, objects and the index in your repository: it can create commits and move
+branches (wanted; `git reflog` and the objects keep what it replaced), and it can plant objects that a ref points to
+(visible in `git log`, never executed). It cannot run code at your next git command, because config, hooks,
+attributes, alternates and the rebase and sequencer state stay closed; a crafted index or `packed-refs` is data that
+git validates (`git fsck`). It does not change where git pushes: remotes live in `.git/config`, which stays closed. Review the agent's commits before you push them. Read-only (`--minigw-ro`),
+sync and worktree mode are unchanged, and so is the Claude CLI mode without "Allow local tools": its file tools stay
+out of `.git` altogether (commits need Bash, which exists only in the sandboxed mode).
 
 This list is defence in depth, not a sandbox for your folder. An agent that may write can still add code that runs
 on your computer later, for example in `package.json` scripts, a `Makefile` or `.mcp.json`. Review an agent's
