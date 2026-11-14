@@ -122,9 +122,15 @@ func makeRouter(session: URLSession = .shared) -> Router {
     #expect(ClaudeCLI.match("claude-cli-sonnet")! == ("sonnet", false))
     var cli = ClaudeCLIConfig()
     let cwd = URL(fileURLWithPath: "/tmp/session")
-    #expect(cli.agentArgs(cwd: cwd, allTools: [], folders: AllowedFolders()) == ["--tools", "Read,Grep,Glob", "--allowedTools", "Read,Grep,Glob", "--permission-mode", "dontAsk"])
+    // #111: path tools are scoped (the session's folder and each checked allowed folder), --tools stays bare, --add-dir for the folders
+    #expect(cli.agentArgs(cwd: cwd, allTools: [], folders: AllowedFolders(), checkedPaths: ["/work/a"])
+            == ["--tools", "Read,Grep,Glob", "--allowedTools", "Read(./**),Read(//work/a/**),Grep(./**),Grep(//work/a/**),Glob(./**),Glob(//work/a/**)", "--permission-mode", "dontAsk", "--add-dir", "/work/a"])
+    #expect(cli.agentArgs(cwd: cwd, allTools: [], folders: AllowedFolders(), checkedPaths: []) == ["--tools", "Read,Grep,Glob", "--allowedTools", "Read(./**),Grep(./**),Glob(./**)", "--permission-mode", "dontAsk"])
     cli.tools = "Read,Edit,Bash(git:*),Write,Grep"  // --minigw-ro: brez orodij za pisanje; Bash tu nima sandboxa
-    #expect(cli.agentArgs(cwd: cwd, allTools: [], readOnly: true, folders: AllowedFolders()) == ["--tools", "Read,Grep", "--allowedTools", "Read,Grep", "--permission-mode", "dontAsk"])
+    #expect(cli.agentArgs(cwd: cwd, allTools: [], readOnly: true, folders: AllowedFolders(), checkedPaths: []) == ["--tools", "Read,Grep", "--allowedTools", "Read(./**),Grep(./**)", "--permission-mode", "dontAsk"])
+    cli.tools = "Read,Write,MultiEdit,WebFetch"  // Write and MultiEdit have no path rule of their own: Edit covers them; the web tool stays bare
+    #expect(cli.agentArgs(cwd: cwd, allTools: [], folders: AllowedFolders(), checkedPaths: []).prefix(4) == ["--tools", "Read,Write,MultiEdit,WebFetch", "--allowedTools", "Read(./**),Edit(./**),WebFetch"])
+    cli.tools = "Read,Edit,Bash(git:*),Write,Grep"
     cli.tools = "Read,Monitor,EnterWorktree,WebFetch"  // seznam dovoljenih: orodja, ki niso na njem, odpadejo
     #expect(cli.agentArgs(cwd: cwd, allTools: [], readOnly: true, folders: AllowedFolders()).prefix(2) == ["--tools", "Read,WebFetch"])
     cli.tools = "Read,Grep,Glob"

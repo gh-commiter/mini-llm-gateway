@@ -41,12 +41,26 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
     /// Read/Edit/Write zunaj teh map niso dovoljeni, Bash teče v sandboxu Claude Code (brez branja domače mape,
     /// pisanje le v teh mapah, omrežje dovoljeno), izhoda iz sandboxa ni.
     /// `readOnly` (--minigw-ro): brez orodij za pisanje; Bash le v sandboxu brez pisanja v te mape (brez sandboxa ga ni).
+    /// The tools that read or write files: allowed only with a path rule (`T(./**)` and `T(//folder/**)`, the double slash is an absolute path).
+    static let pathToolSet: Set<String> = ["Read", "Edit", "Write", "MultiEdit", "NotebookEdit", "Glob", "Grep", "LS"]
+    /// Claude Code matches path rules only for Read and Edit ("Write(...) rules are not matched, Edit covers all file-editing tools"): Write, MultiEdit and NotebookEdit get the Edit rule.
+    static func scoped(_ t: String, dirs: [String]) -> [String] {
+        let r = ["Write", "MultiEdit", "NotebookEdit"].contains(t) ? "Edit" : t
+        return ["\(r)(./**)"] + dirs.dropFirst().map { "\(r)(/\($0)/**)" }
+    }
+
     func agentArgs(cwd: URL, allTools: [String], scratch: URL? = nil, readOnly: Bool = false, folders: AllowedFolders, checkedPaths: [String]? = nil) -> [String] {
+        // #111: without "Allow local tools" the tools have no sandbox, and a bare `--allowedTools Read` means any path (verified with a real
+        // `claude -p`: ~/.ssh, a sibling folder, `../`, and Write outside the folder all worked). Every path tool is scoped as in Go (serve_cli.go
+        // agentArgs): the session's folder and one rule per checked allowed folder (+ --add-dir).
+        let dirs = [cwd.path] + (checkedPaths ?? folders.folders(allowedRoots, excluding: cwd.path, scratch: scratch))
         guard allowLocalTools else {
             let t = readOnly ? Self.readOnlyTools(tools) : tools
-            return ["--tools", t, "--allowedTools", t, "--permission-mode", permissionMode]
+            var allowed: [String] = []
+            for x in t.split(separator: ",").map(String.init).flatMap({ Self.pathToolSet.contains($0) ? Self.scoped($0, dirs: dirs) : [$0] }) where !allowed.contains(x) { allowed.append(x) }
+            return ["--tools", t, "--allowedTools", allowed.joined(separator: ","), "--permission-mode", permissionMode]
+                + dirs.dropFirst().flatMap { ["--add-dir", $0] }
         }
-        let dirs = [cwd.path] + (checkedPaths ?? folders.folders(allowedRoots, excluding: cwd.path, scratch: scratch))
 
         let sandbox: [String: Any] = ["sandbox": [
             "enabled": true, "failIfUnavailable": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false,

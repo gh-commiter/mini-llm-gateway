@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Security (#111): the Claude CLI models without "Allow local tools" (the default, tools Read, Grep, Glob and whatever else is configured) were not limited to the session's folder and the allowed folders: the file tools were allowed for any path, so an approved device, or text in a repository that the agent read, could make the agent read any file the gateway user can (`~/.ssh`, `~/Documents`, ...) and, with Edit or Write configured, write files anywhere (a LaunchAgent or `~/.zshenv`). Verified with a real `claude -p`. This has been so since Claude CLI models with tools were added (0.2). Every file tool is now allowed only in the session's folder and the allowed folders (as in `minigw serve`); a configured Write, MultiEdit or NotebookEdit is covered by the Edit rule. With "Allow local tools" on, the sandbox already limited the tools. Update, and check the allowed folders (Settings, Claude CLI).
 - Fix (#109, all gateways on Mac): the kill timers of agent and `minigw run` processes (git time limit, kill 2 s after an agent or command ends, 5 s after cancel, closing of the output stream) ran on the shared dispatch pool and could start ten or more seconds late when the Mac was busy, so a hung git ran past its limit and an agent's leftover processes lived on until then. They now run on their own threads.
 
 ## 0.5.27
