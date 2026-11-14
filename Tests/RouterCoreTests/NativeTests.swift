@@ -829,3 +829,29 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
         #expect(SharedFolders.adding(.init(path: dataAlias), to: [saved]) == [saved])
     }
 }
+
+/// sec-fix F5: a hard link to a core file makes `minigw run` refuse, like every agent run (syncRun).
+@Test func nativeRunRefusedWhenTheCoreFileHasAnotherName() async throws {
+    let f = try nativeFixture()
+    defer { try? FileManager.default.removeItem(at: f.root) }
+    let store = f.root.appendingPathComponent("core")
+    try FileManager.default.createDirectory(at: store, withIntermediateDirectories: true)
+    try Data("SECRET".utf8).write(to: store.appendingPathComponent("core.db"))
+    try FileManager.default.linkItem(at: store.appendingPathComponent("core.db"), to: f.project.appendingPathComponent("alias.db"))
+    var c = RouterConfig()
+    c.claudeCLI.allowedRoots = f.share.path
+    c.devices = [DeviceConfig(id: "dev", name: "Air", run: true)]
+    c.runCommands = "sh"
+    let r = Router(config: c, token: "tok", secrets: FakeSecrets(values: [:]), core: CoreHelper(binary: nil, store: store, marks: NoMarks()))
+    let ch = await challenge(r, f, device: "dev")
+    let proof = Native.readMarker(f.project.appendingPathComponent(ch.file)) ?? ""
+    let w = FakeWriter()
+    await r.handle(nativeReq("POST", "/minigw/run", ["x-native-id": ch.id, "x-native-proof": proof], #"{"argv":["sh","-c","touch ran"]}"#, device: "dev"), writer: w)
+    #expect(w.status == 403 && String(decoding: w.data, as: UTF8.self).contains("another name outside the core folder"), "\(w.status)")
+    #expect(!FileManager.default.fileExists(atPath: f.project.appendingPathComponent("ran").path))
+    try FileManager.default.removeItem(at: f.project.appendingPathComponent("alias.db"))  // without the link the same request runs
+    let ch2 = await challenge(r, f, device: "dev")
+    let w2 = FakeWriter()
+    await r.handle(nativeReq("POST", "/minigw/run", ["x-native-id": ch2.id, "x-native-proof": Native.readMarker(f.project.appendingPathComponent(ch2.file)) ?? ""], #"{"argv":["sh","-c","exit 0"]}"#, device: "dev"), writer: w2)
+    #expect(w2.status == 200)
+}

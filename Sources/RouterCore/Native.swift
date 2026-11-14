@@ -727,6 +727,10 @@ extension Router {
             return await error(403, "permission_error",
                                "minigw run: the command is not in the allowed commands (\(config.runCommands))", rid: rid, writer: writer)
         }
+        if let core, let why = RouterConfig.coreLinkProblem(store: core.store) {  // sec-fix F5: like every agent run (syncRun), a command is no way around the core folder's denies
+            await Self.natives.discard(id: challenge, owner: d.id)
+            return await error(403, "permission_error", "minigw run cannot run: \(why)", rid: rid, writer: writer)
+        }
         guard let dir = await Self.natives.verify(id: req.header("x-native-id") ?? "", proof: req.header("x-native-proof") ?? "", owner: d.id) else {
             return await error(403, "permission_error", "minigw run: the folder check failed (the folder is not this Mac's shared folder)", rid: rid, writer: writer)
         }
