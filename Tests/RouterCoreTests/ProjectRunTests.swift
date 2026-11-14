@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import RouterCore
 
@@ -548,7 +549,10 @@ echo '{"type":"end","sessionId":"S-'$$'"}'
         for d in [real, home, other] { try fm.createDirectory(at: d, withIntermediateDirectories: true) }
         let auth = home.appendingPathComponent("auth.json"), realAuth = real.appendingPathComponent("auth.json")
         let good = #"{"tokens":"REAL"}"#
-        func reset() throws { try? fm.removeItem(at: realAuth); try Data(good.utf8).write(to: realAuth); unlink(auth.path) }
+        func reset() throws {  // the real login, linked once (the generation is recorded), then the home's link is gone as if the CLI had replaced it
+            try? fm.removeItem(at: realAuth); try Data(good.utf8).write(to: realAuth); unlink(auth.path)
+            Router.linkProjectAuth(home: home, real: real, names: ["auth.json"]); unlink(auth.path)
+        }
         func realText() -> String? { try? String(contentsOf: realAuth, encoding: .utf8) }
         let start = Date().addingTimeInterval(-1)
         let secret = other.appendingPathComponent("target.json"); try Data(#"{"x":"SECRET"}"#.utf8).write(to: secret)
@@ -578,11 +582,64 @@ echo '{"type":"end","sessionId":"S-'$$'"}'
         try reset()
         try Data("model = \"real\"\n".utf8).write(to: real.appendingPathComponent("config.toml"))
         try Data("model = \"planted\"\n".utf8).write(to: home.appendingPathComponent("config.toml"))
-        try Data("{}".utf8).write(to: auth)
+        try Data("not json".utf8).write(to: auth)
         Router.linkProjectAuth(home: home, real: real)
         #expect((try? String(contentsOf: home.appendingPathComponent("config.toml"), encoding: .utf8)) == "model = \"real\"\n")
         #expect((try? fm.destinationOfSymbolicLink(atPath: auth.path)) == realAuth.path)
         #expect(!fm.fileExists(atPath: other.appendingPathComponent("config.toml").path))
+    }
+
+    /// R2: two overlapping runs of one user and project share a home. The login the CLI of one run refreshed is carried back, in whichever order
+    /// the runs start and end, never lost by the other run's start; and a real login that is newer than the one the link was made from stays.
+    @Test func overlappingRunsNeitherLoseARotatedLoginNorOverwriteANewerOne() throws {
+        let fm = FileManager.default
+        let base = fm.temporaryDirectory.appendingPathComponent("auth-" + UUID().uuidString)
+        defer { try? fm.removeItem(at: base) }
+        let real = base.appendingPathComponent("real"), home = base.appendingPathComponent("home"), homeY = base.appendingPathComponent("homeY")
+        for d in [real, home, homeY] { try fm.createDirectory(at: d, withIntermediateDirectories: true) }
+        let auth = home.appendingPathComponent("auth.json"), realAuth = real.appendingPathComponent("auth.json")
+        func text(_ u: URL) -> String? { try? String(contentsOf: u, encoding: .utf8) }
+        func isLink(_ u: URL) -> Bool { (try? fm.destinationOfSymbolicLink(atPath: u.path)) == realAuth.path }
+        func cliReplaces(_ u: URL, _ token: String) throws { try fm.removeItem(at: u); try Data(#"{"tokens":"\#(token)"}"#.utf8).write(to: u) }  // a write by rename
+        func fresh() throws { try? fm.removeItem(at: realAuth); try Data(#"{"tokens":"R0"}"#.utf8).write(to: realAuth); unlink(auth.path); unlink(homeY.appendingPathComponent("auth.json").path) }
+        // order 1: A's CLI rotates the token, then B starts (its start must carry it back, not unlink it), then A and B end
+        try fresh()
+        Router.linkProjectAuth(home: home, real: real)  // run A
+        Router.linkProjectAuth(home: home, real: real)  // run B starts first (link intact: nothing changes)
+        try cliReplaces(auth, "RA")
+        Router.linkProjectAuth(home: home, real: real)  // run C starts after A's refresh
+        #expect(text(realAuth) == #"{"tokens":"RA"}"# && isLink(auth), "the start unlinked the refreshed login: \(text(realAuth) ?? "")")
+        Router.restoreProjectAuth(home: home, real: real, since: Date().addingTimeInterval(-60))  // A ends
+        Router.restoreProjectAuth(home: home, real: real, since: Date().addingTimeInterval(-60))  // B ends
+        #expect(text(realAuth) == #"{"tokens":"RA"}"# && isLink(auth))
+        // order 2: A ends before the next run starts
+        try fresh()
+        Router.linkProjectAuth(home: home, real: real)
+        try cliReplaces(auth, "RA2")
+        Router.restoreProjectAuth(home: home, real: real, since: Date().addingTimeInterval(-60))
+        Router.linkProjectAuth(home: home, real: real)
+        #expect(text(realAuth) == #"{"tokens":"RA2"}"# && isLink(auth))
+        // across homes: home X was linked from R0, another home's run then wrote a newer real login; the slower run's file must not overwrite it
+        try fresh()
+        Router.linkProjectAuth(home: home, real: real)
+        try Data(#"{"tokens":"NEWER"}"#.utf8).write(to: realAuth)  // the other home's run (in place, or its own carry-back)
+        try cliReplaces(auth, "SLOW")
+        Router.restoreProjectAuth(home: home, real: real, since: Date().addingTimeInterval(-60))
+        #expect(text(realAuth) == #"{"tokens":"NEWER"}"# && isLink(auth), "a newer real login was overwritten: \(text(realAuth) ?? "")")
+        // the same through the next run's start
+        try fresh()
+        Router.linkProjectAuth(home: home, real: real)
+        try Data(#"{"tokens":"NEWER"}"#.utf8).write(to: realAuth)
+        try cliReplaces(auth, "SLOW")
+        Router.linkProjectAuth(home: home, real: real)
+        #expect(text(realAuth) == #"{"tokens":"NEWER"}"# && isLink(auth))
+        // real concurrency: the lifecycle of one real file is serialised; many starts and ends never leave the real login damaged
+        try fresh()
+        Router.linkProjectAuth(home: home, real: real)
+        DispatchQueue.concurrentPerform(iterations: 40) { i in
+            if i % 2 == 0 { Router.linkProjectAuth(home: home, real: real) } else { Router.restoreProjectAuth(home: home, real: real, since: Date().addingTimeInterval(-60)) }
+        }
+        #expect(text(realAuth) == #"{"tokens":"R0"}"# && isLink(auth))
     }
 
     /// sec-fix F7: the core's dirName is one path component.
@@ -607,6 +664,40 @@ echo '{"type":"end","sessionId":"S-'$$'"}'
         Router.releaseProjectHome(busy)
         await f.router.projectHome(kind: "codex", owner: "dev", project: run(1, epoch: 3)).map(Router.releaseProjectHome)
         #expect(!FileManager.default.fileExists(atPath: busy.path))  // once its run ended the next prune takes it
+    }
+
+    /// R3: the prune picks a folder, another run then holds a home in it, and the deletion must not take it: the hold waits for the deletion
+    /// and gets a fresh folder; a hold that came before the pick makes the prune skip the folder.
+    @Test func aHoldBetweenThePickAndTheDeletionWaitsAndIsNeverDeleted() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("prune-" + UUID().uuidString)
+        defer { try? fm.removeItem(at: root); ProjectHomes.beforeDelete = nil }
+        let dead = root.appendingPathComponent("1-1-e1"), home = dead.appendingPathComponent("codex")
+        try fm.createDirectory(at: home, withIntermediateDirectories: true)
+        try fm.createDirectory(at: root.appendingPathComponent("2-2-e1/codex"), withIntermediateDirectories: true)
+        let seen = Mutex<(returned: Bool, existed: Bool?)>((false, nil)), done = DispatchSemaphore(value: 0)
+        ProjectHomes.beforeDelete = {  // between the claim and the removeItem
+            ProjectHomes.beforeDelete = nil
+            Thread {
+                ProjectHomes.hold(home.path)  // must wait for the deletion
+                seen.withLock { $0 = (true, fm.fileExists(atPath: dead.path)) }
+                done.signal()
+            }.start()
+            Thread.sleep(forTimeInterval: 0.3)  // the other run is certainly waiting now
+            seen.withLock { #expect(!$0.returned, "the hold did not wait for the deletion") }
+        }
+        Router.pruneProjectHomes(root: root, keep: "2-2-e1", prefix: "1-1-e", epoch: 2, maxHomes: 20)
+        #expect(done.wait(timeout: .now() + 5) == .success)
+        #expect(seen.withLock { $0.existed } == false, "the hold returned before the folder was deleted")
+        ProjectHomes.release(home.path)
+        // a hold that is already there: the prune skips the folder (and takes it later)
+        try fm.createDirectory(at: home, withIntermediateDirectories: true)
+        ProjectHomes.hold(home.path)
+        Router.pruneProjectHomes(root: root, keep: "2-2-e1", prefix: "1-1-e", epoch: 2, maxHomes: 20)
+        #expect(fm.fileExists(atPath: home.path))
+        ProjectHomes.release(home.path)
+        Router.pruneProjectHomes(root: root, keep: "2-2-e1", prefix: "1-1-e", epoch: 2, maxHomes: 20)
+        #expect(!fm.fileExists(atPath: dead.path))
     }
 
     // MARK: D8 usage events

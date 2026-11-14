@@ -88,7 +88,23 @@ func Restore(dir, src string) (err error) {
 	if err != nil {
 		return err
 	}
-	in, err := validate(ctx, src, cur.GatewayID)
+	// R5: the file that is validated is the file that is installed: the source is copied once into the exclusively created private
+	// staging file (0600, in the core folder), and that copy is validated, stamped and renamed; a swap of the source after the copy
+	// has no effect, and a hostile or corrupt copy is refused and removed (the deferred cleanup).
+	if fi, err := os.Lstat(src); err != nil || !fi.Mode().IsRegular() {
+		if err == nil {
+			err = errors.New(src + " is not a regular file")
+		}
+		return err
+	}
+	removeFiles(tmp, tmp+"-wal", tmp+"-shm")
+	if err := copyFile(src, tmp); err != nil {
+		return err
+	}
+	if err := stage("staged"); err != nil {
+		return err
+	}
+	in, err := validateAs(ctx, tmp, src, cur.GatewayID)
 	if err != nil {
 		return err
 	}
@@ -99,11 +115,7 @@ func Restore(dir, src string) (err error) {
 	}
 	detail["epoch_from"], detail["epoch_to"], detail["project_high"] = max(cur.Epoch, in.Epoch), next.Epoch, next.ProjectHigh
 
-	// Build the new file next to the old one, so the final step is a rename on the same volume.
-	removeFiles(tmp, tmp+"-wal", tmp+"-shm")
-	if err := copyFile(src, tmp); err != nil {
-		return err
-	}
+	// The staged file is next to the old one, so the final step is a rename on the same volume.
 	if err := stamp(ctx, tmp, next, src); err != nil {
 		return err
 	}
@@ -257,12 +269,18 @@ func currentState(ctx context.Context, dir string, side state) (state, int, erro
 
 // validate opens src read-only and immutable (no WAL or SHM is created next to it) and checks it.
 func validate(ctx context.Context, src, gateway string) (state, error) {
+	return validateAs(ctx, src, src, gateway)
+}
+
+// validateAs checks the file at path; shown is the name in the errors (the staged copy stands for the backup).
+func validateAs(ctx context.Context, path, shown, gateway string) (state, error) {
+	src := path
 	fi, err := os.Lstat(src)
 	if err != nil {
 		return state{}, err
 	}
 	if !fi.Mode().IsRegular() {
-		return state{}, errors.New(src + " is not a regular file")
+		return state{}, errors.New(shown + " is not a regular file")
 	}
 	db, err := sql.Open("sqlite", dsn(src, "mode=ro&immutable=1&_pragma=trusted_schema(0)"))
 	if err != nil {
@@ -271,17 +289,17 @@ func validate(ctx context.Context, src, gateway string) (state, error) {
 	defer db.Close()
 	var res string
 	if err := db.QueryRowContext(ctx, `PRAGMA integrity_check`).Scan(&res); err != nil || res != "ok" {
-		return state{}, fmt.Errorf("%s is not a valid core database (integrity check: %v %v)", src, res, err)
+		return state{}, fmt.Errorf("%s is not a valid core database (integrity check: %v %v)", shown, res, err)
 	}
 	v, err := schemaVersion(ctx, db)
 	if err != nil || v == 0 {
-		return state{}, fmt.Errorf("%s is not a core database", src)
+		return state{}, fmt.Errorf("%s is not a core database", shown)
 	}
 	if v > len(migrations) {
 		return state{}, fmt.Errorf("%w (schema %d, program %d)", ErrNewerSchema, v, len(migrations))
 	}
 	if err := checkSchemaObjects(ctx, db, v); err != nil {
-		return state{}, fmt.Errorf("%s: %w", src, err)
+		return state{}, fmt.Errorf("%s: %w", shown, err)
 	}
 	m, err := readMetaFull(ctx, db)
 	if err != nil {

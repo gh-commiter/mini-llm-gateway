@@ -1216,20 +1216,40 @@ func agentState(scratch string, k agentKind, owner string, p *projectCtx) (strin
 	var files []string
 	for _, n := range names {
 		src, dst := filepath.Join(real, n), filepath.Join(dir, n)
-		if _, err := os.Stat(src); err != nil {
-			continue
-		}
-		if l, err := os.Readlink(dst); err != nil || l != src {
-			if fi, err := os.Lstat(dst); err == nil && fi.IsDir() {
-				continue // not ours to remove
+		var lerr error
+		skip := false
+		authLife.lock(src, func() { // R2: link, carry-back and replace of one real file under one lock
+			if _, err := os.Stat(src); err != nil {
+				skip = true
+				return
+			}
+			if l, err := os.Readlink(dst); err == nil && l == src {
+				return
+			}
+			if fi, err := os.Lstat(dst); err == nil {
+				if fi.IsDir() {
+					skip = true // not ours to remove
+					return
+				}
+				if n == "auth.json" && fi.Mode().IsRegular() {
+					carryBackLocked(dst, src, time.Time{}) // the CLI of an overlapping run replaced it: carried back, not unlinked
+					if l, err := os.Readlink(dst); err == nil && l == src {
+						return
+					}
+				}
 			}
 			os.Remove(dst) // F6: a file left by an earlier run (carried back or refused at its end) is the link again
-			if err := os.Symlink(src, dst); err != nil {
-				releaseHome(dir)
-				return "", nil, err
+			if lerr = os.Symlink(src, dst); lerr == nil && n == "auth.json" {
+				authLife.setLinked(dst, src)
 			}
+		})
+		if lerr != nil {
+			releaseHome(dir)
+			return "", nil, lerr
 		}
-		files = append(files, src)
+		if !skip {
+			files = append(files, src)
+		}
 	}
 	return dir, files, nil
 }
@@ -1252,16 +1272,72 @@ func restoreAuth(dir string, k agentKind, since time.Time) {
 		return
 	}
 	dst, src := filepath.Join(dir, "auth.json"), filepath.Join(real, "auth.json")
+	authLife.lock(src, func() { carryBackLocked(dst, src, since) })
+}
+
+// authLife (R2): one lock per real auth file for its whole lifecycle, and what the link of each home was made from.
+type authLifeT struct {
+	mu     sync.Mutex
+	locks  map[string]*sync.Mutex
+	linked map[string]linkedAuth
+}
+
+var authLife = &authLifeT{locks: map[string]*sync.Mutex{}, linked: map[string]linkedAuth{}}
+
+type linkedAuth struct {
+	gen authGen
+	at  time.Time
+}
+
+func (a *authLifeT) lock(real string, f func()) {
+	a.mu.Lock()
+	l := a.locks[real]
+	if l == nil {
+		l = &sync.Mutex{}
+		a.locks[real] = l
+	}
+	a.mu.Unlock()
+	l.Lock()
+	defer l.Unlock()
+	f()
+}
+
+// setLinked records the generation of the real file a home's link was just made from (under the real file's lock).
+func (a *authLifeT) setLinked(home, real string) {
+	a.mu.Lock()
+	a.linked[home] = linkedAuth{fileGen(real), time.Now()}
+	a.mu.Unlock()
+}
+
+// carryBackLocked: the carry-back of dst (the home's auth.json) to src (the real one); the caller holds the lock of src. Only a regular
+// file that passes readCarriable and parses as a JSON object, and only when the real file is still the generation the link was made
+// from (a newer real login, written by another run, stays); anything else is dropped and the link made again.
+func carryBackLocked(dst, src string, since time.Time) {
 	if fi, err := os.Lstat(dst); err != nil || !fi.Mode().IsRegular() {
 		return // still the link (or a link planted: never followed)
 	}
+	authLife.mu.Lock()
+	linked, known := authLife.linked[dst]
+	authLife.mu.Unlock()
 	drop := func() {
 		os.Remove(dst)
 		os.Symlink(src, dst)
+		authLife.setLinked(dst, src)
+	}
+	if !known {
+		drop()
+		return
+	}
+	if linked.at.After(since) {
+		since = linked.at
 	}
 	b, ok := readCarriable(dst, since)
 	var obj map[string]any
 	if !ok || json.Unmarshal(b, &obj) != nil || obj == nil {
+		drop()
+		return
+	}
+	if fileGen(src) != linked.gen { // a newer real login (another run, another home): it stays, ours is dropped
 		drop()
 		return
 	}
@@ -1274,7 +1350,7 @@ func restoreAuth(dir string, k agentKind, since time.Time) {
 		return
 	}
 	os.Chmod(src, 0o600)
-	drop()
+	drop() // the link again; the generation is the one just written
 }
 
 // readCarriable: the bytes of a small regular file of this user (one name, modified since `since`), opened without following a link.
@@ -1751,38 +1827,77 @@ func projectStateDir(devDir, kind string, p *projectCtx) string {
 	return dir
 }
 
-// homesBusy (sec-fix F8): the project homes of the runs that are going (path -> runs). pruneProjectHomes skips them.
-var homesBusy = struct {
-	sync.Mutex
-	n map[string]int
-}{n: map[string]int{}}
+// homes (sec-fix F8, R3): the project homes of the runs that are going (path -> runs), and the project folders a prune is deleting.
+// "Pick a folder for deletion" (removeHomeIfIdle) and "hold a home" (holdHome) are one transaction under one lock: a prune skips a
+// folder with a held home, and a hold in a folder that is being deleted waits until the deletion has finished (and gets a fresh home).
+var homes = struct {
+	mu      sync.Mutex
+	cond    *sync.Cond
+	n       map[string]int
+	deleted map[string]bool
+}{n: map[string]int{}, deleted: map[string]bool{}}
 
-func holdHome(dir string) {
-	homesBusy.Lock()
-	homesBusy.n[dir]++
-	homesBusy.Unlock()
+func init() { homes.cond = sync.NewCond(&homes.mu) }
+
+// pruneHook (tests): between the claim and the deletion.
+var pruneHook func()
+
+func holdHome(dir string) { // dir = <root>/<dirName>/<cli>
+	homes.mu.Lock()
+	defer homes.mu.Unlock()
+	for homes.deleted[filepath.Dir(dir)] {
+		homes.cond.Wait()
+	}
+	homes.n[dir]++
 }
 
 // releaseHome: a no-op for a folder that is not held (a run without a project).
 func releaseHome(dir string) {
-	homesBusy.Lock()
-	if homesBusy.n[dir] > 1 {
-		homesBusy.n[dir]--
+	homes.mu.Lock()
+	if homes.n[dir] > 1 {
+		homes.n[dir]--
 	} else {
-		delete(homesBusy.n, dir)
+		delete(homes.n, dir)
 	}
-	homesBusy.Unlock()
+	homes.mu.Unlock()
 }
 
 func homeBusy(root, name string) bool {
-	homesBusy.Lock()
-	defer homesBusy.Unlock()
-	for d := range homesBusy.n {
+	homes.mu.Lock()
+	defer homes.mu.Unlock()
+	for d := range homes.n {
 		if strings.HasPrefix(d, filepath.Join(root, name)+string(filepath.Separator)) {
 			return true
 		}
 	}
 	return false
+}
+
+// removeHomeIfIdle removes the project folder root/name unless a home in it is held; true = removed.
+func removeHomeIfIdle(root, name string) bool {
+	dir := filepath.Join(root, name)
+	homes.mu.Lock()
+	if homes.deleted[dir] {
+		homes.mu.Unlock()
+		return false
+	}
+	for d := range homes.n {
+		if strings.HasPrefix(d, dir+string(filepath.Separator)) {
+			homes.mu.Unlock()
+			return false
+		}
+	}
+	homes.deleted[dir] = true
+	homes.mu.Unlock()
+	if pruneHook != nil {
+		pruneHook()
+	}
+	os.RemoveAll(dir)
+	homes.mu.Lock()
+	delete(homes.deleted, dir)
+	homes.cond.Broadcast()
+	homes.mu.Unlock()
+	return true
 }
 
 func pruneProjectHomes(root string, h coreapi.AgentHomeReply, p *projectCtx) {
@@ -1802,7 +1917,7 @@ func pruneProjectHomes(root string, h coreapi.AgentHomeReply, p *projectCtx) {
 		}
 		if ep, ok := strings.CutPrefix(n, h.Prefix); ok { // same user and project: another epoch
 			if v, err := strconv.ParseInt(ep, 10, 64); err == nil && v < h.Epoch {
-				os.RemoveAll(filepath.Join(root, n))
+				removeHomeIfIdle(root, n)
 				continue
 			}
 		}
@@ -1812,8 +1927,11 @@ func pruneProjectHomes(root string, h coreapi.AgentHomeReply, p *projectCtx) {
 	}
 	if len(live) >= h.MaxHomes {
 		slices.SortFunc(live, func(a, b home) int { return a.at.Compare(b.at) })
-		for _, x := range live[:len(live)-h.MaxHomes+1] {
-			os.RemoveAll(filepath.Join(root, x.name))
+		need := len(live) - h.MaxHomes + 1 // R3: one that turned busy meanwhile is skipped and the next oldest goes instead
+		for _, x := range live {
+			if need > 0 && removeHomeIfIdle(root, x.name) {
+				need--
+			}
 		}
 	}
 }

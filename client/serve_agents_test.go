@@ -883,3 +883,50 @@ func TestProjectHomeInUseIsNeverPruned(t *testing.T) {
 		t.Fatal("the home stays after its run ended")
 	}
 }
+
+// R3: a hold between the pick for deletion and the deletion waits for it and is never deleted; a hold before the pick makes the prune skip.
+func TestHoldBetweenPickAndDeleteWaits(t *testing.T) {
+	root := t.TempDir()
+	dead := filepath.Join(root, "1-1-e1")
+	home := filepath.Join(dead, "codex")
+	os.MkdirAll(home, 0o700)
+	os.MkdirAll(filepath.Join(root, "2-2-e1", "codex"), 0o700)
+	h := coreapi.AgentHome(coreapi.AgentHomeRequest{Kind: "codex", User: 2, Project: 2, Epoch: 1})
+	h.Prefix, h.Epoch = "1-1-e", 2
+	returned := make(chan bool, 1)
+	pruneHook = func() {
+		pruneHook = nil
+		go func() {
+			holdHome(home) // must wait for the deletion
+			_, err := os.Stat(dead)
+			returned <- err != nil // the folder is gone when the hold returns
+		}()
+		select {
+		case <-returned:
+			t.Error("the hold did not wait for the deletion")
+		case <-time.After(300 * time.Millisecond):
+		}
+	}
+	defer func() { pruneHook = nil }()
+	pruneProjectHomes(root, h, nil)
+	select {
+	case gone := <-returned:
+		if !gone {
+			t.Fatal("the hold returned before the folder was deleted")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the hold never returned")
+	}
+	releaseHome(home)
+	os.MkdirAll(home, 0o700) // a hold that is already there: the prune skips the folder and takes it once released
+	holdHome(home)
+	pruneProjectHomes(root, h, nil)
+	if _, err := os.Stat(home); err != nil {
+		t.Fatal("a held home was deleted")
+	}
+	releaseHome(home)
+	pruneProjectHomes(root, h, nil)
+	if _, err := os.Stat(dead); err == nil {
+		t.Fatal("an idle dead epoch stays")
+	}
+}

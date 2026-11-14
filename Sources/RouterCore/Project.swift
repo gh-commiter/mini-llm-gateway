@@ -269,7 +269,11 @@ public enum Projects {
         public func feed(_ chunk: Data) -> Data? {
             if done { return chunk }
             head.append(chunk)
-            guard let end = head.range(of: Data("\r\n\r\n".utf8)) else { return head.count > 64 << 10 ? nil : Data() }
+            // R4: the limit is on the offset of the terminator, not on what has arrived: a head of at most 64 KiB (before CRLFCRLF) is
+            // accepted however it is chunked; the terminator of one that is longer is refused even if it comes in the chunk that crosses 64 KiB
+            let limit = 64 << 10
+            guard let end = head.range(of: Data("\r\n\r\n".utf8)) else { return head.count >= limit + 4 ? nil : Data() }
+            guard end.lowerBound - head.startIndex <= limit else { return nil }
             done = true
             defer { head = Data() }
             guard let rewritten = Projects.rewriteHead(head[..<end.lowerBound], project: project) else { return nil }

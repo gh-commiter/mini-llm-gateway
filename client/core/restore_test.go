@@ -217,3 +217,60 @@ func TestRestoreRefusesExtraSchemaObjects(t *testing.T) { // review L2
 		t.Fatal(err)
 	}
 }
+
+// R5: the file that is validated is the one that is installed.
+func TestRestoreInstallsWhatItValidatedWhenTheSourceIsSwapped(t *testing.T) {
+	dir, bak := restoreFixture(t)
+	evil := filepath.Join(t.TempDir(), "evil.db") // another valid database of this gateway, with another marker
+	{
+		d2 := t.TempDir()
+		s := openT(t, d2)
+		exec(t, s, `INSERT INTO meta VALUES('marker','EVIL')`)
+		s.Close()
+		os.Rename(filepath.Join(d2, dbFile), evil)
+	}
+	restoreHook = func(stage string) error {
+		if stage == "staged" { // after the copy, before the validation: the source is replaced
+			b, _ := os.ReadFile(evil)
+			return os.WriteFile(bak, b, 0o600)
+		}
+		return nil
+	}
+	defer func() { restoreHook = func(string) error { return nil } }()
+	err := Restore(dir, bak)
+	restoreHook = func(string) error { return nil }
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := openT(t, dir)
+	defer s.Close()
+	if got := marker(t, s); got != "backup" {
+		t.Fatalf("installed %q: the swapped source was used", got)
+	}
+}
+
+func TestRestoreRefusesAndRemovesACorruptStagedCopy(t *testing.T) {
+	dir, bak := restoreFixture(t)
+	restoreHook = func(stage string) error {
+		if stage == "staged" { // the staged copy itself is damaged (a hostile file written into the folder)
+			return os.WriteFile(filepath.Join(dir, restoreTmp), []byte("not a database"), 0o600)
+		}
+		return nil
+	}
+	defer func() { restoreHook = func(string) error { return nil } }()
+	err := Restore(dir, bak)
+	restoreHook = func(string) error { return nil }
+	if err == nil || !strings.Contains(err.Error(), bak) {
+		t.Fatalf("a corrupt staged file was accepted or the error does not name the backup: %v", err)
+	}
+	for _, n := range []string{restoreTmp, restoreTmp + "-wal", restoreTmp + "-shm"} {
+		if _, err := os.Stat(filepath.Join(dir, n)); err == nil {
+			t.Fatalf("%s left behind", n)
+		}
+	}
+	s := openT(t, dir)
+	defer s.Close()
+	if got := marker(t, s); got != "after-backup" {
+		t.Fatalf("the old database changed: %q", got)
+	}
+}

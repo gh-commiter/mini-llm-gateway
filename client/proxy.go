@@ -107,6 +107,39 @@ func isTokenByte(b byte) bool {
 	return b >= '0' && b <= '9' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || strings.IndexByte("!#$%&'*+-.^_`|~", b) >= 0
 }
 
+// headRewriter: the first request's header block of one local connection until it is complete, rewritten with rewriteHead;
+// everything after it passes unchanged. ok=false: close the connection. R4: the 64 KiB limit is on the offset of the
+// terminator, whatever the chunking (as Projects.HeadRewriter on the Mac).
+type headRewriter struct {
+	project string
+	head    []byte
+	done    bool
+}
+
+const maxHead = 64 << 10
+
+func (h *headRewriter) feed(chunk []byte) (out []byte, ok bool) {
+	if h.done {
+		return chunk, true
+	}
+	h.head = append(h.head, chunk...)
+	i := bytes.Index(h.head, []byte("\r\n\r\n"))
+	if i < 0 {
+		return nil, len(h.head) < maxHead+4
+	}
+	if i > maxHead {
+		return nil, false
+	}
+	rewritten, ok := rewriteHead(h.head[:i], h.project)
+	if !ok {
+		return nil, false
+	}
+	h.done = true
+	out = append(rewritten, h.head[i:]...)
+	h.head = nil
+	return out, true
+}
+
 func (p *noiseProxy) localURL() string { return "http://" + p.ln.Addr().String() }
 
 func (p *noiseProxy) stop() {
@@ -153,28 +186,15 @@ func (p *noiseProxy) serve(local net.Conn) {
 	// Lokalno → okvirji → router. Ob koncu lokalnega pošiljanja odgovor še teče; povezavo zapre router.
 	go func() {
 		buf := make([]byte, maxPlain)
-		var head []byte // the first request's header block, until it is complete (the gateway serves one request per connection)
-		headDone := false
+		hr := &headRewriter{project: project} // the first request's header block, until it is complete (the gateway serves one request per connection)
 		for {
 			n, err := local.Read(buf)
 			if n > 0 {
-				chunk := buf[:n]
-				if !headDone {
-					head = append(head, chunk...)
-					if i := bytes.Index(head, []byte("\r\n\r\n")); i >= 0 || len(head) > 64<<10 {
-						headDone = true
-						rewritten, ok := rewriteHead(head[:max(i, 0)], project)
-						if i < 0 || !ok { // F2: no end of head within 64 KiB, or a head that cannot be rewritten safely: close, pass nothing on
-							local.Close()
-							remote.Close()
-							return
-						}
-						head = append(rewritten, head[i:]...)
-						chunk = head
-						head = nil
-					} else {
-						chunk = nil
-					}
+				chunk, ok := hr.feed(buf[:n])
+				if !ok { // F1/F2/R4: a head that cannot be rewritten safely, or is longer than 64 KiB: close, pass nothing on
+					local.Close()
+					remote.Close()
+					return
 				}
 				for off := 0; off < len(chunk); off += maxPlain {
 					if _, werr := remote.Write(frames(chunk[off:min(off+maxPlain, len(chunk))], session.send)); werr != nil {

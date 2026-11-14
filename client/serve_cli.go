@@ -127,6 +127,9 @@ func (s *server) agentArgs(dir string, readOnly bool, checked ...[]string) []str
 	}
 	dirs = append(dirs, checked[0]...)
 	scope := func(t string) []string { // orodje z dostopom do datotek le v teh mapah
+		if t == "Write" || t == "MultiEdit" || t == "NotebookEdit" {
+			t = "Edit" // Claude Code matches path rules only for Read and Edit (Edit covers all file-editing tools): a Write(...) rule is ignored
+		}
 		out := []string{t + "(./**)"}
 		for _, d := range dirs[1:] {
 			out = append(out, t+"("+ruleAbs(d)+"/**)")
@@ -148,7 +151,10 @@ func (s *server) agentArgs(dir string, readOnly bool, checked ...[]string) []str
 				for _, t := range []string{"Edit", "Write"} { // tudi na Windows, kjer sandboxa ni
 					deny = append(deny, t+"("+ruleAbs(d)+"/.git/"+g+")", t+"("+ruleAbs(d)+"/.git/"+g+"/**)")
 				}
+				// #111 S3: nested .git (a clone or submodule inside the folder) as on the Mac (N3); only Edit(...) path rules are matched, they stop Write too
+				deny = append(deny, "Edit("+ruleAbs(d)+"/**/.git/"+g+")", "Edit("+ruleAbs(d)+"/**/.git/"+g+"/**)")
 			}
+			deny = append(deny, "Edit("+ruleAbs(d)+"/.git)", "Edit("+ruleAbs(d)+"/**/.git)") // a gitdir: file (submodule) or .git itself
 		}
 	}
 	var args []string
@@ -167,6 +173,7 @@ func (s *server) agentArgs(dir string, readOnly bool, checked ...[]string) []str
 			allowed = append(allowed, "PowerShell") // kot autoAllowBashIfSandboxed: škatla je peskovnik
 		}
 		slices.Sort(allowed)
+		allowed = slices.Compact(allowed) // Write, MultiEdit and NotebookEdit share the Edit rules
 		tools := "default"
 		if readOnly { // le seznam dovoljenih: nova orodja, ki pišejo, so izključena
 			var ro []string
@@ -186,7 +193,11 @@ func (s *server) agentArgs(dir string, readOnly bool, checked ...[]string) []str
 			case t == "", !restrictedOK(t), readOnly && !roAllowed(strings.SplitN(t, "(", 2)[0]):
 				continue
 			case pathTools[t]:
-				allowed = append(allowed, scope(t)...)
+				for _, r := range scope(t) {
+					if !slices.Contains(allowed, r) {
+						allowed = append(allowed, r)
+					}
+				}
 			case box && t == "Bash": // #68: »Bash« iz nastavitev je v škatli PowerShell
 				t = "PowerShell"
 				allowed = append(allowed, t)
@@ -196,7 +207,7 @@ func (s *server) agentArgs(dir string, readOnly bool, checked ...[]string) []str
 			tools = append(tools, t)
 		}
 		args = []string{"--tools", strings.Join(tools, ","), "--allowedTools", strings.Join(allowed, ","),
-			"--disallowedTools", strings.Join(deny, ","), "--permission-mode", c.PermissionMode}
+			"--disallowedTools", strings.Join(deny, ","), "--permission-mode", enforcingMode(c.PermissionMode)}
 	}
 	for _, d := range dirs[1:] {
 		args = append(args, "--add-dir", d)
@@ -224,6 +235,36 @@ const readOnlyWorktree = "Worktree mode cannot be read-only (--minigw-ro): use d
 
 // roAllowed: orodje, ki ga ima Claude CLI pri --minigw-ro (seznam dovoljenih kot ClaudeCLIConfig.readOnlyAllowed na Macu);
 // Bash le zunaj Windows, kjer ga sandbox brez pisanja v mape omeji.
+// enforcingMode (#111 S4): without "Allow local tools" only a permission mode that enforces the path rules (real runs: auto let Read, Grep and
+// Write outside the rules through, plan let Read and Grep through); anything else is used as dontAsk.
+func enforcingMode(m string) string {
+	if m == "dontAsk" || m == "acceptEdits" {
+		return m
+	}
+	return "dontAsk"
+}
+
+// ruleSafe (#111 S5): can the path go into a permission rule as it is? No parentheses, glob characters, comma, backslash, `!`, control
+// characters, no leading or trailing space in the path or in one of its components (they could split or widen a rule). Same as
+// ClaudeCLIConfig.ruleSafe on the Mac; on Windows the separators are converted first.
+func ruleSafe(p string) bool {
+	p = filepath.ToSlash(p)
+	if p == "" || strings.ContainsAny(p, "()*?[]{},\\!") {
+		return false
+	}
+	for _, r := range p {
+		if r < 32 || r == 0x7f {
+			return false
+		}
+	}
+	for _, c := range strings.Split(p, "/") {
+		if c != strings.TrimSpace(c) {
+			return false
+		}
+	}
+	return true
+}
+
 // restrictedOK (sec-fix F3): without "Allow local tools" only tools whose file access the Read/Edit deny rules cover, the web
 // tools and Bash (which the sandbox above confines; the Mac refuses it because it has no sandbox there). Task, MCP tools and the
 // like could run or read outside the rules.
@@ -302,6 +343,10 @@ func (s *server) checkedAgentFolders(c serveConfig, dir string) checkedFolders {
 	}
 	for _, f := range c.AllowedFolders {
 		if f == dir || scratchHiddenOverlaps(f, c.Scratch) || len(copilotCacheOverlaps([]string{f})) > 0 {
+			continue
+		}
+		if !c.AllowLocalTools && !ruleSafe(f) { // S5: the tool rules are built from the path
+			refuse(f, "its path has a character that cannot go into a permission rule (parentheses, * ? [ ] { }, comma, backslash, !, a space at an end)")
 			continue
 		}
 		if _, refused := s.startRefused.Load(f); refused { // M2: logged at start

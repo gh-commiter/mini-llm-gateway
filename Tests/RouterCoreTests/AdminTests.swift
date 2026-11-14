@@ -129,13 +129,19 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
 
         #expect(await admin(app.router(), "PATCH", "/agents/claude", body: #"{"tools":"Read, Grep","folders":"~/src"}"#).status == 200)
         #expect(app.config.claudeCLI.tools == "Read,Grep" && app.config.claudeCLI.allowedRoots == "~/src")
-        // sec-fix F3: no sandbox without "Allow local tools", so only tools the deny rules cover
-        for bad in ["Read,Bash", "Task", "mcp__x__run"] {
-            let r = await admin(app.router(), "PATCH", "/agents/claude", body: #"{"tools":"\#(bad)"}"#)
-            #expect(r.status == 400 && r.text.contains("Allow local tools"), "\(bad)")
+        // #111: restricted (no "Allow local tools") configurations: names trimmed and checked, no tool outside the path rules, only modes that enforce them, rule-safe folders
+        func claude(_ body: String) async -> FakeWriter { await admin(app.router(), "PATCH", "/agents/claude", body: body) }
+        #expect(await claude(#"{"tools":" Read , Grep,Glob "}"#).status == 200 && app.config.claudeCLI.tools == "Read,Grep,Glob")
+        for bad in ["Read,Bash", "Task", "mcp__x__run", "Read;rm", "Bash(git:*)"] {
+            let r = await claude(#"{"tools":"\#(bad)"}"#)
+            #expect(r.status == 400 && (r.text.contains("Allow local tools") || r.text.contains("not a tool name")), "\(bad) \(r.text)")
         }
-        #expect(app.config.claudeCLI.tools == "Read,Grep")
-        #expect(await admin(app.router(), "PATCH", "/agents/claude", body: #"{"tools":"Read,Edit,Write,WebFetch"}"#).status == 200)
+        for mode in ["auto", "plan"] { #expect(await claude(#"{"permissionMode":"\#(mode)"}"#).status == 400, "\(mode)") }
+        #expect(await claude(#"{"permissionMode":"acceptEdits"}"#).status == 200 && app.config.claudeCLI.permissionMode == "acceptEdits")
+        #expect(await claude(#"{"folders":"~/src,/x/Bad (copy)"}"#).status == 400 && app.config.claudeCLI.allowedRoots == "~/src")
+        #expect(await claude(#"{"allowLocalTools":true,"tools":"Read,Bash","permissionMode":"dontAsk"}"#).status == 200)  // the sandbox confines Bash there
+        #expect(await claude(#"{"allowLocalTools":false}"#).status == 400 && app.config.claudeCLI.allowLocalTools)  // only the switch goes off: the stored Bash is refused
+        #expect(await claude(#"{"allowLocalTools":false,"tools":"Read,Grep"}"#).status == 200 && !app.config.claudeCLI.allowLocalTools)
         #expect(await admin(app.router(), "PATCH", "/agents/codex", body: #"{"write":false,"models":["gpt-5"]}"#).status == 200)
         #expect(!app.config.codex.write && app.config.codex.enabledModels == ["gpt-5"])
         #expect(await admin(app.router(), "PATCH", "/agents/grok", body: #"{"models":null}"#).status == 200 && app.config.grok.enabledModels == nil)
@@ -408,9 +414,9 @@ private func acceptPeerPort(_ fd: Int32) -> (Int32, UInt16) {
     // permissionMode, settingSources
     #expect(await admin(app.router(), "PATCH", "/agents/claude", body: #"{"permissionMode":"bogus"}"#).status == 400)
     #expect(await admin(app.router(), "PATCH", "/agents/claude", body: #"{"settingSources":"user,evil"}"#).status == 400)
-    let w = await admin(app.router(), "PATCH", "/agents/claude", body: #"{"permissionMode":"plan","settingSources":"user, project"}"#)
-    #expect(w.status == 200 && w.text.contains(#""permissionMode":"plan""#))
-    #expect(app.config.claudeCLI.permissionMode == "plan" && app.config.claudeCLI.settingSources == "user,project")
+    let w = await admin(app.router(), "PATCH", "/agents/claude", body: #"{"permissionMode":"acceptEdits","settingSources":"user, project"}"#)  // #111: plan and auto do not enforce the path rules: refused without "Allow local tools"
+    #expect(w.status == 200 && w.text.contains(#""permissionMode":"acceptEdits""#))
+    #expect(app.config.claudeCLI.permissionMode == "acceptEdits" && app.config.claudeCLI.settingSources == "user,project")
 
     // GET agents/claude/tools, agents/{codex,grok}/models (brez programa prazno), drugi agenti 404
     let t = await admin(app.router(), "GET", "/agents/claude/tools")

@@ -631,5 +631,79 @@
    "want": "",
    "reject": true
   }
+ ],
+ "limit": [
+  {
+   "name": "head of limit-1 bytes, one write",
+   "headLen": 65535,
+   "cut": 0,
+   "accept": true
+  },
+  {
+   "name": "head of limit-1 bytes, split inside the head",
+   "headLen": 65535,
+   "cut": 1000,
+   "accept": true
+  },
+  {
+   "name": "head of limit-1 bytes, split inside the terminator",
+   "headLen": 65535,
+   "cut": 65537,
+   "accept": true
+  },
+  {
+   "name": "head of limit-1 bytes, terminator in its own chunk",
+   "headLen": 65535,
+   "cut": 65535,
+   "accept": true
+  },
+  {
+   "name": "head of limit+0 bytes, one write",
+   "headLen": 65536,
+   "cut": 0,
+   "accept": true
+  },
+  {
+   "name": "head of limit+0 bytes, split inside the head",
+   "headLen": 65536,
+   "cut": 1000,
+   "accept": true
+  },
+  {
+   "name": "head of limit+0 bytes, split inside the terminator",
+   "headLen": 65536,
+   "cut": 65538,
+   "accept": true
+  },
+  {
+   "name": "head of limit+0 bytes, terminator in its own chunk",
+   "headLen": 65536,
+   "cut": 65536,
+   "accept": true
+  },
+  {
+   "name": "head of limit+1 bytes, one write",
+   "headLen": 65537,
+   "cut": 0,
+   "accept": false
+  },
+  {
+   "name": "head of limit+1 bytes, split inside the head",
+   "headLen": 65537,
+   "cut": 1000,
+   "accept": false
+  },
+  {
+   "name": "head of limit+1 bytes, split inside the terminator",
+   "headLen": 65537,
+   "cut": 65539,
+   "accept": false
+  },
+  {
+   "name": "head of limit+1 bytes, terminator in its own chunk",
+   "headLen": 65537,
+   "cut": 65537,
+   "accept": false
+  }
  ]
 }

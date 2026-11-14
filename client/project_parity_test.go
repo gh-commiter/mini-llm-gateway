@@ -344,3 +344,38 @@ func TestProjectParityCommands(t *testing.T) {
 		writeFixture(t, "project-commands.json", fx)
 	}
 }
+
+// R4: the 64 KiB limit is on the head's length (before CRLFCRLF), not on how much has arrived: rows of the shared fixture.
+func TestProjectParityHeadLimit(t *testing.T) {
+	var fx struct {
+		Limit []struct {
+			Name    string
+			HeadLen int
+			Cut     int
+			Accept  bool
+		}
+	}
+	readFixture(t, "project-header.json", &fx)
+	if len(fx.Limit) < 6 {
+		t.Fatal("rows missing")
+	}
+	for _, c := range fx.Limit {
+		pre := "GET / HTTP/1.1\r\nX-Pad: "
+		req := []byte(pre + strings.Repeat("a", c.HeadLen-len(pre)) + "\r\n\r\n")
+		h := &headRewriter{project: "7"}
+		parts := [][]byte{req}
+		if c.Cut > 0 {
+			parts = [][]byte{req[:c.Cut], req[c.Cut:]}
+		}
+		ok := true
+		var sent []byte
+		for _, p := range parts {
+			out, k := h.feed(p)
+			ok = ok && k
+			sent = append(sent, out...)
+		}
+		if ok != c.Accept || ok && !bytes.HasPrefix(sent, []byte("GET / HTTP/1.1\r\nX-Minigw-Project: 7\r\n")) {
+			t.Errorf("%s: accepted=%v want %v", c.Name, ok, c.Accept)
+		}
+	}
+}
