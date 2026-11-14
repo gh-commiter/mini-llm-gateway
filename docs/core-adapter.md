@@ -112,7 +112,7 @@ app may answer itself) and `testdata/paths.json` (`IsMemberPath`, `IsAdminPath`)
 | 8 | Usage events | later (the helper does not start the usage recorder yet) |
 | 9 | Quota | not part of the core |
 | 10 | Opening the store | done in the helper (`core.Open`, folder 0700 made by the app); `ensure-owner` at the first ready |
-| 11 | Agents out of the data folder | done: Codex always in its permission profile with the folder denied, the folder in the hidden list of Claude CLI, `minigw run` and Copilot, Grok runs only in its kernel-enforced `minigw-core` profile in a gateway-owned `GROK_HOME` (`Grok.prepareCoreHome`); allowed folders around the folder refused (`RouterConfig.overlapsCoreFolder`) |
+| 11 | Agents out of the data folder | done: Codex always in its permission profile with the folder denied, the folder in the hidden list of Claude CLI, `minigw run` and Copilot, Grok runs only in its kernel-enforced `minigw-core` profile in a gateway-owned `GROK_HOME` (`Grok.prepareCoreHome`); allowed folders around the folder refused (`RouterConfig.overlapsCoreFolder`), hard-link aliases refused at open and at every run (`RouterConfig.coreLinkProblem` in `syncRun`), backups only in `<core>/backups` |
 
 Known difference from `minigw serve`: while the helper is down an agent peer gets the 503 (the helper is what would
 answer 403 first); the gateway has the store in-process and answers 403.
