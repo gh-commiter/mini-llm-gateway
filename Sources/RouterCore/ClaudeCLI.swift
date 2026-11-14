@@ -664,7 +664,7 @@ extension Router {
                 sessionID = id
                 prompt = ClaudeCLI.prompt(history: history, last: last)
             }
-            if tree == nil, !cfg.allowLocalTools, let why = cfg.restrictedProblem(mode: false, folders: false) {  // a stored configuration of an older version
+            if tree == nil, !readOnly, !cfg.allowLocalTools, let why = cfg.restrictedProblem(mode: false, folders: false) {  // a stored configuration of an older version; --minigw-ro filters (readOnlyTools: as before, Bash was never in it)
                 return await error(400, "invalid_request_error", "claude \(why)", rid: rid, writer: writer)
             }
             let allTools = cfg.allowLocalTools || tree != nil ? await Self.toolList.get(cfg.executable) : []
