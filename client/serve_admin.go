@@ -849,6 +849,9 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 				}
 			}
 		}
+		if b.PermissionMode != nil && !(b.AllowLocalTools != nil && *b.AllowLocalTools || b.AllowLocalTools == nil && s.conf().AllowLocalTools) && enforcingMode(*b.PermissionMode) != *b.PermissionMode {
+			return fail(400, "permission mode "+*b.PermissionMode+" does not enforce the path rules; use dontAsk or acceptEdits (or turn on \"Allow local tools\")") // S4, as on the Mac
+		}
 		if local := b.AllowLocalTools != nil && *b.AllowLocalTools || b.AllowLocalTools == nil && s.conf().AllowLocalTools; !local {
 			for _, f := range folders { // #111 S5: refused when the tools have no sandbox (the path goes into permission rules)
 				if !ruleSafe(f) {

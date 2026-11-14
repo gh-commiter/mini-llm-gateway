@@ -62,3 +62,41 @@ func TestRestrictedModeUsesAnEnforcingPermissionMode(t *testing.T) { // S4
 		t.Fatalf("restricted args use %v", a)
 	}
 }
+
+// S3/S4 in Go: the restricted branch denies Edit on .git config, hooks, info, commondir and worktrees (top-level and nested), and the mode is refused at save.
+func TestRestrictedGoGitDenyAndModeRefusal(t *testing.T) {
+	s, _ := testServer(t, nil)
+	a := s.agentArgs("/copy", false, []string{"/other"})
+	i := slices.Index(a, "--disallowedTools")
+	if i < 0 {
+		t.Fatal("no deny rules")
+	}
+	deny := strings.Split(a[i+1], ",")
+	for _, d := range []string{"//copy", "//other"} {
+		for _, g := range gitDenies {
+			for _, want := range []string{"Edit(" + d + "/.git/" + g + ")", "Edit(" + d + "/.git/" + g + "/**)", "Edit(" + d + "/**/.git/" + g + ")", "Edit(" + d + "/**/.git/" + g + "/**)"} {
+				if !slices.Contains(deny, want) {
+					t.Errorf("missing %s", want)
+				}
+			}
+		}
+		if !slices.Contains(deny, "Edit("+d+"/.git)") || !slices.Contains(deny, "Edit("+d+"/**/.git)") {
+			t.Errorf("missing .git itself for %s", d)
+		}
+	}
+	ls, _, base := liveServer(t, nil)
+	admin := func(body string) (int, string) {
+		return adminNoise(t, ls, base, ls.admin, "PATCH", adminPrefix+"/agents/claude", body)
+	}
+	for _, m := range []string{"auto", "plan"} {
+		if st, b := admin(`{"allowLocalTools":false,"permissionMode":"` + m + `"}`); st != 400 || !strings.Contains(b, "does not enforce") {
+			t.Errorf("%s saved: %d %s", m, st, b)
+		}
+	}
+	if st, b := admin(`{"allowLocalTools":false,"permissionMode":"acceptEdits"}`); st != 200 {
+		t.Errorf("acceptEdits refused: %d %s", st, b)
+	}
+	if st, b := admin(`{"allowLocalTools":true,"permissionMode":"plan"}`); st != 200 {
+		t.Errorf("with local tools the mode is not used: %d %s", st, b)
+	}
+}

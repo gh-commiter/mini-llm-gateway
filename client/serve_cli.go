@@ -151,7 +151,10 @@ func (s *server) agentArgs(dir string, readOnly bool, checked ...[]string) []str
 				for _, t := range []string{"Edit", "Write"} { // tudi na Windows, kjer sandboxa ni
 					deny = append(deny, t+"("+ruleAbs(d)+"/.git/"+g+")", t+"("+ruleAbs(d)+"/.git/"+g+"/**)")
 				}
+				// #111 S3: nested .git (a clone or submodule inside the folder) as on the Mac (N3); only Edit(...) path rules are matched, they stop Write too
+				deny = append(deny, "Edit("+ruleAbs(d)+"/**/.git/"+g+")", "Edit("+ruleAbs(d)+"/**/.git/"+g+"/**)")
 			}
+			deny = append(deny, "Edit("+ruleAbs(d)+"/.git)", "Edit("+ruleAbs(d)+"/**/.git)") // a gitdir: file (submodule) or .git itself
 		}
 	}
 	var args []string
