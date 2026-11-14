@@ -1,6 +1,6 @@
 cask "minigw" do
-  version "0.5.25"
-  sha256 "5dbfa551c593dff908c2231e5de97b0f495a0819ef26f8cbb4fbd0583d714698"
+  version "0.5.26"
+  sha256 "c9b3eb2c1012a63e7ce9d28925720d5a4a2a528d15c5b064a38504032269547c"
 
   url "https://github.com/gh-commiter/mini-llm-gateway/releases/download/v#{version}/minigw.zip"
   name "minigw"
