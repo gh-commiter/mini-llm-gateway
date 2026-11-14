@@ -599,7 +599,7 @@ extension Router {
         p.terminationHandler = { p in  // waitUntilExit brez run loopa lahko obvisi
             exit.done(p.terminationStatus)
             let g = p.processIdentifier  // #73: 2 s po koncu drevo (tudi vnuk s cevjo) ven, da se branje konča
-            DispatchQueue.global().asyncAfter(deadline: .now() + 2) { Native.killTree(g, pipes: pipes) }
+            Thread { Thread.sleep(forTimeInterval: 2); Native.killTree(g, pipes: pipes) }.start()
         }
 
         do {

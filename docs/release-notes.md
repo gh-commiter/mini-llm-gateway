@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fix (#109, all gateways on Mac): the kill timers of agent and `minigw run` processes (git time limit, kill 2 s after an agent or command ends, 5 s after cancel, closing of the output stream) ran on the shared dispatch pool and could start ten or more seconds late when the Mac was busy, so a hung git ran past its limit and an agent's leftover processes lived on until then. They now run on their own threads.
+
 ## 0.5.27
 
 - Security (#82, #107, Mac client): the Mac client now does what the Windows and Linux client did in 0.5.26: reads, writes, moves, copies and deletes of the shared folder through WebDAV and sync go through the opened folder (descriptor, `openat`/`renameat`/`unlinkat` without following links), so a parent folder swapped for a link during an operation cannot lead out of the share or into a protected path (`.git`, `.claude/settings.json`, ...). Links inside the share (relative or absolute target) work again for agents with a direct or read-only share: they are listed as the folder or file they point to (a file with its real size) and can be read and written; a link that leaves the share (also a dangling link or a link loop) is listed as an empty file and cannot be read or written; a request for the link itself is refused with 403 (reason "links that lead outside the shared folder are not followed"), which the agent does not see yet. 0.5.26 said the shared-folder change was in both clients; it was not in the Mac client. Moving or deleting a link acts on the link itself. Sync still does not copy links to the gateway (as on Windows and Linux), but copies agent changes back through links that stay inside the share.

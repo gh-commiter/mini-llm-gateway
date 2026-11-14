@@ -252,7 +252,7 @@ public enum Copilot {
             var st: Int32 = 0
             while waitpid(pid, &st, 0) == -1 && errno == EINTR {}
             exit.done(st & 0x7f == 0 ? (st >> 8) & 0xff : 128 + (st & 0x7f))
-            DispatchQueue.global().asyncAfter(deadline: .now() + 2) { Native.killTree(pid, pipes: [out, err]) }
+            Thread { Thread.sleep(forTimeInterval: 2); Native.killTree(pid, pipes: [out, err]) }.start()
         }.start()
         Thread {  // ločeno od branja dogodkov: velik pogovor ne zaklene cevi; try?: copilot je lahko že končal
             try? input.write(contentsOf: Data(prompt.utf8))

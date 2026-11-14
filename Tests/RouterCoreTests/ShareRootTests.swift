@@ -315,12 +315,10 @@ private func entry(_ p: String, _ data: String) -> Sync.Entry { Sync.Entry(path:
     let root = try tmp("root"), fm = FileManager.default
     try fm.createDirectory(at: root.appendingPathComponent("t/a/b/c/d"), withIntermediateDirectories: true)
     let rt = try #require(ShareRoot(root))
-    let old = ShareRoot.maxDepth
-    defer { ShareRoot.maxDepth = old }
-    ShareRoot.maxDepth = 10
+    rt.maxDepth = 10
     #expect(!rt.treeProtected("t", base: ["t"]) && rt.removeAll("t"))
     try fm.createDirectory(at: root.appendingPathComponent("u/a/b/c/d/e/f/g/h/i/j/k"), withIntermediateDirectories: true)
-    ShareRoot.maxDepth = 3
+    rt.maxDepth = 3
     #expect(rt.treeProtected("u", base: ["u"]) && !rt.removeAll("u"))
     #expect(!gone(root.appendingPathComponent("u/a")))
 }
