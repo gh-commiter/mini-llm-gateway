@@ -641,7 +641,14 @@ extension Router {
             + " (cd <path> && git … or git -C <path> …) works in that one. Changes you leave uncommitted there are committed for you."
     }
 
-    static func mountNote(_ clientCwd: String, _ shared: URL, readOnly: Bool, synced: Bool = false, branch: String? = nil, gits: [String] = []) -> String {
+    /// `shell`: the agent can run commands (Claude without "Allow local tools" and Copilot cannot); the git sentence comes from GitNote (#112).
+    static func mountNote(_ clientCwd: String, _ shared: URL, readOnly: Bool, synced: Bool = false, branch: String? = nil, gits: [String] = [], shell: Bool = true) -> String {
+        let base = mountNoteBase(clientCwd, shared, readOnly: readOnly, synced: synced, branch: branch, gits: gits)
+        let git = GitNote.text(mode: branch != nil ? "worktree" : synced ? "sync" : "direct", shell: shell, readOnly: readOnly)
+        return git.isEmpty ? base : base + " " + git
+    }
+
+    private static func mountNoteBase(_ clientCwd: String, _ shared: URL, readOnly: Bool, synced: Bool, branch: String?, gits: [String]) -> String {
         if let branch, readOnly {  // worktree, agent brez pisanja
             return "The user's folder \(clientCwd) (on their computer, a git repository) is a clone here at \(shared.path), your working"
                 + " directory, read-only for you: do not try to create, change or delete files in it. Map paths under \(clientCwd) to it."
@@ -722,7 +729,7 @@ extension Router {
                 return await error(503, "api_error", Worktree.unsafeFolders, rid: rid, writer: writer)
             }
             if let shared, let clientCwd {
-                args += ["--append-system-prompt", Self.mountNote(clientCwd, shared, readOnly: readOnly, synced: synced, branch: tree?.branch, gits: tree?.gits ?? [])]
+                args += ["--append-system-prompt", Self.mountNote(clientCwd, shared, readOnly: readOnly, synced: synced, branch: tree?.branch, gits: tree?.gits ?? [], shell: cfg.allowLocalTools && !cfg.disabledTools.contains("Bash"))]
             }
             guard let dir = shared ?? (synced ? nil : ClaudeCLI.resolveCwd(clientCwd, roots: checkedRoots, scratch: config.scratchURL)) else {
                 if let why = await Self.shares.takeRefusal() {  // zaklep pisanja

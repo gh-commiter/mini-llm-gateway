@@ -996,7 +996,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 			if dir, _ = s.hub.push(share, "claude"); dir == "" {
 				return writeError(w, r.rid, 502, "Syncing "+clientCwd+" to the gateway failed (see minigw output)")
 			}
-			extra = syncNote(clientCwd, dir, share.readOnly)
+			extra = syncNote(clientCwd, dir, share.readOnly, s.conf().AllowLocalTools)
 		case s.hub.isRefused(session): // odjemalec je poslal mapo brez sync
 			return writeError(w, r.rid, 400, refusedDirect)
 		case r.h("x-claude-mini-share") == "1": // mapa je bila napovedana, a ni prišla

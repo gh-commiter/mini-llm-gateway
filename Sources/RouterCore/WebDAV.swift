@@ -31,7 +31,8 @@ public enum WebDAV {
             if paths.contains(p) { return nil }
             if paths.count < Self.max {
                 paths.insert(p)
-                return "minigw: refused agent write to \(Noise.quoted(p)) (protected path)\n"
+                // #112: where there is an alternative the line names it
+                return "minigw: refused agent write to \(Noise.quoted(p)) (protected path" + (GitNote.refusalHint(p).map { ": " + $0 } ?? "") + ")\n"
             }
             if more { return nil }
             more = true

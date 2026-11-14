@@ -65,6 +65,9 @@ func (l *refusalLog) line(p string) string {
 			l.paths = map[string]bool{}
 		}
 		l.paths[p] = true
+		if h := gitRefusalHint(p); h != "" { // #112: where there is an alternative the line names it
+			return fmt.Sprintf("minigw: refused agent write to %q (protected path: %s)\n", p, h)
+		}
 		return fmt.Sprintf("minigw: refused agent write to %q (protected path)\n", p)
 	case !l.more:
 		l.more = true

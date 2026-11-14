@@ -1,0 +1,73 @@
+{
+ "_": "Git sentence of the agent's note (docs/how-it-works.md): asserted by Go (gitnote_test.go) and Swift (GitNoteTests.swift); hints = refused path -> the alternative the refusal line names",
+ "cases": [
+  {
+   "Mode": "direct",
+   "Shell": true,
+   "ReadOnly": false,
+   "Note": "Git: you can commit in this folder: add, commit, commit --amend, branch, tag, checkout, stash, merge, single cherry-pick/revert. Not possible in this folder: rebase, multi-commit cherry-pick/revert, git gc, git worktree add, changing .git/config, hooks, info/attributes or remotes. Use merge instead of rebase. If the task needs one of these, say so and tell the user to run it themselves or to use worktree mode (minigw --minigw-work=worktree)."
+  },
+  {
+   "Mode": "direct",
+   "Shell": true,
+   "ReadOnly": true,
+   "Note": "Git: the folder is read-only for you: no changes and no commits."
+  },
+  {
+   "Mode": "direct",
+   "Shell": false,
+   "ReadOnly": false,
+   "Note": "Git: you have no shell here, so no git commands, and the file tools cannot touch .git. If the task needs a commit, say so; the user commits your changes."
+  },
+  {
+   "Mode": "sync",
+   "Shell": true,
+   "ReadOnly": false,
+   "Note": "Git: there is no .git in this copy (git data is not copied), so git commands do not see the user's repository and nothing you commit goes back. Do not run git init or git commit here; the changed files are copied back and the user commits them."
+  },
+  {
+   "Mode": "sync",
+   "Shell": true,
+   "ReadOnly": true,
+   "Note": "Git: the folder is read-only for you: no changes and no commits."
+  },
+  {
+   "Mode": "sync",
+   "Shell": false,
+   "ReadOnly": false,
+   "Note": "Git: you have no shell here, so no git commands, and the file tools cannot touch .git. If the task needs a commit, say so; the user commits your changes."
+  },
+  {
+   "Mode": "worktree",
+   "Shell": true,
+   "ReadOnly": false,
+   "Note": ""
+  }
+ ],
+ "Hints": [
+  [
+   ".git/rebase-merge/git-rebase-todo",
+   "rebase is not available in direct mode; use merge, or worktree mode"
+  ],
+  [
+   ".git/hooks/pre-commit",
+   ""
+  ],
+  [
+   "a/.GIT/sequencer/todo",
+   "a cherry-pick or revert of several commits is not available in direct mode; do them one by one, or use worktree mode"
+  ],
+  [
+   ".git/worktrees/x/gitdir",
+   "git worktree is not available in direct mode; use worktree mode (minigw --minigw-work=worktree)"
+  ],
+  [
+   ".git/gc.pid",
+   "git gc is not available in direct mode"
+  ],
+  [
+   "src/a.txt",
+   ""
+  ]
+ ]
+}

@@ -652,7 +652,7 @@ func (s *server) agentFolder(w http.ResponseWriter, r *req, label, agent string)
 		if dir, _ = s.hub.push(share, agent); dir == "" {
 			return "", "", false, writeError(w, r.rid, 502, "Syncing "+clientCwd+" to the gateway failed (see minigw output)")
 		}
-		return dir, syncNote(clientCwd, dir, share.readOnly), share.readOnly, 0
+		return dir, syncNote(clientCwd, dir, share.readOnly, agent != "copilot"), share.readOnly, 0
 	case s.hub.isRefused(session):
 		return "", "", false, writeError(w, r.rid, 400, refusedDirect)
 	case r.h("x-claude-mini-share") == "1":
@@ -663,7 +663,11 @@ func (s *server) agentFolder(w http.ResponseWriter, r *req, label, agent string)
 }
 
 // syncNote: navodilo agentu za sinhronizirano kopijo mape odjemalca (kot ClaudeCLI.mountNote na Macu).
-func syncNote(clientCwd, dir string, readOnly bool) string {
+func syncNote(clientCwd, dir string, readOnly, shell bool) string {
+	return syncNoteBase(clientCwd, dir, readOnly) + " " + gitNote("sync", shell, readOnly) // #112: the git limits of the run
+}
+
+func syncNoteBase(clientCwd, dir string, readOnly bool) string {
 	note := "The user's folder " + clientCwd + " (on their computer) is synced here as " + dir + ", your working directory: a local copy"
 	if readOnly {
 		return note + ". Map paths under " + clientCwd + " to it. The folder is shared read-only: do not try to create, change or delete files in it."
@@ -737,7 +741,7 @@ func cappedNote(r *req, dir, note string) string {
 	if runOf(r) != nil {
 		return note + " The folder is read-only for you: do not try to create, change or delete files in it."
 	}
-	return syncNote(r.h("x-claude-mini-cwd"), dir, true)
+	return syncNote(r.h("x-claude-mini-cwd"), dir, true, true)
 }
 
 // appliedLimits (#46a): omejitve, ki jih je izvajanje res uporabilo (zgodovina jih ne izračuna znova).

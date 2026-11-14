@@ -360,6 +360,12 @@ send git elsewhere stays refused, in the same list on the gateway's sandboxes an
 - the `.lock` file of a refused name, so the lock-file-then-rename that git uses for `config` stays refused while
   `index.lock` to `index` works.
 
+The agent is told these limits in its system note, built from the same rules (Claude CLI, Codex, Grok and Copilot on
+the Mac; `minigw serve` for sync mode): in direct mode which git commands work and which do not, with merge as the
+alternative to rebase; in sync mode that there is no `.git` in the copy; read-only and no-shell runs (Claude CLI
+without "Allow local tools", Copilot) that there are no commits. When a refused write has an alternative, the client's
+refusal line names it, for example `(protected path: rebase is not available in direct mode; use merge, or worktree mode)`.
+
 Not protected today and not changed: `.gitattributes` and `.gitmodules` in the work tree (they are ordinary files; a
 `filter=` or `diff=` attribute needs a definition in `.git/config`, which stays closed; review `.gitmodules` URLs as
 before).
