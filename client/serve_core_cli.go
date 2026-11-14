@@ -355,4 +355,6 @@ func orDash(s string) string {
 }
 
 // restoreOutcome: core.RestoreOutcome for minigw serve.
-func restoreOutcome(err error) (msg string, failed bool) { return core.RestoreOutcome(err, "stop minigw serve first") }
+func restoreOutcome(err error) (msg string, failed bool) {
+	return core.RestoreOutcome(err, "stop minigw serve first")
+}
