@@ -45,23 +45,41 @@ public enum WebDAV {
     static func refuse(_ rel: [String]) -> DAVResponse {
         let p = rel.joined(separator: "/")
         if let line = refused.withLock({ $0.line(p) }) { try? FileHandle.standardError.write(contentsOf: Data(line.utf8)) }
-        return DAVResponse(403)
+        return forbidden()
+    }
+
+    /// Test: lokalna zamenjava po začetnih preverjanjih, tik pred spremembo (kot Go davBeforeMutation); argument = pot korena.
+    nonisolated(unsafe) static var beforeMutation: ((String) -> Void)?
+
+    /// 403 z istim besedilom kot Go `dav()`; `reason` = razlog zavrnitve povezave.
+    static func forbidden(_ reason: String? = nil) -> DAVResponse {
+        DAVResponse(403, [:], Data(("Access refused. " + (reason ?? ShareRoot.linkRefusal + ". Protected paths cannot be modified.")).utf8))
     }
 
     public static func handle(method: String, path: String, headers: [String: String], body: Data,
                               root: URL, prefix: String) -> DAVResponse {
         let root = root.resolvingSymlinksInPath().standardizedFileURL
-        guard let (url, rel) = resolve(path, prefix: prefix, root: root) else { return DAVResponse(403) }
-        let fm = FileManager.default
-        let junk = isJunk(url)  // ._* (xattri) in .DS_Store ne pišemo v mapo odjemalca
-        var isDir: ObjCBool = false
-        let exists = !junk && fm.fileExists(atPath: url.path, isDirectory: &isDir)
+        guard let rt = ShareRoot(root), let (_, href0) = resolve(path, prefix: prefix, root: root) else { return forbidden() }
+        var p = ShareRoot.join(href0)
+        let junk = isJunk(p)  // ._* (xattri) in .DS_Store ne pišemo v mapo odjemalca
+        // Povezave v mapi (tudi absolutne) se razrešijo tu; zaščita poti velja za rezultat. DELETE in MOVE delata na povezavi sami.
+        let follow = ["GET", "HEAD", "PROPFIND", "PUT", "COPY"].contains(method)
+        do { p = try rt.resolve(p, followLast: follow) } catch let e as ShareRoot.Refused { return forbidden(e.message) } catch { return forbidden() }
+        var rel = ShareRoot.comps(p)
+        var serr: Int32 = 0
+        let info = rt.lstat(p, &serr)
+        if info == nil, serr != ENOENT, serr != ENOTDIR { return forbidden() }
+        let exists = !junk && info != nil
+        let isDir = exists && info!.st_mode & S_IFMT == S_IFDIR
         // Zaščitene poti (kot sync): pisanje v .git, .claude/settings*.json, .vscode/tasks.json, .envrc nikoli, tudi
         // prek povezave; branje ostane.
-        func protected(_ u: URL, _ r: [String]) -> Bool { Sync.isProtected(r.joined(separator: "/")) || Sync.protectedCanonical(u, root: root) }
-        if ["PUT", "MKCOL", "DELETE", "MOVE", "PROPPATCH"].contains(method) || (method == "LOCK" && !exists), protected(url, rel) {
+        func protected(_ r: String, _ c: [String]) -> Bool {
+            Sync.isProtected(c.joined(separator: "/")) || Sync.protectedCanonical(URL(fileURLWithPath: root.path).appendingPathComponent(r), root: root)
+        }
+        if ["PUT", "MKCOL", "DELETE", "MOVE", "PROPPATCH"].contains(method) || (method == "LOCK" && !exists), protected(p, rel) {
             return refuse(rel)
         }
+        func parentExists(_ r: String) -> Bool { rt.isDir(ShareRoot.join(Array(ShareRoot.comps(r).dropLast()))) }
 
         switch method {
         case "OPTIONS":
@@ -70,31 +88,31 @@ public enum WebDAV {
 
         case "PROPFIND":
             guard exists else { return DAVResponse(404) }
-            var items = [(url, rel)]
-            if isDir.boolValue, headers["depth"] != "0" {
-                let names = (try? fm.contentsOfDirectory(atPath: url.path)) ?? []
-                items += names.sorted().filter { !isJunk(URL(fileURLWithPath: $0)) }.map {
-                    (url.appendingPathComponent($0), rel + [$0])
+            var items = [(p, href0)]
+            if isDir, headers["depth"] != "0" {
+                for n in (rt.list(p) ?? []).filter({ !isJunk($0) }).sorted() {
+                    var child = p == "." ? n : p + "/" + n
+                    if let c = try? rt.resolve(child, followLast: true) { child = c }  // povezava v mapi: vrsta in velikost cilja
+                    items.append((child, href0 + [n]))
                 }
             }
-            let xml = items.map { propResponse($0.0, href: href(prefix, $0.1)) }.joined()
+            let xml = items.map { propResponse(rt, $0.0, href: href(prefix, $0.1)) }.joined()
             return DAVResponse(207, ["Content-Type": "application/xml; charset=utf-8"],
                                Data(("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<D:multistatus xmlns:D=\"DAV:\">" + xml + "</D:multistatus>").utf8))
 
         case "PROPPATCH":
             guard exists else { return DAVResponse(404) }
             return DAVResponse(207, ["Content-Type": "application/xml; charset=utf-8"], Data((
-                "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<D:multistatus xmlns:D=\"DAV:\"><D:response><D:href>\(href(prefix, rel))</D:href>"
+                "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<D:multistatus xmlns:D=\"DAV:\"><D:response><D:href>\(href(prefix, href0))</D:href>"
                 + "<D:propstat><D:prop/><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response></D:multistatus>").utf8))
 
         case "GET", "HEAD":
-            guard exists else { return DAVResponse(404) }
-            if isDir.boolValue { return DAVResponse(200, ["Content-Type": "text/plain"]) }
-            var st = stat()  // L3: FIFO ali naprava bi zadržala delavca deljenja
-            guard stat(url.path, &st) == 0, st.st_mode & S_IFMT == S_IFREG else { return DAVResponse(403) }
+            guard exists, let info else { return DAVResponse(404) }
+            if isDir { return DAVResponse(200, ["Content-Type": "text/plain"]) }
+            guard info.st_mode & S_IFMT == S_IFREG else { return forbidden() }  // L3: FIFO, naprava ali povezava
             // Le zahtevani del (HEAD nič): odgovor gre v enem kosu prek routerja (do 64 MB, base64).
-            let size = ((try? fm.attributesOfItem(atPath: url.path)[.size]) as? NSNumber)?.intValue ?? 0
-            var h = ["Content-Type": "application/octet-stream", "Last-Modified": httpDate(modified(url)), "Accept-Ranges": "bytes"]
+            let size = Int(info.st_size)
+            var h = ["Content-Type": "application/octet-stream", "Last-Modified": httpDate(date(info.st_mtimespec)), "Accept-Ranges": "bytes"]
             var start = 0, n = size, status = 200
             if let r = headers["range"], let (a, b) = range(r, size: size) {
                 (start, n, status) = (a, b - a + 1, 206)
@@ -102,78 +120,84 @@ public enum WebDAV {
             }
             if method == "HEAD" { h["Content-Length"] = "\(n)"; return DAVResponse(status, h) }
             guard n <= maxServe else { return DAVResponse(413) }  // takoj, namesto da router čaka na odgovor
-            guard let f = FileHandle(forReadingAtPath: url.path) else { return DAVResponse(403) }
-            defer { try? f.close() }
-            guard (try? f.seek(toOffset: UInt64(start))) != nil else { return DAVResponse(403) }
-            return DAVResponse(status, h, n == 0 ? Data() : ((try? f.read(upToCount: n)) ?? Data()))
+            guard let part = rt.readRange(p, start: start, count: n) else { return forbidden() }
+            return DAVResponse(status, h, part)
 
         case "PUT":
             if junk { return DAVResponse(201) }
-            if isDir.boolValue { return DAVResponse(405) }
-            guard parentExists(url) else { return DAVResponse(409) }
-            do { try body.write(to: url, options: .atomic) } catch { return DAVResponse(403) }
+            if isDir { return DAVResponse(405) }
+            guard parentExists(p) else { return DAVResponse(409) }
+            beforeMutation?(rt.path)
+            // #9: obstoječa datoteka obdrži pravice (0755 build.sh ostane izvršljiv); nova ostane 0600.
+            let perm = info.map { $0.st_mode & S_IFMT == S_IFREG ? $0.st_mode & 0o7777 : nil } ?? nil
+            guard rt.writeAtomic(p, body, mode: perm, mtime: nil) == 0 else { return forbidden() }
             return DAVResponse(exists ? 204 : 201)
 
         case "MKCOL":
-            if fm.fileExists(atPath: url.path) { return DAVResponse(405) }
-            guard parentExists(url) else { return DAVResponse(409) }
-            do { try fm.createDirectory(at: url, withIntermediateDirectories: false) } catch { return DAVResponse(403) }
+            if info != nil { return DAVResponse(405) }
+            guard parentExists(p) else { return DAVResponse(409) }
+            beforeMutation?(rt.path)
+            guard rt.mkdir(p) == 0 else { return forbidden() }
             return DAVResponse(201)
 
         case "DELETE":
             if junk { return DAVResponse(204) }
             guard exists else { return DAVResponse(404) }
-            guard !rel.isEmpty else { return DAVResponse(403) }
-            guard !treeProtected(url, rel) else { return refuse(rel) }
-            do { try fm.removeItem(at: url) } catch { return DAVResponse(403) }
+            guard !rel.isEmpty else { return forbidden() }
+            guard !rt.treeProtected(p, base: rel) else { return refuse(rel) }
+            beforeMutation?(rt.path)
+            guard rt.removeAll(p) else { return forbidden() }
             return DAVResponse(204)
 
         case "MOVE", "COPY":
             guard exists, !rel.isEmpty else { return DAVResponse(junk ? 204 : 404) }
             guard let raw = headers["destination"],
-                  let (dest, destRel) = resolve(URL(string: raw)?.path(percentEncoded: true) ?? raw, prefix: prefix, root: root),
-                  !destRel.isEmpty
-            else { return DAVResponse(403) }
+                  let (_, destRel0) = resolve(URL(string: raw)?.path(percentEncoded: true) ?? raw, prefix: prefix, root: root),
+                  !destRel0.isEmpty
+            else { return forbidden() }
             // Tudi vsebina mape: nič zaščitenega na cilju (stage/settings.json → .claude), nič zaščitenega ne izgine
-            // (MOVE .claude stran, prepis obstoječe .claude).
-            var st = stat()
-            if protected(dest, destRel) || treeProtected(url, destRel) || (lstat(dest.path, &st) == 0 && treeProtected(dest, destRel)) {
+            // (MOVE .claude stran, prepis obstoječe .claude). Cilj: zadnja komponenta ostane, kot je.
+            let dest: String
+            do { dest = try rt.resolve(ShareRoot.join(destRel0), followLast: false) } catch let e as ShareRoot.Refused { return forbidden(e.message) } catch { return forbidden() }
+            let destRel = ShareRoot.comps(dest)
+            if protected(dest, destRel) || rt.treeProtected(p, base: destRel) || (rt.lstat(dest) != nil && rt.treeProtected(dest, base: destRel)) {
                 return refuse(destRel)
             }
-            if method == "MOVE", treeProtected(url, rel) { return refuse(rel) }
+            if method == "MOVE", rt.treeProtected(p, base: rel) { return refuse(rel) }
             if isJunk(dest) { return DAVResponse(201) }
             guard parentExists(dest) else { return DAVResponse(409) }
             // Mapa v svojo podmapo in vir v cilju (MOVE /a/b → /a bi z brisanjem cilja izbrisal vir): nikoli
-            // (kanonični poti, da povezava ne skrije zanke; macOS: velikost črk ni pomembna).
-            let src = url.resolvingSymlinksInPath().path.lowercased() + "/"
-            let dst = dest.deletingLastPathComponent().resolvingSymlinksInPath().appendingPathComponent(dest.lastPathComponent).path.lowercased() + "/"
-            if dst != src, dst.hasPrefix(src) || src.hasPrefix(dst) { return DAVResponse(403) }
+            // (poti sta brez povezav; macOS: velikost črk ni pomembna).
+            let src = p.lowercased() + "/", dst = dest.lowercased() + "/"
+            if dst != src, dst.hasPrefix(src) || src.hasPrefix(dst) { return forbidden() }
+            beforeMutation?(rt.path)
             // Ista datoteka (»a.txt« → »A.txt« na APFS, trda povezava): cilja ne brišemo, ker je to vir.
             // MOVE preimenuje prek začasnega imena (tudi datotečni sistemi, ki sami ne preimenujejo le velikosti črk).
-            if sameFile(url, dest) {
-                if method == "COPY" { return DAVResponse(403) }
-                let tmp = url.deletingLastPathComponent().appendingPathComponent(".minigw-mv-" + UUID().uuidString).path
-                guard rename(url.path, tmp) == 0 else { return DAVResponse(403) }
-                guard rename(tmp, dest.path) == 0 else { _ = rename(tmp, url.path); return DAVResponse(403) }
-                _ = unlink(tmp)  // trda povezava: rename je bil brez učinka, tmp je le še ena povezava cilja
+            if let s = rt.lstat(p), let d = rt.lstat(dest), s.st_dev == d.st_dev, s.st_ino == d.st_ino {
+                if method == "COPY" { return forbidden() }
+                let tmp = ShareRoot.join(Array(ShareRoot.comps(p).dropLast()) + [".minigw-mv-" + UUID().uuidString])
+                guard rt.rename(p, tmp) else { return forbidden() }
+                guard rt.rename(tmp, dest) else { _ = rt.rename(tmp, p); return forbidden() }
+                rt.remove(tmp)  // trda povezava: rename je bil brez učinka, tmp je le še ena povezava cilja
                 return DAVResponse(201)
             }
-            let replaced = fm.fileExists(atPath: dest.path)
+            let replaced = rt.lstat(dest) != nil  // povezava na cilju je sama zamenjana
             if replaced {
                 if headers["overwrite"]?.uppercased() == "F" { return DAVResponse(412) }
-                try? fm.removeItem(at: dest)
+                guard rt.removeAll(dest) else { return forbidden() }
             }
-            do {
-                if method == "MOVE" { try fm.moveItem(at: url, to: dest) } else { try copyTree(url, dest) }
-            } catch { return DAVResponse(403) }
+            guard method == "MOVE" ? rt.rename(p, dest) : rt.copyTree(p, dest) else { return forbidden() }
             return DAVResponse(replaced ? 204 : 201)
 
         case "LOCK":
             // Navidezen izključni zaklep: en agent na sejo, macOS ga potrebuje le za pisanje.
             var created = false
             if !exists, !junk {
-                guard parentExists(url) else { return DAVResponse(409) }
-                created = fm.createFile(atPath: url.path, contents: nil)
+                guard parentExists(p) else { return DAVResponse(409) }
+                beforeMutation?(rt.path)
+                guard let f = rt.create(p) else { return forbidden() }
+                close(f)
+                created = true
             }
             let token = headers["if"].flatMap { h in h.range(of: "opaquelocktoken:[^>]+", options: .regularExpression).map { String(h[$0]) } }
                 ?? "opaquelocktoken:" + UUID().uuidString.lowercased()
@@ -188,20 +212,6 @@ public enum WebDAV {
 
         default:
             return DAVResponse(405)
-        }
-    }
-
-    /// L2: COPY le navadnih datotek in map; simbolne povezave in drugo izpusti (kot Go copyTree).
-    static func copyTree(_ src: URL, _ dst: URL) throws {
-        let fm = FileManager.default
-        switch try fm.attributesOfItem(atPath: src.path)[.type] as? FileAttributeType {  // lstat: povezave ne sledi
-        case .typeRegular?: try fm.copyItem(at: src, to: dst)
-        case .typeDirectory?:
-            try fm.createDirectory(at: dst, withIntermediateDirectories: false)
-            for name in try fm.contentsOfDirectory(atPath: src.path) {
-                try copyTree(src.appendingPathComponent(name), dst.appendingPathComponent(name))
-            }
-        default: break
         }
     }
 
@@ -223,30 +233,9 @@ public enum WebDAV {
         return (url, comps)
     }
 
-    /// Ista datoteka (naprava + inode, brez sledenja zadnji povezavi).
-    static func sameFile(_ a: URL, _ b: URL) -> Bool {
-        var x = stat(), y = stat()
-        return lstat(a.path, &x) == 0 && lstat(b.path, &y) == 0 && x.st_dev == y.st_dev && x.st_ino == y.st_ino
-    }
-
-    /// Ali je katera koli pot v drevesu `dir` (z imenom `base`) zaščitena.
-    /// ponytail: enumerator(atPath:) tiho preskoči nečitljive podmape; ob potrebi enumerator z errorHandler.
-    static func treeProtected(_ dir: URL, _ base: [String]) -> Bool {
-        let b = base.joined(separator: "/")
-        if Sync.isProtected(b) { return true }
-        guard let e = FileManager.default.enumerator(atPath: dir.path) else { return false }
-        for case let sub as String in e where Sync.isProtected(b.isEmpty ? sub : b + "/" + sub) { return true }
-        return false
-    }
-
-    static func isJunk(_ url: URL) -> Bool {
-        let n = url.lastPathComponent
+    static func isJunk(_ path: String) -> Bool {
+        let n = (path as NSString).lastPathComponent
         return n.hasPrefix("._") || n == ".DS_Store"
-    }
-
-    static func parentExists(_ url: URL) -> Bool {
-        var d: ObjCBool = false
-        return FileManager.default.fileExists(atPath: url.deletingLastPathComponent().path, isDirectory: &d) && d.boolValue
     }
 
     static func href(_ prefix: String, _ comps: [String]) -> String {
@@ -254,12 +243,14 @@ public enum WebDAV {
         return prefix + "/" + comps.map { $0.addingPercentEncoding(withAllowedCharacters: allowed) ?? $0 }.joined(separator: "/")
     }
 
-    static func propResponse(_ url: URL, href: String) -> String {
-        let a = (try? FileManager.default.attributesOfItem(atPath: url.path)) ?? [:]
-        let dir = a[.type] as? FileAttributeType == .typeDirectory
-        let size = (a[.size] as? NSNumber)?.intValue ?? 0
-        let mod = a[.modificationDate] as? Date ?? Date()
-        let created = a[.creationDate] as? Date ?? mod
+    /// Povezava, ki je `resolve` ni prepisal (zapusti mapo, ostane povezava) ali česa ni: ne vrsta ne velikost povezave
+    /// (kot Go rootPropResponse: datoteka velikosti 0).
+    static func propResponse(_ rt: ShareRoot, _ rel: String, href: String) -> String {
+        let st = rt.lstat(rel).flatMap { [S_IFREG, S_IFDIR].contains($0.st_mode & S_IFMT) ? $0 : nil }
+        let dir = st.map { $0.st_mode & S_IFMT == S_IFDIR } ?? false
+        let size = st.map { Int($0.st_size) } ?? 0
+        let mod = st.map { date($0.st_mtimespec) } ?? Date()
+        let created = st.map { date($0.st_birthtimespec) } ?? mod
         var props = "<D:resourcetype>\(dir ? "<D:collection/>" : "")</D:resourcetype>"
             + "<D:getlastmodified>\(httpDate(mod))</D:getlastmodified>"
             + "<D:creationdate>\(ISO8601DateFormatter().string(from: created))</D:creationdate>"
@@ -268,9 +259,7 @@ public enum WebDAV {
             + "<D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>"
     }
 
-    static func modified(_ url: URL) -> Date {
-        ((try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date) ?? Date()
-    }
+    static func date(_ t: timespec) -> Date { Date(timeIntervalSince1970: Double(t.tv_sec) + Double(t.tv_nsec) / 1e9) }
 
     static func httpDate(_ d: Date) -> String {
         let f = DateFormatter()
