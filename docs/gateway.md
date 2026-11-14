@@ -232,6 +232,29 @@ minigw serve                 # or run it in this terminal (--port, --config)
   identity check cannot tell two folders apart (the real-path and owner checks still apply); (3) a local process of
   the same user could rename a pinned parent folder into a protected folder after the check (it could write there
   directly anyway).
+- **The core data folder is closed to every agent** (0.6.0, #106): the database, its sidecars (`-wal`, `-shm`, `core.state`,
+  `core.audit.log`), backups and the usage spool hold the notes of all projects, so an agent run of any user must not
+  read or write them. The folder is denied by its **real path** (a link to it from an allowed folder does not reach it),
+  and an allowed folder that contains it or is inside it is refused. Per platform and agent kind:
+  - **Mac** (app data folder `~/Library/Application Support/Mini Gateway`, the core in `core`): Codex always runs under its
+    permission profile (every mode: write, read-only, chat, resume, worktree) with the folder set to `none`; Claude CLI
+    (tool rules and sandbox `denyRead`), `minigw run` and Copilot (Seatbelt profile) hide it with the Scratch list
+    (`RouterConfig.hiddenScratch`). **Grok does not run while the gateway has the core:** its `--deny` is a permission
+    rule of its tools, not enforced for commands (`python3 -c open(...)` read a denied file, grok 1.0.77), its own
+    sandbox only limits writing, and it cannot run inside `sandbox-exec`. The error tells the user so.
+  - **Linux** (`<config dir>/core`): `bwrap` masks the config folder with a tmpfs (Codex, Grok, Copilot); Claude Code's
+    own sandbox has it in `denyRead`. Without `bwrap` agents run only with **Allow commands without a sandbox**, and then
+    they read it: see the acceptance below.
+  - **Windows**: the MXC box denies the config folder (by its final path, junctions included) for Claude CLI and Grok.
+    Codex and Copilot run beside the box and only with **Allow commands without a sandbox**, so they read it.
+  - **Gateway with an agent that can read the folder** (Linux without `bwrap`, Windows without the box, Codex and Copilot
+    on Windows; always with **Allow commands without a sandbox**): the core **refuses to open** (project routes answer 503
+    `core_unavailable`, models keep working) unless the owner has accepted it: `minigw gw claude
+    --accept-agents-read-notes=true` (admin `PATCH /agents/claude` with `acceptAgentsCanReadNotes`, key
+    `acceptAgentsCanReadNotes` in `serve.json`; restart the gateway). An accepted exposure is logged at start and shown in
+    `minigw gw status` (`projects: on; Codex can read all notes (accepted: acceptAgentsCanReadNotes)`; refused:
+    `projects: off (...)`). The check is repeated at **every launch**, next to the config folder's deny: a run of an
+    agent that would read the folder is refused with 403 while the core is open and not accepted.
 - **Allowed folders survive a restart** (M2): when a folder is added (settings, admin API, `minigw gw claude --folders`),
   the gateway saves its real path and identity with it (Go: `allowedRecords` in `serve.json`; Mac: in the settings,
   next to the allowed folders; identity = volume UUID and inode in the Mac app, `statfs` `f_fsid` and inode on Linux,
