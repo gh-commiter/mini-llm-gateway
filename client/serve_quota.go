@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	_ "time/tzdata" // Windows has no zoneinfo for Go (+~450 KB): "Europe/Ljubljana" in the /usage text must load
 )
 
 type quotaValue struct {

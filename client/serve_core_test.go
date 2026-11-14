@@ -863,11 +863,27 @@ func TestRestoreOutcomeTellsTheRealState(t *testing.T) { // review (should-fix)
 
 // The gateway's own fixed 403 is the same body as coreapi's (and as the Mac app's constant): one fixture.
 func TestNoProjectAccessBodyMatchesTheFixture(t *testing.T) {
-	want, err := os.ReadFile("coreapi/testdata/no_project_access.json")
+	want, err := coreapiFixtures.ReadFile("coreapi/testdata/no_project_access.json")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := noProjectAccess().Body; string(got) != string(want) {
 		t.Fatalf("noProjectAccess body %s, fixture %s", got, want)
+	}
+}
+
+// Shutdown releases everything: after closeCore the core folder opens again (the lock is gone) and its files can be
+// removed (on Windows an open handle blocks backup, restore, uninstall and TempDir cleanup).
+func TestCloseCoreReleasesTheCoreFolder(t *testing.T) {
+	f := newCoreFx(t, nil)
+	f.s.closeCore()
+	dir := filepath.Join(f.s.cfgDir, coreDirName)
+	st, err := core.Open(dir, core.Options{ProtectDir: protectDir})
+	if err != nil {
+		t.Fatalf("core folder still held after closeCore: %v", err)
+	}
+	st.Close()
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatalf("core folder cannot be removed after closeCore: %v", err)
 	}
 }

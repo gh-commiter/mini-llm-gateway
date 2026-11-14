@@ -115,9 +115,7 @@ func TestProjectForSymlinkIntoLinkedTree(t *testing.T) {
 	inside := folder(t, root, "sub")
 	outside := folder(t, t.TempDir(), "o")
 	link := filepath.Join(outside, "shortcut")
-	if err := os.Symlink(inside, link); err != nil {
-		t.Skip("no symlinks here:", err)
-	}
+	dirLink(t, inside, link) // a junction on Windows without the symlink privilege
 	st := projectState{Links: []projectLink{{Gateway: "g", Project: 1, Slug: "p", Path: root}}}
 	res, err := projectFor(st, "g", link)
 	if err != nil || res.State != linkOK || res.RealPath != inside {
@@ -125,9 +123,7 @@ func TestProjectForSymlinkIntoLinkedTree(t *testing.T) {
 	}
 	// the reverse: a link stored for the real path also applies to a path through a symlinked parent
 	parentLink := filepath.Join(outside, "parent")
-	if err := os.Symlink(root, parentLink); err != nil {
-		t.Skip(err)
-	}
+	dirLink(t, root, parentLink)
 	if res, _ := projectFor(st, "g", filepath.Join(parentLink, "sub")); res.State != linkOK {
 		t.Fatalf("through a parent link: %+v", res)
 	}

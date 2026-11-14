@@ -21,10 +21,7 @@ func updateFixtures() bool { return os.Getenv("MGW_UPDATE_FIXTURES") != "" }
 
 func readFixture(t *testing.T, name string, v any) {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("testdata", name))
-	if err != nil {
-		t.Fatal(err)
-	}
+	b := srcFile(t, "testdata/"+name)
 	if err := json.Unmarshal(b, v); err != nil {
 		t.Fatal(name, err)
 	}
@@ -65,9 +62,14 @@ func TestProjectParityState(t *testing.T) {
 	if updateFixtures() {
 		os.WriteFile(golden, got, 0o644)
 	}
-	want, err := os.ReadFile(golden)
-	if err != nil || !bytes.Equal(got, want) {
-		t.Fatalf("link file differs from %s:\n got %q\nwant %q (%v)", golden, got, want, err)
+	want := srcFile(t, "testdata/projects.golden.json") // embedded copy
+	if updateFixtures() {
+		want = got
+	}
+	golden = filepath.Join(dir, "golden.json") // load back from a real file: the tree may be absent
+	os.WriteFile(golden, want, 0o644)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("link file differs from %s:\n got %q\nwant %q", golden, got, want)
 	}
 	if st, err := loadProjectState(golden); err != nil || len(st.Links) != 2 || st.Links[1] != fx.GoldenLinks[1] || st.Version != 1 {
 		t.Fatalf("golden does not load back: %+v %v", st, err)

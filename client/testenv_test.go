@@ -18,6 +18,11 @@ import (
 //go:embed testdata
 var testdataFS embed.FS
 
+// coreapi's fixtures are shared with the Mac app; embedded for the same reason.
+//
+//go:embed coreapi/testdata
+var coreapiFixtures embed.FS
+
 // srcFile: datoteka izvorne mape (relativno na client/); preskok, ko testni program teče drugje.
 // testdata/ je vgrajen, zato ti primeri tečejo tudi v samostojnem testnem programu (Windows).
 func srcFile(t *testing.T, rel string) []byte {

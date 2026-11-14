@@ -408,6 +408,8 @@ func TestRunProjectRefusedWithoutDeviceProofAndHeaderOnModelsIgnored(t *testing.
 	}
 	// the core is down: refused with 503, never run without the project
 	x.f.s.api.StopRecorder() // the usage writer reads s.core: stop it before the test takes the core away
+	cs := x.f.s.core         // the fixture's cleanup closes only a set core: close the taken one ourselves (Windows cannot remove an open core.db)
+	t.Cleanup(func() { cs.Close() })
 	x.f.s.core = nil
 	st2, body := x.agent("ana", folder(t, t.TempDir(), "d"), "s", f.pid["fakture"], "go")
 	if st2 != 503 || !strings.Contains(body, "core_unavailable") {

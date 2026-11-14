@@ -41,7 +41,8 @@ func TestAgentReadsCoreTable(t *testing.T) {
 	}
 }
 
-// exposedServer: a server whose Codex runs without a sandbox (the switch is on, no bwrap, no box).
+// exposedServer: a server whose Codex runs without a sandbox (the switch is on, no bwrap, no box). Claude CLI is off:
+// on Windows without the box it is exposed too (agentReadsCoreOn), and these tests are about Codex alone.
 func exposedServer(t *testing.T, mod func(*serveConfig)) *server {
 	t.Helper()
 	old := agentSandboxedNow
@@ -49,6 +50,7 @@ func exposedServer(t *testing.T, mod func(*serveConfig)) *server {
 	t.Cleanup(func() { agentSandboxedNow = old })
 	s, _ := testServer(t, func(c *serveConfig) {
 		c.AllowUnsandboxedBash = true
+		c.ClaudeDisabled = true
 		c.Codex.Enabled = true
 		if mod != nil {
 			mod(c)

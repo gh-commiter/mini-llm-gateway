@@ -295,8 +295,14 @@ func (sp *spool) appendLine(l spoolLine) error {
 	if err := os.MkdirAll(filepath.Dir(sp.path), 0o700); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(sp.path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+	// No O_APPEND: on Windows Go then opens with FILE_APPEND_DATA only, and Truncate (the cut-back below) is denied,
+	// which left half a line in the file. The recorder goroutine is the only writer, so seeking to the end is the same.
+	f, err := os.OpenFile(sp.path, os.O_WRONLY|os.O_CREATE, 0o600)
 	if err != nil {
+		return err
+	}
+	if _, err := f.Seek(0, io.SeekEnd); err != nil {
+		f.Close()
 		return err
 	}
 	n, werr := SpoolWrite(f, b)
