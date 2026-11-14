@@ -477,6 +477,7 @@ echo '{"type":"end","sessionId":"S-'$$'"}'
         #expect(home.path.hasSuffix("/proj/2-3-e4/codex") && FileManager.default.fileExists(atPath: home.path))
         #expect((try? FileManager.default.attributesOfItem(atPath: home.path)[.posixPermissions] as? Int) == 0o700)
         let old = try #require(await f.router.projectHome(kind: "codex", owner: "dev", project: ProjectRun(runId: "r", user: 2, device: "dev", project: 3, epoch: 3)))
+        Router.releaseProjectHome(old)  // its run is over (F8: a home of a run that is going is not pruned)
         #expect(old.path.hasSuffix("/proj/2-3-e3/codex") && FileManager.default.fileExists(atPath: old.path))  // a lower epoch is created for a stale run, and pruned at the next higher one
         let again = try #require(await f.router.projectHome(kind: "codex", owner: "dev", project: p))
         #expect(again == home && !FileManager.default.fileExists(atPath: old.path))
@@ -492,7 +493,7 @@ echo '{"type":"end","sessionId":"S-'$$'"}'
     @Test func homesAreBoundedPerDevice() async throws {
         let f = try await PFx()
         f.makeRouter()
-        for i in 1...25 { _ = await f.router.projectHome(kind: "codex", owner: "dev", project: ProjectRun(runId: "r", user: i, device: "dev", project: 1, epoch: 1)) }
+        for i in 1...25 { await f.router.projectHome(kind: "codex", owner: "dev", project: ProjectRun(runId: "r", user: i, device: "dev", project: 1, epoch: 1)).map(Router.releaseProjectHome) }
         let state = f.router.config.scratch("state")
         let dev = try #require(try FileManager.default.contentsOfDirectory(atPath: state.path).first)
         let homes = try FileManager.default.contentsOfDirectory(atPath: state.appendingPathComponent(dev + "/proj").path)
@@ -522,19 +523,90 @@ echo '{"type":"end","sessionId":"S-'$$'"}'
         defer { try? FileManager.default.removeItem(at: base) }
         let real = base.appendingPathComponent("real"), home = base.appendingPathComponent("home")
         for d in [real, home] { try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true) }
-        try Data("LOGIN1".utf8).write(to: real.appendingPathComponent("auth.json"))
+        let auth = home.appendingPathComponent("auth.json"), realAuth = real.appendingPathComponent("auth.json")
+        try Data(#"{"tokens":"LOGIN1"}"#.utf8).write(to: realAuth)
         Router.linkProjectAuth(home: home, real: real)
-        #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: home.appendingPathComponent("auth.json").path)) == real.appendingPathComponent("auth.json").path)
+        #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: auth.path)) == realAuth.path)
         #expect(!FileManager.default.fileExists(atPath: home.appendingPathComponent("config.toml").path))  // nothing to link: skipped
         // the CLI replaced the link by a new file (a write by rename): it goes back to the real folder, the link is made again
-        try FileManager.default.removeItem(at: home.appendingPathComponent("auth.json"))
-        try Data("LOGIN2".utf8).write(to: home.appendingPathComponent("auth.json"))
-        Router.linkProjectAuth(home: home, real: real)  // a replaced file is not overwritten by the link
-        #expect((try? String(contentsOf: home.appendingPathComponent("auth.json"), encoding: .utf8)) == "LOGIN2")
-        Router.restoreProjectAuth(home: home, real: real)
-        #expect((try? String(contentsOf: real.appendingPathComponent("auth.json"), encoding: .utf8)) == "LOGIN2")
-        #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: home.appendingPathComponent("auth.json").path)) == real.appendingPathComponent("auth.json").path)
-        #expect((try? FileManager.default.attributesOfItem(atPath: real.appendingPathComponent("auth.json").path)[.posixPermissions] as? Int) == 0o600)
+        let start = Date().addingTimeInterval(-1)
+        try FileManager.default.removeItem(at: auth)
+        try Data(#"{"tokens":"LOGIN2"}"#.utf8).write(to: auth)
+        Router.restoreProjectAuth(home: home, real: real, since: start)
+        #expect((try? String(contentsOf: realAuth, encoding: .utf8)) == #"{"tokens":"LOGIN2"}"#)
+        #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: auth.path)) == realAuth.path)
+        #expect((try? FileManager.default.attributesOfItem(atPath: realAuth.path)[.posixPermissions] as? Int) == 0o600)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: real.path).sorted() == ["auth.json"])  // no temporary file left
+    }
+
+    /// sec-fix F6: what the carry-back refuses (the real login stays as it was, the home gets the link again) and the refresh at run start.
+    @Test func carryBackRefusesWhatIsNotAFreshSmallJSONFileOfTheUser() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("auth-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let fm = FileManager.default
+        let real = base.appendingPathComponent("real"), home = base.appendingPathComponent("home"), other = base.appendingPathComponent("other")
+        for d in [real, home, other] { try fm.createDirectory(at: d, withIntermediateDirectories: true) }
+        let auth = home.appendingPathComponent("auth.json"), realAuth = real.appendingPathComponent("auth.json")
+        let good = #"{"tokens":"REAL"}"#
+        func reset() throws { try? fm.removeItem(at: realAuth); try Data(good.utf8).write(to: realAuth); unlink(auth.path) }
+        func realText() -> String? { try? String(contentsOf: realAuth, encoding: .utf8) }
+        let start = Date().addingTimeInterval(-1)
+        let secret = other.appendingPathComponent("target.json"); try Data(#"{"x":"SECRET"}"#.utf8).write(to: secret)
+        // a planted symlink in the home (to a file elsewhere): not read, not carried; the real file is untouched
+        try reset(); try fm.createSymbolicLink(at: auth, withDestinationURL: secret)
+        Router.restoreProjectAuth(home: home, real: real, since: start)
+        #expect(realText() == good)
+        // a symlink at the real name is neither followed nor replaced
+        try reset(); try fm.removeItem(at: realAuth); try fm.createSymbolicLink(at: realAuth, withDestinationURL: secret)
+        try Data(#"{"tokens":"NEW"}"#.utf8).write(to: auth)
+        Router.restoreProjectAuth(home: home, real: real, since: start)
+        #expect((try? fm.destinationOfSymbolicLink(atPath: realAuth.path)) == secret.path && (try? String(contentsOf: secret, encoding: .utf8)) == #"{"x":"SECRET"}"#)
+        // garbage, an array, a huge file, a hard link, a stale file: all refused and dropped (the next run does not use them)
+        let huge = Data(#"{"a":""#.utf8) + Data(repeating: 0x61, count: Router.maxAuthBytes + 10) + Data(#""}"#.utf8)
+        let linked = other.appendingPathComponent("linked.json"); try Data(good.utf8).write(to: linked)
+        let cases: [(String, (URL) throws -> Void)] = [
+            ("garbage", { try Data("not json \u{0}\u{1}".utf8).write(to: $0) }), ("array", { try Data("[1,2]".utf8).write(to: $0) }),
+            ("huge", { try huge.write(to: $0) }), ("hard link", { try? fm.removeItem(at: linked); try Data(good.utf8).write(to: linked); try fm.linkItem(at: linked, to: $0) }),
+            ("stale", { try Data(good.utf8).write(to: $0); try fm.setAttributes([.modificationDate: Date().addingTimeInterval(-3600)], ofItemAtPath: $0.path) })]
+        for (name, make) in cases {
+            try reset(); try make(auth)
+            Router.restoreProjectAuth(home: home, real: real, since: start)
+            #expect(realText() == good, "\(name): the real login changed")
+            #expect((try? fm.destinationOfSymbolicLink(atPath: auth.path)) == realAuth.path, "\(name): the file was not dropped")
+        }
+        // run start: a config.toml an earlier run left in the home is refreshed from the real file, and a leftover auth.json is the link again
+        try reset()
+        try Data("model = \"real\"\n".utf8).write(to: real.appendingPathComponent("config.toml"))
+        try Data("model = \"planted\"\n".utf8).write(to: home.appendingPathComponent("config.toml"))
+        try Data("{}".utf8).write(to: auth)
+        Router.linkProjectAuth(home: home, real: real)
+        #expect((try? String(contentsOf: home.appendingPathComponent("config.toml"), encoding: .utf8)) == "model = \"real\"\n")
+        #expect((try? fm.destinationOfSymbolicLink(atPath: auth.path)) == realAuth.path)
+        #expect(!fm.fileExists(atPath: other.appendingPathComponent("config.toml").path))
+    }
+
+    /// sec-fix F7: the core's dirName is one path component.
+    @Test func homeNameIsOnePlainPathComponent() {
+        for ok in ["2-3-e4", "1-1-e1", "a.b", "..x"] { #expect(Router.isHomeName(ok), "\(ok)") }
+        for bad in ["", ".", "..", "a/b", "/abs", "../x", "x/..", "a\u{0}b"] { #expect(!Router.isHomeName(bad), "\(bad.debugDescription)") }
+    }
+
+    /// sec-fix F8: past maxHomes the oldest goes first, but never the home of a run that is going (and not a dead epoch's either).
+    @Test func aHomeInUseIsNeverPruned() async throws {
+        let f = try await PFx()
+        f.makeRouter()
+        func run(_ user: Int, epoch: Int = 1) -> ProjectRun { ProjectRun(runId: "r", user: user, device: "dev", project: 1, epoch: epoch) }
+        let busy = try #require(await f.router.projectHome(kind: "codex", owner: "dev", project: run(1)))  // held: its run is going
+        let root = busy.deletingLastPathComponent().deletingLastPathComponent()
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-86400)], ofItemAtPath: busy.deletingLastPathComponent().path)  // the oldest
+        for i in 2...45 { await f.router.projectHome(kind: "codex", owner: "dev", project: run(i)).map(Router.releaseProjectHome) }
+        #expect(FileManager.default.fileExists(atPath: busy.path), "evicted past maxHomes")
+        #expect(try FileManager.default.contentsOfDirectory(atPath: root.path).count <= 21)
+        await f.router.projectHome(kind: "codex", owner: "dev", project: run(1, epoch: 2)).map(Router.releaseProjectHome)  // a newer epoch: the old home is dead, but its run goes
+        #expect(FileManager.default.fileExists(atPath: busy.path), "dead epoch removed under a running run")
+        Router.releaseProjectHome(busy)
+        await f.router.projectHome(kind: "codex", owner: "dev", project: run(1, epoch: 3)).map(Router.releaseProjectHome)
+        #expect(!FileManager.default.fileExists(atPath: busy.path))  // once its run ended the next prune takes it
     }
 
     // MARK: D8 usage events

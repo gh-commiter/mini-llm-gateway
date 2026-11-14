@@ -898,6 +898,7 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 		if err != nil {
 			return "", err
 		}
+		defer releaseHome(state) // F8
 		defer restoreAuth(state, k)
 		m := agentMounts{checked: checked, cfgDir: s.cfgDir, state: state, envVar: strings.ToUpper(k.bin) + "_HOME", files: files, rw: append([]string{dir, tmp}, extra...),
 			hide: c.Scratch, tmps: s.tempRoots(), temp: tmp, unboxed: outsideBox(k.name), // #68: Codex in Copilot nista v škatli
@@ -1187,6 +1188,7 @@ func agentState(scratch string, k agentKind, owner string, p *projectCtx) (strin
 		dir = projectStateDir(filepath.Join(scratch, "state", hex.EncodeToString(sum[:8])), k.name, p)
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
+		releaseHome(dir)
 		return "", nil, err
 	}
 	real, names := agentAuthFiles(k)
@@ -1204,6 +1206,7 @@ func agentState(scratch string, k agentKind, owner string, p *projectCtx) (strin
 				continue
 			}
 			if err := authCopyIn(filepath.Join(real, n), filepath.Join(dir, n)); err != nil {
+				releaseHome(dir)
 				return "", nil, err
 			}
 		}
@@ -1221,6 +1224,7 @@ func agentState(scratch string, k agentKind, owner string, p *projectCtx) (strin
 			}
 			os.Remove(dst)
 			if err := os.Symlink(src, dst); err != nil {
+				releaseHome(dir)
 				return "", nil, err
 			}
 		}
@@ -1700,8 +1704,44 @@ func writeAgentError(w http.ResponseWriter, rid string, status int, msg string) 
 func projectStateDir(devDir, kind string, p *projectCtx) string {
 	h := coreapi.AgentHome(coreapi.AgentHomeRequest{Kind: kind, User: p.user, Project: p.project, Epoch: p.epoch})
 	root := filepath.Join(devDir, "proj")
+	dir := filepath.Join(root, h.DirName, kind)
+	holdHome(dir) // F8: held before the prune (and until releaseHome at the end of the run): the prune never removes the home of a run that is going
 	pruneProjectHomes(root, h, p)
-	return filepath.Join(root, h.DirName, kind)
+	return dir
+}
+
+// homesBusy (sec-fix F8): the project homes of the runs that are going (path -> runs). pruneProjectHomes skips them.
+var homesBusy = struct {
+	sync.Mutex
+	n map[string]int
+}{n: map[string]int{}}
+
+func holdHome(dir string) {
+	homesBusy.Lock()
+	homesBusy.n[dir]++
+	homesBusy.Unlock()
+}
+
+// releaseHome: a no-op for a folder that is not held (a run without a project).
+func releaseHome(dir string) {
+	homesBusy.Lock()
+	if homesBusy.n[dir] > 1 {
+		homesBusy.n[dir]--
+	} else {
+		delete(homesBusy.n, dir)
+	}
+	homesBusy.Unlock()
+}
+
+func homeBusy(root, name string) bool {
+	homesBusy.Lock()
+	defer homesBusy.Unlock()
+	for d := range homesBusy.n {
+		if strings.HasPrefix(d, filepath.Join(root, name)+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 func pruneProjectHomes(root string, h coreapi.AgentHomeReply, p *projectCtx) {
@@ -1716,7 +1756,7 @@ func pruneProjectHomes(root string, h coreapi.AgentHomeReply, p *projectCtx) {
 	var live []home
 	for _, e := range ents {
 		n := e.Name()
-		if n == h.DirName {
+		if n == h.DirName || homeBusy(root, n) {
 			continue
 		}
 		if ep, ok := strings.CutPrefix(n, h.Prefix); ok { // same user and project: another epoch

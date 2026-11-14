@@ -227,12 +227,15 @@ extension Router {
         // 0.6.0 (#106): with the project core Grok runs only in its kernel-enforced profile that denies the core data folder
         // (Grok.prepareCoreHome); if that cannot be set up (also while the helper is merely not ready) it does not run.
         var coreEnv: [String: String] = [:]
+        var held: URL?
+        defer { if let held { Self.releaseProjectHome(held) } }  // F8: the project home is held for the whole run
         if core != nil {
             // A project run has its own home per user, project and epoch (projectHome) instead of the shared one: the same profile file in it,
             // the login stays where it is (GROK_AUTH_PATH). Its path is under <Scratch>/state, which every agent's deny list holds.
             var home = config.scratch("grok-home")
             if let p = Self.reqState?.project {
                 guard let h = await projectHome(kind: "grok", owner: req.device?.id ?? "local", project: p) else { return await projectDown(rid: rid, writer: writer) }
+                held = h
                 home = h
             }
             guard let e = Grok.prepareCoreHome(home, deny: RouterConfig.agentDenied(kind: "grok", scratch: config.scratchURL)) else {

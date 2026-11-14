@@ -16,6 +16,19 @@ struct ProjectRun: Sendable, Equatable {
     var cap: CoreRunCap { CoreRunCap(runId: runId, userId: user, deviceId: device, projectId: project, epoch: epoch) }
 }
 
+/// F8: the project homes of the runs that are going (home path -> runs), so that no prune removes one.
+enum ProjectHomes {
+    nonisolated(unsafe) private static var held: [String: Int] = [:]
+    private static let lock = NSLock()
+    static func hold(_ path: String) { lock.lock(); held[path, default: 0] += 1; lock.unlock() }
+    static func release(_ path: String) {
+        lock.lock(); defer { lock.unlock() }
+        if let n = held[path], n > 1 { held[path] = n - 1 } else { held[path] = nil }
+    }
+    /// `dir` is the folder of one project (<root>/<dirName>): busy when a held home is inside it.
+    static func busy(_ dir: String) -> Bool { lock.lock(); defer { lock.unlock() }; return held.keys.contains { $0.hasPrefix(dir + "/") } }
+}
+
 enum ProjectAdmission: Equatable {
     case none                                   // no project header: the request is what it was in 0.5.26
     case admitted(ProjectRun)
@@ -72,22 +85,32 @@ extension Router {
         let r = await core?.internalCall("agent-home", ["kind": kind, "user": p.user, "project": p.project, "epoch": p.epoch]) ?? .unavailable
         guard r.status == 200, let o = try? JSONSerialization.jsonObject(with: r.body) as? [String: Any],
               let dirName = o["dirName"] as? String, let prefix = o["prefix"] as? String, let epoch = o["epoch"] as? Int,
-              let maxHomes = o["maxHomes"] as? Int, !dirName.isEmpty, !dirName.contains("/") else { return nil }
+              let maxHomes = o["maxHomes"] as? Int, Self.isHomeName(dirName) else { return nil }
         let sum = SHA256.hash(data: Data(owner.utf8))
         let dev = config.scratch("state").appendingPathComponent(sum.prefix(8).map { String(format: "%02x", $0) }.joined(), isDirectory: true)
         let root = dev.appendingPathComponent("proj", isDirectory: true)
         let home = root.appendingPathComponent(dirName, isDirectory: true).appendingPathComponent(kind, isDirectory: true)
         let fm = FileManager.default
-        guard (try? fm.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])) != nil else { return nil }
+        // F8: held before the prune and until `releaseProjectHome` at the end of the run: no prune removes the home of a run that is going
+        ProjectHomes.hold(home.path)
+        guard (try? fm.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])) != nil else { ProjectHomes.release(home.path); return nil }
         Self.pruneProjectHomes(root: root, keep: dirName, prefix: prefix, epoch: epoch, maxHomes: maxHomes)
-        guard (try? fm.createDirectory(at: home, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])) != nil else { return nil }
+        guard (try? fm.createDirectory(at: home, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])) != nil else { ProjectHomes.release(home.path); return nil }
         return home
+    }
+
+    /// The end of a run that got its home from `projectHome`.
+    static func releaseProjectHome(_ home: URL) { ProjectHomes.release(home.path) }
+
+    /// F7: the core's `dirName` becomes one path component: never empty, `.`, `..`, with a separator or a NUL.
+    static func isHomeName(_ n: String) -> Bool {
+        !n.isEmpty && n != "." && n != ".." && !n.contains("/") && !n.contains("\u{0}")
     }
 
     static func pruneProjectHomes(root: URL, keep: String, prefix: String, epoch: Int, maxHomes: Int) {
         let fm = FileManager.default
         var live: [(name: String, at: Date)] = []
-        for n in (try? fm.contentsOfDirectory(atPath: root.path)) ?? [] where n != keep {
+        for n in (try? fm.contentsOfDirectory(atPath: root.path)) ?? [] where n != keep && !ProjectHomes.busy(root.appendingPathComponent(n).path) {
             if n.hasPrefix(prefix), let e = Int(n.dropFirst(prefix.count)), e < epoch {  // same user and project: an older epoch
                 try? fm.removeItem(at: root.appendingPathComponent(n))
                 continue
@@ -102,6 +125,8 @@ extension Router {
 
     /// Codex: the login (auth.json) and settings are links to the real files in the run's own home, as `agentState` in Go; Codex writes
     /// auth.json in place, through the link. `restoreProjectAuth` carries a replaced file back.
+    /// sec-fix F6: at every run start a name that is not the link is made one again (a config.toml an earlier run left is refreshed from the
+    /// real file; a file the CLI replaced was carried back, or refused, at the end of that run).
     static func linkProjectAuth(home: URL, real: URL, names: [String] = ["auth.json", "config.toml"]) {
         let fm = FileManager.default
         for n in names {
@@ -109,25 +134,56 @@ extension Router {
             guard fm.fileExists(atPath: src) else { continue }
             if (try? fm.destinationOfSymbolicLink(atPath: dst)) == src { continue }
             var st = stat()
-            if lstat(dst, &st) == 0, st.st_mode & S_IFMT == S_IFREG { continue }  // the CLI replaced it: restoreProjectAuth carries it back
-            try? fm.removeItem(atPath: dst)
+            if lstat(dst, &st) == 0, st.st_mode & S_IFMT == S_IFDIR { continue }  // not ours to remove
+            unlink(dst)
             try? fm.createSymbolicLink(atPath: dst, withDestinationPath: src)
         }
     }
 
+    /// The largest auth.json that is carried back (a real one is a few KB).
+    static let maxAuthBytes = 256 << 10
+
     /// If the CLI replaced auth.json (a write by rename, not through the link) the new one is the newer: it goes to the real folder and
     /// the link is made again, so the real login does not go stale (refresh tokens can change).
-    static func restoreProjectAuth(home: URL, real: URL) {
+    /// sec-fix F6: the file in the home is written by the agent's CLI, which an agent can drive, so it is carried only when it is a regular
+    /// file of this user, with no other link, not larger than `maxAuthBytes`, modified since `since` (this run) and a JSON object; it is read
+    /// without following a link and written to the real folder by a temporary file and rename (a link at the real name is never followed or
+    /// replaced). A file that fails is dropped, so that it is not the login of the next run.
+    static func restoreProjectAuth(home: URL, real: URL, since: Date) {
         let fm = FileManager.default
         let dst = home.appendingPathComponent("auth.json"), src = real.appendingPathComponent("auth.json")
         var st = stat()
-        guard lstat(dst.path, &st) == 0, st.st_mode & S_IFMT == S_IFREG, let data = fm.contents(atPath: dst.path) else { return }
-        let tmp = src.deletingLastPathComponent().appendingPathComponent(".auth.json-" + UUID().uuidString)
-        guard fm.createFile(atPath: tmp.path, contents: data, attributes: [.posixPermissions: 0o600]), rename(tmp.path, src.path) == 0 else {
-            try? fm.removeItem(at: tmp); return
+        guard lstat(dst.path, &st) == 0, st.st_mode & S_IFMT == S_IFREG else { return }  // still the link (or a link planted elsewhere): nothing to carry
+        func drop() { unlink(dst.path); try? fm.createSymbolicLink(atPath: dst.path, withDestinationPath: src.path) }
+        guard let data = Self.readCarriable(dst.path, since: since),
+              (try? JSONSerialization.jsonObject(with: data)) is [String: Any] else { return drop() }
+        var real_ = stat()
+        if lstat(src.path, &real_) == 0, real_.st_mode & S_IFMT != S_IFREG { return drop() }  // a link or a folder at the real name: not touched
+        let tmp = real.appendingPathComponent(".auth.json-" + UUID().uuidString).path
+        let fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+        guard fd >= 0 else { return drop() }
+        let wrote = data.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) } == data.count && fsync(fd) == 0
+        close(fd)
+        guard wrote, rename(tmp, src.path) == 0 else { unlink(tmp); return drop() }
+        drop()  // the link again (the file in the home was carried)
+    }
+
+    /// The bytes of a regular file of this user (no other link, modified since `since`, small), opened without following a link.
+    static func readCarriable(_ path: String, since: Date) -> Data? {
+        let fd = open(path, O_RDONLY | O_NOFOLLOW)
+        guard fd >= 0 else { return nil }
+        defer { close(fd) }
+        var st = stat()
+        guard fstat(fd, &st) == 0, st.st_mode & S_IFMT == S_IFREG, st.st_uid == getuid(), st.st_nlink == 1, st.st_size <= maxAuthBytes,
+              Date(timeIntervalSince1970: TimeInterval(st.st_mtimespec.tv_sec) + TimeInterval(st.st_mtimespec.tv_nsec) / 1e9) >= since else { return nil }
+        var data = Data(), buf = [UInt8](repeating: 0, count: 16 << 10)
+        while data.count <= maxAuthBytes {
+            let n = read(fd, &buf, buf.count)
+            if n < 0 { return nil }
+            if n == 0 { return data }
+            data.append(buf, count: n)
         }
-        try? fm.removeItem(at: dst)
-        try? fm.createSymbolicLink(atPath: dst.path, withDestinationPath: src.path)
+        return nil
     }
 
     /// The agent's paragraph about the project's notes. Notes are written by people: reference, never orders.

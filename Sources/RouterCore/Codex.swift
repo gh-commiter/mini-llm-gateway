@@ -346,12 +346,14 @@ extension Router {
         // 0.6.0 (M2): a run with a project has its own CODEX_HOME per user, project and epoch (its rollout logs hold what the agent read from the
         // notes): the login and settings are links to the real files (as agentState in Go), carried back after the run.
         var projectAuth: (home: URL, real: URL)?
+        let runStart = Date()
+        defer { if let projectAuth { Self.releaseProjectHome(projectAuth.home) } }  // F8: held for the whole run (this function returns when it has ended)
         if let p = Self.reqState?.project {
             guard let home = await projectHome(kind: "codex", owner: req.device?.id ?? "local", project: p) else { return await projectDown(rid: rid, writer: writer) }
             let real = URL(fileURLWithPath: ProcessInfo.processInfo.environment["CODEX_HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory() + "/.codex")
+            projectAuth = (home, real)  // from here the home is released by the defer above
             Self.linkProjectAuth(home: home, real: real)
             codexEnv["CODEX_HOME"] = home.path
-            projectAuth = (home, real)
         }
         let existing = agent ? await Self.codexSessions.get(ClaudeCLI.key(all.dropLast(), scope: scope)) : nil
         if existing != nil { prompt = last.text }
@@ -364,7 +366,7 @@ extension Router {
         let sessions = Self.codexSessions, session = req.header("x-claude-mini-session") ?? ""
         return await replyWhenDone(body: body, model: "claude-codex", rid: rid, writer: writer, req: req) {
             self.dispatched("codex")  // the agent process starts (usage event)
-            defer { if let projectAuth { Self.restoreProjectAuth(home: projectAuth.home, real: projectAuth.real) } }
+            defer { if let projectAuth { Self.restoreProjectAuth(home: projectAuth.home, real: projectAuth.real, since: runStart) } }
             let (text, thread) = try await Codex.run(exe, args: args, cwd: cwd, prompt: prompt, output: output,
                                                          env: codexEnv, dirs: await Self.shares.runDirs(), checked: checked, stopNested: { run?.stop() }, started: { run?.started($0) }) { [onActivity] s in
                 onActivity(.step(id: rid, text: s))

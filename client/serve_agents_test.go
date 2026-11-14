@@ -773,6 +773,7 @@ func TestAgentHomeIsPerUserProjectAndEpoch(t *testing.T) {
 		if err != nil || len(files) != 2 {
 			t.Fatalf("%v %v", files, err)
 		}
+		releaseHome(d) // the run is over (F8: a home of a run that is going is never pruned)
 		return d
 	}
 	a := &projectCtx{user: 1, project: 10, epoch: 5}
@@ -842,5 +843,43 @@ func TestSharedRealHomeNeverForAProjectRun(t *testing.T) {
 		if got := sharedRealHome(c.goos, c.box, c.k, c.p); got != c.want {
 			t.Errorf("%+v: %v", c, got)
 		}
+	}
+}
+
+// sec-fix F8: eviction past MaxHomes and the removal of a dead epoch skip the home of a run that is still going.
+func TestProjectHomeInUseIsNeverPruned(t *testing.T) {
+	scratch := t.TempDir()
+	max := coreapi.AgentHome(coreapi.AgentHomeRequest{Kind: "codex"}).MaxHomes
+	running := &projectCtx{user: 1, project: 1, epoch: 1}
+	busy, _, err := agentState(scratch, codexKind, "devA", running) // held until releaseHome
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-48 * time.Hour) // the oldest, so it would be the first to go
+	os.Chtimes(filepath.Dir(busy), old, old)
+	for i := 0; i < 2*max; i++ {
+		d, _, err := agentState(scratch, codexKind, "devA", &projectCtx{user: 2, project: int64(100 + i), epoch: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		releaseHome(d)
+	}
+	if _, err := os.Stat(busy); err != nil {
+		t.Fatalf("the home of a running run was evicted: %v", err)
+	}
+	// a newer epoch of the same project would remove the dead epoch's home, but not while its run goes
+	if d, _, err := agentState(scratch, codexKind, "devA", &projectCtx{user: 1, project: 1, epoch: 2}); err != nil {
+		t.Fatal(err)
+	} else {
+		releaseHome(d)
+	}
+	if _, err := os.Stat(busy); err != nil {
+		t.Fatalf("the dead epoch's home of a running run was removed: %v", err)
+	}
+	releaseHome(busy) // the run ended: the next prune may take it
+	d, _, _ := agentState(scratch, codexKind, "devA", &projectCtx{user: 1, project: 1, epoch: 3})
+	releaseHome(d)
+	if _, err := os.Stat(busy); err == nil {
+		t.Fatal("the home stays after its run ended")
 	}
 }
