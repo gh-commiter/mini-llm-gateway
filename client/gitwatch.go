@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -144,7 +143,7 @@ var gitWatchPins = []string{"--no-optional-locks", "-c", "core.fsmonitor=false",
 func gitWatchRun(root string, input string, args ...string) (string, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", append(slices.Clone(gitWatchPins), args...)...)
+	cmd := commandContext(ctx, "git", append(slices.Clone(gitWatchPins), args...)...)
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_PAGER=cat", "GIT_OPTIONAL_LOCKS=0", "GIT_EXTERNAL_DIFF=", "GIT_CONFIG_NOSYSTEM=1")
 	if input != "" {
