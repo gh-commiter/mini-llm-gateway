@@ -208,7 +208,8 @@ echo '{"type":"end","sessionId":"S-'$$'"}'
                           ("not an id", await f.ask(project: nil, headers: ["x-minigw-project": "fakture"])),
                           ("unlisted device", await f.ask(project: f.pid["fakture"], device: "stranger"))] {
             #expect(w.status == 403 && w.text.contains(#""type":"no_project_access""#) && w.text.contains(#""message":"No project access""#)
-                    && w.text.contains(#""type":"error""#) && w.text.contains("x-should-retry: false"), "\(name): \(w.text)")
+                    && w.text.contains(#""type":"error""#) && w.text.contains("x-should-retry: false"),
+                    "\(name): \(w.status) \(w.text) helper ready \(f.h.isReady) restarts \(f.h.restarts) last failure \(f.h.lastFailure)")  // #109: a 503 here = the helper was down
         }
         #expect(f.read("ran.txt") == ranBefore)  // none of them started an agent
         // the fixed refusal is the body asserted by Go (testdata/no_project_access.json) inside the Anthropic shape
