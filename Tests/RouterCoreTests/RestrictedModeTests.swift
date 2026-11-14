@@ -229,12 +229,12 @@ private func covers(_ deny: String, _ scope: String) -> Bool { scope == deny || 
     // the app folder's other files and other clients' mounts are not in the allow side (refused by default)
     let a = c.agentArgs(cwd: URL(fileURLWithPath: app + "/mounts/s1"), allTools: [], scratch: scratch, folders: AllowedFolders(), checkedPaths: [])
     #expect(!value(a, "--allowedTools").contains("mounts/s2") && !value(a, "--allowedTools").contains("/\(app)/**"))
-    // a hidden root with no scope folder inside is still denied (the Scratch of the gateway, here: the folder next to the session's)
+    // hidden roots with no scope folder inside are still denied (the app folder, the credential homes, the core, …)
     let other = c.agentArgs(cwd: URL(fileURLWithPath: "/Users/x/src"), allTools: [], scratch: scratch, folders: AllowedFolders(), checkedPaths: [])
-    #expect(deniedPaths(other).contains { covers($0, sync) }, "the Scratch root is denied when no scope folder is inside it")
+    #expect(deniedPaths(other).contains(app), "the app folder is denied when no scope folder is inside it")
 }
 
-@Test func hiddenRootsAreFencedOffAroundTheScopeFolder() throws {
+@Test func hiddenRootsAreDeniedUnlessTheSessionLivesInThem() throws {
     let fm = FileManager.default
     let base = try #require(Sync.real(fm.temporaryDirectory)).appendingPathComponent("hid-" + UUID().uuidString).path
     defer { try? fm.removeItem(atPath: base) }
@@ -244,16 +244,44 @@ private func covers(_ deny: String, _ scope: String) -> Bool { scope == deny || 
     #expect(ClaudeCLIConfig.scopedDenies(hidden: [base + "/app"], scopes: [base + "/app/mounts/s1"]).paths.isEmpty)
     // (b) a hidden root inside an allowed folder, no scope folder inside it: denied
     #expect(ClaudeCLIConfig.scopedDenies(hidden: [base + "/home/app"], scopes: [base + "/cwd", base + "/home"]).paths == [base + "/home/app"])
-    // (c) both: every entry on the way down is denied except the branch to the scope folder (other sessions, the app's files)
+    // (c) a scope folder inside the hidden root and an allowed folder around it: never reaches here (the allowed folder is refused), but if it does it is dropped, not fenced by a snapshot
     let c = ClaudeCLIConfig.scopedDenies(hidden: [base + "/home/app"], scopes: [base + "/home/app/mounts/s1", base + "/home"])
-    #expect(Set(c.paths) == [base + "/home/app/state.json", base + "/home/app/mounts/s2"] && c.dropped.isEmpty)
-    // an entry that cannot go into a rule: the allowed folder around the hidden root is dropped, the session folder stays
-    try Data("x".utf8).write(to: URL(fileURLWithPath: base + "/home/app/bad(1).txt"))
-    let d = ClaudeCLIConfig.scopedDenies(hidden: [base + "/home/app"], scopes: [base + "/home/app/mounts/s1", base + "/home"])
-    #expect(d.dropped == [base + "/home"] && d.paths.isEmpty)
+    #expect(c.paths.isEmpty && c.dropped == [base + "/home"])
     // the same through a symbolic link (the scope folder by its link, the hidden root by its real path)
     try fm.createSymbolicLink(atPath: base + "/lnk", withDestinationPath: base + "/app")
     #expect(ClaudeCLIConfig.scopedDenies(hidden: [base + "/app"], scopes: [base + "/lnk/mounts/s1"]).paths.isEmpty)
     // the rules: contents and the entry itself, so that a file is covered
     #expect(ClaudeCLIConfig.denyRules(["/a/b"], tools: ["Read"]) == ["Read(//a/b/**)", "Read(//a/b)"])
+}
+
+@Test func allowedFoldersThatOverlapTheGatewaysOwnFoldersAreRefused() throws {  // F2, F1
+    let fm = FileManager.default
+    let app = GatewayHistory.defaultFile.deletingLastPathComponent().path
+    let support = (app as NSString).deletingLastPathComponent
+    for f in [app, app + "/mounts", app + "/mounts/s1", support, (support as NSString).deletingLastPathComponent, NSHomeDirectory()] {
+        #expect(RouterConfig.overlapsGatewayFolder(f, scratch: nil), "\(f)")
+    }
+    let scratch = fm.temporaryDirectory.appendingPathComponent("gw-" + UUID().uuidString)
+    defer { try? fm.removeItem(at: scratch) }
+    try fm.createDirectory(at: scratch.appendingPathComponent("sync/dev"), withIntermediateDirectories: true)
+    for f in [scratch.path, scratch.path + "/sync", scratch.path + "/sync/dev", scratch.deletingLastPathComponent().path] { #expect(RouterConfig.overlapsGatewayFolder(f, scratch: scratch), "\(f)") }
+    #expect(!RouterConfig.overlapsGatewayFolder("/Users/someone/Development/proj", scratch: scratch))
+    // at run: a stored such folder is skipped (and logged once)
+    var logged: [String] = []
+    let check = AllowedFolders()
+    check.record(support)
+    #expect(check.checked(support, log: { logged.append($0) }).paths.isEmpty && check.checked(support, log: { logged.append($0) }).paths.isEmpty)
+    #expect(logged.count == 1 && logged[0].contains("gateway's own folders"), "\(logged)")
+}
+
+@Test func withADirectMountSessionTheAllowSideIsOnlyTheSessionAndTheCheckedFolders() {  // F1: no allow outside ./** and the checked allowed folders
+    let app = GatewayHistory.defaultFile.deletingLastPathComponent().standardizedFileURL.path
+    var c = ClaudeCLIConfig(); c.tools = "Read,Grep,Glob,Edit,Write,WebFetch"
+    for ro in [false, true] {
+        let a = c.agentArgs(cwd: URL(fileURLWithPath: app + "/mounts/s1"), allTools: [], readOnly: ro, folders: AllowedFolders(), checkedPaths: ["/Users/x/src"])
+        for r in value(a, "--allowedTools").split(separator: ",").map(String.init) where r != "WebFetch" {
+            #expect(r.contains("(./**)") || r.contains("(//Users/x/src/**)"), "\(r)")
+        }
+        #expect(!value(a, "--allowedTools").contains(app))
+    }
 }

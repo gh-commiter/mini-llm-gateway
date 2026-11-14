@@ -154,12 +154,10 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
     /// #114: which of the hidden folders (the gateway's app folder, Scratch, the Copilot cache, the core …) may be denied to the tools without denying the run's own files.
     /// A deny beats an allow, and a remote client's folder lives INSIDE hidden roots (`…/Mini Gateway/mounts/<dir>`, `Scratch/sync/<…>`): denying the root would deny
     /// the session. So, per hidden root H and the scope folders (the session folder and the checked allowed folders):
-    ///  - no scope folder inside H: H is denied (as before);
-    ///  - a scope folder inside H and no scope folder around H: H is NOT denied: the allow side is only the scope folders, so everything else in H (other clients'
-    ///    mounts and copies, the app's own files) is refused by default;
-    ///  - a scope folder inside H and an allowed folder around H (the admin allowed `~` or `~/Library`): every entry on the way down from H to the scope folder is denied
-    ///    except the branch that leads to it (listed now, links not followed, bounded); if that cannot be done (a name that cannot go into a rule, too many entries) the
-    ///    allowed folder around H is dropped (`dropped`) and the run keeps its own folder.
+    ///  - no scope folder inside H: H is denied;
+    ///  - a scope folder inside H: H is NOT denied: the allow side is only the scope folders, so everything else in H (other clients' mounts and copies, the app's own
+    ///    files) is refused by default. This is only safe while no allowed folder contains H: `AllowedFolders.checked` and the save-time checks refuse allowed folders
+    ///    that contain, equal or lie inside the app folder, Scratch or the Copilot cache; if one gets here anyway it is `dropped` (not used for the run).
     static func scopedDenies(hidden: [String], scopes: [String]) -> (paths: [String], dropped: [String]) {
         func variants(_ p: String) -> [String] {
             var v = [p]
@@ -173,33 +171,10 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
             let hv = variants(h)
             let inner = scopes.filter { underAny(variants($0), hv) }
             if inner.isEmpty { out.append(h); continue }
-            let outer = scopes.filter { !inner.contains($0) && underAny(hv, variants($0)) }
-            if outer.isEmpty { continue }
-            var keep = Set<String>(), dirs: [String] = []
-            for sc in inner {
-                for sv in variants(sc) {
-                    guard let hh = hv.first(where: { under(sv, $0) }), sv != hh else { continue }
-                    var cur = hh
-                    for c in sv.dropFirst(hh.count).split(separator: "/") {
-                        if !dirs.contains(cur) { dirs.append(cur) }
-                        cur += "/" + c
-                        keep.insert(cur)
-                    }
-                }
-            }
-            var found: [String] = [], failed = false
-            for d in dirs {
-                guard let names = try? FileManager.default.contentsOfDirectory(atPath: d), names.count <= 500 else { failed = true; break }
-                for n in names.sorted() where !keep.contains(d + "/" + n) {
-                    if ruleSafe(d + "/" + n) { found.append(d + "/" + n) } else { failed = true }
-                }
-            }
-            if failed {
-                dropped.formUnion(outer)
-                logOnce("claude: the allowed folder(s) \(outer.joined(separator: ", ")) contain the gateway's own folder \(h) and are not used for this run (an entry there cannot be denied)")
-            } else { out += found }
+            for o in scopes where !inner.contains(o) && underAny(hv, variants(o)) { dropped.insert(o) }
         }
-        return (out, Array(dropped))
+        if !dropped.isEmpty { logOnce("claude: the allowed folder(s) \(dropped.sorted().joined(separator: ", ")) contain a gateway folder that a session folder lives in and are not used for this run") }
+        return (out, dropped.sorted())
     }
 
     /// The rules for denied paths: the folder's contents and the entry itself (a file).

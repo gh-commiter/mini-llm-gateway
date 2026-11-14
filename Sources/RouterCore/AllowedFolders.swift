@@ -157,6 +157,13 @@ public final class AllowedFolders: @unchecked Sendable {
                     if st.error == ENOENT { e.missing = true }
                     return nil
                 }
+                if RouterConfig.overlapsGatewayFolder(p, scratch: scratch) {  // #114: the app folder, Scratch, the Copilot cache: contains, equals or inside
+                    if !e.logged {
+                        e.logged = true
+                        log("WARNING: allowed folder \(p) is not used: it contains, equals or is inside one of the gateway's own folders (app folder, Scratch, Copilot cache)")
+                    }
+                    return nil
+                }
                 guard !(scratch.map { RouterConfig.overlapsScratch(p, scratch: $0) } ?? false),
                       !RouterConfig.overlapsCopilotCache(p) else { return nil }
                 let config = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Preferences")

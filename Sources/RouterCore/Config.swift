@@ -160,6 +160,15 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         return inside(s, r) || inside(r, s)
     }
 
+    /// #114: an allowed folder may not contain, equal or lie inside one of the gateway's own folders: the app folder (settings, history, the mounts of remote clients, the core),
+    /// Scratch with its old and neighbouring folders, the Copilot cache. A remote client's folder lives inside them, so their deny rules give way there and only the allow side
+    /// keeps the rest out; an allowed folder around them would let the agents in. Real and literal path (overlapsScratch); one that cannot be resolved counts as overlapping.
+    public static func overlapsGatewayFolder(_ root: String, scratch: URL?) -> Bool {
+        let app = GatewayHistory.defaultFile.deletingLastPathComponent()
+        let roots = [app, copilotCache] + hiddenScratch(scratch).map { URL(fileURLWithPath: $0, isDirectory: true) }
+        return roots.contains { overlapsScratch(root, scratch: $0) }
+    }
+
     /// M1 (0.5.24): mape, ki jih peskovniki agentov skrijejo (dobesedno in kanonično), ob vsakem zagonu (mape ob strani
     /// nastanejo s prevzemom): Scratch, nadomestna mapa scratch(_:) (defaultBase/<ime>), defaultScratch, ter v osnovi
     /// Scratch in v defaultBase prave mape z datoteko lastnika, mape ob strani (<id>.old-<datum>[-<čas>], ScratchOwner.takeOver) in »Mini Gateway Scratch«. Osnove same nikoli

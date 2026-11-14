@@ -981,10 +981,10 @@ struct SettingsView: View {
         panel.prompt = String(localized: "Add")
         guard panel.runModal() == .OK else { return }
         let all = panel.urls.map { ($0.path as NSString).abbreviatingWithTildeInPath }.filter { !roots.contains($0) }
-        let added = all.filter { !RouterConfig.overlapsScratch($0, scratch: draft.scratchURL) && !RouterConfig.overlapsCopilotCache($0) }  // H1, #26
+        let added = all.filter { !RouterConfig.overlapsScratch($0, scratch: draft.scratchURL) && !RouterConfig.overlapsCopilotCache($0) && !RouterConfig.overlapsGatewayFolder($0, scratch: draft.scratchURL) }  // H1, #26, #114
         if added.count < all.count {
             let a = NSAlert()
-            a.messageText = String(localized: "A folder that contains the scratch folder, or is inside it, cannot be an allowed folder.")
+            a.messageText = String(localized: "A folder that contains the gateway\u{2019}s own folders (the app folder, the scratch folder), or is inside one of them, cannot be an allowed folder.")
             a.informativeText = String(localized: "Agents could change the gateway's mirrors and other devices' copies there. Choose another folder, or move the scratch folder (General).")
             a.runModal()
         }

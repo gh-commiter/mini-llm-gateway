@@ -137,6 +137,11 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
             #expect(r.status == 400 && (r.text.contains("Allow local tools") || r.text.contains("not a tool name")), "\(bad) \(r.text)")
         }
         for mode in ["auto", "plan"] { #expect(await claude(#"{"permissionMode":"\#(mode)"}"#).status == 400, "\(mode)") }
+        let appDir = GatewayHistory.defaultFile.deletingLastPathComponent().path  // #114: the app folder, its mounts, the folder around it
+        for f in [appDir, appDir + "/mounts", (appDir as NSString).deletingLastPathComponent] {
+            let r = await claude(#"{"folders":"\#(f)"}"#)
+            #expect(r.status == 400 && r.text.contains("gateway's"), "\(f) \(r.text)")
+        }
         #expect(await claude(#"{"permissionMode":"acceptEdits"}"#).status == 200 && app.config.claudeCLI.permissionMode == "acceptEdits")
         #expect(await claude(#"{"folders":"~/src,/x/Bad (copy)"}"#).status == 400 && app.config.claudeCLI.allowedRoots == "~/src")
         #expect(await claude(#"{"allowLocalTools":true,"tools":"Read,Bash","permissionMode":"dontAsk"}"#).status == 200)  // the sandbox confines Bash there
