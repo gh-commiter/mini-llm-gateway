@@ -17,16 +17,40 @@ struct ProjectRun: Sendable, Equatable {
 }
 
 /// F8: the project homes of the runs that are going (home path -> runs), so that no prune removes one.
+/// R3: "pick a folder for deletion" and "hold a home in it" are one transaction under one lock: a prune `claim`s a folder (refused when a
+/// home in it is held), a `hold` in a claimed folder waits until its deletion has finished (and then gets a fresh home).
 enum ProjectHomes {
     nonisolated(unsafe) private static var held: [String: Int] = [:]
-    private static let lock = NSLock()
-    static func hold(_ path: String) { lock.lock(); held[path, default: 0] += 1; lock.unlock() }
+    nonisolated(unsafe) private static var claimed: Set<String> = []
+    private static let cond = NSCondition()
+    /// Test hook: between the claim and the deletion.
+    nonisolated(unsafe) static var beforeDelete: (() -> Void)?
+
+    /// `path` is <root>/<dirName>/<kind>; its folder <root>/<dirName> is what a prune removes.
+    static func hold(_ path: String) {
+        cond.lock(); defer { cond.unlock() }
+        let dir = (path as NSString).deletingLastPathComponent
+        while claimed.contains(dir) { cond.wait() }
+        held[path, default: 0] += 1
+    }
     static func release(_ path: String) {
-        lock.lock(); defer { lock.unlock() }
+        cond.lock(); defer { cond.unlock() }
         if let n = held[path], n > 1 { held[path] = n - 1 } else { held[path] = nil }
     }
     /// `dir` is the folder of one project (<root>/<dirName>): busy when a held home is inside it.
-    static func busy(_ dir: String) -> Bool { lock.lock(); defer { lock.unlock() }; return held.keys.contains { $0.hasPrefix(dir + "/") } }
+    static func busy(_ dir: String) -> Bool { cond.lock(); defer { cond.unlock() }; return held.keys.contains { $0.hasPrefix(dir + "/") } }
+
+    /// Removes `dir` (a project folder) unless a home in it is held; true = removed. The check and the claim are one step under the lock.
+    static func removeIfIdle(_ dir: String) -> Bool {
+        cond.lock()
+        if claimed.contains(dir) || held.keys.contains(where: { $0.hasPrefix(dir + "/") }) { cond.unlock(); return false }
+        claimed.insert(dir)
+        cond.unlock()
+        beforeDelete?()
+        try? FileManager.default.removeItem(atPath: dir)
+        cond.lock(); claimed.remove(dir); cond.broadcast(); cond.unlock()
+        return true
+    }
 }
 
 enum ProjectAdmission: Equatable {
@@ -112,14 +136,15 @@ extension Router {
         var live: [(name: String, at: Date)] = []
         for n in (try? fm.contentsOfDirectory(atPath: root.path)) ?? [] where n != keep && !ProjectHomes.busy(root.appendingPathComponent(n).path) {
             if n.hasPrefix(prefix), let e = Int(n.dropFirst(prefix.count)), e < epoch {  // same user and project: an older epoch
-                try? fm.removeItem(at: root.appendingPathComponent(n))
+                _ = ProjectHomes.removeIfIdle(root.appendingPathComponent(n).path)
                 continue
             }
             let at = (try? fm.attributesOfItem(atPath: root.appendingPathComponent(n).path)[.modificationDate] as? Date) ?? .distantPast
             live.append((n, at))
         }
         if live.count >= maxHomes {
-            for x in live.sorted(by: { $0.at < $1.at }).prefix(live.count - maxHomes + 1) { try? fm.removeItem(at: root.appendingPathComponent(x.name)) }
+            var need = live.count - maxHomes + 1  // R3: one that turned busy meanwhile is skipped and the next oldest goes instead
+            for x in live.sorted(by: { $0.at < $1.at }) where need > 0 { if ProjectHomes.removeIfIdle(root.appendingPathComponent(x.name).path) { need -= 1 } }
         }
     }
 

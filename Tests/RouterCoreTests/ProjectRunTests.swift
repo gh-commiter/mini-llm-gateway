@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import RouterCore
 
@@ -607,6 +608,40 @@ echo '{"type":"end","sessionId":"S-'$$'"}'
         Router.releaseProjectHome(busy)
         await f.router.projectHome(kind: "codex", owner: "dev", project: run(1, epoch: 3)).map(Router.releaseProjectHome)
         #expect(!FileManager.default.fileExists(atPath: busy.path))  // once its run ended the next prune takes it
+    }
+
+    /// R3: the prune picks a folder, another run then holds a home in it, and the deletion must not take it: the hold waits for the deletion
+    /// and gets a fresh folder; a hold that came before the pick makes the prune skip the folder.
+    @Test func aHoldBetweenThePickAndTheDeletionWaitsAndIsNeverDeleted() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("prune-" + UUID().uuidString)
+        defer { try? fm.removeItem(at: root); ProjectHomes.beforeDelete = nil }
+        let dead = root.appendingPathComponent("1-1-e1"), home = dead.appendingPathComponent("codex")
+        try fm.createDirectory(at: home, withIntermediateDirectories: true)
+        try fm.createDirectory(at: root.appendingPathComponent("2-2-e1/codex"), withIntermediateDirectories: true)
+        let seen = Mutex<(returned: Bool, existed: Bool?)>((false, nil)), done = DispatchSemaphore(value: 0)
+        ProjectHomes.beforeDelete = {  // between the claim and the removeItem
+            ProjectHomes.beforeDelete = nil
+            Thread {
+                ProjectHomes.hold(home.path)  // must wait for the deletion
+                seen.withLock { $0 = (true, fm.fileExists(atPath: dead.path)) }
+                done.signal()
+            }.start()
+            Thread.sleep(forTimeInterval: 0.3)  // the other run is certainly waiting now
+            seen.withLock { #expect(!$0.returned, "the hold did not wait for the deletion") }
+        }
+        Router.pruneProjectHomes(root: root, keep: "2-2-e1", prefix: "1-1-e", epoch: 2, maxHomes: 20)
+        #expect(done.wait(timeout: .now() + 5) == .success)
+        #expect(seen.withLock { $0.existed } == false, "the hold returned before the folder was deleted")
+        ProjectHomes.release(home.path)
+        // a hold that is already there: the prune skips the folder (and takes it later)
+        try fm.createDirectory(at: home, withIntermediateDirectories: true)
+        ProjectHomes.hold(home.path)
+        Router.pruneProjectHomes(root: root, keep: "2-2-e1", prefix: "1-1-e", epoch: 2, maxHomes: 20)
+        #expect(fm.fileExists(atPath: home.path))
+        ProjectHomes.release(home.path)
+        Router.pruneProjectHomes(root: root, keep: "2-2-e1", prefix: "1-1-e", epoch: 2, maxHomes: 20)
+        #expect(!fm.fileExists(atPath: dead.path))
     }
 
     // MARK: D8 usage events

@@ -1751,38 +1751,77 @@ func projectStateDir(devDir, kind string, p *projectCtx) string {
 	return dir
 }
 
-// homesBusy (sec-fix F8): the project homes of the runs that are going (path -> runs). pruneProjectHomes skips them.
-var homesBusy = struct {
-	sync.Mutex
-	n map[string]int
-}{n: map[string]int{}}
+// homes (sec-fix F8, R3): the project homes of the runs that are going (path -> runs), and the project folders a prune is deleting.
+// "Pick a folder for deletion" (removeHomeIfIdle) and "hold a home" (holdHome) are one transaction under one lock: a prune skips a
+// folder with a held home, and a hold in a folder that is being deleted waits until the deletion has finished (and gets a fresh home).
+var homes = struct {
+	mu      sync.Mutex
+	cond    *sync.Cond
+	n       map[string]int
+	deleted map[string]bool
+}{n: map[string]int{}, deleted: map[string]bool{}}
 
-func holdHome(dir string) {
-	homesBusy.Lock()
-	homesBusy.n[dir]++
-	homesBusy.Unlock()
+func init() { homes.cond = sync.NewCond(&homes.mu) }
+
+// pruneHook (tests): between the claim and the deletion.
+var pruneHook func()
+
+func holdHome(dir string) { // dir = <root>/<dirName>/<cli>
+	homes.mu.Lock()
+	defer homes.mu.Unlock()
+	for homes.deleted[filepath.Dir(dir)] {
+		homes.cond.Wait()
+	}
+	homes.n[dir]++
 }
 
 // releaseHome: a no-op for a folder that is not held (a run without a project).
 func releaseHome(dir string) {
-	homesBusy.Lock()
-	if homesBusy.n[dir] > 1 {
-		homesBusy.n[dir]--
+	homes.mu.Lock()
+	if homes.n[dir] > 1 {
+		homes.n[dir]--
 	} else {
-		delete(homesBusy.n, dir)
+		delete(homes.n, dir)
 	}
-	homesBusy.Unlock()
+	homes.mu.Unlock()
 }
 
 func homeBusy(root, name string) bool {
-	homesBusy.Lock()
-	defer homesBusy.Unlock()
-	for d := range homesBusy.n {
+	homes.mu.Lock()
+	defer homes.mu.Unlock()
+	for d := range homes.n {
 		if strings.HasPrefix(d, filepath.Join(root, name)+string(filepath.Separator)) {
 			return true
 		}
 	}
 	return false
+}
+
+// removeHomeIfIdle removes the project folder root/name unless a home in it is held; true = removed.
+func removeHomeIfIdle(root, name string) bool {
+	dir := filepath.Join(root, name)
+	homes.mu.Lock()
+	if homes.deleted[dir] {
+		homes.mu.Unlock()
+		return false
+	}
+	for d := range homes.n {
+		if strings.HasPrefix(d, dir+string(filepath.Separator)) {
+			homes.mu.Unlock()
+			return false
+		}
+	}
+	homes.deleted[dir] = true
+	homes.mu.Unlock()
+	if pruneHook != nil {
+		pruneHook()
+	}
+	os.RemoveAll(dir)
+	homes.mu.Lock()
+	delete(homes.deleted, dir)
+	homes.cond.Broadcast()
+	homes.mu.Unlock()
+	return true
 }
 
 func pruneProjectHomes(root string, h coreapi.AgentHomeReply, p *projectCtx) {
@@ -1802,7 +1841,7 @@ func pruneProjectHomes(root string, h coreapi.AgentHomeReply, p *projectCtx) {
 		}
 		if ep, ok := strings.CutPrefix(n, h.Prefix); ok { // same user and project: another epoch
 			if v, err := strconv.ParseInt(ep, 10, 64); err == nil && v < h.Epoch {
-				os.RemoveAll(filepath.Join(root, n))
+				removeHomeIfIdle(root, n)
 				continue
 			}
 		}
@@ -1812,8 +1851,11 @@ func pruneProjectHomes(root string, h coreapi.AgentHomeReply, p *projectCtx) {
 	}
 	if len(live) >= h.MaxHomes {
 		slices.SortFunc(live, func(a, b home) int { return a.at.Compare(b.at) })
-		for _, x := range live[:len(live)-h.MaxHomes+1] {
-			os.RemoveAll(filepath.Join(root, x.name))
+		need := len(live) - h.MaxHomes + 1 // R3: one that turned busy meanwhile is skipped and the next oldest goes instead
+		for _, x := range live {
+			if need > 0 && removeHomeIfIdle(root, x.name) {
+				need--
+			}
 		}
 	}
 }
