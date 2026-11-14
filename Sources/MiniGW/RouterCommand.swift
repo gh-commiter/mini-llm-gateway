@@ -235,6 +235,7 @@ func routerCommand(_ argv: [String]) {
         fail("--work only applies to minigw gw claude|codex|grok|copilot")
     }
     func need(_ min: Int, _ max: Int) { if pos.count < min || pos.count > max { fail(routerHelp) } }
+    if pos.count == 3, pos[0] == "core", pos[1] == "restore" { coreRestore(pos[2], yes: flags["yes"] != nil) }  // the app must NOT run: no admin connection
     let a = AdminConnection.open()
 
     switch pos[0] {
@@ -245,6 +246,7 @@ func routerCommand(_ argv: [String]) {
         say("version \(st["version"] as? String ?? "?"), port \(st["port"] as? Int ?? 0) on \(st["address"] as? String ?? "?")")
         say(autostartLine(st))
         say("agent requests running: \(st["agents"] as? Int ?? 0)")
+        if let core = st["core"] as? String, !core.isEmpty { say(clean(core)) }  // 0.6.0 (#106)
         say("devices: \(st["devices"] as? Int ?? 0) allowed, \(st["pending"] as? Int ?? 0) waiting (minigw gw devices)")
         let c = st["claude"] as? [String: Any] ?? [:]
         say(clean("claude: \(c["found"] as? Bool == true ? "found" : "not found"), tools \(c["tools"] as? String ?? "")"))
@@ -461,9 +463,28 @@ func routerCommand(_ argv: [String]) {
     }
 }
 
+/// minigw gw core restore: refused while the app runs; otherwise minigw-core restore takes over this process (its question,
+/// its text and its exit code are Go's, client/core/restore_cli.go).
+private func coreRestore(_ file: String, yes: Bool) -> Never {
+    if ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"] != nil {
+        fail("CFFIXED_USER_HOME is set: minigw gw does not run with a redirected home folder")
+    }
+    if let why = CoreRestore.check(appRunning: appOwner() != nil) { fail(why) }
+    let me = Bundle.main.executableURL?.resolvingSymlinksInPath().path ?? CommandLine.arguments[0]
+    let dirs = [(me as NSString).deletingLastPathComponent, "/Applications/Mini Gateway.app/Contents/Helpers",
+                NSHomeDirectory() + "/Applications/Mini Gateway.app/Contents/Helpers"]
+    guard let helper = dirs.map({ $0 + "/minigw-core" }).first(where: FileManager.default.isExecutableFile) else {
+        fail("the project helper (minigw-core) is not installed: it comes with Mini Gateway 0.6.0 or newer (in Mini Gateway.app/Contents/Helpers)")
+    }
+    if let why = helperSignatureProblem(helper, identifier: "dev.trojar.minigateway.core") { fail("not starting \(helper): \(why)") }
+    let argv = CoreRestore.argv(binary: helper, store: CoreHelper.defaultStore.path, file: file, yes: yes).map { strdup($0) } + [nil]
+    execv(helper, argv)
+    fail("cannot start \(helper): \(String(cString: strerror(errno)))")
+}
+
 /// Podpis minigw-tui: ekipa Y2M489RDV8 in identifikator dev.trojar.minigateway.tui (nil = v redu). Ta minigw brez
 /// podpisa ekipe (razvojna gradnja iz swift build) preverjanje preskoči, z opozorilom.
-func helperSignatureProblem(_ path: String) -> String? {
+func helperSignatureProblem(_ path: String, identifier: String = "dev.trojar.minigateway.tui") -> String? {
     let team = "anchor apple generic and certificate leaf[subject.OU] = \"Y2M489RDV8\""
     func valid(_ code: SecStaticCode, _ req: String) -> OSStatus {
         var r: SecRequirement?
@@ -478,8 +499,8 @@ func helperSignatureProblem(_ path: String) -> String? {
     }
     var code: SecStaticCode?
     guard SecStaticCodeCreateWithPath(URL(fileURLWithPath: path) as CFURL, [], &code) == errSecSuccess, let code else { return "cannot read its signature" }
-    let st = valid(code, team + " and identifier \"dev.trojar.minigateway.tui\"")
-    return st == errSecSuccess ? nil : "it is not signed by Mini Gateway (team Y2M489RDV8, identifier dev.trojar.minigateway.tui; OSStatus \(st))"
+    let st = valid(code, team + " and identifier \"\(identifier)\"")
+    return st == errSecSuccess ? nil : "it is not signed by Mini Gateway (team Y2M489RDV8, identifier \(identifier); OSStatus \(st))"
 }
 
 /// Vrstica seje za minigw gw sessions (enako kot sessionLine v Go).

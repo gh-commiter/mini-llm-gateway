@@ -3,8 +3,6 @@ package main
 // minigw gw user|bind|project|member|grant|core …: the core's admin API from the terminal (serve_core_admin.go).
 
 import (
-	"bufio"
-	"errors"
 	"fmt"
 	"io"
 	"minigw/coreapi"
@@ -297,33 +295,12 @@ func coreCommand(a *adminClient, pos []string, o coreOpts) {
 	}
 }
 
-// coreRestore runs core.Restore on the config folder's core, with no gateway running (the store's lock tells).
+// coreRestore runs core.Restore on the config folder's core, with no gateway running (the store's lock tells); the
+// Mac's minigw-core restore runs the same code.
 func coreRestore(cfgPath, file string, yes bool, in io.Reader) {
 	cfgDir, _ := filepath.Abs(filepath.Dir(cfgPath))
-	if !strings.ContainsAny(file, `/\\`) { // a backup's name: it is in the protected backups folder
-		if p := filepath.Join(cfgDir, coreDirName, core.BackupFolder, file); fileExists(p) {
-			file = p
-		}
-	}
-	say("Restoring " + file + " brings back the users, bindings, memberships and grants of that backup, also ones revoked since.")
-	say("The approved device list (serve.json) is not part of the backup and stays as it is. Every run and conversation ends (the epoch grows).")
-	if !yes {
-		fmt.Print("Continue? [y/N] ")
-		line, _ := bufio.NewReader(in).ReadString('\n')
-		if l := strings.ToLower(strings.TrimSpace(line)); l != "y" && l != "yes" {
-			fail("cancelled")
-		}
-	}
-	err := core.Restore(filepath.Join(cfgDir, coreDirName), file)
-	if msg, failed := restoreOutcome(err); failed {
-		fail(msg)
-	} else if err != nil {
-		say(msg)
-		return
-	}
-	say("restored; the previous database is kept next to it as core-<schema>-<time>.db")
-	if _, err := os.Stat(filepath.Join(cfgDir, coreDirName)); err != nil {
-		fail(err.Error())
+	if code := core.RestoreCLI(filepath.Join(cfgDir, coreDirName), file, yes, in, os.Stdout, os.Stderr, "stop minigw serve first"); code != 0 {
+		exitFn(code)
 	}
 }
 
@@ -377,21 +354,5 @@ func orDash(s string) string {
 	return s
 }
 
-// restoreOutcome says what really happened (review): not applied (the previous database is in place), applied with
-// a cleanup left for the next start, or applied.
-func restoreOutcome(err error) (msg string, failed bool) {
-	switch {
-	case err == nil:
-		return "", false
-	case errors.Is(err, core.ErrLocked):
-		return "the gateway (or another minigw) has the core database open: stop minigw serve first, then run the restore again. Nothing was changed.", true
-	case errors.Is(err, core.ErrRestoreApplied):
-		return "restore APPLIED: the backup is the database now (the previous one is kept as a snapshot next to it), but a cleanup step failed and is finished when the gateway starts: " + err.Error(), false
-	}
-	return "restore NOT applied, the previous database is in place: " + err.Error(), true
-}
-
-func fileExists(p string) bool {
-	fi, err := os.Stat(p)
-	return err == nil && fi.Mode().IsRegular()
-}
+// restoreOutcome: core.RestoreOutcome for minigw serve.
+func restoreOutcome(err error) (msg string, failed bool) { return core.RestoreOutcome(err, "stop minigw serve first") }

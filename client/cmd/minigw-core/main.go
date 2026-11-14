@@ -11,6 +11,9 @@
 // (LOCAL_PEERCRED), and must prove the secret in a mutual HMAC handshake before any request is read. The process exits
 // when its parent changes or the app closes the socket.
 //
+// `minigw-core restore -store <folder> [-yes] <file|name>` is the offline restore (minigw gw core restore on the Mac): it takes
+// core.lock exclusively, so it fails while a helper has the store open, and never starts a helper (restore.go).
+//
 // Exit codes: 0 EOF (the app quit), 1 refused (peer is not the parent, bad start) or a failed connection, 2 usage,
 // 3 the parent died. A store that cannot be opened (newer schema, locked, damaged) is NOT an exit: the process stays up
 // and every request is answered with coreapi's 503 core_unavailable (an admin call carries the reason), so the app
@@ -40,6 +43,9 @@ const (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "restore" { // `minigw gw core restore` on the Mac: offline, no socket, no helper
+		os.Exit(restoreMain(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
+	}
 	store := flag.String("store", "", "folder of the core store (private, given by the app)")
 	flag.Parse()
 	log.SetFlags(0)

@@ -290,6 +290,7 @@ struct SettingsView: View {
             header
             Section {
                 LoginItemRow()
+                ProjectsRow()
             }
             Section {
                 TextField("Address", text: $draft.host)
@@ -1024,6 +1025,29 @@ struct EqualWidthHStack: Layout {
             s.place(at: CGPoint(x: x, y: bounds.midY), anchor: .leading, proposal: ProposedViewSize(width: width, height: nil))
             x += width + spacing
         }
+    }
+}
+
+/// 0.6.0: whether the project database works (the same line as `minigw gw status`): read-only, no management here.
+struct ProjectsRow: View {
+    @EnvironmentObject var state: AppState
+    @State private var line = ""
+
+    private var shown: String {
+        if line.hasPrefix("projects: on") { return String(localized: "On") + line.dropFirst("projects: on".count) }  // "; agent runs are refused: …"
+        if line.hasPrefix("projects: off (") && line.hasSuffix(")") { return String(localized: "Off") + ": " + line.dropFirst(15).dropLast() }
+        return line
+    }
+
+    var body: some View {
+        LabeledContent("Projects") { Text(verbatim: shown).textSelection(.enabled).multilineTextAlignment(.trailing) }
+            .help(line)
+            .task {
+                while !Task.isCancelled {
+                    line = await CoreStatus.line(for: state.core)
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                }
+            }
     }
 }
 

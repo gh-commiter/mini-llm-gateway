@@ -70,3 +70,17 @@ private func fixtureJSON(_ name: String) throws -> [String: Any] {
         #expect(!AdminCommands.validDeviceID("short"))
     }
 }
+
+@Suite struct CoreRestoreOffline {
+    @Test func refusedWhileTheAppRuns() {
+        let why = CoreRestore.check(appRunning: true)
+        #expect(why?.contains("quit the app first") == true && why?.contains("Nothing was changed") == true)
+        #expect(CoreRestore.check(appRunning: false) == nil)
+    }
+
+    @Test func theHelperIsStartedInRestoreModeOnly() {
+        let a = CoreRestore.argv(binary: "/h/minigw-core", store: "/s", file: "b.db", yes: true)
+        #expect(a == ["/h/minigw-core", "restore", "-store", "/s", "-yes", "--", "b.db"])  // never the socket mode: no -store before "restore"
+        #expect(CoreRestore.argv(binary: "/h/minigw-core", store: "/s", file: "-x", yes: false) == ["/h/minigw-core", "restore", "-store", "/s", "--", "-x"])
+    }
+}

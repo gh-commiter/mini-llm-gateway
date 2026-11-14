@@ -13,7 +13,7 @@ final class FakeApp: @unchecked Sendable {
     init(_ c: RouterConfig = RouterConfig()) { config = c }
 
     /// Router, kot ga aplikacija zgradi ob vsakem zagonu (apply znova zažene router z novimi nastavitvami).
-    func router(session: URLSession = .shared, scratchInUse: Bool? = nil) -> Router {
+    func router(session: URLSession = .shared, scratchInUse: Bool? = nil, core: CoreHelper? = nil) -> Router {
         var hooks = AdminHooks(secret: adminSecret, connect: "tok#KEY", version: "9.9", installed: { self.lock.withLock { self.login } },
                                setInstalled: { on in self.lock.withLock { self.login = on } },
                                commit: { f, keys in
@@ -27,7 +27,7 @@ final class FakeApp: @unchecked Sendable {
                                },
                                rotateToken: { "newtok#KEY" })
         if let busy = scratchInUse { hooks.scratchInUse = { busy } }
-        return lock.withLock { Router(config: config, token: "tok", secrets: FakeSecrets(values: keys), session: session, admin: hooks,
+        return lock.withLock { Router(config: config, token: "tok", secrets: FakeSecrets(values: keys), session: session, admin: hooks, core: core,
                                          copilotConfig: URL(fileURLWithPath: "/nonexistent/.copilot/config.json")) }  // #81: nikoli prava prijava
     }
 }

@@ -195,10 +195,12 @@ extension Router {
         switch route {
         case "GET status":
             let list = await gateways(c)
+            let coreLine = await coreStatusLine()  // 0.6.0 (#106): as Go's status field "core"; absent when there is no helper
             return (200, ["running": true, "version": hooks.version, "port": Int(c.port), "address": c.host, "installed": hooks.installed(),
                           "autostart": hooks.installed() ? "sign-in" : "", "agents": AgentCount.running.load(ordering: .relaxed),
                           "devices": c.devices.count, "pending": Router.deviceLog.pending.count, "claude": await claudeInfo(c.claudeCLI), "gateways": list, "providers": list]
-                          .merging(c.copilot.enabled ? Copilot.login(copilotConfig).problem.map { ["copilot": $0] } ?? [:] : [:]) { $1 })  // #81
+                          .merging(c.copilot.enabled ? Copilot.login(copilotConfig).problem.map { ["copilot": $0] } ?? [:] : [:]) { $1 }  // #81
+                          .merging(coreLine.isEmpty ? [:] : ["core": coreLine]) { $1 })
 
         // Naprave kot v minigw serve: dovoljene (z zadnjim stikom), čakajoče na odobritev, allowAnyDevice.
         case "GET devices":
