@@ -633,8 +633,7 @@ func TestCoreCLI(t *testing.T) {
 	if us, _ := s.core.ListUsers(t0); !(len(us) == 2 && !us[1].Active) {
 		t.Fatalf("%+v", us)
 	}
-	dest := filepath.Join(t.TempDir(), "b.db")
-	if out := run("core", "backup", dest); !strings.Contains(out, "backup written") {
+	if out := run("core", "backup", "cli.db"); !strings.Contains(out, "backup written") {
 		t.Fatal(out)
 	}
 	if out := run("core", "audit"); !strings.Contains(out, "user.deactivate") && !strings.Contains(out, "user.active") {
