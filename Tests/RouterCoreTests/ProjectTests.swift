@@ -100,6 +100,22 @@ private func fileText(_ p: String) -> String? { FileManager.default.contents(atP
         }
     }
 
+    @Test func headLimitIsOnTheHeadsLengthWhateverTheChunking() throws {  // R4: the shared fixture's limit rows
+        let rows = try fixtureJSON("project-header.json")["limit"] as! [[String: Any]]
+        #expect(rows.count >= 6)
+        for r in rows {
+            let pre = "GET / HTTP/1.1\r\nX-Pad: "
+            let req = Array((pre + String(repeating: "a", count: (r["headLen"] as! Int) - pre.utf8.count)  // utf8: "\r\n" is one Character + "\r\n\r\n").utf8)
+            let cut = r["cut"] as! Int
+            let parts = cut > 0 ? [Data(req[..<cut]), Data(req[cut...])] : [Data(req)]
+            let rw = Projects.HeadRewriter(project: "7")
+            var ok = true, sent = Data()
+            for p in parts { if let o = rw.feed(p) { sent += o } else { ok = false } }
+            #expect(ok == (r["accept"] as! Bool), "\(r["name"]!)")
+            if ok { #expect(String(decoding: sent.prefix(40), as: UTF8.self).hasPrefix("GET / HTTP/1.1\r\nX-Minigw-Project: 7\r\n")) }
+        }
+    }
+
     @Test func headIsRewrittenWhateverTheChunking() {
         let req = "POST /v1/messages HTTP/1.1\r\nHost: x\r\nx-minigw-project: 9\r\nContent-Length: 4\r\n\r\nbody"
         let want = "POST /v1/messages HTTP/1.1\r\nX-Minigw-Project: 42\r\nHost: x\r\nContent-Length: 4\r\n\r\nbody"
