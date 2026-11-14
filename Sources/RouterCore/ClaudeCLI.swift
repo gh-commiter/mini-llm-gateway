@@ -532,10 +532,10 @@ extension Router {
                 prompt = ClaudeCLI.prompt(history: history, last: last)
             }
             let allTools = cfg.allowLocalTools || tree != nil ? await Self.toolList.get(cfg.executable) : []
-            if tree == nil { checked = allowedFolders.checked(cfg.allowedRoots, excluding: dir.path, scratch: config.scratchURL) }
+            if tree == nil { checked = allowedFolders.checked(cfg.allowedRoots, scratch: config.scratchURL) }  // A2: also a cwd that is an allowed root is opened and verified at launch
             args += (tree.map { cfg.worktreeArgs(root: $0.root, maven: $0.maven, cwd: dir, allTools: allTools, network: config.worktreeNetwork,
                                                  scratch: config.scratchURL, read: $0.read, gits: $0.gits) }
-                     ?? cfg.agentArgs(cwd: dir, allTools: allTools, scratch: config.scratchURL, readOnly: readOnly, folders: allowedFolders, checkedPaths: checked.paths))
+                     ?? cfg.agentArgs(cwd: dir, allTools: allTools, scratch: config.scratchURL, readOnly: readOnly, folders: allowedFolders, checkedPaths: checked.paths.filter { $0 != dir.path }))  // the cwd itself is in the arguments already
                 + ["--setting-sources", shared == nil ? cfg.settingSources : ""]  // hooki iz mape odjemalca ne tečejo tukaj
         } else {
             cwd = config.scratch("chat")
