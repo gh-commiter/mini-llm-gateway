@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.5.29
+
 - Fixed (Mac gateway, regression in 0.5.28): with "Allow local tools" off (the default) the Claude CLI models could not read or edit any file of a folder that was shared with the gateway in direct or sync mode whose mount or copy lives in the gateway's own folders: the mount under `~/Library/Application Support/Mini Gateway/mounts` and the copy under the Scratch folder. That is every folder of a remote computer, and sync mode also from the gateway Mac itself (its copy is under `Scratch/sync/local/…`). 0.5.28 denied the tools those gateway folders as hidden, and a deny wins over the allow for the session folder. Not affected: Worktree mode, "Allow local tools" on, and a folder of the same Mac used directly. Now a gateway folder is denied to the tools only where no folder of the run is inside it; where one is, the run's own folders are the only allowed paths, so the other clients' mounts and copies and the app's files stay refused.
 - Changed (Mac gateway): an allowed folder (Settings, Claude CLI, Allowed folders) that contains, equals or is inside one of the gateway's own folders (the app folder `~/Library/Application Support/Mini Gateway`, the Scratch folder, Copilot's package cache) is refused when saved, and a stored one is skipped at run for every agent model (Claude CLI, Codex, Grok; logged once): the agents would otherwise reach the settings and every remote client's mount. New with this version: `~/Library/Application Support`, folders inside the app folder and folders inside old Scratch folders (`*.old-<date>`); `~` and `~/Library` were refused before.
 
