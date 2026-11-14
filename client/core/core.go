@@ -190,8 +190,8 @@ func (s *Store) Close() error {
 	return err
 }
 
-// DB is for reads; writes must use write() so that they are serialized.
-func (s *Store) DB() *sql.DB { return s.db }
+// DB is the read-only handle (query_only); writes go through write(), which serializes them.
+func (s *Store) DB() *sql.DB { return s.rdb }
 
 // GatewayID is created once and kept by every backup.
 func (s *Store) GatewayID() string { return s.gw }

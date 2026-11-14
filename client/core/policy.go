@@ -199,6 +199,8 @@ type rateLimits struct {
 	w  map[int64]*window
 }
 
+// rate counts the request now and returns the limit error; the caller returns it only after the checks that
+// come first (principal, visible, allowed, archived, revision), so an exhausted user still gets 404/403/409.
 func (s *Store) rate(user int64, write bool) error {
 	r := &s.rl
 	r.mu.Lock()

@@ -982,3 +982,142 @@ func TestEpochBumpsWhenAuthorLosesPrivateNote(t *testing.T) {
 	_, err = f.GetNote(ctx, f.p("ana"), fk, n.ID)
 	is(t, err, ErrNotFound)
 }
+
+func TestResolveForLinkNeedsDirectMembership(t *testing.T) { // core-fix 5
+	f := newFx(t)
+	_, err := f.ResolveForLink(ctx, f.p("cene"), "fakture") // grant only: may read, may not link
+	is(t, err, ErrForbidden)
+	if pr, err := f.ResolveForLink(ctx, f.p("cene"), "eureko"); err != nil || pr.Role != Developer {
+		t.Fatalf("%+v %v", pr, err)
+	}
+	if _, err := f.ResolveForLink(ctx, f.p("eva"), fmt.Sprint(f.pid["fakture"])); err != nil { // by id, reader is a member
+		t.Fatal(err)
+	}
+	_, err = f.ResolveForLink(ctx, f.p("dana"), "fakture")
+	is(t, err, ErrNotFound)
+	// a run for a project the user only reaches through a grant is still refused
+	c := RunCap{UserID: f.uid["cene"], DeviceID: "dev-cene", ProjectID: f.pid["fakture"], Epoch: f.epoch.Load()}
+	_, err = f.RunListNotes(ctx, c, true, "", "", 0)
+	is(t, err, ErrNoProjectAccess)
+}
+
+func TestIdempotencyHashIsUnambiguous(t *testing.T) { // core-fix 6: the collision of the review
+	f := newFx(t)
+	a, fk := f.p("ana"), f.pid["fakture"]
+	_, _, err := f.CreateNote(ctx, a, fk, "k", NoteInput{Class: Data, Title: "a", Body: "b\x00c"})
+	f.ok(err)
+	_, rep, err := f.CreateNote(ctx, a, fk, "k", NoteInput{Class: Data, Title: "a\x00b", Body: "c"})
+	is(t, err, ErrIdempotency)
+	if rep {
+		t.Fatal("replayed")
+	}
+}
+
+func TestArchivedBeforeReplay(t *testing.T) { // core-fix 9
+	f := newFx(t)
+	a, fk := f.p("ana"), f.pid["fakture"]
+	in := NoteInput{Class: Data, Title: "x"}
+	_, _, err := f.CreateNote(ctx, a, fk, "k", in)
+	f.ok(err)
+	f.ok(f.SetProjectArchived(ctx, fk, true))
+	_, _, err = f.CreateNote(ctx, a, fk, "k", in)
+	is(t, err, ErrArchived)
+}
+
+func TestDBHandleIsReadOnly(t *testing.T) { // core-fix 10
+	f := newFx(t)
+	if _, err := f.DB().Exec(`INSERT INTO meta VALUES('x','y')`); err == nil {
+		t.Fatal("DB() accepted a write")
+	}
+}
+
+func TestListsCarryNoBody(t *testing.T) { // core-fix 11
+	f := newFx(t)
+	n := f.mk("ana", "fakture", Data)
+	pg, err := f.ListNotes(ctx, f.p("bor"), f.pid["fakture"], "", "", 0)
+	f.ok(err)
+	if len(pg.Notes) != 1 || pg.Notes[0].Body != "" || pg.Notes[0].Title == "" {
+		t.Fatalf("%+v", pg.Notes)
+	}
+	run, err := f.RunListNotes(ctx, RunCap{UserID: f.uid["ana"], DeviceID: "dev-ana", ProjectID: f.pid["fakture"], Epoch: f.epoch.Load()}, true, "", "", 0)
+	f.ok(err)
+	if len(run.Notes) != 1 || run.Notes[0].Body != "" {
+		t.Fatalf("%+v", run.Notes)
+	}
+	if got, _ := f.GetNote(ctx, f.p("bor"), f.pid["fakture"], n.ID); got.Body != "body" {
+		t.Fatal("GetNote lost the body")
+	}
+}
+
+// core-fix 7: an exhausted user still gets the answer of the check that comes first.
+func TestRateLimitComesAfterTheChecks(t *testing.T) {
+	f := newFx(t)
+	fk := f.pid["fakture"]
+	theirs := f.mk("ana", "fakture", Data)
+	mine := f.mk("bor", "fakture", Data)
+	writesPerMin, readsPerMin = 1, 1
+	run := RunCap{UserID: f.uid["cene"], DeviceID: "dev-cene", ProjectID: f.pid["eureko"], Epoch: f.epoch.Load()}
+	in := NoteInput{Class: Data, Title: "x"}
+	bor, dana, eva, fani := f.p("bor"), f.p("dana"), f.p("eva"), f.p("fani")
+	f.ok(f.SetProjectArchived(ctx, f.pid["import"], true))
+	f.ok(f.SetMember(ctx, f.pid["import"], f.uid["eva"], Developer))
+	f.ok(f.SetMember(ctx, f.pid["import"], f.uid["bor"], Developer))
+	f.ok(f.SetMember(ctx, f.pid["import"], f.uid["fani"], Developer))
+	for _, u := range []Principal{bor, dana, eva, fani} { // use up the one write of each
+		f.rate(u.UserID, true)
+		f.rate(u.UserID, true)
+	}
+	f.rate(run.UserID, false)
+	f.rate(run.UserID, false)
+	f.rate(bor.UserID, false)
+	f.rate(bor.UserID, false)
+	_, err := f.UpdateNote(ctx, dana, fk, theirs.ID, 1, in)
+	is(t, err, ErrNotFound)
+	_, err = f.UpdateNote(ctx, bor, fk, theirs.ID, 1, in)
+	is(t, err, ErrForbidden)
+	_, err = f.UpdateNote(ctx, bor, fk, mine.ID, 99, in)
+	is(t, err, ErrRevision{Current: 1})
+	is(t, f.DeleteNote(ctx, dana, fk, theirs.ID, 1), ErrNotFound)
+	is(t, f.DeleteNote(ctx, bor, fk, mine.ID, 99), ErrRevision{Current: 1})
+	_, _, err = f.CreateNote(ctx, eva, fk, "k", in)
+	is(t, err, ErrForbidden)
+	_, _, err = f.CreateNote(ctx, dana, fk, "k", in)
+	is(t, err, ErrNotFound)
+	_, _, err = f.CreateNote(ctx, f.p("fani"), f.pid["import"], "k", in)
+	is(t, err, ErrArchived)
+	_, err = f.GetNote(ctx, dana, fk, theirs.ID)
+	is(t, err, ErrNotFound)
+	_, err = f.ListNotes(ctx, dana, fk, "", "", 0)
+	is(t, err, ErrNotFound)
+	_, err = f.GetProject(ctx, dana, "fakture")
+	is(t, err, ErrNotFound)
+	_, err = f.ListProjects(ctx, Principal{UserID: f.uid["bor"], DeviceID: "dev-eva"}, false)
+	is(t, err, ErrNoProjectAccess)
+	f.ok(f.DeviceRevoked(ctx, "dev-cene"))
+	_, err = f.RunListNotes(ctx, run, true, "", "", 0)
+	is(t, err, ErrNoProjectAccess) // a revoked capability is not a 429
+	_, err = f.RunGetNote(ctx, run, true, theirs.ID)
+	is(t, err, ErrNoProjectAccess)
+	// and where every check passes, the limit is returned
+	var lim ErrLimit
+	_, err = f.UpdateNote(ctx, bor, fk, mine.ID, 1, in)
+	if !errors.As(err, &lim) {
+		t.Fatalf("update: %v", err)
+	}
+	_, _, err = f.CreateNote(ctx, bor, fk, "k9", in)
+	if !errors.As(err, &lim) {
+		t.Fatalf("create: %v", err)
+	}
+	_, err = f.GetNote(ctx, bor, fk, theirs.ID)
+	if !errors.As(err, &lim) {
+		t.Fatalf("get: %v", err)
+	}
+	_, err = f.ListNotes(ctx, bor, fk, "", "", 0)
+	if !errors.As(err, &lim) {
+		t.Fatalf("list: %v", err)
+	}
+	_, _, err = f.CreateNote(ctx, bor, fk, "k9", in) // a replay of a first create is limited as well
+	if !errors.As(err, &lim) {
+		t.Fatalf("replay: %v", err)
+	}
+}

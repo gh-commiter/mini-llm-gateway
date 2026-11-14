@@ -105,6 +105,9 @@ func where(user int64, rs []readable) (string, []any) {
 
 const noteCols = `n.id,n.project_id,n.class,n.title,n.body,n.author_id,u.name,n.created,n.updated,n.revision`
 
+// listCols is noteCols without the body (lists never load it).
+const listCols = `n.id,n.project_id,n.class,n.title,'',n.author_id,u.name,n.created,n.updated,n.revision`
+
 func scanNote(sc interface{ Scan(...any) error }, withBody bool) (n Note, err error) {
 	var c, u int64
 	if err = sc.Scan(&n.ID, &n.ProjectID, &n.Class, &n.Title, &n.Body, &n.AuthorID, &n.Author, &c, &u, &n.Revision); err != nil {
@@ -157,7 +160,7 @@ func listNotes(tx *sql.Tx, user, project int64, rs []readable, class Class, afte
 		q += " AND (n.updated<? OR (n.updated=? AND n.id>?))"
 		args = append(args, c.T, c.T, c.I)
 	}
-	rows, err := tx.Query(`SELECT `+noteCols+` FROM notes n JOIN users u ON u.id=n.author_id WHERE `+q+` ORDER BY n.updated DESC, n.id LIMIT ?`, append(args, limit+1)...)
+	rows, err := tx.Query(`SELECT `+listCols+` FROM notes n JOIN users u ON u.id=n.author_id WHERE `+q+` ORDER BY n.updated DESC, n.id LIMIT ?`, append(args, limit+1)...)
 	if err != nil {
 		return NotePage{}, err
 	}
@@ -213,9 +216,7 @@ func memberAccess(tx *sql.Tx, p Principal, project int64) (access, error) {
 
 // ListNotes lists the notes of a project the caller may read (class filter optional, "" = all).
 func (s *Store) ListNotes(ctx context.Context, p Principal, project int64, class Class, after string, limit int) (pg NotePage, err error) {
-	if err = s.rate(p.UserID, false); err != nil {
-		return
-	}
+	lim := s.rate(p.UserID, false)
 	if limit, err = checkListArgs(class, limit); err != nil {
 		return
 	}
@@ -224,6 +225,9 @@ func (s *Store) ListNotes(ctx context.Context, p Principal, project int64, class
 		if err != nil {
 			return err
 		}
+		if lim != nil {
+			return lim
+		}
 		pg, err = listNotes(tx, p.UserID, project, []readable{a.readable(project, false)}, class, after, limit)
 		return err
 	})
@@ -231,9 +235,7 @@ func (s *Store) ListNotes(ctx context.Context, p Principal, project int64, class
 }
 
 func (s *Store) GetNote(ctx context.Context, p Principal, project, id int64) (n Note, err error) {
-	if err = s.rate(p.UserID, false); err != nil {
-		return
-	}
+	lim := s.rate(p.UserID, false)
 	err = s.read(ctx, func(tx *sql.Tx) error {
 		a, err := memberAccess(tx, p, project)
 		if err != nil {
@@ -245,7 +247,7 @@ func (s *Store) GetNote(ctx context.Context, p Principal, project, id int64) (n 
 		if n.ProjectID != project || !a.can(pRead, n.Class, n.AuthorID == p.UserID) {
 			return ErrNotFound
 		}
-		return nil
+		return lim
 	})
 	if err != nil {
 		return Note{}, err
@@ -319,16 +321,15 @@ func archivedErr(tx *sql.Tx, project int64) error {
 // CreateNote creates a note; key is the Idempotency-Key. A repeat of the same key and payload within 24 h returns
 // the first result (replayed = true) but still needs current access; another payload is ErrIdempotency.
 func (s *Store) CreateNote(ctx context.Context, p Principal, project int64, key string, in NoteInput) (n Note, replayed bool, err error) {
-	if err = s.rate(p.UserID, true); err != nil {
-		return
-	}
+	lim := s.rate(p.UserID, true)
 	if key == "" || len(key) > 64 {
 		return n, false, ErrInvalid{"idempotency key"}
 	}
 	if err = checkInput(in); err != nil {
 		return
 	}
-	h := sha256.Sum256([]byte(string(in.Class) + "\x00" + in.Title + "\x00" + in.Body))
+	enc, _ := json.Marshal(in) // unambiguous: no two inputs give the same bytes
+	h := sha256.Sum256(enc)
 	hash := hex.EncodeToString(h[:])
 	err = s.write(ctx, func(tx *sql.Tx) error {
 		a, err := memberAccess(tx, p, project)
@@ -338,6 +339,9 @@ func (s *Store) CreateNote(ctx context.Context, p Principal, project int64, key 
 		if !a.can(pCreate, in.Class, true) {
 			return ErrForbidden
 		}
+		if err := archivedErr(tx, project); err != nil { // also for a replay
+			return err
+		}
 		now := ms(s.now())
 		tx.Exec(`DELETE FROM idempotency WHERE time<?`, now-idempotencyTTL.Milliseconds())
 		var oldHash, result string
@@ -346,14 +350,17 @@ func (s *Store) CreateNote(ctx context.Context, p Principal, project int64, key 
 			if oldHash != hash {
 				return ErrIdempotency
 			}
+			if lim != nil {
+				return lim
+			}
 			replayed = true
 			return json.Unmarshal([]byte(result), &n)
 		case sql.ErrNoRows:
 		default:
 			return err
 		}
-		if err := archivedErr(tx, project); err != nil {
-			return err
+		if lim != nil {
+			return lim
 		}
 		if err := checkSize(in); err != nil {
 			return err
@@ -386,9 +393,7 @@ func (s *Store) CreateNote(ctx context.Context, p Principal, project int64, key 
 // UpdateNote replaces class, title and body of a note when revision is the current one. A class change is
 // checked against the transition table and always bumps the epoch (also private -> shared: the author may be only a reader by now).
 func (s *Store) UpdateNote(ctx context.Context, p Principal, project, id, revision int64, in NoteInput) (n Note, err error) {
-	if err = s.rate(p.UserID, true); err != nil {
-		return
-	}
+	lim := s.rate(p.UserID, true)
 	if err = checkInput(in); err != nil {
 		return
 	}
@@ -403,6 +408,9 @@ func (s *Store) UpdateNote(ctx context.Context, p Principal, project, id, revisi
 		}
 		if revision != old.Revision {
 			return ErrRevision{Current: old.Revision}
+		}
+		if lim != nil {
+			return lim
 		}
 		if err := checkSize(in); err != nil {
 			return err
@@ -433,9 +441,7 @@ func (s *Store) UpdateNote(ctx context.Context, p Principal, project, id, revisi
 
 // DeleteNote removes a note when revision is current; the audit event keeps id, class and author.
 func (s *Store) DeleteNote(ctx context.Context, p Principal, project, id, revision int64) error {
-	if err := s.rate(p.UserID, true); err != nil {
-		return err
-	}
+	lim := s.rate(p.UserID, true)
 	return s.write(ctx, func(tx *sql.Tx) error {
 		_, n, err := writeAccess(tx, p, project, id)
 		if err != nil {
@@ -443,6 +449,9 @@ func (s *Store) DeleteNote(ctx context.Context, p Principal, project, id, revisi
 		}
 		if revision != n.Revision {
 			return ErrRevision{Current: n.Revision}
+		}
+		if lim != nil {
+			return lim
 		}
 		if _, err := tx.Exec(`DELETE FROM notes WHERE id=?`, id); err != nil {
 			return err
@@ -453,12 +462,13 @@ func (s *Store) DeleteNote(ctx context.Context, p Principal, project, id, revisi
 
 // ListProjects returns the projects the caller can see with role and granted classes; archived ones only when asked.
 func (s *Store) ListProjects(ctx context.Context, p Principal, includeArchived bool) (out []Project, err error) {
-	if err = s.rate(p.UserID, false); err != nil {
-		return
-	}
+	lim := s.rate(p.UserID, false)
 	err = s.read(ctx, func(tx *sql.Tx) error {
 		if err := checkPrincipal(tx, p); err != nil {
 			return err
+		}
+		if lim != nil {
+			return lim
 		}
 		rows, err := tx.Query(`SELECT id,slug,name,archived FROM projects WHERE (archived=0 OR ?1) AND (
   id IN (SELECT project_id FROM memberships WHERE user_id=?2) OR
@@ -496,9 +506,7 @@ func (s *Store) ListProjects(ctx context.Context, p Principal, includeArchived b
 
 // GetProject looks a project up by id (digits) or slug; not visible = ErrNotFound.
 func (s *Store) GetProject(ctx context.Context, p Principal, idOrSlug string) (pr Project, err error) {
-	if err = s.rate(p.UserID, false); err != nil {
-		return
-	}
+	lim := s.rate(p.UserID, false)
 	err = s.read(ctx, func(tx *sql.Tx) error {
 		if err := checkPrincipal(tx, p); err != nil {
 			return err
@@ -517,6 +525,9 @@ func (s *Store) GetProject(ctx context.Context, p Principal, idOrSlug string) (p
 		if !a.visible() {
 			return ErrNotFound
 		}
+		if lim != nil {
+			return lim
+		}
 		pr.Role = a.Role
 		for _, c := range []Class{Structure, Data} {
 			if a.Grants[c] {
@@ -529,6 +540,16 @@ func (s *Store) GetProject(ctx context.Context, p Principal, idOrSlug string) (p
 		return Project{}, err
 	}
 	return
+}
+
+// ResolveForLink is GetProject for `project link`: a link is accepted only for a project the user is a direct
+// member of (a grant alone lets the user read, not work in the project): ErrForbidden for a grant-only project.
+func (s *Store) ResolveForLink(ctx context.Context, p Principal, idOrSlug string) (Project, error) {
+	pr, err := s.GetProject(ctx, p, idOrSlug)
+	if err == nil && pr.Role == "" {
+		return Project{}, ErrForbidden
+	}
+	return pr, err
 }
 
 // RunCap is the notes capability of one agent run (section 4). The gateway keeps it; the core checks it.
@@ -583,9 +604,7 @@ func (s *Store) runScope(tx *sql.Tx, c RunCap, approved bool) ([]readable, error
 
 // RunListNotes lists what the run may read, run project and granted sources together.
 func (s *Store) RunListNotes(ctx context.Context, c RunCap, approved bool, class Class, after string, limit int) (pg NotePage, err error) {
-	if err = s.rate(c.UserID, false); err != nil {
-		return
-	}
+	lim := s.rate(c.UserID, false)
 	if limit, err = checkListArgs(class, limit); err != nil {
 		return
 	}
@@ -593,6 +612,9 @@ func (s *Store) RunListNotes(ctx context.Context, c RunCap, approved bool, class
 		rs, err := s.runScope(tx, c, approved)
 		if err != nil {
 			return err
+		}
+		if lim != nil {
+			return lim
 		}
 		pg, err = listNotes(tx, c.UserID, c.ProjectID, rs, class, after, limit)
 		return err
@@ -602,9 +624,7 @@ func (s *Store) RunListNotes(ctx context.Context, c RunCap, approved bool, class
 
 // RunGetNote reads one note by id if it is in the run's scope (any other note is ErrNotFound).
 func (s *Store) RunGetNote(ctx context.Context, c RunCap, approved bool, id int64) (n Note, err error) {
-	if err = s.rate(c.UserID, false); err != nil {
-		return
-	}
+	lim := s.rate(c.UserID, false)
 	err = s.read(ctx, func(tx *sql.Tx) error {
 		rs, err := s.runScope(tx, c, approved)
 		if err != nil {
@@ -615,7 +635,7 @@ func (s *Store) RunGetNote(ctx context.Context, c RunCap, approved bool, id int6
 		}
 		for _, r := range rs {
 			if r.project == n.ProjectID && r.allows(n.Class, n.AuthorID == c.UserID) {
-				return nil
+				return lim
 			}
 		}
 		return ErrNotFound
