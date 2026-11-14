@@ -1,0 +1,568 @@
+{
+ "gateway": "gw1",
+ "resolution": [
+  {
+   "name": "no link, no hint",
+   "cwd": "plain/x",
+   "dirs": [
+    "plain/x",
+    "work/fakture"
+   ],
+   "git": [],
+   "hints": {},
+   "links": [
+    {
+     "gateway": "gw1",
+     "project": 1,
+     "slug": "fakture",
+     "path": "work/fakture"
+    }
+   ],
+   "gateway": "gw1",
+   "agent": false,
+   "symlinks": {},
+   "want": {
+    "state": "none",
+    "slug": "",
+    "hint": "",
+    "header": "",
+    "error": false
+   }
+  },
+  {
+   "name": "no link, hint in an ancestor",
+   "cwd": "hinted/deep/er",
+   "dirs": [
+    "hinted/deep/er"
+   ],
+   "git": [],
+   "hints": {
+    "hinted": "eureko\n"
+   },
+   "links": [
+    {
+     "gateway": "gw1",
+     "project": 1,
+     "slug": "fakture",
+     "path": "work/fakture"
+    }
+   ],
+   "gateway": "gw1",
+   "agent": false,
+   "symlinks": {},
+   "want": {
+    "state": "none",
+    "slug": "",
+    "hint": "eureko",
+    "header": "",
+    "error": false
+   }
+  },
+  {
+   "name": "hint above the repository root is not looked at",
+   "cwd": "outer/repo/src",
+   "dirs": [
+    "outer/repo/src"
+   ],
+   "git": [
+    "outer/repo"
+   ],
+   "hints": {
+    "outer": "eureko\n"
+   },
+   "links": [],
+   "gateway": "gw1",
+   "agent": false,
+   "symlinks": {},
+   "want": {
+    "state": "none",
+    "slug": "",
+    "hint": "",
+    "header": "",
+    "error": false
+   }
+  },
+  {
+   "name": "link applies at the root",
+   "cwd": "work/fakture",
+   "dirs": [
+    "work/fakture"
+   ],
+   "git": [],
+   "hints": {},
+   "links": [
+    {
+     "gateway": "gw1",
+     "project": 1,
+     "slug": "fakture",
+     "path": "work/fakture"
+    }
+   ],
+   "gateway": "gw1",
+   "agent": false,
+   "symlinks": {},
+   "want": {
+    "state": "ok",
+    "slug": "fakture",
+    "hint": "",
+    "header": "x-minigw-project: 1",
+    "error": false
+   }
+  },
+  {
+   "name": "link applies below",
+   "cwd": "work/fakture/a/b",
+   "dirs": [
+    "work/fakture/a/b"
+   ],
+   "git": [],
+   "hints": {},
+   "links": [
+    {
+     "gateway": "gw1",
+     "project": 1,
+     "slug": "fakture",
+     "path": "work/fakture"
+    }
+   ],
+   "gateway": "gw1",
+   "agent": false,
+   "symlinks": {},
+   "want": {
+    "state": "ok",
+    "slug": "fakture",
+    "hint": "",
+    "header": "x-minigw-project: 1",
+    "error": false
+   }
+  },
+  {
+   "name": "link ok, hint agrees",
+   "cwd": "work/fakture/a",
+   "dirs": [
+    "work/fakture/a"
+   ],
+   "git": [],
+   "hints": {
+    "work/fakture": "fakture\n"
+   },
+   "links": [
+    {
+     "gateway": "gw1",
+     "project": 1,
+     "slug": "fakture",
+     "path": "work/fakture"
+    }
+   ],
+   "gateway": "gw1",
+   "agent": false,
+   "symlinks": {},
+   "want": {
+    "state": "ok",
+    "slug": "fakture",
+    "hint": "fakture",
+    "header": "x-minigw-project: 1",
+    "error": false
+   }
+  },
+  {
+   "name": "link + hint with another slug is refused",
+   "cwd": "work/fakture/a",
+   "dirs": [
+    "work/fakture/a"
+   ],
+   "git": [],
+   "hints": {
+    "work/fakture": "eureko\n"
+   },
+   "links": [
+    {
+     "gateway": "gw1",
+     "project": 1,
+     "slug": "fakture",
+     "path": "work/fakture"
+    }
+   ],
+   "gateway": "gw1",
+   "agent": false,
+   "symlinks": {},
+   "want": {
+    "state": "hintDiff",
+    "slug": "fakture",
+    "hint": "eureko",
+    "header": "",
+    "error": true
+   }
+  },
+  {
+   "name": "an invalid hint is no hint",
+   "cwd": "work/fakture",
+   "dirs": [
+    "work/fakture"
+   ],
+   "git": [],
+   "hints": {
+    "work/fakture": "Not A Slug\n"
+   },
+   "links": [
+    {
+     "gateway": "gw1",
+     "project": 1,
+     "slug": "fakture",
+     "path": "work/fakture"
+    }
+   ],
+   "gateway": "gw1",
+   "agent": false,
+   "symlinks": {},
+   "want": {
+    "state": "ok",
+    "slug": "fakture",
+    "hint": "",
+    "header": "x-minigw-project: 1",
+    "error": false
+   }
+  },
+  {
+   "name": "a hint below the linked root is ignored",
+   "cwd": "work/fakture/inner",
+   "dirs": [
+    "work/fakture/inner"
+   ],
+   "git": [],
+   "hints": {
+    "work/fakture/inner": "other\n"
+   },
+   "links": [
+    {
+     "gateway": "gw1",
+     "project": 1,
+     "slug": "fakture",
+     "path": "work/fakture"
+    }
+   ],
+   "gateway": "gw1",
+   "agent": false,
+   "symlinks": {},
+   "want": {
+    "state": "ok",
+    "slug": "fakture",
+    "hint": "",
+    "header": "x-minigw-project: 1",
+    "error": false
+   }
+  },
+  {
+   "name": "copied folder has no link",
+   "cwd": "work/fakture-copy",
+   "dirs": [
+    "work/fakture-copy",
+    "work/fakture"
+   ],
+   "git": [],
+   "hints": {},
+   "links": [
+    {
+     "gateway": "gw1",
+     "project": 1,
+     "slug": "fakture",
+     "path": "work/fakture"
+    }
+   ],
+   "gateway": "gw1",
+   "agent": false,
+   "symlinks": {},
+   "want": {
+    "state": "none",
+    "slug": "",
+    "hint": "",
+    "header": "",
+    "error": false
+   }
+  },
+  {
+   "name": "moved folder has no link",
+   "cwd": "gone",
+   "dirs": [
+    "gone"
+   ],
+   "git": [],
+   "hints": {},
+   "links": [
+    {
+     "gateway": "gw1",
+     "project": 1,
+     "slug": "fakture",
+     "path": "work/fakture-old"
+    }
+   ],
+   "gateway": "gw1",
+   "agent": false,
+   "symlinks": {},
+   "want": {
+    "state": "none",
+    "slug": "",
+    "hint": "",
+    "header": "",
+    "error": false
+   }
+  },
+  {
+   "name": "another gateway's link does not apply",
+   "cwd": "work/fakture/a",
+   "dirs": [
+    "work/fakture/a"
+   ],
+   "git": [],
+   "hints": {},
+   "links": [
+    {
+     "gateway": "gw1",
+     "project": 1,
+     "slug": "fakture",
+     "path": "work/fakture"
+    }
+   ],
+   "gateway": "gw2",
+   "agent": false,
+   "symlinks": {},
+   "want": {
+    "state": "none",
+    "slug": "",
+    "hint": "",
+    "header": "",
+    "error": false
+   }
+  },
+  {
+   "name": "nearest link wins",
+   "cwd": "mono/mod/deep/x",
+   "dirs": [
+    "mono/mod/deep/x"
+   ],
+   "git": [],
+   "hints": {},
+   "links": [
+    {
+     "gateway": "gw1",
+     "project": 1,
+     "slug": "outer",
+     "path": "mono"
+    },
+    {
+     "gateway": "gw1",
+     "project": 2,
+     "slug": "inner",
+     "path": "mono/mod/deep"
+    }
+   ],
+   "gateway": "gw1",
+   "agent": false,
+   "symlinks": {},
+   "want": {
+    "state": "ok",
+    "slug": "inner",
+    "hint": "",
+    "header": "x-minigw-project: 2",
+    "error": false
+   }
+  },
+  {
+   "name": "outer link above the inner one",
+   "cwd": "mono/mod",
+   "dirs": [
+    "mono/mod/deep"
+   ],
+   "git": [],
+   "hints": {},
+   "links": [
+    {
+     "gateway": "gw1",
+     "project": 1,
+     "slug": "outer",
+     "path": "mono"
+    },
+    {
+     "gateway": "gw1",
+     "project": 2,
+     "slug": "inner",
+     "path": "mono/mod/deep"
+    }
+   ],
+   "gateway": "gw1",
+   "agent": false,
+   "symlinks": {},
+   "want": {
+    "state": "ok",
+    "slug": "outer",
+    "hint": "",
+    "header": "x-minigw-project: 1",
+    "error": false
+   }
+  },
+  {
+   "name": "a symlink into the linked tree resolves to the link",
+   "cwd": "elsewhere/shortcut",
+   "dirs": [
+    "work/fakture/sub",
+    "elsewhere"
+   ],
+   "git": [],
+   "hints": {},
+   "links": [
+    {
+     "gateway": "gw1",
+     "project": 1,
+     "slug": "fakture",
+     "path": "work/fakture"
+    }
+   ],
+   "gateway": "gw1",
+   "agent": false,
+   "symlinks": {
+    "elsewhere/shortcut": "work/fakture/sub"
+   },
+   "want": {
+    "state": "ok",
+    "slug": "fakture",
+    "hint": "",
+    "header": "x-minigw-project: 1",
+    "error": false
+   }
+  },
+  {
+   "name": "inside an agent run no header (the gateway inherits the project)",
+   "cwd": "work/fakture/a",
+   "dirs": [
+    "work/fakture/a"
+   ],
+   "git": [],
+   "hints": {},
+   "links": [
+    {
+     "gateway": "gw1",
+     "project": 1,
+     "slug": "fakture",
+     "path": "work/fakture"
+    }
+   ],
+   "gateway": "gw1",
+   "agent": true,
+   "symlinks": {},
+   "want": {
+    "state": "ok",
+    "slug": "fakture",
+    "hint": "",
+    "header": "",
+    "error": false
+   }
+  },
+  {
+   "name": "project id is written as a plain integer",
+   "cwd": "p",
+   "dirs": [
+    "p"
+   ],
+   "git": [],
+   "hints": {},
+   "links": [
+    {
+     "gateway": "gw1",
+     "project": 9007199254740993,
+     "slug": "big",
+     "path": "p"
+    }
+   ],
+   "gateway": "gw1",
+   "agent": false,
+   "symlinks": {},
+   "want": {
+    "state": "ok",
+    "slug": "big",
+    "hint": "",
+    "header": "x-minigw-project: 9007199254740993",
+    "error": false
+   }
+  }
+ ],
+ "rewrite": [
+  {
+   "name": "forged header dropped",
+   "head": "POST /v1/messages HTTP/1.1\r\nHost: x\r\nX-Minigw-Project: 9\r\nContent-Length: 0",
+   "project": "",
+   "want": "POST /v1/messages HTTP/1.1\r\nHost: x\r\nContent-Length: 0"
+  },
+  {
+   "name": "any case, replaced by ours",
+   "head": "POST /v1/messages HTTP/1.1\r\nhost: x\r\nx-MINIGW-project : 9\r\nX-MINIGW-PROJECT: 8",
+   "project": "42",
+   "want": "POST /v1/messages HTTP/1.1\r\nX-Minigw-Project: 42\r\nhost: x"
+  },
+  {
+   "name": "folded continuation dropped",
+   "head": "GET / HTTP/1.1\r\nX-Minigw-Project: 9\r\n 10\r\nHost: x",
+   "project": "",
+   "want": "GET / HTTP/1.1\r\nHost: x"
+  },
+  {
+   "name": "tab folded continuation dropped",
+   "head": "GET / HTTP/1.1\r\nX-Minigw-Project: 9\r\n\t10\r\nHost: x",
+   "project": "5",
+   "want": "GET / HTTP/1.1\r\nX-Minigw-Project: 5\r\nHost: x"
+  },
+  {
+   "name": "a fold of another header stays",
+   "head": "GET / HTTP/1.1\r\nX-Other: a\r\n b\r\nHost: x",
+   "project": "",
+   "want": "GET / HTTP/1.1\r\nX-Other: a\r\n b\r\nHost: x"
+  },
+  {
+   "name": "similar names stay",
+   "head": "GET / HTTP/1.1\r\nX-Minigw-Project-Other: 9\r\nX-Minigw-Projects: 1",
+   "project": "7",
+   "want": "GET / HTTP/1.1\r\nX-Minigw-Project: 7\r\nX-Minigw-Project-Other: 9\r\nX-Minigw-Projects: 1"
+  },
+  {
+   "name": "no project, no header",
+   "head": "GET / HTTP/1.1\r\nHost: x",
+   "project": "",
+   "want": "GET / HTTP/1.1\r\nHost: x"
+  },
+  {
+   "name": "ours goes right after the request line",
+   "head": "GET / HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer t",
+   "project": "3",
+   "want": "GET / HTTP/1.1\r\nX-Minigw-Project: 3\r\nHost: x\r\nAuthorization: Bearer t"
+  },
+  {
+   "name": "a header value that only contains the name stays",
+   "head": "GET / HTTP/1.1\r\nX-Note: x-minigw-project: 1\r\nHost: x",
+   "project": "",
+   "want": "GET / HTTP/1.1\r\nX-Note: x-minigw-project: 1\r\nHost: x"
+  },
+  {
+   "name": "a line without a colon that starts with the name is kept",
+   "head": "GET / HTTP/1.1\r\nx-minigw-project\r\nHost: x",
+   "project": "",
+   "want": "GET / HTTP/1.1\r\nx-minigw-project\r\nHost: x"
+  },
+  {
+   "name": "request line only",
+   "head": "GET / HTTP/1.1",
+   "project": "8",
+   "want": "GET / HTTP/1.1\r\nX-Minigw-Project: 8"
+  },
+  {
+   "name": "the request line is never dropped",
+   "head": "x-minigw-project: 1",
+   "project": "",
+   "want": "x-minigw-project: 1"
+  },
+  {
+   "name": "non ASCII bytes pass through",
+   "head": "GET /è HTTP/1.1\r\nX-Name: čš\r\nX-Minigw-Project: 1",
+   "project": "",
+   "want": "GET /è HTTP/1.1\r\nX-Name: čš"
+  }
+ ]
+}

@@ -1,0 +1,65 @@
+{
+ "golden_links": [
+  {
+   "gateway": "KEY_base64url-1",
+   "project": 7,
+   "slug": "fakture",
+   "path": "/Users/ana/work/fakture"
+  },
+  {
+   "gateway": "url:http://10.0.0.5:8765",
+   "project": 9007199254740993,
+   "slug": "eureko",
+   "path": "/tmp/a<b>&\"c\\d èč   \u0001\t "
+  }
+ ],
+ "load_ok": [
+  {
+   "name": "empty object",
+   "text": "{}",
+   "links": 0
+  },
+  {
+   "name": "null",
+   "text": "null",
+   "links": 0
+  },
+  {
+   "name": "links null",
+   "text": "{\"version\":1,\"links\":null}",
+   "links": 0
+  },
+  {
+   "name": "unknown fields are ignored",
+   "text": "{\"version\":1,\"x\":[1,2],\"links\":[{\"gateway\":\"g\",\"project\":3,\"slug\":\"s\",\"path\":\"/p\",\"extra\":true}]}",
+   "links": 1
+  },
+  {
+   "name": "missing fields are zero",
+   "text": "{\"links\":[{\"path\":\"/p\"}]}",
+   "links": 1
+  }
+ ],
+ "load_err": [
+  {
+   "name": "broken json",
+   "text": "{broken"
+  },
+  {
+   "name": "empty file",
+   "text": ""
+  },
+  {
+   "name": "links is a string",
+   "text": "{\"links\":\"x\"}"
+  },
+  {
+   "name": "top level array",
+   "text": "[1]"
+  },
+  {
+   "name": "project is a string",
+   "text": "{\"links\":[{\"project\":\"7\"}]}"
+  }
+ ]
+}

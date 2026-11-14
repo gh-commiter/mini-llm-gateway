@@ -1,0 +1,3792 @@
+{
+ "gateway": "gw1",
+ "cases": [
+  {
+   "name": "project list",
+   "args": [
+    "project",
+    "list"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects",
+     "status": 200,
+     "body": "[{\"id\":7,\"slug\":\"fakture\",\"name\":\"Fakture\",\"archived\":false,\"role\":\"developer\",\"granted\":[]},{\"id\":8,\"slug\":\"eureko\",\"name\":\"Eureko\\u0007 d.o.o.\",\"archived\":false,\"granted\":[\"structure\",\"data\"]},{\"id\":9,\"slug\":\"old\",\"name\":\"Old one\",\"archived\":true,\"role\":\"admin\",\"granted\":[\"data\"]}]"
+    }
+   ],
+   "want": {
+    "out": "fakture                  developer                    Fakture  (linked here)\neureko                   reads structure+data by grant Eureko d.o.o.\nold                      admin, reads data by grant   Old one  (archived)\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project list json",
+   "args": [
+    "project",
+    "list",
+    "--json"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects",
+     "status": 200,
+     "body": "[{\"id\":7,\"slug\":\"fakture\",\"name\":\"Fakture\",\"archived\":false,\"role\":\"developer\",\"granted\":[]},{\"id\":8,\"slug\":\"eureko\",\"name\":\"Eureko\\u0007 d.o.o.\",\"archived\":false,\"granted\":[\"structure\",\"data\"]},{\"id\":9,\"slug\":\"old\",\"name\":\"Old one\",\"archived\":true,\"role\":\"admin\",\"granted\":[\"data\"]}]"
+    }
+   ],
+   "want": {
+    "out": "[{\"id\":7,\"slug\":\"fakture\",\"name\":\"Fakture\",\"archived\":false,\"role\":\"developer\",\"granted\":[]},{\"id\":8,\"slug\":\"eureko\",\"name\":\"Eureko\\u0007 d.o.o.\",\"archived\":false,\"granted\":[\"structure\",\"data\"]},{\"id\":9,\"slug\":\"old\",\"name\":\"Old one\",\"archived\":true,\"role\":\"admin\",\"granted\":[\"data\"]}]\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project list archived",
+   "args": [
+    "project",
+    "list",
+    "--archived"
+   ],
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects?archived=1",
+     "status": 200,
+     "body": "[]"
+    }
+   ],
+   "want": {
+    "out": "no projects: ask the gateway owner to add you to one\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects?archived=1",
+      "",
+      ""
+     ]
+    ],
+    "links": []
+   }
+  },
+  {
+   "name": "project list 403",
+   "args": [
+    "project",
+    "list"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects",
+     "status": 403,
+     "body": "{\"error\":{\"message\":\"No project access\",\"type\":\"no_project_access\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "no project access: this device is not approved or not bound to a user on the gateway (ask the gateway owner)",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project list 404",
+   "args": [
+    "project",
+    "list"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects",
+     "status": 404,
+     "body": "{\"error\":{\"type\":\"not_found\",\"message\":\"x\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "not found or not visible",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project list 503",
+   "args": [
+    "project",
+    "list"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects",
+     "status": 503,
+     "body": "{\"error\":{\"message\":\"The project database is not available\",\"type\":\"core_unavailable\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "the gateway's project store is not available",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project list 429 retry-after",
+   "args": [
+    "project",
+    "list"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects",
+     "status": 429,
+     "body": "{\"error\":{\"type\":\"rate_limited\",\"message\":\"x\"}}",
+     "headers": {
+      "Retry-After": "7"
+     }
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "too many requests: try again in 7 seconds",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project list 429 no header",
+   "args": [
+    "project",
+    "list"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects",
+     "status": 429,
+     "body": "{\"error\":{\"type\":\"rate_limited\",\"message\":\"x\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "too many requests: try again in a minute",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project list 500",
+   "args": [
+    "project",
+    "list"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects",
+     "status": 500,
+     "body": "boom"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "gateway answered HTTP 500",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project list no answer",
+   "args": [
+    "project",
+    "list"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects",
+     "status": 0,
+     "body": ""
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "no answer from the gateway",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project list bad flag",
+   "args": [
+    "project",
+    "list",
+    "--nope"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "usage:\nminigw project list [--archived] [--json]     the projects you can see (role, and what a grant gives you)\nminigw project link <slug>                  link this folder (and its subfolders) to a project you are a member of\nminigw project unlink                       remove the link that applies here\nminigw project show                         the link that applies here, and why",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project no args",
+   "args": [
+    "project"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "usage:\nminigw project list [--archived] [--json]     the projects you can see (role, and what a grant gives you)\nminigw project link <slug>                  link this folder (and its subfolders) to a project you are a member of\nminigw project unlink                       remove the link that applies here\nminigw project show                         the link that applies here, and why",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project unknown",
+   "args": [
+    "project",
+    "frobnicate"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "unknown command minigw project frobnicate\nminigw project list [--archived] [--json]     the projects you can see (role, and what a grant gives you)\nminigw project link <slug>                  link this folder (and its subfolders) to a project you are a member of\nminigw project unlink                       remove the link that applies here\nminigw project show                         the link that applies here, and why",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project link ok",
+   "args": [
+    "project",
+    "link",
+    "fakture"
+   ],
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/fakture/link-check",
+     "status": 200,
+     "body": "{\"id\":7,\"slug\":\"fakture\"}"
+    }
+   ],
+   "want": {
+    "out": "linked {root}/proj to project fakture (id 7)\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/fakture/link-check",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project link ok hint differs",
+   "args": [
+    "project",
+    "link",
+    "fakture"
+   ],
+   "hint": "eureko",
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/fakture/link-check",
+     "status": 200,
+     "body": "{\"id\":7,\"slug\":\"fakture\"}"
+    }
+   ],
+   "want": {
+    "out": "linked {root}/proj to project fakture (id 7)\n",
+    "err": "minigw: warning: .minigw-project says project eureko; runs here are refused until you remove or fix it\n",
+    "error": "",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/fakture/link-check",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project link already linked",
+   "args": [
+    "project",
+    "link",
+    "fakture"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "this folder is already linked to fakture: run minigw project unlink first",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project link bad slug",
+   "args": [
+    "project",
+    "link",
+    "Bad Slug"
+   ],
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "not a project slug (lower case letters, digits and -): Bad Slug",
+    "requests": [],
+    "links": []
+   }
+  },
+  {
+   "name": "project link missing slug",
+   "args": [
+    "project",
+    "link"
+   ],
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "usage: minigw project link <slug>",
+    "requests": [],
+    "links": []
+   }
+  },
+  {
+   "name": "project link 404",
+   "args": [
+    "project",
+    "link",
+    "fakture"
+   ],
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/fakture/link-check",
+     "status": 404,
+     "body": "{\"error\":{\"type\":\"not_found\",\"message\":\"x\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "not found or not visible",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/fakture/link-check",
+      "",
+      ""
+     ]
+    ],
+    "links": []
+   }
+  },
+  {
+   "name": "project link 403 forbidden",
+   "args": [
+    "project",
+    "link",
+    "fakture"
+   ],
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/fakture/link-check",
+     "status": 403,
+     "body": "{\"error\":{\"type\":\"forbidden\",\"message\":\"x\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "not allowed: your role in this project does not permit it (a grant alone only lets you read; linking needs a direct role)",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/fakture/link-check",
+      "",
+      ""
+     ]
+    ],
+    "links": []
+   }
+  },
+  {
+   "name": "project link 403 archived",
+   "args": [
+    "project",
+    "link",
+    "fakture"
+   ],
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/fakture/link-check",
+     "status": 403,
+     "body": "{\"error\":{\"type\":\"archived\",\"message\":\"x\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "the project is archived: nobody can write to it",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/fakture/link-check",
+      "",
+      ""
+     ]
+    ],
+    "links": []
+   }
+  },
+  {
+   "name": "project link 403 no access",
+   "args": [
+    "project",
+    "link",
+    "fakture"
+   ],
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/fakture/link-check",
+     "status": 403,
+     "body": "{\"error\":{\"message\":\"No project access\",\"type\":\"no_project_access\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "no project access: this device is not approved or not bound to a user on the gateway (ask the gateway owner)",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/fakture/link-check",
+      "",
+      ""
+     ]
+    ],
+    "links": []
+   }
+  },
+  {
+   "name": "project link 503",
+   "args": [
+    "project",
+    "link",
+    "fakture"
+   ],
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/fakture/link-check",
+     "status": 503,
+     "body": "{\"error\":{\"message\":\"The project database is not available\",\"type\":\"core_unavailable\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "the gateway's project store is not available",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/fakture/link-check",
+      "",
+      ""
+     ]
+    ],
+    "links": []
+   }
+  },
+  {
+   "name": "project link no project in answer",
+   "args": [
+    "project",
+    "link",
+    "fakture"
+   ],
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/fakture/link-check",
+     "status": 200,
+     "body": "{}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "the gateway sent no project",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/fakture/link-check",
+      "",
+      ""
+     ]
+    ],
+    "links": []
+   }
+  },
+  {
+   "name": "project link subfolder of a linked folder",
+   "args": [
+    "project",
+    "link",
+    "eureko"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "cwd": "proj/src",
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/eureko/link-check",
+     "status": 200,
+     "body": "{\"id\":8,\"slug\":\"eureko\"}"
+    }
+   ],
+   "want": {
+    "out": "linked {root}/proj/src to project eureko (id 8)\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/eureko/link-check",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj",
+     "eureko:8@proj/src"
+    ]
+   }
+  },
+  {
+   "name": "project unlink",
+   "args": [
+    "project",
+    "unlink"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "cwd": "proj/src",
+   "responses": [],
+   "want": {
+    "out": "unlinked {root}/proj from project fakture\n",
+    "err": "",
+    "error": "",
+    "requests": [],
+    "links": []
+   }
+  },
+  {
+   "name": "project unlink not linked",
+   "args": [
+    "project",
+    "unlink"
+   ],
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "this folder is not linked to a project",
+    "requests": [],
+    "links": []
+   }
+  },
+  {
+   "name": "project unlink extra arg",
+   "args": [
+    "project",
+    "unlink",
+    "x"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "usage: minigw project unlink",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project show linked no hint",
+   "args": [
+    "project",
+    "show"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [],
+   "want": {
+    "out": "folder:   {root}/proj\nproject:  fakture (id 7)\nlinked:   {root}/proj (the nearest linked folder above or at this one)\nhint:     no .minigw-project in the linked folder\ngateway: gw1\n",
+    "err": "",
+    "error": "",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project show from subfolder",
+   "args": [
+    "project",
+    "show"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "cwd": "proj/src",
+   "responses": [],
+   "want": {
+    "out": "folder:   {root}/proj/src\nproject:  fakture (id 7)\nlinked:   {root}/proj (the nearest linked folder above or at this one)\nhint:     no .minigw-project in the linked folder\ngateway: gw1\n",
+    "err": "",
+    "error": "",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project show hint agrees",
+   "args": [
+    "project",
+    "show"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "hint": "fakture",
+   "responses": [],
+   "want": {
+    "out": "folder:   {root}/proj\nproject:  fakture (id 7)\nlinked:   {root}/proj (the nearest linked folder above or at this one)\nhint:     .minigw-project agrees\ngateway: gw1\n",
+    "err": "",
+    "error": "",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project show hint differs",
+   "args": [
+    "project",
+    "show"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "hint": "eureko",
+   "responses": [],
+   "want": {
+    "out": "folder:   {root}/proj\nproject:  fakture (id 7)\nlinked:   {root}/proj (the nearest linked folder above or at this one)\nhint:     .minigw-project says eureko but the link is fakture: runs here are refused; run minigw project unlink, link again or remove the hint\ngateway: gw1\n",
+    "err": "",
+    "error": "",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "project show not linked",
+   "args": [
+    "project",
+    "show"
+   ],
+   "responses": [],
+   "want": {
+    "out": "folder:   {root}/proj\nproject:  none (not linked)\ngateway: gw1\n",
+    "err": "",
+    "error": "",
+    "requests": [],
+    "links": []
+   }
+  },
+  {
+   "name": "project show not linked with hint",
+   "args": [
+    "project",
+    "show"
+   ],
+   "hint": "eureko",
+   "responses": [],
+   "want": {
+    "out": "folder:   {root}/proj\nproject:  none (not linked)\nhint:     .minigw-project in {root}/proj suggests project eureko; run minigw project link eureko\ngateway: gw1\n",
+    "err": "",
+    "error": "",
+    "requests": [],
+    "links": []
+   }
+  },
+  {
+   "name": "note list",
+   "args": [
+    "note",
+    "list"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/7/notes",
+     "status": 200,
+     "body": "{\"notes\":[{\"id\":12,\"project\":7,\"class\":\"structure\",\"title\":\"Invoice numbering\",\"author\":\"ana\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":3},{\"id\":14,\"project\":7,\"class\":\"data\",\"title\":\"A title with ​zero width\",\"author\":\"bor\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":12}],\"next\":\"c9\"}"
+    }
+   ],
+   "want": {
+    "out": "12     structure r3   2026-11-02 08:30  ana          Invoice numbering\n14     data      r12  2026-11-02 08:30  bor          A title with zero width\nmore: minigw note list --after c9\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/7/notes",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note list json",
+   "args": [
+    "note",
+    "list",
+    "--json"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/7/notes",
+     "status": 200,
+     "body": "{\"notes\":[{\"id\":12,\"project\":7,\"class\":\"structure\",\"title\":\"Invoice numbering\",\"author\":\"ana\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":3},{\"id\":14,\"project\":7,\"class\":\"data\",\"title\":\"A title with ​zero width\",\"author\":\"bor\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":12}],\"next\":\"c9\"}"
+    }
+   ],
+   "want": {
+    "out": "{\"notes\":[{\"id\":12,\"project\":7,\"class\":\"structure\",\"title\":\"Invoice numbering\",\"author\":\"ana\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":3},{\"id\":14,\"project\":7,\"class\":\"data\",\"title\":\"A title with ​zero width\",\"author\":\"bor\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":12}],\"next\":\"c9\"}\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/7/notes",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note list filters",
+   "args": [
+    "note",
+    "list",
+    "--class",
+    "data",
+    "--limit",
+    "5",
+    "--after",
+    "a b&c"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/7/notes?after=a+b%26c&class=data&limit=5",
+     "status": 200,
+     "body": "{\"notes\":[]}"
+    }
+   ],
+   "want": {
+    "out": "no notes\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/7/notes?after=a+b%26c&class=data&limit=5",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note list limit 0",
+   "args": [
+    "note",
+    "list",
+    "--limit",
+    "0"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/7/notes?limit=0",
+     "status": 200,
+     "body": "{\"notes\":[]}"
+    }
+   ],
+   "want": {
+    "out": "no notes\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/7/notes?limit=0",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note list empty",
+   "args": [
+    "note",
+    "list"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/7/notes",
+     "status": 200,
+     "body": "{\"notes\":[]}"
+    }
+   ],
+   "want": {
+    "out": "no notes\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/7/notes",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note list not linked",
+   "args": [
+    "note",
+    "list"
+   ],
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "this folder is not linked to a project: run minigw project link <slug>",
+    "requests": [],
+    "links": []
+   }
+  },
+  {
+   "name": "note list hint suggestion",
+   "args": [
+    "note",
+    "list"
+   ],
+   "hint": "fakture",
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "this folder suggests project fakture (.minigw-project); run minigw project link fakture",
+    "requests": [],
+    "links": []
+   }
+  },
+  {
+   "name": "note list hint differs",
+   "args": [
+    "note",
+    "list"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "hint": "eureko",
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "this folder is linked to fakture but .minigw-project says eureko: run minigw project unlink, link again or remove the hint",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note list --project confirms",
+   "args": [
+    "note",
+    "list",
+    "--project",
+    "fakture"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/7/notes",
+     "status": 200,
+     "body": "{\"notes\":[]}"
+    }
+   ],
+   "want": {
+    "out": "no notes\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/7/notes",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note list --project other",
+   "args": [
+    "note",
+    "list",
+    "--project",
+    "eureko"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "this folder is linked to fakture, not eureko: --project only names the linked project (link the other checkout instead)",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note list 403",
+   "args": [
+    "note",
+    "list"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/7/notes",
+     "status": 403,
+     "body": "{\"error\":{\"message\":\"No project access\",\"type\":\"no_project_access\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "no project access: this device is not approved or not bound to a user on the gateway (ask the gateway owner)",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/7/notes",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note list 404",
+   "args": [
+    "note",
+    "list"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/7/notes",
+     "status": 404,
+     "body": "{\"error\":{\"type\":\"not_found\",\"message\":\"x\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "not found or not visible",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/7/notes",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note list 503",
+   "args": [
+    "note",
+    "list"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/7/notes",
+     "status": 503,
+     "body": "{\"error\":{\"message\":\"The project database is not available\",\"type\":\"core_unavailable\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "the gateway's project store is not available",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/7/notes",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note list extra arg",
+   "args": [
+    "note",
+    "list",
+    "x"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "usage:\nminigw note list [--class c] [--limit n] [--after cursor] [--json]   notes of the linked project\nminigw note read <id> [--json]\nminigw note push [--class structure|data|private] [--title t] [--key k] <file|->   new note (default class data)\nminigw note edit <id> [--class c] [--title t] [--revision n] [<file|->]\nminigw note rm <id> [--revision n]        (inside an agent run only note list and note read work, on the run's own project)\n   --project <slug> only confirms the project this folder is linked to; classes: structure, data, private\n   (private = visible to you and the project admins)",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note no args",
+   "args": [
+    "note"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "usage:\nminigw note list [--class c] [--limit n] [--after cursor] [--json]   notes of the linked project\nminigw note read <id> [--json]\nminigw note push [--class structure|data|private] [--title t] [--key k] <file|->   new note (default class data)\nminigw note edit <id> [--class c] [--title t] [--revision n] [<file|->]\nminigw note rm <id> [--revision n]        (inside an agent run only note list and note read work, on the run's own project)\n   --project <slug> only confirms the project this folder is linked to; classes: structure, data, private\n   (private = visible to you and the project admins)",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note unknown",
+   "args": [
+    "note",
+    "frobnicate"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "unknown command minigw note frobnicate\nminigw note list [--class c] [--limit n] [--after cursor] [--json]   notes of the linked project\nminigw note read <id> [--json]\nminigw note push [--class structure|data|private] [--title t] [--key k] <file|->   new note (default class data)\nminigw note edit <id> [--class c] [--title t] [--revision n] [<file|->]\nminigw note rm <id> [--revision n]        (inside an agent run only note list and note read work, on the run's own project)\n   --project <slug> only confirms the project this folder is linked to; classes: structure, data, private\n   (private = visible to you and the project admins)",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note read",
+   "args": [
+    "note",
+    "read",
+    "12"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/7/notes/12",
+     "status": 200,
+     "body": "{\"id\":12,\"project\":7,\"class\":\"structure\",\"title\":\"Invoice numbering\",\"body\":\"One counter\\tper year.\\nsecond line\",\"author\":\"ana\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":3}"
+    }
+   ],
+   "want": {
+    "out": "note 12  structure  revision 3  by ana  2026-11-02 08:30\nInvoice numbering\n\nOne counter    per year.\nsecond line\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/7/notes/12",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note read no trailing newline body",
+   "args": [
+    "note",
+    "read",
+    "13"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/7/notes/13",
+     "status": 200,
+     "body": "{\"id\":13,\"project\":7,\"class\":\"private\",\"title\":\"Secret\",\"body\":\"no newline at end\\n\",\"author\":\"ana\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":1}"
+    }
+   ],
+   "want": {
+    "out": "note 13  private  revision 1  by ana  2026-11-02 08:30\nSecret\n\nno newline at end\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/7/notes/13",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note read json",
+   "args": [
+    "note",
+    "read",
+    "12",
+    "--json"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/7/notes/12",
+     "status": 200,
+     "body": "{\"id\":12,\"project\":7,\"class\":\"structure\",\"title\":\"Invoice numbering\",\"body\":\"One counter\\tper year.\\nsecond line\",\"author\":\"ana\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":3}"
+    }
+   ],
+   "want": {
+    "out": "{\"id\":12,\"project\":7,\"class\":\"structure\",\"title\":\"Invoice numbering\",\"body\":\"One counter\\tper year.\\nsecond line\",\"author\":\"ana\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":3}\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/7/notes/12",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note read bad id",
+   "args": [
+    "note",
+    "read",
+    "abc"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "not a note id: abc",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note read zero id",
+   "args": [
+    "note",
+    "read",
+    "0"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "not a note id: 0",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note read missing id",
+   "args": [
+    "note",
+    "read"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "usage:\nminigw note list [--class c] [--limit n] [--after cursor] [--json]   notes of the linked project\nminigw note read <id> [--json]\nminigw note push [--class structure|data|private] [--title t] [--key k] <file|->   new note (default class data)\nminigw note edit <id> [--class c] [--title t] [--revision n] [<file|->]\nminigw note rm <id> [--revision n]        (inside an agent run only note list and note read work, on the run's own project)\n   --project <slug> only confirms the project this folder is linked to; classes: structure, data, private\n   (private = visible to you and the project admins)",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note read 404",
+   "args": [
+    "note",
+    "read",
+    "12"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/7/notes/12",
+     "status": 404,
+     "body": "{\"error\":{\"type\":\"not_found\",\"message\":\"x\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "not found or not visible",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/7/notes/12",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note read 403",
+   "args": [
+    "note",
+    "read",
+    "12"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/7/notes/12",
+     "status": 403,
+     "body": "{\"error\":{\"message\":\"No project access\",\"type\":\"no_project_access\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "no project access: this device is not approved or not bound to a user on the gateway (ask the gateway owner)",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/7/notes/12",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note read 503",
+   "args": [
+    "note",
+    "read",
+    "12"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/7/notes/12",
+     "status": 503,
+     "body": "{\"error\":{\"message\":\"The project database is not available\",\"type\":\"core_unavailable\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "the gateway's project store is not available",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/7/notes/12",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note push stdin default class",
+   "args": [
+    "note",
+    "push",
+    "--key",
+    "k1",
+    "-"
+   ],
+   "stdin": "\n  Heading line  \nbody\n",
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/7/notes",
+     "status": 201,
+     "body": "{\"id\":15,\"project\":7,\"class\":\"data\",\"title\":\"Invoice numbering\",\"author\":\"ana\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":1}"
+    }
+   ],
+   "want": {
+    "out": "note 15 created (data, revision 1)\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/7/notes",
+      "{\"body\":\"\\n  Heading line  \\nbody\\n\",\"class\":\"data\",\"title\":\"Heading line\"}",
+      "k1"
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note push structure with title",
+   "args": [
+    "note",
+    "push",
+    "--class",
+    "structure",
+    "--title",
+    "T",
+    "--key",
+    "k1",
+    "-"
+   ],
+   "stdin": "<b>&\n",
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/7/notes",
+     "status": 201,
+     "body": "{\"id\":15,\"project\":7,\"class\":\"structure\",\"title\":\"Invoice numbering\",\"author\":\"ana\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":1}"
+    }
+   ],
+   "want": {
+    "out": "note 15 created (structure, revision 1)\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/7/notes",
+      "{\"body\":\"\\u003cb\\u003e\\u0026\\n\",\"class\":\"structure\",\"title\":\"T\"}",
+      "k1"
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note push private",
+   "args": [
+    "note",
+    "push",
+    "--class",
+    "private",
+    "--key",
+    "k1",
+    "-"
+   ],
+   "stdin": "s\n",
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/7/notes",
+     "status": 201,
+     "body": "{\"id\":15,\"project\":7,\"class\":\"private\",\"title\":\"Invoice numbering\",\"author\":\"ana\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":1}"
+    }
+   ],
+   "want": {
+    "out": "note 15 created (private, revision 1)\nprivate = visible to you and the project admins\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/7/notes",
+      "{\"body\":\"s\\n\",\"class\":\"private\",\"title\":\"s\"}",
+      "k1"
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note push private json",
+   "args": [
+    "note",
+    "push",
+    "--class",
+    "private",
+    "--json",
+    "--key",
+    "k1",
+    "-"
+   ],
+   "stdin": "s\n",
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/7/notes",
+     "status": 201,
+     "body": "{\"id\":15,\"project\":7,\"class\":\"private\",\"title\":\"Invoice numbering\",\"author\":\"ana\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":1}"
+    }
+   ],
+   "want": {
+    "out": "{\"id\":15,\"project\":7,\"class\":\"private\",\"title\":\"Invoice numbering\",\"author\":\"ana\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":1}\n",
+    "err": "private = visible to you and the project admins\n",
+    "error": "",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/7/notes",
+      "{\"body\":\"s\\n\",\"class\":\"private\",\"title\":\"s\"}",
+      "k1"
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note push file argument",
+   "args": [
+    "note",
+    "push",
+    "--key",
+    "k1",
+    "{root}/n.txt"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "files": {
+    "n.txt": "from file\n"
+   },
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/7/notes",
+     "status": 201,
+     "body": "{\"id\":15,\"project\":7,\"class\":\"structure\",\"title\":\"Invoice numbering\",\"author\":\"ana\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":1}"
+    }
+   ],
+   "want": {
+    "out": "note 15 created (structure, revision 1)\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/7/notes",
+      "{\"body\":\"from file\\n\",\"class\":\"data\",\"title\":\"from file\"}",
+      "k1"
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note push file title is file name",
+   "args": [
+    "note",
+    "push",
+    "--key",
+    "k1",
+    "{root}/n.txt"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "files": {
+    "n.txt": "\n\n"
+   },
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/7/notes",
+     "status": 201,
+     "body": "{\"id\":15,\"project\":7,\"class\":\"structure\",\"title\":\"Invoice numbering\",\"author\":\"ana\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":1}"
+    }
+   ],
+   "want": {
+    "out": "note 15 created (structure, revision 1)\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/7/notes",
+      "{\"body\":\"\\n\\n\",\"class\":\"data\",\"title\":\"n.txt\"}",
+      "k1"
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note push stdin empty title",
+   "args": [
+    "note",
+    "push",
+    "--key",
+    "k1",
+    "-"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/7/notes",
+     "status": 201,
+     "body": "{\"id\":15,\"project\":7,\"class\":\"structure\",\"title\":\"Invoice numbering\",\"author\":\"ana\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":1}"
+    }
+   ],
+   "want": {
+    "out": "note 15 created (structure, revision 1)\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/7/notes",
+      "{\"body\":\"\",\"class\":\"data\",\"title\":\"note\"}",
+      "k1"
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note push missing file",
+   "args": [
+    "note",
+    "push",
+    "{root}/nope.txt"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "open {root}/nope.txt: no such file or directory",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note push no file arg",
+   "args": [
+    "note",
+    "push"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "usage:\nminigw note list [--class c] [--limit n] [--after cursor] [--json]   notes of the linked project\nminigw note read <id> [--json]\nminigw note push [--class structure|data|private] [--title t] [--key k] <file|->   new note (default class data)\nminigw note edit <id> [--class c] [--title t] [--revision n] [<file|->]\nminigw note rm <id> [--revision n]        (inside an agent run only note list and note read work, on the run's own project)\n   --project <slug> only confirms the project this folder is linked to; classes: structure, data, private\n   (private = visible to you and the project admins)",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note push too long title",
+   "args": [
+    "note",
+    "push",
+    "--title",
+    "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "-"
+   ],
+   "stdin": "a",
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "too large: a title is at most 256 bytes",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note push body too large",
+   "args": [
+    "note",
+    "push",
+    "-"
+   ],
+   "stdin": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "too large: a note body is at most 64 KiB",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note push long first line title is cut",
+   "args": [
+    "note",
+    "push",
+    "--key",
+    "k1",
+    "-"
+   ],
+   "stdin": "èèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèè\n",
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/7/notes",
+     "status": 201,
+     "body": "{\"id\":15,\"project\":7,\"class\":\"structure\",\"title\":\"Invoice numbering\",\"author\":\"ana\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":1}"
+    }
+   ],
+   "want": {
+    "out": "note 15 created (structure, revision 1)\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/7/notes",
+      "{\"body\":\"èèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèè\\n\",\"class\":\"data\",\"title\":\"èèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèèè\"}",
+      "k1"
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note push 409 key reused",
+   "args": [
+    "note",
+    "push",
+    "--key",
+    "k1",
+    "-"
+   ],
+   "stdin": "a",
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/7/notes",
+     "status": 409,
+     "body": "{\"error\":{\"type\":\"idempotency_conflict\",\"message\":\"x\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "this idempotency key was already used for another note",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/7/notes",
+      "{\"body\":\"a\",\"class\":\"data\",\"title\":\"a\"}",
+      "k1"
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note push 403 archived",
+   "args": [
+    "note",
+    "push",
+    "--key",
+    "k1",
+    "-"
+   ],
+   "stdin": "a",
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/7/notes",
+     "status": 403,
+     "body": "{\"error\":{\"type\":\"archived\",\"message\":\"x\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "the project is archived: nobody can write to it",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/7/notes",
+      "{\"body\":\"a\",\"class\":\"data\",\"title\":\"a\"}",
+      "k1"
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note push 403 forbidden",
+   "args": [
+    "note",
+    "push",
+    "--key",
+    "k1",
+    "-"
+   ],
+   "stdin": "a",
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/7/notes",
+     "status": 403,
+     "body": "{\"error\":{\"type\":\"forbidden\",\"message\":\"x\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "not allowed: your role in this project does not permit it (a grant alone only lets you read; linking needs a direct role)",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/7/notes",
+      "{\"body\":\"a\",\"class\":\"data\",\"title\":\"a\"}",
+      "k1"
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note push 400",
+   "args": [
+    "note",
+    "push",
+    "--key",
+    "k1",
+    "-"
+   ],
+   "stdin": "a",
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/7/notes",
+     "status": 400,
+     "body": "{\"error\":{\"type\":\"invalid\",\"message\":\"invalid class\\nsecond line\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "rejected: invalid class second line",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/7/notes",
+      "{\"body\":\"a\",\"class\":\"data\",\"title\":\"a\"}",
+      "k1"
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note push 413",
+   "args": [
+    "note",
+    "push",
+    "--key",
+    "k1",
+    "-"
+   ],
+   "stdin": "a",
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/7/notes",
+     "status": 413,
+     "body": "{\"error\":{\"type\":\"too_large\",\"message\":\"x\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "too large (title up to 256 bytes, body up to 64 KiB, project limits apply)",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/7/notes",
+      "{\"body\":\"a\",\"class\":\"data\",\"title\":\"a\"}",
+      "k1"
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note push 429",
+   "args": [
+    "note",
+    "push",
+    "--key",
+    "k1",
+    "-"
+   ],
+   "stdin": "a",
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/7/notes",
+     "status": 429,
+     "body": "{\"error\":{\"type\":\"rate_limited\",\"message\":\"x\"}}",
+     "headers": {
+      "Retry-After": "30"
+     }
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "too many requests: try again in 30 seconds",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/7/notes",
+      "{\"body\":\"a\",\"class\":\"data\",\"title\":\"a\"}",
+      "k1"
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note push 503",
+   "args": [
+    "note",
+    "push",
+    "--key",
+    "k1",
+    "-"
+   ],
+   "stdin": "a",
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/7/notes",
+     "status": 503,
+     "body": "{\"error\":{\"message\":\"The project database is not available\",\"type\":\"core_unavailable\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "the gateway's project store is not available",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/7/notes",
+      "{\"body\":\"a\",\"class\":\"data\",\"title\":\"a\"}",
+      "k1"
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note push lost answer",
+   "args": [
+    "note",
+    "push",
+    "--key",
+    "k1",
+    "-"
+   ],
+   "stdin": "a",
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "POST /minigw/v1/projects/7/notes",
+     "status": 0,
+     "body": ""
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "no answer from the gateway: the note may have been created; repeat with --key k1 (safe: no duplicate), or check with minigw note list",
+    "requests": [
+     [
+      "POST",
+      "/minigw/v1/projects/7/notes",
+      "{\"body\":\"a\",\"class\":\"data\",\"title\":\"a\"}",
+      "k1"
+     ],
+     [
+      "POST",
+      "/minigw/v1/projects/7/notes",
+      "{\"body\":\"a\",\"class\":\"data\",\"title\":\"a\"}",
+      "k1"
+     ],
+     [
+      "POST",
+      "/minigw/v1/projects/7/notes",
+      "{\"body\":\"a\",\"class\":\"data\",\"title\":\"a\"}",
+      "k1"
+     ],
+     [
+      "POST",
+      "/minigw/v1/projects/7/notes",
+      "{\"body\":\"a\",\"class\":\"data\",\"title\":\"a\"}",
+      "k1"
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note edit all flags no read",
+   "args": [
+    "note",
+    "edit",
+    "12",
+    "--revision",
+    "3",
+    "--class",
+    "data",
+    "--title",
+    "New",
+    "{root}/b.txt"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "files": {
+    "b.txt": "new body\n"
+   },
+   "responses": [
+    {
+     "match": "PUT /minigw/v1/projects/7/notes/12",
+     "status": 200,
+     "body": "{\"id\":12,\"project\":7,\"class\":\"structure\",\"title\":\"Invoice numbering\",\"body\":\"One counter\\tper year.\\nsecond line\",\"author\":\"ana\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":4}"
+    }
+   ],
+   "want": {
+    "out": "note 12 updated (structure, revision 4)\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "PUT",
+      "/minigw/v1/projects/7/notes/12",
+      "{\"body\":\"new body\\n\",\"class\":\"data\",\"revision\":3,\"title\":\"New\"}",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note edit only title reads first",
+   "args": [
+    "note",
+    "edit",
+    "12",
+    "--title",
+    "Only"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/7/notes/12",
+     "status": 200,
+     "body": "{\"id\":12,\"project\":7,\"class\":\"structure\",\"title\":\"Invoice numbering\",\"body\":\"One counter\\tper year.\\nsecond line\",\"author\":\"ana\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":3}"
+    },
+    {
+     "match": "PUT /minigw/v1/projects/7/notes/12",
+     "status": 200,
+     "body": "{\"id\":12,\"project\":7,\"class\":\"structure\",\"title\":\"Invoice numbering\",\"body\":\"One counter\\tper year.\\nsecond line\",\"author\":\"ana\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":4}"
+    }
+   ],
+   "want": {
+    "out": "note 12 updated (structure, revision 4)\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/7/notes/12",
+      "",
+      ""
+     ],
+     [
+      "PUT",
+      "/minigw/v1/projects/7/notes/12",
+      "{\"body\":\"One counter\\tper year.\\nsecond line\",\"class\":\"structure\",\"revision\":3,\"title\":\"Only\"}",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note edit body from stdin",
+   "args": [
+    "note",
+    "edit",
+    "12",
+    "-"
+   ],
+   "stdin": "from stdin",
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/7/notes/12",
+     "status": 200,
+     "body": "{\"id\":12,\"project\":7,\"class\":\"structure\",\"title\":\"Invoice numbering\",\"body\":\"One counter\\tper year.\\nsecond line\",\"author\":\"ana\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":3}"
+    },
+    {
+     "match": "PUT /minigw/v1/projects/7/notes/12",
+     "status": 200,
+     "body": "{\"id\":12,\"project\":7,\"class\":\"structure\",\"title\":\"Invoice numbering\",\"body\":\"One counter\\tper year.\\nsecond line\",\"author\":\"ana\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":4}"
+    }
+   ],
+   "want": {
+    "out": "note 12 updated (structure, revision 4)\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/7/notes/12",
+      "",
+      ""
+     ],
+     [
+      "PUT",
+      "/minigw/v1/projects/7/notes/12",
+      "{\"body\":\"from stdin\",\"class\":\"structure\",\"revision\":3,\"title\":\"Invoice numbering\"}",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note edit to private",
+   "args": [
+    "note",
+    "edit",
+    "12",
+    "--class",
+    "private",
+    "--revision",
+    "3",
+    "--title",
+    "t",
+    "-"
+   ],
+   "stdin": "x",
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "PUT /minigw/v1/projects/7/notes/12",
+     "status": 200,
+     "body": "{\"id\":12,\"project\":7,\"class\":\"private\",\"title\":\"Invoice numbering\",\"body\":\"One counter\\tper year.\\nsecond line\",\"author\":\"ana\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":4}"
+    }
+   ],
+   "want": {
+    "out": "note 12 updated (private, revision 4)\nprivate = visible to you and the project admins\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "PUT",
+      "/minigw/v1/projects/7/notes/12",
+      "{\"body\":\"x\",\"class\":\"private\",\"revision\":3,\"title\":\"t\"}",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note edit empty title flag",
+   "args": [
+    "note",
+    "edit",
+    "12",
+    "--revision",
+    "3",
+    "--class",
+    "data",
+    "--title",
+    "",
+    "-"
+   ],
+   "stdin": "x",
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "PUT /minigw/v1/projects/7/notes/12",
+     "status": 200,
+     "body": "{\"id\":12,\"project\":7,\"class\":\"structure\",\"title\":\"Invoice numbering\",\"body\":\"One counter\\tper year.\\nsecond line\",\"author\":\"ana\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":4}"
+    }
+   ],
+   "want": {
+    "out": "note 12 updated (structure, revision 4)\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "PUT",
+      "/minigw/v1/projects/7/notes/12",
+      "{\"body\":\"x\",\"class\":\"data\",\"revision\":3,\"title\":\"\"}",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note edit json",
+   "args": [
+    "note",
+    "edit",
+    "12",
+    "--revision",
+    "3",
+    "--class",
+    "data",
+    "--title",
+    "t",
+    "--json",
+    "-"
+   ],
+   "stdin": "x",
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "PUT /minigw/v1/projects/7/notes/12",
+     "status": 200,
+     "body": "{\"id\":12,\"project\":7,\"class\":\"structure\",\"title\":\"Invoice numbering\",\"body\":\"One counter\\tper year.\\nsecond line\",\"author\":\"ana\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":4}"
+    }
+   ],
+   "want": {
+    "out": "{\"id\":12,\"project\":7,\"class\":\"structure\",\"title\":\"Invoice numbering\",\"body\":\"One counter\\tper year.\\nsecond line\",\"author\":\"ana\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":4}\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "PUT",
+      "/minigw/v1/projects/7/notes/12",
+      "{\"body\":\"x\",\"class\":\"data\",\"revision\":3,\"title\":\"t\"}",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note edit 409 revision",
+   "args": [
+    "note",
+    "edit",
+    "12",
+    "--revision",
+    "1",
+    "--class",
+    "data",
+    "--title",
+    "t",
+    "-"
+   ],
+   "stdin": "x",
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "PUT /minigw/v1/projects/7/notes/12",
+     "status": 409,
+     "body": "{\"error\":{\"type\":\"revision_mismatch\",\"message\":\"x\",\"revision\":3}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "the note has changed: its current revision is 3 (read it again, then retry)",
+    "requests": [
+     [
+      "PUT",
+      "/minigw/v1/projects/7/notes/12",
+      "{\"body\":\"x\",\"class\":\"data\",\"revision\":1,\"title\":\"t\"}",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note edit 403 forbidden",
+   "args": [
+    "note",
+    "edit",
+    "12",
+    "--title",
+    "t"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/7/notes/12",
+     "status": 200,
+     "body": "{\"id\":12,\"project\":7,\"class\":\"structure\",\"title\":\"Invoice numbering\",\"body\":\"One counter\\tper year.\\nsecond line\",\"author\":\"ana\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":3}"
+    },
+    {
+     "match": "PUT /minigw/v1/projects/7/notes/12",
+     "status": 403,
+     "body": "{\"error\":{\"type\":\"forbidden\",\"message\":\"x\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "not allowed: your role in this project does not permit it (a grant alone only lets you read; linking needs a direct role)",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/7/notes/12",
+      "",
+      ""
+     ],
+     [
+      "PUT",
+      "/minigw/v1/projects/7/notes/12",
+      "{\"body\":\"One counter\\tper year.\\nsecond line\",\"class\":\"structure\",\"revision\":3,\"title\":\"t\"}",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note edit 404 on read",
+   "args": [
+    "note",
+    "edit",
+    "12",
+    "--title",
+    "t"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/7/notes/12",
+     "status": 404,
+     "body": "{\"error\":{\"type\":\"not_found\",\"message\":\"x\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "not found or not visible",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/7/notes/12",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note edit missing id",
+   "args": [
+    "note",
+    "edit"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "usage:\nminigw note list [--class c] [--limit n] [--after cursor] [--json]   notes of the linked project\nminigw note read <id> [--json]\nminigw note push [--class structure|data|private] [--title t] [--key k] <file|->   new note (default class data)\nminigw note edit <id> [--class c] [--title t] [--revision n] [<file|->]\nminigw note rm <id> [--revision n]        (inside an agent run only note list and note read work, on the run's own project)\n   --project <slug> only confirms the project this folder is linked to; classes: structure, data, private\n   (private = visible to you and the project admins)",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note edit extra args",
+   "args": [
+    "note",
+    "edit",
+    "12",
+    "a",
+    "b"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "usage:\nminigw note list [--class c] [--limit n] [--after cursor] [--json]   notes of the linked project\nminigw note read <id> [--json]\nminigw note push [--class structure|data|private] [--title t] [--key k] <file|->   new note (default class data)\nminigw note edit <id> [--class c] [--title t] [--revision n] [<file|->]\nminigw note rm <id> [--revision n]        (inside an agent run only note list and note read work, on the run's own project)\n   --project <slug> only confirms the project this folder is linked to; classes: structure, data, private\n   (private = visible to you and the project admins)",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note rm reads revision",
+   "args": [
+    "note",
+    "rm",
+    "12"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects/7/notes/12",
+     "status": 200,
+     "body": "{\"id\":12,\"project\":7,\"class\":\"structure\",\"title\":\"Invoice numbering\",\"body\":\"One counter\\tper year.\\nsecond line\",\"author\":\"ana\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":3}"
+    },
+    {
+     "match": "DELETE /minigw/v1/projects/7/notes/12?revision=3",
+     "status": 204,
+     "body": ""
+    }
+   ],
+   "want": {
+    "out": "note 12 deleted\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects/7/notes/12",
+      "",
+      ""
+     ],
+     [
+      "DELETE",
+      "/minigw/v1/projects/7/notes/12?revision=3",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note rm with revision",
+   "args": [
+    "note",
+    "rm",
+    "12",
+    "--revision",
+    "5"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "DELETE /minigw/v1/projects/7/notes/12?revision=5",
+     "status": 204,
+     "body": ""
+    }
+   ],
+   "want": {
+    "out": "note 12 deleted\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "DELETE",
+      "/minigw/v1/projects/7/notes/12?revision=5",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note rm json",
+   "args": [
+    "note",
+    "rm",
+    "12",
+    "--revision",
+    "5",
+    "--json"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "DELETE /minigw/v1/projects/7/notes/12?revision=5",
+     "status": 204,
+     "body": ""
+    }
+   ],
+   "want": {
+    "out": "{\"deleted\":12}\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "DELETE",
+      "/minigw/v1/projects/7/notes/12?revision=5",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note rm 409",
+   "args": [
+    "note",
+    "rm",
+    "12",
+    "--revision",
+    "1"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "DELETE /minigw/v1/projects/7/notes/12?revision=1",
+     "status": 409,
+     "body": "{\"error\":{\"type\":\"revision_mismatch\",\"message\":\"x\",\"revision\":3}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "the note has changed: its current revision is 3 (read it again, then retry)",
+    "requests": [
+     [
+      "DELETE",
+      "/minigw/v1/projects/7/notes/12?revision=1",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note rm 404",
+   "args": [
+    "note",
+    "rm",
+    "12",
+    "--revision",
+    "1"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "DELETE /minigw/v1/projects/7/notes/12?revision=1",
+     "status": 404,
+     "body": "{\"error\":{\"type\":\"not_found\",\"message\":\"x\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "not found or not visible",
+    "requests": [
+     [
+      "DELETE",
+      "/minigw/v1/projects/7/notes/12?revision=1",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "note rm extra arg",
+   "args": [
+    "note",
+    "rm",
+    "12",
+    "x"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "usage:\nminigw note list [--class c] [--limit n] [--after cursor] [--json]   notes of the linked project\nminigw note read <id> [--json]\nminigw note push [--class structure|data|private] [--title t] [--key k] <file|->   new note (default class data)\nminigw note edit <id> [--class c] [--title t] [--revision n] [<file|->]\nminigw note rm <id> [--revision n]        (inside an agent run only note list and note read work, on the run's own project)\n   --project <slug> only confirms the project this folder is linked to; classes: structure, data, private\n   (private = visible to you and the project admins)",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "usage linked folder",
+   "args": [
+    "usage"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/usage?days=7&project=fakture",
+     "status": 200,
+     "body": "{\"days\":[{\"day\":\"2026-11-13\",\"model\":\"claude-opus\",\"userName\":\"ana\",\"project\":7,\"events\":10,\"tokensIn\":1000,\"tokensOut\":200,\"eventsWithoutTokens\":1,\"nestedEvents\":2,\"failedEvents\":3},{\"day\":\"2026-11-14\",\"model\":\"gpt-6.1-sol\",\"events\":4,\"tokensIn\":50,\"tokensOut\":60,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0}],\"gaps\":[{\"count\":3,\"from\":\"2026-11-10T08:00:00Z\",\"to\":\"2026-11-10T09:15:00Z\"}]}"
+    }
+   ],
+   "want": {
+    "out": "project fakture\n2026-11-13  claude-opus               ana  10 events, 1000 in, 200 out, 2 nested, 1 without token counts, 3 failed\n2026-11-14  gpt-6.1-sol               4 events, 50 in, 60 out\ntotal: 14 events, 1050 in, 260 out (every event once, nested ones included)\n3 events lost between 2026-11-10 08:00 and 2026-11-10 09:15\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/usage?days=7&project=fakture",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "usage not linked",
+   "args": [
+    "usage",
+    "--days",
+    "30"
+   ],
+   "responses": [
+    {
+     "match": "GET /minigw/v1/usage?days=30",
+     "status": 200,
+     "body": "{\"days\":[],\"gaps\":[]}"
+    }
+   ],
+   "want": {
+    "out": "your own usage, all projects\nno events\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/usage?days=30",
+      "",
+      ""
+     ]
+    ],
+    "links": []
+   }
+  },
+  {
+   "name": "usage project flag json",
+   "args": [
+    "usage",
+    "--project",
+    "eureko",
+    "--json"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/usage?days=7&project=eureko",
+     "status": 200,
+     "body": "{\"days\":[{\"day\":\"2026-11-13\",\"model\":\"claude-opus\",\"userName\":\"ana\",\"project\":7,\"events\":10,\"tokensIn\":1000,\"tokensOut\":200,\"eventsWithoutTokens\":1,\"nestedEvents\":2,\"failedEvents\":3},{\"day\":\"2026-11-14\",\"model\":\"gpt-6.1-sol\",\"events\":4,\"tokensIn\":50,\"tokensOut\":60,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0}],\"gaps\":[{\"count\":3,\"from\":\"2026-11-10T08:00:00Z\",\"to\":\"2026-11-10T09:15:00Z\"}]}"
+    }
+   ],
+   "want": {
+    "out": "{\"days\":[{\"day\":\"2026-11-13\",\"model\":\"claude-opus\",\"userName\":\"ana\",\"project\":7,\"events\":10,\"tokensIn\":1000,\"tokensOut\":200,\"eventsWithoutTokens\":1,\"nestedEvents\":2,\"failedEvents\":3},{\"day\":\"2026-11-14\",\"model\":\"gpt-6.1-sol\",\"events\":4,\"tokensIn\":50,\"tokensOut\":60,\"eventsWithoutTokens\":0,\"nestedEvents\":0,\"failedEvents\":0}],\"gaps\":[{\"count\":3,\"from\":\"2026-11-10T08:00:00Z\",\"to\":\"2026-11-10T09:15:00Z\"}]}\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/usage?days=7&project=eureko",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "usage hint differs falls back to none",
+   "args": [
+    "usage"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "hint": "eureko",
+   "responses": [
+    {
+     "match": "GET /minigw/v1/usage?days=7",
+     "status": 200,
+     "body": "{\"days\":[],\"gaps\":[]}"
+    }
+   ],
+   "want": {
+    "out": "your own usage, all projects\nno events\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/usage?days=7",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "usage 404 with project",
+   "args": [
+    "usage"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/usage?days=7&project=fakture",
+     "status": 404,
+     "body": "{\"error\":{\"type\":\"not_found\",\"message\":\"x\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "no usage to show for project fakture: not found, not visible to you, or you are not a developer or admin there",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/usage?days=7&project=fakture",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "usage 404 without project",
+   "args": [
+    "usage"
+   ],
+   "responses": [
+    {
+     "match": "GET /minigw/v1/usage?days=7",
+     "status": 404,
+     "body": "{\"error\":{\"type\":\"not_found\",\"message\":\"x\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "not found or not visible",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/usage?days=7",
+      "",
+      ""
+     ]
+    ],
+    "links": []
+   }
+  },
+  {
+   "name": "usage 403",
+   "args": [
+    "usage"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/usage?days=7&project=fakture",
+     "status": 403,
+     "body": "{\"error\":{\"message\":\"No project access\",\"type\":\"no_project_access\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "no project access: this device is not approved or not bound to a user on the gateway (ask the gateway owner)",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/usage?days=7&project=fakture",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "usage 503",
+   "args": [
+    "usage"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [
+    {
+     "match": "GET /minigw/v1/usage?days=7&project=fakture",
+     "status": 503,
+     "body": "{\"error\":{\"message\":\"The project database is not available\",\"type\":\"core_unavailable\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "the gateway's project store is not available",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/usage?days=7&project=fakture",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "usage extra arg",
+   "args": [
+    "usage",
+    "x"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "usage:\nminigw usage [--project slug] [--days n] [--json]   your model usage (a developer sees own events in a project, an admin all of it)",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "usage bad days",
+   "args": [
+    "usage",
+    "--days",
+    "x"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "usage:\nminigw usage [--project slug] [--days n] [--json]   your model usage (a developer sees own events in a project, an admin all of it)",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "agent refuses project list",
+   "args": [
+    "project",
+    "list"
+   ],
+   "stdin": "x",
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "agent": "refuse",
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "inside an agent run only minigw note list and note read work (on the run's own project); link, push, edit, rm and project commands are not available",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "agent refuses project link x",
+   "args": [
+    "project",
+    "link",
+    "x"
+   ],
+   "stdin": "x",
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "agent": "refuse",
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "inside an agent run only minigw note list and note read work (on the run's own project); link, push, edit, rm and project commands are not available",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "agent refuses note push -",
+   "args": [
+    "note",
+    "push",
+    "-"
+   ],
+   "stdin": "x",
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "agent": "refuse",
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "inside an agent run only minigw note list and note read work (on the run's own project); link, push, edit, rm and project commands are not available",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "agent refuses note edit 1 -",
+   "args": [
+    "note",
+    "edit",
+    "1",
+    "-"
+   ],
+   "stdin": "x",
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "agent": "refuse",
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "inside an agent run only minigw note list and note read work (on the run's own project); link, push, edit, rm and project commands are not available",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "agent refuses note rm 1",
+   "args": [
+    "note",
+    "rm",
+    "1"
+   ],
+   "stdin": "x",
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "agent": "refuse",
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "inside an agent run only minigw note list and note read work (on the run's own project); link, push, edit, rm and project commands are not available",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "agent refuses usage",
+   "args": [
+    "usage"
+   ],
+   "stdin": "x",
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "agent": "refuse",
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "inside an agent run only minigw note list and note read work (on the run's own project); link, push, edit, rm and project commands are not available",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "agent refuses note list",
+   "args": [
+    "note",
+    "list"
+   ],
+   "stdin": "x",
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "agent": "refuse",
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "inside an agent run only minigw note list and note read work (on the run's own project); link, push, edit, rm and project commands are not available",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "agent run note list",
+   "args": [
+    "note",
+    "list"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "agent": "run",
+   "responses": [
+    {
+     "match": "GET /minigw/v1/notes",
+     "status": 200,
+     "body": "{\"notes\":[{\"id\":12,\"project\":7,\"class\":\"structure\",\"title\":\"Invoice numbering\",\"author\":\"ana\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":3}]}"
+    }
+   ],
+   "want": {
+    "out": "12     structure r3   2026-11-02 08:30  ana          Invoice numbering\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/notes",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "agent run note read",
+   "args": [
+    "note",
+    "read",
+    "12"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "agent": "run",
+   "responses": [
+    {
+     "match": "GET /minigw/v1/notes/12",
+     "status": 200,
+     "body": "{\"id\":12,\"project\":7,\"class\":\"structure\",\"title\":\"Invoice numbering\",\"body\":\"One counter\\tper year.\\nsecond line\",\"author\":\"ana\",\"created\":\"2026-11-01T10:00:00Z\",\"updated\":\"2026-11-02T08:30:00.5Z\",\"revision\":3}"
+    }
+   ],
+   "want": {
+    "out": "note 12  structure  revision 3  by ana  2026-11-02 08:30\nInvoice numbering\n\nOne counter    per year.\nsecond line\n",
+    "err": "",
+    "error": "",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/notes/12",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "agent run --project not accepted",
+   "args": [
+    "note",
+    "list",
+    "--project",
+    "fakture"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "agent": "run",
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "inside an agent run the project is the run's own: --project is not accepted",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "agent run note push refused",
+   "args": [
+    "note",
+    "push",
+    "-"
+   ],
+   "stdin": "x",
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "agent": "run",
+   "responses": [],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "inside an agent run only minigw note list and note read work (on the run's own project); link, push, edit, rm and project commands are not available",
+    "requests": [],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "agent run unreachable sandbox",
+   "args": [
+    "note",
+    "list"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "agent": "run",
+   "responses": [
+    {
+     "match": "GET /minigw/v1/notes",
+     "status": 0,
+     "body": ""
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "the notes are not reachable from this sandbox (it has no access to the gateway's run port)",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/notes",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  },
+  {
+   "name": "agent run 404",
+   "args": [
+    "note",
+    "read",
+    "12"
+   ],
+   "link": {
+    "slug": "fakture",
+    "project": 7,
+    "rel": "proj"
+   },
+   "agent": "run",
+   "responses": [
+    {
+     "match": "GET /minigw/v1/notes/12",
+     "status": 404,
+     "body": "{\"error\":{\"type\":\"not_found\",\"message\":\"x\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "not found or not visible",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/notes/12",
+      "",
+      ""
+     ]
+    ],
+    "links": [
+     "fakture:7@proj"
+    ]
+   }
+  }
+ ]
+}
