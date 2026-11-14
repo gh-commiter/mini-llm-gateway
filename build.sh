@@ -15,13 +15,14 @@ identities=$(security find-identity -v -p codesigning)
 pick() { print -r -- "$identities" | grep -oE "\"$1: [^\"]+\"" | head -1 | tr -d '"' || true }
 if [[ $MODE == --release ]]; then
   # Izdaja le iz commitane kode (tudi brez nesledenih datotek).
-  [[ -z $(git status --porcelain -- Sources client Resources Package.swift install.sh scripts plugins) ]] \
-    || { print -u2 "Release zahteva commitano kodo (git status -- Sources client Resources Package.swift install.sh scripts plugins ni prazen)."; exit 1 }
+  [[ -z $(git status --porcelain -- Sources client Resources Package.swift install.sh scripts plugins THIRD-PARTY-NOTICES.md) ]] \
+    || { print -u2 "Release zahteva commitano kodo (git status -- Sources client Resources Package.swift install.sh scripts plugins THIRD-PARTY-NOTICES.md ni prazen)."; exit 1 }
   IDENTITY=${SIGN_IDENTITY:-$(pick "Developer ID Application")}
   [[ $IDENTITY == "Developer ID Application:"* ]] || { print -u2 "Release zahteva potrdilo Developer ID Application (Xcode → Settings → Accounts → Manage Certificates → +)."; exit 1 }
   # #8: SHA256SUMS podpiše ključ izdaj zunaj repozitorija (zasebni delovni prostor); javni ključ je pripet v odjemalcih.
   SIGNING_KEY=${MINIGW_SIGNING_KEY:-../.secrets/release-signing-key}
   [[ -r $SIGNING_KEY ]] || { print -u2 "Release needs the signing key $SIGNING_KEY (or MINIGW_SIGNING_KEY): SHA256SUMS must be signed."; exit 1 }
+  scripts/third-party-notices.sh --check  # a new or updated Go module must not ship without its notice
   command -v wixl >/dev/null || { print -u2 "Release needs wixl for the Windows MSI: brew install msitools"; exit 1 }
 else
   IDENTITY=${SIGN_IDENTITY:-$(pick "Developer ID Application")}
@@ -50,6 +51,7 @@ commit=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
 plutil -replace MGCommit -string "$commit" "$APP/Contents/Info.plist"
 mkdir -p "$APP/Contents/Resources/en.lproj"  # izvorni jezik (fallback); prevodi iz katalogov spodaj
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+cp THIRD-PARTY-NOTICES.md "$APP/Contents/Resources/THIRD-PARTY-NOTICES.md"  # scripts/third-party-notices.sh
 for catalog in Resources/*.xcstrings; do
   xcrun xcstringstool compile "$catalog" --output-directory "$APP/Contents/Resources"
 done
@@ -95,7 +97,7 @@ if [[ $MODE == --release ]]; then
   CLI_ZIP="$OUT/minigw.zip"
   rm -f "$CLI_ZIP"
   CLI_STAGE=$(mktemp -d)
-  cp "$APP/Contents/Helpers/minigw" "$APP/Contents/Helpers/minigw-tui" $CLI_STAGE/
+  cp "$APP/Contents/Helpers/minigw" "$APP/Contents/Helpers/minigw-tui" THIRD-PARTY-NOTICES.md $CLI_STAGE/  # minigw-core: only in the app
   ditto -c -k $CLI_STAGE "$CLI_ZIP"
   rm -rf $CLI_STAGE
   xcrun notarytool submit "$CLI_ZIP" --keychain-profile "${NOTARY_PROFILE:-minigateway-notary}" --wait
@@ -118,6 +120,9 @@ if [[ $MODE == --release ]]; then
     (cd client && CGO_ENABLED=0 GOOS=windows GOARCH=$arch go build -trimpath -ldflags "-s -w -H=windowsgui" -o "../$OUT/$name" .)
     GO_BINS+=$name
   done
+  # Notices of the Go modules in the binaries above: a release asset next to them (the Linux binaries ship alone), in SHA256SUMS.
+  cp THIRD-PARTY-NOTICES.md $OUT/THIRD-PARTY-NOTICES.md
+  GO_BINS+=THIRD-PARTY-NOTICES.md
   # Namestitveni paket za Windows (wixl): minigw-windows-<arch>.msi, v SHA256SUMS in zato podpisan.
   scripts/build-msi.sh $VERSION $OUT
   GO_BINS+=(minigw-windows-amd64.msi minigw-windows-arm64.msi)

@@ -42,6 +42,8 @@
         <!-- Pladenj je isti program brez konzole: tudi brez dela Gateway, ker zažene minigw.exe za dejanja namestitve brez
              okna konzole (minigw-tray.exe msi …), in ga minigw serve install pozneje najde ob minigw.exe. -->
         <File Id="tray" Name="minigw-tray.exe" Source="$(var.Tray)"/>
+        <!-- Licence of the software built into minigw.exe (scripts/third-party-notices.sh). -->
+        <File Id="notices" Name="THIRD-PARTY-NOTICES.md" Source="$(var.Notices)"/>
         <!-- »-«: ob odstranitvi le naš del uporabniškega PATH. Brez končnega »\« (kot pathWith v serve_install.go), da
              Windows Installer vnosa, ki ga že ima (tudi od minigw serve install), ne doda še enkrat. -->
         <Environment Id="Path" Name="-PATH" Value="[LocalAppDataFolder]Programs\Mini Gateway" Part="last" Action="set" System="no" Permanent="no"/>

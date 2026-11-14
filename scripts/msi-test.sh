@@ -43,6 +43,7 @@ for arch in amd64 arm64; do
   for fc in "Client	Main" "Gateway	Gateway" "Plugin	Plugin"; do has FeatureComponents $fc; done
   has File "tui	Gateway	minigw-tui.exe"
   has File "tray	Main	minigw-tray.exe"
+  has File "notices	Main	THIRD-PARTY-NOTICES.md"
   # #68: peskovnik agentov (MXC) v mxc\ z licenco, del Gateway; isti program kot pripet v client/mxc.go
   has Directory "MXCDIR	INSTALLDIR	mxc"
   has File "wxcexec	Sandbox	wxc-exec.exe"
