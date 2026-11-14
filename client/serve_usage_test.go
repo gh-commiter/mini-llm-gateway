@@ -284,7 +284,7 @@ func TestUsageSpoolReplayExactlyOnceAndGaps(t *testing.T) {
 	x.setPlan()
 	dir := folder(t, t.TempDir(), "w")
 	coreDir := filepath.Join(f.s.cfgDir, coreDirName)
-	spool := filepath.Join(f.s.cfgDir, coreapi.SpoolName)
+	spool := filepath.Join(coreDir, coreapi.SpoolName) // #106 S3: the spool lives inside the protected core folder
 
 	reopen := func() { // a restart of the gateway's core and recorder
 		f.s.api.StopRecorder()

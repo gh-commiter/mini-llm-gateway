@@ -67,15 +67,57 @@ public enum Grok {
         }
     }
 
-    static func args(cwd: URL, extraDirs: [String], agent: Bool, model: String?, write: Bool) -> [String] {
+    /// 0.6.0 (#106): Grok's own --deny is only a rule of its tools (verified, grok 1.0.77: a python one-liner read a denied
+    /// file). A custom sandbox profile with `deny` is kernel-enforced (Seatbelt, read and write). The profiles live in
+    /// <GROK_HOME>/sandbox.toml, which Grok's sandbox write-protects; the gateway gives Grok its own home (GROK_HOME,
+    /// under Scratch) and keeps the login where it is (GROK_AUTH_PATH), so the user's ~/.grok/sandbox.toml is never touched.
+    static let coreProfiles = [("minigw-core", "workspace"), ("minigw-core-ro", "read-only")]
+    static let coreUnavailable = "Grok cannot run on this gateway while projects are enabled: its sandbox profile that keeps it out of the core data folder could not be set up"
+
+    static func coreSandboxToml(deny: [String]) -> String? {
+        func q(_ s: String) -> String? {
+            s.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7f } ? nil
+                : "\"" + s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
+        }
+        let list = deny.compactMap(q)
+        guard !deny.isEmpty, list.count == deny.count else { return nil }
+        return coreProfiles.map { "[profiles.\($0.0)]\nextends = \"\($0.1)\"\ndeny = [\(list.joined(separator: ", "))]\n" }.joined(separator: "\n")
+    }
+
+    /// Gateway-owned Grok home with the profiles, checked here before each run: env for the process, or nil (refuse).
+    /// `login`: the folder of the real login (the user's ~/.grok or $GROK_HOME).
+    static func prepareCoreHome(_ home: URL, deny: [String], login: URL = Grok.loginHome()) -> [String: String]? {
+        let fm = FileManager.default
+        var st = stat()
+        if lstat(home.path, &st) == 0, st.st_mode & S_IFMT != S_IFDIR { return nil }  // a link: Grok refuses it too
+        guard (try? fm.createDirectory(at: home, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])) != nil,
+              let real = Sync.real(home)?.path, let toml = coreSandboxToml(deny: deny) else { return nil }
+        let file = URL(fileURLWithPath: real).appendingPathComponent("sandbox.toml")
+        if (try? String(contentsOf: file, encoding: .utf8)) != toml {
+            let tmp = file.appendingPathExtension("tmp-" + UUID().uuidString)
+            guard fm.createFile(atPath: tmp.path, contents: Data(toml.utf8), attributes: [.posixPermissions: 0o600]),
+                  rename(tmp.path, file.path) == 0 else { try? fm.removeItem(at: tmp); return nil }
+        }
+        // verify: the file on disk lists every denied path in both profiles (else the run is refused)
+        guard let back = try? String(contentsOf: file, encoding: .utf8), back == toml else { return nil }
+        return ["GROK_HOME": real, "GROK_AUTH_PATH": login.appendingPathComponent("auth.json").path]
+    }
+
+    static func loginHome() -> URL {
+        if let h = ProcessInfo.processInfo.environment["GROK_HOME"], !h.isEmpty { return URL(fileURLWithPath: h) }
+        return URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".grok")
+    }
+
+    /// `core`: the kernel-enforced profile with the core data folder denied instead of the built-in workspace/read-only.
+    static func args(cwd: URL, extraDirs: [String], agent: Bool, model: String?, write: Bool, core: Bool = false) -> [String] {
         var a = ["--cwd", cwd.path, "--output-format", "streaming-json", "--prompt-file", "/dev/stdin"]
         if let model { a += ["-m", model] }
         if agent && write {
             // Jedrni sandbox omeji pisanje na mapo seje (dodatnih map »workspace« ne dovoli, zato brez --add-dir);
             // znotraj njega orodja brez vprašanj (headless).
-            a += ["--sandbox", "workspace", "--always-approve"]
+            a += ["--sandbox", core ? coreProfiles[0].0 : "workspace", "--always-approve"]
         } else {
-            a += ["--sandbox", "read-only"]
+            a += ["--sandbox", core ? coreProfiles[1].0 : "read-only"]
         }
         return a
     }
@@ -175,6 +217,15 @@ extension Router {
     }
 
     func runGrok(_ req: HTTPRequest, body: [String: Any], model: String?, rid: String, writer: ResponseWriter) async -> Int {
+        // 0.6.0 (#106): with the project core Grok runs only in its kernel-enforced profile that denies the core data folder
+        // (Grok.prepareCoreHome); if that cannot be set up (also while the helper is merely not ready) it does not run.
+        var coreEnv: [String: String] = [:]
+        if core != nil {
+            guard let e = Grok.prepareCoreHome(config.scratch("grok-home"), deny: RouterConfig.agentDenied(kind: "grok", scratch: config.scratchURL)) else {
+                return await error(503, "api_error", Grok.coreUnavailable, rid: rid, writer: writer)
+            }
+            coreEnv = e
+        }
         // Grok nima zaščite .git v peskovniku, njegov program pa poganja git zunaj njega (in ~/.grok je pisljiv): s pisanjem
         // zavrni; brez pisanja v worktree le bere v klonu (veje ne vrne).
         let sid = req.header("x-claude-mini-session") ?? ""
@@ -235,7 +286,7 @@ extension Router {
         } else {
             try? FileManager.default.createDirectory(at: cwd, withIntermediateDirectories: true)
         }
-        var args = Grok.args(cwd: cwd, extraDirs: extra, agent: agent, model: model, write: config.grok.write && !readOnly)
+        var args = Grok.args(cwd: cwd, extraDirs: extra, agent: agent, model: model, write: config.grok.write && !readOnly, core: core != nil)
         // Nadaljevanje Grokove seje (prebrane datoteke, rezultati ukazov): ključ je dosedanji pogovor v tej mapi.
         let scope = Self.agentScope("grok", req, cwd: cwd)
         if agent, let existing = await Self.grokSessions.get(ClaudeCLI.key(all.dropLast(), scope: scope)) {
@@ -246,7 +297,7 @@ extension Router {
         let sessions = Self.grokSessions, client = req.header("x-claude-mini-session") ?? ""
         let run = agent ? await startAgentRun(req, kind: "grok", dir: sharedDir, readOnly: readOnly || inTree) : nil
         defer { run?.stop() }
-        var env = run?.env ?? [:]
+        var env = (run?.env ?? [:]).merging(coreEnv) { $1 }
         if inTree, let t = await Self.shares.worktree(session: client) {  // L-N9a: Grok bere v klonu; njegov git z ovojem
             guard let e = Worktree.claudeEnv(root: t.root, maven: t.maven, gitexec: config.scratch("gitexec"), gits: t.gits, agent: "grok") else {
                 return await error(503, "api_error", "Cannot prepare git for the agent's clone (git --exec-path): use sync", rid: rid, writer: writer)

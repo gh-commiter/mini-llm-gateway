@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/url"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -318,14 +317,15 @@ func (a *API) adminDo(ctx context.Context, st *core.Store, method string, seg []
 		}
 		return 200, UsageJSON(rep), true
 	case "POST core/backup":
-		var b struct{ File string }
-		if !dec(&b) || b.File == "" || !filepath.IsAbs(b.File) {
-			return fail(400, "file: an absolute path on the gateway computer")
+		var b struct{ Name string }
+		if !dec(&b) || b.Name == "" {
+			return fail(400, "name: the backup's name (letters, digits, . _ -); it is written into the core folder's backups folder, a path is not accepted")
 		}
-		if err := st.Backup(ctx, b.File); err != nil {
+		dest, err := st.BackupNamed(ctx, b.Name)
+		if err != nil {
 			return fail(400, "backup: "+err.Error())
 		}
-		return 200, map[string]any{"file": b.File}, true
+		return 200, map[string]any{"name": b.Name, "file": dest}, true
 	}
 	return fail(404, "Not found: "+method+" "+seg[0])
 }

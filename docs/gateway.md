@@ -232,6 +232,53 @@ minigw serve                 # or run it in this terminal (--port, --config)
   identity check cannot tell two folders apart (the real-path and owner checks still apply); (3) a local process of
   the same user could rename a pinned parent folder into a protected folder after the check (it could write there
   directly anyway).
+- **The core data folder is closed to every agent** (0.6.0, #106): the database, its sidecars (`-wal`, `-shm`, `core.state`,
+  `core.audit.log`), backups and the usage spool hold the notes of all projects, so an agent run of any user must not
+  read or write them. The folder is denied by its **real path** (a link to it from an allowed folder does not reach it),
+  and an allowed folder that contains it or is inside it is refused. Per platform and agent kind:
+  - **Mac** (app data folder `~/Library/Application Support/Mini Gateway`, the core in `core`): Codex always runs under its
+    permission profile (every mode: write, read-only, chat, resume, worktree) with the folder set to `none`; Claude CLI
+    (tool rules and sandbox `denyRead`), `minigw run` and Copilot (Seatbelt profile) hide it with the Scratch list
+    (`RouterConfig.hiddenScratch`). **Grok** runs (while the core is configured) only in a custom sandbox profile whose
+    `deny` is kernel-enforced: the gateway gives Grok its own home (`GROK_HOME` = `<Scratch>/grok-home`) holding
+    `sandbox.toml` with the profiles `minigw-core` and `minigw-core-ro`, rewritten and checked before every run, and keeps
+    the login in place (`GROK_AUTH_PATH`); `~/.grok` is not touched. If the profile cannot be set up the run is refused.
+    (Grok's own `--deny` is only a rule of its tools: `python3 -c open(...)` read a denied file, grok 1.0.77.)
+  - **Linux** (`<config dir>/core`): `bwrap` masks the config folder with a tmpfs (Codex, Grok, Copilot); Claude Code's
+    own sandbox has it in `denyRead`. Without `bwrap` agents run only with **Allow commands without a sandbox**, and then
+    they read it: see the acceptance below.
+  - **Windows**: the MXC box denies the config folder (by its final path, junctions included) for Claude CLI and Grok.
+    Codex and Copilot run beside the box and only with **Allow commands without a sandbox**, so they read it.
+  - **Gateway with an agent that can read the folder** (Linux without `bwrap`, Windows without the box, Codex and Copilot
+    on Windows; always with **Allow commands without a sandbox**): the core **refuses to open** (project routes answer 503
+    `core_unavailable`, models keep working) unless the owner has accepted it: `minigw gw claude
+    --accept-agents-read-notes=true` (admin `PATCH /agents/claude` with `acceptAgentsCanReadNotes`, key
+    `acceptAgentsCanReadNotes` in `serve.json`; restart the gateway). An accepted exposure is logged at start and shown in
+    `minigw gw status` (`projects: on; Codex can read all notes (accepted: acceptAgentsCanReadNotes)`; refused:
+    `projects: off (...)`). The check is repeated at **every launch**, next to the config folder's deny: a run of an
+    agent that would read the folder is refused with 403 while the core is open and not accepted.
+  - **Data on disk, core not open:** the check does not depend on an open handle. While the core folder holds data and the
+    core is not open (refused, failed, an earlier period), an agent that can read it is refused at launch (403: "old project
+    data in <folder>: move it away, or set acceptAgentsCanReadNotes"); one WARNING at start and
+    `minigw gw status` (`projects: off (...); old project data in <folder>: agents that can read it are refused`) say so.
+    Nothing is deleted. No usage recorder and no spool file exist while the core is not open; the spool
+    (`usage.spool`) lives inside the core folder (Go: `<config>/core`, Mac helper: its store folder).
+  - **Backups** are written only into `<core>/backups` (name only), so every deny of the core folder covers them.
+  - **Hard links:** a hard link to a core file from an allowed folder is the same file under another name and bypasses
+    every deny by path (a sandbox alone does not stop it; tested on Seatbelt). The core refuses to open when a file of the
+    core folder or its backups has a name outside the folder (a name inside, like a restore's snapshot, is fine), and
+    every agent launch checks it again (Go `core.CheckLinks`, Mac `RouterConfig.coreLinkProblem` in `syncRun`) and is
+    refused until the other link is removed.
+  - **Claude CLI in every mode:** the tool rules `Read` and `Edit` (Read covers Grep and Glob, Edit covers Write; checked
+    with a real `claude -p`) for the core folder and the other providers' credential homes are in the settings of the
+    default mode (no "Allow local tools", no sandbox) as well as the sandboxed modes. The Go gateway's default mode already
+    scopes the file tools to the session and allowed folders and denies the config folder.
+  - **Other providers' credentials:** `~/.grok` (or `$GROK_HOME`), `~/.codex` (or `$CODEX_HOME`), `~/.copilot` (or
+    `$COPILOT_HOME`) and the gateway's `Scratch/grok-home` and `Scratch/copilot` are denied to every agent of another
+    kind (Codex's profile, Grok's `sandbox.toml`, the Seatbelt hidden list, Claude's rules); an agent keeps its own home.
+  - **Codex write mode on the Mac** is a permission profile now: writable are the session folder, allowed folders and
+    the request's private temporary folder (`/private/tmp/minigw-codex-<id>`, exported as `TMPDIR`); other places in
+    `/tmp` are not writable any more (before: all of `/tmp`).
 - **Allowed folders survive a restart** (M2): when a folder is added (settings, admin API, `minigw gw claude --folders`),
   the gateway saves its real path and identity with it (Go: `allowedRecords` in `serve.json`; Mac: in the settings,
   next to the allowed folders; identity = volume UUID and inode in the Mac app, `statfs` `f_fsid` and inode on Linux,
@@ -278,9 +325,12 @@ holds a lock on it, so only one process uses it at a time.
 - **Migrations:** forward only. Before the first pending migration the gateway writes a snapshot
   `core-<schema>-<time>.db` next to the database (the last 3 are kept); a failing migration leaves the earlier ones
   applied and the schema version at the last good one. A database written by a newer minigw is refused (503).
-- **Backup:** `minigw gw core backup <file>` writes a consistent copy while the gateway runs (the file must not exist;
-  it is readable by you only). The approved device list (`serve.json`) is not part of it.
-- **Restore:** `minigw gw core restore <file>` works only with the gateway stopped. It checks the file (same gateway,
+- **Backup:** `minigw gw core backup [name]` writes a consistent copy while the gateway runs into the core folder's
+  `backups` folder (a name, no path: a copy in an allowed folder would be a copy of all notes that agents can read; the
+  name must not exist; the file is readable by you only; without a name `core-<UTC time>.db`). Move it out by hand
+  when you need it elsewhere. The approved device list (`serve.json`) is not part of it.
+- **Restore:** `minigw gw core restore <file|name>` works only with the gateway stopped (a name is looked up in
+  `backups`; an explicit path is accepted here, offline). It checks the file (same gateway,
   schema not newer, integrity), keeps the current database as a snapshot, and puts the backup in place with one
   rename. It brings back the users, bindings, memberships and grants of the backup, also ones revoked since, so it asks
   you to confirm (`--yes` skips that). The epoch is set above both values (all runs and conversations end) and the
@@ -300,7 +350,7 @@ app still does the authentication (the Noise tunnel and the device proof, the ap
 admin proof, the agent check); the helper decides everything else, so both gateways answer the same.
 
 - **Where the database is:** `~/Library/Application Support/Mini Gateway/core/` (mode 0700, the files 0600), next to
-  `state.json`. It is not in Scratch and not in the settings. Back it up with `minigw gw core backup <file>`.
+  `state.json`. It is not in Scratch and not in the settings. Back it up with `minigw gw core backup [name]` (written into `core/backups`).
 - **How it runs:** the app starts the helper with a private connection (an inherited socket pair, no file and no
   network port) and a secret made for that start. The helper serves only the app that started it, and ends when the
   app quits or dies. If it stops, the app starts it again (waiting longer after each failure, up to 5 seconds).

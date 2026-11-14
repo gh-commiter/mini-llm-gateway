@@ -39,6 +39,7 @@ runs; otherwise they go to serve.json.
   minigw gw claude [--path FILE] [--tools T1,T2] [--folders DIR1,DIR2] [--allow-local-tools=true|false]
                   [--ask-others=true|false]   (may ask other models of this gateway; needs --allow-local-tools)
                   [--allow-unsandboxed-bash=true|false]   (minigw serve only)
+                  [--accept-agents-read-notes=true|false]  (agents without a sandbox can read all project notes; restart to apply)
   minigw gw claude|codex|grok|copilot [--work=direct|sync|worktree]
                                                         the highest work mode in which the agent may change the
                                                         client's folder (in a lower mode it only reads)
@@ -265,6 +266,7 @@ func routerCommand(args []string, in io.Reader) {
 	path := fs.String("path", "", "claude: path to claude (empty = PATH)")
 	tools := fs.String("tools", "", "claude: the agent's tools")
 	bash := fs.String("allow-unsandboxed-bash", "", "claude: true or false")
+	acceptNotes := fs.String("accept-agents-read-notes", "", "claude: true or false (agents without a sandbox can read all project notes)")
 	folders := fs.String("folders", "", "claude: allowed folders, comma-separated (as on the Mac)")
 	localTools := fs.String("allow-local-tools", "", "claude: true or false")
 	askOthers := fs.String("ask-others", "", "claude: true or false")
@@ -334,6 +336,9 @@ func routerCommand(args []string, in io.Reader) {
 		say(fmt.Sprintf("version %s, port %d on %s", st.Version, st.Port, addr))
 		say(autostartLine(st.Autostart))
 		say(fmt.Sprintf("agent requests running: %d", st.Agents))
+		if st.Core != "" { // #106
+			say(clean(st.Core))
+		}
 		if sb := st.AgentSandbox; sb != nil { // #68: Windows
 			if sb["kind"] == "mxc" {
 				say("agent sandbox: Windows sandbox (MXC " + sb["version"] + ")")
@@ -568,7 +573,7 @@ func routerCommand(args []string, in io.Reader) {
 		}
 		need(1, 1)
 		var c apiClaude
-		if set["path"] || set["tools"] || set["allow-unsandboxed-bash"] || set["folders"] || set["allow-local-tools"] || set["ask-others"] || set["work"] {
+		if set["path"] || set["tools"] || set["allow-unsandboxed-bash"] || set["accept-agents-read-notes"] || set["folders"] || set["allow-local-tools"] || set["ask-others"] || set["work"] {
 			body := map[string]any{}
 			if set["work"] {
 				body["work"] = *work
@@ -585,6 +590,13 @@ func routerCommand(args []string, in io.Reader) {
 					fail("--allow-unsandboxed-bash: true or false")
 				}
 				body["allowUnsandboxedBash"] = b
+			}
+			if set["accept-agents-read-notes"] {
+				b, err := strconv.ParseBool(*acceptNotes)
+				if err != nil {
+					fail("--accept-agents-read-notes: true or false")
+				}
+				body["acceptAgentsCanReadNotes"] = b
 			}
 			if set["folders"] {
 				body["folders"] = *folders

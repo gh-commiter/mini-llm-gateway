@@ -83,6 +83,10 @@ carries the id of its request. Go: `coreapi.WriteRequest/ReadRequest/WriteRespon
 9. **Quota** probes and their settings (they run CLIs and provider HTTP).
 10. **Opening the store** (`core.Open` with the private-folder and backup-file protection of the platform) and closing it; the
     OS account name for `ensure-owner`.
+11. **Keeping agents out of the core data folder** (#106): every agent launch denies the folder by its real path (read and
+    write, all files in it) or the agent kind does not run; allowed folders around it are refused; where an agent cannot be
+    denied (no sandbox) the store opens only with the owner's `acceptAgentsCanReadNotes`, and the check is repeated at each
+    launch. See gateway.md, "The core data folder is closed to every agent".
 
 ## The Mac column: which duties are done
 
@@ -108,6 +112,7 @@ app may answer itself) and `testdata/paths.json` (`IsMemberPath`, `IsAdminPath`)
 | 8 | Usage events | later (the helper does not start the usage recorder yet) |
 | 9 | Quota | not part of the core |
 | 10 | Opening the store | done in the helper (`core.Open`, folder 0700 made by the app); `ensure-owner` at the first ready |
+| 11 | Agents out of the data folder | done: Codex always in its permission profile with the folder denied, the folder in the hidden list of Claude CLI, `minigw run` and Copilot, Grok runs only in its kernel-enforced `minigw-core` profile in a gateway-owned `GROK_HOME` (`Grok.prepareCoreHome`); allowed folders around the folder refused (`RouterConfig.overlapsCoreFolder`), hard-link aliases refused at open and at every run (`RouterConfig.coreLinkProblem` in `syncRun`), backups only in `<core>/backups` |
 
 Known difference from `minigw serve`: while the helper is down an agent peer gets the 503 (the helper is what would
 answer 403 first); the gateway has the store in-process and answers 403.

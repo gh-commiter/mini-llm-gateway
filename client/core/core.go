@@ -100,6 +100,10 @@ func Open(dir string, opts Options) (*Store, error) {
 		lock.Close()
 		return nil, err
 	}
+	if err := checkLinks(dir); err != nil {
+		lock.Close()
+		return nil, err
+	}
 	s := &Store{dir: dir, opts: opts, lock: lock, now: time.Now, rl: rateLimits{w: map[int64]*window{}}}
 	if err := s.open(); err != nil {
 		if s.db != nil {
@@ -392,4 +396,39 @@ func (s *Store) AuditEvents(ctx context.Context, after int64, limit int) ([]Audi
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// CheckLinks: a hard link to a core file from another folder (an allowed folder of an agent) would bypass every deny
+// by path: the same inode under another name. The core refuses to open when a file of the core folder or its backups
+// folder has more than one name (#106). Called by Open and by the gateway before each agent launch (a cheap stat).
+func CheckLinks(dir string) error { return checkLinks(dir) }
+
+func checkLinks(dir string) error {
+	type file struct {
+		path, id string
+		links    uint64
+	}
+	var files []file
+	inside := map[string]uint64{} // names of an identity within the core folder and its backups folder
+	for _, d := range []string{dir, filepath.Join(dir, BackupFolder)} {
+		entries, err := os.ReadDir(d)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			p := filepath.Join(d, e.Name())
+			if fi, err := os.Lstat(p); err == nil && fi.Mode().IsRegular() {
+				n, id := linkInfo(p, fi)
+				files = append(files, file{p, id, n})
+				inside[id]++
+			}
+		}
+	}
+	for _, f := range files {
+		// more names than the core folder itself holds (a failed restore keeps the old database as a snapshot: two names, both inside)
+		if f.links > inside[f.id] {
+			return fmt.Errorf("%w: %s has %d names, %d of them outside the core folder (a hard link to it exists elsewhere, and an agent could read the notes through that name): remove the other link", ErrHardLinked, f.path, f.links, f.links-inside[f.id])
+		}
+	}
+	return nil
 }

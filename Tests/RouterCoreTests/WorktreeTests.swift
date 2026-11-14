@@ -468,8 +468,8 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
     let env = Worktree.harnessEnv(root: root, maven: root, agent: "claude")
     #expect(env["TMPDIR"] == root.path + "/.build/tmp/" && env["CLANG_MODULE_CACHE_PATH"] == root.path + "/.build/ModuleCache"
             && env["xcrun_nocache"] == "1")
-    let codex = Codex.args(cwd: root, extraDirs: [], agent: true, output: root, write: true)
-    #expect(codex.contains("sandbox_workspace_write.exclude_tmpdir_env_var=true"))
+    let codex = Codex.args(cwd: root, extraDirs: [], agent: true, output: root, write: true, tmp: "/private/tmp/minigw-codex-x")
+    #expect(codex.joined(separator: " ").contains(#""/private/tmp/minigw-codex-x"="write""#))  // #106: zasebni TMPDIR v profilu (ne /tmp)
     // #67: $MINIGW_DEPS in skupni predpomnilniki pisljivi (Claude, Codex); ukazi Codex z oznako peskovnika, harness ne
     #expect(claudeWrite.contains(root.path + ".deps") && claudeWrite.contains("/Volumes/X/Scratch/worktrees/dev/x/.cache"))
     #expect(Codex.treeDirs(root: root, cwd: root, maven: root).contains(root.path + ".deps"))

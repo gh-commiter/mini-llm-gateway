@@ -298,9 +298,9 @@ private func get(_ run: AgentRun, _ path: String, token: String?) async -> Int {
         return (try read("claude-args.txt"), try read("codex-args.txt"))
     }
     let rw = try await run(readOnly: false)
-    #expect(rw.codex.contains("workspace-write") && !rw.claude.contains("EnterWorktree"))  // brez glave: pisanje (kontrola)
+    #expect(rw.codex.contains(#"="write""#) && !rw.claude.contains("EnterWorktree"))  // brez glave: pisanje (kontrola)
     let ro = try await run(readOnly: true)
-    #expect(ro.codex.contains("--sandbox\nread-only") && !ro.codex.contains("workspace-write") && !ro.codex.contains("--add-dir"))
+    #expect(ro.codex.contains(#"default_permissions="minigw""#) && !ro.codex.contains(#"="write""#) && !ro.codex.contains("--add-dir") && ro.codex.contains("permissions.minigw.network.enabled=false"))
     #expect(ro.claude.contains("--disallowedTools\nEdit,Write,MultiEdit,NotebookEdit,EnterWorktree,ExitWorktree,Monitor") && ro.claude.contains(#""allowWrite":[]"#))
     let chat = FakeWriter()  // N9: pogovor brez orodij prav tako z obema stikaloma (sicer lažni claude konča brez odgovora)
     await router.handle(request("POST", "/v1/messages", headers: ["Authorization": "Bearer tok"],

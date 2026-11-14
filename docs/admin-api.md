@@ -217,7 +217,7 @@ conversations of a project end), in the same transaction.
 | `POST /grants` | `{"source", "reader", "class": "structure"\|"data"}` | `{"ok": true}`: the members of `reader` read that class of `source` |
 | `DELETE /grants?source=&reader=&class=` | – | `{"ok": true}`; raises the epoch |
 | `GET /audit?after=&limit=` | – | `{"events": [{"id", "time", "actor", "action", "subject", "detail"}], "next"?}`: oldest first, `next` is the last id (pass it as `after`); limit 1-500, default 100; metadata only |
-| `POST /core/backup` | `{"file": "<absolute path>"}` | `{"file"}`: a consistent copy while the gateway runs; the file must not exist, it is readable by the user only |
+| `POST /core/backup` | `{"name": "<name>"}` | `{"name", "file"}`: a consistent copy while the gateway runs, written to `<core>/backups/<name>` (name: letters, digits, `.` `_` `-`, at most 64, no path; a path or `file` is `400`); the file must not exist, it is readable by the user only |
 
 Errors of these routes use the envelope above (`400` invalid, `404` not found, `503` core unavailable).
 

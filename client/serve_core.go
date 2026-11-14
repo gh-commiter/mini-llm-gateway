@@ -27,7 +27,15 @@ const (
 // openCore opens <config dir>/core. A gateway that cannot open it still starts: project routes answer 503, the
 // models work. Not called for the offline server (minigw gw without a running gateway).
 func (s *server) openCore() {
-	st, err := core.Open(filepath.Join(s.cfgDir, coreDirName), core.Options{ProtectDir: protectDir})
+	var st *core.Store
+	var err error
+	if why := s.coreOpenRefusal(s.conf()); why != "" { // #106: agents that could read the database: not opened unless accepted
+		err = errors.New(why)
+		s.warnStaleCore()
+	} else {
+		s.logCoreAccepted(s.conf())
+		st, err = core.Open(filepath.Join(s.cfgDir, coreDirName), core.Options{ProtectDir: protectDir})
+	}
 	if err == nil {
 		s.core = st // the API reads the store through s.core; nothing serves yet (openCore runs before serve)
 		err = s.ensureOwner(st)
@@ -42,8 +50,7 @@ func (s *server) openCore() {
 	if err != nil {
 		s.coreErr = err
 		s.log.Printf("WARNING: the core database cannot be used, project routes answer 503 core_unavailable (models work): %v", err)
-		s.api.StartRecorder() // usage events go to the spool until a start with a usable core
-		return
+		return // no recorder and no spool file while the core is not open (#106 S3: nothing is written next to protected data)
 	}
 	s.api.StartRecorder()
 }
@@ -76,7 +83,7 @@ func (s *server) newAPI() *coreapi.API {
 			}
 			return ""
 		},
-		Dir: s.cfgDir,
+		Dir: filepath.Join(s.cfgDir, coreDirName), // the usage spool lives inside the protected core folder
 		Log: s.log.Printf,
 		AfterAdmission: func(ctx context.Context, _ coreapi.Context, _ coreapi.Request) {
 			if rq, _ := ctx.Value(reqCtxKey{}).(*req); rq != nil && s.coreHook != nil {

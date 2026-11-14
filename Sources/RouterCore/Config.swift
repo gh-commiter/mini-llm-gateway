@@ -169,7 +169,7 @@ public struct RouterConfig: Codable, Sendable, Equatable {
     /// (lahko je uporabnikova mapa z drugo vsebino).
     public static func hiddenScratch(_ scratch: URL?) -> [String] {
         let fm = FileManager.default
-        var dirs = [defaultScratch]
+        var dirs = [defaultScratch] + (coreDenied() + credentialHomes()).map { URL(fileURLWithPath: $0, isDirectory: true) }  // 0.6.0 (#106): the core data folder is denied wherever Scratch is
         if let scratch { dirs = [scratch, defaultBase.appendingPathComponent(scratch.lastPathComponent, isDirectory: true)] + dirs }
         for base in Set([scratch?.deletingLastPathComponent(), defaultBase].compactMap { $0?.standardizedFileURL }) {
             for n in ((try? fm.contentsOfDirectory(atPath: base.path)) ?? []).sorted() {
@@ -181,6 +181,68 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         }
         var seen = Set<String>()
         return dirs.flatMap { [$0.standardizedFileURL.path, Sync.real($0)?.path].compactMap { $0 } }.filter { seen.insert($0).inserted }
+    }
+
+    /// 0.6.0 (#106): the app's data folder (state.json and the core database with its sidecars, backups and usage spool in
+    /// `core`): no agent may read or write it. Literal and real path (a link to it from an allowed folder does not reach
+    /// it); the folder itself, so every file in it.
+    public static func coreDenied(app: URL = GatewayHistory.defaultFile.deletingLastPathComponent(), store: URL = CoreHelper.defaultStore) -> [String] {
+        var seen = Set<String>()
+        return [app, store].flatMap { [$0.standardizedFileURL.path, Sync.realResolving($0)?.path].compactMap { $0 } }.filter { seen.insert($0).inserted }
+    }
+
+    /// 0.6.0 (#106, S3): credential and config homes of the provider CLIs the gateway uses, by real and literal path
+    /// (`$GROK_HOME`/`~/.grok`, `$CODEX_HOME`/`~/.codex`, `$COPILOT_HOME`/`~/.copilot`), except the agent's own.
+    public static func credentialHomes(except kind: String = "", home: String = NSHomeDirectory(),
+                                       env: [String: String] = ProcessInfo.processInfo.environment) -> [String] {
+        var seen = Set<String>()
+        return [("grok", "GROK_HOME", ".grok"), ("codex", "CODEX_HOME", ".codex"), ("copilot", "COPILOT_HOME", ".copilot")]
+            .filter { $0.0 != kind }
+            .flatMap { k -> [String] in
+                let literal = env[k.1].flatMap { $0.isEmpty ? nil : $0 } ?? home + "/" + k.2
+                let url = URL(fileURLWithPath: literal)
+                return [url.standardizedFileURL.path, Sync.realResolving(url)?.path].compactMap { $0 }
+            }.filter { seen.insert($0).inserted }
+    }
+
+    /// Everything an agent of this kind must not read or write: the core data folder, the credential homes of the other
+    /// providers and the gateway's private Scratch folders that belong to another kind (`grok-home`, Copilot's).
+    public static func agentDenied(kind: String, scratch: URL?, home: String = NSHomeDirectory(),
+                                   env: [String: String] = ProcessInfo.processInfo.environment) -> [String] {
+        var out = coreDenied() + credentialHomes(except: kind, home: home, env: env)
+        if let scratch {
+            for (owner, sub) in [("grok", "grok-home"), ("copilot", "copilot")] where owner != kind {
+                let url = scratch.appendingPathComponent(sub, isDirectory: true)
+                out += [url.standardizedFileURL.path, Sync.realResolving(url)?.path].compactMap { $0 }
+            }
+        }
+        var seen = Set<String>()
+        return out.filter { seen.insert($0).inserted }
+    }
+
+    /// 0.6.0 (#106, S3): a hard link to a core file from another folder is the same inode under another name and bypasses
+    /// every deny by path. The helper refuses to open such a store (Go `core.CheckLinks`); this is the cheap stat before each
+    /// agent run for links made while the helper runs. nil = none; names inside the folder (a restore snapshot) are no alias.
+    public static func coreLinkProblem(store: URL = CoreHelper.defaultStore) -> String? {
+        let fm = FileManager.default
+        var files: [(path: String, links: UInt64, id: String)] = []
+        var inside: [String: UInt64] = [:]
+        for dir in [store, store.appendingPathComponent("backups", isDirectory: true)] {
+            for n in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] {
+                let p = dir.appendingPathComponent(n).path
+                var st = stat()
+                guard lstat(p, &st) == 0, st.st_mode & S_IFMT == S_IFREG else { continue }
+                let id = "\(st.st_dev):\(st.st_ino)"
+                files.append((p, UInt64(st.st_nlink), id)); inside[id, default: 0] += 1
+            }
+        }
+        guard let bad = files.first(where: { $0.links > inside[$0.id, default: 0] }) else { return nil }
+        return "\(bad.path) has another name outside the core folder (a hard link to it exists elsewhere, and an agent could read the notes through that name): remove the other link"
+    }
+
+    /// An allowed folder that contains the app's data folder or is inside it (agents would reach the core database).
+    public static func overlapsCoreFolder(_ root: String) -> Bool {
+        [GatewayHistory.defaultFile.deletingLastPathComponent(), CoreHelper.defaultStore].contains { overlapsScratch(root, scratch: $0) }
     }
 
     /// Paket Copilot CLI (koda, ki jo copilot --version naloži in razširi).

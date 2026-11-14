@@ -57,8 +57,11 @@ type serveConfig struct {
 	AllowAnyDevice bool          `json:"allowAnyDevice,omitempty"` // le pri praznem seznamu: vsaka naprava z žetonom
 	AllowLocalApps *bool         `json:"allowLocalApps,omitempty"` // modeli brez žetona za aplikacije tega uporabnika (nil = ne; H1)
 	// Bash v tools na Windows teče brez sandboxa (dostop do vsega, kar sme uporabnik): le z izrecnim dovoljenjem.
-	AllowUnsandboxedBash bool           `json:"allowUnsandboxedBash,omitempty"`
-	Gateways             []serveGateway `json:"gateways,omitempty"` // ključi v shrambi sistema, ne tu (serve_gateway.go)
+	AllowUnsandboxedBash bool `json:"allowUnsandboxedBash,omitempty"`
+	// 0.6.0 (#106): agents without a sandbox can read the core database (the notes of all projects); the core opens
+	// on such a gateway only with this, set by the owner (serve_core_sandbox.go).
+	AcceptAgentsReadNotes bool           `json:"acceptAgentsCanReadNotes,omitempty"`
+	Gateways              []serveGateway `json:"gateways,omitempty"` // ključi v shrambi sistema, ne tu (serve_gateway.go)
 	// Kot nastavitve na Macu (docs/windows-parity.md).
 	AllowedClients   string        `json:"allowedClients,omitempty"`   // IP naslovi, ločeni z vejico ali presledkom; prazno = vsi
 	AllowPlainRemote bool          `json:"allowPlainRemote,omitempty"` // navaden HTTP z drugih računalnikov (brez ključa naprave)
@@ -551,6 +554,7 @@ type server struct {
 	activity      activityLog // tekoče in zadnje zahteve modelom (GET /activity)
 	core          *core.Store // 0.6.0 core (serve_core.go); nil = not opened (offline) or unusable (coreErr)
 	coreErr       error
+	coreStale     string                     // the core folder of an earlier period that still holds data while the core is refused (serve_core_sandbox.go)
 	coreHook      func(r *req, point string) // tests: pause a member operation after admission
 	api           *coreapi.API               // the core's request handler (serve_core.go); the usage recorder runs in it once openCore started it
 	quota         quotaState                 // quota and provider credit (serve_quota.go)

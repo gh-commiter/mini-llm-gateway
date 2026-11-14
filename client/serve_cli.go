@@ -864,6 +864,9 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		if why := s.conf().unsandboxedRefusal(s.cfgDir); why != "" { // #68: prej ob nalaganju nastavitev
 			return writeError(w, r.rid, 403, why)
 		}
+		if why := s.coreRefusal(s.conf(), "claude"); why != "" { // #106
+			return writeError(w, r.rid, 403, why)
+		}
 		clientCwd := r.h("x-claude-mini-cwd")
 		var share *serveShare
 		if parent == nil {

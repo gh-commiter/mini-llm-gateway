@@ -887,6 +887,7 @@ const pages = {
             if (!v) { for (const [n] of COMMANDS) on.delete(n); body.tools = [...on].join(","); }
             await patch(body); show("claude");
           }))) : null,
+          st && st.core ? row(el("div", {class: "label sub", textContent: st.core})) : null,  // #106: projects and agents' access to the notes (read-only; the CLI flag sets it)
           win && !box ? row(el("div", {class: "label warn", textContent: t("unsandboxedWarn")}))
             : row(el("div", {class: "label sub", textContent: t(box ? "sandboxNoteWin" : "sandboxNote")})),
           COMMANDS.filter(x => win || x[0] !== "PowerShell").map(x => toolRow(x, cmdLocked))),

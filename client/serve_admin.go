@@ -61,26 +61,27 @@ type apiGateway struct {
 }
 
 type apiClaude struct {
-	Path                 string         `json:"path"` // prazno = iz PATH
-	Found                bool           `json:"found"`
-	Tools                string         `json:"tools"`
-	AllowUnsandboxedBash bool           `json:"allowUnsandboxedBash"`
-	Exe                  string         `json:"exe,omitempty"`     // najdena pot (tudi pri samodejnem iskanju)
-	ClaudeVersion        string         `json:"version,omitempty"` // claude --version
-	Enabled              bool           `json:"enabled"`
-	Folders              string         `json:"folders"` // dovoljene mape, ločene z vejico (kot na Macu)
-	AllowLocalTools      bool           `json:"allowLocalTools"`
-	AskOthers            bool           `json:"askOthers"`
-	DisabledTools        []string       `json:"disabledTools"`
-	PermissionMode       string         `json:"permissionMode"`
-	SettingSources       string         `json:"settingSources"`
-	Work                 string         `json:"work"`                       // #45: direct, sync ali worktree
-	Off                  string         `json:"off,omitempty"`              // zakaj sta Claude CLI in Codex izklopljena ob zagonu (offReason)
-	LeftOut              []string       `json:"leftOut,omitempty"`          // mape iz serve.json, izpuščene ob zagonu (offFolders)
-	LeftOutUnchecked     []string       `json:"leftOutUnchecked,omitempty"` // od teh tiste, ki jih ni mogoče preveriti (offUnchecked)
-	OffErrors            []string       `json:"offErrors,omitempty"`        // napake razrešitve v razlogu (offErrors)
-	Refused              []string       `json:"refused,omitempty"`          // M2: mape, ki se od zapisa niso več ujemale ob zagonu; ostanejo na seznamu, dokler jih skrbnik ne odstrani in doda znova
-	Login                map[string]any `json:"login"`                      // #68: vrstica Login (stanje žetona setup-token / ključa API, nikoli vrednost)
+	Path                  string         `json:"path"` // prazno = iz PATH
+	Found                 bool           `json:"found"`
+	Tools                 string         `json:"tools"`
+	AllowUnsandboxedBash  bool           `json:"allowUnsandboxedBash"`
+	AcceptAgentsReadNotes bool           `json:"acceptAgentsCanReadNotes"` // #106
+	Exe                   string         `json:"exe,omitempty"`            // najdena pot (tudi pri samodejnem iskanju)
+	ClaudeVersion         string         `json:"version,omitempty"`        // claude --version
+	Enabled               bool           `json:"enabled"`
+	Folders               string         `json:"folders"` // dovoljene mape, ločene z vejico (kot na Macu)
+	AllowLocalTools       bool           `json:"allowLocalTools"`
+	AskOthers             bool           `json:"askOthers"`
+	DisabledTools         []string       `json:"disabledTools"`
+	PermissionMode        string         `json:"permissionMode"`
+	SettingSources        string         `json:"settingSources"`
+	Work                  string         `json:"work"`                       // #45: direct, sync ali worktree
+	Off                   string         `json:"off,omitempty"`              // zakaj sta Claude CLI in Codex izklopljena ob zagonu (offReason)
+	LeftOut               []string       `json:"leftOut,omitempty"`          // mape iz serve.json, izpuščene ob zagonu (offFolders)
+	LeftOutUnchecked      []string       `json:"leftOutUnchecked,omitempty"` // od teh tiste, ki jih ni mogoče preveriti (offUnchecked)
+	OffErrors             []string       `json:"offErrors,omitempty"`        // napake razrešitve v razlogu (offErrors)
+	Refused               []string       `json:"refused,omitempty"`          // M2: mape, ki se od zapisa niso več ujemale ob zagonu; ostanejo na seznamu, dokler jih skrbnik ne odstrani in doda znova
+	Login                 map[string]any `json:"login"`                      // #68: vrstica Login (stanje žetona setup-token / ključa API, nikoli vrednost)
 }
 
 type apiGeneral struct {
@@ -121,6 +122,8 @@ type apiStatus struct {
 	// AgentsUnsandboxed: agenti tu nimajo sandboxa, ki skrije skrivnosti (Windows brez škatle, Linux brez bwrap); Codex in
 	// Copilot na Windows ga nimata nikoli (agents/<kind>.sandboxed).
 	AgentsUnsandboxed bool `json:"agentsUnsandboxed"`
+	// Core (#106): "projects: on" / "projects: on; … can read all notes (accepted …)" / "projects: off (why)"; "" offline.
+	Core string `json:"core,omitempty"`
 	// AgentSandbox (#68, Windows): {"kind":"mxc","version":"1.0.1"} ali {"kind":"","reason":"…"}; drugje ga ni.
 	AgentSandbox map[string]string `json:"agentSandbox,omitempty"`
 	// Copilot (#81): zakaj vklopljeni Copilot ni na voljo (prijava copilot login, shramba ključev); "" = v redu ali izklopljen.
@@ -360,7 +363,7 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 		st := apiStatus{Running: !s.offline, Version: version, Port: c.Port, Address: c.Address, Installed: serviceInstalled(runtime.GOOS),
 			Devices: len(c.Devices), Claude: s.claudeInfo(), Gateways: s.apiGateways(c), OS: runtime.GOOS, Tray: trayRunning(), Build: buildCommit(),
 			Agents: int(s.agentsRunning.Load()), Autostart: autostart(runtime.GOOS), AgentsUnsandboxed: !agentSandboxed(s.cfgDir),
-			AgentSandbox: agentSandboxInfo()}
+			AgentSandbox: agentSandboxInfo(), Core: s.coreStatus(c)}
 		if c.Copilot.Enabled {
 			_, st.Copilot = copilotLogin()
 		}
@@ -798,19 +801,20 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			return 200, s.claudeInfo()
 		}
 		var b struct {
-			Path                 *string   `json:"path"`
-			Tools                *string   `json:"tools"`
-			AllowUnsandboxedBash *bool     `json:"allowUnsandboxedBash"`
-			Enabled              *bool     `json:"enabled"`
-			Folders              *string   `json:"folders"`
-			AllowLocalTools      *bool     `json:"allowLocalTools"`
-			AskOthers            *bool     `json:"askOthers"`
-			DisabledTools        *[]string `json:"disabledTools"`
-			PermissionMode       *string   `json:"permissionMode"`
-			SettingSources       *string   `json:"settingSources"`
-			Work                 *string   `json:"work"`
-			Token                *string   `json:"token"`  // #68: claude setup-token (le za pisanje; "" izbriše)
-			APIKey               *string   `json:"apiKey"` // #68: izbira »Use an API key instead« ("" = nazaj na prijavo)
+			Path                  *string   `json:"path"`
+			Tools                 *string   `json:"tools"`
+			AllowUnsandboxedBash  *bool     `json:"allowUnsandboxedBash"`
+			AcceptAgentsReadNotes *bool     `json:"acceptAgentsCanReadNotes"` // #106
+			Enabled               *bool     `json:"enabled"`
+			Folders               *string   `json:"folders"`
+			AllowLocalTools       *bool     `json:"allowLocalTools"`
+			AskOthers             *bool     `json:"askOthers"`
+			DisabledTools         *[]string `json:"disabledTools"`
+			PermissionMode        *string   `json:"permissionMode"`
+			SettingSources        *string   `json:"settingSources"`
+			Work                  *string   `json:"work"`
+			Token                 *string   `json:"token"`  // #68: claude setup-token (le za pisanje; "" izbriše)
+			APIKey                *string   `json:"apiKey"` // #68: izbira »Use an API key instead« ("" = nazaj na prijavo)
 		}
 		if err := decodeStrict(body, &b); err != nil {
 			return fail(400, err.Error())
@@ -850,6 +854,9 @@ func (s *server) adminDo(method, uri string, body []byte) (int, any) {
 			}
 			if b.AllowUnsandboxedBash != nil {
 				c.AllowUnsandboxedBash = *b.AllowUnsandboxedBash
+			}
+			if b.AcceptAgentsReadNotes != nil {
+				c.AcceptAgentsReadNotes = *b.AcceptAgentsReadNotes
 			}
 			if b.Enabled != nil {
 				c.ClaudeDisabled = !*b.Enabled
@@ -1295,7 +1302,7 @@ func claudeTools(exe []string, dir string) []string { // dir (#68): delovna mapa
 
 func (s *server) claudeInfo() apiClaude {
 	c, exe := s.conf(), s.claudeExe()
-	info := apiClaude{Path: c.Claude, Found: len(exe) > 0, Tools: c.Tools, AllowUnsandboxedBash: c.AllowUnsandboxedBash,
+	info := apiClaude{Path: c.Claude, Found: len(exe) > 0, Tools: c.Tools, AllowUnsandboxedBash: c.AllowUnsandboxedBash, AcceptAgentsReadNotes: c.AcceptAgentsReadNotes,
 		Enabled: !c.ClaudeDisabled, Folders: strings.Join(c.AllowedFolders, ","), AllowLocalTools: c.AllowLocalTools, AskOthers: c.ClaudeAskOthers,
 		DisabledTools: append([]string{}, c.DisabledTools...), PermissionMode: c.PermissionMode, SettingSources: c.SettingSources,
 		Work: apiWork(c.ClaudeWork), Login: agentLogin(s.cfgDir, "claude")}
