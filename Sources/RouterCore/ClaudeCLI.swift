@@ -112,7 +112,9 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
     /// T5: the sentence the agent gets (and tells the user) when the session folder's path has a character that cannot go into a permission rule, so its edit tools are off.
     func editToolsOffNote(cwd: String) -> String? {
         guard !allowLocalTools, !Self.ruleSafe(cwd), Self.toolNames(tools).contains(where: { Self.editClass.contains(Self.toolName($0)) }) else { return nil }
-        return "Edit tools are off for this folder: its path (\(cwd)) contains a character that cannot go into a permission rule (parentheses, * ? [ ] { }, comma, backslash, !, or a space at an end of a name). Tell the user: rename the folder or turn on \"Allow local tools\"."
+        // the path is client-chosen: quoted as a JSON string (newlines and instruction-like text stay data)
+        let quoted = (try? JSONSerialization.data(withJSONObject: cwd, options: [.fragmentsAllowed, .withoutEscapingSlashes])).map { String(decoding: $0, as: UTF8.self) } ?? "\"\""
+        return "Edit tools are off for this folder: its path (a JSON string: \(quoted)) contains a character that cannot go into a permission rule (parentheses, * ? [ ] { }, comma, backslash, !, or a space at an end of a name). Tell the user: rename the folder or turn on \"Allow local tools\"."
     }
 
     nonisolated(unsafe) private static var logged = Set<String>()
@@ -124,15 +126,20 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
 
     /// T3: with setting sources `project` or `local` Claude Code reads `.claude/settings*.json` of the folder (hooks run unsandboxed on the next run; `allow` and
     /// `additionalDirectories` widen the rules): the edit tools may not write `.claude` in the session folder or an allowed folder, nested too (real run: stops Write).
+    /// Claude Code reads `.claude/settings*.json` of the folder only with the setting sources `project` or `local` (`user` is the owner's home).
+    var readsFolderSettings: Bool {
+        settingSources.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.contains { $0 == "project" || $0 == "local" }
+    }
+
     func claudeSettingsEditDenies(dirs: [String]) -> [String] {
-        settingSources.trimmingCharacters(in: .whitespaces).isEmpty ? [] : dirs.flatMap { ["Edit(/\($0)/.claude/**)", "Edit(/\($0)/**/.claude/**)"] }
+        !readsFolderSettings ? [] : dirs.flatMap { ["Edit(/\($0)/.claude/**)", "Edit(/\($0)/**/.claude/**)"] }
     }
 
     /// Edit rules that keep the agent from planting what git of the owner runs: `.git` config, hooks, info and the redirects, in the folder
     /// and nested (the same as the sandbox branch's N3 rules; only Edit(...) rules are matched, and they stop Write too: real run).
     static func gitEditDenies(dirs: [String]) -> [String] {
         dirs.flatMap { d in gitDenies.flatMap { g in ["/\(d)/.git/\(g)", "/\(d)/.git/\(g)/**", "/\(d)/**/.git/\(g)", "/\(d)/**/.git/\(g)/**"].map { "Edit(\($0))" } }
-            + ["Edit(/\(d)/.git)", "Edit(/\(d)/**/.git)"] }
+            + ["Edit(/\(d)/.git)", "Edit(/\(d)/**/.git)"] } + submoduleEditDenies(dirs: dirs).map { "Edit(\($0))" }
     }
 
     /// The tools that read or write files: allowed only with a path rule (`T(./**)` and `T(//folder/**)`, the double slash is an absolute path).
@@ -185,16 +192,14 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
             // #26 (N2): paket Copilot nikoli za pisanje (naloži ga priprava paketa), tudi če je v dovoljeni mapi.
             // --minigw-ro: pisanje v te mape prepovedano (denyWrite velja tudi za delovno mapo, ki jo Claude Code dovoli sam).
             "filesystem": ["denyRead": ["~"] + (scratch.map(RouterConfig.hiddenScratch) ?? []), "allowRead": dirs, "allowWrite": readOnly ? [] : dirs,
-                           "denyWrite": Self.scratchPaths(RouterConfig.copilotCache)
-                               + (readOnly ? dirs : dirs.flatMap { d in Self.gitDenies.flatMap { [d + "/.git/" + $0, d + "/**/.git/" + $0] } + [d + "/**/.git"] }) + (readOnly ? [] : dirs.flatMap { d in settingSources.trimmingCharacters(in: .whitespaces).isEmpty ? [] : [d + "/.claude", d + "/**/.claude"] })],  // native v mapi sami (H1); N3: tudi ugnezdeni (macOS glob)
+                           "denyWrite": sandboxDenyWrite(dirs: dirs, readOnly: readOnly)],  // native v mapi sami (H1); N3: tudi ugnezdeni (macOS glob)
         ]]
         let settings = String(decoding: try! JSONSerialization.data(withJSONObject: sandbox, options: [.sortedKeys]), as: UTF8.self)
         // --minigw-ro: --tools le iz seznama dovoljenih (in Bash v sandboxu brez pisanja), drugih orodij agent nima.
         let roTools = (Self.readOnlyAllowed + ["Bash"]).filter { !disabledTools.contains($0) }
         let others = allTools.filter { !Self.pathTools.contains($0) && !disabledTools.contains($0) && (!readOnly || roTools.contains($0)) }
         // N3: nastavitve, hooki in preusmeritve ugnezdenih .git tudi ne z orodji Edit/Write (kot regex v Native.sandboxProfile)
-        let nestedGit = readOnly ? [] : dirs.flatMap { d in Self.gitDenies.flatMap { g in ["Edit", "Write"].map { "\($0)(/\(d)/**/.git/\(g))" } + ["Edit", "Write"].map { "\($0)(/\(d)/**/.git/\(g)/**)" } }
-            + ["Edit", "Write"].map { "\($0)(/\(d)/**/.git)" } }  // tudi datoteka gitdir: (podmodul) ali .git sam
+        let nestedGit: [String] = readOnly ? [] : Self.nestedGitEditWriteDenies(dirs: dirs)  // tudi datoteka gitdir: (podmodul) ali .git sam
         let denied = disabledTools + (readOnly ? Self.writeTools.filter { !disabledTools.contains($0) } : []) + nestedGit + (readOnly ? [] : claudeSettingsEditDenies(dirs: dirs))
         return ["--tools", readOnly ? roTools.joined(separator: ",") : "default", "--permission-mode", "acceptEdits", "--settings", settings]
             + dirs.dropFirst().flatMap { ["--add-dir", $0] }
@@ -210,7 +215,56 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
 
     /// M4: .git, ki ga bere git lastnika: nastavitve, hooki, atributi in preusmeritve na drug gitdir (commondir,
     /// povezani worktree-ji z gitdir, commondir in config.worktree).
-    static let gitDenies = ["config", "config.worktree", "hooks", "info", "commondir", "worktrees", "modules"]  // modules: .git/modules/<sub>/{config,hooks} run in the owner's `git status` of the parent
+    static let gitDenies = ["config", "config.worktree", "hooks", "info", "commondir", "worktrees"]
+    /// V1: of `.git/modules/<sub>/` (the submodules' git directories: objects, index and HEAD must stay writable for a commit inside a submodule or
+    /// `git submodule update`) only what the owner's git runs is denied: config (core.fsmonitor), hooks, info (attributes) and the redirect.
+    static let submoduleDenies = ["config", "config.worktree", "hooks", "info"]
+
+    /// The submodule config, hooks and info paths that exist under a `.git` folder (for profiles that take literal paths only).
+    static func submoduleGitPaths(_ git: String) -> [String] {
+        var out: [String] = []
+        func walk(_ dir: String, _ depth: Int) {
+            guard depth < 8, let names = try? FileManager.default.contentsOfDirectory(atPath: dir) else { return }
+            for n in names.sorted() {
+                let p = dir + "/" + n
+                var st = stat()
+                guard lstat(p, &st) == 0, st.st_mode & S_IFMT == S_IFDIR || st.st_mode & S_IFMT == S_IFREG else { continue }  // no links
+                if submoduleDenies.contains(n) { out.append(p) } else if st.st_mode & S_IFMT == S_IFDIR && n != "objects" && n != "refs" { walk(p, depth + 1) }
+            }
+        }
+        walk(git + "/modules", 0)
+        return out
+    }
+
+    /// The sandbox's denyWrite: the Copilot package cache, the folders themselves with --minigw-ro, else the git paths the owner's git runs (config, hooks, info,
+    /// redirects; nested; the submodules' config, hooks and info) and, with setting sources, `.claude`.
+    func sandboxDenyWrite(dirs: [String], readOnly: Bool) -> [String] {
+        var out: [String] = Self.scratchPaths(RouterConfig.copilotCache)
+        if readOnly { return out + dirs }
+        for d in dirs {
+            for g in Self.gitDenies { out += [d + "/.git/" + g, d + "/**/.git/" + g] }
+            out.append(d + "/**/.git")
+            for g in Self.submoduleDenies { out += [d + "/.git/modules/**/" + g, d + "/**/.git/modules/**/" + g] }
+            if readsFolderSettings { out += [d + "/.claude", d + "/**/.claude"] }
+        }
+        return out
+    }
+
+    /// N3: the same git paths as Edit and Write deny rules (nested too, `.git` itself, the submodules' config, hooks and info).
+    static func nestedGitEditWriteDenies(dirs: [String]) -> [String] {
+        var rules: [String] = []
+        for d in dirs {
+            for g in gitDenies { rules += ["/\(d)/**/.git/\(g)", "/\(d)/**/.git/\(g)/**"] }
+            rules.append("/\(d)/**/.git")
+        }
+        rules += submoduleEditDenies(dirs: dirs)
+        return rules.flatMap { r in ["Edit(\(r))", "Write(\(r))"] }
+    }
+
+    /// V1: Edit rules (and the sandbox's denyWrite globs) for the submodules' config, hooks and info, top-level and nested.
+    static func submoduleEditDenies(dirs: [String]) -> [String] {
+        dirs.flatMap { d in submoduleDenies.flatMap { g in ["/\(d)/.git/modules/**/\(g)", "/\(d)/.git/modules/**/\(g)/**", "/\(d)/**/.git/modules/**/\(g)", "/\(d)/**/.git/modules/**/\(g)/**"] } }
+    }
 
     /// --minigw-work=worktree: vsa orodja (tudi Bash) vedno v peskovniku Claude Code (brez stikala za izklop):
     /// pisanje le v klon in predpomnilnike gradnje (Worktree.writable), branje domače mape le tam, omrežje po nastavitvi.
@@ -657,7 +711,7 @@ extension Router {
                                    rid: rid, writer: writer)
             }
             cwd = dir
-            if tree == nil { editOffNote = cfg.editToolsOffNote(cwd: dir.path) }
+            if tree == nil, !readOnly { editOffNote = cfg.editToolsOffNote(cwd: dir.path) }  // not for a read-only run (it has no edit tools)
             sharedDir = shared
             let scope = (req.header("x-claude-mini-session") ?? "") + "|" + dir.path
             registryKey = scope
