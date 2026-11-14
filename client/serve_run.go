@@ -68,6 +68,9 @@ func (s *server) attachProject(w http.ResponseWriter, r *req) int {
 		r.project = run.proj
 		return 0
 	}
+	if len(r.Header.Values(projectHeader)) > 1 { // F1: never pick one of several
+		return s.projectRefusal(w, r, 400, "invalid_request_error", "More than one X-Minigw-Project header")
+	}
 	v := r.h(projectHeader)
 	if v == "" {
 		return 0

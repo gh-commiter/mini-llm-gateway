@@ -129,6 +129,13 @@ func admin(_ r: Router, _ method: String, _ path: String, body: String = "", hos
 
         #expect(await admin(app.router(), "PATCH", "/agents/claude", body: #"{"tools":"Read, Grep","folders":"~/src"}"#).status == 200)
         #expect(app.config.claudeCLI.tools == "Read,Grep" && app.config.claudeCLI.allowedRoots == "~/src")
+        // sec-fix F3: no sandbox without "Allow local tools", so only tools the deny rules cover
+        for bad in ["Read,Bash", "Task", "mcp__x__run"] {
+            let r = await admin(app.router(), "PATCH", "/agents/claude", body: #"{"tools":"\#(bad)"}"#)
+            #expect(r.status == 400 && r.text.contains("Allow local tools"), "\(bad)")
+        }
+        #expect(app.config.claudeCLI.tools == "Read,Grep")
+        #expect(await admin(app.router(), "PATCH", "/agents/claude", body: #"{"tools":"Read,Edit,Write,WebFetch"}"#).status == 200)
         #expect(await admin(app.router(), "PATCH", "/agents/codex", body: #"{"write":false,"models":["gpt-5"]}"#).status == 200)
         #expect(!app.config.codex.write && app.config.codex.enabledModels == ["gpt-5"])
         #expect(await admin(app.router(), "PATCH", "/agents/grok", body: #"{"models":null}"#).status == 200 && app.config.grok.enabledModels == nil)

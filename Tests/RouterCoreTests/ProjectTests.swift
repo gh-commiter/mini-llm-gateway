@@ -88,11 +88,15 @@ private func fileText(_ p: String) -> String? { FileManager.default.contents(atP
     }
 
     @Test func proxyHeaderRewriteTable() throws {
-        let rows = try fixtureJSON("project-header.json")["rewrite"] as! [[String: String]]
+        let rows = try fixtureJSON("project-header.json")["rewrite"] as! [[String: Any]]
         #expect(rows.count > 10)
         for r in rows {
-            let got = Projects.rewriteHead(Data(r["head"]!.utf8), project: r["project"]!)
-            #expect(String(decoding: got, as: UTF8.self) == r["want"]!, "\(r["name"]!)")
+            let got = Projects.rewriteHead(Data((r["head"] as! String).utf8), project: r["project"] as! String)
+            if r["reject"] as? Bool == true {  // F1: fail closed
+                #expect(got == nil, "\(r["name"]!)")
+            } else {
+                #expect(got.map { String(decoding: $0, as: UTF8.self) } == r["want"] as? String, "\(r["name"]!)")
+            }
         }
     }
 
@@ -103,14 +107,37 @@ private func fileText(_ p: String) -> String? { FileManager.default.contents(atP
         for step in [1, 3, 7, 1000] {
             let rw = Projects.HeadRewriter(project: "42")
             var sent = Data()
-            for i in stride(from: 0, to: bytes.count, by: step) { sent += rw.feed(Data(bytes[i..<min(i + step, bytes.count)])) }
+            for i in stride(from: 0, to: bytes.count, by: step) { sent += rw.feed(Data(bytes[i..<min(i + step, bytes.count)]))! }
             #expect(String(decoding: sent, as: UTF8.self) == want, "chunks of \(step)")
         }
         let rw = Projects.HeadRewriter(project: "1")  // after the head, later data passes unchanged (only the first request is rewritten)
-        _ = rw.feed(Data("GET / HTTP/1.1\r\n\r\n".utf8))
+        _ = rw.feed(Data("GET / HTTP/1.1\r\n\r\n".utf8))!
         #expect(rw.feed(Data("X-Minigw-Project: 9\r\n".utf8)) == Data("X-Minigw-Project: 9\r\n".utf8))
-        let big = Data(repeating: 0x61, count: 70 << 10)  // no end of head within 64 KiB: passed on as it is
-        #expect(Projects.HeadRewriter(project: "1").feed(big) == big)
+        // F2: no end of head within 64 KiB: the connection is closed (nil), nothing is passed on; also when it arrives in pieces
+        #expect(Projects.HeadRewriter(project: "1").feed(Data(repeating: 0x61, count: 70 << 10)) == nil)
+        let slow = Projects.HeadRewriter(project: "1")
+        #expect(slow.feed(Data("GET / HTTP/1.1\r\n".utf8)) == Data())
+        #expect(slow.feed(Data(repeating: 0x61, count: 40 << 10)) == Data())
+        #expect(slow.feed(Data(repeating: 0x61, count: 30 << 10)) == nil)
+        // F1: a forged header that only a late chunk completes (obs-fold, space before the colon, bare LF) closes it too
+        for late in [" X-Minigw-Project: 7\r\n\r\n", "X-Minigw-Project : 7\r\n\r\n", "X-A: 1\nX-Minigw-Project: 7\r\n\r\n"] {
+            let rw = Projects.HeadRewriter(project: "42")
+            #expect(rw.feed(Data("GET / HTTP/1.1\r\nHost: x\r\n".utf8)) == Data())
+            #expect(rw.feed(Data(late.utf8)) == nil, "\(late.debugDescription)")
+        }
+    }
+
+    @Test func routerParserRefusesWhatGoReadsDifferently() {
+        func parse(_ head: String) -> ParseResult { HTTPParser.parse(Data((head + "\r\n\r\n").utf8)) }
+        func status(_ r: ParseResult) -> Int { if case .error(let s, _) = r { return s }; return 0 }
+        let line = "POST /v1/messages HTTP/1.1\r\n"
+        guard case .request(let ok) = parse(line + "Host: x\r\nX-Minigw-Project: 7") else { Issue.record("valid head refused"); return }
+        #expect(ok.header("x-minigw-project") == "7")
+        for bad in ["Host: x\r\n X-Minigw-Project: 7", "Host: x\r\n\tX-Minigw-Project: 7", "Host: x\r\nX-Minigw-Project : 7",
+                    "Host: x\r\nX-Minigw-Project\u{a0}: 7", "Host: x\r\n\u{a0}X-Minigw-Project: 7", "Host: x\r\nX-A: 1\nX-Minigw-Project: 7",
+                    "Host: x\r\nX Y: 1", "Host: x\r\n: 1", "Host: x\r\nX-Minigw-Project: 1\r\nx-minigw-project: 2"] {
+            #expect(status(parse(line + bad)) == 400, "\(bad.debugDescription)")
+        }
     }
 
     @Test func slugRuleIsGos() {
@@ -546,8 +573,13 @@ private final class Captured: @unchecked Sendable {
     }
 
     @Test func projectIsSetAndAForgedHeaderDropped() async throws {
-        let seen = try await headSeen(project: "42", forged: ["X-Minigw-Project: 9", "x-MINIGW-project : 8"])
+        let seen = try await headSeen(project: "42", forged: ["X-Minigw-Project: 9", "x-MINIGW-project: 8"])
         #expect(seen == "POST /v1/messages HTTP/1.1\r\nX-Minigw-Project: 42\r\nHost: x\r\nContent-Length: 2\r\n\r\n", "\(seen.debugDescription)")
+    }
+
+    @Test func aHeadThatCannotBeRewrittenSafelyReachesNobody() async throws {  // F1: the late chunk carries a forged header with a space before the colon
+        let seen = try await headSeen(project: "42", forged: ["x-MINIGW-project : 8"])
+        #expect(seen == "\r\n\r\n", "\(seen.debugDescription)")
     }
 
     @Test func noProjectMeansNoHeaderEvenIfTheProgramSendsOne() async throws {

@@ -183,7 +183,7 @@ func (s *server) agentArgs(dir string, readOnly bool, checked ...[]string) []str
 		var tools, allowed []string
 		for _, t := range strings.Split(c.Tools, ",") {
 			switch t = strings.TrimSpace(t); {
-			case t == "", readOnly && !roAllowed(strings.SplitN(t, "(", 2)[0]):
+			case t == "", !restrictedOK(t), readOnly && !roAllowed(strings.SplitN(t, "(", 2)[0]):
 				continue
 			case pathTools[t]:
 				allowed = append(allowed, scope(t)...)
@@ -224,6 +224,14 @@ const readOnlyWorktree = "Worktree mode cannot be read-only (--minigw-ro): use d
 
 // roAllowed: orodje, ki ga ima Claude CLI pri --minigw-ro (seznam dovoljenih kot ClaudeCLIConfig.readOnlyAllowed na Macu);
 // Bash le zunaj Windows, kjer ga sandbox brez pisanja v mape omeji.
+// restrictedOK (sec-fix F3): without "Allow local tools" only tools whose file access the Read/Edit deny rules cover, the web
+// tools and Bash (which the sandbox above confines; the Mac refuses it because it has no sandbox there). Task, MCP tools and the
+// like could run or read outside the rules.
+func restrictedOK(t string) bool {
+	t = strings.TrimSpace(strings.SplitN(t, "(", 2)[0])
+	return pathTools[t] || t == "WebSearch" || t == "WebFetch" || t == "Bash"
+}
+
 func roAllowed(t string) bool {
 	return slices.Contains([]string{"Read", "Grep", "Glob", "LS", "WebSearch", "WebFetch"}, t) || t == "Bash" && runtime.GOOS != "windows"
 }

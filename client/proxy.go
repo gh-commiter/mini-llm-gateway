@@ -75,28 +75,36 @@ func (p *noiseProxy) start() error {
 // rewriteHead (L1): the request line and headers (without the final blank line) with every X-Minigw-Project header
 // removed, whatever its case, and, when the run has a project, the one minigw resolved. The agent CLI's own settings
 // (ANTHROPIC_CUSTOM_HEADERS from a repository) can therefore never choose the project of a request.
-func rewriteHead(head []byte, project string) []byte {
+// 0.6.0 sec-fix F1, fail closed: ok=false (close the connection) when the head has a line another parser could read
+// differently: a line starting with SP/HT (obs-fold), a bare CR or LF inside a line, a line without a colon or a header
+// name that is not an RFC 7230 token (`X-Minigw-Project : 7`, a no-break space). The name is compared exactly.
+func rewriteHead(head []byte, project string) (out []byte, ok bool) {
 	lines := strings.Split(string(head), "\r\n")
-	out := make([]string, 0, len(lines)+1)
-	skipping := false
+	kept := make([]string, 0, len(lines)+1)
 	for i, l := range lines {
-		lower := strings.ToLower(l)
-		switch {
-		case i > 0 && skipping && (strings.HasPrefix(l, " ") || strings.HasPrefix(l, "\t")): // folded continuation of a dropped header
-			continue
-		case i > 0 && strings.HasPrefix(lower, "x-minigw-project"):
-			if name, _, ok := strings.Cut(lower, ":"); ok && strings.TrimSpace(name) == "x-minigw-project" {
-				skipping = true
+		if strings.ContainsAny(l, "\r\n") {
+			return nil, false
+		}
+		if i > 0 {
+			name, _, found := strings.Cut(l, ":")
+			if !found || name == "" || strings.IndexFunc(name, func(r rune) bool { return r > 0x7f || !isTokenByte(byte(r)) }) >= 0 {
+				return nil, false
+			}
+			if strings.EqualFold(name, "x-minigw-project") {
 				continue
 			}
 		}
-		skipping = false
-		out = append(out, l)
+		kept = append(kept, l)
 		if i == 0 && project != "" {
-			out = append(out, "X-Minigw-Project: "+project)
+			kept = append(kept, "X-Minigw-Project: "+project)
 		}
 	}
-	return []byte(strings.Join(out, "\r\n"))
+	return []byte(strings.Join(kept, "\r\n")), true
+}
+
+// isTokenByte: RFC 7230 tchar.
+func isTokenByte(b byte) bool {
+	return b >= '0' && b <= '9' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || strings.IndexByte("!#$%&'*+-.^_`|~", b) >= 0
 }
 
 func (p *noiseProxy) localURL() string { return "http://" + p.ln.Addr().String() }
@@ -155,9 +163,13 @@ func (p *noiseProxy) serve(local net.Conn) {
 					head = append(head, chunk...)
 					if i := bytes.Index(head, []byte("\r\n\r\n")); i >= 0 || len(head) > 64<<10 {
 						headDone = true
-						if i >= 0 {
-							head = append(rewriteHead(head[:i], project), head[i:]...)
+						rewritten, ok := rewriteHead(head[:max(i, 0)], project)
+						if i < 0 || !ok { // F2: no end of head within 64 KiB, or a head that cannot be rewritten safely: close, pass nothing on
+							local.Close()
+							remote.Close()
+							return
 						}
+						head = append(rewritten, head[i:]...)
 						chunk = head
 						head = nil
 					} else {

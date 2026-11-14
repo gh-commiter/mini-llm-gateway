@@ -519,6 +519,9 @@ extension Router {
                 if let t = tools, !t.isEmpty, t.range(of: #"^[A-Za-z0-9_]+(,[A-Za-z0-9_]+)*$"#, options: .regularExpression) == nil {
                     throw AdminError(400, "tools: comma-separated tool names, e.g. Read,Grep,Glob")
                 }
+                if !(local ?? config.claudeCLI.allowLocalTools), let bad = ClaudeCLIConfig.unsafeRestricted(tools ?? config.claudeCLI.tools).first {  // also when only the switch goes off
+                    throw AdminError(400, "tools: \(bad) needs \"Allow local tools\" (it runs without a sandbox otherwise and could read outside the deny rules); allowed here: \(ClaudeCLIConfig.restrictedAllowed.joined(separator: ", "))")
+                }
                 if let path, !path.isEmpty, case .failure(let e) = ClaudeCLI.validate(path) { throw AdminError(400, "claude: \(e)") }
                 if let folders, let bad = folders.split(separator: ",").map(String.init).first(where: { RouterConfig.overlapsScratch($0, scratch: c.scratchURL) }) {
                     throw AdminError(400, "allowed folder \(bad.trimmingCharacters(in: .whitespaces)) contains or is inside the scratch folder \(c.scratchURL.path), or cannot be checked (agents could change the gateway's mirrors and other devices' copies): choose another folder")

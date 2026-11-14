@@ -226,6 +226,11 @@ func TestAdminAPILiveApply(t *testing.T) {
 	if args := s.agentArgs(t.TempDir(), false); !slices.Contains(args, "Read,Grep") {
 		t.Fatalf("tools not live: %v", args)
 	}
+	for _, bad := range []string{"Read,Task", "Read,mcp__x__run", "Monitor"} { // sec-fix F3: no sandbox without "Allow local tools"
+		if st, b := admin("PATCH", adminPrefix+"/agents/claude", `{"tools":"`+bad+`"}`); st != 400 || !strings.Contains(b, "Allow local tools") {
+			t.Fatalf("tools %s accepted: %d %s", bad, st, b)
+		}
+	}
 	if st, _ := admin("PATCH", adminPrefix+"/agents/claude", `{"tools":"Read;rm -rf"}`); st != 400 {
 		t.Fatal("bad tools accepted")
 	}

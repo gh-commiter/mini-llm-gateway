@@ -29,6 +29,19 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
     /// Orodja, ki pišejo ali poganjajo ukaze mimo sandboxa Bash (EnterWorktree: git worktree add s hooki): pri --minigw-ro še izrecno prepovedana.
     static let writeTools = ["Edit", "Write", "MultiEdit", "NotebookEdit", "EnterWorktree", "ExitWorktree", "Monitor"]
 
+    /// 0.6.0 sec-fix F3: without "Allow local tools" the run has no sandbox, so only tools whose file access the deny rules
+    /// cover may run: Read (also Grep, Glob, LS), Edit (also Write, MultiEdit, NotebookEdit) and the web tools. Bash, Task,
+    /// MCP tools and the like could read the core folder (`cat`) or hand the work to something that does.
+    static let restrictedAllowed = readOnlyAllowed + ["Edit", "Write", "MultiEdit", "NotebookEdit"]
+
+    static func toolName(_ t: String) -> String { String(t.trimmingCharacters(in: .whitespaces).prefix { $0 != "(" }) }
+
+    /// Entries of a `tools` list that a restricted (no "Allow local tools") run must not get.
+    static func unsafeRestricted(_ tools: String) -> [String] {
+        tools.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && !restrictedAllowed.contains(toolName($0)) }
+    }
+
     /// Seznam orodij le iz readOnlyAllowed (brez »Allow local tools« ni sandboxa, zato brez Bash); tudi oblike »WebFetch(domain:…)«.
     static func readOnlyTools(_ tools: String) -> String {
         tools.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
@@ -51,7 +64,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
 
     func agentArgs(cwd: URL, allTools: [String], scratch: URL? = nil, readOnly: Bool = false, folders: AllowedFolders, checkedPaths: [String]? = nil) -> [String] {
         guard allowLocalTools else {
-            let t = readOnly ? Self.readOnlyTools(tools) : tools
+            let t = readOnly ? Self.readOnlyTools(tools) : tools.split(separator: ",").map(String.init).filter { Self.restrictedAllowed.contains(Self.toolName($0)) }.joined(separator: ",")  // F3: never more than the deny rules cover
             let rules = String(decoding: try! JSONSerialization.data(withJSONObject: ["permissions": Self.toolDenySettings(scratch: scratch)], options: [.sortedKeys]), as: UTF8.self)
             return ["--tools", t, "--allowedTools", t, "--permission-mode", permissionMode, "--settings", rules]
         }
@@ -541,6 +554,9 @@ extension Router {
                 args += ["--session-id", id]
                 sessionID = id
                 prompt = ClaudeCLI.prompt(history: history, last: last)
+            }
+            if tree == nil, !cfg.allowLocalTools, let bad = ClaudeCLIConfig.unsafeRestricted(cfg.tools).first {  // F3: a stored configuration of an older version
+                return await error(400, "invalid_request_error", "claude tools: \(bad) is not allowed without \"Allow local tools\" (no sandbox: it could read outside the deny rules); remove it in Settings", rid: rid, writer: writer)
             }
             let allTools = cfg.allowLocalTools || tree != nil ? await Self.toolList.get(cfg.executable) : []
             if tree == nil { checked = allowedFolders.checked(cfg.allowedRoots, scratch: config.scratchURL) }  // A2: also a cwd that is an allowed root is opened and verified at launch

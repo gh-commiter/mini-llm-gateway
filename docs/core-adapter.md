@@ -126,3 +126,7 @@ Known differences from `minigw serve`:
 
 - Tests that pause a request after admission (the revocation barrier) use `Options.AfterAdmission`, a Go hook; the helper has none.
 - The member envelope and the Anthropic-shaped refusal of an agent request differ; `admit` therefore returns the refusal as data.
+
+## Known limits
+
+- The Mac helper serves one request at a time (one serial queue, 35 s timeout per call), so a slow admin call (backup, restore, audit) delays the `admit` of every project run (and every other helper call) queued behind it, for up to that timeout. No change is planned for 0.6.0.

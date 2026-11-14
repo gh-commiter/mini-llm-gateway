@@ -438,8 +438,11 @@ extension Router {
         // Nadaljevanje seje Copilot (--session-id): ključ je dosedanji pogovor v tej mapi; stanje seje iz Scratch.
         // 0.6.0 (M2): a run with a project keeps its sessions in its own home (per user, project and epoch), not in the shared folder.
         var store = config.scratch("copilot").appendingPathComponent("sessions")
+        var heldHome: URL?
+        defer { if let heldHome { Self.releaseProjectHome(heldHome) } }  // F8: the project home is held for the whole run
         if let p = Self.reqState?.project {
             guard let home = await projectHome(kind: "copilot", owner: req.device?.id ?? "local", project: p) else { return await projectDown(rid: rid, writer: writer) }
+            heldHome = home
             store = home.appendingPathComponent("sessions")
         }
         guard let scope = await conversationScope("agent", Self.agentScopeFields("copilot", req, cwd: cwd), project: Self.reqState?.project) else {

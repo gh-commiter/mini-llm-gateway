@@ -272,7 +272,7 @@ private func profileConfig(_ a: [String]) -> [String] {
 
 // MARK: Grok does not run while the core is on
 
-private actor NoMarks: CoreRevocationMarks {
+actor NoMarks: CoreRevocationMarks {
     func list() -> [String] { [] }
     func add(_ device: String) {}
     func clear(_ devices: [String]) {}

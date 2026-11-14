@@ -363,15 +363,17 @@ func TestClientRefusedInsideAnAgentRun(t *testing.T) {
 func TestProxyRewritesTheProjectHeader(t *testing.T) { // review L1
 	cases := []struct{ name, in, project, want string }{
 		{"forged header dropped", "POST /v1/messages HTTP/1.1\r\nHost: x\r\nX-Minigw-Project: 9\r\nContent-Length: 0", "", "POST /v1/messages HTTP/1.1\r\nHost: x\r\nContent-Length: 0"},
-		{"any case, replaced by ours", "POST /v1/messages HTTP/1.1\r\nhost: x\r\nx-MINIGW-project : 9\r\nX-MINIGW-PROJECT: 8", "42", "POST /v1/messages HTTP/1.1\r\nX-Minigw-Project: 42\r\nhost: x"},
-		{"folded continuation dropped", "GET / HTTP/1.1\r\nX-Minigw-Project: 9\r\n 10\r\nHost: x", "", "GET / HTTP/1.1\r\nHost: x"},
+		{"any case, replaced by ours", "POST /v1/messages HTTP/1.1\r\nhost: x\r\nx-MINIGW-project: 9\r\nX-MINIGW-PROJECT: 8", "42", "POST /v1/messages HTTP/1.1\r\nX-Minigw-Project: 42\r\nhost: x"},
 		{"similar names stay", "GET / HTTP/1.1\r\nX-Minigw-Project-Other: 9\r\nX-Minigw-Projects: 1", "7", "GET / HTTP/1.1\r\nX-Minigw-Project: 7\r\nX-Minigw-Project-Other: 9\r\nX-Minigw-Projects: 1"},
 		{"no project, no header", "GET / HTTP/1.1\r\nHost: x", "", "GET / HTTP/1.1\r\nHost: x"},
 	}
 	for _, c := range cases {
-		if got := string(rewriteHead([]byte(c.in), c.project)); got != c.want {
+		if got, ok := rewriteHead([]byte(c.in), c.project); !ok || string(got) != c.want {
 			t.Errorf("%s:\n got %q\nwant %q", c.name, got, c.want)
 		}
+	}
+	if _, ok := rewriteHead([]byte("GET / HTTP/1.1\r\nHost: x\r\n X-Minigw-Project: 7"), "1"); ok { // F1: the shared fixture has the full table
+		t.Error("obs-fold accepted")
 	}
 }
 
