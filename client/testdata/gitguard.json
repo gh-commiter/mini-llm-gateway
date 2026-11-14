@@ -555,6 +555,26 @@ true
 "git/config",
 true,
 true
+],
+[
+".git/gc.pid",
+true,
+false
+],
+[
+".git/gc.log",
+true,
+false
+],
+[
+".git/gc.pid.lock",
+true,
+false
+],
+[
+".git/gc.logx",
+false,
+false
 ]
 ],
 "setup": [

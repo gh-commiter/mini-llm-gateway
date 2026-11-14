@@ -354,7 +354,7 @@ send git elsewhere stays refused, in the same list on the gateway's sandboxes an
   `exec` line that you would run with `git rebase --continue`. So `git rebase` (it always writes `rebase-merge/`) and
   a `git cherry-pick` or `git revert` of several commits (`sequencer/`) fail in direct mode and leave nothing behind;
   a single `git cherry-pick`, `git revert`, `git commit --amend` and `git merge` work;
-- any name git does not write for the commands above (also `gc.pid`: `git gc` by the agent fails), `.git` itself being replaced by a file or a link, and
+- any name git does not write for the commands above `.git` itself being replaced by a file or a link, and
   `refs`, `logs`, `objects` and `modules` themselves (their contents are writable, the folders cannot be removed or
   renamed);
 - the `.lock` file of a refused name, so the lock-file-then-rename that git uses for `config` stays refused while
@@ -366,9 +366,11 @@ alternative to rebase; in sync mode that there is no `.git` in the copy; read-on
 without "Allow local tools", Copilot) that there are no commits. When a refused write has an alternative, the client's
 refusal line names it, for example `(protected path: rebase is not available in direct mode; use merge, or worktree mode)`.
 
-Not protected today and not changed: `.gitattributes` and `.gitmodules` in the work tree (they are ordinary files; a
-`filter=` or `diff=` attribute needs a definition in `.git/config`, which stays closed; review `.gitmodules` URLs as
-before).
+Known properties, not protected on purpose: `.gitattributes` and `.gitmodules` in the work tree are ordinary tracked files that an agent
+is there to edit, and the change shows in the diff; filter and diff drivers and `update = !cmd` only take effect from `.git/config`, which
+stays closed. Review `.gitmodules` URL changes before you run `git submodule update`. An agent in direct mode can also damage the
+repository's own state (`index`, refs, `HEAD`) just as it can delete work files; the history in `objects` is not rewritten by this and the
+reflog stays.
 
 What the agent gains by writing refs, objects and the index in your repository: it can create commits and move
 branches (wanted; `git reflog` and the objects keep what it replaced), and it can plant objects that a ref points to

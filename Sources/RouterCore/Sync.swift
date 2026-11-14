@@ -132,7 +132,7 @@ public enum Sync {
     /// The files git writes in its directory for add, commit, branch, checkout, stash, tag and merge of local branches
     /// (and their .lock files); index.* is the temporary index of stash, next-index-* of commit with paths.
     static func gitFile(_ n: String) -> Bool {
-        n.range(of: #"^(index(\.[a-z0-9._-]+)?|sharedindex\.[0-9a-f]+|next-index-[0-9]+|head|orig_head|fetch_head|merge_head|merge_msg|merge_mode|merge_rr|auto_merge|commit_editmsg|cherry_pick_head|revert_head|squash_msg|tag_editmsg|packed-refs)(\.lock)?$"#, options: .regularExpression) != nil
+        n.range(of: #"^(index(\.[a-z0-9._-]+)?|sharedindex\.[0-9a-f]+|next-index-[0-9]+|head|orig_head|fetch_head|merge_head|merge_msg|merge_mode|merge_rr|auto_merge|commit_editmsg|cherry_pick_head|revert_head|squash_msg|tag_editmsg|packed-refs|gc\.pid|gc\.log)(\.lock)?$"#, options: .regularExpression) != nil
     }
 
     static func objectsWritable(_ c: [String]) -> Bool {

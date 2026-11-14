@@ -172,7 +172,7 @@ func gitDirWritable(c []string) bool {
 
 // The files git writes in its directory for add, commit, branch, checkout, stash, tag and merge of local branches (and
 // their .lock files); index.* is the temporary index of stash, next-index-* of commit with paths.
-var gitFileRe = regexp.MustCompile(`^(index(\.[a-z0-9._-]+)?|sharedindex\.[0-9a-f]+|next-index-[0-9]+|head|orig_head|fetch_head|merge_head|merge_msg|merge_mode|merge_rr|auto_merge|commit_editmsg|cherry_pick_head|revert_head|squash_msg|tag_editmsg|packed-refs)(\.lock)?$`)
+var gitFileRe = regexp.MustCompile(`^(index(\.[a-z0-9._-]+)?|sharedindex\.[0-9a-f]+|next-index-[0-9]+|head|orig_head|fetch_head|merge_head|merge_msg|merge_mode|merge_rr|auto_merge|commit_editmsg|cherry_pick_head|revert_head|squash_msg|tag_editmsg|packed-refs|gc\.pid|gc\.log)(\.lock)?$`)
 
 func gitObjectsWritable(c []string) bool {
 	if len(c) == 0 {

@@ -18,7 +18,6 @@ enum GitNote {
         Op(name: "single cherry-pick/revert", paths: ["CHERRY_PICK_HEAD", "REVERT_HEAD", "AUTO_MERGE", "MERGE_MSG"]),
         Op(name: "rebase", paths: ["rebase-merge/head-name", "rebase-apply/patch"]),
         Op(name: "multi-commit cherry-pick/revert", paths: ["sequencer/todo"]),
-        Op(name: "git gc", paths: ["gc.pid"]),
         Op(name: "git worktree add", paths: ["worktrees/x/HEAD", "worktrees/x/gitdir"]),
         Op(name: "changing .git/config, hooks, info/attributes or remotes", paths: ["config.lock", "hooks/pre-commit", "info/attributes", "remotes/origin"]),
     ]
@@ -56,7 +55,6 @@ enum GitNote {
         case "rebase-merge", "rebase-apply": return "rebase is not available in direct mode; use merge, or worktree mode"
         case "sequencer": return "a cherry-pick or revert of several commits is not available in direct mode; do them one by one, or use worktree mode"
         case "worktrees": return "git worktree is not available in direct mode; use worktree mode (minigw --minigw-work=worktree)"
-        case "gc.pid": return "git gc is not available in direct mode"
         default: return nil
         }
     }

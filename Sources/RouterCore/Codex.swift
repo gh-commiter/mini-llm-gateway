@@ -134,6 +134,18 @@ public enum Codex {
         for d in deny { fs[d] = "none" }
         for d in writable { fs[d] = "write" }
         if gits.isEmpty { for d in writable { for n in [".git", ".codex"] { fs[d + "/" + n] = "read" } } }  // brez klona: kot workspace-write
+        // #113: nested repositories of the writable folders (found at launch): their .git is read-only as the top-level one; in the direct-mode folder git's own data stays writable
+        if gits.isEmpty {
+            for d in writable where d != directGit {
+                for g in ClaudeCLIConfig.nestedGitDirs(d) { fs[g] = "read" }
+            }
+            if let d = directGit {
+                for g in ClaudeCLIConfig.nestedGitDirs(d) {
+                    for n in ClaudeCLIConfig.directGitDenies { fs[g + "/" + n] = "read" }
+                    for p in ClaudeCLIConfig.submoduleGitPaths(g, deny: ClaudeCLIConfig.directModuleDenies) { fs[p] = "read" }
+                }
+            }
+        }
         // 0.6.0 (#112) direct mode: the client's folder (the mount, never an allowed folder of this Mac) has git's own data writable so that `git add`, `git commit`,
         // `git branch` … work; what the owner's git runs or follows stays read-only (ClaudeCLIConfig.directGitDenies); the client's guard is the final word.
         if let d = directGit {

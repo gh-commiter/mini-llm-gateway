@@ -22,7 +22,6 @@ var gitOps = []gitOp{
 	{"single cherry-pick/revert", []string{"CHERRY_PICK_HEAD", "REVERT_HEAD", "AUTO_MERGE", "MERGE_MSG"}},
 	{"rebase", []string{"rebase-merge/head-name", "rebase-apply/patch"}},
 	{"multi-commit cherry-pick/revert", []string{"sequencer/todo"}},
-	{"git gc", []string{"gc.pid"}},
 	{"git worktree add", []string{"worktrees/x/HEAD", "worktrees/x/gitdir"}},
 	{"changing .git/config, hooks, info/attributes or remotes", []string{"config.lock", "hooks/pre-commit", "info/attributes", "remotes/origin"}},
 }
@@ -82,8 +81,6 @@ func gitRefusalHint(rel string) string {
 			return "a cherry-pick or revert of several commits is not available in direct mode; do them one by one, or use worktree mode"
 		case "worktrees":
 			return "git worktree is not available in direct mode; use worktree mode (minigw --minigw-work=worktree)"
-		case "gc.pid":
-			return "git gc is not available in direct mode"
 		}
 	}
 	return ""

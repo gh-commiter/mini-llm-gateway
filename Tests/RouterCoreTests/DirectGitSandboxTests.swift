@@ -38,7 +38,7 @@ private struct Repo {
         for d in [repo, tmp, up] { try fm.createDirectory(at: d, withIntermediateDirectories: true) }
         func sh(_ cmd: String, _ cwd: URL) -> Bool { run("/bin/sh", ["-c", gitEnv + "cd '\(cwd.path)' && " + cmd]).status == 0 }
         #expect(sh("git init -q && echo a > a && git add a && git commit -qm up", up))
-        #expect(sh("git init -q && echo hi > a.txt && git add a.txt && git commit -qm init && git branch x && git -c protocol.file.allow=always submodule add -q '\(up.path)' sub && git commit -qm sub", repo))
+        #expect(sh("git init -q && echo hi > a.txt && git add a.txt && git commit -qm init && git branch x && git -c protocol.file.allow=always submodule add -q '\(up.path)' sub && git commit -qm sub && git init -q nest && echo n > nest/n && git -C nest add n && git -C nest commit -qm nested", repo))
     }
     func cleanup() { try? FileManager.default.removeItem(at: base) }
     func head() -> String { run("/bin/sh", ["-c", gitEnv + "cd '\(repo.path)' && git log --oneline | wc -l"]).out.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -55,7 +55,8 @@ private struct Repo {
     let w = cfg()
     // what an agent does: add, commit, branch, tag, checkout, stash, merge of a local branch, and a commit inside the submodule (its git dir is .git/modules/sub)
     for cmd in ["echo more >> a.txt && git add a.txt && git commit -qm agent", "git branch feature", "git tag v1", "git checkout -q -b topic", "echo again >> a.txt && git stash -q && git stash list | grep -q stash",
-                "git checkout -q master 2>/dev/null || git checkout -q main", "git merge -q --no-edit x", "echo s > sub/s.txt && git -C sub add s.txt && git -C sub commit -qm subc"] {
+                "git checkout -q master 2>/dev/null || git checkout -q main", "git merge -q --no-edit x", "echo s > sub/s.txt && git -C sub add s.txt && git -C sub commit -qm subc",
+                "echo m > nest/m && git -C nest add m && git -C nest commit -qm nm", "git gc -q"] {
         let o = under(w, cmd)
         #expect(o.status == 0, "\(cmd): \(o)")
     }
@@ -64,12 +65,13 @@ private struct Repo {
     let git = r.repo.appendingPathComponent(".git")
     let denied = ["echo '[core]' >> .git/config", "echo x > .git/hooks/pre-commit", "mkdir -p .git/info && echo x > .git/info/attributes", "mkdir -p .git/objects/info && echo /x > .git/objects/info/alternates",
                   "mkdir .git/rebase-merge && echo 'exec x' > .git/rebase-merge/git-rebase-todo", "mkdir .git/rebase-apply", "mkdir .git/sequencer", "echo x > .git/shallow", "echo x > .git/commondir", "mkdir .git/worktrees",
+                  "echo '[core]' >> nest/.git/config", "echo x > nest/.git/hooks/pre-commit", "mkdir -p nest/.git/info && echo x > nest/.git/info/attributes", "mv nest/.git nest/.g",
                   "echo '[core]' >> .git/modules/sub/config", "echo x > .git/modules/sub/hooks/pre-commit", "mkdir -p .git/modules/sub/info && echo x > .git/modules/sub/info/attributes"]
     for cmd in denied {
         let o = under(w, cmd)
         #expect(o.status != 0, "\(cmd): \(o)")
     }
-    for p in ["hooks/pre-commit", "info/attributes", "objects/info/alternates", "rebase-merge", "rebase-apply", "sequencer", "shallow", "commondir", "worktrees", "modules/sub/hooks/pre-commit", "modules/sub/info/attributes"] {
+    for p in ["../nest/.git/hooks/pre-commit", "../nest/.git/info/attributes", "hooks/pre-commit", "info/attributes", "objects/info/alternates", "rebase-merge", "rebase-apply", "sequencer", "shallow", "commondir", "worktrees", "modules/sub/hooks/pre-commit", "modules/sub/info/attributes"] {
         #expect(!FileManager.default.fileExists(atPath: git.appendingPathComponent(p).path), "\(p)")
     }
     let config = (try? String(contentsOf: git.appendingPathComponent("config"), encoding: .utf8)) ?? ""
@@ -121,6 +123,7 @@ private struct Repo {
     let git = base.appendingPathComponent(".git")
     for d in ["modules/sub/hooks", "modules/sub/info"] { try fm.createDirectory(at: git.appendingPathComponent(d), withIntermediateDirectories: true) }
     try Data("c".utf8).write(to: git.appendingPathComponent("modules/sub/config"))
+    try fm.createDirectory(at: base.appendingPathComponent("a/b/.git/hooks"), withIntermediateDirectories: true)
     var local = ClaudeCLIConfig(); local.allowLocalTools = true
     let a = local.agentArgs(cwd: base, allTools: [], folders: AllowedFolders(), checkedPaths: [])
     let json = try #require(a.firstIndex(of: "--settings").map { a[$0 + 1] })
@@ -128,6 +131,9 @@ private struct Repo {
     let deny = try #require(((st["sandbox"] as? [String: Any])?["filesystem"] as? [String: Any])?["denyWrite"] as? [String])
     // literal paths: Claude's sandbox then also refuses `mv .git/modules m` (a real run: the globs alone did not)
     for p in ["config", "hooks", "info"] { #expect(deny.contains(git.path + "/modules/sub/" + p), "\(p)") }
+    // a nested repository found at launch: its closed paths literally (the globs name entries only)
+    for g in ClaudeCLIConfig.directGitDenies { #expect(deny.contains(base.path + "/a/b/.git/" + g), "\(g)") }
+    #expect(ClaudeCLIConfig.nestedGitDirs(base.path) == [base.path + "/a/b/.git"])
     // worktree mode: the one shared list, config.worktree, worktrees and the submodule folders included
     let wt = local.worktreeArgs(root: base, maven: base, cwd: base, allTools: [], network: false)
     let wjson = try #require(wt.firstIndex(of: "--settings").map { wt[$0 + 1] })

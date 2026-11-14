@@ -116,7 +116,7 @@ private func forceUnmount(_ mp: URL) {
 
     // the agent: edit, add, commit, branch, tag, switch, stash, merge a local branch
     for cmd in ["echo more >> a.txt && git add a.txt && git commit -qm agent", "git branch feature", "git tag v1", "git checkout -q -b topic", "echo again >> a.txt && git stash -q",
-                "git checkout -q - && git merge -q --no-edit x", "git log --oneline | wc -l | grep -q 2"] {
+                "git checkout -q - && git merge -q --no-edit x", "git log --oneline | wc -l | grep -q 2", "git gc -q"] {
         let r = sh(cmd, cwd: mp.path)
         #expect(r.status == 0, "\(cmd): \(r)")
     }

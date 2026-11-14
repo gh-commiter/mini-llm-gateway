@@ -255,6 +255,26 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
         return out
     }
 
+    /// #113: the `.git` folders of the nested repositories under `root` (not its own `.git`), found at launch by a bounded walk (depth 4, 2000 entries, no links,
+    /// not into `.git` or the usual build folders). The globs of the deny rules name entries only, so a nested repository's closed paths are listed literally.
+    static func nestedGitDirs(_ root: String) -> [String] {
+        var out: [String] = [], visited = 0
+        let skip: Set<String> = ["node_modules", ".build", "target", "DerivedData", ".gradle", ".venv", "Pods"]
+        func walk(_ dir: String, _ depth: Int) {
+            guard depth < 4, let names = try? FileManager.default.contentsOfDirectory(atPath: dir) else { return }
+            for n in names.sorted() {
+                visited += 1
+                guard visited <= 2000 else { return }
+                let p = dir + "/" + n
+                var st = stat()
+                guard lstat(p, &st) == 0, st.st_mode & S_IFMT == S_IFDIR else { continue }  // no links
+                if n == ".git" { if depth > 0 { out.append(p) } } else if !skip.contains(n) { walk(p, depth + 1) }
+            }
+        }
+        walk(root, 0)
+        return out
+    }
+
     /// The sandbox's denyWrite: the Copilot package cache, the folders themselves with --minigw-ro, else the git paths the owner's git runs (config, hooks, info,
     /// redirects; nested; the submodules' config, hooks and info) and, with setting sources, `.claude`.
     func sandboxDenyWrite(dirs: [String], readOnly: Bool) -> [String] {
@@ -267,6 +287,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
             // #113: the globs name the entries only, so `mv .git/modules m`, a write in m/sub/config and a move back got past them (a real run); a literal path also
             // makes the sandbox refuse a rename of the folders above it. The submodules' closed paths that exist now, literally.
             out += Self.submoduleGitPaths(d + "/.git", deny: Self.directModuleDenies)
+            for g in Self.nestedGitDirs(d) { out += Self.directGitDenies.map { g + "/" + $0 } + Self.submoduleGitPaths(g, deny: Self.directModuleDenies) }
             if readsFolderSettings { out += [d + "/.claude", d + "/**/.claude"] }
         }
         return out
