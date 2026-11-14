@@ -339,7 +339,8 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     let body = String(decoding: try JSONSerialization.data(withJSONObject: ["argv": ["sh", "-c", script]]), as: UTF8.self)
     let w = FakeWriter(), start = Date()
     await on.handle(nativeReq("POST", "/minigw/run", ["x-native-id": c.id, "x-native-proof": proof], body, device: "dev-n2"), writer: w)
-    #expect(w.text.hasSuffix("x 0\n") && Date().timeIntervalSince(start) < 15)
+    // #109: ~6 s fiksnih čakanj (2 + 1 + 1,5 + uboj) + obremenitev; pomembno: odgovor ne čaka na `sleep 30` (30 s), skupine ni več
+    #expect(w.text.hasSuffix("x 0\n") && Date().timeIntervalSince(start) < 25)
     let pid = try #require(pid_t(String(contentsOf: f.project.appendingPathComponent("bg.pid"), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
     #expect(Darwin.kill(pid, 0) != 0)  // ob odgovoru skupine ni več
 }
@@ -752,7 +753,7 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     let server = RouterServer(router: r, key: key)
     try server.start()
     defer { server.stop() }
-    for _ in 0..<100 where !portInUse(port) { try await Task.sleep(for: .milliseconds(50)) }
+    for _ in 0..<600 where !portInUse(port) { try await Task.sleep(for: .milliseconds(50)) }
     let proxy = try #require(NoiseProxy(routerURL: "http://127.0.0.1:\(port)", routerKey: key.publicKey.rawRepresentation,
                                         device: (key: dev, name: "Air"), suite: .aesGCM))
     try proxy.start()
@@ -761,17 +762,23 @@ private func challenge(_ r: Router, _ f: (root: URL, share: URL, project: URL, o
     let proof = try #require(Native.readMarker(f.project.appendingPathComponent(ch.file)))
     var q = URLRequest(url: URL(string: proxy.localURL + "/minigw/run")!, timeoutInterval: 120)
     q.httpMethod = "POST"
-    q.httpBody = Data(#"{"argv":["sh","-c","echo started; sleep 10; echo done"]}"#.utf8)
+    // #109: ukaz čaka na datoteko, ki jo test ustvari ob prvi vrstici (ne na čas): če izhod ne teče sproti, prva vrstica
+    // pride šele po koncu ukaza (30 s) in je zadnja vrstica »timeout«.
+    q.httpBody = Data(#"{"argv":["sh","-c","echo started; i=0; while [ ! -e go ] && [ $i -lt 300 ]; do sleep 0.1; i=$((i+1)); done; if [ -e go ]; then echo done; else echo timeout; fi"]}"#.utf8)
     q.setValue("Bearer tok", forHTTPHeaderField: "authorization")
     q.setValue(ch.id, forHTTPHeaderField: "x-native-id"); q.setValue(proof, forHTTPHeaderField: "x-native-proof")
     let start = Date()
-    var first = -1.0, last = ""
+    var first = -1.0, last = "", lines: [String] = []
     let (bytes, _) = try await URLSession.shared.bytes(for: q)
     for try await l in bytes.lines {
-        if first < 0 { first = Date().timeIntervalSince(start) }
+        if first < 0 {
+            first = Date().timeIntervalSince(start)
+            FileManager.default.createFile(atPath: f.project.appendingPathComponent("go").path, contents: Data())
+        }
+        if l != "x 0" { lines.append(l) }
         last = l
     }
-    #expect(first >= 0 && first < 5, "first line after \(first) s")  // brez nosniff: šele ob koncu (~15 s)
+    #expect(first >= 0 && lines == ["o c3RhcnRlZAo=", "o ZG9uZQo="], "lines \(lines)")  // brez nosniff: »started« šele ob koncu, ukaz pa »timeout«
     #expect(last == "x 0")
 }
 
