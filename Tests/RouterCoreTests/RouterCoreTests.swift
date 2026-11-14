@@ -122,17 +122,16 @@ func makeRouter(session: URLSession = .shared) -> Router {
     #expect(ClaudeCLI.match("claude-cli-sonnet")! == ("sonnet", false))
     var cli = ClaudeCLIConfig()
     let cwd = URL(fileURLWithPath: "/tmp/session")
-    // #111: path tools are scoped (the session's folder and each checked allowed folder), --tools stays bare, --add-dir for the folders
-    #expect(cli.agentArgs(cwd: cwd, allTools: [], folders: AllowedFolders(), checkedPaths: ["/work/a"])
-            == ["--tools", "Read,Grep,Glob", "--allowedTools", "Read(./**),Read(//work/a/**),Grep(./**),Grep(//work/a/**),Glob(./**),Glob(//work/a/**)", "--permission-mode", "dontAsk", "--add-dir", "/work/a"])
-    #expect(cli.agentArgs(cwd: cwd, allTools: [], folders: AllowedFolders(), checkedPaths: []) == ["--tools", "Read,Grep,Glob", "--allowedTools", "Read(./**),Grep(./**),Glob(./**)", "--permission-mode", "dontAsk"])
+    // #111: path tools are scoped (the session's folder and each checked allowed folder), --tools stays bare, --add-dir for the folders (RestrictedModeTests has the rest)
+    func val(_ a: [String], _ flag: String) -> String { a.firstIndex(of: flag).map { a[$0 + 1] } ?? "" }
+    let scoped = cli.agentArgs(cwd: cwd, allTools: [], folders: AllowedFolders(), checkedPaths: ["/work/a"])
+    #expect(val(scoped, "--tools") == "Read,Grep,Glob" && val(scoped, "--permission-mode") == "dontAsk" && val(scoped, "--add-dir") == "/work/a"
+            && val(scoped, "--allowedTools") == "Read(./**),Read(//work/a/**),Grep(./**),Grep(//work/a/**),Glob(./**),Glob(//work/a/**)")
     cli.tools = "Read,Edit,Bash(git:*),Write,Grep"  // --minigw-ro: brez orodij za pisanje; Bash tu nima sandboxa
-    #expect(cli.agentArgs(cwd: cwd, allTools: [], readOnly: true, folders: AllowedFolders(), checkedPaths: []) == ["--tools", "Read,Grep", "--allowedTools", "Read(./**),Grep(./**)", "--permission-mode", "dontAsk"])
-    cli.tools = "Read,Write,MultiEdit,WebFetch"  // Write and MultiEdit have no path rule of their own: Edit covers them; the web tool stays bare
-    #expect(cli.agentArgs(cwd: cwd, allTools: [], folders: AllowedFolders(), checkedPaths: []).prefix(4) == ["--tools", "Read,Write,MultiEdit,WebFetch", "--allowedTools", "Read(./**),Edit(./**),WebFetch"])
-    cli.tools = "Read,Edit,Bash(git:*),Write,Grep"
+    let roArgs = cli.agentArgs(cwd: cwd, allTools: [], readOnly: true, folders: AllowedFolders(), checkedPaths: [])
+    #expect(val(roArgs, "--tools") == "Read,Grep" && val(roArgs, "--allowedTools") == "Read(./**),Grep(./**)")
     cli.tools = "Read,Monitor,EnterWorktree,WebFetch"  // seznam dovoljenih: orodja, ki niso na njem, odpadejo
-    #expect(cli.agentArgs(cwd: cwd, allTools: [], readOnly: true, folders: AllowedFolders()).prefix(2) == ["--tools", "Read,WebFetch"])
+    #expect(val(cli.agentArgs(cwd: cwd, allTools: [], readOnly: true, folders: AllowedFolders()), "--tools") == "Read,WebFetch")
     cli.tools = "Read,Grep,Glob"
     var local = cli
     local.allowLocalTools = true

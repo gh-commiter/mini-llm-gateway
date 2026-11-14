@@ -502,8 +502,14 @@ extension Router {
                 let local = try b.bool("allowLocalTools"), disabled = try b.strings("disabledTools"), ask = try b.bool("askOthers")
                 let tools = try b.string("tools").map { $0.replacingOccurrences(of: " ", with: "") }
                 let work = try Self.work(b)
-                if let t = tools, !t.isEmpty, t.range(of: #"^[A-Za-z0-9_]+(,[A-Za-z0-9_]+)*$"#, options: .regularExpression) == nil {
-                    throw AdminError(400, "tools: comma-separated tool names, e.g. Read,Grep,Glob")
+                if let t = tools, let p = ClaudeCLIConfig.toolsTextProblem(t) { throw AdminError(400, p) }  // the same rule as the Settings field
+                do {  // #111: what a restricted (no "Allow local tools") run may be configured with; only what this request or the switch touches
+                    var cand = config.claudeCLI
+                    if let tools { cand.tools = tools }
+                    if let local { cand.allowLocalTools = local }
+                    if let mode { cand.permissionMode = mode }
+                    if let folders { cand.allowedRoots = folders }
+                    if let p = cand.restrictedProblem(tools: tools != nil || local != nil, mode: mode != nil, folders: folders != nil || local != nil) { throw AdminError(400, p) }
                 }
                 if let path, !path.isEmpty, case .failure(let e) = ClaudeCLI.validate(path) { throw AdminError(400, "claude: \(e)") }
                 if let folders, let bad = folders.split(separator: ",").map(String.init).first(where: { RouterConfig.overlapsScratch($0, scratch: c.scratchURL) }) {
