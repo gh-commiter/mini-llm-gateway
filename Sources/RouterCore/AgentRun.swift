@@ -14,6 +14,9 @@ final class AgentRun: @unchecked Sendable {
     let dir: URL?        // mapa izvajanja iz ShareHub (kopija, klon, mapa); nil = mapa na tem Macu (resolveCwd)
     let runID: String?   // ShareHub.run klicatelja: vprašani agent dela v istem klonu oz. mestu worktree
     let token: String
+    let ask: Bool                // »May ask other models«: the models' routes exist on the port (a run with a project but without it has the notes only)
+    let project: ProjectRun?     // 0.6.0: the run's project (notes capability, usage); a nested run inherits the root's
+    let evID: String, evUser: Int  // 0.6.0: the usage event of the request that started this run (parent of its nested calls) and its user
     /// M3: žeton v datoteki 0600 v začasni mapi izvajanja, ne v okolju (KERN_PROCARGS2 ga drugim procesom istega uporabnika
     /// pokaže tudi v peskovniku); `ownDir`: mapa, ki jo izbriše stop.
     private(set) var authFile = URL(fileURLWithPath: "/dev/null")
@@ -35,8 +38,10 @@ final class AgentRun: @unchecked Sendable {
 
     var env: [String: String] { ["MINIGW_AGENT_URL": "http://127.0.0.1:\(port)", "MINIGW_AGENT_AUTH_FILE": authFile.path] }
 
-    private init(kind: String, chain: [String], req: HTTPRequest, dir: URL?, readOnly: Bool, listener: NWListener, token: String) {
+    private init(kind: String, chain: [String], req: HTTPRequest, dir: URL?, readOnly: Bool, listener: NWListener, token: String,
+                 ask: Bool, project: ProjectRun?, event: UsageEvent?) {
         self.kind = kind; self.chain = chain; self.dir = dir; self.readOnly = readOnly; self.listener = listener; self.token = token
+        self.ask = ask; self.project = project; evID = event?.id ?? ""; evUser = event?.userId ?? 0
         peer = req.peer; device = req.device
         session = req.header("x-claude-mini-session") ?? ""; cwd = req.header("x-claude-mini-cwd") ?? ""
         role = GatewayHistory.role(req)
@@ -81,7 +86,8 @@ final class AgentRun: @unchecked Sendable {
     /// Vrata in žeton za izvajanje agenta `kind` (pred zagonom procesa); nil, ko jih ni mogoče odpreti.
     /// `secretDir`: začasna mapa izvajanja, ki jo vidi le ta agent (Copilot: mapa zahteve); nil = nova v `scratchTmp`.
     /// `readOnly`: agent sam teče le za branje (worktree, pisanje izklopljeno): tudi vprašani agenti (kot Go startRun).
-    static func start(router: Router, req: HTTPRequest, kind: String, dir: URL?, secretDir: URL?, scratchTmp: URL, readOnly own: Bool = false) async -> AgentRun? {
+    static func start(router: Router, req: HTTPRequest, kind: String, dir: URL?, secretDir: URL?, scratchTmp: URL, readOnly own: Bool = false,
+                      ask: Bool = true, project: ProjectRun? = nil, event: UsageEvent? = nil) async -> AgentRun? {
         let params = NWParameters.tcp
         params.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
         var b = [UInt8](repeating: 0, count: 32)
@@ -90,7 +96,7 @@ final class AgentRun: @unchecked Sendable {
             .replacingOccurrences(of: "=", with: "")
         let readOnly = own ? true : await Router.isReadOnly(req)
         guard let l = try? NWListener(using: params) else { return nil }
-        let run = AgentRun(kind: kind, chain: (current?.chain ?? []) + [kind], req: req, dir: dir, readOnly: readOnly, listener: l, token: token)
+        let run = AgentRun(kind: kind, chain: (current?.chain ?? []) + [kind], req: req, dir: dir, readOnly: readOnly, listener: l, token: token, ask: ask, project: project, event: event)
         var folder = secretDir
         if folder == nil {
             let d = scratchTmp.appendingPathComponent("run-" + UUID().uuidString, isDirectory: true)
@@ -171,7 +177,8 @@ final class AgentRun: @unchecked Sendable {
         guard given.count == want.count, zip(given, want).reduce(0, { $0 | ($1.0 ^ $1.1) }) == 0 else {
             return await router.reject(status: 401, message: "Invalid token for this agent run", writer: writer)
         }
-        guard Self.allowed.contains(req.method + " " + req.path) else {
+        let notes = project != nil && Router.notesPath(req.method, req.path.removingPercentEncoding ?? req.path)  // the run's own notes: GET only
+        guard ask && Self.allowed.contains(req.method + " " + req.path) || notes else {  // models only with "May ask other models"
             return await router.reject(status: 404, message: "Not available to agents: \(req.method) \(req.path)", writer: writer)
         }
         guard await offPool({ self.ownsPeer(peerPort: req.peerPort) }) else {  // M2
@@ -189,8 +196,14 @@ final class AgentRun: @unchecked Sendable {
             return await router.reject(status: 429, message: "This agent already has \(Self.maxNested) requests to other models running, or the gateway is busy", writer: writer)
         }
         defer { running.withLock { $0 -= 1 }; Self.allRunning.withLock { $0 -= 1 } }
+        if notes, let project {  // no project from the request is read: the run's capability
+            let rid = "run_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(12)
+            _ = await router.runNotes(req, cap: project.cap, rid: rid, writer: writer)
+            writer.close()
+            return
+        }
         var r = req
-        for k in ["x-api-key", Self.chainHeader, "x-claude-mini-share"] { r.headers[k] = nil }
+        for k in ["x-api-key", Self.chainHeader, "x-claude-mini-share", Router.projectHeader] { r.headers[k] = nil }  // a nested call never names a project: the run's own is inherited
         r.headers["authorization"] = "Bearer " + router.token
         r.headers["x-claude-mini-session"] = session
         r.headers["x-claude-mini-cwd"] = cwd
@@ -211,6 +224,16 @@ extension Router {
         case "grok": config.grok.askOthers
         case "copilot": config.copilot.askOthers
         default: false
+        }
+    }
+
+    /// 0.6.0: can the agent's commands reach the run port? As for "May ask other models": Claude CLI needs "Allow local tools", Codex its network
+    /// switch (the sandboxes of Grok and Copilot let the loopback port through). Not proven here with the real CLIs.
+    func notesReachable(_ kind: String) -> Bool {
+        switch kind {
+        case "claude": config.claudeCLI.allowLocalTools
+        case "codex": config.codex.network
+        default: true
         }
     }
 
@@ -237,13 +260,17 @@ extension Router {
         } else {
             notes.append(Self.noAskNote)
         }
+        if Self.reqState?.project != nil { notes.append(notesNote(exe: Self.minigwExe, reachable: notesReachable(kind))) }  // 0.6.0
         return notes.joined(separator: "\n\n")
     }
 
     /// Vrata izvajanja, če ima agent `kind` stikalo »May ask other models«; okolje gre agentu, `stop()` ob koncu.
+    /// 0.6.0: a run with a project has the port too (its notes), also without the switch.
     func startAgentRun(_ req: HTTPRequest, kind: String, dir: URL?, secretDir: URL? = nil, readOnly: Bool = false) async -> AgentRun? {
-        guard askOthers(kind) else { return nil }
-        let run = await AgentRun.start(router: self, req: req, kind: kind, dir: dir, secretDir: secretDir, scratchTmp: config.scratch("tmp"), readOnly: readOnly)
+        let project = Self.reqState?.project
+        guard askOthers(kind) || project != nil else { return nil }
+        let run = await AgentRun.start(router: self, req: req, kind: kind, dir: dir, secretDir: secretDir, scratchTmp: config.scratch("tmp"), readOnly: readOnly,
+                                       ask: askOthers(kind), project: project, event: Self.reqState?.event)
         if run == nil { Self.log.error("agent calls: cannot open a loopback port for \(kind, privacy: .public)") }
         return run
     }

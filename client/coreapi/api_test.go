@@ -357,4 +357,23 @@ func TestEventCallsReachTheCore(t *testing.T) {
 	}
 }
 
+// The Mac app reports events it could not deliver while the helper was down: they show as a gap, and a bad call is refused.
+func TestEventLostShowsAsAGap(t *testing.T) {
+	f := newFixture(t)
+	f.api.StartRecorder()
+	defer f.api.StopRecorder()
+	a := nowUTC().Add(-time.Minute)
+	if err := f.api.Call(bg, "event-lost", LostRequest{Count: 3, From: a, To: nowUTC()}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.api.Call(bg, "event-lost", LostRequest{Count: 0}, nil); err == nil {
+		t.Fatal("a count of 0 must be refused")
+	}
+	f.api.FlushRecorder()
+	rep, err := f.st.AdminUsage(bg, 7, core.UsageFilter{})
+	if err != nil || len(rep.Gaps) != 1 || rep.Gaps[0].Count != 3 {
+		t.Fatalf("%+v %v", rep.Gaps, err)
+	}
+}
+
 func nowUTC() time.Time { return time.Now().UTC() }

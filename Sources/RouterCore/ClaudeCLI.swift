@@ -529,7 +529,9 @@ extension Router {
             }
             cwd = dir
             sharedDir = shared
-            let scope = (req.header("x-claude-mini-session") ?? "") + "|" + dir.path
+            guard let scope = await conversationScope("cli", [req.header("x-claude-mini-session") ?? "", dir.path], project: Self.reqState?.project) else {
+                return await projectDown(rid: rid, writer: writer)  // 0.6.0: + user, project, epoch
+            }
             registryKey = scope
             if let existing = await Self.sessions.get(ClaudeCLI.key(history, scope: scope)) {
                 args += ["--resume", existing]
@@ -568,7 +570,7 @@ extension Router {
         if agent {  // #69: navodilo vedno; branje minigw in ovoja git kot doslej le s stikalom ali za vprašanega agenta
             // #67 (Air): ovoj git (gitexec/bin/git prvi na PATH, exec-path) v klonu vedno, sicer peskovnik ne izvede ovoja
             // (git z drugega PATH, exec-path v gitexec neberljiv: remote-https, CMake GIT_EXECUTABLE)
-            let read = (askOthers("claude") || AgentRun.current != nil ? [Self.minigwExe] + (run.map { [$0.authFile.path] } ?? []) : [])
+            let read = (askOthers("claude") || AgentRun.current != nil || Self.reqState?.project != nil ? [Self.minigwExe] + (run.map { [$0.authFile.path] } ?? []) : [])
                 + (await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "") != nil ? [gitexec.path] : [])
             args = Self.withNote(args, agentNote("claude"), read: read)
         }
@@ -614,6 +616,7 @@ extension Router {
         do {
             let held = try checked.open()
             defer { for handle in held { try? handle.close() } }
+            dispatched("claude")  // the claude process is about to start (usage event)
             try p.run()
             run?.started(p.processIdentifier)
         } catch {

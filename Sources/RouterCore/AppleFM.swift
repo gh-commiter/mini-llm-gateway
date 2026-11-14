@@ -99,6 +99,7 @@ extension Router {
         }
         let session = LanguageModelSession(model: model, tools: [], transcript: Transcript(entries: entries))
 
+        dispatched("apple-fm")  // the model starts (usage event)
         let stream = body["stream"] as? Bool == true
         var t = StreamTranslator(model: body["model"] as? String ?? "claude-apple-fm")
         var headers: [(String, String)] = [("request-id", rid)]

@@ -377,7 +377,20 @@ admin proof, the agent check); the helper decides everything else, so both gatew
   served.
 - **First start:** the owner user is created once, named after the Mac account.
 
-## Usage events and quota (0.6.0, `minigw serve`)
+### The Mac app: agents with a project
+
+Agent runs with a project work on the Mac app as on `minigw serve`. The app reads the project id that `minigw`
+sends (`X-Minigw-Project`), asks the helper to admit it (a direct role; otherwise 403 `no_project_access`, or 503
+`core_unavailable` while the helper is not running: it never runs without the project), and gives the run a read-only
+notes capability on its run port (`GET /minigw/v1/notes[/{id}]`, nothing else; the run port also exists for a run
+with a project when "May ask other models" is off). A removed device, a changed binding or role, or a new epoch ends
+the reads of runs already going. Conversations are keyed by user, project and epoch, and Codex, Grok and Copilot
+keep their transcripts in a home of their own per user, project and epoch under `Scratch/state` (hidden from every
+agent). Usage events are sent to the helper, which stores them; while the helper is down they wait in the app (4096
+at most, a longer outage becomes a gap). The Claude CLI agent reads notes with `minigw note list|read` only with
+**Allow local tools**, Codex only with its network switch on.
+
+## Usage events and quota (0.6.0, `minigw serve` and the Mac app)
 
 **What is counted.** Every model invocation is one event: a request to `POST /v1/messages` that reaches a model (a
 provider, Claude CLI, Codex, Grok, Copilot, Foundry Local) and every call an agent makes to another model through its

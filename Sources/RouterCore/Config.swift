@@ -206,7 +206,7 @@ public struct RouterConfig: Codable, Sendable, Equatable {
     }
 
     /// Everything an agent of this kind must not read or write: the core data folder, the credential homes of the other
-    /// providers and the gateway's private Scratch folders that belong to another kind (`grok-home`, Copilot's).
+    /// providers and the gateway's private Scratch folders that belong to another kind (`grok-home`, Copilot's); the agent homes of project runs (`state`) for every kind.
     public static func agentDenied(kind: String, scratch: URL?, home: String = NSHomeDirectory(),
                                    env: [String: String] = ProcessInfo.processInfo.environment) -> [String] {
         var out = coreDenied() + credentialHomes(except: kind, home: home, env: env)
@@ -215,6 +215,11 @@ public struct RouterConfig: Codable, Sendable, Equatable {
                 let url = scratch.appendingPathComponent(sub, isDirectory: true)
                 out += [url.standardizedFileURL.path, Sync.realResolving(url)?.path].compactMap { $0 }
             }
+            // 0.6.0: the homes of agent runs with a project (<Scratch>/state/<device>/proj/<user>-<project>-e<epoch>/<kind>) hold rollout logs and
+            // sessions with what the run read from the notes: no agent's commands read them, not even those of the same kind (the CLI process
+            // itself, which is not sandboxed, is the one that uses its home)
+            let state = scratch.appendingPathComponent("state", isDirectory: true)
+            out += [state.standardizedFileURL.path, Sync.realResolving(state)?.path].compactMap { $0 }
         }
         var seen = Set<String>()
         return out.filter { seen.insert($0).inserted }

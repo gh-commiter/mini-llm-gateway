@@ -336,11 +336,23 @@ extension Router {
             if !config.codex.write || readOnly { treeEnv?["MINIGW_DEPS"] = nil }  // #67: le s pisanjem
             else { treeEnv?["MINIGW_NETWORK_OFF"] = Worktree.networkOff("codex", config) }
         }
-        let codexEnv = (treeEnv
+        var codexEnv = (treeEnv
             ?? ["TMPDIR": privateTmp.path + "/", "CLANG_MODULE_CACHE_PATH": privateTmp.appendingPathComponent("ModuleCache").path, "xcrun_nocache": "1"])
             .merging(run?.env ?? [:]) { $1 }
         // Nadaljevanje niti Codex (prebrane datoteke, rezultati ukazov): ključ je dosedanji pogovor v tej mapi.
-        let scope = Self.agentScope("codex", req, cwd: cwd)
+        guard let scope = await conversationScope("agent", Self.agentScopeFields("codex", req, cwd: cwd), project: Self.reqState?.project) else {
+            return await projectDown(rid: rid, writer: writer)
+        }
+        // 0.6.0 (M2): a run with a project has its own CODEX_HOME per user, project and epoch (its rollout logs hold what the agent read from the
+        // notes): the login and settings are links to the real files (as agentState in Go), carried back after the run.
+        var projectAuth: (home: URL, real: URL)?
+        if let p = Self.reqState?.project {
+            guard let home = await projectHome(kind: "codex", owner: req.device?.id ?? "local", project: p) else { return await projectDown(rid: rid, writer: writer) }
+            let real = URL(fileURLWithPath: ProcessInfo.processInfo.environment["CODEX_HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory() + "/.codex")
+            Self.linkProjectAuth(home: home, real: real)
+            codexEnv["CODEX_HOME"] = home.path
+            projectAuth = (home, real)
+        }
         let existing = agent ? await Self.codexSessions.get(ClaudeCLI.key(all.dropLast(), scope: scope)) : nil
         if existing != nil { prompt = last.text }
         if agent { prompt = agentNote("codex") + "\n\n" + prompt }
@@ -351,6 +363,8 @@ extension Router {
                               deny: RouterConfig.agentDenied(kind: "codex", scratch: config.scratchURL), tmp: tree == nil ? privateTmp.path : nil)  // L3, #106: v vsakem načinu
         let sessions = Self.codexSessions, session = req.header("x-claude-mini-session") ?? ""
         return await replyWhenDone(body: body, model: "claude-codex", rid: rid, writer: writer, req: req) {
+            self.dispatched("codex")  // the agent process starts (usage event)
+            defer { if let projectAuth { Self.restoreProjectAuth(home: projectAuth.home, real: projectAuth.real) } }
             let (text, thread) = try await Codex.run(exe, args: args, cwd: cwd, prompt: prompt, output: output,
                                                          env: codexEnv, dirs: await Self.shares.runDirs(), checked: checked, stopNested: { run?.stop() }, started: { run?.started($0) }) { [onActivity] s in
                 onActivity(.step(id: rid, text: s))
@@ -403,6 +417,7 @@ extension Router {
             await pinger?.value
             let delta = t.emit(text)
             t.usage = ["output_tokens": text.utf8.count / 4]
+            Self.reqState?.tokenSource = "estimated"  // Codex, Grok, Copilot and Siri give no counts: the output is estimated from its length
             if stream {
                 try await writer.write((sent.head ? Data() : head) + delta + t.finish().reduce(Data(), +))
                 return 200

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"minigw/core"
 )
@@ -152,6 +153,14 @@ type EventRequest struct {
 	Event core.UsageEvent `json:"event"`
 }
 
+// LostRequest: events the adapter could not deliver (its own queue overflowed while the helper was down); the core shows
+// them as a gap, as for events its own queue drops.
+type LostRequest struct {
+	Count int64     `json:"count"`
+	From  time.Time `json:"from"`
+	To    time.Time `json:"to"`
+}
+
 // internal serves POST /internal/<name>.
 func (a *API) internal(ctx context.Context, r Request) Response {
 	name, ok := strings.CutPrefix(r.Path, "/internal/")
@@ -243,6 +252,15 @@ func (a *API) internal(ctx context.Context, r Request) Response {
 			a.EventBegin(in.Event)
 		} else {
 			a.EventFinish(in.Event)
+		}
+		return Response{Status: 202, Header: http.Header{"Content-Type": {"application/json"}}, Body: []byte(`{"queued":true}`)}
+	case "event-lost":
+		var in LostRequest
+		if decodeStrict(r.Body, &in) != nil || in.Count < 1 {
+			return bad
+		}
+		if a.rec != nil {
+			a.rec.noteLoss(in.Count, in.From, in.To)
 		}
 		return Response{Status: 202, Header: http.Header{"Content-Type": {"application/json"}}, Body: []byte(`{"queued":true}`)}
 	}

@@ -272,6 +272,7 @@ extension Router {
         do { oreq = try Foundry.request(body, model: model, instructions: fc.instructions, vision: m.vision, stream: stream) } catch {
             return await self.error(400, "invalid_request_error", (error as? Foundry.RequestError)?.message ?? "\(error)", rid: rid, writer: writer)
         }
+        dispatched("foundry")  // the request goes to Foundry Local (usage event)
         let deadline = Date().addingTimeInterval(Foundry.timeout)
         do {
             let base = try await Self.foundry.endpoint(exe)
