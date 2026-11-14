@@ -458,6 +458,9 @@ minigw project unlink
   folder. A clone, a git worktree, a copied or a moved folder has no link until you link it. Inside a linked folder
   you may link a deeper folder to another project; the nearest linked folder wins. You can link only a project
   you are a **direct member** of: a grant lets you read another project's notes, not work in it.
+  The commands and the link file are the same on every system: the Mac `minigw` keeps it in
+  `~/Library/Application Support/minigw/projects.json` (Windows and Linux: `minigw/projects.json` in the user's config folder),
+  in the same format.
 - **Hint file.** A file `.minigw-project` with one line, the project's slug, may be committed to the repository. It
   never links anything: without a link `minigw project show` and the note commands only suggest
   `minigw project link <slug>`. If a linked folder has a hint with another slug, the note commands refuse until you
