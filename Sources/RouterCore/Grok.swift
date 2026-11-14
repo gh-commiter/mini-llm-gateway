@@ -221,7 +221,7 @@ extension Router {
         // (Grok.prepareCoreHome); if that cannot be set up (also while the helper is merely not ready) it does not run.
         var coreEnv: [String: String] = [:]
         if core != nil {
-            guard let e = Grok.prepareCoreHome(config.scratch("grok-home"), deny: RouterConfig.coreDenied()) else {
+            guard let e = Grok.prepareCoreHome(config.scratch("grok-home"), deny: RouterConfig.agentDenied(kind: "grok", scratch: config.scratchURL)) else {
                 return await error(503, "api_error", Grok.coreUnavailable, rid: rid, writer: writer)
             }
             coreEnv = e

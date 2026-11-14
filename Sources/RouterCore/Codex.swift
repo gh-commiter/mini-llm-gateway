@@ -85,7 +85,7 @@ public enum Codex {
     /// (zunaj klona). Pisljive mape imajo .git in .codex le za branje (kot workspace-write).
     static func args(cwd: URL, extraDirs: [String], agent: Bool, output: URL, model: String? = nil,
                      write: Bool = true, network: Bool = false, resume: String? = nil, gits: [String] = [], path: String = "",
-                     deny: [String] = RouterConfig.coreDenied(), tmp: String? = nil) -> [String] {
+                     deny: [String] = RouterConfig.agentDenied(kind: "codex", scratch: nil), tmp: String? = nil) -> [String] {
         var a = ["exec", "--json", "--skip-git-repo-check", "--color", "never", "-C", cwd.path, "-o", output.path]
         if let model { a += ["-m", model] }
         let writes = agent && write
@@ -348,7 +348,7 @@ extension Router {
                               write: config.codex.write && !readOnly, network: config.codex.network && (tree == nil || config.worktreeCodexNetwork),
                               resume: existing, gits: tree?.gits ?? [],
                               path: tree == nil ? "" : Worktree.agentPath(gitexec: config.scratch("gitexec"), path: ProcessInfo.processInfo.environment["PATH"] ?? ""),
-                              deny: RouterConfig.coreDenied(), tmp: tree == nil ? privateTmp.path : nil)  // L3, #106: v vsakem načinu
+                              deny: RouterConfig.agentDenied(kind: "codex", scratch: config.scratchURL), tmp: tree == nil ? privateTmp.path : nil)  // L3, #106: v vsakem načinu
         let sessions = Self.codexSessions, session = req.header("x-claude-mini-session") ?? ""
         return await replyWhenDone(body: body, model: "claude-codex", rid: rid, writer: writer, req: req) {
             let (text, thread) = try await Codex.run(exe, args: args, cwd: cwd, prompt: prompt, output: output,

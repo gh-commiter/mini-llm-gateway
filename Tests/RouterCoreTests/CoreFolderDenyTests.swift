@@ -158,21 +158,88 @@ private func profileConfig(_ a: [String]) -> [String] {
     for d in RouterConfig.coreDenied() { #expect(own.contains("\"\(d)\""), "\(d)") }
 }
 
-@Test func claudeSandboxSettingsDenyCore() throws {
+@Test func claudeDeniesCoreInEveryMode() throws {
     let f = try Fixture(); defer { f.cleanup() }
     let scratch = f.base.appendingPathComponent("Scratch", isDirectory: true)
     try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
-    let live = RouterConfig.coreDenied()
-    var cfg = ClaudeCLIConfig(); cfg.allowLocalTools = true
-    let plain = cfg.agentArgs(cwd: f.work, allTools: [], scratch: scratch, folders: AllowedFolders())
-    let tree = cfg.worktreeArgs(root: f.work, maven: f.tmp, cwd: f.work, allTools: [], network: false, scratch: scratch)
-    for (name, a) in [("plain", plain), ("worktree", tree)] {
+    let live = RouterConfig.agentDenied(kind: "claude", scratch: scratch)
+    #expect(RouterConfig.coreDenied().allSatisfy(live.contains))
+    func settings(_ a: [String], _ name: String) throws -> [String: Any] {
         let json = try #require(a.firstIndex(of: "--settings").map { a[$0 + 1] }, "\(name)")
-        let sb = try #require(((try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any])?["sandbox"] as? [String: Any])
-        let fs = try #require(sb["filesystem"] as? [String: Any])
-        let deny = try #require(fs["denyRead"] as? [String])
+        return try #require((try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any], "\(name)")
+    }
+    // the default mode (no "Allow local tools") has no sandbox: the tool rules are the only deny (#106 S3)
+    var restricted = ClaudeCLIConfig(); restricted.allowLocalTools = false
+    var local = ClaudeCLIConfig(); local.allowLocalTools = true
+    var modes: [(String, [String])] = [
+        ("restricted", restricted.agentArgs(cwd: f.work, allTools: [], scratch: scratch, folders: AllowedFolders())),
+        ("restricted read-only", restricted.agentArgs(cwd: f.work, allTools: [], scratch: scratch, readOnly: true, folders: AllowedFolders())),
+        ("local", local.agentArgs(cwd: f.work, allTools: [], scratch: scratch, folders: AllowedFolders())),
+        ("local read-only", local.agentArgs(cwd: f.work, allTools: [], scratch: scratch, readOnly: true, folders: AllowedFolders())),
+        ("worktree", local.worktreeArgs(root: f.work, maven: f.tmp, cwd: f.work, allTools: [], network: false, scratch: scratch)),
+    ]
+    modes.append(("restricted + other tools", restricted.agentArgs(cwd: f.work, allTools: ["Read", "Bash"], scratch: scratch, folders: AllowedFolders())))
+    for (name, a) in modes {
+        let deny = try #require(((try settings(a, name))["permissions"] as? [String: Any])?["deny"] as? [String], "\(name)")
+        for d in live { for t in ["Read", "Edit"] { #expect(deny.contains("\(t)(/\(d)/**)"), "\(name) \(t) \(d)") } }
+    }
+    for (name, a) in modes where name.hasPrefix("local") || name == "worktree" {
+        let sb = try #require((try settings(a, name))["sandbox"] as? [String: Any])
+        let denyRead = try #require((sb["filesystem"] as? [String: Any])?["denyRead"] as? [String])
         #expect(sb["failIfUnavailable"] as? Bool == true && sb["allowUnsandboxedCommands"] as? Bool == false, "\(name)")
-        for d in live { #expect(deny.contains(d), "\(name) \(d)") }
+        for d in RouterConfig.coreDenied() + RouterConfig.credentialHomes() { #expect(denyRead.contains(d), "\(name) \(d)") }
+    }
+}
+
+// MARK: credential homes of the other providers (S3 A5)
+
+@Test func agentsKeepTheirOwnHomeAndNotTheOthers() throws {
+    let f = try Fixture(); defer { f.cleanup() }
+    let home = f.base.path
+    let scratch = f.base.appendingPathComponent("Scratch", isDirectory: true)
+    for kind in ["codex", "grok", "copilot", "claude"] {
+        let d = RouterConfig.agentDenied(kind: kind, scratch: scratch, home: home, env: [:])
+        for (owner, dir) in [("grok", ".grok"), ("codex", ".codex"), ("copilot", ".copilot")] {
+            #expect(d.contains(home + "/" + dir) == (owner != kind), "\(kind) \(dir)")
+        }
+        #expect(d.contains(scratch.path + "/grok-home") == (kind != "grok") && d.contains(scratch.path + "/copilot") == (kind != "copilot"), "\(kind)")
+        #expect(f.denied.allSatisfy { RouterConfig.coreDenied(app: f.app, store: f.core).contains($0) })
+    }
+    // the gateway user's own *_HOME variables are the homes
+    let env = RouterConfig.credentialHomes(except: "", home: home, env: ["GROK_HOME": f.tmp.path, "CODEX_HOME": f.work.path])
+    #expect(env.contains(f.tmp.path) && env.contains(f.work.path) && !env.contains(home + "/.grok") && env.contains(home + "/.copilot"))
+    // Grok's profile lists the others' homes, not its own login home
+    let toml = try #require(Grok.coreSandboxToml(deny: RouterConfig.agentDenied(kind: "grok", scratch: scratch, home: home, env: [:])))
+    #expect(toml.contains("\"" + home + "/.codex\"") && toml.contains("\"" + home + "/.copilot\"") && !toml.contains("\"" + home + "/.grok\""))
+}
+
+@Test func credentialHomesAreDeniedForRealProcesses() throws {
+    let f = try Fixture(); defer { f.cleanup() }
+    let fm = FileManager.default, home = f.base.path
+    for d in [".grok", ".codex", ".copilot"] {
+        try fm.createDirectory(atPath: home + "/" + d, withIntermediateDirectories: true)
+        try Data("CREDENTIAL".utf8).write(to: URL(fileURLWithPath: home + "/" + d + "/auth.json"))
+    }
+    let scratch = f.base.appendingPathComponent("Scratch", isDirectory: true)
+    try fm.createDirectory(at: scratch.appendingPathComponent("grok-home"), withIntermediateDirectories: true)
+    try Data("PROFILE".utf8).write(to: scratch.appendingPathComponent("grok-home/sandbox.toml"))
+    // Seatbelt (minigw run, Copilot): the hidden list holds all three homes
+    let profile = try #require(Native.sandboxProfile(dir: f.work.path, home: f.base.path, network: true,
+                                                     hidden: f.denied + RouterConfig.credentialHomes(except: "", home: home, env: [:]), writable: []))
+    for d in [".grok", ".codex", ".copilot"] {
+        let r = run("/usr/bin/sandbox-exec", ["-p", profile, "/bin/cat", home + "/" + d + "/auth.json"])
+        #expect(r.status != 0 && !r.out.contains("CREDENTIAL"), "\(d): \(r)")
+    }
+    #expect(run("/usr/bin/sandbox-exec", ["-p", profile, "/bin/cat", f.work.path + "/f.txt"]).out.contains("ALLOWED"))
+    // Codex: its own home stays readable, the others' are not
+    let exe = try #require(["/opt/homebrew/bin/codex", "/usr/local/bin/codex"].first { fm.isExecutableFile(atPath: $0) }, "codex is installed on the Mac that runs this gate")
+    let deny = RouterConfig.agentDenied(kind: "codex", scratch: scratch, home: home, env: [:]) + f.denied
+    let cfg = profileConfig(Codex.args(cwd: f.work, extraDirs: [], agent: true, output: f.base.appendingPathComponent("o"), deny: deny))
+    func under(_ p: String) -> (status: Int32, out: String) { run(exe, ["sandbox"] + cfg + ["--", "/bin/cat", p]) }
+    #expect(under(home + "/.codex/auth.json").out.contains("CREDENTIAL"))  // own home
+    for p in [home + "/.grok/auth.json", home + "/.copilot/auth.json", scratch.path + "/grok-home/sandbox.toml"] {
+        let r = under(p)
+        #expect(r.status != 0 && !r.out.contains("CREDENTIAL") && !r.out.contains("PROFILE"), "\(p): \(r)")
     }
 }
 

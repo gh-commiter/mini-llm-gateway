@@ -169,7 +169,7 @@ public struct RouterConfig: Codable, Sendable, Equatable {
     /// (lahko je uporabnikova mapa z drugo vsebino).
     public static func hiddenScratch(_ scratch: URL?) -> [String] {
         let fm = FileManager.default
-        var dirs = [defaultScratch] + coreDenied().map { URL(fileURLWithPath: $0, isDirectory: true) }  // 0.6.0 (#106): the core data folder is denied wherever Scratch is
+        var dirs = [defaultScratch] + (coreDenied() + credentialHomes()).map { URL(fileURLWithPath: $0, isDirectory: true) }  // 0.6.0 (#106): the core data folder is denied wherever Scratch is
         if let scratch { dirs = [scratch, defaultBase.appendingPathComponent(scratch.lastPathComponent, isDirectory: true)] + dirs }
         for base in Set([scratch?.deletingLastPathComponent(), defaultBase].compactMap { $0?.standardizedFileURL }) {
             for n in ((try? fm.contentsOfDirectory(atPath: base.path)) ?? []).sorted() {
@@ -189,6 +189,35 @@ public struct RouterConfig: Codable, Sendable, Equatable {
     public static func coreDenied(app: URL = GatewayHistory.defaultFile.deletingLastPathComponent(), store: URL = CoreHelper.defaultStore) -> [String] {
         var seen = Set<String>()
         return [app, store].flatMap { [$0.standardizedFileURL.path, Sync.realResolving($0)?.path].compactMap { $0 } }.filter { seen.insert($0).inserted }
+    }
+
+    /// 0.6.0 (#106, S3): credential and config homes of the provider CLIs the gateway uses, by real and literal path
+    /// (`$GROK_HOME`/`~/.grok`, `$CODEX_HOME`/`~/.codex`, `$COPILOT_HOME`/`~/.copilot`), except the agent's own.
+    public static func credentialHomes(except kind: String = "", home: String = NSHomeDirectory(),
+                                       env: [String: String] = ProcessInfo.processInfo.environment) -> [String] {
+        var seen = Set<String>()
+        return [("grok", "GROK_HOME", ".grok"), ("codex", "CODEX_HOME", ".codex"), ("copilot", "COPILOT_HOME", ".copilot")]
+            .filter { $0.0 != kind }
+            .flatMap { k -> [String] in
+                let literal = env[k.1].flatMap { $0.isEmpty ? nil : $0 } ?? home + "/" + k.2
+                let url = URL(fileURLWithPath: literal)
+                return [url.standardizedFileURL.path, Sync.realResolving(url)?.path].compactMap { $0 }
+            }.filter { seen.insert($0).inserted }
+    }
+
+    /// Everything an agent of this kind must not read or write: the core data folder, the credential homes of the other
+    /// providers and the gateway's private Scratch folders that belong to another kind (`grok-home`, Copilot's).
+    public static func agentDenied(kind: String, scratch: URL?, home: String = NSHomeDirectory(),
+                                   env: [String: String] = ProcessInfo.processInfo.environment) -> [String] {
+        var out = coreDenied() + credentialHomes(except: kind, home: home, env: env)
+        if let scratch {
+            for (owner, sub) in [("grok", "grok-home"), ("copilot", "copilot")] where owner != kind {
+                let url = scratch.appendingPathComponent(sub, isDirectory: true)
+                out += [url.standardizedFileURL.path, Sync.realResolving(url)?.path].compactMap { $0 }
+            }
+        }
+        var seen = Set<String>()
+        return out.filter { seen.insert($0).inserted }
     }
 
     /// An allowed folder that contains the app's data folder or is inside it (agents would reach the core database).

@@ -41,10 +41,19 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
     /// Read/Edit/Write zunaj teh map niso dovoljeni, Bash teče v sandboxu Claude Code (brez branja domače mape,
     /// pisanje le v teh mapah, omrežje dovoljeno), izhoda iz sandboxa ni.
     /// `readOnly` (--minigw-ro): brez orodij za pisanje; Bash le v sandboxu brez pisanja v te mape (brez sandboxa ga ni).
+    /// 0.6.0 (#106, S3): permission rules of the tools Read/Grep/Glob/Edit/Write (Read covers Grep and Glob, Edit covers
+    /// Write; verified with a real `claude -p`) for the core folder and the other providers' credential homes, in
+    /// every mode, also without "Allow local tools" (the tools then have no sandbox).
+    static func toolDenySettings(scratch: URL?) -> [String: Any] {
+        let paths = RouterConfig.agentDenied(kind: "claude", scratch: scratch)
+        return ["deny": paths.flatMap { p in ["Read", "Edit"].map { t in "\(t)(/\(p)/**)" } }]
+    }
+
     func agentArgs(cwd: URL, allTools: [String], scratch: URL? = nil, readOnly: Bool = false, folders: AllowedFolders, checkedPaths: [String]? = nil) -> [String] {
         guard allowLocalTools else {
             let t = readOnly ? Self.readOnlyTools(tools) : tools
-            return ["--tools", t, "--allowedTools", t, "--permission-mode", permissionMode]
+            let rules = String(decoding: try! JSONSerialization.data(withJSONObject: ["permissions": Self.toolDenySettings(scratch: scratch)], options: [.sortedKeys]), as: UTF8.self)
+            return ["--tools", t, "--allowedTools", t, "--permission-mode", permissionMode, "--settings", rules]
         }
         let dirs = [cwd.path] + (checkedPaths ?? folders.folders(allowedRoots, excluding: cwd.path, scratch: scratch))
 
@@ -56,7 +65,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
             "filesystem": ["denyRead": ["~"] + (scratch.map(RouterConfig.hiddenScratch) ?? []), "allowRead": dirs, "allowWrite": readOnly ? [] : dirs,
                            "denyWrite": Self.scratchPaths(RouterConfig.copilotCache)
                                + (readOnly ? dirs : dirs.flatMap { d in Self.gitDenies.flatMap { [d + "/.git/" + $0, d + "/**/.git/" + $0] } + [d + "/**/.git"] })],  // native v mapi sami (H1); N3: tudi ugnezdeni (macOS glob)
-        ]]
+        ], "permissions": Self.toolDenySettings(scratch: scratch)]
         let settings = String(decoding: try! JSONSerialization.data(withJSONObject: sandbox, options: [.sortedKeys]), as: UTF8.self)
         // --minigw-ro: --tools le iz seznama dovoljenih (in Bash v sandboxu brez pisanja), drugih orodij agent nima.
         let roTools = (Self.readOnlyAllowed + ["Bash"]).filter { !disabledTools.contains($0) }
@@ -93,7 +102,7 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
                            "denyWrite": (gits.isEmpty ? [root.path + "/.git"] : gits).flatMap { g in ["config", "hooks", "info", "commondir"].map { g + "/" + $0 } }
                                + [(Worktree.tmpLink(root) as NSString).deletingLastPathComponent]  // #67 M2: koren povezav TMPDIR
                                + Native.buildCacheDenies().paths + Self.scratchPaths(RouterConfig.copilotCache)],
-        ]]
+        ], "permissions": Self.toolDenySettings(scratch: scratch)]
         let settings = String(decoding: try! JSONSerialization.data(withJSONObject: sandbox, options: [.sortedKeys]), as: UTF8.self)
         let others = allTools.filter { !Self.pathTools.contains($0) && !disabledTools.contains($0) }
         // Urejanje .git (tudi ugnezdenega) z orodji Edit/Write ne: nastavitve in hooke bere git, ki ga poganja sam claude.
