@@ -322,6 +322,9 @@ func codexTreeProfile(writable, gits, deny []string, network bool, path string) 
 		for _, d := range gitDenies {
 			fs[filepath.Join(g, d)] = "read"
 		}
+		for _, p := range submoduleGitPaths(g) { // V1: the submodules' config, hooks and info (not the whole modules tree)
+			fs[p] = "read"
+		}
 	}
 	keys := slices.Sorted(maps.Keys(fs))
 	var b strings.Builder
