@@ -191,6 +191,60 @@ General  {"port": number, "address": string, "connect": string, "restartRequired
 | `POST /general/scratch/take` | – or `{"name"}` (a folder from `scratchOthers`) | Both gateways (0.5.24): Take over. Without `name` only when `scratchState` is `stale`; with `name` (only a name: a real folder directly in the base, another gateway's, not `*.old-*`, else 400) the stale sibling, for example after a reinstall. The other gateway's folder is renamed to `<base>/<instance>` of this gateway and gets its owner ID; this gateway's current folder (and one already named `<instance>`) is deleted when it has no conversations, else kept as `<instance>.old-<date>` (named in `warning`); nothing is merged. Logged. General (without `connect`). 409 when the folder is this gateway's own, `in-use` (the other gateway runs), or minigw sessions or agents are active; 500 when the rename failed (the folder stays) |
 | `POST /settings/login` | – | `{"url"}`: a one-time link to the settings page (`…/minigw/settings#t=…`, 60 s); `503` when the gateway does not run |
 
+### Core: users, bindings, projects, members, grants, audit, backup (Go gateway, 0.6.0)
+
+Projects, members and notes live in the gateway's core database (`<config folder>/core`, see gateway.md). These
+routes need the running gateway; while the core cannot be opened (or the gateway does not run) they answer
+`503`. Ids are numbers. The caller is the owner (admin authentication above); the `owner` mark on a user gives no
+extra power. Every call writes an audit event; a call that can take access away raises the epoch (all runs and
+conversations of a project end), in the same transaction.
+
+| Method and path | Body | Response |
+|---|---|---|
+| `GET /users` | – | `{"users": [{"id", "name", "active", "owner"}]}` |
+| `POST /users` | `{"name"}` | `{"user"}`; names are unique, any case; 400 for a name in use |
+| `PATCH /users/{id}` | any of `{"name", "active", "owner"}` | `{"ok": true}`; `active: false` raises the epoch |
+| `GET /bindings` | – | `{"bindings": [{"device", "user"}]}` |
+| `PUT /bindings/{device id}` | `{"user"}` | `{"ok": true}`; a device has at most one user; changing it to another user raises the epoch |
+| `DELETE /bindings/{device id}` | – | `{"ok": true}`; raises the epoch. Removing a device from the approved list (`DELETE /devices/{id}`) raises the epoch too but keeps the binding |
+| `GET /projects` | – | `{"projects": [{"id", "slug", "name", "archived", "granted": []}]}` |
+| `POST /projects` | `{"slug", "name"}` | `{"project"}`; slug `[a-z0-9][a-z0-9-]{1,62}`, not only digits; the id is never reused |
+| `PATCH /projects/{id}` | `{"archived": bool}` | `{"ok": true}`; archived: nobody writes |
+| `GET /projects/{id}/members` | – | `{"members": [{"user", "name", "role"}]}` |
+| `PUT /projects/{id}/members/{user}` | `{"role": "reader"\|"developer"\|"admin"}` | `{"ok": true}`; lowering the role raises the epoch |
+| `DELETE /projects/{id}/members/{user}` | – | `{"ok": true}`; raises the epoch |
+| `GET /grants` | – | `{"grants": [{"source", "reader", "class"}]}` |
+| `POST /grants` | `{"source", "reader", "class": "structure"\|"data"}` | `{"ok": true}`: the members of `reader` read that class of `source` |
+| `DELETE /grants?source=&reader=&class=` | – | `{"ok": true}`; raises the epoch |
+| `GET /audit?after=&limit=` | – | `{"events": [{"id", "time", "actor", "action", "subject", "detail"}], "next"?}`: oldest first, `next` is the last id (pass it as `after`); limit 1-500, default 100; metadata only |
+| `POST /core/backup` | `{"file": "<absolute path>"}` | `{"file"}`: a consistent copy while the gateway runs; the file must not exist, it is readable by the user only |
+
+Errors of these routes use the envelope above (`400` invalid, `404` not found, `503` core unavailable).
+
+### Member routes (not admin routes)
+
+Under `/minigw/v1/projects` the gateway serves the members' own API on the encrypted device connection (token
+and device key; see the contracts in docs/plans/contracts-0.6.0.md, section 6). Error body
+`{"error": {"type", "message"}}`: 403 `no_project_access` (no valid token or device key, the device is not on the
+approved list now, it is not bound, its user is inactive; one fixed body, also for plain loopback and the "allow any
+device" and local-app exceptions that apply to the model routes), 404 `not_found` (missing or not visible, one
+body), 403 `forbidden`, 403 `archived`, 409 `revision_mismatch` (with `revision`) or `idempotency_conflict`, 413
+`too_large`, 429 `limit` with `Retry-After`, 400 `invalid`, 503 `core_unavailable`.
+
+| Route | Result |
+|---|---|
+| `GET /projects[?archived=1]` | `[{id, slug, name, archived, role?, granted: [class]}]` |
+| `GET /projects/{id-or-slug}` | one project; digits are always an id |
+| `POST /projects/{id-or-slug}/link-check` | the project, only if the user has a direct role (a grant alone: 403 `forbidden`); for `minigw project link` |
+| `GET /projects/{id}/notes?class=&after=&limit=` | `{notes: [{id, project, class, title, author, created, updated, revision}], next?}`, updated descending then id, default 50, max 100 |
+| `GET /projects/{id}/notes/{note}` | the note with `body` |
+| `POST /projects/{id}/notes` | 201; header `Idempotency-Key` (1-64 bytes); body `{"class", "title", "body"}`; a repeat of the same key and payload within 24 h answers the first result (header `Idempotent-Replay: true`) |
+| `PUT /projects/{id}/notes/{note}` | 200; body `{"revision", "class", "title", "body"}` |
+| `DELETE /projects/{id}/notes/{note}?revision=N` | 204 |
+
+Request bodies are limited to 512 KiB before they are parsed (413 `too_large`); title 256 bytes and body 64 KiB,
+10 000 notes and 100 MiB per project; 60 writes and 600 reads a minute per user.
+
 Notes:
 
 - A remote client without a device key (minigw before 0.4.4, unencrypted clients) is allowed only while the device list

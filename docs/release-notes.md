@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- New (`minigw serve`, step 1 of 0.6.0): the gateway has a core database for users, projects, members, grants and notes (`core` next to `serve.json`), member routes under `/minigw/v1/projects`, admin routes and `minigw gw user|bind|project|member|grant|core` (backup, restore, audit). Without it nothing changes for the model routes; if it cannot be opened the gateway starts and project routes answer 503. Removing a device from the approved list now also raises the core epoch. Docs: gateway.md, admin-api.md.
+
 ## 0.5.26
 
 - Security (allowed folders, all gateways): an allowed folder (Claude CLI **Folders**) is now recorded when you add it: its final path and its identity (volume and inode; on Windows volume serial and file ID). The gateway checks the record at start, on every agent run and right before the agent starts, and also that the folder belongs to the gateway user (on Windows the owner is checked only for a folder that was missing at start, see below). A folder that was replaced by another one (renamed away and a new folder, a disk, a link in its place) is no longer given to agents; the reason is logged once and shown in `agents/claude.refused` (`minigw serve`). If you trust the new folder, remove it from the list and add it again. An existing setting is recorded once at the first start of this version (one log line per folder: `recorded <folder> -> <real path>`); that step trusts what is there. A folder that did not exist when it was recorded takes its identity at its first accepted use. This detects a replaced folder; it does not stop a local process with the gateway user's rights from swapping a folder during the few moments of an agent start.

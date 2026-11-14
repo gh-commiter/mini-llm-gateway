@@ -265,6 +265,33 @@ stops the gateway and removes autostart; the config and keys stay. An MSI instal
 creates the config. Its menu shows the status, devices waiting for approval (Allow / Reject), **Settings…**,
 **Copy Token**, **Start at sign-in**, **Open log** and **Quit**.
 
+## The core database (0.6.0, `minigw serve`)
+
+Users, device bindings, projects, members, grants and notes are kept in a SQLite database in the `core` folder next
+to `serve.json` (`core.db`, with its `-wal` and `-shm` files, `core.state`, `core.audit.log`, snapshots). The folder
+is private to the gateway's user (mode 0600; on Windows an ACL for the user only). The gateway opens it at start and
+holds a lock on it, so only one process uses it at a time.
+
+- **`503 core_unavailable`:** if the database cannot be opened (newer schema than this minigw, locked by another
+  process, damaged) the gateway still starts: the log has one `WARNING` with the reason, the project routes and the
+  core admin routes answer 503, the model routes work as before.
+- **Migrations:** forward only. Before the first pending migration the gateway writes a snapshot
+  `core-<schema>-<time>.db` next to the database (the last 3 are kept); a failing migration leaves the earlier ones
+  applied and the schema version at the last good one. A database written by a newer minigw is refused (503).
+- **Backup:** `minigw gw core backup <file>` writes a consistent copy while the gateway runs (the file must not exist;
+  it is readable by you only). The approved device list (`serve.json`) is not part of it.
+- **Restore:** `minigw gw core restore <file>` works only with the gateway stopped. It checks the file (same gateway,
+  schema not newer, integrity), keeps the current database as a snapshot, and puts the backup in place with one
+  rename. It brings back the users, bindings, memberships and grants of the backup, also ones revoked since, so it asks
+  you to confirm (`--yes` skips that). The epoch is set above both values (all runs and conversations end) and the
+  project-id counter never goes back. An interrupted restore is finished or rolled back at the next start.
+- **Audit:** `minigw gw core audit` lists the audit trail. `core.audit.log` next to the database also records restores
+  and migrations, so they survive a database swap.
+- **Devices:** removing a device from the approved list (`minigw gw devices deny`, the settings page, the tray) raises
+  the core's epoch before the call returns; the device keeps its binding.
+
+Members, projects and grants are managed with `minigw gw user|bind|project|member|grant` (see `minigw gw help`).
+
 ## Where things are stored
 
 | What | Mac app | Windows | Linux |
@@ -273,6 +300,7 @@ creates the config. Its menu shows the status, devices waiting for approval (All
 | Token, gateway key | Keychain | `serve.json` | `serve.json` |
 | Provider API keys | Keychain | Credential Manager | Secret Service (`secret-tool`), else `gateway-keys.json` (mode 0600) next to `serve.json` |
 | Lock for changes of `serve.json` | – | `serve.json.lock` next to `serve.json` (a change waits up to 5 s for another process) | same |
+| Core database (0.6.0) | – | `core\` next to `serve.json` | `core/` next to `serve.json` |
 | Admin secret | Keychain | `admin.secret` in the config folder | `admin.secret` in the config folder |
 | Log | – | `minigw-serve.log` in the config folder (tray) | the systemd journal |
 | Agents' copies and clones | Scratch folder (Settings → General) | Scratch folder | Scratch folder |
