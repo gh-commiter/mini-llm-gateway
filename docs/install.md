@@ -257,6 +257,21 @@ the MSI, or `rm ~/.local/bin/minigw`.
   the systemd user unit. `install.sh --uninstall` runs `minigw uninstall`, which removes the unit, the plugin entries
   and scratch folders, then removes the two files.
 
+## What is new on disk (0.6.0)
+
+- **Mac app:** `Mini Gateway.app/Contents/Helpers/minigw-core` (arm64, signed and notarized with the app, identifier
+  `dev.trojar.minigateway.core`) runs the project database for the app. It is only in the app, not in `minigw.zip`.
+- **Project database (`minigw serve`, Mac app):** a `core` folder. Mac: `~/Library/Application Support/Mini Gateway/core/`;
+  Windows: `%AppData%\minigw\core\`; Linux: `~/.config/minigw/core/`. It holds the projects, members, notes, usage
+  events and audit trail of the gateway; `usage.spool` next to `serve.json` holds usage events waiting for it. A client
+  that only connects to a gateway has none of this.
+- **Backups:** only the files you ask for with `minigw gw core backup <file>`; snapshots made by a migration or a restore sit
+  inside `core`. Nothing is backed up elsewhere.
+- **Licences:** `THIRD-PARTY-NOTICES.md` (the Go modules inside the binaries and their licences) is in the app
+  (`Contents/Resources`), in `minigw.zip`, in the MSI install folder, and a release file next to the Linux binaries.
+- **Uninstall leaves the core folder** on every system; only `--purge`/`PURGE=1`/`brew uninstall --zap` remove it (on the
+  Mac the app folder goes to the Trash). Details and removal by hand: [Gateway: the core database](gateway.md#the-core-database-060-minigw-serve).
+
 ## Build from source
 
 ```sh

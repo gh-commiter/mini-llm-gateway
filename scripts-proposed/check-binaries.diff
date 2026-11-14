@@ -1,0 +1,60 @@
+--- mg-build/scripts/check-binaries.sh
++++ mg-build/scripts/check-binaries.sh (proposed)
+@@ -1,15 +1,54 @@
+ #!/bin/zsh
+ # Preveri zgrajeno aplikacijo: podpis in da binarni datoteki nista instrumentirani (default.profraw).
+-#   check-binaries.sh [pot/do/Mini Gateway.app]
++#   check-binaries.sh [pot/do/Mini Gateway.app] [pot/do/minigw.zip]
++# 0.6.0: tudi pomočnik Contents/Helpers/minigw-core (obstaja, arm64, identifikator, hardened runtime, ista ekipa kot
++# aplikacija, žig časa pri Developer ID, žig različice go version -m = MGCommit, ni v minigw.zip) in obvestila o licencah.
++# minigw.zip: drugi argument, sicer ../release/minigw.zip ob aplikaciji, če obstaja (le po --release).
+ emulate -L zsh; set -eu
+ APP=${1:-build/Mini Gateway.app}
+-for b in "$APP/Contents/MacOS/MiniGateway" "$APP/Contents/Helpers/minigw" "$APP/Contents/Helpers/minigw-tui"; do
++ZIP=${2:-${APP:h}/release/minigw.zip}
++CORE="$APP/Contents/Helpers/minigw-core"
++fail() { print -u2 "FAIL: $*"; exit 1 }
++for b in "$APP/Contents/MacOS/MiniGateway" "$APP/Contents/Helpers/minigw" "$APP/Contents/Helpers/minigw-tui" "$CORE"; do
++  [[ -f $b ]] || fail "missing $b"
+   n=$(otool -l "$b" | grep -c __llvm_prf || true)
+   [[ $n == 0 ]] || { print -u2 "FAIL instrumented (coverage): $b"; exit 1 }
+ done
+ codesign --verify --deep --strict "$APP"
+ codesign --verify --strict "$APP/Contents/Helpers/minigw"
+ codesign --verify --strict -R='identifier "dev.trojar.minigateway.tui" and certificate leaf[subject.OU] = "Y2M489RDV8"' "$APP/Contents/Helpers/minigw-tui"
++# minigw-core: arm64, lasten identifikator, hardened runtime, ista ekipa kot aplikacija
++[[ $(lipo -archs "$CORE") == arm64 ]] || fail "minigw-core is not arm64 only: $(lipo -archs "$CORE")"
++codesign --verify --strict -R='identifier "dev.trojar.minigateway.core"' "$CORE" || fail "minigw-core identifier is not dev.trojar.minigateway.core"
++core_info=$(codesign -dvv "$CORE" 2>&1 || true); app_info=$(codesign -dvv "$APP" 2>&1 || true)
++print -r -- "$core_info" | grep -q '^CodeDirectory .*flags=0x[0-9a-f]*(.*runtime' || fail "minigw-core has no hardened runtime"
++team() { print -r -- "$1" | sed -n 's/^TeamIdentifier=//p' }
++[[ -n $(team "$app_info") && $(team "$app_info") != "not set" && $(team "$core_info") == $(team "$app_info") ]] \
++  || fail "minigw-core team '$(team "$core_info")' differs from the app '$(team "$app_info")'"
++if print -r -- "$core_info" | grep -q '^Authority=Developer ID Application'; then  # izdaja: tudi žig časa (notarizacija ga zahteva)
++  print -r -- "$core_info" | grep -q '^Timestamp=' || fail "minigw-core has no secure timestamp"
++fi
++# Žig različice: Go zapiše vcs.revision v binarno datoteko; mora biti commit aplikacije (MGCommit), ko ni -dirty.
++mgc=$(plutil -extract MGCommit raw "$APP/Contents/Info.plist")
++if [[ $mgc != *-dirty ]]; then
++  gv=$(go version -m "$CORE")
++  rev=$(print -r -- "$gv" | sed -n 's/^[[:space:]]*build[[:space:]]*vcs.revision=//p')
++  [[ -n $rev && $rev == $mgc* ]] || fail "minigw-core vcs.revision '$rev' is not MGCommit $mgc"
++  print -r -- "$gv" | grep -q 'vcs.modified=false' || fail "minigw-core was built from a modified tree"
++  print -r -- "$gv" | grep -q -e '-trimpath=true' -e 'trimpath=true' || fail "minigw-core was not built with -trimpath"
++  print -r -- "$gv" | grep -q 'CGO_ENABLED=0' || fail "minigw-core was built with cgo"
++fi
++# Obvestila o licencah v aplikaciji
++[[ -s "$APP/Contents/Resources/THIRD-PARTY-NOTICES.md" ]] || fail "THIRD-PARTY-NOTICES.md missing in the app Resources"
++# minigw.zip (odjemalec): minigw, minigw-tui in obvestila; minigw-core ni (pomočnik le za aplikacijo)
++if [[ -f $ZIP ]]; then
++  names=$(unzip -Z1 "$ZIP")
++  print -r -- "$names" | grep -qx 'minigw-core' && fail "minigw-core is in $ZIP"
++  for f in minigw minigw-tui THIRD-PARTY-NOTICES.md; do print -r -- "$names" | grep -qx $f || fail "$f missing in $ZIP"; done
++fi
+ # minigw se mora zagnati (MiniGW ni v swift test; globalna inicializacija se lahko sesuje)
+ "$APP/Contents/Helpers/minigw" -v >/dev/null || { print -u2 "FAIL: minigw -v does not run"; exit 1 }
+-print "ok: $(plutil -extract CFBundleShortVersionString raw "$APP/Contents/Info.plist") ($(plutil -extract CFBundleVersion raw "$APP/Contents/Info.plist")), signed, no coverage"
++# minigw-core se mora zagnati: brez -store izstopi s kodo 2 (usage), preden prebere kar koli iz fd 3/4
++rc=0; "$CORE" </dev/null >/dev/null 2>&1 || rc=$?
++[[ $rc == 2 ]] || fail "minigw-core without -store exits $rc, expected 2 (usage)"
++print "ok: $(plutil -extract CFBundleShortVersionString raw "$APP/Contents/Info.plist") ($(plutil -extract CFBundleVersion raw "$APP/Contents/Info.plist")), signed, no coverage, minigw-core ok"

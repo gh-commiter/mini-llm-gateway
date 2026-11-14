@@ -285,6 +285,16 @@ holds a lock on it, so only one process uses it at a time.
   rename. It brings back the users, bindings, memberships and grants of the backup, also ones revoked since, so it asks
   you to confirm (`--yes` skips that). The epoch is set above both values (all runs and conversations end) and the
   project-id counter never goes back. An interrupted restore is finished or rolled back at the next start.
+- **Where backups go:** only where you point `minigw gw core backup <file>`; the gateway makes none by itself. Put them
+  outside the core folder (a backup inside it is removed together with it, see below). The only automatic copies are the
+  migration snapshots and the restore snapshot, both inside the core folder.
+- **Uninstall:** the core folder is never removed by an uninstall or an upgrade, only by purge. Windows MSI: Uninstall and
+  upgrade leave `%AppData%\minigw\core`; `PURGE=1` (or `minigw uninstall --purge`) deletes the whole settings folder,
+  `core` with the projects, members, notes, usage events and audit trail, for good. Linux: `install.sh --uninstall` keeps
+  `~/.config/minigw/core`, `--purge` deletes it. Mac app: dragging the app to the Trash or `brew uninstall` keeps
+  `~/Library/Application Support/Mini Gateway/core`; `brew uninstall --zap` moves it to the Trash. Take a backup first if
+  you may want the projects again. By hand: stop the gateway, then delete the `core` folder (and `usage.spool` next to
+  `serve.json`); the gateway creates an empty core at the next start.
 - **Audit:** `minigw gw core audit` lists the audit trail. `core.audit.log` next to the database also records restores
   and migrations, so they survive a database swap.
 - **Devices:** removing a device from the approved list (`minigw gw devices deny`, the settings page, the tray) raises
