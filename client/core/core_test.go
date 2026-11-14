@@ -488,3 +488,29 @@ func TestBackupProtectsBeforeWriting(t *testing.T) { // core-fix 3
 		}
 	}
 }
+
+func TestBackupLeavesNoTempFileAndNothingOnFailure(t *testing.T) { // review L3
+	s := openT(t, t.TempDir())
+	defer s.Close()
+	out := t.TempDir()
+	if err := s.Backup(ctx, filepath.Join(out, "b.db")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Backup(ctx, filepath.Join(out, "b.db")); !errors.Is(err, os.ErrExist) { // never through an existing file or link
+		t.Fatalf("%v", err)
+	}
+	link := filepath.Join(out, "l.db")
+	if err := os.Symlink(filepath.Join(out, "elsewhere"), link); err == nil {
+		if err := s.Backup(ctx, link); err == nil {
+			t.Fatal("wrote through a link")
+		}
+		if _, err := os.Stat(filepath.Join(out, "elsewhere")); err == nil {
+			t.Fatal("the link target was created")
+		}
+	}
+	for _, d := range []string{s.dir, out} {
+		if m, _ := filepath.Glob(filepath.Join(d, ".backup-*")); len(m) != 0 {
+			t.Fatalf("temp files left: %v", m)
+		}
+	}
+}

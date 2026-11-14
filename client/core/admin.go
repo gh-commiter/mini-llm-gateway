@@ -179,6 +179,7 @@ func (s *Store) SetBinding(ctx context.Context, deviceID string, userID int64) e
 	if deviceID == "" || len(deviceID) > 256 {
 		return ErrInvalid{"device"}
 	}
+	defer s.reloadBound(ctx)
 	return s.adminWrite(ctx, "binding.set", deviceID, map[string]any{"user": userID}, func(tx *sql.Tx) (string, error) {
 		if err := exists(tx, "users", userID); err != nil {
 			return "", err
@@ -202,6 +203,7 @@ func (s *Store) SetBinding(ctx context.Context, deviceID string, userID int64) e
 }
 
 func (s *Store) RemoveBinding(ctx context.Context, deviceID string) error {
+	defer s.reloadBound(ctx)
 	return s.adminWrite(ctx, "binding.remove", deviceID, nil, func(tx *sql.Tx) (string, error) {
 		if err := countOne(tx.Exec(`DELETE FROM device_bindings WHERE device_id=?`, deviceID)); err != nil {
 			return "", err

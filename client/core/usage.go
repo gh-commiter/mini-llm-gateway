@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Usage events (contracts section 7): one row per model invocation, attribution frozen at admission.
@@ -51,6 +52,26 @@ CREATE TABLE usage_gaps(id TEXT PRIMARY KEY, count INTEGER NOT NULL, from_ms INT
 	return err
 }
 
+func migrate4(tx *sql.Tx) error { // folded totals keep the counts a report shows besides events and tokens
+	for _, c := range []string{"failed", "nested", "unknown_tokens"} {
+		if _, err := tx.Exec(`ALTER TABLE usage_daily ADD COLUMN ` + c + ` INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// capStr limits a stored string to n bytes (at a character boundary): an event is never refused for its model name.
+func capStr(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
+}
+
 func nullID(n int64) any {
 	if n == 0 {
 		return nil
@@ -69,7 +90,7 @@ func nullTok(n int64) any {
 func (s *Store) BeginEvent(ctx context.Context, e UsageEvent) error {
 	return s.write(ctx, func(tx *sql.Tx) error {
 		_, err := tx.Exec(`INSERT OR IGNORE INTO usage_events(id,parent_id,start,user_id,device_id,project_id,provider,model,outcome,token_source)
-VALUES(?,?,?,?,?,?,?,?,'open','unknown')`, e.ID, nullStr(e.ParentID), ms(e.Start), nullID(e.UserID), e.DeviceID, nullID(e.ProjectID), e.Provider, e.Model)
+VALUES(?,?,?,?,?,?,?,?,'open','unknown')`, e.ID, nullStr(e.ParentID), ms(e.Start), nullID(e.UserID), capStr(e.DeviceID, 256), nullID(e.ProjectID), capStr(e.Provider, 64), capStr(e.Model, 256))
 		return err
 	})
 }
@@ -91,11 +112,11 @@ func (s *Store) FinishEvent(ctx context.Context, e UsageEvent) error {
 
 func finishEvent(tx *sql.Tx, e UsageEvent) error {
 	if _, err := tx.Exec(`INSERT OR IGNORE INTO usage_events(id,parent_id,start,user_id,device_id,project_id,provider,model,outcome,token_source)
-VALUES(?,?,?,?,?,?,?,?,'open','unknown')`, e.ID, nullStr(e.ParentID), ms(e.Start), nullID(e.UserID), e.DeviceID, nullID(e.ProjectID), e.Provider, e.Model); err != nil {
+VALUES(?,?,?,?,?,?,?,?,'open','unknown')`, e.ID, nullStr(e.ParentID), ms(e.Start), nullID(e.UserID), capStr(e.DeviceID, 256), nullID(e.ProjectID), capStr(e.Provider, 64), capStr(e.Model, 256)); err != nil {
 		return err
 	}
 	_, err := tx.Exec(`UPDATE usage_events SET end=?, outcome=?, tokens_in=?, tokens_out=?, token_source=?, project_id=COALESCE(project_id,?), provider=CASE WHEN provider='' THEN ? ELSE provider END
-WHERE id=? AND outcome IN('open','interrupted')`, ms(e.End), e.Outcome, nullTok(e.TokensIn), nullTok(e.TokensOut), e.TokenSource, nullID(e.ProjectID), e.Provider, e.ID)
+WHERE id=? AND outcome IN('open','interrupted')`, ms(e.End), e.Outcome, nullTok(e.TokensIn), nullTok(e.TokensOut), e.TokenSource, nullID(e.ProjectID), capStr(e.Provider, 64), e.ID)
 	return err
 }
 
@@ -125,10 +146,12 @@ func markInterrupted(tx *sql.Tx) error {
 func (s *Store) FoldOldUsage(ctx context.Context) (n int64, err error) {
 	cut := ms(s.now().UTC().AddDate(0, 0, -usageRetentionDays))
 	err = s.write(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.Exec(`INSERT INTO usage_daily(day,user_id,project_id,provider,model,events,tokens_in,tokens_out)
-SELECT strftime('%Y-%m-%d', start/1000, 'unixepoch'), COALESCE(user_id,0), COALESCE(project_id,0), provider, model, count(*), COALESCE(sum(tokens_in),0), COALESCE(sum(tokens_out),0)
+		if _, err := tx.Exec(`INSERT INTO usage_daily(day,user_id,project_id,provider,model,events,tokens_in,tokens_out,failed,nested,unknown_tokens)
+SELECT strftime('%Y-%m-%d', start/1000, 'unixepoch'), COALESCE(user_id,0), COALESCE(project_id,0), provider, model, count(*), COALESCE(sum(tokens_in),0), COALESCE(sum(tokens_out),0),
+  sum(outcome IN('error','cancelled','interrupted')), sum(parent_id IS NOT NULL), sum(tokens_in IS NULL AND tokens_out IS NULL)
 FROM usage_events WHERE start<? AND outcome!='open' GROUP BY 1,2,3,4,5
-ON CONFLICT(day,user_id,project_id,provider,model) DO UPDATE SET events=events+excluded.events, tokens_in=tokens_in+excluded.tokens_in, tokens_out=tokens_out+excluded.tokens_out`, cut); err != nil {
+ON CONFLICT(day,user_id,project_id,provider,model) DO UPDATE SET events=events+excluded.events, tokens_in=tokens_in+excluded.tokens_in, tokens_out=tokens_out+excluded.tokens_out,
+  failed=failed+excluded.failed, nested=nested+excluded.nested, unknown_tokens=unknown_tokens+excluded.unknown_tokens`, cut); err != nil {
 			return err
 		}
 		r, err := tx.Exec(`DELETE FROM usage_events WHERE start<? AND outcome!='open'`, cut)
@@ -177,6 +200,7 @@ type UsageFilter struct {
 // the own ones, anyone else (reader, grant only, no role) gets ErrNotFound as for an invisible resource; no project:
 // the caller's own events over all projects.
 func (s *Store) Usage(ctx context.Context, p Principal, project int64, days int) (rep UsageReport, err error) {
+	lim := s.rate(p.UserID, false) // a read like any other: counted now, answered after the checks (L5)
 	if days < 1 || days > usageRetentionDays {
 		return rep, ErrInvalid{"days"}
 	}
@@ -184,6 +208,7 @@ func (s *Store) Usage(ctx context.Context, p Principal, project int64, days int)
 		if err := checkPrincipal(tx, p); err != nil {
 			return err
 		}
+		gaps := false // lost-event records are for project admins (their project's period) and the owner
 		f := UsageFilter{User: p.UserID}
 		if project != 0 {
 			a, err := loadAccess(tx, p.UserID, project)
@@ -192,14 +217,17 @@ func (s *Store) Usage(ctx context.Context, p Principal, project int64, days int)
 			}
 			switch a.Role {
 			case Admin:
-				f = UsageFilter{Project: project}
+				f, gaps = UsageFilter{Project: project}, true
 			case Developer:
 				f = UsageFilter{Project: project, User: p.UserID}
 			default:
 				return ErrNotFound
 			}
 		}
-		rep, err = s.usageRows(tx, days, f, false)
+		if lim != nil {
+			return lim
+		}
+		rep, err = s.usageRows(tx, days, f, false, gaps)
 		return err
 	})
 	return
@@ -212,13 +240,13 @@ func (s *Store) AdminUsage(ctx context.Context, days int, f UsageFilter) (rep Us
 		return rep, ErrInvalid{"days"}
 	}
 	err = s.read(ctx, func(tx *sql.Tx) error {
-		rep, err = s.usageRows(tx, days, f, true)
+		rep, err = s.usageRows(tx, days, f, true, true)
 		return err
 	})
 	return
 }
 
-func (s *Store) usageRows(tx *sql.Tx, days int, f UsageFilter, withFolded bool) (UsageReport, error) {
+func (s *Store) usageRows(tx *sql.Tx, days int, f UsageFilter, withFolded, withGaps bool) (UsageReport, error) {
 	now := s.now().UTC()
 	from := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -(days - 1))
 	where, args := []string{"e.start>=?"}, []any{ms(from)}
@@ -260,19 +288,22 @@ FROM usage_events e LEFT JOIN users u ON u.id=e.user_id WHERE ` + strings.Join(w
 		if f.Model != "" {
 			fw, fa = append(fw, "d.model=?"), append(fa, f.Model)
 		}
-		fr, err := tx.Query(`SELECT d.day, d.model, d.user_id, COALESCE(u.name,''), d.project_id, d.events, d.tokens_in, d.tokens_out FROM usage_daily d LEFT JOIN users u ON u.id=d.user_id WHERE `+strings.Join(fw, " AND ")+` ORDER BY d.day DESC`, fa...)
+		fr, err := tx.Query(`SELECT d.day, d.model, d.user_id, COALESCE(u.name,''), d.project_id, d.events, d.tokens_in, d.tokens_out, d.unknown_tokens, d.nested, d.failed FROM usage_daily d LEFT JOIN users u ON u.id=d.user_id WHERE `+strings.Join(fw, " AND ")+` ORDER BY d.day DESC`, fa...)
 		if err != nil {
 			return rep, err
 		}
 		for fr.Next() {
 			var r UsageRow
-			if err := fr.Scan(&r.Day, &r.Model, &r.UserID, &r.UserName, &r.ProjectID, &r.Events, &r.TokensIn, &r.TokensOut); err != nil {
+			if err := fr.Scan(&r.Day, &r.Model, &r.UserID, &r.UserName, &r.ProjectID, &r.Events, &r.TokensIn, &r.TokensOut, &r.UnknownTokens, &r.Nested, &r.Failed); err != nil {
 				fr.Close()
 				return rep, err
 			}
 			rep.Rows = append(rep.Rows, r)
 		}
 		fr.Close()
+	}
+	if !withGaps {
+		return rep, nil
 	}
 	gr, err := tx.Query(`SELECT count, from_ms, to_ms FROM usage_gaps WHERE to_ms>=? ORDER BY from_ms`, ms(from))
 	if err != nil {
@@ -292,36 +323,30 @@ FROM usage_events e LEFT JOIN users u ON u.id=e.user_id WHERE ` + strings.Join(w
 }
 
 // BoundUser is the user a device is bound to (0 = none), whether or not the user is active: attribution of a model
-// request, not an access decision.
-func (s *Store) BoundUser(ctx context.Context, deviceID string) (id int64, err error) {
-	err = s.rdb.QueryRowContext(ctx, `SELECT user_id FROM device_bindings WHERE device_id=?`, deviceID).Scan(&id)
-	if err == sql.ErrNoRows {
-		return 0, nil
+// request, not an access decision. It reads an in-memory snapshot that is reloaded after every binding change, so a
+// model request does no database I/O for it (A3).
+func (s *Store) BoundUser(ctx context.Context, deviceID string) (int64, error) {
+	if m := s.bound.Load(); m != nil {
+		return (*m)[deviceID], nil
 	}
-	return
+	return 0, nil
 }
 
-// UsageGapRecord is a gap as the spool keeps it (the id makes a replay idempotent).
-type UsageGapRecord struct {
-	ID       string
-	Count    int64
-	From, To time.Time
-}
-
-// ReplayUsage stores spooled events and gaps in one transaction. It is idempotent: events by FinishEvent's rule,
-// gaps by id, so a replay that was interrupted before the spool file was cleared can simply run again.
-func (s *Store) ReplayUsage(ctx context.Context, evs []UsageEvent, gaps []UsageGapRecord) error {
-	return s.write(ctx, func(tx *sql.Tx) error {
-		for _, e := range evs {
-			if err := finishEvent(tx, e); err != nil {
-				return err
-			}
+func (s *Store) reloadBound(ctx context.Context) {
+	rows, err := s.rdb.QueryContext(ctx, `SELECT device_id, user_id FROM device_bindings`)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	m := map[string]int64{}
+	for rows.Next() {
+		var d string
+		var u int64
+		if rows.Scan(&d, &u) == nil {
+			m[d] = u
 		}
-		for _, g := range gaps {
-			if _, err := tx.Exec(`INSERT OR IGNORE INTO usage_gaps(id,count,from_ms,to_ms) VALUES(?,?,?,?)`, g.ID, g.Count, ms(g.From), ms(g.To)); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	}
+	if rows.Err() == nil {
+		s.bound.Store(&m)
+	}
 }

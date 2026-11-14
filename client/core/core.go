@@ -53,6 +53,7 @@ type Store struct {
 	epoch atomic.Int64 // mirror of st.Epoch for lock-free reads
 	now   func() time.Time
 	rl    rateLimits
+	bound atomic.Pointer[map[string]int64] // device -> user snapshot for event attribution
 	st    state
 	gw    string
 }
@@ -65,7 +66,7 @@ type state struct {
 }
 
 // migrations is ordered and forward only; migration i brings the schema to version i+1. Tests replace it.
-var migrations = []func(*sql.Tx) error{migrate1, migrate2, migrate3}
+var migrations = []func(*sql.Tx) error{migrate1, migrate2, migrate3, migrate4}
 
 func migrate1(tx *sql.Tx) error {
 	_, err := tx.Exec(`
@@ -170,6 +171,7 @@ func (s *Store) open() error {
 	m.Epoch, m.ProjectHigh = max(m.Epoch, side.Epoch), max(m.ProjectHigh, side.ProjectHigh)
 	s.st, s.gw = m, m.GatewayID
 	s.epoch.Store(m.Epoch)
+	defer s.reloadBound(ctx)
 	if err := s.write(ctx, markInterrupted); err != nil { // events a crash cut off (a spool replay is the caller's business)
 		return err
 	}

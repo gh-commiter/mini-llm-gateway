@@ -1,8 +1,11 @@
 package core
 
 import (
+	"errors"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func (f *fx) event(id, parent string, user, project int64, model, outcome string, in, out int64, at time.Time) UsageEvent {
@@ -171,9 +174,87 @@ func TestUsageGapsAreListedAndIdempotent(t *testing.T) {
 	f.ok(f.AddGap(ctx, "g1", 7, a, b))
 	f.ok(f.AddGap(ctx, "g1", 7, a, b)) // a replay of the same gap adds nothing
 	f.ok(f.AddGap(ctx, "g0", 1, a.AddDate(-1, 0, 0), b.AddDate(-1, 0, 0)))
-	rep, err := f.Usage(ctx, f.p("ana"), 0, 7)
+	rep, err := f.AdminUsage(ctx, 7, UsageFilter{}) // the owner
 	f.ok(err)
 	if len(rep.Gaps) != 1 || rep.Gaps[0].Count != 7 || !rep.Gaps[0].From.Equal(a.Truncate(time.Millisecond)) {
 		t.Fatalf("%+v", rep.Gaps)
+	}
+	// review L5: members see gaps only as admin of the project they asked about
+	for _, c := range []struct {
+		user    string
+		project int64
+		want    int
+	}{{"ana", 0, 0}, {"ana", f.pid["fakture"], 0}, {"bor", f.pid["fakture"], 0}, {"fani", f.pid["fakture"], 1}} {
+		r, err := f.Usage(ctx, f.p(c.user), c.project, 7)
+		f.ok(err)
+		if len(r.Gaps) != c.want {
+			t.Errorf("%s project %d: %d gaps, want %d", c.user, c.project, len(r.Gaps), c.want)
+		}
+	}
+}
+
+func TestUsageCountsAgainstTheReadLimit(t *testing.T) { // review L5
+	f := newFx(t)
+	readsPerMin = 3
+	defer func() { readsPerMin = 600 }()
+	p := f.p("ana")
+	for i := 0; i < 3; i++ {
+		_, err := f.Usage(ctx, p, 0, 7)
+		f.ok(err)
+	}
+	_, err := f.Usage(ctx, p, 0, 7)
+	var lim ErrLimit
+	if !errors.As(err, &lim) {
+		t.Fatalf("got %v", err)
+	}
+	_, err = f.Usage(ctx, f.p("dana"), f.pid["fakture"], 7) // the checks still come first: a stranger gets 404, not 429
+	is(t, err, ErrNotFound)
+}
+
+func TestUsageStringsAreCapped(t *testing.T) { // review L6
+	f := newFx(t)
+	long := strings.Repeat("é", 400) // 800 bytes
+	f.ok(f.BeginEvent(ctx, UsageEvent{ID: "c1", Start: f.now(), DeviceID: strings.Repeat("d", 500), Provider: strings.Repeat("p", 100), Model: long}))
+	f.ok(f.FinishEvent(ctx, UsageEvent{ID: "c1", End: f.now(), Outcome: OutcomeOK, TokensIn: -1, TokensOut: -1, TokenSource: "unknown", Provider: "x"}))
+	var model, dev, prov string
+	f.DB().QueryRow(`SELECT model, device_id, provider FROM usage_events WHERE id='c1'`).Scan(&model, &dev, &prov)
+	if len(model) > 256 || len(model) < 250 || !utf8.ValidString(model) || len(dev) != 256 || len(prov) != 64 {
+		t.Fatalf("%d %d %d", len(model), len(dev), len(prov))
+	}
+}
+
+func TestFoldedTotalsKeepFailedNestedAndUnknownCounts(t *testing.T) { // review (should-fix)
+	f := newFx(t)
+	clock := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
+	f.Store.now = func() time.Time { return clock }
+	old := clock.AddDate(0, 0, -(usageRetentionDays + 5))
+	f.event("p", "", f.uid["ana"], f.pid["fakture"], "m", "ok", 10, 1, old)
+	f.event("n", "p", f.uid["ana"], f.pid["fakture"], "m", "error", -1, -1, old)
+	f.event("c", "", f.uid["ana"], f.pid["fakture"], "m", "cancelled", 5, 5, old)
+	_, err := f.FoldOldUsage(ctx)
+	f.ok(err)
+	rep, err := f.AdminUsage(ctx, 3650, UsageFilter{})
+	f.ok(err)
+	if len(rep.Rows) != 1 {
+		t.Fatalf("%+v", rep.Rows)
+	}
+	r := rep.Rows[0]
+	if r.Events != 3 || r.Failed != 2 || r.Nested != 1 || r.UnknownTokens != 1 {
+		t.Fatalf("%+v", r)
+	}
+}
+
+func TestBoundUserIsAMemorySnapshot(t *testing.T) { // review A3
+	f := newFx(t)
+	f.ok(f.SetBinding(ctx, "dev-new", f.uid["eva"]))
+	if id, _ := f.BoundUser(ctx, "dev-new"); id != f.uid["eva"] {
+		t.Fatalf("%d", id)
+	}
+	f.rdb.Close() // no database I/O is needed to attribute a request
+	if id, err := f.BoundUser(ctx, "dev-new"); id != f.uid["eva"] || err != nil {
+		t.Fatalf("%d %v", id, err)
+	}
+	if id, _ := f.BoundUser(ctx, "unknown"); id != 0 {
+		t.Fatal("unbound device attributed")
 	}
 }
