@@ -49,6 +49,7 @@ public final class Router: Sendable {
     let onDevice: @Sendable (Noise.Device) -> Void  // aplikacija doda novo napravo v nastavitve, beleži »zadnjič«
     let onActivity: @Sendable (Activity) -> Void
     let admin: AdminHooks?  // skrbniški API (aplikacija); nil = ni ga
+    let core: CoreHelper?  // 0.6.0: the helper that hosts the project core (CoreForward.swift); nil = every project route answers 503
     let catalog: Catalog
     let probes = Probes()
     /// Zgodovina naprav in sej: Router.history (aplikacija); testi dajo svojo, da jih vzporedni testi ne motijo.
@@ -62,7 +63,8 @@ public final class Router: Sendable {
                 onLog: @escaping @Sendable (RequestLog) -> Void = { _ in },
                 onDevice: @escaping @Sendable (Noise.Device) -> Void = { _ in },
                 onActivity: @escaping @Sendable (Activity) -> Void = { _ in },
-                admin: AdminHooks? = nil, history: GatewayHistory = Router.history, copilotConfig: URL = Copilot.userConfig, allowedFolders: AllowedFolders = AllowedFolders()) {
+                admin: AdminHooks? = nil, core: CoreHelper? = nil, history: GatewayHistory = Router.history, copilotConfig: URL = Copilot.userConfig, allowedFolders: AllowedFolders = AllowedFolders()) {
+        self.core = core
         self.allowedFolders = allowedFolders
         allowedFolders.record(config.claudeCLI.allowedRoots, records: config.claudeCLI.allowedRecords)
         self.config = config
@@ -214,6 +216,10 @@ public final class Router: Sendable {
 
         if req.path == Self.adminPrefix || req.path.hasPrefix(Self.adminPrefix + "/") {  // lastna skrivnost, ne žeton
             return (await adminHTTP(req, rid: rid, writer: writer), nil, "admin")
+        }
+        // 0.6.0: its own token, device and principal rules (CoreForward.swift); before the generic ones, as in Go (serve.go handle)
+        if CoreRoutes.isMemberPath(req.path.removingPercentEncoding ?? req.path) {
+            return (await memberHTTP(req, rid: rid, writer: writer), nil, nil)
         }
         if req.header(AgentRun.chainHeader) != nil, AgentRun.current == nil {  // veriga agentov je le v prehodu; od zunaj je ponarejena
             return (await error(400, "invalid_request_error", "The X-Minigw-Agent-Chain header is not accepted", rid: rid, writer: writer), nil, nil)

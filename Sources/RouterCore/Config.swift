@@ -101,6 +101,9 @@ public struct RouterConfig: Codable, Sendable, Equatable {
     public var appleFM = AppleFMConfig()
     public var siri = SiriConfig()
     public var devices: [DeviceConfig] = []
+    /// 0.6.0: removed devices whose core epoch was not raised yet (the helper was down); durable with the removal, sent as
+    /// `reconcile` before project routes are served (CoreHelper). As pendingRevocations in serve.json.
+    public var pendingRevocations: [String] = []
     /// Vgrajena ponudnika (kot builtinGateways v minigw serve): vedno na seznamu, izklop da, odstranitev in preimenovanje ne.
     public static let builtInProviders: Set<String> = ["litellm", "openrouter"]
     /// Kot minigw serve: neznana naprava z žetonom je dovoljena le, dokler je seznam prazen in je to vklopljeno; sicer čaka
@@ -271,6 +274,7 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         appleFM = try c.decodeIfPresent(AppleFMConfig.self, forKey: .appleFM) ?? d.appleFM
         siri = try c.decodeIfPresent(SiriConfig.self, forKey: .siri) ?? d.siri
         devices = try c.decodeIfPresent([DeviceConfig].self, forKey: .devices) ?? d.devices
+        pendingRevocations = try c.decodeIfPresent([String].self, forKey: .pendingRevocations) ?? []
         // Nastavitve pred odobritvijo naprav (vsaka naprava je bila sprejeta in dodana): naštete ostanejo dovoljene, pri
         // praznem seznamu ostane dovoljena vsaka (brez dela za uporabnika).
         allowAnyDevice = try c.decodeIfPresent(Bool.self, forKey: .allowAnyDevice) ?? devices.isEmpty
@@ -306,7 +310,7 @@ public struct RouterConfig: Codable, Sendable, Equatable {
             if draft[keyPath: kp] == old[keyPath: kp] { d[keyPath: kp] = new[keyPath: kp] }
         }
         take(\.host); take(\.port); take(\.allowedClients); take(\.allowPlainRemote); take(\.allowAnyDevice); take(\.allowLocalApps); take(\.claudeCLI); take(\.appleFM)
-        take(\.siri); take(\.codex); take(\.copilot); take(\.grok); take(\.foundry); take(\.scratchFolder); take(\.scratchName); take(\.runCommands); take(\.worktreeNetwork); take(\.worktreeCodexNetwork)
+        take(\.siri); take(\.codex); take(\.copilot); take(\.grok); take(\.foundry); take(\.scratchFolder); take(\.scratchName); take(\.runCommands); take(\.pendingRevocations); take(\.worktreeNetwork); take(\.worktreeCodexNetwork)
         for (p, rec) in d.claudeCLI.allowedRecords where rec.ino == 0 {  // C1: an identity adopted meanwhile is not lost to an older draft
             if let cur = new.claudeCLI.allowedRecords[p], cur.ino != 0, cur.real == rec.real { d.claudeCLI.allowedRecords[p] = cur }
         }
@@ -324,6 +328,17 @@ public struct RouterConfig: Codable, Sendable, Equatable {
         }
         out += n.filter { x in find(o, x.id) == nil && find(out, x.id) == nil }  // drugje dodani
         return out
+    }
+
+    /// The config to save when `new` replaces `old`: the pending revocation marks are the app's own (never a stale copy's), and
+    /// every device that is on `old`'s list and not on `new`'s gets a mark, so the mark is durable with the removal itself.
+    /// Settings, the admin API and the CLI all end in one save through this.
+    public static func markingRemovals(_ new: RouterConfig, old: RouterConfig) -> (config: RouterConfig, removed: [String]) {
+        var c = new
+        let removed = old.devices.map(\.id).filter { id in !new.devices.contains { $0.id == id } }
+        c.pendingRevocations = old.pendingRevocations
+        for id in removed where !c.pendingRevocations.contains(id) { c.pendingRevocations.append(id) }
+        return (c, removed)
     }
 
     public var allowedClientList: Set<String> {

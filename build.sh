@@ -60,6 +60,10 @@ codesign --force --options runtime --timestamp --identifier dev.trojar.minigatew
 # Nastavitve v terminalu (minigw gw settings): Go, kliče nazaj minigw (gw api); sam ne bere Keychaina, zato lasten identifikator.
 (cd client && CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o "../$APP/Contents/Helpers/minigw-tui" ./cmd/minigw-tui)
 codesign --force --options runtime --timestamp --identifier dev.trojar.minigateway.tui --sign "$IDENTITY" "$APP/Contents/Helpers/minigw-tui"
+# Projekti 0.6.0: minigw-core, pomočnik s skupno kodo Go (client/core, client/coreapi); aplikacija ga zažene prek vtičnice (docs/gateway.md).
+# Lasten identifikator (ne bere Keychaina). Ni v minigw.zip (le aplikacija ga uporablja): SHA256SUMS ga krije prek zip in dmg aplikacije.
+(cd client && CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o "../$APP/Contents/Helpers/minigw-core" ./cmd/minigw-core)
+codesign --force --options runtime --timestamp --identifier dev.trojar.minigateway.core --sign "$IDENTITY" "$APP/Contents/Helpers/minigw-core"
 codesign --force --options runtime --timestamp --sign "$IDENTITY" "$APP"
 codesign --verify --strict "$APP"
 

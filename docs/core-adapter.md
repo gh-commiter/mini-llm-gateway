@@ -84,6 +84,34 @@ carries the id of its request. Go: `coreapi.WriteRequest/ReadRequest/WriteRespon
 10. **Opening the store** (`core.Open` with the private-folder and backup-file protection of the platform) and closing it; the
     OS account name for `ensure-owner`.
 
+## The Mac column: which duties are done
+
+The Mac app is the adapter of the helper `minigw-core` (`client/cmd/minigw-core`; Swift: `Sources/RouterCore/CoreHelper.swift`,
+`CoreForward.swift`). The helper is started with fd 3 = a socketpair end and fd 4 = a pipe with a 32-byte per-start
+secret (both fixed); it checks that the peer of fd 3 is its parent (`LOCAL_PEERPID`, `LOCAL_PEERCRED`, parent pid
+captured at start), then a mutual HMAC handshake proves the secret both ways and negotiates the protocol version
+(`hello`, `hello_ok`, `auth`, `ready`; frames of at most 1 KiB), then `coreapi` frames follow. It has no listener, logs
+reasons only (never bodies), answers a request within 30 s or with the `core_unavailable` 503, and exits on EOF (0),
+when its parent changes (3), or when the peer is refused (1). A store that cannot be opened is not an exit: every
+request is answered with the 503. `testdata/unavailable.json` and `testdata/no_project_access.json` (the two bodies the
+app may answer itself) and `testdata/paths.json` (`IsMemberPath`, `IsAdminPath`) are asserted by the Go and the Swift tests.
+
+| # | Duty | Mac, 0.6.0 task "core helper" |
+|---|---|---|
+| 1 | Tunnel and device proof | existing Noise code; `device` of a member request is the one proven in this tunnel |
+| 2 | Approved list, revocation | done: `AppState.apply` marks every removal in the same save (`RouterConfig.pendingRevocations`), the admin route calls `device-revoked` before it answers (`CoreHelper.revoke`), the next ready sends `reconcile` before project routes are served |
+| 3 | Admin authentication, non-core admin routes | unchanged; core routes (`IsAdminPath`) are forwarded after it |
+| 4 | Token for member routes, run port exclusion, `agentPeer` | done for the member routes (`Router.memberHTTP`); the run port itself is a later task |
+| 5 | Body reading and the `Request` | done (`MaxBody`, `bodyTooLarge`; `bodyUnreadable` never occurs because the body is complete when routing starts) |
+| 6 | Agent runs, run port, `RunCap` | later |
+| 7 | Project admission of an agent request, `scope`, `agent-home` | later |
+| 8 | Usage events | later (the helper does not start the usage recorder yet) |
+| 9 | Quota | not part of the core |
+| 10 | Opening the store | done in the helper (`core.Open`, folder 0700 made by the app); `ensure-owner` at the first ready |
+
+Known difference from `minigw serve`: while the helper is down an agent peer gets the 503 (the helper is what would
+answer 403 first); the gateway has the store in-process and answers 403.
+
 ## What resisted the split
 
 - Tests that pause a request after admission (the revocation barrier) use `Options.AfterAdmission`, a Go hook; the helper has none.

@@ -115,10 +115,18 @@ final class AppState: ObservableObject {
     struct Running: Identifiable { let id: String; let time: Date; let model: String; var step: String? }
     @Published var inflight: [Running] = []
     let keychain = Keychain()
+    /// 0.6.0: the helper that hosts the project core; lives as long as the app (a router restart does not restart it).
+    /// Its store is <Application Support>/Mini Gateway/core (0700); missing binary = project routes answer 503.
+    let core: CoreHelper
+    nonisolated(unsafe) static var coreHelper: CoreHelper?  // for applicationWillTerminate
     private var server: RouterServer?
     private let log = Logger(subsystem: "dev.trojar.minigateway", category: "app")
 
     init() {
+        let marks = ConfigMarks()
+        core = CoreHelper(binary: CoreHelper.bundled(), store: CoreHelper.defaultStore, marks: marks)
+        marks.state = self
+        Self.coreHelper = core
         for (folder, real) in config.claudeCLI.recordFolders() {  // M2: stara nastavitev brez zapisov: enkrat zapiši trenutno stanje
             log.notice("recorded \(folder, privacy: .public) -> \(real, privacy: .public)")
         }
@@ -137,6 +145,9 @@ final class AppState: ObservableObject {
             }
         }
         ShareHub.cleanupStale()
+        do { try CoreHelper.prepareStoreFolder(CoreHelper.defaultStore); core.start() } catch {
+            log.error("core folder: \(error.localizedDescription, privacy: .public): project routes answer 503")  // no helper without its private folder
+        }
         keychain.delete("copilot-token")  // #81 L1: žeton Copilot do 0.5.24 se ne uporablja več
         if ScratchOwner.claim(config.scratchURL, id: config.instanceID).isEmpty {  // N4: v mapi drugega prehoda nič
             NativeHub.cleanupStale(config.scratch("tmp").appendingPathComponent("native-markers"))  // označbe native po sesutju
@@ -222,7 +233,7 @@ final class AppState: ObservableObject {
                                for (account, key) in keys {  // ključi le po uspešni spremembi, pred ponovnim zagonom
                                    if let key { self.keychain.set(account, key) } else { self.keychain.delete(account) }
                                }
-                               self.apply(c)
+                               self.apply(c, revoke: false)  // a removed device is revoked by the admin route before it answers
                                return c
                            }
                        },
@@ -263,7 +274,7 @@ final class AppState: ObservableObject {
                 case .finished(let id): self.inflight.removeAll { $0.id == id }
                 }
             }
-        }, admin: adminHooks(), allowedFolders: allowedFolders)
+        }, admin: adminHooks(), core: core, allowedFolders: allowedFolders)
         writeAdminItem()
         let s = RouterServer(router: router, key: routerKey)
         s.onState = { [weak self] state in
@@ -370,13 +381,39 @@ final class AppState: ObservableObject {
         return failure
     }
 
-    func apply(_ c: RouterConfig) {
-        var c = c
+    /// Every removal of an approved device (Settings, the admin API and so the CLI) ends here: the pending mark is saved with the
+    /// removal itself, then the core epoch goes up (CoreHelper.revoke, called by the admin route before it answers; for the other
+    /// paths `revoke` is true and it follows at once). A helper that is down keeps the mark; reconcile does it at the next ready.
+    func apply(_ c: RouterConfig, revoke: Bool = true) {
+        let marked = RouterConfig.markingRemovals(c, old: config)  // durable with the removal itself
+        var c = marked.config
+        let removed = marked.removed
         c.claudeCLI.recordFolders()  // M2: nova mapa dobi zapis; obstoječi ostanejo
         config = c
         c.save()
         restart()
+        if revoke && !removed.isEmpty { Task { _ = await core.flush() } }
     }
+
+    func markRevocation(_ device: String) {
+        guard !config.pendingRevocations.contains(device) else { return }
+        config.pendingRevocations.append(device)
+        config.save()
+    }
+
+    func clearRevocations(_ devices: [String]) {
+        guard config.pendingRevocations.contains(where: devices.contains) else { return }
+        config.pendingRevocations.removeAll { devices.contains($0) }
+        config.save()
+    }
+}
+
+/// The pending device revocations live in the app's config (RouterConfig.pendingRevocations).
+final class ConfigMarks: CoreRevocationMarks, @unchecked Sendable {
+    nonisolated(unsafe) weak var state: AppState?
+    func list() async -> [String] { await MainActor.run { state?.config.pendingRevocations ?? [] } }
+    func add(_ device: String) async { await MainActor.run { state?.markRevocation(device) } }
+    func clear(_ devices: [String]) async { await MainActor.run { state?.clearRevocations(devices) } }
 }
 
 /// ⌘, v meniju aplikacije (prej ga je dala scena Settings).
@@ -546,6 +583,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     .write(to: URL(fileURLWithPath: dir).appendingPathComponent(name + ".png"))
             }
         }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        AppState.coreHelper?.stop()  // the helper sees EOF and exits; it also exits by itself when the app dies
     }
 
     @MainActor

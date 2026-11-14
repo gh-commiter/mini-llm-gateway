@@ -153,7 +153,11 @@ extension Router {
             return await adminError(403, why, rid: rid, writer: writer)
         }
         guard req.body.count <= 1 << 20 else { return await adminError(413, "Request body too large", rid: rid, writer: writer) }
-        let (status, obj) = await adminDo(req.method, path: String(req.path.dropFirst(Self.adminPrefix.count)), query: req.query,
+        let below = String(req.path.dropFirst(Self.adminPrefix.count))  // the escaped path below the prefix
+        if CoreRoutes.isAdminPath(req.method, below) {  // 0.6.0: the routes of coreapi (users, bindings, projects, grants, audit, core, usage/events)
+            return await coreAdmin(req, below: below, rid: rid, writer: writer)
+        }
+        let (status, obj) = await adminDo(req.method, path: below, query: req.query,
                                           body: req.body, hooks: admin)
         return await adminReply(status, obj, rid: rid, writer: writer)
     }
@@ -279,7 +283,12 @@ extension Router {
             guard let gone = c.devices.first(where: { $0.id == arg }) else {
                 throw AdminError(404, "no allowed or waiting device with the ID \(arg) (minigw gw devices lists the IDs)")
             }
-            _ = try await hooks.update { c in c.devices.removeAll { $0.id == gone.id } }
+            _ = try await hooks.update { c in c.devices.removeAll { $0.id == gone.id } }  // the app marks it durably in the same save
+            // The epoch goes up before this call answers; when the helper cannot do it now the mark stays and the next ready does it
+            // (CoreHelper.revoke); a helper error is reported as in minigw serve.
+            if let core, case .failed(let why) = await core.revoke(gone.id) {
+                throw AdminError(500, "the device was removed and its revocation is recorded, but the core epoch could not be raised yet: " + why)
+            }
             return (200, ["device": ["id": gone.id, "name": gone.name]])
         case "PATCH devices/{}":  // preimenovanje dovoljene naprave (ime je le oznaka)
             let b = try AdminBody(body, ["name"])
