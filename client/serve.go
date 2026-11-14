@@ -82,11 +82,13 @@ type serveConfig struct {
 	Instance string `json:"instance,omitempty"`
 }
 
-// folderRecord: the final path and identity (st_dev+st_ino; Windows volume serial + file ID) of an allowed folder.
-// Dev and Ino are 0 for a folder that did not exist when it was recorded.
+// folderRecord: the final path and identity of an allowed folder: a stable volume id (Linux statfs f_fsid, Windows volume
+// serial; never st_dev, which changes with the mount order) and the inode / file ID (see recordIDOf).
+// Ino is 0 for a folder that did not exist when it was recorded (adopted at its first use). Vol 0 = no stable volume
+// id (some network/FUSE/tmpfs filesystems, macOS): the inode alone is compared.
 type folderRecord struct {
 	Real string `json:"real"`
-	Dev  uint64 `json:"dev,omitempty"`
+	Vol  uint64 `json:"vol,omitempty"`
 	Ino  uint64 `json:"ino,omitempty"`
 }
 
@@ -320,6 +322,7 @@ func serveCommand(args []string) {
 
 	switch sub {
 	case "init":
+		defer lockServeConfig(*cfgPath)() // B3: load-modify-write
 		c, err := loadServeConfig(*cfgPath)
 		created := errors.Is(err, os.ErrNotExist)
 		if created {
@@ -683,7 +686,7 @@ func (s *server) checkFolderRecords(had map[string]folderRecord, missing []strin
 		why := ""
 		if !samePath(r, rec.Real) {
 			why = "its real path changed to " + r
-		} else if id, err := fileIDOf(r); err == nil && rec.id() != (fileID{}) && id != rec.id() {
+		} else if id, err := recordIDOf(r); err == nil && !rec.matches(id) {
 			why = "its identity changed (another folder is there now)"
 		}
 		if why != "" {
@@ -718,6 +721,23 @@ func saveFolderRecords(path string, records map[string]folderRecord, folders []s
 	if !changed {
 		return nil
 	}
+	return writeServeConfig(path, file)
+}
+
+// saveFolderIdentity (B2): fills the identity of a record that has none (nothing else changes).
+func saveFolderIdentity(path, folder string, id fileID) error {
+	defer lockServeConfig(path)()
+	file, err := loadServeConfig(path)
+	if err != nil {
+		return err
+	}
+	rec, ok := file.AllowedRecords[folder]
+	if !ok || rec.Ino != 0 || !slices.Contains(file.AllowedFolders, folder) {
+		return nil
+	}
+	file.AllowedRecords = maps.Clone(file.AllowedRecords)
+	rec.Vol, rec.Ino = id.dev, id.ino
+	file.AllowedRecords[folder] = rec
 	return writeServeConfig(path, file)
 }
 
@@ -773,8 +793,8 @@ func checkAgent(c *serveConfig, cfgDir string, kept []string) ([]string, error) 
 			return nil, err
 		}
 		rec := folderRecord{Real: r}
-		if id, err := fileIDOf(r); err == nil {
-			rec.Dev, rec.Ino = id.dev, id.ino
+		if id, err := recordIDOf(r); err == nil {
+			rec.Vol, rec.Ino = id.dev, id.ino
 		}
 		records[f] = rec
 	}

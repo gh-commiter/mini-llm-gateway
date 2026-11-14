@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"net"
 	"net/http"
 	"os"
@@ -293,6 +294,7 @@ func (s *server) checkedAgentFolders(c serveConfig, dir string) checkedFolders {
 			continue
 		}
 		if st, err := os.Stat(f); err != nil || !st.IsDir() {
+			s.runRefused.Delete(f) // B5
 			if errors.Is(err, fs.ErrNotExist) {
 				s.wasMissing.Store(f, true)
 			}
@@ -306,7 +308,8 @@ func (s *server) checkedAgentFolders(c serveConfig, dir string) checkedFolders {
 		rec, recorded := c.AllowedRecords[f]
 		saved := rec.Real
 		_, missed := s.wasMissing.Load(f)
-		id, idErr := fileIDOf(r)
+		id, idErr := fileIDOf(r) // launch check (same boot): st_dev + inode
+		rid, ridErr := recordIDOf(r)
 		switch {
 		case err != nil:
 			why = "cannot resolve its real path"
@@ -316,7 +319,7 @@ func (s *server) checkedAgentFolders(c serveConfig, dir string) checkedFolders {
 			why = "it is reached through a link to " + r
 		case !ownedByMe(r) || (missed && !ownedByMe(f)):
 			why = "it is a link or owned by another user"
-		case idErr == nil && rec.id() != (fileID{}) && id != rec.id(): // A1: on every run, not only at start
+		case ridErr == nil && !rec.matches(rid): // A1: on every run, not only at start
 			why = "its identity changed (another folder is there now)"
 		}
 		if why != "" {
@@ -327,9 +330,13 @@ func (s *server) checkedAgentFolders(c serveConfig, dir string) checkedFolders {
 			continue
 		}
 		if idErr != nil {
+			s.runRefused.Delete(f) // B5
 			continue
 		}
 		s.runRefused.Delete(f)
+		if rec.Ino == 0 && ridErr == nil && rid.ino != 0 { // B2: recorded while missing: trust on first use
+			s.adoptFolderIdentity(f, rid)
+		}
 		use := r
 		if runtime.GOOS == "windows" { // #93: a mapped drive's final path is UNC, which Claude Code blocks; keep the drive name, verify() compares its identity at launch
 			use = f
@@ -337,6 +344,25 @@ func (s *server) checkedAgentFolders(c serveConfig, dir string) checkedFolders {
 		out = append(out, checkedFolder{use, id})
 	}
 	return out
+}
+
+// adoptFolderIdentity (B2): a record without identity (the folder did not exist when it was recorded) gets the identity
+// of the folder that was accepted now, in the live config and in serve.json (under lockServeConfig, like the migration).
+func (s *server) adoptFolderIdentity(f string, id fileID) {
+	s.mu.Lock()
+	if rec, ok := s.cfg.AllowedRecords[f]; ok && rec.Ino == 0 {
+		recs := maps.Clone(s.cfg.AllowedRecords)
+		rec.Vol, rec.Ino = id.dev, id.ino
+		recs[f] = rec
+		s.cfg.AllowedRecords = recs
+	}
+	s.mu.Unlock()
+	if s.offline {
+		return
+	}
+	if err := saveFolderIdentity(s.cfgPath, f, id); err != nil {
+		s.log.Printf("WARNING: cannot save the identity of %s (%v): it is adopted again at the next start", f, err)
+	}
 }
 
 // realPath (#83): kanonična pot (finalPath: na Windows tudi stičišča, preslikan pogon → UNC); za pot, ki je še ni, prek

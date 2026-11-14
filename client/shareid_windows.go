@@ -72,3 +72,6 @@ func mountRoot(dir string, _ fileID, home string) (bool, error) {
 	}
 	return false, nil
 }
+
+// recordIDOf (B1): volume serial number and file ID are stable across restarts.
+func recordIDOf(p string) (fileID, error) { return fileIDOf(p) }

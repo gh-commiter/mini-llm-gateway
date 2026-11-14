@@ -51,4 +51,8 @@ func closeFolders(held []*os.File) {
 	}
 }
 
-func (r folderRecord) id() fileID { return fileID{r.Dev, r.Ino} }
+// matches (B1): id (from recordIDOf) is the recorded folder. No recorded inode = not recorded yet (always true; the first
+// use adopts it). The volume ids are compared only when both are known.
+func (r folderRecord) matches(id fileID) bool {
+	return r.Ino == 0 || id.ino == r.Ino && (r.Vol == 0 || id.dev == 0 || id.dev == r.Vol)
+}
