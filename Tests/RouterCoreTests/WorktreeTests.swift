@@ -238,7 +238,7 @@ private func agentRun(_ hub: ShareHub, _ session: String, agent: String = "claud
             && env["MAVEN_OPTS"] == "-Dmaven.repo.local=" + maven.path + " -Djava.io.tmpdir=" + root.path + "/.build/tmp")
     #expect((sb["network"] as? [String: [String]])?["allowedDomains"] == [])
     #expect(a.contains("--add-dir") && a.contains("default") && a.contains("acceptEdits"))
-    #expect(Array((fs["denyWrite"] ?? []).prefix(4)) == ["config", "hooks", "info", "commondir"].map { root.path + "/.git/" + $0 })
+    #expect(Array((fs["denyWrite"] ?? []).prefix(ClaudeCLIConfig.gitDenies.count)) == ClaudeCLIConfig.gitDenies.map { root.path + "/.git/" + $0 })  // #113: the one shared list
     #expect((fs["denyWrite"] ?? []).contains("/private/tmp/mgw-\(getuid())"))  // #67 M2
     #expect(a[a.firstIndex(of: "--disallowedTools")! + 1].contains("Edit(/" + root.path + "/**/.git/**)"))
     #expect(Worktree.scratchIsSafe(URL(fileURLWithPath: NSHomeDirectory() + "/Library/Caches/dev.trojar.minigateway/Scratch")))
