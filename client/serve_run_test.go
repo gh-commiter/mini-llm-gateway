@@ -227,8 +227,9 @@ func (x *runFx) agent(user, dir, sid string, project int64, history ...string) (
 	}
 	body := `{"model":"claude-cli-haiku","tools":[{"name":"x"}],"messages":[` + strings.Join(msgs, ",") + `]}`
 	h := map[string]string{"x-claude-mini-session": sid, "x-claude-mini-cwd": dir, "content-type": "application/json"}
+	x.nps[user].project = "" // minigw's proxy sets the project header (L1); a header from the client would be dropped
 	if project != 0 {
-		h[projectHeader] = fmt.Sprint(project)
+		x.nps[user].project = fmt.Sprint(project)
 	}
 	st, data := call(c, "POST", "/v1/messages", h, []byte(body), 60*time.Second)
 	return st, string(data)
@@ -365,7 +366,9 @@ func TestRunWithoutProjectHasNoPortAndHeaderRules(t *testing.T) {
 	refused("unbound", st, body)
 	// a device that left the approved list
 	f.s.adminDo("DELETE", "/devices/"+devID(f.dev["bor"]), nil)
-	r, _ := call(x.conn("bor"), "POST", "/v1/messages", map[string]string{projectHeader: fmt.Sprint(f.pid["fakture"]), "x-claude-mini-session": "s7", "x-claude-mini-cwd": dir}, []byte(`{"model":"claude-cli-haiku","tools":[{"name":"x"}],"messages":[{"role":"user","content":"go"}]}`), 30*time.Second)
+	x.conn("bor")
+	x.nps["bor"].project = fmt.Sprint(f.pid["fakture"])
+	r, _ := call(x.conn("bor"), "POST", "/v1/messages", map[string]string{"x-claude-mini-session": "s7", "x-claude-mini-cwd": dir}, []byte(`{"model":"claude-cli-haiku","tools":[{"name":"x"}],"messages":[{"role":"user","content":"go"}]}`), 30*time.Second)
 	if r != 403 && r != 0 {
 		t.Errorf("removed device: %d", r)
 	}

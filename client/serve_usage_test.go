@@ -163,37 +163,45 @@ func sumEvents(d []struct{ Events int64 }) (n int64) {
 
 func TestEventOutcomesAndTokenSources(t *testing.T) {
 	f := newCoreFx(t, nil)
-	f.s.startUsage()
 	cases := []struct {
-		name    string
-		status  int
-		in, out int64
-		source  string
-		errSeen bool
-		cancel  bool
-		want    string // outcome; "" = not counted
-		wantSrc string
-		wantIn  int64
+		name       string
+		dispatched bool
+		status     int
+		in, out    int64
+		source     string
+		errSeen    bool
+		cancel     bool
+		want       string // outcome; "" = no event
+		wantSrc    string
+		wantIn     int64
 	}{
-		{"ok, reported", 200, 10, 5, "", false, false, "ok", "reported", 10},
-		{"ok, no counts", 200, 0, 0, "", false, false, "ok", "unknown", -1},
-		{"ok, estimated output", 200, 0, 7, "estimated", false, false, "ok", "estimated", -1},
-		{"rate limited by the provider", 429, 0, 0, "", false, false, "error", "unknown", -1},
-		{"upstream failure", 502, 0, 0, "", false, false, "error", "unknown", -1},
-		{"stream error after 200", 200, 3, 1, "", true, false, "error", "reported", 3},
-		{"client went away", 200, 0, 0, "", false, true, "cancelled", "unknown", -1},
-		{"499", 499, 0, 0, "", false, false, "cancelled", "unknown", -1},
-		{"refused: validation", 400, 0, 0, "", false, false, "", "", 0},
-		{"refused: forbidden", 403, 0, 0, "", false, false, "", "", 0},
-		{"refused: unknown model", 404, 0, 0, "", false, false, "", "", 0},
+		{"ok, reported", true, 200, 10, 5, "", false, false, "ok", "reported", 10},
+		{"ok, no counts", true, 200, 0, 0, "", false, false, "ok", "unknown", -1},
+		{"ok, estimated output", true, 200, 0, 7, "estimated", false, false, "ok", "estimated", -1},
+		{"rate limited by the provider", true, 429, 0, 0, "", false, false, "error", "unknown", -1},
+		{"upstream failure", true, 502, 0, 0, "", false, false, "error", "unknown", -1},
+		{"upstream 400 after dispatch", true, 400, 0, 0, "", false, false, "error", "unknown", -1}, // review A9
+		{"upstream 401 after dispatch", true, 401, 0, 0, "", false, false, "error", "unknown", -1},
+		{"upstream 404 after dispatch", true, 404, 0, 0, "", false, false, "error", "unknown", -1},
+		{"stream error after 200", true, 200, 3, 1, "", true, false, "error", "reported", 3},
+		{"client went away", true, 200, 0, 0, "", false, true, "cancelled", "unknown", -1},
+		{"499", true, 499, 0, 0, "", false, false, "cancelled", "unknown", -1},
+		{"local refusal 400, nothing dispatched", false, 400, 0, 0, "", false, false, "", "", 0},
+		{"local 429 (cached limit), nothing dispatched", false, 429, 0, 0, "", false, false, "", "", 0}, // was counted by the status rule
+		{"local 503 before the process, nothing dispatched", false, 503, 0, 0, "", false, false, "", "", 0},
+		{"local 404 unknown model", false, 404, 0, 0, "", false, false, "", "", 0},
+		{"local 200 without a dispatch", false, 200, 0, 0, "", false, false, "", "", 0},
 	}
 	for _, c := range cases {
 		ctx, cancel := context.WithCancel(context.Background())
 		hr := httptest.NewRequest("POST", "/v1/messages", nil).WithContext(ctx)
 		r := &req{Request: hr, conn: &serveConn{device: &serveDevice{ID: devID(f.dev["ana"])}}, tokenSource: c.source, provider: "codex"}
-		f.s.beginEvent(r, "m-"+strings.ReplaceAll(c.name, " ", "-"))
+		f.s.admitEvent(r, "m-"+strings.ReplaceAll(c.name, " ", "-"))
 		if r.event == nil || r.event.UserID != f.uid["ana"] || r.event.DeviceID != devID(f.dev["ana"]) {
 			t.Fatalf("%s: event %+v", c.name, r.event)
+		}
+		if c.dispatched {
+			f.s.dispatched(r)
 		}
 		if c.cancel {
 			cancel()
@@ -209,13 +217,60 @@ func TestEventOutcomesAndTokenSources(t *testing.T) {
 		e, ok := got["m-"+strings.ReplaceAll(c.name, " ", "-")]
 		if c.want == "" {
 			if ok {
-				t.Errorf("%s: a refusal was counted: %+v", c.name, e)
+				t.Errorf("%s: counted: %+v", c.name, e)
 			}
 			continue
 		}
 		if !ok || e.Outcome != c.want || e.Source != c.wantSrc || e.In != c.wantIn {
 			t.Errorf("%s: %+v, want %s/%s/%d", c.name, e, c.want, c.wantSrc, c.wantIn)
 		}
+	}
+}
+
+// Review A5: one admission context. A nested call carries the root's project and user, a rebinding between admission
+// and finish changes nothing, and a run cut off before its finish keeps its project.
+func TestEventAdmissionContext(t *testing.T) {
+	f := newCoreFx(t, nil)
+	mk := func(withRun *agentRun) *req {
+		hr := httptest.NewRequest("POST", "/v1/messages", nil)
+		if withRun != nil {
+			hr = hr.WithContext(context.WithValue(hr.Context(), agentRunKey{}, withRun))
+		}
+		return &req{Request: hr, conn: &serveConn{device: &serveDevice{ID: devID(f.dev["ana"])}}, provider: "openrouter"}
+	}
+	// a nested PROVIDER call (it never goes through attachProject)
+	root := mk(nil)
+	root.project = &projectCtx{user: f.uid["ana"], project: f.pid["fakture"]}
+	f.s.admitEvent(root, "claude-cli-haiku")
+	f.s.dispatched(root)
+	run := &agentRun{evID: root.event.ID, evUser: root.event.UserID, proj: root.project}
+	nested := mk(run)
+	f.s.admitEvent(nested, "openrouter/some-model")
+	f.ok(f.s.core.SetBinding(t0, devID(f.dev["ana"]), f.uid["bor"])) // rebound between admission and finish
+	f.s.dispatched(nested)
+	f.s.endEvent(nested, 200, &usageWriter{in: 1, out: 1})
+	if nested.event.UserID != f.uid["ana"] || nested.event.ProjectID != f.pid["fakture"] || nested.event.ParentID != root.event.ID {
+		t.Fatalf("%+v", nested.event)
+	}
+	rows := map[string]evRow{}
+	for _, e := range f.events() {
+		rows[e.ID] = e
+	}
+	if e := rows[nested.event.ID]; e.User != f.uid["ana"] || e.Project != f.pid["fakture"] || e.Parent != root.event.ID || e.Outcome != "ok" {
+		t.Fatalf("nested row: %+v", e)
+	}
+	// the root never finished: the process stops; the next open marks it interrupted and it keeps its project
+	f.s.stopUsage()
+	dir := f.s.core.Dir()
+	f.s.core.Close()
+	st, err := core.Open(dir, core.Options{})
+	f.ok(err)
+	defer st.Close()
+	var outcome string
+	var project int64
+	st.DB().QueryRow(`SELECT outcome, COALESCE(project_id,0) FROM usage_events WHERE id=?`, root.event.ID).Scan(&outcome, &project)
+	if outcome != "interrupted" || project != f.pid["fakture"] {
+		t.Fatalf("%s project %d", outcome, project)
 	}
 }
 
@@ -308,9 +363,12 @@ func TestUsageSpoolReplayExactlyOnceAndGaps(t *testing.T) {
 		t.Fatalf("usage output: %s", out.String())
 	}
 	// the member route says so too
-	rr := f.call("ana", "GET", "/minigw/v1/usage", "")
+	rr := f.call("fani", "GET", "/minigw/v1/usage?project=fakture", "") // a project admin sees gaps (review L5) ...
 	if !strings.Contains(rr.body, `"gaps":[{`) {
-		t.Fatalf("member usage without the gap: %s", rr.body)
+		t.Fatalf("project admin without the gap: %s", rr.body)
+	}
+	if rr := f.call("ana", "GET", "/minigw/v1/usage", ""); !strings.Contains(rr.body, `"gaps":[]`) { // ... an ordinary member does not
+		t.Fatalf("member sees gaps: %s", rr.body)
 	}
 }
 

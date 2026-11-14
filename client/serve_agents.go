@@ -1303,6 +1303,7 @@ func (s *server) runAgentProcess(ctx context.Context, r *req, exe string, args [
 	if err == nil {
 		err = m.checked.verify()
 		if err == nil {
+			s.dispatched(r) // the agent process starts (usage event)
 			err = startAgent(cmd)
 		} // Windows: Job agentov (tudi proces v škatli, otrok wxc-exec); Linux: pomočnik subreaper (peer check)
 	}

@@ -744,7 +744,7 @@ func (s *server) messages(w http.ResponseWriter, r *req) (int, string) {
 		return writeError(w, r.rid, 400, "Body must be JSON with a model field"), ""
 	}
 	defer s.activity.start(r, model)()
-	s.beginEvent(r, model)                                                         // 0.6.0: the usage event of this invocation (serve_usage.go)
+	s.admitEvent(r, model)                                                         // 0.6.0: the admission context of this invocation (serve_usage.go); the event begins at dispatch
 	if body["stream"] != true && !strings.HasSuffix(r.URL.Path, "/count_tokens") { // ponovitev po omejitvi v toku (noteLimit)
 		if msg, status, ok := s.recentLimit(r, model); ok {
 			w.Header().Set("x-should-retry", "false")
@@ -1136,6 +1136,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 	defer closeFolders(held)
 	var extraFiles []*os.File
 	name, cargs, extraFiles = allowedClaudeWrap(s.cfgDir, name, cargs, checked, held, r.applied != nil && r.applied.readOnly, s.log.Printf)
+	s.dispatched(r) // the claude process is about to start (usage event)
 	cmd := commandContext(ctx, name, cargs...)
 	cmd.ExtraFiles = extraFiles
 	cmd.Dir = dir

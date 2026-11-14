@@ -35,7 +35,6 @@ type usageKind int
 const (
 	evBegin usageKind = iota
 	evFinish
-	evDiscard
 	evFlush
 )
 
@@ -138,10 +137,6 @@ func (u *usageRecorder) handle(m usageMsg) {
 	case evBegin:
 		if st != nil {
 			st.BeginEvent(ctx, m.ev) // a failure is fine: the finish carries the whole event
-		}
-	case evDiscard:
-		if st != nil {
-			st.DiscardEvent(ctx, m.ev.ID)
 		}
 	case evFinish:
 		if st != nil && u.spool.empty() && st.FinishEvent(ctx, m.ev) == nil {
@@ -324,8 +319,10 @@ func (sp *usageSpool) clear() {
 
 // --- events of requests ---
 
-// beginEvent: a request that names a model is admitted; attribution is frozen here.
-func (s *server) beginEvent(r *req, model string) {
+// admitEvent (A5): the immutable admission context of a model request (user, device, parent, and the project of a
+// nested call), built once when the request is admitted. Nothing is recorded yet: an event exists only once the work
+// was dispatched (dispatched), so a local refusal never becomes one.
+func (s *server) admitEvent(r *req, model string) {
 	if s.usage == nil || r.URL.Path != "/v1/messages" {
 		return
 	}
@@ -334,18 +331,35 @@ func (s *server) beginEvent(r *req, model string) {
 		e.DeviceID = d.ID
 		e.UserID = s.usage.userOf(s, r.Context(), d.ID)
 	}
-	if run := runOf(r); run != nil { // a nested call: the caller's event is the parent, the caller's user stays
+	if run := runOf(r); run != nil { // a nested call: the caller's event is the parent; its user and project are inherited
 		e.ParentID, e.UserID = run.evID, run.evUser
+		if run.proj != nil {
+			e.ProjectID = run.proj.project
+		}
 	}
 	r.event = &e
-	s.usage.enqueue(usageMsg{kind: evBegin, ev: e})
 }
 
-// userOf: the user a device is bound to, from the core; when the core cannot answer, the last binding seen for the
-// device (attribution of an event only, never an access decision). 0 = none.
+// dispatched marks the moment execution or the upstream request really begins (a provider request, an agent process,
+// a Foundry request) and records the event as begun, with its project (also an interrupted run keeps it).
+func (s *server) dispatched(r *req) {
+	e := r.event
+	if e == nil || r.evDispatched {
+		return
+	}
+	r.evDispatched = true
+	if r.project != nil {
+		e.ProjectID = r.project.project
+	}
+	e.Provider = r.provider
+	s.usage.enqueue(usageMsg{kind: evBegin, ev: *e})
+}
+
+// userOf: the user a device is bound to, from the core's in-memory snapshot (no database I/O on the request path);
+// when there is no core, the last binding seen for the device (attribution of an event only, never an access decision).
 func (u *usageRecorder) userOf(s *server, ctx context.Context, device string) int64 {
 	if s.core != nil {
-		if id, err := s.core.BoundUser(ctx, device); err == nil {
+		if id, err := s.core.BoundUser(ctx, device); err == nil && id != 0 {
 			u.bound.Store(device, id)
 			return id
 		}
@@ -356,17 +370,11 @@ func (u *usageRecorder) userOf(s *server, ctx context.Context, device string) in
 	return 0
 }
 
-// refusal statuses: the request never became a model invocation (not counted).
-func refusedStatus(st int) bool { return st == 400 || st == 401 || st == 403 || st == 404 || st == 413 }
-
-// endEvent completes the request's event once the status is known.
+// endEvent completes the event of a request that was dispatched; any status then is an outcome (an upstream 4xx is an
+// error event). A request that never reached dispatch has no event.
 func (s *server) endEvent(r *req, status int, uw *usageWriter) {
 	e := r.event
-	if e == nil {
-		return
-	}
-	if refusedStatus(status) && r.Context().Err() == nil {
-		s.usage.enqueue(usageMsg{kind: evDiscard, ev: *e})
+	if e == nil || !r.evDispatched {
 		return
 	}
 	e.End = time.Now()
@@ -378,13 +386,10 @@ func (s *server) endEvent(r *req, status int, uw *usageWriter) {
 			e.Provider = "unknown"
 		}
 	}
-	if r.project != nil {
-		e.ProjectID = r.project.project
-	}
 	switch {
 	case status == 499 || r.Context().Err() != nil:
 		e.Outcome = core.OutcomeCancelled
-	case status >= 400 || uw != nil && uw.errSeen: // 429 and 5xx, or an error event inside a stream that began with 200
+	case status >= 400 || uw != nil && uw.errSeen: // 429, 5xx, an upstream 4xx, or an error event inside a stream that began with 200
 		e.Outcome = core.OutcomeError
 	default:
 		e.Outcome = core.OutcomeOK

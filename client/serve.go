@@ -1308,14 +1308,15 @@ func (c *serveConn) readDevice() error {
 
 type req struct {
 	*http.Request
-	conn        *serveConn
-	body        []byte
-	rid         string
-	applied     *appliedLimits   // #46a: omejitve izvajanja agenta (runAgent, runCLI)
-	project     *projectCtx      // 0.6.0: project of this agent request (attachProject)
-	event       *core.UsageEvent // 0.6.0: the usage event of this model request (serve_usage.go)
-	provider    string           // provider of the model request, for its usage event
-	tokenSource string           // "estimated" when the agent gives no counts
+	conn         *serveConn
+	body         []byte
+	rid          string
+	applied      *appliedLimits   // #46a: omejitve izvajanja agenta (runAgent, runCLI)
+	project      *projectCtx      // 0.6.0: project of this agent request (attachProject)
+	event        *core.UsageEvent // 0.6.0: the usage event of this model request (serve_usage.go)
+	provider     string           // provider of the model request, for its usage event
+	tokenSource  string           // "estimated" when the agent gives no counts
+	evDispatched bool             // execution or the upstream request began: only then is there an event
 }
 
 func (r *req) h(name string) string { return r.Header.Get(name) }

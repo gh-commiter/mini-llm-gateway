@@ -208,6 +208,9 @@ func (s *Store) Close() error {
 // DB is the read-only handle (query_only); writes go through write(), which serializes them.
 func (s *Store) DB() *sql.DB { return s.rdb }
 
+// Dir is the folder of the database.
+func (s *Store) Dir() string { return s.dir }
+
 // GatewayID is created once and kept by every backup.
 func (s *Store) GatewayID() string { return s.gw }
 

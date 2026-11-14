@@ -456,6 +456,7 @@ func (s *server) passthrough(w http.ResponseWriter, r *req, g serveGateway, m gw
 			up.Header.Set(h, v)
 		}
 	}
+	s.dispatched(r) // the upstream request goes out (usage event)
 	resp, err := g.client().Do(up)
 	if err != nil {
 		if r.Context().Err() != nil {

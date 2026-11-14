@@ -498,6 +498,7 @@ func (s *server) runFoundry(w http.ResponseWriter, r *req, body map[string]any, 
 	b, _ := json.Marshal(oreq)
 	hreq, _ := http.NewRequestWithContext(ctx, "POST", base+"/v1/chat/completions", bytes.NewReader(b))
 	hreq.Header.Set("Content-Type", "application/json")
+	s.dispatched(r) // the Foundry request goes out (usage event)
 	resp, err := foundryClient.Do(hreq)
 	if err != nil {
 		s.foundry.mu.Lock()
