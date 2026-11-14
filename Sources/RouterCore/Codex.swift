@@ -296,8 +296,8 @@ extension Router {
             }
             cwd = dir
             sharedDir = shared
-            checked = allowedFolders.checked(config.claudeCLI.allowedRoots, excluding: dir.path, scratch: config.scratchURL)
-            extra = checked.paths
+            checked = allowedFolders.checked(config.claudeCLI.allowedRoots, scratch: config.scratchURL)  // A2b: a cwd that is an allowed root is verified at launch too
+            extra = checked.paths(without: dir)
             // worktree: pisljiv le klon (koren, ne dovoljene mape)
             tree = await Self.shares.worktree(session: req.header("x-claude-mini-session") ?? "")
             if let tree {

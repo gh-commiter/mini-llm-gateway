@@ -223,8 +223,8 @@ extension Router {
             }
             cwd = dir
             sharedDir = shared
-            checked = allowedFolders.checked(config.claudeCLI.allowedRoots, excluding: dir.path, scratch: config.scratchURL)
-            extra = checked.paths
+            checked = allowedFolders.checked(config.claudeCLI.allowedRoots, scratch: config.scratchURL)  // A2b: a cwd that is an allowed root is verified at launch too
+            extra = checked.paths(without: dir)
             let cap = await capped(req, kind: "grok")  // #45: način seje nad omejitvijo → le branje
             readOnly = await Self.isReadOnly(req) || cap != nil
             Self.runBranch?.readOnly = readOnly || inTree  // #46a

@@ -535,7 +535,7 @@ extension Router {
             if tree == nil { checked = allowedFolders.checked(cfg.allowedRoots, scratch: config.scratchURL) }  // A2: also a cwd that is an allowed root is opened and verified at launch
             args += (tree.map { cfg.worktreeArgs(root: $0.root, maven: $0.maven, cwd: dir, allTools: allTools, network: config.worktreeNetwork,
                                                  scratch: config.scratchURL, read: $0.read, gits: $0.gits) }
-                     ?? cfg.agentArgs(cwd: dir, allTools: allTools, scratch: config.scratchURL, readOnly: readOnly, folders: allowedFolders, checkedPaths: checked.paths.filter { $0 != dir.path }))  // the cwd itself is in the arguments already
+                     ?? cfg.agentArgs(cwd: dir, allTools: allTools, scratch: config.scratchURL, readOnly: readOnly, folders: allowedFolders, checkedPaths: checked.paths(without: dir)))  // the cwd itself is in the arguments already
                 + ["--setting-sources", shared == nil ? cfg.settingSources : ""]  // hooki iz mape odjemalca ne tečejo tukaj
         } else {
             cwd = config.scratch("chat")

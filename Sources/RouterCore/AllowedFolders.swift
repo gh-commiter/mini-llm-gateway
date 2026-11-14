@@ -85,6 +85,11 @@ public final class AllowedFolders: @unchecked Sendable {
         }
         var folders: [Folder] = []
         var paths: [String] { folders.map(\.path) }
+        /// The paths for the agent's arguments without the cwd itself (it is passed already); checked paths are real paths.
+        func paths(without cwd: URL) -> [String] {
+            let real = Sync.real(cwd)?.path
+            return paths.filter { $0 != cwd.path && $0 != real }
+        }
 
         func open() throws -> [FileHandle] {
             var held: [FileHandle] = []
