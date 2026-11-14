@@ -240,12 +240,20 @@ func makeRouter(session: URLSession = .shared) -> Router {
 }
 
 /// Testi si delijo StubUpstream (statično stanje), zato tečejo zaporedno.
+/// #109: odkrivanje modelov čaka v produkciji največ 2 s na klic (Claude Code ima 3 s), sicer velja prejšnji (prazen) seznam;
+/// pod obremenitvijo test zato dobi prazen seznam. Test počaka na dejansko stanje: vsi ponudniki odkriti.
+func discoveryReady(_ r: Router) async {
+    for _ in 0..<300 where !(await r.catalog.status().values.allSatisfy { $0 }) { try? await Task.sleep(for: .milliseconds(100)) }
+}
+
 @Suite(.serialized) struct UpstreamStubTests {
     @Test func modelsListsOnlyEnabledProviders() async {
         let w = FakeWriter()
         let cfg = URLSessionConfiguration.ephemeral
         cfg.protocolClasses = [StubUpstream.self]
-        await makeRouter(session: URLSession(configuration: cfg)).handle(request("GET", "/v1/models", headers: ["x-api-key": "tok"]), writer: w)
+        let r = makeRouter(session: URLSession(configuration: cfg))
+        await discoveryReady(r)
+        await r.handle(request("GET", "/v1/models", headers: ["x-api-key": "tok"]), writer: w)
         #expect(w.status == 200)
         #expect(w.text.contains("\"claude-or-qwen\"") && w.text.contains("\"claude-anthropic/claude-sonnet\""))
         #expect(!w.text.contains("\"or-qwen\"") && !w.text.contains("qwen-local"))
@@ -259,6 +267,7 @@ func makeRouter(session: URLSession = .shared) -> Router {
         c.providers = [ProviderConfig(id: "litellm", name: "LiteLLM", enabled: true, baseURL: "http://lite.local", aliases: "")]
         let r = Router(config: c, token: "tok", secrets: FakeSecrets(values: ["litellm": "k"]), session: URLSession(configuration: cfg))
         let w = FakeWriter()
+        await discoveryReady(r)
         await r.handle(request("GET", "/v1/models", headers: ["x-api-key": "tok"]), writer: w)
         #expect(w.text.contains(#""id":"claude-qwen/qwen3-coder""#) && w.text.contains("qwen/qwen3-coder · 32K"))
         #expect(w.text.contains(#""id":"claude-lite/model""#) && w.text.contains("lite/model · 250K"))  // okno iz /model/info
@@ -277,6 +286,7 @@ func makeRouter(session: URLSession = .shared) -> Router {
         c.providers = [ProviderConfig(id: "or", name: "OR", enabled: true, baseURL: "http://or.local", aliases: "coder = qwen/qwen3-coder")]
         let r = Router(config: c, token: "tok", secrets: FakeSecrets(values: ["or": "k"]), session: URLSession(configuration: cfg))
         let w = FakeWriter()
+        await discoveryReady(r)
         await r.handle(request("GET", "/v1/models", headers: ["x-api-key": "tok"]), writer: w)
         #expect(w.text.contains(#""id":"claude-coder""#) && w.text.contains("qwen/qwen3-coder · 32K"))
         #expect(!w.text.contains("lite/model"))  // izpolnjen seznam = samo našteti
@@ -290,6 +300,7 @@ func makeRouter(session: URLSession = .shared) -> Router {
             c.providers = [ProviderConfig(id: "or", name: "OR", enabled: true, baseURL: "http://or.local", aliases: "", enabledModels: enabled)]
             let r = Router(config: c, token: "tok", secrets: FakeSecrets(values: ["or": "k"]), session: URLSession(configuration: cfg))
             let w = FakeWriter()
+            await discoveryReady(r)
             await r.handle(request("GET", "/v1/models", headers: ["x-api-key": "tok"]), writer: w)
             #expect(w.text.contains("claude-lite/model") == expectLite && w.text.contains("claude-qwen/qwen3-coder") == expectQwen)
             let w2 = FakeWriter()  // izklopljen model se ne usmerja
