@@ -176,14 +176,14 @@ func (s *Store) open() error {
 	if _, err := s.FoldOldUsage(ctx); err != nil {
 		return err
 	}
-	if s.rdb, err = sql.Open("sqlite", dsn(path, "_pragma=busy_timeout(10000)&_pragma=foreign_keys(1)&_pragma=query_only(1)")); err != nil {
+	if s.rdb, err = sql.Open("sqlite", dsn(path, "_pragma=busy_timeout(10000)&_pragma=foreign_keys(1)&_pragma=query_only(1)&_pragma=trusted_schema(0)")); err != nil {
 		return err
 	}
 	return s.write(ctx, func(tx *sql.Tx) error { return s.persist(tx) })
 }
 
 func openDB(path string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", dsn(path, "_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=synchronous(FULL)&_txlock=immediate"))
+	db, err := sql.Open("sqlite", dsn(path, "_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=synchronous(FULL)&_pragma=trusted_schema(0)&_txlock=immediate"))
 	if err != nil {
 		return nil, err
 	}

@@ -264,7 +264,7 @@ func validate(ctx context.Context, src, gateway string) (state, error) {
 	if !fi.Mode().IsRegular() {
 		return state{}, errors.New(src + " is not a regular file")
 	}
-	db, err := sql.Open("sqlite", dsn(src, "mode=ro&immutable=1"))
+	db, err := sql.Open("sqlite", dsn(src, "mode=ro&immutable=1&_pragma=trusted_schema(0)"))
 	if err != nil {
 		return state{}, err
 	}
@@ -279,6 +279,9 @@ func validate(ctx context.Context, src, gateway string) (state, error) {
 	}
 	if v > len(migrations) {
 		return state{}, fmt.Errorf("%w (schema %d, program %d)", ErrNewerSchema, v, len(migrations))
+	}
+	if err := checkSchemaObjects(ctx, db, v); err != nil {
+		return state{}, fmt.Errorf("%s: %w", src, err)
 	}
 	m, err := readMetaFull(ctx, db)
 	if err != nil {
@@ -335,4 +338,63 @@ func stamp(ctx context.Context, path string, st state, src string) error {
 	}
 	_, err = db.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`)
 	return err
+}
+
+// checkSchemaObjects (L2): a backup may hold exactly the tables and indexes of its schema version, built here from
+// this program's own migrations: no trigger, view, virtual table or unknown table that could run code or read data
+// when the restored file is opened.
+func checkSchemaObjects(ctx context.Context, db *sql.DB, version int) error {
+	want, err := expectedObjects(ctx, version)
+	if err != nil {
+		return err
+	}
+	rows, err := db.QueryContext(ctx, `SELECT type, name FROM sqlite_master`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var typ, name string
+		if err := rows.Scan(&typ, &name); err != nil {
+			return err
+		}
+		if !want[typ+" "+name] && !strings.HasPrefix(name, "sqlite_autoindex_") {
+			return fmt.Errorf("unexpected %s %q in a core database of schema %d", typ, name, version)
+		}
+	}
+	return rows.Err()
+}
+
+// expectedObjects runs the first version migrations on an empty in-memory database and lists what they made.
+func expectedObjects(ctx context.Context, version int) (map[string]bool, error) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	for i := 0; i < version; i++ {
+		if err := migrations[i](tx); err != nil {
+			return nil, err
+		}
+	}
+	rows, err := tx.Query(`SELECT type, name FROM sqlite_master`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	want := map[string]bool{"table sqlite_sequence": true}
+	for rows.Next() {
+		var typ, name string
+		if err := rows.Scan(&typ, &name); err != nil {
+			return nil, err
+		}
+		want[typ+" "+name] = true
+	}
+	return want, rows.Err()
 }

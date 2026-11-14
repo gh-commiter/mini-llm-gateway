@@ -1,6 +1,7 @@
 package core
 
 import (
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -181,5 +182,38 @@ func TestRestoreCleanupFailureAfterTheSwapIsNotAFailure(t *testing.T) { // revie
 	defer s.Close()
 	if marker(t, s) != "backup" || unresolvedIntent(dir) != "" {
 		t.Fatalf("marker %q, audit %s", marker(t, s), auditLog(t, dir))
+	}
+}
+
+func TestRestoreRefusesExtraSchemaObjects(t *testing.T) { // review L2
+	for name, ddl := range map[string]string{
+		"trigger": `CREATE TRIGGER evil AFTER INSERT ON meta BEGIN UPDATE meta SET value='x' WHERE key='epoch'; END`,
+		"view":    `CREATE VIEW v AS SELECT * FROM meta`,
+		"table":   `CREATE TABLE extra(a)`,
+		"index":   `CREATE INDEX extra_idx ON meta(value)`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir, bak := restoreFixture(t)
+			raw, err := sql.Open("sqlite", bak)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := raw.Exec(ddl); err != nil {
+				t.Fatal(err)
+			}
+			raw.Close()
+			before := hash(t, filepath.Join(dir, dbFile))
+			if err := Restore(dir, bak); err == nil || !strings.Contains(err.Error(), "unexpected "+name) {
+				t.Fatalf("got %v", err)
+			}
+			if hash(t, filepath.Join(dir, dbFile)) != before {
+				t.Fatal("the database changed")
+			}
+		})
+	}
+	// an untouched backup of every schema this binary knows still restores (autoindexes are allowed)
+	dir, bak := restoreFixture(t)
+	if err := Restore(dir, bak); err != nil {
+		t.Fatal(err)
 	}
 }
