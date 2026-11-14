@@ -129,4 +129,4 @@ Known differences from `minigw serve`:
 
 ## Known limits
 
-- The Mac helper serves one request at a time (one serial queue, 35 s timeout per call), so a slow admin call (backup, restore, audit) makes the `admit` of every project run wait behind it; runs fail with 503 `core_unavailable` only after that timeout.
+- The Mac helper serves one request at a time (one serial queue, 35 s timeout per call), so a slow admin call (backup, restore, audit) delays the `admit` of every project run (and every other helper call) queued behind it, for up to that timeout. No change is planned for 0.6.0.
