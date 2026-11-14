@@ -480,7 +480,7 @@ func (e *projectEnv) note(args []string) error {
 	one := func(method string, hdr map[string]string, body []byte) ([]byte, error) {
 		st, data, h := e.do(c, method, fmt.Sprintf("%s/%d", base, id), hdr, body)
 		if st < 200 || st > 299 {
-			return nil, gatewayError(st, data, h)
+			return nil, e.gwError(st, data, h)
 		}
 		return data, nil
 	}
@@ -523,7 +523,7 @@ func (e *projectEnv) note(args []string) error {
 		}
 		st, data, h := e.do(c, "GET", path, nil, nil)
 		if st != 200 {
-			return gatewayError(st, data, h)
+			return e.gwError(st, data, h)
 		}
 		if *asJSON {
 			e.say(strings.TrimSpace(string(data)))
@@ -717,4 +717,13 @@ func (e *projectEnv) usage(args []string) error {
 	}
 	printUsage(e.out, r, false)
 	return nil
+}
+
+// gwError: gatewayError, with one clear line for a run that cannot reach its run port (M1: the Windows sandbox gets
+// no loopback unless the agent may ask other models).
+func (e *projectEnv) gwError(st int, data []byte, h http.Header) error {
+	if st == 0 && e.runConn != nil {
+		return errors.New("the notes are not reachable from this sandbox (it has no access to the gateway's run port)")
+	}
+	return gatewayError(st, data, h)
 }

@@ -1007,8 +1007,11 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 				extra += "\n\n" + noAskNote
 			}
 			if run.proj != nil {
-				extra += "\n\n" + notesNote(exe, onPath)
-				rules = strings.TrimPrefix(rules+","+notesRules, ",")
+				reach := notesReachable(run.asks(), box)
+				extra += "\n\n" + notesText(exe, onPath, reach)
+				if reach {
+					rules = strings.TrimPrefix(rules+","+notesRules, ",")
+				}
 			}
 			args = sandboxAllowRead(args, exe, run.authFile) // M3: le ta datoteka iz Scratch
 			if i := slices.Index(args, "--allowedTools"); onPath && i >= 0 {
@@ -1088,7 +1091,7 @@ func (s *server) runCLI(w http.ResponseWriter, r *req, body map[string]any, cliM
 		var done func()
 		var err2 error
 		name, cargs, done, err2 = agentWrap(name, cargs, agentMounts{cfgDir: s.cfgDir, rw: append(boxRW, conf), ro: boxRO, hide: s.conf().Scratch,
-			cmdEnv: cmdEnv, cwd: dir, home: filepath.Join(runDir, "home"), temp: boxTemp, noNet: netOff, allowIPs: apiIPs, loopback: run != nil})
+			cmdEnv: cmdEnv, cwd: dir, home: filepath.Join(runDir, "home"), temp: boxTemp, noNet: netOff, allowIPs: apiIPs, loopback: runLoopback(run)})
 		if err2 != nil {
 			s.log.Printf("%s claude: %v", r.rid, err2)
 			return writeError(w, r.rid, 503, "Cannot start Claude CLI in the Windows sandbox: "+err2.Error())

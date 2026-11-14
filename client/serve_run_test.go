@@ -761,3 +761,44 @@ func TestProxySetsTheProjectAndIgnoresAForgedHeader(t *testing.T) {
 		t.Fatalf("%+v", ev)
 	}
 }
+
+// Review M1: a project run alone never opens the host loopback in the MXC sandbox; the agent is told so.
+func TestMXCLoopbackOnlyWithAskOthers(t *testing.T) {
+	proj := &projectCtx{user: 1, project: 2}
+	cases := []struct {
+		name          string
+		run           *agentRun
+		wantLoop      string
+		wantReachable bool // inside the box
+	}{
+		{"project on, ask off", &agentRun{proj: proj}, "deny", false},
+		{"project on, ask on", &agentRun{proj: proj, ask: true}, "allow", true},
+		{"no project, ask on (0.5.26)", &agentRun{ask: true}, "allow", true},
+	}
+	for _, c := range cases {
+		sp := mxcSpec{argv: []string{"claude"}, cwd: filepath.FromSlash("/s/w"), loopback: runLoopback(c.run), egressDeny: false}
+		if got := mxcRequestFor(sp).Network.Ingress.HostLoopback; got != c.wantLoop {
+			t.Errorf("%s: HostLoopback %q, want %q", c.name, got, c.wantLoop)
+		}
+		if got := notesReachable(c.run.asks(), true); got != c.wantReachable {
+			t.Errorf("%s: reachable in the box = %v", c.name, got)
+		}
+		if !notesReachable(c.run.asks(), false) { // outside the box nothing changes
+			t.Errorf("%s: unreachable outside the box", c.name)
+		}
+	}
+	if txt := notesText("/x/minigw", false, false); strings.Contains(txt, "note list") || !strings.Contains(txt, "not available in this sandbox") {
+		t.Fatalf("%q", txt)
+	}
+	if txt := notesText("/x/minigw", false, true); !strings.Contains(txt, "note list") {
+		t.Fatalf("%q", txt)
+	}
+	// inside such a run `minigw note` says so in one line
+	conn := connection{URL: "http://127.0.0.1:1", Token: "t"} // nothing listens: the sandbox cannot reach the port
+	e := &projectEnv{connect: func() (connection, string) { return conn, "" }, cwd: t.TempDir(), in: strings.NewReader(""), out: &out{}, err: &out{},
+		agent: true, runConn: &conn, do: realDo, sleep: func(time.Duration) {}}
+	err := e.note([]string{"list"})
+	if err == nil || !strings.Contains(err.Error(), "not reachable from this sandbox") || strings.Contains(err.Error(), "\n") {
+		t.Fatalf("%v", err)
+	}
+}
