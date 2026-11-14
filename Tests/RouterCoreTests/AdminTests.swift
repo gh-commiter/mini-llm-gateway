@@ -414,9 +414,9 @@ private func acceptPeerPort(_ fd: Int32) -> (Int32, UInt16) {
     // permissionMode, settingSources
     #expect(await admin(app.router(), "PATCH", "/agents/claude", body: #"{"permissionMode":"bogus"}"#).status == 400)
     #expect(await admin(app.router(), "PATCH", "/agents/claude", body: #"{"settingSources":"user,evil"}"#).status == 400)
-    let w = await admin(app.router(), "PATCH", "/agents/claude", body: #"{"permissionMode":"plan","settingSources":"user, project"}"#)
-    #expect(w.status == 200 && w.text.contains(#""permissionMode":"plan""#))
-    #expect(app.config.claudeCLI.permissionMode == "plan" && app.config.claudeCLI.settingSources == "user,project")
+    let w = await admin(app.router(), "PATCH", "/agents/claude", body: #"{"permissionMode":"acceptEdits","settingSources":"user, project"}"#)  // #111: plan and auto do not enforce the path rules: refused without "Allow local tools"
+    #expect(w.status == 200 && w.text.contains(#""permissionMode":"acceptEdits""#))
+    #expect(app.config.claudeCLI.permissionMode == "acceptEdits" && app.config.claudeCLI.settingSources == "user,project")
 
     // GET agents/claude/tools, agents/{codex,grok}/models (brez programa prazno), drugi agenti 404
     let t = await admin(app.router(), "GET", "/agents/claude/tools")
