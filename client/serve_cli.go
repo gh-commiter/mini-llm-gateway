@@ -297,20 +297,28 @@ func readsFolderSettings(sources string) bool {
 	return false
 }
 
-// ruleSafe (#111 S5): can the path go into a permission rule as it is? No parentheses, glob characters, comma, backslash, `!`, control
-// characters, no leading or trailing space in the path or in one of its components (they could split or widen a rule). Same as
-// ClaudeCLIConfig.ruleSafe on the Mac; on Windows the separators are converted first.
+// ruleSafe (#111 S5): can the path go into a permission rule as it is? It judges the text ruleAbs produces: no parentheses, glob characters, comma, backslash,
+// `!`, control characters, no leading or trailing space in the path or in one of its components (they could split or widen a rule). On Windows `C:\x` becomes
+// `//c/x`; a UNC path, `\\?\C:\x`, a drive-relative `C:x`, a path relative to the current drive and a colon after the drive are refused (they would become another path).
 func ruleSafe(p string) bool {
 	p = filepath.ToSlash(p)
-	if p == "" || strings.ContainsAny(p, "()*?[]{},\\!") {
+	if runtime.GOOS == "windows" {
+		// ruleAbs writes `C:\x` as `//c/x`; only a drive path with a separator has that form. A UNC path (`\\server\share`), `\\?\C:\x`, a drive-relative `C:x`,
+		// a path relative to the current drive (`\x`) would become another path in the rule (`///server/share`, `//cx`): not expressible, refused.
+		if len(p) < 3 || p[1] != ':' || p[2] != '/' || !(p[0] >= 'a' && p[0] <= 'z' || p[0] >= 'A' && p[0] <= 'Z') || strings.ContainsRune(p[2:], ':') {
+			return false // also a colon later in the path (an alternate data stream)
+		}
+	}
+	r := ruleAbs(p) // the text that goes into the rule
+	if r == "" || strings.HasSuffix(r, "/") || strings.ContainsAny(r, "()*?[]{},\\!") {
 		return false
 	}
-	for _, r := range p {
-		if r < 32 || r == 0x7f {
+	for _, c := range r {
+		if c < 32 || c == 0x7f {
 			return false
 		}
 	}
-	for _, c := range strings.Split(p, "/") {
+	for _, c := range strings.Split(r, "/") {
 		if c != strings.TrimSpace(c) {
 			return false
 		}
