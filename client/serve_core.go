@@ -191,19 +191,22 @@ func (s *server) projectRoute(w http.ResponseWriter, r *req, p core.Principal) i
 	notFound := func() int { return s.coreError(w, r, core.ErrNotFound) }
 	bad := func(what string) int { return s.coreError(w, r, core.ErrInvalid{What: what}) }
 	id := func(v string) (int64, bool) { n, err := strconv.ParseInt(v, 10, 64); return n, err == nil && n > 0 }
-	body := func(v any) int { // 0 = parsed
+	body := func(v any) error { // the payload of a write: nil = parsed (the same read deadline as readBody)
+		rc := http.NewResponseController(w)
+		rc.SetReadDeadline(time.Now().Add(120 * time.Second))
 		data, err := io.ReadAll(r.Body)
+		rc.SetReadDeadline(time.Time{})
 		if err != nil {
 			var tooBig *http.MaxBytesError
 			if errors.As(err, &tooBig) {
-				return s.coreError(w, r, core.ErrTooLarge)
+				return core.ErrTooLarge
 			}
-			return bad("body")
+			return core.ErrInvalid{What: "body"}
 		}
 		if err := decodeStrict(data, v); err != nil {
-			return bad("JSON body")
+			return core.ErrInvalid{What: "JSON body"}
 		}
-		return 0
+		return nil
 	}
 	out := func(status int, v any) int { return writeJSON(w, r.rid, status, v) }
 
@@ -248,7 +251,7 @@ type noteBody struct {
 }
 
 func (s *server) noteRoute(w http.ResponseWriter, r *req, p core.Principal, pid int64, rest []string, q url.Values,
-	body func(any) int, out func(int, any) int, bad func(string) int, notFound func() int, id func(string) (int64, bool)) int {
+	body func(any) error, out func(int, any) int, bad func(string) int, notFound func() int, id func(string) (int64, bool)) int {
 	ctx := r.Context()
 	get := q.Get
 	if len(rest) == 0 {
@@ -277,8 +280,8 @@ func (s *server) noteRoute(w http.ResponseWriter, r *req, p core.Principal, pid 
 			return out(200, res)
 		case "POST":
 			var b noteBody
-			if st := body(&b); st != 0 {
-				return st
+			if err := body(&b); err != nil {
+				return s.coreError(w, r, err)
 			}
 			n, replay, err := s.core.CreateNote(ctx, p, pid, r.h("Idempotency-Key"), core.NoteInput{Class: b.Class, Title: b.Title, Body: b.Body})
 			if err != nil {
@@ -295,6 +298,13 @@ func (s *server) noteRoute(w http.ResponseWriter, r *req, p core.Principal, pid 
 	if !ok {
 		return bad("note id")
 	}
+	// A bad payload or revision about a note the caller may not see or change is still 404 or 403 (visible first).
+	payloadErr := func(err error) int {
+		if cerr := s.core.CanChangeNote(ctx, p, pid, nid); cerr != nil {
+			return s.coreError(w, r, cerr)
+		}
+		return s.coreError(w, r, err)
+	}
 	switch r.Method {
 	case "GET":
 		n, err := s.core.GetNote(ctx, p, pid, nid)
@@ -304,11 +314,11 @@ func (s *server) noteRoute(w http.ResponseWriter, r *req, p core.Principal, pid 
 		return out(200, toNote(n, true))
 	case "PUT":
 		var b noteBody
-		if st := body(&b); st != 0 {
-			return st
+		if err := body(&b); err != nil {
+			return payloadErr(err)
 		}
 		if b.Revision == nil {
-			return bad("revision")
+			return payloadErr(core.ErrInvalid{What: "revision"})
 		}
 		n, err := s.core.UpdateNote(ctx, p, pid, nid, *b.Revision, core.NoteInput{Class: b.Class, Title: b.Title, Body: b.Body})
 		if err != nil {
@@ -318,7 +328,7 @@ func (s *server) noteRoute(w http.ResponseWriter, r *req, p core.Principal, pid 
 	case "DELETE":
 		rev, err := strconv.ParseInt(get("revision"), 10, 64)
 		if err != nil {
-			return bad("revision")
+			return payloadErr(core.ErrInvalid{What: "revision"})
 		}
 		if err := s.core.DeleteNote(ctx, p, pid, nid, rev); err != nil {
 			return s.coreError(w, r, err)

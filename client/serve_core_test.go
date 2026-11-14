@@ -286,7 +286,7 @@ func TestCoreCase8Revisions(t *testing.T) {
 		status(t, put("dana", theirs, rv), 404)
 	}
 	status(t, f.call("bor", "DELETE", url(mine)+"?revision=2", ""), 204)
-	status(t, f.call("bor", "DELETE", url(theirs)+"?revision=x", ""), 400)
+	status(t, f.call("bor", "DELETE", url(theirs)+"?revision=x", ""), 403) // may not delete it: 403 before the revision is looked at
 }
 
 func TestCoreCase9Identity(t *testing.T) {
@@ -445,7 +445,7 @@ func TestCoreCase18Api(t *testing.T) {
 		"bad limit":        f.call("ana", "GET", n+"?limit=1000", ""),
 		"limit not int":    f.call("ana", "GET", n+"?limit=x", ""),
 		"bad class query":  f.call("ana", "GET", n+"?class=x", ""),
-		"missing revision": f.call("ana", "PUT", n+"/1", `{"class":"data","title":"t"}`),
+		"missing revision": f.call("ana", "PUT", fmt.Sprintf("%s/%d", n, noteOf(f, "ana")), `{"class":"data","title":"t"}`),
 	} {
 		if r.status != 400 || errType2(r) != "invalid" {
 			t.Errorf("%s: %d %s", name, r.status, r.body)
@@ -719,4 +719,40 @@ func coreLiveServer(t *testing.T) (*server, string, string) {
 	t.Cleanup(s.closeCore)
 	go s.serve(ln)
 	return s, cfg, fmt.Sprintf("http://127.0.0.1:%d", c.Port)
+}
+
+func noteOf(f *coreFx, user string) int64 {
+	id, _ := f.create(user, "fakture", "data")
+	return id
+}
+
+func TestCoreVisibilityBeforePayloadChecks(t *testing.T) { // review A6
+	f := newCoreFx(t, nil)
+	mine, _ := f.create("ana", "fakture", "data")
+	n := func(id int64) string { return fmt.Sprintf("%s/%d", f.notesURL("fakture"), id) }
+	huge := `{"revision":1,"class":"data","title":"t","body":"` + strings.Repeat("x", 600<<10) + `"}`
+	bad := map[string]string{"too large": huge, "malformed": `{"revision":`, "no revision": `{"class":"data","title":"t"}`, "bad class": `{"revision":1,"class":"nope","title":"t"}`,
+		"unknown field": `{"revision":1,"class":"data","title":"t","x":1}`}
+	for name, body := range bad {
+		if r := f.call("dana", "PUT", n(mine), body); r.status != 404 { // dana may not see it
+			t.Errorf("%s as a stranger: %d %s", name, r.status, r.body)
+		}
+		if r := f.call("dana", "PUT", n(999999), body); r.status != 404 { // a note that does not exist
+			t.Errorf("%s on a missing note: %d", name, r.status)
+		}
+		if r := f.call("bor", "PUT", n(mine), body); r.status != 403 { // visible, may not change it
+			t.Errorf("%s as a reader of it: %d %s", name, r.status, r.body)
+		}
+		if r := f.call("ana", "PUT", n(mine), body); r.status != 400 && r.status != 413 { // the author: the payload error
+			t.Errorf("%s as the author: %d %s", name, r.status, r.body)
+		}
+	}
+	for _, p := range []string{"?revision=x", "", "?revision="} {
+		if r := f.call("dana", "DELETE", n(mine)+p, ""); r.status != 404 {
+			t.Errorf("DELETE %q as a stranger: %d", p, r.status)
+		}
+		if r := f.call("ana", "DELETE", n(mine)+p, ""); r.status != 400 {
+			t.Errorf("DELETE %q as the author: %d", p, r.status)
+		}
+	}
 }

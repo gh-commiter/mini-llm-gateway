@@ -350,3 +350,28 @@ func (s *Store) reloadBound(ctx context.Context) {
 		s.bound.Store(&m)
 	}
 }
+
+// UsageGapRecord is a gap as the spool keeps it (the id makes a replay idempotent).
+type UsageGapRecord struct {
+	ID       string
+	Count    int64
+	From, To time.Time
+}
+
+// ReplayUsage stores spooled events and gaps in one transaction. It is idempotent: events by FinishEvent's rule,
+// gaps by id, so a replay that was interrupted before the spool file was cleared can simply run again.
+func (s *Store) ReplayUsage(ctx context.Context, evs []UsageEvent, gaps []UsageGapRecord) error {
+	return s.write(ctx, func(tx *sql.Tx) error {
+		for _, e := range evs {
+			if err := finishEvent(tx, e); err != nil {
+				return err
+			}
+		}
+		for _, g := range gaps {
+			if _, err := tx.Exec(`INSERT OR IGNORE INTO usage_gaps(id,count,from_ms,to_ms) VALUES(?,?,?,?)`, g.ID, g.Count, ms(g.From), ms(g.To)); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}

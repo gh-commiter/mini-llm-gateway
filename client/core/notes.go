@@ -394,12 +394,12 @@ func (s *Store) CreateNote(ctx context.Context, p Principal, project int64, key 
 // checked against the transition table and always bumps the epoch (also private -> shared: the author may be only a reader by now).
 func (s *Store) UpdateNote(ctx context.Context, p Principal, project, id, revision int64, in NoteInput) (n Note, err error) {
 	lim := s.rate(p.UserID, true)
-	if err = checkInput(in); err != nil {
-		return
-	}
 	err = s.write(ctx, func(tx *sql.Tx) error {
-		a, old, err := writeAccess(tx, p, project, id)
+		a, old, err := writeAccess(tx, p, project, id) // visible first: an invisible note is 404 whatever the payload
 		if err != nil {
+			return err
+		}
+		if err := checkInput(in); err != nil {
 			return err
 		}
 		own := old.AuthorID == p.UserID
@@ -644,4 +644,14 @@ func (s *Store) RunGetNote(ctx context.Context, c RunCap, approved bool, id int6
 		return Note{}, err
 	}
 	return
+}
+
+// CanChangeNote runs the checks that come before any payload or revision check of an update or delete: visible (404),
+// allowed (403), archived (403). The HTTP layer calls it when a request body is malformed, too large or lacks a
+// revision, so that such a request about a note the caller may not see is still a 404.
+func (s *Store) CanChangeNote(ctx context.Context, p Principal, project, id int64) error {
+	return s.read(ctx, func(tx *sql.Tx) error {
+		_, _, err := writeAccess(tx, p, project, id)
+		return err
+	})
 }
