@@ -122,13 +122,17 @@ func makeRouter(session: URLSession = .shared) -> Router {
     #expect(ClaudeCLI.match("claude-cli-sonnet")! == ("sonnet", false))
     var cli = ClaudeCLIConfig()
     let cwd = URL(fileURLWithPath: "/tmp/session")
-    let plain = cli.agentArgs(cwd: cwd, allTools: [], folders: AllowedFolders())  // #106 S3: + --settings with the tool deny rules
-    #expect(Array(plain.prefix(6)) == ["--tools", "Read,Grep,Glob", "--allowedTools", "Read,Grep,Glob", "--permission-mode", "dontAsk"] && plain.count == 8 && plain[6] == "--settings")
+    let plain = cli.agentArgs(cwd: cwd, allTools: [], folders: AllowedFolders(), checkedPaths: ["/work/a"])  // #106 S3: + --settings with the tool deny rules
+    // #111: path tools are scoped (the session's folder and each checked allowed folder), --tools stays bare, --add-dir for the folders
+    #expect(Array(plain.prefix(6)) == ["--tools", "Read,Grep,Glob", "--allowedTools", "Read(./**),Read(//work/a/**),Grep(./**),Grep(//work/a/**),Glob(./**),Glob(//work/a/**)", "--permission-mode", "dontAsk"]
+            && plain[6] == "--settings" && Array(plain.suffix(2)) == ["--add-dir", "/work/a"])
+    let none = cli.agentArgs(cwd: cwd, allTools: [], folders: AllowedFolders(), checkedPaths: [])
+    #expect(none[3] == "Read(./**),Grep(./**),Glob(./**)" && !none.contains("--add-dir") && !none[3].contains("Read,") )
     cli.tools = "Read,Bash,Task,mcp__x__run,Write"  // sec-fix F3: a stored list of an older version; no sandbox, so nothing the deny rules do not cover
     #expect(ClaudeCLIConfig.unsafeRestricted(cli.tools) == ["Bash", "Task", "mcp__x__run"])
-    #expect(cli.agentArgs(cwd: cwd, allTools: [], folders: AllowedFolders()).prefix(4) == ["--tools", "Read,Write", "--allowedTools", "Read,Write"])
+    #expect(cli.agentArgs(cwd: cwd, allTools: [], folders: AllowedFolders(), checkedPaths: []).prefix(4) == ["--tools", "Read,Write", "--allowedTools", "Read(./**),Edit(./**)"])  // Write has no path rule of its own: Edit covers it
     cli.tools = "Read,Edit,Bash(git:*),Write,Grep"  // --minigw-ro: brez orodij za pisanje; Bash tu nima sandboxa
-    #expect(Array(cli.agentArgs(cwd: cwd, allTools: [], readOnly: true, folders: AllowedFolders()).prefix(6)) == ["--tools", "Read,Grep", "--allowedTools", "Read,Grep", "--permission-mode", "dontAsk"])
+    #expect(Array(cli.agentArgs(cwd: cwd, allTools: [], readOnly: true, folders: AllowedFolders(), checkedPaths: ["/w"]).prefix(6)) == ["--tools", "Read,Grep", "--allowedTools", "Read(./**),Read(//w/**),Grep(./**),Grep(//w/**)", "--permission-mode", "dontAsk"])
     cli.tools = "Read,Monitor,EnterWorktree,WebFetch"  // seznam dovoljenih: orodja, ki niso na njem, odpadejo
     #expect(cli.agentArgs(cwd: cwd, allTools: [], readOnly: true, folders: AllowedFolders()).prefix(2) == ["--tools", "Read,WebFetch"])
     cli.tools = "Read,Grep,Glob"
