@@ -759,6 +759,9 @@ func (s *server) runAgent(w http.ResponseWriter, r *req, body map[string]any, k 
 		return writeError(w, r.rid, 403, k.bin+" needs \"Allow commands without a sandbox\" (Claude CLI settings) on this gateway (Windows, "+
 			"or Linux without bwrap): it can read and change everything this user can, including the gateway's settings"+hint)
 	}
+	if why := s.coreRefusal(c, k.name); why != "" { // #106: next to the check above, at every launch
+		return writeError(w, r.rid, 403, why)
+	}
 	if model != "" && !validAgentModel.MatchString(model) {
 		return writeError(w, r.rid, 400, "Invalid model name")
 	}

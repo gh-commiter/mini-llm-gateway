@@ -27,7 +27,14 @@ const (
 // openCore opens <config dir>/core. A gateway that cannot open it still starts: project routes answer 503, the
 // models work. Not called for the offline server (minigw gw without a running gateway).
 func (s *server) openCore() {
-	st, err := core.Open(filepath.Join(s.cfgDir, coreDirName), core.Options{ProtectDir: protectDir})
+	var st *core.Store
+	var err error
+	if why := s.coreOpenRefusal(s.conf()); why != "" { // #106: agents that could read the database: not opened unless accepted
+		err = errors.New(why)
+	} else {
+		s.logCoreAccepted(s.conf())
+		st, err = core.Open(filepath.Join(s.cfgDir, coreDirName), core.Options{ProtectDir: protectDir})
+	}
 	if err == nil {
 		s.core = st // the API reads the store through s.core; nothing serves yet (openCore runs before serve)
 		err = s.ensureOwner(st)
