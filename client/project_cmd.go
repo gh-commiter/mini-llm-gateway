@@ -154,6 +154,22 @@ func gatewayError(st int, data []byte, h http.Header) error {
 	return fmt.Errorf("gateway answered HTTP %d", st)
 }
 
+// olderGatewayHint: the gateway's version (/health/ready) when it is below 0.6.0, else "". A gateway that reports none is older still.
+func (e *projectEnv) olderGatewayHint(c connection) string {
+	st, data, _ := e.do(c, "GET", "/health/ready", nil, nil)
+	var r struct{ Version string }
+	if st != 200 || json.Unmarshal(data, &r) != nil || (r.Version != "" && strings.Trim(r.Version, "0123456789.") != "") {
+		return ""
+	}
+	if r.Version == "" {
+		return "hint: this gateway is older than 0.6.0 and has no projects (update the gateway)"
+	}
+	if !versionLess(r.Version, "0.6.0") {
+		return ""
+	}
+	return "hint: this gateway runs " + r.Version + ", older than 0.6.0: it has no projects yet (update the gateway)"
+}
+
 // parseFlags: flags and positionals in any order.
 func parseFlags(fs *flag.FlagSet, args []string) ([]string, error) {
 	fs.SetOutput(io.Discard)
@@ -194,7 +210,13 @@ func (e *projectEnv) project(args []string) error {
 		}
 		st, data, h := e.do(c, "GET", path, nil, nil)
 		if st != 200 {
-			return gatewayError(st, data, h)
+			err := gatewayError(st, data, h)
+			if st == 404 { // a gateway older than 0.6.0 has no projects: say so, instead of "not found"
+				if hint := e.olderGatewayHint(c); hint != "" {
+					err = errors.New(err.Error() + "\n" + hint)
+				}
+			}
+			return err
 		}
 		if *asJSON {
 			e.say(strings.TrimSpace(string(data)))

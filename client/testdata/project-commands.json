@@ -164,6 +164,12 @@
       "/minigw/v1/projects",
       "",
       ""
+     ],
+     [
+      "GET",
+      "/health/ready",
+      "",
+      ""
      ]
     ],
     "links": [
@@ -3786,6 +3792,313 @@
     "links": [
      "fakture:7@proj"
     ]
+   }
+  },
+  {
+   "name": "project list older gateway 0.5.27",
+   "args": [
+    "project",
+    "list"
+   ],
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects",
+     "status": 404,
+     "body": "{\"error\":{\"type\":\"not_found\",\"message\":\"Not found\"}}"
+    },
+    {
+     "match": "GET /health/ready",
+     "status": 200,
+     "body": "{\"status\":\"ok\",\"version\":\"0.5.27\",\"providers\":[]}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "not found or not visible\nhint: this gateway runs 0.5.27, older than 0.6.0: it has no projects yet (update the gateway)",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects",
+      "",
+      ""
+     ],
+     [
+      "GET",
+      "/health/ready",
+      "",
+      ""
+     ]
+    ],
+    "links": []
+   }
+  },
+  {
+   "name": "project list older gateway 0.5.9 compares by numbers",
+   "args": [
+    "project",
+    "list"
+   ],
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects",
+     "status": 404,
+     "body": "{\"error\":{\"type\":\"not_found\",\"message\":\"Not found\"}}"
+    },
+    {
+     "match": "GET /health/ready",
+     "status": 200,
+     "body": "{\"version\":\"0.5.9\"}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "not found or not visible\nhint: this gateway runs 0.5.9, older than 0.6.0: it has no projects yet (update the gateway)",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects",
+      "",
+      ""
+     ],
+     [
+      "GET",
+      "/health/ready",
+      "",
+      ""
+     ]
+    ],
+    "links": []
+   }
+  },
+  {
+   "name": "project list older gateway without a version",
+   "args": [
+    "project",
+    "list"
+   ],
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects",
+     "status": 404,
+     "body": "{\"error\":{\"type\":\"not_found\",\"message\":\"Not found\"}}"
+    },
+    {
+     "match": "GET /health/ready",
+     "status": 200,
+     "body": "{\"providers\":[]}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "not found or not visible\nhint: this gateway is older than 0.6.0 and has no projects (update the gateway)",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects",
+      "",
+      ""
+     ],
+     [
+      "GET",
+      "/health/ready",
+      "",
+      ""
+     ]
+    ],
+    "links": []
+   }
+  },
+  {
+   "name": "project list 404 on a 0.6.0 gateway has no hint",
+   "args": [
+    "project",
+    "list"
+   ],
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects",
+     "status": 404,
+     "body": "{\"error\":{\"type\":\"not_found\",\"message\":\"Not found\"}}"
+    },
+    {
+     "match": "GET /health/ready",
+     "status": 200,
+     "body": "{\"version\":\"0.6.0\"}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "not found or not visible",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects",
+      "",
+      ""
+     ],
+     [
+      "GET",
+      "/health/ready",
+      "",
+      ""
+     ]
+    ],
+    "links": []
+   }
+  },
+  {
+   "name": "project list 404 on a newer gateway has no hint",
+   "args": [
+    "project",
+    "list"
+   ],
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects",
+     "status": 404,
+     "body": "{\"error\":{\"type\":\"not_found\",\"message\":\"Not found\"}}"
+    },
+    {
+     "match": "GET /health/ready",
+     "status": 200,
+     "body": "{\"version\":\"0.10.1\"}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "not found or not visible",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects",
+      "",
+      ""
+     ],
+     [
+      "GET",
+      "/health/ready",
+      "",
+      ""
+     ]
+    ],
+    "links": []
+   }
+  },
+  {
+   "name": "project list 404 version is not numeric",
+   "args": [
+    "project",
+    "list"
+   ],
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects",
+     "status": 404,
+     "body": "{\"error\":{\"type\":\"not_found\",\"message\":\"Not found\"}}"
+    },
+    {
+     "match": "GET /health/ready",
+     "status": 200,
+     "body": "{\"version\":\"dev\"}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "not found or not visible",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects",
+      "",
+      ""
+     ],
+     [
+      "GET",
+      "/health/ready",
+      "",
+      ""
+     ]
+    ],
+    "links": []
+   }
+  },
+  {
+   "name": "project list 404 ready refused",
+   "args": [
+    "project",
+    "list"
+   ],
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects",
+     "status": 404,
+     "body": "{\"error\":{\"type\":\"not_found\",\"message\":\"Not found\"}}"
+    },
+    {
+     "match": "GET /health/ready",
+     "status": 401,
+     "body": "{}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "not found or not visible",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects",
+      "",
+      ""
+     ],
+     [
+      "GET",
+      "/health/ready",
+      "",
+      ""
+     ]
+    ],
+    "links": []
+   }
+  },
+  {
+   "name": "project list 404 ready no answer",
+   "args": [
+    "project",
+    "list"
+   ],
+   "responses": [
+    {
+     "match": "GET /minigw/v1/projects",
+     "status": 404,
+     "body": "{\"error\":{\"type\":\"not_found\",\"message\":\"Not found\"}}"
+    }
+   ],
+   "want": {
+    "out": "",
+    "err": "",
+    "error": "not found or not visible",
+    "requests": [
+     [
+      "GET",
+      "/minigw/v1/projects",
+      "",
+      ""
+     ],
+     [
+      "GET",
+      "/health/ready",
+      "",
+      ""
+     ]
+    ],
+    "links": []
    }
   }
  ]

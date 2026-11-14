@@ -114,6 +114,27 @@ public final class ProjectEnv {
         send(c, method, path, headers, body)
     }
 
+    /// The gateway's version (/health/ready) when it is below 0.6.0, else nil. A gateway that reports none is older still.
+    func olderGatewayHint(_ c: ProjectConn) -> String? {
+        let r = request(c, "GET", "/health/ready")
+        guard r.status == 200, let o = JSONValue.parse(r.data)?.dict else { return nil }
+        let v = o["version"]?.string ?? ""
+        guard v.allSatisfy({ $0.isASCII && ($0.isNumber || $0 == ".") }) else { return nil }
+        if v.isEmpty { return "hint: this gateway is older than 0.6.0 and has no projects (update the gateway)" }
+        guard Self.versionLess(v, "0.6.0") else { return nil }
+        return "hint: this gateway runs \(v), older than 0.6.0: it has no projects yet (update the gateway)"
+    }
+
+    /// versionLess of the Go client: a < b by numbers (0.5.9 < 0.5.10); a missing or non-numeric part is 0.
+    static func versionLess(_ a: String, _ b: String) -> Bool {
+        let pa = a.split(separator: ".", omittingEmptySubsequences: false).map { Int($0) ?? 0 }, pb = b.split(separator: ".", omittingEmptySubsequences: false).map { Int($0) ?? 0 }
+        for i in 0..<max(pa.count, pb.count) {
+            let x = i < pa.count ? pa[i] : 0, y = i < pb.count ? pb[i] : 0
+            if x != y { return x < y }
+        }
+        return false
+    }
+
     func loadState() throws -> ProjectState { try Projects.load(state) }
 
     private func stamp(_ d: Date?) -> String {
@@ -138,7 +159,11 @@ public final class ProjectEnv {
             var path = Self.apiProjects
             if fl.bool("archived") { path += "?archived=1" }
             let r = request(c, "GET", path)
-            guard r.status == 200 else { throw Self.gatewayError(r.status, r.data, r.retryAfter) }
+            guard r.status == 200 else {
+                var e = Self.gatewayError(r.status, r.data, r.retryAfter)
+                if r.status == 404, let hint = olderGatewayHint(c) { e = ProjectError(e.message + "\n" + hint) }  // a gateway older than 0.6.0 has no projects
+                throw e
+            }
             if fl.bool("json") { say(ProjectText.trim(String(decoding: r.data, as: UTF8.self))); return }
             let list = JSONValue.parse(r.data)?.array ?? []
             let ps = (try? loadState()) ?? ProjectState()
