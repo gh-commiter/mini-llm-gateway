@@ -14,7 +14,7 @@ func (s *server) quotaAdmin(method string, seg []string, body []byte) (int, any)
 		return fail(404, "Not found: "+method+" "+seg[0])
 	}
 	switch method {
-	case "PATCH": // {"claudeProbe": bool}: the opt-in of the Claude probe
+	case "PATCH": // {"claudeProbe": bool}: the opt-in of the Claude probe; it runs nothing by itself (the next GET does)
 		var b struct{ ClaudeProbe *bool }
 		if decodeStrict(body, &b) != nil || b.ClaudeProbe == nil {
 			return fail(400, "bad JSON body (claudeProbe)")
@@ -26,5 +26,5 @@ func (s *server) quotaAdmin(method string, seg []string, body []byte) (int, any)
 	default:
 		return fail(404, "Not found: "+method+" "+seg[0])
 	}
-	return 200, map[string]any{"quota": s.quotaReport(context.Background()), "claudeProbe": s.conf().ClaudeQuotaProbe}
+	return 200, map[string]any{"quota": s.quotaReportF(context.Background(), method == "GET"), "claudeProbe": s.conf().ClaudeQuotaProbe}
 }

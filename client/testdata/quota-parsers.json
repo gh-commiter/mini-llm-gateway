@@ -1483,6 +1483,408 @@
     true,
     false
    ]
+  },
+  {
+   "name": "codex hostile resets_at 1e100",
+   "kind": "codex",
+   "input": "{\"rate_limits\":{\"primary\":{\"used_percent\":1,\"window_minutes\":300,\"resets_at\":1e100}}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "codex.5h",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "codex-session-log",
+     "stale": false,
+     "unit": "percent",
+     "value": 1
+    }
+   ]
+  },
+  {
+   "name": "codex hostile resets_at -1e100",
+   "kind": "codex",
+   "input": "{\"rate_limits\":{\"primary\":{\"used_percent\":1,\"window_minutes\":300,\"resets_at\":-1e100}}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "codex.5h",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "codex-session-log",
+     "stale": false,
+     "unit": "percent",
+     "value": 1
+    }
+   ]
+  },
+  {
+   "name": "codex hostile resets_at beyond year 9999",
+   "kind": "codex",
+   "input": "{\"rate_limits\":{\"primary\":{\"used_percent\":1,\"window_minutes\":300,\"resets_at\":253402300800}}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "codex.5h",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "codex-session-log",
+     "stale": false,
+     "unit": "percent",
+     "value": 1
+    }
+   ]
+  },
+  {
+   "name": "codex resets_at beyond 9999 falls to resets_in_seconds",
+   "kind": "codex",
+   "input": "{\"rate_limits\":{\"primary\":{\"used_percent\":1,\"window_minutes\":300,\"resets_at\":1e18,\"resets_in_seconds\":120}}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "codex.5h",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "resetsAt": "2026-11-14T10:02:00Z",
+     "source": "codex-session-log",
+     "stale": false,
+     "unit": "percent",
+     "value": 1
+    }
+   ]
+  },
+  {
+   "name": "codex resets_at year 9999 is accepted",
+   "kind": "codex",
+   "input": "{\"rate_limits\":{\"primary\":{\"used_percent\":1,\"window_minutes\":300,\"resets_at\":253402300799}}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "codex.5h",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "resetsAt": "9999-12-31T23:59:59Z",
+     "source": "codex-session-log",
+     "stale": false,
+     "unit": "percent",
+     "value": 1
+    }
+   ]
+  },
+  {
+   "name": "codex hostile resets_in_seconds 1e100",
+   "kind": "codex",
+   "input": "{\"rate_limits\":{\"primary\":{\"used_percent\":1,\"window_minutes\":300,\"resets_in_seconds\":1e100}}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "codex.5h",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "codex-session-log",
+     "stale": false,
+     "unit": "percent",
+     "value": 1
+    }
+   ]
+  },
+  {
+   "name": "codex negative resets_in_seconds",
+   "kind": "codex",
+   "input": "{\"rate_limits\":{\"primary\":{\"used_percent\":1,\"window_minutes\":300,\"resets_in_seconds\":-5}}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "codex.5h",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "codex-session-log",
+     "stale": false,
+     "unit": "percent",
+     "value": 1
+    }
+   ]
+  },
+  {
+   "name": "codex resets_in_seconds at the bound",
+   "kind": "codex",
+   "input": "{\"rate_limits\":{\"primary\":{\"used_percent\":1,\"window_minutes\":300,\"resets_in_seconds\":1e9}}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "codex.5h",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "resetsAt": "2058-07-23T11:46:40Z",
+     "source": "codex-session-log",
+     "stale": false,
+     "unit": "percent",
+     "value": 1
+    }
+   ]
+  },
+  {
+   "name": "codex hostile window_minutes 1e100",
+   "kind": "codex",
+   "input": "{\"rate_limits\":{\"primary\":{\"used_percent\":1,\"window_minutes\":1e100,\"resets_at\":1794000000}}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "codex.week",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "resetsAt": "2026-11-06T21:20:00Z",
+     "source": "codex-session-log",
+     "stale": false,
+     "unit": "percent",
+     "value": 1
+    }
+   ]
+  },
+  {
+   "name": "codex negative window_minutes",
+   "kind": "codex",
+   "input": "{\"rate_limits\":{\"primary\":{\"used_percent\":1,\"window_minutes\":-300,\"resets_at\":1794000000}}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "codex.5h",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "resetsAt": "2026-11-06T21:20:00Z",
+     "source": "codex-session-log",
+     "stale": false,
+     "unit": "percent",
+     "value": 1
+    }
+   ]
+  },
+  {
+   "name": "codex huge used_percent",
+   "kind": "codex",
+   "input": "{\"rate_limits\":{\"primary\":{\"used_percent\":1e308,\"window_minutes\":300}}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "codex.5h",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "codex-session-log",
+     "stale": false,
+     "unit": "percent",
+     "value": 1e+308
+    }
+   ]
+  },
+  {
+   "name": "codex overflowing number makes the line unreadable",
+   "kind": "codex",
+   "input": "{\"rate_limits\":{\"primary\":{\"used_percent\":1e999,\"window_minutes\":300},\"secondary\":{\"used_percent\":4,\"window_minutes\":10080}}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": []
+  },
+  {
+   "name": "codex overflowing resets_at makes the line unreadable",
+   "kind": "codex",
+   "input": "{\"rate_limits\":{\"primary\":{\"used_percent\":1,\"resets_at\":1e999},\"secondary\":{\"used_percent\":4,\"window_minutes\":10080}}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": []
+  },
+  {
+   "name": "codex numbers as strings",
+   "kind": "codex",
+   "input": "{\"rate_limits\":{\"primary\":{\"used_percent\":\"1\",\"window_minutes\":\"300\",\"resets_at\":\"1794000000\"}}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": []
+  },
+  {
+   "name": "codex null numbers",
+   "kind": "codex",
+   "input": "{\"rate_limits\":{\"primary\":{\"used_percent\":1,\"window_minutes\":null,\"resets_at\":null,\"resets_in_seconds\":null}}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "codex.5h",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "codex-session-log",
+     "stale": false,
+     "unit": "percent",
+     "value": 1
+    }
+   ]
+  },
+  {
+   "name": "usage 400 digit percent is skipped",
+   "kind": "claude-usage",
+   "input": "{\"is_error\": false, \"num_turns\": 0, \"total_cost_usd\": 0, \"usage\": {\"input_tokens\": 0, \"output_tokens\": 0}, \"result\": \"Current session: 9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999% used\\n\"}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "no usage lines in the output (another Claude Code version?)"
+   }
+  },
+  {
+   "name": "usage 400 digit percent next to a good line",
+   "kind": "claude-usage",
+   "input": "{\"is_error\": false, \"num_turns\": 0, \"total_cost_usd\": 0, \"usage\": {\"input_tokens\": 0, \"output_tokens\": 0}, \"result\": \"Current session: 9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999% used\\nCurrent week: 5% used\\n\"}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "claude.week",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "claude-usage",
+     "stale": false,
+     "unit": "percent",
+     "value": 5
+    }
+   ]
+  },
+  {
+   "name": "usage 300 digit percent is still a number",
+   "kind": "claude-usage",
+   "input": "{\"is_error\": false, \"num_turns\": 0, \"total_cost_usd\": 0, \"usage\": {\"input_tokens\": 0, \"output_tokens\": 0}, \"result\": \"Current week: 999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999% used\\n\"}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "claude.week",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "claude-usage",
+     "stale": false,
+     "unit": "percent",
+     "value": 1e+300
+    }
+   ]
+  },
+  {
+   "name": "usage huge fraction digits",
+   "kind": "claude-usage",
+   "input": "{\"is_error\": false, \"num_turns\": 0, \"total_cost_usd\": 0, \"usage\": {\"input_tokens\": 0, \"output_tokens\": 0}, \"result\": \"Current week: 1.99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999% used\\n\"}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "claude.week",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "claude-usage",
+     "stale": false,
+     "unit": "percent",
+     "value": 2
+    }
+   ]
+  },
+  {
+   "name": "usage huge cost",
+   "kind": "claude-usage",
+   "input": "{\"num_turns\":0,\"total_cost_usd\":1e308,\"result\":\"Current week: 5% used\"}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "claude /usage ran inference; it is switched off until the gateway restarts"
+   }
+  },
+  {
+   "name": "usage overflowing number",
+   "kind": "claude-usage",
+   "input": "{\"num_turns\":1e999,\"result\":\"Current week: 5% used\"}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "unexpected output"
+   }
+  },
+  {
+   "name": "openrouter overflow of the difference",
+   "kind": "openrouter",
+   "input": "{\"data\":{\"total_credits\":1e308,\"total_usage\":-1e308}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "unexpected answer"
+   }
+  },
+  {
+   "name": "openrouter overflowing number",
+   "kind": "openrouter",
+   "input": "{\"data\":{\"total_credits\":1e999,\"total_usage\":1}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "unexpected answer"
+   }
+  },
+  {
+   "name": "openrouter huge but finite",
+   "kind": "openrouter",
+   "input": "{\"data\":{\"total_credits\":1e308,\"total_usage\":1}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "openrouter.credits-remaining",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "openrouter-api",
+     "stale": false,
+     "unit": "usd",
+     "value": 1e+308
+    },
+    {
+     "name": "openrouter.credits-total",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "openrouter-api",
+     "stale": false,
+     "unit": "usd",
+     "value": 1e+308
+    }
+   ]
+  },
+  {
+   "name": "openrouter negative zero credits",
+   "kind": "openrouter",
+   "input": "{\"data\":{\"total_credits\":-0,\"total_usage\":0}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "unexpected answer"
+   }
+  },
+  {
+   "name": "litellm overflowing spend",
+   "kind": "litellm",
+   "input": "{\"info\":{\"spend\":1e999}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "unexpected answer"
+   }
+  },
+  {
+   "name": "litellm huge max_budget",
+   "kind": "litellm",
+   "input": "{\"info\":{\"spend\":1,\"max_budget\":1e308}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "litellm.spend",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "litellm-api",
+     "stale": false,
+     "unit": "usd",
+     "value": 1
+    },
+    {
+     "name": "litellm.max-budget",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "litellm-api",
+     "stale": false,
+     "unit": "usd",
+     "value": 1e+308
+    }
+   ]
+  },
+  {
+   "name": "litellm overflowing max_budget",
+   "kind": "litellm",
+   "input": "{\"info\":{\"spend\":1,\"max_budget\":1e999}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": {
+    "error": "unexpected answer"
+   }
+  },
+  {
+   "name": "codex resets_in_seconds above the bound",
+   "kind": "codex",
+   "input": "{\"rate_limits\":{\"primary\":{\"used_percent\":1,\"window_minutes\":300,\"resets_in_seconds\":1.0000001e9}}}",
+   "now": "2026-11-14T10:00:00Z",
+   "want": [
+    {
+     "name": "codex.5h",
+     "observedAt": "2026-11-14T10:00:00Z",
+     "source": "codex-session-log",
+     "stale": false,
+     "unit": "percent",
+     "value": 1
+    }
+   ]
   }
  ]
 }
