@@ -292,6 +292,30 @@ holds a lock on it, so only one process uses it at a time.
 
 Members, projects and grants are managed with `minigw gw user|bind|project|member|grant` (see `minigw gw help`).
 
+### The Mac app: the project helper
+
+The Mac app has no copy of this code in Swift. It starts **`minigw-core`** (`Mini Gateway.app/Contents/Helpers/`), a
+small helper made from the same Go packages, and forwards the project routes and the core's admin routes to it. The
+app still does the authentication (the Noise tunnel and the device proof, the approved list, the gateway token, the
+admin proof, the agent check); the helper decides everything else, so both gateways answer the same.
+
+- **Where the database is:** `~/Library/Application Support/Mini Gateway/core/` (mode 0700, the files 0600), next to
+  `state.json`. It is not in Scratch and not in the settings. Back it up with `minigw gw core backup <file>`.
+- **How it runs:** the app starts the helper with a private connection (an inherited socket pair, no file and no
+  network port) and a secret made for that start. The helper serves only the app that started it, and ends when the
+  app quits or dies. If it stops, the app starts it again (waiting longer after each failure, up to 5 seconds).
+- **`503 core_unavailable`:** the project routes answer it while the helper is not running (missing, being restarted,
+  refused because it does not speak the app's protocol version) and while it is up but cannot open the database (newer
+  schema, locked, damaged). The model routes work as before. For the second case the helper stays up and answers every
+  request with the same 503; the admin routes carry the reason (`The project database is not available: …`) and the
+  helper writes it to its error output. Quit and open the app to try again. A request that was cut off by a restart may or may not have
+  been applied: repeat it with the same `Idempotency-Key`.
+- **Removing a device** (Settings, `minigw gw devices deny`, the admin API) raises the core's epoch before the call
+  answers. If the helper is down the removal still happens at once (the device is refused immediately) and a pending
+  mark is saved in the settings with it; the app sends it when the helper is next ready, before any project route is
+  served.
+- **First start:** the owner user is created once, named after the Mac account.
+
 ## Usage events and quota (0.6.0, `minigw serve`)
 
 **What is counted.** Every model invocation is one event: a request to `POST /v1/messages` that reaches a model (a
@@ -357,7 +381,7 @@ place.
 | Provider API keys | Keychain | Credential Manager | Secret Service (`secret-tool`), else `gateway-keys.json` (mode 0600) next to `serve.json` |
 | Lock for changes of `serve.json` | – | `serve.json.lock` next to `serve.json` (a change waits up to 5 s for another process) | same |
 | Usage spool (0.6.0) | – | `usage.spool` next to `serve.json` | same |
-| Core database (0.6.0) | – | `core\` next to `serve.json` | `core/` next to `serve.json` |
+| Core database (0.6.0) | `~/Library/Application Support/Mini Gateway/core/` (0700, hosted by the helper `minigw-core`) | `core\` next to `serve.json` | `core/` next to `serve.json` |
 | Admin secret | Keychain | `admin.secret` in the config folder | `admin.secret` in the config folder |
 | Log | – | `minigw-serve.log` in the config folder (tray) | the systemd journal |
 | Agents' copies and clones | Scratch folder (Settings → General) | Scratch folder | Scratch folder |

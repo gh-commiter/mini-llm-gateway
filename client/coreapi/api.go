@@ -171,9 +171,18 @@ func RetryAfterSeconds(d time.Duration) int { return max(1, int((d+time.Second-1
 
 func noAccess() Response { return jsonErr(403, "no_project_access", "No project access") }
 
+// NoProjectAccess is the fixed 403 an adapter answers itself (a request that fails the gateway token or comes through a
+// run port). testdata/no_project_access.json holds its exact body; the Go gateway's own copy and the Swift one are
+// asserted against it.
+func NoProjectAccess() Response { return noAccess() }
+
 func unavailable() Response {
 	return jsonErr(503, "core_unavailable", "The project database is not available")
 }
+
+// Unavailable is the 503 an adapter answers itself when the core cannot be asked at all (the Mac helper is down).
+// testdata/unavailable.json holds its exact body: the Go and Swift tests both assert it, so the two cannot drift.
+func Unavailable() Response { return unavailable() }
 
 // decodeStrict: one JSON object, unknown fields refused.
 func decodeStrict(body []byte, v any) error {

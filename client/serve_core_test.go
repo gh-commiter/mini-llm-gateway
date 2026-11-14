@@ -859,3 +859,14 @@ func TestRestoreOutcomeTellsTheRealState(t *testing.T) { // review (should-fix)
 		t.Fatal("success")
 	}
 }
+
+// The gateway's own fixed 403 is the same body as coreapi's (and as the Mac app's constant): one fixture.
+func TestNoProjectAccessBodyMatchesTheFixture(t *testing.T) {
+	want, err := os.ReadFile("coreapi/testdata/no_project_access.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := noProjectAccess().Body; string(got) != string(want) {
+		t.Fatalf("noProjectAccess body %s, fixture %s", got, want)
+	}
+}
