@@ -298,7 +298,10 @@ When the folder you start `minigw` in is linked to a project (`minigw project li
 (`X-Minigw-Project`) with the agent requests. The gateway builds the principal as for the member routes (the device
 key proven in the tunnel, the device on the approved list now, bound to an active user) and requires a **direct role**
 in that project; otherwise the request is refused with 403 `no_project_access`, it never runs without the project.
-A request without the header behaves as before. A `.minigw-project` file never links anything.
+A request without the header behaves as before. A `.minigw-project` file never links anything. The fixed `no_project_access` body
+applies to the project routes and to this project admission of an agent request; the generic token and device errors of the
+model routes stay as in 0.5.x. The project header is set by minigw's own proxy (any header of that name from the agent CLI's
+settings is removed), and the member routes refuse requests that come from an agent process of the gateway itself.
 
 - **What the agent can read.** A run with a project gets a read-only notes capability (run, user, device, project,
   epoch) in the gateway, independent of "May ask other models". The run port then also serves

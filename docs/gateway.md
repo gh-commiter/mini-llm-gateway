@@ -319,13 +319,34 @@ only *begun* in the core when the process died become `interrupted`.
 **Retention.** Detail rows older than 400 days are folded into daily totals (at start and once a day).
 
 **Quota (owner only, `minigw gw quota`).** Codex: the last `rate_limits` record in the session log of the Codex run the
-gateway started (5-hour window and week; as fresh as the last run). Claude: `claude -p /usage` run in an empty private
-folder with settings sources off, 0 turns, 30 s timeout (checked with Claude Code 2.1.322: no inference and no cost; the
-result is refused and the feature switched off if a run ever shows turns, cost or tokens), cached for 10 minutes; the text
-format is Claude Code's, so another version may show `unavailable`. OpenRouter credit (`/api/v1/credits`) and LiteLLM
-spend (`/key/info`) with the provider's key, never logged or returned, cached for 10 minutes. Every value shows its
-source, when it was observed and when its window resets; `stale` when the window has reset since or the observation is
-older than a day, or a refresh failed.
+gateway started (5-hour window and week; as fresh as the last run), read in the background after the answer has gone
+out. OpenRouter credit (`/api/v1/credits`) and LiteLLM spend (`/key/info`) with the provider's key, never logged or
+returned, cached for 10 minutes. **Claude is off by default.** `minigw gw quota --claude-probe=on` lets the gateway run
+`claude -p /usage` (at most every 10 minutes, single-flight, 30 s timeout) in an empty private folder under the config
+folder, with settings sources off, `--strict-mcp-config` and an empty MCP config, and an environment built from an
+allowlist: `PATH`, `HOME`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `SystemRoot`, `windir`, `SystemDrive` (the program
+and its login folder), `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME` (Linux login folder), `CLAUDE_CONFIG_DIR`
+(a moved login folder), `CLAUDE_CODE_OAUTH_TOKEN` (login by token), `LANG`, `LC_ALL`, `TZ` (the reset times); nothing
+else, in particular no `ANTHROPIC_*`. Checked with Claude Code 2.1.322: `/usage` runs no model turn (0 turns, no cost,
+no tokens). The residual risk: a future Claude Code could treat `/usage` as a prompt. The gateway checks every answer; a
+run that shows a turn, cost or tokens is refused and the probe is switched off until the gateway restarts, but that
+one run has then already happened. The text format is Claude Code's own, so another version may show `unavailable`.
+Every value shows its source, when it was observed and when its window resets; `stale` when the window has reset since
+or the observation is older than a day, or a refresh failed; `unavailable` values say why (`reason`, for example
+`probe off`).
+
+**Revocation is durable.** Removing a device writes a pending mark (`pendingRevocations` in `serve.json`) in the same
+update that removes the device; with a live core the epoch is raised and the mark cleared before the call answers.
+Offline, with the core unavailable or when the write fails, the mark stays and the next start of the core raises the
+epoch before any project route is enabled.
+
+**Agent homes.** A Codex, Grok or Copilot run with a project keeps its transcripts in a home of its own per device, user,
+project and epoch (`state/<device>/proj/<user>-<project>-e<epoch>/<cli>`; on Windows too, where runs without a project
+still use the real `~/.codex`). Only the login files the gateway already links (`auth.json`, `config.toml`) are carried
+over; sessions and logs never are. The homes of dead epochs of the same user and project are removed when the next one
+is created, and at most 20 project homes are kept per device. Cost: no session resume across an epoch change (by
+design), and one more folder per project in Scratch; on Windows the login file is copied in per run instead of used in
+place.
 
 ## Where things are stored
 
