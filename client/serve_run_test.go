@@ -539,19 +539,46 @@ func TestConversationScopeWithoutProjectIsTheOldKey(t *testing.T) { // case 17: 
 	if got, want := cliScope("sid1", "/gw/copy", nil), "sid1|/gw/copy"; got != want {
 		t.Errorf("cliScope: %q, want %q", got, want)
 	}
-	// with a project every part that must separate conversations is in the key
-	base := &projectCtx{user: 1, project: 2, epoch: 3}
-	keys := map[string]bool{cliScope("s", "/d", base): true}
-	for _, p := range []*projectCtx{{user: 9, project: 2, epoch: 3}, {user: 1, project: 9, epoch: 3}, {user: 1, project: 2, epoch: 9}, nil} {
-		k := cliScope("s", "/d", p)
-		if keys[k] {
-			t.Errorf("scope collision: %q", k)
-		}
-		keys[k] = true
-	}
-	// and the key is built the same for the old and the new function when there is no project
 	if transcriptKey(nil, cliScope("s", "/d", nil)) != transcriptKey(nil, "s|/d") {
 		t.Error("transcript key changed for a request without a project")
+	}
+}
+
+// Review A1: no combination of a project and a hostile folder or session id equals a key of another namespace or
+// of another project scope. Every keying site (agentScope for Codex, Grok, Copilot; cliScope for Claude CLI).
+func TestConversationScopeCannotCollide(t *testing.T) {
+	p := &projectCtx{user: 1, project: 2, epoch: 3}
+	sites := map[string]func(a, b string, p *projectCtx) string{
+		"agentScope": func(a, b string, p *projectCtx) string { return agentScope("codex", a, b, p) },
+		"cliScope":   func(a, b string, p *projectCtx) string { return cliScope(a, b, p) },
+	}
+	hostile := []string{"/w|u1|p2|e3", "/w", "|u1|p2|e3", "\x00project\x00", "/w\x00", `["agent"]`, ""}
+	for name, f := range sites {
+		seen := map[string]string{}
+		add := func(label, key string) {
+			if prev, ok := seen[key]; ok {
+				t.Errorf("%s: %s and %s give the same key %q", name, prev, label, key)
+			}
+			seen[key] = label
+		}
+		for _, a := range []string{"owner", "own|er", "owner|", ""} {
+			for _, b := range hostile {
+				add(fmt.Sprintf("no project (%q, %q)", a, b), f(a, b, nil))
+				add(fmt.Sprintf("project (%q, %q)", a, b), f(a, b, p))
+				add(fmt.Sprintf("project 2 (%q, %q)", a, b), f(a, b, &projectCtx{user: 1, project: 3, epoch: 3}))
+			}
+		}
+		// the exact collision of the review
+		if f("owner", "/w", p) == f("owner", "/w|u1|p2|e3", nil) {
+			t.Errorf("%s: the review's collision", name)
+		}
+		if (&projectCtx{user: 1, project: 23, epoch: 4}).namespace("cli", "a") == (&projectCtx{user: 12, project: 3, epoch: 4}).namespace("cli", "a") {
+			t.Error("numbers run together")
+		}
+	}
+	// and the old concatenation really was ambiguous (the test is not vacuous)
+	if "owner|/w"+"|u1|p2|e3" != "owner|"+"/w|u1|p2|e3" {
+		t.Fatal("the old key was injective")
 	}
 }
 

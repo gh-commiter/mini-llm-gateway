@@ -4,6 +4,7 @@ package main
 // read-only notes capability on the run port, and the conversation scope.
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -29,21 +30,32 @@ func (p *projectCtx) cap() core.RunCap {
 	return core.RunCap{RunID: p.runID, UserID: p.user, DeviceID: p.device, ProjectID: p.project, Epoch: p.epoch}
 }
 
-// scope is the part of every conversation key that a project adds (section 5): user, project and epoch. Without a
-// project it is "", so the 0.5.26 key stays byte for byte.
-func (p *projectCtx) scope() string {
-	if p == nil {
-		return ""
-	}
-	return "|u" + strconv.FormatInt(p.user, 10) + "|p" + strconv.FormatInt(p.project, 10) + "|e" + strconv.FormatInt(p.epoch, 10)
-}
-
 // agentScope (Codex, Grok, Copilot) and cliScope (Claude CLI) are the reuse keys of a conversation: the resume
 // registry and the history match both go through them. Without a project they are the 0.5.26 keys byte for byte.
 func agentScope(kind, owner, cwd string, p *projectCtx) string {
-	return kind + "|" + owner + "|" + cwd + p.scope()
+	if p == nil {
+		return kind + "|" + owner + "|" + cwd
+	}
+	return p.namespace("agent", kind, owner, cwd)
 }
-func cliScope(session, dir string, p *projectCtx) string { return session + "|" + dir + p.scope() }
+
+func cliScope(session, dir string, p *projectCtx) string {
+	if p == nil {
+		return session + "|" + dir
+	}
+	return p.namespace("cli", session, dir)
+}
+
+// namespace (A1): project conversations live in their own key space: a NUL prefix (an HTTP header value cannot hold
+// a NUL, so no 0.5.26 key starts with it) and a JSON array, whose encoding of the fields is unambiguous.
+func (p *projectCtx) namespace(site string, fields ...string) string {
+	parts := []any{site}
+	for _, f := range fields {
+		parts = append(parts, f)
+	}
+	b, _ := json.Marshal(append(parts, p.user, p.project, p.epoch))
+	return "\x00project\x00" + string(b)
+}
 
 // projectRefusal: the fixed body of a refused agent request (both the Anthropic and the member-route error shape).
 func (s *server) projectRefusal(w http.ResponseWriter, r *req, status int, typ, msg string) int {
