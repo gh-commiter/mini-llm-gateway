@@ -265,6 +265,51 @@ private func allowedTemp() throws -> URL {
     #expect(restarted.folders(p) == [p])
 }
 
+// B1: the identity is the volume UUID plus the inode (never st_dev); no UUID: the inode alone.
+@Test func allowedFolderRecordUsesVolumeUUIDAndInode() throws {
+    let fm = FileManager.default, base = try allowedTemp()
+    defer { try? fm.removeItem(at: base) }
+    let folder = base.appendingPathComponent("folder"), p = folder.path
+    try fm.createDirectory(at: folder, withIntermediateDirectories: false)
+    var cfg = ClaudeCLIConfig()
+    cfg.allowedRoots = p
+    cfg.recordFolders(volumeID: { _ in "UUID-A" })
+    #expect(cfg.allowedRecords[p]?.volume == "UUID-A" && cfg.allowedRecords[p]?.ino != 0)
+    func check(_ uuid: String?) -> [String] {
+        let c = AllowedFolders(volumeID: { _ in uuid })
+        c.record(p, records: cfg.allowedRecords)
+        return c.folders(p)
+    }
+    #expect(check("UUID-A") == [p])  // the same volume, whatever st_dev says after a reconnect
+    #expect(check("UUID-B").isEmpty)  // another disk
+    #expect(check(nil) == [p])  // no UUID now: inode only
+    // An old record (dev and ino, no volume) still reads and is compared by inode.
+    let old = try JSONDecoder().decode(FolderRecord.self, from: Data(#"{"real":"\#(p)","dev":7,"ino":\#(cfg.allowedRecords[p]!.ino)}"#.utf8))
+    #expect(old.volume == nil && old.ino == cfg.allowedRecords[p]?.ino)
+    // Another folder (another inode) at the same path is refused.
+    try fm.moveItem(at: folder, to: base.appendingPathComponent("old"))
+    try fm.createDirectory(at: folder, withIntermediateDirectories: false)
+    #expect(check("UUID-A").isEmpty)
+}
+
+// B2: a record without identity adopts the identity at its first accepted use (and tells its owner to save it).
+@Test func allowedFolderRecordWithoutIdentityIsAdopted() throws {
+    let fm = FileManager.default, base = try allowedTemp()
+    defer { try? fm.removeItem(at: base) }
+    let folder = base.appendingPathComponent("folder"), p = folder.path
+    try fm.createDirectory(at: folder, withIntermediateDirectories: false)
+    let check = AllowedFolders(volumeID: { _ in "UUID-A" })
+    final class Saved: @unchecked Sendable { var rec: FolderRecord? }
+    let saved = Saved()
+    check.onAdopt = { _, rec in saved.rec = rec }
+    check.record(p, records: [p: FolderRecord(real: p)])
+    #expect(check.folders(p) == [p])
+    #expect(saved.rec?.volume == "UUID-A" && saved.rec?.ino != 0)
+    try fm.moveItem(at: folder, to: base.appendingPathComponent("old"))
+    try fm.createDirectory(at: folder, withIntermediateDirectories: false)
+    #expect(check.folders(p, log: { _ in }).isEmpty)
+}
+
 // The checked real path of an allowed folder may contain a comma: it must not be split like the configured list.
 @Test func checkedRootWithCommaIsKept() throws {
     let fm = FileManager.default, base = try allowedTemp()

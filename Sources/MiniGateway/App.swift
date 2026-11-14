@@ -127,6 +127,15 @@ final class AppState: ObservableObject {
         Router.deviceLog.onChange = { [weak self] in
             Task { @MainActor in self?.pendingChanged(Router.deviceLog.pending) }
         }
+        allowedFolders.onAdopt = { [weak self] folder, rec in  // B2: a record without identity adopts it at the first use; saved with the settings
+            Task { @MainActor in
+                guard let self, var old = self.config.claudeCLI.allowedRecords[folder], old.ino == 0 else { return }
+                old.volume = rec.volume
+                old.ino = rec.ino
+                self.config.claudeCLI.allowedRecords[folder] = old
+                self.config.save()
+            }
+        }
         ShareHub.cleanupStale()
         keychain.delete("copilot-token")  // #81 L1: žeton Copilot do 0.5.24 se ne uporablja več
         if ScratchOwner.claim(config.scratchURL, id: config.instanceID).isEmpty {  // N4: v mapi drugega prehoda nič

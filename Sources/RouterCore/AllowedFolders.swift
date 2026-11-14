@@ -4,23 +4,42 @@ import os
 
 /// M2: the real path and identity of an allowed folder, recorded when it is added (or at the first start of a version
 /// that has records) and saved with the settings. Start compares and refuses a folder that differs; it never rewrites it.
+/// B1: the identity is the volume UUID plus the inode, never st_dev (macOS assigns it at mount, so it changes for external
+/// and network disks). `volume` nil = the volume has no UUID (some network filesystems): the inode alone is compared.
+/// `ino` 0 = the folder did not exist when it was recorded: it adopts its identity at its first accepted use (B2).
 public struct FolderRecord: Codable, Sendable, Equatable {
     public var real: String
-    public var dev: UInt64 = 0   // 0 and 0: the folder did not exist when it was recorded
+    public var volume: String?
     public var ino: UInt64 = 0
+
+    public init(real: String, volume: String? = nil, ino: UInt64 = 0) {
+        self.real = real; self.volume = volume; self.ino = ino
+    }
+
+    public init(from decoder: Decoder) throws {  // an older record (dev, ino, no volume) still reads: its dev is ignored
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        real = try c.decode(String.self, forKey: .real)
+        volume = try c.decodeIfPresent(String.self, forKey: .volume)
+        ino = try c.decodeIfPresent(UInt64.self, forKey: .ino) ?? 0
+    }
+
+    /// The recorded identity matches `volume`/`ino` now; volumes are compared only when both are known.
+    func matches(volume now: String?, ino now2: UInt64) -> Bool {
+        ino == 0 || ino == now2 && (volume == nil || now == nil || volume == now)
+    }
 }
 
 extension ClaudeCLIConfig {
     /// Records every allowed folder that has no record yet and drops the records of removed folders. Returns the new ones
     /// (folder, real path) for the log. An existing record is never changed.
     @discardableResult
-    public mutating func recordFolders() -> [(folder: String, real: String)] {
+    public mutating func recordFolders(volumeID: (String) -> String? = AllowedFolders.volumeUUID) -> [(folder: String, real: String)] {
         var records: [String: FolderRecord] = [:], added: [(String, String)] = []
         for p in AllowedFolders.paths(allowedRoots) {
             if let old = allowedRecords[p] { records[p] = old; continue }
             guard let real = Sync.realResolving(URL(fileURLWithPath: p))?.path else { continue }
             var rec = FolderRecord(real: real), st = stat()
-            if lstat(real, &st) == 0 { rec.dev = UInt64(bitPattern: Int64(st.st_dev)); rec.ino = UInt64(st.st_ino) }
+            if lstat(real, &st) == 0 { rec.volume = volumeID(real); rec.ino = UInt64(st.st_ino) }
             records[p] = rec
             added.append((p, real))
         }
@@ -35,12 +54,20 @@ public final class AllowedFolders: @unchecked Sendable {
         var real: String?
         var missing: Bool
         var logged = false
-        var expected: (dev: UInt64, ino: UInt64)?  // M2, A1: the recorded identity (nonzero); compared on every check
+        var record: FolderRecord?  // M2, A1: the recorded identity; compared on every check (ino 0: adopted at the first use, B2)
     }
     private let lock = NSLock()
+    /// B2: called with a record that has just adopted its identity; the owner saves it (must not call back in).
+    public var onAdopt: (@Sendable (String, FolderRecord) -> Void)?
+    private let volumeID: (String) -> String?
     private var entries: [String: Entry] = [:]
 
-    public init() {}
+    public init(volumeID: @escaping (String) -> String? = AllowedFolders.volumeUUID) { self.volumeID = volumeID }
+
+    public static func volumeUUID(_ p: String) -> String? {
+        let v = try? URL(fileURLWithPath: p).resourceValues(forKeys: [.volumeUUIDStringKey]).volumeUUIDString
+        return v?.isEmpty == false ? v : nil
+    }
 
     /// A comma-separated list as typed in settings; checked paths travel as arrays (a real path may contain a comma).
     static func list(_ roots: String) -> [String] {
@@ -68,7 +95,7 @@ public final class AllowedFolders: @unchecked Sendable {
                 } else {
                     var e = Entry(real: Sync.realResolving(URL(fileURLWithPath: p))?.path, missing: missing)
                     if let rec = records[p] {  // M2: the saved record, not the current target
-                        if rec.dev != 0 || rec.ino != 0 { e.expected = (rec.dev, rec.ino) }
+                        e.record = rec
                         e.real = rec.real
                     }
                     entries[p] = e
@@ -139,7 +166,7 @@ public final class AllowedFolders: @unchecked Sendable {
                 var why = ""
                 if r == nil { why = "cannot resolve its real path" }
                 else if r != e.real { why = "its real path changed to " + r! }
-                else if have, let x = e.expected, UInt64(bitPattern: Int64(identity.st_dev)) != x.dev || UInt64(identity.st_ino) != x.ino { why = "its identity changed (another folder is there now)" }
+                else if have, let rec = e.record, !rec.matches(volume: volumeID(r!), ino: UInt64(identity.st_ino)) { why = "its identity changed (another folder is there now)" }
                 else if e.missing && r != p { why = "it is reached through a link to " + r! }
                 else if !Self.owned(r!) || (e.missing && !Self.owned(p)) { why = "it is a link or owned by another user" }
                 if !why.isEmpty {
@@ -151,6 +178,12 @@ public final class AllowedFolders: @unchecked Sendable {
                 }
                 guard have, identity.st_mode & S_IFMT == S_IFDIR,
                       identity.st_uid == getuid() else { return nil }
+                if var rec = e.record, rec.ino == 0 {  // B2: recorded while missing: trust on first use
+                    rec.volume = volumeID(r!)
+                    rec.ino = UInt64(identity.st_ino)
+                    e.record = rec
+                    onAdopt?(p, rec)
+                }
                 return Checked.Folder(path: r!, device: identity.st_dev, inode: identity.st_ino)
             }
             return Checked(folders: folders)
