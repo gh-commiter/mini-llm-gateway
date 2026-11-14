@@ -105,7 +105,7 @@ private func fileText(_ p: String) -> String? { FileManager.default.contents(atP
         #expect(rows.count >= 6)
         for r in rows {
             let pre = "GET / HTTP/1.1\r\nX-Pad: "
-            let req = Array((pre + String(repeating: "a", count: (r["headLen"] as! Int) - pre.utf8.count)  // utf8: "\r\n" is one Character + "\r\n\r\n").utf8)
+            let req = Array((pre + String(repeating: "a", count: (r["headLen"] as! Int) - pre.utf8.count) + "\r\n\r\n").utf8)  // utf8: "\r\n" is one Character
             let cut = r["cut"] as! Int
             let parts = cut > 0 ? [Data(req[..<cut]), Data(req[cut...])] : [Data(req)]
             let rw = Projects.HeadRewriter(project: "7")
