@@ -915,7 +915,7 @@ private func gIn(_ dir: URL, _ input: String, _ args: String...) throws -> Strin
     let hide = try #require(p.split(separator: "\n").first { $0.hasPrefix("(deny file-read-data file-write*") })
     #expect(hide.contains("\"\(link.path)\"") && hide.contains("\"\(real.path)\""))
     // L4: ugnezdeni .git: nastavitve in hooki, pa tudi .git sam (preimenovanje, zamenjava z datoteko gitdir)
-    #expect(p.contains(#"(regex #"/\.git/(config|config\.worktree|hooks|info|commondir|worktrees)(/|$)")"#) && p.contains(#"(regex #"/\.git$")"#))
+    #expect(p.contains(#"(regex #"/\.git/(config|config\.worktree|hooks|info|commondir|worktrees|modules)(/|$)")"#) && p.contains(#"(regex #"/\.git$")"#))
 }
 
 /// Agent-calls na native-direct: vprašani agent dela v mapi klicatelja v njegovem izvajanju in ne čaka na zaklep, ki ga

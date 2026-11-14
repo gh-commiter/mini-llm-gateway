@@ -152,7 +152,13 @@ public struct ClaudeCLIConfig: Codable, Sendable, Equatable {
             // #111: a bare `--allowedTools Read` means any path (real `claude -p`: ~/.ssh, a sibling folder, `../`, Write outside the folder all worked), so every
             // path tool is scoped as in Go (serve_cli.go agentArgs): the session's folder and one rule per checked allowed folder (+ --add-dir). A folder whose path
             // cannot go into a rule as it is (S5) is skipped (the session's own folder then gets no edit tools); the names are trimmed (S1: ` Grep` went in bare).
-            var names = readOnly ? Self.toolNames(Self.readOnlyTools(tools)) : Self.toolNames(tools).filter { Self.restrictedAllowed.contains(Self.toolName($0)) }  // never more than the path rules cover
+            // never more than the path rules cover; U1: a path tool is reduced to its bare NAME (a stored `Read(/etc/**)` would be the owner's rule without the folder scope), web tools keep their `(domain:…)`
+            let allowedNames = readOnly ? Self.readOnlyAllowed : Self.restrictedAllowed
+            var names: [String] = []
+            for t in Self.toolNames(tools) where allowedNames.contains(Self.toolName(t)) {
+                let n = Self.pathToolSet.contains(Self.toolName(t)) ? Self.toolName(t) : t
+                if !names.contains(n) { names.append(n) }
+            }
             let extra = dirs.dropFirst().filter { Self.ruleSafe($0) }
             if extra.count != dirs.count - 1 { Self.logOnce("claude: allowed folders with a character that cannot go into a permission rule are skipped: \(dirs.dropFirst().filter { !Self.ruleSafe($0) }.joined(separator: ", "))") }
             let scopeDirs = [cwd.path] + extra
