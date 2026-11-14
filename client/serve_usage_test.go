@@ -296,7 +296,7 @@ func TestUsageSpoolReplayExactlyOnceAndGaps(t *testing.T) {
 	lines := func() int { b, _ := os.ReadFile(spool); return strings.Count(string(b), "\n") }
 
 	f.s.api.UserOf(t0, devID(f.dev["ana"])) // the gateway has seen ana's binding while the core was up
-	f.s.core.Close()                               // the core stops; the gateway goes on
+	f.s.core.Close()                        // the core stops; the gateway goes on
 	for i := 0; i < 3; i++ {
 		if st, body := x.agent("ana", dir, fmt.Sprint("s", i), 0, "go"); st != 200 { // models are never blocked by accounting
 			t.Fatalf("with the core down: %d %s", st, body)
